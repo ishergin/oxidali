@@ -1,0 +1,46 @@
+{
+  "problemMatcher": [
+    {
+      "owner": "rust-diagnostic",
+      "pattern": [
+        {
+          "regexp": "^(error)(?:\\[(\\S+)\\])?: (.*)$",
+          "severity": 1,
+          "code": 2,
+          "message": 3
+        },
+        {
+          "regexp": "^\\s+-->\\s(\\S+):(\\d+):(\\d+)$",
+          "file": 1,
+          "line": 2,
+          "column": 3
+        }
+      ]
+    },
+    {
+      "owner": "cargo-error",
+      "pattern": [
+        {
+          "regexp": "^error: (.*)$",
+          "message": 1
+        }
+      ]
+    },
+    {
+      "owner": "rust-panic",
+      "pattern": [
+        {
+          "regexp": "^thread '(.*)'(?: \\(\\d+\\))? panicked at (\\S+):(\\d+):(\\d+):$",
+          "code": 1,
+          "file": 2,
+          "line": 3,
+          "column": 4
+        },
+        {
+          "regexp": "^(.*)$",
+          "message": 1
+        }
+      ]
+    }
+  ]
+}

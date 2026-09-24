@@ -2,71 +2,119 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: ["**"]
   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   host:
+    name: clippy and host tests
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - uses: ./.github/actions/esp-toolchain
 
-      - name: Install just and ripgrep (verification scripts)
-        run: brew install just ripgrep
-
-      - name: cargo clippy
-        run: just clippy
-
-      - name: cargo test (host crates)
-        run: just test
-
-      - name: BDD
-        run: just bdd
-
-      - name: Merge-gate verification scripts
-        run: just verify
-
-  clippy-pedantic-advisory:
-    name: clippy pedantic (advisory)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: cargo clippy (pedantic + allowlist)
-        continue-on-error: true
-        env:
-          CLIPPY_HOST_TARGET: aarch64-apple-darwin
-        run: bash scripts/run_clippy_pedantic_advisory.sh
-
-  esp32:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install just
         run: brew install just
 
-      - name: Install Rust nightly + espup
-        run: |
-          rustup toolchain install nightly
-          cargo install espup
-          espup install
-          . $HOME/export-esp.sh
+      - name: Clippy
+        run: just clippy
 
-      - name: cargo check (ESP32-P4)
-        run: |
-          . $HOME/export-esp.sh
-          just esp-check
+      - name: Host tests
+        run: just test
+
+  bdd:
+    name: BDD
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/esp-toolchain
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: BDD
+        run: just default_host=x86_64-unknown-linux-gnu bdd
+
+  gates:
+    name: merge gates
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/esp-toolchain
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/app/package-lock.json
+
+      - name: Install just and ripgrep
+        run: brew install just ripgrep
+
+      - name: Web UI dependencies
+        working-directory: web/app
+        run: npm ci
+
+      - name: Merge gates
+        run: just verify
+
+  esp-check:
+    name: firmware type-check (ESP32-P4)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/esp-toolchain
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Restore ESP-IDF
+        uses: actions/cache@v5
+        with:
+          path: .embuild
+          key: embuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'sdkconfig.p4.defaults') }}
+
+      - name: Install just
+        run: brew install just
+
+      - name: cargo check on the P4 triple
+        run: just esp-check
+
+  clippy-pedantic-advisory:
+    name: clippy pedantic (advisory)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/esp-toolchain
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy pedantic with the allowlist
+        continue-on-error: true
+        env:
+          CLIPPY_HOST_TARGET: aarch64-apple-darwin
+        run: bash scripts/run_clippy_pedantic_advisory.sh

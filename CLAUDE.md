@@ -333,8 +333,8 @@ cargo run --target aarch64-apple-darwin -p dali2rust-adapters --example host_dev
   changes `partitions-p4.csv`. Everything executable or selectable stays below 16 MB, and
   `storage` never moves.
 - Run `just ci` before a commit lands and after anything touching a contract, a wire
-  order or ESP-only code; `.github/workflows/ci.yml` does not replace the local run
-  (it lags `just ci`: [roadmap](documentation/product-design/roadmap.md)).
+  order or ESP-only code. `.github/workflows/ci.yml` runs `just ci` without
+  `gear-sim-check`, BDD on a Linux runner, and does not replace the local run.
 - [`tools/dali-gear-sim`](tools/dali-gear-sim/README.md) is a separate workspace pinned to
   the ESP32-C6 and not ported; `just gear-sim-check` proves only that it
   type-checks.

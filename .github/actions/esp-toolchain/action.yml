@@ -1,0 +1,57 @@
+name: esp toolchain
+description: Installs the espup "esp" Rust toolchain that rust-toolchain.toml selects for every build, and exports LIBCLANG_PATH for bindgen.
+
+inputs:
+  espup-version:
+    description: espup release that installs the toolchain
+    default: "0.16.0"
+  toolchain-version:
+    description: esp toolchain release, the one the workspace is developed with
+    default: "1.93.0.0"
+
+runs:
+  using: composite
+  steps:
+    - name: Restore the esp toolchain
+      id: cache
+      uses: actions/cache@v5
+      with:
+        path: ~/.rustup/toolchains/esp
+        key: esp-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchain-version }}
+
+    - name: Install the esp toolchain
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -o pipefail
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          macOS-ARM64) asset=espup-aarch64-apple-darwin ;;
+          macOS-X64) asset=espup-x86_64-apple-darwin ;;
+          Linux-X64) asset=espup-x86_64-unknown-linux-gnu ;;
+          Linux-ARM64) asset=espup-aarch64-unknown-linux-gnu ;;
+          *) echo "::error title=espup::no espup build for $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+        esac
+        curl -fsSL -o espup "https://github.com/esp-rs/espup/releases/download/v${{ inputs.espup-version }}/$asset"
+        chmod +x espup
+        if ! ./espup install --std --targets esp32 --toolchain-version "${{ inputs.toolchain-version }}" \
+            --export-file "$RUNNER_TEMP/export-esp.sh" 2>&1 | tee espup.log; then
+          echo "::error title=espup install failed::$(tail -n 15 espup.log | tr '\n' ' ')"
+          exit 1
+        fi
+
+    - name: Export LIBCLANG_PATH
+      shell: bash
+      run: |
+        lib="$(ls -d "$HOME"/.rustup/toolchains/esp/xtensa-esp32-elf-clang/*/esp-clang/lib | head -n 1)"
+        test -d "$lib"
+        echo "LIBCLANG_PATH=$lib" >> "$GITHUB_ENV"
+
+    - name: Show the toolchain and annotate Rust errors
+      shell: bash
+      run: |
+        rustc -vV
+        cargo clippy --version
+        echo "::add-matcher::${{ github.action_path }}/rust-problem-matcher.json"

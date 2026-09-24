@@ -244,6 +244,20 @@ const SNAPSHOT_RESERVE: usize = 64;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
+
+    const WRITER_START_DEADLINE: Duration = Duration::from_secs(10);
+
+    fn wait_for_first_publish(slot: &ObservationSlot) {
+        let started = Instant::now();
+        while slot.sequence.load(Ordering::Acquire) == 0 {
+            assert!(
+                started.elapsed() < WRITER_START_DEADLINE,
+                "the writer published nothing within {WRITER_START_DEADLINE:?}"
+            );
+            std::thread::yield_now();
+        }
+    }
 
     #[test]
     fn a_published_observation_is_never_read_half_written() {
@@ -261,6 +275,7 @@ mod tests {
             }
         });
 
+        wait_for_first_publish(&SLOT);
         let mut accepted = 0u32;
         for _ in 0..200_000 {
             if let Some(sample) = read_observation(&SLOT, c"httpd", 0) {
