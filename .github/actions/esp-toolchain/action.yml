@@ -14,7 +14,7 @@ runs:
   steps:
     - name: Restore the esp toolchain
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ~/.rustup/toolchains/esp
         key: esp-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchain-version }}
@@ -23,10 +23,17 @@ runs:
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ runner.temp }}
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
+        set -o pipefail
         curl -fsSL -o espup "https://github.com/esp-rs/espup/releases/download/v${{ inputs.espup-version }}/espup-aarch64-apple-darwin"
         chmod +x espup
-        ./espup install --std --targets esp32 --toolchain-version "${{ inputs.toolchain-version }}" --export-file "$RUNNER_TEMP/export-esp.sh"
+        if ! ./espup install --std --targets esp32 --toolchain-version "${{ inputs.toolchain-version }}" \
+            --export-file "$RUNNER_TEMP/export-esp.sh" 2>&1 | tee espup.log; then
+          echo "::error title=espup install failed::$(tail -n 15 espup.log | tr '\n' ' ')"
+          exit 1
+        fi
 
     - name: Export LIBCLANG_PATH
       shell: bash

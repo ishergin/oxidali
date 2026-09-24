@@ -60,12 +60,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Restore ESP-IDF
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .embuild
           key: embuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'sdkconfig.p4.defaults') }}
