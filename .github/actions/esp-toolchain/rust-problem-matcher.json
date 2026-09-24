@@ -30,7 +30,7 @@
       "owner": "rust-panic",
       "pattern": [
         {
-          "regexp": "^thread '(.*)' panicked at (\\S+):(\\d+):(\\d+):$",
+          "regexp": "^thread '(.*)'(?: \\(\\d+\\))? panicked at (\\S+):(\\d+):(\\d+):$",
           "code": 1,
           "file": 2,
           "line": 3,

@@ -20,6 +20,8 @@ const SHORT: u8 = 5;
 const MAX_ATTEMPTS: u64 = 5;
 const EXERCISE_DEADLINE: Duration = Duration::from_secs(20);
 const SIGNAL_DEADLINE: Duration = Duration::from_secs(10);
+const FLOODERS_PER_CORE: usize = 2;
+const MIN_FLOODERS: usize = 4;
 
 fn read_frame(correlation_id: u64) -> BusFrame {
     BusFrame::command(dali2rust_contracts::bus::command_envelope(
@@ -56,6 +58,12 @@ fn flood_events_ingress(
             let _ = publisher.try_publish(BusChannel::Events, BusFrame::event(ev));
         }
     })
+}
+
+fn flooder_count() -> usize {
+    std::thread::available_parallelism()
+        .map_or(MIN_FLOODERS, |cores| cores.get() * FLOODERS_PER_CORE)
+        .max(MIN_FLOODERS)
 }
 
 fn recv_terminal_signal(
@@ -124,7 +132,7 @@ fn a_lost_evidence_chunk_fails_the_read_instead_of_reporting_success() {
         let lost_before = counters.evidence_publish_failed.load(Ordering::Relaxed);
 
         let stop = Arc::new(AtomicBool::new(false));
-        let flooders: Vec<_> = (0..2)
+        let flooders: Vec<_> = (0..flooder_count())
             .map(|_| flood_events_ingress(publisher.clone(), Arc::clone(&stop)))
             .collect();
         assert_eq!(
