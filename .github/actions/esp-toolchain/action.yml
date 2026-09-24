@@ -27,7 +27,14 @@ runs:
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -o pipefail
-        curl -fsSL -o espup "https://github.com/esp-rs/espup/releases/download/v${{ inputs.espup-version }}/espup-aarch64-apple-darwin"
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          macOS-ARM64) asset=espup-aarch64-apple-darwin ;;
+          macOS-X64) asset=espup-x86_64-apple-darwin ;;
+          Linux-X64) asset=espup-x86_64-unknown-linux-gnu ;;
+          Linux-ARM64) asset=espup-aarch64-unknown-linux-gnu ;;
+          *) echo "::error title=espup::no espup build for $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+        esac
+        curl -fsSL -o espup "https://github.com/esp-rs/espup/releases/download/v${{ inputs.espup-version }}/$asset"
         chmod +x espup
         if ! ./espup install --std --targets esp32 --toolchain-version "${{ inputs.toolchain-version }}" \
             --export-file "$RUNNER_TEMP/export-esp.sh" 2>&1 | tee espup.log; then

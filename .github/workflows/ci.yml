@@ -11,7 +11,45 @@ concurrency:
 
 jobs:
   host:
-    name: clippy, tests, BDD, merge gates
+    name: clippy and host tests
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/esp-toolchain
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install just
+        run: brew install just
+
+      - name: Clippy
+        run: just clippy
+
+      - name: Host tests
+        run: just test
+
+  bdd:
+    name: BDD
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/esp-toolchain
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: BDD
+        run: just default_host=x86_64-unknown-linux-gnu bdd
+
+  gates:
+    name: merge gates
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-latest
     steps:
@@ -29,15 +67,6 @@ jobs:
 
       - name: Install just and ripgrep
         run: brew install just ripgrep
-
-      - name: Clippy
-        run: just clippy
-
-      - name: Host tests
-        run: just test
-
-      - name: BDD
-        run: just bdd
 
       - name: Web UI dependencies
         working-directory: web/app
