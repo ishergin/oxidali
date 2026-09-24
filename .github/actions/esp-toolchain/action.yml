@@ -1,0 +1,42 @@
+name: esp toolchain
+description: Installs the espup "esp" Rust toolchain that rust-toolchain.toml selects for every build, and exports LIBCLANG_PATH for bindgen.
+
+inputs:
+  espup-version:
+    description: espup release that installs the toolchain
+    default: "0.16.0"
+  toolchain-version:
+    description: esp toolchain release, the one the workspace is developed with
+    default: "1.93.0.0"
+
+runs:
+  using: composite
+  steps:
+    - name: Restore the esp toolchain
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.rustup/toolchains/esp
+        key: esp-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchain-version }}
+
+    - name: Install the esp toolchain
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      run: |
+        curl -fsSL -o espup "https://github.com/esp-rs/espup/releases/download/v${{ inputs.espup-version }}/espup-aarch64-apple-darwin"
+        chmod +x espup
+        ./espup install --std --targets esp32 --toolchain-version "${{ inputs.toolchain-version }}" --export-file "$RUNNER_TEMP/export-esp.sh"
+
+    - name: Export LIBCLANG_PATH
+      shell: bash
+      run: |
+        lib="$(ls -d "$HOME"/.rustup/toolchains/esp/xtensa-esp32-elf-clang/*/esp-clang/lib | head -n 1)"
+        test -d "$lib"
+        echo "LIBCLANG_PATH=$lib" >> "$GITHUB_ENV"
+
+    - name: Show the toolchain
+      shell: bash
+      run: |
+        rustc -vV
+        cargo clippy --version
