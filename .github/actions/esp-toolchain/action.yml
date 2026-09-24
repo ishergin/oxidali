@@ -42,8 +42,9 @@ runs:
         test -d "$lib"
         echo "LIBCLANG_PATH=$lib" >> "$GITHUB_ENV"
 
-    - name: Show the toolchain
+    - name: Show the toolchain and annotate Rust errors
       shell: bash
       run: |
         rustc -vV
         cargo clippy --version
+        echo "::add-matcher::${{ github.action_path }}/rust-problem-matcher.json"
