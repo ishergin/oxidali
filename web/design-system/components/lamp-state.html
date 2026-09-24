@@ -1,0 +1,266 @@
+<!-- @dsCard group="Components" name="Lamp state" subtitle="The state cell: a dot carrying the lamp's own colour, its level, and its colour value" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lamp state — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1000px; margin: 0 auto; padding: 20px 24px 40px; }
+h2 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+h2:first-of-type { margin-top: 0; }
+.note { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.note code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 6px; }
+/* ── Lamp state ──────────────────────────────────────────────────────────
+   The State column of the physical-device and virtual-lamp lists. It used to
+   be the generic status `Chip` — a fixed amber/grey dot and the words
+   "On · 180" — so two lamps at the same level looked identical whether one
+   was at 2700 K and the other at 6500 K, and an RGB fixture running deep red
+   looked exactly like a warm white one. The owner's report is that this
+   should read the way Home Assistant's does: the control itself carries the
+   colour.
+
+   THE DOT IS THE ONLY THING ALLOWED TO CARRY IT. Not the row, not the text,
+   not a background wash — a coloured row would compete with the dirty/warn
+   vocabulary that already owns row tint, and a coloured label would compete
+   with the amber that means "level". One small filled circle is enough to
+   read at a glance and cannot be confused with a status chip, which always
+   has a *fixed* hue for a *named* condition.
+
+   WHAT THE COLOUR IS, AND WHAT IT IS NOT. It is a PRESENTATIONAL ramp, not
+   colorimetry: warm→cool anchors interpolated across the kelvin range for
+   `cct`, the gear's own sRGB channels at full chroma for `rgb`/`rgbwaf`,
+   plain amber for a brightness-only fixture. `xy` deliberately gets the
+   neutral dot and its coordinates as text — converting xy to a screen colour
+   needs a white point and a gamut this product has never asked a gear for,
+   and inventing one would be the same class of mistake as a camera reading
+   trusted outside its band.
+
+   LEVEL IS ALPHA, NEVER SIZE. A dot that changed size would move the text
+   after it and make a 64-row table shift as levels arrive. Alpha runs
+   0.35..1.0 so a lamp at level 1 is still visible, and the glow appears only
+   above half so a bright fixture reads as bright without every row glowing. */
+.lampstate { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); white-space: nowrap; }
+.lampdot { width: 11px; height: 11px; border-radius: 50%; flex: none;
+  background: var(--lamp, var(--accent)); border: 1px solid color-mix(in srgb, var(--lamp, var(--accent)) 70%, transparent);
+  box-shadow: var(--lamp-glow, none); }
+.lamplv { font-family: var(--mono); font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+/* The colour value in words, for the operator who needs the number and not
+   the impression. Faint by the same rule as every other caption here. */
+.lampcq { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
+/* `on` carries no rule of its own — the dot's colour and alpha come from the
+   inline `--lamp` the projection computes. It is a state NAME, present so the
+   three states read the same way in markup and so a future rule has somewhere
+   to land. */
+.lampstate.on { }
+
+/* Off: a hollow ring. An off lamp has no colour to report — the gear still
+   holds one, and showing it would say the fixture is lit. */
+.lampstate.off .lampdot { background: transparent; border-color: var(--text-faint); box-shadow: none; }
+.lampstate.off .lamplv { color: var(--text-muted); }
+/* Never observed. Distinct from off: nothing has answered, so nothing is
+   claimed. Dashed ring, italic word. */
+/* UNVERIFIED — the fourth state, and the one the first draft of this card was
+   missing. `value_source` says who drove the last commit: `poller` means the
+   wire REPORTED this, everything else — `api`, `hcl`, `mqtt`, `rules`, and
+   `sniffer` too — is the echo of a command, ours or a foreign master's (the
+   translator keeps forward frames and discards backward ones). An arc-power
+   command is unacknowledged by protocol (102 gives DAPC no backward frame), so
+   a level written to gear whose mains is off is transmitted, echoed into the
+   registry, and contradicted by nothing. Measured on the bench 2026-09-01:
+   four luminaires with no mains reported `on` at their commanded levels and
+   not one error anywhere on the screen.
+
+   The ring means UNVERIFIED, not "not yet re-read", and the difference is the
+   whole product decision here. Two conditions, both required:
+
+     1. no read produced this value  (`value_source !== 'poller'`), and
+     2. none is coming — the controller is not polling this bus.
+
+   Condition 2 is what keeps the ring worth looking at. With polling ON every
+   commanded value is uncorroborated for the seconds-to-minutes until the
+   sweep reaches that address, and marking THAT would put a ring on every lamp
+   an operator touches, on a healthy bus, for a gap that closes itself — and a
+   real fault is already carried by the slash (`device_absent`), which
+   outranks. With polling OFF nothing will ever confirm anything, the gap
+   never closes, and the ring is the only thing on the screen saying so.
+
+   Polling is off by default, so the ring is what a fresh controller shows.
+   That is the honest reading and not a defect: those numbers really are only
+   what was asked for.
+
+   NOT gated on `status` (the stored QUERY STATUS byte). That byte is
+   readback-only and never cleared, so it answers "has this gear ever answered
+   since boot", never "has it answered since the command" — one manual read on
+   the device page would have silenced the ring for that lamp for the rest of
+   the boot while nothing was verifying it.
+
+   So: a FILLED dot always means something on the wire reported this, a RING
+   always means this is what we sent and nothing is checking. The colour stays
+   — that part is real, it is what was asked for — and the glow does not,
+   because the glow says "this fixture is bright", which is precisely the
+   unverified claim. */
+.lampstate.unconfirmed .lampdot { background: transparent; border-width: 2px;
+  border-color: var(--lamp, var(--accent)); }
+.lampstate.unconfirmed .lamplv { color: var(--text-muted); }
+.lampstate.unconfirmed .lamplv::after { content: " ?"; color: var(--text-faint); }
+.lampstate.unknown .lampdot { background: transparent; border-style: dashed; border-color: var(--text-faint); box-shadow: none; }
+/* The list's level control: track takes the room the cell has, number after
+   it. Without the readout a 254-step range in a 129 px track is half a level
+   per pixel, which is what the bench reported as "движок не умещается". */
+.lvlcell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lvlnum { font-family: var(--mono); font-size: 12px; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; width: 28px; text-align: right; flex: none; }
+.track2 { position: relative; width: 120px; height: 4px; border-radius: 2px; background: var(--raised); }
+.track2 .f { position: absolute; inset: 0 auto 0 0; border-radius: 2px; background: var(--accent); opacity: .8; }
+.lampstate.unknown .lamplv { color: var(--text-faint); font-style: italic; font-family: var(--font); }
+
+.tbl { width: 100%; border-collapse: collapse; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.tbl th { text-align: left; padding: 9px 12px; background: var(--raised); border-bottom: 1px solid var(--border);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-faint); font-weight: 600; }
+.tbl td { padding: 8px 12px; border-bottom: 1px solid var(--border-soft); font-size: 13px; white-space: nowrap; }
+.tbl tr:last-child td { border-bottom: none; }
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--raised); font-family: var(--mono);
+  font-size: 11px; color: var(--text-muted); }
+.badge.addr { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="page">
+  <h2>In the list</h2>
+  <p class="note">Physical devices and virtual lamps share this cell, so the two screens cannot
+    drift apart again. The dot is the fixture's own colour; the number beside it is the arc level.</p>
+  <table class="tbl">
+    <thead><tr><th>SA</th><th>Name</th><th>State</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge addr">SA 00</span></td><td>Kitchen spot</td>
+        <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.82);--lamp-glow:0 0 7px rgba(240,180,41,.45)"></span><span class="lamplv">180</span></span></td></tr>
+      <tr><td><span class="badge addr">SA 01</span></td><td>Hallway</td>
+        <td><span class="lampstate off"><span class="lampdot"></span><span class="lamplv">Off</span></span></td></tr>
+      <tr><td><span class="badge addr">SA 04</span></td><td>Living room strip</td>
+        <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,166,88,.92);--lamp-glow:0 0 7px rgba(255,166,88,.5)"></span><span class="lamplv">220</span><span class="lampcq">2900 K</span></span></td></tr>
+      <tr><td><span class="badge addr">SA 05</span></td><td>RGB strip</td>
+        <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,81,35,.72);--lamp-glow:0 0 7px rgba(255,81,35,.4)"></span><span class="lamplv">140</span><span class="lampcq">#DC461E</span></span></td></tr>
+      <tr><td><span class="badge addr">SA 07</span></td><td>— unnamed</td>
+        <td><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">unknown</span></span></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Commanded is not observed</h2>
+  <p class="note">The whole point of the cell. A filled dot means the wire reported this; a
+    ring means this is what we <i>sent</i> and nothing is checking. An arc-power command
+    carries no acknowledgment, so a level written to a luminaire with no mains is transmitted,
+    stored, and contradicted by nothing — the ring is the only thing standing between that and
+    a UI claiming an observation it does not have.</p>
+  <p class="note">The ring needs <b>both</b> halves: the value came from a command, <b>and</b>
+    no read is coming. With polling on, every commanded value is uncorroborated until the sweep
+    reaches that address — marking that would ring every lamp an operator touches on a healthy
+    bus, for a gap that closes itself, and a gear that has actually stopped answering already
+    gets the slash. With polling off the gap never closes, and the ring is the only thing that
+    says so. Polling is off by default, so a fresh controller shows rings: those numbers really
+    are only what was asked for.</p>
+  <div class="demo">
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.82);--lamp-glow:0 0 7px rgba(240,180,41,.45)"></span><span class="lamplv">180</span></span>
+    &nbsp;&nbsp;&nbsp;<span class="lampcq">read back by the poller</span>
+    <br><br>
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.82);--lamp-glow:0 0 7px rgba(240,180,41,.45)"></span><span class="lamplv">180</span></span>
+    &nbsp;&nbsp;&nbsp;<span class="lampcq">commanded — polling on, a read is due</span>
+    <br><br>
+    <span class="lampstate on unconfirmed"><span class="lampdot" style="--lamp:rgba(240,180,41,.82)"></span><span class="lamplv">180</span></span>
+    &nbsp;&nbsp;&nbsp;<span class="lampcq">commanded — polling off, nothing will confirm it</span>
+  </div>
+
+  <h2>Level control in the list</h2>
+  <p class="note">The number belongs with the control that drives it. The State cell says what
+    the lamp <i>is</i>; this one is what you are setting.</p>
+  <div class="demo">
+    <span class="lvlcell">
+      <span class="track2"><span class="f" style="width:70%"></span></span>
+      <span class="lvlnum">178</span>
+    </span>
+  </div>
+
+  <h2>The ramp</h2>
+  <p class="note">Warm to cool, anchored and interpolated. Presentational — it is what an
+    operator recognises a colour temperature by, not a claim about the emitter's spectrum.</p>
+  <div class="demo">
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,147,41,1)"></span><span class="lampcq">2000 K</span></span>
+    &nbsp;&nbsp;
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,180,107,1)"></span><span class="lampcq">2700 K</span></span>
+    &nbsp;&nbsp;
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,214,170,1)"></span><span class="lampcq">4000 K</span></span>
+    &nbsp;&nbsp;
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,241,224,1)"></span><span class="lampcq">5000 K</span></span>
+    &nbsp;&nbsp;
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(202,218,255,1)"></span><span class="lampcq">6500 K</span></span>
+  </div>
+
+  <h2>Level is alpha</h2>
+  <p class="note">0.35 at level 1 so the dimmest lamp is still visible, 1.0 at 254; the glow
+    starts above half. Size never changes — a growing dot would shift the text after it and
+    make a long table twitch as readbacks land.</p>
+  <div class="demo">
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.36)"></span><span class="lamplv">10</span></span>
+    &nbsp;&nbsp;
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.52)"></span><span class="lamplv">64</span></span>
+    &nbsp;&nbsp;
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.71);--lamp-glow:0 0 7px rgba(240,180,41,.35)"></span><span class="lamplv">128</span></span>
+    &nbsp;&nbsp;
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,1);--lamp-glow:0 0 7px rgba(240,180,41,.55)"></span><span class="lamplv">254</span></span>
+  </div>
+</div>
+</body>
+</html>

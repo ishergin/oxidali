@@ -1,0 +1,8 @@
+# <boot stage> <floor of internal SRAM free, bytes>; set under a power-on boot, with slack from after_hydrate on for the device count
+composition_start      432000
+before_hydrate         419000
+after_hydrate          402000
+before_ota_worker      382000
+after_ota_worker       380000
+after_workers          360000
+before_httpd           337000

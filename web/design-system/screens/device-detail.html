@@ -1,0 +1,419 @@
+<!-- @dsCard group="Screens" name="Device detail — overview" subtitle="Physical device shell: control strip, page tab bar, and the Overview tab — information, status, commissioning" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Device detail — overview — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 40px; }
+
+/* Breadcrumb + header */
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.head .sub { color: var(--text-faint); font-size: 12px; }
+.spacer { flex: 1; }
+
+.badge { display: inline-flex; padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
+.badge.addr { color: var(--text); background: var(--overlay); }
+.badge.dt8 { color: var(--info); border-color: rgba(77,163,255,.3); }
+.badge .prov { font-family: var(--font); color: var(--text-faint); font-size: 10px; margin-left: 4px; }
+.badge.declared { border-color: rgba(227,160,8,.35); }
+.badge.declared .prov { color: var(--warn); }
+
+/* Override select + effective-value badge (Information card). BOTH slots are a
+   fixed width, because otherwise the two override rows stagger against each
+   other: a select sizes to its widest option (dt8_color vs brightness) and a
+   badge to its text (rgb vs dt8_color), so neither the selects nor the badges
+   lined up. 168px holds the widest label the badge must show, "brightness ·
+   manual", so the row does not move when an override is set. */
+.ovr { display: grid; grid-template-columns: 112px minmax(0, 168px); align-items: center; gap: 8px; }
+.ovr .sel { width: 100%; }
+.ovr .badge { width: 100%; box-sizing: border-box; justify-content: flex-start;
+  min-width: 0; overflow: hidden; white-space: nowrap; }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
+.chip.accent { color: var(--accent-strong); background: var(--accent-soft); }
+
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+.btn.sm { padding: 4px 9px; font-size: 11px; }
+.btn:disabled { opacity: .45; cursor: default; }
+
+/* Selects are styled like inputs everywhere in the app, never left native. */
+.sel { padding: 5px 8px; background: var(--raised); color: var(--text); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; cursor: pointer; }
+.sel.sm { padding: 2px 5px; font-size: 11px; }
+
+/* Control strip. Above the tab bar and OUTSIDE it: an operator reading bank 205
+   must still be able to switch the fixture off without navigating away. */
+.strip { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; display: flex; align-items: center; gap: 18px; }
+.level-num { font-family: var(--mono); font-size: 26px; font-weight: 500; color: var(--accent-strong); }
+.level-num .max { font-size: 12px; color: var(--text-faint); }
+.track { position: relative; flex: 1; height: 6px; border-radius: 3px; background: var(--raised); }
+.track .fill { position: absolute; inset: 0 auto 0 0; width: 70%; border-radius: 3px;
+  background: linear-gradient(90deg, #8a6a14, var(--accent)); box-shadow: 0 0 12px var(--accent-glow); }
+.track .thumb { position: absolute; top: 50%; left: 70%; width: 16px; height: 16px; border-radius: 50%;
+  transform: translate(-50%,-50%); background: var(--accent-strong); border: 2px solid #0e1116;
+  box-shadow: 0 0 0 1px var(--accent), 0 0 10px var(--accent-glow); }
+.btns { display: flex; gap: 6px; }
+.btn.icon { font-family: var(--mono); min-width: 34px; text-align: center; }
+
+/* Page-level tab bar — full spec and the colour rationale live in the
+   "Page tab bar" component card. Repeated here verbatim because every preview
+   is standalone. */
+.ptabs { display: flex; gap: 2px; align-items: stretch; margin-top: 16px; }
+/* One line, hint inline after the label. Stacked (label over hint) the three
+   bank tabs were taller than the other three, so with any vertical alignment
+   the LABELS stopped lining up — the eye reads a tab bar by its labels, and a
+   caption is not worth breaking that for. */
+.ptab { display: flex; align-items: baseline; gap: 7px; padding: 7px 14px 8px;
+  border: 1px solid transparent; border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: none; color: var(--text-muted); font-family: var(--font); font-size: 13px;
+  font-weight: 550; cursor: pointer; text-decoration: none; white-space: nowrap; }
+.ptab:hover { color: var(--text); background: var(--raised); }
+.ptab.active { color: var(--text); background: var(--surface); border-color: var(--border); cursor: default; }
+.ptab .hint { font-family: var(--mono); font-size: 10px; color: var(--text-faint); font-weight: 400; }
+.ptab.active .hint { color: var(--text-muted); }
+.ptab .unread { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--text-faint); margin-left: 6px; vertical-align: middle; }
+.ptabline { height: 1px; background: var(--border); margin-bottom: 14px; }
+
+/* Section grid */
+.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.card header { display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
+.card header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+.act { font-size: 11px; color: var(--info); background: none; border: none; cursor: pointer; font-family: var(--font); }
+
+/* Commissioning (R15). Service tone, deliberately no accent: these actions
+   re-address hardware, so the styling must not invite a casual click. */
+.comm-grid { display: grid; gap: 12px; padding: 12px 14px; }
+.comm-act { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
+.comm-title { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+.comm-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.comm-row + .comm-row { margin-top: 6px; }
+.comm-arrow { color: var(--text-faint); }
+.comm-check { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); }
+.comm-hint { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
+/* Destructive, and NOT coloured until it is armed: a card of permanently red
+ * buttons trains the eye to ignore red. `.sure` is the armed state. */
+.btn.sm.danger:hover { color: var(--err); border-color: color-mix(in srgb, var(--err) 55%, transparent); background: var(--err-soft); }
+.btn.sm.sure { color: var(--err); border-color: color-mix(in srgb, var(--err) 45%, transparent); background: var(--err-soft); }
+.comm-warn { font-size: 11px; color: var(--text-muted); margin-top: 6px;
+  border-left: 2px solid var(--border-strong); padding-left: 6px; }
+
+/* Attribute row: label | value | provenance, with the value column a FIXED
+   width so every input and every read-only number lands on the same right
+   edge across rows. */
+.attr { display: grid; grid-template-columns: 1fr 116px 104px; column-gap: 12px; row-gap: 3px;
+  align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.attr:last-child { border-bottom: none; }
+.attr .k { color: var(--text-muted); font-size: 13px; }
+.attr .v { font-family: var(--mono); font-size: 13px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.attr .v.plain { padding-right: 8px; }
+.attr .v .unit { color: var(--text-faint); font-size: 11px; width: 20px; text-align: left; flex: none; }
+.attr .note { grid-column: 2 / -1; font-size: 11px; color: var(--text-faint); text-align: right; }
+.attr .src { justify-self: end; }
+.attr.controls { grid-template-columns: 1fr; }
+.attr.controls .v { justify-content: flex-start; padding-right: 0; }
+.mono { font-family: var(--mono); font-size: 12px; }
+/* A decoded value's own raw byte, kept beside it rather than instead of it. */
+.raw { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-left: 6px; }
+.types { font-family: var(--mono); font-size: 12px; color: var(--text-muted); }
+.types.muted { font-family: var(--font); color: var(--text-faint); font-style: italic; }
+.cct-range { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+.cct-clamped { font-size: 11px; white-space: nowrap; color: var(--warn);
+  background: var(--warn-soft); border-radius: 4px; padding: 2px 6px; }
+.src { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+.src .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.src.readback { color: var(--ok); background: var(--ok-soft); }
+.src.written { color: var(--info); background: var(--info-soft); }
+.src.stale { color: var(--text-faint); background: var(--raised); }
+
+/* Status flags */
+.flags { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; }
+.flag { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; }
+.flag .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.flag.off { color: var(--text-faint); background: var(--raised); }
+.flag.err { color: var(--err); background: var(--err-soft); }
+.flag.on { color: var(--ok); background: var(--ok-soft); }
+.flag.warn { color: var(--warn); background: var(--warn-soft); }
+.flag.info { color: var(--info); background: var(--info-soft); }
+.chgnote { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.chgnote code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.chgdemo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px; }
+.chgh { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumbs"><a href="#">Adapter 0</a> / <a href="#">Physical devices</a> / SA 04</div>
+
+  <div class="head">
+    <h1>Kitchen spot</h1>
+    <span class="badge addr">SA 04</span>
+    <span class="badge dt8">DT8 CCT</span>
+    <span class="chip ok"><span class="dot"></span>Present</span>
+    <span class="chip accent"><span class="dot"></span>On · 200</span>
+    <span class="spacer"></span>
+    <button class="btn">↻ Read attributes</button>
+    <button class="btn">Identify</button>
+    <button class="btn primary">Rename</button>
+  </div>
+
+  <!-- Header, strip and tab bar are the SHELL: identical on every tab, fed by
+       the device core alone (GET …/physical-devices/{short}). The core carries
+       no attribute sections and no bank coverage, so the shell costs about a
+       kilobyte and can keep its 5 s poll without holding the single httpd task. -->
+  <div class="strip">
+    <div class="level-num">200<span class="max"> /254</span></div>
+    <div class="track"><div class="fill"></div><div class="thumb"></div></div>
+    <div class="btns">
+      <button class="btn">Off</button>
+      <button class="btn icon">−</button>
+      <button class="btn icon">+</button>
+      <button class="btn">Min</button>
+      <button class="btn primary">Max</button>
+    </div>
+    <!-- The CCT slider spans the FIXTURE's own Tc range, read from the gear
+         (QUERY COLOUR VALUE ids 128..131), not a fixed 2700-6500 K. The bounds
+         caption reads "(default)" until the fixture has reported. -->
+    <div style="border-left:1px solid var(--border); padding-left:16px; display:flex; align-items:center; gap:10px;">
+      <span style="font-family:var(--mono); font-size:15px;">3000 K</span>
+      <div style="position:relative; width:130px; height:6px; border-radius:3px; background:linear-gradient(90deg,#ffb46b,#ffd9a0,#f2f6ff,#cfe1ff);">
+        <div style="position:absolute; top:50%; left:38%; width:14px; height:14px; border-radius:50%; transform:translate(-50%,-50%); background:#ffd9a0; border:2px solid #0e1116;"></div>
+      </div>
+      <span class="cct-range">2703–6536 K</span>
+    </div>
+  </div>
+
+  <!-- Clamped state: the stored colour is OUTSIDE this fixture's range. The
+       caption carries the ask, in `warn` — desired ≠ applied — and never in the
+       amber reserved for lamp state. -->
+  <div class="strip" style="margin-top:10px;">
+    <div style="display:flex; align-items:center; gap:10px;">
+      <span style="font-family:var(--mono); font-size:15px;">6250 K</span>
+      <div style="position:relative; width:130px; height:6px; border-radius:3px; background:linear-gradient(90deg,#ffb46b,#ffd9a0,#f2f6ff,#cfe1ff);">
+        <div style="position:absolute; top:50%; left:100%; width:14px; height:14px; border-radius:50%; transform:translate(-50%,-50%); background:#cfe1ff; border:2px solid #0e1116;"></div>
+      </div>
+      <span class="cct-range">2500–6250 K</span>
+      <span class="cct-clamped">asked 6500 K &middot; gear max 6250 K</span>
+    </div>
+  </div>
+
+  <div class="ptabs">
+    <a class="ptab active" href="#">Overview</a>
+    <a class="ptab" href="#">Levels &amp; fade</a>
+    <a class="ptab" href="#">Groups &amp; scenes</a>
+    <a class="ptab" href="#">Identity<span class="hint">banks 0 · 1</span></a>
+    <a class="ptab" href="#">Energy<span class="hint">banks 202–204</span></a>
+    <a class="ptab" href="#">Diagnostics<span class="hint">banks 205–207</span></a>
+  </div>
+  <div class="ptabline"></div>
+
+  <!-- OVERVIEW TAB. Everything here comes from the device core plus one
+       attribute section (`common_102`) for the version / light-source rows —
+       deliberately the smallest tab, because it is the one an operator lands on
+       and it must render before they decide where to go. -->
+  <div class="grid">
+    <div class="card">
+      <header><h3>Information</h3><button class="act">Edit</button></header>
+      <div class="attr"><span class="k">Name</span><span class="v">Kitchen spot</span><span></span></div>
+      <div class="attr controls"><span class="k">Device type override</span><span class="v"><span class="ovr">
+        <select class="sel"><option>inherit</option><option>unknown</option><option>dt6_led</option><option>dt8_color</option></select>
+        <span class="badge">dt8_color<span class="prov">&middot; discovered</span></span>
+      </span></span></div>
+      <!-- Every type the gear declared (IEC 62386-102 §9.18), not the one the
+           row above classifies it as. Three states, and they are different
+           facts: a list, "none" when the gear answered 254, and "not read"
+           when the enumeration never finished. -->
+      <div class="attr"><span class="k">Declared types</span><span class="v"><span class="types">DT6 · DT8 · DT51</span></span><span></span></div>
+      <div class="attr"><span class="k">Declared types</span><span class="v"><span class="types muted">none declared</span></span><span></span></div>
+      <div class="attr"><span class="k">Declared types</span><span class="v"><span class="types muted">not read</span></span><span></span></div>
+      <div class="attr controls"><span class="k">Color mode override</span><span class="v"><span class="ovr">
+        <select class="sel"><option>inherit</option><option>brightness</option><option>cct</option><option>xy</option><option>rgb</option><option>unknown</option></select>
+        <span class="badge declared">cct<span class="prov">&middot; manual</span></span>
+      </span></span></div>
+      <div class="attr"><span class="k">Random address</span><span class="v">0x214365</span><span></span></div>
+      <!-- The byte is not the version. IEC 62386-102 §4.2: major in bits 7..2,
+           minor in bits 1..0 — version 2.0 is the byte 0x08. 0xFF is not
+           version 63.3: §9.10.6 makes it "no control gear implemented". -->
+      <div class="attr"><span class="k">Version</span><span class="v">2.0<span class="raw">0x08</span></span><span class="src readback"><span class="dot"></span>readback · 2 h</span></div>
+      <!-- IEC 62386-102 §11.5.19, table 17. DiiA 5.6 makes type 253 (converter)
+           the discriminator for how `lampFailure` must be read at all. -->
+      <div class="attr"><span class="k">Light source type</span><span class="v">LED<span class="raw">6</span></span><span class="src readback"><span class="dot"></span>readback · 2 h</span></div>
+      <div class="attr"><span class="k">Light source type</span><span class="v">LED · HID<span class="raw">multiple</span></span><span class="src readback"><span class="dot"></span>readback · 2 h</span></div>
+      <div class="attr"><span class="k">Bound virtual lamp</span><span class="v">VL 12 · "Kitchen"</span><span></span></div>
+    </div>
+
+    <div class="card">
+      <header><h3>Status</h3><button class="act">↻ Refresh</button></header>
+      <!-- All eight bits, always rendered, unraised ones faint. -->
+      <div class="flags">
+        <span class="flag off"><span class="dot"></span>Lamp failure</span>
+        <span class="flag off"><span class="dot"></span>Gear failure</span>
+        <span class="flag info"><span class="dot"></span>Lamp lit</span>
+        <span class="flag off"><span class="dot"></span>Limit error</span>
+        <span class="flag off"><span class="dot"></span>Fade running</span>
+        <span class="flag off"><span class="dot"></span>Reset state</span>
+        <span class="flag off"><span class="dot"></span>No short address</span>
+        <span class="flag off"><span class="dot"></span>Power cycle seen</span>
+      </div>
+      <div class="attr"><span class="k">Last seen</span><span class="v">2 s ago</span><span></span></div>
+      <div class="attr"><span class="k">Last DAPC source</span><span class="v">api</span><span></span></div>
+      <div class="attr"><span class="k">Status raw</span><span class="v">0x04</span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+    </div>
+
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Commissioning</h3></header>
+      <div class="comm-grid">
+        <!-- No duration select: IEC 62386-102 §9.14.3.2 gives the window to the
+             gear, which runs its own 10 s ± 1 s procedure. §11.4.7 lets the
+             indication be a driver LED or a sound rather than the light, so the
+             hint promises identification, not a blink. -->
+        <div class="comm-act">
+          <div class="comm-title">Identify</div>
+          <div class="comm-row">
+            <button class="btn sm">Identify</button>
+          </div>
+          <div class="comm-hint">The fixture identifies itself for about 10 s. Press again to extend.</div>
+        </div>
+
+        <div class="comm-act">
+          <div class="comm-title">Change address</div>
+          <div class="comm-row">
+            <span class="mono">SA 00</span>
+            <span class="comm-arrow">&rarr;</span>
+            <select class="sel sm"><option>free SA&hellip;</option><option>23</option><option>24</option></select>
+            <label class="comm-check"><input type="checkbox" checked> Verify</label>
+            <button class="btn sm">Move</button>
+          </div>
+          <div class="comm-hint">Only free short addresses are offered; a taken target is refused server-side.</div>
+        </div>
+
+        <div class="comm-act">
+          <div class="comm-title">Replace</div>
+          <div class="comm-row">
+            <select class="sel sm"><option>replacement SA&hellip;</option><option>01</option><option>02</option></select>
+            <button class="btn sm">Hand over</button>
+          </div>
+          <div class="comm-row">
+            <label class="comm-check"><input type="checkbox" checked> metadata and overrides</label>
+            <label class="comm-check"><input type="checkbox" checked> attributes</label>
+            <label class="comm-check"><input type="checkbox" checked> groups</label>
+            <label class="comm-check"><input type="checkbox" checked> scenes</label>
+          </div>
+          <div class="comm-warn">Remove or power down the old gear first &mdash; the handover refuses while it still answers.</div>
+        </div>
+
+        <div class="comm-act">
+          <div class="comm-title">Forget</div>
+          <div class="comm-row">
+            <button class="btn sm danger">Forget device</button>
+            <span class="comm-arrow">|</span>
+            <button class="btn sm sure">Sure?</button>
+            <span class="comm-hint" style="margin:0">Tap again to confirm</span>
+          </div>
+          <div class="comm-warn">The controller drops its record: name, notes, overrides,
+            attributes and bank data. A bound virtual lamp survives but becomes unbound. This
+            luminaire still answers on the wire &mdash; the next scan re-creates it blank, and
+            the name and the binding do not come back.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<div class="chgh">2026-09-01 — the override rows join their siblings</div>
+<p class="chgnote">The two override rows put their control cluster on a line of ITS OWN — label
+  above, controls below, left-aligned — while every other row in the same card is label-left,
+  value-right. So the Information card read as three kinds of row: <code>Name</code> and
+  <code>Random address</code> right-aligned, the two override rows as left-aligned two-liners,
+  and <code>Declared types</code> wedged between them, right-aligned again. That is the owner's
+  "не правильно выровнены Device type override / Color type override".</p>
+<p class="chgnote">The reason it was stacked has since gone. It was written when the shell was
+  capped at 1240 px, leaving these cards ~330–480 px wide; the shell now runs to 1680 px and
+  <code>.grid2</code> collapses to one column below 900 px, so the narrow case is a full-width
+  card. The cluster keeps its two FIXED slots (112 px select, 168 px badge) and simply wraps
+  inside its own value slot when it has to — which is what keeps the two override rows aligned
+  with each other, since a select sizes to its widest option and a badge to its text.</p>
+<div class="chgdemo">
+  <div class="card" style="max-width:460px">
+    <header><h3>Information</h3></header>
+    <div class="attr"><span class="k">Name</span><span class="v plain">—</span><span></span></div>
+    <div class="attr controls"><span class="k">Device type override</span>
+      <span class="v"><span class="ovr">
+        <select class="sel"><option>inherit</option></select>
+        <span class="badge">dt8_color<span class="prov">· discovered</span></span>
+      </span></span><span></span></div>
+    <div class="attr"><span class="k">Declared types</span><span class="v plain">DT8</span><span></span></div>
+    <div class="attr controls"><span class="k">Color mode override</span>
+      <span class="v"><span class="ovr">
+        <select class="sel"><option>inherit</option></select>
+        <span class="badge">cct<span class="prov">· discovered</span></span>
+      </span></span><span></span></div>
+    <div class="attr"><span class="k">Random address</span><span class="v plain">0xA650F9</span><span></span></div>
+  </div>
+</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!-- @dsCard group="Components" name="Observed values" subtitle="Attribute rows: value, source, freshness, edit affordance" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Observed values — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.wrap { padding: 24px; max-width: 640px; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.card header { display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
+.card header h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+.refresh { font-size: 11px; color: var(--info); background: none; border: none; cursor: pointer; font-family: var(--font); }
+
+.attr { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center;
+  padding: 9px 14px; border-bottom: 1px solid var(--border); }
+.attr:last-child { border-bottom: none; }
+.attr .k { color: var(--text-muted); font-size: 13px; }
+.attr .v { font-family: var(--mono); font-size: 13px; color: var(--text); text-align: right; }
+.attr .v .unit { color: var(--text-faint); font-size: 11px; }
+.attr .v input { width: 64px; padding: 4px 7px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; text-align: right; }
+.attr .v input.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
+
+.src { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; padding: 2px 7px;
+  border-radius: 999px; white-space: nowrap; }
+.src .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.src.readback { color: var(--ok); background: var(--ok-soft); }
+.src.written { color: var(--info); background: var(--info-soft); }
+.src.stale { color: var(--text-faint); background: var(--raised); }
+
+.note { font-size: 11px; color: var(--text-faint); margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <header>
+      <h3>Fading &amp; arc levels</h3>
+      <button class="refresh">↻ Read from device</button>
+    </header>
+
+    <div class="attr">
+      <span class="k">Power-on level</span>
+      <span class="v"><input value="238" class="dirty"></span>
+      <span class="src written"><span class="dot"></span>written · 3 m</span>
+    </div>
+    <div class="attr">
+      <span class="k">System failure level</span>
+      <span class="v"><input value="238"></span>
+      <span class="src readback"><span class="dot"></span>readback · 12 s</span>
+    </div>
+    <div class="attr">
+      <span class="k">Fade time</span>
+      <span class="v"><input value="700"> <span class="unit">ms</span></span>
+      <span class="src readback"><span class="dot"></span>readback · 12 s</span>
+    </div>
+    <div class="attr">
+      <span class="k">Fade rate</span>
+      <span class="v">7 <span class="unit">(44 steps/s)</span></span>
+      <span class="src readback"><span class="dot"></span>readback · 12 s</span>
+    </div>
+    <!-- Writable since the §9.6 min/max wave: the row grew an input like its
+         fade siblings. The value after a write is the gear's ACCEPTED byte
+         (a §9.6 clamp is legal), which is why the provenance chip — not the
+         input — is what tells "typed" from "true". -->
+    <div class="attr">
+      <span class="k">Min arc level</span>
+      <span class="v"><input value="111"></span>
+      <span class="src stale"><span class="dot"></span>never read</span>
+    </div>
+    <div class="attr">
+      <span class="k">Physical minimum <span style="color:var(--text-faint)">· read-only</span></span>
+      <span class="v">111</span>
+      <span class="src readback"><span class="dot"></span>readback · 2 h</span>
+    </div>
+  </div>
+  <div class="note">Editable attributes show an input; amber border = changed locally, not yet written. Read-only rows render as plain values.</div>
+</div>
+</body>
+</html>

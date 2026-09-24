@@ -1,0 +1,239 @@
+<!-- @dsCard group="Screens" name="Policies" subtitle="What a luminaire does with no controller: the two fallback levels, unmanaged by default, and the write that reaches every device" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Policies — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 760px; margin: 0 auto; padding: 20px 24px 100px; }
+
+.head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.crumb { font-size: 12px; color: var(--text-faint); }
+.sub { font-size: 12.5px; color: var(--text-muted); margin: 0 0 16px; }
+
+
+/* Two states of one screen, so each gets its own heading rather than a rule —
+   same device as `settings-dali`, and for the same reason: the difference
+   between them is the whole subject. */
+.state-label { display: flex; align-items: center; gap: 8px; margin: 36px 0 14px; }
+.state-label .ln { flex: 1; height: 1px; background: var(--border); }
+.state-label span { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
+.state-label:first-child { margin-top: 0; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; }
+.panel > h2 { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em;
+  font-weight: 500; margin: 0; padding: 10px 15px; border-bottom: 1px solid var(--border); }
+.panel .body { padding: 14px 15px; }
+
+.srow { display: flex; align-items: flex-start; gap: 14px; padding: 10px 0; }
+.srow + .srow { border-top: 1px solid var(--border-soft); }
+.srow .lbl { flex: 1; }
+.srow .lbl .n { font-size: 13px; color: var(--text); font-weight: 500; }
+.srow .lbl .d { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+.srow .ctl { flex: none; padding-top: 1px; }
+
+.toggle { width: 34px; height: 19px; border-radius: 999px; background: var(--overlay);
+  border: 1px solid var(--border-strong); position: relative; cursor: pointer; flex: none; }
+.toggle i { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
+  background: var(--text-faint); }
+.toggle.on { background: var(--accent-soft); border-color: rgba(240,180,41,.5); }
+.toggle.on i { left: 17px; background: var(--accent); }
+
+/* A level is an arc-power value and therefore amber; `unmanaged` is a
+   placeholder and stays faint, because "this controller writes nothing" is the
+   absence of a level and must not be read as one. */
+.inp { background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--accent-strong); font-size: 12px; padding: 5px 8px; font-family: var(--mono);
+  width: 96px; text-align: right; }
+.inp.unset { color: var(--text-faint); font-family: var(--font); font-style: italic; }
+
+.btn { padding: 6px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+.btn:disabled { opacity: .4; cursor: default; }
+
+.head .spacer { flex: 1; }
+.head .btnbar { display: flex; gap: 8px; align-self: center; }
+
+/* The default is the subject of this screen, not a footnote: an installation
+   nobody has asked goes to full brightness on a power blink. So the notice is
+   a panel-width band, in `warn` because it is a live condition rather than a
+   caption. */
+.warnbar { background: var(--warn-soft); border: 1px solid rgba(227,160,8,.35); border-radius: var(--radius-sm);
+  padding: 9px 12px; font-size: 11.5px; color: var(--warn); margin: 0 0 14px; }
+.warnbar .mono { font-family: var(--mono); }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="state-label"><span>Default — nothing is managed</span><span class="ln"></span></div>
+  <div class="head">
+    <h1>Policies</h1>
+    <span class="crumb">Settings</span>
+    <span class="spacer"></span>
+    <span class="btnbar">
+      <button class="btn" disabled>Discard</button>
+      <button class="btn primary" disabled>Apply</button>
+    </span>
+  </div>
+  <p class="sub">What a luminaire does when the bus falls silent or mains returns. These are the gear&rsquo;s own NVM variables, not settings of ours.</p>
+
+  <div class="panel">
+    <h2>Fallback levels</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">System failure level</div>
+          <div class="d">Where the gear goes when the bus has been silent for more than 500&nbsp;ms (102 §9.12). Empty = unmanaged: this controller writes it on no device. 0&ndash;254.</div>
+        </div>
+        <div class="ctl"><input class="inp unset" value="unmanaged" readonly></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Power-on level</div>
+          <div class="d">Where the gear goes when mains returns. Empty = unmanaged. 0&ndash;254.</div>
+        </div>
+        <div class="ctl"><input class="inp unset" value="unmanaged" readonly></div>
+      </div>
+      <!-- Discovery is the only moment a new device is guaranteed to be
+           addressable and idle, so the choice belongs beside the levels rather
+           than on the discovery screen: it is a property of the policy, not of
+           the scan. -->
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Write to a device as it is discovered</div>
+          <div class="d">Otherwise the policy reaches a device only when you apply it below.</div>
+        </div>
+        <div class="ctl"><span class="toggle"><i></i></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Write it to the installation</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Every known device</div>
+          <div class="d">One write per device, paced. A device that confirms nothing costs one timeout and is reported &mdash; silence from a gear the registry believes is present is a fault worth seeing.</div>
+        </div>
+        <div class="ctl"><button class="btn" disabled>Apply to all</button></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="warnbar">Nothing is managed, so there is nothing to write. IEC&nbsp;62386-102 defaults both variables to <span class="mono">0xFE</span> &mdash; full brightness &mdash; so an installation that has never been asked goes to 100&nbsp;% when the bus dies or the power returns.</p>
+
+  <div class="state-label"><span>Managed, with an unsaved edit</span><span class="ln"></span></div>
+  <div class="head">
+    <h1>Policies</h1>
+    <span class="crumb">Settings</span>
+    <span class="spacer"></span>
+    <span class="btnbar">
+      <button class="btn">Discard</button>
+      <button class="btn primary">Apply</button>
+    </span>
+  </div>
+  <p class="sub">What a luminaire does when the bus falls silent or mains returns. These are the gear&rsquo;s own NVM variables, not settings of ours.</p>
+
+  <div class="panel">
+    <h2>Fallback levels</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">System failure level</div>
+          <div class="d">Where the gear goes when the bus has been silent for more than 500&nbsp;ms (102 §9.12). Empty = unmanaged: this controller writes it on no device. 0&ndash;254.</div>
+        </div>
+        <div class="ctl"><input class="inp" value="128" readonly></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Power-on level</div>
+          <div class="d">Where the gear goes when mains returns. Empty = unmanaged. 0&ndash;254.</div>
+        </div>
+        <div class="ctl"><input class="inp" value="200" readonly></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Write to a device as it is discovered</div>
+          <div class="d">Otherwise the policy reaches a device only when you apply it below.</div>
+        </div>
+        <div class="ctl"><span class="toggle on"><i></i></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- "Apply to all" is disabled while the form is dirty, and the band below
+       says why in the operator's terms. The write sends the STORED policy, so
+       a screen-versus-flash mismatch would program the gear from values the
+       operator can see and did not choose. -->
+  <div class="panel">
+    <h2>Write it to the installation</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Every known device</div>
+          <div class="d">One write per device, paced. A device that confirms nothing costs one timeout and is reported &mdash; silence from a gear the registry believes is present is a fault worth seeing.</div>
+        </div>
+        <div class="ctl"><button class="btn" disabled>Apply to all</button></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="warnbar">Unsaved changes. Apply them first: the write below sends what is stored, not what is on screen.</p>
+
+</div>
+</body>
+</html>

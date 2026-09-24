@@ -1,0 +1,117 @@
+<!-- @dsCard group="Components" name="Event feed" subtitle="Live input + rule activations; the no-rule line is a button, lag is one counter" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Event feed — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; }
+.wrap { padding:24px; max-width:760px; }
+.feed { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+.feed h2 { font-size:11px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.07em;
+  font-weight:500; margin:0; padding:9px 13px; border-bottom:1px solid var(--border);
+  display:flex; justify-content:space-between; }
+.lag { color:var(--warn); font-size:10.5px; text-transform:none; letter-spacing:0; }
+.ln { display:flex; gap:10px; align-items:baseline; padding:7px 13px; font-size:12px;
+  border-bottom:1px solid rgba(42,51,64,.45); }
+.ln:last-child { border-bottom:0; }
+.ts { font-family:var(--mono); font-size:11px; color:var(--text-faint); flex:none; }
+.src { font-family:var(--mono); font-size:11.5px; color:var(--text-muted); flex:none; width:96px; }
+.ev { font-family:var(--mono); font-size:11.5px; flex:none; width:150px; }
+.arrow { color:var(--text-faint); }
+.rule { flex:1; }
+.rule .none { color:var(--text-faint); font-style:italic; }
+.mk { font-size:10.5px; padding:0 7px; border-radius:999px; border:1px solid var(--border-strong); }
+.mk.ok { color:var(--ok); border-color:rgba(70,194,106,.4); }
+.mk.mk-ms { color:var(--text-faint); border:0; font-variant-numeric:tabular-nums; }
+.mk.amb { color:var(--warn); border-color:rgba(227,160,8,.45); }
+.mkbtn { font-size:10.5px; padding:2px 9px; border-radius:999px; border:1px solid rgba(77,163,255,.5);
+  color:var(--info); cursor:pointer; background:none; }
+p.note { color:var(--text-muted); font-size:12px; max-width:66ch; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="feed">
+    <h2>Live events <span class="lag">dropped_since: 12</span></h2>
+    <div class="ln"><span class="ts">12:04:31.208</span><span class="src">dev 3 / in 0</span>
+      <span class="ev">short_press</span><span class="arrow">→</span>
+      <span class="rule">«коридор: вкл/выкл»</span><span class="mk ok">ok</span><span class="mk mk-ms">42 ms</span></div>
+    <div class="ln"><span class="ts">12:04:33.905</span><span class="src">dev 5 / in 0</span>
+      <span class="ev">becomes occupied</span><span class="arrow">→</span>
+      <span class="rule">«ночь: вход»</span><span class="mk ok">ok</span><span class="mk mk-ms">38 ms</span></div>
+    <div class="ln"><span class="ts">12:06:58.031</span><span class="src">dev 3 / in 1</span>
+      <span class="ev">double_press</span><span class="arrow">&rarr;</span>
+      <span class="rule"><span class="none">&hellip;</span></span></div>
+    <div class="ln"><span class="ts">12:07:02.114</span><span class="src">dev 4 / in 0</span>
+      <span class="ev">short_press</span><span class="arrow">→</span>
+      <span class="rule"><span class="none">no rule matches</span></span>
+      <button class="mkbtn">create a rule for this</button></div>
+    <div class="ln"><span class="ts">12:09:40.551</span><span class="src">scheme 0</span>
+      <span class="ev">short_press</span><span class="arrow">→</span>
+      <span class="rule"><span class="none">source unattributable</span></span><span class="mk amb">ambiguous</span></div>
+    <div class="ln"><span class="ts">12:11:18.402</span><span class="src">dev 7 / in 2</span>
+      <span class="ev">event 0x1A4</span><span class="arrow">→</span>
+      <span class="rule"><span class="none">no rule matches</span></span>
+      <button class="mkbtn">create a rule for this</button></div>
+  </div>
+  <p class="note">A line is born UNRESOLVED (&hellip;) and settles: an activation reaches the browser
+  on its own channel a few tens of milliseconds after the event, so &laquo;no rule matches&raquo; is only
+  honest once that window has passed. Asserting it immediately is what the screen used to do, and
+  it read as fact while the device was firing rules the whole time. An instance type the product does not model still shows its raw ten bits rather
+  than the word &laquo;event&raquo;: an unmodelled type is precisely the case where the raw word is the
+  only thing an operator can act on. The no-rule line is the commonest symptom of a mistyped rule, and it doubles as
+  DiiA's own recommended way to identify a device — press the button you are about to name.
+  Client lag is one counter, the sniffer's <code>dropped_since</code> shape: there must not be two
+  different ways of being behind.</p>
+</div>
+</body>
+</html>

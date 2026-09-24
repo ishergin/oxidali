@@ -1,0 +1,20 @@
+RegistryCommandCounters::*  apply-watch revisions, not instrumentation (RegistryApplyWatch polls them)
+RegistryEventsCounters::*   apply-watch revisions, not instrumentation (RegistryApplyWatch polls them)
+
+DaliWorkerCounters::semantic_set_target_state_handled        breakdown of commands_handled (/stats dali.commands_executed_total)
+DaliWorkerCounters::semantic_program_group_membership_handled breakdown of commands_handled
+DaliWorkerCounters::semantic_program_scene_handled           breakdown of commands_handled
+DaliWorkerCounters::semantic_recall_scene_handled            breakdown of commands_handled
+DaliWorkerCounters::semantic_recall_last_active_level_handled breakdown of commands_handled
+DaliWorkerCounters::semantic_write_attributes_handled        breakdown of commands_handled
+DaliWorkerCounters::semantic_discover_devices_handled        breakdown of commands_handled
+DaliWorkerCounters::semantic_read_attributes_handled         breakdown of commands_handled
+DaliWorkerCounters::semantic_read_memory_bank_handled        breakdown of commands_handled
+
+DaliWorkerCounters::discovery_progress_events_published   success total; the failures are on the surface
+DaliWorkerCounters::discovery_failed_events_published     success total; the failures are on the surface
+DaliWorkerCounters::memory_bank_chunk_events_published    success total; the failures are on the surface
+
+MqttCounters::connected  on the surface as `mqtt.connected`, read via is_connected()
+
+OperationTrackerCounters::running  /stats derives the gauge from the transitions instead

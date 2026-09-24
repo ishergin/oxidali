@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "rootDir": ".",
+    "outDir": "./.test-dist"
+  },
+  "include": [
+    "tests/**/*.test.ts",
+    "src/latest-request.ts",
+    "src/api/ws-backoff.ts",
+    "src/components/bus-load-history.ts",
+    "src/components/cct-view.ts",
+    "src/counter-delta.ts",
+    "src/screens/follow-scroll.ts",
+    "src/format.ts"
+  ]
+}

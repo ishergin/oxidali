@@ -1,0 +1,24 @@
+[package]
+name = "dali2rust-api"
+description = "JSON bus codec and HTTP layer"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+dali2rust-bsp = { path = "../dali2rust-bsp" }
+dali2rust-bus = { path = "../dali2rust-bus" }
+dali2rust-contracts = { path = "../dali2rust-contracts" }
+dali2rust-domain = { path = "../dali2rust-domain" }
+dali2rust-rules-model = { path = "../dali2rust-rules-model" }
+dali2rust-platform = { path = "../dali2rust-platform" }
+log = "0.4"
+matchit = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+dali2rust-adapters = { path = "../dali2rust-adapters" }
+dali2rust-test-support = { path = "../dali2rust-test-support" }

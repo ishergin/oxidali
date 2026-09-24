@@ -1,0 +1,63 @@
+# Build output and toolchains
+/target
+/.embuild
+.env
+
+# Editors, OS and agent state
+/.vscode
+.DS_Store
+__pycache__/
+.claude/settings.local.json
+.claude/worktrees/
+.kilo/
+.kilocode/
+
+# Standards and third-party references of unclear licence stay local
+/documentation/IEC62386/
+/documentation/reference/DALI Commands.xlsx
+/documentation/reference/diia-sw098bp-sections-5-12-digest.md
+/crates/dali2rust-firmware/assets/local/
+CLAUDE.local.md
+
+# Hardware still in design, and the scripts behind the enclosure model, stay local
+/hardware/dali-button/
+/hardware/enclosure/*.py
+
+# HIL bench: machine-local config, runs and environments
+/tools/hil/runs/
+/tools/hil/bench.env
+/tools/hil/vendor/
+/tools/hil/.venv/
+/tools/hil/state/
+/tools/hil/.pytest_cache/
+/tools/hil/hil.egg-info/
+
+# The bench corpus describes one installation and stays local, except what tests read
+/tools/hil/corpus/*
+!/tools/hil/corpus/20260915-213611/
+/tools/hil/corpus/20260915-213611/*
+!/tools/hil/corpus/20260915-213611/primary/
+!/tools/hil/corpus/20260915-213611/peer/
+/tools/hil/corpus/20260915-213611/*/*
+!/tools/hil/corpus/20260915-213611/primary/wire/
+!/tools/hil/corpus/20260915-213611/primary/gear/
+!/tools/hil/corpus/20260915-213611/peer/wire/
+/tools/hil/corpus/20260915-213611/*/*/*
+!/tools/hil/corpus/20260915-213611/primary/wire/captures.log
+!/tools/hil/corpus/20260915-213611/primary/gear/short-0.json
+!/tools/hil/corpus/20260915-213611/peer/wire/captures.log
+
+# Retired bench instruments build on their own
+tools/dali-arbiter/build/
+tools/dali-arbiter/sdkconfig
+tools/dali-arbiter/sdkconfig.old
+tools/dali-gear-sim/target/
+tools/dali-gear-sim/.embuild/
+tools/dali-gear-sim/Cargo.lock
+tools/dali-gear-sim/sdkconfig
+tools/dali-gear-sim/sdkconfig.old
+
+# FreeCAD backups and rendered images
+*.FCBak
+*.FCStd1
+*.png

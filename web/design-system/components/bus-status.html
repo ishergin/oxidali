@@ -1,0 +1,283 @@
+<!-- @dsCard group="Components" name="Bus status" subtitle="Dashboard card: what the DALI wire itself is doing, from the PHY's §4.11 classification" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bus status — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1000px; margin: 0 auto; padding: 20px 24px 40px; }
+h2 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+h2:first-of-type { margin-top: 0; }
+.note { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.note code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 6px; }
+/* ── Bus status ──────────────────────────────────────────────────────────
+   The owner's first report: "нет статуса шины на главной (нет питания,
+   ошибка, замыкание и тд)". The dashboard had a small `bus idle` chip on the
+   adapter card, and that chip was not about the bus at all — `bus_status` on
+   the adapter DTO is `enabled ? "idle" : "disabled"`, a property of the
+   adapter's own command gate. It reads "idle" for a segment whose power
+   supply has failed and for one shorted end to end.
+
+   WHERE THE REAL FACTS COME FROM. The PHY publishes IEC 62386-101:2018 §4.11
+   Table 4's own classification as two 0/1 gauges plus a rising-edge count
+   each: the line held ACTIVE for ≥ 45 ms is bus power down (F15), ≥ 550 ms is
+   system failure. A DALI bus idles HIGH, so a line stuck low is a short
+   across the pair or a supply that has stopped — which is exactly the pair an
+   operator with dark luminaires needs told apart from "no gear answered".
+
+   FIVE STATES, NOT TWO, and the fifth is the one that keeps the card honest:
+   before any frame has gone out the PHY has classified nothing, so a green
+   "healthy" would be a claim about a measurement nobody has taken. The
+   entries counters turn a bus that is up NOW into a bus that had an episode,
+   which is the difference between a wiring fault you have and a wiring fault
+   you had.
+
+   THE DETAIL LINE IS PART OF THE STATE, not decoration. "No bus power" tells
+   an operator nothing they can act on; "check the DALI supply and the wiring
+   before reading anything else on this page" tells them where to start and,
+   as importantly, that every other reading on the screen is now suspect. */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.card header { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--border); }
+.card header h3 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-faint); flex: 1; }
+
+.bushealth { display: flex; align-items: flex-start; gap: 12px; padding: 14px; }
+/* A ring, not a filled dot: the lamp-state dot is filled and carries a
+   fixture's colour, and these two must never be mistaken for each other on a
+   screen that shows both. */
+.bushealth .ring { width: 34px; height: 34px; border-radius: 50%; flex: none;
+  border: 2px solid var(--border-strong); display: flex; align-items: center;
+  justify-content: center; font-size: 15px; color: var(--text-muted); }
+.bushealth .txt { min-width: 0; }
+.bushealth .st { font-size: 14px; font-weight: 600; color: var(--text); }
+.bushealth .d { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.bushealth.ok .ring { border-color: color-mix(in srgb, var(--ok) 60%, transparent); color: var(--ok); background: var(--ok-soft); }
+.bushealth.ok .st { color: var(--ok); }
+.bushealth.warn .ring { border-color: color-mix(in srgb, var(--warn) 60%, transparent); color: var(--warn); background: var(--warn-soft); }
+.bushealth.warn .st { color: var(--warn); }
+.bushealth.err .ring { border-color: color-mix(in srgb, var(--err) 65%, transparent); color: var(--err); background: var(--err-soft); }
+.bushealth.err .st { color: var(--err); }
+.bushealth.idle .ring { border-style: dashed; }
+.bushealth.idle .st { color: var(--text-muted); }
+
+/* Four numbers under the verdict, each a link back to the evidence. Faint by
+   the caption rule; the verdict above is the thing being read. */
+.buscounts { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border); }
+.buscounts .c { padding: 9px 14px; border-right: 1px solid var(--border-soft); }
+.buscounts .c:last-child { border-right: none; }
+.buscounts .n { font-family: var(--mono); font-size: 15px; color: var(--text); font-variant-numeric: tabular-nums; }
+.buscounts .n.warn { color: var(--warn); }
+.buscounts .n.err { color: var(--err); }
+.buscounts .l { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; margin-top: 1px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+/* The load figure at the verdict's right — spec and history strip in
+   components/bus-load. It shares the block so the two facts an operator
+   reads first, "is it alive" and "how busy", are read in one glance. */
+.bushealth .load { margin-left: auto; text-align: right; flex: none; }
+.bushealth .load .n { font-family: var(--mono); font-size: 22px; font-weight: 500; line-height: 1.1;
+  color: var(--text); font-variant-numeric: tabular-nums; }
+.bushealth .load .n .u { font-size: 12px; color: var(--text-faint); margin-left: 2px; }
+.bushealth .load .l { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; }
+.bushealth .load .s { font-size: 11px; color: var(--text-muted); font-family: var(--mono); margin-top: 2px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h2>The five states</h2>
+  <p class="note">Read top to bottom: the first that applies wins, so an active fault always
+    beats a historical one and both beat a count of collisions.</p>
+
+  <div class="demo grid2">
+    <div class="card">
+      <header><h3>DALI bus</h3></header>
+      <div class="bushealth err">
+        <span class="ring">⚠</span>
+        <span class="txt">
+          <div class="st">System failure</div>
+          <div class="d">the line has been held active for over 550 ms (IEC 62386-101 §4.11) —
+            a short across the pair, or the supply is gone. No gear can be reached.</div>
+        </span>
+      </div>
+      <div class="buscounts">
+        <div class="c"><div class="n">1 284</div><div class="l">frames</div></div>
+        <div class="c"><div class="n err">3</div><div class="l">power down</div></div>
+        <div class="c"><div class="n err">1</div><div class="l">sys failure</div></div>
+        <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <header><h3>DALI bus</h3></header>
+      <div class="bushealth err">
+        <span class="ring">⚠</span>
+        <span class="txt">
+          <div class="st">No bus power</div>
+          <div class="d">the line has been held active for over 45 ms — bus power down. Check the
+            DALI supply and the wiring before reading anything else on this page.</div>
+        </span>
+      </div>
+      <div class="buscounts">
+        <div class="c"><div class="n">96</div><div class="l">frames</div></div>
+        <div class="c"><div class="n err">1</div><div class="l">power down</div></div>
+        <div class="c"><div class="n">0</div><div class="l">sys failure</div></div>
+        <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <header><h3>DALI bus</h3></header>
+      <div class="bushealth warn">
+        <span class="ring">◔</span>
+        <span class="txt">
+          <div class="st">Recovered</div>
+          <div class="d">the bus is up now, but it went down 2 times since boot — intermittent
+            supply or wiring.</div>
+        </span>
+      </div>
+      <div class="buscounts">
+        <div class="c"><div class="n">7 401</div><div class="l">frames</div></div>
+        <div class="c"><div class="n warn">2</div><div class="l">power down</div></div>
+        <div class="c"><div class="n">0</div><div class="l">sys failure</div></div>
+        <div class="c"><div class="n">4</div><div class="l">collisions</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <header><h3>DALI bus</h3></header>
+      <div class="bushealth ok">
+        <span class="ring">✓</span>
+        <span class="txt">
+          <div class="st">Healthy</div>
+          <div class="d">7 401 frames sent, no power-down or system-failure condition seen since boot.</div>
+        </span>
+      </div>
+      <div class="buscounts">
+        <div class="c"><div class="n">7 401</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">0</div><div class="l">power down</div></div>
+        <div class="c"><div class="n">0</div><div class="l">sys failure</div></div>
+        <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Nothing measured yet</h2>
+  <p class="note">A dashed ring, and the word is <b>not observed</b> rather than a colour.
+    Before the first frame the PHY has classified nothing, and green would be a claim about a
+    measurement that has not been taken — the same rule that keeps <code>unknown</code> distinct
+    from <code>off</code> in the lamp-state cell.</p>
+  <div class="demo">
+    <div class="card">
+      <header><h3>DALI bus</h3></header>
+      <div class="bushealth idle">
+        <span class="ring">·</span>
+        <span class="txt">
+          <div class="st">Not observed</div>
+          <div class="d">no frame has gone out since boot, so the PHY has classified nothing yet.
+            Run a scan or set a level.</div>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <h2>With the load figure (2026-09-05)</h2>
+  <p class="note">The verdict says whether the wire is alive; the figure at its right says how much
+    of it is in use, and <b>own</b> beneath it how much of that was us. It is the device's own
+    one-second gauge, the same number Stats and the OLED show. The counts strip trades
+    <b>sys failure</b> — already in the verdict's detail line — for <b>foreign</b>, the
+    sniffer's forward-frame count. A dash and <b>not measured</b> until the PHY has booked a tick;
+    the history strip is in <code>components/bus-load</code>.</p>
+  <div class="demo">
+    <div class="card">
+      <header><h3>DALI bus</h3></header>
+      <div class="bushealth ok">
+        <span class="ring">✓</span>
+        <span class="txt">
+          <div class="st">Healthy</div>
+          <div class="d">7 401 frames sent, no power-down or system-failure condition seen since boot.</div>
+        </span>
+        <span class="load">
+          <div class="n">37<span class="u">%</span></div>
+          <div class="l">bus load</div>
+          <div class="s">own 21%</div>
+        </span>
+      </div>
+      <div class="buscounts">
+        <div class="c"><div class="n">7 401</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">312</div><div class="l">foreign</div></div>
+        <div class="c"><div class="n warn">3</div><div class="l">collisions</div></div>
+        <div class="c"><div class="n">0</div><div class="l">power down</div></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Adapter switched off</h2>
+  <p class="note">Not a bus fault and must not be painted as one: the commands are refused at the
+    adapter gate and nothing reaches the wire, so there is nothing to classify.</p>
+  <div class="demo">
+    <div class="card">
+      <header><h3>DALI bus</h3></header>
+      <div class="bushealth idle">
+        <span class="ring">·</span>
+        <span class="txt">
+          <div class="st">Disabled</div>
+          <div class="d">the adapter is switched off — commands are refused at the gate, nothing
+            reaches the wire</div>
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

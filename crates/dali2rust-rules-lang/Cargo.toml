@@ -1,0 +1,14 @@
+[package]
+name = "dali2rust-rules-lang"
+description = "Rule language v1 (LANG_RULES_V1): lexer + parser, text to typed model"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+dali2rust-rules-model = { path = "../dali2rust-rules-model" }
+
+[dev-dependencies]
+serde_json = "1"

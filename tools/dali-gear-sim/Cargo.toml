@@ -1,0 +1,39 @@
+[workspace]
+
+[package]
+name = "dali-gear-sim"
+description = "ESP32-C6 DALI control-gear emulator — ~60 virtual gear on one bus"
+version = "0.1.0"
+authors = ["ishergin"]
+edition = "2021"
+rust-version = "1.77"
+
+[[bin]]
+name = "dali-gear-sim"
+path = "src/main.rs"
+
+[dependencies]
+dali2rust-dali-phy = { path = "../../crates/dali2rust-dali-phy" }
+dali2rust-dali-codec = { path = "../../crates/dali2rust-dali-codec" }
+dali2rust-gear-model = { path = "../../crates/dali2rust-gear-model" }
+dali2rust-domain = { path = "../../crates/dali2rust-domain" }
+dali2rust-platform = { path = "../../crates/dali2rust-platform" }
+esp-idf-svc = { version = "0.52.1", features = ["alloc", "critical-section"] }
+postcard = { version = "1.1", features = ["alloc"] }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+
+[build-dependencies]
+embuild = { version = "0.33", features = ["espidf"] }
+
+[package.metadata.esp-idf-sys]
+esp_idf_version = "v5.5.3"
+
+[profile.dev.package.dali2rust-dali-phy]
+debug-assertions = false
+
+[profile.dev]
+debug = true
+opt-level = "z"
+
+[profile.release]
+opt-level = "s"

@@ -1,0 +1,307 @@
+<!-- @dsCard group="Components" name="Page tab bar" subtitle="Device detail tabs: page-level, routable, one fetch per tab; states, bank captions, unread marker" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Page tab bar — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1000px; margin: 0 auto; padding: 20px 24px 40px; }
+h2 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+h2:first-of-type { margin-top: 0; }
+.note { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.note code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 6px; }
+
+/* ── Page-level tab bar ──────────────────────────────────────────────────
+   DELIBERATELY NOT `.tabs`/`.tab`. Those exist already (DALI console) and
+   live INSIDE a card, between its header and its body: their `padding:
+   10px 14px 0` is card-body padding, and `app.css` is one flat unscoped
+   sheet, so reusing the name would silently re-style the console the moment
+   the page bar needed different geometry. Separate names, no inheritance.
+
+   Colour: the active tab is FULL-STRENGTH TEXT on the page surface, never
+   the amber the console uses. Amber is reserved for lamp state and levels,
+   and this bar sits directly under the amber level strip — an amber tab
+   would compete with the one thing on the screen that is allowed to be
+   amber. The folder-tab shape (open bottom edge, line broken under the
+   active tab) carries the selection instead of hue, so it survives being
+   read without colour at all. */
+.ptabs { display: flex; gap: 2px; align-items: stretch; margin-top: 16px; }
+/* One line, hint inline after the label. Stacked (label over hint) the three
+   bank tabs were taller than the other three, so with any vertical alignment
+   the LABELS stopped lining up — the eye reads a tab bar by its labels, and a
+   caption is not worth breaking that for. */
+.ptab { display: flex; align-items: baseline; gap: 7px; padding: 7px 14px 8px;
+  border: 1px solid transparent; border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: none; color: var(--text-muted); font-family: var(--font); font-size: 13px;
+  font-weight: 550; cursor: pointer; text-decoration: none; white-space: nowrap; }
+.ptab:hover { color: var(--text); background: var(--raised); }
+.ptab.active { color: var(--text); background: var(--surface); border-color: var(--border); cursor: default; }
+.ptab.active:hover { background: var(--surface); }
+/* Which memory banks a tab is about. Faint and small by the same rule as
+   every other caption: metadata must not compete with the label above it. */
+.ptab .hint { font-family: var(--mono); font-size: 10px; color: var(--text-faint); font-weight: 400; }
+.ptab.active .hint { color: var(--text-muted); }
+/* Nothing has ever been read for this tab. A dot, not a word: the tab label
+   is the affordance and the dot is a hint about what is behind it. It is
+   `--text-faint`, not `--warn` — an unread section is the ordinary state of
+   a gear nobody has asked yet, not a fault. */
+.ptab .unread { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--text-faint); margin-left: 6px; vertical-align: middle; }
+/* The line the active tab breaks. Full width, drawn under the bar, so the
+   selected tab reads as continuous with the panel below it. */
+.ptabline { height: 1px; background: var(--border); margin-bottom: 14px; }
+
+/* Panel below the bar, shown only so the folder-tab join is visible. */
+.panel { background: var(--surface); border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius); padding: 14px; color: var(--text-faint); font-size: 12px; }
+
+/* Level strip, reproduced at quarter weight purely to show the adjacency
+   the colour decision above is about. */
+.strip { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 16px; display: flex; align-items: center; gap: 16px; }
+.level-num { font-family: var(--mono); font-size: 22px; font-weight: 500; color: var(--accent-strong); }
+.level-num .max { font-size: 11px; color: var(--text-faint); }
+.track { position: relative; flex: 1; height: 6px; border-radius: 3px; background: var(--raised); }
+.track .fill { position: absolute; inset: 0 auto 0 0; width: 70%; border-radius: 3px;
+  background: linear-gradient(90deg, #8a6a14, var(--accent)); box-shadow: 0 0 12px var(--accent-glow); }
+.track .thumb { position: absolute; top: 50%; left: 70%; width: 16px; height: 16px; border-radius: 50%;
+  transform: translate(-50%,-50%); background: var(--accent-strong); border: 2px solid #0e1116;
+  box-shadow: 0 0 0 1px var(--accent), 0 0 10px var(--accent-glow); }
+
+/* ── Narrow viewports: the bar scrolls, it never wraps and never clips ────
+   Measured 2026-09-01 at a 700 px viewport: the six device tabs are ~880 px
+   wide, `.ptabs` was a plain `display:flex` with no wrap and no overflow, so
+   Diagnostics — the tab an operator reaches for when something is wrong —
+   was simply not on the screen and nothing said so. That is the owner's
+   report, "верстка табов не влезает в узкие экраны".
+
+   WRAPPING IS THE WRONG FIX for this bar. A folder-tab strip draws a line
+   the active tab breaks (`.ptabline`); on a second row the line is under the
+   wrong row and the metaphor collapses. Scrolling keeps one row, one line,
+   and one join.
+
+   The scrollbar is HIDDEN here and visible on `.table-wrap`, which looks
+   inconsistent and is not: a table's scroll is the only clue that columns
+   continue, while a tab strip fades at its right edge and the fade is the
+   clue. A 8 px bar under six tabs would be furniture. */
+.ptabs { overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap;
+  scrollbar-width: none; -ms-overflow-style: none;
+  /* The fade. `mask-image` on the strip itself, so it costs no element and
+     cannot fall out of sync with the scroll position: the right edge is soft
+     whenever there is anything under it. */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+.ptabs::-webkit-scrollbar { display: none; }
+/* No mask once everything fits — otherwise the last tab is permanently
+   half-faded on a wide screen, which reads as disabled. */
+@media (min-width: 1100px) {
+  .ptabs { -webkit-mask-image: none; mask-image: none; }
+}
+
+/* The scene selector is the other tab bar, and it takes the opposite
+   decision: sixteen scenes never fit one row at any width, so it wraps by
+   design. What changed is the size — each tab was a three-line block
+   (S-number over name over row count) and sixteen of them cost two rows and
+   ~90 px of vertical space before the operator reached the table they came
+   for. One line, name inline, count as a faint suffix. */
+.scene-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
+.stab { display: inline-flex; align-items: baseline; gap: 6px; padding: 5px 10px;
+  border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface);
+  text-decoration: none; white-space: nowrap; }
+.stab .sn { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.stab .nm { font-size: 12px; color: var(--text-muted); }
+.stab .rows { font-size: 10px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.stab:hover { background: var(--raised); }
+.stab.active { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.stab.active .sn, .stab.active .nm { color: var(--accent-strong); font-weight: 600; }
+.stab.dirty .nm::after { content: " •"; color: var(--dirty); }
+.narrow { max-width: 520px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h2>Device detail — the six tabs</h2>
+  <p class="note">One tab is one fetch. <code>Overview</code> needs only the device core
+    (<code>GET …/physical-devices/{short}</code>); every other tab adds exactly the attribute
+    sections it renders (<code>?sections=…</code>), and <code>Identity</code> additionally asks for
+    bank coverage. The screen used to pull all twelve sections plus bank coverage every 5 s
+    for whichever card happened to be on screen — 7.7 KB per device per poll, of which the
+    operator was looking at one card.</p>
+  <div class="demo">
+    <div class="ptabs">
+      <a class="ptab active" href="#">Overview</a>
+      <a class="ptab" href="#">Levels &amp; fade</a>
+      <a class="ptab" href="#">Groups &amp; scenes</a>
+      <a class="ptab" href="#">Identity<span class="hint">banks 0 · 1</span></a>
+      <a class="ptab" href="#">Energy<span class="hint">banks 202–204</span></a>
+      <a class="ptab" href="#">Diagnostics<span class="hint">banks 205–207</span></a>
+    </div>
+    <div class="ptabline"></div>
+    <div class="panel">Overview panel — Information, Status, Commissioning.</div>
+  </div>
+
+  <h2>Selected: a bank tab</h2>
+  <p class="note">The bank caption stays legible when the tab is active — it is the answer to
+    “where did this number come from”, and on the bank tabs that is the first thing an operator
+    checks against a wire trace.</p>
+  <div class="demo">
+    <div class="ptabs">
+      <a class="ptab" href="#">Overview</a>
+      <a class="ptab" href="#">Levels &amp; fade</a>
+      <a class="ptab" href="#">Groups &amp; scenes</a>
+      <a class="ptab" href="#">Identity<span class="hint">banks 0 · 1</span></a>
+      <a class="ptab" href="#">Energy<span class="hint">banks 202–204</span></a>
+      <a class="ptab active" href="#">Diagnostics<span class="hint">banks 205–207</span></a>
+    </div>
+    <div class="ptabline"></div>
+    <div class="panel">Diagnostics panel — control gear (205), light source (206), luminaire maintenance (207).</div>
+  </div>
+
+  <h2>Unread sections</h2>
+  <p class="note">The dot says the controller holds nothing for that tab yet — no read has landed,
+    so the panel behind it will be an empty state rather than data. Distinct from a gear that
+    answered “not implemented”, which is a value the panel renders as a
+    <code>not implemented</code> chip. Faint, never <code>warn</code>: unread is the ordinary
+    state of a section nobody has asked for.</p>
+  <div class="demo">
+    <div class="ptabs">
+      <a class="ptab active" href="#">Overview</a>
+      <a class="ptab" href="#">Levels &amp; fade</a>
+      <a class="ptab" href="#">Groups &amp; scenes</a>
+      <a class="ptab" href="#">Identity<span class="hint">banks 0 · 1</span><span class="unread"></span></a>
+      <a class="ptab" href="#">Energy<span class="hint">banks 202–204</span><span class="unread"></span></a>
+      <a class="ptab" href="#">Diagnostics<span class="hint">banks 205–207</span><span class="unread"></span></a>
+    </div>
+    <div class="ptabline"></div>
+    <div class="panel">Overview panel.</div>
+  </div>
+
+  <h2>Adjacency with the level strip</h2>
+  <p class="note">The control strip stays <em>above</em> the bar and outside it, on every tab.
+    An operator reading bank 205 must still be able to switch the fixture off without navigating,
+    and the strip is the one element on this screen entitled to amber — which is exactly why the
+    active tab is not.</p>
+  <div class="demo">
+    <div class="strip">
+      <div class="level-num">200<span class="max"> /254</span></div>
+      <div class="track"><div class="fill"></div><div class="thumb"></div></div>
+    </div>
+    <div class="ptabs">
+      <a class="ptab" href="#">Overview</a>
+      <a class="ptab" href="#">Levels &amp; fade</a>
+      <a class="ptab" href="#">Groups &amp; scenes</a>
+      <a class="ptab active" href="#">Identity<span class="hint">banks 0 · 1</span></a>
+      <a class="ptab" href="#">Energy<span class="hint">banks 202–204</span></a>
+      <a class="ptab" href="#">Diagnostics<span class="hint">banks 205–207</span></a>
+    </div>
+    <div class="ptabline"></div>
+    <div class="panel">Identity panel — bank 0, bank 1, bus unit, Part 251.</div>
+  </div>
+
+
+  <h2>Too narrow for the bar</h2>
+  <p class="note">The frame below is 520 px. The strip scrolls horizontally inside it and fades
+    at the edge that has more behind it; the line and the folder join stay intact, which a
+    wrapped second row would break.</p>
+  <div class="demo">
+    <div class="narrow">
+      <div class="ptabs">
+        <a class="ptab active" href="#">Overview</a>
+        <a class="ptab" href="#">Levels &amp; fade</a>
+        <a class="ptab" href="#">Groups &amp; scenes</a>
+        <a class="ptab" href="#">Identity<span class="hint">banks 0 · 1</span></a>
+        <a class="ptab" href="#">Energy<span class="hint">banks 202–204</span></a>
+        <a class="ptab" href="#">Diagnostics<span class="hint">banks 205–207</span></a>
+      </div>
+      <div class="ptabline"></div>
+      <div class="panel">Overview panel.</div>
+    </div>
+  </div>
+
+  <h2>Scene selector — one line per scene</h2>
+  <p class="note">Sixteen never fit one row at any width, so this bar wraps where the device bar
+    scrolls. What it must not do is cost three lines each: the operator came for the table.</p>
+  <div class="demo">
+    <div class="scene-tabs">
+      <a class="stab active" href="#"><span class="sn">S0</span><span class="nm">Evening</span><span class="rows">6</span></a>
+      <a class="stab" href="#"><span class="sn">S1</span><span class="nm">Bright</span><span class="rows">9</span></a>
+      <a class="stab dirty" href="#"><span class="sn">S2</span><span class="nm">Night</span><span class="rows">3</span></a>
+      <a class="stab" href="#"><span class="sn">S3</span><span class="nm">—</span><span class="rows">0</span></a>
+      <a class="stab" href="#"><span class="sn">S4</span><span class="nm">Dinner</span><span class="rows">4</span></a>
+      <a class="stab" href="#"><span class="sn">S5</span><span class="nm">—</span><span class="rows">0</span></a>
+      <a class="stab" href="#"><span class="sn">S6</span><span class="nm">—</span><span class="rows">0</span></a>
+      <a class="stab" href="#"><span class="sn">S7</span><span class="nm">Cleaning</span><span class="rows">12</span></a>
+      <a class="stab" href="#"><span class="sn">S8</span><span class="nm">—</span><span class="rows">0</span></a>
+      <a class="stab" href="#"><span class="sn">S9</span><span class="nm">—</span><span class="rows">0</span></a>
+      <a class="stab" href="#"><span class="sn">S10</span><span class="nm">—</span><span class="rows">0</span></a>
+      <a class="stab" href="#"><span class="sn">S11</span><span class="nm">—</span><span class="rows">0</span></a>
+      <a class="stab" href="#"><span class="sn">S12</span><span class="nm">—</span><span class="rows">0</span></a>
+      <a class="stab" href="#"><span class="sn">S13</span><span class="nm">—</span><span class="rows">0</span></a>
+      <a class="stab" href="#"><span class="sn">S14</span><span class="nm">—</span><span class="rows">0</span></a>
+      <a class="stab" href="#"><span class="sn">S15</span><span class="nm">—</span><span class="rows">0</span></a>
+    </div>
+  </div>
+
+  <h2>Anchors, not buttons</h2>
+  <p class="note">Each tab is an <code>&lt;a href="#/devices/4/energy"&gt;</code>, the same shape the
+    scene selector uses. The tab is then linkable, survives a reload, and comes back from a
+    browser Back — and the fetch for a tab’s sections hangs off the route rather than off local
+    component state, so there is one place that decides what is being requested.</p>
+
+</div>
+</body>
+</html>

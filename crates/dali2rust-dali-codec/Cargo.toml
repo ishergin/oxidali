@@ -1,0 +1,11 @@
+[package]
+name = "dali2rust-dali-codec"
+description = "Manchester encode/decode for DALI frames — task context, not the ISR"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+dali2rust-dali-phy = { path = "../dali2rust-dali-phy" }

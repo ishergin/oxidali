@@ -1,0 +1,431 @@
+<!-- @dsCard group="Screens" name="Scene editor" subtitle="Fixed-geometry matrix: included/level + colour-mode select driving one control, three or six channels" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scene editor — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 80px; }
+
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.spacer { flex: 1; }
+/* HA opt-in: metadata, info tint — never the amber lamp accent. */
+.hatoggle { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px;
+  font-size: 11.5px; color: var(--text-muted); white-space: nowrap; cursor: pointer; }
+.hatoggle input { accent-color: var(--info); margin: 0; }
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.recall { background: var(--info-soft); border-color: rgba(77,163,255,.4); color: var(--info); }
+/* Recall scope: one compact select (whole bus / one group), info-tinted like
+   the recall action it modifies. Single-select on purpose — a recall goes to
+   ONE group frame (102 Table 1), unlike HCL's multi-group chips. */
+.sel { padding: 5px 8px; background: var(--raised); color: var(--text); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; cursor: pointer; }
+
+/* Scene selector tabs */
+.scene-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
+.stab { padding: 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--surface); cursor: pointer; text-align: center; min-width: 56px; }
+.stab .sn { font-family: var(--mono); font-size: 10px; color: var(--text-faint); display: block; }
+.stab .nm { font-size: 12px; color: var(--text-muted); }
+.stab .rows { font-size: 10px; color: var(--text-faint); }
+.stab.active { background: var(--accent-soft); border-color: rgba(240,180,41,.45); }
+.stab.active .nm { color: var(--accent-strong); font-weight: 600; }
+.stab.dirty::after { content: "•"; color: var(--dirty); margin-left: 3px; }
+
+/* Scene table */
+.tbl-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: auto; }
+/* Fixed geometry: cell content (a colour control appearing when a lamp is
+   included) must never move the columns. Widths are declared once via <col>. */
+/* `min-width` with the wrapper's `overflow: auto`: below this the matrix
+   scrolls sideways rather than crushing a column to nothing. It crushed the
+   *last* one, which has no width of its own — and a 0px cell wraps its text
+   one character per line, so the row grew from 45px to 76px and rows stopped
+   scanning as a grid. Every column below is therefore sized. */
+table { border-collapse: collapse; width: 100%; min-width: 900px; table-layout: fixed; }
+th { text-align: left; padding: 9px 12px; background: var(--raised); border-bottom: 1px solid var(--border);
+  font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em; font-weight: 500; position: sticky; top: 0; }
+th.c { text-align: center; }
+/* `vertical-align: middle`, because the default is `baseline` and a table row
+   grows to line up the first baseline of every cell. Controls of different
+   heights (a 24px level box, a 30px colour cell, a 28px checkbox) then made
+   an excluded row 3px taller than an included one for no visible reason.
+   Middle alignment makes a row exactly its tallest control plus padding. */
+td { padding: 7px 12px; vertical-align: middle; border-bottom: 1px solid rgba(42,51,64,.5); }
+tr:hover td { background: rgba(35,44,56,.5); }
+tr.rowdirty td:first-child { box-shadow: inset 2px 0 0 var(--dirty); }
+td.lamp .vl { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-right: 8px; }
+td.c { text-align: center; }
+
+/* `vertical-align: middle` because an inline-flex box takes its baseline from
+   its content, and this one is empty when the row is excluded. Left at the
+   default `baseline` the empty box sat on the text baseline and added its own
+   descender space, so an excluded row was 48px against an included row's 45
+   — the checkbox, not the colour cell, was setting the row height. */
+.inc { width: 26px; height: 26px; vertical-align: middle; border-radius: var(--radius-sm); display: inline-flex; align-items: center;
+  justify-content: center; border: 1px solid var(--border); background: var(--surface); font-size: 13px; cursor: pointer; }
+.inc.on { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+.inc.add { background: var(--dirty-soft); border: 1.5px dashed var(--dirty); color: var(--dirty); }
+
+.lvl { display: inline-flex; align-items: center; gap: 8px; }
+.lvl input { width: 52px; padding: 4px 7px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; text-align: right; }
+.lvl input.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
+.minitrack { width: 74px; height: 4px; border-radius: 2px; background: var(--raised); position: relative; }
+.minitrack .f { position: absolute; inset: 0 auto 0 0; border-radius: 2px; background: var(--accent); opacity: .8; }
+
+.cval { font-family: var(--mono); font-size: 12px; color: var(--text-muted); }
+
+/* Colour cell — a scene slot stores exactly ONE colour mode, so the mode is
+   an explicit select listing only what the bound gear supports ("—" clears
+   the colour), and the control area below it renders just that mode. Both
+   halves have fixed widths so an empty row and an edited row occupy the same
+   box — and the row is the same *height* too, which took three separate fixes
+   (the table's `min-width`, `td { vertical-align }`, and the empty checkbox's
+   own alignment) because each of them silently grew one kind of row only. A
+   64-row matrix is scanned down a column; a row that changes size with its
+   contents is the one bug an operator sees on every screen. */
+.ccell { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+/* Sized for the longest option, `rgbwaf`, so the control area below it starts
+   at the same x on every row. */
+.modesel { width: 72px; flex: none; padding: 3px 6px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; cursor: pointer; }
+.modesel:disabled { opacity: .45; cursor: default; }
+/* Wide enough for the six-channel mode, which is why every mode gets this
+   width: a scene row that changed height or width with its mode would break
+   scanning down a 64-row matrix, and that column is what the operator scans. */
+.cctl { width: 210px; flex: none; display: flex; align-items: center; gap: 6px; }
+.cctl .swatch { flex: none; }
+.cctl .kelvin { font-family: var(--mono); font-size: 11px; color: var(--text-muted); width: 46px; }
+.cctl .slider { flex: 1; height: 4px; border-radius: 2px;
+  background: linear-gradient(90deg, #ffb46b, #fff1de 45%, #cfe0ff); position: relative; }
+.cctl .slider .knob { position: absolute; top: -4px; left: 30%; width: 12px; height: 12px;
+  border-radius: 50%; background: var(--text); border: 2px solid var(--surface); }
+/* `box-sizing` is load-bearing, not tidiness: without it the declared width is
+   the content box and six boxes overflow the cell into the next column. */
+.cctl input.mini { box-sizing: border-box; width: 44px; padding: 3px 5px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; text-align: right; }
+/* Six channels in the same box: narrower boxes and a tighter gap, not a second
+   widget. On the wire `rgb` and `rgbwaf` are one DALI colour type and only the
+   channel count differs, so two controls would be two names for one thing. */
+.cctl.six { gap: 3px; }
+.cctl.six input.mini { width: 32px; }
+.cval .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 6px; border: 1px solid var(--border-strong); }
+/* The same 30px box a control occupies, not a bare text run: an inline text
+   node carries the line-box strut of the cell's own font, which made an
+   excluded row 3px taller than an included one. A placeholder must hold the
+   height it stands in for. */
+.na { display: inline-flex; align-items: center; min-height: 30px; color: var(--text-faint); font-size: 12px; }
+
+.applied { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.applied.diff { color: var(--dirty); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.warn { color: var(--dirty); background: var(--dirty-soft); }
+.btn.discard { color: var(--text-muted); }
+
+.applybar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px; background: var(--overlay);
+  border: 1px solid var(--border-strong); border-radius: 12px; padding: 10px 14px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.45); }
+.applybar .txt { font-size: 13px; }
+.applybar .txt b { color: var(--text); }
+.applybar.busy .txt { color: var(--text-muted); }
+.applybar .phase { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  padding: 2px 9px; border-radius: 999px; }
+.applybar .phase .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.applybar .phase.run { color: var(--info, #4da3ff); background: rgba(77,163,255,.13); }
+.applybar .phase.run .dot { animation: apulse 1.2s ease-in-out infinite; }
+.applybar .phase.done { color: var(--ok); background: var(--ok-soft); }
+.applybar .phase.wait { color: var(--text-faint); background: var(--raised); }
+.applybar .phase.err { color: var(--err); background: var(--err-soft); }
+@keyframes apulse { 50% { opacity: .25; } }
+.btn.apply { background: var(--accent); border-color: var(--accent); color: #14161a; font-weight: 600; padding: 7px 18px; }
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+.chgnote { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.chgnote code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.chgdemo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px; }
+.chgh { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+/* Level and kelvin are FIELDS in this table, never sliders. */
+.numdemo { display: inline-flex; align-items: baseline; gap: 5px; }
+.numdemo .num { width: 52px; padding: 4px 7px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 12px; text-align: right; }
+.numdemo .unit { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumbs"><a href="#">Adapter 0</a> / Scenes</div>
+
+  <div class="head">
+    <h1>Scenes</h1>
+    <!-- HA select opt-in (`ha_select_enabled`): a metadata affordance in the
+         info tint — it must not compete with lamp state, which is what amber
+         is reserved for. Checked = the scene is an option in the Home
+         Assistant scene select. -->
+    <label class="hatoggle"><input type="checkbox" checked> Home Assistant</label>
+    <!-- TWO numbers, never summed. This chip is the GEAR's condition: rows
+         whose desired != applied, healed only by an apply the gear confirms.
+         `--dirty` is reserved for exactly that. The operator's own unsaved
+         edits live in the apply bar below and nowhere else — summing them made
+         the bar permanent on any bench with a standing divergence and left
+         Discard, which can only clear the local half, greyed out forever. -->
+    <span class="chip warn"><span class="dot"></span>7 rows dirty on gear</span>
+    <span class="spacer"></span>
+    <button class="btn">Rename scene</button>
+    <!-- Recall scope (§14.1): "Whole bus" keeps the pre-existing broadcast
+         contract (empty POST body); picking a group sends ONE group-addressed
+         GO TO SCENE — each member fades to its own sceneX, MASK members stay
+         put, non-members never hear it. Group names come from the groups
+         resource; the picker never checks membership — an empty group is a
+         legal recall that reaches nobody. -->
+    <select class="sel">
+      <option selected>Whole bus</option>
+      <option>G0 · Hall</option>
+      <option>G1 · Office</option>
+      <option>G7 · Facade</option>
+    </select>
+    <button class="btn recall">▶ Recall scene 2</button>
+  </div>
+
+  <div class="scene-tabs">
+    <div class="stab"><span class="sn">S0</span><span class="nm">All on</span><span class="rows">12 lamps</span></div>
+    <div class="stab"><span class="sn">S1</span><span class="nm">Evening</span><span class="rows">8 lamps</span></div>
+    <div class="stab active dirty"><span class="sn">S2</span><span class="nm">Movie</span><span class="rows">6 lamps</span></div>
+    <div class="stab"><span class="sn">S3</span><span class="nm">—</span><span class="rows">0</span></div>
+    <div class="stab"><span class="sn">S4</span><span class="nm">—</span><span class="rows">0</span></div>
+    <div class="stab"><span class="sn">S5</span><span class="nm">—</span><span class="rows">0</span></div>
+    <div class="stab"><span class="sn">S6</span><span class="nm">—</span><span class="rows">0</span></div>
+    <div class="stab"><span class="sn">S7</span><span class="nm">—</span><span class="rows">0</span></div>
+    <div class="stab"><span class="sn">…</span><span class="nm">S8–S15</span><span class="rows"></span></div>
+  </div>
+
+  <div class="tbl-wrap">
+    <table>
+      <colgroup>
+        <!-- The lamp name is the only elastic column: it is the one that can
+             absorb a wider viewport without changing what a control looks
+             like. Everything else, including the last, is fixed. -->
+        <col><col style="width:76px"><col style="width:150px">
+        <col style="width:290px"><col style="width:64px"><col style="width:116px">
+      </colgroup>
+      <thead>
+        <tr>
+          <th>Virtual lamp</th>
+          <th class="c">Included</th>
+          <th>Level</th>
+          <th>Color</th>
+          <th class="c">Power</th>
+          <th>Applied (on gear)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="lamp"><span class="vl">VL 00</span>Kitchen main</td>
+          <td class="c"><span class="inc on">✓</span></td>
+          <td><span class="lvl"><input value="75"><span class="minitrack"><span class="f" style="width:30%"></span></span></span></td>
+          <td><span class="ccell"><select class="modesel" disabled><option>—</option></select><span class="cctl"><span class="na">no colour</span></span></span></td>
+          <td class="c cval">on</td>
+          <td><span class="applied">75</span></td>
+        </tr>
+        <tr class="rowdirty">
+          <td class="lamp"><span class="vl">VL 01</span>Kitchen island</td>
+          <td class="c"><span class="inc on">✓</span></td>
+          <td><span class="lvl"><input value="40" class="dirty"><span class="minitrack"><span class="f" style="width:16%"></span></span></span></td>
+          <td><span class="ccell"><select class="modesel"><option selected>—</option><option>cct</option></select><span class="cctl"></span></span></td>
+          <td class="c cval">on</td>
+          <td><span class="applied diff">90 → 40</span></td>
+        </tr>
+        <!-- §12 wave: `Applied (on gear)` colour is a READBACK now, not the
+             echo of the last write — the controller reads the scene's stored
+             colour through the DT8 REPORT registers after every program and on
+             the on-demand `scene_colours` attribute read. So a row can be
+             dirty on colour alone: below, the gear clamped a 2500 K ask into
+             its own 2703 K warm limit and the slot honestly holds 370 mirek.
+             Same `--dirty` treatment as a level divergence — desired ≠ applied
+             is one concept, whatever field diverges. The operation still
+             commits (a clamp is the gear working as specified); the row
+             staying visibly dirty is the surface for it. -->
+        <tr class="rowdirty">
+          <td class="lamp"><span class="vl">VL 02</span>Hall spot</td>
+          <td class="c"><span class="inc on">✓</span></td>
+          <td><span class="lvl"><input value="60"><span class="minitrack"><span class="f" style="width:24%"></span></span></span></td>
+          <td><span class="ccell"><select class="modesel"><option>—</option><option selected>cct</option></select><span class="cctl"><span class="swatch" style="background:#ffcf8a"></span><span class="kelvin">2500 K</span><span class="slider"><span class="knob"></span></span></span></span></td>
+          <td class="c cval">on</td>
+          <td><span class="applied diff">60 · 2703 K (clamped)</span></td>
+        </tr>
+        <tr class="rowdirty">
+          <td class="lamp"><span class="vl">VL 04</span>Living CCT</td>
+          <td class="c"><span class="inc add">✓</span></td>
+          <td><span class="lvl"><input value="120" class="dirty"><span class="minitrack"><span class="f" style="width:47%"></span></span></span></td>
+          <td><span class="ccell"><select class="modesel"><option>—</option><option selected>cct</option></select><span class="cctl"><span class="swatch" style="background:#ffd9a0"></span><span class="kelvin">2700 K</span><span class="slider"><span class="knob"></span></span></span></span></td>
+          <td class="c cval">on</td>
+          <td><span class="applied diff">not in scene</span></td>
+        </tr>
+        <tr>
+          <td class="lamp"><span class="vl">VL 05</span>TV strip</td>
+          <td class="c"><span class="inc on">✓</span></td>
+          <td><span class="lvl"><input value="30"><span class="minitrack"><span class="f" style="width:12%"></span></span></span></td>
+          <td><span class="ccell"><select class="modesel"><option>—</option><option>cct</option><option selected>rgb</option><option>xy</option></select><span class="cctl"><span class="swatch" style="background:#28324e"></span><input class="mini" value="40"><input class="mini" value="50"><input class="mini" value="78"></span></span></td>
+          <td class="c cval">on</td>
+          <td><span class="applied">30</span></td>
+        </tr>
+        <!-- Six-channel fixture (`capabilities.rgbwaf`): the mode list gains
+             `rgbwaf` and the same control grows from three boxes to six. The
+             swatch still mixes R/G/B only — nothing on a screen can render what
+             an amber emitter adds, and a swatch that tried would be inventing a
+             colour rather than reporting one. A scene stores all six: writing
+             three would leave whatever W/A/F the gear happened to hold, and
+             under normalised colour control (§9.1) a stale white both lights up
+             and dims the three that were asked for. -->
+        <tr>
+          <td class="lamp"><span class="vl">VL 09</span>Studio panel</td>
+          <td class="c"><span class="inc on">✓</span></td>
+          <td><span class="lvl"><input value="180"><span class="minitrack"><span class="f" style="width:71%"></span></span></span></td>
+          <td><span class="ccell"><select class="modesel"><option>—</option><option>cct</option><option>rgb</option><option selected>rgbwaf</option><option>xy</option></select><span class="cctl six"><span class="swatch" style="background:#0a141e"></span><input class="mini" value="10"><input class="mini" value="20"><input class="mini" value="30"><input class="mini" value="40"><input class="mini" value="50"><input class="mini" value="60"></span></span></td>
+          <td class="c cval">on</td>
+          <td><span class="applied diff">160</span></td>
+        </tr>
+        <tr>
+          <td class="lamp"><span class="vl">VL 02</span>Hall spot 1</td>
+          <td class="c"><span class="inc"></span></td>
+          <td><span class="na">—</span></td>
+          <td><span class="ccell"><select class="modesel" disabled><option>—</option></select><span class="cctl"></span></span></td>
+          <td class="c"><span class="na">—</span></td>
+          <td><span class="applied">—</span></td>
+        </tr>
+        <tr>
+          <td class="lamp"><span class="vl">VL 03</span>Hall spot 2</td>
+          <td class="c"><span class="inc"></span></td>
+          <td><span class="na">—</span></td>
+          <td><span class="ccell"><select class="modesel" disabled><option>—</option></select><span class="cctl"></span></span></td>
+          <td class="c"><span class="na">—</span></td>
+          <td><span class="applied">—</span></td>
+        </tr>
+        <tr>
+          <td class="lamp"><span class="vl">VL 06</span>— unnamed <span style="font-size:10px;color:var(--text-faint);font-style:italic">unbound</span></td>
+          <td class="c"><span class="inc" style="opacity:.4;cursor:default"></span></td>
+          <td><span class="na">—</span></td>
+          <td><span class="ccell"><select class="modesel" disabled><option>—</option></select><span class="cctl"></span></span></td>
+          <td class="c"><span class="na">—</span></td>
+          <td><span class="applied">—</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- The apply bar appears ONLY when the operator has unsaved edits, and its
+       count is those edits alone. Discard clears exactly what the bar counts,
+       so the button is live whenever the bar is on screen. -->
+  <div class="applybar">
+    <span class="txt"><b>3 pending edits</b> in scene 2 — 1 add · 2 level updates</span>
+    <button class="btn discard">Discard</button>
+    <button class="btn apply">Apply to bus</button>
+  </div>
+
+  <!--
+    Save spans TWO operations since ISSUE-25: the row write (`config_write`,
+    202 + operation id, committed atomically by the registry) and only then the
+    apply that puts it on the wire. They fail differently and must read
+    differently — "the rows were not saved" is not "the gear did not take them",
+    and the second is recoverable by pressing Apply again while the first is not.
+    A scene PUT is sixteen bus chunks; the operator sees one Save.
+  -->
+  <div class="applybar busy" style="position: static; transform: none; margin-top: 14px;">
+    <span class="phase run"><span class="dot"></span>Saving rows</span>
+    <span class="phase wait"><span class="dot"></span>Apply</span>
+    <span class="txt">writing to the registry…</span>
+  </div>
+
+  <div class="applybar busy" style="position: static; transform: none; margin-top: 10px;">
+    <span class="phase done"><span class="dot"></span>Saved</span>
+    <span class="phase run"><span class="dot"></span>Applying</span>
+    <span class="txt">programming the gear…</span>
+  </div>
+
+  <div class="applybar busy" style="position: static; transform: none; margin-top: 10px;">
+    <span class="phase err"><span class="dot"></span>Save failed</span>
+    <span class="phase wait"><span class="dot"></span>Apply</span>
+    <span class="txt">nothing was written — rows unchanged</span>
+  </div>
+
+  <div class="applybar busy" style="position: static; transform: none; margin-top: 10px;">
+    <span class="phase done"><span class="dot"></span>Saved</span>
+    <span class="phase err"><span class="dot"></span>Apply failed</span>
+    <span class="txt">rows stay dirty — press Apply again</span>
+  </div>
+
+<div class="chgh">2026-09-01 — one control per value</div>
+<p class="chgnote">Two controls in this table were drawing a second picture of a number the
+  operator was already typing, and both overflowed their columns doing it. The <b>level</b> cell
+  had a field plus a mini track sized in percent inside a fixed column, so at any zoom but 100 %
+  it ran out of its cell and under the colour select next door. The <b>colour</b> cell put the
+  whole <code>CctSlider</code> — track, kelvin readout, range caption and clamped-value warning,
+  four elements — into a 290 px cell that already held a mode select, and it overlapped the
+  Power column.</p>
+<p class="chgnote">Both are fields now. The fixture's own kelvin range still matters and still
+  has a home: the device card, where there is room to say which fixture clamped and to what. In
+  a 64-row matrix the operator is entering a number they already know.</p>
+<div class="chgdemo">
+  <span class="numdemo"><input class="num" value="254" readonly><span class="unit">/254</span></span>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <span class="numdemo"><input class="num" value="3000" readonly><span class="unit">K</span></span>
+</div>
+</div>
+</body>
+</html>

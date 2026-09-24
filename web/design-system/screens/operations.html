@@ -1,0 +1,221 @@
+<!-- @dsCard group="Screens" name="Operations" subtitle="Two-pane: operation list + group_apply detail with result buckets and outcomes" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Operations — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 40px; }
+
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.head .sub { font-size: 12px; color: var(--text-faint); }
+.spacer { flex: 1; }
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.idle { color: var(--text-muted); background: var(--raised); }
+.chip.run  { color: var(--info); background: var(--info-soft); }
+.chip.run .dot { animation: pulse 1.2s ease-in-out infinite; }
+.chip.ok   { color: var(--ok); background: var(--ok-soft); }
+.chip.err  { color: var(--err); background: var(--err-soft); }
+@keyframes pulse { 50% { opacity: .25; } }
+
+/* Two-pane layout */
+.panes { display: grid; grid-template-columns: 340px 1fr; gap: 14px; align-items: start; }
+
+/* Left: op list */
+.oplist { display: grid; gap: 10px; }
+.op { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 11px 13px; cursor: pointer; }
+.op:hover { border-color: var(--border-strong); }
+.op.active { border-color: rgba(240,180,41,.45); box-shadow: 0 0 0 1px rgba(240,180,41,.25); }
+.op .row1 { display: flex; align-items: center; gap: 10px; }
+.op .title { font-weight: 600; font-size: 13px; flex: 1; }
+.op .row2 { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
+.op .id { font-family: var(--mono); font-size: 10px; color: var(--text-faint); flex: 1; }
+.op .age { font-size: 11px; color: var(--text-faint); }
+
+.bar { height: 4px; border-radius: 2px; background: var(--raised); margin-top: 10px; overflow: hidden; }
+.bar .fill { height: 100%; width: 54%; background: var(--info); border-radius: 2px; }
+.bar.indet .fill { width: 30%; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { 0% { transform: translateX(-100%);} 100% { transform: translateX(340%);} }
+
+/* Right: detail card */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.card header { display: flex; align-items: center; gap: 10px;
+  padding: 11px 16px; background: var(--raised); border-bottom: 1px solid var(--border); }
+.card header h3 { margin: 0; font-size: 14px; font-weight: 650; flex: 1; }
+.card header .id { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+
+.buckets { display: flex; gap: 32px; padding: 18px 16px; border-bottom: 1px solid var(--border); }
+.bucket { display: flex; align-items: baseline; gap: 9px; }
+.bucket .n { font-family: var(--mono); font-size: 30px; font-weight: 600; }
+.bucket .l { font-size: 12px; color: var(--text-muted); }
+.bucket.ok .n { color: var(--ok); }
+.bucket.skip .n { color: var(--text-muted); }
+.bucket.fail .n { color: var(--err); }
+
+/* Outcome table */
+.otable { width: 100%; border-collapse: collapse; }
+.otable th { text-align: left; padding: 8px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border); background: var(--raised); }
+.otable td { padding: 7px 16px; border-bottom: 1px solid rgba(42,51,64,.5); font-size: 13px; }
+.otable tr:last-child td { border-bottom: none; }
+.otable .mono { font-family: var(--mono); font-size: 12px; }
+.otable .act-add { color: var(--ok); font-family: var(--mono); font-size: 12px; }
+.otable .act-rm  { color: var(--warn); font-family: var(--mono); font-size: 12px; }
+.otable .reason { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.otable .reason.skip { color: var(--text-muted); }
+
+.footnote { padding: 10px 16px; font-size: 11px; color: var(--text-faint); border-top: 1px solid var(--border); }
+.footnote b { color: var(--text-muted); font-weight: 550; }
+.meta-row { display: flex; gap: 20px; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
+.meta-row .mono { font-family: var(--mono); font-size: 11px; color: var(--text); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumbs"><a href="#">Adapter 0</a> / Operations</div>
+
+  <div class="head">
+    <h1>Operations</h1>
+    <span class="sub">4 tracked · finished operations evict after 60 s</span>
+    <span class="spacer"></span>
+    <button class="btn">↻ Refresh</button>
+  </div>
+
+  <div class="panes">
+
+    <div class="oplist">
+      <div class="op">
+        <div class="row1">
+          <span class="title">Discovery · full scan</span>
+          <span class="chip run"><span class="dot"></span>running</span>
+        </div>
+        <div class="bar indet"><div class="fill"></div></div>
+        <div class="row2"><span class="id">pd-disc-0-14</span><span class="age">6 s ago</span></div>
+      </div>
+
+      <div class="op active">
+        <div class="row1">
+          <span class="title">Group apply</span>
+          <span class="chip ok"><span class="dot"></span>succeeded</span>
+        </div>
+        <div class="row2"><span class="id">grp-apply-0-6</span><span class="age">18 s ago</span></div>
+      </div>
+
+      <div class="op">
+        <div class="row1">
+          <span class="title">Attribute read · SA 04</span>
+          <span class="chip ok"><span class="dot"></span>succeeded</span>
+        </div>
+        <div class="row2"><span class="id">attr-read-0-19</span><span class="age">32 s ago</span></div>
+      </div>
+
+      <div class="op">
+        <div class="row1">
+          <span class="title">Scene 2 apply</span>
+          <span class="chip err"><span class="dot"></span>failed</span>
+        </div>
+        <div class="row2"><span class="id">scn-apply-0-3</span><span class="age">51 s ago</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <header>
+        <h3>Group apply</h3>
+        <span class="chip ok"><span class="dot"></span>succeeded</span>
+        <span class="id">grp-apply-0-6</span>
+      </header>
+
+      <div class="meta-row">
+        <span>Adapter <span class="mono">0</span></span>
+        <span>Started <span class="mono">12:04:31.208</span></span>
+        <span>Duration <span class="mono">1.84 s</span></span>
+        <span>Requested by <span class="mono">api</span></span>
+      </div>
+
+      <div class="buckets">
+        <div class="bucket ok"><span class="n">14</span><span class="l">programmed</span></div>
+        <div class="bucket skip"><span class="n">2</span><span class="l">skipped</span></div>
+        <div class="bucket fail"><span class="n">0</span><span class="l">failed</span></div>
+      </div>
+
+      <table class="otable">
+        <thead>
+          <tr><th>VL</th><th>Group</th><th>Action</th><th>SA</th><th>Reason</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">VL 00</td><td class="mono">G1</td><td class="act-add">add</td><td class="mono">SA 05</td><td class="reason">—</td></tr>
+          <tr><td class="mono">VL 01</td><td class="mono">G1</td><td class="act-rm">remove</td><td class="mono">SA 05</td><td class="reason">—</td></tr>
+          <tr><td class="mono">VL 03</td><td class="mono">G0</td><td class="act-add">add</td><td class="mono">SA 01</td><td class="reason">—</td></tr>
+          <tr><td class="mono">VL 04</td><td class="mono">G6</td><td class="act-add">add</td><td class="mono">SA 08</td><td class="reason">—</td></tr>
+          <tr><td class="mono">VL 07</td><td class="mono">G3</td><td class="act-add">add</td><td class="mono">SA 12</td><td class="reason">—</td></tr>
+          <tr><td class="mono">VL 20</td><td class="mono">G4</td><td class="act-add">add</td><td class="mono">—</td><td class="reason skip">skipped · unbound</td></tr>
+          <tr><td class="mono">VL 21</td><td class="mono">G4</td><td class="act-add">add</td><td class="mono">—</td><td class="reason skip">skipped · unbound</td></tr>
+        </tbody>
+      </table>
+
+      <div class="footnote">
+        Showing 7 of 16 outcome rows. <b>TTL:</b> finished operations are evicted from the tracker
+        60 s after completion — export the outcome table before it expires.
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

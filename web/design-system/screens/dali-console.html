@@ -1,0 +1,281 @@
+<!-- @dsCard group="Screens" name="DALI console" subtitle="Diagnostic console: command form with tabs, monospace exchange log, commissioning steps (R15)" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DALI console — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 40px; }
+
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.head .sub { font-size: 12px; color: var(--text-faint); }
+.spacer { flex: 1; }
+
+.badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.idle { color: var(--text-muted); background: var(--raised); border: 1px solid var(--border); }
+
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+.btn.sm { padding: 4px 9px; font-size: 11px; }
+.btn.preset { padding: 4px 10px; font-size: 11px; font-family: var(--mono); }
+.btn:disabled { opacity: .45; cursor: default; }
+
+/* Selects are styled like inputs everywhere in the app, never left native. */
+.sel { padding: 5px 8px; background: var(--raised); color: var(--text); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; cursor: pointer; }
+.sel.sm { padding: 2px 5px; font-size: 11px; }
+
+/* Two-pane */
+.panes { display: grid; grid-template-columns: 360px 1fr; gap: 14px; align-items: start; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.card header { display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
+.card header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+.act { font-size: 11px; color: var(--info); background: none; border: none; cursor: pointer; font-family: var(--font); }
+
+/* Tabs */
+.tabs { display: flex; gap: 2px; padding: 10px 14px 0; }
+.tab { padding: 6px 14px; font-size: 12px; font-weight: 550; color: var(--text-muted); cursor: pointer;
+  border: 1px solid transparent; border-bottom: none; border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+.tab.active { color: var(--accent-strong); background: var(--raised); border-color: var(--border); }
+.tabline { height: 1px; background: var(--border); margin: 0 14px; }
+
+/* Form */
+.form { padding: 14px; display: grid; gap: 12px; }
+.field label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--text-muted); font-weight: 600; margin-bottom: 5px; }
+.field input { width: 100%; box-sizing: border-box; padding: 7px 10px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono); font-size: 13px; }
+.field .aid { font-size: 10px; color: var(--text-faint); margin-top: 4px; font-family: var(--mono); }
+.form .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.sendrow { display: flex; align-items: center; gap: 10px; }
+.sendrow .btn.primary { padding: 8px 22px; font-size: 13px; }
+.hintbox { margin: 0 14px 14px; padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--warn-soft); border: 1px solid rgba(227,160,8,.28); font-size: 11px; color: var(--warn); }
+
+/* Presets */
+.presets { display: flex; gap: 6px; flex-wrap: wrap; padding: 12px 14px; border-top: 1px solid var(--border); }
+.presets .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-faint);
+  align-self: center; margin-right: 4px; font-weight: 600; }
+
+/* Log */
+.log { font-family: var(--mono); font-size: 12px; }
+.lrow { display: grid; grid-template-columns: 92px 20px 130px 1fr auto; gap: 10px; align-items: baseline;
+  padding: 6px 14px; border-bottom: 1px solid rgba(42,51,64,.5); }
+.lrow:last-child { border-bottom: none; }
+.lrow:hover { background: rgba(35,44,56,.5); }
+.lrow .ts { color: var(--text-faint); font-size: 11px; }
+.lrow .dir { text-align: center; }
+.lrow .dir.tx { color: var(--text-muted); }
+.lrow .dir.rx { color: var(--ok); }
+.lrow .dir.err { color: var(--err); }
+.lrow .bytes { color: var(--text); letter-spacing: .04em; }
+.lrow .desc { color: var(--text-muted); font-family: var(--font); font-size: 12px; }
+.lrow .lat { color: var(--text-faint); font-size: 11px; }
+.lrow.rx .bytes { color: var(--ok); }
+.lrow.noans .bytes, .lrow.noans .desc { color: var(--text-faint); }
+.lrow.err .bytes, .lrow.err .desc { color: var(--err); }
+
+/* Commissioning steps (R15): expert tool, service tone, no accent. */
+.comm-steps { grid-column: 1 / -1; margin-top: 2px; }
+.comm-steps-toggle { font-family: var(--mono); font-size: 11px; background: none;
+  border: none; color: var(--info); cursor: pointer; padding: 0; }
+.comm-steps-body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin-top: 8px; padding: 8px 10px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.comm-steps-body input { padding: 5px 8px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  font-family: var(--font); font-size: 12px; }
+.comm-steps-body input.mono { font-family: var(--mono); width: 150px; }
+.comm-steps-note { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
+.comm-steps-note .mono { font-family: var(--mono); color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumbs"><a href="#">Adapter 0</a> / DALI console</div>
+
+  <div class="head">
+    <h1>DALI console</h1>
+    <span class="badge">diagnostic</span>
+    <span class="chip idle"><span class="dot"></span>bus idle</span>
+    <span class="spacer"></span>
+    <span class="sub">Adapter 0 · Main DALI</span>
+  </div>
+
+  <div class="panes">
+
+    <div class="card">
+      <header><h3>Send frame</h3></header>
+      <div class="tabs">
+        <span class="tab active">Command</span>
+        <span class="tab">Level</span>
+        <span class="tab">Raw</span>
+      </div>
+      <div class="tabline"></div>
+      <div class="form">
+        <div class="field">
+          <label>wire_address</label>
+          <input value="0x0B">
+          <div class="aid">SA 5 · indirect (bit 0 = 1)</div>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label>command</label>
+            <input value="0x90">
+            <div class="aid">QueryStatus</div>
+          </div>
+          <div class="field">
+            <label>repeat_count</label>
+            <input value="1">
+            <div class="aid">send-twice = 2</div>
+          </div>
+        </div>
+        <div class="sendrow">
+          <button class="btn primary">Send</button>
+          <span style="font-size:11px; color:var(--text-faint);">POST /api/v1/dali/command · JSON</span>
+        </div>
+      </div>
+      <div class="hintbox">Diagnostic path — sends raw 16-bit frames and bypasses product semantics. Registry runtime state is not updated by replies here.</div>
+      <div class="presets">
+        <span class="lbl">Presets</span>
+        <button class="btn preset">Query Status</button>
+        <button class="btn preset">Off</button>
+        <button class="btn preset">DAPC 254</button>
+        <button class="btn preset">Query Device Type</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <header><h3>Exchange log</h3><button class="act">Clear</button></header>
+      <div class="log">
+        <div class="lrow">
+          <span class="ts">12:06:02.114</span><span class="dir tx">→</span>
+          <span class="bytes">0x0B 0x90</span><span class="desc">QueryStatus SA5</span><span class="lat"></span>
+        </div>
+        <div class="lrow rx">
+          <span class="ts">12:06:02.118</span><span class="dir rx">←</span>
+          <span class="bytes">0xFF</span><span class="desc">answer</span><span class="lat">4 ms</span>
+        </div>
+        <div class="lrow">
+          <span class="ts">12:06:00.871</span><span class="dir tx">→</span>
+          <span class="bytes">0x09 0x99</span><span class="desc">QueryDeviceType SA4</span><span class="lat"></span>
+        </div>
+        <div class="lrow rx">
+          <span class="ts">12:06:00.876</span><span class="dir rx">←</span>
+          <span class="bytes">0x08</span><span class="desc">answer · DT8</span><span class="lat">5 ms</span>
+        </div>
+        <div class="lrow">
+          <span class="ts">12:05:41.032</span><span class="dir tx">→</span>
+          <span class="bytes">0x3D 0x90</span><span class="desc">QueryStatus SA30</span><span class="lat"></span>
+        </div>
+        <div class="lrow noans">
+          <span class="ts">12:05:41.052</span><span class="dir tx">·</span>
+          <span class="bytes">—</span><span class="desc">no answer</span><span class="lat">20 ms</span>
+        </div>
+        <div class="lrow">
+          <span class="ts">12:05:12.408</span><span class="dir tx">→</span>
+          <span class="bytes">0x0A 0xFE</span><span class="desc">DAPC 254 SA5</span><span class="lat"></span>
+        </div>
+        <div class="lrow">
+          <span class="ts">12:04:58.220</span><span class="dir tx">→</span>
+          <span class="bytes">0x0B 0x00</span><span class="desc">Off SA5</span><span class="lat"></span>
+        </div>
+        <div class="lrow">
+          <span class="ts">12:04:31.500</span><span class="dir tx">→</span>
+          <span class="bytes">0xC1 0x08</span><span class="desc">EnableDeviceType 8</span><span class="lat"></span>
+        </div>
+        <div class="lrow">
+          <span class="ts">12:04:31.522</span><span class="dir tx">→</span>
+          <span class="bytes">0x09 0xE7</span><span class="desc">SetTemporaryColourTemperature SA4</span><span class="lat"></span>
+        </div>
+        <div class="lrow err">
+          <span class="ts">12:03:47.914</span><span class="dir err">✕</span>
+          <span class="bytes">0x17 0x90</span><span class="desc">bus_contended · collision during forward frame</span><span class="lat">retry 2</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Commissioning steps (R15). Collapsed by default and visually plainer than
+         the command form: this drives the IEC state machine one primitive at a
+         time and assumes the operator knows the sequence. It is not a workflow. -->
+    <div class="comm-steps">
+      <button class="comm-steps-toggle">&#9662; Commissioning steps</button>
+      <div class="comm-steps-body">
+        <select class="sel sm">
+          <option>initialise</option><option>randomise</option><option>search-address</option>
+          <option>compare</option><option>program-short-address</option>
+          <option>verify-short-address</option><option>query-short-address</option>
+          <option>withdraw</option><option>terminate</option><option>physical-selection</option>
+        </select>
+        <select class="sel sm"><option>all</option><option>unaddressed</option><option>short</option></select>
+        <input type="text" class="mono" value="0xFFFFFF" placeholder="24-bit search address">
+        <button class="btn sm">Send step</button>
+      </div>
+      <div class="comm-steps-note">
+        Typed result rides on the backward frame: <span class="mono">match</span> for
+        compare/verify, <span class="mono">short_address</span> for query &mdash; where
+        <span class="mono">none</span> means no gear answered, never address 0.
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,39 @@
+[package]
+name = "dali2rust-bdd"
+description = "BDD tests using cucumber-rs"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobins = false
+
+[[test]]
+name = "bdd"
+path = "src/main.rs"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+dali2rust-bsp = { path = "../../crates/dali2rust-bsp" }
+dali2rust-test-support = { path = "../../crates/dali2rust-test-support" }
+
+[[bench]]
+name = "bus_bench"
+harness = false
+
+[dependencies]
+dali2rust-domain = { path = "../../crates/dali2rust-domain" }
+dali2rust-platform = { path = "../../crates/dali2rust-platform" }
+dali2rust-bus = { path = "../../crates/dali2rust-bus" }
+dali2rust-adapters = { path = "../../crates/dali2rust-adapters" }
+dali2rust-gear-model = { path = "../../crates/dali2rust-gear-model" }
+dali2rust-contracts = { path = "../../crates/dali2rust-contracts" }
+dali2rust-api = { path = "../../crates/dali2rust-api" }
+dali2rust-mqtt-runtime = { path = "../../crates/dali2rust-mqtt-runtime" }
+cucumber = "0.22"
+tokio = { version = "1", features = ["rt", "macros", "time", "net", "io-util"] }
+tiny_http = "0.12"
+futures = "0.3"
+serde_json = "1"

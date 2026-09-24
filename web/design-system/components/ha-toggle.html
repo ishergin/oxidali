@@ -1,0 +1,121 @@
+<!-- @dsCard group="Components" name="HA toggle" subtitle="Home Assistant opt-in checkbox: info tint metadata affordance on groups, scenes and lamps" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HA toggle — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 760px; margin: 0 auto; padding: 28px 24px 48px; }
+h1 { font-size: 20px; font-weight: 650; margin: 0 0 6px; }
+.lede { font-size: 13px; color: var(--text-muted); margin: 0 0 22px; max-width: 62ch; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px; }
+.card h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--text-muted); }
+.row { display: flex; align-items: center; gap: 14px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.row:last-child { border-bottom: 0; }
+.row .where { width: 210px; font-size: 12px; color: var(--text-faint); }
+.note { font-size: 12px; color: var(--text-faint); margin-top: 12px; max-width: 62ch; }
+.note code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+
+/* The component. One rule set, used verbatim on every surface. */
+.hatoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.hatoggle input { accent-color: var(--info); margin: 0; }
+.hatoggle.disabled { opacity: .45; cursor: default; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>HA toggle</h1>
+  <p class="lede">Per-entity Home Assistant opt-in (<code>ha_entity_enabled</code> /
+  <code>ha_select_enabled</code>). A metadata affordance in the <b>info</b> tint —
+  it must never compete with lamp state, which is what the amber accent is
+  reserved for. Default is on; unchecking retracts the entity from the broker
+  (empty retained config), so the switch does something an operator can see.</p>
+
+  <div class="card">
+    <h3>States</h3>
+    <div class="row">
+      <span class="where">exposed (default)</span>
+      <label class="hatoggle"><input type="checkbox" checked> Home Assistant</label>
+    </div>
+    <div class="row">
+      <span class="where">excluded</span>
+      <label class="hatoggle"><input type="checkbox"> Home Assistant</label>
+    </div>
+    <div class="row">
+      <span class="where">bridge disabled (settings)</span>
+      <label class="hatoggle disabled"><input type="checkbox" checked disabled> Home Assistant</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Where it appears</h3>
+    <div class="row"><span class="where">Virtual lamps table</span><span style="font-size:12px; color:var(--text-muted)">per-lamp column switch (<code>virtual-lamps.html</code>)</span></div>
+    <div class="row"><span class="where">Group header popover</span><span style="font-size:12px; color:var(--text-muted)">beside the rename field (<code>group-matrix.html</code>)</span></div>
+    <div class="row"><span class="where">Scene header</span><span style="font-size:12px; color:var(--text-muted)">beside the scene name (<code>scene-editor.html</code>)</span></div>
+  </div>
+
+  <p class="note">Label is always the two words “Home Assistant” — no icon, no
+  abbreviation: the checkbox is small enough that the words are the affordance.
+  Uses <code>accent-color: var(--info)</code>; the checked state must not read
+  as “the lamp is on”.</p>
+</div>
+</body>
+</html>

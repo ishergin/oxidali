@@ -1,0 +1,104 @@
+<!-- @dsCard group="Foundations" name="Colors" subtitle="Surfaces, text, lamp accent, status" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Colors — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.wrap { padding: 24px; max-width: 760px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); margin: 24px 0 10px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.sw { width: 108px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.sw .chip { height: 44px; }
+.sw .meta { padding: 6px 8px; background: var(--surface); }
+.sw .name { font-size: 11px; color: var(--text-muted); }
+.sw .val { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.note { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>Surfaces</h2>
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:var(--bg)"></div><div class="meta"><div class="name">bg</div><div class="val">#0e1116</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--surface)"></div><div class="meta"><div class="name">surface</div><div class="val">#161b22</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--raised)"></div><div class="meta"><div class="name">raised</div><div class="val">#1d242e</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--overlay)"></div><div class="meta"><div class="name">overlay</div><div class="val">#232c38</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--border)"></div><div class="meta"><div class="name">border</div><div class="val">#2a3340</div></div></div>
+  </div>
+
+  <h2>Text</h2>
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:var(--text)"></div><div class="meta"><div class="name">text</div><div class="val">#e7edf4</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--text-muted)"></div><div class="meta"><div class="name">text-muted</div><div class="val">#93a1b0</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--text-faint)"></div><div class="meta"><div class="name">text-faint</div><div class="val">#5c6773</div></div></div>
+  </div>
+
+  <h2>Lamp accent — "light is on"</h2>
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:var(--accent)"></div><div class="meta"><div class="name">accent</div><div class="val">#f0b429</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--accent-strong)"></div><div class="meta"><div class="name">accent-strong</div><div class="val">#ffc84d</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--accent-soft)"></div><div class="meta"><div class="name">accent-soft</div><div class="val">14% alpha</div></div></div>
+  </div>
+  <div class="note">Amber is reserved for lamp/level state; never used for generic emphasis.</div>
+
+  <h2>Status</h2>
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:var(--ok)"></div><div class="meta"><div class="name">ok</div><div class="val">#46c26a</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--warn)"></div><div class="meta"><div class="name">warn / dirty</div><div class="val">#e3a008</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--err)"></div><div class="meta"><div class="name">err</div><div class="val">#f2555a</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--info)"></div><div class="meta"><div class="name">info</div><div class="val">#4da3ff</div></div></div>
+  </div>
+  <div class="note">"Dirty" (desired ≠ applied) always uses the warn hue — one concept, one color.</div>
+</div>
+</body>
+</html>

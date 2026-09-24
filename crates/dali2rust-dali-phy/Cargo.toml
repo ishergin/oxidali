@@ -1,0 +1,11 @@
+[package]
+name = "dali2rust-dali-phy"
+description = "Everything the DALI PHY interrupt executes — and nothing else (ADR-010)"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+dali2rust-platform = { path = "../dali2rust-platform" }

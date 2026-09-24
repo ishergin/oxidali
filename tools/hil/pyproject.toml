@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hil"
+version = "2.1.0"
+description = "dali2rust hardware-in-the-loop test toolkit (camera + WB sniffer + serial + HTTP API oracles)"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy<2",
+    "opencv-python>=4.9,<5",
+    "pyserial~=3.5",
+    "esptool>=4.8,<5",
+    "requests~=2.31",
+    "pytest~=7.4",
+    "pytest-html~=4.1",
+]
+
+[project.scripts]
+hil = "hil.cli:main"
+
+[tool.setuptools]
+packages = ["hil", "hil.camera"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers -m 'not destructive and not slow'"
+markers = [
+    "smoke: instrument-verification suite (fast, non-destructive)",
+    "optical: needs the camera oracle (calibration + capture path)",
+    "sniffer: needs the WB-MDALI-3 MQTT tap over ssh",
+    "serial: needs the persistent DUT serial monitor",
+    "destructive: mutates rig state beyond a snapshot/restore cycle",
+    "slow: long-running (load/soak) — excluded from the default run",
+    "foreign: needs the WB DALI master to be MQTT-controllable",
+    "needs_capability(name): skip unless the firmware/lamp supports it",
+    "ha_bridge: drives the HA MQTT bridge against the bench broker (WB mosquitto)",
+    "redundancy: needs the pair's second controller (HIL_PEER_BASE) on the same segment",
+    "hil_id(id): the HIL scenario id this test implements (HIL-<DOMAIN>-NN)",
+]

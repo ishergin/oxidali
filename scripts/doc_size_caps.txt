@@ -1,0 +1,2 @@
+documentation/product-design/known-issues.md 68 the one home of open defects and external-limitation workarounds; the issue-id gate reads every record from this file
+tools/hil/STRATEGY.md 46 the bench watchlist must live here for the issue-id gate; one row per open bench finding

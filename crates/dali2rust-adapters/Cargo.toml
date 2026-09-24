@@ -1,0 +1,52 @@
+[package]
+name = "dali2rust-adapters"
+description = "Adapter implementations (composition wiring, ESP/host HTTP, DALI transport)"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+dali2rust-bsp = { path = "../dali2rust-bsp" }
+dali2rust-platform = { path = "../dali2rust-platform" }
+dali2rust-dali-phy = { path = "../dali2rust-dali-phy" }
+dali2rust-dali-codec = { path = "../dali2rust-dali-codec" }
+dali2rust-bus = { path = "../dali2rust-bus" }
+dali2rust-api = { path = "../dali2rust-api" }
+dali2rust-contracts = { path = "../dali2rust-contracts" }
+dali2rust-display-runtime = { path = "../dali2rust-display-runtime" }
+dali2rust-dali-runtime = { path = "../dali2rust-dali-runtime" }
+dali2rust-fanout-runtime = { path = "../dali2rust-fanout-runtime" }
+dali2rust-hcl-runtime = { path = "../dali2rust-hcl-runtime" }
+dali2rust-ota-runtime = { path = "../dali2rust-ota-runtime" }
+dali2rust-poller-runtime = { path = "../dali2rust-poller-runtime" }
+dali2rust-redundancy-runtime = { path = "../dali2rust-redundancy-runtime" }
+dali2rust-domain = { path = "../dali2rust-domain" }
+dali2rust-operations-runtime = { path = "../dali2rust-operations-runtime" }
+dali2rust-registry-runtime = { path = "../dali2rust-registry-runtime" }
+dali2rust-rules-model = { path = "../dali2rust-rules-model" }
+dali2rust-rules-lang = { path = "../dali2rust-rules-lang" }
+dali2rust-rules-runtime = { path = "../dali2rust-rules-runtime" }
+dali2rust-mqtt-runtime = { path = "../dali2rust-mqtt-runtime" }
+dali2rust-ws-runtime = { path = "../dali2rust-ws-runtime" }
+postcard = { version = "1.1", features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+log = "0.4"
+
+[target.'cfg(not(target_os = "espidf"))'.dependencies]
+dali2rust-gear-model = { path = "../dali2rust-gear-model" }
+tiny_http = "0.12"
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+
+[target.'cfg(target_os = "espidf")'.dependencies]
+esp-idf-svc = { version = "0.52.1", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
+
+[features]
+default = []
+
+[dev-dependencies]
+dali2rust-test-support = { path = "../dali2rust-test-support" }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"

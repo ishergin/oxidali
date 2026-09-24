@@ -1,0 +1,199 @@
+<!-- @dsCard group="Screens" name="Device detail — DT6 driver" subtitle="Part 207 failure and operating bytes: the section that read nineteen fields and rendered one" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Device detail — DT6 driver — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1000px; margin: 0 auto; padding: 20px 24px 40px; }
+h2 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+h2:first-of-type { margin-top: 0; }
+.note { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.note code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 6px; }
+/* ── LED driver · Part 207 ───────────────────────────────────────────────
+   Found by counting, 2026-09-01: the `dt6_led` attribute section carries
+   NINETEEN fields, the controller reads them, the registry stores them, the
+   REST payload ships them — and the device card rendered exactly one,
+   `dimming_curve`. The failure half is the half that matters: a driver
+   reporting a short or an open circuit is a fault an operator has to act on,
+   and it was visible on no screen at all.
+
+   THE TRAP THIS CARD HAS TO AVOID, and it is a labelling trap. The
+   Diagnostics tab already shows rows called "Short circuit", "Open circuit",
+   "Thermal shutdown" — and they are NOT these. Those come from DiiA 253 memory
+   banks (205/206) and carry a condition WITH HISTORY: has it happened, when,
+   how many times. These are the Part 207 queries — one instantaneous byte
+   each. A gear may answer one family and not the other, which is why both
+   exist and why neither can stand in for the other. Hence the explicit `Part
+   207` in the title and the `DT6` badge: two cards on one device card must not
+   be tellable apart only by which tab you happened to be on.
+
+   FIVE QUERIES, NOT FIVE BITS. Each condition is its own query answering its
+   own byte, so `0` means "the gear says no" and an ABSENT field means "never
+   asked". They must not merge — the chip list is built from
+   present-and-nonzero, never from a truthiness test over the whole set, which
+   would silently report a never-read section as healthy.
+
+   THE SUMMARY BYTE SITS BESIDE THE CHIPS, not instead of them: the gear
+   answers both, and a decode we get wrong has to stay visible next to its
+   evidence rather than replacing it — the same rule the Version row follows
+   one card up.
+
+   THE CARD DOES NOT RENDER AT ALL when the section is empty. A DT8-only
+   fixture never answers these, and an empty Part 207 card is furniture that
+   teaches an operator to ignore the place a real fault would appear. */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.card header { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--border); }
+.card header h3 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-faint); flex: 1; }
+.attr { display: grid; grid-template-columns: 1fr 116px 104px; column-gap: 12px; row-gap: 3px;
+  align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.attr:last-child { border-bottom: none; }
+.attr .k { color: var(--text-muted); font-size: 13px; }
+.attr .v { font-family: var(--mono); font-size: 13px; display: flex; align-items: center;
+  justify-content: flex-end; gap: 6px; }
+.attr.wide { grid-template-columns: 1fr minmax(0, auto) auto; }
+.attr.wide .v { flex-direction: column; align-items: flex-end; gap: 1px; min-width: 0; padding-right: 8px; }
+.attr.wide .v.rowv { flex-direction: row; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.attr .v .raw { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-left: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; border: 1px solid var(--border); color: var(--text-muted); }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); }
+.chip.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.chip.err { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, transparent); background: var(--err-soft); }
+.chip.info { color: var(--info); border-color: color-mix(in srgb, var(--info) 40%, transparent); background: var(--info-soft); }
+.chip.idle { color: var(--text-faint); }
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--raised); font-family: var(--mono);
+  font-size: 11px; color: var(--text-muted); }
+.src { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-faint);
+  justify-self: end; white-space: nowrap; }
+.src .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.src.readback { color: var(--ok); }
+.src.stale { color: var(--text-faint); }
+</style>
+</head>
+<body>
+<div class="page">
+  <h2>Healthy driver</h2>
+  <p class="note">One chip, and it is the absence of a fault rather than a blank: a section that
+    has been read and reports nothing is a different fact from one nobody asked.</p>
+  <div class="demo">
+    <div class="card">
+      <header><h3>LED driver · Part 207</h3><span class="badge">DT6</span></header>
+      <div class="attr wide"><span class="k">Failure status</span>
+        <span class="v rowv"><span class="chip ok"><span class="dot"></span>no failure reported</span></span>
+        <span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr"><span class="k">Failure status byte</span>
+        <span class="v">0x00</span>
+        <span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr wide"><span class="k">Reference measurement</span>
+        <span class="v rowv"><span class="chip idle"><span class="dot"></span>idle</span></span>
+        <span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr wide"><span class="k">Current protector</span>
+        <span class="v rowv"><span class="chip ok"><span class="dot"></span>enabled</span></span>
+        <span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr"><span class="k">Gear type</span><span class="v">0x00</span>
+        <span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr"><span class="k">Fast fade time</span>
+        <span class="v">0<span class="raw">min 23</span></span>
+        <span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+    </div>
+  </div>
+
+  <h2>Driver reporting faults</h2>
+  <p class="note">One chip per condition that answered non-zero, and the summary byte on its own
+    row beside them — the gear answers both, so a decode we get wrong stays next to its evidence
+    instead of replacing it.</p>
+  <div class="demo">
+    <div class="card">
+      <header><h3>LED driver · Part 207</h3><span class="badge">DT6</span></header>
+      <div class="attr wide"><span class="k">Failure status</span>
+        <span class="v rowv">
+          <span class="chip err"><span class="dot"></span>open circuit</span>
+          <span class="chip err"><span class="dot"></span>thermal overload</span>
+        </span>
+        <span class="src readback"><span class="dot"></span>readback · 4 s</span></div>
+      <div class="attr"><span class="k">Failure status byte</span>
+        <span class="v">0x0A</span>
+        <span class="src readback"><span class="dot"></span>readback · 4 s</span></div>
+      <div class="attr wide"><span class="k">Reference measurement</span>
+        <span class="v rowv"><span class="chip err"><span class="dot"></span>failed</span></span>
+        <span class="src readback"><span class="dot"></span>readback · 4 s</span></div>
+      <div class="attr wide"><span class="k">Current protector</span>
+        <span class="v rowv">
+          <span class="chip ok"><span class="dot"></span>enabled</span>
+          <span class="chip warn"><span class="dot"></span>active</span>
+        </span>
+        <span class="src readback"><span class="dot"></span>readback · 4 s</span></div>
+    </div>
+  </div>
+
+  <h2>Not the bank-206 rows</h2>
+  <p class="note">The Diagnostics tab shows rows with the same words — <b>Short circuit</b>,
+    <b>Open circuit</b>, <b>Thermal shutdown</b> — from DiiA 253 memory banks. Those carry a
+    condition <i>with history</i>: whether it has happened, when, and how often. These are the
+    Part 207 queries: one instantaneous byte each. A gear may answer one family and not the
+    other, so neither can stand in for the other, and the card titles have to make that
+    unmistakable at a glance.</p>
+  <div class="demo">
+    <span class="badge">Levels &amp; fade → LED driver · Part 207</span>
+    &nbsp;&nbsp;vs&nbsp;&nbsp;
+    <span class="badge">Diagnostics → Light source diagnostics · bank 206</span>
+  </div>
+</div>
+</body>
+</html>

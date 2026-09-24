@@ -1,0 +1,18 @@
+[package]
+name = "dali2rust-rules-runtime"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+dali2rust-contracts = { path = "../dali2rust-contracts" }
+dali2rust-bus = { path = "../dali2rust-bus" }
+dali2rust-bsp = { path = "../dali2rust-bsp" }
+dali2rust-platform = { path = "../dali2rust-platform" }
+dali2rust-rules-model = { path = "../dali2rust-rules-model" }
+postcard = { version = "1.1", features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+dali2rust-rules-lang = { path = "../dali2rust-rules-lang" }
+dali2rust-test-support = { path = "../dali2rust-test-support" }

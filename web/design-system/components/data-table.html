@@ -1,0 +1,165 @@
+<!-- @dsCard group="Components" name="Data table" subtitle="Panel table: sticky action column, visible horizontal scrollbar, narrow-viewport behaviour" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data table — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1000px; margin: 0 auto; padding: 20px 24px 40px; }
+h2 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+h2:first-of-type { margin-top: 0; }
+.note { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.note code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 6px; }
+/* ── Data table ──────────────────────────────────────────────────────────
+   Every list in this product is one of these. Two things about it are new,
+   and both come from the same owner report: "таблицы обрезаются по ширине на
+   узких экранах (у вирт ламп кнопка unbind например всегда обрезается)".
+
+   1. THE SCROLLBAR IS ALWAYS VISIBLE. `.table-wrap` has always been
+      `overflow: auto`, so the table was never truly truncated — it scrolled.
+      But macOS draws overlay scrollbars, which are invisible until something
+      scrolls, so a table wider than its panel looks exactly like a table that
+      has been cut off. An affordance that only appears after you have already
+      found the thing it is advertising is not an affordance. 8 px, themed,
+      always drawn.
+
+   2. THE ACTION COLUMN IS STICKY. Scrolling is the wrong answer for the one
+      column an operator reaches for by reflex — Unbind, Delete, Rebind. It
+      pins to the right edge with an opaque background and a left rule, so it
+      is reachable at any width and never overlaps the cell sliding under it.
+      Opaque, not `--hover`, because that token is translucent and a sticky
+      cell must not let the scrolled content show through.
+
+   NARROW VIEWPORTS drop columns rather than shrinking them. A 90 px "Last
+   seen" squeezed to 40 px is not a smaller column, it is a broken one; and
+   the fields that go are the ones the detail card repeats anyway. */
+.table-wrap { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: auto;
+  scrollbar-color: var(--border-strong) transparent; scrollbar-width: thin; }
+.table-wrap::-webkit-scrollbar { height: 8px; width: 8px; }
+.table-wrap::-webkit-scrollbar-track { background: transparent; }
+.table-wrap::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+.table-wrap table { border-collapse: collapse; width: 100%; }
+.table-wrap thead th { text-align: left; padding: 9px 12px; background: var(--raised);
+  border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--text-faint); font-weight: 600; white-space: nowrap; }
+.table-wrap tbody td { padding: 8px 12px; border-bottom: 1px solid var(--border-soft);
+  vertical-align: middle; white-space: nowrap; font-size: 13px; }
+.table-wrap tbody tr:last-child td { border-bottom: none; }
+.table-wrap tbody tr:hover td { background: var(--hover); }
+.table-wrap tbody tr.click { cursor: pointer; }
+
+/* The pinned column. `right: 0` plus an opaque fill; the rule on its left
+   edge is what tells the operator the content continues underneath. */
+.acts-col { position: sticky; right: 0; background: var(--surface);
+  border-left: 1px solid var(--border); }
+thead .acts-col { background: var(--raised); }
+tbody tr:hover .acts-col { background: var(--raised); }
+.acts { display: inline-flex; gap: 6px; }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong); background: var(--raised); color: var(--text);
+  font-family: var(--font); font-size: 12.5px; cursor: pointer; }
+.btn:hover { background: var(--overlay); }
+.btn.sm { padding: 3px 9px; font-size: 11.5px; }
+.btn.ghost { background: transparent; }
+.btn.ghost:hover { background: var(--raised); }
+/* Destructive: never coloured until it is armed. A row of permanently red
+   Delete buttons trains the eye to ignore red. */
+.btn.danger:hover { border-color: color-mix(in srgb, var(--err) 55%, transparent); color: var(--err); background: var(--err-soft); }
+.btn.sure { border-color: var(--err); color: var(--err); background: var(--err-soft); }
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--raised); font-family: var(--mono);
+  font-size: 11px; color: var(--text-muted); }
+.badge.addr { color: var(--text); }
+.frame { max-width: 560px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h2>Pinned actions</h2>
+  <p class="note">The frame below is deliberately too narrow for the table. Scroll it: the
+    action column stays, and the scrollbar says there is more before you go looking.</p>
+  <div class="demo">
+    <div class="frame">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>VL</th><th>Name</th><th>Binding</th><th>State</th><th>Level</th><th class="acts-col"></th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge">VL 00</span></td><td>Kitchen spot</td><td><span class="badge addr">SA 00</span></td><td>180</td><td>——●———</td>
+              <td class="acts-col"><span class="acts"><button class="btn sm ghost">Rebind…</button><button class="btn sm ghost">Unbind</button><button class="btn sm ghost danger">Delete</button></span></td></tr>
+            <tr><td><span class="badge">VL 01</span></td><td>Hallway</td><td><span class="badge addr">SA 01</span></td><td>Off</td><td>●—————</td>
+              <td class="acts-col"><span class="acts"><button class="btn sm ghost">Rebind…</button><button class="btn sm ghost">Unbind</button><button class="btn sm ghost danger">Delete</button></span></td></tr>
+            <tr><td><span class="badge">VL 04</span></td><td>Living room strip</td><td><span class="badge addr">SA 04</span></td><td>220</td><td>————●—</td>
+              <td class="acts-col"><span class="acts"><button class="btn sm ghost">Rebind…</button><button class="btn sm ghost">Unbind</button><button class="btn sm sure">Sure?</button></span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <h2>Destructive actions arm before they fire</h2>
+  <p class="note">One click arms and the label becomes <b>Sure?</b>; a second within three
+    seconds performs it, and silence disarms. The same two-step Unbind has used since it
+    shipped — a delete that removes a lamp's name, its group rows and its scene rows deserves
+    at least what unbinding gets.</p>
+  <div class="demo">
+    <button class="btn sm ghost danger">Delete</button>
+    &nbsp;&nbsp;
+    <button class="btn sm sure">Sure?</button>
+  </div>
+</div>
+</body>
+</html>

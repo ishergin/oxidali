@@ -1,0 +1,278 @@
+<!-- @dsCard group="Screens" name="DALI sniffer" subtitle="Realtime decoded bus traffic: TX/RX/reply rows, filters, drop accounting" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DALI sniffer — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.wrap { padding: 20px; }
+h1 { font-size: 18px; margin: 0 0 4px; font-weight: 600; }
+.sub { color: var(--text-muted); font-size: 12px; margin: 0 0 16px; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+
+/* --- toolbar ------------------------------------------------------------ */
+.snf-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.btn { background: var(--raised); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); padding: 5px 11px; font-size: 13px; cursor: pointer; }
+.btn:hover { background: var(--overlay); }
+.btn.primary { background: var(--ok-soft); border-color: rgba(70,194,106,.35); color: var(--ok); }
+.btn.stop { background: var(--err-soft); border-color: rgba(242,85,90,.35); color: var(--err); }
+.btn.ghost { background: transparent; color: var(--text-muted); }
+.snf-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
+.snf-filter { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.snf-filter button { background: var(--raised); border: 0; color: var(--text-muted); padding: 5px 10px; font-size: 12px; cursor: pointer; }
+.snf-filter button + button { border-left: 1px solid var(--border); }
+.snf-filter button.on { background: var(--overlay); color: var(--text); }
+.snf-search { background: var(--raised); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); padding: 5px 9px; font-size: 12px; font-family: var(--mono); width: 130px; }
+
+/* --- frame table -------------------------------------------------------- */
+.snf-log { font-family: var(--mono); font-size: 12px; max-height: 460px; overflow: auto; }
+.snf-row { display: grid; grid-template-columns: 86px 58px 24px 96px 1fr 150px; gap: 10px; padding: 3px 12px; align-items: baseline; border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
+.snf-row:hover { background: var(--hover); }
+.snf-head { color: var(--text-faint); font-family: var(--font); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--border); }
+.snf-t { color: var(--text-faint); }
+.snf-d { color: var(--text-faint); text-align: right; }
+/* Direction is the only colour that carries meaning in this table: our own
+ * traffic vs the other master's vs an answer. Amber is absent by design. */
+.snf-dir { font-weight: 600; }
+.snf-dir.tx { color: var(--info); }
+.snf-dir.rx { color: var(--text-muted); }
+.snf-dir.reply { color: var(--ok); }
+.snf-hex { color: var(--text); }
+.snf-name { color: var(--text); }
+.snf-name.unknown { color: var(--text-faint); font-style: italic; }
+.snf-detail { color: var(--text-muted); }
+.snf-tgt { color: var(--text-muted); }
+.snf-q { color: var(--info); }
+.snf-row.retry { background: rgba(227,160,8,.06); }
+.snf-retry { color: var(--warn); font-size: 11px; }
+.snf-gap { padding: 4px 12px; color: var(--err); background: var(--err-soft); border-bottom: 1px solid var(--border-soft); font-size: 11px; }
+/* Only the newest few hundred matching rows are put in the DOM; the rest stay
+ * buffered. Faint and quiet on purpose — nothing was lost, so it must not read
+ * like `.snf-gap`, which means frames nobody will ever see. */
+.snf-trunc { padding: 4px 12px; color: var(--text-faint); background: var(--raised); border-bottom: 1px solid var(--border); font-size: 11px; font-family: var(--font); }
+
+/* --- footer ------------------------------------------------------------- */
+.snf-foot { display: flex; gap: 18px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
+.snf-foot b { color: var(--text); font-weight: 600; font-family: var(--mono); }
+.snf-foot .bad b { color: var(--err); }
+.snf-idle { padding: 40px 12px; text-align: center; color: var(--text-faint); font-size: 13px; }
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumbs"><a href="#">Adapter 0</a> / DALI sniffer</div>
+  <h1>DALI sniffer</h1>
+  <p class="sub">Every frame on the wire — ours, the other master's, and the answers — decoded as it happens.</p>
+
+  <div class="card">
+    <div class="snf-bar">
+      <button class="btn stop">Stop</button>
+      <button class="btn ghost">Pause</button>
+      <button class="btn ghost">Clear</button>
+      <div class="snf-sep"></div>
+      <div class="snf-filter">
+        <button class="on">All</button><button>TX</button><button>RX</button><button>Replies</button>
+      </div>
+      <div class="snf-filter">
+        <button class="on">All frames</button><button>Hide queries</button>
+      </div>
+      <div class="snf-filter">
+        <button class="on">Follow</button><button>Manual</button>
+      </div>
+      <input class="snf-search" placeholder="addr / hex">
+      <div class="snf-sep"></div>
+      <button class="btn ghost">Copy</button>
+    </div>
+
+    <div class="snf-log">
+      <div class="snf-row snf-head">
+        <span>Time</span><span>+ms</span><span></span><span>Hex</span><span>Command</span><span>Target</span>
+      </div>
+
+      <div class="snf-trunc">884 older matching frame(s) held back from the view — still buffered, and Copy takes all of them</div>
+
+      <div class="snf-row">
+        <span class="snf-t" title="time since boot: the controller had not synced its clock (SNTP) when this was recorded">+2.588</span><span class="snf-d">—</span>
+        <span class="snf-dir rx">←</span><span class="snf-hex">FF 00</span>
+        <span class="snf-name">BROADCAST <span class="snf-detail">OFF</span></span>
+        <span class="snf-tgt">broadcast</span>
+      </div>
+      <div class="snf-row">
+        <span class="snf-t">12:04:31.118</span><span class="snf-d">—</span>
+        <span class="snf-dir tx">→</span><span class="snf-hex">C1 08</span>
+        <span class="snf-name">ENABLE DEVICE TYPE <span class="snf-detail">data=0x08</span></span>
+        <span class="snf-tgt">—</span>
+      </div>
+      <div class="snf-row">
+        <span class="snf-t">12:04:31.131</span><span class="snf-d">13</span>
+        <span class="snf-dir tx">→</span><span class="snf-hex">01 E7</span>
+        <span class="snf-name">DT8 SET TEMPORARY COLOUR TEMPERATURE</span>
+        <span class="snf-tgt">short 0</span>
+      </div>
+      <div class="snf-row">
+        <span class="snf-t">12:04:31.152</span><span class="snf-d">21</span>
+        <span class="snf-dir tx">→</span><span class="snf-hex">01 90</span>
+        <span class="snf-name">QUERY STATUS <span class="snf-q">?</span></span>
+        <span class="snf-tgt">short 0</span>
+      </div>
+      <div class="snf-row">
+        <span class="snf-t">12:04:31.174</span><span class="snf-d">22</span>
+        <span class="snf-dir reply">←</span><span class="snf-hex">80</span>
+        <span class="snf-name">REPLY <span class="snf-detail">0x80 (128)</span></span>
+        <span class="snf-tgt">—</span>
+      </div>
+      <div class="snf-row retry">
+        <span class="snf-t">12:04:31.298</span><span class="snf-d">124</span>
+        <span class="snf-dir tx">→</span><span class="snf-hex">01 90</span>
+        <span class="snf-name">QUERY STATUS <span class="snf-q">?</span> <span class="snf-retry">retry 1</span></span>
+        <span class="snf-tgt">short 0</span>
+      </div>
+      <div class="snf-gap">14 frames dropped — the tap could not keep up</div>
+      <div class="snf-row">
+        <span class="snf-t">12:04:32.006</span><span class="snf-d">708</span>
+        <span class="snf-dir rx">↔</span><span class="snf-hex">A3 42</span>
+        <span class="snf-name">DTR0 <span class="snf-detail">data=0x42</span></span>
+        <span class="snf-tgt">—</span>
+      </div>
+      <div class="snf-row">
+        <span class="snf-t">12:04:32.021</span><span class="snf-d">15</span>
+        <span class="snf-dir rx">↔</span><span class="snf-hex">06 78</span>
+        <span class="snf-name">DAPC <span class="snf-detail">level 120</span></span>
+        <span class="snf-tgt">short 3</span>
+      </div>
+      <div class="snf-row">
+        <span class="snf-t">12:04:32.044</span><span class="snf-d">23</span>
+        <span class="snf-dir rx">↔</span><span class="snf-hex">FF 13</span>
+        <span class="snf-name">GO TO SCENE 3</span>
+        <span class="snf-tgt">broadcast</span>
+      </div>
+      <div class="snf-row">
+        <span class="snf-t">12:04:32.066</span><span class="snf-d">22</span>
+        <span class="snf-dir rx">↔</span><span class="snf-hex">01 F8</span>
+        <span class="snf-name unknown">EXTENDED 0xF8 <span class="snf-detail">no ENABLE DEVICE TYPE seen</span></span>
+        <span class="snf-tgt">short 0</span>
+      </div>
+    </div>
+
+    <div class="snf-foot">
+      <span><b>41</b> frames/s</span>
+      <span><b>1 284</b> buffered / 2 000</span>
+      <span>showing newest <b>400</b> of 1 284</span>
+      <span class="bad"><b>14</b> dropped</span>
+      <span>tap <b>on</b></span>
+      <span>following</span>
+    </div>
+    <p class="sub" style="margin:10px 2px 0">
+      <b>frames/s</b> is a one-second window swept twice a second, not a per-batch
+      figure: the controller does not flush an empty batch, so a rate recomputed
+      only on arrival froze at the last burst and read as a busy bus for as long
+      as the bus stayed silent. It decays to <b>0</b>, and Stop and Clear zero it.
+      The <b>showing newest</b> count appears only when the view is windowed.
+    </p>
+    <p class="sub" style="margin:8px 2px 0">
+      <b>Follow</b> keeps the newest row in view. Scrolling up switches it to
+      <b>Manual</b> and freezes the window — rows keep arriving into the buffer,
+      but the view stops moving under the line being read; the footer then counts
+      them as <b>newer</b>. Scrolling back to the bottom follows again.
+      <b>Pause</b> is the other axis: Follow decides where the view sits, Pause
+      decides whether rows are collected at all.
+    </p>
+    <p class="sub" style="margin:8px 2px 0">
+      A stamp that reads <b>+2.139</b> is <b>time since boot</b>, not a time of
+      day: the controller has no RTC battery, so after a reset its clock sits at
+      the epoch until SNTP anchors it a few seconds later. Rendered as a clock
+      those records would show a convincing <b>03:00:02</b> in a UTC+3 browser —
+      and they are exactly the records someone reads, because they are the ones
+      from the seconds after a flash. Hovering says why.
+    </p>
+  </div>
+
+  <p class="sub" style="margin-top:16px">
+    Idle state (tap stopped) replaces the table body:
+  </p>
+  <div class="card">
+    <div class="snf-bar">
+      <button class="btn primary">Start</button>
+      <button class="btn ghost" disabled>Pause</button>
+      <button class="btn ghost" disabled>Clear</button>
+    </div>
+    <div class="snf-idle">The sniffer is off. Nothing is captured and nothing is sent until you start it.</div>
+  </div>
+
+  <p class="sub" style="margin-top:16px">
+    Held still by scrolling up — the view is frozen and the arrivals are counted:
+  </p>
+  <div class="card">
+    <div class="snf-bar">
+      <button class="btn stop">Stop</button>
+      <button class="btn ghost">Pause</button>
+      <button class="btn ghost">Clear</button>
+      <div class="snf-sep"></div>
+      <div class="snf-filter">
+        <button>Follow</button><button class="on">Manual</button>
+      </div>
+    </div>
+    <div class="snf-foot">
+      <span><b>38</b> frames/s</span>
+      <span><b>2 000</b> buffered / 2 000</span>
+      <span>showing newest <b>400</b> of 2 000</span>
+      <span><b>212</b> newer</span>
+      <span>tap <b>on</b></span>
+      <span>held</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>

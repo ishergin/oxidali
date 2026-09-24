@@ -1,0 +1,263 @@
+<!-- @dsCard group="Screens" name="Virtual lamps" subtitle="VL table: binding, effective type, HA entity toggle, staged state hint" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Virtual lamps — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 40px; }
+
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.head .sub { font-size: 12px; color: var(--text-faint); }
+.spacer { flex: 1; }
+.hint { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; }
+.hint b { color: var(--text-muted); font-weight: 550; }
+
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+.btn.sm { padding: 4px 9px; font-size: 11px; }
+.btn.ghost { border-color: var(--border); color: var(--text-muted); background: transparent; }
+
+.badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
+.badge.addr { color: var(--text); background: var(--overlay); }
+.badge.dt8 { color: var(--info); border-color: rgba(77,163,255,.3); }
+.badge .prov { font-family: var(--font); color: var(--text-faint); font-size: 10px; margin-left: 4px; }
+.badge.declared { border-color: rgba(227,160,8,.35); }
+.badge.declared .prov { color: var(--warn); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.accent { color: var(--accent-strong); background: var(--accent-soft); }
+.chip.idle { color: var(--text-muted); background: var(--raised); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+.chip.bind { font-family: var(--mono); color: var(--text); background: var(--overlay); border: 1px solid var(--border-strong); }
+.chip.unbound { color: var(--text-faint); background: transparent; border: 1px dashed var(--border); font-style: italic; }
+
+/* Table */
+.table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: auto; }
+table { border-collapse: collapse; width: 100%; }
+thead th { text-align: left; padding: 9px 12px; background: var(--raised); border-bottom: 1px solid var(--border);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+tbody td { padding: 8px 12px; border-bottom: 1px solid rgba(42,51,64,.5); vertical-align: middle; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: rgba(35,44,56,.5); }
+
+td .vlid { font-family: var(--mono); font-size: 12px; color: var(--text-muted); }
+.name-edit { display: inline-flex; align-items: center; gap: 7px; padding: 4px 8px; border-radius: var(--radius-sm);
+  border: 1px solid transparent; font-size: 13px; font-weight: 550; cursor: text; }
+.name-edit:hover { border-color: var(--border-strong); background: var(--raised); }
+.name-edit .pen { font-size: 10px; color: var(--text-faint); }
+.name-edit.faint { color: var(--text-faint); font-style: italic; font-weight: 400; }
+
+/* HA switch mockup */
+.switch { position: relative; display: inline-block; width: 32px; height: 18px; border-radius: 999px;
+  background: var(--raised); border: 1px solid var(--border-strong); vertical-align: middle; cursor: pointer; }
+.switch .knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text-faint); transition: left .15s; }
+.switch.on { background: var(--accent-soft); border-color: rgba(240,180,41,.5); }
+.switch.on .knob { left: 16px; background: var(--accent-strong); }
+td .acts { display: inline-flex; gap: 6px; }
+
+/* Lamp state cell — full spec in components/lamp-state. Repeated here because
+   a card must define every class it uses; the colour maths lives in
+   `format.ts::lampState` and nowhere else. */
+.lampstate { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); white-space: nowrap; }
+.lampdot { width: 11px; height: 11px; border-radius: 50%; flex: none;
+  background: var(--lamp, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--lamp, var(--accent)) 70%, transparent);
+  box-shadow: var(--lamp-glow, none); }
+.lamplv { font-family: var(--mono); font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+.lampcq { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
+.lampstate.on { }
+.lampstate.off .lampdot { background: transparent; border-color: var(--text-faint); box-shadow: none; }
+.lampstate.off .lamplv { color: var(--text-muted); }
+.lampstate.unknown .lampdot { background: transparent; border-style: dashed; border-color: var(--text-faint); box-shadow: none; }
+.lampstate.unknown .lamplv { color: var(--text-faint); font-style: italic; font-family: var(--font); }
+.chgnote { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.chgdemo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px; }
+.chgh { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+/* The pinned action column and the armed destructive button — full spec in
+   components/data-table. */
+.acts-col { position: sticky; right: 0; background: var(--surface); border-left: 1px solid var(--border); }
+.acts { display: inline-flex; gap: 6px; }
+.btnx { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: transparent; color: var(--text-muted);
+  font-family: var(--font); font-size: 11.5px; cursor: pointer; }
+.btnx.danger:hover { border-color: color-mix(in srgb, var(--err) 55%, transparent); color: var(--err); background: var(--err-soft); }
+.btnx.sure { border-color: var(--err); color: var(--err); background: var(--err-soft); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumbs"><a href="#">Adapter 0</a> / Virtual lamps</div>
+
+  <div class="head">
+    <h1>Virtual lamps</h1>
+    <span class="sub">7 of 64 configured</span>
+    <span class="spacer"></span>
+    <button class="btn primary">+ New virtual lamp</button>
+  </div>
+  <p class="hint"><b>Unbound lamps stage state:</b> level and color set on an unbound lamp are kept in the registry
+    and pushed to hardware when the lamp is bound to a short address.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>VL</th><th>Name</th><th>Binding</th><th>Effective type</th>
+          <th>HA entity</th><th>State</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="vlid">VL 00</span></td>
+          <td><span class="name-edit">Kitchen main <span class="pen">✎</span></span></td>
+          <td><span class="chip bind">SA 05</span></td>
+          <td><span class="badge dt8">dt8_cct<span class="prov">· inherited</span></span></td>
+          <td><span class="switch on"><span class="knob"></span></span></td>
+          <td><span class="chip idle"><span class="dot"></span>Off</span></td>
+          <td><span class="acts"><button class="btn sm ghost">Bind…</button><button class="btn sm ghost">Unbind</button></span></td>
+        </tr>
+        <tr>
+          <td><span class="vlid">VL 02</span></td>
+          <td><span class="name-edit">Hall spot 1 <span class="pen">✎</span></span></td>
+          <td><span class="chip bind">SA 00</span></td>
+          <td><span class="badge">dt6_led<span class="prov">· inherited</span></span></td>
+          <td><span class="switch on"><span class="knob"></span></span></td>
+          <td><span class="chip accent"><span class="dot"></span>On · 254</span></td>
+          <td><span class="acts"><button class="btn sm ghost">Bind…</button><button class="btn sm ghost">Unbind</button></span></td>
+        </tr>
+        <tr>
+          <td><span class="vlid">VL 03</span></td>
+          <td><span class="name-edit">Hall spot 2 <span class="pen">✎</span></span></td>
+          <td><span class="chip bind">SA 01</span></td>
+          <td><span class="badge">dt6_led<span class="prov">· inherited</span></span></td>
+          <td><span class="switch"><span class="knob"></span></span></td>
+          <td><span class="chip accent"><span class="dot"></span>On · 254</span></td>
+          <td><span class="acts"><button class="btn sm ghost">Bind…</button><button class="btn sm ghost">Unbind</button></span></td>
+        </tr>
+        <tr>
+          <td><span class="vlid">VL 07</span></td>
+          <td><span class="name-edit">Stairs <span class="pen">✎</span></span></td>
+          <td><span class="chip bind">SA 12</span></td>
+          <td><span class="badge dt8 declared">dt8_color<span class="prov">· declared</span></span></td>
+          <td><span class="switch on"><span class="knob"></span></span></td>
+          <td><span class="chip idle"><span class="dot"></span>Off</span></td>
+          <td><span class="acts"><button class="btn sm ghost">Bind…</button><button class="btn sm ghost">Unbind</button></span></td>
+        </tr>
+        <tr>
+          <td><span class="vlid">VL 12</span></td>
+          <td><span class="name-edit">Kitchen <span class="pen">✎</span></span></td>
+          <td><span class="chip bind">SA 04</span></td>
+          <td><span class="badge dt8">dt8_cct<span class="prov">· inherited</span></span></td>
+          <td><span class="switch on"><span class="knob"></span></span></td>
+          <td><span class="chip accent"><span class="dot"></span>On · 200</span></td>
+          <td><span class="acts"><button class="btn sm ghost">Bind…</button><button class="btn sm ghost">Unbind</button></span></td>
+        </tr>
+        <tr>
+          <td><span class="vlid">VL 20</span></td>
+          <td><span class="name-edit">Pantry <span class="pen">✎</span></span></td>
+          <td><span class="chip unbound">unbound</span></td>
+          <td><span class="badge">dt6_led<span class="prov">· declared</span></span></td>
+          <td><span class="switch"><span class="knob"></span></span></td>
+          <td><span class="chip warn"><span class="dot"></span>staged · 180</span></td>
+          <td><span class="acts"><button class="btn sm">Bind…</button></span></td>
+        </tr>
+        <tr>
+          <td><span class="vlid">VL 21</span></td>
+          <td><span class="name-edit faint">— unnamed <span class="pen">✎</span></span></td>
+          <td><span class="chip unbound">unbound</span></td>
+          <td><span class="badge">dt6_led<span class="prov">· default</span></span></td>
+          <td><span class="switch"><span class="knob"></span></span></td>
+          <td><span class="chip idle"><span class="dot"></span>Unknown</span></td>
+          <td><span class="acts"><button class="btn sm">Bind…</button></span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+<div class="chgh">2026-09-01 — delete, colour, and one column fewer</div>
+<p class="chgnote"><b>Delete</b> is new, and it is not Unbind: unbinding drops the binding and
+  keeps the configuration so a lamp can move to a replacement luminaire, while deleting removes
+  the record — name, Home Assistant entity, binding, desired group row, rows in all sixteen
+  scenes. Until it existed there was no way back from a lamp created by mistake, and the only
+  remedy in the field was resetting the whole persisted slice. It arms before it fires, the same
+  two-step Unbind has always used, and one row can have only ONE armed action: two red
+  <b>Sure?</b> buttons a few pixels apart is how an operator deletes a lamp they meant to
+  unbind. It sends nothing to the bus — the membership already programmed into the luminaire
+  stays as it is.</p>
+<p class="chgnote"><b>Type · declared is gone</b> (the bound device's card is where a type
+  belongs, with its override control beside it), and <b>State carries the fixture's colour</b> —
+  <code>components/lamp-state</code>.</p>
+<div class="chgdemo">
+  <span class="acts">
+    <button class="btnx">Rebind…</button>
+    <button class="btnx">Unbind</button>
+    <button class="btnx danger">Delete</button>
+  </span>
+  &nbsp;&nbsp;&nbsp;
+  <span class="acts">
+    <button class="btnx">Rebind…</button>
+    <button class="btnx">Unbind</button>
+    <button class="btnx sure">Sure?</button>
+  </span>
+</div>
+</div>
+</body>
+</html>

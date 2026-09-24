@@ -1,0 +1,17 @@
+[build]
+target = "riscv32imac-esp-espidf"
+
+[target.riscv32imac-esp-espidf]
+linker = "ldproxy"
+runner = "espflash flash --monitor --bootloader target/riscv32imac-esp-espidf/debug/bootloader.bin --partition-table partitions-c6.csv"
+rustflags = ["--cfg", "espidf_time64"]
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[env]
+MCU = { value = "esp32c6", force = true }
+ESP_IDF_SDKCONFIG_DEFAULTS = { value = "sdkconfig.c6.defaults", force = true }
+ESP_IDF_VERSION = "v5.5.3"
+ESP_IDF_TOOLS_INSTALL_DIR = "global"
+ESP_IDF_SYS_ROOT_CRATE = "dali-gear-sim"

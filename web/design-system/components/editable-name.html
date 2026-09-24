@@ -1,0 +1,172 @@
+<!-- @dsCard group="Components" name="Editable name" subtitle="Inline rename with explicit apply / cancel — list rows, page titles, popovers" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Editable name — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1000px; margin: 0 auto; padding: 20px 24px 40px; }
+h2 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+h2:first-of-type { margin-top: 0; }
+.note { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.note code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 6px; }
+/* ── Editable name ───────────────────────────────────────────────────────
+   ONE control for every rename in the product. Before this card there were
+   four: a bare `.name-edit` input in the virtual-lamp row, an `.h1-edit`
+   page title, an unclassed input in the input-device card and another in the
+   group-rename popover. All four committed on Enter or on blur and showed no
+   control at all, which is the owner's report — "редактирование имени сделано
+   неявно": the operator cannot see that the field is editable, cannot see
+   that it is dirty, and cannot see how to keep or drop the change.
+
+   THE RULE THAT MAKES IT EXPLICIT: a name field with buttons does NOT commit
+   on blur. Blur keeps the draft and leaves the two buttons standing, so the
+   only ways out are ✓ (or Enter) and ✕ (or Esc). That is the opposite of the
+   `EditableText` primitive underneath it, and deliberately so — that one
+   exists to stop a 5 s poll clobbering in-flight typing, and commit-on-blur
+   is safe for a numeric field the operator is stepping through. A NAME is
+   not stepped through: it is decided.
+
+   The buttons appear only while editing. An idle row must stay a row — a
+   permanent pair of buttons on every one of 64 lamp rows is noise, and the
+   hover border plus the ✎ affordance already say "this is editable". */
+.name-edit-wrap { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.name-edit { display: inline-flex; align-items: center; gap: 7px; padding: 4px 8px;
+  border-radius: var(--radius-sm); border: 1px solid transparent; font-size: 13px; font-weight: 550;
+  cursor: text; background: transparent; color: var(--text); font-family: var(--font);
+  min-width: 120px; max-width: 100%; }
+.name-edit:hover { border-color: var(--border-strong); background: var(--raised); }
+.name-edit:focus { border-color: var(--border-strong); background: var(--raised); outline: none; }
+.name-edit::placeholder { color: var(--text-faint); font-style: italic; font-weight: 400; }
+/* Dirty is the warn hue, exactly as a dirty scene row or a divergent group
+   cell is: "what you see is not what the controller holds" is one fact with
+   one colour in this product. */
+.name-edit.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
+
+/* The pair. Square, icon-sized, sitting on the field's own baseline so a
+   table row does not grow when editing starts — a row that changes height on
+   focus makes every row below it jump under the pointer. */
+.name-acts { display: inline-flex; gap: 4px; }
+.namebtn { display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong); background: var(--raised); color: var(--text-muted);
+  font-family: var(--font); font-size: 12px; line-height: 1; cursor: pointer; }
+.namebtn:hover { color: var(--text); background: var(--overlay); }
+/* Apply carries the accent; cancel never does. Amber is lamp state, so the
+   confirm here uses --ok, the same green every "this landed" chip uses. */
+.namebtn.ok { border-color: color-mix(in srgb, var(--ok) 55%, transparent); color: var(--ok); background: var(--ok-soft); }
+.namebtn.ok:hover { background: color-mix(in srgb, var(--ok) 22%, transparent); }
+.namebtn.no:hover { border-color: color-mix(in srgb, var(--err) 45%, transparent); color: var(--err); }
+
+/* Page-title variant: same control, heading type. */
+.h1-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.h1-wrap .pencil { color: var(--text-faint); font-size: 12px; opacity: 0; transition: opacity .12s; }
+.h1-wrap:hover .pencil { opacity: 1; }
+.h1-edit { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; color: var(--text);
+  background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm);
+  padding: 2px 8px; margin-left: -8px; font-family: var(--font); cursor: text; min-width: 160px; }
+.h1-edit:hover, .h1-edit:focus { border-color: var(--border-strong); background: var(--raised); outline: none; }
+.h1-edit::placeholder, .h1-edit.name-faint { color: var(--text-faint); font-style: italic; font-weight: 400; }
+.h1-edit.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
+
+.row { display: flex; align-items: center; gap: 18px; margin-bottom: 10px; }
+.lbl { font-size: 11px; color: var(--text-faint); width: 118px; flex: none;
+  text-transform: uppercase; letter-spacing: .07em; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h2>Rename — the three states</h2>
+  <p class="note">Idle is a row, not a form. The buttons exist only while a draft does, and
+    while one exists <b>blur does not commit</b>: the operator decides with ✓ or ✕.</p>
+  <div class="demo">
+    <div class="row"><span class="lbl">idle</span>
+      <span class="name-edit-wrap"><input class="name-edit" value="Kitchen spot" readonly></span>
+    </div>
+    <div class="row"><span class="lbl">idle · unnamed</span>
+      <span class="name-edit-wrap"><input class="name-edit" placeholder="— unnamed" readonly></span>
+    </div>
+    <div class="row"><span class="lbl">editing</span>
+      <span class="name-edit-wrap">
+        <input class="name-edit dirty" value="Kitchen spot 2" readonly>
+        <span class="name-acts">
+          <button class="namebtn ok" title="Apply">✓</button>
+          <button class="namebtn no" title="Cancel">✕</button>
+        </span>
+      </span>
+    </div>
+  </div>
+
+  <h2>Page title</h2>
+  <p class="note">Same control, heading type — the physical-device card and the scene header.
+    The ✎ appears on hover so a title that has never been renamed still reads as one.</p>
+  <div class="demo">
+    <span class="h1-wrap">
+      <input class="h1-edit" value="Living room strip" readonly>
+      <span class="pencil">✎</span>
+    </span>
+  </div>
+  <div class="demo">
+    <span class="h1-wrap">
+      <input class="h1-edit dirty" value="Living room strip N" readonly>
+      <span class="name-acts">
+        <button class="namebtn ok" title="Apply">✓</button>
+        <button class="namebtn no" title="Cancel">✕</button>
+      </span>
+    </span>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,379 @@
+<!-- @dsCard group="Screens" name="Settings — Redundancy" subtitle="A second controller on one segment: role, detection budget, the configuration pull, and the record of who last held the bus" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings — Redundancy — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 760px; margin: 0 auto; padding: 20px 24px 100px; }
+
+.head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.crumb { font-size: 12px; color: var(--text-faint); }
+.sub { font-size: 12.5px; color: var(--text-muted); margin: 0 0 16px; }
+
+
+/* Two units, one wire — so the card shows the pair, active first. Each gets a
+   heading rather than a divider rule: the difference between the two columns
+   of state is the whole subject of the screen. */
+.state-label { display: flex; align-items: center; gap: 8px; margin: 36px 0 14px; }
+.state-label .ln { flex: 1; height: 1px; background: var(--border); }
+.state-label span { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
+.state-label:first-child { margin-top: 0; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; }
+.panel > h2 { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em;
+  font-weight: 500; margin: 0; padding: 10px 15px; border-bottom: 1px solid var(--border); }
+.panel .body { padding: 14px 15px; }
+
+.srow { display: flex; align-items: flex-start; gap: 14px; padding: 10px 0; }
+.srow + .srow { border-top: 1px solid var(--border-soft); }
+.srow .lbl { flex: 1; }
+.srow .lbl .n { font-size: 13px; color: var(--text); font-weight: 500; }
+.srow .lbl .d { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+.srow .ctl { flex: none; padding-top: 1px; }
+
+.toggle { width: 34px; height: 19px; border-radius: 999px; background: var(--overlay);
+  border: 1px solid var(--border-strong); position: relative; cursor: pointer; flex: none; }
+.toggle i { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
+  background: var(--text-faint); }
+.toggle.on { background: var(--accent-soft); border-color: rgba(240,180,41,.5); }
+.toggle.on i { left: 17px; background: var(--accent); }
+
+.inp { background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 12px; padding: 5px 8px; font-family: var(--mono); width: 96px; text-align: right; }
+.inp.wide { width: 186px; text-align: left; }
+.inp.unset { color: var(--text-faint); font-family: var(--font); font-style: italic; }
+/* A row whose control cannot share the line with its label. */
+.srow.stacked { display: block; }
+.srow.stacked .ctl { padding-top: 8px; }
+.ctl.full { display: block; }
+.inp.url { width: 100%; text-align: left; box-sizing: border-box; }
+
+/* Amber is lamp state and levels only, so ROLE must not borrow it — a
+   controller holding the bus is not a lamp. `ok` for the unit that is driving,
+   plain surface for the one that is not: the pair reads as a pair, and neither
+   competes with a level anywhere else on screen. */
+.val { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.val.faint { color: var(--text-faint); }
+.pill { font-size: 11.5px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--raised); color: var(--text-muted); font-family: var(--font); }
+.pill.ok { background: var(--ok-soft); border-color: rgba(70,194,106,.4); color: var(--ok); }
+.pill.info { background: var(--info-soft); border-color: rgba(77,163,255,.4); color: var(--info); }
+
+.btn { padding: 6px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+.btn:disabled { opacity: .4; cursor: default; }
+.head .spacer { flex: 1; }
+.head .btnbar { display: flex; gap: 8px; align-self: center; }
+
+/* The switchover time the owner asked to have recorded. A table, because the
+   question after an incident is "what happened, in what order" — and `took`
+   is the number, so it is the one column in mono. */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+thead th { text-align: left; font-size: 10.5px; color: var(--text-faint); text-transform: uppercase;
+  letter-spacing: .06em; font-weight: 500; padding: 0 10px 7px 0; border-bottom: 1px solid var(--border); }
+tbody td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--border-soft); color: var(--text-muted); }
+tbody tr:last-child td { border-bottom: none; }
+td.mono { font-family: var(--mono); color: var(--text); }
+.hint { font-size: 11.5px; color: var(--text-faint); margin: 0; }
+
+.warnbar { background: var(--warn-soft); border: 1px solid rgba(227,160,8,.35); border-radius: var(--radius-sm);
+  padding: 9px 12px; font-size: 11.5px; color: var(--warn); margin: 0 0 14px; }
+/* A notice that FOLLOWS something gets a gap; one that opens a screen does
+   not. It was sitting flush against the card above it — two stacked bands with
+   no separation. Must come after the shorthand: same specificity, and
+   `margin: 0 0 14px` resets `margin-top`. */
+* + .warnbar { margin-top: 14px; }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="state-label"><span>The unit driving the bus</span><span class="ln"></span></div>
+  <div class="head">
+    <h1>Redundancy</h1>
+    <span class="crumb">Settings</span>
+    <span class="spacer"></span>
+    <span class="btnbar">
+      <button class="btn" disabled>Discard</button>
+      <button class="btn primary" disabled>Apply</button>
+    </span>
+  </div>
+  <p class="sub">A second controller on this segment, silent while the first is alive. The wire decides which is which; the network never does.</p>
+
+  <div class="panel">
+    <h2>Role</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Enabled</div>
+          <div class="d">Off: nothing probes, nothing takes over, and this controller behaves exactly as a single controller always has.</div>
+        </div>
+        <div class="ctl"><span class="toggle on"><i></i></span></div>
+      </div>
+      <!-- Two values, so a switch rather than a select — but the caption has to
+           carry the asymmetry, because the two roles run different algorithms
+           and "off" is not "not a standby", it is "dominant". -->
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">This controller is a standby</div>
+          <div class="d">DiiA 351 §5 gives the arbitration algorithm to type B alone. On: this unit asks. Off: it is a primary &mdash; dominant, never asks and never stands down of its own accord.</div>
+        </div>
+        <div class="ctl"><span class="toggle"><i></i></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Detection</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Probe interval, ms</div>
+          <div class="d">How often a standby asks the segment whether it still has an owner. 250&ndash;60000. One probe is ~38&nbsp;ms of wire at the lowest priority, so 250&nbsp;ms is already about 15&nbsp;% of the bus.</div>
+        </div>
+        <div class="ctl"><input class="inp" value="400" readonly></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Take the bus after</div>
+          <div class="d">Consecutive unanswered probes. Never one by default: a missed query is indistinguishable from a NO (102 §3.13 Note&nbsp;1), so a single lost frame must not move the bus.</div>
+        </div>
+        <div class="ctl"><input class="inp" value="2" readonly></div>
+      </div>
+      <!-- Computed, not quoted. The operator turns two knobs and decides on a
+           third number; making them multiply it in their head hides the answer
+           behind arithmetic. -->
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Worst-case detection</div>
+          <div class="d">Misses × interval, plus one exchange.</div>
+        </div>
+        <div class="ctl"><span class="val">0.86 s</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Peer short address</div>
+          <div class="d">The peer&rsquo;s Part&nbsp;103 control-device address (0&ndash;63, empty = none). Needed only for a planned switchover; the probe is broadcast.</div>
+        </div>
+        <div class="ctl"><input class="inp" value="3" readonly></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Configuration pull</h2>
+    <div class="body">
+      <!-- Stacked, and that is the fix rather than a wider control column: the
+           value is up to sixty-four characters against a 62 px input, and
+           widening the column instead would squeeze the label and the hint
+           that explain the field. Reported as "поле ввода уехало". -->
+      <div class="srow stacked">
+        <div class="lbl">
+          <div class="n">Peer API address</div>
+          <div class="d">http://host[:port] of the other controller. A standby pulls names, bindings, schedules and rules from it every 30&nbsp;s. Empty = no pull, and the standby owns an installation it knows nothing about.</div>
+        </div>
+        <div class="ctl full"><input class="inp url" value="http://192.168.1.11" readonly></div>
+      </div>
+      <!-- Stated rather than implied: intuition says the active unit hands its
+           configuration over, and the truth is the exact opposite. -->
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Direction</div>
+          <div class="d">Only a passive unit pulls, and it never pushes. The active controller is the source, so a takeover cannot overwrite the peer with a copy of itself.</div>
+        </div>
+        <div class="ctl"><span class="hint">Passive pulls from the active one.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Now</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Driving the bus</div>
+          <div class="d">103 §9.9.1 applicationActive.</div>
+        </div>
+        <div class="ctl"><span class="pill ok">yes</span></div>
+      </div>
+      <!-- "Answering" and "driving" are separate rows on purpose: on a healthy
+           standby both are no, and on a primary whose watched workers have
+           wedged the first goes false BEFORE the second. That gap is the
+           liveness lease, and it is the only place it is visible. -->
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Answering probes</div>
+          <div class="d">Whether this controller would answer a peer&rsquo;s probe right now. False on a healthy standby &mdash; and false on a primary whose watched workers stopped turning, which is the liveness lease, visible.</div>
+        </div>
+        <div class="ctl"><span class="pill ok">yes</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Lease left</div>
+          <div class="d">Renewed once a second while the watched workers turn.</div>
+        </div>
+        <div class="ctl"><span class="val">2740 ms</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Probes</div>
+          <div class="d">Answered / unanswered since boot.</div>
+        </div>
+        <div class="ctl"><span class="val faint">0 owned · 0 unowned</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Pulled from the peer</div>
+          <div class="d">Slices written locally / passes that could not reach the peer. An unreachable peer never moves the role: the arbitration worker reads no network state at all.</div>
+        </div>
+        <div class="ctl"><span class="val faint">0 pulled · 0 unreachable</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Hand the bus to the peer</div>
+          <div class="d">Enables the peer, then stands this one down. The lights do not move. Only the controller holding the bus can give it away &mdash; 103 §9.9.1 leaves a passive one no legal way to take it.</div>
+        </div>
+        <div class="ctl"><button class="btn">Switch over</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Changes of hands</h2>
+    <div class="body">
+      <p class="hint">Nothing yet. A failover that happens leaves a row here.</p>
+    </div>
+  </div>
+
+  <div class="state-label"><span>The standby, after it took the bus and gave it back</span><span class="ln"></span></div>
+
+  <div class="panel">
+    <h2>Now</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Driving the bus</div>
+          <div class="d">103 §9.9.1 applicationActive.</div>
+        </div>
+        <div class="ctl"><span class="pill">no</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Answering probes</div>
+          <div class="d">Whether this controller would answer a peer&rsquo;s probe right now. False on a healthy standby &mdash; and false on a primary whose watched workers stopped turning, which is the liveness lease, visible.</div>
+        </div>
+        <div class="ctl"><span class="pill">no</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Lease left</div>
+          <div class="d">Renewed once a second while the watched workers turn.</div>
+        </div>
+        <div class="ctl"><span class="val faint">0 ms</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Probes</div>
+          <div class="d">Answered / unanswered since boot.</div>
+        </div>
+        <div class="ctl"><span class="val">812 owned · 3 unowned</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Pulled from the peer</div>
+          <div class="d">Slices written locally / passes that could not reach the peer. An unreachable peer never moves the role: the arbitration worker reads no network state at all.</div>
+        </div>
+        <div class="ctl"><span class="val">9 pulled · 2 unreachable</span></div>
+      </div>
+      <!-- Disabled on a passive unit because the server refuses it there
+           (`not_the_active_controller`), not because it looks tidy: 103 §9.9.1
+           gives a passive controller no legal way to take the bus. -->
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Hand the bus to the peer</div>
+          <div class="d">Enables the peer, then stands this one down. The lights do not move. Only the controller holding the bus can give it away &mdash; 103 §9.9.1 leaves a passive one no legal way to take it.</div>
+        </div>
+        <div class="ctl"><button class="btn" disabled>Switch over</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Changes of hands</h2>
+    <div class="body">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Became</th><th>Why</th><th>Took</th><th>Missed</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="pill">standby</span></td><td class="mono">peer_answered</td><td class="mono">38 ms</td><td class="mono">0</td></tr>
+            <tr><td><span class="pill info">active</span></td><td class="mono">peer_silent</td><td class="mono">46 ms</td><td class="mono">2</td></tr>
+            <tr><td><span class="pill">standby</span></td><td class="mono">boot</td><td class="mono">4 ms</td><td class="mono">0</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="state-label"><span>Switched off &mdash; everything above is configuration for later</span><span class="ln"></span></div>
+
+  <p class="warnbar">Redundancy is off: nothing probes and nothing takes over. Everything above is configuration for when it is on.</p>
+
+</div>
+</body>
+</html>

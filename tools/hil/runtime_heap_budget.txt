@@ -1,0 +1,2 @@
+# <figure> <floor in bytes>; -1 = not measured yet, reported and not gated
+internal_min_free      300000

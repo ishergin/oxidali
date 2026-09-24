@@ -1,0 +1,199 @@
+<!-- @dsCard group="Screens" name="Rules editor" subtitle="Rule list left, one rule's text right; the whole document stays the canon behind a tab" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rules editor — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 40px; }
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.head .sub { font-size: 12px; color: var(--text-faint); }
+.spacer { flex: 1; }
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+.badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
+.badge.addr { color: var(--text); background: var(--overlay); }
+.badge.dt8 { color: var(--info); border-color: rgba(77,163,255,.3); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.accent { color: var(--accent-strong); background: var(--accent-soft); }
+.chip.idle { color: var(--text-muted); background: var(--raised); }
+.chip.err { color: var(--err); background: var(--err-soft); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
+.cols { display: grid; grid-template-columns: 300px 1fr; gap: 14px; align-items: start; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.panel > h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-muted);
+  font-weight: 600; margin: 0; padding: 9px 13px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px; }
+.panel > h2 .spacer { flex: 1; }
+.rlist { padding: 4px 0; }
+.rrow { display: flex; align-items: center; gap: 9px; padding: 8px 13px; cursor: pointer;
+  border-left: 2px solid transparent; }
+.rrow + .rrow { border-top: 1px solid rgba(42,51,64,.5); }
+.rrow:hover { background: rgba(35,44,56,.5); }
+.rrow.on { background: var(--overlay); border-left-color: var(--accent); }
+.rrow .nm { font-size: 13px; font-weight: 550; flex: 1; }
+.rrow .nm .sub { display: block; font-size: 11px; color: var(--text-faint); font-weight: 400; }
+.rrow.off .nm { color: var(--text-faint); }
+.toggle { width: 30px; height: 17px; border-radius: 999px; background: var(--overlay);
+  border: 1px solid var(--border-strong); position: relative; flex: none; }
+.toggle i { position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%;
+  background: var(--text-faint); }
+.toggle.on { background: var(--accent-soft); border-color: rgba(240,180,41,.5); }
+.toggle.on i { left: 15px; background: var(--accent); }
+.tabs { display: flex; gap: 2px; padding: 0 13px; border-bottom: 1px solid var(--border); }
+.tabs .t { padding: 8px 11px; font-size: 12px; color: var(--text-muted); border-bottom: 2px solid transparent;
+  cursor: pointer; }
+.tabs .t.on { color: var(--text); border-bottom-color: var(--accent); }
+.ed { font-family: var(--mono); font-size: 12.5px; line-height: 1.65; padding: 12px 14px;
+  white-space: pre; overflow-x: auto; }
+.ed .kw { color: var(--accent-strong); }
+.ed .str { color: var(--ok); }
+.ed .cm { color: var(--text-faint); font-style: italic; }
+.bar { display: flex; align-items: center; gap: 10px; padding: 8px 13px; border-top: 1px solid var(--border);
+  font-size: 11.5px; color: var(--text-faint); }
+.bar .ok { color: var(--ok); }
+.hint { font-size: 11.5px; color: var(--text-faint); margin: 10px 0 0; max-width: 74ch; }
+.hint b { color: var(--text-muted); font-weight: 550; }
+.conflict { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; padding: 8px 12px;
+  border-radius: var(--radius-sm); background: var(--warn-soft); border: 1px solid rgba(227,160,8,.35);
+  font-size: 12px; color: var(--text); }
+.conflict b { color: var(--warn); }
+.editor { position: relative; }
+.errline { position: absolute; left: 0; right: 0; height: 20px; background: var(--err-soft);
+  border-left: 2px solid var(--err); pointer-events: none; }
+.parse-msg { padding: 7px 14px; border-top: 1px solid var(--border); font-family: var(--mono);
+  font-size: 11.5px; color: var(--err); }
+.snip { display: inline-flex; padding: 3px 9px; border-radius: 999px; font-size: 11.5px;
+  border: 1px solid var(--border-strong); background: var(--raised); color: var(--text-muted);
+  margin: 0 6px 6px 0; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="head">
+    <h1>Rules</h1>
+    <span class="sub">4 rules · revision 12 · 1 284 B of 12 240</span>
+    <span class="spacer"></span>
+    <button class="btn">Check</button>
+    <button class="btn">Dry-run</button>
+    <button class="btn primary">Save</button>
+  </div>
+
+  <div class="conflict">
+    <span><b>Document changed on the device.</b> Someone saved revision 13 while you edited 12 —
+    saving now would be refused (409). Reload replaces your draft; Keep mine re-arms Save against
+    the fresh revision, and the overwrite still needs a second explicit Save.</span>
+  </div>
+
+  <div class="cols">
+    <div class="panel">
+      <h2>Rules <span class="spacer"></span><span class="badge">+ new</span></h2>
+      <div class="rlist">
+        <div class="rrow on">
+          <span class="toggle on"><i></i></span>
+          <span class="nm">кнопка 1: лампа2<span class="sub">short_press · 1 action</span></span>
+        </div>
+        <div class="rrow">
+          <span class="toggle on"><i></i></span>
+          <span class="nm">кнопка 2: ночной режим<span class="sub">short_press · 3 actions</span></span>
+        </div>
+        <div class="rrow">
+          <span class="toggle on"><i></i></span>
+          <span class="nm">ночь: вход<span class="sub">2 triggers · 1 condition</span></span>
+        </div>
+        <div class="rrow off">
+          <span class="toggle"><i></i></span>
+          <span class="nm">зимний режим<span class="sub">disabled</span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="tabs">
+        <span class="t on">This rule</span>
+        <span class="t">Whole document</span>
+      </div>
+      <div class="errline" style="top: 96px;"></div>
+      <div class="ed"><span class="cm"># Панель test1: кнопка 1 — свет SA01.</span>
+<span class="kw">rule</span> <span class="str">"кнопка 1: лампа2"</span> {
+  <span class="kw">when</span> input(dev=0, inst=0) <span class="kw">is</span> short_press
+  <span class="kw">do</span>   lamp(<span class="str">"лампа2"</span>).toggle(fade=0.7s)
+       panel_select(group=1, selected=0)
+}</div>
+      <div class="parse-msg">12:14 · unknown block "ночной контурр" — did you mean "ночной контур"?</div>
+      <div class="bar"><span class="ok">✓ parses</span> · 1 rule · edits splice back into the stored document</div>
+    </div>
+    <div class="panel" style="grid-column: 1 / -1;">
+      <h2>Snippets</h2>
+      <div style="padding: 10px 13px 6px;">
+        <span class="snip">toggle button</span><span class="snip">night light</span>
+        <span class="snip">staircase timer</span><span class="snip">away</span>
+        <span class="snip">scene panel + LEDs</span>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint"><b>One rule at a time, one document underneath.</b> The device stores the
+  operator's source byte-for-byte — comments included — so the list and the per-rule pane are
+  a view, not a second format: saving splices the edited rule back and writes the whole
+  document under one revision. <b>Whole document</b> is the same text unscoped, for the edits
+  a single rule cannot express (a <span class="badge">def</span> block, reordering, a comment
+  header).</p>
+</div>
+</body>
+</html>

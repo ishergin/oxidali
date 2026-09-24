@@ -1,0 +1,12 @@
+[package]
+name = "dali2rust-gear-model"
+description = "Stateful fake DALI control gear (IEC 62386-102/207/209 slave side)"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+dali2rust-domain = { path = "../dali2rust-domain" }
+dali2rust-platform = { path = "../dali2rust-platform" }

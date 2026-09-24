@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  host:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install just and ripgrep (verification scripts)
+        run: brew install just ripgrep
+
+      - name: cargo clippy
+        run: just clippy
+
+      - name: cargo test (host crates)
+        run: just test
+
+      - name: BDD
+        run: just bdd
+
+      - name: Merge-gate verification scripts
+        run: just verify
+
+  clippy-pedantic-advisory:
+    name: clippy pedantic (advisory)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: cargo clippy (pedantic + allowlist)
+        continue-on-error: true
+        env:
+          CLIPPY_HOST_TARGET: aarch64-apple-darwin
+        run: bash scripts/run_clippy_pedantic_advisory.sh
+
+  esp32:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install just
+        run: brew install just
+
+      - name: Install Rust nightly + espup
+        run: |
+          rustup toolchain install nightly
+          cargo install espup
+          espup install
+          . $HOME/export-esp.sh
+
+      - name: cargo check (ESP32-P4)
+        run: |
+          . $HOME/export-esp.sh
+          just esp-check

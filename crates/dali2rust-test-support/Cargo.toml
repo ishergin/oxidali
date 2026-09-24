@@ -1,0 +1,14 @@
+[package]
+name = "dali2rust-test-support"
+description = "Shared host-side test helpers and port doubles"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+dali2rust-bsp = { path = "../dali2rust-bsp" }
+dali2rust-bus = { path = "../dali2rust-bus" }
+dali2rust-contracts = { path = "../dali2rust-contracts" }
+dali2rust-platform = { path = "../dali2rust-platform" }

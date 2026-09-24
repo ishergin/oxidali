@@ -1,0 +1,20 @@
+[package]
+name = "dali2rust-bus"
+description = "Bus: typed frames + std mpsc backend"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = ["std"]
+std = ["dep:log"]
+
+[dependencies]
+dali2rust-bsp = { path = "../dali2rust-bsp" }
+dali2rust-contracts = { path = "../dali2rust-contracts" }
+log = { version = "0.4", optional = true }
+
+[dev-dependencies]
+dali2rust-test-support = { path = "../dali2rust-test-support" }

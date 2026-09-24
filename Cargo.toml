@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/dali2rust-contracts",
+    "crates/dali2rust-bus",
+    "crates/dali2rust-domain",
+    "crates/dali2rust-platform",
+    "crates/dali2rust-api",
+    "crates/dali2rust-dali-phy",
+    "crates/dali2rust-dali-codec",
+    "crates/dali2rust-gear-model",
+    "crates/dali2rust-adapters",
+    "crates/dali2rust-test-support",
+    "crates/dali2rust-registry-runtime",
+    "crates/dali2rust-operations-runtime",
+    "crates/dali2rust-fanout-runtime",
+    "crates/dali2rust-hcl-runtime",
+    "crates/dali2rust-ota-runtime",
+    "crates/dali2rust-poller-runtime",
+    "crates/dali2rust-redundancy-runtime",
+    "crates/dali2rust-ws-runtime",
+    "crates/dali2rust-mqtt-runtime",
+    "crates/dali2rust-rules-model",
+    "crates/dali2rust-rules-runtime",
+    "crates/dali2rust-rules-lang",
+    "crates/dali2rust-display-runtime",
+    "crates/dali2rust-dali-runtime",
+    "crates/dali2rust-bsp",
+    "crates/dali2rust-firmware",
+    "crates/dali2rust-p4-bringup",
+    "tests/dali2rust-bdd",
+]
+exclude = ["target"]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Igor Shergin <ishergin@gmail.com>"]
+edition = "2021"
+rust-version = "1.82"
+license = "MIT OR Apache-2.0"
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true
+opt-level = "z"
+
+[profile.dev.package.dali2rust-dali-phy]
+debug-assertions = false
+
+[profile.test.package.dali2rust-dali-phy]
+debug-assertions = true

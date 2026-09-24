@@ -1,0 +1,174 @@
+<!-- @dsCard group="Components" name="Status chips" subtitle="DALI status flags, power, source, operation states, dirty" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Status chips — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.wrap { padding: 24px; max-width: 780px; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); margin: 22px 0 10px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 500;
+  border: 1px solid transparent;
+}
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.ok   { color: var(--ok);   background: var(--ok-soft);   border-color: rgba(70,194,106,.25); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); border-color: rgba(227,160,8,.28); }
+.chip.err  { color: var(--err);  background: var(--err-soft);  border-color: rgba(242,85,90,.28); }
+.chip.info { color: var(--info); background: var(--info-soft); border-color: rgba(77,163,255,.28); }
+.chip.idle { color: var(--text-muted); background: var(--raised); border-color: var(--border); }
+.chip.accent { color: var(--accent-strong); background: var(--accent-soft); border-color: rgba(240,180,41,.3); }
+
+.chip.spin .dot { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+
+/* Type badge: squared, mono */
+.badge {
+  display: inline-flex; align-items: center;
+  padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px;
+  background: var(--raised); color: var(--text-muted); border: 1px solid var(--border);
+}
+.badge.dt8 { color: var(--info); border-color: rgba(77,163,255,.3); }
+.badge.addr { color: var(--text); background: var(--overlay); }
+.note { color: var(--text-muted); font-size: 13px; line-height: 1.55; max-width: 62ch; margin: 8px 0 0; }
+.note code { font-family: var(--mono, ui-monospace, monospace); color: var(--text); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>Power / presence</h2>
+  <div class="row">
+    <span class="chip accent"><span class="dot"></span>On · 254</span>
+    <span class="chip idle"><span class="dot"></span>Off</span>
+    <span class="chip idle"><span class="dot"></span>Unknown</span>
+    <span class="chip ok"><span class="dot"></span>Present</span>
+    <span class="chip err"><span class="dot"></span>Unreachable</span>
+  </div>
+
+  <h2>DALI status flags (QueryStatus)</h2>
+  <!-- All eight bits of IEC 62386-102 table 12, named after the §9.16
+       variables. Two of them are not faults and must not read as one:
+       "Fade running" and "Lamp lit" are `info`, so the summary chip in the
+       devices table stays "OK" while they are raised. -->
+  <div class="row">
+    <span class="chip err"><span class="dot"></span>Lamp failure</span>
+    <span class="chip err"><span class="dot"></span>Gear failure</span>
+    <span class="chip info"><span class="dot"></span>Lamp lit</span>
+    <span class="chip warn"><span class="dot"></span>Limit error</span>
+    <span class="chip info spin"><span class="dot"></span>Fade running</span>
+    <span class="chip warn"><span class="dot"></span>Reset state</span>
+    <span class="chip warn"><span class="dot"></span>No short address</span>
+    <span class="chip warn"><span class="dot"></span>Power cycle seen</span>
+  </div>
+  <!-- "Lamp lit" is bit 2 `lampOn` (§9.16.4): FALSE when the lamp is off,
+       during startup, and on total lamp failure. It is the only thing that
+       separates "the gear reports light" from "level > 0" — so it must not be
+       captioned as an on/off duplicate of the power chip above.
+
+       "Power cycle seen" was captioned "Power failure" until 2026-08-16, which
+       named a fault the gear never reported: §9.16.9 calls the bit
+       `powerCycleSeen`, and §11.5.15 makes QUERY POWER FAILURE a legacy
+       spelling of the same bit. Amber because a gear that rebooted since we
+       last drove it has stale RAM state, not because anything failed. -->
+
+
+  <h2>Attribute source / freshness</h2>
+  <div class="row">
+    <span class="chip ok"><span class="dot"></span>readback · 12 s</span>
+    <span class="chip info"><span class="dot"></span>write-confirmed · 3 m</span>
+    <span class="chip idle"><span class="dot"></span>never read</span>
+  </div>
+
+  <h2>Operation lifecycle</h2>
+  <div class="row">
+    <span class="chip idle"><span class="dot"></span>accepted</span>
+    <span class="chip info spin"><span class="dot"></span>running</span>
+    <span class="chip ok"><span class="dot"></span>succeeded</span>
+    <span class="chip err"><span class="dot"></span>failed</span>
+    <span class="chip warn"><span class="dot"></span>timed out</span>
+    <span class="chip idle"><span class="dot"></span>cancelled</span>
+    <span class="chip idle"><span class="dot"></span>unknown</span>
+  </div>
+  <p class="note">
+    <b>unknown</b> is neutral on purpose, and it is not the same as a failure.
+    The controller keeps a finished operation for sixty seconds; a client that
+    asks after that gets a <code>404</code> and genuinely cannot learn how it
+    ended. Painting that green claimed a write had landed — the screens act on
+    that answer, clearing an operator's edited rows — and painting it red would
+    accuse a write that most likely succeeded. Neutral says the one true thing:
+    nobody knows any more.
+  </p>
+
+  <h2>Config sync ("dirty")</h2>
+  <div class="row">
+    <span class="chip ok"><span class="dot"></span>In sync</span>
+    <span class="chip warn"><span class="dot"></span>3 pending changes</span>
+  </div>
+
+  <h2>Type & address badges</h2>
+  <div class="row">
+    <span class="badge addr">A0 · 04</span>
+    <span class="badge">DT6 LED</span>
+    <span class="badge dt8">DT8 CCT</span>
+    <span class="badge dt8">DT8 RGB</span>
+    <span class="badge">VL 12</span>
+    <span class="badge">G7</span>
+    <span class="badge">Scene 2</span>
+  </div>
+</div>
+</body>
+</html>

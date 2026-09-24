@@ -1,0 +1,370 @@
+<!-- @dsCard group="Screens" name="Device detail — memory banks" subtitle="Three bank tabs: identity (banks 0/1, bus unit, Part 251), energy (202–204), diagnostics (205–207), with per-bank read coverage" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Device detail — memory banks — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 40px; }
+.taglabel { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint);
+  margin: 26px 0 8px; }
+.taglabel:first-of-type { margin-top: 0; }
+
+.badge { display: inline-flex; padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+
+/* Page-level tab bar — spec and colour rationale in the "Page tab bar" card. */
+.ptabs { display: flex; gap: 2px; align-items: stretch; }
+/* One line, hint inline after the label. Stacked (label over hint) the three
+   bank tabs were taller than the other three, so with any vertical alignment
+   the LABELS stopped lining up — the eye reads a tab bar by its labels, and a
+   caption is not worth breaking that for. */
+.ptab { display: flex; align-items: baseline; gap: 7px; padding: 7px 14px 8px;
+  border: 1px solid transparent; border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: none; color: var(--text-muted); font-family: var(--font); font-size: 13px;
+  font-weight: 550; cursor: pointer; text-decoration: none; white-space: nowrap; }
+.ptab:hover { color: var(--text); background: var(--raised); }
+.ptab.active { color: var(--text); background: var(--surface); border-color: var(--border); cursor: default; }
+.ptab .hint { font-family: var(--mono); font-size: 10px; color: var(--text-faint); font-weight: 400; }
+.ptab.active .hint { color: var(--text-muted); }
+.ptab .unread { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--text-faint); margin-left: 6px; vertical-align: middle; }
+.ptabline { height: 1px; background: var(--border); margin-bottom: 14px; }
+
+/* Section grid */
+.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.card header { display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
+.card header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+.act { font-size: 11px; color: var(--info); background: none; border: none; cursor: pointer; font-family: var(--font); }
+
+.attr { display: grid; grid-template-columns: 1fr 116px 104px; column-gap: 12px; row-gap: 3px;
+  align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.attr:last-child { border-bottom: none; }
+.attr .k { color: var(--text-muted); font-size: 13px; }
+.attr .v { font-family: var(--mono); font-size: 13px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.attr .v.plain { padding-right: 8px; }
+.attr .v .unit { color: var(--text-faint); font-size: 11px; width: 20px; text-align: left; flex: none; }
+.attr .src { justify-self: end; }
+/* Wide read-only rows (identity / banks): the value is a big number with a hex
+   form AND still needs the provenance chip. The value column sizes to content,
+   the hex stacks UNDER the decimal so the row cannot grow into the chip. */
+.attr.wide { grid-template-columns: 1fr minmax(0, auto) auto; }
+.attr.wide .v { flex-direction: column; align-items: flex-end; gap: 1px; min-width: 0; padding-right: 8px; }
+.attr.wide .v.rowv { flex-direction: row; align-items: center; gap: 8px; }
+.attr.wide .v .hex { font-size: 11px; color: var(--text-faint); }
+/* A 60-character DiiA Part 251 string has no hex form to stack and must WRAP
+   rather than be clipped: a luminaire identification truncated mid-word is
+   worse than a taller row. */
+.attr.text { grid-template-columns: 1fr auto; }
+.attr.text .v { grid-column: 1 / -1; justify-content: flex-start; padding-right: 0;
+  white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.attr.text .k { grid-column: 1; }
+.attr.text .src { grid-column: 2; }
+.attr .v .scale { color: var(--text-faint); font-size: 11px; margin-left: 6px; font-family: var(--mono); }
+.mono { font-family: var(--mono); font-size: 12px; }
+.raw { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-left: 6px; }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+.chip.muted { color: var(--text-faint); background: var(--raised); }
+.chip.tmask { color: var(--info); background: var(--info-soft); }
+/* A TMASK held past DiiA 252 §9.2.4's 30 s stops being "settling" and starts
+   being evidence of a fault, so it earns the warn hue rather than the info one.
+   Amber is NOT available here: it is reserved for lamp state and levels. */
+.chip.tmask.stale { color: var(--warn); background: var(--warn-soft); }
+/* A Part 251 value outside its OWN field's range of validity — the gear saying
+   "unknown", which differs from a location never read (that row is absent).
+   Muted, not warn: an unprogrammed asset field is ordinary, not a fault. */
+.chip.unknown { color: var(--text-faint); background: var(--raised); }
+
+.cond { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px;
+  padding: 5px 14px; border-top: 1px solid var(--border); }
+.cond .k { font-size: 13px; color: var(--text-muted); }
+.cond .n { font-family: var(--mono); font-size: 12px; color: var(--text-faint); }
+
+.src { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+.src .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.src.readback { color: var(--ok); background: var(--ok-soft); }
+.src.stale { color: var(--text-faint); background: var(--raised); }
+
+.hint { font-size: 11px; color: var(--text-faint); margin: 8px 14px 4px; }
+
+/* Per-bank read coverage. Its own row rather than a card: it is provenance for
+   every value on these three tabs, and it comes from its own endpoint
+   (GET …/memory-banks) rather than from the attribute sections. */
+.banks { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
+.bankchip { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 9px;
+  border: 1px solid var(--border); border-radius: 999px; font-family: var(--mono); font-size: 11px;
+  color: var(--text-muted); }
+.bankchip .n { color: var(--text); }
+.bankchip .age { color: var(--text-faint); font-size: 10px; }
+.bankchip.never { color: var(--text-faint); border-style: dashed; }
+
+/* Empty state: the section exists but nothing has been read into it. A
+   sentence and the button that fixes it — never a blank card, which reads as
+   "this gear has none" when it means "nobody has asked". */
+.empty { padding: 22px 14px; text-align: center; color: var(--text-faint); font-size: 12px; }
+.empty .btn { margin-top: 10px; }
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumbs"><a href="#">Adapter 0</a> / SA 04 · Memory banks</div>
+
+
+  <div class="taglabel">Tab · Identity — <span class="mono">?sections=memory_identity,memory_profile,memory_bus_unit,memory_luminaire</span> + <span class="mono">GET …/memory-banks</span></div>
+  <div class="ptabs">
+    <a class="ptab" href="#">Overview</a>
+    <a class="ptab" href="#">Levels &amp; fade</a>
+    <a class="ptab" href="#">Groups &amp; scenes</a>
+    <a class="ptab active" href="#">Identity<span class="hint">banks 0 · 1</span></a>
+    <a class="ptab" href="#">Energy<span class="hint">banks 202–204</span></a>
+    <a class="ptab" href="#">Diagnostics<span class="hint">banks 205–207</span></a>
+  </div>
+  <div class="ptabline"></div>
+
+  <div class="grid">
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Read coverage</h3><button class="act">↻ Read memory banks</button></header>
+      <!-- What has actually been read, per bank, with its age. This is the row
+           that answers "is the number above stale or absent", and it is why the
+           bank endpoint is separate: the coverage changes on every read while
+           the values themselves may not, and a client can poll one without the
+           other. Bytes never reach the wire — only which ranges were read. -->
+      <div class="banks">
+        <span class="bankchip">bank 0 <span class="n">27 B</span><span class="age">2 h</span></span>
+        <span class="bankchip">bank 1 <span class="n">17 B</span><span class="age">2 h</span></span>
+        <span class="bankchip">bank 202 <span class="n">12 B</span><span class="age">3 m</span></span>
+        <span class="bankchip">bank 205 <span class="n">31 B</span><span class="age">2 m</span></span>
+        <span class="bankchip never">bank 207 <span class="n">never read</span></span>
+      </div>
+    </div>
+
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Identity &amp; memory banks</h3><span class="badge">banks 0 · 1</span></header>
+      <div class="attr wide"><span class="k">GTIN</span><span class="v">6748243557378<span class="hex">0x62332A8FC0</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr wide"><span class="k">Serial number</span><span class="v">17942340919319566000<span class="hex">0xF9000000E6FF9B00</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr"><span class="k">Firmware / hardware version</span><span class="v plain">1.255 / 0.8<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr"><span class="k">DALI part versions (101 / 102 / 103)</span><span class="v plain">2.0 / 63.3 / —<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr"><span class="k">Logical units (device / gear / gear index)</span><span class="v plain">1 / 0 / 0<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr"><span class="k">Last accessible memory bank</span><span class="v plain">1<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr wide"><span class="k">OEM GTIN</span><span class="v">96908197035263<span class="hex">0x582332A8FCFF</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr wide"><span class="k">OEM serial number</span><span class="v">17942340919319566000<span class="hex">0xF9000000E6FF9B00</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr wide"><span class="k">Bank 1 lock byte</span><span class="v rowv">0x06 <span class="chip warn">locked</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <!-- Memory bank 0 above 0x1A — DiiA(SW)098bp §7.2.7. NOT in IEC 62386-102:2014,
+           whose Table 9 calls [0x1B,0x7F] "Reserved - not implemented": a gear that
+           answers nothing here is conforming, and the row is simply absent.
+           Table 5's rows 0-8 are illegible in the repository's copy of 098bp, so a
+           configuration in that range is rendered as a bare number with no name —
+           inventing a label would be worse than admitting the source is missing. -->
+      <div class="attr wide"><span class="k">Bus unit configuration</span><span class="v rowv">2 <span class="chip muted">unnamed row</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr wide"><span class="k">Implemented parts (15x)</span><span class="v">Part 151, Part 153<span class="hex">0x05 · 8 bits read</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <!-- DiiA Part 251 strings. The only symbolic names a gear itself carries —
+           there is no "query name" command in 102 — and they belong beside GTIN
+           and the serial because they answer the same question: what is this
+           thing. Display-only: dev.name keeps exactly one writer, the operator,
+           because a vendor string ("LED-Panel-600-4000K") and a name by place
+           ("kitchen, centre") are different facts. -->
+      <div class="attr text"><span class="k">Luminaire identification</span><span class="src readback"><span class="dot"></span>readback · 0 s</span><span class="v">DALI2RUST BENCH LUMINAIRE 0001 / ASSET TAG A-000000000000000</span></div>
+      <div class="attr text"><span class="k">Luminaire colour</span><span class="src readback"><span class="dot"></span>readback · 0 s</span><span class="v">warm white</span></div>
+    </div>
+
+    <!-- DiiA Part 251 numbers, split off from the identity card on purpose:
+         "what is this thing" and "what does it do" are different questions, and
+         one card carrying both runs to ~30 rows. The whole card is gated on the
+         content format ID at 0x11/0x12 — without a recognised 3/4/5 there, 102
+         Table 10 makes everything above 0x10 manufacturer-specific and none of
+         these rows means anything. -->
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Luminaire data</h3><span class="badge">bank 1 · Part 251</span></header>
+      <div class="attr"><span class="k">Content format</span><span class="v plain">3<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr"><span class="k">Manufactured (year / week)</span><span class="v plain">2023 / W02<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr"><span class="k">Nominal input power</span><span class="v plain">31<span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr"><span class="k">Power at minimum</span><span class="v plain">3<span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr"><span class="k">Mains voltage range</span><span class="v plain">198–264<span class="unit">V</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr"><span class="k">Nominal light output</span><span class="v plain">3001<span class="unit">lm</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr"><span class="k">CRI</span><span class="v plain">81<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <!-- MASK-1 at 0x21/0x22 is not "temporarily unavailable" — Part 251 has no
+           TMASK at all. It means Part 209 is implemented, i.e. the luminaire is
+           tunable and a single CCT is not a meaningful answer. -->
+      <div class="attr wide"><span class="k">CCT</span><span class="v rowv"><span class="chip muted">tunable · Part 209</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <div class="attr wide"><span class="k">Light distribution type</span><span class="v rowv">Type II</span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <!-- Week 0 is the standard's "unknown" encoding, not week zero. -->
+      <div class="attr wide"><span class="k">Manufactured (week)</span><span class="v rowv">— <span class="chip unknown">unknown</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+    </div>
+  </div>
+
+  <div class="taglabel">Tab · Energy — <span class="mono">?sections=memory_energy</span></div>
+  <div class="ptabs">
+    <a class="ptab" href="#">Overview</a>
+    <a class="ptab" href="#">Levels &amp; fade</a>
+    <a class="ptab" href="#">Groups &amp; scenes</a>
+    <a class="ptab" href="#">Identity<span class="hint">banks 0 · 1</span></a>
+    <a class="ptab active" href="#">Energy<span class="hint">banks 202–204</span></a>
+    <a class="ptab" href="#">Diagnostics<span class="hint">banks 205–207</span></a>
+  </div>
+  <div class="ptabline"></div>
+
+  <!-- DiiA Part 252 (device type 51). Three states have to stay apart on this
+       card and there is no shorthand that keeps them: MASK is "the gear does not
+       implement this location, or will not let us read it", TMASK is
+       "implemented, no value right now" — and DiiA 252 §9.2.4 gives the gear 30 s
+       to produce one, so a TMASK older than that is a fault indication and goes
+       from info to warn — while a real zero is a gear that has consumed nothing.
+       Collapsing any two of them into an em-dash was the defect this card exists
+       to prevent.
+
+       Scale factor and value are rendered together and stored apart: the factor
+       is a power of ten in [-6..+6], shown faint beside the number so an operator
+       can see WHY 12 345 is 12,345 kWh. No amber anywhere here. -->
+  <div class="grid">
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Energy &amp; power</h3><span class="badge">banks 202 / 203 / 204</span></header>
+      <div class="attr"><span class="k">Active energy</span><span class="v plain">112 345<span class="scale">x10^0 Wh</span></span><span class="src readback"><span class="dot"></span>readback · 3 m</span></div>
+      <div class="attr"><span class="k">Active power</span><span class="v plain">18 500<span class="scale">x10^-3 W</span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr"><span class="k">Apparent energy</span><span class="v plain">117 962<span class="scale">x10^0 VAh</span></span><span class="src readback"><span class="dot"></span>readback · 3 m</span></div>
+      <div class="attr wide"><span class="k">Apparent power</span><span class="v rowv"><span class="chip tmask">temporarily unavailable</span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr wide"><span class="k">Apparent power</span><span class="v rowv"><span class="chip tmask stale">unavailable &gt; 30 s</span></span><span class="src readback"><span class="dot"></span>readback · 44 s</span></div>
+      <div class="attr wide"><span class="k">Load-side energy</span><span class="v rowv"><span class="chip muted">not implemented</span></span><span class="src stale">never read</span></div>
+      <div class="attr"><span class="k">Load-side power</span><span class="v plain">0<span class="scale">x10^-3 W</span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+    </div>
+
+    <!-- The tab a gear with no Part 252 lands on: no device type 51, nothing to
+         read, and the empty state says which fact that is. -->
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Energy &amp; power</h3><span class="badge">banks 202 / 203 / 204</span></header>
+      <div class="empty">
+        This gear does not declare device type 51, so it carries no energy banks.
+      </div>
+    </div>
+  </div>
+
+  <div class="taglabel">Tab · Diagnostics — <span class="mono">?sections=memory_diagnostics</span></div>
+  <div class="ptabs">
+    <a class="ptab" href="#">Overview</a>
+    <a class="ptab" href="#">Levels &amp; fade</a>
+    <a class="ptab" href="#">Groups &amp; scenes</a>
+    <a class="ptab" href="#">Identity<span class="hint">banks 0 · 1</span></a>
+    <a class="ptab" href="#">Energy<span class="hint">banks 202–204</span></a>
+    <a class="ptab active" href="#">Diagnostics<span class="hint">banks 205–207</span></a>
+  </div>
+  <div class="ptabline"></div>
+
+  <!-- DiiA Part 253 (device type 52). The condition rows are pairs on purpose:
+       §9.2.11 protects a flag and its counter as one bundle, and a counter with
+       no flag beside it reads as history with no present tense. §9.2.12/§9.2.14
+       also fold every flag with index > 0 into `controlGearFailure` /
+       `lampFailure`, so these are not independent of the Status card on the
+       Overview tab — the caption says so rather than letting an operator infer
+       two faults from one.
+
+       Temperatures carry the tables' +60 offset and are rendered decoded, with
+       the raw byte faint beside them. -->
+  <div class="grid">
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Control gear diagnostics</h3><span class="badge">bank 205</span></header>
+      <div class="attr"><span class="k">Operating time</span><span class="v plain">1 042 h<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 2 m</span></div>
+      <div class="attr"><span class="k">Starts</span><span class="v plain">318<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 2 m</span></div>
+      <div class="attr"><span class="k">Supply voltage</span><span class="v plain">230,0 V<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 2 m</span></div>
+      <div class="attr"><span class="k">Supply frequency</span><span class="v plain">50 Hz<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 2 m</span></div>
+      <div class="attr"><span class="k">Power factor</span><span class="v plain">0,95<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 2 m</span></div>
+      <div class="attr"><span class="k">Gear temperature</span><span class="v">45 °C<span class="raw">0x69</span></span><span class="src readback"><span class="dot"></span>readback · 2 m</span></div>
+      <div class="attr"><span class="k">Output current</span><span class="v plain">100 %<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 2 m</span></div>
+      <p class="hint">Conditions below also drive the gear-failure status bit (DiiA 253 §9.2.12) — one fault, two places.</p>
+      <div class="cond"><span class="k">Overall failure</span><span class="chip ok"><span class="dot"></span>clear</span><span class="n">0</span></div>
+      <div class="cond"><span class="k">Undervoltage</span><span class="chip ok"><span class="dot"></span>clear</span><span class="n">2</span></div>
+      <div class="cond"><span class="k">Overvoltage</span><span class="chip ok"><span class="dot"></span>clear</span><span class="n">0</span></div>
+      <div class="cond"><span class="k">Output power limitation</span><span class="chip muted">not implemented</span><span class="n">—</span></div>
+      <div class="cond"><span class="k">Thermal derating</span><span class="chip warn"><span class="dot"></span>active</span><span class="n">7</span></div>
+      <div class="cond"><span class="k">Thermal shutdown</span><span class="chip ok"><span class="dot"></span>clear</span><span class="n">0</span></div>
+    </div>
+
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Light source diagnostics</h3><span class="badge">bank 206</span></header>
+      <div class="attr"><span class="k">On time</span><span class="v plain">1 043 h<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 2 m</span></div>
+      <div class="attr"><span class="k">Starts</span><span class="v plain">335<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 2 m</span></div>
+      <div class="attr"><span class="k">Output voltage</span><span class="v plain">24,0 V<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 2 m</span></div>
+      <div class="attr"><span class="k">Output current</span><span class="v plain">0,350 A<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 2 m</span></div>
+      <div class="attr"><span class="k">Source temperature</span><span class="v">50 °C<span class="raw">0x6E</span></span><span class="src readback"><span class="dot"></span>readback · 2 m</span></div>
+      <p class="hint">Short circuit is bank offset 0x18 and open circuit 0x1A — the reverse of Table 5's flag numbering.</p>
+      <div class="cond"><span class="k">Overall failure</span><span class="chip ok"><span class="dot"></span>clear</span><span class="n">0</span></div>
+      <div class="cond"><span class="k">Short circuit</span><span class="chip ok"><span class="dot"></span>clear</span><span class="n">0</span></div>
+      <div class="cond"><span class="k">Open circuit</span><span class="chip ok"><span class="dot"></span>clear</span><span class="n">0</span></div>
+      <div class="cond"><span class="k">Thermal derating</span><span class="chip ok"><span class="dot"></span>clear</span><span class="n">1</span></div>
+      <div class="cond"><span class="k">Thermal shutdown</span><span class="chip ok"><span class="dot"></span>clear</span><span class="n">0</span></div>
+    </div>
+
+    <!-- Bank 207 holds constants the LUMINAIRE manufacturer wrote, not
+         measurements — so it is read once per device like identity, and MASK
+         here means "unknown", which the table says in those words. An unwritten
+         constant is the ordinary case, not a fault. -->
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Luminaire maintenance data</h3><span class="badge">bank 207</span></header>
+      <div class="attr"><span class="k">Rated median useful life</span><span class="v plain">50 000 h<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 1 h</span></div>
+      <div class="attr wide"><span class="k">Reference gear temperature</span><span class="v rowv"><span class="chip muted">unknown</span></span><span class="src readback"><span class="dot"></span>readback · 1 h</span></div>
+      <div class="attr"><span class="k">Rated median useful starts</span><span class="v plain">500 000<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 1 h</span></div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

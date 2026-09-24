@@ -1,0 +1,20 @@
+[package]
+name = "dali2rust-bsp"
+description = "ESP32-P4-ETH board support package"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+libc = "0.2"
+log = "0.4"
+dali2rust-platform = { path = "../dali2rust-platform" }
+
+[target.'cfg(target_os = "espidf")'.dependencies]
+esp-idf-svc = { version = "0.52.1", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
+heapless = { version = "0.9", default-features = false }
+
+[build-dependencies]
+embuild = { version = "0.33", features = ["espidf"] }

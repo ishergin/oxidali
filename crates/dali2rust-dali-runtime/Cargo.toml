@@ -1,0 +1,21 @@
+[package]
+name = "dali2rust-dali-runtime"
+description = "DALI bus command worker and semantic executor (runtime)"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+dali2rust-bsp = { path = "../dali2rust-bsp" }
+dali2rust-bus = { path = "../dali2rust-bus" }
+dali2rust-contracts = { path = "../dali2rust-contracts" }
+dali2rust-domain = { path = "../dali2rust-domain" }
+dali2rust-platform = { path = "../dali2rust-platform" }
+log = "0.4"
+
+[dev-dependencies]
+dali2rust-adapters = { path = "../dali2rust-adapters" }
+dali2rust-registry-runtime = { path = "../dali2rust-registry-runtime" }
+dali2rust-test-support = { path = "../dali2rust-test-support" }

@@ -1,0 +1,1096 @@
+{
+ "colour_values": [
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 0,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 1,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "lsb": 154,
+   "lsb_answered": true,
+   "lsb_echoes_selector": false,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 2,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 3,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 4,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 5,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 6,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 7,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 8,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 9,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 10,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 11,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 12,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 13,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 14,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 15,
+   "wide": false
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 64,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 64,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 65,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 65,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 66,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 66,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 67,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 67,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 68,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 68,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 69,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 69,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 70,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 70,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 71,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 71,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 72,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 72,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 73,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 73,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 74,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 74,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 75,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 75,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 76,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 76,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 77,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 77,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 78,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 78,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 79,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 79,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 80,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 80,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 81,
+   "lsb_answered": true,
+   "lsb_echoes_selector": true,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 81,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 82,
+   "wide": false
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "lsb": 153,
+   "lsb_answered": true,
+   "lsb_echoes_selector": false,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 128,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "lsb": 153,
+   "lsb_answered": true,
+   "lsb_echoes_selector": false,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 129,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 1,
+   "lsb": 114,
+   "lsb_answered": true,
+   "lsb_echoes_selector": false,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 130,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 1,
+   "lsb": 114,
+   "lsb_answered": true,
+   "lsb_echoes_selector": false,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 131,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 192,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 193,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 255,
+   "lsb_answered": true,
+   "lsb_echoes_selector": false,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 194,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 195,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 196,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 197,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 198,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 199,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 200,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 201,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 202,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 203,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 204,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 205,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 206,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 207,
+   "wide": false
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 208,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 224,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 225,
+   "wide": true
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "lsb": 255,
+   "lsb_answered": true,
+   "lsb_echoes_selector": false,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 226,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 227,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 228,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 229,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 230,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 231,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 232,
+   "wide": true
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 233,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 234,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 235,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 236,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 237,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 238,
+   "wide": false
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 239,
+   "wide": false
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": "QUERY COLOUR VALUE",
+   "opcode": 250,
+   "selector": 240,
+   "wide": false
+  }
+ ],
+ "dt6": [
+  {
+   "answered": true,
+   "byte": 0,
+   "name": "QUERY GEAR TYPE",
+   "opcode": 237
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "name": "QUERY DIMMING CURVE",
+   "opcode": 238
+  },
+  {
+   "answered": true,
+   "byte": 1,
+   "name": "QUERY POSSIBLE OPERATING MODES",
+   "opcode": 239
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "name": "QUERY FEATURES",
+   "opcode": 240
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "name": "QUERY FAILURE STATUS",
+   "opcode": 241
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY SHORT CIRCUIT",
+   "opcode": 242
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY OPEN CIRCUIT",
+   "opcode": 243
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY LOAD DECREASE",
+   "opcode": 244
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY LOAD INCREASE",
+   "opcode": 245
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY CURRENT PROTECTOR ACTIVE",
+   "opcode": 246
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY THERMAL SHUT DOWN",
+   "opcode": 247
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY THERMAL OVERLOAD",
+   "opcode": 248
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY REFERENCE RUNNING",
+   "opcode": 249
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY REFERENCE MEASUREMENT FAILED",
+   "opcode": 250
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY CURRENT PROTECTOR ENABLED",
+   "opcode": 251
+  },
+  {
+   "answered": true,
+   "byte": 1,
+   "name": "QUERY OPERATING MODE",
+   "opcode": 252
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "name": "QUERY FAST FADE TIME",
+   "opcode": 253
+  },
+  {
+   "answered": true,
+   "byte": 23,
+   "name": "QUERY MIN FAST FADE TIME",
+   "opcode": 254
+  },
+  {
+   "answered": true,
+   "byte": 1,
+   "name": "QUERY EXTENDED VERSION NUMBER",
+   "opcode": 255
+  }
+ ],
+ "dt8": [
+  {
+   "answered": true,
+   "byte": 1,
+   "name": "QUERY GEAR FEATURES/STATUS",
+   "opcode": 247
+  },
+  {
+   "answered": true,
+   "byte": 32,
+   "name": "QUERY COLOUR STATUS",
+   "opcode": 248
+  },
+  {
+   "answered": true,
+   "byte": 2,
+   "name": "QUERY COLOUR TYPE FEATURES",
+   "opcode": 249
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY RGBWAF CONTROL",
+   "opcode": 251
+  },
+  {
+   "answered": true,
+   "byte": 8,
+   "name": "QUERY EXTENDED VERSION NUMBER",
+   "opcode": 255
+  }
+ ],
+ "short_address": 0,
+ "standard": [
+  {
+   "answered": true,
+   "byte": 0,
+   "name": "QUERY STATUS",
+   "opcode": 144
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": "QUERY CONTROL GEAR PRESENT",
+   "opcode": 145
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY LAMP FAILURE",
+   "opcode": 146
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY LAMP POWER ON",
+   "opcode": 147
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY LIMIT ERROR",
+   "opcode": 148
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY RESET STATE",
+   "opcode": 149
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY MISSING SHORT ADDRESS",
+   "opcode": 150
+  },
+  {
+   "answered": true,
+   "byte": 8,
+   "name": "QUERY VERSION NUMBER",
+   "opcode": 151
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": "QUERY CONTENT DTR0",
+   "opcode": 152
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": "QUERY DEVICE TYPE",
+   "opcode": 153
+  },
+  {
+   "answered": true,
+   "byte": 1,
+   "name": "QUERY PHYSICAL MINIMUM",
+   "opcode": 154
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY POWER FAILURE",
+   "opcode": 155
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": "QUERY CONTENT DTR1",
+   "opcode": 156
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "name": "QUERY CONTENT DTR2",
+   "opcode": 157
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "name": "QUERY OPERATING MODE",
+   "opcode": 158
+  },
+  {
+   "answered": true,
+   "byte": 6,
+   "name": "QUERY LIGHT SOURCE TYPE",
+   "opcode": 159
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "name": "QUERY ACTUAL LEVEL",
+   "opcode": 160
+  },
+  {
+   "answered": true,
+   "byte": 254,
+   "name": "QUERY MAX LEVEL",
+   "opcode": 161
+  },
+  {
+   "answered": true,
+   "byte": 1,
+   "name": "QUERY MIN LEVEL",
+   "opcode": 162
+  },
+  {
+   "answered": true,
+   "byte": 50,
+   "name": "QUERY POWER ON LEVEL",
+   "opcode": 163
+  },
+  {
+   "answered": true,
+   "byte": 254,
+   "name": "QUERY SYSTEM FAILURE LEVEL",
+   "opcode": 164
+  },
+  {
+   "answered": true,
+   "byte": 17,
+   "name": "QUERY FADE TIME/FADE RATE",
+   "opcode": 165
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY MANUFACTURER SPECIFIC MODE",
+   "opcode": 166
+  },
+  {
+   "answered": true,
+   "byte": 6,
+   "name": "QUERY NEXT DEVICE TYPE",
+   "opcode": 167
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "name": "QUERY EXTENDED FADE TIME",
+   "opcode": 168
+  },
+  {
+   "answered": false,
+   "byte": null,
+   "name": "QUERY CONTROL GEAR FAILURE",
+   "opcode": 170
+  },
+  {
+   "answered": true,
+   "byte": 254,
+   "name": null,
+   "opcode": 176
+  },
+  {
+   "answered": true,
+   "byte": 120,
+   "name": null,
+   "opcode": 177
+  },
+  {
+   "answered": true,
+   "byte": 100,
+   "name": null,
+   "opcode": 178
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": null,
+   "opcode": 179
+  },
+  {
+   "answered": true,
+   "byte": 254,
+   "name": null,
+   "opcode": 180
+  },
+  {
+   "answered": true,
+   "byte": 254,
+   "name": null,
+   "opcode": 181
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": null,
+   "opcode": 182
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": null,
+   "opcode": 183
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": null,
+   "opcode": 184
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": null,
+   "opcode": 185
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": null,
+   "opcode": 186
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": null,
+   "opcode": 187
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": null,
+   "opcode": 188
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": null,
+   "opcode": 189
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": null,
+   "opcode": 190
+  },
+  {
+   "answered": true,
+   "byte": 255,
+   "name": null,
+   "opcode": 191
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "name": "QUERY GROUPS 0-7",
+   "opcode": 192
+  },
+  {
+   "answered": true,
+   "byte": 0,
+   "name": "QUERY GROUPS 8-15",
+   "opcode": 193
+  },
+  {
+   "answered": true,
+   "byte": 92,
+   "name": "QUERY RANDOM ADDRESS (H)",
+   "opcode": 194
+  },
+  {
+   "answered": true,
+   "byte": 29,
+   "name": "QUERY RANDOM ADDRESS (M)",
+   "opcode": 195
+  },
+  {
+   "answered": true,
+   "byte": 194,
+   "name": "QUERY RANDOM ADDRESS (L)",
+   "opcode": 196
+  }
+ ]
+}

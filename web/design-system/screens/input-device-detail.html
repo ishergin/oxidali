@@ -1,0 +1,322 @@
+<!-- @dsCard group="Screens" name="Input device detail" subtitle="One 103 control device: heading, declared bytes, one tab per instance" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Input device detail — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1000px; margin: 0 auto; padding: 20px 24px 40px; }
+h2 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+h2:first-of-type { margin-top: 0; }
+.note { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.note code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 6px; }
+/* ── Input device detail ─────────────────────────────────────────────────
+   REWRITTEN 2026-09-01. What was here before expanded the list row downward
+   into the whole device, and the numbers say why that had to go: **6 573 px**
+   of stacked panels for one eight-button panel, and **90** caption elements
+   horizontally clipped by their own container — sentences cut off mid-word,
+   on a screen whose entire content was sentences. The owner's report was
+   "сделано ужасно… нужен однообразный дизайн с physical devices", and this is
+   that: same crumbs, same `EditableName` heading, same `Card` + `.attr` rows,
+   same `.ptabs` bar. After: **900 px**, **0** clipped.
+
+   THREE DECISIONS, and the first two are the whole rewrite.
+
+   1. A ROW IS A LINK, NOT AN ACCORDION. Eight instances stacked is a scroll;
+      eight tabs is a choice. The instance number lives in the URL
+      (`#/input-devices/0/3`) for the same reason the device card's section tab
+      does — linkable, survives a reload, comes back from Back.
+
+   2. THE CLAUSE MOVES INTO `title`. Every row used to carry two to four lines
+      of standard citation at the same visual weight as the control it
+      described. That is not documentation, it is a wall — and it is what made
+      the rows unalignable, because a label column sized by a paragraph has no
+      column. The clause is on the label's tooltip; a one-line `.rowhint`
+      survives ONLY where not saying it changes what the operator does
+      (`T_double` delaying every single click, priority 2 being refused).
+
+   3. THE STATUS BYTES LOOK LIKE THE PHYSICAL DEVICE'S. `BitChips` in a
+      wrapping cluster with the raw hex beside it — the owner asked for "хотя
+      бы как Status в physical devices", and it is literally the same
+      component, which is the only way two screens stay identical. */
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+.head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.head h1 { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
+.head .spacer { flex: 1; }
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--raised); font-family: var(--mono);
+  font-size: 11px; color: var(--text-muted); }
+.badge.addr { color: var(--text); }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; border: 1px solid var(--border); color: var(--text-muted); }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); }
+.chip.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.chip.err { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, transparent); background: var(--err-soft); }
+.chip.idle { color: var(--text-faint); }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong); background: var(--raised); color: var(--text);
+  font-family: var(--font); font-size: 12.5px; cursor: pointer; }
+.btn.ghost { background: transparent; border-color: var(--border); color: var(--text-muted); }
+.btn.danger:hover { border-color: color-mix(in srgb, var(--err) 55%, transparent); color: var(--err); background: var(--err-soft); }
+
+.grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.card header { padding: 11px 14px; border-bottom: 1px solid var(--border); }
+.card header h3 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-faint); }
+
+/* The SAME three-column grid the physical-device cards use. That is the point:
+   label, value on a fixed right edge, provenance in its own slot. */
+.attr { display: grid; grid-template-columns: 1fr 116px 104px; column-gap: 12px; row-gap: 3px;
+  align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.attr:last-child { border-bottom: none; }
+.attr .k { color: var(--text-muted); font-size: 13px; }
+.attr .v { font-family: var(--mono); font-size: 13px; display: flex; align-items: center;
+  justify-content: flex-end; gap: 6px; }
+.attr .v .unit { color: var(--text-faint); font-size: 11px; width: 20px; text-align: left; flex: none; }
+.attr .v .raw { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-left: 6px; }
+.attr .v input { width: 64px; flex: none; padding: 4px 7px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono);
+  font-size: 12px; text-align: right; }
+/* A cluster (chips, several fields) gets its own slot and wraps inside it. */
+.attr.controls { grid-template-columns: 1fr auto 0; }
+.attr.controls .v { justify-content: flex-end; padding-right: 0; }
+
+/* The one caption that survives on screen, and it is a caption: faint, small,
+   under the label, never competing with it. */
+.k .rowhint { display: block; font-size: 10.5px; color: var(--text-faint); font-weight: 400; }
+
+.src { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-faint);
+  justify-self: end; white-space: nowrap; }
+.src .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.src.readback { color: var(--ok); }
+/* A THIRD provenance state, and deliberately not the blue `written` one:
+   nothing here was confirmed by the device, the controller merely still holds
+   the byte from before its own reboot. Borrowing `written` would claim a
+   confirmation that never happened. */
+.src.stored { color: var(--text-muted); }
+.src.stale { color: var(--text-faint); }
+
+.chips { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.gsel { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.gsel input { width: 46px; }
+.fbctl { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.fbctl input { width: 60px; }
+.fb-swatch { width: 14px; height: 14px; border-radius: 4px; flex: none; border: 1px solid var(--border-strong); }
+.evs { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.ev { font-family: var(--mono); font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+  background: none; cursor: pointer; color: var(--text-faint); }
+.ev.on { color: var(--text); border: 1px solid var(--border-strong); }
+.ev.off { color: var(--text-faint); border: 1px dashed var(--border); }
+.mono { font-family: var(--mono); }
+.faint { color: var(--text-faint); }
+
+.ptabs { display: flex; gap: 2px; align-items: stretch; margin: 16px 0 0; overflow-x: auto; flex-wrap: nowrap; }
+.ptab { display: flex; align-items: baseline; gap: 7px; padding: 7px 14px 8px;
+  border: 1px solid transparent; border-bottom: none; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: none; color: var(--text-muted); font-size: 13px; font-weight: 550;
+  cursor: pointer; text-decoration: none; white-space: nowrap; }
+.ptab.active { color: var(--text); background: var(--surface); border-color: var(--border); }
+.ptab .hint { font-family: var(--mono); font-size: 10px; color: var(--text-faint); font-weight: 400; }
+.ptabline { height: 1px; background: var(--border); margin-bottom: 14px; }
+.switch { width: 30px; height: 17px; border-radius: 999px; background: var(--border-strong);
+  display: inline-block; position: relative; cursor: pointer; }
+.switch.on { background: var(--accent); }
+.switch .knob { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
+  background: var(--surface); }
+.switch.on .knob { left: auto; right: 2px; background: var(--accent-contrast); }
+/* An empty state that names an action must carry the control for it. Splitting
+   the list from the device card took Scan away from the one screen that tells
+   you to run it — everything 103 Table 14/15 reports is volatile and never
+   persisted, so this card is blank after EVERY reboot. */
+.empty { padding: 14px; font-size: 12px; color: var(--text-faint); }
+.emptyact { margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumbs">Adapter 0 / Input devices / SA 00</div>
+  <div class="head">
+    <h1>Kitchen panel</h1>
+    <span class="badge addr">SA 00</span>
+    <span class="badge">8 instances</span>
+    <span class="chip ok"><span class="dot"></span>Present</span>
+    <span class="spacer"></span>
+    <button class="btn">⚲ Identify</button>
+    <button class="btn ghost danger">Forget</button>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <header><h3>Information</h3></header>
+      <div class="attr"><span class="k">Short address</span><span class="v">00<span class="unit"></span></span><span></span></div>
+      <div class="attr"><span class="k" title="The Part 103 version the device implements, IEC 62386-101 §4.2 encoded.">Version</span>
+        <span class="v">2.0<span class="raw">0x08</span><span class="unit"></span></span><span></span></div>
+      <div class="attr"><span class="k">Last seen</span><span class="v">4 s ago<span class="unit"></span></span><span></span></div>
+      <div class="attr"><span class="k">Last event</span><span class="v">2 m ago<span class="unit"></span></span><span></span></div>
+      <div class="attr"><span class="k" title="Per-device opt-in. The global switch lives in Settings · Home Assistant.">Home Assistant</span>
+        <span class="v"><span class="switch on"><span class="knob"></span></span></span><span></span></div>
+    </div>
+
+    <div class="card">
+      <header><h3>What the device declares</h3></header>
+      <div class="attr controls"><span class="k" title="103 Table 14, answered to QUERY DEVICE CAPABILITIES. Read-only.">Capabilities</span>
+        <span class="v"><span class="chips">
+          <span class="chip idle"><span class="dot"></span>application controller</span>
+          <span class="chip ok"><span class="dot"></span>has instances</span>
+          <span class="mono faint">0x02</span>
+        </span></span><span></span></div>
+      <div class="attr controls"><span class="k" title="103 Table 15. Volatile by construction, never persisted — blank after a reboot until the next scan.">Status</span>
+        <span class="v"><span class="chips">
+          <span class="chip idle"><span class="dot"></span>device error</span>
+          <span class="chip idle"><span class="dot"></span>quiescent</span>
+          <span class="chip idle"><span class="dot"></span>address is MASK</span>
+          <span class="chip ok"><span class="dot"></span>application active</span>
+          <span class="chip idle"><span class="dot"></span>controller error</span>
+          <span class="chip warn"><span class="dot"></span>power cycle seen</span>
+          <span class="chip idle"><span class="dot"></span>reset state</span>
+          <span class="mono faint">0x28</span>
+        </span></span><span></span></div>
+    </div>
+  </div>
+
+  <div class="grid2" style="margin-bottom:14px">
+    <div class="card">
+      <header><h3>What the device declares — after a reboot</h3></header>
+      <div class="empty">
+        Nothing read since boot. Every byte in this card is volatile by construction — 103
+        Table 15 moves when another master enables the application and a mains cycle sets
+        <i>power cycle seen</i>, so it is never persisted and reads blank after every reboot.
+        Run a scan to fill it.
+        <div class="emptyact"><button class="btn">⌕ Scan</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ptabs">
+    <a class="ptab" href="#">push_button<span class="hint">#0</span></a>
+    <a class="ptab" href="#">push_button<span class="hint">#1</span></a>
+    <a class="ptab" href="#">push_button<span class="hint">#2</span></a>
+    <a class="ptab active" href="#">push_button<span class="hint">#3</span></a>
+    <a class="ptab" href="#">push_button<span class="hint">#4</span></a>
+    <a class="ptab" href="#">push_button<span class="hint">#5</span></a>
+  </div>
+  <div class="ptabline"></div>
+
+  <div class="grid2">
+    <div class="card">
+      <header><h3>Behaviour</h3></header>
+      <div class="attr"><span class="k" title="103 Table 16 bit 1 — the one bit in either status table a controller can write.">Instance active</span>
+        <span class="v"><span class="mono faint">0x02</span><span class="switch on"><span class="knob"></span></span></span><span></span></div>
+      <div class="attr controls"><span class="k" title="A rule bound to a disabled event can never fire.">Events sent<span class="rowhint">double_press delays every single click by 0.2–2 s</span></span>
+        <span class="v"><span class="evs">
+          <button class="ev on">release</button><button class="ev on">press</button>
+          <button class="ev on">short_press</button><button class="ev off">double_press</button>
+          <button class="ev on">long_press_start</button><button class="ev off">long_press_repeat</button>
+          <button class="ev on">long_press_stop</button><button class="ev off">stuck_free</button>
+        </span></span><span></span></div>
+      <div class="attr controls"><span class="k" title="Group 0 is the Part 332 radio-button option; group 1 the panel set one SELECT frame switches.">Instance groups</span>
+        <span class="v"><span class="gsel">
+          <input value="3"><input value="—"><input value="—">
+          <span class="src readback"><span class="dot"></span>read · 4 s</span>
+        </span></span><span></span></div>
+      <div class="attr"><span class="k" title="Scheme 2 is what names the source. Scheme 0 carries no identity at all.">Event scheme</span>
+        <span class="v"><input value="2"><span class="unit"></span></span>
+        <span class="src readback"><span class="dot"></span>read · 4 s</span></div>
+      <div class="attr"><span class="k" title="103 §9.4.1 wants a slot left for the controller's own answers.">Event priority<span class="rowhint">2 is refused (422)</span></span>
+        <span class="v"><input value="3"><span class="unit"></span></span>
+        <span class="src stored"><span class="dot"></span>stored</span></div>
+    </div>
+
+    <div class="card">
+      <header><h3>Timing</h3></header>
+      <div class="attr"><span class="k" title="Short vs long press boundary, in ms (steps of 20).">T_short</span>
+        <span class="v"><input value="300"><span class="unit">ms</span></span>
+        <span class="src readback"><span class="dot"></span>read · 4 s</span></div>
+      <div class="attr"><span class="k" title="The standard has no way to tell a single click from the first of a double until this window closes.">T_double<span class="rowhint">0 = off (factory); any other value delays every single click</span></span>
+        <span class="v"><input value="0"><span class="unit">ms</span></span>
+        <span class="src readback"><span class="dot"></span>read · 4 s</span></div>
+      <div class="attr"><span class="k" title="Long-press repeat interval.">T_repeat</span>
+        <span class="v"><input value="200"><span class="unit">ms</span></span>
+        <span class="src stale"><span class="dot"></span>never read</span></div>
+      <div class="attr"><span class="k" title="A stuck button is a fault the panel announces, not an event to act on.">T_stuck</span>
+        <span class="v"><input value="20"><span class="unit">s</span></span>
+        <span class="src stale"><span class="dot"></span>never read</span></div>
+      <div class="attr"><span class="k">Events seen</span><span class="v">148<span class="unit"></span></span><span></span></div>
+    </div>
+
+    <div class="card" style="grid-column: span 2">
+      <header><h3>Indicator · Part 332</h3></header>
+      <div class="attr controls"><span class="k" title="Active / inactive brightness live in the panel's NVM.">Brightness</span>
+        <span class="v"><span class="fbctl">
+          <span class="fb-swatch" style="background:rgb(255,170,85)"></span>
+          <input value="200"><input value="20">
+          <span class="chip warn"><span class="dot"></span>on/off only</span>
+        </span></span><span></span></div>
+      <div class="attr controls"><span class="k" title="Absent from this list is absent on the panel, not absent from the product.">Declared capability</span>
+        <span class="v"><span class="chips">
+          <span class="chip ok"><span class="dot"></span>visible</span>
+          <span class="chip ok"><span class="dot"></span>brightness</span>
+          <span class="chip ok"><span class="dot"></span>colour</span>
+          <span class="chip idle"><span class="dot"></span>audible</span>
+          <span class="mono faint">0x07</span>
+        </span></span><span></span></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,114 @@
+/* dali2rust Web UI — canonical design tokens.
+ * Dark-first control-panel palette for a DALI lighting controller.
+ * Every preview HTML inlines this block verbatim (Design System pane
+ * renders files standalone); this file is the single editing source.
+ */
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+
+/* Light theme — activated by the app via
+ * document.documentElement.dataset.theme = "light" (persisted under
+ * localStorage "dali2rust-theme"), from the `ThemeToggle` at the bottom of the
+ * sidebar. Design-system previews inline only the :root block above, so they
+ * stay dark by default.
+ *
+ * This comment was briefly "corrected" on 2026-08-30 to say the palette was
+ * reachable by nothing. It was not: the search was for the attribute spelling
+ * `data-theme` while `app.tsx` writes the property spelling `dataset.theme`,
+ * and an empty grep was read as a finding. Left recorded because the trap is
+ * general — a DOM attribute and its property are two spellings of one thing,
+ * and only one of them appears in the source. */
+:root[data-theme="light"] {
+  /* Surfaces */
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --raised: #eef1f5;
+  --overlay: #e4e9ef;
+  --border: #d7dde5;
+  --border-strong: #b9c3cf;
+
+  /* Text */
+  --text: #1a222c;
+  --text-muted: #5a6876;
+  --text-faint: #93a0ad;
+
+  /* Lamp accent — darker amber for contrast on light surfaces */
+  --accent: #c98a00;
+  --accent-strong: #a87400;
+  --accent-soft: rgba(201, 138, 0, 0.14);
+  --accent-glow: rgba(201, 138, 0, 0.25);
+
+  /* Status */
+  --ok: #178f44;
+  --ok-soft: rgba(23, 143, 68, 0.12);
+  --warn: #a06f04;
+  --warn-soft: rgba(160, 111, 4, 0.14);
+  --err: #cf3a40;
+  --err-soft: rgba(207, 58, 64, 0.1);
+  --info: #1868c7;
+  --info-soft: rgba(24, 104, 199, 0.1);
+  --dirty: #a06f04;
+  --dirty-soft: rgba(160, 111, 4, 0.14);
+
+  /* Derived surfaces */
+  --hover: rgba(228, 233, 239, 0.6);
+  --border-soft: rgba(215, 221, 229, 0.7);
+  --shadow: 0 8px 28px rgba(26, 34, 44, 0.16);
+  --accent-contrast: #14161a;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}

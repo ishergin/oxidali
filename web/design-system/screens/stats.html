@@ -1,0 +1,408 @@
+<!-- @dsCard group="Screens" name="Stats" subtitle="R14 product summary: uptime, internal-SRAM headroom, bus/DALI/operation/WebSocket counters with per-sample deltas" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stats — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+
+.shell { display: flex; max-width: 1240px; margin: 0 auto; min-height: 100vh; }
+
+/* Sidebar */
+.side { width: 200px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 18px 10px; }
+.side .brand { display: flex; align-items: baseline; gap: 7px; padding: 0 10px 16px; }
+.side .brand .name { font-weight: 650; font-size: 15px; letter-spacing: -0.01em; }
+.side .brand .glyph { color: var(--accent-strong); font-size: 15px; }
+.nav a { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: var(--radius-sm);
+  color: var(--text-muted); text-decoration: none; font-size: 13px; margin-bottom: 2px; }
+.nav a:hover { background: var(--raised); color: var(--text); }
+.nav a.active { background: var(--accent-soft); color: var(--accent-strong); font-weight: 550; }
+.nav a .ic { width: 16px; text-align: center; font-size: 13px; opacity: .8; }
+.nav .gh { font-size: 10px; text-transform: uppercase; letter-spacing: .09em; color: var(--text-faint);
+  padding: 12px 10px 4px; }
+
+/* Main */
+.main { flex: 1; padding: 20px 24px 40px; min-width: 0; }
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.head .sub { font-size: 12px; color: var(--text-faint); }
+.spacer { flex: 1; }
+.badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
+.hint { font-size: 12px; color: var(--text-faint); margin: 0 0 16px; max-width: 78ch; }
+
+/* Stat tiles — the four figures an operator scans first. */
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 14px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 13px 15px; }
+.tile .l { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+.tile .n { font-family: var(--mono); font-size: 25px; font-weight: 500; margin-top: 5px; letter-spacing: -0.02em; }
+.tile .n .u { font-size: 13px; color: var(--text-faint); margin-left: 3px; }
+.tile .n.warn { color: var(--warn); }
+.tile .foot { font-size: 11px; color: var(--text-faint); margin-top: 3px; font-family: var(--mono); }
+
+/* Counter cards */
+.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.card.span2 { grid-column: 1 / -1; }
+.card header { display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
+.card header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+.card header .note { font-size: 11px; color: var(--text-faint); }
+
+/* One counter row: name, absolute, change since the previous sample. */
+.attr { display: grid; grid-template-columns: 1fr auto 54px; align-items: center; gap: 12px;
+  padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.attr:last-child { border-bottom: none; }
+.attr .k { color: var(--text-muted); font-size: 13px; }
+.attr .v { font-family: var(--mono); font-size: 13px; text-align: right; }
+.attr .v.fault { color: var(--err); }
+.attr .v.warn { color: var(--warn); }
+.attr .v .unit { color: var(--text-faint); font-size: 11px; margin-left: 3px; }
+.attr .delta { font-family: var(--mono); font-size: 11px; text-align: right; color: var(--text-faint); }
+.attr .delta.live { color: var(--info); }
+.attr.sub .k, .attr.sub .v { color: var(--text-faint); font-size: 12px; }
+.chgnote { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.chgnote code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.chgh { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <aside class="side">
+    <div class="brand"><span class="glyph">◍</span><span class="name">dali2rust</span></div>
+    <nav class="nav">
+      <a href="#"><span class="ic">▦</span>Dashboard</a>
+      <a href="#"><span class="ic">◧</span>Physical devices</a>
+      <a href="#"><span class="ic">◍</span>Virtual lamps</a>
+      <a href="#"><span class="ic">⊞</span>Groups</a>
+      <a href="#"><span class="ic">✦</span>Scenes</a>
+      <a href="#"><span class="ic">☀</span>HCL</a>
+      <a href="#"><span class="ic">≡</span>Operations</a>
+      <div class="gh">System</div>
+      <a class="active" href="#"><span class="ic">▤</span>Stats</a>
+      <a href="#"><span class="ic">◔</span>Diagnostics</a>
+      <a href="#"><span class="ic">›_</span>DALI console</a>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <div class="head">
+      <h1>Stats</h1>
+      <span class="badge">read model</span>
+      <span class="spacer"></span>
+      <span class="sub">sampled every <span style="font-family:var(--mono); color:var(--text-muted)">5 s</span></span>
+    </div>
+
+    <p class="hint">
+      Product totals, not raw per-path counters — those live on Diagnostics. Everything
+      suffixed <em>total</em> is free-running and 32-bit: it wraps rather than resets, so the
+      right-hand column (change since the previous sample) is what says whether something is
+      happening now.
+    </p>
+
+    <div class="tiles">
+      <div class="tile">
+        <div class="l">Uptime</div>
+        <div class="n">3 d 14 h 02 m</div>
+        <div class="foot">since boot, from the Clock port</div>
+      </div>
+      <div class="tile">
+        <div class="l">Internal SRAM free</div>
+        <div class="n">15.4<span class="u">KiB</span></div>
+        <div class="foot">largest block 7.0 KiB @boot</div>
+      </div>
+      <div class="tile">
+        <div class="l">Operations running</div>
+        <div class="n">1</div>
+        <div class="foot">118 succeeded · 2 failed</div>
+      </div>
+      <!-- The device's own one-second gauge, the same number the dashboard
+           card and the OLED show. Mono and neutral: a load figure is not a
+           lamp level, and the tile must not read as one. -->
+      <div class="tile">
+        <div class="l">DALI bus load</div>
+        <div class="n">37<span class="u">%</span></div>
+        <div class="foot">own 21% · 312 foreign frames</div>
+      </div>
+    </div>
+
+    <div class="grid">
+
+      <div class="card span2">
+        <header>
+          <h3>Memory</h3>
+          <span class="note">internal SRAM is the pool that runs out — total heap is PSRAM-dominated</span>
+        </header>
+        <div class="attr">
+          <span class="k">Internal free</span>
+          <span class="v">15 744 <span class="unit">B</span></span>
+          <span class="delta"></span>
+        </div>
+        <!-- `@boot`, and it is the whole fix: the walk that produces this
+             number masks the PHY interrupt for 1,7-4,5 ms, so it runs at the
+             boot stages only and `snapshot()` returns the cache. A stale
+             number is a defect only while it is served as a current one. -->
+        <div class="attr">
+          <span class="k">Internal largest block <span class="unit">@boot</span></span>
+          <span class="v">7 168 <span class="unit">B</span></span>
+          <span class="delta"></span>
+        </div>
+        <div class="attr">
+          <span class="k">Internal min ever</span>
+          <span class="v warn">10 032 <span class="unit">B</span></span>
+          <span class="delta"></span>
+        </div>
+        <div class="attr sub">
+          <span class="k">Total heap free (incl. PSRAM)</span>
+          <span class="v">4 519 424 <span class="unit">B</span></span>
+          <span class="delta"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <header><h3>Bus</h3></header>
+        <div class="attr"><span class="k">Commands published</span><span class="v">4 812</span><span class="delta live">+3</span></div>
+        <div class="attr"><span class="k">Events published</span><span class="v">19 044</span><span class="delta live">+12</span></div>
+        <div class="attr"><span class="k">Commands ingress overflow</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <div class="card">
+        <header><h3>DALI</h3></header>
+        <div class="attr"><span class="k">Commands executed</span><span class="v">2 190</span><span class="delta live">+2</span></div>
+        <div class="attr"><span class="k">Timeouts</span><span class="v warn">3</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Errors</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Target state superseded</span><span class="v">5</span><span class="delta"></span></div>
+        <!-- Gauges, so no change column: load falls whenever the wire goes
+             quiet, and a wrap correction would paint that as +4 294 967 000. -->
+        <div class="attr"><span class="k">Wire load permille</span><span class="v">370</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Wire load own permille</span><span class="v">210</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Foreign frames total</span><span class="v">312</span><span class="delta live">+2</span></div>
+        <!-- What the PHY INTERRUPT itself measured. `lost` and `extra` are
+             free-running and keep their change column — a board that starts
+             losing ticks says so there first. `late` and `max gap` are the
+             interrupt's own since-boot figures, republished rather than
+             accumulated, so a delta on either would be arithmetic about
+             nothing. 55 late ticks against zero corrupted captures is a
+             HEALTHY board: the decoder tolerates one lost sample per tick. -->
+        <div class="attr"><span class="k">ISR ticks lost</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">ISR ticks extra</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr sub"><span class="k">ISR late ticks</span><span class="v">55</span><span class="delta"></span></div>
+        <div class="attr sub"><span class="k">ISR max gap</span><span class="v">326 <span class="unit">µs</span></span><span class="delta"></span></div>
+        <!-- Our own backward window, by cause. The first three are faults of
+             ONE gear's answer and are gated at zero on the bench; `multi
+             answer` is the same physics behind a broadcast, group or COMPARE
+             frame — several gear answering one window cannot align — and is
+             the bus-health probe's ordinary reading, so it is plain, never
+             `warn`. `late rejected` is the control: somebody else's frame in
+             its own Table 22 slot. -->
+        <div class="attr"><span class="k">Backward undecodable total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Backward frame size total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Backward incomplete total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr sub"><span class="k">Backward multi answer total</span><span class="v">2</span><span class="delta live">+2</span></div>
+        <div class="attr sub"><span class="k">Backward late rejected total</span><span class="v">14</span><span class="delta"></span></div>
+      </div>
+
+      <div class="card span2">
+        <header>
+          <h3>Operations</h3>
+          <span class="note">running is a gauge; the rest are totals</span>
+        </header>
+        <div class="attr"><span class="k">Running</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Succeeded</span><span class="v">118</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Failed</span><span class="v fault">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Timed out</span><span class="v fault">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Cancelled</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <!-- The three blocks this card's own changelog announced on 2026-09-01
+           and never drew. `stats.tsx` has rendered them since that day; the
+           card said "Added" and showed nothing, which is the same
+           self-concealing shape the changelog entry below describes one level
+           up — a page that looks complete because every OTHER block is there.
+           Drawn 2026-09-16. -->
+      <div class="card">
+        <header>
+          <h3>Home Assistant bridge</h3>
+          <span class="note"><span style="color:var(--ok)">connected</span></span>
+        </header>
+        <div class="attr"><span class="k">Publishes</span><span class="v">8 411</span><span class="delta live">+4</span></div>
+        <div class="attr"><span class="k">Publish failures</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <div class="card">
+        <header><h3>Input devices</h3></header>
+        <div class="attr"><span class="k">Frames24 rx</span><span class="v">1 204</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Events typed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Events generic</span><span class="v">1 198</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Events typed from registry</span><span class="v">1 198</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Events ambiguous scheme</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Events unattributed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr sub"><span class="k">Scans completed</span><span class="v">3</span><span class="delta"></span></div>
+      </div>
+
+      <div class="card span2">
+        <header>
+          <h3>Rules engine</h3>
+          <span class="note">live counts and the latency window are gauges</span>
+        </header>
+        <div class="attr"><span class="k">Activations</span><span class="v">412</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Suppressed (cooldown)</span><span class="v">37</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Actions failed</span><span class="v fault">2</span><span class="delta"></span></div>
+        <div class="attr sub"><span class="k">Rules loaded</span><span class="v">6</span><span class="delta"></span></div>
+        <div class="attr sub"><span class="k">Timers active</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr sub"><span class="k">Trigger → publish p50 / p95 / max</span><span class="v">41 / 96 / 180 <span class="unit">ms</span></span><span class="delta"></span></div>
+      </div>
+
+      <!-- I5. The product view of the push channel: three figures, against the
+           seven Diagnostics carries. `Clients` is a gauge (it goes down when a
+           tab closes), so it shows no change column — the wrap correction would
+           read a closing tab as +4 294 967 295. `Events dropped` is the only
+           one an operator can act on: it means a screen somewhere went stale
+           without saying so, and the answer is fewer open tabs. -->
+      <div class="card span2">
+        <header>
+          <h3>WebSocket</h3>
+          <span class="note">clients is a gauge; the rest are totals</span>
+        </header>
+        <div class="attr"><span class="k">Clients</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Events sent</span><span class="v">31 470</span><span class="delta live">+18</span></div>
+        <div class="attr"><span class="k">Events dropped</span><span class="v fault">6</span><span class="delta"></span></div>
+      </div>
+
+      <!-- The Ethernet MAC's own count, absent on a build without a link.
+           Ring overruns are frames the MAC discarded because every receive
+           descriptor was still full, FIFO overflows the ones it could not
+           even buffer; dropped is the stack refusing a frame the MAC did
+           deliver. None of them is something an operator can act on, so
+           none is `fault`: they are how the receive ring is sized. -->
+      <div class="card">
+        <header>
+          <h3>Network</h3>
+          <span class="note">Ethernet MAC totals since boot</span>
+        </header>
+        <div class="attr"><span class="k">Rx packets total</span><span class="v">184 220</span><span class="delta live">+41</span></div>
+        <div class="attr"><span class="k">Tx packets total</span><span class="v">171 903</span><span class="delta live">+38</span></div>
+        <div class="attr"><span class="k">Rx dropped total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Tx dropped total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Rx ring overruns total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Rx fifo overflows total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr sub"><span class="k">Link up events total</span><span class="v">1</span><span class="delta"></span></div>
+      </div>
+
+    </div>
+  </div>
+
+
+<div class="chgh">2026-09-24 — the receive ring, counted</div>
+<p class="chgnote">A <b>Network</b> card: the Ethernet MAC's packet and loss totals. Two are new —
+  <b>Rx ring overruns</b>, frames the MAC discarded because no receive descriptor was free, and
+  <b>Rx fifo overflows</b>, frames lost before the ring. The MAC keeps both in a read-to-clear
+  register nothing read, so until now a ring too small for its traffic lost frames with every
+  counter at zero. They are plain rows, not faults: the ring is sized against them, and TCP
+  resends what they lose.</p>
+
+
+<div class="chgh">2026-09-21 — several gear answered, and the row that says so</div>
+<p class="chgnote">The DALI card gains the five rows of <b>our own backward window</b>, by cause.
+  Four of them existed on <code>/api/v1/stats</code> since <code>ISSUE-104</code> and were drawn
+  nowhere; the fifth is new: <b>Backward multi answer</b> — a §8.2.5 violation behind a broadcast,
+  group or <code>COMPARE</code> frame, which is several real gear answering one window and failing
+  to align. It is the bus-health probe's ordinary reading (2 of 8 probes on the bench that day), so
+  it is a plain row and never <code>warn</code>; the three rows above it keep meaning "one gear was
+  asked and its answer was unreadable" and are gated at zero. <b>Late rejected</b> stays the control.</p>
+
+<div class="chgh">2026-09-16 — a cached number said so, and four that reached no gate</div>
+<p class="chgnote"><b>Internal largest block</b> carries <code>@boot</code>, on the row and in the
+  tile foot (<code>ISSUE-90</code>). The walk behind it — every block of every matching heap under
+  the allocator's critical section — masks the PHY interrupt for 1,7-4,5 ms, so it moved to the
+  boot stages and the live read returns the cache. That was the right move and it left a stale
+  number sitting between two live ones, on a five-second poll, in a card with delta chips. The
+  suffix is the whole fix: a stale number is a defect only while it is served as a current one.</p>
+<p class="chgnote">The DALI card gains four rows from the interrupt's own accounting
+  (<code>ISSUE-89</code>): ticks it found <b>missing</b>, ticks serviced <b>twice</b>, ticks the
+  interrupt itself timed as <b>late</b>, and the <b>worst gap</b>. Until now they existed only in
+  a serial line, which is to say the acceptance of that remainder rested on a human reading a
+  log. Two are gated at zero on the bench; <code>late</code> is not, because 55 of them against
+  zero corrupted captures is a healthy board — the decoder tolerates one lost sample per tick.</p>
+<p class="chgnote">And the three blocks this card announced on 2026-09-01 and never drew —
+  <b>Home Assistant bridge</b>, <b>Input devices</b>, <b>Rules engine</b> — are drawn. The screen
+  has had them since that day; the card's changelog said "Added" above markup that showed
+  nothing. Exactly the self-concealing shape the entry below describes, one level up.</p>
+
+<div class="chgh">2026-09-05 — the bus load tile</div>
+<p class="chgnote">A fourth tile: <b>DALI bus load</b>, the device's own one-second occupancy gauge
+  — the same number the dashboard card and the OLED strip show, because it is computed once on
+  the device and never in a browser. Its foot carries our own share and the sniffer's foreign
+  forward-frame count, which together answer "busy — with whom?". The DALI card gains the three
+  rows behind the tile; the two per-mille rows are gauges and show no change column.</p>
+
+<div class="chgh">2026-09-01 — three blocks that reached no screen</div>
+<p class="chgnote"><code>/api/v1/stats</code> publishes <b>eight</b> blocks and this page rendered
+  <b>five</b>. The Home Assistant bridge, every Part 103 input figure and the entire rules engine
+  — nineteen counters — were computed, serialized, sent, and displayed nowhere. Added as
+  <b>Home Assistant bridge</b>, <b>Input devices</b> and <b>Rules engine</b>.</p>
+<p class="chgnote">The defect is self-concealing, which is why it lasted: every other block IS on
+  the page, so it looks complete, and there is no count to check it against.
+  <code>scripts/verify_read_surface.py</code> is that count now — it compares the DTO's blocks
+  against the screen's and fails on the next one, with an allowlist whose entry count only ever
+  goes down.</p>
+<p class="chgnote"><code>mqtt.connected</code> is a <b>boolean</b> and renders as a chip in the
+  card header rather than being coerced into the counter grid: a connection state has no delta,
+  and a "0" beside two free-running totals invites reading it as a count. The rules block's live
+  figures — <code>timers_active</code>, <code>rules_loaded</code>, <code>vars_in_use</code> and
+  the three latency percentiles — are declared gauges for the same reason: a falling
+  <code>timers_active</code> is a timer that fired, not a wrapped <code>u32</code>.</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!-- @dsCard group="Components" name="Rule row" subtitle="List row states: ok, partial, failed, disabled, cooldown-suppressed" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rule row — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; }
+.wrap { padding:24px; max-width:760px; }
+h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--text-muted); margin:22px 0 10px; }
+h2:first-child { margin-top:0; }
+.row { display:flex; align-items:center; gap:12px; background:var(--surface);
+  border:1px solid var(--border); border-radius:var(--radius-sm); padding:9px 13px; margin-bottom:8px; }
+.toggle { width:34px; height:19px; border-radius:999px; background:var(--overlay);
+  border:1px solid var(--border-strong); position:relative; flex:none; }
+.toggle i { position:absolute; top:2px; left:2px; width:13px; height:13px; border-radius:50%; background:var(--text-faint); }
+.toggle.on { background:var(--accent-soft); border-color:rgba(240,180,41,.5); }
+.toggle.on i { left:17px; background:var(--accent); }
+.name { font-weight:550; flex:1; }
+.name.dis { color:var(--text-faint); font-weight:450; }
+.meta { font-size:11.5px; color:var(--text-faint); font-variant-numeric:tabular-nums; }
+.out { font-size:11px; padding:1px 8px; border-radius:999px; border:1px solid var(--border-strong); }
+.out.ok { color:var(--ok); border-color:rgba(70,194,106,.4); }
+.out.partial { color:var(--warn); border-color:rgba(227,160,8,.45); }
+.out.failed { color:var(--err); border-color:rgba(242,85,90,.45); }
+.out.supp { color:var(--text-faint); }
+p.note { color:var(--text-muted); font-size:12px; max-width:64ch; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>Outcomes</h2>
+  <div class="row"><span class="toggle on"><i></i></span><span class="name">коридор: вкл/выкл</span>
+    <span class="meta">128× · 42 ms · 12:04:31</span><span class="out ok">ok</span></div>
+  <div class="row"><span class="toggle on"><i></i></span><span class="name">вечерняя сцена</span>
+    <span class="meta">17× · 210 ms</span><span class="out partial">partial</span></div>
+  <div class="row"><span class="toggle on"><i></i></span><span class="name">отчёт в брокер</span>
+    <span class="meta">3× · —</span><span class="out failed">failed</span></div>
+  <div class="row"><span class="toggle on"><i></i></span><span class="name">анти-дребезг</span>
+    <span class="meta">supp. 9× this hour</span><span class="out supp">cooldown</span></div>
+  <div class="row"><span class="toggle"><i></i></span><span class="name dis">зимний режим</span>
+    <span class="meta">disabled</span></div>
+  <p class="note">partial is a distinct outcome, not a failure: a three-lamp scene that failed on
+  the second lamp left the third correct, which is closer to the operator's intent than an abort.
+  The toggle answers instantly (a manifest bit), never through the chunked document write.</p>
+</div>
+</body>
+</html>

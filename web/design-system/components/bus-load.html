@@ -1,0 +1,266 @@
+<!-- @dsCard group="Components" name="Bus load" subtitle="Wire occupancy as one number and a five-minute history: load, our share, collisions — never amber" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bus load — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1000px; margin: 0 auto; padding: 20px 24px 40px; }
+h2 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+h2:first-of-type { margin-top: 0; }
+.note { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.note code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 6px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.card header { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--border); }
+.card header h3 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-faint); flex: 1; }
+.act { font-size: 11px; color: var(--info); background: none; border: none; cursor: pointer; font-family: var(--font); }
+
+/* The verdict block, as components/bus-status specifies it. */
+.bushealth { display: flex; align-items: flex-start; gap: 12px; padding: 14px; }
+.bushealth .ring { width: 34px; height: 34px; border-radius: 50%; flex: none;
+  border: 2px solid var(--border-strong); display: flex; align-items: center;
+  justify-content: center; font-size: 15px; color: var(--text-muted); }
+.bushealth .txt { min-width: 0; }
+.bushealth .st { font-size: 14px; font-weight: 600; color: var(--text); }
+.bushealth .d { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.bushealth.ok .ring { border-color: color-mix(in srgb, var(--ok) 60%, transparent); color: var(--ok); background: var(--ok-soft); }
+.bushealth.ok .st { color: var(--ok); }
+.bushealth.warn .ring { border-color: color-mix(in srgb, var(--warn) 60%, transparent); color: var(--warn); background: var(--warn-soft); }
+.bushealth.warn .st { color: var(--warn); }
+.bushealth.idle .ring { border-style: dashed; }
+.bushealth.idle .st { color: var(--text-muted); }
+.buscounts { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border); }
+.buscounts .c { padding: 9px 14px; border-right: 1px solid var(--border-soft); }
+.buscounts .c:last-child { border-right: none; }
+.buscounts .n { font-family: var(--mono); font-size: 15px; color: var(--text); font-variant-numeric: tabular-nums; }
+.buscounts .n.warn { color: var(--warn); }
+.buscounts .l { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; margin-top: 1px; }
+
+/* ── Bus load ────────────────────────────────────────────────────────────
+   The owner's ask: "загрузка шины в % на главной, чужие кадры, коллизии, и
+   небольшой график истории, который работает только в браузере".
+
+   WHERE THE NUMBER COMES FROM. The PHY interrupt books every 104 µs tick as
+   idle, active (a frame on the wire — ours, another master's, a collision)
+   or transmitting; a one-second window turns the ticks into ONE per-mille
+   gauge on the device (`WireLoadWindow`), and that gauge is what REST, the
+   WebSocket frame, the OLED and this card all read. No surface computes a
+   percent of its own, so none can disagree. Settling is silence and is not
+   load. The browser keeps the HISTORY — a ring of the last five minutes of
+   pushed samples — and the device keeps none.
+
+   THE FIGURE sits at the right of the verdict block, mono like every other
+   number here, with our own share underneath: "37 % · own 21 %" answers the
+   question this bench actually asks, "the bus is busy — but with whom?".
+   The difference is another master plus the answers gear gave to our own
+   queries. Before the first tick is measured (a host transport, the first
+   milliseconds after boot) the figure is a dash and the caption says
+   "not measured" — the same rule that keeps the verdict "not observed"
+   rather than green.
+
+   NEVER AMBER. `--accent` is lamp state, and a filled amber area under the
+   verdict would read as light output. The precedent is the HCL curve:
+   the lamp line is amber, everything that is not a lamp rides a neutral or
+   status hue. So: total load is an `--info` area with its line, our share
+   a neutral dashed line (as `.cct-line`), and a collision is a red tick at
+   the baseline at the moment it happened — `--err`, because a collision is
+   the one thing on this chart that is a fault.
+
+   TIME ON THE X AXIS, not sample index. Samples arrive every 2 s over the
+   socket and every 5 s on the polling fallback, and a chart indexed by
+   sample would show the same minute at two different widths. Fewer than two
+   samples is "collecting…", never an empty box. */
+.bushealth .load { margin-left: auto; text-align: right; flex: none; }
+.bushealth .load .n { font-family: var(--mono); font-size: 22px; font-weight: 500; line-height: 1.1;
+  color: var(--text); font-variant-numeric: tabular-nums; }
+.bushealth .load .n .u { font-size: 12px; color: var(--text-faint); margin-left: 2px; }
+.bushealth .load .l { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; }
+.bushealth .load .s { font-size: 11px; color: var(--text-muted); font-family: var(--mono); margin-top: 2px; }
+.busload { padding: 10px 14px 8px; border-top: 1px solid var(--border); }
+.busload .hd { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+.busload .hd .t { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; flex: 1; }
+.busload .legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-muted); }
+.busload .legend i { display: inline-block; width: 14px; height: 0; border-top: 2px solid var(--info); margin-right: 5px; vertical-align: middle; }
+.busload .legend i.own { border-top: 1.5px dashed var(--text-muted); }
+.busload .legend i.coll { border-top: 3px solid var(--err); width: 3px; }
+.busload svg { width: 100%; height: auto; display: block; }
+.busload .gl { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.busload .glab { fill: var(--text-faint); font-size: 9px; font-family: var(--mono); }
+.busload .area { fill: color-mix(in srgb, var(--info) 22%, transparent); stroke: none; }
+.busload .line { fill: none; stroke: var(--info); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.busload .own { fill: none; stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; }
+.busload .coll { stroke: var(--err); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.busload .empty { font-size: 11px; color: var(--text-faint); padding: 18px 0; text-align: center; }
+.grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h2>The card, with a busy minute in its history</h2>
+  <p class="note">A scan held the wire near full for a minute; the poller's reads are the small
+    blips either side. Our share rides under the total as a dashed line — the gap between the two
+    is the other master and the gear answering us. Three collisions, each a red tick where it
+    happened.</p>
+  <div class="demo">
+    <div class="card" style="max-width:560px">
+      <header><h3>DALI bus</h3><button class="act">Counters →</button></header>
+      <div class="bushealth ok">
+        <span class="ring">✓</span>
+        <span class="txt">
+          <div class="st">Healthy</div>
+          <div class="d">7 401 frames sent, no power-down or system-failure condition seen since boot.</div>
+        </span>
+        <span class="load">
+          <div class="n">37<span class="u">%</span></div>
+          <div class="l">bus load</div>
+          <div class="s">own 21%</div>
+        </span>
+      </div>
+      <div class="buscounts">
+        <div class="c"><div class="n">7 401</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">312</div><div class="l">foreign</div></div>
+        <div class="c"><div class="n warn">3</div><div class="l">collisions</div></div>
+        <div class="c"><div class="n">0</div><div class="l">power down</div></div>
+      </div>
+      <div class="busload">
+        <div class="hd">
+          <span class="t">Bus load · last 5 min</span>
+          <span class="legend"><span><i></i>load</span><span><i class="own"></i>our share</span><span><i class="coll"></i>collision</span></span>
+        </div>
+        <svg viewBox="0 0 720 120" preserveAspectRatio="none" role="img" aria-label="Bus load over the last five minutes">
+          <line class="gl" x1="0" y1="8" x2="720" y2="8"/>
+          <line class="gl" x1="0" y1="56" x2="720" y2="56"/>
+          <line class="gl" x1="0" y1="104" x2="720" y2="104"/>
+          <line class="gl" x1="144" y1="8" x2="144" y2="104"/>
+          <line class="gl" x1="288" y1="8" x2="288" y2="104"/>
+          <line class="gl" x1="432" y1="8" x2="432" y2="104"/>
+          <line class="gl" x1="576" y1="8" x2="576" y2="104"/>
+          <path class="area" d="M0,104 L0,100 L24,99 L48,100 L72,98 L96,99 L120,85 L144,87 L168,99 L192,100 L216,99 L240,16 L264,13 L288,14 L312,12 L336,15 L360,13 L384,46 L408,96 L432,99 L456,100 L480,83 L504,99 L528,100 L552,98 L576,99 L600,100 L624,86 L648,99 L672,100 L696,99 L720,98 L720,104 Z"/>
+          <polyline class="line" points="0,100 24,99 48,100 72,98 96,99 120,85 144,87 168,99 192,100 216,99 240,16 264,13 288,14 312,12 336,15 360,13 384,46 408,96 432,99 456,100 480,83 504,99 528,100 552,98 576,99 600,100 624,86 648,99 672,100 696,99 720,98"/>
+          <polyline class="own" points="0,102 24,101 48,102 72,100 96,101 120,91 144,92 168,101 192,102 216,101 240,48 264,46 288,47 312,45 336,48 360,46 384,68 408,99 432,101 456,102 480,90 504,101 528,102 552,100 576,101 600,102 624,92 648,101 672,102 696,101 720,100"/>
+          <line class="coll" x1="264" y1="104" x2="264" y2="94"/>
+          <line class="coll" x1="336" y1="104" x2="336" y2="90"/>
+          <line class="coll" x1="624" y1="104" x2="624" y2="94"/>
+          <text class="glab" x="4" y="18">100%</text>
+          <text class="glab" x="4" y="66">50%</text>
+          <text class="glab" x="2" y="116">−5 min</text>
+          <text class="glab" x="694" y="116">now</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <h2>Collecting</h2>
+  <p class="note">One sample is a point, not a history. Until the second arrives the strip says so
+    in the caption voice — faint, small — rather than drawing an empty box that reads as "zero
+    load for five minutes".</p>
+  <div class="demo">
+    <div class="card" style="max-width:560px">
+      <header><h3>DALI bus</h3><button class="act">Counters →</button></header>
+      <div class="bushealth ok">
+        <span class="ring">✓</span>
+        <span class="txt">
+          <div class="st">Healthy</div>
+          <div class="d">96 frames sent, no power-down or system-failure condition seen since boot.</div>
+        </span>
+        <span class="load">
+          <div class="n">4<span class="u">%</span></div>
+          <div class="l">bus load</div>
+          <div class="s">own 4%</div>
+        </span>
+      </div>
+      <div class="buscounts">
+        <div class="c"><div class="n">96</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">0</div><div class="l">foreign</div></div>
+        <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
+        <div class="c"><div class="n">0</div><div class="l">power down</div></div>
+      </div>
+      <div class="busload">
+        <div class="hd">
+          <span class="t">Bus load · last 5 min</span>
+          <span class="legend"><span><i></i>load</span><span><i class="own"></i>our share</span><span><i class="coll"></i>collision</span></span>
+        </div>
+        <div class="empty">collecting — one sample so far, the next arrives in 2 s</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Not measured</h2>
+  <p class="note">A transport with no PHY interrupt — the host simulator before its first exchange,
+    the first milliseconds after a boot — has booked no tick at all. Zero there would be a claim
+    about a quiet bus; a dash and <b>not measured</b> is the honest reading, and the history stays
+    in the collecting state until a measured sample arrives.</p>
+  <div class="demo">
+    <div class="card" style="max-width:560px">
+      <header><h3>DALI bus</h3><button class="act">Counters →</button></header>
+      <div class="bushealth idle">
+        <span class="ring">·</span>
+        <span class="txt">
+          <div class="st">Not observed</div>
+          <div class="d">no frame has gone out since boot, so the PHY has classified nothing yet.
+            Run a scan or set a level.</div>
+        </span>
+        <span class="load">
+          <div class="n">—</div>
+          <div class="l">bus load</div>
+          <div class="s">not measured</div>
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

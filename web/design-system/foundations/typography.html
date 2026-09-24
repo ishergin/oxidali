@@ -1,0 +1,82 @@
+<!-- @dsCard group="Foundations" name="Typography" subtitle="Type scale, mono usage, labels" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Typography — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.wrap { padding: 24px; max-width: 760px; display: grid; gap: 18px; }
+.spec { display: grid; grid-template-columns: 190px 1fr; align-items: baseline; gap: 16px; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
+.spec .meta { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.h1 { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+.h2 { font-size: 16px; font-weight: 600; }
+.section { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
+.body { font-size: 14px; }
+.small { font-size: 12px; color: var(--text-muted); }
+.mono { font-family: var(--mono); font-size: 13px; }
+.mono-sm { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.num { font-family: var(--mono); font-size: 22px; font-weight: 500; color: var(--accent-strong); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="spec"><div class="meta">h1 · 20/650</div><div class="h1">Physical device 04 — Kitchen spot</div></div>
+  <div class="spec"><div class="meta">h2 · 16/600</div><div class="h2">Arc level control</div></div>
+  <div class="spec"><div class="meta">section · 12/600 caps</div><div class="section">Fading controls</div></div>
+  <div class="spec"><div class="meta">body · 14/400</div><div class="body">Runtime state is projected from bus evidence; writes go through typed commands.</div></div>
+  <div class="spec"><div class="meta">small · 12/400 muted</div><div class="small">Last read 12 s ago · source: readback</div></div>
+  <div class="spec"><div class="meta">mono · 13</div><div class="mono">0x0B 0x90 → backward 0xFF</div></div>
+  <div class="spec"><div class="meta">mono-sm · 11 muted</div><div class="mono-sm">random_address 0x214365 · correlation 42</div></div>
+  <div class="spec"><div class="meta">num · 22/500 mono</div><div class="num">254</div></div>
+</div>
+</body>
+</html>

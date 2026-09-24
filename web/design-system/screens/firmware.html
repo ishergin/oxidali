@@ -1,0 +1,275 @@
+<!-- @dsCard group="Screens" name="Firmware" subtitle="Network update (ADR-024): running slot, one URL field, live progress, the failure that names its step, and the unverified image an operator must not walk away from" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Firmware — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 760px; margin: 0 auto; padding: 20px 24px 60px; }
+
+.head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.crumb { font-size: 12px; color: var(--text-faint); }
+.sub { font-size: 12.5px; color: var(--text-muted); margin: 0 0 16px; }
+
+.state-label { display: flex; align-items: center; gap: 8px; margin: 36px 0 14px; }
+.state-label .ln { flex: 1; height: 1px; background: var(--border); }
+.state-label span { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; }
+.panel > h2 { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em;
+  font-weight: 500; margin: 0; padding: 10px 15px; border-bottom: 1px solid var(--border); }
+.panel .body { padding: 14px 15px; }
+
+.srow { display: flex; align-items: flex-start; gap: 14px; padding: 10px 0; }
+.srow + .srow { border-top: 1px solid var(--border-soft); }
+.srow .lbl { flex: 1; }
+.srow .lbl .n { font-size: 13px; color: var(--text); font-weight: 500; }
+.srow .lbl .d { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+.srow .ctl { flex: none; padding-top: 1px; }
+
+/* The running slot is an ADDRESS, not a name — mono, like every other address
+   and hex value in this product. */
+.fw-slot { font-family: var(--mono); font-size: 12.5px; color: var(--text); }
+
+/* An image that has not yet proved itself is the one state an operator must
+   not walk away from: the next reset rolls it back. `warn`, because it is
+   exactly "desired != applied" one storey up — the firmware is running but not
+   yet kept. */
+.fw-verify { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; padding: 9px 12px;
+  border-radius: var(--radius-sm); background: var(--warn-soft); border: 1px solid rgba(227,160,8,.35); }
+.fw-verify .t { font-size: 12px; color: var(--warn); }
+.fw-verify .t b { font-weight: 600; }
+
+/* The URL is long, monospaced and typed rarely — full width, no adornment. */
+.fw-urlrow { display: flex; gap: 8px; }
+.fw-url { flex: 1; background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 12px; padding: 6px 9px; font-family: var(--mono); }
+.fw-url.err { border-color: rgba(242,85,90,.55); background: var(--err-soft); }
+.btn { padding: 6px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+.btn:disabled { opacity: .4; cursor: default; }
+.fw-hint { font-size: 11px; color: var(--text-faint); margin-top: 8px; }
+
+/* Progress is the whole screen while a write runs. The bar is NOT amber:
+   amber is lamp state and levels only, and a firmware write is not a lamp. */
+.fw-prog { height: 6px; border-radius: 999px; background: var(--overlay); overflow: hidden; }
+.fw-prog i { display: block; height: 100%; background: var(--info); }
+.fw-progline { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.fw-progline .st { font-size: 13px; color: var(--text); font-weight: 500; }
+.fw-progline .pct { font-family: var(--mono); font-size: 12.5px; color: var(--info); }
+.fw-progline .spacer { flex: 1; }
+.fw-progline .bytes { font-family: var(--mono); font-size: 11.5px; color: var(--text-faint); }
+
+/* A failure names the STEP it failed at, because "execution failed" reads the
+   same for an unreachable server and a refused write. */
+.fw-fail { display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--err-soft); border: 1px solid rgba(242,85,90,.35); }
+.fw-fail .code { font-family: var(--mono); font-size: 12px; color: var(--err); font-weight: 600; }
+.fw-fail .why { font-size: 11.5px; color: var(--text-muted); margin-top: 3px; }
+
+.fw-unavail { font-size: 12px; color: var(--text-faint); }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="state-label"><span>Idle — nothing in flight</span><span class="ln"></span></div>
+  <div class="head"><h1>Firmware</h1><span class="crumb">System</span></div>
+  <p class="sub">The controller fetches an image itself and reboots into it. The wire stays the way back if it cannot.</p>
+
+  <div class="panel">
+    <h2>Running image</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl"><div class="n">Slot</div><div class="d">Which of the two app partitions is executing.</div></div>
+        <div class="ctl"><span class="fw-slot">ota_0</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Version</div></div>
+        <div class="ctl"><span class="fw-slot">0.1.0</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Update from a URL</h2>
+    <div class="body">
+      <div class="fw-urlrow">
+        <input class="fw-url" value="http://192.168.13.30:8099/dali2rust.bin">
+        <button class="btn primary">Update</button>
+      </div>
+      <div class="fw-hint">http or https, up to 96 characters. The controller downloads it, writes the other slot and reboots — about a minute.</div>
+    </div>
+  </div>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Downloading — the write is in progress</span><span class="ln"></span></div>
+  <div class="head"><h1>Firmware</h1><span class="crumb">System</span></div>
+  <p class="sub">The controller fetches an image itself and reboots into it. The wire stays the way back if it cannot.</p>
+
+  <div class="panel">
+    <h2>Update in progress</h2>
+    <div class="body">
+      <div class="fw-progline">
+        <span class="st">Downloading</span>
+        <span class="pct">63%</span>
+        <span class="spacer"></span>
+        <span class="bytes">2 752 512 / 4 356 048 B</span>
+      </div>
+      <div class="fw-prog"><i style="width:63%"></i></div>
+      <div class="fw-hint">Background polling is held off until this finishes. The controller reboots on its own.</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Update from a URL</h2>
+    <div class="body">
+      <div class="fw-urlrow">
+        <input class="fw-url" value="http://192.168.13.30:8099/dali2rust.bin" disabled>
+        <button class="btn primary" disabled>Update</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Written — rebooting into the new image</span><span class="ln"></span></div>
+  <div class="head"><h1>Firmware</h1><span class="crumb">System</span></div>
+
+  <div class="panel">
+    <h2>Update in progress</h2>
+    <div class="body">
+      <div class="fw-progline">
+        <span class="st">Written — rebooting</span>
+        <span class="pct">100%</span>
+        <span class="spacer"></span>
+        <span class="bytes">4 356 048 / 4 356 048 B</span>
+      </div>
+      <div class="fw-prog"><i style="width:100%"></i></div>
+      <div class="fw-hint">The controller drops off the network for a few seconds. This page comes back on its own.</div>
+    </div>
+  </div>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Unverified — the next reset rolls this image back</span><span class="ln"></span></div>
+  <div class="head"><h1>Firmware</h1><span class="crumb">System</span></div>
+
+  <div class="fw-verify">
+    <span class="t"><b>This image has not been kept yet.</b> It is proving itself; if it fails, the next reset returns to the previous slot.</span>
+  </div>
+
+  <div class="panel">
+    <h2>Running image</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl"><div class="n">Slot</div><div class="d">Booted from the image written a moment ago.</div></div>
+        <div class="ctl"><span class="fw-slot">ota_1</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Failed — the step is named, the controller kept running</span><span class="ln"></span></div>
+  <div class="head"><h1>Firmware</h1><span class="crumb">System</span></div>
+
+  <div class="panel">
+    <h2>Last update</h2>
+    <div class="body">
+      <div class="fw-fail">
+        <div>
+          <div class="code">fetch_failed</div>
+          <div class="why">The image could not be downloaded — the server refused, went away, or sent fewer bytes than it announced. Nothing was selected for boot; the controller is still running this image.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Update from a URL</h2>
+    <div class="body">
+      <div class="fw-urlrow">
+        <input class="fw-url err" value="http://192.168.13.30:8099/dali2rust.bin">
+        <button class="btn primary">Retry</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Unavailable — this build has no second slot</span><span class="ln"></span></div>
+  <div class="head"><h1>Firmware</h1><span class="crumb">System</span></div>
+
+  <div class="panel">
+    <h2>Running image</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl"><div class="n">Slot</div></div>
+        <div class="ctl"><span class="fw-slot">factory</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Network update</div>
+          <div class="d">The partition table has a single app partition, so there is nowhere to write an update. Flashing over the wire is the only path.</div>
+        </div>
+        <div class="ctl"><span class="fw-unavail">unavailable</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,52 @@
+# <counter> <budget>; -1 = not measured with a counter attached, reported but not gated
+raw_unanswered           0
+bus_contended            0
+http_503                 0
+http_504                 0
+# /health can outwait the client timeout while the single httpd task runs a blocking handler.
+http_transport           1
+# One refused connection per reboot a test asks for; the destructive tier reboots five times.
+http_reboot_race         5
+attr_read                0
+attr_read_exhausted      0
+optical_contaminated_window  0
+optical_lost_command         0
+optical_gear_colour_lag      0
+# Times expect_program_witness accepted the readback query in place of the programming frame.
+witness_fallbacks        0
+# One re-send of a CCT MQTT command whose DT8 staging lost its readback to the foreign master's traffic.
+mqtt_cct_first_command   1
+# Non-zero means wb-mqtt-dali jammed: check the delivered frames in the validity section, restart the service.
+foreign_master_silent    0
+# The first exchange after Part 103 commissioning, while the segment leaves INITIALISE and quiescent mode.
+input_post_commission_settle    1
+
+# Frames the controller shed, from /api/v1/diagnostics at session end.
+bus_commands_ingress_overflow       0
+bus_confirmations_ingress_overflow  0
+bus_events_ingress_overflow         0
+bus_event_subscriber_overflow       0
+dali_event_publish_failed           0
+dali_confirmation_publish_failed    0
+
+# PHY interrupt tick accounting from /api/v1/stats.dali; isr_late_ticks and isr_max_gap_us are reported, never gated.
+isr_ticks_lost          0
+isr_ticks_extra         0
+# Rates for a same-boot session of ten minutes or more; a _per_h row is gated only once it is listed here.
+isr_ticks_lost_per_h        0
+isr_ticks_extra_per_h       0
+answer_stage_late_per_h     0
+sniff_poll_late_per_h       0
+persist_flush_slow_per_h    0
+# The same three as counts, for sessions shorter than ten minutes.
+answer_stage_late           0
+sniff_poll_late             0
+persist_flush_slow          0
+
+# Read absolutely, not as a session delta: the increment happens in the boot prologue.
+console_log_unavailable   0
+
+# Our backward window by cause; backward_late_rejected and backward_multi_answer are controls, reported and never gated.
+backward_undecodable      0
+backward_frame_size       0
+backward_incomplete       0

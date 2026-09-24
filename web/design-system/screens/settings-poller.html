@@ -1,0 +1,266 @@
+<!-- @dsCard group="Screens" name="Settings — Poller" subtitle="First settings resource: enable/interval/window/groups form with a sticky Apply bar, disabled and dirty-with-error states" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings — Poller — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 760px; margin: 0 auto; padding: 20px 24px 100px; }
+
+.head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.crumb { font-size: 12px; color: var(--text-faint); }
+.sub { font-size: 12.5px; color: var(--text-muted); margin: 0 0 16px; }
+
+/* A settings screen has one record, not a list — the affordance the state
+   label below stands in for is "this whole page, twice", so each instance
+   gets its own heading rather than a synthetic divider rule. */
+.state-label { display: flex; align-items: center; gap: 8px; margin: 36px 0 14px; }
+.state-label .ln { flex: 1; height: 1px; background: var(--border); }
+.state-label span { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; }
+.panel > h2 { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em;
+  font-weight: 500; margin: 0; padding: 10px 15px; border-bottom: 1px solid var(--border); }
+.panel .body { padding: 14px 15px; }
+
+/* Settings row: label + description on the left, one control on the right.
+   Every field on this screen is exactly one of these or the groups grid. */
+.srow { display: flex; align-items: flex-start; gap: 14px; padding: 10px 0; }
+.srow + .srow { border-top: 1px solid rgba(42,51,64,.5); }
+.srow .lbl { flex: 1; }
+.srow .lbl .n { font-size: 13px; color: var(--text); font-weight: 500; }
+.srow .lbl .d { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+.srow .lbl .d.warn { color: var(--warn); }
+.srow .ctl { flex: none; padding-top: 1px; }
+
+.toggle { width: 34px; height: 19px; border-radius: 999px; background: var(--overlay);
+  border: 1px solid var(--border-strong); position: relative; cursor: pointer; flex: none; }
+.toggle i { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
+  background: var(--text-faint); }
+.toggle.on { background: var(--accent-soft); border-color: rgba(240,180,41,.5); }
+.toggle.on i { left: 17px; background: var(--accent); }
+
+.inp { background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 12px; padding: 5px 8px; font-family: var(--mono); width: 84px; text-align: right; }
+.inp.err { border-color: rgba(242,85,90,.55); background: var(--err-soft); }
+.fielderr { display: block; font-size: 10.5px; color: var(--err); margin-top: 5px; text-align: right; }
+
+/* interval_ms is a common bus interval, not a one-off number — presets cover
+   the actual choices operators make; the raw field stays for the rest. */
+.presets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.preset { font-size: 11px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--raised); color: var(--text-muted); cursor: pointer; }
+.preset.on { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+.numrow { display: flex; align-items: center; gap: 8px; }
+.unit { font-size: 11px; color: var(--text-faint); }
+
+.chips { display: flex; gap: 5px; flex-wrap: wrap; }
+.chip { font-size: 11.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--raised); color: var(--text-muted); cursor: pointer; font-family: var(--mono); }
+.chip.on { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+/* The union group (dt8_color, added automatically for DT8 gear) is shown
+   pinned-but-inert rather than omitted, so the toggle below it is legible as
+   "on top of this", not a mystery seventh chip that appears later. */
+.chip.auto { border-style: dashed; opacity: .55; cursor: default; }
+.hint { font-size: 11px; color: var(--text-faint); margin-top: 8px; }
+.req { background: var(--warn-soft); border: 1px solid rgba(227,160,8,.35); border-radius: var(--radius-sm);
+  padding: 6px 9px; font-size: 11px; color: var(--warn); margin-top: 8px; }
+
+/* Edits accumulate as the operator scrolls a form with four cards, so Apply
+   has to stay reachable — a header button would scroll out of view first. */
+.footer-bar { position: sticky; bottom: 0; margin-top: -1px; display: flex; align-items: center; gap: 10px;
+  padding: 11px 15px; background: rgba(14,17,22,.92); backdrop-filter: blur(6px);
+  border: 1px solid var(--border); border-radius: var(--radius); }
+.footer-bar .n { font-size: 12px; color: var(--text-muted); }
+.footer-bar .n b { color: var(--accent-strong); font-weight: 600; }
+.footer-bar .spacer { flex: 1; }
+.btn { padding: 6px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+.btn.ghost { background: transparent; color: var(--text-muted); }
+.btn:disabled { opacity: .4; cursor: default; }
+.footer-bar.idle { background: transparent; backdrop-filter: none; border-color: transparent; }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="state-label"><span>Default — freshly hydrated, never patched</span><span class="ln"></span></div>
+  <div class="head">
+    <h1>Poller</h1>
+    <span class="crumb">Settings</span>
+  </div>
+  <p class="sub">Background attribute reads that keep registry runtime state fresh without manual requests.</p>
+
+  <div class="panel">
+    <h2>Background polling</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Enabled</div>
+          <div class="d warn">Starts background DALI bus polling — increases traffic on a busy bus.</div>
+        </div>
+        <div class="ctl"><span class="toggle"><i></i></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="opacity:.5">
+    <h2>Cycle</h2>
+    <div class="body">
+      <div class="srow"><div class="lbl"><div class="n">Interval</div></div><div class="ctl"><span class="unit">5000 ms</span></div></div>
+    </div>
+  </div>
+
+  <div class="footer-bar idle">
+    <span class="n">No unsaved changes</span>
+    <span class="spacer"></span>
+    <button class="btn ghost" disabled>Discard</button>
+    <button class="btn primary" disabled>Apply</button>
+  </div>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Editing — enabled, custom interval, one rejected field</span><span class="ln"></span></div>
+  <div class="head">
+    <h1>Poller</h1>
+    <span class="crumb">Settings</span>
+  </div>
+  <p class="sub">Background attribute reads that keep registry runtime state fresh without manual requests.</p>
+
+  <div class="panel">
+    <h2>Background polling</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Enabled</div>
+          <div class="d warn">Starts background DALI bus polling — increases traffic on a busy bus.</div>
+        </div>
+        <div class="ctl"><span class="toggle on"><i></i></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Cycle</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Interval</div>
+          <div class="d">A floor, not a promise: the wire-share cap below may stretch it.</div>
+          <div class="presets" style="margin-top:6px">
+            <span class="preset">1 s</span><span class="preset">5 s</span>
+            <span class="preset">30 s</span><span class="preset">5 min</span>
+          </div>
+        </div>
+        <div class="ctl">
+          <div class="numrow"><input class="inp err" value="120"><span class="unit">ms</span></div>
+          <span class="fielderr">200–3,600,000 ms</span>
+        </div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Wire share</div>
+          <div class="d">Background polling never takes more than a quarter of bus time, so an expensive read makes its own period longer. Not configurable.</div>
+        </div>
+        <div class="ctl"><span class="unit">≤ 25 %</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Attribute groups</h2>
+    <div class="body">
+      <div class="chips">
+        <span class="chip on">runtime_status</span>
+        <span class="chip on">common_102</span>
+        <span class="chip">dt6_led</span>
+        <span class="chip">groups</span>
+        <span class="chip">scenes</span>
+        <span class="chip">extended</span>
+        <span class="chip auto" title="Added automatically per-device by Include DT8 colour below">dt8_color</span>
+      </div>
+      <div class="hint">Read on every device each cycle. At least one group is required — an empty set is rejected by the server.</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Filters</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Include DT8 colour</div>
+          <div class="d">Adds <span style="font-family:var(--mono)">dt8_color</span> on top of the groups above, only for gear whose effective type is DT8.</div>
+        </div>
+        <div class="ctl"><span class="toggle on"><i></i></span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Skip unbound virtual lamps</div>
+          <div class="d">Physical devices with no virtual-lamp binding are left out of the cycle entirely.</div>
+        </div>
+        <div class="ctl"><span class="toggle on"><i></i></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-bar">
+    <span class="n"><b>3</b> unsaved changes</span>
+    <span class="spacer"></span>
+    <button class="btn ghost">Discard</button>
+    <button class="btn primary" disabled title="Fix the highlighted field first">Apply</button>
+  </div>
+</div>
+
+</body>
+</html>

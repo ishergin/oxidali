@@ -1,0 +1,150 @@
+<!-- @dsCard group="Components" name="Connection status" subtitle="Sidebar WebSocket dot: live, reconnecting, offline, refused — plus the polling-fallback caption" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Connection status — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.wrap { padding: 24px; max-width: 760px; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); margin: 22px 0 10px; }
+h2:first-child { margin-top: 0; }
+p.note { color: var(--text-muted); font-size: 12px; max-width: 60ch; }
+
+/* The indicator itself. Deliberately NOT amber: --accent is reserved for lamp
+ * state and levels, and a permanently-lit amber dot in the sidebar would read
+ * as "a light is on". */
+.conn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 8px; border-radius: var(--radius-sm);
+  font-size: 12px; color: var(--text-muted);
+  border: 1px solid transparent; background: transparent;
+}
+.conn:hover { background: var(--hover); }
+.conn .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+.conn.live { color: var(--ok); }
+.conn.retry { color: var(--warn); }
+.conn.down { color: var(--err); }
+.conn.refused { color: var(--err); }
+/* Hollow, so "the controller refused us" cannot be read as the solid red of
+ * "no answer at all". These are different facts and the operator acts on them
+ * differently: one is a network to fix, the other is a page served from
+ * somewhere the controller does not accept. */
+.conn.refused .dot { background: transparent; box-shadow: inset 0 0 0 2px currentColor; }
+/* Reconnecting pulses; live, down and refused are steady. A pulsing "live" dot
+ * draws the eye to the one state that needs no attention, and a pulsing
+ * "refused" would promise a retry that is never coming. */
+.conn.retry .dot { animation: conn-pulse 1.1s ease-in-out infinite; }
+@keyframes conn-pulse { 50% { opacity: .25; } }
+
+/* Sidebar footer mock */
+.side {
+  width: 232px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 6px;
+}
+.side .spacer { height: 120px; }
+.side .footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; }
+.themebtn { background: var(--raised); border: 1px solid var(--border); color: var(--text-muted); border-radius: var(--radius-sm); padding: 4px 9px; font-size: 12px; cursor: pointer; }
+.navitem { color: var(--text-muted); padding: 5px 8px; border-radius: var(--radius-sm); font-size: 13px; }
+.navitem.active { color: var(--text); background: var(--raised); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>States</h2>
+  <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:center">
+    <span class="conn live" title="live — updates pushed by the controller"><span class="dot"></span>Live</span>
+    <span class="conn retry" title="reconnecting — polling meanwhile"><span class="dot"></span>Reconnecting</span>
+    <span class="conn down" title="no connection for 74 s — polling only"><span class="dot"></span>Offline</span>
+    <span class="conn refused" title="refused: this page was not served by the controller, so the push channel is closed to it — screens poll instead"><span class="dot"></span>Refused</span>
+  </div>
+  <p class="note">
+    Green is live, amber-of-the-<code>warn</code>-hue is reconnecting (and polling
+    meanwhile), red is more than 60 s without a connection. The lamp accent
+    <code>--accent</code> is never used here.
+  </p>
+
+  <h2>Refused is not Offline</h2>
+  <p class="note">
+    <b>Offline</b> means nobody answered and the ladder is still climbing.
+    <b>Refused</b> means the controller answered at once and said no for a reason
+    that cannot change while the page is loaded — today only
+    <code>ws_origin_rejected</code>, i.e. this page was not served by the
+    controller. Nothing is retrying behind it: the dot is hollow, it does not
+    pulse, and the caption says <em>screens poll instead</em> rather than
+    <em>reconnecting</em>. Retrying a permanent refusal cost a handshake, an
+    error frame and a close every 15 s per tab, all of it through the
+    controller's single httpd task.
+  </p>
+  <p class="note">
+    <code>ws_clients_exhausted</code> deliberately stays <b>Reconnecting</b>: a
+    client slot frees the moment another tab closes, so that one is transient.
+  </p>
+
+  <h2>In the sidebar, beside the theme toggle</h2>
+  <div class="side">
+    <div class="navitem active">Dashboard</div>
+    <div class="navitem">Physical devices</div>
+    <div class="navitem">DALI sniffer</div>
+    <div class="spacer"></div>
+    <div class="footer">
+      <span class="conn live" title="Live — updates arrive over WebSocket"><span class="dot"></span>Live</span>
+      <button class="themebtn">Light</button>
+    </div>
+  </div>
+  <p class="note">
+    The label collapses to the dot alone below 900 px; the tooltip always carries
+    the reason, because "why is my screen stale" is the only question this
+    control exists to answer.
+  </p>
+</div>
+</body>
+</html>

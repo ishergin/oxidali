@@ -1,0 +1,252 @@
+<!-- @dsCard group="Components" name="Operation cards" subtitle="Async op lifecycle: accepted, running, result buckets, failure" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Operation cards — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.wrap { padding: 24px; max-width: 560px; display: grid; gap: 12px; }
+
+.op { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+.op .head { display: flex; align-items: center; gap: 10px; }
+.op .title { font-weight: 600; font-size: 13px; flex: 1; }
+.op .id { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.idle { color: var(--text-muted); background: var(--raised); }
+.chip.run  { color: var(--info); background: var(--info-soft); }
+.chip.run .dot { animation: pulse 1.2s ease-in-out infinite; }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+.chip.ok   { color: var(--ok); background: var(--ok-soft); }
+.chip.err  { color: var(--err); background: var(--err-soft); }
+/* `preempted` is the priority mechanism working, not a fault (ADR-013). It
+   must never take the same colour as a failure: an operator who moves a level
+   while a read is running preempts it BY DESIGN, and after ISSUE-33 that is a
+   routine event rather than a rare one. Muted, like `accepted`. */
+.chip.stood-down { color: var(--text-muted); background: var(--raised); }
+@keyframes pulse { 50% { opacity: .25; } }
+
+.bar { height: 4px; border-radius: 2px; background: var(--raised); margin-top: 10px; overflow: hidden; }
+.bar .fill { height: 100%; width: 54%; background: var(--info); border-radius: 2px; }
+.bar.indet .fill { width: 30%; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { 0% { transform: translateX(-100%);} 100% { transform: translateX(340%);} }
+
+.buckets { display: flex; gap: 14px; margin-top: 10px; }
+.bucket { display: flex; align-items: baseline; gap: 6px; }
+.bucket .n { font-family: var(--mono); font-size: 16px; font-weight: 600; }
+.bucket .l { font-size: 11px; color: var(--text-muted); }
+.bucket.ok .n { color: var(--ok); }
+.bucket.skip .n { color: var(--text-muted); }
+.bucket.fail .n { color: var(--err); }
+
+.fail-list { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; font-size: 12px; }
+.fail-list .row { display: flex; gap: 8px; padding: 3px 0; color: var(--text-muted); }
+.fail-list .mono { font-family: var(--mono); font-size: 11px; color: var(--text); }
+.fail-list .reason { color: var(--err); font-family: var(--mono); font-size: 11px; }
+
+.err-box { margin-top: 10px; padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--err-soft); border: 1px solid rgba(242,85,90,.3); font-size: 12px; }
+.err-box .code { font-family: var(--mono); color: var(--err); }
+.meta { font-size: 11px; color: var(--text-faint); margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="op">
+    <div class="head">
+      <span class="title">Discovery · scan known addresses</span>
+      <span class="chip run"><span class="dot"></span>running</span>
+    </div>
+    <div class="bar indet"><div class="fill"></div></div>
+    <div class="meta">Adapter 0 · <span style="font-family:var(--mono)">pd-disc-0-13</span> · started 4 s ago</div>
+  </div>
+
+  <div class="op">
+    <div class="head">
+      <span class="title">Group apply</span>
+      <span class="chip ok"><span class="dot"></span>succeeded</span>
+    </div>
+    <div class="buckets">
+      <div class="bucket ok"><span class="n">14</span><span class="l">programmed</span></div>
+      <div class="bucket skip"><span class="n">2</span><span class="l">skipped</span></div>
+      <div class="bucket fail"><span class="n">0</span><span class="l">failed</span></div>
+    </div>
+    <div class="meta">Adapter 0 · <span style="font-family:var(--mono)">grp-apply-0-6</span> · finished 12 s ago</div>
+  </div>
+
+  <div class="op">
+    <div class="head">
+      <span class="title">Scene 2 apply</span>
+      <span class="chip err"><span class="dot"></span>failed</span>
+    </div>
+    <div class="buckets">
+      <div class="bucket ok"><span class="n">6</span><span class="l">written</span></div>
+      <div class="bucket skip"><span class="n">1</span><span class="l">skipped</span></div>
+      <div class="bucket fail"><span class="n">2</span><span class="l">failed</span></div>
+    </div>
+    <div class="fail-list">
+      <div class="row"><span class="mono">VL 07 → SA 12</span><span class="reason">no_answer</span></div>
+      <div class="row"><span class="mono">VL 22 → SA 30</span><span class="reason">bus_contended</span></div>
+    </div>
+    <div class="meta">Rows stay dirty — press Apply again to converge.</div>
+  </div>
+
+  <div class="op">
+    <div class="head">
+      <span class="title">Attribute write · SA 04</span>
+      <span class="chip err"><span class="dot"></span>failed</span>
+    </div>
+    <div class="err-box"><span class="code">confirmation_timeout</span> — device did not confirm within 2 s.</div>
+  </div>
+
+  <!-- A Home Assistant republish counts entities, not devices, so it says
+       "announced" rather than "programmed" — and a refused publish is a refused
+       announcement: the run reports FAILED even when the broker took some of
+       them, because an operator reading `succeeded` concludes Home Assistant is
+       up to date. -->
+  <div class="op">
+    <div class="head">
+      <span class="title">Home Assistant discovery</span>
+      <span class="chip ok"><span class="dot"></span>succeeded</span>
+    </div>
+    <div class="buckets">
+      <div class="bucket ok"><span class="n">162</span><span class="l">announced</span></div>
+    </div>
+    <div class="meta">Controller-global · finished 3 s ago</div>
+  </div>
+
+  <div class="op">
+    <div class="head">
+      <span class="title">Home Assistant discovery</span>
+      <span class="chip err"><span class="dot"></span>failed</span>
+    </div>
+    <div class="buckets">
+      <div class="bucket ok"><span class="n">0</span><span class="l">announced</span></div>
+      <div class="bucket fail"><span class="n">162</span><span class="l">refused</span></div>
+    </div>
+    <div class="err-box"><span class="code">discovery_publish_refused</span> — the broker took none of them; nothing reached Home Assistant.</div>
+  </div>
+
+  <!-- Terminal, but unknowable: the controller keeps a finished operation for
+       sixty seconds, and a client that asks later cannot be told how it ended.
+       Neutral, never green — the screens act on this answer. -->
+  <div class="op">
+    <div class="head">
+      <span class="title">Scene 4 save</span>
+      <span class="chip idle"><span class="dot"></span>unknown</span>
+    </div>
+    <div class="meta">Outcome expired before this tab asked — reload to see the stored matrix.</div>
+  </div>
+
+  <!--
+    ADR-013 / ISSUE-33. A long read stands down the moment the operator touches
+    a control, so `status: failed` + `error.code: preempted` is now an ordinary
+    outcome. Three deliberate choices here:
+      * muted chip reading "interrupted", never the red `failed` treatment;
+      * no `err-box` — nothing went wrong and there is nothing to diagnose;
+      * the read retries itself once the operator stops, because they pressed
+        the button once and want the values, not a report about scheduling.
+    Nothing partial is committed, so the readings on screen do not move while
+    this happens.
+  -->
+  <div class="op">
+    <div class="head">
+      <span class="title">Attribute read · SA 04</span>
+      <span class="chip stood-down"><span class="dot"></span>interrupted</span>
+    </div>
+    <div class="meta">Stood down for your command — retrying.</div>
+  </div>
+
+  <!--
+    The one window where the operator legitimately waits: a discovery run holds
+    an INITIALISE session it must not be interrupted in, so a level command
+    during it can honestly answer 504. The banner exists so that answer reads as
+    "the bus is busy being commissioned" rather than "the controller is broken".
+  -->
+  <div class="op">
+    <div class="head">
+      <span class="title">Discovery · commissioning the bus</span>
+      <span class="chip warn"><span class="dot"></span>holds the bus</span>
+    </div>
+    <div class="bar indet"><div class="fill"></div></div>
+    <div class="meta">Level and colour commands wait until this finishes — it cannot be interrupted safely.</div>
+  </div>
+
+  <!--
+    `config_write` (ISSUE-25): saving a matrix or an HCL schedule is now an
+    operation too. It has NO result buckets — it is a registry write, not a run
+    over the wire, so there is nothing to count. All or nothing: the row set
+    lands whole or the matrix is untouched.
+  -->
+  <div class="op">
+    <div class="head">
+      <span class="title">Scene 2 · save 64 rows</span>
+      <span class="chip run"><span class="dot"></span>running</span>
+    </div>
+    <div class="bar indet"><div class="fill"></div></div>
+    <div class="meta">Config write · <span style="font-family:var(--mono)">cfg-scn-0-2-41</span> · commits as one unit</div>
+  </div>
+
+  <div class="op">
+    <div class="head">
+      <span class="title">Group matrix · save</span>
+      <span class="chip err"><span class="dot"></span>failed</span>
+    </div>
+    <div class="err-box"><span class="code">config_write_chunk_count_mismatch</span> — part of the series did not arrive; nothing was written.</div>
+    <div class="meta">The matrix is unchanged — press Save again.</div>
+  </div>
+
+</div>
+</body>
+</html>

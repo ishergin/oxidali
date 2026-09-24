@@ -1,0 +1,242 @@
+<!-- @dsCard group="Screens" name="HCL schedules" subtitle="Schedule list, next-point readout, the time-unsynced gate as a page-level banner, and the per-card daily-override strip with its Resume control" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HCL schedules — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 80px; }
+
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.spacer { flex: 1; }
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+.btn.ghost { background: transparent; border-color: var(--border-strong); color: var(--text-muted); padding: 4px 10px; }
+.btn.ghost:hover { color: var(--text); border-color: var(--info); }
+
+/* The gate is page-level, not per-card: without a clock NO schedule runs, and
+   showing that once is honest where a badge on every card would read as a
+   per-schedule fault. */
+.banner { display: flex; align-items: flex-start; gap: 10px; padding: 11px 14px; margin-bottom: 16px;
+  border-radius: var(--radius); background: var(--warn-soft); border: 1px solid rgba(227,160,8,.4); }
+.banner .ico { color: var(--warn); font-size: 15px; line-height: 1.2; }
+.banner .txt { font-size: 12.5px; color: var(--text); }
+.banner .txt b { color: var(--warn); font-weight: 600; }
+.banner .sub { display: block; margin-top: 2px; font-size: 11.5px; color: var(--text-muted); }
+.banner a { color: var(--info); text-decoration: none; }
+
+.list { display: flex; flex-direction: column; gap: 10px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 13px 15px; }
+.card.paused { opacity: .72; }
+.crow { display: flex; align-items: center; gap: 12px; }
+.sid { font-family: var(--mono); font-size: 13px; color: var(--text); font-weight: 500; }
+.algo { font-size: 11px; color: var(--text-faint); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+
+/* Toggle: the one control that fires a PATCH straight from the list. */
+.toggle { width: 34px; height: 19px; border-radius: 999px; background: var(--overlay);
+  border: 1px solid var(--border-strong); position: relative; cursor: pointer; flex: none; }
+.toggle i { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
+  background: var(--text-faint); transition: none; }
+.toggle.on { background: var(--accent-soft); border-color: rgba(240,180,41,.5); }
+.toggle.on i { left: 17px; background: var(--accent); }
+
+.days { display: flex; gap: 3px; }
+.day { font-size: 10px; width: 22px; text-align: center; padding: 2px 0; border-radius: 4px;
+  background: var(--raised); color: var(--text-faint); border: 1px solid transparent; }
+.day.on { background: var(--accent-soft); color: var(--accent-strong); border-color: rgba(240,180,41,.3); }
+
+.meta { display: flex; gap: 22px; margin-top: 10px; flex-wrap: wrap; }
+.meta .k { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em; }
+.meta .v { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
+.meta .v .g { font-family: var(--mono); color: var(--text); }
+/* The next point is the answer to "what will this thing do?" — the reason to
+   open the screen at all, so it gets the accent rather than the target list. */
+.meta .v.next { color: var(--accent-strong); font-family: var(--mono); }
+.meta .v.paused { color: var(--text-faint); font-family: var(--font); font-style: italic; }
+
+/* Daily override. Not a fault and not dirty — the schedule is behaving exactly
+   as designed — so neither `err` nor `warn`. It gets `info`, and deliberately
+   NOT the amber accent, which belongs to lamp state and levels alone.
+   It is a strip rather than a chip because the operator's question is "why is
+   my enabled schedule doing nothing?", and a two-word badge cannot answer it. */
+.standdown { display: flex; align-items: center; gap: 10px; margin-top: 11px;
+  padding: 8px 11px; border-radius: var(--radius-sm);
+  background: var(--info-soft); border: 1px solid rgba(77,163,255,.28); }
+.standdown .ico { color: var(--info); font-size: 13px; line-height: 1; flex: none; }
+.standdown .txt { font-size: 12px; color: var(--text-muted); }
+.standdown .txt b { color: var(--info); font-weight: 600; font-family: var(--mono); }
+.standdown .txt .g { font-family: var(--mono); color: var(--text); }
+/* A next point that will not fire must not read like one that will, so the
+   accent comes off it while the schedule is standing down. */
+.meta .v.held { color: var(--text-faint); font-family: var(--mono); }
+
+.empty { text-align: center; padding: 44px 0; color: var(--text-faint); font-size: 13px; }
+.empty .big { font-size: 15px; color: var(--text-muted); margin-bottom: 6px; }
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumbs"><a href="#">Adapter 0</a> / HCL schedules</div>
+
+  <div class="head">
+    <h1>HCL schedules</h1>
+    <span class="sub">3 schedules · 2 enabled</span>
+    <span class="spacer"></span>
+    <button class="btn primary">New schedule</button>
+  </div>
+
+  <div class="banner">
+    <span class="ico">&#9888;</span>
+    <span class="txt">
+      <b>Controller clock is not synchronised</b> — every schedule is paused.
+      <span class="sub">A schedule acts on local time of day; without an anchored clock it stays silent rather than guessing. Set the time in <a href="#">Settings &rsaquo; Time</a> or wait for SNTP.</span>
+    </span>
+  </div>
+
+  <div class="list">
+    <div class="card">
+      <div class="crow">
+        <span class="toggle on"><i></i></span>
+        <span class="sid">morning</span>
+        <span class="algo">interpolated</span>
+        <span class="spacer"></span>
+        <span class="days">
+          <span class="day on">Mo</span><span class="day on">Tu</span><span class="day on">We</span>
+          <span class="day on">Th</span><span class="day on">Fr</span><span class="day">Sa</span><span class="day">Su</span>
+        </span>
+      </div>
+      <div class="meta">
+        <div>
+          <div class="k">Targets</div>
+          <div class="v">A0: <span class="g">G1, G5</span> &middot; A1: <span class="g">G3</span></div>
+        </div>
+        <div>
+          <div class="k">Points</div>
+          <div class="v">4</div>
+        </div>
+        <div>
+          <div class="k">Next point</div>
+          <div class="v next">08:00 &middot; 200 &middot; 4000 K</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="crow">
+        <span class="toggle on"><i></i></span>
+        <span class="sid">evening</span>
+        <span class="algo">stepped</span>
+        <span class="spacer"></span>
+        <span class="days">
+          <span class="day on">Mo</span><span class="day on">Tu</span><span class="day on">We</span>
+          <span class="day on">Th</span><span class="day on">Fr</span><span class="day on">Sa</span><span class="day on">Su</span>
+        </span>
+      </div>
+      <div class="meta">
+        <div>
+          <div class="k">Targets</div>
+          <div class="v">A0: <span class="g">broadcast</span></div>
+        </div>
+        <div>
+          <div class="k">Points</div>
+          <div class="v">2</div>
+        </div>
+        <div>
+          <div class="k">Next point</div>
+          <div class="v held">sunset &minus;30 &middot; last active &middot; 2200 K</div>
+        </div>
+      </div>
+      <div class="standdown">
+        <span class="ico">&#8214;</span>
+        <span class="txt">
+          Standing down since <b>14:21</b> — <span class="g">broadcast</span> on A0 was set by
+          hand, so this schedule stops driving it until midnight.
+        </span>
+        <span class="spacer"></span>
+        <button class="btn ghost">Resume now</button>
+      </div>
+    </div>
+
+    <div class="card paused">
+      <div class="crow">
+        <span class="toggle"><i></i></span>
+        <span class="sid">weekend-late</span>
+        <span class="algo">stepped</span>
+        <span class="spacer"></span>
+        <span class="days">
+          <span class="day">Mo</span><span class="day">Tu</span><span class="day">We</span>
+          <span class="day">Th</span><span class="day">Fr</span><span class="day on">Sa</span><span class="day on">Su</span>
+        </span>
+      </div>
+      <div class="meta">
+        <div>
+          <div class="k">Targets</div>
+          <div class="v">A0: <span class="g">G2</span></div>
+        </div>
+        <div>
+          <div class="k">Points</div>
+          <div class="v">3</div>
+        </div>
+        <div>
+          <div class="k">Next point</div>
+          <div class="v paused">disabled</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

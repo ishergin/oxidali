@@ -1,0 +1,1 @@
+stats.sample_ms the sampling window, not a counter block; `uptime` in the header carries the freshness an operator needs

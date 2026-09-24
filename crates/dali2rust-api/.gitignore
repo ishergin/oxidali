@@ -1,0 +1,4 @@
+src/generated/api_common_generated.rs
+src/generated/dali_generated.rs
+src/generated/devices_generated.rs
+src/generated/health_generated.rs

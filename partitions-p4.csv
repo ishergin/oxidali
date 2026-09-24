@@ -1,0 +1,6 @@
+nvs,      data, nvs,     ,        0x10000,
+phy_init, data, phy,     ,        0x1000,
+otadata,  data, ota,     0x1A000, 0x2000,
+ota_0,    app,  ota_0,   0x20000, 6144K,
+ota_1,    app,  ota_1,   0x620000, 6144K,
+storage,  data, undefined, 0xC20000, 0x400000,

@@ -1,0 +1,10 @@
+[package]
+name = "dali2rust-platform"
+description = "Hardware abstraction traits, plus the shared lock-free wire primitives every layer must agree on"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]

@@ -1,0 +1,177 @@
+<!-- @dsCard group="Components" name="Controller role" subtitle="The standby badge in the sidebar brand, and why an active controller deliberately gets none" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Controller role — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 760px; margin: 0 auto; padding: 20px 24px 100px; }
+
+.head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.crumb { font-size: 12px; color: var(--text-faint); }
+.sub { font-size: 12.5px; color: var(--text-muted); margin: 0 0 16px; }
+
+
+.page { max-width: 620px; }
+.state-label { display: flex; align-items: center; gap: 8px; margin: 30px 0 12px; }
+.state-label .ln { flex: 1; height: 1px; background: var(--border); }
+.state-label span { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
+.state-label:first-child { margin-top: 0; }
+
+/* The sidebar, cropped to its top: the badge lives in the brand because that
+   is the one block on screen that answers "which box am I looking at". */
+.side { width: 232px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 0; }
+.brand { display: flex; align-items: center; gap: 9px; padding: 0 14px 12px; }
+.glyph { color: var(--accent); font-size: 15px; }
+.name { font-weight: 620; font-size: 14px; }
+.navitem { padding: 6px 14px; font-size: 12.5px; color: var(--text-muted); }
+.navitem.active { color: var(--text); background: var(--hover); }
+
+/* Warn, not the lamp amber. This is "desired != applied" one storey up — the
+   controller you are typing at is not the one driving — and amber is reserved
+   for lamp state and levels. */
+.rolechip {
+  margin-left: auto;
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  border: 1px solid rgba(227, 160, 8, .38);
+  color: var(--warn);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.rolechip:hover { border-color: rgba(227, 160, 8, .7); }
+
+.note { font-size: 11.5px; color: var(--text-faint); margin: 12px 0 0; line-height: 1.5; }
+.note b { color: var(--text-muted); font-weight: 600; }
+
+/* The 128x64 OLED, at the one thing this card is about: 21 monospace columns. */
+.oled { background: #05070a; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  padding: 7px 9px; margin-bottom: 10px; width: max-content; }
+.oled-row { display: flex; gap: 10px; justify-content: space-between; font-family: var(--mono);
+  font-size: 12px; color: #cfe3ff; letter-spacing: .04em; min-width: 21ch; padding: 1px 2px; }
+.oled-row.inv { background: #cfe3ff; color: #05070a; }
+.oled-role { font-weight: 600; }
+.mono { font-family: var(--mono); font-size: .95em; color: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="state-label"><span>Standby — the badge is present</span><span class="ln"></span></div>
+  <div class="side">
+    <div class="brand">
+      <span class="glyph">◍</span>
+      <span class="name">dali2rust</span>
+      <a class="rolechip" href="#" title="This controller is not driving the bus. Reads work; anything that touches the wire is refused.">standby</a>
+    </div>
+    <div class="navitem active">Dashboard</div>
+    <div class="navitem">Physical devices</div>
+    <div class="navitem">DALI sniffer</div>
+  </div>
+  <p class="note">
+    It links to the Redundancy screen, because the next question after &ldquo;why was my
+    write refused&rdquo; is always &ldquo;then which one is driving, and since when&rdquo;.
+  </p>
+
+  <div class="state-label"><span>Active, or a lone controller — deliberately nothing</span><span class="ln"></span></div>
+  <div class="side">
+    <div class="brand">
+      <span class="glyph">◍</span>
+      <span class="name">dali2rust</span>
+    </div>
+    <div class="navitem active">Dashboard</div>
+    <div class="navitem">Physical devices</div>
+    <div class="navitem">DALI sniffer</div>
+  </div>
+  <p class="note">
+    <b>No badge for the active unit, and that is the design.</b> Every build sends
+    <span class="mono">X-Dali2rust-Role</span> on every response, so a badge that also
+    appeared for <span class="mono">active</span> would be a permanent, unvarying caption
+    on every single-controller installation &mdash; the kind nobody reads and everybody
+    stops seeing. What an operator has to know without being told is the case where their
+    writes will be refused.
+  </p>
+  <div class="state-label"><span>The same fact on the OLED, where a word does not fit</span><span class="ln"></span></div>
+  <div class="oled">
+    <div class="oled-row"><span>192.168.13.140</span><span class="oled-role">A5D05H</span></div>
+    <div class="oled-row"><span>GEAR 12/12</span><span>IN 3/3</span></div>
+  </div>
+  <div class="oled">
+    <div class="oled-row inv"><span>192.168.13.140</span><span class="oled-role">S5D05H</span></div>
+    <div class="oled-row"><span>GEAR 12/12</span><span>IN 3/3</span></div>
+  </div>
+  <p class="note">
+    Twenty-one columns against a fifteen-character address and an uptime of five to
+    seven leave room for a letter, not a word &mdash; and the letter goes in FRONT of the
+    uptime because an overlong pair loses its tail, so what survives a clip has to be the
+    fact no other surface carries. A standby also inverts the row: every other row of that
+    screen reads as a broken controller (no gear driven, no HCL, no poller), and it is
+    what makes one letter enough.
+  </p>
+
+  <p class="note">
+    The badge reads the response header rather than polling
+    <span class="mono">/api/v1/redundancy</span>, which is why it stays live on screens
+    that know nothing about redundancy. That is the whole reason the role travels as a
+    header instead of a field in forty DTOs.
+  </p>
+
+</div>
+</body>
+</html>

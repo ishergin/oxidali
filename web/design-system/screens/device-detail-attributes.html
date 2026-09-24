@@ -1,0 +1,365 @@
+<!-- @dsCard group="Screens" name="Device detail — levels, groups, scenes" subtitle="Two tabs of the device screen: writable fade/arc levels with Tc limits, DT8 colour engine and RGBWAF control, group membership and scene arc levels" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Device detail — levels, groups, scenes — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 40px; }
+.taglabel { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint);
+  margin: 26px 0 8px; }
+.taglabel:first-of-type { margin-top: 0; }
+
+.badge { display: inline-flex; padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
+.badge.declared { border-color: rgba(227,160,8,.35); }
+
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+
+/* Page-level tab bar — spec and colour rationale in the "Page tab bar" card. */
+.ptabs { display: flex; gap: 2px; align-items: stretch; }
+/* One line, hint inline after the label. Stacked (label over hint) the three
+   bank tabs were taller than the other three, so with any vertical alignment
+   the LABELS stopped lining up — the eye reads a tab bar by its labels, and a
+   caption is not worth breaking that for. */
+.ptab { display: flex; align-items: baseline; gap: 7px; padding: 7px 14px 8px;
+  border: 1px solid transparent; border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: none; color: var(--text-muted); font-family: var(--font); font-size: 13px;
+  font-weight: 550; cursor: pointer; text-decoration: none; white-space: nowrap; }
+.ptab:hover { color: var(--text); background: var(--raised); }
+.ptab.active { color: var(--text); background: var(--surface); border-color: var(--border); cursor: default; }
+.ptab .hint { font-family: var(--mono); font-size: 10px; color: var(--text-faint); font-weight: 400; }
+.ptab.active .hint { color: var(--text-muted); }
+.ptabline { height: 1px; background: var(--border); margin-bottom: 14px; }
+
+/* Section grid */
+.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.card header { display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
+.card header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+.act { font-size: 11px; color: var(--info); background: none; border: none; cursor: pointer; font-family: var(--font); }
+
+/* Attribute row: label | value | provenance. Fixed value column so inputs and
+   read-only numbers share one right edge; a note about a value goes on a
+   second grid row under the field. */
+.attr { display: grid; grid-template-columns: 1fr 116px 104px; column-gap: 12px; row-gap: 3px;
+  align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.attr:last-child { border-bottom: none; }
+.attr .k { color: var(--text-muted); font-size: 13px; }
+.attr .v { font-family: var(--mono); font-size: 13px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.attr .v.plain { padding-right: 8px; }
+.attr .v .unit { color: var(--text-faint); font-size: 11px; width: 20px; text-align: left; flex: none; }
+.attr .v input { padding: 4px 7px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono);
+  font-size: 12px; text-align: right; width: 64px; flex: none; }
+/* Scoped to its OWN class, never to `select.sel`. An attribute row is not the
+   only place a select lives — the Device type / Colour mode overrides on the
+   Overview tab are `.ovr .sel` inside the same `.attr .v`, and a rule written
+   as `.attr .v select.sel` outranks `.ovr .sel { width: 100% }` on specificity
+   and stretches them. That collision shipped once already (`.ovr` vs
+   `.standdown`); a dedicated class is what stops it recurring. */
+.attr .v select.attr-enum { padding: 4px 7px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  font-size: 12px; min-width: 158px; flex: none; }
+.attr .v select.attr-enum option { background: var(--raised); color: var(--text); }
+.attr .note { grid-column: 2 / -1; font-size: 11px; color: var(--text-faint); text-align: right; }
+.attr .src { justify-self: end; }
+.attr.controls { grid-template-columns: 1fr; }
+.attr.controls .v { justify-content: flex-start; padding-right: 0; }
+.mono { font-family: var(--mono); font-size: 12px; }
+
+.src { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+.src .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.src.readback { color: var(--ok); background: var(--ok-soft); }
+.src.written { color: var(--info); background: var(--info-soft); }
+.src.stale { color: var(--text-faint); background: var(--raised); }
+
+.flag { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; }
+.flag .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.flag.on { color: var(--ok); background: var(--ok-soft); }
+.flag.warn { color: var(--warn); background: var(--warn-soft); }
+
+.comm-check { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); }
+.comm-hint { font-size: 11px; color: var(--text-faint); margin: 6px 14px 10px; }
+.comm-warn { font-size: 11px; color: var(--text-muted); margin: 6px 14px 10px;
+  border-left: 2px solid var(--border-strong); padding-left: 6px; }
+
+/* Groups bitmask row */
+.gbits { display: flex; gap: 5px; padding: 12px 14px; flex-wrap: wrap; }
+.gbit { width: 30px; height: 30px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 10px; border: 1px solid var(--border); color: var(--text-faint); }
+.gbit.on { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); font-weight: 600; }
+
+/* Scene level pills */
+.scenes { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; padding: 12px 14px; }
+.scene { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 0; text-align: center; }
+.scene .sn { font-family: var(--mono); font-size: 9px; color: var(--text-faint); }
+.scene .sv { font-family: var(--mono); font-size: 13px; color: var(--text); }
+.scene.unset .sv { color: var(--text-faint); }
+
+/* Empty state: the section exists on the wire but nothing has been read into
+   it yet. A sentence and the button that fixes it — never a blank card, which
+   reads as "this gear has none" when it means "nobody has asked". */
+.empty { padding: 22px 14px; text-align: center; color: var(--text-faint); font-size: 12px; }
+.empty .btn { margin-top: 10px; }
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumbs"><a href="#">Adapter 0</a> / SA 04 · Attributes</div>
+
+
+  <div class="taglabel">Tab · Levels &amp; fade — <span class="mono">?sections=common_102,dt6_led,dt8_color,extended</span></div>
+  <div class="ptabs">
+    <a class="ptab" href="#">Overview</a>
+    <a class="ptab active" href="#">Levels &amp; fade</a>
+    <a class="ptab" href="#">Groups &amp; scenes</a>
+    <a class="ptab" href="#">Identity<span class="hint">banks 0 · 1</span></a>
+    <a class="ptab" href="#">Energy<span class="hint">banks 202–204</span></a>
+    <a class="ptab" href="#">Diagnostics<span class="hint">banks 205–207</span></a>
+  </div>
+  <div class="ptabline"></div>
+
+  <div class="grid">
+    <div class="card">
+      <header><h3>Fading &amp; arc levels</h3><button class="act">Write changes</button></header>
+      <div class="attr"><span class="k">Power-on level</span><span class="v"><input value="254"><span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr"><span class="k">System failure level</span><span class="v"><input value="254"><span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <!-- IEC 62386-102 Table 4 gives `fadeTime` sixteen values and nothing
+           between them, so this is a select and not a text box. A free field
+           invited numbers the wire cannot carry: 500 ms became code 1 and the
+           gear faded for 700, while the card kept showing 500 until the next
+           read quietly replaced it. Code 0 carries no duration of its own —
+           the table prints "Extended fade" there and §9.5.2 says so — so it is
+           labelled as the delegation it is, the mirror image of the note on
+           the extended row below. -->
+      <div class="attr"><span class="k">Fade time</span><span class="v"><select class="attr-enum"><option>0 &mdash; extended fade time</option><option selected>1.0 s</option><option>1.4 s</option><option>2.0 s</option><option>2.8 s</option><option>&hellip;</option><option>90.5 s</option></select></span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr"><span class="k">Fade rate</span><span class="v"><input value="7"><span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr"><span class="k">Extended fade time</span><span class="v"><input value="3000"><span class="unit">ms</span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span><span class="note">dormant while fade time ≠ 0</span></div>
+      <!-- §9.6 dimming bounds. The gear may legally CLAMP: min lands in
+           [PHM, maxLevel], max in [minLevel, 254], so the value shown after a
+           write is the CONFIRMED readback — what the gear accepted, not what
+           was typed. Writing min above max is refused before the bus (422). -->
+      <div class="attr"><span class="k">Min arc level</span><span class="v"><input value="111"><span class="unit"></span></span><span class="src written"><span class="dot"></span>written · 3 s</span><span class="note">clamped into [physical 111, max]; accepted value mirrors back</span></div>
+      <div class="attr"><span class="k">Max arc level</span><span class="v"><input value="254"><span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 2 h</span></div>
+      <div class="attr"><span class="k">Physical minimum</span><span class="v plain">111</span><span class="src readback"><span class="dot"></span>readback · 2 h</span></div>
+      <!-- Rendered Tc limits (IEC 62386-209 command 242). Mirek, because that
+           is the wire unit the write takes; kelvin rides as a faint note.
+           Narrowing a limit under the active Tc snaps the light to the boundary
+           without fading (§9.13) — nothing else on the screen can say that
+           before the operator commits. -->
+      <div class="attr"><span class="k">Tc limit, cool end</span><span class="v"><input value="200"><span class="unit">mirek</span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span><span class="note">5000 K · bounded by physical 153</span></div>
+      <div class="attr"><span class="k">Tc limit, warm end</span><span class="v"><input value="350"><span class="unit">mirek</span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span><span class="note">2857 K · a write under the active Tc snaps the light, no fade</span></div>
+    </div>
+
+    <!-- LED driver (IEC 62386-207). Shown only for a device whose declared
+         type set contains 6 — the section is already fetched with the tab, so
+         until now it was read off the wire and dropped on the floor.
+
+         `dimmingCurve` is a SELECT, not a text box: 207 defines 0 and 1 and
+         reserves everything else, so a free field would invite a value the
+         gear has no defined behaviour for (the surface refuses it with 422).
+
+         It sits in its own card rather than among the fade rows because it
+         does not set a level — it changes what EVERY level already stored on
+         this gear means, scenes and power-on level included. The note says so
+         where the operator is about to commit, not in a tooltip. -->
+    <div class="card">
+      <header><h3>LED driver</h3><span class="badge">DT6</span><button class="act">Write changes</button></header>
+      <div class="attr"><span class="k">Dimming curve</span><span class="v"><select class="attr-enum"><option selected>0 &mdash; standard logarithmic</option><option>1 &mdash; linear</option></select></span><span class="src readback"><span class="dot"></span>readback · 12 s</span><span class="note">changes what every stored level means, scenes included</span></div>
+      <div class="attr"><span class="k">Gear type</span><span class="v plain">0x01</span><span class="src readback"><span class="dot"></span>readback · 2 h</span></div>
+      <div class="attr"><span class="k">Fast fade time</span><span class="v plain">0</span><span class="src readback"><span class="dot"></span>readback · 2 h</span></div>
+    </div>
+
+    <!-- The same card after a write. `written` provenance is the whole point:
+         a gear that never executed the pair (no DT6, or a voided send-twice)
+         leaves the row on `readback` and the operator can see that the write
+         did not land, instead of being told it did. -->
+    <div class="card">
+      <header><h3>LED driver</h3><span class="badge declared">DT6</span><button class="act">Write changes</button></header>
+      <div class="attr"><span class="k">Dimming curve</span><span class="v"><select class="attr-enum"><option>0 &mdash; standard logarithmic</option><option selected>1 &mdash; linear</option></select></span><span class="src written"><span class="dot"></span>written · 3 s</span></div>
+      <div class="attr"><span class="k">Gear type</span><span class="v plain">0x01</span><span class="src readback"><span class="dot"></span>readback · 2 h</span></div>
+      <div class="attr"><span class="k">Fast fade time</span><span class="v plain">0</span><span class="src readback"><span class="dot"></span>readback · 2 h</span></div>
+    </div>
+
+    <!-- DT8 colour engine. Shown only for a DT8 device.
+
+         The point of the card is the first row. IEC 62386-209 Table 5: with
+         'Automatic Activation' clear, an arc-power command makes NO colour
+         change, so every colour write this controller sends is silently
+         discarded and the fixture is indistinguishable from one with no colour
+         support. Nothing else on the screen can say that.
+
+         `warn` and not `accent`: amber is lamp state and level, and a config
+         byte must not compete with it. -->
+    <div class="card">
+      <header><h3>DT8 colour engine</h3><span class="badge">0x41</span></header>
+      <div class="attr"><span class="k">Automatic activation</span><span class="v plain"><span class="flag on"><span class="dot"></span>on</span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr"><span class="k">Auto calibration</span><span class="v plain">supported</span><span></span></div>
+      <div class="attr"><span class="k">Auto calibration recovery</span><span class="v plain">not supported</span><span></span></div>
+      <div class="attr controls"><span class="k">Restore auto activation</span><span class="v"><label class="comm-check"><input type="checkbox" checked> allowed</label></span></div>
+      <div class="comm-hint">When a read finds the bit clear, set it back before the next colour write.</div>
+    </div>
+
+    <!-- Same card with the bit clear: the state an operator has to be able to
+         see, because the symptom they arrive with is "colour does nothing". -->
+    <div class="card">
+      <header><h3>DT8 colour engine</h3><span class="badge declared">0x40</span></header>
+      <div class="attr"><span class="k">Automatic activation</span><span class="v plain"><span class="flag warn"><span class="dot"></span>off</span></span><span class="src readback"><span class="dot"></span>readback · 4 s</span></div>
+      <div class="attr"><span class="k">Auto calibration</span><span class="v plain">supported</span><span></span></div>
+      <div class="attr"><span class="k">Auto calibration recovery</span><span class="v plain">not supported</span><span></span></div>
+      <div class="attr controls"><span class="k">Restore auto activation</span><span class="v"><label class="comm-check"><input type="checkbox"> allowed</label></span></div>
+      <div class="comm-warn">Colour writes will not reach this gear until the bit is set. Clear this box only for a fixture that stores the byte permanently.</div>
+    </div>
+
+    <!-- RGBWAF channel control. The second byte that decides whether a colour
+         write does anything, and it fails differently: with the driven channels
+         LINKED, IEC 62386-209 §9.1 has the gear follow the arc level and ignore
+         the dim levels entirely — the write is accepted and nothing moves.
+
+         Raw byte in the badge on purpose: Table 10 makes bits 7..6 a control
+         type with one value the standard leaves *reserved*, and a real fixture
+         on the bench holds exactly that (0xC0) while working correctly. -->
+    <div class="card">
+      <header><h3>RGBWAF channel control</h3><span class="badge">0x80</span></header>
+      <div class="attr"><span class="k">Control type</span><span class="v plain"><span class="flag on"><span class="dot"></span>normalised colour</span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr"><span class="k">Linked channels</span><span class="v plain">none — levels drive the colour</span><span></span></div>
+      <div class="attr"><span class="k">Channels</span><span class="v plain">3 (R G B)</span><span></span></div>
+      <div class="attr controls"><span class="k">Assert on colour write</span><span class="v"><label class="comm-check"><input type="checkbox" checked> allowed</label></span></div>
+      <div class="comm-hint">Read before every colour write; written only when it differs. The gear resets it to <span class="mono">0x3F</span> on power-up.</div>
+    </div>
+
+    <div class="card">
+      <header><h3>RGBWAF channel control</h3><span class="badge declared">0x3F</span></header>
+      <div class="attr"><span class="k">Control type</span><span class="v plain"><span class="flag warn"><span class="dot"></span>channel control</span></span><span class="src readback"><span class="dot"></span>readback · 4 s</span></div>
+      <div class="attr"><span class="k">Linked channels</span><span class="v plain">R G B W A F — all six</span><span></span></div>
+      <div class="attr"><span class="k">Channels</span><span class="v plain">3 (R G B)</span><span></span></div>
+      <div class="attr controls"><span class="k">Assert on colour write</span><span class="v"><label class="comm-check"><input type="checkbox" checked> allowed</label></span></div>
+      <div class="comm-warn">Linked channels ignore the colour levels: a colour write here is accepted and changes nothing. The next colour write will set normalised control.</div>
+    </div>
+
+    <div class="card">
+      <header><h3>RGBWAF channel control</h3><span class="badge declared">0xC0</span></header>
+      <div class="attr"><span class="k">Control type</span><span class="v plain"><span class="flag warn"><span class="dot"></span>reserved (vendor)</span></span><span class="src readback"><span class="dot"></span>readback · 9 s</span></div>
+      <div class="attr"><span class="k">Linked channels</span><span class="v plain">none — levels drive the colour</span><span></span></div>
+      <div class="attr"><span class="k">Channels</span><span class="v plain">3 (R G B)</span><span></span></div>
+      <div class="attr controls"><span class="k">Assert on colour write</span><span class="v"><label class="comm-check"><input type="checkbox"> allowed</label></span></div>
+      <div class="comm-hint">Colour works here, so this is not a fault: the levels are unlinked and only the arc-level scaling is the vendor's own. Clear the box to leave such a fixture alone.</div>
+    </div>
+  </div>
+
+  <div class="taglabel">Tab · Groups &amp; scenes — <span class="mono">?sections=groups,scenes</span></div>
+  <div class="ptabs">
+    <a class="ptab" href="#">Overview</a>
+    <a class="ptab" href="#">Levels &amp; fade</a>
+    <a class="ptab active" href="#">Groups &amp; scenes</a>
+    <a class="ptab" href="#">Identity<span class="hint">banks 0 · 1</span></a>
+    <a class="ptab" href="#">Energy<span class="hint">banks 202–204</span></a>
+    <a class="ptab" href="#">Diagnostics<span class="hint">banks 205–207</span></a>
+  </div>
+  <div class="ptabline"></div>
+
+  <div class="grid">
+    <div class="card">
+      <header><h3>Group membership</h3><button class="act">Open matrix →</button></header>
+      <div class="gbits">
+        <span class="gbit">0</span><span class="gbit on">1</span><span class="gbit">2</span><span class="gbit">3</span>
+        <span class="gbit">4</span><span class="gbit">5</span><span class="gbit">6</span><span class="gbit">7</span>
+        <span class="gbit">8</span><span class="gbit">9</span><span class="gbit">10</span><span class="gbit">11</span>
+        <span class="gbit">12</span><span class="gbit">13</span><span class="gbit">14</span><span class="gbit">15</span>
+      </div>
+      <div class="attr"><span class="k">Membership raw</span><span class="v">0x0002</span><span class="src readback"><span class="dot"></span>readback · 40 s</span></div>
+    </div>
+
+    <!-- Never read. The distinction the empty state exists for: this is not
+         "the gear is in no groups" — that is a membership of 0x0000 with a
+         readback chip beside it. -->
+    <div class="card">
+      <header><h3>Scene arc levels</h3><button class="act">Open scene editor →</button></header>
+      <div class="empty">
+        No scene levels have been read from this gear yet.
+        <div><button class="btn">↻ Read attributes</button></div>
+      </div>
+    </div>
+
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Scene arc levels</h3><button class="act">Open scene editor →</button></header>
+      <div class="scenes">
+        <div class="scene"><div class="sn">S0</div><div class="sv">254</div></div>
+        <div class="scene"><div class="sn">S1</div><div class="sv">180</div></div>
+        <div class="scene"><div class="sn">S2</div><div class="sv">75</div></div>
+        <div class="scene unset"><div class="sn">S3</div><div class="sv">—</div></div>
+        <div class="scene unset"><div class="sn">S4</div><div class="sv">—</div></div>
+        <div class="scene unset"><div class="sn">S5</div><div class="sv">—</div></div>
+        <div class="scene unset"><div class="sn">S6</div><div class="sv">—</div></div>
+        <div class="scene unset"><div class="sn">S7</div><div class="sv">—</div></div>
+        <div class="scene unset"><div class="sn">S8</div><div class="sv">—</div></div>
+        <div class="scene unset"><div class="sn">S9</div><div class="sv">—</div></div>
+        <div class="scene unset"><div class="sn">S10</div><div class="sv">—</div></div>
+        <div class="scene unset"><div class="sn">S11</div><div class="sv">—</div></div>
+        <div class="scene unset"><div class="sn">S12</div><div class="sv">—</div></div>
+        <div class="scene unset"><div class="sn">S13</div><div class="sv">—</div></div>
+        <div class="scene unset"><div class="sn">S14</div><div class="sv">—</div></div>
+        <div class="scene unset"><div class="sn">S15</div><div class="sv">—</div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

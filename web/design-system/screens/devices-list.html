@@ -1,0 +1,250 @@
+<!-- @dsCard group="Screens" name="Devices list" subtitle="Physical devices table: SA, type, state, status flags, groups, bound VL" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Devices list — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 40px; }
+
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.head .sub { font-size: 12px; color: var(--text-faint); }
+.spacer { flex: 1; }
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+
+.badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
+.badge.addr { color: var(--text); background: var(--overlay); }
+.badge.dt8 { color: var(--info); border-color: rgba(77,163,255,.3); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.accent { color: var(--accent-strong); background: var(--accent-soft); }
+.chip.idle { color: var(--text-muted); background: var(--raised); }
+.chip.err { color: var(--err); background: var(--err-soft); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
+
+/* Table */
+.table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: auto; }
+table { border-collapse: collapse; width: 100%; }
+thead th { text-align: left; padding: 9px 12px; background: var(--raised); border-bottom: 1px solid var(--border);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+tbody td { padding: 8px 12px; border-bottom: 1px solid rgba(42,51,64,.5); vertical-align: middle; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: rgba(35,44,56,.5); cursor: pointer; }
+tbody tr.hovered td { background: var(--overlay); }
+
+td .nm { font-size: 13px; font-weight: 550; }
+td .nm.faint { color: var(--text-faint); font-style: italic; font-weight: 400; }
+td .mono { font-family: var(--mono); font-size: 12px; }
+td .groups { font-family: var(--mono); font-size: 12px; color: var(--text-muted); letter-spacing: .04em; }
+td .groups.none { color: var(--text-faint); }
+td .ok-txt { font-size: 12px; color: var(--text-faint); }
+td .seen { font-size: 12px; color: var(--text-muted); }
+td .seen.never { color: var(--text-faint); font-style: italic; }
+td .vl { font-family: var(--mono); font-size: 12px; }
+td .vl .vname { font-family: var(--font); color: var(--text-muted); font-size: 12px; }
+td .vl.none { color: var(--text-faint); font-style: italic; font-family: var(--font); }
+
+/* Lamp state cell — full spec in components/lamp-state. Repeated here because
+   a card must define every class it uses; the colour maths lives in
+   `format.ts::lampState` and nowhere else. */
+.lampstate { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); white-space: nowrap; }
+.lampdot { width: 11px; height: 11px; border-radius: 50%; flex: none;
+  background: var(--lamp, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--lamp, var(--accent)) 70%, transparent);
+  box-shadow: var(--lamp-glow, none); }
+.lamplv { font-family: var(--mono); font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+.lampcq { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
+.lampstate.on { }
+.lampstate.off .lampdot { background: transparent; border-color: var(--text-faint); box-shadow: none; }
+.lampstate.off .lamplv { color: var(--text-muted); }
+.lampstate.unknown .lampdot { background: transparent; border-style: dashed; border-color: var(--text-faint); box-shadow: none; }
+.lampstate.unknown .lamplv { color: var(--text-faint); font-style: italic; font-family: var(--font); }
+.chgnote { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.chgdemo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px; }
+.chgh { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumbs"><a href="#">Adapter 0</a> / Physical devices</div>
+
+  <div class="head">
+    <h1>Physical devices</h1>
+    <span class="sub">14 discovered · 1 unaddressed on bus</span>
+    <span class="spacer"></span>
+    <button class="btn">Commission unaddressed</button>
+    <button class="btn primary">⌕ Scan bus</button>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>SA</th><th>Name</th><th>Type</th><th>State</th><th>Status</th>
+          <th>Groups</th><th>Bound VL</th><th>Last seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="badge addr">SA 00</span></td>
+          <td><span class="nm">Hall spot 1</span></td>
+          <td><span class="badge">DT6 LED</span></td>
+          <td><span class="chip accent"><span class="dot"></span>On · 254</span></td>
+          <td><span class="ok-txt">OK</span></td>
+          <td><span class="groups">G0 G3 G6</span></td>
+          <td><span class="vl">VL 02 <span class="vname">· Hall spot 1</span></span></td>
+          <td><span class="seen">2 s ago</span></td>
+        </tr>
+        <tr>
+          <td><span class="badge addr">SA 01</span></td>
+          <td><span class="nm">Hall spot 2</span></td>
+          <td><span class="badge">DT6 LED</span></td>
+          <td><span class="chip accent"><span class="dot"></span>On · 254</span></td>
+          <td><span class="ok-txt">OK</span></td>
+          <td><span class="groups">G0 G3 G6</span></td>
+          <td><span class="vl">VL 03 <span class="vname">· Hall spot 2</span></span></td>
+          <td><span class="seen">2 s ago</span></td>
+        </tr>
+        <tr class="hovered">
+          <td><span class="badge addr">SA 04</span></td>
+          <td><span class="nm">Kitchen spot</span></td>
+          <td><span class="badge dt8">DT8 CCT</span></td>
+          <td><span class="chip accent"><span class="dot"></span>On · 200</span></td>
+          <td><span class="ok-txt">OK</span></td>
+          <td><span class="groups">G0 G4</span></td>
+          <td><span class="vl">VL 12 <span class="vname">· Kitchen</span></span></td>
+          <td><span class="seen">2 s ago</span></td>
+        </tr>
+        <tr>
+          <td><span class="badge addr">SA 05</span></td>
+          <td><span class="nm">Kitchen island</span></td>
+          <td><span class="badge dt8">DT8 CCT</span></td>
+          <td><span class="chip idle"><span class="dot"></span>Off</span></td>
+          <td><span class="ok-txt">OK</span></td>
+          <td><span class="groups">G0 G4</span></td>
+          <td><span class="vl">VL 01 <span class="vname">· Kitchen island</span></span></td>
+          <td><span class="seen">14 s ago</span></td>
+        </tr>
+        <tr>
+          <td><span class="badge addr">SA 08</span></td>
+          <td><span class="nm">Living wall wash</span></td>
+          <td><span class="badge dt8">DT8 RGB</span></td>
+          <td><span class="chip accent"><span class="dot"></span>On · 120</span></td>
+          <td><span class="chip warn"><span class="dot"></span>Limit error</span></td>
+          <td><span class="groups">G6</span></td>
+          <td><span class="vl">VL 04 <span class="vname">· Living CCT</span></span></td>
+          <td><span class="seen">31 s ago</span></td>
+        </tr>
+        <tr>
+          <td><span class="badge addr">SA 12</span></td>
+          <td><span class="nm">Stair riser</span></td>
+          <td><span class="badge">DT6 LED</span></td>
+          <td><span class="chip idle"><span class="dot"></span>Off</span></td>
+          <td><span class="chip err"><span class="dot"></span>Lamp failure</span></td>
+          <td><span class="groups">G3</span></td>
+          <td><span class="vl">VL 07 <span class="vname">· Stairs</span></span></td>
+          <td><span class="seen">4 m ago</span></td>
+        </tr>
+        <tr>
+          <td><span class="badge addr">SA 21</span></td>
+          <td><span class="nm">Workbench strip</span></td>
+          <td><span class="badge">DT6 LED</span></td>
+          <td><span class="chip idle"><span class="dot"></span>Off</span></td>
+          <td><span class="ok-txt">OK</span></td>
+          <td><span class="groups none">—</span></td>
+          <td><span class="vl none">unbound</span></td>
+          <td><span class="seen">1 h ago</span></td>
+        </tr>
+        <tr>
+          <td><span class="badge addr">SA 30</span></td>
+          <td><span class="nm faint">— unnamed</span></td>
+          <td><span class="badge">DT6 LED</span></td>
+          <td><span class="chip idle"><span class="dot"></span>Unknown</span></td>
+          <td><span class="ok-txt">—</span></td>
+          <td><span class="groups none">—</span></td>
+          <td><span class="vl none">unbound</span></td>
+          <td><span class="seen never">never</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+<div class="chgh">2026-09-01 — the State cell, and one column fewer</div>
+<p class="chgnote">Two changes from the owner's review. <b>Groups is gone</b>: it was a comma
+  list of numbers that could not show the desired-versus-applied split the membership actually
+  has, and the device card has a whole tab that can — a column that cannot tell the truth about
+  its own data is worse than no column. <b>State carries the fixture's colour</b>: it was the
+  generic status chip with a fixed amber dot, so two lamps at the same level looked identical
+  whether one ran 2700 K and the other 6500 K, and a deep-red RGB fixture looked like a warm
+  white one. Full spec in <code>components/lamp-state</code>.</p>
+<div class="chgdemo">
+  <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.82);--lamp-glow:0 0 7px rgba(240,180,41,.45)"></span><span class="lamplv">180</span></span>
+  &nbsp;&nbsp;&nbsp;
+  <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,166,88,.92);--lamp-glow:0 0 7px rgba(255,166,88,.5)"></span><span class="lamplv">220</span><span class="lampcq">2900 K</span></span>
+  &nbsp;&nbsp;&nbsp;
+  <span class="lampstate off"><span class="lampdot"></span><span class="lamplv">Off</span></span>
+  &nbsp;&nbsp;&nbsp;
+  <span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">unknown</span></span>
+</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,381 @@
+<!-- @dsCard group="Screens" name="Dashboard" subtitle="Controller overview: sidebar nav, adapter card, quick actions, recent ops" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dashboard — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+
+.shell { display: flex; max-width: 1240px; margin: 0 auto; min-height: 100vh; }
+
+/* Sidebar */
+.side { width: 200px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 18px 10px; }
+.side .brand { display: flex; align-items: baseline; gap: 7px; padding: 0 10px 16px; }
+.side .brand .name { font-weight: 650; font-size: 15px; letter-spacing: -0.01em; }
+.side .brand .glyph { color: var(--accent-strong); font-size: 15px; }
+.nav a { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: var(--radius-sm);
+  color: var(--text-muted); text-decoration: none; font-size: 13px; margin-bottom: 2px; }
+.nav a:hover { background: var(--raised); color: var(--text); }
+.nav a.active { background: var(--accent-soft); color: var(--accent-strong); font-weight: 550; }
+.nav a .ic { width: 16px; text-align: center; font-size: 13px; opacity: .8; }
+.nav .grp { padding: 12px 10px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-faint); }
+
+/* Main */
+.main { flex: 1; padding: 20px 24px 40px; min-width: 0; }
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.head .sub { font-size: 12px; color: var(--text-faint); }
+.spacer { flex: 1; }
+
+.badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
+.chip.idle { color: var(--text-muted); background: var(--raised); border: 1px solid var(--border); }
+.chip.run { color: var(--info); background: var(--info-soft); }
+.chip.run .dot { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+
+/* Cards grid */
+.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.card header { display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
+.card header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+.act { font-size: 11px; color: var(--info); background: none; border: none; cursor: pointer; font-family: var(--font); }
+
+.attr { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.attr:last-child { border-bottom: none; }
+.attr .k { color: var(--text-muted); font-size: 13px; }
+.attr .v { font-family: var(--mono); font-size: 13px; text-align: right; }
+.attr .v .unit { color: var(--text-faint); font-size: 11px; }
+
+/* Counters row inside adapter card */
+.counters { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--border); }
+.counter { padding: 12px 14px; text-align: center; border-right: 1px solid var(--border); }
+.counter:last-child { border-right: none; }
+.counter .n { font-family: var(--mono); font-size: 22px; font-weight: 500; }
+.counter .n.err { color: var(--err); }
+.counter .n.warn { color: var(--warn); }
+.counter .l { font-size: 11px; color: var(--text-faint); }
+
+/* Quick actions */
+.actions { display: flex; gap: 10px; padding: 14px; flex-wrap: wrap; }
+.actions .btn { padding: 9px 16px; font-size: 13px; }
+
+/* Recent operations mini-list */
+.oprow { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--border); }
+.oprow:last-child { border-bottom: none; }
+.oprow .t { font-size: 13px; font-weight: 550; flex: 1; }
+.oprow .id { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.oprow .age { font-size: 11px; color: var(--text-faint); min-width: 52px; text-align: right; }
+/* The bus card — full spec in components/bus-status. */
+.bushealth { display: flex; align-items: flex-start; gap: 12px; padding: 14px; }
+.bushealth .ring { width: 34px; height: 34px; border-radius: 50%; flex: none;
+  border: 2px solid var(--border-strong); display: flex; align-items: center;
+  justify-content: center; font-size: 15px; color: var(--text-muted); }
+.bushealth .txt { min-width: 0; }
+.bushealth .st { font-size: 14px; font-weight: 600; color: var(--text); }
+.bushealth .d { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.bushealth.ok .ring { border-color: color-mix(in srgb, var(--ok) 60%, transparent); color: var(--ok); background: var(--ok-soft); }
+.bushealth.ok .st { color: var(--ok); }
+.bushealth.err .ring { border-color: color-mix(in srgb, var(--err) 65%, transparent); color: var(--err); background: var(--err-soft); }
+.bushealth.err .st { color: var(--err); }
+.buscounts { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border); }
+.buscounts .c { padding: 9px 14px; border-right: 1px solid var(--border-soft); }
+.buscounts .c:last-child { border-right: none; }
+.buscounts .n { font-family: var(--mono); font-size: 15px; color: var(--text); font-variant-numeric: tabular-nums; }
+.buscounts .n.err { color: var(--err); }
+.buscounts .l { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; margin-top: 1px; }
+.buscounts .n.warn { color: var(--warn); }
+/* Bus load — the figure and the five-minute history; full spec in
+   components/bus-load. Never amber: amber is lamp state. */
+.bushealth .load { margin-left: auto; text-align: right; flex: none; }
+.bushealth .load .n { font-family: var(--mono); font-size: 22px; font-weight: 500; line-height: 1.1;
+  color: var(--text); font-variant-numeric: tabular-nums; }
+.bushealth .load .n .u { font-size: 12px; color: var(--text-faint); margin-left: 2px; }
+.bushealth .load .l { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; }
+.bushealth .load .s { font-size: 11px; color: var(--text-muted); font-family: var(--mono); margin-top: 2px; }
+.busload { padding: 10px 14px 8px; border-top: 1px solid var(--border); }
+.busload .hd { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+.busload .hd .t { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; flex: 1; }
+.busload .legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-muted); }
+.busload .legend i { display: inline-block; width: 14px; height: 0; border-top: 2px solid var(--info); margin-right: 5px; vertical-align: middle; }
+.busload .legend i.own { border-top: 1.5px dashed var(--text-muted); }
+.busload .legend i.coll { border-top: 3px solid var(--err); width: 3px; }
+.busload svg { width: 100%; height: auto; display: block; }
+.busload .gl { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.busload .glab { fill: var(--text-faint); font-size: 9px; font-family: var(--mono); }
+.busload .area { fill: color-mix(in srgb, var(--info) 22%, transparent); stroke: none; }
+.busload .line { fill: none; stroke: var(--info); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.busload .own { fill: none; stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; }
+.busload .coll { stroke: var(--err); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.busload .empty { font-size: 11px; color: var(--text-faint); padding: 18px 0; text-align: center; }
+.chgnote { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.chgnote code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.chgdemo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px; }
+.chgh { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .08em; margin: 26px 0 10px; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <aside class="side">
+    <div class="brand"><span class="glyph">◍</span><span class="name">dali2rust</span></div>
+    <nav class="nav">
+      <!-- Mirrors web/app NAV_GROUPS exactly: one entry per implemented
+           screen, three groups. A card sidebar that drifts from the app is
+           how the HA entry went missing for a week. -->
+      <div class="grp">Control</div>
+      <a class="active" href="#"><span class="ic">▦</span>Dashboard</a>
+      <a href="#"><span class="ic">◧</span>Physical devices</a>
+      <a href="#"><span class="ic">◍</span>Virtual lamps</a>
+      <a href="#"><span class="ic">⊞</span>Groups</a>
+      <a href="#"><span class="ic">✦</span>Scenes</a>
+      <a href="#"><span class="ic">◐</span>HCL schedules</a>
+      <div class="grp">System</div>
+      <a href="#"><span class="ic">≡</span>Operations</a>
+      <a href="#"><span class="ic">›_</span>DALI console</a>
+      <a href="#"><span class="ic">σ</span>Stats</a>
+      <a href="#"><span class="ic">∿</span>DALI sniffer</a>
+      <a href="#"><span class="ic">◔</span>Diagnostics</a>
+      <div class="grp">Settings</div>
+      <a href="#"><span class="ic">⟳</span>Poller</a>
+      <a href="#"><span class="ic">⌂</span>Home Assistant</a>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <div class="head">
+      <h1>dali2rust · Controller</h1>
+      <span class="badge">0.1.0 · esp32p4</span>
+      <span class="chip ok"><span class="dot"></span>Online</span>
+      <span class="spacer"></span>
+      <span class="sub">uptime <span style="font-family:var(--mono); color:var(--text-muted)">3 d 14 h 02 m</span></span>
+    </div>
+
+    <div class="grid">
+
+      <div class="card">
+        <header><h3>DALI bus</h3><button class="act">Counters →</button></header>
+        <div class="bushealth ok">
+          <span class="ring">✓</span>
+          <span class="txt">
+            <div class="st">Healthy</div>
+            <div class="d">7 401 frames sent, no power-down or system-failure condition seen since boot.</div>
+          </span>
+          <span class="load">
+            <div class="n">37<span class="u">%</span></div>
+            <div class="l">bus load</div>
+            <div class="s">own 21%</div>
+          </span>
+        </div>
+        <div class="buscounts">
+          <div class="c"><div class="n">7 401</div><div class="l">frames</div></div>
+          <div class="c"><div class="n">312</div><div class="l">foreign</div></div>
+          <div class="c"><div class="n warn">3</div><div class="l">collisions</div></div>
+          <div class="c"><div class="n">0</div><div class="l">power down</div></div>
+        </div>
+        <div class="busload">
+          <div class="hd">
+            <span class="t">Bus load · last 5 min</span>
+            <span class="legend"><span><i></i>load</span><span><i class="own"></i>our share</span><span><i class="coll"></i>collision</span></span>
+          </div>
+          <svg viewBox="0 0 720 120" preserveAspectRatio="none" role="img" aria-label="Bus load over the last five minutes">
+            <line class="gl" x1="0" y1="8" x2="720" y2="8"/>
+            <line class="gl" x1="0" y1="56" x2="720" y2="56"/>
+            <line class="gl" x1="0" y1="104" x2="720" y2="104"/>
+            <line class="gl" x1="144" y1="8" x2="144" y2="104"/>
+            <line class="gl" x1="288" y1="8" x2="288" y2="104"/>
+            <line class="gl" x1="432" y1="8" x2="432" y2="104"/>
+            <line class="gl" x1="576" y1="8" x2="576" y2="104"/>
+            <path class="area" d="M0,104 L0,100 L24,99 L48,100 L72,98 L96,99 L120,85 L144,87 L168,99 L192,100 L216,99 L240,16 L264,13 L288,14 L312,12 L336,15 L360,13 L384,46 L408,96 L432,99 L456,100 L480,83 L504,99 L528,100 L552,98 L576,99 L600,100 L624,86 L648,99 L672,100 L696,99 L720,98 L720,104 Z"/>
+            <polyline class="line" points="0,100 24,99 48,100 72,98 96,99 120,85 144,87 168,99 192,100 216,99 240,16 264,13 288,14 312,12 336,15 360,13 384,46 408,96 432,99 456,100 480,83 504,99 528,100 552,98 576,99 600,100 624,86 648,99 672,100 696,99 720,98"/>
+            <polyline class="own" points="0,102 24,101 48,102 72,100 96,101 120,91 144,92 168,101 192,102 216,101 240,48 264,46 288,47 312,45 336,48 360,46 384,68 408,99 432,101 456,102 480,90 504,101 528,102 552,100 576,101 600,102 624,92 648,101 672,102 696,101 720,100"/>
+            <line class="coll" x1="264" y1="104" x2="264" y2="94"/>
+            <line class="coll" x1="336" y1="104" x2="336" y2="90"/>
+            <line class="coll" x1="624" y1="104" x2="624" y2="94"/>
+            <text class="glab" x="4" y="18">100%</text>
+            <text class="glab" x="4" y="66">50%</text>
+            <text class="glab" x="2" y="116">−5 min</text>
+            <text class="glab" x="694" y="116">now</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card">
+        <header><h3>Controller</h3><button class="act">Details</button></header>
+        <div class="attr"><span class="k">Target MCU</span><span class="v">esp32p4</span></div>
+        <div class="attr"><span class="k">Registry</span><span class="v"><span class="chip ok" style="font-size:11px; padding:2px 8px;"><span class="dot"></span>hydrated</span></span></div>
+        <div class="attr"><span class="k">Hostname</span><span class="v">dali2rust.local</span></div>
+        <div class="attr"><span class="k">IP address</span><span class="v">192.168.11.41</span></div>
+        <div class="attr"><span class="k">Wi-Fi SSID</span><span class="v">—</span></div>
+        <!-- Bridge status, not a connection dot: disabled / enabled /
+             connected, with the broker URL as a faint mono suffix — the first
+             thing an operator with an empty Home Assistant needs to check. -->
+        <div class="attr"><span class="k">Home Assistant</span><span class="v">connected <span class="unit" style="font-family:var(--mono)">mqtt://192.168.11.110:1883</span></span></div>
+      </div>
+
+      <div class="card">
+        <header><h3>Adapter 0 · Main DALI</h3><span class="chip idle"><span class="dot"></span>bus idle</span></header>
+        <div class="counters">
+          <div class="counter"><div class="n">4 812</div><div class="l">commands</div></div>
+          <div class="counter"><div class="n warn">3</div><div class="l">timeouts</div></div>
+          <div class="counter"><div class="n err">0</div><div class="l">errors</div></div>
+        </div>
+        <div class="attr"><span class="k">Physical devices</span><span class="v">14 <span class="unit">discovered</span></span></div>
+        <div class="attr"><span class="k">Capacity</span><span class="v">64 VL · 16 groups · 16 scenes</span></div>
+        <div class="attr"><span class="k">Last bus activity</span><span class="v">6 s ago</span></div>
+      </div>
+
+      <div class="card">
+        <header><h3>Quick actions</h3></header>
+        <div class="actions">
+          <button class="btn primary">⌕ Discover devices</button>
+          <button class="btn">⊞ Open groups</button>
+          <button class="btn">✦ Open scenes</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <header><h3>Recent operations</h3><button class="act">All operations →</button></header>
+        <div class="oprow">
+          <span class="t">Attribute read · SA 04</span>
+          <span class="id">attr-read-0-19</span>
+          <span class="chip run"><span class="dot"></span>running</span>
+          <span class="age">2 s</span>
+        </div>
+        <div class="oprow">
+          <span class="t">Group apply</span>
+          <span class="id">grp-apply-0-6</span>
+          <span class="chip ok"><span class="dot"></span>succeeded</span>
+          <span class="age">48 s</span>
+        </div>
+        <div class="oprow">
+          <span class="t">Discovery · full scan</span>
+          <span class="id">pd-disc-0-13</span>
+          <span class="chip ok"><span class="dot"></span>succeeded</span>
+          <span class="age">12 m</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+
+<div class="chgh">2026-09-05 — how busy, and with whom</div>
+<p class="chgnote">The bus card answered "is the wire alive?" and nothing about how much of it is in
+  use. The PHY interrupt now books every 104 µs tick as idle, active or transmitting, a
+  one-second window on the device turns that into ONE per-mille gauge, and every surface — this
+  card, Stats, the OLED strip, the WebSocket frame — reads that same number; the browser keeps
+  a five-minute ring of the pushed samples and the device keeps no history at all. Spec in
+  <code>components/bus-load</code>.</p>
+<p class="chgnote">Three things on the card changed. The verdict block gained the figure at its
+  right, with <b>our share</b> beneath it — the gap to the total is the other master and the gear
+  answering us, which on this bench is the question. The counts strip trades <b>sys failure</b>
+  (it lives in the verdict's own detail line) for <b>foreign</b>, the sniffer's forward-frame
+  count. And the history strip sits under the counts: total load as an <code>--info</code> area,
+  our share as the neutral dashed line the HCL curve uses for colour, collisions as red ticks at
+  the moment they happened. <b>Never amber</b> — amber is lamp state, and a filled amber area
+  under the verdict would read as light output.</p>
+
+<div class="chgh">2026-09-01 — the bus is the first card</div>
+<p class="chgnote">The dashboard used to answer "is the bus alive?" with a small
+  <code>bus idle</code> chip on the adapter card, and that chip was never about the bus:
+  <code>bus_status</code> on the adapter DTO is <code>enabled ? "idle" : "disabled"</code>, a
+  property of the adapter's own command gate. It reads "idle" over a segment whose supply has
+  failed and over one shorted end to end. The wire's own condition now leads the page —
+  IEC 62386-101 §4.11 Table 4's classification, straight from the PHY — and the adapter card's
+  chip says what it actually knows (<code>enabled</code> / <code>disabled</code>). Five states,
+  spec in <code>components/bus-status</code>.</p>
+<p class="chgnote">Also gone: the <b>Wi-Fi SSID</b> row. The board has no radio — <code>ADR-011</code>
+  deleted the WiFi <code>NetworkLink</code> with the S3 — so the row could only ever render a
+  dash, and a field that can only be empty teaches an operator to distrust the ones that are.</p>
+<div class="chgdemo">
+  <div class="card" style="max-width:420px">
+    <header><h3>DALI bus</h3></header>
+    <div class="bushealth err">
+      <span class="ring">⚠</span>
+      <span class="txt">
+        <div class="st">No bus power</div>
+        <div class="d">the line has been held active for over 45 ms — bus power down. Check the
+          DALI supply and the wiring before reading anything else on this page.</div>
+      </span>
+    </div>
+    <div class="buscounts">
+      <div class="c"><div class="n">96</div><div class="l">frames</div></div>
+      <div class="c"><div class="n err">1</div><div class="l">power down</div></div>
+      <div class="c"><div class="n">0</div><div class="l">sys failure</div></div>
+      <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="chgh">2026-09-01 — the shell grows, and folds</div>
+<p class="chgnote">The shell was capped at <code>1240 px</code> since the first screen, which is
+  why tables looked truncated on a wide monitor: the device list needs ~1150 px of columns
+  inside a 1020 px content area. It runs to <code>1680 px</code> now — the widest surfaces here
+  are the group matrix (17 columns) and the scene editor, and a table is the one thing that
+  should use the glass it is given. Below <code>900 px</code> the 200 px sidebar becomes a
+  horizontal strip along the top and <code>.grid2</code> collapses to one column, so the tables
+  get the width the furniture was holding.</p>
+</div>
+</body>
+</html>

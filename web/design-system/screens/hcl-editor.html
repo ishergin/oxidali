@@ -1,0 +1,314 @@
+<!-- @dsCard group="Screens" name="HCL schedule editor" subtitle="Day curve preview over the point table, plus targets, algorithm, location, and the daily-override strip when the schedule is standing down" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HCL schedule editor — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 80px; }
+
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.head .sid { font-family: var(--mono); font-size: 15px; color: var(--accent-strong); }
+.spacer { flex: 1; }
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+.btn.ghost { background: transparent; color: var(--text-muted); }
+.btn.sm { padding: 3px 8px; font-size: 11px; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; }
+.panel > h2 { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em;
+  font-weight: 500; margin: 0; padding: 10px 15px; border-bottom: 1px solid var(--border); }
+.panel .body { padding: 14px 15px; }
+
+/* Day curve: the whole point of the screen is that a schedule is a shape, and a
+   table of minutes is not one. Level is the amber line because amber is the
+   lamp; colour temperature rides a neutral line so it never competes. */
+.curve { padding: 12px 15px 4px; }
+.curve svg { width: 100%; height: auto; display: block; }
+.grid { stroke: var(--border); stroke-width: 1; }
+.gridlab { fill: var(--text-faint); font-size: 9px; font-family: var(--mono); }
+.lvl-line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.lvl-dot { fill: var(--accent-strong); }
+.cct-line { fill: none; stroke: var(--text-muted); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.cct-dot { fill: var(--text-muted); }
+/* An astronomical point sits where the sun puts it today, so it is marked as
+   computed rather than typed. */
+.astro { stroke: var(--info); stroke-width: 1; stroke-dasharray: 2 3; }
+.astro-lab { fill: var(--info); font-size: 9px; font-family: var(--mono); }
+.legend { display: flex; gap: 16px; padding: 2px 2px 10px; font-size: 11px; color: var(--text-muted); }
+.legend i { display: inline-block; width: 14px; height: 0; border-top: 2px solid var(--accent); margin-right: 5px; vertical-align: middle; }
+.legend i.cct { border-top: 1.5px dashed var(--text-muted); }
+.legend i.astro { border-top: 1px dashed var(--info); }
+
+table { border-collapse: collapse; width: 100%; }
+th { text-align: left; padding: 8px 12px; background: var(--raised); border-bottom: 1px solid var(--border);
+  font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em; font-weight: 500; }
+td { padding: 6px 12px; border-bottom: 1px solid rgba(42,51,64,.5); font-size: 12.5px; }
+tr:hover td { background: rgba(35,44,56,.5); }
+.sel { background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 12px; padding: 3px 7px; font-family: var(--font); }
+.inp { background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 12px; padding: 3px 7px; width: 62px; font-family: var(--mono); }
+/* A field the contract forbids for this mode is shown disabled rather than
+   hidden: the row keeps its shape, and the reason stays visible. */
+.inp:disabled, .sel:disabled { color: var(--text-faint); background: transparent; border-color: transparent; }
+.inp.err { border-color: rgba(242,85,90,.55); background: var(--err-soft); }
+.fielderr { display: block; font-size: 10.5px; color: var(--err); margin-top: 2px; }
+
+.chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.chip { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--raised); color: var(--text-muted); cursor: pointer; }
+.chip.on { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+.chip.g { font-family: var(--mono); }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.field { margin-bottom: 12px; }
+.field:last-child { margin-bottom: 0; }
+.field .k { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 5px; }
+.radio { display: flex; gap: 8px; }
+.ropt { flex: 1; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--raised);
+  padding: 7px 10px; cursor: pointer; }
+.ropt.on { background: var(--accent-soft); border-color: rgba(240,180,41,.4); }
+.ropt .rn { font-size: 12px; color: var(--text); font-weight: 500; }
+.ropt.on .rn { color: var(--accent-strong); }
+.ropt .rd { font-size: 10.5px; color: var(--text-faint); margin-top: 1px; }
+
+.hint { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
+.hint a { color: var(--info); text-decoration: none; }
+/* Location is optional until an astronomical point needs it — then the form
+   says why, instead of failing at save time. */
+.req { background: var(--warn-soft); border: 1px solid rgba(227,160,8,.35); border-radius: var(--radius-sm);
+  padding: 6px 9px; font-size: 11px; color: var(--warn); margin-top: 6px; }
+
+.trow { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid rgba(42,51,64,.5); }
+.trow:last-of-type { border-bottom: none; }
+
+/* Same daily-override strip as the list screen; here it sits above the curve,
+   because the curve is what the operator is about to edit and it is currently
+   not being applied. `info`, never the amber accent — that belongs to lamp
+   state — and never `warn`, which means dirty. */
+.standdown { display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  padding: 9px 12px; border-radius: var(--radius-sm);
+  background: var(--info-soft); border: 1px solid rgba(77,163,255,.28); }
+.standdown .ico { color: var(--info); font-size: 13px; line-height: 1; flex: none; }
+.standdown .txt { font-size: 12px; color: var(--text-muted); }
+.standdown .txt b { color: var(--info); font-weight: 600; font-family: var(--mono); }
+.standdown .txt .g { font-family: var(--mono); color: var(--text); }
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumbs"><a href="#">Adapter 0</a> / HCL schedules · Editor</div>
+
+  <div class="head">
+    <h1>Schedule</h1>
+    <span class="sid">morning</span>
+    <span class="spacer"></span>
+    <button class="btn ghost">Delete</button>
+    <button class="btn">Cancel</button>
+    <button class="btn primary">Save</button>
+  </div>
+
+  <div class="standdown">
+    <span class="ico">&#8214;</span>
+    <span class="txt">
+      Standing down since <b>14:21</b> — <span class="g">G1</span> on A0 was set by hand, so
+      this schedule stops driving it until midnight. Editing the curve does not resume it.
+    </span>
+    <span class="spacer"></span>
+    <button class="btn ghost">Resume now</button>
+  </div>
+
+  <div class="panel">
+    <h2>Day curve</h2>
+    <div class="curve">
+      <svg viewBox="0 0 720 168" preserveAspectRatio="none" role="img" aria-label="Level and colour temperature across the day">
+        <line class="grid" x1="0" y1="130" x2="720" y2="130"></line>
+        <line class="grid" x1="0" y1="70" x2="720" y2="70" opacity=".5"></line>
+        <line class="grid" x1="0" y1="10" x2="720" y2="10" opacity=".5"></line>
+        <line class="grid" x1="180" y1="6" x2="180" y2="134" opacity=".45"></line>
+        <line class="grid" x1="360" y1="6" x2="360" y2="134" opacity=".45"></line>
+        <line class="grid" x1="540" y1="6" x2="540" y2="134" opacity=".45"></line>
+
+        <line class="astro" x1="624" y1="6" x2="624" y2="134"></line>
+        <text class="astro-lab" x="628" y="16">sunset</text>
+
+        <polyline class="cct-line" points="180,102 240,50 540,90 624,122"></polyline>
+        <polyline class="lvl-line" points="180,92 240,36 540,54"></polyline>
+        <circle class="lvl-dot" cx="180" cy="92" r="3.5"></circle>
+        <circle class="lvl-dot" cx="240" cy="36" r="3.5"></circle>
+        <circle class="lvl-dot" cx="540" cy="54" r="3.5"></circle>
+        <circle class="cct-dot" cx="624" cy="122" r="3"></circle>
+
+        <text class="gridlab" x="2" y="146">00:00</text>
+        <text class="gridlab" x="166" y="146">06:00</text>
+        <text class="gridlab" x="346" y="146">12:00</text>
+        <text class="gridlab" x="526" y="146">18:00</text>
+        <text class="gridlab" x="686" y="146">24:00</text>
+      </svg>
+      <div class="legend">
+        <span><i></i>Level</span>
+        <span><i class="cct"></i>Colour temperature</span>
+        <span><i class="astro"></i>Computed from location</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Points</h2>
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Offset</th><th>Level mode</th><th>Level</th><th>CCT</th><th></th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><select class="sel"><option>absolute</option></select></td>
+          <td><input class="inp" value="06:00"></td>
+          <td><select class="sel"><option>absolute</option></select></td>
+          <td><input class="inp" value="80"></td>
+          <td><input class="inp" value="2700"></td>
+          <td><button class="btn sm ghost">&times;</button></td>
+        </tr>
+        <tr>
+          <td><select class="sel"><option>absolute</option></select></td>
+          <td><input class="inp" value="08:00"></td>
+          <td><select class="sel"><option>absolute</option></select></td>
+          <td><input class="inp" value="200"></td>
+          <td><input class="inp" value="4000"></td>
+          <td><button class="btn sm ghost">&times;</button></td>
+        </tr>
+        <tr>
+          <td><select class="sel"><option>absolute</option></select></td>
+          <td><input class="inp" value="18:00"></td>
+          <td><select class="sel"><option>absolute</option></select></td>
+          <td><input class="inp err" value="255"><span class="fielderr">0&ndash;254 &mdash; 255 is MASK</span></td>
+          <td><input class="inp" value="3000"></td>
+          <td><button class="btn sm ghost">&times;</button></td>
+        </tr>
+        <tr>
+          <td><select class="sel"><option>sunset</option></select></td>
+          <td><input class="inp" value="-30"></td>
+          <td><select class="sel"><option>last active</option></select></td>
+          <td><input class="inp" value="&mdash;" disabled></td>
+          <td><input class="inp" value="2200"></td>
+          <td><button class="btn sm ghost">&times;</button></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="body" style="border-top:1px solid var(--border)">
+      <button class="btn sm">Add point</button>
+      <div class="hint">
+        <b>last active</b> returns each gear to the brightness its user last set; the curve still drives colour.
+        Transition smoothness is a per-device fade time &mdash; set it on the <a href="#">device card</a>, not here.
+      </div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h2>Targets</h2>
+      <div class="body">
+        <div class="trow">
+          <select class="sel"><option>Adapter 0</option></select>
+          <select class="sel"><option>group</option></select>
+          <span class="chips">
+            <span class="chip g on">1</span><span class="chip g">2</span><span class="chip g">3</span>
+            <span class="chip g">4</span><span class="chip g on">5</span><span class="chip g">6</span>
+          </span>
+          <span class="spacer"></span>
+          <button class="btn sm ghost">&times;</button>
+        </div>
+        <div class="trow">
+          <select class="sel"><option>Adapter 1</option></select>
+          <select class="sel"><option>broadcast</option></select>
+          <span class="chips"><span class="chip" style="opacity:.5">whole bus</span></span>
+          <span class="spacer"></span>
+          <button class="btn sm ghost">&times;</button>
+        </div>
+        <div style="margin-top:10px"><button class="btn sm">Add target</button></div>
+        <div class="hint">Groups and broadcast only &mdash; a schedule never addresses a single lamp.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Behaviour</h2>
+      <div class="body">
+        <div class="field">
+          <div class="k">Algorithm</div>
+          <div class="radio">
+            <div class="ropt on"><div class="rn">interpolated</div><div class="rd">Ramps between points</div></div>
+            <div class="ropt"><div class="rn">stepped</div><div class="rd">Holds each point</div></div>
+          </div>
+        </div>
+        <div class="field">
+          <div class="k">Active days</div>
+          <div class="chips">
+            <span class="chip on">Mon</span><span class="chip on">Tue</span><span class="chip on">Wed</span>
+            <span class="chip on">Thu</span><span class="chip on">Fri</span><span class="chip">Sat</span><span class="chip">Sun</span>
+          </div>
+        </div>
+        <div class="field">
+          <div class="k">Location</div>
+          <input class="inp" style="width:96px" value="55.7558">
+          <input class="inp" style="width:96px" value="37.6173">
+          <div class="req">Required: a sunset point cannot be placed without one.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

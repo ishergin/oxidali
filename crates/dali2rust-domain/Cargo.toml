@@ -1,0 +1,13 @@
+[package]
+name = "dali2rust-domain"
+description = "Pure DALI business logic — zero I/O"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+dali2rust-contracts = { path = "../dali2rust-contracts" }
+dali2rust-platform = { path = "../dali2rust-platform" }
+serde = { version = "1", features = ["derive"] }

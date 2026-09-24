@@ -1,0 +1,136 @@
+<!-- @dsCard group="Components" name="Matrix cells" subtitle="Tri-state membership: desired vs applied, dirty highlight" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Matrix cells — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.wrap { padding: 24px; max-width: 720px; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); margin: 22px 0 10px; }
+
+.legend { display: grid; grid-template-columns: 44px 1fr; gap: 10px 14px; align-items: center; max-width: 560px; }
+.legend .desc { font-size: 13px; color: var(--text-muted); }
+.legend .desc b { color: var(--text); font-weight: 600; }
+
+/* The cell itself: a 28px square, click target for toggling membership */
+.cell {
+  width: 28px; height: 28px; border-radius: var(--radius-sm);
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); background: var(--surface);
+  font-size: 14px; cursor: pointer; position: relative;
+}
+.cell:hover { border-color: var(--border-strong); background: var(--raised); }
+
+/* member, in sync: solid check */
+.cell.on { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+/* to add: desired but not applied yet */
+.cell.add { background: var(--dirty-soft); border: 1.5px dashed var(--dirty); color: var(--dirty); }
+/* to remove: applied on the gear, cleared in desired */
+.cell.rm { background: var(--dirty-soft); border: 1.5px dashed var(--dirty); color: var(--dirty); }
+.cell.rm .x { text-decoration: line-through; opacity: .8; }
+/* dirty corner dot shared by add/rm */
+.cell.add::after, .cell.rm::after {
+  content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--dirty); border: 2px solid var(--bg);
+}
+
+.row-demo { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+.mini-table { border-collapse: collapse; margin-top: 6px; }
+.mini-table th { font-family: var(--mono); font-size: 10px; color: var(--text-faint); font-weight: 400; padding: 4px 5px; }
+.mini-table th.g-dirty { color: var(--dirty); }
+.mini-table td { padding: 3px; }
+.mini-table td.name { font-size: 13px; padding-right: 14px; color: var(--text); white-space: nowrap; }
+.mini-table td.name .vl { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-right: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>Cell states</h2>
+  <div class="legend">
+    <span class="cell"></span><span class="desc">Not a member</span>
+    <span class="cell on">✓</span><span class="desc"><b>Member</b> — desired = applied</span>
+    <span class="cell add">✓</span><span class="desc"><b>Will be added</b> — desired, not yet applied (dirty)</span>
+    <span class="cell rm"><span class="x">✓</span></span><span class="desc"><b>Will be removed</b> — applied on gear, cleared in desired (dirty)</span>
+  </div>
+
+  <h2>In context — rows × 16 groups</h2>
+  <table class="mini-table">
+    <tr>
+      <th></th>
+      <th>G0</th><th class="g-dirty">G1•</th><th>G2</th><th>G3</th><th>G4</th><th>G5</th><th>G6</th><th>G7</th>
+    </tr>
+    <tr>
+      <td class="name"><span class="vl">VL 00</span>Kitchen main</td>
+      <td><span class="cell on">✓</span></td>
+      <td><span class="cell add">✓</span></td>
+      <td><span class="cell"></span></td>
+      <td><span class="cell"></span></td>
+      <td><span class="cell on">✓</span></td>
+      <td><span class="cell"></span></td>
+      <td><span class="cell"></span></td>
+      <td><span class="cell"></span></td>
+    </tr>
+    <tr>
+      <td class="name"><span class="vl">VL 01</span>Kitchen island</td>
+      <td><span class="cell on">✓</span></td>
+      <td><span class="cell rm"><span class="x">✓</span></span></td>
+      <td><span class="cell"></span></td>
+      <td><span class="cell"></span></td>
+      <td><span class="cell"></span></td>
+      <td><span class="cell"></span></td>
+      <td><span class="cell on">✓</span></td>
+      <td><span class="cell"></span></td>
+    </tr>
+  </table>
+</div>
+</body>
+</html>

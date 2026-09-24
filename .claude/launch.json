@@ -1,0 +1,40 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "web/app"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "host-dev-server",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": [
+        "run",
+        "--target",
+        "aarch64-apple-darwin",
+        "--package",
+        "dali2rust-adapters",
+        "--example",
+        "host_dev_server"
+      ],
+      "port": 8080,
+      "autoPort": true
+    },
+    {
+      "name": "web-ui-device",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "DALI2RUST_API_TARGET=http://192.168.13.116 npm run dev --prefix web/app -- --port 5174"
+      ],
+      "port": 5174
+    }
+  ]
+}

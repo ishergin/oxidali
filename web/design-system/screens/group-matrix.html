@@ -1,0 +1,390 @@
+<!-- @dsCard group="Screens" name="Group matrix" subtitle="Virtual lamps × 16 groups, desired vs applied, apply bar" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Group matrix — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 80px; }
+
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.head .sub { font-size: 12px; color: var(--text-faint); }
+.spacer { flex: 1; }
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.search { padding: 6px 10px; background: var(--raised); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); color: var(--text); font-size: 12px; width: 200px; font-family: var(--font); }
+.search::placeholder { color: var(--text-faint); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+
+/* Matrix table */
+.matrix-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: auto; }
+table { border-collapse: separate; border-spacing: 0; width: 100%; }
+thead th { position: sticky; top: 0; background: var(--raised); z-index: 2;
+  padding: 8px 4px 6px; border-bottom: 1px solid var(--border); }
+thead th.gname { font-family: var(--mono); font-size: 10px; color: var(--text-muted); font-weight: 500; min-width: 42px; }
+thead th.gname .cnt { display: block; font-size: 9px; color: var(--text-faint); }
+thead th.gname.dirty { color: var(--dirty); }
+thead th.gname.dirty::after { content: " •"; }
+/* Rename popover on a group header (shown open on G1 for the mock). */
+.gpop { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); z-index: 5;
+  margin-top: 4px; padding: 8px 10px; background: var(--overlay); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); box-shadow: 0 8px 24px rgba(0,0,0,.45);
+  display: flex; align-items: center; white-space: nowrap; }
+.gpop-name { width: 120px; padding: 4px 7px; font-size: 12px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+/* HA opt-in: metadata, info tint — never the amber lamp accent. */
+.hatoggle { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px;
+  font-size: 11.5px; color: var(--text-muted); white-space: nowrap; cursor: pointer;
+  font-family: var(--font); text-transform: none; letter-spacing: 0; }
+.hatoggle input { accent-color: var(--info); margin: 0; }
+thead th.lamp { text-align: left; padding-left: 14px; min-width: 220px; font-size: 11px; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: .07em; font-weight: 500; }
+tbody td { padding: 2px 3px; text-align: center; border-bottom: 1px solid rgba(42,51,64,.5); }
+tbody tr:hover td { background: rgba(35,44,56,.5); }
+tbody td.lamp { text-align: left; padding: 6px 8px 6px 14px; white-space: nowrap; }
+tbody td.lamp .vl { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-right: 8px; }
+tbody td.lamp .nm { font-size: 13px; }
+tbody td.lamp .unbound { font-size: 10px; color: var(--text-faint); margin-left: 8px; font-style: italic; }
+tbody tr.rowdirty td.lamp { box-shadow: inset 2px 0 0 var(--dirty); }
+
+.cell { width: 26px; height: 26px; border-radius: var(--radius-sm); display: inline-flex; align-items: center;
+  justify-content: center; border: 1px solid var(--border); background: var(--surface); font-size: 13px; cursor: pointer; position: relative; }
+.cell:hover { border-color: var(--border-strong); background: var(--overlay); }
+.cell.on { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+.cell.add, .cell.rm { background: var(--dirty-soft); border: 1.5px dashed var(--dirty); color: var(--dirty); }
+.cell.rm .x { text-decoration: line-through; opacity: .8; }
+.cell.dis { background: transparent; border-color: rgba(42,51,64,.4); cursor: default; }
+
+/* Apply bar */
+.applybar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px; background: var(--overlay);
+  border: 1px solid var(--border-strong); border-radius: 12px; padding: 10px 14px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.45); }
+.applybar .txt { font-size: 13px; }
+.applybar .txt b { color: var(--text); }
+.applybar.busy .txt { color: var(--text-muted); }
+.applybar .phase { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  padding: 2px 9px; border-radius: 999px; }
+.applybar .phase .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.applybar .phase.run { color: var(--info, #4da3ff); background: rgba(77,163,255,.13); }
+.applybar .phase.run .dot { animation: apulse 1.2s ease-in-out infinite; }
+.applybar .phase.done { color: var(--ok); background: var(--ok-soft); }
+.applybar .phase.wait { color: var(--text-faint); background: var(--raised); }
+.applybar .phase.err { color: var(--err); background: var(--err-soft); }
+@keyframes apulse { 50% { opacity: .25; } }
+.btn.apply { background: var(--accent); border-color: var(--accent); color: #14161a; font-weight: 600; padding: 7px 18px; }
+.btn.discard { color: var(--text-muted); }
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+
+/* ── Rename popover, rebuilt 2026-09-01 ──────────────────────────────────
+   It shipped as a bare box: an unlabelled input with a checkbox and the words
+   "Home Assistant" crammed on one line beside it, no header, no way to tell
+   which of sixteen identical columns was being renamed, and no apply/cancel.
+   The owner asked for "более приятную всплывающую плашку", and what was
+   missing was not polish — it was the three things a form has to say: WHAT it
+   edits, WHAT the control does, and HOW to leave.
+
+   The arrow is load-bearing. Sixteen columns sit ~34 px apart and every header
+   looks the same, and the panel is wider than the column it belongs to, so it
+   cannot simply align to one edge — without an anchor it is genuinely
+   ambiguous which column is about to be renamed.
+
+   The ✓/✕ pair sits UNDER the field rather than beside it: two 24 px buttons
+   next to a 120 px input inside a 216 px panel leave the field too short to
+   read a name in. */
+.pop { position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 5;
+  background: var(--overlay); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  padding: 0; box-shadow: var(--shadow); min-width: 216px; text-align: left; cursor: default; }
+.pop::before { content: ""; position: absolute; top: -5px; left: 50%; width: 8px; height: 8px;
+  transform: translateX(-50%) rotate(45deg); background: var(--overlay);
+  border-left: 1px solid var(--border-strong); border-top: 1px solid var(--border-strong); }
+.pop .ph { display: block; padding: 8px 10px 6px; font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--text-faint); font-weight: 600;
+  border-bottom: 1px solid var(--border); }
+.pop .pb { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+.pop .prow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pop .prow .pl { font-size: 12px; color: var(--text-muted); }
+.pop .name-edit-wrap { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.pop input { width: 100%; box-sizing: border-box; padding: 5px 8px; background: var(--raised);
+  color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  font-family: var(--font); font-size: 12px; }
+.pop input.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
+.pop .name-acts { display: flex; gap: 4px; justify-content: flex-end; }
+.pop .namebtn { display: inline-flex; align-items: center; justify-content: center; width: 24px;
+  height: 24px; padding: 0; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text-muted); font-size: 12px; line-height: 1; cursor: pointer; }
+.pop .namebtn.ok { border-color: color-mix(in srgb, var(--ok) 55%, transparent); color: var(--ok); background: var(--ok-soft); }
+.popdemo { position: relative; height: 200px; }
+.popdemo .col { position: absolute; left: 120px; top: 10px; font-family: var(--mono);
+  font-size: 11px; color: var(--text-muted); }
+.switch { width: 30px; height: 17px; border-radius: 999px; background: var(--border-strong);
+  display: inline-block; position: relative; cursor: pointer; }
+.switch.on { background: var(--accent); }
+.switch .knob { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--surface); }
+.switch.on .knob { left: auto; right: 2px; background: var(--accent-contrast); }
+/* Scaffolding for the annotated example above, matching the component cards. */
+.note { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
+.note code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h2>Renaming a column</h2>
+  <p class="note">Three things a form has to say, and the old box said none of them: which
+    column (<b>the heading</b>, plus the arrow that anchors the panel to it), what the toggle
+    does (a settings row with the same <code>Switch</code> every settings screen uses), and how
+    to leave (✓ / Enter, ✕ / Esc — and <b>blur does not commit</b>).</p>
+  <div class="demo popdemo">
+    <div class="col">G3</div>
+    <span class="pop" style="left:135px; top:34px; transform:none">
+      <span class="ph">Group G3</span>
+      <span class="pb">
+        <span class="name-edit-wrap">
+          <input class="dirty" value="Kitchen" readonly>
+          <span class="name-acts">
+            <button class="namebtn ok">✓</button>
+            <button class="namebtn">✕</button>
+          </span>
+        </span>
+        <span class="prow">
+          <span class="pl">Home Assistant</span>
+          <span class="switch on"><span class="knob"></span></span>
+        </span>
+      </span>
+    </span>
+  </div>
+
+
+  <div class="crumbs"><a href="#">Adapter 0</a> / Groups</div>
+
+  <div class="head">
+    <h1>Groups</h1>
+    <span class="sub">Adapter 0 · 64 virtual lamps × 16 groups</span>
+    <!-- TWO numbers, never summed. This chip is the GEAR's condition:
+         desired != applied in the registry, healed only by an apply the gear
+         confirms (or the per-row re-read). It is `warn`/`--dirty` because that
+         tone is reserved for exactly this. The operator's own unsaved edits
+         live in the apply bar below and nowhere else — summing them made the
+         bar permanent on any bench with a standing divergence and left
+         Discard, which can only clear the local half, greyed out forever. -->
+    <span class="chip warn"><span class="dot"></span>12 rows dirty on gear</span>
+    <span class="spacer"></span>
+    <input class="search" placeholder="Filter lamps…">
+    <button class="btn">Rename groups</button>
+  </div>
+
+  <div class="matrix-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="lamp">Virtual lamp</th>
+          <th class="gname">G0<span class="cnt">Hall · 5</span></th>
+          <th class="gname dirty">G1<span class="cnt">Kitchen · 3</span>
+            <!-- Click a group header → rename popover. The HA opt-out lives
+                 here (`ha_entity_enabled`, default on): the entity toggle is
+                 group metadata, so it rides the metadata surface, not the
+                 matrix cells. Info tint, never amber. -->
+            <div class="gpop">
+              <input class="gpop-name" value="Kitchen" placeholder="Group G1 name">
+              <label class="hatoggle"><input type="checkbox" checked> Home Assistant</label>
+            </div>
+          </th>
+          <th class="gname">G2<span class="cnt">— · 0</span></th>
+          <th class="gname">G3<span class="cnt">— · 2</span></th>
+          <th class="gname">G4<span class="cnt">— · 1</span></th>
+          <th class="gname">G5<span class="cnt">— · 0</span></th>
+          <th class="gname">G6<span class="cnt">— · 4</span></th>
+          <th class="gname">G7<span class="cnt">— · 0</span></th>
+          <th class="gname">G8<span class="cnt">— · 0</span></th>
+          <th class="gname">G9<span class="cnt">— · 0</span></th>
+          <th class="gname">G10<span class="cnt">— · 0</span></th>
+          <th class="gname">G11<span class="cnt">— · 0</span></th>
+          <th class="gname">G12<span class="cnt">— · 0</span></th>
+          <th class="gname">G13<span class="cnt">— · 0</span></th>
+          <th class="gname">G14<span class="cnt">— · 0</span></th>
+          <th class="gname">G15<span class="cnt">— · 0</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="rowdirty">
+          <td class="lamp"><span class="vl">VL 00</span><span class="nm">Kitchen main</span></td>
+          <td><span class="cell on">✓</span></td><td><span class="cell add">✓</span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+        </tr>
+        <tr class="rowdirty">
+          <td class="lamp"><span class="vl">VL 01</span><span class="nm">Kitchen island</span></td>
+          <td><span class="cell on">✓</span></td><td><span class="cell rm"><span class="x">✓</span></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+        </tr>
+        <tr>
+          <td class="lamp"><span class="vl">VL 02</span><span class="nm">Hall spot 1</span></td>
+          <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell on">✓</span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+        </tr>
+        <tr class="rowdirty">
+          <td class="lamp"><span class="vl">VL 03</span><span class="nm">Hall spot 2</span></td>
+          <td><span class="cell add">✓</span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell on">✓</span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+        </tr>
+        <tr>
+          <td class="lamp"><span class="vl">VL 04</span><span class="nm">Living CCT</span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+        </tr>
+        <tr>
+          <td class="lamp"><span class="vl">VL 05</span><span class="nm">TV strip</span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+        </tr>
+        <tr>
+          <td class="lamp"><span class="vl">VL 06</span><span class="nm">— unnamed</span><span class="unbound">unbound</span></td>
+          <td><span class="cell dis"></span></td><td><span class="cell dis"></span></td>
+          <td><span class="cell dis"></span></td><td><span class="cell dis"></span></td>
+          <td><span class="cell dis"></span></td><td><span class="cell dis"></span></td>
+          <td><span class="cell dis"></span></td><td><span class="cell dis"></span></td>
+          <td><span class="cell dis"></span></td><td><span class="cell dis"></span></td>
+          <td><span class="cell dis"></span></td><td><span class="cell dis"></span></td>
+          <td><span class="cell dis"></span></td><td><span class="cell dis"></span></td>
+          <td><span class="cell dis"></span></td><td><span class="cell dis"></span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- The apply bar appears ONLY when the operator has unsaved edits, and its
+       count is those edits alone. Discard clears exactly what the bar counts,
+       so the button is live whenever the bar is on screen. -->
+  <div class="applybar">
+    <span class="txt"><b>3 pending edits</b> — 2 add · 1 remove</span>
+    <button class="btn discard">Discard</button>
+    <button class="btn apply">Apply to bus</button>
+  </div>
+
+  <!--
+    Save spans TWO operations since ISSUE-25: the row write (`config_write`,
+    202 + operation id, committed atomically by the registry) and only then the
+    apply that puts it on the wire. They fail differently and must read
+    differently — "the rows were not saved" is not "the gear did not take them",
+    and the second is recoverable by pressing Apply again while the first is not.
+    Same two phases as the scene editor — one contract, one vocabulary.
+  -->
+  <div class="applybar busy" style="position: static; transform: none; margin-top: 14px;">
+    <span class="phase run"><span class="dot"></span>Saving rows</span>
+    <span class="phase wait"><span class="dot"></span>Apply</span>
+    <span class="txt">writing to the registry…</span>
+  </div>
+
+  <div class="applybar busy" style="position: static; transform: none; margin-top: 10px;">
+    <span class="phase done"><span class="dot"></span>Saved</span>
+    <span class="phase run"><span class="dot"></span>Applying</span>
+    <span class="txt">programming the gear…</span>
+  </div>
+
+  <div class="applybar busy" style="position: static; transform: none; margin-top: 10px;">
+    <span class="phase err"><span class="dot"></span>Save failed</span>
+    <span class="phase wait"><span class="dot"></span>Apply</span>
+    <span class="txt">nothing was written — rows unchanged</span>
+  </div>
+
+  <div class="applybar busy" style="position: static; transform: none; margin-top: 10px;">
+    <span class="phase done"><span class="dot"></span>Saved</span>
+    <span class="phase err"><span class="dot"></span>Apply failed</span>
+    <span class="txt">rows stay dirty — press Apply again</span>
+  </div>
+</div>
+</body>
+</html>

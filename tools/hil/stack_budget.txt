@@ -1,0 +1,31 @@
+# <task as the census prints it> <stack bytes> <deepest use plus one interrupt frame, bytes>; -1 = not measured
+# The depth of inserting a newly discovered record; a settled registry goes far less deep.
+registry_worker      10240   8780
+httpd                20480   10512
+dali_worker          12288   6648
+operation_tracker_worker  10240   4068
+fanout_projector_worker   8192    2600
+sniffer_translator_worker 8192    1900
+apply_orchestrator   8192    5472
+# The deep path is the desired-state tick; it sorts in place, with no library sort scratch.
+hcl-scheduler        8192    2900
+poller               8192    2320
+ws_worker            8192    2860
+# The peak is announcing a fresh broker session.
+mqtt_worker          8192    6816
+display_worker       6144    1668
+arb-supervisor        3072   1700
+arbitration           4096   1972
+bus_task              8192   2076
+confirm-bridge        8192   1536
+# Two interrupt frames: the tick can nest inside a section already under a lower-level interrupt's frame.
+dali-sniff            8192   2800
+ip-watch              8192   1712
+ws-client             8192   1340
+# These two walk registry contents and were measured on an empty registry: tighten from a populated run.
+replication           8192   3000
+rules-worker         12288   7928
+# The depth during a firmware update.
+ota-worker            3072   2000
+# Not frozen until a full tier drives the write path under load.
+log-uart              4096     -1

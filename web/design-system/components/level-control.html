@@ -1,0 +1,178 @@
+<!-- @dsCard group="Components" name="Level control" subtitle="Arc level slider, quick commands, CCT + RGB + six-channel RGBWAF variants" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Level control — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.wrap { padding: 24px; max-width: 720px; display: grid; gap: 16px; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.card h3 { margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+
+.level-row { display: flex; align-items: center; gap: 14px; }
+.level-num { font-family: var(--mono); font-size: 24px; font-weight: 500; color: var(--accent-strong); min-width: 64px; }
+.level-num .max { font-size: 12px; color: var(--text-faint); }
+
+.track { position: relative; flex: 1; height: 6px; border-radius: 3px; background: var(--raised); }
+.track .fill { position: absolute; inset: 0 auto 0 0; width: 70%; border-radius: 3px;
+  background: linear-gradient(90deg, #8a6a14, var(--accent)); box-shadow: 0 0 12px var(--accent-glow); }
+.track .thumb { position: absolute; top: 50%; left: 70%; width: 16px; height: 16px; border-radius: 50%;
+  transform: translate(-50%, -50%); background: var(--accent-strong); border: 2px solid #0e1116;
+  box-shadow: 0 0 0 1px var(--accent), 0 0 10px var(--accent-glow); }
+.track .tick { position: absolute; top: 10px; width: 1px; height: 4px; background: var(--border-strong); }
+.minmax { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-top: 8px; }
+
+.btns { display: flex; gap: 6px; margin-top: 14px; }
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn:hover { background: var(--overlay); }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+.btn.ghost-off { color: var(--text-muted); }
+.btn.icon { font-family: var(--mono); min-width: 34px; text-align: center; }
+.spacer { flex: 1; }
+
+/* CCT variant */
+.cct-track { position: relative; flex: 1; height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, #ffb46b, #ffd9a0, #f2f6ff, #cfe1ff); }
+.cct-thumb { position: absolute; top: 50%; left: 38%; width: 16px; height: 16px; border-radius: 50%;
+  transform: translate(-50%, -50%); background: #ffd9a0; border: 2px solid #0e1116; box-shadow: 0 0 0 1px var(--border-strong); }
+.kelvin { font-family: var(--mono); font-size: 15px; color: var(--text); min-width: 64px; }
+
+/* RGB variant */
+.swatch { width: 34px; height: 34px; border-radius: var(--radius-sm); background: #e6485f; border: 1px solid var(--border-strong); }
+.rgb-fields { display: flex; gap: 6px; }
+.field { display: grid; gap: 3px; }
+.field label { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; }
+.field input { width: 52px; padding: 5px 7px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; }
+
+.hint { font-size: 11px; color: var(--text-faint); margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="card">
+    <h3>Brightness — DT6 LED</h3>
+    <div class="level-row">
+      <div class="level-num">178<span class="max"> /254</span></div>
+      <div class="track">
+        <div class="fill"></div><div class="thumb"></div>
+        <div class="tick" style="left:44%"></div>
+      </div>
+    </div>
+    <div class="minmax"><span>min 111</span><span>max 254</span></div>
+    <div class="btns">
+      <button class="btn ghost-off">Off</button>
+      <button class="btn icon">−</button>
+      <button class="btn icon">+</button>
+      <button class="btn">Min</button>
+      <button class="btn primary">Max</button>
+      <span class="spacer"></span>
+      <button class="btn">Identify</button>
+    </div>
+    <div class="hint">Slider sends DAPC on release; min/max ticks come from the device's arc limits.</div>
+  </div>
+
+  <div class="card">
+    <h3>Color temperature — DT8 CCT</h3>
+    <div class="level-row">
+      <div class="kelvin">3000 K</div>
+      <div class="cct-track"><div class="cct-thumb"></div></div>
+    </div>
+    <div class="minmax"><span>2700 K warm</span><span>6500 K cool</span></div>
+  </div>
+
+  <div class="card">
+    <h3>Color — DT8 RGB</h3>
+    <div class="level-row">
+      <div class="swatch"></div>
+      <div class="rgb-fields">
+        <div class="field"><label>R</label><input value="230"></div>
+        <div class="field"><label>G</label><input value="72"></div>
+        <div class="field"><label>B</label><input value="95"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Six channels. Shown only for a fixture whose `capabilities.rgbwaf` is
+       true, i.e. one that reports more than three RGBWAF channels.
+
+       Same control, three more fields — not a different widget, because on the
+       wire it is not a different colour type: IEC 62386-209 has one RGBWAF
+       type and these are three channels of it or six. The swatch keeps
+       showing R/G/B alone, which is honest: nothing on a screen can render
+       what an amber emitter adds, and a swatch that tried would be inventing
+       a colour rather than reporting one.
+
+       The three-channel control stays for three-channel gear, and for an
+       operator who wants the product to zero W/A/F rather than think about
+       them. -->
+  <div class="card">
+    <h3>Color — DT8 RGBWAF</h3>
+    <div class="level-row">
+      <div class="swatch"></div>
+      <div class="rgb-fields">
+        <div class="field"><label>R</label><input value="230"></div>
+        <div class="field"><label>G</label><input value="72"></div>
+        <div class="field"><label>B</label><input value="95"></div>
+        <div class="field"><label>W</label><input value="0"></div>
+        <div class="field"><label>A</label><input value="40"></div>
+        <div class="field"><label>F</label><input value="0"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
