@@ -71,6 +71,38 @@ Inside the code the project keeps its working name, `dali2rust`: in crate names,
   including optical tests in which a calibrated USB camera checks what each lamp really
   shows ([below](#hardware-in-the-loop-and-bench-instruments)).
 
+## Web UI
+
+The controller serves this UI from its flash. The screenshots come from the host dev
+server running the same stack on a simulated line.
+
+<table>
+  <tr>
+    <td width="50%"><img src="documentation/images/ui-dashboard.webp" alt="Dashboard with DALI bus health, bus load and adapter counters"></td>
+    <td width="50%"><img src="documentation/images/ui-virtual-lamps.webp" alt="Virtual lamps with live state, level and colour"></td>
+  </tr>
+  <tr>
+    <td align="center">Dashboard: bus health, load and counters</td>
+    <td align="center">Virtual lamps: live state, level and colour</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="documentation/images/ui-device.webp" alt="Device card of a DT8 colour-temperature gear"></td>
+    <td width="50%"><img src="documentation/images/ui-scene.webp" alt="Scene matrix with per-lamp level and colour temperature"></td>
+  </tr>
+  <tr>
+    <td align="center">A device card: DT8 colour temperature, banks, commissioning</td>
+    <td align="center">A scene: per-lamp level and colour, desired against applied</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="documentation/images/ui-hcl-schedules.webp" alt="List of HCL schedules with their targets and next point"></td>
+    <td width="50%"><img src="documentation/images/ui-hcl-curve.webp" alt="HCL day curve of level and colour temperature with its points"></td>
+  </tr>
+  <tr>
+    <td align="center">HCL schedules</td>
+    <td align="center">An HCL day curve anchored to sunrise and sunset</td>
+  </tr>
+</table>
+
 ## Hardware
 
 | Part | Role |

@@ -72,6 +72,38 @@ WebSocket API, встроенный веб-интерфейс и мост в Hom
   платах, в том числе оптическими тестами: откалиброванная USB-камера проверяет, что
   на самом деле показывает каждая лампа ([ниже](#hardware-in-the-loop-и-стендовые-инструменты)).
 
+## Веб-интерфейс
+
+Контроллер отдаёт этот интерфейс из своего флеша. Скриншоты сняты с хостового
+dev-сервера, где работает тот же стек на симулированной линии.
+
+<table>
+  <tr>
+    <td width="50%"><img src="documentation/images/ui-dashboard.webp" alt="Панель: состояние и загрузка шины DALI, счётчики адаптера"></td>
+    <td width="50%"><img src="documentation/images/ui-virtual-lamps.webp" alt="Виртуальные лампы с живым состоянием, яркостью и цветом"></td>
+  </tr>
+  <tr>
+    <td align="center">Панель: состояние шины, загрузка, счётчики</td>
+    <td align="center">Виртуальные лампы: состояние, яркость, цвет</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="documentation/images/ui-device.webp" alt="Карточка устройства DT8 с цветовой температурой"></td>
+    <td width="50%"><img src="documentation/images/ui-scene.webp" alt="Матрица сцены с яркостью и цветовой температурой каждой лампы"></td>
+  </tr>
+  <tr>
+    <td align="center">Карточка устройства: DT8 Tc, банки, ввод в эксплуатацию</td>
+    <td align="center">Сцена: яркость и цвет каждой лампы, заданное против применённого</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="documentation/images/ui-hcl-schedules.webp" alt="Список расписаний HCL с целями и следующей точкой"></td>
+    <td width="50%"><img src="documentation/images/ui-hcl-curve.webp" alt="Дневная кривая HCL: яркость и цветовая температура по точкам"></td>
+  </tr>
+  <tr>
+    <td align="center">Расписания HCL</td>
+    <td align="center">Дневная кривая HCL с привязкой к восходу и закату</td>
+  </tr>
+</table>
+
 ## Железо
 
 | Компонент | Назначение |
