@@ -334,7 +334,7 @@ cargo run --target aarch64-apple-darwin -p dali2rust-adapters --example host_dev
   `storage` never moves.
 - Run `just ci` before a commit lands and after anything touching a contract, a wire
   order or ESP-only code. `.github/workflows/ci.yml` runs `just ci` without
-  `gear-sim-check` and does not replace the local run.
+  `gear-sim-check`, BDD on a Linux runner, and does not replace the local run.
 - [`tools/dali-gear-sim`](tools/dali-gear-sim/README.md) is a separate workspace pinned to
   the ESP32-C6 and not ported; `just gear-sim-check` proves only that it
   type-checks.
