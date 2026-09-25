@@ -11,7 +11,7 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_fanout_runtime::{spawn_sniffer_translator_worker, SnifferTranslatorCounters};
 use dali2rust_platform::dali::{ObservedRawFrame, ObservedRawFrameKind};
-use dali2rust_test_support::recv_event_matching;
+use dali2rust_test_support::{recv_event_matching, try_recv_event_matching_envelope};
 
 struct Harness {
     tx: std::sync::mpsc::SyncSender<ObservedRawFrame>,
@@ -210,6 +210,11 @@ fn foreign_dt8_rgb_write_decodes_triple_sys215() {
         .tx
         .send(forward16([(17 << 1) | 1, 235]))
         .expect("set temporary rgb");
+    harness.tx.send(forward16([0xC1, 8])).expect("enable dt8");
+    harness
+        .tx
+        .send(forward16([(17 << 1) | 1, 226]))
+        .expect("activate");
 
     let (_, body) = recv_observed(&harness);
     let color = body
@@ -220,6 +225,54 @@ fn foreign_dt8_rgb_write_decodes_triple_sys215() {
     assert_eq!(color.mode, ColorMode::Rgb);
     assert_eq!((color.r, color.g, color.b), (255, 55, 79));
     assert!(!body.dapc_observed);
+}
+
+fn stage_channels(harness: &Harness, short: u8, opcode: u8, channels: [u8; 3]) {
+    harness.tx.send(forward16([0xA3, channels[0]])).expect("dtr0");
+    harness.tx.send(forward16([0xC3, channels[1]])).expect("dtr1");
+    harness.tx.send(forward16([0xC5, channels[2]])).expect("dtr2");
+    harness.tx.send(forward16([0xC1, 8])).expect("enable dt8");
+    harness
+        .tx
+        .send(forward16([(short << 1) | 1, opcode]))
+        .expect("stage channels");
+}
+
+#[test]
+fn a_foreign_six_channel_write_is_one_rgbwaf_observation_issue122() {
+    let harness = spawn_harness();
+    stage_channels(&harness, 17, 235, [254, 10, 20]);
+    stage_channels(&harness, 17, 236, [30, 0, 254]);
+    harness.tx.send(forward16([0xC1, 8])).expect("enable dt8");
+    harness
+        .tx
+        .send(forward16([(17 << 1) | 1, 226]))
+        .expect("activate");
+
+    let (_, body) = recv_observed(&harness);
+    let color = body
+        .setpoint
+        .as_ref()
+        .and_then(|sp| sp.color.as_ref())
+        .expect("rgbwaf color");
+    assert_eq!(color.mode, ColorMode::Rgbwaf);
+    assert_eq!((color.r, color.g, color.b), (255, 55, 79));
+    let wire_to_srgb = dali2rust_domain::dali::devices::dt8_color::dim_level_to_srgb_channel;
+    assert_eq!((color.w, color.a, color.f), (wire_to_srgb(30), 0, wire_to_srgb(254)));
+    let second = try_recv_event_matching_envelope(&harness.ev_tap, Duration::from_millis(150), |ev| {
+        matches!(ev.payload, BusEventPayload::DaliObservedFrameEvent(_))
+    });
+    assert!(second.is_none(), "one six-channel write published two observations: {second:?}");
+}
+
+#[test]
+fn a_staged_rgb_is_not_an_observation_before_activate() {
+    let harness = spawn_harness();
+    stage_channels(&harness, 17, 235, [254, 10, 20]);
+    harness.tx.send(forward16([17 << 1, 120])).expect("dapc");
+
+    let (_, body) = recv_observed(&harness);
+    assert!(body.dapc_observed, "the staged RGB was published before ACTIVATE");
 }
 
 #[test]

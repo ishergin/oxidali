@@ -66,10 +66,12 @@ pub struct SnifferTranslatorCounters {
     pub app_control_pairs: AtomicU32,
 }
 
-struct XyStage {
+struct ColourStage {
     wire_address: u8,
     x: Option<u16>,
     y: Option<u16>,
+    rgb: Option<[u8; 3]>,
+    waf: Option<[u8; 3]>,
 }
 
 #[derive(Default)]
@@ -78,7 +80,7 @@ struct DecoderState {
     dtr1: Option<u8>,
     dtr2: Option<u8>,
     dt8_armed: bool,
-    xy_stage: Option<XyStage>,
+    colour_stage: Option<ColourStage>,
     pending_device_cmd: Option<([u8; 3], u32)>,
 }
 
@@ -87,19 +89,25 @@ impl DecoderState {
         Some(u16::from(self.dtr1?) << 8 | u16::from(self.dtr0?))
     }
 
-    fn xy_stage_for(&mut self, wire_address: u8) -> &mut XyStage {
+    fn dtr_triple(&self) -> Option<[u8; 3]> {
+        Some([self.dtr0?, self.dtr1?, self.dtr2?])
+    }
+
+    fn colour_stage_for(&mut self, wire_address: u8) -> &mut ColourStage {
         let stale = self
-            .xy_stage
+            .colour_stage
             .as_ref()
             .is_none_or(|stage| stage.wire_address != wire_address);
         if stale {
-            self.xy_stage = Some(XyStage {
+            self.colour_stage = Some(ColourStage {
                 wire_address,
                 x: None,
                 y: None,
+                rgb: None,
+                waf: None,
             });
         }
-        self.xy_stage.as_mut().expect("stage just ensured")
+        self.colour_stage.as_mut().expect("stage just ensured")
     }
 }
 
@@ -419,10 +427,9 @@ fn decode_dt8(
         DT8_SET_TEMPORARY_Y_COORDINATE_OPCODE => stage_xy_half(state, wire_address, false),
         DT8_ACTIVATE_OPCODE => activate_color(state, wire_address, address),
         DT8_SET_TEMPERATURE_TC_OPCODE => decode_cct(state, address),
-        DT8_SET_TEMPORARY_RGB_DIMLEVEL_OPCODE => decode_rgb(state, address),
-        DT8_SET_TEMPORARY_WAF_DIMLEVEL_OPCODE | DT8_SET_TEMPORARY_RGBWAF_CONTROL_OPCODE => {
-            Dt8Outcome::Consumed
-        }
+        DT8_SET_TEMPORARY_RGB_DIMLEVEL_OPCODE => stage_channels(state, wire_address, true),
+        DT8_SET_TEMPORARY_WAF_DIMLEVEL_OPCODE => stage_channels(state, wire_address, false),
+        DT8_SET_TEMPORARY_RGBWAF_CONTROL_OPCODE => Dt8Outcome::Consumed,
         _ => Dt8Outcome::NotDt8,
     }
 }
@@ -431,7 +438,7 @@ fn stage_xy_half(state: &mut DecoderState, wire_address: u8, is_x: bool) -> Dt8O
     let Some(pair) = state.dtr_pair() else {
         return Dt8Outcome::Ambiguous;
     };
-    let stage = state.xy_stage_for(wire_address);
+    let stage = state.colour_stage_for(wire_address);
     if is_x {
         stage.x = Some(pair);
     } else {
@@ -440,20 +447,42 @@ fn stage_xy_half(state: &mut DecoderState, wire_address: u8, is_x: bool) -> Dt8O
     Dt8Outcome::Staged
 }
 
+fn stage_channels(state: &mut DecoderState, wire_address: u8, is_rgb: bool) -> Dt8Outcome {
+    let Some(levels) = state.dtr_triple() else {
+        return Dt8Outcome::Ambiguous;
+    };
+    let stage = state.colour_stage_for(wire_address);
+    if is_rgb {
+        stage.rgb = Some(levels);
+    } else {
+        stage.waf = Some(levels);
+    }
+    Dt8Outcome::Staged
+}
+
 fn activate_color(state: &mut DecoderState, wire_address: u8, address: DaliAddress) -> Dt8Outcome {
-    match state.xy_stage.take() {
-        Some(XyStage {
-            wire_address: staged,
-            x: Some(x),
-            y: Some(y),
-        }) if staged == wire_address => {
-            let mut color = sniffer_color(ColorMode::Xy);
-            color.x = x;
-            color.y = y;
-            Dt8Outcome::Observed(color_fact(address, color))
-        }
-        None => Dt8Outcome::Consumed,
-        Some(_) => Dt8Outcome::Ambiguous,
+    let Some(stage) = state.colour_stage.take() else {
+        return Dt8Outcome::Consumed;
+    };
+    if stage.wire_address != wire_address {
+        return Dt8Outcome::Ambiguous;
+    }
+    match staged_colour(&stage) {
+        Some(color) => Dt8Outcome::Observed(color_fact(address, color)),
+        None => Dt8Outcome::Ambiguous,
+    }
+}
+
+fn staged_colour(stage: &ColourStage) -> Option<ColorValue> {
+    match (stage.x, stage.y, stage.rgb, stage.waf) {
+        (Some(x), Some(y), None, None) => Some(ColorValue {
+            x,
+            y,
+            ..sniffer_color(ColorMode::Xy)
+        }),
+        (None, None, Some(rgb), None) => Some(channel_colour(ColorMode::Rgb, rgb, [0; 3])),
+        (None, None, Some(rgb), Some(waf)) => Some(channel_colour(ColorMode::Rgbwaf, rgb, waf)),
+        _ => None,
     }
 }
 
@@ -466,17 +495,18 @@ fn decode_cct(state: &DecoderState, address: DaliAddress) -> Dt8Outcome {
     Dt8Outcome::Observed(color_fact(address, color))
 }
 
-fn decode_rgb(state: &DecoderState, address: DaliAddress) -> Dt8Outcome {
-    let (Some(r), Some(g), Some(b)) = (state.dtr0, state.dtr1, state.dtr2) else {
-        return Dt8Outcome::Ambiguous;
-    };
-    let color = ColorValue {
-        r: dim_level_to_srgb_channel(r),
-        g: dim_level_to_srgb_channel(g),
-        b: dim_level_to_srgb_channel(b),
-        ..sniffer_color(ColorMode::Rgb)
-    };
-    Dt8Outcome::Observed(color_fact(address, color))
+fn channel_colour(mode: ColorMode, rgb: [u8; 3], waf: [u8; 3]) -> ColorValue {
+    let [r, g, b] = rgb.map(dim_level_to_srgb_channel);
+    let [w, a, f] = waf.map(dim_level_to_srgb_channel);
+    ColorValue {
+        r,
+        g,
+        b,
+        w,
+        a,
+        f,
+        ..sniffer_color(mode)
+    }
 }
 
 fn sniffer_color(mode: ColorMode) -> ColorValue {

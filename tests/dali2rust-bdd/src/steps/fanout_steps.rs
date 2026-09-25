@@ -16,7 +16,7 @@ const ENABLE_DEVICE_TYPE: u8 = 0xC1;
 const DT8_DEVICE_TYPE: u8 = 8;
 const DT8_SET_TEMPORARY_X_COORDINATE_OPCODE: u8 = 224;
 const DT8_SET_TEMPORARY_Y_COORDINATE_OPCODE: u8 = 225;
-const DT8_ACTIVATE_XY_COORDINATE_OPCODE: u8 = 226;
+const DT8_ACTIVATE_OPCODE: u8 = 226;
 const DT8_SET_TEMPERATURE_TC_OPCODE: u8 = 231;
 const DT8_SET_TEMPORARY_RGB_DIMLEVEL_OPCODE: u8 = 235;
 const MIREK_KELVIN_NUMERATOR: u32 = 1_000_000;
@@ -89,7 +89,7 @@ async fn when_foreign_dt8_xy_observed(world: &mut DaliWorld, x: f64, y: f64, sho
     inject_dt8_write(world, short, raw_x, DT8_SET_TEMPORARY_X_COORDINATE_OPCODE);
     inject_dt8_write(world, short, raw_y, DT8_SET_TEMPORARY_Y_COORDINATE_OPCODE);
     inject_forward16(world, [ENABLE_DEVICE_TYPE, DT8_DEVICE_TYPE]);
-    inject_forward16(world, [(short << 1) | 1, DT8_ACTIVATE_XY_COORDINATE_OPCODE]);
+    inject_forward16(world, [(short << 1) | 1, DT8_ACTIVATE_OPCODE]);
 }
 
 // SYS-215
@@ -100,6 +100,8 @@ async fn when_foreign_dt8_rgb_observed(world: &mut DaliWorld, r: u8, g: u8, b: u
     inject_forward16(world, [DTR2, b]);
     inject_forward16(world, [ENABLE_DEVICE_TYPE, DT8_DEVICE_TYPE]);
     inject_forward16(world, [(short << 1) | 1, DT8_SET_TEMPORARY_RGB_DIMLEVEL_OPCODE]);
+    inject_forward16(world, [ENABLE_DEVICE_TYPE, DT8_DEVICE_TYPE]);
+    inject_forward16(world, [(short << 1) | 1, DT8_ACTIVATE_OPCODE]);
 }
 
 // SYS-210 SYS-211 SYS-212 SYS-213 SYS-214 SYS-241
