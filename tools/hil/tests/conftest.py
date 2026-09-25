@@ -10,6 +10,7 @@ from hil.gearsim import GearSim, GearSimUnavailable
 
 from hil import api as api_mod
 from hil import pair
+from hil import prod_state
 from hil import config as config_mod
 from hil import remote_serial as remote_serial_mod
 from hil import serialmon as serialmon_mod
@@ -238,9 +239,7 @@ def _standalone_client(config):
 
 @pytest.fixture(scope="session", autouse=True)
 def production_state(pytestconfig, request):
-    from hil import prod_state
-    if pytestconfig.getoption("--collect-only") or \
-            os.environ.get("HIL_STATE_GUARD", "1") in ("0", "false", "no") or \
+    if pytestconfig.getoption("--collect-only") or not prod_state.guard_enabled() or \
             not any("api" in item.fixturenames for item in request.session.items):
         yield None
         return
@@ -465,10 +464,11 @@ def pytest_addoption(parser):
              "first; the saved profile must still be schema v3")
     parser.addoption(
         "--fast-fade", action="store_true", default=False,
-        help="bench prep: set every gear's fade time to 0 (instant) before the "
-             "suite runs, so level/optical assertions settle inside their "
-             "windows instead of racing a multi-second ramp. Persistent gear "
-             "config — left in place after the run.")
+        help="bench prep: set the fade time of every lamp in HIL_LAMP_SHORTS to 0 "
+             "(instant) after production_state's snapshot, so level/optical "
+             "assertions settle inside their windows instead of racing a "
+             "multi-second ramp; production_state restores it at the end of the "
+             "session, so it refuses to run with HIL_STATE_GUARD=0.")
 
 
 def _optical_unavailable(request, reason):
@@ -636,31 +636,24 @@ def camera_oracle(_oracle_session, test_artifacts, api, request, hil_config):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _fast_fade_prep(request):
+def _fast_fade_prep(request, production_state):
     if not request.config.getoption("--fast-fade"):
+        yield
+        return
+    if production_state is None:
+        print("hil: --fast-fade skipped: no production_state snapshot in this "
+              "session, so nothing would restore the fade time")
         yield
         return
     client = _track(request.config,
                     api_mod.Client(request.getfixturevalue("hil_config")))
     try:
-        client.health()
-        addrs = client.addrs()
+        shorts = client.lamp_addrs()
     except Exception as exc:
         print("hil: --fast-fade skipped bench prep (DUT unavailable: %s)" % exc)
         yield
         return
-    done, failed = [], []
-    for short in addrs:
-        try:
-            view = client.wait_op(client.write_attrs(short, {"fade_time_ms": 0}))
-            (done if view.get("status") == "succeeded" else failed).append(short)
-        except Exception as exc:
-            failed.append(short)
-            print("hil: --fast-fade write failed for SA%02d: %s" % (short, exc))
-    print("hil: --fast-fade set fade_time_ms=0 (instant) on %d/%d gear "
-          "(persistent bench config)%s"
-          % (len(done), len(addrs),
-             "" if not failed else "; failed: %s" % failed))
+    prod_state.fast_fade(client, shorts)
     yield
 
 
@@ -1548,7 +1541,15 @@ def paced():
     return wait
 
 
+def _refuse_unguarded_fast_fade(config):
+    if config.getoption("--fast-fade") and not prod_state.guard_enabled():
+        raise pytest.UsageError(
+            "--fast-fade writes fade time 0 that only production_state restores; "
+            "with HIL_STATE_GUARD=0 nothing would bring it back")
+
+
 def pytest_configure(config):
+    _refuse_unguarded_fast_fade(config)
     config.addinivalue_line("markers", "needs_capability(name): auto-skip when absent")
     config._hil_step_results = []
     config._hil_validity = {"baseline": [], "reboots": [], "contended": []}

@@ -40,6 +40,12 @@ SCENE_REPAIR_ATTEMPTS = 3
 ADD_TO_GROUP, REMOVE_FROM_GROUP = 0x60, 0x70
 MASK = 255
 FRAME_PACE_S = 0.1
+FAST_FADE = {"fade_time_ms": 0}
+GUARD_OFF = ("0", "false", "no")
+
+
+def guard_enabled():
+    return os.environ.get("HIL_STATE_GUARD", "1") not in GUARD_OFF
 
 
 def capture(api, prime=True, log=print):
@@ -430,6 +436,21 @@ def _restore_hcl(api, snap, log):
         elif _norm(now[sid]) != _norm(body):
             log("prod_state: restoring schedule %s" % sid)
             api.hcl.patch(sid, {k: v for k, v in body.items() if k != "schedule_id"})
+
+
+def fast_fade(api, shorts, log=print):
+    done, failed = [], []
+    for short in shorts:
+        try:
+            view = api.wait_op(api.write_attrs(short, dict(FAST_FADE)))
+            (done if view.get("status") == "succeeded" else failed).append(short)
+        except (ApiError, OSError) as exc:
+            failed.append(short)
+            log("prod_state: --fast-fade write failed for SA%02d: %s" % (short, exc))
+    log("prod_state: --fast-fade set fade_time_ms=0 (instant) on %d/%d gear, restored "
+        "at the end of the session%s"
+        % (len(done), len(shorts), "" if not failed else "; failed: %s" % failed))
+    return done, failed
 
 
 def _restore_gear_config(api, snap, log):

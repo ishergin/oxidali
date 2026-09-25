@@ -225,8 +225,9 @@ hil-slow` wrap the cwd.
   line is part of the firmware's contract with the toolkit.
 - Markers: `smoke`, `optical`, `sniffer`, `serial`, `foreign` (the WB master),
   `ha_bridge`, `redundancy`, `slow`, `destructive`, `needs_capability(name)`.
-- `--fast-fade` sets every addressed gear's fade time to 0 for the session, and
-  `production_state` does not bring it back (ISSUE-152).
+- `--fast-fade` sets the fade time of every lamp in `HIL_LAMP_SHORTS` to 0 after
+  `production_state` has taken its snapshot, and `production_state` restores it at
+  the end of the session; with `HIL_STATE_GUARD=0` the option is a usage error.
 - Person-at-the-rig tests skip unless asked for: `HIL_POWER_CUT=1` (cut the
   controller's power mid-write), `HIL_BUS_SHORT=1` (short the bus — every lamp on
   the wire sees it).

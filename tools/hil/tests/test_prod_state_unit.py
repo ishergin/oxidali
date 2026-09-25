@@ -1,5 +1,10 @@
 import copy
+import inspect
+import types
 
+import pytest
+
+import conftest
 from hil import prod_state
 
 
@@ -159,3 +164,43 @@ def test_what_an_enabled_schedule_drives_is_not_a_residual():
     after["devices"]["10"]["state"]["power"] = "off"
     assert any("SA10 shows" in line for line in prod_state.diff(before, after)), \
         "the schedule drives colour only; power is still the session's"
+
+
+class _FadingGear(_Wire):
+    def __init__(self, fade_ms):
+        super().__init__()
+        self.fade_ms = fade_ms
+        self.writes = []
+
+    def attributes(self, short, sections=None):
+        return {"attributes": {"common_102": {"fade_time_ms": {"value": self.fade_ms}}}}
+
+    def write_attrs(self, short, body):
+        self.writes.append((short, dict(body)))
+        self.fade_ms = body.get("fade_time_ms", self.fade_ms)
+        return {"operation_id": "attr-write-%d" % len(self.writes)}
+
+    def wait_op(self, op):
+        return {"operation_id": op["operation_id"], "status": "succeeded"}
+
+
+def test_fast_fade_comes_after_the_snapshot_and_the_restore_takes_it_back():
+    assert "production_state" in inspect.signature(conftest._fast_fade_prep).parameters, \
+        "the fast-fade prep must wait for the snapshot it relies on"
+    gear = _FadingGear(fade_ms=700)
+    snap = {"devices": {"10": {"config": prod_state._gear_config(
+        gear.attributes(10)["attributes"])}}}
+    done, failed = prod_state.fast_fade(gear, [10], log=lambda _: None)
+    assert (done, failed, gear.fade_ms) == ([10], [], 0)
+    prod_state._restore_gear_config(gear, snap, log=lambda _: None)
+    assert gear.writes == [(10, {"fade_time_ms": 0}), (10, {"fade_time_ms": 700})]
+    assert gear.fade_ms == 700
+
+
+def test_fast_fade_without_the_guard_is_a_usage_error(monkeypatch):
+    monkeypatch.setenv("HIL_STATE_GUARD", "0")
+    config = types.SimpleNamespace(getoption=lambda name: name == "--fast-fade")
+    with pytest.raises(pytest.UsageError, match="HIL_STATE_GUARD=0"):
+        conftest._refuse_unguarded_fast_fade(config)
+    monkeypatch.setenv("HIL_STATE_GUARD", "1")
+    conftest._refuse_unguarded_fast_fade(config)
