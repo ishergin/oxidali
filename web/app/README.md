@@ -36,7 +36,8 @@ The dev server takes `DALI2RUST_DEV_SERVER_ADDR` (or `PORT`) to move, and
 plays a foreign master and a wall panel (`press`, `release`, `foreign`,
 `occupancy`). It reads the bundle once at startup: restart it after
 `bash scripts/build_web_ui.sh`. Shipping a UI change to the device is the chain in
-`10-build-release-and-tooling.md`.
+`10-build-release-and-tooling.md`; what a UI pull request carries is in
+[`CONTRIBUTING.md`](../../CONTRIBUTING.md).
 
 ## Conventions
 

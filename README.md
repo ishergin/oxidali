@@ -355,10 +355,11 @@ IEC and the DALI Alliance.
 
 ## Contributing
 
-New behaviour starts with a failing BDD scenario. `just ci` must be green before a
-change lands. The rules are in [`CLAUDE.md`](CLAUDE.md); the recipes for adding a
-command, an endpoint or a worker are in
-[`11-extension-recipes.md`](documentation/architecture/11-extension-recipes.md).
+Changes land through pull requests; how to prepare one, including a web UI change, is in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). New behaviour starts with a failing BDD scenario,
+and `just ci` must be green before a change lands. The rules are in
+[`CLAUDE.md`](CLAUDE.md); the recipes for adding a command, an endpoint or a worker are
+in [`11-extension-recipes.md`](documentation/architecture/11-extension-recipes.md).
 
 ## License
 

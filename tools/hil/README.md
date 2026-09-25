@@ -268,7 +268,7 @@ carries the rate the installation imposes.
 | `preflight` | read-only readiness: DUT HTTP, serial bridge, monitor, WB ssh, broker, camera, calibration, host tools |
 | `monitor start\|stop\|status\|tail` | persistent serial monitor; `start` raises the bridge if needed |
 | `remote start [--restart]\|stop\|status\|ping\|bootloader\|run` | the WB serial bridge and its tunnel |
-| `flash [--build-only] [--allow-nonbench-build] [--allow-red-isr]` | the only flash path (below) |
+| `flash [--build-only] [--allow-nonbench-build] [--allow-red-isr] [--allow-stale-ui]` | the only flash path (below) |
 | `state save\|restore\|diff [FILE]` | the installation snapshot |
 | `api <sub> …` | manual API calls; exit 2 means the firmware lacks the capability |
 | `corpus [parts…]` | freeze both boards' configuration, REST, wire replies and serial evidence into `corpus/`; slices in `SECRET_SLICES` (the Home Assistant slice carries the broker password) are withheld unless `--keep-secrets` writes into an untracked `--out` — a slice that comes to carry a secret joins that list, because a pinned file gets committed |
@@ -309,7 +309,8 @@ bridge, pyserial and esptool this set-up works around are
 
 `hil flash` is the only way to flash the installation; `cargo flash` and `just
 p4-fw-flash` open a local port and cannot reach it. It refuses a build without the
-`bench.env` knobs, runs the ISR-IRAM gate on the linked binary (refusing a red one),
+`bench.env` knobs and a stale embedded UI bundle (`--allow-stale-ui` builds with the
+previous one), runs the ISR-IRAM gate on the linked binary (refusing a red one),
 records `runs/<ts>/manifest.json` (commit, binary sha, knobs, checks), resets the
 chip into its ROM loader through the bridge, writes with esptool at
 `HIL_FLASH_BAUD`, always asks for `run` afterwards (a board left in the loader looks

@@ -154,7 +154,8 @@ def _cmd_monitor(rest):
 
 def _cmd_flash(rest):
     args = _flags("hil flash", rest,
-                  "--build-only", "--allow-nonbench-build", "--allow-red-isr")
+                  "--build-only", "--allow-nonbench-build", "--allow-red-isr",
+                  "--allow-stale-ui")
     from hil import flash
     from hil.config import load as load_config
     return flash.run(
@@ -162,6 +163,7 @@ def _cmd_flash(rest):
         build_only=args.build_only,
         allow_nonbench=args.allow_nonbench_build,
         allow_red_isr=args.allow_red_isr,
+        allow_stale_ui=args.allow_stale_ui,
     )
 
 

@@ -364,11 +364,14 @@ Detail: [10](documentation/architecture/10-build-release-and-tooling.md) §Embed
 (build chain, cards), [`web-ui/`](documentation/product-design/web-ui/README.md) (screens,
 UI rules).
 
-- A UI change reaches the device only through `bash scripts/build_web_ui.sh`, the
-  committed mirror and a reflash.
-- Every screen and component has a card in `web/design-system/`, written in the same
-  change and pushed to the Claude Design project before
-  `scripts/verify_design_system_pushed.sh --stamp`.
+- A UI pull request carries sources only: `web/app` and, in the same change, the card in
+  `web/design-system/` of every screen or component whose look changes; a change that
+  leaves the look as it was carries the trailer `UI-Design: unchanged`
+  (`verify_ui_follows_design.sh`).
+- The embedded bundle (`bash scripts/build_web_ui.sh`) and the push of the cards to the
+  Claude Design project (`/design-sync`, then `verify_design_system_pushed.sh --stamp`)
+  are the maintainer's sync, landed by pull request before a flash: `hil flash` refuses a
+  stale bundle, and `just verify-release` and CI on `main` report both.
 
 ## Code style
 
@@ -381,7 +384,7 @@ UI rules).
 
 ## Merge gates
 
-`just verify` runs every gate; what each holds is in
+Changes reach `main` through pull requests only. `just verify` runs every gate; what each holds is in
 [10](documentation/architecture/10-build-release-and-tooling.md) §Merge gates.
 
 - A gate that passes when its tool is missing is not a gate: `DALI2RUST_SKIP_JSCPD=1`

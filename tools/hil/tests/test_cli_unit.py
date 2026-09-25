@@ -59,7 +59,8 @@ def test_the_real_flash_flags_still_reach_flash(monkeypatch):
     seen = []
     monkeypatch.setattr(flash, "run", lambda cfg, **kwargs: seen.append(kwargs) or 0)
     assert cli.main(["flash", "--build-only", "--allow-red-isr"]) == 0
-    assert seen == [{"build_only": True, "allow_nonbench": False, "allow_red_isr": True}]
+    assert seen == [{"build_only": True, "allow_nonbench": False, "allow_red_isr": True,
+                     "allow_stale_ui": False}]
 
 
 def test_a_misspelt_lamps_flag_switches_nothing_off(monkeypatch, capsys):
