@@ -250,6 +250,33 @@ Feature: Physical device write-attributes
     And the last operation eventually succeeds
     And all scripted DALI exchanges should be consumed without errors
 
+  @id:PD-267
+  Scenario: A fade-time write whose read-back goes unanswered is named unverified and confirms nothing
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given a fade-time 500ms write script for short address 0 whose read-back goes unanswered
+    When I POST JSON {"fade_time_ms":500} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error code should be "verify_unanswered"
+    And physical device 0 common_102 fade_time_ms carries no write provenance
+    And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-268
+  Scenario: A dimming-curve write whose read-back goes unanswered is named unverified and confirms nothing
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given a dimming-curve 1 write script for short address 0 whose read-back goes unanswered
+    When I POST JSON {"dimming_curve":1} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error code should be "verify_unanswered"
+    And physical device 0 dt6_led dimming_curve carries no write provenance
+    And all scripted DALI exchanges should be consumed without errors
+
   @id:PD-255
   Scenario: A reserved dimming-curve value is refused before it reaches the wire
     Given a golden control-gear discovery script for short address 0

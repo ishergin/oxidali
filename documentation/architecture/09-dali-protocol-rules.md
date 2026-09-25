@@ -143,8 +143,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - Arm, prove, act once: an operand staged in a DTR is proved by read-back before the
   command that consumes it, and a read-back tells a wrong answer, silence and a contended
   window apart ([ADR-027](decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md)).
-  The 16-bit configuration write still takes an unanswered read-back as confirmation
-  (open ISSUE-118).
+  A 16-bit configuration write whose read-back went unanswered confirms nothing: the
+  fields that answered still land, and the operation fails `verify_unanswered`.
 - A multi-byte memory-bank value is read inside one latch (DiiA 252/253): chunks are
   field-aligned, a re-arm restarts the value, and a value no latch covers fails
   (`memory_bank_latch_lost`) rather than being stitched. MASK and TMASK are per width,

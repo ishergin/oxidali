@@ -11,7 +11,7 @@ use dali2rust_domain::dali::pres::command::DaliCommand;
 use dali2rust_domain::dali::pres::extended::ExtendedCommand;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
-use dali2rust_test_support::wait_until;
+use dali2rust_test_support::{remains_false_for, wait_until, WORKER_SETTLE};
 use serde_json::{json, Value};
 
 use crate::steps::wire::assert_frame_before;
@@ -1018,7 +1018,7 @@ fn assert_no_script_errors(world: &DaliWorld) {
     assert_eq!(mock.script_error(), None, "unexpected mock script error");
 }
 
-// ADP-022 ADP-023 COMM-001 COMM-004 COMM-008 COMM-010 COMM-030 COMM-032 COMM-034 COMM-036 COMM-038 COMM-052 COMM-056 COMM-057 COMM-092 MQTT-001 MQTT-003 MQTT-005 MQTT-007 MQTT-012 MQTT-013 MQTT-015 MQTT-019 OP-100 OP-132 PD-027 PD-028 PD-029 PD-030 PD-034 PD-035 PD-036 PD-037 PD-040 PD-041 PD-042 PD-043 PD-060 PD-061 PD-062 PD-063 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 PD-164 PD-165 PD-166 PD-168 PD-169 PD-170 PD-171 PD-176 PD-177 PD-179 PD-180 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 PD-190 PD-195 PD-196 PD-197 PD-198 PD-199 PD-200 PD-201 PD-220 PD-221 PD-222 PD-230 PD-241 PD-242 PD-243 PD-250 PD-252 PD-253 PD-254 PD-255 PERS-005 STATS-005 SYS-217 SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 SYS-235 SYS-236 SYS-239 SYS-240 WS-003 WS-004 WS-010 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 WS-046 MQTT-024
+// ADP-022 ADP-023 COMM-001 COMM-004 COMM-008 COMM-010 COMM-030 COMM-032 COMM-034 COMM-036 COMM-038 COMM-052 COMM-056 COMM-057 COMM-092 MQTT-001 MQTT-003 MQTT-005 MQTT-007 MQTT-012 MQTT-013 MQTT-015 MQTT-019 OP-100 OP-132 PD-027 PD-028 PD-029 PD-030 PD-034 PD-035 PD-036 PD-037 PD-040 PD-041 PD-042 PD-043 PD-060 PD-061 PD-062 PD-063 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 PD-164 PD-165 PD-166 PD-168 PD-169 PD-170 PD-171 PD-176 PD-177 PD-179 PD-180 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 PD-190 PD-195 PD-196 PD-197 PD-198 PD-199 PD-200 PD-201 PD-220 PD-221 PD-222 PD-230 PD-241 PD-242 PD-243 PD-250 PD-252 PD-253 PD-254 PD-255 PERS-005 STATS-005 SYS-217 SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 SYS-235 SYS-236 SYS-239 SYS-240 WS-003 WS-004 WS-010 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 WS-046 MQTT-024 PD-267 PD-268
 #[given("a golden control-gear discovery script for short address 0")]
 async fn given_golden_discovery_script(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -1481,6 +1481,10 @@ fn script_rgb_target_state(mock: &MockDaliTransport, rgb: [u8; 3]) {
 }
 
 fn script_fade_time_write(mock: &MockDaliTransport, dtr0: u8) {
+    script_fade_time_write_answered(mock, dtr0, Some(dtr0 << 4));
+}
+
+fn script_fade_time_write_answered(mock: &MockDaliTransport, dtr0: u8, answer: Option<u8>) {
     mock.clear();
     mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(dtr0)));
     let set_fade = standard_frame(TEST_SHORT_ADDRESS, StandardCommand::SetFadeTime);
@@ -1488,7 +1492,7 @@ fn script_fade_time_write(mock: &MockDaliTransport, dtr0: u8) {
     mock.expect_forward_frame(set_fade);
     mock.expect_forward_frame_with_backward(
         standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryFadeTimeFadeRate),
-        Some(dtr0 << 4),
+        answer,
     );
 }
 
@@ -1541,7 +1545,7 @@ fn script_max_triple(mock: &MockDaliTransport, dtr0: u8, answer: u8) {
 #[given(regex = r"^a dimming-curve (\d+) write-attributes script for short address 0$")]
 async fn given_dimming_curve_write_script(world: &mut DaliWorld, curve: u8) {
     let mock = world.dali_mock().lock().expect("mock lock");
-    script_dimming_curve_write(&mock, curve, curve);
+    script_dimming_curve_write(&mock, curve, Some(curve));
 }
 
 // PD-254
@@ -1550,17 +1554,26 @@ async fn given_dimming_curve_write_script(world: &mut DaliWorld, curve: u8) {
 )]
 async fn given_dimming_curve_write_ignored_script(world: &mut DaliWorld, curve: u8) {
     let mock = world.dali_mock().lock().expect("mock lock");
-    script_dimming_curve_write(&mock, curve, 0);
-    script_dimming_curve_write_no_clear(&mock, curve, 0);
-    script_dimming_curve_write_no_clear(&mock, curve, 0);
+    script_dimming_curve_write(&mock, curve, Some(0));
+    script_dimming_curve_write_no_clear(&mock, curve, Some(0));
+    script_dimming_curve_write_no_clear(&mock, curve, Some(0));
 }
 
-fn script_dimming_curve_write(mock: &MockDaliTransport, curve: u8, answer: u8) {
+// PD-268
+#[given(
+    regex = r"^a dimming-curve (\d+) write script for short address 0 whose read-back goes unanswered$"
+)]
+async fn given_dimming_curve_write_unanswered_script(world: &mut DaliWorld, curve: u8) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    script_dimming_curve_write(&mock, curve, None);
+}
+
+fn script_dimming_curve_write(mock: &MockDaliTransport, curve: u8, answer: Option<u8>) {
     mock.clear();
     script_dimming_curve_write_no_clear(mock, curve, answer);
 }
 
-fn script_dimming_curve_write_no_clear(mock: &MockDaliTransport, curve: u8, answer: u8) {
+fn script_dimming_curve_write_no_clear(mock: &MockDaliTransport, curve: u8, answer: Option<u8>) {
     mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(curve)));
     mock.expect_forward_frame_with_backward(
         standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryContentDtr0),
@@ -1579,7 +1592,7 @@ fn script_dimming_curve_write_no_clear(mock: &MockDaliTransport, curve: u8, answ
             TEST_SHORT_ADDRESS,
             ExtendedCommand::Dt6(Dt6Command::QueryDimmingCurve),
         ),
-        Some(answer),
+        answer,
     );
 }
 
@@ -1675,6 +1688,36 @@ async fn given_fade_time_100_write_script(world: &mut DaliWorld) {
 #[given("a fade-time 90500ms write-attributes script for short address 0")]
 async fn given_fade_time_90500_write_script(world: &mut DaliWorld) {
     script_fade_time_write(&world.dali_mock().lock().expect("mock lock"), 15);
+}
+
+// PD-267
+#[given("a fade-time 500ms write script for short address 0 whose read-back goes unanswered")]
+async fn given_fade_time_write_unanswered_script(world: &mut DaliWorld) {
+    script_fade_time_write_answered(&world.dali_mock().lock().expect("mock lock"), 1, None);
+}
+
+// PD-267 PD-268
+#[then(
+    regex = r"^physical device (\d+) (common_102|dt6_led) (fade_time_ms|dimming_curve) carries no write provenance$"
+)]
+async fn then_pd_field_without_write_provenance(
+    world: &mut DaliWorld,
+    short: u8,
+    section: String,
+    field: String,
+) {
+    let port = world.server_port();
+    let source_ptr = format!("/attributes/{section}/{field}/source");
+    let write_confirmed = || {
+        fetch_physical_device_full(port, TEST_ADAPTER_ID, short)
+            .and_then(|json| json.pointer(&source_ptr).and_then(Value::as_str).map(str::to_owned))
+            .as_deref()
+            == Some("write_confirmed")
+    };
+    assert!(
+        remains_false_for(write_confirmed, WORKER_SETTLE),
+        "{field}: a read-back nobody answered proves nothing"
+    );
 }
 
 // PD-034
@@ -2128,7 +2171,7 @@ async fn given_content_confirm_attribute_read_script(world: &mut DaliWorld) {
     script_attribute_read_identity_with_content_confirm(&mock);
 }
 
-// ADP-022 ADP-023 COMM-001 COMM-004 COMM-008 COMM-010 COMM-030 COMM-032 COMM-034 COMM-036 COMM-038 COMM-052 COMM-056 COMM-057 COMM-092 MQTT-001 MQTT-003 MQTT-005 MQTT-007 MQTT-012 MQTT-013 MQTT-015 MQTT-019 OP-100 OP-132 PD-027 PD-028 PD-029 PD-030 PD-034 PD-035 PD-036 PD-037 PD-040 PD-041 PD-042 PD-043 PD-060 PD-061 PD-062 PD-063 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 PD-164 PD-165 PD-166 PD-167 PD-168 PD-169 PD-170 PD-171 PD-176 PD-177 PD-178 PD-179 PD-180 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 PD-189 PD-190 PD-191 PD-192 PD-193 PD-194 PD-195 PD-196 PD-197 PD-198 PD-199 PD-200 PD-201 PD-220 PD-221 PD-222 PD-230 PD-240 PD-241 PD-242 PD-243 PD-250 PD-251 PD-252 PD-253 PD-254 PD-255 PERS-005 STATS-005 SYS-217 SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 SYS-235 SYS-236 SYS-239 SYS-240 WS-003 WS-004 WS-010 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 WS-046 MQTT-024
+// ADP-022 ADP-023 COMM-001 COMM-004 COMM-008 COMM-010 COMM-030 COMM-032 COMM-034 COMM-036 COMM-038 COMM-052 COMM-056 COMM-057 COMM-092 MQTT-001 MQTT-003 MQTT-005 MQTT-007 MQTT-012 MQTT-013 MQTT-015 MQTT-019 OP-100 OP-132 PD-027 PD-028 PD-029 PD-030 PD-034 PD-035 PD-036 PD-037 PD-040 PD-041 PD-042 PD-043 PD-060 PD-061 PD-062 PD-063 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 PD-164 PD-165 PD-166 PD-167 PD-168 PD-169 PD-170 PD-171 PD-176 PD-177 PD-178 PD-179 PD-180 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 PD-189 PD-190 PD-191 PD-192 PD-193 PD-194 PD-195 PD-196 PD-197 PD-198 PD-199 PD-200 PD-201 PD-220 PD-221 PD-222 PD-230 PD-240 PD-241 PD-242 PD-243 PD-250 PD-251 PD-252 PD-253 PD-254 PD-255 PERS-005 STATS-005 SYS-217 SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 SYS-235 SYS-236 SYS-239 SYS-240 WS-003 WS-004 WS-010 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 WS-046 MQTT-024 PD-267 PD-268
 #[when("I start a discovery run for adapter 0")]
 async fn when_start_discovery_run(world: &mut DaliWorld) {
     let body = br#"{"mode":"scan_known_short_addresses"}"#;
@@ -2176,7 +2219,7 @@ async fn when_start_attribute_read(world: &mut DaliWorld) {
     );
 }
 
-// ADP-022 ADP-023 COMM-001 COMM-004 COMM-008 COMM-010 COMM-030 COMM-032 COMM-034 COMM-036 COMM-038 COMM-052 COMM-056 COMM-057 COMM-092 GRP-030 GRP-063 HCL-020 HCL-022 HCL-027 HCL-028 HCL-030 HCL-051 HCL-054 HCL-056 HCL-057 HCL-060 HCL-061 HCL-062 HCL-063 HCL-064 MQTT-001 MQTT-003 MQTT-005 MQTT-007 MQTT-009 MQTT-012 MQTT-013 MQTT-014 MQTT-015 MQTT-017 MQTT-018 MQTT-019 OP-100 OP-132 PD-027 PD-028 PD-029 PD-030 PD-034 PD-035 PD-036 PD-037 PD-040 PD-041 PD-042 PD-043 PD-060 PD-061 PD-062 PD-063 PD-102 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 PD-164 PD-165 PD-166 PD-167 PD-168 PD-169 PD-170 PD-171 PD-176 PD-177 PD-178 PD-179 PD-180 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 PD-189 PD-190 PD-191 PD-192 PD-193 PD-195 PD-196 PD-197 PD-198 PD-199 PD-200 PD-201 PD-220 PD-221 PD-222 PD-230 PD-241 PD-242 PD-243 PD-250 PD-251 PD-252 PD-253 PD-254 PD-255 PERS-005 REG-030 REG-031 RULE-003 RULE-004 RULE-005 RULE-006 RULE-020 RULE-021 RULE-022 RULE-023 RULE-024 SCN-040 SCN-041 SCN-046 SCN-050 SCN-060 SCN-062 SCN-063 SCN-083 SCN-084 SCN-085 SCN-086 SCN-092 SCN-093 SET-HA-020 STATS-005 SYS-210 SYS-211 SYS-213 SYS-217 SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 SYS-235 SYS-236 SYS-239 SYS-240 SYS-241 WS-003 WS-004 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 WS-046 MQTT-024
+// ADP-022 ADP-023 COMM-001 COMM-004 COMM-008 COMM-010 COMM-030 COMM-032 COMM-034 COMM-036 COMM-038 COMM-052 COMM-056 COMM-057 COMM-092 GRP-030 GRP-063 HCL-020 HCL-022 HCL-027 HCL-028 HCL-030 HCL-051 HCL-054 HCL-056 HCL-057 HCL-060 HCL-061 HCL-062 HCL-063 HCL-064 MQTT-001 MQTT-003 MQTT-005 MQTT-007 MQTT-009 MQTT-012 MQTT-013 MQTT-014 MQTT-015 MQTT-017 MQTT-018 MQTT-019 OP-100 OP-132 PD-027 PD-028 PD-029 PD-030 PD-034 PD-035 PD-036 PD-037 PD-040 PD-041 PD-042 PD-043 PD-060 PD-061 PD-062 PD-063 PD-102 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 PD-164 PD-165 PD-166 PD-167 PD-168 PD-169 PD-170 PD-171 PD-176 PD-177 PD-178 PD-179 PD-180 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 PD-189 PD-190 PD-191 PD-192 PD-193 PD-195 PD-196 PD-197 PD-198 PD-199 PD-200 PD-201 PD-220 PD-221 PD-222 PD-230 PD-241 PD-242 PD-243 PD-250 PD-251 PD-252 PD-253 PD-254 PD-255 PERS-005 REG-030 REG-031 RULE-003 RULE-004 RULE-005 RULE-006 RULE-020 RULE-021 RULE-022 RULE-023 RULE-024 SCN-040 SCN-041 SCN-046 SCN-050 SCN-060 SCN-062 SCN-063 SCN-083 SCN-084 SCN-085 SCN-086 SCN-092 SCN-093 SET-HA-020 STATS-005 SYS-210 SYS-211 SYS-213 SYS-217 SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 SYS-235 SYS-236 SYS-239 SYS-240 SYS-241 WS-003 WS-004 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 WS-046 MQTT-024 PD-267 PD-268
 #[then("the last operation eventually succeeds")]
 async fn then_last_operation_eventually_succeeds(world: &mut DaliWorld) {
     wait_for_operation_status(world, "succeeded");
@@ -2194,13 +2237,13 @@ async fn then_group_apply_operation_succeeds(world: &mut DaliWorld) {
     wait_for_operation_status_within(world, "succeeded", GROUP_APPLY_PACING_TIMEOUT);
 }
 
-// ADP-021 ADP-022 ADP-023 INP-077 INP-080 INP-081 PD-103 PD-156 PD-164 PD-169 PD-183 PD-194 RULE-022 SCN-062 SYS-231 SYS-233 ADP-025 ADP-026
+// ADP-021 ADP-022 ADP-023 INP-077 INP-080 INP-081 PD-103 PD-156 PD-164 PD-169 PD-183 PD-194 RULE-022 SCN-062 SYS-231 SYS-233 ADP-025 ADP-026 PD-267 PD-268
 #[then("the last operation eventually fails")]
 async fn then_last_operation_eventually_fails(world: &mut DaliWorld) {
     wait_for_operation_status(world, "failed");
 }
 
-// ADP-021 ADP-022 ADP-023 PD-164 PD-169 PD-183 SYS-231 SYS-233 ADP-025 ADP-026
+// ADP-021 ADP-022 ADP-023 PD-164 PD-169 PD-183 SYS-231 SYS-233 ADP-025 ADP-026 PD-267 PD-268
 #[then(regex = r#"^the operation error code should be "(\w+)"$"#)]
 async fn then_operation_error_code(world: &mut DaliWorld, code: String) {
     let json = last_json(world);
@@ -2686,7 +2729,7 @@ async fn then_physical_device_exposes_short_bank0(world: &mut DaliWorld) {
     );
 }
 
-// GRP-066 PD-030 PD-034 PD-040 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 VL-020 VL-054 PD-169 MQTT-012 MQTT-017 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 SCN-083 SCN-084 SCN-085 COMM-010 COMM-034 COMM-038 COMM-080 COMM-081 COMM-092 PD-037 PD-164 PD-165 PD-166 PD-167 PD-168 PD-170 PD-171 PD-189 PD-190 PD-191 PD-194 PD-195 PD-196 PD-197 PD-198 PD-199 PD-240 PD-241 PD-242 PD-243 PD-250 PD-251 PD-252 PD-253 PD-254 SCN-060 SCN-092 SCN-093 SYS-234
+// GRP-066 PD-030 PD-034 PD-040 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 VL-020 VL-054 PD-169 MQTT-012 MQTT-017 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 SCN-083 SCN-084 SCN-085 COMM-010 COMM-034 COMM-038 COMM-080 COMM-081 COMM-092 PD-037 PD-164 PD-165 PD-166 PD-167 PD-168 PD-170 PD-171 PD-189 PD-190 PD-191 PD-194 PD-195 PD-196 PD-197 PD-198 PD-199 PD-240 PD-241 PD-242 PD-243 PD-250 PD-251 PD-252 PD-253 PD-254 SCN-060 SCN-092 SCN-093 SYS-234 PD-267 PD-268
 #[then("all scripted DALI exchanges should be consumed without errors")]
 async fn then_all_scripted_exchanges_consumed(world: &mut DaliWorld) {
     assert_no_script_errors(world);

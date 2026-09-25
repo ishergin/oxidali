@@ -36,6 +36,7 @@ use crate::runtime::executor::helpers::{
     DT8_COLOUR_TYPE_RGBWAF, DT8_COLOUR_TYPE_TC, DT8_COLOUR_TYPE_XY,
     DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE, DT8_COLOUR_VALUE_REPORT_RED,
     DT8_COLOUR_VALUE_REPORT_TC, DT8_COLOUR_VALUE_REPORT_X, DT8_COLOUR_VALUE_REPORT_Y,
+    VERIFY_UNANSWERED_MESSAGE,
 };
 
 mod common_102;
@@ -92,6 +93,41 @@ impl ConfirmedWritableAttributes {
 pub struct WriteAttributesExecution {
     pub confirmed: ConfirmedWritableAttributes,
     pub error: Option<SemanticDaliError>,
+}
+
+// IEC 62386-102 §3.13
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadBack {
+    Proved(u8),
+    Refused,
+    Unanswered,
+}
+
+#[derive(Debug, Default)]
+struct WriteTally {
+    confirmed: ConfirmedWritableAttributes,
+    unanswered: bool,
+}
+
+impl WriteTally {
+    fn proved(&mut self, read_back: ReadBack) -> Option<u8> {
+        match read_back {
+            ReadBack::Proved(value) => Some(value),
+            ReadBack::Refused => None,
+            ReadBack::Unanswered => {
+                self.unanswered = true;
+                None
+            }
+        }
+    }
+
+    fn into_execution(self, error: Option<SemanticDaliError>) -> WriteAttributesExecution {
+        let unanswered = SemanticDaliError::OperationFailed(VERIFY_UNANSWERED_MESSAGE);
+        WriteAttributesExecution {
+            confirmed: self.confirmed,
+            error: error.or(self.unanswered.then_some(unanswered)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,11 +288,11 @@ pub fn write_short_attributes(
     min_max_levels: (Option<u8>, Option<u8>),
     dimming_curve: Option<u8>,
 ) -> WriteAttributesExecution {
-    let mut confirmed = ConfirmedWritableAttributes::default();
+    let mut tally = WriteTally::default();
     let error = apply_short_attribute_writes(
         controller,
         short_address,
-        &mut confirmed,
+        &mut tally,
         fade_time_ms,
         fade_rate,
         power_on_level,
@@ -267,14 +303,14 @@ pub fn write_short_attributes(
         dimming_curve,
     )
     .err();
-    WriteAttributesExecution { confirmed, error }
+    tally.into_execution(error)
 }
 
 #[allow(clippy::too_many_arguments, reason = "mirrors the public write surface")]
 fn apply_short_attribute_writes(
     controller: &mut impl DaliApplicationController,
     short_address: u8,
-    confirmed: &mut ConfirmedWritableAttributes,
+    tally: &mut WriteTally,
     fade_time_ms: Option<u32>,
     fade_rate: Option<u8>,
     power_on_level: Option<u8>,
@@ -285,31 +321,37 @@ fn apply_short_attribute_writes(
     dimming_curve: Option<u8>,
 ) -> Result<(), SemanticDaliError> {
     let address = dali_short_address(short_address)?;
-    if let Some(error) = write_fade_params(controller, address, confirmed, fade_time_ms, fade_rate) {
+    if let Some(error) = write_fade_params(controller, address, tally, fade_time_ms, fade_rate) {
         return Err(error);
     }
     if let Some(error) =
-        write_levels(controller, address, confirmed, power_on_level, system_failure_level)
+        write_levels(controller, address, tally, power_on_level, system_failure_level)
     {
         return Err(error);
     }
-    write_min_max_levels(controller, address, confirmed, min_max_levels)?;
-    if let Some(ms) = extended_fade_time_ms {
-        let dtr0 = extended_fade_time_byte_from_ms(ms);
-        let verify =
-            |c: &mut _| send_standard_query(c, address, StandardCommand::QueryExtendedFadeTime);
-        if send_dtr0_config_verified(
-            controller,
-            address,
-            dtr0,
-            StandardCommand::SetExtendedFadeTime,
-            verify,
-        )? {
-            confirmed.extended_fade_time_ms = extended_fade_time_ms_from_byte(dtr0);
-        }
+    write_min_max_levels(controller, address, tally, min_max_levels)?;
+    write_extended_fade_time(controller, address, tally, extended_fade_time_ms)?;
+    write_tc_limits(controller, address, &mut tally.confirmed, tc_limits_mirek)?;
+    write_dimming_curve(controller, address, tally, dimming_curve)
+}
+
+fn write_extended_fade_time(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    tally: &mut WriteTally,
+    extended_fade_time_ms: Option<u16>,
+) -> Result<(), SemanticDaliError> {
+    let Some(ms) = extended_fade_time_ms else {
+        return Ok(());
+    };
+    let dtr0 = extended_fade_time_byte_from_ms(ms);
+    let verify = |c: &mut _| send_standard_query(c, address, StandardCommand::QueryExtendedFadeTime);
+    let read_back =
+        send_dtr0_config_verified(controller, address, dtr0, StandardCommand::SetExtendedFadeTime, verify)?;
+    if tally.proved(read_back).is_some() {
+        tally.confirmed.extended_fade_time_ms = extended_fade_time_ms_from_byte(dtr0);
     }
-    write_tc_limits(controller, address, confirmed, tc_limits_mirek)?;
-    write_dimming_curve(controller, address, confirmed, dimming_curve)
+    Ok(())
 }
 
 fn reread_physical_minimum(
@@ -360,7 +402,7 @@ fn send_dtr0_config_verified<C: DaliApplicationController>(
     dtr0: u8,
     command: StandardCommand,
     mut read_back: impl FnMut(&mut C) -> Result<Option<u8>, SemanticDaliError>,
-) -> Result<bool, SemanticDaliError> {
+) -> Result<ReadBack, SemanticDaliError> {
     controller.step_boundary();
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
         let verified = controller.transaction(|controller| {
@@ -368,12 +410,12 @@ fn send_dtr0_config_verified<C: DaliApplicationController>(
             read_back(controller)
         })?;
         match verified {
-            Some(v) if v == dtr0 => return Ok(true),
-            None => return Ok(true),
+            Some(v) if v == dtr0 => return Ok(ReadBack::Proved(v)),
+            None => return Ok(ReadBack::Unanswered),
             Some(_) => {}
         }
     }
-    Ok(false)
+    Ok(ReadBack::Refused)
 }
 
 fn send_dtr0_config_accepted<C: DaliApplicationController>(
@@ -382,7 +424,7 @@ fn send_dtr0_config_accepted<C: DaliApplicationController>(
     dtr0: u8,
     command: StandardCommand,
     mut read_back: impl FnMut(&mut C) -> Result<Option<u8>, SemanticDaliError>,
-) -> Result<Option<u8>, SemanticDaliError> {
+) -> Result<ReadBack, SemanticDaliError> {
     controller.step_boundary();
     let mut previous: Option<u8> = None;
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
@@ -391,31 +433,32 @@ fn send_dtr0_config_accepted<C: DaliApplicationController>(
             read_back(controller)
         })?;
         match answer {
-            Some(v) if v == dtr0 => return Ok(Some(v)),
-            Some(v) if previous == Some(v) => return Ok(Some(v)),
+            Some(v) if v == dtr0 => return Ok(ReadBack::Proved(v)),
+            Some(v) if previous == Some(v) => return Ok(ReadBack::Proved(v)),
             Some(v) => previous = Some(v),
-            None => return Ok(None),
+            None => return Ok(ReadBack::Unanswered),
         }
     }
-    Ok(None)
+    Ok(ReadBack::Refused)
 }
 
 // IEC 62386-102 §9.6
 fn write_min_max_levels(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
-    confirmed: &mut ConfirmedWritableAttributes,
+    tally: &mut WriteTally,
     (min_level, max_level): (Option<u8>, Option<u8>),
 ) -> Result<(), SemanticDaliError> {
     if let Some(min) = min_level {
-        confirmed.min_level = write_level_bound(controller, address, min, true)?;
+        tally.confirmed.min_level = tally.proved(write_level_bound(controller, address, min, true)?);
     }
     if let Some(max) = max_level {
-        confirmed.max_level = write_level_bound(controller, address, max, false)?;
+        tally.confirmed.max_level = tally.proved(write_level_bound(controller, address, max, false)?);
     }
     if let (Some(min), Some(_)) = (min_level, max_level) {
-        if matches!(confirmed.min_level, Some(accepted) if accepted < min) {
-            confirmed.min_level = write_level_bound(controller, address, min, true)?;
+        if matches!(tally.confirmed.min_level, Some(accepted) if accepted < min) {
+            tally.confirmed.min_level =
+                tally.proved(write_level_bound(controller, address, min, true)?);
         }
     }
     Ok(())
@@ -426,7 +469,7 @@ fn write_level_bound(
     address: DaliAddress,
     dtr0: u8,
     min_bound: bool,
-) -> Result<Option<u8>, SemanticDaliError> {
+) -> Result<ReadBack, SemanticDaliError> {
     let (set, query) = if min_bound {
         (StandardCommand::SetMinLevel, StandardCommand::QueryMinLevel)
     } else {
@@ -439,7 +482,7 @@ fn write_level_bound(
 fn write_fade_params(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
-    confirmed: &mut ConfirmedWritableAttributes,
+    tally: &mut WriteTally,
     fade_time_ms: Option<u32>,
     fade_rate: Option<u8>,
 ) -> Option<SemanticDaliError> {
@@ -451,8 +494,11 @@ fn write_fade_params(
         };
         match send_dtr0_config_verified(controller, address, dtr0, StandardCommand::SetFadeTime, verify) {
             Err(error) => return Some(error),
-            Ok(true) => confirmed.fade_time_ms = Some(fade_time_ms_from_dtr0(dtr0)),
-            Ok(false) => {}
+            Ok(read_back) => {
+                if let Some(code) = tally.proved(read_back) {
+                    tally.confirmed.fade_time_ms = Some(fade_time_ms_from_dtr0(code));
+                }
+            }
         }
     }
     if let Some(rate) = fade_rate {
@@ -462,8 +508,7 @@ fn write_fade_params(
         };
         match send_dtr0_config_verified(controller, address, rate, StandardCommand::SetFadeRate, verify) {
             Err(error) => return Some(error),
-            Ok(true) => confirmed.fade_rate = Some(rate),
-            Ok(false) => {}
+            Ok(read_back) => tally.confirmed.fade_rate = tally.proved(read_back),
         }
     }
     None
@@ -472,7 +517,7 @@ fn write_fade_params(
 fn write_levels(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
-    confirmed: &mut ConfirmedWritableAttributes,
+    tally: &mut WriteTally,
     power_on_level: Option<u8>,
     system_failure_level: Option<u8>,
 ) -> Option<SemanticDaliError> {
@@ -482,8 +527,7 @@ fn write_levels(
         match send_dtr0_config_verified(controller, address, level, StandardCommand::SetPowerOnLevel, verify)
         {
             Err(error) => return Some(error),
-            Ok(true) => confirmed.power_on_level = Some(level),
-            Ok(false) => {}
+            Ok(read_back) => tally.confirmed.power_on_level = tally.proved(read_back),
         }
     }
     if let Some(level) = system_failure_level {
@@ -497,8 +541,7 @@ fn write_levels(
             verify,
         ) {
             Err(error) => return Some(error),
-            Ok(true) => confirmed.system_failure_level = Some(level),
-            Ok(false) => {}
+            Ok(read_back) => tally.confirmed.system_failure_level = tally.proved(read_back),
         }
     }
     None
