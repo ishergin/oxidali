@@ -238,7 +238,7 @@ async fn given_transport_parks_for(world: &mut DaliWorld, ms: u64) {
 // SYS-050 SCN-065
 #[when("the DALI transport unblocks")]
 async fn when_transport_unblocks(world: &mut DaliWorld) {
-    world.dali_mock().lock().unwrap().unblock_send();
+    world.release_held_send();
 }
 
 // DALI-020 DALI-021 DALI-022 DALI-023

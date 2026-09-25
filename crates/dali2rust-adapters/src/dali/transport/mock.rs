@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -91,10 +91,13 @@ impl Default for MockInner {
     }
 }
 
+pub const NO_HELD_SEND: usize = usize::MAX;
+
 #[derive(Debug)]
 pub struct MockDaliTransport {
     inner: Mutex<MockInner>,
     unblock_flag: Arc<AtomicBool>,
+    held_send: Arc<AtomicUsize>,
 }
 
 impl Default for MockDaliTransport {
@@ -105,6 +108,7 @@ impl Default for MockDaliTransport {
         Self {
             inner: Mutex::new(inner),
             unblock_flag,
+            held_send: Arc::new(AtomicUsize::new(NO_HELD_SEND)),
         }
     }
 }
@@ -282,6 +286,10 @@ impl MockDaliTransport {
         Arc::clone(&self.unblock_flag)
     }
 
+    pub fn held_send(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.held_send)
+    }
+
     pub fn block_next_send(&self) {
         let mut g = self.inner.lock().unwrap();
         g.block_send = true;
@@ -299,13 +307,6 @@ impl MockDaliTransport {
         let mut g = self.inner.lock().unwrap();
         g.block_at_send = Some(nth);
         g.blocked.store(true, Ordering::Release);
-    }
-
-    pub fn unblock_send(&self) {
-        let mut g = self.inner.lock().unwrap();
-        g.block_send = false;
-        self.unblock_flag.store(false, Ordering::Release);
-        g.block_timeout_ms = 60_000;
     }
 }
 
@@ -495,6 +496,7 @@ impl MockDaliTransport {
         }
         let blocked = Arc::clone(&g.blocked);
         let timeout_ms = g.block_timeout_ms;
+        self.held_send.store(g.sent_frames.len(), Ordering::Release);
         drop(g);
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
         while blocked.load(Ordering::Acquire) {
@@ -505,6 +507,7 @@ impl MockDaliTransport {
             std::thread::sleep(Duration::from_millis(10));
         }
         let mut g = self.inner.lock().unwrap();
+        self.held_send.store(NO_HELD_SEND, Ordering::Release);
         g.block_send = false;
         g.block_at_send = None;
         g
@@ -653,6 +656,36 @@ mod tests {
     fn mock_transport_no_response() {
         let mut transport = MockDaliTransport::new();
         assert_eq!(transport.receive_backward_frame().unwrap(), None);
+    }
+
+    #[test]
+    fn a_held_send_names_its_index_while_the_transport_lock_is_taken() {
+        let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
+        let (unblock, held) = {
+            let mock = transport.lock().unwrap();
+            mock.block_send_at(1);
+            (mock.get_unblock_flag(), mock.held_send())
+        };
+        let sender = Arc::clone(&transport);
+        let worker = std::thread::spawn(move || {
+            let mut mock = sender.lock().unwrap();
+            mock.exchange_frame(0x01FE, false).unwrap();
+            mock.exchange_frame(0x03FE, false).unwrap();
+        });
+
+        dali2rust_test_support::wait_until(
+            || held.load(Ordering::Acquire) == 1,
+            Duration::from_secs(2),
+        );
+        assert!(
+            transport.try_lock().is_err(),
+            "the held send keeps the transport lock, so only the signal can say where it waits"
+        );
+        unblock.store(false, Ordering::Release);
+        worker.join().unwrap();
+
+        assert_eq!(held.load(Ordering::Acquire), NO_HELD_SEND);
+        assert_eq!(transport.lock().unwrap().sent_frames(), vec![0x01FE, 0x03FE]);
     }
 
     #[test]

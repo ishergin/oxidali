@@ -61,6 +61,7 @@ fn a_mid_walk_arrival_waits_out_the_bracket_and_never_truncates() {
         );
     }
     let unblock = mock.get_unblock_flag();
+    let held = mock.held_send();
     mock.block_send_at(2);
     let transport = Arc::new(std::sync::Mutex::new(mock));
 
@@ -77,15 +78,7 @@ fn a_mid_walk_arrival_waits_out_the_bracket_and_never_truncates() {
         publisher.try_publish(BusChannel::Commands, dt8_read_frame(71)),
         PublishResult::Queued
     );
-    wait_until(
-        || {
-            transport
-                .lock()
-                .map(|mock| mock.sent_frames().len() == 2)
-                .unwrap_or(false)
-        },
-        Duration::from_secs(2),
-    );
+    wait_until(|| held.load(Ordering::Acquire) == 2, Duration::from_secs(2));
     assert_eq!(
         publisher.try_publish(BusChannel::Commands, interactive_target_state_frame(81)),
         PublishResult::Queued
