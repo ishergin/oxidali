@@ -148,7 +148,10 @@ export function SettingsPoller() {
       </Card>
 
       <Card title="What is read">
-        <FieldRow label="Attribute groups" hint="At least one. Memory banks are never polled.">
+        <FieldRow
+          label="Attribute groups"
+          hint="At least one. Memory banks 0 and 1 are never polled; the Part 252 and 253 banks follow their switches below."
+        >
           <div class="presets">
             {GROUPS.map((g) => (
               <SelChip

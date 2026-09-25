@@ -19,7 +19,6 @@ export interface Route {
     | 'console'
     | 'sniffer'
   | 'logs'
-    | 'files'
     | 'stats'
     | 'diagnostics'
     | 'firmware'
@@ -52,7 +51,6 @@ const ROUTES: { re: RegExp; name: Route['name']; keys: string[] }[] = [
   { re: /^\/console$/, name: 'console', keys: [] },
   { re: /^\/sniffer$/, name: 'sniffer', keys: [] },
   { re: /^\/logs$/, name: 'logs', keys: [] },
-  { re: /^\/files$/, name: 'files', keys: [] },
   { re: /^\/stats$/, name: 'stats', keys: [] },
   { re: /^\/diagnostics$/, name: 'diagnostics', keys: [] },
   { re: /^\/firmware$/, name: 'firmware', keys: [] },

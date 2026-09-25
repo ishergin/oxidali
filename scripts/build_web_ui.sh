@@ -27,12 +27,15 @@ echo "build_web_ui: gzipped assets in $OUT_DIR"
 
 MANIFEST_FILES=(index.html.gz favicon.svg.gz assets/app.js.gz assets/app.css.gz dali-products.json.gz)
 
-rm -rf "$FW_ASSETS_DIR"
 for rel in "${MANIFEST_FILES[@]}"; do
   if [[ ! -f "$OUT_DIR/$rel" ]]; then
-    echo "build_web_ui: FATAL — manifest file '$rel' missing from $OUT_DIR" >&2
+    echo "build_web_ui: FATAL — manifest file '$rel' missing from $OUT_DIR; mirror left as it was" >&2
     exit 1
   fi
+done
+
+rm -rf "$FW_ASSETS_DIR"
+for rel in "${MANIFEST_FILES[@]}"; do
   mkdir -p "$FW_ASSETS_DIR/$(dirname "$rel")"
   cp "$OUT_DIR/$rel" "$FW_ASSETS_DIR/$rel"
 done

@@ -6,7 +6,7 @@ import type {
   RedundancyCounters,
   SubscriberCounters,
 } from '../api/types'
-import { Badge, Card } from '../components/ui'
+import { Badge, Card, Chip } from '../components/ui'
 import { CounterRows, type Flat, useDeltas } from '../counters'
 import { uptime } from '../format'
 import { useLive, useSnapshotFrames } from '../hooks'
@@ -21,7 +21,6 @@ const FAULT_KEYS = new Set([
   'kind_mismatch',
   'commands_unrouted',
   'delivery_rejected_dropped',
-  'receiver_overflow',
   'invalid_command',
   'execution_failed',
   'confirmation_publish_failed',
@@ -206,8 +205,13 @@ export function DiagnosticsScreen() {
   const data = snapshot.latest ?? polled
   const deltas = useDeltas(data, data?.uptime_ms ?? null)
 
-  if (error) return <div class="empty">Diagnostics unavailable — {error}</div>
-  if (!data) return <div class="empty">Loading diagnostics…</div>
+  if (!data) {
+    return (
+      <div class="empty">
+        {error ? `Diagnostics unavailable — ${error}` : 'Loading diagnostics…'}
+      </div>
+    )
+  }
 
   const bus = data.bus
   const channels = [
@@ -221,6 +225,11 @@ export function DiagnosticsScreen() {
       <div class="head">
         <h1>Diagnostics</h1>
         <Badge>counters</Badge>
+        {error && (
+          <Chip cls="warn" title={error}>
+            stale — last poll failed
+          </Chip>
+        )}
         <span class="spacer" />
         <span class="sub">
           uptime <span class="mono" style="color:var(--text-muted)">{uptime(data.uptime_ms)}</span>

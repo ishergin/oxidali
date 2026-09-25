@@ -6,17 +6,25 @@ import { useVerifying } from '../observation'
 import { draftAfterPoll, draftAfterRefusal, type SliderDraft } from '../slider-draft'
 import { type CctRange, cctSliderView } from './cct-view'
 
+const IME_PROCESS_KEY_CODE = 229
+
+function isImeComposing(e: KeyboardEvent): boolean {
+  return e.isComposing || e.keyCode === IME_PROCESS_KEY_CODE
+}
+
 export function Chip({
   cls,
   spin,
+  title,
   children,
 }: {
   cls: string
   spin?: boolean
+  title?: string
   children: ComponentChildren
 }) {
   return (
-    <span class={`chip ${cls}${spin ? ' spin' : ''}`}>
+    <span class={`chip ${cls}${spin ? ' spin' : ''}`} title={title}>
       <span class="dot" />
       {children}
     </span>
@@ -94,6 +102,7 @@ export function EditableText({
       onFocus={(e) => setDraft(e.currentTarget.value)}
       onInput={(e) => setDraft(e.currentTarget.value)}
       onKeyDown={(e) => {
+        if (isImeComposing(e)) return
         if (e.key === 'Enter') e.currentTarget.blur()
         if (e.key === 'Escape') {
           cancelled.current = true
@@ -168,7 +177,7 @@ export function EditableName({
         onFocus={(e) => setDraft(e.currentTarget.value)}
         onInput={(e) => setDraft(e.currentTarget.value)}
         onKeyDown={(e) => {
-          if (e.isComposing) return
+          if (isImeComposing(e)) return
           if (e.key === 'Enter') commit()
           if (e.key === 'Escape') cancel()
         }}

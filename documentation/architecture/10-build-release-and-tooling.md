@@ -150,6 +150,8 @@ larger than a slot. Changing the table takes a wired flash.
 - `/assets/*` is served immutable for a year and `index.html` no-cache, so the
   `?v=<bundle hash>` that `build_web_ui.sh` stamps on every `/assets/` reference is the
   bundle's only freshness mechanism.
+- Every bundle file is stored gzipped and always served as stored, with
+  `Content-Encoding: gzip`, whatever the request's `Accept-Encoding`.
 - `build_web_ui.sh` and `verify_web_assets.sh` fingerprint the same `web/app` source set
   (sources, `public/`, the entry HTML, the lockfile, the TypeScript and Vite configs);
   changing one list without the other breaks the mirror-freshness gate.

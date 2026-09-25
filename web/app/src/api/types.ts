@@ -209,7 +209,7 @@ export interface ControllerSummary {
 }
 
 export interface Health {
-  status: string
+  status: 'ok' | 'degraded' | 'down'
   uptime_seconds: number
   version: string
 }
