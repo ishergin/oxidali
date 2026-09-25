@@ -275,7 +275,7 @@ async fn given_scene_named(world: &mut DaliWorld, scene_id: u8, name: String) {
     patch_scene_name(world, scene_id, &name);
 }
 
-// SCN-010 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 SYS-211 SYS-213 SYS-241 SCN-040 SCN-050
+// SCN-010 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 SYS-211 SYS-213 SYS-241 SCN-040 SCN-050 ADP-026
 #[given(regex = r"^adapter 0 scene (\d+) desired row for virtual lamp (\d+) has level (\d+)$")]
 async fn given_desired_row_level(world: &mut DaliWorld, scene_id: u8, virtual_lamp_id: u8, level: u8) {
     patch_scene_matrix_row(world, scene_id, virtual_lamp_id, level_desired(level));

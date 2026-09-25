@@ -279,7 +279,7 @@ async fn when_clear_frames24(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear_sent_frames24();
 }
 
-// INP-030 INP-072 INP-078
+// INP-030 INP-072 INP-078 ADP-025
 #[then("the mock transport should have sent no 24-bit frames")]
 async fn then_no_frames24(world: &mut DaliWorld) {
     let mock = world.dali_mock();

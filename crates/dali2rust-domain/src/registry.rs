@@ -797,6 +797,7 @@ pub struct PollTargetView {
 pub struct PollTargetSelection {
     pub targets: Vec<PollTargetView>,
     pub excluded_unbound: u16,
+    pub adapter_enabled: bool,
 }
 
 pub trait PollTargetReadPort: Send + Sync {
@@ -1228,6 +1229,10 @@ pub trait RegistryReadPort: Send + Sync {
         adapter_id: u8,
         short_address: u8,
     ) -> bool;
+}
+
+pub trait AdapterEnabledReadPort: Send + Sync {
+    fn adapter_enabled(&self, adapter_id: u8) -> bool;
 }
 
 pub trait AdapterReadPort: Send + Sync {

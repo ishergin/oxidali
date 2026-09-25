@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResult};
 use dali2rust_contracts::msg::{
-    BusCommandPayload, BusEventPayload, DaliProgramTarget, DaliTargetScope, DeliveryStatus,
-    DiscoveryMode, ErrorCode, GroupMembershipAction, LightSetpoint, MemoryBankReadPreset,
-    OperationWorkerSignal, PowerState,
+    BusCommandPayload, BusEventPayload, CommissioningStep, DaliProgramTarget, DaliTargetScope,
+    DeliveryStatus, DiscoveryMode, ErrorCode, GroupMembershipAction, HclTargetScope,
+    LightSetpoint, MemoryBankReadPreset, OperationWorkerSignal, PowerState, SceneProgramAction,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_dali_runtime::{spawn_dali_worker, DaliWorkerCounters};
@@ -342,54 +342,109 @@ fn adapter_disabled_wire_command_returns_named_refusal_confirmation() {
     assert_eq!(harness.counters.execution_failed.load(Ordering::Relaxed), 1);
 }
 
+fn short_target() -> DaliProgramTarget {
+    DaliProgramTarget::Short { short_address: 5 }
+}
+
+fn refused_operations() -> Vec<BusCommandPayload> {
+    use dali2rust_contracts::msg as m;
+    vec![
+        m::DaliDiscoverDevicesCommand { mode: DiscoveryMode::RefreshKnown, registry_adapter_id: 0 }.into(),
+        m::DaliReadAttributesCommand { registry_adapter_id: 0, short_address: 5, attribute_groups_mask: 1 << 1, memory_banks: MemoryBankReadPreset::None }.into(),
+        m::DaliReadMemoryBankCommand { registry_adapter_id: 0, short_address: 5, bank: 1, start: 0, length: 1 }.into(),
+        m::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: Some(200), fade_rate: None, power_on_level: None, system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: true }.into(),
+        m::DaliIdentifyDeviceCommand { registry_adapter_id: 0, short_address: 5, operation_key: Default::default() }.into(),
+        m::DaliReplaceDeviceCommand { registry_adapter_id: 0, failed_short_address: 5, replacement_short_address: 6, restore_metadata_and_overrides: false, restore_attributes: false, restore_groups: false, restore_scenes: false, operation_key: Default::default() }.into(),
+        m::DaliAddressingCommand { registry_adapter_id: 0, short_address: 5, new_short_address: 6, verify_after_program: true, operation_key: Default::default() }.into(),
+        m::DaliProgramGroupMembershipCommand { registry_adapter_id: 0, target: short_target(), group_id: 1, action: GroupMembershipAction::Add }.into(),
+        m::DaliProgramSceneCommand { registry_adapter_id: 0, target: short_target(), scene_id: 3, action: SceneProgramAction::Clear, target_state: None }.into(),
+        m::Dali103ScanCommand { registry_adapter_id: 0 }.into(),
+        m::Dali103CommissionCommand { registry_adapter_id: 0, include_addressed: false }.into(),
+        m::Dali103InstanceConfigureCommand { registry_adapter_id: 0, short_address: 5, instance_number: 0, patch_mask: 1, event_scheme: 2, event_filter: [0; 3], event_priority: 4, instance_groups: [None; 3], timer_multipliers: [None; 4], instance_enabled: true }.into(),
+        m::Dali103IdentifyCommand { registry_adapter_id: 0, short_address: 5 }.into(),
+        m::Dali103FeedbackConfigureCommand { registry_adapter_id: 0, short_address: 5, instance_number: 0, patch_mask: 1, timing: 0, active_brightness: 0, active_colour: 0, inactive_brightness: 0, inactive_colour: 0, opcode_map: 0 }.into(),
+    ]
+}
+
+fn refused_requests() -> Vec<BusCommandPayload> {
+    use dali2rust_contracts::msg as m;
+    vec![
+        m::DaliCommandPayload { wire_address: 0x01, command: 0xFE, repeat_count: 0, raw_mode: false, raw_expects_backward: false }.into(),
+        m::DaliCommissioningStepCommand { registry_adapter_id: 0, step: CommissioningStep::Terminate, scope: None, short_address: None, search_address: None }.into(),
+        m::DaliSetTargetStateCommand::for_virtual_lamp(0, 4, &setpoint(40)).into(),
+        m::DaliRecallSceneCommand { registry_adapter_id: 0, scope: DaliTargetScope::Broadcast, short_address: 0, group_id: 0, scene_id: 3 }.into(),
+        m::DaliRecallLastActiveLevelCommand { registry_adapter_id: 0, scope: HclTargetScope::Broadcast, group_id: None }.into(),
+        m::DaliStopFadeCommand { registry_adapter_id: 0, scope: DaliTargetScope::Broadcast, virtual_lamp_id: 0, short_address: 0, group_id: 0 }.into(),
+        m::Dali103FeedbackDriveCommand { registry_adapter_id: 0, action: 0, short_address: Some(5), feature_number: None, feature_group: None, selected_group: 0, opcode_map: 0 }.into(),
+        m::Dali103HandoverCommand { registry_adapter_id: 0, peer_short_address: 7 }.into(),
+        m::Dali103ArbitrationProbeCommand { registry_adapter_id: 0 }.into(),
+        m::DaliBusHealthProbeCommand { registry_adapter_id: 0 }.into(),
+    ]
+}
+
+fn assert_nothing_reached_the_wire(harness: &WorkerHarness, kind: &str) {
+    assert!(harness.sent_commands.lock().unwrap().is_empty(), "{kind} sent a 16-bit frame");
+    assert!(harness.sent_frames24.lock().unwrap().is_empty(), "{kind} sent a 24-bit frame");
+}
+
+fn assert_adapter_disabled(code: ErrorCode, message: &str, kind: &str) {
+    assert_eq!(code, ErrorCode::Conflict, "{kind}");
+    assert_eq!(message, "adapter_disabled", "{kind}");
+}
+
+fn envelope_on_adapter_0(corr: u64, payload: BusCommandPayload) -> dali2rust_contracts::msg::CommandEnvelope {
+    dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), payload)
+}
+
 #[test]
 fn adapter_disabled_semantic_commands_publish_worker_failed_signal() {
     let disabled: Arc<dyn RegistryReadPort> = Arc::new(TestReadPort::default());
-    let cases = [
-        (
-            81u64,
-            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 81, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::DaliDiscoverDevicesCommand { mode: DiscoveryMode::RefreshKnown, registry_adapter_id: 0 }),
-        ),
-        (
-            82u64,
-            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 82, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::DaliReadAttributesCommand { registry_adapter_id: 0, short_address: 5, attribute_groups_mask: 1 << 1, memory_banks: MemoryBankReadPreset::None }),
-        ),
-        (
-            83u64,
-            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 83, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::DaliReadMemoryBankCommand { registry_adapter_id: 0, short_address: 5, bank: 1, start: 0, length: 1 }),
-        ),
-        (
-            84u64,
-            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 84, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: Some(200), fade_rate: None, power_on_level: None, system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: true }),
-        ),
-        (
-            85u64,
-            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 85, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::DaliIdentifyDeviceCommand { registry_adapter_id: 0, short_address: 5, operation_key: Default::default() }),
-        ),
-        (
-            86u64,
-            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 86, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::DaliReplaceDeviceCommand { registry_adapter_id: 0, failed_short_address: 5, replacement_short_address: 6, restore_metadata_and_overrides: false, restore_attributes: false, restore_groups: false, restore_scenes: false, operation_key: Default::default() }),
-        ),
-        (
-            87u64,
-            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 87, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::DaliAddressingCommand { registry_adapter_id: 0, short_address: 5, new_short_address: 6, verify_after_program: true, operation_key: Default::default() }),
-        ),
-    ];
-
-    for (corr, cmd) in cases {
+    for (corr, payload) in (81u64..).zip(refused_operations()) {
+        let kind = payload.variant_name();
         let harness = WorkerHarness::new(Arc::clone(&disabled), ControllerMode::NoAnswer);
-        harness.publish(cmd);
+        harness.publish(envelope_on_adapter_0(corr, payload));
         let ev = harness.recv_event_matching(corr, |payload| {
             matches!(payload, BusEventPayload::OperationWorkerSignalEvent(_))
         });
         let BusEventPayload::OperationWorkerSignalEvent(body) = &ev.payload else {
             panic!("expected worker signal");
         };
-        assert_eq!(body.signal, OperationWorkerSignal::WorkerFailed);
-        let error = body.error.as_ref().expect("a failure names its cause");
-        assert_eq!(error.code, ErrorCode::Conflict);
-        assert_eq!(error.message.as_str(), "adapter_disabled");
+        assert_eq!(body.signal, OperationWorkerSignal::WorkerFailed, "{kind}");
+        let error = body.error.as_ref().expect("a refusal names its cause");
+        assert_adapter_disabled(error.code, error.message.as_str(), kind);
+        assert_nothing_reached_the_wire(&harness, kind);
     }
+}
+
+#[test]
+fn adapter_disabled_requests_are_refused_by_confirmation_before_the_wire() {
+    let disabled: Arc<dyn RegistryReadPort> = Arc::new(TestReadPort::default());
+    for (corr, payload) in (121u64..).zip(refused_requests()) {
+        let kind = payload.variant_name();
+        let harness = WorkerHarness::new(Arc::clone(&disabled), ControllerMode::NoAnswer);
+        harness.publish(envelope_on_adapter_0(corr, payload));
+        let conf = harness.recv_confirmation_for(corr);
+        assert_eq!(conf.status, DeliveryStatus::ExecutionFailed, "{kind}");
+        let error = conf.confirmation.error.as_ref().expect("a refusal names its cause");
+        assert_adapter_disabled(error.code, error.message.as_str(), kind);
+        assert_nothing_reached_the_wire(&harness, kind);
+    }
+}
+
+#[test]
+fn every_command_the_dali_worker_handles_meets_the_adapter_gate() {
+    let refused: std::collections::BTreeSet<&str> = refused_operations()
+        .iter()
+        .chain(refused_requests().iter())
+        .map(BusCommandPayload::variant_name)
+        .collect();
+    let handled: std::collections::BTreeSet<&str> =
+        dali2rust_dali_runtime::DALI_WORKER_HANDLED_COMMANDS.iter().copied().collect();
+    assert_eq!(
+        refused, handled,
+        "every command the worker handles drives an adapter's wire, so each one has a \
+         disabled-adapter refusal case here"
+    );
 }
 
 #[test]

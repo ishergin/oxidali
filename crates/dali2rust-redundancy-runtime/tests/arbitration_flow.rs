@@ -6,7 +6,8 @@ use dali2rust_contracts::msg::{
     BusCommandPayload, BusEventPayload, Dali103ArbitrationProbedEvent, DaliSettingsUpdateCommand,
 };
 use dali2rust_domain::registry::{
-    DaliSettingsReadPort, DaliSettingsView, RedundancySettingsReadPort, RedundancySettingsView,
+    AdapterEnabledReadPort, DaliSettingsReadPort, DaliSettingsView, RedundancySettingsReadPort,
+    RedundancySettingsView,
 };
 use dali2rust_redundancy_runtime::{
     run_turn, ArbitrationAction, ArbitrationState, ArbitrationWorkerCounters,
@@ -20,6 +21,13 @@ struct FakeSettings {
     standby: AtomicBool,
     active: AtomicBool,
     mover: AtomicU8,
+    adapter_enabled: AtomicBool,
+}
+
+impl AdapterEnabledReadPort for FakeSettings {
+    fn adapter_enabled(&self, _adapter_id: u8) -> bool {
+        self.adapter_enabled.load(Ordering::Relaxed)
+    }
 }
 
 impl RedundancySettingsReadPort for FakeSettings {
@@ -77,6 +85,7 @@ fn rig(standby: bool) -> Rig {
         mover: AtomicU8::new(dali2rust_contracts::msg::APPLICATION_ACTIVE_UNMOVED),
         standby: AtomicBool::new(standby),
         active: AtomicBool::new(false),
+        adapter_enabled: AtomicBool::new(true),
     });
     Rig {
         deps: ArbitrationWorkerDeps {
@@ -85,6 +94,7 @@ fn rig(standby: bool) -> Rig {
             registry_adapter_id: ADAPTER,
             redundancy: Arc::clone(&settings) as Arc<dyn RedundancySettingsReadPort>,
             dali: Arc::clone(&settings) as Arc<dyn DaliSettingsReadPort>,
+            adapters: Arc::clone(&settings) as Arc<dyn AdapterEnabledReadPort>,
             counters: Arc::new(ArbitrationWorkerCounters::default()),
             transitions: Arc::new(Mutex::new(Vec::new())),
         },
@@ -124,6 +134,20 @@ fn payload_name(payload: &BusCommandPayload) -> String {
         }
         other => format!("{other:?}"),
     }
+}
+
+#[test]
+fn a_standby_on_a_disabled_adapter_sends_no_probe_and_never_claims_the_bus() {
+    let rig = rig(true);
+    rig.settings.adapter_enabled.store(false, Ordering::Relaxed);
+    let mut state = WorkerStateHandle::new();
+    for tick in 0..6 {
+        run_turn(&mut state, &rig.deps, 1_000 + tick * 250);
+    }
+    assert!(
+        drain_empty(&rig),
+        "a disabled adapter carries no probe, and a probe never sent is no missed answer"
+    );
 }
 
 #[test]

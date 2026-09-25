@@ -36,6 +36,7 @@ impl PollTargetReadPort for StubRegistry {
         PollTargetSelection {
             targets: self.devices.clone(),
             excluded_unbound: self.excluded_unbound,
+            adapter_enabled: true,
         }
     }
 }
@@ -851,7 +852,7 @@ struct ReplicatedSettings {
 
 impl PollTargetReadPort for ReplicatedSettings {
     fn list_poll_targets(&self, _adapter_id: u8) -> PollTargetSelection {
-        PollTargetSelection { targets: self.devices.clone(), excluded_unbound: 0 }
+        PollTargetSelection { targets: self.devices.clone(), excluded_unbound: 0, adapter_enabled: true }
     }
 }
 
@@ -914,6 +915,44 @@ fn replicated_settings_wait_for_the_reload_that_announces_them() {
         || h.counters.health_probes_published.load(Ordering::Relaxed) > 0,
         Duration::from_millis(400),
     ));
+}
+
+struct AdapterGate {
+    enabled: bool,
+}
+
+impl PollTargetReadPort for AdapterGate {
+    fn list_poll_targets(&self, _adapter_id: u8) -> PollTargetSelection {
+        let targets = if self.enabled { vec![device(1)] } else { Vec::new() };
+        PollTargetSelection { targets, excluded_unbound: 0, adapter_enabled: self.enabled }
+    }
+}
+
+impl PollerSettingsReadPort for AdapterGate {
+    fn poller_settings_view(&self) -> PollerSettingsView {
+        PollerSettingsView { enabled: true, ..disabled_fast_settings() }
+    }
+}
+
+fn adapter_gate_harness(enabled: bool) -> Harness {
+    let h = spawn_harness_on(Arc::new(AdapterGate { enabled }), true, None, 1);
+    wait_until(|| h.counters.cycles_total.load(Ordering::Relaxed) >= 3, WAIT);
+    h
+}
+
+#[test]
+fn a_disabled_adapter_is_neither_read_nor_probed_issue119() {
+    let control = adapter_gate_harness(true);
+    wait_until(
+        || {
+            control.counters.health_probes_published.load(Ordering::Relaxed) >= 1
+                && control.counters.reads_published.load(Ordering::Relaxed) >= 1
+        },
+        WAIT,
+    );
+    let disabled = adapter_gate_harness(false);
+    assert_eq!(disabled.counters.health_probes_published.load(Ordering::Relaxed), 0);
+    assert_eq!(disabled.counters.reads_published.load(Ordering::Relaxed), 0);
 }
 
 #[test]

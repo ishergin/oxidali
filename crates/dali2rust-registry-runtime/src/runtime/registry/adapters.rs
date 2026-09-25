@@ -1,6 +1,6 @@
 use crate::runtime::registry::store::RegistryStore;
 use dali2rust_contracts::msg::{fixed_text_64, FixedText64};
-use dali2rust_domain::registry::{AdapterReadPort, AdapterView};
+use dali2rust_domain::registry::{AdapterEnabledReadPort, AdapterReadPort, AdapterView};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct AdapterRow {
@@ -21,6 +21,12 @@ impl AdapterRow {
             timeouts: self.timeouts,
             errors: self.errors,
         }
+    }
+}
+
+impl AdapterEnabledReadPort for RegistryStore {
+    fn adapter_enabled(&self, adapter_id: u8) -> bool {
+        self.internal_adapter_snapshot(adapter_id).enabled
     }
 }
 

@@ -2194,13 +2194,13 @@ async fn then_group_apply_operation_succeeds(world: &mut DaliWorld) {
     wait_for_operation_status_within(world, "succeeded", GROUP_APPLY_PACING_TIMEOUT);
 }
 
-// ADP-021 ADP-022 ADP-023 INP-077 INP-080 INP-081 PD-103 PD-156 PD-164 PD-169 PD-183 PD-194 RULE-022 SCN-062 SYS-231 SYS-233
+// ADP-021 ADP-022 ADP-023 INP-077 INP-080 INP-081 PD-103 PD-156 PD-164 PD-169 PD-183 PD-194 RULE-022 SCN-062 SYS-231 SYS-233 ADP-025 ADP-026
 #[then("the last operation eventually fails")]
 async fn then_last_operation_eventually_fails(world: &mut DaliWorld) {
     wait_for_operation_status(world, "failed");
 }
 
-// ADP-021 ADP-022 ADP-023 PD-164 PD-169 PD-183 SYS-231 SYS-233
+// ADP-021 ADP-022 ADP-023 PD-164 PD-169 PD-183 SYS-231 SYS-233 ADP-025 ADP-026
 #[then(regex = r#"^the operation error code should be "(\w+)"$"#)]
 async fn then_operation_error_code(world: &mut DaliWorld, code: String) {
     let json = last_json(world);
@@ -2211,7 +2211,7 @@ async fn then_operation_error_code(world: &mut DaliWorld, code: String) {
     );
 }
 
-// ADP-021 ADP-022 ADP-023 INP-077 INP-080 INP-081 PD-183 RULE-022
+// ADP-021 ADP-022 ADP-023 INP-077 INP-080 INP-081 PD-183 RULE-022 ADP-025 ADP-026
 #[then(regex = r#"^the operation error message should be "(\w+)"$"#)]
 async fn then_operation_error_message(world: &mut DaliWorld, message: String) {
     let json = last_json(world);
