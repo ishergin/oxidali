@@ -941,25 +941,30 @@ fn a_dapc_frame_commits_the_staged_colour() {
 }
 
 #[test]
-fn a_masked_dapc_commits_nothing() {
+fn a_masked_dapc_activates_the_staged_colour_only_while_the_bit_is_set_issue128() {
     let mut fleet = GearFleet::demo_bus();
-    exchange(&mut fleet, special(SpecialCommand::Dtr0(0xC8)), false);
-    exchange(&mut fleet, special(SpecialCommand::Dtr1(0x00)), false);
-    enable_dt8(&mut fleet);
-    exchange(
-        &mut fleet,
-        dt8(5, Dt8Command::SetTemporaryColourTemperature),
-        false,
-    );
-
+    write_gear_features(&mut fleet, 0x00);
+    stage_cct(&mut fleet);
+    let level = fleet.gears()[5].level;
     let masked = (u16::from(short(5).encode_address_byte()) << 8) | 0xFF;
-    exchange(&mut fleet, masked, false);
 
-    enable_dt8(&mut fleet);
+    exchange(&mut fleet, masked, false);
     assert_eq!(
-        exchange(&mut fleet, dt8(5, Dt8Command::QueryColourStatus), true),
-        TransferOutcome::Answer(0)
+        colour_status(&mut fleet),
+        TransferOutcome::Answer(0),
+        "Table 5: MASK with the bit clear changes no colour"
     );
+    assert_eq!(fleet.gears()[5].pending_ct, 200, "Table 5: no change in temporaries");
+
+    write_gear_features(&mut fleet, 0x01);
+    exchange(&mut fleet, masked, false);
+    assert_eq!(
+        colour_status(&mut fleet),
+        TransferOutcome::Answer(DT8_STATUS_TC_ACTIVE),
+        "Table 5: an arc-power command, MASK included, activates while the bit is set"
+    );
+    assert_eq!(fleet.gears()[5].color_ct, 200);
+    assert_eq!(fleet.gears()[5].level, level, "MASK never moves the level");
 }
 
 fn stage_cct(fleet: &mut GearFleet) {

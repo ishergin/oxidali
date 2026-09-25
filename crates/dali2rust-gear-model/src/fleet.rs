@@ -15,7 +15,7 @@ use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_platform::dali::TransferOutcome;
 
 use crate::gear::{
-    apply_standard_write, gear_query_reply, Gear, GearSpec, DALI_YES, DAPC_MASK_LEVEL,
+    apply_standard_write, gear_query_reply, Gear, GearSpec, DALI_YES,
     SHORT_ADDRESS_MASK,
     TC_COOLEST_MIREK, TC_WARMEST_MIREK,
 };
@@ -319,9 +319,7 @@ impl GearFleet {
         {
             // IEC 62386-102 §9.14.3.1
             gear.identifying = false;
-            if level != DAPC_MASK_LEVEL {
-                gear.arc_power_activation();
-            }
+            gear.arc_power_activation();
             gear.apply_dapc(level);
         }
         self.publish_one(None)
