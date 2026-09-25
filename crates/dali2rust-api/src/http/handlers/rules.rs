@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::common::{accepted_operation_response, json_err};
-use crate::http::rules_state::RulesHttpState;
+use crate::http::rules_state::{RuleRuntimeView, RulesHttpState};
 use crate::http::types::HttpResponse;
 
 fn fnv1a32(bytes: &[u8]) -> u32 {
@@ -92,11 +92,13 @@ impl RulesHandler {
     fn get(&self, params: &std::collections::HashMap<String, String>) -> HttpResponse {
         let doc = self.shared.state.document();
         let body = if params.get("format").map(String::as_str) == Some("json") {
+            let mut rules = serde_json::to_value(&doc.compiled).unwrap_or(Value::Null);
+            attach_runtime(&mut rules, &self.shared.state.rule_runtime());
             json!({
                 "lang_id": doc.lang_id,
                 "revision": doc.revision,
                 "diagnostic": doc.diagnostic,
-                "rules": doc.compiled,
+                "rules": rules,
             })
         } else {
             json!({
@@ -278,6 +280,38 @@ impl RulesHandler {
             serde_json::to_vec(&json!({ "name": name, "enabled": enabled }))
                 .unwrap_or_default(),
         )
+    }
+}
+
+fn attach_runtime(rules: &mut Value, runtime: &[RuleRuntimeView]) {
+    let Some(list) = rules.get_mut("rules").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for rule in list {
+        let name = rule.get("name").and_then(Value::as_str).unwrap_or_default();
+        let block = runtime_json(runtime.iter().find(|row| row.name == name));
+        if let Some(object) = rule.as_object_mut() {
+            object.insert("runtime".to_owned(), block);
+        }
+    }
+}
+
+fn runtime_json(row: Option<&RuleRuntimeView>) -> Value {
+    match row {
+        Some(row) => json!({
+            "fire_count": row.fire_count,
+            "last_fired_at_ms": row.last_fired_at_ms,
+            "last_latency_ms": row.last_latency_ms,
+            "last_outcome": row.last_outcome,
+            "last_error": row.last_error,
+        }),
+        None => json!({
+            "fire_count": 0,
+            "last_fired_at_ms": null,
+            "last_latency_ms": null,
+            "last_outcome": null,
+            "last_error": null,
+        }),
     }
 }
 

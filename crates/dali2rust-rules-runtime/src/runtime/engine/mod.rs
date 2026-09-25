@@ -63,6 +63,18 @@ impl Engine {
         self.rules = set;
     }
 
+    pub fn set_rule_enabled(&mut self, name: &str, on: bool) -> bool {
+        let Some(idx) = self
+            .rules
+            .as_ref()
+            .and_then(|set| set.rules.iter().position(|r| r.name == name))
+        else {
+            return false;
+        };
+        exec::flip_rule_bit(&mut self.enabled, &mut self.vol, &mut self.counters, idx, name, on);
+        true
+    }
+
     pub fn handle(&mut self, input: EngineInput<'_>, world: &WorldSnapshot) -> Vec<ActivationOutcome> {
         self.now_ms = world.now_ms;
         self.vol.prune_chain(world.now_ms);

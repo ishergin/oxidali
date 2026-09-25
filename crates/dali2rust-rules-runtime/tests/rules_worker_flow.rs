@@ -22,9 +22,14 @@ struct EmptyWorld {
 
 const LIT_GROUP_ID: u16 = 2;
 
+const FIXED_UNIX_MS: u64 = 1_790_000_000_000;
+
 impl dali2rust_rules_runtime::RulesWorldPort for EmptyWorld {
     fn now_ms(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+    fn unix_ms(&self) -> u64 {
+        FIXED_UNIX_MS
     }
     fn wall(&self) -> Option<dali2rust_rules_runtime::runtime::engine::WallTime> {
         None
@@ -136,6 +141,15 @@ fn harness_hcl(
     lit_group: Arc<std::sync::atomic::AtomicBool>,
     overridden: Arc<std::sync::atomic::AtomicBool>,
 ) -> Harness {
+    let world = EmptyWorld { started: std::time::Instant::now(), lamps, active, lit_group, overridden };
+    harness_spawn(slices, world, Arc::new(StubResolver::permissive()))
+}
+
+fn harness_spawn(
+    slices: Arc<dali2rust_bsp::slice_store_files::FileSliceStore>,
+    world: EmptyWorld,
+    resolver: Arc<dyn dali2rust_rules_model::NameResolver>,
+) -> Harness {
     let (host, publisher, (worker_rx, ev_rx, out_rx)) = BusHost::spawn(BusConfig::default(), |reg| {
         (
             reg.subscribe_commands_and_events(
@@ -157,9 +171,9 @@ fn harness_hcl(
         dali2rust_rules_runtime::RulesWorkerSeams {
             store: Arc::clone(&store),
             compiler: Arc::new(dali2rust_rules_lang::RulesLangV1),
-            resolver: Arc::new(StubResolver::permissive()),
+            resolver,
             slices: Some(slices.clone() as Arc<dyn dali2rust_platform::slice_store::SliceStore>),
-            world: Arc::new(EmptyWorld { started: std::time::Instant::now(), lamps, active, lit_group, overridden }),
+            world: Arc::new(world),
         },
         Arc::clone(&counters),
         Arc::clone(&cells),
@@ -1196,5 +1210,174 @@ fn a_slice_reload_reaches_a_live_engine_issue101() {
         1,
         "the store moved and the engine did not: that is a standby that would \
          take the bus running the document it booted with"
+    );
+}
+
+fn run_rule(h: &Harness, corr: u64, name: &str) {
+    publish(
+        h,
+        corr,
+        dali2rust_contracts::msg::RuleRunCommand {
+            name: dali2rust_contracts::msg::fixed_text_64(name),
+            dry: false,
+        },
+    );
+}
+
+fn wait_cell(cell: &std::sync::atomic::AtomicU32, at_least: u32, what: &str) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while cell.load(std::sync::atomic::Ordering::Relaxed) < at_least {
+        assert!(std::time::Instant::now() < deadline, "{what} never reached {at_least}");
+        std::thread::yield_now();
+    }
+}
+
+const NEIGHBOURS_DOC: &str = "rule \"долгий\" { when http trigger do wait 30s log(\"хвост\") }\n\
+rule \"сосед\" { when http trigger do log(\"y\") }\n\
+rule \"цель\" { when http trigger do log(\"z\") }\n\
+rule \"выключатель\" { when http trigger do rule(\"цель\").disable() }\n";
+
+#[test]
+fn toggling_one_rule_leaves_the_other_rules_running_issue127() {
+    let h = harness("rules-toggle-neighbours");
+    publish_document(&h, 1, NEIGHBOURS_DOC, 0);
+    assert!(recv_signal(&h, 1).error.is_none());
+    wait_revision(&h.store, 1);
+    run_rule(&h, 2, "долгий");
+    wait_cell(&h.cells.continuations_scheduled, 1, "the pending wait");
+    run_rule(&h, 3, "выключатель");
+    wait_cell(&h.cells.activations_total, 2, "the action that disables a rule");
+
+    publish(
+        &h,
+        4,
+        RuleEnableCommand {
+            name: dali2rust_contracts::msg::fixed_text_64("сосед"),
+            enabled: false,
+        },
+    );
+    recv_changed(&h, 2);
+    run_rule(&h, 5, "цель");
+
+    wait_cell(&h.cells.suppressed_disabled, 1, "the bit an action set");
+    assert_eq!(
+        h.cells.continuations_dropped.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a PATCH of one rule cancelled another rule's pending wait"
+    );
+}
+
+struct VanishingGroup {
+    inner: StubResolver,
+    gone: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl dali2rust_rules_model::NameResolver for VanishingGroup {
+    fn primary_adapter(&self) -> u8 {
+        self.inner.primary_adapter()
+    }
+    fn adapter_exists(&self, adapter_id: u8) -> bool {
+        self.inner.adapter_exists(adapter_id)
+    }
+    fn resolve_lamp(&self, name: &str) -> Option<dali2rust_rules_model::LampRef> {
+        self.inner.resolve_lamp(name)
+    }
+    fn resolve_group(&self, name: &str) -> Option<dali2rust_rules_model::GroupRef> {
+        if self.gone.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        Some(dali2rust_rules_model::GroupRef { adapter_id: 0, id: LIT_GROUP_ID }).filter(|_| name == "коридор")
+    }
+    fn resolve_device(&self, name: &str) -> Option<dali2rust_rules_model::DeviceRef> {
+        self.inner.resolve_device(name)
+    }
+    fn resolve_input_device(&self, name: &str) -> Option<dali2rust_rules_model::InputDeviceRef> {
+        self.inner.resolve_input_device(name)
+    }
+    fn resolve_scene(&self, name: &str) -> Option<u8> {
+        self.inner.resolve_scene(name)
+    }
+}
+
+const NAMED_GROUP_DOC: &str = "rule \"свет\" { when http trigger do group(\"коридор\").off() }\n\
+rule \"лог\" { when http trigger do log(\"x\") }\n";
+
+fn names_moved(h: &Harness) {
+    publish_bus_event(
+        h,
+        dali2rust_contracts::CORRELATION_NONE,
+        dali2rust_contracts::msg::VirtualLampChangedEvent { adapter_id: 0, virtual_lamp_id: 0 },
+    );
+}
+
+fn enabled_bit(h: &Harness, name: &str) -> Option<bool> {
+    h.store.document().compiled.as_ref().and_then(|s| s.rule(name)).map(|r| r.enabled)
+}
+
+#[test]
+fn a_disabled_rule_stays_disabled_across_a_document_that_stopped_compiling_issue162() {
+    let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let world = EmptyWorld {
+        started: std::time::Instant::now(),
+        lamps: Vec::new(),
+        active: true,
+        lit_group: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        overridden: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+    let resolver = VanishingGroup { inner: StubResolver::permissive(), gone: Arc::clone(&gone) };
+    let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-vanishing-name"));
+    let h = harness_spawn(slices, world, Arc::new(resolver));
+    publish_document(&h, 1, NAMED_GROUP_DOC, 0);
+    assert!(recv_signal(&h, 1).error.is_none());
+    wait_revision(&h.store, 1);
+    publish(
+        &h,
+        2,
+        RuleEnableCommand { name: dali2rust_contracts::msg::fixed_text_64("лог"), enabled: false },
+    );
+    recv_changed(&h, 2);
+
+    gone.store(true, std::sync::atomic::Ordering::Relaxed);
+    names_moved(&h);
+    wait_revision(&h.store, 3);
+    assert!(h.store.document().compiled.is_none(), "the name vanished, the document must not compile");
+
+    gone.store(false, std::sync::atomic::Ordering::Relaxed);
+    names_moved(&h);
+    wait_revision(&h.store, 4);
+    assert_eq!(enabled_bit(&h, "свет"), Some(true));
+    assert_eq!(
+        enabled_bit(&h, "лог"),
+        Some(false),
+        "the operator's toggle was lost while the document did not compile"
+    );
+}
+
+#[test]
+fn a_wet_run_is_reported_per_rule_and_a_dry_run_is_not_issue100() {
+    let h = harness("rules-runtime-block");
+    publish_document(&h, 1, NEIGHBOURS_DOC, 0);
+    assert!(recv_signal(&h, 1).error.is_none());
+    wait_revision(&h.store, 1);
+    run_rule(&h, 2, "сосед");
+    assert!(recv_signal(&h, 2).error.is_none());
+    publish(
+        &h,
+        3,
+        dali2rust_contracts::msg::RuleRunCommand {
+            name: dali2rust_contracts::msg::fixed_text_64("цель"),
+            dry: true,
+        },
+    );
+    assert!(recv_signal(&h, 3).error.is_none());
+
+    let runtime = h.store.rule_runtime();
+    let fired = runtime.iter().find(|r| r.name == "сосед").expect("the wet run is reported");
+    assert_eq!(fired.fire_count, 1);
+    assert_eq!(fired.last_outcome, dali2rust_rules_runtime::RuleOutcome::Ok);
+    assert_eq!(fired.last_fired_at_ms, FIXED_UNIX_MS);
+    assert!(
+        runtime.iter().all(|r| r.name != "цель"),
+        "a dry run is a preview, not a firing: {runtime:?}"
     );
 }

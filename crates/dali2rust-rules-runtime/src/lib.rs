@@ -5,6 +5,7 @@ pub use runtime::engine::{
     GroupState, HclTargetKey, HclTargetState, InputEventKind, InputState, LampState, LightVerb,
     PartialReason, SunTimes, WallTime, WorldSnapshot,
 };
+pub use runtime::rule_runtime::{RuleOutcome, RuleRuntime};
 pub use runtime::store::{RulesDocument, RulesStore};
 pub use runtime::stats::RulesEngineCells;
 pub use runtime::world_port::RulesWorldPort;

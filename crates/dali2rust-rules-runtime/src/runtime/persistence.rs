@@ -1,5 +1,6 @@
 use dali2rust_contracts::msg::MAX_RULES_SOURCE_BYTES;
 use dali2rust_platform::slice_store::SliceKey;
+use dali2rust_rules_model::RuleSet;
 use serde::{Deserialize, Serialize};
 
 pub const RULES_MANIFEST_VERSION: u32 = 1;
@@ -17,10 +18,38 @@ pub fn fnv1a32(bytes: &[u8]) -> u32 {
     hash
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuleManifestEntry {
     pub name_hash: u32,
     pub enabled: bool,
+}
+
+#[must_use]
+pub fn enable_table_of(set: &RuleSet) -> Vec<RuleManifestEntry> {
+    set.rules
+        .iter()
+        .map(|rule| RuleManifestEntry {
+            name_hash: fnv1a32(rule.name.as_bytes()),
+            enabled: rule.enabled,
+        })
+        .collect()
+}
+
+pub fn apply_enable_table(set: &mut RuleSet, table: &[RuleManifestEntry]) {
+    for rule in &mut set.rules {
+        let name_hash = fnv1a32(rule.name.as_bytes());
+        if let Some(entry) = table.iter().find(|e| e.name_hash == name_hash) {
+            rule.enabled = entry.enabled;
+        }
+    }
+}
+
+pub fn record_enabled(table: &mut Vec<RuleManifestEntry>, name: &str, enabled: bool) {
+    let name_hash = fnv1a32(name.as_bytes());
+    match table.iter_mut().find(|e| e.name_hash == name_hash) {
+        Some(entry) => entry.enabled = enabled,
+        None => table.push(RuleManifestEntry { name_hash, enabled }),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

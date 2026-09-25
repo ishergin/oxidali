@@ -4,6 +4,7 @@ use crate::runtime::engine::{
 
 pub trait RulesWorldPort: Send + Sync {
     fn now_ms(&self) -> u64;
+    fn unix_ms(&self) -> u64;
     fn wall(&self) -> Option<WallTime>;
     fn sun(&self) -> Option<SunTimes>;
     fn controller_active(&self) -> bool;

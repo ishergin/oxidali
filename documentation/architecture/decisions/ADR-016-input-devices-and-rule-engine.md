@@ -106,7 +106,8 @@ so any stored copy can lie; they are shown with their read time and re-read on d
 - **An action failure does not abandon the activation.** The remaining actions run, and
   the activation reports `partial`. What fired is published per activation on the
   WebSocket `rules` channel (`RulesActivationEvent`); aggregates are on
-  `/api/v1/stats`. There is no persisted per-rule tally.
+  `/api/v1/stats`. Each rule's count and last outcome live in RAM and are served with
+  its REST projection; there is no persisted per-rule tally.
 - **Engine state is volatile.** Variables and timers live in RAM; a persistent variable
   would rewrite flash on every assignment. The `controller_starts` and
   `controller_becomes_active` triggers rebuild modes, so a standby's takeover is the same

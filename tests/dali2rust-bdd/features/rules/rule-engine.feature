@@ -87,3 +87,18 @@ Feature: The rules engine: a frame becomes light, honestly reported
     And MQTT should have exactly 2 publishes on "dali/ctl1/a0/group/7/state"
     And the MQTT payload on "dali/ctl1/a0/group/7/state" should have string field "state" = "ON"
     And within 3 seconds the stats pointer "/rules/activations_total" reaches 1
+
+  @id:RULE-026
+  Scenario: The rule projection reports each rule's last firing
+    When I PUT JSON {"base_revision":0,"source":"rule \"night\" {\n  when at 23:00\n  do broadcast.off()\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I send a GET request to "/api/v1/rules?format=json"
+    Then the JSON pointer "/rules/rules/0/runtime/fire_count" should be 0
+    When I POST JSON {} to "/api/v1/rules/night/run"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I send a GET request to "/api/v1/rules?format=json"
+    Then the JSON pointer "/rules/rules/0/runtime/fire_count" should be 1
+    And the JSON pointer "/rules/rules/0/runtime/last_outcome" should be "ok"
+    And the JSON pointer "/rules/rules/0/runtime/last_fired_at_ms" should be greater than 0

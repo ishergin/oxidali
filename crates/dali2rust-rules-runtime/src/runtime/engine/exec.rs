@@ -703,19 +703,29 @@ fn set_rule_bit(env: &mut ExecEnv<'_>, job: &Job, rule: &str, value: bool) -> Re
     if job.dry {
         return Ok(());
     }
-    if let Some(bit) = env.enabled.get_mut(idx) {
+    flip_rule_bit(env.enabled, env.vol, env.counters, idx, rule, value);
+    Ok(())
+}
+
+pub(crate) fn flip_rule_bit(
+    enabled: &mut [bool],
+    vol: &mut Volatile,
+    counters: &mut EngineCounters,
+    idx: usize,
+    rule: &str,
+    value: bool,
+) {
+    if let Some(bit) = enabled.get_mut(idx) {
         *bit = value;
     }
     if !value {
-        let before = env.vol.continuations.len();
-        env.vol.continuations.retain(|c| c.rule != rule);
-        let dropped = before - env.vol.continuations.len();
-        env.counters.continuations_dropped = env
-            .counters
+        let before = vol.continuations.len();
+        vol.continuations.retain(|c| c.rule != rule);
+        let dropped = before - vol.continuations.len();
+        counters.continuations_dropped = counters
             .continuations_dropped
             .saturating_add(dropped as u32);
     }
-    Ok(())
 }
 
 pub(crate) fn record_effect_chain(vol: &mut Volatile, effect: &Effect, depth: u32, now_ms: u64) {

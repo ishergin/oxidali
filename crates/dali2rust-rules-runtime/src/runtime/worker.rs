@@ -15,9 +15,10 @@ use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 use dali2rust_rules_model::{NameResolver, RuleCompiler};
 
 use super::persistence::{
-    fnv1a32, reassemble, text_banks, RuleManifestEntry, RulesManifest, RULES_MANIFEST_VERSION,
-    RULES_TEXT_BANKS,
+    apply_enable_table, enable_table_of, fnv1a32, reassemble, text_banks, RulesManifest,
+    RULES_MANIFEST_VERSION, RULES_TEXT_BANKS,
 };
+use super::rule_runtime::{classify, Firing};
 use super::store::{RulesDocument, RulesStore};
 
 pub const RULES_WORKER_REQUIRED_EVENTS: &[&str] = &["OperationWorkerSignalEvent"];
@@ -218,6 +219,7 @@ impl RulesWorker {
             source: text,
             lang_id: commit.lang_id,
             revision: self.store.revision().wrapping_add(1),
+            enable_table: enable_table_of(&compiled),
             compiled: Some(compiled),
             diagnostic: None,
         };
@@ -316,26 +318,11 @@ impl RulesWorker {
         let snapshot = self.snapshot(started);
         let outcomes = self.engine.handle(input, &snapshot);
         let mut failed_rules: Vec<usize> = Vec::new();
+        let corr = run_corr.unwrap_or(CORRELATION_NONE);
         for (index, outcome) in outcomes.iter().enumerate() {
-            let corr = run_corr.unwrap_or(CORRELATION_NONE);
-            let executor = crate::runtime::executor::EffectExecutor {
-                publisher: &self.publisher,
-                bus_id: self.bus_id,
-                world: self.world.as_ref(),
-                counters: &self.counters,
-            };
-            let report = if outcome.dry {
-                crate::runtime::executor::ExecutionReport::default()
-            } else {
-                executor.execute(&outcome.effects, &snapshot, corr)
-            };
-            if !outcome.dry && (report.failed > 0 || outcome.partial.is_some()) {
+            if self.execute_outcome(outcome, &snapshot, corr, started) {
                 failed_rules.push(index);
             }
-            let latency =
-                u16::try_from(self.world.now_ms().saturating_sub(started)).unwrap_or(u16::MAX);
-            self.latency.note(latency, &self.engine_cells);
-            self.publish_activation(outcome, report.executed, latency);
         }
         self.engine_cells.store(&self.engine.counters());
         if from_failure {
@@ -348,6 +335,36 @@ impl RulesWorker {
                 None,
             );
         }
+    }
+
+    fn execute_outcome(
+        &mut self,
+        outcome: &crate::runtime::engine::ActivationOutcome,
+        snapshot: &crate::runtime::engine::WorldSnapshot,
+        corr: u64,
+        started: u64,
+    ) -> bool {
+        let executor = crate::runtime::executor::EffectExecutor {
+            publisher: &self.publisher,
+            bus_id: self.bus_id,
+            world: self.world.as_ref(),
+            counters: &self.counters,
+        };
+        let report = if outcome.dry {
+            crate::runtime::executor::ExecutionReport::default()
+        } else {
+            executor.execute(&outcome.effects, snapshot, corr)
+        };
+        let latency = u16::try_from(self.world.now_ms().saturating_sub(started)).unwrap_or(u16::MAX);
+        self.latency.note(latency, &self.engine_cells);
+        self.publish_activation(outcome, report.executed, latency);
+        if outcome.dry {
+            return false;
+        }
+        let (result, error) = classify(outcome.partial, report.executed, report.failed);
+        let firing = Firing { at_ms: self.world.unix_ms(), latency_ms: latency, outcome: result, error };
+        self.store.record_firing(&outcome.rule, firing);
+        report.failed > 0 || outcome.partial.is_some()
     }
 
     fn snapshot(&self, now_ms: u64) -> crate::runtime::engine::WorldSnapshot {
@@ -397,17 +414,9 @@ impl RulesWorker {
         if doc.lang_id != self.compiler.lang_id() {
             return;
         }
-        let enabled: Vec<(String, bool)> = doc.compiled.as_ref().map_or_else(Vec::new, |set| {
-            set.rules.iter().map(|r| (r.name.to_string(), r.enabled)).collect()
-        });
         let next = match self.compiler.compile(&doc.source, self.resolver.as_ref()) {
             Ok(mut set) => {
-                for rule in &mut set.rules {
-                    if let Some((_, was)) = enabled.iter().find(|(name, _)| name == rule.name.as_str())
-                    {
-                        rule.enabled = *was;
-                    }
-                }
+                apply_enable_table(&mut set, &doc.enable_table);
                 Some(set)
             }
             Err(_) => None,
@@ -438,6 +447,7 @@ impl RulesWorker {
         self.hydrate();
         let doc = self.store.document();
         self.engine_revision = doc.revision;
+        self.store.retain_runtime(doc.compiled.as_ref());
         self.engine.set_rules(doc.compiled, self.world.now_ms());
         self.funnel.set_watch_groups(self.engine.watches_groups());
         self.engine_cells.store(&self.engine.counters());
@@ -449,18 +459,29 @@ impl RulesWorker {
             return;
         }
         self.engine_revision = doc.revision;
+        self.store.retain_runtime(doc.compiled.as_ref());
         self.engine.set_rules(doc.compiled, self.world.now_ms());
         self.funnel.set_watch_groups(self.engine.watches_groups());
         self.engine_cells.store(&self.engine.counters());
     }
 
     fn on_enable(&mut self, toggle: &RuleEnableCommand) {
-        if self.store.set_enabled(toggle.name.as_str(), toggle.enabled).is_some() {
-            self.counters.enable_toggles.fetch_add(1, Ordering::Relaxed);
-            self.persist(&self.store.document());
-            self.publish_changed();
-        } else {
+        let name = toggle.name.as_str();
+        let Some(revision) = self.store.set_enabled(name, toggle.enabled) else {
             self.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
+        self.counters.enable_toggles.fetch_add(1, Ordering::Relaxed);
+        self.persist(&self.store.document());
+        self.flip_engine_bit(name, toggle.enabled, revision);
+        self.publish_changed();
+    }
+
+    fn flip_engine_bit(&mut self, name: &str, enabled: bool, revision: u32) {
+        let in_step = self.engine_revision == revision.wrapping_sub(1);
+        if in_step && self.engine.set_rule_enabled(name, enabled) {
+            self.engine_revision = revision;
+            self.engine_cells.store(&self.engine.counters());
         }
     }
 
@@ -566,19 +587,7 @@ fn write_banks(slices: &dyn SliceStore, doc: &RulesDocument) -> Result<(), ()> {
         }
         write_one(slices, key, &bytes)?;
     }
-    let entries = doc
-        .compiled
-        .as_ref()
-        .map(|set| {
-            set.rules
-                .iter()
-                .map(|r| RuleManifestEntry {
-                    name_hash: fnv1a32(r.name.as_bytes()),
-                    enabled: r.enabled,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let entries = doc.enable_table.clone();
     let manifest = RulesManifest {
         version: RULES_MANIFEST_VERSION,
         lang_id: doc.lang_id,
@@ -624,21 +633,14 @@ fn load_document(
         Ok(set) => set,
         Err(e) => return Ok(Some(uncompiled_document(text, &manifest, &e))),
     };
-    for rule in &mut compiled.rules {
-        if let Some(entry) = manifest
-            .entries
-            .iter()
-            .find(|e| e.name_hash == fnv1a32(rule.name.as_bytes()))
-        {
-            rule.enabled = entry.enabled;
-        }
-    }
+    apply_enable_table(&mut compiled, &manifest.entries);
     Ok(Some(RulesDocument {
         source: text,
         lang_id: manifest.lang_id,
         revision: manifest.revision,
         compiled: Some(compiled),
         diagnostic: None,
+        enable_table: manifest.entries,
     }))
 }
 
@@ -653,6 +655,7 @@ fn uncompiled_document(
         revision: manifest.revision,
         compiled: None,
         diagnostic: Some(format!("rules_compile_failed: {error}")),
+        enable_table: manifest.entries.clone(),
     }
 }
 

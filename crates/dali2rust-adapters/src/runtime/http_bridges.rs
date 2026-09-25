@@ -80,6 +80,21 @@ impl dali2rust_api::http::rules_state::RulesHttpState for RulesHttpBridge {
     fn revision(&self) -> u32 {
         self.store.revision()
     }
+
+    fn rule_runtime(&self) -> Vec<dali2rust_api::http::rules_state::RuleRuntimeView> {
+        self.store
+            .rule_runtime()
+            .into_iter()
+            .map(|row| dali2rust_api::http::rules_state::RuleRuntimeView {
+                name: row.name,
+                fire_count: row.fire_count,
+                last_fired_at_ms: row.last_fired_at_ms,
+                last_latency_ms: row.last_latency_ms,
+                last_outcome: row.last_outcome.as_str(),
+                last_error: row.last_error,
+            })
+            .collect()
+    }
 }
 
 pub(crate) struct RegistryHttpPorts {
@@ -1171,6 +1186,10 @@ impl RulesWorldBridge {
 impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
     fn now_ms(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    fn unix_ms(&self) -> u64 {
+        dali2rust_platform::clock::UnixTimeMs::unix_millis(&dali2rust_bsp::unix_clock::StdUnixTimeMs)
     }
 
     fn wall(&self) -> Option<dali2rust_rules_runtime::runtime::engine::WallTime> {
