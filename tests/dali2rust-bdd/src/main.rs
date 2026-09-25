@@ -152,7 +152,7 @@ impl DaliWorld {
             client.close();
         }
         self.ws_clients.clear();
-        self.mock_unblock_flag.store(false, Ordering::Release);
+        self.release_held_send();
         self.stop.store(true, Ordering::SeqCst);
         if let Some(h) = self.server_thread.take() {
             let _ = h.join();
@@ -309,6 +309,10 @@ impl DaliWorld {
         &self.dali_mock
     }
 
+    pub fn release_held_send(&self) {
+        self.mock_unblock_flag.store(false, Ordering::Release);
+    }
+
     pub fn mqtt_mock(&self) -> &Arc<dali2rust_mqtt_runtime::MockMqttClient> {
         &self.mqtt_mock
     }
@@ -324,7 +328,7 @@ impl Drop for DaliWorld {
             client.close();
         }
         self.ws_clients.clear();
-        self.mock_unblock_flag.store(false, Ordering::Release);
+        self.release_held_send();
         self.stop.store(true, Ordering::SeqCst);
         if let Some(h) = self.server_thread.take() {
             let _ = h.join();
