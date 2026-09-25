@@ -104,17 +104,9 @@ fn refuse(
     reason: RegisterRejected,
 ) {
     log::info!("ws: refused upgrade on fd {fd}: {reason:?}");
-    let _ = conn.send(FrameType::Close, close_payload(reason));
+    let payload = dali2rust_ws_runtime::close_code(reason).to_be_bytes();
+    let _ = conn.send(FrameType::Close, &payload);
     close_socket(server, fd);
-}
-
-const CLOSE_TRY_AGAIN_LATER: [u8; 2] = 1013u16.to_be_bytes();
-
-fn close_payload(reason: RegisterRejected) -> &'static [u8] {
-    match reason {
-        RegisterRejected::CapacityExhausted => &CLOSE_TRY_AGAIN_LATER,
-        RegisterRejected::OriginRejected => &[],
-    }
 }
 
 fn refuse_reason(conn: &EspHttpWsConnection) -> Option<RegisterRejected> {

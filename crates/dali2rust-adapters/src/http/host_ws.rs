@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use dali2rust_ws_runtime::{ClientId, RegisterRejected, WsHub, WsSink, WsSinkError};
 use tungstenite::handshake::derive_accept_key;
-use tungstenite::protocol::{Message, Role, WebSocket};
+use tungstenite::protocol::frame::coding::CloseCode;
+use tungstenite::protocol::{CloseFrame, Message, Role, WebSocket};
 
 pub const WS_PATH: &str = "/api/v1/ws";
 
@@ -160,10 +161,6 @@ fn serve_connection(hub: &Arc<WsHub>, mut stream: TcpStream, inner_port: u16) {
 }
 
 fn accept_handshake(stream: &mut TcpStream, head: &RequestHead) -> bool {
-    if !head.origin_allowed() {
-        let _ = stream.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
-        return false;
-    }
     let Some(key) = head.header("Sec-WebSocket-Key") else {
         let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
         return false;
@@ -201,6 +198,10 @@ fn upgrade(hub: &Arc<WsHub>, mut stream: TcpStream, head: &RequestHead) {
         socket: Arc::clone(&writer),
         closed: Arc::clone(&closed),
     };
+    if !head.origin_allowed() {
+        reject(&writer, RegisterRejected::OriginRejected);
+        return;
+    }
     match hub.register(Box::new(sink)) {
         Ok(id) => read_loop(Arc::clone(hub), id, reader, writer, closed),
         Err(reason) => reject(&writer, reason),
@@ -212,7 +213,10 @@ fn reject(writer: &WriteHalf, reason: RegisterRejected) {
         return;
     };
     let _ = socket.send(Message::Text(WsHub::rejection_frame(reason)));
-    let _ = socket.close(None);
+    let _ = socket.close(Some(CloseFrame {
+        code: CloseCode::from(dali2rust_ws_runtime::close_code(reason)),
+        reason: "".into(),
+    }));
     let _ = socket.flush();
 }
 

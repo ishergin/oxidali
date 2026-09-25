@@ -1,6 +1,6 @@
 import { signal } from '@preact/signals'
 
-import { CLOSE_TRY_AGAIN_LATER, nextReconnectDelay } from './ws-backoff'
+import { closeVerdict, nextReconnectDelay } from './ws-backoff'
 
 export type WsChannel =
   | 'adapters'
@@ -30,10 +30,10 @@ export const connectionReason = signal<string>('connecting…')
 
 const DOWN_AFTER_MS = 60_000
 
-const TERMINAL_ERROR_REASONS: Record<string, string> = {
-  ws_origin_rejected:
-    'refused: this page was not served by the controller, so the push channel is closed to it — screens poll instead',
-}
+const ORIGIN_REFUSED_REASON =
+  'refused: this page was not served by the controller, so the push channel is closed to it — screens poll instead'
+
+const BUSY_REASON = 'controller busy — too many open tabs; polling'
 
 type Listener = (event: WsEvent) => void
 
@@ -43,7 +43,6 @@ const wanted = new Map<WsChannel, number>()
 let socket: WebSocket | null = null
 let attempt = 0
 let refusedForCapacity = false
-let capacityThisSocket = false
 let downSince: number | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let greeted = false
@@ -113,17 +112,6 @@ function onServerFrame(raw: string) {
 
 function handleErrorFrame(frame: Record<string, unknown>) {
   const error = frame.error as { code?: string; message?: string } | undefined
-  const code = error?.code ?? ''
-  if (code === 'ws_clients_exhausted') {
-    capacityThisSocket = true
-    setState('reconnecting', 'controller busy — too many open tabs; polling')
-    return
-  }
-  const terminal = TERMINAL_ERROR_REASONS[code]
-  if (terminal) {
-    refuse(terminal)
-    return
-  }
   console.warn('ws error frame', error)
 }
 
@@ -178,15 +166,17 @@ export function connect() {
     return
   }
   socket = next
-  capacityThisSocket = false
   next.onmessage = (ev) => onServerFrame(String(ev.data))
   next.onclose = (ev) => {
     if (socket === next) socket = null
     greeted = false
-    refusedForCapacity = capacityThisSocket || ev.code === CLOSE_TRY_AGAIN_LATER
-    if (ev.code === CLOSE_TRY_AGAIN_LATER) {
-      setState('reconnecting', 'controller busy — too many open tabs; polling')
+    const verdict = closeVerdict(ev.code)
+    if (verdict === 'refused') {
+      refuse(ORIGIN_REFUSED_REASON)
+      return
     }
+    refusedForCapacity = verdict === 'busy'
+    if (verdict === 'busy') setState('reconnecting', BUSY_REASON)
     scheduleReconnect()
   }
   next.onerror = () => next.close()

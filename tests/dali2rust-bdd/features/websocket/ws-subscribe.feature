@@ -107,6 +107,11 @@ Feature: WebSocket subscribe and event envelope
     And the WebSocket error code should be "ws_clients_exhausted"
     And the diagnostics websocket counter "upgrades_rejected_total" should be at least 1
 
+  @id:WS-058
+  Scenario: An upgrade from a page the controller did not serve is refused by its CLOSE code
+    When I open a WebSocket connection with Origin "http://evil.example"
+    Then the WebSocket connection should be closed with code 1008
+
   @id:WS-012
   Scenario: A client ping is answered with a pong
     When I open a WebSocket connection

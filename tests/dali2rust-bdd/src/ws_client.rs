@@ -13,6 +13,7 @@ pub struct WsTestClient {
     pending: Vec<Value>,
     reading: bool,
     closed: bool,
+    close_code: Option<u16>,
     pongs: u32,
 }
 
@@ -28,13 +29,26 @@ impl std::fmt::Debug for WsTestClient {
 
 impl WsTestClient {
     pub fn connect(port: u16) -> Self {
+        Self::connect_as(port, None)
+    }
+
+    pub fn connect_with_origin(port: u16, origin: &str) -> Self {
+        Self::connect_as(port, Some(origin))
+    }
+
+    fn connect_as(port: u16, origin: Option<&str>) -> Self {
         let stream = TcpStream::connect(("127.0.0.1", port)).expect("ws tcp connect");
         stream
             .set_read_timeout(Some(READ_TIMEOUT))
             .expect("ws read timeout");
-        let request = format!("ws://127.0.0.1:{port}/api/v1/ws")
+        let mut request = format!("ws://127.0.0.1:{port}/api/v1/ws")
             .into_client_request()
             .expect("ws request");
+        if let Some(origin) = origin {
+            request
+                .headers_mut()
+                .insert("Origin", origin.parse().expect("origin header"));
+        }
         let (socket, _response) =
             tungstenite::client::client(request, stream).expect("ws handshake");
         Self {
@@ -42,8 +56,18 @@ impl WsTestClient {
             pending: Vec::new(),
             reading: true,
             closed: false,
+            close_code: None,
             pongs: 0,
         }
+    }
+
+    pub fn wait_for_close_code(&mut self) -> Option<u16> {
+        self.require_observing("wait_for_close_code");
+        let deadline = Instant::now() + FRAME_TIMEOUT;
+        while !self.closed && Instant::now() < deadline {
+            self.drain();
+        }
+        self.close_code
     }
 
     pub fn stop_reading(&mut self) {
@@ -119,6 +143,11 @@ impl WsTestClient {
                     }
                 }
                 Ok(Message::Pong(_)) => self.pongs += 1,
+                Ok(Message::Close(frame)) => {
+                    self.close_code = frame.map(|f| u16::from(f.code));
+                    self.closed = true;
+                    return;
+                }
                 Ok(_) => {}
                 Err(err) => {
                     if !is_idle_timeout(&err) {

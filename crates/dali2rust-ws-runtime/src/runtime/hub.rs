@@ -31,6 +31,18 @@ pub enum RegisterRejected {
     OriginRejected,
 }
 
+pub const CLOSE_POLICY_VIOLATION: u16 = 1008;
+
+pub const CLOSE_TRY_AGAIN_LATER: u16 = 1013;
+
+// RFC 6455 §7.4.1
+pub const fn close_code(reason: RegisterRejected) -> u16 {
+    match reason {
+        RegisterRejected::CapacityExhausted => CLOSE_TRY_AGAIN_LATER,
+        RegisterRejected::OriginRejected => CLOSE_POLICY_VIOLATION,
+    }
+}
+
 pub fn origin_allowed(origin: Option<&str>, host: Option<&str>) -> bool {
     let Some(origin) = origin else {
         return true;
@@ -1000,6 +1012,12 @@ mod tests {
             Some("dali.local")
         ));
         assert!(!origin_allowed(Some("dali.local"), Some("dali.local")));
+    }
+
+    #[test]
+    fn each_refusal_closes_with_its_own_code() {
+        assert_eq!(close_code(RegisterRejected::CapacityExhausted), 1013);
+        assert_eq!(close_code(RegisterRejected::OriginRejected), 1008);
     }
 
     #[test]

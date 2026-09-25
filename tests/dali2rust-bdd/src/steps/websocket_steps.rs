@@ -202,6 +202,20 @@ async fn then_ack_channels(world: &mut DaliWorld, expected: String) {
     assert_eq!(got, want, "frame was {frame}");
 }
 
+// WS-058
+#[when(regex = r#"^I open a WebSocket connection with Origin "([^"]+)"$"#)]
+async fn when_open_with_origin(world: &mut DaliWorld, origin: String) {
+    let client = WsTestClient::connect_with_origin(world.server_port(), &origin);
+    world.ws_clients.push(client);
+}
+
+// WS-058
+#[then(regex = r"^the WebSocket connection should be closed with code (\d+)$")]
+async fn then_closed_with_code(world: &mut DaliWorld, code: u16) {
+    let got = last_client(world).wait_for_close_code();
+    assert_eq!(got, Some(code), "the refusal must name itself in the CLOSE frame");
+}
+
 // WS-008 WS-011
 #[then(regex = r#"^the WebSocket error code should be "([^"]+)"$"#)]
 async fn then_error_code(world: &mut DaliWorld, code: String) {
