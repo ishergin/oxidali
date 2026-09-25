@@ -159,3 +159,34 @@ def test_a_stale_image_on_the_die_still_fails(tmp_path, capsys):
 
     assert rc == 1
     assert "0.1.990+8e2e8a2f" in capsys.readouterr().err
+
+
+class _Ran:
+    def __init__(self, returncode):
+        self.returncode = returncode
+
+
+def _mirror(monkeypatch, returncode, seen):
+    def fake_run(cmd, cwd=None, **kwargs):
+        seen.append(cmd)
+        return _Ran(returncode)
+    monkeypatch.setattr(flash.subprocess, "run", fake_run)
+
+
+def test_a_stale_ui_bundle_refuses_the_build(tmp_path, monkeypatch, capsys):
+    seen, built = [], []
+    _mirror(monkeypatch, 1, seen)
+    monkeypatch.setattr(flash, "build", lambda *a, **k: built.append(1) or 0)
+    assert flash.run(_cfg(tmp_path, P4, pinned=True), build_only=True) == 1
+    assert seen == [["bash", flash.UI_MIRROR_SCRIPT]]
+    assert built == []
+    assert "build_web_ui.sh" in capsys.readouterr().err
+
+
+def test_allow_stale_ui_builds_with_the_previous_bundle(tmp_path, monkeypatch):
+    seen, built = [], []
+    _mirror(monkeypatch, 1, seen)
+    monkeypatch.setattr(flash, "build", lambda *a, **k: built.append(1) or 0)
+    cfg = _cfg(tmp_path, P4, pinned=True)
+    assert flash.run(cfg, build_only=True, allow_stale_ui=True) == 0
+    assert built == [1]

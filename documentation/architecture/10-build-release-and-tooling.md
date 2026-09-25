@@ -141,8 +141,11 @@ larger than a slot. Changing the table takes a wired flash.
 ## Embedded web UI
 
 - The UI ships in flash: `bash scripts/build_web_ui.sh` builds and gzips `web/app` into
-  `crates/dali2rust-firmware/assets/web/` (committed, so `cargo fw` needs no Node); commit
-  and reflash. The product-name table (`dali-products.json`) ships empty; a gitignored
+  `crates/dali2rust-firmware/assets/web/` (committed, so `cargo fw` needs no Node). A pull
+  request carries sources only; the maintainer rebuilds the bundle when syncing a release.
+  `scripts/verify_web_mirror_fresh.sh` compares it with `web/app`: `hil flash` refuses a
+  stale bundle (`--allow-stale-ui` builds with the previous one), and `just
+  verify-release` and an advisory CI job on `main` report it. The product-name table (`dali-products.json`) ships empty; a gitignored
   `crates/dali2rust-firmware/assets/local/dali-products.json.gz` replaces it in the image
   when present. A new bundle file needs a row in the firmware's `src/web_assets.rs` (or it
   is a silent 404), in `MANIFEST_FILES` of `build_web_ui.sh` and in the host dev server's
@@ -152,14 +155,16 @@ larger than a slot. Changing the table takes a wired flash.
   bundle's only freshness mechanism.
 - Every bundle file is stored gzipped and always served as stored, with
   `Content-Encoding: gzip`, whatever the request's `Accept-Encoding`.
-- `build_web_ui.sh` and `verify_web_assets.sh` fingerprint the same `web/app` source set
+- `build_web_ui.sh` and `verify_web_mirror_fresh.sh` fingerprint the same `web/app` source set
   (sources, `public/`, the entry HTML, the lockfile, the TypeScript and Vite configs);
   changing one list without the other breaks the mirror-freshness gate.
 - Every screen and component has a card in `web/design-system/`, written in the same
-  change as the UI, with the shared `:root` block spliced from an existing card. The
+  change as the UI, with the shared `:root` block spliced from an existing card. A change
+  to screens, components or `app.css` that leaves the look as it was carries the commit
+  trailer `UI-Design: unchanged` instead. The
   design language the cards and the app share is in
   [`web-ui/README.md`](../product-design/web-ui/README.md).
-- Cards are pushed to the Claude Design project "dali2rust Web UI"
+- The maintainer pushes the cards, when syncing, to the Claude Design project "dali2rust Web UI"
   (`0f3fcd66-9619-445b-b9bc-51bc578eefd9`) with `DesignSync`: `list_files` / `get_file`
   first (the owner edits there; never replace the project), `finalize_plan` (`deletes:
   []`), `write_files` with `localDir = web/design-system`, then
@@ -191,10 +196,10 @@ files only go down; the bench's own budgets are in the
 | `verify_runtime_boundaries.sh` | no `#[path]` in runtime crates; fixed composition file set |
 | `verify_fixed_bus_guardrails.sh` | no `String`/`Vec`/JSON in bus messages or registry state |
 | `verify_comments.py` | no comment outside the one-line markers; budget `scripts/comment_budget.txt` |
-| `verify_web_assets.sh` | manifest, mirror freshness, `?v=` stamps, `tsc -b`, UI tests |
+| `verify_web_assets.sh` | every embedded file present, `tsc -b`, UI tests |
 | `verify_web_classes_styled.py` | every `web/app` class has a CSS rule |
 | `verify_design_vocabulary.py` | one `:root` per card; `web/app` speaks card vocabulary |
-| `verify_ui_follows_design.sh` (+ `verify_design_system_pushed.sh`) | no visual UI change while pushed cards are stale |
+| `verify_ui_follows_design.sh` | a visual `web/app` change since `origin/main` changes a card, or declares `UI-Design: unchanged` |
 | `verify_fn_length.sh`, `verify_fn_length_esp.py` | no function over 40 lines, host and ESP-only code |
 | `verify_counter_surface.py` | counter names agree across spellings ([04](04-contracts-and-api-bridge.md)) |
 | `verify_read_surface.py` | every read-payload block reaches a screen |

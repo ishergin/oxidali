@@ -30,6 +30,8 @@ BOARD_ENV_KEYS = ("MCU", "ESP_IDF_SDKCONFIG_DEFAULTS")
 
 ISR_IRAM_SCRIPT = "scripts/verify_dali_isr_iram.py"
 
+UI_MIRROR_SCRIPT = "scripts/verify_web_mirror_fresh.sh"
+
 
 class BoardError(RuntimeError):
     pass
@@ -248,7 +250,28 @@ def serial_port_for_flash(cfg):
     return port
 
 
-def run(cfg, build_only=False, allow_nonbench=False, allow_red_isr=False):
+def check_ui_mirror(cfg, allow_stale=False):
+    rc = subprocess.run(["bash", UI_MIRROR_SCRIPT], cwd=repo_root(cfg)).returncode
+    if rc == 0:
+        return 0
+    if allow_stale:
+        print("ui-mirror: building with the previous UI bundle (--allow-stale-ui)",
+              file=sys.stderr)
+        return 0
+    print(
+        "\nRefusing to build: the embedded web UI is older than web/app, so the\n"
+        "image would carry the previous UI. Run `bash scripts/build_web_ui.sh` and\n"
+        "land the rebuilt bundle through a pull request first. Pass --allow-stale-ui\n"
+        "to build with the previous UI deliberately.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def run(cfg, build_only=False, allow_nonbench=False, allow_red_isr=False,
+        allow_stale_ui=False):
+    if check_ui_mirror(cfg, allow_stale=allow_stale_ui) != 0:
+        return 1
     spec = board_spec(cfg)
     serial_port = None
     if not build_only:

@@ -54,6 +54,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: ./.github/actions/esp-toolchain
 
@@ -101,6 +103,21 @@ jobs:
 
       - name: cargo check on the P4 triple
         run: just esp-check
+
+  release-sync-advisory:
+    name: release sync (advisory)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: The embedded UI bundle matches web/app
+        continue-on-error: true
+        run: bash scripts/verify_web_mirror_fresh.sh
+
+      - name: The design cards are pushed to Claude Design
+        continue-on-error: true
+        run: bash scripts/verify_design_system_pushed.sh
 
   clippy-pedantic-advisory:
     name: clippy pedantic (advisory)

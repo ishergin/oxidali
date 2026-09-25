@@ -96,6 +96,11 @@ verify:
 
 ci: clippy test bdd verify esp-check gear-sim-check
 
+[doc("Maintainer sync state: the embedded UI bundle and the pushed design cards.")]
+verify-release:
+    bash scripts/verify_web_mirror_fresh.sh
+    bash scripts/verify_design_system_pushed.sh
+
 contracts-check:
     bash scripts/verify_contracts_codegen.sh
 
