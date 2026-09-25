@@ -13,6 +13,7 @@ from hil import pair
 from hil import config as config_mod
 from hil import remote_serial as remote_serial_mod
 from hil import serialmon as serialmon_mod
+from hil import tiers
 from hil import validity
 from hil.artifacts import Artifacts
 from hil.seriallog import SerialLog
@@ -1183,7 +1184,18 @@ def pytest_runtest_setup(item):
     api_mod.Client.context = item.nodeid
 
 
+def _reboot_lint(items):
+    violations = [tiers.reboot_violation(
+        item.nodeid, item.fixturenames, {m.name for m in item.iter_markers()},
+        tiers.reach_sources(item.function) if hasattr(item, "function") else [])
+        for item in items]
+    violations = [v for v in violations if v]
+    if violations:
+        raise pytest.UsageError("\n".join(violations))
+
+
 def pytest_collection_modifyitems(config, items):
+    _reboot_lint(items)
     cfg = config_mod.load()
     dut_serial_port, _ = serialmon_mod.effective_port(cfg)
     if "://" in dut_serial_port:

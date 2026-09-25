@@ -214,7 +214,10 @@ hil-slow` wrap the cwd.
 
 - The default run excludes `destructive` and `slow`. An explicit `-m` **replaces**
   that filter (pytest keeps the last `-m`), so the destructive tier is also gated by
-  `HIL_ALLOW_DESTRUCTIVE=1`: without it those tests skip whatever `-m` says.
+  `HIL_ALLOW_DESTRUCTIVE=1`: without it those tests skip whatever `-m` says. Every
+  test that reboots or halts a controller is `destructive`: collection refuses one
+  that requests `dut_reboot` or calls `remote_serial.control` (itself or through a
+  helper in its module) without the marker.
 - The tiers, their order and what each is for: STRATEGY §5. Add
   `--junitxml=runs/current/junit.xml --html=runs/current/report.html` for reports.
 - `hil preflight` judges the serial channel by the log growing after a health request
@@ -369,8 +372,9 @@ one costs a go-ahead.
   refuses a drive outside `HIL_LAMP_SHORTS`, and a group or broadcast action unless
   the whole segment is allowed; a gear-wide command such as `REMOVE FROM SCENE` is
   sent per lamp.
-- **Reboots.** A test or fixture that reboots a controller (reset, flash, OTA, power
-  cut, bootloader request) does so inside `Client.expect_reboot()`: only there are the
+- **Reboots.** A test that reboots a controller carries `destructive`. A test or
+  fixture that reboots one (reset, flash, OTA, power cut, bootloader request) does
+  so inside `Client.expect_reboot()`: only there are the
   failed requests that follow booked as `http_reboot_race` and every client's pooled
   connections dropped; outside it they spend the gated `http_transport` budget.
 - **`202` routes** return before their first frame is sent: wait for the operation

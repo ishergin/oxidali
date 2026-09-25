@@ -343,6 +343,7 @@ def test_a_scheme_2_event_is_retyped_by_the_registry(
 
 @pytest.mark.hil_id("HIL-INP-09")
 @pytest.mark.sniffer
+@pytest.mark.destructive
 def test_commissioning_opens_and_closes_its_session(
         api, panel, sniffer, op_check, test_artifacts):
     with sniffer.window() as win:

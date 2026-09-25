@@ -157,6 +157,7 @@ def test_live_disable_stops_reads_without_restarting_the_worker(
 
 
 @pytest.mark.hil_id("HIL-POL-07")
+@pytest.mark.destructive
 def test_poller_settings_survive_reboot(api, poller_guard, dut_reboot,
                                         test_artifacts):
     poller_guard(enabled=False, interval_ms=45000,
@@ -175,6 +176,7 @@ def test_poller_settings_survive_reboot(api, poller_guard, dut_reboot,
 
 
 @pytest.mark.hil_id("HIL-POL-08")
+@pytest.mark.destructive
 def test_classification_survives_reboot_and_polling_does_not_revoke_it(
         api, poller_guard, poller_counters, dut_reboot, test_artifacts):
     short = _bound_short(api)

@@ -212,6 +212,7 @@ def test_losing_the_peer_link_moves_no_role(api, peer_api, pair_roles, hil_confi
 
 @pytest.mark.hil_id("HIL-RED-05")
 @pytest.mark.serial
+@pytest.mark.destructive
 def test_a_silent_primary_hands_the_bus_over_and_takes_it_back(
         api, peer_api, hil_config, pair_roles, state_snapshot, dut_reboot, test_artifacts):
     if not remote_serial.enabled(hil_config):
