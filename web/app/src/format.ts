@@ -479,22 +479,25 @@ export function timestamp(): string {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`
 }
 
-export const rgbwafControlType = (b: number): string => {
-  switch (b & 0xc0) {
-    case 0x00:
-      return 'channel control'
-    case 0x40:
-      return 'colour control'
-    case 0x80:
-      return 'normalised colour'
-    default:
-      return 'reserved (vendor)'
-  }
+const RGBWAF_CONTROL_TYPE_MASK = 0xc0
+const RGBWAF_CONTROL_209_CHANNEL = 0x00
+const RGBWAF_CONTROL_209_COLOUR = 0x40
+const RGBWAF_CONTROL_NORMALISED = 0x80
+const RGBWAF_CONTROL_EXTENDED = 0xc0
+const RGBWAF_CONTROL_TYPE_LABELS: Record<number, string> = {
+  [RGBWAF_CONTROL_209_CHANNEL]: 'reserved (209:2011 channel control)',
+  [RGBWAF_CONTROL_209_COLOUR]: 'reserved (209:2011 colour control)',
+  [RGBWAF_CONTROL_NORMALISED]: 'normalised colour control',
+  [RGBWAF_CONTROL_EXTENDED]: 'extended colour control',
 }
+
+export const rgbwafControlType = (b: number): string =>
+  RGBWAF_CONTROL_TYPE_LABELS[b & RGBWAF_CONTROL_TYPE_MASK]
 
 export const rgbwafDrives = (b: number): boolean => (b & 0x3f) === 0
 
-export const rgbwafIsTarget = (b: number): boolean => (b & 0xc0) === 0x80 && rgbwafDrives(b)
+export const rgbwafIsTarget = (b: number): boolean =>
+  (b & RGBWAF_CONTROL_TYPE_MASK) === RGBWAF_CONTROL_NORMALISED && rgbwafDrives(b)
 
 const RGBWAF_CHANNELS = ['R', 'G', 'B', 'W', 'A', 'F']
 

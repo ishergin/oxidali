@@ -1200,8 +1200,9 @@ export function DeviceDetail({ short, tab: rawTab }: { short: number; tab?: stri
             )}
             {rgbwafLinked === 0 && !rgbwafIsTarget(rgbwafControl) && (
               <div class="comm-hint">
-                Colour works here: the levels are unlinked and only the arc-level scaling is
-                the vendor's own. Clear the box to leave such a fixture alone.
+                Colour works here: the levels are unlinked. While the box is ticked, the next
+                colour write switches the gear to normalised colour control; clear it to keep
+                the gear's own control type.
               </div>
             )}
           </Card>

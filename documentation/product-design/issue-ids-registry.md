@@ -145,7 +145,7 @@
 | ISSUE-126 | закрыт (ветка fix/wave-2026-09-25) | Часовой пояс и время нельзя задать из web UI |
 | ISSUE-127 | закрыт (ветка fix/wave-2026-09-25) | Переключение одного правила отменяет ожидания всех правил |
 | ISSUE-128 | закрыт (ветка fix/wave-2026-09-25) | Модель гира не активирует цвет на `DAPC(MASK)` |
-| ISSUE-129 | открыт | UI называет `RGBWAF CONTROL = 0xC0` «reserved (vendor)» |
+| ISSUE-129 | закрыт (ветка fix/wave-2026-09-25) | UI называет `RGBWAF CONTROL = 0xC0` «reserved (vendor)» |
 | ISSUE-130 | открыт | Ползунок остаётся на отвергнутом значении |
 | ISSUE-131 | обход | ESP-IDF и esp-idf-hal: прерывание PHY |
 | ISSUE-132 | обход | ESP-IDF и esp-idf-svc: OTA |
