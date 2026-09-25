@@ -8,7 +8,9 @@ use dali2rust_contracts::msg::{
     BusEventPayload, Dali103ArbitrationProbeCommand, DaliSettingsUpdateCommand, Origin,
     RedundancyTransitionEvent,
 };
-use dali2rust_domain::registry::{ApplicationActiveMover, DaliSettingsReadPort, RedundancySettingsReadPort};
+use dali2rust_domain::registry::{
+    AdapterEnabledReadPort, ApplicationActiveMover, DaliSettingsReadPort, RedundancySettingsReadPort,
+};
 
 use super::arbitration::{
     arbitration_step, ArbitrationAction, ArbitrationState, TransitionReason,
@@ -46,6 +48,7 @@ pub struct ArbitrationWorkerDeps {
     pub registry_adapter_id: u8,
     pub redundancy: Arc<dyn RedundancySettingsReadPort>,
     pub dali: Arc<dyn DaliSettingsReadPort>,
+    pub adapters: Arc<dyn AdapterEnabledReadPort>,
     pub counters: Arc<ArbitrationWorkerCounters>,
     pub transitions: SharedTransitionLog,
 }
@@ -195,6 +198,9 @@ fn wait_ms(state: &WorkerStateHandle, now_ms: u32, probe_interval_ms: u32) -> u3
 }
 
 fn publish_probe(deps: &ArbitrationWorkerDeps) {
+    if !deps.adapters.adapter_enabled(deps.registry_adapter_id) {
+        return;
+    }
     let ce = command_envelope(
         SOURCE_ID_UNSPECIFIED,
         CORRELATION_NONE,

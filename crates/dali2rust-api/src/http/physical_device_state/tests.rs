@@ -145,6 +145,35 @@ fn empty_attributes_serialize_to_empty_object() {
     assert_eq!(json, "{}");
 }
 
+fn implemented_parts_json(raw: u8) -> serde_json::Value {
+    let bus_unit = MemoryBusUnitAttributesView {
+        configuration: None,
+        implemented_parts: observed(raw),
+    };
+    let json = attributes_json(
+        &PhysicalDeviceAttributesView::default(),
+        &Default::default(),
+        &Default::default(),
+        &bus_unit,
+        None,
+    );
+    let body: serde_json::Value = serde_json::from_str(&json).expect("attributes json");
+    body["memory_bus_unit"]["implemented_parts"]["value"].clone()
+}
+
+#[test]
+fn implemented_parts_travel_as_part_numbers_and_an_out_of_range_byte_claims_none() {
+    assert_eq!(
+        implemented_parts_json(0x05),
+        serde_json::json!({"raw": 5, "parts": [150, 152]})
+    );
+    assert_eq!(implemented_parts_json(0x00), serde_json::json!({"raw": 0, "parts": []}));
+    assert_eq!(
+        implemented_parts_json(0xFF),
+        serde_json::json!({"raw": 255, "parts": null})
+    );
+}
+
 fn ov<T>(value: T, seq: u64) -> Option<ObservedValue<T>> {
     Some(if seq % 2 == 1 {
         ObservedValue {

@@ -1,10 +1,9 @@
 use dali2rust_contracts::msg::{FixedText, FixedText32, FixedText64};
 use dali2rust_domain::dali::banks::{
-    part251, read_value, BankValue, ImplementedParts, LuminaireFormat, ValueWidth,
-    BUS_UNIT_CONFIGURATION_OFFSET, CONTENT_FORMAT_ID_OFFSET, IMPLEMENTED_PARTS_BASE_OFFSET,
-    IMPLEMENTED_PARTS_EXTENSION_OFFSET,
+    part251, read_value, BankValue, LuminaireFormat, ValueWidth,
+    BUS_UNIT_CONFIGURATION_OFFSET, CONTENT_FORMAT_ID_OFFSET, IMPLEMENTED_PARTS_OFFSET,
 };
-use dali2rust_domain::registry::{BankReading, ImplementedPartsView, LuminaireValue};
+use dali2rust_domain::registry::{BankReading, LuminaireValue};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ParsedMemoryIdentity {
@@ -100,22 +99,13 @@ pub(crate) fn parse_bank1_profile(bytes: &[u8], start_offset: u16) -> ParsedMemo
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ParsedBusUnit {
     pub configuration: Option<u8>,
-    pub implemented_parts: Option<ImplementedPartsView>,
+    pub implemented_parts: Option<u8>,
 }
 
 pub(crate) fn parse_bank0_bus_unit(bytes: &[u8], start_offset: u16) -> ParsedBusUnit {
-    let base = byte(bytes, start_offset, usize::from(IMPLEMENTED_PARTS_BASE_OFFSET));
-    let extension = byte(bytes, start_offset, usize::from(IMPLEMENTED_PARTS_EXTENSION_OFFSET));
-    let implemented_parts = base.map(|base| match extension {
-        Some(extension) => ImplementedParts::from_both(base, extension),
-        None => ImplementedParts::from_base(base),
-    });
     ParsedBusUnit {
         configuration: byte(bytes, start_offset, usize::from(BUS_UNIT_CONFIGURATION_OFFSET)),
-        implemented_parts: implemented_parts.map(|parts| ImplementedPartsView {
-            raw: parts.raw(),
-            bytes: parts.byte_count(),
-        }),
+        implemented_parts: byte(bytes, start_offset, usize::from(IMPLEMENTED_PARTS_OFFSET)),
     }
 }
 

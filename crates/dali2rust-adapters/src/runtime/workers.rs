@@ -547,6 +547,7 @@ fn arbitration_deps(store: &Arc<RegistryStore>) -> ArbitrationDeps {
         redundancy: Arc::clone(store)
             as Arc<dyn dali2rust_domain::registry::RedundancySettingsReadPort>,
         dali: Arc::clone(store) as Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
+        adapters: Arc::clone(store) as Arc<dyn dali2rust_domain::registry::AdapterEnabledReadPort>,
     }
 }
 
@@ -560,6 +561,7 @@ pub(crate) struct ArbitrationDeps {
     pub registry_adapter_id: u8,
     pub redundancy: Arc<dyn dali2rust_domain::registry::RedundancySettingsReadPort>,
     pub dali: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
+    pub adapters: Arc<dyn dali2rust_domain::registry::AdapterEnabledReadPort>,
 }
 
 fn spawn_arbitration(
@@ -578,6 +580,7 @@ fn spawn_arbitration(
             registry_adapter_id: deps.registry_adapter_id,
             redundancy: deps.redundancy,
             dali: deps.dali,
+            adapters: deps.adapters,
             counters: Arc::clone(&counters),
             transitions: Arc::clone(&transitions),
         },

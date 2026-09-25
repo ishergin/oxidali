@@ -100,40 +100,57 @@ impl PollerSettingsReadPort for RegistryStore {
 impl PollTargetReadPort for RegistryStore {
     fn list_poll_targets(&self, adapter_id: u8) -> PollTargetSelection {
         let g = self.read_inner();
-        let skip_unbound = g.poller_settings.skip_unbound_virtual_lamps;
-        let bound: u64 = g
-            .lamps
-            .iter()
-            .filter(|((a, _), _)| *a == adapter_id)
-            .filter_map(|(_, rec)| rec.binding_short)
-            .fold(0u64, |mask, short| mask | (1u64 << short.min(63)));
-        let mut excluded_unbound: u16 = 0;
-        let mut targets: Vec<PollTargetView> = g
-            .physical_devices
-            .iter()
-            .filter(|((a, _), _)| *a == adapter_id)
-            .filter_map(|((_, short_address), rec)| {
-                if skip_unbound && bound & (1u64 << (*short_address).min(63)) == 0 {
-                    excluded_unbound = excluded_unbound.saturating_add(1);
-                    return None;
-                }
-                let declared = rec.supported_device_types;
-                Some(PollTargetView {
-                    short_address: *short_address,
-                    is_dt8: rec.effective_device_type() == DeviceType::Dt8Color,
-                    is_dt6: rec.effective_device_type() == DeviceType::Dt6Led,
-                    declares_energy: declared.is_some_and(|set| set.contains(DEVICE_TYPE_ENERGY)),
-                    declares_diagnostics: declared
-                        .is_some_and(|set| set.contains(DEVICE_TYPE_DIAGNOSTICS)),
-                })
-            })
-            .collect();
-        targets.sort_unstable_by_key(|t| t.short_address);
+        let adapter_enabled = g
+            .adapters
+            .get(usize::from(adapter_id))
+            .is_some_and(|adapter| adapter.enabled);
+        if !adapter_enabled {
+            return PollTargetSelection {
+                targets: Vec::new(),
+                excluded_unbound: 0,
+                adapter_enabled,
+            };
+        }
+        let (targets, excluded_unbound) = poll_targets(&g, adapter_id);
         PollTargetSelection {
             targets,
             excluded_unbound,
+            adapter_enabled,
         }
     }
+}
+
+fn poll_targets(g: &Inner, adapter_id: u8) -> (Vec<PollTargetView>, u16) {
+    let skip_unbound = g.poller_settings.skip_unbound_virtual_lamps;
+    let bound: u64 = g
+        .lamps
+        .iter()
+        .filter(|((a, _), _)| *a == adapter_id)
+        .filter_map(|(_, rec)| rec.binding_short)
+        .fold(0u64, |mask, short| mask | (1u64 << short.min(63)));
+    let mut excluded_unbound: u16 = 0;
+    let mut targets: Vec<PollTargetView> = g
+        .physical_devices
+        .iter()
+        .filter(|((a, _), _)| *a == adapter_id)
+        .filter_map(|((_, short_address), rec)| {
+            if skip_unbound && bound & (1u64 << (*short_address).min(63)) == 0 {
+                excluded_unbound = excluded_unbound.saturating_add(1);
+                return None;
+            }
+            let declared = rec.supported_device_types;
+            Some(PollTargetView {
+                short_address: *short_address,
+                is_dt8: rec.effective_device_type() == DeviceType::Dt8Color,
+                is_dt6: rec.effective_device_type() == DeviceType::Dt6Led,
+                declares_energy: declared.is_some_and(|set| set.contains(DEVICE_TYPE_ENERGY)),
+                declares_diagnostics: declared
+                    .is_some_and(|set| set.contains(DEVICE_TYPE_DIAGNOSTICS)),
+            })
+        })
+        .collect();
+    targets.sort_unstable_by_key(|t| t.short_address);
+    (targets, excluded_unbound)
 }
 
 pub(crate) fn persistable_snapshot(inner: &Inner) -> PersistablePollerSettingsSlice {

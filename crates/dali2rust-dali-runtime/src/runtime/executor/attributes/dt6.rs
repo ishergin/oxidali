@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn write_dimming_curve(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
-    confirmed: &mut ConfirmedWritableAttributes,
+    tally: &mut WriteTally,
     dimming_curve: Option<u8>,
 ) -> Result<(), SemanticDaliError> {
     let Some(curve) = dimming_curve else {
@@ -27,12 +27,12 @@ pub(super) fn write_dimming_curve(
         )?;
         match read {
             Some(v) if v == curve => {
-                confirmed.dimming_curve = Some(v);
-                return reread_physical_minimum(controller, address, confirmed);
+                tally.confirmed.dimming_curve = Some(v);
+                return reread_physical_minimum(controller, address, &mut tally.confirmed);
             }
             None => {
-                confirmed.dimming_curve = Some(curve);
-                return reread_physical_minimum(controller, address, confirmed);
+                tally.unanswered = true;
+                return Ok(());
             }
             Some(_) => {}
         }

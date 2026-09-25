@@ -37,7 +37,6 @@ import {
   attrOf,
   BANK_TEMPERATURE_OFFSET,
   daliVersion,
-  implementedPartNumbers,
   lightDistributionLabel,
   memoryBusUnitOf,
   memoryDiagnosticsOf,
@@ -1483,10 +1482,12 @@ function BusUnitRows({ attributes }: { attributes: Attributes }) {
           k="Implemented parts (15x)"
           v={
             <>
-              {implementedPartNumbers(parts.value).map((p: number) => `Part ${p}`).join(', ') || 'none'}
-              <span class="hex">
-                {hex2(parts.value.raw)} · {parts.value.bytes * 8} bits read
-              </span>
+              {parts.value.parts === null ? (
+                <Chip cls="warn">out of range</Chip>
+              ) : (
+                parts.value.parts.map((p) => `Part ${p}`).join(', ') || 'none'
+              )}
+              <span class="hex">{hex2(parts.value.raw)}</span>
             </>
           }
           ov={parts}

@@ -125,6 +125,7 @@ dali2rust_contracts::dispatch_bus_events! {
     Dali103InstanceConfiguredEvent(body) => {
         let now_ms = dali2rust_bsp::unix_clock::unix_wall_clock_millis();
         let readback = crate::runtime::registry::input_devices::InstanceReadback {
+            instance_type: body.instance_type,
             instance_status: body.instance_status,
             instance_status_written: body.instance_status_written,
             resolution: body.resolution,

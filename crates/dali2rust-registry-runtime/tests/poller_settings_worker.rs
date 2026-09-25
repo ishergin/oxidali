@@ -204,3 +204,50 @@ fn unbound_devices_are_filtered_by_the_port_when_the_setting_asks() {
     assert_eq!(unfiltered.targets.len(), 2, "filter off: both listed");
     assert_eq!(unfiltered.excluded_unbound, 0);
 }
+
+#[test]
+fn a_disabled_adapter_lists_no_poll_targets_and_says_so() {
+    use dali2rust_contracts::msg::{AdapterSettingsUpdateCommand, DeviceType};
+    use dali2rust_domain::registry::PollTargetReadPort;
+
+    let stack = spawn_registry_stack(1, 8);
+    support::seed_physical_via_discovery(&stack.publisher, 80, 9, DeviceType::Dt6Led, &stack.store);
+    publish_cmd(
+        &stack.publisher,
+        dali2rust_contracts::bus::command_envelope(
+            0,
+            82,
+            BusId::default().0,
+            Some(dali2rust_contracts::msg::Origin::Api),
+            dali2rust_contracts::msg::VirtualLampBindCommand {
+                adapter_id: 0,
+                virtual_lamp_id: 2,
+                physical_short_address: 9,
+            },
+        ),
+    );
+    let _ = recv_confirmation_for(&stack.conf_rx, 82, RECV_TIMEOUT);
+    let enabled = stack.store.list_poll_targets(0);
+    assert!(enabled.adapter_enabled);
+    assert_eq!(enabled.targets.iter().map(|t| t.short_address).collect::<Vec<_>>(), vec![9]);
+
+    publish_cmd(
+        &stack.publisher,
+        dali2rust_contracts::bus::command_envelope(
+            0,
+            81,
+            0,
+            Some(dali2rust_contracts::msg::Origin::Api),
+            AdapterSettingsUpdateCommand {
+                patch_mask: AdapterSettingsUpdateCommand::PATCH_ENABLED,
+                name: Default::default(),
+                enabled: false,
+            },
+        ),
+    );
+    let _ = recv_confirmation_for(&stack.conf_rx, 81, RECV_TIMEOUT);
+
+    let disabled = stack.store.list_poll_targets(0);
+    assert!(!disabled.adapter_enabled);
+    assert!(disabled.targets.is_empty(), "nothing on a disabled adapter is polled");
+}

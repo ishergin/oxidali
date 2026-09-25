@@ -3,7 +3,6 @@ import type {
   BankReading,
   CapabilityFlags,
   DaliWireCounters,
-  ImplementedParts,
   MemoryBusUnit,
   MemoryDiagnostics,
   MemoryEnergy,
@@ -341,15 +340,6 @@ export function lightDistributionLabel(raw: number): string | null {
   if (raw === 253) return 'emergency luminaire'
   if (raw === 254) return 'other'
   return null
-}
-
-export function implementedPartNumbers(parts: ImplementedParts): number[] {
-  const bits = parts.bytes * 8
-  const out: number[] = []
-  for (let bit = 0; bit < bits; bit++) {
-    if (parts.raw & (1 << bit)) out.push(151 + bit)
-  }
-  return out
 }
 
 export const TMASK_FAULT_AFTER_MS = 30_000

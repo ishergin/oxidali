@@ -142,13 +142,7 @@ pub struct BankReading {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryBusUnitAttributesView {
     pub configuration: Option<ObservedValue<u8>>,
-    pub implemented_parts: Option<ObservedValue<ImplementedPartsView>>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ImplementedPartsView {
-    pub raw: u16,
-    pub bytes: u8,
+    pub implemented_parts: Option<ObservedValue<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -803,6 +797,7 @@ pub struct PollTargetView {
 pub struct PollTargetSelection {
     pub targets: Vec<PollTargetView>,
     pub excluded_unbound: u16,
+    pub adapter_enabled: bool,
 }
 
 pub trait PollTargetReadPort: Send + Sync {
@@ -1234,6 +1229,10 @@ pub trait RegistryReadPort: Send + Sync {
         adapter_id: u8,
         short_address: u8,
     ) -> bool;
+}
+
+pub trait AdapterEnabledReadPort: Send + Sync {
+    fn adapter_enabled(&self, adapter_id: u8) -> bool;
 }
 
 pub trait AdapterReadPort: Send + Sync {

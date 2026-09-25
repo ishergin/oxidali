@@ -382,6 +382,18 @@ fn read_attributes_outcomes_classify_contended_abort_per_section() {
     assert_script_consumed(&transport);
 }
 
+fn expect_fade_time_readback(mock: &MockDaliTransport, short: u8, code: u8) {
+    mock.expect_forward_frame_with_backward(
+        DaliCommand::Standard {
+            address: short_address(short),
+            command: StandardCommand::QueryFadeTimeFadeRate,
+        }
+        .to_forward_frame()
+        .raw(),
+        Some(code << 4),
+    );
+}
+
 #[test]
 fn write_attributes_fade_time_confirms_the_accepted_code_not_the_request() {
     let mock = MockDaliTransport::new();
@@ -399,6 +411,7 @@ fn write_attributes_fade_time_confirms_the_accepted_code_not_the_request() {
     .raw();
     mock.expect_forward_frame(set_fade);
     mock.expect_forward_frame(set_fade);
+    expect_fade_time_readback(&mock, short, 1);
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
@@ -426,6 +439,7 @@ fn write_attributes_small_fade_time_never_selects_the_extended_fade_code() {
     .raw();
     mock.expect_forward_frame(set_fade);
     mock.expect_forward_frame(set_fade);
+    expect_fade_time_readback(&mock, short, 1);
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
@@ -453,6 +467,7 @@ fn write_attributes_zero_fade_time_selects_the_extended_fade_code() {
     .raw();
     mock.expect_forward_frame(set_fade);
     mock.expect_forward_frame(set_fade);
+    expect_fade_time_readback(&mock, short, 0);
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
@@ -500,6 +515,111 @@ fn expect_bound_triple(
         .raw(),
         Some(answer),
     );
+}
+
+fn expect_fade_time_write(mock: &MockDaliTransport, short: u8, code: u8, answer: Option<u8>) {
+    mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(code)).to_forward_frame().raw());
+    let set_fade = DaliCommand::Standard {
+        address: short_address(short),
+        command: StandardCommand::SetFadeTime,
+    }
+    .to_forward_frame()
+    .raw();
+    mock.expect_forward_frame(set_fade);
+    mock.expect_forward_frame(set_fade);
+    mock.expect_forward_frame_with_backward(
+        DaliCommand::Standard {
+            address: short_address(short),
+            command: StandardCommand::QueryFadeTimeFadeRate,
+        }
+        .to_forward_frame()
+        .raw(),
+        answer,
+    );
+}
+
+fn dt6_frame(short: u8, command: Dt6Command) -> u16 {
+    DaliCommand::Extended {
+        address: short_address(short),
+        command: ExtendedCommand::Dt6(command),
+    }
+    .to_forward_frame()
+    .raw()
+}
+
+#[test]
+fn an_unanswered_fade_time_read_back_is_named_and_confirms_nothing() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_fade_time_write(&mock, short, 1, None);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None,
+    );
+
+    assert_eq!(execution.confirmed.fade_time_ms, None, "a silent query proves nothing");
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_UNANSWERED_MESSAGE))
+    );
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_silent_read_back_does_not_hold_back_the_fields_that_answered() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_fade_time_write(&mock, short, 1, None);
+    expect_bound_triple(&mock, short, StandardCommand::SetPowerOnLevel, StandardCommand::QueryPowerOnLevel, 200, 200);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None,
+    );
+
+    assert_eq!(execution.confirmed.fade_time_ms, None);
+    assert_eq!(execution.confirmed.power_on_level, Some(200), "the answered write still lands");
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_UNANSWERED_MESSAGE))
+    );
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn an_unanswered_dimming_curve_read_back_is_named_and_confirms_nothing() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let curve = 1;
+    let enable_dt6 = DaliCommand::Special(SpecialCommand::EnableDeviceType(6)).to_forward_frame().raw();
+    mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(curve)).to_forward_frame().raw());
+    mock.expect_forward_frame_with_backward(
+        DaliCommand::Standard {
+            address: short_address(short),
+            command: StandardCommand::QueryContentDtr0,
+        }
+        .to_forward_frame()
+        .raw(),
+        Some(curve),
+    );
+    mock.expect_forward_frame(enable_dt6);
+    mock.expect_forward_frame(dt6_frame(short, Dt6Command::SelectDimmingCurve));
+    mock.expect_forward_frame(dt6_frame(short, Dt6Command::SelectDimmingCurve));
+    mock.expect_forward_frame(enable_dt6);
+    mock.expect_forward_frame_with_backward(dt6_frame(short, Dt6Command::QueryDimmingCurve), None);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve),
+    );
+
+    assert_eq!(execution.confirmed.dimming_curve, None, "a gear without DT6 stays unconfirmed");
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_UNANSWERED_MESSAGE))
+    );
+    assert_script_consumed(&transport);
 }
 
 #[test]
@@ -550,7 +670,7 @@ fn a_confirmed_curve_write_rereads_the_physical_minimum() {
 }
 
 #[test]
-fn write_attributes_unanswered_bound_verify_stays_unconfirmed_without_failing() {
+fn write_attributes_unanswered_bound_verify_stays_unconfirmed_and_is_named() {
     let mock = MockDaliTransport::new();
     let short = 17;
     mock.expect_forward_frame(
@@ -581,7 +701,11 @@ fn write_attributes_unanswered_bound_verify_stays_unconfirmed_without_failing() 
         &mut controller, short, None, None, None, None, None, (None, None), (Some(100), None), None,
     );
 
-    assert_eq!(execution.error, None, "silence is not a write failure here");
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_UNANSWERED_MESSAGE)),
+        "silence is its own outcome, not a refusal and not a proof"
+    );
     assert_eq!(execution.confirmed.min_level, None, "unproved stays unconfirmed");
     assert_script_consumed(&transport);
 }

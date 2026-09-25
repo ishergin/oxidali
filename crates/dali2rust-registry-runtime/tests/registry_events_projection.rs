@@ -1101,7 +1101,6 @@ fn a_starting_scan_blanks_presence_so_a_removed_panel_stops_reading_present() {
             short_address: 7,
             presence_unproven: false,
             instance_count: 2,
-            instance_types: [Some(1), Some(1), None, None, None, None, None, None],
             device_capabilities: Some(0b10),
             device_status: Some(0b1000),
             version_number: Some(8),
@@ -1146,17 +1145,17 @@ fn instance_facts_reach_the_read_model_and_only_a_write_stamps_settling() {
             short_address: 9,
             presence_unproven: false,
             instance_count: 1,
-            instance_types: [Some(4), None, None, None, None, None, None, None],
             device_capabilities: Some(0b10),
             device_status: Some(0),
             version_number: Some(8),
         }));
     wait_until(
-        || store.input_device_detail(0, 9).is_some_and(|d| !d.instances.is_empty()),
+        || store.input_device_detail(0, 9).is_some_and(|d| d.summary.present),
         Duration::from_millis(500),
     );
 
     let probe = dali2rust_contracts::msg::Dali103InstanceConfiguredEvent {
+        instance_type: Some(4),
         instance_status: Some(0b10),
         resolution: Some(8),
         instance_status_written: false,
@@ -1172,6 +1171,7 @@ fn instance_facts_reach_the_read_model_and_only_a_write_stamps_settling() {
 
     let detail = store.input_device_detail(0, 9).expect("record");
     let inst = detail.instances.first().expect("instance");
+    assert_eq!(inst.instance_type, Some(4), "the scan's per-instance event carries the type");
     assert_eq!(inst.instance_status, Some(0b10), "Table 16 status must land in the status field");
     assert_eq!(inst.resolution, Some(8), "resolution must land in the resolution field");
     assert_eq!(
@@ -1214,7 +1214,6 @@ fn scan_progress(short_address: u8, presence_unproven: bool)
         short_address,
         presence_unproven,
         instance_count: 1,
-        instance_types: [Some(1), None, None, None, None, None, None, None],
         device_capabilities: Some(0b10),
         device_status: Some(0b1000),
         version_number: Some(8),
@@ -1324,5 +1323,6 @@ fn configured_base(short_address: u8, instance_number: u8) -> dali2rust_contract
         instance_status: None,
         resolution: None,
         instance_status_written: false,
+        instance_type: None,
     }
 }

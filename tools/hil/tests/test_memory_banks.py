@@ -14,6 +14,10 @@ DIAGNOSTIC_BANKS = (205, 206)
 DEVICE_TYPE_ENERGY = 51
 DEVICE_TYPE_DIAGNOSTICS = 52
 
+FIRST_IMPLEMENTED_PART = 150
+IMPLEMENTED_PART_BITS = 5
+IMPLEMENTED_PARTS_DEFINED_BITS = (1 << IMPLEMENTED_PART_BITS) - 1
+
 
 def _declared_types(api, short):
     return api.state(short).get("supported_device_types")
@@ -236,12 +240,19 @@ def test_bank_0_extension_reports_a_classified_configuration(api, paced, op_chec
     parts = section.get("implemented_parts")
     if parts:
         value = parts["value"]
-        assert value["bytes"] in (1, 2), (
-            "only 0x1C and 0x1D carry this mask: %r" % (value,)
-        )
-        assert value["raw"] < (1 << (8 * value["bytes"])), (
-            "the mask carries bits outside the bytes that answered: %r" % (value,)
-        )
+        raw = value["raw"]
+        assert 0 <= raw <= 255
+        if raw & ~IMPLEMENTED_PARTS_DEFINED_BITS:
+            assert value["parts"] is None, (
+                "098bp Table 4 leaves bits 5-7 of 0x1C zero, so a byte that sets "
+                "one claims no part: %r" % (value,)
+            )
+        else:
+            expected = [FIRST_IMPLEMENTED_PART + bit
+                        for bit in range(IMPLEMENTED_PART_BITS) if raw & (1 << bit)]
+            assert value["parts"] == expected, (
+                "bit x of 0x1C is Part 15x (098bp Table 4): %r" % (value,)
+            )
 
 
 @pytest.mark.slow

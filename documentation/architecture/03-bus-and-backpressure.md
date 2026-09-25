@@ -103,10 +103,8 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
   the wire and deliver the refusal by the route's own discipline: an operation failure
   signal for a `202` route, a confirmation for a request-scoped one. The refusal names
   its cause (`adapter_disabled`, `controller_passive`), never the generic
-  `execution_failed` an unanswering gear produces. Control-gear commissioning is gated
-  like every other kind; the adapter switch does not yet gate the Part 103 kinds, the
-  programming cells or the probes (open ISSUE-119 in
-  [`known-issues.md`](../product-design/known-issues.md)).
+  `execution_failed` an unanswering gear produces. Every kind the DALI worker handles
+  drives some adapter's wire, so the adapter switch gates every one of them.
 
 ## Required events
 
@@ -146,9 +144,8 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
 - A subscriber is woken only for the kinds it declares. Declare facts, not numbers: a
   number floods the inbox.
 - Read a setting from the registry; never learn it only from its changed-event, because
-  hydration and a slice reload (import, replication) publish none. The poller is the one
-  worker that still caches its settings from `PollerSettingsChangedEvent` (open
-  ISSUE-160 in [`known-issues.md`](../product-design/known-issues.md)).
+  hydration and a slice reload (import, replication) publish none. A worker that caches a
+  setting refreshes it after a slice reload as it does after a write.
 - A subscriber with nothing to do must not wake. The WebSocket worker parks on its hub
   while no client is connected; an unused surface costs one atomic load.
 

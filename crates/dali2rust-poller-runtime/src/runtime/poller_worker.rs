@@ -202,9 +202,15 @@ fn cycle_period(settings: &PollerSettingsView) -> Duration {
     Duration::from_millis(u64::from(settings.interval_ms.max(MIN_INTERVAL_MS)))
 }
 
-fn probe_rota(cursor: u8, adapter_count: u8) -> VecDeque<u8> {
-    (0..adapter_count)
-        .map(|i| ((u16::from(cursor) + u16::from(i)) % u16::from(adapter_count)) as u8)
+fn probe_rota(cursor: u8, enabled_adapters: &[u8]) -> VecDeque<u8> {
+    let start = enabled_adapters
+        .iter()
+        .position(|adapter_id| *adapter_id >= cursor)
+        .unwrap_or(0);
+    enabled_adapters[start..]
+        .iter()
+        .chain(&enabled_adapters[..start])
+        .copied()
         .collect()
 }
 
@@ -216,8 +222,9 @@ fn start_cycle(state: &mut PollerState, deps: &PollerDeps) {
         deps.counters.window_deferred.fetch_add(1, Ordering::Relaxed);
     }
     state.queue = if state.settings.enabled && deps.role.dali_settings_view().application_active {
-        state.probe_due = probe_rota(state.probe_cursor, deps.adapter_count);
-        select_targets(state, deps)
+        let (queue, enabled_adapters) = select_targets(state, deps);
+        state.probe_due = probe_rota(state.probe_cursor, &enabled_adapters);
+        queue
     } else {
         deps.counters.targets_excluded.store(0, Ordering::Relaxed);
         state.probe_due.clear();
@@ -255,12 +262,16 @@ fn publish_health_probe(state: &mut PollerState, deps: &PollerDeps) {
     }
 }
 
-fn select_targets(state: &mut PollerState, deps: &PollerDeps) -> VecDeque<PollTarget> {
+fn select_targets(state: &mut PollerState, deps: &PollerDeps) -> (VecDeque<PollTarget>, Vec<u8>) {
     let mut queue = VecDeque::new();
     let mut listed: std::collections::HashSet<(u8, u8)> = std::collections::HashSet::new();
     let mut excluded: u32 = 0;
+    let mut enabled_adapters = Vec::new();
     for adapter_id in 0..deps.adapter_count {
         let selection = deps.read_port.list_poll_targets(adapter_id);
+        if selection.adapter_enabled {
+            enabled_adapters.push(adapter_id);
+        }
         excluded += u32::from(selection.excluded_unbound);
         for target in selection.targets {
             listed.insert((adapter_id, target.short_address));
@@ -282,7 +293,7 @@ fn select_targets(state: &mut PollerState, deps: &PollerDeps) -> VecDeque<PollTa
     }
     deps.counters.targets_excluded.store(excluded, Ordering::Relaxed);
     prune_delisted_device_state(state, &listed);
-    rotate_after_cursor(queue, state.cursor)
+    (rotate_after_cursor(queue, state.cursor), enabled_adapters)
 }
 
 fn prune_delisted_device_state(state: &mut PollerState, listed: &std::collections::HashSet<(u8, u8)>) {
@@ -828,7 +839,7 @@ mod tests {
 
     impl PollTargetReadPort for NullPort {
         fn list_poll_targets(&self, _adapter_id: u8) -> PollTargetSelection {
-            PollTargetSelection { targets: Vec::new(), excluded_unbound: 0 }
+            PollTargetSelection { targets: Vec::new(), excluded_unbound: 0, adapter_enabled: true }
         }
     }
 

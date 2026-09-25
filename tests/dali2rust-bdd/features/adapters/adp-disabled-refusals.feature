@@ -52,3 +52,29 @@ Feature: A disabled adapter refuses work, and says so before its TTL
     And the JSON field "error_code" should be "conflict"
     And the JSON field "message" should be "adapter_disabled"
     And the DALI mock transport should have received 0 forward frame
+
+  @id:ADP-025
+  Scenario: Part 103 commissioning on a disabled adapter never reaches the wire
+    When I PATCH JSON {"enabled":false} to "/api/v1/adapters/0"
+    Then the response status should be 200
+    When I POST JSON {} to "/api/v1/adapters/0/input-devices/commission"
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error code should be "conflict"
+    And the operation error message should be "adapter_disabled"
+    And the mock transport should have sent no 24-bit frames
+    And the DALI mock transport should have received 0 forward frame
+
+  @id:ADP-026
+  Scenario: Scene programming on a disabled adapter never reaches the wire
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And adapter 0 scene 3 desired row for virtual lamp 1 has level 100
+    When I PATCH JSON {"enabled":false} to "/api/v1/adapters/0"
+    Then the response status should be 200
+    And the DALI mock transport frame log should be cleared
+    When I send a POST request to "/api/v1/adapters/0/scenes/3/apply"
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error code should be "conflict"
+    And the operation error message should be "adapter_disabled"
+    And the DALI mock transport should have received 0 forward frame

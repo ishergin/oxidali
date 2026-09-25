@@ -20,4 +20,5 @@ log = "0.4"
 esp-idf-svc = { version = "0.52.1", features = ["alloc"] }
 
 [dev-dependencies]
+dali2rust-registry-runtime = { path = "../dali2rust-registry-runtime" }
 dali2rust-test-support = { path = "../dali2rust-test-support" }

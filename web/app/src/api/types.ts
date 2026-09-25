@@ -90,7 +90,7 @@ export interface BankReading {
 
 export interface ImplementedParts {
   raw: number
-  bytes: number
+  parts: number[] | null
 }
 
 export interface BusUnitConfiguration {

@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use dali2rust_bus::{BusId, BusPublisher};
 use dali2rust_contracts::msg::RegistrySliceReloadCommand;
 use dali2rust_platform::slice_store::SliceStore;
@@ -43,14 +45,15 @@ pub(super) fn handle_slice_reload(
         counts.defaulted,
         counts.errors
     );
-    counters
-        .slice_reloads
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    counters
-        .config_updates_applied
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    count_reload(counters);
     announce_reload(publisher, primary_adapter_id, body);
     super::confirm::publish_correlation_ok(publisher, corr);
+}
+
+fn count_reload(counters: &RegistryCommandCounters) {
+    counters.slice_reloads.fetch_add(1, Ordering::Relaxed);
+    counters.config_updates_applied.fetch_add(1, Ordering::Relaxed);
+    counters.home_assistant_settings_applied.fetch_add(1, Ordering::Relaxed);
 }
 
 fn announce_reload(
