@@ -836,6 +836,7 @@ dependencies = [
  "dali2rust-contracts",
  "dali2rust-domain",
  "dali2rust-platform",
+ "dali2rust-registry-runtime",
  "dali2rust-test-support",
  "esp-idf-svc",
  "log",

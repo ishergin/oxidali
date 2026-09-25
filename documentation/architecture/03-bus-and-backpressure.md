@@ -146,9 +146,8 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
 - A subscriber is woken only for the kinds it declares. Declare facts, not numbers: a
   number floods the inbox.
 - Read a setting from the registry; never learn it only from its changed-event, because
-  hydration and a slice reload (import, replication) publish none. The poller is the one
-  worker that still caches its settings from `PollerSettingsChangedEvent` (open
-  ISSUE-160 in [`known-issues.md`](../product-design/known-issues.md)).
+  hydration and a slice reload (import, replication) publish none. A worker that caches a
+  setting refreshes it after a slice reload as it does after a write.
 - A subscriber with nothing to do must not wake. The WebSocket worker parks on its hub
   while no client is connected; an unused surface costs one atomic load.
 
