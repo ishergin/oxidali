@@ -1,4 +1,4 @@
-<!-- @dsCard group="Components" name="Rule row" subtitle="List row states: ok, partial, failed, disabled, cooldown-suppressed" -->
+<!-- @dsCard group="Components" name="Rule row" subtitle="List row with the rule's last firing: ok, partial, failed, refused, never fired, disabled" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -64,33 +64,57 @@ h2:first-child { margin-top:0; }
 .toggle i { position:absolute; top:2px; left:2px; width:13px; height:13px; border-radius:50%; background:var(--text-faint); }
 .toggle.on { background:var(--accent-soft); border-color:rgba(240,180,41,.5); }
 .toggle.on i { left:17px; background:var(--accent); }
-.name { font-weight:550; flex:1; }
+.rbody { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
+.name { font-weight:550; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .name.dis { color:var(--text-faint); font-weight:450; }
+.t { font-size:11px; color:var(--text-faint); }
 .meta { font-size:11.5px; color:var(--text-faint); font-variant-numeric:tabular-nums; }
-.out { font-size:11px; padding:1px 8px; border-radius:999px; border:1px solid var(--border-strong); }
+.meta .why { font-family:var(--mono); font-size:10.5px; color:var(--text-muted); }
+.out { font-size:11px; padding:1px 8px; border-radius:999px; border:1px solid var(--border-strong); flex:none; }
 .out.ok { color:var(--ok); border-color:rgba(70,194,106,.4); }
 .out.partial { color:var(--warn); border-color:rgba(227,160,8,.45); }
 .out.failed { color:var(--err); border-color:rgba(242,85,90,.45); }
-.out.supp { color:var(--text-faint); }
+/* Refused: the engine declined to run the rule (chain depth, a condition it
+   could not evaluate) and attempted nothing, so the pill is hollow. */
+.out.refused { color:var(--err); border-style:dashed; border-color:rgba(242,85,90,.45); }
 p.note { color:var(--text-muted); font-size:12px; max-width:64ch; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h2>Outcomes</h2>
-  <div class="row"><span class="toggle on"><i></i></span><span class="name">коридор: вкл/выкл</span>
-    <span class="meta">128× · 42 ms · 12:04:31</span><span class="out ok">ok</span></div>
-  <div class="row"><span class="toggle on"><i></i></span><span class="name">вечерняя сцена</span>
-    <span class="meta">17× · 210 ms</span><span class="out partial">partial</span></div>
-  <div class="row"><span class="toggle on"><i></i></span><span class="name">отчёт в брокер</span>
-    <span class="meta">3× · —</span><span class="out failed">failed</span></div>
-  <div class="row"><span class="toggle on"><i></i></span><span class="name">анти-дребезг</span>
-    <span class="meta">supp. 9× this hour</span><span class="out supp">cooldown</span></div>
-  <div class="row"><span class="toggle"><i></i></span><span class="name dis">зимний режим</span>
-    <span class="meta">disabled</span></div>
+  <h2>Last firing</h2>
+  <div class="row"><span class="toggle on"><i></i></span>
+    <span class="rbody"><span class="name">коридор: вкл/выкл</span><span class="t">1 trigger · 1 action</span>
+      <span class="meta">128× · 42 ms · 12:04:31.042</span></span>
+    <span class="out ok">ok</span></div>
+  <div class="row"><span class="toggle on"><i></i></span>
+    <span class="rbody"><span class="name">вечерняя сцена</span><span class="t">1 trigger · 3 actions</span>
+      <span class="meta">17× · 210 ms · 19:30:00.004 · <span class="why">action_failed</span></span></span>
+    <span class="out partial">partial</span></div>
+  <div class="row"><span class="toggle on"><i></i></span>
+    <span class="rbody"><span class="name">отчёт в брокер</span><span class="t">1 trigger · 1 action</span>
+      <span class="meta">3× · 8 ms · 11:58:02.310 · <span class="why">action_failed</span></span></span>
+    <span class="out failed">failed</span></div>
+  <div class="row"><span class="toggle on"><i></i></span>
+    <span class="rbody"><span class="name">ночь: вход</span><span class="t">2 triggers · 1 condition · 1 action</span>
+      <span class="meta">1× · 0 ms · +2:14:07.550 · <span class="why">condition_unevaluable</span></span></span>
+    <span class="out refused">refused</span></div>
+  <div class="row"><span class="toggle on"><i></i></span>
+    <span class="rbody"><span class="name">лестница: автовыключение</span><span class="t">1 trigger · 1 action</span>
+      <span class="meta">not fired since boot</span></span></div>
+  <div class="row"><span class="toggle"><i></i></span>
+    <span class="rbody"><span class="name dis">зимний режим</span><span class="t">1 trigger · 2 actions</span>
+      <span class="meta">4× · 36 ms · 07:00:00.012</span></span>
+    <span class="out ok">ok</span></div>
+  <p class="note">The runtime line is the rule's own record since the controller booted: how
+  many times it fired, the latency of the last firing and when it fired. A time with a leading
+  + is time since boot — the clock was not anchored when the rule fired. A rule that never fired
+  says so in words rather than in zeros, and carries no outcome.</p>
   <p class="note">partial is a distinct outcome, not a failure: a three-lamp scene that failed on
   the second lamp left the third correct, which is closer to the operator's intent than an abort.
-  The toggle answers instantly (a manifest bit), never through the chunked document write.</p>
+  refused means the engine did not run the rule at all; the reason follows the time. A disabled
+  rule keeps its last record. The toggle answers instantly (a manifest bit), never through the
+  chunked document write.</p>
 </div>
 </body>
 </html>

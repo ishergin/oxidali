@@ -1,0 +1,273 @@
+<!-- @dsCard group="Screens" name="Settings — Time" subtitle="Controller clock and POSIX zone: synced by SNTP, set manually and unset, the zone field with its refusal, and taking over the browser's time and zone" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings — Time — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 760px; margin: 0 auto; padding: 20px 24px 60px; }
+
+.head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.crumb { font-size: 12px; color: var(--text-faint); }
+.spacer { flex: 1; }
+.sub { font-size: 12.5px; color: var(--text-muted); margin: 0 0 16px; }
+
+.state-label { display: flex; align-items: center; gap: 8px; margin: 36px 0 14px; }
+.state-label .ln { flex: 1; height: 1px; background: var(--border); }
+.state-label span { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; }
+.panel > h2 { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em;
+  font-weight: 500; margin: 0; padding: 10px 15px; border-bottom: 1px solid var(--border); }
+.panel .body { padding: 4px 15px; }
+
+.srow { display: flex; align-items: flex-start; gap: 14px; padding: 10px 0; }
+.srow + .srow { border-top: 1px solid rgba(42,51,64,.5); }
+.srow .lbl { flex: 1; }
+.srow .lbl .n { font-size: 13px; color: var(--text); font-weight: 500; }
+.srow .lbl .d { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+.srow .ctl { flex: none; padding-top: 1px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  justify-content: flex-end; max-width: 58%; }
+
+/* Controller time is a reading, not a level: mono and neutral, never the
+   lamp accent. The offset beside it is the zone's answer for this instant. */
+.mono { font-family: var(--mono); font-size: 12.5px; color: var(--text); }
+.unit { font-size: 11px; color: var(--text-faint); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 500; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
+.chip.info { color: var(--info); background: var(--info-soft); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+
+/* A POSIX TZ string is typed, not picked: the controller has no zone
+   database, so the daylight-saving rule travels inside the string. */
+.inp { background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 12px; padding: 5px 8px; font-family: var(--mono); width: 210px; }
+.inp.err { border-color: rgba(242,85,90,.55); background: var(--err-soft); }
+.req { flex-basis: 100%; text-align: right; background: var(--warn-soft); border: 1px solid rgba(227,160,8,.35);
+  border-radius: var(--radius-sm); padding: 6px 9px; font-size: 11px; color: var(--warn); margin: 6px 0 0; }
+
+.btn { padding: 6px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+.btn:disabled { opacity: .4; cursor: default; }
+
+/* Without an anchored clock every HCL schedule and every time-of-day rule
+   condition is paused; the page says so once, above the controls that fix it. */
+.warnbar { margin: 0 0 14px; padding: 9px 12px; border-radius: var(--radius-sm);
+  background: var(--warn-soft); border: 1px solid rgba(227,160,8,.28);
+  font-size: 12px; line-height: 1.5; color: var(--warn); }
+.hint { font-size: 11.5px; color: var(--text-faint); margin: 10px 0 0; max-width: 74ch; }
+.hint b { color: var(--text-muted); font-weight: 550; }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="state-label"><span>Synced by SNTP — zone matches this browser</span><span class="ln"></span></div>
+  <div class="head">
+    <h1>Time</h1>
+    <span class="crumb">Settings</span>
+    <span class="spacer"></span>
+    <button class="btn" disabled>Discard</button>
+    <button class="btn primary" disabled>Apply</button>
+  </div>
+  <p class="sub">The controller's wall clock and zone. HCL schedules and time-of-day rule conditions run only on an anchored clock, in local time of this zone.</p>
+
+  <div class="panel">
+    <h2>Controller clock</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl"><div class="n">Local time</div><div class="d">In the controller's zone, advancing from the last read.</div></div>
+        <div class="ctl"><span class="mono">2026-09-25 12:04:31</span><span class="unit">UTC+03:00</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Source</div><div class="d">SNTP anchors the clock; a manual time is replaced by the next successful sync.</div></div>
+        <div class="ctl"><span class="chip ok"><span class="dot"></span>synced by SNTP</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Zone</div><div class="d">POSIX TZ. The controller has no zone database, so the daylight-saving rule is part of the string. Stored in flash.</div></div>
+        <div class="ctl"><input class="inp" value="&lt;+03&gt;-3"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>This browser</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl"><div class="n">Browser time</div><div class="d">Europe/Moscow</div></div>
+        <div class="ctl"><span class="mono">2026-09-25 12:04:31</span><span class="unit">in step</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Zone as POSIX TZ</div><div class="d">Derived from this browser's UTC offsets over the current year, not from a zone name.</div></div>
+        <div class="ctl"><span class="mono">&lt;+03&gt;-3</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Take over</div><div class="d">SNTP keeps the time; only the zone would be sent, and it already matches.</div></div>
+        <div class="ctl"><button class="btn primary" disabled>Use this browser's zone</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Set manually — zone edited, Apply armed</span><span class="ln"></span></div>
+  <div class="head">
+    <h1>Time</h1>
+    <span class="crumb">Settings</span>
+    <span class="spacer"></span>
+    <button class="btn">Discard</button>
+    <button class="btn primary">Apply</button>
+  </div>
+  <p class="sub">The controller's wall clock and zone. HCL schedules and time-of-day rule conditions run only on an anchored clock, in local time of this zone.</p>
+
+  <div class="panel">
+    <h2>Controller clock</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl"><div class="n">Local time</div><div class="d">In the controller's zone, advancing from the last read.</div></div>
+        <div class="ctl"><span class="mono">2026-09-25 09:04:28</span><span class="unit">UTC+00:00</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Source</div><div class="d">SNTP anchors the clock; a manual time is replaced by the next successful sync.</div></div>
+        <div class="ctl"><span class="chip info"><span class="dot"></span>set manually</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Zone</div><div class="d">POSIX TZ. The controller has no zone database, so the daylight-saving rule is part of the string. Stored in flash.</div></div>
+        <div class="ctl"><input class="inp" value="&lt;+01&gt;-1&lt;+02&gt;,M3.5.0/2,M10.5.0/3"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>This browser</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl"><div class="n">Browser time</div><div class="d">Europe/Berlin</div></div>
+        <div class="ctl"><span class="mono">2026-09-25 11:04:31</span><span class="unit">controller 3 s behind</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Zone as POSIX TZ</div><div class="d">Derived from this browser's UTC offsets over the current year, not from a zone name.</div></div>
+        <div class="ctl"><span class="mono">&lt;+01&gt;-1&lt;+02&gt;,M3.5.0/2,M10.5.0/3</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Take over</div><div class="d">Sends this browser's clock and zone in one write.</div></div>
+        <div class="ctl"><button class="btn primary">Use this browser's time and zone</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Unset — every schedule paused; a zone the controller refused</span><span class="ln"></span></div>
+  <div class="head">
+    <h1>Time</h1>
+    <span class="crumb">Settings</span>
+    <span class="spacer"></span>
+    <button class="btn">Discard</button>
+    <button class="btn primary">Apply</button>
+  </div>
+  <p class="sub">The controller's wall clock and zone. HCL schedules and time-of-day rule conditions run only on an anchored clock, in local time of this zone.</p>
+
+  <div class="warnbar">The clock is not anchored: every HCL schedule and every time-of-day rule condition is paused until SNTP syncs or a time is set here.</div>
+
+  <div class="panel">
+    <h2>Controller clock</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl"><div class="n">Local time</div><div class="d">Milliseconds since boot are not a time of day, so none is shown.</div></div>
+        <div class="ctl"><span class="chip warn"><span class="dot"></span>not set</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Source</div><div class="d">SNTP anchors the clock; a manual time is replaced by the next successful sync.</div></div>
+        <div class="ctl"><span class="chip warn"><span class="dot"></span>unset</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Zone</div><div class="d">POSIX TZ. The controller has no zone database, so the daylight-saving rule is part of the string. Stored in flash.</div></div>
+        <div class="ctl">
+          <input class="inp err" value="Europe/Berlin">
+          <p class="req">Refused (422): the controller takes a POSIX TZ string such as &lt;+01&gt;-1&lt;+02&gt;,M3.5.0/2,M10.5.0/3, not a zone name.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>This browser</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl"><div class="n">Browser time</div><div class="d">Europe/Berlin</div></div>
+        <div class="ctl"><span class="mono">2026-09-25 11:04:31</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Zone as POSIX TZ</div><div class="d">Derived from this browser's UTC offsets over the current year, not from a zone name.</div></div>
+        <div class="ctl"><span class="mono">&lt;+01&gt;-1&lt;+02&gt;,M3.5.0/2,M10.5.0/3</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl"><div class="n">Take over</div><div class="d">Sends this browser's clock and zone in one write.</div></div>
+        <div class="ctl"><button class="btn primary">Use this browser's time and zone</button></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint"><b>Why a derived string, not the browser's zone name.</b> The browser knows
+  <span class="mono">Europe/Berlin</span>; the controller parses only POSIX TZ. The screen reads the
+  browser's UTC offset in January and July and finds this year's two changes, so the string
+  carries the same rule — and the controller keeps following it after the browser is gone.</p>
+</div>
+
+</body>
+</html>

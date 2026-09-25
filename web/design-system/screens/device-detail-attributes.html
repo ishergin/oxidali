@@ -272,12 +272,18 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
          LINKED, IEC 62386-209 §9.1 has the gear follow the arc level and ignore
          the dim levels entirely — the write is accepted and nothing moves.
 
-         Raw byte in the badge on purpose: Table 10 makes bits 7..6 a control
-         type with one value the standard leaves *reserved*, and a real fixture
-         on the bench holds exactly that (0xC0) while working correctly. -->
+         Raw byte in the badge on purpose: bits 7..6 name the control type, and
+         the two documents disagree on them. DiiA(SW)098bp v1.10 §10.6.13.5
+         defines 0x80 normalised colour control and 0xC0 extended colour
+         control and reserves 0x00 and 0x40, which IEC 62386-209:2011 called
+         channel and colour control; the label says both:
+           00 reserved (209:2011 channel control)
+           01 reserved (209:2011 colour control)
+           10 normalised colour control
+           11 extended colour control -->
     <div class="card">
       <header><h3>RGBWAF channel control</h3><span class="badge">0x80</span></header>
-      <div class="attr"><span class="k">Control type</span><span class="v plain"><span class="flag on"><span class="dot"></span>normalised colour</span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr"><span class="k">Control type</span><span class="v plain"><span class="flag on"><span class="dot"></span>normalised colour control</span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
       <div class="attr"><span class="k">Linked channels</span><span class="v plain">none — levels drive the colour</span><span></span></div>
       <div class="attr"><span class="k">Channels</span><span class="v plain">3 (R G B)</span><span></span></div>
       <div class="attr controls"><span class="k">Assert on colour write</span><span class="v"><label class="comm-check"><input type="checkbox" checked> allowed</label></span></div>
@@ -286,7 +292,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
     <div class="card">
       <header><h3>RGBWAF channel control</h3><span class="badge declared">0x3F</span></header>
-      <div class="attr"><span class="k">Control type</span><span class="v plain"><span class="flag warn"><span class="dot"></span>channel control</span></span><span class="src readback"><span class="dot"></span>readback · 4 s</span></div>
+      <div class="attr"><span class="k">Control type</span><span class="v plain"><span class="flag warn"><span class="dot"></span>reserved (209:2011 channel control)</span></span><span class="src readback"><span class="dot"></span>readback · 4 s</span></div>
       <div class="attr"><span class="k">Linked channels</span><span class="v plain">R G B W A F — all six</span><span></span></div>
       <div class="attr"><span class="k">Channels</span><span class="v plain">3 (R G B)</span><span></span></div>
       <div class="attr controls"><span class="k">Assert on colour write</span><span class="v"><label class="comm-check"><input type="checkbox" checked> allowed</label></span></div>
@@ -295,11 +301,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
     <div class="card">
       <header><h3>RGBWAF channel control</h3><span class="badge declared">0xC0</span></header>
-      <div class="attr"><span class="k">Control type</span><span class="v plain"><span class="flag warn"><span class="dot"></span>reserved (vendor)</span></span><span class="src readback"><span class="dot"></span>readback · 9 s</span></div>
+      <div class="attr"><span class="k">Control type</span><span class="v plain"><span class="flag on"><span class="dot"></span>extended colour control</span></span><span class="src readback"><span class="dot"></span>readback · 9 s</span></div>
       <div class="attr"><span class="k">Linked channels</span><span class="v plain">none — levels drive the colour</span><span></span></div>
       <div class="attr"><span class="k">Channels</span><span class="v plain">3 (R G B)</span><span></span></div>
-      <div class="attr controls"><span class="k">Assert on colour write</span><span class="v"><label class="comm-check"><input type="checkbox"> allowed</label></span></div>
-      <div class="comm-hint">Colour works here, so this is not a fault: the levels are unlinked and only the arc-level scaling is the vendor's own. Clear the box to leave such a fixture alone.</div>
+      <div class="attr controls"><span class="k">Assert on colour write</span><span class="v"><label class="comm-check"><input type="checkbox" checked> allowed</label></span></div>
+      <div class="comm-hint">Colour works here: the levels are unlinked. While the box is ticked, the next colour write switches the gear to normalised colour control; clear it to keep the gear's own control type.</div>
     </div>
   </div>
 

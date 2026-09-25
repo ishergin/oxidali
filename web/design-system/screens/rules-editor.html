@@ -1,4 +1,4 @@
-<!-- @dsCard group="Screens" name="Rules editor" subtitle="Rule list left, one rule's text right; the whole document stays the canon behind a tab" -->
+<!-- @dsCard group="Screens" name="Rules editor" subtitle="Rule list left with each rule's last firing, one rule's text right; the whole document stays the canon behind a tab" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -89,6 +89,14 @@
 .rrow .nm { font-size: 13px; font-weight: 550; flex: 1; }
 .rrow .nm .sub { display: block; font-size: 11px; color: var(--text-faint); font-weight: 400; }
 .rrow.off .nm { color: var(--text-faint); }
+.rrow .nm .meta { display: block; font-size: 11px; color: var(--text-faint); font-weight: 400;
+  font-variant-numeric: tabular-nums; }
+.rrow .nm .meta .why { font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); }
+.out { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-strong); flex: none; }
+.out.ok { color: var(--ok); border-color: rgba(70,194,106,.4); }
+.out.partial { color: var(--warn); border-color: rgba(227,160,8,.45); }
+.out.failed { color: var(--err); border-color: rgba(242,85,90,.45); }
+.out.refused { color: var(--err); border-style: dashed; border-color: rgba(242,85,90,.45); }
 .toggle { width: 30px; height: 17px; border-radius: 999px; background: var(--overlay);
   border: 1px solid var(--border-strong); position: relative; flex: none; }
 .toggle i { position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%;
@@ -146,19 +154,26 @@
       <div class="rlist">
         <div class="rrow on">
           <span class="toggle on"><i></i></span>
-          <span class="nm">кнопка 1: лампа2<span class="sub">short_press · 1 action</span></span>
+          <span class="nm">кнопка 1: лампа2<span class="sub">short_press · 1 action</span>
+            <span class="meta">128× · 42 ms · 12:04:31.042</span></span>
+          <span class="out ok">ok</span>
         </div>
         <div class="rrow">
           <span class="toggle on"><i></i></span>
-          <span class="nm">кнопка 2: ночной режим<span class="sub">short_press · 3 actions</span></span>
+          <span class="nm">кнопка 2: ночной режим<span class="sub">short_press · 3 actions</span>
+            <span class="meta">17× · 210 ms · 23:10:44.310 · <span class="why">action_failed</span></span></span>
+          <span class="out partial">partial</span>
         </div>
         <div class="rrow">
           <span class="toggle on"><i></i></span>
-          <span class="nm">ночь: вход<span class="sub">2 triggers · 1 condition</span></span>
+          <span class="nm">ночь: вход<span class="sub">2 triggers · 1 condition</span>
+            <span class="meta">not fired since boot</span></span>
         </div>
         <div class="rrow off">
           <span class="toggle"><i></i></span>
-          <span class="nm">зимний режим<span class="sub">disabled</span></span>
+          <span class="nm">зимний режим<span class="sub">1 trigger · 2 actions</span>
+            <span class="meta">4× · 36 ms · 07:00:00.012</span></span>
+          <span class="out ok">ok</span>
         </div>
       </div>
     </div>

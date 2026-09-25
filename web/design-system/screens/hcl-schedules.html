@@ -67,7 +67,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
 /* The gate is page-level, not per-card: without a clock NO schedule runs, and
    showing that once is honest where a badge on every card would read as a
-   per-schedule fault. */
+   per-schedule fault. The link goes to Settings › Time, the screen that sets
+   the clock and the zone. */
 .banner { display: flex; align-items: flex-start; gap: 10px; padding: 11px 14px; margin-bottom: 16px;
   border-radius: var(--radius); background: var(--warn-soft); border: 1px solid rgba(227,160,8,.4); }
 .banner .ico { color: var(--warn); font-size: 15px; line-height: 1.2; }
@@ -142,7 +143,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     <span class="ico">&#9888;</span>
     <span class="txt">
       <b>Controller clock is not synchronised</b> — every schedule is paused.
-      <span class="sub">A schedule acts on local time of day; without an anchored clock it stays silent rather than guessing. Set the time in <a href="#">Settings &rsaquo; Time</a> or wait for SNTP.</span>
+      <span class="sub">A schedule acts on local time of day; without an anchored clock it stays silent rather than guessing. Set the time in <a href="#/settings/time">Settings &rsaquo; Time</a> or wait for SNTP.</span>
     </span>
   </div>
 

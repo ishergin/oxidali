@@ -230,7 +230,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <span class="chip">extended</span>
         <span class="chip auto" title="Added automatically per-device by Include DT8 colour below">dt8_color</span>
       </div>
-      <div class="hint">Read on every device each cycle. At least one group is required — an empty set is rejected by the server.</div>
+      <div class="hint">Read on every device each cycle. At least one group is required — an empty set is rejected by the server. Memory banks 0 and 1 are never polled; the Part 252 and 253 banks follow their switches below.</div>
     </div>
   </div>
 
@@ -243,6 +243,20 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
           <div class="d">Adds <span style="font-family:var(--mono)">dt8_color</span> on top of the groups above, only for gear whose effective type is DT8.</div>
         </div>
         <div class="ctl"><span class="toggle on"><i></i></span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Read energy banks</div>
+          <div class="d">DiiA Part 252 banks 202/203/204, only for gear that declared device type 51, no faster than the gear refreshes them.</div>
+        </div>
+        <div class="ctl"><span class="toggle on"><i></i></span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Read diagnostics banks</div>
+          <div class="d">DiiA Part 253 banks 205/206/207, for gear that declared device type 52; spaced further apart than the energy banks.</div>
+        </div>
+        <div class="ctl"><span class="toggle"><i></i></span></div>
       </div>
       <div class="srow">
         <div class="lbl">

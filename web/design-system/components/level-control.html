@@ -1,4 +1,4 @@
-<!-- @dsCard group="Components" name="Level control" subtitle="Arc level slider, quick commands, CCT + RGB + six-channel RGBWAF variants" -->
+<!-- @dsCard group="Components" name="Level control" subtitle="Arc level slider, quick commands, CCT + RGB + six-channel RGBWAF variants, and the slider draft when a write is refused" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -97,6 +97,18 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; }
 
 .hint { font-size: 11px; color: var(--text-faint); margin-top: 10px; }
+
+/* Draft lifecycle of the slider. The readout is amber while it shows the
+   operator's draft rather than the polled level; a refused write drops the
+   draft at once instead of parking the thumb on a level the gear never took. */
+.states { display: grid; gap: 10px; }
+.st { display: grid; grid-template-columns: 170px 1fr 44px; align-items: center; gap: 12px; }
+.st .tag { font-size: 11px; color: var(--text-muted); }
+.st .lvl { font-family: var(--mono); font-size: 12px; color: var(--text-muted); text-align: right; }
+.st .lvl.draft { color: var(--accent); }
+.refusal { margin-top: 12px; padding: 7px 10px; border-radius: var(--radius-sm); font-size: 11.5px;
+  color: var(--err); background: var(--err-soft); border: 1px solid rgba(242,85,90,.3); }
+.refusal .mono { font-family: var(--mono); }
 </style>
 </head>
 <body>
@@ -122,6 +134,34 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <button class="btn">Identify</button>
     </div>
     <div class="hint">Slider sends DAPC on release; min/max ticks come from the device's arc limits.</div>
+  </div>
+
+  <!-- A write refused. The slider keeps its draft until the polled level
+       equals it, so a poll in the middle of a drag cannot throw the thumb
+       back. A refused write (503, 504, a gate's refusal) will never be
+       polled back, so the refusal itself drops the draft: the thumb returns to the
+       observed level and the toast carries the reason. -->
+  <div class="card">
+    <h3>Brightness — write refused</h3>
+    <div class="states">
+      <div class="st">
+        <span class="tag">dragging — draft</span>
+        <div class="track"><div class="fill" style="width:90%"></div><div class="thumb" style="left:90%"></div></div>
+        <span class="lvl draft">230</span>
+      </div>
+      <div class="st">
+        <span class="tag">released — waiting for the poll</span>
+        <div class="track"><div class="fill" style="width:90%"></div><div class="thumb" style="left:90%"></div></div>
+        <span class="lvl draft">230</span>
+      </div>
+      <div class="st">
+        <span class="tag">refused — back to observed</span>
+        <div class="track"><div class="fill"></div><div class="thumb"></div></div>
+        <span class="lvl">178</span>
+      </div>
+    </div>
+    <div class="refusal">Set target state · failed — <span class="mono">503 delivery_rejected</span></div>
+    <div class="hint">The same applies to the CCT slider. A write that lands keeps the draft until the poll shows it.</div>
   </div>
 
   <div class="card">
