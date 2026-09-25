@@ -562,11 +562,10 @@ export function DeviceDetail({ short, tab: rawTab }: { short: number; tab?: stri
   const seen = dev.state.last_seen_ms
   const absent = dev.state.error?.code === 'device_absent'
 
-  const setTarget = async (body: TargetStateRequest) => {
-    await mutate('Set target state', () => api.deviceTargetState(ADAPTER, short, body), () => {
+  const setTarget = (body: TargetStateRequest): Promise<boolean> =>
+    mutate('Set target state', () => api.deviceTargetState(ADAPTER, short, body), () => {
       void reload()
     })
-  }
 
   const level = dev.state.level ?? 0
   ensureProductsLoaded()

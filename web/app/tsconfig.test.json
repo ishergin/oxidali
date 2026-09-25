@@ -15,6 +15,7 @@
     "src/counter-delta.ts",
     "src/screens/follow-scroll.ts",
     "src/format.ts",
-    "src/time-zone.ts"
+    "src/time-zone.ts",
+    "src/slider-draft.ts"
   ]
 }

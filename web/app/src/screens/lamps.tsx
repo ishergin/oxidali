@@ -101,7 +101,7 @@ function LampRow({
     }
   }
 
-  const setLevel = async (level: number) => {
+  const setLevel = async (level: number): Promise<boolean> => {
     try {
       await api.lampTargetState(
         ADAPTER,
@@ -109,8 +109,10 @@ function LampRow({
         level === 0 ? { power: 'off' } : { power: 'on', level },
       )
       onDone()
+      return true
     } catch (e) {
       notify('Set level', 'failed', errorMessage(e))
+      return false
     }
   }
 

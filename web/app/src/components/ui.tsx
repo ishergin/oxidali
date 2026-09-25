@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import type { ObservedValue, RuntimeState } from '../api/types'
 import { ago, hex2, lampState, LEVEL_MAX } from '../format'
 import { useVerifying } from '../observation'
+import { draftAfterPoll, draftAfterRefusal, type SliderDraft } from '../slider-draft'
 import { type CctRange, cctSliderView } from './cct-view'
 
 export function Chip({
@@ -294,6 +295,23 @@ export function AttrRow({
   )
 }
 
+function useSliderDraft(
+  observed: number | null | undefined,
+  onCommit: (value: number) => Promise<boolean>,
+): { draft: SliderDraft; hold: (value: number) => void; commit: (value: number) => void } {
+  const [draft, setDraft] = useState<SliderDraft>(null)
+  useEffect(() => {
+    const next = draftAfterPoll(draft, observed)
+    if (next !== draft) setDraft(next)
+  }, [observed, draft])
+  const commit = (value: number) => {
+    void onCommit(value).then((accepted) => {
+      if (!accepted) setDraft((current) => draftAfterRefusal(current, value))
+    })
+  }
+  return { draft, hold: setDraft, commit }
+}
+
 export function LevelSlider({
   value,
   max = LEVEL_MAX,
@@ -307,12 +325,9 @@ export function LevelSlider({
   mini?: boolean
   disabled?: boolean
   readout?: boolean
-  onCommit: (level: number) => void
+  onCommit: (level: number) => Promise<boolean>
 }) {
-  const [local, setLocal] = useState<number | null>(null)
-  useEffect(() => {
-    if (local !== null && value === local) setLocal(null)
-  }, [value, local])
+  const { draft: local, hold, commit } = useSliderDraft(value, onCommit)
   const v = local ?? value
   const track = (
     <input
@@ -323,8 +338,8 @@ export function LevelSlider({
       value={v}
       disabled={disabled}
       style={`--pct:${(v / max) * 100}%`}
-      onInput={(e) => setLocal(Number(e.currentTarget.value))}
-      onChange={(e) => onCommit(Number(e.currentTarget.value))}
+      onInput={(e) => hold(Number(e.currentTarget.value))}
+      onChange={(e) => commit(Number(e.currentTarget.value))}
     />
   )
   if (!readout) return track
@@ -342,13 +357,10 @@ export function CctSlider({
   range,
 }: {
   kelvin: number | null | undefined
-  onCommit: (kelvin: number) => void
+  onCommit: (kelvin: number) => Promise<boolean>
   range?: CctRange | null
 }) {
-  const [local, setLocal] = useState<number | null>(null)
-  useEffect(() => {
-    if (local !== null && kelvin === local) setLocal(null)
-  }, [kelvin, local])
+  const { draft: local, hold, commit } = useSliderDraft(kelvin, onCommit)
   const { min, max, value: v, clamped } = cctSliderView(kelvin, local, range)
   return (
     <>
@@ -360,8 +372,8 @@ export function CctSlider({
         max={max}
         step={50}
         value={v}
-        onInput={(e) => setLocal(Number(e.currentTarget.value))}
-        onChange={(e) => onCommit(Number(e.currentTarget.value))}
+        onInput={(e) => hold(Number(e.currentTarget.value))}
+        onChange={(e) => commit(Number(e.currentTarget.value))}
       />
       <span class="cct-range" title={range ? 'reported by the fixture' : 'fixture has not reported its range yet'}>
         {min}–{max} K{range ? '' : ' (default)'}
