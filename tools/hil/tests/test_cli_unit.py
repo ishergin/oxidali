@@ -1,4 +1,5 @@
-from hil import cli
+from hil import cli, corpus, flash, serialmon
+from hil.camera import backend
 
 
 def test_help_after_a_command_does_not_run_it(capsys):
@@ -47,7 +48,6 @@ def _never(name, ran):
 
 
 def test_a_misspelt_flash_flag_is_refused_before_anything_is_flashed(monkeypatch, capsys):
-    from hil import flash
     ran = []
     monkeypatch.setattr(flash, "run", _never("flash", ran))
     assert cli.main(["flash", "--build-onyl"]) == cli.EX_USAGE
@@ -56,7 +56,6 @@ def test_a_misspelt_flash_flag_is_refused_before_anything_is_flashed(monkeypatch
 
 
 def test_the_real_flash_flags_still_reach_flash(monkeypatch):
-    from hil import flash
     seen = []
     monkeypatch.setattr(flash, "run", lambda cfg, **kwargs: seen.append(kwargs) or 0)
     assert cli.main(["flash", "--build-only", "--allow-red-isr"]) == 0
@@ -64,7 +63,6 @@ def test_the_real_flash_flags_still_reach_flash(monkeypatch):
 
 
 def test_a_misspelt_lamps_flag_switches_nothing_off(monkeypatch, capsys):
-    from hil.camera import backend
     ran = []
     monkeypatch.setattr(backend, "probe_and_select", _never("camera", ran))
     assert cli.main(["lamps", "--no-basline"]) == cli.EX_USAGE
@@ -73,7 +71,6 @@ def test_a_misspelt_lamps_flag_switches_nothing_off(monkeypatch, capsys):
 
 
 def test_corpus_does_not_take_peer_for_peer_only(monkeypatch, capsys):
-    from hil import corpus
     ran = []
     monkeypatch.setattr(corpus, "run", _never("corpus", ran))
     assert cli.main(["corpus", "--peer"]) == cli.EX_USAGE
@@ -82,7 +79,6 @@ def test_corpus_does_not_take_peer_for_peer_only(monkeypatch, capsys):
 
 
 def test_peer_after_the_command_is_refused(monkeypatch, capsys):
-    from hil import flash, serialmon
     ran = []
     monkeypatch.setattr(flash, "run", _never("flash", ran))
     monkeypatch.setattr(serialmon, "status", _never("monitor", ran))
