@@ -88,3 +88,35 @@ Feature: Policies — what a luminaire does without a controller
     When I send a GET request to "/api/v1/operations"
     Then the response status should be 200
     And the operations list should contain no key starting with "policy-apply-"
+
+  @id:POLICY-010
+  Scenario: A level the gear refuses fails the apply as not confirmed, without waiting out the cell
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I PATCH JSON {"power_on_level":200} to "/api/v1/policies"
+    Then the response status should be 200
+    Given a policy write of power-on level 200 that short address 0 answers with 150 on every attempt
+    When I send a POST request to "/api/v1/policies/apply" with empty body
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error code should be "verify_failed"
+    And the operation error message should be "policy_not_confirmed"
+    And all scripted DALI exchanges should be consumed without errors
+
+  @id:POLICY-011
+  Scenario: A read-back the gear leaves unanswered fails the apply as unverified
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I PATCH JSON {"power_on_level":200} to "/api/v1/policies"
+    Then the response status should be 200
+    Given a policy write of power-on level 200 that short address 0 leaves unanswered
+    When I send a POST request to "/api/v1/policies/apply" with empty body
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error code should be "verify_unanswered"
+    And the operation error message should be "verify_unanswered"
+    And all scripted DALI exchanges should be consumed without errors

@@ -181,6 +181,7 @@ declare_bus_payloads! {
         pub min_level: Option<u8>,
         pub max_level: Option<u8>,
         pub dimming_curve: Option<u8>,
+        pub error: Option<CompactErrorPayload>,
     }
     budget = DaliAttributesWrittenEvent {
         short_address: 63,
@@ -195,6 +196,7 @@ declare_bus_payloads! {
         min_level: Some(u8::MAX),
         max_level: Some(u8::MAX),
         dimming_curve: Some(u8::MAX),
+        error: Some(crate::msg::payload_test_samples::worst_compact_error_payload()),
     };
 
     pub struct DaliTargetStateAppliedEvent {
@@ -948,6 +950,22 @@ impl DaliAttributeReadOutcomesEvent {
     pub fn any_section_absent(&self) -> bool {
         self.section_outcomes()
             .contains(&AttributeGroupReadOutcome::DeviceAbsent)
+    }
+}
+
+impl DaliAttributesWrittenEvent {
+    #[must_use]
+    pub fn confirms_nothing(&self) -> bool {
+        self.fade_time_ms.is_none()
+            && self.fade_rate.is_none()
+            && self.power_on_level.is_none()
+            && self.system_failure_level.is_none()
+            && self.extended_fade_time_ms.is_none()
+            && self.tc_coolest_mirek.is_none()
+            && self.tc_warmest_mirek.is_none()
+            && self.min_level.is_none()
+            && self.max_level.is_none()
+            && self.dimming_curve.is_none()
     }
 }
 

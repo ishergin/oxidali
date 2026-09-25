@@ -87,7 +87,7 @@ mod from_slice_tests {
 
     #[test]
     fn from_slice_dali_attributes_written_decodes_as_event_not_command() {
-        let ev = dali2rust_contracts::bus::event_envelope(0, 901, 1, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliAttributesWrittenEvent { short_address: 17, fade_time_ms: Some(500), fade_rate: None, power_on_level: None, system_failure_level: None, extended_fade_time_ms: None, registry_adapter_id: 0 , tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None });
+        let ev = dali2rust_contracts::bus::event_envelope(0, 901, 1, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliAttributesWrittenEvent { short_address: 17, fade_time_ms: Some(500), fade_rate: None, power_on_level: None, system_failure_level: None, extended_fade_time_ms: None, registry_adapter_id: 0 , tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, error: None });
         let bytes = encode_event_envelope(&ev).expect("encode");
         let frame = BusFrame::from_slice(&bytes).expect("from_slice");
         let BusFrame::Event(arc) = frame else {
