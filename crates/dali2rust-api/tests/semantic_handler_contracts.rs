@@ -349,14 +349,16 @@ struct BusHarness {
     cmd_rx: Arc<Mutex<Receiver<BusFrame>>>,
     slots: Arc<PendingConfirmationSlots>,
     correlation: Arc<CorrelationIdAllocator>,
+    confirmation_timeout_ms: u64,
     _bridge: std::thread::JoinHandle<()>,
     _host: BusHost,
 }
 
 impl BusHarness {
     fn new() -> Self {
+        let config = BusConfig::default();
         let (host, publisher, (cmd_rx, conf_rx)) = BusHost::spawn(
-            BusConfig::default(),
+            config,
             |reg| {
                 (
                     reg.subscribe_commands(32, dali2rust_contracts::msg::COMMAND_VARIANT_NAMES),
@@ -371,9 +373,14 @@ impl BusHarness {
             cmd_rx: Arc::new(Mutex::new(cmd_rx)),
             slots,
             correlation: Arc::new(CorrelationIdAllocator::new()),
+            confirmation_timeout_ms: config.confirmation_timeout_ms,
             _bridge: bridge,
             _host: host,
         }
+    }
+
+    fn confirmation_deadline(&self) -> Duration {
+        Duration::from_millis(self.confirmation_timeout_ms)
     }
 
     fn next_command(&self) -> CommandEnvelope {
@@ -381,7 +388,7 @@ impl BusHarness {
             .cmd_rx
             .lock()
             .expect("cmd lock")
-            .recv_timeout(Duration::from_millis(500))
+            .recv_timeout(self.confirmation_deadline())
             .expect("command frame");
         let BusFrame::Command(command) = frame else {
             panic!("expected command frame");
@@ -392,11 +399,12 @@ impl BusHarness {
     fn ack_next_command(&self) -> std::thread::JoinHandle<CommandEnvelope> {
         let rx = Arc::clone(&self.cmd_rx);
         let publisher = self.publisher.clone();
+        let deadline = self.confirmation_deadline();
         std::thread::spawn(move || {
             let frame = rx
                 .lock()
                 .expect("cmd lock")
-                .recv_timeout(Duration::from_millis(500))
+                .recv_timeout(deadline)
                 .expect("command frame");
             let BusFrame::Command(command) = frame else {
                 panic!("expected command frame");
@@ -431,7 +439,7 @@ fn physical_device_patch_validation_errors() {
         immediate_apply_watch(),
         Arc::new(FixedWall(123_456)),
         BusId::default(),
-        100,
+        harness.confirmation_timeout_ms,
     );
     let request_params = params(&[("adapter_id", "0"), ("short", "1")]);
 
@@ -506,7 +514,7 @@ fn physical_device_patch_accepts_a_full_width_cyrillic_name() {
         immediate_apply_watch(),
         Arc::new(FixedWall(123_456)),
         BusId::default(),
-        100,
+        harness.confirmation_timeout_ms,
     );
     let request_params = params(&[("adapter_id", "0"), ("short", "1")]);
     let name = "Я".repeat(32);
@@ -540,7 +548,7 @@ fn physical_device_patch_publishes_the_override_then_the_notes() {
         immediate_apply_watch(),
         Arc::new(FixedWall(123_456)),
         BusId::default(),
-        100,
+        harness.confirmation_timeout_ms,
     );
     let request_params = params(&[("adapter_id", "0"), ("short", "1")]);
 
@@ -603,17 +611,18 @@ fn physical_device_write_attributes_validation_and_happy_path() {
 
     let rx = Arc::clone(&harness.cmd_rx);
     let publisher = harness.publisher.clone();
+    let deadline = harness.confirmation_deadline();
     let ack = std::thread::spawn(move || {
         let begin = rx
             .lock()
             .expect("cmd lock")
-            .recv_timeout(Duration::from_millis(500))
+            .recv_timeout(deadline)
             .expect("begin command");
         assert!(matches!(begin, BusFrame::Command(_)));
         let frame = rx
             .lock()
             .expect("cmd lock")
-            .recv_timeout(Duration::from_millis(500))
+            .recv_timeout(deadline)
             .expect("semantic command");
         let BusFrame::Command(command) = frame else {
             panic!("expected command frame");
@@ -655,7 +664,7 @@ fn physical_device_target_state_validation_and_happy_path() {
         state,
         Arc::new(FixedWall(123_456)),
         BusId::default(),
-        100,
+        harness.confirmation_timeout_ms,
     );
 
     assert_eq!(
@@ -832,7 +841,7 @@ fn virtual_lamp_patch_validation_errors() {
         state,
         immediate_apply_watch(),
         BusId::default(),
-        100,
+        harness.confirmation_timeout_ms,
     );
     let request_params = params(&[("adapter_id", "0"), ("lamp_id", "1")]);
 
@@ -894,7 +903,7 @@ fn virtual_lamp_binding_put_validates_and_selects_bind_vs_rebind() {
         state_trait,
         immediate_apply_watch(),
         BusId::default(),
-        100,
+        harness.confirmation_timeout_ms,
     );
     let request_params = params(&[("adapter_id", "0"), ("lamp_id", "2")]);
 
@@ -940,12 +949,13 @@ fn virtual_lamp_binding_put_validates_and_selects_bind_vs_rebind() {
 
     let rx = Arc::clone(&harness.cmd_rx);
     let publisher = harness.publisher.clone();
+    let deadline = harness.confirmation_deadline();
     let state_for_bind = Arc::clone(&state);
     let bind_ack = std::thread::spawn(move || {
         let frame = rx
             .lock()
             .expect("cmd lock")
-            .recv_timeout(Duration::from_millis(500))
+            .recv_timeout(deadline)
             .expect("command frame");
         let BusFrame::Command(command) = frame else {
             panic!("expected command frame");
@@ -982,12 +992,13 @@ fn virtual_lamp_binding_put_validates_and_selects_bind_vs_rebind() {
     state.set_virtual_lamp_binding(0, 2, Some(3));
     let rx = Arc::clone(&harness.cmd_rx);
     let publisher = harness.publisher.clone();
+    let deadline = harness.confirmation_deadline();
     let state_for_rebind = Arc::clone(&state);
     let rebind_ack = std::thread::spawn(move || {
         let frame = rx
             .lock()
             .expect("cmd lock")
-            .recv_timeout(Duration::from_millis(500))
+            .recv_timeout(deadline)
             .expect("command frame");
         let BusFrame::Command(command) = frame else {
             panic!("expected command frame");
@@ -1034,18 +1045,19 @@ fn virtual_lamp_binding_delete_returns_updated_dto() {
         state_trait,
         immediate_apply_watch(),
         BusId::default(),
-        100,
+        harness.confirmation_timeout_ms,
     );
     let request_params = params(&[("adapter_id", "0"), ("lamp_id", "3")]);
 
     let rx = Arc::clone(&harness.cmd_rx);
     let publisher = harness.publisher.clone();
+    let deadline = harness.confirmation_deadline();
     let state_for_delete = Arc::clone(&state);
     let ack = std::thread::spawn(move || {
         let frame = rx
             .lock()
             .expect("cmd lock")
-            .recv_timeout(Duration::from_millis(500))
+            .recv_timeout(deadline)
             .expect("command frame");
         let BusFrame::Command(command) = frame else {
             panic!("expected command frame");
@@ -1087,7 +1099,7 @@ fn virtual_lamp_target_state_validation_and_execute() {
         Arc::clone(&harness.correlation),
         unbound_trait,
         BusId::default(),
-        100,
+        harness.confirmation_timeout_ms,
     );
     let request_params = params(&[("adapter_id", "0"), ("lamp_id", "4")]);
 
@@ -1119,7 +1131,7 @@ fn virtual_lamp_target_state_validation_and_execute() {
         Arc::clone(&harness.correlation),
         bound_trait,
         BusId::default(),
-        100,
+        harness.confirmation_timeout_ms,
     );
     let ack = harness.ack_next_command();
     let bound_resp = bound.handle_request(
