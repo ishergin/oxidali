@@ -16,12 +16,13 @@
   и `DaliBusHealthProbeCommand` — в тот же инбокс `DaliWorker`, что и все: своей очереди
   у фона нет.
 - **Потребляет** `PollerSettingsChangedEvent` (перенастройка без рестарта),
-  `DaliAttributeReadOutcomesEvent` (закрывает чтение в полёте — воркер публикует его
-  всегда, а чанков у «немого» чтения может не быть вовсе) и `DaliBusHealthProbedEvent`.
-- **Читает** цели опроса через `PollerReadPort` на каждом цикле, а настройки — один раз
-  при старте; дальше их заменяет каждый `PollerSettingsChangedEvent`, поэтому
-  настройки, пришедшие перечиткой слайсов, не действуют до перезагрузки (открытый
-  ISSUE-160 в [`../../known-issues.md`](../../known-issues.md)).
+  `RegistrySliceReloadedEvent`, `DaliAttributeReadOutcomesEvent` (закрывает чтение в
+  полёте — воркер публикует его всегда, а чанков у «немого» чтения может не быть вовсе)
+  и `DaliBusHealthProbedEvent`.
+- **Читает** цели опроса через `PollerReadPort` на каждом цикле, а настройки — при
+  старте и заново после каждой перезагрузки слайсов: имя в событии перезагрузки называет
+  лишь первый из пришедших слайсов, поэтому перечитываются всегда. Между ними настройки
+  заменяет `PollerSettingsChangedEvent`.
 - **Не публикует** `OperationBeginCommand` (строк в операциях нет) и
   `RegistryRuntimeUpdateCommand`: он только инициирует чтение, runtime доходит до
   реестра штатным путём через проектор. `value_source` таких наблюдений — `poller`.

@@ -113,7 +113,7 @@ pub(crate) fn publish_group_matrix_changed(
     );
 }
 
-pub const REGISTRY_REQUIRED_EVENTS: &[&str] = &["OperationWorkerSignalEvent"];
+pub const REGISTRY_REQUIRED_EVENTS: &[&str] = &["OperationWorkerSignalEvent", "RegistrySliceReloadedEvent"];
 
 pub(crate) fn publish_config_write_signal(
     publisher: &BusPublisher,

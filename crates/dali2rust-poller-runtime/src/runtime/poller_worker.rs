@@ -566,6 +566,7 @@ dali2rust_contracts::dispatch_bus_events! {
     payload = payload;
     ignored = { deps.counters.ignored_events.fetch_add(1, Ordering::Relaxed); };
     PollerSettingsChangedEvent(body) => apply_settings_changed(state, body),
+    RegistrySliceReloadedEvent(_reloaded) => adopt_settings(state, deps.read_port.poller_settings_view()),
     DaliAttributeReadOutcomesEvent(body) => complete_read(state, deps, corr, body),
     DaliBusHealthProbedEvent(body) => record_health_probe(state, deps, corr, body),
 }
@@ -595,15 +596,22 @@ fn record_health_probe(
 }
 
 fn apply_settings_changed(state: &mut PollerState, body: &PollerSettingsChangedEvent) {
-    state.settings = PollerSettingsView {
-        enabled: body.enabled,
-        interval_ms: body.interval_ms,
-        attribute_groups_mask: body.attribute_groups_mask,
-        include_dt8_color: body.include_dt8_color,
-        include_energy: body.include_energy,
-        include_diagnostics: body.include_diagnostics,
-        skip_unbound_virtual_lamps: body.skip_unbound_virtual_lamps,
-    };
+    adopt_settings(
+        state,
+        PollerSettingsView {
+            enabled: body.enabled,
+            interval_ms: body.interval_ms,
+            attribute_groups_mask: body.attribute_groups_mask,
+            include_dt8_color: body.include_dt8_color,
+            include_energy: body.include_energy,
+            include_diagnostics: body.include_diagnostics,
+            skip_unbound_virtual_lamps: body.skip_unbound_virtual_lamps,
+        },
+    );
+}
+
+fn adopt_settings(state: &mut PollerState, settings: PollerSettingsView) {
+    state.settings = settings;
     state.next_cycle = state.last_cycle + cycle_period(&state.settings);
 }
 

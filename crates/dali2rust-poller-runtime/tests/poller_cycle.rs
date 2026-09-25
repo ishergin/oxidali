@@ -11,12 +11,12 @@ use dali2rust_contracts::bus::event_envelope;
 use dali2rust_contracts::msg::{
     AttributeGroupReadOutcome, BusCommandPayload, BusHealthVerdict, DaliAttributeGroup,
     DaliAttributeReadOutcomesEvent, DaliBusHealthProbedEvent, DaliReadAttributesCommand,
-    MemoryBankReadPreset, Origin,
+    MemoryBankReadPreset, Origin, RegistrySliceReloadedEvent,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
-    PollTargetReadPort, PollTargetSelection, PollTargetView, PollerSettingsReadPort,
-    PollerSettingsView,
+    PollTargetReadPort, PollTargetSelection, PollTargetView, PollerReadPort,
+    PollerSettingsReadPort, PollerSettingsView,
 };
 use dali2rust_poller_runtime::{spawn_poller_worker, PollerCounters};
 use dali2rust_test_support::{remains_false_for, wait_until};
@@ -175,6 +175,15 @@ fn spawn_harness_with_adapters(
     auto_respond: Option<AttributeGroupReadOutcome>,
     adapter_count: u8,
 ) -> Harness {
+    spawn_harness_on(Arc::new(registry), owned, auto_respond, adapter_count)
+}
+
+fn spawn_harness_on(
+    read_port: Arc<dyn PollerReadPort>,
+    owned: bool,
+    auto_respond: Option<AttributeGroupReadOutcome>,
+    adapter_count: u8,
+) -> Harness {
     let (host, publisher, (ev_rx, conf_rx, cmd_rx)) = BusHost::spawn(BusConfig::default(), |reg| {
         (
             reg.subscribe_events(64, dali2rust_poller_runtime::POLLER_HANDLED_EVENTS),
@@ -203,7 +212,7 @@ fn spawn_harness_with_adapters(
         ev_rx,
         conf_rx,
         publisher.clone(),
-        Arc::new(registry),
+        read_port,
         Arc::new(CorrelationIdAllocator::new()),
         BUS_ID,
         adapter_count,
@@ -833,6 +842,78 @@ fn pol_033_a_disabled_poller_publishes_no_probe() {
 
     wait_until(|| h.counters.cycles_total.load(Ordering::Relaxed) >= 2, WAIT);
     assert_eq!(h.counters.health_probes_published.load(Ordering::Relaxed), 0);
+}
+
+struct ReplicatedSettings {
+    devices: Vec<PollTargetView>,
+    settings: Mutex<PollerSettingsView>,
+}
+
+impl PollTargetReadPort for ReplicatedSettings {
+    fn list_poll_targets(&self, _adapter_id: u8) -> PollTargetSelection {
+        PollTargetSelection { targets: self.devices.clone(), excluded_unbound: 0 }
+    }
+}
+
+impl PollerSettingsReadPort for ReplicatedSettings {
+    fn poller_settings_view(&self) -> PollerSettingsView {
+        *self.settings.lock().expect("settings")
+    }
+}
+
+fn disabled_fast_settings() -> PollerSettingsView {
+    PollerSettingsView {
+        enabled: false,
+        interval_ms: 50,
+        attribute_groups_mask: DaliAttributeGroup::RuntimeStatus.mask_bit(),
+        include_dt8_color: false,
+        include_energy: false,
+        include_diagnostics: false,
+        skip_unbound_virtual_lamps: false,
+    }
+}
+
+fn replicated_harness() -> (Arc<ReplicatedSettings>, Harness) {
+    let port = Arc::new(ReplicatedSettings {
+        devices: vec![device(1)],
+        settings: Mutex::new(disabled_fast_settings()),
+    });
+    let h = spawn_harness_on(Arc::clone(&port) as Arc<dyn PollerReadPort>, true, None, 1);
+    wait_until(|| h.counters.cycles_total.load(Ordering::Relaxed) >= 2, WAIT);
+    port.settings.lock().expect("settings").enabled = true;
+    (port, h)
+}
+
+fn publish_slice_reloaded(publisher: &BusPublisher, slice_name: &str) {
+    let ev = event_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        0,
+        BusId::default().0,
+        Some(Origin::Registry),
+        RegistrySliceReloadedEvent {
+            slice_name: dali2rust_contracts::msg::fixed_text_32(slice_name),
+        },
+    );
+    let _ = publisher.try_publish(BusChannel::Events, BusFrame::event(ev));
+}
+
+#[test]
+fn replicated_settings_apply_on_the_slice_reload_issue160() {
+    let (_port, h) = replicated_harness();
+    publish_slice_reloaded(&h.publisher, "physical_devices_b0+5");
+    wait_until(
+        || h.counters.health_probes_published.load(Ordering::Relaxed) >= 1,
+        WAIT,
+    );
+}
+
+#[test]
+fn replicated_settings_wait_for_the_reload_that_announces_them() {
+    let (_port, h) = replicated_harness();
+    assert!(remains_false_for(
+        || h.counters.health_probes_published.load(Ordering::Relaxed) > 0,
+        Duration::from_millis(400),
+    ));
 }
 
 #[test]
