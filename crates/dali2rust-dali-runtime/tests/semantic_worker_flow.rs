@@ -448,6 +448,27 @@ fn every_command_the_dali_worker_handles_meets_the_adapter_gate() {
 }
 
 #[test]
+fn a_write_that_confirms_nothing_still_publishes_its_outcome() {
+    let harness = WorkerHarness::new(
+        Arc::new(TestReadPort { enabled: true, ..Default::default() }),
+        ControllerMode::NoAnswer,
+    );
+    let corr = 141u64;
+    let write = dali2rust_contracts::msg::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: None, fade_rate: None, power_on_level: Some(200), system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: false };
+    harness.publish(envelope_on_adapter_0(corr, write.into()));
+
+    let ev = harness.recv_event_matching(corr, |payload| {
+        matches!(payload, BusEventPayload::DaliAttributesWrittenEvent(_))
+    });
+    let BusEventPayload::DaliAttributesWrittenEvent(body) = &ev.payload else {
+        panic!("expected the written event");
+    };
+    assert!(body.confirms_nothing(), "a silent read-back confirms no field");
+    let error = body.error.as_ref().expect("the outcome names why nothing landed");
+    assert_eq!(error.code, ErrorCode::VerifyUnanswered);
+}
+
+#[test]
 fn virtual_lamp_unbound_emits_failed_event_and_confirmation() {
     let harness = WorkerHarness::new(Arc::new(TestReadPort { enabled: true, ..Default::default() }), ControllerMode::NoAnswer);
     let corr = 91u64;

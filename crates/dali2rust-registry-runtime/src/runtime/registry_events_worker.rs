@@ -85,18 +85,19 @@ dali2rust_contracts::dispatch_bus_events! {
             sa,
             &counters.dali_attributes_committed,
             || {
-                store.apply_attributes_written(
-                    aid,
-                    sa,
-                    body.fade_time_ms,
-                    body.fade_rate,
-                    body.power_on_level,
-                    body.system_failure_level,
-                    body.extended_fade_time_ms,
-                    (body.tc_coolest_mirek, body.tc_warmest_mirek),
-                    (body.min_level, body.max_level),
-                    body.dimming_curve,
-                )
+                !body.confirms_nothing()
+                    && store.apply_attributes_written(
+                        aid,
+                        sa,
+                        body.fade_time_ms,
+                        body.fade_rate,
+                        body.power_on_level,
+                        body.system_failure_level,
+                        body.extended_fade_time_ms,
+                        (body.tc_coolest_mirek, body.tc_warmest_mirek),
+                        (body.min_level, body.max_level),
+                        body.dimming_curve,
+                    )
             },
         );
     },

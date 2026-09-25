@@ -231,6 +231,7 @@ fn answer_write_attributes(
             min_level: None,
             max_level: None,
             dimming_curve: None,
+            error: None,
         },
     );
     publish_until_queued(publisher, written);

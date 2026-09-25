@@ -85,7 +85,7 @@
 | `DaliSceneProgrammedEvent` | реестр, трекер, оркестратор | required | Строка сцены запрограммирована; несёт readback уровня и эхо записанного |
 | `DaliAttributesReadEvent` | реестр, проектор | required | Один чанк на группу атрибутов; секцию `RuntimeStatus` применяет только проектор |
 | `DaliAttributeReadOutcomesEvent` | трекер, проектор, поллер | required | Исход каждой группы одного чтения; публикуется и на успехе, и на отказе, до терминального сигнала |
-| `DaliAttributesWrittenEvent` | реестр, оркестратор | required | Принятое гиром (readback), а не запрошенное |
+| `DaliAttributesWrittenEvent` | реестр, оркестратор | required | Принятое гиром (readback), а не запрошенное; на каждую исполненную запись, с ошибкой исполнения, если она была |
 | `DaliMemoryBankReadEvent` / `...AbortedEvent` | реестр | required | Чанки одного логического чтения банка / отмена staging'а |
 | `DaliDiscoveryProgressEvent` | реестр, дисплей | required | Одно устройство скана, по мере обхода |
 | `DaliDiscoveryScanReconciledEvent` | реестр | required | Итог чистого скана известных адресов: маска подтверждённых |

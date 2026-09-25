@@ -335,8 +335,8 @@ impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
     fn synthetic_outcome(
         &self,
         run: &RunState<'_>,
-        _code: ErrorCode,
-        _message: &str,
+        code: ErrorCode,
+        message: &str,
     ) -> EventEnvelope {
         event_envelope(
             SOURCE_ID_UNSPECIFIED,
@@ -356,6 +356,7 @@ impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
                 min_level: None,
                 max_level: None,
                 dimming_curve: None,
+                error: Some(CompactErrorPayload::new(code, message)),
             },
         )
     }
@@ -366,6 +367,9 @@ impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
         };
         if body.short_address != self.short_address {
             return None;
+        }
+        if let Some(error) = hard_error_of(body.error.as_ref()) {
+            return Some(Some(error));
         }
         let wanted_failure = self.system_failure_level.is_none()
             || body.system_failure_level == self.system_failure_level;
@@ -478,5 +482,52 @@ mod tests {
                 "{kind} is a paced outcome and must be routed to this worker",
             );
         }
+    }
+
+    const CELL: dali2rust_domain::registry::PolicyApplyCell =
+        dali2rust_domain::registry::PolicyApplyCell {
+            short_address: 4,
+            system_failure_level: None,
+            power_on_level: Some(200),
+        };
+
+    fn written(power_on_level: Option<u8>, error: Option<CompactErrorPayload>) -> EventEnvelope {
+        event_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            1,
+            BusId::default().0,
+            Some(Origin::Internal),
+            dali2rust_contracts::msg::DaliAttributesWrittenEvent {
+                short_address: CELL.short_address,
+                registry_adapter_id: 0,
+                fade_time_ms: None,
+                fade_rate: None,
+                power_on_level,
+                system_failure_level: None,
+                extended_fade_time_ms: None,
+                tc_coolest_mirek: None,
+                tc_warmest_mirek: None,
+                min_level: None,
+                max_level: None,
+                dimming_curve: None,
+                error,
+            },
+        )
+    }
+
+    #[test]
+    fn a_policy_cell_ends_on_what_its_written_event_says() {
+        assert_eq!(CELL.match_outcome(&written(Some(200), None)), Some(None));
+        assert_eq!(
+            CELL.match_outcome(&written(None, None)),
+            Some(Some((ErrorCode::VerifyFailed, "policy_not_confirmed".to_string()))),
+            "a refused level is answered, and the answer is not the policy"
+        );
+        let unanswered = CompactErrorPayload::new(ErrorCode::VerifyUnanswered, "verify_unanswered");
+        assert_eq!(
+            CELL.match_outcome(&written(None, Some(unanswered))),
+            Some(Some((ErrorCode::VerifyUnanswered, "verify_unanswered".to_string()))),
+            "silence keeps its own name"
+        );
     }
 }
