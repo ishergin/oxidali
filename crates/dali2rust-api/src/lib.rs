@@ -13,4 +13,5 @@ pub mod constants;
 pub mod contracts;
 pub mod ha;
 pub mod http;
+pub mod json_depth;
 pub mod ws;

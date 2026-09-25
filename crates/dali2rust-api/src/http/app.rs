@@ -526,7 +526,7 @@ impl AppBuilder {
                 continue;
             };
             router
-                .register(RouteSpec::new(*method, path, handler))
+                .register(route_spec(*key, *method, path, handler))
                 .unwrap_or_else(|e| panic!("route registration for {method:?} {path}: {e:?}"));
         }
         assert!(
@@ -534,6 +534,22 @@ impl AppBuilder {
             "handler registered for a RouteKey missing from ROUTE_TABLE"
         );
         router
+    }
+}
+
+const RAW_BODY_ROUTES: &[RouteKey] = &[RouteKey::ConfigSlicePut];
+
+fn route_spec(
+    key: RouteKey,
+    method: HttpMethod,
+    path: &'static str,
+    handler: Box<dyn ApiHandler>,
+) -> RouteSpec {
+    let spec = RouteSpec::new(method, path, handler);
+    if RAW_BODY_ROUTES.contains(&key) {
+        spec.raw_body()
+    } else {
+        spec
     }
 }
 
@@ -586,6 +602,52 @@ mod route_table_tests {
         }
         let router = builder.build();
         assert_eq!(router.dispatch("GET", "/api/v1/health", &[]).status, 200);
+    }
+
+    fn noop_router() -> Router {
+        let mut builder = AppBuilder::new("0.0.0-test", Arc::new(FixedClock));
+        for (key, _, _) in ROUTE_TABLE {
+            builder = builder.with_handler(*key, Box::new(NoopHandler));
+        }
+        builder.build()
+    }
+
+    fn with_placeholder_params(path: &str) -> String {
+        path.split('/')
+            .map(|seg| if seg.starts_with('{') { "0" } else { seg })
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
+    #[test]
+    fn every_route_with_a_json_body_refuses_an_over_deep_body() {
+        let router = noop_router();
+        let deep = crate::json_depth::nested_json(crate::json_depth::MAX_JSON_DEPTH + 1);
+        let mut json_routes = 0;
+        for (key, method, path) in ROUTE_TABLE {
+            if !matches!(method, HttpMethod::Post | HttpMethod::Put | HttpMethod::Patch) {
+                continue;
+            }
+            let uri = with_placeholder_params(path);
+            let response = router.dispatch(method.as_str(), &uri, &deep);
+            if RAW_BODY_ROUTES.contains(key) {
+                assert_eq!(response.status, 204, "raw body reaches {method:?} {path}");
+                continue;
+            }
+            assert_eq!(response.status, 400, "{method:?} {path}");
+            let body = String::from_utf8(response.into_body_bytes()).expect("utf-8");
+            assert!(body.contains("invalid_json"), "{method:?} {path}: {body}");
+            json_routes += 1;
+        }
+        assert!(json_routes > 40, "only {json_routes} body routes checked");
+    }
+
+    #[test]
+    fn a_body_within_the_depth_limit_reaches_the_handler() {
+        let router = noop_router();
+        let fine = crate::json_depth::nested_json(crate::json_depth::MAX_JSON_DEPTH);
+        let response = router.dispatch("PUT", "/api/v1/rules", &fine);
+        assert_eq!(response.status, 204);
     }
 }
 

@@ -265,45 +265,12 @@ pub fn pd_cap_supports_color_mode(caps: &CapabilityFlagsDto, cm: ColorMode) -> b
     cap_supports_color_mode(caps, cm)
 }
 
-const MAX_JSON_BODY_DEPTH: usize = 8;
-
-fn json_depth_exceeds(body: &[u8], max_depth: usize) -> bool {
-    let (mut depth, mut in_string, mut escaped) = (0usize, false, false);
-    for &b in body {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if b == b'\\' {
-                escaped = true;
-            } else if b == b'"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match b {
-            b'"' => in_string = true,
-            b'[' | b'{' => {
-                depth += 1;
-                if depth > max_depth {
-                    return true;
-                }
-            }
-            b']' | b'}' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    false
-}
-
 pub fn parse_typed_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, HttpResponse> {
     let body_slice = if body.is_empty() {
         "{}".as_bytes()
     } else {
         body
     };
-    if json_depth_exceeds(body_slice, MAX_JSON_BODY_DEPTH) {
-        return Err(json_err(400, "invalid_json"));
-    }
     serde_json::from_slice(body_slice).map_err(|_| json_err(400, "invalid_json"))
 }
 
@@ -526,43 +493,3 @@ impl<H: MutatingHandler> crate::http::handler::ApiHandler for H {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn nested(depth: usize) -> Vec<u8> {
-        let mut s = String::from("{\"a\":");
-        s.push_str(&"[".repeat(depth - 1));
-        s.push('1');
-        s.push_str(&"]".repeat(depth - 1));
-        s.push('}');
-        s.into_bytes()
-    }
-
-    #[test]
-    fn depth_guard_accepts_product_depths() {
-        assert!(!json_depth_exceeds(&nested(MAX_JSON_BODY_DEPTH), MAX_JSON_BODY_DEPTH));
-        assert!(parse_json_body(&nested(MAX_JSON_BODY_DEPTH)).is_ok());
-    }
-
-    #[test]
-    fn depth_guard_rejects_over_deep_bodies() {
-        assert!(json_depth_exceeds(&nested(MAX_JSON_BODY_DEPTH + 1), MAX_JSON_BODY_DEPTH));
-        let resp = parse_json_body(&nested(MAX_JSON_BODY_DEPTH + 1)).unwrap_err();
-        assert_eq!(resp.status, 400);
-    }
-
-    #[test]
-    fn depth_guard_ignores_braces_inside_strings() {
-        let body = br#"{"a":"[[[[[[[[[[[[[[[[[[[["}"#;
-        assert!(!json_depth_exceeds(body, MAX_JSON_BODY_DEPTH));
-        assert!(parse_json_body(body).is_ok());
-    }
-
-    #[test]
-    fn depth_guard_handles_escaped_quotes_in_strings() {
-        let body = br#"{"a":"x\"[[[[[[[[[[\"y"}"#;
-        assert!(!json_depth_exceeds(body, MAX_JSON_BODY_DEPTH));
-        assert!(parse_json_body(body).is_ok());
-    }
-}

@@ -18,6 +18,9 @@ pub fn ha_light_command_to_setpoint(
     payload: &[u8],
     supports_color_mode: impl Fn(ColorMode) -> bool,
 ) -> Result<LightSetpoint, HttpResponse> {
+    if crate::json_depth::json_too_deep(payload) {
+        return Err(crate::http::handlers::common::json_err(400, "invalid_json"));
+    }
     let raw: Value = serde_json::from_slice(payload)
         .map_err(|_| crate::http::handlers::common::json_err(400, "invalid_json"))?;
     let obj = raw
@@ -136,6 +139,12 @@ mod tests {
     #[test]
     fn an_out_of_scale_brightness_is_clamped_rather_than_refused() {
         assert_eq!(parse(r#"{"state":"ON","brightness":255}"#).level, 254);
+    }
+
+    #[test]
+    fn an_over_deep_command_is_refused_before_parsing() {
+        let deep = crate::json_depth::nested_json(crate::json_depth::MAX_JSON_DEPTH + 1);
+        assert!(ha_light_command_to_setpoint(&deep, anything).is_err());
     }
 
     #[test]

@@ -2,10 +2,22 @@ use super::handler::ApiHandler;
 use super::types::{HttpMethod, HttpResponse, RouteRegisterError};
 use std::collections::HashMap;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestBody {
+    Json,
+    Raw,
+}
+
 pub struct RouteSpec {
     pub method: HttpMethod,
     pub path: &'static str,
     pub handler: Box<dyn ApiHandler>,
+    pub body: RequestBody,
+}
+
+struct Route {
+    handler: Box<dyn ApiHandler>,
+    body: RequestBody,
 }
 
 impl RouteSpec {
@@ -14,7 +26,13 @@ impl RouteSpec {
             method,
             path,
             handler,
+            body: RequestBody::Json,
         }
+    }
+
+    pub fn raw_body(mut self) -> Self {
+        self.body = RequestBody::Raw;
+        self
     }
 
     pub fn get(path: &'static str, handler: Box<dyn ApiHandler>) -> Self {
@@ -39,7 +57,7 @@ impl RouteSpec {
 }
 
 pub struct Router {
-    routers: HashMap<HttpMethod, matchit::Router<Box<dyn ApiHandler>>>,
+    routers: HashMap<HttpMethod, matchit::Router<Route>>,
     role: Option<std::sync::Arc<dyn crate::http::role::ControllerRolePort>>,
 }
 
@@ -67,14 +85,18 @@ impl Router {
         response
     }
 
-    fn router_for(&mut self, method: HttpMethod) -> &mut matchit::Router<Box<dyn ApiHandler>> {
+    fn router_for(&mut self, method: HttpMethod) -> &mut matchit::Router<Route> {
         self.routers.entry(method).or_default()
     }
 
     pub fn register(&mut self, spec: RouteSpec) -> Result<(), RouteRegisterError> {
         let router = self.router_for(spec.method);
+        let route = Route {
+            handler: spec.handler,
+            body: spec.body,
+        };
         router
-            .insert(spec.path, spec.handler)
+            .insert(spec.path, route)
             .map_err(|e| RouteRegisterError(e.to_string()))?;
         Ok(())
     }
@@ -95,12 +117,27 @@ impl Router {
                             .iter()
                             .map(|(k, v)| (k.to_string(), percent_decode_path(v))),
                     );
-                    self.stamped(m.value.handle_request(method, path, body, &params))
+                    self.stamped(m.value.handle(method, path, body, &params))
                 }
                 Err(_) => self.stamped(HttpResponse::not_found()),
             },
             None => self.stamped(HttpResponse::not_found()),
         }
+    }
+}
+
+impl Route {
+    fn handle(
+        &self,
+        method: &str,
+        path: &str,
+        body: &[u8],
+        params: &HashMap<String, String>,
+    ) -> HttpResponse {
+        if self.body == RequestBody::Json && crate::json_depth::json_too_deep(body) {
+            return crate::http::handlers::common::json_err(400, "invalid_json");
+        }
+        self.handler.handle_request(method, path, body, params)
     }
 }
 

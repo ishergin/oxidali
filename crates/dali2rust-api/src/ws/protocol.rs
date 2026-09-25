@@ -93,6 +93,12 @@ pub struct RequestError {
 }
 
 pub fn parse_client_request(text: &str) -> Result<ClientRequest, RequestError> {
+    if crate::json_depth::json_too_deep(text.as_bytes()) {
+        return Err(RequestError {
+            code: ErrorCode::InvalidJson,
+            message: "frame nests too deep".to_string(),
+        });
+    }
     let value: serde_json::Value = serde_json::from_str(text).map_err(|_| RequestError {
         code: ErrorCode::InvalidJson,
         message: "frame is not JSON".to_string(),
@@ -364,6 +370,13 @@ mod tests {
     #[test]
     fn a_non_json_frame_is_an_error_not_a_panic() {
         let err = parse_client_request("not json at all").unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidJson);
+    }
+
+    #[test]
+    fn an_over_deep_frame_is_refused_before_parsing() {
+        let deep = crate::json_depth::nested_json(crate::json_depth::MAX_JSON_DEPTH + 1);
+        let err = parse_client_request(std::str::from_utf8(&deep).unwrap()).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidJson);
     }
 
