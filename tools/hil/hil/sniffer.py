@@ -404,8 +404,8 @@ class Window:
         return stats(self.frames())
 
 
-def decode_main(argv=None):
-    ap = argparse.ArgumentParser(description="decode WB sporadic-frame captures")
+def decode_main(argv=None, parser_class=argparse.ArgumentParser):
+    ap = parser_class(prog="hil decode", description="decode WB sporadic-frame captures")
     ap.add_argument("logfile", nargs="?", help="tap log (default: stdin)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--stats", action="store_true")

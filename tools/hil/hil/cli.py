@@ -1,5 +1,8 @@
+import argparse
 import os
 import sys
+
+EX_USAGE = 64
 
 API_USAGE = ("usage: hil api health|devices|addrs|state N|ts N '<json>'|off N|"
              "off-all|dapc N L|cmd N OP|attr-read N [groups] [banks]|"
@@ -28,19 +31,34 @@ COMMAND_HELP = {
 }
 
 
-def _todo(legacy):
-    print("not migrated yet — use legacy script: %s" % legacy)
-    return 64
+class UsageError(Exception):
+    pass
+
+
+class _Parser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("allow_abbrev", False)
+        kwargs.setdefault("add_help", False)
+        super().__init__(*args, **kwargs)
+
+    def error(self, message):
+        raise UsageError("%s%s: error: %s" % (self.format_usage(), self.prog, message))
+
+
+def _flags(prog, rest, *flags):
+    ap = _Parser(prog=prog)
+    for flag in flags:
+        ap.add_argument(flag, action="store_true")
+    return ap.parse_args(rest)
 
 
 def _cmd_decode(rest):
     from hil.sniffer import decode_main
-    return decode_main(rest) or 0
+    return decode_main(rest, parser_class=_Parser) or 0
 
 
 def _cmd_calibrate(rest):
-    import argparse
-    ap = argparse.ArgumentParser(prog="hil calibrate")
+    ap = _Parser(prog="hil calibrate")
     ap.add_argument("--profile", choices=("day", "night"), default=None)
     ap.add_argument("--fingerprints-only", action="store_true")
     ap.add_argument("--skip-fingerprints", action="store_true")
@@ -64,22 +82,28 @@ def _cmd_calibrate(rest):
 
 
 def _cmd_camera_server(rest):
+    ap = _Parser(prog="hil camera-server")
+    mode = ap.add_mutually_exclusive_group()
+    for flag in ("--restart", "--stop", "--status", "--spawn-terminal"):
+        mode.add_argument(flag, action="store_true")
+    args = ap.parse_args(rest)
     from hil.camera import server
     from hil.config import load as load_config
-    if "--restart" in rest:
+    if args.restart:
         return server.restart_in_terminal()
-    if "--stop" in rest:
+    if args.stop:
         return server.stop(load_config())
-    if "--status" in rest:
+    if args.status:
         return server.status(load_config())
-    if "--spawn-terminal" in rest:
+    if args.spawn_terminal:
         return server.spawn_in_terminal()
     return server.serve() or 0
 
 
 def _cmd_camera_bench(rest):
+    args = _flags("hil camera-bench", rest, "--spawn-terminal")
     from hil.camera import bench, server
-    if "--spawn-terminal" in rest:
+    if args.spawn_terminal:
         import time as _time
         from pathlib import Path as _Path
 
@@ -94,43 +118,71 @@ def _cmd_camera_bench(rest):
 
 
 def _cmd_preflight(rest):
+    _flags("hil preflight", rest)
     from hil.config import load as load_config
     from hil.preflight import run
     return run(load_config())
 
 
+def _monitor_parser():
+    ap = _Parser(prog="hil monitor")
+    subs = ap.add_subparsers(dest="sub")
+    subs.add_parser("start").add_argument("log", nargs="?")
+    subs.add_parser("stop")
+    subs.add_parser("status")
+    subs.add_parser("tail").add_argument("lines", nargs="?", type=int, default=20)
+    run = subs.add_parser("_run")
+    run.add_argument("port")
+    run.add_argument("baud")
+    run.add_argument("discovery", nargs="?", choices=("pinned", "auto"), default="auto")
+    return ap
+
+
 def _cmd_monitor(rest):
+    args = _monitor_parser().parse_args(rest)
     from hil import serialmon
     from hil.config import load as load_config
-    cfg = load_config()
-    sub = rest[0] if rest else "status"
-    if sub == "_run":
-        serialmon.reader_loop(rest[1], rest[2],
-                              pinned=(len(rest) > 3 and rest[3] == "pinned"))
+    if args.sub == "_run":
+        serialmon.reader_loop(args.port, args.baud, pinned=args.discovery == "pinned")
         return 0
-    return {"start": lambda: serialmon.start(cfg, rest[1] if len(rest) > 1 else None),
+    cfg = load_config()
+    return {"start": lambda: serialmon.start(cfg, args.log),
             "stop": lambda: serialmon.stop(cfg),
-            "status": lambda: serialmon.status(cfg),
-            "tail": lambda: serialmon.tail(cfg, int(rest[1]) if len(rest) > 1 else 20),
-            }.get(sub, lambda: _todo("monitor start|stop|status|tail"))()
+            "tail": lambda: serialmon.tail(cfg, args.lines),
+            }.get(args.sub, lambda: serialmon.status(cfg))()
 
 
 def _cmd_flash(rest):
+    args = _flags("hil flash", rest,
+                  "--build-only", "--allow-nonbench-build", "--allow-red-isr")
     from hil import flash
     from hil.config import load as load_config
     return flash.run(
         load_config(),
-        build_only="--build-only" in rest,
-        allow_nonbench="--allow-nonbench-build" in rest,
-        allow_red_isr="--allow-red-isr" in rest,
+        build_only=args.build_only,
+        allow_nonbench=args.allow_nonbench_build,
+        allow_red_isr=args.allow_red_isr,
     )
 
 
+REMOTE_CONTROL_VERBS = ("ping", "bootloader", "run")
+
+
+def _remote_parser():
+    ap = _Parser(prog="hil remote")
+    subs = ap.add_subparsers(dest="sub")
+    subs.add_parser("start").add_argument("--restart", action="store_true")
+    for verb in ("stop", "status") + REMOTE_CONTROL_VERBS:
+        subs.add_parser(verb)
+    return ap
+
+
 def _cmd_remote(rest):
+    args = _remote_parser().parse_args(rest)
     from hil import remote_serial
     from hil.config import load as load_config
     cfg = load_config()
-    sub = rest[0] if rest else "status"
+    sub = args.sub or "status"
     if not remote_serial.enabled(cfg) and sub != "status":
         print("serial is local (HIL_SERIAL_REMOTE is empty)", file=sys.stderr)
         return 1
@@ -138,34 +190,39 @@ def _cmd_remote(rest):
         if sub == "status":
             return remote_serial.status(cfg)
         if sub == "start":
-            remote_serial.ensure(cfg, restart="--restart" in rest)
+            remote_serial.ensure(cfg, restart=args.restart)
             return 0
         if sub == "stop":
             print("tunnel stopped"
                   if remote_serial.stop_tunnel(cfg, remote_serial.target(cfg))
                   else "tunnel not running")
             return 0
-        if sub in ("ping", "bootloader", "run"):
-            print(remote_serial.control(cfg, sub))
-            return 0
+        print(remote_serial.control(cfg, sub))
+        return 0
     except (OSError, remote_serial.RemoteError) as exc:
         print("remote serial: %s" % exc, file=sys.stderr)
         return 1
-    print("usage: hil remote start|stop|status|ping|bootloader|run", file=sys.stderr)
-    return 64
+
+
+API_SUBCOMMANDS = ("health", "devices", "addrs", "state", "ts", "off", "off-all", "dapc",
+                   "cmd", "attr-read", "discovery", "op", "wait-op", "snapshot", "restore")
 
 
 def _cmd_api(rest):
     import json as _json
 
+    if not rest:
+        print(API_USAGE)
+        return EX_USAGE
+    ap = _Parser(prog="hil api")
+    ap.add_argument("sub", choices=API_SUBCOMMANDS)
+    ap.add_argument("args", nargs="*")
+    parsed = ap.parse_args(rest)
     from hil.api import ApiError, Client
     from hil.config import load as load_config
     from hil.lamp_guard import LampNotAllowed
-    if not rest:
-        print(API_USAGE)
-        return 64
     client = Client(load_config())
-    sub, args = rest[0], rest[1:]
+    sub, args = parsed.sub, parsed.args
     try:
         table = {
             "health": lambda: client.health(),
@@ -184,9 +241,6 @@ def _cmd_api(rest):
             "snapshot": lambda: client.snapshot_states(),
             "restore": lambda: client.restore_states(_json.loads(args[0])),
         }
-        if sub not in table:
-            print("unknown api subcommand: %s" % sub, file=sys.stderr)
-            return 64
         result = table[sub]()
         if result is not None:
             print(_json.dumps(result, indent=1, sort_keys=True))
@@ -200,6 +254,7 @@ def _cmd_api(rest):
 
 
 def _cmd_lamps(rest):
+    args = _flags("hil lamps", rest, "--no-baseline")
     from hil.api import Client
     from hil.camera.backend import probe_and_select
     from hil.camera.calibrate import load as load_cal
@@ -213,7 +268,7 @@ def _cmd_lamps(rest):
     geometry = load_geometry(cfg)
     oracle = CameraOracle(backend, cal, geometry, cfg)
     api_client = Client(cfg)
-    if "--no-baseline" not in rest:
+    if not args.no_baseline:
         oracle.fresh_baseline(api_client)
     out = {}
     for label in sorted(geometry):
@@ -228,10 +283,9 @@ def _cmd_lamps(rest):
 
 
 def _cmd_corpus(rest):
-    import argparse
     from hil import corpus
 
-    ap = argparse.ArgumentParser(prog="hil corpus")
+    ap = _Parser(prog="hil corpus")
     ap.add_argument("parts", nargs="*", default=["all"],
                     choices=("all", "panel") + corpus.PARTS)
     ap.add_argument("--out", default=None,
@@ -268,21 +322,22 @@ def _cmd_corpus(rest):
 def _cmd_state(rest):
     from pathlib import Path
 
+    ap = _Parser(prog="hil state")
+    ap.add_argument("action", choices=("save", "restore", "diff"))
+    ap.add_argument("file", nargs="?")
+    args = ap.parse_args(rest)
     from hil import prod_state
     from hil.api import Client
     from hil.config import load as load_config
-    if not rest or rest[0] not in ("save", "restore", "diff"):
-        print("usage: hil state save|restore|diff [FILE]", file=sys.stderr)
-        return 64
     cfg = load_config()
     client = Client(cfg)
-    path = Path(rest[1]) if len(rest) > 1 else prod_state.last_path(cfg)
-    if rest[0] == "save":
+    path = Path(args.file) if args.file else prod_state.last_path(cfg)
+    if args.action == "save":
         prod_state.save(prod_state.capture(client), path)
         print("saved %s" % path)
         return 0
     snap = prod_state.load(path)
-    if rest[0] == "restore":
+    if args.action == "restore":
         residual = prod_state.restore(client, snap, drive_lamps=not cfg.lamps_read_only,
                                       lamp_shorts=cfg.lamp_short_set())
         if not residual:
@@ -335,11 +390,16 @@ def main(argv=None):
     cmd, rest = argv[0], argv[1:]
     handler = COMMANDS.get(cmd)
     if handler is None:
-        print("unknown command: %s" % cmd, file=sys.stderr)
-        return 64
+        print("unknown command: %s%s" % (cmd, " (`--peer` goes first)"
+                                         if cmd == PEER_FLAG else ""), file=sys.stderr)
+        return EX_USAGE
     if any(flag in rest for flag in HELP_FLAGS):
         return _print_help(cmd)
-    return handler(rest)
+    try:
+        return handler(rest)
+    except UsageError as exc:
+        print(str(exc), file=sys.stderr)
+        return EX_USAGE
 
 
 if __name__ == "__main__":

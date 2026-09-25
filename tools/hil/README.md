@@ -266,7 +266,7 @@ carries the rate the installation imposes.
 | --- | --- |
 | `preflight` | read-only readiness: DUT HTTP, serial bridge, monitor, WB ssh, broker, camera, calibration, host tools |
 | `monitor start\|stop\|status\|tail` | persistent serial monitor; `start` raises the bridge if needed |
-| `remote start\|stop\|status\|ping\|bootloader\|run [--restart]` | the WB serial bridge and its tunnel |
+| `remote start [--restart]\|stop\|status\|ping\|bootloader\|run` | the WB serial bridge and its tunnel |
 | `flash [--build-only] [--allow-nonbench-build] [--allow-red-isr]` | the only flash path (below) |
 | `state save\|restore\|diff [FILE]` | the installation snapshot |
 | `api <sub> …` | manual API calls; exit 2 means the firmware lacks the capability |
@@ -274,7 +274,10 @@ carries the rate the installation imposes.
 | `calibrate`, `camera-server`, `camera-bench`, `lamps [--no-baseline]` | optics; `lamps` switches every calibrated lamp **off** for its baseline unless `--no-baseline` |
 | `decode <log>` | decode a sniffer capture |
 
-`hil --peer <command>` runs any of them against the other controller.
+`hil --peer <command>` runs any of them against the other controller; `--peer` goes
+before the command. Every command parses its arguments strictly: an unknown or
+misspelt flag (`--peer` after the command included), an unknown subcommand or a stray
+argument exits 64 before anything runs. `hil api`'s exit 2 keeps its meaning.
 
 ## Serial ports
 

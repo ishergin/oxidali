@@ -40,3 +40,62 @@ def test_a_real_invocation_still_reaches_the_handler():
 def test_unknown_command_is_rejected_without_running_anything(capsys):
     assert cli.main(["definitely-not-a-command"]) == 64
     assert "unknown command" in capsys.readouterr().err
+
+
+def _never(name, ran):
+    return lambda *args, **kwargs: ran.append(name)
+
+
+def test_a_misspelt_flash_flag_is_refused_before_anything_is_flashed(monkeypatch, capsys):
+    from hil import flash
+    ran = []
+    monkeypatch.setattr(flash, "run", _never("flash", ran))
+    assert cli.main(["flash", "--build-onyl"]) == cli.EX_USAGE
+    assert ran == []
+    assert "--build-onyl" in capsys.readouterr().err
+
+
+def test_the_real_flash_flags_still_reach_flash(monkeypatch):
+    from hil import flash
+    seen = []
+    monkeypatch.setattr(flash, "run", lambda cfg, **kwargs: seen.append(kwargs) or 0)
+    assert cli.main(["flash", "--build-only", "--allow-red-isr"]) == 0
+    assert seen == [{"build_only": True, "allow_nonbench": False, "allow_red_isr": True}]
+
+
+def test_a_misspelt_lamps_flag_switches_nothing_off(monkeypatch, capsys):
+    from hil.camera import backend
+    ran = []
+    monkeypatch.setattr(backend, "probe_and_select", _never("camera", ran))
+    assert cli.main(["lamps", "--no-basline"]) == cli.EX_USAGE
+    assert ran == []
+    assert "--no-basline" in capsys.readouterr().err
+
+
+def test_corpus_does_not_take_peer_for_peer_only(monkeypatch, capsys):
+    from hil import corpus
+    ran = []
+    monkeypatch.setattr(corpus, "run", _never("corpus", ran))
+    assert cli.main(["corpus", "--peer"]) == cli.EX_USAGE
+    assert ran == []
+    capsys.readouterr()
+
+
+def test_peer_after_the_command_is_refused(monkeypatch, capsys):
+    from hil import flash, serialmon
+    ran = []
+    monkeypatch.setattr(flash, "run", _never("flash", ran))
+    monkeypatch.setattr(serialmon, "status", _never("monitor", ran))
+    assert cli.main(["flash", "--peer"]) == cli.EX_USAGE
+    assert cli.main(["monitor", "status", "--peer"]) == cli.EX_USAGE
+    assert cli.main(["api", "health", "--peer"]) == cli.EX_USAGE
+    assert ran == []
+    capsys.readouterr()
+
+
+def test_an_unknown_subcommand_is_a_usage_error(capsys):
+    assert cli.main(["monitor", "restart"]) == cli.EX_USAGE
+    assert cli.main(["remote", "reboot"]) == cli.EX_USAGE
+    assert cli.main(["state", "wipe"]) == cli.EX_USAGE
+    assert cli.main(["preflight", "--all"]) == cli.EX_USAGE
+    assert "invalid choice" in capsys.readouterr().err
