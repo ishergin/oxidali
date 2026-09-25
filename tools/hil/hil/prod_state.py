@@ -3,6 +3,7 @@ import os
 import time
 
 from hil.api import ApiError, CapabilityUnsupported, _HomeAssistantSettings, _PollerSettings
+from hil.lamp_guard import LampNotAllowed
 
 PRIME_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,groups,scenes,extended"
 
@@ -134,10 +135,6 @@ def hcl_owned(snap):
             for short in shorts:
                 owned.setdefault(short, set()).update(fields)
     return owned
-
-
-def allowed_shorts(cfg):
-    return {int(x) for x in cfg.lamp_shorts.split(",") if x.strip() != ""}
 
 
 def _settings(api):
@@ -458,8 +455,11 @@ def _restore_gear_tables(api, snap, log):
             log("prod_state: SA%d did not answer its table read (%s)" % (s, exc))
             continue
         attrs = api.attributes(s).get("attributes") or {}
-        _repair_groups(api, s, was["groups"], _gear_groups(attrs), log)
-        _repair_scenes(api, s, was["scenes"], _gear_scenes(attrs), log)
+        try:
+            _repair_groups(api, s, was["groups"], _gear_groups(attrs), log)
+            _repair_scenes(api, s, was["scenes"], _gear_scenes(attrs), log)
+        except LampNotAllowed as exc:
+            log("prod_state: SA%d gear tables left as they are: %s" % (s, exc))
 
 
 def _repair_groups(api, short, want, have, log):
@@ -526,7 +526,7 @@ def _restore_shown(api, snap, log, lamp_shorts=None):
         log("prod_state: SA%s back to %s" % (short, {k: state.get(k) for k in mine}))
         try:
             api.ts(int(short), _setpoint(state, colour="color_mode" in mine))
-        except (ApiError, CapabilityUnsupported) as exc:
+        except (ApiError, CapabilityUnsupported, LampNotAllowed) as exc:
             log("prod_state: SA%s target-state refused: %s" % (short, exc))
         time.sleep(FRAME_PACE_S)
 

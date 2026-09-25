@@ -4,6 +4,7 @@ from hil.wait import wait_until
 
 SCENE_ID = 9
 AUDIT_LEVEL = 90
+REMOVE_FROM_SCENE = 0x50
 
 
 def _mirek(kelvin):
@@ -24,11 +25,13 @@ def _active_tc_mirek(state):
 
 
 def _cct_lamp(api):
+    allowed = api.cfg.lamp_short_set()
     short = next((d["short_address"]
                   for d in api.devices()["physical_devices"]
-                  if (d.get("capabilities") or {}).get("cct")), None)
+                  if d["short_address"] in allowed
+                  and (d.get("capabilities") or {}).get("cct")), None)
     if short is None:
-        pytest.skip("no cct-capable device on the bus")
+        pytest.skip("no cct-capable device in HIL_LAMP_SHORTS on the bus")
     vl = next((v["virtual_lamp_id"]
                for v in api.vlamps.list()["virtual_lamps"]
                if (v.get("binding") or {}).get("physical_short_address") == short),
@@ -98,7 +101,7 @@ def test_scene_colour_audit_reads_stored_not_active(api, scene_matrix_guard,
     scene_kelvin = 1_000_000 // scene_mirek
 
     scene_matrix_guard(SCENE_ID)
-    api.cmd_wire(0xFF, 0x50 + SCENE_ID, repeat=2)
+    api.cmd(short, REMOVE_FROM_SCENE + SCENE_ID, repeat=2)
     api.scenes.matrix_patch(SCENE_ID, [{
         "virtual_lamp_id": vl,
         "desired": {"included": True, "power": "on", "level": AUDIT_LEVEL,

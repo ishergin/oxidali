@@ -12,10 +12,10 @@ LEVEL = 200
 
 
 def main(argv):
-    short = int(argv[1]) if len(argv) > 1 else 1
+    conf = cfg.load()
+    short = int(argv[1]) if len(argv) > 1 else min(conf.lamp_short_set())
     hold = float(argv[2]) if len(argv) > 2 else 6.0
 
-    conf = cfg.load()
     api = Client(conf)
     master = ForeignMaster(conf, api=api)
     master.probe()

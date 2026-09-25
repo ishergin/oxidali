@@ -165,7 +165,7 @@
 | ISSUE-146 | обход | tiny_http и tungstenite: WebSocket хостового сервера |
 | ISSUE-147 | обход | Хост разработки: cargo, macOS, `libc`, Vite |
 | ISSUE-148 | обход | Мост WB и `hil flash`: CH343, RFC2217, esptool, espflash |
-| ISSUE-149 | стенд | Тесты и пробы водят лампы мимо `HIL_LAMP_SHORTS` |
+| ISSUE-149 | закрыт (ветка fix/wave-2026-09-25) | Тесты и пробы водят лампы мимо `HIL_LAMP_SHORTS` |
 | ISSUE-150 | стенд | Перезагрузки и коммишенинг Part 103 в ярусе default |
 | ISSUE-151 | стенд | CLI `hil` молча игнорирует неизвестный флаг |
 | ISSUE-152 | стенд | `--fast-fade` оставляет гирам fade time 0 |

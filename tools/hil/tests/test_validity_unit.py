@@ -6,6 +6,7 @@ import requests
 
 from hil import api as api_mod
 from hil import validity
+from hil.lamp_guard import LampGuard
 
 
 
@@ -43,6 +44,7 @@ def _client(monkeypatch, responses):
     client.timeout_s = 1.0
     client.init_ledger()
     client._rebooting = False
+    client.guard = LampGuard({0})
     queue = list(responses)
 
     class _Session:

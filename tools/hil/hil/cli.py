@@ -160,6 +160,7 @@ def _cmd_api(rest):
 
     from hil.api import ApiError, Client
     from hil.config import load as load_config
+    from hil.lamp_guard import LampNotAllowed
     if not rest:
         print(API_USAGE)
         return 64
@@ -193,6 +194,9 @@ def _cmd_api(rest):
     except ApiError as exc:
         print(str(exc), file=sys.stderr)
         return 2 if exc.status in (404, 422) else 1
+    except LampNotAllowed as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 
 def _cmd_lamps(rest):
@@ -280,7 +284,7 @@ def _cmd_state(rest):
     snap = prod_state.load(path)
     if rest[0] == "restore":
         residual = prod_state.restore(client, snap, drive_lamps=not cfg.lamps_read_only,
-                                      lamp_shorts=prod_state.allowed_shorts(cfg))
+                                      lamp_shorts=cfg.lamp_short_set())
         if not residual:
             prod_state.mark_restored(path, snap)
     else:

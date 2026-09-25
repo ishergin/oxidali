@@ -6,7 +6,9 @@ import requests
 
 from urllib.parse import quote
 
+from hil import lamp_guard
 from hil.config import HilConfig
+from hil.lamp_guard import LampGuard, LampNotAllowed
 
 OP_POLL_S = 0.7
 OP_TIMEOUT_S = 30.0
@@ -79,6 +81,8 @@ class Client:
         self.dali_settings = _DaliSettings(self)
         self.redundancy = _Redundancy(self)
         self.config = _ConfigSlices(self)
+        self.guard = LampGuard.for_config(cfg, segment=self.segment_shorts,
+                                          binding=self._bound_short)
         self.init_ledger()
         self._rebooting = False
 
@@ -112,6 +116,7 @@ class Client:
 
     def _http(self, method, path, body=None):
         url = self._url(path)
+        self.guard.check_request(method, path, body)
         self._drop_pool_after_reboot()
         self._note_diagnostic_write(method, path, body)
         attempts = 3 if method in self.IDEMPOTENT else 1
@@ -168,6 +173,7 @@ class Client:
         return status, payload
 
     def raw_response(self, method, path, body=None):
+        self.guard.check_request(method, path, body)
         return self.http.request(method, self._url(path), json=body,
                                  timeout=self.timeout_s)
 
@@ -192,6 +198,21 @@ class Client:
     def present_addrs(self):
         return sorted(d["short_address"] for d in self.devices()["physical_devices"]
                       if d.get("present", True))
+
+    def segment_shorts(self):
+        return sorted(d["short_address"] for d in self.devices_unfiltered()["physical_devices"]
+                      if d.get("present", True))
+
+    def lamp_addrs(self):
+        allowed = self.cfg.lamp_short_set()
+        return [a for a in self.addrs() if a in allowed]
+
+    def _bound_short(self, lamp_id):
+        try:
+            lamp = self.vlamps.get(lamp_id)
+        except ApiError:
+            return None
+        return (lamp.get("binding") or {}).get("physical_short_address")
 
     def optical_addrs(self):
         wanted = self.cfg.optical_short_set()
@@ -283,34 +304,16 @@ class Client:
             time.sleep(0.35)
 
     def off_all(self):
-        self.off_many(self.addrs())
+        self.off_many(self.lamp_addrs())
 
-    ARC_POWER_OPCODES = range(0x00, 0x20)
-    ACTIVATE_OPCODE = 0xE2
-    TOUCHED_ALL = -1
+    TOUCHED_ALL = lamp_guard.TARGET_SEGMENT
 
     def _note_diagnostic_write(self, method, path, body):
-        if method != "POST" or not isinstance(body, dict):
+        if method != "POST":
             return
-        if path == "dali/level":
-            self._touch_wire(body.get("wire_address"))
-        elif path == "dali/command":
-            if body.get("command") in self.ARC_POWER_OPCODES or \
-                    body.get("command") == self.ACTIVATE_OPCODE:
-                self._touch_wire(body.get("wire_address"))
-        elif path == "dali/raw" and isinstance(body.get("frame"), int):
-            addr, data = (body["frame"] >> 8) & 0xFF, body["frame"] & 0xFF
-            if addr & 1 == 0 or data in self.ARC_POWER_OPCODES or \
-                    data == self.ACTIVATE_OPCODE:
-                self._touch_wire(addr)
-
-    def _touch_wire(self, addr):
-        if not isinstance(addr, int):
-            return
-        if addr < 0x80:
-            self.raw_touched.add(addr >> 1)
-        elif addr <= 0x9F or addr >= 0xFC:
-            self.raw_touched.add(self.TOUCHED_ALL)
+        frame = lamp_guard.diagnostic_frame(path, body)
+        if frame is not None and lamp_guard.frame_visible(*frame):
+            self.raw_touched.add(lamp_guard.wire_target(frame[0]))
 
     def dapc(self, short: int, level: int) -> dict:
         return self._req("POST", "dali/level",
@@ -600,6 +603,8 @@ class Client:
                     pass
             except ApiError:
                 continue
+            except LampNotAllowed as exc:
+                print("restore_states: %s" % exc)
 
 
 

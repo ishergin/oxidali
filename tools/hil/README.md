@@ -42,10 +42,10 @@ zone to `HIL_BENCH_TZ` for the session.
 | `HIL_SERIAL_REMOTE` | `user@host:/dev/…` of the controller's UART behind a [serial bridge](#serial-ports); empty means this host's USB | a reference bench's Wiren Board |
 | `HIL_SERIAL_PORT` | the local serial device when `HIL_SERIAL_REMOTE` is empty | found by scanning |
 | `HIL_SERIAL_BAUD`, `HIL_FLASH_BAUD`, `HIL_SERIAL_BRIDGE_PORT` | console baud, esptool baud, the bridge's local port | `115200`, `1500000`, `4444` |
-| `HIL_LAMP_SHORTS` | short addresses a test may drive (`0,2,3`, `0-3`) | `0,2,3` |
+| `HIL_LAMP_SHORTS` | short addresses a test may drive or write (`0,2,3`, `0-3`); the client refuses the rest ([lamp guard](#the-installation-is-production)); empty allows none | `0,2,3` |
 | `HIL_GEAR_SHORTS` | gear the read tiers target; empty means every gear in the registry | empty |
-| `HIL_OPTICAL_SHORTS` | lamps in the camera's view, calibrated and measured | `0-3` |
-| `HIL_LAMPS_READ_ONLY=1` | report the light, never drive it | off |
+| `HIL_OPTICAL_SHORTS` | lamps in the camera's view, calibrated and measured; always narrowed to `HIL_LAMP_SHORTS` | `HIL_LAMP_SHORTS` |
+| `HIL_LAMPS_READ_ONLY=1` | report the light, never drive it: the client refuses every visible action | off |
 | `HIL_NO_CAMERA=1` (`--no-camera`) | optical tests skip instead of failing | off |
 | `HIL_CAMERA_NAME`, `HIL_CAMERA_ID` | which camera to open | `USB Camera` |
 | `HIL_SKIP_CALIBRATION=1` (`--skip-calibration`), `HIL_CALIBRATION_TTL_S` | reuse the saved calibration; how old it may be | recalibrate; `900` s |
@@ -90,6 +90,25 @@ lamps, save and restore, reboots, destructive tests, exclusive use — are STRAT
 `HIL_LAMP_SHORTS` names the lamps a test may drive; set `HIL_GEAR_SHORTS` on every
 run — empty, the default, means every gear in the registry.
 
+The lamp guard (`hil/lamp_guard.py`) enforces `HIL_LAMP_SHORTS` and
+`HIL_LAMPS_READ_ONLY` in the toolkit, whatever a test or a script selects. Every request `Client` sends (`_http`, `raw_request`,
+`raw_response`) and every frame the WB foreign master sends passes it first, and a
+refusal raises `LampNotAllowed`, naming the address and the reason, before anything
+reaches the wire:
+
+- A physical-device, virtual-lamp (by its binding) or identify target, or a diagnostic
+  frame that writes the gear (DAPC, an opcode below `0x90`, `ACTIVATE`), must address
+  a short in `HIL_LAMP_SHORTS`. Queries always pass.
+- A group or broadcast frame, a group target-state and a scene recall pass only when
+  every present gear on the segment is in `HIL_LAMP_SHORTS`.
+- Under `HIL_LAMPS_READ_ONLY=1` every visible action is refused: target-state, identify,
+  scene recall, and a frame that is DAPC, an arc-power command (`GO TO SCENE`
+  included), `RESET`, `IDENTIFY DEVICE` or `ACTIVATE`. Configuration writes to an
+  allowed lamp still pass (STRATEGY §4).
+- A `/api/v1/dali/*` request whose body names no frame the guard can read is refused.
+- HCL schedules, rules and MQTT commands drive lamps inside the controller, past the
+  guard: a test that uses them picks its targets from the `lamps` fixture.
+
 ## Save and restore
 
 The session-scoped autouse fixture `production_state` (`hil/prod_state.py`) runs
@@ -112,8 +131,9 @@ for every session that reaches the controller:
   every later session ends red until it has been restored. `hil state save` and
   `hil state diff [FILE]` take and compare snapshots by hand.
 - Under `HIL_LAMPS_READ_ONLY=1` the light is reported, never driven — by this
-  fixture, by `state_snapshot` and by `hil state restore` — and a lamp outside
-  `HIL_LAMP_SHORTS` is never driven back.
+  fixture, by `state_snapshot` and by `hil state restore`. A lamp outside
+  `HIL_LAMP_SHORTS` is never driven back, and the lamp guard refuses a repair of its
+  gear groups and scenes: a difference there stays a residual.
 - Across several tiers each session snapshots its own "before": keep the first
   snapshot and `hil state diff` against it at the end. `HIL_STATE_GUARD=0` is the
   only opt-out.
@@ -130,7 +150,8 @@ for every session that reaches the controller:
   panel already holds.
 - A request that can move a lamp through `/api/v1/dali/*` goes through `Client._http`
   (never `raw_response` or a bare session), which books the shorts it touches so
-  `restore_states` re-reads them before comparing.
+  `restore_states` re-reads them before comparing; `raw_response` passes the lamp
+  guard but books nothing.
 - A session fixture that changes the installation takes `production_state` as a
   parameter even when its body does not use it: pytest sets up one conftest's autouse
   fixtures in alphabetical order, and only that dependency puts the snapshot first.
@@ -341,10 +362,13 @@ back through a guard. Keep visible actions out of tests that do not need them �
 one costs a go-ahead.
 
 - **Targets.** A test that changes what a lamp shows takes its target from the `lamps`
-  fixture (or `prod_state.allowed_shorts`), the only selectors filtered by
-  `HIL_LAMP_SHORTS`. `addrs()`, `present_addrs()`, `optical_addrs()`, `devices()` and
-  `off_all()` honour only `HIL_GEAR_SHORTS` / `HIL_OPTICAL_SHORTS`: they pick read
-  targets, never a lamp to drive.
+  fixture or `cfg.lamp_short_set()`; `optical_addrs()`, `present_optical_addrs()`,
+  `lamp_addrs()` and `off_all()` stay inside `HIL_LAMP_SHORTS` too. `addrs()`,
+  `present_addrs()` and `devices()` honour only `HIL_GEAR_SHORTS`: they pick read
+  targets. Whatever the selector, the [lamp guard](#the-installation-is-production)
+  refuses a drive outside `HIL_LAMP_SHORTS`, and a group or broadcast action unless
+  the whole segment is allowed; a gear-wide command such as `REMOVE FROM SCENE` is
+  sent per lamp.
 - **Reboots.** A test or fixture that reboots a controller (reset, flash, OTA, power
   cut, bootloader request) does so inside `Client.expect_reboot()`: only there are the
   failed requests that follow booked as `http_reboot_race` and every client's pooled

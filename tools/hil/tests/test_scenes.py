@@ -6,6 +6,12 @@ from hil.wait import wait_until
 
 SCENE_ID = 12
 LEVEL_A, LEVEL_B = 200, 60
+REMOVE_FROM_SCENE = 0x50
+
+
+def _clear_scene(api, lamps):
+    for short in sorted(lamps.by_label.values()):
+        api.cmd(short, REMOVE_FROM_SCENE + SCENE_ID, repeat=2)
 
 
 def _rows_for(lamps, vl_bindings):
@@ -63,7 +69,7 @@ def test_scene_apply_programs_gear(api, scenes_supported, vl_bindings, lamps,
                                    ops_quiesce, state_snapshot,
                                    test_artifacts, op_check):
     scene_matrix_guard(SCENE_ID)
-    api.cmd_wire(0xFF, 0x50 + SCENE_ID, repeat=2)
+    _clear_scene(api, lamps)
     rows = _rows_for(lamps, vl_bindings)
     api.scenes.matrix_patch(SCENE_ID, rows)
     with sniffer.window() as win:
@@ -105,7 +111,7 @@ def test_scene_recall_reaches_gear_and_states(api, scenes_supported,
                                               camera_oracle, wait_state,
                                               state_snapshot, test_artifacts):
     scene_matrix_guard(SCENE_ID)
-    api.cmd_wire(0xFF, 0x50 + SCENE_ID, repeat=2)
+    _clear_scene(api, lamps)
     rows = _rows_for(lamps, vl_bindings)
     api.scenes.matrix_patch(SCENE_ID, rows)
     api.wait_op(api.scenes.apply(SCENE_ID), timeout_s=60)
@@ -161,7 +167,7 @@ def test_group_recall_moves_members_only(api, scenes_supported, vl_bindings,
                                          wait_state, state_snapshot,
                                          test_artifacts, op_check):
     scene_matrix_guard(SCENE_ID)
-    api.cmd_wire(0xFF, 0x50 + SCENE_ID, repeat=2)
+    _clear_scene(api, lamps)
     rows = _rows_for(lamps, vl_bindings)
     member_vl = rows[0]["virtual_lamp_id"]
     outsider_vl = rows[1]["virtual_lamp_id"]

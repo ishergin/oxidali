@@ -4,6 +4,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from hil.lamp_guard import LampGuard
 from hil.sniffer import ssh_argv
 
 WS_PORT = 8080
@@ -86,6 +87,8 @@ class ForeignMaster:
         self.line = cfg.wb_bus - 1
         self.api = api
         self.retries = collections.Counter()
+        self.guard = LampGuard.for_config(
+            cfg, segment=api.segment_shorts if api is not None else None)
 
     def _run_client(self, frames):
         script = _REMOTE_CLIENT % (WS_PORT, self.line)
@@ -179,8 +182,14 @@ class ForeignMaster:
             })
         return out
 
+    def _check(self, frames):
+        for frame in frames:
+            if frame["bits"] == 16:
+                self.guard.check_frame(*frame["bytes"])
+
     def send_frames(self, frames):
         frames = self._normalize(frames)
+        self._check(frames)
         if self.api is None or not frames:
             return self._send_once(frames)
 
@@ -297,6 +306,7 @@ class ForeignMaster:
         ])
 
     def send_frames_one_at_a_time(self, frames):
+        self._check(self._normalize(frames))
         out = []
         for frame in frames:
             echo = self.send_frames([frame])

@@ -11,7 +11,7 @@ def _env(name, default):
     return os.environ.get(name, default)
 
 
-def _parse_shorts(spec: str) -> frozenset:
+def _parse_shorts(spec: str, name: str) -> frozenset:
     out = set()
     for part in spec.split(","):
         part = part.strip()
@@ -23,7 +23,7 @@ def _parse_shorts(spec: str) -> frozenset:
         else:
             out.add(int(part))
     if not out:
-        raise ValueError("HIL_OPTICAL_SHORTS resolves to no addresses: %r" % spec)
+        raise ValueError("%s resolves to no addresses: %r" % (name, spec))
     return frozenset(out)
 
 
@@ -56,15 +56,20 @@ class HilConfig:
     mqtt_broker_port: int = field(
         default_factory=lambda: int(_env("HIL_MQTT_BROKER_PORT", "1883")))
     optical_shorts: str = field(
-        default_factory=lambda: _env("HIL_OPTICAL_SHORTS", "0-3"))
+        default_factory=lambda: _env("HIL_OPTICAL_SHORTS", ""))
 
     def optical_short_set(self) -> frozenset:
-        return _parse_shorts(self.optical_shorts)
+        lamps = self.lamp_short_set()
+        if not self.optical_shorts.strip():
+            return lamps
+        return _parse_shorts(self.optical_shorts, "HIL_OPTICAL_SHORTS") & lamps
     gear_shorts: str = field(
         default_factory=lambda: _env("HIL_GEAR_SHORTS", ""))
 
     def gear_short_set(self):
-        return _parse_shorts(self.gear_shorts) if self.gear_shorts.strip() else None
+        if not self.gear_shorts.strip():
+            return None
+        return _parse_shorts(self.gear_shorts, "HIL_GEAR_SHORTS")
     serial_port: str = field(
         default_factory=lambda: _serialport().resolve(os.environ.get("HIL_SERIAL_PORT")))
     serial_port_pinned: bool = field(
@@ -82,6 +87,11 @@ class HilConfig:
     lamp_shorts: str = field(default_factory=lambda: _env("HIL_LAMP_SHORTS", "0,2,3"))
     lamps_read_only: bool = field(
         default_factory=lambda: _env("HIL_LAMPS_READ_ONLY", "0") not in ("", "0", "false", "no"))
+
+    def lamp_short_set(self) -> frozenset:
+        if not self.lamp_shorts.strip():
+            return frozenset()
+        return _parse_shorts(self.lamp_shorts, "HIL_LAMP_SHORTS")
     board: str = field(default_factory=lambda: _env("HIL_BOARD", "esp32p4"))
     peer_base: str = field(default_factory=lambda: _env("HIL_PEER_BASE", ""))
     peer_serial_port: str = field(

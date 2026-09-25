@@ -150,11 +150,14 @@ def capabilities(api, device_inventory):
 def state_snapshot(api, hil_config):
     snap = api.snapshot_states()
     yield snap
-    if hil_config.lamps_read_only:
-        for line in api.state_divergences(snap):
-            print("state_snapshot: NOT restored (HIL_LAMPS_READ_ONLY): %s" % line)
-        return
-    api.restore_states(snap)
+    allowed = frozenset() if hil_config.lamps_read_only else hil_config.lamp_short_set()
+    driven = [entry for entry in snap if entry["short_address"] in allowed]
+    left = [entry for entry in snap if entry["short_address"] not in allowed]
+    for line in api.state_divergences(left):
+        print("state_snapshot: NOT restored (HIL_LAMPS_READ_ONLY or outside "
+              "HIL_LAMP_SHORTS): %s" % line)
+    if driven:
+        api.restore_states(driven)
 
 
 @pytest.fixture(scope="session")
@@ -263,7 +266,7 @@ def production_state(pytestconfig, request):
         yield snap
     finally:
         residual = prod_state.restore(api, snap, drive_lamps=not cfg.lamps_read_only,
-                                      lamp_shorts=prod_state.allowed_shorts(cfg))
+                                      lamp_shorts=cfg.lamp_short_set())
         if not residual and not pending:
             prod_state.mark_restored(last, snap)
         state["production_state_residual"] = residual
@@ -565,7 +568,7 @@ def lamp_roster(optical_session, hil_config, request, api):
 def lamps(api, lamp_roster, hil_config):
     from hil.identity import refresh_short_addresses
     mapping, missing = refresh_short_addresses(api, lamp_roster)
-    allowed = {int(x) for x in hil_config.lamp_shorts.split(",") if x.strip() != ""}
+    allowed = hil_config.lamp_short_set()
     refused = {label: short for label, short in mapping.items() if short not in allowed}
     if refused:
         print("lamps: %s refused by HIL_LAMP_SHORTS=%s (owner's rule), not absent"
@@ -673,9 +676,8 @@ def vl_bindings(api, lamps, run_dir, hil_config):
     from hil.results import dumps as _dumps
     registry = os.environ.get("HIL_LAMP_ROSTER") == "registry"
     if registry:
-        from hil import prod_state
         everyone = {d["short_address"] for d in api.devices_unfiltered()["physical_devices"]}
-        if hil_config.lamps_read_only or not everyone <= prod_state.allowed_shorts(hil_config):
+        if hil_config.lamps_read_only or not everyone <= hil_config.lamp_short_set():
             pytest.skip("vl_bindings drives lamps beyond the roster: on the owner's "
                         "wire only with HIL_LAMPS_READ_ONLY off and every lamp in "
                         "HIL_LAMP_SHORTS (HIL_LAMP_ROSTER=registry)")
