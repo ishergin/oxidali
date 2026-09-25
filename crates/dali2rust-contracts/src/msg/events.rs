@@ -641,7 +641,6 @@ declare_bus_payloads! {
         pub short_address: u8,
         pub presence_unproven: bool,
         pub instance_count: u8,
-        pub instance_types: [Option<u8>; 8],
         pub device_capabilities: Option<u8>,
         pub device_status: Option<u8>,
         pub version_number: Option<u8>,
@@ -651,7 +650,6 @@ declare_bus_payloads! {
         short_address: 63,
         presence_unproven: true,
         instance_count: 32,
-        instance_types: [Some(31); 8],
         device_capabilities: Some(u8::MAX),
         device_status: Some(u8::MAX),
         version_number: Some(u8::MAX),
@@ -678,6 +676,7 @@ declare_bus_payloads! {
         pub instance_status: Option<u8>,
         pub resolution: Option<u8>,
         pub instance_status_written: bool,
+        pub instance_type: Option<u8>,
     }
     budget = Dali103InstanceConfiguredEvent {
         registry_adapter_id: u8::MAX,
@@ -700,6 +699,7 @@ declare_bus_payloads! {
         instance_status: Some(u8::MAX),
         resolution: Some(u8::MAX),
         instance_status_written: true,
+        instance_type: Some(u8::MAX),
     };
 
     pub struct InputDeviceChangedEvent {

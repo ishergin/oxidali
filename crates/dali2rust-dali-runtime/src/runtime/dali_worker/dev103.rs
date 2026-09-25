@@ -261,15 +261,6 @@ fn publish_scan_progress(
     device: &ScannedDevice,
     counters: &DaliWorkerCounters,
 ) {
-    let mut instance_types = [None; MAX_REPORTED_INSTANCES];
-    for (slot, (_, instance_type)) in device
-        .instances
-        .iter()
-        .take(MAX_REPORTED_INSTANCES)
-        .enumerate()
-    {
-        instance_types[slot] = Some(*instance_type);
-    }
     let ev = dali2rust_contracts::bus::event_envelope(
         SOURCE_ID_UNSPECIFIED,
         correlation_id,
@@ -280,7 +271,6 @@ fn publish_scan_progress(
             short_address: device.short_address,
             presence_unproven: device.presence_unproven,
             instance_count: device.instance_count,
-            instance_types,
             device_capabilities: device.declarations.capabilities,
             device_status: device.declarations.status,
             version_number: device.declarations.version_number,
@@ -288,8 +278,6 @@ fn publish_scan_progress(
     );
     publish_event_required(publisher, ev, counters, PublishKind::Series, "input-scan-progress");
 }
-
-pub const MAX_REPORTED_INSTANCES: usize = 8;
 
 fn fail_operation(
     publisher: &BusPublisher,
@@ -425,6 +413,7 @@ fn configured_event_base(
         instance_status: None,
         resolution: None,
         instance_status_written: false,
+        instance_type: None,
     }
 }
 
@@ -436,13 +425,14 @@ fn publish_scan_feedback(
     device: &ScannedDevice,
     counters: &DaliWorkerCounters,
 ) {
-    for (((number, _), probe), facts) in device
+    for (((number, instance_type), probe), facts) in device
         .instances
         .iter()
         .zip(&device.feedback)
         .zip(&device.instance_facts)
     {
         let mut body = configured_event_base(registry_adapter_id, device.short_address, *number);
+        body.instance_type = Some(*instance_type);
         body.feedback_opcode_map = Some(probe.map_code);
         body.feedback_capability = probe.capability;
         body.feedback_colour_capability = probe.colour_capability;

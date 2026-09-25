@@ -160,26 +160,6 @@ impl InputDeviceRecord {
         ] {
             changed |= merge_if_answered(field, seen);
         }
-        for (slot, instance_type) in progress.instance_types.iter().enumerate() {
-            let Some(instance_type) = instance_type else {
-                continue;
-            };
-            let number = u8::try_from(slot).unwrap_or(u8::MAX);
-            let entry = match self.instance_mut(number) {
-                Some(existing) => existing,
-                None => {
-                    if self.instances.len() >= MAX_INSTANCES_PER_DEVICE {
-                        continue;
-                    }
-                    self.instances.push(InstanceRecord::empty(number));
-                    self.instances.last_mut().expect("just pushed")
-                }
-            };
-            if entry.instance_type != Some(*instance_type) {
-                entry.instance_type = Some(*instance_type);
-                changed = true;
-            }
-        }
         changed
     }
 
@@ -207,13 +187,12 @@ mod tests {
     use super::*;
     use dali2rust_contracts::msg::InputEventKind;
 
-    fn progress(instance_count: u8, types: [Option<u8>; 8]) -> Dali103ScanProgressEvent {
+    fn progress(instance_count: u8) -> Dali103ScanProgressEvent {
         Dali103ScanProgressEvent {
             registry_adapter_id: 0,
             short_address: 3,
             presence_unproven: false,
             instance_count,
-            instance_types: types,
             device_capabilities: None,
             device_status: None,
             version_number: None,
@@ -238,40 +217,41 @@ mod tests {
     }
 
     #[test]
-    fn a_scan_creates_instances_and_reports_the_change() {
+    fn a_scan_reports_presence_and_the_declared_count_and_the_change() {
         let mut record = InputDeviceRecord::empty(0, 3);
-        let changed = record.apply_scan_progress(
-            &progress(2, [Some(1), Some(1), None, None, None, None, None, None]),
-            500,
-        );
-        assert!(changed);
+        assert!(record.apply_scan_progress(&progress(2), 500));
         assert!(record.present);
         assert_eq!(record.instance_count, 2);
-        assert_eq!(record.instances.len(), 2);
-        assert_eq!(record.instances[0].instance_type, Some(1));
+        assert!(record.instances.is_empty(), "an instance is known from its own answer");
+        assert!(!record.apply_scan_progress(&progress(2), 600));
+    }
 
-        let again = record.apply_scan_progress(
-            &progress(2, [Some(1), Some(1), None, None, None, None, None, None]),
-            600,
-        );
-        assert!(!again);
+    fn typed_readback(instance_type: u8) -> InstanceReadback {
+        InstanceReadback {
+            instance_type: Some(instance_type),
+            ..InstanceReadback::default()
+        }
     }
 
     #[test]
-    fn a_declared_count_larger_than_the_reported_types_is_kept_as_declared() {
-        let mut record = InputDeviceRecord::empty(0, 3);
-        record.apply_scan_progress(&progress(12, [Some(1); 8]), 500);
-        assert_eq!(record.instance_count, 12);
-        assert_eq!(record.instances.len(), 8, "only what the event carried");
+    fn an_instance_type_lands_on_the_number_that_answered() {
+        let store = RegistryStore::with_adapter_count(1);
+        assert!(store.apply_input_scan_progress(&progress(12), 500));
+        assert!(store.apply_instance_readback(0, 3, 9, &typed_readback(4), 500));
+        assert!(store.apply_instance_readback(0, 3, 2, &typed_readback(1), 500));
+        assert_eq!(store.input_instance_type(0, 3, 9), Some(4));
+        assert_eq!(store.input_instance_type(0, 3, 2), Some(1));
+        assert_eq!(store.input_instance_type(0, 3, 1), None, "no answer, no type");
+        assert!(
+            !store.apply_instance_readback(0, 3, 12, &typed_readback(1), 500),
+            "an instance past the declared count is not invented"
+        );
     }
 
     #[test]
     fn an_event_is_attributed_only_when_the_scheme_named_an_instance() {
         let mut record = InputDeviceRecord::empty(0, 3);
-        record.apply_scan_progress(
-            &progress(1, [Some(1), None, None, None, None, None, None, None]),
-            500,
-        );
+        record.apply_scan_progress(&progress(1), 500);
 
         assert!(record.apply_input_event(&event(Some(0), 0x002)));
         assert_eq!(record.instances[0].event_count, 1);
@@ -426,6 +406,7 @@ impl InputDeviceSummary {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct InstanceReadback {
+    pub instance_type: Option<u8>,
     pub instance_status: Option<u8>,
     pub resolution: Option<u8>,
     pub instance_status_written: bool,
@@ -499,6 +480,7 @@ fn merge_if_answered<T: Copy + PartialEq>(slot: &mut Option<T>, answered: Option
 }
 
 fn apply_feedback_readback(instance: &mut InstanceRecord, readback: &InstanceReadback, now_ms: u64) {
+    merge_if_answered(&mut instance.instance_type, readback.instance_type);
     merge_if_answered(&mut instance.instance_status, readback.instance_status);
     merge_if_answered(&mut instance.resolution, readback.resolution);
     if let Some(map) = readback.feedback_opcode_map {

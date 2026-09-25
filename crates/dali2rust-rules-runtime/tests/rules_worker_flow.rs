@@ -801,6 +801,7 @@ fn instance_configured(manual: bool) -> dali2rust_contracts::msg::Dali103Instanc
         instance_status: None,
         resolution: None,
         instance_status_written: false,
+        instance_type: None,
     }
 }
 
