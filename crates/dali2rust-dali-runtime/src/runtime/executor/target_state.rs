@@ -78,7 +78,7 @@ pub fn apply_short_target_state(
     policy: ColorWritePolicy,
 ) -> Result<(), SemanticDaliError> {
     let address = dali_short_address(short_address)?;
-    if policy.auto_activation == RepairAutoActivation::Yes && setpoint.color.is_some() {
+    if policy.auto_activation == RepairAutoActivation::Yes && setpoint.states_color() {
         ensure_automatic_activation(controller, address)?;
     }
     apply_target_state(controller, address, setpoint, policy.rgbwaf_control)

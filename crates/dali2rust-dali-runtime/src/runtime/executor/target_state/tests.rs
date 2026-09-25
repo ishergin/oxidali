@@ -264,6 +264,31 @@ fn a_setpoint_that_states_nothing_sends_no_frames() {
 }
 
 #[test]
+fn a_level_only_setpoint_leaves_automatic_activation_alone_issue117() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let (transport, mut controller) = setup_controller(mock);
+    let mut setpoint = LightSetpoint::default();
+    setpoint.power = PowerState::On;
+    setpoint.level = 200;
+    setpoint.color = Some(ColorValue::default());
+    let policy = ColorWritePolicy {
+        auto_activation: RepairAutoActivation::Yes,
+        rgbwaf_control: AssertRgbwafControl::No,
+    };
+    apply_short_target_state(&mut controller, short, &setpoint, policy).expect("target-state");
+    let frames = transport.lock().unwrap().sent_frames();
+    let enable_dt8 = DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
+        .to_forward_frame()
+        .raw();
+    assert!(
+        !frames.contains(&enable_dt8),
+        "a setpoint stating no colour repaired the activation bit: {frames:04X?}",
+    );
+    assert!(!frames.is_empty(), "the level never reached the wire");
+}
+
+#[test]
 fn target_state_color_only_power_on_activates_then_switches_on() {
     let mock = MockDaliTransport::new();
     let short = 17;
