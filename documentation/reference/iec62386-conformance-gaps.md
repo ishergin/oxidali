@@ -91,15 +91,6 @@ applies once the restart exists.
 | No write path | `ENABLE WRITE MEMORY`, `WRITE MEMORY LOCATION` and `RESET MEMORY BANK` are never sent. Bank 1's OEM GTIN and identification number, Part 251's NVM-RW luminaire data, bank 206's resettable counters and Part 253's lock-byte latch (§9.2.3) cannot be written. |
 | Bank 201 (DiiA 250, DT49) | Not read: integrated bus power supply current and status. |
 
-### 3.2 The Part 15x mask in bank 0 — `SHOULD FIX`
-
-The product reads bank 0 location `0x1C` as bit N = Part 151 + N and accepts a `0x1D`
-extension byte. DiiA(SW)098bp v1.10 Table 4 defines a single byte whose bit x (0–4) is
-Part 15x — bit 0 is Part 150 — and marks `[0x1D, 0x7F]` reserved. The shipped reading is
-therefore off by one and its two-byte form does not exist. The fix re-reads
-`ImplementedParts` and its pinning test against the source and re-interprets the
-installed luminaires' `0x1C` bytes under the corrected base.
-
 ## 4. Part 209 — DT8 colour
 
 ### 4.2 Commands not implemented
@@ -206,7 +197,6 @@ supersedes both.
 | --- | --- | --- |
 | 5.6 | `lampFailure` depends on the light-source type; a converter (type 253) detects failure at its output | `QUERY LIGHT SOURCE TYPE` is read and shown; failure handling does not use it. |
 | 7.1.1 | An NVM variable survives a power cycle only ≥ 30 s after its write (or 300 ms after `SAVE PERSISTENT VARIABLES`) | Not modelled: scenes programmed just before a power cut are lost silently. |
-| 7.2.7 | Bank 0 Part 15x mask | Bit base disputed — §3.2. |
 | 10.6.13 | New-edition 209 variables | §4.3. |
 | 12.7.2 | `ENABLE DEVICE TYPE x` → `QUERY EXTENDED VERSION NUMBER` per discovered type | DT6 only — §2.2. |
 
@@ -238,9 +228,8 @@ Ordered by consequence per unit of work:
 
 1. §1.10 — restart at t_RECOVER after a collision; every post-collision tie-break on the
    shared segment is lost today.
-2. §3.2 — settle the Part 15x bit base against 098bp v1.10.
-3. §16.3 — re-read a gear's RAM state after `powerCycleSeen`.
-4. §2.2 `0xFF`, §10 12.7.2 — the extended version of every discovered device type.
-5. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
-6. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
-7. §3 — a memory-bank write path, when a commissioning surface asks for one.
+2. §16.3 — re-read a gear's RAM state after `powerCycleSeen`.
+3. §2.2 `0xFF`, §10 12.7.2 — the extended version of every discovered device type.
+4. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
+5. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
+6. §3 — a memory-bank write path, when a commissioning surface asks for one.

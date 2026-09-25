@@ -1,9 +1,9 @@
 use dali2rust_contracts::msg::{FixedText32, FixedText64};
-use dali2rust_domain::dali::banks::BusUnitConfiguration;
+use dali2rust_domain::dali::banks::{BusUnitConfiguration, ImplementedParts};
 use dali2rust_domain::registry::{
     AttributeSectionView, AttributeSource, BankReading, Common102AttributesView, ConditionView,
     Dt6LedAttributesView, Dt8ColorAttributesView, EnergyBankView, ExtendedAttributesView,
-    GearDiagnosticsView, GroupsAttributesView, ImplementedPartsView, LuminaireMaintenanceView,
+    GearDiagnosticsView, GroupsAttributesView, LuminaireMaintenanceView,
     LuminaireValue, MemoryBusUnitAttributesView, MemoryDiagnosticsAttributesView,
     MemoryEnergyAttributesView, MemoryIdentityAttributesView, MemoryLuminaireAttributesView,
     MemoryProfileAttributesView, ObservedValue, ScenesAttributesView, SourceDiagnosticsView,
@@ -16,6 +16,17 @@ pub struct ObservedValueDto<T> {
     pub last_write_confirmed_ms: Option<u64>,
     pub source: &'static str,
     pub value: T,
+}
+
+impl<T> ObservedValueDto<T> {
+    fn map<U>(self, f: impl FnOnce(T) -> U) -> ObservedValueDto<U> {
+        ObservedValueDto {
+            last_read_ms: self.last_read_ms,
+            last_write_confirmed_ms: self.last_write_confirmed_ms,
+            source: self.source,
+            value: f(self.value),
+        }
+    }
 }
 
 fn observed_opt<T: Clone>(value: &Option<ObservedValue<T>>) -> Option<ObservedValueDto<T>> {
@@ -151,23 +162,36 @@ impl BusUnitConfigurationDto {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct ImplementedPartsDto {
+    pub raw: u8,
+    pub parts: Option<Vec<u16>>,
+}
+
+impl ImplementedPartsDto {
+    fn from_raw(raw: u8) -> Self {
+        let parts = ImplementedParts::from_byte(raw);
+        Self {
+            raw,
+            parts: parts.in_range().then(|| parts.parts().collect()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct MemoryBusUnitAttributesDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration: Option<ObservedValueDto<BusUnitConfigurationDto>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub implemented_parts: Option<ObservedValueDto<ImplementedPartsView>>,
+    pub implemented_parts: Option<ObservedValueDto<ImplementedPartsDto>>,
 }
 
 impl MemoryBusUnitAttributesDto {
     fn from_view(v: &MemoryBusUnitAttributesView) -> Option<Self> {
         let dto = Self {
-            configuration: observed_opt(&v.configuration).map(|o| ObservedValueDto {
-                last_read_ms: o.last_read_ms,
-                last_write_confirmed_ms: o.last_write_confirmed_ms,
-                source: o.source,
-                value: BusUnitConfigurationDto::from_raw(o.value),
-            }),
-            implemented_parts: observed_opt(&v.implemented_parts),
+            configuration: observed_opt(&v.configuration)
+                .map(|o| o.map(BusUnitConfigurationDto::from_raw)),
+            implemented_parts: observed_opt(&v.implemented_parts)
+                .map(|o| o.map(ImplementedPartsDto::from_raw)),
         };
         (dto.configuration.is_some() || dto.implemented_parts.is_some()).then_some(dto)
     }

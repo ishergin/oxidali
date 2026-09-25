@@ -1,5 +1,5 @@
 use dali2rust_domain::dali::banks::part251::LuminaireFormat;
-use dali2rust_domain::dali::banks::{BUS_UNIT_CONFIGURATION_OFFSET, IMPLEMENTED_PARTS_BASE_OFFSET};
+use dali2rust_domain::dali::banks::{BUS_UNIT_CONFIGURATION_OFFSET, IMPLEMENTED_PARTS_OFFSET};
 
 pub const DEVICE_TYPE_LUMINAIRE_INFO: u8 = 50;
 use dali2rust_domain::dali::devices::dt8_color::{
@@ -304,7 +304,7 @@ fn build_bank0(spec: &GearSpec) -> [u8; BANK0_LEN] {
     b[26] = 0;
     if spec.bus_unit_extension {
         b[usize::from(BUS_UNIT_CONFIGURATION_OFFSET)] = 0;
-        b[usize::from(IMPLEMENTED_PARTS_BASE_OFFSET)] = 0b0000_0001;
+        b[usize::from(IMPLEMENTED_PARTS_OFFSET)] = 0b0000_0001;
     }
     b
 }

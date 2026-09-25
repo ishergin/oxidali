@@ -1,9 +1,12 @@
 // DiiA (SW)098bp §7.2.7
 pub const BUS_UNIT_CONFIGURATION_OFFSET: u8 = 0x1B;
-pub const IMPLEMENTED_PARTS_BASE_OFFSET: u8 = 0x1C;
-pub const IMPLEMENTED_PARTS_EXTENSION_OFFSET: u8 = 0x1D;
+pub const IMPLEMENTED_PARTS_OFFSET: u8 = 0x1C;
 
-pub const BANK0_EXTENDED_LAST_OFFSET: u8 = IMPLEMENTED_PARTS_EXTENSION_OFFSET;
+pub const BANK0_EXTENDED_LAST_OFFSET: u8 = IMPLEMENTED_PARTS_OFFSET;
+
+const FIRST_IMPLEMENTED_PART: u16 = 150;
+const IMPLEMENTED_PART_BITS: u8 = 5;
+const IMPLEMENTED_PARTS_DEFINED_MASK: u8 = (1 << IMPLEMENTED_PART_BITS) - 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BusUnitConfiguration {
@@ -77,53 +80,26 @@ impl BusUnitConfiguration {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ImplementedParts {
-    raw: u16,
-    bytes: u8,
-}
+pub struct ImplementedParts(u8);
 
 impl ImplementedParts {
-    pub const fn from_base(base: u8) -> Self {
-        Self {
-            raw: base as u16,
-            bytes: 1,
-        }
+    pub const fn from_byte(raw: u8) -> Self {
+        Self(raw)
     }
 
-    pub const fn from_both(base: u8, extension: u8) -> Self {
-        Self {
-            raw: ((extension as u16) << 8) | base as u16,
-            bytes: 2,
-        }
+    pub const fn raw(self) -> u8 {
+        self.0
     }
 
-    pub const fn raw(self) -> u16 {
-        self.raw
-    }
-
-    pub const fn byte_count(self) -> u8 {
-        self.bytes
-    }
-
-    pub const fn known_bits(self) -> u8 {
-        self.bytes * 8
-    }
-
-    pub const fn implements_part(self, part: u16) -> Option<bool> {
-        if part < 151 {
-            return None;
-        }
-        let bit = part - 151;
-        if bit >= self.known_bits() as u16 {
-            return None;
-        }
-        Some(self.raw & (1u16 << bit) != 0)
+    pub const fn in_range(self) -> bool {
+        self.0 & !IMPLEMENTED_PARTS_DEFINED_MASK == 0
     }
 
     pub fn parts(self) -> impl Iterator<Item = u16> {
-        let raw = self.raw;
-        let bits = self.known_bits() as u16;
-        (0..bits).filter_map(move |bit| (raw & (1u16 << bit) != 0).then_some(151 + bit))
+        let raw = if self.in_range() { self.0 } else { 0 };
+        (0..IMPLEMENTED_PART_BITS)
+            .filter(move |bit| raw & (1 << bit) != 0)
+            .map(|bit| FIRST_IMPLEMENTED_PART + u16::from(bit))
     }
 }
 
@@ -201,64 +177,33 @@ mod tests {
     }
 
     #[test]
-    fn a_one_byte_mask_leaves_the_high_parts_unknown() {
-        let parts = ImplementedParts::from_base(0b0000_0101);
-        assert_eq!(parts.byte_count(), 1);
-        assert_eq!(parts.implements_part(151), Some(true));
-        assert_eq!(parts.implements_part(152), Some(false));
-        assert_eq!(parts.implements_part(153), Some(true));
-        assert_eq!(parts.implements_part(158), Some(false));
-        assert_eq!(parts.implements_part(159), None, "bit 8 was never read");
-        assert_eq!(parts.parts().collect::<Vec<_>>(), vec![151, 153]);
-    }
-
-    #[test]
-    fn a_two_byte_mask_extends_the_base_rather_than_displacing_it() {
-        let parts = ImplementedParts::from_both(0x02, 0x01);
-        assert_eq!(parts.raw(), 0x0102, "0x1C is the low byte of the word");
-        assert_eq!(parts.known_bits(), 16);
-        assert_eq!(parts.implements_part(152), Some(true), "bit 1 of 0x1C");
-        assert_eq!(parts.implements_part(159), Some(true), "bit 0 of 0x1D");
-        assert_eq!(parts.parts().collect::<Vec<_>>(), vec![152, 159]);
-    }
-
-    #[test]
-    fn a_bit_of_a_location_names_the_same_part_however_many_bytes_answered() {
-        for bit in 0..8u16 {
-            let base = 1u8 << bit;
-            let alone = ImplementedParts::from_base(base);
-            let extended = ImplementedParts::from_both(base, 0x00);
-            let part = 151 + bit;
-            assert_eq!(
-                alone.implements_part(part),
-                Some(true),
-                "0x1C bit {bit} must be Part {part} when it is the only byte"
-            );
-            assert_eq!(
-                extended.implements_part(part),
-                Some(true),
-                "0x1C bit {bit} must still be Part {part} when 0x1D also answered"
-            );
-            assert_eq!(alone.parts().collect::<Vec<_>>(), vec![part]);
-            assert_eq!(extended.parts().collect::<Vec<_>>(), vec![part]);
+    fn bit_x_of_the_byte_is_part_15x() {
+        for bit in 0..IMPLEMENTED_PART_BITS {
+            let parts = ImplementedParts::from_byte(1 << bit);
+            assert!(parts.in_range());
+            assert_eq!(parts.parts().collect::<Vec<_>>(), vec![150 + u16::from(bit)]);
         }
     }
 
     #[test]
-    fn the_extension_byte_carries_parts_159_to_166() {
-        for bit in 0..8u16 {
-            let parts = ImplementedParts::from_both(0x00, 1u8 << bit);
-            let part = 159 + bit;
-            assert_eq!(parts.implements_part(part), Some(true));
-            assert_eq!(parts.parts().collect::<Vec<_>>(), vec![part]);
-        }
-        assert_eq!(ImplementedParts::from_both(0xFF, 0xFF).implements_part(167), None);
+    fn a_byte_lists_every_part_it_sets() {
+        let parts = ImplementedParts::from_byte(0b0000_0101);
+        assert_eq!(parts.raw(), 0x05);
+        assert_eq!(parts.parts().collect::<Vec<_>>(), vec![150, 152]);
+        assert_eq!(
+            ImplementedParts::from_byte(0b0001_1111).parts().collect::<Vec<_>>(),
+            vec![150, 151, 152, 153, 154]
+        );
+        assert_eq!(ImplementedParts::from_byte(0).parts().count(), 0);
     }
 
     #[test]
-    fn part_numbers_below_151_are_not_in_this_mask() {
-        let parts = ImplementedParts::from_base(0xFF);
-        assert_eq!(parts.implements_part(150), None);
-        assert_eq!(parts.implements_part(102), None);
+    fn a_byte_outside_its_range_claims_no_part() {
+        for raw in [0x20, 0x21, 0x80, 0xFF] {
+            let parts = ImplementedParts::from_byte(raw);
+            assert!(!parts.in_range(), "0x{raw:02X} sets a bit Table 4 leaves zero");
+            assert_eq!(parts.raw(), raw);
+            assert_eq!(parts.parts().count(), 0, "0x{raw:02X}");
+        }
     }
 }

@@ -187,9 +187,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   device-type gate: a gear without the type ignores it.
 - The device-type walk is one non-yieldable unit; a break restarts it once, then it fails
   (`bus_contended`, `device_type_enumeration_incomplete`) rather than commit a subset.
-- A bit of a memory-bank location belongs to the location, not to its place in an
-  assembled word: bank 0 `0x1C` means the same whatever else answered (its bit base is an
-  open gap, §3.2 of the conformance gaps).
+- Bank 0 `0x1C` is one byte whose bit x is Part 15x (DiiA(SW)098bp Table 4); a byte with
+  a bit outside that range claims no part.
 
 ## Addressing control gear
 

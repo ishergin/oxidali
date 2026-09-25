@@ -34,6 +34,7 @@ const BANK0_BYTES: [u8; 29] = [
 ];
 const BANK0_BUS_UNIT_CONFIGURATION: u64 = 0x02;
 const BANK0_IMPLEMENTED_PARTS_RAW: u64 = 0b0000_0101;
+const BANK0_IMPLEMENTED_PARTS: [u16; 2] = [150, 152];
 const SHORT_BANK0_BYTES: usize = 20;
 const BANK1_BYTES: [u8; 17] = [
     0x10, 0x00, 0x06, 0x58, 0x23, 0x32, 0xA8, 0xFC, 0xFF, 0xF9, 0x00, 0x00, 0x00, 0xE6, 0xFF,
@@ -2528,10 +2529,9 @@ async fn then_bus_unit_exposed(world: &mut DaliWorld) {
         Some(BANK0_IMPLEMENTED_PARTS_RAW),
     );
     assert_eq!(
-        json.pointer("/attributes/memory_bus_unit/implemented_parts/value/bytes")
-            .and_then(Value::as_u64),
-        Some(1),
-        "no fixture declares 0x1D, so the mask is one byte and the rest is unknown"
+        json.pointer("/attributes/memory_bus_unit/implemented_parts/value/parts"),
+        Some(&json!(BANK0_IMPLEMENTED_PARTS)),
+        "098bp Table 4: bit x of 0x1C is Part 15x, so bits 0 and 2 are Parts 150 and 152"
     );
 }
 

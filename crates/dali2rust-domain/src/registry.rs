@@ -142,13 +142,7 @@ pub struct BankReading {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryBusUnitAttributesView {
     pub configuration: Option<ObservedValue<u8>>,
-    pub implemented_parts: Option<ObservedValue<ImplementedPartsView>>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ImplementedPartsView {
-    pub raw: u16,
-    pub bytes: u8,
+    pub implemented_parts: Option<ObservedValue<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

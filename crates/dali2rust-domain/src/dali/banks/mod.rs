@@ -4,8 +4,7 @@ pub mod part251;
 
 pub use bus_unit::{
     BusUnitConfiguration, EmergencyGearType, ImplementedParts, BANK0_EXTENDED_LAST_OFFSET,
-    BUS_UNIT_CONFIGURATION_OFFSET, IMPLEMENTED_PARTS_BASE_OFFSET,
-    IMPLEMENTED_PARTS_EXTENSION_OFFSET,
+    BUS_UNIT_CONFIGURATION_OFFSET, IMPLEMENTED_PARTS_OFFSET,
 };
 pub use layout::{
     bank_field_map, bank_last_offset, chunk_len, field_containing, is_field_boundary, BankField,

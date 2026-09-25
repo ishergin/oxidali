@@ -217,7 +217,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            configuration in that range is rendered as a bare number with no name —
            inventing a label would be worse than admitting the source is missing. -->
       <div class="attr wide"><span class="k">Bus unit configuration</span><span class="v rowv">2 <span class="chip muted">unnamed row</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
-      <div class="attr wide"><span class="k">Implemented parts (15x)</span><span class="v">Part 151, Part 153<span class="hex">0x05 · 8 bits read</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+      <!-- 0x1C is one byte: bit x is Part 15x (bit 0 = Part 150, bit 4 = Part 154), and
+           the firmware sends the part numbers. A byte with any of bits 5-7 set is outside
+           the range Table 4 gives it and claims no part: the value is a warn chip
+           "out of range" beside the raw byte. -->
+      <div class="attr wide"><span class="k">Implemented parts (15x)</span><span class="v">Part 150, Part 152<span class="hex">0x05</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
       <!-- DiiA Part 251 strings. The only symbolic names a gear itself carries —
            there is no "query name" command in 102 — and they belong beside GTIN
            and the serial because they answer the same question: what is this
