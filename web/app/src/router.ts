@@ -25,6 +25,7 @@ export interface Route {
     | 'firmware'
     | 'settings-poller'
     | 'settings-dali'
+    | 'settings-time'
     | 'settings-redundancy'
     | 'policies'
     | 'settings-home-assistant'
@@ -57,6 +58,7 @@ const ROUTES: { re: RegExp; name: Route['name']; keys: string[] }[] = [
   { re: /^\/firmware$/, name: 'firmware', keys: [] },
   { re: /^\/settings\/poller$/, name: 'settings-poller', keys: [] },
   { re: /^\/settings\/dali$/, name: 'settings-dali', keys: [] },
+  { re: /^\/settings\/time$/, name: 'settings-time', keys: [] },
   { re: /^\/settings\/redundancy$/, name: 'settings-redundancy', keys: [] },
   { re: /^\/policies$/, name: 'policies', keys: [] },
   { re: /^\/settings\/home-assistant$/, name: 'settings-home-assistant', keys: [] },

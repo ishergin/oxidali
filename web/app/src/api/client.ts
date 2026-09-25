@@ -8,6 +8,7 @@ import type {
   AttributeReadsRequest,
   ControllerSummary,
   ControllerTime,
+  ControllerTimePut,
   DaliCommandRequest,
   DaliCommandResponse,
   DaliLevelRequest,
@@ -367,6 +368,7 @@ export const api = {
     ),
 
   time: () => get<ControllerTime>('/time'),
+  setTime: (body: ControllerTimePut) => put<ControllerTime>('/time', body),
 
   diagnostics: () => get<Diagnostics>('/diagnostics'),
   daliCommand: (body: DaliCommandRequest) =>

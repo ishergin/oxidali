@@ -133,7 +133,8 @@ function TimeGate({ time }: { time: ControllerTime | null }) {
         <b>Controller clock is not synchronised</b> — every schedule is paused.
         <span class="sub">
           A schedule acts on local time of day; without an anchored clock it stays silent
-          rather than guessing. Waiting for SNTP, or set the time manually.
+          rather than guessing. Set the time in{' '}
+          <a href="#/settings/time">Settings &rsaquo; Time</a> or wait for SNTP.
         </span>
       </span>
     </div>

@@ -1152,6 +1152,11 @@ export interface ControllerTime {
   utc_offset_minutes: number | null
 }
 
+export interface ControllerTimePut {
+  unix_ms?: number
+  timezone?: string
+}
+
 export type HclAlgorithm = 'stepped' | 'interpolated'
 export type HclTimeRef = 'absolute' | 'sunrise' | 'sunset'
 export type HclLevelMode = 'none' | 'absolute' | 'last_active'

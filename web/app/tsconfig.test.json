@@ -14,6 +14,7 @@
     "src/components/cct-view.ts",
     "src/counter-delta.ts",
     "src/screens/follow-scroll.ts",
-    "src/format.ts"
+    "src/format.ts",
+    "src/time-zone.ts"
   ]
 }

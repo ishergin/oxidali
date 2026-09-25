@@ -99,6 +99,7 @@
 | `#/firmware` | Обновление прошивки | [`firmware.md`](firmware.md) |
 | `#/settings/poller` | Настройки поллера | [`settings-poller.md`](settings-poller.md) |
 | `#/settings/dali` | Настройки DALI | [`settings-dali.md`](settings-dali.md) |
+| `#/settings/time` | Время и часовой пояс контроллера | — |
 | `#/settings/home-assistant` | Мост Home Assistant | — |
 | `#/settings/redundancy` | Отказоустойчивость пары | [`redundancy.md`](redundancy.md) |
 | `#/policies` | Политики без контроллера | — |

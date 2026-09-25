@@ -695,6 +695,7 @@ tr.rowdirty td:first-child { box-shadow: inset 2px 0 0 var(--dirty); }
 .banner .txt { font-size: 12.5px; color: var(--text); }
 .banner .txt b { color: var(--warn); font-weight: 600; }
 .banner .sub { display: block; margin-top: 2px; font-size: 11.5px; color: var(--text-muted); }
+.banner a { color: var(--info); text-decoration: none; }
 
 .hcl-list { display: flex; flex-direction: column; gap: 10px; }
 .hcl-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -806,6 +807,8 @@ table.hcl-points tr:hover td { background: rgba(35,44,56,.5); }
 .fieldrow.stacked { grid-template-columns: minmax(0, 1fr); }
 .fieldrow.stacked .fc { justify-content: flex-start; }
 .fieldrow.stacked .inp { width: 100%; }
+.fieldrow.stacked .fc .txt { width: 100%; }
+.fieldrow.stacked .fc .req { text-align: left; }
 .fieldrow .fc .presets { padding: 0; border-top: none; justify-content: flex-end; }
 .fieldrow .fc .num, .fieldrow .fc .txt { font-family: var(--mono); font-size: 12px;
   padding: 5px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border);
