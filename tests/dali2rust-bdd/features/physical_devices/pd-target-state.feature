@@ -21,6 +21,17 @@ Feature: Physical device direct target state
     Then the response status should be 200
     And all scripted DALI exchanges should be consumed without errors
 
+  @id:PD-266
+  Scenario: The target-state answer is stamped with the wall clock
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given a successful target-state script for level 180 on short address 0
+    When I PUT JSON {"power":"on","level":180} to "/api/v1/adapters/0/physical-devices/0/target-state"
+    Then the response status should be 200
+    And the JSON pointer "/now_ms" should be greater than 0
+
   @id:PD-041
   Scenario: Direct target state does not create an operation entry
     Given a golden control-gear discovery script for short address 0

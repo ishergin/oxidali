@@ -653,6 +653,7 @@ fn physical_device_target_state_validation_and_happy_path() {
         Arc::clone(&harness.slots),
         Arc::clone(&harness.correlation),
         state,
+        Arc::new(FixedWall(123_456)),
         BusId::default(),
         100,
     );

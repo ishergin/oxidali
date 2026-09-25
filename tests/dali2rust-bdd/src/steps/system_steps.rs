@@ -203,6 +203,17 @@ async fn json_pointer_absent(world: &mut DaliWorld, pointer: String) {
     );
 }
 
+// PD-266
+#[then(regex = r#"^the JSON pointer "([^"]*)" should be greater than (\d+)$"#)]
+async fn json_pointer_greater_than(world: &mut DaliWorld, pointer: String, floor: u64) {
+    let val = last_json(world);
+    let got = val.pointer(&pointer).and_then(Value::as_u64);
+    assert!(
+        got.is_some_and(|n| n > floor),
+        "expected {pointer} > {floor}, got {got:?} in {val:?}"
+    );
+}
+
 // PD-200 PD-220 PD-222 PD-230 PD-201 PD-221
 #[then(regex = r#"^the JSON pointer "([^"]*)" should be present$"#)]
 async fn json_pointer_present(world: &mut DaliWorld, pointer: String) {

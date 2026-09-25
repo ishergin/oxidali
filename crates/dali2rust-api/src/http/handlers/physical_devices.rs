@@ -340,6 +340,7 @@ declare_handler_shell! {
         slots: Arc<PendingConfirmationSlots>,
         correlation: Arc<CorrelationIdAllocator>,
         state: Arc<dyn PhysicalDeviceHttpState>,
+        wall: Arc<dyn UnixTimeMs>,
         bus_id: BusId,
         timeout_ms: u64,
     }
@@ -401,9 +402,10 @@ impl crate::http::handlers::common::MutatingHandler for PhysicalDeviceTargetStat
 
     fn respond(&self, args: (u8, u8)) -> HttpResponse {
         let (aid, short) = args;
-        let Some(dto) = self.state.physical_device_core_dto(aid, short) else {
+        let Some(mut dto) = self.state.physical_device_core_dto(aid, short) else {
             return json_err(404, "not_found");
         };
+        dto.now_ms = self.wall.unix_millis();
         json_stream_dto(dto)
     }
 }

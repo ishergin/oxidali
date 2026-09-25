@@ -201,6 +201,33 @@ fn target_state<S: ?Sized, H: ApiHandler + 'static>(
     ))
 }
 
+type TargetStateWithWallCtor<S, H> = fn(
+    BusPublisher,
+    Arc<PendingConfirmationSlots>,
+    Arc<CorrelationIdAllocator>,
+    Arc<S>,
+    Arc<dyn dali2rust_platform::clock::UnixTimeMs>,
+    BusId,
+    u64,
+) -> H;
+
+fn target_state_with_wall<S: ?Sized, H: ApiHandler + 'static>(
+    bus: &HttpBusDispatch,
+    state: &Arc<S>,
+    wall: &Arc<dyn dali2rust_platform::clock::UnixTimeMs>,
+    make: TargetStateWithWallCtor<S, H>,
+) -> Box<dyn ApiHandler> {
+    Box::new(make(
+        bus.publisher.clone(),
+        Arc::clone(&bus.slots),
+        Arc::clone(&bus.correlation),
+        Arc::clone(state),
+        Arc::clone(wall),
+        bus.bus_id,
+        bus.confirmation_timeout_ms,
+    ))
+}
+
 fn apply<S: ?Sized, H: ApiHandler + 'static>(
     bus: &HttpBusDispatch,
     state: &Arc<S>,
@@ -428,7 +455,7 @@ fn wire_physical_devices(
         )
         .with_handler(
             RouteKey::PhysicalDeviceTargetState,
-            target_state(bus, &registry.physical_state, PhysicalDeviceTargetStateHandler::new),
+            target_state_with_wall(bus, &registry.physical_state, &wall, PhysicalDeviceTargetStateHandler::new),
         );
     wire_physical_device_diagnostics(builder, adapter_count, bus, registry)
 }
