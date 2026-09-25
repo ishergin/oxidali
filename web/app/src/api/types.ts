@@ -1236,6 +1236,16 @@ export interface RulesDocument {
   source: string
 }
 
+export type RuleOutcome = 'ok' | 'partial' | 'failed' | 'refused'
+
+export interface RuleRuntime {
+  fire_count: number
+  last_fired_at_ms: number | null
+  last_latency_ms: number | null
+  last_outcome: RuleOutcome | null
+  last_error: string | null
+}
+
 export interface RuleJson {
   name: string
   enabled: boolean
@@ -1244,6 +1254,7 @@ export interface RuleJson {
   triggers: unknown[]
   conditions: unknown[]
   actions: unknown[]
+  runtime: RuleRuntime
 }
 
 export interface RulesJsonProjection {

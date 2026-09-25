@@ -972,7 +972,17 @@ table.hcl-points tr:hover td { background: rgba(35,44,56,.5); }
 .rules .rrow .n { font-weight: 550; flex: 1; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 .rules .rrow .n.dis { color: var(--text-faint); font-weight: 450; }
-.rules .rrow .t { color: var(--text-faint); font-size: 11px; flex: none; text-align: right; }
+.rules .rrow .rbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rules .rrow .t { color: var(--text-faint); font-size: 11px; }
+.rules .rrow .meta { color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.rules .rrow .meta .why { font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); }
+.rules .out { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; flex: none;
+  border: 1px solid var(--border-strong); }
+.rules .out.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.rules .out.partial { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.rules .out.failed { color: var(--err); border-color: color-mix(in srgb, var(--err) 45%, transparent); }
+.rules .out.refused { color: var(--err); border-style: dashed;
+  border-color: color-mix(in srgb, var(--err) 45%, transparent); }
 
 .rules .snips { padding: 6px 13px 11px; }
 .rules .snip { display: inline-block; margin: 4px 4px 0 0; font-size: 11px; padding: 3px 9px;

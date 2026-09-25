@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 
 import { api, ApiError, isRulesParseError } from '../api/client'
-import type { RuleJson, RulesDocument, RulesDocumentJson, RulesParseResult } from '../api/types'
+import type {
+  RuleJson,
+  RuleRuntime,
+  RulesDocument,
+  RulesDocumentJson,
+  RulesParseResult,
+} from '../api/types'
 import { connection, subscribe, type WsChannel, type WsEvent } from '../api/ws'
-import { timestamp } from '../format'
+import { deviceClock, timestamp, UNANCHORED_CLOCK_HINT } from '../format'
 import { usePoll } from '../hooks'
 import { errorMessage, mutate, notify, opCommitted, trackOp } from '../toast'
 
@@ -561,14 +567,38 @@ function RulesPanel({
             >
               <i />
             </button>
-            <span class={r.enabled ? 'n' : 'n dis'} title={`Edit "${r.name}"`}>
-              {r.name}
+            <span class="rbody">
+              <span class={r.enabled ? 'n' : 'n dis'} title={`Edit "${r.name}"`}>
+                {r.name}
+              </span>
+              <span class="t">{ruleSummary(r)}</span>
+              <RuntimeLine runtime={r.runtime} />
             </span>
-            <span class="t">{ruleSummary(r)}</span>
+            {r.runtime.last_outcome !== null && (
+              <span class={`out ${r.runtime.last_outcome}`}>{r.runtime.last_outcome}</span>
+            )}
           </div>
         ))
       )}
     </div>
+  )
+}
+
+function RuntimeLine({ runtime }: { runtime: RuleRuntime }) {
+  if (runtime.last_fired_at_ms === null) return <span class="meta">not fired since boot</span>
+  const at = deviceClock(runtime.last_fired_at_ms)
+  const latency = runtime.last_latency_ms === null ? '—' : `${runtime.last_latency_ms} ms`
+  return (
+    <span class="meta">
+      {runtime.fire_count}× · {latency} ·{' '}
+      <span title={at.anchored ? undefined : UNANCHORED_CLOCK_HINT}>{at.text}</span>
+      {runtime.last_error !== null && (
+        <>
+          {' · '}
+          <span class="why">{runtime.last_error}</span>
+        </>
+      )}
+    </span>
   )
 }
 
