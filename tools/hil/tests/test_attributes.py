@@ -158,12 +158,13 @@ def test_write_fade_time_roundtrip(api, lamps, sniffer, paced, state_snapshot,
 @pytest.mark.hil_id("HIL-ATTR-04")
 @pytest.mark.sniffer
 @pytest.mark.needs_capability("rgb")
-def test_color_mode_override_gates_target_state(api, capabilities,
-                                                needs_capability, sniffer,
-                                                paced, state_snapshot,
-                                                test_artifacts):
+def test_color_mode_override_declares_a_mode_and_erases_none(api, capabilities,
+                                                            needs_capability, sniffer,
+                                                            paced, state_snapshot,
+                                                            test_artifacts):
     short = capabilities.any_lamp_with("rgb")
     before = api.state(short)
+    discovered_cct = bool((before.get("capabilities") or {}).get("cct"))
     _, red = RGB_PRIMARIES[0]
     setpoint = rgb_setpoint(red)
     try:
@@ -173,24 +174,27 @@ def test_color_mode_override_gates_target_state(api, capabilities,
         assert patched.get("notes") == "hil override test"
 
         api.device_patch(short, {"color_mode_override": "cct"})
-        assert api.state(short)["color_mode_effective"] == "cct"
-        status, body = api.raw_request(
-            "PUT", "adapters/%d/physical-devices/%d/target-state"
-            % (api.adapter, short), setpoint)
-        test_artifacts.attach_json("gated_rgb", {"status": status, "body": body})
-        if status == 200:
-            api.device_patch(short, {"color_mode_override": None})
-            pytest.xfail("color_mode_override does not gate target-state on "
-                         "this firmware build (expected 422 "
-                         "unsupported_capability)")
-        assert status == 422, (status, body)
-        assert body.get("error") == "unsupported_capability", body
-
-        api.device_patch(short, {"color_mode_override": None})
+        declared = api.state(short)
+        test_artifacts.attach_json("declared_cct", declared)
+        assert declared["color_mode_effective"] == "cct", declared
+        assert (declared.get("capabilities") or {}).get("cct"), (
+            "a declared mode adds its capability bit: %r" % declared.get("capabilities"))
         with sniffer.window() as win:
             paced(1.0)
-            api.ts(short, setpoint)
+            status, body = api.raw_request(
+                "PUT", "adapters/%d/physical-devices/%d/target-state"
+                % (api.adapter, short), setpoint)
+            test_artifacts.attach_json("rgb_under_cct", {"status": status, "body": body})
+            assert status == 200, (
+                "a declaration never erases the hardware-confirmed rgb capability",
+                status, body)
             win.expect_frame("DT8 SET TEMP RGB DIM LEVEL")
+
+        api.device_patch(short, {"color_mode_override": None})
+        reverted = api.state(short)
+        assert bool((reverted.get("capabilities") or {}).get("cct")) == discovered_cct, (
+            "clearing the declaration returns the scan evidence: %r"
+            % reverted.get("capabilities"))
     finally:
         api.device_patch(short, {
             "name": before.get("name") or None,

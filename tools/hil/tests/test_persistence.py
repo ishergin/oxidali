@@ -78,14 +78,6 @@ def test_config_survives_reboot_runtime_does_not(api, vl_bindings, lamps,
         row_after = next(r for r in api.groups.matrix()["rows"]
                          if r["virtual_lamp_id"] == lid)
         test_artifacts.attach_json("matrix_row_after_reboot", row_after)
-        if not (row_after["desired"][free_group]
-                and row_after["applied"][free_group]):
-            scenes_status, _ = api.raw_request(
-                "GET", "adapters/%d/scenes" % api.adapter)
-            if scenes_status == 404:
-                pytest.xfail("membership matrix does not survive reboot on "
-                             "this pre-R6 build (name/binding/runtime "
-                             "contracts verified above)")
         assert row_after["desired"][free_group] is True, row_after
         assert row_after["applied"][free_group] is True, row_after
     finally:

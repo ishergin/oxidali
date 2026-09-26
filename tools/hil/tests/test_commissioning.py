@@ -49,10 +49,10 @@ def test_random_addresses_stable_across_scans(api, test_artifacts):
             flips[short] = sorted(v for v in values if v is not None)
     test_artifacts.attach_json("random_address_maps",
                                {"maps": maps, "flips": flips})
-    if flips:
-        pytest.xfail("random addresses flipped across scans (known stale "
-                     "backward-attribution on this firmware build): %s"
-                     % flips)
+    assert not flips, (
+        "random addresses changed across three scans of known short addresses: %s — "
+        "a scan reads what the gear holds, so a flip is a backward frame attributed "
+        "to the wrong query" % flips)
 
 
 @pytest.mark.hil_id("HIL-DSC-02")
