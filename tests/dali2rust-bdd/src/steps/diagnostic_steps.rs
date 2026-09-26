@@ -13,7 +13,7 @@ use dali2rust_api::contracts::BufferBytes;
 use crate::steps::wire::{assert_frame_before, assert_nothing_between_frames};
 use crate::DaliWorld;
 
-// BUS-013 BUS-014 BUS-016 CONT-001 DALI-001 DALI-002 DALI-004 DALI-008 DALI-012 DALI-013 DALI-014 DALI-015 DALI-017 DALI-050 DIAG-031 SYS-001 SYS-002 SYS-003 SYS-004 SYS-005 SYS-007 SYS-011 SYS-012 SYS-017 DALI-020 DALI-021 DALI-022 DALI-030 DALI-031 DALI-032 DALI-040 DALI-051 DALI-300 DALI-301 DALI-304 STATS-003 STATS-010 WS-044
+// BUS-013 BUS-014 BUS-016 CONT-001 SYS-247 DIAG-102 DIAG-104 DIAG-108 DIAG-112 DIAG-113 DIAG-114 DIAG-115 DIAG-117 DIAG-150 DIAG-031 SYS-001 SYS-002 SYS-003 SYS-004 SYS-005 SYS-007 SYS-011 SYS-012 SYS-017 DIAG-120 DIAG-121 DIAG-122 DIAG-130 DIAG-131 DIAG-132 DIAG-140 DIAG-151 DIAG-400 DIAG-401 DIAG-404 STATS-003 STATS-010 WS-044
 #[given(regex = r"a DALI mock transport with response (\d+)")]
 async fn given_mock_transport_with_response(world: &mut DaliWorld, response: u64) {
     world.dali_mock().lock().unwrap().clear();
@@ -24,7 +24,7 @@ async fn given_mock_transport_with_response(world: &mut DaliWorld, response: u64
         .set_persistent_response(response as u8);
 }
 
-// DALI-003 DALI-009 DALI-016 DALI-052 DALI-053 DALI-113 GRP-030 GRP-063 GRP-070 GRP-072 OP-131 OP-133 SYS-006 SYS-018 SYS-210 SYS-211 SYS-213 SCN-083 SCN-084 SCN-085 SCN-086 SCN-087 SCN-088 DALI-023 DALI-033 DALI-041 DALI-110 DALI-111 GRP-073 REG-030 REG-031 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 SCN-081 SCN-082 SCN-089 SCN-090 SCN-091 SCN-092 SCN-093 SYS-241
+// DIAG-103 DIAG-109 DIAG-116 DIAG-152 DIAG-153 DIAG-213 GRP-030 GRP-063 GRP-070 GRP-072 OP-131 OP-133 SYS-006 SYS-018 SYS-210 SYS-211 SYS-213 SCN-083 SCN-084 SCN-085 SCN-086 SCN-087 SCN-088 DIAG-123 DIAG-133 DIAG-141 DIAG-210 DIAG-211 GRP-073 REG-030 REG-031 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 SCN-081 SCN-082 SCN-089 SCN-090 SCN-091 SCN-092 SCN-093 SYS-241
 #[given("a DALI mock transport with no response")]
 async fn given_mock_transport_no_response(world: &mut DaliWorld) {
     world.dali_mock().lock().unwrap().clear();
@@ -43,7 +43,7 @@ fn wire_for_address_command(address: u8, command: u8) -> u8 {
     }
 }
 
-// CONT-001 DALI-001 DALI-002 DALI-003 DALI-004 DALI-008 DALI-009 DALI-012 DALI-013 DALI-014 DALI-015 DALI-016 DALI-017 SYS-003 SYS-005 SYS-006 SYS-007 SYS-011 SYS-012 SYS-017 SYS-018 BUS-013 BUS-014 BUS-016 DALI-041
+// CONT-001 SYS-247 DIAG-102 DIAG-103 DIAG-104 DIAG-108 DIAG-109 DIAG-112 DIAG-113 DIAG-114 DIAG-115 DIAG-116 DIAG-117 SYS-003 SYS-005 SYS-006 SYS-007 SYS-011 SYS-012 SYS-017 SYS-018 BUS-013 BUS-014 BUS-016 DIAG-141
 #[when(regex = r"I send a JSON DALI command with address (\d+) and command (\d+)")]
 async fn send_dali_command(world: &mut DaliWorld, address: u64, command: u64) {
     let command = command as u8;
@@ -57,7 +57,7 @@ async fn send_dali_command(world: &mut DaliWorld, address: u64, command: u64) {
     );
 }
 
-// DALI-050 DALI-052 DALI-053 DALI-110 DALI-111 DALI-112 DALI-113 DALI-300 DALI-301 DALI-307 DALI-040 DALI-051 DALI-200
+// DIAG-150 DIAG-152 DIAG-153 DIAG-210 DIAG-211 DIAG-212 DIAG-213 DIAG-400 DIAG-401 DIAG-407 DIAG-140 DIAG-151 SYS-248
 #[when(regex = r"I send a DALI command with wire_address (\d+) and command (\d+)")]
 async fn send_dali_command_wire(world: &mut DaliWorld, wire_address: u64, command: u64) {
     let body = json_command_body(wire_address as u8, command as u8);
@@ -69,7 +69,7 @@ async fn send_dali_command_wire(world: &mut DaliWorld, wire_address: u64, comman
     );
 }
 
-// DALI-004
+// DIAG-104
 #[when("I send an invalid DALI command request")]
 async fn send_invalid_dali_command(world: &mut DaliWorld) {
     world.send_http_request(
@@ -85,7 +85,7 @@ fn parse_json_response(world: &DaliWorld) -> Value {
     serde_json::from_slice(&resp.body).expect("failed to parse JSON response")
 }
 
-// BUS-014 DALI-002 DALI-003 DALI-008 DALI-009 DALI-012 DALI-013 DALI-015 DALI-016 DALI-017 DALI-052 SYS-003 SYS-005 SYS-006 SYS-007 SYS-011 SYS-017 SYS-018 DALI-040 DALI-050
+// BUS-014 DIAG-102 DIAG-103 DIAG-108 DIAG-109 DIAG-112 DIAG-113 DIAG-115 DIAG-116 DIAG-117 DIAG-152 SYS-003 SYS-005 SYS-006 SYS-007 SYS-011 SYS-017 SYS-018 DIAG-140 DIAG-150
 #[then(regex = r"the JSON DaliCommandResponse success should be (true|false)")]
 async fn dali_response_success(world: &mut DaliWorld, expected: String) {
     let val = parse_json_response(world);
@@ -99,7 +99,7 @@ async fn dali_response_success(world: &mut DaliWorld, expected: String) {
     );
 }
 
-// DALI-015 DALI-017 DALI-307 DALI-040
+// DIAG-115 DIAG-117 DIAG-407 DIAG-140
 #[then(regex = r"the JSON DaliCommandResponse backward_frame should be (\d+)")]
 async fn dali_response_backward_frame(world: &mut DaliWorld, expected: u64) {
     let val = parse_json_response(world);
@@ -121,7 +121,7 @@ async fn dali_mock_sent_frame(world: &mut DaliWorld, hex: String) {
     );
 }
 
-// DALI-050
+// DIAG-150
 #[then(
     regex = r"the DALI mock transport should have sent forward frame 0x([0-9a-fA-F]+) before 0x([0-9a-fA-F]+)"
 )]
@@ -132,7 +132,7 @@ async fn dali_mock_two_frames_order(world: &mut DaliWorld, first_hex: String, se
     assert_frame_before(&frames, first, second);
 }
 
-// DALI-051 DALI-052 DALI-053 DALI-113
+// DIAG-151 DIAG-152 DIAG-153 DIAG-213
 #[then(
     regex = r"forward frame 0x([0-9a-fA-F]+) should be immediately followed by 0x([0-9a-fA-F]+)"
 )]
@@ -143,7 +143,7 @@ async fn dali_mock_frames_adjacent(world: &mut DaliWorld, first_hex: String, sec
     assert_nothing_between_frames(&trace, first, second);
 }
 
-// ADP-023 ADP-024 BUS-013 BUS-014 BUS-016 DALI-012 DALI-013 DALI-014 DALI-020 DALI-023 DALI-030 DALI-033 DALI-040 DALI-041 DALI-052 DALI-053 DALI-110 DALI-111 DALI-113 DALI-300 DALI-302 DALI-303 DALI-304 GRP-001 GRP-020 GRP-030 GRP-061 GRP-063 GRP-072 OP-100 PD-032 PD-033 PD-042 PD-043 PD-182 PD-187 PD-244 PD-255 SCN-001 SCN-010 SCN-020 SCN-030 SCN-040 SCN-041 SCN-046 SCN-050 SCN-061 SCN-063 SYS-003 SYS-005 SYS-006 SYS-007 SYS-212 SYS-213 SYS-214 SYS-215 VL-001 VL-010 WS-001 ADP-025 ADP-026
+// ADP-023 ADP-024 BUS-013 BUS-014 BUS-016 DIAG-112 DIAG-113 DIAG-114 DIAG-120 DIAG-123 DIAG-130 DIAG-133 DIAG-140 DIAG-141 DIAG-152 DIAG-153 DIAG-210 DIAG-211 DIAG-213 DIAG-400 DIAG-402 DIAG-403 DIAG-404 GRP-001 GRP-020 GRP-030 GRP-061 GRP-063 GRP-072 OP-100 PD-032 PD-033 PD-042 PD-043 PD-182 PD-187 PD-244 PD-255 SCN-001 SCN-010 SCN-020 SCN-030 SCN-040 SCN-041 SCN-046 SCN-050 SCN-061 SCN-063 SYS-003 SYS-005 SYS-006 SYS-007 SYS-212 SYS-213 SYS-214 SYS-215 VL-001 VL-010 WS-001 ADP-025 ADP-026
 #[then(regex = r"the DALI mock transport should have received (\d+) forward frame")]
 async fn dali_mock_forward_frames(world: &mut DaliWorld, expected: u64) {
     let frames = world.dali_mock().lock().unwrap().sent_frames();
@@ -156,7 +156,7 @@ async fn dali_mock_forward_frames(world: &mut DaliWorld, expected: u64) {
     );
 }
 
-// ADP-001 DALI-001 INP-075 RULE-003 RULE-005 RULE-007 RULE-008 RULE-009
+// ADP-001 SYS-247 INP-075 RULE-003 RULE-005 RULE-007 RULE-008 RULE-009
 #[then(regex = r#"the response body should contain "([^"]+)""#)]
 async fn response_body_contains(world: &mut DaliWorld, expected: String) {
     let resp = world.last_response().expect("no response");
@@ -169,13 +169,13 @@ async fn response_body_contains(world: &mut DaliWorld, expected: String) {
     );
 }
 
-// DALI-112
+// DIAG-212
 #[given("a DALI mock transport that records timestamps")]
 async fn given_timestamp_transport(world: &mut DaliWorld) {
     world.dali_mock().lock().unwrap().clear();
 }
 
-// DALI-112
+// DIAG-212
 #[then(regex = r"forward frames (\d+) and (\d+) should be at least (\d+) milliseconds apart")]
 async fn then_frames_apart(world: &mut DaliWorld, a: usize, b: usize, min_ms: u128) {
     let frames = world.dali_mock().lock().unwrap().sent_frames();
@@ -194,7 +194,7 @@ async fn then_frames_apart(world: &mut DaliWorld, a: usize, b: usize, min_ms: u1
     );
 }
 
-// DALI-200 PD-038 COMM-090
+// SYS-248 PD-038 COMM-090
 #[given(regex = r"^a bus with confirmation timeout of (\d+) milliseconds$")]
 async fn given_confirmation_timeout(world: &mut DaliWorld, timeout_ms: u64) {
     use dali2rust_bus::BusConfig;
@@ -205,7 +205,7 @@ async fn given_confirmation_timeout(world: &mut DaliWorld, timeout_ms: u64) {
     world.restart_server_with_config(config);
 }
 
-// DALI-200 PD-038
+// SYS-248 PD-038
 #[then(regex = r"^the response arrives within (\d+) milliseconds$")]
 async fn then_response_arrives_within(world: &mut DaliWorld, max_ms: u64) {
     assert!(
@@ -223,7 +223,7 @@ async fn then_response_arrives_within(world: &mut DaliWorld, max_ms: u64) {
     );
 }
 
-// DALI-001 DALI-200 PD-038 SYS-050 COMM-090 SCN-065 SCN-082
+// SYS-247 SYS-248 PD-038 SYS-050 COMM-090 SCN-065 SCN-082
 #[given("the DALI transport blocks indefinitely")]
 async fn given_transport_blocks(world: &mut DaliWorld) {
     world.dali_mock().lock().unwrap().block_next_send();
@@ -241,7 +241,7 @@ async fn when_transport_unblocks(world: &mut DaliWorld) {
     world.release_held_send();
 }
 
-// DALI-020 DALI-021 DALI-022 DALI-023
+// DIAG-120 DIAG-121 DIAG-122 DIAG-123
 #[when(regex = r"I send a JSON level command with wire_address (\d+) and level (\d+)")]
 async fn send_json_level_command(world: &mut DaliWorld, wire_address: u64, level: u64) {
     let body = DaliLevelRequestBuffer::new(wire_address as u8, level as u8).to_vec();
@@ -253,7 +253,7 @@ async fn send_json_level_command(world: &mut DaliWorld, wire_address: u64, level
     );
 }
 
-// DALI-020 DALI-021 DALI-030 DALI-031 DALI-307
+// DIAG-120 DIAG-121 DIAG-130 DIAG-131 DIAG-407
 #[then(regex = r"the JSON response success should be (true|false)")]
 async fn json_response_success(world: &mut DaliWorld, expected: String) {
     let val = parse_json_response(world);
@@ -267,7 +267,7 @@ async fn json_response_success(world: &mut DaliWorld, expected: String) {
     );
 }
 
-// DALI-030 DALI-031 DALI-032 DALI-033 DIAG-031 STATS-003 STATS-010 WS-044
+// DIAG-130 DIAG-131 DIAG-132 DIAG-133 DIAG-031 STATS-003 STATS-010 WS-044
 #[when(regex = r"I send a JSON raw command with frame (\d+) and expects_backward (true|false)")]
 async fn send_json_raw_command(world: &mut DaliWorld, frame: u64, expects_backward: String) {
     let expects = expects_backward == "true";
@@ -275,7 +275,7 @@ async fn send_json_raw_command(world: &mut DaliWorld, frame: u64, expects_backwa
     world.send_http_request("POST", "/api/v1/dali/raw", Some(&body), "application/json");
 }
 
-// DALI-305 DALI-306 DALI-307
+// SYS-249 SYS-250 DIAG-407
 #[given(regex = r"the DALI transport responds with 0x([0-9a-fA-F]+)")]
 async fn given_transport_responds_hex(world: &mut DaliWorld, hex: String) {
     let val = u8::from_str_radix(&hex, 16).expect("valid hex byte");
@@ -287,7 +287,7 @@ async fn given_transport_responds_hex(world: &mut DaliWorld, hex: String) {
         .set_persistent_response(val);
 }
 
-// DALI-304
+// DIAG-404
 #[when("I send a DALI command with missing fields")]
 async fn when_send_command_missing_fields(world: &mut DaliWorld) {
     world.send_http_request(
@@ -310,13 +310,13 @@ async fn when_send_dali_command_background(world: &mut DaliWorld) {
     );
 }
 
-// DALI-302 POLICY-010 POLICY-011
+// DIAG-402 POLICY-010 POLICY-011
 #[when(regex = r#"I send a POST request to "([^"]+)" with empty body"#)]
 async fn when_send_post_empty_body(world: &mut DaliWorld, path: String) {
     world.send_http_request("POST", &path, Some(b""), "");
 }
 
-// DALI-301
+// DIAG-401
 #[then("the response content indicates failure")]
 async fn then_response_indicates_failure(world: &mut DaliWorld) {
     let resp = world.last_response().expect("no response");
@@ -328,7 +328,7 @@ async fn then_response_indicates_failure(world: &mut DaliWorld) {
     assert!(failure, "expected failure indication, got {:?}", val);
 }
 
-// DALI-305
+// SYS-249
 #[when(regex = r#"I send two POST requests to "([^"]+)" concurrently"#)]
 async fn when_send_two_concurrent(world: &mut DaliWorld, path: String) {
     world.stored_responses.clear();
@@ -346,7 +346,7 @@ async fn when_send_two_concurrent(world: &mut DaliWorld, path: String) {
     world.stored_responses.push(h2.join().expect("thread 2"));
 }
 
-// DALI-305
+// SYS-249
 #[then("both responses have status 200")]
 async fn then_both_status_200(world: &mut DaliWorld) {
     assert_eq!(world.stored_responses.len(), 2);
@@ -359,7 +359,7 @@ async fn then_both_status_200(world: &mut DaliWorld) {
     }
 }
 
-// DALI-305
+// SYS-249
 #[then("both responses contain backward_frame 0x42")]
 async fn then_both_backward_0x42(world: &mut DaliWorld) {
     assert_eq!(world.stored_responses.len(), 2);
@@ -376,7 +376,7 @@ async fn then_both_backward_0x42(world: &mut DaliWorld) {
     }
 }
 
-// DALI-306
+// SYS-250
 #[when("I send 5 DALI commands in sequence without delay")]
 async fn when_send_5_commands(world: &mut DaliWorld) {
     world.stored_responses.clear();
@@ -393,7 +393,7 @@ async fn when_send_5_commands(world: &mut DaliWorld) {
     }
 }
 
-// DALI-306
+// SYS-250
 #[then("all 5 responses have status 200")]
 async fn then_all_5_status_200(world: &mut DaliWorld) {
     assert_eq!(world.stored_responses.len(), 5);

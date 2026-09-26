@@ -27,8 +27,8 @@
 | `CFG-` | `config_transfer/` | Слайсы конфигурации: манифест, экспорт, импорт |
 | `COMM-` | `commissioning/` | Коммиссионинг control gear |
 | `CONT-` | `contracts/` | Соответствие HTTP-команды сообщению шины и кадру DALI |
-| `DALI-` | `diagnostic/`, `system/` | Диагностический путь `/api/v1/dali/*`; таймаут подтверждения и параллельные команды |
-| `DIAG-` | `diagnostic/` | `/api/v1/diagnostics` |
+| `DALI-` | — | *(removed)* не переиспользуется: сценарии перешли в `DIAG-` и `SYS-` |
+| `DIAG-` | `diagnostic/` | Диагностика: сырой путь `/api/v1/dali/*` и `/api/v1/diagnostics` |
 | `GRP-` | `groups/` | Группы |
 | `HCL-` | `hcl/` | Расписания HCL и планировщик |
 | `INP-` | `input_devices/` | Устройства ввода IEC 62386-103 |
@@ -46,7 +46,7 @@
 | `SET-HA-` | `settings_home_assistant/` | Настройки Home Assistant |
 | `SET-POL-` | `settings_poller/` | Настройки поллера |
 | `STATS-` | `stats/` | Статистика `/api/v1/stats` |
-| `SYS-` | `system/` | Сквозное поведение стека: загрузка, здоровье, композиция, интеграция |
+| `SYS-` | `system/` | Сквозное поведение стека: загрузка, здоровье, композиция, интеграция, таймаут подтверждения и параллельные команды |
 | `VL-` | `virtual_lamps/` | Виртуальные лампы |
 | `WEB-` | `web_ui/` | Раздача встроенного веб-интерфейса |
 | `WS-` | `websocket/` | WebSocket |

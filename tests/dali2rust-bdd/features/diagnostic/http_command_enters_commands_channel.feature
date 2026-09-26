@@ -4,7 +4,7 @@ Feature: HTTP command enters the Commands channel
   I want HTTP POST /api/v1/dali/command to publish a command to the DALI transport
   So that the DALI worker executes it on the bus
 
-  @id:DALI-012
+  @id:DIAG-112
   Scenario: Successful command is forwarded to DALI transport
     Given a DALI mock transport with response 200
     When I send a JSON DALI command with address 1 and command 254
@@ -12,7 +12,7 @@ Feature: HTTP command enters the Commands channel
     And the JSON DaliCommandResponse success should be true
     And the DALI mock transport should have received 1 forward frame
 
-  @id:DALI-013
+  @id:DIAG-113
   Scenario: Command with different address reaches transport
     Given a DALI mock transport with response 100
     When I send a JSON DALI command with address 5 and command 200
@@ -20,7 +20,7 @@ Feature: HTTP command enters the Commands channel
     And the JSON DaliCommandResponse success should be true
     And the DALI mock transport should have received 1 forward frame
 
-  @id:DALI-014
+  @id:DIAG-114
   Scenario: Multiple commands are all forwarded in order
     Given a DALI mock transport with response 200
     When I send a JSON DALI command with address 1 and command 254
