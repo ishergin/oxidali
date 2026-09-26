@@ -17,6 +17,7 @@ from hil import serialmon as serialmon_mod
 from hil import tiers
 from hil import validity
 from hil.artifacts import Artifacts
+from hil.results import failure_line
 from hil.seriallog import SerialLog
 from hil.sniffer import SnifferTap, ssh_argv
 from hil.wait import wait_until
@@ -1283,7 +1284,7 @@ def pytest_runtest_makereport(item, call):
             reason = report.longrepr[2]
         results.append(("SKIP", name, str(reason)))
     elif report.failed:
-        results.append(("FAIL", name, str(report.longrepr)[:120]))
+        results.append(("FAIL", name, failure_line(report.longrepr)))
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
