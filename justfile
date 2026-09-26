@@ -136,13 +136,13 @@ esp-check:
 
 [doc("Type-check the gear emulator against the crates it shares.")]
 gear-sim-check:
-    cd tools/dali-gear-sim && cargo check --target riscv32imac-esp-espidf
+    cd tools/dali-gear-sim && cargo check --target {{p4_target}}
 
 [doc("Build the gear emulator and check its interrupt reaches no flash.")]
 gear-sim-isr-iram-check:
     cd tools/dali-gear-sim && cargo build
     python3 scripts/verify_dali_isr_iram.py --require-tools \
-        tools/dali-gear-sim/target/riscv32imac-esp-espidf/debug/dali-gear-sim
+        tools/dali-gear-sim/target/{{p4_target}}/debug/dali-gear-sim
 
 p4_target := "riscv32imafc-esp-espidf"
 

@@ -56,12 +56,13 @@ for path in sorted(targets):
 
 marker_re = re.compile(r"//\s*(sleep-ok|busy-wait-ok):")
 src_targets = []
-for root, _, files in os.walk(os.path.join(repo_root, "crates")):
-    if os.sep + "src" not in root:
-        continue
-    for name in files:
-        if name.endswith(".rs"):
-            src_targets.append(os.path.join(root, name))
+for tree in ("crates", os.path.join("tools", "dali-gear-sim")):
+    for root, _, files in os.walk(os.path.join(repo_root, tree)):
+        if os.sep + "src" not in root or os.sep + "target" + os.sep in root + os.sep:
+            continue
+        for name in files:
+            if name.endswith(".rs"):
+                src_targets.append(os.path.join(root, name))
 
 for path in sorted(src_targets):
     rel = os.path.relpath(path, repo_root)

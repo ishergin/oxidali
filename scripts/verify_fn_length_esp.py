@@ -19,6 +19,7 @@ SCAN_GLOBS = (
     "crates/*/src/**/esp_ws.rs",
     "crates/dali2rust-firmware/src/**/*.rs",
     "crates/dali2rust-bsp/src/**/*.rs",
+    "tools/dali-gear-sim/src/**/*.rs",
 )
 
 FN_RE = re.compile(
