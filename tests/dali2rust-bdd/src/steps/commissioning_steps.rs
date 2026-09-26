@@ -324,7 +324,7 @@ async fn then_step_short_address_absent(world: &mut DaliWorld) {
     );
 }
 
-// ADP-023 ADP-026
+// ADP-023 ADP-026 ADP-027
 #[then("the DALI mock transport frame log should be cleared")]
 async fn then_clear_mock_frame_log(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear();
