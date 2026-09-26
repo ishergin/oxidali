@@ -534,6 +534,7 @@ fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
         target_state_superseded_total: c.target_state_superseded.load(Relaxed),
         wire_load_permille: h.dali_wire.load_permille.load(Relaxed),
         wire_load_own_permille: h.dali_wire.load_own_permille.load(Relaxed),
+        collision_restarts_total: h.dali_wire.collision_restarts.load(Relaxed),
         foreign_frames_total: h
             .phy_sniffer
             .forward16

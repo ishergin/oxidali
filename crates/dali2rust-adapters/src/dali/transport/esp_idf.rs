@@ -6,7 +6,7 @@ use std::sync::Arc;
 use esp_idf_svc::hal::gpio::{Input, Output, PinDriver, Pull};
 use esp_idf_svc::sys::EspError;
 use esp_idf_svc::sys::{
-    esp_intr_free, gptimer_alarm_cb_t, gptimer_config_t,
+    esp_intr_free, esp_random, gptimer_alarm_cb_t, gptimer_config_t,
     gptimer_count_direction_t_GPTIMER_COUNT_UP, gptimer_del_timer, gptimer_disable, gptimer_enable,
     gptimer_event_callbacks_t, gptimer_handle_t, gptimer_new_timer,
     gptimer_register_event_callbacks, gptimer_start, gptimer_stop, intr_handle_t,
@@ -24,15 +24,16 @@ use dali2rust_dali_phy::backward_window::ANSWER_ARM_TARGET_IDLE_TICKS;
 use dali2rust_dali_phy::fsm::RX_IDLE_LINE_HIGH_TICKS;
 use dali2rust_dali_phy::{
     dali_phy_alarm_isr, settle_ticks_on_wire, ExchangeId, HalfBitBuffer, PhyIsrCore, RegisterGpio,
-    RxCompletedEvent, SessionEvent, BACKWARD8_SAMPLE_COUNT, BUS_POWER_DOWN_TICKS,
+    RxCompletedEvent, SessionEvent, TxGates, BACKWARD8_SAMPLE_COUNT, BUS_POWER_DOWN_TICKS,
     FORWARD16_SAMPLE_COUNT, FORWARD24_SAMPLE_COUNT, MIN_SAMPLES_FOR_DECODE, PHY_TICK_US,
     RX_RING_CAP, TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS,
 };
 
 use crate::dali::transport::{
     arrived_too_early_for_a_backward_frame, arrived_too_late_for_a_backward_frame, backward_timing,
-    foreign_forward_outcome, held_capture_outcome, incomplete_reception_verdict, BackwardTiming,
-    BACKWARD_ACCEPTANCE_FLOOR_US, BACKWARD_ACCEPTANCE_LIMIT_US,
+    collision_restart_gate, foreign_forward_outcome, held_capture_outcome,
+    incomplete_reception_verdict, BackwardTiming, BACKWARD_ACCEPTANCE_FLOOR_US,
+    BACKWARD_ACCEPTANCE_LIMIT_US,
 };
 use dali2rust_dali_codec::codec::{encode_forward16_raw, encode_forward24_raw};
 use dali2rust_dali_codec::rx_decode::{RxDecode, SniffedDecode, SniffedFrame};
@@ -96,7 +97,17 @@ enum TxFrameLabel {
     Forward24([u8; 3]),
 }
 
+const NO_PREVIOUS_FRAME: u32 = u32::MAX;
+const FRAME24_KEY_MARK: u32 = 1 << 24;
+
 impl TxFrameLabel {
+    fn key(self) -> u32 {
+        match self {
+            Self::Forward16(frame) => u32::from(frame),
+            Self::Forward24([b0, b1, b2]) => FRAME24_KEY_MARK | u32::from_be_bytes([0, b0, b1, b2]),
+        }
+    }
+
     fn addresses_single_gear(self) -> bool {
         let first = match self {
             Self::Forward16(frame) => (frame >> 8) as u8,
@@ -162,6 +173,7 @@ struct TransportInner {
     _rx_pin: PinDriver<'static, Input>,
     foreign_frames: AtomicU32,
     last_tx_settle_ticks: AtomicU32,
+    previous_forward: AtomicU32,
     cancel_unacknowledged: AtomicU32,
     forward_single_gear: AtomicBool,
     observed_tx: std::sync::OnceLock<dali2rust_platform::dali::ObservedFrameSender>,
@@ -418,10 +430,11 @@ impl EspIdfDaliTransport {
         unsafe { (*p).isr.take_batch_aborted() };
         for &(frame, expects_backward, min_idle_us) in run {
             let hb = encode_forward16_raw(frame);
-            let gate = u8::try_from(settle_us_to_idle_ticks(min_idle_us)).unwrap_or(u8::MAX);
+            let label = TxFrameLabel::Forward16(frame);
+            let gates = Self::tx_gates(p, label, settle_us_to_idle_ticks(min_idle_us));
             if !unsafe {
                 (*p).isr
-                    .queue_tx_for(&hb.data, hb.length, expects_backward, gate, exchange_id)
+                    .queue_tx_for(&hb.data, hb.length, expects_backward, gates, exchange_id)
             } {
                 Self::cancel_keeping_verdict(p);
                 return Err(EspIdfDaliError::Other("DALI TX batch queue overflow"));
@@ -516,6 +529,20 @@ impl EspIdfDaliTransport {
         }
     }
 
+    // IEC 62386-101 §9.1.4, §9.3
+    fn tx_gates(p: *mut TransportInner, frame: TxFrameLabel, min_idle_ticks: u32) -> TxGates {
+        let key = frame.key();
+        // SAFETY: `p` is valid for the transport lifetime (see callers).
+        let previous = unsafe { (*p).previous_forward.swap(key, Ordering::Relaxed) };
+        // SAFETY: a plain call into the hardware random number generator.
+        let draw = unsafe { esp_random() };
+        let previous = (previous != NO_PREVIOUS_FRAME).then_some(previous);
+        TxGates {
+            min_idle_ticks: u8::try_from(min_idle_ticks).unwrap_or(u8::MAX),
+            restart_gate: collision_restart_gate(key, previous, draw),
+        }
+    }
+
     fn do_send_once(
         p: *mut TransportInner,
         exchange_id: ExchangeId,
@@ -530,10 +557,10 @@ impl EspIdfDaliTransport {
             (*p).forward_single_gear
                 .store(frame.addresses_single_gear(), Ordering::Relaxed)
         };
-        let gate = u8::try_from(min_idle_ticks).unwrap_or(u8::MAX);
+        let gates = Self::tx_gates(p, frame, min_idle_ticks);
         while !unsafe {
             (*p).isr
-                .submit_tx_for(&hb.data, hb.length, expects_backward, gate, exchange_id)
+                .submit_tx_for(&hb.data, hb.length, expects_backward, gates, exchange_id)
         } {
             if std::time::Instant::now() >= deadline {
                 return Err(EspIdfDaliError::Other(
@@ -843,6 +870,7 @@ impl EspIdfDaliTransport {
                 _rx_pin: rx,
                 foreign_frames: AtomicU32::new(0),
                 last_tx_settle_ticks: AtomicU32::new(TX_SETTLE_UNMEASURED),
+                previous_forward: AtomicU32::new(NO_PREVIOUS_FRAME),
                 cancel_unacknowledged: AtomicU32::new(0),
                 forward_single_gear: AtomicBool::new(true),
                 observed_tx: std::sync::OnceLock::new(),
@@ -1687,6 +1715,18 @@ unsafe fn mirror_bus_failure_counters(inner: *mut TransportInner) {
 
 /// # Safety
 /// `inner` must be valid for the transport's lifetime.
+unsafe fn mirror_collision_restarts(inner: *mut TransportInner) {
+    // SAFETY: the caller's contract.
+    let Some(w) = (unsafe { (*inner).wire_counters.get() }) else {
+        return;
+    };
+    // SAFETY: same.
+    w.collision_restarts
+        .store(unsafe { (*inner).isr.collision_restarts() }, Ordering::Relaxed);
+}
+
+/// # Safety
+/// `inner` must be valid for the transport's lifetime.
 unsafe fn mirror_arbitration_counters(inner: *mut TransportInner) {
     let Some(reflex) = (unsafe { (*inner).arbitration_reflex.get() }) else {
         return;
@@ -1862,6 +1902,8 @@ unsafe fn mirror_isr_state(
     let (runs, max_ticks) = unsafe { (*inner).isr.take_line_held_counts() };
     diagnostics.line_held.0 = diagnostics.line_held.0.saturating_add(runs);
     diagnostics.line_held.1 = diagnostics.line_held.1.max(max_ticks);
+    // SAFETY: same.
+    unsafe { mirror_collision_restarts(inner) };
     // SAFETY: same.
     let holds = unsafe { ((*inner).isr.tx_yields(), (*inner).isr.tx_voided()) };
     diagnostics.note_tx_holds(holds.0, holds.1);

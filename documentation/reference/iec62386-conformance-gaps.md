@@ -52,18 +52,6 @@ every receiver rejects the frame — and the destroy-area boundaries (100 / 356,
 433,3 / 476,7 µs) are about one 104 µs sampling tick apart, which a polled receiver
 cannot resolve.
 
-### 1.10 No reduced-settling restart after a collision — `SHOULD FIX`
-
-§9.1.4: after the break, if the bus is idle, the transmitter "shall restart its original
-transmission with a reduced settling time t_RECOVER" — 4,0–4,6 ms (Table 25), at a
-random point per footnote a — so the last transmitter to release the bus restarts
-first (Note 2). The PHY drives the break and waits out the recovery time without
-checking the bus ([08](../architecture/08-dali-phy-and-transport.md)); the controller's
-retry goes through the ordinary settling gate, at least 13,5 ms from the last edge. A
-conforming master restarting after 4,0–4,6 ms therefore
-wins every post-collision tie-break on a shared segment. Footnote a's randomisation
-applies once the restart exists.
-
 ## 2. Part 102 — standard commands
 
 ### 2.2 Commands with no product caller
@@ -221,10 +209,8 @@ gear has cycled. As a boolean broadcast query it needs a positive control.
 
 Ordered by consequence per unit of work:
 
-1. §1.10 — restart at t_RECOVER after a collision; every post-collision tie-break on the
-   shared segment is lost today.
-2. §16.3 — look for `powerCycleSeen` unprompted, with a broadcast `QUERY POWER FAILURE`.
-3. §2.2 `0xFF`, §10 12.7.2 — the extended version of every discovered device type.
-4. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
-5. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
-6. §3 — a memory-bank write path, when a commissioning surface asks for one.
+1. §16.3 — look for `powerCycleSeen` unprompted, with a broadcast `QUERY POWER FAILURE`.
+2. §2.2 `0xFF`, §10 12.7.2 — the extended version of every discovered device type.
+3. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
+4. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
+5. §3 — a memory-bank write path, when a commissioning surface asks for one.

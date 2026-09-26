@@ -13,7 +13,7 @@ pub mod esp_idf;
 pub mod phy_interrupt;
 
 use dali2rust_dali_phy::isr::BUS_FAILURE_POWER_DOWN;
-use dali2rust_dali_phy::{RxCompletedEvent, BUS_POWER_DOWN_TICKS, PHY_TICK_US};
+use dali2rust_dali_phy::{restart_gate_for, RxCompletedEvent, BUS_POWER_DOWN_TICKS, PHY_TICK_US};
 use dali2rust_platform::dali::TransferOutcome;
 
 pub const WIRE_LOAD_WINDOW_TICKS: u32 = 1_000_000 / PHY_TICK_US;
@@ -140,6 +140,53 @@ pub fn incomplete_reception_verdict(
         None
     } else {
         Some(TransferOutcome::CorruptedInWindow)
+    }
+}
+
+// IEC 62386-101 §9.1.4, Table 25
+const RESTART_FIRST_EDGE_TICKS: u8 = 40;
+const RESTART_SPREAD_TICKS: u32 = 4;
+
+pub fn collision_restart_ticks(draw: u32) -> u8 {
+    RESTART_FIRST_EDGE_TICKS + (draw % RESTART_SPREAD_TICKS) as u8
+}
+
+// IEC 62386-101 §9.1.4, §9.3
+pub fn collision_restart_gate(frame_key: u32, previous_key: Option<u32>, draw: u32) -> u8 {
+    if previous_key == Some(frame_key) {
+        return 0;
+    }
+    restart_gate_for(collision_restart_ticks(draw))
+}
+
+#[cfg(test)]
+mod collision_restart_tests {
+    use super::*;
+
+    // IEC 62386-101 Table 25
+    const T_RECOVER_US: (u32, u32) = (4_000, 4_600);
+
+    #[test]
+    fn every_drawn_restart_lands_inside_t_recover_with_a_tick_to_spare() {
+        let mut seen = std::collections::BTreeSet::new();
+        for draw in 0..64u32 {
+            let ticks = u32::from(collision_restart_ticks(draw));
+            seen.insert(ticks);
+            assert!((ticks - 1) * PHY_TICK_US >= T_RECOVER_US.0, "{ticks} ticks");
+            assert!((ticks + 1) * PHY_TICK_US <= T_RECOVER_US.1, "{ticks} ticks");
+        }
+        assert_eq!(seen.len(), 4, "footnote a: the restart point is spread over the window");
+    }
+
+    #[test]
+    fn a_frame_repeating_its_predecessor_is_never_restarted_alone() {
+        assert_eq!(
+            collision_restart_gate(0x01A5, Some(0x01A5), 7),
+            0,
+            "101 §9.3: a break splits a send-twice pair, so its second copy is not restarted"
+        );
+        assert_ne!(collision_restart_gate(0x01A5, Some(0x01A4), 7), 0);
+        assert_ne!(collision_restart_gate(0x01A5, None, 7), 0);
     }
 }
 

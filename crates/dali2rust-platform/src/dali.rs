@@ -143,6 +143,8 @@ pub struct DaliWireCounters {
 
     pub bus_acquire_timeout: core::sync::atomic::AtomicU32,
     pub collisions: core::sync::atomic::AtomicU32,
+    // IEC 62386-101 §9.1.4
+    pub collision_restarts: core::sync::atomic::AtomicU32,
     pub foreign_in_window: core::sync::atomic::AtomicU32,
     pub corrupted_in_window: core::sync::atomic::AtomicU32,
 

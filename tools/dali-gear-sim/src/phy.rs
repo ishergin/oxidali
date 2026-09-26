@@ -1,7 +1,8 @@
 use core::ptr;
 
 use dali2rust_dali_phy::{
-    dali_phy_alarm_isr, PhyIsrCore, RegisterGpio, RxCompletedEvent, SessionEvent, PHY_TICK_US,
+    dali_phy_alarm_isr, PhyIsrCore, RegisterGpio, RxCompletedEvent, SessionEvent, TxGates,
+    PHY_TICK_US,
 };
 use esp_idf_svc::hal::gpio::{Input, Output, PinDriver, Pull};
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -85,7 +86,7 @@ impl GearPhy {
     }
 
     pub fn submit_backward(&self, data: &[u8; 9], len: u8) -> bool {
-        self.isr.submit_tx(data, len, false, 0)
+        self.isr.submit_tx(data, len, false, TxGates::settle(0))
     }
 
     pub fn probe(&self) -> (u32, bool) {
