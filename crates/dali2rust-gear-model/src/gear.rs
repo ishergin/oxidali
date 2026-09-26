@@ -231,6 +231,12 @@ pub(crate) struct Heard {
     pub split: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PendingRandom {
+    pub(crate) address: u32,
+    pub(crate) ready_at_ms: u64,
+}
+
 #[derive(Debug)]
 pub struct Gear {
     pub spec: GearSpec,
@@ -258,6 +264,7 @@ pub struct Gear {
     device_type_walk: Option<usize>,
     pub limit_error: bool,
     pending_repeat: Option<u16>,
+    pub(crate) pending_random: Option<PendingRandom>,
     pub(crate) executes_now: bool,
     pub color_mode: ColorMode,
     pub pending_mode: ColorMode,
@@ -418,7 +425,7 @@ impl Gear {
             initialise: false, withdrawn: false, identifying: false, dimming_curve: 0,
             device_type_walk: None,
             limit_error: false,
-            pending_repeat: None,
+            pending_repeat: None, pending_random: None,
             executes_now: false,
             rgbwaf: Rgbwaf::at_power_up(),
             color_mode: ColorMode::None,

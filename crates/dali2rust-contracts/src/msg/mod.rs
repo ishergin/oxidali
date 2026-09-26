@@ -25,7 +25,7 @@ pub use observation_order::{observation_supersedes, OBSERVATION_ORDER_WINDOW_MS}
 pub use kinds::{
     AttributeGroupReadOutcome, ChannelKind, ColorMode, ConfigWriteResource, DaliAttributeGroup,
     DaliTargetScope,
-    DecodeStatus, DeliveryStatus, DeviceType, DeviceTypeSet, DiscoveryMode, LastDapcSource,
+    DecodeStatus, DeliveryStatus, DeviceCommandScope, DeviceType, DeviceTypeSet, DiscoveryMode, LastDapcSource,
     LevelTransition,
     MemoryBankReadPreset,
     CommissioningStep, IdentifyMechanism, InitialiseScope, InputDeviceLifecycleKind,

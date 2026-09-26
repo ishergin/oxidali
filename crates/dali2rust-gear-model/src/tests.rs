@@ -16,7 +16,10 @@ use dali2rust_domain::dali::banks::part251::LuminaireFormat;
 use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_platform::dali::TransferOutcome;
 
-use crate::fleet::{demo_random_address, encode_short_reply, GearFleet, DEFAULT_RESERVED_SHORT_ADDRESSES};
+use crate::fleet::{
+    demo_random_address, draw_random_address, encode_short_reply, GearFleet,
+    DEFAULT_RESERVED_SHORT_ADDRESSES, RANDOM_ADDRESS_READY_MS,
+};
 use crate::gear::{
     GearSpec, BANK0_BASE_LAST_OFFSET, BANK0_LAST_BANK, BANK1_UNLOCKED, DALI_YES, DT8_STATUS_TC_ACTIVE,
     MEMORY_BANK_IDENTITY, MEMORY_BANK_PROFILE, STATUS_GEAR_FAILURE, STATUS_LAMP_FAILURE,
@@ -588,9 +591,15 @@ fn memory_bank_profile_lock_byte_and_unknown_bank() {
     );
 }
 
+fn wait_out_randomise(fleet: &mut GearFleet) {
+    let now = fleet.now_ms();
+    fleet.advance_to_ms(now + RANDOM_ADDRESS_READY_MS);
+}
+
 fn commission_one(fleet: &mut GearFleet, scope: u8, program_to: u8) -> u32 {
     config(fleet, special(SpecialCommand::Initialise(scope)));
     config(fleet, special(SpecialCommand::Randomise));
+    wait_out_randomise(fleet);
 
     let mut low = 0u32;
     let mut high = 0x00FF_FFFF;
@@ -666,6 +675,7 @@ fn randomise_redraws_the_address_instead_of_replaying_the_seed() {
     let before: Vec<u32> = fleet.gears().iter().map(|g| g.spec.random_address).collect();
     config(&mut fleet, special(SpecialCommand::Initialise(0x00)));
     config(&mut fleet, special(SpecialCommand::Randomise));
+    wait_out_randomise(&mut fleet);
     let after: Vec<u32> = fleet.gears().iter().map(|g| g.spec.random_address).collect();
 
     assert_ne!(before, after, "RANDOMISE must redraw");
@@ -674,6 +684,47 @@ fn randomise_redraws_the_address_instead_of_replaying_the_seed() {
     sorted.sort_unstable();
     sorted.dedup();
     assert_eq!(sorted.len(), after.len(), "addresses must stay distinct");
+}
+
+fn random_addresses(fleet: &GearFleet) -> Vec<u32> {
+    fleet.gears().iter().map(|g| g.spec.random_address).collect()
+}
+
+#[test]
+fn a_new_random_address_is_in_use_only_once_the_gear_has_had_its_100_ms() {
+    let mut fleet = GearFleet::demo_bus();
+    let before = random_addresses(&fleet);
+    config(&mut fleet, special(SpecialCommand::Initialise(0x00)));
+    config(&mut fleet, special(SpecialCommand::Randomise));
+    fleet.advance_to_ms(RANDOM_ADDRESS_READY_MS - 1);
+    assert_eq!(
+        random_addresses(&fleet),
+        before,
+        "IEC 62386-102 §11.7.5 gives the gear 100 ms to make the new address available: a \
+         COMPARE sent sooner still meets the old one"
+    );
+    fleet.advance_to_ms(RANDOM_ADDRESS_READY_MS);
+    assert_ne!(random_addresses(&fleet), before, "at 100 ms the new address is in use");
+}
+
+#[test]
+fn a_search_that_does_not_wait_out_randomise_finds_the_address_it_replaced() {
+    let mut fleet = GearFleet::new(vec![GearSpec::dt6(None, 0x00_1234)], 0, 7);
+    config(&mut fleet, special(SpecialCommand::Initialise(0xFF)));
+    config(&mut fleet, special(SpecialCommand::Randomise));
+    set_search(&mut fleet, 0x00_1234);
+    assert_eq!(
+        exchange(&mut fleet, special(SpecialCommand::Compare), true),
+        TransferOutcome::Answer(DALI_YES),
+        "the old address still answers a COMPARE inside the 100 ms"
+    );
+}
+
+#[test]
+fn a_drawn_random_address_never_takes_the_value_that_means_none() {
+    let mut draws = [0x00FF_FFFFu32, 0x00FF_FFFF, 0x00AB_CDEF].into_iter();
+    let address = draw_random_address(|| draws.next().unwrap_or(0));
+    assert_eq!(address, 0x00AB_CDEF, "IEC 62386-102 §11.7.5 draws from [0x000000, 0xFFFFFE]");
 }
 
 #[test]

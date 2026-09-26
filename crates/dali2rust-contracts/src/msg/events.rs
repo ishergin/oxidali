@@ -6,7 +6,8 @@ use super::commands::{
 };
 use super::errors::CompactErrorPayload;
 use super::kinds::{
-    AttributeGroupReadOutcome, ColorMode, DaliTargetScope, DecodeStatus, DeviceType, DeviceTypeSet,
+    AttributeGroupReadOutcome, ColorMode, DaliTargetScope, DecodeStatus, DeviceCommandScope,
+    DeviceType, DeviceTypeSet,
     IdentifyMechanism, InputDeviceLifecycleKind, InputEventKind, ObservedFrameWidth, ObservedKind,
     OperationStatus, OperationType, OperationWorkerSignal, RuntimeSource,
 };
@@ -715,15 +716,13 @@ declare_bus_payloads! {
 
     pub struct Dali103ApplicationControlObservedEvent {
         pub registry_adapter_id: u8,
-        pub scope_broadcast: bool,
-        pub short_address: u8,
+        pub scope: DeviceCommandScope,
         pub enable: bool,
         pub observed_at_ms: u64,
     }
     budget = Dali103ApplicationControlObservedEvent {
         registry_adapter_id: u8::MAX,
-        scope_broadcast: true,
-        short_address: 63,
+        scope: DeviceCommandScope::Short(63),
         enable: true,
         observed_at_ms: u64::MAX,
     };

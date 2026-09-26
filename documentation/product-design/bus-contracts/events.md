@@ -144,7 +144,8 @@
 - `DaliInputDeviceLifecycleEvent` — служебные события устройства (power cycle,
   локальная перенастройка Part 333).
 - `Dali103ApplicationControlObservedEvent` — подтверждённая send-twice пара чужого
-  `ENABLE` / `DISABLE APPLICATION CONTROLLER`; реестр решает, касается ли она нас.
+  `ENABLE` / `DISABLE APPLICATION CONTROLLER` и её `DeviceCommandScope`; реестр решает,
+  касается ли она нас: `Unaddressed` — только пока у контроллера нет короткого адреса.
 
 Результаты команд Part 103 (`Dali103Scan*`, `Dali103InstanceConfiguredEvent`)
 реестр проецирует в записи устройств ввода; флаг Part 333 из

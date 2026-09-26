@@ -108,11 +108,7 @@ dali2rust_contracts::dispatch_bus_events! {
         commit_device_replacement(publisher, corr, store, counters, body);
     },
     Dali103ApplicationControlObservedEvent(body) => {
-        if let Some(applied) = store.apply_application_control(
-            body.scope_broadcast,
-            body.short_address,
-            body.enable,
-        ) {
+        if let Some(applied) = store.apply_application_control(body.scope, body.enable) {
             counters.app_control_applied.fetch_add(1, Ordering::Relaxed);
             crate::runtime::registry::publish::publish_dali_settings_changed(
                 publisher,

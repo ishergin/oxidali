@@ -11,7 +11,8 @@ use dali2rust_contracts::bus::event_envelope;
 use dali2rust_contracts::msg::{
     Dali103ApplicationControlObservedEvent,
     ColorMode, ColorValue, DaliInputDeviceLifecycleEvent, DaliInputEventObservedEvent,
-    DaliObservedFrameEvent, DaliTargetScope, DecodeStatus, InputDeviceLifecycleKind,
+    DaliObservedFrameEvent, DaliTargetScope, DecodeStatus, DeviceCommandScope,
+    InputDeviceLifecycleKind,
     LevelTransition,
     InputEventKind, LightSetpoint, ObservedFrameWidth, ObservedKind, Origin, PowerState,
 };
@@ -185,6 +186,9 @@ fn translate_raw_frame(
     raw: &ObservedRawFrame,
     instance_types: &dyn InputInstanceTypeReadPort,
 ) {
+    if raw.kind != ObservedRawFrameKind::Forward24 {
+        state.pending_device_cmd = None;
+    }
     match raw.kind {
         ObservedRawFrameKind::Backward8 => {
             counters.backward_ignored.fetch_add(1, Ordering::Relaxed);
@@ -537,7 +541,8 @@ fn color_fact(address: DaliAddress, color: ColorValue) -> ObservedFact {
 // IEC 62386-101 Table 20
 const SEND_TWICE_WINDOW_MS: u32 = 105;
 
-fn application_control(bytes: [u8; 3]) -> Option<(bool, bool, u8)> {
+// IEC 62386-103 §9.5.1
+fn application_control(bytes: [u8; 3]) -> Option<(DeviceCommandScope, bool)> {
     if bytes[1] != 0xFE {
         return None;
     }
@@ -547,8 +552,9 @@ fn application_control(bytes: [u8; 3]) -> Option<(bool, bool, u8)> {
         _ => return None,
     };
     match bytes[0] {
-        0xFF | 0xFD => Some((true, enable, 0)),
-        addr if addr & 0x81 == 0x01 => Some((false, enable, (addr >> 1) & 0x3F)),
+        0xFF => Some((DeviceCommandScope::Broadcast, enable)),
+        0xFD => Some((DeviceCommandScope::Unaddressed, enable)),
+        addr if addr & 0x81 == 0x01 => Some((DeviceCommandScope::Short((addr >> 1) & 0x3F), enable)),
         _ => None,
     }
 }
@@ -569,8 +575,7 @@ fn track_device_command_pair(
         Some((first, at)) if first == raw.bytes
             && raw.observed_at_mono_ms.wrapping_sub(at) <= SEND_TWICE_WINDOW_MS =>
         {
-            let Some((scope_broadcast, enable, short_address)) = application_control(raw.bytes)
-            else {
+            let Some((scope, enable)) = application_control(raw.bytes) else {
                 return;
             };
             counters.app_control_pairs.fetch_add(1, Ordering::Relaxed);
@@ -580,8 +585,7 @@ fn track_device_command_pair(
                 counters,
                 Dali103ApplicationControlObservedEvent {
                     registry_adapter_id,
-                    scope_broadcast,
-                    short_address,
+                    scope,
                     enable,
                     observed_at_ms: raw.observed_at_ms,
                 },
@@ -608,6 +612,7 @@ fn translate_forward24(
         count_unknown(counters);
         return;
     };
+    state.pending_device_cmd = None;
 
     match decoded {
         InputEvent::PowerCycle {

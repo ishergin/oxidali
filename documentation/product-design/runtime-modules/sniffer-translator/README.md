@@ -50,8 +50,10 @@
   `DaliInputEventObservedEvent`; служебные события устройства →
   `DaliInputDeviceLifecycleEvent`;
 - чужая пара `ENABLE` / `DISABLE APPLICATION CONTROLLER`, повторённая в окне
-  send-twice (105 мс), → `Dali103ApplicationControlObservedEvent`; одиночный кадр
-  командой не является;
+  send-twice (105 мс) без единого кадра между половинами (IEC 62386-101 §9.3), →
+  `Dali103ApplicationControlObservedEvent` с областью адресации: broadcast, `0xFD` (только
+  устройствам без короткого адреса, IEC 62386-103 §9.5.1) или короткий адрес; одиночный
+  кадр командой не является;
 - прочие команды считаются: командный путь Part 103 принадлежит `DaliWorker`.
 
 ## Свойства

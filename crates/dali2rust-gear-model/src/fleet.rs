@@ -15,13 +15,19 @@ use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_platform::dali::TransferOutcome;
 
 use crate::gear::{
-    apply_standard_write, gear_query_reply, Gear, GearSpec, DALI_YES,
+    apply_standard_write, gear_query_reply, Gear, GearSpec, PendingRandom, DALI_YES,
     SHORT_ADDRESS_MASK,
     TC_COOLEST_MIREK, TC_WARMEST_MIREK,
 };
 use crate::rng::Rng;
 
 pub const DEFAULT_RESERVED_SHORT_ADDRESSES: u64 = 0x0000_0000_0000_03FF;
+
+// IEC 62386-102 §11.7.5
+pub const RANDOM_ADDRESS_READY_MS: u64 = 100;
+
+// IEC 62386-102 §11.7.5
+const RANDOM_ADDRESS_MAX: u32 = 0x00FF_FFFE;
 
 #[derive(Debug, Default)]
 struct BusRegisters {
@@ -52,6 +58,7 @@ pub struct GearFleet {
     stats: FleetStats,
     answers: Vec<u8>,
     frame_seq: u64,
+    now_ms: u64,
 }
 
 impl GearFleet {
@@ -75,6 +82,22 @@ impl GearFleet {
             stats,
             frame_seq: 0,
             answers: Vec::new(),
+            now_ms: 0,
+        }
+    }
+
+    pub fn now_ms(&self) -> u64 {
+        self.now_ms
+    }
+
+    pub fn advance_to_ms(&mut self, now_ms: u64) {
+        self.now_ms = self.now_ms.max(now_ms);
+        let now = self.now_ms;
+        for gear in &mut self.gears {
+            if let Some(pending) = gear.pending_random.filter(|p| now >= p.ready_at_ms) {
+                gear.spec.random_address = pending.address;
+                gear.pending_random = None;
+            }
         }
     }
 
@@ -374,14 +397,17 @@ impl GearFleet {
         }
     }
 
+    // IEC 62386-102 §11.7.5
     fn randomise(&mut self) {
+        let ready_at_ms = self.now_ms.saturating_add(RANDOM_ADDRESS_READY_MS);
         let rng = &mut self.rng;
         for gear in self
             .gears
             .iter_mut()
             .filter(|g| g.initialise && g.executes_now)
         {
-            gear.spec.random_address = rng.next_24();
+            let address = draw_random_address(|| rng.next_24());
+            gear.pending_random = Some(PendingRandom { address, ready_at_ms });
         }
     }
 
@@ -741,6 +767,15 @@ fn merge_answers(answers: &[u8]) -> TransferOutcome {
         [] => TransferOutcome::NoAnswer,
         [only] => TransferOutcome::Answer(*only),
         _ => TransferOutcome::CorruptedInWindow,
+    }
+}
+
+pub(crate) fn draw_random_address(mut next_24: impl FnMut() -> u32) -> u32 {
+    loop {
+        let candidate = next_24();
+        if candidate <= RANDOM_ADDRESS_MAX {
+            return candidate;
+        }
     }
 }
 

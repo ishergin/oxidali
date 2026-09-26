@@ -47,6 +47,14 @@ impl Origin {
     }
 }
 
+// IEC 62386-103 §9.5.1
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DeviceCommandScope {
+    Broadcast,
+    Unaddressed,
+    Short(u8),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum DaliTargetScope {

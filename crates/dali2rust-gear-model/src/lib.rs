@@ -8,7 +8,9 @@ pub mod input_device;
 #[cfg(test)]
 mod tests;
 
-pub use fleet::{bench_fleet, FleetStats, GearFleet, DEFAULT_RESERVED_SHORT_ADDRESSES};
+pub use fleet::{
+    bench_fleet, FleetStats, GearFleet, DEFAULT_RESERVED_SHORT_ADDRESSES, RANDOM_ADDRESS_READY_MS,
+};
 pub use gear::{
     ColorMode, FaultInjection, Gear, GearSpec, DEFAULT_RGBWAF_CHANNELS, DEVICE_TYPE_DIAGNOSTICS,
     DEVICE_TYPE_ENERGY, DEVICE_TYPE_LUMINAIRE_INFO, SCENE_COUNT,
