@@ -65,6 +65,7 @@ pub struct SnifferTranslatorCounters {
     pub input_lifecycle: AtomicU32,
     pub input_publish_retried: AtomicU32,
     pub app_control_pairs: AtomicU32,
+    pub scene_writes_observed: AtomicU32,
 }
 
 struct ColourStage {
@@ -83,6 +84,7 @@ struct DecoderState {
     dt8_armed: bool,
     colour_stage: Option<ColourStage>,
     pending_device_cmd: Option<([u8; 3], u32)>,
+    pending_scene_write: Option<([u8; 3], u32)>,
 }
 
 impl DecoderState {
@@ -189,6 +191,9 @@ fn translate_raw_frame(
     if raw.kind != ObservedRawFrameKind::Forward24 {
         state.pending_device_cmd = None;
     }
+    if raw.kind != ObservedRawFrameKind::Forward16 {
+        state.pending_scene_write = None;
+    }
     match raw.kind {
         ObservedRawFrameKind::Backward8 => {
             counters.backward_ignored.fetch_add(1, Ordering::Relaxed);
@@ -220,6 +225,7 @@ fn translate_forward16(
     raw: &ObservedRawFrame,
 ) {
     let (wire_address, command) = (raw.bytes[0], raw.bytes[1]);
+    let held_scene_write = state.pending_scene_write.take();
     let dt8_armed = std::mem::take(&mut state.dt8_armed);
     let dt8 = decode_dt8(state, dt8_armed, wire_address, command);
     if handle_dt8_outcome(publisher, bus_id, registry_adapter_id, counters, raw, dt8) {
@@ -229,17 +235,79 @@ fn translate_forward16(
         Ok(DaliCommand::Special(special)) => {
             track_special(state, counters, special);
         }
-        Ok(DaliCommand::Standard { address, command }) => publish_standard(
-            publisher,
-            bus_id,
-            registry_adapter_id,
-            counters,
-            raw,
-            address,
-            command,
-        ),
+        Ok(DaliCommand::Standard { address, command }) => match scene_write_of(command) {
+            Some(write) => {
+                let publish = Publish { publisher, bus_id, registry_adapter_id, counters };
+                track_scene_write(&publish, state, raw, held_scene_write, address, write);
+            }
+            None => publish_standard(
+                publisher,
+                bus_id,
+                registry_adapter_id,
+                counters,
+                raw,
+                address,
+                command,
+            ),
+        },
         Ok(_) | Err(_) => count_unknown(counters),
     }
+}
+
+struct Publish<'a> {
+    publisher: &'a BusPublisher,
+    bus_id: BusId,
+    registry_adapter_id: u8,
+    counters: &'a Arc<SnifferTranslatorCounters>,
+}
+
+fn scene_write_of(command: StandardCommand) -> Option<(ObservedKind, u8)> {
+    match command {
+        StandardCommand::SetScene { scene } => Some((ObservedKind::SceneWriteObserved, scene)),
+        StandardCommand::RemoveScene { scene } => Some((ObservedKind::SceneRemovalObserved, scene)),
+        _ => None,
+    }
+}
+
+// IEC 62386-101 §9.3
+fn track_scene_write(
+    publish: &Publish<'_>,
+    state: &mut DecoderState,
+    raw: &ObservedRawFrame,
+    held: Option<([u8; 3], u32)>,
+    address: DaliAddress,
+    (kind, scene): (ObservedKind, u8),
+) {
+    let paired = held.is_some_and(|(first, at)| {
+        first == raw.bytes && raw.observed_at_mono_ms.wrapping_sub(at) <= SEND_TWICE_WINDOW_MS
+    });
+    if !paired {
+        state.pending_scene_write = Some((raw.bytes, raw.observed_at_mono_ms));
+        return;
+    }
+    if address == DaliAddress::BroadcastUnaddressed {
+        return;
+    }
+    publish.counters.scene_writes_observed.fetch_add(1, Ordering::Relaxed);
+    let (scope, short_address, group_id) = scope_of(address);
+    let fact = ObservedFact {
+        kind,
+        scope,
+        short_address,
+        group_id,
+        scene_id: Some(scene),
+        setpoint: None,
+        dapc_observed: false,
+        level_transition: None,
+    };
+    publish_observed(
+        publish.publisher,
+        publish.bus_id,
+        publish.registry_adapter_id,
+        publish.counters,
+        raw,
+        fact,
+    );
 }
 
 fn publish_standard(

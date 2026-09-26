@@ -41,3 +41,4 @@ pub use persistence_slices::{
 };
 pub use persistence::{HydrateCounts, PersistenceHydrateReport};
 pub use store::{DisplayCounts, PersistenceCounters, RegistryStore};
+pub(crate) use scenes::ForeignSceneWrite;

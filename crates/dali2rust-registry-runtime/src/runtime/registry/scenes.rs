@@ -1,9 +1,11 @@
 use crate::runtime::registry::conversions::color_mode_str;
-use crate::runtime::registry::physical_devices::{write_scene_level_read, SceneColourEvidence};
+use crate::runtime::registry::physical_devices::{
+    forget_scene_level, write_scene_level_read, write_scene_level_written, SceneColourEvidence,
+};
 use crate::runtime::registry::store::{registry_unix_ms, Inner, RegistryStore};
 use dali2rust_contracts::msg::{
-    fixed_text_64, ColorMode, ColorValue, DaliSceneTargetState, FixedText64, PowerState,
-    SceneMatrixDesiredRow,
+    fixed_text_64, ColorMode, ColorValue, DaliSceneTargetState, DaliTargetScope, FixedText64,
+    PowerState, SceneMatrixDesiredRow,
 };
 use dali2rust_domain::dali::devices::dt8_color::{
     dim_level_to_srgb_channel, srgb_channel_to_dim_level, COLOUR_TYPE_BYTE_RGBWAF as SCENE_COLOUR_TYPE_RGBWAF,
@@ -16,6 +18,44 @@ use dali2rust_domain::registry::{
 };
 
 pub(crate) use dali2rust_domain::registry::{SCENE_COUNT, VIRTUAL_LAMP_COUNT};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ForeignSceneWrite {
+    pub scope: DaliTargetScope,
+    pub short_address: Option<u8>,
+    pub group_id: Option<u8>,
+    pub scene_id: u8,
+    pub removal: bool,
+}
+
+fn foreign_write_reaches(write: &ForeignSceneWrite, short: u8, membership: Option<u16>) -> Option<bool> {
+    match write.scope {
+        DaliTargetScope::Short => (write.short_address == Some(short)).then_some(true),
+        DaliTargetScope::Group => {
+            let bit = 1u16.checked_shl(u32::from(write.group_id?))?;
+            match membership {
+                Some(mask) => (mask & bit != 0).then_some(true),
+                None => Some(false),
+            }
+        }
+        DaliTargetScope::Broadcast => Some(true),
+        DaliTargetScope::VirtualLamp | DaliTargetScope::AddressRange => None,
+    }
+}
+
+fn foreign_write_targets(inner: &Inner, adapter_id: u8, write: &ForeignSceneWrite) -> Vec<(u8, bool)> {
+    let mut targets: Vec<(u8, bool)> = inner
+        .physical_devices
+        .iter()
+        .filter(|((aid, _), _)| *aid == adapter_id)
+        .filter_map(|((_, short), record)| {
+            let membership = record.attributes.groups.membership.as_ref().map(|m| m.value);
+            foreign_write_reaches(write, *short, membership).map(|certain| (*short, certain))
+        })
+        .collect();
+    targets.sort_unstable();
+    targets
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct SceneRecord {
@@ -482,6 +522,38 @@ impl RegistryStore {
         changed
     }
 
+    pub(crate) fn apply_foreign_scene_write(&self, adapter_id: u8, write: ForeignSceneWrite) -> Vec<u8> {
+        let mut inner = self.write_inner();
+        if !inner.adapter_exists(adapter_id) || write.scene_id >= SCENE_COUNT {
+            return Vec::new();
+        }
+        let now = registry_unix_ms();
+        let mut changed = Vec::new();
+        for (short, certain) in foreign_write_targets(&inner, adapter_id, &write) {
+            let Some(record) = inner.physical_devices.get_mut(&(adapter_id, short)) else {
+                continue;
+            };
+            let level_changed = if write.removal && certain {
+                write_scene_level_written(&mut record.attributes, write.scene_id, SCENE_NOT_SET, now)
+            } else {
+                forget_scene_level(&mut record.attributes, write.scene_id)
+            };
+            let echo_changed = store_scene_echo_for_short(&mut inner, adapter_id, short, write.scene_id, None);
+            if level_changed || echo_changed {
+                changed.push(short);
+            }
+        }
+        if !changed.is_empty() {
+            inner.physical_devices_revision = inner.physical_devices_revision.saturating_add(1);
+            inner.scenes_matrix_desired_revision = inner.scenes_matrix_desired_revision.wrapping_add(1);
+        }
+        drop(inner);
+        if !changed.is_empty() {
+            self.dirty.mark_physical_devices_dirty(adapter_id);
+        }
+        changed
+    }
+
     pub(crate) fn seed_scene_matrix_from_levels_read(
         &self,
         adapter_id: u8,
@@ -618,6 +690,7 @@ mod tests {
     use crate::runtime::registry::physical_devices::PhysicalDeviceRecord;
     use dali2rust_bsp::psram::PsramBox;
     use dali2rust_contracts::msg::SceneMetadataUpdateCommand;
+    use dali2rust_domain::registry::{AttributeSource, ObservedValue};
 
     const ADAPTER: u8 = 0;
     const SCENE: u8 = 3;
@@ -788,5 +861,74 @@ mod tests {
         assert_eq!(seeded.desired.level, Some(100), "desired := applied");
         assert_eq!(seeded.desired.color_mode, None, "color stays null on seed");
         assert!(!seeded.dirty);
+    }
+
+    fn store_with_group_members(members: &[(u8, Option<u16>)]) -> RegistryStore {
+        let store = RegistryStore::with_adapter_count(1);
+        {
+            let mut g = store.inner.write().expect("registry lock");
+            for &(short, membership) in members {
+                let mut record = PhysicalDeviceRecord::empty(short);
+                record.attributes.groups.membership = membership.map(|value| ObservedValue {
+                    value,
+                    source: AttributeSource::Readback,
+                    last_read_ms: Some(1),
+                    last_write_confirmed_ms: None,
+                });
+                g.physical_devices.insert((ADAPTER, short), PsramBox::new(record));
+            }
+        }
+        for &(short, _) in members {
+            assert!(store.apply_scene_programmed_readback(ADAPTER, short, SCENE, Some(120), None));
+        }
+        store
+    }
+
+    fn scene_level(store: &RegistryStore, short: u8) -> Option<u8> {
+        scene_evidence(store, short).map(|(value, _)| value)
+    }
+
+    fn scene_evidence(store: &RegistryStore, short: u8) -> Option<(u8, AttributeSource)> {
+        let g = store.inner.read().expect("registry lock");
+        g.physical_devices[&(ADAPTER, short)].attributes.scenes.levels[SCENE as usize]
+            .as_ref()
+            .map(|observed| (observed.value, observed.source))
+    }
+
+    #[test]
+    fn a_foreign_group_removal_is_certain_only_where_membership_is_known() {
+        const GROUP: u8 = 4;
+        let store = store_with_group_members(&[(1, Some(1 << GROUP)), (2, Some(0)), (3, None)]);
+        let write = ForeignSceneWrite {
+            scope: DaliTargetScope::Group,
+            short_address: None,
+            group_id: Some(GROUP),
+            scene_id: SCENE,
+            removal: true,
+        };
+        assert_eq!(store.apply_foreign_scene_write(ADAPTER, write), vec![1, 3]);
+        assert_eq!(
+            scene_evidence(&store, 1),
+            Some((SCENE_NOT_SET, AttributeSource::WriteConfirmed)),
+            "a known member left the scene, known from the write, not from a read"
+        );
+        assert_eq!(scene_level(&store, 2), Some(120), "a known non-member is untouched");
+        assert_eq!(scene_level(&store, 3), None, "unknown membership: the level is only unread");
+    }
+
+    #[test]
+    fn a_foreign_broadcast_write_leaves_every_level_unread() {
+        let store = store_with_group_members(&[(1, None), (2, Some(0))]);
+        let write = ForeignSceneWrite {
+            scope: DaliTargetScope::Broadcast,
+            short_address: None,
+            group_id: None,
+            scene_id: SCENE,
+            removal: false,
+        };
+        assert_eq!(store.apply_foreign_scene_write(ADAPTER, write), vec![1, 2]);
+        assert_eq!(scene_level(&store, 1), None);
+        assert_eq!(scene_level(&store, 2), None);
+        assert!(store.dirty.take_physical_devices_dirty_for(ADAPTER));
     }
 }

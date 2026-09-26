@@ -682,3 +682,63 @@ fn foreign_up_and_down_are_counted_apart_from_unknown_frames() {
         "a frame we understood must not be counted as one we could not read"
     );
 }
+
+fn forward16_at(bytes: [u8; 2], mono_ms: u32) -> ObservedRawFrame {
+    ObservedRawFrame {
+        bytes: [bytes[0], bytes[1], 0],
+        kind: ObservedRawFrameKind::Forward16,
+        observed_at_ms: 42,
+        observed_at_mono_ms: mono_ms,
+    }
+}
+
+const SET_SCENE_5_TO_SHORT_3: [u8; 2] = [(3 << 1) | 1, 0x45];
+const REMOVE_SCENE_5_FROM_SHORT_3: [u8; 2] = [(3 << 1) | 1, 0x55];
+
+fn scene_writes(harness: &Harness) -> u32 {
+    harness.counters.scene_writes_observed.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[test]
+fn a_set_scene_pair_is_one_scene_write() {
+    let harness = spawn_harness();
+    harness.tx.send(forward16_at(SET_SCENE_5_TO_SHORT_3, 1_000)).expect("send");
+    harness.tx.send(forward16_at(SET_SCENE_5_TO_SHORT_3, 1_040)).expect("send");
+    let (_, body) = recv_observed(&harness);
+    assert_eq!(body.observed_kind, ObservedKind::SceneWriteObserved);
+    assert_eq!(body.scope, DaliTargetScope::Short);
+    assert_eq!(body.short_address, Some(3));
+    assert_eq!(body.scene_id, Some(5));
+    assert_eq!(scene_writes(&harness), 1);
+}
+
+#[test]
+fn a_remove_from_scene_pair_is_one_scene_removal() {
+    let harness = spawn_harness();
+    harness.tx.send(forward16_at(REMOVE_SCENE_5_FROM_SHORT_3, 1_000)).expect("send");
+    harness.tx.send(forward16_at(REMOVE_SCENE_5_FROM_SHORT_3, 1_040)).expect("send");
+    let (_, body) = recv_observed(&harness);
+    assert_eq!(body.observed_kind, ObservedKind::SceneRemovalObserved);
+    assert_eq!(body.scene_id, Some(5));
+}
+
+#[test]
+fn a_set_scene_pair_past_the_window_is_two_singles() {
+    let harness = spawn_harness();
+    harness.tx.send(forward16_at(SET_SCENE_5_TO_SHORT_3, 1_000)).expect("send");
+    harness.tx.send(forward16_at(SET_SCENE_5_TO_SHORT_3, 1_200)).expect("send");
+    harness.tx.send(forward16_at(SET_SCENE_5_TO_SHORT_3, 1_240)).expect("send");
+    let _ = recv_observed(&harness);
+    assert_eq!(scene_writes(&harness), 1, "IEC 62386-101 Table 20: 200 ms apart is no pair");
+}
+
+#[test]
+fn an_unaddressed_scene_pair_touches_no_registered_gear() {
+    let harness = spawn_harness();
+    harness.tx.send(forward16_at([0xFD, 0x45], 1_000)).expect("send");
+    harness.tx.send(forward16_at([0xFD, 0x45], 1_040)).expect("send");
+    harness.tx.send(forward16_at([17 << 1, 180], 1_080)).expect("send");
+    let (_, body) = recv_observed(&harness);
+    assert_eq!(body.observed_kind, ObservedKind::TargetStateObserved, "the next fact is the DAPC");
+    assert_eq!(scene_writes(&harness), 0);
+}

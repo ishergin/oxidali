@@ -31,6 +31,45 @@ fn inject_forward16(world: &mut DaliWorld, bytes: [u8; 2]) {
     assert!(injected, "sniffer seam not attached or channel full");
 }
 
+const SET_SCENE_BASE: u8 = 0x40;
+const REMOVE_FROM_SCENE_BASE: u8 = 0x50;
+const QUERY_STATUS_OPCODE: u8 = 0x90;
+const SCENE_NUMBER_MASK: u8 = 0x0F;
+const SHORT_ADDRESS_MASK: u8 = 0x3F;
+
+fn command_address(short: u8) -> u8 {
+    ((short & SHORT_ADDRESS_MASK) << 1) | 0x01
+}
+
+fn inject_pair(world: &mut DaliWorld, frame: [u8; 2]) {
+    inject_forward16(world, frame);
+    inject_forward16(world, frame);
+}
+
+// SYS-251 SYS-253
+#[when(regex = r"^a foreign SET SCENE (\d+) pair for short address (\d+) is observed on the bus$")]
+async fn when_foreign_set_scene_pair(world: &mut DaliWorld, scene: u8, short: u8) {
+    inject_pair(world, [command_address(short), SET_SCENE_BASE | (scene & SCENE_NUMBER_MASK)]);
+}
+
+// SYS-252
+#[when(regex = r"^a foreign REMOVE FROM SCENE (\d+) pair for short address (\d+) is observed on the bus$")]
+async fn when_foreign_remove_from_scene_pair(world: &mut DaliWorld, scene: u8, short: u8) {
+    let frame = [command_address(short), REMOVE_FROM_SCENE_BASE | (scene & SCENE_NUMBER_MASK)];
+    inject_pair(world, frame);
+}
+
+// SYS-253
+#[when(
+    regex = r"^a foreign SET SCENE (\d+) pair for short address (\d+) split by another frame is observed on the bus$"
+)]
+async fn when_foreign_split_set_scene_pair(world: &mut DaliWorld, scene: u8, short: u8) {
+    let frame = [command_address(short), SET_SCENE_BASE | (scene & SCENE_NUMBER_MASK)];
+    inject_forward16(world, frame);
+    inject_forward16(world, [command_address(short.wrapping_add(1)), QUERY_STATUS_OPCODE]);
+    inject_forward16(world, frame);
+}
+
 fn virtual_lamp_path(lamp: u8) -> String {
     format!("/api/v1/adapters/0/virtual-lamps/{lamp}")
 }

@@ -521,6 +521,8 @@ pub enum ObservedKind {
     SceneRecallObserved = 1,
     UnknownObserved = 2,
     LevelTransitionObserved = 3,
+    SceneWriteObserved = 4,
+    SceneRemovalObserved = 5,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

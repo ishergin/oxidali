@@ -34,6 +34,7 @@ pub struct StatsDaliDto {
     pub foreign_frames_total: u32,
     pub foreign_verbs_projected_total: u32,
     pub foreign_dimming_unprojected_total: u32,
+    pub foreign_scene_writes_total: u32,
     pub backward_undecodable_total: u32,
     pub backward_frame_size_total: u32,
     pub backward_incomplete_total: u32,

@@ -701,6 +701,7 @@ fn handle_observed_frame(
         ObservedKind::LevelTransitionObserved => {
             handle_observed_level_transition(publisher, bus_id, read_port, counters, body)
         }
+        ObservedKind::SceneWriteObserved | ObservedKind::SceneRemovalObserved => {}
     }
 }
 
