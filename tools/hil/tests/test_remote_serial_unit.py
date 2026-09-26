@@ -287,3 +287,83 @@ def test_preflight_fails_a_bridge_without_its_port_instead_of_calling_it_unreach
     status, name, detail = preflight._check_serial_port(_cfg(tmp_path))
     assert (status, name) == (preflight.FAIL, "serial port")
     assert GONE_REPLY in detail and "unreachable" not in detail
+
+
+class _WritablePort(_HeldPort):
+    def __init__(self, fd):
+        super().__init__(fd)
+        self.written = []
+        self.closed = False
+
+    def write(self, data):
+        self.written.append(data)
+        return len(data)
+
+    def close(self):
+        self.closed = True
+
+
+def _live_bridge(tmp_path, held):
+    node = tmp_path / "ttyACM0"
+    node.write_text("")
+    bridge = _bridge(node, held.fileno())
+    bridge.serial = _WritablePort(held.fileno())
+    return bridge, node
+
+
+def test_a_release_is_refused_while_a_data_client_holds_the_port(tmp_path):
+    (tmp_path / "ttyACM0").write_text("")
+    with open(tmp_path / "ttyACM0") as held:
+        bridge, _ = _live_bridge(tmp_path, held)
+        bridge.client = "127.0.0.1:50000"
+        reply = bridge._control_reply("release")
+    assert reply.startswith("err busy") and not bridge.released
+    assert not bridge.serial.closed
+
+
+def test_a_released_port_answers_only_status_and_reacquire(tmp_path, monkeypatch):
+    (tmp_path / "ttyACM0").write_text("")
+    with open(tmp_path / "ttyACM0") as held:
+        bridge, node = _live_bridge(tmp_path, held)
+        port = bridge.serial
+        assert bridge._control_reply("release") == "ok released"
+        assert port.closed and bridge.released
+        refused = [bridge._control_reply(cmd) for cmd in ("run", "bootloader", "write x")]
+        status = bridge._control_reply("status")
+        reopened = []
+        monkeypatch.setattr(bridge, "open_serial", lambda: reopened.append(True))
+        reply = bridge._control_reply("reacquire")
+    assert all(r.startswith("err released") for r in refused), refused
+    assert status == "ok port=%s released" % node
+    assert reply == "ok reacquired" and reopened and not bridge.released
+
+
+def test_a_write_reaches_the_port_as_one_line(tmp_path):
+    (tmp_path / "ttyACM0").write_text("")
+    with open(tmp_path / "ttyACM0") as held:
+        bridge, _ = _live_bridge(tmp_path, held)
+        reply = bridge._control_reply("write reserve 0-15")
+    assert bridge.serial.written == [b"reserve 0-15\n"]
+    assert reply == "ok wrote 13"
+
+
+class _ChunkedSocket:
+    def __init__(self, chunks):
+        self.chunks = list(chunks)
+
+    def settimeout(self, value):
+        pass
+
+    def recv(self, size):
+        if not self.chunks:
+            raise socket.timeout()
+        return self.chunks.pop(0)
+
+
+def test_a_long_command_is_read_to_its_newline():
+    sock = _ChunkedSocket([b"write reserve 0-3,", b"4-12,13-15\nrest"])
+    assert BRIDGE._read_command(sock) == "write reserve 0-3,4-12,13-15"
+
+
+def test_a_command_without_a_newline_is_complete_when_the_client_stops():
+    assert BRIDGE._read_command(_ChunkedSocket([b"ping"])) == "ping"

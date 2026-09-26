@@ -60,7 +60,21 @@ def test_the_real_flash_flags_still_reach_flash(monkeypatch):
     monkeypatch.setattr(flash, "run", lambda cfg, **kwargs: seen.append(kwargs) or 0)
     assert cli.main(["flash", "--build-only", "--allow-red-isr"]) == 0
     assert seen == [{"build_only": True, "allow_nonbench": False, "allow_red_isr": True,
-                     "allow_stale_ui": False}]
+                     "allow_stale_ui": False, "image": flash.CONTROLLER,
+                     "via": flash.VIA_RFC2217}]
+
+
+def test_the_image_and_delivery_flags_reach_flash(monkeypatch):
+    seen = []
+    monkeypatch.setattr(flash, "run", lambda cfg, **kwargs: seen.append(kwargs) or 0)
+    assert cli.main(["flash", "--image", "gear-sim", "--via", "wb"]) == 0
+    assert seen[0]["image"] == flash.GEAR_SIM and seen[0]["via"] == flash.VIA_WB
+
+
+def test_role_is_refused_without_the_peer_flag(monkeypatch, capsys):
+    monkeypatch.delenv("HIL_PEER", raising=False)
+    assert cli.main(["role", "status"]) == cli.EX_USAGE
+    assert "--peer role" in capsys.readouterr().err
 
 
 def test_a_misspelt_lamps_flag_switches_nothing_off(monkeypatch, capsys):

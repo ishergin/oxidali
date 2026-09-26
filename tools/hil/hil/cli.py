@@ -25,6 +25,10 @@ COMMAND_HELP = {
               "                  [--wire-keep N] [--wire-scan-mb N]\n"
               "Captures both boards by default; `hil --peer corpus` is "
               "`hil corpus --peer-only`.",
+    "role": "hil --peer role gear-sim [--via ota|wb] | controller | status: lend the pair's "
+            "other board to the gear emulator and take it back. `ota` installs the emulator "
+            "in the inactive slot for one boot (any reset returns the controller); `wb` "
+            "writes it by wire from the Wiren Board and keeps it across resets.",
     "state": "state save|restore|diff [FILE]: the owner's installation as a file. "
              "FILE defaults to state/production_state_last.json, which every guarded "
              "session writes, so a killed session is recovered with `hil state restore`.",
@@ -153,18 +157,43 @@ def _cmd_monitor(rest):
 
 
 def _cmd_flash(rest):
-    args = _flags("hil flash", rest,
-                  "--build-only", "--allow-nonbench-build", "--allow-red-isr",
-                  "--allow-stale-ui")
     from hil import flash
     from hil.config import load as load_config
+    ap = _Parser(prog="hil flash")
+    for flag in ("--build-only", "--allow-nonbench-build", "--allow-red-isr",
+                 "--allow-stale-ui"):
+        ap.add_argument(flag, action="store_true")
+    ap.add_argument("--image", choices=sorted(flash.IMAGES), default=flash.CONTROLLER)
+    ap.add_argument("--via", choices=flash.VIAS, default=flash.VIA_RFC2217)
+    args = ap.parse_args(rest)
     return flash.run(
         load_config(),
         build_only=args.build_only,
         allow_nonbench=args.allow_nonbench_build,
         allow_red_isr=args.allow_red_isr,
         allow_stale_ui=args.allow_stale_ui,
+        image=args.image,
+        via=args.via,
     )
+
+
+def _cmd_role(rest):
+    from hil import flash, role
+    from hil.config import load as load_config
+    ap = _Parser(prog="hil --peer role")
+    ap.add_argument("target", choices=("gear-sim", "controller", "status"))
+    ap.add_argument("--via", choices=(flash.VIA_OTA, flash.VIA_WB), default=flash.VIA_OTA)
+    args = ap.parse_args(rest)
+    if os.environ.get("HIL_PEER") != "1":
+        raise UsageError("role applies to the pair's other board: `hil --peer role %s`"
+                         % args.target)
+    peer_cfg = load_config()
+    dut_cfg = peer_cfg.peer()
+    if args.target == "gear-sim":
+        return role.to_gear_sim(dut_cfg, peer_cfg, via=args.via)
+    if args.target == "controller":
+        return role.to_controller(dut_cfg, peer_cfg)
+    return role.status(dut_cfg, peer_cfg)
 
 
 REMOTE_CONTROL_VERBS = ("ping", "bootloader", "run")
@@ -360,6 +389,7 @@ COMMANDS = {
     "monitor": _cmd_monitor,
     "remote": _cmd_remote,
     "flash": _cmd_flash,
+    "role": _cmd_role,
     "api": _cmd_api,
     "lamps": _cmd_lamps,
     "corpus": _cmd_corpus,
