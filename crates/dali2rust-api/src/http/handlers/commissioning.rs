@@ -228,7 +228,6 @@ fn parse_step(step: &str) -> Option<CommissioningStep> {
         "query-short-address" => CommissioningStep::QueryShortAddress,
         "withdraw" => CommissioningStep::Withdraw,
         "terminate" => CommissioningStep::Terminate,
-        "physical-selection" => CommissioningStep::PhysicalSelection,
         _ => return None,
     })
 }

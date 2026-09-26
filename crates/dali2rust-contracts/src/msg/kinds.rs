@@ -497,7 +497,6 @@ pub enum CommissioningStep {
     QueryShortAddress = 6,
     Withdraw = 7,
     Terminate = 8,
-    PhysicalSelection = 9,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

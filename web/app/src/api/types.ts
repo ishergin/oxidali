@@ -439,7 +439,6 @@ export type CommissioningStepName =
   | 'query-short-address'
   | 'withdraw'
   | 'terminate'
-  | 'physical-selection'
 
 export interface CommissioningStepRequest {
   scope?: 'all' | 'unaddressed' | 'short'

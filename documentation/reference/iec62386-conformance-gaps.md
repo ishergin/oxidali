@@ -66,12 +66,6 @@ applies once the restart exists.
 
 ## 2. Part 102 — standard commands
 
-### 2.1 Wrong
-
-| Finding | Detail |
-| --- | --- |
-| `PHYSICAL SELECTION` (0xBD) offered | DALI-1 only and reserved in ed2, yet still a commissioning step (`physical-selection`); a DALI-2 gear ignores it silently. |
-
 ### 2.2 Commands with no product caller
 
 | Opcode | Command | Consequence |
