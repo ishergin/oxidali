@@ -67,7 +67,6 @@ Detail: [01](documentation/architecture/01-overview.md).
 - `dali2rust-bsp` — board support: spawner, stack classes, `PsramBox`, flash binding.
 - `dali2rust-test-support` — shared host test helpers and port doubles.
 - `dali2rust-firmware` — the binary and the only production composition root.
-- `dali2rust-p4-bringup` — bring-up image, own `ESP_IDF_SYS_ROOT_CRATE`.
 - `tests/dali2rust-bdd` — the black-box cucumber suite.
 
 Composition:

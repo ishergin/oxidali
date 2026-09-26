@@ -118,20 +118,7 @@ gear-sim-isr-iram-check:
     python3 scripts/verify_dali_isr_iram.py --require-tools \
         tools/dali-gear-sim/target/riscv32imac-esp-espidf/debug/dali-gear-sim
 
-p4_env := "ESP_IDF_SYS_ROOT_CRATE=dali2rust-p4-bringup "
 p4_target := "riscv32imafc-esp-espidf"
-
-p4-build:
-    {{p4_env}} cargo build -p dali2rust-p4-bringup --target {{p4_target}}
-
-p4-flash PORT="/dev/cu.usbmodem5B901574541": p4-build
-    espflash flash --port {{PORT}} \
-        --bootloader target/{{p4_target}}/debug/bootloader.bin \
-        --partition-table partitions-p4.csv \
-        target/{{p4_target}}/debug/p4_eth
-
-p4-monitor PORT="/dev/cu.usbmodem5B901574541":
-    espflash monitor --port {{PORT}}
 
 [doc("Build the firmware image for the ESP32-P4.")]
 p4-fw-build:
