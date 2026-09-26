@@ -57,7 +57,9 @@ zone to `HIL_BENCH_TZ` for the session. A session whose every test is
 | `HIL_ALLOW_DESTRUCTIVE=1`, `HIL_POWER_CUT=1`, `HIL_BUS_SHORT=1` | allow the destructive and the person-at-the-rig tests | off |
 | `HIL_STATE_GUARD=0` | turn the [save and restore](#save-and-restore) guard off | on |
 | `HIL_BENCH_TZ` | the time zone `bench_baseline` holds the controller in | `MSK-3` |
-| `HIL_GEAR_SIM_PORT` | the [gear emulator](../dali-gear-sim/README.md)'s serial port | unset |
+| `HIL_VIRTUAL_GEAR=1` | run the [virtual-gear](#virtual-gear) tier on the gear the peer emulates | off |
+| `HIL_OWNER_SHORTS` | live lamps a scan cannot see (unpowered), added to the virtual-gear reserve | empty |
+| `HIL_ALLOW_VIRTUAL_COMMISSIONING=1` | let the virtual-gear tier commission emulated gear (a go-ahead per run) | off |
 | `HIL_ADAPTER`, `HIL_BOARD`, `HIL_RUN_DIR` | the DALI adapter id, the board, the artifact directory | `0`, `esp32p4`, `runs/current` |
 
 ## First run
@@ -354,6 +356,18 @@ It passes when `running_slot` has flipped and `pending_verify` has cleared
 ([contract](../../documentation/product-design/rest-api/resources/firmware.md)). OTA
 writes no manifest and checks no version — compare `/api/v1/health` by hand.
 
+**From the Wiren Board and through `hil`** — `hil flash --via wb|ota|rfc2217` picks the
+delivery. `wb` stages the merged image on the Wiren Board, checks its sha256 and writes it
+with a vendored esptool on the board's own serial device: the bridge releases the port for
+the write and reacquires it after, which is the one reset. The Mac's link to the Wiren Board
+then no longer decides whether the write syncs. Before writing, the board the port names must
+fall quiet in its ROM loader while the other board keeps its uptime, so a swapped cable never
+writes the wrong board. `ota` serves the application image from the Wiren Board and installs
+it through the board's update route. `rfc2217` is the esptool-over-the-bridge path above.
+`--image gear-sim` builds [`tools/dali-gear-sim`](../dali-gear-sim/README.md) instead of the
+controller, merges it with the controller's bootloader and checks its ready line rather than
+`/api/v1/health`.
+
 ## The second controller (`hil --peer`)
 
 `hil --peer <command>` is the same toolkit pointed at the pair's other board: its
@@ -363,6 +377,54 @@ first `hil --peer flash` into `state/peer/base.pin`), its serial bridge, and its
 `redundancy` tier reaches it through `peer_api` and skips without one. A reboot the
 suite provokes leaves the peer active and the rebooted board standby; `dut_reboot`
 and the OTA test hand the role back (`hil/pair.py`) before the next assertion.
+
+`hil --peer role gear-sim [--via ota|wb] | controller | status` lends the peer to the gear
+emulator and takes it back ([ADR-031](../../documentation/architecture/decisions/ADR-031-gear-emulator-on-the-standby.md)):
+
+- **`--via ota`** (the default) installs the emulator in the peer's inactive slot for one
+  boot. The ready line must say `pending_verify`, and any reset hands the controller back.
+- **`--via wb`** writes it by wire, and the role survives resets.
+
+The peer must be the standby, its monitor must run before the switch (starting a bridge that
+is down resets the board), and no virtual-gear ledger may be open. `role controller` sends
+the console `reboot` for an OTA role or writes the controller back for a wired one. The role
+lives in `state/peer/role.pin`, and preflight, the `gear_sim` fixture and `peer_health` read
+it.
+
+## Virtual gear
+
+`HIL_VIRTUAL_GEAR=1 .venv/bin/python3 -m pytest --no-camera` runs the tests marked
+`virtual_gear` — and only those — on the gear the peer emulates, on the installation's wire.
+Its rules are STRATEGY §4.8; the mechanics:
+
+1. **Before any config loads**, the plugin (`tests/hil_virtual.py`) reads the reserve and
+   sets `HIL_LAMP_SHORTS`, `HIL_GEAR_SHORTS` and `HIL_OPTICAL_SHORTS` to the park, so every
+   selector follows it. The reserve is the registry, the WB master's device list,
+   `HIL_OWNER_SHORTS` and 0..=15; the park is the first free addresses above it.
+2. **After the owner's installation is snapshotted**, `hil/virtual_gear.py` opens the
+   session:
+   - proves the free groups silent against a positive control;
+   - checks the owner's rules;
+   - gives the emulator the reserve and the fleet, and enables it on a ladder after the
+     first gear answers the controller;
+   - sets the policy's apply-on-discovery aside;
+   - hides the free groups from Home Assistant;
+   - scans, and binds the park to new virtual lamps with HA off.
+3. **During the session**, the lamp guard's fence refuses anything that reaches past the
+   park and the free groups. The tripwire reads the DUT's `DALI PHY TX` lines around every
+   test.
+4. **The teardown follows** `state/virtual_gear.json`:
+   - silence the fleet;
+   - delete the session's lamps and forget the park;
+   - restore group flags and the policy;
+   - compare the registry, the WB list and the retained MQTT topics with the start.
+
+   A teardown that leaves residue keeps the ledger, and the next session and `hil --peer
+   role controller` refuse until it is gone.
+
+The oracle is the emulator's own `C` lines (`hil/gearsim.py`: `GearOracle.expect`,
+`untouched`); `HIL validity` prints a `VIRTUAL GEAR` block with the emulator's answer
+counters, any `SAFETY` stop and what the teardown left.
 
 ## Writing a scenario
 
