@@ -275,7 +275,7 @@ async fn given_scene_named(world: &mut DaliWorld, scene_id: u8, name: String) {
     patch_scene_name(world, scene_id, &name);
 }
 
-// SCN-010 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 SYS-211 SYS-213 SYS-241 SCN-040 SCN-050 ADP-026
+// SCN-010 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 SYS-211 SYS-213 SYS-241 SCN-040 SCN-050 ADP-026 SYS-251 SYS-252 SYS-253
 #[given(regex = r"^adapter 0 scene (\d+) desired row for virtual lamp (\d+) has level (\d+)$")]
 async fn given_desired_row_level(world: &mut DaliWorld, scene_id: u8, virtual_lamp_id: u8, level: u8) {
     patch_scene_matrix_row(world, scene_id, virtual_lamp_id, level_desired(level));
@@ -367,7 +367,7 @@ async fn given_discovered_rgbwaf_capable_vl1(world: &mut DaliWorld) {
     bind_discovered_vl1(world);
 }
 
-// SCN-060 SCN-062 SCN-063 REG-031 SYS-211 SYS-213 SYS-241
+// SCN-060 SCN-062 SCN-063 REG-031 SYS-211 SYS-213 SYS-241 SYS-251 SYS-252 SYS-253
 #[given(regex = r"^adapter 0 scene (\d+) write for short (\d+) level (\d+) is scripted$")]
 async fn given_scene_write_scripted(world: &mut DaliWorld, scene_id: u8, short: u8, level: u8) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -801,4 +801,39 @@ async fn then_only_group_recall_frame(world: &mut DaliWorld, group_id: u8, scene
     .raw();
     let frames = world.dali_mock().lock().expect("mock lock").sent_frames();
     assert_eq!(frames, vec![expected], "unexpected forward frames: {frames:?}");
+}
+
+fn scene_level_pointer(scene: u8) -> String {
+    format!("/attributes/scenes/scene_{scene}/value")
+}
+
+// SYS-251 SYS-252 SYS-253
+#[then(regex = r"^physical device (\d+) scene (\d+) level should be (\d+)$")]
+async fn then_device_scene_level(world: &mut DaliWorld, short: u8, scene: u8, level: u64) {
+    let path = format!("/api/v1/adapters/0/physical-devices/{short}/attributes");
+    let json = super::get_json(world, &path);
+    assert_eq!(
+        json.pointer(&scene_level_pointer(scene)).and_then(Value::as_u64),
+        Some(level),
+        "{json}"
+    );
+}
+
+// SYS-251 SYS-253
+#[then(regex = r"^physical device (\d+) scene (\d+) level should be unread$")]
+async fn then_device_scene_level_unread(world: &mut DaliWorld, short: u8, scene: u8) {
+    let path = format!("/api/v1/adapters/0/physical-devices/{short}/attributes");
+    let json = super::get_json(world, &path);
+    assert!(json.pointer(&scene_level_pointer(scene)).is_none(), "{json}");
+}
+
+// SYS-251 SYS-252
+#[then(regex = r"^the scene (\d+) matrix row for virtual lamp (\d+) should be dirty with nothing applied$")]
+async fn then_scene_row_dirty_nothing_applied(world: &mut DaliWorld, scene: u8, virtual_lamp_id: u8) {
+    super::get_json(world, &format!("/api/v1/adapters/0/scenes/{scene}/matrix"));
+    let row = scene_matrix_row(world, virtual_lamp_id);
+    let applied = row.get("applied").expect("applied state");
+    assert_eq!(applied.get("included").and_then(Value::as_bool), Some(false), "{row:?}");
+    assert!(applied.get("level").is_none_or(Value::is_null), "{row:?}");
+    assert_eq!(row.get("dirty").and_then(Value::as_bool), Some(true), "{row:?}");
 }

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use crate::runtime::registry::publish::{
     publish_group_matrix_changed, publish_physical_device_changed, publish_scene_matrix_changed,
 };
-use crate::runtime::registry::RegistryStore;
+use crate::runtime::registry::{ForeignSceneWrite, RegistryStore};
 use crate::runtime::registry_worker::RegistryEventsCounters;
 use dali2rust_bus::{BusFrame, BusId, BusPublisher};
 use dali2rust_contracts::msg::BusEventPayload;
@@ -65,14 +65,19 @@ dali2rust_contracts::dispatch_bus_events! {
         );
     },
     DaliObservedFrameEvent(body) => {
-        if body.observed_kind == dali2rust_contracts::msg::ObservedKind::TargetStateObserved {
-            note_mass_commanded(
+        match body.observed_kind {
+            dali2rust_contracts::msg::ObservedKind::TargetStateObserved => note_mass_commanded(
                 store,
                 body.registry_adapter_id,
                 body.scope,
                 body.group_id,
                 body.setpoint.as_ref(),
-            );
+            ),
+            dali2rust_contracts::msg::ObservedKind::SceneWriteObserved
+            | dali2rust_contracts::msg::ObservedKind::SceneRemovalObserved => {
+                commit_foreign_scene_write(publisher, corr, store, body);
+            }
+            _ => {}
         }
     },
     DaliAttributesWrittenEvent(body) => {
@@ -367,6 +372,32 @@ fn commit_address_change(
             .dali_address_changes_committed
             .fetch_add(1, Ordering::Relaxed);
         publish_physical_device_changed(publisher, corr, aid, body.new_short_address);
+    }
+}
+
+fn commit_foreign_scene_write(
+    publisher: &BusPublisher,
+    corr: u64,
+    store: &RegistryStore,
+    body: &dali2rust_contracts::msg::DaliObservedFrameEvent,
+) {
+    let Some(scene_id) = body.scene_id else {
+        return;
+    };
+    let aid = body.registry_adapter_id;
+    let write = ForeignSceneWrite {
+        scope: body.scope,
+        short_address: body.short_address,
+        group_id: body.group_id,
+        scene_id,
+        removal: body.observed_kind == dali2rust_contracts::msg::ObservedKind::SceneRemovalObserved,
+    };
+    let changed = store.apply_foreign_scene_write(aid, write);
+    for short in &changed {
+        publish_physical_device_changed(publisher, corr, aid, *short);
+    }
+    if !changed.is_empty() {
+        publish_scene_matrix_changed(publisher, corr, aid, scene_id);
     }
 }
 

@@ -404,6 +404,27 @@ pub(crate) fn write_scene_level_read(
         .is_some_and(|slot| merge_read_attr(slot, level, now_ms))
 }
 
+pub(crate) fn write_scene_level_written(
+    attrs: &mut PhysicalDeviceAttributesView,
+    scene_id: u8,
+    level: u8,
+    now_ms: u64,
+) -> bool {
+    attrs
+        .scenes
+        .levels
+        .get_mut(scene_id as usize)
+        .is_some_and(|slot| merge_write_attr(slot, level, now_ms))
+}
+
+pub(crate) fn forget_scene_level(attrs: &mut PhysicalDeviceAttributesView, scene_id: u8) -> bool {
+    attrs
+        .scenes
+        .levels
+        .get_mut(scene_id as usize)
+        .is_some_and(|slot| slot.take().is_some())
+}
+
 fn merge_scene_levels_read(
     attrs: &mut PhysicalDeviceAttributesView,
     levels: &[u8],

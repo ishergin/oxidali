@@ -193,3 +193,20 @@ async fn bus_publish_totals_unchanged(world: &mut DaliWorld) {
          went from {before:?} to {now:?}"
     );
 }
+
+// SYS-251 SYS-252 SYS-253
+#[then(regex = r"^the stats dali ([a-z_]+) should eventually be (\d+)$")]
+async fn then_stats_dali_counter(world: &mut DaliWorld, field: String, expected: u64) {
+    let pointer = format!("/dali/{field}");
+    let port = world.server_port();
+    wait_until(
+        || {
+            crate::steps::physical_devices_steps::fetch_json(port, "/api/v1/stats")
+                .and_then(|json| json.pointer(&pointer).and_then(Value::as_u64))
+                == Some(expected)
+        },
+        STATS_TIMEOUT,
+    );
+    let json = stats_snapshot(world);
+    assert_eq!(pointer_u64(&json, &pointer), expected, "{json}");
+}

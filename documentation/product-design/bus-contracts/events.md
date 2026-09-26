@@ -120,14 +120,17 @@
 `DaliObservedFrameEvent` публикует только sniffer translator; какие кадры он понимает —
 [`../runtime-modules/sniffer-translator/README.md`](../runtime-modules/sniffer-translator/README.md).
 
-- Публикуются только понятые кадры: `TargetStateObserved`, `SceneRecallObserved` и
-  `LevelTransitionObserved`. Вариант `UnknownObserved` в контракте остаётся, у
-  проектора есть счётчик на случай нового производителя.
+- Публикуются только понятые кадры: `TargetStateObserved`, `SceneRecallObserved`,
+  `LevelTransitionObserved`, `SceneWriteObserved` и `SceneRemovalObserved`. Вариант
+  `UnknownObserved` в контракте остаётся, у проектора есть счётчик на случай нового
+  производителя.
 - `raw_frame` и `decode_status` — диагностическое свидетельство, не продуктовые
   данные.
 - Раскрывает наблюдение проектор
   ([`../runtime-modules/state-fanout/README.md`](../runtime-modules/state-fanout/README.md));
   реестр по групповым кадрам взводит «группой командовали» для плиток Home Assistant.
+  Запись сцены свет не меняет: её проектор пропускает, а реестр сбрасывает уровень
+  сцены прибора ([`../runtime-modules/registry/README.md`](../runtime-modules/registry/README.md)).
   MQTT и WebSocket не обновляют видимое состояние из наблюдения напрямую.
 
 ## Вход Part 103

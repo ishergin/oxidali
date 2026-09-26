@@ -114,3 +114,44 @@ Feature: State-fanout integration for api and sniffer sources
     When a foreign DAPC frame for short address 0 level 180 is observed on the bus
     Then the physical device 0 state level should eventually be 180
     And adapter 0 physical device 0 eventually exposes the golden runtime status and memory-bank identity
+
+  @id:SYS-251
+  Scenario: A foreign SET SCENE pair leaves the scene level unread instead of keeping ours
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And adapter 0 scene 3 desired row for virtual lamp 1 has level 100
+    And a DALI mock transport with no response
+    And adapter 0 scene 3 write for short 0 level 100 is scripted
+    When I send a POST request to "/api/v1/adapters/0/scenes/3/apply"
+    Then the last operation eventually succeeds
+    And physical device 0 scene 3 level should be 100
+    When a foreign SET SCENE 3 pair for short address 0 is observed on the bus
+    Then the stats dali foreign_scene_writes_total should eventually be 1
+    And physical device 0 scene 3 level should be unread
+    And the scene 3 matrix row for virtual lamp 1 should be dirty with nothing applied
+
+  @id:SYS-252
+  Scenario: A foreign REMOVE FROM SCENE pair takes the gear out of the scene
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And adapter 0 scene 3 desired row for virtual lamp 1 has level 100
+    And a DALI mock transport with no response
+    And adapter 0 scene 3 write for short 0 level 100 is scripted
+    When I send a POST request to "/api/v1/adapters/0/scenes/3/apply"
+    Then the last operation eventually succeeds
+    When a foreign REMOVE FROM SCENE 3 pair for short address 0 is observed on the bus
+    Then the stats dali foreign_scene_writes_total should eventually be 1
+    And physical device 0 scene 3 level should be 255
+    And the scene 3 matrix row for virtual lamp 1 should be dirty with nothing applied
+
+  @id:SYS-253
+  Scenario: A SET SCENE pair split by another frame changes nothing
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And adapter 0 scene 3 desired row for virtual lamp 1 has level 100
+    And a DALI mock transport with no response
+    And adapter 0 scene 3 write for short 0 level 100 is scripted
+    When I send a POST request to "/api/v1/adapters/0/scenes/3/apply"
+    Then the last operation eventually succeeds
+    When a foreign SET SCENE 3 pair for short address 0 split by another frame is observed on the bus
+    And a foreign SET SCENE 4 pair for short address 0 is observed on the bus
+    Then the stats dali foreign_scene_writes_total should eventually be 1
+    And physical device 0 scene 3 level should be 100
+    And physical device 0 scene 4 level should be unread

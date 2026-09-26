@@ -965,6 +965,7 @@ export type StatsDali = {
   foreign_frames_total: number
   foreign_verbs_projected_total: number
   foreign_dimming_unprojected_total: number
+  foreign_scene_writes_total: number
   backward_undecodable_total: number
   backward_frame_size_total: number
   backward_incomplete_total: number
