@@ -154,8 +154,9 @@ for every session that reaches the controller:
   `restore_states` re-reads them before comparing; `raw_response` passes the lamp
   guard but books nothing.
 - A session fixture that changes the installation takes `production_state` as a
-  parameter even when its body does not use it: pytest sets up one conftest's autouse
-  fixtures in alphabetical order, and only that dependency puts the snapshot first.
+  parameter even when its body does not use it: pytest sets up autouse fixtures in
+  plugin order and alphabetically within a plugin, and only that dependency puts the
+  snapshot first.
 
 Per-test guards (`state_snapshot`, `*_matrix_guard`, `hcl_guard`, …) restore what
 one test changed. `bench_baseline` suspends the poller and HCL schedules for the
@@ -166,7 +167,7 @@ session and fails it on a device still named `hil-…` by an earlier run.
 | Path | Holds |
 | --- | --- |
 | `hil/` | the library and the `hil` CLI |
-| `tests/` | the suites; `conftest.py` holds the session fixtures and the safety gates |
+| `tests/` | the suites; `conftest.py` lists the `hil_*.py` plugins that hold the fixtures and the safety gates, one per domain: `hil_session` (options, collection, report hooks), `hil_instruments` (clients and instruments), `hil_session_guards` (the autouse guards), `hil_optics`, `hil_test_guards` (per-test guards), `hil_run_validity` (the validity section) |
 | `wb/serial_bridge.py` | the one file deployed to the Wiren Board |
 | `corpus/` | frozen captures of the installation (`hil corpus`); local, and only the files host tests pin are tracked (`.gitignore`) |
 | `*_budget.txt` | run-validity budgets (below) |
@@ -412,12 +413,12 @@ one costs a go-ahead.
   a build that has the feature fails the test. A known-failure hatch is a conditional
   `@pytest.mark.xfail(strict=True)`, never an imperative `pytest.xfail()`, which never
   reports XPASS and so hides a fixed defect and its regression alike.
-- **Autouse fixtures** in `tests/conftest.py` never take `api` (or anything else that
-  skips on an unreachable controller) as a parameter, because an autouse skip skips every
-  collected test, the hardware-free ones included: they build their own client, degrade
-  to a printed warning and record an instrument failure for the per-test fixture to fail
-  or skip on. Nor do they take any other bench fixture, `hil_config` included: the
-  hardware-free verdict below reads every test's fixture closure.
+- **Autouse fixtures** in the `tests/hil_*.py` plugins never take `api` (or anything
+  else that skips on an unreachable controller) as a parameter, because an autouse skip
+  skips every collected test, the hardware-free ones included: they build their own
+  client, degrade to a printed warning and record an instrument failure for the per-test
+  fixture to fail or skip on. Nor do they take any other bench fixture, `hil_config`
+  included: the hardware-free verdict below reads every test's fixture closure.
 - **Hardware-free tests** request no bench fixture (`BENCH_FIXTURES` in `hil/tiers.py`);
   a `*_unit.py` test that requests one is a collection error. A session made only of
   them skips `production_state`, `bench_baseline`, `dut_continuity`, the serial-bridge
@@ -434,7 +435,7 @@ one costs a go-ahead.
 - **The sniffer decoder** names application-extended opcodes as DT8 commands whatever
   prelude preceded them: match another device type's extended command by its bytes and
   its `ENABLE DEVICE TYPE` frame.
-- **Mirrored constants**: `RULES_SOURCE_LIMIT_BYTES` in `tests/conftest.py` mirrors
+- **Mirrored constants**: `RULES_SOURCE_LIMIT_BYTES` in `tests/hil_test_guards.py` mirrors
   `MAX_RULES_SOURCE_BYTES` in `dali2rust-contracts`, and `hil corpus`'s colour-value width
   and defined sets mirror `colour_value_is_wide` / `colour_value_is_defined` in the
   domain crate; change them together.

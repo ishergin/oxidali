@@ -4,7 +4,8 @@ import types
 
 import pytest
 
-import conftest
+import hil_session
+import hil_session_guards
 from hil import prod_state
 
 
@@ -185,7 +186,8 @@ class _FadingGear(_Wire):
 
 
 def test_fast_fade_comes_after_the_snapshot_and_the_restore_takes_it_back():
-    assert "production_state" in inspect.signature(conftest._fast_fade_prep).parameters, \
+    prep = inspect.signature(hil_session_guards._fast_fade_prep)
+    assert "production_state" in prep.parameters, \
         "the fast-fade prep must wait for the snapshot it relies on"
     gear = _FadingGear(fade_ms=700)
     snap = {"devices": {"10": {"config": prod_state._gear_config(
@@ -201,6 +203,6 @@ def test_fast_fade_without_the_guard_is_a_usage_error(monkeypatch):
     monkeypatch.setenv("HIL_STATE_GUARD", "0")
     config = types.SimpleNamespace(getoption=lambda name: name == "--fast-fade")
     with pytest.raises(pytest.UsageError, match="HIL_STATE_GUARD=0"):
-        conftest._refuse_unguarded_fast_fade(config)
+        hil_session._refuse_unguarded_fast_fade(config)
     monkeypatch.setenv("HIL_STATE_GUARD", "1")
-    conftest._refuse_unguarded_fast_fade(config)
+    hil_session._refuse_unguarded_fast_fade(config)

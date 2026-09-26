@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from conftest import _diag_counters
+from hil_instruments import _diag_counters
 from hil.wait import wait_until
 
 LEVEL_A, LEVEL_B = 90, 200
