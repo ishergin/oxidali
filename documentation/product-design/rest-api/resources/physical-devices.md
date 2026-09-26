@@ -102,6 +102,9 @@ BDD — [`physical_devices`](../../../../tests/dali2rust-bdd/features/physical_d
   `memory_diagnostics` — постоянный или выпрямленный ток (DiiA 253), а не «неизвестно».
 - `memory_bus_unit` — банк 0 выше `0x1A`: байт конфигурации с классификацией и байт
   реализованных Part 15x — `{raw, parts}`, где `parts` — номера частей (бит x — Part 15x).
+  `class` называет строку DiiA 098bp Table 5: 0–8 — наборы логических единиц 207 и 209,
+  9–12 — аварийный гир Part 202 (с буквой в `emergency_type`), дальше — reserved и
+  manufacturer-specific.
   Байт с битами вне диапазона части не заявляет: `parts: null`. Нет секции — прибор
   молчит на эти локации, что конформно.
 - `memory_luminaire` — банк 1 выше `0x10` (DiiA Part 251), заполняется только при

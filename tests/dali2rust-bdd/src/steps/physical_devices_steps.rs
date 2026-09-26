@@ -2666,9 +2666,8 @@ async fn then_bus_unit_exposed(world: &mut DaliWorld) {
     assert_eq!(
         json.pointer("/attributes/memory_bus_unit/configuration/value/class")
             .and_then(Value::as_str),
-        Some("unnamed row"),
-        "Table 5 rows 0-8 are illegible in the repository's copy of 098bp, so \
-         the number travels and the label says exactly that"
+        Some("207 LED, 3 logical units"),
+        "DiiA 098bp Table 5 names row 2: three logical units of 207"
     );
     assert!(
         json.pointer("/attributes/memory_bus_unit/configuration/value/emergency_type")
