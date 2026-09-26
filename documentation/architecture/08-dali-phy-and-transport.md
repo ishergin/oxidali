@@ -93,10 +93,16 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   and may have rewritten its DTR — and is reported that tick as `SessionEvent::TxVoided`
   (→ `BusBusy`).
 - A collision is detected while we drive recessive; the interrupt drives the Table 25
-  break, then waits out the recovery time with the line released before it returns to
-  idle. The controller retries a collision with no delay of its own, through the ordinary
-  settling gate (the reduced t_RECOVER restart is a
-  [conformance gap](../reference/iec62386-conformance-gaps.md)).
+  break, releases the line and checks it on the next tick (101 §9.1.4). A line still
+  held means another master's break outlasted ours: the frame is reported as `Collision`
+  and the controller retries it through the ordinary settling gate. An idle line lets the
+  interrupt restart the same frame once, t_RECOVER after the release: the task staged
+  that gate with the frame (`TxGates::restart_gate`, drawn in 4,16–4,47 ms so tick
+  jitter stays inside 4,0–4,6 ms), the batch tail stays queued and no collision reaches
+  the session. The task stages no gate for a frame that repeats the one before it, the
+  second copy of a send-twice pair, which a break splits (101 §9.3); a foreign forward
+  frame before the gate opens voids the frame as above. `dali.collision_restarts_total`
+  in `/api/v1/stats` counts the restarts.
 - A cancel (an exchange the task abandons) drains the held frame, the queued tail and the
   command cell: a frame left in the cell on a busy bus would go out later, outside its
   transaction. A foreign reception drains the held frame and the tail but never the cell,

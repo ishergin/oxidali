@@ -961,6 +961,7 @@ export type StatsDali = {
   target_state_superseded_total: number
   wire_load_permille: number
   wire_load_own_permille: number
+  collision_restarts_total: number
   foreign_frames_total: number
   foreign_verbs_projected_total: number
   foreign_dimming_unprojected_total: number

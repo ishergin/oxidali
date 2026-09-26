@@ -32,15 +32,15 @@ pub use backward_window::{
     ANSWER_ARM_TARGET_IDLE_TICKS, BACKWARD_DATA_BITS, BACKWARD_MAX_US, BACKWARD_MIN_US,
     BACKWARD_TARGET_US,
 };
-pub use command::{AtomicCommandCell, ExchangeId, TxCommand};
+pub use command::{AtomicCommandCell, ExchangeId, TxCommand, TxGates};
 pub use cpu::{isr_core_id, ISR_CORE_ID};
 pub use frame_length::{
     frame_length_class, FrameLengthClass, BACKWARD8_SAMPLE_COUNT, FORWARD16_SAMPLE_COUNT,
     FORWARD24_SAMPLE_COUNT, FORWARD_LENGTH_MIN_SAMPLES, MIN_SAMPLES_FOR_DECODE,
 };
 pub use fsm::{
-    settle_ticks_on_wire, BusState, CollisionPolicy, DaliBitbangPhy, RxCompletedEvent, RxState,
-    TxPollResult, BUS_POWER_DOWN_TICKS, DALI_RX_SAMPLE_BUF_LEN, LINE_HELD_TICKS, PHY_TICK_US,
+    restart_gate_for, settle_ticks_on_wire, BusState, CollisionPolicy, DaliBitbangPhy,
+    RxCompletedEvent, RxState, TxPollResult, BUS_POWER_DOWN_TICKS, DALI_RX_SAMPLE_BUF_LEN, LINE_HELD_TICKS, PHY_TICK_US,
     RX_IDLE_LINE_HIGH_TICKS, RX_START_DEBOUNCE_TICKS, TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS,
 };
 pub use gpio::RegisterGpio;

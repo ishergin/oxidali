@@ -22,15 +22,13 @@ pub const TX_ARM_LEAD_TICKS: u8 = 3;
 
 // IEC 62386-101 Table 25
 const COLLISION_BREAK_MIN_US: u32 = 1_200;
-const COLLISION_RECOVER_MIN_US: u32 = 4_000;
 
 const fn ceil_ticks_for_window(min_us: u32, tick_us: u32) -> u8 {
     min_us.div_ceil(tick_us) as u8
 }
 
-const COLLISION_BREAK_TICKS: u8 = ceil_ticks_for_window(COLLISION_BREAK_MIN_US, PHY_TICK_US);
-const COLLISION_RECOVER_TICKS: u8 = ceil_ticks_for_window(COLLISION_RECOVER_MIN_US, PHY_TICK_US);
-const COLLISION_TOTAL_TICKS: u8 = COLLISION_BREAK_TICKS + COLLISION_RECOVER_TICKS;
+pub const COLLISION_BREAK_TICKS: u8 = ceil_ticks_for_window(COLLISION_BREAK_MIN_US, PHY_TICK_US);
+const COLLISION_CHECK_TICK: u8 = COLLISION_BREAK_TICKS + 2;
 
 const BACKWARD_FRAME_HALF_BITS: u8 = 22;
 
@@ -67,6 +65,11 @@ pub enum CollisionPolicy {
 
 pub const fn settle_ticks_on_wire(pre_idle_ticks: u16, lead: u8) -> u16 {
     pre_idle_ticks.saturating_add(lead as u16)
+}
+
+// IEC 62386-101 §9.1.4
+pub const fn restart_gate_for(release_to_edge_ticks: u8) -> u8 {
+    release_to_edge_ticks.saturating_sub(TX_ARM_LEAD_TICKS + 1)
 }
 
 #[derive(Debug)]
@@ -136,6 +139,7 @@ pub struct DaliBitbangPhy<H: BitbangHal> {
     tx_sp_cnt: u8,
     tx_high: u8,
     tx_collision: u8,
+    tx_idle_after_break: bool,
     tx_armed: u8,
     tx_yielded: bool,
     rx_pre_idle: u8,
@@ -168,6 +172,7 @@ impl<H: BitbangHal> DaliBitbangPhy<H> {
             tx_sp_cnt: 0,
             tx_high: 0,
             tx_collision: 0,
+            tx_idle_after_break: false,
             tx_armed: 0,
             tx_yielded: false,
             rx_pre_idle: 0,
@@ -230,7 +235,7 @@ impl<H: BitbangHal> DaliBitbangPhy<H> {
             BusState::Idle => self.tick_idle(bus_is_high),
             BusState::Rx => self.tick_rx(bus_is_high),
             BusState::Tx => self.tick_tx(bus_is_high),
-            BusState::CollisionTx => self.tick_collision_tx(),
+            BusState::CollisionTx => self.tick_collision_tx(bus_is_high),
         }
     }
 
@@ -285,6 +290,7 @@ impl<H: BitbangHal> DaliBitbangPhy<H> {
             self.tx_collision = self.tx_collision.wrapping_add(1);
         }
         self.tx_sp_cnt = 0;
+        self.tx_idle_after_break = false;
         self.bus_state = BusState::CollisionTx;
     }
 
@@ -326,15 +332,21 @@ impl<H: BitbangHal> DaliBitbangPhy<H> {
 
     #[inline]
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
-    fn tick_collision_tx(&mut self) {
+    fn tick_collision_tx(&mut self, bus_is_high: u8) {
         self.tx_sp_cnt = self.tx_sp_cnt.wrapping_add(1);
         if self.tx_sp_cnt <= COLLISION_BREAK_TICKS {
             self.hal.bus_set_low();
             return;
         }
         self.hal.bus_set_high();
-        if self.tx_sp_cnt >= COLLISION_TOTAL_TICKS {
-            self.set_bus_idle();
+        if self.tx_sp_cnt < COLLISION_CHECK_TICK {
+            return;
+        }
+        // IEC 62386-101 §9.1.4
+        self.tx_idle_after_break = bus_is_high != 0;
+        self.set_bus_idle();
+        if bus_is_high == 0 {
+            self.tick_idle(bus_is_high);
         }
     }
 
@@ -383,6 +395,7 @@ impl<H: BitbangHal> DaliBitbangPhy<H> {
         self.tx_hb_cnt = 0;
         self.tx_sp_cnt = 0;
         self.tx_collision = 0;
+        self.tx_idle_after_break = false;
         self.tx_yielded = false;
         self.tx_armed = TX_ARM_LEAD_TICKS;
         self.rx_state = RxState::Empty;
@@ -420,6 +433,14 @@ impl<H: BitbangHal> DaliBitbangPhy<H> {
             return TxPollResult::Transmitting;
         }
         TxPollResult::Ok
+    }
+
+    // IEC 62386-101 §9.1.4
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    pub fn take_idle_after_break(&mut self) -> bool {
+        let idle = self.tx_idle_after_break;
+        self.tx_idle_after_break = false;
+        idle
     }
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
@@ -692,16 +713,12 @@ mod tests {
     }
 
     #[test]
-    fn collision_recovery_ticks_stay_within_iec_windows() {
+    fn the_collision_break_stays_within_table_25() {
         const TABLE_25_BREAK_US: (u32, u32) = (1_200, 1_400);
-        const TABLE_25_RECOVER_US: (u32, u32) = (4_000, 4_600);
         let break_us = u32::from(COLLISION_BREAK_TICKS) * PHY_TICK_US;
-        let recover_us = u32::from(COLLISION_RECOVER_TICKS) * PHY_TICK_US;
 
         assert!(break_us >= TABLE_25_BREAK_US.0);
         assert!(break_us <= TABLE_25_BREAK_US.1);
-        assert!(recover_us >= TABLE_25_RECOVER_US.0);
-        assert!(recover_us <= TABLE_25_RECOVER_US.1);
     }
 
     #[test]

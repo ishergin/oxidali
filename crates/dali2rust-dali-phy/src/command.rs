@@ -14,7 +14,23 @@ pub struct AtomicCommandCell {
     tx_halfbit_len: AtomicU8,
     expects_backward: AtomicBool,
     min_idle_ticks: AtomicU8,
+    restart_gate: AtomicU8,
     exchange_id: AtomicU32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TxGates {
+    pub min_idle_ticks: u8,
+    pub restart_gate: u8,
+}
+
+impl TxGates {
+    pub const fn settle(min_idle_ticks: u8) -> Self {
+        Self {
+            min_idle_ticks,
+            restart_gate: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +39,7 @@ pub struct TxCommand {
     pub len: u8,
     pub expects_backward: bool,
     pub min_idle_ticks: u8,
+    pub restart_gate: u8,
     pub exchange_id: ExchangeId,
 }
 
@@ -34,6 +51,7 @@ impl AtomicCommandCell {
             tx_halfbit_len: AtomicU8::new(0),
             expects_backward: AtomicBool::new(false),
             min_idle_ticks: AtomicU8::new(0),
+            restart_gate: AtomicU8::new(0),
             exchange_id: AtomicU32::new(0),
         }
     }
@@ -43,7 +61,7 @@ impl AtomicCommandCell {
         halfbit_data: &[u8; HalfBitBuffer::DATA_LEN],
         halfbit_len: u8,
         expects_backward: bool,
-        min_idle_ticks: u8,
+        gates: TxGates,
         exchange_id: ExchangeId,
     ) -> bool {
         if halfbit_len == 0 || halfbit_len > HalfBitBuffer::MAX_DATA_HALF_BITS {
@@ -59,7 +77,8 @@ impl AtomicCommandCell {
         }
         self.expects_backward
             .store(expects_backward, Ordering::Relaxed);
-        self.min_idle_ticks.store(min_idle_ticks, Ordering::Relaxed);
+        self.min_idle_ticks.store(gates.min_idle_ticks, Ordering::Relaxed);
+        self.restart_gate.store(gates.restart_gate, Ordering::Relaxed);
         self.exchange_id.store(exchange_id.0, Ordering::Relaxed);
         self.tx_halfbit_len.store(halfbit_len, Ordering::Relaxed);
 
@@ -92,6 +111,7 @@ impl AtomicCommandCell {
         ];
         let expects_backward = self.expects_backward.load(Ordering::Relaxed);
         let min_idle_ticks = self.min_idle_ticks.load(Ordering::Relaxed);
+        let restart_gate = self.restart_gate.load(Ordering::Relaxed);
         let exchange_id = ExchangeId(self.exchange_id.load(Ordering::Relaxed));
         self.state.store(CMD_IDLE, Ordering::Release);
         Some(TxCommand {
@@ -99,6 +119,7 @@ impl AtomicCommandCell {
             len,
             expects_backward,
             min_idle_ticks,
+            restart_gate,
             exchange_id,
         })
     }
@@ -122,7 +143,7 @@ mod tests {
         data[0] = 0x55;
         data[1] = 0xAA;
         data[2] = 0x01;
-        assert!(cell.send_packed_tx(&data, 24, false, 0, ExchangeId(1)));
+        assert!(cell.send_packed_tx(&data, 24, false, TxGates::settle(0), ExchangeId(1)));
 
         let taken = cell.take_command().unwrap();
         assert_eq!(taken.data[0], 0x55);
@@ -141,7 +162,7 @@ mod tests {
         data[0] = 0x12;
         data[1] = 0x34;
 
-        assert!(cell.send_packed_tx(&data, 16, true, 0, ExchangeId(2)));
+        assert!(cell.send_packed_tx(&data, 16, true, TxGates::settle(0), ExchangeId(2)));
 
         let taken = cell.take_command().unwrap();
         assert_eq!(taken.data[0], 0x12);
@@ -156,7 +177,7 @@ mod tests {
         let cell = AtomicCommandCell::new();
         let data = [0xFF; 9];
 
-        assert!(cell.send_packed_tx(&data, 38, true, 0, ExchangeId(3)));
+        assert!(cell.send_packed_tx(&data, 38, true, TxGates::settle(0), ExchangeId(3)));
 
         let taken = cell.take_command().unwrap();
         assert_eq!(taken.data, data);
@@ -169,7 +190,7 @@ mod tests {
         let cell = AtomicCommandCell::new();
         let data = [1u8, 2, 3, 4, 5, 6, 7, 8, 9];
 
-        assert!(cell.send_packed_tx(&data, 72, false, 0, ExchangeId(4)));
+        assert!(cell.send_packed_tx(&data, 72, false, TxGates::settle(0), ExchangeId(4)));
         assert_eq!(cell.take_command().unwrap().data, data);
     }
 
@@ -178,8 +199,8 @@ mod tests {
         let cell = AtomicCommandCell::new();
         let data = [0xFF; 9];
 
-        assert!(!cell.send_packed_tx(&data, 0, false, 0, ExchangeId(5)));
-        assert!(!cell.send_packed_tx(&data, 73, false, 0, ExchangeId(5)));
+        assert!(!cell.send_packed_tx(&data, 0, false, TxGates::settle(0), ExchangeId(5)));
+        assert!(!cell.send_packed_tx(&data, 73, false, TxGates::settle(0), ExchangeId(5)));
     }
 
     #[test]
@@ -189,8 +210,8 @@ mod tests {
         first[0] = 0x01;
         let mut second = [0u8; 9];
         second[0] = 0x02;
-        assert!(cell.send_packed_tx(&first, 8, false, 0, ExchangeId(6)));
-        assert!(!cell.send_packed_tx(&second, 8, false, 0, ExchangeId(7)));
+        assert!(cell.send_packed_tx(&first, 8, false, TxGates::settle(0), ExchangeId(6)));
+        assert!(!cell.send_packed_tx(&second, 8, false, TxGates::settle(0), ExchangeId(7)));
     }
 
     #[test]
@@ -225,7 +246,7 @@ mod tests {
         let mut sent = 0u32;
         while sent < SENDS {
             let (data, len, exp, min_idle_ticks) = if sent % 2 == 0 { frame_a } else { frame_b };
-            if cell.send_packed_tx(&data, len, exp, min_idle_ticks, ExchangeId(sent + 1)) {
+            if cell.send_packed_tx(&data, len, exp, TxGates::settle(min_idle_ticks), ExchangeId(sent + 1)) {
                 sent += 1;
             }
         }
@@ -250,7 +271,7 @@ mod tests {
         let handle = thread::spawn(move || {
             let mut data = [0u8; 9];
             data[0] = 0xAA;
-            while !cell_clone.send_packed_tx(&data, 8, false, 0, ExchangeId(8)) {
+            while !cell_clone.send_packed_tx(&data, 8, false, TxGates::settle(0), ExchangeId(8)) {
                 thread::yield_now();
             }
         });

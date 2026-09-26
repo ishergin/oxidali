@@ -5,7 +5,7 @@ use crate::answer::AtomicAnswerCell;
 use crate::backward_window::{
     answer_gate, AnswerGate, ANSWER_ARM_MAX_IDLE_TICKS, ANSWER_ARM_TARGET_IDLE_TICKS,
 };
-use crate::command::{AtomicCommandCell, ExchangeId};
+use crate::command::{AtomicCommandCell, ExchangeId, TxGates};
 use crate::cpu::{raw_core_id, ISR_CORE_ID};
 use crate::frame_length::{frame_length_class, FrameLengthClass};
 use crate::fsm::{BusState, DaliBitbangPhy, RxCompletedEvent, RxState, TxPollResult};
@@ -39,6 +39,7 @@ pub struct TxRequest {
     len: u8,
     expects_backward: bool,
     min_idle_ticks: u8,
+    restart_gate: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,9 +112,24 @@ pub struct PhyIsrCore {
     answers_late: AtomicU32,
     answers_rejected: AtomicU32,
     probe: TickProbe,
-    tx_yields: AtomicU32,
-    tx_voided: AtomicU32,
+    tx: TxCounters,
     answers_collided: AtomicU32,
+}
+
+struct TxCounters {
+    yields: AtomicU32,
+    voided: AtomicU32,
+    collision_restarts: AtomicU32,
+}
+
+impl TxCounters {
+    const fn new() -> Self {
+        Self {
+            yields: AtomicU32::new(0),
+            voided: AtomicU32::new(0),
+            collision_restarts: AtomicU32::new(0),
+        }
+    }
 }
 
 pub const BUS_FAILURE_POWER_DOWN: u32 = 1;
@@ -249,8 +265,7 @@ impl PhyIsrCore {
             answers_late: AtomicU32::new(0),
             answers_rejected: AtomicU32::new(0),
             probe: TickProbe::new(),
-            tx_yields: AtomicU32::new(0),
-            tx_voided: AtomicU32::new(0),
+            tx: TxCounters::new(),
             answers_collided: AtomicU32::new(0),
         }
     }
@@ -538,6 +553,7 @@ impl PhyIsrCore {
             len: cmd.len,
             expects_backward: cmd.expects_backward,
             min_idle_ticks: cmd.min_idle_ticks,
+            restart_gate: cmd.restart_gate,
         })
     }
 
@@ -548,7 +564,7 @@ impl PhyIsrCore {
         // SAFETY: called from `tick`, the sole mutator of `pending`.
         let (held, queued) = unsafe { self.discard_queued() };
         if let (true, Some(request)) = (held, held_request) {
-            self.tx_voided.fetch_add(1, Ordering::Relaxed);
+            self.tx.voided.fetch_add(1, Ordering::Relaxed);
             self.push_session_event_for(request.exchange_id, SessionEvent::TxVoided);
         }
         if queued || held_request.is_some_and(|request| request.batched) {
@@ -669,27 +685,66 @@ impl PhyIsrCore {
         }
         if poll == TxPollResult::Ok {
             // SAFETY: called from `tick`, the sole owner of `pending`.
-            unsafe { self.clear_pending() };
-            let expects = self.active_expects_backward.swap(false, Ordering::AcqRel);
-            if expects {
-                self.session_exchange
-                    .store(self.active_epoch.load(Ordering::Acquire), Ordering::Release);
-            }
-            self.push_session_event(SessionEvent::TxComplete {
-                pre_idle_ticks: phy.tx_pre_idle_ticks(),
-            });
+            unsafe { self.report_frame_sent(phy) };
         } else if poll == TxPollResult::Collision {
             // SAFETY: called from `tick`, the sole owner of `pending`.
-            unsafe { self.clear_pending() };
-            self.active_expects_backward.store(false, Ordering::Release);
-            self.session_exchange.store(0, Ordering::Release);
-            // SAFETY: called from `tick`, the sole owner of `pending`.
-            unsafe { self.abort_batch_tail() };
-            self.push_session_event(SessionEvent::TxCollision);
+            unsafe { self.report_collision_or_restart(phy) };
         } else if poll == TxPollResult::Yielded {
             self.active_expects_backward.store(false, Ordering::Release);
-            self.tx_yields.fetch_add(1, Ordering::Relaxed);
+            self.tx.yields.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    unsafe fn report_collision_or_restart(&self, phy: &mut DaliBitbangPhy<RegisterGpio>) {
+        // SAFETY: called from `tick`, the sole owner of `pending`.
+        if phy.take_idle_after_break() && unsafe { self.restart_after_break() } {
+            self.tx.collision_restarts.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        // SAFETY: same.
+        unsafe { self.report_collision() };
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    unsafe fn report_frame_sent(&self, phy: &mut DaliBitbangPhy<RegisterGpio>) {
+        // SAFETY: called from `tick`, the sole owner of `pending`.
+        unsafe { self.clear_pending() };
+        let expects = self.active_expects_backward.swap(false, Ordering::AcqRel);
+        if expects {
+            self.session_exchange
+                .store(self.active_epoch.load(Ordering::Acquire), Ordering::Release);
+        }
+        self.push_session_event(SessionEvent::TxComplete {
+            pre_idle_ticks: phy.tx_pre_idle_ticks(),
+        });
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    unsafe fn report_collision(&self) {
+        // SAFETY: called from `tick`, the sole owner of `pending`.
+        unsafe { self.clear_pending() };
+        self.active_expects_backward.store(false, Ordering::Release);
+        self.session_exchange.store(0, Ordering::Release);
+        // SAFETY: called from `tick`, the sole owner of `pending`.
+        unsafe { self.abort_batch_tail() };
+        self.push_session_event(SessionEvent::TxCollision);
+    }
+
+    // IEC 62386-101 §9.1.4
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    unsafe fn restart_after_break(&self) -> bool {
+        // SAFETY: called from `tick`, the sole mutator of `pending`.
+        let pending = unsafe { &mut *self.pending.get() };
+        let Some(request) = pending else {
+            return false;
+        };
+        if request.restart_gate == 0 {
+            return false;
+        }
+        request.min_idle_ticks = request.restart_gate;
+        request.restart_gate = 0;
+        true
     }
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
@@ -777,19 +832,13 @@ impl PhyIsrCore {
         halfbit_data: &[u8; HalfBitBuffer::DATA_LEN],
         halfbit_len: u8,
         expects_backward: bool,
-        min_idle_ticks: u8,
+        gates: TxGates,
     ) -> bool {
         let exchange_id = match self.current_exchange() {
             ExchangeId(0) => self.begin_exchange(),
             id => id,
         };
-        self.submit_tx_for(
-            halfbit_data,
-            halfbit_len,
-            expects_backward,
-            min_idle_ticks,
-            exchange_id,
-        )
+        self.submit_tx_for(halfbit_data, halfbit_len, expects_backward, gates, exchange_id)
     }
 
     pub fn submit_tx_for(
@@ -797,19 +846,14 @@ impl PhyIsrCore {
         halfbit_data: &[u8; HalfBitBuffer::DATA_LEN],
         halfbit_len: u8,
         expects_backward: bool,
-        min_idle_ticks: u8,
+        gates: TxGates,
         exchange_id: ExchangeId,
     ) -> bool {
         if self.control.requested.load(Ordering::Acquire) != 0 {
             return false;
         }
-        self.cmd.send_packed_tx(
-            halfbit_data,
-            halfbit_len,
-            expects_backward,
-            min_idle_ticks,
-            exchange_id,
-        )
+        self.cmd
+            .send_packed_tx(halfbit_data, halfbit_len, expects_backward, gates, exchange_id)
     }
 
     pub fn submit_answer(&self, rx_epoch: u8, hb: &HalfBitBuffer) -> bool {
@@ -828,11 +872,15 @@ impl PhyIsrCore {
     }
 
     pub fn tx_yields(&self) -> u32 {
-        self.tx_yields.load(Ordering::Relaxed)
+        self.tx.yields.load(Ordering::Relaxed)
     }
 
     pub fn tx_voided(&self) -> u32 {
-        self.tx_voided.load(Ordering::Relaxed)
+        self.tx.voided.load(Ordering::Relaxed)
+    }
+
+    pub fn collision_restarts(&self) -> u32 {
+        self.tx.collision_restarts.load(Ordering::Relaxed)
     }
 
     pub fn last_answer_arm_idle_ticks(&self) -> u32 {
@@ -844,19 +892,13 @@ impl PhyIsrCore {
         halfbit_data: &[u8; HalfBitBuffer::DATA_LEN],
         halfbit_len: u8,
         expects_backward: bool,
-        min_idle_ticks: u8,
+        gates: TxGates,
     ) -> bool {
         let exchange_id = match self.current_exchange() {
             ExchangeId(0) => self.begin_exchange(),
             id => id,
         };
-        self.queue_tx_for(
-            halfbit_data,
-            halfbit_len,
-            expects_backward,
-            min_idle_ticks,
-            exchange_id,
-        )
+        self.queue_tx_for(halfbit_data, halfbit_len, expects_backward, gates, exchange_id)
     }
 
     pub fn queue_tx_for(
@@ -864,7 +906,7 @@ impl PhyIsrCore {
         halfbit_data: &[u8; HalfBitBuffer::DATA_LEN],
         halfbit_len: u8,
         expects_backward: bool,
-        min_idle_ticks: u8,
+        gates: TxGates,
         exchange_id: ExchangeId,
     ) -> bool {
         if self.control.requested.load(Ordering::Acquire) != 0 {
@@ -880,7 +922,8 @@ impl PhyIsrCore {
                 data: *halfbit_data,
                 len: halfbit_len,
                 expects_backward,
-                min_idle_ticks,
+                min_idle_ticks: gates.min_idle_ticks,
+                restart_gate: gates.restart_gate,
             })
             .is_ok()
     }
@@ -1046,8 +1089,8 @@ mod tests {
         let mut data = [0u8; HalfBitBuffer::DATA_LEN];
         data[0] = 0b0101_0101;
         data[1] = 0b0101_0101;
-        assert!(core.submit_tx(&data, 16, false, 0));
-        assert!(!core.submit_tx(&data, 16, false, 0));
+        assert!(core.submit_tx(&data, 16, false, TxGates::settle(0)));
+        assert!(!core.submit_tx(&data, 16, false, TxGates::settle(0)));
 
         let mut completed = false;
         for _ in 0..128 {
@@ -1071,7 +1114,7 @@ mod tests {
         data[0] = 0b0101_0101;
         data[1] = 0b0101_0101;
         const GATE: u8 = 20;
-        assert!(core.submit_tx(&data, 16, false, GATE));
+        assert!(core.submit_tx(&data, 16, false, TxGates::settle(GATE)));
 
         for _ in 0..u32::from(GATE) - 1 {
             // SAFETY: single-threaded test standing in for the ISR context.
@@ -1155,7 +1198,7 @@ mod tests {
         let mut data = [0u8; HalfBitBuffer::DATA_LEN];
         data[0] = 0b0101_0101;
         data[1] = 0b0101_0101;
-        assert!(core.submit_tx(&data, 16, false, 0));
+        assert!(core.submit_tx(&data, 16, false, TxGates::settle(0)));
         const WINDOW: usize = 256;
         // SAFETY: single-threaded test standing in for the ISR context.
         assert!(unsafe { transmitted_within(&core, WINDOW) });
@@ -1184,11 +1227,11 @@ mod tests {
         unsafe { tick_n(&core, 20) };
 
         let data = test_forward_frame();
-        assert!(core.submit_tx(&data, 16, false, 0));
+        assert!(core.submit_tx(&data, 16, false, TxGates::settle(0)));
         // SAFETY: see above.
         unsafe { tick_n(&core, 20) };
         assert!(
-            !core.submit_tx(&data, 16, false, 0),
+            !core.submit_tx(&data, 16, false, TxGates::settle(0)),
             "precondition: the cell still holds the frame, so this is the case \
              the cancel has to reach"
         );
@@ -1197,7 +1240,7 @@ mod tests {
         // SAFETY: see above. One tick is all the cancel needs.
         unsafe { tick_n(&core, 1) };
         assert!(
-            core.submit_tx(&data, 16, false, 0),
+            core.submit_tx(&data, 16, false, TxGates::settle(0)),
             "the cancel must have emptied the cell — a full cell here is the bug"
         );
         core.cancel_pending_tx();
@@ -1214,7 +1257,7 @@ mod tests {
              long the bus takes to recover"
         );
 
-        assert!(core.submit_tx(&data, 16, false, 0));
+        assert!(core.submit_tx(&data, 16, false, TxGates::settle(0)));
         // SAFETY: see above.
         let transmitted = unsafe { transmitted_within(&core, 1024) };
         assert!(
@@ -1234,7 +1277,7 @@ mod tests {
         data[1] = 0b0101_0101;
 
         let epoch_n = core.begin_exchange();
-        assert!(core.submit_tx(&data, 16, false, 0));
+        assert!(core.submit_tx(&data, 16, false, TxGates::settle(0)));
         // SAFETY: single-threaded test standing in for the ISR context.
         unsafe { tick_n(&core, 8) };
         assert!(
@@ -1261,7 +1304,7 @@ mod tests {
              invisible"
         );
 
-        assert!(core.submit_tx(&data, 16, false, 0));
+        assert!(core.submit_tx(&data, 16, false, TxGates::settle(0)));
         assert!(
             // SAFETY: see above.
             unsafe { completes_within(&core, epoch_next, 1024) },
@@ -1282,7 +1325,7 @@ mod tests {
         next[0] = 0b0110_0110;
 
         let abandoned = core.begin_exchange();
-        assert!(core.submit_tx_for(&first, 16, false, 0, abandoned));
+        assert!(core.submit_tx_for(&first, 16, false, TxGates::settle(0), abandoned));
         // SAFETY: single-threaded test standing in for the ISR context.
         unsafe { tick_n(&core, 8) };
         core.cancel_exchange(abandoned);
@@ -1291,7 +1334,7 @@ mod tests {
         assert!(core.cancellation_acknowledged(abandoned));
 
         let retry = core.begin_exchange();
-        assert!(core.submit_tx_for(&next, 16, false, 0, retry));
+        assert!(core.submit_tx_for(&next, 16, false, TxGates::settle(0), retry));
         // SAFETY: single-threaded test standing in for the ISR context.
         let completed = unsafe { completes_within(&core, retry, 512) };
         assert!(
@@ -1313,20 +1356,20 @@ mod tests {
         retry_data[0] = 0b0110_0110;
 
         let abandoned = core.begin_exchange();
-        assert!(core.submit_tx_for(&first, 16, false, 0, abandoned));
+        assert!(core.submit_tx_for(&first, 16, false, TxGates::settle(0), abandoned));
         // SAFETY: single-threaded test standing in for the ISR context.
         unsafe { tick_n(&core, 8) };
         core.cancel_exchange(abandoned);
         let retry = core.begin_exchange();
         assert!(
-            !core.submit_tx_for(&retry_data, 16, false, 0, retry),
+            !core.submit_tx_for(&retry_data, 16, false, TxGates::settle(0), retry),
             "a delayed cancellation must close the producer gate"
         );
 
         // SAFETY: apply the cancellation before submitting the retry.
         unsafe { core.tick() };
         assert!(core.cancellation_acknowledged(abandoned));
-        assert!(core.submit_tx_for(&retry_data, 16, false, 0, retry));
+        assert!(core.submit_tx_for(&retry_data, 16, false, TxGates::settle(0), retry));
         // SAFETY: single-threaded test standing in for the ISR context.
         let completed = unsafe { completes_within(&core, retry, 512) };
         assert!(completed);
@@ -1356,10 +1399,10 @@ mod tests {
         data[0] = 0b0101_0101;
         data[1] = 0b0101_0101;
         for _ in 0..PhyIsrCore::tx_batch_capacity() {
-            assert!(core.queue_tx(&data, 16, false, 2));
+            assert!(core.queue_tx(&data, 16, false, TxGates::settle(2)));
         }
         assert!(
-            !core.queue_tx(&data, 16, false, 2),
+            !core.queue_tx(&data, 16, false, TxGates::settle(2)),
             "the ring holds CAP-1, and the caller must be told when it is full"
         );
 
@@ -1386,8 +1429,8 @@ mod tests {
         let mut data = [0u8; HalfBitBuffer::DATA_LEN];
         data[0] = 0b0101_0101;
         data[1] = 0b0101_0101;
-        assert!(core.queue_tx(&data, 16, true, 2));
-        assert!(core.queue_tx(&data, 16, false, 2));
+        assert!(core.queue_tx(&data, 16, true, TxGates::settle(2)));
+        assert!(core.queue_tx(&data, 16, false, TxGates::settle(2)));
 
         let mut sent = 0usize;
         for _ in 0..2048 {
@@ -1433,7 +1476,7 @@ mod tests {
         let mut data = [0u8; HalfBitBuffer::DATA_LEN];
         data[0] = 0b0101_0101;
         data[1] = 0b0101_0101;
-        assert!(core.submit_tx(&data, 16, false, 0));
+        assert!(core.submit_tx(&data, 16, false, TxGates::settle(0)));
 
         let mut reported = None;
         for _ in 0..128 {
@@ -1460,7 +1503,7 @@ mod tests {
 
         let mut data = [0u8; HalfBitBuffer::DATA_LEN];
         data[0] = 0b0101_0101;
-        assert!(core.submit_tx(&data, 8, true, 0));
+        assert!(core.submit_tx(&data, 8, true, TxGates::settle(0)));
 
         for _ in 0..128 {
             // SAFETY: as above.
@@ -1526,7 +1569,7 @@ mod tests {
         unsafe { *input_ptr = 0; tick_n(&core, 8) };
 
         let data = test_forward_frame();
-        assert!(core.submit_tx(&data, 16, false, 0));
+        assert!(core.submit_tx(&data, 16, false, TxGates::settle(0)));
         for _ in 0..8 {
             // SAFETY: see above.
             unsafe { core.tick() };
@@ -1570,7 +1613,7 @@ mod tests {
         unsafe { tick_n(&core, 64) };
 
         let data = test_forward_frame();
-        assert!(core.submit_tx(&data, 16, false, 0));
+        assert!(core.submit_tx(&data, 16, false, TxGates::settle(0)));
         // SAFETY: same. One tick: the request is pulled and armed (lead = 3).
         unsafe { core.tick() };
         // SAFETY: same provenance as the pointer the core reads through.
@@ -1615,7 +1658,7 @@ mod tests {
 
         let data = test_forward_frame();
         let held_exchange = core.begin_exchange();
-        assert!(core.submit_tx_for(&data, 16, false, 200, held_exchange));
+        assert!(core.submit_tx_for(&data, 16, false, TxGates::settle(200), held_exchange));
         // SAFETY: same.
         unsafe { core.tick() };
         assert!(core.pop_session_event().is_none());
@@ -1647,7 +1690,7 @@ mod tests {
             "a voided frame must not transmit later"
         );
         assert!(
-            core.submit_tx(&data, 16, false, 0),
+            core.submit_tx(&data, 16, false, TxGates::settle(0)),
             "the cell is free after a void"
         );
     }
@@ -1766,7 +1809,7 @@ mod tests {
         let mut data = [0u8; HalfBitBuffer::DATA_LEN];
         data[0] = 0b0101_0101;
         data[1] = 0b0101_0101;
-        assert!(core.submit_tx(&data, 16, true, 0));
+        assert!(core.submit_tx(&data, 16, true, TxGates::settle(0)));
         for _ in 0..256 {
             // SAFETY: a single-threaded test stands in for the ISR context.
             unsafe { core.tick() };
@@ -1888,8 +1931,8 @@ mod tests {
         let mut data = [0u8; HalfBitBuffer::DATA_LEN];
         data[0] = 0b0101_0101;
         data[1] = 0b0101_0101;
-        assert!(core.queue_tx(&data, 16, false, gate));
-        assert!(core.queue_tx(&data, 16, false, gate));
+        assert!(core.queue_tx(&data, 16, false, TxGates::settle(gate)));
+        assert!(core.queue_tx(&data, 16, false, TxGates::settle(gate)));
         // SAFETY: a single-threaded test stands in for the ISR context.
         unsafe { tick_n(core, 4) };
         assert!(core.pop_session_event().is_none());
@@ -2032,7 +2075,7 @@ mod tests {
         let mut data = [0u8; HalfBitBuffer::DATA_LEN];
         data[0] = 0b0101_0101;
         data[1] = 0b0101_0101;
-        assert!(core.submit_tx(&data, 16, false, 0));
+        assert!(core.submit_tx(&data, 16, false, TxGates::settle(0)));
         // SAFETY: single-threaded test standing in for the ISR context.
         let transmitted = unsafe { transmitted_within(&core, 200) };
         assert!(transmitted, "our frame must go out");
@@ -2129,8 +2172,8 @@ mod tests {
         let mut data = [0u8; HalfBitBuffer::DATA_LEN];
         data[0] = 0b0101_0101;
         data[1] = 0b0101_0101;
-        assert!(core.queue_tx(&data, 16, false, 0));
-        assert!(core.queue_tx(&data, 16, false, 0));
+        assert!(core.queue_tx(&data, 16, false, TxGates::settle(0)));
+        assert!(core.queue_tx(&data, 16, false, TxGates::settle(0)));
         // SAFETY: single-threaded test standing in for the ISR context.
         unsafe { tick_n(&core, 2 + usize::from(TX_ARM_LEAD_TICKS)) };
         assert!(core.submit_answer(1, &answer_frame()));
@@ -2298,5 +2341,252 @@ mod tests {
             !frame_active(BusState::Idle, 0),
             "an idle bus is not mid-frame"
         );
+    }
+    mod collision_recovery {
+        use super::*;
+        use crate::fsm::{restart_gate_for, COLLISION_BREAK_TICKS};
+
+        const RECESSIVE: u32 = 0b0010;
+        const RELEASE_TO_EDGE_TICKS: u8 = 41;
+        const RUN_LIMIT_TICKS: usize = 400;
+        const INSIDE_T_RECOVER_TICKS: usize = 10;
+
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        enum Edge {
+            Low,
+            High,
+            None,
+        }
+
+        struct SharedBus {
+            set: *mut u32,
+            clr: *mut u32,
+            input: *mut u32,
+            we_drive_low: bool,
+            other_low_ticks: u32,
+            tick: usize,
+        }
+
+        impl SharedBus {
+            unsafe fn step(&mut self, core: &PhyIsrCore) -> Edge {
+                let other_low = self.other_low_ticks > 0;
+                self.other_low_ticks = self.other_low_ticks.saturating_sub(1);
+                // SAFETY: the three registers outlive the core and nothing else writes them.
+                unsafe {
+                    *self.input = if self.we_drive_low || other_low { 0 } else { RECESSIVE };
+                    *self.set = 0;
+                    *self.clr = 0;
+                    core.tick();
+                }
+                self.tick += 1;
+                // SAFETY: same registers.
+                let (set, clr) = unsafe { (*self.set, *self.clr) };
+                if set != 0 {
+                    self.we_drive_low = true;
+                    Edge::Low
+                } else if clr != 0 {
+                    self.we_drive_low = false;
+                    Edge::High
+                } else {
+                    Edge::None
+                }
+            }
+
+            unsafe fn until(&mut self, core: &PhyIsrCore, wanted: Edge) -> usize {
+                for _ in 0..RUN_LIMIT_TICKS {
+                    // SAFETY: see `step`.
+                    if unsafe { self.step(core) } == wanted {
+                        return self.tick;
+                    }
+                }
+                panic!("no {wanted:?} edge within {RUN_LIMIT_TICKS} ticks");
+            }
+        }
+
+        fn frame() -> [u8; HalfBitBuffer::DATA_LEN] {
+            let mut data = [0; HalfBitBuffer::DATA_LEN];
+            data[..2].copy_from_slice(&[0b1010_1010, 0b1010_1010]);
+            data
+        }
+
+        fn restartable() -> TxGates {
+            TxGates {
+                min_idle_ticks: 0,
+                restart_gate: restart_gate_for(RELEASE_TO_EDGE_TICKS),
+            }
+        }
+
+        unsafe fn collide(bus: &mut SharedBus, core: &PhyIsrCore, other_break_ticks: u32) -> usize {
+            // SAFETY: see `SharedBus::step`.
+            unsafe { bus.until(core, Edge::Low) };
+            // SAFETY: same.
+            unsafe { bus.until(core, Edge::High) };
+            bus.other_low_ticks = other_break_ticks;
+            // SAFETY: same.
+            let break_start = unsafe { bus.until(core, Edge::Low) };
+            // SAFETY: same.
+            let release = unsafe { bus.until(core, Edge::High) };
+            assert_eq!(
+                release - break_start,
+                usize::from(COLLISION_BREAK_TICKS),
+                "101 Table 25: the break lasts t_BREAK"
+            );
+            release
+        }
+
+        fn events(core: &PhyIsrCore) -> (u32, u32, u32) {
+            let (mut complete, mut collision, mut voided) = (0, 0, 0);
+            while let Some(event) = core.pop_session_event() {
+                match event {
+                    SessionEvent::TxComplete { .. } => complete += 1,
+                    SessionEvent::TxCollision => collision += 1,
+                    SessionEvent::TxVoided => voided += 1,
+                    _ => {}
+                }
+            }
+            (complete, collision, voided)
+        }
+
+        fn shared_bus(set: &mut u32, clr: &mut u32, input: &mut u32) -> SharedBus {
+            SharedBus {
+                set,
+                clr,
+                input,
+                we_drive_low: false,
+                other_low_ticks: 0,
+                tick: 0,
+            }
+        }
+
+        #[test]
+        fn a_break_that_ends_on_an_idle_bus_restarts_the_frame_after_t_recover() {
+            let (mut set, mut clr, mut input) = (0u32, 0u32, RECESSIVE);
+            let mut bus = shared_bus(&mut set, &mut clr, &mut input);
+            // SAFETY: the registers outlive the core; `bus` is the only writer.
+            let core = test_core(unsafe { &mut *bus.set }, unsafe { &mut *bus.clr }, unsafe { &*bus.input });
+            assert!(core.submit_tx(&frame(), 16, false, restartable()));
+
+            // SAFETY: single-threaded test standing in for the ISR context.
+            let release = unsafe { collide(&mut bus, &core, 4) };
+            // SAFETY: same.
+            let restart_edge = unsafe { bus.until(&core, Edge::Low) };
+
+            assert_eq!(
+                restart_edge - release,
+                usize::from(RELEASE_TO_EDGE_TICKS),
+                "101 §9.1.4: the restart's first edge is t_RECOVER after the release"
+            );
+            for _ in 0..RUN_LIMIT_TICKS {
+                // SAFETY: same.
+                unsafe { bus.step(&core) };
+            }
+            assert_eq!(events(&core), (1, 0, 0), "the restarted frame completes; no collision is reported");
+            assert_eq!(core.collision_restarts(), 1);
+        }
+
+        #[test]
+        fn a_break_that_ends_on_a_held_bus_reports_the_collision() {
+            let (mut set, mut clr, mut input) = (0u32, 0u32, RECESSIVE);
+            let mut bus = shared_bus(&mut set, &mut clr, &mut input);
+            // SAFETY: the registers outlive the core; `bus` is the only writer.
+            let core = test_core(unsafe { &mut *bus.set }, unsafe { &mut *bus.clr }, unsafe { &*bus.input });
+            assert!(core.submit_tx(&frame(), 16, false, restartable()));
+
+            let longer_than_ours = u32::from(COLLISION_BREAK_TICKS) + 6;
+            // SAFETY: single-threaded test standing in for the ISR context.
+            unsafe { collide(&mut bus, &core, longer_than_ours) };
+            for _ in 0..RUN_LIMIT_TICKS {
+                // SAFETY: same.
+                unsafe { bus.step(&core) };
+            }
+            assert_eq!(events(&core), (0, 1, 0), "the other break outlasted ours: normal avoidance");
+            assert_eq!(core.collision_restarts(), 0);
+        }
+
+        #[test]
+        fn a_frame_without_a_restart_gate_reports_its_collision() {
+            let (mut set, mut clr, mut input) = (0u32, 0u32, RECESSIVE);
+            let mut bus = shared_bus(&mut set, &mut clr, &mut input);
+            // SAFETY: the registers outlive the core; `bus` is the only writer.
+            let core = test_core(unsafe { &mut *bus.set }, unsafe { &mut *bus.clr }, unsafe { &*bus.input });
+            assert!(core.submit_tx(&frame(), 16, false, TxGates::settle(0)));
+
+            // SAFETY: single-threaded test standing in for the ISR context.
+            unsafe { collide(&mut bus, &core, 4) };
+            for _ in 0..RUN_LIMIT_TICKS {
+                // SAFETY: same.
+                unsafe { bus.step(&core) };
+            }
+            assert_eq!(
+                events(&core),
+                (0, 1, 0),
+                "101 §9.3: a pair's second copy is not restarted alone; the task repeats the unit"
+            );
+        }
+
+        #[test]
+        fn a_restarted_frame_that_collides_again_reports_the_collision() {
+            let (mut set, mut clr, mut input) = (0u32, 0u32, RECESSIVE);
+            let mut bus = shared_bus(&mut set, &mut clr, &mut input);
+            // SAFETY: the registers outlive the core; `bus` is the only writer.
+            let core = test_core(unsafe { &mut *bus.set }, unsafe { &mut *bus.clr }, unsafe { &*bus.input });
+            assert!(core.submit_tx(&frame(), 16, false, restartable()));
+
+            // SAFETY: single-threaded test standing in for the ISR context.
+            unsafe { collide(&mut bus, &core, 4) };
+            // SAFETY: same.
+            unsafe { collide(&mut bus, &core, 4) };
+            for _ in 0..RUN_LIMIT_TICKS {
+                // SAFETY: same.
+                unsafe { bus.step(&core) };
+            }
+            assert_eq!(events(&core), (0, 1, 0), "one restart per frame; the second collision goes to the task");
+            assert_eq!(core.collision_restarts(), 1);
+        }
+
+        #[test]
+        fn a_restart_keeps_the_rest_of_its_batch() {
+            let (mut set, mut clr, mut input) = (0u32, 0u32, RECESSIVE);
+            let mut bus = shared_bus(&mut set, &mut clr, &mut input);
+            // SAFETY: the registers outlive the core; `bus` is the only writer.
+            let core = test_core(unsafe { &mut *bus.set }, unsafe { &mut *bus.clr }, unsafe { &*bus.input });
+            assert!(core.queue_tx(&frame(), 16, false, restartable()));
+            assert!(core.queue_tx(&frame(), 16, false, TxGates::settle(2)));
+
+            // SAFETY: single-threaded test standing in for the ISR context.
+            unsafe { collide(&mut bus, &core, 4) };
+            for _ in 0..RUN_LIMIT_TICKS {
+                // SAFETY: same.
+                unsafe { bus.step(&core) };
+            }
+            assert_eq!(events(&core), (2, 0, 0), "the restarted frame and its successor both go out");
+            assert!(!core.take_batch_aborted());
+        }
+
+        #[test]
+        fn a_foreign_frame_inside_t_recover_voids_the_restart() {
+            let (mut set, mut clr, mut input) = (0u32, 0u32, RECESSIVE);
+            let mut bus = shared_bus(&mut set, &mut clr, &mut input);
+            // SAFETY: the registers outlive the core; `bus` is the only writer.
+            let core = test_core(unsafe { &mut *bus.set }, unsafe { &mut *bus.clr }, unsafe { &*bus.input });
+            assert!(core.submit_tx(&frame(), 16, false, restartable()));
+
+            // SAFETY: single-threaded test standing in for the ISR context.
+            unsafe { collide(&mut bus, &core, 4) };
+            for _ in 0..INSIDE_T_RECOVER_TICKS {
+                // SAFETY: same.
+                unsafe { bus.step(&core) };
+            }
+            receive_foreign_frame(&core, bus.input, &SIXTEEN_BITS);
+            for _ in 0..RUN_LIMIT_TICKS {
+                // SAFETY: same.
+                unsafe { bus.step(&core) };
+            }
+            assert_eq!(
+                events(&core),
+                (0, 0, 1),
+                "another master restarted first: the frame is voided and the task repeats it"
+            );
+        }
     }
 }

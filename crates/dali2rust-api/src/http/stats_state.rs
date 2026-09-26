@@ -30,6 +30,7 @@ pub struct StatsDaliDto {
     pub target_state_superseded_total: u32,
     pub wire_load_permille: u32,
     pub wire_load_own_permille: u32,
+    pub collision_restarts_total: u32,
     pub foreign_frames_total: u32,
     pub foreign_verbs_projected_total: u32,
     pub foreign_dimming_unprojected_total: u32,
