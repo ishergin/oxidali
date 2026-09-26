@@ -63,16 +63,21 @@ def _check_serial_port(cfg):
 
 
 def _check_gear_sim(cfg):
-    from hil import serialmon
-    if not cfg.gear_sim_port:
-        return OK, "gear sim", "not configured (set HIL_GEAR_SIM_PORT to use one)"
-    if cfg.gear_sim_port == serialmon.effective_port(cfg)[0]:
-        return FAIL, "gear sim", (
-            "%s is also the DUT's port — HIL_GEAR_SIM_PORT must name the C6"
-            % cfg.gear_sim_port)
-    if not os.path.exists(cfg.gear_sim_port):
-        return FAIL, "gear sim", "%s not present" % cfg.gear_sim_port
-    return OK, "gear sim", "%s" % cfg.gear_sim_port
+    from hil import remote_serial, role, serialmon
+    from hil.config import PeerUnconfigured
+    try:
+        peer = cfg.peer()
+    except PeerUnconfigured:
+        return OK, "gear sim", "no peer is named, so no emulator"
+    if not role.is_gear_sim(peer):
+        return OK, "gear sim", "the peer runs the controller (`hil --peer role gear-sim` lends it)"
+    if not serialmon.alive(peer):
+        return FAIL, "gear sim", "the peer runs the emulator but its monitor is down"
+    try:
+        remote_serial.control(peer, "ping")
+    except (OSError, remote_serial.RemoteError) as exc:
+        return FAIL, "gear sim", "the peer's bridge does not answer: %s" % exc
+    return OK, "gear sim", "the peer runs the emulator (%s)" % role.current(peer).get("via")
 
 
 def _check_monitor(cfg):
