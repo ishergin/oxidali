@@ -632,6 +632,15 @@ fn declared_device_types(query: &SupportedDeviceTypesQuery) -> Option<DeviceType
     Some(declared)
 }
 
+pub(crate) fn read_declared_device_types(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    content_confirm: ContentConfirmPolicy,
+) -> Result<Option<DeviceTypeSet>, SemanticDaliError> {
+    let query = query_supported_device_types_with_policy(controller, address, content_confirm)?;
+    Ok(declared_device_types(&query))
+}
+
 fn query_supported_device_types_with_policy(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,

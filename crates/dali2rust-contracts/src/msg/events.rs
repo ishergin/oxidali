@@ -12,7 +12,10 @@ use super::kinds::{
     OperationStatus, OperationType, OperationWorkerSignal, RuntimeSource,
 };
 use super::payload_macros::declare_bus_payloads;
-use super::state::{Dt6ReadSnapshot, LightSetpoint, RuntimeObservation, SetpointDimensions};
+use super::state::{
+    Dt6ReadSnapshot, ExtendedVersionEntry, LightSetpoint, RuntimeObservation, SetpointDimensions,
+    MAX_EXTENDED_VERSIONS,
+};
 use super::wire::DaliEventPayload;
 
 pub const MAX_PERSISTENCE_SLICES: usize = 151;
@@ -911,6 +914,9 @@ pub enum DaliAttributeReadChunk {
         level: Option<u8>,
         colour_type: Option<u8>,
         values: [Option<u16>; 6],
+    },
+    ExtendedVersions {
+        versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS],
     },
 }
 
