@@ -31,6 +31,7 @@ BDD-конвенции — [`../architecture/05-testing-and-bdd.md`](../architec
 | `PollerSettingsDto.max_concurrent` | `400 unknown_field`; в полёте всегда одно чтение (`ADR-009`) | значение `4` маски `PollerSettingsUpdateCommand` |
 | `declared_type` / `declared_color_mode` виртуальной лампы | `400 unknown_field`; лампа наследует тип и цвет от устройства | — |
 | `duration_ms` identify | `422 unsupported_field`; окно опознания принадлежит гиру | — |
+| шаг коммишенинга `physical-selection` | `404 not_found`, как любой неизвестный шаг: IEC 62386-102 Ed.2 резервирует `PHYSICAL SELECTION` | значение `9` `CommissioningStep` |
 
 ## Общее состояние
 

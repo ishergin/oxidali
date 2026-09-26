@@ -147,6 +147,21 @@ Feature: Physical-device attribute reads
     And adapter 0 physical device 0 eventually exposes runtime rgb 255 55 79
     And all scripted DALI exchanges should be consumed without errors
 
+  @id:PD-269
+  Scenario: A power cycle the gear reports forgets the colour state it held in RAM
+    Given a six-channel DT8 discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given an attribute-read script where short address 0 is RGB-active at 254 10 20 and reports no power cycle
+    When I start an attribute read for adapter 0 physical device 0 with runtime status and dt8 colour
+    Then the last operation eventually succeeds
+    And adapter 0 physical device 0 eventually exposes runtime rgb 255 55 79
+    Given an attribute-read script with no device-type probe for short address 0
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
+    Then the last operation eventually succeeds
+    And adapter 0 physical device 0 eventually holds no colour state from before the power cycle
+    And all scripted DALI exchanges should be consumed without errors
+
   @id:PD-251
   Scenario: A colour the operator asked for reads back as the number they asked for
     Given a six-channel DT8 discovery script for short address 0

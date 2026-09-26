@@ -52,7 +52,6 @@ const COMMISSIONING_STEPS: CommissioningStepName[] = [
   'query-short-address',
   'withdraw',
   'terminate',
-  'physical-selection',
 ]
 
 const STEPS_WITH_SHORT = new Set<CommissioningStepName>([

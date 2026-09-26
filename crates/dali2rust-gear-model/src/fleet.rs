@@ -86,6 +86,13 @@ impl GearFleet {
         }
     }
 
+    pub fn power_cycle(&mut self) {
+        self.regs = BusRegisters::default();
+        for gear in &mut self.gears {
+            gear.power_cycle();
+        }
+    }
+
     pub fn now_ms(&self) -> u64 {
         self.now_ms
     }

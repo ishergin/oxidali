@@ -88,13 +88,34 @@ fn resolve_transition(
     )
 }
 
-fn commit_physical_runtime(rec: &mut PhysicalDeviceRecord, commit: &PhysicalRuntimeCommit<'_>) {
+// IEC 62386-102 Table 14
+// IEC 62386-209 Table 8
+fn forget_ram_state(rec: &mut PhysicalDeviceRecord) {
+    rec.last_active_level = rec.attributes.common102.max_level.as_ref().map(|v| v.value);
+    let dt8 = &mut rec.attributes.dt8_color;
+    dt8.color_value_0 = None;
+    dt8.color_value_1 = None;
+    dt8.color_value_2 = None;
+    dt8.gear_features = None;
+    dt8.rgbwaf_control = None;
+    rec.runtime.forget_colour();
+}
+
+fn commit_physical_runtime(
+    rec: &mut PhysicalDeviceRecord,
+    commit: &PhysicalRuntimeCommit<'_>,
+) -> bool {
+    let power_cycled = rec.runtime.power_cycle_began(commit.observation);
+    if power_cycled {
+        forget_ram_state(rec);
+    }
     if commit.setpoint.power == PowerState::Off || commit.setpoint.level > 0 {
         rec.runtime_level = Some(commit.setpoint.level);
     } else if commit.setpoint.power == PowerState::On {
         rec.runtime_level = rec.last_active_level;
     }
-    if let Some(level) = rec.runtime_level.filter(|level| *level > 0) {
+    // IEC 62386-102 §9.4
+    if let Some(level) = rec.runtime_level.filter(|level| *level > 0 && !power_cycled) {
         rec.last_active_level = Some(level);
     }
     rec.runtime.apply_setpoint(commit.setpoint);
@@ -108,6 +129,7 @@ fn commit_physical_runtime(rec: &mut PhysicalDeviceRecord, commit: &PhysicalRunt
     rec.runtime.observed_at_mono_ms = commit
         .observed_at_mono_ms
         .or(rec.runtime.observed_at_mono_ms);
+    power_cycled
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -980,7 +1002,11 @@ impl RegistryStore {
         }
         let silent = !setpoint_states_a_value(commit.setpoint)
             && rec.runtime.observation_adds_nothing(commit.observation);
-        commit_physical_runtime(rec, commit);
+        let power_cycled = commit_physical_runtime(rec, commit);
+        drop(g);
+        if power_cycled {
+            self.dirty.mark_physical_device_dirty(adapter_id, commit.short_address);
+        }
         if silent {
             return RuntimeCommitOutcome::Unchanged;
         }
@@ -1017,7 +1043,11 @@ impl RegistryStore {
         };
         let silent = !setpoint_states_a_value(&setpoint)
             && rec.runtime.observation_adds_nothing(commit.observation);
-        commit_physical_runtime(rec, &physical);
+        let power_cycled = commit_physical_runtime(rec, &physical);
+        drop(g);
+        if power_cycled {
+            self.dirty.mark_physical_device_dirty(adapter_id, commit.short_address);
+        }
         if silent {
             return RuntimeCommitOutcome::Unchanged;
         }
@@ -1858,6 +1888,63 @@ mod stack_footprint_tests {
         assert_eq!(
             format!("{:?}", *boxed),
             format!("{:?}", PhysicalDeviceRecord::empty(0))
+        );
+    }
+}
+
+#[cfg(test)]
+mod power_cycle_tests {
+    use super::*;
+
+    fn status_read(level: u8, status: u8) -> (LightSetpoint, RuntimeObservation) {
+        let setpoint = LightSetpoint { power: PowerState::for_level(level), level, color: None };
+        let observation = RuntimeObservation {
+            status_flags: Some(dali2rust_domain::dali::status::decode(status)),
+            ..RuntimeObservation::default()
+        };
+        (setpoint, observation)
+    }
+
+    fn commit_status_read(rec: &mut super::PhysicalDeviceRecord, level: u8, status: u8) -> bool {
+        let (setpoint, observation) = status_read(level, status);
+        super::commit_physical_runtime(
+            rec,
+            &super::PhysicalRuntimeCommit {
+                short_address: 0,
+                setpoint: &setpoint,
+                observation: &observation,
+                observed_at_mono_ms: None,
+                entry_last_dapc_source: None,
+                entry_source: RuntimeSource::Readback,
+            },
+        )
+    }
+
+    #[test]
+    fn a_power_cycle_puts_last_active_level_back_to_max_level_and_the_power_on_level_leaves_it() {
+        const STATUS_LAMP_ON: u8 = 0x04;
+        const STATUS_LAMP_ON_AFTER_POWER_CYCLE: u8 = 0x84;
+        const MAX_LEVEL: u8 = 200;
+        let mut rec = super::PhysicalDeviceRecord::empty(0);
+        rec.attributes.common102.max_level = Some(ObservedValue {
+            value: MAX_LEVEL,
+            source: dali2rust_domain::registry::AttributeSource::Readback,
+            last_read_ms: Some(1),
+            last_write_confirmed_ms: None,
+        });
+        assert!(!commit_status_read(&mut rec, 90, STATUS_LAMP_ON));
+        assert_eq!(rec.last_active_level, Some(90));
+        assert!(commit_status_read(&mut rec, 150, STATUS_LAMP_ON_AFTER_POWER_CYCLE));
+        assert_eq!(rec.runtime_level, Some(150), "the power-on level is what the lamp shows");
+        assert_eq!(
+            rec.last_active_level,
+            Some(MAX_LEVEL),
+            "IEC 62386-102 Table 14 powers lastActiveLevel up at maxLevel, and §9.4 keeps the \
+             power-on initialisation from moving it"
+        );
+        assert!(
+            !commit_status_read(&mut rec, 150, STATUS_LAMP_ON_AFTER_POWER_CYCLE),
+            "the bit stays set until a level command: a second read is not a second power cycle"
         );
     }
 }

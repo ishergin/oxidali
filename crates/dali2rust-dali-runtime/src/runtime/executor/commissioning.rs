@@ -372,9 +372,6 @@ fn run_write_step(
         }
         CommissioningStep::Withdraw => send_special(controller, SpecialCommand::Withdraw),
         CommissioningStep::Terminate => send_special(controller, SpecialCommand::Terminate),
-        CommissioningStep::PhysicalSelection => {
-            send_special(controller, SpecialCommand::PhysicalSelection)
-        }
         CommissioningStep::Compare
         | CommissioningStep::VerifyShortAddress
         | CommissioningStep::QueryShortAddress => Err(SemanticDaliError::OperationFailed(

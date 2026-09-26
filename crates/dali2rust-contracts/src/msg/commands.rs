@@ -485,7 +485,7 @@ declare_bus_payloads! {
     }
     budget = DaliCommissioningStepCommand {
         registry_adapter_id: u8::MAX,
-        step: CommissioningStep::PhysicalSelection,
+        step: CommissioningStep::Terminate,
         scope: Some(InitialiseScope::Short),
         short_address: Some(63),
         search_address: Some(0x00FF_FFFF),

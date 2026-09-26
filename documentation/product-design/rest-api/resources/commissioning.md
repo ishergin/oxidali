@@ -93,7 +93,7 @@ invalid_value`.
 | `program-short-address` | `{short_address}` | — |
 | `verify-short-address` | `{short_address}` | `match` |
 | `query-short-address` | `{}` | `short_address`, `answer` |
-| `withdraw`, `terminate`, `physical-selection` | `{}` | — |
+| `withdraw`, `terminate` | `{}` | — |
 
 - Ответ — `success`, `backward_frame` и добавки шага; отсутствующее поле значит «к
   шагу не относится». Отказ исполнения тоже приходит `200` с `success: false`, и тогда

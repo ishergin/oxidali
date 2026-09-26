@@ -31,6 +31,12 @@ Feature: Commissioning expert steps
     Then the response status should be 404
     And the DALI mock transport should have received 0 forward frames
 
+  @id:COMM-096
+  Scenario: Physical selection is not an expert step, because IEC 62386-102 Ed.2 reserves it
+    When I POST JSON {} to "/api/v1/adapters/0/commissioning/steps/physical-selection"
+    Then the response status should be 404
+    And the DALI mock transport should have received 0 forward frames
+
   @id:COMM-084
   Scenario: Program-short-address step validates the DALI short-address range
     When I POST JSON {"short_address":99} to "/api/v1/adapters/0/commissioning/steps/program-short-address"

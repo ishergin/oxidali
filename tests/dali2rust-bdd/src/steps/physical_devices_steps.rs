@@ -868,6 +868,14 @@ fn script_attribute_read_faulted_gear(
 }
 
 fn script_attribute_read_rgb_active(mock: &MockDaliTransport, rgb: (u8, u8, u8)) {
+    script_attribute_read_rgb_active_with_status(mock, rgb, SCRIPTED_RUNTIME_STATUS);
+}
+
+fn script_attribute_read_rgb_active_with_status(
+    mock: &MockDaliTransport,
+    rgb: (u8, u8, u8),
+    status: u8,
+) {
     mock.clear();
     mock.expect_forward_frame_with_backward(
         standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryControlGearPresent),
@@ -881,7 +889,7 @@ fn script_attribute_read_rgb_active(mock: &MockDaliTransport, rgb: (u8, u8, u8))
     );
     mock.expect_forward_frame_with_backward(
         standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryStatus),
-        Some(SCRIPTED_RUNTIME_STATUS),
+        Some(status),
     );
     mock.expect_forward_frame_with_backward(
         standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryActualLevel),
@@ -1038,7 +1046,7 @@ async fn given_full_segment_discovery_script(world: &mut DaliWorld) {
     script_scan_discovery(&mock, &full_segment_random_addresses(), 0x02);
 }
 
-// PD-167 PD-178 PD-251
+// PD-167 PD-178 PD-251 PD-269
 #[given("a six-channel DT8 discovery script for short address 0")]
 async fn given_six_channel_discovery_script(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -1286,7 +1294,7 @@ async fn then_trace_failure_query(world: &mut DaliWorld, expectation: String) {
     }
 }
 
-// PD-168 PD-257 PD-258
+// PD-168 PD-257 PD-258 PD-269
 #[given("an attribute-read script with no device-type probe for short address 0")]
 async fn given_attribute_read_no_probe_script(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -1300,7 +1308,34 @@ async fn given_attribute_read_rgb_script(world: &mut DaliWorld, r: u8, g: u8, b:
     script_attribute_read_rgb_active(&mock, (r, g, b));
 }
 
-// PD-167 PD-251
+// PD-269
+#[given(regex = r"^an attribute-read script where short address 0 is RGB-active at (\d+) (\d+) (\d+) and reports no power cycle$")]
+async fn given_attribute_read_rgb_no_power_cycle_script(world: &mut DaliWorld, r: u8, g: u8, b: u8) {
+    const STATUS_LAMP_ON_WITHOUT_POWER_CYCLE: u8 = SCRIPTED_RUNTIME_STATUS & !0x80;
+    let mock = world.dali_mock().lock().expect("mock lock");
+    script_attribute_read_rgb_active_with_status(&mock, (r, g, b), STATUS_LAMP_ON_WITHOUT_POWER_CYCLE);
+}
+
+// PD-269
+#[then("adapter 0 physical device 0 eventually holds no colour state from before the power cycle")]
+async fn then_pd_forgets_ram_colour(world: &mut DaliWorld) {
+    const RAM_ATTRIBUTES: [&str; 5] =
+        ["color_value_0", "color_value_1", "color_value_2", "gear_features", "rgbwaf_control"];
+    let forgotten = |body: &Value| {
+        body.pointer("/state/rgb").is_none_or(Value::is_null)
+            && RAM_ATTRIBUTES
+                .iter()
+                .all(|name| body.pointer(&format!("/attributes/dt8_color/{name}")).is_none())
+    };
+    let json = wait_for_physical_device(world, forgotten);
+    assert!(
+        forgotten(&json),
+        "IEC 62386-102 §9.16.9 and 209 Table 8: a gear that reports a power cycle has lost \
+         its RAM colour state, so what the registry held from before must be gone: {json}"
+    );
+}
+
+// PD-167 PD-251 PD-269
 #[then(regex = r"^adapter 0 physical device 0 eventually exposes runtime rgb (\d+) (\d+) (\d+)$")]
 async fn then_pd_runtime_rgb(world: &mut DaliWorld, r: u64, g: u64, b: u64) {
     let json = wait_for_physical_device(world, |body| {
@@ -2067,7 +2102,7 @@ async fn then_pd_extended_fade_time_read_back(world: &mut DaliWorld) {
     );
 }
 
-// PD-034 PD-156 PD-165 PD-166 PD-167 PD-170 PD-171 PD-178 PD-251
+// PD-034 PD-156 PD-165 PD-166 PD-167 PD-170 PD-171 PD-178 PD-251 PD-269
 #[when("I start an attribute read for adapter 0 physical device 0 with runtime status and dt8 colour")]
 async fn when_start_runtime_and_colour_attribute_read(world: &mut DaliWorld) {
     let body = br#"{"attribute_groups":["runtime_status","dt8_color"],"memory_banks":"none"}"#;
@@ -2079,7 +2114,7 @@ async fn when_start_runtime_and_colour_attribute_read(world: &mut DaliWorld) {
     );
 }
 
-// PD-166 PD-168
+// PD-166 PD-168 PD-269
 #[when(r#"I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only"#)]
 async fn when_start_runtime_status_attribute_read(world: &mut DaliWorld) {
     let body = br#"{"attribute_groups":["runtime_status"],"memory_banks":"none"}"#;
