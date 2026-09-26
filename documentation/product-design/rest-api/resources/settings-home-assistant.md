@@ -21,7 +21,11 @@
 - `enabled`, `broker_host`, `broker_port`, `broker_username`, `publish_qos` (`0` или
   `1`), `retain_state`, `retain_discovery`.
 - `broker_password` — **только на запись**: ни один путь чтения пароль не возвращает;
-  вместо него read-only `broker_password_set`.
+  вместо него read-only `broker_password_set`. На флеше пароль лежит в слайсе настроек
+  открытым текстом — флеш не шифруется, — и экспорт слайса пиру несёт его так же
+  ([ADR-018](../../../architecture/decisions/ADR-018-controller-redundancy.md)). Это
+  ожидаемое поведение: контроллер рассчитан на доверенную LAN, и пароль закрыт только от
+  путей чтения REST.
 - `broker_url_view` — read-only строка для людей (что контроллер будет набирать), а не
   разбираемый URL; пустая, пока брокер не задан.
 - `discovery_prefix`, `state_topic_prefix` — префиксы топиков.
