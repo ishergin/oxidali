@@ -68,6 +68,7 @@ def capture(api, prime=True, log=print):
         "group_matrix": api.groups.matrix(),
         "scenes_meta": api.scenes.list()["scenes"],
         "scenes": api._scene_snapshot(),
+        "policies": api._req("GET", "policies"),
     }
 
 
@@ -196,6 +197,10 @@ def diff(before, after, shown_shorts=None):
         shown = shown_shorts is None or int(short) in shown_shorts
         out += _diff_device(short, was, after["devices"].get(short), shown,
                             owned.get(short, set()))
+    out += ["SA%s is new in the registry" % short
+            for short in sorted(set(after["devices"]) - set(before["devices"]), key=int)]
+    if "policies" in before and _norm(before["policies"]) != _norm(after.get("policies")):
+        out.append("policies %r -> %r" % (before["policies"], after.get("policies")))
     return out
 
 
@@ -225,8 +230,9 @@ def _diff_vl(before, after):
                                                   v.get(field), other.get(field)))
     known = {v["virtual_lamp_id"] for v in before["vl"]["virtual_lamps"]}
     for lid, v in sorted(now.items()):
-        if lid not in known and v.get("binding"):
-            out.append("VL%d (not in the snapshot) bound %r" % (lid, v["binding"]))
+        if lid not in known:
+            out.append("VL%d is not in the snapshot%s" % (
+                lid, " and is bound %r" % v["binding"] if v.get("binding") else ""))
     return out
 
 
@@ -264,7 +270,7 @@ def restore(api, snap, log=print, drive_lamps=True, lamp_shorts=None):
     def _restore_shown_permitted(api_, snap_, log_):
         _restore_shown(api_, snap_, log_, driven)
 
-    steps = (_restore_settings, _restore_timezone, _restore_adapter,
+    steps = (_restore_settings, _restore_policies, _restore_timezone, _restore_adapter,
              _restore_rules, _restore_devices, _restore_vl, _restore_groups,
              _restore_scenes, _restore_hcl, _restore_gear_config,
              _restore_gear_tables) + ((_restore_shown_permitted,) if drive_lamps else ())
@@ -286,6 +292,17 @@ def restore(api, snap, log=print, drive_lamps=True, lamp_shorts=None):
     for line in residual:
         log("prod_state: NOT RESTORED: %s" % line)
     return residual
+
+
+def _restore_policies(api, snap, log):
+    was = snap.get("policies")
+    if was is None:
+        return
+    now = api._req("GET", "policies")
+    patch = {k: v for k, v in was.items() if k != "manages_anything" and now.get(k) != v}
+    if patch:
+        log("prod_state: policies back to %r" % patch)
+        api._req("PATCH", "policies", patch)
 
 
 def _clear_session_overrides(api, snap, after, log):

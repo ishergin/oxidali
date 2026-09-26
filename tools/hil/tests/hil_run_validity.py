@@ -295,5 +295,21 @@ def pytest_sessionfinish(session, exitstatus):
                      "`internal SRAM low-water` names the moment; lowering "
                      "tools/hil/runtime_heap_budget.txt needs a dated reason.")
         session.exitstatus = 1
+    lines += _virtual_gear_lines(state)
+    if state.get("virtual_gear_safety") or state.get("virtual_gear_residual"):
+        session.exitstatus = 1
     config._hil_validity_report = lines
     _write_summary(config, lines)
+
+
+def _virtual_gear_lines(state):
+    if "virtual_gear" not in state and "virtual_gear_residual" not in state:
+        return []
+    lines = ["", "VIRTUAL GEAR: %s" % state.get("virtual_gear", "never opened")]
+    if state.get("virtual_gear_answers") is not None:
+        lines.append("  emulator answer cell: %s" % state["virtual_gear_answers"])
+    lines += ["  SAFETY: %s" % line for line in state.get("virtual_gear_safety") or []]
+    lines += ["  inconclusive: %s" % line
+              for line in state.get("virtual_gear_inconclusive") or []]
+    lines += ["  NOT TORN DOWN: %s" % line for line in state.get("virtual_gear_residual") or []]
+    return lines

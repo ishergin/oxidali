@@ -862,6 +862,10 @@ class _VirtualLamps(_Namespace):
                             % (self._c.adapter, lamp_id),
                             {"physical_short_address": short})
 
+    def delete(self, lamp_id: int):
+        return self._c._req("DELETE", "adapters/%d/virtual-lamps/%d"
+                            % (self._c.adapter, lamp_id))
+
     def unbind(self, lamp_id: int) -> dict:
         return self._c._req("DELETE", "adapters/%d/virtual-lamps/%d/binding"
                             % (self._c.adapter, lamp_id))
