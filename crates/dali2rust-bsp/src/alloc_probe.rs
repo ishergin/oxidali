@@ -13,9 +13,7 @@ mod imp {
         COUNT.fetch_add(1, Ordering::Relaxed);
         LAST_SIZE.store(size, Ordering::Relaxed);
         LAST_CAPS.store(caps, Ordering::Relaxed);
-        if size > MAX_SIZE.load(Ordering::Relaxed) {
-            MAX_SIZE.store(size, Ordering::Relaxed);
-        }
+        MAX_SIZE.fetch_max(size, Ordering::Relaxed);
     }
 
     static ARM_RC: AtomicU32 = AtomicU32::new(u32::MAX);

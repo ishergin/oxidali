@@ -30,8 +30,7 @@ impl StackLowWater {
 
         // SAFETY: pure FFI query about the current task; no aliasing, no state.
         let free = unsafe { esp_idf_svc::sys::uxTaskGetStackHighWaterMark(core::ptr::null_mut()) };
-        if free < self.min_free.load(Ordering::Relaxed) {
-            self.min_free.store(free, Ordering::Relaxed);
+        if free < self.min_free.fetch_min(free, Ordering::Relaxed) {
             log::warn!(
                 "{} stack low-water: {free} B free of {} after {tag}",
                 self.task,

@@ -69,8 +69,8 @@ BDD conventions → [05](05-testing-and-bdd.md); updates over the network →
 
 ## Build-time knobs
 
-Read with `option_env!`. The build script declares every `DALI2RUST_*` name under the
-firmware's `src` as `rerun-if-env-changed`, so a knob needs no build-script edit.
+Read with `option_env!`, which records each name in the crate's dep-info; cargo rebuilds
+the crate when one changes, so a knob needs no build-script edit.
 `hil flash` builds for itself: pass knobs to it, and check the flip reached the binary.
 
 | Knob | Effect |

@@ -186,7 +186,7 @@ pub fn ensure_confirmation_success(body: &[u8]) -> Result<(), HttpResponse> {
         "superseded" => json_err(409, "superseded"),
         "vl_unbound" => json_err(422, "vl_unbound"),
         "confirmation_timeout" => json_err(504, "confirmation_timeout"),
-        "conflict" => json_err(409, "conflict"),
+        "conflict" => conflict_naming_its_cause(message),
         "not_found" => json_err(404, "not_found"),
         "invalid_value" => json_err(422, "invalid_value"),
         "invalid_resource_id" => json_err(400, "invalid_resource_id"),
@@ -202,6 +202,14 @@ pub fn ensure_confirmation_success(body: &[u8]) -> Result<(), HttpResponse> {
 }
 
 const CONTROLLER_PASSIVE: &str = "controller_passive";
+
+fn conflict_naming_its_cause(message: &str) -> HttpResponse {
+    if message.is_empty() {
+        json_err(409, "conflict")
+    } else {
+        json_err_with_message(409, "conflict", message)
+    }
+}
 
 const STANDBY_RETRY_AFTER: &[(&str, &str)] = &[
     ("Retry-After", "1"),

@@ -78,3 +78,17 @@ Feature: A disabled adapter refuses work, and says so before its TTL
     And the operation error code should be "conflict"
     And the operation error message should be "adapter_disabled"
     And the DALI mock transport should have received 0 forward frame
+
+  @id:ADP-027
+  Scenario: A synchronous command on a disabled adapter names the cause of its 409
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    When I PATCH JSON {"enabled":false} to "/api/v1/adapters/0"
+    Then the response status should be 200
+    And the DALI mock transport frame log should be cleared
+    When I PUT JSON {"power":"on","level":180} to "/api/v1/adapters/0/physical-devices/0/target-state"
+    Then the response status should be 409
+    And the JSON field "error" should be "conflict"
+    And the JSON field "message" should be "adapter_disabled"
+    And the DALI mock transport should have received 0 forward frame

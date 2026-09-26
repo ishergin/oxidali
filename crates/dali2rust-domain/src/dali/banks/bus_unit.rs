@@ -35,10 +35,25 @@ impl EmergencyGearType {
     }
 }
 
+// DiiA 098bp Table 5
+const fn defined_row_label(row: u8) -> &'static str {
+    match row {
+        0 => "207 LED, 1 logical unit",
+        1 => "207 LED, 2 logical units",
+        2 => "207 LED, 3 logical units",
+        3 => "207 LED, 4 logical units",
+        4 => "209 tunable white, 1 logical unit",
+        5 => "209 tunable white, 2 logical units",
+        6 => "209 RGBWAF",
+        7 => "209 tunable white, RGBWAF and xy",
+        _ => "207 LED and 209 tunable white, one logical unit each",
+    }
+}
+
 impl BusUnitConfiguration {
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Defined(_) => "unnamed row",
+            Self::Defined(row) => defined_row_label(row),
             Self::EmergencyType(_) => "Part 202 emergency control gear",
             Self::Reserved(_) => "reserved",
             Self::ManufacturerSpecific(_) => "manufacturer-specific",
@@ -140,13 +155,20 @@ mod tests {
     }
 
     #[test]
-    fn rows_zero_to_eight_are_reported_but_not_named() {
-        for raw in 0u8..=8 {
-            assert_eq!(
-                BusUnitConfiguration::from_byte(raw),
-                BusUnitConfiguration::Defined(raw)
-            );
-        }
+    fn rows_zero_to_eight_carry_their_table_5_names() {
+        let names: Vec<&str> = (0u8..=8)
+            .map(|raw| {
+                assert_eq!(BusUnitConfiguration::from_byte(raw), BusUnitConfiguration::Defined(raw));
+                BusUnitConfiguration::from_byte(raw).label()
+            })
+            .collect();
+        assert_eq!(names[0], "207 LED, 1 logical unit");
+        assert_eq!(names[3], "207 LED, 4 logical units");
+        assert_eq!(names[5], "209 tunable white, 2 logical units");
+        assert_eq!(names[6], "209 RGBWAF");
+        assert_eq!(names[8], "207 LED and 209 tunable white, one logical unit each");
+        let distinct: std::collections::BTreeSet<&str> = names.iter().copied().collect();
+        assert_eq!(distinct.len(), names.len(), "every Table 5 row has its own name");
     }
 
     #[test]
@@ -163,7 +185,7 @@ mod tests {
             };
             assert_eq!(class.emergency_letter(), expected_letter, "byte {raw}");
         }
-        assert_eq!(BusUnitConfiguration::from_byte(0).label(), "unnamed row");
+        assert_eq!(BusUnitConfiguration::from_byte(0).label(), "207 LED, 1 logical unit");
         assert_eq!(BusUnitConfiguration::from_byte(9).label(), "Part 202 emergency control gear");
         assert_eq!(BusUnitConfiguration::from_byte(13).label(), "reserved");
         assert_eq!(BusUnitConfiguration::from_byte(192).label(), "manufacturer-specific");

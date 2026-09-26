@@ -825,6 +825,13 @@ impl Gear {
         self.device_type_walk = None;
     }
 
+    // IEC 62386-101 §9.3
+    // IEC 62386-102 §11.5.13
+    pub(crate) fn hear_elsewhere(&mut self) -> bool {
+        self.device_type_walk = None;
+        self.pending_repeat.take().is_some()
+    }
+
     fn set_min_level(&mut self, dtr0: u8) {
         self.min_level = if dtr0 <= self.spec.phm {
             self.spec.phm

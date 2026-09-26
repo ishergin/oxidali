@@ -24,6 +24,7 @@ const PROJECT_LOG_TARGETS: &[&str] = &[
     "dali2rust_bsp::esp32p4::eth",
     "dali2rust_bsp::esp_thread",
     "dali2rust_bsp::slice_store_raw",
+    "dali2rust_bsp::sntp_sync",
     "dali2rust_dali_runtime::runtime::dali_worker",
     "dali2rust_display_runtime::display::esp_idf",
     "dali2rust_firmware::composition",

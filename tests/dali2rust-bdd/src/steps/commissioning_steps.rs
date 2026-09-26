@@ -119,6 +119,18 @@ fn encoded_short(short: u8) -> u8 {
 // COMM-001 COMM-010
 #[given(regex = r"^an address-change script from short address (\d+) to (\d+)$")]
 async fn given_address_change_script(world: &mut DaliWorld, from: u8, to: u8) {
+    script_address_change(world, from, to, Some(0x00));
+}
+
+// COMM-099
+#[given(
+    regex = r"^an address-change script from short address (\d+) to (\d+) whose new address stays silent$"
+)]
+async fn given_address_change_script_silent(world: &mut DaliWorld, from: u8, to: u8) {
+    script_address_change(world, from, to, None);
+}
+
+fn script_address_change(world: &mut DaliWorld, from: u8, to: u8, status_at_new: Option<u8>) {
     let mock = world.dali_mock().lock().expect("mock lock");
     mock.clear();
     let encoded = encoded_short(to);
@@ -130,10 +142,9 @@ async fn given_address_change_script(world: &mut DaliWorld, from: u8, to: u8) {
     for _ in 0..CONFIG_COMMAND_SENDS {
         mock.expect_forward_frame(standard_frame(from, StandardCommand::SetShortAddress));
     }
-    let _ = encoded;
     mock.expect_forward_frame_with_backward(
         standard_frame(to, StandardCommand::QueryStatus),
-        Some(0x00),
+        status_at_new,
     );
 }
 
@@ -178,7 +189,7 @@ async fn then_result_new_short(world: &mut DaliWorld, expected: u64) {
     );
 }
 
-// COMM-010
+// COMM-010 COMM-099
 #[then(regex = r"^physical device (\d+) should eventually exist on adapter (\d+)$")]
 async fn then_device_exists(world: &mut DaliWorld, short: u8, adapter: u8) {
     let port = world.server_port;
@@ -189,7 +200,7 @@ async fn then_device_exists(world: &mut DaliWorld, short: u8, adapter: u8) {
     );
 }
 
-// COMM-010
+// COMM-010 COMM-099
 #[then(regex = r"^physical device (\d+) should eventually be absent on adapter (\d+)$")]
 async fn then_device_absent(world: &mut DaliWorld, short: u8, adapter: u8) {
     let port = world.server_port;
@@ -324,7 +335,7 @@ async fn then_step_short_address_absent(world: &mut DaliWorld) {
     );
 }
 
-// ADP-023 ADP-026
+// ADP-023 ADP-026 ADP-027
 #[then("the DALI mock transport frame log should be cleared")]
 async fn then_clear_mock_frame_log(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear();

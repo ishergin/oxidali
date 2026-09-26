@@ -1,8 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const KNOB_PREFIX: &str = "DALI2RUST_";
-
 const PRODUCTS_DB: &str = "dali-products.json.gz";
 const LOCAL_ASSETS_DIR: &str = "assets/local";
 const WEB_ASSETS_DIR: &str = "assets/web";
@@ -16,10 +14,6 @@ const IMAGE_INPUTS: &[&str] = &[
 ];
 
 fn main() {
-    for knob in scan_env_knobs(Path::new("src")) {
-        println!("cargo:rerun-if-env-changed={knob}");
-    }
-
     let manifest_dir: PathBuf = std::env::var("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
@@ -128,38 +122,3 @@ fn non_empty(s: String) -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
-fn scan_env_knobs(dir: &Path) -> Vec<String> {
-    let mut found = Vec::new();
-    collect_from(dir, &mut found);
-    found.sort();
-    found.dedup();
-    found
-}
-
-fn collect_from(dir: &Path, out: &mut Vec<String>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_from(&path, out);
-        } else if path.extension().map_or(false, |ext| ext == "rs") {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                out.extend(knob_names_in(&text));
-            }
-        }
-    }
-}
-
-fn knob_names_in(text: &str) -> Vec<String> {
-    text.match_indices(KNOB_PREFIX)
-        .map(|(at, _)| {
-            text[at..]
-                .chars()
-                .take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_')
-                .collect()
-        })
-        .collect()
-}
