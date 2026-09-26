@@ -295,22 +295,21 @@ one. Every session snapshots the controller's configuration and the light and re
 them afterwards. The runbook, with what a bench needs, the configuration and
 the first run, is [`tools/hil/README.md`](tools/hil/README.md).
 
-Two more instruments target an ESP32-C6 with a Pico-DALI2 and are not yet ported to the
-ESP32-P4:
+Two more instruments sit beside the toolkit:
 
-- [`tools/dali-gear-sim`](tools/dali-gear-sim/README.md), the **gear emulator**: one
-  board that answers on a real line as a fleet of about fifty virtual control gear
-  (DT6, DT8 Tc, DT8 RGB+Tc) while drawing a single bus load. It gives the controller a
-  full 64-address bus without 64 drivers: the whole commissioning search, a poller sweep
-  over every address, group and broadcast applies, and a registry at its ceiling. Short
-  addresses 0–9 are reserved for the real lamps on the same wire. It runs the shared
-  `dali2rust-gear-model` crate, the same model as the host simulator. The HIL toolkit
-  drives it over its serial console (`HIL_GEAR_SIM_PORT`).
-- [`tools/dali-arbiter`](tools/dali-arbiter/README.md), the **wire witness**: a
-  receive-only board that records raw pulse widths with the RMT peripheral. The firmware
-  cannot judge its own transmit timing, so this board compares our frames with a
-  reference master's frames in the same capture; `hil/arbiter.py` decodes and scores the
-  captures.
+- [`tools/dali-gear-sim`](tools/dali-gear-sim/README.md), the **gear emulator**: the
+  redundancy pair's second ESP32-P4, borrowed for a session, answers on the shared line
+  as a fleet of virtual control gear (DT6, DT8 Tc, DT8 RGB+Tc) while drawing a single
+  bus load. Tests drive gear that is nobody's light: target states, groups, scenes, HCL,
+  the commissioning search, a poller sweep and a registry near its ceiling. Every boot
+  starts with no fleet until the toolkit names the short addresses the real lamps hold,
+  and nothing is stored. It runs the shared `dali2rust-gear-model` crate, the same model
+  as the host simulator, and the HIL toolkit drives it over its serial console.
+- [`tools/dali-arbiter`](tools/dali-arbiter/README.md), the **wire witness**, targets an
+  ESP32-C6 with a Pico-DALI2 and is not ported: a receive-only board that records raw
+  pulse widths with the RMT peripheral. The firmware cannot judge its own transmit
+  timing, so this board compares our frames with a reference master's frames in the
+  same capture; `hil/arbiter.py` decodes and scores the captures.
 
 ## Roadmap
 
@@ -337,7 +336,7 @@ ESP32-P4:
 | `web/design-system/` | A design card for every screen and component |
 | `hardware/enclosure/` | The DIN-rail enclosure: the FreeCAD model and its exports |
 | `tools/hil/` | The hardware-in-the-loop test toolkit |
-| `tools/dali-gear-sim/`, `tools/dali-arbiter/` | The gear emulator and the wire witness (ESP32-C6, not ported yet) |
+| `tools/dali-gear-sim/`, `tools/dali-arbiter/` | The gear emulator (the pair's second ESP32-P4) and the wire witness (ESP32-C6, not ported) |
 | `scripts/` | Merge-gate scripts (`just verify` runs them all) |
 | `documentation/` | Architecture, decision records and the product design |
 

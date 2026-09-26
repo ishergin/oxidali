@@ -334,9 +334,9 @@ cargo run --target aarch64-apple-darwin -p dali2rust-adapters --example host_dev
 - Run `just ci` before a commit lands and after anything touching a contract, a wire
   order or ESP-only code. `.github/workflows/ci.yml` runs `just ci` without
   `gear-sim-check`, BDD on a Linux runner, and does not replace the local run.
-- [`tools/dali-gear-sim`](tools/dali-gear-sim/README.md) is a separate workspace pinned to
-  the ESP32-C6 and not ported; `just gear-sim-check` proves only that it
-  type-checks.
+- [`tools/dali-gear-sim`](tools/dali-gear-sim/README.md) is a separate workspace for the
+  pair's second ESP32-P4, borrowed for a session; `just gear-sim-check` type-checks it and
+  `just gear-sim-isr-iram-check` gates its interrupt.
 - `hardware/enclosure/` holds the DIN-rail enclosure; the `Params` spreadsheet in
   `dali2rust-case.FCStd` is its only source of dimensions.
 
