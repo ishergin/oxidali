@@ -1183,9 +1183,7 @@ mod tests {
         // SAFETY: single-threaded test standing in for the ISR context.
         unsafe { tick_n(&core, 20) };
 
-        let mut data = [0u8; HalfBitBuffer::DATA_LEN];
-        data[0] = 0b0101_0101;
-        data[1] = 0b0101_0101;
+        let data = test_forward_frame();
         assert!(core.submit_tx(&data, 16, false, 0));
         // SAFETY: see above.
         unsafe { tick_n(&core, 20) };
