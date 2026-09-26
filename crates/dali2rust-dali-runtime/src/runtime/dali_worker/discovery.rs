@@ -108,7 +108,7 @@ fn publish_discovery_failed(
     counters: &DaliWorkerCounters,
 ) {
     let fail_ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, w, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryFailedEvent {});
-    publish_event_typed(publisher, fail_ev, counters);
+    publish_event_typed(publisher, fail_ev);
     counters
         .discovery_failed_events_published
         .fetch_add(1, Ordering::Relaxed);
@@ -136,7 +136,7 @@ fn publish_discovery_succeeded(
 ) {
     let done =
         dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, w, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryCompletedEvent { registry_adapter_id: reg_aid });
-    publish_event_typed(publisher, done, counters);
+    publish_event_typed(publisher, done);
     publish_policy_apply_if_armed(publisher, adapter_id, reg_aid, read_port, correlation);
     publish_operation_worker_signal(
         publisher,

@@ -162,6 +162,17 @@ Feature: Physical-device attribute reads
     And adapter 0 physical device 0 eventually holds no colour state from before the power cycle
     And all scripted DALI exchanges should be consumed without errors
 
+  @id:PD-270
+  Scenario: The extended section reads the extended version of every device type the gear declares
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given an extended attribute-read script for a gear declaring device types 6 and 8
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "extended" only
+    Then the last operation eventually succeeds
+    And physical device 0 eventually exposes extended versions 6:1 and 8:8
+    And all scripted DALI exchanges should be consumed without errors
+
   @id:PD-251
   Scenario: A colour the operator asked for reads back as the number they asked for
     Given a six-channel DT8 discovery script for short address 0

@@ -126,6 +126,7 @@ fn sample_pd(short_address: u8, cct: bool, xy: bool, rgb: bool) -> PhysicalDevic
         device_type_effective: "dt6_led",
         device_type_source: "discovered",
         supported_device_types: None,
+        extended_versions: Vec::new(),
         color_mode_discovered: "brightness",
         color_mode_override: None,
         color_mode_effective: "brightness",

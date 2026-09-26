@@ -60,18 +60,17 @@ cannot resolve.
 | --- | --- | --- |
 | 0xAA | `QUERY CONTROL GEAR FAILURE` | Modelled, never sent (ed2 §9.16.2, §11.5.4). Status bit 0 covers part of it; it is the second candidate for a broadcast health probe. |
 | 0xA6 | `QUERY MANUFACTURER SPECIFIC MODE` | Modelled, never sent (§9.9, §11.5.27). |
-| 0x23 / 0x9E | `SET` / `QUERY OPERATING MODE` | Never sent. A gear parked in a manufacturer-specific mode (0x80–0xFF), where the standard guarantees nothing else, looks healthy. |
+| 0x23 / 0x9E | `SET` / `QUERY OPERATING MODE` | Never sent. A gear parked in a manufacturer-specific mode (0x80–0xFF) looks healthy, although there the standard guarantees only the 101 bus behaviour, the operating-mode commands and the special commands (§9.9) — not level commands or `QUERY STATUS`. |
 | 0x81, 0xC7, 0xC9, 0x24 | `ENABLE WRITE MEMORY`, `WRITE MEMORY LOCATION` (± `NO REPLY`), `RESET MEMORY BANK` | No memory-bank write path — §3. |
 | 0x05, 0x06, 0x08 | `RECALL MAX LEVEL`, `RECALL MIN LEVEL`, `ON AND STEP UP` | Never sent by the product. With the writable `maxLevel` / `minLevel` they are two of the three presets reachable by one group frame (the third is a scene); `ON AND STEP UP` lights dark members at their own `minLevel` (§11.3.10). |
 | 0x01–0x04, 0x07 | `UP`, `DOWN`, `STEP UP`, `STEP DOWN`, `STEP DOWN AND OFF` | Never sent — §1.6. |
-| 0xFF | `QUERY EXTENDED VERSION NUMBER` | Sent only behind `ENABLE DEVICE TYPE 6`, so no other device type's extended version can be read, although DiiA 12.7.2 asks for one per discovered type. |
 
 ## 3. Memory banks
 
 | Finding | Detail |
 | --- | --- |
-| No write path | `ENABLE WRITE MEMORY`, `WRITE MEMORY LOCATION` and `RESET MEMORY BANK` are never sent. Bank 1's OEM GTIN and identification number, Part 251's NVM-RW luminaire data, bank 206's resettable counters and Part 253's lock-byte latch (§9.2.3) cannot be written. |
-| Bank 201 (DiiA 250, DT49) | Not read: integrated bus power supply current and status. |
+| No write path | `ENABLE WRITE MEMORY`, `WRITE MEMORY LOCATION` and `RESET MEMORY BANK` are never sent. Bank 1's OEM GTIN and identification number, Part 251's NVM-RW luminaire data, bank 206's resettable counters, bank 207's luminaire constants, the failure counters banks 205 and 206 reset only through `RESET MEMORY BANK`, and the whole-bank latch of Parts 252 (§9.2.3) and 253 (§9.2.4) cannot be written. |
+| Bank 201 (DiiA 250, DT49) | Not read: the integrated bus power supply's guaranteed and maximum current (0x04, 0x05) and its on/off status (0x06, NVM-RW), nor `QUERY ACTIVE POWER SUPPLY`. |
 
 ## 4. Part 209 — DT8 colour
 
@@ -131,7 +130,8 @@ unit, and DiiA 351's bank 201 (device type and the type B arbitration byte, whic
 never written `0x00`: that value disables arbitration); being commissioned by another
 controller (`INITIALISE`, `RANDOMISE`, address search, `COMPARE`, address programming);
 `POWER NOTIFICATION`; and quiescent mode. DALI-2 certification is out of reach until
-they are.
+they are. The design to build them from, and the decisions it owes, is
+[ADR-030](../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md).
 
 ## 9. Parts not implemented
 
@@ -180,7 +180,6 @@ supersedes both.
 | 5.6 | `lampFailure` depends on the light-source type; a converter (type 253) detects failure at its output | `QUERY LIGHT SOURCE TYPE` is read and shown; failure handling does not use it. |
 | 7.1.1 | An NVM variable survives a power cycle only ≥ 30 s after its write (or 300 ms after `SAVE PERSISTENT VARIABLES`) | Not modelled: scenes programmed just before a power cut are lost silently. |
 | 10.6.13 | New-edition 209 variables | §4.3. |
-| 12.7.2 | `ENABLE DEVICE TYPE x` → `QUERY EXTENDED VERSION NUMBER` per discovered type | DT6 only — §2.2. |
 
 ## 15. Input devices
 
@@ -210,7 +209,6 @@ gear has cycled. As a boolean broadcast query it needs a positive control.
 Ordered by consequence per unit of work:
 
 1. §16.3 — look for `powerCycleSeen` unprompted, with a broadcast `QUERY POWER FAILURE`.
-2. §2.2 `0xFF`, §10 12.7.2 — the extended version of every discovered device type.
-3. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
-4. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
-5. §3 — a memory-bank write path, when a commissioning surface asks for one.
+2. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
+3. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
+4. §3 — a memory-bank write path, when a commissioning surface asks for one.

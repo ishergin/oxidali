@@ -1026,7 +1026,7 @@ fn assert_no_script_errors(world: &DaliWorld) {
     assert_eq!(mock.script_error(), None, "unexpected mock script error");
 }
 
-// ADP-022 ADP-023 COMM-001 COMM-004 COMM-008 COMM-010 COMM-030 COMM-032 COMM-034 COMM-036 COMM-038 COMM-052 COMM-056 COMM-057 COMM-092 MQTT-001 MQTT-003 MQTT-005 MQTT-007 MQTT-012 MQTT-013 MQTT-015 MQTT-019 OP-100 OP-132 PD-027 PD-028 PD-029 PD-030 PD-034 PD-035 PD-036 PD-037 PD-040 PD-041 PD-042 PD-043 PD-060 PD-061 PD-062 PD-063 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 PD-164 PD-165 PD-166 PD-168 PD-169 PD-170 PD-171 PD-176 PD-177 PD-179 PD-180 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 PD-190 PD-195 PD-196 PD-197 PD-198 PD-199 PD-200 PD-201 PD-220 PD-221 PD-222 PD-230 PD-241 PD-242 PD-243 PD-250 PD-252 PD-253 PD-254 PD-255 PERS-005 STATS-005 SYS-217 SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 SYS-235 SYS-236 SYS-239 SYS-240 WS-003 WS-004 WS-010 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 WS-046 MQTT-024 PD-267 PD-268 POLICY-010 POLICY-011
+// ADP-022 ADP-023 COMM-001 COMM-004 COMM-008 COMM-010 COMM-030 COMM-032 COMM-034 COMM-036 COMM-038 COMM-052 COMM-056 COMM-057 COMM-092 MQTT-001 MQTT-003 MQTT-005 MQTT-007 MQTT-012 MQTT-013 MQTT-015 MQTT-019 OP-100 OP-132 PD-027 PD-028 PD-029 PD-030 PD-034 PD-035 PD-036 PD-037 PD-040 PD-041 PD-042 PD-043 PD-060 PD-061 PD-062 PD-063 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 PD-164 PD-165 PD-166 PD-168 PD-169 PD-170 PD-171 PD-176 PD-177 PD-179 PD-180 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 PD-190 PD-195 PD-196 PD-197 PD-198 PD-199 PD-200 PD-201 PD-220 PD-221 PD-222 PD-230 PD-241 PD-242 PD-243 PD-250 PD-252 PD-253 PD-254 PD-255 PERS-005 STATS-005 SYS-217 SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 SYS-235 SYS-236 SYS-239 SYS-240 WS-003 WS-004 WS-010 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 WS-046 MQTT-024 PD-267 PD-268 POLICY-010 POLICY-011 PD-270
 #[given("a golden control-gear discovery script for short address 0")]
 async fn given_golden_discovery_script(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -2045,27 +2045,84 @@ async fn given_extended_fade_write_script(world: &mut DaliWorld) {
     );
 }
 
-// PD-158
-#[given("an extended attribute-read script with fade byte 0x14 for short address 0")]
-async fn given_extended_attribute_read_script(world: &mut DaliWorld) {
-    let mock = world.dali_mock().lock().expect("mock lock");
+// IEC 62386-102 §11.6.2
+fn extended_version_query_frame(short: u8) -> u16 {
+    const QUERY_EXTENDED_VERSION_NUMBER: u16 = 0xFF;
+    (u16::from((short << 1) | 1) << 8) | QUERY_EXTENDED_VERSION_NUMBER
+}
+
+fn script_extended_section(
+    mock: &MockDaliTransport,
+    device_type_walk: &[u8],
+    versions: &[(u8, Option<u8>)],
+) {
     mock.clear();
-    script_attribute_read_prelude(&mock, TEST_SHORT_ADDRESS);
+    script_attribute_read_prelude(mock, TEST_SHORT_ADDRESS);
     mock.expect_forward_frame_with_backward(
         standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryExtendedFadeTime),
         Some(0x14),
     );
-    mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(6)));
+    let (first, rest) = device_type_walk.split_first().expect("a device-type answer");
     mock.expect_forward_frame_with_backward(
-        extended_frame(
-            TEST_SHORT_ADDRESS,
-            ExtendedCommand::Dt6(Dt6Command::QueryExtendedVersionNumber),
-        ),
-        Some(2),
+        standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryDeviceType),
+        Some(*first),
     );
+    for next in rest {
+        mock.expect_forward_frame_with_backward(
+            standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryNextDeviceType),
+            Some(*next),
+        );
+    }
+    for (device_type, answer) in versions {
+        mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(*device_type)));
+        mock.expect_forward_frame_with_backward(
+            extended_version_query_frame(TEST_SHORT_ADDRESS),
+            *answer,
+        );
+    }
 }
 
 // PD-158
+#[given("an extended attribute-read script with fade byte 0x14 for short address 0")]
+async fn given_extended_attribute_read_script(world: &mut DaliWorld) {
+    const DT8: u8 = 8;
+    let mock = world.dali_mock().lock().expect("mock lock");
+    script_extended_section(&mock, &[DT8], &[(DT8, Some(2))]);
+}
+
+// PD-270
+#[given("an extended attribute-read script for a gear declaring device types 6 and 8")]
+async fn given_extended_multi_type_script(world: &mut DaliWorld) {
+    const MASK: u8 = 0xFF;
+    const WALK_END: u8 = 0xFE;
+    let mock = world.dali_mock().lock().expect("mock lock");
+    script_extended_section(&mock, &[MASK, 6, 8, WALK_END], &[(6, Some(1)), (8, Some(0x08))]);
+}
+
+// PD-270
+#[then(regex = r"^physical device 0 eventually exposes extended versions (\d+):(\d+) and (\d+):(\d+)$")]
+async fn then_pd_extended_versions(world: &mut DaliWorld, t1: u64, v1: u64, t2: u64, v2: u64) {
+    let wanted = [(t1, v1), (t2, v2)];
+    let holds = |body: &Value| {
+        let versions = body.pointer("/extended_versions").and_then(Value::as_array);
+        versions.is_some_and(|list| {
+            wanted.iter().all(|(t, v)| {
+                list.iter().any(|entry| {
+                    entry.get("device_type").and_then(Value::as_u64) == Some(*t)
+                        && entry.get("version_number").and_then(Value::as_u64) == Some(*v)
+                })
+            })
+        })
+    };
+    let json = wait_for_physical_device(world, holds);
+    assert!(
+        holds(&json),
+        "IEC 62386-102 §11.6.2: every declared device type answers its own extended \
+         version behind its own ENABLE DEVICE TYPE: {json}"
+    );
+}
+
+// PD-158 PD-270
 #[when(r#"I start an attribute read for adapter 0 physical device 0 with attribute group "extended" only"#)]
 async fn when_start_extended_attribute_read(world: &mut DaliWorld) {
     let body = br#"{"attribute_groups":["extended"],"memory_banks":"none"}"#;

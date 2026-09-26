@@ -3,6 +3,15 @@ use serde::{Deserialize, Serialize};
 use super::errors::CompactErrorPayload;
 use super::kinds::{ColorMode, LastDapcSource, PowerState, RuntimeSource};
 
+pub const MAX_EXTENDED_VERSIONS: usize = 8;
+
+// IEC 62386-102 §11.6.2
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtendedVersionEntry {
+    pub device_type: u8,
+    pub version_number: Option<u8>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StatusFlags {
     pub raw: u8,

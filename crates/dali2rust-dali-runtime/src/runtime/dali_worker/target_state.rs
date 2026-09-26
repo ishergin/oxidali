@@ -139,8 +139,8 @@ fn close_target_state_failure(
     error: &SemanticDaliError,
 ) {
     publish_target_state_failed(
-        publisher, adapter_id, correlation_id, counters, registry_adapter_id, scope,
-        short_address, error,
+        publisher, adapter_id, correlation_id, registry_adapter_id, scope, short_address,
+        error,
     );
     counters.execution_failed.fetch_add(1, Ordering::Relaxed);
     emit_execution_failed_with_product_error(
@@ -161,7 +161,6 @@ fn publish_target_state_failed(
     publisher: &BusPublisher,
     adapter_id: BusId,
     correlation_id: u64,
-    counters: &DaliWorkerCounters,
     registry_adapter_id: u8,
     scope: dali2rust_contracts::msg::DaliTargetScope,
     short_address: Option<u8>,
@@ -184,7 +183,6 @@ fn publish_target_state_failed(
             Some(dali2rust_contracts::msg::Origin::Internal),
             event,
         ),
-        counters,
     );
 }
 
@@ -206,7 +204,7 @@ fn handle_set_target_state_short(
         apply_short_target_state(controller, short_address, sp, policy)
     }) {
         publish_target_state_failed(
-            publisher, adapter_id, correlation_id, counters, registry_adapter_id,
+            publisher, adapter_id, correlation_id, registry_adapter_id,
             dali2rust_contracts::msg::DaliTargetScope::Short, Some(short_address), &error,
         );
         counters.execution_failed.fetch_add(1, Ordering::Relaxed);
@@ -320,7 +318,7 @@ fn handle_set_target_state_group(
         apply_group_target_state(controller, group_id, sp)
     }) {
         let event = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliTargetStateFailedEvent { adapter_id: registry_adapter_id, short_address: 0, error: dali2rust_contracts::msg::CompactErrorPayload::new(error.code(), error.message()), scope: dali2rust_contracts::msg::DaliTargetScope::Group, group_id: Some(group_id), virtual_lamp_id: None });
-        publish_event_typed(publisher, event, counters);
+        publish_event_typed(publisher, event);
         counters.execution_failed.fetch_add(1, Ordering::Relaxed);
         emit_execution_failed_with_product_error(
             publisher,
@@ -413,7 +411,7 @@ fn fail_target_state_vl_unbound(
     counters: &DaliWorkerCounters,
 ) {
     let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliTargetStateFailedEvent { adapter_id: registry_adapter_id, short_address: 0, error: dali2rust_contracts::msg::CompactErrorPayload::new(ErrorCode::VlUnbound, "vl_unbound"), scope: dali2rust_contracts::msg::DaliTargetScope::VirtualLamp, group_id: None, virtual_lamp_id: Some(vl_id) });
-    publish_event_typed(publisher, ev, counters);
+    publish_event_typed(publisher, ev);
     emit_execution_failed_with_product_error(
         publisher,
         correlation_id,
