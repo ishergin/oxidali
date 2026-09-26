@@ -50,7 +50,7 @@ bdd:
 
 [doc("Run only the scenarios of one stage.")]
 bdd-stage STAGE:
-    cargo test --target {{default_host}} -p dali2rust-bdd --test bdd -- "{{STAGE}}"
+    ONLY_STAGE={{STAGE}} cargo test --target {{default_host}} -p dali2rust-bdd --test bdd
 
 [doc("Fail if a stage still has @wip scenarios.")]
 check-stage-clean STAGE:

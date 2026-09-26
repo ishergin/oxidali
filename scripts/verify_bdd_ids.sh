@@ -18,7 +18,7 @@ registry_doc = sys.argv[2]
 scenario_re = re.compile(r'^\s*Scenario(?: Outline)?:')
 id_re = re.compile(r'@id:([A-Z]+(?:-[A-Z]+)*-[0-9]{3}[a-z]?)\b')
 stage_re = re.compile(r'@stage-([A-Z][0-9]{1,2})\b')
-allowed_stage_re = re.compile(r'^(F[0-6]|R(?:[1-9]|1[0-6])|I(?:[1-9]|10)|X[1-4])$')
+allowed_stage_re = re.compile(r'^(F[0-6]|R(?:[1-9]|1[0-7])|I(?:[1-9]|10)|X[1-4])$')
 prefix_re = re.compile(r'^([A-Z]+(?:-[A-Z]+)*-)[0-9]{3}[a-z]?$')
 
 registered_prefixes = set()

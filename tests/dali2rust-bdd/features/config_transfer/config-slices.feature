@@ -1,4 +1,4 @@
-@stage-X1
+@stage-R17
 Feature: Configuration slices — export and import
 
   The configuration a standby cannot learn from the wire. The sniffer carries

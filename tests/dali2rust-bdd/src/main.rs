@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cucumber::gherkin::{Feature, Scenario};
 use cucumber::World;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_adapters::{build_http_test_stack, BusStackRuntime, DaliRuntimeConfig, StaticAsset};
@@ -339,23 +340,33 @@ impl Drop for DaliWorld {
     }
 }
 
+const STAGE_TAG_PREFIX: &str = "stage-";
+
+fn stage_of<'a>(feature: &'a Feature, scenario: &'a Scenario) -> Option<&'a str> {
+    let own = |tags: &'a [String]| tags.iter().find_map(|t| t.strip_prefix(STAGE_TAG_PREFIX));
+    own(&scenario.tags).or_else(|| own(&feature.tags))
+}
+
+fn selected(feature: &Feature, scenario: &Scenario) -> bool {
+    let has_wip = feature.tags.iter().chain(&scenario.tags).any(|t| t == "wip");
+    let features_ok = std::env::var("ONLY_FEATURES").ok().is_none_or(|pat| {
+        feature
+            .path
+            .as_ref()
+            .is_some_and(|p| p.to_string_lossy().contains(pat.as_str()))
+    });
+    let stage_ok = std::env::var("ONLY_STAGE")
+        .ok()
+        .is_none_or(|stage| stage_of(feature, scenario) == Some(stage.as_str()));
+    !has_wip && features_ok && stage_ok
+}
+
 fn main() {
     let features_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("features");
     futures::executor::block_on(
         DaliWorld::cucumber()
             .max_concurrent_scenarios(1)
             .fail_on_skipped()
-            .filter_run_and_exit(features_dir, |feature, _, scenario| {
-                let has_wip = feature.tags.iter().any(|t| t == "wip")
-                    || scenario.tags.iter().any(|t| t == "wip");
-                let only_features = std::env::var("ONLY_FEATURES").ok();
-                let features_ok = only_features.as_ref().map_or(true, |pat| {
-                    feature
-                        .path
-                        .as_ref()
-                        .is_some_and(|p| p.to_string_lossy().contains(pat.as_str()))
-                });
-                !has_wip && features_ok
-            }),
+            .filter_run_and_exit(features_dir, |feature, _, scenario| selected(feature, scenario)),
     );
 }
