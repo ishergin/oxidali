@@ -16,11 +16,12 @@ caps, helds = [], []
 for line in open(sys.argv[1], errors="replace"):
     m = CAP.match(line)
     if m and m.group(1) >= sys.argv[2]:
-        caps.append((datetime.datetime.fromisoformat(m.group(1)), maxrun(m.group(2))))
+        caps.append((datetime.datetime.fromisoformat(m.group(1).rstrip("Z")),
+                     maxrun(m.group(2))))
         continue
     m = HELD.match(line)
     if m and m.group(1) >= sys.argv[2]:
-        helds.append(datetime.datetime.fromisoformat(m.group(1)))
+        helds.append(datetime.datetime.fromisoformat(m.group(1).rstrip("Z")))
 big = [c for c in caps if c[1] >= THRESHOLD]
 print(f"since {sys.argv[2]}: {len(caps)} dumped captures, {len(big)} with a dominant run >= {THRESHOLD} ticks")
 print(f"  `DALI line held` lines: {len(helds)}")

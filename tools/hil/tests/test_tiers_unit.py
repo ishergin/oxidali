@@ -47,6 +47,37 @@ def test_a_mention_in_a_string_is_not_a_call():
     assert tiers.reboot_violation("t", ["api"], set(), [MENTIONS]) is None
 
 
+AUTOUSE = ["production_state", "bench_baseline", "dut_continuity", "optical_session",
+           "_fast_fade_prep", "request", "pytestconfig"]
+
+
+def test_a_session_of_unit_tests_is_hardware_free():
+    closures = [AUTOUSE + ["tmp_path", "monkeypatch"], AUTOUSE + ["capsys"]]
+    assert tiers.session_hardware_free(closures)
+
+
+def test_one_bench_fixture_makes_the_whole_session_a_bench_session():
+    closures = [AUTOUSE + ["tmp_path"], AUTOUSE + ["api", "hil_config"]]
+    assert not tiers.session_hardware_free(closures)
+
+
+def test_the_bench_configuration_alone_is_a_bench_fixture():
+    assert not tiers.session_hardware_free([AUTOUSE + ["hil_config", "test_artifacts"]])
+
+
+def test_an_empty_session_is_hardware_free():
+    assert tiers.session_hardware_free([])
+
+
+def test_a_unit_module_that_requests_a_bench_fixture_is_named():
+    found = tiers.unit_violation("tests/test_x_unit.py::test_y", "tests/test_x_unit.py",
+                                 ["tmp_path", "api"])
+    assert "tests/test_x_unit.py::test_y" in found and "api" in found
+    assert tiers.unit_violation("tests/test_x.py::test_y", "tests/test_x.py", ["api"]) is None
+    assert tiers.unit_violation("tests/test_x_unit.py::test_y", "tests/test_x_unit.py",
+                                ["tmp_path"]) is None
+
+
 def test_a_helper_in_the_same_module_is_followed(tmp_path):
     path = tmp_path / "halting_module.py"
     path.write_text(MODULE)

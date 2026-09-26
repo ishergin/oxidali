@@ -112,10 +112,15 @@ def test_group_apply_programs_gear(api, vl_bindings, lamps, free_group,
     assert row_after["applied"][free_group] is True, row_after
     assert row_after["desired"][free_group] is True, row_after
 
-    bitmask = None
+    bitmask, reads = None, 0
 
     def _bit_reported():
-        nonlocal bitmask
+        nonlocal bitmask, reads
+        if reads:
+            api.count_retry("group_membership_reread",
+                            "SA%d: group %d missing from the gear's mask 0x%04x"
+                            % (short, free_group, bitmask or 0))
+        reads += 1
         api.attr_read_checked(short, groups="groups")
         bitmask = _membership(api.attributes(short, ["groups"]))
         return (bitmask or 0) >> free_group & 1
@@ -147,6 +152,9 @@ def test_apply_empty_diff_returns_matrix(api, vl_bindings, ops_quiesce,
         res = api.groups.apply()
         if "operation_id" not in res:
             break
+        if converge_applies:
+            api.count_retry("group_apply_reconverge",
+                            "apply %d still carried a diff" % (converge_applies + 1))
         converge_applies += 1
         api.wait_op(res, timeout_s=60)
     test_artifacts.attach_json("empty_apply",

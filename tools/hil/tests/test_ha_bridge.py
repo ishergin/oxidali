@@ -234,7 +234,7 @@ def test_bench_membership_matches_registry(api):
     checked = 0
     for row in matrix.get("rows", []):
         short = bound.get(row["virtual_lamp_id"])
-        if short is None or short > 3:
+        if short is None:
             continue
         pd = api.attributes(short, ["groups"])
         membership = ((pd.get("attributes") or {}).get("groups") or {}).get("membership")

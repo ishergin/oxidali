@@ -1,11 +1,24 @@
 import json
+import os
+import time
 import types
+
+import pytest
 
 import hil.api
 import hil.serialmon
 from hil import preflight
+from hil.camera import backend as camera_backend
+from hil.camera import backends
+from hil.camera import server as server_mod
+from hil.camera.backend import REENUMERATE, SPAWN, CameraError
 from hil.camera.calibrate import MIN_EXPOSURE, SCHEMA_VERSION, at_exposure_floor
+from hil.config import HilConfig
 from hil.config import load as load_config
+
+OLD_ADVICE = "hil camera-server --spawn-terminal"
+STALE_S = 60.0
+NO_WAIT_S = 0.05
 
 
 class _FakeClient:
@@ -111,3 +124,49 @@ def test_calibration_age_comes_from_the_stamp_not_the_file():
     assert is_stale(stale, now=now)
     assert is_stale({}, now=now)
     assert age_seconds({"created": "not-a-date"}, now) == float("inf")
+
+
+def _frame_server(tmp_path, monkeypatch, age_s=0.0, healthy=True):
+    cfg = HilConfig(state_dir=tmp_path, serial_remote="")
+    alive = tmp_path / "frame_server" / "server.alive"
+    alive.parent.mkdir(exist_ok=True)
+    alive.write_text(json.dumps({"ts": time.time(), "healthy": healthy,
+                                 "consecutive_failures": 0 if healthy else 3,
+                                 "last_error": None if healthy else "no frames"}))
+    beat = time.time() - age_s
+    os.utime(alive, (beat, beat))
+    monkeypatch.setattr(server_mod, "stray_pids", lambda: [4242])
+    monkeypatch.setattr(backends.FrameServerBackend, "TIMEOUT_S", NO_WAIT_S)
+    monkeypatch.setattr(preflight, "_effective_exposure", lambda cfg: "313")
+    return cfg
+
+
+def test_a_live_single_server_that_serves_no_frame_is_told_to_enumerate_again(
+        tmp_path, monkeypatch):
+    cfg = _frame_server(tmp_path, monkeypatch)
+    monkeypatch.setattr(camera_backend, "probe_and_select", backends.FrameServerBackend)
+    status, name, detail = preflight._check_camera(cfg)
+    assert (status, name) == (preflight.FAIL, "camera")
+    assert "did not pick up the request" in detail
+    assert REENUMERATE in detail and OLD_ADVICE not in detail
+
+
+def test_a_stale_heartbeat_is_told_to_enumerate_again(tmp_path, monkeypatch):
+    status, _, detail = preflight._check_camera(
+        _frame_server(tmp_path, monkeypatch, age_s=STALE_S))
+    assert status == preflight.WARN
+    assert REENUMERATE in detail and OLD_ADVICE not in detail
+
+
+def test_a_server_whose_captures_fail_is_told_to_enumerate_again(tmp_path, monkeypatch):
+    server = backends.FrameServerBackend(_frame_server(tmp_path, monkeypatch, healthy=False))
+    with pytest.raises(CameraError) as failed:
+        server.capture(warmup=1, avg=1)
+    assert "capture(s) failed" in str(failed.value) and REENUMERATE in str(failed.value)
+
+
+def test_only_a_server_that_never_ran_is_told_to_spawn_one(tmp_path, monkeypatch):
+    never = backends.FrameServerBackend(HilConfig(state_dir=tmp_path, serial_remote=""))
+    assert never.down_advice().endswith(SPAWN)
+    stale = backends.FrameServerBackend(_frame_server(tmp_path, monkeypatch, age_s=STALE_S))
+    assert REENUMERATE in stale.down_advice() and SPAWN not in stale.down_advice()

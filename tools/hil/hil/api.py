@@ -16,6 +16,16 @@ ATTR_GROUPS_DEFAULT = "runtime_status,common_102,dt8_color,dt6_led"
 
 BUS_CONTENDED = "bus_contended"
 
+HTTP_GATEWAY_TIMEOUT = 504
+RULES_RECONCILE_S = 10.0
+RULES_LANDED, RULES_OVERTAKEN, RULES_UNCHANGED = "landed", "overtaken", "unchanged"
+
+
+def rules_put_outcome(doc, source, base_revision):
+    if doc.get("revision") == base_revision:
+        return RULES_UNCHANGED
+    return RULES_LANDED if doc.get("source") == source else RULES_OVERTAKEN
+
 
 def op_contended(view) -> bool:
     if not isinstance(view, dict) or view.get("status") != "failed":
@@ -109,17 +119,21 @@ class Client:
         self.retries = collections.Counter()
         self.retry_events = []
 
+    def count_retry(self, kind, detail):
+        self.retries[kind] += 1
+        self.retry_events.append("%s %s%s" % (kind, detail, self._where()))
+
     def _url(self, path):
         return "%s/api/v1/%s" % (self.base, path.lstrip("/"))
 
     IDEMPOTENT = ("GET", "PUT")
 
-    def _http(self, method, path, body=None):
+    def _http(self, method, path, body=None, conditional=False):
         url = self._url(path)
         self.guard.check_request(method, path, body)
         self._drop_pool_after_reboot()
         self._note_diagnostic_write(method, path, body)
-        attempts = 3 if method in self.IDEMPOTENT else 1
+        attempts = 3 if method in self.IDEMPOTENT and not conditional else 1
         for attempt in range(attempts):
             try:
                 resp = self.http.request(method, url, json=body,
@@ -143,8 +157,9 @@ class Client:
             payload = {"raw": resp.text}
         return resp.status_code, payload, url
 
-    def _req(self, method, path, body=None, _retry_503=True, _retry_504=2):
-        status, payload, url = self._http(method, path, body)
+    def _req(self, method, path, body=None, _retry_503=True, _retry_504=2,
+             conditional=False):
+        status, payload, url = self._http(method, path, body, conditional)
         if status >= 400:
             err = str(payload.get("error", ""))
             if status == 503 and _retry_503:
@@ -152,9 +167,10 @@ class Client:
                 self.retry_events.append(
                     "http_503 %s %s%s" % (method, path, self._where()))
                 time.sleep(1.2)
-                return self._req(method, path, body, _retry_503=False)
+                return self._req(method, path, body, _retry_503=False,
+                                 conditional=conditional)
             if (status == 504 and _retry_504 > 0
-                    and method in self.IDEMPOTENT):
+                    and method in self.IDEMPOTENT and not conditional):
                 self.retries["http_504"] += 1
                 self.retry_events.append(
                     "http_504 %s %s%s" % (method, path, self._where()))
@@ -400,9 +416,35 @@ class Client:
     def rules_get(self) -> dict:
         return self._req("GET", "rules")
 
-    def rules_put(self, source: str, base_revision: int) -> dict:
-        return self._req("PUT", "rules",
-                         {"source": source, "base_revision": base_revision})
+    def rules_replace(self, source: str, base_revision: int) -> dict:
+        body = {"source": source, "base_revision": base_revision}
+        try:
+            accepted = self._req("PUT", "rules", body, conditional=True)
+        except requests.RequestException as exc:
+            return self._reconcile_rules(body, _cause_of(exc))
+        except ApiError as exc:
+            if exc.status != HTTP_GATEWAY_TIMEOUT:
+                raise
+            return self._reconcile_rules(body, "HTTP %d" % exc.status)
+        return self.wait_op(accepted)
+
+    def _reconcile_rules(self, body, cause):
+        base = body["base_revision"]
+        self.count_retry("rules_put_reconciled",
+                         "PUT rules base_revision=%d lost its answer (%s)" % (base, cause))
+        deadline = time.monotonic() + RULES_RECONCILE_S
+        doc = self.rules_get()
+        while doc.get("revision") == base and time.monotonic() < deadline:
+            time.sleep(OP_POLL_S)
+            doc = self.rules_get()
+        outcome = rules_put_outcome(doc, body["source"], base)
+        if outcome == RULES_LANDED:
+            return {"status": "succeeded", "reconciled": outcome,
+                    "revision": doc.get("revision")}
+        if outcome == RULES_OVERTAKEN:
+            return {"status": "failed", "reconciled": outcome,
+                    "error": {"code": "conflict", "message": "rule_set_conflict"}}
+        return self.wait_op(self._req("PUT", "rules", body, conditional=True))
 
     def rules_run(self, name: str, dry: bool = False) -> dict:
         return self._req("POST", "rules/%s/run%s"

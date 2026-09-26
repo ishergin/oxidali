@@ -333,7 +333,7 @@ def _restore_rules(api, snap, log):
     now = api.rules_get()
     if now.get("source") != snap["rules"].get("source"):
         log("prod_state: restoring the rules document")
-        api.wait_op(api.rules_put(snap["rules"]["source"], now["revision"]))
+        api.rules_replace(snap["rules"]["source"], now["revision"])
 
 
 def _restore_devices(api, snap, log):
@@ -509,7 +509,7 @@ def _repair_scenes(api, short, want, have, log):
 
 def _set_scene_verified(api, short, n, level):
     for _ in range(SCENE_REPAIR_ATTEMPTS):
-        if _arm_dtr0(api, short, level):
+        if arm_dtr0(api, short, level):
             api.cmd(short, SET_SCENE + n, repeat=2)
             answer = api.raw((((short << 1) | 1) << 8) | (QUERY_SCENE_LEVEL + n),
                              expects_backward=True)
@@ -519,7 +519,7 @@ def _set_scene_verified(api, short, n, level):
     return False
 
 
-def _arm_dtr0(api, short, value, attempts=3):
+def arm_dtr0(api, short, value, attempts=3):
     for _ in range(attempts):
         api.raw((DTR0 << 8) | value)
         answer = api.raw((((short << 1) | 1) << 8) | QUERY_CONTENT_DTR0,

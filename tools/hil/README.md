@@ -32,9 +32,10 @@ Every variable is read from the environment when a command starts. `bench.env` (
 from `bench.env.example`) holds only the firmware build knobs that `hil flash` enforces;
 it does not configure the toolkit. **The defaults name one particular bench.** Set at
 least `HIL_BASE`, the serial variables and the three short-address sets before the first
-run: every pytest session, a unit-test run included, reaches `HIL_BASE`, and
+run: every pytest session that collects a bench test reaches `HIL_BASE`, and
 `bench_baseline` suspends that controller's poller and HCL schedules and sets its time
-zone to `HIL_BENCH_TZ` for the session.
+zone to `HIL_BENCH_TZ` for the session. A session whose every test is
+[hardware-free](#writing-a-scenario) touches no network and no serial port.
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
@@ -73,12 +74,12 @@ export HIL_LAMP_SHORTS=<lamps> HIL_GEAR_SHORTS=<gear> HIL_OPTICAL_SHORTS=<lamps 
   -m "not destructive and not slow and not sniffer and not foreign and not ha_bridge and not redundancy"
 ```
 
-Drop `--no-camera` and the markers of the instruments the bench has. Without any
-hardware the toolkit's own unit tests run against the host dev server:
+Drop `--no-camera` and the markers of the instruments the bench has. The toolkit's own
+unit tests need no hardware and no controller; pointing `HIL_BASE` at a closed port
+keeps a regressed hook from reaching a bench:
 
 ```bash
-cargo run --target aarch64-apple-darwin -p dali2rust-adapters --example host_dev_server  # repository root
-HIL_BASE=http://127.0.0.1:8080 HIL_SERIAL_REMOTE= HIL_NO_CAMERA=1 \
+HIL_BASE=http://127.0.0.1:9 HIL_SERIAL_REMOTE= HIL_NO_CAMERA=1 \
   .venv/bin/python3 -m pytest tests/*_unit.py                                           # tools/hil
 ```
 
@@ -153,8 +154,9 @@ for every session that reaches the controller:
   `restore_states` re-reads them before comparing; `raw_response` passes the lamp
   guard but books nothing.
 - A session fixture that changes the installation takes `production_state` as a
-  parameter even when its body does not use it: pytest sets up one conftest's autouse
-  fixtures in alphabetical order, and only that dependency puts the snapshot first.
+  parameter even when its body does not use it: pytest sets up autouse fixtures in
+  plugin order and alphabetically within a plugin, and only that dependency puts the
+  snapshot first.
 
 Per-test guards (`state_snapshot`, `*_matrix_guard`, `hcl_guard`, …) restore what
 one test changed. `bench_baseline` suspends the poller and HCL schedules for the
@@ -165,7 +167,7 @@ session and fails it on a device still named `hil-…` by an earlier run.
 | Path | Holds |
 | --- | --- |
 | `hil/` | the library and the `hil` CLI |
-| `tests/` | the suites; `conftest.py` holds the session fixtures and the safety gates |
+| `tests/` | the suites; `conftest.py` lists the `hil_*.py` plugins that hold the fixtures and the safety gates, one per domain: `hil_session` (options, collection, report hooks), `hil_instruments` (clients and instruments), `hil_session_guards` (the autouse guards), `hil_optics`, `hil_test_guards` (per-test guards), `hil_run_validity` (the validity section) |
 | `wb/serial_bridge.py` | the one file deployed to the Wiren Board |
 | `corpus/` | frozen captures of the installation (`hil corpus`); local, and only the files host tests pin are tracked (`.gitignore`) |
 | `*_budget.txt` | run-validity budgets (below) |
@@ -191,8 +193,10 @@ The `optical` tests (`test_optical_*`, and the optical cases in `test_scenes`,
 The camera is a UVC camera on a fixed mount with the lamps, or the patches they light,
 in view. `setup.sh` builds `uvc-util`, which locks exposure and white balance. macOS
 denies an agent the camera, so frames come from a frame server (`hil camera-server
---spawn-terminal`, approve it in the Terminal). Exactly one may run; replace a wedged
-one with `--restart`.
+--spawn-terminal`, approve it in the Terminal). Exactly one may run, and
+`--spawn-terminal` leaves a live one as it is. A server that is alive but serves no
+frames holds a camera AVFoundation no longer hands it: run `vendor/uvc-util/uvc-util
+-d`, which enumerates the device again, then `hil camera-server --restart`.
 
 Calibration (`hil calibrate`, or automatically before the first test that needs optics)
 locks the camera, takes two all-off baselines for the noise floor, lights each lamp alone
@@ -241,11 +245,14 @@ hil-slow` wrap the cwd.
 Every run ends with an `HIL validity` section (also in `runs/<ts>/summary.md`): frame
 servers (FAIL on more than one), DUT uptime continuity (a reboot fails the test it
 landed in, unless that test uses `dut_reboot`), the baseline and the gear-segment
-restriction (a restricted run is *not an acceptance run*), the peer, the
-production-state result, WB availability, the retry ledger, the controller's bus
+restriction (a restricted run is *not an acceptance run*), the peer and its uptime
+from session start to end (a reboot, or a peer that stops answering, fails the run),
+the production-state result, WB availability, the retry ledger, the controller's bus
 drop counters, per-task stack headroom (a run whose log has no census says so; a
 budget line no census task matches fails the run unless the task is spawned on
-demand), the boot heap ladder and the runtime heap floor. **Classify a red run from this section, not from the serial log.**
+demand; the trend compares runs of one image, named by the version `/api/v1/health`
+reports, so an image written over the network starts a new one), the boot heap
+ladder and the runtime heap floor. **Classify a red run from this section, not from the serial log.**
 
 | File | Bounds | Moves |
 | --- | --- | --- |
@@ -302,8 +309,15 @@ bridge, pyserial and esptool this set-up works around are
   check on the WB whether it still listens (`ss -ltn`) — if only the tunnel died,
   the start reuses it. A changed `wb/serial_bridge.py` is copied to the WB but a live
   bridge keeps running the old one until `--restart`, which resets the controller.
+- A bridge whose port is gone — the node vanished, the board was enumerated again
+  under the same name, or a read failed under a client — answers every control
+  command `err port-gone: …`. `hil remote`, `hil monitor start`, `hil flash` and
+  `hil preflight` fail on it instead of reusing a bridge that carries no data;
+  `--restart` reopens the port and so resets the controller, which is the operator's
+  decision.
 - Reset sequences run on the WB.
-- Logs: `state/persist/serial.log` (peer: `state/peer/persist/`).
+- Logs: `state/persist/serial.log` (peer: `state/peer/persist/`), each line stamped
+  in UTC (`…Z`) like the `runs/<ts>` directories.
 
 ## Flashing
 
@@ -389,20 +403,29 @@ one costs a go-ahead.
   be split by the poller, HCL or another master overwriting a DTR, and a send-twice pair
   is one request with `repeat_count: 2`, never two; a raw DTR-armed write is proved by
   reading its effect back.
+- **Retries.** A step a test repeats goes through the ledger: `api.count_retry(kind,
+  detail)` for a request or a read, the oracle's `count_retry(cause)` for a
+  measurement; a sniffer `resend=` counts itself. A new kind gets a line of 0 in
+  `retry_budget.txt`. A conditional write is never repeated blindly: after a lost
+  answer `rules_replace` reads `/rules` back and repeats only a write that did not land.
 - **Skips and xfails.** A feature is skipped as absent only on the firmware's own
   evidence (a `404`, a block missing from `/api/v1/diagnostics`); a probe that fails on
   a build that has the feature fails the test. A known-failure hatch is a conditional
   `@pytest.mark.xfail(strict=True)`, never an imperative `pytest.xfail()`, which never
   reports XPASS and so hides a fixed defect and its regression alike.
-- **Autouse fixtures** in `tests/conftest.py` never take `api` (or anything else that
-  skips on an unreachable controller) as a parameter, because an autouse skip skips every
-  collected test, the hardware-free ones included: they build their own client, degrade
-  to a printed warning and record an instrument failure for the per-test fixture to fail
-  or skip on.
-- **Hardware-free unit tests** build `HilConfig` with `serial_remote=""` and their own
-  `base`: the defaults name a reference bench's controller and Wiren Board, and
-  `serialmon.start` or `hil flash` would ssh there and may (re)start the bridge, which
-  resets the controller.
+- **Autouse fixtures** in the `tests/hil_*.py` plugins never take `api` (or anything
+  else that skips on an unreachable controller) as a parameter, because an autouse skip
+  skips every collected test, the hardware-free ones included: they build their own
+  client, degrade to a printed warning and record an instrument failure for the per-test
+  fixture to fail or skip on. Nor do they take any other bench fixture, `hil_config`
+  included: the hardware-free verdict below reads every test's fixture closure.
+- **Hardware-free tests** request no bench fixture (`BENCH_FIXTURES` in `hil/tiers.py`);
+  a `*_unit.py` test that requests one is a collection error. A session made only of
+  them skips `production_state`, `bench_baseline`, `dut_continuity`, the serial-bridge
+  probe, the session baselines and the validity report, and writes no `summary.md`.
+  They build `HilConfig` with `serial_remote=""` and their own `base`: the defaults name
+  a reference bench's controller and Wiren Board, and `serialmon.start` or `hil flash`
+  would ssh there and may (re)start the bridge, which resets the controller.
 - **Measuring threads** own their own `Client`; a shared one shares a `requests.Session`
   and the retry ledger. A sampler that an exception kills fails nothing by itself, so the
   test checks it.
@@ -412,7 +435,7 @@ one costs a go-ahead.
 - **The sniffer decoder** names application-extended opcodes as DT8 commands whatever
   prelude preceded them: match another device type's extended command by its bytes and
   its `ENABLE DEVICE TYPE` frame.
-- **Mirrored constants**: `RULES_SOURCE_LIMIT_BYTES` in `tests/conftest.py` mirrors
+- **Mirrored constants**: `RULES_SOURCE_LIMIT_BYTES` in `tests/hil_test_guards.py` mirrors
   `MAX_RULES_SOURCE_BYTES` in `dali2rust-contracts`, and `hil corpus`'s colour-value width
   and defined sets mirror `colour_value_is_wide` / `colour_value_is_defined` in the
   domain crate; change them together.

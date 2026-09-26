@@ -9,6 +9,16 @@ Short = int
 Label = int
 WireAddress = int
 
+FAILURE_LINE_CHARS = 1000
+
+
+def failure_line(longrepr):
+    message = getattr(getattr(longrepr, "reprcrash", None), "message", None)
+    if not message:
+        lines = [line for line in str(longrepr).splitlines() if line.strip()]
+        message = lines[-1] if lines else ""
+    return " ".join(message.split())[:FAILURE_LINE_CHARS]
+
 
 def np_json_default(obj):
     if isinstance(obj, np.integer):

@@ -17,6 +17,27 @@ CONTROL_RECV_BYTES = 64
 RESET_HOLD_S = 0.1
 RESET_LATCH_S = 0.05
 
+PORT_GONE = "port-gone"
+
+
+class SerialFault(RuntimeError):
+    pass
+
+
+def _serial_io(operation):
+    try:
+        return operation()
+    except (serial.SerialException, OSError) as exc:
+        raise SerialFault(str(exc)) from exc
+
+
+def _node_device(path):
+    return os.stat(path).st_rdev
+
+
+def _held_device(ser):
+    return os.fstat(ser.fileno()).st_rdev
+
 
 class LinesPinned:
     def __init__(self, ser, log):
@@ -52,14 +73,14 @@ class Session:
             readable, _, _ = select.select(
                 [self.socket, self.serial.fileno()], [], [], SELECT_TIMEOUT_S)
             if self.serial.fileno() in readable:
-                data = self.serial.read(self.serial.in_waiting or 1)
+                data = _serial_io(lambda: self.serial.read(self.serial.in_waiting or 1))
                 if data:
                     self.write(b"".join(self.rfc2217.escape(data)))
             if self.socket in readable:
                 data = self.socket.recv(SOCKET_CHUNK_BYTES)
                 if not data:
                     return
-                self.serial.write(b"".join(self.rfc2217.filter(data)))
+                _serial_io(lambda: self.serial.write(b"".join(self.rfc2217.filter(data))))
 
 
 def classic_reset(ser, into_bootloader):
@@ -79,6 +100,7 @@ class Bridge:
         self.host, self.data_port, self.control_port = host, data_port, control_port
         self.serial = None
         self.client = None
+        self.serial_fault = None
         self.started_at = time.time()
 
     def log(self, msg):
@@ -93,7 +115,26 @@ class Bridge:
         ser.open()
         self.serial = ser
 
+    def port_problem(self):
+        try:
+            node = _node_device(self.port)
+        except OSError as exc:
+            return "%s is gone (%s)" % (self.port, exc.strerror or exc)
+        try:
+            held = _held_device(self.serial)
+        except (OSError, serial.SerialException) as exc:
+            return "the bridge's handle on %s is closed (%s)" % (self.port, exc)
+        if node != held:
+            return ("%s was enumerated again and the bridge still holds the device "
+                    "that vanished" % self.port)
+        if self.serial_fault:
+            return "%s failed under a client (%s)" % (self.port, self.serial_fault)
+        return None
+
     def _control_reply(self, cmd):
+        problem = self.port_problem()
+        if problem:
+            return "err %s: %s" % (PORT_GONE, problem)
         if cmd == "ping":
             return "ok %s %d" % (self.port, self.serial.baudrate)
         if cmd == "status":
@@ -136,17 +177,29 @@ class Bridge:
                 self.log("refused %s — %s already connected" % (peer, self.client))
                 sock.close()
                 continue
-            self.client = peer
-            self.log("client %s connected" % peer)
-            try:
-                Session(self.serial, sock, self.log).run()
-            except Exception as exc:
-                self.log("session %s: %r" % (peer, exc))
-            finally:
-                sock.close()
-                self.client = None
-                self.serial.baudrate = self.baud
-                self.log("client %s gone" % peer)
+            self.serve_client(sock, peer)
+
+    def serve_client(self, sock, peer):
+        self.client = peer
+        self.log("client %s connected" % peer)
+        try:
+            Session(self.serial, sock, self.log).run()
+        except SerialFault as exc:
+            self.serial_fault = str(exc)
+            self.log("session %s: serial port failed: %s" % (peer, exc))
+        except Exception as exc:
+            self.log("session %s: %r" % (peer, exc))
+        finally:
+            sock.close()
+            self.client = None
+            self._restore_baud()
+            self.log("client %s gone" % peer)
+
+    def _restore_baud(self):
+        try:
+            _serial_io(lambda: setattr(self.serial, "baudrate", self.baud))
+        except SerialFault as exc:
+            self.serial_fault = self.serial_fault or str(exc)
 
 
 def _listener(host, port):

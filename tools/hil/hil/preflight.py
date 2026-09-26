@@ -5,6 +5,9 @@ import subprocess
 import time
 from pathlib import Path
 
+from hil.camera.backend import REENUMERATE
+from hil.camera.backends import FrameServerBackend
+
 FRESH_HEARTBEAT_S = 5.0
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
 
@@ -41,6 +44,9 @@ def _check_serial_port(cfg):
     if remote_serial.enabled(cfg):
         try:
             reply = remote_serial.control(cfg, "status")
+        except remote_serial.BridgePortGone as exc:
+            return FAIL, "serial port", "%s via %s — %s" % (
+                remote_serial.data_url(cfg), remote_serial.target(cfg), exc)
         except (OSError, remote_serial.RemoteError) as exc:
             return FAIL, "serial port", (
                 "%s via %s — bridge unreachable (%s); `hil remote start`"
@@ -150,9 +156,15 @@ def _check_camera(cfg):
     age = time.time() - alive.stat().st_mtime
     if age >= FRESH_HEARTBEAT_S:
         return WARN, "camera", (
-            "frame server heartbeat is stale (%.0fs) — restart it: "
-            "`hil camera-server --restart`" % age)
+            "frame server heartbeat is stale (%.0fs) — %s" % (age, REENUMERATE))
     return _probe_frame(cfg, age)
+
+
+def _capture_failure(backend, exc):
+    detail = str(exc)
+    if isinstance(backend, FrameServerBackend) and REENUMERATE not in detail:
+        detail += " — " + REENUMERATE
+    return detail
 
 
 def _probe_frame(cfg, age):
@@ -164,7 +176,7 @@ def _probe_frame(cfg, age):
         frame = backend.capture(warmup=2, avg=1)
     except CameraError as exc:
         return FAIL, "camera", "%s [exposure=%s x100us]" % (
-            exc, _effective_exposure(cfg))
+            _capture_failure(backend, exc), _effective_exposure(cfg))
     finally:
         if backend is not None:
             backend.close()

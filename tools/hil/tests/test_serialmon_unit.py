@@ -1,3 +1,6 @@
+import datetime
+import time
+
 import pytest
 
 from hil import serialmon
@@ -95,3 +98,26 @@ def test_a_recorded_pin_naming_a_gone_port_fails_loudly(
     err = capsys.readouterr().err
     assert "serial_port.pin" in err
     assert "HIL_SERIAL_PORT" in err
+
+
+MOSCOW = "MSK-3"
+RUN_DIR_STAMP = "%Y%m%d-%H%M%S"
+
+
+@pytest.fixture()
+def local_time_is_not_utc(monkeypatch):
+    monkeypatch.setenv("TZ", MOSCOW)
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_serial_lines_are_stamped_in_utc_like_the_run_directories(local_time_is_not_utc):
+    assert serialmon.stamp(0.5) == "1970-01-01T00:00:00.500Z"
+    now = time.time()
+    stamped = datetime.datetime.strptime(serialmon.stamp(now), "%Y-%m-%dT%H:%M:%S.%fZ")
+    run_dir = datetime.datetime.strptime(time.strftime(RUN_DIR_STAMP, time.gmtime(now)),
+                                         RUN_DIR_STAMP)
+    assert stamped.replace(microsecond=0) == run_dir
+    assert time.localtime(now).tm_hour != time.gmtime(now).tm_hour, "the premise: TZ moved"

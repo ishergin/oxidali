@@ -6,6 +6,29 @@ DESTRUCTIVE = "destructive"
 REBOOT_FIXTURES = frozenset({"dut_reboot"})
 REMOTE_SERIAL_NAMES = frozenset({"remote_serial", "remote_serial_mod"})
 REMOTE_CONTROL = "control"
+UNIT_MODULE_SUFFIX = "_unit.py"
+BENCH_FIXTURES = frozenset({
+    "hil_config", "run_dir", "test_artifacts", "api", "peer_config", "peer_api",
+    "peer_api_if_any", "sniffer", "gear_sim", "serial_log", "camera", "calibration",
+    "geometry", "lamp_roster", "foreign", "dut_reboot",
+})
+
+
+def bench_fixtures_of(fixturenames):
+    return sorted(BENCH_FIXTURES.intersection(fixturenames))
+
+
+def session_hardware_free(closures):
+    return not any(bench_fixtures_of(fixturenames) for fixturenames in closures)
+
+
+def unit_violation(name, module, fixturenames):
+    reached = bench_fixtures_of(fixturenames)
+    if not str(module).endswith(UNIT_MODULE_SUFFIX) or not reached:
+        return None
+    return ("%s is a unit test and requests %s: a *%s module is hardware-free, so a "
+            "session of unit tests runs without the production-state guard"
+            % (name, ", ".join(reached), UNIT_MODULE_SUFFIX))
 
 
 def _tree(source):

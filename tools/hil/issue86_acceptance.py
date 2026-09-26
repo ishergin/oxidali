@@ -18,10 +18,10 @@ hcl, and the peer records no peer_silent."""
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from hil import config as config_mod
+from hil import serialmon
 from hil.api import ATTR_GROUPS_DEFAULT, Client
 
 SCHEDULE_ID = "issue86-probe"
-ALLOWED_SHORTS = (0, 2, 3)
 TICK_PERIOD_S = 60
 TIMEOUTS_PER_TICK_REQUIRED = 2
 SAMPLE_EVERY_S = 1.0
@@ -151,15 +151,27 @@ def _tick_windows(samples: list[dict]) -> list[dict]:
     return windows
 
 
-def _serial_window(path: Path, from_bytes: int) -> list[str]:
-    if not path.exists():
-        return []
+def serial_start(cfg) -> tuple[Path, int]:
+    log = serialmon.log_path(cfg)
+    return log, log.stat().st_size if log.exists() else 0
+
+
+def serial_window(path: Path, from_bytes: int) -> list[str] | None:
+    if not path.exists() or path.stat().st_size <= from_bytes:
+        return None
     with path.open("rb") as fh:
         fh.seek(from_bytes)
         blob = fh.read()
     text = blob.decode("utf-8", errors="replace")
     keys = ("last turned", "has not turned", "peer_silent", "stale")
     return [line for line in text.splitlines() if any(k in line for k in keys)]
+
+
+def verdict(qualifying, stale_moved, serial_lines, peer_transitions) -> bool:
+    if serial_lines is None:
+        return False
+    hcl_stale = [line for line in serial_lines if "hcl" in line]
+    return bool(qualifying) and not stale_moved and not hcl_stale and peer_transitions == 0
 
 
 def main() -> int:
@@ -193,8 +205,7 @@ def main() -> int:
                          % health.get("role"))
     _assert_groups_empty(api, groups)
 
-    serial_log = Path(cfg.state_dir) / "persist" / "serial.log"
-    serial_from = serial_log.stat().st_size if serial_log.exists() else 0
+    serial_log, serial_from = serial_start(cfg)
 
     out_dir = Path(cfg.state_dir) / "issue86"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -204,10 +215,10 @@ def main() -> int:
     devices = api._req("GET", "adapters/%d/physical-devices"
                        % api.adapter)["physical_devices"]
     read_shorts = [d["short_address"] for d in devices
-                   if d["short_address"] in ALLOWED_SHORTS]
+                   if d["short_address"] in cfg.lamp_short_set()]
     if not read_shorts:
-        raise SystemExit("none of the bench fixtures %s is in the registry — the "
-                         "provocateur reads those and nothing else" % (ALLOWED_SHORTS,))
+        raise SystemExit("none of HIL_LAMP_SHORTS=%s is in the registry — the "
+                         "provocateur reads those and nothing else" % cfg.lamp_shorts)
 
     print("primary %s %s, peer %s" % (cfg.base, health.get("version"),
                                       "yes" if peer else "no"))
@@ -258,11 +269,11 @@ def main() -> int:
                 print("WARNING: schedule %s left disabled: %r" % (schedule_id, exc))
 
     windows = _tick_windows(sampler.samples)
-    serial_lines = _serial_window(serial_log, serial_from)
+    serial_lines = serial_window(serial_log, serial_from)
     qualifying = [w for w in windows
                   if w["d_ticks"] == 1 and w["d_timeouts"] >= TIMEOUTS_PER_TICK_REQUIRED]
     stale_moved = any(w["d_worker_stale"] for w in windows)
-    hcl_stale_lines = [line for line in serial_lines if "hcl" in line]
+    hcl_stale_lines = [line for line in serial_lines or [] if "hcl" in line]
     peer_transitions = 0
     if sampler.samples:
         firsts = [s for s in sampler.samples if "peer_transitions" in s]
@@ -273,7 +284,11 @@ def main() -> int:
     print("ticks observed:            %d" % len(windows))
     print("ticks with >= %d timeouts:  %d" % (TIMEOUTS_PER_TICK_REQUIRED, len(qualifying)))
     print("worker_stale moved:        %s" % ("YES" if stale_moved else "no"))
-    print("serial lines naming hcl:   %d" % len(hcl_stale_lines))
+    if serial_lines is None:
+        print("serial window:             EMPTY — %s did not grow during the run, so "
+              "there is no serial evidence and no verdict" % serial_log)
+    else:
+        print("serial lines naming hcl:   %d" % len(hcl_stale_lines))
     print("peer transitions added:    %d" % peer_transitions)
     for w in windows:
         print("  tick %s→%s  %5.1fs  published %+d  timeouts %+d  failures %+d  stale %+d"
@@ -283,11 +298,10 @@ def main() -> int:
         print("  serial: %s" % line)
     print("samples: %s" % jsonl)
 
-    verdict = (qualifying and not stale_moved and not hcl_stale_lines
-               and peer_transitions == 0)
+    passed = verdict(qualifying, stale_moved, serial_lines, peer_transitions)
     print("\nVERDICT: %s" % ("PASS — a busy worker kept its lease"
-                             if verdict else "INCONCLUSIVE / FAIL (see above)"))
-    return 0 if verdict else 1
+                             if passed else "INCONCLUSIVE / FAIL (see above)"))
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

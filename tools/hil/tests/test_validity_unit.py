@@ -1,12 +1,20 @@
 import re
 import types
+from collections import Counter
+from pathlib import Path
 
 import pytest
 import requests
 
 from hil import api as api_mod
-from hil import validity
+from hil import sniffer, validity
 from hil.lamp_guard import LampGuard
+from hil.oracle import CameraOracle
+
+
+@pytest.fixture(autouse=True)
+def _census_store_of_this_test(monkeypatch, tmp_path):
+    monkeypatch.setattr(validity, "PREVIOUS_STACK_FILE", tmp_path / "stack_previous.json")
 
 
 
@@ -180,6 +188,48 @@ def test_the_first_sample_anchors_instead_of_judging():
     assert validity.uptime_broke(None, 1.0, 1.0, SLACK) is None
 
 
+SESSION_S = 1800.0
+
+
+def test_a_peer_that_kept_running_through_the_session_is_continuous():
+    breach, line = validity.peer_continuity((0.0, 5000.0), (SESSION_S, 6800.0), SLACK)
+    assert breach is None and "continuous" in line
+
+
+def test_a_peer_that_rebooted_mid_session_breaks_continuity():
+    breach, line = validity.peer_continuity((0.0, 5000.0), (SESSION_S, 40.0), SLACK)
+    assert breach == line and "REBOOTED" in breach and "5000s -> 40s" in breach
+
+
+def test_a_peer_that_stopped_answering_is_a_breach_and_one_never_seen_is_not():
+    breach, _ = validity.peer_continuity((0.0, 5000.0), None, SLACK)
+    assert "stopped answering" in breach
+    breach, line = validity.peer_continuity(None, (SESSION_S, 40.0), SLACK)
+    assert breach is None and "unverified" in line
+
+
+CENSUS_ONCE = ["I (1) x: task stack hwm (B free): registry_worker=3000 "]
+MANIFEST = {"commit": "4cc6129f00d1", "firmware": "ab" * 32, "devices": 13}
+
+
+def _stack_report(tmp_path, version):
+    identity = dict(MANIFEST, version=version)
+    return "\n".join(validity.format_report(
+        {"stack_min_free": validity.stack_min_free(CENSUS_ONCE),
+         "stack_budget": _stack_budget(tmp_path), "stack_identity": identity},
+        _budget(tmp_path)))
+
+
+def test_an_image_the_manifest_never_saw_is_not_compared_as_the_same(tmp_path):
+    _stack_report(tmp_path, "0.1.1101+4cc6129")
+    same = _stack_report(tmp_path, "0.1.1101+4cc6129")
+    assert "(prev 7240, +0)" in same
+    over_the_air = _stack_report(tmp_path, "0.1.1109+1555fab")
+    assert "no trend" in over_the_air and "(prev" not in over_the_air
+    assert "version 0.1.1101+4cc6129" in over_the_air
+    assert "version 0.1.1109+1555fab" in over_the_air
+
+
 
 BUDGET_TEXT = """
 # comment
@@ -217,6 +267,51 @@ def test_an_unmeasured_counter_never_gates(tmp_path):
 def test_a_missing_budget_file_gates_nothing(tmp_path):
     assert validity.load_budget(tmp_path / "absent.txt") == {}
     assert validity.breaches({"raw_unanswered": 5}, {}) == []
+
+
+COUNTED_KIND = re.compile(r'count_retry\(\s*"([a-z0-9_]+)",')
+NEW_KINDS = frozenset({"rules_put_reconciled", "teardown_write", "group_membership_reread",
+                       "group_apply_reconverge", "post_commission_requery",
+                       sniffer.SNIFFER_RESEND})
+
+
+def _silent_tap(tmp_path):
+    tap = sniffer.SnifferTap.__new__(sniffer.SnifferTap)
+    tap.retries, tap.retry_events, tap.witness_fallbacks = Counter(), [], 0
+    tap.log_path = tmp_path / "sniffer.log"
+    tap.log_path.write_text("")
+    return tap
+
+
+def test_every_repeated_step_reaches_the_ledger_and_its_budget(monkeypatch, tmp_path):
+    client = _client(monkeypatch, [])
+    client.count_retry("teardown_write", "group apply (ConnectionError)")
+    tap, sent = _silent_tap(tmp_path), []
+    with pytest.raises(AssertionError, match="no frame containing"):
+        sniffer.Window(tap).expect_frame("DAPC short 2", timeout_s=0.01,
+                                         resend=lambda: sent.append("DAPC"))
+    oracle = CameraOracle(None, {"lamps": []}, None, None)
+    oracle.count_retry("gear_colour_lag")
+    foreign = types.SimpleNamespace(retries=Counter(foreign_master_silent=1))
+
+    counters, events = validity.tally([client, tap, oracle, foreign])
+    ledger = validity.collect(dict(counters, bus_contended=0))
+    assert sent == ["DAPC"]
+    assert ledger == {"teardown_write": 1, sniffer.SNIFFER_RESEND: 1,
+                      "optical_gear_colour_lag": 1, "foreign_master_silent": 1}
+    assert [row[0] for row in validity.breaches(ledger, validity.load_budget())] == \
+        sorted(ledger)
+    assert len(events) == 2 and "DAPC short 2" in events[1]
+
+
+def test_every_kind_a_step_is_counted_under_has_a_shipped_budget_line():
+    root = Path(validity.__file__).resolve().parent.parent
+    sources = sorted(root.glob("hil/**/*.py")) + sorted(root.glob("tests/*.py"))
+    kinds = {kind for path in sources for kind in COUNTED_KIND.findall(path.read_text())}
+    budget = validity.load_budget()
+    assert kinds >= NEW_KINDS - {sniffer.SNIFFER_RESEND}
+    assert sorted((kinds | NEW_KINDS) - set(budget)) == []
+    assert {kind: budget[kind] for kind in NEW_KINDS} == dict.fromkeys(NEW_KINDS, 0)
 
 
 

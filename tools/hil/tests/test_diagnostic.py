@@ -1,5 +1,3 @@
-import time
-
 import pytest
 
 from hil.wait import wait_until
@@ -61,6 +59,18 @@ def test_command_repeat_reaches_wire_twice(api, sniffer, paced, lamps,
         api.cmd(short, 0x70 + free_group, repeat=2)
 
 
+QUERY_STATUS = 0x90
+QUERY_ACTUAL_LEVEL = 0xA0
+FADE_RUNNING = 0x10
+FADE_SETTLE_S = 20.0
+STATUS_POLL_S = 0.3
+
+
+def _fade_settled(api, short):
+    status = api.cmd(short, QUERY_STATUS)
+    return status.get("success") is True and not status.get("backward_frame", 0) & FADE_RUNNING
+
+
 @pytest.mark.hil_id("HIL-DIAG-04")
 def test_query_actual_level_matches_state(api, lamps, wait_state,
                                           state_snapshot, test_artifacts):
@@ -69,16 +79,15 @@ def test_query_actual_level_matches_state(api, lamps, wait_state,
     api.ts(short, {"power": "on", "level": 130})
     last = wait_state(short, lambda s: s.get("level") == 130)
     assert last.get("level") == 130, last
-    samples = []
-    for _ in range(3):
-        resp = api.cmd(short, 0xA0)
-        assert resp.get("success") is True, resp
-        samples.append(resp.get("backward_frame"))
-        if samples[-1] == 130:
-            break
-        time.sleep(0.5)
-    test_artifacts.attach_json("query_samples", samples)
-    assert 130 in samples, samples
+    settled = wait_until(lambda: _fade_settled(api, short), FADE_SETTLE_S,
+                         interval_s=STATUS_POLL_S)
+    resp = api.cmd(short, QUERY_ACTUAL_LEVEL)
+    test_artifacts.attach_json("query_actual_level",
+                               {"fade_settled": bool(settled), "answer": resp})
+    assert resp.get("success") is True, resp
+    assert resp.get("backward_frame") == 130, (
+        resp, "fade settled" if settled else
+        "fadeRunning still set after %.0f s" % FADE_SETTLE_S)
     api.off(short)
 
 

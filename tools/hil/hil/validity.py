@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 from pathlib import Path
 
 NOT_MEASURED = -1
@@ -210,6 +211,18 @@ def uptime_broke(prev, now_ts, now_uptime, slack_s):
     return shortfall if shortfall > 0 else None
 
 
+def tally(instruments):
+    counted, optical, events, fallbacks = Counter(), Counter(), [], 0
+    for instrument in instruments:
+        if hasattr(instrument, "retry_causes"):
+            optical.update(instrument.retry_causes)
+            continue
+        fallbacks += getattr(instrument, "witness_fallbacks", 0)
+        counted.update(getattr(instrument, "retries", None) or {})
+        events.extend(getattr(instrument, "retry_events", ()))
+    return {"api": counted, "optical": optical, "witness_fallbacks": fallbacks}, events
+
+
 def collect(counters):
     ledger = {}
     for name, value in (counters.get("api") or {}).items():
@@ -255,10 +268,26 @@ def run_identity(runs_dir):
 def _describe_identity(identity):
     commit = (identity or {}).get("commit") or "?"
     devices = (identity or {}).get("devices")
-    return "commit %s, %s devices" % (
+    return "version %s, flashed commit %s, %s devices" % (
+        (identity or {}).get("version") or "?",
         commit[:12],
         "?" if devices is None else devices,
     )
+
+
+def peer_continuity(start, end, slack_s):
+    if start is None:
+        return None, "uptime unverified: the peer did not answer at session start"
+    if end is None:
+        breach = ("the peer stopped answering by session end (it was up %.0fs at the "
+                  "start) — a reboot presents exactly this way" % start[1])
+        return breach, breach
+    shortfall = uptime_broke(start, end[0], end[1], slack_s)
+    if shortfall is None:
+        return None, "uptime continuous (%.0fs -> %.0fs)" % (start[1], end[1])
+    breach = ("the peer REBOOTED during the session: uptime %.0fs -> %.0fs across "
+              "%.0fs" % (start[1], end[1], end[0] - start[0]))
+    return breach, breach
 
 
 def _load_previous_stacks():
