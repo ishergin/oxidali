@@ -453,7 +453,7 @@ fn group_apply_succeeds_when_all_programmed() {
         publish(
             &publisher,
             BusChannel::Events,
-            BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 9400, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliGroupMembershipProgrammedEvent { registry_adapter_id: 0, target: DaliProgramTarget::VirtualLamp { virtual_lamp_id: vl }, group_id: group, action: action, physical_short_address: Some(short), membership: None, error: None })),
+            BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 9400, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliGroupMembershipProgrammedEvent { registry_adapter_id: 0, target: DaliProgramTarget::VirtualLamp { virtual_lamp_id: vl }, group_id: group, action, physical_short_address: Some(short), membership: None, error: None })),
         );
     }
     wait_until(

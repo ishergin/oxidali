@@ -108,6 +108,33 @@ impl FsWriteSession for StdWriteSession {
     }
 }
 
+impl StdFileSystemHal {
+    fn walk_dir(base: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), FsError> {
+        let dir = if prefix.is_empty() {
+            base.to_path_buf()
+        } else {
+            base.join(prefix)
+        };
+        for entry in std::fs::read_dir(&dir).map_err(FsError::from)? {
+            let entry = entry.map_err(FsError::from)?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let rel = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let full_rel_path = base.join(&rel);
+            let meta = std::fs::metadata(&full_rel_path).map_err(FsError::from)?;
+            if meta.is_dir() {
+                StdFileSystemHal::walk_dir(base, &rel, out)?;
+            } else {
+                out.push(rel);
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,32 +171,5 @@ mod tests {
         session.abort();
         assert_eq!(fs.read_file("/a0/data.bin").expect("read"), b"old");
         assert!(!fs.exists("/a0/data.tmp"), "tmp must be cleaned up on abort");
-    }
-}
-
-impl StdFileSystemHal {
-    fn walk_dir(base: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), FsError> {
-        let dir = if prefix.is_empty() {
-            base.to_path_buf()
-        } else {
-            base.join(prefix)
-        };
-        for entry in std::fs::read_dir(&dir).map_err(FsError::from)? {
-            let entry = entry.map_err(FsError::from)?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let rel = if prefix.is_empty() {
-                name.clone()
-            } else {
-                format!("{prefix}/{name}")
-            };
-            let full_rel_path = base.join(&rel);
-            let meta = std::fs::metadata(&full_rel_path).map_err(FsError::from)?;
-            if meta.is_dir() {
-                StdFileSystemHal::walk_dir(base, &rel, out)?;
-            } else {
-                out.push(rel);
-            }
-        }
-        Ok(())
     }
 }

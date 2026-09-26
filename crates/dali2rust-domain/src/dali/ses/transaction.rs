@@ -101,20 +101,24 @@ mod tests {
 
     #[test]
     fn the_transmitter_limit_is_tighter_than_the_receivers() {
-        assert!(
-            RetryPolicy::SEND_TWICE_TX_MAX_US < RetryPolicy::SEND_TWICE_MAX_INTERVAL_US,
-            "our own obligation must be the tighter of the two"
-        );
+        const {
+            assert!(
+                RetryPolicy::SEND_TWICE_TX_MAX_US < RetryPolicy::SEND_TWICE_MAX_INTERVAL_US,
+                "our own obligation must be the tighter of the two"
+            )
+        };
         assert_eq!(RetryPolicy::SEND_TWICE_TX_MAX_US, 75_000, "Table 17 note c");
         assert_eq!(
             RetryPolicy::SEND_TWICE_MAX_INTERVAL_US,
             94_000,
             "Table 20, forward-to-forward of a send-twice pair"
         );
-        assert!(
-            RetryPolicy::SEND_TWICE_MAX_INTERVAL_US < RetryPolicy::SEND_TWICE_GREY_MAX_INTERVAL_US,
-            "Table 20's grey area sits above the pair limit, not below it"
-        );
+        const {
+            assert!(
+                RetryPolicy::SEND_TWICE_MAX_INTERVAL_US < RetryPolicy::SEND_TWICE_GREY_MAX_INTERVAL_US,
+                "Table 20's grey area sits above the pair limit, not below it"
+            )
+        };
     }
 
     #[test]

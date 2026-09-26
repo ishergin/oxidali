@@ -280,7 +280,7 @@ mod backward_window_tests {
                 "{us} µs is what a conforming gear does — both ends must accept it"
             );
         }
-        assert!(BACKWARD_ACCEPTANCE_FLOOR_US < BACKWARD_ACCEPTANCE_LIMIT_US);
+        const { assert!(BACKWARD_ACCEPTANCE_FLOOR_US < BACKWARD_ACCEPTANCE_LIMIT_US) };
     }
 
     #[test]

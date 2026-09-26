@@ -1268,10 +1268,12 @@ mod operation_ttl_tests {
             DISCOVERY_TTL_MS,
             DISCOVERY_SCAN_ADDRESSES * per_address * DISCOVERY_FRAME_BUDGET_MS
         );
-        assert!(
-            DISCOVERY_TTL_MS > 350_000 * 2,
-            "TTL must clear the measured cost of the phases with room for verify"
-        );
+        const {
+            assert!(
+                DISCOVERY_TTL_MS > 350_000 * 2,
+                "TTL must clear the measured cost of the phases with room for verify"
+            )
+        };
     }
 
     #[test]

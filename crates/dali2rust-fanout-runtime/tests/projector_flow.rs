@@ -311,14 +311,14 @@ fn applied_virtual_lamp_scope_projects_dual_entry_with_correlation_fan001() {
     body.short_address = Some(17);
     publish_event(&publisher, 77, body);
 
-    let (corr, cmd) = recv_runtime_update(&tap);
+    let (corr, cmd) = recv_runtime_update(tap);
     assert_eq!(corr, 77, "product correlation rides into the registry commit");
     assert_eq!(cmd.update.virtual_lamp_id, Some(12));
     assert_eq!(cmd.update.short_address, Some(17));
     assert_eq!(cmd.update.source, RuntimeSource::Api);
     assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Unknown));
     assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(180));
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -338,7 +338,7 @@ fn applied_color_only_keeps_last_dapc_source_fan015() {
     body.short_address = Some(17);
     publish_event(&publisher, 78, body);
 
-    let (_, cmd) = recv_runtime_update(&tap);
+    let (_, cmd) = recv_runtime_update(tap);
     assert_eq!(cmd.update.last_dapc_source, None);
 }
 
@@ -375,7 +375,7 @@ fn applied_group_scope_expands_applied_membership_only_fan002() {
 
     let mut lamps = Vec::new();
     for _ in 0..2 {
-        let (corr, cmd) = recv_runtime_update(&tap);
+        let (corr, cmd) = recv_runtime_update(tap);
         assert_eq!(corr, CORRELATION_NONE, "fan-out entries never confirm");
         assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Group));
         assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(200));
@@ -383,7 +383,7 @@ fn applied_group_scope_expands_applied_membership_only_fan002() {
     }
     lamps.sort_unstable();
     assert_eq!(lamps, vec![1, 2]);
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
     assert_eq!(counters.group_expansions.load(Ordering::Relaxed), 1);
 }
 
@@ -404,7 +404,7 @@ fn applied_group_fanout_carries_the_commands_source() {
     body.group_id = Some(7);
     publish_event(&publisher, 81, body);
 
-    let (_corr, cmd) = recv_runtime_update(&tap);
+    let (_corr, cmd) = recv_runtime_update(tap);
     assert_eq!(cmd.update.source, RuntimeSource::Hcl, "fan-out lost the HCL source");
     let obs = cmd.update.observation.expect("observation");
     assert_eq!(
@@ -438,13 +438,13 @@ fn applied_broadcast_scope_expands_bound_lamps_fan003() {
 
     let mut lamps = Vec::new();
     for _ in 0..3 {
-        let (_, cmd) = recv_runtime_update(&tap);
+        let (_, cmd) = recv_runtime_update(tap);
         assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Group));
         lamps.push(cmd.update.virtual_lamp_id.expect("vl target"));
     }
     lamps.sort_unstable();
     assert_eq!(lamps, vec![1, 2, 3]);
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
     assert_eq!(counters.skipped_unbound.load(Ordering::Relaxed), 1);
 }
 
@@ -466,7 +466,7 @@ fn applied_group_level_only_ignores_capability_fan016() {
 
     let mut lamps = Vec::new();
     for _ in 0..2 {
-        let (_, cmd) = recv_runtime_update(&tap);
+        let (_, cmd) = recv_runtime_update(tap);
         assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(200));
         assert!(cmd
             .update
@@ -478,7 +478,7 @@ fn applied_group_level_only_ignores_capability_fan016() {
     }
     lamps.sort_unstable();
     assert_eq!(lamps, vec![1, 2]);
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -497,7 +497,7 @@ fn applied_group_cct_filters_rgb_only_member_fan017() {
     body.group_id = Some(7);
     publish_event(&publisher, 91, body);
 
-    let by_vl = color_by_vl(&tap, 2);
+    let by_vl = color_by_vl(tap, 2);
     assert_eq!(by_vl[&1].as_ref().map(|c| c.mode), Some(ColorMode::Cct));
     assert_eq!(
         by_vl[&1].as_ref().map(|c| c.color_temperature_kelvin),
@@ -507,7 +507,7 @@ fn applied_group_cct_filters_rgb_only_member_fan017() {
         by_vl[&2].is_none(),
         "rgb-only sibling must not receive the cct colour"
     );
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -530,7 +530,7 @@ fn applied_group_rgb_filters_cct_only_member_fan018() {
     body.group_id = Some(7);
     publish_event(&publisher, 92, body);
 
-    let by_vl = color_by_vl(&tap, 2);
+    let by_vl = color_by_vl(tap, 2);
     assert_eq!(by_vl[&2].as_ref().map(|c| c.mode), Some(ColorMode::Rgb));
     assert_eq!(
         by_vl[&2].as_ref().map(|c| (c.r, c.g, c.b)),
@@ -540,7 +540,7 @@ fn applied_group_rgb_filters_cct_only_member_fan018() {
         by_vl[&1].is_none(),
         "cct-only sibling must not receive the rgb colour"
     );
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -563,7 +563,7 @@ fn applied_group_xy_filters_cct_only_member_fan019() {
     body.group_id = Some(7);
     publish_event(&publisher, 93, body);
 
-    let by_vl = color_by_vl(&tap, 2);
+    let by_vl = color_by_vl(tap, 2);
     assert_eq!(by_vl[&1].as_ref().map(|c| c.mode), Some(ColorMode::Xy));
     assert_eq!(
         by_vl[&1].as_ref().map(|c| (c.x, c.y)),
@@ -573,7 +573,7 @@ fn applied_group_xy_filters_cct_only_member_fan019() {
         by_vl[&2].is_none(),
         "cct-only sibling must not receive the xy colour"
     );
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -589,12 +589,12 @@ fn applied_group_dual_capable_member_accepts_cct_fan020() {
     body.group_id = Some(7);
     publish_event(&publisher, 94, body);
 
-    let (_, cmd) = recv_runtime_update(&tap);
+    let (_, cmd) = recv_runtime_update(tap);
     assert_eq!(
         cmd.update.setpoint.and_then(|sp| sp.color).map(|c| c.mode),
         Some(ColorMode::Cct)
     );
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -614,12 +614,12 @@ fn applied_group_dual_capable_member_accepts_rgb_fan021() {
     body.group_id = Some(7);
     publish_event(&publisher, 95, body);
 
-    let (_, cmd) = recv_runtime_update(&tap);
+    let (_, cmd) = recv_runtime_update(tap);
     assert_eq!(
         cmd.update.setpoint.and_then(|sp| sp.color).map(|c| c.mode),
         Some(ColorMode::Rgb)
     );
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -639,13 +639,13 @@ fn applied_broadcast_cct_filters_rgb_only_member_fan022() {
         applied(DaliTargetScope::Broadcast, color_setpoint(cct_color(4000)), false),
     );
 
-    let by_vl = color_by_vl(&tap, 2);
+    let by_vl = color_by_vl(tap, 2);
     assert_eq!(by_vl[&1].as_ref().map(|c| c.mode), Some(ColorMode::Cct));
     assert!(
         by_vl[&2].is_none(),
         "rgb-only bound lamp must not receive the cct colour"
     );
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -665,13 +665,13 @@ fn applied_group_unknown_capability_is_not_filtered_fan023() {
     body.group_id = Some(7);
     publish_event(&publisher, 97, body);
 
-    let (_, cmd) = recv_runtime_update(&tap);
+    let (_, cmd) = recv_runtime_update(tap);
     assert_eq!(
         cmd.update.setpoint.and_then(|sp| sp.color).map(|c| c.mode),
         Some(ColorMode::Rgb),
         "unknown capability must fail open, not strip the colour"
     );
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -691,7 +691,7 @@ fn observed_short_dapc_projects_sniffer_fact_fan010() {
     body.short_address = Some(17);
     publish_event(&publisher, CORRELATION_NONE, body);
 
-    let (corr, cmd) = recv_runtime_update(&tap);
+    let (corr, cmd) = recv_runtime_update(tap);
     assert_eq!(corr, CORRELATION_NONE);
     assert_eq!(cmd.update.virtual_lamp_id, Some(12));
     assert_eq!(cmd.update.short_address, Some(17));
@@ -733,7 +733,7 @@ fn observed_group_and_broadcast_classify_group_fan011_fan012() {
     group_fact.group_id = Some(7);
     publish_event(&publisher, CORRELATION_NONE, group_fact);
     for _ in 0..2 {
-        let (_, cmd) = recv_runtime_update(&tap);
+        let (_, cmd) = recv_runtime_update(tap);
         assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Group));
         assert_eq!(cmd.update.source, RuntimeSource::Sniffer);
     }
@@ -749,10 +749,10 @@ fn observed_group_and_broadcast_classify_group_fan011_fan012() {
         ),
     );
     for _ in 0..3 {
-        let (_, cmd) = recv_runtime_update(&tap);
+        let (_, cmd) = recv_runtime_update(tap);
         assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Group));
     }
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -776,13 +776,13 @@ fn observed_group_color_filters_incapable_member_fan024() {
     body.group_id = Some(7);
     publish_event(&publisher, CORRELATION_NONE, body);
 
-    let by_vl = color_by_vl(&tap, 2);
+    let by_vl = color_by_vl(tap, 2);
     assert_eq!(by_vl[&2].as_ref().map(|c| c.mode), Some(ColorMode::Rgb));
     assert!(
         by_vl[&1].is_none(),
         "cct-only sibling must not receive the sniffed rgb colour"
     );
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -799,7 +799,7 @@ fn observed_unknown_projects_nothing_sys214() {
             false,
         ),
     );
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
     assert!(counters.skipped_unknown_observed.load(Ordering::Relaxed) >= 1);
 }
 
@@ -832,13 +832,13 @@ fn attribute_read_runtime_status_chunk_projects_fan030() {
         },
     );
 
-    let (corr, cmd) = recv_runtime_update(&tap);
+    let (corr, cmd) = recv_runtime_update(tap);
     assert_eq!(corr, CORRELATION_NONE);
     assert_eq!(cmd.update.virtual_lamp_id, None);
     assert_eq!(cmd.update.short_address, Some(17));
     assert_eq!(cmd.update.last_dapc_source, None);
     assert_eq!(cmd.update.source, RuntimeSource::Readback);
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 fn scene_rows() -> Vec<SceneApplyRowView> {
@@ -910,7 +910,7 @@ fn scene_recall_expands_applied_rows_only_fan050_fan051() {
 
     let mut projected = Vec::new();
     for _ in 0..2 {
-        let (corr, cmd) = recv_runtime_update(&tap);
+        let (corr, cmd) = recv_runtime_update(tap);
         assert_eq!(corr, CORRELATION_NONE);
         assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Scene));
         projected.push((
@@ -920,7 +920,7 @@ fn scene_recall_expands_applied_rows_only_fan050_fan051() {
     }
     projected.sort_unstable();
     assert_eq!(projected, vec![(1, Some(100)), (2, Some(120))]);
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
     assert_eq!(counters.scene_expansions.load(Ordering::Relaxed), 1);
 
     publish_event(
@@ -939,7 +939,7 @@ fn scene_recall_expands_applied_rows_only_fan050_fan051() {
             recalled_at_mono_ms: PRODUCER_MONO_MS,
         },
     );
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -960,11 +960,11 @@ fn observed_scene_recall_projects_applied_rows_fan052() {
     publish_event(&publisher, CORRELATION_NONE, body);
 
     for _ in 0..2 {
-        let (_, cmd) = recv_runtime_update(&tap);
+        let (_, cmd) = recv_runtime_update(tap);
         assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Scene));
         assert_eq!(cmd.update.source, RuntimeSource::Sniffer);
     }
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 fn scene_rows_capability_case() -> Vec<SceneApplyRowView> {
@@ -1014,7 +1014,7 @@ fn scene_recall_filters_incapable_member_colour_fan053() {
     );
 
     for _ in 0..2 {
-        let (_, cmd) = recv_runtime_update(&tap);
+        let (_, cmd) = recv_runtime_update(tap);
         let vl = cmd.update.virtual_lamp_id.expect("vl target");
         let sp = cmd.update.setpoint.expect("setpoint");
         match vl {
@@ -1032,7 +1032,7 @@ fn scene_recall_filters_incapable_member_colour_fan053() {
             other => panic!("unexpected vl {other}"),
         }
     }
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -1056,13 +1056,13 @@ fn observed_scene_recall_filters_incapable_member_colour_fan054() {
     body.scene_id = Some(3);
     publish_event(&publisher, CORRELATION_NONE, body);
 
-    let by_vl = color_by_vl(&tap, 2);
+    let by_vl = color_by_vl(tap, 2);
     assert_eq!(by_vl[&1].as_ref().map(|c| c.mode), Some(ColorMode::Cct));
     assert!(
         by_vl[&2].is_none(),
         "rgb-only member must not receive the sniffed cct colour"
     );
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -1088,12 +1088,12 @@ fn group_scoped_scene_recall_projects_members_only_fan055() {
         },
     );
 
-    let (corr, cmd) = recv_runtime_update(&tap);
+    let (corr, cmd) = recv_runtime_update(tap);
     assert_eq!(corr, CORRELATION_NONE);
     assert_eq!(cmd.update.virtual_lamp_id, Some(1));
     assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(100));
     assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Scene));
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
     assert_eq!(counters.scene_expansions.load(Ordering::Relaxed), 1);
 }
 
@@ -1116,11 +1116,11 @@ fn observed_group_scene_recall_projects_members_only_fan056() {
     body.scene_id = Some(3);
     publish_event(&publisher, CORRELATION_NONE, body);
 
-    let (_, cmd) = recv_runtime_update(&tap);
+    let (_, cmd) = recv_runtime_update(tap);
     assert_eq!(cmd.update.virtual_lamp_id, Some(1));
     assert_eq!(cmd.update.source, RuntimeSource::Sniffer);
     assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Scene));
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -1141,10 +1141,10 @@ fn observed_short_scene_recall_projects_the_bound_row_only_fan057() {
     body.scene_id = Some(3);
     publish_event(&publisher, CORRELATION_NONE, body);
 
-    let (_, cmd) = recv_runtime_update(&tap);
+    let (_, cmd) = recv_runtime_update(tap);
     assert_eq!(cmd.update.virtual_lamp_id, Some(2));
     assert_eq!(cmd.update.source, RuntimeSource::Sniffer);
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -1170,7 +1170,7 @@ fn group_recall_without_a_group_snapshot_is_ignored_not_a_success() {
         },
     );
 
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
     wait_until(
         || counters.ignored_events.load(Ordering::Relaxed) >= 1,
         Duration::from_millis(500),
@@ -1197,7 +1197,7 @@ fn observed_group_recall_with_oversized_group_id_is_ignored() {
     body.scene_id = Some(3);
     publish_event(&publisher, CORRELATION_NONE, body);
 
-    assert_no_more_updates(&tap);
+    assert_no_more_updates(tap);
     wait_until(
         || counters.ignored_events.load(Ordering::Relaxed) >= 1,
         Duration::from_millis(500),
@@ -1275,7 +1275,7 @@ fn every_projected_fact_carries_the_producers_stamp_fan060() {
     body.virtual_lamp_id = Some(12);
     body.short_address = Some(17);
     publish_event(&publisher, 77, body);
-    let (_, cmd) = recv_runtime_update(&tap);
+    let (_, cmd) = recv_runtime_update(tap);
     assert_eq!(
         cmd.update.observed_at_mono_ms,
         Some(PRODUCER_MONO_MS),
@@ -1293,7 +1293,7 @@ fn every_projected_fact_carries_the_producers_stamp_fan060() {
         )
         .tap_short(17),
     );
-    let (_, cmd) = recv_runtime_update(&tap);
+    let (_, cmd) = recv_runtime_update(tap);
     assert_eq!(
         cmd.update.observed_at_mono_ms,
         Some(PRODUCER_MONO_MS),
@@ -1331,7 +1331,7 @@ fn a_runtime_status_chunk_projects_the_read_start_stamp_fan061() {
         },
     );
 
-    let (_, cmd) = recv_runtime_update(&tap);
+    let (_, cmd) = recv_runtime_update(tap);
     assert_eq!(cmd.update.observed_at_mono_ms, Some(PRODUCER_MONO_MS));
 }
 
@@ -1355,7 +1355,7 @@ fn a_fact_with_no_status_read_projects_absent_status_flags_fan062() {
         )
         .tap_short(17),
     );
-    let (_, cmd) = recv_runtime_update(&tap);
+    let (_, cmd) = recv_runtime_update(tap);
     let obs = cmd.update.observation.expect("observation");
     assert_eq!(
         obs.status_flags, None,
@@ -1368,7 +1368,7 @@ fn a_fact_with_no_status_read_projects_absent_status_flags_fan062() {
     body.virtual_lamp_id = Some(12);
     body.short_address = Some(17);
     publish_event(&publisher, 77, body);
-    let (_, cmd) = recv_runtime_update(&tap);
+    let (_, cmd) = recv_runtime_update(tap);
     let obs = cmd.update.observation.expect("observation");
     assert_eq!(
         obs.status_flags, None,
@@ -1407,7 +1407,7 @@ fn a_runtime_status_chunk_forwards_the_observed_flags_fan063() {
         },
     );
 
-    let (_, cmd) = recv_runtime_update(&tap);
+    let (_, cmd) = recv_runtime_update(tap);
     let obs = cmd.update.observation.expect("observation");
     assert_eq!(
         obs.status_flags.as_ref().map(|s| s.raw),
@@ -1512,7 +1512,7 @@ fn a_device_absent_read_projects_a_reachability_fault_fan070() {
         outcomes(17, AttributeGroupReadOutcome::DeviceAbsent),
     );
 
-    let (corr, cmd) = recv_runtime_update(&tap);
+    let (corr, cmd) = recv_runtime_update(tap);
     assert_eq!(corr, CORRELATION_NONE, "an absence verdict is not a requested commit");
     let entry = &cmd.update;
     assert_eq!(entry.short_address, Some(17));

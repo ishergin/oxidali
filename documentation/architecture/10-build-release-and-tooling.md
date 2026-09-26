@@ -44,9 +44,8 @@ BDD conventions → [05](05-testing-and-bdd.md); updates over the network →
 
 - `just ci` before a commit lands and after anything that moves a contract, a wire order
   or ESP-only code; `just quick` is the inner loop. `ci` never links the firmware.
-- `check` compiles test targets too, because test doubles are what breaks unseen;
-  `clippy` covers production targets only. There is no destructive HIL recipe: that tier
-  runs one test at a time, by hand.
+- `check` and `clippy` cover test targets too, because test doubles are what breaks
+  unseen. There is no destructive HIL recipe: that tier runs one test at a time, by hand.
 - Host test time is launch time, not test time: `just gc` sweeps stale `.o` files and
   `just gc-status` counts them (the macOS mechanism: ISSUE-147).
 - The `p4-fw-flash` recipe names a local USB port; the installed boards are flashed with

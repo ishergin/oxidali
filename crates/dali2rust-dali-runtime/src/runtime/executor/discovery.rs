@@ -165,7 +165,7 @@ pub fn discover_known_control_gear(
     let summary = discover_known_control_gear_with_retry_budget(
         controller,
         crate::runtime::config::DEFAULT_DISCOVERY_STEP_RETRIES,
-        &mut |found: &DiscoveredDevice| devices.push(found.clone()),
+        &mut |found: &DiscoveredDevice| devices.push(*found),
     )?;
     Ok(DiscoveryScanReport {
         devices,
@@ -1093,13 +1093,13 @@ mod tests {
     fn read_random_address_stable_reconstructs_per_byte_majority() {
         let mock = MockDaliTransport::new();
         let short = 17;
-        script_random_address_reads(&mock, short, &[0x5C1D_C2, 0x5C1D_1D, 0x5C5C_C2]);
+        script_random_address_reads(&mock, short, &[0x5C_1D_C2, 0x5C_1D_1D, 0x5C_5C_C2]);
 
         let (transport, mut controller) = setup_controller(mock);
         let random_address =
             read_random_address_stable(&mut controller, short).expect("random address majority");
 
-        assert_eq!(random_address, 0x5C1D_C2);
+        assert_eq!(random_address, 0x5C_1D_C2);
         assert_script_consumed(&transport);
     }
 
@@ -1146,13 +1146,13 @@ mod tests {
         let mock = MockDaliTransport::new();
         let short = 17;
         script_random_address_unanswered_m(&mock, short, 0x5C);
-        script_random_address_reads(&mock, short, &[0x5C1D_C2, 0x5C1D_C2]);
+        script_random_address_reads(&mock, short, &[0x5C_1D_C2, 0x5C_1D_C2]);
 
         let (transport, mut controller) = setup_controller(mock);
         let random_address =
             read_random_address_stable(&mut controller, short).expect("later samples answer");
 
-        assert_eq!(random_address, 0x5C1D_C2);
+        assert_eq!(random_address, 0x5C_1D_C2);
         assert_script_consumed(&transport);
     }
 
@@ -1160,7 +1160,7 @@ mod tests {
     fn one_random_address_sample_goes_out_as_a_single_transaction() {
         let mock = MockDaliTransport::new();
         let short = 17;
-        script_random_address_once(&mock, short, 0x5C1D_C2);
+        script_random_address_once(&mock, short, 0x5C_1D_C2);
 
         let (transport, mut controller) = setup_controller(mock);
         let counters = Arc::new(DaliWireCounters::default());
@@ -1168,7 +1168,7 @@ mod tests {
 
         let random_address = read_random_address_once(&mut controller, short).expect("sample");
 
-        assert_eq!(random_address, 0x5C1D_C2);
+        assert_eq!(random_address, 0x5C_1D_C2);
         assert_eq!(
             counters.transactions_started.load(Ordering::Relaxed),
             1,
@@ -1824,9 +1824,9 @@ mod tests {
     fn discover_known_control_gear_verifies_random_address_before_publish() {
         let mock = MockDaliTransport::new();
         script_present_short_addresses(&mock, &[0]);
-        script_random_address_reads(&mock, 0, &[0x5C1D_C2, 0x5C1D_C2]);
+        script_random_address_reads(&mock, 0, &[0x5C_1D_C2, 0x5C_1D_C2]);
         script_verify_session_begin(&mock);
-        script_verify_attempt(&mock, 0x5C1D_C2, Some(0x01));
+        script_verify_attempt(&mock, 0x5C_1D_C2, Some(0x01));
         mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Withdraw).to_forward_frame().raw());
         script_verify_session_end(&mock);
         mock.expect_forward_frame_with_backward(
@@ -1859,7 +1859,7 @@ mod tests {
             DiscoveryScanReport {
                 devices: vec![DiscoveredDevice {
                     short_address: 0,
-                    random_address: Some(0x5C1D_C2),
+                    random_address: Some(0x5C_1D_C2),
                     device_type: DeviceType::Dt8Color,
                     color_mode: ColorMode::Cct,
                     dt8_xy_capable: false,
@@ -1879,9 +1879,9 @@ mod tests {
     fn discover_known_control_gear_uses_third_random_read_to_resolve_mismatch() {
         let mock = MockDaliTransport::new();
         script_present_short_addresses(&mock, &[0]);
-        script_random_address_reads(&mock, 0, &[0x5C1D_C1, 0x5C1D_C2, 0x5C1D_C2]);
+        script_random_address_reads(&mock, 0, &[0x5C_1D_C1, 0x5C_1D_C2, 0x5C_1D_C2]);
         script_verify_session_begin(&mock);
-        script_verify_attempt(&mock, 0x5C1D_C2, Some(0x01));
+        script_verify_attempt(&mock, 0x5C_1D_C2, Some(0x01));
         mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Withdraw).to_forward_frame().raw());
         script_verify_session_end(&mock);
         script_describe_dt6(&mock, 0);
@@ -1894,7 +1894,7 @@ mod tests {
             DiscoveryScanReport {
                 devices: vec![DiscoveredDevice {
                     short_address: 0,
-                    random_address: Some(0x5C1D_C2),
+                    random_address: Some(0x5C_1D_C2),
                     device_type: DeviceType::Dt6Led,
                     color_mode: ColorMode::Brightness,
                     dt8_xy_capable: false,
@@ -1914,11 +1914,11 @@ mod tests {
     fn discover_known_control_gear_retries_verify_after_short_address_timeout() {
         let mock = MockDaliTransport::new();
         script_present_short_addresses(&mock, &[0]);
-        script_random_address_reads(&mock, 0, &[0x5C1D_C2, 0x5C1D_C2]);
+        script_random_address_reads(&mock, 0, &[0x5C_1D_C2, 0x5C_1D_C2]);
         script_verify_session_begin(&mock);
-        script_verify_attempt(&mock, 0x5C1D_C2, None);
-        script_random_address_reads(&mock, 0, &[0x5C1D_C2, 0x5C1D_C2]);
-        script_verify_attempt(&mock, 0x5C1D_C2, Some(0x01));
+        script_verify_attempt(&mock, 0x5C_1D_C2, None);
+        script_random_address_reads(&mock, 0, &[0x5C_1D_C2, 0x5C_1D_C2]);
+        script_verify_attempt(&mock, 0x5C_1D_C2, Some(0x01));
         mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Withdraw).to_forward_frame().raw());
         script_verify_session_end(&mock);
         script_describe_dt6(&mock, 0);
@@ -1931,7 +1931,7 @@ mod tests {
             DiscoveryScanReport {
                 devices: vec![DiscoveredDevice {
                     short_address: 0,
-                    random_address: Some(0x5C1D_C2),
+                    random_address: Some(0x5C_1D_C2),
                     device_type: DeviceType::Dt6Led,
                     color_mode: ColorMode::Brightness,
                     dt8_xy_capable: false,
@@ -1951,16 +1951,16 @@ mod tests {
     fn discover_known_control_gear_keeps_verified_devices_when_later_verify_fails() {
         let mock = MockDaliTransport::new();
         script_present_short_addresses(&mock, &[0, 1]);
-        script_random_address_reads(&mock, 0, &[0x5C1D_C2, 0x5C1D_C2]);
-        script_random_address_reads(&mock, 1, &[0xC8E7_31, 0xC8E7_31]);
+        script_random_address_reads(&mock, 0, &[0x5C_1D_C2, 0x5C_1D_C2]);
+        script_random_address_reads(&mock, 1, &[0xC8_E7_31, 0xC8_E7_31]);
         script_verify_session_begin(&mock);
-        script_verify_attempt(&mock, 0x5C1D_C2, Some(0x01));
+        script_verify_attempt(&mock, 0x5C_1D_C2, Some(0x01));
         mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Withdraw).to_forward_frame().raw());
-        script_verify_attempt(&mock, 0xC8E7_31, None);
-        script_random_address_reads(&mock, 1, &[0xC8E7_31, 0xC8E7_31]);
-        script_verify_attempt(&mock, 0xC8E7_31, None);
-        script_random_address_reads(&mock, 1, &[0xC8E7_31, 0xC8E7_31]);
-        script_verify_attempt(&mock, 0xC8E7_31, None);
+        script_verify_attempt(&mock, 0xC8_E7_31, None);
+        script_random_address_reads(&mock, 1, &[0xC8_E7_31, 0xC8_E7_31]);
+        script_verify_attempt(&mock, 0xC8_E7_31, None);
+        script_random_address_reads(&mock, 1, &[0xC8_E7_31, 0xC8_E7_31]);
+        script_verify_attempt(&mock, 0xC8_E7_31, None);
         script_verify_session_end(&mock);
         script_describe_dt6(&mock, 0);
 
@@ -1972,7 +1972,7 @@ mod tests {
             DiscoveryScanReport {
                 devices: vec![DiscoveredDevice {
                     short_address: 0,
-                    random_address: Some(0x5C1D_C2),
+                    random_address: Some(0x5C_1D_C2),
                     device_type: DeviceType::Dt6Led,
                     color_mode: ColorMode::Brightness,
                     dt8_xy_capable: false,

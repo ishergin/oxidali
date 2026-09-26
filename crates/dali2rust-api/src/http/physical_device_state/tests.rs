@@ -83,7 +83,7 @@ fn attributes_json(
     luminaire: Option<&MemoryLuminaireAttributesView>,
 ) -> String {
     let sections: Vec<AttributeSectionView> = AttributeSectionKind::ALL
-        .into_iter()
+        .iter()
         .map(|kind| match kind {
             AttributeSectionKind::Common102 => {
                 AttributeSectionView::Common102(Box::new(attrs.common102.clone()))

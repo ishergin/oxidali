@@ -33,16 +33,16 @@ fn recall_frame(correlation_id: u64, scene_id: u8) -> BusFrame {
     ))
 }
 
-fn spawn_worker_with_scripted_frames(
-    scripted: &[u16],
-) -> (
+type ScriptedWorker = (
     dali2rust_bus::BusPublisher,
     dali2rust_bus::BusHost,
     std::sync::mpsc::Receiver<BusFrame>,
     std::sync::mpsc::Receiver<BusFrame>,
     Arc<std::sync::Mutex<MockDaliTransport>>,
     dali2rust_bus::BusSubscriberRx,
-) {
+);
+
+fn spawn_worker_with_scripted_frames(scripted: &[u16]) -> ScriptedWorker {
     let (host, publisher, (worker_cmd, conf_obs, ev_obs)) =
         BusHost::spawn(BusConfig::default(), |reg| {
             (

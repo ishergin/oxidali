@@ -1,3 +1,5 @@
+#![allow(clippy::unusual_byte_groupings, reason = "frame literals group their digits by the fields of a Part 103 frame")]
+
 use std::sync::mpsc::sync_channel;
 use std::sync::Arc;
 use std::time::Duration;

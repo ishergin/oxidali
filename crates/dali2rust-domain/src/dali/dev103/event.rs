@@ -323,6 +323,7 @@ pub mod button_filter {
 }
 
 #[cfg(test)]
+#[allow(clippy::unusual_byte_groupings, reason = "frame literals group their digits by the fields of a Part 103 frame")]
 mod tests {
     use super::*;
 

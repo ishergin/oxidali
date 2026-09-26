@@ -65,7 +65,7 @@ fmt:
     cargo fmt --all
 
 clippy:
-    cargo clippy --target {{default_host}} {{host_crates}} -- -D warnings -D clippy::allow_attributes_without_reason -D clippy::undocumented_unsafe_blocks
+    cargo clippy --target {{default_host}} --all-targets {{host_crates}} -- -D warnings -D clippy::allow_attributes_without_reason -D clippy::undocumented_unsafe_blocks
 
 [doc("Advisory pedantic clippy over the host crates, minus the allowlist.")]
 clippy-pedantic-advisory:

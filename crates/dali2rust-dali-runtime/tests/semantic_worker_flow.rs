@@ -20,10 +20,11 @@ use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_domain::registry::{AdapterSnapshot, RegistryReadPort, VirtualLampSnapshot};
 
 fn setpoint(level: u8) -> LightSetpoint {
-    let mut sp = LightSetpoint::default();
-    sp.power = PowerState::On;
-    sp.level = level;
-    sp
+    LightSetpoint {
+        power: PowerState::On,
+        level,
+        ..Default::default()
+    }
 }
 
 #[derive(Clone, Copy)]

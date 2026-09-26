@@ -108,6 +108,38 @@ fn service_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
     }
 }
 
+fn periodic_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
+    reg: &mut dali2rust_bus::BusRegistrar<S, dali2rust_bus::BusSubscriberRx>,
+) -> PeriodicChannels {
+    PeriodicChannels {
+        hcl_rx: reg.subscribe_commands_and_events_named(
+            64,
+            HCL_SCHEDULER_HANDLED_COMMANDS,
+            HCL_SCHEDULER_HANDLED_EVENTS,
+            "hcl_scheduler",
+        ),
+        hcl_conf: reg.subscribe_confirmations(32),
+        poller_ev: reg.subscribe_events_named(64, POLLER_HANDLED_EVENTS, "poller"),
+        poller_conf: reg.subscribe_confirmations(32),
+        rules_cmd: reg.subscribe_commands_and_events_named(
+            128,
+            dali2rust_rules_runtime::RULES_WORKER_HANDLED_COMMANDS,
+            dali2rust_rules_runtime::RULES_WORKER_HANDLED_EVENTS,
+            "rules",
+        ),
+        arbitration_ev: reg.subscribe_events_named(
+            16,
+            dali2rust_redundancy_runtime::ARBITRATION_HANDLED_EVENTS,
+            "arbitration",
+        ),
+        replication_ev: reg.subscribe_events_named(
+            8,
+            dali2rust_redundancy_runtime::REPLICATION_HANDLED_EVENTS,
+            "replication",
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{spawn_bus_subscribers, NAMED_EVENT_SUBSCRIBERS};
@@ -138,37 +170,5 @@ mod tests {
             got, want,
             "the declared list and the live registration must be the same set"
         );
-    }
-}
-
-fn periodic_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
-    reg: &mut dali2rust_bus::BusRegistrar<S, dali2rust_bus::BusSubscriberRx>,
-) -> PeriodicChannels {
-    PeriodicChannels {
-        hcl_rx: reg.subscribe_commands_and_events_named(
-            64,
-            HCL_SCHEDULER_HANDLED_COMMANDS,
-            HCL_SCHEDULER_HANDLED_EVENTS,
-            "hcl_scheduler",
-        ),
-        hcl_conf: reg.subscribe_confirmations(32),
-        poller_ev: reg.subscribe_events_named(64, POLLER_HANDLED_EVENTS, "poller"),
-        poller_conf: reg.subscribe_confirmations(32),
-        rules_cmd: reg.subscribe_commands_and_events_named(
-            128,
-            dali2rust_rules_runtime::RULES_WORKER_HANDLED_COMMANDS,
-            dali2rust_rules_runtime::RULES_WORKER_HANDLED_EVENTS,
-            "rules",
-        ),
-        arbitration_ev: reg.subscribe_events_named(
-            16,
-            dali2rust_redundancy_runtime::ARBITRATION_HANDLED_EVENTS,
-            "arbitration",
-        ),
-        replication_ev: reg.subscribe_events_named(
-            8,
-            dali2rust_redundancy_runtime::REPLICATION_HANDLED_EVENTS,
-            "replication",
-        ),
     }
 }

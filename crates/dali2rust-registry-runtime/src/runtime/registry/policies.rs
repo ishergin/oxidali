@@ -163,8 +163,10 @@ mod tests {
     #[test]
     fn a_policy_with_no_level_manages_nothing() {
         assert!(!PoliciesRecord::default().to_view().manages_anything());
-        let mut record = PoliciesRecord::default();
-        record.apply_on_discovery = true;
+        let mut record = PoliciesRecord {
+            apply_on_discovery: true,
+            ..Default::default()
+        };
         assert!(
             !record.to_view().manages_anything(),
             "a discovery flag is not a level"

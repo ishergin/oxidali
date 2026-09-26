@@ -1099,10 +1099,9 @@ fn the_presence_budget_is_not_spent_on_a_device_that_answers() {
     assert_script_consumed(&transport);
 }
 
-fn light_source_read(
-    answer: Option<u8>,
-    dtrs: &[Option<u8>],
-) -> ((Option<u8>, Option<u32>), std::sync::Arc<std::sync::Mutex<MockDaliTransport>>) {
+type SharedMock = std::sync::Arc<std::sync::Mutex<MockDaliTransport>>;
+
+fn light_source_read(answer: Option<u8>, dtrs: &[Option<u8>]) -> ((Option<u8>, Option<u32>), SharedMock) {
     const SHORT: u8 = 3;
     let mock = MockDaliTransport::new();
     mock.expect_forward_frame_with_backward(

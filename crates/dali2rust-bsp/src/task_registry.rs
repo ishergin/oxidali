@@ -321,8 +321,6 @@ mod tests {
         assert_eq!(sample.free, 900);
     }
 
-    use super::*;
-
     #[test]
     fn a_refresh_replaces_kernel_handles_and_forgets_the_vanished() {
         let names: &[&'static CStr] = &[c"httpd", c"mqtt_task"];

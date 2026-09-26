@@ -635,7 +635,7 @@ fn adapter_settings_update_success() {
     let corr = 1001u64;
     publish_cmd(
         &publisher,
-        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, corr, 0, None, dali2rust_contracts::msg::AdapterSettingsUpdateCommand { patch_mask: AdapterSettingsUpdateCommand::PATCH_NAME, name: dali2rust_contracts::msg::fixed_text_64((Some("Adapter-A")).unwrap_or("")), enabled: false }),
+        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, corr, 0, None, dali2rust_contracts::msg::AdapterSettingsUpdateCommand { patch_mask: AdapterSettingsUpdateCommand::PATCH_NAME, name: dali2rust_contracts::msg::fixed_text_64("Adapter-A"), enabled: false }),
     );
     assert_ok(&recv_confirm_for(&conf_rx, corr));
     assert_eq!(counters.command.adapter_settings_applied.load(Ordering::Relaxed), 1);
@@ -647,7 +647,7 @@ fn adapter_settings_out_of_range_returns_adapter_id_out_of_range() {
     let corr = 1002u64;
     publish_cmd(
         &publisher,
-        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, corr, 1, None, dali2rust_contracts::msg::AdapterSettingsUpdateCommand { patch_mask: AdapterSettingsUpdateCommand::PATCH_NAME, name: dali2rust_contracts::msg::fixed_text_64((Some("Adapter-B")).unwrap_or("")), enabled: true }),
+        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, corr, 1, None, dali2rust_contracts::msg::AdapterSettingsUpdateCommand { patch_mask: AdapterSettingsUpdateCommand::PATCH_NAME, name: dali2rust_contracts::msg::fixed_text_64("Adapter-B"), enabled: true }),
     );
     let c = recv_confirm_for(&conf_rx, corr);
     assert_exec_failed_msg(&c, "adapter_id_out_of_range");

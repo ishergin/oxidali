@@ -83,7 +83,7 @@ fn adapter_settings_round_trip_across_fs_reload() {
     let (publisher, _host) = spawn_registry(Arc::clone(&store));
     publish(
         &publisher,
-        BusFrame::command(dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 10, 0, None, dali2rust_contracts::msg::AdapterSettingsUpdateCommand { patch_mask: AdapterSettingsUpdateCommand::PATCH_NAME | AdapterSettingsUpdateCommand::PATCH_ENABLED, name: dali2rust_contracts::msg::fixed_text_64((Some("Adapter-A")).unwrap_or("")), enabled: false })),
+        BusFrame::command(dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 10, 0, None, dali2rust_contracts::msg::AdapterSettingsUpdateCommand { patch_mask: AdapterSettingsUpdateCommand::PATCH_NAME | AdapterSettingsUpdateCommand::PATCH_ENABLED, name: dali2rust_contracts::msg::fixed_text_64("Adapter-A"), enabled: false })),
     );
     wait_until(
         || {
@@ -226,7 +226,7 @@ fn physical_device_memory_identity_round_trip_across_fs_reload() {
     let (publisher, _host) = spawn_registry(Arc::clone(&store));
     publish(
         &publisher,
-        BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 40, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryProgressEvent { registry_adapter_id: 0, short_address: 9, random_address: Some(0x5C1D_C2), device_type: DeviceType::Dt8Color, color_mode: ColorMode::Cct, dt8_xy_capable: false, dt8_tc_capable: true, dt8_rgb_capable: false, dt8_rgbwaf_capable: false, supported_device_types: None })),
+        BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 40, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryProgressEvent { registry_adapter_id: 0, short_address: 9, random_address: Some(0x5C_1D_C2), device_type: DeviceType::Dt8Color, color_mode: ColorMode::Cct, dt8_xy_capable: false, dt8_tc_capable: true, dt8_rgb_capable: false, dt8_rgbwaf_capable: false, supported_device_types: None })),
     );
     wait_until(
         || store.physical_device_view(0, 9).is_some(),
@@ -259,7 +259,7 @@ fn physical_device_memory_identity_round_trip_across_fs_reload() {
     let reloaded = RegistryStore::with_adapter_count(1);
     let _ = reloaded.hydrate_from_store(&slices, 1);
     let view = reloaded.physical_device_view(0, 9).expect("pd");
-    assert_eq!(view.random_address, Some(0x5C1D_C2));
+    assert_eq!(view.random_address, Some(0x5C_1D_C2));
     assert_eq!(view.memory_banks.len(), 2);
     assert_eq!(view.memory_banks[0].total_bytes_read, BANK0_BYTES.len() as u16);
     assert_eq!(view.memory_banks[1].total_bytes_read, BANK1_BYTES.len() as u16);

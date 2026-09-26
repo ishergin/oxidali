@@ -95,9 +95,11 @@ fn target_state_level_sends_direct_arc_power() {
 
     let (transport, mut controller) = setup_controller(mock);
 
-    let mut setpoint = LightSetpoint::default();
-    setpoint.power = PowerState::On;
-    setpoint.level = 180;
+    let setpoint = LightSetpoint {
+        power: PowerState::On,
+        level: 180,
+        ..Default::default()
+    };
     apply_short_target_state(&mut controller, 17, &setpoint, ColorWritePolicy::NONE).expect("target-state");
 
     assert_script_consumed(&transport);
@@ -140,11 +142,13 @@ fn target_state_rgb_uses_temporary_rgb_dimlevels() {
     let (transport, mut controller) = setup_controller(mock);
 
     let mut setpoint = LightSetpoint::default();
-    let mut color = dali2rust_contracts::msg::ColorValue::default();
-    color.mode = ColorMode::Rgb;
-    color.r = 255;
-    color.g = 0;
-    color.b = 0;
+    let color = dali2rust_contracts::msg::ColorValue {
+        mode: ColorMode::Rgb,
+        r: 255,
+        g: 0,
+        b: 0,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     apply_short_target_state(&mut controller, short, &setpoint, ColorWritePolicy::NONE).expect("target-state");
 
@@ -177,9 +181,11 @@ fn target_state_cct_uses_dtr_pair_then_dt8_temperature_command() {
 
     let (transport, mut controller) = setup_controller(mock);
     let mut setpoint = LightSetpoint::default();
-    let mut color = dali2rust_contracts::msg::ColorValue::default();
-    color.mode = ColorMode::Cct;
-    color.color_temperature_kelvin = 4000;
+    let color = dali2rust_contracts::msg::ColorValue {
+        mode: ColorMode::Cct,
+        color_temperature_kelvin: 4000,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     apply_short_target_state(&mut controller, short, &setpoint, ColorWritePolicy::NONE).expect("target-state");
 
@@ -194,9 +200,11 @@ fn a_level_carrying_colour_write_never_sends_activate() {
             | DT8_STATUS_RGB_ACTIVE);
         let (transport, mut controller) = setup_controller(mock);
         let mut setpoint = LightSetpoint::default();
-        let mut color = dali2rust_contracts::msg::ColorValue::default();
-        color.mode = mode;
-        color.color_temperature_kelvin = 4000;
+        let color = dali2rust_contracts::msg::ColorValue {
+            mode,
+            color_temperature_kelvin: 4000,
+            ..Default::default()
+        };
         setpoint.color = Some(color);
         setpoint.power = PowerState::On;
         setpoint.level = 200;
@@ -218,9 +226,11 @@ fn colour_without_power_does_not_switch_an_off_gear_on() {
     mock.set_persistent_response(0);
     let (transport, mut controller) = setup_controller(mock);
     let mut setpoint = LightSetpoint::default();
-    let mut color = dali2rust_contracts::msg::ColorValue::default();
-    color.mode = ColorMode::Cct;
-    color.color_temperature_kelvin = 4000;
+    let color = dali2rust_contracts::msg::ColorValue {
+        mode: ColorMode::Cct,
+        color_temperature_kelvin: 4000,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     setpoint.power = PowerState::Unknown;
     setpoint.level = 0;
@@ -268,10 +278,11 @@ fn a_level_only_setpoint_leaves_automatic_activation_alone_issue117() {
     let mock = MockDaliTransport::new();
     let short = 17;
     let (transport, mut controller) = setup_controller(mock);
-    let mut setpoint = LightSetpoint::default();
-    setpoint.power = PowerState::On;
-    setpoint.level = 200;
-    setpoint.color = Some(ColorValue::default());
+    let setpoint = LightSetpoint {
+        power: PowerState::On,
+        level: 200,
+        color: Some(ColorValue::default()),
+    };
     let policy = ColorWritePolicy {
         auto_activation: RepairAutoActivation::Yes,
         rgbwaf_control: AssertRgbwafControl::No,
@@ -337,13 +348,17 @@ fn target_state_color_only_power_on_activates_then_switches_on() {
     );
 
     let (transport, mut controller) = setup_controller(mock);
-    let mut setpoint = LightSetpoint::default();
-    setpoint.power = PowerState::On;
-    let mut color = dali2rust_contracts::msg::ColorValue::default();
-    color.mode = ColorMode::Rgb;
-    color.r = 254;
-    color.g = 0;
-    color.b = 200;
+    let mut setpoint = LightSetpoint {
+        power: PowerState::On,
+        ..Default::default()
+    };
+    let color = dali2rust_contracts::msg::ColorValue {
+        mode: ColorMode::Rgb,
+        r: 254,
+        g: 0,
+        b: 200,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     apply_short_target_state(&mut controller, short, &setpoint, ColorWritePolicy::NONE).expect("target-state");
 
@@ -356,11 +371,15 @@ fn a_colour_only_power_on_asks_the_gear_nothing_whatever_it_is_doing() {
     let short = 9;
     mock.set_persistent_response(DT8_STATUS_TC_ACTIVE);
     let (transport, mut controller) = setup_controller(mock);
-    let mut setpoint = LightSetpoint::default();
-    setpoint.power = PowerState::On;
-    let mut color = dali2rust_contracts::msg::ColorValue::default();
-    color.mode = ColorMode::Cct;
-    color.color_temperature_kelvin = 4000;
+    let mut setpoint = LightSetpoint {
+        power: PowerState::On,
+        ..Default::default()
+    };
+    let color = dali2rust_contracts::msg::ColorValue {
+        mode: ColorMode::Cct,
+        color_temperature_kelvin: 4000,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     apply_short_target_state(&mut controller, short, &setpoint, ColorWritePolicy::NONE)
         .expect("target-state");
@@ -420,13 +439,17 @@ fn target_state_group_color_only_power_on_sends_no_queries() {
     );
 
     let (transport, mut controller) = setup_controller(mock);
-    let mut setpoint = LightSetpoint::default();
-    setpoint.power = PowerState::On;
-    let mut color = dali2rust_contracts::msg::ColorValue::default();
-    color.mode = ColorMode::Rgb;
-    color.r = 10;
-    color.g = 20;
-    color.b = 30;
+    let mut setpoint = LightSetpoint {
+        power: PowerState::On,
+        ..Default::default()
+    };
+    let color = dali2rust_contracts::msg::ColorValue {
+        mode: ColorMode::Rgb,
+        r: 10,
+        g: 20,
+        b: 30,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     apply_group_target_state(&mut controller, 3, &setpoint).expect("target-state");
 
@@ -455,9 +478,11 @@ fn group_color_only_without_power_activates_via_dt8_activate() {
     let mut setpoint = LightSetpoint::default();
     assert_eq!(setpoint.power, PowerState::Unknown);
     assert_eq!(setpoint.level, 0);
-    let mut color = dali2rust_contracts::msg::ColorValue::default();
-    color.mode = ColorMode::Cct;
-    color.color_temperature_kelvin = 3000;
+    let color = dali2rust_contracts::msg::ColorValue {
+        mode: ColorMode::Cct,
+        color_temperature_kelvin: 3000,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     apply_group_target_state(&mut controller, 7, &setpoint).expect("target-state");
 
@@ -484,9 +509,11 @@ fn broadcast_color_only_without_power_activates_via_dt8_activate() {
 
     let (transport, mut controller) = setup_controller(mock);
     let mut setpoint = LightSetpoint::default();
-    let mut color = dali2rust_contracts::msg::ColorValue::default();
-    color.mode = ColorMode::Cct;
-    color.color_temperature_kelvin = 3000;
+    let color = dali2rust_contracts::msg::ColorValue {
+        mode: ColorMode::Cct,
+        color_temperature_kelvin: 3000,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     apply_broadcast_target_state(&mut controller, &setpoint).expect("target-state");
 
@@ -514,12 +541,16 @@ fn group_color_with_level_activates_by_dapc_alone() {
     );
 
     let (transport, mut controller) = setup_controller(mock);
-    let mut setpoint = LightSetpoint::default();
-    setpoint.power = PowerState::On;
-    setpoint.level = 180;
-    let mut color = dali2rust_contracts::msg::ColorValue::default();
-    color.mode = ColorMode::Cct;
-    color.color_temperature_kelvin = 3000;
+    let mut setpoint = LightSetpoint {
+        power: PowerState::On,
+        level: 180,
+        ..Default::default()
+    };
+    let color = dali2rust_contracts::msg::ColorValue {
+        mode: ColorMode::Cct,
+        color_temperature_kelvin: 3000,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     apply_group_target_state(&mut controller, 7, &setpoint).expect("target-state");
 
@@ -562,10 +593,12 @@ fn target_state_xy_sends_temporary_x_then_y_then_activate() {
 
     let (transport, mut controller) = setup_controller(mock);
     let mut setpoint = LightSetpoint::default();
-    let mut color = dali2rust_contracts::msg::ColorValue::default();
-    color.mode = ColorMode::Xy;
-    color.x = 0x1234;
-    color.y = 0x5678;
+    let color = dali2rust_contracts::msg::ColorValue {
+        mode: ColorMode::Xy,
+        x: 0x1234,
+        y: 0x5678,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     apply_short_target_state(&mut controller, short, &setpoint, ColorWritePolicy::NONE).expect("target-state");
 
@@ -595,9 +628,11 @@ fn target_state_cct_redrives_once_when_colour_type_verify_fails() {
 
     let (transport, mut controller) = setup_controller(mock);
     let mut setpoint = LightSetpoint::default();
-    let mut color = dali2rust_contracts::msg::ColorValue::default();
-    color.mode = ColorMode::Cct;
-    color.color_temperature_kelvin = 4000;
+    let color = dali2rust_contracts::msg::ColorValue {
+        mode: ColorMode::Cct,
+        color_temperature_kelvin: 4000,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     apply_short_target_state(&mut controller, short, &setpoint, ColorWritePolicy::NONE).expect("target-state");
     assert_script_consumed(&transport);
@@ -626,9 +661,11 @@ fn target_state_cct_redrives_when_value_reads_back_out_of_range() {
 
     let (transport, mut controller) = setup_controller(mock);
     let mut setpoint = LightSetpoint::default();
-    let mut color = dali2rust_contracts::msg::ColorValue::default();
-    color.mode = ColorMode::Cct;
-    color.color_temperature_kelvin = 4000;
+    let color = dali2rust_contracts::msg::ColorValue {
+        mode: ColorMode::Cct,
+        color_temperature_kelvin: 4000,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     apply_short_target_state(&mut controller, short, &setpoint, ColorWritePolicy::NONE).expect("target-state");
     assert_script_consumed(&transport);
@@ -646,9 +683,11 @@ fn target_state_power_off_fades_to_zero_with_dapc() {
     mock.expect_forward_frame(expected);
 
     let (transport, mut controller) = setup_controller(mock);
-    let mut setpoint = LightSetpoint::default();
-    setpoint.power = PowerState::Off;
-    setpoint.level = 0;
+    let setpoint = LightSetpoint {
+        power: PowerState::Off,
+        level: 0,
+        ..Default::default()
+    };
     apply_short_target_state(&mut controller, 5, &setpoint, ColorWritePolicy::NONE).expect("target-state");
     assert_script_consumed(&transport);
 }
@@ -665,9 +704,11 @@ fn target_state_on_with_zero_level_sends_go_to_last_active_level() {
     mock.expect_forward_frame(expected);
 
     let (transport, mut controller) = setup_controller(mock);
-    let mut setpoint = LightSetpoint::default();
-    setpoint.power = PowerState::On;
-    setpoint.level = 0;
+    let setpoint = LightSetpoint {
+        power: PowerState::On,
+        level: 0,
+        ..Default::default()
+    };
     apply_short_target_state(&mut controller, 6, &setpoint, ColorWritePolicy::NONE).expect("target-state");
     assert_script_consumed(&transport);
 }
@@ -905,9 +946,11 @@ fn a_cct_write_does_not_touch_the_control_byte() {
 
     let (transport, mut controller) = setup_controller(mock);
     let mut setpoint = LightSetpoint::default();
-    let mut color = ColorValue::default();
-    color.mode = ColorMode::Cct;
-    color.color_temperature_kelvin = 2439;
+    let color = ColorValue {
+        mode: ColorMode::Cct,
+        color_temperature_kelvin: 2439,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     setpoint.power = PowerState::On;
     setpoint.level = 200;
@@ -1139,11 +1182,13 @@ fn assert_policy() -> ColorWritePolicy {
 
 fn rgb_setpoint(r: u8, g: u8, b: u8, level: u8) -> LightSetpoint {
     let mut setpoint = LightSetpoint::default();
-    let mut color = ColorValue::default();
-    color.mode = ColorMode::Rgb;
-    color.r = r;
-    color.g = g;
-    color.b = b;
+    let color = ColorValue {
+        mode: ColorMode::Rgb,
+        r,
+        g,
+        b,
+        ..Default::default()
+    };
     setpoint.color = Some(color);
     setpoint.power = PowerState::On;
     setpoint.level = level;

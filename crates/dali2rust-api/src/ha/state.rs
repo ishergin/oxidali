@@ -75,6 +75,28 @@ pub fn group_state_payload(state: &dali2rust_domain::registry::HaGroupStateView)
     Value::Object(m)
 }
 
+#[must_use]
+pub fn input_event_state_payload(
+    kind: dali2rust_contracts::msg::InputEventKind,
+    typed_value: u16,
+) -> Option<String> {
+    use dali2rust_contracts::msg::InputEventKind;
+    match kind {
+        InputEventKind::Button => {
+            let event = dali2rust_domain::dali::dev103::ButtonEvent::from_info(typed_value)?;
+            Some(format!("{{\"event_type\":\"{}\"}}", event.name()))
+        }
+        InputEventKind::Occupancy => {
+            let occupied = typed_value & OCCUPANCY_OCCUPIED_BIT != 0;
+            Some(if occupied { "ON".to_string() } else { "OFF".to_string() })
+        }
+        InputEventKind::Position | InputEventKind::Illuminance => Some(typed_value.to_string()),
+        InputEventKind::Generic => None,
+    }
+}
+
+const OCCUPANCY_OCCUPIED_BIT: u16 = 1 << 1;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,25 +261,3 @@ mod tests {
         assert_eq!(v["brightness"], 254, "full DALI level is full HA brightness");
     }
 }
-
-#[must_use]
-pub fn input_event_state_payload(
-    kind: dali2rust_contracts::msg::InputEventKind,
-    typed_value: u16,
-) -> Option<String> {
-    use dali2rust_contracts::msg::InputEventKind;
-    match kind {
-        InputEventKind::Button => {
-            let event = dali2rust_domain::dali::dev103::ButtonEvent::from_info(typed_value)?;
-            Some(format!("{{\"event_type\":\"{}\"}}", event.name()))
-        }
-        InputEventKind::Occupancy => {
-            let occupied = typed_value & OCCUPANCY_OCCUPIED_BIT != 0;
-            Some(if occupied { "ON".to_string() } else { "OFF".to_string() })
-        }
-        InputEventKind::Position | InputEventKind::Illuminance => Some(typed_value.to_string()),
-        InputEventKind::Generic => None,
-    }
-}
-
-const OCCUPANCY_OCCUPIED_BIT: u16 = 1 << 1;

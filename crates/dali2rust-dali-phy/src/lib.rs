@@ -62,9 +62,11 @@ const _: () = assert!(
 mod profile_tests {
     #[test]
     fn host_tests_keep_the_checks_the_firmware_gives_up() {
-        assert!(
-            cfg!(debug_assertions),
-            "[profile.test.package.dali2rust-dali-phy] override is missing"
-        );
+        const {
+            assert!(
+                cfg!(debug_assertions),
+                "[profile.test.package.dali2rust-dali-phy] override is missing"
+            )
+        };
     }
 }
