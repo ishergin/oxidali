@@ -71,7 +71,8 @@
 [`../reference/iec62386-conformance-gaps.md`](../reference/iec62386-conformance-gaps.md)
 §8. Для `COMPARE` и чтения банка через DTR нужен отдельный отвечающий механизм: таблица
 ответов их не выражает ([`runtime-modules/redundancy/README.md`](runtime-modules/redundancy/README.md)
-§Ответ).
+§Ответ). Дизайн и пять решений, которые нужны до кода, —
+[ADR-030](../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md).
 
 ### R17 — отказоустойчивость
 

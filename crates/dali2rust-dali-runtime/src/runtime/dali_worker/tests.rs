@@ -103,6 +103,7 @@ fn test_publish_read_attributes_evidence_publishes_runtime_update_and_event() {
         dt6: None,
         extended_fade_time_ms: None,
         extended_version_number: None,
+        extended_versions: [None; dali2rust_contracts::msg::MAX_EXTENDED_VERSIONS],
         has_scene_colours: false,
         scene_colours: None,
     };
@@ -157,6 +158,7 @@ mod measured_colour {
             dt6: None,
             extended_fade_time_ms: None,
             extended_version_number: None,
+            extended_versions: [None; dali2rust_contracts::msg::MAX_EXTENDED_VERSIONS],
             has_scene_colours: false,
             scene_colours: None,
         };
@@ -311,4 +313,52 @@ fn sequence_incomplete_never_pollutes_the_transport_abort_counter() {
         1
     );
     assert_eq!(counters.read_attributes_transport_aborts.load(Ordering::Relaxed), 0);
+}
+
+mod publish_accounting {
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    use dali2rust_bus::{BusConfig, BusHost, BusId};
+    use dali2rust_contracts::msg::{DaliDiscoveryCompletedEvent, Origin};
+    use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
+
+    use super::super::publish::publish_event_typed;
+    use super::super::DaliWorkerCounters;
+
+    const OVERFLOW_DEADLINE: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn a_best_effort_event_lost_to_a_full_ingress_is_no_required_delivery_failure() {
+        let (host, publisher, ()) = BusHost::spawn(
+            BusConfig {
+                events_ingress: 1,
+                ..BusConfig::default()
+            },
+            |_| {},
+        );
+        let counters = DaliWorkerCounters::default();
+        let deadline = Instant::now() + OVERFLOW_DEADLINE;
+        while host.counters_snapshot().events.ingress_overflow == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "inconclusive: the events ingress never overflowed, so no best-effort \
+                 event was lost and nothing here was tested"
+            );
+            let completed = dali2rust_contracts::bus::event_envelope(
+                SOURCE_ID_UNSPECIFIED,
+                1,
+                BusId::default().0,
+                Some(Origin::Internal),
+                DaliDiscoveryCompletedEvent { registry_adapter_id: 0 },
+            );
+            publish_event_typed(&publisher, completed);
+        }
+        assert_eq!(
+            counters.event_publish_failed.load(Ordering::Relaxed),
+            0,
+            "a best-effort drop is the bus's ingress_overflow; event_publish_failed \
+             counts only a required publish that exhausted its budget (ADR-021)"
+        );
+    }
 }

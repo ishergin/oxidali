@@ -21,16 +21,9 @@ pub const DALI_WORKER_REQUIRED_EVENTS: &[&str] = &[
     "Dali103InstanceConfiguredEvent",
 ];
 
-pub(super) fn publish_event_typed(
-    publisher: &BusPublisher,
-    env: EventEnvelope,
-    counters: &DaliWorkerCounters,
-) {
+pub(super) fn publish_event_typed(publisher: &BusPublisher, env: EventEnvelope) {
     let result = publisher.try_publish(BusChannel::Events, BusFrame::event(env));
     if result != PublishResult::Queued {
-        counters
-            .event_publish_failed
-            .fetch_add(1, Ordering::Relaxed);
         log::warn!("DALI worker: event publish failed: {result:?}");
     }
 }

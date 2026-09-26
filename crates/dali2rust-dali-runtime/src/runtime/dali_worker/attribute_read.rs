@@ -222,6 +222,7 @@ fn attribute_read_chunks(
             fade_time_ms: result.extended_fade_time_ms,
             version_number: result.extended_version_number,
         });
+        chunks.push(Chunk::ExtendedVersions { versions: result.extended_versions });
     }
     if let Some(scene_colours) = result.scene_colours.as_ref() {
         chunks.extend(scene_colours.iter().cloned());

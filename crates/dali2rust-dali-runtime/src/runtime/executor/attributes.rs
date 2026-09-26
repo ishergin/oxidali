@@ -1,6 +1,7 @@
 use dali2rust_contracts::msg::{
     AttributeGroupReadOutcome, ColorMode, DaliAttributeGroup, DeviceTypeSet, Dt6ReadSnapshot,
-    LightSetpoint, PowerState, RuntimeObservation, StatusFlags,
+    ExtendedVersionEntry, LightSetpoint, PowerState, RuntimeObservation, StatusFlags,
+    MAX_EXTENDED_VERSIONS,
 };
 use dali2rust_domain::dali::controller::DaliApplicationController;
 use dali2rust_domain::dali::device::ACTUAL_LEVEL_MASK;
@@ -271,6 +272,7 @@ pub struct AttributeReadExecution {
     pub dt6: Option<Dt6ReadSnapshot>,
     pub extended_fade_time_ms: Option<u16>,
     pub extended_version_number: Option<u8>,
+    pub extended_versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS],
     pub has_scene_colours: bool,
     pub scene_colours: Option<Vec<dali2rust_contracts::msg::DaliAttributeReadChunk>>,
 }
@@ -790,28 +792,68 @@ impl MembershipSections {
 struct ExtendedReadSnapshot {
     fade_time_ms: Option<u16>,
     version_number: Option<u8>,
+    versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS],
+}
+
+#[derive(Clone, Copy)]
+struct KnownVersions {
+    device_types: Option<DeviceTypeSet>,
+    dt6: Option<u8>,
 }
 
 fn read_extended_snapshot(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     content_confirm: ContentConfirmPolicy,
+    known: KnownVersions,
 ) -> Result<ExtendedReadSnapshot, SemanticDaliError> {
     let mut fade_time_ms = read_extended_fade_time(controller, address, content_confirm)?;
     if fade_time_ms.is_none() {
         log::info!("extended fade time: unrepresentable readback byte, re-reading");
         fade_time_ms = read_extended_fade_time(controller, address, content_confirm)?;
     }
-    let version_number = send_extended_query_stable(
-        controller,
-        content_confirm,
-        address,
-        ExtendedCommand::Dt6(Dt6Command::QueryExtendedVersionNumber),
-    )?;
+    let device_types = match known.device_types {
+        Some(types) => Some(types),
+        None => super::discovery::read_declared_device_types(controller, address, content_confirm)?,
+    };
+    let versions = read_extended_versions(controller, address, content_confirm, device_types, known.dt6)?;
+    let version_number = versions
+        .iter()
+        .flatten()
+        .find(|e| e.device_type == DeviceType::Led.code())
+        .and_then(|e| e.version_number);
     Ok(ExtendedReadSnapshot {
         fade_time_ms,
         version_number,
+        versions,
     })
+}
+
+// IEC 62386-102 §9.18, §11.6.2
+fn read_extended_versions(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    content_confirm: ContentConfirmPolicy,
+    device_types: Option<DeviceTypeSet>,
+    dt6_version: Option<u8>,
+) -> Result<[Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS], SemanticDaliError> {
+    let mut versions = [None; MAX_EXTENDED_VERSIONS];
+    let Some(device_types) = device_types else {
+        return Ok(versions);
+    };
+    for (slot, device_type) in versions.iter_mut().zip(device_types.iter()) {
+        let version_number = match dt6_version.filter(|_| device_type == DeviceType::Led.code()) {
+            Some(already_read) => Some(already_read),
+            None => send_extended_query_stable(
+                controller,
+                content_confirm,
+                address,
+                ExtendedCommand::ExtendedVersion { device_type },
+            )?,
+        };
+        *slot = Some(ExtendedVersionEntry { device_type, version_number });
+    }
+    Ok(versions)
 }
 
 fn read_extended_fade_time(
@@ -828,17 +870,21 @@ fn read_extended_fade_time(
     .and_then(extended_fade_time_ms_from_byte))
 }
 
-fn dt6_failure_escalation(scalars: &CollectedAttributeScalars) -> bool {
-    if !scalars.failure_suspected {
-        return false;
-    }
+fn known_device_types(scalars: &CollectedAttributeScalars) -> Option<DeviceTypeSet> {
     scalars
         .probed
         .supported_device_types
         .or(scalars.c102.supported_device_types)
-        .is_none_or(|types| types.contains(DeviceType::Led.code()))
 }
 
+fn dt6_failure_escalation(scalars: &CollectedAttributeScalars) -> bool {
+    if !scalars.failure_suspected {
+        return false;
+    }
+    known_device_types(scalars).is_none_or(|types| types.contains(DeviceType::Led.code()))
+}
+
+#[allow(clippy::too_many_arguments, reason = "one sequential sweep; the known device types ride beside the breaker")]
 fn read_membership_and_dt_sections(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
@@ -847,6 +893,7 @@ fn read_membership_and_dt_sections(
     outcomes: &mut AttributeReadOutcomes,
     breaker: &mut MandatorySilenceBreaker,
     escalate_dt6_failure: bool,
+    known_device_types: Option<DeviceTypeSet>,
 ) -> Result<MembershipSections, SemanticDaliError> {
     let mut s = MembershipSections::gates(groups);
     s.groups_membership = track_gated(s.has_groups, outcomes, AttributeReadSection::Groups, || {
@@ -863,8 +910,12 @@ fn read_membership_and_dt_sections(
     if s.dt6.is_none() && escalate_dt6_failure {
         s.dt6 = read_dt6_failure_byte(controller, address, content_confirm)?;
     }
+    let known = KnownVersions {
+        device_types: known_device_types,
+        dt6: s.dt6.as_ref().and_then(|d| d.extended_version_number),
+    };
     s.extended = track_gated(s.has_extended, outcomes, AttributeReadSection::Extended, || {
-        read_extended_snapshot(controller, address, content_confirm)
+        read_extended_snapshot(controller, address, content_confirm, known)
     })?;
     s.scene_colours = track_gated(
         s.has_scene_colours,
@@ -1004,6 +1055,7 @@ fn build_attribute_read_execution(
         outcomes,
         breaker,
         dt6_failure_escalation(&scalars),
+        known_device_types(&scalars),
     )?;
     let caps = dt8_capability_flags(scalars.probed.dt8_probe.as_ref());
     Ok(scalars.into_execution(sections, caps))
@@ -1044,6 +1096,10 @@ impl CollectedAttributeScalars {
             dt6: sections.dt6,
             extended_fade_time_ms: sections.extended.as_ref().and_then(|e| e.fade_time_ms),
             extended_version_number: sections.extended.as_ref().and_then(|e| e.version_number),
+            extended_versions: sections
+                .extended
+                .as_ref()
+                .map_or([None; MAX_EXTENDED_VERSIONS], |e| e.versions),
             has_scene_colours: sections.has_scene_colours,
             scene_colours: sections.scene_colours,
         }

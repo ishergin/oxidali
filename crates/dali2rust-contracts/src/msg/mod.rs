@@ -33,8 +33,9 @@ pub use kinds::{
     OperationType, OperationWorkerSignal, Origin, PowerState, RuntimeSource,
 };
 pub use state::{
-    CapabilityFlags, ColorValue, Dt6ReadSnapshot, FailureStatus, Level, LightSetpoint,
-    RuntimeObservation, SceneRow, SetpointDimensions, StatusFlags,
+    CapabilityFlags, ColorValue, Dt6ReadSnapshot, ExtendedVersionEntry, FailureStatus, Level,
+    LightSetpoint, RuntimeObservation, SceneRow, SetpointDimensions, StatusFlags,
+    MAX_EXTENDED_VERSIONS,
 };
 pub use wire::{DaliCommandPayload, DaliConfirmationPayload, DaliEventPayload};
 
