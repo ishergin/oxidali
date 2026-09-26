@@ -103,6 +103,7 @@ fn test_publish_read_attributes_evidence_publishes_runtime_update_and_event() {
         dt6: None,
         extended_fade_time_ms: None,
         extended_version_number: None,
+        extended_versions: [None; dali2rust_contracts::msg::MAX_EXTENDED_VERSIONS],
         has_scene_colours: false,
         scene_colours: None,
     };
@@ -157,6 +158,7 @@ mod measured_colour {
             dt6: None,
             extended_fade_time_ms: None,
             extended_version_number: None,
+            extended_versions: [None; dali2rust_contracts::msg::MAX_EXTENDED_VERSIONS],
             has_scene_colours: false,
             scene_colours: None,
         };

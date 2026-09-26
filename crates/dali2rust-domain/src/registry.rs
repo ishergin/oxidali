@@ -4,7 +4,8 @@ use core::ptr::addr_of_mut;
 
 use serde::{Deserialize, Serialize};
 use dali2rust_contracts::msg::{
-    ColorMode, DeviceTypeSet, FixedText32, FixedText64, OperationType,
+    ColorMode, DeviceTypeSet, ExtendedVersionEntry, FixedText32, FixedText64, OperationType,
+    MAX_EXTENDED_VERSIONS,
 };
 use dali2rust_platform::small_sort::insertion_sort_by;
 
@@ -496,6 +497,7 @@ pub struct PhysicalDeviceCoreView {
     pub device_type_effective: &'static str,
     pub device_type_source: &'static str,
     pub supported_device_types: Option<DeviceTypeSet>,
+    pub extended_versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS],
     pub color_mode_discovered: &'static str,
     pub color_mode_override: Option<&'static str>,
     pub color_mode_effective: &'static str,

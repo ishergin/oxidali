@@ -44,8 +44,8 @@ BDD — [`physical_devices`](../../../../tests/dali2rust-bdd/features/physical_d
   шине одним запросом). `random_address` в строке остаётся: через него проверяют
   листинг discovery. `now_ms` — один на конверт.
 - **Ядро** — идентичность, имя и заметки, тип и режим со всеми источниками и
-  override'ами, `supported_device_types`, разрешения DT8, capabilities, `state` и
-  `color_temperature_range`. Его же эхом отдают `PATCH` и `PUT …/target-state`.
+  override'ами, `supported_device_types` и `extended_versions`, разрешения DT8,
+  capabilities, `state` и `color_temperature_range`. Его же эхом отдают `PATCH` и `PUT …/target-state`.
 - **Секции** — `?sections=a,b` выбирает из `common_102`, `dt6_led`, `dt8_color`,
   `extended`, `groups`, `scenes`, `memory_identity`, `memory_profile`,
   `memory_bus_unit`, `memory_luminaire`, `memory_energy`, `memory_diagnostics`; без
@@ -70,6 +70,12 @@ BDD — [`physical_devices`](../../../../tests/dali2rust-bdd/features/physical_d
   попадает в набор и почему набор хранится —
   [09 §Device types](../../../architecture/09-dali-protocol-rules.md#device-types-and-memory-banks).
   Липкий и персистится.
+- `extended_versions` — список `{device_type, version_number}`: расширенная версия каждого
+  объявленного типа, прочитанная группой `extended` за его собственным
+  `ENABLE DEVICE TYPE` (IEC 62386-102 §9.18, §11.6.2). `version_number: null` — тип
+  объявлен, а на свой запрос не ответил. Байт сырой: издание 1 отвечает целым (1, 2),
+  издание 2 — `x.y` в битах 7:2 и 1:0. Не персистится: после перезагрузки поля нет до
+  следующего чтения.
 - `capabilities` — подтверждённые железом биты плюс бит, который заявляет
   `color_mode_override` (см. ниже). `device_type_override` в capabilities не
   участвует.

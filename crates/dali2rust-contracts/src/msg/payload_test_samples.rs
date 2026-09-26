@@ -167,7 +167,7 @@ pub(crate) fn worst_attributes_read_event() -> crate::msg::DaliAttributesReadEve
     }
 }
 
-pub(crate) fn worst_attribute_read_chunks() -> [crate::msg::DaliAttributeReadChunk; 9] {
+pub(crate) fn worst_attribute_read_chunks() -> [crate::msg::DaliAttributeReadChunk; 10] {
     use crate::msg::DaliAttributeReadChunk as Chunk;
     [
         Chunk::Identity {
@@ -225,6 +225,12 @@ pub(crate) fn worst_attribute_read_chunks() -> [crate::msg::DaliAttributeReadChu
             level: Some(u8::MAX),
             colour_type: Some(u8::MAX),
             values: [Some(u16::MAX); 6],
+        },
+        Chunk::ExtendedVersions {
+            versions: [Some(crate::msg::ExtendedVersionEntry {
+                device_type: u8::MAX,
+                version_number: Some(u8::MAX),
+            }); crate::msg::MAX_EXTENDED_VERSIONS],
         },
     ]
 }

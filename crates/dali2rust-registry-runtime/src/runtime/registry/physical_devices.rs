@@ -11,7 +11,8 @@ use crate::runtime::registry::views::{
 };
 use dali2rust_bsp::psram::PsramBox;
 use dali2rust_contracts::msg::{
-    observation_supersedes, ColorMode, ColorValue, DeviceType, DeviceTypeSet, FailureStatus,
+    observation_supersedes, ColorMode, ColorValue, DeviceType, DeviceTypeSet, ExtendedVersionEntry,
+    FailureStatus, MAX_EXTENDED_VERSIONS,
     FixedText64, LastDapcSource, LevelTransition, LightSetpoint, PowerState, RuntimeObservation,
     RuntimeSource, StatusFlags,
 };
@@ -175,6 +176,7 @@ pub(crate) struct PhysicalDeviceRecord {
     pub bus_unit: MemoryBusUnitAttributesView,
     pub luminaire_info: Option<PsramBox<MemoryLuminaireAttributesView>>,
     pub scene_colour_observed: [SceneColourEvidence; 16],
+    pub extended_versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS],
     pub scan_miss_count: u8,
 }
 
@@ -247,6 +249,8 @@ physical_device_record_fields! {
         bus_unit: MemoryBusUnitAttributesView = MemoryBusUnitAttributesView::default(),
         luminaire_info: Option<PsramBox<MemoryLuminaireAttributesView>> = None,
         scene_colour_observed: [SceneColourEvidence; 16] = [SceneColourEvidence::Unread; 16],
+        extended_versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS] =
+            [None; MAX_EXTENDED_VERSIONS],
         scan_miss_count: u8 = 0,
     }
 }
@@ -795,6 +799,10 @@ impl RegistryStore {
                 colour_type,
                 values,
             } => Self::apply_scene_colour_chunk(r, *scene, *level, *colour_type, values, now),
+            Chunk::ExtendedVersions { versions } => {
+                r.extended_versions = *versions;
+                false
+            }
         }
     }
 
@@ -1298,6 +1306,7 @@ impl RegistryStore {
             device_type_effective: device_type_str(dt_eff),
             device_type_source: override_source_str(rec.device_type_override.is_some()),
             supported_device_types: rec.supported_device_types,
+            extended_versions: rec.extended_versions,
             color_mode_discovered: color_mode_str(rec.color_mode_discovered),
             color_mode_override: rec.color_mode_override.map(color_mode_str),
             color_mode_effective: color_mode_str(cm_eff),
@@ -1860,7 +1869,7 @@ mod stack_footprint_tests {
         const PLACED: usize = 2;
         assert_eq!(
             PhysicalDeviceRecord::INLINE_INIT_TEMPORARIES.len() + PLACED,
-            28,
+            29,
             "the field list and the record have diverged; both come from \
              physical_device_record_fields!, so this means a field was added \
              to the struct alone"

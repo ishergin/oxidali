@@ -256,7 +256,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
         let repeats = cmd.requires_repeat();
         let enable = match cmd {
             DaliCommand::Extended { command, .. } => Some(
-                SpecialCommand::EnableDeviceType(command.enable_device_type().code())
+                SpecialCommand::EnableDeviceType(command.enable_device_type())
                     .to_forward_frame(),
             ),
             _ => None,

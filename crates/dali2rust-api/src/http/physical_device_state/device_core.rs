@@ -22,6 +22,8 @@ pub struct PhysicalDeviceCoreDto {
     pub device_type_source: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supported_device_types: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extended_versions: Vec<ExtendedVersionDto>,
     pub color_mode_discovered: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color_mode_override: Option<&'static str>,
@@ -33,6 +35,12 @@ pub struct PhysicalDeviceCoreDto {
     pub capabilities: CapabilityFlagsDto,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color_temperature_range: Option<ColorTemperatureRangeDto>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct ExtendedVersionDto {
+    pub device_type: u8,
+    pub version_number: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -54,6 +62,15 @@ pub(crate) fn core_view_to_dto(view: PhysicalDeviceCoreView) -> PhysicalDeviceCo
         device_type_effective: view.device_type_effective,
         device_type_source: view.device_type_source,
         supported_device_types: view.supported_device_types.map(|set| set.iter().collect()),
+        extended_versions: view
+            .extended_versions
+            .iter()
+            .flatten()
+            .map(|e| ExtendedVersionDto {
+                device_type: e.device_type,
+                version_number: e.version_number,
+            })
+            .collect(),
         color_mode_discovered: view.color_mode_discovered,
         color_mode_override: view.color_mode_override,
         color_mode_effective: view.color_mode_effective,
