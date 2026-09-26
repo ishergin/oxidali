@@ -7,7 +7,8 @@ use std::sync::atomic::Ordering::Relaxed;
 
 use dali2rust_contracts::msg::{
     BusEventPayload, ColorMode, DaliInputEventObservedEvent, DaliObservedFrameEvent,
-    DaliTargetScope, DecodeStatus, InputDeviceLifecycleKind, InputEventKind, ObservedKind, Origin,
+    DaliTargetScope, DecodeStatus, DeviceCommandScope, InputDeviceLifecycleKind, InputEventKind,
+    ObservedKind, Origin,
 };
 use dali2rust_fanout_runtime::{spawn_sniffer_translator_worker, SnifferTranslatorCounters};
 use dali2rust_platform::dali::{ObservedRawFrame, ObservedRawFrameKind};
@@ -574,7 +575,7 @@ fn an_application_control_pair_is_published_only_when_confirmed() {
     harness.tx.send(forward24_at([0xFF, 0xFE, 0x17], 1_000)).expect("send");
     harness.tx.send(forward24_at([0xFF, 0xFE, 0x17], 1_050)).expect("send");
     let body = recv_app_control(&harness);
-    assert!(body.scope_broadcast);
+    assert_eq!(body.scope, DeviceCommandScope::Broadcast);
     assert!(!body.enable, "0x17 is DISABLE");
     assert_eq!(
         harness.counters.app_control_pairs.load(std::sync::atomic::Ordering::Relaxed),
@@ -603,9 +604,43 @@ fn a_short_addressed_pair_reports_the_address_without_judging_it() {
     harness.tx.send(forward24_at([0x0B, 0xFE, 0x16], 2_000)).expect("send");
     harness.tx.send(forward24_at([0x0B, 0xFE, 0x16], 2_040)).expect("send");
     let body = recv_app_control(&harness);
-    assert!(!body.scope_broadcast);
-    assert_eq!(body.short_address, 5);
+    assert_eq!(body.scope, DeviceCommandScope::Short(5));
     assert!(body.enable);
+}
+
+#[test]
+fn an_unaddressed_pair_is_reported_as_unaddressed() {
+    let harness = spawn_harness();
+    harness.tx.send(forward24_at([0xFD, 0xFE, 0x17], 3_000)).expect("send");
+    harness.tx.send(forward24_at([0xFD, 0xFE, 0x17], 3_040)).expect("send");
+    let body = recv_app_control(&harness);
+    assert_eq!(
+        body.scope,
+        DeviceCommandScope::Unaddressed,
+        "0xFD reaches only a device without a short address, and the registry knows ours"
+    );
+}
+
+#[test]
+fn any_frame_between_the_two_halves_splits_the_pair() {
+    let harness = spawn_harness();
+    let enable = [0xFF, 0xFE, 0x16];
+    let disable = [0xFF, 0xFE, 0x17];
+    harness.tx.send(forward24_at(enable, 4_000)).expect("send");
+    harness.tx.send(forward16([0x07, 0x90])).expect("send");
+    harness.tx.send(forward24_at(enable, 4_050)).expect("send");
+    harness.tx.send(forward24_at(disable, 4_100)).expect("send");
+    harness.tx.send(forward24_at(disable, 4_140)).expect("send");
+    let body = recv_app_control(&harness);
+    assert!(
+        !body.enable,
+        "IEC 62386-101 §9.3: the frame between the two ENABLE halves makes them two singles, \
+         so the first pair to reach the registry is the unbroken DISABLE"
+    );
+    assert_eq!(
+        harness.counters.app_control_pairs.load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
 }
 
 #[test]

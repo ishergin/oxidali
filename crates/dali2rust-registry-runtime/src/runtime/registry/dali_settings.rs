@@ -1,4 +1,4 @@
-use dali2rust_contracts::msg::DaliSettingsUpdateCommand;
+use dali2rust_contracts::msg::{DaliSettingsUpdateCommand, DeviceCommandScope};
 use dali2rust_domain::registry::{ApplicationActiveMover, DaliSettingsReadPort, DaliSettingsView};
 
 use super::persistence_slices::PersistableDaliSettingsSlice;
@@ -110,13 +110,16 @@ pub(crate) fn hydrate_dali_settings_inner(
 impl RegistryStore {
     pub(crate) fn apply_application_control(
         &self,
-        scope_broadcast: bool,
-        short_address: u8,
+        scope: DeviceCommandScope,
         enable: bool,
     ) -> Option<DaliSettingsRecord> {
         let mut g = self.write_inner();
-        let addressed_to_us = scope_broadcast
-            || g.dali_settings.device_short_address == Some(short_address);
+        let ours = g.dali_settings.device_short_address;
+        let addressed_to_us = match scope {
+            DeviceCommandScope::Broadcast => true,
+            DeviceCommandScope::Unaddressed => ours.is_none(),
+            DeviceCommandScope::Short(address) => ours == Some(address),
+        };
         if !addressed_to_us || g.dali_settings.application_active == enable {
             return None;
         }
@@ -133,23 +136,39 @@ impl RegistryStore {
 mod application_control_tests {
     use super::*;
 
+    use DeviceCommandScope::{Broadcast, Short, Unaddressed};
+
     #[test]
     fn scope_is_decided_here_and_only_our_address_counts() {
         let store = RegistryStore::with_adapter_count(1);
-        assert!(store.apply_application_control(true, 0, false).is_some());
+        assert!(store.apply_application_control(Broadcast, false).is_some());
         assert!(!store.read_inner().dali_settings.application_active);
-        assert!(store.apply_application_control(false, 5, true).is_none());
+        assert!(store.apply_application_control(Short(5), true).is_none());
         assert!(!store.read_inner().dali_settings.application_active);
         store.write_inner().dali_settings.device_short_address = Some(5);
-        assert!(store.apply_application_control(false, 5, true).is_some());
+        assert!(store.apply_application_control(Short(5), true).is_some());
         assert!(store.read_inner().dali_settings.application_active);
-        assert!(store.apply_application_control(false, 6, false).is_none());
+        assert!(store.apply_application_control(Short(6), false).is_none());
         assert!(store.read_inner().dali_settings.application_active);
+    }
+
+    #[test]
+    fn an_unaddressed_broadcast_reaches_us_only_while_we_have_no_short_address() {
+        let store = RegistryStore::with_adapter_count(1);
+        store.write_inner().dali_settings.device_short_address = Some(5);
+        assert!(
+            store.apply_application_control(Unaddressed, false).is_none(),
+            "IEC 62386-103 §9.5.1: 0xFD addresses only devices without a short address"
+        );
+        assert!(store.read_inner().dali_settings.application_active);
+        store.write_inner().dali_settings.device_short_address = None;
+        assert!(store.apply_application_control(Unaddressed, false).is_some());
+        assert!(!store.read_inner().dali_settings.application_active);
     }
 
     #[test]
     fn a_no_op_pair_is_not_a_change() {
         let store = RegistryStore::with_adapter_count(1);
-        assert!(store.apply_application_control(true, 0, true).is_none());
+        assert!(store.apply_application_control(Broadcast, true).is_none());
     }
 }
