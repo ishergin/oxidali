@@ -202,6 +202,7 @@ files only go down; the bench's own budgets are in the
 | `verify_fn_length.sh`, `verify_fn_length_esp.py` | no function over 40 lines, host and ESP-only code |
 | `verify_counter_surface.py` | counter names agree across spellings ([04](04-contracts-and-api-bridge.md)) |
 | `verify_read_surface.py` | every read-payload block reaches a screen |
+| `verify_rest_docs.py` | every route the router serves and every error code the API answers is named in a REST resource document, and every documented route is served |
 | `verify_dali_isr_iram.py` | the PHY interrupt reaches no flash; soft here, hard in `hil flash` |
 
 ## Comments

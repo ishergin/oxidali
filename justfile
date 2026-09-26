@@ -92,6 +92,7 @@ verify:
     python3 scripts/verify_fn_length_esp.py
     python3 scripts/verify_counter_surface.py
     python3 scripts/verify_read_surface.py
+    python3 scripts/verify_rest_docs.py
     python3 scripts/verify_dali_isr_iram.py
 
 ci: clippy test bdd verify esp-check gear-sim-check
