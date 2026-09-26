@@ -24,15 +24,15 @@ use dali2rust_dali_phy::backward_window::ANSWER_ARM_TARGET_IDLE_TICKS;
 use dali2rust_dali_phy::fsm::RX_IDLE_LINE_HIGH_TICKS;
 use dali2rust_dali_phy::{
     dali_phy_alarm_isr, settle_ticks_on_wire, ExchangeId, HalfBitBuffer, PhyIsrCore, RegisterGpio,
-    RxCompletedEvent, SessionEvent, BACKWARD8_SAMPLE_COUNT, FORWARD16_SAMPLE_COUNT,
-    FORWARD24_SAMPLE_COUNT, MIN_SAMPLES_FOR_DECODE, PHY_TICK_US, RX_RING_CAP, TX_ARM_LEAD_TICKS,
-    TX_HALF_BIT_TICKS,
+    RxCompletedEvent, SessionEvent, BACKWARD8_SAMPLE_COUNT, BUS_POWER_DOWN_TICKS,
+    FORWARD16_SAMPLE_COUNT, FORWARD24_SAMPLE_COUNT, MIN_SAMPLES_FOR_DECODE, PHY_TICK_US,
+    RX_RING_CAP, TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS,
 };
 
 use crate::dali::transport::{
     arrived_too_early_for_a_backward_frame, arrived_too_late_for_a_backward_frame, backward_timing,
-    foreign_forward_outcome, BackwardTiming, BACKWARD_ACCEPTANCE_FLOOR_US,
-    BACKWARD_ACCEPTANCE_LIMIT_US,
+    foreign_forward_outcome, held_capture_outcome, incomplete_reception_verdict, BackwardTiming,
+    BACKWARD_ACCEPTANCE_FLOOR_US, BACKWARD_ACCEPTANCE_LIMIT_US,
 };
 use dali2rust_dali_codec::codec::{encode_forward16_raw, encode_forward24_raw};
 use dali2rust_dali_codec::rx_decode::{RxDecode, SniffedDecode, SniffedFrame};
@@ -266,7 +266,10 @@ fn log_backward_timeout_and_clear(p: *mut TransportInner, window_was_open: bool)
     if let Some(rx_pre_idle) = rx_started {
         let (idle_ticks, failure_flags) =
             unsafe { ((*p).isr.idle_ticks(), (*p).isr.bus_failure_flags()) };
-        let outcome = super::incomplete_reception_outcome(rx_pre_idle);
+        let outcome = match super::incomplete_reception_outcome(rx_pre_idle) {
+            TransferOutcome::CorruptedInWindow => settle_held_reception(p),
+            other => other,
+        };
         let (cause, verdict) = match backward_timing(rx_pre_idle) {
             BackwardTiming::TooEarly => (
                 BackwardCause::EarlyRejected,
@@ -291,6 +294,22 @@ fn log_backward_timeout_and_clear(p: *mut TransportInner, window_was_open: bool)
     }
     log::info!("DALI PHY RX: backward timeout ({waited_ms} ms)");
     TransferOutcome::NoAnswer
+}
+
+fn settle_held_reception(p: *mut TransportInner) -> TransferOutcome {
+    let bound = u64::from(BUS_POWER_DOWN_TICKS) * u64::from(PHY_TICK_US);
+    let deadline = std::time::Instant::now() + Duration::from_micros(bound);
+    loop {
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
+        let flags = unsafe { (*p).isr.bus_failure_flags() };
+        let active = dali2rust_platform::dali::PHY_FRAME_ACTIVE.load(Ordering::Relaxed);
+        if let Some(outcome) = incomplete_reception_verdict(flags, active) {
+            return outcome;
+        }
+        if !EspIdfDaliTransport::wait_for_notification_or_deadline(p, deadline) {
+            return TransferOutcome::CorruptedInWindow;
+        }
+    }
 }
 
 impl EspIdfDaliTransport {
@@ -715,12 +734,18 @@ impl EspIdfDaliTransport {
 
     fn log_undecodable_capture(ev: &RxCompletedEvent) -> TransferOutcome {
         let run = ev.longest_dominant_run_ticks();
-        if ev.is_line_held() {
+        let held_ms = PHY_TICK_US.saturating_mul(u32::from(run)) / 1000;
+        let outcome = held_capture_outcome(run);
+        if outcome == TransferOutcome::BusBusy {
+            log::warn!(
+                "DALI PHY RX: active {run} ticks ({held_ms} ms) through the backward window \
+                 — bus power down past 45 ms (101 Tables 18/19 footnote b), not an answer"
+            );
+        } else if ev.is_line_held() {
             log::warn!(
                 "DALI PHY RX: line HELD through the backward window, {run} ticks \
-                 ({} ms), no edges — not a frame by §7.4.2-7.4.4, still reported \
-                 as a §8.2.5 backward frame",
-                u32::from(PHY_TICK_US).saturating_mul(u32::from(run)) / 1000
+                 ({held_ms} ms), no edges — a bit-timing violation (101 Tables 18/19), \
+                 so a §8.2.5 backward frame"
             );
         } else {
             log::warn!(
@@ -728,7 +753,7 @@ impl EspIdfDaliTransport {
                  dominant run {run} ticks) — §8.2.5 backward frame"
             );
         }
-        TransferOutcome::CorruptedInWindow
+        outcome
     }
 
     fn foreign_forward_in_window(

@@ -40,8 +40,8 @@ pub use frame_length::{
 };
 pub use fsm::{
     settle_ticks_on_wire, BusState, CollisionPolicy, DaliBitbangPhy, RxCompletedEvent, RxState,
-    TxPollResult, DALI_RX_SAMPLE_BUF_LEN, LINE_HELD_TICKS, PHY_TICK_US, RX_IDLE_LINE_HIGH_TICKS,
-    RX_START_DEBOUNCE_TICKS, TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS,
+    TxPollResult, BUS_POWER_DOWN_TICKS, DALI_RX_SAMPLE_BUF_LEN, LINE_HELD_TICKS, PHY_TICK_US,
+    RX_IDLE_LINE_HIGH_TICKS, RX_START_DEBOUNCE_TICKS, TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS,
 };
 pub use gpio::RegisterGpio;
 pub use halfbits::HalfBitBuffer;

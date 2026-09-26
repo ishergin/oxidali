@@ -120,11 +120,15 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - Several gear answering one window can also decode as a clean byte, so a clean answer to
   an addressed query does not prove a single responder (open ISSUE-124 in
   [`known-issues.md`](../product-design/known-issues.md)).
-- A capture held dominant longer than any transmitter drives (`is_line_held`) is logged
-  as a hold but still read as a §8.2.5 backward frame (open ISSUE-123): two control
-  devices at one short address answering half a bit apart produce the same capture, so
-  only repetition across probes tells them apart — which is why the Part 103 scan
-  re-asks a violating address.
+- An active state from 750 µs up to 45 ms is a bit-timing violation (101 Tables 18 and
+  19), so a capture held dominant through the window (`is_line_held`) is still a §8.2.5
+  backward frame, logged as a hold; §9.5.2 itself makes 1,3–2 ms of active state a shared
+  interface's sign of differing answers. Two control devices at one short address answering
+  half a bit apart produce the same capture, so only repetition across probes tells them
+  apart — which is why the Part 103 scan re-asks a violating address. Past 45 ms the active
+  state is bus power down (footnote b), not a frame: the exchange ends `BusBusy`, and a
+  reception still active when the window closes is waited out until it releases or crosses
+  that bound.
 - A read that has passed its presence probe fails `device_absent` after three consecutive
   clean silences on queries Part 102 obliges a present gear to answer. A contended
   exchange counts as heard, and a device-type-scoped or edition-2-only query (`QUERY

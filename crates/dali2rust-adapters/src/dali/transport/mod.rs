@@ -12,7 +12,8 @@ pub mod esp_idf;
 #[cfg(target_os = "espidf")]
 pub mod phy_interrupt;
 
-use dali2rust_dali_phy::{RxCompletedEvent, PHY_TICK_US};
+use dali2rust_dali_phy::isr::BUS_FAILURE_POWER_DOWN;
+use dali2rust_dali_phy::{RxCompletedEvent, BUS_POWER_DOWN_TICKS, PHY_TICK_US};
 use dali2rust_platform::dali::TransferOutcome;
 
 pub const WIRE_LOAD_WINDOW_TICKS: u32 = 1_000_000 / PHY_TICK_US;
@@ -119,9 +120,33 @@ pub fn arrived_too_early_for_a_backward_frame(ev: &RxCompletedEvent) -> bool {
     backward_timing(ev.pre_idle_ticks) == BackwardTiming::TooEarly
 }
 
+// IEC 62386-101 §8.2.1, Table 18, Table 19, §8.2.5
+pub fn held_capture_outcome(dominant_run_ticks: u16) -> TransferOutcome {
+    if dominant_run_ticks >= BUS_POWER_DOWN_TICKS {
+        TransferOutcome::BusBusy
+    } else {
+        TransferOutcome::CorruptedInWindow
+    }
+}
+
+// IEC 62386-101 §8.2.1, Table 18, Table 19, §8.2.5
+pub fn incomplete_reception_verdict(
+    bus_failure_flags: u32,
+    frame_active: bool,
+) -> Option<TransferOutcome> {
+    if bus_failure_flags & BUS_FAILURE_POWER_DOWN != 0 {
+        Some(TransferOutcome::BusBusy)
+    } else if frame_active {
+        None
+    } else {
+        Some(TransferOutcome::CorruptedInWindow)
+    }
+}
+
 #[cfg(test)]
 mod backward_window_tests {
     use super::*;
+    use dali2rust_dali_phy::LINE_HELD_TICKS;
 
     fn arriving_after(ticks: u8) -> RxCompletedEvent {
         RxCompletedEvent {
@@ -143,6 +168,47 @@ mod backward_window_tests {
                 "{us} µs is inside the Table 20 acceptance window"
             );
         }
+    }
+
+    const SHARED_INTERFACE_CORRUPTION_US: [u32; 2] = [1_300, 2_000];
+
+    #[test]
+    fn an_active_state_short_of_45_ms_is_a_bit_timing_violation_and_so_an_answer() {
+        let shared = SHARED_INTERFACE_CORRUPTION_US.map(|us| (us / PHY_TICK_US) as u16);
+        for run in [shared[0], shared[1], LINE_HELD_TICKS, 200, BUS_POWER_DOWN_TICKS - 1] {
+            assert_eq!(
+                held_capture_outcome(run),
+                TransferOutcome::CorruptedInWindow,
+                "{run} ticks of active state: 101 Tables 18 and 19 call it a bit-timing \
+                 violation, and §8.2.5 reads a violation in the window as a backward frame"
+            );
+        }
+    }
+
+    #[test]
+    fn an_active_state_past_45_ms_is_bus_power_down_and_answers_nothing() {
+        for run in [BUS_POWER_DOWN_TICKS, BUS_POWER_DOWN_TICKS + 1, u16::MAX] {
+            assert_eq!(
+                held_capture_outcome(run),
+                TransferOutcome::BusBusy,
+                "{run} ticks: footnote b of Tables 18 and 19 makes it bus power down, not a frame"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reception_still_active_at_the_deadline_waits_for_its_verdict() {
+        assert_eq!(incomplete_reception_verdict(0, true), None);
+        assert_eq!(
+            incomplete_reception_verdict(0, false),
+            Some(TransferOutcome::CorruptedInWindow),
+            "released before 45 ms: the hold was a violation, so a backward frame"
+        );
+        assert_eq!(
+            incomplete_reception_verdict(BUS_FAILURE_POWER_DOWN, false),
+            Some(TransferOutcome::BusBusy),
+            "still active at 45 ms: bus power down, not an answer"
+        );
     }
 
     #[test]
