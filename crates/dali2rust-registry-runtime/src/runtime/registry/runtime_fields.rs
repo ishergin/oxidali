@@ -137,6 +137,20 @@ impl RuntimeObservationData {
         self.waf = None;
     }
 
+    pub(crate) fn forget_colour(&mut self) {
+        self.color_mode = ColorMode::Unknown;
+        self.kelvin = None;
+        self.xy = None;
+        self.clear_rgbwaf();
+    }
+
+    // IEC 62386-102 §9.16.9
+    pub(crate) fn power_cycle_began(&self, observation: &RuntimeObservation) -> bool {
+        let seen_now = observation.status_flags.as_ref().is_some_and(|sf| sf.power_cycle_seen);
+        let clear_before = self.status_flags.as_ref().is_some_and(|sf| !sf.power_cycle_seen);
+        seen_now && clear_before
+    }
+
     pub(crate) fn apply_observation(&mut self, observation: &RuntimeObservation) {
         self.has_observation = true;
         if let Some(sf) = observation.status_flags.as_ref() {

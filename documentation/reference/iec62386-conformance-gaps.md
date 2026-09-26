@@ -208,13 +208,14 @@ reads `QUERY DEVICE CAPABILITIES` (bit 0 `applicationControllerPresent`) and
 
 ## 16. Control gear never speaks unbidden
 
-### 16.3 `powerCycleSeen` is not used as a change detector — `GAP`
+### 16.3 Nothing looks for `powerCycleSeen` unprompted — `GAP`
 
 102 Table 12 bit 7 is set at power-on, so a gear that shows it has lost power since it
-was last driven, and the registry's view of its RAM state (`actualLevel`,
-`lastActiveLevel`, active colour) is stale. Which reads can see the bit is in
-[09](../architecture/09-dali-protocol-rules.md); the bit is read, stored and shown, but
-nothing re-reads a gear when it is set.
+was last driven. A read that sees the bit appear makes the registry forget the RAM state
+it held for that gear ([09](../architecture/09-dali-protocol-rules.md)), but only an
+explicit attribute read or the poller, which is off by default, reads it. The cheap
+detector is a broadcast `QUERY POWER FAILURE` (0x9B, 102 §11.5.15): any answer means some
+gear has cycled. As a boolean broadcast query it needs a positive control.
 
 ## 17. Priority
 
@@ -222,7 +223,7 @@ Ordered by consequence per unit of work:
 
 1. §1.10 — restart at t_RECOVER after a collision; every post-collision tie-break on the
    shared segment is lost today.
-2. §16.3 — re-read a gear's RAM state after `powerCycleSeen`.
+2. §16.3 — look for `powerCycleSeen` unprompted, with a broadcast `QUERY POWER FAILURE`.
 3. §2.2 `0xFF`, §10 12.7.2 — the extended version of every discovered device type.
 4. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
 5. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.

@@ -173,7 +173,11 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   excludes DT6), and the section's booleans are decoded from that byte.
 - `powerCycleSeen` (102 §9.16.9) is cleared by `RESET` and every level command, so it is
   evidence only from a status read that precedes any driving command: the poller's reads
-  can report it, the target-state path cannot.
+  can report it, the target-state path cannot. A read that shows it set where the previous
+  read showed it clear is a power cycle the registry acts on: it forgets the gear's RAM
+  state — `lastActiveLevel` returns to `maxLevel` (Table 14) and the power-on level does
+  not move it (§9.4); the DT8 actual colour values, gear features/status and
+  `RGBWAF CONTROL` (209 Table 8) are unknown until read again.
 - Identification is the gear's own procedure: one `IDENTIFY DEVICE` send-twice pair
   (102 §9.14.3.2) starts a 10 s ± 1 s window the gear owns and restores from itself
   (§9.14.3.1). Nothing else is sent — no `RECALL MIN`/`MAX LEVEL`, no restoring level
