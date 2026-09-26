@@ -319,9 +319,9 @@ cargo run --target aarch64-apple-darwin -p dali2rust-adapters --example host_dev
 
 - There is no workspace `build.target`, and every alias names its triple, the host one
   included. `MCU` and `ESP_IDF_SDKCONFIG_DEFAULTS` are forced in `.cargo/config.toml`.
-- `DALI2RUST_*` knobs are read with `option_env!`, and the build script tracks every name
-  it finds in the firmware's `src`. Pass knobs to `hil flash`, which builds for itself,
-  and check that the flip reached the binary.
+- `DALI2RUST_*` knobs are read with `option_env!`, which cargo tracks by itself: a changed
+  knob rebuilds the crate that reads it. Pass knobs to `hil flash`, which builds for
+  itself, and check that the flip reached the binary.
 - ESP-IDF is pinned to v5.5.3; move it only between bench experiments.
 - The version is `<major>.<minor>.<commit count>+<sha>[.dirty.<stamp>]`, derived by the
   firmware's `build.rs` and reported by `/api/v1/health`, `/api/v1/controller`, Home
