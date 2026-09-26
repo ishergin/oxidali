@@ -825,7 +825,8 @@ impl Gear {
         self.device_type_walk = None;
     }
 
-    // IEC 62386-101 §9.3, IEC 62386-102 §11.5.13
+    // IEC 62386-101 §9.3
+    // IEC 62386-102 §11.5.13
     pub(crate) fn hear_elsewhere(&mut self) -> bool {
         self.device_type_walk = None;
         self.pending_repeat.take().is_some()
