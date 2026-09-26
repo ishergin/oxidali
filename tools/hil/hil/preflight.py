@@ -41,6 +41,9 @@ def _check_serial_port(cfg):
     if remote_serial.enabled(cfg):
         try:
             reply = remote_serial.control(cfg, "status")
+        except remote_serial.BridgePortGone as exc:
+            return FAIL, "serial port", "%s via %s — %s" % (
+                remote_serial.data_url(cfg), remote_serial.target(cfg), exc)
         except (OSError, remote_serial.RemoteError) as exc:
             return FAIL, "serial port", (
                 "%s via %s — bridge unreachable (%s); `hil remote start`"

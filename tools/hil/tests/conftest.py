@@ -1201,15 +1201,20 @@ def _collection_lint(items):
         raise pytest.UsageError("\n".join(violations))
 
 
+NO_SERIAL = "no board attached here and no WB bridge answering"
+
+
 def _serial_absence(cfg):
     dut_serial_port, _ = serialmon_mod.effective_port(cfg)
     if "://" not in dut_serial_port:
-        return dut_serial_port, not os.path.exists(dut_serial_port)
+        return dut_serial_port, None if os.path.exists(dut_serial_port) else NO_SERIAL
     try:
         remote_serial_mod.control(cfg, "ping")
-        return dut_serial_port, False
+        return dut_serial_port, None
+    except remote_serial_mod.BridgePortGone as exc:
+        return dut_serial_port, str(exc)
     except Exception:
-        return dut_serial_port, True
+        return dut_serial_port, NO_SERIAL
 
 
 def _take_isr_baseline(config, cfg):
@@ -1235,8 +1240,8 @@ def _mark_skips(items, serial_absent, dut_serial_port):
     for item in items:
         if serial_absent and item.get_closest_marker("serial"):
             item.add_marker(pytest.mark.skip(
-                reason="serial port %s unreachable — no board attached here and "
-                       "no WB bridge answering" % dut_serial_port))
+                reason="serial port %s unreachable — %s" % (dut_serial_port,
+                                                           serial_absent)))
         if not allow_destructive and item.get_closest_marker("destructive"):
             item.add_marker(pytest.mark.skip(
                 reason="destructive tier needs HIL_ALLOW_DESTRUCTIVE=1 "
@@ -1247,7 +1252,7 @@ def pytest_collection_modifyitems(config, items):
     config._hil_hardware_free = tiers.session_hardware_free(
         item.fixturenames for item in items)
     _collection_lint(items)
-    dut_serial_port, serial_absent = None, False
+    dut_serial_port, serial_absent = None, None
     if not config._hil_hardware_free:
         cfg = config_mod.load()
         dut_serial_port, serial_absent = _serial_absence(cfg)

@@ -1,6 +1,11 @@
-import pytest
+import importlib.util
+import os
+import socket
 
-from hil import remote_serial
+import pytest
+import serial
+
+from hil import preflight, remote_serial
 from hil.config import HilConfig
 
 SSH = "root@192.168.13.110"
@@ -154,3 +159,131 @@ def test_an_explicit_restart_replaces_a_live_bridge(monkeypatch, tmp_path):
     monkeypatch.setattr(remote_serial, "_ssh", lambda tgt, cmd: commands.append(cmd) or _Out())
     assert remote_serial.start_bridge(_cfg(tmp_path), _tgt(), restart=True) == "started"
     assert any("fuser -k" in cmd for cmd in commands)
+
+
+def _bridge_module():
+    spec = importlib.util.spec_from_file_location("serial_bridge", remote_serial.script_path())
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+BRIDGE = _bridge_module()
+BAUD = 115200
+UNPLUGGED = "device reports readiness to read but returned no data"
+GONE_REPLY = "err port-gone: /dev/ttyACM0 is gone (No such file or directory)"
+
+
+class _HeldPort:
+    in_waiting = 1
+
+    def __init__(self, fd, fail=None):
+        self.fd, self.fail, self.baudrate = fd, fail, BAUD
+
+    def fileno(self):
+        return self.fd
+
+    def read(self, size):
+        raise serial.SerialException(self.fail)
+
+
+def _bridge(node, held_fd, fail=None):
+    bridge = BRIDGE.Bridge(str(node), BAUD, "127.0.0.1", 0, 0)
+    bridge.serial = _HeldPort(held_fd, fail)
+    bridge.log = lambda message: None
+    return bridge
+
+
+def test_the_bridge_answers_an_error_on_every_command_once_its_port_vanished(tmp_path):
+    node = tmp_path / "ttyACM0"
+    node.write_text("")
+    with open(node) as held:
+        bridge = _bridge(node, held.fileno())
+        assert bridge._control_reply("ping") == "ok %s %d" % (node, BAUD)
+        node.unlink()
+        replies = [bridge._control_reply(cmd) for cmd in ("ping", "status", "run", "bootloader")]
+    assert all(r.startswith("err %s: " % BRIDGE.PORT_GONE) and "is gone" in r
+               for r in replies), replies
+
+
+def test_a_port_enumerated_again_is_not_the_device_the_bridge_holds(tmp_path, monkeypatch):
+    node = tmp_path / "ttyACM0"
+    node.write_text("")
+    with open(node) as held:
+        bridge = _bridge(node, held.fileno())
+        monkeypatch.setattr(BRIDGE, "_node_device", lambda path: os.fstat(held.fileno()).st_rdev + 1)
+        reply = bridge._control_reply("status")
+    assert reply.startswith("err %s: " % BRIDGE.PORT_GONE) and "enumerated again" in reply
+
+
+def test_a_serial_fault_under_a_client_is_remembered_by_the_control_port(tmp_path):
+    node = tmp_path / "ttyACM0"
+    node.write_text("")
+    readable, writable = os.pipe()
+    os.write(writable, b"x")
+    ours, theirs = socket.socketpair()
+    try:
+        bridge = _bridge(node, readable, fail=UNPLUGGED)
+        bridge.serve_client(theirs, "127.0.0.1:50000")
+        reply = bridge._control_reply("ping")
+    finally:
+        ours.close()
+        os.close(readable)
+        os.close(writable)
+    assert bridge.client is None
+    assert reply.startswith("err %s: " % BRIDGE.PORT_GONE) and UNPLUGGED in reply
+
+
+def test_the_client_spells_the_bridges_error_the_way_the_bridge_does():
+    assert remote_serial.PORT_GONE == BRIDGE.PORT_GONE
+
+
+class _ControlSocket:
+    def __init__(self, reply):
+        self.reply = reply.encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def sendall(self, data):
+        pass
+
+    def recv(self, size):
+        return self.reply
+
+
+def test_a_reused_bridge_without_its_port_fails_at_once_and_names_the_reset(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(remote_serial, "start_bridge", lambda cfg, tgt, restart=False: "reusing")
+    monkeypatch.setattr(remote_serial, "start_tunnel", lambda cfg, tgt: "reusing")
+    monkeypatch.setattr(remote_serial.socket, "create_connection",
+                        lambda address, timeout: _ControlSocket(GONE_REPLY + "\n"))
+    monkeypatch.setattr(remote_serial.time, "sleep",
+                        lambda s: pytest.fail("ensure retried a bridge that answered"))
+    with pytest.raises(remote_serial.BridgePortGone) as refused:
+        remote_serial.ensure(_cfg(tmp_path), verbose=False)
+    assert GONE_REPLY in str(refused.value)
+    assert remote_serial.RESTART_RESETS in str(refused.value)
+
+
+def _port_gone(cfg, command, timeout=None):
+    raise remote_serial.BridgePortGone(GONE_REPLY)
+
+
+def test_status_says_the_bridge_answers_without_its_port(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(remote_serial, "control", _port_gone)
+    monkeypatch.setattr(remote_serial, "_tunnel_description", lambda cfg, tgt: "running")
+    assert remote_serial.status(_cfg(tmp_path)) == 1
+    err = capsys.readouterr().err
+    assert GONE_REPLY in err and "unreachable" not in err
+
+
+def test_preflight_fails_a_bridge_without_its_port_instead_of_calling_it_unreachable(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(remote_serial, "control", _port_gone)
+    status, name, detail = preflight._check_serial_port(_cfg(tmp_path))
+    assert (status, name) == (preflight.FAIL, "serial port")
+    assert GONE_REPLY in detail and "unreachable" not in detail

@@ -303,6 +303,12 @@ bridge, pyserial and esptool this set-up works around are
   check on the WB whether it still listens (`ss -ltn`) — if only the tunnel died,
   the start reuses it. A changed `wb/serial_bridge.py` is copied to the WB but a live
   bridge keeps running the old one until `--restart`, which resets the controller.
+- A bridge whose port is gone — the node vanished, the board was enumerated again
+  under the same name, or a read failed under a client — answers every control
+  command `err port-gone: …`. `hil remote`, `hil monitor start`, `hil flash` and
+  `hil preflight` fail on it instead of reusing a bridge that carries no data;
+  `--restart` reopens the port and so resets the controller, which is the operator's
+  decision.
 - Reset sequences run on the WB.
 - Logs: `state/persist/serial.log` (peer: `state/peer/persist/`).
 

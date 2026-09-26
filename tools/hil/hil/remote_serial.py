@@ -19,8 +19,17 @@ TUNNEL_OPTS = ("-N", "-o", "ExitOnForwardFailure=yes",
 CONTROL_TIMEOUT_S = 6.0
 BRIDGE_START_TIMEOUT_S = 10.0
 
+PORT_GONE = "port-gone"
+RESTART_RESETS = ("`hil remote start --restart` opens the port again, and opening it "
+                  "resets the controller: a production event, so restarting is the "
+                  "operator's decision")
+
 
 class RemoteError(RuntimeError):
+    pass
+
+
+class BridgePortGone(RemoteError):
     pass
 
 
@@ -237,9 +246,13 @@ def control(cfg, command, timeout=CONTROL_TIMEOUT_S):
     with socket.create_connection(("127.0.0.1", control_port(cfg)), timeout) as sock:
         sock.sendall(command.encode("ascii"))
         reply = sock.recv(256).decode("ascii", "replace").strip()
-    if not reply.startswith("ok"):
-        raise RemoteError("bridge refused %r: %s" % (command, reply))
-    return reply
+    if reply.startswith("ok"):
+        return reply
+    if reply.startswith("err %s" % PORT_GONE):
+        raise BridgePortGone("the serial bridge answers %r but its serial port is gone, "
+                             "so it carries no data (%s); %s"
+                             % (command, reply, RESTART_RESETS))
+    raise RemoteError("bridge refused %r: %s" % (command, reply))
 
 
 def ensure(cfg, restart=False, verbose=True):
@@ -259,6 +272,8 @@ def ensure(cfg, restart=False, verbose=True):
                 print("serial bridge: %s (%s), tunnel %s — %s"
                       % (tgt, bridge, tunnel, reply), flush=True)
             return reply
+        except BridgePortGone:
+            raise
         except (OSError, RemoteError) as exc:
             last = exc
             time.sleep(0.5)
@@ -289,6 +304,9 @@ def status(cfg):
     try:
         print("bridge:      %s" % control(cfg, "status"))
         return 0
+    except BridgePortGone as exc:
+        print("bridge:      %s" % exc, file=sys.stderr)
+        return 1
     except (OSError, RemoteError) as exc:
         print("bridge:      unreachable (%s)" % exc, file=sys.stderr)
         return 1
