@@ -193,7 +193,7 @@ files only go down; the bench's own budgets are in the
 | `verify_issue_ids.py` | every `ISSUE-NN` resolves to one issue-registry row |
 | `verify_bdd_ids.sh`, `verify_bdd_coverage.sh` (+ tree policy), `verify_bdd_layers.sh`, `verify_no_bdd_production_hooks.sh`, `verify_test_layers.sh` (+ `verify_duplication.sh`) | [05](05-testing-and-bdd.md) |
 | `verify_runtime_boundaries.sh` | no `#[path]` in runtime crates; fixed composition file set |
-| `verify_fixed_bus_guardrails.sh` | no `String`/`Vec`/JSON in bus messages or registry state |
+| `verify_fixed_bus_guardrails.sh` | no `String`/`Vec`/JSON in bus messages or registry state; test code is outside it |
 | `verify_comments.py` | no comment outside the one-line markers; budget `scripts/comment_budget.txt` |
 | `verify_web_assets.sh` | every embedded file present, `tsc -b`, UI tests |
 | `verify_web_classes_styled.py` | every `web/app` class has a CSS rule |
