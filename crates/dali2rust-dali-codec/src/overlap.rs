@@ -66,8 +66,10 @@ pub fn overlapping_backward_capture(
     answers: &[OverlappingAnswer],
     sample_phase_ns: u64,
 ) -> RxCompletedEvent {
-    let mut event = RxCompletedEvent::default();
-    event.pre_idle_ticks = IN_WINDOW_PRE_IDLE_TICKS;
+    let mut event = RxCompletedEvent {
+        pre_idle_ticks: IN_WINDOW_PRE_IDLE_TICKS,
+        ..RxCompletedEvent::default()
+    };
     let Some(first) = first_dominant_tick(answers, sample_phase_ns) else {
         return event;
     };
