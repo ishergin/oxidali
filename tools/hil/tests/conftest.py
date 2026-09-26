@@ -1233,6 +1233,19 @@ def _take_isr_baseline(config, cfg):
         config._hil_isr_baseline = ({}, None, None)
 
 
+def _peer_health(peer_cfg):
+    try:
+        health = api_mod.Client(peer_cfg).health()
+        return health, (time.time(), float(health["uptime_seconds"]))
+    except Exception:
+        return None, None
+
+
+def _take_session_baselines(config, cfg):
+    _take_isr_baseline(config, cfg)
+    config._hil_peer_start = _peer_health(cfg.peer())[1] if cfg.has_peer else None
+
+
 def _tier(item):
     if item.get_closest_marker("destructive"):
         return 2 if "commissioning" in item.nodeid else 1
@@ -1260,7 +1273,7 @@ def pytest_collection_modifyitems(config, items):
     if not config._hil_hardware_free:
         cfg = config_mod.load()
         dut_serial_port, serial_absent = _serial_absence(cfg)
-        _take_isr_baseline(config, cfg)
+        _take_session_baselines(config, cfg)
     _mark_skips(items, serial_absent, dut_serial_port)
     items.sort(key=_tier)
 
@@ -1338,9 +1351,11 @@ def _validity_state(config):
     state["runtime_heap_budget"] = validity.load_runtime_heap_budget()
     state["runtime_heap"] = _runtime_heap(cfg)
     state["stack_identity"] = dict(validity.run_identity(cfg.runs_dir),
-                                   devices=_registry_device_count(cfg))
+                                   devices=_registry_device_count(cfg),
+                                   version=_running_version(cfg))
     state["gear_segment"] = _gear_segment(cfg)
-    state["peer"] = _peer_identity(cfg)
+    state["peer"], state["peer_breach"] = _peer_state(
+        cfg, getattr(config, "_hil_peer_start", None))
     state["bus_drops"] = _bus_drops(cfg, getattr(config, "_hil_isr_baseline", {}))
     state["bus_subscriber_losses"] = _bus_subscriber_losses(cfg)
     state["retry_events"] = retry_events
@@ -1349,17 +1364,23 @@ def _validity_state(config):
     return state
 
 
-def _peer_identity(cfg):
+def _peer_state(cfg, start):
     if not cfg.has_peer:
-        return "none (single controller)"
+        return "none (single controller)", None
     peer = cfg.peer()
-    try:
-        version = api_mod.Client(peer).health().get("version")
-    except Exception:
-        version = "unreachable"
+    health, end = _peer_health(peer)
+    breach, continuity = validity.peer_continuity(start, end, UPTIME_SLACK_S)
     identity = validity.run_identity(peer.runs_dir)
-    return "%s version=%s (last flashed commit %s)" % (
-        peer.base, version, (identity.get("commit") or "?")[:12])
+    return "%s version=%s (last flashed commit %s); %s" % (
+        peer.base, (health or {}).get("version") or "unreachable",
+        (identity.get("commit") or "?")[:12], continuity), breach
+
+
+def _running_version(cfg):
+    try:
+        return api_mod.Client(cfg).health().get("version")
+    except Exception:
+        return None
 
 
 def _gear_segment(cfg):
@@ -1519,6 +1540,14 @@ def pytest_sessionfinish(session, exitstatus):
         lines.append("STACK OBSERVATION STALE/MISSING: %s" % ", ".join(gaps))
         lines.append("A callback-owned task must publish a fresh watermark; a "
                      "cached kernel handle is never dereferenced after exit.")
+        session.exitstatus = 1
+    peer_breach = state.get("peer_breach")
+    if peer_breach:
+        lines.append("")
+        lines.append("PEER CONTINUITY BROKEN: %s" % peer_breach)
+        lines.append("The second controller shares the line: from that moment the "
+                     "session measured next to a unit that was booting, arbitrating "
+                     "or holding the bus. Find what touched it before trusting the run.")
         session.exitstatus = 1
     pending = state.get("production_state_pending")
     if pending:

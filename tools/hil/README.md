@@ -242,11 +242,14 @@ hil-slow` wrap the cwd.
 Every run ends with an `HIL validity` section (also in `runs/<ts>/summary.md`): frame
 servers (FAIL on more than one), DUT uptime continuity (a reboot fails the test it
 landed in, unless that test uses `dut_reboot`), the baseline and the gear-segment
-restriction (a restricted run is *not an acceptance run*), the peer, the
-production-state result, WB availability, the retry ledger, the controller's bus
+restriction (a restricted run is *not an acceptance run*), the peer and its uptime
+from session start to end (a reboot, or a peer that stops answering, fails the run),
+the production-state result, WB availability, the retry ledger, the controller's bus
 drop counters, per-task stack headroom (a run whose log has no census says so; a
 budget line no census task matches fails the run unless the task is spawned on
-demand), the boot heap ladder and the runtime heap floor. **Classify a red run from this section, not from the serial log.**
+demand; the trend compares runs of one image, named by the version `/api/v1/health`
+reports, so an image written over the network starts a new one), the boot heap
+ladder and the runtime heap floor. **Classify a red run from this section, not from the serial log.**
 
 | File | Bounds | Moves |
 | --- | --- | --- |
@@ -310,7 +313,8 @@ bridge, pyserial and esptool this set-up works around are
   `--restart` reopens the port and so resets the controller, which is the operator's
   decision.
 - Reset sequences run on the WB.
-- Logs: `state/persist/serial.log` (peer: `state/peer/persist/`).
+- Logs: `state/persist/serial.log` (peer: `state/peer/persist/`), each line stamped
+  in UTC (`…Z`) like the `runs/<ts>` directories.
 
 ## Flashing
 

@@ -268,10 +268,26 @@ def run_identity(runs_dir):
 def _describe_identity(identity):
     commit = (identity or {}).get("commit") or "?"
     devices = (identity or {}).get("devices")
-    return "commit %s, %s devices" % (
+    return "version %s, flashed commit %s, %s devices" % (
+        (identity or {}).get("version") or "?",
         commit[:12],
         "?" if devices is None else devices,
     )
+
+
+def peer_continuity(start, end, slack_s):
+    if start is None:
+        return None, "uptime unverified: the peer did not answer at session start"
+    if end is None:
+        breach = ("the peer stopped answering by session end (it was up %.0fs at the "
+                  "start) — a reboot presents exactly this way" % start[1])
+        return breach, breach
+    shortfall = uptime_broke(start, end[0], end[1], slack_s)
+    if shortfall is None:
+        return None, "uptime continuous (%.0fs -> %.0fs)" % (start[1], end[1])
+    breach = ("the peer REBOOTED during the session: uptime %.0fs -> %.0fs across "
+              "%.0fs" % (start[1], end[1], end[0] - start[0]))
+    return breach, breach
 
 
 def _load_previous_stacks():

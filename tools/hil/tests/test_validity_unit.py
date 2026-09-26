@@ -12,6 +12,11 @@ from hil.lamp_guard import LampGuard
 from hil.oracle import CameraOracle
 
 
+@pytest.fixture(autouse=True)
+def _census_store_of_this_test(monkeypatch, tmp_path):
+    monkeypatch.setattr(validity, "PREVIOUS_STACK_FILE", tmp_path / "stack_previous.json")
+
+
 
 def test_bus_contended_is_recognised_and_a_real_failure_is_not():
     contended = {"error": {"code": "operation_failed", "message": "bus_contended"},
@@ -181,6 +186,48 @@ def test_normal_growth_and_slack_do_not_trip_it():
 
 def test_the_first_sample_anchors_instead_of_judging():
     assert validity.uptime_broke(None, 1.0, 1.0, SLACK) is None
+
+
+SESSION_S = 1800.0
+
+
+def test_a_peer_that_kept_running_through_the_session_is_continuous():
+    breach, line = validity.peer_continuity((0.0, 5000.0), (SESSION_S, 6800.0), SLACK)
+    assert breach is None and "continuous" in line
+
+
+def test_a_peer_that_rebooted_mid_session_breaks_continuity():
+    breach, line = validity.peer_continuity((0.0, 5000.0), (SESSION_S, 40.0), SLACK)
+    assert breach == line and "REBOOTED" in breach and "5000s -> 40s" in breach
+
+
+def test_a_peer_that_stopped_answering_is_a_breach_and_one_never_seen_is_not():
+    breach, _ = validity.peer_continuity((0.0, 5000.0), None, SLACK)
+    assert "stopped answering" in breach
+    breach, line = validity.peer_continuity(None, (SESSION_S, 40.0), SLACK)
+    assert breach is None and "unverified" in line
+
+
+CENSUS_ONCE = ["I (1) x: task stack hwm (B free): registry_worker=3000 "]
+MANIFEST = {"commit": "4cc6129f00d1", "firmware": "ab" * 32, "devices": 13}
+
+
+def _stack_report(tmp_path, version):
+    identity = dict(MANIFEST, version=version)
+    return "\n".join(validity.format_report(
+        {"stack_min_free": validity.stack_min_free(CENSUS_ONCE),
+         "stack_budget": _stack_budget(tmp_path), "stack_identity": identity},
+        _budget(tmp_path)))
+
+
+def test_an_image_the_manifest_never_saw_is_not_compared_as_the_same(tmp_path):
+    _stack_report(tmp_path, "0.1.1101+4cc6129")
+    same = _stack_report(tmp_path, "0.1.1101+4cc6129")
+    assert "(prev 7240, +0)" in same
+    over_the_air = _stack_report(tmp_path, "0.1.1109+1555fab")
+    assert "no trend" in over_the_air and "(prev" not in over_the_air
+    assert "version 0.1.1101+4cc6129" in over_the_air
+    assert "version 0.1.1109+1555fab" in over_the_air
 
 
 

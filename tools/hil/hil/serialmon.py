@@ -81,15 +81,21 @@ def log_path(cfg) -> Path:
     return sidecar_log(_pidfile(cfg)) or cfg.persist_serial_log
 
 
+MS_PER_S = 1000
+
+
+def stamp(now):
+    return "%s.%03dZ" % (time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)),
+                         int(now % 1 * MS_PER_S))
+
+
 def reader_loop(port, baud, pinned=False):
     import serial
 
     from hil import serialport
 
     def ts():
-        now = time.time()
-        return (time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))
-                + ".%03d" % ((now % 1) * 1000))
+        return stamp(time.time())
 
     while True:
         try:
