@@ -118,8 +118,14 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   broadcast, group, special command) is counted as `backward_multi_answer`, apart from the
   counters that mean "one gear was asked and its answer was unreadable".
 - Several gear answering one window can also decode as a clean byte, so a clean answer to
-  an addressed query does not prove a single responder (open ISSUE-124 in
-  [`known-issues.md`](../product-design/known-issues.md)).
+  an addressed query does not prove a single responder. The codec's `overlap` tests
+  measure it: answers less than 0,4 ms apart read clean in most cases when they agree and
+  in about three of five when they differ, one in six as a value neither sent; from 1 ms
+  apart almost never; which pairs merge clean depends on the two values. No flag on the
+  answer separates such a merge, because at a 104 µs sampling tick it fits one gear's
+  tolerated bit timing (101 Table 16): only a random-address search scoped by
+  `INITIALISE` to that short address tells two gear apart. `SimDaliTransport` merges
+  several answers on the wire the same way, up to 1 ms apart.
 - An active state from 750 µs up to 45 ms is a bit-timing violation (101 Tables 18 and
   19), so a capture held dominant through the window (`is_line_held`) is still a §8.2.5
   backward frame, logged as a hold; §9.5.2 itself makes 1,3–2 ms of active state a shared

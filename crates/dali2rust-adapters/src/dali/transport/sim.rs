@@ -3,14 +3,16 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 use std::time::Instant;
 
+use dali2rust_dali_codec::overlap::{overlapping_backward_capture, OverlappingAnswer};
+use dali2rust_dali_codec::rx_decode::RxDecode;
 use dali2rust_dali_phy::{PHY_TICK_US, TX_HALF_BIT_TICKS};
-use dali2rust_gear_model::GearFleet;
+use dali2rust_gear_model::{GearFleet, Rng};
 use dali2rust_platform::dali::{
     DaliTransport, DaliWireCounters, ObservedFrameSender, ObservedRawFrame,
     ObservedRawFrameKind, TransferOutcome, WireLoadWindow,
 };
 
-use super::WIRE_LOAD_WINDOW_TICKS;
+use super::{held_capture_outcome, WIRE_LOAD_WINDOW_TICKS};
 
 pub use dali2rust_gear_model::{GearSpec, DEFAULT_RESERVED_SHORT_ADDRESSES};
 
@@ -19,6 +21,10 @@ const HOST_RNG_SEED: u32 = 0x00C0_FFEE;
 const FORWARD16_TICKS: u32 = 38 * TX_HALF_BIT_TICKS;
 const FORWARD24_TICKS: u32 = 54 * TX_HALF_BIT_TICKS;
 const BACKWARD8_TICKS: u32 = 22 * TX_HALF_BIT_TICKS;
+
+const ANSWER_SPREAD_NS: u32 = 1_000_000;
+const OVERLAP_RNG_SEED: u32 = 0x0124_5EED;
+const TICK_NS: u32 = PHY_TICK_US * 1_000;
 
 #[derive(Debug)]
 pub struct SimDaliTransport {
@@ -34,6 +40,7 @@ pub struct SimDaliTransport {
     born: Instant,
     active_ticks: u32,
     tx_ticks: u32,
+    overlap_rng: Rng,
 }
 
 impl SimDaliTransport {
@@ -51,6 +58,7 @@ impl SimDaliTransport {
             born: Instant::now(),
             active_ticks: 0,
             tx_ticks: 0,
+            overlap_rng: Rng::new(OVERLAP_RNG_SEED),
         }
     }
 
@@ -68,6 +76,7 @@ impl SimDaliTransport {
             born: Instant::now(),
             active_ticks: 0,
             tx_ticks: 0,
+            overlap_rng: Rng::new(OVERLAP_RNG_SEED),
         }
     }
 
@@ -166,8 +175,34 @@ impl SimDaliTransport {
         self.sent_frame_times.push(Instant::now());
         self.fleet.advance_to_ms(elapsed_ms(self.born));
         let outcome = self.fleet.exchange(frame, expects_backward);
+        let outcome = self.merged_on_the_wire(outcome);
         self.charge_wire(FORWARD16_TICKS, &outcome);
         outcome
+    }
+
+    fn merged_on_the_wire(&mut self, outcome: TransferOutcome) -> TransferOutcome {
+        let values = self.fleet.last_answers().to_vec();
+        if outcome != TransferOutcome::CorruptedInWindow || values.len() < 2 {
+            return outcome;
+        }
+        let answers: Vec<OverlappingAnswer> = values
+            .iter()
+            .enumerate()
+            .map(|(index, &value)| OverlappingAnswer {
+                value,
+                start_ns: if index == 0 { 0 } else { self.answer_offset_ns() },
+            })
+            .collect();
+        let phase = u64::from(self.overlap_rng.next_u32() % TICK_NS);
+        let event = overlapping_backward_capture(&answers, phase);
+        event.decode_backward_byte().map_or_else(
+            || held_capture_outcome(event.longest_dominant_run_ticks()),
+            TransferOutcome::Answer,
+        )
+    }
+
+    fn answer_offset_ns(&mut self) -> u64 {
+        u64::from(self.overlap_rng.next_u32() % ANSWER_SPREAD_NS)
     }
 
     fn charge_wire(&mut self, forward_ticks: u32, outcome: &TransferOutcome) {
@@ -245,6 +280,41 @@ mod tests {
         assert_eq!(counters.wire_ticks_active.load(Relaxed), FORWARD16_TICKS);
         assert_eq!(counters.wire_ticks_tx.load(Relaxed), 0,
                    "another master's frame must never count as ours");
+    }
+
+    #[test]
+    fn two_gear_at_one_address_sometimes_read_as_one_clean_answer() {
+        const LEVELS: [u8; 2] = [0x00, 0x80];
+        const QUERY_ACTUAL_LEVEL_SA3: u16 = 0x07A0;
+        const ASKS: usize = 200;
+        let mut sim = SimDaliTransport::new(vec![
+            GearSpec::dt6(Some(3), 0x00_0100),
+            GearSpec::dt6(Some(3), 0x00_0200),
+        ]);
+        for (gear, level) in sim.fleet.gears_mut().iter_mut().zip(LEVELS) {
+            gear.level = level;
+        }
+        let outcomes: Vec<TransferOutcome> =
+            (0..ASKS).map(|_| match sim.exchange_frame(QUERY_ACTUAL_LEVEL_SA3, true) {
+                Ok(outcome) => outcome,
+                Err(never) => match never {},
+            }).collect();
+        let clean = outcomes
+            .iter()
+            .filter(|o| matches!(o, TransferOutcome::Answer(_)))
+            .count();
+        assert!(
+            clean > 0 && clean < ASKS,
+            "answers up to 1 ms apart merge on the wire: some read clean, some violate \
+             (09 §Reading answers); got {clean} clean of {ASKS}"
+        );
+        assert!(
+            outcomes.iter().all(|o| matches!(
+                o,
+                TransferOutcome::Answer(_) | TransferOutcome::CorruptedInWindow
+            )),
+            "a merge is an answer or a violation, never silence"
+        );
     }
 
     #[test]
@@ -384,3 +454,4 @@ impl DaliTransport for SimDaliTransport {
         false
     }
 }
+
