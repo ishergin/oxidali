@@ -1,4 +1,7 @@
-from hil.identity import refresh_short_addresses
+import pytest
+
+from hil import identity, prod_state
+from hil.identity import refresh_short_addresses, restore_short_addresses
 
 GOOD = (677222947651, 2738477721888259483)
 CORRUPT = (677029561089, 74022002431466241)
@@ -63,3 +66,80 @@ def test_empty_bus_gives_up_without_reads():
     mapping, missing = refresh_short_addresses(api, CALIBRATED)
 
     assert api.reads == [] and mapping == {} and missing == [1]
+
+
+YES = 0xFF
+OLD, NEW, ELSEWHERE = 5, 9, 7
+SET = ("cmd", OLD, identity.SET_SHORT_ADDRESS, identity.SEND_TWICE)
+
+
+class _Bus:
+    def __init__(self, gear, foreign_dtr0=None, spoil=None):
+        self.at = dict(gear)
+        self.dtr0, self.foreign_dtr0, self.spoil = 0, foreign_dtr0, spoil
+        self.sent = []
+
+    def devices(self):
+        return {"physical_devices": [
+            {"short_address": short, "gtin": gtin, "identification_number": idn}
+            for short, (gtin, idn) in sorted(self.at.items())]}
+
+    def raw(self, frame, expects_backward=False):
+        addr, data = frame >> 8, frame & 0xFF
+        if addr == prod_state.DTR0:
+            self.dtr0 = data
+            self.sent.append(("DTR0", data))
+            return {"success": True, "backward_frame": 0}
+        short = addr >> 1
+        self.sent.append(("query", short, data))
+        if short not in self.at:
+            return {"success": False, "backward_frame": 0}
+        if data == prod_state.QUERY_CONTENT_DTR0:
+            seen = self.dtr0 if self.foreign_dtr0 is None else self.foreign_dtr0
+            return {"success": True, "backward_frame": seen}
+        return {"success": True, "backward_frame": YES}
+
+    def cmd(self, short, opcode, repeat=1):
+        self.sent.append(("cmd", short, opcode, repeat))
+        if opcode == identity.SET_SHORT_ADDRESS and short in self.at:
+            if self.spoil is not None:
+                self.dtr0 = self.spoil
+            self.at[self.dtr0 >> 1] = self.at.pop(short)
+        return {"success": True}
+
+
+@pytest.fixture(autouse=True)
+def _no_pacing(monkeypatch):
+    monkeypatch.setattr(prod_state, "FRAME_PACE_S", 0)
+
+
+def test_the_address_moves_only_after_dtr0_reads_back_and_the_move_is_checked():
+    bus = _Bus({OLD: GOOD})
+    assert restore_short_addresses(bus, {GOOD: NEW}) == []
+    assert bus.at == {NEW: GOOD}
+    proof = ("query", OLD, prod_state.QUERY_CONTENT_DTR0)
+    assert bus.sent.index(proof) < bus.sent.index(SET)
+    assert bus.sent[bus.sent.index(SET) + 1:] == [
+        ("query", NEW, identity.QUERY_CONTROL_GEAR_PRESENT),
+        ("query", OLD, identity.QUERY_CONTROL_GEAR_PRESENT)]
+
+
+def test_a_dtr0_that_never_reads_back_sends_no_set_short_address():
+    bus = _Bus({OLD: GOOD}, foreign_dtr0=0x10)
+    with pytest.raises(identity.AddressNotMoved, match="never read DTR0 back"):
+        restore_short_addresses(bus, {GOOD: NEW})
+    assert SET not in bus.sent and bus.at == {OLD: GOOD}
+
+
+def test_a_dtr0_overwritten_after_its_proof_is_refused_by_the_check():
+    bus = _Bus({OLD: GOOD}, spoil=(ELSEWHERE << 1) | 1)
+    with pytest.raises(identity.AddressNotMoved, match="went astray"):
+        restore_short_addresses(bus, {GOOD: NEW})
+    assert bus.at == {ELSEWHERE: GOOD}
+
+
+def test_a_target_another_gear_holds_is_refused_before_anything_is_sent():
+    bus = _Bus({OLD: GOOD, NEW: CORRUPT})
+    with pytest.raises(identity.AddressNotMoved, match="already answers"):
+        restore_short_addresses(bus, {GOOD: NEW})
+    assert [frame for frame in bus.sent if frame[0] != "query"] == []

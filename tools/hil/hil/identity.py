@@ -1,5 +1,22 @@
 from hil.api import ApiError, Client
+from hil.prod_state import arm_dtr0
 from hil.results import LampIdentity
+
+SET_SHORT_ADDRESS = 0x80
+QUERY_CONTROL_GEAR_PRESENT = 0x91
+SEND_TWICE = 2
+LANDING = {
+    (True, False): None,
+    (False, True): "did not take: SA%(old)d still answers and SA%(new)d is silent",
+    (True, True): "is unproved: both SA%(new)d and SA%(old)d answer",
+    (False, False): ("went astray: neither SA%(new)d nor SA%(old)d answers — DTR0 moved "
+                     "between its proof and SET SHORT ADDRESS, so the gear holds an "
+                     "address nobody chose; find it before anything else writes"),
+}
+
+
+class AddressNotMoved(RuntimeError):
+    pass
 
 
 def _identity_values(device):
@@ -34,9 +51,28 @@ def restore_short_addresses(api: Client, desired):
         want = unmatched.pop(lamp.key, None)
         if want is None or want == lamp.short_address:
             continue
-        api.raw((0xA3 << 8) | ((want << 1) | 1))
-        api.cmd(lamp.short_address, 0x80, repeat=2)
+        move_short_address(api, lamp.short_address, want)
     return list(unmatched)
+
+
+def _answers(api, short):
+    frame = (((short << 1) | 1) << 8) | QUERY_CONTROL_GEAR_PRESENT
+    return api.raw(frame, expects_backward=True).get("success") is True
+
+
+def move_short_address(api, old, new):
+    move = "SA%d -> SA%d" % (old, new)
+    if _answers(api, new):
+        raise AddressNotMoved("%s refused: SA%d already answers, and a second gear there "
+                              "would share its address" % (move, new))
+    operand = (new << 1) | 1
+    if not arm_dtr0(api, old, operand):
+        raise AddressNotMoved("%s refused: SA%d never read DTR0 back as 0x%02X, so SET "
+                              "SHORT ADDRESS was not sent" % (move, old, operand))
+    api.cmd(old, SET_SHORT_ADDRESS, repeat=SEND_TWICE)
+    verdict = LANDING[(_answers(api, new), _answers(api, old))]
+    if verdict is not None:
+        raise AddressNotMoved("%s %s" % (move, verdict % {"old": old, "new": new}))
 
 
 def _identity_index(api: Client):
