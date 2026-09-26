@@ -192,8 +192,10 @@ The `optical` tests (`test_optical_*`, and the optical cases in `test_scenes`,
 The camera is a UVC camera on a fixed mount with the lamps, or the patches they light,
 in view. `setup.sh` builds `uvc-util`, which locks exposure and white balance. macOS
 denies an agent the camera, so frames come from a frame server (`hil camera-server
---spawn-terminal`, approve it in the Terminal). Exactly one may run; replace a wedged
-one with `--restart`.
+--spawn-terminal`, approve it in the Terminal). Exactly one may run, and
+`--spawn-terminal` leaves a live one as it is. A server that is alive but serves no
+frames holds a camera AVFoundation no longer hands it: run `vendor/uvc-util/uvc-util
+-d`, which enumerates the device again, then `hil camera-server --restart`.
 
 Calibration (`hil calibrate`, or automatically before the first test that needs optics)
 locks the camera, takes two all-off baselines for the noise floor, lights each lamp alone

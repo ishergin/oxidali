@@ -11,8 +11,8 @@ from pathlib import Path
 
 import numpy as np
 
-from hil.camera.backend import (AVG_FRAMES, WARMUP_FRAMES, CameraBackend,
-                                CameraError, LockMode)
+from hil.camera.backend import (AVG_FRAMES, REENUMERATE, SPAWN, WARMUP_FRAMES,
+                                CameraBackend, CameraError, LockMode)
 from hil.camera.capture import avg_frames, drain_to_live, open_session
 from hil.camera.controls import ControlError, UvcUtilControl
 
@@ -232,6 +232,11 @@ class FrameServerBackend(CameraBackend):
         except OSError:
             return False
 
+    def down_advice(self):
+        if not (self.mailbox / "server.alive").exists():
+            return "the frame server is not running — %s" % SPAWN
+        return "the frame server's heartbeat is stale — %s" % REENUMERATE
+
     def health(self):
         try:
             body = json.loads((self.mailbox / "server.alive").read_text())
@@ -241,12 +246,13 @@ class FrameServerBackend(CameraBackend):
 
     def capture(self, warmup=WARMUP_FRAMES, avg=AVG_FRAMES):
         if not self.alive():
-            raise CameraError("frame server not running — hil camera-server --spawn-terminal")
+            raise CameraError(self.down_advice())
         health = self.health()
         if health is not None and not health.get("healthy", True):
             raise CameraError(
-                "frame server is up but its last %d capture(s) failed: %s"
-                % (health.get("consecutive_failures", 1), health.get("last_error")))
+                "frame server is up but its last %d capture(s) failed: %s — %s"
+                % (health.get("consecutive_failures", 1), health.get("last_error"),
+                   REENUMERATE))
         self._reap_orphans()
         rid = "%d_%d" % (os.getpid(), int(time.time() * 1000))
         req = self.mailbox / ("req_%s.json" % rid)
@@ -264,7 +270,7 @@ class FrameServerBackend(CameraBackend):
             if err_path.exists():
                 msg = err_path.read_text()
                 err_path.unlink()
-                raise CameraError("frame server: %s" % msg)
+                raise CameraError("frame server: %s — %s" % (msg, REENUMERATE))
             time.sleep(0.1)
         raise CameraError(self._timeout_reason(req, err_path))
 
@@ -295,7 +301,7 @@ class FrameServerBackend(CameraBackend):
         if err_path.exists():
             msg = err_path.read_text()
             err_path.unlink()
-            return "frame server: %s" % msg
+            return "frame server: %s — %s" % (msg, REENUMERATE)
         pending = req.exists()
         try:
             req.unlink()
@@ -303,13 +309,10 @@ class FrameServerBackend(CameraBackend):
             pass
         if pending:
             return ("frame server is heart-beating but did not pick up the "
-                    "request within %.0fs — restart it: "
-                    "`hil camera-server --spawn-terminal`" % self.TIMEOUT_S)
+                    "request within %.0fs — %s" % (self.TIMEOUT_S, REENUMERATE))
         return ("frame server took the request but did not answer within "
-                "%.0fs — capture is blocked (camera unplugged, or the server "
-                "process lacks the camera TCC grant). Restart it from an "
-                "operator Terminal: `hil camera-server --spawn-terminal`"
-                % self.TIMEOUT_S)
+                "%.0fs — capture is blocked on a camera it no longer holds; %s"
+                % (self.TIMEOUT_S, REENUMERATE))
 
     def ensure_locked(self):
         if not self.alive():

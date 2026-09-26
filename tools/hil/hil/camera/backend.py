@@ -30,6 +30,11 @@ class Capability(enum.Enum):
 
 FLAT_RATIO = 1.25
 
+REENUMERATE = ("run `vendor/uvc-util/uvc-util -d`, then `hil camera-server --restart`: "
+               "AVFoundation hands the camera over only once the device is enumerated "
+               "again, and `--spawn-terminal` leaves a live server as it is")
+SPAWN = "start it with `hil camera-server --spawn-terminal`"
+
 
 @dataclass
 class ProbeResult:
@@ -90,7 +95,6 @@ def probe_and_select(cfg):
         pass
     server = FrameServerBackend(cfg)
     if not server.alive():
-        raise CameraError(
-            "no camera path: direct capture is TCC-denied and the frame server "
-            "is not running — start it with: hil camera-server --spawn-terminal")
+        raise CameraError("no camera path: direct capture is TCC-denied and %s"
+                          % server.down_advice())
     return server
