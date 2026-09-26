@@ -27,9 +27,6 @@ impl FileSystemHal for StdFileSystemHal {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&tmp, content).map_err(FsError::from)?;
-
-        let _ = std::fs::remove_file(&target);
-
         std::fs::rename(&tmp, &target).map_err(|e| {
             let _ = std::fs::remove_file(&tmp);
             FsError::Io(e)
@@ -95,7 +92,6 @@ impl FsWriteSession for StdWriteSession {
     fn commit(mut self: Box<Self>) -> Result<(), FsError> {
         self.file.flush().map_err(FsError::from)?;
         drop(self.file);
-        let _ = std::fs::remove_file(&self.target);
         std::fs::rename(&self.tmp, &self.target).map_err(|e| {
             let _ = std::fs::remove_file(&self.tmp);
             FsError::Io(e)
@@ -160,6 +156,18 @@ mod tests {
         session.commit().expect("commit");
         assert_eq!(fs.read_file("/a0/data.bin").expect("read"), b"hello world");
         assert!(!fs.exists("/a0/data.tmp"), "tmp must be renamed away");
+    }
+
+    #[test]
+    fn an_atomic_write_and_a_commit_replace_the_previous_content() {
+        let fs = scratch_fs("replace");
+        fs.write_file_atomic("/a0/data.bin", b"old").expect("seed");
+        fs.write_file_atomic("/a0/data.bin", b"newer").expect("replace");
+        assert_eq!(fs.read_file("/a0/data.bin").expect("read"), b"newer");
+        let mut session = fs.begin_atomic_write("/a0/data.bin").expect("begin");
+        session.append(b"newest").expect("append");
+        session.commit().expect("commit");
+        assert_eq!(fs.read_file("/a0/data.bin").expect("read"), b"newest");
     }
 
     #[test]

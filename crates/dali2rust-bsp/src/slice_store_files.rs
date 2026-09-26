@@ -63,7 +63,6 @@ impl SliceWriteSession for FileWriteSession {
     fn commit(mut self: Box<Self>) -> Result<(), StoreError> {
         self.file.flush().map_err(|e| backend("flush", e))?;
         drop(self.file);
-        let _ = std::fs::remove_file(&self.target);
         std::fs::rename(&self.tmp, &self.target).map_err(|e| {
             let _ = std::fs::remove_file(&self.tmp);
             backend("rename", e)
