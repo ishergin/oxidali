@@ -76,7 +76,7 @@ class CameraOracle:
             self.artifacts.attach_json(name + "_metrics", m)
         return m
 
-    def _count_retry(self, cause):
+    def count_retry(self, cause):
         self.retry_causes[cause] += 1
         self.retries += 1
 
@@ -88,7 +88,7 @@ class CameraOracle:
             raise
         except AssertionError:
             if window is not None and window.contaminated:
-                self._count_retry("contaminated_window")
+                self.count_retry("contaminated_window")
                 if self.artifacts:
                     self.artifacts.attach_json(
                         (name or "assert") + "_retry",
@@ -132,7 +132,7 @@ class CameraOracle:
             if resend is None:
                 raise
             resend()
-            self._count_retry("lost_command")
+            self.count_retry("lost_command")
             return self._assert(check, label, name + "_resend", window)
 
     def require_colour(self, m, label, what="colour"):
@@ -163,7 +163,7 @@ class CameraOracle:
             if resend is not None:
                 resend()
             time.sleep(COLOR_RAMP_S)
-            self._count_retry("gear_colour_lag")
+            self.count_retry("gear_colour_lag")
             return self._assert(check, label, "hue_%s_lagretry" % color_name, window)
 
     def judge_cct_order(self, ratios, min_spread=1.15):

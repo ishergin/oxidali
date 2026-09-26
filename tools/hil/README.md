@@ -396,6 +396,11 @@ one costs a go-ahead.
   be split by the poller, HCL or another master overwriting a DTR, and a send-twice pair
   is one request with `repeat_count: 2`, never two; a raw DTR-armed write is proved by
   reading its effect back.
+- **Retries.** A step a test repeats goes through the ledger: `api.count_retry(kind,
+  detail)` for a request or a read, the oracle's `count_retry(cause)` for a
+  measurement; a sniffer `resend=` counts itself. A new kind gets a line of 0 in
+  `retry_budget.txt`. A conditional write is never repeated blindly: after a lost
+  answer `rules_replace` reads `/rules` back and repeats only a write that did not land.
 - **Skips and xfails.** A feature is skipped as absent only on the firmware's own
   evidence (a `404`, a block missing from `/api/v1/diagnostics`); a probe that fails on
   a build that has the feature fails the test. A known-failure hatch is a conditional

@@ -1,12 +1,15 @@
 import re
 import types
+from collections import Counter
+from pathlib import Path
 
 import pytest
 import requests
 
 from hil import api as api_mod
-from hil import validity
+from hil import sniffer, validity
 from hil.lamp_guard import LampGuard
+from hil.oracle import CameraOracle
 
 
 
@@ -217,6 +220,51 @@ def test_an_unmeasured_counter_never_gates(tmp_path):
 def test_a_missing_budget_file_gates_nothing(tmp_path):
     assert validity.load_budget(tmp_path / "absent.txt") == {}
     assert validity.breaches({"raw_unanswered": 5}, {}) == []
+
+
+COUNTED_KIND = re.compile(r'count_retry\(\s*"([a-z0-9_]+)",')
+NEW_KINDS = frozenset({"rules_put_reconciled", "teardown_write", "group_membership_reread",
+                       "group_apply_reconverge", "post_commission_requery",
+                       sniffer.SNIFFER_RESEND})
+
+
+def _silent_tap(tmp_path):
+    tap = sniffer.SnifferTap.__new__(sniffer.SnifferTap)
+    tap.retries, tap.retry_events, tap.witness_fallbacks = Counter(), [], 0
+    tap.log_path = tmp_path / "sniffer.log"
+    tap.log_path.write_text("")
+    return tap
+
+
+def test_every_repeated_step_reaches_the_ledger_and_its_budget(monkeypatch, tmp_path):
+    client = _client(monkeypatch, [])
+    client.count_retry("teardown_write", "group apply (ConnectionError)")
+    tap, sent = _silent_tap(tmp_path), []
+    with pytest.raises(AssertionError, match="no frame containing"):
+        sniffer.Window(tap).expect_frame("DAPC short 2", timeout_s=0.01,
+                                         resend=lambda: sent.append("DAPC"))
+    oracle = CameraOracle(None, {"lamps": []}, None, None)
+    oracle.count_retry("gear_colour_lag")
+    foreign = types.SimpleNamespace(retries=Counter(foreign_master_silent=1))
+
+    counters, events = validity.tally([client, tap, oracle, foreign])
+    ledger = validity.collect(dict(counters, bus_contended=0))
+    assert sent == ["DAPC"]
+    assert ledger == {"teardown_write": 1, sniffer.SNIFFER_RESEND: 1,
+                      "optical_gear_colour_lag": 1, "foreign_master_silent": 1}
+    assert [row[0] for row in validity.breaches(ledger, validity.load_budget())] == \
+        sorted(ledger)
+    assert len(events) == 2 and "DAPC short 2" in events[1]
+
+
+def test_every_kind_a_step_is_counted_under_has_a_shipped_budget_line():
+    root = Path(validity.__file__).resolve().parent.parent
+    sources = sorted(root.glob("hil/**/*.py")) + sorted(root.glob("tests/*.py"))
+    kinds = {kind for path in sources for kind in COUNTED_KIND.findall(path.read_text())}
+    budget = validity.load_budget()
+    assert kinds >= NEW_KINDS - {sniffer.SNIFFER_RESEND}
+    assert sorted((kinds | NEW_KINDS) - set(budget)) == []
+    assert {kind: budget[kind] for kind in NEW_KINDS} == dict.fromkeys(NEW_KINDS, 0)
 
 
 

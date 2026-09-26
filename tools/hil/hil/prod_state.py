@@ -333,7 +333,7 @@ def _restore_rules(api, snap, log):
     now = api.rules_get()
     if now.get("source") != snap["rules"].get("source"):
         log("prod_state: restoring the rules document")
-        api.wait_op(api.rules_put(snap["rules"]["source"], now["revision"]))
+        api.rules_replace(snap["rules"]["source"], now["revision"])
 
 
 def _restore_devices(api, snap, log):

@@ -5,6 +5,9 @@ import pytest
 from hil.api import ApiError
 
 DISCOVERY_SCAN_TIMEOUT_S = 180
+QUERY_ACTUAL_LEVEL = 0xA0
+REQUERY_ATTEMPTS = 3
+REQUERY_PAUSE_S = 2.0
 
 pytestmark = [pytest.mark.destructive, pytest.mark.sniffer]
 
@@ -70,9 +73,13 @@ def test_commission_unaddressed_cycle_is_safe(api, sniffer, lamps,
     assert api.addrs() == before, (before, api.addrs())
     for short in before:
         resp = {}
-        for _ in range(3):
-            resp = api.cmd(short, 0xA0)
+        for attempt in range(REQUERY_ATTEMPTS):
+            if attempt:
+                api.count_retry("post_commission_requery",
+                                "SA%d silent to QUERY ACTUAL LEVEL after commissioning"
+                                % short)
+                time.sleep(REQUERY_PAUSE_S)
+            resp = api.cmd(short, QUERY_ACTUAL_LEVEL)
             if resp.get("success"):
                 break
-            time.sleep(2.0)
         assert resp.get("success") is True, (short, resp)

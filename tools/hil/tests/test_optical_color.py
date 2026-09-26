@@ -18,14 +18,8 @@ def test_rgb_classification(api, lamps, capabilities, camera_oracle,
     for name, rgb in RGB_PRIMARIES:
         setpoint = rgb_setpoint(rgb)
         api.ts(short, setpoint)
-        try:
-            camera_oracle.assert_hue(label, name,
-                                     resend=lambda sp=setpoint: api.ts(short, sp))
-        except AssertionError:
-            api.ts(short, setpoint)
-            time.sleep(COLOR_RAMP_S)
-            camera_oracle.assert_hue(label, name,
-                                     resend=lambda sp=setpoint: api.ts(short, sp))
+        camera_oracle.assert_hue(label, name,
+                                 resend=lambda sp=setpoint: api.ts(short, sp))
     api.off(short)
 
 
@@ -43,14 +37,8 @@ def test_rgb_colour_without_level_activates(api, lamps, capabilities,
         setpoint = {"power": "on", "color_mode": "rgb",
                     "rgb": {"r": rgb[0], "g": rgb[1], "b": rgb[2]}}
         api.ts(short, setpoint)
-        try:
-            camera_oracle.assert_hue(label, name,
-                                     resend=lambda sp=setpoint: api.ts(short, sp))
-        except AssertionError:
-            api.ts(short, setpoint)
-            time.sleep(COLOR_RAMP_S)
-            camera_oracle.assert_hue(label, name,
-                                     resend=lambda sp=setpoint: api.ts(short, sp))
+        camera_oracle.assert_hue(label, name,
+                                 resend=lambda sp=setpoint: api.ts(short, sp))
     api.off(short)
 
 
@@ -83,6 +71,7 @@ def test_cct_ordering(api, lamps, camera_oracle, calibration, state_snapshot,
             camera_oracle.measure(label, name="cct_%d" % kelvin), label, "cct")
         other = 6500 if kelvin == 2700 else 2700
         if abs(m["rb_ratio"] - expected[kelvin]) > abs(m["rb_ratio"] - expected[other]):
+            camera_oracle.count_retry("gear_colour_lag")
             api.ts(short, setpoint)
             time.sleep(COLOR_RAMP_S)
             m = camera_oracle.require_colour(

@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 from pathlib import Path
 
 NOT_MEASURED = -1
@@ -208,6 +209,18 @@ def uptime_broke(prev, now_ts, now_uptime, slack_s):
     expected = prev_uptime + (now_ts - prev_ts)
     shortfall = expected - (now_uptime + slack_s)
     return shortfall if shortfall > 0 else None
+
+
+def tally(instruments):
+    counted, optical, events, fallbacks = Counter(), Counter(), [], 0
+    for instrument in instruments:
+        if hasattr(instrument, "retry_causes"):
+            optical.update(instrument.retry_causes)
+            continue
+        fallbacks += getattr(instrument, "witness_fallbacks", 0)
+        counted.update(getattr(instrument, "retries", None) or {})
+        events.extend(getattr(instrument, "retry_events", ()))
+    return {"api": counted, "optical": optical, "witness_fallbacks": fallbacks}, events
 
 
 def collect(counters):

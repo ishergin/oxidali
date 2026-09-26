@@ -1,10 +1,10 @@
-import collections
 import datetime
 import os
 import subprocess
 import time
 
 import pytest
+from requests import RequestException
 
 from hil.gearsim import GearSim, GearSimUnavailable
 
@@ -37,6 +37,7 @@ UNCLASSIFIED_REPORT = ("collection stopped before the session was classified: no
 
 PANEL_SHORT = 0
 NVM_SETTLING_WAIT_S = 90
+TEARDOWN_RETRY_S = 2.0
 
 
 def _await_nvm_settling(api, short):
@@ -707,12 +708,12 @@ def vl_bindings(api, lamps, run_dir, hil_config):
     return mapping
 
 
-def _teardown_write(fn):
-    from requests import RequestException
+def _teardown_write(api, what, fn):
     try:
         return fn()
-    except RequestException:
-        time.sleep(2.0)
+    except RequestException as exc:
+        api.count_retry("teardown_write", "%s (%s)" % (what, api_mod._cause_of(exc)))
+        time.sleep(TEARDOWN_RETRY_S)
         return fn()
 
 
@@ -723,8 +724,9 @@ def group_matrix_guard(api):
     rows = [{"virtual_lamp_id": r["virtual_lamp_id"], "desired": r["desired"]}
             for r in before["rows"]]
     if rows:
-        _teardown_write(lambda: api.groups.matrix_patch(rows))
-    res = _teardown_write(api.groups.apply)
+        _teardown_write(api, "group matrix PATCH",
+                        lambda: api.groups.matrix_patch(rows))
+    res = _teardown_write(api, "group apply", api.groups.apply)
     if "operation_id" in res:
         api.wait_op(res)
 
@@ -752,8 +754,10 @@ def scene_matrix_guard(api):
                  "desired": _scene_desired_writeback(r["desired"])}
                 for r in before["rows"]]
         if rows:
-            _teardown_write(lambda: api.scenes.matrix_patch(scene_id, rows))
-        res = _teardown_write(lambda: api.scenes.apply(scene_id))
+            _teardown_write(api, "scene %d matrix PATCH" % scene_id,
+                            lambda: api.scenes.matrix_patch(scene_id, rows))
+        res = _teardown_write(api, "scene %d apply" % scene_id,
+                              lambda: api.scenes.apply(scene_id))
         if "operation_id" in res:
             api.wait_op(res)
 
@@ -884,7 +888,7 @@ def rules_guard(api):
     original = doc.get("source") or ""
 
     def _commit(source, what):
-        view = api.wait_op(api.rules_put(source, api.rules_get()["revision"]))
+        view = api.rules_replace(source, api.rules_get()["revision"])
         if view.get("status") != "succeeded":
             pytest.fail("rules %s did not commit: %r" % (what, view),
                         pytrace=False)
@@ -1323,18 +1327,7 @@ def _validity_state(config):
                                     ", ".join(str(p) for p in strays)))
     except Exception:
         state["frame_server"] = "unknown"
-    api_retries, optical, fallbacks = collections.Counter(), collections.Counter(), 0
-    retry_events = []
-    for obj in getattr(config, "_hil_counted", []):
-        if isinstance(obj, api_mod.Client):
-            api_retries.update(obj.retries)
-            retry_events.extend(getattr(obj, "retry_events", ()))
-        elif hasattr(obj, "retry_causes"):
-            optical.update(obj.retry_causes)
-        elif hasattr(obj, "witness_fallbacks"):
-            fallbacks += obj.witness_fallbacks
-        elif hasattr(obj, "retries"):
-            api_retries.update(obj.retries)
+    counters, retry_events = validity.tally(getattr(config, "_hil_counted", []))
     state["stack_budget"] = validity.load_stack_budget()
     census_lines = _stack_census_lines(config)
     state["stack_min_free"] = validity.stack_min_free(census_lines)
@@ -1351,12 +1344,8 @@ def _validity_state(config):
     state["bus_drops"] = _bus_drops(cfg, getattr(config, "_hil_isr_baseline", {}))
     state["bus_subscriber_losses"] = _bus_subscriber_losses(cfg)
     state["retry_events"] = retry_events
-    state["ledger"] = validity.collect({
-        "api": api_retries,
-        "optical": optical,
-        "witness_fallbacks": fallbacks,
-        "bus_contended": len(state.get("contended") or []),
-    })
+    state["ledger"] = validity.collect(
+        dict(counters, bus_contended=len(state.get("contended") or [])))
     return state
 
 

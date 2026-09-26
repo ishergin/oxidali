@@ -61,12 +61,6 @@ def test_attribute_read_sweep_plausible(api, lamps, sniffer, paced, op_check,
     if ext_fade is not None:
         assert 0 <= ext_fade <= 65_535, ext_fade
     ext_fade = _attr_section(device, "extended").get("fade_time_ms") or {}
-    if ext_fade.get("last_read_ms") is None:
-        api.attr_read_checked(short, groups="extended")
-        device = api.device_full(short)
-        test_artifacts.attach_json("attributes_extended_retry",
-                                   device.get("attributes"))
-        ext_fade = _attr_section(device, "extended").get("fade_time_ms") or {}
     assert ext_fade.get("last_read_ms") is not None, (
         "extended.fade_time_ms was not read by the full sweep: %r" % (ext_fade,))
     outcomes = view.get("attribute_read_outcomes") or {}

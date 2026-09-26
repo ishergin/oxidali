@@ -20,6 +20,18 @@ mqtt_cct_first_command   1
 foreign_master_silent    0
 # The first exchange after Part 103 commissioning, while the segment leaves INITIALISE and quiescent mode.
 input_post_commission_settle    1
+# A conditional PUT /rules whose answer was lost, settled by reading /rules back.
+rules_put_reconciled     0
+# A guard's teardown write repeated after a transport error.
+teardown_write           0
+# The gear's group mask read again because the applied bit was not in it yet.
+group_membership_reread  0
+# A group apply that still carried a diff after the converging one.
+group_apply_reconverge   0
+# A gear queried again after commissioning because it did not answer.
+post_commission_requery  0
+# A command the sniffer did not see within half its window, sent again.
+sniffer_resend           0
 
 # Frames the controller shed, from /api/v1/diagnostics at session end.
 bus_commands_ingress_overflow       0

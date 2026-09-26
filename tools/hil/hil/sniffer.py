@@ -1,4 +1,5 @@
 import argparse
+import collections
 import json
 import os
 import re
@@ -25,6 +26,8 @@ def ssh_argv(cfg, remote_cmd):
 WIRE_BYTE0_IS_LSB = False
 
 RETAINED_WINDOW_S = 0.7
+
+SNIFFER_RESEND = "sniffer_resend"
 
 SPECIAL = {
     0xA1: "TERMINATE", 0xA3: "DTR0", 0xA5: "INITIALISE", 0xA7: "RANDOMISE",
@@ -244,6 +247,8 @@ class SnifferTap:
         self._proc = None
         self.owned = False
         self.witness_fallbacks = 0
+        self.retries = collections.Counter()
+        self.retry_events = []
         attached = self._attach_existing()
         if attached:
             self.log_path = attached
@@ -283,6 +288,12 @@ class SnifferTap:
 
     def window(self):
         return Window(self)
+
+    def resend(self, send, awaited):
+        self.retries[SNIFFER_RESEND] += 1
+        self.retry_events.append("%s: nothing matching %r yet, sent again"
+                                 % (SNIFFER_RESEND, awaited))
+        send()
 
     def close(self):
         if self._proc is not None and self.owned:
@@ -343,7 +354,7 @@ class Window:
                     return f
             now = time.monotonic()
             if resend_at and now >= resend_at:
-                resend()
+                self.tap.resend(resend, contains)
                 resend_at = None
             if now >= deadline:
                 raise AssertionError(
@@ -362,7 +373,7 @@ class Window:
                     return f
             now = time.monotonic()
             if resend_at and now >= resend_at:
-                resend()
+                self.tap.resend(resend, contains)
                 resend_at = None
             if now >= deadline:
                 raise AssertionError(
