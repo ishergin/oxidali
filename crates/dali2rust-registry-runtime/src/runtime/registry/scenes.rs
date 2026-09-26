@@ -582,6 +582,36 @@ impl SceneReadPort for RegistryStore {
     }
 }
 
+impl RegistryStore {
+    pub(crate) fn note_scene_recalled(
+        &self,
+        adapter_id: u8,
+        scene_id: u8,
+        scope: dali2rust_contracts::msg::DaliTargetScope,
+    ) {
+        let mut inner = self.write_inner();
+        if scope == dali2rust_contracts::msg::DaliTargetScope::Broadcast {
+            inner.active_scene.insert(adapter_id, scene_id);
+        } else {
+            inner.active_scene.remove(&adapter_id);
+        }
+    }
+
+    pub(crate) fn clear_active_scene_unless_from_scene(
+        &self,
+        adapter_id: u8,
+        last_dapc: Option<dali2rust_contracts::msg::LastDapcSource>,
+    ) {
+        let Some(source) = last_dapc else {
+            return;
+        };
+        if source == dali2rust_contracts::msg::LastDapcSource::Scene {
+            return;
+        }
+        self.write_inner().active_scene.remove(&adapter_id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -758,36 +788,5 @@ mod tests {
         assert_eq!(seeded.desired.level, Some(100), "desired := applied");
         assert_eq!(seeded.desired.color_mode, None, "color stays null on seed");
         assert!(!seeded.dirty);
-    }
-}
-
-
-impl RegistryStore {
-    pub(crate) fn note_scene_recalled(
-        &self,
-        adapter_id: u8,
-        scene_id: u8,
-        scope: dali2rust_contracts::msg::DaliTargetScope,
-    ) {
-        let mut inner = self.write_inner();
-        if scope == dali2rust_contracts::msg::DaliTargetScope::Broadcast {
-            inner.active_scene.insert(adapter_id, scene_id);
-        } else {
-            inner.active_scene.remove(&adapter_id);
-        }
-    }
-
-    pub(crate) fn clear_active_scene_unless_from_scene(
-        &self,
-        adapter_id: u8,
-        last_dapc: Option<dali2rust_contracts::msg::LastDapcSource>,
-    ) {
-        let Some(source) = last_dapc else {
-            return;
-        };
-        if source == dali2rust_contracts::msg::LastDapcSource::Scene {
-            return;
-        }
-        self.write_inner().active_scene.remove(&adapter_id);
     }
 }

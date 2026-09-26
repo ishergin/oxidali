@@ -1,4 +1,4 @@
-@stage-X1
+@stage-R17
 Feature: Redundancy — settings
 
   What the operator configured, as opposed to what happened. Off by default:

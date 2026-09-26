@@ -240,109 +240,6 @@ fn elapsed_ticks(since: Instant) -> u32 {
     (since.elapsed().as_micros() / u128::from(PHY_TICK_US)) as u32
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_button_press_reaches_the_observed_channel() {
-        let mut sim = SimDaliTransport::demo_bus();
-        let (tx, rx) = std::sync::mpsc::sync_channel(8);
-        sim.set_observed_frame_sender(tx);
-
-        let sent = sim.press_button(0, 3, true);
-
-        assert_eq!(sent, 1, "the demo panel's button instance emits one event");
-        let frame = rx.try_recv().expect("the event reaches the translator");
-        assert_eq!(frame.kind, ObservedRawFrameKind::Forward24);
-        assert_ne!(frame.bytes, [0, 0, 0]);
-        assert_eq!(sim.press_button(0, 3, false), 1, "and so does the release");
-    }
-
-    #[test]
-    fn an_injection_with_no_listener_says_so() {
-        let mut sim = SimDaliTransport::demo_bus();
-
-        assert!(!sim.inject_foreign_frame(0xFE80));
-        assert_eq!(sim.press_button(0, 0, true), 0);
-    }
-
-    #[test]
-    fn foreign_traffic_is_active_wire_but_not_our_own() {
-        let mut sim = SimDaliTransport::demo_bus();
-        let counters = Arc::new(DaliWireCounters::default());
-        sim.set_wire_counters(Arc::clone(&counters));
-        let (tx, _rx) = std::sync::mpsc::sync_channel(8);
-        sim.set_observed_frame_sender(tx);
-
-        assert!(sim.inject_foreign_frame(0xFE80));
-
-        assert_eq!(counters.wire_ticks_active.load(Relaxed), FORWARD16_TICKS);
-        assert_eq!(counters.wire_ticks_tx.load(Relaxed), 0,
-                   "another master's frame must never count as ours");
-    }
-
-    #[test]
-    fn two_gear_at_one_address_sometimes_read_as_one_clean_answer() {
-        const LEVELS: [u8; 2] = [0x00, 0x80];
-        const QUERY_ACTUAL_LEVEL_SA3: u16 = 0x07A0;
-        const ASKS: usize = 200;
-        let mut sim = SimDaliTransport::new(vec![
-            GearSpec::dt6(Some(3), 0x00_0100),
-            GearSpec::dt6(Some(3), 0x00_0200),
-        ]);
-        for (gear, level) in sim.fleet.gears_mut().iter_mut().zip(LEVELS) {
-            gear.level = level;
-        }
-        let outcomes: Vec<TransferOutcome> =
-            (0..ASKS).map(|_| match sim.exchange_frame(QUERY_ACTUAL_LEVEL_SA3, true) {
-                Ok(outcome) => outcome,
-                Err(never) => match never {},
-            }).collect();
-        let clean = outcomes
-            .iter()
-            .filter(|o| matches!(o, TransferOutcome::Answer(_)))
-            .count();
-        assert!(
-            clean > 0 && clean < ASKS,
-            "answers up to 1 ms apart merge on the wire: some read clean, some violate \
-             (09 §Reading answers); got {clean} clean of {ASKS}"
-        );
-        assert!(
-            outcomes.iter().all(|o| matches!(
-                o,
-                TransferOutcome::Answer(_) | TransferOutcome::CorruptedInWindow
-            )),
-            "a merge is an answer or a violation, never silence"
-        );
-    }
-
-    #[test]
-    fn exchanges_charge_the_simulated_wire() {
-        let mut sim = SimDaliTransport::demo_bus();
-        let counters = Arc::new(DaliWireCounters::default());
-        sim.set_wire_counters(Arc::clone(&counters));
-
-        let _ = sim.exchange_frame(0xFE80, false);
-        assert_eq!(counters.wire_ticks_tx.load(Relaxed), FORWARD16_TICKS);
-        assert_eq!(counters.wire_ticks_active.load(Relaxed), FORWARD16_TICKS);
-
-        let outcome = sim.exchange_frame(0x0190, true);
-        assert!(matches!(outcome, Ok(TransferOutcome::Answer(_))), "{outcome:?}");
-        assert_eq!(counters.wire_ticks_tx.load(Relaxed), 2 * FORWARD16_TICKS);
-        assert_eq!(
-            counters.wire_ticks_active.load(Relaxed),
-            2 * FORWARD16_TICKS + BACKWARD8_TICKS
-        );
-
-        let _ = sim.exchange_frame24([0xFF, 0xFE, 0x00], false);
-        assert_eq!(
-            counters.wire_ticks_tx.load(Relaxed),
-            2 * FORWARD16_TICKS + FORWARD24_TICKS
-        );
-    }
-}
-
 fn demo_input_devices() -> dali2rust_gear_model::input_device::DeviceFleet {
     use dali2rust_gear_model::input_device::{
         DeviceFleet, FeedbackDialect, FeedbackSpec, InputDeviceSpec, InstanceSpec,
@@ -455,3 +352,105 @@ impl DaliTransport for SimDaliTransport {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_button_press_reaches_the_observed_channel() {
+        let mut sim = SimDaliTransport::demo_bus();
+        let (tx, rx) = std::sync::mpsc::sync_channel(8);
+        sim.set_observed_frame_sender(tx);
+
+        let sent = sim.press_button(0, 3, true);
+
+        assert_eq!(sent, 1, "the demo panel's button instance emits one event");
+        let frame = rx.try_recv().expect("the event reaches the translator");
+        assert_eq!(frame.kind, ObservedRawFrameKind::Forward24);
+        assert_ne!(frame.bytes, [0, 0, 0]);
+        assert_eq!(sim.press_button(0, 3, false), 1, "and so does the release");
+    }
+
+    #[test]
+    fn an_injection_with_no_listener_says_so() {
+        let mut sim = SimDaliTransport::demo_bus();
+
+        assert!(!sim.inject_foreign_frame(0xFE80));
+        assert_eq!(sim.press_button(0, 0, true), 0);
+    }
+
+    #[test]
+    fn foreign_traffic_is_active_wire_but_not_our_own() {
+        let mut sim = SimDaliTransport::demo_bus();
+        let counters = Arc::new(DaliWireCounters::default());
+        sim.set_wire_counters(Arc::clone(&counters));
+        let (tx, _rx) = std::sync::mpsc::sync_channel(8);
+        sim.set_observed_frame_sender(tx);
+
+        assert!(sim.inject_foreign_frame(0xFE80));
+
+        assert_eq!(counters.wire_ticks_active.load(Relaxed), FORWARD16_TICKS);
+        assert_eq!(counters.wire_ticks_tx.load(Relaxed), 0,
+                   "another master's frame must never count as ours");
+    }
+
+    #[test]
+    fn two_gear_at_one_address_sometimes_read_as_one_clean_answer() {
+        const LEVELS: [u8; 2] = [0x00, 0x80];
+        const QUERY_ACTUAL_LEVEL_SA3: u16 = 0x07A0;
+        const ASKS: usize = 200;
+        let mut sim = SimDaliTransport::new(vec![
+            GearSpec::dt6(Some(3), 0x00_0100),
+            GearSpec::dt6(Some(3), 0x00_0200),
+        ]);
+        for (gear, level) in sim.fleet.gears_mut().iter_mut().zip(LEVELS) {
+            gear.level = level;
+        }
+        let outcomes: Vec<TransferOutcome> =
+            (0..ASKS).map(|_| match sim.exchange_frame(QUERY_ACTUAL_LEVEL_SA3, true) {
+                Ok(outcome) => outcome,
+                Err(never) => match never {},
+            }).collect();
+        let clean = outcomes
+            .iter()
+            .filter(|o| matches!(o, TransferOutcome::Answer(_)))
+            .count();
+        assert!(
+            clean > 0 && clean < ASKS,
+            "answers up to 1 ms apart merge on the wire: some read clean, some violate \
+             (09 §Reading answers); got {clean} clean of {ASKS}"
+        );
+        assert!(
+            outcomes.iter().all(|o| matches!(
+                o,
+                TransferOutcome::Answer(_) | TransferOutcome::CorruptedInWindow
+            )),
+            "a merge is an answer or a violation, never silence"
+        );
+    }
+
+    #[test]
+    fn exchanges_charge_the_simulated_wire() {
+        let mut sim = SimDaliTransport::demo_bus();
+        let counters = Arc::new(DaliWireCounters::default());
+        sim.set_wire_counters(Arc::clone(&counters));
+
+        let _ = sim.exchange_frame(0xFE80, false);
+        assert_eq!(counters.wire_ticks_tx.load(Relaxed), FORWARD16_TICKS);
+        assert_eq!(counters.wire_ticks_active.load(Relaxed), FORWARD16_TICKS);
+
+        let outcome = sim.exchange_frame(0x0190, true);
+        assert!(matches!(outcome, Ok(TransferOutcome::Answer(_))), "{outcome:?}");
+        assert_eq!(counters.wire_ticks_tx.load(Relaxed), 2 * FORWARD16_TICKS);
+        assert_eq!(
+            counters.wire_ticks_active.load(Relaxed),
+            2 * FORWARD16_TICKS + BACKWARD8_TICKS
+        );
+
+        let _ = sim.exchange_frame24([0xFF, 0xFE, 0x00], false);
+        assert_eq!(
+            counters.wire_ticks_tx.load(Relaxed),
+            2 * FORWARD16_TICKS + FORWARD24_TICKS
+        );
+    }
+}

@@ -280,10 +280,7 @@ mod tests {
 
     #[test]
     fn layout_fits_the_partition() {
-        assert!(
-            LAYOUT_BYTES < 4 * 1024 * 1024,
-            "layout is {LAYOUT_BYTES} B"
-        );
+        const { assert!(LAYOUT_BYTES < 4 * 1024 * 1024, "the slice layout must fit the partition") };
     }
 
     #[test]

@@ -1438,7 +1438,7 @@ mod product_limit_tests {
 
     #[test]
     fn a_lamp_id_is_below_the_count_not_below_the_type() {
-        assert!(VIRTUAL_LAMP_COUNT < u8::MAX, "MAX would be a valid id");
+        const { assert!(VIRTUAL_LAMP_COUNT < u8::MAX, "MAX would be a valid id") };
         assert!(
             (0..VIRTUAL_LAMP_COUNT).all(|id| usize::from(id) < MAX_SHORT_ADDRESSES),
             "every lamp row must be able to name a short address"

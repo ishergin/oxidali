@@ -205,6 +205,116 @@ pub fn publish_command_and_wait_json_confirmation(
     recv_confirmation_bytes(wait, timeout_ms, slots, correlation_id)
 }
 
+pub fn dispatch_and_wait_for_success(
+    publisher: &dali2rust_bus::BusPublisher,
+    slots: &std::sync::Arc<crate::confirmation_bridge::PendingConfirmationSlots>,
+    correlation_id: u64,
+    timeout_ms: u64,
+    frame: dali2rust_bus::BusFrame,
+) -> Result<(), crate::http::types::HttpResponse> {
+    let conf_body = publish_command_and_wait_json_confirmation(
+        publisher,
+        slots,
+        correlation_id,
+        timeout_ms,
+        frame,
+    )?;
+    crate::http::handlers::common::ensure_confirmation_success(&conf_body)
+}
+
+pub fn publish_batch_and_wait_for_success(
+    publisher: &dali2rust_bus::BusPublisher,
+    slots: &std::sync::Arc<PendingConfirmationSlots>,
+    timeout_ms: u64,
+    batch: Vec<(u64, dali2rust_bus::BusFrame)>,
+) -> Result<(), HttpResponse> {
+    use crate::bus_codec::confirmation_to_json_body;
+
+    let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
+    let mut waits = Vec::with_capacity(batch.len());
+    for (correlation_id, _) in &batch {
+        match slots.try_register(*correlation_id, confirmation_to_json_body) {
+            Ok(rx) => waits.push(rx),
+            Err(()) => {
+                cancel_batch(slots, &batch);
+                return Err(HttpResponse::json(
+                    503,
+                    br#"{"error":"confirmation_slots_exhausted"}"#.to_vec(),
+                ));
+            }
+        }
+    }
+    let published = publish_batch_frames(publisher, &batch);
+    if published < batch.len() {
+        return Err(refuse_partial_batch(slots, deadline, waits, &batch, published));
+    }
+    collect_batch_confirmations(slots, deadline, waits, &batch)
+}
+
+fn publish_batch_frames(
+    publisher: &dali2rust_bus::BusPublisher,
+    batch: &[(u64, dali2rust_bus::BusFrame)],
+) -> usize {
+    batch
+        .iter()
+        .take_while(|(_, frame)| {
+            dali2rust_bus::publish_required(
+                publisher,
+                BusChannel::Commands,
+                frame.clone(),
+                &dali2rust_bus::HANDLER_PUBLISH_BACKOFF_MS,
+                dali2rust_bus::REQUIRED_PUBLISH_UNCAPPED,
+                "http-batch",
+            )
+            .queued
+        })
+        .count()
+}
+
+fn refuse_partial_batch(
+    slots: &PendingConfirmationSlots,
+    deadline: std::time::Instant,
+    waits: Vec<crate::confirmation_bridge::ConfirmationHandle>,
+    batch: &[(u64, dali2rust_bus::BusFrame)],
+    published: usize,
+) -> HttpResponse {
+    let mut waits = waits;
+    let unpublished = waits.split_off(published);
+    drop(unpublished);
+    cancel_batch(slots, &batch[published..]);
+    if published == 0 {
+        return HttpResponse::json(503, br#"{"error":"commands_ingress_overload"}"#.to_vec());
+    }
+    let _ = collect_batch_confirmations(slots, deadline, waits, &batch[..published]);
+    HttpResponse::json(503, br#"{"error":"partial_apply"}"#.to_vec())
+}
+
+fn collect_batch_confirmations(
+    slots: &PendingConfirmationSlots,
+    deadline: std::time::Instant,
+    waits: Vec<crate::confirmation_bridge::ConfirmationHandle>,
+    batch: &[(u64, dali2rust_bus::BusFrame)],
+) -> Result<(), HttpResponse> {
+    for (index, (wait, (correlation_id, _))) in waits.into_iter().zip(batch.iter()).enumerate() {
+        let outcome = recv_confirmation_bytes_until(wait, deadline, slots, *correlation_id)
+            .and_then(|body| crate::http::handlers::common::ensure_confirmation_success(&body));
+        if let Err(resp) = outcome {
+            cancel_batch(slots, &batch[index + 1..]);
+            return Err(resp);
+        }
+    }
+    Ok(())
+}
+
+fn cancel_batch(
+    slots: &PendingConfirmationSlots,
+    batch: &[(u64, dali2rust_bus::BusFrame)],
+) {
+    for (correlation_id, _) in batch {
+        slots.cancel(*correlation_id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -491,116 +601,5 @@ mod tests {
             r#"{"error":"commands_ingress_overload"}"#
         );
         assert_pool_fully_free(&slots, 2);
-    }
-}
-
-
-pub fn dispatch_and_wait_for_success(
-    publisher: &dali2rust_bus::BusPublisher,
-    slots: &std::sync::Arc<crate::confirmation_bridge::PendingConfirmationSlots>,
-    correlation_id: u64,
-    timeout_ms: u64,
-    frame: dali2rust_bus::BusFrame,
-) -> Result<(), crate::http::types::HttpResponse> {
-    let conf_body = publish_command_and_wait_json_confirmation(
-        publisher,
-        slots,
-        correlation_id,
-        timeout_ms,
-        frame,
-    )?;
-    crate::http::handlers::common::ensure_confirmation_success(&conf_body)
-}
-
-pub fn publish_batch_and_wait_for_success(
-    publisher: &dali2rust_bus::BusPublisher,
-    slots: &std::sync::Arc<PendingConfirmationSlots>,
-    timeout_ms: u64,
-    batch: Vec<(u64, dali2rust_bus::BusFrame)>,
-) -> Result<(), HttpResponse> {
-    use crate::bus_codec::confirmation_to_json_body;
-
-    let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
-    let mut waits = Vec::with_capacity(batch.len());
-    for (correlation_id, _) in &batch {
-        match slots.try_register(*correlation_id, confirmation_to_json_body) {
-            Ok(rx) => waits.push(rx),
-            Err(()) => {
-                cancel_batch(slots, &batch);
-                return Err(HttpResponse::json(
-                    503,
-                    br#"{"error":"confirmation_slots_exhausted"}"#.to_vec(),
-                ));
-            }
-        }
-    }
-    let published = publish_batch_frames(publisher, &batch);
-    if published < batch.len() {
-        return Err(refuse_partial_batch(slots, deadline, waits, &batch, published));
-    }
-    collect_batch_confirmations(slots, deadline, waits, &batch)
-}
-
-fn publish_batch_frames(
-    publisher: &dali2rust_bus::BusPublisher,
-    batch: &[(u64, dali2rust_bus::BusFrame)],
-) -> usize {
-    batch
-        .iter()
-        .take_while(|(_, frame)| {
-            dali2rust_bus::publish_required(
-                publisher,
-                BusChannel::Commands,
-                frame.clone(),
-                &dali2rust_bus::HANDLER_PUBLISH_BACKOFF_MS,
-                dali2rust_bus::REQUIRED_PUBLISH_UNCAPPED,
-                "http-batch",
-            )
-            .queued
-        })
-        .count()
-}
-
-fn refuse_partial_batch(
-    slots: &PendingConfirmationSlots,
-    deadline: std::time::Instant,
-    waits: Vec<crate::confirmation_bridge::ConfirmationHandle>,
-    batch: &[(u64, dali2rust_bus::BusFrame)],
-    published: usize,
-) -> HttpResponse {
-    let mut waits = waits;
-    let unpublished = waits.split_off(published);
-    drop(unpublished);
-    cancel_batch(slots, &batch[published..]);
-    if published == 0 {
-        return HttpResponse::json(503, br#"{"error":"commands_ingress_overload"}"#.to_vec());
-    }
-    let _ = collect_batch_confirmations(slots, deadline, waits, &batch[..published]);
-    HttpResponse::json(503, br#"{"error":"partial_apply"}"#.to_vec())
-}
-
-fn collect_batch_confirmations(
-    slots: &PendingConfirmationSlots,
-    deadline: std::time::Instant,
-    waits: Vec<crate::confirmation_bridge::ConfirmationHandle>,
-    batch: &[(u64, dali2rust_bus::BusFrame)],
-) -> Result<(), HttpResponse> {
-    for (index, (wait, (correlation_id, _))) in waits.into_iter().zip(batch.iter()).enumerate() {
-        let outcome = recv_confirmation_bytes_until(wait, deadline, slots, *correlation_id)
-            .and_then(|body| crate::http::handlers::common::ensure_confirmation_success(&body));
-        if let Err(resp) = outcome {
-            cancel_batch(slots, &batch[index + 1..]);
-            return Err(resp);
-        }
-    }
-    Ok(())
-}
-
-fn cancel_batch(
-    slots: &PendingConfirmationSlots,
-    batch: &[(u64, dali2rust_bus::BusFrame)],
-) {
-    for (correlation_id, _) in batch {
-        slots.cancel(*correlation_id);
     }
 }

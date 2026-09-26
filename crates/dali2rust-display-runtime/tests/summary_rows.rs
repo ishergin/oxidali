@@ -44,7 +44,7 @@ fn a_single_controller_keeps_its_uptime_and_shows_no_role() {
         spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
     publish(&publisher, IpAddressAssignedEvent::from_ip_text("10.0.0.9"));
     wait_row(&view, 0, "10.0.0.9");
-    let row = view.lines()[0].text.clone();
+    let row = view.lines()[0].text;
     assert!(row.contains("00H00M"), "the uptime is the whole right side: {row:?}");
 }
 

@@ -734,6 +734,19 @@ fn cool_absent_device(state: &mut PollerState, counters: &PollerCounters, adapte
     counters.device_cooldowns.fetch_add(1, Ordering::Relaxed);
 }
 
+pub struct ActiveRole;
+
+impl dali2rust_domain::registry::DaliSettingsReadPort for ActiveRole {
+    fn dali_settings_view(&self) -> dali2rust_domain::registry::DaliSettingsView {
+        dali2rust_domain::registry::DaliSettingsView {
+            dt8_auto_activation_repair: false,
+            dt8_rgbwaf_control_assert: false,
+            application_active: true,
+            device_short_address: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1023,18 +1036,5 @@ mod tests {
             state.next_cycle.duration_since(state.last_cycle) >= Duration::from_millis(200),
             "the REST floor (200 ms) holds even for a crafted event"
         );
-    }
-}
-
-pub struct ActiveRole;
-
-impl dali2rust_domain::registry::DaliSettingsReadPort for ActiveRole {
-    fn dali_settings_view(&self) -> dali2rust_domain::registry::DaliSettingsView {
-        dali2rust_domain::registry::DaliSettingsView {
-            dt8_auto_activation_repair: false,
-            dt8_rgbwaf_control_assert: false,
-            application_active: true,
-            device_short_address: None,
-        }
     }
 }

@@ -1183,9 +1183,7 @@ mod tests {
         // SAFETY: single-threaded test standing in for the ISR context.
         unsafe { tick_n(&core, 20) };
 
-        let mut data = [0u8; HalfBitBuffer::DATA_LEN];
-        data[0] = 0b0101_0101;
-        data[1] = 0b0101_0101;
+        let data = test_forward_frame();
         assert!(core.submit_tx(&data, 16, false, 0));
         // SAFETY: see above.
         unsafe { tick_n(&core, 20) };
@@ -1209,16 +1207,18 @@ mod tests {
         // SAFETY: single-threaded test; nothing else holds a reference.
         unsafe { *input.get() = RECESSIVE };
         // SAFETY: see above.
+        let transmitted = unsafe { transmitted_within(&core, 1024) };
         assert!(
-            !unsafe { transmitted_within(&core, 1024) },
+            !transmitted,
             "a frame its caller gave up on must never reach the wire, however \
              long the bus takes to recover"
         );
 
         assert!(core.submit_tx(&data, 16, false, 0));
         // SAFETY: see above.
+        let transmitted = unsafe { transmitted_within(&core, 1024) };
         assert!(
-            unsafe { transmitted_within(&core, 1024) },
+            transmitted,
             "the bus recovered and the PHY transmits — so the silence above was \
              about the cancelled frame, not about a wedged rig"
         );
@@ -1286,13 +1286,16 @@ mod tests {
         // SAFETY: single-threaded test standing in for the ISR context.
         unsafe { tick_n(&core, 8) };
         core.cancel_exchange(abandoned);
+        // SAFETY: single-threaded test standing in for the ISR context.
         unsafe { core.tick() };
         assert!(core.cancellation_acknowledged(abandoned));
 
         let retry = core.begin_exchange();
         assert!(core.submit_tx_for(&next, 16, false, 0, retry));
+        // SAFETY: single-threaded test standing in for the ISR context.
+        let completed = unsafe { completes_within(&core, retry, 512) };
         assert!(
-            unsafe { completes_within(&core, retry, 512) },
+            completed,
             "completion of the cancelled frame must not clear the retry"
         );
         assert!(core.pop_session_event_for(abandoned).is_none());
@@ -1324,7 +1327,9 @@ mod tests {
         unsafe { core.tick() };
         assert!(core.cancellation_acknowledged(abandoned));
         assert!(core.submit_tx_for(&retry_data, 16, false, 0, retry));
-        assert!(unsafe { completes_within(&core, retry, 512) });
+        // SAFETY: single-threaded test standing in for the ISR context.
+        let completed = unsafe { completes_within(&core, retry, 512) };
+        assert!(completed);
     }
 
     unsafe fn completes_within(core: &PhyIsrCore, epoch: ExchangeId, ticks: usize) -> bool {
@@ -1657,8 +1662,8 @@ mod tests {
 
         let epoch = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
         assert!(core.submit_answer(epoch, &answer_frame()));
-        // SAFETY: single-threaded test standing in for the ISR context.
         while core.last_answer_arm_idle_ticks() == 0 {
+            // SAFETY: single-threaded test standing in for the ISR context.
             unsafe { core.tick() };
         }
         // SAFETY: same provenance as the pointer the core reads through.
@@ -1911,10 +1916,8 @@ mod tests {
             "the frame still reaches the sniffer"
         );
         // SAFETY: single-threaded test standing in for the ISR context.
-        assert!(
-            !unsafe { transmitted_within(&core, 600) },
-            "nothing of the voided unit goes out"
-        );
+        let transmitted = unsafe { transmitted_within(&core, 600) };
+        assert!(!transmitted, "nothing of the voided unit goes out");
     }
 
     #[test]
@@ -2031,10 +2034,8 @@ mod tests {
         data[1] = 0b0101_0101;
         assert!(core.submit_tx(&data, 16, false, 0));
         // SAFETY: single-threaded test standing in for the ISR context.
-        assert!(
-            unsafe { transmitted_within(&core, 200) },
-            "our frame must go out"
-        );
+        let transmitted = unsafe { transmitted_within(&core, 200) };
+        assert!(transmitted, "our frame must go out");
 
         assert!(core.submit_answer(epoch, &answer_frame()));
         // SAFETY: single-threaded test standing in for the ISR context.

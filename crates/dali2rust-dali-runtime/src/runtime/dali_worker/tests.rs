@@ -64,9 +64,11 @@ fn test_publish_read_attributes_evidence_publishes_runtime_update_and_event() {
         DaliReadAttributesCommand, LightSetpoint, MemoryBankReadPreset, PowerState,
     };
 
-    let mut config = BusConfig::default();
-    config.commands_ingress = 1;
-    config.events_ingress = 10;
+    let config = BusConfig {
+        commands_ingress: 1,
+        events_ingress: 10,
+        ..Default::default()
+    };
     let (_host, publisher, ()) = BusHost::spawn(config, |_| {});
 
     let ar = DaliReadAttributesCommand {
@@ -76,9 +78,11 @@ fn test_publish_read_attributes_evidence_publishes_runtime_update_and_event() {
         memory_banks: MemoryBankReadPreset::None,
     };
 
-    let mut setpoint = LightSetpoint::default();
-    setpoint.power = PowerState::On;
-    setpoint.level = 254;
+    let setpoint = LightSetpoint {
+        power: PowerState::On,
+        level: 254,
+        ..Default::default()
+    };
 
     let execution = crate::runtime::executor::AttributeReadExecution {
         runtime_setpoint: Some(setpoint),
@@ -132,7 +136,7 @@ mod measured_colour {
     use crate::runtime::executor::AttributeReadExecution;
 
     fn dt8_read(mode: ColorMode) -> AttributeReadExecution {
-        let execution = AttributeReadExecution {
+        AttributeReadExecution {
             runtime_setpoint: None,
             runtime_observation: None,
             random_address: None,
@@ -161,8 +165,7 @@ mod measured_colour {
             extended_versions: [None; dali2rust_contracts::msg::MAX_EXTENDED_VERSIONS],
             has_scene_colours: false,
             scene_colours: None,
-        };
-            execution
+        }
     }
 
     fn colour(

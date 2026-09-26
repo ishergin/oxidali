@@ -37,16 +37,15 @@ BDD conventions → [05](05-testing-and-bdd.md); updates over the network →
 | Group | Recipes |
 | --- | --- |
 | Host | `check`, `test` (`--all-targets` over `scripts/host_crates.txt`, so no doc-tests), `quick <crates…>` (check all, test the named crates and BDD), `clippy` (`-D warnings`), `clippy-pedantic-advisory`, `fmt` (manual; rustfmt is no gate — wrap only lines you touch) |
-| BDD | `bdd`, `bdd-check`, `bdd-stage`, `check-stage-clean` |
+| BDD | `bdd` (`bdd_shards=N` over N processes), `bdd-check`, `bdd-stage`, `check-stage-clean` |
 | Gates | `verify`; `ci` = clippy, test, bdd, verify, `esp-check`, `gear-sim-check`; `contracts-check` |
 | Firmware | `esp-check` (`cargo check` on the P4 triple), `p4-fw-build`, `p4-isr-iram-check`, `p4-fw-flash` |
 | Other | emulator `gear-sim-check` / `gear-sim-isr-iram-check`; `gc`, `gc-status`; `hil-preflight`, `hil-smoke`, `hil-default`, `hil-slow` |
 
 - `just ci` before a commit lands and after anything that moves a contract, a wire order
   or ESP-only code; `just quick` is the inner loop. `ci` never links the firmware.
-- `check` compiles test targets too, because test doubles are what breaks unseen;
-  `clippy` covers production targets only. There is no destructive HIL recipe: that tier
-  runs one test at a time, by hand.
+- `check` and `clippy` cover test targets too, because test doubles are what breaks
+  unseen. There is no destructive HIL recipe: that tier runs one test at a time, by hand.
 - Host test time is launch time, not test time: `just gc` sweeps stale `.o` files and
   `just gc-status` counts them (the macOS mechanism: ISSUE-147).
 - The `p4-fw-flash` recipe names a local USB port; the installed boards are flashed with
@@ -194,7 +193,7 @@ files only go down; the bench's own budgets are in the
 | `verify_issue_ids.py` | every `ISSUE-NN` resolves to one issue-registry row |
 | `verify_bdd_ids.sh`, `verify_bdd_coverage.sh` (+ tree policy), `verify_bdd_layers.sh`, `verify_no_bdd_production_hooks.sh`, `verify_test_layers.sh` (+ `verify_duplication.sh`) | [05](05-testing-and-bdd.md) |
 | `verify_runtime_boundaries.sh` | no `#[path]` in runtime crates; fixed composition file set |
-| `verify_fixed_bus_guardrails.sh` | no `String`/`Vec`/JSON in bus messages or registry state |
+| `verify_fixed_bus_guardrails.sh` | no `String`/`Vec`/JSON in bus messages or registry state; test code is outside it |
 | `verify_comments.py` | no comment outside the one-line markers; budget `scripts/comment_budget.txt` |
 | `verify_web_assets.sh` | every embedded file present, `tsc -b`, UI tests |
 | `verify_web_classes_styled.py` | every `web/app` class has a CSS rule |
@@ -203,6 +202,7 @@ files only go down; the bench's own budgets are in the
 | `verify_fn_length.sh`, `verify_fn_length_esp.py` | no function over 40 lines, host and ESP-only code |
 | `verify_counter_surface.py` | counter names agree across spellings ([04](04-contracts-and-api-bridge.md)) |
 | `verify_read_surface.py` | every read-payload block reaches a screen |
+| `verify_rest_docs.py` | every route the router serves and every error code the API answers is named in a REST resource document, and every documented route is served |
 | `verify_dali_isr_iram.py` | the PHY interrupt reaches no flash; soft here, hard in `hil flash` |
 
 ## Comments

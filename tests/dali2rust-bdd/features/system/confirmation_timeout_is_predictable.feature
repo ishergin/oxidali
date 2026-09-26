@@ -4,7 +4,7 @@ Feature: Confirmation timeout is predictable
   I want the HTTP handler to return a 504 timeout when no confirmation arrives
   So that I know the command did not complete within the expected time
 
-  @id:DALI-001
+  @id:SYS-247
   Scenario: No confirmation within timeout period returns 504
     Given a DALI mock transport with response 200
     And the DALI transport blocks indefinitely
@@ -12,7 +12,7 @@ Feature: Confirmation timeout is predictable
     Then the response status should be 504
     And the response body should contain "confirmation_timeout"
 
-  @id:DALI-200 @stage-X1
+  @id:SYS-248 @stage-X1
   Scenario: Confirmation timeout can be configured
     Given a bus with confirmation timeout of 500 milliseconds
     And the DALI transport blocks indefinitely

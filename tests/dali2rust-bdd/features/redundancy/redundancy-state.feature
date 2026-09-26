@@ -1,4 +1,4 @@
-@stage-X1
+@stage-R17
 Feature: Redundancy — state and the planned handover
 
   What happened, as opposed to what was configured. Read-only and served in

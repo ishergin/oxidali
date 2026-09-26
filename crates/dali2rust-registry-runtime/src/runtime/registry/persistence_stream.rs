@@ -612,10 +612,11 @@ mod tests {
         for seed in (0..device_count).rev() {
             g.physical_devices
                 .insert((0, seed), PsramBox::new(fat_pd_record(seed)));
-            let mut vl = VlRecord::default();
-            vl.name = fixed_text_64(&format!("Lamp {seed}"));
-            vl.ha_entity_enabled = seed % 2 == 0;
-            vl.binding_short = Some(seed);
+            let vl = VlRecord {
+                name: fixed_text_64(&format!("Lamp {seed}")),
+                ha_entity_enabled: seed % 2 == 0,
+                binding_short: Some(seed),
+            };
             g.lamps.insert((0, seed), vl);
         }
         g.physical_devices.insert((1, 7), PsramBox::new(fat_pd_record(7)));

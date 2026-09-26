@@ -4,7 +4,7 @@ Feature: DALI special commands
   I want commissioning and memory special commands to use the normal command path
   So that special-command confirmations are correlated like standard commands
 
-  @id:DALI-307
+  @id:DIAG-407
   Scenario: Write memory location returns a backward frame
     Given the DALI transport responds with 0x2A
     When I send a DALI command with wire_address 199 and command 85

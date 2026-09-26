@@ -40,17 +40,42 @@ quick +CRATES:
     cargo test -p dali2rust-bdd --target {{default_host}} --test bdd
 
 [doc("Verify BDD IDs and coverage, then run the scenarios.")]
-bdd-check:
+bdd-check: && bdd
     @bash scripts/verify_bdd_ids.sh
     @bash scripts/verify_bdd_coverage.sh
-    cargo test --target {{default_host}} -p dali2rust-bdd --test bdd
 
+bdd_shards := "1"
+
+[doc("Run the BDD suite; bdd_shards=N splits it over N processes by feature.")]
 bdd:
-    cargo test --target {{default_host}} -p dali2rust-bdd --test bdd
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{bdd_shards}}" -le 1 ]; then
+      exec cargo test --target {{default_host}} -p dali2rust-bdd --test bdd
+    fi
+    bin=$(cargo test --target {{default_host}} -p dali2rust-bdd --test bdd --no-run 2>&1 \
+      | sed -n 's/.*Executable .*(\(.*\)).*/\1/p' | tail -1)
+    logs=$(mktemp -d)
+    trap 'rm -rf "$logs"' EXIT
+    pids=()
+    for ((i = 0; i < {{bdd_shards}}; i++)); do
+      BDD_SHARD="$i/{{bdd_shards}}" "$bin" >"$logs/$i.log" 2>&1 &
+      pids+=($!)
+    done
+    status=0
+    for i in "${!pids[@]}"; do
+      if ! wait "${pids[$i]}"; then
+        status=1
+        echo "BDD shard $i/{{bdd_shards}} failed:"
+        tail -80 "$logs/$i.log"
+      fi
+    done
+    grep -h -E '^[0-9]+ (scenarios|steps)' "$logs"/*.log
+    exit "$status"
 
 [doc("Run only the scenarios of one stage.")]
 bdd-stage STAGE:
-    cargo test --target {{default_host}} -p dali2rust-bdd --test bdd -- "{{STAGE}}"
+    ONLY_STAGE={{STAGE}} cargo test --target {{default_host}} -p dali2rust-bdd --test bdd
 
 [doc("Fail if a stage still has @wip scenarios.")]
 check-stage-clean STAGE:
@@ -65,7 +90,7 @@ fmt:
     cargo fmt --all
 
 clippy:
-    cargo clippy --target {{default_host}} {{host_crates}} -- -D warnings -D clippy::allow_attributes_without_reason -D clippy::undocumented_unsafe_blocks
+    cargo clippy --target {{default_host}} --all-targets {{host_crates}} -- -D warnings -D clippy::allow_attributes_without_reason -D clippy::undocumented_unsafe_blocks
 
 [doc("Advisory pedantic clippy over the host crates, minus the allowlist.")]
 clippy-pedantic-advisory:
@@ -92,6 +117,7 @@ verify:
     python3 scripts/verify_fn_length_esp.py
     python3 scripts/verify_counter_surface.py
     python3 scripts/verify_read_surface.py
+    python3 scripts/verify_rest_docs.py
     python3 scripts/verify_dali_isr_iram.py
 
 ci: clippy test bdd verify esp-check gear-sim-check

@@ -196,7 +196,7 @@ pub fn seed_physical_via_discovery(
 ) {
     publish_event(
         publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryProgressEvent { registry_adapter_id: 0, short_address: short_address, random_address: None, device_type: device_type, color_mode: ColorMode::Unknown, dt8_xy_capable: false, dt8_tc_capable: false, dt8_rgb_capable: false, dt8_rgbwaf_capable: false, supported_device_types: None }),
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryProgressEvent { registry_adapter_id: 0, short_address, random_address: None, device_type, color_mode: ColorMode::Unknown, dt8_xy_capable: false, dt8_tc_capable: false, dt8_rgb_capable: false, dt8_rgbwaf_capable: false, supported_device_types: None }),
     );
     wait_until(
         || store.physical_device_view(0, short_address).is_some(),

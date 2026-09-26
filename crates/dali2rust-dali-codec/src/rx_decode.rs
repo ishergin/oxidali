@@ -671,7 +671,7 @@ mod tests {
 
     fn held_line_capture(dominant_ticks: usize) -> RxCompletedEvent {
         let mut ticks = vec![0u8; dominant_ticks];
-        ticks.extend(core::iter::repeat(1).take(16));
+        ticks.extend(core::iter::repeat_n(1, 16));
         while ticks.len() % 8 != 0 {
             ticks.push(1);
         }

@@ -199,7 +199,7 @@ fn flush_dirty_slices_no_op_when_store_clean() {
     let store = RegistryStore::with_adapter_count(1);
     store.flush_dirty_slices(&slices);
     assert!(
-        !slices.load(SliceKey::Adapters).is_ok(),
+        slices.load(SliceKey::Adapters).is_err(),
         "unexpected adapters file after no-op flush"
     );
 }

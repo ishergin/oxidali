@@ -106,6 +106,9 @@ BDD conventions → [05](05-testing-and-bdd.md); DALI rules → [09](09-dali-pro
    ([07](07-memory-and-cores.md)); JSON is built only in `dali2rust-api`
    ([04](04-contracts-and-api-bridge.md)).
 6. A scenario under the resource's feature directory.
+7. The route and every error code it can answer are named in the resource's document
+   under `documentation/product-design/rest-api/`; `verify_rest_docs.py` fails a route
+   or a code that no document names.
 
 ## A platform backend
 

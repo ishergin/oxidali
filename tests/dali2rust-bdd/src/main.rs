@@ -1,10 +1,13 @@
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cucumber::gherkin::{Feature, Scenario};
 use cucumber::World;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_adapters::{build_http_test_stack, BusStackRuntime, DaliRuntimeConfig, StaticAsset};
@@ -339,23 +342,83 @@ impl Drop for DaliWorld {
     }
 }
 
+const STAGE_TAG_PREFIX: &str = "stage-";
+
+fn stage_of<'a>(feature: &'a Feature, scenario: &'a Scenario) -> Option<&'a str> {
+    let own = |tags: &'a [String]| tags.iter().find_map(|t| t.strip_prefix(STAGE_TAG_PREFIX));
+    own(&scenario.tags).or_else(|| own(&feature.tags))
+}
+
+fn features_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("features")
+}
+
+fn feature_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let entries = std::fs::read_dir(dir).expect("features directory");
+    for path in entries.map(|entry| entry.expect("features entry").path()) {
+        if path.is_dir() {
+            feature_files(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "feature") {
+            out.push(path);
+        }
+    }
+}
+
+fn scenario_count(path: &Path) -> usize {
+    let text = std::fs::read_to_string(path).expect("feature file");
+    text.lines().filter(|line| line.trim_start().starts_with("Scenario")).count()
+}
+
+fn shard_table(shards: usize) -> HashMap<PathBuf, usize> {
+    let mut files = Vec::new();
+    feature_files(&features_dir(), &mut files);
+    let mut weighted: Vec<(usize, PathBuf)> = files.into_iter().map(|p| (scenario_count(&p), p)).collect();
+    weighted.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let mut load = vec![0usize; shards];
+    let mut table = HashMap::new();
+    for (count, path) in weighted {
+        let lightest = (0..shards).min_by_key(|&shard| load[shard]).unwrap_or(0);
+        load[lightest] += count;
+        table.insert(path, lightest);
+    }
+    table
+}
+
+fn in_shard(feature: &Feature) -> bool {
+    static TABLE: OnceLock<Option<(usize, HashMap<PathBuf, usize>)>> = OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let spec = std::env::var("BDD_SHARD").ok()?;
+        let (index, count) = spec.split_once('/').expect("BDD_SHARD is <index>/<count>");
+        let count: usize = count.parse().expect("BDD_SHARD count");
+        Some((index.parse().expect("BDD_SHARD index"), shard_table(count.max(1))))
+    });
+    let Some((index, table)) = table else {
+        return true;
+    };
+    let path = feature.path.as_ref().expect("a parsed feature has a path");
+    let shard = table.get(path).unwrap_or_else(|| panic!("{} is not in the shard table", path.display()));
+    shard == index
+}
+
+fn selected(feature: &Feature, scenario: &Scenario) -> bool {
+    let has_wip = feature.tags.iter().chain(&scenario.tags).any(|t| t == "wip");
+    let features_ok = std::env::var("ONLY_FEATURES").ok().is_none_or(|pat| {
+        feature
+            .path
+            .as_ref()
+            .is_some_and(|p| p.to_string_lossy().contains(pat.as_str()))
+    });
+    let stage_ok = std::env::var("ONLY_STAGE")
+        .ok()
+        .is_none_or(|stage| stage_of(feature, scenario) == Some(stage.as_str()));
+    !has_wip && features_ok && stage_ok && in_shard(feature)
+}
+
 fn main() {
-    let features_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("features");
     futures::executor::block_on(
         DaliWorld::cucumber()
             .max_concurrent_scenarios(1)
             .fail_on_skipped()
-            .filter_run_and_exit(features_dir, |feature, _, scenario| {
-                let has_wip = feature.tags.iter().any(|t| t == "wip")
-                    || scenario.tags.iter().any(|t| t == "wip");
-                let only_features = std::env::var("ONLY_FEATURES").ok();
-                let features_ok = only_features.as_ref().map_or(true, |pat| {
-                    feature
-                        .path
-                        .as_ref()
-                        .is_some_and(|p| p.to_string_lossy().contains(pat.as_str()))
-                });
-                !has_wip && features_ok
-            }),
+            .filter_run_and_exit(features_dir(), |feature, _, scenario| selected(feature, scenario)),
     );
 }

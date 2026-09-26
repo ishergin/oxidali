@@ -2981,6 +2981,7 @@ mod bench_conformance {
 
     fn model_answered() -> std::collections::BTreeSet<u8> {
         const DAPC_OFF_LIKE_THE_DRIVEN_BENCH_GEAR: u16 = 0x0000;
+        const SHORT_0_COMMAND_ADDRESS_BYTE: u16 = 0x01;
         let mut fleet = GearFleet::new(
             vec![GearSpec::dt8(Some(0), 0x5C_2A_42, (true, false, false), (153, 370))],
             0,
@@ -2991,7 +2992,7 @@ mod bench_conformance {
             .chain([0xAA])
             .chain(0xB0..=0xC4)
             .filter(|op| {
-                let frame = (u16::from(0u8 << 1 | 1) << 8) | u16::from(*op);
+                let frame = (SHORT_0_COMMAND_ADDRESS_BYTE << 8) | u16::from(*op);
                 !matches!(fleet.exchange(frame, true), TransferOutcome::NoAnswer)
             })
             .collect()

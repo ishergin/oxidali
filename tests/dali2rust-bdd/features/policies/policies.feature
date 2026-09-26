@@ -1,4 +1,4 @@
-@stage-X1
+@stage-R17
 Feature: Policies — what a luminaire does without a controller
 
   `ADR-018` D7. `systemFailureLevel` and `powerOnLevel` are the two variables

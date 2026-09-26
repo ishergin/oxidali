@@ -164,7 +164,7 @@ fn every_event_has_a_consumer_or_is_documented_observed_only() {
              or document why it is observed-only"
         );
         assert!(
-            !(observed_only && !consumers.is_empty()),
+            !observed_only || consumers.is_empty(),
             "event {name}: consumed by {consumers:?} but still listed in \
              OBSERVED_ONLY_EVENTS — remove the stale entry"
         );

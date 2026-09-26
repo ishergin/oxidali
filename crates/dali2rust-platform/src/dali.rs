@@ -853,7 +853,7 @@ mod persist_flush_tests {
         let (n1, slow1, ms1, max1) = persist_flush_stats();
         assert!(n1.wrapping_sub(n0) >= 2);
         assert!(slow1.wrapping_sub(slow0) >= 1);
-        assert!(ms1.wrapping_sub(ms0) >= 2 * PERSIST_FLUSH_SLOW_MS + 1);
+        assert!(ms1.wrapping_sub(ms0) > 2 * PERSIST_FLUSH_SLOW_MS);
         assert!(max1 > PERSIST_FLUSH_SLOW_MS);
     }
 }
@@ -899,11 +899,11 @@ mod persist_gate_tests {
     fn the_quiet_gap_outlasts_the_backward_window() {
         const TABLE_20_MAX_US: u32 = 10_500;
         const PHY_TICK_US: u32 = 104;
-        assert!(
-            super::PERSIST_QUIET_GAP_TICKS * PHY_TICK_US > TABLE_20_MAX_US,
-            "a {} tick gap is {} us, inside Table 20's {TABLE_20_MAX_US} us",
-            super::PERSIST_QUIET_GAP_TICKS,
-            super::PERSIST_QUIET_GAP_TICKS * PHY_TICK_US
-        );
+        const {
+            assert!(
+                super::PERSIST_QUIET_GAP_TICKS * PHY_TICK_US > TABLE_20_MAX_US,
+                "the quiet gap must outlast Table 20's backward window"
+            )
+        };
     }
 }
