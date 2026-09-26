@@ -434,7 +434,7 @@ fn handle_bus_health_probe(
             lamp_failure: probe.lamp_failure,
         },
     );
-    publish_event_typed(publisher, ev, counters);
+    publish_event_typed(publisher, ev);
 }
 
 fn handle_handover(
@@ -466,7 +466,7 @@ fn handle_handover(
             peer_short_address: cmd.peer_short_address,
         },
     );
-    publish_event_typed(publisher, sent, counters);
+    publish_event_typed(publisher, sent);
     stand_down_after_handover(publisher, adapter_id, counters);
     publish_confirmation_ok(publisher, correlation_id, counters);
 }
@@ -525,7 +525,7 @@ fn handle_arbitration_probe(
             owned,
         },
     );
-    publish_event_typed(publisher, ev, counters);
+    publish_event_typed(publisher, ev);
 }
 
 #[cfg(test)]

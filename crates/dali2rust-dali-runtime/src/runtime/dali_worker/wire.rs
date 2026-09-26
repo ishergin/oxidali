@@ -146,5 +146,5 @@ fn publish_wire_payload_results(
     publish_confirmation_typed(publisher, conf, counters);
 
     let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, 0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliEventPayload { wire_address, command, repeat_count: 1 });
-    publish_event_typed(publisher, ev, counters);
+    publish_event_typed(publisher, ev);
 }
