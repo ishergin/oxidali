@@ -29,6 +29,11 @@ LEAKED_NAME_PREFIX = "hil-"
 
 UPTIME_SLACK_S = 30.0
 
+HARDWARE_FREE_REPORT = ("hardware-free session: no collected test requests a bench "
+                        "fixture, so no instrument was reached and nothing is classified")
+UNCLASSIFIED_REPORT = ("collection stopped before the session was classified: no test "
+                       "ran, no instrument was reached and nothing is classified")
+
 PANEL_SHORT = 0
 NVM_SETTLING_WAIT_S = 90
 
@@ -224,6 +229,10 @@ def _validity(config):
     return config._hil_validity
 
 
+def _hardware_free(config):
+    return getattr(config, "_hil_hardware_free", False)
+
+
 def _track(config, obj):
     config._hil_counted.append(obj)
     return obj
@@ -239,7 +248,8 @@ def _standalone_client(config):
 
 @pytest.fixture(scope="session", autouse=True)
 def production_state(pytestconfig, request):
-    if pytestconfig.getoption("--collect-only") or not prod_state.guard_enabled() or \
+    if pytestconfig.getoption("--collect-only") or _hardware_free(pytestconfig) or \
+            not prod_state.guard_enabled() or \
             not any("api" in item.fixturenames for item in request.session.items):
         yield None
         return
@@ -281,7 +291,7 @@ def production_state(pytestconfig, request):
 @pytest.fixture(scope="session", autouse=True)
 def bench_baseline(pytestconfig, production_state):
     findings = []
-    if pytestconfig.getoption("--collect-only"):
+    if pytestconfig.getoption("--collect-only") or _hardware_free(pytestconfig):
         yield
         return
     try:
@@ -412,7 +422,7 @@ def op_check(request):
 def dut_continuity(request):
     yield
     config = request.config
-    if request.config.getoption("--collect-only"):
+    if request.config.getoption("--collect-only") or _hardware_free(config):
         return
     state = getattr(config, "_hil_uptime", None)
     if "dut_reboot" in request.fixturenames:
@@ -490,7 +500,7 @@ def _run_needs_optics(session):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def optical_session(hil_config, request):
+def optical_session(request):
     state = {"backend": None, "calibration": None, "error": None}
     opted_out = bool(request.config.getoption("--no-camera")
                      or os.environ.get("HIL_NO_CAMERA"))
@@ -504,6 +514,7 @@ def optical_session(hil_config, request):
     from hil.camera.backend import probe_and_select
     from hil.camera.calibrate import Calibrator
     from hil.camera.calibrate import load as load_cal
+    hil_config = request.getfixturevalue("hil_config")
     try:
         state["backend"] = probe_and_select(hil_config)
         if not _skip_calibration(request):
@@ -1177,31 +1188,49 @@ def pytest_runtest_setup(item):
     api_mod.Client.context = item.nodeid
 
 
-def _reboot_lint(items):
+def _collection_lint(items):
     violations = [tiers.reboot_violation(
         item.nodeid, item.fixturenames, {m.name for m in item.iter_markers()},
         tiers.reach_sources(item.function) if hasattr(item, "function") else [])
         for item in items]
+    violations += [tiers.unit_violation(item.nodeid, item.path, item.fixturenames)
+                   for item in items]
     violations = [v for v in violations if v]
     if violations:
         raise pytest.UsageError("\n".join(violations))
 
 
-def pytest_collection_modifyitems(config, items):
-    _reboot_lint(items)
-    cfg = config_mod.load()
+def _serial_absence(cfg):
     dut_serial_port, _ = serialmon_mod.effective_port(cfg)
-    if "://" in dut_serial_port:
-        try:
-            remote_serial_mod.control(cfg, "ping")
-            serial_absent = False
-        except Exception:
-            serial_absent = True
-    else:
-        serial_absent = not os.path.exists(dut_serial_port)
+    if "://" not in dut_serial_port:
+        return dut_serial_port, not os.path.exists(dut_serial_port)
+    try:
+        remote_serial_mod.control(cfg, "ping")
+        return dut_serial_port, False
+    except Exception:
+        return dut_serial_port, True
 
+
+def _take_isr_baseline(config, cfg):
+    try:
+        stats = api_mod.Client(cfg).stats()
+        config._hil_isr_baseline = (
+            validity.isr_timing_counters(stats),
+            (stats.get("controller") or {}).get("uptime_ms"),
+            time.monotonic(),
+        )
+    except Exception:
+        config._hil_isr_baseline = ({}, None, None)
+
+
+def _tier(item):
+    if item.get_closest_marker("destructive"):
+        return 2 if "commissioning" in item.nodeid else 1
+    return 0
+
+
+def _mark_skips(items, serial_absent, dut_serial_port):
     allow_destructive = os.environ.get("HIL_ALLOW_DESTRUCTIVE") == "1"
-
     for item in items:
         if serial_absent and item.get_closest_marker("serial"):
             item.add_marker(pytest.mark.skip(
@@ -1211,10 +1240,18 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.skip(
                 reason="destructive tier needs HIL_ALLOW_DESTRUCTIVE=1 "
                        "(run one test at a time; see tools/hil/README.md)"))
-    def _tier(item):
-        if item.get_closest_marker("destructive"):
-            return 2 if "commissioning" in item.nodeid else 1
-        return 0
+
+
+def pytest_collection_modifyitems(config, items):
+    config._hil_hardware_free = tiers.session_hardware_free(
+        item.fixturenames for item in items)
+    _collection_lint(items)
+    dut_serial_port, serial_absent = None, False
+    if not config._hil_hardware_free:
+        cfg = config_mod.load()
+        dut_serial_port, serial_absent = _serial_absence(cfg)
+        _take_isr_baseline(config, cfg)
+    _mark_skips(items, serial_absent, dut_serial_port)
     items.sort(key=_tier)
 
 
@@ -1436,6 +1473,11 @@ def pytest_sessionfinish(session, exitstatus):
     config = session.config
     if config.getoption("--collect-only"):
         return
+    verdict = getattr(config, "_hil_hardware_free", None)
+    if verdict is not False:
+        config._hil_validity_report = [
+            HARDWARE_FREE_REPORT if verdict else UNCLASSIFIED_REPORT]
+        return
     state = _validity_state(config)
     budget = validity.load_budget()
     lines = validity.format_report(state, budget)
@@ -1555,16 +1597,7 @@ def pytest_configure(config):
     config._hil_validity = {"baseline": [], "reboots": [], "contended": []}
     config._hil_uptime = None
     config._hil_counted = []
-    try:
-        cfg = config_mod.load()
-        stats = api_mod.Client(cfg).stats()
-        config._hil_isr_baseline = (
-            validity.isr_timing_counters(stats),
-            (stats.get("controller") or {}).get("uptime_ms"),
-            time.monotonic(),
-        )
-    except Exception:
-        config._hil_isr_baseline = ({}, None, None)
+    config._hil_isr_baseline = ({}, None, None)
     try:
         path = SerialLog(config_mod.load()).log_path
         config._hil_serial_offset = path.stat().st_size if path.exists() else 0

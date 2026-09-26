@@ -32,9 +32,10 @@ Every variable is read from the environment when a command starts. `bench.env` (
 from `bench.env.example`) holds only the firmware build knobs that `hil flash` enforces;
 it does not configure the toolkit. **The defaults name one particular bench.** Set at
 least `HIL_BASE`, the serial variables and the three short-address sets before the first
-run: every pytest session, a unit-test run included, reaches `HIL_BASE`, and
+run: every pytest session that collects a bench test reaches `HIL_BASE`, and
 `bench_baseline` suspends that controller's poller and HCL schedules and sets its time
-zone to `HIL_BENCH_TZ` for the session.
+zone to `HIL_BENCH_TZ` for the session. A session whose every test is
+[hardware-free](#writing-a-scenario) touches no network and no serial port.
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
@@ -73,12 +74,12 @@ export HIL_LAMP_SHORTS=<lamps> HIL_GEAR_SHORTS=<gear> HIL_OPTICAL_SHORTS=<lamps 
   -m "not destructive and not slow and not sniffer and not foreign and not ha_bridge and not redundancy"
 ```
 
-Drop `--no-camera` and the markers of the instruments the bench has. Without any
-hardware the toolkit's own unit tests run against the host dev server:
+Drop `--no-camera` and the markers of the instruments the bench has. The toolkit's own
+unit tests need no hardware and no controller; pointing `HIL_BASE` at a closed port
+keeps a regressed hook from reaching a bench:
 
 ```bash
-cargo run --target aarch64-apple-darwin -p dali2rust-adapters --example host_dev_server  # repository root
-HIL_BASE=http://127.0.0.1:8080 HIL_SERIAL_REMOTE= HIL_NO_CAMERA=1 \
+HIL_BASE=http://127.0.0.1:9 HIL_SERIAL_REMOTE= HIL_NO_CAMERA=1 \
   .venv/bin/python3 -m pytest tests/*_unit.py                                           # tools/hil
 ```
 
@@ -398,11 +399,15 @@ one costs a go-ahead.
   skips on an unreachable controller) as a parameter, because an autouse skip skips every
   collected test, the hardware-free ones included: they build their own client, degrade
   to a printed warning and record an instrument failure for the per-test fixture to fail
-  or skip on.
-- **Hardware-free unit tests** build `HilConfig` with `serial_remote=""` and their own
-  `base`: the defaults name a reference bench's controller and Wiren Board, and
-  `serialmon.start` or `hil flash` would ssh there and may (re)start the bridge, which
-  resets the controller.
+  or skip on. Nor do they take any other bench fixture, `hil_config` included: the
+  hardware-free verdict below reads every test's fixture closure.
+- **Hardware-free tests** request no bench fixture (`BENCH_FIXTURES` in `hil/tiers.py`);
+  a `*_unit.py` test that requests one is a collection error. A session made only of
+  them skips `production_state`, `bench_baseline`, `dut_continuity`, the serial-bridge
+  probe, the session baselines and the validity report, and writes no `summary.md`.
+  They build `HilConfig` with `serial_remote=""` and their own `base`: the defaults name
+  a reference bench's controller and Wiren Board, and `serialmon.start` or `hil flash`
+  would ssh there and may (re)start the bridge, which resets the controller.
 - **Measuring threads** own their own `Client`; a shared one shares a `requests.Session`
   and the retry ledger. A sampler that an exception kills fails nothing by itself, so the
   test checks it.
