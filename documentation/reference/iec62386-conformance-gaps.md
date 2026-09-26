@@ -142,7 +142,8 @@ unit, and DiiA 351's bank 201 (device type and the type B arbitration byte, whic
 never written `0x00`: that value disables arbitration); being commissioned by another
 controller (`INITIALISE`, `RANDOMISE`, address search, `COMPARE`, address programming);
 `POWER NOTIFICATION`; and quiescent mode. DALI-2 certification is out of reach until
-they are.
+they are. The design to build them from, and the decisions it owes, is
+[ADR-030](../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md).
 
 ## 9. Parts not implemented
 

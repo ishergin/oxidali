@@ -36,6 +36,7 @@ Scope: why the system is built this way. How it works is in the
 | [027](ADR-027-dtr-operand-proof-and-readback-outcomes.md) | DTR proof, read-back outcomes | Accepted | Arm, prove, act; three read-back outcomes |
 | [028](ADR-028-task-stacks-in-psram-on-the-xip-image.md) | Stacks and Rust heap in PSRAM | Accepted | On the XIP image only mapping flash keeps a stack internal; Rust objects from 256 B in PSRAM |
 | [029](ADR-029-network-buffers-in-psram-and-a-measured-receive-ring.md) | Network buffers in PSRAM | Accepted | lwIP and received frames in PSRAM; mailbox holds the window; ring sized by its drop counter |
+| [030](ADR-030-controller-as-a-part-103-bus-unit.md) | The controller as a Part 103 bus unit | Deferred | One stateful model answers every device query; five decisions owed before code |
 
 A new record takes the next number and the same sections (`Status`, `Date`, `Context`,
 `Decision`, `Consequences`). A later decision that changes an earlier one is merged into
