@@ -28,8 +28,9 @@ just bdd-check    # ID and coverage gates, then the suite
   substring, for example `ONLY_FEATURES=pd-discovery just bdd`.
 - `ONLY_STAGE=<stage>` (what `just bdd-stage R6` sets) runs the scenarios of one stage:
   a scenario's own `@stage-*` tag overrides its feature's.
-- Scenarios run one at a time; `cargo bdd -- --concurrency <N>` overrides that for a
-  local run.
+- A process runs its scenarios one at a time. `just bdd_shards=4 bdd` splits the
+  feature files over four processes, balanced by scenario count; `BDD_SHARD=<i>/<n>` is
+  what each process reads. `just bdd` keeps one process unless told otherwise.
 - The runner skips `@wip` scenarios. A cucumber `--name` or `--tags` filter replaces the
   harness filter (the `@wip` skip, `ONLY_FEATURES` and `ONLY_STAGE`), so a tag expression
   that should keep the skip says so:

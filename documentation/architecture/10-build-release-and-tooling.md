@@ -37,7 +37,7 @@ BDD conventions → [05](05-testing-and-bdd.md); updates over the network →
 | Group | Recipes |
 | --- | --- |
 | Host | `check`, `test` (`--all-targets` over `scripts/host_crates.txt`, so no doc-tests), `quick <crates…>` (check all, test the named crates and BDD), `clippy` (`-D warnings`), `clippy-pedantic-advisory`, `fmt` (manual; rustfmt is no gate — wrap only lines you touch) |
-| BDD | `bdd`, `bdd-check`, `bdd-stage`, `check-stage-clean` |
+| BDD | `bdd` (`bdd_shards=N` over N processes), `bdd-check`, `bdd-stage`, `check-stage-clean` |
 | Gates | `verify`; `ci` = clippy, test, bdd, verify, `esp-check`, `gear-sim-check`; `contracts-check` |
 | Firmware | `esp-check` (`cargo check` on the P4 triple), `p4-fw-build`, `p4-isr-iram-check`, `p4-fw-flash` |
 | Other | emulator `gear-sim-check` / `gear-sim-isr-iram-check`; `gc`, `gc-status`; `hil-preflight`, `hil-smoke`, `hil-default`, `hil-slow` |
