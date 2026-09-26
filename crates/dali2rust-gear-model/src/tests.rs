@@ -728,6 +728,30 @@ fn a_drawn_random_address_never_takes_the_value_that_means_none() {
 }
 
 #[test]
+fn a_power_cycle_is_reported_until_a_level_command_clears_it() {
+    let mut fleet = GearFleet::demo_bus();
+    let query = standard(0, StandardCommand::QueryPowerFailure);
+    let dapc = standard(0, StandardCommand::DirectArcPower { level: 90 });
+    exchange(&mut fleet, dapc, false);
+    assert_eq!(exchange(&mut fleet, query, true), TransferOutcome::NoAnswer);
+    fleet.power_cycle();
+    assert_eq!(
+        exchange(&mut fleet, query, true),
+        TransferOutcome::Answer(DALI_YES),
+        "IEC 62386-102 §11.5.15 answers YES while powerCycleSeen is set"
+    );
+    let gear = &fleet.gears()[0];
+    assert_eq!(gear.level, gear.power_on_level, "the lamp comes up at its power-on level");
+    assert_eq!(gear.last_active_level, gear.max_level, "Table 14 powers it up at maxLevel");
+    exchange(&mut fleet, dapc, false);
+    assert_eq!(
+        exchange(&mut fleet, query, true),
+        TransferOutcome::NoAnswer,
+        "§9.16.9: a level command clears the bit"
+    );
+}
+
+#[test]
 fn randomise_leaves_gear_outside_the_initialise_scope_alone() {
     let mut fleet = GearFleet::demo_bus();
     let untouched = fleet.gears()[0].spec.random_address;
@@ -2956,11 +2980,13 @@ mod bench_conformance {
     }
 
     fn model_answered() -> std::collections::BTreeSet<u8> {
+        const DAPC_OFF_LIKE_THE_DRIVEN_BENCH_GEAR: u16 = 0x0000;
         let mut fleet = GearFleet::new(
             vec![GearSpec::dt8(Some(0), 0x5C_2A_42, (true, false, false), (153, 370))],
             0,
             1,
         );
+        fleet.exchange(DAPC_OFF_LIKE_THE_DRIVEN_BENCH_GEAR, false);
         (0x90..=0xA8u8)
             .chain([0xAA])
             .chain(0xB0..=0xC4)

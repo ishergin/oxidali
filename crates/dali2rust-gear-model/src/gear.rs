@@ -439,6 +439,26 @@ impl Gear {
         }
     }
 
+    // IEC 62386-102 §9.13, Table 14
+    // IEC 62386-209 Table 8
+    pub fn power_cycle(&mut self) {
+        if self.power_on_level != DAPC_MASK_LEVEL {
+            self.level = self.power_on_level;
+        }
+        self.last_active_level = self.max_level;
+        self.power_cycle_seen = true;
+        self.limit_error = false;
+        self.initialise = false;
+        self.withdrawn = false;
+        self.identifying = false;
+        self.pending_repeat = None;
+        self.pending_random = None;
+        self.rgbwaf = Rgbwaf::at_power_up();
+        self.pending_mode = ColorMode::None;
+        self.report = ColourSetting::mask();
+        self.gear_features = GEAR_FEATURES_POWER_UP_DEFAULT;
+    }
+
     pub fn set_metering(&mut self, energy: bool, diagnostics: bool) {
         self.spec.energy_reporting = energy;
         self.spec.diagnostics_reporting = diagnostics;
@@ -1339,6 +1359,7 @@ fn level_query_reply(gear: &Gear, command: StandardCommand) -> Option<TransferOu
         StandardCommand::QueryLampFailure => Some(answer_if(gear.lamp_failure, DALI_YES)),
         StandardCommand::QueryLampPowerOn => Some(answer_if(gear.lamp_on(), DALI_YES)),
         StandardCommand::QueryLimitError => Some(answer_if(gear.limit_error, DALI_YES)),
+        StandardCommand::QueryPowerFailure => Some(answer_if(gear.power_cycle_seen, DALI_YES)),
         StandardCommand::QueryOperatingMode => answer(OPERATING_MODE_STANDARD),
         StandardCommand::QueryResetState => Some(answer_if(gear.reset_state, DALI_YES)),
         StandardCommand::QueryControlGearFailure => Some(answer_if(
