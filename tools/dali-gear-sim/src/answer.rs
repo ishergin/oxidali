@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use dali2rust_dali_codec::codec::merge_dominant;
 use dali2rust_dali_codec::rx_decode::{RxDecode, SniffedFrame};
@@ -91,6 +92,7 @@ pub struct AnswerLoop {
     stats: Arc<Mutex<LoopStats>>,
     digests: Vec<GearDigest>,
     enabled_device_type: Option<u8>,
+    born: Instant,
 }
 
 impl AnswerLoop {
@@ -105,6 +107,7 @@ impl AnswerLoop {
             stats,
             digests: Vec::new(),
             enabled_device_type: None,
+            born: Instant::now(),
         }
     }
 
@@ -214,6 +217,7 @@ impl AnswerLoop {
             };
             logsink::snapshot(&fleet, &mut self.digests);
             let expects = fleet.expects_backward(frame);
+            fleet.advance_to_ms(u64::try_from(self.born.elapsed().as_millis()).unwrap_or(u64::MAX));
             let outcome = fleet.exchange(frame, expects);
             logsink::log_changes(&self.digests, &fleet);
             let held = fleet.any_gear_holds(frame);

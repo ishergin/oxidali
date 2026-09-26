@@ -164,6 +164,7 @@ impl SimDaliTransport {
         self.sent_frames.push(frame);
         self.sent_frame_min_idle_us.push(min_idle_us);
         self.sent_frame_times.push(Instant::now());
+        self.fleet.advance_to_ms(elapsed_ms(self.born));
         let outcome = self.fleet.exchange(frame, expects_backward);
         self.charge_wire(FORWARD16_TICKS, &outcome);
         outcome
@@ -194,6 +195,10 @@ impl SimDaliTransport {
                 .store(u32::from(load.own_permille), Relaxed);
         }
     }
+}
+
+fn elapsed_ms(since: Instant) -> u64 {
+    u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 fn elapsed_ticks(since: Instant) -> u32 {
