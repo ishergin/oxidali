@@ -369,6 +369,28 @@ fn multi_type_fleet() -> GearFleet {
 }
 
 #[test]
+fn a_frame_to_another_gear_cancels_the_device_type_walk() {
+    let mut spec = GearSpec::dt8(Some(8), 0x00AB_CDEF, (true, false, false), (153, 370));
+    spec.device_types = vec![6, 8];
+    let neighbour = GearSpec::dt6(Some(9), 0x00AB_CDF0);
+    let mut fleet = GearFleet::new(vec![spec, neighbour], 0, 7);
+    assert_eq!(
+        exchange(&mut fleet, standard(8, StandardCommand::QueryDeviceType), true),
+        TransferOutcome::Answer(255)
+    );
+    assert_eq!(
+        exchange(&mut fleet, standard(8, StandardCommand::QueryNextDeviceType), true),
+        TransferOutcome::Answer(6)
+    );
+    let _ = exchange(&mut fleet, standard(9, StandardCommand::QueryActualLevel), true);
+    assert_eq!(
+        exchange(&mut fleet, standard(8, StandardCommand::QueryNextDeviceType), true),
+        TransferOutcome::NoAnswer,
+        "102 §11.5.13: the walk holds only while each query directly follows the last"
+    );
+}
+
+#[test]
 fn a_single_type_gear_answers_no_to_query_next() {
     let mut fleet = GearFleet::demo_bus();
     let first = exchange(&mut fleet, standard(1, StandardCommand::QueryDeviceType), true);
@@ -1453,19 +1475,19 @@ fn a_configuration_command_sent_once_does_not_execute() {
 }
 
 #[test]
-fn a_frame_addressed_to_another_gear_does_not_break_the_pair() {
+fn a_frame_addressed_to_another_gear_breaks_the_pair_too() {
     let mut fleet = GearFleet::demo_bus();
     exchange(&mut fleet, special(SpecialCommand::Dtr0(200)), false);
     exchange(&mut fleet, standard(0, StandardCommand::SetMaxLevel), false);
     exchange(&mut fleet, standard(1, StandardCommand::QueryStatus), true);
     exchange(&mut fleet, standard(0, StandardCommand::SetMaxLevel), false);
 
-    assert_eq!(query_max_level(&mut fleet, 0), 200, "the pair still executed");
     assert_eq!(
         fleet.stats().send_twice_split_by_interloper,
-        0,
-        "somebody else's traffic is not our violation"
+        1,
+        "101 §9.3: no active state may occur between the halves, whoever it addresses"
     );
+    assert_eq!(query_max_level(&mut fleet, 0), 254, "the first half is ignored");
 }
 
 #[test]
@@ -1503,7 +1525,7 @@ fn an_unaddressed_dtr_write_between_the_halves_voids_the_pair() {
 }
 
 #[test]
-fn a_broadcast_pair_executes_on_every_gear_but_the_interrupted_one() {
+fn a_query_to_one_gear_splits_a_broadcast_pair_on_every_gear() {
     let mut fleet = GearFleet::demo_bus();
     let broadcast = frame(DaliCommand::Standard {
         address: DaliAddress::Broadcast,
@@ -1514,13 +1536,14 @@ fn a_broadcast_pair_executes_on_every_gear_but_the_interrupted_one() {
     exchange(&mut fleet, standard(3, StandardCommand::QueryStatus), true);
     exchange(&mut fleet, broadcast, false);
 
+    let listening = fleet.gears().iter().filter(|gear| gear.enabled).count();
     assert_eq!(
-        fleet.stats().send_twice_split_by_interloper,
-        1,
-        "exactly one gear lost its pair"
+        fleet.stats().send_twice_split_by_interloper as usize,
+        listening,
+        "101 §9.3: every gear saw the frame between the halves"
     );
-    assert_eq!(query_max_level(&mut fleet, 0), 200);
-    assert_eq!(query_max_level(&mut fleet, 3), 254, "gear 3 was interrupted");
+    assert_eq!(query_max_level(&mut fleet, 0), 254);
+    assert_eq!(query_max_level(&mut fleet, 3), 254);
 }
 
 #[test]
@@ -2236,6 +2259,40 @@ fn a_query_leaves_identification_running_and_an_instruction_stops_it() {
 }
 
 #[test]
+fn table_93_special_instructions_stop_identification() {
+    for stopper in [
+        SpecialCommand::Terminate,
+        SpecialCommand::Withdraw,
+        SpecialCommand::Dtr0(2),
+    ] {
+        let mut fleet = GearFleet::demo_bus();
+        config(&mut fleet, standard(0, StandardCommand::IdentifyDevice));
+        exchange(&mut fleet, special(stopper), false);
+        assert!(
+            !fleet.gears()[0].identifying,
+            "102 §11.4.7: {stopper:?} is an instruction other than the four that continue it"
+        );
+    }
+}
+
+#[test]
+fn table_93_ping_initialise_and_compare_leave_identification_running() {
+    for bystander in [
+        SpecialCommand::Ping,
+        SpecialCommand::Initialise(0x01),
+        SpecialCommand::Compare,
+    ] {
+        let mut fleet = GearFleet::demo_bus();
+        config(&mut fleet, standard(0, StandardCommand::IdentifyDevice));
+        exchange(&mut fleet, special(bystander), bystander == SpecialCommand::Compare);
+        assert!(
+            fleet.gears()[0].identifying,
+            "102 Table 93: {bystander:?} must not stop the procedure"
+        );
+    }
+}
+
+#[test]
 fn a_single_identify_frame_does_not_start_the_procedure() {
     let mut fleet = GearFleet::demo_bus();
     exchange(
@@ -2942,15 +2999,15 @@ mod bench_conformance {
         ),
         (
             0xA7,
-            "bench-only",
-            "QUERY NEXT DEVICE TYPE: all four bench fixtures answer 255 to \
-            QUERY DEVICE TYPE — MASK, 'more than one' — and enumerate \
-            through 0xA7 (§11.5.13). This model has no multi-type gear at \
-            all: `GearSpec::dt8` declares a single 8. So the product's \
-            device-type walk, which every real fixture on this bench \
-            requires, is exercised against scripted mock frames and \
-            against nothing that behaves like a driver. The wave that \
-            closes it is a model that can hold a DeviceTypeSet",
+            "bench-only: the drivers are laxer than 102 §11.5.13",
+            "QUERY NEXT DEVICE TYPE answers only when directly preceded by \
+            QUERY DEVICE TYPE or by itself ('in all other cases: NO'). The \
+            sweep sends it after 0xA6, so the model stays silent, while \
+            every bench fixture answers the next type of a walk the \
+            sweep's earlier 0x99 opened: the drivers do not end the walk \
+            on the commands between. The product walks in one \
+            transaction, where both behaviours answer the same, so the \
+            model keeps the standard's rule",
         ),
     ];
 

@@ -299,6 +299,7 @@ impl GearFleet {
                 }
                 _ => {
                     gear.executes_now = false;
+                    split += u32::from(gear.hear_elsewhere());
                     continue;
                 }
             };
@@ -356,6 +357,11 @@ impl GearFleet {
     }
 
     fn on_special(&mut self, special: SpecialCommand) -> TransferOutcome {
+        if stops_identification(special) {
+            for gear in self.gears.iter_mut().filter(|g| g.executes_now) {
+                gear.identifying = false;
+            }
+        }
         match special {
             SpecialCommand::Dtr0(v) => self.regs.dtr0 = v,
             SpecialCommand::Dtr1(v) => self.regs.dtr1 = v,
@@ -843,6 +849,19 @@ enum Audience {
     // IEC 62386-102 §12.3.15
     Every,
     Addressed(DaliAddress),
+}
+
+// IEC 62386-102 §11.4.7, Table 93
+fn stops_identification(special: SpecialCommand) -> bool {
+    !matches!(
+        special,
+        SpecialCommand::Initialise(_)
+            | SpecialCommand::Ping
+            | SpecialCommand::Compare
+            | SpecialCommand::VerifyShortAddress(_)
+            | SpecialCommand::QueryShortAddress
+            | SpecialCommand::PhysicalSelection
+    )
 }
 
 fn is_walk_query(decoded: Option<&DaliCommand>) -> bool {
