@@ -27,5 +27,4 @@ replication           8192   3000
 rules-worker         12288   7928
 # The depth during a firmware update.
 ota-worker            3072   2000
-# Not frozen until a full tier drives the write path under load.
-log-uart              4096     -1
+log-uart              4096   2344

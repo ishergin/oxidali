@@ -27,7 +27,6 @@ members = [
     "crates/dali2rust-dali-runtime",
     "crates/dali2rust-bsp",
     "crates/dali2rust-firmware",
-    "crates/dali2rust-p4-bringup",
     "tests/dali2rust-bdd",
 ]
 exclude = ["target"]

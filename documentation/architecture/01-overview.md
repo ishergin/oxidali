@@ -45,7 +45,6 @@ Scope: crate responsibilities and cross-crate rules; each subsystem has its own 
 | `dali2rust-bsp` | Board support: thread spawner, stack classes, task registry, PSRAM box, heap stats, slice-store flash binding |
 | `dali2rust-test-support` | Shared host-side test helpers and port doubles |
 | `dali2rust-firmware` | The binary and the only production composition root |
-| `dali2rust-p4-bringup` | A separate bring-up image (Ethernet, counters and a DALI transmit probe) with its own `ESP_IDF_SYS_ROOT_CRATE`; not on the product path |
 
 `tests/dali2rust-bdd` is the black-box BDD crate ([05](05-testing-and-bdd.md)).
 

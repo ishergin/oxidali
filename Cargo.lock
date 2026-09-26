@@ -868,19 +868,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dali2rust-p4-bringup"
-version = "0.1.0"
-dependencies = [
- "dali2rust-adapters",
- "dali2rust-bsp",
- "dali2rust-platform",
- "embassy-executor",
- "embuild",
- "esp-idf-svc",
- "log",
-]
-
-[[package]]
 name = "dali2rust-platform"
 version = "0.1.0"
 

@@ -40,7 +40,7 @@ BDD conventions → [05](05-testing-and-bdd.md); updates over the network →
 | BDD | `bdd`, `bdd-check`, `bdd-stage`, `check-stage-clean` |
 | Gates | `verify`; `ci` = clippy, test, bdd, verify, `esp-check`, `gear-sim-check`; `contracts-check` |
 | Firmware | `esp-check` (`cargo check` on the P4 triple), `p4-fw-build`, `p4-isr-iram-check`, `p4-fw-flash` |
-| Other | bring-up image `p4-build` / `p4-flash` / `p4-monitor`; emulator `gear-sim-check` / `gear-sim-isr-iram-check`; `gc`, `gc-status`; `hil-preflight`, `hil-smoke`, `hil-default`, `hil-slow` |
+| Other | emulator `gear-sim-check` / `gear-sim-isr-iram-check`; `gc`, `gc-status`; `hil-preflight`, `hil-smoke`, `hil-default`, `hil-slow` |
 
 - `just ci` before a commit lands and after anything that moves a contract, a wire order
   or ESP-only code; `just quick` is the inner loop. `ci` never links the firmware.
@@ -49,8 +49,8 @@ BDD conventions → [05](05-testing-and-bdd.md); updates over the network →
   runs one test at a time, by hand.
 - Host test time is launch time, not test time: `just gc` sweeps stale `.o` files and
   `just gc-status` counts them (the macOS mechanism: ISSUE-147).
-- The `p4-*flash` and `p4-monitor` recipes name a local USB port; the installed boards
-  are flashed with `hil flash` ([runbook](../../tools/hil/README.md#flashing)).
+- The `p4-fw-flash` recipe names a local USB port; the installed boards are flashed with
+  `hil flash` ([runbook](../../tools/hil/README.md#flashing)).
 
 ## Firmware version
 
@@ -179,13 +179,13 @@ files only go down; the bench's own budgets are in the
 
 - A new host-buildable crate is added to `scripts/host_crates.txt` only — the one list
   that `just check` / `test` / `clippy`, `verify_fn_length.sh` and the pedantic advisory
-  read. The ESP-only crates (firmware, bring-up) and the BDD crate stay out of it.
+  read. The ESP-only firmware crate and the BDD crate stay out of it.
 - The 40-line rule is measured on production code: `verify_fn_length.sh` runs clippy on
   `--lib` targets, so unit-test modules, integration tests and the BDD crate are outside
   it. `verify_fn_length_esp.py` finds ESP-only code by the literal
   `target_os = "espidf"` in a file, by `#[cfg(target_os = "espidf")] mod name;` on its
-  declaration, by the `esp_idf.rs` / `esp_ws.rs` file names, or by the firmware, BSP and
-  bring-up paths; a module gated any other way is measured by neither gate.
+  declaration, by the `esp_idf.rs` / `esp_ws.rs` file names, or by the firmware and BSP
+  paths; a module gated any other way is measured by neither gate.
 
 | Script | Holds |
 | --- | --- |

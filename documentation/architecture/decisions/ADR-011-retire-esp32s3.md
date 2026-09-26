@@ -56,9 +56,6 @@ bench flash path must know about both. Each of those is the correct local answer
   in `hil flash`, the `force` decision and every mechanism above must change together.
 - `scripts/verify_dali_isr_iram.py` parses RISC-V only, which is the only architecture
   there is.
-- The bring-up image (`dali2rust-p4-bringup`) remains a board diagnostic: Ethernet and
-  its counters, no DALI, built as its own ESP-IDF root crate and not part of the product
-  path.
 - Build and flashing details are described in
   [10-build-release-and-tooling.md](../10-build-release-and-tooling.md); the memory
   budget of this board is in [07-memory-and-cores.md](../07-memory-and-cores.md).
