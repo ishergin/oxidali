@@ -38,21 +38,20 @@ pub fn encode_event_envelope(value: &EventEnvelope) -> Result<Vec<u8>, postcard:
     encode(value)
 }
 
-const ENCODED_LEN_BUF: usize = 512;
+fn encoded_len<T: Serialize + ?Sized>(value: &T) -> Result<usize, postcard::Error> {
+    postcard::experimental::serialized_size(value)
+}
 
 pub fn encoded_len_command(value: &CommandEnvelope) -> Result<usize, postcard::Error> {
-    let mut buf = [0u8; ENCODED_LEN_BUF];
-    postcard::to_slice(value, &mut buf).map(|s| s.len())
+    encoded_len(value)
 }
 
 pub fn encoded_len_confirmation(value: &ConfirmationEnvelope) -> Result<usize, postcard::Error> {
-    let mut buf = [0u8; ENCODED_LEN_BUF];
-    postcard::to_slice(value, &mut buf).map(|s| s.len())
+    encoded_len(value)
 }
 
 pub fn encoded_len_event(value: &EventEnvelope) -> Result<usize, postcard::Error> {
-    let mut buf = [0u8; ENCODED_LEN_BUF];
-    postcard::to_slice(value, &mut buf).map(|s| s.len())
+    encoded_len(value)
 }
 
 pub fn decode_command_envelope(bytes: &[u8]) -> Result<CommandEnvelope, postcard::Error> {
@@ -65,4 +64,27 @@ pub fn decode_confirmation_envelope(bytes: &[u8]) -> Result<ConfirmationEnvelope
 
 pub fn decode_event_envelope(bytes: &[u8]) -> Result<EventEnvelope, postcard::Error> {
     postcard::from_bytes(bytes)
+}
+
+#[cfg(test)]
+mod encoded_len_tests {
+    use super::*;
+    use crate::bus::build_confirmation_envelope_with_product_error;
+    use crate::msg::{DeliveryStatus, ErrorCode};
+
+    const LONGEST_ERROR_MESSAGE: usize = 64;
+
+    #[test]
+    fn confirmation_length_matches_its_encoding() {
+        let message = "x".repeat(LONGEST_ERROR_MESSAGE);
+        let confirmation = build_confirmation_envelope_with_product_error(
+            u64::MAX,
+            DeliveryStatus::ExecutionFailed,
+            u8::MAX,
+            u16::MAX,
+            Some((ErrorCode::InvalidValue, &message)),
+        );
+        let encoded = encode_confirmation_envelope(&confirmation).expect("encode");
+        assert_eq!(encoded_len_confirmation(&confirmation), Ok(encoded.len()));
+    }
 }

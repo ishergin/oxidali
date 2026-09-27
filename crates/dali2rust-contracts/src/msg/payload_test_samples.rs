@@ -255,9 +255,11 @@ pub(crate) fn command_probe(payload: &BusCommandPayload) -> usize {
         ),
         payload: payload.clone(),
     };
-    crate::bus::encode_command_envelope(&ce)
+    let len = crate::bus::encode_command_envelope(&ce)
         .expect("postcard encode of command envelope")
-        .len()
+        .len();
+    assert_eq!(crate::bus::encoded_len_command(&ce), Ok(len));
+    len
 }
 
 pub(crate) fn event_probe(payload: &BusEventPayload) -> usize {
@@ -268,9 +270,11 @@ pub(crate) fn event_probe(payload: &BusEventPayload) -> usize {
         ),
         payload: payload.clone(),
     };
-    crate::bus::encode_event_envelope(&ev)
+    let len = crate::bus::encode_event_envelope(&ev)
         .expect("postcard encode of event envelope")
-        .len()
+        .len();
+    assert_eq!(crate::bus::encoded_len_event(&ev), Ok(len));
+    len
 }
 
 pub fn worst_hcl_targets() -> crate::msg::commands::HclTargetList {
