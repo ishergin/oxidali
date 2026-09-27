@@ -403,13 +403,19 @@ merged with the controller's bootloader, and checked by its ready line; the cons
 again on `ready`, so a monitor that missed the boot still reads it.
 
 The role is recorded in `state/peer/role.pin` as soon as the image is delivered
-(`confirmed: false` until the ready line checks out). `role controller` asks the board
-itself: a peer that answers as a controller is only recorded; otherwise the last ready line
-decides — `pending_verify` resets the board through the bridge, which rolls the emulator
-back, and anything else writes the controller back by wire (`--via` overrides). Then the
-standby's registry is compared with the DUT's once their slices match, and a standby that
-still holds entries the slices dropped is reset once. Preflight, the virtual-gear session
-and the run-validity report read the pin.
+(`confirmed: false` until the ready line checks out). `role controller` refuses while a
+ledger is open or when the peer's bridge is the DUT's, and asks the board itself:
+
+- a peer that answers as a controller is only recorded;
+- otherwise the emulator is asked for its ready line through the peer's bridge, which proves
+  the board that bridge resets. `pending_verify` resets it, while the DUT's uptime witnesses
+  that the reset did not reach the DUT; anything else writes the controller back by wire,
+  building with the committed UI bundle even when it is stale;
+- a peer that answers neither needs `--via`, which also overrides the ready line.
+
+Then the standby's registry is compared with the DUT's once the slices the DUT holds match,
+and a standby that still holds entries the slices dropped is reset once, witnessed the same
+way. Preflight, the virtual-gear session and the run-validity report read the pin.
 
 ## Virtual gear
 
@@ -445,7 +451,10 @@ Its rules are STRATEGY §4.8; the mechanics:
    controller` refuse until `hil state restore` finishes it.
 
 The session stops the run with exit code 3 when it cannot open, 4 on a `SAFETY` stop, 5
-when the peer came back as a controller and 6 when the tripwire went blind.
+when the peer came back as a controller and 6 when the tripwire went blind. The emulator
+takes one reserve per boot: a later session on the same boot proceeds with the same reserve,
+and another reserve needs the emulator restarted — under the OTA role that returns the
+controller.
 
 The oracle is the emulator's own `C` lines (`hil/gearsim.py`: `GearOracle.expect`,
 `untouched`); `HIL validity` prints a `VIRTUAL GEAR` block with the emulator's answer

@@ -175,8 +175,10 @@ def _pin(peer, **fields):
     (peer.state_dir / role.ROLE_PIN).write_text(json.dumps(fields))
 
 
-def _silent_peer(monkeypatch, compared):
-    monkeypatch.setattr(role, "controller_health", lambda cfg: None)
+def _silent_peer(monkeypatch, compared, banner=("abcd", "ota_1", "pending_verify")):
+    monkeypatch.setattr(role, "controller_health", lambda cfg: {
+        DUT: {"role": "active", "uptime_seconds": 500}}.get(cfg.base))
+    monkeypatch.setattr(role, "emulator_banner", lambda cfg: banner)
     monkeypatch.setattr(role, "compare_registries",
                         lambda dut, peer, log=print: compared.append(peer) or 0)
 
@@ -197,10 +199,10 @@ def test_a_wired_role_returns_by_writing_the_controller(tmp_path, monkeypatch):
     dut, peer = _cfgs(tmp_path)
     _pin(peer, role=role.ROLE_GEAR_SIM, via="wb")
     runs, compared = [], []
-    _silent_peer(monkeypatch, compared)
+    _silent_peer(monkeypatch, compared, banner=("abcd", "ota_0", "none"))
     monkeypatch.setattr(role.flash, "run", lambda cfg, **kw: runs.append(kw) or 0)
     assert role.to_controller(dut, peer) == 0
-    assert runs == [{"image": flash.CONTROLLER, "via": flash.VIA_WB}]
+    assert runs == [{"image": flash.CONTROLLER, "via": flash.VIA_WB, "allow_stale_ui": True}]
 
 
 def test_a_reset_that_keeps_the_emulator_names_the_wired_return(tmp_path, monkeypatch, capsys):
@@ -212,6 +214,39 @@ def test_a_reset_that_keeps_the_emulator_names_the_wired_return(tmp_path, monkey
     assert role.to_controller(dut, peer) == 1
     assert "--via wb" in capsys.readouterr().err
     assert role.current(peer)["role"] == role.ROLE_GEAR_SIM
+
+
+def test_a_silent_peer_needs_an_explicit_way_back(tmp_path, monkeypatch, capsys):
+    dut, peer = _cfgs(tmp_path)
+    _pin(peer, role=role.ROLE_GEAR_SIM, via="ota")
+    _silent_peer(monkeypatch, [], banner=None)
+    monkeypatch.setattr(role.remote_serial, "control", lambda cfg, cmd: pytest.fail(cmd))
+    assert role.to_controller(dut, peer) == 1
+    assert "--via ota|wb" in capsys.readouterr().err
+
+
+def test_a_reset_that_takes_the_dut_down_is_reported(tmp_path, monkeypatch):
+    dut, peer = _cfgs(tmp_path)
+    healths = [{"role": "active", "uptime_seconds": 500}, None]
+    monkeypatch.setattr(role, "controller_health", lambda cfg: healths.pop(0))
+    monkeypatch.setattr(role.remote_serial, "control", lambda cfg, cmd: "ok")
+    with pytest.raises(role.RoleError, match="names the DUT"):
+        role.reset_witnessed(dut, peer)
+
+
+def test_a_reset_without_a_witness_is_refused(tmp_path, monkeypatch):
+    dut, peer = _cfgs(tmp_path)
+    monkeypatch.setattr(role, "controller_health", lambda cfg: None)
+    monkeypatch.setattr(role.remote_serial, "control", lambda cfg, cmd: pytest.fail(cmd))
+    with pytest.raises(role.RoleError, match="does not answer"):
+        role.reset_witnessed(dut, peer)
+
+
+def test_the_return_refuses_a_peer_bridge_that_is_the_duts(tmp_path, monkeypatch, capsys):
+    dut = HilConfig(base=DUT, state_dir=tmp_path, runs_dir=tmp_path / "runs", peer_base=PEER,
+                    serial_remote="root@wb:/dev/ttyA", peer_serial_remote="root@wb:/dev/ttyA")
+    assert role.to_controller(dut, dut.peer()) == 2
+    assert "is the DUT's" in capsys.readouterr().err
 
 
 def test_a_peer_already_back_as_a_controller_is_only_recorded_and_compared(tmp_path, monkeypatch):
@@ -228,11 +263,26 @@ def test_a_peer_already_back_as_a_controller_is_only_recorded_and_compared(tmp_p
 
 @pytest.mark.parametrize("state,via", [
     ("pending_verify", flash.VIA_OTA), ("none", flash.VIA_WB), ("new", flash.VIA_WB)])
-def test_the_last_ready_line_decides_how_the_role_returns(tmp_path, monkeypatch, state, via):
+def test_the_fresh_ready_line_decides_how_the_role_returns(state, via):
+    assert role.return_via(("abcd", "ota_1", state)) == via
+
+
+def test_the_banner_is_asked_for_through_the_peers_own_bridge(tmp_path, monkeypatch):
     dut, peer = _cfgs(tmp_path)
-    _pin(peer, role=role.ROLE_GEAR_SIM, via="ota")
-    monkeypatch.setattr(role.flash, "ready_line", lambda cfg, since: ("abcd", "ota_1", state))
-    assert role.return_via(peer) == via
+    log = tmp_path / "peer.log"
+    log.write_text("# ready build=old slot=ota_1 state=pending_verify\n")
+    sent = []
+
+    def control(cfg, cmd):
+        sent.append((cfg.base, cmd))
+        with open(log, "a") as fh:
+            fh.write("# ready build=abcd slot=ota_0 state=none\n")
+        return "ok"
+    monkeypatch.setattr(role.serialmon, "log_size", lambda cfg: log.stat().st_size)
+    monkeypatch.setattr(role.flash.serialmon, "log_path", lambda cfg: log)
+    monkeypatch.setattr(role.remote_serial, "control", control)
+    assert role.emulator_banner(peer) == ("abcd", "ota_0", "none")
+    assert sent == [(PEER, "write ready")]
 
 
 def test_the_role_is_recorded_before_the_banner_is_checked(tmp_path, monkeypatch):
@@ -253,6 +303,7 @@ def test_a_stale_gear_sim_record_does_not_skip_the_switch(tmp_path, monkeypatch)
     _pin(peer, role=role.ROLE_GEAR_SIM, via="ota", confirmed=True)
     runs = []
     monkeypatch.setattr(role, "controller_health", lambda cfg: {"role": "standby"})
+    monkeypatch.setattr(role, "emulator_banner", lambda cfg: pytest.fail("asked"))
     monkeypatch.setattr(role, "preconditions", lambda dut, peer: [])
     monkeypatch.setattr(role.flash, "run", lambda cfg, **kw: runs.append(kw["image"]) or 0)
     assert role.to_gear_sim(dut, peer) == 0
@@ -265,6 +316,8 @@ def test_a_standby_that_keeps_stale_entries_is_reset_once(tmp_path, monkeypatch)
     monkeypatch.setattr(role, "_converged", lambda dut, peer: True)
     monkeypatch.setattr(role, "registry_difference", lambda dut, peer: differences.pop(0))
     monkeypatch.setattr(role.remote_serial, "control", lambda cfg, cmd: sent.append(cmd) or "ok")
+    monkeypatch.setattr(role, "controller_health",
+                        lambda cfg: {"role": "active", "uptime_seconds": 500})
     monkeypatch.setattr(role, "_await_controller", lambda cfg: True)
     assert role.compare_registries(dut, peer, log=lambda line: None) == 0
     assert sent == ["run"]
@@ -322,3 +375,21 @@ def test_a_missed_boot_line_is_asked_for_again(tmp_path, monkeypatch):
         return "ok wrote"
     monkeypatch.setattr(flash.remote_serial, "control", control)
     assert flash.wait_banner(cfg, 0, timeout_s=2) == ("abcd", "ota_1", "none")
+
+
+def test_a_slice_the_dut_lacks_does_not_block_convergence():
+    dut = {"groups_a0": (40, 7), "rules_b1": (None, 0)}
+    assert role.slices_match(dut, {"groups_a0": (40, 7), "rules_b1": (12, 99)})
+    assert not role.slices_match(dut, {"groups_a0": (40, 8)})
+    assert not role.slices_match({}, {})
+
+
+def test_a_wb_that_does_not_answer_counts_as_a_flasher(tmp_path, monkeypatch):
+    dut, peer = _cfgs(tmp_path)
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "ssh":
+            raise role.subprocess.TimeoutExpired(cmd, 20)
+        return role.subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+    monkeypatch.setattr(role.subprocess, "run", run)
+    assert role.foreign_flashers(peer) == ["%s did not say which flashers run" % peer.wb_ssh]

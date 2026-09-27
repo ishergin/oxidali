@@ -20,8 +20,7 @@ WRITE_TIMEOUT_S = 600
 WRITE_POLL_S = 5
 WRITE_START_TIMEOUT_S = 30
 COPY_TIMEOUT_S = 180
-WRITE_RC = REMOTE_IMAGES + "/write.rc"
-WRITE_LOG = REMOTE_IMAGES + "/write.log"
+WRITE_STEM = REMOTE_IMAGES + "/write-%d"
 WRITE_LOG_TAIL = 15
 BRIDGE_VERBS = "verbs="
 RELEASE_VERB = "release"
@@ -150,28 +149,40 @@ def enter_loader(cfg, before_write=None):
 
 
 def run_detached(tgt, command, log=print, timeout_s=WRITE_TIMEOUT_S) -> int:
-    start = ("rm -f {rc}; nohup setsid sh -c '{cmd} > {log} 2>&1; echo $? > {rc}' "
-             "< /dev/null > /dev/null 2>&1 &").format(cmd=command, log=WRITE_LOG, rc=WRITE_RC)
+    stem = WRITE_STEM % time.time_ns()
+    rc_file, log_file = stem + ".rc", stem + ".log"
+    start = ("nohup setsid sh -c '{cmd} > {log} 2>&1; echo $? > {rc}' "
+             "< /dev/null > /dev/null 2>&1 &").format(cmd=command, log=log_file, rc=rc_file)
     try:
-        _ssh(tgt, start, timeout=WRITE_START_TIMEOUT_S)
+        started = _ssh(tgt, start, timeout=WRITE_START_TIMEOUT_S)
     except subprocess.TimeoutExpired:
         log("wb flash: the ssh that started esptool hung; polling for its result")
+    else:
+        if started.returncode != 0:
+            raise WbFlashError("ssh did not start esptool on %s (exit %d)"
+                               % (tgt.ssh, started.returncode))
+    rc = _await_rc(tgt, rc_file, timeout_s)
+    if rc != 0:
+        log(_ssh(tgt, "tail -%d %s" % (WRITE_LOG_TAIL, log_file),
+                 capture_output=True, text=True).stdout)
+    _ssh(tgt, "rm -f %s %s" % (rc_file, log_file))
+    return rc
+
+
+def _await_rc(tgt, rc_file, timeout_s):
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         time.sleep(WRITE_POLL_S)
-        rc = _remote_rc(tgt)
+        rc = _remote_rc(tgt, rc_file)
         if rc is not None:
-            if rc != 0:
-                log(_ssh(tgt, "tail -%d %s" % (WRITE_LOG_TAIL, WRITE_LOG),
-                         capture_output=True, text=True).stdout)
             return rc
     raise WbFlashError("esptool did not finish within %ds on %s: see %s there"
-                       % (timeout_s, tgt.ssh, WRITE_LOG))
+                       % (timeout_s, tgt.ssh, rc_file.replace(".rc", ".log")))
 
 
-def _remote_rc(tgt):
+def _remote_rc(tgt, rc_file):
     try:
-        out = _ssh(tgt, "cat %s 2>/dev/null" % WRITE_RC, capture_output=True, text=True)
+        out = _ssh(tgt, "cat %s 2>/dev/null" % rc_file, capture_output=True, text=True)
     except subprocess.TimeoutExpired:
         return None
     text = out.stdout.strip()

@@ -12,8 +12,10 @@ POLL_S = 0.1
 
 STAMP = re.compile(r"^\S+Z ")
 _KV = re.compile(r"(\w+)=(-?\d+)")
-RESERVED = re.compile(r"^reserved (0x[0-9a-f]+) \((\d+) addresses\)")
+RESERVED = re.compile(r"^(?:refused: )?reserved (?:already )?(0x[0-9a-f]+)")
 SHOW_FIELDS = 8
+UNTOUCHED_QUIET_S = 1.0
+UNTOUCHED_MAX_S = 5.0
 ARROW = "->"
 
 
@@ -79,13 +81,15 @@ class GearSim:
             return _replies(window, timeout_s)
 
     def reserve(self, shorts):
-        line = _expect(self.command("reserve " + spell(shorts)), "reserved ")
-        echo = RESERVED.match(line)
+        replies = self.command("reserve " + spell(shorts))
         mask = sum(1 << s for s in set(shorts))
-        if echo is None or int(echo.group(1), 16) != mask:
-            raise GearSimUnavailable("the emulator reserved %r, the toolkit sent %s"
-                                     % (line, spell(shorts)))
-        return line
+        for line in replies:
+            echo = RESERVED.match(line)
+            if echo and int(echo.group(1), 16) == mask:
+                return line
+        raise GearSimUnavailable("the emulator holds another reserve than %s (it takes one "
+                                 "per boot): %s" % (spell(shorts), " | ".join(replies)
+                                                    or "no reply"))
 
     def fleet(self, base, dt6, cct, rgb):
         return _expect(self.command("fleet %d %d %d %d" % (base, dt6, cct, rgb)), "fleet ")
@@ -177,5 +181,17 @@ class GearOracle:
             time.sleep(POLL_S)
 
     def untouched(self, window, shorts):
+        self._await_quiet(window)
         moved = [c for c in self.changes(window) if c.short in set(shorts)]
         assert not moved, "gear that must stay still changed: %s" % moved
+
+    def _await_quiet(self, window):
+        deadline = time.monotonic() + UNTOUCHED_MAX_S
+        count, still_since = -1, time.monotonic()
+        while time.monotonic() < deadline:
+            now = len(self.changes(window))
+            if now != count:
+                count, still_since = now, time.monotonic()
+            elif time.monotonic() - still_since >= UNTOUCHED_QUIET_S:
+                return
+            time.sleep(POLL_S)

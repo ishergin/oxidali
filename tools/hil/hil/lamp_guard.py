@@ -39,11 +39,9 @@ TERMINATE, DTR0, INITIALISE, RANDOMISE, COMPARE, WITHDRAW, PING = (
 SEARCH_ADDRESS_H, SEARCH_ADDRESS_M, SEARCH_ADDRESS_L = 0xB1, 0xB3, 0xB5
 PROGRAM_SHORT_ADDRESS, VERIFY_SHORT_ADDRESS, QUERY_SHORT_ADDRESS = 0xB7, 0xB9, 0xBB
 ENABLE_DEVICE_TYPE, DTR1, DTR2 = 0xC1, 0xC3, 0xC5
-WRITE_MEMORY_LOCATION, WRITE_MEMORY_LOCATION_NO_REPLY = 0xC7, 0xC9
 SPECIAL_FIRST = 0xA0
 INITIALISE_UNADDRESSED = 0xFF
-SETUP_SPECIALS = frozenset({TERMINATE, DTR0, PING, ENABLE_DEVICE_TYPE, DTR1, DTR2,
-                            WRITE_MEMORY_LOCATION, WRITE_MEMORY_LOCATION_NO_REPLY})
+SETUP_SPECIALS = frozenset({TERMINATE, DTR0, PING, ENABLE_DEVICE_TYPE, DTR1, DTR2})
 COMMISSIONING_SPECIALS = frozenset({INITIALISE, RANDOMISE, COMPARE, WITHDRAW,
                                     SEARCH_ADDRESS_H, SEARCH_ADDRESS_M, SEARCH_ADDRESS_L,
                                     PROGRAM_SHORT_ADDRESS, VERIFY_SHORT_ADDRESS,
@@ -162,12 +160,10 @@ class VirtualFence:
         if addr >= BROADCAST_FIRST:
             raise LampNotAllowed("%s refused: broadcast never runs on a shared wire"
                                  % describe_frame(addr, data))
-        if target == TARGET_SEGMENT:
-            if (addr >> 1) & GROUP_MASK not in self.groups:
-                raise LampNotAllowed("%s refused: the group is outside %s"
-                                     % (describe_frame(addr, data), spell(self.groups)))
-            return True
-        if target not in self.park:
+        if target == TARGET_SEGMENT and (addr >> 1) & GROUP_MASK not in self.groups:
+            raise LampNotAllowed("%s refused: the group is outside %s"
+                                 % (describe_frame(addr, data), spell(self.groups)))
+        if target != TARGET_SEGMENT and target not in self.park:
             raise LampNotAllowed("%s refused: SA%d is outside the park %s"
                                  % (describe_frame(addr, data), target, spell(self.park)))
         if addr & 1 and data in GROUP_CONFIG_OPCODES and data & GROUP_OF_OPCODE not in self.groups:

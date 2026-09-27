@@ -17,8 +17,9 @@ ROLE_POLL_S = 2.0
 REQUEST_TIMEOUT_S = 3
 SSH_TIMEOUT_S = 20
 REPLICATION_WAIT_S = 120
+READY_ASK_TIMEOUT_S = 10
 LEDGER = "virtual_gear.json"
-FLASHER = "esptool"
+FLASHER_PATTERN = "python.*-m esptool|esptool.py"
 STATE_PENDING_VERIFY = "pending_verify"
 
 
@@ -62,15 +63,16 @@ def controller_health(cfg):
 
 
 def foreign_flashers(cfg) -> list:
-    out = []
-    local = subprocess.run(["pgrep", "-fl", FLASHER], capture_output=True, text=True)
-    out += ["here: %s" % line for line in local.stdout.splitlines() if line.strip()]
-    remote = subprocess.run(["ssh", *remote_serial.SSH_OPTS, cfg.wb_ssh,
-                             "pgrep -fa %s; true" % FLASHER],
-                            capture_output=True, text=True, timeout=SSH_TIMEOUT_S)
-    out += ["on %s: %s" % (cfg.wb_ssh, line) for line in remote.stdout.splitlines()
-            if line.strip() and "pgrep" not in line]
-    return out
+    local = subprocess.run(["pgrep", "-fl", FLASHER_PATTERN], capture_output=True, text=True)
+    out = ["here: %s" % line for line in local.stdout.splitlines() if line.strip()]
+    try:
+        remote = subprocess.run(["ssh", *remote_serial.SSH_OPTS, cfg.wb_ssh,
+                                 "pgrep -fa '%s'; true" % FLASHER_PATTERN],
+                                capture_output=True, text=True, timeout=SSH_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return out + ["%s did not say which flashers run" % cfg.wb_ssh]
+    return out + ["on %s: %s" % (cfg.wb_ssh, line) for line in remote.stdout.splitlines()
+                  if line.strip() and "pgrep" not in line]
 
 
 def preconditions(dut_cfg, peer_cfg) -> list:
@@ -94,7 +96,8 @@ def preconditions(dut_cfg, peer_cfg) -> list:
 
 
 def to_gear_sim(dut_cfg, peer_cfg, via=flash.VIA_OTA, log=print) -> int:
-    if is_gear_sim(peer_cfg) and controller_health(peer_cfg) is None:
+    if is_gear_sim(peer_cfg) and controller_health(peer_cfg) is None and \
+            emulator_banner(peer_cfg) is not None:
         log("the peer already runs the gear emulator (%s)" % current(peer_cfg))
         return 0
     problems = preconditions(dut_cfg, peer_cfg)
@@ -113,16 +116,15 @@ def to_gear_sim(dut_cfg, peer_cfg, via=flash.VIA_OTA, log=print) -> int:
 
 
 def to_controller(dut_cfg, peer_cfg, via=None, log=print) -> int:
-    if (Path(dut_cfg.state_dir) / LEDGER).exists():
-        print("role: a virtual-gear session is still open (%s): its teardown must "
-              "clean the DUT's registry before the standby pulls it"
-              % (Path(dut_cfg.state_dir) / LEDGER), file=sys.stderr)
+    problem = _return_problem(dut_cfg, peer_cfg)
+    if problem:
+        print("role: %s" % problem, file=sys.stderr)
         return 2
     if controller_health(peer_cfg) is None:
         try:
-            rc = _hand_back(peer_cfg, via or return_via(peer_cfg))
-        except (OSError, remote_serial.RemoteError) as exc:
-            print("role: the peer's bridge failed: %s" % exc, file=sys.stderr)
+            rc = _hand_back(dut_cfg, peer_cfg, via)
+        except (OSError, remote_serial.RemoteError, RoleError) as exc:
+            print("role: %s" % exc, file=sys.stderr)
             return 1
         if rc != 0:
             return rc
@@ -131,23 +133,62 @@ def to_controller(dut_cfg, peer_cfg, via=None, log=print) -> int:
     return compare_registries(dut_cfg, peer_cfg, log)
 
 
-def return_via(peer_cfg) -> str:
-    banner = flash.ready_line(peer_cfg, 0)
-    if banner is not None:
-        return flash.VIA_OTA if banner[2] == STATE_PENDING_VERIFY else flash.VIA_WB
-    return current(peer_cfg).get("via", flash.VIA_WB)
+def _return_problem(dut_cfg, peer_cfg):
+    if (Path(dut_cfg.state_dir) / LEDGER).exists():
+        return ("a virtual-gear session is still open (%s): its teardown must clean the "
+                "DUT's registry before the standby pulls it" % (Path(dut_cfg.state_dir) / LEDGER))
+    if peer_cfg.serial_remote and peer_cfg.serial_remote == dut_cfg.serial_remote:
+        return "the peer's serial bridge is the DUT's (%s)" % peer_cfg.serial_remote
+    return None
 
 
-def _hand_back(peer_cfg, via) -> int:
+def emulator_banner(peer_cfg):
+    mark = serialmon.log_size(peer_cfg)
+    try:
+        remote_serial.control(peer_cfg, "write ready")
+    except (OSError, remote_serial.RemoteError):
+        return None
+    deadline = time.monotonic() + READY_ASK_TIMEOUT_S
+    while time.monotonic() < deadline:
+        found = flash.ready_line(peer_cfg, mark)
+        if found is not None:
+            return found
+        time.sleep(ROLE_POLL_S)
+    return None
+
+
+def return_via(banner) -> str:
+    return flash.VIA_OTA if banner[2] == STATE_PENDING_VERIFY else flash.VIA_WB
+
+
+def _hand_back(dut_cfg, peer_cfg, via) -> int:
+    banner = emulator_banner(peer_cfg)
+    if banner is None and via is None:
+        raise RoleError("the peer answers neither as a controller nor as the emulator, so "
+                        "which board the bridge resets is unproven: name the way back with "
+                        "--via ota|wb")
+    via = via or return_via(banner)
     if via == flash.VIA_WB:
-        return flash.run(peer_cfg, image=flash.CONTROLLER, via=flash.VIA_WB)
-    remote_serial.control(peer_cfg, "run")
+        return flash.run(peer_cfg, image=flash.CONTROLLER, via=flash.VIA_WB,
+                         allow_stale_ui=True)
+    reset_witnessed(dut_cfg, peer_cfg)
     if _await_controller(peer_cfg):
         return 0
     print("role: a reset did not bring the controller back, so the bootloader kept the "
           "emulator: `hil --peer role controller --via wb` writes the controller",
           file=sys.stderr)
     return 1
+
+
+def reset_witnessed(dut_cfg, peer_cfg):
+    before = controller_health(dut_cfg)
+    if before is None:
+        raise RoleError("the DUT does not answer, so nothing would show a reset reaching it")
+    remote_serial.control(peer_cfg, "run")
+    after = controller_health(dut_cfg)
+    if after is None or after.get("uptime_seconds", 0) < before.get("uptime_seconds", 0):
+        raise RoleError("the DUT went down when the peer's bridge reset its board: the "
+                        "bridge %s names the DUT" % peer_cfg.serial_remote)
 
 
 def _await_controller(peer_cfg, timeout_s=ROLE_RETURN_TIMEOUT_S) -> bool:
@@ -162,17 +203,21 @@ def _await_controller(peer_cfg, timeout_s=ROLE_RETURN_TIMEOUT_S) -> bool:
     return False
 
 
-def _slices(cfg):
+def _slices(cfg) -> dict:
     rows = _get(cfg.base, "/api/v1/config/slices")
     rows = rows.get("slices", rows) if isinstance(rows, dict) else rows
-    return sorted((r.get("name"), r.get("crc32")) for r in rows or [])
+    return {r.get("name"): (r.get("bytes"), r.get("crc32")) for r in rows or []}
+
+
+def slices_match(dut, peer) -> bool:
+    held = {name: row for name, row in dut.items() if row[0] is not None}
+    return bool(held) and all(peer.get(name) == row for name, row in held.items())
 
 
 def _converged(dut_cfg, peer_cfg, timeout_s=REPLICATION_WAIT_S) -> bool:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        dut = _slices(dut_cfg)
-        if dut and dut == _slices(peer_cfg):
+        if slices_match(_slices(dut_cfg), _slices(peer_cfg)):
             return True
         time.sleep(ROLE_POLL_S)
     return False
@@ -207,7 +252,11 @@ def compare_registries(dut_cfg, peer_cfg, log=print) -> int:
         log("the standby keeps entries its slices no longer hold: %s" % "; ".join(difference))
         if attempt:
             return 1
-        remote_serial.control(peer_cfg, "run")
+        try:
+            reset_witnessed(dut_cfg, peer_cfg)
+        except (OSError, remote_serial.RemoteError, RoleError) as exc:
+            print("role: %s" % exc, file=sys.stderr)
+            return 1
         if not _await_controller(peer_cfg):
             return 1
     return 1

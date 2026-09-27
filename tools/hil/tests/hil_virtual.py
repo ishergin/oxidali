@@ -3,11 +3,12 @@ import time
 from dataclasses import dataclass
 
 import pytest
+import requests
 
 from hil import api as api_mod
 from hil import config as config_mod
 from hil import role, serialmon, tripwire, virtual_gear
-from hil.config import _parse_shorts
+from hil.config import PeerUnconfigured, _parse_shorts
 from hil.gearsim import GearOracle, GearSim, GearSimUnavailable
 from hil.lamp_guard import VirtualFence, spell
 from hil.seriallog import LogWindow
@@ -100,21 +101,44 @@ def virtual_gear_session(request, production_state, bench_baseline):
         pytest.exit("virtual gear: a previous session left %s — `hil state restore` finishes "
                     "its teardown first" % ledger.path, returncode=EXIT_SETUP)
     session, opened, state = _open_session(request, cfg)
-    try:
-        yield VirtualBench(opened["park"], opened["groups"], opened["vl_of_short"],
-                           session.sim, GearOracle(session.sim))
-    finally:
-        stats = _safe(session.sim.stats)
-        state["virtual_gear_answers"] = {k: stats.get(k) for k in
-                                         ("sent", "stale", "expired", "late", "late_ticks",
-                                          "log_dropped")} if stats else "unread"
-        state["virtual_gear_residual"] = session.close()
+    with LogWindow(serialmon.log_path(cfg)) as whole:
+        try:
+            yield VirtualBench(opened["park"], opened["groups"], opened["vl_of_short"],
+                               session.sim, GearOracle(session.sim))
+        finally:
+            _sweep(whole, cfg, opened, state)
+            _close_session(session, state)
+
+
+def _sweep(whole, cfg, opened, state):
+    _sweep_with(whole, api_mod.Client(cfg), opened, state)
+
+
+def _sweep_with(whole, admin, opened, state):
+    fence = VirtualFence(opened["park"], opened["groups"], opened["vl_of_short"].values(),
+                         commissioning=commissioning_allowed())
+    if not _flush(whole, admin, opened["park"][0]):
+        state.setdefault("virtual_gear_inconclusive", []).append(
+            "session: the final barrier never reached the DUT's log, so frames after the "
+            "last test went unjudged")
+    seen = {line.split(": ", 1)[-1] for line in state.get("virtual_gear_safety", [])}
+    fresh = [v for v in tripwire.violations(whole.lines(), fence) if v not in seen]
+    if fresh:
+        state.setdefault("virtual_gear_safety", []).extend("session: %s" % v for v in fresh)
+
+
+def _close_session(session, state):
+    stats = _safe(session.sim.stats)
+    state["virtual_gear_answers"] = {k: stats.get(k) for k in
+                                     ("sent", "stale", "expired", "late", "late_ticks",
+                                      "log_dropped")} if stats else "unread"
+    state["virtual_gear_residual"] = session.close()
 
 
 def _open_session(request, cfg):
     try:
         sim = GearSim(cfg.peer())
-    except GearSimUnavailable as exc:
+    except (GearSimUnavailable, PeerUnconfigured) as exc:
         pytest.exit("virtual gear: %s" % exc, returncode=EXIT_SETUP)
     session = virtual_gear.VirtualSession(cfg, api_mod.Client(cfg), sim, owner_shorts())
     state = validity_of(request.config)
@@ -178,7 +202,10 @@ def virtual_tripwire(request, virtual_gear_session, virtual_gear_fence):
 def _flush(window, admin, short):
     _await_quiet(window)
     seen = tripwire.barrier_count(window.lines(), short)
-    admin.cmd(short, tripwire.QUERY_STATUS)
+    try:
+        admin.cmd(short, tripwire.QUERY_STATUS)
+    except (api_mod.ApiError, requests.RequestException):
+        return False
     return bool(wait_until(lambda: tripwire.barrier_count(window.lines(), short) > seen,
                            BARRIER_TIMEOUT_S, POLL_S))
 

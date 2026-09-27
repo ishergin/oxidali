@@ -248,6 +248,7 @@ def test_commissioning_steps_stay_on_unaddressed_gear_and_the_park(step, body, a
     (0xB7, 0xFF, True, True),
     (0xA3, 0x10, False, False),
     (0xC1, 0x08, False, False),
+    (0xC7, 0x00, True, True),
     (0xCD, 0x00, True, True),
 ])
 def test_special_frames_are_pinned(addr, data, commissioning, refused):
@@ -261,6 +262,8 @@ def test_special_frames_are_pinned(addr, data, commissioning, refused):
 
 @pytest.mark.parametrize("addr,data,refused", [
     (0x89, 0x05, False),
+    (0x89, 0x64, False),
+    (0x89, 0x60, True),
     (0x81, 0x05, True),
     (0xFE, 0x80, True),
     (0xFF, 0x05, True),

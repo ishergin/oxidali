@@ -68,35 +68,56 @@ class _Target:
 
 
 class _Remote:
-    def __init__(self, rcs):
-        self.rcs, self.commands = list(rcs), []
+    def __init__(self, rcs, start_rc=0):
+        self.rcs, self.commands, self.start_rc = list(rcs), [], start_rc
 
     def __call__(self, tgt, command, timeout=60, **kwargs):
         self.commands.append(command)
         if command.startswith("cat "):
             return subprocess.CompletedProcess(command, 0, stdout=self.rcs.pop(0), stderr="")
+        if command.startswith("nohup "):
+            return subprocess.CompletedProcess(command, self.start_rc, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 0, stdout="esptool said no\n", stderr="")
 
 
-def test_a_detached_write_is_polled_until_its_exit_code(monkeypatch):
-    remote = _Remote(["", "", "0\n"])
+def _detached(monkeypatch, remote):
     monkeypatch.setattr(wb_flash, "_ssh", remote)
     monkeypatch.setattr(wb_flash.time, "sleep", lambda s: None)
+    return remote
+
+
+def test_a_detached_write_is_polled_until_its_exit_code(monkeypatch):
+    remote = _detached(monkeypatch, _Remote(["", "", "0\n"]))
     assert wb_flash.run_detached(_Target(), "python3 -m esptool x") == 0
-    assert "nohup setsid sh -c" in remote.commands[0]
-    assert remote.commands[0].count(wb_flash.WRITE_RC) == 2
+    start, *polls, cleanup = remote.commands
+    rc_file = start.split("echo $? > ")[1].split("'")[0]
+    assert start.startswith("nohup setsid sh -c") and rc_file.endswith(".rc")
+    assert all(rc_file in poll for poll in polls) and rc_file in cleanup
+
+
+def test_every_write_gets_its_own_exit_code_file(monkeypatch):
+    remote = _detached(monkeypatch, _Remote(["0\n", "0\n"]))
+    wb_flash.run_detached(_Target(), "x")
+    wb_flash.run_detached(_Target(), "x")
+    starts = [c for c in remote.commands if c.startswith("nohup")]
+    assert starts[0] != starts[1]
+
+
+def test_a_start_that_fails_is_not_read_as_a_finished_write(monkeypatch):
+    remote = _detached(monkeypatch, _Remote(["0\n"], start_rc=255))
+    with pytest.raises(wb_flash.WbFlashError, match="did not start"):
+        wb_flash.run_detached(_Target(), "x")
+    assert not any(c.startswith("cat ") for c in remote.commands)
 
 
 def test_a_failed_detached_write_shows_its_log(monkeypatch):
-    remote, lines = _Remote(["2\n"]), []
-    monkeypatch.setattr(wb_flash, "_ssh", remote)
-    monkeypatch.setattr(wb_flash.time, "sleep", lambda s: None)
+    lines = []
+    _detached(monkeypatch, _Remote(["2\n"]))
     assert wb_flash.run_detached(_Target(), "python3 -m esptool x", log=lines.append) == 2
     assert lines == ["esptool said no\n"]
 
 
 def test_a_write_that_never_finishes_is_an_error(monkeypatch):
-    monkeypatch.setattr(wb_flash, "_ssh", _Remote([""] * 10))
-    monkeypatch.setattr(wb_flash.time, "sleep", lambda s: None)
+    _detached(monkeypatch, _Remote([""] * 10))
     with pytest.raises(wb_flash.WbFlashError, match="did not finish"):
         wb_flash.run_detached(_Target(), "x", timeout_s=0.0)

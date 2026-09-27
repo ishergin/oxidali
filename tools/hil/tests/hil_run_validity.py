@@ -305,7 +305,8 @@ def pytest_sessionfinish(session, exitstatus):
                      "tools/hil/runtime_heap_budget.txt needs a dated reason.")
         session.exitstatus = session.exitstatus or 1
     lines += _virtual_gear_lines(state)
-    if state.get("virtual_gear_safety") or state.get("virtual_gear_residual"):
+    if state.get("virtual_gear_safety") or state.get("virtual_gear_residual") or \
+            state.get("virtual_gear_inconclusive"):
         session.exitstatus = session.exitstatus or 1
     config._hil_validity_report = lines
     _write_summary(config, lines)

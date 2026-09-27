@@ -1,4 +1,5 @@
 import json
+import threading
 
 import pytest
 
@@ -125,6 +126,7 @@ def test_the_show_table_is_parsed(tmp_path, monkeypatch):
 
 def test_the_oracle_finds_the_change_it_waits_for(tmp_path, monkeypatch):
     cfg, log = _peer(tmp_path, monkeypatch)
+    monkeypatch.setattr(gearsim, "UNTOUCHED_QUIET_S", 0.05)
     oracle = gearsim.GearOracle(gearsim.GearSim(cfg))
     with LogWindow(log) as window:
         with open(log, "a") as fh:
@@ -135,3 +137,47 @@ def test_the_oracle_finds_the_change_it_waits_for(tmp_path, monkeypatch):
             oracle.expect(window, 18, "level", 1, timeout_s=0.2)
         with pytest.raises(AssertionError, match="must stay still"):
             oracle.untouched(window, [17])
+
+
+def _reserve_reply(tmp_path, monkeypatch, reply):
+    cfg, log = _peer(tmp_path, monkeypatch)
+
+    def control(peer, command):
+        with open(log, "a") as fh:
+            fh.write(STAMP + "# %s\n" % reply)
+        return "ok"
+    monkeypatch.setattr(gearsim.remote_serial, "control", control)
+    monkeypatch.setattr(gearsim, "REPLY_QUIET_S", 0.0)
+    return gearsim.GearSim(cfg)
+
+
+def test_a_second_session_on_one_boot_keeps_an_equal_reserve(tmp_path, monkeypatch):
+    sim = _reserve_reply(tmp_path, monkeypatch, "refused: reserved already 0x000000000000ffff "
+                         "for this boot; reboot to change it")
+    assert sim.reserve(range(16)).startswith("refused: reserved already")
+
+
+def test_a_second_session_with_another_reserve_is_refused(tmp_path, monkeypatch):
+    sim = _reserve_reply(tmp_path, monkeypatch, "refused: reserved already 0x000000000000000f "
+                         "for this boot; reboot to change it")
+    with pytest.raises(gearsim.GearSimUnavailable, match="one per boot"):
+        sim.reserve(range(16))
+
+
+def test_untouched_waits_for_the_emulator_to_fall_quiet(tmp_path, monkeypatch):
+    cfg, log = _peer(tmp_path, monkeypatch)
+    monkeypatch.setattr(gearsim, "UNTOUCHED_QUIET_S", 0.3)
+    monkeypatch.setattr(gearsim, "POLL_S", 0.02)
+    oracle = gearsim.GearOracle(gearsim.GearSim(cfg))
+
+    def late_line():
+        with open(log, "a") as fh:
+            fh.write(STAMP + "C 9 A17 level 0 -> 5\n")
+    with LogWindow(log) as window:
+        timer = threading.Timer(0.1, late_line)
+        timer.start()
+        try:
+            with pytest.raises(AssertionError, match="must stay still"):
+                oracle.untouched(window, [17])
+        finally:
+            timer.join()
