@@ -63,7 +63,7 @@ def capture(api, prime=True, log=print):
         "adapter": api.adapter_info(),
         "rules": api.rules_get(),
         "hcl": api.hcl.list(),
-        "vl": api.vlamps.list(),
+        "vl": api.vlamps.list_unfiltered(),
         "groups": api.groups.list()["groups"],
         "group_matrix": api.groups.matrix(),
         "scenes_meta": api.scenes.list()["scenes"],
@@ -386,7 +386,7 @@ def _attempt(log, label, fn):
 
 
 def _restore_vl(api, snap, log):
-    now = {v["virtual_lamp_id"]: v for v in api.vlamps.list()["virtual_lamps"]}
+    now = {v["virtual_lamp_id"]: v for v in api.vlamps.list_unfiltered()["virtual_lamps"]}
     want = {v["virtual_lamp_id"]: _bound_short(v) for v in snap["vl"]["virtual_lamps"]}
     for lid, have in sorted(now.items()):
         got = _bound_short(have)

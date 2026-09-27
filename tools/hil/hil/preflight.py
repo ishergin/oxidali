@@ -71,6 +71,11 @@ def _check_gear_sim(cfg):
         return OK, "gear sim", "no peer is named, so no emulator"
     if not role.is_gear_sim(peer):
         return OK, "gear sim", "the peer runs the controller (`hil --peer role gear-sim` lends it)"
+    if peer.serial_remote and peer.serial_remote == cfg.serial_remote:
+        return FAIL, "gear sim", "the emulator's bridge is the DUT's (%s)" % cfg.serial_remote
+    if role.controller_health(peer) is not None:
+        return FAIL, "gear sim", ("the record says gear-sim, yet the peer answers as a "
+                                  "controller: `hil --peer role controller` records it")
     if not serialmon.alive(peer):
         return FAIL, "gear sim", "the peer runs the emulator but its monitor is down"
     try:

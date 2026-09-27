@@ -3,6 +3,7 @@ import time
 from dataclasses import dataclass
 
 from hil import remote_serial, role, serialmon
+from hil.lamp_guard import spell
 from hil.seriallog import LogWindow
 
 REPLY_QUIET_S = 0.4
@@ -11,6 +12,8 @@ POLL_S = 0.1
 
 STAMP = re.compile(r"^\S+Z ")
 _KV = re.compile(r"(\w+)=(-?\d+)")
+RESERVED = re.compile(r"^reserved (0x[0-9a-f]+) \((\d+) addresses\)")
+SHOW_FIELDS = 8
 ARROW = "->"
 
 
@@ -55,6 +58,10 @@ class GearSim:
         if not role.is_gear_sim(peer_cfg):
             raise GearSimUnavailable("the peer does not run the gear emulator "
                                      "(`hil --peer role gear-sim`)")
+        health = role.controller_health(peer_cfg)
+        if health is not None:
+            raise GearSimUnavailable("the peer answers HTTP as a %s controller: a reset handed "
+                                     "the OTA role back" % health.get("role"))
         if not serialmon.alive(peer_cfg):
             raise GearSimUnavailable("the peer's serial monitor is not running")
         self.cfg = peer_cfg
@@ -71,8 +78,14 @@ class GearSim:
             remote_serial.control(self.cfg, "write " + verb)
             return _replies(window, timeout_s)
 
-    def reserve(self, spec):
-        return _expect(self.command("reserve " + spec), "reserved ")
+    def reserve(self, shorts):
+        line = _expect(self.command("reserve " + spell(shorts)), "reserved ")
+        echo = RESERVED.match(line)
+        mask = sum(1 << s for s in set(shorts))
+        if echo is None or int(echo.group(1), 16) != mask:
+            raise GearSimUnavailable("the emulator reserved %r, the toolkit sent %s"
+                                     % (line, spell(shorts)))
+        return line
 
     def fleet(self, base, dt6, cct, rgb):
         return _expect(self.command("fleet %d %d %d %d" % (base, dt6, cct, rgb)), "fleet ")
@@ -90,7 +103,7 @@ class GearSim:
         rows = []
         for line in self.command("show"):
             fields = line.split()
-            if len(fields) == 8 and fields[0].isdigit() and fields[1].isdigit():
+            if len(fields) == SHOW_FIELDS and fields[0].isdigit() and fields[1].isdigit():
                 rows.append({"short": int(fields[1]), "random": int(fields[2], 16),
                              "dt8": fields[3] == "DT8", "level": int(fields[4]),
                              "groups": int(fields[5], 16), "enabled": fields[6] == "yes"})

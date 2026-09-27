@@ -1,11 +1,13 @@
 import re
 
-from hil.lamp_guard import (BROADCAST_FIRST, GROUP_MASK, TARGET_SEGMENT, describe_frame,
-                            frame_writes, wire_target)
+from hil.lamp_guard import LampNotAllowed, describe_frame
 
-TX_LINE = re.compile(r"DALI PHY TX: forward16 0x([0-9a-f]{4}) \(ISR-owned bitbang\)")
+TX_LINE = re.compile(
+    r"DALI PHY TX: forward16 0x([0-9a-f]{4})(?: \(batched\))? \(ISR-owned bitbang\)")
 BYTE_BITS = 8
 BYTE = 0xFF
+QUERY_STATUS = 0x90
+SELECTOR_BIT = 0x01
 LOG_LOSS_COUNTERS = ("console_log_dropped_total", "console_log_busy_total",
                      "console_log_truncated_total", "console_log_unavailable_total")
 
@@ -20,19 +22,22 @@ def sent_frames(lines):
     return out
 
 
-def violations(lines, park, groups):
-    park, groups, out = frozenset(park), frozenset(groups), []
+def violations(lines, fence):
+    out = []
     for addr, data in sent_frames(lines):
-        target = wire_target(addr)
-        if target is None or not frame_writes(addr, data):
-            continue
-        if addr >= BROADCAST_FIRST:
-            out.append("broadcast on a shared wire: %s" % describe_frame(addr, data))
-        elif target == TARGET_SEGMENT and (addr >> 1) & GROUP_MASK not in groups:
-            out.append("a group outside the session: %s" % describe_frame(addr, data))
-        elif target != TARGET_SEGMENT and target not in park:
-            out.append("a lamp outside the park: %s" % describe_frame(addr, data))
+        try:
+            fence.check_frame(addr, data)
+        except LampNotAllowed as exc:
+            out.append("%s went out: %s" % (describe_frame(addr, data), exc))
     return out
+
+
+def barrier(short):
+    return (short << 1) | SELECTOR_BIT, QUERY_STATUS
+
+
+def barrier_count(lines, short):
+    return sent_frames(lines).count(barrier(short))
 
 
 def log_losses(stats):

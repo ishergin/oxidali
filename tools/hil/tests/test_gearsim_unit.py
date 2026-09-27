@@ -46,6 +46,7 @@ def _peer(tmp_path, monkeypatch, role_name="gear-sim"):
     log.write_text("")
     monkeypatch.setattr(gearsim.serialmon, "alive", lambda c: True)
     monkeypatch.setattr(gearsim.serialmon, "log_path", lambda c: log)
+    monkeypatch.setattr(gearsim.role, "controller_health", lambda c: None)
     return cfg, log
 
 
@@ -68,8 +69,28 @@ def test_a_command_goes_through_the_bridge_and_its_reply_through_the_log(tmp_pat
     monkeypatch.setattr(gearsim.remote_serial, "control", control)
     monkeypatch.setattr(gearsim, "REPLY_QUIET_S", 0.0)
     sim = gearsim.GearSim(cfg)
-    assert sim.reserve("0-15") == "reserved 0x000000000000ffff (16 addresses)"
+    assert sim.reserve(range(16)) == "reserved 0x000000000000ffff (16 addresses)"
     assert sent == ["write reserve 0-15"]
+
+
+def test_a_reserve_the_emulator_echoes_differently_is_refused(tmp_path, monkeypatch):
+    cfg, log = _peer(tmp_path, monkeypatch)
+
+    def control(peer, command):
+        with open(log, "a") as fh:
+            fh.write(STAMP + "# reserved 0x000000000000000f (4 addresses)\n")
+        return "ok"
+    monkeypatch.setattr(gearsim.remote_serial, "control", control)
+    monkeypatch.setattr(gearsim, "REPLY_QUIET_S", 0.0)
+    with pytest.raises(gearsim.GearSimUnavailable):
+        gearsim.GearSim(cfg).reserve(range(16))
+
+
+def test_a_peer_that_answers_as_a_controller_has_no_emulator_console(tmp_path, monkeypatch):
+    cfg, _ = _peer(tmp_path, monkeypatch)
+    monkeypatch.setattr(gearsim.role, "controller_health", lambda c: {"role": "standby"})
+    with pytest.raises(gearsim.GearSimUnavailable):
+        gearsim.GearSim(cfg)
 
 
 def test_a_refusal_is_raised_not_swallowed(tmp_path, monkeypatch):

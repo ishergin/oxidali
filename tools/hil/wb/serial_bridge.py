@@ -20,6 +20,7 @@ RESET_HOLD_S = 0.1
 RESET_LATCH_S = 0.05
 
 PORT_GONE = "port-gone"
+PORT_VERBS = ("release", "reacquire", "write")
 
 
 class SerialFault(RuntimeError):
@@ -151,9 +152,9 @@ class Bridge:
         if cmd == "ping":
             return "ok %s %d" % (self.port, self.serial.baudrate)
         if cmd == "status":
-            return "ok port=%s baud=%d client=%s uptime=%d" % (
+            return "ok port=%s baud=%d client=%s uptime=%d verbs=%s" % (
                 self.port, self.serial.baudrate,
-                self.client or "none", time.time() - self.started_at)
+                self.client or "none", time.time() - self.started_at, ",".join(PORT_VERBS))
         if cmd in ("bootloader", "run"):
             classic_reset(self.serial, cmd == "bootloader")
             self.log("control: reset -> %s" % cmd)

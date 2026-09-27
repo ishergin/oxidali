@@ -1,5 +1,6 @@
 import contextlib
 import hashlib
+import importlib.util
 import os
 import subprocess
 import time
@@ -16,7 +17,14 @@ TOOLS_DIGEST_FILE = ".digest"
 
 WB_FLASH_BAUD = 921600
 WRITE_TIMEOUT_S = 600
+WRITE_POLL_S = 5
+WRITE_START_TIMEOUT_S = 30
 COPY_TIMEOUT_S = 180
+WRITE_RC = REMOTE_IMAGES + "/write.rc"
+WRITE_LOG = REMOTE_IMAGES + "/write.log"
+WRITE_LOG_TAIL = 15
+BRIDGE_VERBS = "verbs="
+RELEASE_VERB = "release"
 
 OTA_HTTP_PORT = 8765
 OTA_SERVER_START_TIMEOUT_S = 15
@@ -33,8 +41,10 @@ def _ssh(tgt, command, timeout=60, **kwargs):
 
 
 def _site_packages() -> Path:
-    import esptool
-    return Path(esptool.__file__).resolve().parent.parent
+    found = importlib.util.find_spec("esptool")
+    if found is None or found.origin is None:
+        raise WbFlashError("esptool is not installed in the toolkit's venv")
+    return Path(found.origin).resolve().parent.parent
 
 
 def tools_digest(site: Path) -> str:
@@ -100,25 +110,76 @@ def write_command(device: str, remote_image: str, baud: int = WB_FLASH_BAUD) -> 
 def write(cfg, image: Path, before_write=None, log=print) -> int:
     tgt = remote_serial.target(cfg)
     remote_serial.resolve_device(tgt)
+    require_release(cfg)
     if ensure_tools(tgt):
         log("wb flash: esptool copied to %s:%s" % (tgt.ssh, REMOTE_TOOLS))
     remote = stage(tgt, image)
     try:
-        remote_serial.control(cfg, "bootloader")
-        try:
-            if before_write is not None:
-                before_write()
-        except Exception:
-            remote_serial.control(cfg, "run")
-            raise
-        remote_serial.control(cfg, "release")
+        enter_loader(cfg, before_write)
         try:
             log("wb flash: writing %s on %s through %s" % (image.name, tgt.ssh, tgt.device))
-            return _ssh(tgt, write_command(tgt.device, remote), timeout=WRITE_TIMEOUT_S).returncode
+            return run_detached(tgt, write_command(tgt.device, remote), log)
         finally:
             remote_serial.control(cfg, "reacquire")
     finally:
         unstage(tgt, remote)
+
+
+def require_release(cfg):
+    reply = remote_serial.control(cfg, "status")
+    if "released" in reply.split():
+        raise WbFlashError("the bridge's port is released, so a write did not finish: "
+                           "`hil %sremote reacquire` opens it again (and resets the board)"
+                           % _peer_flag(cfg))
+    verbs = reply.partition(BRIDGE_VERBS)[2].split(" ")[0].split(",")
+    if RELEASE_VERB not in verbs:
+        raise WbFlashError("the bridge on the WB cannot release its port (%s): `hil "
+                           "%sremote start --restart` runs the current bridge, which resets "
+                           "the board" % (reply, _peer_flag(cfg)))
+
+
+def enter_loader(cfg, before_write=None):
+    remote_serial.control(cfg, "bootloader")
+    try:
+        if before_write is not None:
+            before_write()
+        remote_serial.control(cfg, "release")
+    except Exception:
+        remote_serial.control(cfg, "run")
+        raise
+
+
+def run_detached(tgt, command, log=print, timeout_s=WRITE_TIMEOUT_S) -> int:
+    start = ("rm -f {rc}; nohup setsid sh -c '{cmd} > {log} 2>&1; echo $? > {rc}' "
+             "< /dev/null > /dev/null 2>&1 &").format(cmd=command, log=WRITE_LOG, rc=WRITE_RC)
+    try:
+        _ssh(tgt, start, timeout=WRITE_START_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        log("wb flash: the ssh that started esptool hung; polling for its result")
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        time.sleep(WRITE_POLL_S)
+        rc = _remote_rc(tgt)
+        if rc is not None:
+            if rc != 0:
+                log(_ssh(tgt, "tail -%d %s" % (WRITE_LOG_TAIL, WRITE_LOG),
+                         capture_output=True, text=True).stdout)
+            return rc
+    raise WbFlashError("esptool did not finish within %ds on %s: see %s there"
+                       % (timeout_s, tgt.ssh, WRITE_LOG))
+
+
+def _remote_rc(tgt):
+    try:
+        out = _ssh(tgt, "cat %s 2>/dev/null" % WRITE_RC, capture_output=True, text=True)
+    except subprocess.TimeoutExpired:
+        return None
+    text = out.stdout.strip()
+    return int(text) if text.lstrip("-").isdigit() else None
+
+
+def _peer_flag(cfg) -> str:
+    return "--peer " if cfg.is_peer else ""
 
 
 def _await_served(url, timeout_s=OTA_SERVER_START_TIMEOUT_S):

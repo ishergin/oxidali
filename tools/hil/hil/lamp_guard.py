@@ -1,5 +1,4 @@
 import re
-from urllib.parse import unquote
 
 TARGET_SEGMENT = -1
 SHORT_LIMIT = 0x80
@@ -35,159 +34,110 @@ class LampNotAllowed(RuntimeError):
     pass
 
 
-INITIALISE, RANDOMISE, PROGRAM_SHORT_ADDRESS = 0xA5, 0xA7, 0xB7
-COMMISSIONING_SPECIALS = frozenset({INITIALISE, RANDOMISE, PROGRAM_SHORT_ADDRESS})
+TERMINATE, DTR0, INITIALISE, RANDOMISE, COMPARE, WITHDRAW, PING = (
+    0xA1, 0xA3, 0xA5, 0xA7, 0xA9, 0xAB, 0xAD)
+SEARCH_ADDRESS_H, SEARCH_ADDRESS_M, SEARCH_ADDRESS_L = 0xB1, 0xB3, 0xB5
+PROGRAM_SHORT_ADDRESS, VERIFY_SHORT_ADDRESS, QUERY_SHORT_ADDRESS = 0xB7, 0xB9, 0xBB
+ENABLE_DEVICE_TYPE, DTR1, DTR2 = 0xC1, 0xC3, 0xC5
+WRITE_MEMORY_LOCATION, WRITE_MEMORY_LOCATION_NO_REPLY = 0xC7, 0xC9
+SPECIAL_FIRST = 0xA0
+INITIALISE_UNADDRESSED = 0xFF
+SETUP_SPECIALS = frozenset({TERMINATE, DTR0, PING, ENABLE_DEVICE_TYPE, DTR1, DTR2,
+                            WRITE_MEMORY_LOCATION, WRITE_MEMORY_LOCATION_NO_REPLY})
+COMMISSIONING_SPECIALS = frozenset({INITIALISE, RANDOMISE, COMPARE, WITHDRAW,
+                                    SEARCH_ADDRESS_H, SEARCH_ADDRESS_M, SEARCH_ADDRESS_L,
+                                    PROGRAM_SHORT_ADDRESS, VERIFY_SHORT_ADDRESS,
+                                    QUERY_SHORT_ADDRESS})
+PARK_OPERAND_SPECIALS = frozenset({PROGRAM_SHORT_ADDRESS, VERIFY_SHORT_ADDRESS})
 GROUP_CONFIG_OPCODES = range(0x60, 0x80)
 GROUP_OF_OPCODE = 0x0F
-PUT, DELETE = "PUT", "DELETE"
-COMMISSION_MODE = "commission_unaddressed"
+PUT, PATCH, POST = "PUT", "PATCH", "POST"
+UNADDRESSED_SCOPE = "unaddressed"
+STEPS_ANY_OPERAND = frozenset({"initialise", "randomise", "search-address", "compare",
+                               "withdraw", "terminate"})
+STEPS_PARK_OPERAND = frozenset({"program-short-address", "verify-short-address"})
 
-FENCE_ROUTES = (
+VIRTUAL_ROUTES = (
+    ("lamp_ts", re.compile(r"adapters/\d+/virtual-lamps/(\d+)/target-state")),
+    ("device_ts", re.compile(r"adapters/\d+/physical-devices/(\d+)/target-state")),
     ("group_ts", re.compile(r"adapters/\d+/groups/(\d+)/target-state")),
-    ("groups_apply", re.compile(r"adapters/\d+/groups/apply")),
-    ("group_meta", re.compile(r"adapters/\d+/groups/(\d+)")),
     ("group_matrix", re.compile(r"adapters/\d+/group-membership-matrix")),
+    ("groups_apply", re.compile(r"adapters/\d+/groups/apply")),
     ("scene_matrix", re.compile(r"adapters/\d+/scenes/(\d+)/matrix")),
     ("scene_apply", re.compile(r"adapters/\d+/scenes/(\d+)/apply")),
-    ("scene_recall", re.compile(r"adapters/\d+/scenes/(\d+)/recall")),
-    ("scene_meta", re.compile(r"adapters/\d+/scenes/(\d+)")),
-    ("hcl", re.compile(r"hcl-schedules(?:/([^/]+))?(?:/override)?")),
-    ("rule_run", re.compile(r"rules/([^/]+)/run")),
-    ("rules", re.compile(r"rules(?:/([^/]+))?")),
-    ("commissioning", re.compile(r"adapters/\d+/commissioning/(?!identify$).+")),
-    ("discovery", re.compile(r"adapters/\d+/discovery-runs")),
-    ("policies", re.compile(r"policies(?:/apply)?")),
-    ("device_config", re.compile(r"adapters/\d+/physical-devices/(\d+)(?:/write-attributes)?")),
-    ("vl_binding", re.compile(r"adapters/\d+/virtual-lamps/(\d+)/binding")),
-    ("vl", re.compile(r"adapters/\d+/virtual-lamps/(\d+)")),
+    ("identify", re.compile(r"adapters/\d+/commissioning/identify")),
+    ("step", re.compile(r"adapters/\d+/commissioning/steps/([a-z-]+)")),
 )
 
 
 class VirtualFence:
-    def __init__(self, park, groups, session_vls, owner_rules="", owner_schedules=(),
-                 commissioning=False, pending=None):
+    def __init__(self, park, groups, session_vls, commissioning=False, pending=None):
         self.park = frozenset(park)
         self.groups = frozenset(groups)
         self.session_vls = frozenset(session_vls)
-        self.owner_rules = owner_rules or ""
-        self.owner_schedules = frozenset(owner_schedules)
         self.commissioning = bool(commissioning)
         self._pending = pending
 
     def check_request(self, method, path, body):
-        for kind, pattern in FENCE_ROUTES:
+        if path.startswith(DIAGNOSTIC_PREFIX):
+            return False
+        for kind, pattern in VIRTUAL_ROUTES:
             match = pattern.fullmatch(path)
             if match:
                 key = match.group(1) if pattern.groups else None
-                return getattr(self, "_" + kind)(method, key, body)
-        return False
+                getattr(self, "_" + kind)(method, key, body)
+                return True
+        self.refuse("%s %s (not on the virtual tier's list)" % (method, path))
 
     def refuse(self, what):
         raise LampNotAllowed("%s refused: the virtual-gear session reaches only the park "
                              "SA%s and groups %s" % (what, spell(self.park), spell(self.groups)))
 
+    def _lamp_ts(self, method, key, body):
+        if method != PUT or int(key) not in self.session_vls:
+            self.refuse("%s target-state of VL%s" % (method, key))
+
+    def _device_ts(self, method, key, body):
+        if method != PUT or int(key) not in self.park:
+            self.refuse("%s target-state of SA%s" % (method, key))
+
     def _group_ts(self, method, key, body):
-        if int(key) not in self.groups:
-            self.refuse("target-state of group %s" % key)
-        return True
-
-    def _groups_apply(self, method, key, body):
-        self._pending_only("group", None)
-        return True
-
-    def _group_meta(self, method, key, body):
-        allowed = isinstance(body, dict) and set(body) <= {"ha_entity_enabled"} \
-            and int(key) in self.groups
-        if not allowed:
-            self.refuse("%s of group %s %r" % (method, key, body))
-        return True
+        if method != PUT or int(key) not in self.groups:
+            self.refuse("%s target-state of group %s" % (method, key))
 
     def _group_matrix(self, method, key, body):
         self._session_rows(method, body, "group membership", self.groups)
-        return True
+
+    def _groups_apply(self, method, key, body):
+        self._pending_only(method, "group", None)
 
     def _scene_matrix(self, method, key, body):
         self._session_rows(method, body, "scene %s" % key, None)
-        return True
 
     def _scene_apply(self, method, key, body):
-        self._pending_only("scene", int(key))
-        return True
+        self._pending_only(method, "scene", int(key))
 
-    def _scene_recall(self, method, key, body):
-        scope = body.get("scope") if isinstance(body, dict) else None
-        if scope != "group" or body.get("group_id") not in self.groups:
-            self.refuse("recall of scene %s with %r" % (key, body))
-        return True
+    def _identify(self, method, key, body):
+        short = body.get("short_address") if isinstance(body, dict) else None
+        if method != POST or short not in self.park:
+            self.refuse("IDENTIFY DEVICE of %r" % short)
 
-    def _scene_meta(self, method, key, body):
-        self.refuse("%s of scene %s" % (method, key))
-
-    def _hcl(self, method, key, body):
-        if method == DELETE and key in self.owner_schedules:
-            self.refuse("deleting the owner's HCL schedule %s" % key)
-        for target in (body or {}).get("targets") or [] if isinstance(body, dict) else []:
-            if target.get("scope") != "group" or \
-                    not set(target.get("group_ids") or ()) <= self.groups:
-                self.refuse("HCL target %r" % target)
-        return True
-
-    def owns_rule(self, key):
-        return unquote(key or "") in RULE_NAME.findall(self.owner_rules)
-
-    def _rule_run(self, method, key, body):
-        if self.owns_rule(key):
-            self.refuse("running the owner's rule %r" % unquote(key))
-        return True
-
-    def _rules(self, method, key, body):
-        if method == "POST" and key == RULES_PARSE:
-            return True
-        if method == "PATCH" and key and not self.owns_rule(key):
-            return True
-        source = body.get("source") if isinstance(body, dict) else None
-        if method != PUT or key or not isinstance(source, str):
-            self.refuse("%s rules/%s" % (method, unquote(key or "")))
-        new_groups = set(RULE_GROUP.findall(source)) - set(RULE_GROUP.findall(self.owner_rules))
-        stray = sorted(int(g) for g in new_groups if int(g) not in self.groups)
-        if stray:
-            self.refuse("a rules document that drives groups %s" % stray)
-        return True
-
-    def _commissioning(self, method, key, body):
+    def _step(self, method, key, body):
         if not self.commissioning:
             self.refuse("commissioning step %s (HIL_ALLOW_VIRTUAL_COMMISSIONING is off)" % key)
-        return True
-
-    def _discovery(self, method, key, body):
-        mode = body.get("mode") if isinstance(body, dict) else None
-        if mode == COMMISSION_MODE and not self.commissioning:
-            self.refuse("discovery mode %s" % mode)
-        return True
-
-    def _policies(self, method, key, body):
-        self.refuse("%s policies" % method)
-
-    def _device_config(self, method, key, body):
-        if int(key) not in self.park:
-            self.refuse("%s of SA%s" % (method, key))
-        return True
-
-    def _vl_binding(self, method, key, body):
-        short = body.get("physical_short_address") if isinstance(body, dict) else None
-        if int(key) not in self.session_vls or (method == PUT and short not in self.park):
-            self.refuse("binding VL%s to %r" % (key, short))
-        return True
-
-    def _vl(self, method, key, body):
-        if int(key) not in self.session_vls:
-            self.refuse("%s of VL%s" % (method, key))
-        return True
+        body = body if isinstance(body, dict) else {}
+        if method != POST or key not in STEPS_ANY_OPERAND | STEPS_PARK_OPERAND:
+            self.refuse("%s commissioning step %s" % (method, key))
+        if key == "initialise" and body.get("scope") != UNADDRESSED_SCOPE:
+            self.refuse("initialise with %r: only gear without a short address may enter "
+                        "initialisation" % body)
+        if key in STEPS_PARK_OPERAND and body.get("short_address") not in self.park:
+            self.refuse("%s to %r, outside the park" % (key, body.get("short_address")))
 
     def _session_rows(self, method, body, what, groups):
         rows = body.get("rows") if isinstance(body, dict) else body
-        if method == PUT or not isinstance(rows, list):
-            self.refuse("replacing the whole %s matrix" % what)
+        if method != PATCH or not isinstance(rows, list):
+            self.refuse("%s of the whole %s matrix" % (method, what))
         for row in rows:
             if row.get("virtual_lamp_id") not in self.session_vls:
                 self.refuse("a %s row of VL%s" % (what, row.get("virtual_lamp_id")))
@@ -196,16 +146,16 @@ class VirtualFence:
                 self.refuse("VL%s into groups outside %s" % (row.get("virtual_lamp_id"),
                                                              spell(groups)))
 
-    def _pending_only(self, kind, scene):
+    def _pending_only(self, method, kind, scene):
         pending = set(self._pending(kind, scene)) if self._pending else None
-        if pending is None or not pending <= self.session_vls:
+        if method != POST or pending is None or not pending <= self.session_vls:
             self.refuse("an apply whose diff reaches VL%s" % spell((pending or set())
                                                                   - self.session_vls))
 
     def check_frame(self, addr, data):
-        if addr in COMMISSIONING_SPECIALS and not self.commissioning:
-            raise LampNotAllowed("commissioning frame 0x%02X refused: "
-                                 "HIL_ALLOW_VIRTUAL_COMMISSIONING is off" % addr)
+        if SPECIAL_FIRST <= addr < BROADCAST_FIRST:
+            self._special(addr, data)
+            return True
         target = wire_target(addr)
         if target is None or not frame_writes(addr, data):
             return False
@@ -217,15 +167,30 @@ class VirtualFence:
                 raise LampNotAllowed("%s refused: the group is outside %s"
                                      % (describe_frame(addr, data), spell(self.groups)))
             return True
+        if target not in self.park:
+            raise LampNotAllowed("%s refused: SA%d is outside the park %s"
+                                 % (describe_frame(addr, data), target, spell(self.park)))
         if addr & 1 and data in GROUP_CONFIG_OPCODES and data & GROUP_OF_OPCODE not in self.groups:
             raise LampNotAllowed("%s refused: it joins or leaves a group outside %s"
                                  % (describe_frame(addr, data), spell(self.groups)))
-        return False
+        return True
 
-
-RULE_GROUP = re.compile(r"\bgroup\((\d+)\)")
-RULE_NAME = re.compile(r'^\s*rule\s+"([^"]*)"', re.MULTILINE)
-RULES_PARSE = "parse"
+    def _special(self, addr, data):
+        if addr in SETUP_SPECIALS:
+            return
+        if addr not in COMMISSIONING_SPECIALS:
+            raise LampNotAllowed("special command 0x%02X refused: the virtual tier never "
+                                 "sends it" % addr)
+        if not self.commissioning:
+            raise LampNotAllowed("commissioning frame 0x%02X refused: "
+                                 "HIL_ALLOW_VIRTUAL_COMMISSIONING is off" % addr)
+        if addr == INITIALISE and data != INITIALISE_UNADDRESSED:
+            raise LampNotAllowed("INITIALISE 0x%02X refused: only gear without a short "
+                                 "address (0x%02X) may enter initialisation"
+                                 % (data, INITIALISE_UNADDRESSED))
+        if addr in PARK_OPERAND_SPECIALS and data not in {(s << 1) | 1 for s in self.park}:
+            raise LampNotAllowed("special command 0x%02X with operand 0x%02X refused: it "
+                                 "names no park address" % (addr, data))
 
 
 def wire_target(addr):
@@ -279,7 +244,13 @@ def describe_frame(addr, data):
 
 
 def spell(shorts):
-    return ",".join(str(s) for s in sorted(shorts)) or "(none)"
+    runs = []
+    for short in sorted(set(shorts)):
+        if runs and short == runs[-1][1] + 1:
+            runs[-1][1] = short
+        else:
+            runs.append([short, short])
+    return ",".join(str(a) if a == b else "%d-%d" % (a, b) for a, b in runs) or "(none)"
 
 
 def named(shorts):

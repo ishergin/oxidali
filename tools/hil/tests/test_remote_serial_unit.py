@@ -338,6 +338,14 @@ def test_a_released_port_answers_only_status_and_reacquire(tmp_path, monkeypatch
     assert reply == "ok reacquired" and reopened and not bridge.released
 
 
+def test_status_names_the_verbs_a_writer_needs(tmp_path):
+    (tmp_path / "ttyACM0").write_text("")
+    with open(tmp_path / "ttyACM0") as held:
+        bridge, _ = _live_bridge(tmp_path, held)
+        reply = bridge._control_reply("status")
+    assert reply.endswith("verbs=release,reacquire,write")
+
+
 def test_a_write_reaches_the_port_as_one_line(tmp_path):
     (tmp_path / "ttyACM0").write_text("")
     with open(tmp_path / "ttyACM0") as held:

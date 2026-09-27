@@ -1,8 +1,11 @@
 import time
 
+import pytest
+
 from hil import api as api_mod
 from hil import config as config_mod
-from hil import validity
+from hil import role, validity
+from hil.lamp_guard import spell
 from hil.seriallog import SerialLog
 from hil_harness import UPTIME_SLACK_S, peer_health
 
@@ -58,7 +61,7 @@ def _validity_state(config):
     state["stack_identity"] = dict(validity.run_identity(cfg.runs_dir),
                                    devices=_registry_device_count(cfg),
                                    version=_running_version(cfg))
-    state["gear_segment"] = _gear_segment(cfg)
+    state["gear_segment"] = _gear_segment(cfg, getattr(config, "_hil_virtual_plan", None))
     state["peer"], state["peer_breach"] = _peer_state(
         cfg, getattr(config, "_hil_peer_start", None))
     state["bus_drops"] = _bus_drops(cfg, getattr(config, "_hil_isr_baseline", {}))
@@ -73,6 +76,8 @@ def _peer_state(cfg, start):
     if not cfg.has_peer:
         return "none (single controller)", None
     peer = cfg.peer()
+    if role.is_gear_sim(peer) and role.controller_health(peer) is None:
+        return "the gear emulator (%s)" % role.current(peer).get("via"), None
     health, end = peer_health(peer)
     breach, continuity = validity.peer_continuity(start, end, UPTIME_SLACK_S)
     identity = validity.run_identity(peer.runs_dir)
@@ -88,7 +93,10 @@ def _running_version(cfg):
         return None
 
 
-def _gear_segment(cfg):
+def _gear_segment(cfg, virtual_plan=None):
+    if virtual_plan:
+        return ("VIRTUAL: emulated gear on the park SA%s; no real lamp is driven, so this is a "
+                "run on emulated gear, not a lamp acceptance run" % spell(virtual_plan["park"]))
     wanted = cfg.gear_short_set()
     if wanted is None:
         return "whole registry (HIL_GEAR_SHORTS unset)"
@@ -190,6 +198,7 @@ def _write_summary(config, lines):
         print("could not write summary.md: %s" % exc)
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
     config = session.config
     if config.getoption("--collect-only"):
@@ -208,7 +217,7 @@ def pytest_sessionfinish(session, exitstatus):
         lines += ["OVER BUDGET: %s absorbed %d, budget %d" % row for row in over]
         lines.append("A budget is raised with a dated measurement in "
                      "tools/hil/retry_budget.txt, never to make a run green.")
-        session.exitstatus = 1
+        session.exitstatus = session.exitstatus or 1
     shed = validity.bus_drop_breaches(state, budget)
     if shed:
         lines.append("")
@@ -218,7 +227,7 @@ def pytest_sessionfinish(session, exitstatus):
                      "by TTL reporting a timeout for work that finished "
                      "(ISSUE-50, ADR-021) — find the producer, do not raise "
                      "tools/hil/retry_budget.txt.")
-        session.exitstatus = 1
+        session.exitstatus = session.exitstatus or 1
     deep = validity.stack_breaches(state.get("stack_min_free") or {},
                                    state.get("stack_budget") or {})
     if deep:
@@ -228,7 +237,7 @@ def pytest_sessionfinish(session, exitstatus):
                      "Stack protection fault (ISSUE-49). Shorten the path the "
                      "probe names, or move the growth off the stack — raising "
                      "tools/hil/stack_budget.txt is not the fix.")
-        session.exitstatus = 1
+        session.exitstatus = session.exitstatus or 1
     dead = validity.stack_budget_dead_lines(state.get("stack_min_free") or {},
                                             state.get("stack_budget") or {})
     if dead:
@@ -238,14 +247,14 @@ def pytest_sessionfinish(session, exitstatus):
                      "budget key spelled any other way measures nothing. Spell the "
                      "key as `task stack hwm` prints it; a task the firmware spawns "
                      "only on demand belongs in ON_DEMAND_TASKS (hil/validity.py).")
-        session.exitstatus = 1
+        session.exitstatus = session.exitstatus or 1
     gaps = state.get("stack_observation_gaps") or []
     if gaps:
         lines.append("")
         lines.append("STACK OBSERVATION STALE/MISSING: %s" % ", ".join(gaps))
         lines.append("A callback-owned task must publish a fresh watermark; a "
                      "cached kernel handle is never dereferenced after exit.")
-        session.exitstatus = 1
+        session.exitstatus = session.exitstatus or 1
     peer_breach = state.get("peer_breach")
     if peer_breach:
         lines.append("")
@@ -253,7 +262,7 @@ def pytest_sessionfinish(session, exitstatus):
         lines.append("The second controller shares the line: from that moment the "
                      "session measured next to a unit that was booting, arbitrating "
                      "or holding the bus. Find what touched it before trusting the run.")
-        session.exitstatus = 1
+        session.exitstatus = session.exitstatus or 1
     pending = state.get("production_state_pending")
     if pending:
         lines.append("")
@@ -261,7 +270,7 @@ def pytest_sessionfinish(session, exitstatus):
                      "was kept, and this session only restored to what it found. "
                      "Run `hil state restore` to put the owner's installation back."
                      % pending)
-        session.exitstatus = 1
+        session.exitstatus = session.exitstatus or 1
     residual = state.get("production_state_residual") or []
     if residual:
         lines.append("")
@@ -269,7 +278,7 @@ def pytest_sessionfinish(session, exitstatus):
         lines.append("The session left the owner's installation different from "
                      "how it found it. The snapshot is tools/hil/state/"
                      "production_state_last.json; `hil state restore` retries.")
-        session.exitstatus = 1
+        session.exitstatus = session.exitstatus or 1
     eroded = validity.boot_heap_breaches(state.get("boot_heap") or {},
                                         state.get("boot_heap_budget") or {})
     if eroded:
@@ -282,7 +291,7 @@ def pytest_sessionfinish(session, exitstatus):
                      "and a boot loop. Find what the stage named above now "
                      "allocates; lowering tools/hil/boot_heap_budget.txt needs a "
                      "dated reason.")
-        session.exitstatus = 1
+        session.exitstatus = session.exitstatus or 1
     thin = validity.runtime_heap_breaches(state.get("runtime_heap") or {},
                                           state.get("runtime_heap_budget") or {})
     if thin:
@@ -294,10 +303,10 @@ def pytest_sessionfinish(session, exitstatus):
                      "task stack, httpd, DMA, TLS — fails. The serial line "
                      "`internal SRAM low-water` names the moment; lowering "
                      "tools/hil/runtime_heap_budget.txt needs a dated reason.")
-        session.exitstatus = 1
+        session.exitstatus = session.exitstatus or 1
     lines += _virtual_gear_lines(state)
     if state.get("virtual_gear_safety") or state.get("virtual_gear_residual"):
-        session.exitstatus = 1
+        session.exitstatus = session.exitstatus or 1
     config._hil_validity_report = lines
     _write_summary(config, lines)
 

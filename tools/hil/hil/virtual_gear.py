@@ -3,9 +3,12 @@ import os
 import re
 import subprocess
 import time
+from functools import partial
 from pathlib import Path
 
 from hil import remote_serial, role, serialmon
+from hil.gearsim import GearSim, GearSimUnavailable
+from hil.lamp_guard import spell
 
 LEDGER = role.LEDGER
 
@@ -15,12 +18,16 @@ VL_ID_LIMIT = 64
 RESERVE_FLOOR = 16
 DEFAULT_PARK = (4, 4, 4)
 LADDER_FIRST = 4
+LADDER_COUNTERS = ("sent", "late", "expired")
 
 GROUP_ADDRESS_BASE = 0x80
 SELECTOR_BIT = 0x01
 QUERY_STATUS = 0x90
 QUERY_CONTROL_GEAR_PRESENT = 0x91
 YES = 0xFF
+PROOF_PROBES = 3
+PROOF_ATTEMPTS = 3
+CONTENTION_COUNTERS = ("collision_restarts_total", "foreign_frames_total")
 
 SCAN_MODE = "scan_known_short_addresses"
 PARK_VL_NAME = "virtual gear SA%d"
@@ -61,16 +68,6 @@ class Ledger:
         self.path.unlink(missing_ok=True)
 
 
-def spell(shorts) -> str:
-    ordered, runs = sorted(set(shorts)), []
-    for short in ordered:
-        if runs and short == runs[-1][1] + 1:
-            runs[-1][1] = short
-        else:
-            runs.append([short, short])
-    return ",".join(str(a) if a == b else "%d-%d" % (a, b) for a, b in runs)
-
-
 def reserve(registry, wb, owner) -> frozenset:
     return frozenset(range(RESERVE_FLOOR)) | frozenset(registry) | frozenset(wb) | frozenset(owner)
 
@@ -80,12 +77,15 @@ def park_shorts(reserved, count) -> list:
     if len(free) < count:
         raise VirtualGearError("%d gear asked, %d addresses are free of the reserve"
                                % (count, len(free)))
-    base = free[0]
-    return [s for s in free if s >= base][:count]
+    return free[:count]
 
 
 def registry_shorts(api) -> set:
     return {d["short_address"] for d in api.devices_unfiltered()["physical_devices"]}
+
+
+def vl_ids(api) -> list:
+    return sorted(v["virtual_lamp_id"] for v in api.vlamps.list_unfiltered()["virtual_lamps"])
 
 
 def wb_shorts(cfg) -> set:
@@ -94,7 +94,12 @@ def wb_shorts(cfg) -> set:
     if out.returncode != 0:
         raise VirtualGearError("could not read %s on %s: %s"
                                % (WB_CONFIG, cfg.wb_ssh, out.stderr.strip()))
-    return wb_shorts_of(json.loads(out.stdout), cfg.wb_device, cfg.wb_bus)
+    shorts = wb_shorts_of(json.loads(out.stdout), cfg.wb_device, cfg.wb_bus)
+    if not shorts:
+        raise VirtualGearError("%s lists no gear for device %r bus %d: check HIL_WB_DEVICE and "
+                               "HIL_WB_BUS, or the reserve misses every lamp only the WB "
+                               "master knows" % (WB_CONFIG, cfg.wb_device, cfg.wb_bus))
+    return shorts
 
 
 def wb_shorts_of(conf, device, bus) -> set:
@@ -119,9 +124,8 @@ def used_groups(devices, matrix_rows):
             return None
         used |= {g for g in range(GROUP_COUNT) if mask >> g & 1}
     for row in matrix_rows:
-        for group, desired in enumerate(row.get("desired") or []):
-            if desired:
-                used.add(group)
+        for key in ("desired", "applied"):
+            used |= {g for g, bit in enumerate(row.get(key) or []) if bit}
     return used
 
 
@@ -138,19 +142,44 @@ def answered_yes(resp) -> bool:
         (bool(resp.get("success")) and resp.get("backward_frame") == YES)
 
 
+def answered_cleanly(resp) -> bool:
+    return bool(resp.get("success")) and not resp.get("backward_violation")
+
+
+def contention(api) -> tuple:
+    dali = api.stats().get("dali") or {}
+    return tuple(dali.get(name, 0) for name in CONTENTION_COUNTERS)
+
+
+def _answers(api, group) -> list:
+    return [answered_yes(api.cmd_wire(group_address(group), QUERY_CONTROL_GEAR_PRESENT))
+            for _ in range(PROOF_PROBES)]
+
+
+def _probe_groups(api, groups, used):
+    control = next((g for g in sorted(used) if all(_answers(api, g))), None)
+    occupied = [g for g in groups if any(_answers(api, g))]
+    return control, occupied
+
+
 def prove_groups_empty(api, groups, used):
-    controls = [g for g in sorted(used or ()) if answered_yes(
-        api.cmd_wire(group_address(g), QUERY_CONTROL_GEAR_PRESENT))]
-    if not controls:
-        raise VirtualGearError(
-            "no group live lamps hold answered QUERY CONTROL GEAR PRESENT, so silence "
-            "from the free groups would prove nothing")
-    occupied = [g for g in groups if answered_yes(
-        api.cmd_wire(group_address(g), QUERY_CONTROL_GEAR_PRESENT))]
-    if occupied:
-        raise VirtualGearError("groups %s answer on the wire: real gear sits in them"
-                               % occupied)
-    return controls[0]
+    if not groups:
+        return None
+    for _ in range(PROOF_ATTEMPTS):
+        before = contention(api)
+        control, occupied = _probe_groups(api, groups, used)
+        if contention(api) != before:
+            continue
+        if control is None:
+            raise VirtualGearError(
+                "no group live lamps hold answered QUERY CONTROL GEAR PRESENT on every probe, "
+                "so silence from the free groups would prove nothing")
+        if occupied:
+            raise VirtualGearError("groups %s answer on the wire: real gear sits in them"
+                                   % occupied)
+        return control
+    raise VirtualGearError("another transmitter shared the wire during every group proof "
+                           "(%s moved), so silence proved nothing" % ", ".join(CONTENTION_COUNTERS))
 
 
 def rules_conflicts(source, groups, names) -> list:
@@ -182,9 +211,18 @@ def retained(cfg, prefixes) -> dict:
     return found
 
 
+def retained_residue(before, now, discovery_prefix) -> list:
+    out = ["retained MQTT topic appeared: %s" % t for t in sorted(set(now) - set(before))]
+    out += ["retained MQTT topic vanished: %s" % t for t in sorted(set(before) - set(now))]
+    out += ["retained MQTT config changed: %s" % t for t in sorted(set(before) & set(now))
+            if discovery_prefix and t.startswith(discovery_prefix + "/")
+            and before[t] != now[t]]
+    return out
+
+
 class VirtualSession:
-    def __init__(self, cfg, api, peer_cfg, sim, owner_shorts=(), park=DEFAULT_PARK, log=print):
-        self.cfg, self.api, self.peer_cfg, self.sim = cfg, api, peer_cfg, sim
+    def __init__(self, cfg, api, sim, owner_shorts=(), park=DEFAULT_PARK, log=print):
+        self.cfg, self.api, self.sim = cfg, api, sim
         self.owner_shorts, self.shape, self.log = frozenset(owner_shorts), park, log
         self.ledger = Ledger.of(cfg)
 
@@ -212,31 +250,37 @@ class VirtualSession:
         if problems:
             raise VirtualGearError("; ".join(problems))
         control = prove_groups_empty(self.api, groups, used)
+        ha = self._ha_prefixes()
         self.ledger.update(opened_at=time.strftime("%Y-%m-%dT%H:%M:%S"), phase="building",
                            reserve=sorted(reserved), park=park, groups=groups,
                            positive_control=control, wb_before=sorted(wb),
-                           vl_before=[v["virtual_lamp_id"] for v in
-                                      self.api.vlamps.list()["virtual_lamps"]],
-                           ha_before=self._retained())
+                           vl_before=vl_ids(self.api), ha_prefixes=ha,
+                           ha_before=self._retained(ha))
         self._build(reserved, park)
         self._neutralise(groups)
         self._enrol(park, groups)
         self.ledger.update(phase="open")
         return self.ledger.data
 
-    def _retained(self):
+    def _ha_prefixes(self):
         ha = self.api.ha.get()
         if not ha.get("enabled"):
             return {}
-        prefixes = [p for p in (ha.get("discovery_prefix"), ha.get("state_topic_prefix")) if p]
-        found = retained(self.cfg, prefixes)
+        return {key: ha.get(key) for key in ("discovery_prefix", "state_topic_prefix")
+                if ha.get(key)}
+
+    def _retained(self, prefixes):
+        if not prefixes:
+            return {}
+        found = retained(self.cfg, sorted(prefixes.values()))
         if not found:
             raise VirtualGearError("Home Assistant is enabled, yet no retained topic under %s "
-                                   "was read: the HA check would be blind" % prefixes)
+                                   "was read: the HA check would be blind"
+                                   % sorted(prefixes.values()))
         return found
 
     def _build(self, reserved, park):
-        self.sim.reserve(spell(reserved))
+        self.sim.reserve(reserved)
         self.sim.fleet(park[0], *self.shape)
         shown = sorted(row["short"] for row in self.sim.show())
         if shown != park:
@@ -246,12 +290,16 @@ class VirtualSession:
 
     def _ladder(self, park):
         first = park[0]
+        before = self.sim.stats()
         self.sim.enable(first)
-        if not answered_status(self.api.cmd(first, QUERY_STATUS)):
-            raise VirtualGearError("SA%d does not answer the controller's QUERY STATUS" % first)
-        stats = self.sim.stats()
-        if stats.get("sent", 0) < 1 or stats.get("late", 0) or stats.get("expired", 0):
-            raise VirtualGearError("the first answer left the window: %r" % stats)
+        reply = self.api.cmd(first, QUERY_STATUS)
+        if not answered_cleanly(reply):
+            raise VirtualGearError("SA%d does not answer the controller's QUERY STATUS "
+                                   "cleanly: %r" % (first, reply))
+        after = self.sim.stats()
+        moved = {key: after.get(key, 0) - before.get(key, 0) for key in LADDER_COUNTERS}
+        if moved["sent"] < 1 or moved["late"] or moved["expired"]:
+            raise VirtualGearError("the first answer left the window: %r" % moved)
         for short in park[1:LADDER_FIRST]:
             self.sim.enable(short)
         self.sim.enable("all")
@@ -269,58 +317,90 @@ class VirtualSession:
 
     def _enrol(self, park, groups):
         self.api.wait_op(self.api.discovery(SCAN_MODE))
-        present = {d["short_address"]: d for d in self.api.devices_unfiltered()["physical_devices"]}
-        missing = [s for s in park if s not in present]
+        missing = sorted(set(park) - registry_shorts(self.api))
         if missing:
             raise VirtualGearError("the scan did not enrol %s" % spell(missing))
-        stray = [s for s in park if (present[s].get("groups_membership") or 0) & ~group_mask(groups)]
+        stray = [row["short"] for row in self.sim.show()
+                 if row["short"] in park and row["groups"] & ~group_mask(groups)]
         if stray:
             raise VirtualGearError("emulated gear %s hold groups outside %s" % (stray, groups))
         ids = free_vl_ids(self.ledger.data.get("vl_before", []), len(park))
         for lamp_id, short in zip(ids, park):
-            self.api.vlamps.patch(lamp_id, {"name": PARK_VL_NAME % short, "ha_entity_enabled": False})
             self.ledger.append("created_vls", lamp_id)
+            self.api.vlamps.patch(lamp_id, {"name": PARK_VL_NAME % short, "ha_entity_enabled": False})
             self.api.vlamps.bind(lamp_id, short)
         self.ledger.update(vl_of_short={str(s): i for i, s in zip(ids, park)})
 
     def close(self):
         if not self.ledger.exists():
             return []
-        data = self.ledger.data
+        residue = []
+        for label, step in self._teardown_steps():
+            try:
+                step()
+            except Exception as exc:
+                residue.append("%s failed: %s" % (label, exc))
+                self.log("virtual gear: %s failed: %s" % (label, exc))
         try:
-            self.sim.disable("all")
+            residue += self.residual()
         except Exception as exc:
-            self.log("virtual gear: the emulator did not go quiet (%s)" % exc)
-        for lamp_id in data.get("created_vls", []):
-            _ignore_missing(lambda: self.api.vlamps.delete(lamp_id))
-        for short in data.get("park", []):
-            _ignore_missing(lambda: self.api.device_forget(short))
-        for group, flag in (data.get("group_flags") or {}).items():
-            self.api.groups.patch(int(group), {"ha_entity_enabled": flag})
-        if data.get("policy_rearm"):
-            self.api._req("PATCH", "policies", {"apply_on_discovery": True})
-        residual = self.residual()
-        if not residual:
+            residue.append("the residue check failed: %s" % exc)
+        if not residue:
             self.ledger.remove()
-        return residual
+        return residue
+
+    def _teardown_steps(self):
+        data = self.ledger.data
+        steps = [("silencing the emulated fleet", self._silence)]
+        steps += [("deleting VL%d" % i, partial(_ignore_missing, partial(self.api.vlamps.delete, i)))
+                  for i in data.get("created_vls", [])]
+        steps += [("forgetting SA%d" % s, partial(_ignore_missing, partial(self.api.device_forget, s)))
+                  for s in data.get("park", [])]
+        steps += [("restoring group %s's HA flag" % g, partial(self._restore_flag, int(g), flag))
+                  for g, flag in (data.get("group_flags") or {}).items()]
+        if data.get("policy_rearm"):
+            steps.append(("re-arming apply-on-discovery", partial(
+                self.api._req, "PATCH", "policies", {"apply_on_discovery": True})))
+        return steps
+
+    def _silence(self):
+        if self.sim is None:
+            self.log("virtual gear: no emulator console, so no fleet to silence")
+            return
+        self.sim.disable("all")
+
+    def _restore_flag(self, group, flag):
+        if not isinstance(flag, bool):
+            raise VirtualGearError("group %d's HA flag was %r before the session; it stays "
+                                   "hidden" % (group, flag))
+        self.api.groups.patch(group, {"ha_entity_enabled": flag})
 
     def residual(self):
         data, out = self.ledger.data, []
         left = registry_shorts(self.api) & set(data.get("park", []))
         if left:
             out.append("emulated gear still registered: %s" % spell(left))
-        vls = {v["virtual_lamp_id"] for v in self.api.vlamps.list()["virtual_lamps"]}
+        vls = set(vl_ids(self.api))
         out += ["VL%d created by the session still exists" % i
                 for i in data.get("created_vls", []) if i in vls]
         wb = wb_shorts(self.cfg)
         if sorted(wb) != data.get("wb_before"):
             out.append("the WB master's device list changed: %s -> %s"
                        % (spell(data.get("wb_before", [])), spell(wb)))
-        now = self._retained()
-        changed = sorted(set(now.items()) ^ set((data.get("ha_before") or {}).items()))
-        out += ["retained MQTT topic differs: %s" % topic for topic in
-                sorted({topic for topic, _ in changed})]
-        return out
+        prefixes = data.get("ha_prefixes") or {}
+        return out + retained_residue(data.get("ha_before") or {}, self._retained(prefixes),
+                                      prefixes.get("discovery_prefix"))
+
+
+def teardown(cfg, api, log=print) -> list:
+    if not Ledger.of(cfg).exists():
+        return []
+    try:
+        sim = GearSim(cfg.peer())
+    except (GearSimUnavailable, RuntimeError) as exc:
+        log("virtual gear: no emulator console (%s)" % exc)
+        sim = None
+    return VirtualSession(cfg, api, sim, log=log).close()
 
 
 def group_mask(groups) -> int:
@@ -328,10 +408,6 @@ def group_mask(groups) -> int:
     for group in groups:
         mask |= 1 << group
     return mask
-
-
-def answered_status(resp) -> bool:
-    return bool(resp.get("success")) or bool(resp.get("backward_violation"))
 
 
 def _ignore_missing(action):

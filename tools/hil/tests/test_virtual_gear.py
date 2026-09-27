@@ -26,6 +26,8 @@ def test_a_lamp_level_reaches_its_emulated_gear_and_no_other(api, virtual_bench)
 
 @pytest.mark.hil_id("HIL-VG-02")
 def test_a_group_reaches_its_members_and_no_other_gear(api, virtual_bench):
+    if not virtual_bench.groups:
+        pytest.skip("no free group: a live lamp's group membership is unknown")
     group = virtual_bench.groups[0]
     members, others = virtual_bench.park[:2], virtual_bench.park[2:]
     oracle = virtual_bench.oracle
@@ -61,6 +63,7 @@ def test_a_scene_is_stored_in_the_emulated_gear(api, virtual_bench):
 
 
 SEARCH_TOP = 0xFFFFFF
+QUERY_STATUS = 0x90
 COMMISSIONING_ENV = "HIL_ALLOW_VIRTUAL_COMMISSIONING"
 
 
@@ -100,7 +103,6 @@ def test_an_unaddressed_emulated_gear_is_commissioned_onto_the_park(api, virtual
         pytest.skip("commissioning on the installation's wire needs %s=1 and a go-ahead "
                     "for this run" % COMMISSIONING_ENV)
     sim, oracle, target = virtual_bench.sim, virtual_bench.oracle, virtual_bench.park[0]
-    live_before = sorted(d["short_address"] for d in api.devices_unfiltered()["physical_devices"])
     sim.disable("all")
     assert not _any_unaddressed(api), "a live gear on this wire has no short address"
     sim.command("unaddress 1")
@@ -117,5 +119,6 @@ def test_an_unaddressed_emulated_gear_is_commissioned_onto_the_park(api, virtual
         finally:
             _step(api, "terminate")
         oracle.expect(window, target, "short_address", target)
-    live_after = sorted(d["short_address"] for d in api.devices_unfiltered()["physical_devices"])
-    assert live_after == live_before, "commissioning moved a live address"
+    reply = api.cmd(target, QUERY_STATUS)
+    assert reply.get("success") and not reply.get("backward_violation"), \
+        "SA%d does not answer at its new address: %r" % (target, reply)
