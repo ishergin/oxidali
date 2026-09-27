@@ -11,9 +11,8 @@ states, groups, scenes, HCL, commissioning — therefore piled up as bench debt.
 emulator ([ADR-014](ADR-014-gear-model-and-second-dali-endpoint.md)) answers as a fleet of
 control gear, but its board is gone. The only other board is the redundancy pair's
 standby ([ADR-018](ADR-018-controller-redundancy.md)), on the same wire as the owner's
-lamps, powered and reached through the Wiren Board. The Wiren Board resets every few hours
-and takes both boards with it, and the Mac that runs the toolkit is not always on the
-installation's network.
+lamps, powered and reached through the Wiren Board. A Wiren Board reboot takes both boards
+with it, and the Mac that runs the toolkit is not always on the installation's network.
 
 ## Decision
 
@@ -23,26 +22,21 @@ installation's network.
      the controller's own update route (ADR-024). The emulator never confirms itself, so the
      bootloader rolls it back at the next reset of any kind. Its ready line must report the
      slot `pending_verify`; anything else ends the switch, and `new` means the bootloader
-     kept the image, so the board is recovered by wire at once.
+     kept the image, so the operator writes the controller back by wire.
    - **Wired:** the merged image, built with the controller's bootloader and partition table,
      is written by esptool running on the Wiren Board itself. The role survives resets, and
      the controller is written back the same way.
 2. **The emulator stores nothing.** Every boot starts with no fleet and no reserve, and
    `fleet` and `enable` refuse until the reserve names every address a real lamp holds.
-3. **A session is an envelope around the tests.**
-   - **Addresses:** the reserve comes from the controller's registry, the Wiren Board
-     master's device list, a list of unpowered lamps and a fixed floor; the park is the
-     first free addresses above it.
-   - **Groups:** the session uses only groups no live lamp holds, proven silent on the wire
-     after a positive control.
-   - **Guard and tripwire:** the toolkit's lamp guard refuses every route and frame that
-     could reach past the park and those groups, broadcast included. A tripwire reads the
-     controller's own transmit log around each test.
-   - **Neutralised state:** the policy's apply-on-discovery is set aside for the scan, and
-     Home Assistant never sees a session lamp or group.
-   - **Ledger:** a ledger file drives an idempotent teardown. The standby returns only
-     after the teardown is clean, and its registry is then checked against the
-     controller's.
+3. **A session is an envelope around the tests.** Its rules are
+   [`tools/hil/STRATEGY.md`](../../../tools/hil/STRATEGY.md) §4.8:
+   - the reserve covers every address a real lamp may hold, and the fleet parks above it;
+   - the session uses only groups no live lamp holds, proven silent on the wire;
+   - the toolkit refuses every request and frame that is not on the tier's list, and a
+     tripwire judges the controller's own transmit log with the same list after every test;
+   - Home Assistant never sees a session lamp or group;
+   - a ledger written before the first registry write drives the teardown, and the standby
+     returns only after it is clean, its registry then compared with the controller's.
 4. **Commissioning runs on the installation only onto emulated gear.** It uses the expert
    steps with an explicit park address, never the product's unaddressed commissioning,
    which picks the lowest free address. A separate flag and a go-ahead per run are required,
@@ -68,5 +62,7 @@ installation's network.
   registry is checked afterwards.
 - The emulator's `C` lines are an oracle independent of the controller's registry, but they
   report the model's state, not light; optical and fade behaviour stay on real lamps.
+- The tripwire cannot tell who sent a frame, so the owner's own use of the lights during a
+  test stops the session.
 - The runbook is [`tools/hil/README.md`](../../../tools/hil/README.md#virtual-gear); the safety
   rules are [`tools/hil/STRATEGY.md`](../../../tools/hil/STRATEGY.md) §4.

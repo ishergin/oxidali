@@ -8,8 +8,8 @@ one bus load (~2 mA) however many gear it emulates.
 
 Scope: the instrument, its build and its console protocol. The gear semantics are
 `dali2rust-gear-model`, shared with the host dev server's simulated bus. Lending the
-peer to the emulator and the HIL tier that drives the fleet are open work
-([roadmap](../../documentation/product-design/roadmap.md)).
+peer to the emulator and the HIL tier that drives the fleet live in
+[`tools/hil`](../hil/README.md#virtual-gear).
 
 ## The one rule: never share an address with a real lamp
 
@@ -140,8 +140,9 @@ which has no board.
 
 ## Bring-up order
 
-1. Put the image on the peer. The fleet is empty and transmits nothing;
-   confirm from the log that it hears the traffic on the wire (`log frame`).
+1. Put the image on the peer (`hil --peer role gear-sim`). The fleet is empty and
+   transmits nothing; confirm from the log that it hears the traffic on the wire
+   (`log frame`).
 2. `reserve` every live address, `fleet`, `enable` one gear, query it from the
    controller, and check that `stats` shows it sent with no late ticks.
 3. Read the same gear from the Wiren Board's master.
