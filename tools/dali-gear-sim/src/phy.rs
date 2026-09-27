@@ -26,6 +26,7 @@ const TIMER_ALARM_TICKS: u64 = PHY_TICK_US as u64;
 
 const PROBE_MS: u32 = 300;
 const PROBE_SAMPLE_US: u32 = 20;
+const US_PER_MS: u32 = 1_000;
 
 const _: () = assert!(DALI_TX_GPIO < 32 && DALI_RX_GPIO < 32);
 
@@ -216,7 +217,7 @@ fn probe_rx(rx_in: *const u32, rx_mask: u32, ms: u32) -> (u32, bool) {
     // SAFETY: a plain read of a mapped register the pad is already configured for.
     let mut last = unsafe { ptr::read_volatile(rx_in) } & rx_mask != 0;
     let start_level = last;
-    for _ in 0..(ms * 1000 / PROBE_SAMPLE_US) {
+    for _ in 0..(ms * US_PER_MS / PROBE_SAMPLE_US) {
         // SAFETY: as above.
         let now = unsafe { ptr::read_volatile(rx_in) } & rx_mask != 0;
         if now != last {

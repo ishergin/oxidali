@@ -38,11 +38,10 @@ fn main() {
     spawn::on_app_core(c"dali-gear", GEAR_TASK_STACK, GEAR_TASK_PRIORITY, move || {
         AnswerLoop::new(phy, gear_fleet, gear_stats).run()
     });
-    let console = Console::new(phy, fleet, stats, FLEET_SEED);
+    let console = Console::new(phy, fleet, stats, FLEET_SEED, BUILD, slot);
     spawn::on_app_core(c"gear-console", CONSOLE_TASK_STACK, CONSOLE_TASK_PRIORITY, move || {
         console.run()
     });
-    note!("ready build={BUILD} slot={} state={}", slot.label, slot.state);
 }
 
 fn start_phy() -> &'static phy::GearPhy {

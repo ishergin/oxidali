@@ -12,6 +12,7 @@ use dali2rust_domain::dali::devices::dt8_color::GEAR_FEATURES_AUTOMATIC_ACTIVATI
 use dali2rust_gear_model::{bench_fleet, FleetStats, Gear, GearFleet};
 
 use crate::answer::LoopStats;
+use crate::boot_slot::BootSlot;
 use crate::logsink::{self, Level};
 use crate::note;
 use crate::phy::GearPhy;
@@ -24,6 +25,7 @@ type Handler = fn(&Console, &[&str]);
 
 const COMMANDS: &[(&str, Handler, &str)] = &[
     ("help", Console::help, "this list"),
+    ("ready", Console::ready, "the ready line again: build, running slot, OTA state"),
     ("show", Console::show, "[addr]  the fleet table, or one gear"),
     ("stats", Console::stats, "loop, answer-cell, late-tick, fleet and wire counters"),
     ("reserve", Console::reserve, "<a-b,c ...>  addresses the fleet never holds; once per boot, before `fleet`"),
@@ -46,6 +48,8 @@ pub struct Console {
     stats: Arc<Mutex<LoopStats>>,
     reserved: Cell<Option<u64>>,
     seed: u32,
+    build: &'static str,
+    slot: BootSlot,
 }
 
 impl Console {
@@ -54,6 +58,8 @@ impl Console {
         fleet: Arc<Mutex<GearFleet>>,
         stats: Arc<Mutex<LoopStats>>,
         seed: u32,
+        build: &'static str,
+        slot: BootSlot,
     ) -> Self {
         Self {
             phy,
@@ -61,12 +67,15 @@ impl Console {
             stats,
             reserved: Cell::new(None),
             seed,
+            build,
+            slot,
         }
     }
 
     pub fn run(self) -> ! {
         let stdin = std::io::stdin();
         let mut raw = String::new();
+        self.ready(&[]);
         loop {
             raw.clear();
             match stdin.lock().read_line(&mut raw) {
@@ -90,6 +99,10 @@ impl Console {
             Some((_, handler, _)) => handler(self, &args),
             None => note!("unknown command '{verb}' — try 'help'"),
         }
+    }
+
+    fn ready(&self, _args: &[&str]) {
+        note!("ready build={} slot={} state={}", self.build, self.slot.label, self.slot.state);
     }
 
     fn help(&self, _args: &[&str]) {
@@ -192,7 +205,7 @@ impl Console {
 
     fn reserve(&self, args: &[&str]) {
         if let Some(mask) = self.reserved.get() {
-            return note!("reserved already {mask:#018x} for this boot; reboot to change it");
+            return note!("refused: reserved already {mask:#018x} for this boot; reboot to change it");
         }
         let Some(mask) = parse_reserve(&args.join(" ")) else {
             return note!("usage: reserve <a-b,c ...>   short addresses 0..=63 the fleet never holds");
@@ -251,6 +264,7 @@ impl Console {
             None => None,
         };
         match touched {
+            Some(0) if on => note!("refused: no gear to enable at {}", which.unwrap_or_default()),
             Some(count) => note!("{verb}d {count} gear"),
             None => note!("usage: {verb} <addr|all>"),
         }
