@@ -39,7 +39,7 @@ pub fn encode_event_envelope(value: &EventEnvelope) -> Result<Vec<u8>, postcard:
 }
 
 fn encoded_len<T: Serialize + ?Sized>(value: &T) -> Result<usize, postcard::Error> {
-    postcard::experimental::serialized_size(value)
+    postcard::serialize_with_flavor(value, postcard::ser_flavors::Size::default())
 }
 
 pub fn encoded_len_command(value: &CommandEnvelope) -> Result<usize, postcard::Error> {
@@ -70,21 +70,21 @@ pub fn decode_event_envelope(bytes: &[u8]) -> Result<EventEnvelope, postcard::Er
 mod encoded_len_tests {
     use super::*;
     use crate::bus::build_confirmation_envelope_with_product_error;
+    use crate::msg::payload_test_samples::worst_text64;
     use crate::msg::{DeliveryStatus, ErrorCode};
 
-    const LONGEST_ERROR_MESSAGE: usize = 64;
-
     #[test]
-    fn confirmation_length_matches_its_encoding() {
-        let message = "x".repeat(LONGEST_ERROR_MESSAGE);
+    fn the_longest_confirmation_matches_its_encoding_and_fits_the_wire() {
+        let message = worst_text64();
         let confirmation = build_confirmation_envelope_with_product_error(
             u64::MAX,
             DeliveryStatus::ExecutionFailed,
             u8::MAX,
             u16::MAX,
-            Some((ErrorCode::InvalidValue, &message)),
+            Some((ErrorCode::InvalidValue, message.as_str())),
         );
         let encoded = encode_confirmation_envelope(&confirmation).expect("encode");
         assert_eq!(encoded_len_confirmation(&confirmation), Ok(encoded.len()));
+        assert!(encoded.len() <= MAX_BUS_WIRE_BYTES, "{} B", encoded.len());
     }
 }
