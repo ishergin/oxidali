@@ -7,9 +7,9 @@ scenes, HCL, a commissioning search, a poller sweep, a registry near its ceiling
 one bus load (~2 mA) however many gear it emulates.
 
 Scope: the instrument, its build and its console protocol. The gear semantics are
-`dali2rust-gear-model`, shared with the host dev server's simulated bus. Putting the
-image on the peer, taking it back and the HIL tier that drives the fleet live in
-[`tools/hil`](../hil/README.md).
+`dali2rust-gear-model`, shared with the host dev server's simulated bus. Lending the
+peer to the emulator and the HIL tier that drives the fleet are open work
+([roadmap](../../documentation/product-design/roadmap.md)).
 
 ## The one rule: never share an address with a real lamp
 
@@ -65,7 +65,7 @@ waits on the UART. Data lines start with a token, everything else with `#`, so a
 parses the stream without guessing:
 
 ```
-# ready build=<sha> slot=<label> state=<token>   boot is complete, commands are accepted
+# ready build=<sha> slot=<label> state=<token>   the console accepts commands (and `ready`)
 C <t_us> A16 level 0 -> 180                     a gear's state changed
 F <t_us> fe 90 Broadcast QUERY STATUS            a forward frame was heard     (log frame)
 B <t_us> 84 n=1                                  an answer was staged          (log frame)
@@ -84,9 +84,10 @@ scene levels. Lines the queue drops show up as `log_dropped` in `stats`.
 
 | Command | |
 | --- | --- |
-| `reserve <a-b,c ...>` | the short addresses the fleet never holds; once per boot, before `fleet` |
+| `ready` | the ready line again, for a reader that missed the boot |
+| `reserve <a-b,c ...>` | the short addresses the fleet never holds; once per boot, before `fleet`; a second one is refused |
 | `fleet <base> <dt6> <cct> <rgb>` | build the fleet from `base` upward, skipping the reserve; all disabled |
-| `enable\|disable <addr\|all>` | put gear on or off the bus |
+| `enable\|disable <addr\|all>` | put gear on or off the bus; enabling an address no gear holds is refused |
 | `show [addr]` | the fleet table, or one gear |
 | `stats` | loop counters; the answer cell (`sent`, `stale`, `expired`, `late`, `rejected`, `collided`); late ticks; forward frames per IEC 62386-101 Table 22 priority; violations (`enable_consumed`, `send_twice_interloper`) |
 | `unaddress <count>` | take the short address off that many gear, leaving them as factory-fresh drivers |
@@ -127,8 +128,10 @@ What the model leaves out is listed in
 ## Timing, and how far to trust it
 
 A gear starts its backward frame 5.5–10.5 ms after the forward frame ends. The interrupt
-decides when the answer starts. The emulator only has to stage it before the Table 20
-target: about 4.5 ms after the capture completes, and the ring is polled once per tick.
+decides when the answer starts. The emulator only has to stage it before the interrupt
+arms it, `ANSWER_ARM_TARGET_IDLE_TICKS` after the forward frame ends, while the
+capture completes after `RX_IDLE_LINE_HIGH_TICKS` (both in `dali2rust-dali-phy`); the
+ring is polled once per tick.
 `late`, `expired` and the late ticks are the PHY's reports on its own clock.
 
 The independent check is to read an emulated gear from the Wiren Board's master.
@@ -137,7 +140,7 @@ which has no board.
 
 ## Bring-up order
 
-1. Put the image on the peer (`tools/hil`). The fleet is empty and transmits nothing;
+1. Put the image on the peer. The fleet is empty and transmits nothing;
    confirm from the log that it hears the traffic on the wire (`log frame`).
 2. `reserve` every live address, `fleet`, `enable` one gear, query it from the
    controller, and check that `stats` shows it sent with no late ticks.
