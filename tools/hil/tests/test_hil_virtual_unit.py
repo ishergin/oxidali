@@ -109,7 +109,7 @@ def test_the_session_sweep_judges_frames_between_tests(tmp_path, quick):
     log, whole = _window(tmp_path, 0x2105, 0x0d05)
     state = {"virtual_gear_safety": []}
     opened = {"park": PARK, "groups": [4], "vl_of_short": {"16": 60, "17": 61}}
-    hil_virtual._sweep_with(whole, _Admin(log), opened, state)
+    hil_virtual._sweep_with(whole, _Admin(log), opened, state, {})
     assert len(state["virtual_gear_safety"]) == 1 and "SA6" in state["virtual_gear_safety"][0]
 
 
@@ -119,8 +119,18 @@ def test_the_sweep_does_not_report_a_frame_twice(tmp_path, quick):
     first = tripwire.violations(whole.lines(), fence)[0]
     state = {"virtual_gear_safety": ["tests/test_virtual_gear.py::test_x: %s" % first]}
     opened = {"park": PARK, "groups": [4], "vl_of_short": {"16": 60, "17": 61}}
-    hil_virtual._sweep_with(whole, _Admin(log), opened, state)
+    hil_virtual._sweep_with(whole, _Admin(log), opened, state, {})
     assert len(state["virtual_gear_safety"]) == 1
+
+
+def test_the_sweep_notices_lines_the_dut_lost(tmp_path, quick, monkeypatch):
+    log, whole = _window(tmp_path)
+    monkeypatch.setattr(hil_virtual.tripwire, "log_losses",
+                        lambda stats: {"console_log_dropped_total": 3})
+    state = {}
+    opened = {"park": PARK, "groups": [4], "vl_of_short": {"16": 60, "17": 61}}
+    hil_virtual._sweep_with(whole, _Admin(log), opened, state, {"console_log_dropped_total": 1})
+    assert "cannot vouch" in state["virtual_gear_inconclusive"][0]
 
 
 class _Lamps:

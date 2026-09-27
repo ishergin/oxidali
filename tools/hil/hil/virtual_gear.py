@@ -28,6 +28,7 @@ YES = 0xFF
 PROOF_PROBES = 3
 PROOF_ATTEMPTS = 3
 CONTENTION_COUNTERS = ("collision_restarts_total", "foreign_frames_total")
+EXIT_SETUP, EXIT_SAFETY, EXIT_PEER_RETURNED, EXIT_BLIND = 3, 4, 5, 6
 
 SCAN_MODE = "scan_known_short_addresses"
 PARK_VL_NAME = "virtual gear SA%d"

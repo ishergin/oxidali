@@ -18,6 +18,7 @@ REQUEST_TIMEOUT_S = 3
 SSH_TIMEOUT_S = 20
 REPLICATION_WAIT_S = 120
 READY_ASK_TIMEOUT_S = 10
+WITNESS_WINDOW_S = 15
 LEDGER = "virtual_gear.json"
 FLASHER_PATTERN = "python.*-m esptool|esptool.py"
 STATE_PENDING_VERIFY = "pending_verify"
@@ -164,9 +165,11 @@ def return_via(banner) -> str:
 def _hand_back(dut_cfg, peer_cfg, via) -> int:
     banner = emulator_banner(peer_cfg)
     if banner is None and via is None:
-        raise RoleError("the peer answers neither as a controller nor as the emulator, so "
-                        "which board the bridge resets is unproven: name the way back with "
-                        "--via ota|wb")
+        why = ("its serial monitor is down (`hil --peer monitor start`)"
+               if not serialmon.alive(peer_cfg) else
+               "it answers neither as a controller nor as the emulator")
+        raise RoleError("the peer's board is unproven, %s: name the way back with "
+                        "--via ota|wb" % why)
     via = via or return_via(banner)
     if via == flash.VIA_WB:
         return flash.run(peer_cfg, image=flash.CONTROLLER, via=flash.VIA_WB,
@@ -180,15 +183,21 @@ def _hand_back(dut_cfg, peer_cfg, via) -> int:
     return 1
 
 
-def reset_witnessed(dut_cfg, peer_cfg):
+def reset_witnessed(dut_cfg, peer_cfg, window_s=WITNESS_WINDOW_S):
     before = controller_health(dut_cfg)
     if before is None:
         raise RoleError("the DUT does not answer, so nothing would show a reset reaching it")
     remote_serial.control(peer_cfg, "run")
-    after = controller_health(dut_cfg)
-    if after is None or after.get("uptime_seconds", 0) < before.get("uptime_seconds", 0):
-        raise RoleError("the DUT went down when the peer's bridge reset its board: the "
-                        "bridge %s names the DUT" % peer_cfg.serial_remote)
+    deadline = time.monotonic() + window_s
+    while time.monotonic() < deadline:
+        after = controller_health(dut_cfg)
+        if after is not None:
+            if after.get("uptime_seconds", 0) < before.get("uptime_seconds", 0):
+                break
+            return
+        time.sleep(ROLE_POLL_S)
+    raise RoleError("the DUT restarted or fell silent when the peer's bridge reset its board: "
+                    "the bridge %s names the DUT" % peer_cfg.serial_remote)
 
 
 def _await_controller(peer_cfg, timeout_s=ROLE_RETURN_TIMEOUT_S) -> bool:

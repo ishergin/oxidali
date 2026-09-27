@@ -220,18 +220,39 @@ def test_a_silent_peer_needs_an_explicit_way_back(tmp_path, monkeypatch, capsys)
     dut, peer = _cfgs(tmp_path)
     _pin(peer, role=role.ROLE_GEAR_SIM, via="ota")
     _silent_peer(monkeypatch, [], banner=None)
+    monkeypatch.setattr(role.serialmon, "alive", lambda cfg: False)
     monkeypatch.setattr(role.remote_serial, "control", lambda cfg, cmd: pytest.fail(cmd))
     assert role.to_controller(dut, peer) == 1
-    assert "--via ota|wb" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "--via ota|wb" in err and "monitor is down" in err
 
 
-def test_a_reset_that_takes_the_dut_down_is_reported(tmp_path, monkeypatch):
-    dut, peer = _cfgs(tmp_path)
-    healths = [{"role": "active", "uptime_seconds": 500}, None]
-    monkeypatch.setattr(role, "controller_health", lambda cfg: healths.pop(0))
+def _witness(monkeypatch, healths):
+    replies = list(healths)
+    monkeypatch.setattr(role, "controller_health",
+                        lambda cfg: replies.pop(0) if len(replies) > 1 else replies[0])
     monkeypatch.setattr(role.remote_serial, "control", lambda cfg, cmd: "ok")
+    monkeypatch.setattr(role.time, "sleep", lambda s: None)
+
+
+UP = {"role": "active", "uptime_seconds": 500}
+
+
+@pytest.mark.parametrize("healths", [
+    [UP, None],
+    [UP, None, {"role": "active", "uptime_seconds": 4}],
+])
+def test_a_reset_that_takes_the_dut_down_is_reported(tmp_path, monkeypatch, healths):
+    dut, peer = _cfgs(tmp_path)
+    _witness(monkeypatch, healths)
     with pytest.raises(role.RoleError, match="names the DUT"):
-        role.reset_witnessed(dut, peer)
+        role.reset_witnessed(dut, peer, window_s=0.2)
+
+
+def test_a_slow_dut_that_keeps_its_uptime_is_not_accused(tmp_path, monkeypatch):
+    dut, peer = _cfgs(tmp_path)
+    _witness(monkeypatch, [UP, None, None, {"role": "active", "uptime_seconds": 503}])
+    role.reset_witnessed(dut, peer, window_s=5)
 
 
 def test_a_reset_without_a_witness_is_refused(tmp_path, monkeypatch):

@@ -104,10 +104,48 @@ def test_every_write_gets_its_own_exit_code_file(monkeypatch):
 
 
 def test_a_start_that_fails_is_not_read_as_a_finished_write(monkeypatch):
-    remote = _detached(monkeypatch, _Remote(["0\n"], start_rc=255))
+    remote = _detached(monkeypatch, _Remote(["0\n"], start_rc=127))
     with pytest.raises(wb_flash.WbFlashError, match="did not start"):
         wb_flash.run_detached(_Target(), "x")
     assert not any(c.startswith("cat ") for c in remote.commands)
+
+
+def test_a_dropped_start_ssh_is_polled_like_a_hung_one(monkeypatch):
+    remote = _detached(monkeypatch, _Remote(["", "0\n"], start_rc=wb_flash.SSH_UNREACHABLE))
+    assert wb_flash.run_detached(_Target(), "x", log=lambda line: None) == 0
+    assert sum(c.startswith("cat ") for c in remote.commands) == 2
+
+
+class _Port:
+    def __init__(self, busy_polls):
+        self.busy_polls, self.commands = busy_polls, []
+
+    def __call__(self, tgt, command, timeout=60, **kwargs):
+        self.commands.append(command)
+        busy = self.busy_polls > 0
+        self.busy_polls -= 1
+        return subprocess.CompletedProcess(command, 0 if busy else 1, stdout="", stderr="")
+
+
+class _PortTarget(_Target):
+    device = "/dev/ttyX"
+
+
+def test_the_port_is_reacquired_only_once_esptool_lets_go(monkeypatch):
+    sent = _control(monkeypatch)
+    monkeypatch.setattr(wb_flash, "_ssh", _Port(busy_polls=2))
+    monkeypatch.setattr(wb_flash.time, "sleep", lambda s: None)
+    wb_flash.reacquire_when_free(_cfg(), _PortTarget())
+    assert sent == ["reacquire"]
+
+
+def test_a_port_still_held_is_left_released(monkeypatch):
+    sent = _control(monkeypatch)
+    monkeypatch.setattr(wb_flash, "_ssh", _Port(busy_polls=1000))
+    monkeypatch.setattr(wb_flash.time, "sleep", lambda s: None)
+    with pytest.raises(wb_flash.WbFlashError, match="stays released"):
+        wb_flash.reacquire_when_free(_cfg(), _PortTarget(), timeout_s=0.0)
+    assert sent == []
 
 
 def test_a_failed_detached_write_shows_its_log(monkeypatch):

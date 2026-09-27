@@ -21,6 +21,8 @@ WRITE_POLL_S = 5
 WRITE_START_TIMEOUT_S = 30
 COPY_TIMEOUT_S = 180
 WRITE_STEM = REMOTE_IMAGES + "/write-%d"
+SSH_UNREACHABLE = 255
+PORT_FREE_TIMEOUT_S = 60
 WRITE_LOG_TAIL = 15
 BRIDGE_VERBS = "verbs="
 RELEASE_VERB = "release"
@@ -119,7 +121,7 @@ def write(cfg, image: Path, before_write=None, log=print) -> int:
             log("wb flash: writing %s on %s through %s" % (image.name, tgt.ssh, tgt.device))
             return run_detached(tgt, write_command(tgt.device, remote), log)
         finally:
-            remote_serial.control(cfg, "reacquire")
+            reacquire_when_free(cfg, tgt)
     finally:
         unstage(tgt, remote)
 
@@ -158,7 +160,9 @@ def run_detached(tgt, command, log=print, timeout_s=WRITE_TIMEOUT_S) -> int:
     except subprocess.TimeoutExpired:
         log("wb flash: the ssh that started esptool hung; polling for its result")
     else:
-        if started.returncode != 0:
+        if started.returncode == SSH_UNREACHABLE:
+            log("wb flash: the ssh that started esptool dropped; polling for its result")
+        elif started.returncode != 0:
             raise WbFlashError("ssh did not start esptool on %s (exit %d)"
                                % (tgt.ssh, started.returncode))
     rc = _await_rc(tgt, rc_file, timeout_s)
@@ -187,6 +191,17 @@ def _remote_rc(tgt, rc_file):
         return None
     text = out.stdout.strip()
     return int(text) if text.lstrip("-").isdigit() else None
+
+
+def reacquire_when_free(cfg, tgt, timeout_s=PORT_FREE_TIMEOUT_S):
+    deadline = time.monotonic() + timeout_s
+    while _ssh(tgt, "fuser -s %s" % tgt.device).returncode == 0:
+        if time.monotonic() >= deadline:
+            raise WbFlashError("a process still holds %s on %s, so the port stays released: "
+                               "`hil %sremote reacquire` once it ends"
+                               % (tgt.device, tgt.ssh, _peer_flag(cfg)))
+        time.sleep(WRITE_POLL_S)
+    remote_serial.control(cfg, "reacquire")
 
 
 def _peer_flag(cfg) -> str:

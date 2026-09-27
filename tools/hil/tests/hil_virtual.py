@@ -21,7 +21,8 @@ OWNER_SHORTS_ENV = "HIL_OWNER_SHORTS"
 SHORT_ENVS = ("HIL_LAMP_SHORTS", "HIL_GEAR_SHORTS", "HIL_OPTICAL_SHORTS")
 MARKER = "virtual_gear"
 EXCLUSIVE_MARKERS = ("redundancy",)
-EXIT_SETUP, EXIT_SAFETY, EXIT_PEER_RETURNED, EXIT_BLIND = 3, 4, 5, 6
+EXIT_SETUP, EXIT_SAFETY = virtual_gear.EXIT_SETUP, virtual_gear.EXIT_SAFETY
+EXIT_PEER_RETURNED, EXIT_BLIND = virtual_gear.EXIT_PEER_RETURNED, virtual_gear.EXIT_BLIND
 QUIET_S = 1.5
 SETTLE_MAX_S = 10.0
 BARRIER_TIMEOUT_S = 10.0
@@ -101,26 +102,28 @@ def virtual_gear_session(request, production_state, bench_baseline):
         pytest.exit("virtual gear: a previous session left %s — `hil state restore` finishes "
                     "its teardown first" % ledger.path, returncode=EXIT_SETUP)
     session, opened, state = _open_session(request, cfg)
+    admin = api_mod.Client(cfg)
+    losses = tripwire.log_losses(admin.stats())
     with LogWindow(serialmon.log_path(cfg)) as whole:
         try:
             yield VirtualBench(opened["park"], opened["groups"], opened["vl_of_short"],
                                session.sim, GearOracle(session.sim))
         finally:
-            _sweep(whole, cfg, opened, state)
+            _sweep_with(whole, admin, opened, state, losses)
             _close_session(session, state)
 
 
-def _sweep(whole, cfg, opened, state):
-    _sweep_with(whole, api_mod.Client(cfg), opened, state)
-
-
-def _sweep_with(whole, admin, opened, state):
+def _sweep_with(whole, admin, opened, state, losses):
     fence = VirtualFence(opened["park"], opened["groups"], opened["vl_of_short"].values(),
                          commissioning=commissioning_allowed())
     if not _flush(whole, admin, opened["park"][0]):
         state.setdefault("virtual_gear_inconclusive", []).append(
             "session: the final barrier never reached the DUT's log, so frames after the "
             "last test went unjudged")
+    lost = tripwire.lost_lines(losses, tripwire.log_losses(admin.stats()))
+    if lost:
+        state.setdefault("virtual_gear_inconclusive", []).append(
+            "session: the DUT lost log lines %s, so the sweep cannot vouch" % lost)
     seen = {line.split(": ", 1)[-1] for line in state.get("virtual_gear_safety", [])}
     fresh = [v for v in tripwire.violations(whole.lines(), fence) if v not in seen]
     if fresh:
