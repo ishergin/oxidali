@@ -102,3 +102,18 @@ Feature: The rules engine: a frame becomes light, honestly reported
     Then the JSON pointer "/rules/rules/0/runtime/fire_count" should be 1
     And the JSON pointer "/rules/rules/0/runtime/last_outcome" should be "ok"
     And the JSON pointer "/rules/rules/0/runtime/last_fired_at_ms" should be greater than 0
+
+  @id:RULE-027
+  Scenario: A lamp whose level is unknown fails a level condition and takes no relative step
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    When I PUT JSON {"base_revision":0,"source":"rule \"gate\" {\n  when at 23:00\n  if lamp(1).level < 50\n  do lamp(1).off()\n}\nrule \"step\" {\n  when at 23:00\n  do lamp(1).level(+10)\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given the DALI mock transport trace is cleared
+    When I POST JSON {} to "/api/v1/rules/gate/run"
+    Then the response status should be 202
+    And within 3 seconds the stats pointer "/rules/conditions_rejected" reaches 1
+    When I POST JSON {} to "/api/v1/rules/step/run"
+    Then the response status should be 202
+    And within 3 seconds the stats pointer "/rules/activations_total" reaches 1
+    And the mock transport should have sent no frames

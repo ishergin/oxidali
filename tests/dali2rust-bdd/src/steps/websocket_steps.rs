@@ -293,6 +293,13 @@ async fn then_observation_inline(world: &mut DaliWorld) {
     }
 }
 
+// WS-059
+#[then("the runtime state payload should report no level")]
+async fn then_no_level(world: &mut DaliWorld) {
+    let state = remembered_state(world);
+    assert!(state["level"].is_null(), "level should be null in {state}");
+}
+
 fn remembered_state(world: &DaliWorld) -> Value {
     let frame = world.remembered_json.clone().expect("no remembered frame");
     frame["payload"]["state"].clone()
