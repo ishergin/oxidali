@@ -50,7 +50,7 @@ fn display_view_reflects_dali_worker_traffic() {
     );
     let setpoint = dali2rust_contracts::msg::LightSetpoint {
         power: dali2rust_contracts::msg::PowerState::On,
-        level: 180,
+        level: Some(180),
         color: None,
     };
     let frame = BusFrame::command(dali2rust_contracts::bus::command_envelope(

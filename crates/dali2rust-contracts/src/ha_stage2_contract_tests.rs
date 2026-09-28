@@ -156,7 +156,7 @@ fn bus_event_payload_variant_order_is_frozen() {
 fn light_setpoint_serde_roundtrip() {
     let sample = LightSetpoint {
         power: PowerState::On,
-        level: 180,
+        level: Some(180),
         color: Some(ColorValue {
             mode: ColorMode::Cct,
             color_temperature_kelvin: 3000,
@@ -173,7 +173,7 @@ fn light_setpoint_serde_roundtrip() {
     let json = serde_json::to_string(&sample).expect("serialize");
     let back: LightSetpoint = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(back.power, PowerState::On);
-    assert_eq!(back.level, 180);
+    assert_eq!(back.level, Some(180));
     let color = back.color.expect("color");
     assert_eq!(color.mode, ColorMode::Cct);
     assert_eq!(color.color_temperature_kelvin, 3000);
@@ -211,7 +211,7 @@ fn scene_row_serde_roundtrip() {
         included: true,
         setpoint: Some(LightSetpoint {
             power: PowerState::On,
-            level: 179,
+            level: Some(179),
             color: Some(ColorValue {
                 mode: ColorMode::Cct,
                 color_temperature_kelvin: 2700,
@@ -239,7 +239,7 @@ fn scene_row_serde_roundtrip() {
     let json = serde_json::to_string(&row).expect("serialize");
     let back: SceneRow = serde_json::from_str(&json).expect("deserialize");
     assert!(back.included);
-    assert_eq!(back.setpoint.expect("included row has setpoint").level, 179);
+    assert_eq!(back.setpoint.expect("included row has setpoint").level, Some(179));
 
     let excluded = SceneRow {
         included: false,
@@ -343,7 +343,7 @@ fn registry_runtime_update_command_serde_roundtrip() {
             short_address: None,
             setpoint: Some(LightSetpoint {
                 power: PowerState::On,
-                level: 200,
+                level: Some(200),
                 color: None,
             }),
             observation: None,

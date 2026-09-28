@@ -96,11 +96,6 @@ pub struct CompactErrorPayload {
 }
 
 impl CompactErrorPayload {
-    #[must_use]
-    pub fn is_device_absent(&self) -> bool {
-        self.code == ErrorCode::DeviceAbsent
-    }
-
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
             code,

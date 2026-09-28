@@ -32,7 +32,7 @@ fn dapc_frame(level: u8) -> u16 {
 fn target_state_frame(correlation_id: u64, level: u8) -> BusFrame {
     let setpoint = LightSetpoint {
         power: PowerState::On,
-        level,
+        level: Some(level),
         color: None,
     };
     BusFrame::command(dali2rust_contracts::bus::command_envelope(
@@ -127,7 +127,7 @@ fn stale_target_state_commands_are_superseded_within_one_drain() {
     };
     let applied = (applied_ev.meta.correlation_id, body.clone());
     assert_eq!(applied.0, 13, "newest correlation wins");
-    assert_eq!(applied.1.setpoint.level, 220);
+    assert_eq!(applied.1.setpoint.level, Some(220));
     assert_eq!(applied.1.short_address, Some(SHORT));
 
     assert_eq!(

@@ -97,7 +97,7 @@ fn target_state_level_sends_direct_arc_power() {
 
     let setpoint = LightSetpoint {
         power: PowerState::On,
-        level: 180,
+        level: Some(180),
         ..Default::default()
     };
     apply_short_target_state(&mut controller, 17, &setpoint, ColorWritePolicy::NONE).expect("target-state");
@@ -207,7 +207,7 @@ fn a_level_carrying_colour_write_never_sends_activate() {
         };
         setpoint.color = Some(color);
         setpoint.power = PowerState::On;
-        setpoint.level = 200;
+        setpoint.level = Some(200);
         apply_short_target_state(&mut controller, 17, &setpoint, ColorWritePolicy::NONE).expect("target-state");
 
         let frames = transport.lock().unwrap().sent_frames();
@@ -233,7 +233,7 @@ fn colour_without_power_does_not_switch_an_off_gear_on() {
     };
     setpoint.color = Some(color);
     setpoint.power = PowerState::Unknown;
-    setpoint.level = 0;
+    setpoint.level = None;
     apply_short_target_state(&mut controller, short, &setpoint, ColorWritePolicy::NONE).expect("target-state");
 
     let frames = transport.lock().unwrap().sent_frames();
@@ -280,7 +280,7 @@ fn a_level_only_setpoint_leaves_automatic_activation_alone_issue117() {
     let (transport, mut controller) = setup_controller(mock);
     let setpoint = LightSetpoint {
         power: PowerState::On,
-        level: 200,
+        level: Some(200),
         color: Some(ColorValue::default()),
     };
     let policy = ColorWritePolicy {
@@ -477,7 +477,7 @@ fn group_color_only_without_power_activates_via_dt8_activate() {
     let (transport, mut controller) = setup_controller(mock);
     let mut setpoint = LightSetpoint::default();
     assert_eq!(setpoint.power, PowerState::Unknown);
-    assert_eq!(setpoint.level, 0);
+    assert_eq!(setpoint.level, None);
     let color = dali2rust_contracts::msg::ColorValue {
         mode: ColorMode::Cct,
         color_temperature_kelvin: 3000,
@@ -543,7 +543,7 @@ fn group_color_with_level_activates_by_dapc_alone() {
     let (transport, mut controller) = setup_controller(mock);
     let mut setpoint = LightSetpoint {
         power: PowerState::On,
-        level: 180,
+        level: Some(180),
         ..Default::default()
     };
     let color = dali2rust_contracts::msg::ColorValue {
@@ -672,24 +672,27 @@ fn target_state_cct_redrives_when_value_reads_back_out_of_range() {
 }
 
 #[test]
-fn target_state_power_off_fades_to_zero_with_dapc() {
-    let mock = MockDaliTransport::new();
-    let expected = DaliCommand::Standard {
-        address: short_address(5),
-        command: StandardCommand::DirectArcPower { level: 0 },
-    }
-    .to_forward_frame()
-    .raw();
-    mock.expect_forward_frame(expected);
+fn target_state_power_off_or_a_bare_zero_fades_to_zero_with_dapc() {
+    for power in [PowerState::Off, PowerState::Unknown] {
+        let mock = MockDaliTransport::new();
+        let expected = DaliCommand::Standard {
+            address: short_address(5),
+            command: StandardCommand::DirectArcPower { level: 0 },
+        }
+        .to_forward_frame()
+        .raw();
+        mock.expect_forward_frame(expected);
 
-    let (transport, mut controller) = setup_controller(mock);
-    let setpoint = LightSetpoint {
-        power: PowerState::Off,
-        level: 0,
-        ..Default::default()
-    };
-    apply_short_target_state(&mut controller, 5, &setpoint, ColorWritePolicy::NONE).expect("target-state");
-    assert_script_consumed(&transport);
+        let (transport, mut controller) = setup_controller(mock);
+        let setpoint = LightSetpoint {
+            power,
+            level: Some(0),
+            ..Default::default()
+        };
+        apply_short_target_state(&mut controller, 5, &setpoint, ColorWritePolicy::NONE)
+            .expect("target-state");
+        assert_script_consumed(&transport);
+    }
 }
 
 #[test]
@@ -706,7 +709,7 @@ fn target_state_on_with_zero_level_sends_go_to_last_active_level() {
     let (transport, mut controller) = setup_controller(mock);
     let setpoint = LightSetpoint {
         power: PowerState::On,
-        level: 0,
+        level: Some(0),
         ..Default::default()
     };
     apply_short_target_state(&mut controller, 6, &setpoint, ColorWritePolicy::NONE).expect("target-state");
@@ -953,7 +956,7 @@ fn a_cct_write_does_not_touch_the_control_byte() {
     };
     setpoint.color = Some(color);
     setpoint.power = PowerState::On;
-    setpoint.level = 200;
+    setpoint.level = Some(200);
     apply_short_target_state(&mut controller, short, &setpoint, assert_policy())
         .expect("target-state");
     assert_script_consumed(&transport);
@@ -990,6 +993,7 @@ fn a_colour_only_write_to_a_dark_gear_is_activated_and_verified() {
     let (transport, mut controller) = setup_controller(mock);
     let mut setpoint = rgb_setpoint(255, 0, 0, 0);
     setpoint.power = PowerState::Unknown;
+    setpoint.level = None;
     apply_short_target_state(&mut controller, short, &setpoint, assert_policy())
         .expect("a staged colour on a dark gear is not a failure");
     assert_script_consumed(&transport);
@@ -1191,7 +1195,7 @@ fn rgb_setpoint(r: u8, g: u8, b: u8, level: u8) -> LightSetpoint {
     };
     setpoint.color = Some(color);
     setpoint.power = PowerState::On;
-    setpoint.level = level;
+    setpoint.level = Some(level);
     setpoint
 }
 

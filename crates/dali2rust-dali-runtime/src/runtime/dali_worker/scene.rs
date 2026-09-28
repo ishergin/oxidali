@@ -223,7 +223,7 @@ fn publish_recall_last_active_applied(
         group_id,
         &LightSetpoint {
             power: dali2rust_contracts::msg::PowerState::On,
-            level: 0,
+            level: None,
             color: None,
         },
         RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api),

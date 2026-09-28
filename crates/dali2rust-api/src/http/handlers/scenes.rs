@@ -562,7 +562,7 @@ fn parse_scene_target(
     if power == Some(PowerState::Unknown) {
         return Err(json_err(422, "invalid_value"));
     }
-    let level = normalized_scene_level(power, has_level.then_some(setpoint.level))?;
+    let level = normalized_scene_level(power, setpoint.level.filter(|_| has_level))?;
     let color = setpoint.color.filter(|c| is_storable_scene_mode(c.mode));
     if let Some(color) = color.as_ref() {
         validate_color_value_present(color, fields)?;

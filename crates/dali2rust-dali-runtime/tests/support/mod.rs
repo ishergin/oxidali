@@ -86,7 +86,7 @@ pub fn target_state_frame(
             group_id: 0,
             setpoint: LightSetpoint {
                 power: PowerState::On,
-                level,
+                level: Some(level),
                 color: None,
             },
         },

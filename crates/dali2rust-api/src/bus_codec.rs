@@ -113,7 +113,7 @@ mod tests {
     fn roundtrip_dali_set_target_state_short_command_envelope() {
         let sp = LightSetpoint {
             power: PowerState::On,
-            level: 0,
+            level: None,
             color: Some(ColorValue {
                 mode: ColorMode::None,
                 color_temperature_kelvin: 0,

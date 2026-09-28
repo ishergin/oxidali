@@ -54,15 +54,15 @@ async fn then_translator_counter_is(world: &mut DaliWorld, name: String, expecte
     );
 }
 
-// INP-005 RULE-021 RULE-023
+// INP-005 RULE-021 RULE-023 RULE-027
 #[then("the mock transport should have sent no frames")]
 async fn then_no_frames_sent(world: &mut DaliWorld) {
     let mock = world.dali_mock();
     let guard = mock.lock().expect("mock lock");
     assert!(
         guard.sent_frames().is_empty(),
-        "the translator publishes facts, never commands: an observed event must \
-         not put a frame on the wire"
+        "nothing in this scenario may put a frame on the wire: {:?}",
+        guard.sent_frames()
     );
     assert!(
         guard.sent_frames24().is_empty(),

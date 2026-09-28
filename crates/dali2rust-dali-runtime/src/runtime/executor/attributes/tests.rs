@@ -1,4 +1,5 @@
 use super::*;
+use dali2rust_contracts::msg::PowerState;
 use crate::runtime::executor::test_helpers::shared::{
     assert_script_consumed, setup_controller, short_address,
 };
@@ -1734,7 +1735,7 @@ fn a_healthy_status_spends_no_part_207_frames() {
     assert_no_dt6_failure_traffic(&transport, short);
     assert!(execution.dt6.is_none(), "nothing was read, so nothing is published");
     let setpoint = execution.runtime_setpoint.expect("runtime section ran");
-    assert_eq!(setpoint.level, 200);
+    assert_eq!(setpoint.level, Some(200));
     assert_eq!(setpoint.power, PowerState::On);
 }
 
@@ -1750,7 +1751,7 @@ fn a_mask_actual_level_states_no_level_and_asks_part_207_why() {
     assert_dt6_failure_traffic(&transport, short);
 
     let setpoint = execution.runtime_setpoint.expect("runtime section ran");
-    assert_eq!(setpoint.level, 0, "MASK is not 255 and not a level");
+    assert_eq!(setpoint.level, None, "MASK is not 255 and not a level");
     assert_eq!(
         setpoint.power,
         PowerState::Unknown,

@@ -74,6 +74,23 @@ Feature: WebSocket subscribe and event envelope
     And the runtime state payload should expand the light setpoint inline
     And the runtime state payload should expand the runtime observation inline
 
+  @id:WS-059
+  Scenario: A lamp no command has dimmed reports a null level on the WebSocket as on REST
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given an open WebSocket connection
+    And the WebSocket client is subscribed to "virtual_lamps"
+    And a cct 3000K target-state script for short address 0
+    When I PUT JSON {"color_mode":"cct","color_temperature_kelvin":3000} to "/api/v1/adapters/0/physical-devices/0/target-state"
+    Then the response status should be 200
+    And the WebSocket client should receive a "RuntimeStateChangedEvent" frame on channel "virtual_lamps"
+    And the runtime state payload should report no level
+    When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
+    Then the response status should be 200
+    And the JSON pointer "/state/level" should be null
+
   @id:WS-004
   Scenario: A client only receives frames for channels it subscribed to
     Given a golden control-gear discovery script for short address 0

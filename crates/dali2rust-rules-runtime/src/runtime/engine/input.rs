@@ -36,9 +36,9 @@ pub enum EngineInput<'a> {
         adapter_id: u8,
         lamp_id: u16,
         is_on: bool,
-        level: u8,
+        level: Option<u8>,
         was_on: bool,
-        previous_level: u8,
+        previous_level: Option<u8>,
     },
     GroupChanged {
         adapter_id: u8,

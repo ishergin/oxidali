@@ -29,7 +29,7 @@ const OCCUPANCY_MOVEMENT_BIT: u16 = 1 << 0;
 #[derive(Default)]
 pub(crate) struct FunnelState {
     occupied: HashMap<(u8, u8, u8), bool>,
-    lamps: HashMap<(u8, u16), (bool, u8)>,
+    lamps: HashMap<(u8, u16), (bool, Option<u8>)>,
     groups: HashMap<(u8, u16), bool>,
     devices: HashMap<(u8, u8), bool>,
     active: Option<bool>,

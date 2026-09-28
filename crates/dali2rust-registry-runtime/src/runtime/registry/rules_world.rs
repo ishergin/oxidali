@@ -3,7 +3,7 @@ use dali2rust_contracts::msg::PowerState;
 use super::groups::GROUP_COUNT;
 use super::store::RegistryStore;
 
-pub type RulesLampRow = (u8, u16, bool, u8, Option<u16>, u8);
+pub type RulesLampRow = (u8, u16, bool, Option<u8>, Option<u16>, Option<u8>);
 pub type RulesGroupRow = (u8, u16, bool, u8);
 pub type RulesDeviceRow = (u8, u8, bool);
 pub type RulesInputRow = (u8, u8, u8, Option<bool>, Option<u16>);
@@ -20,10 +20,10 @@ impl RegistryStore {
                 let rt = lamp
                     .binding_short
                     .and_then(|short| g.physical_devices.get(&(*adapter, short)));
-                let level = rt.and_then(|pd| pd.runtime_level).unwrap_or(0);
+                let level = rt.and_then(|pd| pd.runtime_level);
                 let is_on = rt.is_some_and(|pd| pd.runtime.power == PowerState::On);
                 let kelvin = rt.and_then(|pd| pd.runtime.kelvin);
-                (*adapter, u16::from(*lamp_id), is_on, level, kelvin, level.max(1))
+                (*adapter, u16::from(*lamp_id), is_on, level, kelvin, level.map(|l| l.max(1)))
             })
             .collect();
         rows.sort_unstable_by_key(|r| (r.0, r.1));

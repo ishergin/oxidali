@@ -94,7 +94,7 @@ fn foreign_short_dapc_decodes_to_target_state_observed_snif001() {
     assert_eq!(body.observed_kind, ObservedKind::TargetStateObserved);
     assert_eq!(body.scope, DaliTargetScope::Short);
     assert_eq!(body.short_address, Some(17));
-    assert_eq!(body.setpoint.as_ref().map(|sp| sp.level), Some(180));
+    assert_eq!(body.setpoint.as_ref().map(|sp| sp.level), Some(Some(180)));
     assert!(body.dapc_observed);
     assert_eq!(body.decode_status, DecodeStatus::Decoded);
     assert_eq!(body.observed_at_ms, 42);

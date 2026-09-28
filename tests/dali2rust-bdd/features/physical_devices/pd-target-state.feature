@@ -21,6 +21,19 @@ Feature: Physical device direct target state
     Then the response status should be 200
     And all scripted DALI exchanges should be consumed without errors
 
+  @id:PD-271
+  Scenario: A level of 0 without power is a level, and the gear gets DAPC 0
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given a power-off target-state script for short address 0
+    When I PUT JSON {"level":0} to "/api/v1/adapters/0/physical-devices/0/target-state"
+    Then the response status should be 200
+    And all scripted DALI exchanges should be consumed without errors
+    And the physical device 0 state level should eventually be 0
+    And the physical device 0 state power should eventually be "off"
+
   @id:PD-266
   Scenario: The target-state answer is stamped with the wall clock
     Given a golden control-gear discovery script for short address 0

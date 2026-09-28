@@ -35,7 +35,7 @@ pub use kinds::{
 pub use state::{
     CapabilityFlags, ColorValue, Dt6ReadSnapshot, ExtendedVersionEntry, FailureStatus, Level,
     LightSetpoint, RuntimeObservation, SceneRow, SetpointDimensions, StatusFlags,
-    MAX_EXTENDED_VERSIONS,
+    ARC_POWER_OFF, MAX_EXTENDED_VERSIONS,
 };
 pub use wire::{DaliCommandPayload, DaliConfirmationPayload, DaliEventPayload};
 

@@ -10,8 +10,8 @@ use dali2rust_contracts::msg::{
     DaliInputEventObservedEvent, DaliSceneRecalledEvent, DaliTargetScope,
     DaliTargetStateAppliedEvent, DaliTargetStateFailedEvent, ErrorCode, FixedText32,
     HclScheduleChangedEvent, InputEventKind, DaliObservedFrameEvent, IpAddressAssignedEvent,
-    ObservedKind, OperationStatus, OperationStatusChangedEvent, OperationType, PowerState,
-    RuntimeSource,
+    ObservedKind, OperationStatus, OperationStatusChangedEvent, OperationType, RuntimeSource,
+    ARC_POWER_OFF,
 };
 use dali2rust_domain::dali::dev103::ButtonEvent;
 
@@ -356,15 +356,24 @@ fn apply_observed(facts: &mut Facts, adapter: u8, body: &DaliObservedFrameEvent)
 }
 
 fn observed_label(setpoint: &dali2rust_contracts::msg::LightSetpoint) -> EventLabel {
-    if setpoint.power == PowerState::Off {
+    if setpoint.dapc_level() == Some(ARC_POWER_OFF) {
         return EventLabel::from_fmt(format_args!("OFF"));
     }
-    match setpoint.color.as_ref() {
-        Some(c) if c.color_temperature_kelvin > 0 => EventLabel::from_fmt(format_args!(
-            "{} {}K",
-            setpoint.level, c.color_temperature_kelvin
-        )),
-        _ => EventLabel::from_fmt(format_args!("ON {}", setpoint.level)),
+    match (setpoint.color.as_ref(), setpoint.level) {
+        (Some(c), Some(level)) if c.color_temperature_kelvin > 0 => {
+            EventLabel::from_fmt(format_args!("{} {}K", level, c.color_temperature_kelvin))
+        }
+        (Some(c), None) if c.color_temperature_kelvin > 0 => {
+            EventLabel::from_fmt(format_args!("{}K", c.color_temperature_kelvin))
+        }
+        (_, level) => on_label(level),
+    }
+}
+
+fn on_label(level: Option<u8>) -> EventLabel {
+    match level {
+        Some(level) => EventLabel::from_fmt(format_args!("ON {level}")),
+        None => EventLabel::from_fmt(format_args!("ON")),
     }
 }
 
@@ -407,13 +416,13 @@ fn target_label(
 }
 
 fn setpoint_label(body: &DaliTargetStateAppliedEvent) -> EventLabel {
-    if body.setpoint.power == PowerState::Off {
+    if body.setpoint.dapc_level() == Some(ARC_POWER_OFF) {
         return EventLabel::from_fmt(format_args!("OFF"));
     }
     if body.dapc_applied {
-        return EventLabel::from_fmt(format_args!("ON {}", body.setpoint.level));
+        return on_label(body.setpoint.level);
     }
-    match body.setpoint.color.as_ref() {
+    match body.setpoint.color.as_ref().filter(|_| body.setpoint.states_color()) {
         Some(c) if c.color_temperature_kelvin > 0 => {
             EventLabel::from_fmt(format_args!("{}K", c.color_temperature_kelvin))
         }

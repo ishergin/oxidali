@@ -17,8 +17,8 @@ pub fn light_state_payload(setpoint: &LightSetpoint) -> Value {
     let mut m = Map::new();
     let on = matches!(setpoint.power, PowerState::On);
     m.insert("state".into(), json!(if on { "ON" } else { "OFF" }));
-    if on && setpoint.level > 0 {
-        m.insert("brightness".into(), json!(level_to_ha(setpoint.level)));
+    if let Some(level) = setpoint.level.filter(|level| on && *level > 0) {
+        m.insert("brightness".into(), json!(level_to_ha(level)));
     }
     if let Some(color) = setpoint.color.as_ref() {
         if let Some(mode) = ha_color_mode(color.mode) {
@@ -102,7 +102,7 @@ mod tests {
     use super::*;
     use dali2rust_contracts::msg::ColorValue;
 
-    fn setpoint(power: PowerState, level: u8, color: Option<ColorValue>) -> LightSetpoint {
+    fn setpoint(power: PowerState, level: Option<u8>, color: Option<ColorValue>) -> LightSetpoint {
         LightSetpoint {
             power,
             level,
@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn an_on_lamp_reports_upper_case_state_and_its_arc_level_as_brightness() {
-        let v = light_state_payload(&setpoint(PowerState::On, 180, None));
+        let v = light_state_payload(&setpoint(PowerState::On, Some(180), None));
         assert_eq!(v["state"], "ON");
         assert_eq!(v["brightness"], 180);
     }
@@ -156,24 +156,26 @@ mod tests {
 
     #[test]
     fn an_off_lamp_reports_no_brightness_at_all() {
-        let v = light_state_payload(&setpoint(PowerState::Off, 180, None));
+        let v = light_state_payload(&setpoint(PowerState::Off, Some(180), None));
         assert_eq!(v["state"], "OFF");
         assert!(v.get("brightness").is_none());
     }
 
     #[test]
     fn switching_on_without_a_level_reports_on_and_no_brightness() {
-        let v = light_state_payload(&setpoint(PowerState::On, 0, None));
-        assert_eq!(v["state"], "ON");
-        assert!(
-            v.get("brightness").is_none(),
-            "a recall states no brightness: {v}"
-        );
+        for level in [None, Some(0)] {
+            let v = light_state_payload(&setpoint(PowerState::On, level, None));
+            assert_eq!(v["state"], "ON");
+            assert!(
+                v.get("brightness").is_none(),
+                "a recall states no brightness, and a zero is not one: {v}"
+            );
+        }
     }
 
     #[test]
     fn an_unknown_power_reads_as_off_rather_than_as_a_lit_lamp() {
-        let v = light_state_payload(&setpoint(PowerState::Unknown, 0, None));
+        let v = light_state_payload(&setpoint(PowerState::Unknown, None, None));
         assert_eq!(v["state"], "OFF");
     }
 
@@ -184,7 +186,7 @@ mod tests {
             color_temperature_kelvin: 3000,
             ..Default::default()
         };
-        let v = light_state_payload(&setpoint(PowerState::On, 180, Some(color)));
+        let v = light_state_payload(&setpoint(PowerState::On, Some(180), Some(color)));
         assert_eq!(v["color_mode"], "color_temp");
         assert_eq!(v["color_temp"], 3000);
         assert!(v.get("color_temp_kelvin").is_none(), "config flag, not a payload key");
@@ -197,7 +199,7 @@ mod tests {
             color_temperature_kelvin: 0,
             ..Default::default()
         };
-        let v = light_state_payload(&setpoint(PowerState::On, 180, Some(color)));
+        let v = light_state_payload(&setpoint(PowerState::On, Some(180), Some(color)));
         assert!(v.get("color_temp").is_none());
         assert!(v.get("color_mode").is_none());
     }
@@ -255,7 +257,7 @@ mod tests {
             b: 90,
             ..Default::default()
         };
-        let v = light_state_payload(&setpoint(PowerState::On, 254, Some(color)));
+        let v = light_state_payload(&setpoint(PowerState::On, Some(254), Some(color)));
         assert_eq!(v["color_mode"], "rgb");
         assert_eq!(v["color"], json!({"r": 255, "g": 180, "b": 90}));
         assert_eq!(v["brightness"], 254, "full DALI level is full HA brightness");

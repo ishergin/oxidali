@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use dali2rust_bus::BusId;
 use dali2rust_contracts::msg::{
-    CompactErrorPayload, DeviceType, ErrorCode, LightSetpoint, PowerState,
+    DeviceType, ErrorCode, LightSetpoint, PowerState,
     RegistryRuntimeUpdateCommand, RuntimeObservation, RuntimeRegistryUpdateEntry, RuntimeSource,
     StatusFlags,
 };
@@ -45,11 +45,7 @@ fn all_clear_flags() -> StatusFlags {
 }
 
 fn level_setpoint(level: u8) -> LightSetpoint {
-    LightSetpoint {
-        power: PowerState::On,
-        level,
-        color: None,
-    }
+    LightSetpoint::from_level(level, None)
 }
 
 fn runtime_entry(
@@ -68,13 +64,7 @@ fn runtime_entry(
     }
 }
 
-fn publish_runtime(
-    stack: &support::RegistryTestStack,
-    corr: u64,
-    level: u8,
-    source: RuntimeSource,
-    observation: RuntimeObservation,
-) {
+fn publish_entry(stack: &support::RegistryTestStack, corr: u64, entry: RuntimeRegistryUpdateEntry) {
     publish_cmd(
         &stack.publisher,
         dali2rust_contracts::bus::command_envelope(
@@ -82,9 +72,19 @@ fn publish_runtime(
             corr,
             BusId::default().0,
             Some(dali2rust_contracts::msg::Origin::Internal),
-            RegistryRuntimeUpdateCommand::internal(0, runtime_entry(level, source, observation)),
+            RegistryRuntimeUpdateCommand::internal(0, entry),
         ),
     );
+}
+
+fn publish_runtime(
+    stack: &support::RegistryTestStack,
+    corr: u64,
+    level: u8,
+    source: RuntimeSource,
+    observation: RuntimeObservation,
+) {
+    publish_entry(stack, corr, runtime_entry(level, source, observation));
 }
 
 fn status_observation(flags: StatusFlags) -> RuntimeObservation {
@@ -218,10 +218,7 @@ fn an_inbound_observation_error_is_ignored() {
     seed_physical_via_discovery(&stack.publisher, 2, SHORT, DeviceType::Dt6Led, &stack.store);
 
     let mut observation = RuntimeObservation::api_timestamped(1_000);
-    observation.error = Some(CompactErrorPayload::new(
-        ErrorCode::ExecutionFailed,
-        "execution_failed",
-    ));
+    observation.error = Some(ErrorCode::ExecutionFailed);
 
     publish_runtime(&stack, 204, 90, RuntimeSource::Api, observation);
     assert_ok(&recv_confirm_for(&stack.conf_rx, 204));
@@ -234,6 +231,36 @@ fn an_inbound_observation_error_is_ignored() {
         state(&stack).error.is_none(),
         "an observation cannot report an error; wiring one needs its own set/clear path"
     );
+}
+
+#[test]
+fn a_bare_level_records_the_power_it_commands() {
+    let stack = spawn_registry_stack(1, 16);
+    seed_physical_via_discovery(&stack.publisher, 2, SHORT, DeviceType::Dt6Led, &stack.store);
+
+    for (corr, level, power) in [(230, 120, "on"), (231, 0, "off")] {
+        let entry = RuntimeRegistryUpdateEntry {
+            setpoint: Some(LightSetpoint {
+                power: PowerState::Unknown,
+                level: Some(level),
+                color: None,
+            }),
+            ..runtime_entry(level, RuntimeSource::Api, RuntimeObservation::api_timestamped(1_000))
+        };
+        publish_entry(&stack, corr, entry);
+        assert_ok(&recv_confirm_for(&stack.conf_rx, corr));
+        let committed = || {
+            let s = state(&stack);
+            s.level == Some(level) && s.power == power
+        };
+        dali2rust_test_support::try_wait_until(committed, Duration::from_millis(500));
+        let after = state(&stack);
+        assert_eq!(
+            (after.level, after.power.as_str()),
+            (Some(level), power),
+            "a level without power is DAPC of that level, and the record says what it did"
+        );
+    }
 }
 
 fn absence_entry() -> RuntimeRegistryUpdateEntry {
@@ -249,16 +276,7 @@ fn absence_entry() -> RuntimeRegistryUpdateEntry {
 }
 
 fn publish_absence(stack: &support::RegistryTestStack, corr: u64) {
-    publish_cmd(
-        &stack.publisher,
-        dali2rust_contracts::bus::command_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            corr,
-            BusId::default().0,
-            Some(dali2rust_contracts::msg::Origin::Internal),
-            RegistryRuntimeUpdateCommand::internal(0, absence_entry()),
-        ),
-    );
+    publish_entry(stack, corr, absence_entry());
 }
 
 #[test]

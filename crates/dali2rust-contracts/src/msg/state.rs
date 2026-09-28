@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use super::errors::CompactErrorPayload;
+use super::errors::ErrorCode;
 use super::kinds::{ColorMode, LastDapcSource, PowerState, RuntimeSource};
 
 pub const MAX_EXTENDED_VERSIONS: usize = 8;
+// IEC 62386-102 §9.3
+pub const ARC_POWER_OFF: u8 = 0;
 
 // IEC 62386-102 §11.6.2
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,7 +90,7 @@ pub struct Level {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LightSetpoint {
     pub power: PowerState,
-    pub level: u8,
+    pub level: Option<u8>,
     pub color: Option<ColorValue>,
 }
 
@@ -96,7 +98,7 @@ impl Default for LightSetpoint {
     fn default() -> Self {
         Self {
             power: PowerState::Unknown,
-            level: 0,
+            level: None,
             color: None,
         }
     }
@@ -126,14 +128,14 @@ impl SetpointDimensions {
 
 impl LightSetpoint {
     pub fn states_a_value(&self) -> bool {
-        self.power != PowerState::Unknown || self.level > 0 || self.color.is_some()
+        self.power != PowerState::Unknown || self.level.is_some() || self.color.is_some()
     }
 
     pub fn merge_from(&mut self, next: &Self) {
         if next.power != PowerState::Unknown {
             self.power = next.power;
             self.level = next.level;
-        } else if next.level > 0 {
+        } else if next.level.is_some() {
             self.level = next.level;
         }
         if next.states_color() || (next.color.is_some() && !self.states_color()) {
@@ -144,17 +146,25 @@ impl LightSetpoint {
     pub const fn from_level(level: u8, color: Option<ColorValue>) -> Self {
         Self {
             power: PowerState::for_level(level),
-            level,
+            level: Some(level),
             color,
         }
     }
 
     pub const fn commanded_power(&self) -> Option<bool> {
-        match self.power {
-            PowerState::Off => Some(false),
-            PowerState::On => Some(true),
-            _ if self.level > 0 => Some(true),
-            _ => None,
+        match (self.power, self.level) {
+            (PowerState::Off, _) => Some(false),
+            (PowerState::On, _) => Some(true),
+            (_, Some(level)) => Some(level > 0),
+            (_, None) => None,
+        }
+    }
+
+    pub const fn dapc_level(&self) -> Option<u8> {
+        match (self.power, self.level) {
+            (PowerState::Off, _) => Some(ARC_POWER_OFF),
+            (PowerState::On, Some(ARC_POWER_OFF)) | (_, None) => None,
+            (_, Some(level)) => Some(level),
         }
     }
 
@@ -184,7 +194,7 @@ pub struct RuntimeObservation {
     pub value_source: Option<RuntimeSource>,
     pub last_seen_ms: Option<u64>,
     pub last_dapc_source: LastDapcSource,
-    pub error: Option<CompactErrorPayload>,
+    pub error: Option<ErrorCode>,
 }
 
 impl RuntimeObservation {
@@ -215,16 +225,13 @@ impl RuntimeObservation {
             value_source: Some(source),
             last_seen_ms: None,
             last_dapc_source: LastDapcSource::default(),
-            error: Some(CompactErrorPayload::new(
-                crate::msg::ErrorCode::DeviceAbsent,
-                "no answer",
-            )),
+            error: Some(ErrorCode::DeviceAbsent),
         }
     }
 
     #[must_use]
     pub fn reports_absence(&self) -> bool {
-        self.error.as_ref().is_some_and(CompactErrorPayload::is_device_absent)
+        self.error == Some(ErrorCode::DeviceAbsent)
     }
 }
 
@@ -270,3 +277,43 @@ pub struct Dt6ReadSnapshot {
     pub extended_version_number: Option<u8>,
 }
 
+#[cfg(test)]
+mod setpoint_wire_tests {
+    use super::{LightSetpoint, PowerState};
+
+    const LEVEL: u8 = 120;
+
+    fn setpoint(power: PowerState, level: Option<u8>) -> LightSetpoint {
+        LightSetpoint {
+            power,
+            level,
+            color: None,
+        }
+    }
+
+    #[test]
+    fn a_level_of_zero_is_a_level_and_an_unknown_one_says_nothing() {
+        let cases = [
+            (PowerState::Unknown, None, None, None),
+            (PowerState::Unknown, Some(0), Some(0), Some(false)),
+            (PowerState::Unknown, Some(LEVEL), Some(LEVEL), Some(true)),
+            (PowerState::Off, None, Some(0), Some(false)),
+            (PowerState::Off, Some(LEVEL), Some(0), Some(false)),
+            (PowerState::On, None, None, Some(true)),
+            (PowerState::On, Some(0), None, Some(true)),
+            (PowerState::On, Some(LEVEL), Some(LEVEL), Some(true)),
+        ];
+        for (power, level, dapc, commanded) in cases {
+            let sp = setpoint(power, level);
+            assert_eq!(sp.dapc_level(), dapc, "{power:?} {level:?} on the wire");
+            assert_eq!(sp.commanded_power(), commanded, "{power:?} {level:?} power");
+        }
+    }
+
+    #[test]
+    fn from_level_puts_a_zero_on_the_wire_as_off() {
+        assert_eq!(LightSetpoint::from_level(0, None).dapc_level(), Some(0));
+        assert_eq!(LightSetpoint::from_level(0, None).power, PowerState::Off);
+        assert_eq!(LightSetpoint::from_level(LEVEL, None).dapc_level(), Some(LEVEL));
+    }
+}

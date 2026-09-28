@@ -135,8 +135,9 @@ Detail: [06](documentation/architecture/06-registry-and-persistence.md),
   observation; an entry naming an unbound virtual lamp is refused (`VlUnbound`).
 - Runtime fields and operation status are not persisted. Group and scene diffs are
   expanded by the apply orchestrator, never by the registry or a handler.
-- A lamp is on because its power says so; a level of 0 is a level. Whether a setpoint
-  states a colour is `states_color()`, never `color.is_some()`.
+- A lamp is on because its power says so; a level of 0 is a level, and an unknown one is
+  `None`, never 0. What reaches the wire is `dapc_level()`. Whether a setpoint states a
+  colour is `states_color()`, never `color.is_some()`.
 - Hydration joins before HTTP mounts, so no mutating request precedes it; a boot-order
   change keeps that or adds a gate.
 - Each persisted slice has its own version: bump only the slice whose shape moved and say

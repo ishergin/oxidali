@@ -26,7 +26,7 @@ fn any_on(stack: &support::RegistryTestStack, group_id: u8) -> bool {
 fn commit_power(stack: &support::RegistryTestStack, correlation_id: u64, lamp: (u8, u8, u8), on: bool) {
     let setpoint = LightSetpoint {
         power: if on { PowerState::On } else { PowerState::Off },
-        level: if on { 200 } else { 0 },
+        level: if on { Some(200) } else { Some(0) },
         color: None,
     };
     commit_setpoint(stack, correlation_id, lamp, &setpoint);
@@ -39,7 +39,7 @@ fn commit_switch_on_without_level(
 ) {
     let setpoint = LightSetpoint {
         power: PowerState::On,
-        level: 0,
+        level: None,
         color: None,
     };
     commit_setpoint(stack, correlation_id, lamp, &setpoint);

@@ -185,7 +185,7 @@ fn apply_setpoint_power_level(
         if *lu > 254 {
             return Err(json_err(422, "invalid_value"));
         }
-        sp.level = *lu as u8;
+        sp.level = Some(*lu as u8);
     }
     Ok(())
 }
@@ -454,7 +454,7 @@ mod tests {
             "rgb": null
         }));
         assert_eq!(sp.power, PowerState::Unknown);
-        assert_eq!(sp.level, 0);
+        assert_eq!(sp.level, None);
         assert_eq!(sp.color.expect("default color slot").mode, ColorMode::default());
     }
 
@@ -541,7 +541,7 @@ mod tests {
             "color_temperature_kelvin": 2700
         }));
         assert_eq!(sp.power, PowerState::On);
-        assert_eq!(sp.level, 77);
+        assert_eq!(sp.level, Some(77));
         let color = sp.color.expect("cct color");
         assert_eq!(color.mode, ColorMode::Cct);
         assert_eq!(color.color_temperature_kelvin, 2700);
