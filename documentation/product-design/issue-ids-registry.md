@@ -161,7 +161,7 @@
 | ISSUE-142 | обход | Rust (rustc/LLVM, std): кадры стека в профиле прошивки |
 | ISSUE-143 | обход | `std::thread` на ESP-IDF: имя и стек не доходят до FreeRTOS |
 | ISSUE-144 | обход | esp-idf-sys и embuild: сборка образа |
-| ISSUE-145 | обход | Home Assistant: цвет, `node_id`, пустое имя |
+| ISSUE-145 | обход | Home Assistant: цвет, сегмент узла discovery, пустое имя |
 | ISSUE-146 | обход | tiny_http и tungstenite: WebSocket хостового сервера |
 | ISSUE-147 | обход | Хост разработки: cargo, macOS, `libc`, Vite |
 | ISSUE-148 | обход | Мост WB и `hil flash`: CH343, RFC2217, esptool, espflash |

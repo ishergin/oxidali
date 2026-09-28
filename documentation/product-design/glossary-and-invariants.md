@@ -14,6 +14,10 @@ state-DTO — [`rest-api/contracts/state-contracts.md`](rest-api/contracts/state
 - **Controller** — один контроллер на единственной плате Waveshare ESP32-P4-ETH
   ([`../architecture/01-overview.md`](../architecture/01-overview.md)) с одним или
   несколькими DALI-адаптерами.
+- **Installation / node** — установка — то, что пара отказоустойчивости обслуживает
+  вместе, её имя — `controller_id` (в настройках Home Assistant — Controller ID); узел —
+  одна плата пары, её имя — `node_id`, оно же hostname
+  ([ADR-032](../architecture/decisions/ADR-032-installation-and-node-identity.md)).
 - **Adapter** — физическая шина DALI со своим транспортом; адресное пространство
   адаптера — 64 коротких адреса gear, 64 виртуальные лампы, 16 групп, 16 сцен и
   отдельно 64 адреса устройств ввода.

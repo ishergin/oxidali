@@ -158,7 +158,7 @@ impl NetworkLink for EthLink {
 
     fn hostname(&self) -> Option<String> {
         let mut name: *const c_char = ptr::null();
-        // SAFETY: `netif` is never freed; the name it hands back is owned by the netif.
+        // SAFETY: `netif` is never freed; `set_hostname` writes the name once, before start, and nothing replaces it.
         let err = unsafe { sys::esp_netif_get_hostname(self.netif, &mut name) };
         if err != sys::ESP_OK || name.is_null() {
             return None;
@@ -338,9 +338,6 @@ fn attach_counting_glue(
             mac.as_mut_ptr() as *mut c_void
         ))?;
         esp!(sys::esp_netif_set_mac(netif, mac.as_mut_ptr()))?;
-        if let Err(err) = set_hostname(netif, mac) {
-            log::warn!("eth: hostname not set, DHCP carries the default: {err}");
-        }
         log::info!("eth: mac {}", mac_text(mac));
         Ok((netif, mac))
     }
@@ -365,6 +362,9 @@ pub fn start() -> Result<EthLink, EspError> {
 
     let handle = install_driver()?;
     let (netif, mac) = attach_counting_glue(handle)?;
+    if let Err(err) = set_hostname(netif, mac) {
+        log::warn!("eth: hostname not set, DHCP carries the default: {err}");
+    }
 
     // SAFETY: `netif` outlives the handler; it is never freed.
     unsafe {

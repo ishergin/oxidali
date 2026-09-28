@@ -375,22 +375,18 @@ impl ControllerSummaryBridge {
 }
 
 impl dali2rust_api::http::handlers::controller::ControllerSummarySource for ControllerSummaryBridge {
-    fn installation_id(&self) -> String {
-        self.settings.home_assistant_settings_view().controller_id
-    }
-
-    fn ha_enabled_and_url(&self) -> (bool, String) {
+    fn facts(&self) -> dali2rust_api::http::handlers::controller::ControllerFacts {
         let view = self.settings.home_assistant_settings_view();
-        let url = view.broker_url_view();
-        (view.enabled, url)
-    }
-
-    fn ha_connected(&self) -> bool {
-        self.counters.is_connected()
-    }
-
-    fn network_link(&self) -> Option<&dyn NetworkLink> {
-        self.link.as_deref()
+        let link = self.link.as_deref();
+        dali2rust_api::http::handlers::controller::ControllerFacts {
+            broker_url: view.broker_url_view(),
+            ha_enabled: view.enabled,
+            installation_id: view.controller_id,
+            ha_connected: self.counters.is_connected(),
+            mac: link.and_then(|l| l.hardware_address()),
+            hostname: link.and_then(|l| l.hostname()),
+            ipv4: link.and_then(|l| l.status().ipv4),
+        }
     }
 }
 

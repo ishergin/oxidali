@@ -218,11 +218,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_controller_id_comes_from_the_last_three_mac_bytes_in_lowercase_hex() {
-        assert_eq!(
-            node_name([0x3c, 0x84, 0x27, 0xA1, 0xB2, 0xC3]),
-            "dali-a1b2c3"
-        );
+    fn the_seed_names_the_installation_after_the_last_three_mac_bytes() {
+        let store = RegistryStore::new();
+        store.seed_home_assistant_controller_id([0x3c, 0x84, 0x27, 0xA1, 0xB2, 0xC3]);
+        assert_eq!(store.home_assistant_settings_view().controller_id, "dali-a1b2c3");
     }
 
     #[test]

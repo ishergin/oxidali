@@ -236,7 +236,7 @@ ID — маркер `hil_id` теста ([README](README.md#writing-a-scenario))
 | Модуль | ID | Ярус | Свет | Что доказывает |
 | --- | --- | --- | --- | --- |
 | `test_smoke_infra` | — | smoke | часть | Приборы живы; сниффер ловит размеренные DAPC без потерь. |
-| `test_adapters` | SYS-02..04 | default | часть | Сводка и адаптеры согласованы; выключенный адаптер отказывает с `adapter_disabled`, и до провода не доходит ни одного кадра. |
+| `test_adapters` | SYS-02..04 | default | часть | Сводка и адаптеры согласованы, а имя узла, hostname на интерфейсе и MAC — одно и то же имя; выключенный адаптер отказывает с `adapter_disabled`, и до провода не доходит ни одного кадра. |
 | `test_diagnostic` | DIAG-02..06 | default | часть | Сырой кадр байт в байт; `repeat_count=2`; ответ `QUERY ACTUAL LEVEL` = реестр; честное «нет ответа». |
 | `test_attributes` | ATTR-01..05, 07..13 | smoke, default | часть | Чтение; fade time и его длительность; min/max; кривая; sRGB на проводе; брекет DT8. `ATTR-06` — §9.2. |
 | `test_target_state` | TS-05..07 | default | да | Коалесцирование пачки, `off_all`, уровень и цвет одним PUT. |

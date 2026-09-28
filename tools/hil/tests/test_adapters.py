@@ -17,8 +17,8 @@ def test_controller_and_adapters_consistent(api, test_artifacts):
     test_artifacts.attach_json("adapters", adapters)
     assert ctrl["adapter_count"] == len(adapters) >= 1
     assert ctrl["firmware_version"] == api.health()["version"]
-    node = NODE_ID.match(ctrl["node_id"] or "")
-    assert node, "node_id %r is not dali-<last three MAC bytes>" % ctrl["node_id"]
+    node = NODE_ID.match(ctrl.get("node_id") or "")
+    assert node, "node_id %r is not dali-<last three MAC bytes>" % ctrl.get("node_id")
     assert ctrl["network"]["hostname"] == ctrl["node_id"], \
         "the interface carries a hostname other than the node's name"
     assert ctrl["network"]["mac"].replace(":", "")[-6:] == node.group(1)

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dali2rust_platform::clock::Clock;
-use dali2rust_platform::net::{ipv4_text, mac_text, node_name, NetworkLink};
+use dali2rust_platform::net::{ipv4_text, mac_text, node_name};
 use serde::Serialize;
 
 use crate::http::handler::ApiHandler;
@@ -39,11 +39,18 @@ struct ControllerHaBody {
     broker_url: String,
 }
 
+pub struct ControllerFacts {
+    pub installation_id: String,
+    pub ha_enabled: bool,
+    pub ha_connected: bool,
+    pub broker_url: String,
+    pub mac: Option<[u8; 6]>,
+    pub hostname: Option<String>,
+    pub ipv4: Option<[u8; 4]>,
+}
+
 pub trait ControllerSummarySource: Send + Sync {
-    fn installation_id(&self) -> String;
-    fn ha_enabled_and_url(&self) -> (bool, String);
-    fn ha_connected(&self) -> bool;
-    fn network_link(&self) -> Option<&dyn NetworkLink>;
+    fn facts(&self) -> ControllerFacts;
 }
 
 #[derive(Serialize)]
@@ -83,32 +90,27 @@ impl ControllerSummaryHandler {
     }
 
     fn summary_body(&self) -> ControllerSummaryBody {
-        let link = self.source.network_link();
-        let (enabled, broker_url) = self.source.ha_enabled_and_url();
+        let facts = self.source.facts();
         ControllerSummaryBody {
-            controller_id: self.source.installation_id(),
-            node_id: link.and_then(|l| l.hardware_address()).map(node_name),
+            node_id: facts.mac.map(node_name),
+            network: ControllerNetworkBody {
+                hostname: facts.hostname,
+                ip: facts.ipv4.map(ipv4_text),
+                mac: facts.mac.map(mac_text),
+            },
+            home_assistant: ControllerHaBody {
+                enabled: facts.ha_enabled,
+                connected: facts.ha_connected,
+                broker_url: facts.broker_url,
+            },
+            controller_id: facts.installation_id,
             firmware_version: self.firmware_version,
             target_mcu: TARGET_MCU,
             uptime_ms: self.clock.monotonic_ms().saturating_sub(self.started_ms),
-            network: network_body(link),
-            home_assistant: ControllerHaBody {
-                enabled,
-                connected: self.source.ha_connected(),
-                broker_url,
-            },
             cluster: ControllerClusterBody { enabled: false },
             adapter_count: self.adapter_count,
             hydrated: true,
         }
-    }
-}
-
-fn network_body(link: Option<&dyn NetworkLink>) -> ControllerNetworkBody {
-    ControllerNetworkBody {
-        hostname: link.and_then(|l| l.hostname()),
-        ip: link.and_then(|l| l.status().ipv4).map(ipv4_text),
-        mac: link.and_then(|l| l.hardware_address()).map(mac_text),
     }
 }
 

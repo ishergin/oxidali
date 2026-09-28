@@ -140,24 +140,22 @@ export function Dashboard() {
           </div>
           <div class="attr">
             <span class="k">Installation</span>
-            <span class="v">
-              <span class="mono">{c.controller_id}</span>
-            </span>
+            <span class="v">{c.controller_id}</span>
             <span />
           </div>
           <div class="attr">
             <span class="k">Hostname</span>
-            <span class="v">{c.network.hostname ? <span class="mono">{c.network.hostname}</span> : '—'}</span>
+            <span class="v">{c.network.hostname || '—'}</span>
             <span />
           </div>
           <div class="attr">
             <span class="k">IP address</span>
-            <span class="v">{c.network.ip ? <span class="mono">{c.network.ip}</span> : '—'}</span>
+            <span class="v">{c.network.ip || '—'}</span>
             <span />
           </div>
           <div class="attr">
             <span class="k">MAC address</span>
-            <span class="v">{c.network.mac ? <span class="mono">{c.network.mac}</span> : '—'}</span>
+            <span class="v">{c.network.mac || '—'}</span>
             <span />
           </div>
           <div class="attr">

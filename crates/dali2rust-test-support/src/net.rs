@@ -1,15 +1,16 @@
-use dali2rust_platform::net::{node_name, LinkStats, LinkStatus, NetworkLink};
+use dali2rust_platform::net::{LinkStats, LinkStatus, NetworkLink};
 
 pub const MOCK_LINK_SPEED_MBPS: u16 = 100;
 
 pub struct MockNetworkLink {
     mac: [u8; 6],
     ipv4: Option<[u8; 4]>,
+    hostname: String,
 }
 
 impl MockNetworkLink {
-    pub fn new(mac: [u8; 6], ipv4: Option<[u8; 4]>) -> Self {
-        Self { mac, ipv4 }
+    pub fn new(mac: [u8; 6], ipv4: Option<[u8; 4]>, hostname: &str) -> Self {
+        Self { mac, ipv4, hostname: hostname.to_string() }
     }
 }
 
@@ -36,6 +37,6 @@ impl NetworkLink for MockNetworkLink {
     }
 
     fn hostname(&self) -> Option<String> {
-        Some(node_name(self.mac))
+        Some(self.hostname.clone())
     }
 }
