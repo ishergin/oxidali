@@ -163,12 +163,14 @@ mod tests {
 
     #[test]
     fn switching_on_without_a_level_reports_on_and_no_brightness() {
-        let v = light_state_payload(&setpoint(PowerState::On, None, None));
-        assert_eq!(v["state"], "ON");
-        assert!(
-            v.get("brightness").is_none(),
-            "a recall states no brightness: {v}"
-        );
+        for level in [None, Some(0)] {
+            let v = light_state_payload(&setpoint(PowerState::On, level, None));
+            assert_eq!(v["state"], "ON");
+            assert!(
+                v.get("brightness").is_none(),
+                "a recall states no brightness, and a zero is not one: {v}"
+            );
+        }
     }
 
     #[test]

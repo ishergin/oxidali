@@ -89,8 +89,12 @@ fn failure_status_data(fs: &dali2rust_contracts::msg::FailureStatus) -> FailureS
 
 impl RuntimeObservationData {
     pub(crate) fn apply_setpoint(&mut self, setpoint: &LightSetpoint) {
-        if setpoint.power != dali2rust_contracts::msg::PowerState::Unknown {
-            self.power = setpoint.power;
+        if let Some(on) = setpoint.commanded_power() {
+            self.power = if on {
+                dali2rust_contracts::msg::PowerState::On
+            } else {
+                dali2rust_contracts::msg::PowerState::Off
+            };
         }
         if let Some(cv) = setpoint.color.as_ref() {
             self.apply_color(cv);

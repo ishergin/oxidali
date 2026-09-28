@@ -80,7 +80,7 @@ async fn when_open_ws(world: &mut DaliWorld) {
     open_client(world);
 }
 
-// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046
+// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059
 #[given("an open WebSocket connection")]
 async fn given_open_ws(world: &mut DaliWorld) {
     open_client(world);
@@ -163,7 +163,7 @@ async fn when_subscribe(world: &mut DaliWorld, channels: String) {
     last_client(world).subscribe(&channels);
 }
 
-// WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-010 WS-013
+// WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-010 WS-013 WS-059
 #[given(regex = r#"^the WebSocket client is subscribed to "([^"]+)"$"#)]
 async fn given_subscribed(world: &mut DaliWorld, channels: String) {
     let c = last_client(world);
@@ -223,7 +223,7 @@ async fn then_error_code(world: &mut DaliWorld, code: String) {
     assert_eq!(frame["error"]["code"], code.as_str(), "frame was {frame}");
 }
 
-// WS-003 WS-010 WS-030 WS-046 WS-013
+// WS-003 WS-010 WS-030 WS-046 WS-013 WS-059
 #[then(regex = r#"^the WebSocket client should receive a "([^"]+)" frame on channel "([^"]+)"$"#)]
 async fn then_receive_event(world: &mut DaliWorld, event_type: String, channel: String) {
     let frame = last_client(world)

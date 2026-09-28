@@ -106,17 +106,7 @@ fn commit_physical_runtime(
     if power_cycled {
         forget_ram_state(rec);
     }
-    match commit.setpoint.dapc_level() {
-        Some(level) => rec.runtime_level = Some(level),
-        None if commit.setpoint.power == PowerState::On => {
-            rec.runtime_level = rec.last_active_level;
-        }
-        None => {}
-    }
-    // IEC 62386-102 §9.4
-    if let Some(level) = rec.runtime_level.filter(|level| *level > 0 && !power_cycled) {
-        rec.last_active_level = Some(level);
-    }
+    record_commanded_level(rec, commit.setpoint, power_cycled);
     rec.runtime.apply_setpoint(commit.setpoint);
     rec.runtime.apply_observation(commit.observation);
     rec.runtime.merge_command_metadata(
@@ -129,6 +119,22 @@ fn commit_physical_runtime(
         .observed_at_mono_ms
         .or(rec.runtime.observed_at_mono_ms);
     power_cycled
+}
+
+fn record_commanded_level(
+    rec: &mut PhysicalDeviceRecord,
+    setpoint: &LightSetpoint,
+    power_cycled: bool,
+) {
+    match setpoint.dapc_level() {
+        Some(level) => rec.runtime_level = Some(level),
+        None if setpoint.power == PowerState::On => rec.runtime_level = rec.last_active_level,
+        None => {}
+    }
+    // IEC 62386-102 §9.4
+    if let Some(level) = rec.runtime_level.filter(|level| *level > 0 && !power_cycled) {
+        rec.last_active_level = Some(level);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

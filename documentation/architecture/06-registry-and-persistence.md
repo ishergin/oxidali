@@ -92,12 +92,14 @@ httpd stack in [07](07-memory-and-cores.md).
   gear clamps to its limits or after foreign frames the sniffer cannot decode.
 - **On-ness is the power field alone; a level of 0 is a level.** A setpoint's level is
   optional: `None` states nothing, and `0` is the level DAPC 0 sets. What reaches the wire
-  is `LightSetpoint::dapc_level()` — off is DAPC 0, a stated level goes as itself, and on
-  with no level or with 0 goes out as `GO TO LAST ACTIVE LEVEL` — and the commit records
-  the same level. The registry keeps `last_active_level`, the level the gear is known to be
-  lit at, across the OFF that zeroes the level, and projects it on that recall. It is a prediction: a read repairs it, a reboot empties it, and a gear
-  never seen lit has none — then the level is honestly unknown. Surfaces reporting
-  brightness omit it rather than publish 0.
+  is `LightSetpoint::dapc_level()`: off is DAPC 0, a stated level goes as itself, and on
+  with no level or with 0 goes out as `GO TO LAST ACTIVE LEVEL`. The commit records that
+  level and the power `commanded_power()` names, so a bare 0 is recorded as off. The
+  registry keeps `last_active_level`, the level the gear is known to be lit at, across the
+  OFF that zeroes the level, and records it as the level a `GO TO LAST ACTIVE LEVEL`
+  restores. It is a prediction: a read repairs it, a reboot empties it, and a gear never
+  seen lit has none — then the level is honestly unknown. Surfaces reporting brightness
+  omit it rather than publish 0.
 - **A setpoint states a colour only if `states_color()` says so.** Parsed setpoints
   always carry a colour slot, so `color.is_some()` is not the test.
 

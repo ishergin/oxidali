@@ -4,6 +4,7 @@ use super::errors::ErrorCode;
 use super::kinds::{ColorMode, LastDapcSource, PowerState, RuntimeSource};
 
 pub const MAX_EXTENDED_VERSIONS: usize = 8;
+// IEC 62386-102 §9.3
 pub const ARC_POWER_OFF: u8 = 0;
 
 // IEC 62386-102 §11.6.2
@@ -276,3 +277,44 @@ pub struct Dt6ReadSnapshot {
     pub extended_version_number: Option<u8>,
 }
 
+
+#[cfg(test)]
+mod setpoint_wire_tests {
+    use super::{LightSetpoint, PowerState};
+
+    const LEVEL: u8 = 120;
+
+    fn setpoint(power: PowerState, level: Option<u8>) -> LightSetpoint {
+        LightSetpoint {
+            power,
+            level,
+            color: None,
+        }
+    }
+
+    #[test]
+    fn a_level_of_zero_is_a_level_and_an_unknown_one_says_nothing() {
+        let cases = [
+            (PowerState::Unknown, None, None, None),
+            (PowerState::Unknown, Some(0), Some(0), Some(false)),
+            (PowerState::Unknown, Some(LEVEL), Some(LEVEL), Some(true)),
+            (PowerState::Off, None, Some(0), Some(false)),
+            (PowerState::Off, Some(LEVEL), Some(0), Some(false)),
+            (PowerState::On, None, None, Some(true)),
+            (PowerState::On, Some(0), None, Some(true)),
+            (PowerState::On, Some(LEVEL), Some(LEVEL), Some(true)),
+        ];
+        for (power, level, dapc, commanded) in cases {
+            let sp = setpoint(power, level);
+            assert_eq!(sp.dapc_level(), dapc, "{power:?} {level:?} on the wire");
+            assert_eq!(sp.commanded_power(), commanded, "{power:?} {level:?} power");
+        }
+    }
+
+    #[test]
+    fn from_level_puts_a_zero_on_the_wire_as_off() {
+        assert_eq!(LightSetpoint::from_level(0, None).dapc_level(), Some(0));
+        assert_eq!(LightSetpoint::from_level(0, None).power, PowerState::Off);
+        assert_eq!(LightSetpoint::from_level(LEVEL, None).dapc_level(), Some(LEVEL));
+    }
+}

@@ -32,6 +32,7 @@ Feature: Physical device direct target state
     Then the response status should be 200
     And all scripted DALI exchanges should be consumed without errors
     And the physical device 0 state level should eventually be 0
+    And the physical device 0 state power should eventually be "off"
 
   @id:PD-266
   Scenario: The target-state answer is stamped with the wall clock

@@ -56,11 +56,11 @@ rules.
 чтения и отсутствия ответа); конфигурацией не является и не персистится.
 
 **`RuntimeObservation`** — статус, отказы, источник значения, `last_seen_ms`, источник
-последнего DAPC и код ошибки без текста. На входе реестра (`RuntimeRegistryUpdateEntry.observation`)
-это частичный отчёт, на выходе (`RuntimeStateChangedEvent`) — снимок записи
-([`events.md`](events.md)); правила слияния и единственная хранимая ошибка
-(`device_absent`) — [06](../../architecture/06-registry-and-persistence.md) §Merge
-rules.
+последнего DAPC и код ошибки без текста. На входе реестра
+(`RuntimeRegistryUpdateEntry.observation`) это частичный отчёт, на выходе
+(`RuntimeStateChangedEvent`) — снимок записи ([`events.md`](events.md)); правила слияния
+и единственная хранимая ошибка (`device_absent`) —
+[06](../../architecture/06-registry-and-persistence.md) §Merge rules.
 
 **`CapabilityFlags`** — `brightness`, `cct`, `xy`, `rgb`, `rgbwaf` (больше трёх каналов
 RGBWAF), `scenes`, `groups`. Цветовые биты — липкие доказательства из

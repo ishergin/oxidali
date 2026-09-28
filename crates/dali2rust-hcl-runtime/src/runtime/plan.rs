@@ -91,28 +91,22 @@ pub fn commands_for(entry: &DesiredEntry) -> Vec<PlannedCommand> {
             color_temperature_kelvin: kelvin,
             ..ColorValue::default()
         });
-    match entry.state.level_mode {
-        HclLevelMode::Absolute => vec![PlannedCommand::TargetState {
+    let colour_only = color.map(|color| PlannedCommand::TargetState {
+        key: entry.key,
+        setpoint: color_only_setpoint(color),
+    });
+    match (entry.state.level_mode, entry.state.level) {
+        (HclLevelMode::Absolute, Some(level)) => vec![PlannedCommand::TargetState {
             key: entry.key,
-            setpoint: absolute_setpoint(entry.state.level.unwrap_or(0), color),
+            setpoint: absolute_setpoint(level, color),
         }],
-        HclLevelMode::LastActive => color
-            .map(|color| PlannedCommand::TargetState {
-                key: entry.key,
-                setpoint: color_only_setpoint(color),
-            })
+        (HclLevelMode::LastActive, _) => colour_only
             .into_iter()
             .chain(std::iter::once(PlannedCommand::RecallLastActive {
                 key: entry.key,
             }))
             .collect(),
-        HclLevelMode::None => color
-            .map(|color| PlannedCommand::TargetState {
-                key: entry.key,
-                setpoint: color_only_setpoint(color),
-            })
-            .into_iter()
-            .collect(),
+        (HclLevelMode::Absolute | HclLevelMode::None, _) => colour_only.into_iter().collect(),
     }
 }
 
@@ -257,6 +251,17 @@ mod tests {
             panic!("expected a target-state command");
         };
         assert_eq!(setpoint.power, PowerState::Off);
+    }
+
+    #[test]
+    fn an_absolute_point_without_a_level_guesses_no_zero() {
+        let commands = commands_for(&entry(group_key(0, 3), HclLevelMode::Absolute, None, Some(2700)));
+        assert_eq!(commands.len(), 1);
+        let PlannedCommand::TargetState { setpoint, .. } = &commands[0] else {
+            panic!("expected a target-state command");
+        };
+        assert_eq!(setpoint.dapc_level(), None, "a missing level is not DAPC 0");
+        assert!(commands_for(&entry(group_key(0, 3), HclLevelMode::Absolute, None, None)).is_empty());
     }
 
     #[test]

@@ -179,6 +179,17 @@ fn switching_off_says_off_rather_than_a_level() {
 }
 
 #[test]
+fn a_bare_level_of_zero_says_off_like_the_wire() {
+    let (_host, publisher, view, _w) =
+        spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
+    let mut ev = applied(RuntimeSource::Api, Some(0), Some(3000));
+    ev.setpoint.power = PowerState::Unknown;
+    ev.dapc_applied = false;
+    publish(&publisher, ev);
+    wait_row(&view, 6, "A03 OFF");
+}
+
+#[test]
 fn switching_on_without_a_level_says_on_rather_than_a_zero() {
     let (_host, publisher, view, _w) =
         spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());

@@ -10,8 +10,8 @@ use dali2rust_contracts::msg::{
     DaliInputEventObservedEvent, DaliSceneRecalledEvent, DaliTargetScope,
     DaliTargetStateAppliedEvent, DaliTargetStateFailedEvent, ErrorCode, FixedText32,
     HclScheduleChangedEvent, InputEventKind, DaliObservedFrameEvent, IpAddressAssignedEvent,
-    ObservedKind, OperationStatus, OperationStatusChangedEvent, OperationType, PowerState,
-    RuntimeSource,
+    ObservedKind, OperationStatus, OperationStatusChangedEvent, OperationType, RuntimeSource,
+    ARC_POWER_OFF,
 };
 use dali2rust_domain::dali::dev103::ButtonEvent;
 
@@ -356,7 +356,7 @@ fn apply_observed(facts: &mut Facts, adapter: u8, body: &DaliObservedFrameEvent)
 }
 
 fn observed_label(setpoint: &dali2rust_contracts::msg::LightSetpoint) -> EventLabel {
-    if setpoint.power == PowerState::Off {
+    if setpoint.dapc_level() == Some(ARC_POWER_OFF) {
         return EventLabel::from_fmt(format_args!("OFF"));
     }
     match (setpoint.color.as_ref(), setpoint.level) {
@@ -416,7 +416,7 @@ fn target_label(
 }
 
 fn setpoint_label(body: &DaliTargetStateAppliedEvent) -> EventLabel {
-    if body.setpoint.power == PowerState::Off {
+    if body.setpoint.dapc_level() == Some(ARC_POWER_OFF) {
         return EventLabel::from_fmt(format_args!("OFF"));
     }
     if body.dapc_applied {

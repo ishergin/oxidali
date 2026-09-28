@@ -29,8 +29,6 @@ use dali2rust_domain::dali::devices::dt8_color::{
     COLOUR_STATUS_XY_OUT_OF_RANGE as DT8_STATUS_XY_OUT_OF_RANGE,
 };
 
-// IEC 62386-102 §9.3
-
 pub fn apply_with_sequence_retry<T>(
     sequence_retries: u8,
     mut run: impl FnMut() -> Result<T, SemanticDaliError>,

@@ -16,14 +16,6 @@ pub enum ParsedBusEvent {
     IpAssigned {
         ip: String,
     },
-    RuntimeStateChanged {
-        adapter_id: u8,
-        correlation_id: u64,
-        virtual_lamp_id: Option<u8>,
-        short_address: Option<u8>,
-        level: Option<u8>,
-        communication_failure: bool,
-    },
 }
 
 pub fn parse_event_envelope_from_typed(ev: &EventEnvelope) -> Option<ParsedBusEvent> {
@@ -39,21 +31,6 @@ pub fn parse_event_envelope_from_typed(ev: &EventEnvelope) -> Option<ParsedBusEv
                 p.ip_v4[0], p.ip_v4[1], p.ip_v4[2], p.ip_v4[3]
             ),
         }),
-        BusEventPayload::RuntimeStateChangedEvent(p) => {
-            let communication_failure = p
-                .state_observation
-                .failure_status
-                .as_ref()
-                .is_some_and(|f| f.communication_failure);
-            Some(ParsedBusEvent::RuntimeStateChanged {
-                adapter_id: p.adapter_id,
-                correlation_id: ev.meta.correlation_id,
-                virtual_lamp_id: p.virtual_lamp_id,
-                short_address: p.short_address,
-                level: p.state_setpoint.level,
-                communication_failure,
-            })
-        }
         _ => None,
     }
 }
@@ -253,7 +230,6 @@ mod tests {
                 assert_eq!(repeat_count, 1);
             }
             ParsedBusEvent::IpAssigned { .. } => panic!("expected DALI variant"),
-            ParsedBusEvent::RuntimeStateChanged { .. } => panic!("expected DALI variant"),
         }
     }
 
@@ -270,7 +246,6 @@ mod tests {
         match parse_event_envelope(&bytes).expect("parse") {
             ParsedBusEvent::IpAssigned { ip } => assert_eq!(ip, "192.168.4.2"),
             ParsedBusEvent::Dali { .. } => panic!("expected IpAssigned variant"),
-            ParsedBusEvent::RuntimeStateChanged { .. } => panic!("expected IpAssigned variant"),
         }
     }
 }

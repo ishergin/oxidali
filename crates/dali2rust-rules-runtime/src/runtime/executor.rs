@@ -303,33 +303,25 @@ fn setpoint_of(
     snapshot: &WorldSnapshot,
 ) -> Option<LightSetpoint> {
     let current = lamp_of(target, snapshot);
-    let mut sp = LightSetpoint::default();
-    match verb {
-        LightVerb::On { level } => {
-            sp.power = PowerState::On;
-            sp.level = *level;
-        }
-        LightVerb::Off => sp.power = PowerState::Off,
-        LightVerb::Level { level } => {
-            sp.power = PowerState::On;
-            sp.level = Some(*level);
-        }
+    let powered = |power| LightSetpoint { power, ..LightSetpoint::default() };
+    Some(match verb {
+        LightVerb::On { level } => LightSetpoint { level: *level, ..powered(PowerState::On) },
+        LightVerb::Off => powered(PowerState::Off),
+        LightVerb::Level { level } => LightSetpoint::from_level(*level, None),
         LightVerb::LevelRelative { delta } | LightVerb::Dim { delta } => {
-            let lamp = current?;
-            if !lamp.is_on {
-                return None;
-            }
-            sp.power = PowerState::On;
-            sp.level = Some(clamp_level(i32::from(lamp.level?) + i32::from(*delta)));
+            let lamp = current.filter(|lamp| lamp.is_on)?;
+            LightSetpoint::from_level(clamp_level(i32::from(lamp.level?) + i32::from(*delta)), None)
         }
         LightVerb::Cct { .. }
         | LightVerb::CctRelative { .. }
         | LightVerb::Xy { .. }
-        | LightVerb::Rgb { .. } => sp.color = Some(colour_of(verb, current)?),
-        LightVerb::LastActive => sp.power = PowerState::On,
+        | LightVerb::Rgb { .. } => LightSetpoint {
+            color: Some(colour_of(verb, current)?),
+            ..LightSetpoint::default()
+        },
+        LightVerb::LastActive => powered(PowerState::On),
         LightVerb::StopFade => return None,
-    }
-    Some(sp)
+    })
 }
 
 fn colour_of(

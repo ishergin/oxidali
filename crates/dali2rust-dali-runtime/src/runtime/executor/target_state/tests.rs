@@ -672,24 +672,27 @@ fn target_state_cct_redrives_when_value_reads_back_out_of_range() {
 }
 
 #[test]
-fn target_state_power_off_fades_to_zero_with_dapc() {
-    let mock = MockDaliTransport::new();
-    let expected = DaliCommand::Standard {
-        address: short_address(5),
-        command: StandardCommand::DirectArcPower { level: 0 },
-    }
-    .to_forward_frame()
-    .raw();
-    mock.expect_forward_frame(expected);
+fn target_state_power_off_or_a_bare_zero_fades_to_zero_with_dapc() {
+    for power in [PowerState::Off, PowerState::Unknown] {
+        let mock = MockDaliTransport::new();
+        let expected = DaliCommand::Standard {
+            address: short_address(5),
+            command: StandardCommand::DirectArcPower { level: 0 },
+        }
+        .to_forward_frame()
+        .raw();
+        mock.expect_forward_frame(expected);
 
-    let (transport, mut controller) = setup_controller(mock);
-    let setpoint = LightSetpoint {
-        power: PowerState::Off,
-        level: Some(0),
-        ..Default::default()
-    };
-    apply_short_target_state(&mut controller, 5, &setpoint, ColorWritePolicy::NONE).expect("target-state");
-    assert_script_consumed(&transport);
+        let (transport, mut controller) = setup_controller(mock);
+        let setpoint = LightSetpoint {
+            power,
+            level: Some(0),
+            ..Default::default()
+        };
+        apply_short_target_state(&mut controller, 5, &setpoint, ColorWritePolicy::NONE)
+            .expect("target-state");
+        assert_script_consumed(&transport);
+    }
 }
 
 #[test]

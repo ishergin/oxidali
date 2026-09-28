@@ -1131,6 +1131,25 @@ fn every_light_argument_reaches_the_setpoint() {
 }
 
 #[test]
+fn a_computed_level_of_zero_goes_out_as_dapc_zero() {
+    use dali2rust_contracts::msg::PowerState;
+
+    for (kind, snippet) in [
+        ("level-zero", "lamp(0).level(0)"),
+        ("level-down-to-zero", "lamp(0).level(-200)"),
+        ("dim-down-to-zero", "lamp(0).dim(-200)"),
+    ] {
+        let sp = landing_setpoint(kind, snippet);
+        assert_eq!(
+            sp.dapc_level(),
+            Some(0),
+            "{snippet}: a level of 0 is DAPC 0, never GO TO LAST ACTIVE LEVEL"
+        );
+        assert_eq!(sp.power, PowerState::Off, "{snippet}");
+    }
+}
+
+#[test]
 fn hold_hcl_true_changes_nothing_and_false_never_reaches_the_bus() {
     let plain = landing_setpoint("hold-hcl-default", "lamp(0).level(200)");
     let explicit = landing_setpoint("hold-hcl-true", "lamp(0).level(200, hold_hcl=true)");
