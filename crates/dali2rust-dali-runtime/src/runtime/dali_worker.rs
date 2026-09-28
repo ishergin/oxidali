@@ -102,6 +102,18 @@ use target_state::handle_set_target_state;
 use wire::process_wire_payload;
 use write_attributes::handle_write_attributes;
 
+struct WorkerInputs<C> {
+    cmd_rx: BusSubscriberRx,
+    controller: C,
+    runtime_config: DaliRuntimeConfig,
+    read_port: Arc<dyn RegistryReadPort>,
+    publisher: BusPublisher,
+    adapter_id: BusId,
+    counters: Arc<DaliWorkerCounters>,
+    interactive: Arc<dali2rust_platform::dali::WireActivity>,
+    correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
+}
+
 pub fn spawn_dali_worker<C: DaliApplicationController + Send + 'static>(
     cmd_rx: BusSubscriberRx,
     controller: C,
@@ -113,22 +125,21 @@ pub fn spawn_dali_worker<C: DaliApplicationController + Send + 'static>(
     interactive: Arc<dali2rust_platform::dali::WireActivity>,
     correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
 ) -> std::thread::JoinHandle<()> {
+    let mut inputs = Box::new(WorkerInputs {
+        cmd_rx,
+        controller,
+        runtime_config,
+        read_port,
+        publisher,
+        adapter_id,
+        counters,
+        interactive,
+        correlation,
+    });
     esp_thread::spawn_named_stack(
         c"dali_worker",
         std_thread_stack::COMMAND_WORKER_STACK,
-        move || {
-            run_command_loop(
-                &cmd_rx,
-                controller,
-                runtime_config,
-                read_port.as_ref(),
-                &publisher,
-                &interactive,
-                adapter_id,
-                &counters,
-                correlation.as_ref(),
-            );
-        },
+        move || run_command_loop(&mut inputs),
     )
 }
 

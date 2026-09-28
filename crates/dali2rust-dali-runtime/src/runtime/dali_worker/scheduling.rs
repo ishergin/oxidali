@@ -1,17 +1,9 @@
 use super::*;
 
-pub(super) fn run_command_loop(
-    cmd_rx: &BusSubscriberRx,
-    controller: impl DaliApplicationController,
-    runtime_config: DaliRuntimeConfig,
-    read_port: &dyn RegistryReadPort,
-    publisher: &BusPublisher,
-    interactive: &Arc<dali2rust_platform::dali::WireActivity>,
-    adapter_id: BusId,
-    counters: &DaliWorkerCounters,
-    correlation: &dali2rust_bus::CorrelationIdAllocator,
-) {
-    let mut ctrl = controller;
+pub(super) fn run_command_loop(inputs: &mut WorkerInputs<impl DaliApplicationController>) {
+    let WorkerInputs { cmd_rx, controller: ctrl, runtime_config, read_port, publisher, adapter_id,
+        counters, interactive, correlation } = inputs;
+    let (runtime_config, adapter_id) = (*runtime_config, *adapter_id);
     while let Ok(frame) = cmd_rx.recv() {
         let mut batch = vec![frame];
         while let Some(frame) = take_next_command(&mut batch, cmd_rx, publisher, adapter_id, counters)
@@ -22,12 +14,12 @@ pub(super) fn run_command_loop(
                     frame,
                     c,
                     runtime_config,
-                    read_port,
+                    read_port.as_ref(),
                     publisher,
                     interactive.as_ref(),
                     adapter_id,
                     counters,
-                    correlation,
+                    correlation.as_ref(),
                 )
             };
             crate::runtime::required_publish::with_budget(scope.publish_priority, || {
