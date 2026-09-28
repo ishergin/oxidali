@@ -12,13 +12,13 @@ hcl-scheduler        8192    2900
 poller               8192    2320
 ws_worker            8192    2860
 # The peak is announcing a fresh broker session.
-mqtt_worker          8192    6816
+mqtt_worker          8192    3592
 display_worker       6144    1668
 arb-supervisor        3072   1700
 arbitration           4096   1972
 bus_task              8192   2076
 confirm-bridge        8192   1536
-# Two interrupt frames: the tick can nest inside a section already under a lower-level interrupt's frame.
+# The deep path is a sniff log from the loop's 1 KiB frame.
 dali-sniff            8192   2800
 ip-watch              8192   1712
 ws-client             8192   1340
