@@ -14,6 +14,9 @@ BRIDGE = ROOT / "crates/dali2rust-adapters/src/runtime/http_bridges.rs"
 TS_TYPES = ROOT / "web/app/src/api/types.ts"
 FAULT_KEYS_TSX = ROOT / "web/app/src/screens/diagnostics.tsx"
 DESIGN_DOC = ROOT / "documentation/product-design/rest-api/resources/diagnostics.md"
+RESOURCE_DOCS = (
+    ("RedundancyStateDto", ROOT / "documentation/product-design/rest-api/resources/redundancy.md"),
+)
 INTERNAL = ROOT / "scripts/counter_surface_internal.txt"
 INTERNAL_BUDGET = ROOT / "scripts/counter_surface_internal_budget.txt"
 DEFAULT_INTERNAL_BUDGET = 0
@@ -27,13 +30,14 @@ ROOTS = (
 
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 
+RAW_GET = r'_get\([^)]*"/api/v1/(?:diagnostics|stats|redundancy)"\)'
 FETCH_CALL = re.compile(
     r"api\.diagnostics\(\)|api\.stats\(\)|diagnostics_snapshot\(|\bdiagnostics\s*[\[.]"
-    r"|\.redundancy\.get\(\)"
+    r"|\.redundancy\.get\(\)|" + RAW_GET
 )
 FETCH = re.compile(
     r"(\w+)\s*=\s*[^=]*(?:api\.diagnostics\(\)|api\.stats\(\)|diagnostics_snapshot\("
-    r"|\.redundancy\.get\(\))"
+    r"|\.redundancy\.get\(\)|" + RAW_GET + r")"
 )
 DEFINITION = re.compile(r"^\s*(?:def |async def |fn |async fn |pub fn |#\[)")
 
@@ -295,6 +299,19 @@ def check_design_doc(rust_types):
     return problems
 
 
+def check_resource_docs(rust_types):
+    problems = []
+    for struct, doc in RESOURCE_DOCS:
+        text = doc.read_text()
+        for field, _ in rust_types.get(struct, []):
+            if "`%s`" % field not in text:
+                problems.append(
+                    "%s: %s has a %r field the document does not name"
+                    % (doc.relative_to(ROOT), struct, field)
+                )
+    return problems
+
+
 def check_fault_keys(names):
     source = FAULT_KEYS_TSX.read_text()
     match = re.search(r"const FAULT_KEYS = new Set\(\[(.*?)\]\)", source, re.S)
@@ -325,6 +342,7 @@ def main():
     problems += check_fault_keys(names)
     problems += check_bdd_block_list(rust_types)
     problems += check_design_doc(rust_types)
+    problems += check_resource_docs(rust_types)
 
     if problems:
         print("counter surface: %d problem(s)\n" % len(problems))

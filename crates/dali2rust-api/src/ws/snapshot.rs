@@ -2,7 +2,7 @@ use crate::http::diagnostics_state::{DiagnosticsDto, DiagnosticsHttpState};
 use crate::http::stats_state::{StatsHttpState, StatsReportDto};
 use crate::ws::protocol::{event_frame_reserving, Channel};
 
-pub const DIAGNOSTICS_SNAPSHOT_CEILING_BYTES: usize = 8776;
+pub const DIAGNOSTICS_SNAPSHOT_CEILING_BYTES: usize = 8608;
 
 pub const STATS_SNAPSHOT_RESERVE_BYTES: usize = 3072;
 

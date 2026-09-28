@@ -64,7 +64,7 @@ def sample(base):
             if k in probes:
                 out["red_" + k] = int(probes[k])
     except Exception as e:
-        out["probes_error"] = str(e)
+        out["redundancy_error"] = str(e)
     return out
 
 

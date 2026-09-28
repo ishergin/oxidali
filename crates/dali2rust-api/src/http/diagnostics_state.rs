@@ -15,8 +15,8 @@ macro_rules! declare_widest_dtos {
     (@widest) => { u32::MAX };
 }
 
-pub const WORST_COMMAND_SUBSCRIBERS: usize = 9;
-pub const WORST_CONFIRMATION_SUBSCRIBERS: usize = 6;
+pub const WORST_COMMAND_SUBSCRIBERS: usize = 8;
+pub const WORST_CONFIRMATION_SUBSCRIBERS: usize = 4;
 pub const WORST_EVENT_SUBSCRIBERS: usize = 13;
 pub const WORST_EVENT_SUBSCRIBER_NAME: &str = "wwwwwwwwwwwwwwwwwwwwwwww";
 

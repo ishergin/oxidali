@@ -56,10 +56,11 @@ class Sampler(threading.Thread):
         except Exception as exc:
             return {"t": _now(), "error": repr(exc)}
         hcl = diag.get("hcl", {})
+        red, redundancy_error = {}, None
         try:
-            red = self.api.redundancy.get().get("arbitration", {})
+            red = self.api.redundancy.get()["arbitration"]
         except Exception as exc:
-            return {"t": _now(), "error": repr(exc)}
+            redundancy_error = repr(exc)
         sample = {
             "t": _now(),
             "ticks": hcl.get("ticks"),
@@ -72,13 +73,17 @@ class Sampler(threading.Thread):
             "window_closed": red.get("window_closed"),
             "late": red.get("late"),
         }
+        if redundancy_error is not None:
+            sample["redundancy_error"] = redundancy_error
         if self.peer is not None:
             try:
-                peer_red = self.peer._req("GET", "redundancy")
-                sample["peer_owned"] = peer_red["probes"]["owned"]
-                sample["peer_unowned"] = peer_red["probes"]["unowned"]
-                sample["peer_transitions"] = len(peer_red.get("transitions", []))
-                sample["peer_takeovers"] = peer_red.get("takeovers")
+                peer_red = self.peer.redundancy.get()
+                sample.update({
+                    "peer_owned": peer_red["probes"]["owned"],
+                    "peer_unowned": peer_red["probes"]["unowned"],
+                    "peer_transitions": len(peer_red.get("transitions", [])),
+                    "peer_takeovers": peer_red.get("takeovers"),
+                })
             except Exception as exc:
                 sample["peer_error"] = repr(exc)
         return sample

@@ -1,13 +1,14 @@
 use std::time::Duration;
 
 use cucumber::{given, then, when};
-use dali2rust_test_support::wait_until;
+use dali2rust_test_support::{try_wait_until, wait_until};
 
 use crate::steps::physical_devices_steps::fetch_json;
 use crate::steps::wire::{frame_claim, FrameClaim};
 use crate::DaliWorld;
 
 const TRANSITION_TIMEOUT: Duration = Duration::from_secs(4);
+const SUPERVISOR_TICKS_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn scalar_text(value: &serde_json::Value) -> String {
     match value.as_str() {
@@ -31,6 +32,16 @@ async fn json_pointer_eventually(world: &mut DaliWorld, pointer: String, path: S
         Some(expected.as_str()),
         "{path}{pointer}: {found:?}"
     );
+}
+
+// RED-029
+#[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be greater than (\d+)$"#)]
+async fn json_pointer_eventually_greater(world: &mut DaliWorld, pointer: String, path: String, floor: u64) {
+    let port = world.server_port();
+    let read = || fetch_json(port, &path).and_then(|json| json.pointer(&pointer).and_then(serde_json::Value::as_u64));
+    try_wait_until(|| read().is_some_and(|n| n > floor), SUPERVISOR_TICKS_TIMEOUT);
+    let found = read();
+    assert!(found.is_some_and(|n| n > floor), "{path}{pointer}: {found:?}, expected > {floor}");
 }
 
 // CFG-009 CFG-010

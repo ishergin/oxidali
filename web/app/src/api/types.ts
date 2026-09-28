@@ -343,7 +343,7 @@ export type RedundancyReplication = {
 }
 
 export interface RedundancyState {
-  uptime_ms: number
+  now_ms: number
   enabled: boolean
   role: 'primary' | 'standby'
   active: boolean

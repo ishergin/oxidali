@@ -55,7 +55,7 @@ pub struct RedundancyReplicationDto {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RedundancyStateDto {
-    pub uptime_ms: u64,
+    pub now_ms: u32,
     pub enabled: bool,
     pub role: &'static str,
     pub active: bool,

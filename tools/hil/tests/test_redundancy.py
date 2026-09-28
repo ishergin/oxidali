@@ -333,10 +333,10 @@ def _await_quiet_bus(api, peer_api):
     def counters():
         w = api.diagnostics().get("dali_wire") or {}
         p = peer_api.diagnostics()
-        pair = peer_api.redundancy.get()
+        peer_pair = peer_api.redundancy.get()
         return (w.get("collisions"), w.get("exchange_retries"),
                 (p.get("dali_wire") or {}).get("collisions"),
-                (pair.get("arbitration") or {}).get("probe_failed"))
+                peer_pair["arbitration"]["probe_failed"])
     deadline = time.monotonic() + QUIET_BUS_TIMEOUT_S
     last = counters()
     while time.monotonic() < deadline:
@@ -351,10 +351,11 @@ def _await_quiet_bus(api, peer_api):
 
 def _arb_snapshot(api, peer_api):
     d = api.diagnostics()
+    primary_arbitration = api.redundancy.get()["arbitration"]
     p = peer_api.diagnostics()
     peer_pair = peer_api.redundancy.get()
     return {
-        "primary_redundancy": api.redundancy.get().get("arbitration") or {},
+        "primary_redundancy": primary_arbitration,
         "primary_wire": d.get("dali_wire") or {},
         "primary_sniffer": d.get("phy_sniffer") or {},
         "peer_probes": peer_pair.get("probes") or {},

@@ -149,7 +149,7 @@ async fn json_numeric_field(world: &mut DaliWorld, field: String, expected: u64)
     );
 }
 
-// INP-010 INP-018 INP-071 INP-076 INP-079 PD-200 PD-201 PD-220 PD-230 RULE-001 RULE-002 RULE-003 RULE-006 STATS-002 VL-010 VL-020 VL-034 VL-035 VL-100
+// INP-010 INP-018 INP-071 INP-076 INP-079 PD-200 PD-201 PD-220 PD-230 RULE-001 RULE-002 RULE-003 RULE-006 STATS-002 VL-010 VL-020 VL-034 VL-035 VL-100 RED-029
 #[then(regex = r#"^the JSON pointer "([^"]*)" should be (\d+)$"#)]
 async fn json_pointer_number(world: &mut DaliWorld, pointer: String, expected: u64) {
     let val = last_json(world);
@@ -203,7 +203,7 @@ async fn json_pointer_absent(world: &mut DaliWorld, pointer: String) {
     );
 }
 
-// PD-266 RED-029
+// PD-266
 #[then(regex = r#"^the JSON pointer "([^"]*)" should be greater than (\d+)$"#)]
 async fn json_pointer_greater_than(world: &mut DaliWorld, pointer: String, floor: u64) {
     let val = last_json(world);

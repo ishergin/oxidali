@@ -38,6 +38,9 @@ const FAULT_KEYS = new Set([
   'probe_failed',
   'handover_incomplete',
   'role_publish_failed',
+  'ingress_rejected',
+  'rejected',
+  'reload_publish_failed',
   'outstanding_expired',
   'publish_failed',
   'flush_error_total',
@@ -176,9 +179,9 @@ function MqttCard({ mqtt, deltas }: { mqtt: MqttBridgeCounters; deltas: Flat }) 
   )
 }
 
-function RedundancyCard() {
+function RedundancyCards() {
   const { data: pair, error } = usePoll(() => api.redundancy(), DIAG_POLL_MS)
-  const deltas = useDeltas(pair, pair?.uptime_ms ?? null)
+  const deltas = useDeltas(pair, pair?.now_ms ?? null)
   if (!pair) {
     return (
       <Card title="Redundancy">
@@ -186,31 +189,44 @@ function RedundancyCard() {
       </Card>
     )
   }
+  const stale = error ? (
+    <Chip cls="warn" title={error}>
+      stale — last poll failed
+    </Chip>
+  ) : undefined
   return (
-    <Card title="Redundancy">
-      <div class="attr">
-        <span class="k">Role</span>
-        <span class="v">{pair.role}</span>
-        <span class="delta" />
-      </div>
-      <div class="attr">
-        <span class="k">Arbitration table</span>
-        <span class="v">{pair.answering ? 'armed' : 'idle'}</span>
-        <span class="delta" />
-      </div>
-      <CounterRows block={pair.arbitration} path="arbitration" deltas={deltas} isFault={isFault} />
-      <CounterRows
-        block={{
-          takeovers: pair.takeovers,
-          stand_downs: pair.stand_downs,
-          role_publish_failed: pair.role_publish_failed,
-          ignored_events: pair.ignored_events,
-        }}
-        path=""
-        deltas={deltas}
-        isFault={isFault}
-      />
-    </Card>
+    <>
+      <Card title="Redundancy" action={stale}>
+        <div class="attr">
+          <span class="k">Role</span>
+          <span class="v">{pair.role}</span>
+          <span class="delta" />
+        </div>
+        <div class="attr">
+          <span class="k">Arbitration table</span>
+          <span class="v">{pair.answering ? 'armed' : 'idle'}</span>
+          <span class="delta" />
+        </div>
+        <CounterRows block={pair.arbitration} path="arbitration" deltas={deltas} isFault={isFault} />
+        <CounterRows
+          block={{
+            takeovers: pair.takeovers,
+            stand_downs: pair.stand_downs,
+            role_publish_failed: pair.role_publish_failed,
+            ignored_events: pair.ignored_events,
+          }}
+          path=""
+          deltas={deltas}
+          isFault={isFault}
+        />
+      </Card>
+      <Card title="Redundancy · probes" action={stale}>
+        <CounterRows block={pair.probes} path="probes" deltas={deltas} isFault={isFault} />
+      </Card>
+      <Card title="Redundancy · replication" action={stale}>
+        <CounterRows block={pair.replication} path="replication" deltas={deltas} isFault={isFault} />
+      </Card>
+    </>
   )
 }
 
@@ -372,7 +388,7 @@ export function DiagnosticsScreen() {
 
         <MqttCard mqtt={data.mqtt} deltas={deltas} />
 
-        <RedundancyCard />
+        <RedundancyCards />
 
         <Card title="Rules engine" span2>
           <CounterRows

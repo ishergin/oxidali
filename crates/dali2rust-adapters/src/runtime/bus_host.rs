@@ -165,16 +165,17 @@ mod tests {
             ("event", counters.event_subscribers.len(), WORST_EVENT_SUBSCRIBERS),
         ];
         for (kind, live, modelled) in rows {
-            assert!(
-                live <= modelled,
-                "{live} {kind} subscribers against a worst case of {modelled}: \
-                 the DiagnosticsSnapshot ceiling is measured on a bus smaller than this one"
+            assert_eq!(
+                live, modelled,
+                "{live} {kind} subscribers against a modelled {modelled}: move the model \
+                 with the bus and re-measure the DiagnosticsSnapshot ceiling"
             );
         }
-        for name in NAMED_EVENT_SUBSCRIBERS {
+        for subscriber in &counters.event_subscribers {
             assert!(
-                name.len() <= WORST_EVENT_SUBSCRIBER_NAME.len(),
-                "subscriber name {name:?} is longer than the modelled worst case"
+                subscriber.name.len() <= WORST_EVENT_SUBSCRIBER_NAME.len(),
+                "subscriber name {:?} is longer than the modelled worst case",
+                subscriber.name
             );
         }
     }

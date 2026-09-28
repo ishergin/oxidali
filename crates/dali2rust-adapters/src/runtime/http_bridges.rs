@@ -770,11 +770,37 @@ impl dali2rust_api::http::role::ControllerRolePort for RoleBridge {
 }
 
 pub(crate) struct RedundancyBridge {
-    started: std::time::Instant,
     settings: Arc<dyn dali2rust_domain::registry::RedundancySettingsReadPort>,
     dali: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
     counters: RuntimeCounterHandles,
     transitions: dali2rust_redundancy_runtime::SharedTransitionLog,
+}
+
+fn arbitration_dto(
+    supervisor: &dali2rust_redundancy_runtime::ArbitrationSupervisorCounters,
+    reflex: dali2rust_platform::arbitration::ArbitrationReflexCounters,
+    worker: &dali2rust_dali_runtime::DaliWorkerCounters,
+) -> dali2rust_api::http::redundancy_state::RedundancyArbitrationDto {
+    dali2rust_api::http::redundancy_state::RedundancyArbitrationDto {
+        defended: supervisor.defended.load(Relaxed),
+        worker_stale: supervisor.stood_down_worker_stale.load(Relaxed),
+        answered: reflex.answered,
+        suppressed: reflex.suppressed_lease,
+        cell_busy: reflex.cell_busy,
+        aborted: reflex.aborted,
+        window_closed: reflex.window_closed,
+        late: reflex.out_of_window,
+        probe_failed: worker.arbitration_probe_failed.load(Relaxed),
+        handover_incomplete: worker.handover_stand_down_failed.load(Relaxed),
+    }
+}
+
+fn role_name(standby: bool) -> &'static str {
+    if standby {
+        dali2rust_api::http::redundancy_settings_state::ROLE_STANDBY
+    } else {
+        dali2rust_api::http::redundancy_settings_state::ROLE_PRIMARY
+    }
 }
 
 impl RedundancyBridge {
@@ -785,7 +811,6 @@ impl RedundancyBridge {
         transitions: dali2rust_redundancy_runtime::SharedTransitionLog,
     ) -> Self {
         Self {
-            started: std::time::Instant::now(),
             settings,
             dali,
             counters,
@@ -794,20 +819,20 @@ impl RedundancyBridge {
     }
 
     fn arbitration_row(&self) -> dali2rust_api::http::redundancy_state::RedundancyArbitrationDto {
-        let supervisor = &self.counters.arbitration_supervisor;
-        let worker = &self.counters.dali_worker;
-        let reflex = self.counters.arbitration_reflex.counters();
-        dali2rust_api::http::redundancy_state::RedundancyArbitrationDto {
-            defended: supervisor.defended.load(Relaxed),
-            worker_stale: supervisor.stood_down_worker_stale.load(Relaxed),
-            answered: reflex.answered,
-            suppressed: reflex.suppressed_lease,
-            cell_busy: reflex.cell_busy,
-            aborted: reflex.aborted,
-            window_closed: reflex.window_closed,
-            late: reflex.out_of_window,
-            probe_failed: worker.arbitration_probe_failed.load(Relaxed),
-            handover_incomplete: worker.handover_stand_down_failed.load(Relaxed),
+        arbitration_dto(
+            &self.counters.arbitration_supervisor,
+            self.counters.arbitration_reflex.counters(),
+            &self.counters.dali_worker,
+        )
+    }
+
+    fn probe_row(&self) -> dali2rust_api::http::redundancy_state::RedundancyProbeDto {
+        let worker = &self.counters.arbitration_worker;
+        dali2rust_api::http::redundancy_state::RedundancyProbeDto {
+            published: worker.probes_published.load(Relaxed),
+            ingress_rejected: worker.probes_ingress_rejected.load(Relaxed),
+            owned: worker.probes_owned.load(Relaxed),
+            unowned: worker.probes_unowned.load(Relaxed),
         }
     }
 
@@ -831,23 +856,14 @@ impl dali2rust_api::http::redundancy_state::RedundancyHttpState for RedundancyBr
         let reflex = &self.counters.arbitration_reflex;
         let worker = &self.counters.arbitration_worker;
         rs::RedundancyStateDto {
-            uptime_ms: self.started.elapsed().as_millis() as u64,
+            now_ms: now,
             enabled: view.enabled,
-            role: if view.standby_role {
-                dali2rust_api::http::redundancy_settings_state::ROLE_STANDBY
-            } else {
-                dali2rust_api::http::redundancy_settings_state::ROLE_PRIMARY
-            },
+            role: role_name(view.standby_role),
             active: self.dali.dali_settings_view().application_active,
             answering: reflex.is_armed(now),
             lease_remaining_ms: reflex.lease_remaining_ms(now),
             arbitration: self.arbitration_row(),
-            probes: rs::RedundancyProbeDto {
-                published: worker.probes_published.load(Relaxed),
-                ingress_rejected: worker.probes_ingress_rejected.load(Relaxed),
-                owned: worker.probes_owned.load(Relaxed),
-                unowned: worker.probes_unowned.load(Relaxed),
-            },
+            probes: self.probe_row(),
             takeovers: worker.takeovers.load(Relaxed),
             stand_downs: worker.stand_downs.load(Relaxed),
             role_publish_failed: worker.role_publish_failed.load(Relaxed),
@@ -1385,5 +1401,46 @@ impl dali2rust_api::http::firmware_state::FirmwareHttpState for FirmwareBridge {
                 error: snapshot.error.map(|e| e.as_str()),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::sync::atomic::Ordering::Relaxed;
+
+    use super::arbitration_dto;
+    use dali2rust_platform::arbitration::ArbitrationReflexCounters;
+
+    #[test]
+    fn every_arbitration_field_reads_its_own_producer() {
+        let supervisor = dali2rust_redundancy_runtime::ArbitrationSupervisorCounters::default();
+        supervisor.defended.store(1, Relaxed);
+        supervisor.stood_down_worker_stale.store(2, Relaxed);
+        let reflex = ArbitrationReflexCounters {
+            answered: 3,
+            suppressed_lease: 4,
+            cell_busy: 5,
+            aborted: 6,
+            window_closed: 7,
+            out_of_window: 8,
+        };
+        let worker = dali2rust_dali_runtime::DaliWorkerCounters::default();
+        worker.arbitration_probe_failed.store(9, Relaxed);
+        worker.handover_stand_down_failed.store(10, Relaxed);
+
+        let row = arbitration_dto(&supervisor, reflex, &worker);
+        let got = [
+            row.defended,
+            row.worker_stale,
+            row.answered,
+            row.suppressed,
+            row.cell_busy,
+            row.aborted,
+            row.window_closed,
+            row.late,
+            row.probe_failed,
+            row.handover_incomplete,
+        ];
+        assert_eq!(got, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }
 }

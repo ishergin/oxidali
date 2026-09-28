@@ -52,7 +52,7 @@ def _snapshot(api: Client, peer: Client) -> dict:
         "poller_duty_deferred": poller["duty_deferred"],
         "poller_interactive_deferred": poller["interactive_deferred"],
     }
-    peer_red = peer._req("GET", "redundancy")
+    peer_red = peer.redundancy.get()
     out.update({
         "peer_published": peer_red["probes"]["published"],
         "peer_owned": peer_red["probes"]["owned"],

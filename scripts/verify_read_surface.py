@@ -54,9 +54,16 @@ SURFACES = [
 ]
 
 
+def reaches(src: str, accessor: str, block: str) -> bool:
+    name = re.escape(block)
+    shown = rf"\b{accessor}\.{name}\b"
+    delta_clock = rf"\buseDeltas\(\s*{accessor}\s*,\s*{accessor}\??\.{name}\b"
+    return bool(re.search(shown, src) or re.search(delta_clock, src))
+
+
 def renders(screens: list[tuple[str, str]], block: str) -> bool:
     return any(
-        re.search(rf"\b{accessor}\??\.{re.escape(block)}\b", screen_source(f"{ROOT}/{path}"))
+        reaches(screen_source(f"{ROOT}/{path}"), accessor, block)
         for path, accessor in screens
     )
 
@@ -92,7 +99,8 @@ for surface, dto_path, struct, screens in SURFACES:
             continue
         fail.append(
             f"{key} is published by {struct} and reached no screen ({where}).\n"
-            "     Render it, or name it in scripts/read_surface_internal.txt with a reason."
+            "     Render it, key the screen's delta column on it (useDeltas(x, x?.field)),\n"
+            "     or name it in scripts/read_surface_internal.txt with a reason."
         )
 
 for key in sorted(set(allowed) - known):
