@@ -20,7 +20,7 @@ pub const MAX_SHORT_ADDRESSES: usize = 64;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VirtualLampSnapshot {
     pub name: String,
-    pub runtime_level: u8,
+    pub runtime_level: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -707,7 +707,7 @@ fn physical_device_target_state_validation_and_happy_path() {
         panic!("expected DaliSetTargetStateCommand");
     };
     assert_eq!(body.short_address, 2);
-    assert_eq!(body.setpoint.level, 80);
+    assert_eq!(body.setpoint.level, Some(80));
 }
 
 #[test]
@@ -1147,7 +1147,7 @@ fn virtual_lamp_target_state_validation_and_execute() {
         panic!("expected DaliSetTargetStateCommand");
     };
     assert_eq!(body.virtual_lamp_id, 5);
-    assert_eq!(body.setpoint.level, 33);
+    assert_eq!(body.setpoint.level, Some(33));
 }
 
 struct FixedWall(u64);

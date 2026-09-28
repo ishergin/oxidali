@@ -22,7 +22,7 @@ use dali2rust_domain::registry::{AdapterSnapshot, RegistryReadPort, VirtualLampS
 fn setpoint(level: u8) -> LightSetpoint {
     LightSetpoint {
         power: PowerState::On,
-        level,
+        level: Some(level),
         ..Default::default()
     }
 }
@@ -293,7 +293,7 @@ fn semantic_short_target_state_publishes_expanded_applied_event_without_runtime_
     assert_eq!(body.scope, DaliTargetScope::Short);
     assert_eq!(body.short_address, Some(short));
     assert_eq!(body.virtual_lamp_id, None);
-    assert_eq!(body.setpoint.level, 55);
+    assert_eq!(body.setpoint.level, Some(55));
     assert!(body.dapc_applied);
     let original = harness.recv_command_matching(corr, |payload| {
         matches!(payload, BusCommandPayload::DaliSetTargetStateCommand(_))
@@ -509,7 +509,7 @@ fn virtual_lamp_bound_target_state_publishes_expanded_applied_event_without_runt
     assert_eq!(body.scope, DaliTargetScope::VirtualLamp);
     assert_eq!(body.virtual_lamp_id, Some(4));
     assert_eq!(body.short_address, Some(12));
-    assert_eq!(body.setpoint.level, 42);
+    assert_eq!(body.setpoint.level, Some(42));
     assert!(body.dapc_applied);
     let original = harness.recv_command_matching(corr, |payload| {
         matches!(payload, BusCommandPayload::DaliSetTargetStateCommand(_))
@@ -571,7 +571,7 @@ fn group_target_state_confirms_without_runtime_update() {
     assert_eq!(body.scope, DaliTargetScope::Group);
     assert_eq!(body.group_id, Some(3));
     assert_eq!(body.short_address, None);
-    assert_eq!(body.setpoint.level, 88);
+    assert_eq!(body.setpoint.level, Some(88));
     assert!(body.dapc_applied);
     assert!(
         harness

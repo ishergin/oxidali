@@ -1330,7 +1330,7 @@ fn expects_backward_covers_the_two_opcodes_the_codec_does_not_model() {
 
 #[test]
 fn bench_fleet_lays_gear_out_from_the_base_address_upward() {
-    let specs = crate::fleet::bench_fleet(10, 2, 2, 1, 42);
+    let specs = crate::fleet::bench_fleet(10, 2, 2, 1, 42, DEFAULT_RESERVED_SHORT_ADDRESSES);
     assert_eq!(specs.len(), 5);
     let addrs: Vec<Option<u8>> = specs.iter().map(|s| s.short_address).collect();
     assert_eq!(addrs, vec![Some(10), Some(11), Some(12), Some(13), Some(14)]);
@@ -1345,7 +1345,7 @@ fn bench_fleet_lays_gear_out_from_the_base_address_upward() {
 
 #[test]
 fn a_sixty_gear_fleet_avoids_the_reserved_block_entirely() {
-    let specs = crate::fleet::bench_fleet(10, 27, 18, 9, 7);
+    let specs = crate::fleet::bench_fleet(10, 27, 18, 9, 7, DEFAULT_RESERVED_SHORT_ADDRESSES);
     let fleet = GearFleet::new(specs, DEFAULT_RESERVED_SHORT_ADDRESSES, 7);
     assert_eq!(fleet.gears().len(), 54);
     assert_eq!(
@@ -1363,7 +1363,7 @@ fn a_sixty_gear_fleet_avoids_the_reserved_block_entirely() {
 
 #[test]
 fn a_fleet_larger_than_the_address_space_leaves_the_excess_unaddressed() {
-    let specs = crate::fleet::bench_fleet(10, 40, 20, 10, 7);
+    let specs = crate::fleet::bench_fleet(10, 40, 20, 10, 7, DEFAULT_RESERVED_SHORT_ADDRESSES);
     assert_eq!(specs.len(), 70);
     let addressed: Vec<u8> = specs.iter().filter_map(|s| s.short_address).collect();
     assert_eq!(addressed.len(), 54, "only 10..=63 are addressable");
@@ -1373,6 +1373,20 @@ fn a_fleet_larger_than_the_address_space_leaves_the_excess_unaddressed() {
             .any(|s| matches!(s.short_address, Some(a) if !(10..=63).contains(&a))),
         "every addressed gear sits in the free block: {addressed:?}"
     );
+}
+
+#[test]
+fn a_fleet_skips_the_reserve_it_is_given_not_the_default_block() {
+    let installation: u64 = 0xFFFF;
+    let specs = crate::fleet::bench_fleet(10, 3, 2, 1, 7, installation);
+    let addrs: Vec<Option<u8>> = specs.iter().map(|s| s.short_address).collect();
+    assert_eq!(
+        addrs,
+        vec![Some(16), Some(17), Some(18), Some(19), Some(20), Some(21)],
+        "a reserve of 0..=15 moves a fleet based at 10 up to 16"
+    );
+    let fleet = GearFleet::new(specs, installation, 7);
+    assert_eq!(fleet.stats().reserved_conflicts, 0);
 }
 
 #[test]

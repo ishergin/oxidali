@@ -303,7 +303,7 @@ fn registry_runtime_update_not_applied_for_unknown_physical_short() {
     let _ = store;
     let sp = LightSetpoint {
         power: PowerState::On,
-        level: 40,
+        level: Some(40),
         color: None,
     };
     let corr = 801u64;
@@ -321,7 +321,7 @@ fn registry_runtime_update_applies_physical_short() {
     seed_physical(&publisher, &store, 14);
     let sp = LightSetpoint {
         power: PowerState::On,
-        level: 88,
+        level: Some(88),
         color: None,
     };
     let corr = 802u64;
@@ -339,7 +339,7 @@ fn registry_runtime_update_applies_physical_short() {
     };
     assert_eq!(body.short_address, Some(14));
     assert_eq!(body.virtual_lamp_id, None);
-    assert_eq!(body.state_setpoint.level, 88);
+    assert_eq!(body.state_setpoint.level, Some(88));
 }
 
 #[test]
@@ -349,7 +349,7 @@ fn a_level_commit_on_a_coloured_gear_publishes_the_commits_dimensions_not_the_re
 
     let colour = LightSetpoint {
         power: PowerState::Unknown,
-        level: 0,
+        level: None,
         color: Some(dali2rust_contracts::msg::ColorValue {
             mode: dali2rust_contracts::msg::ColorMode::Cct,
             color_temperature_kelvin: 2700,
@@ -430,7 +430,7 @@ fn registry_runtime_colour_only_update_keeps_stored_level() {
 
     let level_sp = LightSetpoint {
         power: PowerState::On,
-        level: 120,
+        level: Some(120),
         color: None,
     };
     let c1 = 811u64;
@@ -442,7 +442,7 @@ fn registry_runtime_colour_only_update_keeps_stored_level() {
 
     let colour_only = LightSetpoint {
         power: PowerState::On,
-        level: 0,
+        level: None,
         color: Some(ColorValue {
             mode: ColorMode::Cct,
             color_temperature_kelvin: 3000,
@@ -461,7 +461,7 @@ fn registry_runtime_colour_only_update_keeps_stored_level() {
 
     let off_sp = LightSetpoint {
         power: PowerState::Off,
-        level: 0,
+        level: Some(0),
         color: None,
     };
     let c3 = 813u64;
@@ -480,8 +480,8 @@ fn a_switch_on_with_colour_on_a_dark_lamp_recalls_the_shadowed_level() {
     seed_physical(&publisher, &store, 15);
 
     for (corr, setpoint) in [
-        (821u64, LightSetpoint { power: PowerState::On, level: 120, color: None }),
-        (822u64, LightSetpoint { power: PowerState::Off, level: 0, color: None }),
+        (821u64, LightSetpoint { power: PowerState::On, level: Some(120), color: None }),
+        (822u64, LightSetpoint { power: PowerState::Off, level: Some(0), color: None }),
     ] {
         publish_cmd(
             &publisher,
@@ -497,7 +497,7 @@ fn a_switch_on_with_colour_on_a_dark_lamp_recalls_the_shadowed_level() {
 
     let switch_on = LightSetpoint {
         power: PowerState::On,
-        level: 0,
+        level: None,
         color: Some(ColorValue {
             mode: ColorMode::Cct,
             color_temperature_kelvin: 3000,
@@ -529,7 +529,7 @@ fn a_recall_on_a_lamp_never_seen_lit_leaves_the_level_unknown() {
     let (publisher, conf_rx, _ev_rx, store, _counters, _host) = spawn_cmd_stack_with_events(1);
     seed_physical(&publisher, &store, 17);
 
-    let switch_on = LightSetpoint { power: PowerState::On, level: 0, color: None };
+    let switch_on = LightSetpoint { power: PowerState::On, level: None, color: None };
     let c = 841u64;
     publish_cmd(
         &publisher,
@@ -546,7 +546,7 @@ fn a_colour_only_setpoint_states_neither_power_nor_level() {
     let (publisher, conf_rx, _ev_rx, store, _counters, _host) = spawn_cmd_stack_with_events(1);
     seed_physical(&publisher, &store, 16);
 
-    let lit = LightSetpoint { power: PowerState::On, level: 90, color: None };
+    let lit = LightSetpoint { power: PowerState::On, level: Some(90), color: None };
     let c1 = 831u64;
     publish_cmd(
         &publisher,
@@ -556,7 +556,7 @@ fn a_colour_only_setpoint_states_neither_power_nor_level() {
 
     let colour_only = LightSetpoint {
         power: PowerState::Unknown,
-        level: 0,
+        level: None,
         color: Some(ColorValue {
             mode: ColorMode::Cct,
             color_temperature_kelvin: 4000,
@@ -615,7 +615,7 @@ fn registry_runtime_missing_setpoint_and_missing_observation() {
 
     entry.setpoint = Some(LightSetpoint {
         power: PowerState::On,
-        level: 1,
+        level: Some(1),
         color: None,
     });
     entry.observation = None;
@@ -687,7 +687,7 @@ fn registry_runtime_combined_vl_and_short_single_commit_and_event() {
 
     let sp = LightSetpoint {
         power: PowerState::On,
-        level: 66,
+        level: Some(66),
         color: None,
     };
     let corr = 2101u64;
@@ -714,7 +714,7 @@ fn registry_runtime_combined_vl_and_short_single_commit_and_event() {
     };
     assert_eq!(body.virtual_lamp_id, Some(9));
     assert_eq!(body.short_address, Some(10));
-    assert_eq!(body.state_setpoint.level, 66);
+    assert_eq!(body.state_setpoint.level, Some(66));
 }
 
 #[test]
@@ -731,7 +731,7 @@ fn registry_runtime_binding_mismatch_fails() {
 
     let sp = LightSetpoint {
         power: PowerState::On,
-        level: 1,
+        level: Some(1),
         color: None,
     };
     let mut obs = runtime_observation_api_timestamped(100);
@@ -764,7 +764,7 @@ fn registry_runtime_entry_last_dapc_source_overrides_observation() {
     seed_physical(&publisher, &store, 14);
     let sp = LightSetpoint {
         power: PowerState::On,
-        level: 10,
+        level: Some(10),
         color: None,
     };
     let mut obs = runtime_observation_api_timestamped(11_000);
@@ -801,7 +801,7 @@ fn registry_runtime_entry_last_dapc_source_none_preserves_existing_value() {
         short_address: Some(15),
         setpoint: Some(LightSetpoint {
             power: PowerState::On,
-            level: 20,
+            level: Some(20),
             color: None,
         }),
         observation: Some(runtime_observation_api_timestamped(12_000)),
@@ -823,7 +823,7 @@ fn registry_runtime_entry_last_dapc_source_none_preserves_existing_value() {
         short_address: Some(15),
         setpoint: Some(LightSetpoint {
             power: PowerState::On,
-            level: 21,
+            level: Some(21),
             color: None,
         }),
         observation: Some(obs),
@@ -853,7 +853,7 @@ fn registry_runtime_missing_virtual_lamp_and_short_fails() {
         short_address: None,
         setpoint: Some(LightSetpoint {
             power: PowerState::On,
-            level: 1,
+            level: Some(1),
             color: None,
         }),
         observation: Some(runtime_observation_api_timestamped(1)),
@@ -951,8 +951,8 @@ fn a_foreign_recall_verb_is_resolved_against_the_shadowed_level() {
     seed_physical(&publisher, &store, 21);
 
     for (corr, setpoint) in [
-        (901u64, LightSetpoint { power: PowerState::On, level: 137, color: None }),
-        (902u64, LightSetpoint { power: PowerState::Off, level: 0, color: None }),
+        (901u64, LightSetpoint { power: PowerState::On, level: Some(137), color: None }),
+        (902u64, LightSetpoint { power: PowerState::Off, level: Some(0), color: None }),
     ] {
         publish_cmd(
             &publisher,
@@ -992,7 +992,7 @@ fn an_unresolvable_verb_leaves_the_stored_level_untouched() {
 
     let (publisher, conf_rx, _ev_rx, store, _counters, _host) = spawn_cmd_stack_with_events(1);
     seed_physical(&publisher, &store, 22);
-    let lit = LightSetpoint { power: PowerState::On, level: 90, color: None };
+    let lit = LightSetpoint { power: PowerState::On, level: Some(90), color: None };
     publish_cmd(
         &publisher,
         dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 911, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, RuntimeRegistryUpdateEntry::api_short_physical(22, &lit, 40_000))),

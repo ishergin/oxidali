@@ -22,10 +22,6 @@ pub use rng::Rng;
 mod emulator_import_contract {
     #[allow(unused_imports, reason = "the imports ARE the test — resolution is the assertion")]
     mod exact_emulator_surface {
-        pub use crate::{
-            bench_fleet, FleetStats, Gear, GearFleet, GearSpec, DEFAULT_RESERVED_SHORT_ADDRESSES,
-            DEFAULT_RGBWAF_CHANNELS, DEVICE_TYPE_DIAGNOSTICS, DEVICE_TYPE_ENERGY,
-            DEVICE_TYPE_LUMINAIRE_INFO, SCENE_COUNT,
-        };
+        pub use crate::{bench_fleet, ColorMode, FleetStats, Gear, GearFleet, SCENE_COUNT};
     }
 }

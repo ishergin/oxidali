@@ -257,7 +257,7 @@ fn event_ctx(input: &In<'_>) -> EventCtx {
             },
         },
         In::LampChanged { level, .. } => EventCtx {
-            value: Some(i64::from(*level)),
+            value: level.map(i64::from),
             ..EventCtx::default()
         },
         In::GroupChanged { any_on, .. } => EventCtx {

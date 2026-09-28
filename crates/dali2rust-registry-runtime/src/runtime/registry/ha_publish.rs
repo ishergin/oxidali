@@ -46,12 +46,7 @@ fn lamp_view(inner: &Inner, adapter_id: u8, virtual_lamp_id: u8) -> Option<HaLam
         inner
             .physical_devices
             .get(&(adapter_id, short))
-            .is_some_and(|pd| {
-                pd.runtime
-                    .error
-                    .as_ref()
-                    .is_some_and(dali2rust_contracts::msg::CompactErrorPayload::is_device_absent)
-            })
+            .is_some_and(|pd| pd.runtime.reports_absence())
     });
     Some(HaLampView {
         virtual_lamp_id,

@@ -32,7 +32,8 @@ interrupt levels on the ESP32-P4:
 2. **Composition fails by name if an assumption of that path does not hold** (the checks
    are in 08): a clear that does not clear would re-enter level 5 for ever on that core.
 3. **The driver path stays compiled as the rollback** (`DALI2RUST_PHY_ISR_LEVEL=3`), and
-   `hil flash` records the knob. The gear emulator stays on the driver path.
+   `hil flash` records the knob. The gear emulator stays on the driver path at priority
+   3, with its tasks on the other core.
 4. **The image executes from PSRAM** (`CONFIG_SPIRAM_XIP_FROM_PSRAM`). With code and
    read-only data copied to PSRAM at boot, a flash program or erase takes the SPI1 lock
    and nothing else: no cache-off window, no stalled core. What that retires and what

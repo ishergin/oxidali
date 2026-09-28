@@ -303,33 +303,25 @@ fn setpoint_of(
     snapshot: &WorldSnapshot,
 ) -> Option<LightSetpoint> {
     let current = lamp_of(target, snapshot);
-    let mut sp = LightSetpoint { power: PowerState::Unknown, level: 0, color: None };
-    match verb {
-        LightVerb::On { level } => {
-            sp.power = PowerState::On;
-            sp.level = level.unwrap_or(0);
-        }
-        LightVerb::Off => sp.power = PowerState::Off,
-        LightVerb::Level { level } => {
-            sp.power = PowerState::On;
-            sp.level = *level;
-        }
+    let powered = |power| LightSetpoint { power, ..LightSetpoint::default() };
+    Some(match verb {
+        LightVerb::On { level } => LightSetpoint { level: *level, ..powered(PowerState::On) },
+        LightVerb::Off => powered(PowerState::Off),
+        LightVerb::Level { level } => LightSetpoint::from_level(*level, None),
         LightVerb::LevelRelative { delta } | LightVerb::Dim { delta } => {
-            let lamp = current?;
-            if !lamp.is_on {
-                return None;
-            }
-            sp.power = PowerState::On;
-            sp.level = clamp_level(i32::from(lamp.level) + i32::from(*delta));
+            let lamp = current.filter(|lamp| lamp.is_on)?;
+            LightSetpoint::from_level(clamp_level(i32::from(lamp.level?) + i32::from(*delta)), None)
         }
         LightVerb::Cct { .. }
         | LightVerb::CctRelative { .. }
         | LightVerb::Xy { .. }
-        | LightVerb::Rgb { .. } => sp.color = Some(colour_of(verb, current)?),
-        LightVerb::LastActive => sp.power = PowerState::On,
+        | LightVerb::Rgb { .. } => LightSetpoint {
+            color: Some(colour_of(verb, current)?),
+            ..LightSetpoint::default()
+        },
+        LightVerb::LastActive => powered(PowerState::On),
         LightVerb::StopFade => return None,
-    }
-    Some(sp)
+    })
 }
 
 fn colour_of(
@@ -408,26 +400,26 @@ fn scope_of(target: &LightTarget) -> (DaliTargetScope, u8, u8, u8) {
 mod merge_tests {
     use super::*;
 
-    fn sp(power: PowerState, level: u8, color: Option<ColorValue>) -> LightSetpoint {
+    fn sp(power: PowerState, level: Option<u8>, color: Option<ColorValue>) -> LightSetpoint {
         LightSetpoint { power, level, color }
     }
 
     #[test]
     fn a_level_and_a_colour_on_one_lamp_become_one_setpoint() {
-        let mut acc = sp(PowerState::On, 200, None);
-        let colour_only = sp(PowerState::Unknown, 0, Some(ColorValue::default()));
+        let mut acc = sp(PowerState::On, Some(200), None);
+        let colour_only = sp(PowerState::Unknown, None, Some(ColorValue::default()));
         acc.merge_from(&colour_only);
         assert_eq!(acc.power, PowerState::On, "colour must not clear power");
-        assert_eq!(acc.level, 200, "colour must not clear the level");
+        assert_eq!(acc.level, Some(200), "colour must not clear the level");
         assert!(acc.color.is_some(), "the colour is carried too");
     }
 
     #[test]
     fn a_later_power_verb_wins_and_carries_its_own_level() {
-        let mut acc = sp(PowerState::On, 200, Some(ColorValue::default()));
-        acc.merge_from(&sp(PowerState::Off, 0, None));
+        let mut acc = sp(PowerState::On, Some(200), Some(ColorValue::default()));
+        acc.merge_from(&sp(PowerState::Off, Some(0), None));
         assert_eq!(acc.power, PowerState::Off);
-        assert_eq!(acc.level, 0);
+        assert_eq!(acc.level, Some(0));
         assert!(acc.color.is_some(), "a power verb says nothing about colour");
     }
 
@@ -437,9 +429,9 @@ mod merge_tests {
             mode: ColorMode::Cct,
             ..ColorValue::default()
         };
-        let mut acc = sp(PowerState::On, 0, Some(stated));
-        acc.merge_from(&sp(PowerState::On, 200, Some(ColorValue::default())));
-        assert_eq!(acc.level, 200, "the later level wins");
+        let mut acc = sp(PowerState::On, None, Some(stated));
+        acc.merge_from(&sp(PowerState::On, Some(200), Some(ColorValue::default())));
+        assert_eq!(acc.level, Some(200), "the later level wins");
         assert_eq!(
             acc.color.map(|c| c.mode),
             Some(ColorMode::Cct),

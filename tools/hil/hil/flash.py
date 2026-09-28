@@ -6,9 +6,16 @@ from pathlib import Path
 
 import requests
 
-from hil import benchenv, remote_serial, serialmon, serialport
+from hil import benchenv, remote_serial, serialmon, serialport, wb_flash
 
 READY_TIMEOUT_S = 90
+OTA_TIMEOUT_S = 300
+OTA_POLL_S = 2.0
+HEALTH_TIMEOUT_S = 3
+BOARD_QUIET_TIMEOUT_S = 15
+REQUEST_TIMEOUT_S = 10
+POLL_S = 1
+BANNER_BOOT_S = 20
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -23,6 +30,21 @@ BOARDS = {
         "isr_iram_check": True,
     },
 }
+
+CONTROLLER, GEAR_SIM = "controller", "gear-sim"
+
+IMAGES = {
+    CONTROLLER: {"workspace": ".", "cargo_args": None, "elf": "dali2rust",
+                 "bench": True},
+    GEAR_SIM: {"workspace": "tools/dali-gear-sim", "cargo_args": ["build"],
+               "elf": "dali-gear-sim", "bench": False},
+}
+
+VIA_RFC2217, VIA_WB, VIA_OTA = "rfc2217", "wb", "ota"
+VIAS = (VIA_RFC2217, VIA_WB, VIA_OTA)
+
+READY_LINE = re.compile(r"# ready build=(\S+) slot=(\S+) state=(\S+)")
+BANNER_STATE = {VIA_OTA: "pending_verify", VIA_WB: "none", VIA_RFC2217: "none"}
 
 CARGO_CONFIG = ".cargo/config.toml"
 
@@ -75,21 +97,32 @@ def board_env(spec, root: Path = None) -> dict:
     return knobs
 
 
-def board_spec(cfg):
+def board_spec(cfg, image=CONTROLLER):
     spec = BOARDS.get(cfg.board)
     if spec is None:
         raise BoardError(
             "unknown HIL_BOARD %r — known boards: %s"
             % (cfg.board, ", ".join(sorted(BOARDS))))
+    recipe = IMAGES.get(image)
+    if recipe is None:
+        raise BoardError("unknown image %r — known images: %s"
+                         % (image, ", ".join(sorted(IMAGES))))
     target = spec["target"]
     spec = dict(spec, name=cfg.board)
+    workspace = recipe["workspace"]
+    prefix = "" if workspace == "." else workspace + "/"
     return dict(
         spec,
-        build_env=dict(spec["build_env"]),
-        board_env=board_env(spec),
-        firmware_bin="target/%s/debug/dali2rust" % target,
+        image=image,
+        workspace=workspace,
+        bench=recipe["bench"],
+        cargo_args=recipe["cargo_args"] or spec["cargo_args"],
+        build_env=dict(spec["build_env"]) if recipe["bench"] else {},
+        board_env=board_env(spec, REPO_ROOT / workspace),
+        firmware_bin="%starget/%s/debug/%s" % (prefix, target, recipe["elf"]),
         bootloader="target/%s/debug/bootloader.bin" % target,
-        merged_bin="target/%s/debug/dali2rust-merged.bin" % target,
+        merged_bin="target/%s/debug/%s-merged.bin" % (target, recipe["elf"]),
+        app_bin="target/%s/debug/%s-app.bin" % (target, recipe["elf"]),
     )
 
 
@@ -99,6 +132,11 @@ def repo_root(cfg) -> Path:
 
 def build(cfg, allow_nonbench=False, spec=None):
     spec = spec or board_spec(cfg)
+    if not spec["bench"]:
+        print("cargo build of the %s image (%s)" % (spec["image"], spec["workspace"]),
+              flush=True)
+        return subprocess.run(["cargo", *spec["cargo_args"]],
+                              cwd=repo_root(cfg) / spec["workspace"]).returncode
     env = benchenv.resolve(Path(cfg.root))
     env.update(spec["build_env"])
     problems = benchenv.validate(env)
@@ -150,6 +188,11 @@ def check_isr_iram(cfg, spec, allow_red=False):
 
 
 def merged_image(spec, root: Path) -> Path:
+    if not (root / spec["bootloader"]).is_file():
+        raise BoardError(
+            "%s is missing: every image on this board is merged with the controller's "
+            "bootloader, so build the controller once (`hil flash --build-only`)"
+            % spec["bootloader"])
     out = root / spec["merged_bin"]
     rc = subprocess.run(
         ["espflash", "save-image", "--chip", spec["mcu"],
@@ -161,6 +204,171 @@ def merged_image(spec, root: Path) -> Path:
     if rc != 0:
         raise RuntimeError("espflash save-image failed (rc=%d)" % rc)
     return out
+
+
+def app_image(spec, root: Path) -> Path:
+    out = root / spec["app_bin"]
+    rc = subprocess.run(
+        ["espflash", "save-image", "--chip", spec["mcu"],
+         "--flash-size", spec["flash_size"], spec["firmware_bin"], str(out)],
+        cwd=root).returncode
+    if rc != 0:
+        raise RuntimeError("espflash save-image failed (rc=%d)" % rc)
+    return out
+
+
+def health(base):
+    try:
+        r = requests.get(base.rstrip("/") + "/api/v1/health", timeout=HEALTH_TIMEOUT_S)
+        return r.json() if r.ok else None
+    except (requests.RequestException, ValueError):
+        return None
+
+
+def board_proof(cfg):
+    target_answered = bool(cfg.base) and health(cfg.base) is not None
+    other = _other_board(cfg)
+    other_before = health(other.base) if other is not None else None
+    if not target_answered and other_before is None:
+        raise BoardError("nothing can tell which board %s resets: %s answers no HTTP and the "
+                         "other board cannot be reached" % (cfg.serial_remote, cfg.base or
+                                                            "the target"))
+
+    def check():
+        if target_answered and not _goes_quiet(cfg.base):
+            raise BoardError(
+                "the bridge named by %s put a board into its bootloader, yet %s still "
+                "answers: the port and the URL name different boards"
+                % (cfg.serial_remote, cfg.base))
+        if other_before is None:
+            return
+        other_after = health(other.base)
+        if other_after is None or \
+                other_after.get("uptime_seconds", 0) < other_before.get("uptime_seconds", 0):
+            raise BoardError("%s stopped or restarted when %s was put into its bootloader: "
+                             "the port names the wrong board" % (other.base, cfg.base))
+    return check
+
+
+def _other_board(cfg):
+    try:
+        other = cfg.peer()
+    except Exception:
+        return None
+    return other if other.base else None
+
+
+def _goes_quiet(base, timeout_s=BOARD_QUIET_TIMEOUT_S):
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if health(base) is None:
+            return True
+        time.sleep(POLL_S)
+    return False
+
+
+def deliver_ota(cfg, spec, root: Path) -> int:
+    image = app_image(spec, root)
+    with wb_flash.serve(cfg, image) as url:
+        r = requests.post(cfg.base.rstrip("/") + "/api/v1/firmware/updates",
+                          json={"url": url}, timeout=REQUEST_TIMEOUT_S)
+        if r.status_code != 202:
+            print("the board refused the update: %d %s" % (r.status_code, r.text[:200]),
+                  file=sys.stderr)
+            return 1
+        return await_update(cfg.base)
+
+
+def await_update(base, timeout_s=OTA_TIMEOUT_S):
+    deadline = time.monotonic() + timeout_s
+    seen = None
+    while time.monotonic() < deadline:
+        try:
+            update = requests.get(base.rstrip("/") + "/api/v1/firmware",
+                                  timeout=HEALTH_TIMEOUT_S).json().get("update") or {}
+        except (requests.RequestException, ValueError):
+            if seen in ("finishing", "ready_to_reboot"):
+                return 0
+            update = {}
+        state = update.get("state")
+        if state == "failed":
+            print("the update failed: %s" % update.get("error"), file=sys.stderr)
+            return 1
+        if state == "ready_to_reboot":
+            return 0
+        seen = state or seen
+        time.sleep(OTA_POLL_S)
+    print("the update did not finish within %ds" % timeout_s, file=sys.stderr)
+    return 1
+
+
+def deliver(cfg, spec, root: Path, via, serial_port) -> int:
+    if via == VIA_OTA:
+        return deliver_ota(cfg, spec, root)
+    if via == VIA_WB:
+        return wb_flash.write(cfg, merged_image(spec, root), before_write=board_proof(cfg))
+    if remote_serial.enabled(cfg):
+        return write_remote(cfg, spec, root)
+    return write_local(spec, root, serial_port, cfg.flash_baud)
+
+
+def wait_banner(cfg, since: int, timeout_s=READY_TIMEOUT_S):
+    found = _poll_banner(cfg, since, BANNER_BOOT_S)
+    if found is not None or not remote_serial.enabled(cfg):
+        return found
+    try:
+        remote_serial.control(cfg, "write ready")
+    except (OSError, remote_serial.RemoteError) as exc:
+        print("asking the emulator for its ready line failed: %s" % exc, file=sys.stderr)
+        return None
+    return _poll_banner(cfg, since, timeout_s - BANNER_BOOT_S)
+
+
+def _poll_banner(cfg, since, timeout_s):
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        found = ready_line(cfg, since)
+        if found:
+            return found
+        time.sleep(POLL_S)
+    return None
+
+
+def ready_line(cfg, since: int):
+    log = serialmon.log_path(cfg)
+    if not log or not log.exists():
+        return None
+    found = None
+    with open(log, "r", errors="replace") as fh:
+        fh.seek(since)
+        for line in fh:
+            match = READY_LINE.search(line)
+            if match:
+                found = match.groups()
+    return found
+
+
+def verify_banner(cfg, since, via, root) -> int:
+    found = wait_banner(cfg, since)
+    if found is None:
+        print("the emulator printed no ready line within %ds — check %s"
+              % (READY_TIMEOUT_S, serialmon.log_path(cfg)), file=sys.stderr)
+        return 1
+    build_id, slot, state = found
+    head = benchenv.head_commit(root)
+    if head and not head.startswith(build_id.partition(".")[0]):
+        print("the emulator reports build %s, not the commit just built (%s)"
+              % (build_id, head[:8]), file=sys.stderr)
+        return 1
+    want = BANNER_STATE[via]
+    if state != want:
+        print("the emulator runs %s in state %r; a %s delivery must give %r%s"
+              % (slot, state, via, want,
+                 " — the bootloader kept the image: `hil --peer role controller --via wb` "
+                 "writes the controller back" if state == "new" else ""), file=sys.stderr)
+        return 1
+    print("emulator ready: build %s in %s, state %s" % (build_id, slot, state))
+    return 0
 
 
 def write_remote(cfg, spec, root: Path) -> int:
@@ -269,21 +477,10 @@ def check_ui_mirror(cfg, allow_stale=False):
 
 
 def run(cfg, build_only=False, allow_nonbench=False, allow_red_isr=False,
-        allow_stale_ui=False):
-    if check_ui_mirror(cfg, allow_stale=allow_stale_ui) != 0:
-        return 1
-    spec = board_spec(cfg)
-    serial_port = None
-    if not build_only:
-        serial_port = serial_port_for_flash(cfg)
-        if serial_port is None:
-            return 2
-        if not cfg.base and not serialmon.alive(cfg):
-            print("no base URL for this board and no serial monitor to learn "
-                  "one from: start `hil %smonitor start` first, or set "
-                  "HIL_PEER_BASE" % ("--peer " if cfg.is_peer else ""),
-                  file=sys.stderr)
-            return 2
+        allow_stale_ui=False, image=CONTROLLER, via=VIA_RFC2217, on_delivered=None):
+    spec, serial_port, rc = _prepare(cfg, image, via, build_only, allow_stale_ui)
+    if rc is not None:
+        return rc
     rc = build(cfg, allow_nonbench=allow_nonbench, spec=spec)
     if rc != 0 or build_only:
         return rc
@@ -291,46 +488,106 @@ def run(cfg, build_only=False, allow_nonbench=False, allow_red_isr=False,
     if rc != 0:
         return rc
     root = repo_root(cfg)
+    manifest = _write_manifest(cfg, spec, root, via, serial_port, isr_iram)
+    log_mark = serialmon.log_size(cfg)
+    rc = _deliver_around_monitor(cfg, spec, root, via, serial_port)
+    if rc != 0:
+        return rc
+    if on_delivered is not None:
+        on_delivered()
+    if not spec["bench"]:
+        return verify_banner(cfg, log_mark, via, root)
+    return _verify_controller(cfg, spec, root, via, manifest, log_mark)
+
+
+def require_standby_peer(cfg):
+    if not cfg.is_peer:
+        raise BoardError("the gear emulator goes only onto the pair's other board: "
+                         "`hil --peer role gear-sim`")
+    found = health(cfg.base) if cfg.base else None
+    if not found or found.get("role") != "standby":
+        raise BoardError("%s is not a standby controller (%r): the emulator never replaces "
+                         "the controller that holds the wire" % (cfg.base, found))
+
+
+def _prepare(cfg, image, via, build_only, allow_stale_ui):
+    if via not in VIAS:
+        raise BoardError("unknown delivery %r — known: %s" % (via, ", ".join(VIAS)))
+    if image == GEAR_SIM:
+        require_standby_peer(cfg)
+    if via == VIA_WB and not remote_serial.enabled(cfg):
+        raise BoardError("--via wb writes through the board's bridge on the WB, and none "
+                         "is named (HIL_SERIAL_REMOTE, HIL_PEER_SERIAL_REMOTE)")
+    if via == VIA_OTA and not cfg.base:
+        raise BoardError("--via ota posts to the board's HTTP address, and none is known")
+    if image == CONTROLLER and check_ui_mirror(cfg, allow_stale=allow_stale_ui) != 0:
+        return None, None, 1
+    spec = board_spec(cfg, image)
+    if build_only or via == VIA_OTA:
+        return spec, None, None
+    serial_port = serial_port_for_flash(cfg)
+    if serial_port is None:
+        return spec, None, 2
+    if not cfg.base and not serialmon.alive(cfg):
+        print("no base URL for this board and no serial monitor to learn one from: start "
+              "`hil %smonitor start` first, or set HIL_PEER_BASE"
+              % ("--peer " if cfg.is_peer else ""), file=sys.stderr)
+        return spec, None, 2
+    return spec, serial_port, None
+
+
+def _write_manifest(cfg, spec, root, via, serial_port, isr_iram):
     env = benchenv.resolve(Path(cfg.root))
     manifest = benchenv.write_manifest(
         cfg.new_run_dir(), root, env, Path(spec["firmware_bin"]), spec["target"],
-        bench_valid=not benchenv.validate(env),
-        board_env=spec["board_env"],
-        checks={"isr_iram": isr_iram},
-        transport=("wb-bridge %s" % remote_serial.target(cfg)
-                   if remote_serial.enabled(cfg) else "local %s" % serial_port),
-    )
+        bench_valid=not benchenv.validate(env) if spec["bench"] else True,
+        board_env=spec["board_env"], checks={"isr_iram": isr_iram},
+        transport=_transport(cfg, via, serial_port), image=spec["image"])
     print("run manifest: %s" % manifest, flush=True)
+    return manifest
+
+
+def _verify_controller(cfg, spec, root, via, manifest, log_mark):
+    base = cfg.base or learn_base(cfg, since=log_mark)
+    if base is None:
+        print("the board announced no lease within %ds — check the serial log (%s)"
+              % (READY_TIMEOUT_S, serialmon.log_path(cfg)), file=sys.stderr)
+        return 1
+    if not cfg.base:
+        record_base(cfg, base)
+    if via == VIA_OTA:
+        _goes_quiet(base)
+    found = wait_ready(cfg, base=base)
+    if found is None:
+        print("DUT did not come back within %ds — check serial log" % READY_TIMEOUT_S,
+              file=sys.stderr)
+        return 1
+    built = spec["app_bin"] if via == VIA_OTA else spec["merged_bin"]
+    return verify_running_version(found, root, manifest, image=root / built)
+
+
+def _transport(cfg, via, serial_port):
+    if via == VIA_OTA:
+        return "ota %s served from %s" % (cfg.base, cfg.wb_ssh)
+    if via == VIA_WB:
+        return "wb-local esptool %s" % remote_serial.target(cfg)
+    if remote_serial.enabled(cfg):
+        return "wb-bridge %s" % remote_serial.target(cfg)
+    return "local %s" % serial_port
+
+
+def _deliver_around_monitor(cfg, spec, root, via, serial_port):
     monitor_was_alive = serialmon.alive(cfg)
-    log_mark = serialmon.log_size(cfg)
-    if monitor_was_alive:
+    holds_port = via != VIA_OTA and monitor_was_alive
+    if holds_port:
         serialmon.stop(cfg)
         time.sleep(1)
     sys.stdout.flush()
     try:
-        rc = (write_remote(cfg, spec, root) if remote_serial.enabled(cfg)
-              else write_local(spec, root, serial_port, cfg.flash_baud))
-        if rc != 0:
-            return rc
+        return deliver(cfg, spec, root, via, serial_port)
     finally:
-        if monitor_was_alive:
+        if holds_port:
             serialmon.start(cfg)
-    base = cfg.base
-    if not base:
-        base = learn_base(cfg, since=log_mark)
-        if base is None:
-            print("the board announced no lease within %ds — check the serial "
-                  "log (%s)" % (READY_TIMEOUT_S, serialmon.log_path(cfg)),
-                  file=sys.stderr)
-            return 1
-        record_base(cfg, base)
-    health = wait_ready(cfg, base=base)
-    if health is None:
-        print("DUT did not come back within %ds — check serial log"
-              % READY_TIMEOUT_S, file=sys.stderr)
-        return 1
-    return verify_running_version(health, root, manifest,
-                                  image=root / spec["merged_bin"])
 
 
 IMAGE_VERSION = re.compile(

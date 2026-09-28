@@ -523,7 +523,7 @@ class Client:
 
     def config_snapshot(self) -> dict:
         return {
-            "vl": self.vlamps.list(),
+            "vl": self.vlamps.list_unfiltered(),
             "group_matrix": self.groups.matrix(),
             "scenes": self._scene_snapshot(),
         }
@@ -563,7 +563,7 @@ class Client:
 
     def config_restore(self, snap: dict) -> None:
         current = {v["virtual_lamp_id"]: v
-                   for v in self.vlamps.list()["virtual_lamps"]}
+                   for v in self.vlamps.list_unfiltered()["virtual_lamps"]}
         for v in snap["vl"]["virtual_lamps"]:
             lid = v["virtual_lamp_id"]
             want = (v.get("binding") or {}).get("physical_short_address")
@@ -838,8 +838,11 @@ class _Scenes(_Namespace):
 
 
 class _VirtualLamps(_Namespace):
+    def list_unfiltered(self) -> dict:
+        return self._c._req("GET", "adapters/%d/virtual-lamps" % self._c.adapter)
+
     def list(self) -> dict:
-        body = self._c._req("GET", "adapters/%d/virtual-lamps" % self._c.adapter)
+        body = self.list_unfiltered()
         wanted = self._c.cfg.gear_short_set()
         if wanted is None or not isinstance(body, dict):
             return body
@@ -861,6 +864,10 @@ class _VirtualLamps(_Namespace):
         return self._c._req("PUT", "adapters/%d/virtual-lamps/%d/binding"
                             % (self._c.adapter, lamp_id),
                             {"physical_short_address": short})
+
+    def delete(self, lamp_id: int):
+        return self._c._req("DELETE", "adapters/%d/virtual-lamps/%d"
+                            % (self._c.adapter, lamp_id))
 
     def unbind(self, lamp_id: int) -> dict:
         return self._c._req("DELETE", "adapters/%d/virtual-lamps/%d/binding"

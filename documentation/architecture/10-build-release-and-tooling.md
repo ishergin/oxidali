@@ -220,8 +220,9 @@ files only go down; the bench's own budgets are in the
 
 ## Beside the workspace
 
-- [`tools/dali-gear-sim`](../../tools/dali-gear-sim/README.md), the gear emulator, is
-  its own cargo workspace; its README states what `gear-sim-check` does and does not
+- [`tools/dali-gear-sim`](../../tools/dali-gear-sim/README.md), the gear emulator for the
+  pair's second ESP32-P4, is its own cargo workspace, layered on the root's sdkconfig and
+  partition table; its README states what `gear-sim-check` and `gear-sim-isr-iram-check`
   prove ([ADR-014](decisions/ADR-014-gear-model-and-second-dali-endpoint.md)).
 - `hardware/enclosure/` models the DIN-rail enclosure; the `Params` spreadsheet in
   `dali2rust-case.FCStd` is its source of dimensions.

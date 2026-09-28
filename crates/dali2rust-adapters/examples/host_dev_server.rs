@@ -18,6 +18,7 @@ const FLEET_ENV: &str = "DALI2RUST_DEV_SERVER_FLEET";
 const BENCH_FLEET: &str = "bench";
 const BENCH_FLEET_LAYOUT: (u8, u8, u8, u8) = (0, 34, 20, 10);
 const BENCH_FLEET_SEED: u32 = 0x0DA1_1000;
+const NO_RESERVED_SHORT_ADDRESSES: u64 = 0;
 const DEV_SERVER_VERSION: &str = "dev-host";
 
 fn asset_route(rel: &str) -> Option<(&'static str, &'static str)> {
@@ -145,6 +146,7 @@ fn main() {
             cct,
             rgb,
             BENCH_FLEET_SEED,
+            NO_RESERVED_SHORT_ADDRESSES,
         ))
     } else {
         SimDaliTransport::demo_bus()

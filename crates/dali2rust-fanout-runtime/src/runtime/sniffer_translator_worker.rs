@@ -410,7 +410,7 @@ fn classify_product_shape(
             None,
             Some(LightSetpoint {
                 power: PowerState::Off,
-                level: 0,
+                level: Some(0),
                 color: None,
             }),
             false,
@@ -441,11 +441,7 @@ fn is_unprojectable_dimming(command: StandardCommand) -> bool {
 }
 
 fn level_setpoint(level: u8) -> LightSetpoint {
-    LightSetpoint {
-        power: PowerState::for_level(level),
-        level,
-        color: None,
-    }
+    LightSetpoint::from_level(level, None)
 }
 
 fn handle_dt8_outcome(
@@ -598,7 +594,7 @@ fn color_fact(address: DaliAddress, color: ColorValue) -> ObservedFact {
         scene_id: None,
         setpoint: Some(LightSetpoint {
             power: PowerState::Unknown,
-            level: 0,
+            level: None,
             color: Some(color),
         }),
         dapc_observed: false,

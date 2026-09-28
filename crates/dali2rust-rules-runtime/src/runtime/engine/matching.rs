@@ -207,9 +207,10 @@ fn lamp_matches(trigger: &Trigger, input: &EngineInput<'_>) -> bool {
         } => {
             lamp.adapter_id == *adapter_id
                 && lamp.id == *lamp_id
-                && match direction {
-                    CrossDirection::Above => previous_level <= threshold && level > threshold,
-                    CrossDirection::Below => previous_level >= threshold && level < threshold,
+                && match (previous_level, level, direction) {
+                    (Some(was), Some(now), CrossDirection::Above) => was <= threshold && now > threshold,
+                    (Some(was), Some(now), CrossDirection::Below) => was >= threshold && now < threshold,
+                    _ => false,
                 }
         }
         _ => false,

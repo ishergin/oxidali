@@ -37,7 +37,7 @@ fn commit_colour(
 ) {
     let setpoint = LightSetpoint {
         power: PowerState::On,
-        level: 200,
+        level: Some(200),
         color: Some(color),
     };
     publish_cmd(

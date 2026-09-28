@@ -1,6 +1,6 @@
 use dali2rust_contracts::msg::{
     AttributeGroupReadOutcome, ColorMode, DaliAttributeGroup, DeviceTypeSet, Dt6ReadSnapshot,
-    ExtendedVersionEntry, LightSetpoint, PowerState, RuntimeObservation, StatusFlags,
+    ExtendedVersionEntry, LightSetpoint, RuntimeObservation, StatusFlags,
     MAX_EXTENDED_VERSIONS,
 };
 use dali2rust_domain::dali::controller::DaliApplicationController;

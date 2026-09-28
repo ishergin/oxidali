@@ -135,8 +135,9 @@ Detail: [06](documentation/architecture/06-registry-and-persistence.md),
   observation; an entry naming an unbound virtual lamp is refused (`VlUnbound`).
 - Runtime fields and operation status are not persisted. Group and scene diffs are
   expanded by the apply orchestrator, never by the registry or a handler.
-- A lamp is on because its power says so; a level of 0 is a level. Whether a setpoint
-  states a colour is `states_color()`, never `color.is_some()`.
+- A lamp is on because its power says so; a level of 0 is a level, and an unknown one is
+  `None`, never 0. What reaches the wire is `dapc_level()`. Whether a setpoint states a
+  colour is `states_color()`, never `color.is_some()`.
 - Hydration joins before HTTP mounts, so no mutating request precedes it; a boot-order
   change keeps that or adds a gate.
 - Each persisted slice has its own version: bump only the slice whose shape moved and say
@@ -334,9 +335,9 @@ cargo run --target aarch64-apple-darwin -p dali2rust-adapters --example host_dev
 - Run `just ci` before a commit lands and after anything touching a contract, a wire
   order or ESP-only code. `.github/workflows/ci.yml` runs `just ci` without
   `gear-sim-check`, BDD on a Linux runner, and does not replace the local run.
-- [`tools/dali-gear-sim`](tools/dali-gear-sim/README.md) is a separate workspace pinned to
-  the ESP32-C6 and not ported; `just gear-sim-check` proves only that it
-  type-checks.
+- [`tools/dali-gear-sim`](tools/dali-gear-sim/README.md) is a separate workspace for the
+  pair's second ESP32-P4, borrowed for a session; `just gear-sim-check` type-checks it and
+  `just gear-sim-isr-iram-check` gates its interrupt.
 - `hardware/enclosure/` holds the DIN-rail enclosure; the `Params` spreadsheet in
   `dali2rust-case.FCStd` is its only source of dimensions.
 
@@ -348,7 +349,9 @@ Detail: [`tools/hil/README.md`](tools/hil/README.md) (runbook),
 - A bench may be production lighting. Anything that visibly changes a lamp needs the
   go-ahead of whoever owns that light for that run; without it, run with
   `HIL_LAMPS_READ_ONLY=1` and deselect every test that drives light (STRATEGY §4).
-- Tests drive only `HIL_LAMP_SHORTS`; commissioning never runs on production lighting.
+- Tests drive only `HIL_LAMP_SHORTS`; commissioning never runs on production lighting,
+  except the virtual-gear tier's expert steps onto emulated gear with
+  `HIL_ALLOW_VIRTUAL_COMMISSIONING=1` and a go-ahead per run (STRATEGY §4.8, ADR-031).
   Bench-specific rules live in `CLAUDE.local.md`, which is not tracked.
 - Every session saves the bench and restores it; recover a killed session with
   `hil state restore`.

@@ -5,4 +5,5 @@ pytest_plugins = [
     "hil_optics",
     "hil_test_guards",
     "hil_run_validity",
+    "hil_virtual",
 ]

@@ -62,10 +62,6 @@ pub(crate) enum RuntimeCommitOutcome {
     NoRecord,
 }
 
-fn setpoint_states_a_value(setpoint: &LightSetpoint) -> bool {
-    setpoint.power != PowerState::Unknown || setpoint.level > 0 || setpoint.color.is_some()
-}
-
 pub(crate) struct LevelTransitionCommit<'a> {
     pub short_address: u8,
     pub transition: LevelTransition,
@@ -110,27 +106,35 @@ fn commit_physical_runtime(
     if power_cycled {
         forget_ram_state(rec);
     }
-    if commit.setpoint.power == PowerState::Off || commit.setpoint.level > 0 {
-        rec.runtime_level = Some(commit.setpoint.level);
-    } else if commit.setpoint.power == PowerState::On {
-        rec.runtime_level = rec.last_active_level;
-    }
-    // IEC 62386-102 §9.4
-    if let Some(level) = rec.runtime_level.filter(|level| *level > 0 && !power_cycled) {
-        rec.last_active_level = Some(level);
-    }
+    record_commanded_level(rec, commit.setpoint, power_cycled);
     rec.runtime.apply_setpoint(commit.setpoint);
     rec.runtime.apply_observation(commit.observation);
     rec.runtime.merge_command_metadata(
         commit.observation.value_source,
         commit.entry_last_dapc_source,
         commit.entry_source,
-        setpoint_states_a_value(commit.setpoint),
+        commit.setpoint.states_a_value(),
     );
     rec.runtime.observed_at_mono_ms = commit
         .observed_at_mono_ms
         .or(rec.runtime.observed_at_mono_ms);
     power_cycled
+}
+
+fn record_commanded_level(
+    rec: &mut PhysicalDeviceRecord,
+    setpoint: &LightSetpoint,
+    power_cycled: bool,
+) {
+    match setpoint.dapc_level() {
+        Some(level) => rec.runtime_level = Some(level),
+        None if setpoint.power == PowerState::On => rec.runtime_level = rec.last_active_level,
+        None => {}
+    }
+    // IEC 62386-102 §9.4
+    if let Some(level) = rec.runtime_level.filter(|level| *level > 0 && !power_cycled) {
+        rec.last_active_level = Some(level);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -587,7 +591,7 @@ fn color_value_from_runtime(rec: &RuntimeObservationData) -> Option<ColorValue> 
 fn light_setpoint_from_physical_record(rec: &PhysicalDeviceRecord) -> LightSetpoint {
     LightSetpoint {
         power: rec.runtime.power,
-        level: rec.runtime_level.unwrap_or(0),
+        level: rec.runtime_level,
         color: color_value_from_runtime(&rec.runtime),
     }
 }
@@ -599,7 +603,7 @@ fn runtime_observation_from_runtime_data(rt: &RuntimeObservationData) -> Runtime
         value_source: rt.value_source,
         last_seen_ms: rt.last_seen_ms,
         last_dapc_source: rt.last_dapc_source,
-        error: rt.error.clone(),
+        error: rt.error,
     }
 }
 
@@ -1029,7 +1033,7 @@ impl RegistryStore {
         if !observation_supersedes(commit.observed_at_mono_ms, rec.runtime.observed_at_mono_ms) {
             return RuntimeCommitOutcome::Superseded;
         }
-        let silent = !setpoint_states_a_value(commit.setpoint)
+        let silent = !commit.setpoint.states_a_value()
             && rec.runtime.observation_adds_nothing(commit.observation);
         let power_cycled = commit_physical_runtime(rec, commit);
         drop(g);
@@ -1055,11 +1059,7 @@ impl RegistryStore {
             return RuntimeCommitOutcome::Superseded;
         }
         let setpoint = match resolve_transition(commit.transition, rec) {
-            TransitionOutcome::Level(level) => LightSetpoint {
-                power: PowerState::for_level(level),
-                level,
-                color: None,
-            },
+            TransitionOutcome::Level(level) => LightSetpoint::from_level(level, None),
             TransitionOutcome::Unchanged | TransitionOutcome::Unknown => LightSetpoint::default(),
         };
         let physical = PhysicalRuntimeCommit {
@@ -1070,7 +1070,7 @@ impl RegistryStore {
             entry_last_dapc_source: None,
             entry_source: commit.source,
         };
-        let silent = !setpoint_states_a_value(&setpoint)
+        let silent = !setpoint.states_a_value()
             && rec.runtime.observation_adds_nothing(commit.observation);
         let power_cycled = commit_physical_runtime(rec, &physical);
         drop(g);
@@ -1927,7 +1927,7 @@ mod power_cycle_tests {
     use super::*;
 
     fn status_read(level: u8, status: u8) -> (LightSetpoint, RuntimeObservation) {
-        let setpoint = LightSetpoint { power: PowerState::for_level(level), level, color: None };
+        let setpoint = LightSetpoint::from_level(level, None);
         let observation = RuntimeObservation {
             status_flags: Some(dali2rust_domain::dali::status::decode(status)),
             ..RuntimeObservation::default()

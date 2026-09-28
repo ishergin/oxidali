@@ -87,7 +87,7 @@ def main(argv):
     print("      verdicts: clear=%d one_failure=%d several_failures=%d"
           % (clear, one, several))
     if several:
-        print("NOTE  `several` on this bench is unexpected — the C6 fleet is "
+        print("NOTE  `several` on this bench is unexpected — the emulated fleet is "
               "bit-aligned by construction, so a violation here came from the "
               "real luminaires and is worth capturing.")
 

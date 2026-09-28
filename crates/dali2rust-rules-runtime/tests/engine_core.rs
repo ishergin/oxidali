@@ -35,11 +35,39 @@ fn with_lamp(mut w: WorldSnapshot, lamp: dali2rust_rules_model::LampRef, is_on: 
         adapter_id: lamp.adapter_id,
         id: lamp.id,
         is_on,
-        level,
+        level: Some(level),
         cct_kelvin: None,
-        last_level: level,
+        last_level: Some(level),
     });
     w
+}
+
+fn with_unknown_level(mut w: WorldSnapshot, lamp: dali2rust_rules_model::LampRef) -> WorldSnapshot {
+    w.lamps.push(LampState {
+        adapter_id: lamp.adapter_id,
+        id: lamp.id,
+        is_on: true,
+        level: None,
+        cct_kelvin: None,
+        last_level: None,
+    });
+    w
+}
+
+fn lamp_level_edge(
+    lamp: dali2rust_rules_model::LampRef,
+    was_on: bool,
+    previous_level: Option<u8>,
+    level: Option<u8>,
+) -> EngineInput<'static> {
+    EngineInput::LampChanged {
+        adapter_id: lamp.adapter_id,
+        lamp_id: lamp.id,
+        is_on: true,
+        level,
+        was_on,
+        previous_level,
+    }
 }
 
 fn night_world(now_ms: u64, minutes: u16, weekday: u8) -> WorldSnapshot {
@@ -88,9 +116,9 @@ fn lamp_on_edge(lamp: dali2rust_rules_model::LampRef, on: bool) -> EngineInput<'
         adapter_id: lamp.adapter_id,
         lamp_id: lamp.id,
         is_on: on,
-        level: if on { 200 } else { 0 },
+        level: if on { Some(200) } else { Some(0) },
         was_on: !on,
-        previous_level: if on { 0 } else { 200 },
+        previous_level: if on { Some(0) } else { Some(200) },
     }
 }
 
@@ -806,6 +834,67 @@ fn an_unevaluable_condition_is_a_partial_outcome_not_a_false() {
     assert_eq!(out[0].partial, Some(PartialReason::ConditionUnevaluable));
     assert_eq!(eng.counters().partial_outcomes, 1);
     assert_eq!(eng.counters().conditions_rejected, 0);
+}
+
+#[test]
+fn an_unknown_level_fails_every_comparison_on_it_including_not_equal() {
+    let lamp = resolver().resolve_lamp("коридор").unwrap();
+    let src = r#"
+rule "ниже" { when http trigger if lamp("коридор").level < 50 do log("<") }
+rule "мимо" { when http trigger if lamp("коридор").level != 50 do log("!=") }
+"#;
+    let mut eng = engine(src, 0);
+    let unknown = with_unknown_level(world(0), lamp);
+    assert!(eng.handle(run("ниже"), &unknown).is_empty());
+    assert!(eng.handle(run("мимо"), &unknown).is_empty());
+    assert_eq!(eng.counters().conditions_rejected, 2);
+    assert_eq!(eng.counters().partial_outcomes, 0, "a false condition is not a partial outcome");
+    let known = with_lamp(world(1), lamp, true, 20);
+    assert_eq!(eng.handle(run("ниже"), &known).len(), 1, "a known level passes the same gate");
+}
+
+#[test]
+fn an_unknown_level_read_as_a_value_is_unevaluable() {
+    let lamp = resolver().resolve_lamp("коридор").unwrap();
+    let kitchen = resolver().resolve_lamp("кухня").unwrap();
+    let src = r#"
+rule "эхо" { when http trigger do lamp("кухня").level(lamp("коридор").level) }
+rule "память" { when http trigger do lamp("кухня").level(lamp("коридор").last_level) }
+rule "справа" { when http trigger if lamp("кухня").level > lamp("коридор").level do log(">") }
+"#;
+    let mut eng = engine(src, 0);
+    let unknown = with_lamp(with_unknown_level(world(0), lamp), kitchen, true, 100);
+    for name in ["эхо", "память", "справа"] {
+        let out = eng.handle(run(name), &unknown);
+        assert_eq!(out.len(), 1, "{name}");
+        assert!(out[0].effects.is_empty(), "{name}: {out:?}");
+        assert!(out[0].partial.is_some(), "{name}: {out:?}");
+    }
+    assert_eq!(eng.counters().partial_outcomes, 3);
+    assert_eq!(eng.counters().conditions_rejected, 0, "unevaluable is not false");
+}
+
+#[test]
+fn a_level_crossing_needs_two_known_levels() {
+    let lamp = resolver().resolve_lamp("коридор").unwrap();
+    let src = r#"rule "порог" { when lamp("коридор").level crosses above 100 do log("↑") }"#;
+    let mut eng = engine(src, 0);
+    assert!(eng.handle(lamp_level_edge(lamp, true, None, Some(150)), &world(1_000)).is_empty());
+    assert!(eng.handle(lamp_level_edge(lamp, true, Some(50), None), &world(2_000)).is_empty());
+    let known = lamp_level_edge(lamp, true, Some(50), Some(150));
+    assert_eq!(eng.handle(known, &world(3_000)).len(), 1, "two known levels cross");
+}
+
+#[test]
+fn event_value_of_a_lamp_with_an_unknown_level_is_unevaluable() {
+    let lamp = resolver().resolve_lamp("коридор").unwrap();
+    let src = r#"rule "эхо" { when lamp("коридор") turns on do lamp("кухня").level(event.value) }"#;
+    let mut eng = engine(src, 0);
+    let out = eng.handle(lamp_level_edge(lamp, false, None, None), &world(1_000));
+    assert_eq!(out.len(), 1);
+    assert!(out[0].effects.is_empty(), "{out:?}");
+    assert!(out[0].partial.is_some(), "{out:?}");
+    assert_eq!(eng.counters().partial_outcomes, 1);
 }
 
 #[test]

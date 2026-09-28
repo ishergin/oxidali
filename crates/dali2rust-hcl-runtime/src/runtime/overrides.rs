@@ -343,7 +343,7 @@ mod tests {
         let stub = MembershipStub::with_lamp_in_groups(1, &[3]);
         let recoloured = foreign_commit(LightSetpoint {
             power: PowerState::Unknown,
-            level: 0,
+            level: None,
             color: Some(ColorValue {
                 mode: ColorMode::Cct,
                 color_temperature_kelvin: 3000,

@@ -162,6 +162,7 @@ def _log_lines(frame):
 
 @pytest.mark.hil_id("HIL-WS-05")
 @pytest.mark.smoke
+@pytest.mark.serial
 def test_the_log_channel_replays_and_keeps_uart_alive(
         api, hil_config, ws_baseline, serial_log, test_artifacts):
     with serial_log.window() as serial:

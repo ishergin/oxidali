@@ -29,9 +29,6 @@ use dali2rust_domain::dali::devices::dt8_color::{
     COLOUR_STATUS_XY_OUT_OF_RANGE as DT8_STATUS_XY_OUT_OF_RANGE,
 };
 
-// IEC 62386-102 §9.3
-const ARC_POWER_LEVEL_OFF: u8 = 0;
-
 pub fn apply_with_sequence_retry<T>(
     sequence_retries: u8,
     mut run: impl FnMut() -> Result<T, SemanticDaliError>,
@@ -174,25 +171,8 @@ fn send_arc_command(
     setpoint: &LightSetpoint,
     color_staged: bool,
 ) -> Result<bool, SemanticDaliError> {
-    if setpoint.power == PowerState::Off {
-        send_standard(
-            controller,
-            address,
-            StandardCommand::DirectArcPower {
-                level: ARC_POWER_LEVEL_OFF,
-            },
-        )?;
-        return Ok(true);
-    }
-
-    if setpoint.level > 0 {
-        send_standard(
-            controller,
-            address,
-            StandardCommand::DirectArcPower {
-                level: setpoint.level,
-            },
-        )?;
+    if let Some(level) = setpoint.dapc_level() {
+        send_standard(controller, address, StandardCommand::DirectArcPower { level })?;
         return Ok(true);
     }
 

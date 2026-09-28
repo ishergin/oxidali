@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use dali2rust_bus::BusId;
 use dali2rust_contracts::msg::{
-    DeviceType, LightSetpoint, PowerState, RegistryRuntimeUpdateCommand, RuntimeObservation,
+    DeviceType, LightSetpoint, RegistryRuntimeUpdateCommand, RuntimeObservation,
     RuntimeRegistryUpdateEntry, RuntimeSource, OBSERVATION_ORDER_WINDOW_MS,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
@@ -15,11 +15,7 @@ use support::{publish_cmd, recv_confirm_for, seed_physical_via_discovery, spawn_
 const SHORT: u8 = 7;
 
 fn level_setpoint(level: u8) -> LightSetpoint {
-    LightSetpoint {
-        power: PowerState::On,
-        level,
-        color: None,
-    }
+    LightSetpoint::from_level(level, None)
 }
 
 fn runtime_entry(level: u8, source: RuntimeSource, stamp: Option<u32>) -> RuntimeRegistryUpdateEntry {

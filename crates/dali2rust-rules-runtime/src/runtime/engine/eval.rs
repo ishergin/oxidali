@@ -59,10 +59,10 @@ fn eval_reading(env: &EvalEnv<'_>, reading: &Reading) -> EvalResult<i64> {
 fn lamp_reading(env: &EvalEnv<'_>, reading: &Reading, adapter: u8, id: u16) -> EvalResult<i64> {
     let lamp = env.world.lamp(adapter, id).ok_or(Unevaluable)?;
     match reading {
-        Reading::LampLevel { .. } => Ok(i64::from(lamp.level)),
+        Reading::LampLevel { .. } => lamp.level.map(i64::from).ok_or(Unevaluable),
         Reading::LampCct { .. } => lamp.cct_kelvin.map(i64::from).ok_or(Unevaluable),
         Reading::LampIsOn { .. } => Ok(i64::from(lamp.is_on)),
-        _ => Ok(i64::from(lamp.last_level)),
+        _ => lamp.last_level.map(i64::from).ok_or(Unevaluable),
     }
 }
 
@@ -191,9 +191,7 @@ pub(crate) fn eval_condition(env: &EvalEnv<'_>, condition: &Condition) -> EvalRe
         Condition::DayIn { days } => day_in_cond(env, days),
         Condition::SunIs { up } => Ok(sun_is_up(env)? == *up),
         Condition::LampIs { lamp, on } => lamp_is_cond(env, lamp, *on),
-        Condition::LampLevel { lamp, cmp, value } => {
-            reading_cmp(env, &Reading::LampLevel { lamp: *lamp }, *cmp, value)
-        }
+        Condition::LampLevel { lamp, cmp, value } => lamp_level_cond(env, lamp, *cmp, value),
         Condition::LampCct { lamp, cmp, value } => {
             reading_cmp(env, &Reading::LampCct { lamp: *lamp }, *cmp, value)
         }
@@ -231,6 +229,19 @@ fn day_in_cond(env: &EvalEnv<'_>, days: &dali2rust_rules_model::DaySet) -> EvalR
     let wall = env.world.wall.ok_or(Unevaluable)?;
     let day = Weekday::ALL.get(usize::from(wall.weekday)).ok_or(Unevaluable)?;
     Ok(days.contains(*day))
+}
+
+fn lamp_level_cond(
+    env: &EvalEnv<'_>,
+    lamp: &dali2rust_rules_model::LampRef,
+    cmp: Cmp,
+    value: &ValueExpr,
+) -> EvalResult<bool> {
+    let state = env.world.lamp(lamp.adapter_id, lamp.id).ok_or(Unevaluable)?;
+    let Some(level) = state.level else {
+        return Ok(false);
+    };
+    Ok(compare_i64(cmp, i64::from(level), eval_value(env, value)?))
 }
 
 fn lamp_is_cond(env: &EvalEnv<'_>, lamp: &dali2rust_rules_model::LampRef, on: bool) -> EvalResult<bool> {

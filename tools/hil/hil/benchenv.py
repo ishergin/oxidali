@@ -110,7 +110,8 @@ def write_manifest(run_dir: Path, repo_root: Path, env: dict[str, str],
                    firmware_bin: Path, target: str, bench_valid: bool,
                    board_env: dict[str, str] | None = None,
                    checks: dict[str, str] | None = None,
-                   transport: str | None = None) -> Path:
+                   transport: str | None = None,
+                   image: str | None = None) -> Path:
     dirty = _git(repo_root, "status", "--porcelain")
     manifest = {
         "git": {
@@ -132,6 +133,7 @@ def write_manifest(run_dir: Path, repo_root: Path, env: dict[str, str],
         "bench_valid": bench_valid,
         "checks": dict(checks or {}),
         "flash_transport": transport or "local",
+        "image": image or "controller",
     }
     run_dir.mkdir(parents=True, exist_ok=True)
     path = run_dir / "manifest.json"

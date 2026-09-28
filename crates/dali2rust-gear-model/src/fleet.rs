@@ -994,7 +994,14 @@ fn store_gear_features(gear: &mut Gear, dtr0: u8) {
 
 const SHORT_ADDRESS_MAX: u8 = SHORT_ADDRESS_MASK;
 
-pub fn bench_fleet(base: u8, dt6: u8, cct: u8, rgb: u8, seed: u32) -> Vec<GearSpec> {
+pub fn bench_fleet(
+    base: u8,
+    dt6: u8,
+    cct: u8,
+    rgb: u8,
+    seed: u32,
+    reserved: u64,
+) -> Vec<GearSpec> {
     let mut rng = Rng::new(seed);
     let mut specs = Vec::new();
     let mut short = base;
@@ -1015,9 +1022,7 @@ pub fn bench_fleet(base: u8, dt6: u8, cct: u8, rgb: u8, seed: u32) -> Vec<GearSp
     };
     for (kind, count) in [(0u8, dt6), (1, cct), (2, rgb)] {
         for _ in 0..count {
-            while short <= SHORT_ADDRESS_MAX
-                && is_reserved(DEFAULT_RESERVED_SHORT_ADDRESSES, Some(short))
-            {
+            while short <= SHORT_ADDRESS_MAX && is_reserved(reserved, Some(short)) {
                 short += 1;
             }
             specs.push(push(kind, (short <= SHORT_ADDRESS_MAX).then_some(short), &mut rng));

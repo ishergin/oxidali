@@ -1,5 +1,5 @@
 use dali2rust_contracts::msg::{
-    ColorMode, CompactErrorPayload, LastDapcSource, LightSetpoint, RuntimeObservation, RuntimeSource,
+    ColorMode, ErrorCode, LastDapcSource, LightSetpoint, RuntimeObservation, RuntimeSource,
 };
 
 #[derive(Clone, Debug)]
@@ -38,7 +38,7 @@ pub(crate) struct RuntimeObservationData {
     pub value_source: Option<RuntimeSource>,
     pub last_seen_ms: Option<u64>,
     pub last_dapc_source: LastDapcSource,
-    pub error: Option<CompactErrorPayload>,
+    pub error: Option<ErrorCode>,
     pub observed_at_mono_ms: Option<u32>,
 }
 
@@ -89,8 +89,12 @@ fn failure_status_data(fs: &dali2rust_contracts::msg::FailureStatus) -> FailureS
 
 impl RuntimeObservationData {
     pub(crate) fn apply_setpoint(&mut self, setpoint: &LightSetpoint) {
-        if setpoint.power != dali2rust_contracts::msg::PowerState::Unknown {
-            self.power = setpoint.power;
+        if let Some(on) = setpoint.commanded_power() {
+            self.power = if on {
+                dali2rust_contracts::msg::PowerState::On
+            } else {
+                dali2rust_contracts::msg::PowerState::Off
+            };
         }
         if let Some(cv) = setpoint.color.as_ref() {
             self.apply_color(cv);
@@ -137,6 +141,10 @@ impl RuntimeObservationData {
         self.waf = None;
     }
 
+    pub(crate) fn reports_absence(&self) -> bool {
+        self.error == Some(ErrorCode::DeviceAbsent)
+    }
+
     pub(crate) fn forget_colour(&mut self) {
         self.color_mode = ColorMode::Unknown;
         self.kelvin = None;
@@ -167,7 +175,7 @@ impl RuntimeObservationData {
 
     fn apply_reachability(&mut self, observation: &RuntimeObservation) {
         if observation.reports_absence() {
-            self.error = observation.error.clone();
+            self.error = observation.error;
         } else if observation.status_flags.is_some() || observation.failure_status.is_some() {
             self.error = None;
         }
@@ -192,7 +200,7 @@ impl RuntimeObservationData {
         observation.status_flags.is_none()
             && observation.failure_status.is_none()
             && observation.last_seen_ms.is_none()
-            && observation.error.as_ref().map(|e| e.code) == self.error.as_ref().map(|e| e.code)
+            && observation.error == self.error
     }
 }
 
@@ -225,7 +233,7 @@ mod color_transition_tests {
     fn setpoint(color: Option<ColorValue>) -> LightSetpoint {
         LightSetpoint {
             power: PowerState::On,
-            level: 100,
+            level: Some(100),
             color,
         }
     }
@@ -281,13 +289,13 @@ mod color_transition_tests {
         assert_eq!(data.power, PowerState::On);
         data.apply_setpoint(&LightSetpoint {
             power: PowerState::Unknown,
-            level: 0,
+            level: None,
             color: Some(observed(CCT)),
         });
         assert_eq!(data.power, PowerState::On, "no statement, no change");
         data.apply_setpoint(&LightSetpoint {
             power: PowerState::Off,
-            level: 0,
+            level: None,
             color: None,
         });
         assert_eq!(data.power, PowerState::Off, "an explicit OFF still lands");
@@ -316,7 +324,7 @@ mod reachability_tests {
             value_source: Some(RuntimeSource::Poller),
             last_seen_ms: None,
             last_dapc_source: LastDapcSource::default(),
-            error: Some(CompactErrorPayload::new(ErrorCode::DeviceAbsent, "no answer")),
+            error: Some(ErrorCode::DeviceAbsent),
         }
     }
 
@@ -344,7 +352,7 @@ mod reachability_tests {
     fn absence_is_set_by_the_observation_that_saw_it() {
         let mut rt = RuntimeObservationData::default();
         rt.apply_observation(&absent());
-        assert_eq!(rt.error.as_ref().map(|e| e.code), Some(ErrorCode::DeviceAbsent));
+        assert_eq!(rt.error, Some(ErrorCode::DeviceAbsent));
     }
 
     #[test]
@@ -354,7 +362,7 @@ mod reachability_tests {
 
         rt.apply_observation(&commanded());
         assert_eq!(
-            rt.error.as_ref().map(|e| e.code),
+            rt.error,
             Some(ErrorCode::DeviceAbsent),
             "a command echo must not clear a reachability fault"
         );
