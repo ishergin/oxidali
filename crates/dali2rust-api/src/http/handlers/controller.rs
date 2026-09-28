@@ -93,11 +93,7 @@ impl ControllerSummaryHandler {
         let facts = self.source.facts();
         ControllerSummaryBody {
             node_id: facts.mac.map(node_name),
-            network: ControllerNetworkBody {
-                hostname: facts.hostname,
-                ip: facts.ipv4.map(ipv4_text),
-                mac: facts.mac.map(mac_text),
-            },
+            network: network_body(facts.hostname, facts.ipv4, facts.mac),
             home_assistant: ControllerHaBody {
                 enabled: facts.ha_enabled,
                 connected: facts.ha_connected,
@@ -111,6 +107,18 @@ impl ControllerSummaryHandler {
             adapter_count: self.adapter_count,
             hydrated: true,
         }
+    }
+}
+
+fn network_body(
+    hostname: Option<String>,
+    ipv4: Option<[u8; 4]>,
+    mac: Option<[u8; 6]>,
+) -> ControllerNetworkBody {
+    ControllerNetworkBody {
+        hostname,
+        ip: ipv4.map(ipv4_text),
+        mac: mac.map(mac_text),
     }
 }
 
