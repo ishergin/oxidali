@@ -9,6 +9,7 @@ Feature: Runtime diagnostics endpoint
     When I send a GET request to "/api/v1/diagnostics"
     Then the response status should be 200
     And the JSON response should have the diagnostics blocks
+    And the JSON field "redundancy" should be absent
 
   @id:DIAG-031
   Scenario: Bus counters behind the snapshot are live

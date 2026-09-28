@@ -15,6 +15,23 @@ Feature: Redundancy — state and the planned handover
     And the JSON pointer "/replication/passes" should be 0
     And the JSON pointer "/replication/peer_unreachable" should be 0
 
+  @id:RED-029
+  Scenario: The state resource carries the arbitration counters and the clock their deltas key on
+    When I send a GET request to "/api/v1/redundancy"
+    Then the response status should be 200
+    And the JSON pointer "/uptime_ms" should be greater than 0
+    And the JSON pointer "/arbitration/defended" should be 0
+    And the JSON pointer "/arbitration/worker_stale" should be 0
+    And the JSON pointer "/arbitration/answered" should be 0
+    And the JSON pointer "/arbitration/suppressed" should be 0
+    And the JSON pointer "/arbitration/cell_busy" should be 0
+    And the JSON pointer "/arbitration/aborted" should be 0
+    And the JSON pointer "/arbitration/window_closed" should be 0
+    And the JSON pointer "/arbitration/late" should be 0
+    And the JSON pointer "/arbitration/probe_failed" should be 0
+    And the JSON pointer "/arbitration/handover_incomplete" should be 0
+    And the JSON pointer "/arbitration/armed" should be absent
+
   @id:RED-021
   Scenario: Every response says which controller answered it
     When I send a GET request to "/api/v1/health"
