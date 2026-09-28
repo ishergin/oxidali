@@ -22,7 +22,7 @@
 
 | Префикс | Каталог `features/` | Домен |
 |---|---|---|
-| `ADP-` | `adapters/` | DALI-адаптеры |
+| `ADP-` | `adapters/` | DALI-адаптеры и сводка контроллера |
 | `BUS-` | `contracts/` | Доставка HTTP → шина → провод |
 | `CFG-` | `config_transfer/` | Слайсы конфигурации: манифест, экспорт, импорт |
 | `COMM-` | `commissioning/` | Коммиссионинг control gear |

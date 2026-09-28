@@ -10,11 +10,14 @@ use std::time::{Duration, Instant};
 use cucumber::gherkin::{Feature, Scenario};
 use cucumber::World;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
-use dali2rust_adapters::{build_http_test_stack, BusStackRuntime, DaliRuntimeConfig, StaticAsset};
+use dali2rust_adapters::{
+    build_http_test_stack, BusStackRuntime, DaliRuntimeConfig, HttpTestPorts, StaticAsset,
+};
 use dali2rust_bus::BusConfig;
+use dali2rust_platform::net::NetworkLink;
 use dali2rust_platform::slice_store::SliceStore;
 use dali2rust_bsp::slice_store_files::InMemorySliceStore;
-use dali2rust_test_support::wait_for_tcp_ready;
+use dali2rust_test_support::{wait_for_tcp_ready, MockNetworkLink};
 use dali2rust_adapters::http::host::HostServer;
 
 pub mod steps;
@@ -48,6 +51,7 @@ pub struct DaliWorld {
     mqtt_mock: Arc<dali2rust_mqtt_runtime::MockMqttClient>,
     _runtime: Option<Box<BusStackRuntime>>,
     persistence_slices: Option<Arc<InMemorySliceStore>>,
+    network_link: Option<([u8; 6], Option<[u8; 4]>, String)>,
     runtime_config: DaliRuntimeConfig,
     pub stored_responses: Vec<TestResponse>,
     pub remembered_u64: Option<u64>,
@@ -85,6 +89,7 @@ impl DaliWorld {
             mqtt_mock: dali2rust_mqtt_runtime::MockMqttClient::bundle().0,
             _runtime: None,
             persistence_slices: None,
+            network_link: None,
             runtime_config: DaliRuntimeConfig::default(),
             stored_responses: Vec::new(),
             remembered_u64: None,
@@ -109,8 +114,6 @@ impl DaliWorld {
         self.server_port = server.port();
 
         let stop = self.stop.clone();
-        let (mqtt_mock, mqtt_bundle) = dali2rust_mqtt_runtime::MockMqttClient::bundle();
-        self.mqtt_mock = mqtt_mock;
         let (router, ws_hub, runtime) = build_http_test_stack(
             "0.1.0-test",
             self.dali_mock.clone(),
@@ -118,7 +121,7 @@ impl DaliWorld {
             runtime_config,
             self.persistence_slices_api(),
             WEB_TEST_ASSETS,
-            Some(mqtt_bundle),
+            self.test_ports(),
         );
         self._runtime = Some(runtime);
         let router = Arc::new(router);
@@ -170,6 +173,20 @@ impl DaliWorld {
 
     pub fn restart_server(&mut self) {
         self.restart_server_with_config(BusConfig::default());
+    }
+
+    pub fn run_on_network_link(&mut self, mac: [u8; 6], ipv4: Option<[u8; 4]>, hostname: String) {
+        self.network_link = Some((mac, ipv4, hostname));
+        self.restart_server();
+    }
+
+    fn test_ports(&mut self) -> HttpTestPorts {
+        let (mqtt_mock, mqtt_bundle) = dali2rust_mqtt_runtime::MockMqttClient::bundle();
+        self.mqtt_mock = mqtt_mock;
+        let network_link = self.network_link.as_ref().map(|(mac, ipv4, hostname)| {
+            Arc::new(MockNetworkLink::new(*mac, *ipv4, hostname)) as Arc<dyn NetworkLink>
+        });
+        HttpTestPorts { mqtt_client: Some(mqtt_bundle), network_link }
     }
 
     pub fn enable_in_memory_persistence(&mut self) {

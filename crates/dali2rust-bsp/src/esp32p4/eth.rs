@@ -1,10 +1,11 @@
-use core::ffi::c_void;
+use core::ffi::{c_char, c_void, CStr};
 use core::ptr;
+use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use esp_idf_svc::sys::{self, esp, EspError};
 
-use dali2rust_platform::net::{LinkStats, LinkStatus, NetworkLink};
+use dali2rust_platform::net::{mac_text, node_name, LinkStats, LinkStatus, NetworkLink};
 
 use super::emac_dma::{decode_missed_frames, MISSED_FRAMES_WORD};
 use super::pins;
@@ -153,6 +154,17 @@ impl NetworkLink for EthLink {
 
     fn hardware_address(&self) -> Option<[u8; 6]> {
         Some(self.mac)
+    }
+
+    fn hostname(&self) -> Option<String> {
+        let mut name: *const c_char = ptr::null();
+        // SAFETY: `netif` is never freed; `set_hostname` writes the name once, before start, and nothing replaces it.
+        let err = unsafe { sys::esp_netif_get_hostname(self.netif, &mut name) };
+        if err != sys::ESP_OK || name.is_null() {
+            return None;
+        }
+        // SAFETY: a non-null name from `esp_netif_get_hostname` is NUL-terminated.
+        Some(unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned())
     }
 
     fn stats(&self) -> LinkStats {
@@ -326,12 +338,16 @@ fn attach_counting_glue(
             mac.as_mut_ptr() as *mut c_void
         ))?;
         esp!(sys::esp_netif_set_mac(netif, mac.as_mut_ptr()))?;
-        log::info!(
-            "eth: mac {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
-        );
+        log::info!("eth: mac {}", mac_text(mac));
         Ok((netif, mac))
     }
+}
+
+fn set_hostname(netif: *mut sys::esp_netif_t, mac: [u8; 6]) -> Result<(), EspError> {
+    let name = CString::new(node_name(mac))
+        .map_err(|_| EspError::from_infallible::<{ sys::ESP_ERR_INVALID_ARG }>())?;
+    // SAFETY: `netif` is live and not started yet; `esp_netif_set_hostname` copies the name.
+    esp!(unsafe { sys::esp_netif_set_hostname(netif, name.as_ptr()) })
 }
 
 pub fn start() -> Result<EthLink, EspError> {
@@ -346,6 +362,9 @@ pub fn start() -> Result<EthLink, EspError> {
 
     let handle = install_driver()?;
     let (netif, mac) = attach_counting_glue(handle)?;
+    if let Err(err) = set_hostname(netif, mac) {
+        log::warn!("eth: hostname not set, DHCP carries the default: {err}");
+    }
 
     // SAFETY: `netif` outlives the handler; it is never freed.
     unsafe {

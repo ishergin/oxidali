@@ -5,6 +5,7 @@ use dali2rust_contracts::msg::{
 use dali2rust_domain::registry::{
     HomeAssistantSecretReadPort, HomeAssistantSettingsReadPort, HomeAssistantSettingsView,
 };
+use dali2rust_platform::net::node_name;
 
 use super::persistence_slices::PersistableHomeAssistantSettingsSlice;
 use super::store::{Inner, RegistryStore};
@@ -49,10 +50,6 @@ impl Default for HomeAssistantSettingsRecord {
             expose_input_devices: true,
         }
     }
-}
-
-pub(crate) fn controller_id_from_mac(mac: [u8; 6]) -> String {
-    format!("dali-{:02x}{:02x}{:02x}", mac[3], mac[4], mac[5])
 }
 
 impl HomeAssistantSettingsRecord {
@@ -119,7 +116,7 @@ impl HomeAssistantSettingsRecord {
 impl RegistryStore {
     pub fn seed_home_assistant_controller_id(&self, mac: [u8; 6]) {
         let mut g = self.write_inner();
-        g.home_assistant_settings.controller_id = controller_id_from_mac(mac);
+        g.home_assistant_settings.controller_id = node_name(mac);
     }
 
     pub(crate) fn apply_home_assistant_settings_from_command(
@@ -221,17 +218,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_controller_id_comes_from_the_last_three_mac_bytes_in_lowercase_hex() {
-        assert_eq!(
-            controller_id_from_mac([0x3c, 0x84, 0x27, 0xA1, 0xB2, 0xC3]),
-            "dali-a1b2c3"
-        );
+    fn the_seed_names_the_installation_after_the_last_three_mac_bytes() {
+        let store = RegistryStore::new();
+        store.seed_home_assistant_controller_id([0x3c, 0x84, 0x27, 0xA1, 0xB2, 0xC3]);
+        assert_eq!(store.home_assistant_settings_view().controller_id, "dali-a1b2c3");
     }
 
     #[test]
     fn a_mac_derived_controller_id_is_always_topic_safe() {
         for byte in 0u8..=255 {
-            let id = controller_id_from_mac([0, 0, 0, byte, byte, byte]);
+            let id = node_name([0, 0, 0, byte, byte, byte]);
             assert!(
                 id.chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),

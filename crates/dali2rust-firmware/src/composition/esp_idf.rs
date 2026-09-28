@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use dali2rust_platform::display::DisplayDriver;
 
-use dali2rust_platform::net::NetworkLink;
+use dali2rust_platform::net::{ipv4_text, NetworkLink};
 
 const PROJECT_LOG_TARGETS: &[&str] = &[
     "dali2rust_adapters::dali::transport::esp_idf",
@@ -109,7 +109,7 @@ fn setup_eth() -> (Arc<dyn NetworkLink>, String) {
 fn current_ip(link: &dyn NetworkLink) -> String {
     match link.status().ipv4 {
         Some(o) => {
-            let ip = format!("{}.{}.{}.{}", o[0], o[1], o[2], o[3]);
+            let ip = ipv4_text(o);
             log::info!("eth: DHCP already bound {ip}");
             ip
         }

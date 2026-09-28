@@ -29,6 +29,27 @@ pub trait NetworkLink: Send + Sync {
     fn hardware_address(&self) -> Option<[u8; 6]> {
         None
     }
+
+    fn hostname(&self) -> Option<String> {
+        None
+    }
+}
+
+pub const NODE_NAME_PREFIX: &str = "dali-";
+
+pub fn node_name(mac: [u8; 6]) -> String {
+    let [_, _, _, a, b, c] = mac;
+    format!("{NODE_NAME_PREFIX}{a:02x}{b:02x}{c:02x}")
+}
+
+pub fn mac_text(mac: [u8; 6]) -> String {
+    let [a, b, c, d, e, f] = mac;
+    format!("{a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{f:02x}")
+}
+
+pub fn ipv4_text(ip: [u8; 4]) -> String {
+    let [a, b, c, d] = ip;
+    format!("{a}.{b}.{c}.{d}")
 }
 
 impl LinkStats {
@@ -80,6 +101,17 @@ mod tests {
             ..Default::default()
         };
         assert!(!busy.has_loss());
+    }
+
+    #[test]
+    fn a_node_is_named_after_the_last_three_bytes_of_its_mac() {
+        assert_eq!(node_name([0x30, 0xed, 0xa0, 0x7b, 0x90, 0xe4]), "dali-7b90e4");
+    }
+
+    #[test]
+    fn addresses_render_as_their_conventional_text() {
+        assert_eq!(mac_text([0x02, 0x00, 0x00, 0xa1, 0xb2, 0xc3]), "02:00:00:a1:b2:c3");
+        assert_eq!(ipv4_text([192, 168, 13, 240]), "192.168.13.240");
     }
 
     #[test]

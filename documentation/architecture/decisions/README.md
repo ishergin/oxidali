@@ -38,6 +38,7 @@ Scope: why the system is built this way. How it works is in the
 | [029](ADR-029-network-buffers-in-psram-and-a-measured-receive-ring.md) | Network buffers in PSRAM | Accepted | lwIP and received frames in PSRAM; mailbox holds the window; ring sized by its drop counter |
 | [030](ADR-030-controller-as-a-part-103-bus-unit.md) | The controller as a Part 103 bus unit | Deferred | One stateful model answers every device query; five decisions owed before code |
 | [031](ADR-031-gear-emulator-on-the-standby.md) | Gear emulator on the standby | Accepted | Lent by OTA for one boot or by wire; a session envelope keeps it off the owner's lamps |
+| [032](ADR-032-installation-and-node-identity.md) | Installation and node identity | Accepted | `controller_id` is the pair's installation; `node_id` and the hostname come from the node's MAC |
 
 A new record takes the next number and the same sections (`Status`, `Date`, `Context`,
 `Decision`, `Consequences`). A later decision that changes an earlier one is merged into

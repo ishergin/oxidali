@@ -113,6 +113,8 @@ class Capture:
                 "version": health.get("version"), "role": health.get("role"),
                 "uptime_seconds": health.get("uptime_seconds"),
                 "controller_id": controller.get("controller_id"),
+                "node_id": controller.get("node_id"),
+                "hostname": (controller.get("network") or {}).get("hostname"),
                 "adapter_count": controller.get("adapter_count")}
 
     def slices(self, keep_secrets: bool = False) -> None:

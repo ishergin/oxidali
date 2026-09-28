@@ -180,6 +180,27 @@ def test_keep_secrets_includes_it(tmp_path):
 
 
 
+def test_the_identity_names_the_node_beside_the_installation(tmp_path):
+    bodies = {
+        "health": {"version": "0.1.0+test", "role": "standby", "uptime_seconds": 7},
+        "controller": {"controller_id": "dali-3fa2c1", "node_id": "dali-7b90e4",
+                       "network": {"hostname": "dali-7b90e4"}, "adapter_count": 1},
+    }
+
+    class _IdentityClient(_FakeClient):
+        def raw_response(self, method, path, body=None):
+            class _R:
+                status_code = 200
+                content = json.dumps(bodies[path]).encode()
+            return _R()
+
+    identity = corpus.Capture(_IdentityClient(), tmp_path, "peer").identity()
+
+    assert identity["controller_id"] == "dali-3fa2c1"
+    assert identity["node_id"] == "dali-7b90e4"
+    assert identity["hostname"] == "dali-7b90e4"
+
+
 def test_a_board_that_does_not_answer_is_recorded_not_raised(tmp_path):
     import requests
 

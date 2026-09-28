@@ -139,6 +139,11 @@ export function Dashboard() {
             <span />
           </div>
           <div class="attr">
+            <span class="k">Installation</span>
+            <span class="v">{c.controller_id}</span>
+            <span />
+          </div>
+          <div class="attr">
             <span class="k">Hostname</span>
             <span class="v">{c.network.hostname || '—'}</span>
             <span />
@@ -146,6 +151,11 @@ export function Dashboard() {
           <div class="attr">
             <span class="k">IP address</span>
             <span class="v">{c.network.ip || '—'}</span>
+            <span />
+          </div>
+          <div class="attr">
+            <span class="k">MAC address</span>
+            <span class="v">{c.network.mac || '—'}</span>
             <span />
           </div>
           <div class="attr">

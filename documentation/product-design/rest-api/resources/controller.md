@@ -31,9 +31,20 @@
 - `home_assistant` — `enabled` и `broker_url` из настроек, `connected` — из самого моста:
   включённый мост, которому брокер отказывает, виден как неподключённый.
 - `adapter_count` — число DALI-адаптеров, фиксируется при загрузке.
-- `controller_id`, `network` (`hostname`, `ip`) и `cluster` сейчас не наполнены:
-  отдаются константы (`local`, пустые строки, `enabled: false`). Идентичность для Home
-  Assistant — `controller_id` в [`settings-home-assistant.md`](settings-home-assistant.md).
+- `controller_id` — установка: `controller_id` из
+  [`settings-home-assistant.md`](settings-home-assistant.md), общий у пары
+  отказоустойчивости; задаётся тем ресурсом или импортом его слайса — так его получает
+  standby.
+- `node_id` — сам узел: `dali-` и три последних байта его MAC. У двух плат пары он разный,
+  нигде не хранится и не реплицируется. На плате MAC известен всегда; `null` — только в
+  сборке без сетевого линка, то есть в хостовом стеке.
+- `network` — `hostname`, который несёт интерфейс (он равен `node_id`, его несёт запрос
+  DHCP), `mac` линка и `ip` его аренды; поле, за которым ничего нет (адрес до аренды, любое
+  поле без линка), — `null`.
+- `cluster` — `enabled: false`, пока кластер не собран.
+
+Почему установка и узел разделены —
+[ADR-032](../../../architecture/decisions/ADR-032-installation-and-node-identity.md).
 
 ## `GET /health`
 

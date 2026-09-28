@@ -1,5 +1,6 @@
 pub mod bus;
 pub mod fs;
+pub mod net;
 pub mod sync;
 
 pub use bus::{
@@ -11,6 +12,7 @@ pub use bus::{
     PublishTally,
 };
 pub use fs::{temp_fs, InMemoryFileSystemHal, temp_slice_store, write_slice};
+pub use net::MockNetworkLink;
 pub use sync::{
     await_counter_u32, await_counter_u64, recv_with_deadline, remains_false_for,
     try_wait_until, wait_for_tcp_ready, wait_until,

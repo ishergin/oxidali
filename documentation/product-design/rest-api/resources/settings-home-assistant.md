@@ -29,9 +29,10 @@
 - `broker_url_view` — read-only строка для людей (что контроллер будет набирать), а не
   разбираемый URL; пустая, пока брокер не задан.
 - `discovery_prefix`, `state_topic_prefix` — префиксы топиков.
-- `controller_id` — корень `unique_id` сущностей в Home Assistant и `node_id` топиков
-  discovery; символы вне безопасного для топика набора — `422 invalid_value` (обход
-  ISSUE-145 в [`../../known-issues.md`](../../known-issues.md)).
+- `controller_id` — установка: корень `unique_id` сущностей в Home Assistant и сегмент
+  узла в топиках discovery (Home Assistant зовёт его `node_id`; это не `node_id` платы из
+  [`controller.md`](controller.md)); символы вне безопасного для топика набора —
+  `422 invalid_value` (обход ISSUE-145 в [`../../known-issues.md`](../../known-issues.md)).
 - `expose_input_devices` — глобальная половина гейта выставления устройств ввода
   (вторая половина — `ha_expose` устройства в [`input-devices.md`](input-devices.md)).
 

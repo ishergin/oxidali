@@ -1,8 +1,12 @@
+import ipaddress
+import re
+
 import pytest
 
 ADAPTER_DISABLED = "adapter_disabled"
 HTTP_CONFLICT = 409
 QUIET_SETTLE_S = 2.5
+NODE_ID = re.compile(r"^dali-([0-9a-f]{6})$")
 
 
 @pytest.mark.hil_id("HIL-SYS-02")
@@ -13,6 +17,12 @@ def test_controller_and_adapters_consistent(api, test_artifacts):
     test_artifacts.attach_json("adapters", adapters)
     assert ctrl["adapter_count"] == len(adapters) >= 1
     assert ctrl["firmware_version"] == api.health()["version"]
+    node = NODE_ID.match(ctrl.get("node_id") or "")
+    assert node, "node_id %r is not dali-<last three MAC bytes>" % ctrl.get("node_id")
+    assert ctrl["network"]["hostname"] == ctrl["node_id"], \
+        "the interface carries a hostname other than the node's name"
+    assert ctrl["network"]["mac"].replace(":", "")[-6:] == node.group(1)
+    assert ipaddress.ip_address(ctrl["network"]["ip"]).version == 4
     a0 = api.adapter_info()
     assert a0 == next(a for a in adapters if a["adapter_id"] == api.adapter)
     assert a0["bus_status"] in ("idle", "disabled")
