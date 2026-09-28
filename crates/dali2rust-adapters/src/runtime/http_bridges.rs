@@ -770,35 +770,49 @@ impl dali2rust_api::http::role::ControllerRolePort for RoleBridge {
 }
 
 pub(crate) struct RedundancyBridge {
+    started: std::time::Instant,
     settings: Arc<dyn dali2rust_domain::registry::RedundancySettingsReadPort>,
     dali: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
-    reflex: Arc<dali2rust_platform::arbitration::ArbitrationReflex>,
-    counters: Arc<dali2rust_redundancy_runtime::ArbitrationWorkerCounters>,
+    counters: RuntimeCounterHandles,
     transitions: dali2rust_redundancy_runtime::SharedTransitionLog,
-    replication: Arc<dali2rust_redundancy_runtime::ReplicationCounters>,
 }
 
 impl RedundancyBridge {
     pub(crate) fn new(
         settings: Arc<dyn dali2rust_domain::registry::RedundancySettingsReadPort>,
         dali: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
-        reflex: Arc<dali2rust_platform::arbitration::ArbitrationReflex>,
-        counters: Arc<dali2rust_redundancy_runtime::ArbitrationWorkerCounters>,
+        counters: RuntimeCounterHandles,
         transitions: dali2rust_redundancy_runtime::SharedTransitionLog,
-        replication: Arc<dali2rust_redundancy_runtime::ReplicationCounters>,
     ) -> Self {
         Self {
+            started: std::time::Instant::now(),
             settings,
             dali,
-            reflex,
             counters,
             transitions,
-            replication,
+        }
+    }
+
+    fn arbitration_row(&self) -> dali2rust_api::http::redundancy_state::RedundancyArbitrationDto {
+        let supervisor = &self.counters.arbitration_supervisor;
+        let worker = &self.counters.dali_worker;
+        let reflex = self.counters.arbitration_reflex.counters();
+        dali2rust_api::http::redundancy_state::RedundancyArbitrationDto {
+            defended: supervisor.defended.load(Relaxed),
+            worker_stale: supervisor.stood_down_worker_stale.load(Relaxed),
+            answered: reflex.answered,
+            suppressed: reflex.suppressed_lease,
+            cell_busy: reflex.cell_busy,
+            aborted: reflex.aborted,
+            window_closed: reflex.window_closed,
+            late: reflex.out_of_window,
+            probe_failed: worker.arbitration_probe_failed.load(Relaxed),
+            handover_incomplete: worker.handover_stand_down_failed.load(Relaxed),
         }
     }
 
     fn replication_row(&self) -> dali2rust_api::http::redundancy_state::RedundancyReplicationDto {
-        let c = &self.replication;
+        let c = &self.counters.replication;
         dali2rust_api::http::redundancy_state::RedundancyReplicationDto {
             passes: c.passes.load(Relaxed),
             peer_unreachable: c.peer_unreachable.load(Relaxed),
@@ -814,7 +828,10 @@ impl dali2rust_api::http::redundancy_state::RedundancyHttpState for RedundancyBr
         use dali2rust_api::http::redundancy_state as rs;
         let view = self.settings.redundancy_settings_view();
         let now = dali2rust_platform::liveness::monotonic_ms();
+        let reflex = &self.counters.arbitration_reflex;
+        let worker = &self.counters.arbitration_worker;
         rs::RedundancyStateDto {
+            uptime_ms: self.started.elapsed().as_millis() as u64,
             enabled: view.enabled,
             role: if view.standby_role {
                 dali2rust_api::http::redundancy_settings_state::ROLE_STANDBY
@@ -822,18 +839,19 @@ impl dali2rust_api::http::redundancy_state::RedundancyHttpState for RedundancyBr
                 dali2rust_api::http::redundancy_settings_state::ROLE_PRIMARY
             },
             active: self.dali.dali_settings_view().application_active,
-            answering: self.reflex.is_armed(now),
-            lease_remaining_ms: self.reflex.lease_remaining_ms(now),
+            answering: reflex.is_armed(now),
+            lease_remaining_ms: reflex.lease_remaining_ms(now),
+            arbitration: self.arbitration_row(),
             probes: rs::RedundancyProbeDto {
-                published: self.counters.probes_published.load(Relaxed),
-                ingress_rejected: self.counters.probes_ingress_rejected.load(Relaxed),
-                owned: self.counters.probes_owned.load(Relaxed),
-                unowned: self.counters.probes_unowned.load(Relaxed),
+                published: worker.probes_published.load(Relaxed),
+                ingress_rejected: worker.probes_ingress_rejected.load(Relaxed),
+                owned: worker.probes_owned.load(Relaxed),
+                unowned: worker.probes_unowned.load(Relaxed),
             },
-            takeovers: self.counters.takeovers.load(Relaxed),
-            stand_downs: self.counters.stand_downs.load(Relaxed),
-            role_publish_failed: self.counters.role_publish_failed.load(Relaxed),
-            ignored_events: self.counters.ignored_events.load(Relaxed),
+            takeovers: worker.takeovers.load(Relaxed),
+            stand_downs: worker.stand_downs.load(Relaxed),
+            role_publish_failed: worker.role_publish_failed.load(Relaxed),
+            ignored_events: worker.ignored_events.load(Relaxed),
             replication: self.replication_row(),
             transitions: self.transition_rows(),
         }
@@ -860,41 +878,6 @@ impl RedundancyBridge {
                 missed_probes: r.missed_probes,
             })
             .collect()
-    }
-}
-
-fn redundancy_dto(
-    supervisor: &dali2rust_redundancy_runtime::ArbitrationSupervisorCounters,
-    reflex: &dali2rust_platform::arbitration::ArbitrationReflex,
-    worker: (u32, u32),
-) -> dali2rust_api::http::diagnostics_state::RedundancyDto {
-    let r = reflex.counters();
-    dali2rust_api::http::diagnostics_state::RedundancyDto {
-        defended: supervisor.defended.load(Relaxed),
-        worker_stale: supervisor.stood_down_worker_stale.load(Relaxed),
-        answered: r.answered,
-        suppressed: r.suppressed_lease,
-        cell_busy: r.cell_busy,
-        aborted: r.aborted,
-        window_closed: r.window_closed,
-        late: r.out_of_window,
-        probe_failed: worker.0,
-        handover_incomplete: worker.1,
-        armed: reflex.is_armed(dali2rust_platform::liveness::monotonic_ms()),
-    }
-}
-
-impl DiagnosticsBridge {
-    fn redundancy_block(&self) -> dali2rust_api::http::diagnostics_state::RedundancyDto {
-        let worker = &self.counters.dali_worker;
-        redundancy_dto(
-            &self.counters.arbitration_supervisor,
-            &self.counters.arbitration_reflex,
-            (
-                worker.arbitration_probe_failed.load(Relaxed),
-                worker.handover_stand_down_failed.load(Relaxed),
-            ),
-        )
     }
 }
 
@@ -933,7 +916,6 @@ impl DiagnosticsHttpState for DiagnosticsBridge {
         out.poller = poller_dto(&self.counters.poller);
         out.websocket = websocket_dto(&self.counters.websocket);
         out.mqtt = mqtt_dto(&self.counters.mqtt);
-        out.redundancy = self.redundancy_block();
     }
 
     fn diagnostics_dto(&self) -> DiagnosticsDto {

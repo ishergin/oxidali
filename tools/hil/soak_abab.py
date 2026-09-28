@@ -48,16 +48,18 @@ def sample(base):
         out["stats_error"] = str(e)
     try:
         diag = _get(base, "/api/v1/diagnostics")
-        for k in REDUNDANCY:
-            if k in (diag.get("redundancy") or {}):
-                out["red_" + k] = int(diag["redundancy"][k])
         for k in SNIFFER:
             if k in (diag.get("phy_sniffer") or {}):
                 out["sniff_" + k] = int(diag["phy_sniffer"][k])
     except Exception as e:
         out["diag_error"] = str(e)
     try:
-        probes = _get(base, "/api/v1/redundancy").get("probes") or {}
+        pair = _get(base, "/api/v1/redundancy")
+        arbitration = pair.get("arbitration") or {}
+        for k in REDUNDANCY:
+            if k in arbitration:
+                out["red_" + k] = int(arbitration[k])
+        probes = pair.get("probes") or {}
         for k in PROBES:
             if k in probes:
                 out["red_" + k] = int(probes[k])

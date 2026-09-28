@@ -15,12 +15,10 @@ macro_rules! declare_widest_dtos {
     (@widest) => { u32::MAX };
 }
 
-#[cfg(test)]
-const WORST_COMMAND_SUBSCRIBERS: usize = 9;
-#[cfg(test)]
-const WORST_CONFIRMATION_SUBSCRIBERS: usize = 6;
-#[cfg(test)]
-const WORST_EVENT_SUBSCRIBERS: usize = 12;
+pub const WORST_COMMAND_SUBSCRIBERS: usize = 9;
+pub const WORST_CONFIRMATION_SUBSCRIBERS: usize = 6;
+pub const WORST_EVENT_SUBSCRIBERS: usize = 13;
+pub const WORST_EVENT_SUBSCRIBER_NAME: &str = "wwwwwwwwwwwwwwwwwwwwwwww";
 
 #[cfg(test)]
 fn widest_subscribers(rows: usize) -> Vec<SubscriberCountersDto> {
@@ -33,7 +31,7 @@ fn widest_event_subscribers() -> Vec<EventSubscriberCountersDto> {
         EventSubscriberCountersDto {
             delivered: u32::MAX,
             receiver_overflow: u32::MAX,
-            name: "wwwwwwwwwwwwwwwwwwwwwwww",
+            name: WORST_EVENT_SUBSCRIBER_NAME,
         };
         WORST_EVENT_SUBSCRIBERS
     ]
@@ -356,21 +354,6 @@ pub struct OperationTrackerDto {
     pub ignored_events: u32,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize)]
-pub struct RedundancyDto {
-    pub defended: u32,
-    pub worker_stale: u32,
-    pub answered: u32,
-    pub suppressed: u32,
-    pub cell_busy: u32,
-    pub aborted: u32,
-    pub window_closed: u32,
-    pub late: u32,
-    pub probe_failed: u32,
-    pub handover_incomplete: u32,
-    pub armed: bool,
-}
-
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct DiagnosticsDto {
     pub uptime_ms: u64,
@@ -390,7 +373,6 @@ pub struct DiagnosticsDto {
     pub websocket: WebSocketDto,
     pub mqtt: MqttBridgeDto,
     pub rules: RulesWorkerDto,
-    pub redundancy: RedundancyDto,
 }
 
 pub trait DiagnosticsHttpState: Send + Sync {
@@ -505,10 +487,6 @@ declare_widest_dtos! {
     OperationTrackerDto {
         pending_outcomes_expired, ignored_commands, ignored_events,
     }
-    RedundancyDto {
-        defended, worker_stale, answered, suppressed, cell_busy, aborted, window_closed,
-        late, probe_failed, handover_incomplete, armed = false,
-    }
     DiagnosticsDto {
         uptime_ms = u64::MAX, bus = BusCountersDto::widest(),
         confirmation_bridge = ConfirmationBridgeDto::widest(),
@@ -521,6 +499,5 @@ declare_widest_dtos! {
         dali_wire = DaliWireDto::widest(), hcl = HclSchedulerDto::widest(),
         poller = PollerDto::widest(), websocket = WebSocketDto::widest(),
         mqtt = MqttBridgeDto::widest(), rules = RulesWorkerDto::widest(),
-        redundancy = RedundancyDto::widest(),
     }
 }

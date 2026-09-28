@@ -24,7 +24,8 @@ PROBE_EXCHANGE_MS = 40.0
 
 def _snapshot(api: Client, peer: Client) -> dict:
     diag = api.diagnostics()
-    red = diag["redundancy"]
+    pair = api.redundancy.get()
+    red = pair["arbitration"]
     wire = diag["dali_wire"]
     sniff = diag["phy_sniffer"]
     poller = diag["poller"]
@@ -52,16 +53,15 @@ def _snapshot(api: Client, peer: Client) -> dict:
         "poller_interactive_deferred": poller["interactive_deferred"],
     }
     peer_red = peer._req("GET", "redundancy")
-    peer_diag = peer.diagnostics()["redundancy"]
     out.update({
         "peer_published": peer_red["probes"]["published"],
         "peer_owned": peer_red["probes"]["owned"],
         "peer_unowned": peer_red["probes"]["unowned"],
-        "peer_probe_failed": peer_diag["probe_failed"],
+        "peer_probe_failed": peer_red["arbitration"]["probe_failed"],
         "peer_takeovers": peer_red["takeovers"],
         "peer_stand_downs": peer_red["stand_downs"],
         "peer_transitions": len(peer_red["transitions"]),
-        "primary_takeovers": api.redundancy.get()["takeovers"],
+        "primary_takeovers": pair["takeovers"],
     })
     return out
 

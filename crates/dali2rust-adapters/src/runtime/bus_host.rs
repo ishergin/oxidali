@@ -143,15 +143,45 @@ fn periodic_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
 #[cfg(test)]
 mod tests {
     use super::{spawn_bus_subscribers, NAMED_EVENT_SUBSCRIBERS};
+    use dali2rust_api::http::diagnostics_state::{
+        WORST_COMMAND_SUBSCRIBERS, WORST_CONFIRMATION_SUBSCRIBERS, WORST_EVENT_SUBSCRIBERS,
+        WORST_EVENT_SUBSCRIBER_NAME,
+    };
 
-    #[test]
-    fn the_composed_bus_names_every_event_subscriber_it_registers() {
-        let subs = spawn_bus_subscribers(
+    fn composed_bus() -> super::BusSubscribers {
+        spawn_bus_subscribers(
             dali2rust_bus::BusConfig::default(),
             dali2rust_bus::BusId::default(),
             std::sync::Arc::new(dali2rust_platform::dali::WireActivity::new()),
-        );
-        let counters = subs.publisher.counters_snapshot();
+        )
+    }
+
+    #[test]
+    fn the_diagnostics_frame_ceiling_models_the_composed_bus() {
+        let counters = composed_bus().publisher.counters_snapshot();
+        let rows = [
+            ("command", counters.command_subscribers.len(), WORST_COMMAND_SUBSCRIBERS),
+            ("confirmation", counters.confirmation_subscribers.len(), WORST_CONFIRMATION_SUBSCRIBERS),
+            ("event", counters.event_subscribers.len(), WORST_EVENT_SUBSCRIBERS),
+        ];
+        for (kind, live, modelled) in rows {
+            assert!(
+                live <= modelled,
+                "{live} {kind} subscribers against a worst case of {modelled}: \
+                 the DiagnosticsSnapshot ceiling is measured on a bus smaller than this one"
+            );
+        }
+        for name in NAMED_EVENT_SUBSCRIBERS {
+            assert!(
+                name.len() <= WORST_EVENT_SUBSCRIBER_NAME.len(),
+                "subscriber name {name:?} is longer than the modelled worst case"
+            );
+        }
+    }
+
+    #[test]
+    fn the_composed_bus_names_every_event_subscriber_it_registers() {
+        let counters = composed_bus().publisher.counters_snapshot();
         let registered: Vec<&str> = counters
             .event_subscribers
             .iter()

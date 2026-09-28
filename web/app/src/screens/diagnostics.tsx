@@ -3,13 +3,12 @@ import type {
   DaliWireCounters,
   Diagnostics,
   MqttBridgeCounters,
-  RedundancyCounters,
   SubscriberCounters,
 } from '../api/types'
 import { Badge, Card, Chip } from '../components/ui'
 import { CounterRows, type Flat, useDeltas } from '../counters'
 import { uptime } from '../format'
-import { useLive, useSnapshotFrames } from '../hooks'
+import { useLive, usePoll, useSnapshotFrames } from '../hooks'
 
 const DIAG_POLL_MS = 2000
 
@@ -38,6 +37,7 @@ const FAULT_KEYS = new Set([
   'late',
   'probe_failed',
   'handover_incomplete',
+  'role_publish_failed',
   'outstanding_expired',
   'publish_failed',
   'flush_error_total',
@@ -176,22 +176,40 @@ function MqttCard({ mqtt, deltas }: { mqtt: MqttBridgeCounters; deltas: Flat }) 
   )
 }
 
-function RedundancyCard({
-  redundancy,
-  deltas,
-}: {
-  redundancy: RedundancyCounters
-  deltas: Flat
-}) {
-  const { armed, ...totals } = redundancy
+function RedundancyCard() {
+  const { data: pair, error } = usePoll(() => api.redundancy(), DIAG_POLL_MS)
+  const deltas = useDeltas(pair, pair?.uptime_ms ?? null)
+  if (!pair) {
+    return (
+      <Card title="Redundancy">
+        <div class="empty">{error ? `Unavailable — ${error}` : 'Loading…'}</div>
+      </Card>
+    )
+  }
   return (
     <Card title="Redundancy">
       <div class="attr">
-        <span class="k">Arbitration table</span>
-        <span class="v">{armed ? 'armed' : 'idle'}</span>
+        <span class="k">Role</span>
+        <span class="v">{pair.role}</span>
         <span class="delta" />
       </div>
-      <CounterRows block={totals} path="redundancy" deltas={deltas} isFault={isFault} />
+      <div class="attr">
+        <span class="k">Arbitration table</span>
+        <span class="v">{pair.answering ? 'armed' : 'idle'}</span>
+        <span class="delta" />
+      </div>
+      <CounterRows block={pair.arbitration} path="arbitration" deltas={deltas} isFault={isFault} />
+      <CounterRows
+        block={{
+          takeovers: pair.takeovers,
+          stand_downs: pair.stand_downs,
+          role_publish_failed: pair.role_publish_failed,
+          ignored_events: pair.ignored_events,
+        }}
+        path=""
+        deltas={deltas}
+        isFault={isFault}
+      />
     </Card>
   )
 }
@@ -354,7 +372,7 @@ export function DiagnosticsScreen() {
 
         <MqttCard mqtt={data.mqtt} deltas={deltas} />
 
-        <RedundancyCard redundancy={data.redundancy} deltas={deltas} />
+        <RedundancyCard />
 
         <Card title="Rules engine" span2>
           <CounterRows

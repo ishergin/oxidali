@@ -31,6 +31,20 @@ pub struct RedundancyProbeDto {
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct RedundancyArbitrationDto {
+    pub defended: u32,
+    pub worker_stale: u32,
+    pub answered: u32,
+    pub suppressed: u32,
+    pub cell_busy: u32,
+    pub aborted: u32,
+    pub window_closed: u32,
+    pub late: u32,
+    pub probe_failed: u32,
+    pub handover_incomplete: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct RedundancyReplicationDto {
     pub passes: u32,
     pub peer_unreachable: u32,
@@ -41,11 +55,13 @@ pub struct RedundancyReplicationDto {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RedundancyStateDto {
+    pub uptime_ms: u64,
     pub enabled: bool,
     pub role: &'static str,
     pub active: bool,
     pub answering: bool,
     pub lease_remaining_ms: u32,
+    pub arbitration: RedundancyArbitrationDto,
     pub probes: RedundancyProbeDto,
     pub takeovers: u32,
     pub stand_downs: u32,

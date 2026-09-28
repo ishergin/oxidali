@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 API = ROOT / "crates/dali2rust-api/src/http"
 DIAGNOSTICS_DTO = API / "diagnostics_state.rs"
 STATS_DTO = API / "stats_state.rs"
+REDUNDANCY_DTO = API / "redundancy_state.rs"
 BRIDGE = ROOT / "crates/dali2rust-adapters/src/runtime/http_bridges.rs"
 TS_TYPES = ROOT / "web/app/src/api/types.ts"
 FAULT_KEYS_TSX = ROOT / "web/app/src/screens/diagnostics.tsx"
@@ -18,14 +19,22 @@ INTERNAL_BUDGET = ROOT / "scripts/counter_surface_internal_budget.txt"
 DEFAULT_INTERNAL_BUDGET = 0
 CONSUMERS = (ROOT / "tools/hil", ROOT / "tests/dali2rust-bdd/src")
 
-ROOTS = (("DiagnosticsDto", "Diagnostics"), ("StatsReportDto", "StatsReportPayload"))
+ROOTS = (
+    ("DiagnosticsDto", "Diagnostics"),
+    ("StatsReportDto", "StatsReportPayload"),
+    ("RedundancyStateDto", "RedundancyState"),
+)
 
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 
 FETCH_CALL = re.compile(
     r"api\.diagnostics\(\)|api\.stats\(\)|diagnostics_snapshot\(|\bdiagnostics\s*[\[.]"
+    r"|\.redundancy\.get\(\)"
 )
-FETCH = re.compile(r"(\w+)\s*=\s*[^=]*(?:api\.diagnostics\(\)|api\.stats\(\)|diagnostics_snapshot\()")
+FETCH = re.compile(
+    r"(\w+)\s*=\s*[^=]*(?:api\.diagnostics\(\)|api\.stats\(\)|diagnostics_snapshot\("
+    r"|\.redundancy\.get\(\))"
+)
 DEFINITION = re.compile(r"^\s*(?:def |async def |fn |async fn |pub fn |#\[)")
 
 
@@ -302,6 +311,7 @@ def check_fault_keys(names):
 def main():
     rust_types = dict(rust_structs(DIAGNOSTICS_DTO))
     rust_types.update(rust_structs(STATS_DTO))
+    rust_types.update(rust_structs(REDUNDANCY_DTO))
     ts_defs = ts_types()
     internal = read_internal()
 

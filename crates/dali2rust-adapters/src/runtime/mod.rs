@@ -630,10 +630,8 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
         redundancy: Arc::new(http_bridges::RedundancyBridge::new(
             Arc::clone(&args.redundancy_settings),
             Arc::clone(&args.dali_settings),
-            Arc::clone(&args.counters.arbitration_reflex),
-            Arc::clone(&args.counters.arbitration_worker),
+            args.counters.clone(),
             args.transitions,
-            Arc::clone(&args.counters.replication),
         )),
         stats: Arc::new(http_bridges::StatsBridge::new(
             args.clock,

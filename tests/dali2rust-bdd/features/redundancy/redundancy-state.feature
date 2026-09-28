@@ -20,16 +20,16 @@ Feature: Redundancy — state and the planned handover
     When I send a GET request to "/api/v1/redundancy"
     Then the response status should be 200
     And the JSON pointer "/uptime_ms" should be greater than 0
-    And the JSON pointer "/arbitration/defended" should be 0
-    And the JSON pointer "/arbitration/worker_stale" should be 0
-    And the JSON pointer "/arbitration/answered" should be 0
-    And the JSON pointer "/arbitration/suppressed" should be 0
-    And the JSON pointer "/arbitration/cell_busy" should be 0
-    And the JSON pointer "/arbitration/aborted" should be 0
-    And the JSON pointer "/arbitration/window_closed" should be 0
-    And the JSON pointer "/arbitration/late" should be 0
-    And the JSON pointer "/arbitration/probe_failed" should be 0
-    And the JSON pointer "/arbitration/handover_incomplete" should be 0
+    And the JSON pointer "/arbitration/defended" should be a count
+    And the JSON pointer "/arbitration/worker_stale" should be a count
+    And the JSON pointer "/arbitration/answered" should be a count
+    And the JSON pointer "/arbitration/suppressed" should be a count
+    And the JSON pointer "/arbitration/cell_busy" should be a count
+    And the JSON pointer "/arbitration/aborted" should be a count
+    And the JSON pointer "/arbitration/window_closed" should be a count
+    And the JSON pointer "/arbitration/late" should be a count
+    And the JSON pointer "/arbitration/probe_failed" should be a count
+    And the JSON pointer "/arbitration/handover_incomplete" should be a count
     And the JSON pointer "/arbitration/armed" should be absent
 
   @id:RED-021

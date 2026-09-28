@@ -21,9 +21,9 @@ MARKER = "hil-flush-probe"
 
 
 def counters(api):
-    diag = api.diagnostics()
-    redundancy, sniffer = diag["redundancy"], diag["phy_sniffer"]
-    out = {key: redundancy[key] for key in REDUNDANCY_FIELDS}
+    arbitration = api.redundancy.get()["arbitration"]
+    sniffer = api.diagnostics()["phy_sniffer"]
+    out = {key: arbitration[key] for key in REDUNDANCY_FIELDS}
     out.update(failed=sniffer["decode_failed"], unsup=sniffer["unsupported_len"],
                frames=sniffer["frames"])
     return out

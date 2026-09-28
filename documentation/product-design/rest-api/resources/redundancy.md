@@ -5,8 +5,7 @@
 
 **Границы:** настройки — [`settings-redundancy.md`](settings-redundancy.md); механизм
 (арбитраж, лиза, репликация) —
-[`../../runtime-modules/redundancy/README.md`](../../runtime-modules/redundancy/README.md);
-счётчики отвечающей стороны — блок `redundancy` в [`diagnostics.md`](diagnostics.md).
+[`../../runtime-modules/redundancy/README.md`](../../runtime-modules/redundancy/README.md).
 BDD — [`redundancy`](../../../../tests/dali2rust-bdd/features/redundancy/).
 
 ## Маршруты
@@ -23,6 +22,14 @@ BDD — [`redundancy`](../../../../tests/dali2rust-bdd/features/redundancy/).
 
 ## Состояние
 
+Все счётчики пары — в этом ресурсе, рядом с зондами и переходами, которые они
+объясняют. Кадр `DiagnosticsSnapshot` их не несёт: у него жёсткий потолок размера, а
+`/stats` — продуктовая сводка оператора, а не сырые счётчики механизма. Своего канала
+WebSocket у ресурса нет: экран Diagnostics опрашивает его с той же частотой, что и
+свои блоки.
+
+- `uptime_ms` — часы выборки: колонка дельт сбрасывается, когда они идут назад
+  (перезагрузка), а не показывает перенос `u32`.
 - `active` — IEC 62386-103 §9.9.1 `applicationActive`: пока `false`, ни один прямой кадр
   не уходит на провод.
 - `answering` — отвечает ли узел на зонд пира **сейчас**. На здоровом стэндбае
@@ -30,6 +37,12 @@ BDD — [`redundancy`](../../../../tests/dali2rust-bdd/features/redundancy/).
   раньше, чем `active` — это весь механизм живости, видимый снаружи.
 - `lease_remaining_ms` — остаток лизы, которая разрешает отвечать; не продлевается —
   узел вот-вот замолчит и отдаст шину.
+- `arbitration` — отвечающая сторона: лиза продлена (`defended`, супервизор жив),
+  наблюдаемый воркер встал (`worker_stale`), чужие зонды отвечены в окне (`answered`),
+  подавлены (`suppressed`), не ушли (`cell_busy`, `aborted`, `window_closed`), поздние
+  ответы (`late`), наши зонды, не дошедшие до провода (`probe_failed`), неполное плановое
+  переключение (`handover_incomplete`). Флаг «таблица арбитража взведена» — это
+  `answering`, отдельного поля у него нет.
 - `probes` — зонды, которые отправил этот узел, и сколько раз шина оказалась
   занята (пир жив) или свободна; `takeovers`, `stand_downs`.
 - `replication` — перенос конфигурации с пира: проходы, недоступность пира (на роль не

@@ -423,16 +423,28 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            and a sub-tick sleep on this build busy-waits instead of parking.
            So `PHY sniffer · Poll fast` above (one per millisecond of burned
            CPU) is only legible beside this row. -->
+      <!-- The one card on this screen that does not come from
+           /api/v1/diagnostics: it polls /api/v1/redundancy, the pair's own
+           resource, on the same 2 s cadence, and its change column keys on
+           that resource's uptime_ms. `Role` and `Arbitration table` are
+           gauges, and the arbitration table is the resource's `answering`.
+           Until the first answer the card says Loading; a failed first poll
+           names the error, and a later one keeps the last sample. -->
       <div class="card">
         <header>
           <h3>Redundancy</h3>
-          <span class="note">arbitration table is a gauge</span>
+          <span class="note">role and arbitration table are gauges</span>
         </header>
+        <div class="attr"><span class="k">Role</span><span class="v">primary</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Arbitration table</span><span class="v">armed</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Defended</span><span class="v">3 601</span><span class="delta live">+1</span></div>
         <div class="attr"><span class="k">Worker stale</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Answered</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Window closed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Takeovers</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Stand downs</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Role publish failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ignored events</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
       <div class="card span2">
@@ -469,6 +481,15 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       next good poll; hovering it names the error.</p>
   </div>
 
+
+<div class="chgh">2026-09-28 — the Redundancy card reads the pair's own resource</div>
+<p class="chgnote">The arbitration counters left <code>/api/v1/diagnostics</code> for
+  <code>/api/v1/redundancy</code>, next to the probes, takeovers and replication tally they
+  explain. The card stays here, beside <b>PHY sniffer · Poll fast</b>, and polls that resource.
+  It gained <b>Role</b> and the four counters of the pair that no screen showed: takeovers,
+  stand-downs, role publish failures and ignored events. <b>Arbitration table</b> is the
+  resource's <code>answering</code>; the diagnostics block used to carry the same flag a second
+  time as <code>armed</code>.</p>
 
 <div class="chgh">2026-09-12 — three cells that say what a wait costs</div>
 <p class="chgnote">A FreeRTOS tick on this board is 10 ms, and ESP-IDF runs any shorter sleep as

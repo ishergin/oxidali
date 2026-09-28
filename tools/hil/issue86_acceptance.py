@@ -56,7 +56,10 @@ class Sampler(threading.Thread):
         except Exception as exc:
             return {"t": _now(), "error": repr(exc)}
         hcl = diag.get("hcl", {})
-        red = diag.get("redundancy", {})
+        try:
+            red = self.api.redundancy.get().get("arbitration", {})
+        except Exception as exc:
+            return {"t": _now(), "error": repr(exc)}
         sample = {
             "t": _now(),
             "ticks": hcl.get("ticks"),

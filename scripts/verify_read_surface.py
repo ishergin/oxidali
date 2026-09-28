@@ -34,15 +34,31 @@ SURFACES = [
         "stats",
         "crates/dali2rust-api/src/http/stats_state.rs",
         "StatsReportDto",
-        "web/app/src/screens/stats.tsx",
+        [("web/app/src/screens/stats.tsx", "data")],
     ),
     (
         "diagnostics",
         "crates/dali2rust-api/src/http/diagnostics_state.rs",
         "DiagnosticsDto",
-        "web/app/src/screens/diagnostics.tsx",
+        [("web/app/src/screens/diagnostics.tsx", "data")],
+    ),
+    (
+        "redundancy",
+        "crates/dali2rust-api/src/http/redundancy_state.rs",
+        "RedundancyStateDto",
+        [
+            ("web/app/src/screens/diagnostics.tsx", "pair"),
+            ("web/app/src/screens/settings-redundancy.tsx", "state"),
+        ],
     ),
 ]
+
+
+def renders(screens: list[tuple[str, str]], block: str) -> bool:
+    return any(
+        re.search(rf"\b{accessor}\??\.{re.escape(block)}\b", screen_source(f"{ROOT}/{path}"))
+        for path, accessor in screens
+    )
 
 allowed = allowlist()
 budget = int(open(f"{ROOT}/scripts/read_surface_internal_budget.txt", encoding="utf-8").read().strip())
@@ -57,26 +73,25 @@ if len(allowed) > budget:
 checked = 0
 known: set[str] = set()
 stale: list[str] = []
-for surface, dto_path, struct, screen_path in SURFACES:
+for surface, dto_path, struct, screens in SURFACES:
     blocks = dto_blocks(f"{ROOT}/{dto_path}", struct)
-    src = screen_source(f"{ROOT}/{screen_path}")
+    where = ", ".join(f"{accessor}. in {path}" for path, accessor in screens)
     for block in blocks:
         checked += 1
         key = f"{surface}.{block}"
         known.add(key)
-        rendered = bool(re.search(rf"\bdata\.{re.escape(block)}\b", src))
+        rendered = renders(screens, block)
         if key in allowed:
             if rendered:
                 stale.append(
-                    f"{key} is in the exception list and IS rendered by {screen_path}.\n"
+                    f"{key} is in the exception list and IS rendered ({where}).\n"
                     "     Drop the line and lower scripts/read_surface_internal_budget.txt."
                 )
             continue
         if rendered:
             continue
         fail.append(
-            f"{key} is published by {struct} and reached no screen "
-            f"({screen_path}).\n"
+            f"{key} is published by {struct} and reached no screen ({where}).\n"
             "     Render it, or name it in scripts/read_surface_internal.txt with a reason."
         )
 

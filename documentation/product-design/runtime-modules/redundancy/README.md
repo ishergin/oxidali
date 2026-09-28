@@ -142,8 +142,8 @@ MQTT — [`ADR-018`](../../../architecture/decisions/ADR-018-controller-redundan
 
 ## Счётчики
 
-Блок `redundancy` в `/api/v1/diagnostics`: `defended` растёт раз в секунду, пока жив
+Блок `arbitration` в `GET /api/v1/redundancy`: `defended` растёт раз в секунду, пока жив
 супервизор; `worker_stale` — перехват вызвали мы; `suppressed` — запрос узнан и не
 отвечен; `answered` — ответ дошёл до провода; `cell_busy`, `aborted`, `late` — ответ не
-дошёл или опоздал. Журнал переходов (последние восемь, с причинами и метками) —
-`GET /api/v1/redundancy`.
+дошёл или опоздал. Журнал переходов (последние восемь, с причинами и метками) — там же,
+`transitions`.
