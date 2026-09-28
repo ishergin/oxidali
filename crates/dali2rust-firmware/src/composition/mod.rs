@@ -153,7 +153,6 @@ fn stack_options(
         network_link: network_link(),
         wall_clock: Some(wall_clock),
         web_assets: crate::web_assets::WEB_ASSETS,
-        controller_hardware_id: controller_hardware_id(),
         mqtt_client: mqtt_client(),
         firmware_update: firmware_update_ports(),
         ..StackOptions::default()
@@ -189,16 +188,6 @@ fn mqtt_client() -> Option<dali2rust_platform::mqtt::MqttClientBundle> {
 
 #[cfg(not(target_os = "espidf"))]
 fn mqtt_client() -> Option<dali2rust_platform::mqtt::MqttClientBundle> {
-    None
-}
-
-#[cfg(target_os = "espidf")]
-fn controller_hardware_id() -> Option<[u8; 6]> {
-    esp_idf::ETH_LINK.get().and_then(|l| l.hardware_address())
-}
-
-#[cfg(not(target_os = "espidf"))]
-fn controller_hardware_id() -> Option<[u8; 6]> {
     None
 }
 
@@ -578,7 +567,7 @@ fn spawn_ip_watcher(stack: &'static dali2rust_adapters::BusStackRuntime) {
                     continue;
                 }
                 let ip = match now {
-                    Some(o) => format!("{}.{}.{}.{}", o[0], o[1], o[2], o[3]),
+                    Some(o) => dali2rust_platform::net::ipv4_text(o),
                     None => NO_IP_DISPLAY.to_string(),
                 };
                 log::info!("eth: address now {ip} — publishing to the display");

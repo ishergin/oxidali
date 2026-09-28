@@ -10,11 +10,14 @@ use std::time::{Duration, Instant};
 use cucumber::gherkin::{Feature, Scenario};
 use cucumber::World;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
-use dali2rust_adapters::{build_http_test_stack, BusStackRuntime, DaliRuntimeConfig, StaticAsset};
+use dali2rust_adapters::{
+    build_http_test_stack, BusStackRuntime, DaliRuntimeConfig, HttpTestPorts, StaticAsset,
+};
 use dali2rust_bus::BusConfig;
+use dali2rust_platform::net::NetworkLink;
 use dali2rust_platform::slice_store::SliceStore;
 use dali2rust_bsp::slice_store_files::InMemorySliceStore;
-use dali2rust_test_support::wait_for_tcp_ready;
+use dali2rust_test_support::{wait_for_tcp_ready, MockNetworkLink};
 use dali2rust_adapters::http::host::HostServer;
 
 pub mod steps;
@@ -48,6 +51,7 @@ pub struct DaliWorld {
     mqtt_mock: Arc<dali2rust_mqtt_runtime::MockMqttClient>,
     _runtime: Option<Box<BusStackRuntime>>,
     persistence_slices: Option<Arc<InMemorySliceStore>>,
+    network_link: Option<([u8; 6], [u8; 4])>,
     runtime_config: DaliRuntimeConfig,
     pub stored_responses: Vec<TestResponse>,
     pub remembered_u64: Option<u64>,
@@ -85,6 +89,7 @@ impl DaliWorld {
             mqtt_mock: dali2rust_mqtt_runtime::MockMqttClient::bundle().0,
             _runtime: None,
             persistence_slices: None,
+            network_link: None,
             runtime_config: DaliRuntimeConfig::default(),
             stored_responses: Vec::new(),
             remembered_u64: None,
@@ -118,7 +123,10 @@ impl DaliWorld {
             runtime_config,
             self.persistence_slices_api(),
             WEB_TEST_ASSETS,
-            Some(mqtt_bundle),
+            HttpTestPorts {
+                mqtt_client: Some(mqtt_bundle),
+                network_link: self.network_link_port(),
+            },
         );
         self._runtime = Some(runtime);
         let router = Arc::new(router);
@@ -170,6 +178,16 @@ impl DaliWorld {
 
     pub fn restart_server(&mut self) {
         self.restart_server_with_config(BusConfig::default());
+    }
+
+    pub fn run_on_network_link(&mut self, mac: [u8; 6], ipv4: [u8; 4]) {
+        self.network_link = Some((mac, ipv4));
+        self.restart_server();
+    }
+
+    fn network_link_port(&self) -> Option<Arc<dyn NetworkLink>> {
+        self.network_link
+            .map(|(mac, ipv4)| Arc::new(MockNetworkLink::new(mac, Some(ipv4))) as Arc<dyn NetworkLink>)
     }
 
     pub fn enable_in_memory_persistence(&mut self) {

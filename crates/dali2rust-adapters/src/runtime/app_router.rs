@@ -262,7 +262,7 @@ pub(crate) fn build_app_router(
     wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
     persist_timezone: Arc<dyn Fn(&str) + Send + Sync>,
     web_assets: &'static [StaticAsset],
-    home_assistant: Arc<dyn dali2rust_api::http::handlers::controller::ControllerHaSummary>,
+    controller_summary: Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
     rules: RulesHttpDeps,
 ) -> Router {
     let redundancy_read = Arc::clone(&read_models.redundancy);
@@ -276,7 +276,7 @@ pub(crate) fn build_app_router(
         &bus,
         &registry,
         clock,
-        home_assistant,
+        controller_summary,
     );
     let builder = wire_dali_command_handlers(builder, &bus);
     let builder = wire_operations(builder, &op_read);
@@ -339,7 +339,7 @@ fn wire_controller_and_adapters(
     bus: &HttpBusDispatch,
     registry: &RegistryHttpPorts,
     clock: Arc<dyn Clock>,
-    home_assistant: Arc<dyn dali2rust_api::http::handlers::controller::ControllerHaSummary>,
+    controller_summary: Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
 ) -> AppBuilder {
     builder
         .with_handler(
@@ -348,7 +348,7 @@ fn wire_controller_and_adapters(
                 version,
                 adapter_count,
                 clock,
-                home_assistant,
+                controller_summary,
             )),
         )
         .with_handler(RouteKey::AdaptersList, read(&registry.adapter_state, AdaptersListHandler::new))

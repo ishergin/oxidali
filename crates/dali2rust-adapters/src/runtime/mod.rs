@@ -47,7 +47,6 @@ pub struct StackOptions {
     pub wall_clock: Option<Arc<dali2rust_bsp::wall_clock::SystemWallClock>>,
     pub web_assets: &'static [StaticAsset],
     pub hcl_config: dali2rust_hcl_runtime::HclConfig,
-    pub controller_hardware_id: Option<[u8; 6]>,
     pub mqtt_client: Option<dali2rust_platform::mqtt::MqttClientBundle>,
     pub firmware_update: Option<crate::ota::FirmwareUpdatePorts>,
 }
@@ -65,7 +64,6 @@ impl Default for StackOptions {
             wall_clock: None,
             web_assets: &[],
             hcl_config: dali2rust_hcl_runtime::HclConfig::default(),
-            controller_hardware_id: None,
             mqtt_client: None,
             firmware_update: None,
         }
@@ -94,7 +92,6 @@ fn boot_from_options(
         wall_clock,
         web_assets,
         hcl_config,
-        controller_hardware_id,
         mqtt_client,
         firmware_update,
     } = options;
@@ -107,7 +104,7 @@ fn boot_from_options(
         persistence_slices,
         wall_clock,
         hcl_config,
-        controller_hardware_id,
+        controller_hardware_id: network_link.as_ref().and_then(|l| l.hardware_address()),
         mqtt_client,
     });
     (
@@ -133,7 +130,7 @@ pub fn build_router_with_bus_and_transport<T: DaliTransport + Send + 'static>(
     let (mut booted, rest) = boot_from_options(version, options);
     let clock: Arc<dyn dali2rust_platform::clock::Clock> =
         Arc::new(dali2rust_dali_runtime::StdClock::new());
-    let home_assistant = controller_ha_summary(&booted);
+    let controller_summary = controller_summary_source(&booted, rest.gauges.link.clone());
     let (workers, read_models) =
         spawn_fleet(transport, hardware_display, &mut booted, &rest, &clock);
     let rules = rules_http_deps(&booted);
@@ -148,7 +145,7 @@ pub fn build_router_with_bus_and_transport<T: DaliTransport + Send + 'static>(
             persist_timezone: booted.scheduling.persist_timezone,
             read_models,
             clock,
-            home_assistant,
+            controller_summary,
             rules,
         },
         &workers,
@@ -215,12 +212,14 @@ fn boot_read_models(
     })
 }
 
-fn controller_ha_summary(
+fn controller_summary_source(
     booted: &BootedStack,
-) -> Arc<dyn dali2rust_api::http::handlers::controller::ControllerHaSummary> {
-    Arc::new(http_bridges::ControllerHaBridge::new(
+    link: Option<Arc<dyn dali2rust_platform::net::NetworkLink>>,
+) -> Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource> {
+    Arc::new(http_bridges::ControllerSummaryBridge::new(
         Arc::clone(&booted.registry.http.home_assistant_settings_port),
         Arc::clone(&booted.mqtt_counters),
+        link,
     ))
 }
 
@@ -277,7 +276,7 @@ struct RouterParts {
     persist_timezone: Arc<dyn Fn(&str) + Send + Sync>,
     read_models: ReadModelPorts,
     clock: Arc<dyn dali2rust_platform::clock::Clock>,
-    home_assistant: Arc<dyn dali2rust_api::http::handlers::controller::ControllerHaSummary>,
+    controller_summary: Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
     rules: app_router::RulesHttpDeps,
 }
 
@@ -294,7 +293,7 @@ fn assemble_router(parts: RouterParts, workers: &workers::SpawnedWorkers) -> Rou
         parts.wall_clock,
         parts.persist_timezone,
         parts.web_assets,
-        parts.home_assistant,
+        parts.controller_summary,
         parts.rules,
     )
 }
@@ -647,6 +646,12 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
     }
 }
 
+#[derive(Default)]
+pub struct HttpTestPorts {
+    pub mqtt_client: Option<dali2rust_platform::mqtt::MqttClientBundle>,
+    pub network_link: Option<Arc<dyn dali2rust_platform::net::NetworkLink>>,
+}
+
 pub fn build_http_test_stack(
     version: &'static str,
     mock: Arc<Mutex<MockDaliTransport>>,
@@ -654,7 +659,7 @@ pub fn build_http_test_stack(
     runtime_config: DaliRuntimeConfig,
     persistence_slices: Option<Arc<dyn SliceStore>>,
     web_assets: &'static [StaticAsset],
-    mqtt_client: Option<dali2rust_platform::mqtt::MqttClientBundle>,
+    ports: HttpTestPorts,
 ) -> (Router, Arc<WsHub>, Box<BusStackRuntime>) {
     build_router_with_bus_and_transport(
         version,
@@ -670,7 +675,8 @@ pub fn build_http_test_stack(
             adapter_count: 2,
             persistence_slices,
             web_assets,
-            mqtt_client,
+            mqtt_client: ports.mqtt_client,
+            network_link: ports.network_link,
             firmware_update: Some(crate::ota::FirmwareUpdatePorts::host()),
             ..StackOptions::default()
         },

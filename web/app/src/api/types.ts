@@ -198,10 +198,11 @@ export interface MemoryDiagnostics {
 
 export interface ControllerSummary {
   controller_id: string
+  node_id: string | null
   firmware_version: string
   target_mcu: string
   uptime_ms: number
-  network: { hostname: string; ip: string }
+  network: { hostname: string | null; ip: string | null; mac: string | null }
   home_assistant: { enabled: boolean; connected: boolean; broker_url: string }
   cluster: { enabled: boolean }
   adapter_count: number

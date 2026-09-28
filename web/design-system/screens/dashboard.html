@@ -264,9 +264,10 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <header><h3>Controller</h3><button class="act">Details</button></header>
         <div class="attr"><span class="k">Target MCU</span><span class="v">esp32p4</span></div>
         <div class="attr"><span class="k">Registry</span><span class="v"><span class="chip ok" style="font-size:11px; padding:2px 8px;"><span class="dot"></span>hydrated</span></span></div>
-        <div class="attr"><span class="k">Hostname</span><span class="v">dali2rust.local</span></div>
-        <div class="attr"><span class="k">IP address</span><span class="v">192.168.11.41</span></div>
-        <div class="attr"><span class="k">Wi-Fi SSID</span><span class="v">—</span></div>
+        <div class="attr"><span class="k">Installation</span><span class="v"><span class="mono">dali-3fa2c1</span></span></div>
+        <div class="attr"><span class="k">Hostname</span><span class="v"><span class="mono">dali-7b90e4</span></span></div>
+        <div class="attr"><span class="k">IP address</span><span class="v"><span class="mono">192.168.13.240</span></span></div>
+        <div class="attr"><span class="k">MAC address</span><span class="v"><span class="mono">30:ed:a0:7b:90:e4</span></span></div>
         <!-- Bridge status, not a connection dot: disabled / enabled /
              connected, with the broker URL as a faint mono suffix — the first
              thing an operator with an empty Home Assistant needs to check. -->
@@ -319,6 +320,15 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     </div>
   </div>
 
+
+<div class="chgh">2026-09-28 — which installation, which board</div>
+<p class="chgnote">The Controller card showed a hostname and an address the firmware never
+  filled. It now names two things. <b>Installation</b> is the Home Assistant controller id,
+  shared by both boards of a redundancy pair. <b>Hostname</b> is this board's own name, built from
+  its MAC and carried by its DHCP request, so the two boards of a pair differ here and nowhere
+  above (<code>ADR-032</code>). The sample shows the standby: its installation was seeded by the
+  other board. The <b>MAC address</b> row joins them. Addresses are mono, as everywhere else. The
+  Wi-Fi SSID row, whose removal the 2026-09-01 note records, has left the card too.</p>
 
 <div class="chgh">2026-09-05 — how busy, and with whom</div>
 <p class="chgnote">The bus card answered "is the wire alive?" and nothing about how much of it is in

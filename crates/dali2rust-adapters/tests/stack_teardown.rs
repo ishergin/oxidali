@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use dali2rust_adapters::dali::MockDaliTransport;
-use dali2rust_adapters::{build_http_test_stack, BusStackRuntime, DaliRuntimeConfig};
+use dali2rust_adapters::{
+    build_http_test_stack, BusStackRuntime, DaliRuntimeConfig, HttpTestPorts,
+};
 use dali2rust_bus::BusConfig;
 
 fn build_and_drop() {
@@ -13,7 +15,7 @@ fn build_and_drop() {
         DaliRuntimeConfig::default(),
         None,
         &[],
-        None,
+        HttpTestPorts::default(),
     );
     drop(runtime);
 }

@@ -358,21 +358,27 @@ fn load_array<const N: usize>(counters: &[core::sync::atomic::AtomicU32; N]) -> 
     core::array::from_fn(|index| counters[index].load(Relaxed))
 }
 
-pub(crate) struct ControllerHaBridge {
+pub(crate) struct ControllerSummaryBridge {
     settings: Arc<dyn dali2rust_domain::registry::HomeAssistantSettingsReadPort>,
     counters: Arc<dali2rust_mqtt_runtime::MqttCounters>,
+    link: Option<Arc<dyn NetworkLink>>,
 }
 
-impl ControllerHaBridge {
+impl ControllerSummaryBridge {
     pub(crate) fn new(
         settings: Arc<dyn dali2rust_domain::registry::HomeAssistantSettingsReadPort>,
         counters: Arc<dali2rust_mqtt_runtime::MqttCounters>,
+        link: Option<Arc<dyn NetworkLink>>,
     ) -> Self {
-        Self { settings, counters }
+        Self { settings, counters, link }
     }
 }
 
-impl dali2rust_api::http::handlers::controller::ControllerHaSummary for ControllerHaBridge {
+impl dali2rust_api::http::handlers::controller::ControllerSummarySource for ControllerSummaryBridge {
+    fn installation_id(&self) -> String {
+        self.settings.home_assistant_settings_view().controller_id
+    }
+
     fn ha_enabled_and_url(&self) -> (bool, String) {
         let view = self.settings.home_assistant_settings_view();
         let url = view.broker_url_view();
@@ -381,6 +387,10 @@ impl dali2rust_api::http::handlers::controller::ControllerHaSummary for Controll
 
     fn ha_connected(&self) -> bool {
         self.counters.is_connected()
+    }
+
+    fn network_link(&self) -> Option<&dyn NetworkLink> {
+        self.link.as_deref()
     }
 }
 
