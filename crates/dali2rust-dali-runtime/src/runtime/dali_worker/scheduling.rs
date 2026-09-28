@@ -1,17 +1,8 @@
 use super::*;
 
 pub(super) fn run_command_loop(inputs: &mut WorkerInputs<impl DaliApplicationController>) {
-    let WorkerInputs {
-        cmd_rx,
-        controller: ctrl,
-        runtime_config,
-        read_port,
-        publisher,
-        adapter_id,
-        counters,
-        interactive,
-        correlation,
-    } = inputs;
+    let WorkerInputs { cmd_rx, controller: ctrl, runtime_config, read_port, publisher, adapter_id,
+        counters, interactive, correlation } = inputs;
     let (runtime_config, adapter_id) = (*runtime_config, *adapter_id);
     while let Ok(frame) = cmd_rx.recv() {
         let mut batch = vec![frame];
