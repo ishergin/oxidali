@@ -15,6 +15,23 @@ Feature: Redundancy — state and the planned handover
     And the JSON pointer "/replication/passes" should be 0
     And the JSON pointer "/replication/peer_unreachable" should be 0
 
+  @id:RED-029
+  Scenario: The state resource carries the arbitration counters and its own clock
+    When I send a GET request to "/api/v1/redundancy"
+    Then the response status should be 200
+    And the JSON pointer "/arbitration/worker_stale" should be a count
+    And the JSON pointer "/arbitration/answered" should be 0
+    And the JSON pointer "/arbitration/suppressed" should be 0
+    And the JSON pointer "/arbitration/cell_busy" should be 0
+    And the JSON pointer "/arbitration/aborted" should be 0
+    And the JSON pointer "/arbitration/window_closed" should be 0
+    And the JSON pointer "/arbitration/late" should be 0
+    And the JSON pointer "/arbitration/probe_failed" should be 0
+    And the JSON pointer "/arbitration/handover_incomplete" should be 0
+    And the JSON pointer "/arbitration/armed" should be absent
+    And the JSON pointer "/arbitration/defended" at "/api/v1/redundancy" should eventually be greater than 0
+    And the JSON pointer "/now_ms" at "/api/v1/redundancy" should eventually be greater than 0
+
   @id:RED-021
   Scenario: Every response says which controller answered it
     When I send a GET request to "/api/v1/health"
@@ -67,6 +84,7 @@ Feature: Redundancy — state and the planned handover
     When I send a GET request to "/api/v1/redundancy"
     Then the JSON pointer "/transitions/0/now_active" should be true
     And the JSON pointer "/transitions/0/missed_probes" should be 0
+    And the JSON pointer "/now_ms" should be at least the JSON pointer "/transitions/0/completed_at_ms"
 
   @id:RED-027
   Scenario: A planned switchover is recorded as a handover on the side that gave the bus away

@@ -314,24 +314,48 @@ export interface RedundancyTransition {
   missed_probes: number
 }
 
+export type RedundancyArbitration = {
+  defended: number
+  worker_stale: number
+  answered: number
+  suppressed: number
+  cell_busy: number
+  aborted: number
+  window_closed: number
+  late: number
+  probe_failed: number
+  handover_incomplete: number
+}
+
+export type RedundancyProbes = {
+  published: number
+  ingress_rejected: number
+  owned: number
+  unowned: number
+}
+
+export type RedundancyReplication = {
+  passes: number
+  peer_unreachable: number
+  pulled: number
+  rejected: number
+  reload_publish_failed: number
+}
+
 export interface RedundancyState {
+  now_ms: number
   enabled: boolean
   role: 'primary' | 'standby'
   active: boolean
   answering: boolean
   lease_remaining_ms: number
-  probes: { published: number; ingress_rejected: number; owned: number; unowned: number }
+  arbitration: RedundancyArbitration
+  probes: RedundancyProbes
   takeovers: number
   stand_downs: number
   role_publish_failed: number
   ignored_events: number
-  replication: {
-    passes: number
-    peer_unreachable: number
-    pulled: number
-    rejected: number
-    reload_publish_failed: number
-  }
+  replication: RedundancyReplication
   transitions: RedundancyTransition[]
 }
 
@@ -899,20 +923,6 @@ export type MqttBridgeCounters = {
   rule_publishes_dropped_total: number
 }
 
-export type RedundancyCounters = {
-  defended: number
-  worker_stale: number
-  answered: number
-  suppressed: number
-  cell_busy: number
-  aborted: number
-  window_closed: number
-  late: number
-  probe_failed: number
-  handover_incomplete: number
-  armed: boolean
-}
-
 export interface Diagnostics {
   uptime_ms: number
   bus: BusCounters
@@ -931,7 +941,6 @@ export interface Diagnostics {
   poller: PollerCounters
   websocket: WebSocketCounters
   mqtt: MqttBridgeCounters
-  redundancy: RedundancyCounters
 }
 
 export type StatsController = {

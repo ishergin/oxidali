@@ -112,6 +112,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   font-size: 11px; font-weight: 500; }
 .chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .chip.warn { color: var(--warn); background: var(--warn-soft); }
+.empty { padding: 32px; text-align: center; color: var(--text-faint); font-size: 13px; }
 .state-label { display: flex; align-items: center; gap: 8px; margin: 30px 0 14px; }
 .state-label .ln { flex: 1; height: 1px; background: var(--border); }
 .state-label span { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
@@ -423,16 +424,44 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            and a sub-tick sleep on this build busy-waits instead of parking.
            So `PHY sniffer · Poll fast` above (one per millisecond of burned
            CPU) is only legible beside this row. -->
+      <!-- The three Redundancy cards are the ones on this screen that do not
+           come from /api/v1/diagnostics: they poll /api/v1/redundancy, the
+           pair's own resource, on the same 2 s cadence, and their change
+           column keys on that resource's now_ms. `Role` and `Arbitration
+           table` are gauges, and the arbitration table is the resource's
+           `answering`. Their own states are drawn at the foot of the page. -->
       <div class="card">
         <header>
           <h3>Redundancy</h3>
-          <span class="note">arbitration table is a gauge</span>
+          <span class="note">role and arbitration table are gauges</span>
         </header>
+        <div class="attr"><span class="k">Role</span><span class="v">primary</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Arbitration table</span><span class="v">armed</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Defended</span><span class="v">3 601</span><span class="delta live">+1</span></div>
-        <div class="attr"><span class="k">Worker stale</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Worker stale</span><span class="v">1</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Answered</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Window closed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Takeovers</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Stand downs</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Role publish failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ignored events</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <div class="card">
+        <header><h3>Redundancy · probes</h3></header>
+        <div class="attr"><span class="k">Published</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ingress rejected</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Owned</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Unowned</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <div class="card">
+        <header><h3>Redundancy · replication</h3></header>
+        <div class="attr"><span class="k">Passes</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Peer unreachable</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Pulled</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Rejected</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Reload publish failed</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
       <div class="card span2">
@@ -467,8 +496,38 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     </div>
     <p class="hint">Every card below keeps the last sample it had. The chip goes away with the
       next good poll; hovering it names the error.</p>
+
+    <div class="state-label"><span>Redundancy — before the first answer, and after a failed poll</span><span class="ln"></span></div>
+    <div class="grid">
+      <div class="card">
+        <header><h3>Redundancy</h3></header>
+        <div class="empty">Loading…</div>
+      </div>
+      <div class="card">
+        <header>
+          <h3>Redundancy</h3>
+          <span class="chip warn" title="Failed to fetch"><span class="dot"></span>stale — last poll failed</span>
+        </header>
+        <div class="attr"><span class="k">Role</span><span class="v">primary</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Arbitration table</span><span class="v">armed</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Defended</span><span class="v">3 601</span><span class="delta"></span></div>
+      </div>
+    </div>
+    <p class="hint">The Redundancy cards poll their own resource, so they carry their own chip:
+      the page's chip speaks for /api/v1/diagnostics only. A first poll that fails says
+      <i>Unavailable</i> and names the error where <i>Loading…</i> stands.</p>
   </div>
 
+
+<div class="chgh">2026-09-28 — the Redundancy cards read the pair's own resource</div>
+<p class="chgnote">The arbitration counters left <code>/api/v1/diagnostics</code> for
+  <code>/api/v1/redundancy</code>, next to the probes, takeovers and replication tally they
+  explain. The card stays on this screen, with <b>PHY sniffer · Poll fast</b>, and polls that
+  resource; two more cards show its probes and replication, so every counter of the pair is
+  on one screen, and a failed poll gets its own chip. <b>Arbitration table</b> is the
+  resource's <code>answering</code>; the diagnostics block used to carry the same flag a second
+  time as <code>armed</code>. <b>Worker stale</b> may be non-zero right after a boot: a
+  supervisor tick can land before a watched worker first turns, and that is not a fault.</p>
 
 <div class="chgh">2026-09-12 — three cells that say what a wait costs</div>
 <p class="chgnote">A FreeRTOS tick on this board is 10 ms, and ESP-IDF runs any shorter sleep as

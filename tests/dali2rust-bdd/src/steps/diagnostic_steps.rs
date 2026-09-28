@@ -433,7 +433,6 @@ async fn diagnostics_blocks_present(world: &mut DaliWorld) {
         "poller",
         "websocket",
         "mqtt",
-        "redundancy",
     ] {
         assert!(val.get(block).is_some(), "missing diagnostics block {block}");
     }

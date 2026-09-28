@@ -66,7 +66,7 @@ export function CounterRows({
   return (
     <>
       {Object.entries(block).map(([key, value]) => {
-        const delta = gauges?.includes(key) ? 0 : deltas[`${path}.${key}`] ?? 0
+        const delta = gauges?.includes(key) ? 0 : deltas[path ? `${path}.${key}` : key] ?? 0
         const fault = isFault?.(key, value) ?? false
         return (
           <div class="attr" key={key}>

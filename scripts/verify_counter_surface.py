@@ -9,23 +9,40 @@ ROOT = Path(__file__).resolve().parent.parent
 API = ROOT / "crates/dali2rust-api/src/http"
 DIAGNOSTICS_DTO = API / "diagnostics_state.rs"
 STATS_DTO = API / "stats_state.rs"
+REDUNDANCY_DTO = API / "redundancy_state.rs"
 BRIDGE = ROOT / "crates/dali2rust-adapters/src/runtime/http_bridges.rs"
 TS_TYPES = ROOT / "web/app/src/api/types.ts"
 FAULT_KEYS_TSX = ROOT / "web/app/src/screens/diagnostics.tsx"
 DESIGN_DOC = ROOT / "documentation/product-design/rest-api/resources/diagnostics.md"
+RESOURCE_DOCS = (
+    ("RedundancyStateDto", ROOT / "documentation/product-design/rest-api/resources/redundancy.md"),
+    (
+        "RedundancyArbitrationDto",
+        ROOT / "documentation/product-design/runtime-modules/redundancy/README.md",
+    ),
+)
 INTERNAL = ROOT / "scripts/counter_surface_internal.txt"
 INTERNAL_BUDGET = ROOT / "scripts/counter_surface_internal_budget.txt"
 DEFAULT_INTERNAL_BUDGET = 0
 CONSUMERS = (ROOT / "tools/hil", ROOT / "tests/dali2rust-bdd/src")
 
-ROOTS = (("DiagnosticsDto", "Diagnostics"), ("StatsReportDto", "StatsReportPayload"))
+ROOTS = (
+    ("DiagnosticsDto", "Diagnostics"),
+    ("StatsReportDto", "StatsReportPayload"),
+    ("RedundancyStateDto", "RedundancyState"),
+)
 
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 
+RAW_GET = r'_get\([^)]*"/api/v1/(?:diagnostics|stats|redundancy)"\)'
 FETCH_CALL = re.compile(
     r"api\.diagnostics\(\)|api\.stats\(\)|diagnostics_snapshot\(|\bdiagnostics\s*[\[.]"
+    r"|\.redundancy\.get\(\)|" + RAW_GET
 )
-FETCH = re.compile(r"(\w+)\s*=\s*[^=]*(?:api\.diagnostics\(\)|api\.stats\(\)|diagnostics_snapshot\()")
+FETCH = re.compile(
+    r"(\w+)\s*=\s*[^=]*(?:api\.diagnostics\(\)|api\.stats\(\)|diagnostics_snapshot\("
+    r"|\.redundancy\.get\(\)|" + RAW_GET + r")"
+)
 DEFINITION = re.compile(r"^\s*(?:def |async def |fn |async fn |pub fn |#\[)")
 
 
@@ -286,6 +303,22 @@ def check_design_doc(rust_types):
     return problems
 
 
+def check_resource_docs(rust_types):
+    problems = []
+    for struct, doc in RESOURCE_DOCS:
+        text = doc.read_text()
+        if not rust_types.get(struct):
+            problems.append("%s: no such DTO to check against %s" % (struct, doc.relative_to(ROOT)))
+            continue
+        for field, _ in rust_types[struct]:
+            if "`%s`" % field not in text:
+                problems.append(
+                    "%s: %s has a %r field the document does not name"
+                    % (doc.relative_to(ROOT), struct, field)
+                )
+    return problems
+
+
 def check_fault_keys(names):
     source = FAULT_KEYS_TSX.read_text()
     match = re.search(r"const FAULT_KEYS = new Set\(\[(.*?)\]\)", source, re.S)
@@ -302,6 +335,7 @@ def check_fault_keys(names):
 def main():
     rust_types = dict(rust_structs(DIAGNOSTICS_DTO))
     rust_types.update(rust_structs(STATS_DTO))
+    rust_types.update(rust_structs(REDUNDANCY_DTO))
     ts_defs = ts_types()
     internal = read_internal()
 
@@ -315,6 +349,7 @@ def main():
     problems += check_fault_keys(names)
     problems += check_bdd_block_list(rust_types)
     problems += check_design_doc(rust_types)
+    problems += check_resource_docs(rust_types)
 
     if problems:
         print("counter surface: %d problem(s)\n" % len(problems))

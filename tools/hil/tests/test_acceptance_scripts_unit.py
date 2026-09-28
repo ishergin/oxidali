@@ -62,6 +62,19 @@ def test_issue86_judges_a_window_the_log_did_grow_into(tmp_path):
     assert not ISSUE86.verdict(QUALIFYING, False, stale, 0)
 
 
+def _hcl_sample(t, ticks, worker_stale):
+    return {"t": t, "ticks": ticks, "command_timeouts": 0, "commands_published": 0,
+            "command_failures": 0, "worker_stale": worker_stale}
+
+
+def test_issue86_never_ends_a_window_on_a_sample_with_a_missing_read():
+    samples = [_hcl_sample(0.0, 1, 0), {"t": 3.0, "error": "diagnostics"},
+               _hcl_sample(5.0, 2, None), _hcl_sample(10.0, 2, 0), _hcl_sample(15.0, 3, 0)]
+    windows = ISSUE86._tick_windows(samples)
+    assert [(w["ticks_from"], w["ticks_to"]) for w in windows] == [(1, 2), (2, 3)]
+    assert [w["gaps"] for w in windows] == [2, 0]
+
+
 def test_issue89_reads_its_windows_by_offset_whatever_the_stamps(tmp_path):
     log = tmp_path / "serial.log"
     log.write_text(BOOT)

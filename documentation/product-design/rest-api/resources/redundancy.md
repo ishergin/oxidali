@@ -5,8 +5,7 @@
 
 **Границы:** настройки — [`settings-redundancy.md`](settings-redundancy.md); механизм
 (арбитраж, лиза, репликация) —
-[`../../runtime-modules/redundancy/README.md`](../../runtime-modules/redundancy/README.md);
-счётчики отвечающей стороны — блок `redundancy` в [`diagnostics.md`](diagnostics.md).
+[`../../runtime-modules/redundancy/README.md`](../../runtime-modules/redundancy/README.md).
 BDD — [`redundancy`](../../../../tests/dali2rust-bdd/features/redundancy/).
 
 ## Маршруты
@@ -23,6 +22,14 @@ BDD — [`redundancy`](../../../../tests/dali2rust-bdd/features/redundancy/).
 
 ## Состояние
 
+Счётчики пары — в этом ресурсе
+([04](../../../architecture/04-contracts-and-api-bridge.md) §Counter surface).
+
+- `now_ms` — часы ресурса, `u32`: по ним же идут лиза и метки `transitions`, так что
+  возраст перехода — разность по модулю 2³², а экран ключует по ним колонку дельт
+  ([`web-ui`](../../web-ui/README.md) §Правила каждого экрана).
+- `enabled`, `role` — настройки пары, как их видит этот узел
+  ([`settings-redundancy.md`](settings-redundancy.md)).
 - `active` — IEC 62386-103 §9.9.1 `applicationActive`: пока `false`, ни один прямой кадр
   не уходит на провод.
 - `answering` — отвечает ли узел на зонд пира **сейчас**. На здоровом стэндбае
@@ -30,8 +37,14 @@ BDD — [`redundancy`](../../../../tests/dali2rust-bdd/features/redundancy/).
   раньше, чем `active` — это весь механизм живости, видимый снаружи.
 - `lease_remaining_ms` — остаток лизы, которая разрешает отвечать; не продлевается —
   узел вот-вот замолчит и отдаст шину.
-- `probes` — зонды, которые отправил этот узел, и сколько раз шина оказалась
-  занята (пир жив) или свободна; `takeovers`, `stand_downs`.
+- `arbitration` — счётчики отвечающей стороны; смысл каждого —
+  [модуль redundancy](../../runtime-modules/redundancy/README.md) §Счётчики.
+- `probes` — зонды, которые отправил этот узел, отвергнутые входом шины, и сколько раз
+  шина оказалась занята (пир жив) или свободна; `takeovers`, `stand_downs` — решения
+  взять шину и отдать её, считаются до публикации смены роли.
+- `role_publish_failed` — решённая смена роли не опубликована, и переход при этом не
+  записывается; `ignored_events` — кадры, пришедшие воркеру арбитража, но не
+  относящиеся к нему.
 - `replication` — перенос конфигурации с пира: проходы, недоступность пира (на роль не
   влияет: воркер арбитража не читает ни одного сетевого состояния), подтянутые и
   отвергнутые слайсы (при отказе остаются прежние байты — устаревшая копия лучше

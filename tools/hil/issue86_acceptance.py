@@ -56,7 +56,11 @@ class Sampler(threading.Thread):
         except Exception as exc:
             return {"t": _now(), "error": repr(exc)}
         hcl = diag.get("hcl", {})
-        red = diag.get("redundancy", {})
+        red, redundancy_error = {}, None
+        try:
+            red = self.api.redundancy.get()["arbitration"]
+        except Exception as exc:
+            redundancy_error = repr(exc)
         sample = {
             "t": _now(),
             "ticks": hcl.get("ticks"),
@@ -69,13 +73,17 @@ class Sampler(threading.Thread):
             "window_closed": red.get("window_closed"),
             "late": red.get("late"),
         }
+        if redundancy_error is not None:
+            sample["redundancy_error"] = redundancy_error
         if self.peer is not None:
             try:
-                peer_red = self.peer._req("GET", "redundancy")
-                sample["peer_owned"] = peer_red["probes"]["owned"]
-                sample["peer_unowned"] = peer_red["probes"]["unowned"]
-                sample["peer_transitions"] = len(peer_red.get("transitions", []))
-                sample["peer_takeovers"] = peer_red.get("takeovers")
+                peer_red = self.peer.redundancy.get()
+                sample.update({
+                    "peer_owned": peer_red["probes"]["owned"],
+                    "peer_unowned": peer_red["probes"]["unowned"],
+                    "peer_transitions": len(peer_red.get("transitions", [])),
+                    "peer_takeovers": peer_red.get("takeovers"),
+                })
             except Exception as exc:
                 sample["peer_error"] = repr(exc)
         return sample
@@ -128,11 +136,14 @@ def _assert_groups_empty(api: Client, groups: list[int]) -> None:
 def _tick_windows(samples: list[dict]) -> list[dict]:
     windows = []
     start = None
+    gaps = 0
     for sample in samples:
-        if sample.get("ticks") is None:
+        if sample.get("ticks") is None or sample.get("worker_stale") is None:
+            gaps += 1
             continue
         if start is None:
             start = sample
+            gaps = 0
             continue
         if sample["ticks"] != start["ticks"]:
             windows.append(
@@ -145,9 +156,11 @@ def _tick_windows(samples: list[dict]) -> list[dict]:
                     "d_failures": sample["command_failures"] - start["command_failures"],
                     "d_worker_stale": sample["worker_stale"] - start["worker_stale"],
                     "seconds": round(sample["t"] - start["t"], 1),
+                    "gaps": gaps,
                 }
             )
             start = sample
+            gaps = 0
     return windows
 
 
@@ -271,8 +284,10 @@ def main() -> int:
     windows = _tick_windows(sampler.samples)
     serial_lines = serial_window(serial_log, serial_from)
     qualifying = [w for w in windows
-                  if w["d_ticks"] == 1 and w["d_timeouts"] >= TIMEOUTS_PER_TICK_REQUIRED]
+                  if not w["gaps"] and w["d_ticks"] == 1
+                  and w["d_timeouts"] >= TIMEOUTS_PER_TICK_REQUIRED]
     stale_moved = any(w["d_worker_stale"] for w in windows)
+    gapped = [w for w in windows if w["gaps"]]
     hcl_stale_lines = [line for line in serial_lines or [] if "hcl" in line]
     peer_transitions = 0
     if sampler.samples:
@@ -284,6 +299,8 @@ def main() -> int:
     print("ticks observed:            %d" % len(windows))
     print("ticks with >= %d timeouts:  %d" % (TIMEOUTS_PER_TICK_REQUIRED, len(qualifying)))
     print("worker_stale moved:        %s" % ("YES" if stale_moved else "no"))
+    print("windows with a missing read:  %d%s"
+          % (len(gapped), " — none of them counts as qualifying" if gapped else ""))
     if serial_lines is None:
         print("serial window:             EMPTY — %s did not grow during the run, so "
               "there is no serial evidence and no verdict" % serial_log)

@@ -309,6 +309,12 @@ mod tests {
             run_supervisor_tick(&inputs, NOW),
             SupervisorTurn::StandDown(StandDownReason::WorkerStale("ghost"))
         );
+        assert_eq!(
+            inputs.counters.stood_down_worker_stale.load(Ordering::Relaxed),
+            1,
+            "a boot tick before the worker first turns is counted as a stand-down"
+        );
+        assert_eq!(inputs.counters.defended.load(Ordering::Relaxed), 0);
     }
 
     #[test]
