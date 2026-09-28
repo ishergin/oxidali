@@ -194,6 +194,7 @@ function RedundancyCards() {
       stale — last poll failed
     </Chip>
   ) : undefined
+  const shown: Flat = error ? {} : deltas
   return (
     <>
       <Card title="Redundancy" action={stale}>
@@ -207,7 +208,7 @@ function RedundancyCards() {
           <span class="v">{pair.answering ? 'armed' : 'idle'}</span>
           <span class="delta" />
         </div>
-        <CounterRows block={pair.arbitration} path="arbitration" deltas={deltas} isFault={isFault} />
+        <CounterRows block={pair.arbitration} path="arbitration" deltas={shown} isFault={isFault} />
         <CounterRows
           block={{
             takeovers: pair.takeovers,
@@ -216,15 +217,15 @@ function RedundancyCards() {
             ignored_events: pair.ignored_events,
           }}
           path=""
-          deltas={deltas}
+          deltas={shown}
           isFault={isFault}
         />
       </Card>
       <Card title="Redundancy · probes" action={stale}>
-        <CounterRows block={pair.probes} path="probes" deltas={deltas} isFault={isFault} />
+        <CounterRows block={pair.probes} path="probes" deltas={shown} isFault={isFault} />
       </Card>
       <Card title="Redundancy · replication" action={stale}>
-        <CounterRows block={pair.replication} path="replication" deltas={deltas} isFault={isFault} />
+        <CounterRows block={pair.replication} path="replication" deltas={shown} isFault={isFault} />
       </Card>
     </>
   )

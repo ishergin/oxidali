@@ -113,7 +113,8 @@ if stale:
     fail.extend(stale)
 
 if fail:
-    print("verify_read_surface: a read payload has a block nothing shows.\n", file=sys.stderr)
+    print("verify_read_surface: a read payload has a block that reaches no screen.\n",
+          file=sys.stderr)
     for f in fail:
         print("  " + f + "\n", file=sys.stderr)
     sys.exit(1)

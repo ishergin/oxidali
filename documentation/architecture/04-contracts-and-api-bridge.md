@@ -97,8 +97,10 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   `scripts/counter_surface_internal.txt`, whose entry count is frozen in
   `counter_surface_internal_budget.txt` and only goes down.
 - Counters are `u32` on the wire; they wrap as their mechanism does.
-- A new counter goes to `/api/v1/stats`, or to the REST resource of the subsystem it
-  counts when that subsystem has one: the controller pair's counters are on
-  `/api/v1/redundancy`. The periodic WebSocket diagnostics frame has a hard ceiling
-  (`DIAGNOSTICS_SNAPSHOT_CEILING_BYTES`) and no headroom; raising the ceiling is not the
-  fix.
+- A new counter goes to `/api/v1/stats`. The one other counter resource is the
+  controller pair's `/api/v1/redundancy`, which carries its counters beside the probes
+  and transitions they explain and is a root of both counter gates. The periodic
+  WebSocket diagnostics frame has a hard ceiling (`DIAGNOSTICS_SNAPSHOT_CEILING_BYTES`)
+  and no headroom; raising the ceiling is not the fix. The one sanctioned reason to
+  re-measure it is a change to the composed bus: an adapters test holds the worst case's
+  subscriber model equal to the live bus, and the ceiling follows that model.

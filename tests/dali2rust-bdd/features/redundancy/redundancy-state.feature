@@ -84,6 +84,7 @@ Feature: Redundancy — state and the planned handover
     When I send a GET request to "/api/v1/redundancy"
     Then the JSON pointer "/transitions/0/now_active" should be true
     And the JSON pointer "/transitions/0/missed_probes" should be 0
+    And the JSON pointer "/now_ms" should be at least the JSON pointer "/transitions/0/completed_at_ms"
 
   @id:RED-027
   Scenario: A planned switchover is recorded as a handover on the side that gave the bus away

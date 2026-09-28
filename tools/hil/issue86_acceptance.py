@@ -136,11 +136,16 @@ def _assert_groups_empty(api: Client, groups: list[int]) -> None:
 def _tick_windows(samples: list[dict]) -> list[dict]:
     windows = []
     start = None
+    gaps = 0
     for sample in samples:
         if sample.get("ticks") is None:
             continue
+        if sample.get("worker_stale") is None:
+            gaps += 1
+            continue
         if start is None:
             start = sample
+            gaps = 0
             continue
         if sample["ticks"] != start["ticks"]:
             windows.append(
@@ -153,9 +158,11 @@ def _tick_windows(samples: list[dict]) -> list[dict]:
                     "d_failures": sample["command_failures"] - start["command_failures"],
                     "d_worker_stale": sample["worker_stale"] - start["worker_stale"],
                     "seconds": round(sample["t"] - start["t"], 1),
+                    "redundancy_gaps": gaps,
                 }
             )
             start = sample
+            gaps = 0
     return windows
 
 
@@ -281,6 +288,7 @@ def main() -> int:
     qualifying = [w for w in windows
                   if w["d_ticks"] == 1 and w["d_timeouts"] >= TIMEOUTS_PER_TICK_REQUIRED]
     stale_moved = any(w["d_worker_stale"] for w in windows)
+    gapped = [w for w in windows if w["redundancy_gaps"]]
     hcl_stale_lines = [line for line in serial_lines or [] if "hcl" in line]
     peer_transitions = 0
     if sampler.samples:
@@ -292,6 +300,8 @@ def main() -> int:
     print("ticks observed:            %d" % len(windows))
     print("ticks with >= %d timeouts:  %d" % (TIMEOUTS_PER_TICK_REQUIRED, len(qualifying)))
     print("worker_stale moved:        %s" % ("YES" if stale_moved else "no"))
+    print("windows missing a redundancy read: %d%s"
+          % (len(gapped), " — no verdict over them" if gapped else ""))
     if serial_lines is None:
         print("serial window:             EMPTY — %s did not grow during the run, so "
               "there is no serial evidence and no verdict" % serial_log)
@@ -306,7 +316,7 @@ def main() -> int:
         print("  serial: %s" % line)
     print("samples: %s" % jsonl)
 
-    passed = verdict(qualifying, stale_moved, serial_lines, peer_transitions)
+    passed = not gapped and verdict(qualifying, stale_moved, serial_lines, peer_transitions)
     print("\nVERDICT: %s" % ("PASS — a busy worker kept its lease"
                              if passed else "INCONCLUSIVE / FAIL (see above)"))
     return 0 if passed else 1

@@ -16,6 +16,10 @@ FAULT_KEYS_TSX = ROOT / "web/app/src/screens/diagnostics.tsx"
 DESIGN_DOC = ROOT / "documentation/product-design/rest-api/resources/diagnostics.md"
 RESOURCE_DOCS = (
     ("RedundancyStateDto", ROOT / "documentation/product-design/rest-api/resources/redundancy.md"),
+    (
+        "RedundancyArbitrationDto",
+        ROOT / "documentation/product-design/runtime-modules/redundancy/README.md",
+    ),
 )
 INTERNAL = ROOT / "scripts/counter_surface_internal.txt"
 INTERNAL_BUDGET = ROOT / "scripts/counter_surface_internal_budget.txt"
@@ -303,7 +307,10 @@ def check_resource_docs(rust_types):
     problems = []
     for struct, doc in RESOURCE_DOCS:
         text = doc.read_text()
-        for field, _ in rust_types.get(struct, []):
+        if not rust_types.get(struct):
+            problems.append("%s: no such DTO to check against %s" % (struct, doc.relative_to(ROOT)))
+            continue
+        for field, _ in rust_types[struct]:
             if "`%s`" % field not in text:
                 problems.append(
                     "%s: %s has a %r field the document does not name"

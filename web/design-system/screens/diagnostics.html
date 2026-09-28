@@ -526,8 +526,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   resource; two more cards show its probes and replication, so every counter of the pair is
   on one screen, and a failed poll gets its own chip. <b>Arbitration table</b> is the
   resource's <code>answering</code>; the diagnostics block used to carry the same flag a second
-  time as <code>armed</code>. <b>Worker stale</b> reads 1 after a boot: the supervisor's first
-  tick lands before the watched workers have turned.</p>
+  time as <code>armed</code>. <b>Worker stale</b> may be non-zero right after a boot: a
+  supervisor tick can land before a watched worker first turns, and that is not a fault.</p>
 
 <div class="chgh">2026-09-12 — three cells that say what a wait costs</div>
 <p class="chgnote">A FreeRTOS tick on this board is 10 ms, and ESP-IDF runs any shorter sleep as

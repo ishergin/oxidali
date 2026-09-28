@@ -151,9 +151,8 @@ Detail: [06](documentation/architecture/06-registry-and-persistence.md),
 - An HTTP request meets its confirmation only in the pending-confirmation slot pool, fed
   by one confirmation-bridge thread: no slot, ingress full or a rejection → `503`,
   timeout → `504`; a timeout frees the slot, not the command (ADR-002).
-- A new counter goes to `/api/v1/stats`, or to its subsystem's own resource when it has
-  one; counters are `u32` and wrap; `scripts/verify_counter_surface.py` keeps its
-  spellings in step.
+- A new counter goes to `/api/v1/stats`; counters are `u32` and wrap;
+  `scripts/verify_counter_surface.py` keeps its spellings in step.
 
 ## ESP32 threading, httpd and memory
 
