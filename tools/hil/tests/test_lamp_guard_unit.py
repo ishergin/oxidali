@@ -24,7 +24,7 @@ def _guard(segment=(0, 2, 3), read_only=False):
 
 
 def test_a_short_outside_the_allowlist_is_refused_and_named():
-    with pytest.raises(LampNotAllowed, match=r"SA1 is outside HIL_LAMP_SHORTS=0,2,3"):
+    with pytest.raises(LampNotAllowed, match=r"SA1 is outside HIL_LAMP_SHORTS=0,2-3"):
         _guard().check_frame(_short_wire(OWNER), 100)
     with pytest.raises(LampNotAllowed, match=r"wire address 0x03"):
         _guard().check_frame(_short_wire(OWNER, command=True), REMOVE_FROM_SCENE_12)

@@ -78,7 +78,7 @@ def test_a_lease_is_learned_from_lines_after_the_mark(tmp_path, monkeypatch):
 def test_a_board_with_no_base_and_no_monitor_is_refused_before_the_build(
         tmp_path, monkeypatch, capsys):
     cfg = _cfg(tmp_path, peer_serial_port=PEER_PORT).peer()
-    monkeypatch.setattr(flash, "board_spec", lambda cfg: {})
+    monkeypatch.setattr(flash, "board_spec", lambda cfg, image=flash.CONTROLLER: {})
     monkeypatch.setattr(flash, "serial_port_for_flash", lambda cfg: PEER_PORT)
     built = []
     monkeypatch.setattr(flash, "build", lambda *a, **k: built.append(1) or 0)

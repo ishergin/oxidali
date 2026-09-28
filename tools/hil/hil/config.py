@@ -83,7 +83,6 @@ class HilConfig:
     serial_bridge_port: int = field(
         default_factory=lambda: int(_env("HIL_SERIAL_BRIDGE_PORT", "4444")))
     flash_baud: int = field(default_factory=lambda: int(_env("HIL_FLASH_BAUD", "1500000")))
-    gear_sim_port: str = field(default_factory=lambda: _env("HIL_GEAR_SIM_PORT", ""))
     lamp_shorts: str = field(default_factory=lambda: _env("HIL_LAMP_SHORTS", "0,2,3"))
     lamps_read_only: bool = field(
         default_factory=lambda: _env("HIL_LAMPS_READ_ONLY", "0") not in ("", "0", "false", "no"))

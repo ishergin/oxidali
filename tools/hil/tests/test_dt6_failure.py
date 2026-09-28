@@ -30,7 +30,7 @@ def _query_frames(win, short):
 def faulted_gear(api, gear_sim):
     short = _dt6_short(api)
     if short is None:
-        pytest.skip("no DT6 gear on the segment — the C6 fleet is off the bus")
+        pytest.skip("no DT6 gear on the segment — the gear emulator is off the bus")
     injected = []
 
     def inject(word, expected_byte):
@@ -91,7 +91,7 @@ def test_a_thermal_shut_down_is_found_through_the_masked_level(
 def test_a_healthy_dt6_gear_pays_no_207_frames(api, gear_sim, op_check, sniffer):
     short = _dt6_short(api)
     if short is None:
-        pytest.skip("no DT6 gear on the segment — the C6 fleet is off the bus")
+        pytest.skip("no DT6 gear on the segment — the gear emulator is off the bus")
     gear_sim.command("fail %d none" % short)
 
     with sniffer.window() as win:

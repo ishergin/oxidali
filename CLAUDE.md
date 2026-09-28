@@ -348,7 +348,9 @@ Detail: [`tools/hil/README.md`](tools/hil/README.md) (runbook),
 - A bench may be production lighting. Anything that visibly changes a lamp needs the
   go-ahead of whoever owns that light for that run; without it, run with
   `HIL_LAMPS_READ_ONLY=1` and deselect every test that drives light (STRATEGY §4).
-- Tests drive only `HIL_LAMP_SHORTS`; commissioning never runs on production lighting.
+- Tests drive only `HIL_LAMP_SHORTS`; commissioning never runs on production lighting,
+  except the virtual-gear tier's expert steps onto emulated gear with
+  `HIL_ALLOW_VIRTUAL_COMMISSIONING=1` and a go-ahead per run (STRATEGY §4.8, ADR-031).
   Bench-specific rules live in `CLAUDE.local.md`, which is not tracked.
 - Every session saves the bench and restores it; recover a killed session with
   `hil state restore`.

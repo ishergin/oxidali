@@ -244,7 +244,7 @@ def stop_tunnel(cfg, tgt=None):
 
 def control(cfg, command, timeout=CONTROL_TIMEOUT_S):
     with socket.create_connection(("127.0.0.1", control_port(cfg)), timeout) as sock:
-        sock.sendall(command.encode("ascii"))
+        sock.sendall((command + "\n").encode("ascii", "replace"))
         reply = sock.recv(256).decode("ascii", "replace").strip()
     if reply.startswith("ok"):
         return reply
