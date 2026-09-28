@@ -296,7 +296,7 @@ def test_luminaire_extension_is_gated_by_its_content_format_id(api, gear_sim, pa
             "no gear on the segment declared a Part 251 content format (the "
             "bench luminaires stop bank 1 at 0x1F and answer MASK at 0x11), so "
             "the string regions and formats 4/5 went unexercised; that needs "
-            "the C6 fleet configured with format 3/4/5 gear"
+            "the emulated fleet configured with format 3/4/5 gear"
         )
 
 

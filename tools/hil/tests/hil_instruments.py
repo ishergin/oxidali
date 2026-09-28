@@ -5,8 +5,9 @@ import pytest
 
 from hil import api as api_mod
 from hil import config as config_mod
-from hil import pair
+from hil import pair, remote_serial
 from hil.artifacts import Artifacts
+from hil.config import PeerUnconfigured
 from hil.gearsim import GearSim, GearSimUnavailable
 from hil.seriallog import SerialLog
 from hil.sniffer import SnifferTap, ssh_argv
@@ -170,12 +171,13 @@ def sniffer(request, hil_config, run_dir):
 def gear_sim(request, hil_config):
     validity_state = validity_of(request.config)
     try:
-        sim = GearSim(hil_config.gear_sim_port)
-    except GearSimUnavailable as exc:
+        peer = hil_config.peer()
+        sim = GearSim(peer)
+    except (GearSimUnavailable, PeerUnconfigured) as exc:
         validity_state["gear_sim"] = "unavailable (%s) — no receiving-end " \
             "evidence about transaction integrity was collected" % exc
         pytest.skip("gear emulator unavailable: %s" % exc)
-    validity_state["gear_sim"] = "console open (%s)" % hil_config.gear_sim_port
+    validity_state["gear_sim"] = "the peer's console (%s)" % remote_serial.data_url(peer)
     yield sim
     sim.close()
 

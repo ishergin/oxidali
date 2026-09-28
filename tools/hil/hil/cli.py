@@ -25,6 +25,10 @@ COMMAND_HELP = {
               "                  [--wire-keep N] [--wire-scan-mb N]\n"
               "Captures both boards by default; `hil --peer corpus` is "
               "`hil corpus --peer-only`.",
+    "role": "hil --peer role gear-sim [--via ota|wb] | controller | status: lend the pair's "
+            "other board to the gear emulator and take it back. `ota` installs the emulator "
+            "in the inactive slot for one boot (any reset returns the controller); `wb` "
+            "writes it by wire from the Wiren Board and keeps it across resets.",
     "state": "state save|restore|diff [FILE]: the owner's installation as a file. "
              "FILE defaults to state/production_state_last.json, which every guarded "
              "session writes, so a killed session is recovered with `hil state restore`.",
@@ -153,21 +157,48 @@ def _cmd_monitor(rest):
 
 
 def _cmd_flash(rest):
-    args = _flags("hil flash", rest,
-                  "--build-only", "--allow-nonbench-build", "--allow-red-isr",
-                  "--allow-stale-ui")
     from hil import flash
     from hil.config import load as load_config
+    ap = _Parser(prog="hil flash")
+    for flag in ("--build-only", "--allow-nonbench-build", "--allow-red-isr",
+                 "--allow-stale-ui"):
+        ap.add_argument(flag, action="store_true")
+    ap.add_argument("--via", choices=flash.VIAS, default=flash.VIA_RFC2217)
+    args = ap.parse_args(rest)
     return flash.run(
         load_config(),
         build_only=args.build_only,
         allow_nonbench=args.allow_nonbench_build,
         allow_red_isr=args.allow_red_isr,
         allow_stale_ui=args.allow_stale_ui,
+        via=args.via,
     )
 
 
-REMOTE_CONTROL_VERBS = ("ping", "bootloader", "run")
+def _cmd_role(rest):
+    from hil import flash, role
+    from hil.config import PeerUnconfigured
+    from hil.config import load as load_config
+    ap = _Parser(prog="hil --peer role")
+    ap.add_argument("target", choices=("gear-sim", "controller", "status"))
+    ap.add_argument("--via", choices=(flash.VIA_OTA, flash.VIA_WB))
+    args = ap.parse_args(rest)
+    if os.environ.get("HIL_PEER") != "1":
+        raise UsageError("role applies to the pair's other board: `hil --peer role %s`"
+                         % args.target)
+    try:
+        peer_cfg = load_config()
+        dut_cfg = peer_cfg.peer()
+    except PeerUnconfigured as exc:
+        raise UsageError(str(exc))
+    if args.target == "gear-sim":
+        return role.to_gear_sim(dut_cfg, peer_cfg, via=args.via or flash.VIA_OTA)
+    if args.target == "controller":
+        return role.to_controller(dut_cfg, peer_cfg, via=args.via)
+    return role.status(dut_cfg, peer_cfg)
+
+
+REMOTE_CONTROL_VERBS = ("ping", "bootloader", "run", "release", "reacquire")
 
 
 def _remote_parser():
@@ -328,7 +359,7 @@ def _cmd_state(rest):
     ap.add_argument("action", choices=("save", "restore", "diff"))
     ap.add_argument("file", nargs="?")
     args = ap.parse_args(rest)
-    from hil import prod_state
+    from hil import prod_state, virtual_gear
     from hil.api import Client
     from hil.config import load as load_config
     cfg = load_config()
@@ -340,10 +371,14 @@ def _cmd_state(rest):
         return 0
     snap = prod_state.load(path)
     if args.action == "restore":
+        leftover = virtual_gear.teardown(cfg, client)
+        for line in leftover:
+            print("virtual gear: NOT TORN DOWN: %s" % line)
         residual = prod_state.restore(client, snap, drive_lamps=not cfg.lamps_read_only,
                                       lamp_shorts=cfg.lamp_short_set())
         if not residual:
             prod_state.mark_restored(path, snap)
+        residual = leftover + residual
     else:
         residual = prod_state.diff(snap, prod_state.capture(client))
         for line in residual:
@@ -360,6 +395,7 @@ COMMANDS = {
     "monitor": _cmd_monitor,
     "remote": _cmd_remote,
     "flash": _cmd_flash,
+    "role": _cmd_role,
     "api": _cmd_api,
     "lamps": _cmd_lamps,
     "corpus": _cmd_corpus,

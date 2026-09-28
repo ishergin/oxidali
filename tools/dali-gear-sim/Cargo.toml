@@ -2,11 +2,11 @@
 
 [package]
 name = "dali-gear-sim"
-description = "ESP32-C6 DALI control-gear emulator — ~60 virtual gear on one bus"
+description = "ESP32-P4 DALI control-gear emulator — a fleet of virtual gear on one bus"
 version = "0.1.0"
 authors = ["ishergin"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.82"
 
 [[bin]]
 name = "dali-gear-sim"
@@ -19,8 +19,6 @@ dali2rust-gear-model = { path = "../../crates/dali2rust-gear-model" }
 dali2rust-domain = { path = "../../crates/dali2rust-domain" }
 dali2rust-platform = { path = "../../crates/dali2rust-platform" }
 esp-idf-svc = { version = "0.52.1", features = ["alloc", "critical-section"] }
-postcard = { version = "1.1", features = ["alloc"] }
-serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 
 [build-dependencies]
 embuild = { version = "0.33", features = ["espidf"] }

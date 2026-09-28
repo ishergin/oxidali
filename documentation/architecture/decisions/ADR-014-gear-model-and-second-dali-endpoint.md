@@ -16,8 +16,8 @@ rule-engine input trigger) needs another master on the wire.
 The repository already holds the pieces, built for the other side of the wire: the PHY
 FSM is not master-shaped, the Manchester codec produces backward frames, and the host
 simulator implements the IEC 62386-102/207/209 slave side. A gear emulator on a second
-MCU needs all three, and it cannot be a member of the root workspace, whose `MCU` knob is
-forced to the P4 ([ADR-011](ADR-011-retire-esp32s3.md)).
+MCU needs all three, and it cannot share the root workspace's ESP-IDF build, which is
+configured for the controller image ([ADR-011](ADR-011-retire-esp32s3.md)).
 
 ## Decision
 
@@ -41,7 +41,8 @@ forced to the P4 ([ADR-011](ADR-011-retire-esp32s3.md)).
    addresses it must never hold and refuses them at construction and at
    `PROGRAM SHORT ADDRESS`, counting both refusals. The set must cover every real
    luminaire sharing the segment, because two devices answering one address kill the
-   bus. The hardware emulator also brings a fleet with no stored history up disabled.
+   bus. The hardware emulator stores nothing and starts every boot with no fleet and no
+   reserve; it builds and enables gear only after the reserve is set.
 5. **The gear judges order; the master judges time.** A configuration command executes
    only on a second identical instance (101 §9.3, 102 §11.4.1). The model splits a pair
    only on a frame addressed to the same gear — narrower than §9.3, whose receiver
@@ -74,10 +75,9 @@ forced to the P4 ([ADR-011](ADR-011-retire-esp32s3.md)).
 - The observed half of the product is reachable on the host: the dev server and the BDD
   suite exercise the sniffer translator, the Part 103 event path and the rule triggers
   without hardware.
-- The hardware emulator is not ported to the P4
-  ([roadmap](../../product-design/roadmap.md)); `just gear-sim-check` only type-checks it
-  against the shared crates ([10](../10-build-release-and-tooling.md)). It stays on the
-  gptimer driver's interrupt path
+- The hardware emulator runs on the redundancy pair's second ESP32-P4, layered on the
+  root's sdkconfig and partition table ([10](../10-build-release-and-tooling.md)). It
+  answers through the PHY's answer cell, stays on the gptimer driver's interrupt path
   ([ADR-025](ADR-025-phy-interrupt-above-critical-sections.md)), and
   `verify_dali_isr_iram.py` applies to its binary as to the firmware's.
 - Both shared crates are listed in `scripts/host_crates.txt`, so the function-length and

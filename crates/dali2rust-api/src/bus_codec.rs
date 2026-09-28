@@ -1,44 +1,8 @@
-use dali2rust_contracts::msg::{
-    BusEventPayload, ConfirmationEnvelope, DeliveryStatus, ErrorCode, EventEnvelope,
-};
+use dali2rust_contracts::msg::{ConfirmationEnvelope, DeliveryStatus, ErrorCode};
 use serde_json;
 
 pub use dali2rust_contracts::bus::{parse_command_envelope, ParsedDaliCommandEnvelope};
 pub use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ParsedBusEvent {
-    Dali {
-        wire_address: u8,
-        command: u8,
-        repeat_count: u8,
-    },
-    IpAssigned {
-        ip: String,
-    },
-}
-
-pub fn parse_event_envelope_from_typed(ev: &EventEnvelope) -> Option<ParsedBusEvent> {
-    match &ev.payload {
-        BusEventPayload::DaliEventPayload(p) => Some(ParsedBusEvent::Dali {
-            wire_address: p.wire_address,
-            command: p.command,
-            repeat_count: p.repeat_count,
-        }),
-        BusEventPayload::IpAddressAssignedEvent(p) => Some(ParsedBusEvent::IpAssigned {
-            ip: format!(
-                "{}.{}.{}.{}",
-                p.ip_v4[0], p.ip_v4[1], p.ip_v4[2], p.ip_v4[3]
-            ),
-        }),
-        _ => None,
-    }
-}
-
-pub fn parse_event_envelope(data: &[u8]) -> Option<ParsedBusEvent> {
-    let ev = dali2rust_contracts::bus::decode_event_envelope(data).ok()?;
-    parse_event_envelope_from_typed(&ev)
-}
 
 fn confirmation_json_body_from_native(ce: &ConfirmationEnvelope) -> Option<Vec<u8>> {
     let status = ce.status;
@@ -88,12 +52,9 @@ mod tests {
     use dali2rust_bus::BusId;
     use dali2rust_contracts::bus::{
         build_confirmation_envelope_with_product_error, command_envelope,
-        decode_command_envelope, encode_command_envelope, encode_event_envelope, event_envelope,
+        decode_command_envelope, encode_command_envelope,
     };
-    use dali2rust_contracts::msg::{
-        DaliCommandPayload, DaliEventPayload, DaliSetTargetStateCommand, IpAddressAssignedEvent,
-        Origin,
-    };
+    use dali2rust_contracts::msg::{DaliCommandPayload, DaliSetTargetStateCommand, Origin};
     use dali2rust_contracts::msg::{
         BusCommandPayload, ColorMode, ColorValue, DeliveryStatus, LightSetpoint, PowerState,
     };
@@ -203,49 +164,5 @@ mod tests {
         assert_eq!(command.meta.target_adapter_id, 3);
         let env = parse_command_envelope(&bytes).expect("parse command envelope");
         assert_eq!(BusId(env.target_adapter_id), BusId(3));
-    }
-
-    #[test]
-    fn parse_dali_bus_event_from_envelope() {
-        let ev = event_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            42,
-            0,
-            Some(Origin::Internal),
-            DaliEventPayload {
-                wire_address: 3,
-                command: 9,
-                repeat_count: 1,
-            },
-        );
-        let bytes = encode_event_envelope(&ev).expect("encode");
-        match parse_event_envelope(&bytes).expect("parse") {
-            ParsedBusEvent::Dali {
-                wire_address,
-                command,
-                repeat_count,
-            } => {
-                assert_eq!(wire_address, 3);
-                assert_eq!(command, 9);
-                assert_eq!(repeat_count, 1);
-            }
-            ParsedBusEvent::IpAssigned { .. } => panic!("expected DALI variant"),
-        }
-    }
-
-    #[test]
-    fn parse_ip_assigned_event_from_envelope() {
-        let ev = event_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            7,
-            0,
-            Some(Origin::Internal),
-            IpAddressAssignedEvent::from_ip_text("192.168.4.2"),
-        );
-        let bytes = encode_event_envelope(&ev).expect("encode");
-        match parse_event_envelope(&bytes).expect("parse") {
-            ParsedBusEvent::IpAssigned { ip } => assert_eq!(ip, "192.168.4.2"),
-            ParsedBusEvent::Dali { .. } => panic!("expected IpAssigned variant"),
-        }
     }
 }

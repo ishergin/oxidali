@@ -60,7 +60,27 @@ def test_the_real_flash_flags_still_reach_flash(monkeypatch):
     monkeypatch.setattr(flash, "run", lambda cfg, **kwargs: seen.append(kwargs) or 0)
     assert cli.main(["flash", "--build-only", "--allow-red-isr"]) == 0
     assert seen == [{"build_only": True, "allow_nonbench": False, "allow_red_isr": True,
-                     "allow_stale_ui": False}]
+                     "allow_stale_ui": False, "via": flash.VIA_RFC2217}]
+
+
+def test_the_delivery_flag_reaches_flash(monkeypatch):
+    seen = []
+    monkeypatch.setattr(flash, "run", lambda cfg, **kwargs: seen.append(kwargs) or 0)
+    assert cli.main(["flash", "--via", "wb"]) == 0
+    assert seen[0]["via"] == flash.VIA_WB and "image" not in seen[0]
+
+
+def test_flash_has_no_way_to_name_the_emulator_image(monkeypatch, capsys):
+    ran = []
+    monkeypatch.setattr(flash, "run", _never("flash", ran))
+    assert cli.main(["flash", "--image", "gear-sim"]) == cli.EX_USAGE
+    assert ran == []
+
+
+def test_role_is_refused_without_the_peer_flag(monkeypatch, capsys):
+    monkeypatch.delenv("HIL_PEER", raising=False)
+    assert cli.main(["role", "status"]) == cli.EX_USAGE
+    assert "--peer role" in capsys.readouterr().err
 
 
 def test_a_misspelt_lamps_flag_switches_nothing_off(monkeypatch, capsys):

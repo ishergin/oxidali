@@ -151,7 +151,7 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
 - The sniffer stages the answer before it logs, forwards or dumps the capture;
   everything after staging is diagnostic.
 - The window constants live in `dali-phy::backward_window` beside `TX_ARM_LEAD_TICKS`,
-  bounded at compile time; `tools/dali-gear-sim` keeps copies of its own.
+  bounded at compile time; the gear emulator stages its answers in the same cell.
 
 ## Transports
 

@@ -12,12 +12,15 @@ import serial.rfc2217
 SELECT_TIMEOUT_S = 0.2
 SERIAL_READ_TIMEOUT_S = 0
 SOCKET_CHUNK_BYTES = 65536
-CONTROL_RECV_BYTES = 64
+CONTROL_RECV_BYTES = 256
+CONTROL_MAX_BYTES = 4096
+CONTROL_TAIL_TIMEOUT_S = 0.2
 
 RESET_HOLD_S = 0.1
 RESET_LATCH_S = 0.05
 
 PORT_GONE = "port-gone"
+PORT_VERBS = ("release", "reacquire", "write")
 
 
 class SerialFault(RuntimeError):
@@ -59,9 +62,10 @@ class LinesPinned:
 
 
 class Session:
-    def __init__(self, ser, sock, log):
+    def __init__(self, ser, sock, log, port_lock):
         self.serial, self.socket, self.log = ser, sock, log
         self._write_lock = threading.Lock()
+        self._port_lock = port_lock
         self.rfc2217 = serial.rfc2217.PortManager(LinesPinned(self.serial, log), self)
 
     def write(self, data):
@@ -80,7 +84,9 @@ class Session:
                 data = self.socket.recv(SOCKET_CHUNK_BYTES)
                 if not data:
                     return
-                _serial_io(lambda: self.serial.write(b"".join(self.rfc2217.filter(data))))
+                payload = b"".join(self.rfc2217.filter(data))
+                with self._port_lock:
+                    _serial_io(lambda: self.serial.write(payload))
 
 
 def classic_reset(ser, into_bootloader):
@@ -101,6 +107,8 @@ class Bridge:
         self.serial = None
         self.client = None
         self.serial_fault = None
+        self.released = False
+        self.port_lock = threading.Lock()
         self.started_at = time.time()
 
     def log(self, msg):
@@ -132,15 +140,21 @@ class Bridge:
         return None
 
     def _control_reply(self, cmd):
+        if self.released:
+            return self._released_reply(cmd)
+        if cmd == "release":
+            return self._release()
         problem = self.port_problem()
         if problem:
             return "err %s: %s" % (PORT_GONE, problem)
+        if cmd.startswith("write "):
+            return self._write_line(cmd[len("write "):])
         if cmd == "ping":
             return "ok %s %d" % (self.port, self.serial.baudrate)
         if cmd == "status":
-            return "ok port=%s baud=%d client=%s uptime=%d" % (
+            return "ok port=%s baud=%d client=%s uptime=%d verbs=%s" % (
                 self.port, self.serial.baudrate,
-                self.client or "none", time.time() - self.started_at)
+                self.client or "none", time.time() - self.started_at, ",".join(PORT_VERBS))
         if cmd in ("bootloader", "run"):
             classic_reset(self.serial, cmd == "bootloader")
             self.log("control: reset -> %s" % cmd)
@@ -150,13 +164,38 @@ class Bridge:
             return "ok baud %d" % self.serial.baudrate
         return "err unknown command %r" % cmd
 
+    def _released_reply(self, cmd):
+        if cmd == "reacquire":
+            self.open_serial()
+            self.released = False
+            self.log("control: port reacquired (opening it resets the board)")
+            return "ok reacquired"
+        if cmd in ("ping", "status"):
+            return "ok port=%s released" % self.port
+        return "err released: the port is closed for a write on this host; reacquire first"
+
+    def _release(self):
+        if self.client is not None:
+            return "err busy: %s holds the data port; stop it first" % self.client
+        with self.port_lock:
+            self.serial.close()
+            self.released = True
+        self.log("control: port released for a write on this host")
+        return "ok released"
+
+    def _write_line(self, text):
+        data = (text + "\n").encode("ascii", "replace")
+        with self.port_lock:
+            _serial_io(lambda: self.serial.write(data))
+        return "ok wrote %d" % len(data)
+
     def control_loop(self):
         srv = _listener(self.host, self.control_port)
         while True:
             sock, _ = srv.accept()
             try:
                 sock.settimeout(5)
-                cmd = sock.recv(CONTROL_RECV_BYTES).decode("ascii", "replace").strip()
+                cmd = _read_command(sock)
                 sock.sendall((self._control_reply(cmd) + "\n").encode())
             except Exception as exc:
                 self.log("control error: %r" % (exc,))
@@ -173,8 +212,10 @@ class Bridge:
             sock, addr = srv.accept()
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             peer = "%s:%d" % addr
-            if self.client is not None:
-                self.log("refused %s — %s already connected" % (peer, self.client))
+            if self.client is not None or self.released:
+                self.log("refused %s — %s" % (
+                    peer, "the port is released" if self.released
+                    else "%s already connected" % self.client))
                 sock.close()
                 continue
             self.serve_client(sock, peer)
@@ -183,7 +224,7 @@ class Bridge:
         self.client = peer
         self.log("client %s connected" % peer)
         try:
-            Session(self.serial, sock, self.log).run()
+            Session(self.serial, sock, self.log, self.port_lock).run()
         except SerialFault as exc:
             self.serial_fault = str(exc)
             self.log("session %s: serial port failed: %s" % (peer, exc))
@@ -200,6 +241,20 @@ class Bridge:
             _serial_io(lambda: setattr(self.serial, "baudrate", self.baud))
         except SerialFault as exc:
             self.serial_fault = self.serial_fault or str(exc)
+
+
+def _read_command(sock):
+    data = sock.recv(CONTROL_RECV_BYTES)
+    sock.settimeout(CONTROL_TAIL_TIMEOUT_S)
+    while data and b"\n" not in data and len(data) < CONTROL_MAX_BYTES:
+        try:
+            chunk = sock.recv(CONTROL_RECV_BYTES)
+        except socket.timeout:
+            break
+        if not chunk:
+            break
+        data += chunk
+    return data.split(b"\n", 1)[0].decode("ascii", "replace").strip()
 
 
 def _listener(host, port):

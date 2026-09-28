@@ -154,7 +154,7 @@ def test_the_priority_ladder_is_visible_on_the_wire(api, gear_sim):
         pytest.skip("the emulator heard no forward frames — nothing to report")
 
     wire = api.diagnostics().get("dali_wire", {})
-    print("observed settling bands (C6): %r" % bands)
+    print("observed settling bands (gear emulator): %r" % bands)
     print("intended priorities (DUT): %r" % wire.get("frames_sent_by_priority"))
     assert sum(bands.values()) > 0
 
