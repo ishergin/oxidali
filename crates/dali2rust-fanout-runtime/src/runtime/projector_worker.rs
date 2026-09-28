@@ -670,10 +670,11 @@ fn handle_scene_recalled(
 }
 
 fn scene_target_to_setpoint(target: &DaliSceneTargetState) -> LightSetpoint {
-    let level = target.level.unwrap_or(0);
     LightSetpoint {
-        power: target.power.unwrap_or(PowerState::for_level(level)),
-        level,
+        power: target
+            .power
+            .unwrap_or_else(|| target.level.map_or(PowerState::Unknown, PowerState::for_level)),
+        level: target.level,
         color: target.color,
     }
 }

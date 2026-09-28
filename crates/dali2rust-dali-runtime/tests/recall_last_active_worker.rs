@@ -228,7 +228,7 @@ fn a_group_recall_publishes_an_applied_fact_with_no_level() {
         dali2rust_contracts::msg::PowerState::On
     );
     assert_eq!(
-        applied.setpoint.level, 0,
+        applied.setpoint.level, None,
         "a level stated here would be one number for every member"
     );
     assert!(applied.setpoint.color.is_none());

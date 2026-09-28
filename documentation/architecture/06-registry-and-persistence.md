@@ -90,11 +90,12 @@ httpd stack in [07](07-memory-and-cores.md).
   the one the mode names. Commands and the sniffer observe what was requested; only a
   read observes what the gear holds, so a read is also how a record converges after a
   gear clamps to its limits or after foreign frames the sniffer cannot decode.
-- **On-ness is the power field alone; a level of 0 is a level.** A lamp switched on with
-  no level goes out as `GO TO LAST ACTIVE LEVEL`; the commit carries level 0 only because
-  a setpoint cannot say "absent". The registry keeps `last_active_level`, the level the
-  gear is known to be lit at, across the OFF that zeroes the level, and projects it on
-  that recall. It is a prediction: a read repairs it, a reboot empties it, and a gear
+- **On-ness is the power field alone; a level of 0 is a level.** A setpoint's level is
+  optional: `None` states nothing, and `0` is the level DAPC 0 sets. What reaches the wire
+  is `LightSetpoint::dapc_level()` — off is DAPC 0, a stated level goes as itself, and on
+  with no level or with 0 goes out as `GO TO LAST ACTIVE LEVEL` — and the commit records
+  the same level. The registry keeps `last_active_level`, the level the gear is known to be
+  lit at, across the OFF that zeroes the level, and projects it on that recall. It is a prediction: a read repairs it, a reboot empties it, and a gear
   never seen lit has none — then the level is honestly unknown. Surfaces reporting
   brightness omit it rather than publish 0.
 - **A setpoint states a colour only if `states_color()` says so.** Parsed setpoints

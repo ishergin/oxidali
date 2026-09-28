@@ -117,17 +117,13 @@ pub fn commands_for(entry: &DesiredEntry) -> Vec<PlannedCommand> {
 }
 
 fn absolute_setpoint(level: u8, color: Option<ColorValue>) -> LightSetpoint {
-    LightSetpoint {
-        power: PowerState::for_level(level),
-        level,
-        color,
-    }
+    LightSetpoint::from_level(level, color)
 }
 
 fn color_only_setpoint(color: ColorValue) -> LightSetpoint {
     LightSetpoint {
         power: PowerState::Unknown,
-        level: 0,
+        level: None,
         color: Some(color),
     }
 }
@@ -248,7 +244,7 @@ mod tests {
         let PlannedCommand::TargetState { setpoint, .. } = &commands[0] else {
             panic!("expected a target-state command");
         };
-        assert_eq!(setpoint.level, 180);
+        assert_eq!(setpoint.level, Some(180));
         assert_eq!(setpoint.power, PowerState::On);
         let color = setpoint.color.as_ref().expect("colour rides along");
         assert_eq!(color.color_temperature_kelvin, 3000);
@@ -289,7 +285,7 @@ mod tests {
             panic!("expected a target-state command");
         };
         assert_eq!(setpoint.power, PowerState::Unknown, "not an on or off order");
-        assert_eq!(setpoint.level, 0, "no DAPC for a colour-only point");
+        assert_eq!(setpoint.level, None, "no DAPC for a colour-only point");
     }
 
     #[test]

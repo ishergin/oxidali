@@ -20,7 +20,7 @@ fn registry_runtime_vl_only_rejected_when_unbound() {
         { let __corr = corr; dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, __corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, dali2rust_contracts::msg::RuntimeRegistryUpdateEntry::sniffer_level(12, 180, 12_345))) },
     );
 
-    assert_eq!(stack.store.virtual_lamp_snapshot(0, 12).runtime_level, 0);
+    assert_eq!(stack.store.virtual_lamp_snapshot(0, 12).runtime_level, None);
     assert_exec_failed_msg(&recv_confirm_for(&stack.conf_rx, corr), "vl_unbound");
     assert!(
         stack.ev_rx.recv_timeout(std::time::Duration::from_millis(200)).is_err(),
@@ -68,7 +68,7 @@ fn runtime_state_changed_event_reflects_post_commit_physical_when_vl_bound() {
     let body = recv_runtime_state_changed(&stack.ev_rx, corr);
     assert_eq!(body.virtual_lamp_id, Some(12u8));
     assert_eq!(body.short_address, Some(7));
-    assert_eq!(body.state_setpoint.level, 55);
+    assert_eq!(body.state_setpoint.level, Some(55));
     assert_eq!(body.state_observation.last_seen_ms, Some(99_001));
 }
 
@@ -98,7 +98,7 @@ fn a_short_only_commit_names_the_lamp_bound_to_that_short_address() {
     let corr = 21u64;
     let setpoint = dali2rust_contracts::msg::LightSetpoint {
         power: dali2rust_contracts::msg::PowerState::On,
-        level: 77,
+        level: Some(77),
         color: None,
     };
     publish_cmd(
@@ -124,7 +124,7 @@ fn a_short_only_commit_names_the_lamp_bound_to_that_short_address() {
         Some(12),
         "the commit landed on lamp 12; an event without it hides that from every consumer"
     );
-    assert_eq!(event.state_setpoint.level, 77);
+    assert_eq!(event.state_setpoint.level, Some(77));
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn a_short_only_commit_on_an_unbound_device_names_no_lamp() {
     let corr = 22u64;
     let setpoint = dali2rust_contracts::msg::LightSetpoint {
         power: dali2rust_contracts::msg::PowerState::On,
-        level: 41,
+        level: Some(41),
         color: None,
     };
     publish_cmd(

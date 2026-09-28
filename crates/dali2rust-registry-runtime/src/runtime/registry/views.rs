@@ -46,11 +46,7 @@ pub(crate) fn physical_device_state_view(
             .map(observation_source_from_runtime),
         last_seen_ms: rec.runtime.last_seen_ms,
         last_dapc_source: last_dapc_source_view(rec.runtime.last_dapc_source),
-        error: rec
-            .runtime
-            .error
-            .as_ref()
-            .map(|e| RuntimeErrorView { code: e.code }),
+        error: rec.runtime.error.map(|code| RuntimeErrorView { code }),
     }
 }
 

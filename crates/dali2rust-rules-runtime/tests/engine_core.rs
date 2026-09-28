@@ -35,9 +35,9 @@ fn with_lamp(mut w: WorldSnapshot, lamp: dali2rust_rules_model::LampRef, is_on: 
         adapter_id: lamp.adapter_id,
         id: lamp.id,
         is_on,
-        level,
+        level: Some(level),
         cct_kelvin: None,
-        last_level: level,
+        last_level: Some(level),
     });
     w
 }
@@ -88,9 +88,9 @@ fn lamp_on_edge(lamp: dali2rust_rules_model::LampRef, on: bool) -> EngineInput<'
         adapter_id: lamp.adapter_id,
         lamp_id: lamp.id,
         is_on: on,
-        level: if on { 200 } else { 0 },
+        level: if on { Some(200) } else { Some(0) },
         was_on: !on,
-        previous_level: if on { 0 } else { 200 },
+        previous_level: if on { Some(0) } else { Some(200) },
     }
 }
 

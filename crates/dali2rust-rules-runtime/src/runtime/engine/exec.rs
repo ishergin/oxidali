@@ -458,7 +458,7 @@ fn level_verb(
             LightTarget::Lamp(l) => {
                 let lamp = env.world.lamp(l.adapter_id, l.id).ok_or(Unevaluable)?;
                 Ok(LightVerb::Level {
-                    level: clamp_level(i64::from(lamp.level) + i64::from(*delta)),
+                    level: clamp_level(i64::from(lamp.level.ok_or(Unevaluable)?) + i64::from(*delta)),
                 })
             }
             _ => Ok(LightVerb::LevelRelative { delta: *delta }),

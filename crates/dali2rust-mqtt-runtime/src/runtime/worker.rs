@@ -1332,11 +1332,7 @@ fn publish_lamp(
     if !session.lamp_config_hashes.contains_key(&(adapter_id, lamp_id)) {
         return;
     }
-    let absent = body
-        .state_observation
-        .error
-        .as_ref()
-        .is_some_and(dali2rust_contracts::msg::CompactErrorPayload::is_device_absent);
+    let absent = body.state_observation.reports_absence();
     publish_lamp_availability_if_changed(
         client, session, ports, topics, settings, adapter_id, lamp_id, absent,
     );

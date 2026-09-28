@@ -35,17 +35,13 @@ fn observed_group_frame(group_id: u8, setpoint: Option<LightSetpoint>, dapc: boo
 }
 
 fn on_setpoint(level: u8) -> LightSetpoint {
-    LightSetpoint {
-        power: PowerState::On,
-        level,
-        color: None,
-    }
+    LightSetpoint::from_level(level, None)
 }
 
 fn off_setpoint() -> LightSetpoint {
     LightSetpoint {
         power: PowerState::Off,
-        level: 0,
+        level: Some(0),
         color: None,
     }
 }
@@ -188,7 +184,7 @@ fn scene_recalls_and_colour_only_commands_never_arm_a_tile() {
                 group_id: Some(GROUP),
                 setpoint: LightSetpoint {
                     power: PowerState::Unknown,
-                    level: 0,
+                    level: None,
                     color: Some(ColorValue {
                         mode: ColorMode::Cct,
                         color_temperature_kelvin: 3000,

@@ -80,7 +80,7 @@ fn test_publish_read_attributes_evidence_publishes_runtime_update_and_event() {
 
     let setpoint = LightSetpoint {
         power: PowerState::On,
-        level: 254,
+        level: Some(254),
         ..Default::default()
     };
 

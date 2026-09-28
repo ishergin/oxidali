@@ -183,8 +183,7 @@ impl RegistryStore {
         let runtime_level = vl
             .and_then(|r| r.binding_short)
             .and_then(|sa| g.physical_devices.get(&(adapter_id, sa)))
-            .map(|pr| pr.runtime_level.unwrap_or(0))
-            .unwrap_or(0);
+            .and_then(|pr| pr.runtime_level);
         drop(g);
         VirtualLampSnapshot {
             name,

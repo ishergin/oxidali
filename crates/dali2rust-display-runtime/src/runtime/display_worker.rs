@@ -359,12 +359,21 @@ fn observed_label(setpoint: &dali2rust_contracts::msg::LightSetpoint) -> EventLa
     if setpoint.power == PowerState::Off {
         return EventLabel::from_fmt(format_args!("OFF"));
     }
-    match setpoint.color.as_ref() {
-        Some(c) if c.color_temperature_kelvin > 0 => EventLabel::from_fmt(format_args!(
-            "{} {}K",
-            setpoint.level, c.color_temperature_kelvin
-        )),
-        _ => EventLabel::from_fmt(format_args!("ON {}", setpoint.level)),
+    match (setpoint.color.as_ref(), setpoint.level) {
+        (Some(c), Some(level)) if c.color_temperature_kelvin > 0 => {
+            EventLabel::from_fmt(format_args!("{} {}K", level, c.color_temperature_kelvin))
+        }
+        (Some(c), None) if c.color_temperature_kelvin > 0 => {
+            EventLabel::from_fmt(format_args!("{}K", c.color_temperature_kelvin))
+        }
+        (_, level) => on_label(level),
+    }
+}
+
+fn on_label(level: Option<u8>) -> EventLabel {
+    match level {
+        Some(level) => EventLabel::from_fmt(format_args!("ON {level}")),
+        None => EventLabel::from_fmt(format_args!("ON")),
     }
 }
 
@@ -411,7 +420,7 @@ fn setpoint_label(body: &DaliTargetStateAppliedEvent) -> EventLabel {
         return EventLabel::from_fmt(format_args!("OFF"));
     }
     if body.dapc_applied {
-        return EventLabel::from_fmt(format_args!("ON {}", body.setpoint.level));
+        return on_label(body.setpoint.level);
     }
     match body.setpoint.color.as_ref() {
         Some(c) if c.color_temperature_kelvin > 0 => {

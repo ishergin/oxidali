@@ -375,7 +375,7 @@ fn runtime_state_contract(
     let color = setpoint.color.as_ref();
     PhysicalDeviceStateDto {
         power: setpoint.power.rest_name().to_string(),
-        level: Some(setpoint.level),
+        level: setpoint.level,
         color_mode: color.map_or("unknown", |c| c.mode.rest_name()).to_string(),
         color_temperature_kelvin: color.and_then(ColorValue::cct),
         xy: color
@@ -392,8 +392,8 @@ fn runtime_state_contract(
         value_source: obs.value_source.map(|s| s.rest_name().to_string()),
         last_seen_ms: obs.last_seen_ms,
         last_dapc_source: obs.last_dapc_source.rest_name().map(str::to_string),
-        error: obs.error.as_ref().map(|e| RuntimeErrorDto {
-            code: product_error_code_snake(e.code),
+        error: obs.error.map(|code| RuntimeErrorDto {
+            code: product_error_code_snake(code),
         }),
     }
 }
@@ -539,7 +539,7 @@ mod tests {
     fn cct_setpoint() -> LightSetpoint {
         LightSetpoint {
             power: PowerState::On,
-            level: 180,
+            level: Some(180),
             color: Some(ColorValue {
                 mode: ColorMode::Cct,
                 color_temperature_kelvin: 3000,
@@ -861,7 +861,7 @@ mod tests {
     #[test]
     fn a_runtime_error_is_the_product_code_not_a_discriminant() {
         let mut observation = observation();
-        observation.error = Some(CompactErrorPayload::new(ErrorCode::VlUnbound, "unbound"));
+        observation.error = Some(ErrorCode::VlUnbound);
         let ev = envelope(RuntimeStateChangedEvent {
             adapter_id: 0,
             virtual_lamp_id: Some(12),
@@ -884,14 +884,14 @@ mod tests {
             short_address: None,
             state_setpoint: LightSetpoint {
                 power: PowerState::On,
-                level: 100,
+                level: Some(100),
                 color: Some(ColorValue::default()),
             },
             state_observation: RuntimeObservation::default(),
             commit_source: RuntimeSource::Api,
             commit_dimensions: LightSetpoint {
                 power: PowerState::On,
-                level: 100,
+                level: Some(100),
                 color: Some(ColorValue::default()),
             }
             .dimensions(),

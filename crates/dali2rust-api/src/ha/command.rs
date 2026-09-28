@@ -100,7 +100,7 @@ mod tests {
     fn on_with_brightness_becomes_a_power_and_level_setpoint() {
         let sp = parse(r#"{"state":"ON","brightness":180}"#);
         assert_eq!(sp.power, PowerState::On);
-        assert_eq!(sp.level, 180, "brightness_scale 254 makes this the identity");
+        assert_eq!(sp.level, Some(180), "brightness_scale 254 makes this the identity");
     }
 
     #[test]
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn an_out_of_scale_brightness_is_clamped_rather_than_refused() {
-        assert_eq!(parse(r#"{"state":"ON","brightness":255}"#).level, 254);
+        assert_eq!(parse(r#"{"state":"ON","brightness":255}"#).level, Some(254));
     }
 
     #[test]

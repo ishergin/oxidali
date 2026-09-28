@@ -73,7 +73,7 @@ fn runtime_level_stays_volatile_across_fs_reload() {
     let _ = reloaded.hydrate_from_store(&slices, 1);
     let snap = reloaded.virtual_lamp_snapshot(0, 12);
     assert_eq!(snap.name, "Kitchen");
-    assert_eq!(snap.runtime_level, 0);
+    assert_eq!(snap.runtime_level, None);
 }
 
 #[test]

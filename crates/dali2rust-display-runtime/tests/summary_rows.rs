@@ -133,7 +133,7 @@ fn the_poller_row_reads_the_settings_without_any_event() {
 fn an_applied_change_lands_on_the_live_row_with_its_source() {
     let (_host, publisher, view, _w) =
         spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
-    publish(&publisher, applied(RuntimeSource::Mqtt, 180, None));
+    publish(&publisher, applied(RuntimeSource::Mqtt, Some(180), None));
     wait_row(&view, 6, "A03 ON 180 HA");
 }
 
@@ -141,7 +141,7 @@ fn an_applied_change_lands_on_the_live_row_with_its_source() {
 fn an_hcl_apply_fills_the_hcl_row() {
     let (_host, publisher, view, _w) =
         spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
-    publish(&publisher, applied(RuntimeSource::Hcl, 200, Some(3200)));
+    publish(&publisher, applied(RuntimeSource::Hcl, Some(200), Some(3200)));
     wait_row(&view, 3, "3200K");
 }
 
@@ -172,17 +172,27 @@ fn a_discovery_walk_takes_the_live_row_with_a_count() {
 fn switching_off_says_off_rather_than_a_level() {
     let (_host, publisher, view, _w) =
         spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
-    let mut ev = applied(RuntimeSource::Api, 0, None);
+    let mut ev = applied(RuntimeSource::Api, None, None);
     ev.setpoint.power = PowerState::Off;
     publish(&publisher, ev);
     wait_row(&view, 6, "A03 OFF");
 }
 
 #[test]
+fn switching_on_without_a_level_says_on_rather_than_a_zero() {
+    let (_host, publisher, view, _w) =
+        spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
+    publish(&publisher, applied(RuntimeSource::Api, None, None));
+    wait_row(&view, 6, "A03 ON");
+    let row = view.lines()[6].text;
+    assert!(!row.contains("ON 0"), "an unknown level is not a zero: {row}");
+}
+
+#[test]
 fn a_group_apply_is_named_as_a_group() {
     let (_host, publisher, view, _w) =
         spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
-    let mut ev = applied(RuntimeSource::Api, 200, None);
+    let mut ev = applied(RuntimeSource::Api, Some(200), None);
     ev.scope = DaliTargetScope::Group;
     ev.short_address = Some(0);
     ev.group_id = Some(2);
@@ -238,7 +248,7 @@ fn observed_group_level(level: u8) -> DaliObservedFrameEvent {
         scene_id: None,
         setpoint: Some(LightSetpoint {
             power: PowerState::On,
-            level,
+            level: Some(level),
             color: None,
         }),
         dapc_observed: true,
@@ -251,7 +261,7 @@ fn observed_group_level(level: u8) -> DaliObservedFrameEvent {
     }
 }
 
-fn applied(source: RuntimeSource, level: u8, kelvin: Option<u16>) -> DaliTargetStateAppliedEvent {
+fn applied(source: RuntimeSource, level: Option<u8>, kelvin: Option<u16>) -> DaliTargetStateAppliedEvent {
     DaliTargetStateAppliedEvent {
         registry_adapter_id: 0,
         scope: DaliTargetScope::Short,
@@ -284,7 +294,7 @@ fn applied(source: RuntimeSource, level: u8, kelvin: Option<u16>) -> DaliTargetS
 fn an_event_for_another_adapter_does_not_reach_the_rows() {
     let (_host, publisher, view, _w) =
         spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
-    let mut foreign = applied(RuntimeSource::Api, 180, None);
+    let mut foreign = applied(RuntimeSource::Api, Some(180), None);
     foreign.registry_adapter_id = 1;
     publish(&publisher, foreign);
     publish(&publisher, IpAddressAssignedEvent::from_ip_text("10.0.0.9"));

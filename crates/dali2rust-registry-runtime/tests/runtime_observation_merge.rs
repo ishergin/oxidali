@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use dali2rust_bus::BusId;
 use dali2rust_contracts::msg::{
-    CompactErrorPayload, DeviceType, ErrorCode, LightSetpoint, PowerState,
+    DeviceType, ErrorCode, LightSetpoint,
     RegistryRuntimeUpdateCommand, RuntimeObservation, RuntimeRegistryUpdateEntry, RuntimeSource,
     StatusFlags,
 };
@@ -45,11 +45,7 @@ fn all_clear_flags() -> StatusFlags {
 }
 
 fn level_setpoint(level: u8) -> LightSetpoint {
-    LightSetpoint {
-        power: PowerState::On,
-        level,
-        color: None,
-    }
+    LightSetpoint::from_level(level, None)
 }
 
 fn runtime_entry(
@@ -218,10 +214,7 @@ fn an_inbound_observation_error_is_ignored() {
     seed_physical_via_discovery(&stack.publisher, 2, SHORT, DeviceType::Dt6Led, &stack.store);
 
     let mut observation = RuntimeObservation::api_timestamped(1_000);
-    observation.error = Some(CompactErrorPayload::new(
-        ErrorCode::ExecutionFailed,
-        "execution_failed",
-    ));
+    observation.error = Some(ErrorCode::ExecutionFailed);
 
     publish_runtime(&stack, 204, 90, RuntimeSource::Api, observation);
     assert_ok(&recv_confirm_for(&stack.conf_rx, 204));

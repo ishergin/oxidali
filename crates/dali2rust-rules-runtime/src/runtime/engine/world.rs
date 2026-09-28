@@ -19,9 +19,9 @@ pub struct LampState {
     pub adapter_id: u8,
     pub id: u16,
     pub is_on: bool,
-    pub level: u8,
+    pub level: Option<u8>,
     pub cct_kelvin: Option<u16>,
-    pub last_level: u8,
+    pub last_level: Option<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

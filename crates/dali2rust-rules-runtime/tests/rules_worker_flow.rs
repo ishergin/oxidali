@@ -424,7 +424,7 @@ fn a_rule_publishes_its_effects_in_source_order_and_merges_per_target() {
     else {
         panic!("first command must be the merged setpoint");
     };
-    assert_eq!(ts.setpoint.level, 50, "the level verb must survive the merge");
+    assert_eq!(ts.setpoint.level, Some(50), "the level verb must survive the merge");
     assert!(
         ts.setpoint.color.is_some(),
         "the colour verb must survive it too — two verbs on one lamp are ONE \
@@ -440,9 +440,9 @@ fn on_without_a_level_asks_the_gear_for_its_last_active_level() {
             adapter_id: 0,
             id: 6,
             is_on: false,
-            level: 0,
+            level: Some(0),
             cct_kelvin: None,
-            last_level: 1,
+            last_level: Some(1),
         }],
     );
     publish_document(
@@ -467,8 +467,8 @@ fn on_without_a_level_asks_the_gear_for_its_last_active_level() {
     let (power, level) = recv_setpoint(&h).expect("the rule must publish a setpoint");
     assert_eq!(power, dali2rust_contracts::msg::PowerState::On);
     assert_eq!(
-        level, 0,
-        "no level means GO TO LAST ACTIVE LEVEL; a synthesized {} would be a \
+        level, None,
+        "no level means GO TO LAST ACTIVE LEVEL; a synthesized {:?} would be a \
          DAPC the operator never asked for",
         level
     );
@@ -494,7 +494,7 @@ where
 
 const COMMAND_WAIT: Duration = Duration::from_secs(2);
 
-fn recv_setpoint(h: &Harness) -> Option<(dali2rust_contracts::msg::PowerState, u8)> {
+fn recv_setpoint(h: &Harness) -> Option<(dali2rust_contracts::msg::PowerState, Option<u8>)> {
     dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |payload| {
         matches!(
             payload,
@@ -541,7 +541,7 @@ fn a_takeover_fires_the_controller_role_triggers() {
 
     let (power, level) = recv_setpoint(&h).expect("the takeover must fire the rule");
     assert_eq!(power, dali2rust_contracts::msg::PowerState::On);
-    assert_eq!(level, 77);
+    assert_eq!(level, Some(77));
 }
 
 #[test]
@@ -608,7 +608,7 @@ fn a_group_edge_arrives_with_the_event_that_moved_it() {
     publish_bus_event(&h, 83, runtime_state_changed(2));
 
     let (_, level) = recv_setpoint(&h).expect("the group edge must fire the rule");
-    assert_eq!(level, 90);
+    assert_eq!(level, Some(90));
     assert!(
         started.elapsed() < Duration::from_millis(500),
         "the edge came from the event, not from the next tick: {:?}",
@@ -619,7 +619,7 @@ fn a_group_edge_arrives_with_the_event_that_moved_it() {
 fn runtime_state_changed(lamp_id: u8) -> dali2rust_contracts::msg::RuntimeStateChangedEvent {
     let state_setpoint = dali2rust_contracts::msg::LightSetpoint {
         power: dali2rust_contracts::msg::PowerState::On,
-        level: 200,
+        level: Some(200),
         color: None,
     };
     dali2rust_contracts::msg::RuntimeStateChangedEvent {
@@ -657,7 +657,7 @@ fn a_failed_activation_fires_the_rule_that_watches_it() {
     );
 
     let (_, level) = recv_setpoint(&h).expect("the failure must fire the watching rule");
-    assert_eq!(level, 55);
+    assert_eq!(level, Some(55));
 }
 
 #[test]
@@ -752,7 +752,7 @@ fn an_override_edge_reaches_the_rule_that_watches_it() {
     overridden.store(true, std::sync::atomic::Ordering::Relaxed);
 
     let (_, level) = recv_setpoint(&h).expect("the override edge must fire the rule");
-    assert_eq!(level, 44);
+    assert_eq!(level, Some(44));
 }
 
 #[test]
@@ -776,7 +776,7 @@ fn a_part_333_flag_moving_fires_the_rule_that_watches_the_device() {
 
     publish_bus_event(&h, 133, instance_configured(true));
     let (_, level) = recv_setpoint(&h).expect("the flag moving must fire the rule");
-    assert_eq!(level, 33);
+    assert_eq!(level, Some(33));
 }
 
 fn instance_configured(manual: bool) -> dali2rust_contracts::msg::Dali103InstanceConfiguredEvent {
@@ -936,9 +936,9 @@ fn run_landing(kind: &str, snippet: &str) -> (Vec<String>, Arc<RulesWorkerCounte
         adapter_id: 0,
         id: 0,
         is_on: true,
-        level: 120,
+        level: Some(120),
         cct_kelvin: Some(3000),
-        last_level: 120,
+        last_level: Some(120),
     }];
     let h = harness_with_lamps(
         Arc::new(dali2rust_test_support::fs::temp_slice_store(&format!(
@@ -1057,9 +1057,9 @@ fn landing_setpoint(kind: &str, snippet: &str) -> dali2rust_contracts::msg::Ligh
         adapter_id: 0,
         id: 0,
         is_on: true,
-        level: 120,
+        level: Some(120),
         cct_kelvin: Some(3000),
-        last_level: 120,
+        last_level: Some(120),
     }];
     let h = harness_with_lamps(
         Arc::new(dali2rust_test_support::fs::temp_slice_store(&format!(
@@ -1097,13 +1097,13 @@ fn every_light_argument_reaches_the_setpoint() {
     use dali2rust_contracts::msg::{ColorMode, PowerState};
 
     let sp = landing_setpoint("level-absolute", "lamp(0).on(level=200)");
-    assert_eq!((sp.power, sp.level), (PowerState::On, 200));
+    assert_eq!((sp.power, sp.level), (PowerState::On, Some(200)));
 
     let sp = landing_setpoint("level-relative", "lamp(0).level(+10)");
-    assert_eq!(sp.level, 130, "a relative step must apply to the stored level");
+    assert_eq!(sp.level, Some(130), "a relative step must apply to the stored level");
 
     let sp = landing_setpoint("level-saturating", "lamp(0).level(+200)");
-    assert_eq!(sp.level, 254, "a relative step saturates, it does not wrap");
+    assert_eq!(sp.level, Some(254), "a relative step saturates, it does not wrap");
 
     let sp = landing_setpoint("cct-absolute", "lamp(0).cct(2700)");
     let color = sp.color.expect("a cct verb states a colour");

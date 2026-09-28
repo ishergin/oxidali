@@ -249,7 +249,7 @@ impl Harness {
             value_source,
             dali2rust_contracts::msg::LightSetpoint {
                 power: PowerState::On,
-                level: 254,
+                level: Some(254),
                 color: None,
             },
         );
@@ -417,7 +417,7 @@ fn a_stepped_point_is_published_once_and_then_held() {
     };
     assert_eq!(body.scope, DaliTargetScope::Group);
     assert_eq!(body.group_id, 3);
-    assert_eq!(body.setpoint.level, 80);
+    assert_eq!(body.setpoint.level, Some(80));
     assert_eq!(body.setpoint.power, PowerState::On);
     assert_eq!(
         body.setpoint
@@ -664,7 +664,7 @@ fn last_active_sends_the_colour_and_the_recall_to_the_same_target() {
         panic!("colour first, got {:?}", commands[0]);
     };
     assert_eq!(color.setpoint.power, PowerState::Unknown, "brightness untouched");
-    assert_eq!(color.setpoint.level, 0);
+    assert_eq!(color.setpoint.level, None);
 
     let BusCommandPayload::DaliRecallLastActiveLevelCommand(recall) = &commands[1] else {
         panic!("recall second, got {:?}", commands[1]);
@@ -731,7 +731,7 @@ fn two_schedules_claiming_one_group_send_a_single_command() {
     let BusCommandPayload::DaliSetTargetStateCommand(body) = &commands[0] else {
         panic!("expected a target-state command");
     };
-    assert_eq!(body.setpoint.level, 200, "the later schedule id wins");
+    assert_eq!(body.setpoint.level, Some(200), "the later schedule id wins");
 }
 
 fn group_three_registry() -> StubRegistry {
@@ -800,7 +800,7 @@ fn a_foreign_colour_command_stands_down_a_colour_only_schedule() {
         RuntimeSource::Api,
         LightSetpoint {
             power: PowerState::Unknown,
-            level: 0,
+            level: None,
             color: Some(ColorValue {
                 mode: ColorMode::Cct,
                 color_temperature_kelvin: 3000,

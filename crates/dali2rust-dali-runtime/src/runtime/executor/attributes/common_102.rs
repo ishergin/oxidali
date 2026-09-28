@@ -19,21 +19,9 @@ pub(super) fn read_runtime_setpoint(
     let level_unknown = level == ACTUAL_LEVEL_MASK;
     let failure_suspected = flags.lamp_failure || flags.gear_failure || level_unknown;
     let setpoint = if level_unknown {
-        LightSetpoint {
-            power: PowerState::Unknown,
-            level: 0,
-            color: None,
-        }
+        LightSetpoint::default()
     } else {
-        LightSetpoint {
-            power: if level == 0 {
-                PowerState::Off
-            } else {
-                PowerState::On
-            },
-            level,
-            color: None,
-        }
+        LightSetpoint::from_level(level, None)
     };
     let observation = RuntimeObservation {
         status_flags: Some(flags),

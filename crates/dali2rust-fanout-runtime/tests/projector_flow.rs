@@ -169,7 +169,7 @@ fn xy_color(x: u16, y: u16) -> ColorValue {
 fn color_setpoint(color: ColorValue) -> LightSetpoint {
     LightSetpoint {
         power: PowerState::On,
-        level: 0,
+        level: None,
         color: Some(color),
     }
 }
@@ -248,7 +248,7 @@ fn assert_no_more_updates(tap: &BusSubscriberRx) {
 fn setpoint(level: u8) -> LightSetpoint {
     LightSetpoint {
         power: PowerState::On,
-        level,
+        level: Some(level),
         color: None,
     }
 }
@@ -317,7 +317,7 @@ fn applied_virtual_lamp_scope_projects_dual_entry_with_correlation_fan001() {
     assert_eq!(cmd.update.short_address, Some(17));
     assert_eq!(cmd.update.source, RuntimeSource::Api);
     assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Unknown));
-    assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(180));
+    assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(Some(180)));
     assert_no_more_updates(tap);
 }
 
@@ -327,7 +327,7 @@ fn applied_color_only_keeps_last_dapc_source_fan015() {
     let (publisher, tap, _) = (h.publisher.clone(), &h.tap, &h.counters);
     let sp = LightSetpoint {
         power: PowerState::Unknown,
-        level: 0,
+        level: None,
         color: Some(ColorValue {
             mode: ColorMode::Cct,
             color_temperature_kelvin: 4000,
@@ -378,7 +378,7 @@ fn applied_group_scope_expands_applied_membership_only_fan002() {
         let (corr, cmd) = recv_runtime_update(tap);
         assert_eq!(corr, CORRELATION_NONE, "fan-out entries never confirm");
         assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Group));
-        assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(200));
+        assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(Some(200)));
         lamps.push(cmd.update.virtual_lamp_id.expect("vl target"));
     }
     lamps.sort_unstable();
@@ -467,7 +467,7 @@ fn applied_group_level_only_ignores_capability_fan016() {
     let mut lamps = Vec::new();
     for _ in 0..2 {
         let (_, cmd) = recv_runtime_update(tap);
-        assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(200));
+        assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(Some(200)));
         assert!(cmd
             .update
             .setpoint
@@ -915,7 +915,7 @@ fn scene_recall_expands_applied_rows_only_fan050_fan051() {
         assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Scene));
         projected.push((
             cmd.update.virtual_lamp_id.expect("vl target"),
-            cmd.update.setpoint.as_ref().map(|sp| sp.level),
+            cmd.update.setpoint.as_ref().and_then(|sp| sp.level),
         ));
     }
     projected.sort_unstable();
@@ -1019,11 +1019,11 @@ fn scene_recall_filters_incapable_member_colour_fan053() {
         let sp = cmd.update.setpoint.expect("setpoint");
         match vl {
             1 => {
-                assert_eq!(sp.level, 100);
+                assert_eq!(sp.level, Some(100));
                 assert_eq!(sp.color.map(|c| c.mode), Some(ColorMode::Cct));
             }
             2 => {
-                assert_eq!(sp.level, 120, "incapable member still gets its row's level");
+                assert_eq!(sp.level, Some(120), "incapable member still gets its row's level");
                 assert!(
                     sp.color.is_none(),
                     "rgb-only member must not receive the cct colour"
@@ -1091,7 +1091,7 @@ fn group_scoped_scene_recall_projects_members_only_fan055() {
     let (corr, cmd) = recv_runtime_update(tap);
     assert_eq!(corr, CORRELATION_NONE);
     assert_eq!(cmd.update.virtual_lamp_id, Some(1));
-    assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(100));
+    assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(Some(100)));
     assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Scene));
     assert_no_more_updates(tap);
     assert_eq!(counters.scene_expansions.load(Ordering::Relaxed), 1);
@@ -1259,7 +1259,7 @@ fn observed_burst_for_same_target_coalesces_to_final_value() {
     let (_, cmd) = recv_runtime_update(&cmd_tap);
     assert_eq!(
         cmd.update.setpoint.as_ref().map(|sp| sp.level),
-        Some(30),
+        Some(Some(30)),
         "only the final value of the burst projects"
     );
     assert_no_more_updates(&cmd_tap);
@@ -1518,12 +1518,12 @@ fn a_device_absent_read_projects_a_reachability_fault_fan070() {
     assert_eq!(entry.short_address, Some(17));
     let obs = entry.observation.as_ref().expect("an observation");
     assert_eq!(
-        obs.error.as_ref().map(|e| e.code),
+        obs.error,
         Some(dali2rust_contracts::msg::ErrorCode::DeviceAbsent),
     );
     let sp = entry.setpoint.as_ref().expect("a setpoint");
     assert_eq!(sp.power, PowerState::Unknown);
-    assert_eq!(sp.level, 0);
+    assert_eq!(sp.level, None);
     assert!(sp.color.is_none());
     assert_eq!(obs.last_seen_ms, None);
 }

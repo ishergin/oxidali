@@ -343,12 +343,7 @@ fn count_for_display(g: &Inner, adapter_id: u8) -> DisplayCounts {
                 continue;
             }
             counts.gear_known = counts.gear_known.saturating_add(1);
-            if rec
-                .runtime
-                .error
-                .as_ref()
-                .is_some_and(dali2rust_contracts::msg::CompactErrorPayload::is_device_absent)
-            {
+            if rec.runtime.reports_absence() {
                 counts.gear_unreachable = counts.gear_unreachable.saturating_add(1);
             }
             if rec

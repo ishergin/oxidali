@@ -49,7 +49,7 @@ pub fn projected_event_frame(correlation_id: u64) -> BusFrame {
     const SETPOINT: dali2rust_contracts::msg::LightSetpoint =
         dali2rust_contracts::msg::LightSetpoint {
             power: dali2rust_contracts::msg::PowerState::On,
-            level: 128,
+            level: Some(128),
             color: None,
         };
     BusFrame::event(event_envelope(

@@ -422,7 +422,7 @@ fn fail_target_state_vl_unbound(
 }
 
 fn setpoint_dapc_applied(sp: &LightSetpoint) -> bool {
-    sp.power != dali2rust_contracts::msg::PowerState::Off && sp.level > 0
+    sp.power != dali2rust_contracts::msg::PowerState::Off && sp.level.is_some_and(|level| level > 0)
 }
 
 fn publish_target_state_applied_event(

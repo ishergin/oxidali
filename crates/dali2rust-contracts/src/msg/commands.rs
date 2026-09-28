@@ -1208,7 +1208,7 @@ impl RuntimeRegistryUpdateEntry {
             short_address: None,
             setpoint: Some(LightSetpoint {
                 power: super::kinds::PowerState::On,
-                level,
+                level: Some(level),
                 color: Some(super::state::ColorValue::default()),
             }),
             observation: Some(RuntimeObservation::sniffer_timestamped(last_seen_ms)),

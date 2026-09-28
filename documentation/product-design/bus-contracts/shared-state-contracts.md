@@ -32,10 +32,12 @@ WebSocket и мост Home Assistant: из чего они состоят на �
 
 **Уровень** — сырой arc power `0..254`, одно представление яркости на всех
 поверхностях ([`state-contracts.md`](../rest-api/contracts/state-contracts.md)
-§`LightSetpoint`).
+§`LightSetpoint`). На шине он необязателен: `None` — уровень не сказан или не известен,
+`0` — уровень.
 
-**`LightSetpoint`** — питание, уровень и необязательный цвет. Что значит отсутствующее
-поле на входе реестра, почему цвет едет целиком и почему запись держит одно
+**`LightSetpoint`** — питание, необязательный уровень и необязательный цвет. Какой DAPC
+уходит на провод, решает одна функция — `dapc_level()`. Что значит отсутствующее поле на
+входе реестра, почему цвет едет целиком и почему запись держит одно
 представление цвета — [06](../../architecture/06-registry-and-persistence.md) §Merge
 rules.
 
@@ -54,7 +56,7 @@ rules.
 чтения и отсутствия ответа); конфигурацией не является и не персистится.
 
 **`RuntimeObservation`** — статус, отказы, источник значения, `last_seen_ms`, источник
-последнего DAPC и ошибка. На входе реестра (`RuntimeRegistryUpdateEntry.observation`)
+последнего DAPC и код ошибки без текста. На входе реестра (`RuntimeRegistryUpdateEntry.observation`)
 это частичный отчёт, на выходе (`RuntimeStateChangedEvent`) — снимок записи
 ([`events.md`](events.md)); правила слияния и единственная хранимая ошибка
 (`device_absent`) — [06](../../architecture/06-registry-and-persistence.md) §Merge

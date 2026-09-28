@@ -55,7 +55,7 @@ pub(crate) fn worst_color_value() -> ColorValue {
 pub(crate) fn worst_setpoint() -> LightSetpoint {
     LightSetpoint {
         power: crate::msg::PowerState::On,
-        level: u8::MAX,
+        level: Some(u8::MAX),
         color: Some(worst_color_value()),
     }
 }
@@ -83,7 +83,7 @@ pub(crate) fn worst_observation() -> RuntimeObservation {
         value_source: Some(RuntimeSource::Poller),
         last_seen_ms: Some(u64::MAX),
         last_dapc_source: crate::msg::LastDapcSource::Scene,
-        error: Some(worst_compact_error_payload()),
+        error: Some(ErrorCode::ReadContended),
     }
 }
 
