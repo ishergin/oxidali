@@ -200,6 +200,17 @@ fn switching_on_without_a_level_says_on_rather_than_a_zero() {
 }
 
 #[test]
+fn switching_on_with_an_empty_colour_slot_says_on() {
+    let (_host, publisher, view, _w) =
+        spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
+    let mut ev = applied(RuntimeSource::Api, None, None);
+    ev.setpoint.color = Some(ColorValue::default());
+    ev.dapc_applied = false;
+    publish(&publisher, ev);
+    wait_row(&view, 6, "A03 ON");
+}
+
+#[test]
 fn a_group_apply_is_named_as_a_group() {
     let (_host, publisher, view, _w) =
         spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());

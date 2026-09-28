@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use dali2rust_bus::BusId;
 use dali2rust_contracts::msg::{
-    DeviceType, ErrorCode, LightSetpoint,
+    DeviceType, ErrorCode, LightSetpoint, PowerState,
     RegistryRuntimeUpdateCommand, RuntimeObservation, RuntimeRegistryUpdateEntry, RuntimeSource,
     StatusFlags,
 };
@@ -64,13 +64,7 @@ fn runtime_entry(
     }
 }
 
-fn publish_runtime(
-    stack: &support::RegistryTestStack,
-    corr: u64,
-    level: u8,
-    source: RuntimeSource,
-    observation: RuntimeObservation,
-) {
+fn publish_entry(stack: &support::RegistryTestStack, corr: u64, entry: RuntimeRegistryUpdateEntry) {
     publish_cmd(
         &stack.publisher,
         dali2rust_contracts::bus::command_envelope(
@@ -78,9 +72,19 @@ fn publish_runtime(
             corr,
             BusId::default().0,
             Some(dali2rust_contracts::msg::Origin::Internal),
-            RegistryRuntimeUpdateCommand::internal(0, runtime_entry(level, source, observation)),
+            RegistryRuntimeUpdateCommand::internal(0, entry),
         ),
     );
+}
+
+fn publish_runtime(
+    stack: &support::RegistryTestStack,
+    corr: u64,
+    level: u8,
+    source: RuntimeSource,
+    observation: RuntimeObservation,
+) {
+    publish_entry(stack, corr, runtime_entry(level, source, observation));
 }
 
 fn status_observation(flags: StatusFlags) -> RuntimeObservation {
@@ -229,6 +233,36 @@ fn an_inbound_observation_error_is_ignored() {
     );
 }
 
+#[test]
+fn a_bare_level_records_the_power_it_commands() {
+    let stack = spawn_registry_stack(1, 16);
+    seed_physical_via_discovery(&stack.publisher, 2, SHORT, DeviceType::Dt6Led, &stack.store);
+
+    for (corr, level, power) in [(230, 120, "on"), (231, 0, "off")] {
+        let entry = RuntimeRegistryUpdateEntry {
+            setpoint: Some(LightSetpoint {
+                power: PowerState::Unknown,
+                level: Some(level),
+                color: None,
+            }),
+            ..runtime_entry(level, RuntimeSource::Api, RuntimeObservation::api_timestamped(1_000))
+        };
+        publish_entry(&stack, corr, entry);
+        assert_ok(&recv_confirm_for(&stack.conf_rx, corr));
+        let committed = || {
+            let s = state(&stack);
+            s.level == Some(level) && s.power == power
+        };
+        dali2rust_test_support::try_wait_until(committed, Duration::from_millis(500));
+        let after = state(&stack);
+        assert_eq!(
+            (after.level, after.power.as_str()),
+            (Some(level), power),
+            "a level without power is DAPC of that level, and the record says what it did"
+        );
+    }
+}
+
 fn absence_entry() -> RuntimeRegistryUpdateEntry {
     RuntimeRegistryUpdateEntry {
         virtual_lamp_id: None,
@@ -242,16 +276,7 @@ fn absence_entry() -> RuntimeRegistryUpdateEntry {
 }
 
 fn publish_absence(stack: &support::RegistryTestStack, corr: u64) {
-    publish_cmd(
-        &stack.publisher,
-        dali2rust_contracts::bus::command_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            corr,
-            BusId::default().0,
-            Some(dali2rust_contracts::msg::Origin::Internal),
-            RegistryRuntimeUpdateCommand::internal(0, absence_entry()),
-        ),
-    );
+    publish_entry(stack, corr, absence_entry());
 }
 
 #[test]

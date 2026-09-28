@@ -856,19 +856,22 @@ rule "мимо" { when http trigger if lamp("коридор").level != 50 do log
 #[test]
 fn an_unknown_level_read_as_a_value_is_unevaluable() {
     let lamp = resolver().resolve_lamp("коридор").unwrap();
+    let kitchen = resolver().resolve_lamp("кухня").unwrap();
     let src = r#"
 rule "эхо" { when http trigger do lamp("кухня").level(lamp("коридор").level) }
 rule "память" { when http trigger do lamp("кухня").level(lamp("коридор").last_level) }
+rule "справа" { when http trigger if lamp("кухня").level > lamp("коридор").level do log(">") }
 "#;
     let mut eng = engine(src, 0);
-    let unknown = with_unknown_level(world(0), lamp);
-    for name in ["эхо", "память"] {
+    let unknown = with_lamp(with_unknown_level(world(0), lamp), kitchen, true, 100);
+    for name in ["эхо", "память", "справа"] {
         let out = eng.handle(run(name), &unknown);
         assert_eq!(out.len(), 1, "{name}");
         assert!(out[0].effects.is_empty(), "{name}: {out:?}");
         assert!(out[0].partial.is_some(), "{name}: {out:?}");
     }
-    assert_eq!(eng.counters().partial_outcomes, 2);
+    assert_eq!(eng.counters().partial_outcomes, 3);
+    assert_eq!(eng.counters().conditions_rejected, 0, "unevaluable is not false");
 }
 
 #[test]

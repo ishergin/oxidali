@@ -422,7 +422,7 @@ fn setpoint_label(body: &DaliTargetStateAppliedEvent) -> EventLabel {
     if body.dapc_applied {
         return on_label(body.setpoint.level);
     }
-    match body.setpoint.color.as_ref() {
+    match body.setpoint.color.as_ref().filter(|_| body.setpoint.states_color()) {
         Some(c) if c.color_temperature_kelvin > 0 => {
             EventLabel::from_fmt(format_args!("{}K", c.color_temperature_kelvin))
         }

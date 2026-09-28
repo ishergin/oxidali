@@ -277,7 +277,6 @@ pub struct Dt6ReadSnapshot {
     pub extended_version_number: Option<u8>,
 }
 
-
 #[cfg(test)]
 mod setpoint_wire_tests {
     use super::{LightSetpoint, PowerState};

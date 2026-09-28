@@ -931,15 +931,27 @@ fn landing_document(snippet: &str) -> String {
     )
 }
 
-fn run_landing(kind: &str, snippet: &str) -> (Vec<String>, Arc<RulesWorkerCounters>) {
-    let lamps = vec![dali2rust_rules_runtime::runtime::engine::LampState {
+fn landing_lamp(level: Option<u8>) -> dali2rust_rules_runtime::runtime::engine::LampState {
+    dali2rust_rules_runtime::runtime::engine::LampState {
         adapter_id: 0,
         id: 0,
         is_on: true,
-        level: Some(120),
+        level,
         cct_kelvin: Some(3000),
-        last_level: Some(120),
-    }];
+        last_level: level,
+    }
+}
+
+fn run_landing(kind: &str, snippet: &str) -> (Vec<String>, Arc<RulesWorkerCounters>) {
+    run_landing_on(kind, snippet, landing_lamp(Some(120)))
+}
+
+fn run_landing_on(
+    kind: &str,
+    snippet: &str,
+    lamp: dali2rust_rules_runtime::runtime::engine::LampState,
+) -> (Vec<String>, Arc<RulesWorkerCounters>) {
+    let lamps = vec![lamp];
     let h = harness_with_lamps(
         Arc::new(dali2rust_test_support::fs::temp_slice_store(&format!(
             "landing-{kind}"
@@ -1053,14 +1065,7 @@ fn every_counted_landing_moves_its_counter() {
 }
 
 fn landing_setpoint(kind: &str, snippet: &str) -> dali2rust_contracts::msg::LightSetpoint {
-    let lamps = vec![dali2rust_rules_runtime::runtime::engine::LampState {
-        adapter_id: 0,
-        id: 0,
-        is_on: true,
-        level: Some(120),
-        cct_kelvin: Some(3000),
-        last_level: Some(120),
-    }];
+    let lamps = vec![landing_lamp(Some(120))];
     let h = harness_with_lamps(
         Arc::new(dali2rust_test_support::fs::temp_slice_store(&format!(
             "argument-{kind}"
@@ -1131,9 +1136,16 @@ fn every_light_argument_reaches_the_setpoint() {
 }
 
 #[test]
-fn a_computed_level_of_zero_goes_out_as_dapc_zero() {
-    use dali2rust_contracts::msg::PowerState;
+fn a_dim_from_an_unknown_level_is_skipped_and_counted() {
+    let (seen, counters) = run_landing_on("dim-unknown", "lamp(0).dim(+10)", landing_lamp(None));
+    let skipped = || counters.effects_skipped_dark.load(std::sync::atomic::Ordering::Relaxed);
+    dali2rust_test_support::wait_until(|| skipped() >= 1, COMMAND_WAIT);
+    assert_eq!(skipped(), 1);
+    assert!(seen.is_empty(), "a step from an unknown level has no base to step from: {seen:?}");
+}
 
+#[test]
+fn a_computed_level_of_zero_goes_out_as_dapc_zero() {
     for (kind, snippet) in [
         ("level-zero", "lamp(0).level(0)"),
         ("level-down-to-zero", "lamp(0).level(-200)"),
@@ -1145,7 +1157,7 @@ fn a_computed_level_of_zero_goes_out_as_dapc_zero() {
             Some(0),
             "{snippet}: a level of 0 is DAPC 0, never GO TO LAST ACTIVE LEVEL"
         );
-        assert_eq!(sp.power, PowerState::Off, "{snippet}");
+        assert_eq!(sp.power, dali2rust_contracts::msg::PowerState::Off, "{snippet}");
     }
 }
 
