@@ -88,19 +88,18 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
 - A counter is spelled in several places: the `AtomicU32` in its runtime crate, the DTO
   in `api`, the mapping in `adapters`, the worst-case sample in `api/src/ws/snapshot.rs`,
   the TypeScript mirror in `web/app/src/api/types.ts`, string keys in the HIL suite and
-  BDD steps, and the product-design diagnostics table. The compiler holds only DTO →
-  mapping → sample; `scripts/verify_counter_surface.py` compares the names of the rest,
-  and a counter that counts the wrong thing is still a test's job.
+  BDD steps, and the product-design documents of the resource that carries it. The
+  compiler holds only DTO → mapping → sample; `scripts/verify_counter_surface.py`
+  compares the names of the rest, and a counter that counts the wrong thing is still a
+  test's job.
 - The gate finds a counter by its shape — a one-line `pub name: AtomicU32,` field of a
   top-level `pub struct …Counters` — and silently misses any other spelling.
 - A counter kept off the surface is listed with a reason in
   `scripts/counter_surface_internal.txt`, whose entry count is frozen in
   `counter_surface_internal_budget.txt` and only goes down.
 - Counters are `u32` on the wire; they wrap as their mechanism does.
-- A new counter goes to `/api/v1/stats`. The one other counter resource is the
-  controller pair's `/api/v1/redundancy`, which carries its counters beside the probes
-  and transitions they explain and is a root of both counter gates. The periodic
-  WebSocket diagnostics frame has a hard ceiling (`DIAGNOSTICS_SNAPSHOT_CEILING_BYTES`)
-  and no headroom; raising the ceiling is not the fix. The one sanctioned reason to
-  re-measure it is a change to the composed bus: an adapters test holds the worst case's
-  subscriber model equal to the live bus, and the ceiling follows that model.
+- A new counter goes to `/api/v1/stats`. The controller pair's counters live on
+  `/api/v1/redundancy` instead, beside the probes and transitions they explain; that
+  resource is a root of both counter gates. The periodic WebSocket diagnostics frame has
+  a hard ceiling (`DIAGNOSTICS_SNAPSHOT_CEILING_BYTES`) and no headroom; raising the
+  ceiling is not the fix.

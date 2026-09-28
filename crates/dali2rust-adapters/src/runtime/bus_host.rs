@@ -168,7 +168,7 @@ mod tests {
             assert_eq!(
                 live, modelled,
                 "{live} {kind} subscribers against a modelled {modelled}: move the model \
-                 with the bus and re-measure the DiagnosticsSnapshot ceiling"
+                 with the bus, and the DiagnosticsSnapshot ceiling test judges the new worst case"
             );
         }
         for subscriber in &counters.event_subscribers {
