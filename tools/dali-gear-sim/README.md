@@ -1,113 +1,149 @@
-# dali-gear-sim — a board that answers as ~54 DALI control gear
+# dali-gear-sim — a board that answers as a fleet of DALI control gear
 
-> **Targets an ESP32-C6 and is not ported to the ESP32-P4.** It is pinned to the C6:
-> the `riscv32imac` target (the P4 is `imafc`), `MCU`, `sdkconfig.c6.defaults`,
-> `partitions-c6.csv` and the C6 pin map. `just gear-sim-check` proves only that this
-> crate still compiles against the workspace crates it shares (gear model, codec, PHY,
-> domain, platform), not that any hardware works.
-
-A load-test instrument. On a real DALI segment it answers as a fleet of virtual
-control gear (DT6, DT8 Tc, DT8 RGB+Tc) so the controller meets a full bus: the
-whole commissioning search, a poller sweep over every address, group and broadcast
-applies, a registry at its 64-address ceiling. It is one bus load (~2 mA) however
-many gear it emulates.
+A bench instrument that runs on the redundancy pair's second ESP32-P4-ETH, borrowed for a
+session. On the shared DALI wire it answers as a fleet of virtual control gear (DT6, DT8
+Tc, DT8 RGB+Tc), so tests drive gear that is nobody's light: target states, groups,
+scenes, HCL, a commissioning search, a poller sweep, a registry near its ceiling. It is
+one bus load (~2 mA) however many gear it emulates.
 
 Scope: the instrument, its build and its console protocol. The gear semantics are
-`dali2rust-gear-model`, shared with the host dev server's simulated bus; the HIL
-toolkit's console client is `tools/hil/hil/gearsim.py`.
+`dali2rust-gear-model`, shared with the host dev server's simulated bus. Lending the
+peer to the emulator and the HIL tier that drives the fleet are open work
+([roadmap](../../documentation/product-design/roadmap.md)).
 
 ## The one rule: never share an address with a real lamp
 
-Two devices answering one short address do not degrade the bus, they kill it. The
-model refuses the reserved block (`DEFAULT_RESERVED_SHORT_ADDRESSES`, 0..=9) at
-construction and at `PROGRAM SHORT ADDRESS`; the default fleet (27 DT6, 18 Tc,
-9 RGB+Tc) fills 10..=63. The TX pad is parked recessive before anything else runs,
-and a fleet with no stored history comes up **disabled**. The reserved block must
-cover every real lamp on the wire the fleet joins — check it against that wire's
-addresses before enabling a single gear.
+Two devices answering one short address do not degrade the bus, they kill it. So every
+boot starts with **no fleet and no reserve**, and nothing is stored in flash. `reserve`
+names every short address a real lamp holds on this wire: the controller's registry,
+the Wiren Board master's device list and unpowered lamps a scan cannot see. `fleet` and
+`enable` refuse until it is set, and a fleet asks for at most 64 − |reserve| addresses.
+The model also refuses reserved addresses at construction and at `PROGRAM SHORT ADDRESS`.
 
 ## Build
 
-A separate cargo workspace: its `.cargo/config.toml` overrides the root's forced
-`MCU` and sdkconfig for builds started in this directory. Nothing in `cargo fw`,
-`cargo flash` or `hil flash` builds it.
+A separate cargo workspace. Its `.cargo/config.toml` overrides the root's forced `MCU`
+and sdkconfig for builds started in this directory. `sdkconfig.gear-sim.defaults` is
+layered on the root's `sdkconfig.p4.defaults` and changes only what differs:
+- the path to the root's `partitions-p4.csv` — one partition table per board, so the
+  image fits the pair's OTA slot;
+- no secondary console;
+- `WARN` logs;
+- no core dump on the console.
 
 ```bash
-cd tools/dali-gear-sim && cargo build   # `cargo run` flashes and monitors (debug profile)
-just gear-sim-check                     # type-check only
+cd tools/dali-gear-sim && cargo build
+just gear-sim-check                     # type-check against the shared crates
 just gear-sim-isr-iram-check            # build, then the ISR-IRAM gate on the linked binary
 ```
 
-It writes its fleet to flash, so its PHY interrupt must reach no flash-resident
-code: run the ISR-IRAM gate before it goes on a wire. C6 wiring (ESP32-C6-Pico +
-Pico-DALI2): DALI TX on GPIO 14, inverted (pad high = bus active); DALI RX on GPIO 5.
+The bench's boards hang on the Wiren Board's USB; the image reaches the peer only
+through the HIL toolkit.
+
+## Board and answer path
+
+ESP32-P4-ETH + Pico-DALI2, wired like the controller: DALI TX on GPIO 14, inverted (pad
+high = bus active); DALI RX on GPIO 17. The console is UART0 through the board's USB-UART.
+
+The PHY is the firmware's `dali2rust-dali-phy`, on the gptimer driver path at interrupt
+priority 3; [ADR-025](../../documentation/architecture/decisions/ADR-025-phy-interrupt-above-critical-sections.md)
+keeps the emulator off the level-5 path. The interrupt runs on core 0, where it is
+registered, and every emulator task is pinned to core 1, so critical sections on the
+interrupt's core stay rare.
+
+A decoded forward frame goes to the fleet in task context. The fleet's answer is staged
+in the PHY's answer cell, and the interrupt sends it inside the IEC 62386-101 Table 20
+window (`backward_window.rs`) — the mechanism the controller uses for its arbitration
+answer. Several answering gear merge into one frame by OR-ing their dominant half-bits,
+which is what the wired-AND bus does.
 
 ## Serial protocol
 
-One port carries the event log and the console. Data lines start with a token,
-everything else with `#`, so a reader parses the stream without guessing:
+One port carries the event log and the console through one output path: the UART
+driver behind the VFS, fed by a bounded queue with one writer, so the gear task never
+waits on the UART. Data lines start with a token, everything else with `#`, so a reader
+parses the stream without guessing:
 
 ```
-C <t_us> A05 level 0 -> 180            a gear's state changed
-F <t_us> fe 90 Broadcast QUERY STATUS  a forward frame was heard     (log frame)
-B <t_us> 84 n=1 t=58                   a backward frame was sent     (log frame)
-B <t_us> -- n=3 collision              several gear answered differently
-E <t_us> window_missed idle_ticks=95   something went wrong
-# ...                                  notes, banners, console replies
+# ready build=<sha> slot=<label> state=<token>   the console accepts commands (and `ready`)
+C <t_us> A16 level 0 -> 180                     a gear's state changed
+F <t_us> fe 90 Broadcast QUERY STATUS            a forward frame was heard     (log frame)
+B <t_us> 84 n=1                                  an answer was staged          (log frame)
+B <t_us> -- n=3 collision                        several gear answered differently
+E <t_us> answer_cell_busy ...                    something went wrong
 ```
 
-`t=` is the idle-tick count the answer was submitted at, which the `stats`
-histogram summarises. A console reply is a run of `#` lines and ends when they stop.
-Opening the port reboots a C6, so a client opens it once per session;
-`HIL_GEAR_SIM_PORT` names it and is never auto-detected.
+`state` is the running slot's OTA state as the bootloader keeps it:
+- `pending_verify` — installed over OTA; any reset hands the board back to the controller;
+- `none` — written by wire; the role survives resets;
+- `new`, `valid`, `invalid`, `aborted`, `undefined` — anything else.
+
+`C` lines carry the short and random address, `enabled`, groups, level, `identify`,
+colour mode, mirek, xy, the RGBWAF channels, the level range, the Tc limits and the
+scene levels. Lines the queue drops show up as `log_dropped` in `stats`.
 
 | Command | |
 | --- | --- |
+| `ready` | the ready line again, for a reader that missed the boot |
+| `reserve <a-b,c ...>` | the short addresses the fleet never holds; once per boot, before `fleet`; a second one is refused |
+| `fleet <base> <dt6> <cct> <rgb>` | build the fleet from `base` upward, skipping the reserve; all disabled |
+| `enable\|disable <addr\|all>` | put gear on or off the bus; enabling an address no gear holds is refused |
 | `show [addr]` | the fleet table, or one gear |
-| `stats` | counters, the submit-timing histogram, forward frames per IEC 62386-101 Table 22 priority, violations (`enable_consumed`, `send_twice_interloper`) |
-| `base <addr>` | where the next `fleet` starts; reserved addresses are skipped |
-| `fleet <dt6> <cct> <rgb>` | rebuild from the base address up (comes up disabled) |
-| `unaddress <count>` | take the short address off that many gear, leaving them as factory-fresh drivers; `fleet` restores them |
-| `enable\|disable <addr\|all>` | put gear on or off the bus |
-| `autoact <addr> on\|off` | the DT8 Automatic Activation bit (RAM, not saved) |
+| `stats` | loop counters; the answer cell (`sent`, `stale`, `expired`, `late`, `rejected`, `collided`); late ticks; forward frames per IEC 62386-101 Table 22 priority; violations (`enable_consumed`, `send_twice_interloper`) |
+| `unaddress <count>` | take the short address off that many gear, leaving them as factory-fresh drivers |
+| `autoact <addr> on\|off` | the DT8 Automatic Activation bit |
 | `metering <addr> energy\|diagnostics\|both\|off` | DiiA Part 252/253 banks 202–207 and the device types that announce them |
 | `luminaire <addr> off\|3\|4\|5\|bus-unit-on\|bus-unit-off` | memory bank 1's DiiA Part 251 extension at content format 3–5, and bank 0's `0x1B`/`0x1C` |
 | `fail <addr> lamp\|none\|short\|open\|thermal\|derate\|<byte>` | `lamp` sets 102 status bit 1 alone; the rest set the Part 207 failure byte and let the model derive what follows |
 | `drop <addr> <permille>` | withhold that fraction of answers |
 | `log off\|change\|frame\|trace` | verbosity; keep `change` during a load run, `frame` makes the console the bottleneck |
-| `save` / `load` / `erase` | the stored fleet |
-| `reboot` | |
+| `reboot` | restart; under the OTA role this hands the board back to the controller |
+
+How to read the answer cell on a shared wire:
+- `stale` counts both a frame that moved the epoch before the answer went out and a
+  yield to another transmitter, so it is non-zero wherever real gear or another master
+  share the wire;
+- `collided` stays 0 by construction: a backward frame is exempt from collision
+  detection;
+- `late`, `expired` and the late ticks are the timing verdicts.
 
 ## What it models
 
-Implemented: the commissioning search (INITIALISE, RANDOMISE, COMPARE, WITHDRAW,
-PROGRAM/VERIFY SHORT ADDRESS), DAPC and the arc-power commands, group membership,
-the 16-scene table, level limits and fade registers, the status byte, memory banks
-0 and 1 with DTR0 auto-increment, and DT8 colour with the IEC 62386-209 staging
-rule; of the DT6 extended commands, the dimming curve and the Part 207 failure
-queries. What the model leaves out is listed in
+Implemented:
+- the commissioning search (INITIALISE, RANDOMISE, COMPARE, WITHDRAW, PROGRAM/VERIFY
+  SHORT ADDRESS);
+- DAPC and the arc-power commands;
+- group membership and the 16-scene table;
+- level limits and fade registers;
+- the status byte;
+- memory banks 0 and 1 with DTR0 auto-increment;
+- DT8 colour with the IEC 62386-209 staging rule;
+- of the DT6 extended commands, the dimming curve and the Part 207 failure queries.
+
+What the model leaves out is listed in
 [`05-testing-and-bdd.md`](../../documentation/architecture/05-testing-and-bdd.md)
 (*Host models and the mock transport*). An unknown extended opcode is ignored, so
 `log trace` shows what a controller actually sends.
 
 ## Timing, and how far to trust it
 
-A gear starts its backward frame 5.5–10.5 ms after the forward frame ends. The
-emulator aims at 6.5 ms, submitting its answer at the matching PHY idle-tick count
-less the transmitter's arming lead, and asserts both bounds at compile time
-(`src/answer.rs` has the derivation), so a change to the PHY's lead fails the
-build. The `stats` histogram is a self-report on its own clock. The independent
-check is to read an emulated gear from the Wiren Board's master; edge-level
-evidence needs the wire witness in [`tools/dali-arbiter`](../dali-arbiter/README.md),
-which has no board either.
+A gear starts its backward frame 5.5–10.5 ms after the forward frame ends. The interrupt
+decides when the answer starts. The emulator only has to stage it before the interrupt
+arms it, `ANSWER_ARM_TARGET_IDLE_TICKS` after the forward frame ends, while the
+capture completes after `RX_IDLE_LINE_HIGH_TICKS` (both in `dali2rust-dali-phy`); the
+ring is polled once per tick.
+`late`, `expired` and the late ticks are the PHY's reports on its own clock.
+
+The independent check is to read an emulated gear from the Wiren Board's master.
+Edge-level evidence needs a wire witness ([`tools/dali-arbiter`](../dali-arbiter/README.md)),
+which has no board.
 
 ## Bring-up order
 
-1. Flash. The fleet is disabled and transmits nothing; confirm from the log that it
-   hears and describes the traffic on the wire.
-2. `enable` one gear, query it from the controller (`hil api cmd`), and check that
-   `stats` puts the answers inside the window.
+1. Put the image on the peer. The fleet is empty and transmits nothing;
+   confirm from the log that it hears the traffic on the wire (`log frame`).
+2. `reserve` every live address, `fleet`, `enable` one gear, query it from the
+   controller, and check that `stats` shows it sent with no late ticks.
 3. Read the same gear from the Wiren Board's master.
-4. Scale up: poller sweep, group apply, a full registry.
-5. Commissioning re-addresses every gear on the wire, real lamps included: only on a
-   wire where that is allowed, one test at a time.
+4. Scale up: four gear, then the tier's fleet; a poller sweep, a group apply.
+5. Commissioning follows [`tools/hil/STRATEGY.md`](../hil/STRATEGY.md) §4.
