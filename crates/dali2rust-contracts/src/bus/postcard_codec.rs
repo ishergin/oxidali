@@ -38,21 +38,20 @@ pub fn encode_event_envelope(value: &EventEnvelope) -> Result<Vec<u8>, postcard:
     encode(value)
 }
 
-const ENCODED_LEN_BUF: usize = 512;
+fn encoded_len<T: Serialize + ?Sized>(value: &T) -> Result<usize, postcard::Error> {
+    postcard::serialize_with_flavor(value, postcard::ser_flavors::Size::default())
+}
 
 pub fn encoded_len_command(value: &CommandEnvelope) -> Result<usize, postcard::Error> {
-    let mut buf = [0u8; ENCODED_LEN_BUF];
-    postcard::to_slice(value, &mut buf).map(|s| s.len())
+    encoded_len(value)
 }
 
 pub fn encoded_len_confirmation(value: &ConfirmationEnvelope) -> Result<usize, postcard::Error> {
-    let mut buf = [0u8; ENCODED_LEN_BUF];
-    postcard::to_slice(value, &mut buf).map(|s| s.len())
+    encoded_len(value)
 }
 
 pub fn encoded_len_event(value: &EventEnvelope) -> Result<usize, postcard::Error> {
-    let mut buf = [0u8; ENCODED_LEN_BUF];
-    postcard::to_slice(value, &mut buf).map(|s| s.len())
+    encoded_len(value)
 }
 
 pub fn decode_command_envelope(bytes: &[u8]) -> Result<CommandEnvelope, postcard::Error> {
@@ -65,4 +64,27 @@ pub fn decode_confirmation_envelope(bytes: &[u8]) -> Result<ConfirmationEnvelope
 
 pub fn decode_event_envelope(bytes: &[u8]) -> Result<EventEnvelope, postcard::Error> {
     postcard::from_bytes(bytes)
+}
+
+#[cfg(test)]
+mod encoded_len_tests {
+    use super::*;
+    use crate::bus::build_confirmation_envelope_with_product_error;
+    use crate::msg::payload_test_samples::worst_text64;
+    use crate::msg::{DeliveryStatus, ErrorCode};
+
+    #[test]
+    fn the_longest_confirmation_matches_its_encoding_and_fits_the_wire() {
+        let message = worst_text64();
+        let confirmation = build_confirmation_envelope_with_product_error(
+            u64::MAX,
+            DeliveryStatus::ExecutionFailed,
+            u8::MAX,
+            u16::MAX,
+            Some((ErrorCode::InvalidValue, message.as_str())),
+        );
+        let encoded = encode_confirmation_envelope(&confirmation).expect("encode");
+        assert_eq!(encoded_len_confirmation(&confirmation), Ok(encoded.len()));
+        assert!(encoded.len() <= MAX_BUS_WIRE_BYTES, "{} B", encoded.len());
+    }
 }
