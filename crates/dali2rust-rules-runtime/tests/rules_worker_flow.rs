@@ -1625,6 +1625,7 @@ const WIDE_ID_DOC: &str = "rule \"лампа\" {\n  when http trigger\n  do lamp
                            rule \"группа\" {\n  when http trigger\n  do group(\"вне поля\").off()\n}\n\
                            rule \"стоп\" {\n  when http trigger\n  do group(\"вне поля\").stop_fade()\n}\n\
                            rule \"сцена\" {\n  when http trigger\n  do scene(3).recall(group(\"вне поля\"))\n}\n\
+                           rule \"сцена лампы\" {\n  when http trigger\n  do scene(3).recall(lamp(\"за краем\"))\n}\n\
                            rule \"метка\" {\n  when http trigger\n  do lamp(6).level(55)\n}\n";
 
 fn empty_world() -> EmptyWorld {
@@ -1671,7 +1672,10 @@ fn an_id_wider_than_its_bus_field_fails_its_effect_instead_of_narrowing() {
         );
     let h = harness_spawn(
         Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-wide-id")),
-        EmptyWorld { lamps: vec![bound_lamp(EFFECT_LAMP)], ..empty_world() },
+        EmptyWorld {
+            lamps: vec![bound_lamp(EFFECT_LAMP), bound_lamp(WIDER_THAN_ITS_BUS_FIELD)],
+            ..empty_world()
+        },
         Arc::new(resolver),
     );
     publish_document(&h, 121, WIDE_ID_DOC, 0);
@@ -1679,7 +1683,7 @@ fn an_id_wider_than_its_bus_field_fails_its_effect_instead_of_narrowing() {
     assert!(sig.error.is_none(), "the document must compile: {sig:?}");
     wait_revision(&h.store, 1);
 
-    let effects = ["лампа", "группа", "стоп", "сцена"];
+    let effects = ["лампа", "группа", "стоп", "сцена", "сцена лампы"];
     for (corr, name) in (122..).zip(effects.iter().chain(["метка"].iter())) {
         run_rule(&h, corr, name);
         recv_signal(&h, corr);
