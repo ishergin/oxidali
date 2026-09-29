@@ -240,6 +240,25 @@ fn a_publish_to_a_topic_filter_is_refused_wherever_the_action_is_written() {
 }
 
 #[test]
+fn a_control_character_or_a_noncharacter_is_not_one_exact_topic() {
+    let malformed = ["a\t", "a\u{1f}", "a\u{7f}", "a\u{9f}", "a\u{fdd0}", "a\u{fffe}", "a\u{2ffff}"];
+    for topic in malformed {
+        let trigger = set_with(vec![], vec![mqtt_rule("t", &[topic], None)]);
+        let publish = set_with(vec![], vec![rule_with_actions("p", vec![publish(topic)])]);
+        for set in [trigger, publish] {
+            assert!(
+                matches!(validate(&set), Err(ModelError::MqttTopicNotExact { .. })),
+                "{topic:?}"
+            );
+        }
+    }
+    for topic in ["a\u{a0}", "a\u{fdcf}", "a\u{fdf0}", "a\u{fffd}", "дом/сцена"] {
+        validate(&set_with(vec![], vec![mqtt_rule("t", &[topic], None)]))
+            .unwrap_or_else(|e| panic!("{topic:?} is a well-formed topic: {e:?}"));
+    }
+}
+
+#[test]
 fn an_mqtt_trigger_topic_and_payload_stop_at_the_frame_budget() {
     let long = "x".repeat(MAX_MQTT_TOPIC_BYTES + 1);
     let set = set_with(vec![], vec![mqtt_rule("t", &[&long], None)]);

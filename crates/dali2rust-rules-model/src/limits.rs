@@ -20,6 +20,9 @@ pub const MAX_VAR_TEXT_BYTES: usize = 16;
 pub const MAX_MQTT_TOPIC_BYTES: usize = 48;
 pub const MAX_MQTT_PAYLOAD_BYTES: usize = 48;
 pub const MAX_MQTT_TRIGGER_TOPICS: usize = 8;
+const UNICODE_NONCHARACTER_BLOCK: core::ops::RangeInclusive<u32> = 0xFDD0..=0xFDEF;
+const UNICODE_PLANE_OFFSET_MASK: u32 = 0xFFFF;
+const UNICODE_FIRST_PLANE_END_NONCHARACTER: u32 = 0xFFFE;
 pub const MAX_RULES_SOURCE_BYTES: usize = 12240;
 pub const MIN_EVERY_PERIOD_MS: u32 = 1000;
 pub const MAX_SCENE_CYCLE_ENTRIES: usize = 16;
@@ -232,7 +235,15 @@ fn check_triggers(rule: &Rule) -> Result<(), ModelError> {
 }
 
 pub fn mqtt_topic_is_exact(topic: &str) -> bool {
-    !topic.is_empty() && !topic.contains(['+', '#', '\0'])
+    !topic.is_empty() && !topic.chars().any(refused_in_mqtt_topic)
+}
+
+fn refused_in_mqtt_topic(c: char) -> bool {
+    let code = u32::from(c);
+    matches!(c, '+' | '#')
+        || c.is_control()
+        || UNICODE_NONCHARACTER_BLOCK.contains(&code)
+        || code & UNICODE_PLANE_OFFSET_MASK >= UNICODE_FIRST_PLANE_END_NONCHARACTER
 }
 
 fn check_mqtt_topic(owner: &str, topic: &str) -> Result<(), ModelError> {

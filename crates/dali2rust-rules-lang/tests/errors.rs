@@ -54,6 +54,32 @@ fn a_topic_filter_is_refused_at_the_topic() {
     assert!(err.message.contains("expected quoted"), "{err}");
 }
 
+const MALFORMED_TOPICS: &[&str] = &[
+    "home/scene\t",
+    "home/\u{1}",
+    "home/\u{7f}",
+    "home/\u{85}",
+    "home/\u{9f}",
+    "home/\u{fdd0}",
+    "home/\u{fdef}",
+    "home/\u{fffe}",
+    "home/\u{1ffff}",
+    "home/\u{10ffff}",
+];
+
+#[test]
+fn a_control_character_or_a_noncharacter_in_a_topic_is_refused_at_the_topic() {
+    for topic in MALFORMED_TOPICS {
+        let err = compile_err(&wrap_trigger(&format!("mqtt \"{topic}\"")));
+        assert_eq!((err.line, err.column), (4, 13), "trigger {topic:?}: {err}");
+        assert!(err.message.contains("one exact topic"), "trigger {topic:?}: {err}");
+        let err = compile_err(&wrap_action(&format!("mqtt.publish(\"{topic}\", \"on\")")));
+        assert_eq!((err.line, err.column), (5, 19), "publish {topic:?}: {err}");
+        assert!(err.message.contains("one exact topic"), "publish {topic:?}: {err}");
+    }
+    compile_ok(&wrap_trigger("mqtt \"дом/сцена/\u{a0}\u{fffd}\""));
+}
+
 #[test]
 fn a_publish_to_a_topic_filter_is_refused_at_the_topic() {
     for topic in ["home/+/mode", "home/#", ""] {

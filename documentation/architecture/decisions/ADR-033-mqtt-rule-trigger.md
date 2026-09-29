@@ -17,11 +17,14 @@ messages to every new subscription.
 ## Decision
 
 1. **Exact topic names, bounded.** A trigger names one topic and optionally one payload,
-   compared byte for byte. `+` and `#` are refused where they are written, as are an empty
-   topic and U+0000: a filter would move matching into the engine and could subscribe the
-   controller to traffic of any volume. The topic and the payload literal are at most
-   48 bytes each — what a bus frame carries — and a document names at most eight distinct
-   topics (`MAX_MQTT_TRIGGER_TOPICS`). The trigger is not an input event, so its default
+   compared byte for byte. `+` and `#` are refused where they are written: a filter would
+   move matching into the engine and could subscribe the controller to traffic of any
+   volume. So are an empty topic, control characters and Unicode noncharacters, which
+   MQTT 3.1.1 §1.5.3 lets a broker treat as a malformed packet — it closes the session,
+   so one such topic would end every session right after its SUBSCRIBE. `mqtt.publish`
+   takes the same check. The topic and the payload literal are at most 48 bytes each —
+   what a bus frame carries — and a document names at most eight distinct topics
+   (`MAX_MQTT_TRIGGER_TOPICS`). The trigger is not an input event, so its default
    cooldown is the 200 ms of every other trigger class.
 2. **The bridge stays the only broker client.** It subscribes the document's topics in
    every session, after the Home Assistant command filters, at QoS 0: a trigger acts at

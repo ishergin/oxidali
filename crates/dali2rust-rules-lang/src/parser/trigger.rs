@@ -313,7 +313,9 @@ fn mqtt_trigger(c: &mut Cursor<'_>) -> Result<Trigger, CompileError> {
 pub(crate) fn mqtt_topic(c: &mut Cursor<'_>) -> Result<String, CompileError> {
     let (topic, pos) = c.expect_string("mqtt topic")?;
     if !mqtt_topic_is_exact(&topic) {
-        return Err(pos.err("an mqtt topic is one exact topic: not empty, no `+`, `#` or U+0000"));
+        return Err(pos.err(
+            "an mqtt topic is one exact topic: not empty, no `+`, `#`, control character or Unicode noncharacter",
+        ));
     }
     if topic.len() > MAX_MQTT_TOPIC_BYTES {
         return Err(pos.err(format!("mqtt topic exceeds {MAX_MQTT_TOPIC_BYTES} bytes")));
