@@ -76,7 +76,7 @@ QUERY_COLOUR_VALUE = 0xFA
 def test_the_client_reads_an_extended_command_by_the_enable_it_sent_before():
     guard = _guard(read_only=True)
     guard.check_frame(ENABLE_DEVICE_TYPE, 6)
-    with pytest.raises(LampNotAllowed, match=r"SA1 is outside"):
+    with pytest.raises(LampNotAllowed, match=r"\(SA1\) refused: HIL_LAMPS_READ_ONLY"):
         guard.check_frame(_short_wire(OWNER, command=True), SELECT_DIMMING_CURVE)
     guard.check_frame(ENABLE_DEVICE_TYPE, 8)
     guard.check_frame(_short_wire(OWNER, command=True), QUERY_COLOUR_VALUE)
@@ -86,6 +86,65 @@ def test_the_client_reads_an_extended_command_by_the_enable_it_sent_before():
     guard.check_frame(ENABLE_DEVICE_TYPE, 8)
     with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY"):
         guard.check_frame(_short_wire(2, command=True), 0xE2)
+
+
+FORBIDDEN_SA5 = 5
+GROUP_0_COMMAND = 0x81
+BROADCAST_COMMAND = 0xFF
+DISABLE_CURRENT_PROTECTOR = 0xE2
+Y_STEP_UP = 0xE5
+
+
+def _typed(wire_address, command):
+    return {"wire_address": wire_address, "command": command, "repeat_count": 1}
+
+
+def test_a_typed_extended_command_is_judged_by_the_enable_the_firmware_sends_for_it():
+    nothing_allowed = LampGuard((), read_only=True)
+    for wire_address in (_short_wire(FORBIDDEN_SA5, command=True), GROUP_0_COMMAND,
+                         BROADCAST_COMMAND):
+        with pytest.raises(LampNotAllowed):
+            nothing_allowed.check_request("POST", "dali/command",
+                                          _typed(wire_address, SELECT_DIMMING_CURVE))
+    nothing_allowed.check_request("POST", "dali/command",
+                                  _typed(_short_wire(FORBIDDEN_SA5, command=True),
+                                         QUERY_COLOUR_VALUE))
+    client = _client()
+    with pytest.raises(LampNotAllowed, match=r"SA1 is outside"):
+        client.cmd(OWNER, DISABLE_CURRENT_PROTECTOR)
+    assert client.http.sent == []
+    guard = _guard(read_only=True)
+    guard.check_request("POST", "dali/command",
+                        _typed(_short_wire(2, command=True), DISABLE_CURRENT_PROTECTOR))
+    with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY"):
+        guard.check_request("POST", "dali/command",
+                            _typed(_short_wire(2, command=True), Y_STEP_UP))
+    with pytest.raises(LampNotAllowed, match=r"SA1 is outside"):
+        _guard().check_request("POST", "dali/command",
+                               _typed(_short_wire(OWNER, command=True), Y_STEP_UP))
+
+
+REFERENCE_SYSTEM_POWER = 0xE0
+STORE_DTR_AS_FAST_FADE_TIME = 0xE4
+SET_TEMPORARY_X = 0xE0
+X_STEP_UP, Y_STEP_DOWN, TC_STEP_COOLER, TC_STEP_WARMER = 0xE3, 0xE6, 0xE8, 0xE9
+START_AUTO_CALIBRATION = 0xF6
+UNCLASSIFIED_DEVICE_TYPE = 7
+
+
+def test_read_only_counts_every_extended_command_that_moves_the_light_as_visible():
+    guard = _guard(read_only=True)
+    for enabled, opcode in ((6, REFERENCE_SYSTEM_POWER), (6, SELECT_DIMMING_CURVE),
+                            (8, X_STEP_UP), (8, Y_STEP_DOWN), (8, TC_STEP_COOLER),
+                            (8, TC_STEP_WARMER), (8, START_AUTO_CALIBRATION), (8, 0xE2),
+                            (UNCLASSIFIED_DEVICE_TYPE, REFERENCE_SYSTEM_POWER)):
+        guard.check_frame(ENABLE_DEVICE_TYPE, enabled)
+        with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY"):
+            guard.check_frame(_short_wire(2, command=True), opcode)
+    for enabled, opcode in ((6, STORE_DTR_AS_FAST_FADE_TIME), (6, DISABLE_CURRENT_PROTECTOR),
+                            (8, SET_TEMPORARY_X), (8, STORE_TC_LIMIT)):
+        guard.check_frame(ENABLE_DEVICE_TYPE, enabled)
+        guard.check_frame(_short_wire(2, command=True), opcode)
 
 
 def test_an_attribute_write_reaches_only_an_allowed_lamp_and_is_not_a_visible_action():

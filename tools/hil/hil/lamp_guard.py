@@ -13,13 +13,23 @@ FIRST_QUERY_OPCODE = 0x90
 ARC_POWER_OPCODES = range(0x00, 0x20)
 RESET_OPCODE = 0x20
 IDENTIFY_DEVICE_OPCODE = 0x25
-ACTIVATE_OPCODE = 0xE2
-VISIBLE_OPCODES = frozenset(ARC_POWER_OPCODES) | {RESET_OPCODE, IDENTIFY_DEVICE_OPCODE,
-                                                  ACTIVATE_OPCODE}
+VISIBLE_OPCODES = frozenset(ARC_POWER_OPCODES) | {RESET_OPCODE, IDENTIFY_DEVICE_OPCODE}
 EXTENDED_FIRST = 0xE0
 QUERY_EXTENDED_VERSION = 0xFF
 DT6, DT8 = 6, 8
 EXTENDED_QUERY_FIRST = {DT6: 0xED, DT8: 0xF7}
+DT6_CONFIG_END = 0xE5
+DT6_OPCODES = (frozenset(range(EXTENDED_FIRST, DT6_CONFIG_END))
+               | frozenset(range(EXTENDED_QUERY_FIRST[DT6], BYTE + 1)))
+REFERENCE_SYSTEM_POWER, SELECT_DIMMING_CURVE = 0xE0, 0xE3
+ACTIVATE_OPCODE = 0xE2
+XY_STEPS = range(0xE3, 0xE7)
+TC_STEPS = range(0xE8, 0xEA)
+START_AUTO_CALIBRATION = 0xF6
+VISIBLE_EXTENDED = {
+    DT6: frozenset({REFERENCE_SYSTEM_POWER, SELECT_DIMMING_CURVE}),
+    DT8: frozenset(XY_STEPS) | frozenset(TC_STEPS) | {ACTIVATE_OPCODE, START_AUTO_CALIBRATION},
+}
 UNSEEN = "unseen"
 READ_METHODS = ("GET", "HEAD")
 DIAGNOSTIC_PREFIX = "dali/"
@@ -312,13 +322,19 @@ def diagnostic_frame(path, body):
         return None
     addr = body.get("wire_address")
     if path == "dali/level" and _is_byte(addr):
-        return addr & ~1, body.get("level")
+        return addr & ~1, body.get("level"), None
     if path == "dali/command" and _is_byte(addr) and _is_byte(body.get("command")):
-        return addr, body["command"]
+        return addr, body["command"], typed_enable(body["command"])
     frame = body.get("frame")
     if path == "dali/raw" and isinstance(frame, int) and 0 <= frame < FORWARD16_LIMIT:
-        return frame >> 8, frame & BYTE
+        return frame >> 8, frame & BYTE, UNSEEN
     return None
+
+
+def typed_enable(data):
+    if data < EXTENDED_FIRST:
+        return None
+    return DT6 if data in DT6_OPCODES else DT8
 
 
 def extended_writes(data, enabled):
@@ -344,8 +360,18 @@ def frame_visible(addr, data, enabled=UNSEEN):
     if addr & 1 == 0:
         return True
     if data >= EXTENDED_FIRST:
-        return data == ACTIVATE_OPCODE and enabled in (DT8, UNSEEN)
+        return extended_visible(data, enabled)
     return data in VISIBLE_OPCODES
+
+
+def extended_visible(data, enabled):
+    if enabled is None:
+        return False
+    if enabled == UNSEEN:
+        return any(data in opcodes for opcodes in VISIBLE_EXTENDED.values())
+    if enabled in VISIBLE_EXTENDED:
+        return data in VISIBLE_EXTENDED[enabled]
+    return extended_writes(data, enabled)
 
 
 def enables(addr, data):
@@ -423,8 +449,9 @@ class LampGuard:
         short = body.get("short_address") if isinstance(body, dict) else None
         return short if isinstance(short, int) else None
 
-    def check_frame(self, addr, data):
-        enabled, self._enabled = self._enabled, enables(addr, data)
+    def check_frame(self, addr, data, enabled=UNSEEN):
+        tracked, self._enabled = self._enabled, enables(addr, data)
+        enabled = tracked if enabled == UNSEEN else enabled
         if self.fence is not None and self.fence.check_frame(addr, data, enabled):
             return
         target = wire_target(addr)

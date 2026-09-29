@@ -103,14 +103,18 @@ reaches the wire:
 
 - A physical-device, virtual-lamp (by its binding) or identify target, an attribute
   write, or a diagnostic frame that writes the gear (DAPC, an opcode below `0x90`, or an
-  application extended command the `ENABLE DEVICE TYPE` right before it makes a write)
-  must address a short in `HIL_LAMP_SHORTS`. Queries always pass.
+  application extended command that the enabled device type makes a write) must address
+  a short in `HIL_LAMP_SHORTS`. Queries always pass. On `dali/raw` the enabled device
+  type is the `ENABLE DEVICE TYPE` frame right before; on `dali/command` it is the one the
+  firmware sends itself for the opcode: DT6 for an opcode of its table, DT8 otherwise.
 - A group or broadcast frame, a group target-state and a scene recall pass only when
   every present gear on the segment is in `HIL_LAMP_SHORTS`.
 - Under `HIL_LAMPS_READ_ONLY=1` every visible action is refused: target-state, identify,
   scene recall, and a frame that is DAPC, an arc-power command (`GO TO SCENE`
-  included), `RESET`, `IDENTIFY DEVICE` or `ACTIVATE`. Configuration writes to an
-  allowed lamp still pass (STRATEGY §4).
+  included), `RESET`, `IDENTIFY DEVICE`, a DT8 `ACTIVATE`, xy or Tc step or
+  `START AUTO CALIBRATION`, a DT6 `REFERENCE SYSTEM POWER` or `SELECT DIMMING CURVE`, or
+  an extended write for a device type the guard does not classify. Configuration writes
+  to an allowed lamp still pass (STRATEGY §4).
 - A `/api/v1/dali/*` request whose body names no frame the guard can read is refused.
 - HCL schedules, rules, MQTT commands and the policy apply reach lamps inside the
   controller, past the guard: a test that uses them picks its targets from the `lamps`
