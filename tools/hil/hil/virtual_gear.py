@@ -281,6 +281,13 @@ def owner_rule_conflicts(api, scope) -> list:
                            api.adapter)
 
 
+def owner_rule_groups(api) -> set:
+    group_ids = {g.get("name"): g["group_id"] for g in api.groups.list()["groups"]}
+    compiled = api._req("GET", "rules?format=json").get("rules")
+    return (text_references(api.rules_get().get("source"), group_ids)["group"]
+            | rule_references(compiled, api.adapter)["group"])
+
+
 def real_tier_conflicts(api, allowed) -> list:
     lamps = [v for v in api.vlamps.list_unfiltered()["virtual_lamps"]
              if (v.get("binding") or {}).get("physical_short_address") in allowed]

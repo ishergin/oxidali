@@ -4,6 +4,8 @@ import subprocess
 
 import pytest
 
+import hil_test_guards
+
 from hil import tripwire, virtual_gear, wait
 from hil.lamp_guard import (GROUP_TARGET, LampGuard, LampNotAllowed, RulesBaseline, VirtualFence,
                             appended_test_rules, http_rule, spell)
@@ -713,4 +715,29 @@ def test_owner_rules_that_watch_a_test_lamp_stop_the_light_tests():
     assert conflicts(_RealTier('rule "e" {\n  when lamp(9) turns on\n  do group(5).off()\n}')) \
         == []
     assert "SA2 reports no group membership" in conflicts(_RealTier("", masks={2: None}))[0]
+
+
+class _Groups(_RealTier):
+    def __init__(self, masks, source="", answering=(), rows=()):
+        super().__init__(source, masks=masks, rows=rows)
+        self.answering, self.probed = set(answering), []
+
+    def stats(self):
+        return {"dali": {}}
+
+    def cmd_wire(self, wire_address, opcode):
+        group = (wire_address >> 1) & 0x0F
+        self.probed.append(group)
+        return {"success": True, "backward_frame": 0xFF} if group in self.answering else {}
+
+
+def test_a_free_group_is_free_of_every_registered_gear_and_owner_rule_and_silent():
+    owner = {1: 1 << 15, 2: 1 << 3}
+    assert hil_test_guards.free_group_of(_Groups(owner, answering={15, 3})) == 14
+    ruled = 'rule "x" {\n  when http trigger\n  do group(14).off()\n}'
+    assert hil_test_guards.free_group_of(_Groups(owner, ruled, answering={15, 3})) == 13
+    with pytest.raises(pytest.skip.Exception, match=r"SA2 report no group membership"):
+        hil_test_guards.free_group_of(_Groups({1: 1 << 15, 2: None}))
+    with pytest.raises(pytest.skip.Exception, match=r"group 14 cannot be shown empty.*answer"):
+        hil_test_guards.free_group_of(_Groups(owner, answering={15, 3, 14}))
 

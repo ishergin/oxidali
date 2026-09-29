@@ -344,26 +344,30 @@ def allowed_bound_lamp(api, what, wanted=None):
                 % (spell(allowed), what))
 
 
+def free_group_of(api):
+    devices = api.devices_unfiltered()["physical_devices"]
+    used = virtual_gear.used_groups(devices, api.groups.matrix().get("rows", []))
+    if used is None:
+        pytest.skip("SA%s report no group membership, so no group can be shown free"
+                    % spell(d["short_address"] for d in devices
+                            if d.get("groups_membership") is None))
+    ruled = virtual_gear.owner_rule_groups(api)
+    free = [g for g in range(virtual_gear.GROUP_COUNT - 1, -1, -1)
+            if g not in used and g not in ruled]
+    if not free:
+        pytest.skip("no DALI group is free of registered gear and of the owner's rules")
+    try:
+        virtual_gear.prove_groups_empty(api, free[:1], used)
+    except virtual_gear.VirtualGearError as exc:
+        pytest.skip("group %d cannot be shown empty on the wire: %s" % (free[0], exc))
+    return free[0]
+
+
 @pytest.fixture()
 def free_group(api, capabilities):
-    matrix = api.groups.matrix()
-    used = set()
-    for row in matrix["rows"]:
-        for gid in range(16):
-            if row["desired"][gid] or row["applied"][gid]:
-                used.add(gid)
     for d in api.devices()["physical_devices"]:
         capabilities.ensure(d["short_address"], "groups")
-    for d in api.devices()["physical_devices"]:
-        bitmask = d.get("groups_membership")
-        if bitmask:
-            for gid in range(16):
-                if bitmask & (1 << gid):
-                    used.add(gid)
-    for gid in range(15, -1, -1):
-        if gid not in used:
-            return gid
-    pytest.skip("no free DALI group available on this rig")
+    return free_group_of(api)
 
 
 @pytest.fixture()
