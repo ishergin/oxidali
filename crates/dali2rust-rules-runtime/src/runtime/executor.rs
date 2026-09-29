@@ -81,15 +81,7 @@ impl EffectExecutor<'_> {
                 self.counters.effects_skipped_dark.fetch_add(1, Ordering::Relaxed);
                 continue;
             };
-            let key = light_key(target);
-            let slot = open.iter().find(|(k, _)| *k == key).map(|(_, slot)| *slot);
-            match slot {
-                Some(slot) => lights[slot].2.merge_from(&sp),
-                None => {
-                    open.push((key, lights.len()));
-                    lights.push((index, *target, sp));
-                }
-            }
+            merge_light(&mut lights, &mut open, (index, *target, sp));
         }
         lights
     }
@@ -133,7 +125,9 @@ impl EffectExecutor<'_> {
     }
 
     fn publish_light(&self, target: &LightTarget, setpoint: LightSetpoint, corr: u64) -> bool {
-        let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target);
+        let Some((scope, virtual_lamp_id, group_id, adapter)) = scope_of(target) else {
+            return false;
+        };
         self.publish(
             corr,
             DaliSetTargetStateCommand {
@@ -149,7 +143,9 @@ impl EffectExecutor<'_> {
 
     // IEC 62386-102 §9.5.9
     fn stop_fade(&self, target: &LightTarget, corr: u64) -> bool {
-        let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target);
+        let Some((scope, virtual_lamp_id, group_id, adapter)) = scope_of(target) else {
+            return false;
+        };
         self.publish(
             corr,
             DaliStopFadeCommand {
@@ -164,9 +160,10 @@ impl EffectExecutor<'_> {
 
     fn scene_recall(&self, scene: u8, target: &Option<LightTarget>, corr: u64) -> bool {
         let (scope, group_id, adapter) = match target {
-            Some(LightTarget::Group(group)) => {
-                (DaliTargetScope::Group, group.id as u8, group.adapter_id)
-            }
+            Some(LightTarget::Group(group)) => match u8::try_from(group.id) {
+                Ok(group_id) => (DaliTargetScope::Group, group_id, group.adapter_id),
+                Err(_) => return false,
+            },
             Some(LightTarget::Broadcast { adapter_id }) => {
                 (DaliTargetScope::Broadcast, 0, *adapter_id)
             }
@@ -288,12 +285,28 @@ struct LightKey {
     adapter: u8,
 }
 
-fn light_key(target: &LightTarget) -> LightKey {
-    let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target);
-    LightKey {
+fn light_key(target: &LightTarget) -> Option<LightKey> {
+    let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target)?;
+    Some(LightKey {
         scope: scope as u8,
         id: virtual_lamp_id.max(group_id),
         adapter,
+    })
+}
+
+fn merge_light(
+    lights: &mut Vec<(usize, LightTarget, LightSetpoint)>,
+    open: &mut Vec<(LightKey, usize)>,
+    light: (usize, LightTarget, LightSetpoint),
+) {
+    let key = light_key(&light.1);
+    let slot = key.and_then(|key| open.iter().find(|(k, _)| *k == key).map(|(_, slot)| *slot));
+    match slot {
+        Some(slot) => lights[slot].2.merge_from(&light.2),
+        None => {
+            open.extend(key.map(|key| (key, lights.len())));
+            lights.push(light);
+        }
     }
 }
 
@@ -383,17 +396,19 @@ fn lamp_of<'a>(
     }
 }
 
-fn scope_of(target: &LightTarget) -> (DaliTargetScope, u8, u8, u8) {
-    match target {
+fn scope_of(target: &LightTarget) -> Option<(DaliTargetScope, u8, u8, u8)> {
+    Some(match target {
         LightTarget::Lamp(lamp) => (
             DaliTargetScope::VirtualLamp,
-            lamp.id as u8,
+            u8::try_from(lamp.id).ok()?,
             0,
             lamp.adapter_id,
         ),
-        LightTarget::Group(group) => (DaliTargetScope::Group, 0, group.id as u8, group.adapter_id),
+        LightTarget::Group(group) => {
+            (DaliTargetScope::Group, 0, u8::try_from(group.id).ok()?, group.adapter_id)
+        }
         LightTarget::Broadcast { adapter_id } => (DaliTargetScope::Broadcast, 0, 0, *adapter_id),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -437,6 +452,17 @@ mod merge_tests {
             Some(ColorMode::Cct),
             "a setpoint that states no colour must leave the stated one alone"
         );
+    }
+
+    #[test]
+    fn a_target_whose_id_does_not_fit_its_field_opens_no_merge_slot() {
+        let wide = LightTarget::Lamp(dali2rust_rules_model::LampRef { id: 300, adapter_id: 0 });
+        let mut lights = Vec::new();
+        let mut open = Vec::new();
+        merge_light(&mut lights, &mut open, (0, wide, sp(PowerState::Off, None, None)));
+        merge_light(&mut lights, &mut open, (1, wide, sp(PowerState::On, Some(10), None)));
+        assert_eq!(lights.len(), 2, "each effect stays apart and fails on its own");
+        assert!(open.is_empty(), "no merge slot for a key that cannot be built");
     }
 
     #[test]

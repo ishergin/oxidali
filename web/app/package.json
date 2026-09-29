@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
+    "test": "rm -rf .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
     "preview": "vite preview"
   },
   "dependencies": {
