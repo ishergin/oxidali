@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from hil import remote_serial, role, serialmon
 from hil.lamp_guard import describe_frame, spell
 from hil.seriallog import LogWindow
+from hil.wait import settled
 
 REPLY_QUIET_S = 0.4
 REPLY_TIMEOUT_S = 5.0
@@ -90,6 +91,16 @@ def parse_heard(line: str):
 
 def heard_frames(lines):
     return [frame for frame in map(parse_heard, lines) if frame]
+
+
+def unheard(sent, heard):
+    pairs, missed, at = [(frame.address, frame.data) for frame in heard], [], 0
+    for frame in sent:
+        try:
+            at = pairs.index(frame, at) + 1
+        except ValueError:
+            missed.append(frame)
+    return missed
 
 
 def moved(before, after, names):
@@ -284,7 +295,10 @@ class HeardWindow(LogWindow):
     def heard(self):
         return heard_frames(self.lines())
 
-    def blind(self):
+    def heard_settled(self, quiet_s, max_s, poll_s):
+        return settled(self.heard, quiet_s, max_s, poll_s)
+
+    def losses(self):
         return moved(self.before, self.sim.stats(), HEARING_COUNTERS)
 
 
@@ -319,12 +333,4 @@ class GearOracle:
         assert not moved, "gear that must stay still changed: %s" % moved
 
     def _await_quiet(self, window):
-        deadline = time.monotonic() + UNTOUCHED_MAX_S
-        count, still_since = -1, time.monotonic()
-        while time.monotonic() < deadline:
-            now = len(self.changes(window))
-            if now != count:
-                count, still_since = now, time.monotonic()
-            elif time.monotonic() - still_since >= UNTOUCHED_QUIET_S:
-                return
-            time.sleep(POLL_S)
+        settled(lambda: self.changes(window), UNTOUCHED_QUIET_S, UNTOUCHED_MAX_S, POLL_S)

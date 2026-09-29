@@ -1,5 +1,4 @@
 import os
-import time
 from dataclasses import dataclass
 
 import pytest
@@ -262,15 +261,7 @@ def _flush(window, admin, short):
 
 
 def _await_quiet(window):
-    deadline = time.monotonic() + SETTLE_MAX_S
-    count, still_since = -1, time.monotonic()
-    while time.monotonic() < deadline:
-        now = len(tripwire.sent_frames(window.lines()))
-        if now != count:
-            count, still_since = now, time.monotonic()
-        elif time.monotonic() - still_since >= QUIET_S:
-            return
-        time.sleep(POLL_S)
+    tripwire.settled_frames(window, QUIET_S, SETTLE_MAX_S, POLL_S)
 
 
 def _judge(request, cfg, admin, before, flushed, found):

@@ -292,7 +292,8 @@ def test_hearing_logs_frames_for_its_window_and_puts_the_level_back(tmp_path, mo
             fh.write(STAMP + "F 7 88 ff Group(4) DAPC\n")
     assert sent == ["write log", "write stats", "write log frame", "write log change"]
     assert window.heard() == [gearsim.Heard(7, 0x88, 0xFF)]
-    assert window.blind() == {"log_dropped": 2}
+    assert window.heard_settled(0.05, 1.0, 0.01) == [gearsim.Heard(7, 0x88, 0xFF)]
+    assert window.losses() == {"log_dropped": 2}
 
 
 def test_a_level_the_emulator_does_not_name_is_refused(tmp_path, monkeypatch):
@@ -310,3 +311,10 @@ def test_a_level_the_emulator_does_not_name_is_refused(tmp_path, monkeypatch):
 def test_moved_names_only_the_counters_that_moved():
     assert gearsim.moved({"a": 1, "b": 2}, {"a": 1, "b": 5, "c": 1}, ("a", "b", "c")) == {
         "b": 3, "c": 1}
+
+
+def test_a_frame_the_dut_sent_counts_as_heard_only_in_order():
+    heard = _frames((0xA3, 0x4D), (0x03, 0x90), (0xC1, 0x08), (0x29, 0xE2))
+    assert gearsim.unheard([(0xA3, 0x4D), (0xC1, 0x08), (0x29, 0xE2)], heard) == []
+    assert gearsim.unheard([(0xC1, 0x08), (0xA3, 0x4D), (0x29, 0xE2)], heard) == [(0xA3, 0x4D)]
+    assert gearsim.unheard([(0x88, 0xFF)], heard) == [(0x88, 0xFF)]

@@ -13,3 +13,16 @@ def wait_until(predicate, timeout_s: float, interval_s: float = 0.5,
     if desc:
         print("hil: gave up waiting for %s after %.1fs" % (desc, timeout_s))
     return value
+
+
+def settled(read, quiet_s: float, max_s: float, poll_s: float):
+    deadline = time.monotonic() + max_s
+    count, still_since = -1, time.monotonic()
+    while time.monotonic() < deadline:
+        now = len(read())
+        if now != count:
+            count, still_since = now, time.monotonic()
+        elif time.monotonic() - still_since >= quiet_s:
+            break
+        time.sleep(poll_s)
+    return read()

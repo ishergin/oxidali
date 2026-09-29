@@ -1,6 +1,7 @@
 import re
 
 from hil.lamp_guard import LampNotAllowed, describe_frame
+from hil.wait import settled
 
 TX_LINE = re.compile(
     r"DALI PHY TX: forward16 0x([0-9a-f]{4})(?: \(batched\))? \(ISR-owned bitbang\)")
@@ -20,6 +21,10 @@ def sent_frames(lines):
             frame = int(match.group(1), 16)
             out.append((frame >> BYTE_BITS, frame & BYTE))
     return out
+
+
+def settled_frames(window, quiet_s, max_s, poll_s):
+    return settled(lambda: sent_frames(window.lines()), quiet_s, max_s, poll_s)
 
 
 def violations(lines, fence):

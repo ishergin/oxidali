@@ -459,9 +459,10 @@ controller.
 
 The oracle is the emulator's own `C` lines (`hil/gearsim.py`: `GearOracle.expect`,
 `untouched`) and, inside `GearOracle.hearing()`, the forward frames it heard (`F` lines,
-logged only for that window; a moved `log_dropped`, `decode_failed` or `ring_dropped`
-leaves the window blind); `HIL validity` prints a `VIRTUAL GEAR` block with the
-emulator's answer counters, any `SAFETY` stop and what the teardown left.
+logged only for that window), which vouch for the wire only when every frame the DUT
+logged as sent in the same window is among them (`gearsim.unheard`); `HIL validity`
+prints a `VIRTUAL GEAR` block with the emulator's answer counters, any `SAFETY` stop and
+what the teardown left.
 
 ## Writing a scenario
 

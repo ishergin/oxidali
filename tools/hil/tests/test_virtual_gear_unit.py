@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from hil import tripwire, virtual_gear
+from hil import tripwire, virtual_gear, wait
 from hil.lamp_guard import (GROUP_TARGET, LampGuard, LampNotAllowed, RulesBaseline, VirtualFence,
                             appended_test_rules, http_rule, spell)
 
@@ -400,6 +400,29 @@ def test_the_tripwire_judges_frames_with_the_fence():
     assert len(found) == 5
     assert any("group 0" in v for v in found) and any("broadcast" in v for v in found)
     assert any("SA6" in v for v in found) and any("0xA5" in v for v in found)
+
+
+def test_a_reading_is_taken_once_it_stops_growing():
+    grown = [[1], [1, 2], [1, 2, 3]]
+
+    def read():
+        return grown.pop(0) if len(grown) > 1 else grown[0]
+    assert wait.settled(read, 0.02, 1.0, 0.005) == [1, 2, 3]
+    endless = iter(range(1, 10 ** 6))
+    assert len(wait.settled(lambda: [0] * next(endless), 0.05, 0.1, 0.001)) > 1
+
+
+class _Lines:
+    def __init__(self, lines):
+        self._lines = lines
+
+    def lines(self):
+        return self._lines
+
+
+def test_the_transmit_log_is_read_once_it_falls_quiet():
+    window = _Lines([_tx(0x2105), "I (2) x: unrelated", _tx(0x8805, batched=True)])
+    assert tripwire.settled_frames(window, 0.01, 0.5, 0.005) == [(0x21, 0x05), (0x88, 0x05)]
 
 
 def test_the_barrier_is_counted_not_merely_seen():
