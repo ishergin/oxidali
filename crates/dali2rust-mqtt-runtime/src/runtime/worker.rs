@@ -64,6 +64,7 @@ pub struct MqttWorkerPorts {
 struct Session {
     generation: u32,
     subscriptions_expected: u32,
+    command_filters: [String; 3],
     rule_topics: Vec<String>,
     lamp_config_hashes: HashMap<(u8, u8), u64>,
     input_config_hashes: HashMap<(u8, u8, u8), u64>,
@@ -75,10 +76,11 @@ struct Session {
 }
 
 impl Session {
-    fn begin(&mut self, generation: u32, dialled_with: u64) {
+    fn begin(&mut self, generation: u32, dialled_with: u64, topics: &HaTopics) {
         let Self {
             generation: gen_slot,
             subscriptions_expected,
+            command_filters,
             rule_topics,
             dialled_with: dialled_slot,
             lamp_config_hashes,
@@ -90,6 +92,7 @@ impl Session {
         } = self;
         *gen_slot = generation;
         *subscriptions_expected = 0;
+        *command_filters = topics.command_subscriptions();
         rule_topics.clear();
         *dialled_slot = dialled_with;
         lamp_config_hashes.clear();
@@ -903,7 +906,7 @@ fn ensure_session(
     {
         return false;
     }
-    follow_rule_topics(client.as_mut(), session, rules, topics, ports);
+    follow_rule_topics(client.as_mut(), session, rules, ports);
     ports.counters.set_connected(
         link.subscriptions_acked() >= session.subscriptions_expected
             && rule_topics::all_followed(&session.rule_topics, rules.topics()),
@@ -929,13 +932,14 @@ fn begin_session(
         announce_offline(client.as_mut(), &announced);
         return false;
     }
-    let subscriptions = u32::try_from(announced.command_subscriptions().len()).unwrap_or(u32::MAX);
-    *topics = announced;
     session.begin(
         link.session_generation(),
         session_settings_fingerprint(settings, password),
+        &announced,
     );
-    session.subscriptions_expected = subscriptions;
+    *topics = announced;
+    session.subscriptions_expected =
+        u32::try_from(session.command_filters.len()).unwrap_or(u32::MAX);
     plan_session_reannounce(job, ports, settings);
     true
 }
@@ -945,13 +949,12 @@ fn follow_rule_topics(
     client: &mut dyn MqttClient,
     session: &mut Session,
     rules: &mut RuleTopicCache,
-    topics: &HaTopics,
     ports: &MqttWorkerPorts,
 ) {
     rules.refresh(ports.rule_topics.as_ref());
-    let covering = topics.command_subscriptions();
+    let covering = &session.command_filters;
     let sent =
-        rule_topics::follow_topics(client, &mut session.rule_topics, rules.topics(), &covering);
+        rule_topics::follow_topics(client, &mut session.rule_topics, rules.topics(), covering);
     session.subscriptions_expected = session.subscriptions_expected.saturating_add(sent);
 }
 
