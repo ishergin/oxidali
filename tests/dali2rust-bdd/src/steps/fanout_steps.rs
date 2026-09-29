@@ -92,7 +92,7 @@ async fn when_foreign_last_active_observed(world: &mut DaliWorld, short: u8) {
     inject_forward16(world, [(short << 1) | 0x01, GO_TO_LAST_ACTIVE_LEVEL]);
 }
 
-// SYS-213 RULE-034 RULE-035 RULE-036
+// SYS-213 RULE-034 RULE-035 RULE-036 RULE-040
 #[when(regex = r"^a foreign broadcast recall of scene (\d+) is observed on the bus$")]
 async fn when_foreign_scene_recall_observed(world: &mut DaliWorld, scene: u8) {
     const BROADCAST_INDIRECT: u8 = 0xFF;
@@ -122,7 +122,7 @@ async fn when_foreign_unaddressed_off_observed(world: &mut DaliWorld) {
     inject_forward16(world, [UNADDRESSED_BROADCAST_INDIRECT, OFF_OPCODE]);
 }
 
-// RULE-035
+// RULE-035 RULE-040
 #[when(regex = r"^a foreign group (\d+) recall of scene (\d+) is observed on the bus$")]
 async fn when_foreign_group_recall_observed(world: &mut DaliWorld, group: u8, scene: u8) {
     inject_forward16(world, [GROUP_ADDRESS_FLAG | (group << 1) | 0x01, go_to_scene(scene)]);
@@ -154,7 +154,7 @@ fn inject_dt8_write(world: &mut DaliWorld, short: u8, value: u16, opcode: u8) {
     inject_forward16(world, [(short << 1) | 1, opcode]);
 }
 
-// SYS-215
+// SYS-215 RULE-040
 #[when(regex = r"^a foreign DT8 CCT (\d+)K write for short address (\d+) is observed on the bus$")]
 async fn when_foreign_dt8_cct_observed(world: &mut DaliWorld, kelvin: u32, short: u8) {
     let mirek = (MIREK_KELVIN_NUMERATOR / kelvin) as u16;

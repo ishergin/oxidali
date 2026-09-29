@@ -6,7 +6,8 @@ Feature: Rules and scenes: a recall is one frame and a fact once it has happened
   GO TO SCENE that happened, never on one that failed. The positive controls
   order the proof: the rules funnel takes one publisher's events in order, so
   once a later recall has fired its rule, the verdict on every earlier recall
-  is in.
+  is in. The Home Assistant scene select is republished when a lamp commits,
+  so a colour-only frame, which keeps the active scene, is what shows it.
 
   @id:RULE-030
   Scenario: A recall that failed on the wire wakes no scene rule, one that happened does
@@ -128,3 +129,14 @@ Feature: Rules and scenes: a recall is one frame and a fact once it has happened
     Then the virtual lamp 1 runtime level should eventually be 90
     And the diagnostics projector counter "scene_expansions" should be 1
     And the DALI mock transport should have received 0 forward frame
+
+  @id:RULE-040
+  Scenario: A foreign recall moves the Home Assistant scene select as one of ours does
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And the Home Assistant bridge is enabled with controller id "ctl1"
+    When a foreign broadcast recall of scene 3 is observed on the bus
+    And a foreign DT8 CCT 3000K write for short address 0 is observed on the bus
+    Then MQTT should have a retained "Scene 3" on "dali/ctl1/a0/scene_select/state"
+    When a foreign group 2 recall of scene 3 is observed on the bus
+    And a foreign DT8 CCT 4000K write for short address 0 is observed on the bus
+    Then MQTT should have a retained "None" on "dali/ctl1/a0/scene_select/state"
