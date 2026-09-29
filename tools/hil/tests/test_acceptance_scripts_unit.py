@@ -155,9 +155,10 @@ def test_the_provocation_rewrites_the_name_it_found_and_restores_it_exactly():
     assert registry.record == {"name": "Kitchen", "notes": "the owner's note"}
 
 
-def test_the_provocation_targets_the_lowest_registered_gear():
-    assert provoke.first_registered(_Unfiltered([9, 1, 4])) == 1
-    assert provoke.first_registered(_Unfiltered([])) is None
+def test_the_provocation_writes_only_registered_gear_the_bench_may_write():
+    assert provoke.first_registered(_Unfiltered([9, 1, 4]), {4, 9}) == 4
+    assert provoke.first_registered(_Unfiltered([9, 1, 4]), {7}) is None
+    assert provoke.first_registered(_Unfiltered([]), {0, 2, 3}) is None
 
 
 class _Unfiltered:

@@ -1,8 +1,9 @@
 NAME = "name"
 
 
-def first_registered(api):
-    shorts = sorted(d["short_address"] for d in api.devices_unfiltered()["physical_devices"])
+def first_registered(api, allowed):
+    shorts = sorted(d["short_address"] for d in api.devices_unfiltered()["physical_devices"]
+                    if d["short_address"] in allowed)
     return shorts[0] if shorts else None
 
 

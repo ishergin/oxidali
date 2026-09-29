@@ -259,7 +259,7 @@ def _idle_subscribers(kinds):
 @pytest.mark.serial
 def test_two_sniffer_subscribers_keep_ws_client_out_of_late_isr_entries(
         api, hil_config, serial_log, ws_baseline, test_artifacts):
-    short = provoke.first_registered(api)
+    short = provoke.first_registered(api, hil_config.lamp_short_set())
     rewrite = provoke.NameRewrite(api, short) if short is not None else None
     losses = tripwire.log_losses(api.stats())
     with serial_log.window() as serial:

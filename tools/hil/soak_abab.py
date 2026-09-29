@@ -174,17 +174,17 @@ def main():
         peer = cfg.peer()
         boards["peer"] = (peer.base.rstrip("/"), serialmon.log_path(peer))
     api = Client(cfg)
-    short = first_registered(api)
-    if short is None:
-        raise SystemExit("no physical device registered — nothing to flush")
-    rewrite = NameRewrite(api, short)
-    print("soak: boards=%s provocation=PATCH name of SA%d every %.1f s, %d WS client(s)" % (
-        {b: v[0] for b, v in boards.items()}, short, args.patch_every, args.ws))
+    short = first_registered(api, cfg.lamp_short_set())
+    rewrite = NameRewrite(api, short) if short is not None else None
+    print("soak: boards=%s provocation=%s, %d WS client(s)" % (
+        {b: v[0] for b, v in boards.items()},
+        "PATCH name of SA%d every %.1f s" % (short, args.patch_every) if rewrite
+        else "none: no gear in HIL_LAMP_SHORTS=%s is registered" % cfg.lamp_shorts, args.ws))
     ws = wsclient.Subscribers(boards["dut"][0], args.ws) if args.ws else None
     results = []
     try:
         for cycle in range(args.cycles):
-            for side, provoke in (("A", False), ("B", True)):
+            for side, provoke in (("A", False), ("B", rewrite is not None)):
                 name = "%s%d %s" % (side, cycle + 1, "PROVOKED" if provoke else "quiet")
                 r = run_phase(name, args.phase_s, boards, rewrite if provoke else None,
                               args.patch_every)
@@ -195,7 +195,7 @@ def main():
             ws.close()
             for line in ws.errors:
                 print("soak: %s — the load ran one client lighter from then on" % line)
-        if not rewrite.restore():
+        if rewrite is not None and not rewrite.restore():
             print("soak: SA%d's name is not back to %r — restore it by hand"
                   % (short, rewrite.original))
     summary = summarise(results)
