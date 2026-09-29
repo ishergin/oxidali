@@ -148,6 +148,12 @@ fn a_foreign_go_to_scene_is_a_recall_fact_for_every_addressed_class() {
 fn a_go_to_scene_for_gear_without_an_address_is_no_recall_fact() {
     let harness = spawn_harness();
     harness.tx.send(forward16([0xFD, 0x10 | 5])).expect("send");
+    let (_, seen) = recv_observed(&harness);
+    assert_eq!(
+        (seen.observed_kind, seen.scene_id),
+        (ObservedKind::SceneRecallObserved, Some(5)),
+        "the frame decodes; only the recall fact is withheld"
+    );
     harness.tx.send(forward16([0xFF, 0x10 | 6])).expect("send");
 
     let (_, body) = recv_recall(&harness);
