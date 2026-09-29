@@ -137,7 +137,22 @@ fn frame_priority_key(frame: &BusFrame, adapter_id: BusId) -> u8 {
         .map_or(NOT_OURS, |priority| priority as u8)
 }
 
-fn supersede_coalesce_key(frame: &BusFrame, adapter_id: BusId) -> Option<(u8, u8, u8, u8, u8)> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum SupersedeKind {
+    TargetState,
+    RecallScene { scene_id: u8 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct SupersedeKey {
+    kind: SupersedeKind,
+    adapter: u8,
+    scope: u8,
+    identity: u8,
+    hold_hcl: bool,
+}
+
+fn supersede_coalesce_key(frame: &BusFrame, adapter_id: BusId) -> Option<SupersedeKey> {
     let BusFrame::Command(ce) = frame else {
         return None;
     };
@@ -152,15 +167,21 @@ fn supersede_coalesce_key(frame: &BusFrame, adapter_id: BusId) -> Option<(u8, u8
                 DaliTargetScope::Group => ts.group_id,
                 _ => return None,
             };
-            Some((0, ts.registry_adapter_id, ts.scope as u8, identity, 0))
+            Some(SupersedeKey {
+                kind: SupersedeKind::TargetState,
+                adapter: ts.registry_adapter_id,
+                scope: ts.scope as u8,
+                identity,
+                hold_hcl: ts.hold_hcl,
+            })
         }
-        BusCommandPayload::DaliRecallSceneCommand(rc) => Some((
-            1,
-            rc.registry_adapter_id,
-            rc.scope as u8,
-            rc.scene_id,
-            recall_identity(rc),
-        )),
+        BusCommandPayload::DaliRecallSceneCommand(rc) => Some(SupersedeKey {
+            kind: SupersedeKind::RecallScene { scene_id: rc.scene_id },
+            adapter: rc.registry_adapter_id,
+            scope: rc.scope as u8,
+            identity: recall_identity(rc),
+            hold_hcl: rc.hold_hcl,
+        }),
         _ => None,
     }
 }
@@ -184,17 +205,7 @@ fn target_state_setpoint(frame: &BusFrame) -> Option<&LightSetpoint> {
     }
 }
 
-fn target_state_holds_hcl(frame: &BusFrame) -> bool {
-    let BusFrame::Command(ce) = frame else {
-        return false;
-    };
-    matches!(&ce.payload, BusCommandPayload::DaliSetTargetStateCommand(ts) if ts.hold_hcl)
-}
-
-fn frame_with_setpoint(
-    frame: &BusFrame,
-    (setpoint, hold_hcl): (LightSetpoint, bool),
-) -> Option<BusFrame> {
+fn frame_with_setpoint(frame: &BusFrame, setpoint: LightSetpoint) -> Option<BusFrame> {
     let BusFrame::Command(ce) = frame else {
         return None;
     };
@@ -206,14 +217,13 @@ fn frame_with_setpoint(
         return None;
     };
     ts.setpoint = setpoint;
-    ts.hold_hcl = hold_hcl;
     Some(BusFrame::command(envelope))
 }
 
 fn is_displaced(
-    key: Option<(u8, u8, u8, u8, u8)>,
+    key: Option<SupersedeKey>,
     index: usize,
-    last_by_key: &std::collections::HashMap<(u8, u8, u8, u8, u8), usize>,
+    last_by_key: &std::collections::HashMap<SupersedeKey, usize>,
 ) -> bool {
     key.is_some_and(|key| last_by_key.get(&key) != Some(&index))
 }
@@ -227,18 +237,17 @@ fn same_origin(a: &BusFrame, b: &BusFrame) -> bool {
 
 fn fold_displaced_setpoints(
     batch: &mut [BusFrame],
-    last_by_key: &std::collections::HashMap<(u8, u8, u8, u8, u8), usize>,
+    last_by_key: &std::collections::HashMap<SupersedeKey, usize>,
     adapter_id: BusId,
 ) -> Vec<usize> {
     let mut carried = Vec::new();
     for (&key, &survivor) in last_by_key {
-        if key.0 != 0 {
+        if key.kind != SupersedeKind::TargetState {
             continue;
         }
         let Some(original) = target_state_setpoint(&batch[survivor]).cloned() else {
             continue;
         };
-        let original = (original, target_state_holds_hcl(&batch[survivor]));
         let acc = fold_one_key(
             batch,
             last_by_key,
@@ -259,15 +268,14 @@ fn fold_displaced_setpoints(
 
 fn fold_one_key(
     batch: &[BusFrame],
-    last_by_key: &std::collections::HashMap<(u8, u8, u8, u8, u8), usize>,
+    last_by_key: &std::collections::HashMap<SupersedeKey, usize>,
     adapter_id: BusId,
-    key: (u8, u8, u8, u8, u8),
+    key: SupersedeKey,
     survivor: usize,
-    (survivor_setpoint, survivor_holds): (LightSetpoint, bool),
+    survivor_setpoint: LightSetpoint,
     carried: &mut Vec<usize>,
-) -> (LightSetpoint, bool) {
+) -> LightSetpoint {
     let mut acc = survivor_setpoint;
-    let mut holds = survivor_holds;
     for index in (0..survivor).rev() {
         let frame = &batch[index];
         let frame_key = supersede_coalesce_key(frame, adapter_id);
@@ -288,11 +296,10 @@ fn fold_one_key(
         candidate.merge_from(&acc);
         if candidate != acc {
             acc = candidate;
-            holds |= target_state_holds_hcl(frame);
             carried.push(index);
         }
     }
-    (acc, holds)
+    acc
 }
 
 fn supersede_stale_target_state(
@@ -304,7 +311,7 @@ fn supersede_stale_target_state(
     if batch.len() < 2 {
         return;
     }
-    let mut last_by_key: std::collections::HashMap<(u8, u8, u8, u8, u8), usize> =
+    let mut last_by_key: std::collections::HashMap<SupersedeKey, usize> =
         std::collections::HashMap::new();
     for (index, frame) in batch.iter().enumerate() {
         if let Some(key) = supersede_coalesce_key(frame, adapter_id) {

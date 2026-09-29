@@ -1133,6 +1133,11 @@ fn landing_setpoint(kind: &str, snippet: &str) -> dali2rust_contracts::msg::Ligh
 }
 
 fn landing_command(kind: &str, document: &str) -> dali2rust_contracts::msg::DaliSetTargetStateCommand {
+    let h = landing_run(kind, document);
+    next_setpoint_command(&h).unwrap_or_else(|| panic!("{kind}: {document:?} published no setpoint"))
+}
+
+fn landing_run(kind: &str, document: &str) -> Harness {
     let lamps = vec![landing_lamp(Some(120))];
     let h = harness_with_lamps(
         Arc::new(dali2rust_test_support::fs::temp_slice_store(&format!(
@@ -1144,23 +1149,19 @@ fn landing_command(kind: &str, document: &str) -> dali2rust_contracts::msg::Dali
     let sig = recv_signal(&h, 1);
     assert!(sig.error.is_none(), "{kind}: {document:?} — {sig:?}");
     wait_revision(&h.store, 1);
-    publish(
-        &h,
-        2,
-        dali2rust_contracts::msg::RuleRunCommand {
-            name: dali2rust_contracts::msg::fixed_text_64("под тестом"),
-            dry: false,
-        },
-    );
+    run_rule(&h, 2, "под тестом");
+    h
+}
+
+fn next_setpoint_command(h: &Harness) -> Option<dali2rust_contracts::msg::DaliSetTargetStateCommand> {
     let ce = dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |payload| {
         matches!(
             payload,
             dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(_)
         )
-    })
-    .unwrap_or_else(|| panic!("{kind}: {document:?} published no setpoint"));
+    })?;
     match ce.payload {
-        dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(ts) => ts,
+        dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(ts) => Some(ts),
         _ => unreachable!("filtered above"),
     }
 }
@@ -1279,22 +1280,48 @@ fn hold_hcl_true_changes_nothing_and_false_rides_on_the_command() {
 }
 
 #[test]
-fn a_merged_setpoint_holds_if_any_merged_effect_holds() {
-    let mixed = landing_command(
+fn effects_that_differ_in_hold_hcl_are_separate_commands_in_source_order() {
+    let h = landing_run(
         "hold-hcl-merge-mixed",
         &landing_document("lamp(0).level(200, hold_hcl=false)\n     lamp(0).cct(2700)"),
     );
-    assert_eq!(mixed.setpoint.level, Some(200), "both verbs are one command");
-    assert!(mixed.setpoint.states_color(), "both verbs are one command");
-    assert!(
-        mixed.hold_hcl,
-        "the colour half asked to hold the schedule; merging must not drop that claim"
+    let first = next_setpoint_command(&h).expect("the level");
+    let second = next_setpoint_command(&h).expect("the colour");
+    assert_eq!(
+        (first.setpoint.level, first.setpoint.states_color(), first.hold_hcl),
+        (Some(200), false, false)
     );
+    assert_eq!(
+        (second.setpoint.level, second.setpoint.states_color(), second.hold_hcl),
+        (None, true, true),
+        "merging would have put the level under the colour's claim on the schedule"
+    );
+
+    let h = landing_run(
+        "hold-hcl-merge-order",
+        &landing_document(
+            "lamp(0).level(100, hold_hcl=false)\n     lamp(0).level(150)\n     lamp(0).level(200, hold_hcl=false)",
+        ),
+    );
+    let levels: Vec<(Option<u8>, bool)> = std::iter::from_fn(|| next_setpoint_command(&h))
+        .map(|ts| (ts.setpoint.level, ts.hold_hcl))
+        .collect();
+    assert_eq!(
+        levels,
+        vec![(Some(100), false), (Some(150), true), (Some(200), false)],
+        "a later effect must not jump over an effect on the same lamp with the other claim"
+    );
+}
+
+#[test]
+fn effects_with_one_hold_hcl_still_merge_into_one_command() {
     let spared = landing_command(
         "hold-hcl-merge-spared",
         &landing_document("lamp(0).level(200, hold_hcl=false)\n     lamp(0).cct(2700, hold_hcl=false)"),
     );
-    assert!(!spared.hold_hcl, "no merged effect holds, so the command does not");
+    assert_eq!(spared.setpoint.level, Some(200), "both verbs are one command");
+    assert!(spared.setpoint.states_color(), "both verbs are one command");
+    assert!(!spared.hold_hcl);
 }
 
 #[test]

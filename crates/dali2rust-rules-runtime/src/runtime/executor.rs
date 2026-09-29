@@ -42,7 +42,6 @@ struct MergedLight {
 impl MergedLight {
     fn absorb(&mut self, later: &MergedLight) {
         self.setpoint.merge_from(&later.setpoint);
-        self.hold_hcl |= later.hold_hcl;
     }
 }
 
@@ -59,8 +58,14 @@ impl LightSeries {
 
     fn absorb(&mut self, light: MergedLight) {
         let key = light_key(&light.target);
-        match self.open.iter().find(|(open, _)| *open == key) {
-            Some(&(_, slot)) => self.lights[slot].absorb(&light),
+        match self.open.iter_mut().find(|(open, _)| *open == key) {
+            Some((_, slot)) if self.lights[*slot].hold_hcl == light.hold_hcl => {
+                self.lights[*slot].absorb(&light);
+            }
+            Some((_, slot)) => {
+                *slot = self.lights.len();
+                self.lights.push(light);
+            }
             None => {
                 self.open.push((key, self.lights.len()));
                 self.lights.push(light);

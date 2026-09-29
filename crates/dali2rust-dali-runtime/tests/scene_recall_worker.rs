@@ -322,3 +322,47 @@ fn recalls_of_one_scene_on_two_lamps_are_judged_one_by_one() {
         );
     }
 }
+
+fn group_go_to_scene_frame(group: u8, scene: u8) -> u16 {
+    DaliCommand::Standard {
+        address: DaliAddress::group(group).expect("group"),
+        command: StandardCommand::GoToScene { scene },
+    }
+    .to_forward_frame()
+    .raw()
+}
+
+#[test]
+fn recalls_that_differ_in_hold_hcl_never_supersede_each_other() {
+    let frame = group_go_to_scene_frame(5, 3);
+    let (publisher, host, conf_obs, _ev_obs, transport, worker_cmd) =
+        spawn_worker_with_scripted_frames(&[frame, frame]);
+    let recall = |hold_hcl| dali2rust_contracts::msg::DaliRecallSceneCommand {
+        hold_hcl,
+        ..dali2rust_contracts::msg::DaliRecallSceneCommand::for_group(0, 5, 3)
+    };
+    queue_before_the_worker(
+        &publisher,
+        &host,
+        vec![targeted_recall_frame(91, recall(false)), targeted_recall_frame(92, recall(true))],
+    );
+    let _worker = spawn_worker(worker_cmd, publisher.clone(), &transport);
+
+    for corr in [91u64, 92] {
+        let BusFrame::Confirmation(conf) = conf_obs
+            .recv_timeout(Duration::from_secs(1))
+            .expect("confirmation")
+        else {
+            panic!("expected confirmation frame");
+        };
+        assert_eq!(conf.meta.correlation_id, corr);
+        assert_eq!(
+            conf.status,
+            DeliveryStatus::Ok,
+            "a recall that holds the schedule must not be answered superseded by one that does not"
+        );
+    }
+    let mock = transport.lock().expect("mock lock");
+    assert_eq!(mock.sent_frames(), vec![frame, frame]);
+    assert_eq!(mock.script_error(), None);
+}

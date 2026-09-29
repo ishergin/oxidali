@@ -166,8 +166,8 @@ fn rules_frame(correlation_id: u64, setpoint: LightSetpoint, hold_hcl: bool) -> 
 }
 
 #[test]
-fn a_carried_field_keeps_the_hcl_claim_of_the_command_it_came_from() {
-    let (host, publisher, (worker_cmd, event_obs, conf_obs)) =
+fn commands_that_differ_in_hold_hcl_never_fold_into_one() {
+    let (host, publisher, (worker_cmd, event_obs, _conf_obs)) =
         BusHost::spawn(BusConfig::default(), |reg| {
             (
                 reg.subscribe_commands(16, DALI_WORKER_HANDLED_COMMANDS),
@@ -190,7 +190,11 @@ fn a_carried_field_keeps_the_hcl_claim_of_the_command_it_came_from() {
         Duration::from_secs(1),
     );
     let transport = Arc::new(std::sync::Mutex::new(MockDaliTransport::new()));
-    transport.lock().expect("mock lock").expect_forward_frame(dapc_frame(150));
+    {
+        let mock = transport.lock().expect("mock lock");
+        mock.expect_forward_frame(dapc_frame(100));
+        mock.expect_forward_frame(dapc_frame(150));
+    }
     let _worker = spawn_dali_worker(
         worker_cmd,
         DaliController::new(Arc::clone(&transport), Box::new(StdClock::new())),
@@ -203,26 +207,23 @@ fn a_carried_field_keeps_the_hcl_claim_of_the_command_it_came_from() {
         Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
     );
 
-    let BusFrame::Confirmation(carried) = conf_obs
-        .recv_timeout(Duration::from_secs(1))
-        .expect("confirmation")
-    else {
-        panic!("expected confirmation frame");
-    };
+    let applied: Vec<(u64, Option<u8>, bool)> = (0..2)
+        .map(|_| {
+            let ev = recv_event_matching(&event_obs, Duration::from_secs(1), |payload| {
+                matches!(payload, BusEventPayload::DaliTargetStateAppliedEvent(_))
+            });
+            let BusEventPayload::DaliTargetStateAppliedEvent(body) = &ev.payload else {
+                unreachable!("predicate selected this variant");
+            };
+            (ev.meta.correlation_id, body.setpoint.level, body.hold_hcl)
+        })
+        .collect();
     assert_eq!(
-        (carried.meta.correlation_id, carried.status),
-        (21, DeliveryStatus::Ok),
-        "the displaced command's power rode on the survivor"
+        applied,
+        vec![(21, Some(100), true), (22, Some(150), false)],
+        "folding would have committed one claim for both commands"
     );
-    let applied_ev = recv_event_matching(&event_obs, Duration::from_secs(1), |payload| {
-        matches!(payload, BusEventPayload::DaliTargetStateAppliedEvent(_))
-    });
-    let BusEventPayload::DaliTargetStateAppliedEvent(body) = &applied_ev.payload else {
-        unreachable!("predicate selected this variant");
-    };
-    assert_eq!((body.setpoint.power, body.setpoint.level), (PowerState::On, Some(150)));
-    assert!(
-        body.hold_hcl,
-        "the carried power came from a command that holds the schedule, so the commit must hold"
-    );
+    let mock = transport.lock().expect("mock lock");
+    assert_eq!(mock.scripted_exchanges_remaining(), 0, "{:04X?}", mock.sent_frames());
+    assert_eq!(mock.script_error(), None);
 }
