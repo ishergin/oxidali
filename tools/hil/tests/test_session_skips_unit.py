@@ -194,3 +194,23 @@ def test_the_default_run_is_read_only(monkeypatch):
     monkeypatch.setenv("HIL_LAMPS_READ_ONLY", "0")
     assert not HilConfig(serial_remote="").lamps_read_only
 
+
+class _ZoneApi:
+    def __init__(self, zone):
+        self.zone, self.sets = zone, []
+
+    def time_get(self):
+        return {"timezone": self.zone}
+
+    def time_set(self, timezone):
+        self.sets.append(timezone)
+        self.zone = timezone
+
+
+def test_a_run_that_drives_no_lamp_reports_a_wrong_zone_and_never_moves_the_clock():
+    api = _ZoneApi("UTC0")
+    findings = hil_session_guards._neutralize_timezone(api, drives_lamps=False)
+    assert api.sets == [] and "left as it is" in findings[0]
+    findings = hil_session_guards._neutralize_timezone(api, drives_lamps=True)
+    assert api.sets == [hil_session_guards.BENCH_BASELINE_TZ] and "restored" in findings[0]
+

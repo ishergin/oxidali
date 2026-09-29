@@ -87,7 +87,7 @@ def bench_baseline(pytestconfig, production_state):
     findings.extend(_neutralize_poller(api))
     schedule_findings, suspended = _neutralize_schedules(api, api.cfg.drives_lamps())
     findings.extend(schedule_findings)
-    findings.extend(_neutralize_timezone(api))
+    findings.extend(_neutralize_timezone(api, api.cfg.drives_lamps()))
     leaked = _leaked_names(api)
     validity_of(pytestconfig)["observed"] = _observed_baseline(api)
 
@@ -155,10 +155,13 @@ def _restore_schedules(api, suspended):
                   "re-enable it by hand" % (schedule_id, exc))
 
 
-def _neutralize_timezone(api):
+def _neutralize_timezone(api, drives_lamps):
     found = api.time_get().get("timezone")
     if found == BENCH_BASELINE_TZ:
         return []
+    if not drives_lamps:
+        return ["found timezone %r, expected %r — left as it is: a run that drives no lamp "
+                "never moves the controller's clock" % (found, BENCH_BASELINE_TZ)]
     api.time_set(timezone=BENCH_BASELINE_TZ)
     now = api.time_get().get("timezone")
     if now != BENCH_BASELINE_TZ:
