@@ -5,7 +5,7 @@ import pytest
 
 import hil.api
 from hil.config import HilConfig, load as load_config
-from hil.foreign import ForeignMaster
+from hil.foreign import ForeignMaster, injection_refusal
 from hil.lamp_guard import LampGuard, LampNotAllowed
 
 LAMPS = frozenset({0, 2, 3})
@@ -426,6 +426,57 @@ def test_the_client_refuses_an_apply_that_would_push_an_owner_row(monkeypatch):
     with pytest.raises(LampNotAllowed, match=r"row of VL7 refused: SA1 is outside"):
         client.groups.apply()
     assert client.http.sent == []
+
+
+PANEL, KEYED_INSTANCE, FREE_INSTANCE = 5, 0, 3
+
+
+def _input_rule(name, trigger, enabled=True):
+    return {"name": name, "enabled": enabled, "triggers": [trigger]}
+
+
+OWNER_INPUT_RULES = {"rules": [
+    _input_rule("hall", {"kind": "input_event", "adapter_id": 0, "device_short_address": PANEL,
+                         "instance_number": KEYED_INSTANCE, "event": "short_press"}),
+    _input_rule("boot", {"kind": "input_device_power_cycled", "adapter_id": 0,
+                         "device_short_address": PANEL}),
+    _input_rule("hil-inp-06", {"kind": "input_event", "adapter_id": 0,
+                               "device_short_address": PANEL, "instance_number": FREE_INSTANCE,
+                               "event": "short_press"}),
+    _input_rule("off", {"kind": "input_event", "adapter_id": 0, "device_short_address": PANEL,
+                        "instance_number": FREE_INSTANCE, "event": "press"}, enabled=False),
+]}
+GROUP_RULES = {"rules": [_input_rule("any", {"kind": "input_event", "adapter_id": 0,
+                                             "instance_group": 7, "event": "press"})]}
+
+
+def _event(short, instance, info=0x002):
+    return [short << 1, 0x80 | (instance << 2) | (info >> 8), info & 0xFF]
+
+
+def test_an_injected_event_is_refused_when_an_owner_rule_could_fire_on_it(monkeypatch):
+    assert "hall" in injection_refusal(_event(PANEL, KEYED_INSTANCE), OWNER_INPUT_RULES, 0)
+    assert injection_refusal(_event(PANEL, FREE_INSTANCE), OWNER_INPUT_RULES, 0) is None
+    assert "boot" in injection_refusal([0xFE, 0xE0, 0x40 | PANEL], OWNER_INPUT_RULES, 0)
+    assert injection_refusal([0xFE, 0xE0, 0x40 | (PANEL + 1)], OWNER_INPUT_RULES, 0) is None
+    assert injection_refusal([0x80 | (1 << 1), 0x80, 0x002], OWNER_INPUT_RULES, 0) is None
+    assert "any" in injection_refusal(_event(PANEL + 1, FREE_INSTANCE), GROUP_RULES, 0)
+    assert "any" in injection_refusal([0xC0 | (7 << 1), 0x00, 0x001], GROUP_RULES, 0)
+    assert "command" in injection_refusal([(PANEL << 1) | 1, 0xFE, 0x30], {"rules": []}, 0)
+
+    class _Api:
+        adapter = 0
+
+        def _req(self, method, path, body=None):
+            return {"rules": OWNER_INPUT_RULES}
+
+    master = ForeignMaster(dataclasses.replace(load_config(), lamp_shorts="0,2,3"))
+    with pytest.raises(LampNotAllowed, match=r"no controller lists the rules"):
+        master._check(master._normalize([{"bits": 24, "bytes": _event(PANEL, FREE_INSTANCE)}]))
+    master.api = _Api()
+    with pytest.raises(LampNotAllowed, match=r"rule\(s\) \['hall'\] could fire"):
+        master._check(master._normalize([{"bits": 24, "bytes": _event(PANEL, KEYED_INSTANCE)}]))
+    master._check(master._normalize([{"bits": 24, "bytes": _event(PANEL, FREE_INSTANCE)}]))
 
 
 def test_off_all_drives_only_the_allowlist(monkeypatch):
