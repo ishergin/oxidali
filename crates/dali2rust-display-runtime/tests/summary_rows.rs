@@ -237,6 +237,7 @@ fn a_scene_recall_names_the_scene() {
             error: None,
             recalled_at_mono_ms: 0,
             source: RuntimeSource::Api,
+            hold_hcl: true,
         },
     );
     wait_row(&view, 6, "G02 SC3 WEB");
@@ -310,6 +311,7 @@ fn applied(source: RuntimeSource, level: Option<u8>, kelvin: Option<u16>) -> Dal
         dapc_applied: true,
         source,
         applied_at_mono_ms: 0,
+        hold_hcl: true,
     }
 }
 

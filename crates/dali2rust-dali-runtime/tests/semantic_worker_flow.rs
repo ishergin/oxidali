@@ -613,6 +613,50 @@ fn a_recall_fact_names_the_source_that_asked_for_it() {
 }
 
 #[test]
+fn an_applied_fact_says_whether_its_command_holds_the_schedule() {
+    use dali2rust_contracts::msg::DaliSetTargetStateCommand as Cmd;
+    let mut read_port = TestReadPort { enabled: true, ..Default::default() };
+    read_port.bindings.insert((0, 4), 12);
+    let harness = WorkerHarness::new(Arc::new(read_port), ControllerMode::NoAnswer);
+    let commands = [
+        Cmd::for_virtual_lamp(0, 4, &setpoint(42)),
+        Cmd::for_short(0, 9, &setpoint(43)),
+        Cmd::for_group(0, 3, &setpoint(44)),
+        Cmd { scope: DaliTargetScope::Broadcast, ..Cmd::for_short(0, 0, &setpoint(45)) },
+    ];
+    for (offset, command) in (0u64..).zip(commands) {
+        for hold_hcl in [false, true] {
+            let corr = 200 + offset * 2 + u64::from(hold_hcl);
+            harness.publish(dali2rust_contracts::bus::command_envelope(
+                SOURCE_ID_UNSPECIFIED,
+                corr,
+                BusId::default().0,
+                Some(dali2rust_contracts::msg::Origin::Rules),
+                Cmd { hold_hcl, ..command.clone() },
+            ));
+            let ev = harness.recv_event_matching(corr, |payload| {
+                matches!(payload, BusEventPayload::DaliTargetStateAppliedEvent(_))
+            });
+            let BusEventPayload::DaliTargetStateAppliedEvent(body) = &ev.payload else {
+                unreachable!("the predicate selected this variant");
+            };
+            assert_eq!(body.hold_hcl, hold_hcl, "{:?} hold_hcl={hold_hcl}", command.scope);
+        }
+    }
+    harness.publish(dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        210,
+        BusId::default().0,
+        Some(dali2rust_contracts::msg::Origin::Rules),
+        dali2rust_contracts::msg::DaliRecallSceneCommand {
+            hold_hcl: false,
+            ..dali2rust_contracts::msg::DaliRecallSceneCommand::for_virtual_lamp(0, 4, 3)
+        },
+    ));
+    assert!(!recalled_event(&harness, 210).hold_hcl, "a recall fact says it too");
+}
+
+#[test]
 fn a_recall_on_an_unbound_lamp_reaches_no_wire_and_is_counted() {
     let harness = WorkerHarness::new(Arc::new(TestReadPort { enabled: true, ..Default::default() }), ControllerMode::NoAnswer);
     harness.publish(lamp_recall(95, 4, 3));

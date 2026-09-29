@@ -155,10 +155,11 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
   displaces an earlier one that has not started (the keys:
   [DALI worker](../product-design/runtime-modules/dali-worker/README.md)).
 - A displaced target-state setpoint of the survivor's origin gives the survivor every
-  field the survivor does not state (`LightSetpoint::merge_from`). Nothing of another
-  origin is folded — the survivor's envelope carries the origin, which sets its priority
-  and the runtime source of its commit — and nothing is folded across a lamp-driving
-  frame that reaches the wire in between.
+  field the survivor does not state (`LightSetpoint::merge_from`), and the survivor
+  holds the HCL schedule (`hold_hcl`) if a command that gave it a field did. Nothing of
+  another origin is folded — the survivor's envelope carries the origin, which sets its
+  priority and the runtime source of its commit — and nothing is folded across a
+  lamp-driving frame that reaches the wire in between.
 - A displaced command whose fields were carried is confirmed as success; one that
   contributed nothing is answered `superseded` (409). Coalescing may drop a frame, but a
   field the survivor does not state is never dropped silently.

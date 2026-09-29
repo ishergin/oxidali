@@ -449,6 +449,7 @@ fn foreign_recall(
         error: None,
         recalled_at_mono_ms: raw.observed_at_mono_ms,
         source: RuntimeSource::Sniffer,
+        hold_hcl: true,
     })
 }
 

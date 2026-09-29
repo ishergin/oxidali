@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+pub(super) struct Provenance {
+    pub(super) source: RuntimeSource,
+    pub(super) hold_hcl: bool,
+}
+
 fn resolve_color_write_policy(
     read_port: &dyn RegistryReadPort,
     registry_adapter_id: u8,
@@ -37,7 +43,10 @@ pub(super) fn handle_set_target_state(
     counters: &DaliWorkerCounters,
 ) {
     let sequence_retries = runtime_config.target_state_sequence_retries;
-    let source = RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api);
+    let provenance = Provenance {
+        source: RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api),
+        hold_hcl: ts.hold_hcl,
+    };
 
     match ts.scope {
         DaliTargetScope::VirtualLamp => handle_set_target_state_vl(
@@ -47,7 +56,7 @@ pub(super) fn handle_set_target_state(
             publisher,
             adapter_id,
             correlation_id,
-            source,
+            provenance,
             ts.registry_adapter_id,
             ts.virtual_lamp_id,
             &ts.setpoint,
@@ -65,7 +74,7 @@ pub(super) fn handle_set_target_state(
                 publisher,
                 adapter_id,
                 correlation_id,
-                source,
+                provenance,
                 ts,
                 policy,
                 counters,
@@ -74,14 +83,14 @@ pub(super) fn handle_set_target_state(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "source threads provenance through one extra param")]
+#[allow(clippy::too_many_arguments, reason = "provenance threads through one extra param")]
 fn run_set_target_state_physical(
     controller: &mut impl DaliApplicationController,
     sequence_retries: u8,
     publisher: &BusPublisher,
     adapter_id: BusId,
     correlation_id: u64,
-    source: RuntimeSource,
+    provenance: Provenance,
     ts: &dali2rust_contracts::msg::DaliSetTargetStateCommand,
     policy: ColorWritePolicy,
     counters: &DaliWorkerCounters,
@@ -93,7 +102,7 @@ fn run_set_target_state_physical(
             publisher,
             adapter_id,
             correlation_id,
-            source,
+            provenance,
             ts.registry_adapter_id,
             ts.short_address,
             &ts.setpoint,
@@ -106,7 +115,7 @@ fn run_set_target_state_physical(
             publisher,
             adapter_id,
             correlation_id,
-            source,
+            provenance,
             ts.registry_adapter_id,
             ts.group_id,
             &ts.setpoint,
@@ -118,7 +127,7 @@ fn run_set_target_state_physical(
             publisher,
             adapter_id,
             correlation_id,
-            source,
+            provenance,
             ts.registry_adapter_id,
             &ts.setpoint,
             counters,
@@ -186,14 +195,14 @@ fn publish_target_state_failed(
     );
 }
 
-#[allow(clippy::too_many_arguments, reason = "source threads provenance through one extra param")]
+#[allow(clippy::too_many_arguments, reason = "provenance threads through one extra param")]
 fn handle_set_target_state_short(
     controller: &mut impl DaliApplicationController,
     sequence_retries: u8,
     publisher: &BusPublisher,
     adapter_id: BusId,
     correlation_id: u64,
-    source: RuntimeSource,
+    provenance: Provenance,
     registry_adapter_id: u8,
     short_address: u8,
     sp: &dali2rust_contracts::msg::LightSetpoint,
@@ -218,7 +227,7 @@ fn handle_set_target_state_short(
         Some(short_address),
         None,
         sp,
-        source,
+        provenance,
     );
     if !publish_target_state_applied_event(publisher, correlation_id, adapter_id, counters, applied)
     {
@@ -237,7 +246,7 @@ pub(super) fn target_state_applied_event(
     short_address: Option<u8>,
     group_id: Option<u8>,
     sp: &dali2rust_contracts::msg::LightSetpoint,
-    source: RuntimeSource,
+    provenance: Provenance,
 ) -> dali2rust_contracts::msg::DaliTargetStateAppliedEvent {
     dali2rust_contracts::msg::DaliTargetStateAppliedEvent {
         registry_adapter_id,
@@ -247,19 +256,20 @@ pub(super) fn target_state_applied_event(
         group_id,
         setpoint: sp.clone(),
         dapc_applied: setpoint_dapc_applied(sp),
-        source,
+        source: provenance.source,
         applied_at_mono_ms: dali2rust_bsp::monotonic_clock::observation_stamp_ms(),
+        hold_hcl: provenance.hold_hcl,
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "source threads provenance through one extra param")]
+#[allow(clippy::too_many_arguments, reason = "provenance threads through one extra param")]
 fn handle_set_target_state_broadcast(
     controller: &mut impl DaliApplicationController,
     sequence_retries: u8,
     publisher: &BusPublisher,
     adapter_id: BusId,
     correlation_id: u64,
-    source: RuntimeSource,
+    provenance: Provenance,
     registry_adapter_id: u8,
     sp: &dali2rust_contracts::msg::LightSetpoint,
     counters: &DaliWorkerCounters,
@@ -280,7 +290,7 @@ fn handle_set_target_state_broadcast(
         None,
         None,
         sp,
-        source,
+        provenance,
     );
     publish_event_required(
         publisher,
@@ -301,14 +311,14 @@ fn handle_set_target_state_broadcast(
     publish_confirmation_ok(publisher, correlation_id, counters);
 }
 
-#[allow(clippy::too_many_arguments, reason = "source threads provenance through one extra param")]
+#[allow(clippy::too_many_arguments, reason = "provenance threads through one extra param")]
 fn handle_set_target_state_group(
     controller: &mut impl DaliApplicationController,
     sequence_retries: u8,
     publisher: &BusPublisher,
     adapter_id: BusId,
     correlation_id: u64,
-    source: RuntimeSource,
+    provenance: Provenance,
     registry_adapter_id: u8,
     group_id: u8,
     sp: &dali2rust_contracts::msg::LightSetpoint,
@@ -337,7 +347,7 @@ fn handle_set_target_state_group(
         None,
         Some(group_id),
         sp,
-        source,
+        provenance,
     );
     let applied_event =
         dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), applied);
@@ -348,7 +358,7 @@ fn handle_set_target_state_group(
         .fetch_add(1, Ordering::Relaxed);
 }
 
-#[allow(clippy::too_many_arguments, reason = "source threads provenance through one extra param")]
+#[allow(clippy::too_many_arguments, reason = "provenance threads through one extra param")]
 fn handle_set_target_state_vl(
     controller: &mut impl DaliApplicationController,
     sequence_retries: u8,
@@ -356,7 +366,7 @@ fn handle_set_target_state_vl(
     publisher: &BusPublisher,
     adapter_id: BusId,
     correlation_id: u64,
-    source: RuntimeSource,
+    provenance: Provenance,
     registry_adapter_id: u8,
     vl_id: u8,
     sp: &dali2rust_contracts::msg::LightSetpoint,
@@ -390,7 +400,7 @@ fn handle_set_target_state_vl(
         Some(short_sa),
         None,
         sp,
-        source,
+        provenance,
     );
     if !publish_target_state_applied_event(publisher, correlation_id, adapter_id, counters, applied)
     {

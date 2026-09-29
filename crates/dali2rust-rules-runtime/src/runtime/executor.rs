@@ -21,6 +21,13 @@ pub(crate) struct ExecutionReport {
     pub failed: u8,
 }
 
+struct MergedLight {
+    at: usize,
+    target: LightTarget,
+    setpoint: LightSetpoint,
+    hold_hcl: bool,
+}
+
 pub(crate) struct EffectExecutor<'a> {
     pub publisher: &'a BusPublisher,
     pub bus_id: BusId,
@@ -43,11 +50,8 @@ impl EffectExecutor<'_> {
                 Effect::Light { target, verb: LightVerb::StopFade, .. } => {
                     self.stop_fade(target, corr)
                 }
-                Effect::Light { .. } => match lights.iter().position(|(at, _, _)| *at == index) {
-                    Some(slot) => {
-                        let (_, target, setpoint) = lights.remove(slot);
-                        self.publish_light(&target, setpoint, corr)
-                    }
+                Effect::Light { .. } => match lights.iter().position(|light| light.at == index) {
+                    Some(slot) => self.publish_light(lights.remove(slot), corr),
                     None => continue,
                 },
                 other => self.one(other, snapshot, corr),
@@ -61,15 +65,11 @@ impl EffectExecutor<'_> {
         ExecutionReport { executed, failed }
     }
 
-    fn merge_lights(
-        &self,
-        effects: &[Effect],
-        snapshot: &WorldSnapshot,
-    ) -> Vec<(usize, LightTarget, LightSetpoint)> {
-        let mut lights: Vec<(usize, LightTarget, LightSetpoint)> = Vec::new();
+    fn merge_lights(&self, effects: &[Effect], snapshot: &WorldSnapshot) -> Vec<MergedLight> {
+        let mut lights: Vec<MergedLight> = Vec::new();
         let mut open: Vec<(LightKey, usize)> = Vec::new();
         for (index, effect) in effects.iter().enumerate() {
-            let Effect::Light { target, verb, .. } = effect else {
+            let Effect::Light { target, verb, hold_hcl } = effect else {
                 open.clear();
                 continue;
             };
@@ -84,10 +84,18 @@ impl EffectExecutor<'_> {
             let key = light_key(target);
             let slot = open.iter().find(|(k, _)| *k == key).map(|(_, slot)| *slot);
             match slot {
-                Some(slot) => lights[slot].2.merge_from(&sp),
+                Some(slot) => {
+                    lights[slot].setpoint.merge_from(&sp);
+                    lights[slot].hold_hcl |= *hold_hcl;
+                }
                 None => {
                     open.push((key, lights.len()));
-                    lights.push((index, *target, sp));
+                    lights.push(MergedLight {
+                        at: index,
+                        target: *target,
+                        setpoint: sp,
+                        hold_hcl: *hold_hcl,
+                    });
                 }
             }
         }
@@ -100,7 +108,9 @@ impl EffectExecutor<'_> {
                 debug_assert!(false, "light effects are merged and published by execute()");
                 false
             }
-            Effect::SceneRecall { scene, target, .. } => self.scene_recall(*scene, target, corr),
+            Effect::SceneRecall { scene, target, hold_hcl } => {
+                self.scene_recall(*scene, target, *hold_hcl, corr)
+            }
             Effect::SceneApply { scene, .. } => self.scene_apply(*scene, corr),
             Effect::HclResume { target } => self.hcl_resume(target, corr),
             Effect::HclHold { .. } => self.unmapped(&self.counters.hcl_hold_unmapped),
@@ -132,8 +142,8 @@ impl EffectExecutor<'_> {
         }
     }
 
-    fn publish_light(&self, target: &LightTarget, setpoint: LightSetpoint, corr: u64) -> bool {
-        let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target);
+    fn publish_light(&self, light: MergedLight, corr: u64) -> bool {
+        let (scope, virtual_lamp_id, group_id, adapter) = scope_of(&light.target);
         self.publish(
             corr,
             DaliSetTargetStateCommand {
@@ -141,8 +151,9 @@ impl EffectExecutor<'_> {
                 virtual_lamp_id,
                 short_address: 0,
                 group_id,
-                setpoint,
+                setpoint: light.setpoint,
                 registry_adapter_id: adapter,
+                hold_hcl: light.hold_hcl,
             },
         )
     }
@@ -162,7 +173,13 @@ impl EffectExecutor<'_> {
         )
     }
 
-    fn scene_recall(&self, scene: u8, target: &Option<LightTarget>, corr: u64) -> bool {
+    fn scene_recall(
+        &self,
+        scene: u8,
+        target: &Option<LightTarget>,
+        hold_hcl: bool,
+        corr: u64,
+    ) -> bool {
         let command = match target {
             Some(LightTarget::Group(group)) => {
                 DaliRecallSceneCommand::for_group(group.adapter_id, group.id as u8, scene)
@@ -175,7 +192,7 @@ impl EffectExecutor<'_> {
             }
             None => DaliRecallSceneCommand::broadcast(0, scene),
         };
-        self.publish(corr, command)
+        self.publish(corr, DaliRecallSceneCommand { hold_hcl, ..command })
     }
 
     fn scene_apply(&self, scene: u8, corr: u64) -> bool {

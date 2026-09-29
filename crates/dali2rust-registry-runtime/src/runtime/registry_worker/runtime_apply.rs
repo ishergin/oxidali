@@ -7,7 +7,7 @@ use dali2rust_contracts::msg::{
 };
 
 use crate::runtime::registry::physical_devices::{PhysicalRuntimeCommit, RuntimeCommitOutcome};
-use crate::runtime::registry::publish::publish_runtime_state_changed;
+use crate::runtime::registry::publish::{publish_runtime_state_changed, RuntimeCommitMeta};
 use crate::runtime::registry::RegistryStore;
 
 use super::confirm::{
@@ -147,6 +147,7 @@ fn apply_registry_runtime_targets(
             observed_at_mono_ms: entry.observed_at_mono_ms,
             entry_last_dapc_source: entry.last_dapc_source,
             entry_source: entry.source,
+            entry_holds_hcl: entry.hold_hcl,
         },
         store,
     ))
@@ -213,8 +214,11 @@ fn apply_runtime_physical_and_publish(
         vl,
         short_address,
         store,
-        commit.entry_source,
-        commit.setpoint.dimensions(),
+        RuntimeCommitMeta {
+            source: commit.entry_source,
+            dimensions: commit.setpoint.dimensions(),
+            holds_hcl: commit.entry_holds_hcl,
+        },
     ) {
         RuntimeCommitOutcome::Committed
     } else {
@@ -231,8 +235,7 @@ fn publish_runtime_snapshot(
     vl: Option<u8>,
     short_address: u8,
     store: &RegistryStore,
-    commit_source: dali2rust_contracts::msg::RuntimeSource,
-    commit_dimensions: dali2rust_contracts::msg::SetpointDimensions,
+    commit: RuntimeCommitMeta,
 ) -> bool {
     let Some((snap_sp, snap_obs)) =
         store.runtime_state_payload_from_physical(adapter_id, short_address)
@@ -253,8 +256,7 @@ fn publish_runtime_snapshot(
         Some(short_address),
         &snap_sp,
         &snap_obs,
-        commit_source,
-        commit_dimensions,
+        commit,
     );
     true
 }
@@ -346,8 +348,11 @@ fn announce_transition(
         vl,
         short_address,
         store,
-        cmd.source,
-        dali2rust_contracts::msg::SetpointDimensions { level: true, color: false },
+        RuntimeCommitMeta {
+            source: cmd.source,
+            dimensions: dali2rust_contracts::msg::SetpointDimensions { level: true, color: false },
+            holds_hcl: true,
+        },
     ) {
         RuntimeCommitOutcome::Committed
     } else {

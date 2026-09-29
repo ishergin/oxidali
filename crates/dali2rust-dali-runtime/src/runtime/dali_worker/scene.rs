@@ -275,7 +275,10 @@ fn publish_recall_last_active_applied(
             level: None,
             color: None,
         },
-        RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api),
+        super::target_state::Provenance {
+            source: RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api),
+            hold_hcl: true,
+        },
     );
     let env = dali2rust_contracts::bus::event_envelope(
         SOURCE_ID_UNSPECIFIED,
@@ -338,6 +341,7 @@ fn publish_scene_recalled_outcome(
                 .map(|(code, message)| dali2rust_contracts::msg::CompactErrorPayload::new(code, message)),
             recalled_at_mono_ms: dali2rust_bsp::monotonic_clock::observation_stamp_ms(),
             source: outcome.source,
+            hold_hcl: command.hold_hcl,
         },
     );
     publish_event_required(

@@ -630,6 +630,7 @@ fn runtime_state_changed(lamp_id: u8) -> dali2rust_contracts::msg::RuntimeStateC
         state_observation: dali2rust_contracts::msg::RuntimeObservation::default(),
         commit_source: dali2rust_contracts::msg::RuntimeSource::Api,
         commit_dimensions: state_setpoint.dimensions(),
+        commit_holds_hcl: true,
     }
 }
 
@@ -820,6 +821,7 @@ fn scene_recalled(scene_id: u8, failed: bool) -> dali2rust_contracts::msg::DaliS
         }),
         recalled_at_mono_ms: 0,
         source: dali2rust_contracts::msg::RuntimeSource::Api,
+        hold_hcl: true,
     }
 }
 
@@ -1108,6 +1110,10 @@ fn every_counted_landing_moves_its_counter() {
 }
 
 fn landing_setpoint(kind: &str, snippet: &str) -> dali2rust_contracts::msg::LightSetpoint {
+    landing_command(kind, &landing_document(snippet)).setpoint
+}
+
+fn landing_command(kind: &str, document: &str) -> dali2rust_contracts::msg::DaliSetTargetStateCommand {
     let lamps = vec![landing_lamp(Some(120))];
     let h = harness_with_lamps(
         Arc::new(dali2rust_test_support::fs::temp_slice_store(&format!(
@@ -1115,9 +1121,9 @@ fn landing_setpoint(kind: &str, snippet: &str) -> dali2rust_contracts::msg::Ligh
         ))),
         lamps,
     );
-    publish_document(&h, 1, &landing_document(snippet), 0);
+    publish_document(&h, 1, document, 0);
     let sig = recv_signal(&h, 1);
-    assert!(sig.error.is_none(), "{kind}: {snippet:?} — {sig:?}");
+    assert!(sig.error.is_none(), "{kind}: {document:?} — {sig:?}");
     wait_revision(&h.store, 1);
     publish(
         &h,
@@ -1133,9 +1139,9 @@ fn landing_setpoint(kind: &str, snippet: &str) -> dali2rust_contracts::msg::Ligh
             dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(_)
         )
     })
-    .unwrap_or_else(|| panic!("{kind}: `{snippet}` published no setpoint"));
+    .unwrap_or_else(|| panic!("{kind}: {document:?} published no setpoint"));
     match ce.payload {
-        dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(ts) => ts.setpoint,
+        dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(ts) => ts,
         _ => unreachable!("filtered above"),
     }
 }
@@ -1231,24 +1237,67 @@ fn a_computed_level_of_zero_goes_out_as_dapc_zero() {
     }
 }
 
+const HOLD_FALSE_RULE_DOC: &str = "rule \"под тестом\" hold_hcl false {\n  when http trigger\n  do lamp(0).level(200)\n}\n";
+
 #[test]
-fn hold_hcl_true_changes_nothing_and_false_never_reaches_the_bus() {
-    let plain = landing_setpoint("hold-hcl-default", "lamp(0).level(200)");
-    let explicit = landing_setpoint("hold-hcl-true", "lamp(0).level(200, hold_hcl=true)");
+fn hold_hcl_true_changes_nothing_and_false_rides_on_the_command() {
+    let plain = landing_command("hold-hcl-default", &landing_document("lamp(0).level(200)"));
+    let explicit =
+        landing_command("hold-hcl-true", &landing_document("lamp(0).level(200, hold_hcl=true)"));
     assert_eq!(
         plain, explicit,
         "`hold_hcl=true` is the default written out; it must not change the \
          published command"
     );
+    assert!(plain.hold_hcl, "a rule's light write holds the schedule by default");
 
-    let h = harness("landing-hold-hcl-false");
-    publish_document(&h, 1, &landing_document("lamp(0).level(200, hold_hcl=false)"), 0);
-    let sig = recv_signal(&h, 1);
-    assert!(
-        sig.error.is_some(),
-        "`hold_hcl=false` must be refused at the commit, not accepted and \
-         silently dropped (ISSUE-96)"
+    let action =
+        landing_command("hold-hcl-false", &landing_document("lamp(0).level(200, hold_hcl=false)"));
+    assert!(!action.hold_hcl, "the action modifier must reach the command");
+    let rule = landing_command("hold-hcl-rule-false", HOLD_FALSE_RULE_DOC);
+    assert!(!rule.hold_hcl, "the rule modifier must reach the command");
+    assert_eq!(action.setpoint, plain.setpoint, "the flag changes nothing else");
+}
+
+#[test]
+fn a_merged_setpoint_holds_if_any_merged_effect_holds() {
+    let mixed = landing_command(
+        "hold-hcl-merge-mixed",
+        &landing_document("lamp(0).level(200, hold_hcl=false)\n     lamp(0).cct(2700)"),
     );
+    assert_eq!(mixed.setpoint.level, Some(200), "both verbs are one command");
+    assert!(mixed.setpoint.states_color(), "both verbs are one command");
+    assert!(
+        mixed.hold_hcl,
+        "the colour half asked to hold the schedule; merging must not drop that claim"
+    );
+    let spared = landing_command(
+        "hold-hcl-merge-spared",
+        &landing_document("lamp(0).level(200, hold_hcl=false)\n     lamp(0).cct(2700, hold_hcl=false)"),
+    );
+    assert!(!spared.hold_hcl, "no merged effect holds, so the command does not");
+}
+
+#[test]
+fn a_scene_recall_from_a_rule_that_does_not_hold_says_so() {
+    let h = harness("landing-hold-hcl-recall");
+    publish_document(
+        &h,
+        1,
+        "rule \"под тестом\" hold_hcl false {\n  when http trigger\n  do scene(3).recall(lamp(6))\n}\n",
+        0,
+    );
+    assert!(recv_signal(&h, 1).error.is_none());
+    wait_revision(&h.store, 1);
+    run_rule(&h, 2, "под тестом");
+    let ce = dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |payload| {
+        matches!(payload, dali2rust_contracts::msg::BusCommandPayload::DaliRecallSceneCommand(_))
+    })
+    .expect("the recall must reach the bus");
+    let dali2rust_contracts::msg::BusCommandPayload::DaliRecallSceneCommand(cmd) = ce.payload else {
+        unreachable!("filtered above")
+    };
+    assert!(!cmd.hold_hcl);
 }
 
 #[test]

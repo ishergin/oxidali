@@ -29,10 +29,11 @@ pub struct RuntimeCommit {
     pub virtual_lamp_id: Option<u8>,
     pub value_source: Option<RuntimeSource>,
     pub states: SetpointDimensions,
+    pub holds_hcl: bool,
 }
 
 impl RuntimeCommit {
-    pub(crate) fn is_foreign(&self) -> bool {
+    fn is_foreign(&self) -> bool {
         !matches!(
             self.value_source,
             Some(RuntimeSource::Hcl)
@@ -40,6 +41,10 @@ impl RuntimeCommit {
                 | Some(RuntimeSource::Readback)
                 | None
         )
+    }
+
+    pub(crate) fn overrides(&self) -> bool {
+        self.holds_hcl && self.is_foreign()
     }
 }
 
@@ -145,7 +150,7 @@ pub fn commit_hits_target(
     use dali2rust_contracts::msg::HclTargetScope;
 
     if commit.adapter_id != target.adapter_id
-        || !commit.is_foreign()
+        || !commit.overrides()
         || !commit.states.intersects(driven)
     {
         return false;
@@ -262,6 +267,7 @@ mod tests {
                 level: true,
                 color: false,
             },
+            holds_hcl: true,
         }
     }
 
@@ -278,6 +284,7 @@ mod tests {
             virtual_lamp_id: Some(1),
             value_source: Some(RuntimeSource::Api),
             states: setpoint.dimensions(),
+            holds_hcl: true,
         }
     }
 
@@ -322,6 +329,23 @@ mod tests {
                 "{source:?} must suspend the schedule"
             );
         }
+    }
+
+    #[test]
+    fn a_commit_that_does_not_hold_leaves_the_schedule_running() {
+        let stub = MembershipStub::with_lamp_in_groups(1, &[3]);
+        let spared = RuntimeCommit {
+            holds_hcl: false,
+            ..commit(RuntimeSource::Rules, Some(1))
+        };
+        assert!(
+            !commit_hits_target(&stub, &spared, group_target(3), drives_level()),
+            "a rule that said hold_hcl false moved the lamp without overriding the schedule"
+        );
+        assert!(
+            commit_hits_target(&stub, &commit(RuntimeSource::Rules, Some(1)), group_target(3), drives_level()),
+            "the same rule commit that holds does stand the schedule down"
+        );
     }
 
     #[test]

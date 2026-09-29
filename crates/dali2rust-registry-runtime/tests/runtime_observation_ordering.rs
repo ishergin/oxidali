@@ -27,6 +27,7 @@ fn runtime_entry(level: u8, source: RuntimeSource, stamp: Option<u32>) -> Runtim
         last_dapc_source: None,
         source,
         observed_at_mono_ms: stamp,
+        hold_hcl: true,
     }
 }
 

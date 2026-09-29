@@ -67,6 +67,7 @@ pub struct RuntimeRegistryUpdateEntry {
     pub last_dapc_source: Option<super::kinds::LastDapcSource>,
     pub source: RuntimeSource,
     pub observed_at_mono_ms: Option<u32>,
+    pub hold_hcl: bool,
 }
 
 impl Default for RuntimeRegistryUpdateEntry {
@@ -79,6 +80,7 @@ impl Default for RuntimeRegistryUpdateEntry {
             last_dapc_source: None,
             source: RuntimeSource::Poller,
             observed_at_mono_ms: None,
+            hold_hcl: true,
         }
     }
 }
@@ -241,6 +243,7 @@ declare_bus_payloads! {
         pub group_id: u8,
         pub setpoint: LightSetpoint,
         pub registry_adapter_id: u8,
+        pub hold_hcl: bool,
     }
     budget = DaliSetTargetStateCommand {
         scope: DaliTargetScope::AddressRange,
@@ -249,6 +252,7 @@ declare_bus_payloads! {
         group_id: 15,
         setpoint: crate::msg::payload_test_samples::worst_setpoint(),
         registry_adapter_id: u8::MAX,
+        hold_hcl: true,
     };
 
     pub struct DaliWriteAttributesCommand {
@@ -431,6 +435,7 @@ declare_bus_payloads! {
         pub short_address: u8,
         pub group_id: u8,
         pub scene_id: u8,
+        pub hold_hcl: bool,
     }
     budget = DaliRecallSceneCommand {
         registry_adapter_id: u8::MAX,
@@ -439,6 +444,7 @@ declare_bus_payloads! {
         short_address: 63,
         group_id: 15,
         scene_id: 15,
+        hold_hcl: true,
     };
 
     pub struct SceneApplyExecuteCommand {
@@ -1142,6 +1148,7 @@ impl DaliRecallSceneCommand {
             short_address: 0,
             group_id: 0,
             scene_id,
+            hold_hcl: true,
         }
     }
 
@@ -1171,6 +1178,7 @@ impl DaliSetTargetStateCommand {
             group_id: 0,
             setpoint: setpoint.clone(),
             registry_adapter_id,
+            hold_hcl: true,
         }
     }
 
@@ -1183,20 +1191,16 @@ impl DaliSetTargetStateCommand {
             scope: DaliTargetScope::VirtualLamp,
             virtual_lamp_id,
             short_address: 0,
-            group_id: 0,
-            setpoint: setpoint.clone(),
-            registry_adapter_id,
+            ..Self::for_short(registry_adapter_id, 0, setpoint)
         }
     }
 
     pub fn for_group(registry_adapter_id: u8, group_id: u8, setpoint: &LightSetpoint) -> Self {
         Self {
             scope: DaliTargetScope::Group,
-            virtual_lamp_id: 0,
-            short_address: 0,
             group_id,
-            setpoint: setpoint.clone(),
-            registry_adapter_id,
+            short_address: 0,
+            ..Self::for_short(registry_adapter_id, 0, setpoint)
         }
     }
 }
@@ -1224,6 +1228,7 @@ impl RuntimeRegistryUpdateEntry {
             last_dapc_source: None,
             source: RuntimeSource::Sniffer,
             observed_at_mono_ms: None,
+            hold_hcl: true,
         }
     }
 
@@ -1236,6 +1241,7 @@ impl RuntimeRegistryUpdateEntry {
             last_dapc_source: None,
             source: RuntimeSource::Api,
             observed_at_mono_ms: None,
+            hold_hcl: true,
         }
     }
 
@@ -1253,6 +1259,7 @@ impl RuntimeRegistryUpdateEntry {
             last_dapc_source: None,
             source: RuntimeSource::Api,
             observed_at_mono_ms: None,
+            hold_hcl: true,
         }
     }
 }

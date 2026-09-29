@@ -89,6 +89,7 @@ pub fn target_state_frame(
                 level: Some(level),
                 color: None,
             },
+            hold_hcl: true,
         },
     ))
 }

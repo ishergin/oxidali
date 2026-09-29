@@ -182,20 +182,35 @@ fn refusing_fade_leaves_durations_working_everywhere_else() {
     let _ = compile(doc);
 }
 
-#[test]
-fn hold_hcl_false_is_refused_at_both_sites() {
-    for source in [
-        "rule \"t\" {\n  when http trigger\n  do lamp(\"коридор\").off(hold_hcl=false)\n}\n",
-        "rule \"t\" hold_hcl false {\n  when http trigger\n  do lamp(\"коридор\").off()\n}\n",
-    ] {
-        let err = compile_err(source);
-        assert!(err.message.contains("ISSUE-96"), "{err}");
-        assert!(err.message.contains("hold_hcl=false"), "{err}");
+fn light_hold(set: &dali2rust_rules_model::RuleSet) -> Option<bool> {
+    match &set.rule("t").expect("rule t").actions[0] {
+        dali2rust_rules_model::Action::Light(light) => light.hold_hcl,
+        other => panic!("expected a light action, got {other:?}"),
     }
 }
 
 #[test]
-fn hold_hcl_true_is_still_accepted() {
-    let _ = compile("rule \"t\" {\n  when http trigger\n  do lamp(\"коридор\").off(hold_hcl=true)\n}\n");
-    let _ = compile("rule \"t\" hold_hcl true {\n  when http trigger\n  do lamp(\"коридор\").off()\n}\n");
+fn hold_hcl_takes_true_or_false_at_both_sites() {
+    for (word, hold) in [("true", true), ("false", false)] {
+        let rule_level = format!(
+            "rule \"t\" hold_hcl {word} {{\n  when http trigger\n  do lamp(\"коридор\").off()\n}}\n"
+        );
+        let set = compile(&rule_level).unwrap_or_else(|e| panic!("{word}: {e}"));
+        assert_eq!(set.rule("t").map(|r| r.hold_hcl), Some(hold), "rule modifier {word}");
+
+        let action_level = format!(
+            "rule \"t\" {{\n  when http trigger\n  do lamp(\"коридор\").off(hold_hcl={word})\n}}\n"
+        );
+        let set = compile(&action_level).unwrap_or_else(|e| panic!("{word}: {e}"));
+        assert_eq!(light_hold(&set), Some(hold), "action modifier {word}");
+        assert_eq!(set.rule("t").map(|r| r.hold_hcl), Some(true), "the rule default stays");
+    }
+}
+
+#[test]
+fn hold_hcl_is_a_word_true_or_false_at_both_sites() {
+    let err = compile_err("rule \"t\" {\n  when http trigger\n  do lamp(\"коридор\").off(hold_hcl=1)\n}\n");
+    assert!(err.message.contains("hold_hcl must be true or false"), "{err}");
+    let err = compile_err("rule \"t\" hold_hcl maybe {\n  when http trigger\n  do lamp(\"коридор\").off()\n}\n");
+    assert!(err.message.contains("true or false"), "{err}");
 }

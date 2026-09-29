@@ -60,8 +60,8 @@
 вида (почему — `ADR-016`, таблица приоритетов —
 [`../../../architecture/09-dali-protocol-rules.md`](../../../architecture/09-dali-protocol-rules.md)
 §Priority and yielding). В провенансе коммит правила — `rules`, и HCL видит его как
-ручное вмешательство ([`../hcl-scheduler/README.md`](../hcl-scheduler/README.md)
-§Override).
+ручное вмешательство, если правило не сказало `hold_hcl false`
+([`../hcl-scheduler/README.md`](../hcl-scheduler/README.md) §Override).
 
 ## Активация
 

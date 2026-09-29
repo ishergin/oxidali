@@ -47,6 +47,7 @@ fn target_state_frame(correlation_id: u64, level: u8) -> BusFrame {
             virtual_lamp_id: 0,
             group_id: 0,
             setpoint,
+            hold_hcl: true,
         },
     ))
 }
@@ -149,4 +150,79 @@ fn stale_target_state_commands_are_superseded_within_one_drain() {
         mock.sent_frames()
     );
     assert_eq!(mock.script_error(), None);
+}
+
+fn rules_frame(correlation_id: u64, setpoint: LightSetpoint, hold_hcl: bool) -> BusFrame {
+    BusFrame::command(dali2rust_contracts::bus::command_envelope(
+        0,
+        correlation_id,
+        BusId::default().0,
+        Some(dali2rust_contracts::msg::Origin::Rules),
+        dali2rust_contracts::msg::DaliSetTargetStateCommand {
+            hold_hcl,
+            ..dali2rust_contracts::msg::DaliSetTargetStateCommand::for_short(0, SHORT, &setpoint)
+        },
+    ))
+}
+
+#[test]
+fn a_carried_field_keeps_the_hcl_claim_of_the_command_it_came_from() {
+    let (host, publisher, (worker_cmd, event_obs, conf_obs)) =
+        BusHost::spawn(BusConfig::default(), |reg| {
+            (
+                reg.subscribe_commands(16, DALI_WORKER_HANDLED_COMMANDS),
+                reg.subscribe_events(16, dali2rust_contracts::msg::EVENT_VARIANT_NAMES),
+                reg.subscribe_confirmations(16),
+            )
+        });
+    let switched_on = LightSetpoint { power: PowerState::On, level: Some(100), color: None };
+    let level_only = LightSetpoint { power: PowerState::Unknown, level: Some(150), color: None };
+    for frame in [rules_frame(21, switched_on, true), rules_frame(22, level_only, false)] {
+        assert_eq!(publisher.try_publish(BusChannel::Commands, frame), PublishResult::Queued);
+    }
+    wait_until(
+        || {
+            host.counters_snapshot()
+                .command_subscribers
+                .first()
+                .is_some_and(|sub| sub.delivered == 2)
+        },
+        Duration::from_secs(1),
+    );
+    let transport = Arc::new(std::sync::Mutex::new(MockDaliTransport::new()));
+    transport.lock().expect("mock lock").expect_forward_frame(dapc_frame(150));
+    let _worker = spawn_dali_worker(
+        worker_cmd,
+        DaliController::new(Arc::clone(&transport), Box::new(StdClock::new())),
+        DaliRuntimeConfig::default(),
+        Arc::new(RegistryStore::with_adapter_count(1)),
+        publisher.clone(),
+        BusId::default(),
+        Arc::new(DaliWorkerCounters::default()),
+        Arc::new(dali2rust_platform::dali::WireActivity::new()),
+        Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
+    );
+
+    let BusFrame::Confirmation(carried) = conf_obs
+        .recv_timeout(Duration::from_secs(1))
+        .expect("confirmation")
+    else {
+        panic!("expected confirmation frame");
+    };
+    assert_eq!(
+        (carried.meta.correlation_id, carried.status),
+        (21, DeliveryStatus::Ok),
+        "the displaced command's power rode on the survivor"
+    );
+    let applied_ev = recv_event_matching(&event_obs, Duration::from_secs(1), |payload| {
+        matches!(payload, BusEventPayload::DaliTargetStateAppliedEvent(_))
+    });
+    let BusEventPayload::DaliTargetStateAppliedEvent(body) = &applied_ev.payload else {
+        unreachable!("predicate selected this variant");
+    };
+    assert_eq!((body.setpoint.power, body.setpoint.level), (PowerState::On, Some(150)));
+    assert!(
+        body.hold_hcl,
+        "the carried power came from a command that holds the schedule, so the commit must hold"
+    );
 }

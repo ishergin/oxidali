@@ -184,7 +184,17 @@ fn target_state_setpoint(frame: &BusFrame) -> Option<&LightSetpoint> {
     }
 }
 
-fn frame_with_setpoint(frame: &BusFrame, setpoint: LightSetpoint) -> Option<BusFrame> {
+fn target_state_holds_hcl(frame: &BusFrame) -> bool {
+    let BusFrame::Command(ce) = frame else {
+        return false;
+    };
+    matches!(&ce.payload, BusCommandPayload::DaliSetTargetStateCommand(ts) if ts.hold_hcl)
+}
+
+fn frame_with_setpoint(
+    frame: &BusFrame,
+    (setpoint, hold_hcl): (LightSetpoint, bool),
+) -> Option<BusFrame> {
     let BusFrame::Command(ce) = frame else {
         return None;
     };
@@ -196,6 +206,7 @@ fn frame_with_setpoint(frame: &BusFrame, setpoint: LightSetpoint) -> Option<BusF
         return None;
     };
     ts.setpoint = setpoint;
+    ts.hold_hcl = hold_hcl;
     Some(BusFrame::command(envelope))
 }
 
@@ -227,6 +238,7 @@ fn fold_displaced_setpoints(
         let Some(original) = target_state_setpoint(&batch[survivor]).cloned() else {
             continue;
         };
+        let original = (original, target_state_holds_hcl(&batch[survivor]));
         let acc = fold_one_key(
             batch,
             last_by_key,
@@ -251,10 +263,11 @@ fn fold_one_key(
     adapter_id: BusId,
     key: (u8, u8, u8, u8, u8),
     survivor: usize,
-    survivor_setpoint: LightSetpoint,
+    (survivor_setpoint, survivor_holds): (LightSetpoint, bool),
     carried: &mut Vec<usize>,
-) -> LightSetpoint {
+) -> (LightSetpoint, bool) {
     let mut acc = survivor_setpoint;
+    let mut holds = survivor_holds;
     for index in (0..survivor).rev() {
         let frame = &batch[index];
         let frame_key = supersede_coalesce_key(frame, adapter_id);
@@ -275,10 +288,11 @@ fn fold_one_key(
         candidate.merge_from(&acc);
         if candidate != acc {
             acc = candidate;
+            holds |= target_state_holds_hcl(frame);
             carried.push(index);
         }
     }
-    acc
+    (acc, holds)
 }
 
 fn supersede_stale_target_state(

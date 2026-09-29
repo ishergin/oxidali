@@ -275,6 +275,7 @@ fn applied_from(
         dapc_applied: dapc,
         source,
         applied_at_mono_ms: PRODUCER_MONO_MS,
+        hold_hcl: true,
     }
 }
 
@@ -412,6 +413,54 @@ fn applied_group_fanout_carries_the_commands_source() {
         Some(RuntimeSource::Hcl),
         "the observation must agree with the fact's source",
     );
+}
+
+#[test]
+fn every_commit_a_fact_leads_to_says_whether_the_fact_holds_the_schedule() {
+    let port = FakeReadPort {
+        lamps: vec![bound_lamp(1, 2)],
+        group_rows: vec![group_row(1, 2)],
+        scene_rows: scene_rows(),
+        ..FakeReadPort::default()
+    };
+    let h = spawn_harness(port);
+    let (publisher, tap) = (h.publisher.clone(), &h.tap);
+    let spared = |scope: DaliTargetScope| DaliTargetStateAppliedEvent {
+        hold_hcl: false,
+        virtual_lamp_id: Some(1),
+        short_address: Some(2),
+        group_id: Some(7),
+        ..applied_from(scope, setpoint(90), true, RuntimeSource::Rules)
+    };
+    for scope in [DaliTargetScope::VirtualLamp, DaliTargetScope::Group, DaliTargetScope::Broadcast] {
+        publish_event(&publisher, CORRELATION_NONE, spared(scope));
+        let (_, cmd) = recv_runtime_update(tap);
+        assert!(!cmd.update.hold_hcl, "{scope:?}: the rule said hold_hcl false");
+        assert_eq!(cmd.update.source, RuntimeSource::Rules, "{scope:?}: provenance stays truthful");
+    }
+    publish_event(
+        &publisher,
+        CORRELATION_NONE,
+        DaliSceneRecalledEvent {
+            hold_hcl: false,
+            source: RuntimeSource::Rules,
+            ..foreign_recall(DaliTargetScope::Short, 2, 0)
+        },
+    );
+    let (_, cmd) = recv_runtime_update(tap);
+    assert!(!cmd.update.hold_hcl, "a recall's rows carry the recall's flag");
+
+    let mut sniffed = observed(
+        ObservedKind::TargetStateObserved,
+        DaliTargetScope::Short,
+        Some(setpoint(30)),
+        true,
+    );
+    sniffed.short_address = Some(2);
+    publish_event(&publisher, CORRELATION_NONE, sniffed);
+    let (_, cmd) = recv_runtime_update(tap);
+    assert!(cmd.update.hold_hcl, "a foreign master's command overrides the schedule");
+    assert_no_more_updates(tap);
 }
 
 #[test]
@@ -906,6 +955,7 @@ fn scene_recall_expands_applied_rows_only_fan050_fan051() {
             error: None,
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Api,
+            hold_hcl: true,
         },
     );
 
@@ -939,6 +989,7 @@ fn scene_recall_expands_applied_rows_only_fan050_fan051() {
             )),
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Api,
+            hold_hcl: true,
         },
     );
     assert_no_more_updates(tap);
@@ -964,6 +1015,7 @@ fn a_short_address_recall_projects_the_bound_row_only() {
             error: None,
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Rules,
+            hold_hcl: true,
         },
     );
 
@@ -1004,6 +1056,7 @@ fn a_recall_that_names_a_lamp_instead_of_an_address_is_ignored() {
             error: None,
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Api,
+            hold_hcl: true,
         },
     );
 
@@ -1029,6 +1082,7 @@ fn foreign_recall(scope: DaliTargetScope, short_address: u8, group_id: u8) -> Da
         error: None,
         recalled_at_mono_ms: PRODUCER_MONO_MS,
         source: RuntimeSource::Sniffer,
+        hold_hcl: true,
     }
 }
 
@@ -1124,6 +1178,7 @@ fn scene_recall_filters_incapable_member_colour_fan053() {
             error: None,
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Api,
+            hold_hcl: true,
         },
     );
 
@@ -1193,6 +1248,7 @@ fn group_scoped_scene_recall_projects_members_only_fan055() {
             error: None,
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Api,
+            hold_hcl: true,
         },
     );
 
@@ -1260,6 +1316,7 @@ fn group_recall_without_a_group_snapshot_is_ignored_not_a_success() {
             error: None,
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Api,
+            hold_hcl: true,
         },
     );
 
