@@ -1,3 +1,4 @@
+import { pad2 } from './format.js'
 import { lexLine, NEWLINE, QUOTE } from './rule-lexis.js'
 
 export type NameKind = 'lamp' | 'group' | 'input' | 'schedule'
@@ -48,6 +49,7 @@ export interface Edit {
 
 export interface KeyInput {
   key: string
+  keyCode: number
   shiftKey: boolean
   ctrlKey: boolean
   altKey: boolean
@@ -60,6 +62,16 @@ export type KeyAction =
   | { kind: 'move'; active: number }
   | { kind: 'accept' }
   | { kind: 'close' }
+
+export interface CompletionList {
+  context: CompletionContext
+  active: number
+}
+
+export interface KeyTarget {
+  active: number
+  count: number
+}
 
 export interface PlacementInput {
   x: number
@@ -81,6 +93,7 @@ const OPEN_PAREN = '('
 const MEMBER_DOT = '.'
 const HCL_OBJECT = 'hcl'
 const OPEN_CHORD_KEY = ' '
+const IME_PROCESS_KEY_CODE = 229
 
 const CALLS: ReadonlyMap<string, NameKind> = new Map([
   ['lamp', 'lamp'],
@@ -171,6 +184,65 @@ export function completionContext(text: string, caret: number): CompletionContex
   }
 }
 
+export function completionAt(
+  text: string,
+  selectionStart: number,
+  selectionEnd: number,
+): CompletionContext | null {
+  return selectionStart === selectionEnd ? completionContext(text, selectionStart) : null
+}
+
+export function sameArgument(a: CompletionContext, b: CompletionContext): boolean {
+  return a.kind === b.kind && a.openAt === b.openAt
+}
+
+export function listAfterInput(
+  list: CompletionList | null,
+  context: CompletionContext | null,
+): { list: CompletionList | null; opening: boolean } {
+  if (context === null) return { list: null, opening: false }
+  return { list: { context, active: 0 }, opening: list === null }
+}
+
+export function listAfterCaret(
+  list: CompletionList | null,
+  context: CompletionContext | null,
+): CompletionList | null {
+  if (list === null || context === null || !sameArgument(context, list.context)) return null
+  return context.caret === list.context.caret ? list : { context, active: list.active }
+}
+
+export function acceptable(list: CompletionList | null, context: CompletionContext | null): boolean {
+  return list !== null && context !== null && sameArgument(context, list.context)
+}
+
+export function clampActive(active: number, count: number): number {
+  return Math.min(active, Math.max(0, count - 1))
+}
+
+export function keyTarget(list: CompletionList | null, count: number, visible: boolean): KeyTarget | null {
+  if (list === null) return null
+  return { active: clampActive(list.active, count), count: visible ? count : 0 }
+}
+
+export function idTag(kind: NameKind, id: number | null): string | null {
+  if (id === null) return null
+  switch (kind) {
+    case 'lamp':
+      return `VL ${pad2(id)}`
+    case 'group':
+      return `G${id}`
+    case 'input':
+      return `SA ${pad2(id)}`
+    case 'schedule':
+      return null
+  }
+}
+
+export function byIdHint(kind: NameKind, id: number): string {
+  return kind === 'input' ? `input(${id}, …)` : `${kind}(${id})`
+}
+
 export function namesDue(requestedAt: number | null, now: number): boolean {
   return requestedAt === null || now - requestedAt >= NAMES_FRESH_MS
 }
@@ -238,11 +310,9 @@ export function applyEdit(text: string, edit: Edit): { text: string; caret: numb
   }
 }
 
-export function keyAction(
-  key: KeyInput,
-  list: { active: number; count: number } | null,
-): KeyAction | null {
-  if (key.isComposing || key.altKey || key.metaKey || key.shiftKey) return null
+export function keyAction(key: KeyInput, list: KeyTarget | null): KeyAction | null {
+  if (key.isComposing || key.keyCode === IME_PROCESS_KEY_CODE) return null
+  if (key.altKey || key.metaKey || key.shiftKey) return null
   if (key.ctrlKey) return key.key === OPEN_CHORD_KEY && list === null ? { kind: 'open' } : null
   if (list === null || list.count === 0) return null
   switch (key.key) {

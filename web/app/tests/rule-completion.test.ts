@@ -2,11 +2,20 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  acceptable,
   acceptEdit,
   applyEdit,
+  byIdHint,
+  clampActive,
+  completionAt,
   completionContext,
+  idTag,
   keyAction,
+  keyTarget,
   lineAt,
+  listAfterCaret,
+  listAfterInput,
+  sameArgument,
   MAX_NAME_BYTES,
   NAMES_FRESH_MS,
   namesDue,
@@ -55,6 +64,7 @@ const candidates = (...list: string[]): NameCandidate[] => list.map((name, id) =
 
 const key = (k: string, mods: Partial<KeyInput> = {}): KeyInput => ({
   key: k,
+  keyCode: 0,
   shiftKey: false,
   ctrlKey: false,
   altKey: false,
@@ -380,4 +390,80 @@ test('registry resources become names with the id the language takes in their pl
     schedule: [{ name: 'morning', id: null }],
   })
   assert.deepEqual(names(rankSuggestions('', list.group)), ['ночь'])
+})
+
+const contextAt = (marked: string) => {
+  const context = contextOf(marked)
+  assert.ok(context, `no completion place in ${marked}`)
+  return context
+}
+
+test('only a collapsed selection has a completion place', () => {
+  const text = 'do lamp("ку'
+  assert.equal(completionAt(text, text.length, text.length)?.prefix, 'ку')
+  assert.equal(completionAt(text, text.length - 1, text.length), null)
+})
+
+test('an argument is the same while its kind and opening quote are', () => {
+  assert.ok(sameArgument(contextAt('do lamp("к▮'), contextAt('do lamp("ку▮')))
+  assert.equal(sameArgument(contextAt('do lamp("к▮'), contextAt('do group("к▮')), false)
+  assert.equal(sameArgument(contextAt('do lamp("к▮'), contextAt('do  lamp("к▮')), false)
+})
+
+test('typing opens the list at its place and asks for names only on the way from closed', () => {
+  const first = listAfterInput(null, contextAt('do lamp("▮'))
+  assert.equal(first.opening, true)
+  assert.equal(first.list?.active, 0)
+  const typed = listAfterInput({ context: contextAt('do lamp("▮'), active: 2 }, contextAt('do lamp("к▮'))
+  assert.deepEqual({ opening: typed.opening, active: typed.list?.active }, { opening: false, active: 0 })
+  assert.deepEqual(listAfterInput(first.list, null), { list: null, opening: false })
+})
+
+test('moving the caret never opens the list, keeps it inside the argument and closes it outside', () => {
+  const list = { context: contextAt('do lamp("кух▮ня")'), active: 2 }
+  assert.equal(listAfterCaret(null, contextAt('do lamp("к▮')), null)
+  assert.equal(listAfterCaret(list, contextAt('do lamp("кух▮ня")')), list)
+  assert.deepEqual(listAfterCaret(list, contextAt('do lamp("к▮ухня")')), {
+    context: contextAt('do lamp("к▮ухня")'),
+    active: 2,
+  })
+  assert.equal(listAfterCaret(list, null), null)
+  assert.equal(listAfterCaret(list, contextAt('do group("кух▮ня")')), null)
+})
+
+test('a suggestion is accepted only into the argument its list was opened for', () => {
+  const list = { context: contextAt('do lamp("к▮'), active: 0 }
+  assert.equal(acceptable(list, contextAt('do lamp("ку▮')), true)
+  assert.equal(acceptable(list, contextAt('do group("ку▮')), false)
+  assert.equal(acceptable(null, contextAt('do lamp("ку▮')), false)
+  assert.equal(acceptable(list, null), false)
+})
+
+test('the active row stays inside a list that shrank', () => {
+  assert.equal(clampActive(4, 3), 2)
+  assert.equal(clampActive(1, 3), 1)
+  assert.equal(clampActive(2, 0), 0)
+})
+
+test('a list that is not on screen takes no keys', () => {
+  const list = { context: contextAt('do lamp("к▮'), active: 5 }
+  assert.deepEqual(keyTarget(list, 3, true), { active: 2, count: 3 })
+  assert.equal(keyAction(key('Enter'), keyTarget(list, 3, false)), null)
+  assert.equal(keyAction(key('ArrowDown'), keyTarget(list, 3, false)), null)
+  assert.equal(keyTarget(null, 3, true), null)
+})
+
+test('the Enter that ends an IME composition in Safari passes through', () => {
+  assert.equal(keyAction(key('Enter', { keyCode: 229 }), { active: 0, count: 3 }), null)
+})
+
+test('a row names its id the way the other screens do', () => {
+  assert.equal(idTag('lamp', 7), 'VL 07')
+  assert.equal(idTag('group', 3), 'G3')
+  assert.equal(idTag('input', 12), 'SA 12')
+  assert.equal(idTag('schedule', null), null)
+  assert.equal(idTag('lamp', null), null)
+  assert.equal(byIdHint('lamp', 12), 'lamp(12)')
+  assert.equal(byIdHint('group', 3), 'group(3)')
+  assert.equal(byIdHint('input', 5), 'input(5, …)')
 })

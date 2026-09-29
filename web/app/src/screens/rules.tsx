@@ -9,14 +9,21 @@ import type {
   RulesParseResult,
 } from '../api/types'
 import { connection, subscribe, type WsChannel, type WsEvent } from '../api/ws'
-import { ADAPTER, deviceClock, pad2, timestamp, UNANCHORED_CLOCK_HINT } from '../format'
+import { ADAPTER, deviceClock, timestamp, UNANCHORED_CLOCK_HINT } from '../format'
 import { usePoll } from '../hooks'
 import {
+  acceptable,
   acceptEdit,
   applyEdit,
-  completionContext,
+  byIdHint,
+  clampActive,
+  completionAt,
+  idTag,
   keyAction,
+  keyTarget,
   lineAt,
+  listAfterCaret,
+  listAfterInput,
   MAX_NAME_BYTES,
   namesDue,
   placeList,
@@ -24,6 +31,8 @@ import {
   registryNames,
   scrollToShow,
   type CompletionContext,
+  type CompletionList,
+  type Edit,
   type KeyInput,
   type NameKind,
   type Placement,
@@ -240,16 +249,16 @@ function suggestPlacement(
 }
 
 function caretContext(ta: HTMLTextAreaElement | null): CompletionContext | null {
-  if (ta === null || ta.selectionStart !== ta.selectionEnd) return null
-  return completionContext(ta.value, ta.selectionStart)
+  return ta === null ? null : completionAt(ta.value, ta.selectionStart, ta.selectionEnd)
 }
 
-const sameArgument = (a: CompletionContext, b: CompletionContext) =>
-  a.kind === b.kind && a.openAt === b.openAt
-
-interface OpenList {
-  context: CompletionContext
-  active: number
+function insertKeepingUndo(ta: HTMLTextAreaElement, edit: Edit): string | null {
+  ta.setSelectionRange(edit.from, edit.to)
+  if (document.execCommand('insertText', false, edit.insert)) return null
+  const next = applyEdit(ta.value, edit)
+  ta.value = next.text
+  ta.setSelectionRange(next.caret, next.caret)
+  return next.text
 }
 
 function useNameCompletion(
@@ -257,40 +266,32 @@ function useNameCompletion(
   names: RegistryNames | null,
   onOpening: () => void,
 ) {
-  const [list, setList] = useState<OpenList | null>(null)
+  const [list, setList] = useState<CompletionList | null>(null)
   const items =
     list !== null && names !== null
       ? rankSuggestions(list.context.prefix, names[list.context.kind])
       : []
-  const active = Math.min(list?.active ?? 0, Math.max(0, items.length - 1))
+  const active = list === null ? 0 : clampActive(list.active, items.length)
 
   const open = () => {
-    const context = caretContext(taRef.current)
-    if (context !== null && list === null) onOpening()
-    setList(context === null ? null : { context, active: 0 })
+    const next = listAfterInput(list, caretContext(taRef.current))
+    if (next.opening) onOpening()
+    setList(next.list)
   }
 
-  const follow = () => {
-    if (list === null) return
-    const context = caretContext(taRef.current)
-    if (context !== null && context.caret === list.context.caret) return
-    setList(context !== null && sameArgument(context, list.context) ? { context, active } : null)
-  }
+  const follow = () => setList(listAfterCaret(list, caretContext(taRef.current)))
 
   const accept = (suggestion: Suggestion | undefined): string | null => {
     const ta = taRef.current
     const context = caretContext(ta)
+    const ok = acceptable(list, context)
     setList(null)
-    if (ta === null || context === null || list === null || suggestion === undefined) return null
-    if (!sameArgument(context, list.context)) return null
-    const next = applyEdit(ta.value, acceptEdit(context, suggestion))
-    ta.value = next.text
-    ta.setSelectionRange(next.caret, next.caret)
-    return next.text
+    if (ta === null || context === null || !ok || suggestion === undefined) return null
+    return insertKeepingUndo(ta, acceptEdit(context, suggestion))
   }
 
-  const keyDown = (e: KeyInput & { preventDefault: () => void }): string | null => {
-    const action = keyAction(e, list === null ? null : { active, count: items.length })
+  const keyDown = (e: KeyInput & { preventDefault: () => void }, visible: boolean): string | null => {
+    const action = keyAction(e, keyTarget(list, items.length, visible))
     if (action === null) return null
     e.preventDefault()
     switch (action.kind) {
@@ -309,18 +310,6 @@ function useNameCompletion(
   }
 
   return { list, items, active, open, follow, accept, keyDown, close: () => setList(null) }
-}
-
-function byIdHint(kind: NameKind, id: number): string {
-  return kind === 'input' ? `input(${id}, …)` : `${kind}(${id})`
-}
-
-function idTag(kind: NameKind, id: number | null): string | null {
-  if (id === null) return null
-  if (kind === 'lamp') return `VL ${pad2(id)}`
-  if (kind === 'group') return `G${id}`
-  if (kind === 'input') return `SA ${pad2(id)}`
-  return null
 }
 
 function SuggestRow({
@@ -390,6 +379,7 @@ function SuggestList({
       role="listbox"
       aria-label={KIND_LABEL[kind]}
       style={{ ...box, ...vertical }}
+      onMouseDown={(e) => e.preventDefault()}
     >
       <div class="sh">
         <span>{KIND_LABEL[kind]}</span>
@@ -720,7 +710,7 @@ export function RulesScreen() {
                 completion.open()
               }}
               onKeyDown={(e) => {
-                const next = completion.keyDown(e)
+                const next = completion.keyDown(e, suggestAt !== null)
                 if (next !== null) editDraft(next)
               }}
               onKeyUp={completion.follow}
