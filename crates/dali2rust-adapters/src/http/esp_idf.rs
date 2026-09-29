@@ -13,6 +13,7 @@ use dali2rust_api::http::types::{HttpBody, HttpResponse};
 use super::wire_method::wire_method;
 
 const HTTPD_TASK_STACK_BYTES: usize = 20 * 1024;
+const HTTPD_MAX_OPEN_SOCKETS: usize = 10;
 
 pub struct HttpdStackReserve(*mut core::ffi::c_void);
 
@@ -66,6 +67,22 @@ fn log_internal_heap_before_httpd() {
     }
 }
 
+fn httpd_configuration() -> Configuration {
+    let defaults = Configuration::default();
+    let task_caps = if httpd_stack_in_psram() {
+        esp_idf_svc::sys::MALLOC_CAP_SPIRAM | esp_idf_svc::sys::MALLOC_CAP_8BIT
+    } else {
+        defaults.task_caps
+    };
+    Configuration {
+        stack_size: HTTPD_TASK_STACK_BYTES,
+        uri_match_wildcard: true,
+        max_open_sockets: HTTPD_MAX_OPEN_SOCKETS,
+        task_caps,
+        ..defaults
+    }
+}
+
 #[inline(never)]
 pub fn mount(
     router: Arc<Router>,
@@ -74,13 +91,7 @@ pub fn mount(
 ) -> Result<EspHttpServer<'static>, EspIOError> {
     drop(stack_reserve);
     log_internal_heap_before_httpd();
-    let mut conf = Configuration::default();
-    conf.stack_size = HTTPD_TASK_STACK_BYTES;
-    conf.uri_match_wildcard = true;
-    conf.max_open_sockets = 10;
-    if httpd_stack_in_psram() {
-        conf.task_caps = esp_idf_svc::sys::MALLOC_CAP_SPIRAM | esp_idf_svc::sys::MALLOC_CAP_8BIT;
-    }
+    let conf = httpd_configuration();
 
     assert_eq!(
         conf.stack_size, HTTPD_TASK_STACK_BYTES,
