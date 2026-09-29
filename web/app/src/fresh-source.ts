@@ -18,6 +18,10 @@ export function freshSource<T>(
   }
 }
 
-export function settledValue<T>(result: PromiseSettledResult<T>): T | null {
-  return result.status === 'fulfilled' ? result.value : null
+export async function settle<T>(request: () => Promise<T>): Promise<T | null> {
+  try {
+    return await request()
+  } catch {
+    return null
+  }
 }

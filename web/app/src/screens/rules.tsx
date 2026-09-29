@@ -10,7 +10,7 @@ import type {
 } from '../api/types'
 import { connection, subscribe, type WsChannel, type WsEvent } from '../api/ws'
 import { ADAPTER, deviceClock, timestamp, UNANCHORED_CLOCK_HINT } from '../format'
-import { freshSource, settledValue } from '../fresh-source'
+import { freshSource, settle } from '../fresh-source'
 import { usePoll } from '../hooks'
 import {
   acceptable,
@@ -199,18 +199,16 @@ const PARTIAL_REASONS: Record<number, string> = {
 }
 
 async function fetchRegistryNames(previous: RegistryNames | null): Promise<RegistryNames> {
-  const [lamps, groups, inputs, schedules] = await Promise.allSettled([
-    api.virtualLamps(ADAPTER),
-    api.groups(ADAPTER),
-    api.inputDevices(ADAPTER),
-    api.hclSchedules(),
-  ])
+  const lamps = await settle(() => api.virtualLamps(ADAPTER))
+  const groups = await settle(() => api.groups(ADAPTER))
+  const inputs = await settle(() => api.inputDevices(ADAPTER))
+  const schedules = await settle(() => api.hclSchedules())
   return registryNames(
     {
-      lamps: settledValue(lamps)?.virtual_lamps ?? null,
-      groups: settledValue(groups)?.groups ?? null,
-      inputs: settledValue(inputs)?.input_devices ?? null,
-      schedules: settledValue(schedules)?.schedules ?? null,
+      lamps: lamps?.virtual_lamps ?? null,
+      groups: groups?.groups ?? null,
+      inputs: inputs?.input_devices ?? null,
+      schedules: schedules?.schedules ?? null,
     },
     previous,
   )

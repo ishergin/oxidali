@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { freshSource, settledValue } from '../src/fresh-source.js'
+import { freshSource, settle } from '../src/fresh-source.js'
 
 const FRESH_MS = 10_000
 
@@ -62,7 +62,7 @@ test('a failed load is not retried inside the fresh interval', async () => {
   assert.equal(await h.source(), 'a')
 })
 
-test('a settled result gives its value, or null when it failed', () => {
-  assert.equal(settledValue({ status: 'fulfilled', value: 3 }), 3)
-  assert.equal(settledValue({ status: 'rejected', reason: new Error('x') }), null)
+test('a settled request gives its value, or null when it failed', async () => {
+  assert.equal(await settle(async () => 3), 3)
+  assert.equal(await settle(async () => Promise.reject(new Error('down'))), null)
 })
