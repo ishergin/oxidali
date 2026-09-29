@@ -21,11 +21,51 @@ pub(crate) struct ExecutionReport {
     pub failed: u8,
 }
 
+impl ExecutionReport {
+    fn note(&mut self, published: bool) {
+        if published {
+            self.executed = self.executed.saturating_add(1);
+        } else {
+            self.failed = self.failed.saturating_add(1);
+        }
+    }
+}
+
 struct MergedLight {
     at: usize,
     target: LightTarget,
     setpoint: LightSetpoint,
     hold_hcl: bool,
+}
+
+impl MergedLight {
+    fn absorb(&mut self, later: &MergedLight) {
+        self.setpoint.merge_from(&later.setpoint);
+        self.hold_hcl |= later.hold_hcl;
+    }
+}
+
+#[derive(Default)]
+struct LightSeries {
+    lights: Vec<MergedLight>,
+    open: Vec<(LightKey, usize)>,
+}
+
+impl LightSeries {
+    fn close(&mut self) {
+        self.open.clear();
+    }
+
+    fn absorb(&mut self, light: MergedLight) {
+        let key = light_key(&light.target);
+        match self.open.iter().find(|(open, _)| *open == key) {
+            Some(&(_, slot)) => self.lights[slot].absorb(&light),
+            None => {
+                self.open.push((key, self.lights.len()));
+                self.lights.push(light);
+            }
+        }
+    }
 }
 
 pub(crate) struct EffectExecutor<'a> {
@@ -42,8 +82,7 @@ impl EffectExecutor<'_> {
         snapshot: &WorldSnapshot,
         corr: u64,
     ) -> ExecutionReport {
-        let mut executed: u8 = 0;
-        let mut failed: u8 = 0;
+        let mut report = ExecutionReport::default();
         let mut lights = self.merge_lights(effects, snapshot);
         for (index, effect) in effects.iter().enumerate() {
             let published = match effect {
@@ -56,65 +95,76 @@ impl EffectExecutor<'_> {
                 },
                 other => self.one(other, snapshot, corr),
             };
-            if published {
-                executed = executed.saturating_add(1);
-            } else {
-                failed = failed.saturating_add(1);
-            }
+            report.note(published);
         }
-        ExecutionReport { executed, failed }
+        report
     }
 
     fn merge_lights(&self, effects: &[Effect], snapshot: &WorldSnapshot) -> Vec<MergedLight> {
-        let mut lights: Vec<MergedLight> = Vec::new();
-        let mut open: Vec<(LightKey, usize)> = Vec::new();
+        let mut series = LightSeries::default();
         for (index, effect) in effects.iter().enumerate() {
             let Effect::Light { target, verb, hold_hcl } = effect else {
-                open.clear();
+                series.close();
                 continue;
             };
             if matches!(verb, LightVerb::StopFade) {
-                open.clear();
+                series.close();
                 continue;
             }
-            let Some(sp) = setpoint_of(verb, target, snapshot) else {
+            let Some(setpoint) = setpoint_of(verb, target, snapshot) else {
                 self.counters.effects_skipped_dark.fetch_add(1, Ordering::Relaxed);
                 continue;
             };
-            let key = light_key(target);
-            let slot = open.iter().find(|(k, _)| *k == key).map(|(_, slot)| *slot);
-            match slot {
-                Some(slot) => {
-                    lights[slot].setpoint.merge_from(&sp);
-                    lights[slot].hold_hcl |= *hold_hcl;
-                }
-                None => {
-                    open.push((key, lights.len()));
-                    lights.push(MergedLight {
-                        at: index,
-                        target: *target,
-                        setpoint: sp,
-                        hold_hcl: *hold_hcl,
-                    });
-                }
-            }
+            series.absorb(MergedLight { at: index, target: *target, setpoint, hold_hcl: *hold_hcl });
         }
-        lights
+        series.lights
     }
 
-    fn one(&self, effect: &Effect, _snapshot: &WorldSnapshot, corr: u64) -> bool {
+    fn one(&self, effect: &Effect, snapshot: &WorldSnapshot, corr: u64) -> bool {
         match effect {
-            Effect::Light { .. } => {
-                debug_assert!(false, "light effects are merged and published by execute()");
-                false
+            Effect::Light { .. } => self.misrouted(),
+            Effect::SceneRecall { .. } | Effect::SceneApply { .. } => {
+                self.scene_effect(effect, snapshot, corr)
             }
+            Effect::HclResume { .. } | Effect::HclHold { .. } | Effect::HclSchedule { .. } => {
+                self.hcl_effect(effect, corr)
+            }
+            Effect::InputFeedback { .. }
+            | Effect::PanelSelect { .. }
+            | Effect::CancelHold { .. }
+            | Effect::CatchMovement { .. } => self.input_effect(effect, corr),
+            Effect::MqttPublish { .. } | Effect::Log { .. } | Effect::StatCount { .. } => {
+                self.state_effect(effect, corr)
+            }
+        }
+    }
+
+    fn misrouted(&self) -> bool {
+        debug_assert!(false, "an effect reached the executor of another family");
+        false
+    }
+
+    fn scene_effect(&self, effect: &Effect, _snapshot: &WorldSnapshot, corr: u64) -> bool {
+        match effect {
             Effect::SceneRecall { scene, target, hold_hcl } => {
                 self.scene_recall(*scene, target, *hold_hcl, corr)
             }
             Effect::SceneApply { scene, .. } => self.scene_apply(*scene, corr),
+            _ => self.misrouted(),
+        }
+    }
+
+    fn hcl_effect(&self, effect: &Effect, corr: u64) -> bool {
+        match effect {
             Effect::HclResume { target } => self.hcl_resume(target, corr),
             Effect::HclHold { .. } => self.unmapped(&self.counters.hcl_hold_unmapped),
             Effect::HclSchedule { .. } => self.unmapped(&self.counters.hcl_schedule_unmapped),
+            _ => self.misrouted(),
+        }
+    }
+
+    fn input_effect(&self, effect: &Effect, corr: u64) -> bool {
+        match effect {
             Effect::InputFeedback { input, on } => self.feedback_drive(
                 Some(input.device_short_address),
                 Some(input.instance_number),
@@ -130,16 +180,24 @@ impl EffectExecutor<'_> {
             Effect::CancelHold { .. } | Effect::CatchMovement { .. } => {
                 self.unmapped(&self.counters.input_action_unmapped)
             }
-            Effect::MqttPublish { topic, payload, retain } => self.mqtt(topic, payload, *retain, corr),
-            Effect::Log { text: _ } => {
-                self.counters.log_lines.fetch_add(1, Ordering::Relaxed);
-                true
-            }
-            Effect::StatCount { .. } => {
-                self.counters.stat_counts.fetch_add(1, Ordering::Relaxed);
-                true
-            }
+            _ => self.misrouted(),
         }
+    }
+
+    fn state_effect(&self, effect: &Effect, corr: u64) -> bool {
+        match effect {
+            Effect::MqttPublish { topic, payload, retain } => {
+                self.mqtt(topic, payload, *retain, corr)
+            }
+            Effect::Log { text: _ } => self.counted(&self.counters.log_lines),
+            Effect::StatCount { .. } => self.counted(&self.counters.stat_counts),
+            _ => self.misrouted(),
+        }
+    }
+
+    fn counted(&self, cell: &std::sync::atomic::AtomicU32) -> bool {
+        cell.fetch_add(1, Ordering::Relaxed);
+        true
     }
 
     fn publish_light(&self, light: MergedLight, corr: u64) -> bool {
