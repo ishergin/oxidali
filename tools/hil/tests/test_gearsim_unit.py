@@ -264,15 +264,16 @@ GROUP_MASK_FRAME = (0x88, 0xFF)
 @pytest.mark.parametrize("pairs,masks,moves", [
     ([GROUP_MASK_FRAME], 1, 0),
     ([GROUP_MASK_FRAME, (0x89, 0xA0), (0x24, 0x05), (0x21, 0x90)], 1, 0),
-    ([(0x88, 150)], 0, 0),
+    ([(0x88, 150)], 0, 1),
     ([GROUP_MASK_FRAME, GROUP_MASK_FRAME], 2, 0),
     ([GROUP_MASK_FRAME, (32, 150)], 1, 1),
     ([GROUP_MASK_FRAME, (0x21, 0x05)], 1, 1),
     ([GROUP_MASK_FRAME, (0xFE, 100)], 1, 1),
     ([GROUP_MASK_FRAME, (0x89, 0x10)], 1, 1),
-    ([(32, 150), GROUP_MASK_FRAME, (32, 0xFF)], 1, 0),
+    ([(32, 150), GROUP_MASK_FRAME, (32, 0xFF)], 1, 1),
+    ([(0x88, 100), GROUP_MASK_FRAME], 1, 1),
 ])
-def test_a_stop_is_counted_in_masks_and_level_frames_after_it(pairs, masks, moves):
+def test_a_stop_is_counted_in_masks_and_level_frames_anywhere_in_its_window(pairs, masks, moves):
     frames = _frames(*pairs)
     assert gearsim.mask_frames(frames, 4) == masks
     assert len(gearsim.level_moves(frames, 4, [16, 17])) == moves

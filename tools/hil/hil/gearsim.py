@@ -181,13 +181,9 @@ def mask_frames(frames, group):
 
 
 def level_moves(frames, group, members):
-    target = (group_dapc_address(group), MASK)
-    first = next((i for i, frame in enumerate(frames)
-                  if (frame.address, frame.data) == target), None)
-    after = frames[first + 1:] if first is not None else []
-    return ["%s at %d us moved the level after the stop"
+    return ["%s at %d us is a level frame in the stop's window"
             % (describe_frame(frame.address, frame.data), frame.at_us)
-            for frame in after if moves_level(frame, group, members)]
+            for frame in frames if moves_level(frame, group, members)]
 
 
 def moves_level(frame, group, members):
