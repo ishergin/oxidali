@@ -5,6 +5,8 @@ export const MAX_NAME_BYTES = 48
 export const SUGGEST_WIDTH_PX = 300
 export const SUGGEST_MAX_HEIGHT_PX = 240
 
+export const NAMES_FRESH_MS = 10_000
+
 export interface NameCandidate {
   name: string
   id: number | null
@@ -172,6 +174,10 @@ export function completionContext(text: string, caret: number): CompletionContex
     closeAt: closingQuoteFrom(text, caret),
     prefix: text.slice(openAt + 1, caret),
   }
+}
+
+export function namesDue(requestedAt: number | null, now: number): boolean {
+  return requestedAt === null || now - requestedAt >= NAMES_FRESH_MS
 }
 
 export function unwritable(name: string): Unwritable | null {

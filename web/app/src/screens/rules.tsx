@@ -10,7 +10,7 @@ import type {
 } from '../api/types'
 import { connection, subscribe, type WsChannel, type WsEvent } from '../api/ws'
 import { ADAPTER, deviceClock, pad2, timestamp, UNANCHORED_CLOCK_HINT } from '../format'
-import { useLive, usePoll } from '../hooks'
+import { usePoll } from '../hooks'
 import {
   acceptEdit,
   applyEdit,
@@ -18,6 +18,7 @@ import {
   keyAction,
   lineAt,
   MAX_NAME_BYTES,
+  namesDue,
   placeList,
   rankSuggestions,
   registryNames,
@@ -39,15 +40,6 @@ const PARSE_DEBOUNCE_MS = 500
 const LINE_HEIGHT_PX = 20
 const EDITOR_PAD_PX = 12
 const EDITOR_PAD_X_PX = 14
-
-const NAME_CHANNELS: WsChannel[] = ['virtual_lamps', 'groups', 'input']
-
-const NAME_TRIGGERS: ReadonlySet<string> = new Set([
-  'VirtualLampChangedEvent',
-  'GroupChangedEvent',
-  'InputDeviceChangedEvent',
-  'DropNotice',
-])
 
 const NAMES_RECONCILE_MS = 60_000
 
@@ -252,7 +244,17 @@ async function fetchRegistryNames(): Promise<RegistryNames> {
   })
 }
 
-const ignoreUnlessNamesMoved = (event: WsEvent) => !NAME_TRIGGERS.has(event.type)
+function useRegistryNames() {
+  const requestedAt = useRef<number | null>(null)
+  const poll = usePoll(() => {
+    requestedAt.current = Date.now()
+    return fetchRegistryNames()
+  }, NAMES_RECONCILE_MS)
+  const refreshIfStale = () => {
+    if (namesDue(requestedAt.current, Date.now())) void poll.reload()
+  }
+  return { data: poll.data, refreshIfStale }
+}
 
 let measureCtx: CanvasRenderingContext2D | null = null
 
@@ -296,6 +298,7 @@ interface OpenList {
 function useNameCompletion(
   taRef: { current: HTMLTextAreaElement | null },
   names: RegistryNames | null,
+  onOpening: () => void,
 ) {
   const [list, setList] = useState<OpenList | null>(null)
   const items =
@@ -306,6 +309,7 @@ function useNameCompletion(
 
   const open = () => {
     const context = caretContext(taRef.current)
+    if (context !== null && list === null) onOpening()
     setList(context === null ? null : { context, active: 0 })
   }
 
@@ -470,11 +474,8 @@ export function RulesScreen() {
   const parseSeq = useRef(0)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const caretTouched = useRef(false)
-  const names = useLive(fetchRegistryNames, NAME_CHANNELS, {
-    intervalMs: NAMES_RECONCILE_MS,
-    onEvent: ignoreUnlessNamesMoved,
-  })
-  const completion = useNameCompletion(taRef, names.data)
+  const names = useRegistryNames()
+  const completion = useNameCompletion(taRef, names.data, names.refreshIfStale)
 
   const parseErr = parse !== null && 'error' in parse ? parse : null
 
@@ -770,6 +771,7 @@ export function RulesScreen() {
               aria-activedescendant={suggestAt ? `${SUGGEST_ID}-${completion.active}` : undefined}
               onFocus={() => {
                 caretTouched.current = true
+                names.refreshIfStale()
               }}
               onBlur={completion.close}
               onInput={(e) => {

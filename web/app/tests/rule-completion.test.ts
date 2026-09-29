@@ -8,6 +8,8 @@ import {
   keyAction,
   lineAt,
   MAX_NAME_BYTES,
+  NAMES_FRESH_MS,
+  namesDue,
   placeList,
   rankSuggestions,
   registryNames,
@@ -321,6 +323,12 @@ test('the active row scrolls into the list only when it is out of sight', () => 
   assert.equal(scrollToShow(130, rowHeight, 0, viewHeight), 26)
   assert.equal(scrollToShow(26, rowHeight, 52, viewHeight), 26)
   assert.equal(scrollToShow(0, rowHeight, 104, viewHeight), 0)
+})
+
+test('the names are fetched again only when never fetched or older than the fresh interval', () => {
+  assert.equal(namesDue(null, 0), true)
+  assert.equal(namesDue(1000, 1000 + NAMES_FRESH_MS - 1), false)
+  assert.equal(namesDue(1000, 1000 + NAMES_FRESH_MS), true)
 })
 
 test('a line is found by counting breaks before the index', () => {
