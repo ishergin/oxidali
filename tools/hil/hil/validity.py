@@ -456,43 +456,47 @@ def event_subscriber_losses(diagnostics: dict) -> list:
     return sorted([row for row in losses if row[1] > 0], key=lambda row: -row[1])
 
 
+STATS_DALI_COUNTERS = (
+    ("isr_ticks_lost_total", "isr_ticks_lost"),
+    ("isr_ticks_extra_total", "isr_ticks_extra"),
+    ("isr_late_ticks_total", "isr_late_ticks"),
+    ("isr_max_gap_us", "isr_max_gap_us"),
+    ("backward_undecodable_total", "backward_undecodable"),
+    ("backward_frame_size_total", "backward_frame_size"),
+    ("backward_incomplete_total", "backward_incomplete"),
+    ("backward_early_rejected_total", "backward_early_rejected"),
+    ("backward_late_rejected_total", "backward_late_rejected"),
+    ("backward_multi_answer_total", "backward_multi_answer"),
+    ("isr_ticks_deficit_raw_total", "isr_ticks_deficit_raw"),
+    ("isr_ticks_surplus_raw_total", "isr_ticks_surplus_raw"),
+    ("console_log_dropped_total", "console_log_dropped"),
+    ("console_log_busy_total", "console_log_busy"),
+    ("console_log_truncated_total", "console_log_truncated"),
+    ("console_uart_errors_total", "console_uart_errors"),
+    ("answer_staged_total", "answer_staged"),
+    ("answer_stage_late_total", "answer_stage_late"),
+    ("answer_stage_max_ticks", "answer_stage_max_ticks"),
+    ("sniff_poll_late_total", "sniff_poll_late"),
+    ("sniff_poll_gap_max_us", "sniff_poll_gap_max_us"),
+    ("persist_flush_total", "persist_flush"),
+    ("persist_flush_slow_total", "persist_flush_slow"),
+    ("persist_flush_ms_total", "persist_flush_ms"),
+    ("persist_flush_max_ms", "persist_flush_max_ms"),
+    ("persist_gate_waits_total", "persist_gate_waits"),
+    ("persist_gate_timeouts_total", "persist_gate_timeouts"),
+    ("readback_groups_doubled_total", "readback_groups_doubled"),
+    ("readback_colour_features_zero_total", "readback_colour_features_zero"),
+    ("readback_extended_fade_unrepresentable_total", "readback_extended_fade_unrepresentable"),
+    ("program_repairs_total", "program_repairs"),
+)
+
+
 def isr_timing_counters(stats):
     if not stats:
         return {}
     dali = stats.get("dali") or {}
-    out = {}
-    for field, name in (
-        ("isr_ticks_lost_total", "isr_ticks_lost"),
-        ("isr_ticks_extra_total", "isr_ticks_extra"),
-        ("isr_late_ticks_total", "isr_late_ticks"),
-        ("isr_max_gap_us", "isr_max_gap_us"),
-        ("backward_undecodable_total", "backward_undecodable"),
-        ("backward_frame_size_total", "backward_frame_size"),
-        ("backward_incomplete_total", "backward_incomplete"),
-        ("backward_early_rejected_total", "backward_early_rejected"),
-        ("backward_late_rejected_total", "backward_late_rejected"),
-        ("backward_multi_answer_total", "backward_multi_answer"),
-        ("isr_ticks_deficit_raw_total", "isr_ticks_deficit_raw"),
-        ("isr_ticks_surplus_raw_total", "isr_ticks_surplus_raw"),
-        ("console_log_dropped_total", "console_log_dropped"),
-        ("console_log_busy_total", "console_log_busy"),
-        ("console_log_truncated_total", "console_log_truncated"),
-        ("console_uart_errors_total", "console_uart_errors"),
-        ("answer_staged_total", "answer_staged"),
-        ("answer_stage_late_total", "answer_stage_late"),
-        ("answer_stage_max_ticks", "answer_stage_max_ticks"),
-        ("sniff_poll_late_total", "sniff_poll_late"),
-        ("sniff_poll_gap_max_us", "sniff_poll_gap_max_us"),
-        ("persist_flush_total", "persist_flush"),
-        ("persist_flush_slow_total", "persist_flush_slow"),
-        ("persist_flush_ms_total", "persist_flush_ms"),
-        ("persist_flush_max_ms", "persist_flush_max_ms"),
-        ("persist_gate_waits_total", "persist_gate_waits"),
-        ("persist_gate_timeouts_total", "persist_gate_timeouts"),
-    ):
-        if dali.get(field) is not None:
-            out[name] = int(dali[field])
-    return out
+    return {name: int(dali[field]) for field, name in STATS_DALI_COUNTERS
+            if dali.get(field) is not None}
 
 
 def absolute_counters(stats):

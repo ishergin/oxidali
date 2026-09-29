@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use dali2rust_contracts::msg::{ColorMode, DeviceType, DeviceTypeSet};
 use dali2rust_domain::dali::commands::DaliResponse;
-use dali2rust_domain::dali::controller::DaliApplicationController;
+use dali2rust_domain::dali::controller::{DaliApplicationController, ReadbackWorkaround};
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::types::DaliAddress;
@@ -763,6 +763,9 @@ fn query_dt8_capabilities(
     content_confirm: ContentConfirmPolicy,
 ) -> Result<Option<Dt8Capabilities>, SemanticDaliError> {
     let mut features = query_colour_type_features(controller, address, content_confirm)?;
+    if features == Some(0) {
+        controller.note_workaround(ReadbackWorkaround::ColourFeaturesZero);
+    }
     if features.is_none_or(|f| f == 0) {
         features = query_colour_type_features(controller, address, content_confirm)?.or(features);
     }
@@ -879,6 +882,7 @@ mod tests {
     use super::*;
     use crate::runtime::executor::test_helpers::shared::{
         assert_script_consumed, setup_controller, short_address, short_raw_query_frame,
+        wire_counters,
     };
     use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
     use dali2rust_domain::dali::commands::DaliCommand;
@@ -1252,6 +1256,48 @@ mod tests {
                 type_enum_degraded: false,
                 supported_device_types: declared(&[6]),
             })
+        );
+        assert_script_consumed(&transport);
+    }
+
+    fn script_colour_type_features(mock: &MockDaliTransport, short: u8, answer: Option<u8>) {
+        mock.expect_forward_frame(
+            DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
+                .to_forward_frame()
+                .raw(),
+        );
+        mock.expect_forward_frame_with_backward(
+            short_raw_query_frame(short_address(short), DT8_QUERY_COLOUR_TYPE_FEATURES),
+            answer,
+        );
+    }
+
+    #[test]
+    fn a_zero_colour_features_answer_is_counted_and_asked_again() {
+        const TC_ONLY: u8 = 0x02;
+        let short = 17;
+        let mock = MockDaliTransport::new();
+        script_colour_type_features(&mock, short, Some(0));
+        script_colour_type_features(&mock, short, Some(TC_ONLY));
+        script_colour_type_features(&mock, short, None);
+        script_colour_type_features(&mock, short, Some(TC_ONLY));
+        script_colour_type_features(&mock, short, Some(TC_ONLY));
+
+        let (transport, mut controller) = setup_controller(mock);
+        let counters = wire_counters(&mut controller);
+        let mut probe = || {
+            query_dt8_capabilities(&mut controller, short_address(short), DISCOVERY_CONTENT_CONFIRM)
+                .expect("features")
+                .map(|caps| caps.tc_capable)
+        };
+        assert_eq!(probe(), Some(true), "the second answer replaces the zero");
+        assert_eq!(counters.readback_colour_features_zero.load(Ordering::Relaxed), 1);
+        assert_eq!(probe(), Some(true), "silence is re-asked too");
+        assert_eq!(probe(), Some(true), "a non-zero first answer is taken as it is");
+        assert_eq!(
+            counters.readback_colour_features_zero.load(Ordering::Relaxed),
+            1,
+            "only a zero answer is the signature"
         );
         assert_script_consumed(&transport);
     }

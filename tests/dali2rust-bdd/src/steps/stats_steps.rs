@@ -49,6 +49,10 @@ async fn stats_blocks_present(world: &mut DaliWorld) {
         "/dali/console_log_truncated_total",
         "/dali/console_log_unavailable_total",
         "/dali/console_uart_errors_total",
+        "/dali/readback_groups_doubled_total",
+        "/dali/readback_colour_features_zero_total",
+        "/dali/readback_extended_fade_unrepresentable_total",
+        "/dali/program_repairs_total",
         "/operations/running",
         "/operations/succeeded_total",
         "/operations/failed_total",
@@ -194,7 +198,7 @@ async fn bus_publish_totals_unchanged(world: &mut DaliWorld) {
     );
 }
 
-// SYS-251 SYS-252 SYS-253
+// SYS-251 SYS-252 SYS-253 PD-159
 #[then(regex = r"^the stats dali ([a-z_]+) should eventually be (\d+)$")]
 async fn then_stats_dali_counter(world: &mut DaliWorld, field: String, expected: u64) {
     let pointer = format!("/dali/{field}");

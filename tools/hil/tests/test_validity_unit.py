@@ -743,6 +743,24 @@ def test_task_latency_gauges_are_values_not_deltas():
     assert out["persist_flush_slow"] == 78
 
 
+READBACK_WORKAROUNDS = ("readback_groups_doubled", "readback_colour_features_zero",
+                        "readback_extended_fade_unrepresentable", "program_repairs")
+
+
+def test_readback_workaround_counters_are_reported_and_never_gated():
+    stats = {"dali": {name + "_total": 3 for name in READBACK_WORKAROUNDS}}
+    got = validity.isr_timing_counters(stats)
+    assert {name: got[name] for name in READBACK_WORKAROUNDS} == dict.fromkeys(READBACK_WORKAROUNDS, 3)
+    budget = validity.load_budget()
+    assert {name: budget.get(name) for name in READBACK_WORKAROUNDS} == \
+        dict.fromkeys(READBACK_WORKAROUNDS, validity.NOT_MEASURED)
+    state = {"bus_drops": dict.fromkeys(READBACK_WORKAROUNDS, 9)}
+    assert validity.bus_drop_breaches(state, budget) == []
+    lines = validity._bus_drop_lines(state, budget)
+    for name in READBACK_WORKAROUNDS:
+        assert any(name in line and "unmeasured" in line for line in lines), lines
+
+
 def test_task_latency_counters_are_read_from_stats():
     stats = {"dali": {"answer_staged_total": 30, "answer_stage_late_total": 1,
                       "persist_flush_slow_total": 78, "persist_gate_waits_total": 5}}

@@ -1,6 +1,6 @@
 use dali2rust_contracts::msg::ErrorCode;
 use dali2rust_domain::dali::commands::{DaliCommand, DaliResponse};
-use dali2rust_domain::dali::controller::DaliApplicationController;
+use dali2rust_domain::dali::controller::{DaliApplicationController, ReadbackWorkaround};
 use dali2rust_domain::dali::devices::dt8_color::{
     Dt8Command, opcode_requires_repeat as dt8_opcode_requires_repeat,
 };
@@ -479,16 +479,18 @@ pub fn send_raw_query_once_observed(
     Ok((frame.value(), contended))
 }
 
-pub(crate) fn program_with_verify_repair<V: Copy>(
-    mut drive: impl FnMut() -> Result<Option<V>, SemanticDaliError>,
+pub(crate) fn program_with_verify_repair<C: DaliApplicationController, V: Copy>(
+    controller: &mut C,
+    mut drive: impl FnMut(&mut C) -> Result<Option<V>, SemanticDaliError>,
     converged: impl Fn(Option<V>) -> bool,
 ) -> Result<Option<V>, SemanticDaliError> {
-    let mut readback = drive()?;
+    let mut readback = drive(controller)?;
     for _ in 0..PROGRAM_VERIFY_REPAIRS {
         if converged(readback) {
             break;
         }
-        readback = match drive() {
+        controller.note_workaround(ReadbackWorkaround::ProgramRepair);
+        readback = match drive(controller) {
             Ok(second) => second.or(readback),
             Err(_) => readback,
         };

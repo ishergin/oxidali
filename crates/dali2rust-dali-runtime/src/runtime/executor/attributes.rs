@@ -3,7 +3,7 @@ use dali2rust_contracts::msg::{
     ExtendedVersionEntry, LightSetpoint, RuntimeObservation, StatusFlags,
     MAX_EXTENDED_VERSIONS,
 };
-use dali2rust_domain::dali::controller::DaliApplicationController;
+use dali2rust_domain::dali::controller::{DaliApplicationController, ReadbackWorkaround};
 use dali2rust_domain::dali::device::ACTUAL_LEVEL_MASK;
 use dali2rust_domain::dali::devices::dt6_led::{decode_failure_status, Dt6Command};
 use dali2rust_domain::dali::devices::DeviceType;

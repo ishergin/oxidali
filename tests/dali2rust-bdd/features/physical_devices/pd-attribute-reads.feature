@@ -213,6 +213,7 @@ Feature: Physical-device attribute reads
     And the last operation eventually succeeds
     And physical device 0 eventually exposes groups membership 2
     And all scripted DALI exchanges should be consumed without errors
+    And the stats dali readback_groups_doubled_total should eventually be 1
 
   @id:PD-170
   Scenario: An attribute read publishes the gear features byte it measured

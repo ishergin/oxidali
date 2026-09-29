@@ -1,8 +1,9 @@
 use super::*;
 use dali2rust_contracts::msg::PowerState;
 use crate::runtime::executor::test_helpers::shared::{
-    assert_script_consumed, setup_controller, short_address,
+    assert_script_consumed, setup_controller, short_address, wire_counters,
 };
+use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
 
 use crate::runtime::executor::attributes::dt8::read_dt8_tc_limits;
@@ -84,6 +85,63 @@ fn groups_membership_doubled_byte_signature_triggers_one_reread() {
     let (transport, mut controller) = setup_controller(mock);
     let mask = read_group_membership_mask(&mut controller, 9).expect("read");
     assert_eq!(mask, Some(0x0002), "re-read replaces the doubled first pair");
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_doubled_group_byte_pair_is_counted_and_a_clean_pair_is_not() {
+    let (lo, hi) = groups_query_frames(short_address(9));
+    let mock = MockDaliTransport::new();
+    mock.expect_forward_frame_with_backward(lo, Some(0x02));
+    mock.expect_forward_frame_with_backward(hi, Some(0x02));
+    mock.expect_forward_frame_with_backward(lo, Some(0x02));
+    mock.expect_forward_frame_with_backward(hi, Some(0x00));
+    mock.expect_forward_frame_with_backward(lo, Some(0x03));
+    mock.expect_forward_frame_with_backward(hi, Some(0x00));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let counters = wire_counters(&mut controller);
+    read_group_membership_mask(&mut controller, 9).expect("doubled read");
+    assert_eq!(counters.readback_groups_doubled.load(Relaxed), 1);
+    read_group_membership_mask(&mut controller, 9).expect("clean read");
+    assert_eq!(
+        counters.readback_groups_doubled.load(Relaxed),
+        1,
+        "distinct bytes are not the signature"
+    );
+    assert_script_consumed(&transport);
+}
+
+const EXTENDED_FADE_SEVENTY_SECONDS: u8 = 0x36;
+
+#[test]
+fn an_extended_fade_the_record_cannot_carry_is_counted_and_silence_is_not() {
+    let query = standard_query_frame(9, StandardCommand::QueryExtendedFadeTime);
+    let mock = MockDaliTransport::new();
+    mock.expect_forward_frame_with_backward(query, Some(EXTENDED_FADE_SEVENTY_SECONDS));
+    mock.expect_forward_frame_with_backward(query, Some(EXTENDED_FADE_SEVENTY_SECONDS));
+    mock.expect_forward_frame_with_backward(query, None);
+    mock.expect_forward_frame_with_backward(query, None);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let counters = wire_counters(&mut controller);
+    let known = KnownVersions {
+        device_types: Some(DeviceTypeSet::default()),
+        dt6: None,
+    };
+    let policy = ContentConfirmPolicy::default();
+    let seventy = read_extended_snapshot(&mut controller, short_address(9), policy, known)
+        .expect("unrepresentable read");
+    assert_eq!(seventy.fade_time_ms, None, "70 s is above the u16 ms field");
+    assert_eq!(counters.readback_extended_fade_unrepresentable.load(Relaxed), 1);
+    let silent = read_extended_snapshot(&mut controller, short_address(9), policy, known)
+        .expect("silent read");
+    assert_eq!(silent.fade_time_ms, None);
+    assert_eq!(
+        counters.readback_extended_fade_unrepresentable.load(Relaxed),
+        1,
+        "an unanswered query is re-asked but is not the signature"
+    );
     assert_script_consumed(&transport);
 }
 

@@ -16,7 +16,8 @@ pub fn program_group_membership(
 ) -> Result<Option<u16>, SemanticDaliError> {
     let address = dali_short_address(short_address)?;
     program_with_verify_repair(
-        || drive_membership_program(controller, address, short_address, group_id, action),
+        controller,
+        |c| drive_membership_program(c, address, short_address, group_id, action),
         |readback| membership_confirms(readback, group_id, action),
     )
 }
@@ -48,8 +49,9 @@ fn membership_confirms(readback: Option<u16>, group_id: u8, action: GroupMembers
 mod tests {
     use super::*;
     use crate::runtime::executor::test_helpers::shared::{
-        assert_script_consumed, setup_controller, short_address,
+        assert_script_consumed, setup_controller, short_address, wire_counters,
     };
+    use std::sync::atomic::Ordering::Relaxed;
     use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
     use dali2rust_domain::dali::commands::DaliCommand;
 
@@ -86,10 +88,12 @@ mod tests {
         expect_add_drive(&mock, Some(GROUP_BIT as u8), Some(0));
 
         let (transport, mut controller) = setup_controller(mock);
+        let counters = wire_counters(&mut controller);
         let mask =
             program_group_membership(&mut controller, SHORT, GROUP, GroupMembershipAction::Add)
                 .expect("membership add");
         assert_eq!(mask, Some(GROUP_BIT));
+        assert_eq!(counters.program_repairs.load(Relaxed), 0, "nothing to repair");
         assert_script_consumed(&transport);
     }
 
@@ -100,10 +104,12 @@ mod tests {
         expect_add_drive(&mock, Some(GROUP_BIT as u8), Some(0));
 
         let (transport, mut controller) = setup_controller(mock);
+        let counters = wire_counters(&mut controller);
         let mask =
             program_group_membership(&mut controller, SHORT, GROUP, GroupMembershipAction::Add)
                 .expect("membership add repaired");
         assert_eq!(mask, Some(GROUP_BIT));
+        assert_eq!(counters.program_repairs.load(Relaxed), 1, "one repair spent");
         assert_script_consumed(&transport);
     }
 
@@ -115,10 +121,12 @@ mod tests {
         expect_add_drive(&mock, None, None);
 
         let (transport, mut controller) = setup_controller(mock);
+        let counters = wire_counters(&mut controller);
         let mask =
             program_group_membership(&mut controller, SHORT, GROUP, GroupMembershipAction::Add)
                 .expect("membership add with silent repair readback");
         assert_eq!(mask, Some(0));
+        assert_eq!(counters.program_repairs.load(Relaxed), 2, "the whole budget spent");
         assert_script_consumed(&transport);
     }
 

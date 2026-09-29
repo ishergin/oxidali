@@ -26,7 +26,8 @@ pub fn program_scene_row(
     let address = dali_short_address(short_address)?;
     let expected = expected_slot_byte(action, target_state)?;
     program_with_verify_repair(
-        || drive_scene_program(controller, address, scene_id, action, target_state),
+        controller,
+        |c| drive_scene_program(c, address, scene_id, action, target_state),
         |readback| readback == Some(expected),
     )
 }
@@ -154,7 +155,9 @@ mod tests {
     };
     use crate::runtime::executor::test_helpers::shared::{
         assert_script_consumed, setup_controller, short_address, short_raw_query_frame,
+        wire_counters,
     };
+    use std::sync::atomic::Ordering::Relaxed;
     use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
     use dali2rust_domain::dali::commands::DaliCommand;
 
@@ -409,6 +412,7 @@ mod tests {
         expect_write_drive(&mock, 60, Some(60));
 
         let (transport, mut controller) = setup_controller(mock);
+        let counters = wire_counters(&mut controller);
         let level = program_scene_row(
             &mut controller,
             SHORT,
@@ -418,6 +422,7 @@ mod tests {
         )
         .expect("scene write repaired");
         assert_eq!(level, Some(60));
+        assert_eq!(counters.program_repairs.load(Relaxed), 1, "one repair spent");
         assert_script_consumed(&transport);
     }
 
@@ -449,6 +454,7 @@ mod tests {
         expect_write_drive(&mock, 60, None);
 
         let (transport, mut controller) = setup_controller(mock);
+        let counters = wire_counters(&mut controller);
         let level = program_scene_row(
             &mut controller,
             SHORT,
@@ -458,6 +464,7 @@ mod tests {
         )
         .expect("scene write with mismatched evidence");
         assert_eq!(level, Some(30));
+        assert_eq!(counters.program_repairs.load(Relaxed), 2, "the whole budget spent");
         assert_script_consumed(&transport);
     }
 

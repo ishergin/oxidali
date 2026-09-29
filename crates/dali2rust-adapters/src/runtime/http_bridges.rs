@@ -28,7 +28,7 @@ use dali2rust_api::http::redundancy_settings_state::{
     RedundancySettingsHttpStateBridge,
 };
 use dali2rust_api::http::stats_state::{
-    StatsBusDto, StatsControllerDto, StatsDaliDto, StatsDaliTaskTimingDto, StatsHttpState, StatsInputDto, StatsMqttDto,
+    StatsBusDto, StatsControllerDto, StatsDaliDto, StatsDaliReadbackDto, StatsDaliTaskTimingDto, StatsHttpState, StatsInputDto, StatsMqttDto,
     StatsNetworkDto, StatsOperationsDto, StatsReportDto, StatsRulesDto, StatsWebSocketDto,
 };
 use dali2rust_api::http::{
@@ -567,6 +567,18 @@ fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
         isr_late_ticks_total: h.phy_sniffer.isr_late_ticks.load(Relaxed),
         isr_max_gap_us: h.phy_sniffer.isr_max_gap_us.load(Relaxed),
         task_timing: stats_task_timing_dto(h),
+        readback: stats_readback_dto(&h.dali_wire),
+    }
+}
+
+fn stats_readback_dto(w: &dali2rust_platform::dali::DaliWireCounters) -> StatsDaliReadbackDto {
+    StatsDaliReadbackDto {
+        readback_groups_doubled_total: w.readback_groups_doubled.load(Relaxed),
+        readback_colour_features_zero_total: w.readback_colour_features_zero.load(Relaxed),
+        readback_extended_fade_unrepresentable_total: w
+            .readback_extended_fade_unrepresentable
+            .load(Relaxed),
+        program_repairs_total: w.program_repairs.load(Relaxed),
     }
 }
 

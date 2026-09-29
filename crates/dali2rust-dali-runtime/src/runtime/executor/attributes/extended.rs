@@ -67,11 +67,7 @@ pub(super) fn read_extended_snapshot(
     content_confirm: ContentConfirmPolicy,
     known: KnownVersions,
 ) -> Result<ExtendedReadSnapshot, SemanticDaliError> {
-    let mut fade_time_ms = read_extended_fade_time(controller, address, content_confirm)?;
-    if fade_time_ms.is_none() {
-        log::info!("extended fade time: unrepresentable readback byte, re-reading");
-        fade_time_ms = read_extended_fade_time(controller, address, content_confirm)?;
-    }
+    let fade_time_ms = read_extended_fade_time(controller, address, content_confirm)?;
     let device_types = match known.device_types {
         Some(types) => Some(types),
         None => super::super::discovery::read_declared_device_types(controller, address, content_confirm)?,
@@ -121,11 +117,27 @@ fn read_extended_fade_time(
     address: DaliAddress,
     content_confirm: ContentConfirmPolicy,
 ) -> Result<Option<u16>, SemanticDaliError> {
-    Ok(send_standard_query_stable(
+    let first = read_extended_fade_byte(controller, address, content_confirm)?;
+    if let Some(ms) = first.and_then(extended_fade_time_ms_from_byte) {
+        return Ok(Some(ms));
+    }
+    if first.is_some() {
+        controller.note_workaround(ReadbackWorkaround::ExtendedFadeUnrepresentable);
+    }
+    log::info!("extended fade time: unrepresentable readback byte, re-reading");
+    Ok(read_extended_fade_byte(controller, address, content_confirm)?
+        .and_then(extended_fade_time_ms_from_byte))
+}
+
+fn read_extended_fade_byte(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    content_confirm: ContentConfirmPolicy,
+) -> Result<Option<u8>, SemanticDaliError> {
+    send_standard_query_stable(
         controller,
         content_confirm,
         address,
         StandardCommand::QueryExtendedFadeTime,
-    )?
-    .and_then(extended_fade_time_ms_from_byte))
+    )
 }
