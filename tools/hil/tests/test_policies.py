@@ -75,7 +75,7 @@ def test_a_discovery_run_writes_the_armed_policy_without_a_manual_apply(
             "installation of the owner's lamps this test never runs, by design"
             % (named(refused), spell(hil_config.lamp_short_set())))
     for short in shorts:
-        attr_guard(short, *POLICY_LEVELS, verify=True)
+        attr_guard(short, *POLICY_LEVELS, verify=True, required=True)
     before = {short: _leaves(api, short) for short in shorts}
     known = set(api.operations())
 
