@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 
 use crate::steps::frames::{special_frame, standard_frame};
 use crate::steps::last_json;
+use crate::steps::polling::wait_for_operation_status;
 use crate::steps::wire::assert_frame_before;
 use crate::DaliWorld;
 
@@ -12,7 +13,8 @@ use super::discovery_scripts::{
     script_detect_dt8_cct, script_discovery, script_discovery_corrupted_window_retry,
     script_discovery_declares_only_dt6, script_discovery_multi_dt_mask, script_discovery_no_answers,
     script_discovery_partial_failure, script_discovery_permanent_multiple_responders,
-    script_discovery_unterminated_type_walk, script_scan_discovery, script_six_channel_discovery,
+    script_discovery_unterminated_type_walk, script_scan_discovery,
+    script_scan_discovery_per_device, script_six_channel_discovery, DT8_FEATURES_RGB_CAPABLE,
 };
 use super::read_model::{wait_for_physical_device, wait_for_physical_devices};
 use super::{TEST_RANDOM_ADDRESS, TEST_SHORT_ADDRESS};
@@ -42,6 +44,32 @@ async fn given_full_segment_discovery_script(world: &mut DaliWorld) {
 async fn given_six_channel_discovery_script(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
     script_six_channel_discovery(&mock);
+}
+
+const DT8_FEATURES_TC_ONLY: u8 = 0x02;
+const SECOND_DEVICE_SHORT_ADDRESS: u8 = 1;
+const SECOND_DEVICE_RANDOM_ADDRESS: u32 = 0x2A_0F13;
+
+// COMM-100 COMM-101
+#[given("adapter 0 has discovered a colour-temperature device 0 and an RGB device 1")]
+async fn given_cct_and_rgb_devices_discovered(world: &mut DaliWorld) {
+    {
+        let mock = world.dali_mock().lock().expect("mock lock");
+        script_scan_discovery_per_device(
+            &mock,
+            &[
+                (TEST_SHORT_ADDRESS, TEST_RANDOM_ADDRESS, DT8_FEATURES_TC_ONLY),
+                (SECOND_DEVICE_SHORT_ADDRESS, SECOND_DEVICE_RANDOM_ADDRESS, DT8_FEATURES_RGB_CAPABLE),
+            ],
+        );
+    }
+    world.send_http_request(
+        "POST",
+        "/api/v1/adapters/0/discovery-runs",
+        Some(br#"{"mode":"scan_known_short_addresses"}"#),
+        "application/json",
+    );
+    wait_for_operation_status(world, "succeeded");
 }
 
 // PD-106

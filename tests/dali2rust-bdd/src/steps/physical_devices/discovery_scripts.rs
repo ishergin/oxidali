@@ -6,7 +6,7 @@ use crate::steps::frames::{dt8_raw_query_frame, special_frame, standard_frame};
 
 use super::{TEST_RANDOM_ADDRESS, TEST_SHORT_ADDRESS};
 
-pub(super) fn script_detect_dt8_cct(mock: &MockDaliTransport, short: u8) {
+pub(crate) fn script_detect_dt8_cct(mock: &MockDaliTransport, short: u8) {
     script_detect_dt8_with_features(mock, short, 0x02);
 }
 
@@ -144,13 +144,28 @@ pub(crate) fn script_scan_discovery(
     present: &[(u8, u32)],
     features: u8,
 ) {
+    let featured: Vec<(u8, u32, u8)> = present
+        .iter()
+        .map(|&(short, random_address)| (short, random_address, features))
+        .collect();
+    script_scan_discovery_per_device(mock, &featured);
+}
+
+pub(super) fn script_scan_discovery_per_device(
+    mock: &MockDaliTransport,
+    present: &[(u8, u32, u8)],
+) {
+    let pairs: Vec<(u8, u32)> = present
+        .iter()
+        .map(|&(short, random_address, _)| (short, random_address))
+        .collect();
     mock.clear();
-    script_presence_sweep(mock, present);
-    for &(short, random_address) in present {
+    script_presence_sweep(mock, &pairs);
+    for &(short, random_address) in &pairs {
         script_discovery_random_address_reads(mock, short, &[random_address, random_address]);
     }
-    script_verify_session(mock, present);
-    for &(short, _) in present {
+    script_verify_session(mock, &pairs);
+    for &(short, _, features) in present {
         script_detect_dt8_with_features(mock, short, features);
     }
 }

@@ -1,12 +1,14 @@
 use std::time::Duration;
 
 use cucumber::{given, then};
+use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_test_support::wait_until;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use serde_json::Value;
 
 use crate::steps::frames::{special_frame, standard_frame};
+use crate::steps::physical_devices::discovery_scripts::script_detect_dt8_cct;
 use crate::steps::polling::fetch_json;
 use crate::DaliWorld;
 
@@ -134,6 +136,15 @@ async fn given_address_change_script_silent(world: &mut DaliWorld, from: u8, to:
 fn script_address_change(world: &mut DaliWorld, from: u8, to: u8, status_at_new: Option<u8>) {
     let mock = world.dali_mock().lock().expect("mock lock");
     mock.clear();
+    script_address_change_frames(&mock, from, to, status_at_new);
+}
+
+fn script_address_change_frames(
+    mock: &MockDaliTransport,
+    from: u8,
+    to: u8,
+    status_at_new: Option<u8>,
+) {
     let encoded = encoded_short(to);
     mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(encoded)));
     mock.expect_forward_frame_with_backward(
@@ -146,6 +157,69 @@ fn script_address_change(world: &mut DaliWorld, from: u8, to: u8, status_at_new:
     mock.expect_forward_frame_with_backward(
         standard_frame(to, StandardCommand::QueryStatus),
         status_at_new,
+    );
+}
+
+const VERIFIED_STATUS: u8 = 0x00;
+const MAX_SHORT_ADDRESS: u8 = 63;
+
+// COMM-100
+#[given(
+    regex = r"^a replacement script in which short address (\d+) stays silent and short address (\d+) takes its address$"
+)]
+async fn given_replacement_script(world: &mut DaliWorld, failed: u8, replacement: u8) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    mock.clear();
+    mock.expect_forward_frame_with_backward(
+        standard_frame(failed, StandardCommand::QueryDeviceType),
+        None,
+    );
+    script_address_change_frames(&mock, replacement, failed, Some(VERIFIED_STATUS));
+}
+
+// COMM-101
+#[given(regex = r"^a replacement script in which short address (\d+) still answers$")]
+async fn given_replacement_script_failed_still_answers(world: &mut DaliWorld, failed: u8) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    mock.clear();
+    script_detect_dt8_cct(&mock, failed);
+}
+
+// COMM-100
+#[then(
+    regex = r"^the transport should have carried exactly the replacement of short address (\d+) by short address (\d+)$"
+)]
+async fn then_replacement_profile(world: &mut DaliWorld, failed: u8, replacement: u8) {
+    let set_short_address = standard_frame(replacement, StandardCommand::SetShortAddress);
+    let expected = vec![
+        standard_frame(failed, StandardCommand::QueryDeviceType),
+        special_frame(SpecialCommand::Dtr0(encoded_short(failed))),
+        standard_frame(replacement, StandardCommand::QueryContentDtr0),
+        set_short_address,
+        set_short_address,
+        standard_frame(failed, StandardCommand::QueryStatus),
+    ];
+    let frames = world.dali_mock().lock().expect("mock lock").sent_frames();
+    assert_eq!(
+        frames, expected,
+        "ask the failed address for its device type, arm DTR0 with the failed address, \
+         prove it at the replacement, SET SHORT ADDRESS twice back to back, then verify at \
+         the failed address — and nothing else: {frames:04X?}"
+    );
+}
+
+// COMM-101
+#[then("no short address should have been programmed on the bus")]
+async fn then_no_short_address_programmed(world: &mut DaliWorld) {
+    let frames = world.dali_mock().lock().expect("mock lock").sent_frames();
+    let programmed: Vec<u16> = (0..=MAX_SHORT_ADDRESS)
+        .map(|short| standard_frame(short, StandardCommand::SetShortAddress))
+        .filter(|frame| frames.contains(frame))
+        .collect();
+    assert!(
+        programmed.is_empty(),
+        "a failed device that still answers must stop the replacement before any \
+         SET SHORT ADDRESS: {frames:04X?}"
     );
 }
 
@@ -190,7 +264,7 @@ async fn then_result_new_short(world: &mut DaliWorld, expected: u64) {
     );
 }
 
-// COMM-010 COMM-099
+// COMM-010 COMM-099 COMM-101
 #[then(regex = r"^physical device (\d+) should eventually exist on adapter (\d+)$")]
 async fn then_device_exists(world: &mut DaliWorld, short: u8, adapter: u8) {
     let port = world.server_port;
@@ -201,7 +275,7 @@ async fn then_device_exists(world: &mut DaliWorld, short: u8, adapter: u8) {
     );
 }
 
-// COMM-010 COMM-099
+// COMM-010 COMM-099 COMM-100
 #[then(regex = r"^physical device (\d+) should eventually be absent on adapter (\d+)$")]
 async fn then_device_absent(world: &mut DaliWorld, short: u8, adapter: u8) {
     let port = world.server_port;
