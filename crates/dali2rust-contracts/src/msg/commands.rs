@@ -1131,32 +1131,48 @@ impl SceneMetadataUpdateCommand {
     pub const PATCH_HA_SELECT_ENABLED: u8 = 2;
 }
 
-macro_rules! instance_patch_fields {
-    ($($field:ident = $bit:literal,)+) => {
+macro_rules! patch_fields {
+    ($name:ident: $bits:ty { $($field:ident = $bit:literal,)+ }) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub enum InstancePatchField {
+        pub enum $name {
             $($field = $bit,)+
         }
 
-        impl InstancePatchField {
+        impl $name {
             pub const ALL: [Self; [$($bit),+].len()] = [$(Self::$field),+];
+
+            pub const ALL_BITS: $bits = {
+                let mut bits = 0;
+                let mut index = 0;
+                while index < Self::ALL.len() {
+                    bits |= Self::ALL[index].bit();
+                    index += 1;
+                }
+                bits
+            };
+
+            pub const fn bit(self) -> $bits {
+                1 << self as $bits
+            }
         }
     };
 }
 
 // IEC 62386-103 §9.6.3
-instance_patch_fields! {
-    InstanceEnabled = 10,
-    EventFilter = 1,
-    EventPriority = 2,
-    InstanceGroup0 = 3,
-    InstanceGroup1 = 4,
-    InstanceGroup2 = 5,
-    TimerShort = 6,
-    TimerDouble = 7,
-    TimerRepeat = 8,
-    TimerStuck = 9,
-    EventScheme = 0,
+patch_fields! {
+    InstancePatchField: u16 {
+        InstanceEnabled = 10,
+        EventFilter = 1,
+        EventPriority = 2,
+        InstanceGroup0 = 3,
+        InstanceGroup1 = 4,
+        InstanceGroup2 = 5,
+        TimerShort = 6,
+        TimerDouble = 7,
+        TimerRepeat = 8,
+        TimerStuck = 9,
+        EventScheme = 0,
+    }
 }
 
 impl InstancePatchField {
@@ -1164,30 +1180,54 @@ impl InstancePatchField {
         [Self::InstanceGroup0, Self::InstanceGroup1, Self::InstanceGroup2];
     pub const TIMERS: [Self; 4] =
         [Self::TimerShort, Self::TimerDouble, Self::TimerRepeat, Self::TimerStuck];
-
-    pub const fn bit(self) -> u16 {
-        1 << self as u16
-    }
-
-    const fn bits_of(fields: &[Self]) -> u16 {
-        let mut bits = 0;
-        let mut index = 0;
-        while index < fields.len() {
-            bits |= fields[index].bit();
-            index += 1;
-        }
-        bits
-    }
 }
 
 impl Dali103InstanceConfigureCommand {
-    pub const ALL_PATCH_BITS: u16 = InstancePatchField::bits_of(&InstancePatchField::ALL);
+    pub const ALL_PATCH_BITS: u16 = InstancePatchField::ALL_BITS;
 
     pub const fn patches(&self, field: InstancePatchField) -> bool {
         self.patch_mask & field.bit() != 0
     }
 
     pub fn patch(&mut self, field: InstancePatchField) {
+        self.patch_mask |= field.bit();
+    }
+}
+
+patch_fields! {
+    FeedbackPatchField: u8 {
+        Timing = 0,
+        ActiveBrightness = 1,
+        ActiveColour = 2,
+        InactiveBrightness = 3,
+        InactiveColour = 4,
+    }
+}
+
+impl Dali103FeedbackConfigureCommand {
+    pub const fn patches(&self, field: FeedbackPatchField) -> bool {
+        self.patch_mask & field.bit() != 0
+    }
+
+    pub const fn value(&self, field: FeedbackPatchField) -> u8 {
+        match field {
+            FeedbackPatchField::Timing => self.timing,
+            FeedbackPatchField::ActiveBrightness => self.active_brightness,
+            FeedbackPatchField::ActiveColour => self.active_colour,
+            FeedbackPatchField::InactiveBrightness => self.inactive_brightness,
+            FeedbackPatchField::InactiveColour => self.inactive_colour,
+        }
+    }
+
+    pub fn patch(&mut self, field: FeedbackPatchField, value: u8) {
+        let slot = match field {
+            FeedbackPatchField::Timing => &mut self.timing,
+            FeedbackPatchField::ActiveBrightness => &mut self.active_brightness,
+            FeedbackPatchField::ActiveColour => &mut self.active_colour,
+            FeedbackPatchField::InactiveBrightness => &mut self.inactive_brightness,
+            FeedbackPatchField::InactiveColour => &mut self.inactive_colour,
+        };
+        *slot = value;
         self.patch_mask |= field.bit();
     }
 }
@@ -1436,6 +1476,55 @@ mod instance_patch_tests {
         cmd.patch(InstancePatchField::TimerRepeat);
         for field in InstancePatchField::ALL {
             assert_eq!(cmd.patches(field), field == InstancePatchField::TimerRepeat, "{field:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod feedback_patch_tests {
+    use super::*;
+
+    fn declared_bit(field: FeedbackPatchField) -> u8 {
+        match field {
+            FeedbackPatchField::Timing => 0,
+            FeedbackPatchField::ActiveBrightness => 1,
+            FeedbackPatchField::ActiveColour => 2,
+            FeedbackPatchField::InactiveBrightness => 3,
+            FeedbackPatchField::InactiveColour => 4,
+        }
+    }
+
+    #[test]
+    fn every_feedback_field_is_in_the_table_with_a_bit_of_its_own() {
+        for field in FeedbackPatchField::ALL {
+            assert_eq!(field.bit(), 1 << declared_bit(field), "{field:?}");
+        }
+        assert_eq!(
+            FeedbackPatchField::ALL_BITS.count_ones() as usize,
+            FeedbackPatchField::ALL.len()
+        );
+    }
+
+    #[test]
+    fn a_patched_feedback_field_carries_its_own_value_and_bit() {
+        for (value, field) in (1u8..).zip(FeedbackPatchField::ALL) {
+            let mut cmd = Dali103FeedbackConfigureCommand {
+                registry_adapter_id: 0,
+                short_address: 0,
+                instance_number: 0,
+                patch_mask: 0,
+                timing: 0,
+                active_brightness: 0,
+                active_colour: 0,
+                inactive_brightness: 0,
+                inactive_colour: 0,
+                opcode_map: 0,
+            };
+            cmd.patch(field, value);
+            for other in FeedbackPatchField::ALL {
+                assert_eq!(cmd.patches(other), other == field, "{field:?} patched {other:?}");
+                assert_eq!(cmd.value(other), if other == field { value } else { 0 });
+            }
         }
     }
 }
