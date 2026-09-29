@@ -42,6 +42,10 @@
   (recall, исполненный этим контроллером), `RedundancyTransitionEvent`
   (`controller becomes active`), `DaliSettingsChangedEvent`,
   `Dali103InstanceConfiguredEvent` (`manual config changed`).
+- **Сообщения брокера**: `MqttRuleMessageEvent` (`when mqtt`) публикует мост MQTT. Топики
+  триггеров мост читает из стора правил, когда сдвигается поколение документа — его
+  двигает каждая замена документа, гидрация и перечитка слайсов включительно
+  ([`ADR-033`](../../../architecture/decisions/ADR-033-mqtt-rule-trigger.md)).
 - **События-инвалидации**: `VirtualLampChangedEvent` и `PhysicalDeviceChangedEvent` —
   имя, разрешённое при компиляции, могло перестать разрешаться, и граф
   перекомпилируется; `RegistrySliceReloadedEvent` — слайс-стор сменился под нами
