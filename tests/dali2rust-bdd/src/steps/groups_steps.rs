@@ -5,9 +5,10 @@ use dali2rust_domain::dali::pres::command::DaliCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use serde_json::{json, Value};
 
-use crate::steps::physical_devices_steps::{
-    script_discovery, script_discovery_with_features, wait_for_operation_status,
+use crate::steps::physical_devices::discovery_scripts::{
+    script_discovery, script_discovery_with_features,
 };
+use crate::steps::polling::wait_for_operation_status;
 use crate::{DaliWorld};
 use crate::steps::{assert_result_skips_lamp, last_json};
 

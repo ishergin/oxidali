@@ -449,11 +449,10 @@ fn desired_entries(
     schedules: &[HclScheduleView],
     local: LocalCivilTime,
 ) -> Vec<DesiredEntry> {
+    let desired = desired_states(schedules, local);
     let ledger = lock_ledger(&deps.overrides);
-    schedules
-        .iter()
-        .filter(|schedule| runs_today(schedule, local))
-        .filter_map(|schedule| Some((schedule, desired_state(schedule, local)?)))
+    desired
+        .into_iter()
         .flat_map(|(schedule, desired)| {
             schedule
                 .targets
@@ -463,6 +462,20 @@ fn desired_entries(
                 .map(move |key| DesiredEntry { key, state: desired })
         })
         .collect()
+}
+
+#[inline(never)]
+fn desired_states(
+    schedules: &[HclScheduleView],
+    local: LocalCivilTime,
+) -> Vec<(&HclScheduleView, DesiredState)> {
+    let mut desired = Vec::with_capacity(schedules.len());
+    for schedule in schedules.iter().filter(|schedule| runs_today(schedule, local)) {
+        if let Some(state) = desired_state(schedule, local) {
+            desired.push((schedule, state));
+        }
+    }
+    desired
 }
 
 fn runs_today(schedule: &HclScheduleView, local: LocalCivilTime) -> bool {

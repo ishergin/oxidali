@@ -4,6 +4,7 @@ pub mod shared {
     use crate::runtime::controller::DaliController;
     use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
     use dali2rust_domain::dali::types::DaliAddress;
+    use dali2rust_platform::dali::{DaliTransport, DaliWireCounters};
     use std::sync::{Arc, Mutex};
 
     pub fn short_address(short: u8) -> DaliAddress {
@@ -24,11 +25,19 @@ pub mod shared {
         frame.raw()
     }
 
-    pub fn setup_controller<T: dali2rust_platform::dali::DaliTransport + Send>(
+    pub fn setup_controller<T: DaliTransport + Send>(
         mock: T,
     ) -> (Arc<Mutex<T>>, DaliController<T>) {
         let transport = Arc::new(Mutex::new(mock));
         let controller = DaliController::new(Arc::clone(&transport), Box::new(StdClock::new()));
         (transport, controller)
+    }
+
+    pub fn wire_counters<T: DaliTransport + Send>(
+        controller: &mut DaliController<T>,
+    ) -> Arc<DaliWireCounters> {
+        let counters = Arc::new(DaliWireCounters::default());
+        controller.set_wire_counters(Arc::clone(&counters));
+        counters
     }
 }

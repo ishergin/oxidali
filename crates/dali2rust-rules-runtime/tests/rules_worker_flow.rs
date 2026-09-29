@@ -158,7 +158,7 @@ fn harness_hcl(
     if !lamps.iter().any(|lamp| lamp.id == EFFECT_LAMP) {
         lamps.push(bound_lamp(EFFECT_LAMP));
     }
-    let world = EmptyWorld { started: std::time::Instant::now(), lamps, active, lit_group, overridden };
+    let world = EmptyWorld { lamps, active, lit_group, overridden, ..empty_world() };
     harness_spawn(slices, world, Arc::new(StubResolver::permissive()))
 }
 
@@ -1617,4 +1617,86 @@ fn an_effect_on_a_lamp_with_no_binding_fails_its_activation_and_reaches_no_bus()
     let runtime = h.store.rule_runtime();
     let recall = runtime.iter().find(|r| r.name == "recall").expect("the recall fired");
     assert_eq!(recall.last_outcome, dali2rust_rules_runtime::RuleOutcome::Failed);
+}
+
+const WIDER_THAN_ITS_BUS_FIELD: u16 = 300;
+
+const WIDE_ID_DOC: &str = "rule \"лампа\" {\n  when http trigger\n  do lamp(\"за краем\").off()\n}\n\
+                           rule \"группа\" {\n  when http trigger\n  do group(\"вне поля\").off()\n}\n\
+                           rule \"стоп\" {\n  when http trigger\n  do group(\"вне поля\").stop_fade()\n}\n\
+                           rule \"сцена\" {\n  when http trigger\n  do scene(3).recall(group(\"вне поля\"))\n}\n\
+                           rule \"метка\" {\n  when http trigger\n  do lamp(6).level(55)\n}\n";
+
+fn empty_world() -> EmptyWorld {
+    EmptyWorld {
+        started: std::time::Instant::now(),
+        lamps: Vec::new(),
+        active: true,
+        lit_group: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        overridden: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    }
+}
+
+fn commands_before_the_marker(
+    h: &Harness,
+    marker_lamp: u8,
+) -> Vec<dali2rust_contracts::msg::BusCommandPayload> {
+    let mut before = Vec::new();
+    loop {
+        let command =
+            dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |_| true)
+                .expect("the marker rule's command must reach the bus");
+        match command.payload {
+            dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(ts)
+                if ts.scope == dali2rust_contracts::msg::DaliTargetScope::VirtualLamp
+                    && ts.virtual_lamp_id == marker_lamp =>
+            {
+                return before;
+            }
+            other => before.push(other),
+        }
+    }
+}
+
+#[test]
+fn an_id_wider_than_its_bus_field_fails_its_effect_instead_of_narrowing() {
+    let resolver = StubResolver::permissive()
+        .with_lamp(
+            "за краем",
+            dali2rust_rules_model::LampRef { adapter_id: 0, id: WIDER_THAN_ITS_BUS_FIELD },
+        )
+        .with_group(
+            "вне поля",
+            dali2rust_rules_model::GroupRef { adapter_id: 0, id: WIDER_THAN_ITS_BUS_FIELD },
+        );
+    let h = harness_spawn(
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-wide-id")),
+        EmptyWorld { lamps: vec![bound_lamp(EFFECT_LAMP)], ..empty_world() },
+        Arc::new(resolver),
+    );
+    publish_document(&h, 121, WIDE_ID_DOC, 0);
+    let sig = recv_signal(&h, 121);
+    assert!(sig.error.is_none(), "the document must compile: {sig:?}");
+    wait_revision(&h.store, 1);
+
+    let effects = ["лампа", "группа", "стоп", "сцена"];
+    for (corr, name) in (122..).zip(effects.iter().chain(["метка"].iter())) {
+        run_rule(&h, corr, name);
+        recv_signal(&h, corr);
+    }
+
+    let runtime = h.store.rule_runtime();
+    for name in effects {
+        let row = runtime.iter().find(|r| r.name == name).expect("every rule fired once");
+        assert_eq!(
+            row.last_outcome,
+            dali2rust_rules_runtime::RuleOutcome::Failed,
+            "{name}: an effect whose id does not fit its bus field must fail"
+        );
+    }
+    let narrowed = commands_before_the_marker(&h, 6);
+    assert!(
+        narrowed.is_empty(),
+        "no effect may reach the bus with its id taken mod 256: {narrowed:?}"
+    );
 }

@@ -1,6 +1,6 @@
 mod support;
 
-use support::{compile, compile_err, wrap_trigger};
+use support::{compile, compile_err, compile_ok, wrap_action, wrap_condition, wrap_trigger};
 
 const TWO_RULES: &str = r#"# comment line
 rule "первое" {
@@ -213,4 +213,40 @@ fn hold_hcl_is_a_word_true_or_false_at_both_sites() {
     assert!(err.message.contains("hold_hcl must be true or false"), "{err}");
     let err = compile_err("rule \"t\" hold_hcl maybe {\n  when http trigger\n  do lamp(\"коридор\").off()\n}\n");
     assert!(err.message.contains("true or false"), "{err}");
+}
+
+#[test]
+fn a_lamp_id_beyond_the_virtual_lamps_is_refused_at_the_number() {
+    let err = compile_err(&wrap_action("lamp(300).off()"));
+    assert_eq!((err.line, err.column), (5, 11), "{err}");
+    assert!(err.message.contains("lamp id 300 out of range 0..=63"), "{err}");
+    let err = compile_err(&wrap_action("lamp(64).off()"));
+    assert!(err.message.contains("lamp id 64"), "{err}");
+    let _ = compile_ok(&wrap_action("lamp(63).off()"));
+}
+
+#[test]
+fn a_group_id_beyond_the_dali_groups_is_refused_at_the_number() {
+    let err = compile_err(&wrap_action("group(300).off()"));
+    assert_eq!((err.line, err.column), (5, 12), "{err}");
+    assert!(err.message.contains("group id 300 out of range 0..=15"), "{err}");
+    let err = compile_err(&wrap_action("scene(3).recall(group(16))"));
+    assert!(err.message.contains("group id 16"), "{err}");
+    let _ = compile_ok(&wrap_action("group(15).off()"));
+}
+
+#[test]
+fn an_out_of_range_id_is_refused_wherever_a_reference_is_written() {
+    for (source, what, at) in [
+        (wrap_trigger("lamp(64) turns on"), "lamp id 64", (4, 13)),
+        (wrap_trigger("group(16) becomes any_on"), "group id 16", (4, 14)),
+        (wrap_condition("lamp(64) is on"), "lamp id 64", (5, 11)),
+        (wrap_condition("hcl is overridden for group(16)"), "group id 16", (5, 34)),
+        (wrap_action("hcl.resume(group(16))"), "group id 16", (5, 23)),
+        (wrap_action("broadcast.level(lamp(64).level)"), "lamp id 64", (5, 27)),
+    ] {
+        let err = compile_err(&source);
+        assert!(err.message.contains(what), "{what}: {err}");
+        assert_eq!((err.line, err.column), at, "{what}: {err}");
+    }
 }

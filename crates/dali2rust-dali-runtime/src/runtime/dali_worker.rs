@@ -49,16 +49,6 @@ mod blocked;
 mod commissioning;
 mod counters;
 mod dev103;
-
-pub mod dev103_patch_mask {
-    pub use super::dev103::{
-        ALL_PATCH_BITS, PATCH_EVENT_FILTER, PATCH_EVENT_PRIORITY, PATCH_EVENT_SCHEME,
-        PATCH_INSTANCE_ENABLED,
-        PATCH_INSTANCE_GROUP_0, PATCH_INSTANCE_GROUP_1, PATCH_INSTANCE_GROUP_2,
-        PATCH_TIMER_DOUBLE, PATCH_TIMER_REPEAT, PATCH_TIMER_SHORT, PATCH_TIMER_STUCK,
-        TIMER_PATCH_BITS,
-    };
-}
 mod discovery;
 mod membership;
 mod memory_bank;

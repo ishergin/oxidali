@@ -1,6 +1,5 @@
 #![allow(
     clippy::derivable_impls,
-    clippy::field_reassign_with_default,
     clippy::manual_contains,
     clippy::needless_borrow,
     clippy::new_without_default,

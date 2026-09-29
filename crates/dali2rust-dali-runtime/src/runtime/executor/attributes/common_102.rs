@@ -141,6 +141,9 @@ pub(super) fn read_groups_membership(
         Some(mask) if is_doubled_membership(mask) => {
             log::info!("groups membership 0x{mask:04X} has the doubled-byte signature; re-reading");
             let confirmed = read_groups_membership_once(controller, address, breaker)?;
+            if confirmed.is_some_and(|reread| reread != mask) {
+                controller.note_workaround(ReadbackWorkaround::GroupsCorrected);
+            }
             Ok(confirmed.or(first))
         }
         other => Ok(other),

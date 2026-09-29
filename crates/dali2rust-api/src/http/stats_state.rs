@@ -36,17 +36,10 @@ pub struct StatsDaliDto {
     pub foreign_dimming_unprojected_total: u32,
     pub foreign_scene_writes_total: u32,
     pub foreign_unaddressed_ignored_total: u32,
-    pub backward_undecodable_total: u32,
-    pub backward_frame_size_total: u32,
-    pub backward_incomplete_total: u32,
-    pub backward_early_rejected_total: u32,
-    pub backward_late_rejected_total: u32,
-    pub backward_multi_answer_total: u32,
-    pub console_log_dropped_total: u32,
-    pub console_log_busy_total: u32,
-    pub console_log_truncated_total: u32,
-    pub console_log_unavailable_total: u32,
-    pub console_uart_errors_total: u32,
+    #[serde(flatten)]
+    pub backward: StatsDaliBackwardDto,
+    #[serde(flatten)]
+    pub console: StatsDaliConsoleDto,
     pub isr_ticks_deficit_raw_total: u32,
     pub isr_ticks_surplus_raw_total: u32,
     pub isr_ticks_lost_total: u32,
@@ -55,6 +48,35 @@ pub struct StatsDaliDto {
     pub isr_max_gap_us: u32,
     #[serde(flatten)]
     pub task_timing: StatsDaliTaskTimingDto,
+    #[serde(flatten)]
+    pub readback: StatsDaliReadbackDto,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct StatsDaliReadbackDto {
+    pub readback_groups_corrected_total: u32,
+    pub readback_colour_features_corrected_total: u32,
+    pub readback_extended_fade_corrected_total: u32,
+    pub program_repairs_total: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct StatsDaliBackwardDto {
+    pub backward_undecodable_total: u32,
+    pub backward_frame_size_total: u32,
+    pub backward_incomplete_total: u32,
+    pub backward_early_rejected_total: u32,
+    pub backward_late_rejected_total: u32,
+    pub backward_multi_answer_total: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct StatsDaliConsoleDto {
+    pub console_log_dropped_total: u32,
+    pub console_log_busy_total: u32,
+    pub console_log_truncated_total: u32,
+    pub console_log_unavailable_total: u32,
+    pub console_uart_errors_total: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]

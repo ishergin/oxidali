@@ -1,4 +1,5 @@
 pub mod bus;
+pub mod clock;
 pub mod fs;
 pub mod ingress_hold;
 pub mod net;
@@ -11,6 +12,7 @@ pub use bus::{
     try_recv_event_matching_envelope, EventObserver,
     PublishTally,
 };
+pub use clock::StoppedClock;
 pub use fs::{temp_fs, InMemoryFileSystemHal, temp_slice_store, write_slice};
 pub use ingress_hold::{hold_the_events_ingress_full, HeldEventsIngress};
 pub use net::MockNetworkLink;

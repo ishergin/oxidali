@@ -5,7 +5,7 @@ use dali2rust_platform::dali::ObservedRawFrameKind;
 use dali2rust_test_support::wait_until;
 use serde_json::Value;
 
-use crate::steps::physical_devices_steps::fetch_json;
+use crate::steps::polling::fetch_json;
 use crate::steps::wire::{command_address, go_to_scene, group_command_address, SCENE_NUMBER_MASK};
 use crate::DaliWorld;
 

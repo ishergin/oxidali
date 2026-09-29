@@ -10,9 +10,10 @@ use dali2rust_test_support::wait_until;
 use serde_json::{json, Value};
 
 use crate::steps::groups_steps::bind_discovered_vl1;
-use crate::steps::physical_devices_steps::{
-    fetch_json, script_discovery_with_features, script_staged_dtrs, special_frame, standard_frame,
-};
+use crate::steps::frames::{special_frame, standard_frame};
+use crate::steps::physical_devices::discovery_scripts::script_discovery_with_features;
+use crate::steps::physical_devices::write_scripts::script_staged_dtrs;
+use crate::steps::polling::fetch_json;
 use crate::DaliWorld;
 use crate::steps::wire::{command_address, go_to_scene};
 use crate::steps::{assert_result_skips_lamp, last_json};
@@ -422,7 +423,7 @@ async fn given_scene_colours_audit_script(
 ) {
     let mock = world.dali_mock().lock().expect("mock lock");
     mock.clear();
-    crate::steps::physical_devices_steps::script_attribute_read_prelude(&mock, short);
+    crate::steps::physical_devices::attribute_read_scripts::script_attribute_read_prelude(&mock, short);
     for s in 0..16u8 {
         if s == scene {
             script_scene_colour_verify(&mock, short, s, level, Some(mirek));

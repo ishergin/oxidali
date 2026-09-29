@@ -57,7 +57,10 @@ impl LightSeries {
     }
 
     fn absorb(&mut self, light: MergedLight) {
-        let key = light_key(&light.target);
+        let Some(key) = light_key(&light.target) else {
+            self.lights.push(light);
+            return;
+        };
         match self.open.iter_mut().find(|(open, _)| *open == key) {
             Some((_, slot)) if self.lights[*slot].hold_hcl == light.hold_hcl => {
                 self.lights[*slot].absorb(&light);
@@ -225,10 +228,12 @@ impl EffectExecutor<'_> {
     }
 
     fn publish_light(&self, light: MergedLight, corr: u64) -> bool {
+        let Some((scope, virtual_lamp_id, group_id, adapter)) = scope_of(&light.target) else {
+            return false;
+        };
         if !light.bound {
             return self.unbound_lamp();
         }
-        let (scope, virtual_lamp_id, group_id, adapter) = scope_of(&light.target);
         self.publish(
             corr,
             DaliSetTargetStateCommand {
@@ -245,10 +250,12 @@ impl EffectExecutor<'_> {
 
     // IEC 62386-102 §9.5.9
     fn stop_fade(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {
+        let Some((scope, virtual_lamp_id, group_id, adapter)) = scope_of(target) else {
+            return false;
+        };
         if !lamp_bound(target, snapshot) {
             return self.unbound_lamp();
         }
-        let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target);
         self.publish(
             corr,
             DaliStopFadeCommand {
@@ -269,21 +276,12 @@ impl EffectExecutor<'_> {
         snapshot: &WorldSnapshot,
         corr: u64,
     ) -> bool {
+        let Some(command) = recall_command(scene, target) else {
+            return false;
+        };
         if target.is_some_and(|target| !lamp_bound(&target, snapshot)) {
             return self.unbound_lamp();
         }
-        let command = match target {
-            Some(LightTarget::Group(group)) => {
-                DaliRecallSceneCommand::for_group(group.adapter_id, group.id as u8, scene)
-            }
-            Some(LightTarget::Lamp(lamp)) => {
-                DaliRecallSceneCommand::for_virtual_lamp(lamp.adapter_id, lamp.id as u8, scene)
-            }
-            Some(LightTarget::Broadcast { adapter_id }) => {
-                DaliRecallSceneCommand::broadcast(*adapter_id, scene)
-            }
-            None => DaliRecallSceneCommand::broadcast(0, scene),
-        };
         self.publish(corr, DaliRecallSceneCommand { hold_hcl, ..command })
     }
 
@@ -393,13 +391,13 @@ struct LightKey {
     adapter: u8,
 }
 
-fn light_key(target: &LightTarget) -> LightKey {
-    let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target);
-    LightKey {
+fn light_key(target: &LightTarget) -> Option<LightKey> {
+    let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target)?;
+    Some(LightKey {
         scope: scope as u8,
         id: virtual_lamp_id.max(group_id),
         adapter,
-    }
+    })
 }
 
 fn setpoint_of(
@@ -495,17 +493,36 @@ fn lamp_bound(target: &LightTarget, snapshot: &WorldSnapshot) -> bool {
     }
 }
 
-fn scope_of(target: &LightTarget) -> (DaliTargetScope, u8, u8, u8) {
-    match target {
+fn recall_command(scene: u8, target: &Option<LightTarget>) -> Option<DaliRecallSceneCommand> {
+    Some(match target {
+        Some(LightTarget::Group(group)) => {
+            DaliRecallSceneCommand::for_group(group.adapter_id, u8::try_from(group.id).ok()?, scene)
+        }
+        Some(LightTarget::Lamp(lamp)) => DaliRecallSceneCommand::for_virtual_lamp(
+            lamp.adapter_id,
+            u8::try_from(lamp.id).ok()?,
+            scene,
+        ),
+        Some(LightTarget::Broadcast { adapter_id }) => {
+            DaliRecallSceneCommand::broadcast(*adapter_id, scene)
+        }
+        None => DaliRecallSceneCommand::broadcast(0, scene),
+    })
+}
+
+fn scope_of(target: &LightTarget) -> Option<(DaliTargetScope, u8, u8, u8)> {
+    Some(match target {
         LightTarget::Lamp(lamp) => (
             DaliTargetScope::VirtualLamp,
-            lamp.id as u8,
+            u8::try_from(lamp.id).ok()?,
             0,
             lamp.adapter_id,
         ),
-        LightTarget::Group(group) => (DaliTargetScope::Group, 0, group.id as u8, group.adapter_id),
+        LightTarget::Group(group) => {
+            (DaliTargetScope::Group, 0, u8::try_from(group.id).ok()?, group.adapter_id)
+        }
         LightTarget::Broadcast { adapter_id } => (DaliTargetScope::Broadcast, 0, 0, *adapter_id),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -549,6 +566,20 @@ mod merge_tests {
             Some(ColorMode::Cct),
             "a setpoint that states no colour must leave the stated one alone"
         );
+    }
+
+    fn light(at: usize, target: LightTarget, setpoint: LightSetpoint) -> MergedLight {
+        MergedLight { at, target, setpoint, hold_hcl: true, bound: true }
+    }
+
+    #[test]
+    fn a_target_whose_id_does_not_fit_its_field_opens_no_merge_slot() {
+        let wide = LightTarget::Lamp(dali2rust_rules_model::LampRef { id: 300, adapter_id: 0 });
+        let mut series = LightSeries::default();
+        series.absorb(light(0, wide, sp(PowerState::Off, None, None)));
+        series.absorb(light(1, wide, sp(PowerState::On, Some(10), None)));
+        assert_eq!(series.lights.len(), 2, "each effect stays apart and fails on its own");
+        assert!(series.open.is_empty(), "no merge slot for a key that cannot be built");
     }
 
     #[test]

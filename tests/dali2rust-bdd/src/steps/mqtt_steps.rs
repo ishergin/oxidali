@@ -16,7 +16,7 @@ fn payload_json(world: &DaliWorld, topic: &str) -> serde_json::Value {
         .unwrap_or_else(|e| panic!("payload on {topic} is not JSON: {e}"))
 }
 
-// MQTT-003 MQTT-004 MQTT-005 MQTT-006 MQTT-007 MQTT-008 MQTT-009 MQTT-010 MQTT-011 MQTT-012 MQTT-013 MQTT-015 MQTT-016 MQTT-017 MQTT-018 MQTT-019 MQTT-001 MQTT-002 MQTT-014 MQTT-020 SET-HA-020 MQTT-024 RULE-040
+// MQTT-003 MQTT-004 MQTT-005 MQTT-006 MQTT-007 MQTT-008 MQTT-009 MQTT-010 MQTT-011 MQTT-012 MQTT-013 MQTT-015 MQTT-016 MQTT-017 MQTT-018 MQTT-019 MQTT-001 MQTT-002 MQTT-014 MQTT-020 SET-HA-020 MQTT-024 COMM-100 RULE-040
 #[given(regex = r#"^the Home Assistant bridge is enabled with controller id "([^"]*)"$"#)]
 async fn enable_bridge(world: &mut DaliWorld, controller_id: String) {
     let body = format!(
@@ -83,7 +83,7 @@ async fn birth_precedes_discovery(world: &mut DaliWorld, topic: String) {
     }
 }
 
-// MQTT-002 MQTT-005 MQTT-007 MQTT-008 MQTT-010 MQTT-013 MQTT-018
+// MQTT-002 MQTT-005 MQTT-007 MQTT-008 MQTT-010 MQTT-013 MQTT-018 COMM-100
 #[then(regex = r#"^MQTT should have exactly (\d+) publish(?:es)? on "([^"]*)"$"#)]
 async fn publish_count(world: &mut DaliWorld, count: usize, topic: String) {
     let mock = world.mqtt_mock().clone();
@@ -96,7 +96,7 @@ async fn publish_count(world: &mut DaliWorld, count: usize, topic: String) {
     );
 }
 
-// MQTT-001 MQTT-002 MQTT-005 MQTT-007 MQTT-009 MQTT-013 MQTT-017 MQTT-018 MQTT-024
+// MQTT-001 MQTT-002 MQTT-005 MQTT-007 MQTT-009 MQTT-013 MQTT-017 MQTT-018 MQTT-024 COMM-100
 #[then(regex = r#"^the MQTT payload on "([^"]*)" should have string field "([^"]*)" = "([^"]*)"$"#)]
 async fn payload_string(world: &mut DaliWorld, topic: String, field: String, expected: String) {
     let mock = world.mqtt_mock().clone();
@@ -158,7 +158,7 @@ async fn payload_boolean(world: &mut DaliWorld, topic: String, field: String, ex
     assert_eq!(v[&field].as_bool(), Some(expected == "true"), "field {field}");
 }
 
-// MQTT-008 MQTT-015
+// MQTT-008 MQTT-015 COMM-100
 #[then(regex = r#"^the MQTT payload on "([^"]*)" array field "([^"]*)" should contain "([^"]*)"$"#)]
 async fn payload_array_contains(world: &mut DaliWorld, topic: String, field: String, want: String) {
     let mock = world.mqtt_mock().clone();

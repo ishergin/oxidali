@@ -456,43 +456,47 @@ def event_subscriber_losses(diagnostics: dict) -> list:
     return sorted([row for row in losses if row[1] > 0], key=lambda row: -row[1])
 
 
+STATS_DALI_COUNTERS = (
+    ("isr_ticks_lost_total", "isr_ticks_lost"),
+    ("isr_ticks_extra_total", "isr_ticks_extra"),
+    ("isr_late_ticks_total", "isr_late_ticks"),
+    ("isr_max_gap_us", "isr_max_gap_us"),
+    ("backward_undecodable_total", "backward_undecodable"),
+    ("backward_frame_size_total", "backward_frame_size"),
+    ("backward_incomplete_total", "backward_incomplete"),
+    ("backward_early_rejected_total", "backward_early_rejected"),
+    ("backward_late_rejected_total", "backward_late_rejected"),
+    ("backward_multi_answer_total", "backward_multi_answer"),
+    ("isr_ticks_deficit_raw_total", "isr_ticks_deficit_raw"),
+    ("isr_ticks_surplus_raw_total", "isr_ticks_surplus_raw"),
+    ("console_log_dropped_total", "console_log_dropped"),
+    ("console_log_busy_total", "console_log_busy"),
+    ("console_log_truncated_total", "console_log_truncated"),
+    ("console_uart_errors_total", "console_uart_errors"),
+    ("answer_staged_total", "answer_staged"),
+    ("answer_stage_late_total", "answer_stage_late"),
+    ("answer_stage_max_ticks", "answer_stage_max_ticks"),
+    ("sniff_poll_late_total", "sniff_poll_late"),
+    ("sniff_poll_gap_max_us", "sniff_poll_gap_max_us"),
+    ("persist_flush_total", "persist_flush"),
+    ("persist_flush_slow_total", "persist_flush_slow"),
+    ("persist_flush_ms_total", "persist_flush_ms"),
+    ("persist_flush_max_ms", "persist_flush_max_ms"),
+    ("persist_gate_waits_total", "persist_gate_waits"),
+    ("persist_gate_timeouts_total", "persist_gate_timeouts"),
+    ("readback_groups_corrected_total", "readback_groups_corrected"),
+    ("readback_colour_features_corrected_total", "readback_colour_features_corrected"),
+    ("readback_extended_fade_corrected_total", "readback_extended_fade_corrected"),
+    ("program_repairs_total", "program_repairs"),
+)
+
+
 def isr_timing_counters(stats):
     if not stats:
         return {}
     dali = stats.get("dali") or {}
-    out = {}
-    for field, name in (
-        ("isr_ticks_lost_total", "isr_ticks_lost"),
-        ("isr_ticks_extra_total", "isr_ticks_extra"),
-        ("isr_late_ticks_total", "isr_late_ticks"),
-        ("isr_max_gap_us", "isr_max_gap_us"),
-        ("backward_undecodable_total", "backward_undecodable"),
-        ("backward_frame_size_total", "backward_frame_size"),
-        ("backward_incomplete_total", "backward_incomplete"),
-        ("backward_early_rejected_total", "backward_early_rejected"),
-        ("backward_late_rejected_total", "backward_late_rejected"),
-        ("backward_multi_answer_total", "backward_multi_answer"),
-        ("isr_ticks_deficit_raw_total", "isr_ticks_deficit_raw"),
-        ("isr_ticks_surplus_raw_total", "isr_ticks_surplus_raw"),
-        ("console_log_dropped_total", "console_log_dropped"),
-        ("console_log_busy_total", "console_log_busy"),
-        ("console_log_truncated_total", "console_log_truncated"),
-        ("console_uart_errors_total", "console_uart_errors"),
-        ("answer_staged_total", "answer_staged"),
-        ("answer_stage_late_total", "answer_stage_late"),
-        ("answer_stage_max_ticks", "answer_stage_max_ticks"),
-        ("sniff_poll_late_total", "sniff_poll_late"),
-        ("sniff_poll_gap_max_us", "sniff_poll_gap_max_us"),
-        ("persist_flush_total", "persist_flush"),
-        ("persist_flush_slow_total", "persist_flush_slow"),
-        ("persist_flush_ms_total", "persist_flush_ms"),
-        ("persist_flush_max_ms", "persist_flush_max_ms"),
-        ("persist_gate_waits_total", "persist_gate_waits"),
-        ("persist_gate_timeouts_total", "persist_gate_timeouts"),
-    ):
-        if dali.get(field) is not None:
-            out[name] = int(dali[field])
-    return out
+    return {name: int(dali[field]) for field, name in STATS_DALI_COUNTERS
+            if dali.get(field) is not None}
 
 
 def absolute_counters(stats):
@@ -573,6 +577,27 @@ UNGATED_BUS_COUNTERS = (
 )
 
 
+WATCHED_WORKAROUNDS = (
+    "readback_groups_corrected",
+    "readback_colour_features_corrected",
+    "readback_extended_fade_corrected",
+    "program_repairs",
+)
+
+
+def _drop_verdict(name, count, budget):
+    if name in UNGATED_BUS_COUNTERS:
+        return "not gated (mechanism exercised)"
+    if name in WATCHED_WORKAROUNDS:
+        return "watched, never gated: the workaround goes once this stays at 0"
+    limit = budget.get(name, NOT_MEASURED)
+    if limit == NOT_MEASURED:
+        return "unmeasured — set a budget"
+    if count > limit:
+        return "OVER BUDGET %d" % limit
+    return "budget %d" % limit
+
+
 def _bus_drop_lines(state, budget):
     drops = state.get("bus_drops")
     if not drops:
@@ -580,17 +605,7 @@ def _bus_drop_lines(state, budget):
                 "own drop counters are the ISSUE-50 evidence and this run has none"]
     lines = ["bus drops (budget from retry_budget.txt):"]
     for name, count in sorted(drops.items()):
-        if name in UNGATED_BUS_COUNTERS:
-            lines.append("  %-28s %5d   not gated (mechanism exercised)" % (name, count))
-            continue
-        limit = budget.get(name, NOT_MEASURED)
-        if limit == NOT_MEASURED:
-            verdict = "unmeasured — set a budget"
-        elif count > limit:
-            verdict = "OVER BUDGET %d" % limit
-        else:
-            verdict = "budget %d" % limit
-        lines.append("  %-28s %5d   %s" % (name, count, verdict))
+        lines.append("  %-28s %5d   %s" % (name, count, _drop_verdict(name, count, budget)))
     for who, lost in state.get("bus_subscriber_losses") or []:
         lines.append("      lost by %-20s %5d" % (who, lost))
     return lines
@@ -600,7 +615,7 @@ def bus_drop_breaches(state, budget):
     drops = {
         name: count
         for name, count in (state.get("bus_drops") or {}).items()
-        if name not in UNGATED_BUS_COUNTERS
+        if name not in UNGATED_BUS_COUNTERS and name not in WATCHED_WORKAROUNDS
     }
     return breaches(drops, budget)
 
