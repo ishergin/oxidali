@@ -1,5 +1,5 @@
 import { pad2 } from './format.js'
-import { lexLine, NEWLINE, QUOTE } from './rule-lexis.js'
+import { lexLine, NEWLINE, QUOTE, type LineLexis, type StringSpan } from './rule-lexis.js'
 
 export type NameKind = 'lamp' | 'group' | 'input' | 'schedule'
 
@@ -159,10 +159,13 @@ function calleeBefore(text: string, lineStart: number, openAt: number): NameKind
   return object.word === HCL_OBJECT ? 'schedule' : null
 }
 
-function closesArgument(line: string, close: number): boolean {
+function argumentClose(line: string, lexis: LineLexis, literal: StringSpan): number | null {
+  const close = literal.close
+  if (close === null || lexis.strings.at(-1)?.close === null) return null
   let i = close + 1
   while (i < line.length && isBlank(line[i])) i += 1
-  return i < line.length && AFTER_FIRST_ARGUMENT.has(line[i])
+  if (i === line.length || i === lexis.comment) return close
+  return AFTER_FIRST_ARGUMENT.has(line[i]) ? close : null
 }
 
 export function completionContext(text: string, caret: number): CompletionContext | null {
@@ -170,19 +173,18 @@ export function completionContext(text: string, caret: number): CompletionContex
   const lineStart = lineStartOf(text, caret)
   const line = text.slice(lineStart, lineEndOf(text, caret))
   const at = caret - lineStart
-  const literal = lexLine(line).strings.find(
-    (s) => s.open < at && (s.close === null || at <= s.close),
-  )
+  const lexis = lexLine(line)
+  const literal = lexis.strings.find((s) => s.open < at && (s.close === null || at <= s.close))
   if (literal === undefined) return null
   const openAt = lineStart + literal.open
   const kind = calleeBefore(text, lineStart, openAt)
   if (kind === null) return null
-  const close = literal.close
+  const close = argumentClose(line, lexis, literal)
   return {
     kind,
     openAt,
     caret,
-    closeAt: close !== null && closesArgument(line, close) ? lineStart + close : null,
+    closeAt: close === null ? null : lineStart + close,
     prefix: text.slice(openAt + 1, caret),
   }
 }

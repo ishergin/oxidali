@@ -153,13 +153,18 @@ test('the literal ends at the next quote on its line, where the device lexer end
   assert.equal(contextOf('do lamp("ку▮\ndo log("x")')?.closeAt, null)
 })
 
-test('a closing quote counts only when `)` or `,` follows it, the only tokens after a first argument', () => {
+test("a closing quote is the argument's own when the line's strings balance and `)`, `,`, a comment or the line end follows", () => {
   assert.ok(contextOf('do lamp("кух▮ня").on()')?.closeAt)
   assert.ok(contextOf('when input("пан▮", inst=1) is short_press')?.closeAt)
   assert.ok(contextOf('do lamp("к▮"  )')?.closeAt)
+  assert.ok(contextOf('do lamp("кух▮ня"')?.closeAt)
+  assert.ok(contextOf('do lamp("кух▮ня"  # )')?.closeAt)
+  assert.equal(contextOf('do lamp("кух▮ня" x')?.closeAt, null)
+})
+
+test('a quote typed before existing code leaves the last string of the line open, so no closing quote counts', () => {
   assert.equal(contextOf('if lamp("▮) is on and group("Night") any_on')?.closeAt, null)
-  assert.equal(contextOf('do lamp("кух▮ня"')?.closeAt, null)
-  assert.equal(contextOf('do lamp("кух▮ня"  # )')?.closeAt, null)
+  assert.equal(contextOf('do lamp("▮).on() log(",")')?.closeAt, null)
 })
 
 test('accepting before a quote that belongs to a later string deletes nothing', () => {
@@ -171,6 +176,15 @@ test('accepting before a quote that belongs to a later string deletes nothing', 
     accept('if lamp("Ki▮) is on and group("Night") any_on', only('ki', 'Kitchen', 7)),
     'if lamp("Kitchen"▮) is on and group("Night") any_on',
   )
+  assert.equal(
+    accept('do lamp("▮).on() log(",")', only('', 'Kitchen')),
+    'do lamp("Kitchen"▮).on() log(",")',
+  )
+})
+
+test('accepting inside a literal whose bracket is not typed yet keeps one closing quote', () => {
+  assert.equal(accept('do lamp("кух▮ня"', only('кух', 'кухня')), 'do lamp("кухня"▮')
+  assert.equal(accept('do lamp("кух▮ня"  # потом', only('кух', 'кухня')), 'do lamp("кухня"▮  # потом')
 })
 
 test('a caret outside the text has no context', () => {
