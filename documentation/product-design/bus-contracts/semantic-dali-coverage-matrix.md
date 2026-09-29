@@ -30,7 +30,7 @@
 | HCL | точка `level_mode = absolute` или `none` | `DaliSetTargetStateCommand`, `scope ∈ {Group, Broadcast}` (при `none` — только цвет) |
 | HCL | точка `level_mode = last_active` | `DaliRecallLastActiveLevelCommand` на ту же цель + отдельная команда цвета |
 | Правила | световые действия | `DaliSetTargetStateCommand` (лампа, группа, broadcast), `DaliStopFadeCommand` |
-| Правила | сцены | `DaliRecallSceneCommand` (`Group` / `Broadcast`), `SceneApplyExecuteCommand` |
+| Правила | сцены | `DaliRecallSceneCommand` (`Group` / `Broadcast` / `VirtualLamp`), `SceneApplyExecuteCommand` |
 | Правила | индикация панелей | `Dali103FeedbackDriveCommand` |
 | Поллер | фоновое чтение | `DaliReadAttributesCommand`, `scope = Short`, `Origin::Poller` (серии банков 202-207 — пресетом) |
 | Поллер | health-probe сегмента | `DaliBusHealthProbeCommand` |
@@ -40,8 +40,8 @@
 | Проектор state-fanout | проекция фактов в реестр | `RegistryRuntimeUpdateCommand`, `RegistryLevelTransitionCommand` — DALI-команд не публикует |
 | Sniffer translator | чужие кадры | только события (`DaliObservedFrameEvent`, вход Part 103) — команд не публикует |
 
-`DaliProgramTarget = Short` допустим контрактом, но ни один документированный
-продуктовый сценарий его сейчас не использует.
+`DaliProgramTarget = Short` и `DaliRecallSceneCommand` со `scope = Short` допустимы
+контрактом, но ни один документированный продуктовый сценарий их сейчас не использует.
 
 ## Правило тестирования
 

@@ -163,28 +163,19 @@ impl EffectExecutor<'_> {
     }
 
     fn scene_recall(&self, scene: u8, target: &Option<LightTarget>, corr: u64) -> bool {
-        let (scope, group_id, adapter) = match target {
+        let command = match target {
             Some(LightTarget::Group(group)) => {
-                (DaliTargetScope::Group, group.id as u8, group.adapter_id)
+                DaliRecallSceneCommand::for_group(group.adapter_id, group.id as u8, scene)
+            }
+            Some(LightTarget::Lamp(lamp)) => {
+                DaliRecallSceneCommand::for_virtual_lamp(lamp.adapter_id, lamp.id as u8, scene)
             }
             Some(LightTarget::Broadcast { adapter_id }) => {
-                (DaliTargetScope::Broadcast, 0, *adapter_id)
+                DaliRecallSceneCommand::broadcast(*adapter_id, scene)
             }
-            Some(LightTarget::Lamp(_)) => {
-                return self.unmapped(&self.counters.input_action_unmapped);
-            }
-            None => (DaliTargetScope::Broadcast, 0, 0),
+            None => DaliRecallSceneCommand::broadcast(0, scene),
         };
-        self.publish(
-            corr,
-            DaliRecallSceneCommand {
-                registry_adapter_id: adapter,
-                scope,
-                short_address: 0,
-                group_id,
-                scene_id: scene,
-            },
-        )
+        self.publish(corr, command)
     }
 
     fn scene_apply(&self, scene: u8, corr: u64) -> bool {

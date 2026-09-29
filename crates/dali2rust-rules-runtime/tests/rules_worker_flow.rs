@@ -1178,6 +1178,33 @@ fn every_light_argument_reaches_the_setpoint() {
 }
 
 #[test]
+fn a_scene_recall_on_a_lamp_is_one_recall_scoped_to_that_lamp() {
+    let h = harness("landing-scene-recall-lamp");
+    publish_document(&h, 1, &landing_document("scene(3).recall(lamp(6))"), 0);
+    assert!(recv_signal(&h, 1).error.is_none());
+    wait_revision(&h.store, 1);
+    run_rule(&h, 2, "под тестом");
+
+    let ce = dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |payload| {
+        matches!(payload, dali2rust_contracts::msg::BusCommandPayload::DaliRecallSceneCommand(_))
+    })
+    .expect("a lamp recall must reach the bus");
+    let dali2rust_contracts::msg::BusCommandPayload::DaliRecallSceneCommand(cmd) = ce.payload else {
+        unreachable!("filtered above")
+    };
+    assert_eq!(
+        (cmd.scope, cmd.virtual_lamp_id, cmd.scene_id),
+        (dali2rust_contracts::msg::DaliTargetScope::VirtualLamp, 6, 3),
+        "the DALI worker resolves the lamp to its short address, as it does for target-state"
+    );
+    assert_eq!(
+        h.counters.input_action_unmapped.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a lamp recall is carried now, not counted as an input action without a carrier"
+    );
+}
+
+#[test]
 fn a_dim_from_an_unknown_level_is_skipped_and_counted() {
     let (seen, counters) = run_landing_on("dim-unknown", "lamp(0).dim(+10)", landing_lamp(None));
     let skipped = || counters.effects_skipped_dark.load(std::sync::atomic::Ordering::Relaxed);

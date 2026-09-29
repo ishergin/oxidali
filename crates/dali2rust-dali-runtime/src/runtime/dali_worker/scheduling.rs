@@ -159,9 +159,18 @@ fn supersede_coalesce_key(frame: &BusFrame, adapter_id: BusId) -> Option<(u8, u8
             rc.registry_adapter_id,
             rc.scope as u8,
             rc.scene_id,
-            rc.group_id,
+            recall_identity(rc),
         )),
         _ => None,
+    }
+}
+
+fn recall_identity(rc: &dali2rust_contracts::msg::DaliRecallSceneCommand) -> u8 {
+    match rc.scope {
+        DaliTargetScope::Group => rc.group_id,
+        DaliTargetScope::Short => rc.short_address,
+        DaliTargetScope::VirtualLamp => rc.virtual_lamp_id,
+        DaliTargetScope::Broadcast | DaliTargetScope::AddressRange => 0,
     }
 }
 

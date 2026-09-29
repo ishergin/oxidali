@@ -143,7 +143,7 @@ async fn when_foreign_dt8_rgb_observed(world: &mut DaliWorld, r: u8, g: u8, b: u
     inject_forward16(world, [(short << 1) | 1, DT8_ACTIVATE_OPCODE]);
 }
 
-// SYS-210 SYS-211 SYS-212 SYS-213 SYS-214 SYS-241
+// SYS-210 SYS-211 SYS-212 SYS-213 SYS-214 SYS-241 RULE-031
 #[then(regex = r"^the virtual lamp (\d+) runtime level should eventually be (\d+)$")]
 async fn then_vl_runtime_level_eventually(world: &mut DaliWorld, lamp: u8, level: u8) {
     wait_until(
@@ -180,7 +180,7 @@ async fn then_vl_runtime_cct_eventually(world: &mut DaliWorld, lamp: u8, kelvin:
     );
 }
 
-// SYS-210 SYS-211 SYS-212 SYS-213 SYS-241
+// SYS-210 SYS-211 SYS-212 SYS-213 SYS-241 RULE-031
 #[then(regex = r#"^the virtual lamp (\d+) last_dapc_source should be "([^"]+)"$"#)]
 async fn then_vl_last_dapc_source(world: &mut DaliWorld, lamp: u8, expected: String) {
     let json = lamp_state_field(world, lamp, "/state/last_dapc_source");

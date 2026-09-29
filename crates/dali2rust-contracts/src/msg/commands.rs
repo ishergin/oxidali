@@ -427,6 +427,7 @@ declare_bus_payloads! {
     pub struct DaliRecallSceneCommand {
         pub registry_adapter_id: u8,
         pub scope: DaliTargetScope,
+        pub virtual_lamp_id: u8,
         pub short_address: u8,
         pub group_id: u8,
         pub scene_id: u8,
@@ -434,6 +435,7 @@ declare_bus_payloads! {
     budget = DaliRecallSceneCommand {
         registry_adapter_id: u8::MAX,
         scope: DaliTargetScope::AddressRange,
+        virtual_lamp_id: 63,
         short_address: 63,
         group_id: 15,
         scene_id: 15,
@@ -1136,6 +1138,7 @@ impl DaliRecallSceneCommand {
         Self {
             registry_adapter_id,
             scope: DaliTargetScope::Broadcast,
+            virtual_lamp_id: 0,
             short_address: 0,
             group_id: 0,
             scene_id,
@@ -1144,11 +1147,17 @@ impl DaliRecallSceneCommand {
 
     pub fn for_group(registry_adapter_id: u8, group_id: u8, scene_id: u8) -> Self {
         Self {
-            registry_adapter_id,
-            scope: DaliTargetScope::Group,
-            short_address: 0,
             group_id,
-            scene_id,
+            scope: DaliTargetScope::Group,
+            ..Self::broadcast(registry_adapter_id, scene_id)
+        }
+    }
+
+    pub fn for_virtual_lamp(registry_adapter_id: u8, virtual_lamp_id: u8, scene_id: u8) -> Self {
+        Self {
+            virtual_lamp_id,
+            scope: DaliTargetScope::VirtualLamp,
+            ..Self::broadcast(registry_adapter_id, scene_id)
         }
     }
 }

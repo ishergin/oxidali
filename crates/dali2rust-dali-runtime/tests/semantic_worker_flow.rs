@@ -373,7 +373,7 @@ fn refused_requests() -> Vec<BusCommandPayload> {
         m::DaliCommandPayload { wire_address: 0x01, command: 0xFE, repeat_count: 0, raw_mode: false, raw_expects_backward: false }.into(),
         m::DaliCommissioningStepCommand { registry_adapter_id: 0, step: CommissioningStep::Terminate, scope: None, short_address: None, search_address: None }.into(),
         m::DaliSetTargetStateCommand::for_virtual_lamp(0, 4, &setpoint(40)).into(),
-        m::DaliRecallSceneCommand { registry_adapter_id: 0, scope: DaliTargetScope::Broadcast, short_address: 0, group_id: 0, scene_id: 3 }.into(),
+        m::DaliRecallSceneCommand::broadcast(0, 3).into(),
         m::DaliRecallLastActiveLevelCommand { registry_adapter_id: 0, scope: HclTargetScope::Broadcast, group_id: None }.into(),
         m::DaliStopFadeCommand { registry_adapter_id: 0, scope: DaliTargetScope::Broadcast, virtual_lamp_id: 0, short_address: 0, group_id: 0 }.into(),
         m::Dali103FeedbackDriveCommand { registry_adapter_id: 0, action: 0, short_address: Some(5), feature_number: None, feature_group: None, selected_group: 0, opcode_map: 0 }.into(),
@@ -543,6 +543,71 @@ fn virtual_lamp_bound_target_state_publishes_expanded_applied_event_without_runt
             .load(Ordering::Relaxed),
         1
     );
+}
+
+fn lamp_recall(corr: u64, virtual_lamp_id: u8, scene_id: u8) -> dali2rust_contracts::msg::CommandEnvelope {
+    dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        corr,
+        BusId::default().0,
+        Some(dali2rust_contracts::msg::Origin::Rules),
+        dali2rust_contracts::msg::DaliRecallSceneCommand::for_virtual_lamp(0, virtual_lamp_id, scene_id),
+    )
+}
+
+fn recalled_event(
+    harness: &WorkerHarness,
+    corr: u64,
+) -> dali2rust_contracts::msg::DaliSceneRecalledEvent {
+    let ev = harness.recv_event_matching(corr, |payload| {
+        matches!(payload, BusEventPayload::DaliSceneRecalledEvent(_))
+    });
+    let BusEventPayload::DaliSceneRecalledEvent(body) = &ev.payload else {
+        unreachable!("the predicate selected this variant");
+    };
+    body.clone()
+}
+
+#[test]
+fn a_lamp_recall_is_one_go_to_scene_to_the_short_address_it_is_bound_to() {
+    let mut read_port = TestReadPort { enabled: true, ..Default::default() };
+    read_port.bindings.insert((0, 4), 12);
+    let harness = WorkerHarness::new(Arc::new(read_port), ControllerMode::NoAnswer);
+    harness.publish(lamp_recall(94, 4, 3));
+
+    let body = recalled_event(&harness, 94);
+    assert!(body.error.is_none(), "{body:?}");
+    assert_eq!(
+        (body.scope, body.short_address, body.scene_id),
+        (DaliTargetScope::Short, 12, 3),
+        "the fact names the address the frame went to, so the projector reaches that device only"
+    );
+    assert_eq!(harness.recv_confirmation_for(94).status, DeliveryStatus::Ok);
+    assert_eq!(
+        harness.sent_commands.lock().expect("sent lock").as_slice(),
+        &[DaliCommand::Standard {
+            address: DaliAddress::short(12).expect("short"),
+            command: StandardCommand::GoToScene { scene: 3 },
+        }]
+    );
+}
+
+#[test]
+fn a_recall_on_an_unbound_lamp_reaches_no_wire_and_is_counted() {
+    let harness = WorkerHarness::new(Arc::new(TestReadPort { enabled: true, ..Default::default() }), ControllerMode::NoAnswer);
+    harness.publish(lamp_recall(95, 4, 3));
+
+    let body = recalled_event(&harness, 95);
+    let error = body.error.as_ref().expect("an unbound lamp is a failed recall");
+    assert_eq!(error.message.as_str(), "vl_unbound");
+    let conf = harness.recv_confirmation_for(95);
+    assert_eq!(conf.status, DeliveryStatus::ExecutionFailed);
+    assert_eq!(
+        conf.confirmation.error.as_ref().map(|e| e.message.as_str()),
+        Some("vl_unbound")
+    );
+    assert!(harness.sent_commands.lock().expect("sent lock").is_empty());
+    assert_eq!(harness.counters.execution_failed.load(Ordering::Relaxed), 1);
 }
 
 #[test]

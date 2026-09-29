@@ -17,7 +17,7 @@ use std::time::Duration;
 use cucumber::then;
 use dali2rust_test_support::sync::wait_until;
 
-// RULE-020 RULE-021 RULE-023 RULE-024 RULE-027
+// RULE-020 RULE-021 RULE-023 RULE-024 RULE-027 RULE-032
 #[then(regex = r#"^within (\d+) seconds the stats pointer "([^"]+)" reaches (\d+)$"#)]
 async fn then_stats_pointer_reaches(world: &mut DaliWorld, secs: u64, pointer: String, expected: u64) {
     let port = world.server_port();

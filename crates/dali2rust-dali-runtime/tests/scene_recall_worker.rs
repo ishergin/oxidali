@@ -212,3 +212,113 @@ fn recalls_of_different_scenes_execute_fifo() {
         "different scenes do not coalesce and run FIFO"
     );
 }
+
+fn targeted_recall_frame(
+    correlation_id: u64,
+    command: dali2rust_contracts::msg::DaliRecallSceneCommand,
+) -> BusFrame {
+    BusFrame::command(dali2rust_contracts::bus::command_envelope(
+        0,
+        correlation_id,
+        BusId::default().0,
+        None,
+        command,
+    ))
+}
+
+fn short_go_to_scene_frame(short: u8, scene: u8) -> u16 {
+    DaliCommand::Standard {
+        address: DaliAddress::short(short).expect("short"),
+        command: StandardCommand::GoToScene { scene },
+    }
+    .to_forward_frame()
+    .raw()
+}
+
+fn queue_before_the_worker(
+    publisher: &dali2rust_bus::BusPublisher,
+    host: &dali2rust_bus::BusHost,
+    frames: Vec<BusFrame>,
+) {
+    let count = u32::try_from(frames.len()).expect("a handful of frames");
+    for frame in frames {
+        assert_eq!(publisher.try_publish(BusChannel::Commands, frame), PublishResult::Queued);
+    }
+    wait_until(
+        || {
+            host.counters_snapshot()
+                .command_subscribers
+                .first()
+                .is_some_and(|sub| sub.delivered == count)
+        },
+        Duration::from_secs(1),
+    );
+}
+
+#[test]
+fn recalls_of_one_scene_on_two_short_addresses_both_reach_the_wire() {
+    let frames = [short_go_to_scene_frame(5, 3), short_go_to_scene_frame(6, 3)];
+    let (publisher, host, conf_obs, _ev_obs, transport, worker_cmd) =
+        spawn_worker_with_scripted_frames(&frames);
+    let on_short = |short_address| dali2rust_contracts::msg::DaliRecallSceneCommand {
+        scope: dali2rust_contracts::msg::DaliTargetScope::Short,
+        short_address,
+        ..dali2rust_contracts::msg::DaliRecallSceneCommand::broadcast(0, 3)
+    };
+    queue_before_the_worker(
+        &publisher,
+        &host,
+        vec![targeted_recall_frame(61, on_short(5)), targeted_recall_frame(62, on_short(6))],
+    );
+    let _worker = spawn_worker(worker_cmd, publisher.clone(), &transport);
+
+    for corr in [61u64, 62] {
+        let BusFrame::Confirmation(conf) = conf_obs
+            .recv_timeout(Duration::from_secs(1))
+            .expect("confirmation")
+        else {
+            panic!("expected confirmation frame");
+        };
+        assert_eq!(conf.meta.correlation_id, corr);
+        assert_eq!(conf.status, DeliveryStatus::Ok, "a recall on another address is no supersession");
+    }
+    let mock = transport.lock().expect("mock lock");
+    assert_eq!(mock.sent_frames(), frames.to_vec());
+    assert_eq!(mock.script_error(), None);
+}
+
+#[test]
+fn recalls_of_one_scene_on_two_lamps_are_judged_one_by_one() {
+    let (publisher, host, conf_obs, _ev_obs, transport, worker_cmd) =
+        spawn_worker_with_scripted_frames(&[]);
+    queue_before_the_worker(
+        &publisher,
+        &host,
+        [(71u64, 1u8), (72, 2)]
+            .into_iter()
+            .map(|(corr, lamp)| {
+                targeted_recall_frame(
+                    corr,
+                    dali2rust_contracts::msg::DaliRecallSceneCommand::for_virtual_lamp(0, lamp, 3),
+                )
+            })
+            .collect(),
+    );
+    let _worker = spawn_worker(worker_cmd, publisher.clone(), &transport);
+
+    for corr in [71u64, 72] {
+        let BusFrame::Confirmation(conf) = conf_obs
+            .recv_timeout(Duration::from_secs(1))
+            .expect("confirmation")
+        else {
+            panic!("expected confirmation frame");
+        };
+        assert_eq!(conf.meta.correlation_id, corr);
+        assert_eq!(
+            conf.confirmation.error.as_ref().map(|e| e.message.as_str()),
+            Some("vl_unbound"),
+            "neither lamp is bound here, and each recall must be refused on its own: \
+             a key without the lamp would have answered the first one superseded"
+        );
+    }
+}

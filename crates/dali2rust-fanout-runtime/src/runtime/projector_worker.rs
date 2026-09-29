@@ -652,6 +652,10 @@ fn handle_scene_recalled(
     if body.error.is_some() {
         return;
     }
+    let Some((group_id, short_address)) = recalled_reach(body) else {
+        counters.ignored_events.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
     expand_scene_recall(
         publisher,
         bus_id,
@@ -660,13 +664,22 @@ fn handle_scene_recalled(
         SceneRecallExpansion {
             registry_adapter_id: body.registry_adapter_id,
             scene_id: body.scene_id,
-            group_id: (body.scope == DaliTargetScope::Group).then_some(body.group_id),
-            short_address: None,
+            group_id,
+            short_address,
             source: RuntimeSource::Api,
             last_seen_ms: dali2rust_bsp::unix_clock::unix_wall_clock_millis(),
             observed_at_mono_ms: Some(body.recalled_at_mono_ms),
         },
     );
+}
+
+fn recalled_reach(body: &DaliSceneRecalledEvent) -> Option<(Option<u8>, Option<u8>)> {
+    match body.scope {
+        DaliTargetScope::Broadcast => Some((None, None)),
+        DaliTargetScope::Group => Some((Some(body.group_id), None)),
+        DaliTargetScope::Short => Some((None, Some(body.short_address))),
+        DaliTargetScope::VirtualLamp | DaliTargetScope::AddressRange => None,
+    }
 }
 
 fn scene_target_to_setpoint(target: &DaliSceneTargetState) -> LightSetpoint {

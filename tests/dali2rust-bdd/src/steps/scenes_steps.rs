@@ -275,7 +275,7 @@ async fn given_scene_named(world: &mut DaliWorld, scene_id: u8, name: String) {
     patch_scene_name(world, scene_id, &name);
 }
 
-// SCN-010 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 SYS-211 SYS-213 SYS-241 SCN-040 SCN-050 ADP-026 SYS-251 SYS-252 SYS-253
+// SCN-010 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 SYS-211 SYS-213 SYS-241 SCN-040 SCN-050 ADP-026 SYS-251 SYS-252 SYS-253 RULE-031
 #[given(regex = r"^adapter 0 scene (\d+) desired row for virtual lamp (\d+) has level (\d+)$")]
 async fn given_desired_row_level(world: &mut DaliWorld, scene_id: u8, virtual_lamp_id: u8, level: u8) {
     patch_scene_matrix_row(world, scene_id, virtual_lamp_id, level_desired(level));
@@ -367,7 +367,7 @@ async fn given_discovered_rgbwaf_capable_vl1(world: &mut DaliWorld) {
     bind_discovered_vl1(world);
 }
 
-// SCN-060 SCN-062 SCN-063 REG-031 SYS-211 SYS-213 SYS-241 SYS-251 SYS-252 SYS-253
+// SCN-060 SCN-062 SCN-063 REG-031 SYS-211 SYS-213 SYS-241 SYS-251 SYS-252 SYS-253 RULE-031
 #[given(regex = r"^adapter 0 scene (\d+) write for short (\d+) level (\d+) is scripted$")]
 async fn given_scene_write_scripted(world: &mut DaliWorld, scene_id: u8, short: u8, level: u8) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -815,6 +815,18 @@ async fn then_only_group_recall_frame(world: &mut DaliWorld, group_id: u8, scene
     .raw();
     let frames = world.dali_mock().lock().expect("mock lock").sent_frames();
     assert_eq!(frames, vec![expected], "unexpected forward frames: {frames:?}");
+}
+
+const SHORT_COMMAND_ADDRESS_FLAG: u8 = 0x01;
+const GO_TO_SCENE_OPCODE_BASE: u8 = 0x10;
+
+// RULE-031
+#[then(regex = r"^the DALI mock transport should have sent only a short (\d+) go-to-scene (\d+) frame$")]
+async fn then_only_short_recall_frame(world: &mut DaliWorld, short: u8, scene_id: u8) {
+    let address_byte = (short << 1) | SHORT_COMMAND_ADDRESS_FLAG;
+    let expected = u16::from_be_bytes([address_byte, GO_TO_SCENE_OPCODE_BASE + scene_id]);
+    let frames = world.dali_mock().lock().expect("mock lock").sent_frames();
+    assert_eq!(frames, vec![expected], "expected 0AAAAAA1 + GO TO SCENE only: {frames:04X?}");
 }
 
 fn scene_level_pointer(scene: u8) -> String {

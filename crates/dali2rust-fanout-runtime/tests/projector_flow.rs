@@ -943,6 +943,70 @@ fn scene_recall_expands_applied_rows_only_fan050_fan051() {
 }
 
 #[test]
+fn a_short_address_recall_projects_the_bound_row_only() {
+    let port = FakeReadPort {
+        scene_rows: scene_rows(),
+        ..FakeReadPort::default()
+    };
+    let h = spawn_harness(port);
+    let (publisher, tap, counters) = (h.publisher.clone(), &h.tap, &h.counters);
+    publish_event(
+        &publisher,
+        84,
+        DaliSceneRecalledEvent {
+            registry_adapter_id: 0,
+            scope: DaliTargetScope::Short,
+            short_address: 3,
+            group_id: 0,
+            scene_id: 3,
+            error: None,
+            recalled_at_mono_ms: PRODUCER_MONO_MS,
+        },
+    );
+
+    let (_, cmd) = recv_runtime_update(tap);
+    assert_eq!(cmd.update.virtual_lamp_id, Some(2), "the lamp bound to short 3");
+    assert_eq!(cmd.update.setpoint.as_ref().and_then(|sp| sp.level), Some(120));
+    assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Scene));
+    assert_no_more_updates(tap);
+    assert_eq!(counters.scene_expansions.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn a_recall_that_names_a_lamp_instead_of_an_address_is_ignored() {
+    let port = FakeReadPort {
+        scene_rows: scene_rows(),
+        ..FakeReadPort::default()
+    };
+    let h = spawn_harness(port);
+    let (publisher, tap, counters) = (h.publisher.clone(), &h.tap, &h.counters);
+    publish_event(
+        &publisher,
+        85,
+        DaliSceneRecalledEvent {
+            registry_adapter_id: 0,
+            scope: DaliTargetScope::VirtualLamp,
+            short_address: 3,
+            group_id: 0,
+            scene_id: 3,
+            error: None,
+            recalled_at_mono_ms: PRODUCER_MONO_MS,
+        },
+    );
+
+    assert_no_more_updates(tap);
+    wait_until(
+        || counters.ignored_events.load(Ordering::Relaxed) >= 1,
+        Duration::from_millis(500),
+    );
+    assert_eq!(
+        counters.scene_expansions.load(Ordering::Relaxed),
+        0,
+        "the DALI worker names the address a recall went to; a lamp scope must not read as broadcast"
+    );
+}
+
+#[test]
 fn observed_scene_recall_projects_applied_rows_fan052() {
     let port = FakeReadPort {
         scene_rows: scene_rows(),
