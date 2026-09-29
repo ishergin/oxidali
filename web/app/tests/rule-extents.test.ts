@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   currentScope,
   editInScope,
+  errorRow,
   insertBlock,
   insertionPoint,
   prependBlock,
@@ -223,4 +224,16 @@ test('a block goes in with one blank line around it, at the caret or at the end'
 test('a feed skeleton goes on top of the document', () => {
   assert.equal(prependBlock('', 'X\n'), 'X\n')
   assert.equal(prependBlock('a\n', 'X\n'), 'X\n\na\n')
+})
+
+test("a parse error's row counts from the top of what the editor shows, and a line outside a rule's tab has none", () => {
+  const scope = scopeRule('ушёл', doc('# шапка', '', away))
+  assert.ok(scope)
+  assert.deepEqual(scope.span, { from: 2, to: 6 })
+  assert.equal(errorRow(5, null), 4)
+  assert.equal(errorRow(3, scope), 0)
+  assert.equal(errorRow(5, scope), 2)
+  assert.equal(errorRow(7, scope), 4)
+  assert.equal(errorRow(2, scope), null)
+  assert.equal(errorRow(8, scope), null)
 })

@@ -65,6 +65,12 @@ export function currentScope(scope: RuleScope | null, source: string): RuleScope
   return scope === null || scope.base === source ? scope : scopeRule(scope.name, source)
 }
 
+export function errorRow(line: number, scope: RuleScope | null): number | null {
+  const row = line - 1
+  if (scope === null) return row
+  return row >= scope.span.from && row <= scope.span.to ? row - scope.span.from : null
+}
+
 export function editInScope(scope: RuleScope, text: string): RuleScope {
   const lines = text.split(NEWLINE).length
   return {

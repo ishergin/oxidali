@@ -44,6 +44,7 @@ import {
 import {
   currentScope,
   editInScope,
+  errorRow,
   insertBlock,
   insertionPoint,
   prependBlock,
@@ -449,24 +450,24 @@ export function RulesScreen() {
     return () => clearTimeout(id)
   }, [draft])
 
-  const errLine = parseErr?.line ?? null
+  const full = draft ?? doc.data?.text.source ?? ''
+  const current = currentScope(scope, full)
+  const errRow = parseErr === null ? null : errorRow(parseErr.line, current)
   useEffect(() => {
     const ta = taRef.current
-    if (errLine === null || !ta) return
-    const y = EDITOR_PAD_PX + (errLine - 1) * LINE_HEIGHT_PX
+    if (errRow === null || !ta) return
+    const y = EDITOR_PAD_PX + errRow * LINE_HEIGHT_PX
     if (y < ta.scrollTop || y > ta.scrollTop + ta.clientHeight - LINE_HEIGHT_PX * 2) {
       ta.scrollTop = Math.max(0, y - ta.clientHeight / 2)
       setScrollTop(ta.scrollTop)
     }
-  }, [errLine])
+  }, [errRow])
 
   if (!doc.data) return <div class="empty">Loading rules…</div>
   const data = doc.data
   const text = data.text
   const rules = data.json.rules?.rules ?? null
   const source = text.source
-  const full = draft ?? source
-  const current = currentScope(scope, full)
   const shown = current === null ? full : ruleText(full, current.span)
   const dirty = draft !== null && draft !== source
   const drift = draft !== null && baseRev !== null && text.revision > baseRev
@@ -684,10 +685,10 @@ export function RulesScreen() {
             {dirty && <span>· unsaved</span>}
           </div>
           <div class="editwrap">
-            {parseErr && (
+            {errRow !== null && (
               <div
                 class="errline"
-                style={{ top: `${EDITOR_PAD_PX + (parseErr.line - 1) * LINE_HEIGHT_PX - scrollTop}px` }}
+                style={{ top: `${EDITOR_PAD_PX + errRow * LINE_HEIGHT_PX - scrollTop}px` }}
               />
             )}
             <textarea
