@@ -921,7 +921,7 @@ table.hcl-points tr:hover td { background: rgba(35,44,56,.5); }
 .src.stored { color: var(--text-muted); }
 
 .rules .rrow { cursor: pointer; border-left: 2px solid transparent; }
-.rules .rrow.on { background: var(--overlay); border-left-color: var(--accent); }
+.rules .rrow.on { background: var(--overlay); border-left-color: var(--info); }
 .rules .tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--border); }
 .rules .tabs .t { padding: 7px 10px; font-size: 12px; color: var(--text-muted);
   border-bottom: 2px solid transparent; cursor: pointer; }

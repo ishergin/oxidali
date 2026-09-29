@@ -85,7 +85,7 @@
   border-left: 2px solid transparent; }
 .rrow + .rrow { border-top: 1px solid rgba(42,51,64,.5); }
 .rrow:hover { background: rgba(35,44,56,.5); }
-.rrow.on { background: var(--overlay); border-left-color: var(--accent); }
+.rrow.on { background: var(--overlay); border-left-color: var(--info); }
 .rrow .nm { font-size: 13px; font-weight: 550; flex: 1; }
 .rrow .nm .sub { display: block; font-size: 11px; color: var(--text-faint); font-weight: 400; }
 .rrow.off .nm { color: var(--text-faint); }
@@ -247,8 +247,9 @@
   <span class="badge">lamp("</span>, <span class="badge">group("</span>,
   <span class="badge">input("</span> and <span class="badge">hcl.enable("</span> /
   <span class="badge">hcl.disable("</span> the editor lists the controller's names — prefix
-  matches first, then the rest; Enter, Tab or a click inserts the name with its closing quote.
-  A name a rule string cannot hold (a quote, a line break, over 48 bytes) is offered by its id.
+  matches first, then names containing the text; Enter, Tab or a click inserts the name with
+  its closing quote. A name a rule string cannot hold (a quote, a line break, over 48 bytes),
+  or one several entries share, is offered by its id.
   The list reads the caret's surroundings and nothing more: what the text means is still the
   device parser's call.</p>
 </div>
