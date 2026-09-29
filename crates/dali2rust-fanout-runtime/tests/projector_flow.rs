@@ -1117,7 +1117,7 @@ fn an_observed_recall_frame_projects_nothing_its_recall_fact_does() {
     assert_eq!(
         counters.scene_expansions.load(Ordering::Relaxed),
         1,
-        "one foreign recall is one expansion: the raw frame is the display's, the fact is the projector's"
+        "one foreign recall is one expansion: only its recall fact expands"
     );
 }
 

@@ -122,15 +122,15 @@
 `DaliObservedFrameEvent` публикует только sniffer translator; какие кадры он понимает —
 [`../runtime-modules/sniffer-translator/README.md`](../runtime-modules/sniffer-translator/README.md).
 
-- Публикуются только понятые кадры: `TargetStateObserved`, `SceneRecallObserved`,
-  `LevelTransitionObserved`, `SceneWriteObserved` и `SceneRemovalObserved`. Вариант
-  `UnknownObserved` в контракте остаётся, у проектора есть счётчик на случай нового
-  производителя.
+- Публикуются только понятые кадры: `TargetStateObserved`, `LevelTransitionObserved`,
+  `SceneWriteObserved` и `SceneRemovalObserved`. Варианты `UnknownObserved` и
+  `SceneRecallObserved` в контракте остаются без производителя; на первый у проектора
+  есть счётчик на случай нового производителя.
 - `raw_frame` и `decode_status` — диагностическое свидетельство, не продуктовые
   данные.
-- `GO TO SCENE` транслятор публикует ещё и фактом `DaliSceneRecalledEvent` с источником
-  `Sniffer`: проектор раскрывает, а правила видят recall — наш или чужой — по одному
-  событию, наблюдение же `SceneRecallObserved` остаётся дисплею.
+- `GO TO SCENE` транслятор публикует не наблюдением, а фактом `DaliSceneRecalledEvent`
+  с источником `Sniffer`: проектор, реестр, правила и дисплей видят recall — наш или
+  чужой — одним событием.
 - Раскрывает наблюдение проектор
   ([`../runtime-modules/state-fanout/README.md`](../runtime-modules/state-fanout/README.md));
   реестр по групповым кадрам взводит «группой командовали» для плиток Home Assistant.

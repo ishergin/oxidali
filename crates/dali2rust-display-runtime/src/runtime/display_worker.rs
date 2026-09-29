@@ -331,12 +331,9 @@ fn apply_observed(facts: &mut Facts, adapter: u8, body: &DaliObservedFrameEvent)
     if !speaks_for(adapter, body.registry_adapter_id) {
         return;
     }
-    let what = match (body.observed_kind, body.scene_id) {
-        (ObservedKind::SceneRecallObserved, Some(scene)) => {
-            EventLabel::from_fmt(format_args!("SC{scene}"))
-        }
-        (ObservedKind::UnknownObserved, _) => return,
-        (ObservedKind::LevelTransitionObserved, _) => match body.level_transition {
+    let what = match body.observed_kind {
+        ObservedKind::UnknownObserved | ObservedKind::SceneRecallObserved => return,
+        ObservedKind::LevelTransitionObserved => match body.level_transition {
             Some(verb) => EventLabel::from_fmt(format_args!("{}", transition_label(verb))),
             None => return,
         },

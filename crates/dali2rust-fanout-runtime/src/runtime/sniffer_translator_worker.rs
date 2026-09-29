@@ -323,12 +323,13 @@ fn publish_standard(
     let Some(target) = scope_of(address) else {
         return;
     };
+    if let Some(recall) = foreign_recall(registry_adapter_id, raw, target, command) {
+        publish_required_fact(publisher, bus_id, counters, recall);
+        return;
+    }
     match classify_standard(target, command) {
         Some(observed) => {
             publish_observed(publisher, bus_id, registry_adapter_id, counters, raw, observed);
-            if let Some(recall) = foreign_recall(registry_adapter_id, raw, target, command) {
-                publish_required_fact(publisher, bus_id, counters, recall);
-            }
         }
         None if is_unprojectable_dimming(command) => {
             counters
@@ -380,18 +381,18 @@ fn classify_standard(
     (scope, short_address, group_id): Target,
     command: StandardCommand,
 ) -> Option<ObservedFact> {
-    let shape = |(kind, scene_id, setpoint, dapc_observed)| ObservedFact {
-        kind,
+    let target_state = |(setpoint, dapc_observed)| ObservedFact {
+        kind: ObservedKind::TargetStateObserved,
         scope,
         short_address,
         group_id,
-        scene_id,
-        setpoint,
+        scene_id: None,
+        setpoint: Some(setpoint),
         dapc_observed,
         level_transition: None,
     };
     classify_product_shape(command)
-        .map(shape)
+        .map(target_state)
         .or_else(|| level_transition_of(command).map(|verb| ObservedFact {
             kind: ObservedKind::LevelTransitionObserved,
             scope,
@@ -404,30 +405,18 @@ fn classify_standard(
         }))
 }
 
-fn classify_product_shape(
-    command: StandardCommand,
-) -> Option<(ObservedKind, Option<u8>, Option<LightSetpoint>, bool)> {
+fn classify_product_shape(command: StandardCommand) -> Option<(LightSetpoint, bool)> {
     match command {
         StandardCommand::DirectArcPower { level } if level == DAPC_MASK_LEVEL => None,
-        StandardCommand::DirectArcPower { level } => Some((
-            ObservedKind::TargetStateObserved,
-            None,
-            Some(level_setpoint(level)),
-            true,
-        )),
+        StandardCommand::DirectArcPower { level } => Some((level_setpoint(level), true)),
         StandardCommand::Off => Some((
-            ObservedKind::TargetStateObserved,
-            None,
-            Some(LightSetpoint {
+            LightSetpoint {
                 power: PowerState::Off,
                 level: Some(0),
                 color: None,
-            }),
+            },
             false,
         )),
-        StandardCommand::GoToScene { scene } => {
-            Some((ObservedKind::SceneRecallObserved, Some(scene), None, false))
-        }
         _ => None,
     }
 }

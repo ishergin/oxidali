@@ -33,8 +33,8 @@
   короткого адреса, а их реестр не описывает: из него не выходит ни наблюдения, ни
   факта, ни цвета DT8.
 - `DAPC` и `OFF` → `TargetStateObserved` с короткой, групповой или широковещательной
-  адресацией; `GO TO SCENE` → `SceneRecallObserved` и recall-факт
-  `DaliSceneRecalledEvent` с источником `Sniffer`.
+  адресацией; `GO TO SCENE` → recall-факт `DaliSceneRecalledEvent` с источником
+  `Sniffer`, без наблюдения: у recall'а один маршрут ко всем потребителям.
 - Пара `SET SCENE` или `REMOVE FROM SCENE`, повторённая в окне send-twice без единого
   кадра между половинами (IEC 62386-101 §9.3), → `SceneWriteObserved` или
   `SceneRemovalObserved` с адресом и номером сцены; одиночный или разорванный кадр

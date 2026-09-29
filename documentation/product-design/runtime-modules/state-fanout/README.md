@@ -37,9 +37,9 @@ broadcast и сцены по участникам.
 | Секция `RuntimeStatus` чтения | один коммит устройства |
 | Исход чтения «устройство не ответило» | наблюдение отсутствия (`device_absent`) без уровня и без `last_seen_ms` |
 
-- **Recall** — наш и чужой — раскрывается из одного `DaliSceneRecalledEvent`;
-  наблюдение `SceneRecallObserved` проектор не раскрывает, иначе чужой recall лёг бы
-  дважды.
+- **Recall** — наш и чужой — раскрывается из одного `DaliSceneRecalledEvent`: чужой
+  `GO TO SCENE` транслятор публикует только этим фактом
+  ([`../sniffer-translator/README.md`](../sniffer-translator/README.md)).
 - **Цветовой гейт** при раскрытии на разнородных участников —
   [`../../../architecture/06-registry-and-persistence.md`](../../../architecture/06-registry-and-persistence.md)
   §Colour capability gate; capability участника берётся из вида лампы, то есть с учётом

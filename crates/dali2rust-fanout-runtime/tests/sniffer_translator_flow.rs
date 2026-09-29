@@ -14,7 +14,7 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_fanout_runtime::{spawn_sniffer_translator_worker, SnifferTranslatorCounters};
 use dali2rust_platform::dali::{ObservedRawFrame, ObservedRawFrameKind};
-use dali2rust_test_support::{recv_event_matching, try_recv_event_matching_envelope};
+use dali2rust_test_support::{recv_event_matching, try_recv_event_matching_envelope, wait_until};
 
 struct Harness {
     tx: std::sync::mpsc::SyncSender<ObservedRawFrame>,
@@ -100,18 +100,6 @@ fn foreign_short_dapc_decodes_to_target_state_observed_snif001() {
     assert_eq!(body.observed_at_ms, 42);
 }
 
-#[test]
-fn broadcast_go_to_scene_decodes_to_scene_recall_observed_snif002() {
-    let harness = spawn_harness();
-    harness.tx.send(forward16([0xFF, 0x10 | 3])).expect("send");
-
-    let (_, body) = recv_observed(&harness);
-    assert_eq!(body.observed_kind, ObservedKind::SceneRecallObserved);
-    assert_eq!(body.scope, DaliTargetScope::Broadcast);
-    assert_eq!(body.scene_id, Some(3));
-    assert!(!body.dapc_observed);
-}
-
 fn recv_recall(harness: &Harness) -> (Origin, dali2rust_contracts::msg::DaliSceneRecalledEvent) {
     let ev = recv_event_matching(&harness.ev_tap, Duration::from_secs(1), |payload| {
         matches!(payload, BusEventPayload::DaliSceneRecalledEvent(_))
@@ -152,6 +140,35 @@ fn recv_translated(harness: &Harness) -> BusEventPayload {
         )
     });
     ev.payload.clone()
+}
+
+#[test]
+fn a_foreign_go_to_scene_is_its_recall_fact_and_nothing_else_snif002() {
+    let harness = spawn_harness();
+    harness.tx.send(forward16([0xFF, 0x10 | 3])).expect("send");
+    harness.tx.send(forward16([17 << 1, 90])).expect("send");
+
+    let BusEventPayload::DaliSceneRecalledEvent(recall) = recv_translated(&harness) else {
+        panic!("a GO TO SCENE is translated into its recall fact first and alone");
+    };
+    assert_eq!((recall.scope, recall.scene_id), (DaliTargetScope::Broadcast, 3));
+    let BusEventPayload::DaliObservedFrameEvent(next) = recv_translated(&harness) else {
+        panic!("the DAPC after it is an observation");
+    };
+    assert_eq!(
+        (next.observed_kind, next.short_address),
+        (ObservedKind::TargetStateObserved, Some(17)),
+        "no recall observation travels beside the fact: every consumer takes the fact"
+    );
+    wait_until(
+        || harness.counters.observed_published.load(Relaxed) >= 2,
+        Duration::from_secs(1),
+    );
+    assert_eq!(
+        harness.counters.observed_published.load(Relaxed),
+        2,
+        "one publish per understood frame"
+    );
 }
 
 const UNADDRESSED_DAPC: u8 = 0xFC;
