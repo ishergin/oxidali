@@ -126,7 +126,28 @@ mod tests {
             program_group_membership(&mut controller, SHORT, GROUP, GroupMembershipAction::Add)
                 .expect("membership add with silent repair readback");
         assert_eq!(mask, Some(0));
-        assert_eq!(counters.program_repairs.load(Relaxed), 2, "the whole budget spent");
+        assert_eq!(
+            counters.program_repairs.load(Relaxed),
+            1,
+            "the first repair followed a wrong mask, the second only silence"
+        );
+        assert_script_consumed(&transport);
+    }
+
+    #[test]
+    fn a_silent_gear_is_driven_again_but_counts_no_repair() {
+        let mock = MockDaliTransport::new();
+        for _ in 0..3 {
+            expect_add_drive(&mock, None, None);
+        }
+
+        let (transport, mut controller) = setup_controller(mock);
+        let counters = wire_counters(&mut controller);
+        let mask =
+            program_group_membership(&mut controller, SHORT, GROUP, GroupMembershipAction::Add)
+                .expect("membership add with a silent gear");
+        assert_eq!(mask, None);
+        assert_eq!(counters.program_repairs.load(Relaxed), 0, "silence is not a wrong answer");
         assert_script_consumed(&transport);
     }
 

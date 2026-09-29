@@ -422,7 +422,11 @@ mod tests {
         )
         .expect("scene write repaired");
         assert_eq!(level, Some(60));
-        assert_eq!(counters.program_repairs.load(Relaxed), 1, "one repair spent");
+        assert_eq!(
+            counters.program_repairs.load(Relaxed),
+            0,
+            "a lost read-back is driven again but is not a wrong answer"
+        );
         assert_script_consumed(&transport);
     }
 
@@ -464,7 +468,11 @@ mod tests {
         )
         .expect("scene write with mismatched evidence");
         assert_eq!(level, Some(30));
-        assert_eq!(counters.program_repairs.load(Relaxed), 2, "the whole budget spent");
+        assert_eq!(
+            counters.program_repairs.load(Relaxed),
+            1,
+            "the first repair followed a wrong level, the second only silence"
+        );
         assert_script_consumed(&transport);
     }
 

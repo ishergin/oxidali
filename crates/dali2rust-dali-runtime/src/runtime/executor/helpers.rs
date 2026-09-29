@@ -484,16 +484,17 @@ pub(crate) fn program_with_verify_repair<C: DaliApplicationController, V: Copy>(
     mut drive: impl FnMut(&mut C) -> Result<Option<V>, SemanticDaliError>,
     converged: impl Fn(Option<V>) -> bool,
 ) -> Result<Option<V>, SemanticDaliError> {
-    let mut readback = drive(controller)?;
+    let mut latest = drive(controller)?;
+    let mut readback = latest;
     for _ in 0..PROGRAM_VERIFY_REPAIRS {
         if converged(readback) {
             break;
         }
-        controller.note_workaround(ReadbackWorkaround::ProgramRepair);
-        readback = match drive(controller) {
-            Ok(second) => second.or(readback),
-            Err(_) => readback,
-        };
+        if latest.is_some() {
+            controller.note_workaround(ReadbackWorkaround::ProgramRepair);
+        }
+        latest = drive(controller).unwrap_or(None);
+        readback = latest.or(readback);
     }
     Ok(readback)
 }
