@@ -958,3 +958,79 @@ fn an_idle_engine_parks_and_an_empty_document_matches_nothing() {
     assert!(eng.handle(button(1, 0, InputEventKind::Press), &world(200)).is_empty());
     assert_eq!(eng.counters().rules_loaded, 0);
 }
+
+const MQTT_SCENES: &str = "rule \"a-вечер\" {\n  when mqtt \"home/scene\" is \"evening\"\n  do broadcast.off()\n}\nrule \"b-любой\" {\n  when mqtt \"home/scene\"\n  do log(\"scene\")\n}\n";
+
+fn mqtt<'a>(topic: &'a str, payload: &'a [u8], truncated: bool) -> EngineInput<'a> {
+    EngineInput::MqttMessage { topic, payload, truncated }
+}
+
+fn fired(out: &[dali2rust_rules_runtime::ActivationOutcome]) -> Vec<&str> {
+    out.iter().map(|o| o.rule.as_str()).collect()
+}
+
+#[test]
+fn a_broker_message_fires_the_rules_on_its_topic_by_payload() {
+    let mut eng = engine(MQTT_SCENES, 0);
+    let out = eng.handle(mqtt("home/scene", b"evening", false), &world(1_000));
+    assert_eq!(fired(&out), ["a-вечер", "b-любой"]);
+    assert_eq!(out[0].trigger_kind, "mqtt_message");
+    assert!(matches!(out[0].effects[0], Effect::Light { verb: LightVerb::Off, .. }));
+
+    let out = eng.handle(mqtt("home/scene", b"morning", false), &world(2_000));
+    assert_eq!(fired(&out), ["b-любой"], "another payload wakes only the payload-less trigger");
+
+    let out = eng.handle(mqtt("home/scenery", b"evening", false), &world(3_000));
+    assert!(out.is_empty(), "a topic is one exact name, not a prefix: {out:?}");
+}
+
+#[test]
+fn a_truncated_payload_never_equals_a_literal_it_starts_with() {
+    let literal = "a".repeat(dali2rust_rules_model::limits::MAX_MQTT_PAYLOAD_BYTES);
+    let source = format!(
+        "rule \"a-точно\" {{\n  when mqtt \"home/scene\" is \"{literal}\"\n  do broadcast.off()\n}}\nrule \"b-любой\" {{\n  when mqtt \"home/scene\"\n  do log(\"scene\")\n}}\n"
+    );
+    let mut eng = engine(&source, 0);
+    let out = eng.handle(mqtt("home/scene", literal.as_bytes(), true), &world(1_000));
+    assert_eq!(fired(&out), ["b-любой"]);
+    let out = eng.handle(mqtt("home/scene", literal.as_bytes(), false), &world(2_000));
+    assert_eq!(fired(&out), ["a-точно", "b-любой"]);
+}
+
+#[test]
+fn a_numeric_payload_is_the_event_value_and_anything_else_is_unevaluable() {
+    let source = "rule \"уровень\" {\n  when mqtt \"home/level\"\n  do broadcast.level(event.value)\n}\n";
+    let mut eng = engine(source, 0);
+    let out = eng.handle(mqtt("home/level", b"128", false), &world(1_000));
+    assert!(
+        matches!(out[0].effects[..], [Effect::Light { verb: LightVerb::Level { level: 128 }, .. }]),
+        "{out:?}"
+    );
+    assert_eq!(out[0].partial, None);
+    for (at, payload) in [(2_000, &b"evening"[..]), (3_000, b"12.5"), (4_000, b" 7"), (5_000, b"2147483648")] {
+        let out = eng.handle(mqtt("home/level", payload, false), &world(at));
+        assert_eq!(
+            out[0].partial,
+            Some(PartialReason::ConditionUnevaluable),
+            "{:?}: {out:?}",
+            String::from_utf8_lossy(payload)
+        );
+        assert!(out[0].effects.is_empty(), "{out:?}");
+    }
+    let out = eng.handle(mqtt("home/level", b"128", true), &world(6_000));
+    assert_eq!(out[0].partial, Some(PartialReason::ConditionUnevaluable), "a cut number is no number");
+}
+
+#[test]
+fn the_rule_payload_ceiling_is_the_bus_frame() {
+    assert_eq!(
+        dali2rust_rules_model::limits::MAX_MQTT_PAYLOAD_BYTES,
+        dali2rust_contracts::msg::MQTT_RULE_PAYLOAD_BYTES,
+        "a literal longer than the frame could never match, a shorter one would be cut short"
+    );
+    assert!(
+        dali2rust_rules_model::limits::MAX_MQTT_TOPIC_BYTES
+            <= dali2rust_contracts::msg::FixedText48::new().capacity(),
+        "every trigger topic fits the event's topic field"
+    );
+}

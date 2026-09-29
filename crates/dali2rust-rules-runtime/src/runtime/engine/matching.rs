@@ -42,8 +42,23 @@ fn trigger_matches(trigger: &Trigger, input: &EngineInput<'_>, vol: &Volatile) -
         EngineInput::RuleFailed { name } => {
             matches!(trigger, Trigger::RuleFails { rule } if rule == name)
         }
+        EngineInput::MqttMessage { .. } => mqtt_matches(trigger, input),
         EngineInput::RunRule { .. } | EngineInput::Tick => false,
     }
+}
+
+fn mqtt_matches(trigger: &Trigger, input: &EngineInput<'_>) -> bool {
+    let (
+        Trigger::MqttMessage { topic, payload },
+        EngineInput::MqttMessage { topic: arrived, payload: body, truncated },
+    ) = (trigger, input)
+    else {
+        return false;
+    };
+    topic == arrived
+        && payload
+            .as_ref()
+            .is_none_or(|literal| !truncated && literal.as_bytes() == *body)
 }
 
 fn lifecycle_matches(trigger: &Trigger, input: &EngineInput<'_>) -> bool {

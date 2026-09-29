@@ -79,4 +79,9 @@ pub enum EngineInput<'a> {
     RuleFailed {
         name: &'a str,
     },
+    MqttMessage {
+        topic: &'a str,
+        payload: &'a [u8],
+        truncated: bool,
+    },
 }

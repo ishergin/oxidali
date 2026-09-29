@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::bounded::{FixedBytes24, FixedItems, FixedText32, FixedText64};
+use super::bounded::{FixedBytes24, FixedItems, FixedText32, FixedText48, FixedText64};
 use super::commands::{
     DaliProgramTarget, DaliSceneTargetState, GroupMembershipAction, SceneProgramAction,
 };
@@ -20,6 +20,8 @@ use super::wire::DaliEventPayload;
 
 pub const MAX_PERSISTENCE_SLICES: usize = 151;
 pub const MAX_PERSISTENCE_ERRORS: usize = 149;
+
+pub const MQTT_RULE_PAYLOAD_BYTES: usize = 48;
 
 pub type PersistenceSliceList = FixedItems<PersistenceSliceKind, MAX_PERSISTENCE_SLICES>;
 pub type PersistenceSliceErrorList = FixedItems<PersistenceSliceError, MAX_PERSISTENCE_ERRORS>;
@@ -835,6 +837,17 @@ declare_bus_payloads! {
     }
     budget = RegistrySliceReloadedEvent {
         slice_name: crate::msg::payload_test_samples::worst_text32(),
+    };
+
+    pub struct MqttRuleMessageEvent {
+        pub topic: FixedText48,
+        pub payload: FixedItems<u8, MQTT_RULE_PAYLOAD_BYTES>,
+        pub truncated: bool,
+    }
+    budget = MqttRuleMessageEvent {
+        topic: crate::msg::payload_test_samples::worst_text48(),
+        payload: crate::msg::payload_test_samples::worst_mqtt_rule_payload(),
+        truncated: true,
     };
 
 }
