@@ -241,11 +241,11 @@ ID — маркер `hil_id` теста ([README](README.md#writing-a-scenario))
 | `test_adapters` | SYS-02..04 | default | часть | Сводка и адаптеры согласованы, hostname интерфейса равен имени узла, а оно — хвосту MAC; выключенный адаптер отказывает с `adapter_disabled`, и до провода не доходит ни одного кадра. |
 | `test_diagnostic` | DIAG-02..06 | default | часть | Сырой кадр байт в байт; `repeat_count=2`; ответ `QUERY ACTUAL LEVEL` = реестр; честное «нет ответа». |
 | `test_attributes` | ATTR-01..05, 07..13 | smoke, default | часть | Чтение; fade time и его длительность; min/max; кривая; sRGB на проводе; брекет DT8. `ATTR-06` — §9.2. |
-| `test_target_state` | TS-05..07 | default | да | Коалесцирование пачки, `off_all`, уровень и цвет одним PUT. |
+| `test_target_state` | TS-05..08 | default | да | Коалесцирование пачки, `off_all`, уровень и цвет одним PUT; серия Tc в фейде — последнее значение. |
 | `test_scenarios` | — | default | часть | Образец сценария; групповой DAPC; скан без переадресации. |
 | `test_optical_*` | — | smoke | да | ON/OFF, яркость, RGB, colour-only, порядок CCT. Нужна оптика. |
-| `test_virtual_gear` | VG-01..04 | `HIL_VIRTUAL_GEAR=1`; VG-04 — ещё `HIL_ALLOW_DESTRUCTIVE=1` и `HIL_ALLOW_VIRTUAL_COMMISSIONING=1` | нет (эмулятор) | Уровень доходит до своего гира и ни до какого другого; группа — только до членов; сцена записана в гир; безадресный гир ввода в эксплуатацию получает адрес парка (§4.8). Оракул — строки `C` эмулятора. |
-| `test_groups` | GRP-02..07 | default | часть | Матрица и dirty; apply программирует гир; пустой diff; конфликт. |
+| `test_virtual_gear` | VG-01..06 | `HIL_VIRTUAL_GEAR=1`; VG-04 — ещё `HIL_ALLOW_DESTRUCTIVE=1` и `HIL_ALLOW_VIRTUAL_COMMISSIONING=1` | нет (эмулятор) | Уровень доходит до своего гира и ни до какого другого; группа — только до членов; сцена записана в гир; безадресный гир ввода в эксплуатацию получает адрес парка (§4.8); цвет — `ACTIVATE` без `QUERY STATUS`; `.stop_fade()` — один `DAPC(MASK)` группе. Оракул — строки `C` и `F` эмулятора. |
+| `test_groups` | GRP-02..07, 10 | default | часть | Матрица и dirty; apply программирует гир; пустой diff; конфликт; `.stop_fade()` останавливает фейд. |
 | `test_group_colour` | GRP-08, 09, HCL-10 | default | да | Групповой и broadcast цвет активируется на каждом члене. |
 | `test_capability_gate` | CAP-01..03 | default | да | Групповой цвет режется по возможностям члена. |
 | `test_scenes` | SCN-01..07 | default, slow | часть | Staged-запись; apply → `SET SCENE`; recall, групповой — одним кадром. |
@@ -262,14 +262,15 @@ ID — маркер `hil_id` теста ([README](README.md#writing-a-scenario))
 | `test_memory_banks` | — | smoke, slow | нет | Банки 202–207, MASK/TMASK; банк 0 выше `0x1A`. Без гиров 51/52 — скип, и это находка. |
 | `test_identify` | — | default | да | Одна пара `IDENTIFY DEVICE`, ни одной команды уровня; `powerCycleSeen` цел. |
 | `test_input_devices` | INP-01..13 | smoke, default; INP-09 — destructive | часть | Скан; запись инстанса; 24-битные кадры; Part 332; событие → правило → гир; нажатие в HA. |
-| `test_ws` | WS-01..06 | smoke, default | нет | Кривые кадры не роняют контроллер; слот освобождается; канал логов. |
+| `test_ws` | WS-01..07 | smoke, default; WS-07 — slow | нет | Кривые кадры не роняют контроллер; слот освобождается; канал логов; `ws-client` вне `DALI ISR late entries` при двух подписчиках. |
 | `test_httpd_availability` | HTTP-01 | smoke, slow | нет | httpd обслуживает сокеты во время чанковой записи; чтение без фолта стека. |
-| `test_ha_bridge` | MQTT-11 | default | часть | Discovery и диалект; CCT; плитки; сцены; disable → offline; группа двигает членов. |
+| `test_ha_bridge` | MQTT-11, 12 | default; MQTT-12 — `HIL_VIRTUAL_GEAR=1`, парк от 16 | часть | Discovery и диалект; CCT; плитки; сцены; disable → offline; группа двигает членов; всплеск на парке не переполняет мост. |
 | `test_redundancy` | RED-01..08 | default, с пиром; RED-05 — destructive | часть | Арбитраж; отказ записи на standby; репликация; отказ и возврат; переключение. |
 | `test_load` | LOAD-01..02 | slow | да | Трафик без перезагрузки; честный backpressure; доставка событий. |
 | `test_persistence` | PERS-01..05 | destructive | часть | Слайсы переживают перезагрузку, runtime и операции — нет; сцены живут в гире. |
 | `test_firmware_update` | OTA-01 | destructive | нет | Образ по сети загружается в другой слот; фон DALI стоит на время записи. |
 | `test_pd_forget` | — | destructive | нет | Забытое устройство возвращается сканом пустым. |
+| `test_policies` | POLICY-01 | destructive | нет | Скан при `apply_on_discovery` пишет политику сам; скип, пока guard не разрешает весь реестр. |
 | `test_commissioning` | DSC-02..04 | destructive | нет | Refresh без переадресации; цикл коммишенинга. Не запускается (§4.5); коммишенинг на эмулированных гирах — VG-04 (§4.8). |
 | `test_torn_slice_write` | — | destructive | нет | Обрыв питания в записи слайса — поднимается сохранённая ревизия (`HIL_POWER_CUT=1`). |
 | `test_bus_short` | — | destructive | да | Замыкание шины: `bus_power_down`, `system_failure`, снятие флагов (`HIL_BUS_SHORT=1`). |
