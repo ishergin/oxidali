@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from hil import mqtt_tap, validity
+from hil import mqtt_tap, validity, virtual_gear
 from hil.lamp_guard import TARGET_SEGMENT
 from hil.wait import wait_until
 from hil_test_guards import allowed_bound_lamp, drive_allowed
@@ -216,13 +216,22 @@ def test_exclusion_retracts_immediately(ha_guard, api, mqtt_counters, hil_config
                       STATE_WAIT_S), "re-enabling never re-announced the config"
 
 
+def _absent_vl(api):
+    try:
+        return virtual_gear.free_vl_ids(virtual_gear.vl_ids(api), 1)[0]
+    except virtual_gear.VirtualGearError as exc:
+        pytest.skip("no virtual lamp id is unused, so a command to an existing one could "
+                    "light it: %s" % exc)
+
+
 def test_counters_move_and_unknown_entity_is_unroutable(ha_guard, api, mqtt_counters,
                                                         hil_config):
+    absent = _absent_vl(api)
     received_before = mqtt_counters.get("commands_received_total")
     unroutable_before = mqtt_counters.get("commands_unroutable_total")
     _enter_and_connect(ha_guard, api, mqtt_counters)
 
-    _pub(hil_config, ha_guard.topic("a0/vl/63/set"), '{"state":"ON"}')
+    _pub(hil_config, ha_guard.topic("a0/vl/%d/set" % absent), '{"state":"ON"}')
     assert wait_until(
         lambda: mqtt_counters.delta(
             unroutable_before, mqtt_counters.get("commands_unroutable_total")) >= 1,
