@@ -61,7 +61,9 @@ def test_the_ready_line_is_read_from_the_monitor_log(tmp_path, monkeypatch):
     (flash.VIA_OTA, "new", 1),
     (flash.VIA_OTA, "valid", 1),
     (flash.VIA_WB, "none", 0),
+    (flash.VIA_WB, "valid", 0),
     (flash.VIA_WB, "pending_verify", 1),
+    (flash.VIA_WB, "new", 1),
 ])
 def test_the_banner_state_is_a_hard_gate(tmp_path, monkeypatch, capsys, via, state, expected):
     log = _banner_log(tmp_path, "# ready build=abcd1234 slot=ota_1 state=%s" % state)
@@ -380,6 +382,26 @@ def test_a_board_proof_needs_a_witness(tmp_path, monkeypatch):
     monkeypatch.setattr(flash, "health", lambda base: None)
     with pytest.raises(flash.BoardError):
         flash.board_proof(peer)
+
+
+def test_the_ready_line_is_asked_for_until_a_late_monitor_records_it(tmp_path, monkeypatch):
+    log = tmp_path / "serial.log"
+    log.write_text("")
+    cfg = HilConfig(serial_remote="root@wb:/dev/ttyX")
+    monkeypatch.setattr(flash.serialmon, "log_path", lambda c: log)
+    monkeypatch.setattr(flash, "BANNER_BOOT_S", 0.1)
+    monkeypatch.setattr(flash, "READY_ASK_INTERVAL_S", 0.2)
+    monkeypatch.setattr(flash, "POLL_S", 0.02)
+    asks = []
+
+    def control(c, cmd):
+        asks.append(cmd)
+        if len(asks) == 3:
+            log.write_text("# ready build=abcd slot=ota_0 state=valid\n")
+        return "ok wrote"
+    monkeypatch.setattr(flash.remote_serial, "control", control)
+    assert flash.wait_banner(cfg, 0, timeout_s=3) == ("abcd", "ota_0", "valid")
+    assert asks == ["write ready"] * 3
 
 
 def test_a_missed_boot_line_is_asked_for_again(tmp_path, monkeypatch):
