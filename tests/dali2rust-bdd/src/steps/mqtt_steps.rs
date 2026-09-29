@@ -16,7 +16,7 @@ fn payload_json(world: &DaliWorld, topic: &str) -> serde_json::Value {
         .unwrap_or_else(|e| panic!("payload on {topic} is not JSON: {e}"))
 }
 
-// MQTT-003 MQTT-004 MQTT-005 MQTT-006 MQTT-007 MQTT-008 MQTT-009 MQTT-010 MQTT-011 MQTT-012 MQTT-013 MQTT-015 MQTT-016 MQTT-017 MQTT-018 MQTT-019 MQTT-001 MQTT-002 MQTT-014 MQTT-020 SET-HA-020 MQTT-024
+// MQTT-003 MQTT-004 MQTT-005 MQTT-006 MQTT-007 MQTT-008 MQTT-009 MQTT-010 MQTT-011 MQTT-012 MQTT-013 MQTT-015 MQTT-016 MQTT-017 MQTT-018 MQTT-019 MQTT-001 MQTT-002 MQTT-014 MQTT-020 SET-HA-020 MQTT-024 RULE-080 RULE-081 RULE-082 RULE-083 RULE-084
 #[given(regex = r#"^the Home Assistant bridge is enabled with controller id "([^"]*)"$"#)]
 async fn enable_bridge(world: &mut DaliWorld, controller_id: String) {
     let body = format!(
@@ -203,7 +203,7 @@ async fn payload_field_absent(world: &mut DaliWorld, topic: String, field: Strin
     );
 }
 
-// MQTT-010
+// MQTT-010 RULE-082
 #[then(regex = r#"^the MQTT broker should eventually observe (\d+) connects$"#)]
 async fn broker_connect_count(world: &mut DaliWorld, want: u32) {
     let mock = world.mqtt_mock().clone();
@@ -240,4 +240,30 @@ async fn operation_result_published_entities(world: &mut DaliWorld, want: u64) {
         published >= want,
         "expected at least {want} published entities, got {published}: {json:?}"
     );
+}
+
+// RULE-080 RULE-082
+#[then(regex = r#"^the MQTT broker should eventually hold a subscription to "([^"]*)"$"#)]
+async fn broker_holds_subscription(world: &mut DaliWorld, topic: String) {
+    let mock = world.mqtt_mock().clone();
+    wait_until(move || mock.active_subscriptions().contains(&topic), PUBLISH_WAIT);
+}
+
+// RULE-082
+#[then(regex = r#"^the MQTT broker should eventually no longer hold a subscription to "([^"]*)"$"#)]
+async fn broker_dropped_subscription(world: &mut DaliWorld, topic: String) {
+    let mock = world.mqtt_mock().clone();
+    wait_until(
+        move || !mock.active_subscriptions().contains(&topic) && mock.unsubscriptions().contains(&topic),
+        PUBLISH_WAIT,
+    );
+}
+
+// RULE-080 RULE-081 RULE-083 RULE-084
+#[when(regex = r#"^a broker client publishes "([^"]*)" on "([^"]*)"$"#)]
+async fn broker_client_publishes(world: &mut DaliWorld, payload: String, topic: String) {
+    let mock = world.mqtt_mock().clone();
+    let subscribed = topic.clone();
+    wait_until(move || mock.active_subscriptions().contains(&subscribed), PUBLISH_WAIT);
+    world.mqtt_mock().deliver(&topic, payload.as_bytes());
 }

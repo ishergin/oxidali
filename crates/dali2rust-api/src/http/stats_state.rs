@@ -132,6 +132,7 @@ pub struct StatsMqttDto {
     pub connected: bool,
     pub publishes_total: u32,
     pub publish_failures_total: u32,
+    pub rule_messages_total: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]

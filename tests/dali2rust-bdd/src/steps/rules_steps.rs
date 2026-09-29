@@ -17,7 +17,7 @@ use std::time::Duration;
 use cucumber::then;
 use dali2rust_test_support::sync::wait_until;
 
-// RULE-020 RULE-021 RULE-023 RULE-024 RULE-027
+// RULE-020 RULE-021 RULE-023 RULE-024 RULE-027 RULE-080 RULE-081 RULE-084
 #[then(regex = r#"^within (\d+) seconds the stats pointer "([^"]+)" reaches (\d+)$"#)]
 async fn then_stats_pointer_reaches(world: &mut DaliWorld, secs: u64, pointer: String, expected: u64) {
     let port = world.server_port();
@@ -48,5 +48,16 @@ async fn then_broadcast_off_sent(world: &mut DaliWorld) {
     assert!(
         frames.iter().any(|f| *f == 0xFE00),
         "expected broadcast off (DAPC 0, 0xFE00) among {frames:04X?}"
+    );
+}
+
+// RULE-080 RULE-083
+#[then(regex = r"^the DALI mock transport should eventually have sent forward frame 0x([0-9a-fA-F]+)$")]
+async fn then_forward_frame_eventually_sent(world: &mut DaliWorld, hex: String) {
+    let wanted = u16::from_str_radix(&hex, 16).expect("hex frame");
+    let mock = world.dali_mock().clone();
+    wait_until(
+        move || mock.lock().expect("mock lock").sent_frames().contains(&wanted),
+        Duration::from_secs(5),
     );
 }

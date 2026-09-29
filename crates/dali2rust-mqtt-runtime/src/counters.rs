@@ -9,6 +9,7 @@ pub struct MqttCounters {
     pub commands_received_total: AtomicU32,
     pub commands_dropped_total: AtomicU32,
     pub rule_publishes_dropped_total: AtomicU32,
+    pub rule_messages_total: AtomicU32,
     pub commands_unroutable_total: AtomicU32,
     pub commands_ingress_rejected_total: AtomicU32,
     pub discovery_published_total: AtomicU32,

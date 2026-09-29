@@ -17,7 +17,7 @@ use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, BusSubscriberRx, 
 use dali2rust_contracts::msg::{
     BusEventPayload, DaliRecallSceneCommand, DaliSetTargetStateCommand, Origin,
 };
-use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
+use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::registry::{
     HaPublishReadPort, HomeAssistantSecretReadPort, HomeAssistantSettingsApplyWatchPort,
     HomeAssistantSettingsReadPort, HomeAssistantSettingsView,
@@ -28,6 +28,7 @@ use dali2rust_platform::mqtt::{
 
 use dali2rust_api::coalesce::BurstCoalescer;
 use crate::counters::MqttCounters;
+use crate::runtime::rule_topics::{self, RuleTopicCache, RuleTopicsReadPort};
 use crate::runtime::session::{
     announce_and_subscribe, announce_offline, qos_of, session_config, topics_of,
 };
@@ -55,12 +56,14 @@ pub struct MqttWorkerPorts {
     pub version: &'static str,
     pub adapter_count: u8,
     pub role: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
+    pub rule_topics: Arc<dyn RuleTopicsReadPort>,
 }
 
 #[derive(Default)]
 struct Session {
     generation: u32,
     subscriptions_expected: u32,
+    rule_topics: Vec<String>,
     lamp_config_hashes: HashMap<(u8, u8), u64>,
     input_config_hashes: HashMap<(u8, u8, u8), u64>,
     lamp_availability: HashMap<(u8, u8), bool>,
@@ -75,6 +78,7 @@ impl Session {
         let Self {
             generation: gen_slot,
             subscriptions_expected,
+            rule_topics,
             dialled_with: dialled_slot,
             lamp_config_hashes,
             input_config_hashes,
@@ -85,6 +89,7 @@ impl Session {
         } = self;
         *gen_slot = generation;
         *subscriptions_expected = 0;
+        rule_topics.clear();
         *dialled_slot = dialled_with;
         lamp_config_hashes.clear();
         input_config_hashes.clear();
@@ -244,6 +249,7 @@ struct WorkerLoopState {
     rule_budget: RulePublishBudget,
     config: SettingsCache,
     pacer: DialPacer,
+    rules: RuleTopicCache,
 }
 
 #[inline(never)]
@@ -259,7 +265,7 @@ fn run(
     ports: MqttWorkerPorts,
 ) {
     let mut state = new_loop_state();
-    let WorkerLoopState { burst, session, topics, job, rule_budget, config, pacer } = &mut *state;
+    let WorkerLoopState { burst, session, topics, job, rule_budget, config, pacer, rules } = &mut *state;
     WORKER_STACK.note("start");
     loop {
         config.refresh(&ports);
@@ -274,7 +280,7 @@ fn run(
             continue;
         }
         restart_if_settings_changed(&mut client, session, topics, settings, password, &ports);
-        if !ensure_session(&mut client, session, topics, job, settings, password, pacer, &ports)
+        if !ensure_session(&mut client, session, topics, job, settings, password, pacer, &ports, rules)
         {
             park_after_failed_dial(&ev_rx, job, pacer, &link, &ports);
             continue;
@@ -332,7 +338,7 @@ fn serve_turn(
     job: &mut Option<DiscoveryJob>,
     rule_budget: &mut RulePublishBudget,
 ) -> bool {
-    if !service_inbound(cx.incoming, topics, cx.ports) {
+    if !service_inbound(cx.incoming, topics, &session.rule_topics, cx.ports) {
         return false;
     }
     WORKER_STACK.note("inbound");
@@ -388,6 +394,7 @@ fn terminal_signal(
 pub const MQTT_WORKER_REQUIRED_EVENTS: &[&str] = &[
     "HomeAssistantDiscoveryPublishedEvent",
     "OperationWorkerSignalEvent",
+    "MqttRuleMessageEvent",
 ];
 
 fn publish_event<P>(ports: &MqttWorkerPorts, correlation_id: u64, payload: P)
@@ -779,17 +786,42 @@ fn fail_job_after_dial_streak(
 fn service_inbound(
     incoming: &Receiver<MqttIncoming>,
     topics: &HaTopics,
+    rule_topics: &[String],
     ports: &MqttWorkerPorts,
 ) -> bool {
     match incoming.recv_timeout(WAIT) {
         Ok(message) => {
-            bump(&ports.counters.commands_received_total);
-            handle_command(topics, ports, &message);
+            route_inbound(topics, rule_topics, ports, &message);
             true
         }
         Err(RecvTimeoutError::Timeout) => true,
         Err(RecvTimeoutError::Disconnected) => false,
     }
+}
+
+fn route_inbound(
+    topics: &HaTopics,
+    rule_topics: &[String],
+    ports: &MqttWorkerPorts,
+    message: &MqttIncoming,
+) {
+    if rule_topics.contains(&message.topic) {
+        forward_rule_message(ports, message);
+        if topics.parse_command_topic(&message.topic).is_none() {
+            return;
+        }
+    }
+    bump(&ports.counters.commands_received_total);
+    handle_command(topics, ports, message);
+}
+
+#[inline(never)]
+fn forward_rule_message(ports: &MqttWorkerPorts, message: &MqttIncoming) {
+    if message.retained {
+        return;
+    }
+    bump(&ports.counters.rule_messages_total);
+    publish_event(ports, CORRELATION_NONE, rule_topics::message_event(message));
 }
 
 #[inline(never)]
@@ -827,6 +859,7 @@ fn ensure_session(
     password: &str,
     pacer: &mut DialPacer,
     ports: &MqttWorkerPorts,
+    rules: &mut RuleTopicCache,
 ) -> bool {
     let link = client.link();
     if !link.is_connected() {
@@ -852,12 +885,24 @@ fn ensure_session(
         session.subscriptions_expected = subscriptions;
         plan_session_reannounce(job, ports, settings);
     }
-    if !ports.counters.is_connected()
-        && link.subscriptions_acked() >= session.subscriptions_expected
-    {
-        ports.counters.set_connected(true);
-    }
+    follow_rule_topics(client.as_mut(), session, rules, ports);
+    ports.counters.set_connected(
+        link.subscriptions_acked() >= session.subscriptions_expected
+            && rule_topics::all_followed(&session.rule_topics, rules.topics()),
+    );
     true
+}
+
+#[inline(never)]
+fn follow_rule_topics(
+    client: &mut dyn MqttClient,
+    session: &mut Session,
+    rules: &mut RuleTopicCache,
+    ports: &MqttWorkerPorts,
+) {
+    rules.refresh(ports.rule_topics.as_ref());
+    let sent = rule_topics::follow_topics(client, &mut session.rule_topics, rules.topics());
+    session.subscriptions_expected = session.subscriptions_expected.saturating_add(sent);
 }
 
 #[inline(never)]
@@ -1774,6 +1819,7 @@ mod tests {
                 version: "test",
                 adapter_count: 1,
                 role: Arc::new(ActiveRole),
+                rule_topics: Arc::new(crate::client::MockRuleTopics::default()),
             },
             host,
         )
@@ -1834,8 +1880,10 @@ mod tests {
         let mut topics = HaTopics::default();
         let mut job = None;
         let mut pacer = DialPacer::default();
+        let mut rules = RuleTopicCache::default();
         assert!(ensure_session(
-            &mut client, &mut session, &mut topics, &mut job, &settings, "", &mut pacer, &ports
+            &mut client, &mut session, &mut topics, &mut job, &settings, "", &mut pacer, &ports,
+            &mut rules,
         ));
         assert!(!mock.subscriptions().is_empty(), "the fresh session subscribed");
         assert!(
@@ -1844,7 +1892,8 @@ mod tests {
         );
         mock.release_subacks();
         assert!(ensure_session(
-            &mut client, &mut session, &mut topics, &mut job, &settings, "", &mut pacer, &ports
+            &mut client, &mut session, &mut topics, &mut job, &settings, "", &mut pacer, &ports,
+            &mut rules,
         ));
         assert!(ports.counters.is_connected(), "every SUBACK in: the gauge reads 1");
     }

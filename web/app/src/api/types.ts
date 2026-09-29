@@ -1024,6 +1024,7 @@ export type StatsMqtt = {
   connected: boolean
   publishes_total: number
   publish_failures_total: number
+  rule_messages_total: number
 }
 
 export type StatsRules = {

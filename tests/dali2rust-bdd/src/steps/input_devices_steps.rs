@@ -54,7 +54,7 @@ async fn then_translator_counter_is(world: &mut DaliWorld, name: String, expecte
     );
 }
 
-// INP-005 RULE-021 RULE-023 RULE-027
+// INP-005 RULE-021 RULE-023 RULE-027 RULE-081 RULE-084
 #[then("the mock transport should have sent no frames")]
 async fn then_no_frames_sent(world: &mut DaliWorld) {
     let mock = world.dali_mock();

@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -5,6 +6,8 @@ use dali2rust_platform::mqtt::{
     MqttClient, MqttConnectionState, MqttError, MqttIncoming, MqttLastWill, MqttLink, MqttQos,
     MqttSessionConfig,
 };
+
+use crate::runtime::rule_topics::RuleTopicsReadPort;
 
 const REFUSAL_REPORT_LATENCY: Duration = Duration::from_millis(20);
 
@@ -282,6 +285,30 @@ impl MqttClient for MockMqttHandle {
 
     fn link(&self) -> Arc<MqttLink> {
         Arc::clone(&self.0.link)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct MockRuleTopics {
+    generation: AtomicU32,
+    topics: Mutex<Vec<String>>,
+}
+
+impl MockRuleTopics {
+    pub fn set(&self, topics: &[&str]) {
+        *self.topics.lock().unwrap_or_else(|e| e.into_inner()) =
+            topics.iter().map(|topic| (*topic).to_string()).collect();
+        self.generation.fetch_add(1, Ordering::Release);
+    }
+}
+
+impl RuleTopicsReadPort for MockRuleTopics {
+    fn rule_topics_generation(&self) -> u32 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    fn rule_topics(&self) -> Vec<String> {
+        self.topics.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 
