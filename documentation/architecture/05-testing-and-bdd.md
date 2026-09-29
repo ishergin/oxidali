@@ -59,11 +59,12 @@ design copies of scenarios.
   that mechanism's counter moved; a run that leaves it at zero is inconclusive, not
   green.
 - **A red test is fixed in the code**, never by loosening its assert.
-- **Pressure is caused inside the wait.** A backpressure or required-delivery test
-  publishes inside its own predicate (`publish_until_refused`), drives a burst train
-  rather than an unbroken flood (`flood_in_bursts_observed`), and brackets its
-  experiment with `FloodOutcome::since`, so a descheduled publisher costs a turn, not a
-  red test.
+- **A full ingress is held, not raced.** A test whose subject is a worker's publish
+  meeting a full ingress holds the worker at its wire port, parks the bus router with
+  the ingress full (`hold_the_events_ingress_full`) and releases both on predicates. A
+  flood races the router, and no flooder count wins that race on every host. A test
+  whose stimulus is its own refused publish publishes inside its own predicate
+  (`publish_until_refused`).
 - **Shared helpers live in `dali2rust-test-support`** (bus taps and frame builders,
   in-memory filesystem and slice store, waits). No per-crate copies and no new ad-hoc
   `*Harness` / `*TestStack` structs.

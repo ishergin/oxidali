@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResult};
 use dali2rust_contracts::msg::{BusEventPayload, DiscoveryMode, OperationWorkerSignal};
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_dali_runtime::{spawn_dali_worker, DaliWorkerCounters};
+use dali2rust_dali_runtime::{spawn_dali_worker, DaliWorkerCounters, DALI_WORKER_HANDLED_COMMANDS};
 use dali2rust_domain::dali::commands::{DaliCommand, DaliResponse};
 use dali2rust_domain::dali::controller::{DaliApplicationController, DaliProductController};
 use dali2rust_domain::dali::frame::ForwardFrame;
@@ -15,7 +15,7 @@ use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::ses::DaliSession;
 use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_domain::registry::{AdapterSnapshot, RegistryReadPort, VirtualLampSnapshot};
-use dali2rust_test_support::wait_until;
+use dali2rust_test_support::{hold_the_events_ingress_full, recv_event_matching, try_wait_until};
 
 const TAPPED_EVENTS: &[&str] = &[
     "DaliDiscoveryProgressEvent",
@@ -28,6 +28,8 @@ const FLEET_SIZE: u8 = 64;
 
 const TERMINAL_DEADLINE: Duration = Duration::from_secs(20);
 
+const STEP_DEADLINE: Duration = Duration::from_secs(10);
+
 fn random_address_of(short: u8) -> u32 {
     0x5C_0000 | (u32::from(short) << 8) | u32::from(short)
 }
@@ -36,14 +38,16 @@ struct FleetController {
     session: DaliSession,
     search_address: u32,
     withdrawn: Vec<bool>,
+    wire: Arc<Mutex<()>>,
 }
 
 impl FleetController {
-    fn new() -> Self {
+    fn new(wire: Arc<Mutex<()>>) -> Self {
         Self {
             session: DaliSession::new(),
             search_address: 0,
             withdrawn: vec![false; usize::from(FLEET_SIZE)],
+            wire,
         }
     }
 
@@ -104,6 +108,8 @@ impl DaliProductController for FleetController {
     type Error = ();
 
     fn send_command(&mut self, cmd: &DaliCommand) -> Result<DaliResponse, Self::Error> {
+        let wire = Arc::clone(&self.wire);
+        let _exchange = wire.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(match *cmd {
             DaliCommand::Standard {
                 address: DaliAddress::Short(short),
@@ -125,6 +131,7 @@ impl DaliApplicationController for FleetController {
         _frame: ForwardFrame,
         _expects_backward: bool,
     ) -> Result<DaliResponse, Self::Error> {
+        let _exchange = self.wire.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(DaliResponse::NoAnswer)
     }
 }
@@ -181,6 +188,7 @@ struct ScanHarness {
     ev_rx: std::sync::mpsc::Receiver<BusFrame>,
     policy_rx: std::sync::mpsc::Receiver<BusFrame>,
     counters: Arc<DaliWorkerCounters>,
+    wire: Arc<Mutex<()>>,
     _worker: std::thread::JoinHandle<()>,
     _host: BusHost,
 }
@@ -194,15 +202,16 @@ impl ScanHarness {
         let (host, publisher, (worker_cmd, ev_tap, policy_tap)) =
             BusHost::spawn(BusConfig::default(), |reg| {
             (
-                reg.subscribe_commands(32, dali2rust_contracts::msg::COMMAND_VARIANT_NAMES),
+                reg.subscribe_commands(32, DALI_WORKER_HANDLED_COMMANDS),
                 reg.subscribe_events(512, TAPPED_EVENTS),
                 reg.subscribe_commands(8, &["PolicyApplyExecuteCommand"]),
             )
         });
         let counters = Arc::new(DaliWorkerCounters::default());
+        let wire = Arc::new(Mutex::new(()));
         let worker = spawn_dali_worker(
             worker_cmd,
-            FleetController::new(),
+            FleetController::new(Arc::clone(&wire)),
             dali2rust_dali_runtime::DaliRuntimeConfig::default(),
             Arc::new(EnabledAdapter { policy_armed }),
             publisher.clone(),
@@ -216,6 +225,7 @@ impl ScanHarness {
             ev_rx: ev_tap,
             policy_rx: policy_tap,
             counters,
+            wire,
             _worker: worker,
             _host: host,
         }
@@ -237,6 +247,25 @@ impl ScanHarness {
                 .try_publish(BusChannel::Commands, BusFrame::command(cmd)),
             PublishResult::Queued
         );
+    }
+
+    fn hold_the_wire(&self) -> MutexGuard<'_, ()> {
+        self.wire.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn events_refused(&self) -> u32 {
+        self.publisher.counters_snapshot().events.ingress_overflow
+    }
+
+    fn wait_for_started(&self, correlation_id: u64) {
+        recv_event_matching(&self.ev_rx, STEP_DEADLINE, |payload| {
+            matches!(
+                payload,
+                BusEventPayload::OperationWorkerSignalEvent(body)
+                    if body.workflow_correlation_id == correlation_id
+                        && body.signal == OperationWorkerSignal::WorkerStarted
+            )
+        });
     }
 
     fn drain_until_terminal(&self, correlation_id: u64) -> Vec<BusEventPayload> {
@@ -348,101 +377,71 @@ fn a_full_segment_refresh_reports_its_terminal_outcome() {
     );
 }
 
-const FLOOD_CEILING: Duration = TERMINAL_DEADLINE;
-
-fn flood_events_ingress(
-    publisher: dali2rust_bus::BusPublisher,
-    stop: Arc<std::sync::atomic::AtomicBool>,
-    progress: Arc<dali2rust_test_support::FloodProgress>,
-) -> std::thread::JoinHandle<dali2rust_test_support::FloodOutcome> {
-    std::thread::spawn(move || {
-        dali2rust_test_support::flood_in_bursts_observed(
-            &publisher,
-            BusChannel::Events,
-            || {
-                BusFrame::event(dali2rust_contracts::bus::event_envelope(
-                    SOURCE_ID_UNSPECIFIED,
-                    0,
-                    BusId::default().0,
-                    Some(dali2rust_contracts::msg::Origin::Internal),
-                    dali2rust_contracts::msg::DaliEventPayload {
-                        wire_address: 0xFE,
-                        command: 0x00,
-                        repeat_count: 1,
-                    },
-                ))
-            },
-            &stop,
-            FLOOD_CEILING,
-            &progress,
-        )
-    })
+fn backoff_schedule() -> Duration {
+    Duration::from_millis(dali2rust_bus::REQUIRED_PUBLISH_BACKOFF_MS.iter().sum())
 }
 
-#[test]
-fn a_terminal_outcome_survives_a_flooded_events_ingress() {
-    let harness = ScanHarness::new();
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let progress = Arc::new(dali2rust_test_support::FloodProgress::default());
-    let flood = flood_events_ingress(
-        harness.publisher.clone(),
-        Arc::clone(&stop),
-        Arc::clone(&progress),
+fn wait_for_the_first_refused_progress(harness: &ScanHarness, refused_by_the_fill: u32) {
+    assert!(
+        try_wait_until(|| harness.events_refused() > refused_by_the_fill, STEP_DEADLINE),
+        "the scan's first progress event never met the full events ingress"
     );
+}
 
-    wait_until(
-        || progress.snapshot().drained > 0,
-        Duration::from_secs(5),
+fn assert_the_retried_scan_succeeded(
+    harness: &ScanHarness,
+    events: &[BusEventPayload],
+    held_for: Duration,
+) {
+    assert!(
+        held_for < backoff_schedule(),
+        "inconclusive: the ingress stayed full for {held_for:?}, past the {:?} backoff \
+         schedule, because this host starved the test thread; ADR-021 promises nothing \
+         past the schedule",
+        backoff_schedule()
     );
-
-    let before = progress.snapshot();
-    harness.start_scan(4400, DiscoveryMode::RefreshKnown);
-    let events = harness.drain_until_terminal(4400);
-    wait_until(
-        || progress.snapshot().bursts >= before.bursts.saturating_add(2),
-        Duration::from_secs(2),
+    assert!(
+        harness.counters.event_publish_retried.load(Ordering::Relaxed) > 0,
+        "a progress event met the full ingress, yet no retry was counted"
     );
-    let window = progress.snapshot().since(before);
-    stop.store(true, Ordering::Relaxed);
-    let flood = flood.join().expect("flood thread");
-
-    let retried = harness.counters.event_publish_retried.load(Ordering::Relaxed);
-    let terminal_seen = events.iter().any(|e| {
-        matches!(
+    assert_eq!(
+        harness.counters.event_publish_failed.load(Ordering::Relaxed),
+        0,
+        "a required event was dropped even with the backoff (the ingress was full for \
+         {held_for:?})"
+    );
+    assert_eq!(
+        count_progress(events).len(),
+        usize::from(FLEET_SIZE),
+        "the progress event that met the full ingress was not delivered by its retry"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
             e,
             BusEventPayload::OperationWorkerSignalEvent(body)
                 if body.signal == OperationWorkerSignal::WorkerSucceeded
-        )
-    });
-    let dropped = harness.counters.event_publish_failed.load(Ordering::Relaxed);
-
-    if !terminal_seen || dropped != 0 {
-        assert!(
-            window.burst_pressure_held(),
-            "the bus task never drained between bursts DURING THE SCAN on this \
-             host (window {window:?} of lifetime {flood:?}) — the stimulus was a \
-             saturated bus, the case ADR-021 withholds the guarantee for. This \
-             run says nothing about required delivery; it says this host could \
-             not schedule the consumer while the experiment ran"
-        );
-    }
-
-    assert!(
-        terminal_seen,
-        "the terminal outcome was lost to a full ingress ({retried} retries spent, \
-         window {window:?}); the operation can now only end by TTL — ISSUE-50"
+        )),
+        "the terminal outcome was lost after a full ingress; the operation can now only \
+         end by TTL — ISSUE-50"
     );
-    assert_eq!(
-        dropped, 0,
-        "a required event was dropped even with the backoff (window {window:?})"
-    );
+}
 
-    assert!(
-        retried > 0,
-        "the scan reported its outcome, but no required publish ever met a full \
-         ingress ({flood:?}) — the backoff was never exercised, so this run is \
-         an inconclusive experiment rather than a pass"
-    );
+#[test]
+fn a_terminal_outcome_survives_a_full_events_ingress() {
+    let harness = ScanHarness::new();
+    let wire_held = harness.hold_the_wire();
+    harness.start_scan(4400, DiscoveryMode::RefreshKnown);
+    harness.wait_for_started(4400);
+    let ingress = hold_the_events_ingress_full(&harness.publisher);
+    let refused_by_the_fill = harness.events_refused();
+    drop(wire_held);
+    let held_since = Instant::now();
+
+    wait_for_the_first_refused_progress(&harness, refused_by_the_fill);
+    ingress.release();
+    let held_for = held_since.elapsed();
+    let events = harness.drain_until_terminal(4400);
+    assert_the_retried_scan_succeeded(&harness, &events, held_for);
 }
 
 #[test]
