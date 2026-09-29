@@ -188,8 +188,10 @@ when hcl override clears for group("кухня")
 Источник — `RuntimeStateChangedEvent`; `scene(N) recalled` — `DaliSceneRecalledEvent`:
 recall, исполненный этим контроллером, или чужой `GO TO SCENE` на короткий адрес,
 группу или broadcast, увиденный сниффером. Неудавшийся recall триггер не будит, один
-recall будит его один раз, а recall приборам без короткого адреса не будит вовсе: их
-реестр не описывает. Триггер срабатывает на **переход**, а не на факт.
+recall будит его один раз, а `GO TO SCENE` с адресом unaddressed broadcast (`0xFD`) не
+будит вовсе: такой кадр доходит только до приборов без короткого адреса
+([`../sniffer-translator/README.md`](../sniffer-translator/README.md)). Триггер
+срабатывает на **переход**, а не на факт.
 
 Три перехода из этого списка выводятся не из события, а из снимка, и вот почему:
 

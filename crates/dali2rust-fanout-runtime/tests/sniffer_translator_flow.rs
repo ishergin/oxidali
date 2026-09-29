@@ -144,23 +144,45 @@ fn a_foreign_go_to_scene_is_a_recall_fact_for_every_addressed_class() {
     }
 }
 
-#[test]
-fn a_go_to_scene_for_gear_without_an_address_is_no_recall_fact() {
-    let harness = spawn_harness();
-    harness.tx.send(forward16([0xFD, 0x10 | 5])).expect("send");
-    let (_, seen) = recv_observed(&harness);
-    assert_eq!(
-        (seen.observed_kind, seen.scene_id),
-        (ObservedKind::SceneRecallObserved, Some(5)),
-        "the frame decodes; only the recall fact is withheld"
-    );
-    harness.tx.send(forward16([0xFF, 0x10 | 6])).expect("send");
+fn recv_translated(harness: &Harness) -> BusEventPayload {
+    let ev = recv_event_matching(&harness.ev_tap, Duration::from_secs(1), |payload| {
+        matches!(
+            payload,
+            BusEventPayload::DaliObservedFrameEvent(_) | BusEventPayload::DaliSceneRecalledEvent(_)
+        )
+    });
+    ev.payload.clone()
+}
 
-    let (_, body) = recv_recall(&harness);
+const UNADDRESSED_DAPC: u8 = 0xFC;
+const UNADDRESSED_COMMAND: u8 = 0xFD;
+
+#[test]
+fn a_frame_for_gear_without_a_short_address_projects_nothing() {
+    let harness = spawn_harness();
+    for frame in [
+        [UNADDRESSED_DAPC, 180],
+        [UNADDRESSED_COMMAND, 0x00],
+        [UNADDRESSED_COMMAND, 0x05],
+        [UNADDRESSED_COMMAND, 0x10 | 5],
+        [0xA3, 250],
+        [0xC3, 0],
+        [0xC1, 8],
+        [UNADDRESSED_COMMAND, 231],
+        [17 << 1, 90],
+    ] {
+        harness.tx.send(forward16(frame)).expect("send");
+    }
+
+    let BusEventPayload::DaliObservedFrameEvent(body) = recv_translated(&harness) else {
+        panic!("DAPC, OFF, RECALL MAX LEVEL, GO TO SCENE and a colour to 0xFC/0xFD reach only \
+                gear with no short address, which no record describes; nothing may read them \
+                as a broadcast");
+    };
     assert_eq!(
-        body.scene_id, 6,
-        "an unaddressed recall reaches only gear with no short address, which no record \
-         describes; it must not read as a broadcast recall"
+        (body.scope, body.short_address, body.setpoint.and_then(|sp| sp.level)),
+        (DaliTargetScope::Short, Some(17), Some(90)),
+        "the first thing translated is the addressed frame that follows them"
     );
 }
 

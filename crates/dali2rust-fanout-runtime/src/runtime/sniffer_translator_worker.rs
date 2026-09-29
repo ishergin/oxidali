@@ -287,11 +287,10 @@ fn track_scene_write(
         state.pending_scene_write = Some((raw.bytes, raw.observed_at_mono_ms));
         return;
     }
-    if address == DaliAddress::BroadcastUnaddressed {
+    let Some((scope, short_address, group_id)) = scope_of(address) else {
         return;
-    }
+    };
     publish.counters.scene_writes_observed.fetch_add(1, Ordering::Relaxed);
-    let (scope, short_address, group_id) = scope_of(address);
     let fact = ObservedFact {
         kind,
         scope,
@@ -321,10 +320,13 @@ fn publish_standard(
     address: DaliAddress,
     command: StandardCommand,
 ) {
-    match classify_standard(address, command) {
+    let Some(target) = scope_of(address) else {
+        return;
+    };
+    match classify_standard(target, command) {
         Some(observed) => {
             publish_observed(publisher, bus_id, registry_adapter_id, counters, raw, observed);
-            if let Some(recall) = foreign_recall(registry_adapter_id, raw, address, command) {
+            if let Some(recall) = foreign_recall(registry_adapter_id, raw, target, command) {
                 publish_required_fact(publisher, bus_id, counters, recall);
             }
         }
@@ -363,18 +365,21 @@ struct ObservedFact {
     level_transition: Option<LevelTransition>,
 }
 
-fn scope_of(address: DaliAddress) -> (DaliTargetScope, Option<u8>, Option<u8>) {
+type Target = (DaliTargetScope, Option<u8>, Option<u8>);
+
+fn scope_of(address: DaliAddress) -> Option<Target> {
     match address {
-        DaliAddress::Short(a) => (DaliTargetScope::Short, Some(a), None),
-        DaliAddress::Group(g) => (DaliTargetScope::Group, None, Some(g)),
-        DaliAddress::Broadcast | DaliAddress::BroadcastUnaddressed => {
-            (DaliTargetScope::Broadcast, None, None)
-        }
+        DaliAddress::Short(a) => Some((DaliTargetScope::Short, Some(a), None)),
+        DaliAddress::Group(g) => Some((DaliTargetScope::Group, None, Some(g))),
+        DaliAddress::Broadcast => Some((DaliTargetScope::Broadcast, None, None)),
+        DaliAddress::BroadcastUnaddressed => None,
     }
 }
 
-fn classify_standard(address: DaliAddress, command: StandardCommand) -> Option<ObservedFact> {
-    let (scope, short_address, group_id) = scope_of(address);
+fn classify_standard(
+    (scope, short_address, group_id): Target,
+    command: StandardCommand,
+) -> Option<ObservedFact> {
     let shape = |(kind, scene_id, setpoint, dapc_observed)| ObservedFact {
         kind,
         scope,
@@ -430,16 +435,12 @@ fn classify_product_shape(
 fn foreign_recall(
     registry_adapter_id: u8,
     raw: &ObservedRawFrame,
-    address: DaliAddress,
+    (scope, short_address, group_id): Target,
     command: StandardCommand,
 ) -> Option<DaliSceneRecalledEvent> {
     let StandardCommand::GoToScene { scene } = command else {
         return None;
     };
-    if address == DaliAddress::BroadcastUnaddressed {
-        return None;
-    }
-    let (scope, short_address, group_id) = scope_of(address);
     Some(DaliSceneRecalledEvent {
         registry_adapter_id,
         scope,
@@ -568,7 +569,7 @@ fn activate_color(state: &mut DecoderState, wire_address: u8, address: DaliAddre
         return Dt8Outcome::Ambiguous;
     }
     match staged_colour(&stage) {
-        Some(color) => Dt8Outcome::Observed(color_fact(address, color)),
+        Some(color) => color_fact(address, color),
         None => Dt8Outcome::Ambiguous,
     }
 }
@@ -592,7 +593,7 @@ fn decode_cct(state: &DecoderState, address: DaliAddress) -> Dt8Outcome {
     };
     let mut color = sniffer_color(ColorMode::Cct);
     color.color_temperature_kelvin = kelvin;
-    Dt8Outcome::Observed(color_fact(address, color))
+    color_fact(address, color)
 }
 
 fn channel_colour(mode: ColorMode, rgb: [u8; 3], waf: [u8; 3]) -> ColorValue {
@@ -616,9 +617,11 @@ fn sniffer_color(mode: ColorMode) -> ColorValue {
     }
 }
 
-fn color_fact(address: DaliAddress, color: ColorValue) -> ObservedFact {
-    let (scope, short_address, group_id) = scope_of(address);
-    ObservedFact {
+fn color_fact(address: DaliAddress, color: ColorValue) -> Dt8Outcome {
+    let Some((scope, short_address, group_id)) = scope_of(address) else {
+        return Dt8Outcome::Consumed;
+    };
+    Dt8Outcome::Observed(ObservedFact {
         kind: ObservedKind::TargetStateObserved,
         scope,
         short_address,
@@ -631,7 +634,7 @@ fn color_fact(address: DaliAddress, color: ColorValue) -> ObservedFact {
         }),
         dapc_observed: false,
         level_transition: None,
-    }
+    })
 }
 
 // IEC 62386-101 Table 20
