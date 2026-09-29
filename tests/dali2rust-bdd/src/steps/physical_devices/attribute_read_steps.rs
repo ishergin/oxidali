@@ -227,12 +227,25 @@ async fn given_doubled_groups_read_script(world: &mut DaliWorld) {
     mock.expect_forward_frame_with_backward(hi, Some(0x00));
 }
 
+const EXTENDED_FADE_HALF_SECOND: u8 = 0x14;
+const EXTENDED_FADE_SEVENTY_SECONDS: u8 = 0x36;
+const DT8: u8 = 8;
+
 // PD-158
 #[given("an extended attribute-read script with fade byte 0x14 for short address 0")]
 async fn given_extended_attribute_read_script(world: &mut DaliWorld) {
-    const DT8: u8 = 8;
     let mock = world.dali_mock().lock().expect("mock lock");
-    script_extended_section(&mock, &[DT8], &[(DT8, Some(2))]);
+    script_extended_section(&mock, &[EXTENDED_FADE_HALF_SECOND], &[DT8], &[(DT8, Some(2))]);
+}
+
+// PD-273
+#[given(
+    "an extended attribute-read script where the fade byte first reads 0x36 and then 0x14 for short address 0"
+)]
+async fn given_extended_fade_corrected_script(world: &mut DaliWorld) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    let fade = [EXTENDED_FADE_SEVENTY_SECONDS, EXTENDED_FADE_HALF_SECOND];
+    script_extended_section(&mock, &fade, &[DT8], &[(DT8, Some(2))]);
 }
 
 // PD-270
@@ -241,7 +254,8 @@ async fn given_extended_multi_type_script(world: &mut DaliWorld) {
     const MASK: u8 = 0xFF;
     const WALK_END: u8 = 0xFE;
     let mock = world.dali_mock().lock().expect("mock lock");
-    script_extended_section(&mock, &[MASK, 6, 8, WALK_END], &[(6, Some(1)), (8, Some(0x08))]);
+    let walk = [MASK, 6, DT8, WALK_END];
+    script_extended_section(&mock, &[EXTENDED_FADE_HALF_SECOND], &walk, &[(6, Some(1)), (DT8, Some(0x08))]);
 }
 
 // PD-155
@@ -301,7 +315,7 @@ async fn when_start_scene_colours_attribute_read(world: &mut DaliWorld) {
     );
 }
 
-// PD-158 PD-270
+// PD-158 PD-270 PD-273
 #[when(r#"I start an attribute read for adapter 0 physical device 0 with attribute group "extended" only"#)]
 async fn when_start_extended_attribute_read(world: &mut DaliWorld) {
     let body = br#"{"attribute_groups":["extended"],"memory_banks":"none"}"#;

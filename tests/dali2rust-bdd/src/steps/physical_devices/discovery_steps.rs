@@ -13,13 +13,14 @@ use super::discovery_scripts::{
     script_detect_dt8_cct, script_discovery, script_discovery_corrupted_window_retry,
     script_discovery_declares_only_dt6, script_discovery_multi_dt_mask, script_discovery_no_answers,
     script_discovery_partial_failure, script_discovery_permanent_multiple_responders,
-    script_discovery_unterminated_type_walk, script_scan_discovery,
-    script_scan_discovery_per_device, script_six_channel_discovery, DT8_FEATURES_RGB_CAPABLE,
+    script_discovery_unterminated_type_walk, script_discovery_zero_features_corrected,
+    script_scan_discovery, script_scan_discovery_per_device, script_six_channel_discovery,
+    DT8_FEATURES_RGB_CAPABLE,
 };
 use super::read_model::{wait_for_physical_device, wait_for_physical_devices};
 use super::{TEST_RANDOM_ADDRESS, TEST_SHORT_ADDRESS};
 
-// ADP-022 ADP-023 COMM-001 COMM-004 COMM-008 COMM-010 COMM-030 COMM-032 COMM-034 COMM-036 COMM-038 COMM-052 COMM-056 COMM-057 COMM-092 MQTT-001 MQTT-003 MQTT-005 MQTT-007 MQTT-012 MQTT-013 MQTT-015 MQTT-019 OP-100 OP-132 PD-027 PD-028 PD-029 PD-030 PD-034 PD-035 PD-036 PD-037 PD-040 PD-041 PD-042 PD-043 PD-060 PD-061 PD-062 PD-063 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 PD-164 PD-165 PD-166 PD-168 PD-169 PD-170 PD-171 PD-176 PD-177 PD-179 PD-180 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 PD-190 PD-195 PD-196 PD-197 PD-198 PD-199 PD-200 PD-201 PD-220 PD-221 PD-222 PD-230 PD-241 PD-242 PD-243 PD-250 PD-252 PD-253 PD-254 PD-255 PERS-005 STATS-005 SYS-217 SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 SYS-235 SYS-236 SYS-239 SYS-240 WS-003 WS-004 WS-010 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 WS-046 MQTT-024 PD-267 PD-268 POLICY-010 POLICY-011 PD-270 ADP-027 COMM-097 COMM-099 PD-271 WS-059
+// ADP-022 ADP-023 COMM-001 COMM-004 COMM-008 COMM-010 COMM-030 COMM-032 COMM-034 COMM-036 COMM-038 COMM-052 COMM-056 COMM-057 COMM-092 MQTT-001 MQTT-003 MQTT-005 MQTT-007 MQTT-012 MQTT-013 MQTT-015 MQTT-019 OP-100 OP-132 PD-027 PD-028 PD-029 PD-030 PD-034 PD-035 PD-036 PD-037 PD-040 PD-041 PD-042 PD-043 PD-060 PD-061 PD-062 PD-063 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 PD-164 PD-165 PD-166 PD-168 PD-169 PD-170 PD-171 PD-176 PD-177 PD-179 PD-180 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 PD-190 PD-195 PD-196 PD-197 PD-198 PD-199 PD-200 PD-201 PD-220 PD-221 PD-222 PD-230 PD-241 PD-242 PD-243 PD-250 PD-252 PD-253 PD-254 PD-255 PERS-005 STATS-005 SYS-217 SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 SYS-235 SYS-236 SYS-239 SYS-240 WS-003 WS-004 WS-010 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 WS-046 MQTT-024 PD-267 PD-268 POLICY-010 POLICY-011 PD-270 ADP-027 COMM-097 COMM-099 PD-271 WS-059 PD-273
 #[given("a golden control-gear discovery script for short address 0")]
 async fn given_golden_discovery_script(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -70,6 +71,13 @@ async fn given_cct_and_rgb_devices_discovered(world: &mut DaliWorld) {
         "application/json",
     );
     wait_for_operation_status(world, "succeeded");
+}
+
+// PD-272
+#[given("a discovery script where short address 0 first answers zero colour-type features")]
+async fn given_zero_features_corrected_discovery_script(world: &mut DaliWorld) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    script_discovery_zero_features_corrected(&mock);
 }
 
 // PD-106
@@ -129,7 +137,7 @@ async fn given_unterminated_type_walk_script(world: &mut DaliWorld) {
     script_discovery_unterminated_type_walk(&mock);
 }
 
-// ADP-022 ADP-023 COMM-001 COMM-004 COMM-008 COMM-010 COMM-030 COMM-032 COMM-034 COMM-036 COMM-038 COMM-052 COMM-056 COMM-057 COMM-092 MQTT-001 MQTT-003 MQTT-005 MQTT-007 MQTT-012 MQTT-013 MQTT-015 MQTT-019 OP-100 OP-132 PD-027 PD-028 PD-029 PD-030 PD-034 PD-035 PD-036 PD-037 PD-040 PD-041 PD-042 PD-043 PD-060 PD-061 PD-062 PD-063 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 PD-164 PD-165 PD-166 PD-167 PD-168 PD-169 PD-170 PD-171 PD-176 PD-177 PD-178 PD-179 PD-180 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 PD-189 PD-190 PD-191 PD-192 PD-193 PD-194 PD-195 PD-196 PD-197 PD-198 PD-199 PD-200 PD-201 PD-220 PD-221 PD-222 PD-230 PD-240 PD-241 PD-242 PD-243 PD-250 PD-251 PD-252 PD-253 PD-254 PD-255 PERS-005 STATS-005 SYS-217 SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 SYS-235 SYS-236 SYS-239 SYS-240 WS-003 WS-004 WS-010 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 WS-046 MQTT-024 PD-267 PD-268 POLICY-010 POLICY-011 ADP-027 COMM-097 COMM-098 COMM-099 PD-271 WS-059
+// ADP-022 ADP-023 COMM-001 COMM-004 COMM-008 COMM-010 COMM-030 COMM-032 COMM-034 COMM-036 COMM-038 COMM-052 COMM-056 COMM-057 COMM-092 MQTT-001 MQTT-003 MQTT-005 MQTT-007 MQTT-012 MQTT-013 MQTT-015 MQTT-019 OP-100 OP-132 PD-027 PD-028 PD-029 PD-030 PD-034 PD-035 PD-036 PD-037 PD-040 PD-041 PD-042 PD-043 PD-060 PD-061 PD-062 PD-063 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 PD-164 PD-165 PD-166 PD-167 PD-168 PD-169 PD-170 PD-171 PD-176 PD-177 PD-178 PD-179 PD-180 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 PD-189 PD-190 PD-191 PD-192 PD-193 PD-194 PD-195 PD-196 PD-197 PD-198 PD-199 PD-200 PD-201 PD-220 PD-221 PD-222 PD-230 PD-240 PD-241 PD-242 PD-243 PD-250 PD-251 PD-252 PD-253 PD-254 PD-255 PERS-005 STATS-005 SYS-217 SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 SYS-235 SYS-236 SYS-239 SYS-240 WS-003 WS-004 WS-010 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 WS-046 MQTT-024 PD-267 PD-268 POLICY-010 POLICY-011 ADP-027 COMM-097 COMM-098 COMM-099 PD-271 WS-059 PD-272 PD-273
 #[when("I start a discovery run for adapter 0")]
 async fn when_start_discovery_run(world: &mut DaliWorld) {
     let body = br#"{"mode":"scan_known_short_addresses"}"#;
@@ -279,7 +287,7 @@ async fn then_declares_no_known_device_types(world: &mut DaliWorld) {
     );
 }
 
-// PD-102 PD-104 PD-105 PD-106
+// PD-102 PD-104 PD-105 PD-106 PD-272
 #[then("adapter 0 physical device 0 eventually exposes the discovered random address and DT8 identity")]
 async fn then_discovery_state_exposed(world: &mut DaliWorld) {
     let json = wait_for_physical_device(world, |body| {

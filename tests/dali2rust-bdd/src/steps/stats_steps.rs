@@ -228,14 +228,14 @@ fn readback_counters(json: &Value) -> [u64; 4] {
     READBACK_COUNTERS.map(|pointer| pointer_u64(json, pointer))
 }
 
-// PD-159
+// PD-159 PD-272 PD-273
 #[given("I remember the stats dali read-back counters")]
 async fn remember_readback_counters(world: &mut DaliWorld) {
     let json = stats_snapshot(world);
     world.remembered_json = Some(json!(readback_counters(&json)));
 }
 
-// PD-159
+// PD-159 PD-272 PD-273
 #[then(
     regex = r"^the stats dali read-back counters should eventually have grown by groups (\d+), colour features (\d+), extended fade (\d+) and program repairs (\d+)$"
 )]

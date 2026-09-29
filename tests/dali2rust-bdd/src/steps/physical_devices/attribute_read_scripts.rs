@@ -395,15 +395,18 @@ pub(super) fn script_attribute_read_identity_with_content_confirm(mock: &MockDal
 
 pub(super) fn script_extended_section(
     mock: &MockDaliTransport,
+    fade_answers: &[u8],
     device_type_walk: &[u8],
     versions: &[(u8, Option<u8>)],
 ) {
     mock.clear();
     script_attribute_read_prelude(mock, TEST_SHORT_ADDRESS);
-    mock.expect_forward_frame_with_backward(
-        standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryExtendedFadeTime),
-        Some(0x14),
-    );
+    for answer in fade_answers {
+        mock.expect_forward_frame_with_backward(
+            standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryExtendedFadeTime),
+            Some(*answer),
+        );
+    }
     let (first, rest) = device_type_walk.split_first().expect("a device-type answer");
     mock.expect_forward_frame_with_backward(
         standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryDeviceType),

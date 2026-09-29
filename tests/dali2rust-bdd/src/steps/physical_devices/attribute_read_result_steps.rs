@@ -205,7 +205,7 @@ async fn then_pd_extended_versions(world: &mut DaliWorld, t1: u64, v1: u64, t2: 
     );
 }
 
-// PD-158
+// PD-158 PD-273
 #[then("physical device 0 eventually exposes extended fade_time_ms 500 as read back")]
 async fn then_pd_extended_fade_time_read_back(world: &mut DaliWorld) {
     let port = world.server_port();

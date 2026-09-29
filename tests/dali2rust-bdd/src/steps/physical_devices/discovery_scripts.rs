@@ -194,6 +194,23 @@ fn script_discovery_one_verified_device_prelude(mock: &MockDaliTransport) {
     mock.expect_forward_frame(special_frame(SpecialCommand::Initialise(0x00)));
 }
 
+pub(super) fn script_discovery_zero_features_corrected(mock: &MockDaliTransport) {
+    const TC_ONLY: u8 = 0x02;
+    const CCT_ACTIVE: u8 = 0x20;
+    script_discovery_one_verified_device(mock);
+    mock.expect_forward_frame_with_backward(
+        standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryDeviceType),
+        Some(0),
+    );
+    for (opcode, answer) in [(0xF9, 0), (0xF9, TC_ONLY), (0xF8, CCT_ACTIVE)] {
+        mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
+        mock.expect_forward_frame_with_backward(
+            dt8_raw_query_frame(TEST_SHORT_ADDRESS, opcode),
+            Some(answer),
+        );
+    }
+}
+
 fn script_discovery_one_verified_device(mock: &MockDaliTransport) {
     script_discovery_one_verified_device_prelude(mock);
     script_discovery_verify_attempt(mock, TEST_RANDOM_ADDRESS, Some(0x01));

@@ -173,6 +173,20 @@ Feature: Physical-device attribute reads
     And physical device 0 eventually exposes extended versions 6:1 and 8:8
     And all scripted DALI exchanges should be consumed without errors
 
+  @id:PD-273
+  Scenario: An extended fade answer the re-read corrects is counted on the stats surface
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given an extended attribute-read script where the fade byte first reads 0x36 and then 0x14 for short address 0
+    And I remember the stats dali read-back counters
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "extended" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And physical device 0 eventually exposes extended fade_time_ms 500 as read back
+    And all scripted DALI exchanges should be consumed without errors
+    And the stats dali read-back counters should eventually have grown by groups 0, colour features 0, extended fade 1 and program repairs 0
+
   @id:PD-251
   Scenario: A colour the operator asked for reads back as the number they asked for
     Given a six-channel DT8 discovery script for short address 0

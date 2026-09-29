@@ -1423,9 +1423,58 @@ impl dali2rust_api::http::firmware_state::FirmwareHttpState for FirmwareBridge {
 #[cfg(test)]
 mod tests {
     use core::sync::atomic::Ordering::Relaxed;
+    use std::sync::{Arc, Mutex};
 
-    use super::arbitration_dto;
+    use super::{arbitration_dto, stats_readback_dto};
+    use crate::dali::transport::mock::MockDaliTransport;
+    use dali2rust_contracts::msg::GroupMembershipAction;
+    use dali2rust_dali_runtime::runtime::controller::DaliController;
+    use dali2rust_dali_runtime::runtime::executor::program_group_membership;
+    use dali2rust_dali_runtime::StdClock;
+    use dali2rust_domain::dali::commands::{DaliCommand, StandardCommand};
+    use dali2rust_domain::dali::types::DaliAddress;
     use dali2rust_platform::arbitration::ArbitrationReflexCounters;
+    use dali2rust_platform::dali::DaliWireCounters;
+
+    const SHORT: u8 = 4;
+    const GROUP: u8 = 3;
+
+    fn frame(command: StandardCommand) -> u16 {
+        let address = DaliAddress::short(SHORT).expect("short address");
+        DaliCommand::Standard { address, command }.to_forward_frame().raw()
+    }
+
+    fn script_group_add(mock: &MockDaliTransport, readback: u8) {
+        let add = frame(StandardCommand::AddToGroup { group: GROUP });
+        mock.expect_forward_frame(add);
+        mock.expect_forward_frame(add);
+        mock.expect_forward_frame_with_backward(frame(StandardCommand::QueryGroups0To7), Some(readback));
+        mock.expect_forward_frame_with_backward(frame(StandardCommand::QueryGroups8To15), Some(0));
+    }
+
+    #[test]
+    fn a_repair_the_group_programme_spends_reaches_program_repairs_total_and_no_other_field() {
+        let mock = MockDaliTransport::new();
+        script_group_add(&mock, 0);
+        script_group_add(&mock, 1 << GROUP);
+        let transport = Arc::new(Mutex::new(mock));
+        let mut controller = DaliController::new(Arc::clone(&transport), Box::new(StdClock::new()));
+        let wire = Arc::new(DaliWireCounters::default());
+        controller.set_wire_counters(Arc::clone(&wire));
+
+        program_group_membership(&mut controller, SHORT, GROUP, GroupMembershipAction::Add)
+            .expect("the second drive converges");
+
+        let row = stats_readback_dto(&wire);
+        let got = [
+            row.readback_groups_corrected_total,
+            row.readback_colour_features_corrected_total,
+            row.readback_extended_fade_corrected_total,
+            row.program_repairs_total,
+        ];
+        assert_eq!(got, [0, 0, 0, 1]);
+        assert_eq!(transport.lock().expect("mock lock").scripted_exchanges_remaining(), 0);
+    }
 
     #[test]
     fn every_arbitration_field_reads_its_own_producer() {
