@@ -132,7 +132,9 @@ unless named.
 - Measure a change's frame depth on the linked image before flashing, not after
   (`scripts/measure_stack_frames.py` reads every stack adjustment of a function, not only
   the first `addi sp`, and adds a prologue the size-optimised build outlined into an
-  `OUTLINED_FUNCTION_*` fragment).
+  `OUTLINED_FUNCTION_*` fragment). With `--path <function>` it prints the deepest static
+  call path below a function; it does not follow indirect calls (trait objects, the `log`
+  facade), so the path is a lower bound on what the census sees, not a budget.
 
 ## The httpd stack is a budget
 
