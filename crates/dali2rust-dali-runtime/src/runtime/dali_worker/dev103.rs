@@ -139,35 +139,53 @@ fn write_instance_field(
     field: InstancePatchField,
     proved: &mut ProvedWrites,
 ) -> Result<(), SemanticDaliError> {
-    let (short, instance) = (cmd.short_address, cmd.instance_number);
     match field {
-        InstancePatchField::InstanceEnabled => {
-            let status = set_instance_enabled_verified(controller, short, instance, cmd.instance_enabled)?;
-            proved.instance_status = Some(status);
-            Ok(())
-        }
-        InstancePatchField::EventFilter => {
-            set_event_filter_verified(controller, short, instance, cmd.event_filter)
-        }
-        InstancePatchField::EventPriority => {
-            set_event_priority_verified(controller, short, instance, cmd.event_priority)
-        }
-        InstancePatchField::InstanceGroup0 => write_instance_group(controller, cmd, 0),
-        InstancePatchField::InstanceGroup1 => write_instance_group(controller, cmd, 1),
-        InstancePatchField::InstanceGroup2 => write_instance_group(controller, cmd, 2),
-        InstancePatchField::TimerShort => write_timer(controller, cmd, 0),
-        InstancePatchField::TimerDouble => write_timer(controller, cmd, 1),
-        InstancePatchField::TimerRepeat => write_timer(controller, cmd, 2),
-        InstancePatchField::TimerStuck => write_timer(controller, cmd, 3),
+        InstancePatchField::InstanceEnabled => write_instance_enabled(controller, cmd, proved),
+        InstancePatchField::EventFilter => write_event_filter(controller, cmd),
+        InstancePatchField::EventPriority => write_event_priority(controller, cmd),
+        InstancePatchField::InstanceGroup0
+        | InstancePatchField::InstanceGroup1
+        | InstancePatchField::InstanceGroup2 => write_instance_group(controller, cmd, field),
+        InstancePatchField::TimerShort
+        | InstancePatchField::TimerDouble
+        | InstancePatchField::TimerRepeat
+        | InstancePatchField::TimerStuck => write_timer(controller, cmd, field),
         InstancePatchField::EventScheme => write_event_scheme(controller, cmd),
     }
+}
+
+fn write_instance_enabled(
+    controller: &mut impl DaliApplicationController,
+    cmd: &Dali103InstanceConfigureCommand,
+    proved: &mut ProvedWrites,
+) -> Result<(), SemanticDaliError> {
+    let (short, instance) = (cmd.short_address, cmd.instance_number);
+    let status = set_instance_enabled_verified(controller, short, instance, cmd.instance_enabled)?;
+    proved.instance_status = Some(status);
+    Ok(())
+}
+
+fn write_event_filter(
+    controller: &mut impl DaliApplicationController,
+    cmd: &Dali103InstanceConfigureCommand,
+) -> Result<(), SemanticDaliError> {
+    set_event_filter_verified(controller, cmd.short_address, cmd.instance_number, cmd.event_filter)
+}
+
+fn write_event_priority(
+    controller: &mut impl DaliApplicationController,
+    cmd: &Dali103InstanceConfigureCommand,
+) -> Result<(), SemanticDaliError> {
+    let priority = cmd.event_priority;
+    set_event_priority_verified(controller, cmd.short_address, cmd.instance_number, priority)
 }
 
 fn write_instance_group(
     controller: &mut impl DaliApplicationController,
     cmd: &Dali103InstanceConfigureCommand,
-    slot: u8,
+    field: InstancePatchField,
 ) -> Result<(), SemanticDaliError> {
+    let slot = slot_after(InstancePatchField::InstanceGroup0, field);
     let group = cmd.instance_groups[usize::from(slot)];
     set_instance_group_verified(controller, cmd.short_address, cmd.instance_number, slot, group)
 }
@@ -175,11 +193,16 @@ fn write_instance_group(
 fn write_timer(
     controller: &mut impl DaliApplicationController,
     cmd: &Dali103InstanceConfigureCommand,
-    slot: usize,
+    field: InstancePatchField,
 ) -> Result<(), SemanticDaliError> {
+    let slot = usize::from(slot_after(InstancePatchField::TimerShort, field));
     let value = cmd.timer_multipliers[slot]
         .ok_or(SemanticDaliError::OperationFailed("invalid_timer"))?;
     set_button_timer_verified(controller, cmd.short_address, cmd.instance_number, slot, value)
+}
+
+fn slot_after(first: InstancePatchField, field: InstancePatchField) -> u8 {
+    (field as u8).saturating_sub(first as u8)
 }
 
 // IEC 62386-103 §9.6.3
@@ -483,7 +506,11 @@ mod tests {
     use super::*;
     use crate::runtime::clock::StdClock;
     use crate::runtime::controller::DaliController;
+    use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
     use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
+    use dali2rust_domain::dali::dev103::{
+        Button301Command, Device103Address, ForwardFrame24, Instance103Command, InstanceAddress,
+    };
     use std::sync::Mutex;
 
     const REFUSED_GROUP: u8 = 40;
@@ -515,6 +542,56 @@ mod tests {
         }
         cmd.patch(field);
         cmd
+    }
+
+    const EVERY_ANSWER: u8 = 4;
+
+    fn set_frame(field: InstancePatchField) -> [u8; 3] {
+        let (address, instance) = (Device103Address::Short(0), InstanceAddress::Number(0));
+        let button = |cmd: Button301Command| ForwardFrame24::command(address, instance, cmd.metadata().opcode);
+        let frame = match field {
+            InstancePatchField::InstanceEnabled => Instance103Command::DisableInstance.frame(address, instance),
+            InstancePatchField::EventFilter => Instance103Command::SetEventFilter.frame(address, instance),
+            InstancePatchField::EventPriority => Instance103Command::SetEventPriority.frame(address, instance),
+            InstancePatchField::InstanceGroup0 => {
+                Instance103Command::SetPrimaryInstanceGroup.frame(address, instance)
+            }
+            InstancePatchField::InstanceGroup1 => Instance103Command::SetInstanceGroup1.frame(address, instance),
+            InstancePatchField::InstanceGroup2 => Instance103Command::SetInstanceGroup2.frame(address, instance),
+            InstancePatchField::TimerShort => button(Button301Command::SetShortTimer),
+            InstancePatchField::TimerDouble => button(Button301Command::SetDoubleTimer),
+            InstancePatchField::TimerRepeat => button(Button301Command::SetRepeatTimer),
+            InstancePatchField::TimerStuck => button(Button301Command::SetStuckTimer),
+            InstancePatchField::EventScheme => Instance103Command::SetEventScheme.frame(address, instance),
+        };
+        frame.as_bytes()
+    }
+
+    #[test]
+    fn a_whole_patch_is_written_in_table_order_with_the_instance_first_and_the_scheme_last() {
+        let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
+        transport.lock().expect("mock lock").set_persistent_response(EVERY_ANSWER);
+        let mut controller = DaliController::new(Arc::clone(&transport), Box::new(StdClock::new()));
+        let mut cmd = command_patching(InstancePatchField::EventScheme);
+        cmd.patch_mask = Dali103InstanceConfigureCommand::ALL_PATCH_BITS;
+        cmd.event_scheme = EVERY_ANSWER;
+        cmd.event_filter = [EVERY_ANSWER, 0, 0];
+        cmd.event_priority = EVERY_ANSWER;
+        cmd.instance_groups = [Some(EVERY_ANSWER); 3];
+        cmd.timer_multipliers = [Some(EVERY_ANSWER); 4];
+        let mut proved = ProvedWrites::default();
+        configure_instance(&mut controller, &cmd, &mut proved).expect("every field lands");
+        assert_eq!(proved.mask, Dali103InstanceConfigureCommand::ALL_PATCH_BITS);
+
+        let frames = transport.lock().expect("mock lock").sent_frames24();
+        let mut written: Vec<InstancePatchField> = Vec::new();
+        for frame in frames {
+            let field = InstancePatchField::ALL.into_iter().find(|f| set_frame(*f) == frame);
+            if let Some(field) = field.filter(|f| written.last() != Some(f)) {
+                written.push(field);
+            }
+        }
+        assert_eq!(written, InstancePatchField::ALL, "IEC 62386-103 §9.6.3: the scheme goes last");
     }
 
     #[test]

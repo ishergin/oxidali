@@ -1395,9 +1395,10 @@ mod instance_patch_tests {
             assert_eq!(field.bit(), 1 << declared_bit(field), "{field:?}");
         }
         assert_eq!(
-            Dali103InstanceConfigureCommand::ALL_PATCH_BITS,
-            (1 << InstancePatchField::ALL.len()) - 1,
-            "the table's bits run contiguously from bit 0 and no two fields share one"
+            Dali103InstanceConfigureCommand::ALL_PATCH_BITS.count_ones() as usize,
+            InstancePatchField::ALL.len(),
+            "each field appears once in the table and no two fields share a bit; a retired \
+             field's bit stays reserved, so the bits need not be contiguous"
         );
     }
 
@@ -1408,7 +1409,7 @@ mod instance_patch_tests {
     }
 
     #[test]
-    fn group_and_timer_slots_name_table_fields_in_slot_order() {
+    fn group_and_timer_runs_are_contiguous_so_a_slot_is_the_offset_from_the_first() {
         let slots = InstancePatchField::INSTANCE_GROUPS
             .into_iter()
             .chain(InstancePatchField::TIMERS);
