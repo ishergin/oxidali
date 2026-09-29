@@ -117,8 +117,10 @@ reaches the wire:
   to an allowed lamp still pass (STRATEGY §4).
 - A `/api/v1/dali/*` request whose body names no frame the guard can read is refused.
 - HCL schedules, rules, MQTT commands and the policy apply reach lamps inside the
-  controller, past the guard: a test that uses them picks its targets from the `lamps`
-  fixture, or the guard's verdict on each gear they reach.
+  controller, past the guard: a test that uses them asks the guard before its first
+  action (`drive_allowed` and `allowed_bound_lamp` in `tests/hil_test_guards.py`) for each
+  lamp they reach, or for the whole segment when they reach a group, a broadcast or the
+  HA scene select, and skips on a refusal.
 
 ## Save and restore
 

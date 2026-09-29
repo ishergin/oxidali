@@ -2,6 +2,9 @@ import time
 
 import pytest
 
+from hil.lamp_guard import TARGET_SEGMENT
+from hil_test_guards import drive_allowed
+
 pytestmark = pytest.mark.light
 
 CCT_WARM_K = 2700
@@ -153,6 +156,7 @@ def test_hcl_broadcast_colour_point_activates(api, capabilities, lamps,
                                               hcl_guard, ops_quiesce, sniffer,
                                               wait_state, state_snapshot,
                                               test_artifacts):
+    drive_allowed(api, TARGET_SEGMENT, "a broadcast HCL colour point")
     members = _cct_members(api, capabilities)
     if not members:
         pytest.skip("needs at least one bound CCT-capable luminaire")

@@ -5,6 +5,7 @@ import time
 import pytest
 
 from hil.wait import wait_until
+from hil_test_guards import allowed_bound_lamp
 
 
 @pytest.mark.hil_id("HIL-INP-01")
@@ -160,22 +161,9 @@ POST_COMMISSION_SCAN_ATTEMPTS = 3
 POST_COMMISSION_SETTLE_S = 3.0
 
 
-FORBIDDEN_LAMPS = frozenset({4, 5, 6})
-
-
 @pytest.fixture()
 def bound_lamp(api):
-    for lamp in api.vlamps.list()["virtual_lamps"]:
-        short = (lamp.get("binding") or {}).get("physical_short_address")
-        lamp_id = lamp["virtual_lamp_id"]
-        if short is None:
-            continue
-        if short in FORBIDDEN_LAMPS or lamp_id in FORBIDDEN_LAMPS:
-            continue
-        return lamp_id, short
-    pytest.skip("no drivable virtual lamp is bound to a physical device — "
-                "every binding is either absent or one of the lamps this "
-                "module must not touch (%s)" % sorted(FORBIDDEN_LAMPS))
+    return allowed_bound_lamp(api, "a rule that an input event makes drive a lamp")
 
 
 @pytest.mark.light

@@ -2,8 +2,9 @@ import time
 
 import pytest
 
-from hil.lamp_guard import GROUP_TARGET, TARGET_SEGMENT, LampNotAllowed, http_rule
+from hil.lamp_guard import GROUP_TARGET, TARGET_SEGMENT, http_rule
 from hil.wait import wait_until
+from hil_test_guards import drive_allowed
 
 
 def _membership(device):
@@ -203,11 +204,8 @@ STOP_FADE_POLL_S = 0.5
 
 @pytest.fixture()
 def group_actions_allowed(api):
-    try:
-        api.guard.check_target(TARGET_SEGMENT, True, "a stop_fade rule on a group")
-    except LampNotAllowed as exc:
-        pytest.skip("%s — the rule's DAPC MASK reaches the whole group past the client, so "
-                    "the segment must hold only test gear" % exc)
+    drive_allowed(api, TARGET_SEGMENT, "a stop_fade rule, whose DAPC MASK reaches every "
+                                       "member of its group,")
 
 
 @pytest.mark.light

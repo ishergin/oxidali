@@ -3,7 +3,9 @@ import time
 import pytest
 
 from hil import mqtt_tap, validity
+from hil.lamp_guard import TARGET_SEGMENT
 from hil.wait import wait_until
+from hil_test_guards import allowed_bound_lamp, drive_allowed
 from hil_virtual import PARK_ENV
 
 pytestmark = pytest.mark.ha_bridge
@@ -17,15 +19,24 @@ def _vl_state(api, vl_id):
     return api.vlamps.get(vl_id)["state"]
 
 
+def _exposed_cct(lamp):
+    return lamp["ha_entity_enabled"] and lamp["capabilities"]["cct"]
+
+
 def _cct_lamp(api):
     for lamp in api.vlamps.list()["virtual_lamps"]:
-        if (lamp["ha_entity_enabled"] and lamp["capabilities"]["cct"]
+        if (_exposed_cct(lamp)
                 and (lamp.get("binding") or {}).get("physical_short_address") is not None):
             return lamp["virtual_lamp_id"]
     pytest.skip("no exposed CCT-capable bound virtual lamp on this bench")
 
 
+def _driven_cct_lamp(api):
+    return allowed_bound_lamp(api, "an MQTT command to an exposed CCT lamp", _exposed_cct)[0]
+
+
 def _shared_groups_lamp(api):
+    drive_allowed(api, TARGET_SEGMENT, "a group command over MQTT or the foreign master")
     matrix = api.groups.matrix()
     for row in matrix.get("rows", []):
         applied = [i for i, v in enumerate(row.get("applied", [])) if v]
@@ -89,8 +100,8 @@ def test_session_discovery_and_kelvin_dialect(ha_guard, api, mqtt_counters, hil_
 @pytest.mark.light
 def test_cct_round_trip_and_colour_only_power(ha_guard, api, mqtt_counters,
                                               hil_config, state_snapshot):
+    vl_id = _driven_cct_lamp(api)
     _enter_and_connect(ha_guard, api, mqtt_counters)
-    vl_id = _cct_lamp(api)
     set_topic = ha_guard.topic("a0/vl/%d/set" % vl_id)
 
     _cct_command_with_ledger(
@@ -118,8 +129,8 @@ def test_cct_round_trip_and_colour_only_power(ha_guard, api, mqtt_counters,
 @pytest.mark.light
 def test_group_tile_lights_only_for_the_commanded_group(ha_guard, api, mqtt_counters,
                                                         hil_config, state_snapshot):
-    _enter_and_connect(ha_guard, api, mqtt_counters)
     vl_id, g_cmd, g_other = _shared_groups_lamp(api)
+    _enter_and_connect(ha_guard, api, mqtt_counters)
 
     def tile(group_id):
         payload = mqtt_tap.retained_json(
@@ -148,8 +159,8 @@ def test_group_tile_lights_only_for_the_commanded_group(ha_guard, api, mqtt_coun
 @pytest.mark.foreign
 def test_foreign_master_group_frame_arms_the_tile(ha_guard, api, mqtt_counters,
                                                   hil_config, state_snapshot, foreign):
-    _enter_and_connect(ha_guard, api, mqtt_counters)
     _vl, g_cmd, _g_other = _shared_groups_lamp(api)
+    _enter_and_connect(ha_guard, api, mqtt_counters)
 
     def tile():
         payload = mqtt_tap.retained_json(
@@ -167,8 +178,9 @@ def test_foreign_master_group_frame_arms_the_tile(ha_guard, api, mqtt_counters,
 @pytest.mark.light
 def test_scene_select_recall_and_reset(ha_guard, api, mqtt_counters,
                                        hil_config, state_snapshot):
+    drive_allowed(api, TARGET_SEGMENT, "an HA scene select, which recalls by broadcast,")
+    vl_id = _driven_cct_lamp(api)
     _enter_and_connect(ha_guard, api, mqtt_counters)
-    vl_id = _cct_lamp(api)
 
     _pub(hil_config, ha_guard.topic("a0/scene_select/set"), "Scene 0")
     time.sleep(1.0)
@@ -276,6 +288,7 @@ def test_cct_over_mqtt_is_optically_real(ha_guard, api,
                   and l["ha_entity_enabled"]), None)
     if vl_id is None:
         pytest.skip("fingerprint lamp SA%d is not an exposed virtual lamp" % short)
+    drive_allowed(api, short, "an MQTT command to VL%d" % vl_id)
 
     _enter_and_connect(ha_guard, api, mqtt_counters)
     set_topic = ha_guard.topic("a0/vl/%d/set" % vl_id)
@@ -315,8 +328,8 @@ def test_a_group_command_reaches_the_lamps_not_only_the_tile(ha_guard, api,
                                                             hil_config, sniffer,
                                                             state_snapshot,
                                                             test_artifacts):
-    _enter_and_connect(ha_guard, api, mqtt_counters)
     _vl, g_cmd, _g_other = _shared_groups_lamp(api)
+    _enter_and_connect(ha_guard, api, mqtt_counters)
     members = [s for s in _group_members(api, g_cmd) if s in api.optical_addrs()]
     if not members:
         pytest.skip("group %d has no bound luminaire member on this bench" % g_cmd)

@@ -2,8 +2,10 @@ import time
 
 import pytest
 
-from hil_instruments import _diag_counters
+from hil.lamp_guard import TARGET_SEGMENT
 from hil.wait import wait_until
+from hil_instruments import _diag_counters
+from hil_test_guards import allowed_bound_lamp, drive_allowed
 
 pytestmark = pytest.mark.light
 
@@ -53,11 +55,7 @@ def _wait_suspended(api, schedule_id, timeout_s=TICK_BUDGET_S):
 
 
 def _first_bound(api):
-    for lamp in api.vlamps.list()["virtual_lamps"]:
-        short = (lamp.get("binding") or {}).get("physical_short_address")
-        if short is not None:
-            return lamp["virtual_lamp_id"], short
-    return None, None
+    return allowed_bound_lamp(api, "a lamp an HCL schedule drives")
 
 
 @pytest.mark.hil_id("HIL-HCL-01")
@@ -69,8 +67,6 @@ def test_stepped_point_in_the_past_drives_the_group(api, clock_guard,
                                                     state_snapshot,
                                                     test_artifacts):
     lamp_id, short = _first_bound(api)
-    if lamp_id is None:
-        pytest.skip("no bound virtual lamp on the rig")
     api.groups.join([lamp_id], free_group)
 
     clock_guard(10, 0)
@@ -98,8 +94,6 @@ def test_crossing_a_point_boundary_drives_the_new_level(api, clock_guard,
                                                         state_snapshot,
                                                         test_artifacts):
     lamp_id, short = _first_bound(api)
-    if lamp_id is None:
-        pytest.skip("no bound virtual lamp on the rig")
     api.groups.join([lamp_id], free_group)
 
     first, second = 9 * 60, 9 * 60 + 3
@@ -132,8 +126,6 @@ def test_disabled_schedule_drives_nothing(api, clock_guard, hcl_guard,
                                           wait_state, state_snapshot,
                                           test_artifacts):
     lamp_id, short = _first_bound(api)
-    if lamp_id is None:
-        pytest.skip("no bound virtual lamp on the rig")
     api.groups.join([lamp_id], free_group)
 
     parked = 40
@@ -239,9 +231,8 @@ def test_manual_command_before_the_schedule_ran_does_not_suspend_it(
         api, clock_guard, hcl_guard, vl_bindings, free_group,
         group_matrix_guard, ops_quiesce, wait_state, state_snapshot,
         test_artifacts):
+    drive_allowed(api, TARGET_SEGMENT, "a broadcast HCL schedule")
     lamp_id, short = _first_bound(api)
-    if lamp_id is None:
-        pytest.skip("no bound virtual lamp on the rig")
 
     clock_guard(10, 0)
     hcl_guard("hil-ovr-early")
@@ -278,8 +269,6 @@ def test_a_manual_command_after_the_schedule_drove_is_reported_as_an_override(
         group_matrix_guard, ops_quiesce, wait_state, state_snapshot,
         test_artifacts):
     lamp_id, short = _first_bound(api)
-    if lamp_id is None:
-        pytest.skip("no bound virtual lamp on the rig")
     api.groups.join([lamp_id], free_group)
 
     clock_guard(10, 0)
@@ -316,8 +305,6 @@ def test_resetting_the_override_lets_the_schedule_drive_again(
         group_matrix_guard, ops_quiesce, wait_state, state_snapshot,
         test_artifacts):
     lamp_id, short = _first_bound(api)
-    if lamp_id is None:
-        pytest.skip("no bound virtual lamp on the rig")
     api.groups.join([lamp_id], free_group)
 
     clock_guard(10, 0)
@@ -373,8 +360,6 @@ def test_a_slider_queued_behind_a_schedule_sweep_still_wins(
         group_matrix_guard, ops_quiesce, wait_state, state_snapshot,
         test_artifacts):
     lamp_id, short = _first_bound(api)
-    if lamp_id is None:
-        pytest.skip("no bound virtual lamp on the rig")
     api.groups.join([lamp_id], free_group)
 
     clock_guard(10, 0)

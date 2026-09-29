@@ -7,7 +7,7 @@ from requests import RequestException
 
 from hil import api as api_mod
 from hil import prod_state
-from hil.lamp_guard import RULE_SEPARATOR
+from hil.lamp_guard import RULE_SEPARATOR, LampNotAllowed, spell
 from hil.wait import wait_until
 from hil_harness import ANCHOR_TZ
 
@@ -312,6 +312,25 @@ def policy_guard(api):
 def adapter_enabled_guard(api):
     yield
     api.adapter_patch({"enabled": True})
+
+
+def drive_allowed(api, target, what):
+    try:
+        api.guard.check_target(target, True, what)
+    except LampNotAllowed as exc:
+        pytest.skip("%s — the controller drives it past the client, so the guard is asked "
+                    "before the test starts" % exc)
+
+
+def allowed_bound_lamp(api, what, wanted=None):
+    allowed = set(api.lamp_addrs())
+    for lamp in api.vlamps.list()["virtual_lamps"]:
+        short = (lamp.get("binding") or {}).get("physical_short_address")
+        if short in allowed and (wanted is None or wanted(lamp)):
+            drive_allowed(api, short, what)
+            return lamp["virtual_lamp_id"], short
+    pytest.skip("no fitting virtual lamp is bound to a lamp of HIL_LAMP_SHORTS=%s for %s"
+                % (spell(allowed), what))
 
 
 @pytest.fixture()

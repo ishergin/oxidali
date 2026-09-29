@@ -3,6 +3,7 @@ import time
 import pytest
 
 from hil.wait import wait_until
+from hil_test_guards import allowed_bound_lamp
 
 FAST_INTERVAL_MS = 1000
 
@@ -245,13 +246,13 @@ def test_sustained_poll_under_foreign_traffic(api, poller_guard,
         "the DUT did not stay up for the whole run"
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-POL-10")
 @pytest.mark.slow
 def test_poller_never_delays_an_interactive_put(api, poller_guard, poller_counters,
                                                 test_artifacts):
-    short = _bound_short(api)
-    if short is None:
-        pytest.skip("no virtual lamp is bound — the poller would skip every device")
+    _lamp_id, short = allowed_bound_lamp(api, "the interactive PUTs the poller must not "
+                                              "delay")
 
     poller_guard(enabled=True, interval_ms=200, include_dt8_color=True)
     assert poller_counters.wait("reads_published", poller_counters.get("reads_published") + 2,
