@@ -80,6 +80,15 @@ COMMISSIONING_SPECIALS = frozenset({INITIALISE, RANDOMISE, COMPARE, WITHDRAW,
                                     PROGRAM_SHORT_ADDRESS, VERIFY_SHORT_ADDRESS,
                                     QUERY_SHORT_ADDRESS})
 PARK_OPERAND_SPECIALS = frozenset({PROGRAM_SHORT_ADDRESS, VERIFY_SHORT_ADDRESS})
+COMMISSIONING_REFUSAL = ("commissioning never runs on the installation: only the virtual "
+                         "tier's expert steps reach emulated gear, with "
+                         "HIL_ALLOW_VIRTUAL_COMMISSIONING=1")
+COMMISSIONING_ROUTES = (
+    re.compile(r"adapters/[0-9]+/commissioning/(steps/[a-z-]+|address-changes|replacements)"),
+    re.compile(r"adapters/[0-9]+/input-devices/commission"),
+)
+DISCOVERY_ROUTE = re.compile(r"adapters/[0-9]+/discovery-runs")
+SCAN_MODES = frozenset({"scan_known_short_addresses", "refresh_known"})
 GROUP_CONFIG_OPCODES = range(0x60, 0x80)
 GROUP_OF_OPCODE = 0x0F
 PUT, PATCH, POST = "PUT", "PATCH", "POST"
@@ -332,6 +341,22 @@ def _short_of(body):
     return body.get("short_address") if isinstance(body, dict) else None
 
 
+def _refuse_commissioning(method, path, body):
+    mode = body.get("mode") if isinstance(body, dict) else None
+    if any(route.fullmatch(path) for route in COMMISSIONING_ROUTES) or (
+            DISCOVERY_ROUTE.fullmatch(path) and mode not in SCAN_MODES):
+        raise LampNotAllowed("%s %s %r refused: %s"
+                             % (method.upper(), path, body, COMMISSIONING_REFUSAL))
+
+
+def _refuse_special(addr):
+    if addr in SETUP_SPECIALS:
+        return
+    why = COMMISSIONING_REFUSAL if addr in COMMISSIONING_SPECIALS else \
+        "the guard does not know what it does to the gear"
+    raise LampNotAllowed("special command 0x%02X refused: %s" % (addr, why))
+
+
 def diagnostic_frame(path, body):
     if not isinstance(body, dict):
         return None
@@ -435,6 +460,7 @@ class LampGuard:
         path = path.lstrip("/").split("?", 1)[0]
         if self.fence is not None and self.fence.check_request(method.upper(), path, body):
             return
+        _refuse_commissioning(method, path, body)
         if path.startswith(DIAGNOSTIC_PREFIX):
             frame = diagnostic_frame(path, body)
             if frame is None:
@@ -484,6 +510,9 @@ class LampGuard:
 
     def _judge_frame(self, addr, data, enabled):
         if self.fence is not None and self.fence.check_frame(addr, data, enabled):
+            return
+        if SPECIAL_FIRST <= addr < BROADCAST_FIRST:
+            _refuse_special(addr)
             return
         target = wire_target(addr)
         if target is None or not frame_writes(addr, data, enabled):

@@ -314,6 +314,13 @@ def adapter_enabled_guard(api):
     api.adapter_patch({"enabled": True})
 
 
+def ask_guard(api, method, path, body=None):
+    try:
+        api.guard.check_request(method, path, body)
+    except LampNotAllowed as exc:
+        pytest.skip(str(exc))
+
+
 def drive_allowed(api, target, what):
     try:
         api.guard.check_target(target, True, what)

@@ -352,6 +352,43 @@ def test_read_only_refuses_a_visible_route_before_it_resolves_the_target():
                                        {"power": "on"})
 
 
+COMMISSIONING_REQUESTS = (
+    ("adapters/0/commissioning/steps/initialise", {"scope": "unaddressed"}),
+    ("adapters/0/commissioning/steps/program-short-address", {"short_address": 2}),
+    ("adapters/0/commissioning/address-changes", {"from": 2, "to": 3}),
+    ("adapters/0/commissioning/replacements", {"short_address": 2}),
+    ("adapters/0/input-devices/commission", {"include_addressed": False}),
+    ("adapters/0/discovery-runs", {"mode": "commission_unaddressed"}),
+    ("adapters/0/discovery-runs", {}),
+)
+INITIALISE, RANDOMISE, PROGRAM_SHORT_ADDRESS, RESERVED_SPECIAL = 0xA5, 0xA7, 0xB7, 0xCB
+
+
+def test_commissioning_never_passes_the_guard_outside_the_virtual_tier(monkeypatch):
+    guard = _guard()
+    for path, body in COMMISSIONING_REQUESTS:
+        with pytest.raises(LampNotAllowed, match=r"commissioning never runs on the installation"):
+            guard.check_request("POST", path, body)
+    for mode in ("scan_known_short_addresses", "refresh_known"):
+        guard.check_request("POST", "adapters/0/discovery-runs", {"mode": mode})
+    for addr, data in ((INITIALISE, 0xFF), (RANDOMISE, 0), (PROGRAM_SHORT_ADDRESS, 5)):
+        with pytest.raises(LampNotAllowed, match=r"commissioning never runs"):
+            guard.check_request("POST", "dali/raw", {"frame": (addr << 8) | data})
+        with pytest.raises(LampNotAllowed, match=r"commissioning never runs"):
+            guard.check_request("POST", "dali/command", _typed(addr, data))
+    with pytest.raises(LampNotAllowed, match=r"does not know what it does"):
+        guard.check_frame(RESERVED_SPECIAL, 0)
+    guard.check_frame(DTR0, 0x10)
+    guard.check_frame(ENABLE_DEVICE_TYPE, 8)
+    master = ForeignMaster(dataclasses.replace(load_config(), lamp_shorts="0,2,3",
+                                               lamps_read_only=False))
+    sent = []
+    monkeypatch.setattr(master, "_run_client", lambda frames: sent.append(frames) or [])
+    with pytest.raises(LampNotAllowed, match=r"commissioning never runs"):
+        master.raw16(INITIALISE, 0x00)
+    assert sent == []
+
+
 def test_off_all_drives_only_the_allowlist(monkeypatch):
     monkeypatch.setattr(hil.api.time, "sleep", lambda _s: None)
     client = _client(shorts=(0, 1, 2, 3, 4))

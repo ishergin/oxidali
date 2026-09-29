@@ -5,7 +5,7 @@ import time
 import pytest
 
 from hil.wait import wait_until
-from hil_test_guards import allowed_bound_lamp
+from hil_test_guards import allowed_bound_lamp, ask_guard
 
 
 @pytest.mark.hil_id("HIL-INP-01")
@@ -335,6 +335,8 @@ def test_a_scheme_2_event_is_retyped_by_the_registry(
 @pytest.mark.destructive
 def test_commissioning_opens_and_closes_its_session(
         api, panel, sniffer, op_check, test_artifacts):
+    ask_guard(api, "POST", "adapters/%d/input-devices/commission" % api.adapter,
+              {"include_addressed": False})
     with sniffer.window() as win:
         op_check(api.wait_op(api.input_commission(include_addressed=False)))
         time.sleep(2.0)
