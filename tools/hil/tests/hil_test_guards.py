@@ -11,6 +11,7 @@ from hil import virtual_gear
 from hil.lamp_guard import RULE_SEPARATOR, LampNotAllowed, appended_rule_names, spell
 from hil.wait import wait_until
 from hil_harness import ANCHOR_TZ
+from hil_session_guards import refuse_schedule_suspension
 from hil_session import LIGHT_MARKER
 
 TEARDOWN_RETRY_S = 2.0
@@ -522,6 +523,7 @@ def owner_rules_ignore_the_test_lamps(request):
 
 @pytest.fixture()
 def hcl_guard(api):
+    refuse_schedule_suspension(api)
     created = []
     suspended = []
     schedules = api.hcl.list()

@@ -85,7 +85,7 @@ def bench_baseline(pytestconfig, production_state):
         return
 
     findings.extend(_neutralize_poller(api))
-    schedule_findings, suspended = _neutralize_schedules(api)
+    schedule_findings, suspended = _neutralize_schedules(api, api.cfg.drives_lamps())
     findings.extend(schedule_findings)
     findings.extend(_neutralize_timezone(api))
     leaked = _leaked_names(api)
@@ -120,10 +120,14 @@ def _neutralize_poller(api):
             "run; see ISSUE-30)"]
 
 
-def _neutralize_schedules(api):
+def _neutralize_schedules(api, drives_lamps):
     enabled = [s["schedule_id"] for s in api.hcl.list() if s.get("enabled")]
     if not enabled:
         return [], []
+    if not drives_lamps:
+        return (["left %d HCL schedule(s) of the owner enabled (%s): a run that drives no "
+                 "lamp neither suspends nor re-enables them" % (len(enabled),
+                                                                ", ".join(enabled))], [])
     for schedule_id in enabled:
         api.hcl.patch(schedule_id, {"enabled": False})
     still_on = [s["schedule_id"] for s in api.hcl.list() if s.get("enabled")]
@@ -134,6 +138,12 @@ def _neutralize_schedules(api):
     return (["found %d HCL schedule(s) ENABLED (%s) — suspended for the "
              "session, restored at the end"
              % (len(enabled), ", ".join(enabled))], enabled)
+
+
+def refuse_schedule_suspension(api):
+    if not api.cfg.drives_lamps():
+        pytest.skip("a run that drives no lamp leaves the owner's HCL schedules alone, so a "
+                    "test that needs them suspended does not run")
 
 
 def _restore_schedules(api, suspended):

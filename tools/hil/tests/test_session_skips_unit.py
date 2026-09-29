@@ -1,4 +1,7 @@
+import pytest
+
 import hil_session
+import hil_session_guards
 import test_groups
 import test_policies
 import test_target_state
@@ -111,3 +114,45 @@ def test_the_policy_test_is_destructive_and_the_emulated_ones_are_not_light():
         test_policies.test_a_discovery_run_writes_the_armed_policy_without_a_manual_apply)}
     assert "light" not in {m.name for m in _module_marks(
         test_virtual_gear.test_a_stop_fade_rule_sends_one_dapc_mask_to_its_group_and_no_level)}
+
+
+class _Schedules:
+    def __init__(self):
+        self.enabled, self.patches = {"owner-evening": True}, []
+
+    def list(self):
+        return [{"schedule_id": k, "enabled": v} for k, v in self.enabled.items()]
+
+    def patch(self, schedule_id, body):
+        self.patches.append((schedule_id, body))
+        self.enabled[schedule_id] = body["enabled"]
+
+
+class _HclApi:
+    def __init__(self):
+        self.hcl = _Schedules()
+
+
+def test_a_run_that_drives_no_lamp_leaves_the_owner_schedules_alone():
+    api = _HclApi()
+    findings, suspended = hil_session_guards._neutralize_schedules(api, drives_lamps=False)
+    assert api.hcl.patches == [] and suspended == []
+    assert "left 1 HCL schedule(s)" in findings[0]
+    findings, suspended = hil_session_guards._neutralize_schedules(api, drives_lamps=True)
+    assert api.hcl.patches == [("owner-evening", {"enabled": False})]
+    assert suspended == ["owner-evening"]
+
+
+def test_only_a_named_lamp_without_read_only_makes_a_run_drive_lamps():
+    assert not HilConfig(lamp_shorts="", lamps_read_only=False, serial_remote="").drives_lamps()
+    assert not HilConfig(lamp_shorts="2", lamps_read_only=True, serial_remote="").drives_lamps()
+    assert HilConfig(lamp_shorts="2", lamps_read_only=False, serial_remote="").drives_lamps()
+
+
+def test_the_hcl_guard_refuses_a_run_that_drives_no_lamp():
+    api = _HclApi()
+    api.cfg = HilConfig(lamp_shorts="", serial_remote="")
+    with pytest.raises(pytest.skip.Exception, match=r"leaves the owner's HCL schedules alone"):
+        hil_session_guards.refuse_schedule_suspension(api)
+    assert api.hcl.patches == []
+

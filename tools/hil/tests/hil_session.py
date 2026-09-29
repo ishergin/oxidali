@@ -61,7 +61,7 @@ def ungated(item, drives_lamps, commits_rules):
 
 
 def _deselect_ungated(config, items, cfg):
-    drives_lamps = bool(cfg.lamp_short_set()) and not cfg.lamps_read_only
+    drives_lamps = cfg.drives_lamps()
     commits_rules = os.environ.get(RULE_COMMITS_ENV) == "1"
     kept, dropped = [], []
     for item in items:

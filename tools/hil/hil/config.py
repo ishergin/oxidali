@@ -91,6 +91,9 @@ class HilConfig:
         if not self.lamp_shorts.strip():
             return frozenset()
         return _parse_shorts(self.lamp_shorts, "HIL_LAMP_SHORTS")
+
+    def drives_lamps(self) -> bool:
+        return bool(self.lamp_short_set()) and not self.lamps_read_only
     board: str = field(default_factory=lambda: _env("HIL_BOARD", "esp32p4"))
     peer_base: str = field(default_factory=lambda: _env("HIL_PEER_BASE", ""))
     peer_serial_port: str = field(
