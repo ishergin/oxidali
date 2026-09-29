@@ -8,7 +8,7 @@ from requests import RequestException
 from hil import api as api_mod
 from hil import prod_state
 from hil import virtual_gear
-from hil.lamp_guard import RULE_SEPARATOR, LampNotAllowed, spell
+from hil.lamp_guard import RULE_SEPARATOR, LampNotAllowed, appended_rule_names, spell
 from hil.wait import wait_until
 from hil_harness import ANCHOR_TZ
 from hil_session import LIGHT_MARKER
@@ -263,11 +263,14 @@ class _RulesCommits:
     def restore(self):
         if self.ours is None:
             return []
-        if self.api.rules_get().get("source") != self.original:
+        source = self.api.rules_get().get("source") or ""
+        if source != self.original:
             refusal = prod_state.commit_refusal(prod_state.continuations_pending(self.api))
             if refusal:
-                return ["the test rules stay in the document for the session restore, "
-                        "because %s" % refusal]
+                names = prod_state.switch_off(self.api,
+                                              appended_rule_names(self.original, source))
+                return ["the test rules %s stay in the document, switched off, for the "
+                        "session restore, because %s" % (names, refusal)]
             self.commit(self.original, self.ours, "restore")
         return rules_residue(self.original, self.api.rules_get().get("source") or "",
                              self.toggles, self.api.rules_toggles())

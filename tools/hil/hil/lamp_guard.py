@@ -127,6 +127,7 @@ TEST_RULE = re.compile(
 
 
 HIL_RULE = re.compile(r'rule "hil-[^"\n]*" \{[^{}]*\}')
+HIL_RULE_NAME = re.compile(r'rule "(hil-[^"\n]*)"')
 
 
 def http_rule(name, target, key, action):
@@ -145,6 +146,11 @@ def appended_blocks(baseline, source):
 def only_hil_rules_appended(baseline, source):
     blocks = appended_blocks(baseline, source)
     return blocks is not None and all(HIL_RULE.fullmatch(block) for block in blocks)
+
+
+def appended_rule_names(baseline, source):
+    return [name for block in appended_blocks(baseline, source) or []
+            for name in HIL_RULE_NAME.findall(block)]
 
 
 @dataclass(frozen=True)
@@ -258,6 +264,8 @@ class VirtualFence:
 
     def _rule_toggle(self, method, key, body):
         name = unquote(key)
+        if method == PATCH and name in self.test_rules and body == {"enabled": False}:
+            return
         owner = self.rules.toggles if self.rules is not None else {}
         if method != PATCH or name not in owner or body != {"enabled": owner[name]}:
             self.refuse("%s of rule %r other than its toggle back to %r"

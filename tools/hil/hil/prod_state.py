@@ -3,7 +3,7 @@ import os
 import time
 
 from hil.api import ApiError, CapabilityUnsupported, _HomeAssistantSettings, _PollerSettings
-from hil.lamp_guard import LampNotAllowed, only_hil_rules_appended
+from hil.lamp_guard import LampNotAllowed, appended_rule_names, only_hil_rules_appended
 
 PRIME_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,groups,scenes,extended"
 
@@ -382,6 +382,12 @@ def commit_refusal(pending):
     return None
 
 
+def switch_off(api, names):
+    for name in names:
+        api.rule_enable(name, False)
+    return names
+
+
 def _restore_rules(api, snap, log):
     was, now = snap["rules"].get("source") or "", api.rules_get()
     if (now.get("source") or "") != was:
@@ -390,8 +396,10 @@ def _restore_rules(api, snap, log):
             log("prod_state: the rules document differs from the snapshot by more than test "
                 "rules; someone else edited it, so it is left as it is")
         elif refusal:
-            log("prod_state: the test rules stay in the rules document, because %s; run "
-                "`hil state restore` once nothing is pending" % refusal)
+            names = switch_off(api, appended_rule_names(was, now.get("source") or ""))
+            log("prod_state: the test rules %s stay in the rules document, switched off, "
+                "because %s; run `hil state restore` once nothing is pending"
+                % (names, refusal))
         else:
             log("prod_state: taking the test rules out of the rules document")
             api.rules_replace(was, now["revision"])

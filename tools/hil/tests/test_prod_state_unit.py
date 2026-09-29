@@ -411,7 +411,8 @@ def test_a_delay_pending_at_restore_keeps_the_test_rule_and_names_why():
     api.pending = 1
     residue = commits.restore()
     assert len(api.puts) == 1 and api.source.endswith(TEST_RULE)
-    assert residue and "1 delayed action(s)" in residue[0]
+    assert api.patches == [("hil-vg-06-stop-fade", False)]
+    assert residue and "switched off" in residue[0] and "1 delayed action(s)" in residue[0]
 
 
 def test_a_commit_that_fails_after_its_replace_still_leaves_the_test_rule_to_restore():
@@ -440,7 +441,8 @@ def test_the_session_restore_leaves_test_rules_while_the_owner_has_delays_pendin
         api, log = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": True}, pending=pending), []
         prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append)
         assert api.puts == [] and any("stay in the rules document" in line and why in line
-                                      for line in log)
+                                      and "switched off" in line for line in log)
+        assert api.patches == [("hil-vg-06-stop-fade", False)]
 
 
 def test_the_guard_restores_against_the_revision_its_own_commit_left():

@@ -338,6 +338,14 @@ def test_a_toggle_passes_only_back_to_what_the_owner_had(path, body, refused):
         guard.check_request("PATCH", path, body)
 
 
+def test_the_fence_lets_a_test_rule_it_passed_be_switched_off_and_nothing_else():
+    guard = _guard(_ruled())
+    guard.check_request("PUT", "rules", _with(http_rule("hil-a", GROUP_TARGET, 4, "stop_fade()")))
+    guard.check_request("PATCH", "rules/hil-a", {"enabled": False})
+    with pytest.raises(LampNotAllowed):
+        guard.check_request("PATCH", "rules/hil-a", {"enabled": True})
+
+
 def test_the_appended_rules_are_read_off_the_owner_document():
     rule = http_rule("hil-a", GROUP_TARGET, 4, "stop_fade()")
     assert appended_test_rules("", rule) == [("hil-a", "group", 4)]
