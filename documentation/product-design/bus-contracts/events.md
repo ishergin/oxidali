@@ -176,11 +176,12 @@
 
 ## Сообщения брокера
 
-`MqttRuleMessageEvent` — одно сообщение на топике, который мост подписал для триггеров
+`MqttRuleMessageEvent` — одно сообщение на топике, за которым мост следит для триггеров
 `when mqtt`: топик, до 48 байт payload и признак `truncated`, если payload был длиннее.
-Сообщение перечитать неоткуда, поэтому мост публикует событие через `publish_required`;
-retained-сообщение, отданное брокером на саму подписку, события не порождает
-([`ADR-033`](../../architecture/decisions/ADR-033-mqtt-rule-trigger.md)).
+Сообщение перечитать неоткуда, поэтому мост публикует событие через `publish_required`.
+Какие сообщения доходят до события и с каким темпом, решает мост
+([`../runtime-modules/mqtt-home-assistant/README.md`](../runtime-modules/mqtt-home-assistant/README.md),
+[`ADR-033`](../../architecture/decisions/ADR-033-mqtt-rule-trigger.md)).
 
 ## Настройки
 

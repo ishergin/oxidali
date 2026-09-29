@@ -47,7 +47,9 @@ messages to every new subscription.
    this: it is best-effort and is not published on hydration or a slice reload, and a
    missed wake would leave the session on the wrong document until the next reconnect —
    the reason the bridge already reads its settings this way
-   ([ADR-015](ADR-015-routed-event-delivery.md) §4).
+   ([ADR-015](ADR-015-routed-event-delivery.md) §4). The set covers every rule, enabled
+   or not: another rule can enable one through the engine's own bit, which the document
+   never sees.
 4. **One delivery-required event per message, paced per topic.** A message on a rule
    topic becomes an `MqttRuleMessageEvent` — topic, at most 48 payload bytes and a
    `truncated` flag — consumed by the rules worker, and it is not a Home Assistant command;
@@ -95,9 +97,10 @@ messages to every new subscription.
 
 ## Consequences
 
-- A standby holds no broker session, so `when mqtt` never fires there; the controller that
-  becomes active subscribes with its fresh session. A message published while no session
-  exists is lost for rules.
+- `when mqtt` fires only while the bridge holds a session: the Home Assistant bridge
+  enabled with a broker set, on the active controller. A standby, a disabled bridge or a
+  missing broker has none; the controller that becomes active subscribes with its fresh
+  session, and a message published while no session exists is lost for rules.
 - The broker client port gains `unsubscribe` and the retain flag of an incoming message.
   The esp-idf-svc event wrapper drops that flag, so on the device the client takes data
   events from the ESP-IDF event itself.
