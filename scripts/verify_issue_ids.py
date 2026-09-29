@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -70,9 +71,19 @@ def parse_records() -> tuple[set[int], set[int]]:
     return known, bench
 
 
+def candidate_files() -> list[Path]:
+    res = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    if res.returncode != 0:
+        return list(ROOT.rglob("*"))
+    return [ROOT / line for line in res.stdout.splitlines() if line]
+
+
 def scan_citations() -> dict[int, str]:
     cited: dict[int, str] = {}
-    for path in ROOT.rglob("*"):
+    for path in candidate_files():
         if not path.is_file() or path.suffix not in SCAN_SUFFIXES:
             continue
         rel = path.relative_to(ROOT)
