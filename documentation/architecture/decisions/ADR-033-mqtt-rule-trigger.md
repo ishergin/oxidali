@@ -108,6 +108,6 @@ messages to every new subscription.
   newer message replaced (`rule_messages_coalesced_total`) and those the bus refused after
   the backoff (`rule_messages_lost_total`); none of them is a received command.
 - The language and its limits are in
-  [operations.md](../../product-design/runtime-modules/rules-engine/operations.md) §1.7,
+  [mqtt-trigger.md](../../product-design/runtime-modules/rules-engine/mqtt-trigger.md),
   the sessions in
   [mqtt-home-assistant](../../product-design/runtime-modules/mqtt-home-assistant/README.md).

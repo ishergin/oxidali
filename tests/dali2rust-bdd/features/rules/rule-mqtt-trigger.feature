@@ -1,7 +1,7 @@
 @stage-I10
 Feature: A broker message fires a rule
 
-  I10-C. The MQTT bridge is the one broker client: it subscribes the rules
+  I10-B. The MQTT bridge is the one broker client: it subscribes the rules
   document's `when mqtt` topics in its session and hands each message on them
   to the rules worker as one typed event (ADR-033). Each scenario runs from a
   client publishing on the mock broker to the frame on the mock DALI
