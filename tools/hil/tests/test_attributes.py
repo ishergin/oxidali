@@ -3,6 +3,7 @@ import time
 import pytest
 
 from hil.camera.calibrate import rgb_setpoint, RGB_PRIMARIES
+from hil.lamp_guard import LampNotAllowed
 
 ALL_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,groups,scenes,extended"
 
@@ -204,6 +205,7 @@ def test_color_mode_override_declares_a_mode_and_erases_none(api, capabilities,
         api.off(short)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-07")
 @pytest.mark.sniffer
 def test_min_level_write_confirms_accepted_value(api, lamps, sniffer, paced,
@@ -234,6 +236,7 @@ def test_min_level_write_confirms_accepted_value(api, lamps, sniffer, paced,
     assert leaf.get("source") == "write_confirmed", leaf
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-08")
 @pytest.mark.sniffer
 def test_min_level_clamp_against_lowered_max_confirms_accepted(
@@ -427,6 +430,7 @@ def _dimming_curve(api, short):
     return cell.get("value"), cell.get("source")
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-11")
 @pytest.mark.smoke
 def test_dimming_curve_writes_and_reports_write_confirmed_provenance(
@@ -458,9 +462,12 @@ def test_a_reserved_dimming_curve_never_reaches_the_bus(api):
     short = next(iter(api.optical_addrs()), None)
     if short is None:
         pytest.skip("no optical fixture configured")
-    status, body = api.raw_request(
-        "POST", "adapters/%d/physical-devices/%d/write-attributes"
-        % (api.adapter, short), {"dimming_curve": 2})
+    try:
+        status, body = api.raw_request(
+            "POST", "adapters/%d/physical-devices/%d/write-attributes"
+            % (api.adapter, short), {"dimming_curve": 2})
+    except LampNotAllowed as exc:
+        pytest.skip("%s — the guard refuses a curve write before the controller can" % exc)
     assert status == 422, (
         "a reserved dimming-curve value must be refused at ingress, got %d: %r"
         % (status, body))

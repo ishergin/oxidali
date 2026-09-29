@@ -113,8 +113,12 @@ reaches the wire:
   scene recall, and a frame that is DAPC, an arc-power command (`GO TO SCENE`
   included), `RESET`, `IDENTIFY DEVICE`, a DT8 `ACTIVATE`, xy or Tc step or
   `START AUTO CALIBRATION`, a DT6 `REFERENCE SYSTEM POWER` or `SELECT DIMMING CURVE`, or
-  an extended write for a device type the guard does not classify. Configuration writes
-  to an allowed lamp still pass (STRATEGY §4).
+  an extended write for a device type the guard does not classify. A new level or Tc
+  limit moves a lit lamp into its range at once, and a new curve changes its output, so
+  `SET MAX LEVEL`, `SET MIN LEVEL`, the DT8 `STORE COLOUR TEMPERATURE Tc LIMIT` and an
+  attribute write of `max_level`, `min_level`, `dimming_curve`, `tc_coolest_mirek` or
+  `tc_warmest_mirek` are visible too. Other configuration writes to an allowed lamp
+  still pass (STRATEGY §4).
 - A `/api/v1/dali/*` request whose body names no frame the guard can read is refused.
 - HCL schedules, rules, MQTT commands and the policy apply reach lamps inside the
   controller, past the guard: a test that uses them asks the guard before its first

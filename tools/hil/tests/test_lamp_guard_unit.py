@@ -70,6 +70,7 @@ def test_read_only_refuses_a_visible_action_and_keeps_a_configuration_write():
 ENABLE_DEVICE_TYPE = 0xC1
 SELECT_DIMMING_CURVE = 0xE3
 STORE_TC_LIMIT = 0xF2
+STORE_GEAR_FEATURES = 0xF3
 QUERY_COLOUR_VALUE = 0xFA
 
 
@@ -82,7 +83,7 @@ def test_the_client_reads_an_extended_command_by_the_enable_it_sent_before():
     guard.check_frame(_short_wire(OWNER, command=True), QUERY_COLOUR_VALUE)
     guard.check_frame(_short_wire(OWNER, command=True), SELECT_DIMMING_CURVE)
     guard.check_frame(ENABLE_DEVICE_TYPE, 8)
-    guard.check_frame(_short_wire(2, command=True), STORE_TC_LIMIT)
+    guard.check_frame(_short_wire(2, command=True), STORE_GEAR_FEATURES)
     guard.check_frame(ENABLE_DEVICE_TYPE, 8)
     with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY"):
         guard.check_frame(_short_wire(2, command=True), 0xE2)
@@ -137,14 +138,59 @@ def test_read_only_counts_every_extended_command_that_moves_the_light_as_visible
     for enabled, opcode in ((6, REFERENCE_SYSTEM_POWER), (6, SELECT_DIMMING_CURVE),
                             (8, X_STEP_UP), (8, Y_STEP_DOWN), (8, TC_STEP_COOLER),
                             (8, TC_STEP_WARMER), (8, START_AUTO_CALIBRATION), (8, 0xE2),
+                            (8, STORE_TC_LIMIT),
                             (UNCLASSIFIED_DEVICE_TYPE, REFERENCE_SYSTEM_POWER)):
         guard.check_frame(ENABLE_DEVICE_TYPE, enabled)
         with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY"):
             guard.check_frame(_short_wire(2, command=True), opcode)
     for enabled, opcode in ((6, STORE_DTR_AS_FAST_FADE_TIME), (6, DISABLE_CURRENT_PROTECTOR),
-                            (8, SET_TEMPORARY_X), (8, STORE_TC_LIMIT)):
+                            (8, SET_TEMPORARY_X), (8, STORE_GEAR_FEATURES)):
         guard.check_frame(ENABLE_DEVICE_TYPE, enabled)
         guard.check_frame(_short_wire(2, command=True), opcode)
+
+
+DTR0 = 0xA3
+SET_MAX_LEVEL, SET_MIN_LEVEL, SET_FADE_TIME = 0x2A, 0x2B, 0x2E
+CLAMPED_LEVEL = 100
+WRITE_ATTRIBUTES = "adapters/0/physical-devices/%d/write-attributes"
+
+
+def _raw(addr, data):
+    return {"frame": (addr << 8) | data}
+
+
+def test_a_new_level_limit_is_a_visible_frame_and_reaches_only_an_allowed_lamp():
+    for opcode in (SET_MAX_LEVEL, SET_MIN_LEVEL):
+        read_only = _guard(read_only=True)
+        read_only.check_request("POST", "dali/raw", _raw(DTR0, CLAMPED_LEVEL))
+        with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY"):
+            read_only.check_request("POST", "dali/raw", _raw(_short_wire(2, command=True),
+                                                             opcode))
+        with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY"):
+            read_only.check_request("POST", "dali/command",
+                                    _typed(_short_wire(2, command=True), opcode))
+        driving = _guard()
+        driving.check_request("POST", "dali/raw", _raw(DTR0, CLAMPED_LEVEL))
+        driving.check_request("POST", "dali/raw", _raw(_short_wire(2, command=True), opcode))
+        with pytest.raises(LampNotAllowed, match=r"SA1 is outside"):
+            driving.check_request("POST", "dali/raw", _raw(_short_wire(OWNER, command=True),
+                                                           opcode))
+    _guard(read_only=True).check_frame(_short_wire(2, command=True), SET_FADE_TIME)
+
+
+def test_an_attribute_write_that_moves_a_lit_lamp_is_visible_and_reaches_only_an_allowed_lamp():
+    read_only, driving = _guard(read_only=True), _guard()
+    for body in ({"max_level": CLAMPED_LEVEL}, {"min_level": CLAMPED_LEVEL},
+                 {"fade_time_ms": 0, "max_level": CLAMPED_LEVEL}, {"dimming_curve": 1},
+                 {"tc_coolest_mirek": 153}, {"tc_warmest_mirek": 370}):
+        with pytest.raises(LampNotAllowed, match=r"attribute write to SA2 refused: "
+                                                 r"HIL_LAMPS_READ_ONLY"):
+            read_only.check_request("POST", WRITE_ATTRIBUTES % 2, body)
+        driving.check_request("POST", WRITE_ATTRIBUTES % 2, body)
+        with pytest.raises(LampNotAllowed, match=r"SA1 is outside"):
+            driving.check_request("POST", WRITE_ATTRIBUTES % OWNER, body)
+    read_only.check_request("POST", WRITE_ATTRIBUTES % 2, {"fade_time_ms": 0,
+                                                           "power_on_level": 254})
 
 
 def test_an_attribute_write_reaches_only_an_allowed_lamp_and_is_not_a_visible_action():

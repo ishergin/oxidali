@@ -13,7 +13,9 @@ FIRST_QUERY_OPCODE = 0x90
 ARC_POWER_OPCODES = range(0x00, 0x20)
 RESET_OPCODE = 0x20
 IDENTIFY_DEVICE_OPCODE = 0x25
-VISIBLE_OPCODES = frozenset(ARC_POWER_OPCODES) | {RESET_OPCODE, IDENTIFY_DEVICE_OPCODE}
+SET_MAX_LEVEL, SET_MIN_LEVEL = 0x2A, 0x2B
+VISIBLE_OPCODES = frozenset(ARC_POWER_OPCODES) | {RESET_OPCODE, IDENTIFY_DEVICE_OPCODE,
+                                                  SET_MAX_LEVEL, SET_MIN_LEVEL}
 EXTENDED_FIRST = 0xE0
 QUERY_EXTENDED_VERSION = 0xFF
 DT6, DT8 = 6, 8
@@ -25,17 +27,26 @@ REFERENCE_SYSTEM_POWER, SELECT_DIMMING_CURVE = 0xE0, 0xE3
 ACTIVATE_OPCODE = 0xE2
 XY_STEPS = range(0xE3, 0xE7)
 TC_STEPS = range(0xE8, 0xEA)
-START_AUTO_CALIBRATION = 0xF6
+STORE_TC_LIMIT, START_AUTO_CALIBRATION = 0xF2, 0xF6
 VISIBLE_EXTENDED = {
     DT6: frozenset({REFERENCE_SYSTEM_POWER, SELECT_DIMMING_CURVE}),
-    DT8: frozenset(XY_STEPS) | frozenset(TC_STEPS) | {ACTIVATE_OPCODE, START_AUTO_CALIBRATION},
+    DT8: (frozenset(XY_STEPS) | frozenset(TC_STEPS)
+          | {ACTIVATE_OPCODE, STORE_TC_LIMIT, START_AUTO_CALIBRATION}),
 }
+VISIBLE_ATTRIBUTES = frozenset({"max_level", "min_level", "dimming_curve",
+                                "tc_coolest_mirek", "tc_warmest_mirek"})
 UNSEEN = "unseen"
 READ_METHODS = ("GET", "HEAD")
 DIAGNOSTIC_PREFIX = "dali/"
 
 SHORT, SEGMENT, LAMP, IDENTIFY = "short", "segment", "lamp", "identify"
-VISIBLE, CONFIGURATION = True, False
+VISIBLE = True
+
+
+def attribute_write_visible(body):
+    return not isinstance(body, dict) or bool(VISIBLE_ATTRIBUTES & set(body))
+
+
 RESOURCES = (
     (re.compile(r"adapters/[0-9]+/physical-devices/([0-9]+)/target-state"), SHORT,
      "target-state of SA%s", VISIBLE),
@@ -48,7 +59,7 @@ RESOURCES = (
     (re.compile(r"adapters/[0-9]+/commissioning/identify"), IDENTIFY,
      "IDENTIFY DEVICE of SA%s", VISIBLE),
     (re.compile(r"adapters/[0-9]+/physical-devices/([0-9]+)/write-attributes"), SHORT,
-     "attribute write to SA%s", CONFIGURATION),
+     "attribute write to SA%s", attribute_write_visible),
 )
 
 
@@ -436,7 +447,8 @@ class LampGuard:
                 key = match.group(1) if pattern.groups else None
                 target = self._resource_target(kind, key, body)
                 if target is not None:
-                    self.check_target(target, visible, label % (target if key is None else key))
+                    self.check_target(target, visible(body) if callable(visible) else visible,
+                                      label % (target if key is None else key))
                 return
 
     def _resource_target(self, kind, key, body):
