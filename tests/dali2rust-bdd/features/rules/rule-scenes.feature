@@ -18,6 +18,7 @@ Feature: Rules and scenes: a recall is one frame and a fact once it has happened
     And I remember the stats pointer "/dali/errors_total"
     When I send a POST request to "/api/v1/adapters/0/scenes/3/recall"
     Then the response status should be 503
+    And all scripted DALI exchanges should be consumed without errors
     And the stats pointer "/dali/errors_total" should have grown by 1
     When I send a POST request to "/api/v1/adapters/0/scenes/4/recall"
     Then the response status should be 200
