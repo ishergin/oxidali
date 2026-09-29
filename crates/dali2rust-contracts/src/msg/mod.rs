@@ -41,7 +41,8 @@ pub use wire::{DaliCommandPayload, DaliConfirmationPayload, DaliEventPayload};
 
 pub use commands::{
     Dali103CommissionCommand, Dali103FeedbackConfigureCommand, Dali103FeedbackDriveCommand,
-    Dali103IdentifyCommand, Dali103InstanceConfigureCommand, MqttPublishCommand, RuleCommitCommand,
+    Dali103IdentifyCommand, Dali103InstanceConfigureCommand, FeedbackPatchField, InstancePatchField,
+    MqttPublishCommand, RuleCommitCommand,
     RuleEnableCommand, RuleRunCommand, RuleStageCommand,
     Dali103ScanCommand, InputDeviceMetadataUpdateCommand, InputDeviceNotesUpdateCommand,
     DaliAddressingCommand, DaliCommissioningStepCommand, DaliIdentifyDeviceCommand,

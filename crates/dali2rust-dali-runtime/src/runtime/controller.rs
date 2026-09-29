@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use dali2rust_domain::dali::commands::{DaliCommand, DaliResponse};
 use dali2rust_domain::dali::controller::{
-    DaliApplicationController, DaliProductController, Frame24Fault,
+    DaliApplicationController, DaliProductController, Frame24Fault, ReadbackWorkaround,
 };
 use dali2rust_domain::dali::frame::{ForwardFrame, FrameError};
 use dali2rust_domain::dali::pres::special::SpecialCommand;
@@ -246,6 +246,19 @@ impl<T: DaliTransport + Send> DaliApplicationController for DaliController<T> {
 
     fn transaction_exempt<R>(&mut self, run: impl FnOnce(&mut Self) -> R) -> R {
         self.run_transaction(true, run)
+    }
+
+    fn note_workaround(&mut self, workaround: ReadbackWorkaround) {
+        let counters = &self.wire_counters;
+        let counter = match workaround {
+            ReadbackWorkaround::GroupsCorrected => &counters.readback_groups_corrected,
+            ReadbackWorkaround::ColourFeaturesCorrected => {
+                &counters.readback_colour_features_corrected
+            }
+            ReadbackWorkaround::ExtendedFadeCorrected => &counters.readback_extended_fade_corrected,
+            ReadbackWorkaround::ProgramRepair => &counters.program_repairs,
+        };
+        counter.fetch_add(1, Relaxed);
     }
 }
 

@@ -28,7 +28,8 @@ use dali2rust_api::http::redundancy_settings_state::{
     RedundancySettingsHttpStateBridge,
 };
 use dali2rust_api::http::stats_state::{
-    StatsBusDto, StatsControllerDto, StatsDaliDto, StatsDaliTaskTimingDto, StatsHttpState, StatsInputDto, StatsMqttDto,
+    StatsBusDto, StatsControllerDto, StatsDaliBackwardDto, StatsDaliConsoleDto, StatsDaliDto,
+    StatsDaliReadbackDto, StatsDaliTaskTimingDto, StatsHttpState, StatsInputDto, StatsMqttDto,
     StatsNetworkDto, StatsOperationsDto, StatsReportDto, StatsRulesDto, StatsWebSocketDto,
 };
 use dali2rust_api::http::{
@@ -530,7 +531,6 @@ fn stats_bus_dto(c: &dali2rust_bus::BusCounters, confirmation_timeouts: u32) -> 
 
 fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
     let c = &h.dali_worker;
-    let console = crate::log::console_counters();
     StatsDaliDto {
         commands_executed_total: c.commands_handled.load(Relaxed),
         errors_total: c
@@ -549,17 +549,8 @@ fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
         foreign_verbs_projected_total: h.projector.transitions_expanded.load(Relaxed),
         foreign_dimming_unprojected_total: h.sniffer_translator.dimming_unprojectable.load(Relaxed),
         foreign_scene_writes_total: h.sniffer_translator.scene_writes_observed.load(Relaxed),
-        backward_undecodable_total: h.phy_sniffer.backward_undecodable.load(Relaxed),
-        backward_frame_size_total: h.phy_sniffer.backward_frame_size.load(Relaxed),
-        backward_incomplete_total: h.phy_sniffer.backward_incomplete.load(Relaxed),
-        backward_early_rejected_total: h.phy_sniffer.backward_early_rejected.load(Relaxed),
-        backward_late_rejected_total: h.phy_sniffer.backward_late_rejected.load(Relaxed),
-        backward_multi_answer_total: h.phy_sniffer.backward_multi_answer.load(Relaxed),
-        console_log_dropped_total: console.dropped.load(Relaxed),
-        console_log_busy_total: console.busy.load(Relaxed),
-        console_log_truncated_total: console.truncated.load(Relaxed),
-        console_log_unavailable_total: console.unavailable.load(Relaxed),
-        console_uart_errors_total: console.uart_errors.load(Relaxed),
+        backward: stats_backward_dto(&h.phy_sniffer),
+        console: stats_console_dto(),
         isr_ticks_deficit_raw_total: h.phy_sniffer.isr_ticks_deficit_raw.load(Relaxed),
         isr_ticks_surplus_raw_total: h.phy_sniffer.isr_ticks_surplus_raw.load(Relaxed),
         isr_ticks_lost_total: h.phy_sniffer.isr_ticks_lost.load(Relaxed),
@@ -567,6 +558,38 @@ fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
         isr_late_ticks_total: h.phy_sniffer.isr_late_ticks.load(Relaxed),
         isr_max_gap_us: h.phy_sniffer.isr_max_gap_us.load(Relaxed),
         task_timing: stats_task_timing_dto(h),
+        readback: stats_readback_dto(&h.dali_wire),
+    }
+}
+
+fn stats_backward_dto(s: &dali2rust_platform::dali::PhySnifferCounters) -> StatsDaliBackwardDto {
+    StatsDaliBackwardDto {
+        backward_undecodable_total: s.backward_undecodable.load(Relaxed),
+        backward_frame_size_total: s.backward_frame_size.load(Relaxed),
+        backward_incomplete_total: s.backward_incomplete.load(Relaxed),
+        backward_early_rejected_total: s.backward_early_rejected.load(Relaxed),
+        backward_late_rejected_total: s.backward_late_rejected.load(Relaxed),
+        backward_multi_answer_total: s.backward_multi_answer.load(Relaxed),
+    }
+}
+
+fn stats_console_dto() -> StatsDaliConsoleDto {
+    let console = crate::log::console_counters();
+    StatsDaliConsoleDto {
+        console_log_dropped_total: console.dropped.load(Relaxed),
+        console_log_busy_total: console.busy.load(Relaxed),
+        console_log_truncated_total: console.truncated.load(Relaxed),
+        console_log_unavailable_total: console.unavailable.load(Relaxed),
+        console_uart_errors_total: console.uart_errors.load(Relaxed),
+    }
+}
+
+fn stats_readback_dto(w: &dali2rust_platform::dali::DaliWireCounters) -> StatsDaliReadbackDto {
+    StatsDaliReadbackDto {
+        readback_groups_corrected_total: w.readback_groups_corrected.load(Relaxed),
+        readback_colour_features_corrected_total: w.readback_colour_features_corrected.load(Relaxed),
+        readback_extended_fade_corrected_total: w.readback_extended_fade_corrected.load(Relaxed),
+        program_repairs_total: w.program_repairs.load(Relaxed),
     }
 }
 
@@ -1418,9 +1441,58 @@ impl dali2rust_api::http::firmware_state::FirmwareHttpState for FirmwareBridge {
 #[cfg(test)]
 mod tests {
     use core::sync::atomic::Ordering::Relaxed;
+    use std::sync::{Arc, Mutex};
 
-    use super::arbitration_dto;
+    use super::{arbitration_dto, stats_readback_dto};
+    use crate::dali::transport::mock::MockDaliTransport;
+    use dali2rust_contracts::msg::GroupMembershipAction;
+    use dali2rust_dali_runtime::runtime::controller::DaliController;
+    use dali2rust_dali_runtime::runtime::executor::program_group_membership;
+    use dali2rust_dali_runtime::StdClock;
+    use dali2rust_domain::dali::commands::{DaliCommand, StandardCommand};
+    use dali2rust_domain::dali::types::DaliAddress;
     use dali2rust_platform::arbitration::ArbitrationReflexCounters;
+    use dali2rust_platform::dali::DaliWireCounters;
+
+    const SHORT: u8 = 4;
+    const GROUP: u8 = 3;
+
+    fn frame(command: StandardCommand) -> u16 {
+        let address = DaliAddress::short(SHORT).expect("short address");
+        DaliCommand::Standard { address, command }.to_forward_frame().raw()
+    }
+
+    fn script_group_add(mock: &MockDaliTransport, readback: u8) {
+        let add = frame(StandardCommand::AddToGroup { group: GROUP });
+        mock.expect_forward_frame(add);
+        mock.expect_forward_frame(add);
+        mock.expect_forward_frame_with_backward(frame(StandardCommand::QueryGroups0To7), Some(readback));
+        mock.expect_forward_frame_with_backward(frame(StandardCommand::QueryGroups8To15), Some(0));
+    }
+
+    #[test]
+    fn a_repair_the_group_programme_spends_reaches_program_repairs_total_and_no_other_field() {
+        let mock = MockDaliTransport::new();
+        script_group_add(&mock, 0);
+        script_group_add(&mock, 1 << GROUP);
+        let transport = Arc::new(Mutex::new(mock));
+        let mut controller = DaliController::new(Arc::clone(&transport), Box::new(StdClock::new()));
+        let wire = Arc::new(DaliWireCounters::default());
+        controller.set_wire_counters(Arc::clone(&wire));
+
+        program_group_membership(&mut controller, SHORT, GROUP, GroupMembershipAction::Add)
+            .expect("the second drive converges");
+
+        let row = stats_readback_dto(&wire);
+        let got = [
+            row.readback_groups_corrected_total,
+            row.readback_colour_features_corrected_total,
+            row.readback_extended_fade_corrected_total,
+            row.program_repairs_total,
+        ];
+        assert_eq!(got, [0, 0, 0, 1]);
+        assert_eq!(transport.lock().expect("mock lock").scripted_exchanges_remaining(), 0);
+    }
 
     #[test]
     fn every_arbitration_field_reads_its_own_producer() {

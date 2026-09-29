@@ -743,6 +743,26 @@ def test_task_latency_gauges_are_values_not_deltas():
     assert out["persist_flush_slow"] == 78
 
 
+READBACK_WORKAROUNDS = ("readback_groups_corrected", "readback_colour_features_corrected",
+                        "readback_extended_fade_corrected", "program_repairs")
+
+
+def test_readback_workaround_counters_are_watched_and_never_gated():
+    stats = {"dali": {name + "_total": 3 for name in READBACK_WORKAROUNDS}}
+    got = validity.isr_timing_counters(stats)
+    assert {name: got[name] for name in READBACK_WORKAROUNDS} == dict.fromkeys(READBACK_WORKAROUNDS, 3)
+    assert set(READBACK_WORKAROUNDS) == set(validity.WATCHED_WORKAROUNDS)
+    budget = validity.load_budget()
+    assert not set(READBACK_WORKAROUNDS) & set(budget), "a watched counter has no budget to set"
+    gated = {name: 0 for name in READBACK_WORKAROUNDS}
+    assert validity.bus_drop_breaches({"bus_drops": dict.fromkeys(READBACK_WORKAROUNDS, 9)},
+                                      gated) == []
+    lines = validity._bus_drop_lines({"bus_drops": dict.fromkeys(READBACK_WORKAROUNDS, 9)}, budget)
+    for name in READBACK_WORKAROUNDS:
+        row = next(line for line in lines if name in line)
+        assert "watched, never gated" in row and "set a budget" not in row, row
+
+
 def test_task_latency_counters_are_read_from_stats():
     stats = {"dali": {"answer_staged_total": 30, "answer_stage_late_total": 1,
                       "persist_flush_slow_total": 78, "persist_gate_waits_total": 5}}

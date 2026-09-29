@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use cucumber::{given, then};
-use dali2rust_test_support::wait_until;
-use serde_json::Value;
+use dali2rust_test_support::{try_wait_until, wait_until};
+use serde_json::{json, Value};
 
 use crate::steps::last_json;
 use crate::DaliWorld;
@@ -49,6 +49,10 @@ async fn stats_blocks_present(world: &mut DaliWorld) {
         "/dali/console_log_truncated_total",
         "/dali/console_log_unavailable_total",
         "/dali/console_uart_errors_total",
+        "/dali/readback_groups_corrected_total",
+        "/dali/readback_colour_features_corrected_total",
+        "/dali/readback_extended_fade_corrected_total",
+        "/dali/program_repairs_total",
         "/operations/running",
         "/operations/succeeded_total",
         "/operations/failed_total",
@@ -201,7 +205,7 @@ async fn then_stats_dali_counter(world: &mut DaliWorld, field: String, expected:
     let port = world.server_port();
     wait_until(
         || {
-            crate::steps::physical_devices_steps::fetch_json(port, "/api/v1/stats")
+            crate::steps::polling::fetch_json(port, "/api/v1/stats")
                 .and_then(|json| json.pointer(&pointer).and_then(Value::as_u64))
                 == Some(expected)
         },
@@ -209,4 +213,47 @@ async fn then_stats_dali_counter(world: &mut DaliWorld, field: String, expected:
     );
     let json = stats_snapshot(world);
     assert_eq!(pointer_u64(&json, &pointer), expected, "{json}");
+}
+
+const READBACK_COUNTERS: [&str; 4] = [
+    "/dali/readback_groups_corrected_total",
+    "/dali/readback_colour_features_corrected_total",
+    "/dali/readback_extended_fade_corrected_total",
+    "/dali/program_repairs_total",
+];
+
+const U32_WRAP: u64 = 0xFFFF_FFFF;
+
+fn readback_counters(json: &Value) -> [u64; 4] {
+    READBACK_COUNTERS.map(|pointer| pointer_u64(json, pointer))
+}
+
+// PD-159 PD-272 PD-273
+#[given("I remember the stats dali read-back counters")]
+async fn remember_readback_counters(world: &mut DaliWorld) {
+    let json = stats_snapshot(world);
+    world.remembered_json = Some(json!(readback_counters(&json)));
+}
+
+// PD-159 PD-272 PD-273
+#[then(
+    regex = r"^the stats dali read-back counters should eventually have grown by groups (\d+), colour features (\d+), extended fade (\d+) and program repairs (\d+)$"
+)]
+async fn readback_counters_grew(world: &mut DaliWorld, groups: u64, features: u64, fade: u64, repairs: u64) {
+    let remembered = world.remembered_json.clone().expect("remembered read-back counters");
+    let before: [u64; 4] = serde_json::from_value(remembered).expect("four remembered counters");
+    let port = world.server_port();
+    let grown = || {
+        crate::steps::polling::fetch_json(port, "/api/v1/stats").map(|json| {
+            let now = readback_counters(&json);
+            [0, 1, 2, 3].map(|i| now[i].wrapping_sub(before[i]) & U32_WRAP)
+        })
+    };
+    let want = [groups, features, fade, repairs];
+    try_wait_until(|| grown() == Some(want), STATS_TIMEOUT);
+    assert_eq!(
+        grown(),
+        Some(want),
+        "each read-back counter grows by what its own workaround did, in its own field: {READBACK_COUNTERS:?}"
+    );
 }

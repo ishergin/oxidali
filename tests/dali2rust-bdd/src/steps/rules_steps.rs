@@ -24,7 +24,7 @@ async fn then_stats_pointer_reaches(world: &mut DaliWorld, secs: u64, pointer: S
     let seen = std::cell::RefCell::new(0u64);
     wait_until(
         || {
-            let value = crate::steps::physical_devices_steps::fetch_json(port, "/api/v1/stats")
+            let value = crate::steps::polling::fetch_json(port, "/api/v1/stats")
                 .and_then(|json| json.pointer(&pointer).and_then(serde_json::Value::as_u64))
                 .unwrap_or(0);
             *seen.borrow_mut() = value;
