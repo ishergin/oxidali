@@ -328,6 +328,10 @@ def _is_byte(value):
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= BYTE
 
 
+def _short_of(body):
+    return body.get("short_address") if isinstance(body, dict) else None
+
+
 def diagnostic_frame(path, body):
     if not isinstance(body, dict):
         return None
@@ -443,21 +447,34 @@ class LampGuard:
             match = pattern.fullmatch(path)
             if match:
                 key = match.group(1) if pattern.groups else None
-                target = self._resource_target(kind, key, body)
-                if target is not None:
-                    self.check_target(target, visible(body) if callable(visible) else visible,
-                                      label % (target if key is None else key))
+                self._check_resource(kind, key, body, label,
+                                     visible(body) if callable(visible) else visible)
                 return
 
-    def _resource_target(self, kind, key, body):
+    def _check_resource(self, kind, key, body, label, visible):
+        what = label % (key if key is not None else _short_of(body))
+        if visible and self.read_only:
+            raise LampNotAllowed("%s refused: HIL_LAMPS_READ_ONLY=1 forbids every visible "
+                                 "action" % what)
+        target = self._resource_target(kind, key, body, what)
+        if target is not None:
+            self.check_target(target, visible, what)
+
+    def _resource_target(self, kind, key, body, what):
         if kind == SHORT:
             return int(key)
         if kind == SEGMENT:
             return TARGET_SEGMENT
         if kind == LAMP:
-            return None if self._binding is None else self._binding(int(key))
-        short = body.get("short_address") if isinstance(body, dict) else None
-        return short if isinstance(short, int) else None
+            if self._binding is None:
+                raise LampNotAllowed("%s refused: no controller resolves the lamp's binding"
+                                     % what)
+            return self._binding(int(key))
+        short = _short_of(body)
+        if not _is_byte(short):
+            raise LampNotAllowed("%s refused: the body names no short address, so the guard "
+                                 "cannot tell which gear it reaches" % what)
+        return short
 
     def check_frame(self, addr, data, enabled=UNSEEN):
         if enabled == UNSEEN and self._enabled is not None:

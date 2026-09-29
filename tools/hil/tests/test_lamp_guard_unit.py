@@ -314,6 +314,44 @@ def test_every_client_door_to_a_forbidden_lamp_is_shut_before_the_wire(monkeypat
         "adapters/0/virtual-lamps/8/target-state", "dali/command"]
 
 
+class _Failing(_Response):
+    status_code = 500
+
+
+def test_a_virtual_lamp_target_is_refused_unless_its_binding_was_read(monkeypatch):
+    client = _client()
+    answer = client.http.request
+
+    def request(method, url, json=None, timeout=None):
+        if method == "GET" and url.endswith("virtual-lamps/9"):
+            return _Failing({"error": "busy"})
+        return answer(method, url, json=json, timeout=timeout)
+
+    monkeypatch.setattr(client.http, "request", request)
+    with pytest.raises(LampNotAllowed, match=r"VL9 refused: its binding could not be read"):
+        client.vlamps.ts(9, {"power": "on"})
+    assert client.http.sent == []
+    client.vlamps.ts(5, {"power": "on"})
+    assert [path for _m, path, _b in client.http.sent] == [
+        "adapters/0/virtual-lamps/5/target-state"]
+
+
+def test_read_only_refuses_a_visible_route_before_it_resolves_the_target():
+    looked = []
+    guard = LampGuard(LAMPS, read_only=True, binding=looked.append)
+    with pytest.raises(LampNotAllowed, match=r"target-state of VL7 refused: "
+                                             r"HIL_LAMPS_READ_ONLY"):
+        guard.check_request("PUT", "adapters/0/virtual-lamps/7/target-state", {"power": "on"})
+    assert looked == []
+    with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY"):
+        guard.check_request("POST", "adapters/0/commissioning/identify", {})
+    with pytest.raises(LampNotAllowed, match=r"names no short address"):
+        LampGuard(LAMPS).check_request("POST", "adapters/0/commissioning/identify", {})
+    with pytest.raises(LampNotAllowed, match=r"no controller resolves"):
+        LampGuard(LAMPS).check_request("PUT", "adapters/0/virtual-lamps/7/target-state",
+                                       {"power": "on"})
+
+
 def test_off_all_drives_only_the_allowlist(monkeypatch):
     monkeypatch.setattr(hil.api.time, "sleep", lambda _s: None)
     client = _client(shorts=(0, 1, 2, 3, 4))

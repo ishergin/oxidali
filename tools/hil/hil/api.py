@@ -240,8 +240,10 @@ class Client:
     def _bound_short(self, lamp_id):
         try:
             lamp = self.vlamps.get(lamp_id)
-        except ApiError:
-            return None
+        except (ApiError, requests.RequestException) as exc:
+            raise LampNotAllowed("target-state of VL%d refused: its binding could not be read "
+                                 "(%s), so the guard cannot tell which gear it reaches"
+                                 % (lamp_id, exc)) from exc
         return (lamp.get("binding") or {}).get("physical_short_address")
 
     def optical_addrs(self):
