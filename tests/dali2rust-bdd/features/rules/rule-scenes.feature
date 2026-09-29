@@ -47,7 +47,12 @@ Feature: Rules and scenes: a recall is one frame and a fact once it has happened
     And the DALI mock transport should have sent only a short 0 go-to-scene 3 frame
 
   @id:RULE-032
-  Scenario: A recall or a light action on a lamp with no binding reaches no wire and fails its rule
+  Scenario: A recall or a light action on a lamp whose binding was removed reaches no wire and fails its rule
+    Given adapter 0 has discovered physical devices 0 and 1
+    When I PUT JSON {"physical_short_address":0} to "/api/v1/adapters/0/virtual-lamps/2/binding"
+    Then the response status should be 200
+    When I send a DELETE request to "/api/v1/adapters/0/virtual-lamps/2/binding"
+    Then the response status should be 200
     When I PUT JSON {"base_revision":0,"source":"rule \"recall-nowhere\" {\n  when http trigger\n  do scene(3).recall(lamp(2))\n}\nrule \"off-nowhere\" {\n  when http trigger\n  do lamp(2).off()\n}\nrule \"watch\" cooldown 0ms {\n  when rule(\"recall-nowhere\") fails\n  when rule(\"off-nowhere\") fails\n  do log(\"w\")\n}\n"} to "/api/v1/rules"
     Then the response status should be 202
     And the last operation eventually succeeds
