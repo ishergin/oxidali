@@ -952,6 +952,7 @@ dependencies = [
  "dali2rust-bus",
  "dali2rust-contracts",
  "dali2rust-platform",
+ "log",
 ]
 
 [[package]]
