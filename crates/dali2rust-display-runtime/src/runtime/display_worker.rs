@@ -381,12 +381,16 @@ fn apply_scene(facts: &mut Facts, adapter: u8, body: &DaliSceneRecalledEvent) {
     if !speaks_for(adapter, body.registry_adapter_id) {
         return;
     }
+    let scope = match body.virtual_lamp_id {
+        Some(_) => DaliTargetScope::VirtualLamp,
+        None => body.scope,
+    };
     facts.last_action = Some(ActionLine {
         target: target_label(
-            body.scope,
+            scope,
             Some(body.short_address),
             Some(body.group_id),
-            None,
+            body.virtual_lamp_id,
         ),
         what: EventLabel::from_fmt(format_args!("SC{}", body.scene_id)),
         source: Some(body.source),

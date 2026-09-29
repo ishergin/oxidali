@@ -437,6 +437,7 @@ declare_bus_payloads! {
         pub recalled_at_mono_ms: u32,
         pub source: RuntimeSource,
         pub hold_hcl: bool,
+        pub virtual_lamp_id: Option<u8>,
     }
     budget = DaliSceneRecalledEvent {
         registry_adapter_id: u8::MAX,
@@ -448,6 +449,7 @@ declare_bus_payloads! {
         recalled_at_mono_ms: u32::MAX,
         source: RuntimeSource::Readback,
         hold_hcl: true,
+        virtual_lamp_id: Some(63),
     };
 
     pub struct DaliObservedFrameEvent {

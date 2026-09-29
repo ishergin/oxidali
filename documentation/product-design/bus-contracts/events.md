@@ -82,7 +82,7 @@
 |---|---|---|---|
 | `DaliTargetStateAppliedEvent` | проектор, реестр, дисплей | required | Уставка стала истинной на проводе; несёт scope, идентичности, setpoint, признак DAPC, источник и `hold_hcl` команды и монотонную метку момента применения |
 | `DaliTargetStateFailedEvent` | дисплей | best-effort | Отказ исполнения; ждущий узнаёт о нём по подтверждению |
-| `DaliSceneRecalledEvent` | проектор, реестр, правила, дисплей | required | Recall сцены на адрес, куда ушёл кадр, источник и `hold_hcl` коммита. Наш публикует `DaliWorker` — с `error`, если кадр не ушёл на шину, и тогда его показывает только дисплей; чужой — sniffer translator. Без `error` реестр запоминает активную сцену |
+| `DaliSceneRecalledEvent` | проектор, реестр, правила, дисплей | required | Recall сцены на адрес, куда ушёл кадр, источник и `hold_hcl` коммита; recall лампы несёт и её `virtual_lamp_id`, по которому дисплей называет лампу и тогда, когда адреса нет. Наш публикует `DaliWorker` — с `error`, если кадр не ушёл на шину, и тогда его показывает только дисплей; чужой — sniffer translator. Без `error` реестр запоминает активную сцену |
 | `DaliGroupMembershipProgrammedEvent` | реестр, трекер, оркестратор | required | Ячейка членства запрограммирована; несёт маску readback'а |
 | `DaliSceneProgrammedEvent` | реестр, трекер, оркестратор | required | Строка сцены запрограммирована; несёт readback уровня и эхо записанного |
 | `DaliAttributesReadEvent` | реестр, проектор | required | Один чанк на группу атрибутов; секцию `RuntimeStatus` применяет только проектор |

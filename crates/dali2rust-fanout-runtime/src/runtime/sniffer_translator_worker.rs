@@ -450,6 +450,7 @@ fn foreign_recall(
         recalled_at_mono_ms: raw.observed_at_mono_ms,
         source: RuntimeSource::Sniffer,
         hold_hcl: true,
+        virtual_lamp_id: None,
     })
 }
 

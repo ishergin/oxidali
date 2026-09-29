@@ -956,6 +956,7 @@ fn scene_recall_expands_applied_rows_only_fan050_fan051() {
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Api,
             hold_hcl: true,
+            virtual_lamp_id: None,
         },
     );
 
@@ -990,6 +991,7 @@ fn scene_recall_expands_applied_rows_only_fan050_fan051() {
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Api,
             hold_hcl: true,
+            virtual_lamp_id: None,
         },
     );
     assert_no_more_updates(tap);
@@ -1016,6 +1018,7 @@ fn a_short_address_recall_projects_the_bound_row_only() {
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Rules,
             hold_hcl: true,
+            virtual_lamp_id: None,
         },
     );
 
@@ -1057,6 +1060,7 @@ fn a_recall_that_names_a_lamp_instead_of_an_address_is_ignored() {
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Api,
             hold_hcl: true,
+            virtual_lamp_id: None,
         },
     );
 
@@ -1083,6 +1087,7 @@ fn foreign_recall(scope: DaliTargetScope, short_address: u8, group_id: u8) -> Da
         recalled_at_mono_ms: PRODUCER_MONO_MS,
         source: RuntimeSource::Sniffer,
         hold_hcl: true,
+        virtual_lamp_id: None,
     }
 }
 
@@ -1179,6 +1184,7 @@ fn scene_recall_filters_incapable_member_colour_fan053() {
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Api,
             hold_hcl: true,
+            virtual_lamp_id: None,
         },
     );
 
@@ -1249,6 +1255,7 @@ fn group_scoped_scene_recall_projects_members_only_fan055() {
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Api,
             hold_hcl: true,
+            virtual_lamp_id: None,
         },
     );
 
@@ -1317,6 +1324,7 @@ fn group_recall_without_a_group_snapshot_is_ignored_not_a_success() {
             recalled_at_mono_ms: PRODUCER_MONO_MS,
             source: RuntimeSource::Api,
             hold_hcl: true,
+            virtual_lamp_id: None,
         },
     );
 

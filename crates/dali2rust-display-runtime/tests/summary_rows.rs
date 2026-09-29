@@ -238,9 +238,35 @@ fn a_scene_recall_names_the_scene() {
             recalled_at_mono_ms: 0,
             source: RuntimeSource::Api,
             hold_hcl: true,
+            virtual_lamp_id: None,
         },
     );
     wait_row(&view, 6, "G02 SC3 WEB");
+}
+
+#[test]
+fn a_failed_recall_on_a_lamp_names_the_lamp() {
+    let (_host, publisher, view, _w) =
+        spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
+    publish(
+        &publisher,
+        DaliSceneRecalledEvent {
+            registry_adapter_id: 0,
+            scope: DaliTargetScope::VirtualLamp,
+            short_address: 0,
+            group_id: 0,
+            scene_id: 3,
+            error: Some(dali2rust_contracts::msg::CompactErrorPayload::new(
+                dali2rust_contracts::msg::ErrorCode::OperationFailed,
+                "dali_transport_error",
+            )),
+            recalled_at_mono_ms: 0,
+            source: RuntimeSource::Rules,
+            hold_hcl: true,
+            virtual_lamp_id: Some(4),
+        },
+    );
+    wait_row(&view, 6, "! L04 SC3");
 }
 
 #[test]

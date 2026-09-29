@@ -165,6 +165,7 @@ fn scene_recalls_and_colour_only_commands_never_arm_a_tile() {
                 recalled_at_mono_ms: 2_000,
                 source: dali2rust_contracts::msg::RuntimeSource::Api,
                 hold_hcl: true,
+                virtual_lamp_id: None,
             },
         ),
     );
@@ -268,6 +269,7 @@ fn a_group_recall_clears_the_adapter_wide_active_scene() {
                 recalled_at_mono_ms: 3_000,
                 source: dali2rust_contracts::msg::RuntimeSource::Api,
                 hold_hcl: true,
+                virtual_lamp_id: None,
             },
         )
     };

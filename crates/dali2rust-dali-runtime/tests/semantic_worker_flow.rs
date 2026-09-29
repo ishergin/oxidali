@@ -582,6 +582,7 @@ fn a_lamp_recall_is_one_go_to_scene_to_the_short_address_it_is_bound_to() {
         (DaliTargetScope::Short, 12, 3),
         "the fact names the address the frame went to, so the projector reaches that device only"
     );
+    assert_eq!(body.virtual_lamp_id, Some(4), "and the lamp that asked, for the display");
     assert_eq!(harness.recv_confirmation_for(94).status, DeliveryStatus::Ok);
     assert_eq!(
         harness.sent_commands.lock().expect("sent lock").as_slice(),
@@ -664,6 +665,11 @@ fn a_recall_on_an_unbound_lamp_reaches_no_wire_and_is_counted() {
     let body = recalled_event(&harness, 95);
     let error = body.error.as_ref().expect("an unbound lamp is a failed recall");
     assert_eq!(error.message.as_str(), "vl_unbound");
+    assert_eq!(
+        (body.scope, body.virtual_lamp_id),
+        (DaliTargetScope::VirtualLamp, Some(4)),
+        "a failed lamp recall has no address, so it names the lamp"
+    );
     let conf = harness.recv_confirmation_for(95);
     assert_eq!(conf.status, DeliveryStatus::ExecutionFailed);
     assert_eq!(

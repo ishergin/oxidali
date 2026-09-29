@@ -342,6 +342,8 @@ fn publish_scene_recalled_outcome(
             recalled_at_mono_ms: dali2rust_bsp::monotonic_clock::observation_stamp_ms(),
             source: outcome.source,
             hold_hcl: command.hold_hcl,
+            virtual_lamp_id: (command.scope == DaliTargetScope::VirtualLamp)
+                .then_some(command.virtual_lamp_id),
         },
     );
     publish_event_required(
