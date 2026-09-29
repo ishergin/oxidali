@@ -65,7 +65,7 @@ pub struct SnifferTranslatorCounters {
     pub input_events_typed_from_registry: AtomicU32,
     pub input_events_ambiguous_scheme: AtomicU32,
     pub input_lifecycle: AtomicU32,
-    pub input_publish_retried: AtomicU32,
+    pub fact_publish_retried: AtomicU32,
     pub app_control_pairs: AtomicU32,
     pub scene_writes_observed: AtomicU32,
 }
@@ -866,7 +866,7 @@ fn publish_required_fact<P>(
     }
     if outcome.retries > 0 {
         counters
-            .input_publish_retried
+            .fact_publish_retried
             .fetch_add(outcome.retries, Ordering::Relaxed);
     }
 }

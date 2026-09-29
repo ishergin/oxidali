@@ -771,7 +771,7 @@ export type SnifferTranslatorCounters = {
   input_events_generic: number
   input_events_ambiguous_scheme: number
   input_lifecycle: number
-  input_publish_retried: number
+  fact_publish_retried: number
   app_control_pairs: number
 }
 

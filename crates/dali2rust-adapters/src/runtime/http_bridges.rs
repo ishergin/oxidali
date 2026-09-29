@@ -271,7 +271,7 @@ declare_counter_mapping! {
     sniffer_translator_dto(c: dali2rust_fanout_runtime::SnifferTranslatorCounters) -> SnifferTranslatorDto {
         observed_published, unknown_seen, special_tracked, dt8_staged, backward_ignored,
         publish_failed, input_events_typed, input_events_generic,
-        input_events_ambiguous_scheme, input_lifecycle, input_publish_retried,
+        input_events_ambiguous_scheme, input_lifecycle, fact_publish_retried,
         app_control_pairs,
     }
 
