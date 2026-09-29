@@ -48,6 +48,8 @@ pub enum ModelError {
     VarTextTooLong { rule: String, text: String },
     MqttTopicTooLong { rule: String, bytes: usize },
     MqttPayloadTooLong { rule: String, bytes: usize },
+    MqttTopicNotExact { rule: String, topic: String },
+    TooManyMqttTopics { rule: String, count: usize },
     SceneCycleTooLong { rule: String, count: usize },
     SceneOutOfRange { rule: String, scene: u8 },
 }
@@ -74,6 +76,8 @@ impl ModelError {
             | ModelError::VarTextTooLong { rule, .. }
             | ModelError::MqttTopicTooLong { rule, .. }
             | ModelError::MqttPayloadTooLong { rule, .. }
+            | ModelError::MqttTopicNotExact { rule, .. }
+            | ModelError::TooManyMqttTopics { rule, .. }
             | ModelError::SceneCycleTooLong { rule, .. }
             | ModelError::SceneOutOfRange { rule, .. } => Some(rule),
             ModelError::NoActions { owner } => Some(owner),
@@ -117,6 +121,8 @@ impl fmt::Display for ModelError {
             E::VarTextTooLong { rule, text } => write!(f, "rule \"{rule}\": var text too long: \"{text}\""),
             E::MqttTopicTooLong { rule, bytes } => write!(f, "rule \"{rule}\": mqtt topic is {bytes} bytes"),
             E::MqttPayloadTooLong { rule, bytes } => write!(f, "rule \"{rule}\": mqtt payload is {bytes} bytes"),
+            E::MqttTopicNotExact { rule, topic } => write!(f, "rule \"{rule}\": mqtt topic \"{topic}\" is not one exact topic"),
+            E::TooManyMqttTopics { rule, count } => write!(f, "rule \"{rule}\": the document names {count} mqtt trigger topics"),
             E::SceneCycleTooLong { rule, count } => write!(f, "rule \"{rule}\": scene.cycle lists {count} scenes"),
             E::SceneOutOfRange { rule, scene } => write!(f, "rule \"{rule}\": scene {scene} out of range"),
         }

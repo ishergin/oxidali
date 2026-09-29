@@ -2,10 +2,14 @@ use crate::cursor::Cursor;
 use crate::lexer::{Pos, TokenKind};
 use crate::parser::refs;
 use crate::parser::timeval;
-use dali2rust_rules_model::limits::{MAX_INPUT_VALUE_10BIT, MAX_LEVEL, MAX_SCENE};
+use dali2rust_rules_model::limits::{
+    mqtt_topic_is_exact, MAX_INPUT_VALUE_10BIT, MAX_LEVEL, MAX_MQTT_PAYLOAD_BYTES,
+    MAX_MQTT_TOPIC_BYTES, MAX_MQTT_TRIGGER_TOPICS, MAX_SCENE,
+};
 use dali2rust_rules_model::{
-    CompileError, CrossDirection, DurationMs, GroupAggregate, InputEventMatch, InputSelector,
-    OccupancyState, OnlineTransition, OverrideTransition, PowerTransition, Trigger, TriggerKind,
+    distinct_mqtt_topics, CompileError, CrossDirection, DurationMs, GroupAggregate,
+    InputEventMatch, InputSelector, OccupancyState, OnlineTransition, OverrideTransition,
+    PowerTransition, RuleSet, Trigger, TriggerKind,
 };
 
 pub const PARSED_TRIGGER_KINDS: &[TriggerKind] = &[
@@ -29,6 +33,7 @@ pub const PARSED_TRIGGER_KINDS: &[TriggerKind] = &[
     TriggerKind::ControllerBecomesActive,
     TriggerKind::RuleFails,
     TriggerKind::HttpTrigger,
+    TriggerKind::MqttMessage,
 ];
 
 pub fn trigger(c: &mut Cursor<'_>) -> Result<Trigger, CompileError> {
@@ -46,7 +51,7 @@ pub fn trigger(c: &mut Cursor<'_>) -> Result<Trigger, CompileError> {
         "controller" => controller_trigger(c),
         "rule" => rule_trigger(c),
         "http" => http_trigger(c),
-        "mqtt" => mqtt_reserved(c, pos),
+        "mqtt" => mqtt_trigger(c),
         _ => Err(pos.err(format!("unknown trigger \"{word}\""))),
     }
 }
@@ -299,12 +304,42 @@ fn http_trigger(c: &mut Cursor<'_>) -> Result<Trigger, CompileError> {
     Ok(Trigger::HttpTrigger)
 }
 
-fn mqtt_reserved(c: &mut Cursor<'_>, pos: Pos) -> Result<Trigger, CompileError> {
-    let _topic = c.expect_string("mqtt topic")?;
-    if c.accept_kw("is") {
-        let _payload = c.expect_string("mqtt payload")?;
+fn mqtt_trigger(c: &mut Cursor<'_>) -> Result<Trigger, CompileError> {
+    let (topic, pos) = c.expect_string("mqtt topic")?;
+    if !mqtt_topic_is_exact(&topic) {
+        return Err(pos.err("an mqtt trigger names one exact topic: not empty, no `+`, `#` or U+0000"));
     }
-    Err(pos.err("`when mqtt` is reserved: external triggers arrive in stage 2 (ADR-016 A11)"))
+    if topic.len() > MAX_MQTT_TOPIC_BYTES {
+        return Err(pos.err(format!("mqtt topic exceeds {MAX_MQTT_TOPIC_BYTES} bytes")));
+    }
+    let payload = if c.accept_kw("is") { Some(mqtt_payload(c)?) } else { None };
+    Ok(Trigger::MqttMessage { topic, payload })
+}
+
+fn mqtt_payload(c: &mut Cursor<'_>) -> Result<String, CompileError> {
+    let (payload, pos) = c.expect_string("mqtt payload")?;
+    if payload.len() > MAX_MQTT_PAYLOAD_BYTES {
+        return Err(pos.err(format!("mqtt payload exceeds {MAX_MQTT_PAYLOAD_BYTES} bytes")));
+    }
+    Ok(payload)
+}
+
+pub(crate) fn check_topic_budget(
+    set: &RuleSet,
+    earlier: &[Trigger],
+    trigger: &Trigger,
+    pos: Pos,
+) -> Result<(), CompileError> {
+    let Some(topic) = trigger.mqtt_topic() else {
+        return Ok(());
+    };
+    let named = distinct_mqtt_topics(set.rules.iter().flat_map(|rule| &rule.triggers).chain(earlier));
+    if named.contains(&topic) || named.len() < MAX_MQTT_TRIGGER_TOPICS {
+        return Ok(());
+    }
+    Err(pos.err(format!(
+        "a document names at most {MAX_MQTT_TRIGGER_TOPICS} mqtt trigger topics"
+    )))
 }
 
 pub(crate) fn quoted_ref(c: &mut Cursor<'_>, what: &str) -> Result<String, CompileError> {

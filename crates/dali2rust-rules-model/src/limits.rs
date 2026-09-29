@@ -2,7 +2,7 @@ use crate::action::{Action, FlowAction, SceneAction, StateAction};
 use crate::condition::{Condition, VarOperand};
 use crate::error::ModelError;
 use crate::rule::{DefBlock, Rule, RuleSet};
-use crate::trigger::Trigger;
+use crate::trigger::{distinct_mqtt_topics, Trigger};
 use crate::value::ValueExpr;
 
 pub const MAX_RULES: usize = 64;
@@ -19,6 +19,7 @@ pub const MAX_NAME_BYTES: usize = 48;
 pub const MAX_VAR_TEXT_BYTES: usize = 16;
 pub const MAX_MQTT_TOPIC_BYTES: usize = 48;
 pub const MAX_MQTT_PAYLOAD_BYTES: usize = 48;
+pub const MAX_MQTT_TRIGGER_TOPICS: usize = 8;
 pub const MAX_RULES_SOURCE_BYTES: usize = 12240;
 pub const MIN_EVERY_PERIOD_MS: u32 = 1000;
 pub const MAX_SCENE_CYCLE_ENTRIES: usize = 16;
@@ -55,6 +56,7 @@ pub fn validate(set: &RuleSet) -> Result<(), ModelError> {
     check_unique_names(set)?;
     check_block_references(set)?;
     check_rule_references(set)?;
+    check_mqtt_topic_count(set)?;
     for block in &set.blocks {
         check_block_shape(block)?;
     }
@@ -213,13 +215,46 @@ fn check_rule_shape(rule: &Rule) -> Result<(), ModelError> {
 
 fn check_triggers(rule: &Rule) -> Result<(), ModelError> {
     for trigger in &rule.triggers {
-        if let Trigger::Every { period_ms } = trigger {
-            if period_ms.0 < MIN_EVERY_PERIOD_MS {
+        match trigger {
+            Trigger::Every { period_ms } if period_ms.0 < MIN_EVERY_PERIOD_MS => {
                 return Err(ModelError::EveryPeriodTooShort {
                     rule: rule.name.clone(),
                     period_ms: period_ms.0,
                 });
             }
+            Trigger::MqttMessage { topic, payload } => {
+                check_mqtt_trigger(&rule.name, topic, payload.as_deref())?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+pub fn mqtt_topic_is_exact(topic: &str) -> bool {
+    !topic.is_empty() && !topic.contains(['+', '#', '\0'])
+}
+
+fn check_mqtt_trigger(rule: &str, topic: &str, payload: Option<&str>) -> Result<(), ModelError> {
+    if !mqtt_topic_is_exact(topic) {
+        return Err(ModelError::MqttTopicNotExact { rule: rule.into(), topic: topic.into() });
+    }
+    if topic.len() > MAX_MQTT_TOPIC_BYTES {
+        return Err(ModelError::MqttTopicTooLong { rule: rule.into(), bytes: topic.len() });
+    }
+    match payload {
+        Some(literal) if literal.len() > MAX_MQTT_PAYLOAD_BYTES => {
+            Err(ModelError::MqttPayloadTooLong { rule: rule.into(), bytes: literal.len() })
+        }
+        _ => Ok(()),
+    }
+}
+
+fn check_mqtt_topic_count(set: &RuleSet) -> Result<(), ModelError> {
+    for (index, rule) in set.rules.iter().enumerate() {
+        let count = distinct_mqtt_topics(set.rules[..=index].iter().flat_map(|r| &r.triggers)).len();
+        if count > MAX_MQTT_TRIGGER_TOPICS {
+            return Err(ModelError::TooManyMqttTopics { rule: rule.name.clone(), count });
         }
     }
     Ok(())

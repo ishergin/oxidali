@@ -145,7 +145,7 @@ fn rule_body(
     let name = unique_name(c, spans, set, "rule name", true)?;
     let m = modifiers(c)?;
     c.expect(&TokenKind::LBrace, "`{`")?;
-    let triggers = when_section(c, &name)?;
+    let triggers = when_section(c, &name, set)?;
     let conditions = if_section(c, &name)?;
     let actions = do_section(c, &name)?;
     c.expect(&TokenKind::RBrace, "`}`")?;
@@ -160,7 +160,11 @@ fn rule_body(
     })
 }
 
-fn when_section(c: &mut Cursor<'_>, rule: &str) -> Result<Vec<Trigger>, CompileError> {
+fn when_section(
+    c: &mut Cursor<'_>,
+    rule: &str,
+    set: &RuleSet,
+) -> Result<Vec<Trigger>, CompileError> {
     let mut triggers = Vec::new();
     loop {
         let pos = c.here();
@@ -172,7 +176,10 @@ fn when_section(c: &mut Cursor<'_>, rule: &str) -> Result<Vec<Trigger>, CompileE
                 "rule \"{rule}\" has more than {MAX_TRIGGERS_PER_RULE} `when` triggers"
             )));
         }
-        triggers.push(trigger::trigger(c)?);
+        let at = c.here();
+        let parsed = trigger::trigger(c)?;
+        trigger::check_topic_budget(set, &triggers, &parsed, at)?;
+        triggers.push(parsed);
     }
     if triggers.is_empty() {
         return Err(c.err_here(format!("rule \"{rule}\" needs a `when` trigger")));

@@ -1,4 +1,6 @@
-use dali2rust_rules_model::limits::MAX_ACTIONS_EXPANDED;
+use dali2rust_rules_model::limits::{
+    MAX_ACTIONS_EXPANDED, MAX_MQTT_PAYLOAD_BYTES, MAX_MQTT_TOPIC_BYTES, MAX_MQTT_TRIGGER_TOPICS,
+};
 use dali2rust_rules_model::{
     expanded_action_count, validate, Action, DefBlock, FlowAction, ModelError, Rule, RuleSet,
     StateAction, Trigger,
@@ -180,4 +182,73 @@ fn after_counts_its_body_plus_itself() {
     });
     let rule = rule_with_actions("delayed", vec![action]);
     assert_eq!(expanded_action_count(&rule, &[]).unwrap(), 3);
+}
+
+fn mqtt_rule(name: &str, topics: &[&str], payload: Option<&str>) -> Rule {
+    Rule {
+        triggers: topics
+            .iter()
+            .map(|topic| Trigger::MqttMessage {
+                topic: (*topic).into(),
+                payload: payload.map(Into::into),
+            })
+            .collect(),
+        ..rule_with_actions(name, vec![simple_action()])
+    }
+}
+
+#[test]
+fn a_wildcard_or_empty_mqtt_topic_is_not_one_exact_topic() {
+    for topic in ["home/+/mode", "home/#", "", "home/\0"] {
+        let set = set_with(vec![], vec![mqtt_rule("w", &[topic], None)]);
+        match validate(&set) {
+            Err(ModelError::MqttTopicNotExact { rule, topic: named }) => {
+                assert_eq!(rule, "w");
+                assert_eq!(named, topic);
+            }
+            other => panic!("{topic:?}: expected MqttTopicNotExact, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn an_mqtt_trigger_topic_and_payload_stop_at_the_frame_budget() {
+    let long = "x".repeat(MAX_MQTT_TOPIC_BYTES + 1);
+    let set = set_with(vec![], vec![mqtt_rule("t", &[&long], None)]);
+    assert!(matches!(validate(&set), Err(ModelError::MqttTopicTooLong { bytes: 49, .. })));
+    let edge = "x".repeat(MAX_MQTT_PAYLOAD_BYTES);
+    validate(&set_with(vec![], vec![mqtt_rule("p", &["home/mode"], Some(&edge))]))
+        .expect("a 48-byte payload literal is the ceiling, not past it");
+    let over = "x".repeat(MAX_MQTT_PAYLOAD_BYTES + 1);
+    let set = set_with(vec![], vec![mqtt_rule("p", &["home/mode"], Some(&over))]);
+    assert!(matches!(validate(&set), Err(ModelError::MqttPayloadTooLong { bytes: 49, .. })));
+}
+
+#[test]
+fn the_ninth_distinct_topic_is_refused_at_the_rule_that_names_it() {
+    let rules: Vec<Rule> = (0..3)
+        .map(|r| {
+            let topics: Vec<String> = (0..4).map(|t| format!("t/{}", r * 3 + t)).collect();
+            let refs: Vec<&str> = topics.iter().map(String::as_str).collect();
+            mqtt_rule(&format!("r{r}"), &refs, None)
+        })
+        .collect();
+    assert_eq!(set_with(vec![], rules.clone()).mqtt_topics().len(), 10);
+    match validate(&set_with(vec![], rules)) {
+        Err(ModelError::TooManyMqttTopics { rule, count }) => {
+            assert_eq!(rule, "r2", "r0 and r1 name t/0..t/6, r2 adds t/7..t/9");
+            assert_eq!(count, MAX_MQTT_TRIGGER_TOPICS + 2);
+        }
+        other => panic!("expected TooManyMqttTopics, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_repeated_topic_is_one_topic_against_the_ceiling() {
+    let rules: Vec<Rule> = (0..MAX_MQTT_TRIGGER_TOPICS)
+        .map(|n| mqtt_rule(&format!("r{n}"), &[&format!("t/{n}"), "t/0"], Some("on")))
+        .collect();
+    let set = set_with(vec![], rules);
+    assert_eq!(set.mqtt_topics().len(), MAX_MQTT_TRIGGER_TOPICS);
+    validate(&set).expect("eight distinct topics named sixteen times are eight topics");
 }

@@ -24,9 +24,10 @@ pub enum TriggerKind {
     ControllerBecomesActive,
     RuleFails,
     HttpTrigger,
+    MqttMessage,
 }
 
-pub const TRIGGER_KIND_COUNT: usize = 20;
+pub const TRIGGER_KIND_COUNT: usize = 21;
 
 const TRIGGER_KIND_NAMES: [&str; TRIGGER_KIND_COUNT] = [
     "input_event",
@@ -49,6 +50,7 @@ const TRIGGER_KIND_NAMES: [&str; TRIGGER_KIND_COUNT] = [
     "controller_becomes_active",
     "rule_fails",
     "http_trigger",
+    "mqtt_message",
 ];
 
 impl TriggerKind {
@@ -73,6 +75,7 @@ impl TriggerKind {
         TriggerKind::ControllerBecomesActive,
         TriggerKind::RuleFails,
         TriggerKind::HttpTrigger,
+        TriggerKind::MqttMessage,
     ];
 
     pub fn name(self) -> &'static str {
@@ -228,6 +231,11 @@ pub enum Trigger {
         rule: String,
     },
     HttpTrigger,
+    MqttMessage {
+        topic: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<String>,
+    },
 }
 
 impl Trigger {
@@ -255,8 +263,26 @@ impl Trigger {
             Trigger::ControllerBecomesActive => TriggerKind::ControllerBecomesActive,
             Trigger::RuleFails { .. } => TriggerKind::RuleFails,
             Trigger::HttpTrigger => TriggerKind::HttpTrigger,
+            Trigger::MqttMessage { .. } => TriggerKind::MqttMessage,
         }
     }
+
+    pub fn mqtt_topic(&self) -> Option<&str> {
+        match self {
+            Trigger::MqttMessage { topic, .. } => Some(topic),
+            _ => None,
+        }
+    }
+}
+
+pub fn distinct_mqtt_topics<'a>(triggers: impl IntoIterator<Item = &'a Trigger>) -> Vec<&'a str> {
+    let mut topics: Vec<&str> = Vec::new();
+    for topic in triggers.into_iter().filter_map(Trigger::mqtt_topic) {
+        if !topics.contains(&topic) {
+            topics.push(topic);
+        }
+    }
+    topics
 }
 
 #[cfg(test)]

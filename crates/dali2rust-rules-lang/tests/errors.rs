@@ -1,6 +1,7 @@
 mod support;
 
-use support::{compile, compile_err, wrap_trigger};
+use dali2rust_rules_model::limits::MAX_MQTT_TRIGGER_TOPICS;
+use support::{compile, compile_err, compile_ok, wrap_trigger};
 
 const TWO_RULES: &str = r#"# comment line
 rule "первое" {
@@ -43,13 +44,40 @@ fn an_unknown_adapter_is_a_compile_error_with_coordinates() {
 }
 
 #[test]
-fn the_reserved_mqtt_trigger_parses_structurally_then_rejects() {
-    let err = compile_err(&wrap_trigger("mqtt \"dali2rust/cmd/ночь\""));
-    assert!(err.message.contains("stage 2"), "{err}");
-    let err = compile_err(&wrap_trigger("mqtt \"dali2rust/cmd\" is \"on\""));
-    assert!(err.message.contains("reserved"), "{err}");
+fn a_topic_filter_is_refused_at_the_topic() {
+    for snippet in ["mqtt \"home/+/mode\"", "mqtt \"home/#\"", "mqtt \"\""] {
+        let err = compile_err(&wrap_trigger(snippet));
+        assert_eq!((err.line, err.column), (4, 13), "{snippet}: {err}");
+        assert!(err.message.contains("one exact topic"), "{snippet}: {err}");
+    }
     let err = compile_err(&wrap_trigger("mqtt 42"));
     assert!(err.message.contains("expected quoted"), "{err}");
+}
+
+#[test]
+fn an_mqtt_topic_or_payload_past_the_frame_is_refused_where_it_is_written() {
+    let long = "x".repeat(49);
+    let err = compile_err(&wrap_trigger(&format!("mqtt \"{long}\"")));
+    assert_eq!((err.line, err.column), (4, 13), "{err}");
+    assert!(err.message.contains("mqtt topic exceeds 48 bytes"), "{err}");
+    let err = compile_err(&wrap_trigger(&format!("mqtt \"t\" is \"{long}\"")));
+    assert_eq!((err.line, err.column), (4, 20), "{err}");
+    assert!(err.message.contains("mqtt payload exceeds 48 bytes"), "{err}");
+}
+
+#[test]
+fn the_ninth_distinct_topic_is_refused_at_its_trigger() {
+    let mut source = String::new();
+    for n in 0..MAX_MQTT_TRIGGER_TOPICS {
+        source.push_str(&format!(
+            "rule \"r{n}\" {{ when mqtt \"t/{n}\" when mqtt \"t/0\" do log(\"x\") }}\n"
+        ));
+    }
+    compile_ok(&source);
+    source.push_str("rule \"late\" {\n  when mqtt \"t/3\"\n  when mqtt \"t/8\"\n  do log(\"x\")\n}\n");
+    let err = compile_err(&source);
+    assert_eq!((err.line, err.column), (11, 8), "{err}");
+    assert!(err.message.contains("at most 8 mqtt trigger topics"), "{err}");
 }
 
 #[test]
