@@ -14,9 +14,9 @@ use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_registry_runtime::RegistryStore;
 use dali2rust_test_support::wait_until;
 
-fn go_to_scene_frame(scene: u8) -> u16 {
+fn go_to_scene_frame(address: DaliAddress, scene: u8) -> u16 {
     DaliCommand::Standard {
-        address: DaliAddress::Broadcast,
+        address,
         command: StandardCommand::GoToScene { scene },
     }
     .to_forward_frame()
@@ -83,7 +83,7 @@ fn spawn_worker(
 #[test]
 fn recall_sends_one_broadcast_frame_and_publishes_event() {
     let (publisher, _host, conf_obs, ev_obs, transport, worker_cmd) =
-        spawn_worker_with_scripted_frames(&[go_to_scene_frame(3)]);
+        spawn_worker_with_scripted_frames(&[go_to_scene_frame(DaliAddress::Broadcast, 3)]);
     let _worker = spawn_worker(worker_cmd, publisher.clone(), &transport);
 
     assert_eq!(
@@ -115,14 +115,14 @@ fn recall_sends_one_broadcast_frame_and_publishes_event() {
     assert!(saw_recalled, "expected DaliSceneRecalledEvent");
 
     let mock = transport.lock().expect("mock lock");
-    assert_eq!(mock.sent_frames(), vec![go_to_scene_frame(3)]);
+    assert_eq!(mock.sent_frames(), vec![go_to_scene_frame(DaliAddress::Broadcast, 3)]);
     assert_eq!(mock.script_error(), None);
 }
 
 #[test]
 fn newer_recall_of_same_scene_supersedes_queued_one() {
     let (publisher, host, conf_obs, _ev_obs, transport, worker_cmd) =
-        spawn_worker_with_scripted_frames(&[go_to_scene_frame(3)]);
+        spawn_worker_with_scripted_frames(&[go_to_scene_frame(DaliAddress::Broadcast, 3)]);
 
     for corr in [31u64, 32] {
         assert_eq!(
@@ -166,15 +166,16 @@ fn newer_recall_of_same_scene_supersedes_queued_one() {
     let mock = transport.lock().expect("mock lock");
     assert_eq!(
         mock.sent_frames(),
-        vec![go_to_scene_frame(3)],
+        vec![go_to_scene_frame(DaliAddress::Broadcast, 3)],
         "one GoToScene for the winning recall only"
     );
 }
 
 #[test]
 fn recalls_of_different_scenes_execute_fifo() {
+    let frames = [1, 2].map(|scene| go_to_scene_frame(DaliAddress::Broadcast, scene));
     let (publisher, host, conf_obs, _ev_obs, transport, worker_cmd) =
-        spawn_worker_with_scripted_frames(&[go_to_scene_frame(1), go_to_scene_frame(2)]);
+        spawn_worker_with_scripted_frames(&frames);
 
     for (corr, scene) in [(41u64, 1u8), (42, 2)] {
         assert_eq!(
@@ -208,7 +209,7 @@ fn recalls_of_different_scenes_execute_fifo() {
     let mock = transport.lock().expect("mock lock");
     assert_eq!(
         mock.sent_frames(),
-        vec![go_to_scene_frame(1), go_to_scene_frame(2)],
+        frames.to_vec(),
         "different scenes do not coalesce and run FIFO"
     );
 }
@@ -224,15 +225,6 @@ fn targeted_recall_frame(
         None,
         command,
     ))
-}
-
-fn short_go_to_scene_frame(short: u8, scene: u8) -> u16 {
-    DaliCommand::Standard {
-        address: DaliAddress::short(short).expect("short"),
-        command: StandardCommand::GoToScene { scene },
-    }
-    .to_forward_frame()
-    .raw()
 }
 
 fn queue_before_the_worker(
@@ -257,7 +249,8 @@ fn queue_before_the_worker(
 
 #[test]
 fn recalls_of_one_scene_on_two_short_addresses_both_reach_the_wire() {
-    let frames = [short_go_to_scene_frame(5, 3), short_go_to_scene_frame(6, 3)];
+    let frames =
+        [5, 6].map(|short| go_to_scene_frame(DaliAddress::short(short).expect("short"), 3));
     let (publisher, host, conf_obs, _ev_obs, transport, worker_cmd) =
         spawn_worker_with_scripted_frames(&frames);
     let on_short = |short_address| dali2rust_contracts::msg::DaliRecallSceneCommand {
@@ -323,18 +316,9 @@ fn recalls_of_one_scene_on_two_lamps_are_judged_one_by_one() {
     }
 }
 
-fn group_go_to_scene_frame(group: u8, scene: u8) -> u16 {
-    DaliCommand::Standard {
-        address: DaliAddress::group(group).expect("group"),
-        command: StandardCommand::GoToScene { scene },
-    }
-    .to_forward_frame()
-    .raw()
-}
-
 #[test]
 fn recalls_that_differ_in_hold_hcl_never_supersede_each_other() {
-    let frame = group_go_to_scene_frame(5, 3);
+    let frame = go_to_scene_frame(DaliAddress::group(5).expect("group"), 3);
     let (publisher, host, conf_obs, _ev_obs, transport, worker_cmd) =
         spawn_worker_with_scripted_frames(&[frame, frame]);
     let recall = |hold_hcl| dali2rust_contracts::msg::DaliRecallSceneCommand {
