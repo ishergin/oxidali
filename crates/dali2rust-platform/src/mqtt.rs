@@ -56,6 +56,7 @@ pub struct MqttSessionConfig {
 pub struct MqttIncoming {
     pub topic: String,
     pub payload: Vec<u8>,
+    pub retained: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -170,6 +171,8 @@ pub trait MqttClient: Send {
 
     fn subscribe(&mut self, topic_filter: &str, qos: MqttQos) -> Result<(), MqttError>;
 
+    fn unsubscribe(&mut self, topic_filter: &str) -> Result<(), MqttError>;
+
     fn link(&self) -> std::sync::Arc<MqttLink>;
 }
 
@@ -197,6 +200,7 @@ mod tests {
             link.deliver(MqttIncoming {
                 topic: format!("t/{i}"),
                 payload: Vec::new(),
+                retained: false,
             });
         }
         assert_eq!(link.dropped_incoming(), 3);

@@ -20,6 +20,8 @@ pub struct PublishedMessage {
 struct MockInner {
     published: Vec<PublishedMessage>,
     subscriptions: Vec<String>,
+    unsubscriptions: Vec<String>,
+    active: Vec<String>,
     session: Option<MqttSessionConfig>,
     connect_calls: u32,
     disconnect_calls: u32,
@@ -95,6 +97,14 @@ impl MockMqttClient {
         self.lock().subscriptions.clone()
     }
 
+    pub fn unsubscriptions(&self) -> Vec<String> {
+        self.lock().unsubscriptions.clone()
+    }
+
+    pub fn active_subscriptions(&self) -> Vec<String> {
+        self.lock().active.clone()
+    }
+
     pub fn session_config(&self) -> Option<MqttSessionConfig> {
         self.lock().session.clone()
     }
@@ -112,14 +122,27 @@ impl MockMqttClient {
     }
 
     pub fn deliver(&self, topic: &str, payload: &[u8]) {
+        self.deliver_flagged(topic, payload, false);
+    }
+
+    pub fn deliver_retained(&self, topic: &str, payload: &[u8]) {
+        self.deliver_flagged(topic, payload, true);
+    }
+
+    fn deliver_flagged(&self, topic: &str, payload: &[u8], retained: bool) {
         self.link.deliver(MqttIncoming {
             topic: topic.to_string(),
             payload: payload.to_vec(),
+            retained,
         });
     }
 
     pub fn set_connected(&self, up: bool) {
-        self.lock().connected = up;
+        {
+            let mut g = self.lock();
+            g.connected = up;
+            g.active.clear();
+        }
         self.link.set_state(if up {
             MqttConnectionState::Connected
         } else {
@@ -147,6 +170,7 @@ impl MockMqttClient {
         let mut g = self.lock();
         g.published.clear();
         g.subscriptions.clear();
+        g.unsubscriptions.clear();
     }
 }
 
@@ -184,6 +208,7 @@ impl MqttClient for MockMqttHandle {
             }
             g.session = Some(config.clone());
             g.connected = true;
+            g.active.clear();
         }
         self.0.link.set_state(MqttConnectionState::Connected);
         Ok(())
@@ -194,6 +219,7 @@ impl MqttClient for MockMqttHandle {
             let mut g = self.0.lock();
             g.disconnect_calls += 1;
             g.connected = false;
+            g.active.clear();
         }
         self.0.link.set_state(MqttConnectionState::Disconnected);
     }
@@ -233,11 +259,24 @@ impl MqttClient for MockMqttHandle {
         }
         let _ = qos;
         g.subscriptions.push(topic_filter.to_string());
+        if !g.active.iter().any(|t| t == topic_filter) {
+            g.active.push(topic_filter.to_string());
+        }
         if g.hold_subacks {
             g.held_subacks += 1;
         } else {
             self.0.link.note_subscription_acked();
         }
+        Ok(())
+    }
+
+    fn unsubscribe(&mut self, topic_filter: &str) -> Result<(), MqttError> {
+        let mut g = self.0.lock();
+        if !g.connected {
+            return Err(MqttError::NotConnected);
+        }
+        g.unsubscriptions.push(topic_filter.to_string());
+        g.active.retain(|t| t != topic_filter);
         Ok(())
     }
 
