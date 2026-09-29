@@ -459,14 +459,7 @@ fn a_finished_scan_starts_the_policy_apply_when_armed_issue79() {
         "the scan itself must succeed, or this proves nothing about its epilogue"
     );
 
-    let mut applies = Vec::new();
-    while let Ok(BusFrame::Command(ce)) = harness.policy_rx.try_recv() {
-        if let dali2rust_contracts::msg::BusCommandPayload::PolicyApplyExecuteCommand(body) =
-            &ce.payload
-        {
-            applies.push((ce.meta.correlation_id, body.operation_key.as_str().to_string()));
-        }
-    }
+    let applies = policy_applies_before_a_probe(&harness);
     assert_eq!(
         applies.len(),
         1,
@@ -494,8 +487,56 @@ fn a_finished_scan_publishes_no_policy_apply_when_disarmed_issue79() {
         BusEventPayload::OperationWorkerSignalEvent(body)
             if body.signal == OperationWorkerSignal::WorkerSucceeded
     )));
+    let applies = policy_applies_before_a_probe(&harness);
     assert!(
-        harness.policy_rx.try_recv().is_err(),
-        "a disarmed policy must put nothing on the bus"
+        applies.is_empty(),
+        "a disarmed policy must put nothing on the bus: {applies:?}"
     );
+}
+
+const POLICY_PROBE_CORRELATION: u64 = 5_999;
+
+fn policy_probe() -> BusFrame {
+    BusFrame::command(dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        POLICY_PROBE_CORRELATION,
+        BusId::default().0,
+        Some(dali2rust_contracts::msg::Origin::Internal),
+        dali2rust_contracts::msg::PolicyApplyExecuteCommand {
+            registry_adapter_id: 0,
+            operation_key: dali2rust_contracts::msg::fixed_text_32("probe"),
+        },
+    ))
+}
+
+fn policy_applies_before_a_probe(harness: &ScanHarness) -> Vec<(u64, String)> {
+    assert_eq!(
+        harness.publisher.try_publish(BusChannel::Commands, policy_probe()),
+        PublishResult::Queued
+    );
+    let deadline = Instant::now() + TERMINAL_DEADLINE;
+    let mut applies = Vec::new();
+    while let Some(apply) = next_policy_apply(harness, deadline) {
+        if apply.0 == POLICY_PROBE_CORRELATION {
+            return applies;
+        }
+        applies.push(apply);
+    }
+    panic!(
+        "the probe published after the terminal never reached the policy tap, so nothing \
+         the scan published before its terminal is proven delivered: {applies:?}"
+    );
+}
+
+fn next_policy_apply(harness: &ScanHarness, deadline: Instant) -> Option<(u64, String)> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    match harness.policy_rx.recv_timeout(remaining).ok()? {
+        BusFrame::Command(ce) => match &ce.payload {
+            dali2rust_contracts::msg::BusCommandPayload::PolicyApplyExecuteCommand(body) => {
+                Some((ce.meta.correlation_id, body.operation_key.as_str().to_string()))
+            }
+            other => panic!("the policy tap carried {other:?}"),
+        },
+        other => panic!("the policy tap carried {other:?}"),
+    }
 }
