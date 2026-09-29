@@ -129,13 +129,14 @@ abort the boot where no `cargo check` sees it. Experiments layer on top
 | Name | Offset | Size | Rule |
 | --- | --- | --- | --- |
 | `nvs` | `0x9000` | 64 KB | never initialised ([08](08-dali-phy-and-transport.md)) |
-| `phy_init` | `0x19000` | 4 KB | kept without a radio: its absence fails a boot-time lookup |
 | `otadata` | `0x1A000` | 8 KB | below 16 MB, or the bootloader ignores it |
 | `ota_0`, `ota_1` | `0x20000`, `0x620000` | 6 MB each | below 16 MB, or an update started from the slot faults; empty `otadata` boots `ota_0` |
 | `storage` | `0xC20000` | 4 MB | persistence slices; never moves (that orphans every virtual-lamp binding) |
 
-Nothing executable or selectable goes above `0x1020000`. `esp_ota_begin` refuses an image
-larger than a slot. Changing the table takes a wired flash.
+There is no `phy_init`: the board has no radio, and ESP-IDF registers its PHY component
+without sources on the ESP32-P4, so nothing looks the partition up. Nothing executable or
+selectable goes above `0x1020000`. `esp_ota_begin` refuses an image larger than a slot.
+Changing the table takes a wired flash.
 
 ## Embedded web UI
 
