@@ -38,7 +38,7 @@ import {
   type Placement,
   type RegistryNames,
   type Suggestion,
-  type Unwritable,
+  type ByIdReason,
 } from '../rule-completion'
 import {
   currentScope,
@@ -82,10 +82,11 @@ const KIND_LABEL: Record<NameKind, string> = {
   schedule: 'HCL schedules',
 }
 
-const UNWRITABLE_WHY: Record<Unwritable, string> = {
+const BY_ID_WHY: Record<ByIdReason, string> = {
   quote: 'The name has a quote, which a rule string cannot hold',
   line_break: 'The name has a line break, which a rule string cannot hold',
   too_long: `The name is longer than the ${MAX_NAME_BYTES} bytes a rule string holds`,
+  ambiguous: 'Several entries share this name, and the device would resolve it to any one of them',
 }
 
 const FEED_CHANNELS: WsChannel[] = ['input', 'rules']
@@ -333,7 +334,7 @@ function SuggestRow({
       role="option"
       aria-selected={active}
       class={`so${active ? ' on' : ''}${why !== null ? ' byid' : ''}`}
-      title={why !== null ? UNWRITABLE_WHY[why] : undefined}
+      title={why !== null ? BY_ID_WHY[why] : undefined}
       onMouseDown={(e) => {
         e.preventDefault()
         onPick(suggestion)
@@ -388,7 +389,7 @@ function SuggestList({
       <div class="sb" ref={bodyRef}>
         {items.map((s, i) => (
           <SuggestRow
-            key={s.name}
+            key={s.key}
             kind={kind}
             suggestion={s}
             index={i}

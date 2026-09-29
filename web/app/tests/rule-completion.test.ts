@@ -205,15 +205,26 @@ test('a name matches in either Unicode normalisation and is inserted as stored',
   assert.equal(match?.text, `"${stored}"`)
 })
 
-test('a name listed twice is suggested once, an empty one never', () => {
+test('a name several entries share is offered once per id, as ambiguous; an empty one never', () => {
   const list: NameCandidate[] = [
-    { name: 'кухня', id: 1 },
     { name: 'кухня', id: 2 },
-    { name: '', id: 3 },
+    { name: 'коридор', id: 3 },
+    { name: 'кухня', id: 1 },
+    { name: '', id: 4 },
   ]
-  assert.deepEqual(rankSuggestions('', list), [
-    { name: 'кухня', id: 1, text: '"кухня"', why: null },
+  assert.deepEqual(rankSuggestions('к', list), [
+    { key: 'name:коридор', name: 'коридор', id: 3, text: '"коридор"', why: null },
+    { key: 'id:1', name: 'кухня', id: 1, text: '1', why: 'ambiguous' },
+    { key: 'id:2', name: 'кухня', id: 2, text: '2', why: 'ambiguous' },
   ])
+})
+
+test('an ambiguous name with no id to stand in for it is not offered', () => {
+  const list: NameCandidate[] = [
+    { name: 'morning', id: null },
+    { name: 'morning', id: null },
+  ]
+  assert.deepEqual(rankSuggestions('', list), [])
 })
 
 test('nothing matches, nothing is suggested', () => {
@@ -230,6 +241,7 @@ test('the name limit counts UTF-8 bytes, not characters', () => {
 
 test('a name a rule string cannot hold is offered by its id', () => {
   assert.deepEqual(only('', 'Бра "у зеркала"', 4), {
+    key: 'id:4',
     name: 'Бра "у зеркала"',
     id: 4,
     text: '4',
@@ -238,7 +250,13 @@ test('a name a rule string cannot hold is offered by its id', () => {
   assert.equal(only('', 'две\nстроки', 5).why, 'line_break')
   assert.equal(only('', 'две\rстроки', 5).why, 'line_break')
   const long = 'кухня: подсветка рабочей зоны'
-  assert.deepEqual(only('кух', long, 12), { name: long, id: 12, text: '12', why: 'too_long' })
+  assert.deepEqual(only('кух', long, 12), {
+    key: 'id:12',
+    name: long,
+    id: 12,
+    text: '12',
+    why: 'too_long',
+  })
 })
 
 test('a name with neither a string form nor an id is not offered', () => {

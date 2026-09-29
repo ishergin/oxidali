@@ -34,11 +34,14 @@ export interface CompletionContext {
 
 export type Unwritable = 'quote' | 'line_break' | 'too_long'
 
+export type ByIdReason = Unwritable | 'ambiguous'
+
 export interface Suggestion {
+  key: string
   name: string
   id: number | null
   text: string
-  why: Unwritable | null
+  why: ByIdReason | null
 }
 
 export interface Edit {
@@ -254,10 +257,16 @@ export function unwritable(name: string): Unwritable | null {
   return null
 }
 
-function suggestionFor({ name, id }: NameCandidate): Suggestion | null {
-  const why = unwritable(name)
-  if (why === null) return { name, id, text: `${QUOTE}${name}${QUOTE}`, why }
-  return id === null ? null : { name, id, text: String(id), why }
+function suggestionFor({ name, id }: NameCandidate, shared: boolean): Suggestion | null {
+  const why = unwritable(name) ?? (shared ? 'ambiguous' : null)
+  if (why === null) return { key: `name:${name}`, name, id, text: `${QUOTE}${name}${QUOTE}`, why }
+  return id === null ? null : { key: `id:${id}`, name, id, text: String(id), why }
+}
+
+function nameCounts(candidates: readonly NameCandidate[]): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const { name } of candidates) counts.set(name, (counts.get(name) ?? 0) + 1)
+  return counts
 }
 
 const fold = (s: string) => s.normalize('NFC').toLowerCase()
@@ -273,24 +282,27 @@ interface Ranked {
   suggestion: Suggestion
 }
 
+const NO_ID = -1
+
 function byTierThenName(a: Ranked, b: Ranked): number {
   return (
     a.tier - b.tier ||
     compareText(a.key, b.key) ||
-    compareText(a.suggestion.name, b.suggestion.name)
+    compareText(a.suggestion.name, b.suggestion.name) ||
+    (a.suggestion.id ?? NO_ID) - (b.suggestion.id ?? NO_ID)
   )
 }
 
 export function rankSuggestions(prefix: string, candidates: readonly NameCandidate[]): Suggestion[] {
   const query = fold(prefix)
-  const seen = new Set<string>()
+  const counts = nameCounts(candidates)
   const ranked: Ranked[] = []
   for (const candidate of candidates) {
-    if (candidate.name === '' || seen.has(candidate.name)) continue
-    seen.add(candidate.name)
+    if (candidate.name === '') continue
     const key = fold(candidate.name)
     const at = key.indexOf(query)
-    const suggestion = at < 0 ? null : suggestionFor(candidate)
+    const shared = (counts.get(candidate.name) ?? 0) > 1
+    const suggestion = at < 0 ? null : suggestionFor(candidate, shared)
     if (suggestion !== null) {
       ranked.push({ tier: at === 0 ? PREFIX_TIER : SUBSTRING_TIER, key, suggestion })
     }
