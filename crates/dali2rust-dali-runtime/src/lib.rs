@@ -13,7 +13,6 @@ pub use runtime::dali_worker::{
     spawn_dali_worker, DaliWorkerCounters, DALI_WORKER_HANDLED_COMMANDS,
     DALI_WORKER_REQUIRED_EVENTS,
 };
-pub use runtime::dali_worker::dev103_patch_mask;
 
 pub mod dev103_feedback_mask {
     pub use crate::runtime::executor::dev103_feedback::{

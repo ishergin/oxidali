@@ -4,7 +4,7 @@ use dali2rust_bus::{BusId, BusPublisher};
 use dali2rust_contracts::msg::{
     Dali103CommissionCommand, Dali103IdentifyCommand, Dali103InstanceConfigureCommand,
     Dali103ScanCommand, InputDeviceMetadataUpdateCommand, InputDeviceNotesUpdateCommand,
-    OperationType,
+    InstancePatchField, OperationType,
 };
 use serde_json::Value;
 
@@ -17,13 +17,6 @@ use crate::http::types::HttpResponse;
 fn path_u8(params: &std::collections::HashMap<String, String>, key: &str) -> Option<u8> {
     params.get(key)?.parse::<u8>().ok()
 }
-
-pub const PATCH_EVENT_SCHEME: u16 = 1 << 0;
-pub const PATCH_EVENT_FILTER: u16 = 1 << 1;
-pub const PATCH_EVENT_PRIORITY: u16 = 1 << 2;
-pub const PATCH_INSTANCE_GROUP_0: u16 = 1 << 3;
-pub const TIMER_PATCH_BITS: [u16; 4] = [1 << 6, 1 << 7, 1 << 8, 1 << 9];
-pub const PATCH_INSTANCE_ENABLED: u16 = 1 << 10;
 
 pub const FB_PATCH_TIMING: u8 = 1 << 0;
 pub const FB_PATCH_ACTIVE_BRIGHTNESS: u8 = 1 << 1;
@@ -485,7 +478,7 @@ fn parse_timers(
             units
         };
         cmd.timer_multipliers[slot] = Some(u8::try_from(units).unwrap_or(u8::MAX));
-        cmd.patch_mask |= TIMER_PATCH_BITS[slot];
+        cmd.patch(InstancePatchField::TIMERS[slot]);
     }
     Ok(())
 }
@@ -582,7 +575,7 @@ fn parse_scheme_and_priority(
             return Err(json_err(422, "invalid_value"));
         }
         cmd.event_scheme = u8::try_from(scheme).unwrap_or(0);
-        cmd.patch_mask |= PATCH_EVENT_SCHEME;
+        cmd.patch(InstancePatchField::EventScheme);
     }
     if let Some(priority) = json.get("event_priority") {
         let priority = priority.as_u64().ok_or_else(|| json_err(422, "invalid_value"))?;
@@ -590,11 +583,11 @@ fn parse_scheme_and_priority(
             return Err(json_err(422, "invalid_value"));
         }
         cmd.event_priority = u8::try_from(priority).unwrap_or(3);
-        cmd.patch_mask |= PATCH_EVENT_PRIORITY;
+        cmd.patch(InstancePatchField::EventPriority);
     }
     if let Some(enabled) = json.get("enabled") {
         cmd.instance_enabled = enabled.as_bool().ok_or_else(|| json_err(422, "invalid_value"))?;
-        cmd.patch_mask |= PATCH_INSTANCE_ENABLED;
+        cmd.patch(InstancePatchField::InstanceEnabled);
     }
     Ok(())
 }
@@ -613,13 +606,13 @@ fn parse_filter_and_groups(
             cmd.event_filter[slot] =
                 u8::try_from(value).map_err(|_| json_err(422, "invalid_value"))?;
         }
-        cmd.patch_mask |= PATCH_EVENT_FILTER;
+        cmd.patch(InstancePatchField::EventFilter);
     }
     if let Some(groups) = json.get("instance_groups") {
         let groups = groups.as_array().ok_or_else(|| json_err(422, "invalid_value"))?;
         for (slot, group) in groups.iter().take(3).enumerate() {
             cmd.instance_groups[slot] = parse_group(group)?;
-            cmd.patch_mask |= PATCH_INSTANCE_GROUP_0 << slot;
+            cmd.patch(InstancePatchField::INSTANCE_GROUPS[slot]);
         }
     }
     Ok(())

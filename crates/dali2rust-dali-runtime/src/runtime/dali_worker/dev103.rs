@@ -2,7 +2,7 @@ use super::*;
 
 use dali2rust_contracts::msg::{
     Dali103CommissionCommand, Dali103IdentifyCommand, Dali103InstanceConfigureCommand,
-    Dali103ScanCommand, Dali103ScanProgressEvent, ErrorCode,
+    Dali103ScanCommand, Dali103ScanProgressEvent, ErrorCode, InstancePatchField,
 };
 use dali2rust_domain::dali::dev103::EventScheme;
 
@@ -15,37 +15,6 @@ use crate::runtime::executor::dev103::{
 use crate::runtime::executor::dev103_feedback::{
     configure_feedback, drive_feedback, ConfiguredFeedback,
 };
-
-pub const PATCH_EVENT_SCHEME: u16 = 1 << 0;
-pub const PATCH_EVENT_FILTER: u16 = 1 << 1;
-pub const PATCH_EVENT_PRIORITY: u16 = 1 << 2;
-pub const PATCH_INSTANCE_GROUP_0: u16 = 1 << 3;
-pub const PATCH_INSTANCE_GROUP_1: u16 = 1 << 4;
-pub const PATCH_INSTANCE_GROUP_2: u16 = 1 << 5;
-pub const PATCH_TIMER_SHORT: u16 = 1 << 6;
-pub const PATCH_TIMER_DOUBLE: u16 = 1 << 7;
-pub const PATCH_TIMER_REPEAT: u16 = 1 << 8;
-pub const PATCH_TIMER_STUCK: u16 = 1 << 9;
-pub const PATCH_INSTANCE_ENABLED: u16 = 1 << 10;
-
-pub const ALL_PATCH_BITS: u16 = PATCH_EVENT_SCHEME
-    | PATCH_EVENT_FILTER
-    | PATCH_EVENT_PRIORITY
-    | PATCH_INSTANCE_GROUP_0
-    | PATCH_INSTANCE_GROUP_1
-    | PATCH_INSTANCE_GROUP_2
-    | PATCH_TIMER_SHORT
-    | PATCH_TIMER_DOUBLE
-    | PATCH_TIMER_REPEAT
-    | PATCH_TIMER_STUCK
-    | PATCH_INSTANCE_ENABLED;
-
-pub const TIMER_PATCH_BITS: [u16; 4] = [
-    PATCH_TIMER_SHORT,
-    PATCH_TIMER_DOUBLE,
-    PATCH_TIMER_REPEAT,
-    PATCH_TIMER_STUCK,
-];
 
 pub(super) fn handle_103_scan(
     controller: &mut impl DaliApplicationController,
@@ -153,86 +122,76 @@ fn configure_instance(
     cmd: &Dali103InstanceConfigureCommand,
     proved: &mut ProvedWrites,
 ) -> Result<(), SemanticDaliError> {
-    let (short, instance) = (cmd.short_address, cmd.instance_number);
-    if cmd.patch_mask & PATCH_INSTANCE_ENABLED != 0 {
-        proved.instance_status = Some(set_instance_enabled_verified(
-            controller,
-            short,
-            instance,
-            cmd.instance_enabled,
-        )?);
-        proved.mask |= PATCH_INSTANCE_ENABLED;
-        controller.step_boundary();
-    }
-    configure_event_fields(controller, cmd, proved)?;
-    configure_timers(controller, cmd, proved)?;
-    // IEC 62386-103 §9.6.3
-    if cmd.patch_mask & PATCH_EVENT_SCHEME != 0 {
-        let scheme =
-            EventScheme::from_code(cmd.event_scheme).ok_or(SemanticDaliError::OperationFailed(
-                "invalid_event_scheme",
-            ))?;
-        set_event_scheme_verified(controller, short, instance, scheme)?;
-        proved.mask |= PATCH_EVENT_SCHEME;
-        controller.step_boundary();
-    }
-    Ok(())
-}
-
-fn configure_event_fields(
-    controller: &mut impl DaliApplicationController,
-    cmd: &Dali103InstanceConfigureCommand,
-    proved: &mut ProvedWrites,
-) -> Result<(), SemanticDaliError> {
-    let (short, instance) = (cmd.short_address, cmd.instance_number);
-    if cmd.patch_mask & PATCH_EVENT_FILTER != 0 {
-        set_event_filter_verified(controller, short, instance, cmd.event_filter)?;
-        proved.mask |= PATCH_EVENT_FILTER;
-        controller.step_boundary();
-    }
-    if cmd.patch_mask & PATCH_EVENT_PRIORITY != 0 {
-        set_event_priority_verified(controller, short, instance, cmd.event_priority)?;
-        proved.mask |= PATCH_EVENT_PRIORITY;
-        controller.step_boundary();
-    }
-    for (bit, slot) in [
-        (PATCH_INSTANCE_GROUP_0, 0u8),
-        (PATCH_INSTANCE_GROUP_1, 1),
-        (PATCH_INSTANCE_GROUP_2, 2),
-    ] {
-        if cmd.patch_mask & bit != 0 {
-            let group = cmd.instance_groups[slot as usize];
-            set_instance_group_verified(controller, short, instance, slot, group)?;
-            proved.mask |= bit;
-            controller.step_boundary();
-        }
-    }
-    Ok(())
-}
-
-fn configure_timers(
-    controller: &mut impl DaliApplicationController,
-    cmd: &Dali103InstanceConfigureCommand,
-    proved: &mut ProvedWrites,
-) -> Result<(), SemanticDaliError> {
-    for (slot, bit) in TIMER_PATCH_BITS.iter().enumerate() {
-        if cmd.patch_mask & bit == 0 {
+    for field in InstancePatchField::ALL {
+        if !cmd.patches(field) {
             continue;
         }
-        let value = cmd.timer_multipliers[slot]
-            .ok_or(SemanticDaliError::OperationFailed("invalid_timer"))?;
-        set_button_timer_verified(
-            controller,
-            cmd.short_address,
-            cmd.instance_number,
-            slot,
-            value,
-        )?;
-        proved.mask |= bit;
+        write_instance_field(controller, cmd, field, proved)?;
+        proved.mask |= field.bit();
         controller.step_boundary();
     }
     Ok(())
 }
+
+fn write_instance_field(
+    controller: &mut impl DaliApplicationController,
+    cmd: &Dali103InstanceConfigureCommand,
+    field: InstancePatchField,
+    proved: &mut ProvedWrites,
+) -> Result<(), SemanticDaliError> {
+    let (short, instance) = (cmd.short_address, cmd.instance_number);
+    match field {
+        InstancePatchField::InstanceEnabled => {
+            let status = set_instance_enabled_verified(controller, short, instance, cmd.instance_enabled)?;
+            proved.instance_status = Some(status);
+            Ok(())
+        }
+        InstancePatchField::EventFilter => {
+            set_event_filter_verified(controller, short, instance, cmd.event_filter)
+        }
+        InstancePatchField::EventPriority => {
+            set_event_priority_verified(controller, short, instance, cmd.event_priority)
+        }
+        InstancePatchField::InstanceGroup0 => write_instance_group(controller, cmd, 0),
+        InstancePatchField::InstanceGroup1 => write_instance_group(controller, cmd, 1),
+        InstancePatchField::InstanceGroup2 => write_instance_group(controller, cmd, 2),
+        InstancePatchField::TimerShort => write_timer(controller, cmd, 0),
+        InstancePatchField::TimerDouble => write_timer(controller, cmd, 1),
+        InstancePatchField::TimerRepeat => write_timer(controller, cmd, 2),
+        InstancePatchField::TimerStuck => write_timer(controller, cmd, 3),
+        InstancePatchField::EventScheme => write_event_scheme(controller, cmd),
+    }
+}
+
+fn write_instance_group(
+    controller: &mut impl DaliApplicationController,
+    cmd: &Dali103InstanceConfigureCommand,
+    slot: u8,
+) -> Result<(), SemanticDaliError> {
+    let group = cmd.instance_groups[usize::from(slot)];
+    set_instance_group_verified(controller, cmd.short_address, cmd.instance_number, slot, group)
+}
+
+fn write_timer(
+    controller: &mut impl DaliApplicationController,
+    cmd: &Dali103InstanceConfigureCommand,
+    slot: usize,
+) -> Result<(), SemanticDaliError> {
+    let value = cmd.timer_multipliers[slot]
+        .ok_or(SemanticDaliError::OperationFailed("invalid_timer"))?;
+    set_button_timer_verified(controller, cmd.short_address, cmd.instance_number, slot, value)
+}
+
+// IEC 62386-103 §9.6.3
+fn write_event_scheme(
+    controller: &mut impl DaliApplicationController,
+    cmd: &Dali103InstanceConfigureCommand,
+) -> Result<(), SemanticDaliError> {
+    let scheme = EventScheme::from_code(cmd.event_scheme)
+        .ok_or(SemanticDaliError::OperationFailed("invalid_event_scheme"))?;
+    set_event_scheme_verified(controller, cmd.short_address, cmd.instance_number, scheme)
+}
+
 
 fn publish_scan_started(
     publisher: &BusPublisher,
@@ -307,8 +266,7 @@ fn publish_instance_configured(
     let mask = proved.mask;
     let mut instance_groups = [None; 3];
     for (slot, group) in cmd.instance_groups.iter().enumerate() {
-        let bit = PATCH_INSTANCE_GROUP_0 << slot;
-        if mask & bit != 0 {
+        if mask & InstancePatchField::INSTANCE_GROUPS[slot].bit() != 0 {
             instance_groups[slot] = Some(*group);
         }
     }
@@ -316,9 +274,11 @@ fn publish_instance_configured(
         configured_event_base(cmd.registry_adapter_id, cmd.short_address, cmd.instance_number);
     body.instance_status = proved.instance_status;
     body.instance_status_written = proved.instance_status.is_some();
-    body.event_scheme = (mask & PATCH_EVENT_SCHEME != 0).then_some(cmd.event_scheme);
-    body.event_filter = (mask & PATCH_EVENT_FILTER != 0).then_some(cmd.event_filter);
-    body.event_priority = (mask & PATCH_EVENT_PRIORITY != 0).then_some(cmd.event_priority);
+    let proved_field = |field: InstancePatchField| mask & field.bit() != 0;
+    body.event_scheme = proved_field(InstancePatchField::EventScheme).then_some(cmd.event_scheme);
+    body.event_filter = proved_field(InstancePatchField::EventFilter).then_some(cmd.event_filter);
+    body.event_priority =
+        proved_field(InstancePatchField::EventPriority).then_some(cmd.event_priority);
     body.instance_groups = instance_groups;
     body.timers = configured_timers(cmd, mask);
     let ev = dali2rust_contracts::bus::event_envelope(
@@ -339,8 +299,8 @@ fn publish_instance_configured(
 
 fn configured_timers(cmd: &Dali103InstanceConfigureCommand, mask: u16) -> [Option<u8>; 4] {
     let mut timers = [None; 4];
-    for (slot, bit) in TIMER_PATCH_BITS.iter().enumerate() {
-        if mask & bit != 0 {
+    for (slot, field) in InstancePatchField::TIMERS.iter().enumerate() {
+        if mask & field.bit() != 0 {
             timers[slot] = cmd.timer_multipliers[slot];
         }
     }
@@ -516,4 +476,56 @@ fn publish_worker_succeeded(
         dali2rust_contracts::msg::Origin::Api,
         counters,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::clock::StdClock;
+    use crate::runtime::controller::DaliController;
+    use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
+    use std::sync::Mutex;
+
+    const REFUSED_GROUP: u8 = 40;
+    const FIRST_GROUP: u8 = 4;
+    const FIRST_TIMER_UNITS: u8 = 10;
+
+    fn command_patching(field: InstancePatchField) -> Dali103InstanceConfigureCommand {
+        let mut cmd = Dali103InstanceConfigureCommand {
+            registry_adapter_id: 0,
+            short_address: 0,
+            instance_number: 0,
+            patch_mask: 0,
+            event_scheme: EventScheme::Device.code(),
+            event_filter: [0x01, 0, 0],
+            event_priority: 4,
+            instance_groups: [Some(REFUSED_GROUP); 3],
+            timer_multipliers: [None; 4],
+            instance_enabled: false,
+        };
+        for (slot, member) in (0u8..).zip(InstancePatchField::INSTANCE_GROUPS) {
+            if member == field {
+                cmd.instance_groups[usize::from(slot)] = Some(FIRST_GROUP + slot);
+            }
+        }
+        for (slot, member) in (0u8..).zip(InstancePatchField::TIMERS) {
+            if member == field {
+                cmd.timer_multipliers[usize::from(slot)] = Some(FIRST_TIMER_UNITS + slot);
+            }
+        }
+        cmd.patch(field);
+        cmd
+    }
+
+    #[test]
+    fn every_field_of_the_patch_table_is_written_to_its_own_slot_and_proved() {
+        for field in InstancePatchField::ALL {
+            let transport = Arc::new(Mutex::new(SimDaliTransport::demo_bus()));
+            let mut controller = DaliController::new(transport, Box::new(StdClock::new()));
+            let mut proved = ProvedWrites::default();
+            configure_instance(&mut controller, &command_patching(field), &mut proved)
+                .unwrap_or_else(|error| panic!("{field:?} did not land: {error:?}"));
+            assert_eq!(proved.mask, field.bit(), "{field:?} proved something else");
+        }
+    }
 }

@@ -1131,6 +1131,67 @@ impl SceneMetadataUpdateCommand {
     pub const PATCH_HA_SELECT_ENABLED: u8 = 2;
 }
 
+macro_rules! instance_patch_fields {
+    ($($field:ident = $bit:literal,)+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum InstancePatchField {
+            $($field = $bit,)+
+        }
+
+        impl InstancePatchField {
+            pub const ALL: [Self; [$($bit),+].len()] = [$(Self::$field),+];
+        }
+    };
+}
+
+// IEC 62386-103 §9.6.3
+instance_patch_fields! {
+    InstanceEnabled = 10,
+    EventFilter = 1,
+    EventPriority = 2,
+    InstanceGroup0 = 3,
+    InstanceGroup1 = 4,
+    InstanceGroup2 = 5,
+    TimerShort = 6,
+    TimerDouble = 7,
+    TimerRepeat = 8,
+    TimerStuck = 9,
+    EventScheme = 0,
+}
+
+impl InstancePatchField {
+    pub const INSTANCE_GROUPS: [Self; 3] =
+        [Self::InstanceGroup0, Self::InstanceGroup1, Self::InstanceGroup2];
+    pub const TIMERS: [Self; 4] =
+        [Self::TimerShort, Self::TimerDouble, Self::TimerRepeat, Self::TimerStuck];
+
+    pub const fn bit(self) -> u16 {
+        1 << self as u16
+    }
+
+    const fn bits_of(fields: &[Self]) -> u16 {
+        let mut bits = 0;
+        let mut index = 0;
+        while index < fields.len() {
+            bits |= fields[index].bit();
+            index += 1;
+        }
+        bits
+    }
+}
+
+impl Dali103InstanceConfigureCommand {
+    pub const ALL_PATCH_BITS: u16 = InstancePatchField::bits_of(&InstancePatchField::ALL);
+
+    pub const fn patches(&self, field: InstancePatchField) -> bool {
+        self.patch_mask & field.bit() != 0
+    }
+
+    pub fn patch(&mut self, field: InstancePatchField) {
+        self.patch_mask |= field.bit();
+    }
+}
+
 impl DaliRecallSceneCommand {
     pub fn broadcast(registry_adapter_id: u8, scene_id: u8) -> Self {
         Self {
@@ -1305,6 +1366,76 @@ mod operation_ttl_tests {
             DISCOVERY_TTL_MS,
             "the begin command must carry the kind's budget, not the generic one"
         );
+    }
+}
+
+#[cfg(test)]
+mod instance_patch_tests {
+    use super::*;
+
+    fn declared_bit(field: InstancePatchField) -> u16 {
+        match field {
+            InstancePatchField::EventScheme => 0,
+            InstancePatchField::EventFilter => 1,
+            InstancePatchField::EventPriority => 2,
+            InstancePatchField::InstanceGroup0 => 3,
+            InstancePatchField::InstanceGroup1 => 4,
+            InstancePatchField::InstanceGroup2 => 5,
+            InstancePatchField::TimerShort => 6,
+            InstancePatchField::TimerDouble => 7,
+            InstancePatchField::TimerRepeat => 8,
+            InstancePatchField::TimerStuck => 9,
+            InstancePatchField::InstanceEnabled => 10,
+        }
+    }
+
+    #[test]
+    fn every_patch_field_is_in_the_table_with_a_bit_of_its_own() {
+        for field in InstancePatchField::ALL {
+            assert_eq!(field.bit(), 1 << declared_bit(field), "{field:?}");
+        }
+        assert_eq!(
+            Dali103InstanceConfigureCommand::ALL_PATCH_BITS,
+            (1 << InstancePatchField::ALL.len()) - 1,
+            "the table's bits run contiguously from bit 0 and no two fields share one"
+        );
+    }
+
+    #[test]
+    fn the_table_writes_the_instance_state_first_and_the_scheme_last() {
+        assert_eq!(InstancePatchField::ALL.first(), Some(&InstancePatchField::InstanceEnabled));
+        assert_eq!(InstancePatchField::ALL.last(), Some(&InstancePatchField::EventScheme));
+    }
+
+    #[test]
+    fn group_and_timer_slots_name_table_fields_in_slot_order() {
+        let slots = InstancePatchField::INSTANCE_GROUPS
+            .into_iter()
+            .chain(InstancePatchField::TIMERS);
+        for (offset, field) in (3u16..).zip(slots) {
+            assert_eq!(declared_bit(field), offset, "{field:?}");
+            assert!(InstancePatchField::ALL.contains(&field), "{field:?}");
+        }
+    }
+
+    #[test]
+    fn a_patched_field_reads_back_from_the_mask() {
+        let mut cmd = Dali103InstanceConfigureCommand {
+            registry_adapter_id: 0,
+            short_address: 0,
+            instance_number: 0,
+            patch_mask: 0,
+            event_scheme: 0,
+            event_filter: [0; 3],
+            event_priority: 0,
+            instance_groups: [None; 3],
+            timer_multipliers: [None; 4],
+            instance_enabled: false,
+        };
+        cmd.patch(InstancePatchField::TimerRepeat);
+        for field in InstancePatchField::ALL {
+            assert_eq!(cmd.patches(field), field == InstancePatchField::TimerRepeat, "{field:?}");
+        }
     }
 }
 
