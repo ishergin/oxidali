@@ -15,9 +15,15 @@ OUTLINED_PROLOGUE = re.compile(r"\bjalr\s+t0,.*#\s*([0-9a-f]+)\s+<OUTLINED_FUNCT
 ANNOTATED_TARGET = re.compile(r"#\s*([0-9a-f]+)\s+<.+>")
 DIRECT_TARGET = re.compile(r"^(?:(\w+),)?([0-9a-f]+)\s+<.+>")
 NEVER_RETURNS = re.compile(
-    r"panicking|panic_|rust_begin_unwind|__rust_end_short_backtrace|abort|unwrap_failed"
-    r"|expect_failed|handle_alloc_error|capacity_overflow|slice_(?:start_|end_)?index"
-    r"|index_out_of_bounds|str_index|assert_failed|begin_panic|rust_panic"
+    r"^(?:abort|__assert_func|_esp_error_check_failed|esp_system_abort|panic_abort"
+    r"|_panic_handler|panicHandler|esp_panic_handler)$"
+    r"|^__rustc::(?:__rust_abort|__rust_start_panic|rust_panic|rust_begin_unwind"
+    r"|__rust_alloc_error_handler)"
+    r"|^core::panicking::|^std::panicking::(?:begin_panic|rust_panic|panic_with_hook"
+    r"|panic_handler|default_hook)|__rust_end_short_backtrace"
+    r"|^core::(?:result|option)::(?:unwrap|expect)_failed"
+    r"|^alloc::(?:alloc::handle_alloc_error|raw_vec::(?:capacity_overflow|handle_error))"
+    r"|^core::(?:slice|str)::\S*(?:_fail|do_panic)|^core::cell::panic_already"
 )
 
 USAGE = """usage: python3 scripts/measure_stack_frames.py <objdump> <elf> [substring]
@@ -30,9 +36,10 @@ ESP toolchain; [substring] filters the demangled names.
 With --path, prints the deepest static call path below every function whose
 demangled name ends with <function>, frame by frame. Direct calls and tail
 calls are followed; indirect calls (trait objects, function pointers, the log
-facade) are not, and each frame shows how many it makes, so the path is a lower
-bound on what the stack census sees. Panic paths are left out, and so is every
-function whose name matches --skip."""
+facade) are not, and each frame shows how many it makes. Functions that never
+return (panics, aborts, failed asserts) are left out, and so is every function
+whose name matches --skip. Error branches the census never runs are counted, so
+the path is an estimate that names where the depth is, not a bound."""
 
 
 class Function:

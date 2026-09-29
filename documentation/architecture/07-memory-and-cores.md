@@ -133,8 +133,9 @@ unless named.
   (`scripts/measure_stack_frames.py` reads every stack adjustment of a function, not only
   the first `addi sp`, and adds a prologue the size-optimised build outlined into an
   `OUTLINED_FUNCTION_*` fragment). With `--path <function>` it prints the deepest static
-  call path below a function; it does not follow indirect calls (trait objects, the `log`
-  facade), so the path is a lower bound on what the census sees, not a budget.
+  call path below a function: it names where the depth is, but it is no bound — it does
+  not follow indirect calls (trait objects, the `log` facade) and it counts error branches
+  the census never runs. A budget moves only on a census.
 
 ## The httpd stack is a budget
 
