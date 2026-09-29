@@ -91,7 +91,7 @@ def _allowed_tc_fixture(api, capabilities):
                  if short in present and capabilities.ensure(short, "cct")), None)
 
 
-@pytest.mark.hil_id("HIL-TS-08")
+@pytest.mark.hil_id("HIL-TS-09")
 def test_a_colour_temperature_series_during_a_fade_leaves_the_fixture_at_the_last_value(
         api, hil_config, capabilities, attr_guard, state_snapshot, test_artifacts):
     if hil_config.lamps_read_only:

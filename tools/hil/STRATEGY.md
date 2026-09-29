@@ -241,7 +241,7 @@ ID — маркер `hil_id` теста ([README](README.md#writing-a-scenario))
 | `test_adapters` | SYS-02..04 | default | часть | Сводка и адаптеры согласованы, hostname интерфейса равен имени узла, а оно — хвосту MAC; выключенный адаптер отказывает с `adapter_disabled`, и до провода не доходит ни одного кадра. |
 | `test_diagnostic` | DIAG-02..06 | default | часть | Сырой кадр байт в байт; `repeat_count=2`; ответ `QUERY ACTUAL LEVEL` = реестр; честное «нет ответа». |
 | `test_attributes` | ATTR-01..05, 07..13 | smoke, default | часть | Чтение; fade time и его длительность; min/max; кривая; sRGB на проводе; брекет DT8. `ATTR-06` — §9.2. |
-| `test_target_state` | TS-05..08 | default | да | Коалесцирование пачки, `off_all`, уровень и цвет одним PUT; серия Tc в фейде — последнее значение. |
+| `test_target_state` | TS-05..07, 09 | default | да | Коалесцирование пачки, `off_all`, уровень и цвет одним PUT; серия Tc в фейде — последнее значение. |
 | `test_scenarios` | — | default | часть | Образец сценария; групповой DAPC; скан без переадресации. |
 | `test_optical_*` | — | smoke | да | ON/OFF, яркость, RGB, colour-only, порядок CCT. Нужна оптика. |
 | `test_virtual_gear` | VG-01..06 | `HIL_VIRTUAL_GEAR=1`; VG-04 — ещё `HIL_ALLOW_DESTRUCTIVE=1` и `HIL_ALLOW_VIRTUAL_COMMISSIONING=1` | нет (эмулятор) | Уровень доходит до своего гира и ни до какого другого; группа — только до членов; сцена записана в гир; безадресный гир ввода в эксплуатацию получает адрес парка (§4.8); цвет — `ACTIVATE` без `QUERY STATUS`; `.stop_fade()` — один `DAPC(MASK)` группе. Оракул — строки `C` и `F` эмулятора. |
