@@ -40,9 +40,10 @@
   моменту, даёт `DaliTargetStateFailedEvent` с `vl_unbound`.
 - Покомандного фейда нет: длительность любого перехода живёт в гире (`fadeTime`) и
   пишется через `DaliWriteAttributesCommand`.
-- `hold_hcl` — объявляет ли команда ручное вмешательство для HCL; снят только у света
-  правила с `hold_hcl false`. Признак едет через applied-факт, проектор и реестр в
-  `commit_holds_hcl` коммита; `DaliRecallSceneCommand` несёт его так же.
+- `hold_hcl` — объявляет ли команда ручное вмешательство для HCL
+  ([`../runtime-modules/hcl-scheduler/README.md`](../runtime-modules/hcl-scheduler/README.md)
+  §Override). Признак едет через applied-факт, проектор и реестр в `commit_holds_hcl`
+  коммита; `DaliRecallSceneCommand` несёт его так же.
 - Подтверждение: для лампы и короткого адреса — после коммита реестра (цепочка
   applied-факт → проектор → RRUC → подтверждение реестра); для группы и broadcast —
   воркером сразу после исполнения, а проекция на членов идёт асинхронно.
@@ -64,7 +65,8 @@ broadcast (продюсер — HCL для `level_mode = last_active`). Applied-
 target-state, а непривязанная даёт `vl_unbound`. Recall-факт называет адрес, на который
 ушёл кадр, так что проектор раскрывает его ровно на тех, кто кадр получил. Recall
 никогда не заменяется синтетическим поламповым target-state или программированием
-сцены. Broadcast-recall ставит активную сцену адаптера, любой другой — снимает её.
+сцены. Что recall делает с активной сценой адаптера — [`events.md`](events.md)
+§Результаты DALI.
 
 ## Программирование конфигурации
 

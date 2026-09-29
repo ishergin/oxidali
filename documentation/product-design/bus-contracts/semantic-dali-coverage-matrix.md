@@ -38,7 +38,7 @@
 | Apply orchestrator | ячейки политики | `DaliWriteAttributesCommand` (`signals_operation = false`) |
 | Воркер арбитража | зонд владельца шины | `Dali103ArbitrationProbeCommand` |
 | Проектор state-fanout | проекция фактов в реестр | `RegistryRuntimeUpdateCommand`, `RegistryLevelTransitionCommand` — DALI-команд не публикует |
-| Sniffer translator | чужие кадры | только события (`DaliObservedFrameEvent`, вход Part 103) — команд не публикует |
+| Sniffer translator | чужие кадры | только события (`DaliObservedFrameEvent`, вход Part 103, `DaliSceneRecalledEvent` чужого `GO TO SCENE`) — команд не публикует |
 
 `DaliProgramTarget = Short` и `DaliRecallSceneCommand` со `scope = Short` допустимы
 контрактом, но ни один документированный продуктовый сценарий их сейчас не использует.
