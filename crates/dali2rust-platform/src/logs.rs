@@ -91,9 +91,18 @@ impl LogLine {
             target: [0; LOG_TARGET_BYTES],
             text: [0; LOG_TEXT_BYTES],
         };
-        line.target_len = copy_truncated(&mut line.target, target, false);
-        line.text_len = copy_truncated(&mut line.text, text, true);
+        line.overwrite(at_ms, seq, level, target, text);
         line
+    }
+
+    pub fn overwrite(&mut self, at_ms: u64, seq: u32, level: LogLevel, target: &[u8], text: &[u8]) {
+        self.at_ms = at_ms;
+        self.seq = seq;
+        self.level = level;
+        self.target_len = copy_truncated(&mut self.target, target, false);
+        self.text_len = copy_truncated(&mut self.text, text, true);
+        self.target[usize::from(self.target_len)..].fill(0);
+        self.text[usize::from(self.text_len)..].fill(0);
     }
 
     pub fn target_str(&self) -> &str {
@@ -131,6 +140,13 @@ fn valid_prefix(bytes: &[u8]) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{LogLevel, LogLine, LOG_TEXT_BYTES};
+
+    #[test]
+    fn a_slot_overwritten_in_place_equals_a_new_line() {
+        let mut slot = LogLine::new(1, 1, LogLevel::Warn, b"a::long::target", &[b'x'; LOG_TEXT_BYTES]);
+        slot.overwrite(2, 3, LogLevel::Info, b"t", b"short");
+        assert_eq!(slot, LogLine::new(2, 3, LogLevel::Info, b"t", b"short"));
+    }
 
     #[test]
     fn a_level_filter_is_a_number_comparison_in_the_esp_idf_direction() {
