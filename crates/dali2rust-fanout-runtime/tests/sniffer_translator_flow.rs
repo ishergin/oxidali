@@ -112,6 +112,52 @@ fn broadcast_go_to_scene_decodes_to_scene_recall_observed_snif002() {
     assert!(!body.dapc_observed);
 }
 
+fn recv_recall(harness: &Harness) -> (Origin, dali2rust_contracts::msg::DaliSceneRecalledEvent) {
+    let ev = recv_event_matching(&harness.ev_tap, Duration::from_secs(1), |payload| {
+        matches!(payload, BusEventPayload::DaliSceneRecalledEvent(_))
+    });
+    let BusEventPayload::DaliSceneRecalledEvent(body) = &ev.payload else {
+        unreachable!("predicate selected this variant");
+    };
+    (ev.meta.origin, body.clone())
+}
+
+#[test]
+fn a_foreign_go_to_scene_is_a_recall_fact_for_every_addressed_class() {
+    let harness = spawn_harness();
+    for (frame, scope, short_address, group_id) in [
+        ([0xFF, 0x10 | 3], DaliTargetScope::Broadcast, 0, 0),
+        ([0x80 | (2 << 1) | 0x01, 0x10 | 3], DaliTargetScope::Group, 0, 2),
+        ([(7 << 1) | 0x01, 0x10 | 3], DaliTargetScope::Short, 7, 0),
+    ] {
+        harness.tx.send(forward16(frame)).expect("send");
+        let (origin, body) = recv_recall(&harness);
+        assert_eq!(origin, Origin::Sniffer);
+        assert_eq!(
+            (body.scope, body.short_address, body.group_id, body.scene_id),
+            (scope, short_address, group_id, 3),
+            "{frame:02X?}"
+        );
+        assert_eq!(body.source, dali2rust_contracts::msg::RuntimeSource::Sniffer);
+        assert!(body.error.is_none(), "a frame seen on the wire is a recall that happened");
+        assert_eq!(body.recalled_at_mono_ms, OBSERVED_MONO_MS, "stamped when the wire carried it");
+    }
+}
+
+#[test]
+fn a_go_to_scene_for_gear_without_an_address_is_no_recall_fact() {
+    let harness = spawn_harness();
+    harness.tx.send(forward16([0xFD, 0x10 | 5])).expect("send");
+    harness.tx.send(forward16([0xFF, 0x10 | 6])).expect("send");
+
+    let (_, body) = recv_recall(&harness);
+    assert_eq!(
+        body.scene_id, 6,
+        "an unaddressed recall reaches only gear with no short address, which no record \
+         describes; it must not read as a broadcast recall"
+    );
+}
+
 #[test]
 fn unrecognized_frames_are_counted_not_published_snif003() {
     let harness = spawn_harness();

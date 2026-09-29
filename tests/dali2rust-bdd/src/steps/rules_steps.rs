@@ -63,7 +63,7 @@ fn rule_fire_count(port: u16, name: &str) -> Option<u64> {
         .as_u64()
 }
 
-// RULE-030
+// RULE-030 RULE-034 RULE-035
 #[then(regex = r#"^the rule "([^"]+)" eventually has fired (\d+) times?$"#)]
 async fn then_rule_eventually_fired(world: &mut DaliWorld, name: String, expected: u64) {
     let port = world.server_port();
@@ -74,7 +74,7 @@ async fn then_rule_eventually_fired(world: &mut DaliWorld, name: String, expecte
     assert_eq!(rule_fire_count(port, &name), Some(expected), "fire count of rule {name}");
 }
 
-// RULE-030
+// RULE-030 RULE-034 RULE-035
 #[then(regex = r#"^the rule "([^"]+)" should have fired (\d+) times?$"#)]
 async fn then_rule_has_fired(world: &mut DaliWorld, name: String, expected: u64) {
     let port = world.server_port();

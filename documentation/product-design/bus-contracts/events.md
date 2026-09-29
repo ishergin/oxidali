@@ -31,7 +31,7 @@
 | Настройки | `PollerSettingsChangedEvent`, `DaliSettingsChangedEvent`, `HomeAssistantSettingsChangedEvent`, `RedundancySettingsChangedEvent`, `PoliciesChangedEvent` | registry worker | поллер; арбитраж, супервизор и правила; — ; воркер репликации; — | best-effort |
 | Операции | `OperationStatusChangedEvent` | operation tracker | WS, дисплей | best-effort |
 | Сигналы исполнителей | `OperationWorkerSignalEvent` | `DaliWorker`, реестр, оркестратор, MQTT, правила, OTA, HTTP | operation tracker | **required** |
-| Результаты DALI | [ниже](#результаты-dali) | `DaliWorker` | по виду | по виду |
+| Результаты DALI | [ниже](#результаты-dali) | `DaliWorker`; recall сцены — и sniffer translator | по виду | по виду |
 | Наблюдения | `DaliObservedFrameEvent` | sniffer translator | проектор, реестр, дисплей | best-effort |
 | Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `Dali103ApplicationControlObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
 | Результаты Part 103 | `Dali103ScanStartedEvent`, `Dali103ScanProgressEvent`, `Dali103InstanceConfiguredEvent` | `DaliWorker` | реестр; правила (`manual config changed`) | **required** |
@@ -80,7 +80,7 @@
 |---|---|---|---|
 | `DaliTargetStateAppliedEvent` | проектор, реестр, дисплей | required | Уставка стала истинной на проводе; несёт scope, идентичности, setpoint, признак DAPC и монотонную метку момента применения |
 | `DaliTargetStateFailedEvent` | дисплей | best-effort | Отказ исполнения; ждущий узнаёт о нём по подтверждению |
-| `DaliSceneRecalledEvent` | проектор, реестр, правила, дисплей | required | Исход нативного recall: без `error` кадр ушёл на шину, и реестр запоминает активную сцену; recall с `error` не случился — его показывает только дисплей |
+| `DaliSceneRecalledEvent` | проектор, реестр, правила, дисплей | required | Recall сцены на адрес, куда ушёл кадр, и источник коммита. Наш публикует `DaliWorker` — с `error`, если кадр не ушёл на шину, и тогда его показывает только дисплей; чужой — sniffer translator. Без `error` реестр запоминает активную сцену |
 | `DaliGroupMembershipProgrammedEvent` | реестр, трекер, оркестратор | required | Ячейка членства запрограммирована; несёт маску readback'а |
 | `DaliSceneProgrammedEvent` | реестр, трекер, оркестратор | required | Строка сцены запрограммирована; несёт readback уровня и эхо записанного |
 | `DaliAttributesReadEvent` | реестр, проектор | required | Один чанк на группу атрибутов; секцию `RuntimeStatus` применяет только проектор |
@@ -126,6 +126,9 @@
   производителя.
 - `raw_frame` и `decode_status` — диагностическое свидетельство, не продуктовые
   данные.
+- `GO TO SCENE` транслятор публикует ещё и фактом `DaliSceneRecalledEvent` с источником
+  `Sniffer`: проектор раскрывает, а правила видят recall — наш или чужой — по одному
+  событию, наблюдение же `SceneRecallObserved` остаётся дисплею.
 - Раскрывает наблюдение проектор
   ([`../runtime-modules/state-fanout/README.md`](../runtime-modules/state-fanout/README.md));
   реестр по групповым кадрам взводит «группой командовали» для плиток Home Assistant.

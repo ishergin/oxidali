@@ -76,3 +76,48 @@ Feature: Rules and scenes: a recall is one frame and a fact once it has happened
     When I POST JSON {} to "/api/v1/rules/evening/run"
     Then the response status should be 202
     And virtual lamp 1 on adapter 0 should eventually report level 150 from value_source "rules"
+
+  @id:RULE-034
+  Scenario: A foreign GO TO SCENE wakes the scene rule once, and so does one recall of ours
+    When I PUT JSON {"base_revision":0,"source":"rule \"after-3\" cooldown 0ms {\n  when scene(3) recalled\n  do log(\"3\")\n}\nrule \"after-4\" cooldown 0ms {\n  when scene(4) recalled\n  do log(\"4\")\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When a foreign broadcast recall of scene 3 is observed on the bus
+    Then the rule "after-3" eventually has fired 1 time
+    When I send a POST request to "/api/v1/adapters/0/scenes/3/recall"
+    Then the response status should be 200
+    And the rule "after-3" eventually has fired 2 times
+    When I send a POST request to "/api/v1/adapters/0/scenes/4/recall"
+    Then the response status should be 200
+    And the rule "after-4" eventually has fired 1 time
+    And the rule "after-3" should have fired 2 times
+
+  @id:RULE-035
+  Scenario: A foreign recall on a group or one short address wakes the scene rule, one to gear without an address does not
+    When I PUT JSON {"base_revision":0,"source":"rule \"after-5\" cooldown 0ms {\n  when scene(5) recalled\n  do log(\"5\")\n}\nrule \"after-6\" cooldown 0ms {\n  when scene(6) recalled\n  do log(\"6\")\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When a foreign unaddressed recall of scene 5 is observed on the bus
+    And a foreign broadcast recall of scene 6 is observed on the bus
+    Then the rule "after-6" eventually has fired 1 time
+    And the rule "after-5" should have fired 0 times
+    When a foreign group 2 recall of scene 5 is observed on the bus
+    Then the rule "after-5" eventually has fired 1 time
+    When a foreign short address 7 recall of scene 5 is observed on the bus
+    Then the rule "after-5" eventually has fired 2 times
+
+  @id:RULE-036
+  Scenario: A foreign recall is projected once, under the sniffer's name
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And adapter 0 scene 3 desired row for virtual lamp 1 has level 100
+    And a DALI mock transport with no response
+    And adapter 0 scene 3 write for short 0 level 100 is scripted
+    When I send a POST request to "/api/v1/adapters/0/scenes/3/apply"
+    Then the last operation eventually succeeds
+    Given the DALI mock transport trace is cleared
+    When a foreign broadcast recall of scene 3 is observed on the bus
+    Then virtual lamp 1 on adapter 0 should eventually report level 100 from value_source "sniffer"
+    When a foreign DAPC frame for short address 0 level 90 is observed on the bus
+    Then the virtual lamp 1 runtime level should eventually be 90
+    And the diagnostics projector counter "scene_expansions" should be 1
+    And the DALI mock transport should have received 0 forward frame

@@ -185,9 +185,11 @@ when hcl override starts for group("кухня")
 when hcl override clears for group("кухня")
 ```
 
-Источник — `RuntimeStateChangedEvent`; `scene(N) recalled` — recall, исполненный этим
-контроллером (`DaliSceneRecalledEvent`): чужой recall, увиденный сниффером, этот
-триггер не будит. Триггер срабатывает на **переход**, а не на факт.
+Источник — `RuntimeStateChangedEvent`; `scene(N) recalled` — `DaliSceneRecalledEvent`:
+recall, исполненный этим контроллером, или чужой `GO TO SCENE` на короткий адрес,
+группу или broadcast, увиденный сниффером. Неудавшийся recall триггер не будит, один
+recall будит его один раз, а recall приборам без короткого адреса не будит вовсе: их
+реестр не описывает. Триггер срабатывает на **переход**, а не на факт.
 
 Три перехода из этого списка выводятся не из события, а из снимка, и вот почему:
 

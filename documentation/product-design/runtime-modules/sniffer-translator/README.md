@@ -19,8 +19,9 @@
 - **Окно сниффера**: каждый сырой кадр сначала зеркалится в WebSocket-канал `sniffer`
   — транслятор единственный видит чужой поток целиком, включая специальные команды и
   запросы, которые типизированная трансляция отбрасывает.
-- **Публикует** `DaliObservedFrameEvent` (best-effort) и три события Part 103 через
-  `publish_required` — нажатие перечитать неоткуда.
+- **Публикует** `DaliObservedFrameEvent` (best-effort), а через `publish_required` —
+  три события Part 103 и `DaliSceneRecalledEvent`: нажатие и чужой recall перечитать
+  неоткуда.
 - **Читает** один узкий порт — тип инстанса устройства ввода
   (`InputInstanceTypeReadPort`): событие схемы 2 называет инстанс, а не его тип.
 
@@ -29,7 +30,9 @@
 **16 бит**:
 
 - `DAPC` и `OFF` → `TargetStateObserved` с короткой, групповой или широковещательной
-  адресацией; `GO TO SCENE` → `SceneRecallObserved`.
+  адресацией; `GO TO SCENE` → `SceneRecallObserved` и, кроме адреса unaddressed
+  broadcast, recall-факт `DaliSceneRecalledEvent` с источником `Sniffer`: приборы без
+  короткого адреса реестр не описывает.
 - Пара `SET SCENE` или `REMOVE FROM SCENE`, повторённая в окне send-twice без единого
   кадра между половинами (IEC 62386-101 §9.3), → `SceneWriteObserved` или
   `SceneRemovalObserved` с адресом и номером сцены; одиночный или разорванный кадр

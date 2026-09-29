@@ -39,7 +39,7 @@
   документа; `RuleRunCommand` — ручной запуск и сухой прогон.
 - **События-триггеры**: события входа и служебные события устройств ввода,
   `RuntimeStateChangedEvent` (лампы и агрегаты групп), `DaliSceneRecalledEvent`
-  (recall, исполненный этим контроллером), `RedundancyTransitionEvent`
+  (случившийся recall — наш или чужой, увиденный сниффером), `RedundancyTransitionEvent`
   (`controller becomes active`), `DaliSettingsChangedEvent`,
   `Dali103InstanceConfiguredEvent` (`manual config changed`).
 - **События-инвалидации**: `VirtualLampChangedEvent` и `PhysicalDeviceChangedEvent` —

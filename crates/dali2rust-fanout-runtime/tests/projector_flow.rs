@@ -1019,14 +1019,27 @@ fn a_recall_that_names_a_lamp_instead_of_an_address_is_ignored() {
     );
 }
 
+fn foreign_recall(scope: DaliTargetScope, short_address: u8, group_id: u8) -> DaliSceneRecalledEvent {
+    DaliSceneRecalledEvent {
+        registry_adapter_id: 0,
+        scope,
+        short_address,
+        group_id,
+        scene_id: 3,
+        error: None,
+        recalled_at_mono_ms: PRODUCER_MONO_MS,
+        source: RuntimeSource::Sniffer,
+    }
+}
+
 #[test]
-fn observed_scene_recall_projects_applied_rows_fan052() {
+fn an_observed_recall_frame_projects_nothing_its_recall_fact_does() {
     let port = FakeReadPort {
         scene_rows: scene_rows(),
         ..FakeReadPort::default()
     };
     let h = spawn_harness(port);
-    let (publisher, tap, _) = (h.publisher.clone(), &h.tap, &h.counters);
+    let (publisher, tap, counters) = (h.publisher.clone(), &h.tap, &h.counters);
     let mut body = observed(
         ObservedKind::SceneRecallObserved,
         DaliTargetScope::Broadcast,
@@ -1035,6 +1048,29 @@ fn observed_scene_recall_projects_applied_rows_fan052() {
     );
     body.scene_id = Some(3);
     publish_event(&publisher, CORRELATION_NONE, body);
+    publish_event(&publisher, CORRELATION_NONE, foreign_recall(DaliTargetScope::Broadcast, 0, 0));
+
+    for _ in 0..2 {
+        let (_, cmd) = recv_runtime_update(tap);
+        assert_eq!(cmd.update.source, RuntimeSource::Sniffer);
+    }
+    assert_no_more_updates(tap);
+    assert_eq!(
+        counters.scene_expansions.load(Ordering::Relaxed),
+        1,
+        "one foreign recall is one expansion: the raw frame is the display's, the fact is the projector's"
+    );
+}
+
+#[test]
+fn observed_scene_recall_projects_applied_rows_fan052() {
+    let port = FakeReadPort {
+        scene_rows: scene_rows(),
+        ..FakeReadPort::default()
+    };
+    let h = spawn_harness(port);
+    let (publisher, tap, _) = (h.publisher.clone(), &h.tap, &h.counters);
+    publish_event(&publisher, CORRELATION_NONE, foreign_recall(DaliTargetScope::Broadcast, 0, 0));
 
     for _ in 0..2 {
         let (_, cmd) = recv_runtime_update(tap);
@@ -1125,14 +1161,7 @@ fn observed_scene_recall_filters_incapable_member_colour_fan054() {
     };
     let h = spawn_harness(port);
     let (publisher, tap, _) = (h.publisher.clone(), &h.tap, &h.counters);
-    let mut body = observed(
-        ObservedKind::SceneRecallObserved,
-        DaliTargetScope::Broadcast,
-        None,
-        false,
-    );
-    body.scene_id = Some(3);
-    publish_event(&publisher, CORRELATION_NONE, body);
+    publish_event(&publisher, CORRELATION_NONE, foreign_recall(DaliTargetScope::Broadcast, 0, 0));
 
     let by_vl = color_by_vl(tap, 2);
     assert_eq!(by_vl[&1].as_ref().map(|c| c.mode), Some(ColorMode::Cct));
@@ -1185,15 +1214,7 @@ fn observed_group_scene_recall_projects_members_only_fan056() {
     };
     let h = spawn_harness(port);
     let (publisher, tap, _) = (h.publisher.clone(), &h.tap, &h.counters);
-    let mut body = observed(
-        ObservedKind::SceneRecallObserved,
-        DaliTargetScope::Group,
-        None,
-        false,
-    );
-    body.group_id = Some(7);
-    body.scene_id = Some(3);
-    publish_event(&publisher, CORRELATION_NONE, body);
+    publish_event(&publisher, CORRELATION_NONE, foreign_recall(DaliTargetScope::Group, 0, 7));
 
     let (_, cmd) = recv_runtime_update(tap);
     assert_eq!(cmd.update.virtual_lamp_id, Some(1));
@@ -1210,15 +1231,7 @@ fn observed_short_scene_recall_projects_the_bound_row_only_fan057() {
     };
     let h = spawn_harness(port);
     let (publisher, tap, _) = (h.publisher.clone(), &h.tap, &h.counters);
-    let mut body = observed(
-        ObservedKind::SceneRecallObserved,
-        DaliTargetScope::Short,
-        None,
-        false,
-    );
-    body.short_address = Some(3);
-    body.scene_id = Some(3);
-    publish_event(&publisher, CORRELATION_NONE, body);
+    publish_event(&publisher, CORRELATION_NONE, foreign_recall(DaliTargetScope::Short, 3, 0));
 
     let (_, cmd) = recv_runtime_update(tap);
     assert_eq!(cmd.update.virtual_lamp_id, Some(2));
@@ -1267,15 +1280,7 @@ fn observed_group_recall_with_oversized_group_id_is_ignored() {
     };
     let h = spawn_harness(port);
     let (publisher, tap, counters) = (h.publisher.clone(), &h.tap, &h.counters);
-    let mut body = observed(
-        ObservedKind::SceneRecallObserved,
-        DaliTargetScope::Group,
-        None,
-        false,
-    );
-    body.group_id = Some(16);
-    body.scene_id = Some(3);
-    publish_event(&publisher, CORRELATION_NONE, body);
+    publish_event(&publisher, CORRELATION_NONE, foreign_recall(DaliTargetScope::Group, 0, 16));
 
     assert_no_more_updates(tap);
     wait_until(

@@ -11,10 +11,11 @@ use dali2rust_contracts::bus::event_envelope;
 use dali2rust_contracts::msg::{
     Dali103ApplicationControlObservedEvent,
     ColorMode, ColorValue, DaliInputDeviceLifecycleEvent, DaliInputEventObservedEvent,
-    DaliObservedFrameEvent, DaliTargetScope, DecodeStatus, DeviceCommandScope,
-    InputDeviceLifecycleKind,
+    DaliObservedFrameEvent, DaliSceneRecalledEvent, DaliTargetScope, DecodeStatus,
+    DeviceCommandScope, InputDeviceLifecycleKind,
     LevelTransition,
     InputEventKind, LightSetpoint, ObservedFrameWidth, ObservedKind, Origin, PowerState,
+    RuntimeSource,
 };
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::dali::dev103::{
@@ -47,6 +48,7 @@ pub const SNIFFER_TRANSLATOR_REQUIRED_EVENTS: &[&str] = &[
     "DaliInputEventObservedEvent",
     "DaliInputDeviceLifecycleEvent",
     "Dali103ApplicationControlObservedEvent",
+    "DaliSceneRecalledEvent",
 ];
 
 #[derive(Debug, Default)]
@@ -321,7 +323,10 @@ fn publish_standard(
 ) {
     match classify_standard(address, command) {
         Some(observed) => {
-            publish_observed(publisher, bus_id, registry_adapter_id, counters, raw, observed)
+            publish_observed(publisher, bus_id, registry_adapter_id, counters, raw, observed);
+            if let Some(recall) = foreign_recall(registry_adapter_id, raw, address, command) {
+                publish_required_fact(publisher, bus_id, counters, recall);
+            }
         }
         None if is_unprojectable_dimming(command) => {
             counters
@@ -420,6 +425,31 @@ fn classify_product_shape(
         }
         _ => None,
     }
+}
+
+fn foreign_recall(
+    registry_adapter_id: u8,
+    raw: &ObservedRawFrame,
+    address: DaliAddress,
+    command: StandardCommand,
+) -> Option<DaliSceneRecalledEvent> {
+    let StandardCommand::GoToScene { scene } = command else {
+        return None;
+    };
+    if address == DaliAddress::BroadcastUnaddressed {
+        return None;
+    }
+    let (scope, short_address, group_id) = scope_of(address);
+    Some(DaliSceneRecalledEvent {
+        registry_adapter_id,
+        scope,
+        short_address: short_address.unwrap_or(0),
+        group_id: group_id.unwrap_or(0),
+        scene_id: scene,
+        error: None,
+        recalled_at_mono_ms: raw.observed_at_mono_ms,
+        source: RuntimeSource::Sniffer,
+    })
 }
 
 fn level_transition_of(command: StandardCommand) -> Option<LevelTransition> {
@@ -643,7 +673,7 @@ fn track_device_command_pair(
                 return;
             };
             counters.app_control_pairs.fetch_add(1, Ordering::Relaxed);
-            publish_input_fact(
+            publish_required_fact(
                 publisher,
                 bus_id,
                 counters,
@@ -684,7 +714,7 @@ fn translate_forward24(
             device_group,
         } => {
             counters.input_lifecycle.fetch_add(1, Ordering::Relaxed);
-            publish_input_fact(
+            publish_required_fact(
                 publisher,
                 bus_id,
                 counters,
@@ -725,7 +755,7 @@ fn publish_instance_event(
 ) {
     count_typed(counters, source, type_event(source.instance_type, info));
     let resolved = resolve_instance_type(registry_adapter_id, source, counters, instance_types);
-    publish_input_fact(
+    publish_required_fact(
         publisher,
         bus_id,
         counters,
@@ -812,7 +842,7 @@ fn count_typed(
     }
 }
 
-fn publish_input_fact<P>(
+fn publish_required_fact<P>(
     publisher: &BusPublisher,
     bus_id: BusId,
     counters: &Arc<SnifferTranslatorCounters>,
@@ -833,7 +863,7 @@ fn publish_input_fact<P>(
         BusFrame::event(env),
         &REQUIRED_PUBLISH_BACKOFF_MS,
         REQUIRED_PUBLISH_UNCAPPED,
-        "sniffer-translator-input-event",
+        "sniffer-translator-fact",
     );
     if outcome.queued {
         counters.observed_published.fetch_add(1, Ordering::Relaxed);

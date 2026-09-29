@@ -709,13 +709,12 @@ fn handle_observed_frame(
         ObservedKind::TargetStateObserved => handle_observed_target_state(
             publisher, bus_id, read_port, counters, body,
         ),
-        ObservedKind::SceneRecallObserved => {
-            handle_observed_scene_recall(publisher, bus_id, read_port, counters, body)
-        }
         ObservedKind::LevelTransitionObserved => {
             handle_observed_level_transition(publisher, bus_id, read_port, counters, body)
         }
-        ObservedKind::SceneWriteObserved | ObservedKind::SceneRemovalObserved => {}
+        ObservedKind::SceneRecallObserved
+        | ObservedKind::SceneWriteObserved
+        | ObservedKind::SceneRemovalObserved => {}
     }
 }
 
@@ -794,43 +793,6 @@ fn handle_observed_level_transition(
     counters
         .transitions_expanded
         .fetch_add(1, Ordering::Relaxed);
-}
-
-fn handle_observed_scene_recall(
-    publisher: &BusPublisher,
-    bus_id: BusId,
-    read_port: &dyn ProjectorReadPort,
-    counters: &Arc<ProjectorCounters>,
-    body: &DaliObservedFrameEvent,
-) {
-    let Some(scene_id) = body.scene_id else {
-        counters.ignored_events.fetch_add(1, Ordering::Relaxed);
-        return;
-    };
-    let (group_id, short_address) = match (body.scope, body.group_id, body.short_address) {
-        (DaliTargetScope::Group, Some(group_id), _) => (Some(group_id), None),
-        (DaliTargetScope::Short, _, Some(short)) => (None, Some(short)),
-        (DaliTargetScope::Group, None, _) | (DaliTargetScope::Short, _, None) => {
-            counters.ignored_events.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-        _ => (None, None),
-    };
-    expand_scene_recall(
-        publisher,
-        bus_id,
-        read_port,
-        counters,
-        SceneRecallExpansion {
-            registry_adapter_id: body.registry_adapter_id,
-            scene_id,
-            group_id,
-            short_address,
-            source: RuntimeSource::Sniffer,
-            last_seen_ms: body.observed_at_ms,
-            observed_at_mono_ms: Some(body.observed_at_mono_ms),
-        },
-    );
 }
 
 fn handle_observed_target_state(
