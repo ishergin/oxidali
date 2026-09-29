@@ -87,7 +87,6 @@ messages to every new subscription.
    answers a light change with a message is invisible to the chain and runs at the pace
    of the rule's cooldown, and a message another client sends on a topic a rule published
    within the window is counted as that publish's echo.
-
 9. **The bridge's own topics are not triggers.** A rule on a topic the bridge publishes
    — the state or availability of a lamp, group, scene selector or input, the
    controller's availability, a discovery config — would hear the bridge echo the
