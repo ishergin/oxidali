@@ -3,9 +3,9 @@ Feature: A broker message fires a rule
 
   I10-B. The MQTT bridge is the one broker client: it subscribes the rules
   document's `when mqtt` topics in its session and hands each message on them
-  to the rules worker as one typed event (ADR-033). Each scenario runs from a
-  client publishing on the mock broker to the frame on the mock DALI
-  transport; nothing hand-builds the event.
+  to the rules worker as one typed event (ADR-033). A scenario that fires a
+  rule runs from a client publishing on the mock broker to the frame on the
+  mock DALI transport; nothing hand-builds the event.
 
   @id:RULE-080
   Scenario: A matching payload fires the rule, and its broadcast reaches the wire
@@ -71,3 +71,13 @@ Feature: A broker message fires a rule
     Then the JSON pointer "/rules/rules/0/runtime/fire_count" should be 0
     And the JSON pointer "/rules/rules/1/runtime/fire_count" should be 1
     And the mock transport should have sent no frames
+
+  @id:RULE-085
+  Scenario: A rule on a topic the bridge publishes itself gets no subscription, and the rest does
+    Given the Home Assistant bridge is enabled with controller id "ctl1"
+    When I PUT JSON {"base_revision":0,"source":"rule \"эхо\" {\n  when mqtt \"dali/ctl1/a0/vl/1/state\"\n  do broadcast.off()\n}\nrule \"режим\" {\n  when mqtt \"home/mode\"\n  do log(\"mode\")\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the MQTT broker should eventually hold a subscription to "home/mode"
+    And within 3 seconds the stats pointer "/mqtt/own_topics_refused_total" reaches 1
+    And the MQTT broker should never have received a subscription to "dali/ctl1/a0/vl/1/state"
