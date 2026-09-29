@@ -98,10 +98,10 @@ fn receive_raw_events(client: &EspMqttClient<'static>, link: &Arc<MqttLink>) -> 
 extern "C" fn on_event(receiver: *mut c_void, _base: esp_event_base_t, _id: i32, event: *mut c_void) {
     // SAFETY: registered with the bridge's `MqttLink`; every esp-mqtt event carries an `esp_mqtt_event_t`.
     let (link, event) = unsafe { (&*receiver.cast::<MqttLink>(), &*event.cast::<esp_mqtt_event_t>()) };
-    match event.event_id {
-        esp_mqtt_event_id_t_MQTT_EVENT_DATA => deliver_first_chunk(link, event),
-        esp_mqtt_event_id_t_MQTT_EVENT_SUBSCRIBED => note_suback(link, event),
-        _ => {}
+    if event.event_id == esp_mqtt_event_id_t_MQTT_EVENT_DATA {
+        deliver_first_chunk(link, event);
+    } else if event.event_id == esp_mqtt_event_id_t_MQTT_EVENT_SUBSCRIBED {
+        note_suback(link, event);
     }
 }
 
