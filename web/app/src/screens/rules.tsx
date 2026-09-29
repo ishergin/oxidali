@@ -9,8 +9,27 @@ import type {
   RulesParseResult,
 } from '../api/types'
 import { connection, subscribe, type WsChannel, type WsEvent } from '../api/ws'
-import { deviceClock, timestamp, UNANCHORED_CLOCK_HINT } from '../format'
-import { usePoll } from '../hooks'
+import { ADAPTER, deviceClock, pad2, timestamp, UNANCHORED_CLOCK_HINT } from '../format'
+import { useLive, usePoll } from '../hooks'
+import {
+  acceptEdit,
+  applyEdit,
+  completionContext,
+  keyAction,
+  lineAt,
+  MAX_NAME_BYTES,
+  placeList,
+  rankSuggestions,
+  registryNames,
+  scrollToShow,
+  type CompletionContext,
+  type KeyInput,
+  type NameKind,
+  type Placement,
+  type RegistryNames,
+  type Suggestion,
+  type Unwritable,
+} from '../rule-completion'
 import { errorMessage, mutate, notify, opCommitted, trackOp } from '../toast'
 
 const MAX_RULES_SOURCE_BYTES = 12_240
@@ -19,6 +38,33 @@ const PARSE_DEBOUNCE_MS = 500
 
 const LINE_HEIGHT_PX = 20
 const EDITOR_PAD_PX = 12
+const EDITOR_PAD_X_PX = 14
+
+const NAME_CHANNELS: WsChannel[] = ['virtual_lamps', 'groups', 'input']
+
+const NAME_TRIGGERS: ReadonlySet<string> = new Set([
+  'VirtualLampChangedEvent',
+  'GroupChangedEvent',
+  'InputDeviceChangedEvent',
+  'DropNotice',
+])
+
+const NAMES_RECONCILE_MS = 60_000
+
+const SUGGEST_ID = 'rule-suggest'
+
+const KIND_LABEL: Record<NameKind, string> = {
+  lamp: 'Virtual lamps',
+  group: 'Groups',
+  input: 'Input devices',
+  schedule: 'HCL schedules',
+}
+
+const UNWRITABLE_WHY: Record<Unwritable, string> = {
+  quote: 'The name has a quote, which a rule string cannot hold',
+  line_break: 'The name has a line break, which a rule string cannot hold',
+  too_long: `The name is longer than the ${MAX_NAME_BYTES} bytes a rule string holds`,
+}
 
 const FEED_CAPACITY = 100
 
@@ -191,6 +237,222 @@ function spliceRule(source: string, span: { from: number; to: number }, text: st
   return [...lines.slice(0, span.from), ...text.split('\n'), ...lines.slice(span.to + 1)].join('\n')
 }
 
+async function fetchRegistryNames(): Promise<RegistryNames> {
+  const [lamps, groups, inputs, schedules] = await Promise.all([
+    api.virtualLamps(ADAPTER),
+    api.groups(ADAPTER),
+    api.inputDevices(ADAPTER),
+    api.hclSchedules(),
+  ])
+  return registryNames({
+    lamps: lamps.virtual_lamps,
+    groups: groups.groups,
+    inputs: inputs.input_devices,
+    schedules: schedules.schedules,
+  })
+}
+
+const ignoreUnlessNamesMoved = (event: WsEvent) => !NAME_TRIGGERS.has(event.type)
+
+let measureCtx: CanvasRenderingContext2D | null = null
+
+function textWidth(ta: HTMLTextAreaElement, text: string): number {
+  measureCtx ??= document.createElement('canvas').getContext('2d')
+  if (measureCtx === null) return 0
+  const style = getComputedStyle(ta)
+  measureCtx.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+  return measureCtx.measureText(text).width
+}
+
+function suggestPlacement(
+  ta: HTMLTextAreaElement,
+  text: string,
+  openAt: number,
+  scroll: { top: number; left: number },
+): Placement | null {
+  const { line, start } = lineAt(text, openAt)
+  return placeList({
+    x: EDITOR_PAD_X_PX + textWidth(ta, text.slice(start, openAt + 1)) - scroll.left,
+    lineTop: EDITOR_PAD_PX + line * LINE_HEIGHT_PX - scroll.top,
+    lineHeight: LINE_HEIGHT_PX,
+    viewWidth: ta.clientWidth,
+    viewHeight: ta.clientHeight,
+  })
+}
+
+function caretContext(ta: HTMLTextAreaElement | null): CompletionContext | null {
+  if (ta === null || ta.selectionStart !== ta.selectionEnd) return null
+  return completionContext(ta.value, ta.selectionStart)
+}
+
+const sameArgument = (a: CompletionContext, b: CompletionContext) =>
+  a.kind === b.kind && a.openAt === b.openAt
+
+interface OpenList {
+  context: CompletionContext
+  active: number
+}
+
+function useNameCompletion(
+  taRef: { current: HTMLTextAreaElement | null },
+  names: RegistryNames | null,
+) {
+  const [list, setList] = useState<OpenList | null>(null)
+  const items =
+    list !== null && names !== null
+      ? rankSuggestions(list.context.prefix, names[list.context.kind])
+      : []
+  const active = Math.min(list?.active ?? 0, Math.max(0, items.length - 1))
+
+  const open = () => {
+    const context = caretContext(taRef.current)
+    setList(context === null ? null : { context, active: 0 })
+  }
+
+  const follow = () => {
+    if (list === null) return
+    const context = caretContext(taRef.current)
+    if (context !== null && context.caret === list.context.caret) return
+    setList(context !== null && sameArgument(context, list.context) ? { context, active } : null)
+  }
+
+  const accept = (suggestion: Suggestion | undefined): string | null => {
+    const ta = taRef.current
+    const context = caretContext(ta)
+    setList(null)
+    if (ta === null || context === null || list === null || suggestion === undefined) return null
+    if (!sameArgument(context, list.context)) return null
+    const next = applyEdit(ta.value, acceptEdit(context, suggestion))
+    ta.value = next.text
+    ta.setSelectionRange(next.caret, next.caret)
+    return next.text
+  }
+
+  const keyDown = (e: KeyInput & { preventDefault: () => void }): string | null => {
+    const action = keyAction(e, list === null ? null : { active, count: items.length })
+    if (action === null) return null
+    e.preventDefault()
+    switch (action.kind) {
+      case 'open':
+        open()
+        return null
+      case 'move':
+        setList(list && { ...list, active: action.active })
+        return null
+      case 'close':
+        setList(null)
+        return null
+      case 'accept':
+        return accept(items[active])
+    }
+  }
+
+  return { list, items, active, open, follow, accept, keyDown, close: () => setList(null) }
+}
+
+function byIdHint(kind: NameKind, id: number): string {
+  return kind === 'input' ? `input(${id}, …)` : `${kind}(${id})`
+}
+
+function idTag(kind: NameKind, id: number | null): string | null {
+  if (id === null) return null
+  if (kind === 'lamp') return `VL ${pad2(id)}`
+  if (kind === 'group') return `G${id}`
+  if (kind === 'input') return `SA ${pad2(id)}`
+  return null
+}
+
+function SuggestRow({
+  kind,
+  suggestion,
+  index,
+  active,
+  onPick,
+}: {
+  kind: NameKind
+  suggestion: Suggestion
+  index: number
+  active: boolean
+  onPick: (s: Suggestion) => void
+}) {
+  const { name, id, why } = suggestion
+  const tag = idTag(kind, id)
+  return (
+    <div
+      id={`${SUGGEST_ID}-${index}`}
+      role="option"
+      aria-selected={active}
+      class={`so${active ? ' on' : ''}${why !== null ? ' byid' : ''}`}
+      title={why !== null ? UNWRITABLE_WHY[why] : undefined}
+      onMouseDown={(e) => {
+        e.preventDefault()
+        onPick(suggestion)
+      }}
+    >
+      <span class="nm">{name}</span>
+      {why !== null && id !== null ? (
+        <span class="why">by id → {byIdHint(kind, id)}</span>
+      ) : (
+        tag !== null && <span class="tag">{tag}</span>
+      )}
+    </div>
+  )
+}
+
+function SuggestList({
+  kind,
+  items,
+  active,
+  at,
+  onPick,
+}: {
+  kind: NameKind
+  items: Suggestion[]
+  active: number
+  at: Placement
+  onPick: (s: Suggestion) => void
+}) {
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const body = bodyRef.current
+    const row = body?.children[active]
+    if (!body || !(row instanceof HTMLElement)) return
+    const next = scrollToShow(row.offsetTop, row.offsetHeight, body.scrollTop, body.clientHeight)
+    if (next !== null) body.scrollTop = next
+  }, [active])
+  const vertical = at.top !== null ? { top: `${at.top}px` } : { bottom: `${at.bottom}px` }
+  const box = { left: `${at.left}px`, width: `${at.width}px`, maxHeight: `${at.maxHeight}px` }
+  return (
+    <div
+      class="suggest"
+      id={SUGGEST_ID}
+      role="listbox"
+      aria-label={KIND_LABEL[kind]}
+      style={{ ...box, ...vertical }}
+    >
+      <div class="sh">
+        <span>{KIND_LABEL[kind]}</span>
+        <span>{items.length}</span>
+      </div>
+      <div class="sb" ref={bodyRef}>
+        {items.map((s, i) => (
+          <SuggestRow
+            key={s.name}
+            kind={kind}
+            suggestion={s}
+            index={i}
+            active={i === active}
+            onPick={onPick}
+          />
+        ))}
+      </div>
+      <div class="sf">
+        <kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Enter</kbd> <kbd>Tab</kbd> insert · <kbd>Esc</kbd> close
+      </div>
+    </div>
+  )
+}
+
 export function RulesScreen() {
   const doc = usePoll(async (): Promise<{ text: RulesDocument; json: RulesDocumentJson }> => {
     const [text, json] = await Promise.all([api.rules(), api.rulesJson()])
@@ -203,10 +465,16 @@ export function RulesScreen() {
   const [parse, setParse] = useState<RulesParseResult | null>(null)
   const [checking, setChecking] = useState(false)
   const [scrollTop, setScrollTop] = useState(0)
+  const [scrollLeft, setScrollLeft] = useState(0)
   const [scoped, setScoped] = useState<string | null>(null)
   const parseSeq = useRef(0)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const caretTouched = useRef(false)
+  const names = useLive(fetchRegistryNames, NAME_CHANNELS, {
+    intervalMs: NAMES_RECONCILE_MS,
+    onEvent: ignoreUnlessNamesMoved,
+  })
+  const completion = useNameCompletion(taRef, names.data)
 
   const parseErr = parse !== null && 'error' in parse ? parse : null
 
@@ -258,10 +526,22 @@ export function RulesScreen() {
   const dirty = draft !== null && draft !== source
   const drift = draft !== null && baseRev !== null && text.revision > baseRev
   const bytes = UTF8.encode(full).length
+  const suggestAt =
+    completion.list !== null && completion.items.length > 0 && taRef.current !== null
+      ? suggestPlacement(taRef.current, shown, completion.list.context.openAt, {
+          top: scrollTop,
+          left: scrollLeft,
+        })
+      : null
 
   const editDraft = (value: string) => {
     if (draft === null) setBaseRev(data.text.revision)
     setDraft(span === null ? value : spliceRule(full, span, value))
+  }
+
+  const pickName = (s: Suggestion) => {
+    const next = completion.accept(s)
+    if (next !== null) editDraft(next)
   }
 
   const discard = () => {
@@ -485,12 +765,37 @@ export function RulesScreen() {
               spellcheck={false}
               wrap="off"
               value={shown}
+              aria-autocomplete="list"
+              aria-controls={suggestAt ? SUGGEST_ID : undefined}
+              aria-activedescendant={suggestAt ? `${SUGGEST_ID}-${completion.active}` : undefined}
               onFocus={() => {
                 caretTouched.current = true
               }}
-              onInput={(e) => editDraft(e.currentTarget.value)}
-              onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+              onBlur={completion.close}
+              onInput={(e) => {
+                editDraft(e.currentTarget.value)
+                completion.open()
+              }}
+              onKeyDown={(e) => {
+                const next = completion.keyDown(e)
+                if (next !== null) editDraft(next)
+              }}
+              onKeyUp={completion.follow}
+              onClick={completion.follow}
+              onScroll={(e) => {
+                setScrollTop(e.currentTarget.scrollTop)
+                setScrollLeft(e.currentTarget.scrollLeft)
+              }}
             />
+            {suggestAt && completion.list && (
+              <SuggestList
+                kind={completion.list.context.kind}
+                items={completion.items}
+                active={completion.active}
+                at={suggestAt}
+                onPick={pickName}
+              />
+            )}
           </div>
           {parseErr && (
             <div class="parse-msg">
