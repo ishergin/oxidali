@@ -28,7 +28,8 @@ use dali2rust_api::http::redundancy_settings_state::{
     RedundancySettingsHttpStateBridge,
 };
 use dali2rust_api::http::stats_state::{
-    StatsBusDto, StatsControllerDto, StatsDaliDto, StatsDaliReadbackDto, StatsDaliTaskTimingDto, StatsHttpState, StatsInputDto, StatsMqttDto,
+    StatsBusDto, StatsControllerDto, StatsDaliBackwardDto, StatsDaliConsoleDto, StatsDaliDto,
+    StatsDaliReadbackDto, StatsDaliTaskTimingDto, StatsHttpState, StatsInputDto, StatsMqttDto,
     StatsNetworkDto, StatsOperationsDto, StatsReportDto, StatsRulesDto, StatsWebSocketDto,
 };
 use dali2rust_api::http::{
@@ -530,7 +531,6 @@ fn stats_bus_dto(c: &dali2rust_bus::BusCounters, confirmation_timeouts: u32) -> 
 
 fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
     let c = &h.dali_worker;
-    let console = crate::log::console_counters();
     StatsDaliDto {
         commands_executed_total: c.commands_handled.load(Relaxed),
         errors_total: c
@@ -549,17 +549,8 @@ fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
         foreign_verbs_projected_total: h.projector.transitions_expanded.load(Relaxed),
         foreign_dimming_unprojected_total: h.sniffer_translator.dimming_unprojectable.load(Relaxed),
         foreign_scene_writes_total: h.sniffer_translator.scene_writes_observed.load(Relaxed),
-        backward_undecodable_total: h.phy_sniffer.backward_undecodable.load(Relaxed),
-        backward_frame_size_total: h.phy_sniffer.backward_frame_size.load(Relaxed),
-        backward_incomplete_total: h.phy_sniffer.backward_incomplete.load(Relaxed),
-        backward_early_rejected_total: h.phy_sniffer.backward_early_rejected.load(Relaxed),
-        backward_late_rejected_total: h.phy_sniffer.backward_late_rejected.load(Relaxed),
-        backward_multi_answer_total: h.phy_sniffer.backward_multi_answer.load(Relaxed),
-        console_log_dropped_total: console.dropped.load(Relaxed),
-        console_log_busy_total: console.busy.load(Relaxed),
-        console_log_truncated_total: console.truncated.load(Relaxed),
-        console_log_unavailable_total: console.unavailable.load(Relaxed),
-        console_uart_errors_total: console.uart_errors.load(Relaxed),
+        backward: stats_backward_dto(&h.phy_sniffer),
+        console: stats_console_dto(),
         isr_ticks_deficit_raw_total: h.phy_sniffer.isr_ticks_deficit_raw.load(Relaxed),
         isr_ticks_surplus_raw_total: h.phy_sniffer.isr_ticks_surplus_raw.load(Relaxed),
         isr_ticks_lost_total: h.phy_sniffer.isr_ticks_lost.load(Relaxed),
@@ -568,6 +559,28 @@ fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
         isr_max_gap_us: h.phy_sniffer.isr_max_gap_us.load(Relaxed),
         task_timing: stats_task_timing_dto(h),
         readback: stats_readback_dto(&h.dali_wire),
+    }
+}
+
+fn stats_backward_dto(s: &dali2rust_platform::dali::PhySnifferCounters) -> StatsDaliBackwardDto {
+    StatsDaliBackwardDto {
+        backward_undecodable_total: s.backward_undecodable.load(Relaxed),
+        backward_frame_size_total: s.backward_frame_size.load(Relaxed),
+        backward_incomplete_total: s.backward_incomplete.load(Relaxed),
+        backward_early_rejected_total: s.backward_early_rejected.load(Relaxed),
+        backward_late_rejected_total: s.backward_late_rejected.load(Relaxed),
+        backward_multi_answer_total: s.backward_multi_answer.load(Relaxed),
+    }
+}
+
+fn stats_console_dto() -> StatsDaliConsoleDto {
+    let console = crate::log::console_counters();
+    StatsDaliConsoleDto {
+        console_log_dropped_total: console.dropped.load(Relaxed),
+        console_log_busy_total: console.busy.load(Relaxed),
+        console_log_truncated_total: console.truncated.load(Relaxed),
+        console_log_unavailable_total: console.unavailable.load(Relaxed),
+        console_uart_errors_total: console.uart_errors.load(Relaxed),
     }
 }
 
