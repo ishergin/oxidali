@@ -106,7 +106,8 @@ class Client:
         self.redundancy = _Redundancy(self)
         self.config = _ConfigSlices(self)
         self.guard = LampGuard.for_config(cfg, segment=self.segment_shorts,
-                                          binding=self._bound_short)
+                                          binding=self._bound_short,
+                                          pending=self.pending_lamps)
         self.init_ledger()
         self._rebooting = False
 
@@ -241,10 +242,15 @@ class Client:
         try:
             lamp = self.vlamps.get(lamp_id)
         except (ApiError, requests.RequestException) as exc:
-            raise LampNotAllowed("target-state of VL%d refused: its binding could not be read "
+            raise LampNotAllowed("a request for VL%d refused: its binding could not be read "
                                  "(%s), so the guard cannot tell which gear it reaches"
                                  % (lamp_id, exc)) from exc
         return (lamp.get("binding") or {}).get("physical_short_address")
+
+    def pending_lamps(self, kind, scene):
+        rows = self.groups.matrix().get("rows", []) if kind == "group" \
+            else self.scenes.matrix(scene).get("rows", [])
+        return {r["virtual_lamp_id"] for r in rows if r.get("desired") != r.get("applied")}
 
     def optical_addrs(self):
         wanted = self.cfg.optical_short_set()

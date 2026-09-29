@@ -80,6 +80,7 @@ def _teardown_write(api, what, fn):
 
 @pytest.fixture()
 def group_matrix_guard(api):
+    ask_guard(api, "POST", "adapters/%d/groups/apply" % api.adapter)
     before = api.groups.matrix()
     yield before
     rows = [{"virtual_lamp_id": r["virtual_lamp_id"], "desired": r["desired"]}
@@ -106,6 +107,7 @@ def scene_matrix_guard(api):
     guarded = []
 
     def guard(scene_id):
+        ask_guard(api, "POST", "adapters/%d/scenes/%d/apply" % (api.adapter, scene_id))
         snap = api.scenes.matrix(scene_id)
         guarded.append((scene_id, snap))
         return snap

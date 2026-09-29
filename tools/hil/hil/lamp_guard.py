@@ -88,6 +88,8 @@ COMMISSIONING_ROUTES = (
     re.compile(r"adapters/[0-9]+/input-devices/commission"),
 )
 DISCOVERY_ROUTE = re.compile(r"adapters/[0-9]+/discovery-runs")
+APPLY_ROUTES = (("group", re.compile(r"adapters/[0-9]+/groups/apply")),
+                ("scene", re.compile(r"adapters/[0-9]+/scenes/([0-9]+)/apply")))
 SCAN_MODES = frozenset({"scan_known_short_addresses", "refresh_known"})
 GROUP_CONFIG_OPCODES = range(0x60, 0x80)
 GROUP_OF_OPCODE = 0x0F
@@ -341,6 +343,14 @@ def _short_of(body):
     return body.get("short_address") if isinstance(body, dict) else None
 
 
+def _apply_route(path):
+    for kind, route in APPLY_ROUTES:
+        match = route.fullmatch(path)
+        if match:
+            return kind, int(match.group(1)) if route.groups else None
+    return None
+
+
 def _refuse_commissioning(method, path, body):
     mode = body.get("mode") if isinstance(body, dict) else None
     if any(route.fullmatch(path) for route in COMMISSIONING_ROUTES) or (
@@ -442,17 +452,18 @@ def named(shorts):
 
 
 class LampGuard:
-    def __init__(self, allowed, read_only=False, segment=None, binding=None):
+    def __init__(self, allowed, read_only=False, segment=None, binding=None, pending=None):
         self.allowed = frozenset(allowed)
         self.read_only = bool(read_only)
         self._segment = segment
         self._binding = binding
+        self._pending = pending
         self.fence = None
         self._enabled = None
 
     @classmethod
-    def for_config(cls, cfg, segment=None, binding=None):
-        return cls(cfg.lamp_short_set(), cfg.lamps_read_only, segment, binding)
+    def for_config(cls, cfg, segment=None, binding=None, pending=None):
+        return cls(cfg.lamp_short_set(), cfg.lamps_read_only, segment, binding, pending)
 
     def check_request(self, method, path, body=None):
         if method.upper() in READ_METHODS:
@@ -461,6 +472,10 @@ class LampGuard:
         if self.fence is not None and self.fence.check_request(method.upper(), path, body):
             return
         _refuse_commissioning(method, path, body)
+        apply = _apply_route(path)
+        if apply is not None:
+            self._check_apply(method, *apply)
+            return
         if path.startswith(DIAGNOSTIC_PREFIX):
             frame = diagnostic_frame(path, body)
             if frame is None:
@@ -485,6 +500,20 @@ class LampGuard:
         target = self._resource_target(kind, key, body, what)
         if target is not None:
             self.check_target(target, visible, what)
+
+    def _check_apply(self, method, kind, scene):
+        what = "%s %s apply" % (method.upper(), kind if scene is None else "scene %d" % scene)
+        if self.read_only:
+            raise LampNotAllowed("%s refused: HIL_LAMPS_READ_ONLY=1 refuses an apply, which "
+                                 "writes the gear of every row it changes" % what)
+        if self._pending is None or self._binding is None:
+            raise LampNotAllowed("%s refused: no controller lists the rows it writes" % what)
+        for lamp in sorted(self._pending(kind, scene)):
+            short = self._binding(lamp)
+            if short is None:
+                raise LampNotAllowed("%s refused: it writes the row of VL%d, which is bound to "
+                                     "no lamp" % (what, lamp))
+            self.check_target(short, False, "the %s's row of VL%d" % (what, lamp))
 
     def _resource_target(self, kind, key, body, what):
         if kind == SHORT:

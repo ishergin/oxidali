@@ -181,8 +181,8 @@ def virtual_gear_fence(request, virtual_gear_session):
     api = request.getfixturevalue("api")
     bench = virtual_gear_session
     api.guard.fence = VirtualFence(bench.park, bench.groups, bench.vl_of_short.values(),
-                                   commissioning=commissioning_allowed(), pending=_pending(api),
-                                   rules=_rules_baseline(api))
+                                   commissioning=commissioning_allowed(),
+                                   pending=api.pending_lamps, rules=_rules_baseline(api))
     try:
         yield api.guard.fence
     finally:
@@ -191,14 +191,6 @@ def virtual_gear_fence(request, virtual_gear_session):
 
 def _rules_baseline(api):
     return RulesBaseline(api.rules_get().get("source") or "", api.rules_toggles())
-
-
-def _pending(api):
-    def pending(kind, scene):
-        rows = api.groups.matrix().get("rows", []) if kind == "group" \
-            else api.scenes.matrix(scene).get("rows", [])
-        return {r["virtual_lamp_id"] for r in rows if r.get("desired") != r.get("applied")}
-    return pending
 
 
 @pytest.fixture()

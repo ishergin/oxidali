@@ -389,6 +389,45 @@ def test_commissioning_never_passes_the_guard_outside_the_virtual_tier(monkeypat
     assert sent == []
 
 
+GROUP_APPLY, SCENE_APPLY = "adapters/0/groups/apply", "adapters/0/scenes/3/apply"
+
+
+def _applying(read_only=False, pending=(), bindings=None):
+    bindings = bindings or {}
+    return LampGuard(LAMPS, read_only=read_only, segment=lambda: [0, 2, 3],
+                     binding=bindings.get, pending=lambda kind, scene: set(pending))
+
+
+def test_an_apply_writes_only_rows_of_lamps_the_guard_allows():
+    for path in (GROUP_APPLY, SCENE_APPLY):
+        _applying(pending={7}, bindings={7: 2}).check_request("POST", path)
+        _applying().check_request("POST", path)
+        with pytest.raises(LampNotAllowed, match=r"SA1 is outside"):
+            _applying(pending={7, 8}, bindings={7: 2, 8: OWNER}).check_request("POST", path)
+        with pytest.raises(LampNotAllowed, match=r"VL9, which is bound to no lamp"):
+            _applying(pending={9}).check_request("POST", path)
+        with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY"):
+            _applying(read_only=True).check_request("POST", path)
+        with pytest.raises(LampNotAllowed, match=r"no controller lists"):
+            LampGuard(LAMPS).check_request("POST", path)
+
+
+def test_the_client_refuses_an_apply_that_would_push_an_owner_row(monkeypatch):
+    client = _client(bindings={7: OWNER})
+    rows = [{"virtual_lamp_id": 7, "desired": [True] + [False] * 15, "applied": [False] * 16}]
+    answer = client.http.request
+
+    def request(method, url, json=None, timeout=None):
+        if method == "GET" and url.endswith("group-membership-matrix"):
+            return _Response({"rows": rows})
+        return answer(method, url, json=json, timeout=timeout)
+
+    monkeypatch.setattr(client.http, "request", request)
+    with pytest.raises(LampNotAllowed, match=r"row of VL7 refused: SA1 is outside"):
+        client.groups.apply()
+    assert client.http.sent == []
+
+
 def test_off_all_drives_only_the_allowlist(monkeypatch):
     monkeypatch.setattr(hil.api.time, "sleep", lambda _s: None)
     client = _client(shorts=(0, 1, 2, 3, 4))

@@ -4,7 +4,7 @@ import pytest
 
 from hil.lamp_guard import GROUP_TARGET, TARGET_SEGMENT, http_rule
 from hil.wait import wait_until
-from hil_test_guards import drive_allowed
+from hil_test_guards import ask_guard, drive_allowed
 
 
 def _membership(device):
@@ -149,6 +149,7 @@ def test_group_apply_programs_gear(api, vl_bindings, lamps, free_group,
 @pytest.mark.hil_id("HIL-GRP-06")
 def test_apply_empty_diff_returns_matrix(api, vl_bindings, ops_quiesce,
                                          test_artifacts):
+    ask_guard(api, "POST", "adapters/%d/groups/apply" % api.adapter)
     converge_applies = 0
     res = {}
     for _ in range(3):
