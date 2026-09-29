@@ -235,19 +235,26 @@ pub fn mqtt_topic_is_exact(topic: &str) -> bool {
     !topic.is_empty() && !topic.contains(['+', '#', '\0'])
 }
 
-fn check_mqtt_trigger(rule: &str, topic: &str, payload: Option<&str>) -> Result<(), ModelError> {
+fn check_mqtt_topic(owner: &str, topic: &str) -> Result<(), ModelError> {
     if !mqtt_topic_is_exact(topic) {
-        return Err(ModelError::MqttTopicNotExact { rule: rule.into(), topic: topic.into() });
+        return Err(ModelError::MqttTopicNotExact { rule: owner.into(), topic: topic.into() });
     }
     if topic.len() > MAX_MQTT_TOPIC_BYTES {
-        return Err(ModelError::MqttTopicTooLong { rule: rule.into(), bytes: topic.len() });
+        return Err(ModelError::MqttTopicTooLong { rule: owner.into(), bytes: topic.len() });
     }
-    match payload {
-        Some(literal) if literal.len() > MAX_MQTT_PAYLOAD_BYTES => {
-            Err(ModelError::MqttPayloadTooLong { rule: rule.into(), bytes: literal.len() })
-        }
-        _ => Ok(()),
+    Ok(())
+}
+
+fn check_mqtt_payload(owner: &str, payload: &str) -> Result<(), ModelError> {
+    if payload.len() > MAX_MQTT_PAYLOAD_BYTES {
+        return Err(ModelError::MqttPayloadTooLong { rule: owner.into(), bytes: payload.len() });
     }
+    Ok(())
+}
+
+fn check_mqtt_trigger(rule: &str, topic: &str, payload: Option<&str>) -> Result<(), ModelError> {
+    check_mqtt_topic(rule, topic)?;
+    payload.map_or(Ok(()), |literal| check_mqtt_payload(rule, literal))
 }
 
 fn check_mqtt_topic_count(set: &RuleSet) -> Result<(), ModelError> {
@@ -332,11 +339,9 @@ fn check_state_payload(owner: &str, state: &StateAction) -> Result<(), ModelErro
         {
             Err(ModelError::VarTextTooLong { rule: owner.into(), text: text.clone() })
         }
-        StateAction::MqttPublish { topic, .. } if topic.len() > MAX_MQTT_TOPIC_BYTES => {
-            Err(ModelError::MqttTopicTooLong { rule: owner.into(), bytes: topic.len() })
-        }
-        StateAction::MqttPublish { payload, .. } if payload.len() > MAX_MQTT_PAYLOAD_BYTES => {
-            Err(ModelError::MqttPayloadTooLong { rule: owner.into(), bytes: payload.len() })
+        StateAction::MqttPublish { topic, payload, .. } => {
+            check_mqtt_topic(owner, topic)?;
+            check_mqtt_payload(owner, payload)
         }
         _ => Ok(()),
     }

@@ -305,18 +305,23 @@ fn http_trigger(c: &mut Cursor<'_>) -> Result<Trigger, CompileError> {
 }
 
 fn mqtt_trigger(c: &mut Cursor<'_>) -> Result<Trigger, CompileError> {
-    let (topic, pos) = c.expect_string("mqtt topic")?;
-    if !mqtt_topic_is_exact(&topic) {
-        return Err(pos.err("an mqtt trigger names one exact topic: not empty, no `+`, `#` or U+0000"));
-    }
-    if topic.len() > MAX_MQTT_TOPIC_BYTES {
-        return Err(pos.err(format!("mqtt topic exceeds {MAX_MQTT_TOPIC_BYTES} bytes")));
-    }
+    let topic = mqtt_topic(c)?;
     let payload = if c.accept_kw("is") { Some(mqtt_payload(c)?) } else { None };
     Ok(Trigger::MqttMessage { topic, payload })
 }
 
-fn mqtt_payload(c: &mut Cursor<'_>) -> Result<String, CompileError> {
+pub(crate) fn mqtt_topic(c: &mut Cursor<'_>) -> Result<String, CompileError> {
+    let (topic, pos) = c.expect_string("mqtt topic")?;
+    if !mqtt_topic_is_exact(&topic) {
+        return Err(pos.err("an mqtt topic is one exact topic: not empty, no `+`, `#` or U+0000"));
+    }
+    if topic.len() > MAX_MQTT_TOPIC_BYTES {
+        return Err(pos.err(format!("mqtt topic exceeds {MAX_MQTT_TOPIC_BYTES} bytes")));
+    }
+    Ok(topic)
+}
+
+pub(crate) fn mqtt_payload(c: &mut Cursor<'_>) -> Result<String, CompileError> {
     let (payload, pos) = c.expect_string("mqtt payload")?;
     if payload.len() > MAX_MQTT_PAYLOAD_BYTES {
         return Err(pos.err(format!("mqtt payload exceeds {MAX_MQTT_PAYLOAD_BYTES} bytes")));

@@ -211,6 +211,34 @@ fn a_wildcard_or_empty_mqtt_topic_is_not_one_exact_topic() {
     }
 }
 
+fn publish(topic: &str) -> Action {
+    Action::State(StateAction::MqttPublish {
+        topic: topic.into(),
+        payload: "on".into(),
+        retain: false,
+    })
+}
+
+#[test]
+fn a_publish_to_a_topic_filter_is_refused_wherever_the_action_is_written() {
+    for topic in ["home/+/mode", "home/#", "", "home/\0"] {
+        let in_rule = set_with(vec![], vec![rule_with_actions("r", vec![publish(topic)])]);
+        let in_block = set_with(
+            vec![def("b", vec![publish(topic)])],
+            vec![rule_with_actions("r", vec![call("b")])],
+        );
+        for (set, owner) in [(in_rule, "r"), (in_block, "b")] {
+            match validate(&set) {
+                Err(ModelError::MqttTopicNotExact { rule, topic: named }) => {
+                    assert_eq!(rule, owner, "{topic:?}");
+                    assert_eq!(named, topic);
+                }
+                other => panic!("{topic:?} in {owner}: expected MqttTopicNotExact, got {other:?}"),
+            }
+        }
+    }
+}
+
 #[test]
 fn an_mqtt_trigger_topic_and_payload_stop_at_the_frame_budget() {
     let long = "x".repeat(MAX_MQTT_TOPIC_BYTES + 1);

@@ -1,7 +1,7 @@
 mod support;
 
 use dali2rust_rules_model::limits::MAX_MQTT_TRIGGER_TOPICS;
-use support::{compile, compile_err, compile_ok, wrap_trigger};
+use support::{compile, compile_err, compile_ok, wrap_action, wrap_trigger};
 
 const TWO_RULES: &str = r#"# comment line
 rule "первое" {
@@ -52,6 +52,15 @@ fn a_topic_filter_is_refused_at_the_topic() {
     }
     let err = compile_err(&wrap_trigger("mqtt 42"));
     assert!(err.message.contains("expected quoted"), "{err}");
+}
+
+#[test]
+fn a_publish_to_a_topic_filter_is_refused_at_the_topic() {
+    for topic in ["home/+/mode", "home/#", ""] {
+        let err = compile_err(&wrap_action(&format!("mqtt.publish(\"{topic}\", \"on\")")));
+        assert_eq!((err.line, err.column), (5, 19), "{topic:?}: {err}");
+        assert!(err.message.contains("one exact topic"), "{topic:?}: {err}");
+    }
 }
 
 #[test]
