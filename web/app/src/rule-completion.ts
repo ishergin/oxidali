@@ -90,6 +90,8 @@ const CALLS: ReadonlyMap<string, NameKind> = new Map([
 
 const HCL_SCHEDULE_VERBS: ReadonlySet<string> = new Set(['enable', 'disable'])
 
+const AFTER_FIRST_ARGUMENT: ReadonlySet<string> = new Set([')', ','])
+
 const IDENT_CHAR = /[A-Za-z0-9_]/
 const WHITESPACE = /\s/
 const LINE_BREAK = /[\r\n]/
@@ -141,22 +143,30 @@ function calleeBefore(text: string, lineStart: number, openAt: number): NameKind
   return object.word === HCL_OBJECT ? 'schedule' : null
 }
 
+function closesArgument(line: string, close: number): boolean {
+  let i = close + 1
+  while (i < line.length && isBlank(line[i])) i += 1
+  return i < line.length && AFTER_FIRST_ARGUMENT.has(line[i])
+}
+
 export function completionContext(text: string, caret: number): CompletionContext | null {
   if (caret < 0 || caret > text.length) return null
   const lineStart = lineStartOf(text, caret)
+  const line = text.slice(lineStart, lineEndOf(text, caret))
   const at = caret - lineStart
-  const literal = lexLine(text.slice(lineStart, lineEndOf(text, caret))).strings.find(
+  const literal = lexLine(line).strings.find(
     (s) => s.open < at && (s.close === null || at <= s.close),
   )
   if (literal === undefined) return null
   const openAt = lineStart + literal.open
   const kind = calleeBefore(text, lineStart, openAt)
   if (kind === null) return null
+  const close = literal.close
   return {
     kind,
     openAt,
     caret,
-    closeAt: literal.close === null ? null : lineStart + literal.close,
+    closeAt: close !== null && closesArgument(line, close) ? lineStart + close : null,
     prefix: text.slice(openAt + 1, caret),
   }
 }

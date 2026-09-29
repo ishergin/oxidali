@@ -145,6 +145,26 @@ test('the literal ends at the next quote on its line, where the device lexer end
   assert.equal(contextOf('do lamp("ку▮\ndo log("x")')?.closeAt, null)
 })
 
+test('a closing quote counts only when `)` or `,` follows it, the only tokens after a first argument', () => {
+  assert.ok(contextOf('do lamp("кух▮ня").on()')?.closeAt)
+  assert.ok(contextOf('when input("пан▮", inst=1) is short_press')?.closeAt)
+  assert.ok(contextOf('do lamp("к▮"  )')?.closeAt)
+  assert.equal(contextOf('if lamp("▮) is on and group("Night") any_on')?.closeAt, null)
+  assert.equal(contextOf('do lamp("кух▮ня"')?.closeAt, null)
+  assert.equal(contextOf('do lamp("кух▮ня"  # )')?.closeAt, null)
+})
+
+test('accepting before a quote that belongs to a later string deletes nothing', () => {
+  assert.equal(
+    accept('if lamp("▮) is on and group("Night") any_on', only('', 'Kitchen')),
+    'if lamp("Kitchen"▮) is on and group("Night") any_on',
+  )
+  assert.equal(
+    accept('if lamp("Ki▮) is on and group("Night") any_on', only('ki', 'Kitchen', 7)),
+    'if lamp("Kitchen"▮) is on and group("Night") any_on',
+  )
+})
+
 test('a caret outside the text has no context', () => {
   assert.equal(completionContext('lamp("', -1), null)
   assert.equal(completionContext('lamp("', 7), null)
