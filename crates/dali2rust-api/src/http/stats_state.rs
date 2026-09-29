@@ -136,6 +136,7 @@ pub struct StatsMqttDto {
     pub rule_messages_coalesced_total: u32,
     pub rule_messages_lost_total: u32,
     pub subscriptions_refused_total: u32,
+    pub own_topics_refused_total: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]

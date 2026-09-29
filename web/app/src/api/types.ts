@@ -1028,6 +1028,7 @@ export type StatsMqtt = {
   rule_messages_coalesced_total: number
   rule_messages_lost_total: number
   subscriptions_refused_total: number
+  own_topics_refused_total: number
 }
 
 export type StatsRules = {

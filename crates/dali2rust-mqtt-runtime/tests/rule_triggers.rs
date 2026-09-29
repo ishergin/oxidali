@@ -193,3 +193,26 @@ fn a_refused_rule_subscription_holds_connected_down_until_the_document_drops_it(
     wait_until(move || counters.is_connected(), WAIT);
     assert_eq!(h.counters.subscriptions_refused_total.load(Ordering::Relaxed), 1);
 }
+
+#[test]
+fn a_rule_topic_the_bridge_publishes_itself_is_refused_once_per_session_without_the_gauge() {
+    let h = connected_bridge();
+    let own = "dali/ctl1/a0/vl/1/state";
+    h.rule_topics.set(&[own, "home/mode"]);
+    following(&h, "home/mode");
+    assert!(
+        !h.mock.subscriptions().iter().any(|t| t == own),
+        "the bridge never subscribes its own state topic: {:?}",
+        h.mock.subscriptions()
+    );
+    assert_eq!(h.counters.own_topics_refused_total.load(Ordering::Relaxed), 1);
+    let counters = Arc::clone(&h.counters);
+    wait_until(move || counters.is_connected(), WAIT);
+    h.rule_topics.set(&[own, "home/mode", RULE_TOPIC]);
+    following(&h, RULE_TOPIC);
+    assert_eq!(
+        h.counters.own_topics_refused_total.load(Ordering::Relaxed),
+        1,
+        "a refused topic that stays in the document is counted once per session"
+    );
+}

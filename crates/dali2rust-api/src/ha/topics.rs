@@ -125,6 +125,19 @@ impl HaTopics {
         ]
     }
 
+    pub fn published_topic_filters(&self) -> [String; 7] {
+        let root = format!("{}/{}", self.state_prefix, self.controller_id);
+        [
+            format!("{root}/availability"),
+            format!("{root}/+/vl/+/state"),
+            format!("{root}/+/vl/+/availability"),
+            format!("{root}/+/group/+/state"),
+            format!("{root}/+/scene_select/state"),
+            format!("{root}/+/in/+/+/state"),
+            format!("{}/+/{}/+/config", self.discovery_prefix, self.controller_id),
+        ]
+    }
+
     pub fn parse_command_topic(&self, topic: &str) -> Option<HaCommandTarget> {
         let rest = topic.strip_prefix(&self.command_root)?;
         let parts: Vec<&str> = rest.split('/').collect();
@@ -184,24 +197,50 @@ mod tests {
         assert_eq!(t.availability_topic(), "dali/ctl1/availability");
     }
 
+    fn matches(filter: &str, topic: &str) -> bool {
+        let f: Vec<&str> = filter.split('/').collect();
+        let s: Vec<&str> = topic.split('/').collect();
+        f.len() == s.len() && f.iter().zip(&s).all(|(a, b)| *a == "+" || a == b)
+    }
+
+    fn command_topics(t: &HaTopics) -> [String; 3] {
+        [
+            t.lamp_command_topic(0, 12),
+            t.group_command_topic(0, 7),
+            t.scene_select_command_topic(0),
+        ]
+    }
+
     #[test]
     fn every_command_topic_we_publish_is_covered_by_a_subscription() {
         let t = topics();
         let subs = t.command_subscriptions();
-        let matches = |filter: &str, topic: &str| {
-            let f: Vec<&str> = filter.split('/').collect();
-            let s: Vec<&str> = topic.split('/').collect();
-            f.len() == s.len() && f.iter().zip(&s).all(|(a, b)| *a == "+" || a == b)
-        };
-        for topic in [
-            t.lamp_command_topic(0, 12),
-            t.group_command_topic(0, 7),
-            t.scene_select_command_topic(0),
-        ] {
+        for topic in command_topics(&t) {
             assert!(
                 subs.iter().any(|f| matches(f, &topic)),
                 "no subscription covers {topic}"
             );
+        }
+    }
+
+    #[test]
+    fn every_topic_the_bridge_publishes_is_one_of_its_own_and_no_command_topic_is() {
+        let t = topics();
+        let own = t.published_topic_filters();
+        for topic in [
+            t.availability_topic(),
+            t.lamp_state_topic(0, 12),
+            t.lamp_availability_topic(0, 12),
+            t.group_state_topic(1, 7),
+            t.scene_select_state_topic(0),
+            t.input_state_topic(0, 3, 1),
+            t.discovery_topic("light", &HaTopics::lamp_object_id(0, 12)),
+            t.discovery_topic("select", &HaTopics::scene_select_object_id(0)),
+        ] {
+            assert!(own.iter().any(|f| matches(f, &topic)), "no own filter holds {topic}");
+        }
+        for topic in command_topics(&t) {
+            assert!(!own.iter().any(|f| matches(f, &topic)), "{topic} is a command, not ours");
         }
     }
 

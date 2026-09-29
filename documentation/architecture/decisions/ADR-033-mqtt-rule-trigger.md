@@ -88,6 +88,16 @@ messages to every new subscription.
    of the rule's cooldown, and a message another client sends on a topic a rule published
    within the window is counted as that publish's echo.
 
+9. **The bridge's own topics are not triggers.** A rule on a topic the bridge publishes
+   — the state or availability of a lamp, group, scene selector or input, the
+   controller's availability, a discovery config — would hear the bridge echo the
+   controller's own state, a loop the chain cannot see because the echo is no
+   `mqtt.publish`. The bridge knows these topics from its topic set, so it does not
+   subscribe such a rule topic; it logs the topic, counts it once per session
+   (`own_topics_refused_total`) and follows the rest of the document, and `connected` does
+   not wait for it. A rule reacts to the controller's own state with `when lamp(…)`. The
+   Home Assistant command topics (`…/set`) are not the bridge's own and remain triggers.
+
 ### Rejected alternatives
 
 - **Wildcard filters** — matching moves into the engine, and the subscription set is no

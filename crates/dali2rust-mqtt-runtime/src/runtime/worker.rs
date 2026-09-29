@@ -29,7 +29,9 @@ use dali2rust_platform::mqtt::{
 
 use dali2rust_api::coalesce::BurstCoalescer;
 use crate::counters::MqttCounters;
-use crate::runtime::rule_topics::{self, Paced, RuleTopicCache, RuleTopicsReadPort};
+use crate::runtime::rule_topics::{
+    self, BridgeFilters, Paced, RuleFollow, RuleTopicCache, RuleTopicsReadPort,
+};
 use crate::runtime::session::{
     announce_and_subscribe, announce_offline, qos_of, session_config, topics_of,
 };
@@ -65,8 +67,8 @@ pub struct MqttWorkerPorts {
 struct Session {
     generation: u32,
     subscriptions: Subscriptions,
-    command_filters: [String; 3],
-    rule_topics: Vec<String>,
+    filters: BridgeFilters,
+    rule_topics: RuleFollow,
     lamp_config_hashes: HashMap<(u8, u8), u64>,
     input_config_hashes: HashMap<(u8, u8, u8), u64>,
     lamp_availability: HashMap<(u8, u8), bool>,
@@ -81,7 +83,7 @@ impl Session {
         let Self {
             generation: gen_slot,
             subscriptions,
-            command_filters,
+            filters,
             rule_topics,
             dialled_with: dialled_slot,
             lamp_config_hashes,
@@ -93,8 +95,8 @@ impl Session {
         } = self;
         *gen_slot = generation;
         *subscriptions = Subscriptions::default();
-        *command_filters = topics.command_subscriptions();
-        rule_topics.clear();
+        *filters = BridgeFilters::of(topics);
+        *rule_topics = RuleFollow::default();
         *dialled_slot = dialled_with;
         lamp_config_hashes.clear();
         input_config_hashes.clear();
@@ -812,12 +814,12 @@ fn serve_inbound(cx: &mut ServeTurn<'_>, topics: &HaTopics, session: &Session) -
 
 fn route_inbound(
     topics: &HaTopics,
-    followed: &[String],
+    followed: &RuleFollow,
     rules: &mut RuleTopicCache,
     ports: &MqttWorkerPorts,
     message: MqttIncoming,
 ) {
-    let for_rules = followed.contains(&message.topic);
+    let for_rules = followed.follows(&message.topic);
     if !for_rules || topics.parse_command_topic(&message.topic).is_some() {
         bump(&ports.counters.commands_received_total);
         handle_command(topics, ports, &message);
@@ -906,8 +908,7 @@ fn ensure_session(
     follow_rule_topics(client.as_mut(), session, rules, ports);
     settle_subacks(&link, session, ports);
     ports.counters.set_connected(
-        session.subscriptions.all_granted()
-            && rule_topics::all_followed(&session.rule_topics, rules.topics()),
+        session.subscriptions.all_granted() && session.rule_topics.complete(rules.topics()),
     );
     true
 }
@@ -954,13 +955,9 @@ fn follow_rule_topics(
     ports: &MqttWorkerPorts,
 ) {
     rules.refresh(ports.rule_topics.as_ref());
-    rule_topics::follow_topics(
-        client,
-        &mut session.rule_topics,
-        &mut session.subscriptions,
-        rules.topics(),
-        &session.command_filters,
-    );
+    let refused =
+        session.rule_topics.follow(client, &mut session.subscriptions, rules.topics(), &session.filters);
+    dali2rust_bus::worker_counters::bump_by(&ports.counters.own_topics_refused_total, refused);
 }
 
 #[inline(never)]

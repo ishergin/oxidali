@@ -1,3 +1,4 @@
+use dali2rust_api::ha::HaTopics;
 use dali2rust_contracts::msg::{
     fixed_text_48, FixedItems, MqttRuleMessageEvent, MQTT_RULE_PAYLOAD_BYTES,
 };
@@ -93,26 +94,76 @@ impl RuleMessagePacer {
     }
 }
 
-pub(crate) fn follow_topics(
-    client: &mut dyn MqttClient,
-    followed: &mut Vec<String>,
-    subscriptions: &mut Subscriptions,
-    wanted: &[String],
-    covering: &[String],
-) {
-    followed.retain(|topic| wanted.contains(topic) || !unfollow(client, subscriptions, topic));
-    for topic in wanted {
-        if followed.contains(topic) {
-            continue;
+#[derive(Debug, Default)]
+pub(crate) struct BridgeFilters {
+    commands: Vec<String>,
+    own: Vec<String>,
+}
+
+impl BridgeFilters {
+    pub(crate) fn of(topics: &HaTopics) -> Self {
+        Self {
+            commands: topics.command_subscriptions().into(),
+            own: topics.published_topic_filters().into(),
         }
-        if !covering.iter().any(|filter| topic_filter_matches(filter, topic)) {
-            let Ok(message_id) = client.subscribe(topic, MqttQos::AtMostOnce) else {
-                continue;
-            };
-            subscriptions.sent(topic, message_id);
-        }
-        followed.push(topic.clone());
     }
+
+    fn covers(&self, topic: &str) -> bool {
+        self.commands.iter().any(|filter| topic_filter_matches(filter, topic))
+    }
+
+    fn owns(&self, topic: &str) -> bool {
+        self.own.iter().any(|filter| topic_filter_matches(filter, topic))
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct RuleFollow {
+    followed: Vec<String>,
+    own: Vec<String>,
+}
+
+impl RuleFollow {
+    pub(crate) fn follows(&self, topic: &str) -> bool {
+        self.followed.iter().any(|followed| followed == topic)
+    }
+
+    pub(crate) fn complete(&self, wanted: &[String]) -> bool {
+        wanted.iter().all(|topic| self.follows(topic) || self.own.contains(topic))
+    }
+
+    pub(crate) fn follow(
+        &mut self,
+        client: &mut dyn MqttClient,
+        subscriptions: &mut Subscriptions,
+        wanted: &[String],
+        filters: &BridgeFilters,
+    ) -> u32 {
+        self.followed.retain(|topic| wanted.contains(topic) || !unfollow(client, subscriptions, topic));
+        self.own.retain(|topic| wanted.contains(topic));
+        let mut refused = 0;
+        for topic in wanted {
+            if self.follows(topic) || self.own.contains(topic) {
+                continue;
+            }
+            if filters.owns(topic) {
+                log::warn!("mqtt: rule topic {topic} is one this bridge publishes; not subscribed");
+                self.own.push(topic.clone());
+                refused += 1;
+            } else if filters.covers(topic) || subscribe(client, subscriptions, topic) {
+                self.followed.push(topic.clone());
+            }
+        }
+        refused
+    }
+}
+
+fn subscribe(client: &mut dyn MqttClient, subscriptions: &mut Subscriptions, topic: &str) -> bool {
+    let Ok(message_id) = client.subscribe(topic, MqttQos::AtMostOnce) else {
+        return false;
+    };
+    subscriptions.sent(topic, message_id);
+    true
 }
 
 fn unfollow(client: &mut dyn MqttClient, subscriptions: &mut Subscriptions, topic: &str) -> bool {
@@ -142,10 +193,6 @@ pub(crate) fn topic_filter_matches(filter: &str, topic: &str) -> bool {
         }
     }
     levels.next().is_none()
-}
-
-pub(crate) fn all_followed(subscribed: &[String], wanted: &[String]) -> bool {
-    wanted.iter().all(|topic| subscribed.contains(topic))
 }
 
 pub(crate) fn message_event(message: &MqttIncoming) -> MqttRuleMessageEvent {
@@ -188,46 +235,64 @@ mod tests {
         names.iter().map(|name| (*name).to_string()).collect()
     }
 
+    fn bridge() -> BridgeFilters {
+        BridgeFilters::of(&HaTopics::new("homeassistant", "dali", "ctl1"))
+    }
+
     #[test]
     fn a_document_change_subscribes_the_new_topics_and_drops_the_gone_ones() {
         let (mock, mut client) = connected();
-        let (mut followed, mut subscriptions) = (Vec::new(), Subscriptions::default());
-        follow_topics(&mut client, &mut followed, &mut subscriptions, &topics(&["a", "b"]), &[]);
-        follow_topics(&mut client, &mut followed, &mut subscriptions, &topics(&["b", "c"]), &[]);
+        let (mut follow, mut subscriptions) = (RuleFollow::default(), Subscriptions::default());
+        follow.follow(&mut client, &mut subscriptions, &topics(&["a", "b"]), &bridge());
+        follow.follow(&mut client, &mut subscriptions, &topics(&["b", "c"]), &bridge());
         assert_eq!(mock.subscriptions(), topics(&["a", "b", "c"]));
         assert_eq!(mock.active_subscriptions(), topics(&["b", "c"]));
         assert_eq!(mock.unsubscriptions(), topics(&["a"]));
         assert!(!subscriptions.holds("a"), "an unsubscribed topic waits for no SUBACK");
-        follow_topics(&mut client, &mut followed, &mut subscriptions, &topics(&["b", "c"]), &[]);
+        follow.follow(&mut client, &mut subscriptions, &topics(&["b", "c"]), &bridge());
         assert_eq!(mock.subscriptions().len(), 3, "an unchanged document sends nothing");
     }
 
     #[test]
     fn a_failed_subscribe_is_retried_and_holds_the_set_incomplete() {
         let (mock, mut client) = connected();
-        let (mut followed, mut subscriptions) = (Vec::new(), Subscriptions::default());
+        let (mut follow, mut subscriptions) = (RuleFollow::default(), Subscriptions::default());
         let wanted = topics(&["a"]);
         mock.fail_next_subscribes(1);
-        follow_topics(&mut client, &mut followed, &mut subscriptions, &wanted, &[]);
-        assert!(!all_followed(&followed, &wanted), "a topic whose SUBSCRIBE failed is not followed");
-        follow_topics(&mut client, &mut followed, &mut subscriptions, &wanted, &[]);
-        assert!(all_followed(&followed, &wanted));
+        follow.follow(&mut client, &mut subscriptions, &wanted, &bridge());
+        assert!(!follow.complete(&wanted), "a topic whose SUBSCRIBE failed is not followed");
+        follow.follow(&mut client, &mut subscriptions, &wanted, &bridge());
+        assert!(follow.complete(&wanted));
         assert!(subscriptions.holds("a"));
     }
 
     #[test]
     fn a_topic_a_filter_covers_is_followed_without_its_own_subscription() {
         let (mock, mut client) = connected();
-        let covering = topics(&["dali/ctl1/+/vl/+/set"]);
         let wanted = topics(&["dali/ctl1/a0/vl/1/set"]);
-        let (mut followed, mut subscriptions) = (Vec::new(), Subscriptions::default());
-        follow_topics(&mut client, &mut followed, &mut subscriptions, &wanted, &covering);
-        assert!(all_followed(&followed, &wanted));
+        let (mut follow, mut subscriptions) = (RuleFollow::default(), Subscriptions::default());
+        follow.follow(&mut client, &mut subscriptions, &wanted, &bridge());
+        assert!(follow.follows("dali/ctl1/a0/vl/1/set"));
         assert!(mock.subscriptions().is_empty(), "no SUBSCRIBE for a covered topic");
         assert!(subscriptions.all_granted(), "nothing waits for a SUBACK");
-        follow_topics(&mut client, &mut followed, &mut subscriptions, &[], &covering);
-        assert!(followed.is_empty());
+        follow.follow(&mut client, &mut subscriptions, &[], &bridge());
+        assert!(!follow.follows("dali/ctl1/a0/vl/1/set"));
         assert!(mock.unsubscriptions().is_empty(), "no UNSUBSCRIBE for what was never subscribed");
+    }
+
+    #[test]
+    fn a_topic_the_bridge_publishes_is_refused_once_and_never_followed() {
+        let (mock, mut client) = connected();
+        let own = "homeassistant/light/ctl1/a0_vl_1/config";
+        let wanted = topics(&[own]);
+        let (mut follow, mut subscriptions) = (RuleFollow::default(), Subscriptions::default());
+        assert_eq!(follow.follow(&mut client, &mut subscriptions, &wanted, &bridge()), 1);
+        assert_eq!(follow.follow(&mut client, &mut subscriptions, &wanted, &bridge()), 0);
+        assert!(!follow.follows(own));
+        assert!(follow.complete(&wanted), "a refused topic does not hold the session incomplete");
+        assert!(mock.subscriptions().is_empty());
+        follow.follow(&mut client, &mut subscriptions, &[], &bridge());
+        assert_eq!(follow.follow(&mut client, &mut subscriptions, &wanted, &bridge()), 1, "back in the document, refused anew");
     }
 
     #[test]
