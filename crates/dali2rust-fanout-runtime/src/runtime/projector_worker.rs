@@ -666,7 +666,7 @@ fn handle_scene_recalled(
             scene_id: body.scene_id,
             group_id,
             short_address,
-            source: RuntimeSource::Api,
+            source: body.source,
             last_seen_ms: dali2rust_bsp::unix_clock::unix_wall_clock_millis(),
             observed_at_mono_ms: Some(body.recalled_at_mono_ms),
         },

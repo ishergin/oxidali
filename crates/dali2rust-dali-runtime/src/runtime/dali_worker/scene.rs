@@ -111,6 +111,7 @@ pub(super) struct RecallOutcome<'a> {
     pub(super) publisher: &'a BusPublisher,
     pub(super) adapter_id: BusId,
     pub(super) correlation_id: u64,
+    pub(super) source: RuntimeSource,
     pub(super) counters: &'a DaliWorkerCounters,
 }
 
@@ -336,6 +337,7 @@ fn publish_scene_recalled_outcome(
             error: error
                 .map(|(code, message)| dali2rust_contracts::msg::CompactErrorPayload::new(code, message)),
             recalled_at_mono_ms: dali2rust_bsp::monotonic_clock::observation_stamp_ms(),
+            source: outcome.source,
         },
     );
     publish_event_required(

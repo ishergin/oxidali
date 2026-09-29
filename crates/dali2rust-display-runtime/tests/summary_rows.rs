@@ -236,9 +236,10 @@ fn a_scene_recall_names_the_scene() {
             scene_id: 3,
             error: None,
             recalled_at_mono_ms: 0,
+            source: RuntimeSource::Api,
         },
     );
-    wait_row(&view, 6, "G02 SC3");
+    wait_row(&view, 6, "G02 SC3 WEB");
 }
 
 #[test]

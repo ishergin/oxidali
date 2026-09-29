@@ -54,3 +54,25 @@ Feature: Rules and scenes: a recall is one frame and a fact once it has happened
     And the last operation eventually succeeds
     And within 3 seconds the stats pointer "/dali/errors_total" reaches 1
     And the mock transport should have sent no frames
+
+  @id:RULE-033
+  Scenario: A recall commits under the source that asked for it
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And adapter 0 scene 3 desired row for virtual lamp 1 has level 100
+    And adapter 0 scene 4 desired row for virtual lamp 1 has level 150
+    And a DALI mock transport with no response
+    And adapter 0 scene 3 write for short 0 level 100 is scripted
+    When I send a POST request to "/api/v1/adapters/0/scenes/3/apply"
+    Then the last operation eventually succeeds
+    Given adapter 0 scene 4 write for short 0 level 150 is scripted
+    When I send a POST request to "/api/v1/adapters/0/scenes/4/apply"
+    Then the last operation eventually succeeds
+    When I PUT JSON {"base_revision":0,"source":"rule \"evening\" {\n  when http trigger\n  do scene(4).recall(broadcast)\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I send a POST request to "/api/v1/adapters/0/scenes/3/recall"
+    Then the response status should be 200
+    And virtual lamp 1 on adapter 0 should eventually report level 100 from value_source "api"
+    When I POST JSON {} to "/api/v1/rules/evening/run"
+    Then the response status should be 202
+    And virtual lamp 1 on adapter 0 should eventually report level 150 from value_source "rules"

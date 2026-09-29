@@ -163,6 +163,7 @@ fn scene_recalls_and_colour_only_commands_never_arm_a_tile() {
                 scene_id: 5,
                 error: None,
                 recalled_at_mono_ms: 2_000,
+                source: dali2rust_contracts::msg::RuntimeSource::Api,
             },
         ),
     );
@@ -261,6 +262,7 @@ fn a_group_recall_clears_the_adapter_wide_active_scene() {
                 scene_id,
                 error: None,
                 recalled_at_mono_ms: 3_000,
+                source: dali2rust_contracts::msg::RuntimeSource::Api,
             },
         )
     };

@@ -819,6 +819,7 @@ fn scene_recalled(scene_id: u8, failed: bool) -> dali2rust_contracts::msg::DaliS
             )
         }),
         recalled_at_mono_ms: 0,
+        source: dali2rust_contracts::msg::RuntimeSource::Api,
     }
 }
 

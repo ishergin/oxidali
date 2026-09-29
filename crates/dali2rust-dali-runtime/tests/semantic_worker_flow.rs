@@ -593,6 +593,26 @@ fn a_lamp_recall_is_one_go_to_scene_to_the_short_address_it_is_bound_to() {
 }
 
 #[test]
+fn a_recall_fact_names_the_source_that_asked_for_it() {
+    use dali2rust_contracts::msg::{Origin, RuntimeSource};
+    let harness = WorkerHarness::new(Arc::new(TestReadPort { enabled: true, ..Default::default() }), ControllerMode::NoAnswer);
+    for (corr, origin, source) in [
+        (96u64, Origin::Api, RuntimeSource::Api),
+        (97, Origin::Mqtt, RuntimeSource::Mqtt),
+        (98, Origin::Rules, RuntimeSource::Rules),
+    ] {
+        harness.publish(dali2rust_contracts::bus::command_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            corr,
+            BusId::default().0,
+            Some(origin),
+            dali2rust_contracts::msg::DaliRecallSceneCommand::broadcast(0, 3),
+        ));
+        assert_eq!(recalled_event(&harness, corr).source, source, "{origin:?}");
+    }
+}
+
+#[test]
 fn a_recall_on_an_unbound_lamp_reaches_no_wire_and_is_counted() {
     let harness = WorkerHarness::new(Arc::new(TestReadPort { enabled: true, ..Default::default() }), ControllerMode::NoAnswer);
     harness.publish(lamp_recall(95, 4, 3));

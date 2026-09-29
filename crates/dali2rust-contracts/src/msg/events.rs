@@ -431,6 +431,7 @@ declare_bus_payloads! {
         pub scene_id: u8,
         pub error: Option<CompactErrorPayload>,
         pub recalled_at_mono_ms: u32,
+        pub source: RuntimeSource,
     }
     budget = DaliSceneRecalledEvent {
         registry_adapter_id: u8::MAX,
@@ -440,6 +441,7 @@ declare_bus_payloads! {
         scene_id: 15,
         error: Some(crate::msg::payload_test_samples::worst_compact_error_payload()),
         recalled_at_mono_ms: u32::MAX,
+        source: RuntimeSource::Readback,
     };
 
     pub struct DaliObservedFrameEvent {

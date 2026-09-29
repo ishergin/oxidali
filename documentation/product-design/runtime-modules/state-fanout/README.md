@@ -55,8 +55,9 @@ broadcast и сцены по участникам.
   [`../../../architecture/06-registry-and-persistence.md`](../../../architecture/06-registry-and-persistence.md)
   §Update path и §Merge rules. Метка applied-факта — момент применения на проводе;
   отсутствие не штампуется.
-- Источник коммита команды — из её `Origin` (`Api`, `Mqtt`, `Hcl`, `Rules`);
-  наблюдения сниффера — `Sniffer`; секция `RuntimeStatus` — `Readback`: чтение ничего
+- Источник коммита команды — из её `Origin` (`Api`, `Mqtt`, `Hcl`, `Rules`), который
+  `DaliWorker` кладёт в `source` applied-факта и recall-факта; наблюдения сниффера —
+  `Sniffer`; секция `RuntimeStatus` — `Readback`: чтение ничего
   не командует, и HCL не должен принимать его за ручное вмешательство; отсутствие
   устройства — `Poller`.
 

@@ -905,6 +905,7 @@ fn scene_recall_expands_applied_rows_only_fan050_fan051() {
             scene_id: 3,
             error: None,
             recalled_at_mono_ms: PRODUCER_MONO_MS,
+            source: RuntimeSource::Api,
         },
     );
 
@@ -937,6 +938,7 @@ fn scene_recall_expands_applied_rows_only_fan050_fan051() {
                 "recall_failed",
             )),
             recalled_at_mono_ms: PRODUCER_MONO_MS,
+            source: RuntimeSource::Api,
         },
     );
     assert_no_more_updates(tap);
@@ -961,6 +963,7 @@ fn a_short_address_recall_projects_the_bound_row_only() {
             scene_id: 3,
             error: None,
             recalled_at_mono_ms: PRODUCER_MONO_MS,
+            source: RuntimeSource::Rules,
         },
     );
 
@@ -968,6 +971,15 @@ fn a_short_address_recall_projects_the_bound_row_only() {
     assert_eq!(cmd.update.virtual_lamp_id, Some(2), "the lamp bound to short 3");
     assert_eq!(cmd.update.setpoint.as_ref().and_then(|sp| sp.level), Some(120));
     assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Scene));
+    assert_eq!(
+        cmd.update.source,
+        RuntimeSource::Rules,
+        "the commit names who recalled the scene, not a blanket api"
+    );
+    assert_eq!(
+        cmd.update.observation.as_ref().map(|obs| obs.value_source),
+        Some(Some(RuntimeSource::Rules))
+    );
     assert_no_more_updates(tap);
     assert_eq!(counters.scene_expansions.load(Ordering::Relaxed), 1);
 }
@@ -991,6 +1003,7 @@ fn a_recall_that_names_a_lamp_instead_of_an_address_is_ignored() {
             scene_id: 3,
             error: None,
             recalled_at_mono_ms: PRODUCER_MONO_MS,
+            source: RuntimeSource::Api,
         },
     );
 
@@ -1074,6 +1087,7 @@ fn scene_recall_filters_incapable_member_colour_fan053() {
             scene_id: 3,
             error: None,
             recalled_at_mono_ms: PRODUCER_MONO_MS,
+            source: RuntimeSource::Api,
         },
     );
 
@@ -1149,6 +1163,7 @@ fn group_scoped_scene_recall_projects_members_only_fan055() {
             scene_id: 3,
             error: None,
             recalled_at_mono_ms: PRODUCER_MONO_MS,
+            source: RuntimeSource::Api,
         },
     );
 
@@ -1231,6 +1246,7 @@ fn group_recall_without_a_group_snapshot_is_ignored_not_a_success() {
             scene_id: 3,
             error: None,
             recalled_at_mono_ms: PRODUCER_MONO_MS,
+            source: RuntimeSource::Api,
         },
     );
 

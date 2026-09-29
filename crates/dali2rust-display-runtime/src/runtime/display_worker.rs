@@ -389,7 +389,7 @@ fn apply_scene(facts: &mut Facts, adapter: u8, body: &DaliSceneRecalledEvent) {
             None,
         ),
         what: EventLabel::from_fmt(format_args!("SC{}", body.scene_id)),
-        source: None,
+        source: Some(body.source),
         failed: body.error.is_some(),
         age_ms: 0,
     });
