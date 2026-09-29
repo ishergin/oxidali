@@ -337,6 +337,10 @@ fn serve_turn(
         &cx.ports.counters.commands_dropped_total,
         cx.link.dropped_incoming(),
     );
+    dali2rust_bus::worker_counters::mirror(
+        &cx.ports.counters.subscriptions_refused_total,
+        cx.link.subscriptions_refused(),
+    );
     drain_bus(cx.ev_rx, burst, client, session, topics, cx.settings, cx.ports, job, rule_budget);
     if let Some(active) = job.as_mut() {
         let finished = advance_discovery(client, session, active, topics, cx.settings, cx.ports);

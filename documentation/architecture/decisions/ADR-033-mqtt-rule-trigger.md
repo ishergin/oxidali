@@ -31,9 +31,13 @@ messages to every new subscription.
    most once per message, and on a clean session QoS 1 buys nothing but an
    acknowledgement. A rule topic that a command filter already covers gets no
    subscription of its own: a broker may deliver one copy per matching subscription
-   (MQTT 3.1.1 §3.3.5), and Mosquitto does. `connected` keeps its meaning — every subscription the session wants is
-   sent and acknowledged, rule topics included — so a topic added mid-session lowers it
-   until its SUBACK arrives.
+   (MQTT 3.1.1 §3.3.5), and Mosquitto does. `connected` changes meaning: it was raised
+   once per session when the command filters were acknowledged, and it is now evaluated
+   every turn and true only while every subscription the session wants, rule topics
+   included, is sent and granted. It drops while a topic added mid-session waits for its
+   SUBACK and stays down while the broker refuses one (a SUBACK of 0x80, counted as
+   `subscriptions_refused_total`); `/api/v1/controller` shows it as
+   `home_assistant.connected`.
 3. **The topic set is read, not announced.** The rules store is the one home of the
    compiled document. A read port gives the bridge the document's distinct topics and a
    generation that moves on every replacement of the document: commit, enable, recompile

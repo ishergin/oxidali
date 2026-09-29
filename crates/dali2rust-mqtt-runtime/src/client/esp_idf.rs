@@ -6,7 +6,8 @@ use esp_idf_svc::mqtt::client::{
     EspMqttClient, EventPayload, LwtConfiguration, MqttClientConfiguration, QoS,
 };
 use esp_idf_svc::sys::{
-    esp, esp_event_base_t, esp_mqtt_client_register_event, esp_mqtt_event_id_t_MQTT_EVENT_DATA,
+    esp, esp_event_base_t, esp_mqtt_client_register_event, esp_mqtt_event_id_t_MQTT_EVENT_ANY,
+    esp_mqtt_event_id_t_MQTT_EVENT_DATA, esp_mqtt_event_id_t_MQTT_EVENT_SUBSCRIBED,
     esp_mqtt_event_t, EspError,
 };
 
@@ -18,6 +19,7 @@ use dali2rust_platform::mqtt::{
 const BUFFER_BYTES: usize = 1024;
 const OUT_BUFFER_BYTES: usize = 2048;
 const TASK_STACK_BYTES: usize = 4096;
+const SUBACK_FAILURE: u8 = 0x80;
 
 fn to_qos(qos: MqttQos) -> QoS {
     match qos {
@@ -63,7 +65,7 @@ impl EspMqttBridgeClient {
         }
         let link = Arc::clone(&self.link);
         let client = EspMqttClient::new_cb(&url, &cfg, move |event| dispatch(&link, event.payload()))?;
-        receive_data_events(&client, &self.link)?;
+        receive_raw_events(&client, &self.link)?;
         Ok(client)
     }
 }
@@ -73,7 +75,6 @@ fn dispatch(link: &Arc<MqttLink>, payload: EventPayload<'_, EspError>) {
     match payload {
         EventPayload::Connected(_) => link.set_state(MqttConnectionState::Connected),
         EventPayload::Disconnected => link.set_state(MqttConnectionState::Disconnected),
-        EventPayload::Subscribed(_) => link.note_subscription_acked(),
         EventPayload::Error(_) => {
             log::warn!("mqtt: transport error (cause not surfaced by esp-idf-svc)");
         }
@@ -81,37 +82,52 @@ fn dispatch(link: &Arc<MqttLink>, payload: EventPayload<'_, EspError>) {
     }
 }
 
-fn receive_data_events(client: &EspMqttClient<'static>, link: &Arc<MqttLink>) -> Result<(), EspError> {
+fn receive_raw_events(client: &EspMqttClient<'static>, link: &Arc<MqttLink>) -> Result<(), EspError> {
     let receiver = Arc::as_ptr(link).cast_mut().cast::<c_void>();
     // SAFETY: the link outlives `client`, which drops first and unregisters the handler as it is destroyed.
     esp!(unsafe {
         esp_mqtt_client_register_event(
             client.handle(),
-            esp_mqtt_event_id_t_MQTT_EVENT_DATA,
-            Some(on_data),
+            esp_mqtt_event_id_t_MQTT_EVENT_ANY,
+            Some(on_event),
             receiver,
         )
     })
 }
 
-extern "C" fn on_data(receiver: *mut c_void, _base: esp_event_base_t, _id: i32, event: *mut c_void) {
-    // SAFETY: registered with the bridge's `MqttLink` for MQTT_EVENT_DATA, whose data is an `esp_mqtt_event_t`.
+extern "C" fn on_event(receiver: *mut c_void, _base: esp_event_base_t, _id: i32, event: *mut c_void) {
+    // SAFETY: registered with the bridge's `MqttLink`; every esp-mqtt event carries an `esp_mqtt_event_t`.
     let (link, event) = unsafe { (&*receiver.cast::<MqttLink>(), &*event.cast::<esp_mqtt_event_t>()) };
+    match event.event_id {
+        esp_mqtt_event_id_t_MQTT_EVENT_DATA => deliver_first_chunk(link, event),
+        esp_mqtt_event_id_t_MQTT_EVENT_SUBSCRIBED => note_suback(link, event),
+        _ => {}
+    }
+}
+
+fn deliver_first_chunk(link: &MqttLink, event: &esp_mqtt_event_t) {
     if event.current_data_offset != 0 || event.topic.is_null() {
         return;
     }
-    // SAFETY: esp-mqtt points both at their stated byte counts of the PUBLISH until this handler returns.
+    // SAFETY: esp-mqtt points both at their stated byte counts of the PUBLISH until the handler returns.
     let (topic, payload) = unsafe {
         (event_bytes(event.topic, event.topic_len), event_bytes(event.data, event.data_len))
     };
-    let Ok(topic) = core::str::from_utf8(topic) else {
-        return;
-    };
     link.deliver(MqttIncoming {
-        topic: topic.to_string(),
+        topic: String::from_utf8_lossy(topic).into_owned(),
         payload: payload.to_vec(),
         retained: event.retain,
     });
+}
+
+fn note_suback(link: &MqttLink, event: &esp_mqtt_event_t) {
+    // SAFETY: esp-mqtt points `data` at the SUBACK's return codes until the handler returns.
+    let codes = unsafe { event_bytes(event.data, event.data_len) };
+    if codes.iter().any(|code| *code >= SUBACK_FAILURE) {
+        link.note_subscription_refused();
+    } else {
+        link.note_subscription_acked();
+    }
 }
 
 unsafe fn event_bytes<'a>(start: *const c_char, len: c_int) -> &'a [u8] {

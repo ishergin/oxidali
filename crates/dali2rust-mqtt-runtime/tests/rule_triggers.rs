@@ -171,3 +171,18 @@ fn a_burst_on_one_topic_is_paced_and_its_latest_message_arrives_last() {
         "every message is published or counted as coalesced: {seen:?}"
     );
 }
+
+#[test]
+fn a_refused_rule_subscription_holds_connected_down_and_is_counted() {
+    let h = connected_bridge();
+    h.mock.refuse_next_subacks(1);
+    h.rule_topics.set(&[RULE_TOPIC]);
+    let counters = Arc::clone(&h.counters);
+    wait_until(move || counters.subscriptions_refused_total.load(Ordering::Relaxed) == 1, WAIT);
+    let counters = Arc::clone(&h.counters);
+    wait_until(move || !counters.is_connected(), WAIT);
+    assert!(
+        !h.mock.active_subscriptions().iter().any(|t| t == RULE_TOPIC),
+        "the broker denied the topic, so nothing arrives on it"
+    );
+}

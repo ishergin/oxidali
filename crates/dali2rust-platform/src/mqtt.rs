@@ -74,6 +74,7 @@ pub struct MqttLink {
     state: AtomicU8,
     session_generation: AtomicU32,
     subscriptions_acked: AtomicU32,
+    subscriptions_refused: AtomicU32,
     dropped_incoming: AtomicU32,
     tx: std::sync::mpsc::SyncSender<MqttIncoming>,
     changed: Condvar,
@@ -87,6 +88,7 @@ impl MqttLink {
             state: AtomicU8::new(MqttConnectionState::Disconnected.as_u8()),
             session_generation: AtomicU32::new(0),
             subscriptions_acked: AtomicU32::new(0),
+            subscriptions_refused: AtomicU32::new(0),
             dropped_incoming: AtomicU32::new(0),
             tx,
             changed: Condvar::new(),
@@ -117,6 +119,15 @@ impl MqttLink {
 
     pub fn note_subscription_acked(&self) {
         self.subscriptions_acked.fetch_add(1, Ordering::Relaxed);
+        self.wake();
+    }
+
+    pub fn subscriptions_refused(&self) -> u32 {
+        self.subscriptions_refused.load(Ordering::Relaxed)
+    }
+
+    pub fn note_subscription_refused(&self) {
+        self.subscriptions_refused.fetch_add(1, Ordering::Relaxed);
         self.wake();
     }
 
@@ -191,6 +202,20 @@ mod tests {
         link.set_state(MqttConnectionState::Disconnected);
         link.set_state(MqttConnectionState::Connected);
         assert_eq!(link.session_generation(), 2);
+    }
+
+    #[test]
+    fn a_refused_suback_is_counted_apart_and_never_as_an_acknowledgement() {
+        let (link, _rx) = MqttLink::new();
+        link.set_state(MqttConnectionState::Connected);
+        link.note_subscription_acked();
+        link.note_subscription_refused();
+        assert_eq!(link.subscriptions_acked(), 1);
+        assert_eq!(link.subscriptions_refused(), 1);
+        link.set_state(MqttConnectionState::Disconnected);
+        link.set_state(MqttConnectionState::Connected);
+        assert_eq!(link.subscriptions_acked(), 0, "acknowledgements belong to a session");
+        assert_eq!(link.subscriptions_refused(), 1, "refusals are a running total");
     }
 
     #[test]

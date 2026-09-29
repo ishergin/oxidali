@@ -419,6 +419,7 @@ fn stats_mqtt_dto(c: &dali2rust_mqtt_runtime::MqttCounters) -> StatsMqttDto {
         rule_messages_total: M::load(&c.rule_messages_total),
         rule_messages_coalesced_total: M::load(&c.rule_messages_coalesced_total),
         rule_messages_lost_total: M::load(&c.rule_messages_lost_total),
+        subscriptions_refused_total: M::load(&c.subscriptions_refused_total),
     }
 }
 

@@ -32,6 +32,7 @@ struct MockInner {
     fail_subscribes: u32,
     hold_subacks: bool,
     held_subacks: u32,
+    refuse_subacks: u32,
     fail_connects: u32,
     stall_connects: u32,
     connected: bool,
@@ -176,6 +177,10 @@ impl MockMqttClient {
         self.lock().fail_subscribes = n;
     }
 
+    pub fn refuse_next_subacks(&self, n: u32) {
+        self.lock().refuse_subacks = n;
+    }
+
     pub fn fail_next_connects(&self, n: u32) {
         self.lock().fail_connects = n;
     }
@@ -277,6 +282,11 @@ impl MqttClient for MockMqttHandle {
         }
         let _ = qos;
         g.subscriptions.push(topic_filter.to_string());
+        if g.refuse_subacks > 0 {
+            g.refuse_subacks -= 1;
+            self.0.link.note_subscription_refused();
+            return Ok(());
+        }
         if !g.active.iter().any(|t| t == topic_filter) {
             g.active.push(topic_filter.to_string());
         }
