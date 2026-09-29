@@ -1,8 +1,11 @@
 import threading
+import time
 
 import pytest
 
+from hil.api import kelvin_to_mirek
 from hil.camera.calibrate import rgb_setpoint, RGB_PRIMARIES
+from test_virtual_gear import TC_SERIES_GAPS_S, TC_SERIES_KELVIN
 
 
 @pytest.mark.hil_id("HIL-TS-05")
@@ -74,4 +77,44 @@ def test_combined_level_and_rgb_single_put(api, capabilities,
     assert last.get("level") == 200, last
     if last.get("rgb"):
         assert last["rgb"].get("r", 0) >= last["rgb"].get("b", 0), last
+    api.off(short)
+
+
+TC_FIXTURE_FADE_MS = 1000
+TC_FIXTURE_LEVEL = 120
+TC_SETTLE_S = 2.5
+
+
+def _allowed_tc_fixture(api, capabilities):
+    present = set(api.present_addrs())
+    return next((short for short in api.lamp_addrs()
+                 if short in present and capabilities.ensure(short, "cct")), None)
+
+
+@pytest.mark.hil_id("HIL-TS-08")
+def test_a_colour_temperature_series_during_a_fade_leaves_the_fixture_at_the_last_value(
+        api, hil_config, capabilities, attr_guard, state_snapshot, test_artifacts):
+    if hil_config.lamps_read_only:
+        pytest.skip("HIL_LAMPS_READ_ONLY=1: every step here changes a fixture's colour "
+                    "temperature, which needs the owner's go-ahead for the run")
+    short = _allowed_tc_fixture(api, capabilities)
+    if short is None:
+        pytest.skip("no DT8 Tc fixture in HIL_LAMP_SHORTS=%s is on the wire: the physics "
+                    "half needs one, and the owner's go-ahead" % hil_config.lamp_shorts)
+    attr_guard(short, "fade_time_ms", verify=True)
+    written = api.wait_op(api.write_attrs(short, {"fade_time_ms": TC_FIXTURE_FADE_MS}))
+    assert written.get("status") == "succeeded", written
+    api.ts(short, {"power": "on", "level": TC_FIXTURE_LEVEL})
+    held = {}
+    for gap in TC_SERIES_GAPS_S:
+        for kelvin in TC_SERIES_KELVIN:
+            api.ts(short, {"color_mode": "cct", "color_temperature_kelvin": kelvin})
+            time.sleep(gap)
+        time.sleep(TC_SETTLE_S)
+        held[gap] = api.held_tc_mirek(short)
+    test_artifacts.attach_json("colour_series", {"short": short, "held_mirek": held})
+    last = kelvin_to_mirek(TC_SERIES_KELVIN[-1])
+    assert all(value == last for value in held.values()), (
+        "SA%d does not hold the last colour temperature (%d mirek) after a fresh read: "
+        "%r by the gap between commands" % (short, last, held))
     api.off(short)
