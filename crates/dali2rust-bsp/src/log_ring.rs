@@ -66,7 +66,7 @@ impl LogRing {
         };
         let seq = inner.write_seq;
         let slot = (seq as usize) % LOG_RING_LINES;
-        inner.arena[slot] = LogLine::new(at_ms, seq, level, target, text);
+        inner.arena[slot].overwrite(at_ms, seq, level, target, text);
         inner.write_seq = seq.wrapping_add(1);
     }
 
