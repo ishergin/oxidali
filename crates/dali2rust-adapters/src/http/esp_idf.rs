@@ -95,13 +95,15 @@ pub fn mount(
 
     assert_eq!(
         conf.stack_size, HTTPD_TASK_STACK_BYTES,
-        "httpd stack_size must be set; check mount() and profile optimizations"
+        "httpd stack_size must be set; check httpd_configuration() and profile optimizations"
     );
 
     log::warn!(
-        "HTTP: httpd stack_size={} bytes in {} (esp-idf-svc default is 6144)",
+        "HTTP: httpd stack_size={} bytes in {}, max_open_sockets={}, uri_match_wildcard={}",
         conf.stack_size,
-        if httpd_stack_in_psram() { "PSRAM" } else { "internal SRAM" }
+        if conf.task_caps & esp_idf_svc::sys::MALLOC_CAP_SPIRAM != 0 { "PSRAM" } else { "internal SRAM" },
+        conf.max_open_sockets,
+        conf.uri_match_wildcard
     );
 
     let mut server = EspHttpServer::new(&conf)?;
