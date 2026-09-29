@@ -81,12 +81,38 @@ def test_the_client_reads_an_extended_command_by_the_enable_it_sent_before():
         guard.check_frame(_short_wire(OWNER, command=True), SELECT_DIMMING_CURVE)
     guard.check_frame(ENABLE_DEVICE_TYPE, 8)
     guard.check_frame(_short_wire(OWNER, command=True), QUERY_COLOUR_VALUE)
-    guard.check_frame(_short_wire(OWNER, command=True), SELECT_DIMMING_CURVE)
     guard.check_frame(ENABLE_DEVICE_TYPE, 8)
     guard.check_frame(_short_wire(2, command=True), STORE_GEAR_FEATURES)
     guard.check_frame(ENABLE_DEVICE_TYPE, 8)
     with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY"):
         guard.check_frame(_short_wire(2, command=True), 0xE2)
+
+
+def test_a_refused_frame_leaves_the_enable_it_followed_in_force():
+    guard = _guard()
+    guard.check_frame(ENABLE_DEVICE_TYPE, 8)
+    for _ in range(2):
+        with pytest.raises(LampNotAllowed, match=r"SA1 is outside"):
+            guard.check_frame(_short_wire(OWNER, command=True), 0xE2)
+
+
+def test_an_extended_frame_with_no_enable_this_client_sent_is_an_unknown_write(monkeypatch):
+    with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY"):
+        _guard(read_only=True).check_request(
+            "POST", "dali/raw", {"frame": (_short_wire(2, command=True) << 8) | 0xE3})
+    guard = _guard()
+    guard.check_frame(ENABLE_DEVICE_TYPE, 8)
+    guard.check_frame(_short_wire(2, command=True), QUERY_COLOUR_VALUE)
+    with pytest.raises(LampNotAllowed, match=r"SA1 is outside"):
+        guard.check_frame(_short_wire(OWNER, command=True), SELECT_DIMMING_CURVE)
+    guard.check_frame(_short_wire(OWNER, command=True), 0xFF)
+    master = ForeignMaster(dataclasses.replace(load_config(), lamp_shorts="0,2,3",
+                                               lamps_read_only=False))
+    sent = []
+    monkeypatch.setattr(master, "_run_client", lambda frames: sent.append(frames) or [])
+    with pytest.raises(LampNotAllowed, match=r"SA1 is outside"):
+        master.raw16(_short_wire(OWNER, command=True), 0xE2)
+    assert sent == []
 
 
 FORBIDDEN_SA5 = 5

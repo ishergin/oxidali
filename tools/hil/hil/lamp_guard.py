@@ -378,8 +378,6 @@ def frame_visible(addr, data, enabled=UNSEEN):
 def extended_visible(data, enabled):
     if enabled is None:
         return False
-    if enabled == UNSEEN:
-        return any(data in opcodes for opcodes in VISIBLE_EXTENDED.values())
     if enabled in VISIBLE_EXTENDED:
         return data in VISIBLE_EXTENDED[enabled]
     return extended_writes(data, enabled)
@@ -462,8 +460,12 @@ class LampGuard:
         return short if isinstance(short, int) else None
 
     def check_frame(self, addr, data, enabled=UNSEEN):
-        tracked, self._enabled = self._enabled, enables(addr, data)
-        enabled = tracked if enabled == UNSEEN else enabled
+        if enabled == UNSEEN and self._enabled is not None:
+            enabled = self._enabled
+        self._judge_frame(addr, data, enabled)
+        self._enabled = enables(addr, data)
+
+    def _judge_frame(self, addr, data, enabled):
         if self.fence is not None and self.fence.check_frame(addr, data, enabled):
             return
         target = wire_target(addr)
