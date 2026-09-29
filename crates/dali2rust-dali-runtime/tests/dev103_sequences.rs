@@ -13,13 +13,13 @@ use dali2rust_domain::dali::dev103::{
     Device103Address, Device103Command, EventScheme, Instance103Command, InstanceAddress,
     Special103Command,
 };
-use dali2rust_dali_runtime::runtime::clock::StdClock;
 use dali2rust_domain::dali::ses::RetryPolicy;
 use dali2rust_platform::dali::{DaliWireCounters, TransferOutcome};
+use dali2rust_test_support::StoppedClock;
 
 fn controller() -> (DaliController<MockDaliTransport>, Arc<Mutex<MockDaliTransport>>) {
     let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
-    let controller = DaliController::new(Arc::clone(&transport), Box::new(StdClock::new()));
+    let controller = DaliController::new(Arc::clone(&transport), Box::new(StoppedClock::at(0)));
     (controller, transport)
 }
 
@@ -406,7 +406,7 @@ fn a_broadcast_read_back_is_contended_the_moment_a_second_panel_answers() {
 #[test]
 fn an_instance_write_lands_on_a_segment_with_two_panels() {
     let transport = Arc::new(Mutex::new(SimDaliTransport::demo_bus()));
-    let mut controller = DaliController::new(Arc::clone(&transport), Box::new(StdClock::new()));
+    let mut controller = DaliController::new(Arc::clone(&transport), Box::new(StoppedClock::at(0)));
 
     for short in [0u8, 1] {
         set_event_scheme_verified(&mut controller, short, 0, EventScheme::Device).unwrap_or_else(
