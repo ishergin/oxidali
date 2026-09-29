@@ -45,8 +45,7 @@ VIA_RFC2217, VIA_WB, VIA_OTA = "rfc2217", "wb", "ota"
 VIAS = (VIA_RFC2217, VIA_WB, VIA_OTA)
 
 READY_LINE = re.compile(r"# ready build=(\S+) slot=(\S+) state=(\S+)")
-BANNER_STATES = {VIA_OTA: ("pending_verify",), VIA_WB: ("none", "valid"),
-                 VIA_RFC2217: ("none", "valid")}
+BANNER_STATES = {VIA_OTA: ("pending_verify",), VIA_WB: ("valid",), VIA_RFC2217: ("valid",)}
 
 CARGO_CONFIG = ".cargo/config.toml"
 

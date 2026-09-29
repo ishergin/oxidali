@@ -60,7 +60,7 @@ def test_the_ready_line_is_read_from_the_monitor_log(tmp_path, monkeypatch):
     (flash.VIA_OTA, "pending_verify", 0),
     (flash.VIA_OTA, "new", 1),
     (flash.VIA_OTA, "valid", 1),
-    (flash.VIA_WB, "none", 0),
+    (flash.VIA_WB, "none", 1),
     (flash.VIA_WB, "valid", 0),
     (flash.VIA_WB, "pending_verify", 1),
     (flash.VIA_WB, "new", 1),
@@ -201,7 +201,7 @@ def test_a_wired_role_returns_by_writing_the_controller(tmp_path, monkeypatch):
     dut, peer = _cfgs(tmp_path)
     _pin(peer, role=role.ROLE_GEAR_SIM, via="wb")
     runs, compared = [], []
-    _silent_peer(monkeypatch, compared, banner=("abcd", "ota_0", "none"))
+    _silent_peer(monkeypatch, compared, banner=("abcd", "ota_0", "valid"))
     monkeypatch.setattr(role.flash, "run", lambda cfg, **kw: runs.append(kw) or 0)
     assert role.to_controller(dut, peer) == 0
     assert runs == [{"image": flash.CONTROLLER, "via": flash.VIA_WB, "allow_stale_ui": True}]
@@ -285,7 +285,7 @@ def test_a_peer_already_back_as_a_controller_is_only_recorded_and_compared(tmp_p
 
 
 @pytest.mark.parametrize("state,via", [
-    ("pending_verify", flash.VIA_OTA), ("none", flash.VIA_WB), ("new", flash.VIA_WB)])
+    ("pending_verify", flash.VIA_OTA), ("valid", flash.VIA_WB), ("new", flash.VIA_WB)])
 def test_the_fresh_ready_line_decides_how_the_role_returns(state, via):
     assert role.return_via(("abcd", "ota_1", state)) == via
 
@@ -299,12 +299,12 @@ def test_the_banner_is_asked_for_through_the_peers_own_bridge(tmp_path, monkeypa
     def control(cfg, cmd):
         sent.append((cfg.base, cmd))
         with open(log, "a") as fh:
-            fh.write("# ready build=abcd slot=ota_0 state=none\n")
+            fh.write("# ready build=abcd slot=ota_0 state=valid\n")
         return "ok"
     monkeypatch.setattr(role.serialmon, "log_size", lambda cfg: log.stat().st_size)
     monkeypatch.setattr(role.flash.serialmon, "log_path", lambda cfg: log)
     monkeypatch.setattr(role.remote_serial, "control", control)
-    assert role.emulator_banner(peer) == ("abcd", "ota_0", "none")
+    assert role.emulator_banner(peer) == ("abcd", "ota_0", "valid")
     assert sent == [(PEER, "write ready")]
 
 

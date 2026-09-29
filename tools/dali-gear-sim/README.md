@@ -75,9 +75,9 @@ E <t_us> answer_cell_busy ...                    something went wrong
 
 `state` is the running slot's OTA state as the bootloader keeps it:
 - `pending_verify` — installed over OTA; any reset hands the board back to the controller;
-- `none` or `valid` — written by wire; the role survives resets. `valid` means the slot kept
-  the confirmation a controller wrote there before the emulator replaced it;
-- `new`, `invalid`, `aborted`, `undefined` — anything else.
+- `valid` — written by wire: the merged image erases `otadata`, so the bootloader boots
+  `ota_0` and records it valid; the role survives resets;
+- `new`, `invalid`, `aborted`, `none`, `undefined` — anything else.
 
 `C` lines carry the short and random address, `enabled`, groups, level, `identify`,
 colour mode, mirek, xy, the RGBWAF channels, the level range, the Tc limits and the
