@@ -1004,9 +1004,9 @@ export type StatsDali = {
   persist_flush_max_ms: number
   persist_gate_waits_total: number
   persist_gate_timeouts_total: number
-  readback_groups_doubled_total: number
-  readback_colour_features_zero_total: number
-  readback_extended_fade_unrepresentable_total: number
+  readback_groups_corrected_total: number
+  readback_colour_features_corrected_total: number
+  readback_extended_fade_corrected_total: number
   program_repairs_total: number
 }
 

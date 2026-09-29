@@ -484,9 +484,9 @@ STATS_DALI_COUNTERS = (
     ("persist_flush_max_ms", "persist_flush_max_ms"),
     ("persist_gate_waits_total", "persist_gate_waits"),
     ("persist_gate_timeouts_total", "persist_gate_timeouts"),
-    ("readback_groups_doubled_total", "readback_groups_doubled"),
-    ("readback_colour_features_zero_total", "readback_colour_features_zero"),
-    ("readback_extended_fade_unrepresentable_total", "readback_extended_fade_unrepresentable"),
+    ("readback_groups_corrected_total", "readback_groups_corrected"),
+    ("readback_colour_features_corrected_total", "readback_colour_features_corrected"),
+    ("readback_extended_fade_corrected_total", "readback_extended_fade_corrected"),
     ("program_repairs_total", "program_repairs"),
 )
 
@@ -577,6 +577,27 @@ UNGATED_BUS_COUNTERS = (
 )
 
 
+WATCHED_WORKAROUNDS = (
+    "readback_groups_corrected",
+    "readback_colour_features_corrected",
+    "readback_extended_fade_corrected",
+    "program_repairs",
+)
+
+
+def _drop_verdict(name, count, budget):
+    if name in UNGATED_BUS_COUNTERS:
+        return "not gated (mechanism exercised)"
+    if name in WATCHED_WORKAROUNDS:
+        return "watched, never gated: the workaround goes once this stays at 0"
+    limit = budget.get(name, NOT_MEASURED)
+    if limit == NOT_MEASURED:
+        return "unmeasured — set a budget"
+    if count > limit:
+        return "OVER BUDGET %d" % limit
+    return "budget %d" % limit
+
+
 def _bus_drop_lines(state, budget):
     drops = state.get("bus_drops")
     if not drops:
@@ -584,17 +605,7 @@ def _bus_drop_lines(state, budget):
                 "own drop counters are the ISSUE-50 evidence and this run has none"]
     lines = ["bus drops (budget from retry_budget.txt):"]
     for name, count in sorted(drops.items()):
-        if name in UNGATED_BUS_COUNTERS:
-            lines.append("  %-28s %5d   not gated (mechanism exercised)" % (name, count))
-            continue
-        limit = budget.get(name, NOT_MEASURED)
-        if limit == NOT_MEASURED:
-            verdict = "unmeasured — set a budget"
-        elif count > limit:
-            verdict = "OVER BUDGET %d" % limit
-        else:
-            verdict = "budget %d" % limit
-        lines.append("  %-28s %5d   %s" % (name, count, verdict))
+        lines.append("  %-28s %5d   %s" % (name, count, _drop_verdict(name, count, budget)))
     for who, lost in state.get("bus_subscriber_losses") or []:
         lines.append("      lost by %-20s %5d" % (who, lost))
     return lines
@@ -604,7 +615,7 @@ def bus_drop_breaches(state, budget):
     drops = {
         name: count
         for name, count in (state.get("bus_drops") or {}).items()
-        if name not in UNGATED_BUS_COUNTERS
+        if name not in UNGATED_BUS_COUNTERS and name not in WATCHED_WORKAROUNDS
     }
     return breaches(drops, budget)
 

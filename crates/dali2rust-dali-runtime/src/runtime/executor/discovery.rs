@@ -762,13 +762,12 @@ fn query_dt8_capabilities(
     address: DaliAddress,
     content_confirm: ContentConfirmPolicy,
 ) -> Result<Option<Dt8Capabilities>, SemanticDaliError> {
-    let mut features = query_colour_type_features(controller, address, content_confirm)?;
-    if features == Some(0) {
-        controller.note_workaround(ReadbackWorkaround::ColourFeaturesZero);
-    }
-    if features.is_none_or(|f| f == 0) {
-        features = query_colour_type_features(controller, address, content_confirm)?.or(features);
-    }
+    let first = query_colour_type_features(controller, address, content_confirm)?;
+    let features = if first.is_none_or(|f| f == 0) {
+        reread_colour_type_features(controller, address, content_confirm, first)?
+    } else {
+        first
+    };
     Ok(features.map(|features| {
         let channels = (features & DT8_RGBWAF_CHANNELS_MASK) >> DT8_RGBWAF_CHANNELS_SHIFT;
         Dt8Capabilities {
@@ -778,6 +777,19 @@ fn query_dt8_capabilities(
             rgbwaf_capable: channels > DT8_RGB_CHANNELS,
         }
     }))
+}
+
+fn reread_colour_type_features(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    content_confirm: ContentConfirmPolicy,
+    first: Option<u8>,
+) -> Result<Option<u8>, SemanticDaliError> {
+    let reread = query_colour_type_features(controller, address, content_confirm)?;
+    if first == Some(0) && reread.is_some_and(|f| f != 0) {
+        controller.note_workaround(ReadbackWorkaround::ColourFeaturesCorrected);
+    }
+    Ok(reread.or(first))
 }
 
 fn query_colour_type_features(
@@ -1273,15 +1285,13 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_colour_features_answer_is_counted_and_asked_again() {
+    fn a_zero_colour_features_answer_the_re_read_corrects_is_counted() {
         const TC_ONLY: u8 = 0x02;
         let short = 17;
         let mock = MockDaliTransport::new();
-        script_colour_type_features(&mock, short, Some(0));
-        script_colour_type_features(&mock, short, Some(TC_ONLY));
-        script_colour_type_features(&mock, short, None);
-        script_colour_type_features(&mock, short, Some(TC_ONLY));
-        script_colour_type_features(&mock, short, Some(TC_ONLY));
+        for answer in [Some(0), Some(TC_ONLY), Some(0), Some(0), None, Some(TC_ONLY), Some(TC_ONLY)] {
+            script_colour_type_features(&mock, short, answer);
+        }
 
         let (transport, mut controller) = setup_controller(mock);
         let counters = wire_counters(&mut controller);
@@ -1291,13 +1301,14 @@ mod tests {
                 .map(|caps| caps.tc_capable)
         };
         assert_eq!(probe(), Some(true), "the second answer replaces the zero");
-        assert_eq!(counters.readback_colour_features_zero.load(Ordering::Relaxed), 1);
+        assert_eq!(counters.readback_colour_features_corrected.load(Ordering::Relaxed), 1);
+        assert_eq!(probe(), Some(false), "a confirmed zero is the gear's answer");
         assert_eq!(probe(), Some(true), "silence is re-asked too");
         assert_eq!(probe(), Some(true), "a non-zero first answer is taken as it is");
         assert_eq!(
-            counters.readback_colour_features_zero.load(Ordering::Relaxed),
+            counters.readback_colour_features_corrected.load(Ordering::Relaxed),
             1,
-            "only a zero answer is the signature"
+            "a confirmed zero, silence and a non-zero answer corrected nothing"
         );
         assert_script_consumed(&transport);
     }

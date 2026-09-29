@@ -150,9 +150,9 @@ pub struct DaliWireCounters {
 
     pub exchange_retries: core::sync::atomic::AtomicU32,
     pub retry_exhausted: core::sync::atomic::AtomicU32,
-    pub readback_groups_doubled: core::sync::atomic::AtomicU32,
-    pub readback_colour_features_zero: core::sync::atomic::AtomicU32,
-    pub readback_extended_fade_unrepresentable: core::sync::atomic::AtomicU32,
+    pub readback_groups_corrected: core::sync::atomic::AtomicU32,
+    pub readback_colour_features_corrected: core::sync::atomic::AtomicU32,
+    pub readback_extended_fade_corrected: core::sync::atomic::AtomicU32,
     pub program_repairs: core::sync::atomic::AtomicU32,
     // IEC 62386-101 Table 17, Table 20
     pub send_twice_over_transmitter_max: core::sync::atomic::AtomicU32,

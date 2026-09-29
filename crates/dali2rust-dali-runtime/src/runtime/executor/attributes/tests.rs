@@ -89,39 +89,66 @@ fn groups_membership_doubled_byte_signature_triggers_one_reread() {
 }
 
 #[test]
-fn a_doubled_group_byte_pair_is_counted_and_a_clean_pair_is_not() {
+fn a_doubled_group_pair_the_re_read_corrects_is_counted_and_a_confirmed_one_is_not() {
+    const GROUPS_0_AND_8: u8 = 0x01;
     let (lo, hi) = groups_query_frames(short_address(9));
     let mock = MockDaliTransport::new();
-    mock.expect_forward_frame_with_backward(lo, Some(0x02));
-    mock.expect_forward_frame_with_backward(hi, Some(0x02));
-    mock.expect_forward_frame_with_backward(lo, Some(0x02));
-    mock.expect_forward_frame_with_backward(hi, Some(0x00));
-    mock.expect_forward_frame_with_backward(lo, Some(0x03));
-    mock.expect_forward_frame_with_backward(hi, Some(0x00));
+    for (low, high) in [(0x02, 0x02), (0x02, 0x00), (GROUPS_0_AND_8, GROUPS_0_AND_8)] {
+        mock.expect_forward_frame_with_backward(lo, Some(low));
+        mock.expect_forward_frame_with_backward(hi, Some(high));
+    }
+    mock.expect_forward_frame_with_backward(lo, Some(GROUPS_0_AND_8));
+    mock.expect_forward_frame_with_backward(hi, Some(GROUPS_0_AND_8));
 
     let (transport, mut controller) = setup_controller(mock);
     let counters = wire_counters(&mut controller);
-    read_group_membership_mask(&mut controller, 9).expect("doubled read");
-    assert_eq!(counters.readback_groups_doubled.load(Relaxed), 1);
-    read_group_membership_mask(&mut controller, 9).expect("clean read");
+    let corrected = read_group_membership_mask(&mut controller, 9).expect("corrected read");
+    assert_eq!(corrected, Some(0x0002));
+    assert_eq!(counters.readback_groups_corrected.load(Relaxed), 1);
+    let confirmed = read_group_membership_mask(&mut controller, 9).expect("confirmed read");
+    assert_eq!(confirmed, Some(0x0101), "a gear really in groups 0 and 8");
     assert_eq!(
-        counters.readback_groups_doubled.load(Relaxed),
+        counters.readback_groups_corrected.load(Relaxed),
         1,
-        "distinct bytes are not the signature"
+        "a re-read that agrees corrected nothing"
     );
     assert_script_consumed(&transport);
 }
 
+#[test]
+fn an_ungrouped_gear_is_not_the_doubled_signature_and_is_not_re_read() {
+    let (lo, hi) = groups_query_frames(short_address(9));
+    let mock = MockDaliTransport::new();
+    mock.expect_forward_frame_with_backward(lo, Some(0x00));
+    mock.expect_forward_frame_with_backward(hi, Some(0x00));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let counters = wire_counters(&mut controller);
+    let mask = read_group_membership_mask(&mut controller, 9).expect("read");
+    assert_eq!(mask, Some(0));
+    let frames = transport.lock().expect("mock lock").sent_frames();
+    assert_eq!(frames, vec![lo, hi], "two zero bytes are one read, not a signature");
+    assert_eq!(counters.readback_groups_corrected.load(Relaxed), 0);
+    assert_script_consumed(&transport);
+}
+
 const EXTENDED_FADE_SEVENTY_SECONDS: u8 = 0x36;
+const EXTENDED_FADE_HALF_SECOND: u8 = 0x14;
 
 #[test]
-fn an_extended_fade_the_record_cannot_carry_is_counted_and_silence_is_not() {
+fn an_extended_fade_the_re_read_corrects_is_counted_and_a_confirmed_or_silent_one_is_not() {
     let query = standard_query_frame(9, StandardCommand::QueryExtendedFadeTime);
     let mock = MockDaliTransport::new();
-    mock.expect_forward_frame_with_backward(query, Some(EXTENDED_FADE_SEVENTY_SECONDS));
-    mock.expect_forward_frame_with_backward(query, Some(EXTENDED_FADE_SEVENTY_SECONDS));
-    mock.expect_forward_frame_with_backward(query, None);
-    mock.expect_forward_frame_with_backward(query, None);
+    for answer in [
+        Some(EXTENDED_FADE_SEVENTY_SECONDS),
+        Some(EXTENDED_FADE_HALF_SECOND),
+        Some(EXTENDED_FADE_SEVENTY_SECONDS),
+        Some(EXTENDED_FADE_SEVENTY_SECONDS),
+        None,
+        None,
+    ] {
+        mock.expect_forward_frame_with_backward(query, answer);
+    }
 
     let (transport, mut controller) = setup_controller(mock);
     let counters = wire_counters(&mut controller);
@@ -130,17 +157,19 @@ fn an_extended_fade_the_record_cannot_carry_is_counted_and_silence_is_not() {
         dt6: None,
     };
     let policy = ContentConfirmPolicy::default();
-    let seventy = read_extended_snapshot(&mut controller, short_address(9), policy, known)
-        .expect("unrepresentable read");
-    assert_eq!(seventy.fade_time_ms, None, "70 s is above the u16 ms field");
-    assert_eq!(counters.readback_extended_fade_unrepresentable.load(Relaxed), 1);
-    let silent = read_extended_snapshot(&mut controller, short_address(9), policy, known)
-        .expect("silent read");
-    assert_eq!(silent.fade_time_ms, None);
+    let mut read = || {
+        read_extended_snapshot(&mut controller, short_address(9), policy, known)
+            .expect("extended read")
+            .fade_time_ms
+    };
+    assert_eq!(read(), Some(500), "the re-read replaces the first answer");
+    assert_eq!(counters.readback_extended_fade_corrected.load(Relaxed), 1);
+    assert_eq!(read(), None, "a confirmed 70 s is above the u16 ms field, not wrong");
+    assert_eq!(read(), None);
     assert_eq!(
-        counters.readback_extended_fade_unrepresentable.load(Relaxed),
+        counters.readback_extended_fade_corrected.load(Relaxed),
         1,
-        "an unanswered query is re-asked but is not the signature"
+        "a confirmed answer and silence corrected nothing"
     );
     assert_script_consumed(&transport);
 }

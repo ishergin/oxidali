@@ -63,8 +63,4 @@ backward_undecodable      0
 backward_frame_size       0
 backward_incomplete       0
 
-# Read-back workarounds under watch, from /api/v1/stats.dali: a clean answer re-read on a wrong-answer signature, and scene or group programming repairs.
-readback_groups_doubled                 -1
-readback_colour_features_zero           -1
-readback_extended_fade_unrepresentable  -1
-program_repairs                         -1
+# Read-back workarounds from /api/v1/stats.dali (readback_*_corrected, program_repairs) are watched, never gated: no budget line.

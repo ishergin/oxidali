@@ -208,12 +208,13 @@ Feature: Physical-device attribute reads
     Then the response status should be 202
     And the last operation eventually succeeds
     Given a groups attribute-read script with a doubled-byte first pair for short address 0
+    And I remember the stats dali read-back counters
     When I start an attribute read for adapter 0 physical device 0 with attribute group "groups" only
     Then the response status should be 202
     And the last operation eventually succeeds
     And physical device 0 eventually exposes groups membership 2
     And all scripted DALI exchanges should be consumed without errors
-    And the stats dali readback_groups_doubled_total should eventually be 1
+    And the stats dali read-back counters should eventually have grown by groups 1, colour features 0, extended fade 0 and program repairs 0
 
   @id:PD-170
   Scenario: An attribute read publishes the gear features byte it measured

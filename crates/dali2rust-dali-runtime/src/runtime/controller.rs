@@ -251,11 +251,11 @@ impl<T: DaliTransport + Send> DaliApplicationController for DaliController<T> {
     fn note_workaround(&mut self, workaround: ReadbackWorkaround) {
         let counters = &self.wire_counters;
         let counter = match workaround {
-            ReadbackWorkaround::GroupsDoubledByte => &counters.readback_groups_doubled,
-            ReadbackWorkaround::ColourFeaturesZero => &counters.readback_colour_features_zero,
-            ReadbackWorkaround::ExtendedFadeUnrepresentable => {
-                &counters.readback_extended_fade_unrepresentable
+            ReadbackWorkaround::GroupsCorrected => &counters.readback_groups_corrected,
+            ReadbackWorkaround::ColourFeaturesCorrected => {
+                &counters.readback_colour_features_corrected
             }
+            ReadbackWorkaround::ExtendedFadeCorrected => &counters.readback_extended_fade_corrected,
             ReadbackWorkaround::ProgramRepair => &counters.program_repairs,
         };
         counter.fetch_add(1, Relaxed);

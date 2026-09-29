@@ -13,9 +13,9 @@ pub enum Frame24Fault {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadbackWorkaround {
-    GroupsDoubledByte,
-    ColourFeaturesZero,
-    ExtendedFadeUnrepresentable,
+    GroupsCorrected,
+    ColourFeaturesCorrected,
+    ExtendedFadeCorrected,
     ProgramRepair,
 }
 

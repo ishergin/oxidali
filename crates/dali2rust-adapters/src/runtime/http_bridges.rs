@@ -573,11 +573,9 @@ fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
 
 fn stats_readback_dto(w: &dali2rust_platform::dali::DaliWireCounters) -> StatsDaliReadbackDto {
     StatsDaliReadbackDto {
-        readback_groups_doubled_total: w.readback_groups_doubled.load(Relaxed),
-        readback_colour_features_zero_total: w.readback_colour_features_zero.load(Relaxed),
-        readback_extended_fade_unrepresentable_total: w
-            .readback_extended_fade_unrepresentable
-            .load(Relaxed),
+        readback_groups_corrected_total: w.readback_groups_corrected.load(Relaxed),
+        readback_colour_features_corrected_total: w.readback_colour_features_corrected.load(Relaxed),
+        readback_extended_fade_corrected_total: w.readback_extended_fade_corrected.load(Relaxed),
         program_repairs_total: w.program_repairs.load(Relaxed),
     }
 }

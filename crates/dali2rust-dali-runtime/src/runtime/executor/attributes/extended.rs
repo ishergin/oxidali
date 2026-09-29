@@ -121,12 +121,12 @@ fn read_extended_fade_time(
     if let Some(ms) = first.and_then(extended_fade_time_ms_from_byte) {
         return Ok(Some(ms));
     }
-    if first.is_some() {
-        controller.note_workaround(ReadbackWorkaround::ExtendedFadeUnrepresentable);
-    }
     log::info!("extended fade time: unrepresentable readback byte, re-reading");
-    Ok(read_extended_fade_byte(controller, address, content_confirm)?
-        .and_then(extended_fade_time_ms_from_byte))
+    let reread = read_extended_fade_byte(controller, address, content_confirm)?;
+    if first.is_some() && reread.is_some() && reread != first {
+        controller.note_workaround(ReadbackWorkaround::ExtendedFadeCorrected);
+    }
+    Ok(reread.and_then(extended_fade_time_ms_from_byte))
 }
 
 fn read_extended_fade_byte(

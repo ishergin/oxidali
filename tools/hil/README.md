@@ -267,7 +267,8 @@ ladder and the runtime heap floor. **Classify a red run from this section, not f
 
 Changing a budget against its direction needs a dated measurement line in the file.
 `-1` means "never measured with a counter attached": reported, not gated — replace it
-with the first instrumented figure. A retry is counted, never silent; a dead
+with the first instrumented figure. A `watched` row counts a workaround's firings and has
+no budget line: it never gates, and the workaround goes once it stays at zero. A retry is counted, never silent; a dead
 instrument (a blind colour sample) is charged to no budget. A red test keeps its
 strict assert ([05](../../documentation/architecture/05-testing-and-bdd.md)); the budget
 carries the rate the installation imposes.

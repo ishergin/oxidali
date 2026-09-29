@@ -60,9 +60,9 @@ pub struct StatsDaliDto {
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct StatsDaliReadbackDto {
-    pub readback_groups_doubled_total: u32,
-    pub readback_colour_features_zero_total: u32,
-    pub readback_extended_fade_unrepresentable_total: u32,
+    pub readback_groups_corrected_total: u32,
+    pub readback_colour_features_corrected_total: u32,
+    pub readback_extended_fade_corrected_total: u32,
     pub program_repairs_total: u32,
 }
 
