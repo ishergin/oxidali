@@ -15,8 +15,10 @@ Feature: Rules and scenes: a recall is one frame and a fact once it has happened
     Then the response status should be 202
     And the last operation eventually succeeds
     Given the DALI mock transport fails the next broadcast go-to-scene 3 frame
+    And I remember the stats pointer "/dali/errors_total"
     When I send a POST request to "/api/v1/adapters/0/scenes/3/recall"
     Then the response status should be 503
+    And the stats pointer "/dali/errors_total" should have grown by 1
     When I send a POST request to "/api/v1/adapters/0/scenes/4/recall"
     Then the response status should be 200
     And the rule "after-4" eventually has fired 1 time
@@ -123,11 +125,12 @@ Feature: Rules and scenes: a recall is one frame and a fact once it has happened
     When I send a POST request to "/api/v1/adapters/0/scenes/3/apply"
     Then the last operation eventually succeeds
     Given the DALI mock transport trace is cleared
+    And I remember the diagnostics projector counter "scene_expansions"
     When a foreign broadcast recall of scene 3 is observed on the bus
     Then virtual lamp 1 on adapter 0 should eventually report level 100 from value_source "sniffer"
     When a foreign DAPC frame for short address 0 level 90 is observed on the bus
     Then the virtual lamp 1 runtime level should eventually be 90
-    And the diagnostics projector counter "scene_expansions" should be 1
+    And the diagnostics projector counter "scene_expansions" should have grown by 1
     And the DALI mock transport should have received 0 forward frame
 
   @id:RULE-040

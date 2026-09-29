@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 use dali2rust_platform::dali::ObservedRawFrameKind;
 use dali2rust_test_support::wait_until;
 use serde_json::Value;
@@ -134,11 +134,24 @@ async fn when_foreign_short_recall_observed(world: &mut DaliWorld, short: u8, sc
     inject_forward16(world, [command_address(short), go_to_scene(scene)]);
 }
 
-// RULE-036
-#[then(regex = r#"^the diagnostics projector counter "([a-z_]+)" should be (\d+)$"#)]
-async fn then_projector_counter_is(world: &mut DaliWorld, name: String, expected: u64) {
+fn projector_counter(world: &mut DaliWorld, name: &str) -> u64 {
     let json = super::get_json(world, "/api/v1/diagnostics");
-    assert_eq!(json["projector"][name.as_str()].as_u64(), Some(expected), "projector.{name}");
+    json["projector"][name]
+        .as_u64()
+        .unwrap_or_else(|| panic!("projector.{name} missing or not a number in {json}"))
+}
+
+// RULE-036
+#[given(regex = r#"^I remember the diagnostics projector counter "([a-z_]+)"$"#)]
+async fn remember_projector_counter(world: &mut DaliWorld, name: String) {
+    world.remembered_u64 = Some(projector_counter(world, &name));
+}
+
+// RULE-036
+#[then(regex = r#"^the diagnostics projector counter "([a-z_]+)" should have grown by (\d+)$"#)]
+async fn then_projector_counter_grew_by(world: &mut DaliWorld, name: String, delta: u64) {
+    let before = world.remembered_u64.expect("remembered projector counter");
+    assert_eq!(projector_counter(world, &name), before + delta, "projector.{name}");
 }
 
 // SYS-214
