@@ -73,16 +73,19 @@ messages to every new subscription.
 7. **A number feeds `event.value`.** A payload that is exactly a signed decimal integer
    within 32 bits is the activation's `event.value`; any other payload leaves the value
    unevaluable, and a rule that reads it reports `partial`.
-8. **A message joins the deepest recent chain.** A broker message cannot say what caused
-   it, so the activation it starts counts as caused by the deepest rule effect of the
-   last `CHAIN_WINDOW_MS` (2 s), and a `mqtt.publish` effect is recorded in the chain like
-   a light effect. A rule that publishes to its own trigger topic, and a rule on one of
-   the bridge's own state topics that changes that lamp, stop at the chain depth after
-   five activations when the round trip is shorter than the window. A slower loop is not
-   caught: the bridge's publish limiter, a bucket of four refilled once a second that
-   drops the excess, ends only a loop shorter than a second and never touches the
-   bridge's state publishes. The price is an unrelated message within 2 s of a chain
-   already at its depth limit, which is refused as the next link.
+8. **A message inherits depth only from a publish on its topic.** A broker message cannot
+   say what caused it, and the one cause the engine knows is its own `mqtt.publish`: that
+   effect is recorded in the chain under its topic at the publishing activation's depth,
+   and a message on that topic within `CHAIN_WINDOW_MS` (2 s) starts an activation one
+   level deeper. Every other message starts a chain of its own, so a rule on a busy
+   external topic never counts its own earlier messages as links. A rule that publishes to
+   its own trigger topic stops at the chain depth after five activations when the round
+   trip is shorter than the window. A slower loop is not caught: the bridge's publish
+   limiter, a bucket of four refilled once a second that drops the excess, ends only a
+   loop shorter than a second. The price is twofold: a loop through another client that
+   answers a light change with a message is invisible to the chain and runs at the pace
+   of the rule's cooldown, and a message another client sends on a topic a rule published
+   within the window is counted as that publish's echo.
 
 ### Rejected alternatives
 

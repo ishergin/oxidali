@@ -1055,18 +1055,26 @@ fn a_rule_that_publishes_to_its_own_topic_stops_at_the_chain_depth() {
 }
 
 #[test]
-fn a_rule_on_the_bridges_own_state_topic_stops_at_the_chain_depth() {
-    let lamp = resolver().resolve_lamp("коридор").unwrap();
-    let source = "rule \"мигание\" cooldown 0ms {\n  when mqtt \"dali/ctl1/a0/vl/3/state\"\n  do lamp(\"коридор\").toggle()\n}\n";
+fn a_light_rule_on_an_external_topic_never_counts_its_own_messages_as_a_chain() {
+    let source = "rule \"пульт\" cooldown 0ms {\n  when mqtt \"remote/dim\"\n  do broadcast.level(event.value)\n}\n";
     let mut eng = engine(source, 0);
-    let mut refused = false;
-    for step in 0..8u64 {
-        let lit = step % 2 == 0;
-        let out = eng.handle(
-            mqtt("dali/ctl1/a0/vl/3/state", b"{}", false),
-            &with_lamp(world(1_000 + step * 100), lamp, lit, if lit { 200 } else { 0 }),
-        );
-        refused |= chain_refused(&out);
+    for step in 0..20u64 {
+        let out = eng.handle(mqtt("remote/dim", b"100", false), &world(1_000 + step * 400));
+        assert_eq!(out.len(), 1, "message {step} fires: {out:?}");
+        assert_eq!(out[0].partial, None, "message {step} is no link of a chain: {out:?}");
     }
-    assert!(refused, "a toggle echoed back by the bridge must not run for ever");
+}
+
+#[test]
+fn a_publish_chains_only_the_messages_on_its_own_topic() {
+    let source = "rule \"эхо\" cooldown 0ms {\n  when mqtt \"home/echo\"\n  do mqtt.publish(\"home/echo\", \"x\")\n}\n\
+                  rule \"пульт\" cooldown 0ms {\n  when mqtt \"remote/dim\"\n  do broadcast.level(event.value)\n}\n";
+    let mut eng = engine(source, 0);
+    for step in 0..=u64::from(dali2rust_rules_runtime::runtime::engine::MAX_CHAIN_DEPTH) {
+        let _ = eng.handle(mqtt("home/echo", b"x", false), &world(1_000 + step * 100));
+    }
+    let out = eng.handle(mqtt("remote/dim", b"100", false), &world(1_550));
+    assert_eq!(out[0].partial, None, "the echo's depth is not the remote's: {out:?}");
+    let out = eng.handle(mqtt("home/echo", b"x", false), &world(1_600));
+    assert!(chain_refused(&out), "while the echo itself is at its limit: {out:?}");
 }

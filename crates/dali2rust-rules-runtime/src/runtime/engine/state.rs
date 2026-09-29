@@ -22,17 +22,17 @@ pub(crate) struct EventCtx {
     pub source: Option<(u8, u8, u8)>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ChainKey {
     Lamp(u8, u16),
     Group(u8, u16),
     AdapterWide(u8),
     Scene(u8),
     Hcl(HclTargetKey),
-    Broker,
+    BrokerTopic(String),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct ChainEntry {
     pub key: ChainKey,
     pub depth: u32,
@@ -100,15 +100,6 @@ impl Volatile {
             .map(|e| e.depth)
             .max();
         parent.map_or(0, |d| d.saturating_add(1))
-    }
-
-    pub fn chain_depth_any(&self, now_ms: u64) -> u32 {
-        self.chain
-            .iter()
-            .filter(|e| now_ms.saturating_sub(e.at_ms) <= CHAIN_WINDOW_MS)
-            .map(|e| e.depth.saturating_add(1))
-            .max()
-            .unwrap_or(0)
     }
 
     pub fn record_chain(&mut self, key: ChainKey, depth: u32, now_ms: u64) {
