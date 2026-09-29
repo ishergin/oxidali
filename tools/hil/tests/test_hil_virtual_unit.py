@@ -159,3 +159,36 @@ def test_a_restore_keeps_an_owner_binding_a_narrowed_roster_hides():
     snap = {"vl": api.list_unfiltered()}
     prod_state._restore_vl(api, snap, log=lambda line: None)
     assert api.unbound == []
+
+
+def test_the_park_shape_defaults_and_follows_its_variable(monkeypatch):
+    monkeypatch.delenv(hil_virtual.PARK_ENV, raising=False)
+    assert hil_virtual.park_shape() == virtual_gear.DEFAULT_PARK
+    monkeypatch.setenv(hil_virtual.PARK_ENV, "6,5,5")
+    assert hil_virtual.park_shape() == (6, 5, 5)
+    monkeypatch.setenv(hil_virtual.PARK_ENV, "16")
+    with pytest.raises(pytest.UsageError, match=hil_virtual.PARK_ENV):
+        hil_virtual.park_shape()
+
+
+def test_the_bench_names_its_gear_by_kind():
+    bench = hil_virtual.VirtualBench(list(range(16, 28)), [4], {}, (4, 4, 4), None, None)
+    assert bench.of_kind("cct") == [20, 21, 22, 23]
+    assert bench.of_kind("rgb") == [24, 25, 26, 27]
+
+
+def _row(lamp_id, desired, applied):
+    return {"virtual_lamp_id": lamp_id, "desired": desired, "applied": applied}
+
+
+def test_only_the_session_rows_that_moved_are_put_back():
+    before = hil_virtual.session_rows({"rows": [_row(60, [False], [False]),
+                                                _row(61, [True], [True]),
+                                                _row(6, [True], [True])]}, [60, 61])
+    assert sorted(before) == [60, 61]
+    now = {60: _row(60, [True], [True]), 61: _row(61, [True], [True])}
+    assert hil_virtual.rows_to_restore(before, now) == [
+        {"virtual_lamp_id": 60, "desired": [False]}]
+    assert hil_virtual.rows_to_restore(before, {60: _row(60, [False], [True])}) == [
+        {"virtual_lamp_id": 60, "desired": [False]}]
+    assert hil_virtual.rows_to_restore(before, {}) == []

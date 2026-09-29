@@ -4,7 +4,8 @@ import subprocess
 import pytest
 
 from hil import tripwire, virtual_gear
-from hil.lamp_guard import LampGuard, LampNotAllowed, VirtualFence, spell
+from hil.lamp_guard import (GROUP_TARGET, LampGuard, LampNotAllowed, RulesBaseline, VirtualFence,
+                            appended_test_rules, http_rule, spell)
 
 WB_CONF = {"gateways": [{"device_id": "wb-dali_19", "buses": [
     {"devices": [{"short": 0}, {"short": 1}, {"short": 12}, {"short": 0, "dali2": True}]},
@@ -28,6 +29,22 @@ def test_the_park_takes_the_first_free_addresses():
     assert virtual_gear.park_shorts(frozenset(range(16)) | {17}, 3) == [16, 18, 19]
     with pytest.raises(virtual_gear.VirtualGearError):
         virtual_gear.park_shorts(frozenset(range(62)), 3)
+
+
+def test_a_park_shape_names_three_counts():
+    assert virtual_gear.parse_park(" 6, 5,5 ") == (6, 5, 5)
+    assert virtual_gear.parse_park("0,1,0") == (0, 1, 0)
+    for spec in ("6,5", "6,5,5,1", "6,-5,5", "a,b,c", "0,0,0", ""):
+        with pytest.raises(virtual_gear.VirtualGearError):
+            virtual_gear.parse_park(spec)
+
+
+def test_a_kind_is_the_slice_the_fleet_builds_for_it():
+    park = list(range(16, 32))
+    assert virtual_gear.park_of_kind(park, (6, 5, 5), "dt6") == list(range(16, 22))
+    assert virtual_gear.park_of_kind(park, (6, 5, 5), "cct") == list(range(22, 27))
+    assert virtual_gear.park_of_kind(park, (6, 5, 5), "rgb") == list(range(27, 32))
+    assert virtual_gear.park_of_kind(park[:8], (8, 0, 0), "cct") == []
 
 
 def test_the_wb_list_is_read_for_the_named_gateway_and_bus_without_part_103_units():
@@ -166,6 +183,9 @@ def _guard(fence):
      {"rows": [{"virtual_lamp_id": 60, "desired": {"included": True, "level": 90}}]}),
     ("POST", "adapters/0/commissioning/identify", {"short_address": 16}),
     ("POST", "dali/command", {"wire_address": 0x0D, "command": 0x91}),
+    ("POST", "adapters/0/physical-devices/16/attribute-reads",
+     {"attribute_groups": ["dt8_color"], "memory_banks": "none"}),
+    ("POST", "adapters/0/physical-devices/17/write-attributes", {"fade_time_ms": 1000}),
 ])
 def test_the_fence_lets_the_session_reach_its_own_gear(method, path, body):
     _guard(_fence()).check_request(method, path, body)
@@ -190,7 +210,10 @@ def test_the_fence_lets_the_session_reach_its_own_gear(method, path, body):
     ("PUT", "adapters/0/virtual-lamps/60/binding", {"physical_short_address": 16}),
     ("DELETE", "adapters/0/virtual-lamps/6", None),
     ("DELETE", "adapters/0/physical-devices/16", None),
-    ("POST", "adapters/0/physical-devices/16/write-attributes", {"fade_time_ms": 0}),
+    ("POST", "adapters/0/physical-devices/6/write-attributes", {"fade_time_ms": 0}),
+    ("POST", "adapters/0/physical-devices/6/attribute-reads", {"attribute_groups": ["groups"]}),
+    ("PUT", "adapters/0/physical-devices/16/write-attributes", {"fade_time_ms": 0}),
+    ("PATCH", "adapters/0/physical-devices/16", {"name": "x"}),
     ("PATCH", "policies", {"apply_on_discovery": True}),
     ("POST", "adapters/0/discovery-runs", {"mode": "scan_known_short_addresses"}),
     ("POST", "adapters/0/commissioning/address-changes", {"short_address": 16}),
@@ -207,6 +230,80 @@ def test_the_fence_lets_the_session_reach_its_own_gear(method, path, body):
 def test_the_fence_refuses_everything_else(method, path, body):
     with pytest.raises(LampNotAllowed):
         _guard(_fence()).check_request(method, path, body)
+
+
+OWNER_TOGGLES = {"подсветка: включить": True, "кнопка 3": False}
+
+
+def _ruled(**kw):
+    return _fence(rules=RulesBaseline(OWNER_RULES, dict(OWNER_TOGGLES)), **kw)
+
+
+def _with(fragment):
+    return {"source": OWNER_RULES + "\n\n" + fragment, "base_revision": 3}
+
+
+def test_the_fence_passes_the_owner_rules_plus_an_http_rule_on_the_session_and_its_run():
+    guard = _guard(_ruled())
+    guard.check_request("PUT", "rules", _with(http_rule("hil-a", GROUP_TARGET, 4, "stop_fade()")))
+    guard.check_request("POST", "rules/hil-a/run", {})
+    guard.check_request("POST", "rules/hil-a/run?dry=1", {})
+    guard.check_request("PUT", "rules", _with(http_rule("hil-b", "lamp", 61, "level(90)")))
+    guard.check_request("PUT", "rules", {"source": OWNER_RULES, "base_revision": 4})
+
+
+@pytest.mark.parametrize("body", [
+    _with(http_rule("hil-a", GROUP_TARGET, 0, "stop_fade()")),
+    _with(http_rule("hil-a", "lamp", 6, "on()")),
+    _with('rule "hil-a" {\n  when http trigger\n  do   broadcast.off()\n}'),
+    _with('rule "hil-a" {\n  when group(4) becomes any_on\n  do   group(4).off()\n}'),
+    _with('rule "owner-like" {\n  when http trigger\n  do   group(4).off()\n}'),
+    _with(http_rule("hil-a", GROUP_TARGET, 4, "stop_fade()") + "\n"),
+    {"source": OWNER_RULES.replace("кнопка 3", "кнопка 4"), "base_revision": 3},
+    {"source": "", "base_revision": 3},
+    {"base_revision": 3},
+])
+def test_the_fence_refuses_any_other_rules_document(body):
+    with pytest.raises(LampNotAllowed):
+        _guard(_ruled()).check_request("PUT", "rules", body)
+
+
+def test_without_a_baseline_the_fence_refuses_every_rules_write():
+    with pytest.raises(LampNotAllowed):
+        _guard(_fence()).check_request("PUT", "rules", _with(
+            http_rule("hil-a", GROUP_TARGET, 4, "stop_fade()")))
+
+
+def test_a_run_needs_a_rule_the_fence_passed():
+    guard = _guard(_ruled())
+    for name in ("hil-a", "%D0%BA%D0%BD%D0%BE%D0%BF%D0%BA%D0%B0%203"):
+        with pytest.raises(LampNotAllowed):
+            guard.check_request("POST", "rules/%s/run" % name, {})
+
+
+@pytest.mark.parametrize("path,body,refused", [
+    ("rules/%D0%BA%D0%BD%D0%BE%D0%BF%D0%BA%D0%B0%203", {"enabled": False}, False),
+    ("rules/%D0%BA%D0%BD%D0%BE%D0%BF%D0%BA%D0%B0%203", {"enabled": True}, True),
+    ("rules/hil-a", {"enabled": False}, True),
+    ("rules/%D0%BA%D0%BD%D0%BE%D0%BF%D0%BA%D0%B0%203", {"enabled": False, "x": 1}, True),
+])
+def test_a_toggle_passes_only_back_to_what_the_owner_had(path, body, refused):
+    guard = _guard(_ruled())
+    if refused:
+        with pytest.raises(LampNotAllowed):
+            guard.check_request("PATCH", path, body)
+    else:
+        guard.check_request("PATCH", path, body)
+
+
+def test_the_appended_rules_are_read_off_the_owner_document():
+    rule = http_rule("hil-a", GROUP_TARGET, 4, "stop_fade()")
+    assert appended_test_rules("", rule) == [("hil-a", "group", 4)]
+    assert appended_test_rules("x", "x") == []
+    two = "x\n\n" + rule + "\n\n" + http_rule("hil-b", "lamp", 60, "on()")
+    assert appended_test_rules("x", two) == [("hil-a", "group", 4), ("hil-b", "lamp", 60)]
+    assert appended_test_rules("x", "y\n\n" + rule) is None
+    assert appended_test_rules("x", "x\n\n") is None
 
 
 def test_an_apply_is_allowed_only_when_its_diff_is_the_sessions():

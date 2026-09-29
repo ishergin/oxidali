@@ -1,4 +1,6 @@
 import re
+from dataclasses import dataclass
+from urllib.parse import unquote
 
 TARGET_SEGMENT = -1
 SHORT_LIMIT = 0x80
@@ -65,16 +67,58 @@ VIRTUAL_ROUTES = (
     ("scene_apply", re.compile(r"adapters/\d+/scenes/(\d+)/apply")),
     ("identify", re.compile(r"adapters/\d+/commissioning/identify")),
     ("step", re.compile(r"adapters/\d+/commissioning/steps/([a-z-]+)")),
+    ("attr_read", re.compile(r"adapters/\d+/physical-devices/(\d+)/attribute-reads")),
+    ("attr_write", re.compile(r"adapters/\d+/physical-devices/(\d+)/write-attributes")),
+    ("rules", re.compile(r"rules")),
+    ("rule_toggle", re.compile(r"rules/([^/]+)")),
+    ("rule_run", re.compile(r"rules/([^/]+)/run")),
 )
+
+RULE_SEPARATOR = "\n\n"
+GROUP_TARGET = "group"
+HTTP_RULE = 'rule "%s" {\n  when http trigger\n  do   %s(%d).%s\n}'
+TEST_RULE = re.compile(
+    r'rule "(hil-[a-z0-9-]+)" \{\n'
+    r'  when http trigger\n'
+    r'  do   (group|lamp)\((\d+)\)\.[a-z_]+\([^()\n]*\)\n'
+    r'\}')
+
+
+def http_rule(name, target, key, action):
+    return HTTP_RULE % (name, target, key, action)
+
+
+@dataclass(frozen=True)
+class RulesBaseline:
+    source: str
+    toggles: dict
+
+
+def appended_test_rules(baseline, source):
+    if source == baseline:
+        return []
+    prefix = baseline + RULE_SEPARATOR if baseline else ""
+    if not source.startswith(prefix):
+        return None
+    found = []
+    for block in source[len(prefix):].split(RULE_SEPARATOR):
+        match = TEST_RULE.fullmatch(block)
+        if match is None:
+            return None
+        found.append((match.group(1), match.group(2), int(match.group(3))))
+    return found
 
 
 class VirtualFence:
-    def __init__(self, park, groups, session_vls, commissioning=False, pending=None):
+    def __init__(self, park, groups, session_vls, commissioning=False, pending=None,
+                 rules=None):
         self.park = frozenset(park)
         self.groups = frozenset(groups)
         self.session_vls = frozenset(session_vls)
         self.commissioning = bool(commissioning)
         self._pending = pending
+        self.rules = rules
+        self.test_rules = set()
 
     def check_request(self, method, path, body):
         if path.startswith(DIAGNOSTIC_PREFIX):
@@ -131,6 +175,41 @@ class VirtualFence:
                         "initialisation" % body)
         if key in STEPS_PARK_OPERAND and body.get("short_address") not in self.park:
             self.refuse("%s to %r, outside the park" % (key, body.get("short_address")))
+
+    def _attr_read(self, method, key, body):
+        self._park_post(method, key, "attribute read")
+
+    def _attr_write(self, method, key, body):
+        self._park_post(method, key, "attribute write")
+
+    def _park_post(self, method, key, what):
+        if method != POST or int(key) not in self.park:
+            self.refuse("%s %s of SA%s" % (method, what, key))
+
+    def _rules(self, method, key, body):
+        source = body.get("source") if isinstance(body, dict) else None
+        added = None
+        if method == PUT and self.rules is not None and isinstance(source, str):
+            added = appended_test_rules(self.rules.source, source)
+        if added is None:
+            self.refuse("%s of a rules document other than the owner's plus HTTP-triggered "
+                        "test rules" % method)
+        for name, kind, target in added:
+            if target not in (self.groups if kind == GROUP_TARGET else self.session_vls):
+                self.refuse("test rule %r on %s(%d)" % (name, kind, target))
+        self.test_rules.update(name for name, _, _ in added)
+
+    def _rule_toggle(self, method, key, body):
+        name = unquote(key)
+        owner = self.rules.toggles if self.rules is not None else {}
+        if method != PATCH or name not in owner or body != {"enabled": owner[name]}:
+            self.refuse("%s of rule %r other than its toggle back to %r"
+                        % (method, name, owner.get(name)))
+
+    def _rule_run(self, method, key, body):
+        name = unquote(key)
+        if method != POST or name not in self.test_rules:
+            self.refuse("%s run of rule %r, which no test appended" % (method, name))
 
     def _session_rows(self, method, body, what, groups):
         rows = body.get("rows") if isinstance(body, dict) else body

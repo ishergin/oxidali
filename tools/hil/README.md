@@ -58,6 +58,7 @@ zone to `HIL_BENCH_TZ` for the session. A session whose every test is
 | `HIL_STATE_GUARD=0` | turn the [save and restore](#save-and-restore) guard off | on |
 | `HIL_BENCH_TZ` | the time zone `bench_baseline` holds the controller in | `MSK-3` |
 | `HIL_VIRTUAL_GEAR=1` | run the [virtual-gear](#virtual-gear) tier on the gear the peer emulates | off |
+| `HIL_VIRTUAL_PARK` | the emulated park's shape: DT6, DT8 Tc and DT8 RGB+Tc gear, built in that order on the first free addresses above the reserve | `4,4,4` |
 | `HIL_OWNER_SHORTS` | live lamps a scan cannot see (unpowered), added to the virtual-gear reserve | empty |
 | `HIL_ALLOW_VIRTUAL_COMMISSIONING=1` | let the virtual-gear tier commission emulated gear (a go-ahead per run) | off |
 | `HIL_ADAPTER`, `HIL_BOARD`, `HIL_RUN_DIR` | the DALI adapter id, the board, the artifact directory | `0`, `esp32p4`, `runs/current` |
@@ -457,8 +458,10 @@ and another reserve needs the emulator restarted — under the OTA role that ret
 controller.
 
 The oracle is the emulator's own `C` lines (`hil/gearsim.py`: `GearOracle.expect`,
-`untouched`); `HIL validity` prints a `VIRTUAL GEAR` block with the emulator's answer
-counters, any `SAFETY` stop and what the teardown left.
+`untouched`) and, inside `GearOracle.hearing()`, the forward frames it heard (`F` lines,
+logged only for that window; a moved `log_dropped`, `decode_failed` or `ring_dropped`
+leaves the window blind); `HIL validity` prints a `VIRTUAL GEAR` block with the
+emulator's answer counters, any `SAFETY` stop and what the teardown left.
 
 ## Writing a scenario
 

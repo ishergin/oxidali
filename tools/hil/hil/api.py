@@ -17,6 +17,10 @@ ATTR_GROUPS_DEFAULT = "runtime_status,common_102,dt8_color,dt6_led"
 BUS_CONTENDED = "bus_contended"
 
 HTTP_GATEWAY_TIMEOUT = 504
+MIREK_KELVIN = 1_000_000
+DT8_COLOR_SECTION = "dt8_color"
+TC_SLOT = "color_value_2"
+QUERY_ACTUAL_LEVEL = 0xA0
 RULES_RECONCILE_S = 10.0
 RULES_LANDED, RULES_OVERTAKEN, RULES_UNCHANGED = "landed", "overtaken", "unchanged"
 
@@ -25,6 +29,16 @@ def rules_put_outcome(doc, source, base_revision):
     if doc.get("revision") == base_revision:
         return RULES_UNCHANGED
     return RULES_LANDED if doc.get("source") == source else RULES_OVERTAKEN
+
+
+def kelvin_to_mirek(kelvin):
+    return (MIREK_KELVIN + kelvin // 2) // kelvin
+
+
+def rule_toggles_of(projection):
+    compiled = (projection or {}).get("rules") or {}
+    return {rule["name"]: bool(rule.get("enabled", True))
+            for rule in compiled.get("rules") or []}
 
 
 def op_contended(view) -> bool:
@@ -340,6 +354,13 @@ class Client:
                          {"wire_address": (short << 1) | 1, "command": opcode,
                           "repeat_count": repeat})
 
+    def actual_level(self, short: int):
+        reply = self.cmd(short, QUERY_ACTUAL_LEVEL)
+        return reply.get("backward_frame") if reply.get("success") else None
+
+    def actual_levels(self, shorts) -> dict:
+        return {short: self.actual_level(short) for short in shorts}
+
     def cmd_wire(self, wire_address: int, opcode: int, repeat: int = 1) -> dict:
         return self._req("POST", "dali/command",
                          {"wire_address": wire_address, "command": opcode,
@@ -450,6 +471,12 @@ class Client:
         return self._req("POST", "rules/%s/run%s"
                          % (quote(name, safe=""), "?dry=1" if dry else ""), {})
 
+    def rules_toggles(self) -> dict:
+        return rule_toggles_of(self._req("GET", "rules?format=json"))
+
+    def rule_enable(self, name: str, enabled: bool) -> dict:
+        return self._req("PATCH", "rules/%s" % quote(name, safe=""), {"enabled": enabled})
+
     def attr_read(self, short, groups=ATTR_GROUPS_DEFAULT, banks="none"):
         return self._req("POST", "adapters/%d/physical-devices/%d/attribute-reads"
                          % (self.adapter, short),
@@ -476,6 +503,12 @@ class Client:
         raise ApiError(500, {"error": "attr_read_not_succeeded",
                              "last": view.get("status"), "view": view},
                        "attribute-reads")
+
+    def held_tc_mirek(self, short):
+        self.attr_read_checked(short, groups=DT8_COLOR_SECTION)
+        section = ((self.attributes(short, [DT8_COLOR_SECTION]).get("attributes") or {})
+                   .get(DT8_COLOR_SECTION) or {})
+        return (section.get(TC_SLOT) or {}).get("value")
 
     def identify(self, short):
         return self._req("POST", "adapters/%d/commissioning/identify" % self.adapter,

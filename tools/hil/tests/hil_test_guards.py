@@ -6,6 +6,8 @@ import pytest
 from requests import RequestException
 
 from hil import api as api_mod
+from hil import prod_state
+from hil.lamp_guard import RULE_SEPARATOR
 from hil.wait import wait_until
 from hil_harness import ANCHOR_TZ
 
@@ -144,6 +146,8 @@ _ATTR_GUARD_SECTIONS = {
     "fade_time_ms": "common_102",
     "min_level": "common_102",
     "max_level": "common_102",
+    "power_on_level": "common_102",
+    "system_failure_level": "common_102",
     "dimming_curve": "dt6_led",
 }
 
@@ -184,6 +188,26 @@ def attr_guard(api):
                     % (attr, short, want, holds))
 
 
+def rules_residue(source, now_source, toggles, now_toggles):
+    out = [] if now_source == source else ["the document is not the one the test found"]
+    out += ["rule %r is %s, was %s" % (name, _toggle(now_toggles.get(name)),
+                                       _toggle(toggles.get(name)))
+            for name in sorted(set(toggles) | set(now_toggles))
+            if now_toggles.get(name) != toggles.get(name)]
+    return out
+
+
+def _toggle(enabled):
+    return {True: "enabled", False: "disabled"}.get(enabled, "absent")
+
+
+def _reassert_toggles(api, toggles):
+    now = api.rules_toggles()
+    for name, enabled in sorted(toggles.items()):
+        if now.get(name) != enabled:
+            api.rule_enable(name, enabled)
+
+
 @pytest.fixture()
 def rules_guard(api):
     doc = api.rules_get()
@@ -192,16 +216,18 @@ def rules_guard(api):
                     "rule appended to it would be refused for that reason"
                     % doc["diagnostic"])
     original = doc.get("source") or ""
+    toggles = api.rules_toggles()
 
     def _commit(source, what):
         view = api.rules_replace(source, api.rules_get()["revision"])
         if view.get("status") != "succeeded":
             pytest.fail("rules %s did not commit: %r" % (what, view),
                         pytrace=False)
+        _reassert_toggles(api, toggles)
         return view
 
     def add(fragment):
-        source = (original + "\n\n" + fragment) if original else fragment
+        source = (original + RULE_SEPARATOR + fragment) if original else fragment
         if len(source.encode()) > RULES_SOURCE_LIMIT_BYTES:
             pytest.skip(
                 "the stored document plus a test rule exceeds the %d-byte "
@@ -214,6 +240,26 @@ def rules_guard(api):
     finally:
         if api.rules_get().get("source") != original:
             _commit(original, "restore")
+        residue = rules_residue(original, api.rules_get().get("source") or "", toggles,
+                                api.rules_toggles())
+        if residue:
+            pytest.fail("RULES NOT RESTORED: %s — a document commit resets every rule's "
+                        "toggle to its text, and the owner's automation now runs on what "
+                        "this test left" % "; ".join(residue), pytrace=False)
+
+
+@pytest.fixture()
+def policy_guard(api):
+    before = api._req("GET", "policies")
+    try:
+        yield before
+    finally:
+        prod_state.restore_policies(api, before)
+        left = prod_state.policy_patch(before, api._req("GET", "policies"))
+        if left:
+            pytest.fail("POLICY NOT RESTORED: %r still differ from %r — an armed policy is "
+                        "written into every registered device by the next scan"
+                        % (sorted(left), before), pytrace=False)
 
 
 @pytest.fixture()

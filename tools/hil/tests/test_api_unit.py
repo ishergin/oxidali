@@ -183,3 +183,42 @@ def test_a_conflict_the_controller_answers_is_raised_not_reconciled(monkeypatch)
         client.rules_replace(SOURCE, BASE)
     assert refused.value.status == 409
     assert client.http.calls == [PUT] and not client.retries
+
+
+def test_rule_toggles_are_read_from_the_compiled_projection():
+    projection = {"rules": {"rules": [{"name": "a", "enabled": False}, {"name": "b"}]}}
+    assert hil.api.rule_toggles_of(projection) == {"a": False, "b": True}
+    assert hil.api.rule_toggles_of({"rules": None, "diagnostic": "x"}) == {}
+
+
+def test_a_toggle_is_read_and_written_by_the_rule_name(monkeypatch):
+    quoted = "rules/%D0%BA%D0%BD%D0%BE%D0%BF%D0%BA%D0%B0%203"
+    client = _scripted(monkeypatch, {
+        ("GET", "rules?format=json"): [(200, {"rules": {"rules": [
+            {"name": "кнопка 3", "enabled": True}]}})],
+        ("PATCH", quoted): [(200, {"name": "кнопка 3", "enabled": False})]})
+    assert client.rules_toggles() == {"кнопка 3": True}
+    assert client.rule_enable("кнопка 3", False)["enabled"] is False
+    assert client.http.calls[-1] == ("PATCH", quoted)
+
+
+def test_kelvin_turns_into_mirek_the_way_the_controller_rounds():
+    assert [hil.api.kelvin_to_mirek(k) for k in (2700, 3000, 3500, 5000, 6000)] == [
+        370, 333, 286, 200, 167]
+
+
+def test_the_actual_level_is_the_answer_and_silence_is_none(monkeypatch):
+    client = _scripted(monkeypatch, {("POST", "dali/command"): [
+        (200, {"success": True, "backward_frame": 150}),
+        (200, {"success": False, "backward_frame": 0})]})
+    assert client.actual_levels([16, 17]) == {16: 150, 17: None}
+
+
+def test_the_held_colour_temperature_comes_from_a_fresh_read(monkeypatch):
+    client = _scripted(monkeypatch, {
+        ("POST", "adapters/0/physical-devices/20/attribute-reads"): [ACCEPTED],
+        ("GET", "operations/" + OPERATION): [COMMITTED],
+        ("GET", "adapters/0/physical-devices/20/attributes?sections=dt8_color"): [
+            (200, {"attributes": {"dt8_color": {"color_value_2": {"value": 333}}}})]})
+    assert client.held_tc_mirek(20) == 333
+    assert client.http.calls[0] == ("POST", "adapters/0/physical-devices/20/attribute-reads")

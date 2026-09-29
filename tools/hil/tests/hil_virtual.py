@@ -10,7 +10,7 @@ from hil import config as config_mod
 from hil import role, serialmon, tripwire, virtual_gear
 from hil.config import PeerUnconfigured, _parse_shorts
 from hil.gearsim import GearOracle, GearSim, GearSimUnavailable
-from hil.lamp_guard import VirtualFence, spell
+from hil.lamp_guard import RulesBaseline, VirtualFence, spell
 from hil.seriallog import LogWindow
 from hil.wait import wait_until
 from hil_harness import validity_of
@@ -18,6 +18,7 @@ from hil_harness import validity_of
 VIRTUAL_ENV = "HIL_VIRTUAL_GEAR"
 COMMISSIONING_ENV = "HIL_ALLOW_VIRTUAL_COMMISSIONING"
 OWNER_SHORTS_ENV = "HIL_OWNER_SHORTS"
+PARK_ENV = "HIL_VIRTUAL_PARK"
 SHORT_ENVS = ("HIL_LAMP_SHORTS", "HIL_GEAR_SHORTS", "HIL_OPTICAL_SHORTS")
 MARKER = "virtual_gear"
 EXCLUSIVE_MARKERS = ("redundancy",)
@@ -28,6 +29,7 @@ SETTLE_MAX_S = 10.0
 BARRIER_TIMEOUT_S = 10.0
 POLL_S = 0.2
 SAFETY_NOTE = "the owner's own use of the lights during a test trips it too"
+RESTORE_APPLY_S = 90
 
 
 def enabled():
@@ -43,16 +45,30 @@ def owner_shorts():
     return _parse_shorts(spec, OWNER_SHORTS_ENV) if spec else frozenset()
 
 
+def park_shape():
+    spec = os.environ.get(PARK_ENV, "").strip()
+    if not spec:
+        return virtual_gear.DEFAULT_PARK
+    try:
+        return virtual_gear.parse_park(spec)
+    except virtual_gear.VirtualGearError as exc:
+        raise pytest.UsageError("%s: %s" % (PARK_ENV, exc))
+
+
 @dataclass
 class VirtualBench:
     park: list
     groups: list
     vl_of_short: dict
+    shape: tuple
     sim: GearSim
     oracle: GearOracle
 
     def vl(self, short):
         return self.vl_of_short[str(short)]
+
+    def of_kind(self, kind):
+        return virtual_gear.park_of_kind(self.park, self.shape, kind)
 
 
 def pytest_configure(config):
@@ -61,12 +77,13 @@ def pytest_configure(config):
         return
     cfg = config_mod.load()
     api = api_mod.Client(cfg)
+    shape = park_shape()
     reserved = virtual_gear.reserve(virtual_gear.registry_shorts(api),
                                     virtual_gear.wb_shorts(cfg), owner_shorts())
-    park = virtual_gear.park_shorts(reserved, sum(virtual_gear.DEFAULT_PARK))
+    park = virtual_gear.park_shorts(reserved, sum(shape))
     for name in SHORT_ENVS:
         os.environ[name] = spell(park)
-    config._hil_virtual_plan = {"reserve": sorted(reserved), "park": park}
+    config._hil_virtual_plan = {"reserve": sorted(reserved), "park": park, "shape": shape}
 
 
 def pytest_collection_modifyitems(config, items):
@@ -107,7 +124,7 @@ def virtual_gear_session(request, production_state, bench_baseline):
     with LogWindow(serialmon.log_path(cfg)) as whole:
         try:
             yield VirtualBench(opened["park"], opened["groups"], opened["vl_of_short"],
-                               session.sim, GearOracle(session.sim))
+                               tuple(opened["shape"]), session.sim, GearOracle(session.sim))
         finally:
             _sweep_with(whole, admin, opened, state, losses)
             _close_session(session, state)
@@ -143,7 +160,8 @@ def _open_session(request, cfg):
         sim = GearSim(cfg.peer())
     except (GearSimUnavailable, PeerUnconfigured) as exc:
         pytest.exit("virtual gear: %s" % exc, returncode=EXIT_SETUP)
-    session = virtual_gear.VirtualSession(cfg, api_mod.Client(cfg), sim, owner_shorts())
+    session = virtual_gear.VirtualSession(cfg, api_mod.Client(cfg), sim, owner_shorts(),
+                                          park=park_shape())
     state = validity_of(request.config)
     try:
         opened = session.open()
@@ -164,11 +182,16 @@ def virtual_gear_fence(request, virtual_gear_session):
     api = request.getfixturevalue("api")
     bench = virtual_gear_session
     api.guard.fence = VirtualFence(bench.park, bench.groups, bench.vl_of_short.values(),
-                                   commissioning=commissioning_allowed(), pending=_pending(api))
+                                   commissioning=commissioning_allowed(), pending=_pending(api),
+                                   rules=_rules_baseline(api))
     try:
         yield api.guard.fence
     finally:
         api.guard.fence = None
+
+
+def _rules_baseline(api):
+    return RulesBaseline(api.rules_get().get("source") or "", api.rules_toggles())
 
 
 def _pending(api):
@@ -185,6 +208,31 @@ def virtual_bench(virtual_gear_session):
         pytest.skip("not a virtual-gear session (%s=1 and `hil --peer role gear-sim`)"
                     % VIRTUAL_ENV)
     return virtual_gear_session
+
+
+def session_rows(matrix, lamp_ids):
+    return {row["virtual_lamp_id"]: row for row in matrix.get("rows", [])
+            if row["virtual_lamp_id"] in set(lamp_ids)}
+
+
+def rows_to_restore(before, now):
+    return [{"virtual_lamp_id": lamp_id, "desired": row["desired"]}
+            for lamp_id, row in sorted(before.items()) if lamp_id in now
+            and (now[lamp_id]["desired"], now[lamp_id]["applied"])
+            != (row["desired"], row["applied"])]
+
+
+@pytest.fixture()
+def session_rows_guard(api, virtual_bench):
+    lamp_ids = list(virtual_bench.vl_of_short.values())
+    before = session_rows(api.groups.matrix(), lamp_ids)
+    yield before
+    rows = rows_to_restore(before, session_rows(api.groups.matrix(), lamp_ids))
+    if rows:
+        api.groups.matrix_patch(rows)
+        applied = api.groups.apply()
+        if "operation_id" in applied:
+            api.wait_op(applied, timeout_s=RESTORE_APPLY_S)
 
 
 @pytest.fixture(autouse=True)

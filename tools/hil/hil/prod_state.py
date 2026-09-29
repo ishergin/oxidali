@@ -298,11 +298,19 @@ def _restore_policies(api, snap, log):
     was = snap.get("policies")
     if was is None:
         return
+    restore_policies(api, was, log)
+
+
+def restore_policies(api, was, log=print):
     now = api._req("GET", "policies")
-    patch = {k: v for k, v in was.items() if k != "manages_anything" and now.get(k) != v}
+    patch = policy_patch(was, now)
     if patch:
         log("prod_state: policies back to %r" % patch)
         api._req("PATCH", "policies", patch)
+
+
+def policy_patch(was, now):
+    return {k: v for k, v in was.items() if k != "manages_anything" and now.get(k) != v}
 
 
 def _clear_session_overrides(api, snap, after, log):

@@ -17,6 +17,7 @@ GROUP_COUNT = 16
 VL_ID_LIMIT = 64
 RESERVE_FLOOR = 16
 DEFAULT_PARK = (4, 4, 4)
+PARK_KINDS = ("dt6", "cct", "rgb")
 LADDER_FIRST = 4
 LADDER_COUNTERS = ("sent", "late", "expired")
 
@@ -79,6 +80,23 @@ def park_shorts(reserved, count) -> list:
         raise VirtualGearError("%d gear asked, %d addresses are free of the reserve"
                                % (count, len(free)))
     return free[:count]
+
+
+def parse_park(spec) -> tuple:
+    parts = [part.strip() for part in spec.split(",")]
+    if len(parts) != len(PARK_KINDS) or not all(part.isdigit() for part in parts):
+        raise VirtualGearError("a park shape is the %s counts, as in %s; got %r"
+                               % ("/".join(PARK_KINDS), ",".join(map(str, DEFAULT_PARK)), spec))
+    shape = tuple(int(part) for part in parts)
+    if not sum(shape):
+        raise VirtualGearError("a park of no gear leaves the tier nothing to drive: %r" % spec)
+    return shape
+
+
+def park_of_kind(park, shape, kind) -> list:
+    index = PARK_KINDS.index(kind)
+    start = sum(shape[:index])
+    return list(park[start:start + shape[index]])
 
 
 def registry_shorts(api) -> set:
@@ -253,7 +271,8 @@ class VirtualSession:
         control = prove_groups_empty(self.api, groups, used)
         ha = self._ha_prefixes()
         self.ledger.update(opened_at=time.strftime("%Y-%m-%dT%H:%M:%S"), phase="building",
-                           reserve=sorted(reserved), park=park, groups=groups,
+                           reserve=sorted(reserved), park=park, shape=list(self.shape),
+                           groups=groups,
                            positive_control=control, wb_before=sorted(wb),
                            vl_before=vl_ids(self.api), ha_prefixes=ha,
                            ha_before=self._retained(ha))
