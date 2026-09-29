@@ -20,6 +20,24 @@ pub(crate) fn rule_matches(
 fn trigger_matches(trigger: &Trigger, input: &EngineInput<'_>, vol: &Volatile) -> bool {
     match input {
         EngineInput::InputEvent { .. } => input_event_matches(trigger, input, vol),
+        EngineInput::PowerCycled { .. } | EngineInput::ManualConfigChanged { .. } => {
+            lifecycle_matches(trigger, input)
+        }
+        EngineInput::LampChanged { .. }
+        | EngineInput::GroupChanged { .. }
+        | EngineInput::SceneRecalled { .. }
+        | EngineInput::DevicePresence { .. }
+        | EngineInput::HclOverride { .. } => state_matches(trigger, input),
+        EngineInput::ControllerActive { .. }
+        | EngineInput::ControllerStarts
+        | EngineInput::RuleFailed { .. }
+        | EngineInput::MqttMessage { .. } => system_matches(trigger, input),
+        EngineInput::RunRule { .. } | EngineInput::Tick => false,
+    }
+}
+
+fn state_matches(trigger: &Trigger, input: &EngineInput<'_>) -> bool {
+    match input {
         EngineInput::LampChanged { .. } => lamp_matches(trigger, input),
         EngineInput::GroupChanged { .. } => group_matches(trigger, input),
         EngineInput::SceneRecalled { adapter_id, scene_id } => matches!(
@@ -33,17 +51,21 @@ fn trigger_matches(trigger: &Trigger, input: &EngineInput<'_>, vol: &Volatile) -
             Trigger::HclOverride { target: t, transition }
                 if t == target && *started == (*transition == OverrideTransition::Starts)
         ),
+        _ => false,
+    }
+}
+
+fn system_matches(trigger: &Trigger, input: &EngineInput<'_>) -> bool {
+    match input {
         EngineInput::ControllerActive { active } => {
             *active && matches!(trigger, Trigger::ControllerBecomesActive)
         }
         EngineInput::ControllerStarts => matches!(trigger, Trigger::ControllerStarts),
-        EngineInput::PowerCycled { .. } => lifecycle_matches(trigger, input),
-        EngineInput::ManualConfigChanged { .. } => lifecycle_matches(trigger, input),
         EngineInput::RuleFailed { name } => {
             matches!(trigger, Trigger::RuleFails { rule } if rule == name)
         }
         EngineInput::MqttMessage { .. } => mqtt_matches(trigger, input),
-        EngineInput::RunRule { .. } | EngineInput::Tick => false,
+        _ => false,
     }
 }
 

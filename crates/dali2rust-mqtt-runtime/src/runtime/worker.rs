@@ -898,27 +898,45 @@ fn ensure_session(
         }
     }
     pacer.established();
-    if link.session_generation() != session.generation {
-        let announced = topics_of(settings);
-        if let Err(e) = announce_and_subscribe(client.as_mut(), &announced) {
-            log::warn!("mqtt: could not announce on a fresh session: {e:?}");
-            announce_offline(client.as_mut(), &announced);
-            return false;
-        }
-        let subscriptions = u32::try_from(announced.command_subscriptions().len()).unwrap_or(u32::MAX);
-        *topics = announced;
-        session.begin(
-            link.session_generation(),
-            session_settings_fingerprint(settings, password),
-        );
-        session.subscriptions_expected = subscriptions;
-        plan_session_reannounce(job, ports, settings);
+    if link.session_generation() != session.generation
+        && !begin_session(client, &link, session, topics, job, settings, password, ports)
+    {
+        return false;
     }
     follow_rule_topics(client.as_mut(), session, rules, topics, ports);
     ports.counters.set_connected(
         link.subscriptions_acked() >= session.subscriptions_expected
             && rule_topics::all_followed(&session.rule_topics, rules.topics()),
     );
+    true
+}
+
+#[allow(clippy::too_many_arguments, reason = "the loop's state is threaded, not rebuilt")]
+#[inline(never)]
+fn begin_session(
+    client: &mut Box<dyn MqttClient>,
+    link: &MqttLink,
+    session: &mut Session,
+    topics: &mut HaTopics,
+    job: &mut Option<DiscoveryJob>,
+    settings: &HomeAssistantSettingsView,
+    password: &str,
+    ports: &MqttWorkerPorts,
+) -> bool {
+    let announced = topics_of(settings);
+    if let Err(e) = announce_and_subscribe(client.as_mut(), &announced) {
+        log::warn!("mqtt: could not announce on a fresh session: {e:?}");
+        announce_offline(client.as_mut(), &announced);
+        return false;
+    }
+    let subscriptions = u32::try_from(announced.command_subscriptions().len()).unwrap_or(u32::MAX);
+    *topics = announced;
+    session.begin(
+        link.session_generation(),
+        session_settings_fingerprint(settings, password),
+    );
+    session.subscriptions_expected = subscriptions;
+    plan_session_reannounce(job, ports, settings);
     true
 }
 
