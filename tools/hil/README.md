@@ -33,8 +33,9 @@ from `bench.env.example`) holds only the firmware build knobs that `hil flash` e
 it does not configure the toolkit. **The defaults name one particular bench.** Set at
 least `HIL_BASE`, the serial variables and the three short-address sets before the first
 run: every pytest session that collects a bench test reaches `HIL_BASE`, and
-`bench_baseline` suspends that controller's poller and HCL schedules and sets its time
-zone to `HIL_BENCH_TZ` for the session. A session whose every test is
+`bench_baseline` suspends that controller's poller for the session; a run that drives
+lamps also suspends its HCL schedules (so does a virtual-gear run) and sets its time zone
+to `HIL_BENCH_TZ`, a run that drives none leaves both alone. A session whose every test is
 [hardware-free](#writing-a-scenario) touches no network and no serial port.
 
 | Variable | Meaning | Default |
@@ -46,7 +47,7 @@ zone to `HIL_BENCH_TZ` for the session. A session whose every test is
 | `HIL_LAMP_SHORTS` | short addresses a test may drive or write (`0,2,3`, `0-3`); the client refuses the rest ([lamp guard](#the-installation-is-production)); empty allows none | empty: the reference bench has no lamp a test may drive |
 | `HIL_GEAR_SHORTS` | gear the read tiers target; empty means every gear in the registry | empty |
 | `HIL_OPTICAL_SHORTS` | lamps in the camera's view, calibrated and measured; always narrowed to `HIL_LAMP_SHORTS` | `HIL_LAMP_SHORTS` |
-| `HIL_LAMPS_READ_ONLY=1` | report the light, never drive it: the client refuses every visible action | off |
+| `HIL_LAMPS_READ_ONLY` | on: report the light, never drive it, and the client refuses every visible action; `0` with lamps in `HIL_LAMP_SHORTS` is a run with the owner's go-ahead | on |
 | `HIL_NO_CAMERA=1` (`--no-camera`) | optical tests skip instead of failing | off |
 | `HIL_CAMERA_NAME`, `HIL_CAMERA_ID` | which camera to open | `USB Camera` |
 | `HIL_SKIP_CALIBRATION=1` (`--skip-calibration`), `HIL_CALIBRATION_TTL_S` | reuse the saved calibration; how old it may be | recalibrate; `900` s |
@@ -56,7 +57,7 @@ zone to `HIL_BENCH_TZ` for the session. A session whose every test is
 | `HIL_PEER_BASE`, `HIL_PEER_SERIAL_PORT`, `HIL_PEER_SERIAL_REMOTE`, `HIL_PEER_SERIAL_BRIDGE_PORT` | the pair's [second controller](#the-second-controller-hil---peer) | unset, unset, a reference bench's Wiren Board, `4446` |
 | `HIL_ALLOW_DESTRUCTIVE=1`, `HIL_POWER_CUT=1`, `HIL_BUS_SHORT=1` | allow the destructive and the person-at-the-rig tests | off |
 | `HIL_STATE_GUARD=0` | turn the [save and restore](#save-and-restore) guard off | on |
-| `HIL_BENCH_TZ` | the time zone `bench_baseline` holds the controller in | `MSK-3` |
+| `HIL_BENCH_TZ` | the time zone `bench_baseline` holds the controller in during a run that drives lamps | `MSK-3` |
 | `HIL_VIRTUAL_GEAR=1` | run the [virtual-gear](#virtual-gear) tier on the gear the peer emulates | off |
 | `HIL_VIRTUAL_PARK` | the emulated park's shape: DT6, DT8 Tc and DT8 RGB+Tc gear, built in that order on the first free addresses above the reserve | `4,4,4` |
 | `HIL_OWNER_SHORTS` | live lamps a scan cannot see (unpowered), added to the virtual-gear reserve | empty |
@@ -104,9 +105,12 @@ reaches the wire:
 - A physical-device, virtual-lamp (by its binding) or identify target, an attribute
   write, or a diagnostic frame that writes the gear (DAPC, an opcode below `0x90`, or an
   application extended command that the enabled device type makes a write) must address
-  a short in `HIL_LAMP_SHORTS`. Queries always pass. On `dali/raw` the enabled device
-  type is the `ENABLE DEVICE TYPE` frame right before; on `dali/command` it is the one the
-  firmware sends itself for the opcode: DT6 for an opcode of its table, DT8 otherwise.
+  a short in `HIL_LAMP_SHORTS`. Queries always pass. On `dali/raw` and the WB master the
+  enabled device type is the last `ENABLE DEVICE TYPE` that client sent, kept until a
+  frame passes, and with none an extended command is an unknown write; on `dali/command`
+  it is the one the firmware sends itself: DT6 for an opcode of its table, DT8
+  otherwise. A virtual lamp whose binding cannot be read, or an identify naming no
+  short, is refused.
 - A group or broadcast frame, a group target-state and a scene recall pass only when
   every present gear on the segment is in `HIL_LAMP_SHORTS`.
 - Under `HIL_LAMPS_READ_ONLY=1` every visible action is refused: target-state, identify,
@@ -120,11 +124,26 @@ reaches the wire:
   `tc_warmest_mirek` are visible too. Other configuration writes to an allowed lamp
   still pass (STRATEGY §4).
 - A `/api/v1/dali/*` request whose body names no frame the guard can read is refused.
+- Commissioning is refused — the steps, address changes, replacements, a
+  `commission_unaddressed` run, the input-device commission and every special frame but
+  TERMINATE, DTR0–2, PING and `ENABLE DEVICE TYPE` — except by the virtual tier's fence
+  with `HIL_ALLOW_VIRTUAL_COMMISSIONING=1`.
+- A group or scene apply passes only when every virtual lamp whose row it writes is bound
+  to a lamp of `HIL_LAMP_SHORTS`, and never under read-only.
+- A 24-bit frame from the WB master is refused when an enabled owner rule could fire on
+  the event it carries (same device and instance, a power cycle of the device, or any
+  instance group), and when it is a command.
 - HCL schedules, rules, MQTT commands and the policy apply reach lamps inside the
   controller, past the guard: a test that uses them asks the guard before its first
   action (`drive_allowed` and `allowed_bound_lamp` in `tests/hil_test_guards.py`) for each
-  lamp they reach, or for the whole segment when they reach a group, a broadcast or the
-  HA scene select, and skips on a refusal.
+  lamp they reach, or for the whole segment when they reach a broadcast, the HA scene
+  select or a group other than `free_group`, which no registered gear or owner rule uses
+  and which answers no group query, and into which a test joins only its own lamps.
+- Every `light` test first skips when an enabled owner rule names its lamps, their virtual
+  lamps or their groups. A test moves the controller's clock (`clock_guard`) only on its
+  first call, never under read-only, and skips while an owner rule fires at a time of day
+  or at the sun.
+- A refusal while a test sets up or runs is reported as a skip that quotes it.
 
 ## Save and restore
 
@@ -146,9 +165,9 @@ for every session that reaches the controller:
 - It restores the rules document only where the difference is whole blocks of rules
   named `hil-…`, against the revision it read, so an owner's edit stays and is reported;
   while `rules.continuations_pending` is not 0, or the firmware has no such gauge, it
-  leaves the test rules in place and says so, because a commit drops the owner's delayed
-  actions. Each rule's toggle is put back after that, because a document commit resets
-  toggles to the text.
+  leaves the test rules in place, switched off, and says so, because a commit drops the
+  owner's delayed actions. A commit resets toggles to the text, so it puts back those the
+  commit changed; any other toggle that differs from the snapshot is a residual.
 - The snapshot is also `state/production_state_last.json`. A session killed before
   its teardown is recovered with `hil state restore`, which first finishes a left
   virtual-gear session from its ledger ([Virtual gear](#virtual-gear)); such a snapshot is kept, and
@@ -182,8 +201,8 @@ for every session that reaches the controller:
   snapshot first.
 
 Per-test guards (`state_snapshot`, `*_matrix_guard`, `hcl_guard`, …) restore what
-one test changed. `bench_baseline` suspends the poller and HCL schedules for the
-session and fails it on a device still named `hil-…` by an earlier run.
+one test changed. `bench_baseline` suspends the poller (and, as above, the HCL schedules)
+for the session and fails it on a device still named `hil-…`.
 
 ## Layout
 
@@ -254,7 +273,7 @@ hil-slow` wrap the cwd.
   `ha_bridge`, `redundancy`, `slow`, `destructive`, `needs_capability(name)`,
   `virtual_gear` (the gear the peer emulates), `light` (changes what a lamp shows).
 - Whatever `-m` says, collection deselects a `light` test unless `HIL_LAMP_SHORTS` names
-  a lamp and `HIL_LAMPS_READ_ONLY` is off, and a test that commits the rules document
+  a lamp and `HIL_LAMPS_READ_ONLY=0`, and a test that commits the rules document
   (it requests `rules_guard`) unless `HIL_ALLOW_RULE_COMMITS=1`.
 - `--fast-fade` sets the fade time of every lamp in `HIL_LAMP_SHORTS` to 0 after
   `production_state` has taken its snapshot, and `production_state` restores it at
