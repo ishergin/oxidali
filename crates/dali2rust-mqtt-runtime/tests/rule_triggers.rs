@@ -149,3 +149,25 @@ fn a_rule_topic_a_command_filter_covers_is_one_copy_both_rule_message_and_comman
     assert_eq!(h.counters.rule_messages_total.load(Ordering::Relaxed), 2);
     assert_eq!(h.counters.commands_received_total.load(Ordering::Relaxed), 1);
 }
+
+#[test]
+fn a_burst_on_one_topic_is_paced_and_its_latest_message_arrives_last() {
+    let h = connected_bridge();
+    h.rule_topics.set(&[RULE_TOPIC]);
+    following(&h, RULE_TOPIC);
+    for payload in ["1", "2", "3", "4", "5"] {
+        h.mock.broker_publish(RULE_TOPIC, payload.as_bytes());
+    }
+    let mut seen: Vec<Vec<u8>> = Vec::new();
+    while seen.last().map(Vec::as_slice) != Some(&b"5"[..]) {
+        seen.push(next_rule_message(&h).payload.as_slice().to_vec());
+    }
+    assert_eq!(seen[0], b"1", "the first message goes at once");
+    let coalesced = h.counters.rule_messages_coalesced_total.load(Ordering::Relaxed);
+    assert_eq!(h.counters.rule_messages_total.load(Ordering::Relaxed), 5);
+    assert_eq!(
+        usize::try_from(coalesced).unwrap() + seen.len(),
+        5,
+        "every message is published or counted as coalesced: {seen:?}"
+    );
+}

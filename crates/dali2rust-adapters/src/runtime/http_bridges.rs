@@ -417,6 +417,8 @@ fn stats_mqtt_dto(c: &dali2rust_mqtt_runtime::MqttCounters) -> StatsMqttDto {
         publishes_total: M::load(&c.publishes_total),
         publish_failures_total: M::load(&c.publish_failures_total),
         rule_messages_total: M::load(&c.rule_messages_total),
+        rule_messages_coalesced_total: M::load(&c.rule_messages_coalesced_total),
+        rule_messages_lost_total: M::load(&c.rule_messages_lost_total),
     }
 }
 

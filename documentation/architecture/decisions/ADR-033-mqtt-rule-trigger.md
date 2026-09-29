@@ -44,13 +44,19 @@ messages to every new subscription.
    missed wake would leave the session on the wrong document until the next reconnect —
    the reason the bridge already reads its settings this way
    ([ADR-015](ADR-015-routed-event-delivery.md) §4).
-4. **One delivery-required event per message.** A message on a topic the bridge subscribed
-   for rules becomes one `MqttRuleMessageEvent` — topic, at most 48 payload bytes and a
+4. **One delivery-required event per message, paced per topic.** A message on a rule
+   topic becomes an `MqttRuleMessageEvent` — topic, at most 48 payload bytes and a
    `truncated` flag — consumed by the rules worker, and it is not a Home Assistant command;
-   a topic that is also a command topic is both. The message is an occurrence nothing will
-   re-send, like a button press, so the event goes through `publish_required`
-   ([ADR-021](ADR-021-required-event-delivery.md)): the bridge owns its thread and holds no
-   deadline, and the event is the one frame of its unit of work.
+   a topic that is also a command topic is both. Flow control belongs to the producer
+   ([ADR-007](ADR-007-apply-orchestrator.md)): a busy topic, a meter at tens of hertz,
+   would flood the rules worker's funnel and the events ingress and hold the thread that
+   serves Home Assistant commands. So the bridge publishes at most one event per topic per
+   `RULE_MESSAGE_INTERVAL_MS` (100 ms): the first message goes at once, a later one waits
+   out the interval, and a newer message replaces a waiting one — the latest wins, and the
+   replaced one is counted. A published message is an occurrence nothing will re-send,
+   like a button press, so its event goes through `publish_required`
+   ([ADR-021](ADR-021-required-event-delivery.md)): the bridge owns its thread, and the
+   event is the one frame of its unit of work.
 5. **A subscription is not an event.** A retained message the broker delivers because of
    the subscription itself carries the retain flag (MQTT 3.1.1 §3.3.1.3) and fires nothing:
    every reconnect would replay it, and a light would change because a cable was replugged.
@@ -86,8 +92,9 @@ messages to every new subscription.
 - The broker client port gains `unsubscribe` and the retain flag of an incoming message.
   The esp-idf-svc event wrapper drops that flag, so on the device the client takes data
   events from the ESP-IDF event itself.
-- The bridge counts messages on rule topics as `rule_messages_total`, not as received
-  commands.
+- The stats `mqtt` block counts messages on rule topics (`rule_messages_total`), those a
+  newer message replaced (`rule_messages_coalesced_total`) and those the bus refused after
+  the backoff (`rule_messages_lost_total`); none of them is a received command.
 - The language and its limits are in
   [operations.md](../../product-design/runtime-modules/rules-engine/operations.md) §1.7,
   the sessions in

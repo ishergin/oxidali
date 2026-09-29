@@ -3,6 +3,8 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_platform::mqtt::{MqttClient, MqttIncoming, MqttQos};
 
+pub(crate) const RULE_MESSAGE_INTERVAL_MS: u32 = 100;
+
 pub trait RuleTopicsReadPort: Send + Sync {
     fn rule_topics_generation(&self) -> u32;
 
@@ -13,6 +15,7 @@ pub trait RuleTopicsReadPort: Send + Sync {
 pub(crate) struct RuleTopicCache {
     generation: Option<u32>,
     topics: Vec<String>,
+    pub(crate) pacer: RuleMessagePacer,
 }
 
 impl RuleTopicCache {
@@ -22,11 +25,69 @@ impl RuleTopicCache {
             return;
         }
         self.topics = port.rule_topics();
+        self.pacer.retain(&self.topics);
         self.generation = Some(generation);
     }
 
     pub(crate) fn topics(&self) -> &[String] {
         &self.topics
+    }
+}
+
+pub(crate) enum Paced {
+    Now(MqttIncoming),
+    Held { superseded: bool },
+}
+
+struct PacedTopic {
+    topic: String,
+    released_at_ms: u32,
+    held: Option<MqttIncoming>,
+}
+
+impl PacedTopic {
+    fn due(&self, now_ms: u32) -> bool {
+        now_ms.wrapping_sub(self.released_at_ms) >= RULE_MESSAGE_INTERVAL_MS
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct RuleMessagePacer {
+    slots: Vec<PacedTopic>,
+}
+
+impl RuleMessagePacer {
+    pub(crate) fn offer(&mut self, message: MqttIncoming, now_ms: u32) -> Paced {
+        let Some(slot) = self.slots.iter_mut().find(|slot| slot.topic == message.topic) else {
+            self.slots.push(PacedTopic { topic: message.topic.clone(), released_at_ms: now_ms, held: None });
+            return Paced::Now(message);
+        };
+        if slot.held.is_none() && slot.due(now_ms) {
+            slot.released_at_ms = now_ms;
+            return Paced::Now(message);
+        }
+        Paced::Held { superseded: slot.held.replace(message).is_some() }
+    }
+
+    pub(crate) fn take_due(&mut self, now_ms: u32) -> Vec<MqttIncoming> {
+        let mut due = Vec::new();
+        for slot in self.slots.iter_mut().filter(|slot| slot.held.is_some() && slot.due(now_ms)) {
+            slot.released_at_ms = now_ms;
+            due.extend(slot.held.take());
+        }
+        due
+    }
+
+    pub(crate) fn wait_ms(&self, now_ms: u32, cap_ms: u32) -> u32 {
+        self.slots
+            .iter()
+            .filter(|slot| slot.held.is_some())
+            .map(|slot| RULE_MESSAGE_INTERVAL_MS.saturating_sub(now_ms.wrapping_sub(slot.released_at_ms)))
+            .fold(cap_ms, u32::min)
+    }
+
+    pub(crate) fn retain(&mut self, topics: &[String]) {
+        self.slots.retain(|slot| topics.contains(&slot.topic));
     }
 }
 
@@ -184,6 +245,45 @@ mod tests {
         for (filter, topic) in apart {
             assert!(!topic_filter_matches(filter, topic), "{filter} should not match {topic}");
         }
+    }
+
+    fn message(topic: &str, payload: &str) -> MqttIncoming {
+        MqttIncoming { topic: topic.to_string(), payload: payload.as_bytes().to_vec(), retained: false }
+    }
+
+    fn payload_of(paced: &Paced) -> Option<&[u8]> {
+        match paced {
+            Paced::Now(message) => Some(&message.payload),
+            Paced::Held { .. } => None,
+        }
+    }
+
+    #[test]
+    fn a_topic_publishes_at_most_once_per_interval_and_the_latest_waiting_message_wins() {
+        let mut pacer = RuleMessagePacer::default();
+        assert_eq!(payload_of(&pacer.offer(message("a", "1"), 1_000)), Some(&b"1"[..]));
+        assert!(matches!(pacer.offer(message("a", "2"), 1_010), Paced::Held { superseded: false }));
+        assert!(matches!(pacer.offer(message("a", "3"), 1_020), Paced::Held { superseded: true }));
+        assert_eq!(payload_of(&pacer.offer(message("b", "x"), 1_030)), Some(&b"x"[..]), "topics pace apart");
+        assert_eq!(pacer.wait_ms(1_050, 100), 50, "wake when the waiting message falls due");
+        assert!(pacer.take_due(1_099).is_empty());
+        let due = pacer.take_due(1_100);
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].payload, b"3");
+        assert_eq!(pacer.wait_ms(1_100, 100), 100, "nothing waits");
+        assert!(matches!(pacer.offer(message("a", "4"), 1_150), Paced::Held { superseded: false }));
+        assert_eq!(payload_of(&pacer.offer(message("a", "5"), 2_000)), None, "a waiting message goes first");
+        assert_eq!(pacer.take_due(2_000)[0].payload, b"5");
+    }
+
+    #[test]
+    fn a_topic_the_document_dropped_loses_its_waiting_message() {
+        let mut pacer = RuleMessagePacer::default();
+        let _ = pacer.offer(message("a", "1"), 0);
+        let _ = pacer.offer(message("a", "2"), 10);
+        pacer.retain(&topics(&["b"]));
+        assert!(pacer.take_due(1_000).is_empty());
+        assert_eq!(payload_of(&pacer.offer(message("a", "3"), 1_000)), Some(&b"3"[..]));
     }
 
     #[test]

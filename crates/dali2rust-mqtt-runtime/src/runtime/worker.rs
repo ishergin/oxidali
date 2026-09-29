@@ -22,18 +22,19 @@ use dali2rust_domain::registry::{
     HaPublishReadPort, HomeAssistantSecretReadPort, HomeAssistantSettingsApplyWatchPort,
     HomeAssistantSettingsReadPort, HomeAssistantSettingsView,
 };
+use dali2rust_platform::liveness::monotonic_ms;
 use dali2rust_platform::mqtt::{
     MqttClient, MqttConnectionState, MqttIncoming, MqttLink, MqttQos,
 };
 
 use dali2rust_api::coalesce::BurstCoalescer;
 use crate::counters::MqttCounters;
-use crate::runtime::rule_topics::{self, RuleTopicCache, RuleTopicsReadPort};
+use crate::runtime::rule_topics::{self, Paced, RuleTopicCache, RuleTopicsReadPort};
 use crate::runtime::session::{
     announce_and_subscribe, announce_offline, qos_of, session_config, topics_of,
 };
 
-const WAIT: Duration = Duration::from_millis(100);
+const WAIT_MS: u32 = 100;
 const PARK: Duration = Duration::from_millis(500);
 
 
@@ -286,21 +287,10 @@ fn run(
             continue;
         }
         WORKER_STACK.note("session");
-        if !serve_turn(
-            ServeTurn {
-                ev_rx: &ev_rx,
-                incoming: &incoming,
-                link: &link,
-                ports: &ports,
-                settings,
-            },
-            burst,
-            &mut client,
-            session,
-            topics,
-            job,
-            rule_budget,
-        ) {
+        let cx = ServeTurn {
+            ev_rx: &ev_rx, incoming: &incoming, link: &link, ports: &ports, settings, rules: &mut *rules,
+        };
+        if !serve_turn(cx, burst, &mut client, session, topics, job, rule_budget) {
             return;
         }
     }
@@ -326,11 +316,12 @@ struct ServeTurn<'a> {
     link: &'a MqttLink,
     ports: &'a MqttWorkerPorts,
     settings: &'a HomeAssistantSettingsView,
+    rules: &'a mut RuleTopicCache,
 }
 
 #[inline(never)]
 fn serve_turn(
-    cx: ServeTurn<'_>,
+    mut cx: ServeTurn<'_>,
     burst: &mut BurstCoalescer<BusFrame>,
     client: &mut Box<dyn MqttClient>,
     session: &mut Session,
@@ -338,7 +329,7 @@ fn serve_turn(
     job: &mut Option<DiscoveryJob>,
     rule_budget: &mut RulePublishBudget,
 ) -> bool {
-    if !service_inbound(cx.incoming, topics, &session.rule_topics, cx.ports) {
+    if !serve_inbound(&mut cx, topics, session) {
         return false;
     }
     WORKER_STACK.note("inbound");
@@ -401,6 +392,25 @@ fn publish_event<P>(ports: &MqttWorkerPorts, correlation_id: u64, payload: P)
 where
     P: Into<dali2rust_contracts::msg::BusEventPayload>,
 {
+    publish_required_event(
+        ports,
+        correlation_id,
+        payload,
+        dali2rust_bus::RequiredPublishCounters::new(
+            &ports.counters.terminal_event_publish_retried_total,
+            &ports.counters.terminal_event_publish_failed_total,
+        ),
+    );
+}
+
+fn publish_required_event<P>(
+    ports: &MqttWorkerPorts,
+    correlation_id: u64,
+    payload: P,
+    counters: dali2rust_bus::RequiredPublishCounters<'_>,
+) where
+    P: Into<dali2rust_contracts::msg::BusEventPayload>,
+{
     let envelope = dali2rust_contracts::bus::event_envelope(
         SOURCE_ID_UNSPECIFIED,
         correlation_id,
@@ -415,10 +425,7 @@ where
         &dali2rust_bus::REQUIRED_PUBLISH_BACKOFF_MS,
         dali2rust_bus::REQUIRED_PUBLISH_UNCAPPED,
         "mqtt-bridge",
-        dali2rust_bus::RequiredPublishCounters::new(
-            &ports.counters.terminal_event_publish_retried_total,
-            &ports.counters.terminal_event_publish_failed_total,
-        ),
+        counters,
     );
 }
 
@@ -783,15 +790,15 @@ fn fail_job_after_dial_streak(
 }
 
 #[inline(never)]
-fn service_inbound(
-    incoming: &Receiver<MqttIncoming>,
-    topics: &HaTopics,
-    rule_topics: &[String],
-    ports: &MqttWorkerPorts,
-) -> bool {
-    match incoming.recv_timeout(WAIT) {
+fn serve_inbound(cx: &mut ServeTurn<'_>, topics: &HaTopics, session: &Session) -> bool {
+    let now_ms = monotonic_ms();
+    for message in cx.rules.pacer.take_due(now_ms) {
+        publish_rule_message(cx.ports, &message);
+    }
+    let wait = Duration::from_millis(u64::from(cx.rules.pacer.wait_ms(now_ms, WAIT_MS)));
+    match cx.incoming.recv_timeout(wait) {
         Ok(message) => {
-            route_inbound(topics, rule_topics, ports, &message);
+            route_inbound(topics, &session.rule_topics, cx.rules, cx.ports, message);
             true
         }
         Err(RecvTimeoutError::Timeout) => true,
@@ -801,27 +808,45 @@ fn service_inbound(
 
 fn route_inbound(
     topics: &HaTopics,
-    rule_topics: &[String],
+    followed: &[String],
+    rules: &mut RuleTopicCache,
     ports: &MqttWorkerPorts,
-    message: &MqttIncoming,
+    message: MqttIncoming,
 ) {
-    if rule_topics.contains(&message.topic) {
-        forward_rule_message(ports, message);
-        if topics.parse_command_topic(&message.topic).is_none() {
-            return;
-        }
+    let for_rules = followed.contains(&message.topic);
+    if !for_rules || topics.parse_command_topic(&message.topic).is_some() {
+        bump(&ports.counters.commands_received_total);
+        handle_command(topics, ports, &message);
     }
-    bump(&ports.counters.commands_received_total);
-    handle_command(topics, ports, message);
+    if for_rules {
+        pace_rule_message(rules, ports, message);
+    }
 }
 
 #[inline(never)]
-fn forward_rule_message(ports: &MqttWorkerPorts, message: &MqttIncoming) {
+fn pace_rule_message(rules: &mut RuleTopicCache, ports: &MqttWorkerPorts, message: MqttIncoming) {
     if message.retained {
         return;
     }
     bump(&ports.counters.rule_messages_total);
-    publish_event(ports, CORRELATION_NONE, rule_topics::message_event(message));
+    match rules.pacer.offer(message, monotonic_ms()) {
+        Paced::Now(message) => publish_rule_message(ports, &message),
+        Paced::Held { superseded: true } => bump(&ports.counters.rule_messages_coalesced_total),
+        Paced::Held { superseded: false } => {}
+    }
+}
+
+#[inline(never)]
+fn publish_rule_message(ports: &MqttWorkerPorts, message: &MqttIncoming) {
+    publish_required_event(
+        ports,
+        CORRELATION_NONE,
+        rule_topics::message_event(message),
+        dali2rust_bus::RequiredPublishCounters {
+            retried: None,
+            failed: Some(&ports.counters.rule_messages_lost_total),
+        },
+    );
 }
 
 #[inline(never)]

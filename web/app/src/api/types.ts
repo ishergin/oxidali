@@ -1025,6 +1025,8 @@ export type StatsMqtt = {
   publishes_total: number
   publish_failures_total: number
   rule_messages_total: number
+  rule_messages_coalesced_total: number
+  rule_messages_lost_total: number
 }
 
 export type StatsRules = {
