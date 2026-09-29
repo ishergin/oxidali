@@ -885,7 +885,7 @@ fn ensure_session(
         session.subscriptions_expected = subscriptions;
         plan_session_reannounce(job, ports, settings);
     }
-    follow_rule_topics(client.as_mut(), session, rules, ports);
+    follow_rule_topics(client.as_mut(), session, rules, topics, ports);
     ports.counters.set_connected(
         link.subscriptions_acked() >= session.subscriptions_expected
             && rule_topics::all_followed(&session.rule_topics, rules.topics()),
@@ -898,10 +898,13 @@ fn follow_rule_topics(
     client: &mut dyn MqttClient,
     session: &mut Session,
     rules: &mut RuleTopicCache,
+    topics: &HaTopics,
     ports: &MqttWorkerPorts,
 ) {
     rules.refresh(ports.rule_topics.as_ref());
-    let sent = rule_topics::follow_topics(client, &mut session.rule_topics, rules.topics());
+    let covering = topics.command_subscriptions();
+    let sent =
+        rule_topics::follow_topics(client, &mut session.rule_topics, rules.topics(), &covering);
     session.subscriptions_expected = session.subscriptions_expected.saturating_add(sent);
 }
 

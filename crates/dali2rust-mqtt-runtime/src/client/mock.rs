@@ -7,7 +7,7 @@ use dali2rust_platform::mqtt::{
     MqttSessionConfig,
 };
 
-use crate::runtime::rule_topics::RuleTopicsReadPort;
+use crate::runtime::rule_topics::{topic_filter_matches, RuleTopicsReadPort};
 
 const REFUSAL_REPORT_LATENCY: Duration = Duration::from_millis(20);
 
@@ -106,6 +106,21 @@ impl MockMqttClient {
 
     pub fn active_subscriptions(&self) -> Vec<String> {
         self.lock().active.clone()
+    }
+
+    pub fn covers(&self, topic: &str) -> bool {
+        self.matching_subscriptions(topic) > 0
+    }
+
+    pub fn broker_publish(&self, topic: &str, payload: &[u8]) {
+        for _ in 0..self.matching_subscriptions(topic) {
+            self.deliver(topic, payload);
+        }
+    }
+
+    fn matching_subscriptions(&self, topic: &str) -> usize {
+        let g = self.lock();
+        g.active.iter().filter(|filter| topic_filter_matches(filter, topic)).count()
     }
 
     pub fn session_config(&self) -> Option<MqttSessionConfig> {

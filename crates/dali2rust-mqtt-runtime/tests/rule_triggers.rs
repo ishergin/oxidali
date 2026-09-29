@@ -126,16 +126,26 @@ fn a_retained_replay_on_subscription_fires_nothing() {
 }
 
 #[test]
-fn a_rule_topic_that_is_also_a_command_topic_is_both() {
+fn a_rule_topic_a_command_filter_covers_is_one_copy_both_rule_message_and_command() {
     let h = connected_bridge();
     let command_topic = "dali/ctl1/a0/vl/1/set";
-    h.rule_topics.set(&[command_topic]);
-    following(&h, command_topic);
-    h.mock.deliver(command_topic, br#"{"state":"ON","brightness":180}"#);
-    let event = next_rule_message(&h);
-    assert_eq!(event.topic.as_str(), command_topic);
+    let control_topic = "home/control";
+    h.rule_topics.set(&[command_topic, control_topic]);
+    following(&h, control_topic);
+    assert!(
+        !h.mock.subscriptions().iter().any(|t| t == command_topic),
+        "the command wildcard already delivers it: {:?}",
+        h.mock.subscriptions()
+    );
+    h.mock.broker_publish(command_topic, br#"{"state":"ON","brightness":180}"#);
+    h.mock.broker_publish(control_topic, b"after");
+    let first = next_rule_message(&h);
+    assert_eq!(first.topic.as_str(), command_topic);
     let _ = recv_command_matching(&h.cmd_rx, WAIT, |payload| {
         matches!(payload, BusCommandPayload::DaliSetTargetStateCommand(_))
     });
+    let second = next_rule_message(&h);
+    assert_eq!(second.topic.as_str(), control_topic, "one copy, then the control");
+    assert_eq!(h.counters.rule_messages_total.load(Ordering::Relaxed), 2);
     assert_eq!(h.counters.commands_received_total.load(Ordering::Relaxed), 1);
 }

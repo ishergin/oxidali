@@ -263,7 +263,7 @@ async fn broker_dropped_subscription(world: &mut DaliWorld, topic: String) {
 #[when(regex = r#"^a broker client publishes "([^"]*)" on "([^"]*)"$"#)]
 async fn broker_client_publishes(world: &mut DaliWorld, payload: String, topic: String) {
     let mock = world.mqtt_mock().clone();
-    let subscribed = topic.clone();
-    wait_until(move || mock.active_subscriptions().contains(&subscribed), PUBLISH_WAIT);
-    world.mqtt_mock().deliver(&topic, payload.as_bytes());
+    let covered = topic.clone();
+    wait_until(move || mock.covers(&covered), PUBLISH_WAIT);
+    world.mqtt_mock().broker_publish(&topic, payload.as_bytes());
 }

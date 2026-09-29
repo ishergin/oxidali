@@ -29,7 +29,9 @@ messages to every new subscription.
 2. **The bridge stays the only broker client.** It subscribes the document's topics in
    every session, after the Home Assistant command filters, at QoS 0: a trigger acts at
    most once per message, and on a clean session QoS 1 buys nothing but an
-   acknowledgement. `connected` keeps its meaning — every subscription the session wants is
+   acknowledgement. A rule topic that a command filter already covers gets no
+   subscription of its own: a broker may deliver one copy per matching subscription
+   (MQTT 3.1.1 §3.3.5), and Mosquitto does. `connected` keeps its meaning — every subscription the session wants is
    sent and acknowledged, rule topics included — so a topic added mid-session lowers it
    until its SUBACK arrives.
 3. **The topic set is read, not announced.** The rules store is the one home of the
