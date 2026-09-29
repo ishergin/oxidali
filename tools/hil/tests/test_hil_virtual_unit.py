@@ -192,3 +192,12 @@ def test_only_the_session_rows_that_moved_are_put_back():
     assert hil_virtual.rows_to_restore(before, {60: _row(60, [False], [True])}) == [
         {"virtual_lamp_id": 60, "desired": [False]}]
     assert hil_virtual.rows_to_restore(before, {}) == []
+
+
+def test_an_extended_write_to_an_owner_address_stops_the_session(tmp_path, monkeypatch, quick):
+    _, window = _window(tmp_path, 0xC106, 0x0DE3)
+    found = tripwire.violations(window.lines(), VirtualFence(PARK, [4], [60, 61]))
+    assert len(found) == 1 and "SA6" in found[0]
+    with pytest.raises(pytest.exit.Exception) as stop:
+        _judge(monkeypatch, found=found)
+    assert stop.value.returncode == hil_virtual.EXIT_SAFETY

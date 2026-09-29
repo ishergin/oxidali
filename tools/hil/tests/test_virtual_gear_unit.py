@@ -140,12 +140,51 @@ def test_only_a_clean_answer_passes_the_first_rung():
     assert not virtual_gear.answered_cleanly({"success": False})
 
 
-def test_the_owner_rules_may_not_use_the_session_groups_or_names():
-    assert virtual_gear.rules_conflicts(OWNER_RULES, [0, 4], ["x"]) == \
+COMPILED = {"rules": [
+    {"name": "a", "triggers": [{"kind": "group_aggregate", "group": {"adapter_id": 0, "id": 5}},
+                               {"kind": "device_online", "device":
+                                {"adapter_id": 0, "short_address": 17}}],
+     "conditions": [{"kind": "lamp_level", "lamp": {"adapter_id": 0, "id": 61}}],
+     "actions": [{"kind": "light_off", "scope": "virtual_lamp", "adapter_id": 0, "id": 60},
+                 {"kind": "scene_recall", "target": {"scope": "group", "adapter_id": 0,
+                                                     "id": 6}},
+                 {"kind": "light_on", "scope": "group", "adapter_id": 1, "id": 4},
+                 {"kind": "input_feedback", "device": {"adapter_id": 0,
+                                                       "device_short_address": 16}}]}],
+    "blocks": []}
+
+
+def _scope(groups=(4, 5), lamps=(60, 61), park=(16, 17)):
+    return virtual_gear.SessionScope.of(groups, lamps, park)
+
+
+def test_the_compiled_rules_name_every_group_lamp_and_device_they_reach():
+    assert virtual_gear.rule_references(COMPILED, 0) == {
+        "group": {5, 6}, "lamp": {60, 61}, "device": {17}}
+    assert virtual_gear.rule_references(None, 0) == {"group": set(), "lamp": set(),
+                                                     "device": set()}
+
+
+def test_the_owner_rules_may_not_reach_the_session_in_text_or_compiled():
+    assert virtual_gear.rules_conflicts(OWNER_RULES, None, _scope(groups=(0, 4)), {}, 0) == \
         ["the owner's rules use group 0"]
-    assert virtual_gear.rules_conflicts(OWNER_RULES, [4], ["Подсветка"]) == \
-        ["the owner's rules name lamp 'Подсветка'"]
-    assert virtual_gear.rules_conflicts(OWNER_RULES, [4, 5], ["virtual gear SA16"]) == []
+    assert virtual_gear.rules_conflicts(OWNER_RULES, None, _scope(groups=(4,)), {}, 0) == []
+    assert virtual_gear.rules_conflicts(
+        'rule "x" {\n  when device(16) goes offline\n  do lamp(60).off()\n}', None,
+        _scope(), {}, 0) == ["the owner's rules use lamp 60",
+                             "the owner's rules watch device 16"]
+    assert virtual_gear.rules_conflicts(
+        'rule "x" {\n  when group("зал") becomes any_on\n  do lamp("virtual gear SA17", '
+        'adapter=0).on()\n}', None, _scope(), {"зал": 5}, 0) == [
+        "the owner's rules use group 5", "the owner's rules name lamp 'virtual gear SA17'"]
+    assert virtual_gear.rules_conflicts("", COMPILED, _scope(), {}, 0) == [
+        "the owner's rules use group 5", "the owner's rules use lamp 60",
+        "the owner's rules use lamp 61", "the owner's rules watch device 17"]
+
+
+def test_an_input_device_is_not_a_park_device():
+    source = 'rule "x" {\n  when input device(dev=16) power cycled\n  do log("x")\n}'
+    assert virtual_gear.rules_conflicts(source, None, _scope(), {}, 0) == []
 
 
 def test_session_vls_take_ids_nobody_holds():
@@ -423,6 +462,25 @@ class _Lines:
 def test_the_transmit_log_is_read_once_it_falls_quiet():
     window = _Lines([_tx(0x2105), "I (2) x: unrelated", _tx(0x8805, batched=True)])
     assert tripwire.settled_frames(window, 0.01, 0.5, 0.005) == [(0x21, 0x05), (0x88, 0x05)]
+
+
+@pytest.mark.parametrize("frames,found", [
+    ((0xC106, 0x0DE3), 1),
+    ((0xC108, 0x0DF2), 1),
+    ((0xC108, 0x0DE8), 1),
+    ((0xC108, 0x0DF6), 1),
+    ((0xC107, 0x0DE0), 1),
+    ((0xC108, 0x0DFA), 0),
+    ((0xC106, 0x0DED), 0),
+    ((0xC107, 0x0DFF), 0),
+    ((0x0DE3,), 0),
+    ((0xC106, 0xA300, 0x0DE3), 0),
+    ((0xC108, 0x21F2), 0),
+    ((0xC108, 0x21E2), 0),
+])
+def test_the_tripwire_reads_an_extended_command_by_the_enable_before_it(frames, found):
+    lines = [_tx(frame) for frame in frames]
+    assert len(tripwire.violations(lines, _fence(park=[16], groups=[4]))) == found
 
 
 def test_the_barrier_is_counted_not_merely_seen():

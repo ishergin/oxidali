@@ -152,6 +152,13 @@ _ATTR_GUARD_SECTIONS = {
 }
 
 
+def refuse_unread(short, attrs, values, default):
+    unread = sorted(a for a in attrs if values[a] is None and default is None)
+    if unread:
+        pytest.skip("SA%d did not report %s, so nothing could put it back: the test does "
+                    "not write it" % (short, ", ".join(unread)))
+
+
 @pytest.fixture()
 def attr_guard(api):
     guarded = []
@@ -160,7 +167,7 @@ def attr_guard(api):
         return ((api.attributes(short, [name]).get("attributes") or {})
                 .get(name) or {})
 
-    def guard(short, *attrs, default=None, verify=False):
+    def guard(short, *attrs, default=None, verify=False, required=False):
         for name in sorted({_ATTR_GUARD_SECTIONS[a] for a in attrs}):
             api.attr_read_checked(short, groups=name)
         sections = {name: _section(short, name)
@@ -168,6 +175,8 @@ def attr_guard(api):
         values = {attr: (sections[_ATTR_GUARD_SECTIONS[attr]].get(attr)
                          or {}).get("value")
                   for attr in attrs}
+        if required:
+            refuse_unread(short, attrs, values, default)
         guarded.append((short, attrs, values, default, verify))
         return values
 
@@ -186,6 +195,17 @@ def attr_guard(api):
                     "the gear is left holding test configuration, and every "
                     "later run measures it; fix before trusting anything else."
                     % (attr, short, want, holds))
+
+
+CONTINUATION_COUNTERS = ("continuations_scheduled", "continuations_fired",
+                         "continuations_dropped")
+DROPPED = "continuations_dropped"
+U32 = 1 << 32
+
+
+def pending_continuations(rules_stats):
+    scheduled, fired, dropped = (int(rules_stats.get(k) or 0) for k in CONTINUATION_COUNTERS)
+    return (scheduled - fired - dropped) % U32
 
 
 def rules_residue(source, now_source, toggles, now_toggles):
@@ -208,6 +228,52 @@ def _reassert_toggles(api, toggles):
             api.rule_enable(name, enabled)
 
 
+def _refuse_a_live_owner_document(toggles, rules_stats):
+    disabled = sorted(name for name, enabled in toggles.items() if not enabled)
+    if disabled:
+        pytest.skip("the owner's rule(s) %s are switched off, and a document commit switches "
+                    "every rule back to its text until the guard reasserts it" % disabled)
+    pending = pending_continuations(rules_stats)
+    if pending:
+        pytest.skip("%d delayed action(s) of the owner's rules are pending (after/wait), and "
+                    "a document commit drops them" % pending)
+
+
+class _RulesCommits:
+    def __init__(self, api, doc, toggles):
+        self.api, self.original, self.toggles = api, doc.get("source") or "", toggles
+        self.base, self.ours = doc.get("revision"), None
+
+    def commit(self, source, base, what):
+        try:
+            view = self.api.rules_replace(source, base)
+        except api_mod.ApiError as exc:
+            pytest.fail("rules %s did not commit (%s): the document changed while the test "
+                        "held it, so the owner's edit is kept and the test rule stays for a "
+                        "hand to remove" % (what, exc), pytrace=False)
+        if view.get("status") != "succeeded":
+            pytest.fail("rules %s did not commit: %r" % (what, view), pytrace=False)
+        _reassert_toggles(self.api, self.toggles)
+        self.ours = self.api.rules_get()["revision"]
+
+    def append(self, fragment):
+        source = self.original + RULE_SEPARATOR + fragment if self.original else fragment
+        if len(source.encode()) > RULES_SOURCE_LIMIT_BYTES:
+            pytest.skip(
+                "the stored document plus a test rule exceeds the %d-byte "
+                "source limit; this bench cannot add one without evicting the "
+                "owner's" % RULES_SOURCE_LIMIT_BYTES)
+        self.commit(source, self.base if self.ours is None else self.ours, "append")
+
+    def restore(self):
+        if self.ours is None:
+            return []
+        if self.api.rules_get().get("source") != self.original:
+            self.commit(self.original, self.ours, "restore")
+        return rules_residue(self.original, self.api.rules_get().get("source") or "",
+                             self.toggles, self.api.rules_toggles())
+
+
 @pytest.fixture()
 def rules_guard(api):
     doc = api.rules_get()
@@ -215,37 +281,22 @@ def rules_guard(api):
         pytest.skip("the stored rules document does not compile (%s) — a test "
                     "rule appended to it would be refused for that reason"
                     % doc["diagnostic"])
-    original = doc.get("source") or ""
-    toggles = api.rules_toggles()
-
-    def _commit(source, what):
-        view = api.rules_replace(source, api.rules_get()["revision"])
-        if view.get("status") != "succeeded":
-            pytest.fail("rules %s did not commit: %r" % (what, view),
-                        pytrace=False)
-        _reassert_toggles(api, toggles)
-        return view
-
-    def add(fragment):
-        source = (original + RULE_SEPARATOR + fragment) if original else fragment
-        if len(source.encode()) > RULES_SOURCE_LIMIT_BYTES:
-            pytest.skip(
-                "the stored document plus a test rule exceeds the %d-byte "
-                "source limit; this bench cannot add one without evicting the "
-                "owner's" % RULES_SOURCE_LIMIT_BYTES)
-        _commit(source, "append")
-
+    toggles, rules_stats = api.rules_toggles(), api.stats().get("rules") or {}
+    _refuse_a_live_owner_document(toggles, rules_stats)
+    commits = _RulesCommits(api, doc, toggles)
     try:
-        yield add
+        yield commits.append
     finally:
-        if api.rules_get().get("source") != original:
-            _commit(original, "restore")
-        residue = rules_residue(original, api.rules_get().get("source") or "", toggles,
-                                api.rules_toggles())
+        residue = commits.restore()
+        dropped = (int((api.stats().get("rules") or {}).get(DROPPED) or 0)
+                   - int(rules_stats.get(DROPPED) or 0)) % U32
+        if commits.ours is not None and dropped:
+            residue.append("%d pending delayed action(s) of the owner's rules were dropped"
+                           % dropped)
         if residue:
             pytest.fail("RULES NOT RESTORED: %s — a document commit resets every rule's "
-                        "toggle to its text, and the owner's automation now runs on what "
-                        "this test left" % "; ".join(residue), pytrace=False)
+                        "toggle to its text and drops what after/wait still owed"
+                        % "; ".join(residue), pytrace=False)
 
 
 @pytest.fixture()

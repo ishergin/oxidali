@@ -8,7 +8,9 @@ import hil_session
 import hil_session_guards
 import hil_test_guards
 import test_policies
+from hil import api as api_mod
 from hil import prod_state
+from hil.lamp_guard import GROUP_TARGET, LampNotAllowed, http_rule
 
 
 def _snap():
@@ -259,6 +261,91 @@ def test_a_level_counts_as_written_only_with_a_fresh_confirmed_write():
     assert len(test_policies.unconfirmed_levels(before, wrong, wanted)) == 2
 
 
+OWNER_DOC = 'rule "night" {\n  when at 23:00\n  do broadcast.off()\n}'
+TEST_RULE = http_rule("hil-vg-06-stop-fade", GROUP_TARGET, 4, "stop_fade()")
+
+
+class _Rules:
+    def __init__(self, source, toggles, revision=7, conflict=False):
+        self.source, self.toggles, self.revision = source, dict(toggles), revision
+        self.conflict, self.puts, self.patches = conflict, [], []
+
+    def rules_get(self):
+        return {"source": self.source, "revision": self.revision, "diagnostic": None}
+
+    def rules_toggles(self):
+        return dict(self.toggles)
+
+    def rules_replace(self, source, base):
+        self.puts.append((source, base))
+        if self.conflict or base != self.revision:
+            raise api_mod.ApiError(409, {"error": "rule_set_conflict"}, "rules")
+        self.source, self.revision = source, self.revision + 1
+        self.toggles = {name: True for name in self.toggles}
+        return {"status": "succeeded"}
+
+    def rule_enable(self, name, enabled):
+        self.patches.append((name, enabled))
+        self.toggles[name] = enabled
+        self.revision += 1
+
+
+def _snap_rules(source, toggles):
+    return {"rules": {"source": source}, "rule_toggles": dict(toggles)}
+
+
+def test_the_session_takes_its_test_rules_out_and_puts_every_toggle_back():
+    api = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": True, "hil-vg-06-stop-fade": True})
+    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None)
+    assert api.puts == [(OWNER_DOC, 7)] and api.toggles["night"] is False
+
+
+def test_the_session_puts_a_toggle_back_even_when_the_text_already_matches():
+    api = _Rules(OWNER_DOC, {"night": True})
+    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None)
+    assert api.puts == [] and api.patches == [("night", False)]
+
+
+def test_an_owner_edit_is_left_in_place_and_reported():
+    edited = OWNER_DOC.replace("23:00", "22:00")
+    api, log = _Rules(edited, {"night": True}), []
+    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append)
+    assert api.puts == [] and any("someone else edited it" in line for line in log)
+    assert prod_state.diff(
+        {"rules": {"source": OWNER_DOC}, "rule_toggles": {"night": False}, **_bare()},
+        {"rules": {"source": edited}, "rule_toggles": {"night": True}, **_bare()}) == [
+        "rules source differs", "rule 'night' enabled False -> True"]
+
+
+def _bare():
+    snap = _snap()
+    return {k: v for k, v in snap.items() if k not in ("rules",)}
+
+
+def test_a_gear_config_the_guard_refuses_is_left_and_the_rest_restored(monkeypatch):
+    class _Gear:
+        def __init__(self):
+            self.written = []
+
+        def attributes(self, short):
+            return {"attributes": {"common_102": {"fade_time_ms": {"value": 700}}}}
+
+        def write_attrs(self, short, body):
+            if short == 6:
+                raise LampNotAllowed("attribute write to SA6 refused")
+            self.written.append(short)
+            return {"operation_id": "op"}
+
+        def wait_op(self, op):
+            return {"status": "succeeded"}
+
+    gear, log = _Gear(), []
+    snap = {"devices": {"6": {"config": {"fade_time_ms": 0}},
+                        "7": {"config": {"fade_time_ms": 0}}}}
+    prod_state._restore_gear_config(gear, snap, log.append)
+    assert gear.written == [7] and any("SA6 gear config left" in line for line in log)
+
+
 def test_a_rules_residue_names_the_document_and_every_toggle_that_moved():
     toggles = {"night": False, "day": True}
     assert hil_test_guards.rules_residue("a", "a", toggles, dict(toggles)) == []
@@ -267,3 +354,54 @@ def test_a_rules_residue_names_the_document_and_every_toggle_that_moved():
     assert residue == ["the document is not the one the test found",
                        "rule 'hil-x' is enabled, was absent",
                        "rule 'night' is enabled, was disabled"]
+
+
+
+def test_pending_delays_are_what_was_scheduled_and_neither_fired_nor_dropped():
+    stats = {"continuations_scheduled": 10, "continuations_fired": 7, "continuations_dropped": 2}
+    assert hil_test_guards.pending_continuations(stats) == 1
+    assert hil_test_guards.pending_continuations({}) == 0
+    assert hil_test_guards.pending_continuations({"continuations_dropped": 1}) > 1 << 31
+
+
+def test_a_live_owner_document_refuses_a_commit():
+    with pytest.raises(pytest.skip.Exception, match="switched off"):
+        hil_test_guards._refuse_a_live_owner_document({"night": False}, {})
+    with pytest.raises(pytest.skip.Exception, match="1 delayed action"):
+        hil_test_guards._refuse_a_live_owner_document(
+            {"night": True}, {"continuations_scheduled": 1})
+    hil_test_guards._refuse_a_live_owner_document({"night": True}, {})
+
+
+def test_the_guard_restores_against_the_revision_its_own_commit_left():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    commits.append(TEST_RULE)
+    assert api.puts == [(OWNER_DOC + "\n\n" + TEST_RULE, 7)] and commits.ours == 8
+    assert commits.restore() == []
+    assert api.puts[-1] == (OWNER_DOC, 8) and api.source == OWNER_DOC
+
+
+def test_an_owner_edit_during_the_test_is_a_named_failure_not_an_overwrite():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    commits.append(TEST_RULE)
+    api.source, api.revision = api.source + "\n# owner", api.revision + 1
+    with pytest.raises(pytest.fail.Exception, match="changed while the test held it"):
+        commits.restore()
+    assert api.source.endswith("# owner")
+
+
+def test_a_test_that_never_committed_does_not_judge_the_owner_toggles():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    api.toggles["night"] = False
+    assert commits.restore() == [] and api.puts == []
+
+
+def test_an_unread_attribute_the_test_would_write_refuses_the_gear():
+    with pytest.raises(pytest.skip.Exception, match="SA4 did not report power_on_level"):
+        hil_test_guards.refuse_unread(4, ("power_on_level", "system_failure_level"),
+                                      {"power_on_level": None, "system_failure_level": 254},
+                                      None)
+    hil_test_guards.refuse_unread(4, ("power_on_level",), {"power_on_level": None}, 254)

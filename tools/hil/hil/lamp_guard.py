@@ -16,19 +16,29 @@ IDENTIFY_DEVICE_OPCODE = 0x25
 ACTIVATE_OPCODE = 0xE2
 VISIBLE_OPCODES = frozenset(ARC_POWER_OPCODES) | {RESET_OPCODE, IDENTIFY_DEVICE_OPCODE,
                                                   ACTIVATE_OPCODE}
+EXTENDED_FIRST = 0xE0
+QUERY_EXTENDED_VERSION = 0xFF
+DT6, DT8 = 6, 8
+EXTENDED_QUERY_FIRST = {DT6: 0xED, DT8: 0xF7}
+UNSEEN = "unseen"
 READ_METHODS = ("GET", "HEAD")
 DIAGNOSTIC_PREFIX = "dali/"
 
 SHORT, SEGMENT, LAMP, IDENTIFY = "short", "segment", "lamp", "identify"
+VISIBLE, CONFIGURATION = True, False
 RESOURCES = (
-    (re.compile(r"adapters/\d+/physical-devices/(\d+)/target-state"), SHORT,
-     "target-state of SA%s"),
-    (re.compile(r"adapters/\d+/groups/(\d+)/target-state"), SEGMENT,
-     "target-state of group %s"),
-    (re.compile(r"adapters/\d+/virtual-lamps/(\d+)/target-state"), LAMP,
-     "target-state of VL%s"),
-    (re.compile(r"adapters/\d+/scenes/(\d+)/recall"), SEGMENT, "recall of scene %s"),
-    (re.compile(r"adapters/\d+/commissioning/identify"), IDENTIFY, "IDENTIFY DEVICE of SA%s"),
+    (re.compile(r"adapters/[0-9]+/physical-devices/([0-9]+)/target-state"), SHORT,
+     "target-state of SA%s", VISIBLE),
+    (re.compile(r"adapters/[0-9]+/groups/([0-9]+)/target-state"), SEGMENT,
+     "target-state of group %s", VISIBLE),
+    (re.compile(r"adapters/[0-9]+/virtual-lamps/([0-9]+)/target-state"), LAMP,
+     "target-state of VL%s", VISIBLE),
+    (re.compile(r"adapters/[0-9]+/scenes/([0-9]+)/recall"), SEGMENT, "recall of scene %s",
+     VISIBLE),
+    (re.compile(r"adapters/[0-9]+/commissioning/identify"), IDENTIFY,
+     "IDENTIFY DEVICE of SA%s", VISIBLE),
+    (re.compile(r"adapters/[0-9]+/physical-devices/([0-9]+)/write-attributes"), SHORT,
+     "attribute write to SA%s", CONFIGURATION),
 )
 
 
@@ -80,12 +90,29 @@ HTTP_RULE = 'rule "%s" {\n  when http trigger\n  do   %s(%d).%s\n}'
 TEST_RULE = re.compile(
     r'rule "(hil-[a-z0-9-]+)" \{\n'
     r'  when http trigger\n'
-    r'  do   (group|lamp)\((\d+)\)\.[a-z_]+\([^()\n]*\)\n'
+    r'  do   (group|lamp)\(([0-9]+)\)\.[a-z_]+\([^()\n]*\)\n'
     r'\}')
+
+
+HIL_RULE = re.compile(r'rule "hil-[^"\n]*" \{.*\}', re.S)
 
 
 def http_rule(name, target, key, action):
     return HTTP_RULE % (name, target, key, action)
+
+
+def appended_blocks(baseline, source):
+    if source == baseline:
+        return []
+    prefix = baseline + RULE_SEPARATOR if baseline else ""
+    if not source.startswith(prefix):
+        return None
+    return source[len(prefix):].split(RULE_SEPARATOR)
+
+
+def only_hil_rules_appended(baseline, source):
+    blocks = appended_blocks(baseline, source)
+    return blocks is not None and all(HIL_RULE.fullmatch(block) for block in blocks)
 
 
 @dataclass(frozen=True)
@@ -95,13 +122,11 @@ class RulesBaseline:
 
 
 def appended_test_rules(baseline, source):
-    if source == baseline:
-        return []
-    prefix = baseline + RULE_SEPARATOR if baseline else ""
-    if not source.startswith(prefix):
+    blocks = appended_blocks(baseline, source)
+    if blocks is None:
         return None
     found = []
-    for block in source[len(prefix):].split(RULE_SEPARATOR):
+    for block in blocks:
         match = TEST_RULE.fullmatch(block)
         if match is None:
             return None
@@ -229,12 +254,12 @@ class VirtualFence:
             self.refuse("an apply whose diff reaches VL%s" % spell((pending or set())
                                                                   - self.session_vls))
 
-    def check_frame(self, addr, data):
+    def check_frame(self, addr, data, enabled=None):
         if SPECIAL_FIRST <= addr < BROADCAST_FIRST:
             self._special(addr, data)
             return True
         target = wire_target(addr)
-        if target is None or not frame_writes(addr, data):
+        if target is None or not frame_writes(addr, data, enabled):
             return False
         if addr >= BROADCAST_FIRST:
             raise LampNotAllowed("%s refused: broadcast never runs on a shared wire"
@@ -296,15 +321,35 @@ def diagnostic_frame(path, body):
     return None
 
 
-def frame_writes(addr, data):
+def extended_writes(data, enabled):
+    if enabled is None:
+        return False
+    first = EXTENDED_QUERY_FIRST.get(enabled)
+    return data < first if first is not None else data != QUERY_EXTENDED_VERSION
+
+
+def frame_writes(addr, data, enabled):
     if wire_target(addr) is None:
         return False
-    return addr & 1 == 0 or not isinstance(data, int) or data < FIRST_QUERY_OPCODE \
-        or data == ACTIVATE_OPCODE
+    if addr & 1 == 0 or not isinstance(data, int):
+        return True
+    if data >= EXTENDED_FIRST:
+        return extended_writes(data, enabled)
+    return data < FIRST_QUERY_OPCODE
 
 
-def frame_visible(addr, data):
-    return wire_target(addr) is not None and (addr & 1 == 0 or data in VISIBLE_OPCODES)
+def frame_visible(addr, data, enabled=UNSEEN):
+    if wire_target(addr) is None:
+        return False
+    if addr & 1 == 0:
+        return True
+    if data >= EXTENDED_FIRST:
+        return data == ACTIVATE_OPCODE and enabled in (DT8, UNSEEN)
+    return data in VISIBLE_OPCODES
+
+
+def enables(addr, data):
+    return data if addr == ENABLE_DEVICE_TYPE else None
 
 
 def describe_frame(addr, data):
@@ -339,6 +384,7 @@ class LampGuard:
         self._segment = segment
         self._binding = binding
         self.fence = None
+        self._enabled = None
 
     @classmethod
     def for_config(cls, cfg, segment=None, binding=None):
@@ -358,13 +404,13 @@ class LampGuard:
                     "reaches" % (path, body))
             self.check_frame(*frame)
             return
-        for pattern, kind, label in RESOURCES:
+        for pattern, kind, label, visible in RESOURCES:
             match = pattern.fullmatch(path)
             if match:
                 key = match.group(1) if pattern.groups else None
                 target = self._resource_target(kind, key, body)
                 if target is not None:
-                    self.check_target(target, True, label % (target if key is None else key))
+                    self.check_target(target, visible, label % (target if key is None else key))
                 return
 
     def _resource_target(self, kind, key, body):
@@ -378,12 +424,14 @@ class LampGuard:
         return short if isinstance(short, int) else None
 
     def check_frame(self, addr, data):
-        if self.fence is not None and self.fence.check_frame(addr, data):
+        enabled, self._enabled = self._enabled, enables(addr, data)
+        if self.fence is not None and self.fence.check_frame(addr, data, enabled):
             return
         target = wire_target(addr)
-        if target is None or not frame_writes(addr, data):
+        if target is None or not frame_writes(addr, data, enabled):
             return
-        self.check_target(target, frame_visible(addr, data), describe_frame(addr, data))
+        self.check_target(target, frame_visible(addr, data, enabled),
+                          describe_frame(addr, data))
 
     def check_target(self, target, visible, what):
         if visible and self.read_only:

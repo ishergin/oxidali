@@ -3,7 +3,7 @@ import os
 import time
 
 from hil.api import ApiError, CapabilityUnsupported, _HomeAssistantSettings, _PollerSettings
-from hil.lamp_guard import LampNotAllowed
+from hil.lamp_guard import LampNotAllowed, only_hil_rules_appended
 
 PRIME_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,groups,scenes,extended"
 
@@ -62,6 +62,7 @@ def capture(api, prime=True, log=print):
         "timezone": api.time_get().get("timezone"),
         "adapter": api.adapter_info(),
         "rules": api.rules_get(),
+        "rule_toggles": api.rules_toggles(),
         "hcl": api.hcl.list(),
         "vl": api.vlamps.list_unfiltered(),
         "groups": api.groups.list()["groups"],
@@ -188,6 +189,7 @@ def diff(before, after, shown_shorts=None):
             out.append("%s differs" % key)
     if before["rules"].get("source") != after["rules"].get("source"):
         out.append("rules source differs")
+    out += toggle_residue(before.get("rule_toggles"), after.get("rule_toggles"))
     if before["adapter"].get("enabled") != after["adapter"].get("enabled"):
         out.append("adapter enabled %r -> %r" % (before["adapter"].get("enabled"),
                                                 after["adapter"].get("enabled")))
@@ -202,6 +204,14 @@ def diff(before, after, shown_shorts=None):
     if "policies" in before and _norm(before["policies"]) != _norm(after.get("policies")):
         out.append("policies %r -> %r" % (before["policies"], after.get("policies")))
     return out
+
+
+def toggle_residue(was, now):
+    if was is None:
+        return []
+    now = now or {}
+    return ["rule %r enabled %r -> %r" % (name, enabled, now.get(name))
+            for name, enabled in sorted(was.items()) if now.get(name) != enabled]
 
 
 def _norm(value):
@@ -355,10 +365,23 @@ def _restore_adapter(api, snap, log):
 
 
 def _restore_rules(api, snap, log):
-    now = api.rules_get()
-    if now.get("source") != snap["rules"].get("source"):
-        log("prod_state: restoring the rules document")
-        api.rules_replace(snap["rules"]["source"], now["revision"])
+    was, now = snap["rules"].get("source") or "", api.rules_get()
+    if (now.get("source") or "") != was:
+        if not only_hil_rules_appended(was, now.get("source") or ""):
+            log("prod_state: the rules document differs from the snapshot by more than test "
+                "rules; someone else edited it, so it is left as it is")
+        else:
+            log("prod_state: taking the test rules out of the rules document")
+            api.rules_replace(was, now["revision"])
+    _restore_toggles(api, snap.get("rule_toggles") or {}, log)
+
+
+def _restore_toggles(api, was, log):
+    now = api.rules_toggles()
+    for name, enabled in sorted(was.items()):
+        if name in now and now[name] != enabled:
+            log("prod_state: rule %r back to %s" % (name, "enabled" if enabled else "disabled"))
+            api.rule_enable(name, enabled)
 
 
 def _restore_devices(api, snap, log):
@@ -485,9 +508,12 @@ def _restore_gear_config(api, snap, log):
         body = {f: v for f, v in was["config"].items() if now.get(f) != v}
         if body:
             log("prod_state: restoring SA%s gear config %s" % (short, body))
-            _attempt(log, "SA%s gear config" % short,
-                     lambda short=short, body=body: api.wait_op(
-                         api.write_attrs(int(short), body)))
+            try:
+                _attempt(log, "SA%s gear config" % short,
+                         lambda short=short, body=body: api.wait_op(
+                             api.write_attrs(int(short), body)))
+            except LampNotAllowed as exc:
+                log("prod_state: SA%s gear config left as it is: %s" % (short, exc))
 
 
 def _restore_gear_tables(api, snap, log):

@@ -67,6 +67,38 @@ def test_read_only_refuses_a_visible_action_and_keeps_a_configuration_write():
     guard.check_frame(_short_wire(0, command=True), ADD_TO_GROUP_5)
 
 
+ENABLE_DEVICE_TYPE = 0xC1
+SELECT_DIMMING_CURVE = 0xE3
+STORE_TC_LIMIT = 0xF2
+QUERY_COLOUR_VALUE = 0xFA
+
+
+def test_the_client_reads_an_extended_command_by_the_enable_it_sent_before():
+    guard = _guard(read_only=True)
+    guard.check_frame(ENABLE_DEVICE_TYPE, 6)
+    with pytest.raises(LampNotAllowed, match=r"SA1 is outside"):
+        guard.check_frame(_short_wire(OWNER, command=True), SELECT_DIMMING_CURVE)
+    guard.check_frame(ENABLE_DEVICE_TYPE, 8)
+    guard.check_frame(_short_wire(OWNER, command=True), QUERY_COLOUR_VALUE)
+    guard.check_frame(_short_wire(OWNER, command=True), SELECT_DIMMING_CURVE)
+    guard.check_frame(ENABLE_DEVICE_TYPE, 8)
+    guard.check_frame(_short_wire(2, command=True), STORE_TC_LIMIT)
+    guard.check_frame(ENABLE_DEVICE_TYPE, 8)
+    with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY"):
+        guard.check_frame(_short_wire(2, command=True), 0xE2)
+
+
+def test_an_attribute_write_reaches_only_an_allowed_lamp_and_is_not_a_visible_action():
+    guard = _guard(read_only=True)
+    guard.check_request("POST", "adapters/0/physical-devices/2/write-attributes",
+                        {"fade_time_ms": 0})
+    with pytest.raises(LampNotAllowed, match=r"attribute write to SA1 refused: SA1 is outside"):
+        guard.check_request("POST", "adapters/0/physical-devices/1/write-attributes",
+                            {"fade_time_ms": 0})
+    guard.check_request("POST", "adapters/0/physical-devices/1/attribute-reads",
+                        {"attribute_groups": ["common_102"]})
+
+
 def test_the_range_form_parses_and_bounds_the_optical_set():
     cfg = HilConfig(lamp_shorts="0-3", optical_shorts="")
     assert cfg.lamp_short_set() == frozenset({0, 1, 2, 3})
