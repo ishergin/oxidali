@@ -1,16 +1,14 @@
 import argparse
 import datetime
 import json
-import re
-import socket
-import threading
 import time
 import urllib.request
 from pathlib import Path
 
 from hil import config as hil_config
-from hil import serialmon
-from hil import wsclient
+from hil import seriallog, serialmon, wsclient
+from hil.api import Client
+from hil.provoke import NameRewrite, first_registered
 
 HERE = Path(__file__).resolve().parent
 
@@ -27,9 +25,6 @@ STATS_GAUGES = ("isr_max_gap_us", "answer_stage_max_ticks", "sniff_poll_gap_max_
 REDUNDANCY = ("answered", "window_closed", "late", "suppressed", "aborted")
 PROBES = ("owned", "unowned")
 SNIFFER = ("frames", "decode_failed", "unsupported_len")
-
-LATE_LINE = re.compile(r"^(\S+) .*DALI ISR late (?:tick|entries)[^:]*: (.*)$")
-LATE_ITEM = re.compile(r"([\w\-+.]+)×(\d+) \(max (\d+) us")
 
 
 def _get(base, path, timeout=6):
@@ -88,84 +83,24 @@ def log_offset(log):
 
 
 def late_entries(log, offset):
-    tally = {}
     try:
         fh = open(log, "rb")
     except OSError:
-        return tally
+        return {}
     with fh:
         fh.seek(offset)
-        for raw in fh:
-            m = LATE_LINE.match(raw.decode("utf-8", "replace"))
-            if not m:
-                continue
-            for task, count, gap in LATE_ITEM.findall(m.group(2)):
-                cur = tally.setdefault(task, [0, 0])
-                cur[0] += int(count)
-                cur[1] = max(cur[1], int(gap))
-    return tally
+        return seriallog.late_entry_tasks(raw.decode("utf-8", "replace") for raw in fh)
 
 
-def provocation_target(base):
-    devices = _get(base, "/api/v1/adapters/0/physical-devices")["physical_devices"]
-    if not devices:
-        raise SystemExit("no physical device registered — nothing to flush")
-    dev = devices[0]
-    return dev["short_address"], dev.get("name") or ""
-
-
-def patch_name(base, short, name):
-    body = json.dumps({"name": name}).encode()
-    req = urllib.request.Request(
-        "%s/api/v1/adapters/0/physical-devices/%d" % (base, short),
-        data=body, method="PATCH", headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=8) as r:
-        r.read()
-
-
-class WsLoad:
-    def __init__(self, base, n):
-        self.clients = []
-        self.stop = threading.Event()
-        for _ in range(n):
-            c = wsclient.connect(base)
-            c.subscribe(["sniffer", "diagnostics", "stats"])
-            self.clients.append(c)
-        self.threads = [threading.Thread(target=self._drain, args=(c,), daemon=True)
-                        for c in self.clients]
-        for t in self.threads:
-            t.start()
-
-    def _drain(self, client):
-        while not self.stop.is_set():
-            try:
-                client.recv(timeout=1.0)
-            except socket.timeout:
-                continue
-            except Exception as e:
-                if not self.stop.is_set():
-                    print("soak: a WS load client dropped (%s) — the load is now "
-                          "one client lighter" % e)
-                return
-
-    def close(self):
-        self.stop.set()
-        for c in self.clients:
-            try:
-                c.close()
-            except Exception:
-                pass
-
-
-def run_phase(name, seconds, boards, target, patch_every):
+def run_phase(name, seconds, boards, provoke, patch_every):
     t0 = datetime.datetime.now().isoformat(timespec="seconds")
     before = {b: sample(base) for b, (base, _) in boards.items()}
     offsets = {b: log_offset(log) for b, (_, log) in boards.items()}
     end, patches, failures = time.time() + seconds, 0, 0
     while time.time() < end:
-        if target:
+        if provoke:
             try:
-                patch_name(boards["dut"][0], *target)
+                provoke()
                 patches += 1
             except Exception:
                 failures += 1
@@ -238,22 +173,31 @@ def main():
     if not args.no_peer:
         peer = cfg.peer()
         boards["peer"] = (peer.base.rstrip("/"), serialmon.log_path(peer))
-    target = provocation_target(boards["dut"][0])
+    api = Client(cfg)
+    short = first_registered(api)
+    if short is None:
+        raise SystemExit("no physical device registered — nothing to flush")
+    rewrite = NameRewrite(api, short)
     print("soak: boards=%s provocation=PATCH name of SA%d every %.1f s, %d WS client(s)" % (
-        {b: v[0] for b, v in boards.items()}, target[0], args.patch_every, args.ws))
-    ws = WsLoad(boards["dut"][0], args.ws) if args.ws else None
+        {b: v[0] for b, v in boards.items()}, short, args.patch_every, args.ws))
+    ws = wsclient.Subscribers(boards["dut"][0], args.ws) if args.ws else None
     results = []
     try:
         for cycle in range(args.cycles):
             for side, provoke in (("A", False), ("B", True)):
                 name = "%s%d %s" % (side, cycle + 1, "PROVOKED" if provoke else "quiet")
-                r = run_phase(name, args.phase_s, boards, target if provoke else None,
+                r = run_phase(name, args.phase_s, boards, rewrite if provoke else None,
                               args.patch_every)
                 print_phase(r)
                 results.append(r)
     finally:
         if ws:
             ws.close()
+            for line in ws.errors:
+                print("soak: %s — the load ran one client lighter from then on" % line)
+        if not rewrite.restore():
+            print("soak: SA%d's name is not back to %r — restore it by hand"
+                  % (short, rewrite.original))
     summary = summarise(results)
     if args.out:
         Path(args.out).write_text(json.dumps({"phases": results, "summary": summary},

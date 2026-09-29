@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from hil import provoke, seriallog
 from hil.config import HilConfig
 
 HIL_ROOT = Path(__file__).resolve().parent.parent
@@ -23,6 +24,10 @@ def _script(name):
 
 ISSUE86 = _script("issue86_acceptance")
 ISSUE89 = _script("issue89_flush_stall_ab")
+SOAK = _script("soak_abab")
+LATE = ("2026-09-26T08:00:02.000Z W (5) dali: DALI ISR late entries (delayed; see raw deficit "
+        "for losses): ws-client×2 (max 140 us @0x40001234<0x40005678), (none)×1 (max 9 us "
+        "@0x0<0x0), httpd+isr×1 (max 60 us @0x1<0x2), ws-client+isr×1 (max 300 us @0x3<0x4)")
 
 
 def _cfg(tmp_path, lamp_shorts="0,2,3"):
@@ -120,3 +125,44 @@ def test_issue89_writes_only_gear_the_bench_may_write(tmp_path):
 def test_issue89_names_no_bench_address_and_no_checkout_path():
     source = (HIL_ROOT / "issue89_flush_stall_ab.py").read_text()
     assert "192.168." not in source and "/Users/" not in source
+
+
+def test_late_entries_are_tallied_by_task_and_nesting():
+    tally = seriallog.late_entry_tasks([LATE, TIMING, LATE])
+    assert tally == {"ws-client": [4, 140], "httpd+isr": [2, 60], "ws-client+isr": [2, 300]}
+    assert {seriallog.task_of(key) for key in tally} == {"ws-client", "httpd"}
+
+
+def test_the_soak_reads_late_entries_from_its_offset_through_the_toolkit(tmp_path):
+    log = tmp_path / "serial.log"
+    log.write_text(LATE + "\n")
+    start = log.stat().st_size
+    with log.open("a") as fh:
+        fh.write(LATE.replace("ws-client×2", "mqtt_task×3") + "\n")
+    assert SOAK.late_entries(log, start) == {"mqtt_task": [3, 140], "httpd+isr": [1, 60],
+                                             "ws-client+isr": [1, 300]}
+    assert SOAK.late_entries(tmp_path / "missing.log", 0) == {}
+
+
+def test_the_provocation_rewrites_the_name_it_found_and_restores_it_exactly():
+    registry = _Registry({"name": "Kitchen", "notes": "the owner's note"})
+    rewrite = provoke.NameRewrite(registry, 2)
+    for _ in range(3):
+        rewrite()
+    assert registry.patches == [{"name": "Kitchen"}] * 3 and rewrite.writes == 3
+    registry.record["name"] = "renamed meanwhile"
+    assert rewrite.restore()
+    assert registry.record == {"name": "Kitchen", "notes": "the owner's note"}
+
+
+def test_the_provocation_targets_the_lowest_registered_gear():
+    assert provoke.first_registered(_Unfiltered([9, 1, 4])) == 1
+    assert provoke.first_registered(_Unfiltered([])) is None
+
+
+class _Unfiltered:
+    def __init__(self, shorts):
+        self.shorts = shorts
+
+    def devices_unfiltered(self):
+        return {"physical_devices": [{"short_address": s} for s in self.shorts]}

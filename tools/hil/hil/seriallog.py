@@ -5,6 +5,26 @@ from pathlib import Path
 from hil import serialmon
 
 BOOT_MARKER = "HTTP server listening"
+LATE_ENTRIES = re.compile(r"DALI ISR late (?:tick|entries)[^:]*: (.*)$")
+LATE_ITEM = re.compile(r"([\w\-+.]+)×(\d+) \(max (\d+) us")
+NESTED_SUFFIX = "+isr"
+
+
+def late_entry_tasks(lines):
+    tally = {}
+    for line in lines:
+        match = LATE_ENTRIES.search(line)
+        if not match:
+            continue
+        for task, count, gap in LATE_ITEM.findall(match.group(1)):
+            entry = tally.setdefault(task, [0, 0])
+            entry[0] += int(count)
+            entry[1] = max(entry[1], int(gap))
+    return tally
+
+
+def task_of(key):
+    return key[:-len(NESTED_SUFFIX)] if key.endswith(NESTED_SUFFIX) else key
 
 
 class SerialLog:

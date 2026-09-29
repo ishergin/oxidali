@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from hil import wsclient
+from hil import provoke, seriallog, tripwire, wsclient
 from hil.wait import wait_until
 from hil.wsclient import OP_BINARY, OP_PONG, WsError
 
@@ -226,4 +226,75 @@ def test_the_log_channel_carries_an_esp_idf_component_line(
             "installed above the C log path, or the component's own level "
             "filter is quieter than the ring's")
 
+    ws_baseline["survived"]()
+
+
+SOAK_CLIENTS = 2
+SOAK_QUIET_S = 300
+SOAK_PROVOKED_S = 300
+SOAK_PATCH_EVERY_S = 3.0
+SOAK_POLL_S = 2.0
+DIAGNOSTICS_PERIOD_S = 2.0
+SNIFFER_BATCH = "SnifferBatch"
+DIAGNOSTICS_SNAPSHOT = "DiagnosticsSnapshot"
+WS_CLIENT_TASK = "ws-client"
+MIN_DIAGNOSTICS = (SOAK_QUIET_S + SOAK_PROVOKED_S) / DIAGNOSTICS_PERIOD_S / 2
+
+
+def _soak(load, seconds, rewrite=None):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end and not load.errors:
+        if rewrite is not None:
+            rewrite()
+        time.sleep(SOAK_PATCH_EVERY_S if rewrite is not None else SOAK_POLL_S)
+
+
+def _idle_subscribers(kinds):
+    return [index for index, seen in enumerate(kinds)
+            if not seen.get(SNIFFER_BATCH) or seen.get(DIAGNOSTICS_SNAPSHOT, 0) < MIN_DIAGNOSTICS]
+
+
+@pytest.mark.hil_id("HIL-WS-07")
+@pytest.mark.slow
+@pytest.mark.serial
+def test_two_sniffer_subscribers_keep_ws_client_out_of_late_isr_entries(
+        api, hil_config, serial_log, ws_baseline, test_artifacts):
+    short = provoke.first_registered(api)
+    rewrite = provoke.NameRewrite(api, short) if short is not None else None
+    losses = tripwire.log_losses(api.stats())
+    with serial_log.window() as serial:
+        load = wsclient.Subscribers(hil_config.base, SOAK_CLIENTS)
+        try:
+            _soak(load, SOAK_QUIET_S)
+            _soak(load, SOAK_PROVOKED_S, rewrite)
+        finally:
+            load.close()
+            restored = rewrite.restore() if rewrite is not None else True
+        lines = serial.lines()
+    lost = tripwire.lost_lines(losses, tripwire.log_losses(api.stats()))
+    late = seriallog.late_entry_tasks(lines)
+    kinds = [dict(seen) for seen in load.kinds]
+    test_artifacts.attach_json("soak", {
+        "frames_by_subscriber": kinds, "load_errors": load.errors, "late_entries": late,
+        "provoked_on": short, "name_writes": rewrite.writes if rewrite else 0,
+        "log_lines": len(lines), "lost_log_lines": lost})
+
+    assert restored, "SA%s's name is not back to %r: restore it by hand" % (
+        short, rewrite.original)
+    assert not load.errors, "the WebSocket load did not hold: %s" % load.errors
+    assert lines, (
+        "INCONCLUSIVE, not a product failure: the serial log did not grow in ten "
+        "minutes, so no late-entries line could have been read")
+    assert not lost, (
+        "INCONCLUSIVE, not a product failure: the DUT dropped log lines %s, and a "
+        "late-entries line may be among them" % lost)
+    assert not _idle_subscribers(kinds), (
+        "INCONCLUSIVE, not a product failure: subscriber(s) %s got no sniffer batch or "
+        "fewer than %d diagnostics snapshots, so the send path was not exercised: %s"
+        % (_idle_subscribers(kinds), MIN_DIAGNOSTICS, kinds))
+    offenders = {key: tally for key, tally in late.items()
+                 if seriallog.task_of(key) == WS_CLIENT_TASK}
+    assert not offenders, (
+        "ws-client delayed the PHY interrupt while two subscribers were served: %s "
+        "(count, max gap in us)" % offenders)
     ws_baseline["survived"]()

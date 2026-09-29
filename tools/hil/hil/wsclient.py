@@ -1,9 +1,11 @@
 import base64
+import collections
 import hashlib
 import json
 import os
 import socket
 import struct
+import threading
 import time
 from urllib.parse import urlsplit
 
@@ -17,6 +19,11 @@ OP_PING = 0x9
 OP_PONG = 0xA
 
 MAX_FRAME_BYTES = 256 * 1024
+
+LOAD_CHANNELS = ("sniffer", "diagnostics", "stats")
+DRAIN_TIMEOUT_S = 1.0
+JOIN_TIMEOUT_S = 5.0
+UNDECODABLE = "undecodable"
 
 
 class WsError(RuntimeError):
@@ -189,3 +196,62 @@ def connect(base, path="/api/v1/ws", timeout=5.0):
             "Sec-WebSocket-Accept was %r, expected %r for the key we sent"
             % (accept, expected))
     return client
+
+
+def frame_kind(opcode, payload):
+    if opcode != OP_TEXT:
+        return "opcode 0x%X" % opcode
+    try:
+        frame = json.loads(payload.decode())
+    except (ValueError, UnicodeDecodeError):
+        return UNDECODABLE
+    if not isinstance(frame, dict):
+        return UNDECODABLE
+    return str(frame.get("type") or frame.get("op") or UNDECODABLE)
+
+
+class Subscribers:
+    def __init__(self, base, count, channels=LOAD_CHANNELS, opener=None):
+        opener = opener or connect
+        self.stop = threading.Event()
+        self.errors = []
+        self.kinds = [collections.Counter() for _ in range(count)]
+        self.clients = []
+        try:
+            for _ in range(count):
+                client = opener(base)
+                self.clients.append(client)
+                client.subscribe(channels)
+        except Exception:
+            self._close_clients()
+            raise
+        self.threads = [threading.Thread(target=self._drain, args=(index,), daemon=True)
+                        for index in range(count)]
+        for thread in self.threads:
+            thread.start()
+
+    def _drain(self, index):
+        client, kinds = self.clients[index], self.kinds[index]
+        while not self.stop.is_set():
+            try:
+                opcode, payload = client.recv(timeout=DRAIN_TIMEOUT_S)
+            except socket.timeout:
+                continue
+            except Exception as exc:
+                if not self.stop.is_set():
+                    self.errors.append("subscriber %d dropped: %s" % (index, exc))
+                return
+            kinds[frame_kind(opcode, payload)] += 1
+
+    def close(self):
+        self.stop.set()
+        for thread in self.threads:
+            thread.join(timeout=JOIN_TIMEOUT_S)
+        self._close_clients()
+
+    def _close_clients(self):
+        for client in self.clients:
+            try:
+                client.close()
+            except Exception:
+                pass
