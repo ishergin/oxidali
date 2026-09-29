@@ -1,6 +1,6 @@
 import contextlib
 import hashlib
-import importlib.util
+import importlib.metadata
 import os
 import subprocess
 import time
@@ -42,10 +42,11 @@ def _ssh(tgt, command, timeout=60, **kwargs):
 
 
 def _site_packages() -> Path:
-    found = importlib.util.find_spec("esptool")
-    if found is None or found.origin is None:
+    try:
+        installed = importlib.metadata.distribution("esptool")
+    except importlib.metadata.PackageNotFoundError:
         raise WbFlashError("esptool is not installed in the toolkit's venv")
-    return Path(found.origin).resolve().parent.parent
+    return Path(installed.locate_file("")).resolve()
 
 
 def tools_digest(site: Path) -> str:
