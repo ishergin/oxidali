@@ -16,6 +16,7 @@ BOARD_QUIET_TIMEOUT_S = 15
 REQUEST_TIMEOUT_S = 10
 POLL_S = 1
 BANNER_BOOT_S = 20
+READY_ASK_INTERVAL_S = 10
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -44,7 +45,8 @@ VIA_RFC2217, VIA_WB, VIA_OTA = "rfc2217", "wb", "ota"
 VIAS = (VIA_RFC2217, VIA_WB, VIA_OTA)
 
 READY_LINE = re.compile(r"# ready build=(\S+) slot=(\S+) state=(\S+)")
-BANNER_STATE = {VIA_OTA: "pending_verify", VIA_WB: "none", VIA_RFC2217: "none"}
+BANNER_STATES = {VIA_OTA: ("pending_verify",), VIA_WB: ("none", "valid"),
+                 VIA_RFC2217: ("none", "valid")}
 
 CARGO_CONFIG = ".cargo/config.toml"
 
@@ -313,15 +315,16 @@ def deliver(cfg, spec, root: Path, via, serial_port) -> int:
 
 
 def wait_banner(cfg, since: int, timeout_s=READY_TIMEOUT_S):
+    deadline = time.monotonic() + timeout_s
     found = _poll_banner(cfg, since, BANNER_BOOT_S)
-    if found is not None or not remote_serial.enabled(cfg):
-        return found
-    try:
-        remote_serial.control(cfg, "write ready")
-    except (OSError, remote_serial.RemoteError) as exc:
-        print("asking the emulator for its ready line failed: %s" % exc, file=sys.stderr)
-        return None
-    return _poll_banner(cfg, since, timeout_s - BANNER_BOOT_S)
+    while found is None and remote_serial.enabled(cfg) and time.monotonic() < deadline:
+        try:
+            remote_serial.control(cfg, "write ready")
+        except (OSError, remote_serial.RemoteError) as exc:
+            print("asking the emulator for its ready line failed: %s" % exc, file=sys.stderr)
+            return None
+        found = _poll_banner(cfg, since, min(READY_ASK_INTERVAL_S, deadline - time.monotonic()))
+    return found
 
 
 def _poll_banner(cfg, since, timeout_s):
@@ -360,10 +363,10 @@ def verify_banner(cfg, since, via, root) -> int:
         print("the emulator reports build %s, not the commit just built (%s)"
               % (build_id, head[:8]), file=sys.stderr)
         return 1
-    want = BANNER_STATE[via]
-    if state != want:
-        print("the emulator runs %s in state %r; a %s delivery must give %r%s"
-              % (slot, state, via, want,
+    want = BANNER_STATES[via]
+    if state not in want:
+        print("the emulator runs %s in state %r; a %s delivery must give %s%s"
+              % (slot, state, via, " or ".join(repr(s) for s in want),
                  " — the bootloader kept the image: `hil --peer role controller --via wb` "
                  "writes the controller back" if state == "new" else ""), file=sys.stderr)
         return 1
