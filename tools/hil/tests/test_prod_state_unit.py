@@ -299,10 +299,13 @@ def _snap_rules(source, toggles):
     return {"rules": {"source": source}, "rule_toggles": dict(toggles)}
 
 
-def test_the_session_takes_its_test_rules_out_and_puts_every_toggle_back():
-    api = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": True, "hil-vg-06-stop-fade": True})
+def test_the_session_takes_its_test_rules_out_and_puts_back_the_toggles_its_commit_reset():
+    api = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": False, "hil-vg-06-stop-fade": True})
     prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None)
-    assert api.puts == [(OWNER_DOC, 7)] and api.toggles["night"] is False
+    assert api.puts == [(OWNER_DOC, 7)] and api.patches == [("night", False)]
+    moved = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": True, "hil-vg-06-stop-fade": True})
+    prod_state._restore_rules(moved, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None)
+    assert moved.puts == [(OWNER_DOC, 7)] and moved.patches == [] and moved.toggles["night"]
 
 
 OWNER_NEW = 'rule "porch" {\n  when at 06:00\n  do group(9).on()\n}'
@@ -317,10 +320,13 @@ def test_an_owner_rule_written_after_a_test_rule_keeps_the_document_as_it_is():
         assert any("someone else edited it" in line for line in log)
 
 
-def test_the_session_puts_a_toggle_back_even_when_the_text_already_matches():
+def test_the_session_leaves_a_toggle_it_did_not_move_and_reports_it():
     api = _Rules(OWNER_DOC, {"night": True})
     prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None)
-    assert api.puts == [] and api.patches == [("night", False)]
+    assert api.puts == [] and api.patches == []
+    assert "rule 'night' enabled False -> True" in prod_state.diff(
+        {"rules": {"source": OWNER_DOC}, "rule_toggles": {"night": False}, **_bare()},
+        {"rules": {"source": OWNER_DOC}, "rule_toggles": {"night": True}, **_bare()})
 
 
 def test_an_owner_edit_is_left_in_place_and_reported():
@@ -402,6 +408,16 @@ def test_the_guard_checks_the_owner_document_again_right_before_each_commit():
     with pytest.raises(pytest.skip.Exception, match="switched off"):
         commits.append(TEST_RULE)
     assert api.puts == [] and commits.restore() == []
+
+
+def test_the_guard_keeps_a_toggle_the_owner_moved_during_the_test_and_reports_it():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    commits.append(TEST_RULE)
+    api.toggles["night"] = False
+    residue = commits.restore()
+    assert api.source == OWNER_DOC and api.toggles["night"] is False
+    assert residue == ["rule 'night' is disabled, was enabled"]
 
 
 def test_a_delay_pending_at_restore_keeps_the_test_rule_and_names_why():

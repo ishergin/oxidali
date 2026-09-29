@@ -231,9 +231,10 @@ def _refuse_a_live_owner_document(toggles, pending):
 class _RulesCommits:
     def __init__(self, api, doc, toggles):
         self.api, self.original, self.toggles = api, doc.get("source") or "", toggles
-        self.base, self.ours = doc.get("revision"), None
+        self.base, self.ours, self.owed = doc.get("revision"), None, {}
 
     def commit(self, source, base, what):
+        wanted = {**self.api.rules_toggles(), **self.owed}
         try:
             view = self.api.rules_replace(source, base)
         except api_mod.ApiError as exc:
@@ -244,10 +245,11 @@ class _RulesCommits:
             pytest.fail("rules %s did not commit: %r" % (what, view), pytrace=False)
         self.ours = (base + 1) % U32
         now = self.api.rules_toggles()
-        for name, enabled in sorted(self.toggles.items()):
-            if now.get(name) != enabled:
-                self.api.rule_enable(name, enabled)
-                self.ours = (self.ours + 1) % U32
+        self.owed = {n: e for n, e in wanted.items() if n in now and now[n] != e}
+        for name, enabled in sorted(dict(self.owed).items()):
+            self.api.rule_enable(name, enabled)
+            self.ours = (self.ours + 1) % U32
+            del self.owed[name]
 
     def append(self, fragment):
         source = self.original + RULE_SEPARATOR + fragment if self.original else fragment

@@ -390,20 +390,21 @@ def switch_off(api, names):
 
 def _restore_rules(api, snap, log):
     was, now = snap["rules"].get("source") or "", api.rules_get()
-    if (now.get("source") or "") != was:
-        refusal = commit_refusal(continuations_pending(api))
-        if not only_hil_rules_appended(was, now.get("source") or ""):
-            log("prod_state: the rules document differs from the snapshot by more than test "
-                "rules; someone else edited it, so it is left as it is")
-        elif refusal:
-            names = switch_off(api, appended_rule_names(was, now.get("source") or ""))
-            log("prod_state: the test rules %s stay in the rules document, switched off, "
-                "because %s; run `hil state restore` once nothing is pending"
-                % (names, refusal))
-        else:
-            log("prod_state: taking the test rules out of the rules document")
-            api.rules_replace(was, now["revision"])
-    _restore_toggles(api, snap.get("rule_toggles") or {}, log)
+    if (now.get("source") or "") == was:
+        return
+    refusal = commit_refusal(continuations_pending(api))
+    if not only_hil_rules_appended(was, now.get("source") or ""):
+        log("prod_state: the rules document differs from the snapshot by more than test "
+            "rules; someone else edited it, so it is left as it is")
+    elif refusal:
+        names = switch_off(api, appended_rule_names(was, now.get("source") or ""))
+        log("prod_state: the test rules %s stay in the rules document, switched off, "
+            "because %s; run `hil state restore` once nothing is pending" % (names, refusal))
+    else:
+        log("prod_state: taking the test rules out of the rules document")
+        before = api.rules_toggles()
+        api.rules_replace(was, now["revision"])
+        _restore_toggles(api, before, log)
 
 
 def _restore_toggles(api, was, log):
