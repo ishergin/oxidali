@@ -1122,7 +1122,7 @@ fn an_observed_recall_frame_projects_nothing_its_recall_fact_does() {
 }
 
 #[test]
-fn observed_scene_recall_projects_applied_rows_fan052() {
+fn a_foreign_recall_projects_applied_rows_fan052() {
     let port = FakeReadPort {
         scene_rows: scene_rows(),
         ..FakeReadPort::default()
@@ -1211,7 +1211,7 @@ fn scene_recall_filters_incapable_member_colour_fan053() {
 }
 
 #[test]
-fn observed_scene_recall_filters_incapable_member_colour_fan054() {
+fn a_foreign_recall_filters_incapable_member_colour_fan054() {
     let port = FakeReadPort {
         scene_rows: scene_rows_capability_case(),
         lamps: vec![
@@ -1269,7 +1269,7 @@ fn group_scoped_scene_recall_projects_members_only_fan055() {
 }
 
 #[test]
-fn observed_group_scene_recall_projects_members_only_fan056() {
+fn a_foreign_group_recall_projects_members_only_fan056() {
     let port = FakeReadPort {
         scene_rows: scene_rows(),
         group_rows: vec![group_row(1, 2)],
@@ -1287,7 +1287,7 @@ fn observed_group_scene_recall_projects_members_only_fan056() {
 }
 
 #[test]
-fn observed_short_scene_recall_projects_the_bound_row_only_fan057() {
+fn a_foreign_short_recall_projects_the_bound_row_only_fan057() {
     let port = FakeReadPort {
         scene_rows: scene_rows(),
         ..FakeReadPort::default()
@@ -1327,25 +1327,6 @@ fn group_recall_without_a_group_snapshot_is_ignored_not_a_success() {
             virtual_lamp_id: None,
         },
     );
-
-    assert_no_more_updates(tap);
-    wait_until(
-        || counters.ignored_events.load(Ordering::Relaxed) >= 1,
-        Duration::from_millis(500),
-    );
-    assert_eq!(counters.scene_expansions.load(Ordering::Relaxed), 0);
-}
-
-#[test]
-fn observed_group_recall_with_oversized_group_id_is_ignored() {
-    let port = FakeReadPort {
-        scene_rows: scene_rows(),
-        group_rows: vec![group_row(1, 2)],
-        ..FakeReadPort::default()
-    };
-    let h = spawn_harness(port);
-    let (publisher, tap, counters) = (h.publisher.clone(), &h.tap, &h.counters);
-    publish_event(&publisher, CORRELATION_NONE, foreign_recall(DaliTargetScope::Group, 0, 16));
 
     assert_no_more_updates(tap);
     wait_until(

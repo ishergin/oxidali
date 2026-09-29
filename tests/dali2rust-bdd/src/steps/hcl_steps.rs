@@ -351,7 +351,6 @@ async fn then_device_holds_stored_colour(world: &mut DaliWorld, short: u64) {
     );
 }
 
-
 fn suspended_groups(port: u16, schedule_id: &str) -> Option<Vec<u64>> {
     let path = format!("/api/v1/hcl-schedules/{schedule_id}/override");
     let json = crate::steps::physical_devices_steps::fetch_json(port, &path)?;

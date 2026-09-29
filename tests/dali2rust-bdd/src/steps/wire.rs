@@ -1,5 +1,24 @@
 use dali2rust_adapters::dali::transport::mock::BusFrameSource;
 
+const SHORT_ADDRESS_MASK: u8 = 0x3F;
+const GROUP_NUMBER_MASK: u8 = 0x0F;
+const GROUP_ADDRESS_FLAG: u8 = 0x80;
+const COMMAND_SELECTOR_BIT: u8 = 0x01;
+const GO_TO_SCENE_BASE: u8 = 0x10;
+pub const SCENE_NUMBER_MASK: u8 = 0x0F;
+
+pub fn command_address(short: u8) -> u8 {
+    ((short & SHORT_ADDRESS_MASK) << 1) | COMMAND_SELECTOR_BIT
+}
+
+pub fn group_command_address(group: u8) -> u8 {
+    GROUP_ADDRESS_FLAG | ((group & GROUP_NUMBER_MASK) << 1) | COMMAND_SELECTOR_BIT
+}
+
+pub fn go_to_scene(scene: u8) -> u8 {
+    GO_TO_SCENE_BASE | (scene & SCENE_NUMBER_MASK)
+}
+
 pub fn frame_index(frames: &[u16], frame: u16) -> usize {
     frames
         .iter()

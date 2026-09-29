@@ -9,6 +9,7 @@ use dali2rust_contracts::msg::{
     DeliveryStatus, DiscoveryMode, ErrorCode, GroupMembershipAction, HclTargetScope,
     LightSetpoint, MemoryBankReadPreset, OperationWorkerSignal, PowerState, SceneProgramAction,
 };
+use dali2rust_contracts::msg::{DaliSetTargetStateCommand, Origin, RuntimeSource};
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_dali_runtime::{spawn_dali_worker, DaliWorkerCounters};
 use dali2rust_domain::dali::commands::{DaliCommand, DaliResponse};
@@ -595,7 +596,6 @@ fn a_lamp_recall_is_one_go_to_scene_to_the_short_address_it_is_bound_to() {
 
 #[test]
 fn a_recall_fact_names_the_source_that_asked_for_it() {
-    use dali2rust_contracts::msg::{Origin, RuntimeSource};
     let harness = WorkerHarness::new(Arc::new(TestReadPort { enabled: true, ..Default::default() }), ControllerMode::NoAnswer);
     for (corr, origin, source) in [
         (96u64, Origin::Api, RuntimeSource::Api),
@@ -615,15 +615,17 @@ fn a_recall_fact_names_the_source_that_asked_for_it() {
 
 #[test]
 fn an_applied_fact_says_whether_its_command_holds_the_schedule() {
-    use dali2rust_contracts::msg::DaliSetTargetStateCommand as Cmd;
     let mut read_port = TestReadPort { enabled: true, ..Default::default() };
     read_port.bindings.insert((0, 4), 12);
     let harness = WorkerHarness::new(Arc::new(read_port), ControllerMode::NoAnswer);
     let commands = [
-        Cmd::for_virtual_lamp(0, 4, &setpoint(42)),
-        Cmd::for_short(0, 9, &setpoint(43)),
-        Cmd::for_group(0, 3, &setpoint(44)),
-        Cmd { scope: DaliTargetScope::Broadcast, ..Cmd::for_short(0, 0, &setpoint(45)) },
+        DaliSetTargetStateCommand::for_virtual_lamp(0, 4, &setpoint(42)),
+        DaliSetTargetStateCommand::for_short(0, 9, &setpoint(43)),
+        DaliSetTargetStateCommand::for_group(0, 3, &setpoint(44)),
+        DaliSetTargetStateCommand {
+            scope: DaliTargetScope::Broadcast,
+            ..DaliSetTargetStateCommand::for_short(0, 0, &setpoint(45))
+        },
     ];
     for (offset, command) in (0u64..).zip(commands) {
         for hold_hcl in [false, true] {
@@ -633,7 +635,7 @@ fn an_applied_fact_says_whether_its_command_holds_the_schedule() {
                 corr,
                 BusId::default().0,
                 Some(dali2rust_contracts::msg::Origin::Rules),
-                Cmd { hold_hcl, ..command.clone() },
+                DaliSetTargetStateCommand { hold_hcl, ..command.clone() },
             ));
             let ev = harness.recv_event_matching(corr, |payload| {
                 matches!(payload, BusEventPayload::DaliTargetStateAppliedEvent(_))

@@ -14,6 +14,7 @@ use crate::steps::physical_devices_steps::{
     fetch_json, script_discovery_with_features, script_staged_dtrs, special_frame, standard_frame,
 };
 use crate::DaliWorld;
+use crate::steps::wire::{command_address, go_to_scene};
 use crate::steps::{assert_result_skips_lamp, last_json};
 
 const DT8_SET_TEMPERATURE_TC: u8 = 231;
@@ -817,14 +818,10 @@ async fn then_only_group_recall_frame(world: &mut DaliWorld, group_id: u8, scene
     assert_eq!(frames, vec![expected], "unexpected forward frames: {frames:?}");
 }
 
-const SHORT_COMMAND_ADDRESS_FLAG: u8 = 0x01;
-const GO_TO_SCENE_OPCODE_BASE: u8 = 0x10;
-
 // RULE-031
 #[then(regex = r"^the DALI mock transport should have sent only a short (\d+) go-to-scene (\d+) frame$")]
 async fn then_only_short_recall_frame(world: &mut DaliWorld, short: u8, scene_id: u8) {
-    let address_byte = (short << 1) | SHORT_COMMAND_ADDRESS_FLAG;
-    let expected = u16::from_be_bytes([address_byte, GO_TO_SCENE_OPCODE_BASE + scene_id]);
+    let expected = u16::from_be_bytes([command_address(short), go_to_scene(scene_id)]);
     let frames = world.dali_mock().lock().expect("mock lock").sent_frames();
     assert_eq!(frames, vec![expected], "expected 0AAAAAA1 + GO TO SCENE only: {frames:04X?}");
 }

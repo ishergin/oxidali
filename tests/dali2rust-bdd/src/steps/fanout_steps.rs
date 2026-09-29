@@ -6,6 +6,7 @@ use dali2rust_test_support::wait_until;
 use serde_json::Value;
 
 use crate::steps::physical_devices_steps::fetch_json;
+use crate::steps::wire::{command_address, go_to_scene, group_command_address, SCENE_NUMBER_MASK};
 use crate::DaliWorld;
 
 const READ_MODEL_TIMEOUT: Duration = Duration::from_secs(4);
@@ -34,12 +35,6 @@ fn inject_forward16(world: &mut DaliWorld, bytes: [u8; 2]) {
 const SET_SCENE_BASE: u8 = 0x40;
 const REMOVE_FROM_SCENE_BASE: u8 = 0x50;
 const QUERY_STATUS_OPCODE: u8 = 0x90;
-const SCENE_NUMBER_MASK: u8 = 0x0F;
-const SHORT_ADDRESS_MASK: u8 = 0x3F;
-
-fn command_address(short: u8) -> u8 {
-    ((short & SHORT_ADDRESS_MASK) << 1) | 0x01
-}
 
 fn inject_pair(world: &mut DaliWorld, frame: [u8; 2]) {
     inject_forward16(world, frame);
@@ -95,18 +90,11 @@ async fn when_foreign_last_active_observed(world: &mut DaliWorld, short: u8) {
 // SYS-213 RULE-034 RULE-035 RULE-036 RULE-040
 #[when(regex = r"^a foreign broadcast recall of scene (\d+) is observed on the bus$")]
 async fn when_foreign_scene_recall_observed(world: &mut DaliWorld, scene: u8) {
-    const BROADCAST_INDIRECT: u8 = 0xFF;
-    const GO_TO_SCENE_BASE: u8 = 0x10;
-    inject_forward16(world, [BROADCAST_INDIRECT, GO_TO_SCENE_BASE | (scene & 0x0F)]);
+    inject_forward16(world, [BROADCAST_INDIRECT, go_to_scene(scene)]);
 }
 
-const GO_TO_SCENE_BASE: u8 = 0x10;
+const BROADCAST_INDIRECT: u8 = 0xFF;
 const UNADDRESSED_BROADCAST_INDIRECT: u8 = 0xFD;
-const GROUP_ADDRESS_FLAG: u8 = 0x80;
-
-fn go_to_scene(scene: u8) -> u8 {
-    GO_TO_SCENE_BASE | (scene & SCENE_NUMBER_MASK)
-}
 
 // RULE-035
 #[when(regex = r"^a foreign unaddressed recall of scene (\d+) is observed on the bus$")]
@@ -125,7 +113,7 @@ async fn when_foreign_unaddressed_off_observed(world: &mut DaliWorld) {
 // RULE-035 RULE-040
 #[when(regex = r"^a foreign group (\d+) recall of scene (\d+) is observed on the bus$")]
 async fn when_foreign_group_recall_observed(world: &mut DaliWorld, group: u8, scene: u8) {
-    inject_forward16(world, [GROUP_ADDRESS_FLAG | (group << 1) | 0x01, go_to_scene(scene)]);
+    inject_forward16(world, [group_command_address(group), go_to_scene(scene)]);
 }
 
 // RULE-035
