@@ -6,6 +6,7 @@ import {
   attachActivation,
   FEED_CAPACITY,
   feedRow,
+  feedSkeleton,
   nextSettleAt,
   RULE_SETTLE_MS,
   rowVerdict,
@@ -111,4 +112,23 @@ test('the feed wakes at the soonest end of a pending window and never for a sett
   assert.equal(nextSettleAt(rows, 1350), 1000 + RULE_SETTLE_MS)
   assert.equal(nextSettleAt(rows, 1000 + RULE_SETTLE_MS), 1300 + RULE_SETTLE_MS)
   assert.equal(nextSettleAt(rows, 1300 + RULE_SETTLE_MS), null)
+})
+
+test('a feed row without a rule becomes a rule skeleton for its source', () => {
+  assert.equal(
+    feedSkeleton(press(1, 1000)),
+    [
+      '# from the live feed',
+      'rule "dev 3 / inst 0: short_press" {',
+      '  when input(dev=3, inst=0) is short_press',
+      '  do   log("TODO")',
+      '}',
+      '',
+    ].join('\n'),
+  )
+  const occupied = feedRow({ short_address: 5, instance_number: 1, event: 'occupied' }, false, stamp(2, 0))
+  assert.match(feedSkeleton(occupied) ?? '', /when input\(dev=5, inst=1\) becomes occupied/)
+  const cycled = feedRow({ short_address: 7 }, true, stamp(3, 0))
+  assert.match(feedSkeleton(cycled) ?? '', /when input device\(dev=7\) power cycled/)
+  assert.equal(feedSkeleton(press(4, 0, null)), null)
 })

@@ -31,11 +31,21 @@ import {
   type Suggestion,
   type Unwritable,
 } from '../rule-completion'
-import { ruleSpans, ruleText, spliceRule } from '../rule-extents'
+import {
+  currentScope,
+  editInScope,
+  insertBlock,
+  insertionPoint,
+  prependBlock,
+  ruleText,
+  scopeRule,
+  type RuleScope,
+} from '../rule-extents'
 import {
   appendRow,
   attachActivation,
   feedRow,
+  feedSkeleton,
   nextSettleAt,
   rowVerdict,
   type FeedRow,
@@ -417,7 +427,7 @@ export function RulesScreen() {
   const [checking, setChecking] = useState(false)
   const [scrollTop, setScrollTop] = useState(0)
   const [scrollLeft, setScrollLeft] = useState(0)
-  const [scoped, setScoped] = useState<string | null>(null)
+  const [scope, setScope] = useState<RuleScope | null>(null)
   const parseSeq = useRef(0)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const caretTouched = useRef(false)
@@ -467,9 +477,8 @@ export function RulesScreen() {
   const rules = data.json.rules?.rules ?? null
   const source = text.source
   const full = draft ?? source
-  const spans = ruleSpans(full)
-  const span = scoped === null ? null : spans.get(scoped) ?? null
-  const shown = span === null ? full : ruleText(full, span)
+  const current = currentScope(scope, full)
+  const shown = current === null ? full : ruleText(full, current.span)
   const dirty = draft !== null && draft !== source
   const drift = draft !== null && baseRev !== null && text.revision > baseRev
   const bytes = UTF8.encode(full).length
@@ -483,7 +492,19 @@ export function RulesScreen() {
 
   const editDraft = (value: string) => {
     if (draft === null) setBaseRev(data.text.revision)
-    setDraft(span === null ? value : spliceRule(full, span, value))
+    if (current === null) {
+      setDraft(value)
+      return
+    }
+    const next = editInScope(current, value)
+    setScope(next)
+    setDraft(next.base)
+  }
+
+  const editWhole = (next: string) => {
+    if (draft === null) setBaseRev(data.text.revision)
+    setScope(null)
+    setDraft(next)
   }
 
   const pickName = (s: Suggestion) => {
@@ -569,41 +590,15 @@ export function RulesScreen() {
     void mutate(`Rule "${r.name}"`, () => api.patchRule(r.name, !r.enabled), doc.reload)
 
   const insertSnippet = (code: string) => {
-    const current = draft ?? source
     const ta = taRef.current
-    const at = caretTouched.current && ta ? ta.selectionStart : current.length
-    const before = current.slice(0, at)
-    const after = current.slice(at)
-    const lead = before === '' || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n'
-    const tail = after === '' ? '\n' : after.startsWith('\n') ? '\n' : '\n\n'
-    editDraft(before + lead + code.trim() + tail + after)
+    const caret = caretTouched.current && ta ? ta.selectionStart : null
+    editWhole(insertBlock(full, insertionPoint(full, current, caret), code))
   }
 
   const prefill = (row: FeedRow) => {
-    const short = row.short
-    if (short === null) return
-    const inst = row.instance ?? 0
-    const ev = row.event ?? 'short_press'
-    const verb = ev === 'occupied' || ev === 'vacant' ? 'becomes' : 'is'
-    const skeleton = row.lifecycle
-      ? [
-          '# from the live feed',
-          `rule "dev ${short}: power cycled" {`,
-          `  when input device(dev=${short}) power cycled`,
-          `  do   log("TODO")`,
-          '}',
-          '',
-        ].join('\n')
-      : [
-          '# from the live feed',
-          `rule "dev ${short} / inst ${inst}: ${ev}" {`,
-          `  when input(dev=${short}, inst=${inst}) ${verb} ${ev}`,
-          `  do   log("TODO")`,
-          '}',
-          '',
-        ].join('\n')
-    const current = draft ?? source
-    editDraft(current === '' ? skeleton : `${skeleton}\n${current}`)
+    const skeleton = feedSkeleton(row)
+    if (skeleton === null) return
+    editWhole(prependBlock(full, skeleton))
     if (taRef.current) taRef.current.scrollTop = 0
   }
 
@@ -682,12 +677,12 @@ export function RulesScreen() {
         <div class="editor">
           <div class="tabs">
             <span
-              class={scoped === null ? 't on' : 't'}
-              onClick={() => setScoped(null)}
+              class={current === null ? 't on' : 't'}
+              onClick={() => setScope(null)}
             >
               Whole document
             </span>
-            {scoped !== null && <span class="t on">{scoped}</span>}
+            {current !== null && <span class="t on">{current.name}</span>}
           </div>
           <div class="bar">
             <span class={state.cls}>{state.label}</span>
@@ -758,8 +753,8 @@ export function RulesScreen() {
             diagnostic={text.diagnostic}
             busy={busy}
             onToggle={toggleRule}
-            selected={scoped}
-            onSelect={(name) => setScoped(spans.has(name) ? name : null)}
+            selected={current?.name ?? null}
+            onSelect={(name) => setScope(scopeRule(name, full))}
           />
           <div class="panel">
             <h2>Snippets</h2>

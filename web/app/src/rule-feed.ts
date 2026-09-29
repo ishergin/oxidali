@@ -1,6 +1,11 @@
 export const RULE_SETTLE_MS = 1000
 export const FEED_CAPACITY = 100
 
+const DEFAULT_EVENT = 'short_press'
+const STATE_EVENTS: ReadonlySet<string> = new Set(['occupied', 'vacant'])
+const SKELETON_HEADER = '# from the live feed'
+const SKELETON_ACTION = '  do   log("TODO")'
+
 export interface InputFeedPayload {
   scheme?: number | null
   short_address?: number | null
@@ -84,6 +89,32 @@ export function rowVerdict(row: FeedRow, now: number): FeedVerdict {
   if (row.short === null) return 'unattributable'
   if (row.rule === undefined && now - row.atMs < RULE_SETTLE_MS) return 'pending'
   return row.rule ? 'fired' : 'unmatched'
+}
+
+export function feedSkeleton(row: FeedRow): string | null {
+  const dev = row.short
+  if (dev === null) return null
+  if (row.lifecycle) {
+    return [
+      SKELETON_HEADER,
+      `rule "dev ${dev}: power cycled" {`,
+      `  when input device(dev=${dev}) power cycled`,
+      SKELETON_ACTION,
+      '}',
+      '',
+    ].join('\n')
+  }
+  const inst = row.instance ?? 0
+  const ev = row.event ?? DEFAULT_EVENT
+  const verb = STATE_EVENTS.has(ev) ? 'becomes' : 'is'
+  return [
+    SKELETON_HEADER,
+    `rule "dev ${dev} / inst ${inst}: ${ev}" {`,
+    `  when input(dev=${dev}, inst=${inst}) ${verb} ${ev}`,
+    SKELETON_ACTION,
+    '}',
+    '',
+  ].join('\n')
 }
 
 export function nextSettleAt(rows: readonly FeedRow[], now: number): number | null {

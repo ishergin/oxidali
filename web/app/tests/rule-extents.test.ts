@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { ruleSpans, ruleText, spliceRule } from '../src/rule-extents.js'
+import {
+  currentScope,
+  editInScope,
+  insertBlock,
+  insertionPoint,
+  prependBlock,
+  ruleSpans,
+  ruleText,
+  scopeRule,
+  spliceRule,
+} from '../src/rule-extents.js'
 
 const doc = (...lines: string[]) => lines.join('\n')
 
@@ -142,4 +152,75 @@ test('the single-rule view splices back without touching any other byte', () => 
   assert.equal(ruleText(source, a), doc('rule "a" {', '  when every 5m', '  do   log("}")', '}'))
   const edited = spliceRule(source, a, doc('rule "a" {', '  when every 1m', '  do   log("}")', '}'))
   assert.equal(edited, source.replace('every 5m\n  do   log("}")', 'every 1m\n  do   log("}")'))
+})
+
+const away = doc(
+  'rule "ушёл" {',
+  '  when input(dev=3, inst=2) is long_press_start',
+  '  do   broadcast.off()',
+  '       after 5m do { hcl.resume(broadcast) }',
+  '}',
+  'rule "b" {',
+  '  when every 5m',
+  '  do   log("b")',
+  '}',
+  '',
+)
+
+const ruleB = doc('rule "b" {', '  when every 5m', '  do   log("b")', '}', '')
+
+test("a rule's own tab keeps its rule while an edit leaves a string open", () => {
+  const scope = scopeRule('ушёл', away)
+  assert.ok(scope)
+  const typed = ruleText(away, scope.span).replace('hcl.resume(broadcast)', 'hcl.resume(lamp(")')
+  const next = editInScope(scope, typed)
+  assert.equal(ruleSpans(next.base).has('ушёл'), false)
+  assert.equal(currentScope(next, next.base), next)
+  assert.equal(ruleText(next.base, next.span), typed)
+  assert.ok(next.base.endsWith(ruleB))
+})
+
+test('the tab follows its rule when an edit adds or removes lines', () => {
+  const scope = scopeRule('ушёл', away)
+  assert.ok(scope)
+  const longer = editInScope(scope, doc(ruleText(away, scope.span), '# ещё строка'))
+  assert.deepEqual(longer.span, { from: 0, to: 5 })
+  assert.ok(longer.base.endsWith(ruleB))
+  const shorter = editInScope(longer, 'rule "ушёл" { when every 5m do broadcast.off() }')
+  assert.deepEqual(shorter.span, { from: 0, to: 0 })
+  assert.equal(shorter.base, doc('rule "ушёл" { when every 5m do broadcast.off() }', ruleB))
+})
+
+test('a document changed outside the tab finds its rule again by name, or lets it go', () => {
+  const scope = scopeRule('ушёл', away)
+  assert.ok(scope)
+  const moved = doc('# шапка', away)
+  assert.deepEqual(currentScope(scope, moved), { name: 'ушёл', span: { from: 1, to: 5 }, base: moved })
+  assert.equal(currentScope(scope, ruleB), null)
+  assert.equal(currentScope(null, away), null)
+})
+
+test("a snippet from a rule's own tab lands after that rule and the document stays whole", () => {
+  const scope = scopeRule('ушёл', away)
+  assert.ok(scope)
+  const snippet = doc('rule "c" {', '  when every 1m', '  do   log("c")', '}')
+  const caretInsideTheRule = 3
+  const next = insertBlock(away, insertionPoint(away, scope, caretInsideTheRule), snippet)
+  assert.equal(next, doc(ruleText(away, scope.span), '', snippet, '', ruleB))
+  assert.equal(next.split('rule "ушёл"').length, 2)
+})
+
+test('a block goes in with one blank line around it, at the caret or at the end', () => {
+  assert.equal(insertionPoint('abc', null, 1), 1)
+  assert.equal(insertionPoint('abc', null, null), 3)
+  assert.equal(insertBlock('', 0, 'X'), 'X\n')
+  assert.equal(insertBlock('a\n', 2, '  X\n'), 'a\n\nX\n')
+  assert.equal(insertBlock('a\n\nb\n', 3, 'X'), 'a\n\nX\n\nb\n')
+  assert.equal(insertBlock('a\nb', 1, 'X'), 'a\n\nX\n\nb')
+  assert.equal(insertBlock('a\n\nb', 1, 'X'), 'a\n\nX\n\nb')
+})
+
+test('a feed skeleton goes on top of the document', () => {
+  assert.equal(prependBlock('', 'X\n'), 'X\n')
+  assert.equal(prependBlock('a\n', 'X\n'), 'X\n\na\n')
 })
