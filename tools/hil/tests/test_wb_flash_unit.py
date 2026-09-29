@@ -1,4 +1,5 @@
 import subprocess
+import sys
 
 import pytest
 
@@ -23,6 +24,15 @@ def _control(monkeypatch, replies=None, failing=()):
         return (replies or {}).get(cmd, "ok")
     monkeypatch.setattr(wb_flash.remote_serial, "control", control)
     return sent
+
+
+def test_the_tools_are_found_as_packages_when_a_script_shadows_them(tmp_path, monkeypatch):
+    (tmp_path / "esptool.py").write_text("")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "esptool", raising=False)
+    site = wb_flash._site_packages()
+    for package in wb_flash.TOOL_PACKAGES:
+        assert (site / package / "__init__.py").is_file(), (site, package)
 
 
 def test_a_bridge_that_cannot_release_is_refused_before_any_reset(monkeypatch):
