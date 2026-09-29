@@ -85,7 +85,7 @@ Feature: Commissioning replace device
     And the last operation eventually fails
     And the operation error code should be "verify_failed"
     And all scripted DALI exchanges should be consumed without errors
-    And no short address should have been programmed on the bus
+    And the transport should have carried exactly the identity probe of short address 0
     And physical device 1 should eventually exist on adapter 0
     When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
     Then the response status should be 200

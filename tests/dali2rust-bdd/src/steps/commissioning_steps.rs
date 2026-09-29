@@ -7,7 +7,7 @@ use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use serde_json::Value;
 
-use crate::steps::frames::{special_frame, standard_frame};
+use crate::steps::frames::{dt8_raw_query_frame, special_frame, standard_frame};
 use crate::steps::physical_devices::discovery_scripts::script_detect_dt8_cct;
 use crate::steps::polling::fetch_json;
 use crate::DaliWorld;
@@ -161,7 +161,8 @@ fn script_address_change_frames(
 }
 
 const VERIFIED_STATUS: u8 = 0x00;
-const MAX_SHORT_ADDRESS: u8 = 63;
+const DT8_QUERY_COLOUR_TYPE_FEATURES: u8 = 0xF9;
+const DT8_QUERY_COLOUR_STATUS: u8 = 0xF8;
 
 // COMM-100
 #[given(
@@ -209,17 +210,21 @@ async fn then_replacement_profile(world: &mut DaliWorld, failed: u8, replacement
 }
 
 // COMM-101
-#[then("no short address should have been programmed on the bus")]
-async fn then_no_short_address_programmed(world: &mut DaliWorld) {
+#[then(regex = r"^the transport should have carried exactly the identity probe of short address (\d+)$")]
+async fn then_identity_probe_only(world: &mut DaliWorld, short: u8) {
+    let enable_dt8 = special_frame(SpecialCommand::EnableDeviceType(8));
+    let expected = vec![
+        standard_frame(short, StandardCommand::QueryDeviceType),
+        enable_dt8,
+        dt8_raw_query_frame(short, DT8_QUERY_COLOUR_TYPE_FEATURES),
+        enable_dt8,
+        dt8_raw_query_frame(short, DT8_QUERY_COLOUR_STATUS),
+    ];
     let frames = world.dali_mock().lock().expect("mock lock").sent_frames();
-    let programmed: Vec<u16> = (0..=MAX_SHORT_ADDRESS)
-        .map(|short| standard_frame(short, StandardCommand::SetShortAddress))
-        .filter(|frame| frames.contains(frame))
-        .collect();
-    assert!(
-        programmed.is_empty(),
-        "a failed device that still answers must stop the replacement before any \
-         SET SHORT ADDRESS: {frames:04X?}"
+    assert_eq!(
+        frames, expected,
+        "a failed device that still answers stops the replacement at its identity probe: \
+         no DTR0, no SET SHORT ADDRESS, no verify: {frames:04X?}"
     );
 }
 
