@@ -522,3 +522,26 @@ async fn diagnostics_uptime_monotonic(world: &mut DaliWorld) {
         "uptime went backwards: before={before} now={now}"
     );
 }
+
+// COMM-004 COMM-008 COMM-052 COMM-056 COMM-057 INP-001 INP-002 INP-003 INP-004 INP-005 OP-100 PD-042 PD-043 PD-255 RULE-020 RULE-021 RULE-023 SYS-230 SYS-231 SYS-232 SYS-233 SYS-235 SYS-236 SYS-238 SYS-239 SYS-240 COMM-098 RULE-027
+#[given("the DALI mock transport trace is cleared")]
+async fn given_mock_trace_cleared(world: &mut DaliWorld) {
+    world.dali_mock().lock().expect("mock lock").clear();
+}
+
+fn assert_no_script_errors(world: &DaliWorld) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    assert_eq!(
+        mock.scripted_exchanges_remaining(),
+        0,
+        "scripted exchanges remain: {:?}",
+        mock.sent_frames()
+    );
+    assert_eq!(mock.script_error(), None, "unexpected mock script error");
+}
+
+// GRP-066 PD-030 PD-034 PD-040 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 VL-020 VL-054 PD-169 MQTT-012 MQTT-017 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 SCN-083 SCN-084 SCN-085 COMM-010 COMM-034 COMM-038 COMM-080 COMM-081 COMM-092 PD-037 PD-164 PD-165 PD-166 PD-167 PD-168 PD-170 PD-171 PD-189 PD-190 PD-191 PD-194 PD-195 PD-196 PD-197 PD-198 PD-199 PD-240 PD-241 PD-242 PD-243 PD-250 PD-251 PD-252 PD-253 PD-254 SCN-060 SCN-092 SCN-093 SYS-234 PD-267 PD-268 POLICY-010 POLICY-011 COMM-099 PD-271
+#[then("all scripted DALI exchanges should be consumed without errors")]
+async fn then_all_scripted_exchanges_consumed(world: &mut DaliWorld) {
+    assert_no_script_errors(world);
+}

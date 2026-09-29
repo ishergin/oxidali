@@ -6,7 +6,8 @@ use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use serde_json::Value;
 
-use crate::steps::physical_devices_steps::{fetch_json, special_frame, standard_frame};
+use crate::steps::frames::{special_frame, standard_frame};
+use crate::steps::polling::fetch_json;
 use crate::DaliWorld;
 
 const IDENTIFY_PAIR_FRAMES: usize = 2;

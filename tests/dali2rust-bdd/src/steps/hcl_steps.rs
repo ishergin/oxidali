@@ -164,7 +164,7 @@ fn set_clock(world: &mut DaliWorld, minutes_since_midnight: u64) {
 }
 
 fn scheduler_ticks(port: u16) -> u64 {
-    crate::steps::physical_devices_steps::fetch_json(port, "/api/v1/diagnostics")
+    crate::steps::polling::fetch_json(port, "/api/v1/diagnostics")
         .map(|json| json["hcl"]["ticks"].as_u64().unwrap_or(0))
         .unwrap_or(0)
 }
@@ -315,12 +315,12 @@ async fn then_override_eventually_suspended(world: &mut DaliWorld, schedule_id: 
     let path = format!("/api/v1/hcl-schedules/{schedule_id}/override");
     dali2rust_test_support::wait_until(
         || {
-            crate::steps::physical_devices_steps::fetch_json(port, &path)
+            crate::steps::polling::fetch_json(port, &path)
                 .is_some_and(|json| json["suspended"] == serde_json::Value::Bool(true))
         },
         std::time::Duration::from_secs(10),
     );
-    let json = crate::steps::physical_devices_steps::fetch_json(port, &path)
+    let json = crate::steps::polling::fetch_json(port, &path)
         .expect("override read should answer");
     assert_eq!(
         json["suspended"],
@@ -334,7 +334,7 @@ async fn then_override_eventually_suspended(world: &mut DaliWorld, schedule_id: 
 async fn then_device_holds_stored_colour(world: &mut DaliWorld, short: u64) {
     let port = world.server_port();
     let colour = || {
-        crate::steps::physical_devices_steps::fetch_json(port, "/api/v1/adapters/0/physical-devices")
+        crate::steps::polling::fetch_json(port, "/api/v1/adapters/0/physical-devices")
             .and_then(|json| {
                 json["physical_devices"]
                     .as_array()?

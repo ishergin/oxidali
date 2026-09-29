@@ -144,8 +144,12 @@ Decided in [`ADR-004`](decisions/ADR-004-bdd-black-box-boundary.md).
   `verify_bdd_tree_policy.sh`; a new resource adds its directory there. `dali/`, `bus/`,
   `display/` and `registry/` are forbidden, and an empty directory fails the coverage
   gate.
-- Steps live in `src/steps/<domain>_steps.rs`; steps shared across resources live in
-  `system_steps.rs`, `diagnostic_steps.rs` and `contracts_steps.rs`.
+- Steps live in `src/steps/<domain>_steps.rs`, or in `src/steps/<domain>/` split by what
+  they drive, with that domain's mock-transport scripts beside them; steps shared across
+  resources live in `system_steps.rs`, `diagnostic_steps.rs` and `contracts_steps.rs`,
+  and the operation-outcome steps in `operations_steps.rs`.
+- Helpers several step files use sit in `src/steps/`: frame builders in `frames.rs`, HTTP
+  polling in `polling.rs`, frame-order and priority assertions in `wire.rs`.
 
 ## Tags
 

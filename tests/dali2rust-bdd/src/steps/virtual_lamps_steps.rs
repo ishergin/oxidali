@@ -1,9 +1,9 @@
 use cucumber::{given, then};
 use serde_json::{json, Value};
 
-use crate::steps::physical_devices_steps::{
-    read_groups_membership_from_gear, script_scan_discovery, wait_for_operation_status,
-};
+use crate::steps::physical_devices::attribute_read_steps::read_groups_membership_from_gear;
+use crate::steps::physical_devices::discovery_scripts::script_scan_discovery;
+use crate::steps::polling::wait_for_operation_status;
 use crate::{DaliWorld};
 use crate::steps::last_json;
 

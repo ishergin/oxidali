@@ -201,7 +201,7 @@ async fn then_stats_dali_counter(world: &mut DaliWorld, field: String, expected:
     let port = world.server_port();
     wait_until(
         || {
-            crate::steps::physical_devices_steps::fetch_json(port, "/api/v1/stats")
+            crate::steps::polling::fetch_json(port, "/api/v1/stats")
                 .and_then(|json| json.pointer(&pointer).and_then(Value::as_u64))
                 == Some(expected)
         },
