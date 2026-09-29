@@ -80,7 +80,7 @@
 |---|---|---|---|
 | `DaliTargetStateAppliedEvent` | проектор, реестр, дисплей | required | Уставка стала истинной на проводе; несёт scope, идентичности, setpoint, признак DAPC и монотонную метку момента применения |
 | `DaliTargetStateFailedEvent` | дисплей | best-effort | Отказ исполнения; ждущий узнаёт о нём по подтверждению |
-| `DaliSceneRecalledEvent` | проектор, реестр, правила, дисплей | required | На шине произошёл нативный recall; реестр запоминает активную сцену |
+| `DaliSceneRecalledEvent` | проектор, реестр, правила, дисплей | required | Исход нативного recall: без `error` кадр ушёл на шину, и реестр запоминает активную сцену; recall с `error` не случился — его показывает только дисплей |
 | `DaliGroupMembershipProgrammedEvent` | реестр, трекер, оркестратор | required | Ячейка членства запрограммирована; несёт маску readback'а |
 | `DaliSceneProgrammedEvent` | реестр, трекер, оркестратор | required | Строка сцены запрограммирована; несёт readback уровня и эхо записанного |
 | `DaliAttributesReadEvent` | реестр, проектор | required | Один чанк на группу атрибутов; секцию `RuntimeStatus` применяет только проектор |

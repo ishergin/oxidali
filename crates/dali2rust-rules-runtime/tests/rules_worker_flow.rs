@@ -805,6 +805,48 @@ fn instance_configured(manual: bool) -> dali2rust_contracts::msg::Dali103Instanc
     }
 }
 
+fn scene_recalled(scene_id: u8, failed: bool) -> dali2rust_contracts::msg::DaliSceneRecalledEvent {
+    dali2rust_contracts::msg::DaliSceneRecalledEvent {
+        registry_adapter_id: 0,
+        scope: dali2rust_contracts::msg::DaliTargetScope::Broadcast,
+        short_address: 0,
+        group_id: 0,
+        scene_id,
+        error: failed.then(|| {
+            dali2rust_contracts::msg::CompactErrorPayload::new(
+                dali2rust_contracts::msg::ErrorCode::ExecutionFailed,
+                "execution_failed",
+            )
+        }),
+        recalled_at_mono_ms: 0,
+    }
+}
+
+const SCENE_RULES_DOC: &str = "rule \"три\" cooldown 0ms {\n  when scene(3) recalled\n  do lamp(6).level(33)\n}\n\
+rule \"четыре\" cooldown 0ms {\n  when scene(4) recalled\n  do lamp(6).level(44)\n}\n";
+
+#[test]
+fn a_recall_that_failed_wakes_no_scene_rule() {
+    let h = harness("rules-scene-recall-failed");
+    publish_document(&h, 141, SCENE_RULES_DOC, 0);
+    let sig = recv_signal(&h, 141);
+    assert!(sig.error.is_none(), "the document must compile: {sig:?}");
+    wait_revision(&h.store, 1);
+
+    publish_bus_event(&h, 142, scene_recalled(3, true));
+    publish_bus_event(&h, 143, scene_recalled(4, false));
+    let (_, level) = recv_setpoint(&h).expect("the recall that happened must fire its rule");
+    assert_eq!(
+        level,
+        Some(44),
+        "the failed recall of scene 3 reached the funnel first; had it woken its rule, 33 would lead"
+    );
+
+    publish_bus_event(&h, 144, scene_recalled(3, false));
+    let (_, level) = recv_setpoint(&h).expect("a recall of scene 3 that happened fires its rule");
+    assert_eq!(level, Some(33));
+}
+
 
 #[test]
 fn stop_fade_publishes_its_own_command_for_a_group() {

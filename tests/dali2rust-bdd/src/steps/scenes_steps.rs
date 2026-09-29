@@ -777,6 +777,20 @@ async fn given_broadcast_recall_script(world: &mut DaliWorld, scene_id: u8) {
     );
 }
 
+// RULE-030
+#[given(regex = r"^the DALI mock transport fails the next broadcast go-to-scene (\d+) frame$")]
+async fn given_broadcast_recall_fails(world: &mut DaliWorld, scene_id: u8) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    mock.expect_forward_frame_send_error(
+        DaliCommand::Standard {
+            address: DaliAddress::Broadcast,
+            command: StandardCommand::GoToScene { scene: scene_id },
+        }
+        .to_forward_frame()
+        .raw(),
+    );
+}
+
 // SCN-080
 #[then(regex = r"^the DALI mock transport should have sent only a broadcast go-to-scene (\d+) frame$")]
 async fn then_only_broadcast_recall_frame(world: &mut DaliWorld, scene_id: u8) {

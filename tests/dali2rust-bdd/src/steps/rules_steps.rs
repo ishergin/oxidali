@@ -50,3 +50,33 @@ async fn then_broadcast_off_sent(world: &mut DaliWorld) {
         "expected broadcast off (DAPC 0, 0xFE00) among {frames:04X?}"
     );
 }
+
+const RULE_FIRE_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn rule_fire_count(port: u16, name: &str) -> Option<u64> {
+    let json = crate::steps::physical_devices_steps::fetch_json(port, "/api/v1/rules?format=json")?;
+    json.pointer("/rules/rules")?
+        .as_array()?
+        .iter()
+        .find(|rule| rule["name"].as_str() == Some(name))?
+        .pointer("/runtime/fire_count")?
+        .as_u64()
+}
+
+// RULE-030
+#[then(regex = r#"^the rule "([^"]+)" eventually has fired (\d+) times?$"#)]
+async fn then_rule_eventually_fired(world: &mut DaliWorld, name: String, expected: u64) {
+    let port = world.server_port();
+    wait_until(
+        || rule_fire_count(port, &name).is_some_and(|count| count >= expected),
+        RULE_FIRE_TIMEOUT,
+    );
+    assert_eq!(rule_fire_count(port, &name), Some(expected), "fire count of rule {name}");
+}
+
+// RULE-030
+#[then(regex = r#"^the rule "([^"]+)" should have fired (\d+) times?$"#)]
+async fn then_rule_has_fired(world: &mut DaliWorld, name: String, expected: u64) {
+    let port = world.server_port();
+    assert_eq!(rule_fire_count(port, &name), Some(expected), "fire count of rule {name}");
+}
