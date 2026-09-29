@@ -14,7 +14,7 @@ from hil.seriallog import LogWindow
 from hil.wait import wait_until
 from hil_harness import validity_of
 
-VIRTUAL_ENV = "HIL_VIRTUAL_GEAR"
+VIRTUAL_ENV = virtual_gear.VIRTUAL_ENV
 COMMISSIONING_ENV = "HIL_ALLOW_VIRTUAL_COMMISSIONING"
 OWNER_SHORTS_ENV = "HIL_OWNER_SHORTS"
 PARK_ENV = "HIL_VIRTUAL_PARK"
@@ -32,7 +32,7 @@ RESTORE_APPLY_S = 90
 
 
 def enabled():
-    return os.environ.get(VIRTUAL_ENV) == "1"
+    return virtual_gear.run_enabled()
 
 
 def commissioning_allowed():

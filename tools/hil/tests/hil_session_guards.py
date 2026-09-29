@@ -8,6 +8,7 @@ from hil import config as config_mod
 from hil import prod_state
 from hil import serialmon as serialmon_mod
 from hil import validity
+from hil.virtual_gear import run_enabled as virtual_gear_run
 from hil_harness import ANCHOR_TZ, UPTIME_SLACK_S, track, validity_of
 
 BENCH_BASELINE_TZ = os.environ.get("HIL_BENCH_TZ", "MSK-3")
@@ -85,7 +86,8 @@ def bench_baseline(pytestconfig, production_state):
         return
 
     findings.extend(_neutralize_poller(api))
-    schedule_findings, suspended = _neutralize_schedules(api, api.cfg.drives_lamps())
+    schedule_findings, suspended = _neutralize_schedules(
+        api, api.cfg.drives_lamps() or virtual_gear_run())
     findings.extend(schedule_findings)
     findings.extend(_neutralize_timezone(api, api.cfg.drives_lamps()))
     leaked = _leaked_names(api)
@@ -120,11 +122,11 @@ def _neutralize_poller(api):
             "run; see ISSUE-30)"]
 
 
-def _neutralize_schedules(api, drives_lamps):
+def _neutralize_schedules(api, suspend):
     enabled = [s["schedule_id"] for s in api.hcl.list() if s.get("enabled")]
     if not enabled:
         return [], []
-    if not drives_lamps:
+    if not suspend:
         return (["left %d HCL schedule(s) of the owner enabled (%s): a run that drives no "
                  "lamp neither suspends nor re-enables them" % (len(enabled),
                                                                 ", ".join(enabled))], [])

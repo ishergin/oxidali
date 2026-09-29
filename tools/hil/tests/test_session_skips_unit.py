@@ -138,10 +138,10 @@ class _HclApi:
 
 def test_a_run_that_drives_no_lamp_leaves_the_owner_schedules_alone():
     api = _HclApi()
-    findings, suspended = hil_session_guards._neutralize_schedules(api, drives_lamps=False)
+    findings, suspended = hil_session_guards._neutralize_schedules(api, suspend=False)
     assert api.hcl.patches == [] and suspended == []
     assert "left 1 HCL schedule(s)" in findings[0]
-    findings, suspended = hil_session_guards._neutralize_schedules(api, drives_lamps=True)
+    findings, suspended = hil_session_guards._neutralize_schedules(api, suspend=True)
     assert api.hcl.patches == [("owner-evening", {"enabled": False})]
     assert suspended == ["owner-evening"]
 

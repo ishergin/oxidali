@@ -33,6 +33,7 @@ CONTENTION_COUNTERS = ("collision_restarts_total", "foreign_frames_total")
 EXIT_SETUP, EXIT_SAFETY, EXIT_PEER_RETURNED, EXIT_BLIND = 3, 4, 5, 6
 
 SCAN_MODE = "scan_known_short_addresses"
+VIRTUAL_ENV = "HIL_VIRTUAL_GEAR"
 PARK_VL_NAME = "virtual gear SA%d"
 WB_CONFIG = "/etc/wb-mqtt-dali.conf"
 SSH_TIMEOUT_S = 30
@@ -96,6 +97,10 @@ def parse_park(spec) -> tuple:
     if not sum(shape):
         raise VirtualGearError("a park of no gear leaves the tier nothing to drive: %r" % spec)
     return shape
+
+
+def run_enabled() -> bool:
+    return os.environ.get(VIRTUAL_ENV) == "1"
 
 
 def park_of_kind(park, shape, kind) -> list:
