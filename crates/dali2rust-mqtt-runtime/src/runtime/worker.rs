@@ -33,6 +33,7 @@ use crate::runtime::rule_topics::{self, Paced, RuleTopicCache, RuleTopicsReadPor
 use crate::runtime::session::{
     announce_and_subscribe, announce_offline, qos_of, session_config, topics_of,
 };
+use crate::runtime::subscriptions::Subscriptions;
 
 const WAIT_MS: u32 = 100;
 const PARK: Duration = Duration::from_millis(500);
@@ -63,7 +64,7 @@ pub struct MqttWorkerPorts {
 #[derive(Default)]
 struct Session {
     generation: u32,
-    subscriptions_expected: u32,
+    subscriptions: Subscriptions,
     command_filters: [String; 3],
     rule_topics: Vec<String>,
     lamp_config_hashes: HashMap<(u8, u8), u64>,
@@ -79,7 +80,7 @@ impl Session {
     fn begin(&mut self, generation: u32, dialled_with: u64, topics: &HaTopics) {
         let Self {
             generation: gen_slot,
-            subscriptions_expected,
+            subscriptions,
             command_filters,
             rule_topics,
             dialled_with: dialled_slot,
@@ -91,7 +92,7 @@ impl Session {
             announced_selects,
         } = self;
         *gen_slot = generation;
-        *subscriptions_expected = 0;
+        *subscriptions = Subscriptions::default();
         *command_filters = topics.command_subscriptions();
         rule_topics.clear();
         *dialled_slot = dialled_with;
@@ -339,10 +340,6 @@ fn serve_turn(
     dali2rust_bus::worker_counters::mirror(
         &cx.ports.counters.commands_dropped_total,
         cx.link.dropped_incoming(),
-    );
-    dali2rust_bus::worker_counters::mirror(
-        &cx.ports.counters.subscriptions_refused_total,
-        cx.link.subscriptions_refused(),
     );
     drain_bus(cx.ev_rx, burst, client, session, topics, cx.settings, cx.ports, job, rule_budget);
     if let Some(active) = job.as_mut() {
@@ -907,8 +904,9 @@ fn ensure_session(
         return false;
     }
     follow_rule_topics(client.as_mut(), session, rules, ports);
+    settle_subacks(&link, session, ports);
     ports.counters.set_connected(
-        link.subscriptions_acked() >= session.subscriptions_expected
+        session.subscriptions.all_granted()
             && rule_topics::all_followed(&session.rule_topics, rules.topics()),
     );
     true
@@ -927,19 +925,23 @@ fn begin_session(
     ports: &MqttWorkerPorts,
 ) -> bool {
     let announced = topics_of(settings);
-    if let Err(e) = announce_and_subscribe(client.as_mut(), &announced) {
-        log::warn!("mqtt: could not announce on a fresh session: {e:?}");
-        announce_offline(client.as_mut(), &announced);
-        return false;
-    }
+    let sent = match announce_and_subscribe(client.as_mut(), &announced) {
+        Ok(sent) => sent,
+        Err(e) => {
+            log::warn!("mqtt: could not announce on a fresh session: {e:?}");
+            announce_offline(client.as_mut(), &announced);
+            return false;
+        }
+    };
     session.begin(
         link.session_generation(),
         session_settings_fingerprint(settings, password),
         &announced,
     );
+    for (filter, message_id) in &sent {
+        session.subscriptions.sent(filter, *message_id);
+    }
     *topics = announced;
-    session.subscriptions_expected =
-        u32::try_from(session.command_filters.len()).unwrap_or(u32::MAX);
     plan_session_reannounce(job, ports, settings);
     true
 }
@@ -952,10 +954,23 @@ fn follow_rule_topics(
     ports: &MqttWorkerPorts,
 ) {
     rules.refresh(ports.rule_topics.as_ref());
-    let covering = &session.command_filters;
-    let sent =
-        rule_topics::follow_topics(client, &mut session.rule_topics, rules.topics(), covering);
-    session.subscriptions_expected = session.subscriptions_expected.saturating_add(sent);
+    rule_topics::follow_topics(
+        client,
+        &mut session.rule_topics,
+        &mut session.subscriptions,
+        rules.topics(),
+        &session.command_filters,
+    );
+}
+
+#[inline(never)]
+fn settle_subacks(link: &MqttLink, session: &mut Session, ports: &MqttWorkerPorts) {
+    for ack in link.take_subacks() {
+        if let Some(filter) = session.subscriptions.settle(ack) {
+            log::warn!("mqtt: the broker refused the subscription to {filter}");
+            bump(&ports.counters.subscriptions_refused_total);
+        }
+    }
 }
 
 #[inline(never)]

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use dali2rust_platform::mqtt::{
     MqttClient, MqttConnectionState, MqttError, MqttIncoming, MqttLastWill, MqttLink, MqttQos,
-    MqttSessionConfig,
+    MqttSessionConfig, MqttSubAck,
 };
 
 use crate::runtime::rule_topics::{topic_filter_matches, RuleTopicsReadPort};
@@ -30,8 +30,9 @@ struct MockInner {
     disconnect_calls: u32,
     fail_publishes: u32,
     fail_subscribes: u32,
+    last_message_id: u32,
     hold_subacks: bool,
-    held_subacks: u32,
+    held_subacks: Vec<u32>,
     refuse_subacks: u32,
     fail_connects: u32,
     stall_connects: u32,
@@ -92,8 +93,8 @@ impl MockMqttClient {
             g.hold_subacks = false;
             core::mem::take(&mut g.held_subacks)
         };
-        for _ in 0..held {
-            self.link.note_subscription_acked();
+        for message_id in held {
+            self.link.note_suback(MqttSubAck { message_id, granted: true });
         }
     }
 
@@ -271,7 +272,7 @@ impl MqttClient for MockMqttHandle {
         Ok(())
     }
 
-    fn subscribe(&mut self, topic_filter: &str, qos: MqttQos) -> Result<(), MqttError> {
+    fn subscribe(&mut self, topic_filter: &str, qos: MqttQos) -> Result<u32, MqttError> {
         let mut g = self.0.lock();
         if !g.connected {
             return Err(MqttError::NotConnected);
@@ -282,20 +283,22 @@ impl MqttClient for MockMqttHandle {
         }
         let _ = qos;
         g.subscriptions.push(topic_filter.to_string());
+        g.last_message_id = g.last_message_id.wrapping_add(1);
+        let message_id = g.last_message_id;
         if g.refuse_subacks > 0 {
             g.refuse_subacks -= 1;
-            self.0.link.note_subscription_refused();
-            return Ok(());
+            self.0.link.note_suback(MqttSubAck { message_id, granted: false });
+            return Ok(message_id);
         }
         if !g.active.iter().any(|t| t == topic_filter) {
             g.active.push(topic_filter.to_string());
         }
         if g.hold_subacks {
-            g.held_subacks += 1;
+            g.held_subacks.push(message_id);
         } else {
-            self.0.link.note_subscription_acked();
+            self.0.link.note_suback(MqttSubAck { message_id, granted: true });
         }
-        Ok(())
+        Ok(message_id)
     }
 
     fn unsubscribe(&mut self, topic_filter: &str) -> Result<(), MqttError> {

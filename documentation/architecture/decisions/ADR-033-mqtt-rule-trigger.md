@@ -34,10 +34,11 @@ messages to every new subscription.
    (MQTT 3.1.1 §3.3.5), and Mosquitto does. `connected` changes meaning: it was raised
    once per session when the command filters were acknowledged, and it is now evaluated
    every turn and true only while every subscription the session wants, rule topics
-   included, is sent and granted. It drops while a topic added mid-session waits for its
-   SUBACK and stays down while the broker refuses one (a SUBACK of 0x80, counted as
-   `subscriptions_refused_total`); `/api/v1/controller` shows it as
-   `home_assistant.connected`.
+   included, is sent and granted. A SUBACK settles the subscription whose message id it
+   carries. The flag drops while a topic added mid-session waits for its SUBACK and
+   stays down while the document holds a topic the broker refused (a SUBACK of 0x80,
+   counted as `subscriptions_refused_total` and logged with the topic);
+   `/api/v1/controller` shows it as `home_assistant.connected`.
 3. **The topic set is read, not announced.** The rules store is the one home of the
    compiled document. A read port gives the bridge the document's distinct topics and a
    generation that moves on every replacement of the document: commit, enable, recompile
@@ -104,9 +105,10 @@ messages to every new subscription.
   enabled with a broker set, on the active controller. A standby, a disabled bridge or a
   missing broker has none; the controller that becomes active subscribes with its fresh
   session, and a message published while no session exists is lost for rules.
-- The broker client port gains `unsubscribe` and the retain flag of an incoming message.
-  The esp-idf-svc event wrapper drops that flag, so on the device the client takes data
-  events from the ESP-IDF event itself.
+- The broker client port gains `unsubscribe`, the retain flag of an incoming message and
+  the message id of a SUBSCRIBE, which the link hands back with its SUBACK. The esp-idf-svc
+  event wrapper drops the flag and the return codes, so on the device the client takes
+  data and SUBACK events from the ESP-IDF event itself.
 - The stats `mqtt` block counts messages on rule topics (`rule_messages_total`), those a
   newer message replaced (`rule_messages_coalesced_total`) and those the bus refused after
   the backoff (`rule_messages_lost_total`); none of them is a received command.

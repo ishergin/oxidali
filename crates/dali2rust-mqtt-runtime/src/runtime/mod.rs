@@ -1,5 +1,6 @@
 pub mod rule_topics;
 pub mod session;
+mod subscriptions;
 pub mod worker;
 
 pub use rule_topics::RuleTopicsReadPort;

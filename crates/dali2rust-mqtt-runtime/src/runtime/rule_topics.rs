@@ -3,6 +3,8 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_platform::mqtt::{MqttClient, MqttIncoming, MqttQos};
 
+use crate::runtime::subscriptions::Subscriptions;
+
 pub(crate) const RULE_MESSAGE_INTERVAL_MS: u32 = 100;
 
 pub trait RuleTopicsReadPort: Send + Sync {
@@ -94,26 +96,33 @@ impl RuleMessagePacer {
 pub(crate) fn follow_topics(
     client: &mut dyn MqttClient,
     followed: &mut Vec<String>,
+    subscriptions: &mut Subscriptions,
     wanted: &[String],
     covering: &[String],
-) -> u32 {
-    let covered = |topic: &str| covering.iter().any(|filter| topic_filter_matches(filter, topic));
-    followed.retain(|topic| {
-        wanted.contains(topic) || (!covered(topic) && client.unsubscribe(topic).is_err())
-    });
-    let mut sent = 0;
+) {
+    followed.retain(|topic| wanted.contains(topic) || !unfollow(client, subscriptions, topic));
     for topic in wanted {
         if followed.contains(topic) {
             continue;
         }
-        let own = !covered(topic);
-        if own && client.subscribe(topic, MqttQos::AtMostOnce).is_err() {
-            continue;
+        if !covering.iter().any(|filter| topic_filter_matches(filter, topic)) {
+            let Ok(message_id) = client.subscribe(topic, MqttQos::AtMostOnce) else {
+                continue;
+            };
+            subscriptions.sent(topic, message_id);
         }
-        sent += u32::from(own);
         followed.push(topic.clone());
     }
-    sent
+}
+
+fn unfollow(client: &mut dyn MqttClient, subscriptions: &mut Subscriptions, topic: &str) -> bool {
+    if subscriptions.holds(topic) {
+        if client.unsubscribe(topic).is_err() {
+            return false;
+        }
+        subscriptions.forget(topic);
+    }
+    true
 }
 
 pub(crate) fn topic_filter_matches(filter: &str, topic: &str) -> bool {
@@ -182,28 +191,28 @@ mod tests {
     #[test]
     fn a_document_change_subscribes_the_new_topics_and_drops_the_gone_ones() {
         let (mock, mut client) = connected();
-        let mut subscribed = Vec::new();
-        assert_eq!(follow_topics(&mut client, &mut subscribed, &topics(&["a", "b"]), &[]), 2);
-        assert_eq!(follow_topics(&mut client, &mut subscribed, &topics(&["b", "c"]), &[]), 1);
+        let (mut followed, mut subscriptions) = (Vec::new(), Subscriptions::default());
+        follow_topics(&mut client, &mut followed, &mut subscriptions, &topics(&["a", "b"]), &[]);
+        follow_topics(&mut client, &mut followed, &mut subscriptions, &topics(&["b", "c"]), &[]);
+        assert_eq!(mock.subscriptions(), topics(&["a", "b", "c"]));
         assert_eq!(mock.active_subscriptions(), topics(&["b", "c"]));
         assert_eq!(mock.unsubscriptions(), topics(&["a"]));
-        assert_eq!(
-            follow_topics(&mut client, &mut subscribed, &topics(&["b", "c"]), &[]),
-            0,
-            "an unchanged document sends nothing"
-        );
+        assert!(!subscriptions.holds("a"), "an unsubscribed topic waits for no SUBACK");
+        follow_topics(&mut client, &mut followed, &mut subscriptions, &topics(&["b", "c"]), &[]);
+        assert_eq!(mock.subscriptions().len(), 3, "an unchanged document sends nothing");
     }
 
     #[test]
-    fn a_refused_subscription_is_retried_and_holds_the_set_incomplete() {
+    fn a_failed_subscribe_is_retried_and_holds_the_set_incomplete() {
         let (mock, mut client) = connected();
-        let mut subscribed = Vec::new();
+        let (mut followed, mut subscriptions) = (Vec::new(), Subscriptions::default());
         let wanted = topics(&["a"]);
         mock.fail_next_subscribes(1);
-        assert_eq!(follow_topics(&mut client, &mut subscribed, &wanted, &[]), 0);
-        assert!(!all_followed(&subscribed, &wanted), "a refused topic is not followed");
-        assert_eq!(follow_topics(&mut client, &mut subscribed, &wanted, &[]), 1);
-        assert!(all_followed(&subscribed, &wanted));
+        follow_topics(&mut client, &mut followed, &mut subscriptions, &wanted, &[]);
+        assert!(!all_followed(&followed, &wanted), "a topic whose SUBSCRIBE failed is not followed");
+        follow_topics(&mut client, &mut followed, &mut subscriptions, &wanted, &[]);
+        assert!(all_followed(&followed, &wanted));
+        assert!(subscriptions.holds("a"));
     }
 
     #[test]
@@ -211,11 +220,12 @@ mod tests {
         let (mock, mut client) = connected();
         let covering = topics(&["dali/ctl1/+/vl/+/set"]);
         let wanted = topics(&["dali/ctl1/a0/vl/1/set"]);
-        let mut followed = Vec::new();
-        assert_eq!(follow_topics(&mut client, &mut followed, &wanted, &covering), 0);
+        let (mut followed, mut subscriptions) = (Vec::new(), Subscriptions::default());
+        follow_topics(&mut client, &mut followed, &mut subscriptions, &wanted, &covering);
         assert!(all_followed(&followed, &wanted));
         assert!(mock.subscriptions().is_empty(), "no SUBSCRIBE for a covered topic");
-        follow_topics(&mut client, &mut followed, &[], &covering);
+        assert!(subscriptions.all_granted(), "nothing waits for a SUBACK");
+        follow_topics(&mut client, &mut followed, &mut subscriptions, &[], &covering);
         assert!(followed.is_empty());
         assert!(mock.unsubscriptions().is_empty(), "no UNSUBSCRIBE for what was never subscribed");
     }

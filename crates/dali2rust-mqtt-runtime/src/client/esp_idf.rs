@@ -13,7 +13,7 @@ use esp_idf_svc::sys::{
 
 use dali2rust_platform::mqtt::{
     MqttClient, MqttClientBundle, MqttConnectionState, MqttError, MqttIncoming, MqttLink, MqttQos,
-    MqttSessionConfig,
+    MqttSessionConfig, MqttSubAck,
 };
 
 const BUFFER_BYTES: usize = 1024;
@@ -121,13 +121,13 @@ fn deliver_first_chunk(link: &MqttLink, event: &esp_mqtt_event_t) {
 }
 
 fn note_suback(link: &MqttLink, event: &esp_mqtt_event_t) {
+    let Ok(message_id) = u32::try_from(event.msg_id) else {
+        return;
+    };
     // SAFETY: esp-mqtt points `data` at the SUBACK's return codes until the handler returns.
     let codes = unsafe { event_bytes(event.data, event.data_len) };
-    if codes.iter().any(|code| *code >= SUBACK_FAILURE) {
-        link.note_subscription_refused();
-    } else {
-        link.note_subscription_acked();
-    }
+    let granted = !codes.is_empty() && codes.iter().all(|code| *code < SUBACK_FAILURE);
+    link.note_suback(MqttSubAck { message_id, granted });
 }
 
 unsafe fn event_bytes<'a>(start: *const c_char, len: c_int) -> &'a [u8] {
@@ -177,11 +177,10 @@ impl MqttClient for EspMqttBridgeClient {
             .map_err(|e| MqttError::Rejected(e.code()))
     }
 
-    fn subscribe(&mut self, topic_filter: &str, qos: MqttQos) -> Result<(), MqttError> {
+    fn subscribe(&mut self, topic_filter: &str, qos: MqttQos) -> Result<u32, MqttError> {
         let client = self.client.as_mut().ok_or(MqttError::NotConnected)?;
         client
             .subscribe(topic_filter, to_qos(qos))
-            .map(|_| ())
             .map_err(|e| MqttError::Rejected(e.code()))
     }
 

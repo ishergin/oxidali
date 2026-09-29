@@ -173,16 +173,23 @@ fn a_burst_on_one_topic_is_paced_and_its_latest_message_arrives_last() {
 }
 
 #[test]
-fn a_refused_rule_subscription_holds_connected_down_and_is_counted() {
+fn a_refused_rule_subscription_holds_connected_down_until_the_document_drops_it() {
     let h = connected_bridge();
     h.mock.refuse_next_subacks(1);
     h.rule_topics.set(&[RULE_TOPIC]);
     let counters = Arc::clone(&h.counters);
     wait_until(move || counters.subscriptions_refused_total.load(Ordering::Relaxed) == 1, WAIT);
-    let counters = Arc::clone(&h.counters);
-    wait_until(move || !counters.is_connected(), WAIT);
+    h.rule_topics.set(&[RULE_TOPIC, "home/mode"]);
+    following(&h, "home/mode");
+    h.mock.broker_publish("home/mode", b"away");
+    assert_eq!(next_rule_message(&h).topic.as_str(), "home/mode", "the granted topic serves rules");
+    assert!(!h.counters.is_connected(), "the refused topic still holds the gauge down");
     assert!(
         !h.mock.active_subscriptions().iter().any(|t| t == RULE_TOPIC),
         "the broker denied the topic, so nothing arrives on it"
     );
+    h.rule_topics.set(&["home/mode"]);
+    let counters = Arc::clone(&h.counters);
+    wait_until(move || counters.is_connected(), WAIT);
+    assert_eq!(h.counters.subscriptions_refused_total.load(Ordering::Relaxed), 1);
 }
