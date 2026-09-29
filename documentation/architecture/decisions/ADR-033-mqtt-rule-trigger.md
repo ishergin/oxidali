@@ -71,11 +71,16 @@ messages to every new subscription.
 7. **A number feeds `event.value`.** A payload that is exactly a signed decimal integer
    within 32 bits is the activation's `event.value`; any other payload leaves the value
    unevaluable, and a rule that reads it reports `partial`.
-8. **No loop guard beyond the existing ones.** A message is an external occurrence and
-   starts a chain at depth zero. A rule that publishes to its own trigger topic fires
-   itself again: its cooldown ends the loop only when the broker round trip is shorter
-   than the cooldown; otherwise the bridge's publish limiter holds the loop at one publish
-   a second for as long as it runs.
+8. **A message joins the deepest recent chain.** A broker message cannot say what caused
+   it, so the activation it starts counts as caused by the deepest rule effect of the
+   last `CHAIN_WINDOW_MS` (2 s), and a `mqtt.publish` effect is recorded in the chain like
+   a light effect. A rule that publishes to its own trigger topic, and a rule on one of
+   the bridge's own state topics that changes that lamp, stop at the chain depth after
+   five activations when the round trip is shorter than the window. A slower loop is not
+   caught: the bridge's publish limiter, a bucket of four refilled once a second that
+   drops the excess, ends only a loop shorter than a second and never touches the
+   bridge's state publishes. The price is an unrelated message within 2 s of a chain
+   already at its depth limit, which is refused as the next link.
 
 ### Rejected alternatives
 

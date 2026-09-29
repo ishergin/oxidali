@@ -233,6 +233,7 @@ fn input_chain_depth(env: &ExecEnv<'_>, input: &In<'_>) -> u32 {
         In::HclOverride { target, .. } => {
             env.vol.chain_depth_for(&[ChainKey::Hcl(*target)], now)
         }
+        In::MqttMessage { .. } => env.vol.chain_depth_any(now),
         _ => 0,
     }
 }

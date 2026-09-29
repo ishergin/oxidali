@@ -1034,3 +1034,39 @@ fn the_rule_payload_ceiling_is_the_bus_frame() {
         "every trigger topic fits the event's topic field"
     );
 }
+
+fn chain_refused(out: &[dali2rust_rules_runtime::ActivationOutcome]) -> bool {
+    out.iter().any(|o| o.partial == Some(PartialReason::ChainDepth))
+}
+
+#[test]
+fn a_rule_that_publishes_to_its_own_topic_stops_at_the_chain_depth() {
+    let source = "rule \"эхо\" cooldown 0ms {\n  when mqtt \"home/echo\"\n  do mqtt.publish(\"home/echo\", \"x\")\n}\n";
+    let mut eng = engine(source, 0);
+    for step in 0..=u64::from(dali2rust_rules_runtime::runtime::engine::MAX_CHAIN_DEPTH) {
+        let out = eng.handle(mqtt("home/echo", b"x", false), &world(1_000 + step * 100));
+        assert!(!chain_refused(&out), "turn {step} of the loop still fires: {out:?}");
+    }
+    let out = eng.handle(mqtt("home/echo", b"x", false), &world(1_600));
+    assert!(chain_refused(&out), "the loop ends at the chain depth: {out:?}");
+    let quiet = 1_600 + dali2rust_rules_runtime::runtime::engine::CHAIN_WINDOW_MS + 1;
+    let out = eng.handle(mqtt("home/echo", b"x", false), &world(quiet));
+    assert!(!chain_refused(&out), "a message after the window starts a fresh chain: {out:?}");
+}
+
+#[test]
+fn a_rule_on_the_bridges_own_state_topic_stops_at_the_chain_depth() {
+    let lamp = resolver().resolve_lamp("коридор").unwrap();
+    let source = "rule \"мигание\" cooldown 0ms {\n  when mqtt \"dali/ctl1/a0/vl/3/state\"\n  do lamp(\"коридор\").toggle()\n}\n";
+    let mut eng = engine(source, 0);
+    let mut refused = false;
+    for step in 0..8u64 {
+        let lit = step % 2 == 0;
+        let out = eng.handle(
+            mqtt("dali/ctl1/a0/vl/3/state", b"{}", false),
+            &with_lamp(world(1_000 + step * 100), lamp, lit, if lit { 200 } else { 0 }),
+        );
+        refused |= chain_refused(&out);
+    }
+    assert!(refused, "a toggle echoed back by the bridge must not run for ever");
+}
