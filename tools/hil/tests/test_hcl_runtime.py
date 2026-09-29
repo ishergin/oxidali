@@ -5,6 +5,8 @@ import pytest
 from hil_instruments import _diag_counters
 from hil.wait import wait_until
 
+pytestmark = pytest.mark.light
+
 LEVEL_A, LEVEL_B = 90, 200
 CCT_K = 3000
 TICK_BUDGET_S = 95

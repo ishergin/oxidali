@@ -2,6 +2,8 @@ import time
 
 import pytest
 
+pytestmark = pytest.mark.light
+
 CCT_WARM_K = 2700
 CCT_COOL_K = 5000
 SETTLE_S = 1.0

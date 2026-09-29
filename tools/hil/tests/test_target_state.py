@@ -7,6 +7,8 @@ from hil.api import kelvin_to_mirek
 from hil.camera.calibrate import rgb_setpoint, RGB_PRIMARIES
 from test_virtual_gear import TC_SERIES_GAPS_S, TC_SERIES_KELVIN
 
+pytestmark = pytest.mark.light
+
 
 @pytest.mark.hil_id("HIL-TS-05")
 @pytest.mark.sniffer

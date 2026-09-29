@@ -49,6 +49,26 @@ def _collection_lint(items):
 
 
 NO_SERIAL = "no board attached here and no WB bridge answering"
+LIGHT_MARKER = "light"
+RULE_COMMITS_ENV = "HIL_ALLOW_RULE_COMMITS"
+RULE_COMMITTING_FIXTURE = "rules_guard"
+
+
+def ungated(item, drives_lamps, commits_rules):
+    if item.get_closest_marker(LIGHT_MARKER) and not drives_lamps:
+        return True
+    return RULE_COMMITTING_FIXTURE in item.fixturenames and not commits_rules
+
+
+def _deselect_ungated(config, items, cfg):
+    drives_lamps = bool(cfg.lamp_short_set()) and not cfg.lamps_read_only
+    commits_rules = os.environ.get(RULE_COMMITS_ENV) == "1"
+    kept, dropped = [], []
+    for item in items:
+        (dropped if ungated(item, drives_lamps, commits_rules) else kept).append(item)
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = kept
 
 
 def _serial_absence(cfg):
@@ -107,6 +127,7 @@ def pytest_collection_modifyitems(config, items):
     dut_serial_port, serial_absent = None, None
     if not config._hil_hardware_free:
         cfg = config_mod.load()
+        _deselect_ungated(config, items, cfg)
         dut_serial_port, serial_absent = _serial_absence(cfg)
         _take_session_baselines(config, cfg)
     _mark_skips(items, serial_absent, dut_serial_port)

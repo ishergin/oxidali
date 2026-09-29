@@ -2,6 +2,8 @@ import pytest
 
 from hil.wait import wait_until
 
+pytestmark = pytest.mark.light
+
 SCENE_ID = 9
 AUDIT_LEVEL = 90
 REMOVE_FROM_SCENE = 0x50

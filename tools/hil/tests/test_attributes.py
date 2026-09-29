@@ -155,6 +155,7 @@ def test_write_fade_time_roundtrip(api, lamps, sniffer, paced, state_snapshot,
         assert after == expected_ms, (requested_ms, expected_ms, after)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-04")
 @pytest.mark.sniffer
 @pytest.mark.needs_capability("rgb")
@@ -329,6 +330,7 @@ def test_a_widening_device_type_override_is_refused(api, op_check):
         api.device_patch(short, {"device_type_override": before})
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-09")
 @pytest.mark.sniffer
 def test_fade_time_actually_lasts_what_it_says(api, lamps, sniffer, paced,
@@ -380,6 +382,7 @@ def test_fade_time_actually_lasts_what_it_says(api, lamps, sniffer, paced,
         api.off(short)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-10")
 @pytest.mark.sniffer
 @pytest.mark.needs_capability("rgb")
@@ -464,6 +467,7 @@ def test_a_reserved_dimming_curve_never_reaches_the_bus(api):
     assert body.get("error") == "invalid_value", body
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-12")
 @pytest.mark.sniffer
 def test_srgb_channels_reach_the_wire_as_linear_dim_levels(

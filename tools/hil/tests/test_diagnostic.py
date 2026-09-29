@@ -5,6 +5,7 @@ from hil.wait import wait_until
 pytestmark = pytest.mark.sniffer
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-DIAG-02")
 def test_raw_frame_exact_echo_and_backward(api, sniffer, paced, lamps,
                                            state_snapshot, test_artifacts):
@@ -71,6 +72,7 @@ def _fade_settled(api, short):
     return status.get("success") is True and not status.get("backward_frame", 0) & FADE_RUNNING
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-DIAG-04")
 def test_query_actual_level_matches_state(api, lamps, wait_state,
                                           state_snapshot, test_artifacts):

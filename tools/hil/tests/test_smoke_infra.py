@@ -37,6 +37,7 @@ def test_serial_console_alive(api, serial_log):
     assert "-> 200" in line
 
 
+@pytest.mark.light
 @pytest.mark.sniffer
 def test_sniffer_catches_paced_commands(api, sniffer, paced, state_snapshot,
                                         test_artifacts):

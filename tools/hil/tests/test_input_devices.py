@@ -178,6 +178,7 @@ def bound_lamp(api):
                 "module must not touch (%s)" % sorted(FORBIDDEN_LAMPS))
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-06")
 @pytest.mark.foreign
 def test_an_injected_event_activates_a_rule_and_reaches_the_gear(
@@ -396,6 +397,7 @@ def test_commissioning_opens_and_closes_its_session(
         "segment that looks empty and is not (%r)" % (panel, device))
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-10")
 def test_the_button_vocabulary_reaches_a_rule_from_a_real_panel(
         api, foreign, panel, unkeyed_instance, bound_lamp, rules_guard,

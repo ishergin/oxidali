@@ -3,6 +3,8 @@ import time
 
 import pytest
 
+pytestmark = pytest.mark.light
+
 ARM_TIMEOUT_S = 120
 RELEASE_TIMEOUT_S = 120
 POWER_DOWN_MS = 45

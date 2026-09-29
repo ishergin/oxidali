@@ -210,6 +210,7 @@ def test_losing_the_peer_link_moves_no_role(api, peer_api, pair_roles, hil_confi
 
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-RED-05")
 @pytest.mark.serial
 @pytest.mark.destructive

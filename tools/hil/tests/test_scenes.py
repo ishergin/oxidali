@@ -101,6 +101,7 @@ def test_scene_apply_programs_gear(api, scenes_supported, vl_bindings, lamps,
         assert after["applied"]["level"] == row["desired"]["level"]
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-SCN-02")
 @pytest.mark.sniffer
 @pytest.mark.optical
@@ -134,6 +135,7 @@ def test_scene_recall_reaches_gear_and_states(api, scenes_supported,
     api.off_all()
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-SCN-05")
 def test_recall_of_empty_scene_is_noop(api, scenes_supported, vl_bindings,
                                        lamps, wait_state, state_snapshot,
@@ -156,6 +158,7 @@ def test_recall_of_empty_scene_is_noop(api, scenes_supported, vl_bindings,
     api.off(short)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-SCN-06")
 @pytest.mark.sniffer
 @pytest.mark.optical
@@ -220,6 +223,7 @@ def _fleet_actual_level(api, short):
     return r.get("backward_frame")
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-SCN-07")
 @pytest.mark.slow
 @pytest.mark.sniffer

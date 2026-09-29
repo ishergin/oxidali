@@ -1,6 +1,6 @@
 import pytest
 
-pytestmark = pytest.mark.foreign
+pytestmark = [pytest.mark.foreign, pytest.mark.light]
 
 LEVEL_A, LEVEL_B = 180, 220
 

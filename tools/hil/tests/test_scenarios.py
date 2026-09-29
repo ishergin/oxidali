@@ -12,6 +12,7 @@ def _rgb_lamp(lamps, capabilities):
     return None
 
 
+@pytest.mark.light
 @pytest.mark.optical
 @pytest.mark.sniffer
 def test_target_state_level_and_color(api, lamps, capabilities, camera_oracle,
@@ -47,6 +48,7 @@ def _group_members(api, gid):
     return members
 
 
+@pytest.mark.light
 @pytest.mark.optical
 @pytest.mark.sniffer
 def test_group_target_state_reaches_members(api, lamps, camera_oracle, sniffer,

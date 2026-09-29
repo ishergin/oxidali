@@ -1,12 +1,18 @@
 import hil_session
+import test_groups
+import test_policies
+import test_target_state
+import test_virtual_gear
 import test_ws
+from hil.config import HilConfig
 
 UART = "rfc2217://127.0.0.1:4444"
 
 
 class _Item:
-    def __init__(self, markers):
+    def __init__(self, markers, fixturenames=()):
         self.markers = set(markers)
+        self.fixturenames = list(fixturenames)
         self.added = []
 
     def get_closest_marker(self, name):
@@ -36,6 +42,72 @@ def test_a_serial_test_runs_while_the_console_answers():
 def test_the_log_channel_test_asks_for_the_serial_console():
     marks = {mark.name for mark in test_ws.test_the_log_channel_replays_and_keeps_uart_alive.pytestmark}
     assert {"smoke", "serial"} <= marks, (
-        "HIL-WS-05 asserts on the UART; without the serial marker it fails, instead of "
+        "HIL-WS-08 asserts on the UART; without the serial marker it fails, instead of "
         "skipping, on a run with no serial console"
     )
+
+
+
+def test_a_light_test_is_selected_only_when_the_run_may_drive_lamps():
+    light, plain = _Item({"light"}), _Item({"smoke"})
+    assert hil_session.ungated(light, drives_lamps=False, commits_rules=True)
+    assert not hil_session.ungated(light, drives_lamps=True, commits_rules=False)
+    assert not hil_session.ungated(plain, drives_lamps=False, commits_rules=False)
+
+
+def test_a_rule_committing_test_is_selected_only_with_its_flag():
+    rules = _Item(set(), fixturenames=["api", "rules_guard"])
+    assert hil_session.ungated(rules, drives_lamps=True, commits_rules=False)
+    assert not hil_session.ungated(rules, drives_lamps=False, commits_rules=True)
+
+
+class _Hook:
+    def __init__(self):
+        self.deselected = []
+
+    def pytest_deselected(self, items):
+        self.deselected.extend(items)
+
+
+class _Config:
+    def __init__(self):
+        self.hook = _Hook()
+
+
+def test_the_default_run_deselects_light_and_rule_committing_tests(monkeypatch):
+    monkeypatch.delenv(hil_session.RULE_COMMITS_ENV, raising=False)
+    light, rules, plain = (_Item({"light"}), _Item(set(), ["rules_guard"]), _Item({"smoke"}))
+    items, config = [light, rules, plain], _Config()
+    hil_session._deselect_ungated(config, items, HilConfig(lamp_shorts="", serial_remote=""))
+    assert items == [plain] and config.hook.deselected == [light, rules]
+    items = [light, rules, plain]
+    monkeypatch.setenv(hil_session.RULE_COMMITS_ENV, "1")
+    hil_session._deselect_ungated(_Config(), items, HilConfig(lamp_shorts="2",
+                                                              lamps_read_only=True,
+                                                              serial_remote=""))
+    assert items == [rules, plain]
+
+
+def test_no_lamp_is_drivable_unless_the_run_names_one(monkeypatch):
+    monkeypatch.delenv("HIL_LAMP_SHORTS", raising=False)
+    assert HilConfig(serial_remote="").lamp_short_set() == frozenset()
+
+
+def test_the_new_light_tests_carry_the_light_marker():
+    for test in (test_target_state.test_a_colour_temperature_series_during_a_fade_leaves_the_fixture_at_the_last_value,
+                 test_groups.test_a_stop_fade_rule_leaves_real_members_where_it_caught_them):
+        marks = {mark.name for mark in getattr(test, "pytestmark", [])}
+        module = {mark.name for mark in _module_marks(test)}
+        assert "light" in marks | module, test.__name__
+
+
+def _module_marks(test):
+    marks = __import__(test.__module__).__dict__.get("pytestmark", [])
+    return marks if isinstance(marks, list) else [marks]
+
+
+def test_the_policy_test_is_destructive_and_the_emulated_ones_are_not_light():
+    assert "destructive" in {m.name for m in _module_marks(
+        test_policies.test_a_discovery_run_writes_the_armed_policy_without_a_manual_apply)}
+    assert "light" not in {m.name for m in _module_marks(
+        test_virtual_gear.test_a_stop_fade_rule_sends_one_dapc_mask_to_its_group_and_no_level)}

@@ -86,6 +86,7 @@ def test_session_discovery_and_kelvin_dialect(ha_guard, api, mqtt_counters, hil_
         "both forms sent at once is undefined in HA's schema: %r" % config)
 
 
+@pytest.mark.light
 def test_cct_round_trip_and_colour_only_power(ha_guard, api, mqtt_counters,
                                               hil_config, state_snapshot):
     _enter_and_connect(ha_guard, api, mqtt_counters)
@@ -114,6 +115,7 @@ def test_cct_round_trip_and_colour_only_power(ha_guard, api, mqtt_counters,
     assert wait_until(lambda: _vl_state(api, vl_id)["power"] == "off", STATE_WAIT_S)
 
 
+@pytest.mark.light
 def test_group_tile_lights_only_for_the_commanded_group(ha_guard, api, mqtt_counters,
                                                         hil_config, state_snapshot):
     _enter_and_connect(ha_guard, api, mqtt_counters)
@@ -142,6 +144,7 @@ def test_group_tile_lights_only_for_the_commanded_group(ha_guard, api, mqtt_coun
     assert wait_until(lambda: tile(g_cmd) == "OFF", STATE_WAIT_S)
 
 
+@pytest.mark.light
 @pytest.mark.foreign
 def test_foreign_master_group_frame_arms_the_tile(ha_guard, api, mqtt_counters,
                                                   hil_config, state_snapshot, foreign):
@@ -161,6 +164,7 @@ def test_foreign_master_group_frame_arms_the_tile(ha_guard, api, mqtt_counters,
         "foreign group DAPC 0 (off) never cleared the tile"
 
 
+@pytest.mark.light
 def test_scene_select_recall_and_reset(ha_guard, api, mqtt_counters,
                                        hil_config, state_snapshot):
     _enter_and_connect(ha_guard, api, mqtt_counters)
@@ -252,6 +256,7 @@ def test_bench_membership_matches_registry(api):
         pytest.skip("no real fixture with a gear-reported membership read")
 
 
+@pytest.mark.light
 @pytest.mark.optical
 def test_cct_over_mqtt_is_optically_real(ha_guard, api,
                                          mqtt_counters, hil_config,
@@ -302,6 +307,7 @@ def _group_members(api, group_id):
     return sorted(shorts)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-MQTT-11")
 @pytest.mark.sniffer
 def test_a_group_command_reaches_the_lamps_not_only_the_tile(ha_guard, api,

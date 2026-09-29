@@ -73,6 +73,7 @@ def test_matrix_patch_marks_dirty_without_frames(api, vl_bindings, lamps,
         win.expect_quiet("ADD TO GROUP", settle_s=2.5)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-GRP-02")
 @pytest.mark.sniffer
 def test_group_apply_programs_gear(api, vl_bindings, lamps, free_group,
@@ -200,6 +201,7 @@ STOP_FADE_LEVEL_WAIT_S = 12.0
 STOP_FADE_POLL_S = 0.5
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-GRP-10")
 def test_a_stop_fade_rule_leaves_real_members_where_it_caught_them(
         api, hil_config, vl_bindings, lamps, free_group, group_matrix_guard, ops_quiesce,
