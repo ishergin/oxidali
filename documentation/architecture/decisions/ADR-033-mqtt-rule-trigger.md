@@ -120,8 +120,10 @@ messages to every new subscription.
   event wrapper drops the flag and the return codes, so on the device the client takes
   data and SUBACK events from the ESP-IDF event itself.
 - The stats `mqtt` block counts messages on rule topics (`rule_messages_total`), those a
-  newer message replaced (`rule_messages_coalesced_total`) and those the bus refused after
-  the backoff (`rule_messages_lost_total`); none of them is a received command.
+  newer message replaced (`rule_messages_coalesced_total`) and those lost
+  (`rule_messages_lost_total`): refused by the bus after the backoff, or still waiting out
+  the interval when their session ended or the document dropped their topic. A waiting
+  message never outlives its session. None of them is a received command.
 - The language and its limits are in
   [mqtt-trigger.md](../../product-design/runtime-modules/rules-engine/mqtt-trigger.md),
   the sessions in

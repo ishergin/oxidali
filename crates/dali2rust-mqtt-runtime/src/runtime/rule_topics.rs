@@ -22,14 +22,14 @@ pub(crate) struct RuleTopicCache {
 }
 
 impl RuleTopicCache {
-    pub(crate) fn refresh(&mut self, port: &dyn RuleTopicsReadPort) {
+    pub(crate) fn refresh(&mut self, port: &dyn RuleTopicsReadPort) -> u32 {
         let generation = port.rule_topics_generation();
         if self.generation == Some(generation) {
-            return;
+            return 0;
         }
         self.topics = port.rule_topics();
-        self.pacer.retain(&self.topics);
         self.generation = Some(generation);
+        self.pacer.retain(&self.topics)
     }
 
     pub(crate) fn topics(&self) -> &[String] {
@@ -89,8 +89,21 @@ impl RuleMessagePacer {
             .fold(cap_ms, u32::min)
     }
 
-    pub(crate) fn retain(&mut self, topics: &[String]) {
+    pub(crate) fn retain(&mut self, topics: &[String]) -> u32 {
+        let held_before = self.held();
         self.slots.retain(|slot| topics.contains(&slot.topic));
+        held_before - self.held()
+    }
+
+    pub(crate) fn clear(&mut self) -> u32 {
+        let held = self.held();
+        self.slots.clear();
+        held
+    }
+
+    fn held(&self) -> u32 {
+        let held = self.slots.iter().filter(|slot| slot.held.is_some()).count();
+        u32::try_from(held).unwrap_or(u32::MAX)
     }
 }
 
@@ -352,13 +365,25 @@ mod tests {
     }
 
     #[test]
-    fn a_topic_the_document_dropped_loses_its_waiting_message() {
+    fn a_topic_the_document_dropped_loses_its_waiting_message_and_counts_it() {
         let mut pacer = RuleMessagePacer::default();
         let _ = pacer.offer(message("a", "1"), 0);
         let _ = pacer.offer(message("a", "2"), 10);
-        pacer.retain(&topics(&["b"]));
+        let _ = pacer.offer(message("b", "1"), 10);
+        assert_eq!(pacer.retain(&topics(&["b"])), 1, "the waiting message on a is lost");
         assert!(pacer.take_due(1_000).is_empty());
         assert_eq!(payload_of(&pacer.offer(message("a", "3"), 1_000)), Some(&b"3"[..]));
+    }
+
+    #[test]
+    fn clearing_the_pacer_counts_every_waiting_message() {
+        let mut pacer = RuleMessagePacer::default();
+        for (topic, at) in [("a", 0), ("a", 10), ("b", 20), ("b", 30), ("c", 40)] {
+            let _ = pacer.offer(message(topic, "x"), at);
+        }
+        assert_eq!(pacer.clear(), 2, "a and b each hold one; c went at once");
+        assert!(pacer.take_due(1_000).is_empty());
+        assert_eq!(pacer.clear(), 0);
     }
 
     #[test]

@@ -282,7 +282,7 @@ fn run(
         } = &*config;
         if !ready(settings, ports.role.as_ref()) {
             discard_bus(&ev_rx, &ports);
-            stand_down(&mut client, session, topics, &ports, &link, job);
+            stand_down(&mut client, session, topics, &ports, &link, job, rules);
             WORKER_STACK.note("stand-down");
             continue;
         }
@@ -760,7 +760,9 @@ fn stand_down(
     ports: &MqttWorkerPorts,
     link: &Arc<MqttLink>,
     job: &mut Option<DiscoveryJob>,
+    rules: &mut RuleTopicCache,
 ) {
+    drop_held_rule_messages(rules, ports);
     if let Some(workflow) = job.take().and_then(|stalled| stalled.workflow) {
         refuse_command(ports, workflow);
     }
@@ -893,6 +895,9 @@ fn ensure_session(
     rules: &mut RuleTopicCache,
 ) -> bool {
     let link = client.link();
+    if !link.is_connected() || link.session_generation() != session.generation {
+        drop_held_rule_messages(rules, ports);
+    }
     if !link.is_connected() {
         ports.counters.set_connected(false);
         if !dial(client, &link, settings, password, pacer, ports) {
@@ -954,10 +959,16 @@ fn follow_rule_topics(
     rules: &mut RuleTopicCache,
     ports: &MqttWorkerPorts,
 ) {
-    rules.refresh(ports.rule_topics.as_ref());
+    let lost = rules.refresh(ports.rule_topics.as_ref());
+    dali2rust_bus::worker_counters::bump_by(&ports.counters.rule_messages_lost_total, lost);
     let refused =
         session.rule_topics.follow(client, &mut session.subscriptions, rules.topics(), &session.filters);
     dali2rust_bus::worker_counters::bump_by(&ports.counters.own_topics_refused_total, refused);
+}
+
+fn drop_held_rule_messages(rules: &mut RuleTopicCache, ports: &MqttWorkerPorts) {
+    let lost = rules.pacer.clear();
+    dali2rust_bus::worker_counters::bump_by(&ports.counters.rule_messages_lost_total, lost);
 }
 
 #[inline(never)]
@@ -1963,6 +1974,65 @@ mod tests {
         assert!(ports.counters.is_connected(), "every SUBACK in: the gauge reads 1");
     }
 
+    const RULE_MESSAGE_WAIT_PROOF_MS: u32 = 1_000;
+
+    fn ports_following(topic: &str) -> (MqttWorkerPorts, dali2rust_bus::BusHost, RuleTopicCache) {
+        let (mut ports, host) = test_ports();
+        let followed = Arc::new(crate::client::MockRuleTopics::default());
+        followed.set(&[topic]);
+        ports.rule_topics = followed;
+        let mut rules = RuleTopicCache::default();
+        rules.refresh(ports.rule_topics.as_ref());
+        (ports, host, rules)
+    }
+
+    fn hold_one_rule_message(rules: &mut RuleTopicCache, topic: &str) {
+        let now = monotonic_ms();
+        let message = |payload: &str| MqttIncoming {
+            topic: topic.to_string(),
+            payload: payload.as_bytes().to_vec(),
+            retained: false,
+        };
+        assert!(matches!(rules.pacer.offer(message("first"), now), Paced::Now(_)));
+        assert!(matches!(rules.pacer.offer(message("held"), now), Paced::Held { superseded: false }));
+    }
+
+    #[test]
+    fn a_message_held_when_the_session_ends_is_lost_and_never_reaches_the_next_session() {
+        let (ports, _host, mut rules) = ports_following("home/scene");
+        hold_one_rule_message(&mut rules, "home/scene");
+        let (mock, _incoming) = MockMqttClient::new();
+        let mut client: Box<dyn MqttClient> = Box::new(MockMqttHandle::new(Arc::clone(&mock)));
+        let settings = HomeAssistantSettingsView {
+            enabled: true,
+            broker_host: "broker.example".to_string(),
+            ..HomeAssistantSettingsView::default()
+        };
+        let (mut session, mut topics, mut job) = (Session::default(), HaTopics::default(), None);
+        let mut pacer = DialPacer::default();
+        assert!(ensure_session(
+            &mut client, &mut session, &mut topics, &mut job, &settings, "", &mut pacer, &ports,
+            &mut rules,
+        ));
+        assert_eq!(MqttCounters::load(&ports.counters.rule_messages_lost_total), 1);
+        let later = monotonic_ms().wrapping_add(RULE_MESSAGE_WAIT_PROOF_MS);
+        assert!(rules.pacer.take_due(later).is_empty(), "the fresh session inherits nothing");
+    }
+
+    #[test]
+    fn standing_down_loses_a_held_rule_message_with_a_count() {
+        let (ports, _host, mut rules) = ports_following("home/scene");
+        hold_one_rule_message(&mut rules, "home/scene");
+        let (mock, _incoming) = MockMqttClient::new();
+        let mut client: Box<dyn MqttClient> = Box::new(MockMqttHandle::new(Arc::clone(&mock)));
+        let link = client.link();
+        let (mut session, mut job) = (Session::default(), None);
+        stand_down(&mut client, &mut session, &HaTopics::default(), &ports, &link, &mut job, &mut rules);
+        assert_eq!(MqttCounters::load(&ports.counters.rule_messages_lost_total), 1);
+        let later = monotonic_ms().wrapping_add(RULE_MESSAGE_WAIT_PROOF_MS);
+        assert!(rules.pacer.take_due(later).is_empty());
+    }
+
     #[test]
     fn stand_down_clears_the_connected_gauge_even_when_the_link_already_dropped() {
         let (ports, _host) = test_ports();
@@ -1980,6 +2050,7 @@ mod tests {
             &ports,
             &link,
             &mut job,
+            &mut RuleTopicCache::default(),
         );
         assert!(
             !ports.counters.is_connected(),
