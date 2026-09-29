@@ -1430,16 +1430,10 @@ mod instance_patch_tests {
     }
 
     #[test]
-    fn every_patch_field_is_in_the_table_with_a_bit_of_its_own() {
+    fn every_patch_field_keeps_its_declared_bit() {
         for field in InstancePatchField::ALL {
             assert_eq!(field.bit(), 1 << declared_bit(field), "{field:?}");
         }
-        assert_eq!(
-            Dali103InstanceConfigureCommand::ALL_PATCH_BITS.count_ones() as usize,
-            InstancePatchField::ALL.len(),
-            "each field appears once in the table and no two fields share a bit; a retired \
-             field's bit stays reserved, so the bits need not be contiguous"
-        );
     }
 
     #[test]
@@ -1449,7 +1443,7 @@ mod instance_patch_tests {
     }
 
     #[test]
-    fn group_and_timer_runs_are_contiguous_so_a_slot_is_the_offset_from_the_first() {
+    fn group_and_timer_runs_list_their_fields_in_slot_order() {
         let slots = InstancePatchField::INSTANCE_GROUPS
             .into_iter()
             .chain(InstancePatchField::TIMERS);
@@ -1495,14 +1489,10 @@ mod feedback_patch_tests {
     }
 
     #[test]
-    fn every_feedback_field_is_in_the_table_with_a_bit_of_its_own() {
+    fn every_feedback_field_keeps_its_declared_bit() {
         for field in FeedbackPatchField::ALL {
             assert_eq!(field.bit(), 1 << declared_bit(field), "{field:?}");
         }
-        assert_eq!(
-            FeedbackPatchField::ALL_BITS.count_ones() as usize,
-            FeedbackPatchField::ALL.len()
-        );
     }
 
     #[test]

@@ -1,10 +1,14 @@
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
+use dali2rust_domain::dali::devices::dt8_color::Dt8Command;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 
 use crate::steps::frames::{dt8_raw_query_frame, special_frame, standard_frame};
 
 use super::{TEST_RANDOM_ADDRESS, TEST_SHORT_ADDRESS};
+
+const QUERY_COLOUR_TYPE_FEATURES: u8 = Dt8Command::QueryColourTypeFeatures.opcode();
+const QUERY_COLOUR_STATUS: u8 = Dt8Command::QueryColourStatus.opcode();
 
 pub(crate) fn script_detect_dt8_cct(mock: &MockDaliTransport, short: u8) {
     script_detect_dt8_with_features(mock, short, 0x02);
@@ -25,9 +29,9 @@ pub(crate) fn script_detect_dt8_with_features_and_status(
         Some(0),
     );
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
-    mock.expect_forward_frame_with_backward(dt8_raw_query_frame(short, 0xF9), Some(features));
+    mock.expect_forward_frame_with_backward(dt8_raw_query_frame(short, QUERY_COLOUR_TYPE_FEATURES), Some(features));
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
-    mock.expect_forward_frame_with_backward(dt8_raw_query_frame(short, 0xF8), Some(status));
+    mock.expect_forward_frame_with_backward(dt8_raw_query_frame(short, QUERY_COLOUR_STATUS), Some(status));
 }
 
 fn script_detect_multi_dt_mask_cct(mock: &MockDaliTransport, short: u8) {
@@ -42,9 +46,9 @@ fn script_detect_multi_dt_mask_cct(mock: &MockDaliTransport, short: u8) {
         );
     }
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
-    mock.expect_forward_frame_with_backward(dt8_raw_query_frame(short, 0xF9), Some(0x02));
+    mock.expect_forward_frame_with_backward(dt8_raw_query_frame(short, QUERY_COLOUR_TYPE_FEATURES), Some(0x02));
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
-    mock.expect_forward_frame_with_backward(dt8_raw_query_frame(short, 0xF8), Some(0x20));
+    mock.expect_forward_frame_with_backward(dt8_raw_query_frame(short, QUERY_COLOUR_STATUS), Some(0x20));
 }
 
 fn script_discovery_random_address_once(mock: &MockDaliTransport, short: u8, random_address: u32) {
@@ -202,7 +206,12 @@ pub(super) fn script_discovery_zero_features_corrected(mock: &MockDaliTransport)
         standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryDeviceType),
         Some(0),
     );
-    for (opcode, answer) in [(0xF9, 0), (0xF9, TC_ONLY), (0xF8, CCT_ACTIVE)] {
+    let reads = [
+        (QUERY_COLOUR_TYPE_FEATURES, 0),
+        (QUERY_COLOUR_TYPE_FEATURES, TC_ONLY),
+        (QUERY_COLOUR_STATUS, CCT_ACTIVE),
+    ];
+    for (opcode, answer) in reads {
         mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
         mock.expect_forward_frame_with_backward(
             dt8_raw_query_frame(TEST_SHORT_ADDRESS, opcode),
@@ -244,10 +253,10 @@ pub(super) fn script_discovery_unterminated_type_walk(mock: &MockDaliTransport) 
     }
     for _ in 0..2 {
         mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
-        mock.expect_forward_frame_with_backward(dt8_raw_query_frame(TEST_SHORT_ADDRESS, 0xF9), None);
+        mock.expect_forward_frame_with_backward(dt8_raw_query_frame(TEST_SHORT_ADDRESS, QUERY_COLOUR_TYPE_FEATURES), None);
     }
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
-    mock.expect_forward_frame_with_backward(dt8_raw_query_frame(TEST_SHORT_ADDRESS, 0xF8), None);
+    mock.expect_forward_frame_with_backward(dt8_raw_query_frame(TEST_SHORT_ADDRESS, QUERY_COLOUR_STATUS), None);
 }
 
 pub(super) fn script_discovery_no_answers(mock: &MockDaliTransport) {

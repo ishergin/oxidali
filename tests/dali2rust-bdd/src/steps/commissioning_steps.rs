@@ -3,6 +3,7 @@ use std::time::Duration;
 use cucumber::{given, then};
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_test_support::wait_until;
+use dali2rust_domain::dali::devices::dt8_color::Dt8Command;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use serde_json::Value;
@@ -161,8 +162,8 @@ fn script_address_change_frames(
 }
 
 const VERIFIED_STATUS: u8 = 0x00;
-const DT8_QUERY_COLOUR_TYPE_FEATURES: u8 = 0xF9;
-const DT8_QUERY_COLOUR_STATUS: u8 = 0xF8;
+const DT8_QUERY_COLOUR_TYPE_FEATURES: u8 = Dt8Command::QueryColourTypeFeatures.opcode();
+const DT8_QUERY_COLOUR_STATUS: u8 = Dt8Command::QueryColourStatus.opcode();
 
 // COMM-100
 #[given(

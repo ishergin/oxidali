@@ -185,7 +185,7 @@ fn write_instance_group(
     cmd: &Dali103InstanceConfigureCommand,
     field: InstancePatchField,
 ) -> Result<(), SemanticDaliError> {
-    let slot = slot_after(InstancePatchField::InstanceGroup0, field);
+    let slot = slot_in(&InstancePatchField::INSTANCE_GROUPS, field)?;
     let group = cmd.instance_groups[usize::from(slot)];
     set_instance_group_verified(controller, cmd.short_address, cmd.instance_number, slot, group)
 }
@@ -195,14 +195,17 @@ fn write_timer(
     cmd: &Dali103InstanceConfigureCommand,
     field: InstancePatchField,
 ) -> Result<(), SemanticDaliError> {
-    let slot = usize::from(slot_after(InstancePatchField::TimerShort, field));
+    let slot = usize::from(slot_in(&InstancePatchField::TIMERS, field)?);
     let value = cmd.timer_multipliers[slot]
         .ok_or(SemanticDaliError::OperationFailed("invalid_timer"))?;
     set_button_timer_verified(controller, cmd.short_address, cmd.instance_number, slot, value)
 }
 
-fn slot_after(first: InstancePatchField, field: InstancePatchField) -> u8 {
-    (field as u8).saturating_sub(first as u8)
+fn slot_in(run: &[InstancePatchField], field: InstancePatchField) -> Result<u8, SemanticDaliError> {
+    run.iter()
+        .position(|member| *member == field)
+        .and_then(|slot| u8::try_from(slot).ok())
+        .ok_or(SemanticDaliError::OperationFailed("invalid_request"))
 }
 
 // IEC 62386-103 §9.6.3
