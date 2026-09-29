@@ -995,6 +995,15 @@ declare_bus_payloads! {
         source: RuntimeSource::Sniffer,
         observed_at_mono_ms: Some(u32::MAX),
     };
+
+    pub struct HclScheduleEnableCommand {
+        pub schedule_id: FixedText32,
+        pub enabled: bool,
+    }
+    budget = HclScheduleEnableCommand {
+        schedule_id: crate::msg::payload_test_samples::worst_text32(),
+        enabled: true,
+    };
 }
 
 impl FirmwareUpdateBeginCommand {

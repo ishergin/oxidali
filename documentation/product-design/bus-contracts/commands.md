@@ -48,6 +48,7 @@
 | Операции | `OperationBeginCommand`, `OperationRegistryResetCommand` | operation tracker | HTTP, оркестратор | — |
 | Массовое применение | `GroupApplyExecuteCommand`, `SceneApplyExecuteCommand`, `PolicyApplyExecuteCommand` | apply orchestrator | HTTP, правила (`scene.apply`) | `202` + операция |
 | HCL | `HclOverrideClearCommand` | HCL scheduler | HTTP, правила (`hcl.resume`) | подтверждение запроса |
+| Бит расписания HCL | `HclScheduleEnableCommand` | registry worker | правила (`hcl.enable` / `hcl.disable`) | подтверждение; его никто не ждёт |
 | Home Assistant | `HomeAssistantDiscoveryPublishCommand`, `MqttPublishCommand` | MQTT bridge | HTTP; правила (`mqtt.publish`) | `202` + операция; без ответа |
 | Правила | `RuleStageCommand`, `RuleCommitCommand`, `RuleEnableCommand`, `RuleRunCommand` | rules worker | HTTP | `202` + операция `config_write`; включение — ожидание ревизии |
 | Прошивка | `FirmwareUpdateBeginCommand` | OTA worker | HTTP | `202` + операция `firmware_update` |
@@ -103,7 +104,9 @@
 расписания повторяется в каждом чанке; чанк с нулевыми начальными индексами targets и
 points открывает серию; индексы остальных обязаны равняться накопленной длине
 (`409 chunk_out_of_order`); чанк с `last_chunk` коммитит, и
-`HclScheduleChangedEvent` публикуется один раз — на коммите или удалении. Координаты
+`HclScheduleChangedEvent` публикуется один раз — на коммите, удалении или смене бита
+`enabled` (`HclScheduleEnableCommand`; бит, который уже стоит, ничего не публикует, а
+неизвестное расписание отвергается `schedule_not_found`). Координаты
 едут микроградусами (`i32`), чтобы payload оставался `Eq`. Реестр как единственный
 писатель отвергает неисполнимое расписание (`422`) и девятое расписание
 (`409 schedule_limit_reached`). Staging не персистится и выселяется по возрасту.

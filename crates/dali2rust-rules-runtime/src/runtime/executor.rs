@@ -4,9 +4,9 @@ use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, PublishResult};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
     ColorMode, ColorValue, DaliRecallSceneCommand, DaliSetTargetStateCommand, DaliStopFadeCommand,
-    DaliTargetScope,
-    HclOverrideClearCommand, LightSetpoint, MqttPublishCommand, Origin, PowerState,
-    SceneApplyExecuteCommand,
+    DaliTargetScope, FixedText32,
+    HclOverrideClearCommand, HclScheduleEnableCommand, LightSetpoint, MqttPublishCommand, Origin,
+    PowerState, SceneApplyExecuteCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_rules_model::LightTarget;
@@ -185,7 +185,7 @@ impl EffectExecutor<'_> {
         match effect {
             Effect::HclResume { target } => self.hcl_resume(target, corr),
             Effect::HclHold { .. } => self.unmapped(&self.counters.hcl_hold_unmapped),
-            Effect::HclSchedule { .. } => self.unmapped(&self.counters.hcl_schedule_unmapped),
+            Effect::HclSchedule { schedule, enabled } => self.hcl_switch(schedule, *enabled, corr),
             _ => self.misrouted(),
         }
     }
@@ -313,6 +313,13 @@ impl EffectExecutor<'_> {
             );
         }
         any
+    }
+
+    fn hcl_switch(&self, schedule: &str, enabled: bool, corr: u64) -> bool {
+        let Some(schedule_id) = schedule_id_of(schedule) else {
+            return false;
+        };
+        self.publish(corr, HclScheduleEnableCommand { schedule_id, enabled })
     }
 
     #[allow(clippy::too_many_arguments, reason = "one private call shape for both drive forms")]
@@ -508,6 +515,12 @@ fn recall_command(scene: u8, target: &Option<LightTarget>) -> Option<DaliRecallS
         }
         None => DaliRecallSceneCommand::broadcast(0, scene),
     })
+}
+
+fn schedule_id_of(name: &str) -> Option<FixedText32> {
+    let mut id = FixedText32::new();
+    id.push_str(name).ok()?;
+    Some(id)
 }
 
 fn scope_of(target: &LightTarget) -> Option<(DaliTargetScope, u8, u8, u8)> {

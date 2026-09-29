@@ -87,6 +87,7 @@ const EXECUTOR_OUTPUT: &[&str] = &[
     "HclOverrideClearCommand",
     "Dali103FeedbackDriveCommand",
     "MqttPublishCommand",
+    "HclScheduleEnableCommand",
 ];
 
 struct Harness {
@@ -944,8 +945,8 @@ const LANDINGS: &[(&str, &str, Landing)] = &[
     ("scene_cycle", "scene.cycle(1, 3, 7)", Landing::Bus("DaliRecallSceneCommand")),
     ("hcl_resume", "hcl.resume(broadcast)", Landing::Bus("HclOverrideClearCommand")),
     ("hcl_hold", "hcl.hold(broadcast)", Landing::Unmapped("hcl_hold_unmapped")),
-    ("hcl_enable", "hcl.enable(\"вечер\")", Landing::Unmapped("hcl_schedule_unmapped")),
-    ("hcl_disable", "hcl.disable(\"вечер\")", Landing::Unmapped("hcl_schedule_unmapped")),
+    ("hcl_enable", "hcl.enable(\"evening\")", Landing::Bus("HclScheduleEnableCommand")),
+    ("hcl_disable", "hcl.disable(\"evening\")", Landing::Bus("HclScheduleEnableCommand")),
     ("input_feedback_on", "input(3,0).feedback.on()", Landing::Bus("Dali103FeedbackDriveCommand")),
     ("input_feedback_off", "input(3,0).feedback.off()", Landing::Bus("Dali103FeedbackDriveCommand")),
     ("panel_select", "panel_select(group=4, selected=1)", Landing::Bus("Dali103FeedbackDriveCommand")),
@@ -1703,4 +1704,49 @@ fn an_id_wider_than_its_bus_field_fails_its_effect_instead_of_narrowing() {
         narrowed.is_empty(),
         "no effect may reach the bus with its id taken mod 256: {narrowed:?}"
     );
+}
+
+const SCHEDULE_ID_CAPACITY: usize = 32;
+
+fn schedule_switch_document(fitting: &str, too_long: &str) -> String {
+    format!(
+        "rule \"fits\" {{\n  when http trigger\n  do hcl.disable(\"{fitting}\")\n}}\n\
+         rule \"too long\" {{\n  when http trigger\n  do hcl.enable(\"{too_long}\")\n}}\n\
+         rule \"marker\" {{\n  when http trigger\n  do lamp(6).level(55)\n}}\n"
+    )
+}
+
+#[test]
+fn a_schedule_switch_names_its_schedule_whole_or_fails_instead_of_narrowing() {
+    let fitting = "s".repeat(SCHEDULE_ID_CAPACITY);
+    let too_long = "t".repeat(SCHEDULE_ID_CAPACITY + 1);
+    let h = harness("rules-schedule-switch");
+    publish_document(&h, 131, &schedule_switch_document(&fitting, &too_long), 0);
+    assert!(recv_signal(&h, 131).error.is_none());
+    wait_revision(&h.store, 1);
+
+    for (corr, name) in [(132u64, "fits"), (133, "too long"), (134, "marker")] {
+        run_rule(&h, corr, name);
+        recv_signal(&h, corr);
+    }
+
+    let published = commands_before_the_marker(&h, 6);
+    let switches: Vec<(String, bool)> = published
+        .iter()
+        .filter_map(|payload| match payload {
+            dali2rust_contracts::msg::BusCommandPayload::HclScheduleEnableCommand(cmd) => {
+                Some((cmd.schedule_id.as_str().to_owned(), cmd.enabled))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        switches,
+        vec![(fitting, false)],
+        "the id that fits goes out whole with its bit; the longer one is not cut to fit"
+    );
+    let runtime = h.store.rule_runtime();
+    let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);
+    assert_eq!(outcome("fits"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
+    assert_eq!(outcome("too long"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
 }

@@ -77,6 +77,13 @@ pub(crate) enum HclChunkOutcome {
     Committed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HclSwitchOutcome {
+    Switched,
+    Unchanged,
+    Unknown,
+}
+
 fn opens_sequence(command: &HclScheduleUpsertCommand) -> bool {
     command.first_target_index == 0 && command.first_point_index == 0
 }
@@ -109,6 +116,25 @@ impl RegistryStore {
             self.dirty.mark_hcl_schedules_dirty();
         }
         outcome
+    }
+
+    pub(crate) fn switch_hcl_schedule(
+        &self,
+        schedule_id: &FixedText32,
+        enabled: bool,
+    ) -> HclSwitchOutcome {
+        let mut inner = self.write_inner();
+        let Some(record) = inner.hcl_schedules.get_mut(schedule_id) else {
+            return HclSwitchOutcome::Unknown;
+        };
+        if record.enabled == enabled {
+            return HclSwitchOutcome::Unchanged;
+        }
+        record.enabled = enabled;
+        inner.hcl_schedules_revision = inner.hcl_schedules_revision.wrapping_add(1);
+        drop(inner);
+        self.dirty.mark_hcl_schedules_dirty();
+        HclSwitchOutcome::Switched
     }
 
     pub(crate) fn remove_hcl_schedule(&self, schedule_id: &FixedText32) -> bool {

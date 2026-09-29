@@ -3,10 +3,10 @@ use std::sync::atomic::Ordering;
 use dali2rust_bus::{BusId, BusPublisher};
 use dali2rust_contracts::msg::{
     ErrorCode, HclLevelMode, HclSchedulePointRow, HclScheduleDeleteCommand,
-    HclScheduleUpsertCommand, HclTargetRow, HclTargetScope, HclTimeRef,
+    HclScheduleEnableCommand, HclScheduleUpsertCommand, HclTargetRow, HclTargetScope, HclTimeRef,
 };
 
-use crate::runtime::registry::hcl_schedules::{HclChunkOutcome, HclChunkRejection};
+use crate::runtime::registry::hcl_schedules::{HclChunkOutcome, HclChunkRejection, HclSwitchOutcome};
 use crate::runtime::registry::publish::{publish_config_write_signal, publish_hcl_schedule_changed};
 use crate::runtime::registry::RegistryStore;
 
@@ -92,6 +92,39 @@ pub(super) fn handle_hcl_schedule_delete(
         .fetch_add(1, Ordering::Relaxed);
     counters.config_updates_applied.fetch_add(1, Ordering::Relaxed);
     publish_correlation_ok(publisher, corr);
+}
+
+pub(super) fn handle_hcl_schedule_enable(
+    publisher: &BusPublisher,
+    tid: u16,
+    corr: u64,
+    primary_adapter_id: BusId,
+    store: &RegistryStore,
+    counters: &RegistryCommandCounters,
+    body: &HclScheduleEnableCommand,
+) {
+    if check_primary_adapter(publisher, tid, primary_adapter_id, corr).is_err() {
+        return;
+    }
+    match store.switch_hcl_schedule(&body.schedule_id, body.enabled) {
+        HclSwitchOutcome::Unknown => {
+            counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
+            publish_correlation_failed(publisher, corr, ErrorCode::NotFound, "schedule_not_found");
+        }
+        HclSwitchOutcome::Unchanged => publish_correlation_ok(publisher, corr),
+        HclSwitchOutcome::Switched => {
+            publish_hcl_schedule_changed(
+                publisher,
+                corr,
+                tid,
+                body.schedule_id.clone(),
+                false,
+                body.enabled,
+            );
+            counters.config_updates_applied.fetch_add(1, Ordering::Relaxed);
+            publish_correlation_ok(publisher, corr);
+        }
+    }
 }
 
 fn validate_upsert_chunk(body: &HclScheduleUpsertCommand) -> Result<(), Rejection> {

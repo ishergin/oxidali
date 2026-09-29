@@ -217,13 +217,13 @@ fn wait_for_frame(world: &mut DaliWorld, frame: u16) {
     );
 }
 
-// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038
+// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038 RULE-060
 #[given(regex = r"^the controller clock reads (\d+) minutes past midnight$")]
 async fn given_clock_reads(world: &mut DaliWorld, minutes: u64) {
     set_clock(world, minutes);
 }
 
-// HCL-051 HCL-053 HCL-061 HCL-064 HCL-060 HCL-077
+// HCL-051 HCL-053 HCL-061 HCL-064 HCL-060 HCL-077 RULE-060
 #[when(regex = r"^the scheduler has run (\d+) more ticks$")]
 async fn when_scheduler_ticks(world: &mut DaliWorld, count: u64) {
     let port = world.server_port();
@@ -238,7 +238,7 @@ async fn when_scheduler_ticks(world: &mut DaliWorld, count: u64) {
     );
 }
 
-// HCL-050 HCL-063 HCL-053 HCL-054 HCL-056 HCL-057 SYS-237 RULE-037 RULE-038
+// HCL-050 HCL-063 HCL-053 HCL-054 HCL-056 HCL-057 SYS-237 RULE-037 RULE-038 RULE-060
 #[then(regex = r"^the scheduler should drive group (\d+) to level (\d+)$")]
 async fn then_group_driven(world: &mut DaliWorld, group_id: u8, level: u8) {
     wait_for_frame(world, dapc_frame(Some(group_id), level));
@@ -256,7 +256,7 @@ async fn then_recall_last_active(world: &mut DaliWorld, group_id: u8) {
     wait_for_frame(world, last_active_frame(Some(group_id)));
 }
 
-// HCL-051 HCL-064 HCL-061
+// HCL-051 HCL-064 HCL-061 RULE-060
 #[then("no DALI frames should have reached the bus")]
 async fn then_no_frames(world: &mut DaliWorld) {
     let frames = sent_frames(world);
@@ -384,5 +384,24 @@ async fn then_group_not_suspended(world: &mut DaliWorld, schedule_id: String, gr
     assert!(
         !groups.contains(&group_id),
         "schedule {schedule_id} must keep driving group {group_id}: suspended {groups:?}"
+    );
+}
+
+fn schedule_enabled(port: u16, schedule_id: &str) -> Option<bool> {
+    let path = format!("{HCL_SCHEDULES_PATH}/{schedule_id}");
+    crate::steps::polling::fetch_json(port, &path)?["enabled"].as_bool()
+}
+
+// RULE-060
+#[then(regex = r#"^HCL schedule "([^"]+)" is eventually (enabled|disabled)$"#)]
+async fn then_schedule_eventually_switched(world: &mut DaliWorld, schedule_id: String, state: String) {
+    let port = world.server_port();
+    let wanted = state == "enabled";
+    let settled = || schedule_enabled(port, &schedule_id) == Some(wanted);
+    dali2rust_test_support::wait_until(settled, std::time::Duration::from_secs(5));
+    assert_eq!(
+        schedule_enabled(port, &schedule_id),
+        Some(wanted),
+        "the registry should hold schedule {schedule_id} {state}"
     );
 }
