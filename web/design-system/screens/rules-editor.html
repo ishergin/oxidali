@@ -85,7 +85,7 @@
   border-left: 2px solid transparent; }
 .rrow + .rrow { border-top: 1px solid rgba(42,51,64,.5); }
 .rrow:hover { background: rgba(35,44,56,.5); }
-.rrow.on { background: var(--overlay); border-left-color: var(--accent); }
+.rrow.on { background: var(--overlay); border-left-color: var(--info); }
 .rrow .nm { font-size: 13px; font-weight: 550; flex: 1; }
 .rrow .nm .sub { display: block; font-size: 11px; color: var(--text-faint); font-weight: 400; }
 .rrow.off .nm { color: var(--text-faint); }
@@ -106,7 +106,7 @@
 .tabs { display: flex; gap: 2px; padding: 0 13px; border-bottom: 1px solid var(--border); }
 .tabs .t { padding: 8px 11px; font-size: 12px; color: var(--text-muted); border-bottom: 2px solid transparent;
   cursor: pointer; }
-.tabs .t.on { color: var(--text); border-bottom-color: var(--accent); }
+.tabs .t.on { color: var(--text); border-bottom-color: var(--info); }
 .ed { font-family: var(--mono); font-size: 12.5px; line-height: 1.65; padding: 12px 14px;
   white-space: pre; overflow-x: auto; }
 .ed .kw { color: var(--accent-strong); }
@@ -129,6 +129,25 @@
 .snip { display: inline-flex; padding: 3px 9px; border-radius: 999px; font-size: 11.5px;
   border: 1px solid var(--border-strong); background: var(--raised); color: var(--text-muted);
   margin: 0 6px 6px 0; cursor: pointer; }
+.suggest { position: absolute; z-index: 2; width: 300px; box-sizing: border-box; display: flex;
+  flex-direction: column; background: var(--overlay); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow); font-size: 12px; overflow: hidden; }
+.suggest .sh { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px 5px;
+  font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--text-faint);
+  font-weight: 600; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.suggest .sb { padding: 3px 0; }
+.suggest .so { display: flex; align-items: baseline; gap: 10px; padding: 5px 10px; cursor: pointer; }
+.suggest .so:hover, .suggest .so.on { background: var(--raised); }
+.suggest .so.on { box-shadow: inset 2px 0 0 var(--info); }
+.suggest .so .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text); }
+.suggest .so.byid .nm { color: var(--text-muted); font-style: italic; }
+.suggest .so .tag { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
+.suggest .so .why { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); }
+.suggest .sf { padding: 5px 10px; border-top: 1px solid var(--border); font-size: 10.5px;
+  color: var(--text-faint); white-space: nowrap; }
+.suggest .sf kbd { font-family: var(--mono); font-size: 10px; padding: 0 4px; border-radius: 4px;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-muted); }
 </style>
 </head>
 <body>
@@ -184,12 +203,26 @@
         <span class="t">Whole document</span>
       </div>
       <div class="errline" style="top: 96px;"></div>
-      <div class="ed"><span class="cm"># Панель test1: кнопка 1 — свет SA01.</span>
+      <div class="editor">
+        <div class="ed"><span class="cm"># Панель test1: кнопка 1 — свет SA01.</span>
 <span class="kw">rule</span> <span class="str">"кнопка 1: лампа2"</span> {
   <span class="kw">when</span> input(dev=0, inst=0) <span class="kw">is</span> short_press
-  <span class="kw">do</span>   lamp(<span class="str">"лампа2"</span>).toggle(fade=0.7s)
+  <span class="kw">do</span>   lamp(<span class="str">"лампа2"</span>).toggle()
        panel_select(group=1, selected=0)
+       lamp(<span class="str">"к</span>
 }</div>
+        <div class="suggest" style="top: 136px; left: 112px;">
+          <div class="sh"><span>Virtual lamps</span><span>4</span></div>
+          <div class="sb">
+            <div class="so on"><span class="nm">кабинет</span><span class="tag">VL 05</span></div>
+            <div class="so"><span class="nm">коридор</span><span class="tag">VL 01</span></div>
+            <div class="so byid" title="The name is longer than the 48 bytes a rule string holds">
+              <span class="nm">кухня: подсветка рабочей зоны</span><span class="why">by id → lamp(12)</span></div>
+            <div class="so"><span class="nm">детская, ночник у кровати</span><span class="tag">VL 08</span></div>
+          </div>
+          <div class="sf"><kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Enter</kbd> <kbd>Tab</kbd> insert · <kbd>Esc</kbd> close</div>
+        </div>
+      </div>
       <div class="parse-msg">12:14 · unknown block "ночной контурр" — did you mean "ночной контур"?</div>
       <div class="bar"><span class="ok">✓ parses</span> · 1 rule · edits splice back into the stored document</div>
     </div>
@@ -209,6 +242,16 @@
   document under one revision. <b>Whole document</b> is the same text unscoped, for the edits
   a single rule cannot express (a <span class="badge">def</span> block, reordering, a comment
   header).</p>
+
+  <p class="hint"><b>Names complete from the registry.</b> Inside the first string of
+  <span class="badge">lamp("</span>, <span class="badge">group("</span>,
+  <span class="badge">input("</span> and <span class="badge">hcl.enable("</span> /
+  <span class="badge">hcl.disable("</span> the editor lists the controller's names — prefix
+  matches first, then names containing the text; Enter, Tab or a click inserts the name with
+  its closing quote. A name a rule string cannot hold (a quote, a line break, over 48 bytes),
+  or one several entries share, is offered by its id.
+  The list reads the caret's surroundings and nothing more: what the text means is the device
+  parser's call.</p>
 </div>
 </body>
 </html>
