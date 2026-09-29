@@ -274,6 +274,36 @@ def rules_conflicts(source, compiled, scope, group_ids, adapter) -> list:
     return out
 
 
+def owner_rule_conflicts(api, scope) -> list:
+    group_ids = {g.get("name"): g["group_id"] for g in api.groups.list()["groups"]}
+    compiled = api._req("GET", "rules?format=json").get("rules")
+    return rules_conflicts(api.rules_get().get("source"), compiled, scope, group_ids,
+                           api.adapter)
+
+
+def real_tier_conflicts(api, allowed) -> list:
+    lamps = [v for v in api.vlamps.list_unfiltered()["virtual_lamps"]
+             if (v.get("binding") or {}).get("physical_short_address") in allowed]
+    ids = {v["virtual_lamp_id"] for v in lamps}
+    groups, problems = set(), []
+    for dev in api.devices_unfiltered()["physical_devices"]:
+        if dev["short_address"] not in allowed:
+            continue
+        mask = dev.get("groups_membership")
+        if mask is None:
+            problems.append("SA%d reports no group membership, so an owner rule on its "
+                            "groups cannot be ruled out" % dev["short_address"])
+            continue
+        groups |= {g for g in range(GROUP_COUNT) if mask >> g & 1}
+    for row in api.groups.matrix().get("rows", []):
+        if row["virtual_lamp_id"] in ids:
+            for key in ("desired", "applied"):
+                groups |= {g for g, bit in enumerate(row.get(key) or []) if bit}
+    scope = SessionScope(frozenset(groups), frozenset(ids), frozenset(allowed),
+                         frozenset(v["name"] for v in lamps if v.get("name")))
+    return problems + owner_rule_conflicts(api, scope)
+
+
 def free_vl_ids(existing, count) -> list:
     free = [i for i in range(VL_ID_LIMIT) if i not in set(existing)]
     if len(free) < count:
@@ -320,11 +350,7 @@ class VirtualSession:
         if remote_serial.enabled(self.cfg) and not serialmon.alive(self.cfg):
             problems.append("the DUT's serial monitor is down: no tripwire without it")
         scope = SessionScope.of(groups, free_vl_ids(vl_ids(self.api), len(park)), park)
-        group_ids = {g.get("name"): g["group_id"] for g in self.api.groups.list()["groups"]}
-        compiled = self.api._req("GET", "rules?format=json").get("rules")
-        problems += rules_conflicts(self.api.rules_get().get("source"), compiled, scope,
-                                    group_ids, self.api.adapter)
-        return problems
+        return problems + owner_rule_conflicts(self.api, scope)
 
     def open(self):
         if self.ledger.exists():

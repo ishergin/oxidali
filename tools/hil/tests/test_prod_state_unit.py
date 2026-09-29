@@ -475,3 +475,53 @@ def test_an_unread_attribute_the_test_would_write_refuses_the_gear():
                                       {"power_on_level": None, "system_failure_level": 254},
                                       None)
     hil_test_guards.refuse_unread(4, ("power_on_level",), {"power_on_level": None}, 254)
+
+
+TIMED = {"rules": {"rules": [
+    {"name": "dusk", "enabled": True, "triggers": [{"kind": "at_solar", "event": "sunset",
+                                                    "offset_ms": 0}]},
+    {"name": "night", "enabled": False, "triggers": [{"kind": "at_time",
+                                                      "time": {"hour": 23, "minute": 0}}]},
+    {"name": "hall", "enabled": True, "triggers": [{"kind": "http_trigger"}]},
+]}}
+
+
+class _ClockApi:
+    def __init__(self, compiled, read_only=False):
+        self.compiled, self.calls = compiled, []
+        self.cfg = types.SimpleNamespace(lamps_read_only=read_only)
+
+    def _req(self, method, path, body=None):
+        return self.compiled
+
+    def time_get(self):
+        return {"timezone": "MSK-3"}
+
+    def time_set(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+def test_timed_rules_are_the_enabled_ones_a_time_or_the_sun_fires():
+    assert api_mod.timed_rules_of(TIMED) == ["dusk"]
+    assert api_mod.timed_rules_of({"rules": None}) == []
+
+
+def test_the_clock_moves_on_the_first_call_and_never_under_an_owner_timed_rule():
+    quiet = _ClockApi({"rules": {"rules": TIMED["rules"]["rules"][1:]}})
+    clock = hil_test_guards._Clock(quiet)
+    assert quiet.calls == []
+    clock.at(10, 0)
+    assert quiet.calls[0] == {"timezone": hil_test_guards.ANCHOR_TZ} and len(quiet.calls) == 2
+    clock.restore()
+    assert quiet.calls[-1] == {"timezone": "MSK-3"}
+    timed = _ClockApi(TIMED)
+    clock = hil_test_guards._Clock(timed)
+    with pytest.raises(pytest.skip.Exception, match=r"\['dusk'\] fire at a time of day"):
+        clock.at(10, 0)
+    clock.restore()
+    assert timed.calls == []
+    read_only = _ClockApi({"rules": {"rules": []}}, read_only=True)
+    with pytest.raises(pytest.skip.Exception, match=r"read-only run never moves"):
+        hil_test_guards._Clock(read_only).at(10, 0)
+    assert read_only.calls == []
+

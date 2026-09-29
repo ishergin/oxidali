@@ -1,4 +1,5 @@
 import json
+import types
 import subprocess
 
 import pytest
@@ -664,3 +665,52 @@ def test_a_first_rung_that_proves_nothing_stops_the_ladder(tmp_path, reply, move
     with pytest.raises(virtual_gear.VirtualGearError):
         _session(tmp_path, _LadderApi(reply), sim)._ladder([16, 17])
     assert sim.enabled == [16]
+
+
+class _RealTier:
+    adapter = 0
+
+    def __init__(self, source, compiled=None, masks=None, rows=()):
+        self.source, self.compiled = source, compiled
+        self.masks = masks if masks is not None else {2: 1 << 3, 4: 1 << 5}
+        self.rows = list(rows)
+
+    def _req(self, method, path, body=None):
+        return {"rules": self.compiled}
+
+    def rules_get(self):
+        return {"source": self.source}
+
+    def devices_unfiltered(self):
+        return {"physical_devices": [{"short_address": s, "groups_membership": m}
+                                     for s, m in self.masks.items()]}
+
+    @property
+    def vlamps(self):
+        return types.SimpleNamespace(list_unfiltered=lambda: {"virtual_lamps": [
+            {"virtual_lamp_id": 7, "name": "Test.Desk", "binding": {"physical_short_address": 2}},
+            {"virtual_lamp_id": 9, "name": "Hall", "binding": {"physical_short_address": 4}}]})
+
+    @property
+    def groups(self):
+        return types.SimpleNamespace(
+            list=lambda: {"groups": [{"group_id": 3, "name": "desk"}]},
+            matrix=lambda: {"rows": self.rows})
+
+
+def test_owner_rules_that_watch_a_test_lamp_stop_the_light_tests():
+    def conflicts(api):
+        return virtual_gear.real_tier_conflicts(api, {2})
+
+    assert conflicts(_RealTier('rule "a" {\n  when lamp(7) turns on\n  do lamp(9).off()\n}')) \
+        == ["the owner's rules use lamp 7"]
+    assert conflicts(_RealTier('rule "b" {\n  when group(3) becomes any_on\n'
+                               '  do lamp(9).off()\n}')) == ["the owner's rules use group 3"]
+    assert conflicts(_RealTier('rule "c" {\n  when lamp("Test.Desk") turns on\n'
+                               '  do lamp(9).off()\n}')) == ["the owner's rules name lamp 'Test.Desk'"]
+    assert conflicts(_RealTier('rule "d" {\n  when device(2) goes_offline\n'
+                               '  do lamp(9).off()\n}')) == ["the owner's rules watch device 2"]
+    assert conflicts(_RealTier('rule "e" {\n  when lamp(9) turns on\n  do group(5).off()\n}')) \
+        == []
+    assert "SA2 reports no group membership" in conflicts(_RealTier("", masks={2: None}))[0]
+

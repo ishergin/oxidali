@@ -7,9 +7,11 @@ from requests import RequestException
 
 from hil import api as api_mod
 from hil import prod_state
+from hil import virtual_gear
 from hil.lamp_guard import RULE_SEPARATOR, LampNotAllowed, spell
 from hil.wait import wait_until
 from hil_harness import ANCHOR_TZ
+from hil_session import LIGHT_MARKER
 
 TEARDOWN_RETRY_S = 2.0
 
@@ -457,26 +459,56 @@ def ha_guard(api, hil_config):
         api.ha.patch({k: before[k] for k in api_mod._HomeAssistantSettings.RESTORABLE})
 
 
-@pytest.fixture()
-def clock_guard(api):
-    before = api.time_get()
-    api.time_set(timezone=ANCHOR_TZ)
+class _Clock:
+    def __init__(self, api):
+        self.api, self.before = api, None
 
-    def at(hour, minute, day_offset=0):
+    def at(self, hour, minute, day_offset=0):
+        if self.api.cfg.lamps_read_only:
+            pytest.skip("a read-only run never moves the controller's clock: a move fires "
+                        "the owner's timed rules and publishes every HCL schedule's point")
+        timed = api_mod.timed_rules_of(self.api._req("GET", "rules?format=json"))
+        if timed:
+            pytest.skip("the owner's rule(s) %s fire at a time of day or at the sun, and a "
+                        "clock move fires each whose time falls in the hour before the new "
+                        "time" % timed)
+        if self.before is None:
+            self.before = self.api.time_get()
+            self.api.time_set(timezone=ANCHOR_TZ)
         day = (datetime.datetime.now(datetime.timezone.utc)
                + datetime.timedelta(days=day_offset)).date()
         target = datetime.datetime(day.year, day.month, day.day, hour, minute,
                                    tzinfo=datetime.timezone.utc)
         unix_ms = int(target.timestamp() * 1000)
-        api.time_set(unix_ms=unix_ms)
+        self.api.time_set(unix_ms=unix_ms)
         return unix_ms
 
+    def restore(self):
+        if self.before is None:
+            return
+        self.api.time_set(unix_ms=int(time.time() * 1000))
+        if self.before.get("timezone"):
+            self.api.time_set(timezone=self.before["timezone"])
+
+
+@pytest.fixture()
+def clock_guard(api):
+    clock = _Clock(api)
     try:
-        yield at
+        yield clock.at
     finally:
-        api.time_set(unix_ms=int(time.time() * 1000))
-        if before.get("timezone"):
-            api.time_set(timezone=before["timezone"])
+        clock.restore()
+
+
+@pytest.fixture(autouse=True)
+def owner_rules_ignore_the_test_lamps(request):
+    if request.node.get_closest_marker(LIGHT_MARKER) is None:
+        return
+    api = request.getfixturevalue("api")
+    conflicts = virtual_gear.real_tier_conflicts(api, api.cfg.lamp_short_set())
+    if conflicts:
+        pytest.skip("an owner rule reacts to the lamps this test drives: %s"
+                    % "; ".join(conflicts))
 
 
 @pytest.fixture()

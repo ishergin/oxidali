@@ -35,6 +35,16 @@ def kelvin_to_mirek(kelvin):
     return (MIREK_KELVIN + kelvin // 2) // kelvin
 
 
+TIMED_TRIGGERS = frozenset({"at_time", "at_solar"})
+
+
+def timed_rules_of(projection):
+    compiled = (projection or {}).get("rules") or {}
+    return sorted(rule["name"] for rule in compiled.get("rules") or []
+                  if rule.get("enabled", True)
+                  and any(t.get("kind") in TIMED_TRIGGERS for t in rule.get("triggers") or []))
+
+
 def rule_toggles_of(projection):
     compiled = (projection or {}).get("rules") or {}
     return {rule["name"]: bool(rule.get("enabled", True))
