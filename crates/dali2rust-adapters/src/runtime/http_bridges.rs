@@ -1094,7 +1094,12 @@ fn instance_dto(view: &dali2rust_registry_runtime::InstanceView) -> InstanceDto 
     }
 }
 
+use dali2rust_domain::registry::{GROUP_COUNT, VIRTUAL_LAMP_COUNT};
+use dali2rust_rules_model::limits::{MAX_GROUP_ID, MAX_LAMP_ID};
 use dali2rust_rules_model::{DeviceRef, GroupRef, InputDeviceRef, LampRef, NameResolver};
+
+const _: () = assert!(MAX_LAMP_ID as u16 + 1 == VIRTUAL_LAMP_COUNT as u16);
+const _: () = assert!(MAX_GROUP_ID as u16 + 1 == GROUP_COUNT as u16);
 
 pub struct RegistryNameResolver {
     store: Arc<RegistryStore>,
@@ -1387,7 +1392,7 @@ fn suspended_matches(
 ) -> bool {
     match target {
         dali2rust_rules_model::LightTarget::Group(group) => {
-            suspended.adapter_id == group.adapter_id && suspended.group_id == group.id as u8
+            suspended.adapter_id == group.adapter_id && u16::from(suspended.group_id) == group.id
         }
         dali2rust_rules_model::LightTarget::Broadcast { adapter_id } => {
             suspended.adapter_id == *adapter_id && suspended.group_id == 0

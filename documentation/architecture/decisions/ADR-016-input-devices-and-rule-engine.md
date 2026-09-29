@@ -78,6 +78,9 @@ so any stored copy can lie; they are shown with their read time and re-read on d
 - **One grammar, on the device.** The parser runs on the httpd task (iterative, bounded
   temporaries). The web UI is a text editor with no grammar of its own: it posts source to
   `POST /api/v1/rules/parse` and renders the device's diagnostics with line and column.
+  For editing help it may know the lexical extent of strings and comments, where a `rule`
+  block begins and ends, and which calls take a registry name — never whether a text is
+  valid.
 - **The document compiles as a whole.** A stored document that fails to compile — at
   boot, or when a name it references stops resolving — keeps its source and runs no
   rules; one that cannot be loaded whole (an unknown `lang_id`, torn banks) runs none
