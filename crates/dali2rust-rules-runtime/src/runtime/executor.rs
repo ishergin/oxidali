@@ -36,6 +36,7 @@ struct MergedLight {
     target: LightTarget,
     setpoint: LightSetpoint,
     hold_hcl: bool,
+    bound: bool,
 }
 
 impl MergedLight {
@@ -87,7 +88,7 @@ impl EffectExecutor<'_> {
         for (index, effect) in effects.iter().enumerate() {
             let published = match effect {
                 Effect::Light { target, verb: LightVerb::StopFade, .. } => {
-                    self.stop_fade(target, corr)
+                    self.stop_fade(target, snapshot, corr)
                 }
                 Effect::Light { .. } => match lights.iter().position(|light| light.at == index) {
                     Some(slot) => self.publish_light(lights.remove(slot), corr),
@@ -111,13 +112,31 @@ impl EffectExecutor<'_> {
                 series.close();
                 continue;
             }
-            let Some(setpoint) = setpoint_of(verb, target, snapshot) else {
-                self.counters.effects_skipped_dark.fetch_add(1, Ordering::Relaxed);
-                continue;
-            };
-            series.absorb(MergedLight { at: index, target: *target, setpoint, hold_hcl: *hold_hcl });
+            if let Some(light) = self.plan_light(index, target, verb, *hold_hcl, snapshot) {
+                series.absorb(light);
+            }
         }
         series.lights
+    }
+
+    fn plan_light(
+        &self,
+        at: usize,
+        target: &LightTarget,
+        verb: &LightVerb,
+        hold_hcl: bool,
+        snapshot: &WorldSnapshot,
+    ) -> Option<MergedLight> {
+        let bound = lamp_bound(target, snapshot);
+        let setpoint = match setpoint_of(verb, target, snapshot) {
+            Some(setpoint) => setpoint,
+            None if bound => {
+                self.counters.effects_skipped_dark.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+            None => LightSetpoint::default(),
+        };
+        Some(MergedLight { at, target: *target, setpoint, hold_hcl, bound })
     }
 
     fn one(&self, effect: &Effect, snapshot: &WorldSnapshot, corr: u64) -> bool {
@@ -144,10 +163,10 @@ impl EffectExecutor<'_> {
         false
     }
 
-    fn scene_effect(&self, effect: &Effect, _snapshot: &WorldSnapshot, corr: u64) -> bool {
+    fn scene_effect(&self, effect: &Effect, snapshot: &WorldSnapshot, corr: u64) -> bool {
         match effect {
             Effect::SceneRecall { scene, target, hold_hcl } => {
-                self.scene_recall(*scene, target, *hold_hcl, corr)
+                self.scene_recall(*scene, target, *hold_hcl, snapshot, corr)
             }
             Effect::SceneApply { scene, .. } => self.scene_apply(*scene, corr),
             _ => self.misrouted(),
@@ -201,6 +220,9 @@ impl EffectExecutor<'_> {
     }
 
     fn publish_light(&self, light: MergedLight, corr: u64) -> bool {
+        if !light.bound {
+            return self.unbound_lamp();
+        }
         let (scope, virtual_lamp_id, group_id, adapter) = scope_of(&light.target);
         self.publish(
             corr,
@@ -217,7 +239,10 @@ impl EffectExecutor<'_> {
     }
 
     // IEC 62386-102 §9.5.9
-    fn stop_fade(&self, target: &LightTarget, corr: u64) -> bool {
+    fn stop_fade(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {
+        if !lamp_bound(target, snapshot) {
+            return self.unbound_lamp();
+        }
         let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target);
         self.publish(
             corr,
@@ -236,8 +261,12 @@ impl EffectExecutor<'_> {
         scene: u8,
         target: &Option<LightTarget>,
         hold_hcl: bool,
+        snapshot: &WorldSnapshot,
         corr: u64,
     ) -> bool {
+        if target.is_some_and(|target| !lamp_bound(&target, snapshot)) {
+            return self.unbound_lamp();
+        }
         let command = match target {
             Some(LightTarget::Group(group)) => {
                 DaliRecallSceneCommand::for_group(group.adapter_id, group.id as u8, scene)
@@ -318,6 +347,11 @@ impl EffectExecutor<'_> {
                 retain,
             },
         )
+    }
+
+    fn unbound_lamp(&self) -> bool {
+        self.counters.effects_unbound.fetch_add(1, Ordering::Relaxed);
+        false
     }
 
     fn unmapped(&self, cell: &std::sync::atomic::AtomicU32) -> bool {
@@ -446,6 +480,13 @@ fn lamp_of<'a>(
             .iter()
             .find(|l| l.adapter_id == lamp.adapter_id && l.id == lamp.id),
         _ => None,
+    }
+}
+
+fn lamp_bound(target: &LightTarget, snapshot: &WorldSnapshot) -> bool {
+    match target {
+        LightTarget::Lamp(_) => lamp_of(target, snapshot).is_some_and(|lamp| lamp.bound),
+        LightTarget::Group(_) | LightTarget::Broadcast { .. } => true,
     }
 }
 

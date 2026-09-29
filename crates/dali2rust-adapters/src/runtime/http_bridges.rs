@@ -411,6 +411,7 @@ fn stats_rules_dto(counters: &RuntimeCounterHandles) -> StatsRulesDto {
         chain_depth_exceeded: c.chain_depth_exceeded.load(Relaxed),
         effects_emitted: c.effects_emitted.load(Relaxed),
         actions_failed: c.actions_failed.load(Relaxed),
+        effects_unbound: counters.rules.effects_unbound.load(Relaxed),
         continuations_scheduled: c.continuations_scheduled.load(Relaxed),
         continuations_fired: c.continuations_fired.load(Relaxed),
         continuations_dropped: c.continuations_dropped.load(Relaxed),
@@ -1237,7 +1238,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
         self.store
             .rules_lamp_rows()
             .into_iter()
-            .map(|(adapter_id, id, is_on, level, cct_kelvin, last_level)| {
+            .map(|(adapter_id, id, is_on, level, cct_kelvin, last_level, bound)| {
                 dali2rust_rules_runtime::runtime::engine::LampState {
                     adapter_id,
                     id,
@@ -1245,6 +1246,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
                     level,
                     cct_kelvin,
                     last_level,
+                    bound,
                 }
             })
             .collect()

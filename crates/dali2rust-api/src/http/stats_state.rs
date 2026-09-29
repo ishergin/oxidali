@@ -98,6 +98,7 @@ pub struct StatsRulesDto {
     pub chain_depth_exceeded: u32,
     pub effects_emitted: u32,
     pub actions_failed: u32,
+    pub effects_unbound: u32,
     pub continuations_scheduled: u32,
     pub continuations_fired: u32,
     pub continuations_dropped: u32,

@@ -134,13 +134,30 @@ fn harness_full(
     harness_hcl(slices, lamps, active, lit_group, Arc::new(std::sync::atomic::AtomicBool::new(false)))
 }
 
+const EFFECT_LAMP: u16 = 6;
+
+fn bound_lamp(id: u16) -> dali2rust_rules_runtime::runtime::engine::LampState {
+    dali2rust_rules_runtime::runtime::engine::LampState {
+        adapter_id: 0,
+        id,
+        is_on: false,
+        level: None,
+        cct_kelvin: None,
+        last_level: None,
+        bound: true,
+    }
+}
+
 fn harness_hcl(
     slices: Arc<dali2rust_bsp::slice_store_files::FileSliceStore>,
-    lamps: Vec<dali2rust_rules_runtime::runtime::engine::LampState>,
+    mut lamps: Vec<dali2rust_rules_runtime::runtime::engine::LampState>,
     active: bool,
     lit_group: Arc<std::sync::atomic::AtomicBool>,
     overridden: Arc<std::sync::atomic::AtomicBool>,
 ) -> Harness {
+    if !lamps.iter().any(|lamp| lamp.id == EFFECT_LAMP) {
+        lamps.push(bound_lamp(EFFECT_LAMP));
+    }
     let world = EmptyWorld { started: std::time::Instant::now(), lamps, active, lit_group, overridden };
     harness_spawn(slices, world, Arc::new(StubResolver::permissive()))
 }
@@ -443,6 +460,7 @@ fn on_without_a_level_asks_the_gear_for_its_last_active_level() {
             level: Some(0),
             cct_kelvin: None,
             last_level: Some(1),
+            bound: true,
         }],
     );
     publish_document(
@@ -984,6 +1002,7 @@ fn landing_lamp(level: Option<u8>) -> dali2rust_rules_runtime::runtime::engine::
         level,
         cct_kelvin: Some(3000),
         last_level: level,
+        bound: true,
     }
 }
 
@@ -1531,4 +1550,43 @@ fn a_wet_run_is_reported_per_rule_and_a_dry_run_is_not_issue100() {
         runtime.iter().all(|r| r.name != "цель"),
         "a dry run is a preview, not a firing: {runtime:?}"
     );
+}
+
+const UNBOUND_DOC: &str = "rule \"recall\" {\n  when http trigger\n  do scene(3).recall(lamp(8))\n}\n\
+rule \"light\" {\n  when http trigger\n  do lamp(8).off()\n}\n\
+rule \"stop\" {\n  when http trigger\n  do lamp(8).stop_fade()\n}\n\
+rule \"absent\" {\n  when http trigger\n  do lamp(9).level(10)\n}\n\
+rule \"watch\" cooldown 0ms {\n  when rule(\"recall\") fails\n  when rule(\"light\") fails\n  when rule(\"stop\") fails\n  when rule(\"absent\") fails\n  do lamp(6).level(55)\n}\n";
+
+#[test]
+fn an_effect_on_a_lamp_with_no_binding_fails_its_activation_and_reaches_no_bus() {
+    let unbound = dali2rust_rules_runtime::runtime::engine::LampState {
+        bound: false,
+        ..bound_lamp(8)
+    };
+    let h = harness_with_lamps(
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-unbound-lamp")),
+        vec![unbound],
+    );
+    publish_document(&h, 1, UNBOUND_DOC, 0);
+    assert!(recv_signal(&h, 1).error.is_none());
+    wait_revision(&h.store, 1);
+
+    for (corr, rule) in [(2u64, "recall"), (3, "light"), (4, "stop"), (5, "absent")] {
+        run_rule(&h, corr, rule);
+        let ce = dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |_| true)
+            .unwrap_or_else(|| panic!("{rule}: the watching rule must fire"));
+        let dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(ts) = ce.payload else {
+            panic!("{rule}: published {:?} for a lamp nothing is bound to", ce.payload)
+        };
+        assert_eq!(
+            (ts.virtual_lamp_id, ts.setpoint.level),
+            (6, Some(55)),
+            "{rule}: the first command out must be the watcher's"
+        );
+    }
+    assert_eq!(h.counters.effects_unbound.load(std::sync::atomic::Ordering::Relaxed), 4);
+    let runtime = h.store.rule_runtime();
+    let recall = runtime.iter().find(|r| r.name == "recall").expect("the recall fired");
+    assert_eq!(recall.last_outcome, dali2rust_rules_runtime::RuleOutcome::Failed);
 }

@@ -1036,6 +1036,7 @@ export type StatsRules = {
   chain_depth_exceeded: number
   effects_emitted: number
   actions_failed: number
+  effects_unbound: number
   continuations_scheduled: number
   continuations_fired: number
   continuations_dropped: number
