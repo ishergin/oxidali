@@ -5,6 +5,7 @@ import pytest
 import requests
 
 import hil.api
+import test_target_state
 from hil.config import load as load_config
 
 
@@ -207,11 +208,12 @@ def test_kelvin_turns_into_mirek_the_way_the_controller_rounds():
         370, 333, 286, 200, 167]
 
 
-def test_the_actual_level_is_the_answer_and_silence_is_none(monkeypatch):
+def test_the_actual_level_is_the_answer_and_silence_or_a_violation_is_none(monkeypatch):
     client = _scripted(monkeypatch, {("POST", "dali/command"): [
         (200, {"success": True, "backward_frame": 150}),
-        (200, {"success": False, "backward_frame": 0})]})
-    assert client.actual_levels([16, 17]) == {16: 150, 17: None}
+        (200, {"success": False, "backward_frame": 0}),
+        (200, {"success": True, "backward_frame": 0, "backward_violation": True})]})
+    assert client.actual_levels([16, 17, 18]) == {16: 150, 17: None, 18: None}
 
 
 def test_the_held_colour_temperature_comes_from_a_fresh_read(monkeypatch):
@@ -222,3 +224,42 @@ def test_the_held_colour_temperature_comes_from_a_fresh_read(monkeypatch):
             (200, {"attributes": {"dt8_color": {"color_value_2": {"value": 333}}}})]})
     assert client.held_tc_mirek(20) == 333
     assert client.http.calls[0] == ("POST", "adapters/0/physical-devices/20/attribute-reads")
+
+
+
+def test_fade_running_is_bit_4_of_a_clean_status_answer(monkeypatch):
+    client = _scripted(monkeypatch, {("POST", "dali/command"): [
+        (200, {"success": True, "backward_frame": 0x14}),
+        (200, {"success": True, "backward_frame": 0x04}),
+        (200, {"success": True, "backward_frame": 0xFF, "backward_violation": True}),
+        (200, {"success": False, "backward_frame": 0})]})
+    assert [test_target_state._fade_running(client, 20) for _ in range(4)] == [
+        True, False, None, None]
+
+
+def test_a_timed_series_reports_its_widest_gap_the_status_before_the_last_and_retries(
+        monkeypatch):
+    sent = []
+
+    class _Fixture:
+        retries = {}
+
+        def cmd(self, short, opcode):
+            sent.append(("status", short))
+            return {"success": True, "backward_frame": 0x10 if len(sent) < 7 else 0x00}
+
+        def ts(self, short, setpoint):
+            sent.append(setpoint["color_temperature_kelvin"])
+
+        def actual_level(self, short):
+            return 120
+
+        def held_tc_mirek(self, short):
+            return 333
+
+    monkeypatch.setattr(test_target_state.time, "sleep", lambda seconds: None)
+    report = test_target_state._timed_series(_Fixture(), 20, 0.3)
+    assert sent[:7] == [2700, 3500, 4200, 5000, 6000, ("status", 20), 3000]
+    assert report["fade_running_before_last"] is True and report["settled"]
+    assert report["retried"] == 0 and report["held_mirek"] == 333
+    assert 0 <= report["widest_gap_s"] < 1.0

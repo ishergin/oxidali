@@ -1,5 +1,6 @@
 import base64
 import socket
+import struct
 import threading
 
 import pytest
@@ -162,3 +163,16 @@ def test_a_subscriber_without_a_sniffer_batch_or_enough_snapshots_proves_nothing
     busy = {"SnifferBatch": 3, "DiagnosticsSnapshot": test_ws.MIN_DIAGNOSTICS}
     kinds = [busy, dict(busy, SnifferBatch=0), {"SnifferBatch": 1, "DiagnosticsSnapshot": 1}]
     assert test_ws._idle_subscribers(kinds) == [1, 2]
+
+
+
+def test_a_close_is_recorded_with_its_code_and_a_capacity_refusal_is_named():
+    close = struct.pack("!H", wsclient.TRY_AGAIN_LATER) + b"busy"
+    clients = [_FakeWs([_text("SnifferBatch"), (wsclient.OP_CLOSE, close)]), _FakeWs([])]
+    opened = iter(clients)
+    load = wsclient.Subscribers("http://127.0.0.1:9", 2, opener=lambda base: next(opened))
+    assert wait_until(lambda: load.closes, DRAIN_WAIT_S, interval_s=0.01)
+    load.close()
+    assert load.closes == [(0, wsclient.TRY_AGAIN_LATER)] and load.refused() == [0]
+    assert dict(load.kinds[0]) == {"SnifferBatch": 1} and load.errors == []
+    assert wsclient.close_code(b"") is None

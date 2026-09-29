@@ -28,6 +28,16 @@ SOAK = _script("soak_abab")
 LATE = ("2026-09-26T08:00:02.000Z W (5) dali: DALI ISR late entries (delayed; see raw deficit "
         "for losses): ws-client×2 (max 140 us @0x40001234<0x40005678), (none)×1 (max 9 us "
         "@0x0<0x0), httpd+isr×1 (max 60 us @0x1<0x2), ws-client+isr×1 (max 300 us @0x3<0x4)")
+BENCH_UNREGISTERED = (
+    "2026-09-17T15:38:24.560 W (14196) dali2rust_adapters::dali::transport::esp_idf: DALI ISR "
+    "late entries (delayed; see raw deficit for losses): mqtt_worker×1 (max 220 us "
+    "@0x4ff0efe2<0x4ff12416), dali-sniff×1 (max 251 us @0x4ff01f68<0x4ff0f0c4), 0x4ff89254 "
+    "(not registered)×1 (max 217 us @0x4ff0efe2<0x4ff0c272)")
+BENCH_INTERLEAVED = (
+    "2026-09-22T21:43:14.820 W (3950143) dali2rust_adapters::dali::transport::esp_idf: DALI "
+    "ISR late entries (delayed; see raw deficit for losses): ota-run×3 (max 330 us "
+    "@0x4ff0f11c<0x4ff0dd16), ipc0×3 (max 306E (3952207) task_wdt: Task watchdog got "
+    "triggered. The following tasks/users did not reset the watchdog in time:")
 
 
 def _cfg(tmp_path, lamp_shorts="0,2,3"):
@@ -128,9 +138,33 @@ def test_issue89_names_no_bench_address_and_no_checkout_path():
 
 
 def test_late_entries_are_tallied_by_task_and_nesting():
-    tally = seriallog.late_entry_tasks([LATE, TIMING, LATE])
-    assert tally == {"ws-client": [4, 140], "httpd+isr": [2, 60], "ws-client+isr": [2, 300]}
-    assert {seriallog.task_of(key) for key in tally} == {"ws-client", "httpd"}
+    found = seriallog.late_entries([LATE, TIMING, LATE])
+    assert found.tasks == {"ws-client": [4, 140], "(none)": [2, 9], "httpd+isr": [2, 60],
+                           "ws-client+isr": [2, 300]}
+    assert {seriallog.task_of(key) for key in found.tasks} == {"ws-client", "(none)", "httpd"}
+    assert (found.unparsed, found.truncated) == (0, 0)
+    assert len(found.mentioning("ws-client")) == 2 and not found.mentioning("mqtt_worker")
+
+
+def test_a_bench_line_with_an_unregistered_task_parses_whole():
+    found = seriallog.late_entries([BENCH_UNREGISTERED])
+    assert found.tasks == {"mqtt_worker": [1, 220], "dali-sniff": [1, 251],
+                           "0x4ff89254 (not registered)": [1, 217]}
+    assert found.unparsed == 0
+
+
+def test_a_line_another_log_cut_into_counts_the_items_it_lost():
+    found = seriallog.late_entries([BENCH_INTERLEAVED])
+    assert found.tasks == {"ota-run": [3, 330]}
+    assert found.unparsed == 1 and found.mentioning("ipc0")
+
+
+def test_a_line_at_the_firmware_report_limit_is_counted_truncated():
+    items = ", ".join("task%02d×1 (max 200 us @0x40000000<0x40000000)" % n for n in range(20))
+    text = items.encode()[:seriallog.LATE_REPORT_BYTES].decode("utf-8", "ignore")
+    line = "W (1) x: DALI ISR late entries (delayed; see raw deficit for losses): " + text
+    assert seriallog.late_entries([line]).truncated == 1
+    assert seriallog.late_entries([BENCH_UNREGISTERED]).truncated == 0
 
 
 def test_the_soak_reads_late_entries_from_its_offset_through_the_toolkit(tmp_path):
@@ -139,8 +173,8 @@ def test_the_soak_reads_late_entries_from_its_offset_through_the_toolkit(tmp_pat
     start = log.stat().st_size
     with log.open("a") as fh:
         fh.write(LATE.replace("ws-client×2", "mqtt_task×3") + "\n")
-    assert SOAK.late_entries(log, start) == {"mqtt_task": [3, 140], "httpd+isr": [1, 60],
-                                             "ws-client+isr": [1, 300]}
+    assert SOAK.late_entries(log, start) == {"mqtt_task": [3, 140], "(none)": [1, 9],
+                                             "httpd+isr": [1, 60], "ws-client+isr": [1, 300]}
     assert SOAK.late_entries(tmp_path / "missing.log", 0) == {}
 
 
@@ -167,3 +201,26 @@ class _Unfiltered:
 
     def devices_unfiltered(self):
         return {"physical_devices": [{"short_address": s} for s in self.shorts]}
+
+
+HEARTBEAT = "2026-09-29T10:%02d:00.000Z I (%d) dali2rust: firmware heartbeat: uptime=%ds"
+
+
+def _beats(*uptimes):
+    return [HEARTBEAT % (n, uptime * 1000, uptime) for n, uptime in enumerate(uptimes)]
+
+
+def test_the_heartbeat_run_counts_only_consecutive_minutes():
+    assert seriallog.heartbeat_run(_beats(*range(60, 660, 60))) == 10
+    assert seriallog.heartbeat_run(_beats(60, 120, 240, 300, 360)) == 3
+    assert seriallog.heartbeat_run(_beats(600, 60, 120)) == 2
+    assert seriallog.heartbeat_run(["noise"]) == 0
+
+
+def test_the_log_is_known_to_have_passed_a_moment_by_the_firmware_stamp():
+    lines = ["2026-09-29T10:00:00.000Z I (4999) x: HTTP access: GET /api/v1/health",
+             "2026-09-29T10:00:01.000Z unstamped line"]
+    assert seriallog.dut_ms(lines[0]) == 4999 and seriallog.dut_ms(lines[1]) is None
+    assert seriallog.logged_past(lines, 4999) and not seriallog.logged_past(lines, 5000)
+    assert seriallog.newest_ms(lines + ["x W (12) y"]) == 4999
+    assert seriallog.newest_ms(lines[1:]) is None and not seriallog.logged_past([], 0)

@@ -24,6 +24,8 @@ LOAD_CHANNELS = ("sniffer", "diagnostics", "stats")
 DRAIN_TIMEOUT_S = 1.0
 JOIN_TIMEOUT_S = 5.0
 UNDECODABLE = "undecodable"
+CLOSE_CODE_BYTES = 2
+TRY_AGAIN_LATER = 1013
 
 
 class WsError(RuntimeError):
@@ -198,6 +200,12 @@ def connect(base, path="/api/v1/ws", timeout=5.0):
     return client
 
 
+def close_code(payload):
+    if len(payload) < CLOSE_CODE_BYTES:
+        return None
+    return struct.unpack("!H", payload[:CLOSE_CODE_BYTES])[0]
+
+
 def frame_kind(opcode, payload):
     if opcode != OP_TEXT:
         return "opcode 0x%X" % opcode
@@ -214,7 +222,7 @@ class Subscribers:
     def __init__(self, base, count, channels=LOAD_CHANNELS, opener=None):
         opener = opener or connect
         self.stop = threading.Event()
-        self.errors = []
+        self.errors, self.closes = [], []
         self.kinds = [collections.Counter() for _ in range(count)]
         self.clients = []
         try:
@@ -241,7 +249,13 @@ class Subscribers:
                 if not self.stop.is_set():
                     self.errors.append("subscriber %d dropped: %s" % (index, exc))
                 return
+            if opcode == OP_CLOSE:
+                self.closes.append((index, close_code(payload)))
+                return
             kinds[frame_kind(opcode, payload)] += 1
+
+    def refused(self):
+        return [index for index, code in self.closes if code == TRY_AGAIN_LATER]
 
     def close(self):
         self.stop.set()

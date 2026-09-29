@@ -205,63 +205,77 @@ STAGE = (0x29, 0xE7)
 ACTIVATE = (0x29, 0xE2)
 STATUS = (0x29, 0x90)
 COLOUR_STATUS = (0x29, 0xF8)
-DTRS = ((0xA3, 0x4D), (0xC3, 0x01))
 
 
-def _write(*between):
-    return list(DTRS) + [ENABLE_DT8, STAGE, ENABLE_DT8, COLOUR_STATUS] + list(between) + [
+def _dtrs(mirek):
+    return [(0xA3, mirek & 0xFF), (0xC3, mirek >> 8)]
+
+
+def _write(mirek, *between):
+    return _dtrs(mirek) + [ENABLE_DT8, STAGE, ENABLE_DT8, COLOUR_STATUS] + list(between) + [
         ENABLE_DT8, ACTIVATE]
 
 
-def test_a_colour_write_the_fix_sends_is_staged_and_activated():
-    tally = gearsim.colour_writes(_frames(*(_write() + _write())), 20)
-    assert (tally.stagings, tally.activations, tally.faults) == (2, 2, [])
+def test_every_colour_the_fix_stages_is_paired_with_its_activate():
+    tally = gearsim.colour_writes(_frames(*(_write(370) + _write(286))), 20)
+    assert tally.activated() == [370, 286]
+    assert (tally.gates, tally.faults) == ([], [])
 
 
-def test_a_status_gate_between_staging_and_activation_is_a_fault():
-    tally = gearsim.colour_writes(_frames(*_write(STATUS)), 20)
-    assert tally.activations == 1
-    assert any("QUERY STATUS" in fault for fault in tally.faults)
+def test_a_status_gate_between_staging_and_activation_is_direct_evidence():
+    tally = gearsim.colour_writes(_frames(*_write(370, STATUS)), 20)
+    assert tally.activated() == [370] and tally.faults == []
+    assert len(tally.gates) == 1 and "QUERY STATUS" in tally.gates[0]
 
 
 def test_a_status_query_to_another_gear_is_not_a_gate():
-    tally = gearsim.colour_writes(_frames(*_write((0x03, 0x90))), 20)
-    assert tally.faults == []
+    tally = gearsim.colour_writes(_frames(*_write(370, (0x03, 0x90))), 20)
+    assert tally.gates == []
 
 
 def test_a_staged_colour_never_activated_is_a_fault():
-    tally = gearsim.colour_writes(_frames(*list(DTRS), ENABLE_DT8, STAGE, STATUS), 20)
-    assert tally.activations == 0
+    tally = gearsim.colour_writes(_frames(*_dtrs(370), ENABLE_DT8, STAGE, STATUS), 20)
+    assert tally.activated() == []
     assert any("never activated" in fault for fault in tally.faults)
 
 
+def test_a_colour_replaced_before_its_activate_cannot_hide_behind_an_extra_one():
+    frames = _write(370)[:-2] + _write(286) + [ENABLE_DT8, ACTIVATE]
+    tally = gearsim.colour_writes(_frames(*frames), 20)
+    assert tally.activated() == [286]
+    assert any("370 mirek staged on SA20 was replaced by 286" in f for f in tally.faults)
+
+
 def test_an_activate_the_enable_did_not_open_is_a_fault():
-    tally = gearsim.colour_writes(_frames(ENABLE_DT8, STAGE, (0x29, 0x98), ACTIVATE), 20)
+    frames = _dtrs(370) + [ENABLE_DT8, STAGE, (0x29, 0x98), ACTIVATE]
+    tally = gearsim.colour_writes(_frames(*frames), 20)
     assert any("did not follow ENABLE DEVICE TYPE 8" in fault for fault in tally.faults)
 
 
-def test_a_restaged_colour_activated_once_is_one_unit():
-    frames = _frames(ENABLE_DT8, STAGE, ENABLE_DT8, STAGE, ENABLE_DT8, ACTIVATE)
-    tally = gearsim.colour_writes(frames, 20)
-    assert (tally.stagings, tally.activations, tally.faults) == (2, 1, [])
+def test_a_retried_unit_counts_its_colour_once():
+    frames = _dtrs(370) + [ENABLE_DT8, STAGE] + _write(370) + _write(370)
+    tally = gearsim.colour_writes(_frames(*frames), 20)
+    assert tally.activated() == [370] and tally.faults == []
 
 
 GROUP_MASK_FRAME = (0x88, 0xFF)
 
 
-@pytest.mark.parametrize("pairs,faults", [
-    ([GROUP_MASK_FRAME], 0),
-    ([GROUP_MASK_FRAME, (0x89, 0xA0), (0x24, 0x05), (0x21, 0x90)], 0),
-    ([(0x88, 150)], 2),
-    ([GROUP_MASK_FRAME, GROUP_MASK_FRAME], 1),
-    ([GROUP_MASK_FRAME, (32, 150)], 1),
-    ([GROUP_MASK_FRAME, (0x21, 0x05)], 1),
-    ([GROUP_MASK_FRAME, (0xFE, 100)], 1),
-    ([GROUP_MASK_FRAME, (0x89, 0x10)], 1),
-    ([GROUP_MASK_FRAME, (32, 0xFF)], 0),
+@pytest.mark.parametrize("pairs,masks,moves", [
+    ([GROUP_MASK_FRAME], 1, 0),
+    ([GROUP_MASK_FRAME, (0x89, 0xA0), (0x24, 0x05), (0x21, 0x90)], 1, 0),
+    ([(0x88, 150)], 0, 0),
+    ([GROUP_MASK_FRAME, GROUP_MASK_FRAME], 2, 0),
+    ([GROUP_MASK_FRAME, (32, 150)], 1, 1),
+    ([GROUP_MASK_FRAME, (0x21, 0x05)], 1, 1),
+    ([GROUP_MASK_FRAME, (0xFE, 100)], 1, 1),
+    ([GROUP_MASK_FRAME, (0x89, 0x10)], 1, 1),
+    ([(32, 150), GROUP_MASK_FRAME, (32, 0xFF)], 1, 0),
 ])
-def test_a_stop_is_one_group_mask_and_no_level_after_it(pairs, faults):
-    assert len(gearsim.stop_fade_faults(_frames(*pairs), 4, [16, 17])) == faults
+def test_a_stop_is_counted_in_masks_and_level_frames_after_it(pairs, masks, moves):
+    frames = _frames(*pairs)
+    assert gearsim.mask_frames(frames, 4) == masks
+    assert len(gearsim.level_moves(frames, 4, [16, 17])) == moves
 
 
 def _console(tmp_path, monkeypatch, dropped=(0, 2)):

@@ -134,6 +134,7 @@ def test_an_unaddressed_emulated_gear_is_commissioned_onto_the_park(api, virtual
 TC_SERIES_KELVIN = (2700, 3500, 4200, 5000, 6000, 3000)
 TC_SERIES_GAPS_S = (0.3, 3.0)
 TC_FADE_MS = 1000
+COLOUR_FIELD = "colour_mirek"
 
 
 def _series(api, lamp, gap):
@@ -147,10 +148,33 @@ def _settled(window, dut):
     return sent, window.heard_settled(LOG_QUIET_S, LOG_SETTLE_MAX_S, LOG_POLL_S)
 
 
-def _cannot_vouch(what, missed, lost):
-    return ("INCONCLUSIVE, not a product failure: %s the emulator did not hear %d frame(s) "
-            "the DUT logged as sent (%s; its loss counters moved by %r), so its frame list "
-            "cannot vouch" % (what, len(missed), missed, lost))
+def _reached(oracle, window, short, value):
+    return any(c.short == short and c.field == COLOUR_FIELD and c.new == str(value)
+               for c in oracle.changes(window))
+
+
+def _colour_series(api, bench, serial_log, short, gap):
+    last = kelvin_to_mirek(TC_SERIES_KELVIN[-1])
+    losses = tripwire.log_losses(api.stats())
+    with bench.oracle.hearing() as window, serial_log.window() as dut:
+        _series(api, bench.vl(short), gap)
+        wait_until(lambda: _reached(bench.oracle, window, short, last), HEARD_TIMEOUT_S,
+                   interval_s=POLL_S)
+        sent, heard = _settled(window, dut)
+    writes = gearsim.colour_writes(heard, short)
+    return {"gates": writes.gates, "faults": writes.faults, "activated": writes.activated(),
+            "activates_sent": sent.count((gearsim.command_address(short), gearsim.ACTIVATE)),
+            "unheard": gearsim.unheard(sent, heard), "emulator_lost": window.losses(),
+            "dut_lost": tripwire.lost_lines(losses, tripwire.log_losses(api.stats())),
+            "held_mirek": api.held_tc_mirek(short)}
+
+
+def _cannot_vouch(what, seen):
+    return ("INCONCLUSIVE, not a product failure: %s the controller's log lost lines (%r) or "
+            "the emulator did not hear %d frame(s) the controller logged as sent (%s; its own "
+            "loss counters moved by %r), so the frame lists cannot vouch"
+            % (what, seen["dut_lost"], len(seen["unheard"]), seen["unheard"],
+               seen["emulator_lost"]))
 
 
 @pytest.mark.hil_id("HIL-VG-05")
@@ -159,74 +183,88 @@ def test_every_colour_only_write_to_an_emulated_tc_gear_is_activated_without_a_s
     tc_gear = virtual_bench.of_kind("cct")
     if not tc_gear:
         pytest.skip("the park holds no DT8 Tc gear (its shape is %s)" % (virtual_bench.shape,))
-    short, oracle = tc_gear[0], virtual_bench.oracle
-    last = kelvin_to_mirek(TC_SERIES_KELVIN[-1])
-    attr_guard(short, "fade_time_ms", verify=True)
+    short = tc_gear[0]
+    commanded = [kelvin_to_mirek(k) for k in TC_SERIES_KELVIN]
+    attr_guard(short, "fade_time_ms", verify=True, required=True)
     written = api.wait_op(api.write_attrs(short, {"fade_time_ms": TC_FADE_MS}))
     assert written.get("status") == "succeeded", written
     api.held_tc_mirek(short)
-    report = {}
-    for gap in TC_SERIES_GAPS_S:
-        with oracle.hearing() as window, serial_log.window() as dut:
-            _series(api, virtual_bench.vl(short), gap)
-            oracle.expect(window, short, "colour_mirek", last)
-            sent, heard = _settled(window, dut)
-        writes = gearsim.colour_writes(heard, short)
-        report[gap] = {"stagings": writes.stagings, "activations": writes.activations,
-                       "faults": writes.faults, "unheard": gearsim.unheard(sent, heard),
-                       "lost": window.losses(), "held_mirek": api.held_tc_mirek(short)}
+    report = {gap: _colour_series(api, virtual_bench, serial_log, short, gap)
+              for gap in TC_SERIES_GAPS_S}
     test_artifacts.attach_json("colour_series", report)
 
     for gap, seen in sorted(report.items()):
-        assert not seen["unheard"], _cannot_vouch(
-            "during the %.1f s series" % gap, seen["unheard"], seen["lost"])
+        assert not seen["gates"], "%.1f s apart: %s" % (gap, seen["gates"])
+    for gap, seen in sorted(report.items()):
+        assert not seen["dut_lost"] and not seen["unheard"], _cannot_vouch(
+            "during the %.1f s series" % gap, seen)
+        assert seen["activates_sent"] >= len(commanded), (
+            "%.1f s apart: the controller logged %d ACTIVATE frames to SA%d for %d colour-only "
+            "writes, with no log line lost" % (gap, seen["activates_sent"], short,
+                                               len(commanded)))
         assert not seen["faults"], "%.1f s apart: %s" % (gap, seen["faults"])
-        assert seen["activations"] >= len(TC_SERIES_KELVIN), (
-            "%.1f s apart: %d colour-only writes, %d ACTIVATE frames reached the gear"
-            % (gap, len(TC_SERIES_KELVIN), seen["activations"]))
-        assert seen["held_mirek"] == last, (
+        assert seen["activated"] == commanded, (
+            "%.1f s apart: the gear activated %r mirek, the commands were %r"
+            % (gap, seen["activated"], commanded))
+        assert seen["held_mirek"] == commanded[-1], (
             "%.1f s apart: the gear holds %r mirek after a fresh read, the last command was "
-            "%d" % (gap, seen["held_mirek"], last))
+            "%d" % (gap, seen["held_mirek"], commanded[-1]))
 
 
 STOP_FADE_LEVEL = 150
 STOP_FADE_RULE = "hil-vg-06-stop-fade"
 STOP_FADE = "stop_fade()"
 HEARD_TIMEOUT_S = 10.0
-FOLLOW_UP_S = 2.0
 LEVEL_WAIT_S = 10.0
 POLL_S = 0.3
 
 
+def _stop_report(api, window, group, dut_lines, losses):
+    sent, heard = _settled(window, dut_lines)
+    mask = (gearsim.group_dapc_address(group), gearsim.MASK)
+    return {"sent_masks": sent.count(mask),
+            "collided_masks": tripwire.collided_frames(dut_lines.lines()).count(mask),
+            "heard_masks": gearsim.mask_frames(heard, group), "heard": heard,
+            "unheard": gearsim.unheard(sent, heard), "emulator_lost": window.losses(),
+            "dut_lost": tripwire.lost_lines(losses, tripwire.log_losses(api.stats()))}
+
+
 @pytest.mark.hil_id("HIL-VG-06")
 def test_a_stop_fade_rule_sends_one_dapc_mask_to_its_group_and_no_level(
-        api, virtual_bench, serial_log, session_rows_guard, rules_guard, op_check,
+        api, virtual_bench, serial_log, rules_guard, session_rows_guard, op_check,
         test_artifacts):
     if not virtual_bench.groups:
         pytest.skip("no free group: a live lamp's group membership is unknown")
     group, members = virtual_bench.groups[0], virtual_bench.park[:2]
-    oracle, mask = virtual_bench.oracle, gearsim.group_dapc_address(group)
+    oracle = virtual_bench.oracle
     api.groups.join([virtual_bench.vl(s) for s in members], group, timeout_s=OP_TIMEOUT_S)
     api.groups.ts(group, {"power": "on", "level": STOP_FADE_LEVEL})
     assert wait_until(lambda: set(api.actual_levels(members).values()) == {STOP_FADE_LEVEL},
                       LEVEL_WAIT_S, interval_s=POLL_S), api.actual_levels(members)
     rules_guard(http_rule(STOP_FADE_RULE, GROUP_TARGET, group, STOP_FADE))
+    losses = tripwire.log_losses(api.stats())
     with oracle.hearing() as window, serial_log.window() as dut:
         op_check(api.wait_op(api.rules_run(STOP_FADE_RULE)))
-        wait_until(lambda: any((f.address, f.data) == (mask, gearsim.MASK)
-                               for f in window.heard()), HEARD_TIMEOUT_S, interval_s=POLL_S)
-        time.sleep(FOLLOW_UP_S)
-        sent, heard = _settled(window, dut)
-    missed, lost = gearsim.unheard(sent, heard), window.losses()
-    faults = gearsim.stop_fade_faults(heard, group, members)
+        wait_until(lambda: gearsim.mask_frames(window.heard(), group), HEARD_TIMEOUT_S,
+                   interval_s=POLL_S)
+        seen = _stop_report(api, window, group, dut, losses)
+    moves = gearsim.level_moves(seen.pop("heard"), group, members)
     levels = api.actual_levels(members)
-    test_artifacts.attach_json("stop_fade", {
-        "group": group, "members": members, "levels": levels, "faults": faults,
-        "unheard": missed, "lost": lost, "sent": sent,
-        "heard": [[f.at_us, f.address, f.data] for f in heard]})
+    test_artifacts.attach_json("stop_fade", dict(seen, group=group, members=members,
+                                                 moves=moves, levels=levels))
 
-    assert not missed, _cannot_vouch("after the rule ran", missed, lost)
-    assert not faults, faults
+    assert not moves, moves
+    assert seen["sent_masks"] <= 1, (
+        "the controller logged %d complete DAPC MASK frames to group %d for one stop"
+        % (seen["sent_masks"], group))
+    assert seen["heard_masks"] <= seen["sent_masks"] + seen["collided_masks"], (
+        "the gear heard %d DAPC MASK frames to group %d, the controller sent %d and %d "
+        "collided" % (seen["heard_masks"], group, seen["sent_masks"], seen["collided_masks"]))
+    assert not seen["dut_lost"] and not seen["unheard"], _cannot_vouch(
+        "after the rule ran", seen)
+    assert seen["sent_masks"] == 1 and seen["heard_masks"] >= 1, (
+        "no DAPC MASK to group %d reached the gear: the controller logged %d, the gear heard "
+        "%d, and neither log lost a line" % (group, seen["sent_masks"], seen["heard_masks"]))
     assert set(levels.values()) == {STOP_FADE_LEVEL}, (
         "the members left the level the stop caught them at: %r" % levels)
     oracle.untouched(window, members)

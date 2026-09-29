@@ -201,21 +201,23 @@ STOP_FADE_LEVEL_WAIT_S = 12.0
 STOP_FADE_POLL_S = 0.5
 
 
+@pytest.fixture()
+def group_actions_allowed(api):
+    try:
+        api.guard.check_target(TARGET_SEGMENT, True, "a stop_fade rule on a group")
+    except LampNotAllowed as exc:
+        pytest.skip("%s — the rule's DAPC MASK reaches the whole group past the client, so "
+                    "the segment must hold only test gear" % exc)
+
+
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-GRP-10")
 def test_a_stop_fade_rule_leaves_real_members_where_it_caught_them(
-        api, hil_config, vl_bindings, lamps, free_group, group_matrix_guard, ops_quiesce,
-        attr_guard, rules_guard, state_snapshot, op_check, test_artifacts):
-    if hil_config.lamps_read_only:
-        pytest.skip("HIL_LAMPS_READ_ONLY=1: the fade and its stop are visible, which needs "
-                    "the owner's go-ahead for the run")
-    try:
-        api.guard.check_target(TARGET_SEGMENT, True, "a stop_fade rule on group %d" % free_group)
-    except LampNotAllowed as exc:
-        pytest.skip("%s — the rule's DAPC MASK reaches the whole group past the client" % exc)
+        api, group_actions_allowed, rules_guard, attr_guard, vl_bindings, lamps, free_group,
+        group_matrix_guard, ops_quiesce, state_snapshot, op_check, test_artifacts):
     members = [lamps.by_label[label] for label in lamps.labels()]
     for short in members:
-        attr_guard(short, "fade_time_ms", verify=True)
+        attr_guard(short, "fade_time_ms", verify=True, required=True)
         written = api.wait_op(api.write_attrs(short, {"fade_time_ms": STOP_FADE_FADE_MS}))
         assert written.get("status") == "succeeded", written
     api.groups.join([label - 1 for label in lamps.labels()], free_group)

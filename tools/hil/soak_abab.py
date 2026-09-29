@@ -89,7 +89,7 @@ def late_entries(log, offset):
         return {}
     with fh:
         fh.seek(offset)
-        return seriallog.late_entry_tasks(raw.decode("utf-8", "replace") for raw in fh)
+        return seriallog.late_entries(raw.decode("utf-8", "replace") for raw in fh).tasks
 
 
 def run_phase(name, seconds, boards, provoke, patch_every):

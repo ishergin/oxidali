@@ -355,12 +355,14 @@ def test_a_group_command_reaches_the_lamps_not_only_the_tile(ha_guard, api,
 
 
 BRIDGE_SUBSCRIBER = "mqtt_bridge"
+BRIDGE_INBOX_DEPTH = 64
 BURST_LAMPS = 16
 BURST_OP_S = 90
 BRIDGE_QUIET_S = 2.0
 BRIDGE_SETTLE_MAX_S = 30.0
 BRIDGE_POLL_S = 0.5
-U32 = 1 << 32
+BRIDGE_COUNTERS = ("delivered", "receiver_overflow", "bus_coalesced_total",
+                   "bus_discarded_total")
 
 
 def _bridge_counters(api):
@@ -368,9 +370,11 @@ def _bridge_counters(api):
     subscriber = validity.event_subscriber(diagnostics, BRIDGE_SUBSCRIBER) or {}
     mqtt = diagnostics.get("mqtt") or {}
     return {"connected": bool(mqtt.get("connected")), "named": bool(subscriber),
+            "uptime_ms": int(diagnostics.get("uptime_ms") or 0),
             "delivered": int(subscriber.get("delivered") or 0),
             "receiver_overflow": int(subscriber.get("receiver_overflow") or 0),
-            "bus_coalesced_total": int(mqtt.get("bus_coalesced_total") or 0)}
+            "bus_coalesced_total": int(mqtt.get("bus_coalesced_total") or 0),
+            "bus_discarded_total": int(mqtt.get("bus_discarded_total") or 0)}
 
 
 def _bridge_settled(api):
@@ -386,8 +390,8 @@ def _bridge_settled(api):
     return last
 
 
-def _moved(before, after, name):
-    return (after[name] - before[name]) % U32
+def _moved(before, after):
+    return {name: after[name] - before[name] for name in BRIDGE_COUNTERS}
 
 
 @pytest.mark.hil_id("HIL-MQTT-12")
@@ -414,16 +418,19 @@ def test_a_read_and_apply_burst_over_the_park_overflows_no_bridge_inbox(
     api.groups.join([virtual_bench.vl(s) for s in shorts], group, apply=False)
     views.append(op_check(api.wait_op(api.groups.apply(), timeout_s=BURST_OP_S)))
     after = _bridge_settled(api)
-    moved = {name: _moved(before, after, name)
-             for name in ("delivered", "receiver_overflow", "bus_coalesced_total")}
+    moved = _moved(before, after)
     test_artifacts.attach_json("bridge", {"before": before, "after": after, "moved": moved,
                                           "operations": [v.get("operation_id")
                                                          for v in views]})
 
-    assert moved["receiver_overflow"] == 0, (
-        "the bridge's inbox overflowed %d time(s) under a burst over %d gear: %r"
-        % (moved["receiver_overflow"], BURST_LAMPS, moved))
-    assert moved["delivered"] and moved["bus_coalesced_total"], (
-        "INCONCLUSIVE, not a product failure: the bridge was delivered %d event(s) and "
-        "coalesced %d, so the burst never filled the buffer that merges them: %r"
-        % (moved["delivered"], moved["bus_coalesced_total"], moved))
+    assert after["uptime_ms"] >= before["uptime_ms"], (
+        "the controller restarted during the burst (uptime %d -> %d ms), so the bridge's "
+        "counters started again" % (before["uptime_ms"], after["uptime_ms"]))
+    assert moved["receiver_overflow"] == 0 and moved["bus_discarded_total"] == 0, (
+        "the bridge lost events under a burst over %d gear: %r" % (BURST_LAMPS, moved))
+    assert after["connected"], "the bridge lost its broker during the burst: %r" % after
+    assert moved["delivered"] > BRIDGE_INBOX_DEPTH and moved["bus_coalesced_total"], (
+        "INCONCLUSIVE, not a product failure: the bridge was delivered %d event(s), %d needed "
+        "to outrun its %d-slot inbox, and coalesced %d, so the burst never filled the buffer "
+        "that merges them: %r" % (moved["delivered"], BRIDGE_INBOX_DEPTH + 1,
+                                  BRIDGE_INBOX_DEPTH, moved["bus_coalesced_total"], moved))

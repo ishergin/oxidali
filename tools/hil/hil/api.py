@@ -356,7 +356,9 @@ class Client:
 
     def actual_level(self, short: int):
         reply = self.cmd(short, QUERY_ACTUAL_LEVEL)
-        return reply.get("backward_frame") if reply.get("success") else None
+        if not reply.get("success") or reply.get("backward_violation"):
+            return None
+        return reply.get("backward_frame")
 
     def actual_levels(self, shorts) -> dict:
         return {short: self.actual_level(short) for short in shorts}

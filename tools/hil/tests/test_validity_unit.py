@@ -764,19 +764,22 @@ def test_a_named_event_subscriber_is_found_by_its_name():
 
 
 class _Diagnostics:
-    def __init__(self, delivered, overflow, coalesced, connected=True):
-        self.body = {"bus": {"event_subscribers": [
+    def __init__(self, delivered, overflow, coalesced, connected=True, uptime_ms=1000,
+                 discarded=0):
+        self.body = {"uptime_ms": uptime_ms, "bus": {"event_subscribers": [
             {"name": "mqtt_bridge", "delivered": delivered, "receiver_overflow": overflow}]},
-            "mqtt": {"connected": connected, "bus_coalesced_total": coalesced}}
+            "mqtt": {"connected": connected, "bus_coalesced_total": coalesced,
+                     "bus_discarded_total": discarded}}
 
     def diagnostics(self):
         return self.body
 
 
-def test_the_bridge_counters_come_from_its_subscriber_and_wrap():
-    before = test_ha_bridge._bridge_counters(_Diagnostics(2**32 - 1, 0, 5))
-    after = test_ha_bridge._bridge_counters(_Diagnostics(3, 0, 9))
-    assert before["named"] and before["connected"]
-    assert test_ha_bridge._moved(before, after, "delivered") == 4
-    assert test_ha_bridge._moved(before, after, "bus_coalesced_total") == 4
+def test_the_bridge_counters_come_from_its_subscriber_and_the_mqtt_block():
+    before = test_ha_bridge._bridge_counters(_Diagnostics(10, 0, 5))
+    after = test_ha_bridge._bridge_counters(_Diagnostics(90, 0, 9, uptime_ms=5000, discarded=2))
+    assert before["named"] and before["connected"] and after["uptime_ms"] == 5000
+    assert test_ha_bridge._moved(before, after) == {
+        "delivered": 80, "receiver_overflow": 0, "bus_coalesced_total": 4,
+        "bus_discarded_total": 2}
     assert not test_ha_bridge._bridge_counters(_Diagnostics(0, 0, 0, connected=False))["connected"]

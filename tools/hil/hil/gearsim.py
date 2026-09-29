@@ -34,6 +34,8 @@ ENABLE_DEVICE_TYPE_8 = (0xC1, 0x08)
 SET_TEMPORARY_COLOUR_TEMPERATURE = 0xE7
 ACTIVATE = 0xE2
 DT8_WRITES = (SET_TEMPORARY_COLOUR_TEMPERATURE, ACTIVATE)
+DTR0, DTR1 = 0xA3, 0xC3
+BYTE_BITS = 8
 
 
 class GearSimUnavailable(RuntimeError):
@@ -118,43 +120,74 @@ def group_dapc_address(group):
 
 @dataclass
 class ColourWrites:
-    stagings: int
-    activations: int
+    units: list
+    gates: list
     faults: list
+
+    def activated(self):
+        out = []
+        for value, done in self.units:
+            if done and (not out or out[-1] != value):
+                out.append(value)
+        return out
 
 
 def colour_writes(frames, short):
-    address, staged, previous = command_address(short), False, None
-    tally = ColourWrites(0, 0, [])
+    tally, dtr, previous = ColourWrites([], [], []), {}, None
     for frame in frames:
-        pair = (frame.address, frame.data)
-        if frame.address == address and frame.data in DT8_WRITES \
-                and previous != ENABLE_DEVICE_TYPE_8:
-            tally.faults.append("0x%02X to SA%d at %d us did not follow ENABLE DEVICE TYPE 8"
-                                % (frame.data, short, frame.at_us))
-        if pair == (address, SET_TEMPORARY_COLOUR_TEMPERATURE):
-            staged, tally.stagings = True, tally.stagings + 1
-        elif pair == (address, QUERY_STATUS) and staged:
-            tally.faults.append("QUERY STATUS to SA%d at %d us sat between a staged colour "
-                                "and its ACTIVATE" % (short, frame.at_us))
-        elif pair == (address, ACTIVATE):
-            staged, tally.activations = False, tally.activations + 1
-        previous = pair
-    if staged:
-        tally.faults.append("the last colour staged on SA%d was never activated" % short)
+        if frame.address in (DTR0, DTR1):
+            dtr[frame.address] = frame.data
+        elif frame.address == command_address(short):
+            _colour_step(tally, frame, previous == ENABLE_DEVICE_TYPE_8, dtr, short)
+        previous = (frame.address, frame.data)
+    if tally.units and not tally.units[-1][1]:
+        tally.faults.append("%s mirek staged on SA%d was never activated"
+                            % (tally.units[-1][0], short))
     return tally
 
 
-def stop_fade_faults(frames, group, members):
-    target = group_dapc_address(group)
-    masks = [i for i, frame in enumerate(frames) if (frame.address, frame.data) == (target, MASK)]
-    faults = [] if len(masks) == 1 else [
-        "%d DAPC MASK frame(s) to group %d (0x%02X), exactly one expected"
-        % (len(masks), group, target)]
-    after = frames[masks[0] + 1:] if masks else frames
-    return faults + ["%s at %d us moved the level after the stop"
-                     % (describe_frame(frame.address, frame.data), frame.at_us)
-                     for frame in after if moves_level(frame, group, members)]
+def _colour_step(tally, frame, enabled, dtr, short):
+    if frame.data in DT8_WRITES and not enabled:
+        tally.faults.append("0x%02X to SA%d at %d us did not follow ENABLE DEVICE TYPE 8"
+                            % (frame.data, short, frame.at_us))
+    pending = tally.units and not tally.units[-1][1]
+    if frame.data == SET_TEMPORARY_COLOUR_TEMPERATURE:
+        _stage(tally, staged_value(dtr), frame, short)
+    elif frame.data == QUERY_STATUS and pending:
+        tally.gates.append("QUERY STATUS to SA%d at %d us sat between a staged colour and "
+                           "its ACTIVATE" % (short, frame.at_us))
+    elif frame.data == ACTIVATE and tally.units:
+        tally.units[-1][1] = True
+
+
+def _stage(tally, value, frame, short):
+    if tally.units and not tally.units[-1][1]:
+        if tally.units[-1][0] == value:
+            return
+        tally.faults.append("%s mirek staged on SA%d was replaced by %s at %d us before an "
+                            "ACTIVATE" % (tally.units[-1][0], short, value, frame.at_us))
+    tally.units.append([value, False])
+
+
+def staged_value(dtr):
+    if DTR0 not in dtr or DTR1 not in dtr:
+        return None
+    return dtr[DTR1] << BYTE_BITS | dtr[DTR0]
+
+
+def mask_frames(frames, group):
+    return sum(1 for frame in frames
+               if (frame.address, frame.data) == (group_dapc_address(group), MASK))
+
+
+def level_moves(frames, group, members):
+    target = (group_dapc_address(group), MASK)
+    first = next((i for i, frame in enumerate(frames)
+                  if (frame.address, frame.data) == target), None)
+    after = frames[first + 1:] if first is not None else []
+    return ["%s at %d us moved the level after the stop"
+            % (describe_frame(frame.address, frame.data), frame.at_us)
+            for frame in after if moves_level(frame, group, members)]
 
 
 def moves_level(frame, group, members):
