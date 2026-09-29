@@ -6,6 +6,8 @@ import pytest
 
 import hil_session
 import hil_session_guards
+import hil_test_guards
+import test_policies
 from hil import prod_state
 
 
@@ -206,3 +208,62 @@ def test_fast_fade_without_the_guard_is_a_usage_error(monkeypatch):
         hil_session._refuse_unguarded_fast_fade(config)
     monkeypatch.setenv("HIL_STATE_GUARD", "1")
     hil_session._refuse_unguarded_fast_fade(config)
+
+
+POLICY = {"system_failure_level": None, "power_on_level": 254, "apply_on_discovery": False,
+          "manages_anything": True}
+
+
+class _Policies:
+    def __init__(self, now):
+        self.now, self.patches = dict(now), []
+
+    def _req(self, method, path, body=None):
+        assert path == "policies"
+        if method == "PATCH":
+            self.patches.append(body)
+            self.now.update(body)
+        return dict(self.now)
+
+
+def test_a_policy_is_put_back_field_by_field_and_never_its_derived_flag():
+    api = _Policies(dict(POLICY, power_on_level=200, apply_on_discovery=True,
+                         manages_anything=False))
+    prod_state.restore_policies(api, POLICY, log=lambda line: None)
+    assert api.patches == [{"power_on_level": 254, "apply_on_discovery": False}]
+    assert prod_state.policy_patch(POLICY, api.now) == {}
+
+
+def test_a_policy_that_holds_is_not_written():
+    api = _Policies(POLICY)
+    prod_state.restore_policies(api, POLICY, log=lambda line: None)
+    assert api.patches == []
+
+
+def _leaf(value, source, confirmed_at):
+    return {"value": value, "source": source, "last_write_confirmed_ms": confirmed_at}
+
+
+def test_a_level_counts_as_written_only_with_a_fresh_confirmed_write():
+    wanted = {"power_on_level": 254}
+    before = {4: {"power_on_level": _leaf(254, "write_confirmed", 100)},
+              5: {"power_on_level": _leaf(200, "readback", None)}}
+    fresh = {4: {"power_on_level": _leaf(254, "write_confirmed", 900)},
+             5: {"power_on_level": _leaf(254, "write_confirmed", 910)}}
+    assert test_policies.unconfirmed_levels(before, fresh, wanted) == []
+    stale = {4: {"power_on_level": _leaf(254, "write_confirmed", 100)},
+             5: {"power_on_level": _leaf(254, "readback", 910)}}
+    assert len(test_policies.unconfirmed_levels(before, stale, wanted)) == 2
+    wrong = {4: {"power_on_level": _leaf(200, "write_confirmed", 900)},
+             5: {"power_on_level": _leaf(254, "write_confirmed", None)}}
+    assert len(test_policies.unconfirmed_levels(before, wrong, wanted)) == 2
+
+
+def test_a_rules_residue_names_the_document_and_every_toggle_that_moved():
+    toggles = {"night": False, "day": True}
+    assert hil_test_guards.rules_residue("a", "a", toggles, dict(toggles)) == []
+    residue = hil_test_guards.rules_residue("a", "a\n\nb", toggles,
+                                            {"night": True, "day": True, "hil-x": True})
+    assert residue == ["the document is not the one the test found",
+                       "rule 'hil-x' is enabled, was absent",
+                       "rule 'night' is enabled, was disabled"]

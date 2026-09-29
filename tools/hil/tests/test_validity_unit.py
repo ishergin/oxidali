@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import requests
 
+import test_ha_bridge
 from hil import api as api_mod
 from hil import sniffer, validity
 from hil.lamp_guard import LampGuard
@@ -751,3 +752,31 @@ def test_task_latency_counters_are_read_from_stats():
     assert out["answer_stage_late"] == 1
     assert out["persist_flush_slow"] == 78
     assert out["persist_gate_waits"] == 5
+
+
+def test_a_named_event_subscriber_is_found_by_its_name():
+    diagnostics = {"bus": {"event_subscribers": [
+        {"name": "ws_fanout", "delivered": 9, "receiver_overflow": 0},
+        {"name": "mqtt_bridge", "delivered": 4, "receiver_overflow": 1}]}}
+    assert validity.event_subscriber(diagnostics, "mqtt_bridge")["delivered"] == 4
+    assert validity.event_subscriber(diagnostics, "display") is None
+    assert validity.event_subscriber({}, "mqtt_bridge") is None
+
+
+class _Diagnostics:
+    def __init__(self, delivered, overflow, coalesced, connected=True):
+        self.body = {"bus": {"event_subscribers": [
+            {"name": "mqtt_bridge", "delivered": delivered, "receiver_overflow": overflow}]},
+            "mqtt": {"connected": connected, "bus_coalesced_total": coalesced}}
+
+    def diagnostics(self):
+        return self.body
+
+
+def test_the_bridge_counters_come_from_its_subscriber_and_wrap():
+    before = test_ha_bridge._bridge_counters(_Diagnostics(2**32 - 1, 0, 5))
+    after = test_ha_bridge._bridge_counters(_Diagnostics(3, 0, 9))
+    assert before["named"] and before["connected"]
+    assert test_ha_bridge._moved(before, after, "delivered") == 4
+    assert test_ha_bridge._moved(before, after, "bus_coalesced_total") == 4
+    assert not test_ha_bridge._bridge_counters(_Diagnostics(0, 0, 0, connected=False))["connected"]

@@ -2,8 +2,9 @@ import time
 
 import pytest
 
-from hil import mqtt_tap
+from hil import mqtt_tap, validity
 from hil.wait import wait_until
+from hil_virtual import PARK_ENV
 
 pytestmark = pytest.mark.ha_bridge
 
@@ -345,3 +346,78 @@ def test_a_group_command_reaches_the_lamps_not_only_the_tile(ha_guard, api,
         "the colour half of an MQTT group command never activated on %r" % stale
 
     _pub(hil_config, ha_guard.topic("a0/group/%d/set" % g_cmd), '{"state":"OFF"}')
+
+
+BRIDGE_SUBSCRIBER = "mqtt_bridge"
+BURST_LAMPS = 16
+BURST_OP_S = 90
+BRIDGE_QUIET_S = 2.0
+BRIDGE_SETTLE_MAX_S = 30.0
+BRIDGE_POLL_S = 0.5
+U32 = 1 << 32
+
+
+def _bridge_counters(api):
+    diagnostics = api.diagnostics()
+    subscriber = validity.event_subscriber(diagnostics, BRIDGE_SUBSCRIBER) or {}
+    mqtt = diagnostics.get("mqtt") or {}
+    return {"connected": bool(mqtt.get("connected")), "named": bool(subscriber),
+            "delivered": int(subscriber.get("delivered") or 0),
+            "receiver_overflow": int(subscriber.get("receiver_overflow") or 0),
+            "bus_coalesced_total": int(mqtt.get("bus_coalesced_total") or 0)}
+
+
+def _bridge_settled(api):
+    last, still_since = _bridge_counters(api), time.monotonic()
+    deadline = still_since + BRIDGE_SETTLE_MAX_S
+    while time.monotonic() < deadline:
+        time.sleep(BRIDGE_POLL_S)
+        now = _bridge_counters(api)
+        if now["delivered"] != last["delivered"]:
+            last, still_since = now, time.monotonic()
+        elif time.monotonic() - still_since >= BRIDGE_QUIET_S:
+            return now
+    return last
+
+
+def _moved(before, after, name):
+    return (after[name] - before[name]) % U32
+
+
+@pytest.mark.hil_id("HIL-MQTT-12")
+@pytest.mark.virtual_gear
+def test_a_read_and_apply_burst_over_the_park_overflows_no_bridge_inbox(
+        api, virtual_bench, session_rows_guard, op_check, test_artifacts):
+    before = _bridge_counters(api)
+    if not before["connected"]:
+        pytest.skip("the Home Assistant bridge is not connected to a broker "
+                    "(diagnostics mqtt.connected is false), so no burst meets a "
+                    "publishing bridge")
+    if not before["named"]:
+        pytest.skip("this firmware names no %r event subscriber in /api/v1/diagnostics"
+                    % BRIDGE_SUBSCRIBER)
+    if len(virtual_bench.park) < BURST_LAMPS:
+        pytest.skip("the park holds %d emulated gear and the burst needs %d: start the "
+                    "session with %s=6,5,5 or larger"
+                    % (len(virtual_bench.park), BURST_LAMPS, PARK_ENV))
+    if not virtual_bench.groups:
+        pytest.skip("no free group: a live lamp's group membership is unknown")
+    shorts, group = virtual_bench.park[:BURST_LAMPS], virtual_bench.groups[0]
+    views = [op_check(api.wait_op(api.attr_read(short), timeout_s=BURST_OP_S))
+             for short in shorts]
+    api.groups.join([virtual_bench.vl(s) for s in shorts], group, apply=False)
+    views.append(op_check(api.wait_op(api.groups.apply(), timeout_s=BURST_OP_S)))
+    after = _bridge_settled(api)
+    moved = {name: _moved(before, after, name)
+             for name in ("delivered", "receiver_overflow", "bus_coalesced_total")}
+    test_artifacts.attach_json("bridge", {"before": before, "after": after, "moved": moved,
+                                          "operations": [v.get("operation_id")
+                                                         for v in views]})
+
+    assert moved["receiver_overflow"] == 0, (
+        "the bridge's inbox overflowed %d time(s) under a burst over %d gear: %r"
+        % (moved["receiver_overflow"], BURST_LAMPS, moved))
+    assert moved["delivered"] and moved["bus_coalesced_total"], (
+        "INCONCLUSIVE, not a product failure: the bridge was delivered %d event(s) and "
+        "coalesced %d, so the burst never filled the buffer that merges them: %r"
+        % (moved["delivered"], moved["bus_coalesced_total"], moved))

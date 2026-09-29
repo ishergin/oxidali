@@ -447,6 +447,11 @@ def bus_drop_counters(diagnostics):
     return out
 
 
+def event_subscriber(diagnostics: dict, name: str):
+    subscribers = (diagnostics.get("bus") or {}).get("event_subscribers") or []
+    return next((s for s in subscribers if s.get("name") == name), None)
+
+
 def event_subscriber_losses(diagnostics: dict) -> list:
     subscribers = (diagnostics.get("bus") or {}).get("event_subscribers") or []
     losses = [
