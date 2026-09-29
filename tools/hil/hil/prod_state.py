@@ -364,12 +364,34 @@ def _restore_adapter(api, snap, log):
                       ("enabled", "name"), api.adapter_patch, log)
 
 
+CONTINUATIONS_PENDING = "continuations_pending"
+
+
+def continuations_pending(api):
+    value = (api.stats().get("rules") or {}).get(CONTINUATIONS_PENDING)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def commit_refusal(pending):
+    if pending is None:
+        return ("the firmware reports no rules.%s, so nothing tells whether a document commit "
+                "would drop the owner's delayed actions (after/wait)" % CONTINUATIONS_PENDING)
+    if pending:
+        return ("%d delayed action(s) of the owner's rules are pending (after/wait), and a "
+                "document commit drops them" % pending)
+    return None
+
+
 def _restore_rules(api, snap, log):
     was, now = snap["rules"].get("source") or "", api.rules_get()
     if (now.get("source") or "") != was:
+        refusal = commit_refusal(continuations_pending(api))
         if not only_hil_rules_appended(was, now.get("source") or ""):
             log("prod_state: the rules document differs from the snapshot by more than test "
                 "rules; someone else edited it, so it is left as it is")
+        elif refusal:
+            log("prod_state: the test rules stay in the rules document, because %s; run "
+                "`hil state restore` once nothing is pending" % refusal)
         else:
             log("prod_state: taking the test rules out of the rules document")
             api.rules_replace(was, now["revision"])

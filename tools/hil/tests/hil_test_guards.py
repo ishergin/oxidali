@@ -197,15 +197,8 @@ def attr_guard(api):
                     % (attr, short, want, holds))
 
 
-CONTINUATION_COUNTERS = ("continuations_scheduled", "continuations_fired",
-                         "continuations_dropped")
 DROPPED = "continuations_dropped"
 U32 = 1 << 32
-
-
-def pending_continuations(rules_stats):
-    scheduled, fired, dropped = (int(rules_stats.get(k) or 0) for k in CONTINUATION_COUNTERS)
-    return (scheduled - fired - dropped) % U32
 
 
 def rules_residue(source, now_source, toggles, now_toggles):
@@ -221,22 +214,14 @@ def _toggle(enabled):
     return {True: "enabled", False: "disabled"}.get(enabled, "absent")
 
 
-def _reassert_toggles(api, toggles):
-    now = api.rules_toggles()
-    for name, enabled in sorted(toggles.items()):
-        if now.get(name) != enabled:
-            api.rule_enable(name, enabled)
-
-
-def _refuse_a_live_owner_document(toggles, rules_stats):
+def _refuse_a_live_owner_document(toggles, pending):
     disabled = sorted(name for name, enabled in toggles.items() if not enabled)
     if disabled:
         pytest.skip("the owner's rule(s) %s are switched off, and a document commit switches "
                     "every rule back to its text until the guard reasserts it" % disabled)
-    pending = pending_continuations(rules_stats)
-    if pending:
-        pytest.skip("%d delayed action(s) of the owner's rules are pending (after/wait), and "
-                    "a document commit drops them" % pending)
+    refusal = prod_state.commit_refusal(pending)
+    if refusal:
+        pytest.skip(refusal)
 
 
 class _RulesCommits:
@@ -253,8 +238,12 @@ class _RulesCommits:
                         "hand to remove" % (what, exc), pytrace=False)
         if view.get("status") != "succeeded":
             pytest.fail("rules %s did not commit: %r" % (what, view), pytrace=False)
-        _reassert_toggles(self.api, self.toggles)
-        self.ours = self.api.rules_get()["revision"]
+        self.ours = (base + 1) % U32
+        now = self.api.rules_toggles()
+        for name, enabled in sorted(self.toggles.items()):
+            if now.get(name) != enabled:
+                self.api.rule_enable(name, enabled)
+                self.ours = (self.ours + 1) % U32
 
     def append(self, fragment):
         source = self.original + RULE_SEPARATOR + fragment if self.original else fragment
@@ -263,12 +252,18 @@ class _RulesCommits:
                 "the stored document plus a test rule exceeds the %d-byte "
                 "source limit; this bench cannot add one without evicting the "
                 "owner's" % RULES_SOURCE_LIMIT_BYTES)
+        _refuse_a_live_owner_document(self.api.rules_toggles(),
+                                      prod_state.continuations_pending(self.api))
         self.commit(source, self.base if self.ours is None else self.ours, "append")
 
     def restore(self):
         if self.ours is None:
             return []
         if self.api.rules_get().get("source") != self.original:
+            refusal = prod_state.commit_refusal(prod_state.continuations_pending(self.api))
+            if refusal:
+                return ["the test rules stay in the document for the session restore, "
+                        "because %s" % refusal]
             self.commit(self.original, self.ours, "restore")
         return rules_residue(self.original, self.api.rules_get().get("source") or "",
                              self.toggles, self.api.rules_toggles())
@@ -282,7 +277,7 @@ def rules_guard(api):
                     "rule appended to it would be refused for that reason"
                     % doc["diagnostic"])
     toggles, rules_stats = api.rules_toggles(), api.stats().get("rules") or {}
-    _refuse_a_live_owner_document(toggles, rules_stats)
+    _refuse_a_live_owner_document(toggles, prod_state.continuations_pending(api))
     commits = _RulesCommits(api, doc, toggles)
     try:
         yield commits.append

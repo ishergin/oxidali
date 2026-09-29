@@ -266,9 +266,14 @@ TEST_RULE = http_rule("hil-vg-06-stop-fade", GROUP_TARGET, 4, "stop_fade()")
 
 
 class _Rules:
-    def __init__(self, source, toggles, revision=7, conflict=False):
+    def __init__(self, source, toggles, revision=7, conflict=False, pending=0):
         self.source, self.toggles, self.revision = source, dict(toggles), revision
         self.conflict, self.puts, self.patches = conflict, [], []
+        self.pending = pending
+
+    def stats(self):
+        gauge = {} if self.pending is None else {"continuations_pending": self.pending}
+        return {"rules": dict(gauge, continuations_dropped=0)}
 
     def rules_get(self):
         return {"source": self.source, "revision": self.revision, "diagnostic": None}
@@ -298,6 +303,18 @@ def test_the_session_takes_its_test_rules_out_and_puts_every_toggle_back():
     api = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": True, "hil-vg-06-stop-fade": True})
     prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None)
     assert api.puts == [(OWNER_DOC, 7)] and api.toggles["night"] is False
+
+
+OWNER_NEW = 'rule "porch" {\n  when at 06:00\n  do group(9).on()\n}'
+
+
+def test_an_owner_rule_written_after_a_test_rule_keeps_the_document_as_it_is():
+    for joint in ("\n", "\n\n"):
+        source = OWNER_DOC + "\n\n" + TEST_RULE + joint + OWNER_NEW
+        api, log = _Rules(source, {"night": True}), []
+        prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append)
+        assert api.puts == [] and api.source == source
+        assert any("someone else edited it" in line for line in log)
 
 
 def test_the_session_puts_a_toggle_back_even_when_the_text_already_matches():
@@ -357,20 +374,73 @@ def test_a_rules_residue_names_the_document_and_every_toggle_that_moved():
 
 
 
-def test_pending_delays_are_what_was_scheduled_and_neither_fired_nor_dropped():
-    stats = {"continuations_scheduled": 10, "continuations_fired": 7, "continuations_dropped": 2}
-    assert hil_test_guards.pending_continuations(stats) == 1
-    assert hil_test_guards.pending_continuations({}) == 0
-    assert hil_test_guards.pending_continuations({"continuations_dropped": 1}) > 1 << 31
+def test_pending_delays_are_read_from_the_firmware_gauge_and_never_estimated():
+    assert prod_state.continuations_pending(_Rules(OWNER_DOC, {}, pending=3)) == 3
+    assert prod_state.continuations_pending(_Rules(OWNER_DOC, {}, pending=None)) is None
+    assert prod_state.commit_refusal(0) is None
+    assert "3 delayed action(s)" in prod_state.commit_refusal(3)
+    assert "reports no rules.continuations_pending" in prod_state.commit_refusal(None)
 
 
 def test_a_live_owner_document_refuses_a_commit():
     with pytest.raises(pytest.skip.Exception, match="switched off"):
-        hil_test_guards._refuse_a_live_owner_document({"night": False}, {})
+        hil_test_guards._refuse_a_live_owner_document({"night": False}, 0)
     with pytest.raises(pytest.skip.Exception, match="1 delayed action"):
-        hil_test_guards._refuse_a_live_owner_document(
-            {"night": True}, {"continuations_scheduled": 1})
-    hil_test_guards._refuse_a_live_owner_document({"night": True}, {})
+        hil_test_guards._refuse_a_live_owner_document({"night": True}, 1)
+    with pytest.raises(pytest.skip.Exception, match="reports no rules.continuations_pending"):
+        hil_test_guards._refuse_a_live_owner_document({"night": True}, None)
+    hil_test_guards._refuse_a_live_owner_document({"night": True}, 0)
+
+
+def test_the_guard_checks_the_owner_document_again_right_before_each_commit():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    api.pending = 2
+    with pytest.raises(pytest.skip.Exception, match="2 delayed action"):
+        commits.append(TEST_RULE)
+    api.pending, api.toggles["night"] = 0, False
+    with pytest.raises(pytest.skip.Exception, match="switched off"):
+        commits.append(TEST_RULE)
+    assert api.puts == [] and commits.restore() == []
+
+
+def test_a_delay_pending_at_restore_keeps_the_test_rule_and_names_why():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    commits.append(TEST_RULE)
+    api.pending = 1
+    residue = commits.restore()
+    assert len(api.puts) == 1 and api.source.endswith(TEST_RULE)
+    assert residue and "1 delayed action(s)" in residue[0]
+
+
+def test_a_commit_that_fails_after_its_replace_still_leaves_the_test_rule_to_restore():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    replace, enable = api.rules_replace, api.rule_enable
+
+    def replace_and_reset(source, base):
+        view = replace(source, base)
+        api.toggles["night"] = False
+        return view
+
+    def overloaded(name, enabled):
+        raise api_mod.ApiError(503, {"error": "commands_ingress_overload"}, "rules")
+
+    api.rules_replace, api.rule_enable = replace_and_reset, overloaded
+    with pytest.raises(api_mod.ApiError):
+        commits.append(TEST_RULE)
+    assert commits.ours == 8
+    api.rules_replace, api.rule_enable = replace, enable
+    assert commits.restore() == [] and api.source == OWNER_DOC
+
+
+def test_the_session_restore_leaves_test_rules_while_the_owner_has_delays_pending():
+    for pending, why in ((1, "1 delayed action(s)"), (None, "reports no rules.")):
+        api, log = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": True}, pending=pending), []
+        prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append)
+        assert api.puts == [] and any("stay in the rules document" in line and why in line
+                                      for line in log)
 
 
 def test_the_guard_restores_against_the_revision_its_own_commit_left():

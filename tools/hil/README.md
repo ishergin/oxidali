@@ -137,9 +137,12 @@ for every session that reaches the controller:
   `PRODUCTION STATE NOT RESTORED` and turns the run red.
 - It cannot restore the colour a DT8 gear stored with a scene, or anything outside
   the controller (the Wiren Board's configuration, Home Assistant).
-- It restores the rules document only where the difference is rules named `hil-…`,
-  against the revision it read, so an owner's edit stays and is reported; each rule's
-  toggle is put back after that, because a document commit resets toggles to the text.
+- It restores the rules document only where the difference is whole blocks of rules
+  named `hil-…`, against the revision it read, so an owner's edit stays and is reported;
+  while `rules.continuations_pending` is not 0, or the firmware has no such gauge, it
+  leaves the test rules in place and says so, because a commit drops the owner's delayed
+  actions. Each rule's toggle is put back after that, because a document commit resets
+  toggles to the text.
 - The snapshot is also `state/production_state_last.json`. A session killed before
   its teardown is recovered with `hil state restore`, which first finishes a left
   virtual-gear session from its ledger ([Virtual gear](#virtual-gear)); such a snapshot is kept, and

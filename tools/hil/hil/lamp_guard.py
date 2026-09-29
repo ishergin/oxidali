@@ -104,7 +104,7 @@ TEST_RULE = re.compile(
     r'\}')
 
 
-HIL_RULE = re.compile(r'rule "hil-[^"\n]*" \{.*\}', re.S)
+HIL_RULE = re.compile(r'rule "hil-[^"\n]*" \{[^{}]*\}')
 
 
 def http_rule(name, target, key, action):
