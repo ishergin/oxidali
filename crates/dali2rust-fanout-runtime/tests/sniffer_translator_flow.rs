@@ -201,6 +201,13 @@ fn a_frame_for_gear_without_a_short_address_projects_nothing() {
         (DaliTargetScope::Short, Some(17), Some(90)),
         "the first thing translated is the addressed frame that follows them"
     );
+    assert_eq!(
+        harness.counters.unaddressed_ignored.load(Relaxed),
+        5,
+        "the DAPC, the OFF, the RECALL MAX LEVEL, the GO TO SCENE and the colour are each \
+         counted where they were dropped, so the translator still accounts for the PHY's frames"
+    );
+    assert_eq!(harness.counters.unknown_seen.load(Relaxed), 0, "they were understood, not unknown");
 }
 
 #[test]
@@ -832,4 +839,9 @@ fn an_unaddressed_scene_pair_touches_no_registered_gear() {
     let (_, body) = recv_observed(&harness);
     assert_eq!(body.observed_kind, ObservedKind::TargetStateObserved, "the next fact is the DAPC");
     assert_eq!(scene_writes(&harness), 0);
+    assert_eq!(
+        harness.counters.unaddressed_ignored.load(Relaxed),
+        1,
+        "the pair is one command, dropped once"
+    );
 }

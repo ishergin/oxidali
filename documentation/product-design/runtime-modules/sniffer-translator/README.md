@@ -31,7 +31,8 @@
 
 - Кадр с адресом unaddressed broadcast (`0xFC`, `0xFD`) доходит только до приборов без
   короткого адреса, а их реестр не описывает: из него не выходит ни наблюдения, ни
-  факта, ни цвета DT8.
+  факта, ни цвета DT8, а сам кадр считается отброшенным
+  ([`../../rest-api/resources/stats.md`](../../rest-api/resources/stats.md), блок `dali`).
 - `DAPC` и `OFF` → `TargetStateObserved` с короткой, групповой или широковещательной
   адресацией; `GO TO SCENE` → recall-факт `DaliSceneRecalledEvent` с источником
   `Sniffer`, без наблюдения: у recall'а один маршрут ко всем потребителям.

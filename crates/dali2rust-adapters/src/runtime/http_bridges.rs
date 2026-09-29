@@ -550,6 +550,7 @@ fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
         foreign_verbs_projected_total: h.projector.transitions_expanded.load(Relaxed),
         foreign_dimming_unprojected_total: h.sniffer_translator.dimming_unprojectable.load(Relaxed),
         foreign_scene_writes_total: h.sniffer_translator.scene_writes_observed.load(Relaxed),
+        foreign_unaddressed_ignored_total: h.sniffer_translator.unaddressed_ignored.load(Relaxed),
         backward_undecodable_total: h.phy_sniffer.backward_undecodable.load(Relaxed),
         backward_frame_size_total: h.phy_sniffer.backward_frame_size.load(Relaxed),
         backward_incomplete_total: h.phy_sniffer.backward_incomplete.load(Relaxed),

@@ -68,6 +68,7 @@ pub struct SnifferTranslatorCounters {
     pub fact_publish_retried: AtomicU32,
     pub app_control_pairs: AtomicU32,
     pub scene_writes_observed: AtomicU32,
+    pub unaddressed_ignored: AtomicU32,
 }
 
 struct ColourStage {
@@ -288,6 +289,7 @@ fn track_scene_write(
         return;
     }
     let Some((scope, short_address, group_id)) = scope_of(address) else {
+        count_unaddressed(publish.counters);
         return;
     };
     publish.counters.scene_writes_observed.fetch_add(1, Ordering::Relaxed);
@@ -321,6 +323,7 @@ fn publish_standard(
     command: StandardCommand,
 ) {
     let Some(target) = scope_of(address) else {
+        count_unaddressed(counters);
         return;
     };
     if let Some(recall) = foreign_recall(registry_adapter_id, raw, target, command) {
@@ -489,6 +492,10 @@ fn handle_dt8_outcome(
             count_unknown(counters);
             true
         }
+        Dt8Outcome::Unaddressed => {
+            count_unaddressed(counters);
+            true
+        }
     }
 }
 
@@ -498,6 +505,7 @@ enum Dt8Outcome {
     Observed(ObservedFact),
     Ambiguous,
     Consumed,
+    Unaddressed,
 }
 
 fn decode_dt8(
@@ -608,7 +616,7 @@ fn sniffer_color(mode: ColorMode) -> ColorValue {
 
 fn color_fact(address: DaliAddress, color: ColorValue) -> Dt8Outcome {
     let Some((scope, short_address, group_id)) = scope_of(address) else {
-        return Dt8Outcome::Consumed;
+        return Dt8Outcome::Unaddressed;
     };
     Dt8Outcome::Observed(ObservedFact {
         kind: ObservedKind::TargetStateObserved,
@@ -899,6 +907,10 @@ fn publish_observed(
 
 fn count_unknown(counters: &Arc<SnifferTranslatorCounters>) {
     counters.unknown_seen.fetch_add(1, Ordering::Relaxed);
+}
+
+fn count_unaddressed(counters: &Arc<SnifferTranslatorCounters>) {
+    counters.unaddressed_ignored.fetch_add(1, Ordering::Relaxed);
 }
 
 fn publish_event(

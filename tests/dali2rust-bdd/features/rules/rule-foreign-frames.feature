@@ -16,7 +16,9 @@ Feature: Rules and foreign frames: a frame moves only the lamps it reaches
     And the last operation eventually succeeds
     When a foreign DAPC frame for short address 0 level 90 is observed on the bus
     Then the virtual lamp 1 runtime level should eventually be 90
+    Given I remember the stats pointer "/dali/foreign_unaddressed_ignored_total"
     When a foreign unaddressed OFF is observed on the bus
     And a foreign DAPC frame for short address 0 level 120 is observed on the bus
     Then the rule "bright" eventually has fired 1 time
     And the rule "dark" should have fired 0 times
+    And the stats pointer "/dali/foreign_unaddressed_ignored_total" should have grown by 1

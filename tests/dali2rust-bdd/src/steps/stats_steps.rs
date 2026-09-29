@@ -116,14 +116,14 @@ async fn dali_executed_increased(world: &mut DaliWorld) {
     );
 }
 
-// RULE-030
+// RULE-030 RULE-039
 #[given(regex = r#"^I remember the stats pointer "([^"]+)"$"#)]
 async fn remember_stats_pointer(world: &mut DaliWorld, pointer: String) {
     let json = stats_snapshot(world);
     world.remembered_u64 = Some(pointer_u64(&json, &pointer));
 }
 
-// RULE-030
+// RULE-030 RULE-039
 #[then(regex = r#"^the stats pointer "([^"]+)" should have grown by (\d+)$"#)]
 async fn stats_pointer_grew_by(world: &mut DaliWorld, pointer: String, delta: u64) {
     let before = world.remembered_u64.expect("remembered stats pointer");
