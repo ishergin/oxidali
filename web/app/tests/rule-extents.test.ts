@@ -237,3 +237,14 @@ test("a parse error's row counts from the top of what the editor shows, and a li
   assert.equal(errorRow(2, scope), null)
   assert.equal(errorRow(8, scope), null)
 })
+
+test('a rule that left the document is let go, so retyping its header later does not reopen the tab', () => {
+  const opened = scopeRule('ушёл', away)
+  assert.ok(opened)
+  const withoutIt = ruleB
+  const retyped = doc(ruleB, 'rule "ушёл" {', '  when every 5m', '  do   log("снова")', '}')
+  const stored = currentScope(opened, withoutIt)
+  assert.equal(stored, null)
+  assert.equal(currentScope(stored, retyped), null)
+  assert.notEqual(currentScope(opened, retyped), null)
+})

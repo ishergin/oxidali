@@ -452,6 +452,9 @@ export function RulesScreen() {
 
   const full = draft ?? doc.data?.text.source ?? ''
   const current = currentScope(scope, full)
+  useEffect(() => {
+    if (current !== scope) setScope(current)
+  }, [current, scope])
   const errRow = parseErr === null ? null : errorRow(parseErr.line, current)
   useEffect(() => {
     const ta = taRef.current
