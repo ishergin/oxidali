@@ -194,10 +194,10 @@ def test_every_colour_only_write_to_an_emulated_tc_gear_is_activated_without_a_s
     test_artifacts.attach_json("colour_series", report)
 
     for gap, seen in sorted(report.items()):
-        assert not seen["gates"], "%.1f s apart: %s" % (gap, seen["gates"])
-    for gap, seen in sorted(report.items()):
         assert not seen["dut_lost"] and not seen["unheard"], _cannot_vouch(
             "during the %.1f s series" % gap, seen)
+    for gap, seen in sorted(report.items()):
+        assert not seen["gates"], "%.1f s apart: %s" % (gap, seen["gates"])
         assert seen["activates_sent"] >= len(commanded), (
             "%.1f s apart: the controller logged %d ACTIVATE frames to SA%d for %d colour-only "
             "writes, with no log line lost" % (gap, seen["activates_sent"], short,
@@ -253,6 +253,8 @@ def test_a_stop_fade_rule_sends_one_dapc_mask_to_its_group_and_no_level(
     test_artifacts.attach_json("stop_fade", dict(seen, group=group, members=members,
                                                  moves=moves, levels=levels))
 
+    assert not seen["dut_lost"] and not seen["unheard"], _cannot_vouch(
+        "after the rule ran", seen)
     assert not moves, moves
     assert seen["sent_masks"] <= 1, (
         "the controller logged %d complete DAPC MASK frames to group %d for one stop"
@@ -260,8 +262,6 @@ def test_a_stop_fade_rule_sends_one_dapc_mask_to_its_group_and_no_level(
     assert seen["heard_masks"] <= seen["sent_masks"] + seen["collided_masks"], (
         "the gear heard %d DAPC MASK frames to group %d, the controller sent %d and %d "
         "collided" % (seen["heard_masks"], group, seen["sent_masks"], seen["collided_masks"]))
-    assert not seen["dut_lost"] and not seen["unheard"], _cannot_vouch(
-        "after the rule ran", seen)
     assert seen["sent_masks"] == 1 and seen["heard_masks"] >= 1, (
         "no DAPC MASK to group %d reached the gear: the controller logged %d, the gear heard "
         "%d, and neither log lost a line" % (group, seen["sent_masks"], seen["heard_masks"]))
