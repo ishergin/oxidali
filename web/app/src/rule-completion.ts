@@ -1,3 +1,5 @@
+import { lexLine, NEWLINE, QUOTE } from './rule-lexis.js'
+
 export type NameKind = 'lamp' | 'group' | 'input' | 'schedule'
 
 export const MAX_NAME_BYTES = 48
@@ -75,9 +77,6 @@ export interface Placement {
   maxHeight: number
 }
 
-const QUOTE = '"'
-const COMMENT = '#'
-const NEWLINE = '\n'
 const OPEN_PAREN = '('
 const MEMBER_DOT = '.'
 const HCL_OBJECT = 'hcl'
@@ -104,19 +103,9 @@ function lineStartOf(text: string, index: number): number {
   return index === 0 ? 0 : text.lastIndexOf(NEWLINE, index - 1) + 1
 }
 
-function openQuoteBefore(text: string, lineStart: number, caret: number): number | null {
-  let open: number | null = null
-  for (let i = lineStart; i < caret; i += 1) {
-    const ch = text[i]
-    if (open !== null) {
-      if (ch === QUOTE) open = null
-    } else if (ch === COMMENT) {
-      return null
-    } else if (ch === QUOTE) {
-      open = i
-    }
-  }
-  return open
+function lineEndOf(text: string, index: number): number {
+  const end = text.indexOf(NEWLINE, index)
+  return end < 0 ? text.length : end
 }
 
 function lastNonBlankBefore(text: string, lineStart: number, index: number): number {
@@ -152,26 +141,22 @@ function calleeBefore(text: string, lineStart: number, openAt: number): NameKind
   return object.word === HCL_OBJECT ? 'schedule' : null
 }
 
-function closingQuoteFrom(text: string, caret: number): number | null {
-  for (let i = caret; i < text.length; i += 1) {
-    if (text[i] === QUOTE) return i
-    if (text[i] === NEWLINE) return null
-  }
-  return null
-}
-
 export function completionContext(text: string, caret: number): CompletionContext | null {
   if (caret < 0 || caret > text.length) return null
   const lineStart = lineStartOf(text, caret)
-  const openAt = openQuoteBefore(text, lineStart, caret)
-  if (openAt === null) return null
+  const at = caret - lineStart
+  const literal = lexLine(text.slice(lineStart, lineEndOf(text, caret))).strings.find(
+    (s) => s.open < at && (s.close === null || at <= s.close),
+  )
+  if (literal === undefined) return null
+  const openAt = lineStart + literal.open
   const kind = calleeBefore(text, lineStart, openAt)
   if (kind === null) return null
   return {
     kind,
     openAt,
     caret,
-    closeAt: closingQuoteFrom(text, caret),
+    closeAt: literal.close === null ? null : lineStart + literal.close,
     prefix: text.slice(openAt + 1, caret),
   }
 }

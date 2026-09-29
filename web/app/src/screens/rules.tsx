@@ -31,6 +31,17 @@ import {
   type Suggestion,
   type Unwritable,
 } from '../rule-completion'
+import { ruleSpans, ruleText, spliceRule } from '../rule-extents'
+import {
+  appendRow,
+  attachActivation,
+  feedRow,
+  nextSettleAt,
+  rowVerdict,
+  type FeedRow,
+  type InputFeedPayload,
+  type RuleActivationPayload,
+} from '../rule-feed'
 import { errorMessage, mutate, notify, opCommitted, trackOp } from '../toast'
 
 const MAX_RULES_SOURCE_BYTES = 12_240
@@ -58,9 +69,11 @@ const UNWRITABLE_WHY: Record<Unwritable, string> = {
   too_long: `The name is longer than the ${MAX_NAME_BYTES} bytes a rule string holds`,
 }
 
-const FEED_CAPACITY = 100
-
 const FEED_CHANNELS: WsChannel[] = ['input', 'rules']
+
+const INPUT_EVENT = 'DaliInputEventObservedEvent'
+const LIFECYCLE_EVENT = 'DaliInputDeviceLifecycleEvent'
+const ACTIVATION_EVENT = 'RulesActivationEvent'
 
 const UTF8 = new TextEncoder()
 
@@ -157,76 +170,10 @@ function ruleSummary(r: RuleJson): string {
   return parts.join(' · ')
 }
 
-interface InputFeedPayload {
-  scheme?: number | null
-  short_address?: number | null
-  instance_number?: number | null
-  event?: string | null
-  event_info?: number | null
-}
-
-interface RuleActivationPayload {
-  rule_name?: string | null
-  dry?: boolean | null
-  effects?: number | null
-  partial?: number | null
-  trigger_to_publish_ms?: number | null
-}
-
-interface FeedRow {
-  seq: number
-  at: string
-  short: number | null
-  instance: number | null
-  event: string | null
-  scheme: number | null
-  info: number | null
-  lifecycle: boolean
-  atMs: number
-  rule?: string | null
-  partial?: number
-  ms?: number | null
-}
-
 const PARTIAL_REASONS: Record<number, string> = {
   1: 'partial — condition',
   2: 'partial — effect budget',
   3: 'partial — chain depth',
-}
-
-const RULE_SETTLE_MS = 1000
-
-function ruleSpans(source: string): Map<string, { from: number; to: number }> {
-  const spans = new Map<string, { from: number; to: number }>()
-  const lines = source.split('\n')
-  let name: string | null = null
-  let depth = 0
-  let from = 0
-  lines.forEach((line, i) => {
-    if (name === null) {
-      const m = /^\s*rule\s+"([^"]+)"\s*\{/.exec(line)
-      if (m) {
-        name = m[1]
-        from = i
-        depth = 0
-      }
-    }
-    if (name === null) return
-    for (const ch of line) {
-      if (ch === '{') depth += 1
-      else if (ch === '}') depth -= 1
-    }
-    if (depth <= 0) {
-      spans.set(name, { from, to: i })
-      name = null
-    }
-  })
-  return spans
-}
-
-function spliceRule(source: string, span: { from: number; to: number }, text: string): string {
-  const lines = source.split('\n')
-  return [...lines.slice(0, span.from), ...text.split('\n'), ...lines.slice(span.to + 1)].join('\n')
 }
 
 async function fetchRegistryNames(): Promise<RegistryNames> {
@@ -522,8 +469,7 @@ export function RulesScreen() {
   const full = draft ?? source
   const spans = ruleSpans(full)
   const span = scoped === null ? null : spans.get(scoped) ?? null
-  const shown =
-    span === null ? full : full.split('\n').slice(span.from, span.to + 1).join('\n')
+  const shown = span === null ? full : ruleText(full, span)
   const dirty = draft !== null && draft !== source
   const drift = draft !== null && baseRev !== null && text.revision > baseRev
   const bytes = UTF8.encode(full).length
@@ -927,59 +873,26 @@ function LiveFeed({
         setDropped((d) => d + lost)
         return
       }
-      if (event.type === 'RulesActivationEvent') {
-        const a = (event.payload ?? {}) as RuleActivationPayload
-        if (a.dry) return
-        setRows((prev) => {
-          const now = Date.now()
-          const i = prev
-            .map((r) => r.rule === undefined && r.short !== null && now - r.atMs < RULE_SETTLE_MS)
-            .lastIndexOf(true)
-          if (i < 0) return prev
-          const next = prev.slice()
-          next[i] = {
-            ...next[i],
-            rule: a.rule_name ?? null,
-            partial: a.partial ?? 0,
-            ms: a.trigger_to_publish_ms ?? null,
-          }
-          return next
-        })
+      if (event.type === ACTIVATION_EVENT) {
+        const activation = (event.payload ?? {}) as RuleActivationPayload
+        setRows((prev) => attachActivation(prev, activation, Date.now()))
         return
       }
-      if (
-        event.type !== 'DaliInputEventObservedEvent' &&
-        event.type !== 'DaliInputDeviceLifecycleEvent'
-      ) {
-        return
-      }
-      const p = (event.payload ?? {}) as InputFeedPayload
+      if (event.type !== INPUT_EVENT && event.type !== LIFECYCLE_EVENT) return
       seq.current += 1
-      const row: FeedRow = {
-        seq: seq.current,
-        at: timestamp(),
-        short: p.short_address ?? null,
-        instance: p.instance_number ?? null,
-        event: p.event ?? null,
-        scheme: p.scheme ?? null,
-        info: p.event_info ?? null,
-        lifecycle: event.type === 'DaliInputDeviceLifecycleEvent',
-        atMs: Date.now(),
-      }
-      setRows((prev) => {
-        const next = [...prev, row]
-        return next.length > FEED_CAPACITY ? next.slice(next.length - FEED_CAPACITY) : next
-      })
+      const stamp = { seq: seq.current, at: timestamp(), atMs: Date.now() }
+      const row = feedRow(
+        (event.payload ?? {}) as InputFeedPayload,
+        event.type === LIFECYCLE_EVENT,
+        stamp,
+      )
+      setRows((prev) => appendRow(prev, row))
     })
     return dispose
   }, [])
 
   const [, setTick] = useState(0)
-  const settleNow = Date.now()
-  const deadlines = rows
-    .filter((r) => r.rule === undefined && r.atMs + RULE_SETTLE_MS > settleNow)
-    .map((r) => r.atMs + RULE_SETTLE_MS)
-  const dueAt = deadlines.length > 0 ? Math.min(...deadlines) : null
+  const dueAt = nextSettleAt(rows, Date.now())
   useEffect(() => {
     if (dueAt === null) return
     const t = setTimeout(() => setTick((n) => n + 1), Math.max(0, dueAt - Date.now()))
@@ -1033,18 +946,30 @@ function FeedLine({ row, onPrefill }: { row: FeedRow; onPrefill: (row: FeedRow) 
       <span class="src">{src}</span>
       <span class="ev">{ev}</span>
       <span class="arrow">→</span>
-      {row.short === null ? (
+      <FeedOutcome row={row} onPrefill={onPrefill} />
+    </div>
+  )
+}
+
+function FeedOutcome({ row, onPrefill }: { row: FeedRow; onPrefill: (row: FeedRow) => void }) {
+  switch (rowVerdict(row, Date.now())) {
+    case 'unattributable':
+      return (
         <>
           <span class="rule">
             <span class="none">source unattributable</span>
           </span>
           <span class="mk amb">ambiguous</span>
         </>
-      ) : row.rule === undefined && Date.now() - row.atMs < RULE_SETTLE_MS ? (
+      )
+    case 'pending':
+      return (
         <span class="rule">
           <span class="none">…</span>
         </span>
-      ) : row.rule ? (
+      )
+    case 'fired':
+      return (
         <>
           <span class="rule">«{row.rule}»</span>
           <span class={`mk ${row.partial ? 'amb' : 'ok'}`}>
@@ -1052,7 +977,9 @@ function FeedLine({ row, onPrefill }: { row: FeedRow; onPrefill: (row: FeedRow) 
           </span>
           {row.ms !== null && row.ms !== undefined && <span class="mk mk-ms">{row.ms} ms</span>}
         </>
-      ) : (
+      )
+    case 'unmatched':
+      return (
         <>
           <span class="rule">
             <span class="none">no rule fired</span>
@@ -1061,7 +988,6 @@ function FeedLine({ row, onPrefill }: { row: FeedRow; onPrefill: (row: FeedRow) 
             create a rule for this
           </button>
         </>
-      )}
-    </div>
-  )
+      )
+  }
 }
