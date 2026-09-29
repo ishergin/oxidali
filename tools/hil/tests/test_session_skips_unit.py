@@ -1,3 +1,5 @@
+import types
+
 import pytest
 
 import hil_session
@@ -8,6 +10,7 @@ import test_target_state
 import test_virtual_gear
 import test_ws
 from hil.config import HilConfig
+from hil.lamp_guard import LampNotAllowed
 
 UART = "rfc2217://127.0.0.1:4444"
 
@@ -155,4 +158,39 @@ def test_the_hcl_guard_refuses_a_run_that_drives_no_lamp():
     with pytest.raises(pytest.skip.Exception, match=r"leaves the owner's HCL schedules alone"):
         hil_session_guards.refuse_schedule_suspension(api)
     assert api.hcl.patches == []
+
+
+class _Excinfo:
+    def __init__(self, exc):
+        self.value = exc
+
+    def errisinstance(self, cls):
+        return isinstance(self.value, cls)
+
+
+def _failed(when):
+    return types.SimpleNamespace(when=when, outcome="failed", longrepr="boom",
+                                 location=("tests/test_x.py", 7, "test_x"))
+
+
+def test_a_guard_refusal_during_a_test_is_a_skip_that_names_its_cause():
+    refusal = LampNotAllowed("target-state of SA1 refused: SA1 is outside HIL_LAMP_SHORTS")
+    for when in ("setup", "call"):
+        report = _failed(when)
+        hil_session.skip_guard_refusal(report, types.SimpleNamespace(excinfo=_Excinfo(refusal)))
+        assert report.outcome == "skipped" and "SA1 is outside" in report.longrepr[2]
+    teardown = _failed("teardown")
+    hil_session.skip_guard_refusal(teardown, types.SimpleNamespace(excinfo=_Excinfo(refusal)))
+    assert teardown.outcome == "failed"
+    other = _failed("call")
+    hil_session.skip_guard_refusal(other, types.SimpleNamespace(
+        excinfo=_Excinfo(AssertionError("a product failure"))))
+    assert other.outcome == "failed"
+
+
+def test_the_default_run_is_read_only(monkeypatch):
+    monkeypatch.delenv("HIL_LAMPS_READ_ONLY", raising=False)
+    assert HilConfig(serial_remote="").lamps_read_only
+    monkeypatch.setenv("HIL_LAMPS_READ_ONLY", "0")
+    assert not HilConfig(serial_remote="").lamps_read_only
 

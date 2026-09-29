@@ -85,7 +85,7 @@ class HilConfig:
     flash_baud: int = field(default_factory=lambda: int(_env("HIL_FLASH_BAUD", "1500000")))
     lamp_shorts: str = field(default_factory=lambda: _env("HIL_LAMP_SHORTS", ""))
     lamps_read_only: bool = field(
-        default_factory=lambda: _env("HIL_LAMPS_READ_ONLY", "0") not in ("", "0", "false", "no"))
+        default_factory=lambda: _env("HIL_LAMPS_READ_ONLY", "1") not in ("", "0", "false", "no"))
 
     def lamp_short_set(self) -> frozenset:
         if not self.lamp_shorts.strip():

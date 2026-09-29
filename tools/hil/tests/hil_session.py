@@ -10,6 +10,7 @@ from hil import remote_serial as remote_serial_mod
 from hil import serialmon as serialmon_mod
 from hil import tiers
 from hil import validity
+from hil.lamp_guard import LampNotAllowed
 from hil.results import failure_line
 from hil.seriallog import SerialLog
 from hil_harness import peer_health
@@ -134,10 +135,21 @@ def pytest_collection_modifyitems(config, items):
     items.sort(key=_tier)
 
 
+def skip_guard_refusal(report, call):
+    if report.when == "teardown" or report.outcome != "failed" or call.excinfo is None:
+        return
+    if not call.excinfo.errisinstance(LampNotAllowed):
+        return
+    report.outcome = "skipped"
+    report.longrepr = (str(report.location[0]), report.location[1] or 0,
+                       "Skipped: the lamp guard refused it: %s" % call.excinfo.value)
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
+    skip_guard_refusal(report, call)
     if report.when != "call" and not (
             report.when == "setup" and (report.skipped or report.failed)):
         return
