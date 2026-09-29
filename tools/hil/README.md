@@ -43,7 +43,7 @@ zone to `HIL_BENCH_TZ` for the session. A session whose every test is
 | `HIL_SERIAL_REMOTE` | `user@host:/dev/…` of the controller's UART behind a [serial bridge](#serial-ports); empty means this host's USB | a reference bench's Wiren Board |
 | `HIL_SERIAL_PORT` | the local serial device when `HIL_SERIAL_REMOTE` is empty | found by scanning |
 | `HIL_SERIAL_BAUD`, `HIL_FLASH_BAUD`, `HIL_SERIAL_BRIDGE_PORT` | console baud, esptool baud, the bridge's local port | `115200`, `1500000`, `4444` |
-| `HIL_LAMP_SHORTS` | short addresses a test may drive or write (`0,2,3`, `0-3`); the client refuses the rest ([lamp guard](#the-installation-is-production)); empty allows none | `0,2,3` |
+| `HIL_LAMP_SHORTS` | short addresses a test may drive or write (`0,2,3`, `0-3`); the client refuses the rest ([lamp guard](#the-installation-is-production)); empty allows none | empty: the reference bench has no lamp a test may drive |
 | `HIL_GEAR_SHORTS` | gear the read tiers target; empty means every gear in the registry | empty |
 | `HIL_OPTICAL_SHORTS` | lamps in the camera's view, calibrated and measured; always narrowed to `HIL_LAMP_SHORTS` | `HIL_LAMP_SHORTS` |
 | `HIL_LAMPS_READ_ONLY=1` | report the light, never drive it: the client refuses every visible action | off |
@@ -61,6 +61,7 @@ zone to `HIL_BENCH_TZ` for the session. A session whose every test is
 | `HIL_VIRTUAL_PARK` | the emulated park's shape: DT6, DT8 Tc and DT8 RGB+Tc gear, built in that order on the first free addresses above the reserve | `4,4,4` |
 | `HIL_OWNER_SHORTS` | live lamps a scan cannot see (unpowered), added to the virtual-gear reserve | empty |
 | `HIL_ALLOW_VIRTUAL_COMMISSIONING=1` | let the virtual-gear tier commission emulated gear (a go-ahead per run) | off |
+| `HIL_ALLOW_RULE_COMMITS=1` | select the tests that commit the rules document (`rules_guard`; a go-ahead per run, STRATEGY §4) | off |
 | `HIL_ADAPTER`, `HIL_BOARD`, `HIL_RUN_DIR` | the DALI adapter id, the board, the artifact directory | `0`, `esp32p4`, `runs/current` |
 
 ## First run
@@ -100,9 +101,10 @@ The lamp guard (`hil/lamp_guard.py`) enforces `HIL_LAMP_SHORTS` and
 refusal raises `LampNotAllowed`, naming the address and the reason, before anything
 reaches the wire:
 
-- A physical-device, virtual-lamp (by its binding) or identify target, or a diagnostic
-  frame that writes the gear (DAPC, an opcode below `0x90`, `ACTIVATE`), must address
-  a short in `HIL_LAMP_SHORTS`. Queries always pass.
+- A physical-device, virtual-lamp (by its binding) or identify target, an attribute
+  write, or a diagnostic frame that writes the gear (DAPC, an opcode below `0x90`, or an
+  application extended command the `ENABLE DEVICE TYPE` right before it makes a write)
+  must address a short in `HIL_LAMP_SHORTS`. Queries always pass.
 - A group or broadcast frame, a group target-state and a scene recall pass only when
   every present gear on the segment is in `HIL_LAMP_SHORTS`.
 - Under `HIL_LAMPS_READ_ONLY=1` every visible action is refused: target-state, identify,
@@ -110,8 +112,9 @@ reaches the wire:
   included), `RESET`, `IDENTIFY DEVICE` or `ACTIVATE`. Configuration writes to an
   allowed lamp still pass (STRATEGY §4).
 - A `/api/v1/dali/*` request whose body names no frame the guard can read is refused.
-- HCL schedules, rules and MQTT commands drive lamps inside the controller, past the
-  guard: a test that uses them picks its targets from the `lamps` fixture.
+- HCL schedules, rules, MQTT commands and the policy apply reach lamps inside the
+  controller, past the guard: a test that uses them picks its targets from the `lamps`
+  fixture, or the guard's verdict on each gear they reach.
 
 ## Save and restore
 
@@ -130,6 +133,9 @@ for every session that reaches the controller:
   `PRODUCTION STATE NOT RESTORED` and turns the run red.
 - It cannot restore the colour a DT8 gear stored with a scene, or anything outside
   the controller (the Wiren Board's configuration, Home Assistant).
+- It restores the rules document only where the difference is rules named `hil-…`,
+  against the revision it read, so an owner's edit stays and is reported; each rule's
+  toggle is put back after that, because a document commit resets toggles to the text.
 - The snapshot is also `state/production_state_last.json`. A session killed before
   its teardown is recovered with `hil state restore`, which first finishes a left
   virtual-gear session from its ledger ([Virtual gear](#virtual-gear)); such a snapshot is kept, and
@@ -233,7 +239,10 @@ hil-slow` wrap the cwd.
   line is part of the firmware's contract with the toolkit.
 - Markers: `smoke`, `optical`, `sniffer`, `serial`, `foreign` (the WB master),
   `ha_bridge`, `redundancy`, `slow`, `destructive`, `needs_capability(name)`,
-  `virtual_gear` (the gear the peer emulates).
+  `virtual_gear` (the gear the peer emulates), `light` (changes what a lamp shows).
+- Whatever `-m` says, collection deselects a `light` test unless `HIL_LAMP_SHORTS` names
+  a lamp and `HIL_LAMPS_READ_ONLY` is off, and a test that commits the rules document
+  (it requests `rules_guard`) unless `HIL_ALLOW_RULE_COMMITS=1`.
 - `--fast-fade` sets the fade time of every lamp in `HIL_LAMP_SHORTS` to 0 after
   `production_state` has taken its snapshot, and `production_state` restores it at
   the end of the session; with `HIL_STATE_GUARD=0` the option is a usage error.
@@ -430,7 +439,8 @@ Its rules are STRATEGY §4.8; the mechanics:
 2. **After the owner's installation is snapshotted** (without the snapshot the session
    refuses), `hil/virtual_gear.py` opens the session:
    - proves the free groups silent against a positive control;
-   - checks the owner's rules;
+   - checks that no owner rule, compiled or in text, names a free group, a session lamp
+     (by id or name) or a park device;
    - gives the emulator the reserve, checks the mask it echoes, builds the fleet and enables
      it on a ladder once the first gear has answered the controller cleanly and the
      emulator's answer counters moved without a late or expired answer;
@@ -538,7 +548,9 @@ one costs a go-ahead.
 - **Mirrored constants**: `RULES_SOURCE_LIMIT_BYTES` in `tests/hil_test_guards.py` mirrors
   `MAX_RULES_SOURCE_BYTES` in `dali2rust-contracts`, and `hil corpus`'s colour-value width
   and defined sets mirror `colour_value_is_wide` / `colour_value_is_defined` in the
-  domain crate; change them together.
+  domain crate; `hil/seriallog.py`'s `LATE_REPORT_BYTES` and `HEARTBEAT_PERIOD_S`, and
+  the report interval, client limit and bridge inbox depth in `test_ws.py` and
+  `test_ha_bridge.py`, mirror the firmware's; change them together.
 
 ## Validate the instrument before believing a measurement
 
