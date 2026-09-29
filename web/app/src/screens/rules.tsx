@@ -10,6 +10,7 @@ import type {
 } from '../api/types'
 import { connection, subscribe, type WsChannel, type WsEvent } from '../api/ws'
 import { ADAPTER, deviceClock, timestamp, UNANCHORED_CLOCK_HINT } from '../format'
+import { freshSource, settledValue } from '../fresh-source'
 import { usePoll } from '../hooks'
 import {
   acceptable,
@@ -25,7 +26,7 @@ import {
   listAfterCaret,
   listAfterInput,
   MAX_NAME_BYTES,
-  namesDue,
+  NAMES_FRESH_MS,
   placeList,
   rankSuggestions,
   registryNames,
@@ -196,31 +197,28 @@ const PARTIAL_REASONS: Record<number, string> = {
   3: 'partial — chain depth',
 }
 
-async function fetchRegistryNames(): Promise<RegistryNames> {
-  const [lamps, groups, inputs, schedules] = await Promise.all([
+async function fetchRegistryNames(previous: RegistryNames | null): Promise<RegistryNames> {
+  const [lamps, groups, inputs, schedules] = await Promise.allSettled([
     api.virtualLamps(ADAPTER),
     api.groups(ADAPTER),
     api.inputDevices(ADAPTER),
     api.hclSchedules(),
   ])
-  return registryNames({
-    lamps: lamps.virtual_lamps,
-    groups: groups.groups,
-    inputs: inputs.input_devices,
-    schedules: schedules.schedules,
-  })
+  return registryNames(
+    {
+      lamps: settledValue(lamps)?.virtual_lamps ?? null,
+      groups: settledValue(groups)?.groups ?? null,
+      inputs: settledValue(inputs)?.input_devices ?? null,
+      schedules: settledValue(schedules)?.schedules ?? null,
+    },
+    previous,
+  )
 }
 
 function useRegistryNames() {
-  const requestedAt = useRef<number | null>(null)
-  const poll = usePoll(() => {
-    requestedAt.current = Date.now()
-    return fetchRegistryNames()
-  }, NAMES_RECONCILE_MS)
-  const refreshIfStale = () => {
-    if (namesDue(requestedAt.current, Date.now())) void poll.reload()
-  }
-  return { data: poll.data, refreshIfStale }
+  const [source] = useState(() => freshSource(fetchRegistryNames, Date.now, NAMES_FRESH_MS))
+  const poll = usePoll(source, NAMES_RECONCILE_MS)
+  return { data: poll.data, refresh: () => void poll.reload() }
 }
 
 let measureCtx: CanvasRenderingContext2D | null = null
@@ -423,7 +421,7 @@ export function RulesScreen() {
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const caretTouched = useRef(false)
   const names = useRegistryNames()
-  const completion = useNameCompletion(taRef, names.data, names.refreshIfStale)
+  const completion = useNameCompletion(taRef, names.data, names.refresh)
 
   const parseErr = parse !== null && 'error' in parse ? parse : null
 
@@ -703,7 +701,7 @@ export function RulesScreen() {
               aria-activedescendant={suggestAt ? `${SUGGEST_ID}-${completion.active}` : undefined}
               onFocus={() => {
                 caretTouched.current = true
-                names.refreshIfStale()
+                names.refresh()
               }}
               onBlur={completion.close}
               onInput={(e) => {

@@ -18,10 +18,10 @@ export interface NameCandidate {
 export type RegistryNames = Record<NameKind, NameCandidate[]>
 
 export interface RegistrySources {
-  lamps: readonly { virtual_lamp_id: number; name: string }[]
-  groups: readonly { group_id: number; name: string }[]
-  inputs: readonly { short_address: number; name: string | null }[]
-  schedules: readonly { schedule_id: string }[]
+  lamps: readonly { virtual_lamp_id: number; name: string }[] | null
+  groups: readonly { group_id: number; name: string }[] | null
+  inputs: readonly { short_address: number; name: string | null }[] | null
+  schedules: readonly { schedule_id: string }[] | null
 }
 
 export interface CompletionContext {
@@ -246,10 +246,6 @@ export function byIdHint(kind: NameKind, id: number): string {
   return kind === 'input' ? `input(${id}, …)` : `${kind}(${id})`
 }
 
-export function namesDue(requestedAt: number | null, now: number): boolean {
-  return requestedAt === null || now - requestedAt >= NAMES_FRESH_MS
-}
-
 export function unwritable(name: string): Unwritable | null {
   if (name.includes(QUOTE)) return 'quote'
   if (LINE_BREAK.test(name)) return 'line_break'
@@ -374,11 +370,19 @@ export function scrollToShow(
   return itemBottom > scrollTop + viewHeight ? itemBottom - viewHeight : null
 }
 
-export function registryNames(sources: RegistrySources): RegistryNames {
+export function registryNames(
+  sources: RegistrySources,
+  previous: RegistryNames | null,
+): RegistryNames {
+  const { lamps, groups, inputs, schedules } = sources
   return {
-    lamp: sources.lamps.map((l) => ({ name: l.name, id: l.virtual_lamp_id })),
-    group: sources.groups.map((g) => ({ name: g.name, id: g.group_id })),
-    input: sources.inputs.flatMap((d) => (d.name ? [{ name: d.name, id: d.short_address }] : [])),
-    schedule: sources.schedules.map((s) => ({ name: s.schedule_id, id: null })),
+    lamp: lamps?.map((l) => ({ name: l.name, id: l.virtual_lamp_id })) ?? previous?.lamp ?? [],
+    group: groups?.map((g) => ({ name: g.name, id: g.group_id })) ?? previous?.group ?? [],
+    input:
+      inputs?.flatMap((d) => (d.name ? [{ name: d.name, id: d.short_address }] : [])) ??
+      previous?.input ??
+      [],
+    schedule:
+      schedules?.map((s) => ({ name: s.schedule_id, id: null })) ?? previous?.schedule ?? [],
   }
 }

@@ -17,6 +17,7 @@
     "src/format.ts",
     "src/time-zone.ts",
     "src/slider-draft.ts",
+    "src/fresh-source.ts",
     "src/rule-lexis.ts",
     "src/rule-completion.ts",
     "src/rule-extents.ts",

@@ -17,8 +17,6 @@ import {
   listAfterInput,
   sameArgument,
   MAX_NAME_BYTES,
-  NAMES_FRESH_MS,
-  namesDue,
   placeList,
   rankSuggestions,
   registryNames,
@@ -373,12 +371,6 @@ test('the active row scrolls into the list only when it is out of sight', () => 
   assert.equal(scrollToShow(0, rowHeight, 104, viewHeight), 0)
 })
 
-test('the names are fetched again only when never fetched or older than the fresh interval', () => {
-  assert.equal(namesDue(null, 0), true)
-  assert.equal(namesDue(1000, 1000 + NAMES_FRESH_MS - 1), false)
-  assert.equal(namesDue(1000, 1000 + NAMES_FRESH_MS), true)
-})
-
 test('a line is found by counting breaks before the index', () => {
   assert.deepEqual(lineAt('a\nbc\nd', 4), { line: 1, start: 2 })
   assert.deepEqual(lineAt('\nx', 0), { line: 0, start: 0 })
@@ -397,7 +389,7 @@ test('registry resources become names with the id the language takes in their pl
       { short_address: 6, name: null },
     ],
     schedules: [{ schedule_id: 'morning' }],
-  })
+  }, null)
   assert.deepEqual(list, {
     lamp: [{ name: 'коридор', id: 7 }],
     group: [
@@ -408,6 +400,32 @@ test('registry resources become names with the id the language takes in their pl
     schedule: [{ name: 'morning', id: null }],
   })
   assert.deepEqual(names(rankSuggestions('', list.group)), ['ночь'])
+})
+
+test('a failed request keeps its kind from the last load and leaves the other kinds fresh', () => {
+  const previous = {
+    lamp: [{ name: 'коридор', id: 7 }],
+    group: [{ name: 'ночь', id: 3 }],
+    input: [],
+    schedule: [],
+  }
+  const next = registryNames(
+    {
+      lamps: null,
+      groups: [{ group_id: 1, name: 'зал' }],
+      inputs: null,
+      schedules: [{ schedule_id: 'evening' }],
+    },
+    previous,
+  )
+  assert.deepEqual(next, {
+    lamp: [{ name: 'коридор', id: 7 }],
+    group: [{ name: 'зал', id: 1 }],
+    input: [],
+    schedule: [{ name: 'evening', id: null }],
+  })
+  const never = registryNames({ lamps: null, groups: null, inputs: null, schedules: null }, null)
+  assert.deepEqual(never, { lamp: [], group: [], input: [], schedule: [] })
 })
 
 const contextAt = (marked: string) => {
