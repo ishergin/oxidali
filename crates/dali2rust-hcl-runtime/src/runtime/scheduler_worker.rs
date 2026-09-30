@@ -15,7 +15,7 @@ use dali2rust_contracts::bus::{
 use dali2rust_contracts::msg::{
     BusCommandPayload, BusEventPayload, DaliRecallLastActiveLevelCommand,
     DaliSetTargetStateCommand, DeliveryStatus, ErrorCode, HclOverrideClearCommand,
-    HclOverrideHoldCommand, Origin, RuntimeStateChangedEvent,
+    HclOverrideHoldCommand, HclOverrideResumeCommand, Origin, RuntimeStateChangedEvent,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{HclScheduleView, HclSchedulerReadPort};
@@ -258,16 +258,34 @@ dali2rust_contracts::dispatch_bus_commands! {
     ignored = { deps.counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
     HclOverrideClearCommand(body) => handle_override_clear(deps, correlation_id, body),
     HclOverrideHoldCommand(body) => handle_override_hold(state, deps, correlation_id, body),
+    HclOverrideResumeCommand(body) => handle_override_resume(deps, correlation_id, body),
 }
 
 fn handle_override_clear(deps: &SchedulerDeps, correlation_id: u64, body: &HclOverrideClearCommand) {
     let lifted = lock_ledger(&deps.overrides).clear_schedule(body.schedule_id.as_str());
+    count_lifted(deps, lifted);
+    confirm_override_command(deps, correlation_id, None);
+}
+
+fn handle_override_resume(deps: &SchedulerDeps, correlation_id: u64, body: &HclOverrideResumeCommand) {
+    let read_port = deps.read_port.as_ref();
+    let covers = |target: TargetKey| {
+        hold_covers_target(read_port, body.registry_adapter_id, body.target, target)
+    };
+    let flags = lock_ledger(&deps.overrides).flags();
+    let covered: Vec<(String, TargetKey)> =
+        flags.into_iter().filter(|(_, target)| covers(*target)).collect();
+    let lifted = lock_ledger(&deps.overrides).lift(&covered);
+    count_lifted(deps, lifted);
+    confirm_override_command(deps, correlation_id, None);
+}
+
+fn count_lifted(deps: &SchedulerDeps, lifted: usize) {
     if lifted > 0 {
         deps.counters
             .overrides_reset
             .fetch_add(lifted as u32, Ordering::Relaxed);
     }
-    confirm_override_command(deps, correlation_id, None);
 }
 
 fn handle_override_hold(
@@ -333,11 +351,7 @@ fn apply_event(state: &mut SchedulerState, deps: &SchedulerDeps, payload: &BusEv
             state.forget_edited(&sorted_schedules(deps));
             if body.removed {
                 let lifted = lock_ledger(&deps.overrides).clear_schedule(body.schedule_id.as_str());
-                if lifted > 0 {
-                    deps.counters
-                        .overrides_reset
-                        .fetch_add(lifted as u32, Ordering::Relaxed);
-                }
+                count_lifted(deps, lifted);
             }
         }
         BusEventPayload::RuntimeStateChangedEvent(body) => {

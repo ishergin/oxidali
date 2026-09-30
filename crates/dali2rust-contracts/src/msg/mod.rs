@@ -87,7 +87,7 @@ pub use events::{
 
 pub use commands::{
     DaliRecallLastActiveLevelCommand, HclOverrideClearCommand, HclOverrideHoldCommand,
-    HclPointList, HclSchedulePointRow, HclScheduleDeleteCommand, HclScheduleEnableCommand,
+    HclOverrideResumeCommand, HclPointList, HclSchedulePointRow, HclScheduleDeleteCommand, HclScheduleEnableCommand,
     HclScheduleUpsertCommand, HclTargetList, HclTargetRow, MAX_HCL_POINTS_PER_COMMAND,
     MAX_HCL_TARGETS_PER_COMMAND,
 };

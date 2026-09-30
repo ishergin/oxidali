@@ -19,9 +19,4 @@ pub trait RulesWorldPort: Send + Sync {
         short_address: u8,
         instance_number: u8,
     ) -> [Option<u8>; 3];
-    fn hcl_schedules_for(
-        &self,
-        adapter_id: u8,
-        target: dali2rust_contracts::msg::HclOverrideTarget,
-    ) -> Vec<String>;
 }

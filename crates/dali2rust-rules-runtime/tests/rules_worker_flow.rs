@@ -75,13 +75,6 @@ impl dali2rust_rules_runtime::RulesWorldPort for EmptyWorld {
     fn input_instance_groups(&self, _a: u8, _s: u8, _i: u8) -> [Option<u8>; 3] {
         [None; 3]
     }
-    fn hcl_schedules_for(
-        &self,
-        _adapter_id: u8,
-        _target: dali2rust_contracts::msg::HclOverrideTarget,
-    ) -> Vec<String> {
-        vec!["вечер".to_string()]
-    }
 }
 
 const OCCUPANCY_SENSOR: (u8, u8) = (3, 0);
@@ -113,12 +106,12 @@ const EXECUTOR_OUTPUT: &[&str] = &[
     "DaliRecallSceneCommand",
     "DaliStopFadeCommand",
     "SceneApplyExecuteCommand",
-    "HclOverrideClearCommand",
     "Dali103FeedbackDriveCommand",
     "MqttPublishCommand",
     "HclScheduleEnableCommand",
     "HclOverrideHoldCommand",
     "Dali103InstanceActionCommand",
+    "HclOverrideResumeCommand",
 ];
 
 struct Harness {
@@ -978,7 +971,7 @@ const LANDINGS: &[(&str, &str, Landing)] = &[
     ("scene_recall", "scene(3).recall(broadcast)", Landing::Bus("DaliRecallSceneCommand")),
     ("scene_apply", "scene(3).apply()", Landing::Bus("SceneApplyExecuteCommand")),
     ("scene_cycle", "scene.cycle(1, 3, 7)", Landing::Bus("DaliRecallSceneCommand")),
-    ("hcl_resume", "hcl.resume(broadcast)", Landing::Bus("HclOverrideClearCommand")),
+    ("hcl_resume", "hcl.resume(broadcast)", Landing::Bus("HclOverrideResumeCommand")),
     ("hcl_hold", "hcl.hold(broadcast)", Landing::Bus("HclOverrideHoldCommand")),
     ("hcl_enable", "hcl.enable(\"evening\")", Landing::Bus("HclScheduleEnableCommand")),
     ("hcl_disable", "hcl.disable(\"evening\")", Landing::Bus("HclScheduleEnableCommand")),
@@ -1807,34 +1800,45 @@ fn a_hold_names_its_target_and_a_lamp_with_no_binding_holds_nothing() {
 
 const RESUME_DOC: &str = "rule \"unbound\" {\n  when http trigger\n  do hcl.resume(lamp(8))\n}\n\
 rule \"bound\" {\n  when http trigger\n  do hcl.resume(lamp(6))\n}\n\
+rule \"group\" {\n  when http trigger\n  do hcl.resume(group(2))\n}\n\
 rule \"marker\" {\n  when http trigger\n  do lamp(6).level(55)\n}\n";
 
 #[test]
-fn a_resume_on_a_lamp_with_no_binding_lifts_nothing() {
+fn a_resume_names_its_target_and_a_lamp_with_no_binding_lifts_nothing() {
     let unbound = dali2rust_rules_runtime::runtime::engine::LampState {
         bound: false,
         ..bound_lamp(8)
     };
     let h = harness_with_lamps(
-        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-resume-unbound")),
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-resume-targets")),
         vec![unbound],
     );
     publish_document(&h, 151, RESUME_DOC, 0);
     assert!(recv_signal(&h, 151).error.is_none());
     wait_revision(&h.store, 1);
 
-    for (corr, name) in [(152u64, "unbound"), (153, "bound"), (154, "marker")] {
+    for (corr, name) in [(152u64, "unbound"), (153, "bound"), (154, "group"), (155, "marker")] {
         run_rule(&h, corr, name);
         recv_signal(&h, corr);
     }
 
-    let clears = commands_before_the_marker(&h, 6)
+    let resumes: Vec<(u8, dali2rust_contracts::msg::HclOverrideTarget)> = commands_before_the_marker(&h, 6)
         .iter()
-        .filter(|payload| {
-            matches!(payload, dali2rust_contracts::msg::BusCommandPayload::HclOverrideClearCommand(_))
+        .filter_map(|payload| match payload {
+            dali2rust_contracts::msg::BusCommandPayload::HclOverrideResumeCommand(cmd) => {
+                Some((cmd.registry_adapter_id, cmd.target))
+            }
+            _ => None,
         })
-        .count();
-    assert_eq!(clears, 1, "only the bound lamp's resume reaches the scheduler");
+        .collect();
+    assert_eq!(
+        resumes,
+        vec![
+            (0, dali2rust_contracts::msg::HclOverrideTarget::VirtualLamp { virtual_lamp_id: 6 }),
+            (0, dali2rust_contracts::msg::HclOverrideTarget::Group { group_id: 2 }),
+        ],
+        "a resume names its target; the scheduler lifts what the target covers"
+    );
     assert_eq!(h.counters.effects_unbound.load(std::sync::atomic::Ordering::Relaxed), 1);
     let runtime = h.store.rule_runtime();
     let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);

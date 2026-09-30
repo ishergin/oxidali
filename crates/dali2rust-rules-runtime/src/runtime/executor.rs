@@ -5,7 +5,7 @@ use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
     ColorMode, ColorValue, Dali103InstanceAction, Dali103InstanceActionCommand,
     DaliRecallSceneCommand, DaliSetTargetStateCommand, DaliStopFadeCommand, DaliTargetScope,
-    FixedText32, HclOverrideClearCommand, HclOverrideHoldCommand, HclOverrideTarget,
+    FixedText32, HclOverrideHoldCommand, HclOverrideResumeCommand, HclOverrideTarget,
     HclScheduleEnableCommand, LightSetpoint, MqttPublishCommand, Origin, PowerState,
     SceneApplyExecuteCommand,
 };
@@ -15,7 +15,6 @@ use dali2rust_rules_model::{InputRef, LightTarget};
 
 use crate::runtime::engine::{Effect, LightVerb, WorldSnapshot};
 use crate::runtime::worker::RulesWorkerCounters;
-use crate::runtime::world_port::RulesWorldPort;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ExecutionReport {
@@ -84,7 +83,6 @@ pub(crate) const RULES_LOG_TARGET: &str = "rules";
 pub(crate) struct EffectExecutor<'a> {
     pub publisher: &'a BusPublisher,
     pub bus_id: BusId,
-    pub world: &'a dyn RulesWorldPort,
     pub counters: &'a RulesWorkerCounters,
     pub rule: &'a str,
 }
@@ -307,23 +305,10 @@ impl EffectExecutor<'_> {
     }
 
     fn hcl_resume(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {
-        let Some((adapter_id, named)) = self.hcl_target(target, snapshot) else {
+        let Some((registry_adapter_id, resumed)) = self.hcl_target(target, snapshot) else {
             return false;
         };
-        let schedules = self.world.hcl_schedules_for(adapter_id, named);
-        if schedules.is_empty() {
-            return false;
-        }
-        let mut any = false;
-        for schedule in schedules {
-            any |= self.publish(
-                corr,
-                HclOverrideClearCommand {
-                    schedule_id: dali2rust_contracts::msg::fixed_text_32(&schedule),
-                },
-            );
-        }
-        any
+        self.publish(corr, HclOverrideResumeCommand { registry_adapter_id, target: resumed })
     }
 
     fn hcl_hold(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {

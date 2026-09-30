@@ -50,7 +50,7 @@
   по смене ревизии: у документа пира может быть та же ревизия при других байтах.
 - **Публикует** (все с `Origin::Rules`): `DaliSetTargetStateCommand` и
   `DaliStopFadeCommand` — свет; `DaliRecallSceneCommand` и `SceneApplyExecuteCommand` —
-  сцены; `HclOverrideClearCommand` — `hcl.resume`; `HclOverrideHoldCommand` — `hcl.hold`;
+  сцены; `HclOverrideHoldCommand` — `hcl.hold`; `HclOverrideResumeCommand` — `hcl.resume`;
   `HclScheduleEnableCommand` —
   `hcl.enable` / `hcl.disable` (исполняет реестр); `Dali103FeedbackDriveCommand` —
   индикация; `Dali103InstanceActionCommand` — `cancel_hold` / `catch_movement` датчика

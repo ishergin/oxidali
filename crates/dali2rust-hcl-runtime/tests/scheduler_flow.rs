@@ -8,8 +8,9 @@ use dali2rust_bus::{
 };
 use dali2rust_contracts::msg::{
     BusCommandPayload, ColorMode, ColorValue, DaliTargetScope, HclAlgorithm, HclLevelMode,
-    HclOverrideClearCommand, HclOverrideHoldCommand, HclOverrideTarget, HclSchedulePointRow,
-    HclTargetRow, HclTargetScope, HclTimeRef, LightSetpoint, PowerState, RuntimeSource,
+    HclOverrideClearCommand, HclOverrideHoldCommand, HclOverrideResumeCommand, HclOverrideTarget,
+    HclSchedulePointRow, HclTargetRow, HclTargetScope, HclTimeRef, LightSetpoint, PowerState,
+    RuntimeSource,
 };
 use dali2rust_domain::registry::{
     AdapterReadPort, AdapterView, GroupApplyRowView, GroupApplySnapshot,
@@ -302,6 +303,16 @@ impl Harness {
         self.publish_command(
             correlation_id,
             HclOverrideHoldCommand {
+                registry_adapter_id: 0,
+                target,
+            },
+        );
+    }
+
+    fn resume(&self, correlation_id: u64, target: HclOverrideTarget) {
+        self.publish_command(
+            correlation_id,
+            HclOverrideResumeCommand {
                 registry_adapter_id: 0,
                 target,
             },
@@ -1558,6 +1569,33 @@ fn a_broadcast_hold_stands_down_every_target_on_its_adapter() {
         suspended_groups(&harness, "wide"),
         vec![None, Some(5), Some(7), Some(8), Some(9)]
     );
+}
+
+#[test]
+fn a_resume_lifts_only_the_targets_its_argument_covers() {
+    let harness = spawn_harness(five_target_registry(), Arc::new(StubClock::at(600)));
+    harness.hold(77, HclOverrideTarget::Broadcast);
+    harness.confirmation_for(77);
+
+    harness.resume(78, HclOverrideTarget::Group { group_id: 9 });
+    harness.confirmation_for(78);
+    assert_eq!(
+        suspended_groups(&harness, "wide"),
+        vec![Some(5), Some(7), Some(8)],
+        "group 9 and the broadcast target its lamp is in"
+    );
+
+    harness.resume(79, HclOverrideTarget::VirtualLamp { virtual_lamp_id: 1 });
+    harness.confirmation_for(79);
+    assert_eq!(suspended_groups(&harness, "wide"), vec![Some(5)], "the groups of lamp 1");
+
+    harness.resume(80, HclOverrideTarget::Broadcast);
+    assert_eq!(
+        harness.confirmation_for(80).status,
+        dali2rust_contracts::msg::DeliveryStatus::Ok
+    );
+    assert!(suspended_groups(&harness, "wide").is_empty());
+    assert_eq!(harness.counters.overrides_reset.load(Ordering::Relaxed), 5);
 }
 
 #[test]

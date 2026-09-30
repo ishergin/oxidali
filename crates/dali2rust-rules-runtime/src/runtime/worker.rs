@@ -344,7 +344,6 @@ impl RulesWorker {
         let executor = crate::runtime::executor::EffectExecutor {
             publisher: &self.publisher,
             bus_id: self.bus_id,
-            world: self.world.as_ref(),
             counters: &self.counters,
             rule: &outcome.rule,
         };

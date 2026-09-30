@@ -1385,14 +1385,6 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
             })
             .unwrap_or([None; 3])
     }
-
-    fn hcl_schedules_for(
-        &self,
-        adapter_id: u8,
-        target: dali2rust_contracts::msg::HclOverrideTarget,
-    ) -> Vec<String> {
-        dali2rust_hcl_runtime::schedules_holding(self.store.as_ref(), adapter_id, target)
-    }
 }
 
 fn suspended_matches(

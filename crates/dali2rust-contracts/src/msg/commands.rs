@@ -1026,6 +1026,15 @@ declare_bus_payloads! {
         instance_number: 31,
         action: crate::msg::kinds::Dali103InstanceAction::CatchMovement,
     };
+
+    pub struct HclOverrideResumeCommand {
+        pub registry_adapter_id: u8,
+        pub target: super::kinds::HclOverrideTarget,
+    }
+    budget = HclOverrideResumeCommand {
+        registry_adapter_id: u8::MAX,
+        target: crate::msg::kinds::HclOverrideTarget::VirtualLamp { virtual_lamp_id: 63 },
+    };
 }
 
 impl FirmwareUpdateBeginCommand {

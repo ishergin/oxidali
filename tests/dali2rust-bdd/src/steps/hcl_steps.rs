@@ -217,7 +217,7 @@ fn wait_for_frame(world: &mut DaliWorld, frame: u16) {
     );
 }
 
-// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064
+// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064 RULE-070
 #[given(regex = r"^the controller clock reads (\d+) minutes past midnight$")]
 async fn given_clock_reads(world: &mut DaliWorld, minutes: u64) {
     set_clock(world, minutes);
@@ -238,7 +238,7 @@ async fn when_scheduler_ticks(world: &mut DaliWorld, count: u64) {
     );
 }
 
-// HCL-050 HCL-063 HCL-053 HCL-054 HCL-056 HCL-057 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064
+// HCL-050 HCL-063 HCL-053 HCL-054 HCL-056 HCL-057 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064 RULE-070
 #[then(regex = r"^the scheduler should drive group (\d+) to level (\d+)$")]
 async fn then_group_driven(world: &mut DaliWorld, group_id: u8, level: u8) {
     wait_for_frame(world, dapc_frame(Some(group_id), level));
@@ -364,7 +364,7 @@ fn suspended_groups(port: u16, schedule_id: &str) -> Option<Vec<u64>> {
     )
 }
 
-// RULE-037 RULE-038 RULE-061 RULE-063 RULE-062 RULE-064
+// RULE-037 RULE-038 RULE-061 RULE-063 RULE-062
 #[then(regex = r#"^HCL schedule "([^"]+)" eventually reports group (\d+) suspended$"#)]
 async fn then_group_eventually_suspended(world: &mut DaliWorld, schedule_id: String, group_id: u64) {
     let port = world.server_port();
@@ -373,6 +373,26 @@ async fn then_group_eventually_suspended(world: &mut DaliWorld, schedule_id: Str
     assert!(
         suspended(),
         "schedule {schedule_id} should hold group {group_id}: {:?}",
+        suspended_groups(port, &schedule_id)
+    );
+}
+
+// RULE-064
+#[then(regex = r#"^HCL schedule "([^"]+)" eventually reports only groups? ([\d, ]+) suspended$"#)]
+async fn then_only_groups_eventually_suspended(world: &mut DaliWorld, schedule_id: String, groups: String) {
+    let mut wanted: Vec<u64> = groups.split(',').map(|id| id.trim().parse().expect("group id")).collect();
+    wanted.sort_unstable();
+    let port = world.server_port();
+    let settled = || {
+        suspended_groups(port, &schedule_id).is_some_and(|mut seen| {
+            seen.sort_unstable();
+            seen == wanted
+        })
+    };
+    dali2rust_test_support::wait_until(settled, std::time::Duration::from_secs(10));
+    assert!(
+        settled(),
+        "schedule {schedule_id} should hold exactly groups {wanted:?}: {:?}",
         suspended_groups(port, &schedule_id)
     );
 }
