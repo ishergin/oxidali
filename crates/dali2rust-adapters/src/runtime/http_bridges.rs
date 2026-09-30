@@ -1393,10 +1393,13 @@ fn suspended_matches(
 ) -> bool {
     match target {
         dali2rust_rules_model::LightTarget::Group(group) => {
-            suspended.adapter_id == group.adapter_id && u16::from(suspended.group_id) == group.id
+            suspended.scope == dali2rust_contracts::msg::HclTargetScope::Group
+                && suspended.adapter_id == group.adapter_id
+                && u16::from(suspended.group_id) == group.id
         }
         dali2rust_rules_model::LightTarget::Broadcast { adapter_id } => {
-            suspended.adapter_id == *adapter_id && suspended.group_id == 0
+            suspended.scope == dali2rust_contracts::msg::HclTargetScope::Broadcast
+                && suspended.adapter_id == *adapter_id
         }
         dali2rust_rules_model::LightTarget::Lamp(_) => false,
     }
@@ -1445,7 +1448,9 @@ mod tests {
     use core::sync::atomic::Ordering::Relaxed;
     use std::sync::{Arc, Mutex};
 
-    use super::{arbitration_dto, stats_readback_dto};
+    use super::{arbitration_dto, stats_readback_dto, suspended_matches};
+    use dali2rust_contracts::msg::HclTargetScope;
+    use dali2rust_rules_model::{GroupRef, LightTarget};
     use crate::dali::transport::mock::MockDaliTransport;
     use dali2rust_contracts::msg::GroupMembershipAction;
     use dali2rust_dali_runtime::runtime::controller::DaliController;
@@ -1527,5 +1532,20 @@ mod tests {
             row.handover_incomplete,
         ];
         assert_eq!(got, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn a_suspended_broadcast_and_a_suspended_group_zero_are_told_apart_by_scope() {
+        let key = |scope, group_id| dali2rust_hcl_runtime::TargetKey { adapter_id: 0, scope, group_id };
+        let group_zero = LightTarget::Group(GroupRef { adapter_id: 0, id: 0 });
+        let broadcast = LightTarget::Broadcast { adapter_id: 0 };
+
+        assert!(suspended_matches(&key(HclTargetScope::Broadcast, 0), &broadcast));
+        assert!(
+            !suspended_matches(&key(HclTargetScope::Broadcast, 0), &group_zero),
+            "a held broadcast key carries group id 0 and is not group 0"
+        );
+        assert!(suspended_matches(&key(HclTargetScope::Group, 0), &group_zero));
+        assert!(!suspended_matches(&key(HclTargetScope::Group, 0), &broadcast));
     }
 }
