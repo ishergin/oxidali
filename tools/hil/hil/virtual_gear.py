@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
-from hil import remote_serial, role, serialmon
+from hil import durable, remote_serial, role, serialmon
 from hil.gearsim import GearSim, GearSimUnavailable
 from hil.lamp_guard import spell
 
@@ -65,9 +65,7 @@ class Ledger:
 
     def update(self, **fields):
         self.data.update(fields)
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(self.data, indent=1, sort_keys=True, ensure_ascii=False))
-        os.replace(tmp, self.path)
+        durable.write_json(self.path, self.data)
 
     def append(self, key, value):
         self.update(**{key: list(self.data.get(key, [])) + [value]})

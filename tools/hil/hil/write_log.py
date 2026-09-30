@@ -1,7 +1,8 @@
 import json
-import os
 import re
 from urllib.parse import unquote
+
+from hil import durable
 
 ALL = "*"
 READ_METHODS = ("GET", "HEAD")
@@ -202,11 +203,8 @@ class WriteLog:
     def save(self):
         if self.path is None:
             return
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps({"session": self.session, "base": self.base,
-                                   "touched": {k: sorted(v) for k, v in self.touched.items()}},
-                                  indent=1, sort_keys=True, ensure_ascii=False))
-        os.replace(tmp, self.path)
+        durable.write_json(self.path, {"session": self.session, "base": self.base,
+                                       "touched": {k: sorted(v) for k, v in self.touched.items()}})
 
 
 _SESSION = {"log": None}

@@ -4,6 +4,7 @@ import re
 import time
 from collections import namedtuple
 
+from hil import durable
 from hil.api import ApiError, CapabilityUnsupported, _HomeAssistantSettings, _PollerSettings
 from hil.lamp_guard import TEST_RULE_PREFIX, LampNotAllowed, named, only_hil_rules_appended
 from hil.write_log import WriteLog, WriteLogError, writes_path
@@ -193,9 +194,7 @@ def _settings(api):
 
 
 def save(snap, path):
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(snap, indent=1, ensure_ascii=False, sort_keys=True))
-    os.replace(tmp, path)
+    durable.write_json(path, snap)
 
 
 class SessionFileError(ValueError):

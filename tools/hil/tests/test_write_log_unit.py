@@ -1,10 +1,13 @@
+import json
+import os
 import re
+import stat
 import types
 
 import pytest
 
 import hil.api
-from hil import write_log
+from hil import prod_state, virtual_gear, write_log
 from hil.config import load as load_config
 from hil.write_log import ALL, WriteLog, request_keys
 
@@ -149,3 +152,26 @@ def test_a_log_of_the_wrong_shape_or_another_controller_is_refused_not_read_as_n
     path.write_text(text)
     with pytest.raises(write_log.WriteLogError, match=re.escape(why)):
         WriteLog.load(path, "t1", "http://dut")
+
+
+def test_every_state_file_reaches_the_disk_before_its_name_does(monkeypatch, tmp_path):
+    events, real_fsync, real_replace = [], os.fsync, os.replace
+
+    def fsync(fd):
+        events.append("fsync " + ("folder" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file"))
+        real_fsync(fd)
+
+    def replace(source, target):
+        events.append("rename")
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "replace", replace)
+    for save in (lambda path: prod_state.save({"taken_at": "t1"}, path),
+                 lambda path: WriteLog("t1", "http://dut", path).save(),
+                 lambda path: virtual_gear.Ledger(path).update(step="scan")):
+        events.clear()
+        path = tmp_path / "state.json"
+        save(path)
+        assert events == ["fsync file", "rename", "fsync folder"]
+        assert json.loads(path.read_text()) and not (tmp_path / "state.json.tmp").exists()
