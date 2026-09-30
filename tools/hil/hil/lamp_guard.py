@@ -91,6 +91,7 @@ COMMISSIONING_ROUTES = (
     re.compile(r"adapters/[0-9]+/input-devices/commission"),
 )
 DISCOVERY_ROUTE = re.compile(r"adapters/[0-9]+/discovery-runs")
+POLICY_APPLY_ROUTE = re.compile(r"policies/apply")
 APPLY_ROUTES = (("group", re.compile(r"adapters/[0-9]+/groups/apply")),
                 ("scene", re.compile(r"adapters/[0-9]+/scenes/([0-9]+)/apply")))
 SCAN_MODES = frozenset({"scan_known_short_addresses", "refresh_known"})
@@ -477,20 +478,22 @@ def named(shorts):
 
 class LampGuard:
     def __init__(self, allowed, read_only=False, segment=None, binding=None, pending=None,
-                 restart_rules=None):
+                 restart_rules=None, policy_armed=None):
         self.allowed = frozenset(allowed)
         self.read_only = bool(read_only)
         self._segment = segment
         self._binding = binding
         self._pending = pending
         self._restart_rules = restart_rules
+        self._policy_armed = policy_armed
         self.fence = None
         self._enabled = None
 
     @classmethod
-    def for_config(cls, cfg, segment=None, binding=None, pending=None, restart_rules=None):
+    def for_config(cls, cfg, segment=None, binding=None, pending=None, restart_rules=None,
+                   policy_armed=None):
         return cls(cfg.lamp_short_set(), cfg.lamps_read_only, segment, binding, pending,
-                   restart_rules)
+                   restart_rules, policy_armed)
 
     def check_request(self, method, path, body=None):
         if method.upper() in READ_METHODS:
@@ -504,6 +507,7 @@ class LampGuard:
         if restarts(path, body):
             self.check_restart("%s %s" % (method.upper(), path))
         _refuse_commissioning(method, path, body)
+        self._check_policy_write(method, path)
         apply = _apply_route(path)
         if apply is not None:
             return keys + self._check_apply(method, *apply)
@@ -543,6 +547,22 @@ class LampGuard:
             return []
         reached = self.check_target(target, visible, what)
         return shown_keys(reached) if kind in (LAMP, SEGMENT) else []
+
+    def _check_policy_write(self, method, path):
+        what = "%s %s" % (method.upper(), path)
+        if DISCOVERY_ROUTE.fullmatch(path):
+            if self._policy_armed is None:
+                raise LampNotAllowed("%s refused: no controller says whether apply-on-discovery "
+                                     "is armed, and an armed policy writes every registered gear"
+                                     % what)
+            if not self._policy_armed():
+                return
+            what += " with apply-on-discovery armed"
+        elif not POLICY_APPLY_ROUTE.fullmatch(path):
+            return
+        self.check_target(TARGET_SEGMENT, False,
+                          "%s, which writes power_on_level and system_failure_level into every "
+                          "registered gear," % what)
 
     def _check_apply(self, method, kind, scene):
         what = "%s %s apply" % (method.upper(), kind if scene is None else "scene %d" % scene)

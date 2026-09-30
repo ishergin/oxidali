@@ -430,10 +430,6 @@ class VirtualSession:
         self.sim.enable("all")
 
     def _neutralise(self, groups):
-        policy = self.api._req("GET", "policies")
-        if policy.get("apply_on_discovery") and policy.get("manages_anything"):
-            self.ledger.update(policy_rearm=True)
-            self.api._req("PATCH", "policies", {"apply_on_discovery": False})
         flags = {}
         for group in groups:
             flags[str(group)] = self.api.groups.get(group).get("ha_entity_enabled")
@@ -483,9 +479,6 @@ class VirtualSession:
                   for s in data.get("park", [])]
         steps += [("restoring group %s's HA flag" % g, partial(self._restore_flag, int(g), flag))
                   for g, flag in (data.get("group_flags") or {}).items()]
-        if data.get("policy_rearm"):
-            steps.append(("re-arming apply-on-discovery", partial(
-                self.api._req, "PATCH", "policies", {"apply_on_discovery": True})))
         return steps
 
     def _silence(self):

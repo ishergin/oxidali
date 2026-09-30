@@ -105,8 +105,9 @@ bench test's setup or run it is reported as a skip that quotes it:
   read by the last `ENABLE DEVICE TYPE` the client sent (`dali/raw`, the WB master; with
   none, an unknown write) or the one the firmware sends itself (`dali/command`). A virtual
   lamp whose binding cannot be read, or an identify naming no short, is refused.
-- A group or broadcast frame, a group target-state and a scene recall pass only when
-  every present gear on the segment is in `HIL_LAMP_SHORTS`.
+- A group or broadcast frame, a group target-state, a scene recall, a policy apply and a
+  scan while apply-on-discovery is armed pass only when every present gear on the segment
+  is in `HIL_LAMP_SHORTS`.
 - Under `HIL_LAMPS_READ_ONLY=1` every visible action is refused: target-state, identify,
   scene recall, and every frame or attribute write that changes what a lit lamp shows
   (`VISIBLE_*` in `hil/lamp_guard.py`; a new level or Tc limit moves a lit lamp into
@@ -125,8 +126,8 @@ bench test's setup or run it is reported as a skip that quotes it:
 - A 24-bit frame from the WB master is refused under read-only, since a forged input event
   reaches automations the toolkit cannot see, when an
   enabled owner rule could fire on its event, and when it is a command.
-- HCL schedules, rules, MQTT commands and the policy apply reach lamps inside the
-  controller, past the guard: a test that uses them asks the guard before its first
+- HCL schedules, rules and MQTT commands reach lamps inside the controller, past the
+  guard: a test that uses them asks the guard before its first
   action (`drive_allowed`, `allowed_bound_lamp`) for each lamp they reach, or for the whole
   segment when they reach a broadcast, the HA scene select or a group other than
   `free_group`, which no registered gear or owner rule uses, which answers no group query
@@ -141,9 +142,10 @@ A run with no `HIL_*` flag writes only this, each put back by its test or guard:
 adapter's name; group 15's and a scene's name and Home Assistant exposure (HIL-GRP-03,
 HIL-SCN-03); the Home Assistant bridge's settings, moved to `hiltest` (the owner's
 entities are unavailable meanwhile), and one virtual lamp's exposure (`ha_bridge`
-tests, `ha_guard`); the poller's settings (`test_poller`, `poller_guard`); and a poller
-the owner left on, off for the session (`bench_baseline`). HIL-INP-02 and 03 rewrite the
-panel's instance group membership with the value it holds; scans refresh the registry.
+tests, `ha_guard`); the poller's settings (`test_poller`, `poller_guard`); and the owner's
+poller and armed apply-on-discovery, off for the session (`bench_baseline`). HIL-INP-02 and
+03 rewrite the panel's instance group membership with the value it holds; scans refresh the
+registry.
 
 ## Save and restore
 
@@ -477,7 +479,6 @@ Its rules are STRATEGY §4.8; the mechanics:
    - gives the emulator the reserve, checks the mask it echoes, builds the fleet and enables
      it on a ladder once the first gear has answered the controller cleanly and the
      emulator's answer counters moved without a late or expired answer;
-   - sets the policy's apply-on-discovery aside;
    - hides the free groups from Home Assistant;
    - scans, and binds the park to new virtual lamps with HA off, writing each lamp's id to
      the ledger before creating it.
@@ -488,7 +489,7 @@ Its rules are STRATEGY §4.8; the mechanics:
 4. **The teardown follows** `state/virtual_gear.json`, step by step:
    - silence the fleet;
    - delete the session's lamps and forget the park;
-   - restore group flags and the policy;
+   - restore group flags;
    - compare the registry, the WB list and the retained MQTT topics with the start.
 
    A teardown that leaves residue keeps the ledger: the next session and `hil --peer role

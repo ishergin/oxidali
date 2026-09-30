@@ -119,13 +119,18 @@ class Client:
         self.guard = LampGuard.for_config(cfg, segment=self.segment_shorts,
                                           binding=self._bound_short,
                                           pending=self.pending_lamps,
-                                          restart_rules=self.restart_rules)
+                                          restart_rules=self.restart_rules,
+                                          policy_armed=self.policy_armed)
         self.init_ledger()
         self._rebooting = False
 
     def restart_rules(self):
         fired = rules_on(self._req("GET", "rules?format=json"), RESTART_TRIGGERS)
         return [name for name in fired if not name.startswith(lamp_guard.TEST_RULE_PREFIX)]
+
+    def policy_armed(self):
+        policy = self._req("GET", "policies")
+        return bool(policy.get("apply_on_discovery") and policy.get("manages_anything"))
 
     @contextlib.contextmanager
     def expect_reboot(self):

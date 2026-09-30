@@ -110,6 +110,7 @@ def bench_baseline(pytestconfig, production_state):
         return
 
     findings.extend(_neutralize_poller(api))
+    findings.extend(_neutralize_policy_apply(api))
     schedule_findings, suspended = _neutralize_schedules(
         api, api.cfg.drives_lamps() or virtual_gear_run())
     findings.extend(schedule_findings)
@@ -144,6 +145,17 @@ def _neutralize_poller(api):
                     pytrace=False)
     return ["found the poller ENABLED — disabled it (leftover from an earlier "
             "run; see ISSUE-30)"]
+
+
+def _neutralize_policy_apply(api):
+    if not api.policy_armed():
+        return []
+    api._req("PATCH", "policies", {"apply_on_discovery": False})
+    if api.policy_armed():
+        pytest.fail("bench_baseline could not disarm apply-on-discovery — every scan below "
+                    "would write the policy into every registered gear", pytrace=False)
+    return ["found apply-on-discovery ARMED — disarmed for the session, so a scan writes no "
+            "gear; the session's restore re-arms it"]
 
 
 def _neutralize_schedules(api, suspend):

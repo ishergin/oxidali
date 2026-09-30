@@ -547,27 +547,25 @@ def _session(tmp_path, api, sim, **ledger):
     return session
 
 
-def test_teardown_deletes_vls_before_devices_and_restores_flags_and_policy(tmp_path, monkeypatch):
+def test_teardown_deletes_vls_before_devices_and_restores_flags(tmp_path, monkeypatch):
     api, sim = _TeardownApi(), _QuietSim()
     session = _session(tmp_path, api, sim, park=[16, 17], created_vls=[60, 61],
-                       group_flags={"4": True}, policy_rearm=True)
+                       group_flags={"4": True})
     monkeypatch.setattr(session, "residual", lambda: [])
     assert session.close() == []
     assert sim.disabled == ["all"]
     assert api.calls == [("vl-delete", 60), ("vl-delete", 61), ("forget", 16), ("forget", 17),
-                         ("group", 4, {"ha_entity_enabled": True}),
-                         ("PATCH", "policies", {"apply_on_discovery": True})]
+                         ("group", 4, {"ha_entity_enabled": True})]
     assert not session.ledger.exists()
 
 
 def test_a_failing_step_leaves_residue_and_the_rest_still_runs(tmp_path, monkeypatch):
     api = _TeardownApi(failing={"vl-delete"})
     session = _session(tmp_path, api, None, park=[16], created_vls=[60],
-                       group_flags={"4": None}, policy_rearm=True)
+                       group_flags={"4": None})
     monkeypatch.setattr(session, "residual", lambda: [])
     residue = session.close()
     assert ("forget", 16) in api.calls
-    assert ("PATCH", "policies", {"apply_on_discovery": True}) in api.calls
     assert any("VL60" in line for line in residue)
     assert any("group 4" in line for line in residue)
     assert session.ledger.exists()
