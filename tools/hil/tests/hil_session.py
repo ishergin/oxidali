@@ -135,6 +135,33 @@ def pytest_collection_modifyitems(config, items):
     items.sort(key=_tier)
 
 
+DECLARED_SKIPS = ("skip", "skipif")
+UNDECLARED_SKIP = ("a unit test fails on a skip no skip or skipif marker declares, so a "
+                   "regression never reads as a skip: %s")
+
+
+def fail_undeclared_skip(report, declared):
+    if report.outcome != "skipped" or declared or hasattr(report, "wasxfail"):
+        return
+    reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else report.longrepr
+    report.outcome = "failed"
+    report.longrepr = UNDECLARED_SKIP % reason
+
+
+def judge_report(item, report, call):
+    if not tiers.is_unit(item.path):
+        skip_guard_refusal(report, call)
+        return
+    fail_undeclared_skip(report, any(item.get_closest_marker(name) for name in DECLARED_SKIPS))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    outcome = yield
+    if tiers.is_unit(getattr(collector, "path", "")):
+        fail_undeclared_skip(outcome.get_result(), False)
+
+
 def skip_guard_refusal(report, call):
     if report.when == "teardown" or report.outcome != "failed" or call.excinfo is None:
         return
@@ -149,7 +176,7 @@ def skip_guard_refusal(report, call):
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
-    skip_guard_refusal(report, call)
+    judge_report(item, report, call)
     if report.when != "call" and not (
             report.when == "setup" and (report.skipped or report.failed)):
         return

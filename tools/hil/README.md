@@ -96,9 +96,9 @@ rules of STRATEGY §4. `HIL_LAMP_SHORTS` names the lamps a test may drive; set
 
 The lamp guard (`hil/lamp_guard.py`) enforces `HIL_LAMP_SHORTS` and
 `HIL_LAMPS_READ_ONLY`, whatever a test or a script selects. Every request
-`Client` sends and every frame the WB foreign master sends passes it first, and a refusal
+`Client` sends and every frame of the WB foreign master passes it first, and a refusal
 raises `LampNotAllowed`, naming its cause, before anything reaches the wire; during a
-test's setup or run it is reported as a skip that quotes it:
+bench test's setup or run it is reported as a skip that quotes it:
 
 - A target-state, identify or attribute write, or a diagnostic frame that writes the gear,
   must address a short in `HIL_LAMP_SHORTS`; queries always pass. An extended command is
@@ -223,7 +223,7 @@ the port.
 
 ## Optical tests
 
-The camera is the oracle for what a lamp really shows, whatever the controller reports.
+The camera is the oracle for what a lamp really shows.
 The `optical` tests (`test_optical_*`, and the optical cases in `test_scenes`,
 `test_scenarios`, `test_hcl_runtime` and `test_ha_bridge`) check that:
 
@@ -535,9 +535,8 @@ one costs a go-ahead.
   refuses a drive outside `HIL_LAMP_SHORTS`, and a group or broadcast action unless
   the whole segment is allowed; a gear-wide command such as `REMOVE FROM SCENE` is
   sent per lamp.
-- **Reboots.** A test that reboots a controller carries `destructive`. A test or
-  fixture that reboots one (reset, flash, OTA, power cut, bootloader request) does
-  so inside `Client.expect_reboot()`: only there are the
+- **Reboots.** A test or fixture that reboots a controller (reset, flash, OTA, power
+  cut, bootloader request) does so inside `Client.expect_reboot()`: only there are the
   failed requests that follow booked as `http_reboot_race` and every client's pooled
   connections dropped; outside it they spend the gated `http_transport` budget.
 - **`202` routes** return before their first frame is sent: wait for the operation
@@ -564,7 +563,8 @@ one costs a go-ahead.
   fixture to fail or skip on. Nor do they take any other bench fixture, `hil_config`
   included: the hardware-free verdict below reads every test's fixture closure.
 - **Hardware-free tests** request no bench fixture (`BENCH_FIXTURES` in `hil/tiers.py`);
-  a `*_unit.py` test that requests one is a collection error. A session made only of
+  a `*_unit.py` test that requests one is a collection error, and a guard refusal or a
+  skip no `skip` or `skipif` marker declares fails it. A session made only of
   them skips `production_state`, `bench_baseline`, `dut_continuity`, the serial-bridge
   probe, the session baselines and the validity report, and writes no `summary.md`.
   They build `HilConfig` with `serial_remote=""` and their own `base`: the defaults name
