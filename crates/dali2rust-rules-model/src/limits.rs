@@ -1,4 +1,4 @@
-use crate::action::{Action, FlowAction, SceneAction, StateAction};
+use crate::action::{Action, FlowAction, HclAction, SceneAction, StateAction};
 use crate::condition::{Condition, VarOperand};
 use crate::error::ModelError;
 use crate::rule::{DefBlock, Rule, RuleSet};
@@ -19,6 +19,7 @@ pub const MAX_NAME_BYTES: usize = 48;
 pub const MAX_VAR_TEXT_BYTES: usize = 16;
 pub const MAX_MQTT_TOPIC_BYTES: usize = 48;
 pub const MAX_MQTT_PAYLOAD_BYTES: usize = 48;
+pub const MAX_SCHEDULE_ID_BYTES: usize = 32;
 pub const MAX_RULES_SOURCE_BYTES: usize = 12240;
 pub const MIN_EVERY_PERIOD_MS: u32 = 1000;
 pub const MAX_SCENE_CYCLE_ENTRIES: usize = 16;
@@ -269,6 +270,11 @@ fn check_action_payload(owner: &str, action: &Action) -> Result<(), ModelError> 
         Action::Scene(scene) => check_scene_payload(owner, scene),
         Action::State(state) => check_state_payload(owner, state),
         Action::Flow(flow) => check_flow_payload(owner, flow),
+        Action::Hcl(HclAction::Enable { schedule } | HclAction::Disable { schedule })
+            if schedule.len() > MAX_SCHEDULE_ID_BYTES =>
+        {
+            Err(ModelError::ScheduleIdTooLong { rule: owner.into(), bytes: schedule.len() })
+        }
         _ => Ok(()),
     }
 }

@@ -1,7 +1,7 @@
-use dali2rust_rules_model::limits::{MAX_ACTIONS_EXPANDED, MAX_STAT_NAMES};
+use dali2rust_rules_model::limits::{MAX_ACTIONS_EXPANDED, MAX_SCHEDULE_ID_BYTES, MAX_STAT_NAMES};
 use dali2rust_rules_model::{
-    expanded_action_count, validate, Action, DefBlock, FlowAction, ModelError, Rule, RuleSet,
-    StateAction, Trigger,
+    expanded_action_count, validate, Action, DefBlock, FlowAction, HclAction, ModelError, Rule,
+    RuleSet, StateAction, Trigger,
 };
 
 fn simple_action() -> Action {
@@ -237,5 +237,22 @@ fn a_stat_name_with_a_control_character_is_refused_at_the_owner_that_names_it() 
             assert_eq!(name, "door\u{7}open");
         }
         other => panic!("expected StatNameNotPrintable, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_schedule_id_past_the_bus_field_is_refused_at_its_rule() {
+    let switch = |schedule: String| Action::Hcl(HclAction::Enable { schedule });
+    let fits = "s".repeat(MAX_SCHEDULE_ID_BYTES);
+    let fitting = vec![rule_with_actions("fits", vec![switch(fits.clone())])];
+    assert_eq!(validate(&set_with(vec![], fitting)), Ok(()));
+
+    let past = vec![rule_with_actions("past", vec![switch(format!("{fits}s"))])];
+    match validate(&set_with(vec![], past)) {
+        Err(ModelError::ScheduleIdTooLong { rule, bytes }) => {
+            assert_eq!(rule, "past");
+            assert_eq!(bytes, MAX_SCHEDULE_ID_BYTES + 1);
+        }
+        other => panic!("expected ScheduleIdTooLong, got {other:?}"),
     }
 }

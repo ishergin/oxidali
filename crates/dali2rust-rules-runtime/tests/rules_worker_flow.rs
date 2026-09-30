@@ -1706,24 +1706,22 @@ fn an_id_wider_than_its_bus_field_fails_its_effect_instead_of_narrowing() {
 
 const SCHEDULE_ID_CAPACITY: usize = 32;
 
-fn schedule_switch_document(fitting: &str, too_long: &str) -> String {
+fn schedule_switch_document(fitting: &str) -> String {
     format!(
         "rule \"fits\" {{\n  when http trigger\n  do hcl.disable(\"{fitting}\")\n}}\n\
-         rule \"too long\" {{\n  when http trigger\n  do hcl.enable(\"{too_long}\")\n}}\n\
          rule \"marker\" {{\n  when http trigger\n  do lamp(6).level(55)\n}}\n"
     )
 }
 
 #[test]
-fn a_schedule_switch_names_its_schedule_whole_or_fails_instead_of_narrowing() {
+fn a_schedule_switch_names_its_schedule_whole() {
     let fitting = "s".repeat(SCHEDULE_ID_CAPACITY);
-    let too_long = "t".repeat(SCHEDULE_ID_CAPACITY + 1);
     let h = harness("rules-schedule-switch");
-    publish_document(&h, 131, &schedule_switch_document(&fitting, &too_long), 0);
+    publish_document(&h, 131, &schedule_switch_document(&fitting), 0);
     assert!(recv_signal(&h, 131).error.is_none());
     wait_revision(&h.store, 1);
 
-    for (corr, name) in [(132u64, "fits"), (133, "too long"), (134, "marker")] {
+    for (corr, name) in [(132u64, "fits"), (134, "marker")] {
         run_rule(&h, corr, name);
         recv_signal(&h, corr);
     }
@@ -1738,15 +1736,10 @@ fn a_schedule_switch_names_its_schedule_whole_or_fails_instead_of_narrowing() {
             _ => None,
         })
         .collect();
-    assert_eq!(
-        switches,
-        vec![(fitting, false)],
-        "the id that fits goes out whole with its bit; the longer one is not cut to fit"
-    );
+    assert_eq!(switches, vec![(fitting, false)], "the id goes out whole with its bit");
     let runtime = h.store.rule_runtime();
     let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);
     assert_eq!(outcome("fits"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
-    assert_eq!(outcome("too long"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
 }
 
 const HOLD_DOC: &str = "rule \"group\" {\n  when http trigger\n  do hcl.hold(group(2))\n}\n\

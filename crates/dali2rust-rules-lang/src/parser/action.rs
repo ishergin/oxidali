@@ -7,7 +7,7 @@ use crate::parser::refs;
 use crate::parser::trigger::quoted_ref;
 use dali2rust_rules_model::limits::{
     stat_name_is_printable, MAX_INSTANCE_GROUP, MAX_MQTT_PAYLOAD_BYTES, MAX_MQTT_TOPIC_BYTES,
-    MAX_REPEAT, MAX_SCENE, MAX_SCENE_CYCLE_ENTRIES, MAX_VAR_TEXT_BYTES,
+    MAX_REPEAT, MAX_SCENE, MAX_SCENE_CYCLE_ENTRIES, MAX_SCHEDULE_ID_BYTES, MAX_VAR_TEXT_BYTES,
 };
 use dali2rust_rules_model::{
     Action, ActionKind, CompileError, DurationMs, FlowAction, HclAction, InputAction, SceneAction,
@@ -195,7 +195,10 @@ fn hcl_action(c: &mut Cursor<'_>) -> Result<Action, CompileError> {
         }
         "enable" | "disable" => {
             c.expect(&TokenKind::LParen, "`(`")?;
-            let (schedule, _) = refs::checked_name(c, "schedule name")?;
+            let (schedule, at) = refs::checked_name(c, "schedule id")?;
+            if schedule.len() > MAX_SCHEDULE_ID_BYTES {
+                return Err(at.err(format!("schedule id exceeds {MAX_SCHEDULE_ID_BYTES} bytes")));
+            }
             c.expect(&TokenKind::RParen, "`)`")?;
             Ok(Action::Hcl(if verb == "enable" {
                 HclAction::Enable { schedule }

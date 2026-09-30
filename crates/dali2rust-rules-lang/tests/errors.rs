@@ -285,3 +285,15 @@ fn a_control_character_in_a_stat_name_is_refused_at_the_name() {
     }
     compile_ok(&wrap_action("stat(\"дверь\u{a0}открыта\\\").count()"));
 }
+
+#[test]
+fn a_schedule_id_past_the_bus_field_is_refused_at_the_id() {
+    let fits = "s".repeat(32);
+    for verb in ["enable", "disable"] {
+        compile_ok(&wrap_action(&format!("hcl.{verb}(\"{fits}\")")));
+        let err = compile_err(&wrap_action(&format!("hcl.{verb}(\"{fits}s\")")));
+        let id_column = 6 + "hcl.(".len() as u32 + verb.len() as u32;
+        assert_eq!((err.line, err.column), (5, id_column), "{verb}: {err}");
+        assert!(err.message.contains("schedule id exceeds 32 bytes"), "{verb}: {err}");
+    }
+}

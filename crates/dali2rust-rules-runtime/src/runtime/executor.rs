@@ -635,6 +635,13 @@ mod merge_tests {
     }
 
     #[test]
+    fn the_compilers_schedule_id_limit_is_the_bus_fields_capacity() {
+        let longest = "s".repeat(dali2rust_rules_model::limits::MAX_SCHEDULE_ID_BYTES);
+        assert!(schedule_id_of(&longest).is_some());
+        assert!(schedule_id_of(&format!("{longest}s")).is_none());
+    }
+
+    #[test]
     fn a_target_whose_id_does_not_fit_its_field_opens_no_merge_slot() {
         let wide = LightTarget::Lamp(dali2rust_rules_model::LampRef { id: 300, adapter_id: 0 });
         let mut series = LightSeries::default();

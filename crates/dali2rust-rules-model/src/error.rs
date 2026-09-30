@@ -48,6 +48,7 @@ pub enum ModelError {
     VarTextTooLong { rule: String, text: String },
     MqttTopicTooLong { rule: String, bytes: usize },
     MqttPayloadTooLong { rule: String, bytes: usize },
+    ScheduleIdTooLong { rule: String, bytes: usize },
     SceneCycleTooLong { rule: String, count: usize },
     SceneOutOfRange { rule: String, scene: u8 },
     TooManyStatNames { owner: String, count: usize },
@@ -76,6 +77,7 @@ impl ModelError {
             | ModelError::VarTextTooLong { rule, .. }
             | ModelError::MqttTopicTooLong { rule, .. }
             | ModelError::MqttPayloadTooLong { rule, .. }
+            | ModelError::ScheduleIdTooLong { rule, .. }
             | ModelError::SceneCycleTooLong { rule, .. }
             | ModelError::SceneOutOfRange { rule, .. } => Some(rule),
             ModelError::NoActions { owner }
@@ -121,6 +123,7 @@ impl fmt::Display for ModelError {
             E::VarTextTooLong { rule, text } => write!(f, "rule \"{rule}\": var text too long: \"{text}\""),
             E::MqttTopicTooLong { rule, bytes } => write!(f, "rule \"{rule}\": mqtt topic is {bytes} bytes"),
             E::MqttPayloadTooLong { rule, bytes } => write!(f, "rule \"{rule}\": mqtt payload is {bytes} bytes"),
+            E::ScheduleIdTooLong { rule, bytes } => write!(f, "rule \"{rule}\": schedule id is {bytes} bytes, at most {}", crate::limits::MAX_SCHEDULE_ID_BYTES),
             E::SceneCycleTooLong { rule, count } => write!(f, "rule \"{rule}\": scene.cycle lists {count} scenes"),
             E::SceneOutOfRange { rule, scene } => write!(f, "rule \"{rule}\": scene {scene} out of range"),
             E::TooManyStatNames { owner, count } => write!(f, "\"{owner}\" names a stat counter past the limit: the document names {count}, at most {}", crate::limits::MAX_STAT_NAMES),
