@@ -45,7 +45,6 @@ pub enum Effect {
         retain: bool,
     },
     Log { text: String },
-    StatCount { name: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

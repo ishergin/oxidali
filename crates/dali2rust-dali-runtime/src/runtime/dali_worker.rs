@@ -406,6 +406,14 @@ dali2rust_contracts::dispatch_bus_commands! {
         fd,
         counters,
     ),
+    Dali103InstanceActionCommand(action) => dev103::handle_103_instance_action(
+        controller,
+        publisher,
+        read_port,
+        correlation_id,
+        action,
+        counters,
+    ),
     Dali103IdentifyCommand(id) => handle_103_identify(
         controller,
         publisher,

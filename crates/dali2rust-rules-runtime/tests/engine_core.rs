@@ -1080,3 +1080,48 @@ fn a_publish_chains_only_the_messages_on_its_own_topic() {
     let out = eng.handle(mqtt("home/echo", b"x", false), &world(1_600));
     assert!(chain_refused(&out), "while the echo itself is at its limit: {out:?}");
 }
+
+fn stat_counts(eng: &Engine) -> Vec<(String, u32)> {
+    eng.stat_counts().map(|(name, count)| (name.to_owned(), count)).collect()
+}
+
+#[test]
+fn named_counters_count_wet_runs_only_and_a_reload_keeps_the_names_it_keeps() {
+    let mut eng = engine(
+        "rule \"a\" {\n  when http trigger\n  do stat(\"x\").count()\n     stat(\"y\").count()\n}\n",
+        0,
+    );
+    assert_eq!(stat_counts(&eng), [("x".into(), 0), ("y".into(), 0)], "a name the document brings starts at 0");
+    eng.handle(run("a"), &world(10));
+    eng.handle(EngineInput::RunRule { name: "a", dry: true }, &world(20));
+    assert_eq!(stat_counts(&eng), [("x".into(), 1), ("y".into(), 1)], "a dry run counts nothing");
+
+    eng.set_rules(
+        Some(compile("rule \"b\" {\n  when http trigger\n  do stat(\"x\").count()\n     stat(\"z\").count()\n}\n")),
+        30,
+    );
+    assert_eq!(
+        stat_counts(&eng),
+        [("x".into(), 1), ("z".into(), 0)],
+        "x survives with its count, y is gone, z starts at 0"
+    );
+}
+
+#[test]
+fn a_pending_continuation_is_a_gauge_that_falls_when_it_fires() {
+    let mut eng = engine(
+        "rule \"later\" {\n  when http trigger\n  do after 1s do { log(\"late\") }\n}\n",
+        0,
+    );
+    assert_eq!(eng.counters().continuations_pending, 0);
+    eng.handle(run("later"), &world(0));
+    assert_eq!(eng.counters().continuations_pending, 1, "the after block waits on the wheel");
+
+    let fired = eng.handle(EngineInput::Tick, &world(1_000));
+    assert_eq!(eng.counters().continuations_pending, 0, "a fired continuation is no longer pending");
+    assert!(
+        fired.iter().any(|outcome| outcome.effects.iter().any(|e| matches!(e, Effect::Log { .. }))),
+        "the continuation ran its body: {fired:?}"
+    );
+    assert_eq!(eng.counters().continuations_fired, 1);
+}

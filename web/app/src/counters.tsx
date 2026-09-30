@@ -1,39 +1,24 @@
 import { useRef } from 'preact/hooks'
-import { deltaOf } from './counter-delta'
+import { deltaOf, type Flat, flatten } from './counter-delta'
 
-export { deltaOf } from './counter-delta'
-
-export type Flat = Record<string, number>
+export { deltaOf, type Flat } from './counter-delta'
 
 export function label(key: string): string {
   const words = key.replace(/_/g, ' ')
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
-export function flatten(value: unknown, prefix: string, out: Flat): Flat {
-  if (typeof value === 'number') {
-    out[prefix] = value
-    return out
-  }
-  if (Array.isArray(value)) {
-    value.forEach((v, i) => flatten(v, `${prefix}[${i}]`, out))
-    return out
-  }
-  if (value && typeof value === 'object') {
-    for (const [k, v] of Object.entries(value)) {
-      flatten(v, prefix ? `${prefix}.${k}` : k, out)
-    }
-  }
-  return out
-}
-
-export function useDeltas(data: unknown, sampleMs: number | null): Flat {
+export function useDeltas<T>(
+  data: T | null | undefined,
+  sampleMs: number | null,
+  view: (data: T) => unknown = (sample) => sample,
+): Flat {
   const previous = useRef<Flat | null>(null)
   const sampledAt = useRef(-1)
   const deltas = useRef<Flat>({})
 
   if (data && sampleMs !== null && sampleMs !== sampledAt.current) {
-    const flat = flatten(data, '', {})
+    const flat = flatten(view(data), '', {})
     if (sampledAt.current >= 0 && sampleMs < sampledAt.current) {
       deltas.current = {}
     } else if (previous.current) {

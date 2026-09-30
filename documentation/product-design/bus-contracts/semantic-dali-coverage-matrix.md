@@ -32,6 +32,7 @@
 | Правила | световые действия | `DaliSetTargetStateCommand` (лампа, группа, broadcast), `DaliStopFadeCommand` |
 | Правила | сцены | `DaliRecallSceneCommand` (`Group` / `Broadcast` / `VirtualLamp`), `SceneApplyExecuteCommand` |
 | Правила | индикация панелей | `Dali103FeedbackDriveCommand` |
+| Правила | датчик присутствия (303) | `Dali103InstanceActionCommand` |
 | Поллер | фоновое чтение | `DaliReadAttributesCommand`, `scope = Short`, `Origin::Poller` (серии банков 202-207 — пресетом) |
 | Поллер | health-probe сегмента | `DaliBusHealthProbeCommand` |
 | Apply orchestrator | ячейки apply | `DaliProgramGroupMembershipCommand`, `DaliProgramSceneCommand` (`target = VirtualLamp`) |

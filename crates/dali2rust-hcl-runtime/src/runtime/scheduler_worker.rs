@@ -9,10 +9,14 @@ use dali2rust_bus::{
     publish_or_drop, BusChannel, BusFrame, BusId, BusPublisher, BusSubscriberRx,
     CorrelationIdAllocator, PublishResult,
 };
-use dali2rust_contracts::bus::{build_confirmation_envelope, command_envelope};
+use dali2rust_contracts::bus::{
+    build_confirmation_envelope, build_confirmation_envelope_with_product_error, command_envelope,
+};
 use dali2rust_contracts::msg::{
     BusCommandPayload, BusEventPayload, DaliRecallLastActiveLevelCommand,
-    DaliSetTargetStateCommand, DeliveryStatus, HclOverrideClearCommand, Origin,
+    DaliSetTargetStateCommand, DeliveryStatus, ErrorCode, HclOverrideClearCommand,
+    HclOverrideHoldCommand, HclOverrideResumeCommand, HclScheduleChangedEvent, Origin,
+    RuntimeStateChangedEvent,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{HclScheduleView, HclSchedulerReadPort};
@@ -21,17 +25,20 @@ use dali2rust_platform::wall_clock::{LocalCivilTime, WallClock};
 
 use super::astronomy::Location;
 use super::curve::{effective_points, evaluate, DesiredState};
-use super::overrides::{commit_hits_target, driven_dimensions, OverrideLedger, RuntimeCommit};
+use super::overrides::{
+    commit_hits_target, driven_dimensions, hold_covers_target, resume_removal, Causes,
+    OverrideLedger, RuntimeCommit,
+};
 use super::plan::{
-    coalesce, expand_target, plan, DesiredEntry, PlannedCommand, TargetKey,
+    coalesce, expand_target, plan, DesiredEntry, PlannedCommand, TargetKey, TickPlan,
 };
 
 pub const DEFAULT_TICK_PERIOD_MS: u64 = 60_000;
 pub const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 2_000;
 const MAX_IDLE_WAIT: Duration = Duration::from_secs(1);
 const CONFIRMATION_POLL_SLICE: Duration = Duration::from_millis(50);
-const MAX_DEFERRED_FRAMES: usize = 64;
 const DAYS_PER_WEEK: u8 = 7;
+const HOLD_WITHOUT_CLOCK: &str = "time_unsynced";
 
 #[derive(Clone, Copy, Debug)]
 pub struct HclConfig {
@@ -54,13 +61,13 @@ pub struct HclSchedulerCounters {
     pub ticks_time_unsynced: AtomicU32,
     pub commands_published: AtomicU32,
     pub commands_dropped_cap: AtomicU32,
-    pub deferred_dropped_cap: AtomicU32,
     pub command_timeouts: AtomicU32,
     pub command_failures: AtomicU32,
     pub ingress_rejections: AtomicU32,
     pub overrides_started: AtomicU32,
     pub overrides_cleared: AtomicU32,
     pub overrides_reset: AtomicU32,
+    pub ticks_cut: AtomicU32,
     pub ignored_events: AtomicU32,
     pub ignored_commands: AtomicU32,
 }
@@ -106,6 +113,30 @@ impl PublishOutcomes {
 struct SchedulerState {
     last_published: HashMap<TargetKey, PublishRecord>,
     published_from: Option<Vec<HclScheduleView>>,
+    tick: Option<TickScope>,
+}
+
+#[derive(Default)]
+struct TickScope {
+    sources: Vec<(TargetKey, String)>,
+    published: Vec<TargetKey>,
+    stood_down: Vec<TargetKey>,
+    edited: Vec<String>,
+    cut: bool,
+}
+
+impl TickScope {
+    fn planned(schedules: &[HclScheduleView], fresh: &[DesiredEntry]) -> Self {
+        let source = |entry: &DesiredEntry| schedules.get(entry.schedule).map(|view| view.schedule_id.clone());
+        let sources = fresh.iter().filter_map(|entry| Some((entry.key, source(entry)?))).collect();
+        Self { sources, ..Self::default() }
+    }
+
+    fn planned_by_an_edited_schedule(&self, target: &TargetKey) -> bool {
+        self.sources
+            .iter()
+            .any(|(key, schedule)| key == target && self.edited.contains(schedule))
+    }
 }
 
 impl SchedulerState {
@@ -113,6 +144,51 @@ impl SchedulerState {
         Self {
             last_published: HashMap::new(),
             published_from: None,
+            tick: None,
+        }
+    }
+
+    fn stand_down(&mut self, target: TargetKey) {
+        self.last_published.remove(&target);
+        if let Some(tick) = self.tick.as_mut() {
+            tick.stood_down.push(target);
+        }
+    }
+
+    fn note_published(&mut self, target: TargetKey) {
+        if let Some(tick) = self.tick.as_mut() {
+            tick.published.push(target);
+        }
+    }
+
+    fn driven(&self, target: &TargetKey) -> bool {
+        self.last_published.contains_key(target)
+            || self.tick.as_ref().is_some_and(|tick| tick.published.contains(target))
+    }
+
+    fn skips_in_tick(&mut self, target: &TargetKey) -> bool {
+        let Some(tick) = self.tick.as_mut() else {
+            return false;
+        };
+        let cut = tick.planned_by_an_edited_schedule(target);
+        tick.cut |= cut;
+        cut || tick.stood_down.contains(target)
+    }
+
+    fn edit_during_tick(&mut self, edited: &str, current: &[HclScheduleView]) {
+        let was = self.published_from.as_deref().and_then(|views| schedule_named(views, edited));
+        let now = schedule_named(current, edited);
+        if was == now {
+            return;
+        }
+        let stale: Vec<TargetKey> =
+            was.into_iter().chain(now).flat_map(|view| view.targets.iter().flat_map(expand_target)).collect();
+        for key in &stale {
+            self.last_published.remove(key);
+        }
+        if let Some(tick) = self.tick.as_mut() {
+            tick.published.retain(|key| !stale.contains(key));
+            tick.edited.push(edited.to_owned());
         }
     }
 
@@ -126,6 +202,10 @@ impl SchedulerState {
         self.last_published.clear();
         self.published_from = None;
     }
+}
+
+fn schedule_named<'v>(views: &'v [HclScheduleView], schedule_id: &str) -> Option<&'v HclScheduleView> {
+    views.iter().find(|view| view.schedule_id == schedule_id)
 }
 
 struct SchedulerDeps {
@@ -228,9 +308,8 @@ fn apply_frame(state: &mut SchedulerState, deps: &SchedulerDeps, frame: &BusFram
         BusFrame::Event(envelope) => apply_event(state, deps, &envelope.payload),
         BusFrame::Command(envelope) => dispatch_scheduler_command(
             &envelope.payload,
-            &deps.publisher,
-            &deps.overrides,
-            &deps.counters,
+            state,
+            deps,
             envelope.meta.correlation_id,
         ),
         BusFrame::Confirmation(_) => {
@@ -243,70 +322,143 @@ dali2rust_contracts::dispatch_bus_commands! {
     pub const HCL_SCHEDULER_HANDLED_COMMANDS;
     fn dispatch_scheduler_command(
         payload: &BusCommandPayload,
-        publisher: &BusPublisher,
-        overrides: &SharedOverrideLedger,
-        counters: &Arc<HclSchedulerCounters>,
+        state: &mut SchedulerState,
+        deps: &SchedulerDeps,
         correlation_id: u64,
     );
     payload = payload;
-    ignored = { counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
-    HclOverrideClearCommand(body) =>
-        handle_override_clear(publisher, overrides, counters, correlation_id, body),
+    ignored = { deps.counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
+    HclOverrideClearCommand(body) => handle_override_clear(deps, correlation_id, body),
+    HclOverrideHoldCommand(body) => handle_override_hold(state, deps, correlation_id, body),
+    HclOverrideResumeCommand(body) => handle_override_resume(deps, correlation_id, body),
 }
 
-fn handle_override_clear(
-    publisher: &BusPublisher,
-    overrides: &SharedOverrideLedger,
-    counters: &Arc<HclSchedulerCounters>,
-    correlation_id: u64,
-    body: &HclOverrideClearCommand,
-) {
-    let lifted = lock_ledger(overrides).clear_schedule(body.schedule_id.as_str());
+fn handle_override_clear(deps: &SchedulerDeps, correlation_id: u64, body: &HclOverrideClearCommand) {
+    let lifted = lock_ledger(&deps.overrides).clear_schedule(body.schedule_id.as_str());
+    count_lifted(deps, lifted);
+    confirm_override_command(deps, correlation_id, None);
+}
+
+fn handle_override_resume(deps: &SchedulerDeps, correlation_id: u64, body: &HclOverrideResumeCommand) {
+    let adapter_id = body.registry_adapter_id;
+    let removal = resume_removal(deps.read_port.as_ref(), adapter_id, body.target);
+    let lifted = lock_ledger(&deps.overrides).resume(adapter_id, removal);
+    count_lifted(deps, lifted);
+    confirm_override_command(deps, correlation_id, None);
+}
+
+fn count_lifted(deps: &SchedulerDeps, lifted: usize) {
     if lifted > 0 {
-        counters
+        deps.counters
             .overrides_reset
             .fetch_add(lifted as u32, Ordering::Relaxed);
     }
-    let confirmation = BusFrame::confirmation(build_confirmation_envelope(
-        correlation_id,
-        DeliveryStatus::Ok,
-        0,
-        SOURCE_ID_UNSPECIFIED,
-    ));
+}
+
+fn handle_override_hold(
+    state: &mut SchedulerState,
+    deps: &SchedulerDeps,
+    correlation_id: u64,
+    body: &HclOverrideHoldCommand,
+) {
+    let Some(local) = deps.clock.local() else {
+        confirm_override_command(deps, correlation_id, Some(HOLD_WITHOUT_CLOCK));
+        return;
+    };
+    roll_over_ledger(state, deps, local.year_day);
+    hold_covered_targets(state, deps, body, local);
+    confirm_override_command(deps, correlation_id, None);
+}
+
+fn hold_covered_targets(
+    state: &mut SchedulerState,
+    deps: &SchedulerDeps,
+    body: &HclOverrideHoldCommand,
+    local: LocalCivilTime,
+) {
+    let read_port = deps.read_port.as_ref();
+    for schedule in read_port.list_hcl_schedule_views() {
+        if !runs_today(&schedule, local) {
+            continue;
+        }
+        for target in schedule.targets.iter().flat_map(expand_target) {
+            if hold_covers_target(read_port, body.registry_adapter_id, body.target, target) {
+                let (at, cause) = (local.minutes_since_midnight, Causes::of_hold(body.target));
+                hold_target(state, deps, &schedule.schedule_id, target, at, cause);
+            }
+        }
+    }
+}
+
+fn hold_target(
+    state: &mut SchedulerState,
+    deps: &SchedulerDeps,
+    schedule_id: &str,
+    target: TargetKey,
+    at_minutes: u16,
+    cause: Causes,
+) {
+    if lock_ledger(&deps.overrides).suspend(schedule_id, target, at_minutes, cause) {
+        deps.counters.overrides_started.fetch_add(1, Ordering::Relaxed);
+    }
+    state.stand_down(target);
+}
+
+fn confirm_override_command(deps: &SchedulerDeps, correlation_id: u64, refusal: Option<&str>) {
+    let envelope = match refusal {
+        None => build_confirmation_envelope(correlation_id, DeliveryStatus::Ok, 0, SOURCE_ID_UNSPECIFIED),
+        Some(message) => build_confirmation_envelope_with_product_error(
+            correlation_id,
+            DeliveryStatus::ExecutionFailed,
+            0,
+            SOURCE_ID_UNSPECIFIED,
+            Some((ErrorCode::Conflict, message)),
+        ),
+    };
     publish_or_drop(
-        publisher,
+        &deps.publisher,
         BusChannel::Confirmations,
-        confirmation,
-        "hcl-override-clear",
+        BusFrame::confirmation(envelope),
+        "hcl-override-command",
     );
 }
 
 fn apply_event(state: &mut SchedulerState, deps: &SchedulerDeps, payload: &BusEventPayload) {
     match payload {
-        BusEventPayload::HclScheduleChangedEvent(body) => {
-            state.forget_edited(&sorted_schedules(deps));
-            if body.removed {
-                let lifted = lock_ledger(&deps.overrides).clear_schedule(body.schedule_id.as_str());
-                if lifted > 0 {
-                    deps.counters
-                        .overrides_reset
-                        .fetch_add(lifted as u32, Ordering::Relaxed);
-                }
-            }
-        }
+        BusEventPayload::HclScheduleChangedEvent(body) => apply_schedule_change(state, deps, body),
         BusEventPayload::RuntimeStateChangedEvent(body) => {
-            let commit = RuntimeCommit {
-                adapter_id: body.adapter_id,
-                virtual_lamp_id: body.virtual_lamp_id,
-                value_source: Some(body.commit_source),
-                states: body.commit_dimensions,
-                holds_hcl: body.commit_holds_hcl,
-            };
-            suspend_hit_targets(state, deps, &commit);
+            suspend_hit_targets(state, deps, &runtime_commit(body));
         }
         _ => {
             deps.counters.ignored_events.fetch_add(1, Ordering::Relaxed);
         }
+    }
+}
+
+fn apply_schedule_change(
+    state: &mut SchedulerState,
+    deps: &SchedulerDeps,
+    body: &HclScheduleChangedEvent,
+) {
+    let current = sorted_schedules(deps);
+    if state.tick.is_some() {
+        state.edit_during_tick(body.schedule_id.as_str(), &current);
+    } else {
+        state.forget_edited(&current);
+    }
+    if body.removed {
+        let lifted = lock_ledger(&deps.overrides).clear_schedule(body.schedule_id.as_str());
+        count_lifted(deps, lifted);
+    }
+}
+
+fn runtime_commit(body: &RuntimeStateChangedEvent) -> RuntimeCommit {
+    RuntimeCommit {
+        adapter_id: body.adapter_id,
+        virtual_lamp_id: body.virtual_lamp_id,
+        value_source: Some(body.commit_source),
+        states: body.commit_dimensions,
+        holds_hcl: body.commit_holds_hcl,
     }
 }
 
@@ -318,37 +470,41 @@ fn suspend_hit_targets(state: &mut SchedulerState, deps: &SchedulerDeps, commit:
         return;
     };
     roll_over_ledger(state, deps, local.year_day);
-    let mut hit: Vec<TargetKey> = Vec::new();
-    let mut spared: Vec<TargetKey> = Vec::new();
+    let mut split = HitSplit::default();
     for schedule in deps.read_port.list_hcl_schedule_views() {
-        if !runs_today(&schedule, local) {
-            continue;
-        }
-        let driven = driven_dimensions(&schedule.points);
-        for target in schedule.targets.iter().flat_map(expand_target) {
-            if !state.last_published.contains_key(&target) {
-                continue;
-            }
-            if !commit_hits_target(deps.read_port.as_ref(), commit, target, driven) {
-                spared.push(target);
-                continue;
-            }
-            let started = lock_ledger(&deps.overrides).suspend(
-                &schedule.schedule_id,
-                target,
-                local.minutes_since_midnight,
-            );
-            if started {
-                deps.counters.overrides_started.fetch_add(1, Ordering::Relaxed);
-            }
-            hit.push(target);
+        if runs_today(&schedule, local) {
+            split_targets(state, deps, commit, (&schedule, local), &mut split);
         }
     }
-    for target in hit {
-        if spared.contains(&target) {
+    for target in split.hit.into_iter().filter(|target| !split.spared.contains(target)) {
+        state.stand_down(target);
+    }
+}
+
+#[derive(Default)]
+struct HitSplit {
+    hit: Vec<TargetKey>,
+    spared: Vec<TargetKey>,
+}
+
+fn split_targets(
+    state: &SchedulerState,
+    deps: &SchedulerDeps,
+    commit: &RuntimeCommit,
+    (schedule, local): (&HclScheduleView, LocalCivilTime),
+    split: &mut HitSplit,
+) {
+    let driven = driven_dimensions(&schedule.points);
+    for target in schedule.targets.iter().flat_map(expand_target).filter(|t| state.driven(t)) {
+        if !commit_hits_target(deps.read_port.as_ref(), commit, target, driven) {
+            split.spared.push(target);
             continue;
         }
-        state.last_published.remove(&target);
+        let (at, cause) = (local.minutes_since_midnight, Causes::of_commit(commit));
+        if lock_ledger(&deps.overrides).suspend(&schedule.schedule_id, target, at, cause) {
+            deps.counters.overrides_started.fetch_add(1, Ordering::Relaxed);
+        }
+        split.hit.push(target);
     }
 }
 
@@ -394,6 +550,35 @@ fn run_tick(
     let Some(local) = tick_is_due(deps) else {
         return;
     };
+    let (fresh, tick_plan) = plan_tick(state, deps, local);
+    let schedules = state.published_from.as_deref().unwrap_or_default();
+    state.tick = Some(TickScope::planned(schedules, &fresh));
+    let outcomes = publish_plan(rx, conf_rx, deps, &tick_plan.commands, state);
+    WORKER_STACK.note("tick:publish");
+    finish_tick(state, deps, fresh, &outcomes);
+}
+
+fn finish_tick(
+    state: &mut SchedulerState,
+    deps: &SchedulerDeps,
+    fresh: Vec<DesiredEntry>,
+    outcomes: &PublishOutcomes,
+) {
+    let tick = state.tick.take().unwrap_or_default();
+    record_published(state, fresh, outcomes, &tick);
+    if tick.cut {
+        deps.counters.ticks_cut.fetch_add(1, Ordering::Relaxed);
+    }
+    if !tick.edited.is_empty() {
+        state.published_from = Some(sorted_schedules(deps));
+    }
+}
+
+fn plan_tick(
+    state: &mut SchedulerState,
+    deps: &SchedulerDeps,
+    local: LocalCivilTime,
+) -> (Vec<DesiredEntry>, TickPlan) {
     roll_over_ledger(state, deps, local.year_day);
     state.published_from = Some(sorted_schedules(deps));
     let schedules = state.published_from.as_deref().unwrap_or_default();
@@ -402,27 +587,27 @@ fn run_tick(
     let fresh = unconfirmed_entries(state, entries);
     let tick_plan = plan(&fresh);
     if tick_plan.dropped > 0 {
-        deps.counters
-            .commands_dropped_cap
-            .fetch_add(tick_plan.dropped as u32, Ordering::Relaxed);
+        let dropped = tick_plan.dropped as u32;
+        deps.counters.commands_dropped_cap.fetch_add(dropped, Ordering::Relaxed);
     }
     WORKER_STACK.note("tick:plan");
-    let mut deferred = Vec::new();
-    let outcomes = publish_plan(rx, conf_rx, deps, &tick_plan.commands, &mut deferred);
-    WORKER_STACK.note("tick:publish");
-    for entry in fresh {
+    (fresh, tick_plan)
+}
+
+fn record_published(
+    state: &mut SchedulerState,
+    fresh: Vec<DesiredEntry>,
+    outcomes: &PublishOutcomes,
+    tick: &TickScope,
+) {
+    for entry in fresh.into_iter().filter(|entry| !tick.planned_by_an_edited_schedule(&entry.key)) {
         if let Some(confirmed) = outcomes.get(&entry.key) {
-            state.last_published.insert(
-                entry.key,
-                PublishRecord {
-                    state: entry.state,
-                    confirmed,
-                },
-            );
+            let record = PublishRecord { state: entry.state, confirmed };
+            state.last_published.insert(entry.key, record);
         }
     }
-    for frame in deferred {
-        apply_frame(state, deps, &frame);
+    for key in &tick.stood_down {
+        state.last_published.remove(key);
     }
 }
 
@@ -453,13 +638,13 @@ fn desired_entries(
     let ledger = lock_ledger(&deps.overrides);
     desired
         .into_iter()
-        .flat_map(|(schedule, desired)| {
+        .flat_map(|(index, schedule, desired)| {
             schedule
                 .targets
                 .iter()
                 .flat_map(expand_target)
                 .filter(|target| !ledger.is_suspended(&schedule.schedule_id, *target))
-                .map(move |key| DesiredEntry { key, state: desired })
+                .map(move |key| DesiredEntry { key, state: desired, schedule: index })
         })
         .collect()
 }
@@ -468,11 +653,14 @@ fn desired_entries(
 fn desired_states(
     schedules: &[HclScheduleView],
     local: LocalCivilTime,
-) -> Vec<(&HclScheduleView, DesiredState)> {
+) -> Vec<(usize, &HclScheduleView, DesiredState)> {
     let mut desired = Vec::with_capacity(schedules.len());
-    for schedule in schedules.iter().filter(|schedule| runs_today(schedule, local)) {
+    for (index, schedule) in schedules.iter().enumerate() {
+        if !runs_today(schedule, local) {
+            continue;
+        }
         if let Some(state) = desired_state(schedule, local) {
-            desired.push((schedule, state));
+            desired.push((index, schedule, state));
         }
     }
     desired
@@ -505,33 +693,39 @@ fn publish_plan(
     conf_rx: &BusSubscriberRx,
     deps: &SchedulerDeps,
     commands: &[PlannedCommand],
-    deferred: &mut Vec<BusFrame>,
+    state: &mut SchedulerState,
 ) -> PublishOutcomes {
     let mut outcomes = PublishOutcomes::default();
     for (index, command) in commands.iter().enumerate() {
-        let correlation_id = deps.correlation.next_id();
-        let frame = BusFrame::command(command_envelope_for(deps, command, correlation_id));
-        if deps.publisher.try_publish(BusChannel::Commands, frame) != PublishResult::Queued {
-            deps.counters
-                .ingress_rejections
-                .fetch_add(1, Ordering::Relaxed);
+        if state.skips_in_tick(&command.key()) {
+            continue;
+        }
+        let Some(confirmed) = publish_one(rx, conf_rx, deps, command, state) else {
             mark_unpublished_keys(&mut outcomes, &commands[index..]);
             break;
-        }
-        deps.counters
-            .commands_published
-            .fetch_add(1, Ordering::Relaxed);
-        let confirmed = wait_for_confirmation(
-            rx,
-            conf_rx,
-            deps,
-            correlation_id,
-            deps.config.command_timeout_ms,
-            deferred,
-        );
+        };
         outcomes.merge(command.key(), confirmed);
     }
     outcomes
+}
+
+fn publish_one(
+    rx: &BusSubscriberRx,
+    conf_rx: &BusSubscriberRx,
+    deps: &SchedulerDeps,
+    command: &PlannedCommand,
+    state: &mut SchedulerState,
+) -> Option<bool> {
+    let correlation_id = deps.correlation.next_id();
+    let frame = BusFrame::command(command_envelope_for(deps, command, correlation_id));
+    if deps.publisher.try_publish(BusChannel::Commands, frame) != PublishResult::Queued {
+        deps.counters.ingress_rejections.fetch_add(1, Ordering::Relaxed);
+        return None;
+    }
+    deps.counters.commands_published.fetch_add(1, Ordering::Relaxed);
+    state.note_published(command.key());
+    let timeout_ms = deps.config.command_timeout_ms;
+    Some(wait_for_confirmation(rx, conf_rx, deps, correlation_id, timeout_ms, state))
 }
 
 fn mark_unpublished_keys(outcomes: &mut PublishOutcomes, unpublished: &[PlannedCommand]) {
@@ -540,29 +734,10 @@ fn mark_unpublished_keys(outcomes: &mut PublishOutcomes, unpublished: &[PlannedC
     }
 }
 
-fn service_commands(rx: &BusSubscriberRx, deps: &SchedulerDeps, deferred: &mut Vec<BusFrame>) {
+fn serve_inbox(rx: &BusSubscriberRx, deps: &SchedulerDeps, state: &mut SchedulerState) {
     while let Ok(frame) = rx.try_recv() {
-        match frame {
-            BusFrame::Command(envelope) => dispatch_scheduler_command(
-                &envelope.payload,
-                &deps.publisher,
-                &deps.overrides,
-                &deps.counters,
-                envelope.meta.correlation_id,
-            ),
-            other => defer_frame(&deps.counters, deferred, other),
-        }
+        apply_frame(state, deps, &frame);
     }
-}
-
-fn defer_frame(counters: &HclSchedulerCounters, deferred: &mut Vec<BusFrame>, frame: BusFrame) {
-    if deferred.len() >= MAX_DEFERRED_FRAMES {
-        counters
-            .deferred_dropped_cap
-            .fetch_add(1, Ordering::Relaxed);
-        return;
-    }
-    deferred.push(frame);
 }
 
 fn command_envelope_for(
@@ -610,61 +785,43 @@ fn wait_for_confirmation(
     deps: &SchedulerDeps,
     correlation_id: u64,
     timeout_ms: u64,
-    deferred: &mut Vec<BusFrame>,
+    state: &mut SchedulerState,
 ) -> bool {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            deps.counters.command_timeouts.fetch_add(1, Ordering::Relaxed);
-            return false;
+            return timed_out(deps);
         }
-        match deps
-            .liveness
-            .while_turning(|| conf_rx.recv_timeout(remaining.min(CONFIRMATION_POLL_SLICE)))
-        {
-            Ok(BusFrame::Confirmation(envelope)) => {
-                if envelope.meta.correlation_id == correlation_id {
-                    if envelope.status == dali2rust_contracts::msg::DeliveryStatus::Ok {
-                        return true;
-                    }
-                    deps.counters.command_failures.fetch_add(1, Ordering::Relaxed);
-                    return false;
-                }
+        let slice = remaining.min(CONFIRMATION_POLL_SLICE);
+        let received = deps.liveness.while_turning(|| conf_rx.recv_timeout(slice));
+        serve_inbox(rx, deps, state);
+        match received {
+            Ok(BusFrame::Confirmation(envelope)) if envelope.meta.correlation_id == correlation_id => {
+                return confirmed_ok(deps, envelope.status);
             }
-            Ok(_) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                service_commands(rx, deps, deferred);
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                deps.counters.command_timeouts.fetch_add(1, Ordering::Relaxed);
-                return false;
-            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return timed_out(deps),
+            _ => {}
         }
     }
+}
+
+fn timed_out(deps: &SchedulerDeps) -> bool {
+    deps.counters.command_timeouts.fetch_add(1, Ordering::Relaxed);
+    false
+}
+
+fn confirmed_ok(deps: &SchedulerDeps, status: DeliveryStatus) -> bool {
+    if status == DeliveryStatus::Ok {
+        return true;
+    }
+    deps.counters.command_failures.fetch_add(1, Ordering::Relaxed);
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dali2rust_contracts::bus::event_envelope;
-    use dali2rust_contracts::msg::{
-        HclScheduleChangedEvent, fixed_text_32,
-    };
-
-    fn any_event_frame() -> BusFrame {
-        BusFrame::event(event_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            0,
-            BusId::default().0,
-            Some(Origin::Registry),
-            HclScheduleChangedEvent {
-                schedule_id: fixed_text_32("morning"),
-                removed: false,
-                enabled: true,
-            },
-        ))
-    }
 
     #[test]
     fn an_ingress_break_between_a_pairs_halves_unconfirms_the_key_but_keeps_it_driven() {
@@ -699,18 +856,19 @@ mod tests {
     }
 
     #[test]
-    fn the_deferred_buffer_holds_its_cap_and_counts_the_rest() {
-        let counters = HclSchedulerCounters::default();
-        let mut deferred = Vec::new();
-        let overflow = 5;
-        for _ in 0..MAX_DEFERRED_FRAMES + overflow {
-            defer_frame(&counters, &mut deferred, any_event_frame());
-        }
-        assert_eq!(deferred.len(), MAX_DEFERRED_FRAMES, "the cap holds");
-        assert_eq!(
-            counters.deferred_dropped_cap.load(Ordering::Relaxed),
-            overflow as u32,
-            "every dropped frame is counted, so the loss is visible"
-        );
+    fn a_stand_down_between_ticks_leaves_nothing_for_a_tick_to_carry() {
+        let key = TargetKey {
+            adapter_id: 0,
+            scope: dali2rust_contracts::msg::HclTargetScope::Group,
+            group_id: 3,
+        };
+        let mut state = SchedulerState::new();
+        state.stand_down(key);
+        assert!(state.tick.is_none(), "a hold between ticks, as on a standby, keeps no list");
+
+        state.tick = Some(TickScope::default());
+        state.stand_down(key);
+        let stood_down = state.tick.take().map(|tick| tick.stood_down);
+        assert_eq!(stood_down, Some(vec![key]), "a tick in progress remembers what to strip");
     }
 }

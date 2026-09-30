@@ -12,7 +12,7 @@ import { useLive, usePoll, useSnapshotFrames } from '../hooks'
 
 const DIAG_POLL_MS = 2000
 
-const RULES_GAUGES = ['stat_counts', 'log_lines'] as const
+const RULES_GAUGES = ['log_lines'] as const
 
 const FAULT_KEYS = new Set([
   'ingress_overflow',

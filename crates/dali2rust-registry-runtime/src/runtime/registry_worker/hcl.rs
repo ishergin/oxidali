@@ -3,10 +3,10 @@ use std::sync::atomic::Ordering;
 use dali2rust_bus::{BusId, BusPublisher};
 use dali2rust_contracts::msg::{
     ErrorCode, HclLevelMode, HclSchedulePointRow, HclScheduleDeleteCommand,
-    HclScheduleUpsertCommand, HclTargetRow, HclTargetScope, HclTimeRef,
+    HclScheduleEnableCommand, HclScheduleUpsertCommand, HclTargetRow, HclTargetScope, HclTimeRef,
 };
 
-use crate::runtime::registry::hcl_schedules::{HclChunkOutcome, HclChunkRejection};
+use crate::runtime::registry::hcl_schedules::{HclChunkOutcome, HclChunkRejection, HclSwitchOutcome};
 use crate::runtime::registry::publish::{publish_config_write_signal, publish_hcl_schedule_changed};
 use crate::runtime::registry::RegistryStore;
 
@@ -92,6 +92,48 @@ pub(super) fn handle_hcl_schedule_delete(
         .fetch_add(1, Ordering::Relaxed);
     counters.config_updates_applied.fetch_add(1, Ordering::Relaxed);
     publish_correlation_ok(publisher, corr);
+}
+
+pub(super) fn handle_hcl_schedule_enable(
+    publisher: &BusPublisher,
+    tid: u16,
+    corr: u64,
+    primary_adapter_id: BusId,
+    store: &RegistryStore,
+    counters: &RegistryCommandCounters,
+    body: &HclScheduleEnableCommand,
+) {
+    if check_primary_adapter(publisher, tid, primary_adapter_id, corr).is_err() {
+        return;
+    }
+    let outcome = store.switch_hcl_schedule(&body.schedule_id, body.enabled);
+    if let HclSwitchOutcome::Switched { joined_waiting_write } = outcome {
+        count_switch(counters, joined_waiting_write);
+        let schedule_id = body.schedule_id.clone();
+        publish_hcl_schedule_changed(publisher, corr, tid, schedule_id, false, body.enabled);
+    }
+    confirm_switch(publisher, corr, counters, outcome);
+}
+
+fn count_switch(counters: &RegistryCommandCounters, joined_waiting_write: bool) {
+    counters.config_updates_applied.fetch_add(1, Ordering::Relaxed);
+    if joined_waiting_write {
+        counters.hcl_switches_coalesced.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn confirm_switch(
+    publisher: &BusPublisher,
+    corr: u64,
+    counters: &RegistryCommandCounters,
+    outcome: HclSwitchOutcome,
+) {
+    if outcome == HclSwitchOutcome::Unknown {
+        counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
+        publish_correlation_failed(publisher, corr, ErrorCode::NotFound, "schedule_not_found");
+    } else {
+        publish_correlation_ok(publisher, corr);
+    }
 }
 
 fn validate_upsert_chunk(body: &HclScheduleUpsertCommand) -> Result<(), Rejection> {

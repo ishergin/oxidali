@@ -41,7 +41,8 @@ pub use wire::{DaliCommandPayload, DaliConfirmationPayload, DaliEventPayload};
 
 pub use commands::{
     Dali103CommissionCommand, Dali103FeedbackConfigureCommand, Dali103FeedbackDriveCommand,
-    Dali103IdentifyCommand, Dali103InstanceConfigureCommand, FeedbackPatchField, InstancePatchField,
+    Dali103IdentifyCommand, Dali103InstanceActionCommand, Dali103InstanceConfigureCommand,
+    FeedbackPatchField, InstancePatchField,
     MqttPublishCommand, RuleCommitCommand,
     RuleEnableCommand, RuleRunCommand, RuleStageCommand,
     Dali103ScanCommand, InputDeviceMetadataUpdateCommand, InputDeviceNotesUpdateCommand,
@@ -85,12 +86,14 @@ pub use events::{
 };
 
 pub use commands::{
-    DaliRecallLastActiveLevelCommand, HclOverrideClearCommand, HclPointList, HclSchedulePointRow,
-    HclScheduleDeleteCommand, HclScheduleUpsertCommand, HclTargetList, HclTargetRow,
-    MAX_HCL_POINTS_PER_COMMAND, MAX_HCL_TARGETS_PER_COMMAND,
+    DaliRecallLastActiveLevelCommand, HclOverrideClearCommand, HclOverrideHoldCommand,
+    HclOverrideResumeCommand, HclPointList, HclSchedulePointRow, HclScheduleDeleteCommand, HclScheduleEnableCommand,
+    HclScheduleUpsertCommand, HclTargetList, HclTargetRow, MAX_HCL_POINTS_PER_COMMAND,
+    MAX_HCL_TARGETS_PER_COMMAND,
 };
 pub use events::HclScheduleChangedEvent;
-pub use kinds::{HclAlgorithm, HclLevelMode, HclTargetScope, HclTimeRef};
+pub use kinds::{HclAlgorithm, HclLevelMode, HclOverrideTarget, HclTargetScope, HclTimeRef};
+pub use kinds::Dali103InstanceAction;
 
 pub use commands::DaliSettingsUpdateCommand;
 pub use commands::{

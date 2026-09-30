@@ -995,6 +995,46 @@ declare_bus_payloads! {
         source: RuntimeSource::Sniffer,
         observed_at_mono_ms: Some(u32::MAX),
     };
+
+    pub struct HclScheduleEnableCommand {
+        pub schedule_id: FixedText32,
+        pub enabled: bool,
+    }
+    budget = HclScheduleEnableCommand {
+        schedule_id: crate::msg::payload_test_samples::worst_text32(),
+        enabled: true,
+    };
+
+    pub struct HclOverrideHoldCommand {
+        pub registry_adapter_id: u8,
+        pub target: super::kinds::HclOverrideTarget,
+    }
+    budget = HclOverrideHoldCommand {
+        registry_adapter_id: u8::MAX,
+        target: crate::msg::kinds::HclOverrideTarget::VirtualLamp { virtual_lamp_id: 63 },
+    };
+
+    pub struct Dali103InstanceActionCommand {
+        pub registry_adapter_id: u8,
+        pub short_address: u8,
+        pub instance_number: u8,
+        pub action: super::kinds::Dali103InstanceAction,
+    }
+    budget = Dali103InstanceActionCommand {
+        registry_adapter_id: u8::MAX,
+        short_address: 63,
+        instance_number: 31,
+        action: crate::msg::kinds::Dali103InstanceAction::CatchMovement,
+    };
+
+    pub struct HclOverrideResumeCommand {
+        pub registry_adapter_id: u8,
+        pub target: super::kinds::HclOverrideTarget,
+    }
+    budget = HclOverrideResumeCommand {
+        registry_adapter_id: u8::MAX,
+        target: crate::msg::kinds::HclOverrideTarget::VirtualLamp { virtual_lamp_id: 63 },
+    };
 }
 
 impl FirmwareUpdateBeginCommand {

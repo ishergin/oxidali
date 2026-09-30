@@ -1,20 +1,5 @@
 use serde::Serialize;
 
-macro_rules! declare_widest_dtos {
-    ( $( $ty:ident { $( $field:ident $( = $widest:expr )? ),* $(,)? } )* ) => {
-        $(
-            impl $ty {
-                #[cfg(test)]
-                pub(crate) fn widest() -> Self {
-                    Self { $( $field: declare_widest_dtos!(@widest $($widest)?), )* }
-                }
-            }
-        )*
-    };
-    (@widest $widest:expr) => { $widest };
-    (@widest) => { u32::MAX };
-}
-
 pub const WORST_COMMAND_SUBSCRIBERS: usize = 8;
 pub const WORST_CONFIRMATION_SUBSCRIBERS: usize = 4;
 pub const WORST_EVENT_SUBSCRIBERS: usize = 13;
@@ -177,11 +162,7 @@ pub struct RulesWorkerDto {
     pub effects_published: u32,
     pub effects_ingress_rejected: u32,
     pub effects_skipped_dark: u32,
-    pub hcl_hold_unmapped: u32,
-    pub hcl_schedule_unmapped: u32,
-    pub input_action_unmapped: u32,
     pub log_lines: u32,
-    pub stat_counts: u32,
     pub activations_published: u32,
 }
 
@@ -212,7 +193,6 @@ pub struct HclSchedulerDto {
     pub ticks_time_unsynced: u32,
     pub commands_published: u32,
     pub commands_dropped_cap: u32,
-    pub deferred_dropped_cap: u32,
     pub command_timeouts: u32,
     pub command_failures: u32,
     pub ingress_rejections: u32,
@@ -422,8 +402,7 @@ declare_widest_dtos! {
     RulesWorkerDto {
         commits_applied, commits_rejected, enable_toggles, hydrate_failed,
         persist_failed, ignored_commands, effects_published, effects_ingress_rejected,
-        effects_skipped_dark, hcl_hold_unmapped, hcl_schedule_unmapped,
-        input_action_unmapped, log_lines, stat_counts, activations_published,
+        effects_skipped_dark, log_lines, activations_published,
     }
     ProjectorDto {
         runtime_updates_published, runtime_updates_retried,
@@ -436,7 +415,7 @@ declare_widest_dtos! {
     }
     HclSchedulerDto {
         ticks, ticks_time_unsynced, commands_published, commands_dropped_cap,
-        deferred_dropped_cap, command_timeouts, command_failures, ingress_rejections,
+        command_timeouts, command_failures, ingress_rejections,
         overrides_started, overrides_cleared, overrides_reset, ignored_commands,
         ignored_events,
     }

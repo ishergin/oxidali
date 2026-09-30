@@ -134,6 +134,11 @@ filtered: they address one device.
   nothing and the next flush rewrites the adapter as banks.
 - The registry worker flushes dirty slices after a short debounce, and at once after a
   deliberate single configuration write, through one reused 1 KiB chunk buffer.
+- A schedule switch (`HclScheduleEnableCommand`, the rules' verb) changes the record and
+  publishes at once, but its write is paced: the first unwritten switch opens
+  `HCL_SWITCH_WRITE_INTERVAL`, the slice is written when it closes, and any earlier write
+  of the slice carries the waiting bits. A rule that flaps a schedule costs one write per
+  interval, not one per switch.
 - A record that changes short address (an address change, a device replacement) dirties
   the bank it left as well as the bank it joined: flushing only the destination would
   leave a stale copy that hydration restores as a second record for the same gear.

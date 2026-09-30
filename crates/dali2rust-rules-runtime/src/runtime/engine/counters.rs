@@ -12,6 +12,7 @@ pub struct EngineCountersSnapshot {
     pub continuations_scheduled: u32,
     pub continuations_fired: u32,
     pub continuations_dropped: u32,
+    pub continuations_pending: u32,
     pub ticks_time_unsynced: u32,
     pub timers_active: u32,
     pub rules_loaded: u32,
@@ -36,12 +37,7 @@ pub(crate) struct EngineCounters {
 }
 
 impl EngineCounters {
-    pub(crate) fn snapshot(
-        &self,
-        timers_active: u32,
-        rules_loaded: u32,
-        vars_in_use: u32,
-    ) -> EngineCountersSnapshot {
+    pub(crate) fn snapshot(&self, gauges: EngineGauges) -> EngineCountersSnapshot {
         EngineCountersSnapshot {
             activations_total: self.activations_total,
             activations_dry: self.activations_dry,
@@ -55,12 +51,21 @@ impl EngineCounters {
             continuations_scheduled: self.continuations_scheduled,
             continuations_fired: self.continuations_fired,
             continuations_dropped: self.continuations_dropped,
+            continuations_pending: gauges.continuations_pending,
             ticks_time_unsynced: self.ticks_time_unsynced,
-            timers_active,
-            rules_loaded,
-            vars_in_use,
+            timers_active: gauges.timers_active,
+            rules_loaded: gauges.rules_loaded,
+            vars_in_use: gauges.vars_in_use,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct EngineGauges {
+    pub continuations_pending: u32,
+    pub timers_active: u32,
+    pub rules_loaded: u32,
+    pub vars_in_use: u32,
 }
 
 pub(crate) fn bump(counter: &mut u32) {

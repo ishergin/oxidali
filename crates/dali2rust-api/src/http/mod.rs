@@ -1,3 +1,6 @@
+#[macro_use]
+mod widest;
+
 pub mod adapter_state;
 pub mod app;
 pub mod diagnostics_state;

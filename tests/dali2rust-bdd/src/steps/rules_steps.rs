@@ -39,6 +39,29 @@ async fn then_stats_pointer_reaches(world: &mut DaliWorld, secs: u64, pointer: S
     );
 }
 
+// RULE-069
+#[then(regex = r#"^the stats pointer "([^"]+)" eventually reads (\d+)$"#)]
+async fn then_stats_pointer_reads(world: &mut DaliWorld, pointer: String, expected: u64) {
+    let port = world.server_port();
+    wait_until(|| stats_pointer(port, &pointer) == Some(expected), RULE_FIRE_TIMEOUT);
+    assert_eq!(stats_pointer(port, &pointer), Some(expected), "stats{pointer}");
+}
+
+// RULE-070
+#[then(regex = r#"^the stats pointer "([^"]+)" eventually grows by (\d+)$"#)]
+async fn then_stats_pointer_grows_by(world: &mut DaliWorld, pointer: String, delta: u64) {
+    let before = world.remembered_u64.expect("remembered stats pointer");
+    let port = world.server_port();
+    let expected = Some(before + delta);
+    wait_until(|| stats_pointer(port, &pointer) == expected, RULE_FIRE_TIMEOUT);
+    assert_eq!(stats_pointer(port, &pointer), expected, "stats{pointer} grew from {before}");
+}
+
+fn stats_pointer(port: u16, pointer: &str) -> Option<u64> {
+    crate::steps::polling::fetch_json(port, "/api/v1/stats")
+        .and_then(|json| json.pointer(pointer).and_then(serde_json::Value::as_u64))
+}
+
 // RULE-020
 #[then("the mock transport should have sent a broadcast off frame")]
 async fn then_broadcast_off_sent(world: &mut DaliWorld) {
@@ -63,7 +86,7 @@ fn rule_fire_count(port: u16, name: &str) -> Option<u64> {
         .as_u64()
 }
 
-// RULE-030 RULE-034 RULE-035 RULE-037 RULE-038 RULE-032 RULE-039
+// RULE-030 RULE-034 RULE-035 RULE-037 RULE-038 RULE-032 RULE-039 RULE-061 RULE-066
 #[then(regex = r#"^the rule "([^"]+)" eventually has fired (\d+) times?$"#)]
 async fn then_rule_eventually_fired(world: &mut DaliWorld, name: String, expected: u64) {
     let port = world.server_port();
@@ -74,14 +97,14 @@ async fn then_rule_eventually_fired(world: &mut DaliWorld, name: String, expecte
     assert_eq!(rule_fire_count(port, &name), Some(expected), "fire count of rule {name}");
 }
 
-// RULE-030 RULE-034 RULE-035 RULE-037 RULE-038 RULE-039
+// RULE-030 RULE-034 RULE-035 RULE-037 RULE-038 RULE-039 RULE-061
 #[then(regex = r#"^the rule "([^"]+)" should have fired (\d+) times?$"#)]
 async fn then_rule_has_fired(world: &mut DaliWorld, name: String, expected: u64) {
     let port = world.server_port();
     assert_eq!(rule_fire_count(port, &name), Some(expected), "fire count of rule {name}");
 }
 
-// RULE-037 RULE-038
+// RULE-037 RULE-038 RULE-061
 #[then(regex = r#"^the rule "([^"]+)" eventually has fired at least (\d+) times?$"#)]
 async fn then_rule_eventually_fired_at_least(world: &mut DaliWorld, name: String, expected: u64) {
     let port = world.server_port();
@@ -93,7 +116,7 @@ async fn then_rule_eventually_fired_at_least(world: &mut DaliWorld, name: String
     assert!(count.is_some_and(|count| count >= expected), "fire count of rule {name}: {count:?}");
 }
 
-// RULE-032
+// RULE-032 RULE-060 RULE-061 RULE-064 RULE-065 RULE-066 RULE-070
 #[then(regex = r#"^the rule "([^"]+)" should have the last outcome "([a-z_]+)"$"#)]
 async fn then_rule_last_outcome(world: &mut DaliWorld, name: String, expected: String) {
     let port = world.server_port();
@@ -117,4 +140,34 @@ async fn then_forward_frame_eventually_sent(world: &mut DaliWorld, hex: String) 
         move || mock.lock().expect("mock lock").sent_frames().contains(&wanted),
         Duration::from_secs(5),
     );
+}
+
+fn rule_counter(port: u16, name: &str) -> Option<u64> {
+    let json = crate::steps::polling::fetch_json(port, "/api/v1/stats")?;
+    json.pointer("/rules/stats")?
+        .as_array()?
+        .iter()
+        .find(|row| row["name"].as_str() == Some(name))?
+        .get("count")?
+        .as_u64()
+}
+
+// RULE-068
+#[then(regex = r#"^the stats eventually list the rule counter "([^"]+)" at (\d+)$"#)]
+async fn then_rule_counter_eventually(world: &mut DaliWorld, name: String, expected: u64) {
+    let port = world.server_port();
+    wait_until(|| rule_counter(port, &name) == Some(expected), RULE_FIRE_TIMEOUT);
+    assert_eq!(rule_counter(port, &name), Some(expected), "rules.stats row {name}");
+}
+
+// RULE-068
+#[then(regex = r#"^the stats list the rule counter "([^"]+)" at (\d+)$"#)]
+async fn then_rule_counter_is(world: &mut DaliWorld, name: String, expected: u64) {
+    assert_eq!(rule_counter(world.server_port(), &name), Some(expected), "rules.stats row {name}");
+}
+
+// RULE-068
+#[then(regex = r#"^the stats do not list the rule counter "([^"]+)"$"#)]
+async fn then_rule_counter_absent(world: &mut DaliWorld, name: String) {
+    assert_eq!(rule_counter(world.server_port(), &name), None, "a name the document dropped");
 }

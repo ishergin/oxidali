@@ -147,6 +147,7 @@ fn blocked_refusal<'c>(
         | BusCommandPayload::DaliRecallLastActiveLevelCommand(_)
         | BusCommandPayload::DaliStopFadeCommand(_)
         | BusCommandPayload::Dali103FeedbackDriveCommand(_)
+        | BusCommandPayload::Dali103InstanceActionCommand(_)
         | BusCommandPayload::Dali103HandoverCommand(_)
         | BusCommandPayload::Dali103ArbitrationProbeCommand(_)
         | BusCommandPayload::DaliBusHealthProbeCommand(_) => BlockedRefusal::Confirmation,
@@ -214,6 +215,7 @@ fn bus_unit_adapter_id(payload: &BusCommandPayload) -> Option<u8> {
         BusCommandPayload::Dali103IdentifyCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::Dali103FeedbackConfigureCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::Dali103FeedbackDriveCommand(cmd) => Some(cmd.registry_adapter_id),
+        BusCommandPayload::Dali103InstanceActionCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::Dali103ArbitrationProbeCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::Dali103HandoverCommand(cmd) => Some(cmd.registry_adapter_id),
         _ => None,

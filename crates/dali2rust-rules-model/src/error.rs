@@ -50,8 +50,12 @@ pub enum ModelError {
     MqttPayloadTooLong { rule: String, bytes: usize },
     MqttTopicNotExact { rule: String, topic: String },
     TooManyMqttTopics { rule: String, count: usize },
+    ScheduleIdTooLong { rule: String, bytes: usize },
     SceneCycleTooLong { rule: String, count: usize },
     SceneOutOfRange { rule: String, scene: u8 },
+    TooManyStatNames { owner: String, count: usize },
+    StatNameNotPrintable { owner: String, name: String },
+    StatNameTooLong { owner: String, bytes: usize },
 }
 
 impl ModelError {
@@ -78,9 +82,13 @@ impl ModelError {
             | ModelError::MqttPayloadTooLong { rule, .. }
             | ModelError::MqttTopicNotExact { rule, .. }
             | ModelError::TooManyMqttTopics { rule, .. }
+            | ModelError::ScheduleIdTooLong { rule, .. }
             | ModelError::SceneCycleTooLong { rule, .. }
             | ModelError::SceneOutOfRange { rule, .. } => Some(rule),
-            ModelError::NoActions { owner } => Some(owner),
+            ModelError::NoActions { owner }
+            | ModelError::TooManyStatNames { owner, .. }
+            | ModelError::StatNameNotPrintable { owner, .. }
+            | ModelError::StatNameTooLong { owner, .. } => Some(owner),
             ModelError::TooManyBlockActions { block, .. } => Some(block),
             ModelError::UnresolvedBlock { referenced_by, .. } => {
                 referenced_by.first().map(String::as_str)
@@ -123,8 +131,12 @@ impl fmt::Display for ModelError {
             E::MqttPayloadTooLong { rule, bytes } => write!(f, "rule \"{rule}\": mqtt payload is {bytes} bytes"),
             E::MqttTopicNotExact { rule, topic } => write!(f, "rule \"{rule}\": mqtt topic {topic:?} is not one exact topic"),
             E::TooManyMqttTopics { rule, count } => write!(f, "rule \"{rule}\": the document names {count} mqtt trigger topics"),
+            E::ScheduleIdTooLong { rule, bytes } => write!(f, "rule \"{rule}\": schedule id is {bytes} bytes, at most {}", crate::limits::MAX_SCHEDULE_ID_BYTES),
             E::SceneCycleTooLong { rule, count } => write!(f, "rule \"{rule}\": scene.cycle lists {count} scenes"),
             E::SceneOutOfRange { rule, scene } => write!(f, "rule \"{rule}\": scene {scene} out of range"),
+            E::TooManyStatNames { owner, count } => write!(f, "\"{owner}\" names a stat counter past the limit: the document names {count}, at most {}", crate::limits::MAX_STAT_NAMES),
+            E::StatNameNotPrintable { owner, name } => write!(f, "\"{owner}\" names a stat counter with a control character: {name:?}"),
+            E::StatNameTooLong { owner, bytes } => write!(f, "\"{owner}\" names a stat counter of {bytes} bytes, at most {}", crate::limits::MAX_NAME_BYTES),
         }
     }
 }

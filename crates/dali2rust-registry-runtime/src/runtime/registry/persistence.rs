@@ -238,9 +238,13 @@ impl crate::runtime::registry::store::RegistryStore {
     }
 
     fn flush_hcl_schedules_if_dirty(&self, slices: &dyn SliceStore) {
+        let taken = self.dirty.take_hcl_schedules_dirty();
+        if taken {
+            self.dirty.take_hcl_switches_waiting();
+        }
         self.flush_global_slice_if_dirty(
             slices,
-            self.dirty.take_hcl_schedules_dirty(),
+            taken,
             || self.dirty.mark_hcl_schedules_dirty(),
             SliceKey::HclSchedules,
             HCL_SCHEDULES_SLICE_VERSION,

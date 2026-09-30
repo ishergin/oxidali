@@ -5,7 +5,7 @@ use crate::msg::{
     RuntimeRegistryUpdateEntry, RuntimeSource, SceneRow, StatusFlags,
 };
 
-const FROZEN_COMMAND_ORDER: [&str; 68] = [
+const FROZEN_COMMAND_ORDER: [&str; 72] = [
     "DaliCommandPayload",
     "AdapterSettingsUpdateCommand",
     "GroupMetadataUpdateCommand",
@@ -74,6 +74,10 @@ const FROZEN_COMMAND_ORDER: [&str; 68] = [
     "RegistrySliceReloadCommand",
     "DaliStopFadeCommand",
     "RegistryLevelTransitionCommand",
+    "HclScheduleEnableCommand",
+    "HclOverrideHoldCommand",
+    "Dali103InstanceActionCommand",
+    "HclOverrideResumeCommand",
 ];
 
 #[test]

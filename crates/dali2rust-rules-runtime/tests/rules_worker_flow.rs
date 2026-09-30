@@ -4,10 +4,11 @@ use std::time::Duration;
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResult};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
-    BusEventPayload, Origin, RuleCommitCommand, RuleEnableCommand, RuleStageCommand,
-    RULE_SOURCE_CHUNK_BYTES,
+    BusEventPayload, Dali103InstanceAction, Origin, RuleCommitCommand, RuleEnableCommand,
+    RuleStageCommand, RULE_SOURCE_CHUNK_BYTES,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
+use dali2rust_domain::dali::dev103::instance_type;
 use dali2rust_rules_model::testing::StubResolver;
 use dali2rust_rules_runtime::runtime::persistence::fnv1a32;
 use dali2rust_rules_runtime::{spawn_rules_worker, RulesStore, RulesWorkerCounters};
@@ -57,7 +58,10 @@ impl dali2rust_rules_runtime::RulesWorldPort for EmptyWorld {
         Vec::new()
     }
     fn inputs(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::InputState> {
-        Vec::new()
+        vec![
+            input_state(OCCUPANCY_SENSOR.0, OCCUPANCY_SENSOR.1, instance_type::OCCUPANCY),
+            input_state(PUSH_BUTTON.0, PUSH_BUTTON.1, instance_type::PUSH_BUTTON),
+        ]
     }
     fn hcl(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::HclTargetState> {
         vec![dali2rust_rules_runtime::runtime::engine::HclTargetState {
@@ -69,11 +73,33 @@ impl dali2rust_rules_runtime::RulesWorldPort for EmptyWorld {
             overridden: self.overridden.load(std::sync::atomic::Ordering::Relaxed),
         }]
     }
+    fn hcl_schedules(&self) -> Vec<String> {
+        vec![KNOWN_SCHEDULE.to_string(), "s".repeat(SCHEDULE_ID_CAPACITY)]
+    }
     fn input_instance_groups(&self, _a: u8, _s: u8, _i: u8) -> [Option<u8>; 3] {
         [None; 3]
     }
-    fn hcl_schedules_for(&self, _t: &dali2rust_rules_model::LightTarget) -> Vec<String> {
-        vec!["вечер".to_string()]
+}
+
+const KNOWN_SCHEDULE: &str = "evening";
+
+const OCCUPANCY_SENSOR: (u8, u8) = (3, 0);
+const PUSH_BUTTON: (u8, u8) = (3, 1);
+
+fn input_state(
+    short_address: u8,
+    instance_number: u8,
+    instance_type: u8,
+) -> dali2rust_rules_runtime::runtime::engine::InputState {
+    dali2rust_rules_runtime::runtime::engine::InputState {
+        adapter_id: 0,
+        short_address,
+        instance_number,
+        instance_type: Some(instance_type),
+        occupied: None,
+        light: None,
+        position: None,
+        last_event_age_ms: None,
     }
 }
 
@@ -84,9 +110,12 @@ const EXECUTOR_OUTPUT: &[&str] = &[
     "DaliRecallSceneCommand",
     "DaliStopFadeCommand",
     "SceneApplyExecuteCommand",
-    "HclOverrideClearCommand",
     "Dali103FeedbackDriveCommand",
     "MqttPublishCommand",
+    "HclScheduleEnableCommand",
+    "HclOverrideHoldCommand",
+    "Dali103InstanceActionCommand",
+    "HclOverrideResumeCommand",
 ];
 
 struct Harness {
@@ -658,7 +687,7 @@ fn a_failed_activation_fires_the_rule_that_watches_it() {
     publish_document(
         &h,
         91,
-        "rule \"падает\" {\n  when http trigger\n  do hcl.hold(group(2))\n}\n\
+        "rule \"падает\" {\n  when http trigger\n  do lamp(9).off()\n}\n\
          \nrule \"ловит\" {\n  when rule(\"падает\") fails\n  do lamp(6).level(55)\n}\n",
         0,
     );
@@ -685,7 +714,7 @@ fn a_rule_that_watches_its_own_failure_does_not_recurse() {
     publish_document(
         &h,
         101,
-        "rule \"сам\" {\n  when http trigger\n  when rule(\"сам\") fails\n  do hcl.hold(group(2))\n}\n",
+        "rule \"сам\" cooldown 0ms {\n  when http trigger\n  when rule(\"сам\") fails\n  do lamp(9).off()\n}\n",
         0,
     );
     let sig = recv_signal(&h, 101);
@@ -701,7 +730,7 @@ fn a_rule_that_watches_its_own_failure_does_not_recurse() {
         },
     );
 
-    assert!(recv_setpoint(&h).is_none(), "hcl.hold reaches no command");
+    assert!(recv_setpoint(&h).is_none(), "an effect on a lamp the world does not know reaches no command");
     publish(
         &h,
         103,
@@ -711,6 +740,11 @@ fn a_rule_that_watches_its_own_failure_does_not_recurse() {
         },
     );
     recv_changed(&h, 2);
+    assert_eq!(
+        h.counters.effects_unbound.load(std::sync::atomic::Ordering::Relaxed),
+        2,
+        "the run failed, its failure woke the rule once, and that failure woke nothing"
+    );
 }
 
 #[test]
@@ -719,7 +753,7 @@ fn a_dry_run_reports_no_failure() {
     publish_document(
         &h,
         111,
-        "rule \"падает\" {\n  when http trigger\n  do hcl.hold(group(2))\n}\n\
+        "rule \"падает\" {\n  when http trigger\n  do lamp(9).off()\n}\n\
          \nrule \"ловит\" {\n  when rule(\"падает\") fails\n  do lamp(6).level(55)\n}\n",
         0,
     );
@@ -915,7 +949,6 @@ fn stop_fade_publishes_its_own_command_for_a_group() {
 enum Landing {
     Bus(&'static str),
     BusVia(&'static str, &'static str),
-    Unmapped(&'static str),
     Counted(&'static str),
     NoEffect,
 }
@@ -942,15 +975,15 @@ const LANDINGS: &[(&str, &str, Landing)] = &[
     ("scene_recall", "scene(3).recall(broadcast)", Landing::Bus("DaliRecallSceneCommand")),
     ("scene_apply", "scene(3).apply()", Landing::Bus("SceneApplyExecuteCommand")),
     ("scene_cycle", "scene.cycle(1, 3, 7)", Landing::Bus("DaliRecallSceneCommand")),
-    ("hcl_resume", "hcl.resume(broadcast)", Landing::Bus("HclOverrideClearCommand")),
-    ("hcl_hold", "hcl.hold(broadcast)", Landing::Unmapped("hcl_hold_unmapped")),
-    ("hcl_enable", "hcl.enable(\"вечер\")", Landing::Unmapped("hcl_schedule_unmapped")),
-    ("hcl_disable", "hcl.disable(\"вечер\")", Landing::Unmapped("hcl_schedule_unmapped")),
+    ("hcl_resume", "hcl.resume(broadcast)", Landing::Bus("HclOverrideResumeCommand")),
+    ("hcl_hold", "hcl.hold(broadcast)", Landing::Bus("HclOverrideHoldCommand")),
+    ("hcl_enable", "hcl.enable(\"evening\")", Landing::Bus("HclScheduleEnableCommand")),
+    ("hcl_disable", "hcl.disable(\"evening\")", Landing::Bus("HclScheduleEnableCommand")),
     ("input_feedback_on", "input(3,0).feedback.on()", Landing::Bus("Dali103FeedbackDriveCommand")),
     ("input_feedback_off", "input(3,0).feedback.off()", Landing::Bus("Dali103FeedbackDriveCommand")),
     ("panel_select", "panel_select(group=4, selected=1)", Landing::Bus("Dali103FeedbackDriveCommand")),
-    ("input_cancel_hold", "input(3,0).cancel_hold()", Landing::Unmapped("input_action_unmapped")),
-    ("input_catch_movement", "input(3,0).catch_movement()", Landing::Unmapped("input_action_unmapped")),
+    ("input_cancel_hold", "input(3,0).cancel_hold()", Landing::Bus("Dali103InstanceActionCommand")),
+    ("input_catch_movement", "input(3,0).catch_movement()", Landing::Bus("Dali103InstanceActionCommand")),
     ("wait", "wait 1s", Landing::NoEffect),
     ("after", "after 1m do { log(\"x\") }", Landing::NoEffect),
     ("timer_start", "timer(\"t\").start(1m)", Landing::NoEffect),
@@ -965,7 +998,7 @@ const LANDINGS: &[(&str, &str, Landing)] = &[
     ("rule_disable", "rule(\"другое\").disable()", Landing::NoEffect),
     ("mqtt_publish", "mqtt.publish(\"t\", \"p\")", Landing::Bus("MqttPublishCommand")),
     ("log", "log(\"x\")", Landing::Counted("log_lines")),
-    ("stat_count", "stat(\"имя\").count()", Landing::Counted("stat_counts")),
+    ("stat_count", "stat(\"имя\").count()", Landing::NoEffect),
 ];
 
 #[test]
@@ -1083,33 +1116,9 @@ fn every_bus_landing_reaches_the_bus_as_declared() {
     }
 }
 
-#[test]
-fn every_unmapped_landing_moves_its_counter_and_nothing_else() {
-    for (kind, snippet, landing) in LANDINGS {
-        let Landing::Unmapped(counter) = landing else {
-            continue;
-        };
-        let (seen, counters) = run_landing(kind, snippet);
-        assert!(
-            seen.is_empty(),
-            "{kind}: declared unmapped, yet it published {seen:?}"
-        );
-        assert!(
-            unmapped_counter(&counters, counter) > 0,
-            "{kind}: declared unmapped via `{counter}`, and that counter did \
-             not move — the no-op is invisible to an operator"
-        );
-    }
-}
-
-fn unmapped_counter(counters: &RulesWorkerCounters, name: &str) -> u32 {
-    use std::sync::atomic::Ordering;
+fn landing_counter(counters: &RulesWorkerCounters, name: &str) -> u32 {
     match name {
-        "hcl_hold_unmapped" => counters.hcl_hold_unmapped.load(Ordering::Relaxed),
-        "hcl_schedule_unmapped" => counters.hcl_schedule_unmapped.load(Ordering::Relaxed),
-        "input_action_unmapped" => counters.input_action_unmapped.load(Ordering::Relaxed),
-        "log_lines" => counters.log_lines.load(Ordering::Relaxed),
-        "stat_counts" => counters.stat_counts.load(Ordering::Relaxed),
+        "log_lines" => counters.log_lines.load(std::sync::atomic::Ordering::Relaxed),
         other => panic!("LANDINGS names a counter this test cannot read: {other}"),
     }
 }
@@ -1123,7 +1132,7 @@ fn every_counted_landing_moves_its_counter() {
         let (seen, counters) = run_landing(kind, snippet);
         assert!(seen.is_empty(), "{kind}: published {seen:?}");
         assert!(
-            unmapped_counter(&counters, counter) > 0,
+            landing_counter(&counters, counter) > 0,
             "{kind}: `{counter}` did not move"
         );
     }
@@ -1224,11 +1233,6 @@ fn a_scene_recall_on_a_lamp_is_one_recall_scoped_to_that_lamp() {
         (cmd.scope, cmd.virtual_lamp_id, cmd.scene_id),
         (dali2rust_contracts::msg::DaliTargetScope::VirtualLamp, 6, 3),
         "the DALI worker resolves the lamp to its short address, as it does for target-state"
-    );
-    assert_eq!(
-        h.counters.input_action_unmapped.load(std::sync::atomic::Ordering::Relaxed),
-        0,
-        "a lamp recall is carried now, not counted as an input action without a carrier"
     );
 }
 
@@ -1756,4 +1760,204 @@ fn a_slice_reload_moves_the_topic_generation_even_at_the_same_revision() {
     dali2rust_test_support::wait_until(move || store.generation() != committed, COMMAND_WAIT);
     assert_eq!(h.store.revision(), 1, "the reloaded document keeps its revision");
     assert_eq!(h.store.mqtt_topics(), ["home/scene"]);
+}
+
+const SCHEDULE_ID_CAPACITY: usize = 32;
+
+fn schedule_switch_document(fitting: &str) -> String {
+    format!(
+        "rule \"fits\" {{\n  when http trigger\n  do hcl.disable(\"{fitting}\")\n}}\n\
+         rule \"unknown\" {{\n  when http trigger\n  do hcl.enable(\"nowhere\")\n}}\n\
+         rule \"marker\" {{\n  when http trigger\n  do lamp(6).level(55)\n}}\n"
+    )
+}
+
+#[test]
+fn a_schedule_switch_names_a_schedule_the_world_knows_whole_or_fails() {
+    let fitting = "s".repeat(SCHEDULE_ID_CAPACITY);
+    let h = harness("rules-schedule-switch");
+    publish_document(&h, 131, &schedule_switch_document(&fitting), 0);
+    assert!(recv_signal(&h, 131).error.is_none());
+    wait_revision(&h.store, 1);
+
+    for (corr, name) in [(132u64, "fits"), (133, "unknown"), (134, "marker")] {
+        run_rule(&h, corr, name);
+        recv_signal(&h, corr);
+    }
+
+    let published = commands_before_the_marker(&h, 6);
+    let switches: Vec<(String, bool)> = published
+        .iter()
+        .filter_map(|payload| match payload {
+            dali2rust_contracts::msg::BusCommandPayload::HclScheduleEnableCommand(cmd) => {
+                Some((cmd.schedule_id.as_str().to_owned(), cmd.enabled))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        switches,
+        vec![(fitting, false)],
+        "a known id goes out whole with its bit; an id the world does not hold goes nowhere"
+    );
+    let runtime = h.store.rule_runtime();
+    let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);
+    assert_eq!(outcome("fits"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
+    assert_eq!(outcome("unknown"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
+}
+
+const HOLD_DOC: &str = "rule \"group\" {\n  when http trigger\n  do hcl.hold(group(2))\n}\n\
+rule \"lamp\" {\n  when http trigger\n  do hcl.hold(lamp(6))\n}\n\
+rule \"unbound\" {\n  when http trigger\n  do hcl.hold(lamp(8))\n}\n\
+rule \"marker\" {\n  when http trigger\n  do lamp(6).level(55)\n}\n";
+
+#[test]
+fn a_hold_names_its_target_and_a_lamp_with_no_binding_holds_nothing() {
+    let unbound = dali2rust_rules_runtime::runtime::engine::LampState {
+        bound: false,
+        ..bound_lamp(8)
+    };
+    let h = harness_with_lamps(
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-hold-targets")),
+        vec![unbound],
+    );
+    publish_document(&h, 141, HOLD_DOC, 0);
+    assert!(recv_signal(&h, 141).error.is_none());
+    wait_revision(&h.store, 1);
+
+    for (corr, name) in [(142u64, "group"), (143, "lamp"), (144, "unbound"), (145, "marker")] {
+        run_rule(&h, corr, name);
+        recv_signal(&h, corr);
+    }
+
+    let holds: Vec<(u8, dali2rust_contracts::msg::HclOverrideTarget)> = commands_before_the_marker(&h, 6)
+        .iter()
+        .filter_map(|payload| match payload {
+            dali2rust_contracts::msg::BusCommandPayload::HclOverrideHoldCommand(cmd) => {
+                Some((cmd.registry_adapter_id, cmd.target))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        holds,
+        vec![
+            (0, dali2rust_contracts::msg::HclOverrideTarget::Group { group_id: 2 }),
+            (0, dali2rust_contracts::msg::HclOverrideTarget::VirtualLamp { virtual_lamp_id: 6 }),
+        ],
+        "a group and a bound lamp are held; the scheduler resolves the lamp to its groups"
+    );
+    assert_eq!(h.counters.effects_unbound.load(std::sync::atomic::Ordering::Relaxed), 1);
+    let runtime = h.store.rule_runtime();
+    let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);
+    assert_eq!(outcome("lamp"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
+    assert_eq!(outcome("unbound"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
+}
+
+const RESUME_DOC: &str = "rule \"unbound\" {\n  when http trigger\n  do hcl.resume(lamp(8))\n}\n\
+rule \"bound\" {\n  when http trigger\n  do hcl.resume(lamp(6))\n}\n\
+rule \"group\" {\n  when http trigger\n  do hcl.resume(group(2))\n}\n\
+rule \"marker\" {\n  when http trigger\n  do lamp(6).level(55)\n}\n";
+
+#[test]
+fn a_resume_names_its_target_and_a_lamp_with_no_binding_lifts_nothing() {
+    let unbound = dali2rust_rules_runtime::runtime::engine::LampState {
+        bound: false,
+        ..bound_lamp(8)
+    };
+    let h = harness_with_lamps(
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-resume-targets")),
+        vec![unbound],
+    );
+    publish_document(&h, 151, RESUME_DOC, 0);
+    assert!(recv_signal(&h, 151).error.is_none());
+    wait_revision(&h.store, 1);
+
+    for (corr, name) in [(152u64, "unbound"), (153, "bound"), (154, "group"), (155, "marker")] {
+        run_rule(&h, corr, name);
+        recv_signal(&h, corr);
+    }
+
+    let resumes: Vec<(u8, dali2rust_contracts::msg::HclOverrideTarget)> = commands_before_the_marker(&h, 6)
+        .iter()
+        .filter_map(|payload| match payload {
+            dali2rust_contracts::msg::BusCommandPayload::HclOverrideResumeCommand(cmd) => {
+                Some((cmd.registry_adapter_id, cmd.target))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        resumes,
+        vec![
+            (0, dali2rust_contracts::msg::HclOverrideTarget::VirtualLamp { virtual_lamp_id: 6 }),
+            (0, dali2rust_contracts::msg::HclOverrideTarget::Group { group_id: 2 }),
+        ],
+        "a resume names its target; the scheduler lifts what the target covers"
+    );
+    assert_eq!(h.counters.effects_unbound.load(std::sync::atomic::Ordering::Relaxed), 1);
+    let runtime = h.store.rule_runtime();
+    let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);
+    assert_eq!(outcome("unbound"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
+    assert_eq!(outcome("bound"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
+}
+
+const INSTANCE_ACTION_DOC: &str = "rule \"sensor\" {\n  when http trigger\n  do input(3,0).cancel_hold()\n     input(3,0).catch_movement()\n}\n\
+rule \"button\" {\n  when http trigger\n  do input(3,1).cancel_hold()\n}\n\
+rule \"unknown\" {\n  when http trigger\n  do input(4,0).catch_movement()\n}\n\
+rule \"marker\" {\n  when http trigger\n  do lamp(6).level(55)\n}\n";
+
+#[test]
+fn an_instance_action_goes_to_an_occupancy_sensor_and_fails_on_any_other_instance() {
+    let h = harness("rules-instance-action");
+    publish_document(&h, 161, INSTANCE_ACTION_DOC, 0);
+    assert!(recv_signal(&h, 161).error.is_none());
+    wait_revision(&h.store, 1);
+
+    for (corr, name) in [(162u64, "button"), (163, "unknown"), (164, "sensor"), (165, "marker")] {
+        run_rule(&h, corr, name);
+        recv_signal(&h, corr);
+    }
+
+    let actions: Vec<(u8, u8, u8, Dali103InstanceAction)> = commands_before_the_marker(&h, 6)
+        .iter()
+        .filter_map(|payload| match payload {
+            dali2rust_contracts::msg::BusCommandPayload::Dali103InstanceActionCommand(cmd) => Some((
+                cmd.registry_adapter_id,
+                cmd.short_address,
+                cmd.instance_number,
+                cmd.action,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        actions,
+        vec![
+            (0, 3, 0, Dali103InstanceAction::CancelHoldTimer),
+            (0, 3, 0, Dali103InstanceAction::CatchMovement),
+        ],
+        "only the occupancy sensor is told, in the rule's order"
+    );
+    let runtime = h.store.rule_runtime();
+    let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);
+    assert_eq!(outcome("sensor"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
+    assert_eq!(outcome("button"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
+    assert_eq!(outcome("unknown"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
+}
+
+#[test]
+fn a_named_count_reaches_the_cells_the_stats_are_read_from() {
+    let h = harness("rules-named-stats");
+    publish_document(&h, 171, "rule \"a\" {\n  when http trigger\n  do stat(\"x\").count()\n}\n", 0);
+    assert!(recv_signal(&h, 171).error.is_none());
+    wait_revision(&h.store, 1);
+    let x = |count| vec![dali2rust_rules_runtime::RuleStatCount { name: "x".into(), count }];
+    dali2rust_test_support::wait_until(|| h.cells.stat_counts() == x(0), COMMAND_WAIT);
+    assert_eq!(h.cells.stat_counts(), x(0), "the loaded document's names are listed before any run");
+
+    run_rule(&h, 172, "a");
+    recv_signal(&h, 172);
+    dali2rust_test_support::wait_until(|| h.cells.stat_counts() == x(1), COMMAND_WAIT);
+    assert_eq!(h.cells.stat_counts(), x(1));
 }

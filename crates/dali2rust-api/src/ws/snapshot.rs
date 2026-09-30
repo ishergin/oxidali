@@ -4,7 +4,7 @@ use crate::ws::protocol::{event_frame_reserving, Channel};
 
 pub const DIAGNOSTICS_SNAPSHOT_CEILING_BYTES: usize = 8608;
 
-pub const STATS_SNAPSHOT_RESERVE_BYTES: usize = 3072;
+pub const STATS_SNAPSHOT_CEILING_BYTES: usize = 6336;
 
 pub fn stats_snapshot_frame(state: &dyn StatsHttpState, ts_ms: u64) -> String {
     let dto = boxed_stats(state);
@@ -13,7 +13,7 @@ pub fn stats_snapshot_frame(state: &dyn StatsHttpState, ts_ms: u64) -> String {
         Channel::Stats,
         ts_ms,
         dto.as_ref(),
-        STATS_SNAPSHOT_RESERVE_BYTES,
+        STATS_SNAPSHOT_CEILING_BYTES,
     )
 }
 
@@ -46,6 +46,39 @@ fn boxed_diagnostics(state: &dyn DiagnosticsHttpState) -> Box<DiagnosticsDto> {
 mod tests {
     use super::*;
     use crate::http::diagnostics_state::{DiagnosticsDto, DiagnosticsHttpState};
+    use crate::http::stats_state::{StatsHttpState, StatsReportDto};
+    use crate::ws::protocol::ENVELOPE_RESERVE_BYTES;
+
+    struct WorstStats;
+    impl StatsHttpState for WorstStats {
+        fn stats_dto(&self) -> StatsReportDto {
+            StatsReportDto::widest()
+        }
+    }
+
+    #[test]
+    fn the_stats_snapshot_worst_case_is_measured_and_frozen() {
+        let frame = stats_snapshot_frame(&WorstStats, u64::MAX);
+        eprintln!(
+            "worst-case StatsSnapshot: {} B of {} B ceiling",
+            frame.len(),
+            STATS_SNAPSHOT_CEILING_BYTES
+        );
+        assert!(
+            frame.len() <= STATS_SNAPSHOT_CEILING_BYTES,
+            "worst-case StatsSnapshot measures {} B against the frozen {} B ceiling — \
+             every added byte goes out every five seconds to every client, so shrink \
+             the DTO or argue the ceiling in a PR",
+            frame.len(),
+            STATS_SNAPSHOT_CEILING_BYTES
+        );
+        assert!(
+            frame.capacity() <= frame.len() + ENVELOPE_RESERVE_BYTES,
+            "envelope capacity {} B for a {} B frame: the buffer grew instead of being reserved",
+            frame.capacity(),
+            frame.len()
+        );
+    }
 
     struct WorstCase;
     impl DiagnosticsHttpState for WorstCase {
@@ -81,8 +114,6 @@ mod tests {
 
     #[test]
     fn the_diagnostics_snapshot_is_built_without_a_growing_buffer() {
-        use crate::ws::protocol::ENVELOPE_RESERVE_BYTES;
-
         let frame = diagnostics_snapshot_frame(&WorstCase, u64::MAX);
         assert!(
             frame.capacity() <= frame.len() + ENVELOPE_RESERVE_BYTES,

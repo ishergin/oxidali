@@ -9,7 +9,9 @@ use crate::runtime::registry::RegistryStore;
 use super::adapter::handle_adapter_settings;
 use super::config_write::handle_config_write_commit;
 use super::group::GroupMatrix;
-use super::hcl::{handle_hcl_schedule_delete, handle_hcl_schedule_upsert};
+use super::hcl::{
+    handle_hcl_schedule_delete, handle_hcl_schedule_enable, handle_hcl_schedule_upsert,
+};
 use super::matrix::{handle_metadata, stage_matrix_chunk};
 use super::home_assistant_settings::{
     handle_controller_id_update, handle_credentials_update, handle_settings_update,
@@ -112,6 +114,8 @@ dali2rust_contracts::dispatch_bus_commands! {
         handle_hcl_schedule_upsert(publisher, tid, corr, primary_adapter_id, store, counters, body),
     HclScheduleDeleteCommand(body) =>
         handle_hcl_schedule_delete(publisher, tid, corr, primary_adapter_id, store, counters, body),
+    HclScheduleEnableCommand(body) =>
+        handle_hcl_schedule_enable(publisher, tid, corr, primary_adapter_id, store, counters, body),
     InputDeviceMetadataUpdateCommand(body) => {
         super::input_devices::handle_input_device_metadata(publisher, corr, store, counters, body);
     },

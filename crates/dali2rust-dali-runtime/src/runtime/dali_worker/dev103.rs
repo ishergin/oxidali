@@ -1,17 +1,20 @@
 use super::*;
 
 use dali2rust_contracts::msg::{
-    Dali103CommissionCommand, Dali103IdentifyCommand, Dali103InstanceConfigureCommand,
-    Dali103ScanCommand, Dali103ScanProgressEvent, ErrorCode, InstancePatchField,
+    Dali103CommissionCommand, Dali103IdentifyCommand, Dali103InstanceActionCommand,
+    Dali103InstanceConfigureCommand, Dali103ScanCommand, Dali103ScanProgressEvent, ErrorCode,
+    InstancePatchField,
 };
-use dali2rust_domain::dali::dev103::EventScheme;
+use dali2rust_domain::dali::dev103::{instance_type, EventScheme};
 
 use crate::runtime::executor::dev103::{
     set_instance_enabled_verified,
-    commission_control_devices, identify_device, scan_control_devices, set_button_timer_verified,
-    set_event_filter_verified, set_event_priority_verified, set_event_scheme_verified,
-    set_instance_group_verified, ScannedDevice,
+    commission_control_devices, identify_device, run_instance_action, scan_control_devices,
+    set_button_timer_verified, set_event_filter_verified, set_event_priority_verified,
+    set_event_scheme_verified, set_instance_group_verified, ScannedDevice,
 };
+
+const NOT_AN_OCCUPANCY_SENSOR: &str = "input_instance_not_occupancy";
 use crate::runtime::executor::dev103_feedback::{
     configure_feedback, drive_feedback, ConfiguredFeedback,
 };
@@ -474,7 +477,45 @@ pub(super) fn handle_103_feedback_drive(
     cmd: &dali2rust_contracts::msg::Dali103FeedbackDriveCommand,
     counters: &DaliWorkerCounters,
 ) {
-    match drive_feedback(controller, cmd) {
+    confirm_request(publisher, correlation_id, counters, drive_feedback(controller, cmd));
+}
+
+pub(super) fn handle_103_instance_action(
+    controller: &mut impl DaliApplicationController,
+    publisher: &BusPublisher,
+    read_port: &dyn RegistryReadPort,
+    correlation_id: u64,
+    cmd: &Dali103InstanceActionCommand,
+    counters: &DaliWorkerCounters,
+) {
+    let outcome = occupancy_sensor(read_port, cmd).and_then(|()| {
+        run_instance_action(controller, cmd.short_address, cmd.instance_number, cmd.action)
+    });
+    confirm_request(publisher, correlation_id, counters, outcome);
+}
+
+fn occupancy_sensor(
+    read_port: &dyn RegistryReadPort,
+    cmd: &Dali103InstanceActionCommand,
+) -> Result<(), SemanticDaliError> {
+    let known = read_port.input_instance_type(
+        cmd.registry_adapter_id,
+        cmd.short_address,
+        cmd.instance_number,
+    );
+    if known == Some(instance_type::OCCUPANCY) {
+        return Ok(());
+    }
+    Err(SemanticDaliError::Conflict(NOT_AN_OCCUPANCY_SENSOR))
+}
+
+fn confirm_request(
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    counters: &DaliWorkerCounters,
+    outcome: Result<(), SemanticDaliError>,
+) {
+    match outcome {
         Ok(()) => super::publish::publish_confirmation_ok(publisher, correlation_id, counters),
         Err(error) => {
             counters.execution_failed.fetch_add(1, Ordering::Relaxed);

@@ -48,8 +48,8 @@ rule "hcl and feedback" {
   if input(dev=6, inst=0).light above 300 and hcl is enabled for group("кухня") and device(3) is online and rule("buttons") is enabled
   do hcl.resume(group("кухня"))
      hcl.hold(broadcast)
-     hcl.enable("дневное")
-     hcl.disable("дневное")
+     hcl.enable("daytime")
+     hcl.disable("daytime")
      input(dev=3, inst=0).feedback.on()
      input(dev=3, inst=0).feedback.off()
      input(dev=5, inst=0).cancel_hold()

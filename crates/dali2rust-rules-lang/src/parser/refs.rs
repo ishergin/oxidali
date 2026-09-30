@@ -1,5 +1,6 @@
 use crate::cursor::Cursor;
 use crate::lexer::{Pos, TokenKind};
+use dali2rust_domain::dali::dev103::instance_type;
 use dali2rust_rules_model::limits::{
     MAX_GROUP_ID, MAX_INSTANCE_GROUP, MAX_INSTANCE_NUMBER, MAX_LAMP_ID, MAX_NAME_BYTES,
     MAX_SHORT_ADDRESS,
@@ -165,10 +166,10 @@ fn input_type_value(c: &mut Cursor<'_>) -> Result<u8, CompileError> {
         Some(TokenKind::Ident(_)) => {
             let (word, pos) = c.expect_ident("instance type")?;
             match word.as_str() {
-                "button" => Ok(1),
-                "absolute" => Ok(2),
-                "occupancy" => Ok(3),
-                "light" => Ok(4),
+                "button" => Ok(instance_type::PUSH_BUTTON),
+                "absolute" => Ok(instance_type::ABSOLUTE_INPUT),
+                "occupancy" => Ok(instance_type::OCCUPANCY),
+                "light" => Ok(instance_type::LIGHT_SENSOR),
                 _ => Err(pos.err(format!("unknown instance type \"{word}\""))),
             }
         }
