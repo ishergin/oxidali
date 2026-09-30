@@ -4,7 +4,7 @@ use dali2rust_contracts::msg::{
     HclLevelMode, HclOverrideTarget, HclSchedulePointRow, HclTargetScope, RuntimeSource,
     SetpointDimensions,
 };
-use dali2rust_domain::registry::GroupReadPort;
+use dali2rust_domain::registry::{GroupApplyRowView, GroupReadPort};
 use dali2rust_platform::small_sort::insertion_sort_by;
 
 use super::plan::TargetKey;
@@ -196,6 +196,46 @@ pub fn hold_covers_target(
             lamp_in_target(read_port, adapter_id, virtual_lamp_id, target)
         }
     }
+}
+
+pub fn resume_covers_target(
+    read_port: &dyn GroupReadPort,
+    adapter_id: u8,
+    resumed: HclOverrideTarget,
+    target: TargetKey,
+) -> bool {
+    if adapter_id != target.adapter_id {
+        return false;
+    }
+    match (resumed, target.scope) {
+        (HclOverrideTarget::Broadcast, _) => true,
+        (_, HclTargetScope::Broadcast) => false,
+        (HclOverrideTarget::Group { group_id }, HclTargetScope::Group) => {
+            target.group_id == group_id
+                || members_all(read_port, adapter_id, target.group_id, |row| in_group(row, group_id))
+        }
+        (HclOverrideTarget::VirtualLamp { virtual_lamp_id }, HclTargetScope::Group) => {
+            let only_the_lamp = |row: &GroupApplyRowView| row.virtual_lamp_id == virtual_lamp_id;
+            members_all(read_port, adapter_id, target.group_id, only_the_lamp)
+        }
+    }
+}
+
+fn members_all(
+    read_port: &dyn GroupReadPort,
+    adapter_id: u8,
+    group_id: u8,
+    inside: impl Fn(&GroupApplyRowView) -> bool,
+) -> bool {
+    let Some(snapshot) = read_port.group_apply_snapshot(adapter_id) else {
+        return false;
+    };
+    let mut members = snapshot.rows.iter().filter(|row| in_group(row, group_id)).peekable();
+    members.peek().is_some() && members.all(inside)
+}
+
+fn in_group(row: &GroupApplyRowView, group_id: u8) -> bool {
+    group_id < GROUP_COUNT && row.applied_groups_mask & (1u16 << group_id) != 0
 }
 
 fn group_covers_target(
@@ -628,6 +668,29 @@ mod tests {
             assert!(hold_covers_target(&stub, 0, HclOverrideTarget::Broadcast, target), "{target:?}");
         }
         assert!(!hold_covers_target(&stub, 1, HclOverrideTarget::Broadcast, group_target(0)));
+    }
+
+    #[test]
+    fn a_resume_lifts_only_targets_that_lie_inside_its_own() {
+        let stub = MembershipStub::with_lamp_in_groups(1, &[3, 5]).and_lamp_in_groups(2, &[3, 9]);
+        let group = |group_id| HclOverrideTarget::Group { group_id };
+        let lamp = |virtual_lamp_id| HclOverrideTarget::VirtualLamp { virtual_lamp_id };
+        let inside = |resumed, target| resume_covers_target(&stub, 0, resumed, target);
+
+        assert!(inside(group(3), group_target(3)), "itself");
+        assert!(inside(group(3), group_target(5)), "group 5 is lamp 1, which group 3 holds");
+        assert!(inside(group(3), group_target(9)), "group 9 is lamp 2, which group 3 holds");
+        assert!(!inside(group(5), group_target(3)), "group 3 is wider than group 5");
+        assert!(!inside(group(3), broadcast_target()), "the broadcast is wider than any group");
+        assert!(!inside(group(3), group_target(6)), "an empty group lies inside nothing but itself");
+        assert!(inside(group(6), group_target(6)));
+        assert!(inside(lamp(1), group_target(5)), "group 5 is lamp 1 alone");
+        assert!(!inside(lamp(1), group_target(3)), "group 3 also holds lamp 2");
+        assert!(!inside(lamp(1), broadcast_target()));
+        for target in [broadcast_target(), group_target(3), group_target(12)] {
+            assert!(inside(HclOverrideTarget::Broadcast, target), "{target:?}");
+        }
+        assert!(!resume_covers_target(&stub, 1, HclOverrideTarget::Broadcast, group_target(3)));
     }
 
     #[test]

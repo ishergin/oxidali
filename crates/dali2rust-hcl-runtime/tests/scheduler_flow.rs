@@ -1631,13 +1631,17 @@ fn a_resume_lifts_only_the_targets_its_argument_covers() {
     harness.confirmation_for(78);
     assert_eq!(
         suspended_groups(&harness, "wide"),
-        vec![Some(5), Some(7), Some(8)],
-        "group 9 and the broadcast target its lamp is in"
+        vec![None, Some(5), Some(7), Some(8)],
+        "group 9 alone lies inside group 9; the broadcast is wider"
     );
 
     harness.resume(79, HclOverrideTarget::VirtualLamp { virtual_lamp_id: 1 });
     harness.confirmation_for(79);
-    assert_eq!(suspended_groups(&harness, "wide"), vec![Some(5)], "the groups of lamp 1");
+    assert_eq!(
+        suspended_groups(&harness, "wide"),
+        vec![None, Some(5)],
+        "groups 7 and 8 hold lamp 1 and nothing else"
+    );
 
     harness.resume(80, HclOverrideTarget::Broadcast);
     assert_eq!(
@@ -1646,6 +1650,29 @@ fn a_resume_lifts_only_the_targets_its_argument_covers() {
     );
     assert!(suspended_groups(&harness, "wide").is_empty());
     assert_eq!(harness.counters.overrides_reset.load(Ordering::Relaxed), 5);
+}
+
+#[test]
+fn a_group_resume_leaves_the_broadcast_an_owner_commit_on_another_lamp_raised() {
+    let harness = spawn_harness(five_target_registry(), Arc::new(StubClock::at(600)));
+    harness.wait_for_commands(5);
+    harness.publish_manual_commit_on_lamp(1);
+    wait_until(
+        || suspended_groups(&harness, "wide") == [None, Some(7), Some(8)],
+        Duration::from_secs(3),
+    );
+    let published = harness.commands().len();
+
+    harness.resume(86, HclOverrideTarget::Group { group_id: 9 });
+    harness.confirmation_for(86);
+    harness.wait_for_ticks(2);
+
+    assert_eq!(
+        suspended_groups(&harness, "wide"),
+        [None, Some(7), Some(8)],
+        "the broadcast flag is lamp 1's owner's; group 9 does not reach over lamp 1"
+    );
+    assert_eq!(harness.commands().len(), published, "nothing drives over lamp 1 again");
 }
 
 #[test]

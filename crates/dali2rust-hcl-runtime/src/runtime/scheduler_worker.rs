@@ -25,7 +25,8 @@ use dali2rust_platform::wall_clock::{LocalCivilTime, WallClock};
 use super::astronomy::Location;
 use super::curve::{effective_points, evaluate, DesiredState};
 use super::overrides::{
-    commit_hits_target, driven_dimensions, hold_covers_target, OverrideLedger, RuntimeCommit,
+    commit_hits_target, driven_dimensions, hold_covers_target, resume_covers_target,
+    OverrideLedger, RuntimeCommit,
 };
 use super::plan::{
     coalesce, expand_target, plan, DesiredEntry, PlannedCommand, TargetKey,
@@ -299,7 +300,7 @@ fn handle_override_clear(deps: &SchedulerDeps, correlation_id: u64, body: &HclOv
 fn handle_override_resume(deps: &SchedulerDeps, correlation_id: u64, body: &HclOverrideResumeCommand) {
     let read_port = deps.read_port.as_ref();
     let covers = |target: TargetKey| {
-        hold_covers_target(read_port, body.registry_adapter_id, body.target, target)
+        resume_covers_target(read_port, body.registry_adapter_id, body.target, target)
     };
     let flags = lock_ledger(&deps.overrides).flags();
     let covered: Vec<(String, TargetKey)> =

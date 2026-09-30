@@ -47,7 +47,7 @@
 | Диагностический сырой кадр | `DaliCommandPayload` (`raw_mode`) | `DaliWorker` | только диагностический REST | подтверждение запроса |
 | Операции | `OperationBeginCommand`, `OperationRegistryResetCommand` | operation tracker | HTTP, оркестратор | — |
 | Массовое применение | `GroupApplyExecuteCommand`, `SceneApplyExecuteCommand`, `PolicyApplyExecuteCommand` | apply orchestrator | HTTP, правила (`scene.apply`) | `202` + операция |
-| HCL | `HclOverrideClearCommand` (все флаги расписания), `HclOverrideHoldCommand`, `HclOverrideResumeCommand` (флаги целей, которые покрывает цель) | HCL scheduler | HTTP (снятие); правила (`hcl.hold`, `hcl.resume`) | подтверждение запроса; подтверждений от правил никто не ждёт |
+| HCL | `HclOverrideClearCommand` (все флаги расписания), `HclOverrideHoldCommand`, `HclOverrideResumeCommand` (флаги целей внутри цели) | HCL scheduler | HTTP (снятие); правила (`hcl.hold`, `hcl.resume`) | подтверждение запроса; подтверждений от правил никто не ждёт |
 | Бит расписания HCL | `HclScheduleEnableCommand` | registry worker | правила (`hcl.enable` / `hcl.disable`) | подтверждение; его никто не ждёт |
 | Home Assistant | `HomeAssistantDiscoveryPublishCommand`, `MqttPublishCommand` | MQTT bridge | HTTP; правила (`mqtt.publish`) | `202` + операция; без ответа |
 | Правила | `RuleStageCommand`, `RuleCommitCommand`, `RuleEnableCommand`, `RuleRunCommand` | rules worker | HTTP | `202` + операция `config_write`; включение — ожидание ревизии |

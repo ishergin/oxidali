@@ -399,7 +399,7 @@ Home Assistant, из HCL и из сцен.
 
 | Операция | Смысл |
 |---|---|
-| `hcl.resume(target)` | Снять override: на каждом расписании снимаются флаги только целей, которые покрыл бы `hcl.hold` той же цели. Все флаги расписания снимает REST `DELETE …/override` |
+| `hcl.resume(target)` | Снять override: на каждом расписании снимаются флаги только целей внутри цели — у broadcast это весь адаптер ([`../hcl-scheduler/README.md`](../hcl-scheduler/README.md) §Override). Все флаги расписания снимает REST `DELETE …/override` |
 | `hcl.hold(target)` | Поставить override, свет не трогая: каждое расписание, которое сегодня работает и ведёт цель, отпускает её до локальной полуночи во всех размерностях, даже если ещё не публиковало. Что покрывает цель — [`../hcl-scheduler/README.md`](../hcl-scheduler/README.md) §Override. Снимают `hcl.resume` и REST |
 | `hcl.enable("evening")` / `hcl.disable("evening")` | Включить или выключить расписание целиком — бит `enabled` в реестре. Расписание названо `schedule_id` и ищется при исполнении: неизвестное снимку — отказ эффекта; id длиннее `MAX_SCHEDULE_ID_BYTES = 32` байт — ошибка компиляции на самом id |
 
