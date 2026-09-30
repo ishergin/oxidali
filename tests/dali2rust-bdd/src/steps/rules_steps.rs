@@ -63,7 +63,7 @@ fn rule_fire_count(port: u16, name: &str) -> Option<u64> {
         .as_u64()
 }
 
-// RULE-030 RULE-034 RULE-035 RULE-037 RULE-038 RULE-032 RULE-039
+// RULE-030 RULE-034 RULE-035 RULE-037 RULE-038 RULE-032 RULE-039 RULE-061
 #[then(regex = r#"^the rule "([^"]+)" eventually has fired (\d+) times?$"#)]
 async fn then_rule_eventually_fired(world: &mut DaliWorld, name: String, expected: u64) {
     let port = world.server_port();
@@ -74,14 +74,14 @@ async fn then_rule_eventually_fired(world: &mut DaliWorld, name: String, expecte
     assert_eq!(rule_fire_count(port, &name), Some(expected), "fire count of rule {name}");
 }
 
-// RULE-030 RULE-034 RULE-035 RULE-037 RULE-038 RULE-039
+// RULE-030 RULE-034 RULE-035 RULE-037 RULE-038 RULE-039 RULE-061
 #[then(regex = r#"^the rule "([^"]+)" should have fired (\d+) times?$"#)]
 async fn then_rule_has_fired(world: &mut DaliWorld, name: String, expected: u64) {
     let port = world.server_port();
     assert_eq!(rule_fire_count(port, &name), Some(expected), "fire count of rule {name}");
 }
 
-// RULE-037 RULE-038
+// RULE-037 RULE-038 RULE-061
 #[then(regex = r#"^the rule "([^"]+)" eventually has fired at least (\d+) times?$"#)]
 async fn then_rule_eventually_fired_at_least(world: &mut DaliWorld, name: String, expected: u64) {
     let port = world.server_port();
@@ -93,7 +93,7 @@ async fn then_rule_eventually_fired_at_least(world: &mut DaliWorld, name: String
     assert!(count.is_some_and(|count| count >= expected), "fire count of rule {name}: {count:?}");
 }
 
-// RULE-032 RULE-060
+// RULE-032 RULE-060 RULE-061
 #[then(regex = r#"^the rule "([^"]+)" should have the last outcome "([a-z_]+)"$"#)]
 async fn then_rule_last_outcome(world: &mut DaliWorld, name: String, expected: String) {
     let port = world.server_port();

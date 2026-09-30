@@ -1004,6 +1004,15 @@ declare_bus_payloads! {
         schedule_id: crate::msg::payload_test_samples::worst_text32(),
         enabled: true,
     };
+
+    pub struct HclOverrideHoldCommand {
+        pub registry_adapter_id: u8,
+        pub target: super::kinds::HclOverrideTarget,
+    }
+    budget = HclOverrideHoldCommand {
+        registry_adapter_id: u8::MAX,
+        target: crate::msg::kinds::HclOverrideTarget::VirtualLamp { virtual_lamp_id: 63 },
+    };
 }
 
 impl FirmwareUpdateBeginCommand {

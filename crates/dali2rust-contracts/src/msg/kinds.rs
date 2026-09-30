@@ -600,6 +600,13 @@ pub enum HclTargetScope {
     Broadcast = 1,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HclOverrideTarget {
+    Group { group_id: u8 },
+    Broadcast,
+    VirtualLamp { virtual_lamp_id: u8 },
+}
+
 #[cfg(test)]
 mod status_name_tests {
     use super::OperationStatus;

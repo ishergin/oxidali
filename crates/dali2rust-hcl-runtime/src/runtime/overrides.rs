@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use dali2rust_contracts::msg::{
-    HclLevelMode, HclSchedulePointRow, HclTargetScope, RuntimeSource, SetpointDimensions,
+    HclLevelMode, HclOverrideTarget, HclSchedulePointRow, HclTargetScope, RuntimeSource,
+    SetpointDimensions,
 };
 use dali2rust_domain::registry::GroupReadPort;
 use dali2rust_platform::small_sort::insertion_sort_by;
@@ -147,21 +148,48 @@ pub fn commit_hits_target(
     target: TargetKey,
     driven: SetpointDimensions,
 ) -> bool {
-    use dali2rust_contracts::msg::HclTargetScope;
+    if !commit.overrides() || !commit.states.intersects(driven) {
+        return false;
+    }
+    match commit.virtual_lamp_id {
+        Some(lamp_id) => lamp_in_target(read_port, commit.adapter_id, lamp_id, target),
+        None => commit.adapter_id == target.adapter_id && target.scope == HclTargetScope::Broadcast,
+    }
+}
 
-    if commit.adapter_id != target.adapter_id
-        || !commit.overrides()
-        || !commit.states.intersects(driven)
-    {
+pub fn hold_covers_target(
+    read_port: &dyn GroupReadPort,
+    adapter_id: u8,
+    held: HclOverrideTarget,
+    target: TargetKey,
+) -> bool {
+    if adapter_id != target.adapter_id {
+        return false;
+    }
+    match held {
+        HclOverrideTarget::Broadcast => target.scope == HclTargetScope::Broadcast,
+        HclOverrideTarget::Group { group_id } => {
+            target.scope == HclTargetScope::Group && target.group_id == group_id
+        }
+        HclOverrideTarget::VirtualLamp { virtual_lamp_id } => {
+            lamp_in_target(read_port, adapter_id, virtual_lamp_id, target)
+        }
+    }
+}
+
+fn lamp_in_target(
+    read_port: &dyn GroupReadPort,
+    adapter_id: u8,
+    virtual_lamp_id: u8,
+    target: TargetKey,
+) -> bool {
+    if adapter_id != target.adapter_id {
         return false;
     }
     match target.scope {
         HclTargetScope::Broadcast => true,
         HclTargetScope::Group => {
-            let Some(lamp_id) = commit.virtual_lamp_id else {
-                return false;
-            };
-            lamp_is_in_group(read_port, commit.adapter_id, lamp_id, target.group_id)
+            lamp_is_in_group(read_port, adapter_id, virtual_lamp_id, target.group_id)
         }
     }
 }
@@ -506,6 +534,43 @@ mod tests {
             broadcast_target(),
             drives_level()
         ));
+    }
+
+    #[test]
+    fn a_group_hold_covers_that_group_and_not_the_broadcast_key_that_shares_its_id() {
+        let stub = MembershipStub::with_lamp_in_groups(1, &[0]);
+        let group_zero = HclOverrideTarget::Group { group_id: 0 };
+        assert!(hold_covers_target(&stub, 0, group_zero, group_target(0)));
+        assert!(
+            !hold_covers_target(&stub, 0, group_zero, broadcast_target()),
+            "a broadcast key carries group id 0 too; the scope tells them apart"
+        );
+        assert!(!hold_covers_target(&stub, 0, group_zero, group_target(3)));
+        assert!(!hold_covers_target(&stub, 1, group_zero, group_target(0)), "another adapter");
+    }
+
+    #[test]
+    fn a_broadcast_hold_covers_only_the_broadcast_key() {
+        let stub = MembershipStub::with_lamp_in_groups(1, &[0]);
+        assert!(hold_covers_target(&stub, 0, HclOverrideTarget::Broadcast, broadcast_target()));
+        assert!(!hold_covers_target(&stub, 0, HclOverrideTarget::Broadcast, group_target(0)));
+    }
+
+    #[test]
+    fn a_lamp_hold_covers_exactly_what_a_commit_on_that_lamp_would() {
+        let stub = MembershipStub::with_lamp_in_groups(1, &[3]);
+        let lamp = HclOverrideTarget::VirtualLamp { virtual_lamp_id: 1 };
+        for target in [group_target(3), group_target(5), broadcast_target()] {
+            let commit = commit(RuntimeSource::Api, Some(1));
+            assert_eq!(
+                hold_covers_target(&stub, 0, lamp, target),
+                commit_hits_target(&stub, &commit, target, drives_level()),
+                "{target:?}"
+            );
+        }
+        assert!(hold_covers_target(&stub, 0, lamp, group_target(3)));
+        assert!(!hold_covers_target(&stub, 0, lamp, group_target(5)));
+        assert!(!hold_covers_target(&stub, 1, lamp, broadcast_target()), "another adapter");
     }
 
     #[test]

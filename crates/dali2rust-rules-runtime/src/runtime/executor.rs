@@ -4,8 +4,8 @@ use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, PublishResult};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
     ColorMode, ColorValue, DaliRecallSceneCommand, DaliSetTargetStateCommand, DaliStopFadeCommand,
-    DaliTargetScope, FixedText32,
-    HclOverrideClearCommand, HclScheduleEnableCommand, LightSetpoint, MqttPublishCommand, Origin,
+    DaliTargetScope, FixedText32, HclOverrideClearCommand, HclOverrideHoldCommand,
+    HclOverrideTarget, HclScheduleEnableCommand, LightSetpoint, MqttPublishCommand, Origin,
     PowerState, SceneApplyExecuteCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
@@ -154,7 +154,7 @@ impl EffectExecutor<'_> {
                 self.scene_effect(effect, snapshot, corr)
             }
             Effect::HclResume { .. } | Effect::HclHold { .. } | Effect::HclSchedule { .. } => {
-                self.hcl_effect(effect, corr)
+                self.hcl_effect(effect, snapshot, corr)
             }
             Effect::InputFeedback { .. }
             | Effect::PanelSelect { .. }
@@ -181,10 +181,10 @@ impl EffectExecutor<'_> {
         }
     }
 
-    fn hcl_effect(&self, effect: &Effect, corr: u64) -> bool {
+    fn hcl_effect(&self, effect: &Effect, snapshot: &WorldSnapshot, corr: u64) -> bool {
         match effect {
             Effect::HclResume { target } => self.hcl_resume(target, corr),
-            Effect::HclHold { .. } => self.unmapped(&self.counters.hcl_hold_unmapped),
+            Effect::HclHold { target } => self.hcl_hold(target, snapshot, corr),
             Effect::HclSchedule { schedule, enabled } => self.hcl_switch(schedule, *enabled, corr),
             _ => self.misrouted(),
         }
@@ -313,6 +313,16 @@ impl EffectExecutor<'_> {
             );
         }
         any
+    }
+
+    fn hcl_hold(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {
+        let Some((registry_adapter_id, held)) = override_target_of(target) else {
+            return false;
+        };
+        if !lamp_bound(target, snapshot) {
+            return self.unbound_lamp();
+        }
+        self.publish(corr, HclOverrideHoldCommand { registry_adapter_id, target: held })
     }
 
     fn hcl_switch(&self, schedule: &str, enabled: bool, corr: u64) -> bool {
@@ -514,6 +524,20 @@ fn recall_command(scene: u8, target: &Option<LightTarget>) -> Option<DaliRecallS
             DaliRecallSceneCommand::broadcast(*adapter_id, scene)
         }
         None => DaliRecallSceneCommand::broadcast(0, scene),
+    })
+}
+
+fn override_target_of(target: &LightTarget) -> Option<(u8, HclOverrideTarget)> {
+    Some(match target {
+        LightTarget::Lamp(lamp) => (
+            lamp.adapter_id,
+            HclOverrideTarget::VirtualLamp { virtual_lamp_id: u8::try_from(lamp.id).ok()? },
+        ),
+        LightTarget::Group(group) => (
+            group.adapter_id,
+            HclOverrideTarget::Group { group_id: u8::try_from(group.id).ok()? },
+        ),
+        LightTarget::Broadcast { adapter_id } => (*adapter_id, HclOverrideTarget::Broadcast),
     })
 }
 

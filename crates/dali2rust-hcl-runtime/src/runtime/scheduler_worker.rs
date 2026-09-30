@@ -9,10 +9,13 @@ use dali2rust_bus::{
     publish_or_drop, BusChannel, BusFrame, BusId, BusPublisher, BusSubscriberRx,
     CorrelationIdAllocator, PublishResult,
 };
-use dali2rust_contracts::bus::{build_confirmation_envelope, command_envelope};
+use dali2rust_contracts::bus::{
+    build_confirmation_envelope, build_confirmation_envelope_with_product_error, command_envelope,
+};
 use dali2rust_contracts::msg::{
     BusCommandPayload, BusEventPayload, DaliRecallLastActiveLevelCommand,
-    DaliSetTargetStateCommand, DeliveryStatus, HclOverrideClearCommand, Origin,
+    DaliSetTargetStateCommand, DeliveryStatus, ErrorCode, HclOverrideClearCommand,
+    HclOverrideHoldCommand, Origin,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{HclScheduleView, HclSchedulerReadPort};
@@ -21,7 +24,9 @@ use dali2rust_platform::wall_clock::{LocalCivilTime, WallClock};
 
 use super::astronomy::Location;
 use super::curve::{effective_points, evaluate, DesiredState};
-use super::overrides::{commit_hits_target, driven_dimensions, OverrideLedger, RuntimeCommit};
+use super::overrides::{
+    commit_hits_target, driven_dimensions, hold_covers_target, OverrideLedger, RuntimeCommit,
+};
 use super::plan::{
     coalesce, expand_target, plan, DesiredEntry, PlannedCommand, TargetKey,
 };
@@ -32,6 +37,7 @@ const MAX_IDLE_WAIT: Duration = Duration::from_secs(1);
 const CONFIRMATION_POLL_SLICE: Duration = Duration::from_millis(50);
 const MAX_DEFERRED_FRAMES: usize = 64;
 const DAYS_PER_WEEK: u8 = 7;
+const HOLD_WITHOUT_CLOCK: &str = "time_unsynced";
 
 #[derive(Clone, Copy, Debug)]
 pub struct HclConfig {
@@ -228,9 +234,8 @@ fn apply_frame(state: &mut SchedulerState, deps: &SchedulerDeps, frame: &BusFram
         BusFrame::Event(envelope) => apply_event(state, deps, &envelope.payload),
         BusFrame::Command(envelope) => dispatch_scheduler_command(
             &envelope.payload,
-            &deps.publisher,
-            &deps.overrides,
-            &deps.counters,
+            state,
+            deps,
             envelope.meta.correlation_id,
         ),
         BusFrame::Confirmation(_) => {
@@ -243,41 +248,79 @@ dali2rust_contracts::dispatch_bus_commands! {
     pub const HCL_SCHEDULER_HANDLED_COMMANDS;
     fn dispatch_scheduler_command(
         payload: &BusCommandPayload,
-        publisher: &BusPublisher,
-        overrides: &SharedOverrideLedger,
-        counters: &Arc<HclSchedulerCounters>,
+        state: &mut SchedulerState,
+        deps: &SchedulerDeps,
         correlation_id: u64,
     );
     payload = payload;
-    ignored = { counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
-    HclOverrideClearCommand(body) =>
-        handle_override_clear(publisher, overrides, counters, correlation_id, body),
+    ignored = { deps.counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
+    HclOverrideClearCommand(body) => handle_override_clear(deps, correlation_id, body),
+    HclOverrideHoldCommand(body) => handle_override_hold(state, deps, correlation_id, body),
 }
 
-fn handle_override_clear(
-    publisher: &BusPublisher,
-    overrides: &SharedOverrideLedger,
-    counters: &Arc<HclSchedulerCounters>,
-    correlation_id: u64,
-    body: &HclOverrideClearCommand,
-) {
-    let lifted = lock_ledger(overrides).clear_schedule(body.schedule_id.as_str());
+fn handle_override_clear(deps: &SchedulerDeps, correlation_id: u64, body: &HclOverrideClearCommand) {
+    let lifted = lock_ledger(&deps.overrides).clear_schedule(body.schedule_id.as_str());
     if lifted > 0 {
-        counters
+        deps.counters
             .overrides_reset
             .fetch_add(lifted as u32, Ordering::Relaxed);
     }
-    let confirmation = BusFrame::confirmation(build_confirmation_envelope(
-        correlation_id,
-        DeliveryStatus::Ok,
-        0,
-        SOURCE_ID_UNSPECIFIED,
-    ));
+    confirm_override_command(deps, correlation_id, None);
+}
+
+fn handle_override_hold(
+    state: &mut SchedulerState,
+    deps: &SchedulerDeps,
+    correlation_id: u64,
+    body: &HclOverrideHoldCommand,
+) {
+    let Some(local) = deps.clock.local() else {
+        confirm_override_command(deps, correlation_id, Some(HOLD_WITHOUT_CLOCK));
+        return;
+    };
+    roll_over_ledger(state, deps, local.year_day);
+    for schedule in deps.read_port.list_hcl_schedule_views() {
+        if !runs_today(&schedule, local) {
+            continue;
+        }
+        for target in schedule.targets.iter().flat_map(expand_target) {
+            if hold_covers_target(deps.read_port.as_ref(), body.registry_adapter_id, body.target, target) {
+                hold_target(state, deps, &schedule.schedule_id, target, local.minutes_since_midnight);
+            }
+        }
+    }
+    confirm_override_command(deps, correlation_id, None);
+}
+
+fn hold_target(
+    state: &mut SchedulerState,
+    deps: &SchedulerDeps,
+    schedule_id: &str,
+    target: TargetKey,
+    at_minutes: u16,
+) {
+    if lock_ledger(&deps.overrides).suspend(schedule_id, target, at_minutes) {
+        deps.counters.overrides_started.fetch_add(1, Ordering::Relaxed);
+    }
+    state.last_published.remove(&target);
+}
+
+fn confirm_override_command(deps: &SchedulerDeps, correlation_id: u64, refusal: Option<&str>) {
+    let envelope = match refusal {
+        None => build_confirmation_envelope(correlation_id, DeliveryStatus::Ok, 0, SOURCE_ID_UNSPECIFIED),
+        Some(message) => build_confirmation_envelope_with_product_error(
+            correlation_id,
+            DeliveryStatus::ExecutionFailed,
+            0,
+            SOURCE_ID_UNSPECIFIED,
+            Some((ErrorCode::Conflict, message)),
+        ),
+    };
     publish_or_drop(
-        publisher,
+        &deps.publisher,
         BusChannel::Confirmations,
-        confirmation,
-        "hcl-override-clear",
+        BusFrame::confirmation(envelope),
+        "hcl-override-command",
     );
 }
 
@@ -542,17 +585,25 @@ fn mark_unpublished_keys(outcomes: &mut PublishOutcomes, unpublished: &[PlannedC
 
 fn service_commands(rx: &BusSubscriberRx, deps: &SchedulerDeps, deferred: &mut Vec<BusFrame>) {
     while let Ok(frame) = rx.try_recv() {
-        match frame {
-            BusFrame::Command(envelope) => dispatch_scheduler_command(
-                &envelope.payload,
-                &deps.publisher,
-                &deps.overrides,
-                &deps.counters,
-                envelope.meta.correlation_id,
-            ),
-            other => defer_frame(&deps.counters, deferred, other),
+        match clear_to_serve_now(&frame, deferred) {
+            Some((correlation_id, body)) => handle_override_clear(deps, correlation_id, body),
+            None => defer_frame(&deps.counters, deferred, frame),
         }
     }
+}
+
+fn clear_to_serve_now<'f>(
+    frame: &'f BusFrame,
+    deferred: &[BusFrame],
+) -> Option<(u64, &'f HclOverrideClearCommand)> {
+    let BusFrame::Command(envelope) = frame else {
+        return None;
+    };
+    let BusCommandPayload::HclOverrideClearCommand(body) = &envelope.payload else {
+        return None;
+    };
+    let behind_a_command = deferred.iter().any(|held| matches!(held, BusFrame::Command(_)));
+    (!behind_a_command).then_some((envelope.meta.correlation_id, body))
 }
 
 fn defer_frame(counters: &HclSchedulerCounters, deferred: &mut Vec<BusFrame>, frame: BusFrame) {

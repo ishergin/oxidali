@@ -88,6 +88,7 @@ const EXECUTOR_OUTPUT: &[&str] = &[
     "Dali103FeedbackDriveCommand",
     "MqttPublishCommand",
     "HclScheduleEnableCommand",
+    "HclOverrideHoldCommand",
 ];
 
 struct Harness {
@@ -944,7 +945,7 @@ const LANDINGS: &[(&str, &str, Landing)] = &[
     ("scene_apply", "scene(3).apply()", Landing::Bus("SceneApplyExecuteCommand")),
     ("scene_cycle", "scene.cycle(1, 3, 7)", Landing::Bus("DaliRecallSceneCommand")),
     ("hcl_resume", "hcl.resume(broadcast)", Landing::Bus("HclOverrideClearCommand")),
-    ("hcl_hold", "hcl.hold(broadcast)", Landing::Unmapped("hcl_hold_unmapped")),
+    ("hcl_hold", "hcl.hold(broadcast)", Landing::Bus("HclOverrideHoldCommand")),
     ("hcl_enable", "hcl.enable(\"evening\")", Landing::Bus("HclScheduleEnableCommand")),
     ("hcl_disable", "hcl.disable(\"evening\")", Landing::Bus("HclScheduleEnableCommand")),
     ("input_feedback_on", "input(3,0).feedback.on()", Landing::Bus("Dali103FeedbackDriveCommand")),
@@ -1749,4 +1750,52 @@ fn a_schedule_switch_names_its_schedule_whole_or_fails_instead_of_narrowing() {
     let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);
     assert_eq!(outcome("fits"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
     assert_eq!(outcome("too long"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
+}
+
+const HOLD_DOC: &str = "rule \"group\" {\n  when http trigger\n  do hcl.hold(group(2))\n}\n\
+rule \"lamp\" {\n  when http trigger\n  do hcl.hold(lamp(6))\n}\n\
+rule \"unbound\" {\n  when http trigger\n  do hcl.hold(lamp(8))\n}\n\
+rule \"marker\" {\n  when http trigger\n  do lamp(6).level(55)\n}\n";
+
+#[test]
+fn a_hold_names_its_target_and_a_lamp_with_no_binding_holds_nothing() {
+    let unbound = dali2rust_rules_runtime::runtime::engine::LampState {
+        bound: false,
+        ..bound_lamp(8)
+    };
+    let h = harness_with_lamps(
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-hold-targets")),
+        vec![unbound],
+    );
+    publish_document(&h, 141, HOLD_DOC, 0);
+    assert!(recv_signal(&h, 141).error.is_none());
+    wait_revision(&h.store, 1);
+
+    for (corr, name) in [(142u64, "group"), (143, "lamp"), (144, "unbound"), (145, "marker")] {
+        run_rule(&h, corr, name);
+        recv_signal(&h, corr);
+    }
+
+    let holds: Vec<(u8, dali2rust_contracts::msg::HclOverrideTarget)> = commands_before_the_marker(&h, 6)
+        .iter()
+        .filter_map(|payload| match payload {
+            dali2rust_contracts::msg::BusCommandPayload::HclOverrideHoldCommand(cmd) => {
+                Some((cmd.registry_adapter_id, cmd.target))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        holds,
+        vec![
+            (0, dali2rust_contracts::msg::HclOverrideTarget::Group { group_id: 2 }),
+            (0, dali2rust_contracts::msg::HclOverrideTarget::VirtualLamp { virtual_lamp_id: 6 }),
+        ],
+        "a group and a bound lamp are held; the scheduler resolves the lamp to its groups"
+    );
+    assert_eq!(h.counters.effects_unbound.load(std::sync::atomic::Ordering::Relaxed), 1);
+    let runtime = h.store.rule_runtime();
+    let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);
+    assert_eq!(outcome("lamp"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
+    assert_eq!(outcome("unbound"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
 }

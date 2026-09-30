@@ -7,7 +7,8 @@ pub use runtime::plan::{
     MAX_COMMANDS_PER_TICK,
 };
 pub use runtime::overrides::{
-    commit_hits_target, driven_dimensions, OverrideLedger, RuntimeCommit, SuspendedTarget,
+    commit_hits_target, driven_dimensions, hold_covers_target, OverrideLedger, RuntimeCommit,
+    SuspendedTarget,
 };
 pub use runtime::scheduler_worker::{
     spawn_hcl_scheduler_worker, HclConfig, HclSchedulerCounters, SharedOverrideLedger,

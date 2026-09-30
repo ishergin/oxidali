@@ -217,13 +217,13 @@ fn wait_for_frame(world: &mut DaliWorld, frame: u16) {
     );
 }
 
-// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038 RULE-060
+// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063
 #[given(regex = r"^the controller clock reads (\d+) minutes past midnight$")]
 async fn given_clock_reads(world: &mut DaliWorld, minutes: u64) {
     set_clock(world, minutes);
 }
 
-// HCL-051 HCL-053 HCL-061 HCL-064 HCL-060 HCL-077 RULE-060
+// HCL-051 HCL-053 HCL-061 HCL-064 HCL-060 HCL-077 RULE-060 RULE-062
 #[when(regex = r"^the scheduler has run (\d+) more ticks$")]
 async fn when_scheduler_ticks(world: &mut DaliWorld, count: u64) {
     let port = world.server_port();
@@ -238,7 +238,7 @@ async fn when_scheduler_ticks(world: &mut DaliWorld, count: u64) {
     );
 }
 
-// HCL-050 HCL-063 HCL-053 HCL-054 HCL-056 HCL-057 SYS-237 RULE-037 RULE-038 RULE-060
+// HCL-050 HCL-063 HCL-053 HCL-054 HCL-056 HCL-057 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063
 #[then(regex = r"^the scheduler should drive group (\d+) to level (\d+)$")]
 async fn then_group_driven(world: &mut DaliWorld, group_id: u8, level: u8) {
     wait_for_frame(world, dapc_frame(Some(group_id), level));
@@ -256,7 +256,7 @@ async fn then_recall_last_active(world: &mut DaliWorld, group_id: u8) {
     wait_for_frame(world, last_active_frame(Some(group_id)));
 }
 
-// HCL-051 HCL-064 HCL-061 RULE-060
+// HCL-051 HCL-064 HCL-061 RULE-060 RULE-061
 #[then("no DALI frames should have reached the bus")]
 async fn then_no_frames(world: &mut DaliWorld) {
     let frames = sent_frames(world);
@@ -285,7 +285,7 @@ async fn then_some_frames(world: &mut DaliWorld) {
     );
 }
 
-// HCL-053
+// HCL-053 RULE-062
 #[then(regex = r"^exactly (\d+) arc power levels? should have been driven$")]
 async fn then_dapc_count(world: &mut DaliWorld, expected: usize) {
     let dapc: Vec<u16> = sent_frames(world)
@@ -364,7 +364,7 @@ fn suspended_groups(port: u16, schedule_id: &str) -> Option<Vec<u64>> {
     )
 }
 
-// RULE-037 RULE-038
+// RULE-037 RULE-038 RULE-061 RULE-063 RULE-062
 #[then(regex = r#"^HCL schedule "([^"]+)" eventually reports group (\d+) suspended$"#)]
 async fn then_group_eventually_suspended(world: &mut DaliWorld, schedule_id: String, group_id: u64) {
     let port = world.server_port();
@@ -377,7 +377,7 @@ async fn then_group_eventually_suspended(world: &mut DaliWorld, schedule_id: Str
     );
 }
 
-// RULE-037 RULE-038
+// RULE-037 RULE-038 RULE-061 RULE-063
 #[then(regex = r#"^HCL schedule "([^"]+)" should not report group (\d+) suspended$"#)]
 async fn then_group_not_suspended(world: &mut DaliWorld, schedule_id: String, group_id: u64) {
     let groups = suspended_groups(world.server_port(), &schedule_id).expect("override read");
@@ -403,5 +403,18 @@ async fn then_schedule_eventually_switched(world: &mut DaliWorld, schedule_id: S
         schedule_enabled(port, &schedule_id),
         Some(wanted),
         "the registry should hold schedule {schedule_id} {state}"
+    );
+}
+
+// RULE-062
+#[then(regex = r#"^HCL schedule "([^"]+)" eventually reports itself running$"#)]
+async fn then_override_eventually_running(world: &mut DaliWorld, schedule_id: String) {
+    let port = world.server_port();
+    let running = || suspended_groups(port, &schedule_id).is_some_and(|groups| groups.is_empty());
+    dali2rust_test_support::wait_until(running, std::time::Duration::from_secs(10));
+    assert!(
+        running(),
+        "schedule {schedule_id} should hold no target: {:?}",
+        suspended_groups(port, &schedule_id)
     );
 }
