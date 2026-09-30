@@ -8,6 +8,7 @@ use dali2rust_contracts::msg::{
     RULE_SOURCE_CHUNK_BYTES,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
+use dali2rust_domain::dali::dev103::instance_type;
 use dali2rust_rules_model::testing::StubResolver;
 use dali2rust_rules_runtime::runtime::persistence::fnv1a32;
 use dali2rust_rules_runtime::{spawn_rules_worker, RulesStore, RulesWorkerCounters};
@@ -58,8 +59,8 @@ impl dali2rust_rules_runtime::RulesWorldPort for EmptyWorld {
     }
     fn inputs(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::InputState> {
         vec![
-            input_state(OCCUPANCY_SENSOR.0, OCCUPANCY_SENSOR.1, OCCUPANCY_TYPE),
-            input_state(PUSH_BUTTON.0, PUSH_BUTTON.1, PUSH_BUTTON_TYPE),
+            input_state(OCCUPANCY_SENSOR.0, OCCUPANCY_SENSOR.1, instance_type::OCCUPANCY),
+            input_state(PUSH_BUTTON.0, PUSH_BUTTON.1, instance_type::PUSH_BUTTON),
         ]
     }
     fn hcl(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::HclTargetState> {
@@ -79,8 +80,6 @@ impl dali2rust_rules_runtime::RulesWorldPort for EmptyWorld {
 
 const OCCUPANCY_SENSOR: (u8, u8) = (3, 0);
 const PUSH_BUTTON: (u8, u8) = (3, 1);
-const OCCUPANCY_TYPE: u8 = 3;
-const PUSH_BUTTON_TYPE: u8 = 1;
 
 fn input_state(
     short_address: u8,

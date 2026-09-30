@@ -1,10 +1,10 @@
 use crate::cursor::Cursor;
 use crate::lexer::{Pos, TokenKind};
+use dali2rust_domain::dali::dev103::instance_type;
 use dali2rust_rules_model::limits::{
     MAX_GROUP_ID, MAX_INSTANCE_GROUP, MAX_INSTANCE_NUMBER, MAX_LAMP_ID, MAX_NAME_BYTES,
     MAX_SHORT_ADDRESS,
 };
-use dali2rust_rules_model::refs::instance_type;
 use dali2rust_rules_model::{
     CompileError, DeviceRef, GroupRef, InputDeviceRef, InputGroupSelector, InputRef,
     InputSelector, LampRef, LightTarget,

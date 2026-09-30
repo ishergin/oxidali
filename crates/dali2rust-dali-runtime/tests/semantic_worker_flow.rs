@@ -18,6 +18,7 @@ use dali2rust_domain::dali::frame::ForwardFrame;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::ses::DaliSession;
 use dali2rust_domain::dali::types::DaliAddress;
+use dali2rust_domain::dali::dev103::instance_type;
 use dali2rust_domain::registry::{
     AdapterSnapshot, InputInstanceTypeReadPort, RegistryReadPort, VirtualLampSnapshot,
 };
@@ -1013,15 +1014,13 @@ fn a_passive_controller_refuses_a_feedback_drive_on_the_confirmation() {
 const SENSOR_SHORT: u8 = 5;
 const SENSOR_INSTANCE: u8 = 2;
 const BUTTON_INSTANCE: u8 = 0;
-const OCCUPANCY_TYPE: u8 = 3;
-const BUTTON_TYPE: u8 = 1;
 
 fn sensor_read_port() -> TestReadPort {
     TestReadPort {
         enabled: true,
         instance_types: HashMap::from([
-            ((0, SENSOR_SHORT, SENSOR_INSTANCE), OCCUPANCY_TYPE),
-            ((0, SENSOR_SHORT, BUTTON_INSTANCE), BUTTON_TYPE),
+            ((0, SENSOR_SHORT, SENSOR_INSTANCE), instance_type::OCCUPANCY),
+            ((0, SENSOR_SHORT, BUTTON_INSTANCE), instance_type::PUSH_BUTTON),
         ]),
         ..Default::default()
     }

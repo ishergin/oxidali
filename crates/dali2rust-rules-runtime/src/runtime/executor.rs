@@ -10,7 +10,7 @@ use dali2rust_contracts::msg::{
     SceneApplyExecuteCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_rules_model::refs::instance_type;
+use dali2rust_domain::dali::dev103::instance_type;
 use dali2rust_rules_model::{InputRef, LightTarget};
 
 use crate::runtime::engine::{Effect, LightVerb, WorldSnapshot};
