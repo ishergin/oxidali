@@ -14,7 +14,9 @@ use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::ses::DaliSession;
 use dali2rust_domain::dali::types::DaliAddress;
-use dali2rust_domain::registry::{AdapterSnapshot, RegistryReadPort, VirtualLampSnapshot};
+use dali2rust_domain::registry::{
+    AdapterSnapshot, InputInstanceTypeReadPort, RegistryReadPort, VirtualLampSnapshot,
+};
 use dali2rust_test_support::{hold_the_events_ingress_full, recv_event_matching, try_wait_until};
 
 const TAPPED_EVENTS: &[&str] = &[
@@ -141,13 +143,15 @@ struct EnabledAdapter {
     policy_armed: bool,
 }
 
+impl InputInstanceTypeReadPort for EnabledAdapter {
+    fn input_instance_type(&self, _adapter_id: u8, _short: u8, _instance: u8) -> Option<u8> {
+        None
+    }
+}
+
 impl RegistryReadPort for EnabledAdapter {
     fn application_controller_active(&self) -> bool {
         true
-    }
-
-    fn input_instance_type(&self, _adapter_id: u8, _short: u8, _instance: u8) -> Option<u8> {
-        None
     }
 
     fn virtual_lamp_snapshot(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> VirtualLampSnapshot {

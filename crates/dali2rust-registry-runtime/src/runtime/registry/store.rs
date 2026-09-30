@@ -535,15 +535,6 @@ impl RegistryReadPort for RegistryStore {
         self.read_inner().dali_settings.application_active
     }
 
-    fn input_instance_type(
-        &self,
-        adapter_id: u8,
-        short_address: u8,
-        instance_number: u8,
-    ) -> Option<u8> {
-        RegistryStore::input_instance_type(self, adapter_id, short_address, instance_number)
-    }
-
     fn virtual_lamp_snapshot(
         &self,
         adapter_id: u8,

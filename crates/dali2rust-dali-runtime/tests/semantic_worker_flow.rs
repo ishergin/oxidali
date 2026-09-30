@@ -18,7 +18,9 @@ use dali2rust_domain::dali::frame::ForwardFrame;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::ses::DaliSession;
 use dali2rust_domain::dali::types::DaliAddress;
-use dali2rust_domain::registry::{AdapterSnapshot, RegistryReadPort, VirtualLampSnapshot};
+use dali2rust_domain::registry::{
+    AdapterSnapshot, InputInstanceTypeReadPort, RegistryReadPort, VirtualLampSnapshot,
+};
 
 fn setpoint(level: u8) -> LightSetpoint {
     LightSetpoint {
@@ -114,13 +116,15 @@ struct TestReadPort {
     instance_types: HashMap<(u8, u8, u8), u8>,
 }
 
+impl InputInstanceTypeReadPort for TestReadPort {
+    fn input_instance_type(&self, adapter_id: u8, short: u8, instance: u8) -> Option<u8> {
+        self.instance_types.get(&(adapter_id, short, instance)).copied()
+    }
+}
+
 impl RegistryReadPort for TestReadPort {
     fn application_controller_active(&self) -> bool {
         !self.passive
-    }
-
-    fn input_instance_type(&self, adapter_id: u8, short: u8, instance: u8) -> Option<u8> {
-        self.instance_types.get(&(adapter_id, short, instance)).copied()
     }
 
     fn virtual_lamp_snapshot(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> VirtualLampSnapshot {
