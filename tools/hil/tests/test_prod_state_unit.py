@@ -591,11 +591,11 @@ class _Overrides:
         self.records[short] = body["device_type_override"]
 
 
-def test_the_override_probe_writes_only_a_refused_widening_to_a_lamp_it_may_not_write():
+def test_the_override_probe_writes_nothing_to_a_lamp_the_run_may_not_write():
     owner = _Overrides()
-    with pytest.raises(pytest.skip.Exception, match=r"SA1 is not a lamp of HIL_LAMP_SHORTS"):
+    with pytest.raises(pytest.skip.Exception, match=r"no lamp of HIL_LAMP_SHORTS"):
         test_attributes.test_a_widening_device_type_override_is_refused(owner, None)
-    assert owner.patches == [(1, {"device_type_override": "dt8_color"})]
+    assert owner.patches == []
     allowed = _Overrides(allowed={2})
     test_attributes.test_a_widening_device_type_override_is_refused(allowed, None)
     assert allowed.patches == [(2, {"device_type_override": "dt8_color"}),
