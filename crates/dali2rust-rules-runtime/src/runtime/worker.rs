@@ -48,9 +48,6 @@ pub struct RulesWorkerCounters {
     pub effects_ingress_rejected: AtomicU32,
     pub effects_skipped_dark: AtomicU32,
     pub effects_unbound: AtomicU32,
-    pub hcl_hold_unmapped: AtomicU32,
-    pub hcl_schedule_unmapped: AtomicU32,
-    pub input_action_unmapped: AtomicU32,
     pub log_lines: AtomicU32,
     pub activations_published: AtomicU32,
 }

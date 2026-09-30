@@ -4,8 +4,6 @@
 [`README.md`](README.md), REST-контракт — в
 [`../../rest-api/resources/rules.md`](../../rest-api/resources/rules.md), решения —
 в [`ADR-016`](../../../architecture/decisions/ADR-016-input-devices-and-rule-engine.md).
-Глагол, который разбирается, но пока не имеет носителя на шине, помечен ниже
-«не исполняется»: движок считает его в диагностике и ничего не делает.
 
 Грамматика ниже — это `LANG_RULES_V1 = 1`, крейт `dali2rust-rules-lang`. Что канон —
 исходный текст с комментариями и что язык заменяем без правки движка —

@@ -1119,13 +1119,9 @@ fn every_bus_landing_reaches_the_bus_as_declared() {
     }
 }
 
-fn unmapped_counter(counters: &RulesWorkerCounters, name: &str) -> u32 {
-    use std::sync::atomic::Ordering;
+fn landing_counter(counters: &RulesWorkerCounters, name: &str) -> u32 {
     match name {
-        "hcl_hold_unmapped" => counters.hcl_hold_unmapped.load(Ordering::Relaxed),
-        "hcl_schedule_unmapped" => counters.hcl_schedule_unmapped.load(Ordering::Relaxed),
-        "input_action_unmapped" => counters.input_action_unmapped.load(Ordering::Relaxed),
-        "log_lines" => counters.log_lines.load(Ordering::Relaxed),
+        "log_lines" => counters.log_lines.load(std::sync::atomic::Ordering::Relaxed),
         other => panic!("LANDINGS names a counter this test cannot read: {other}"),
     }
 }
@@ -1139,7 +1135,7 @@ fn every_counted_landing_moves_its_counter() {
         let (seen, counters) = run_landing(kind, snippet);
         assert!(seen.is_empty(), "{kind}: published {seen:?}");
         assert!(
-            unmapped_counter(&counters, counter) > 0,
+            landing_counter(&counters, counter) > 0,
             "{kind}: `{counter}` did not move"
         );
     }
@@ -1240,11 +1236,6 @@ fn a_scene_recall_on_a_lamp_is_one_recall_scoped_to_that_lamp() {
         (cmd.scope, cmd.virtual_lamp_id, cmd.scene_id),
         (dali2rust_contracts::msg::DaliTargetScope::VirtualLamp, 6, 3),
         "the DALI worker resolves the lamp to its short address, as it does for target-state"
-    );
-    assert_eq!(
-        h.counters.input_action_unmapped.load(std::sync::atomic::Ordering::Relaxed),
-        0,
-        "a lamp recall is carried now, not counted as an input action without a carrier"
     );
 }
 

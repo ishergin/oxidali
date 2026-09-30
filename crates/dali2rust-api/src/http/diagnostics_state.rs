@@ -177,9 +177,6 @@ pub struct RulesWorkerDto {
     pub effects_published: u32,
     pub effects_ingress_rejected: u32,
     pub effects_skipped_dark: u32,
-    pub hcl_hold_unmapped: u32,
-    pub hcl_schedule_unmapped: u32,
-    pub input_action_unmapped: u32,
     pub log_lines: u32,
     pub activations_published: u32,
 }
@@ -421,8 +418,7 @@ declare_widest_dtos! {
     RulesWorkerDto {
         commits_applied, commits_rejected, enable_toggles, hydrate_failed,
         persist_failed, ignored_commands, effects_published, effects_ingress_rejected,
-        effects_skipped_dark, hcl_hold_unmapped, hcl_schedule_unmapped,
-        input_action_unmapped, log_lines, activations_published,
+        effects_skipped_dark, log_lines, activations_published,
     }
     ProjectorDto {
         runtime_updates_published, runtime_updates_retried,

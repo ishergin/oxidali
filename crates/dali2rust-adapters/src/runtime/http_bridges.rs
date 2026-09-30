@@ -280,8 +280,7 @@ declare_counter_mapping! {
     rules_worker_dto(c: dali2rust_rules_runtime::RulesWorkerCounters) -> RulesWorkerDto {
         commits_applied, commits_rejected, enable_toggles, hydrate_failed,
         persist_failed, ignored_commands, effects_published, effects_ingress_rejected,
-        effects_skipped_dark, hcl_hold_unmapped, hcl_schedule_unmapped,
-        input_action_unmapped, log_lines, activations_published,
+        effects_skipped_dark, log_lines, activations_published,
     }
 
     projector_dto(c: dali2rust_fanout_runtime::ProjectorCounters) -> ProjectorDto {

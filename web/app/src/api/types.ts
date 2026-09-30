@@ -785,9 +785,6 @@ export type RulesWorkerCounters = {
   effects_published: number
   effects_ingress_rejected: number
   effects_skipped_dark: number
-  hcl_hold_unmapped: number
-  hcl_schedule_unmapped: number
-  input_action_unmapped: number
   log_lines: number
   activations_published: number
 }
