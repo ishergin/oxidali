@@ -10,10 +10,12 @@ use dali2rust_test_support::wait_until;
 use serde_json::{json, Value};
 
 use crate::steps::groups_steps::bind_discovered_vl1;
-use crate::steps::physical_devices_steps::{
-    fetch_json, script_discovery_with_features, script_staged_dtrs, special_frame, standard_frame,
-};
+use crate::steps::frames::{special_frame, standard_frame};
+use crate::steps::physical_devices::discovery_scripts::script_discovery_with_features;
+use crate::steps::physical_devices::write_scripts::script_staged_dtrs;
+use crate::steps::polling::fetch_json;
 use crate::DaliWorld;
+use crate::steps::wire::{command_address, go_to_scene};
 use crate::steps::{assert_result_skips_lamp, last_json};
 
 const DT8_SET_TEMPERATURE_TC: u8 = 231;
@@ -275,7 +277,7 @@ async fn given_scene_named(world: &mut DaliWorld, scene_id: u8, name: String) {
     patch_scene_name(world, scene_id, &name);
 }
 
-// SCN-010 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 SYS-211 SYS-213 SYS-241 SCN-040 SCN-050 ADP-026 SYS-251 SYS-252 SYS-253
+// SCN-010 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 SYS-211 SYS-213 SYS-241 SCN-040 SCN-050 ADP-026 SYS-251 SYS-252 SYS-253 RULE-031 RULE-033 RULE-036 RULE-038
 #[given(regex = r"^adapter 0 scene (\d+) desired row for virtual lamp (\d+) has level (\d+)$")]
 async fn given_desired_row_level(world: &mut DaliWorld, scene_id: u8, virtual_lamp_id: u8, level: u8) {
     patch_scene_matrix_row(world, scene_id, virtual_lamp_id, level_desired(level));
@@ -367,7 +369,7 @@ async fn given_discovered_rgbwaf_capable_vl1(world: &mut DaliWorld) {
     bind_discovered_vl1(world);
 }
 
-// SCN-060 SCN-062 SCN-063 REG-031 SYS-211 SYS-213 SYS-241 SYS-251 SYS-252 SYS-253
+// SCN-060 SCN-062 SCN-063 REG-031 SYS-211 SYS-213 SYS-241 SYS-251 SYS-252 SYS-253 RULE-031 RULE-033 RULE-036 RULE-038
 #[given(regex = r"^adapter 0 scene (\d+) write for short (\d+) level (\d+) is scripted$")]
 async fn given_scene_write_scripted(world: &mut DaliWorld, scene_id: u8, short: u8, level: u8) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -421,7 +423,7 @@ async fn given_scene_colours_audit_script(
 ) {
     let mock = world.dali_mock().lock().expect("mock lock");
     mock.clear();
-    crate::steps::physical_devices_steps::script_attribute_read_prelude(&mock, short);
+    crate::steps::physical_devices::attribute_read_scripts::script_attribute_read_prelude(&mock, short);
     for s in 0..16u8 {
         if s == scene {
             script_scene_colour_verify(&mock, short, s, level, Some(mirek));
@@ -777,6 +779,20 @@ async fn given_broadcast_recall_script(world: &mut DaliWorld, scene_id: u8) {
     );
 }
 
+// RULE-030
+#[given(regex = r"^the DALI mock transport fails the next broadcast go-to-scene (\d+) frame$")]
+async fn given_broadcast_recall_fails(world: &mut DaliWorld, scene_id: u8) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    mock.expect_forward_frame_send_error(
+        DaliCommand::Standard {
+            address: DaliAddress::Broadcast,
+            command: StandardCommand::GoToScene { scene: scene_id },
+        }
+        .to_forward_frame()
+        .raw(),
+    );
+}
+
 // SCN-080
 #[then(regex = r"^the DALI mock transport should have sent only a broadcast go-to-scene (\d+) frame$")]
 async fn then_only_broadcast_recall_frame(world: &mut DaliWorld, scene_id: u8) {
@@ -801,6 +817,14 @@ async fn then_only_group_recall_frame(world: &mut DaliWorld, group_id: u8, scene
     .raw();
     let frames = world.dali_mock().lock().expect("mock lock").sent_frames();
     assert_eq!(frames, vec![expected], "unexpected forward frames: {frames:?}");
+}
+
+// RULE-031
+#[then(regex = r"^the DALI mock transport should have sent only a short (\d+) go-to-scene (\d+) frame$")]
+async fn then_only_short_recall_frame(world: &mut DaliWorld, short: u8, scene_id: u8) {
+    let expected = u16::from_be_bytes([command_address(short), go_to_scene(scene_id)]);
+    let frames = world.dali_mock().lock().expect("mock lock").sent_frames();
+    assert_eq!(frames, vec![expected], "expected 0AAAAAA1 + GO TO SCENE only: {frames:04X?}");
 }
 
 fn scene_level_pointer(scene: u8) -> String {

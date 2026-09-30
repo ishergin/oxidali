@@ -173,19 +173,10 @@ fn reject_fade(bag: &mut ArgBag) -> Result<(), CompileError> {
     }
 }
 
-pub(crate) const HOLD_HCL_FALSE_REFUSAL: &str =
-    "hold_hcl=false is not implemented: the flag has no carrier to the \
-     registry's commit_source, so a light write from a rule always suspends \
-     the schedule for that target (ISSUE-96). Drop the modifier — the default \
-     hold_hcl=true is what happens";
-
 fn hold_hcl_of(bag: &mut ArgBag) -> Result<Option<bool>, CompileError> {
     match bag.take_named("hold_hcl") {
         None => Ok(None),
-        Some(CallArg { value: ArgValue::Bool(true), .. }) => Ok(Some(true)),
-        Some(CallArg { value: ArgValue::Bool(false), pos, .. }) => {
-            Err(pos.err(HOLD_HCL_FALSE_REFUSAL))
-        }
+        Some(CallArg { value: ArgValue::Bool(hold), .. }) => Ok(Some(hold)),
         Some(arg) => Err(arg.pos.err("hold_hcl must be true or false")),
     }
 }

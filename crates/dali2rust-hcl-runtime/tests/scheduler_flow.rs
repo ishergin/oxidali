@@ -214,6 +214,7 @@ fn commit_event(
                 value_source: Some(value_source),
                 ..Default::default()
             },
+            commit_holds_hcl: true,
         },
     )
 }
@@ -890,6 +891,44 @@ fn a_poller_readback_leaves_the_schedule_running() {
 }
 
 #[test]
+fn a_rule_commit_that_does_not_hold_leaves_the_schedule_running() {
+    let registry = StubRegistry {
+        schedules: vec![schedule(
+            "evening",
+            vec![group_target(0, &[3, 5])],
+            vec![point(0, HclLevelMode::Absolute, Some(80), None)],
+        )],
+        membership: vec![(1, 1u16 << 3), (2, 1u16 << 5)],
+    };
+    let harness = spawn_harness(registry, Arc::new(StubClock::at(600)));
+    harness.wait_for_commands(2);
+
+    let level = dali2rust_contracts::msg::LightSetpoint::from_level(200, None);
+    let mut spared = commit_event(1, RuntimeSource::Rules, level);
+    let dali2rust_contracts::msg::BusEventPayload::RuntimeStateChangedEvent(body) =
+        &mut spared.payload
+    else {
+        unreachable!("commit_event builds a runtime commit");
+    };
+    body.commit_holds_hcl = false;
+    assert_eq!(
+        harness.publisher.try_publish(BusChannel::Events, BusFrame::event(spared)),
+        PublishResult::Queued
+    );
+    harness.publish_commit_on_lamp(2, RuntimeSource::Rules);
+    wait_for_overrides_started(&harness, 1);
+
+    let view = harness.override_view("evening");
+    let groups: Vec<Option<u8>> = view.targets.iter().map(|target| target.group_id).collect();
+    assert_eq!(
+        groups,
+        vec![Some(5)],
+        "the rule that held stood group 5 down; the one that said hold_hcl false left group 3 driven"
+    );
+    assert_eq!(harness.counters.overrides_started.load(Ordering::Relaxed), 1);
+}
+
+#[test]
 fn a_manual_commit_before_the_schedule_ran_leaves_it_running() {
     let membership = 1u16 << 1;
     let registry = StubRegistry {
@@ -1253,5 +1292,75 @@ fn a_tick_that_is_publishing_keeps_beating() {
     assert!(
         harness.counters.command_timeouts.load(Ordering::Relaxed) >= 1,
         "the window has to be built from real unanswered commands"
+    );
+}
+
+const MOSCOW_LATITUDE_MICRODEG: i32 = 55_755_800;
+const MOSCOW_LONGITUDE_MICRODEG: i32 = 37_617_300;
+
+fn group_levels(commands: &[BusCommandPayload]) -> Vec<(u8, Option<u8>)> {
+    commands
+        .iter()
+        .filter_map(|payload| match payload {
+            BusCommandPayload::DaliSetTargetStateCommand(body)
+                if body.scope == DaliTargetScope::Group =>
+            {
+                Some((body.group_id, body.setpoint.level))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_sunrise_point_resolves_from_the_location_next_to_a_schedule_with_no_state_yet() {
+    let located = HclScheduleView {
+        latitude_microdeg: Some(MOSCOW_LATITUDE_MICRODEG),
+        longitude_microdeg: Some(MOSCOW_LONGITUDE_MICRODEG),
+        ..schedule(
+            "dawn",
+            vec![group_target(0, &[2])],
+            vec![
+                point(0, HclLevelMode::Absolute, Some(40), None),
+                HclSchedulePointRow {
+                    time_ref: HclTimeRef::Sunrise,
+                    ..point(0, HclLevelMode::Absolute, Some(200), None)
+                },
+            ],
+        )
+    };
+    let not_yet = schedule(
+        "late",
+        vec![group_target(0, &[4])],
+        vec![point(1380, HclLevelMode::Absolute, Some(90), None)],
+    );
+    let clock = Arc::new(StubClock::at(180));
+    let harness = spawn_harness(
+        StubRegistry {
+            schedules: vec![located, not_yet],
+            ..StubRegistry::default()
+        },
+        Arc::clone(&clock),
+    );
+
+    let before_sunrise = harness.wait_for_commands(1);
+    assert_eq!(
+        group_levels(&before_sunrise),
+        vec![(2, Some(40))],
+        "03:00 on the solstice is before a Moscow sunrise: the midnight point holds"
+    );
+
+    clock.set_local(720, YEAR_DAY);
+    let after_sunrise = harness.wait_for_commands(2);
+    assert_eq!(
+        group_levels(&after_sunrise[1..]),
+        vec![(2, Some(200))],
+        "by noon the sunrise point, placed by the astronomy, has passed"
+    );
+
+    harness.wait_for_ticks(2);
+    assert!(
+        group_levels(&harness.commands()).iter().all(|(group, _)| *group != 4),
+        "a schedule whose only point is still ahead sends nothing"
     );
 }

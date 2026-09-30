@@ -578,6 +578,7 @@ mod tests {
             state_observation: observation(),
             commit_source: RuntimeSource::Api,
             commit_dimensions: cct_setpoint().dimensions(),
+            commit_holds_hcl: true,
         })
     }
 
@@ -870,6 +871,7 @@ mod tests {
             state_observation: observation,
             commit_source: RuntimeSource::Api,
             commit_dimensions: cct_setpoint().dimensions(),
+            commit_holds_hcl: true,
         });
         let (_, frame) = project_event(&ev).into_iter().next().unwrap();
         let v: Value = serde_json::from_str(&frame).unwrap();
@@ -895,6 +897,7 @@ mod tests {
                 color: Some(ColorValue::default()),
             }
             .dimensions(),
+            commit_holds_hcl: true,
         });
         let (_, frame) = project_event(&ev).into_iter().next().unwrap();
         let v: Value = serde_json::from_str(&frame).unwrap();

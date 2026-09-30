@@ -6,6 +6,7 @@ pub mod commissioning_steps;
 pub mod contracts_steps;
 pub mod diagnostic_steps;
 pub mod fanout_steps;
+pub mod frames;
 pub mod firmware_steps;
 pub mod groups_steps;
 pub mod hcl_steps;
@@ -13,7 +14,8 @@ pub mod input_devices_steps;
 pub mod rules_steps;
 pub mod mqtt_steps;
 pub mod operations_steps;
-pub mod physical_devices_steps;
+pub mod physical_devices;
+pub mod polling;
 pub mod poller_steps;
 pub mod policies_steps;
 pub mod redundancy_steps;
@@ -68,5 +70,5 @@ pub fn await_config_write(world: &mut DaliWorld, what: &str) {
         .unwrap_or_else(|| panic!("{what}: no response"))
         .status;
     assert_eq!(status, 202, "{what} should be accepted");
-    physical_devices_steps::wait_for_operation_status(world, "succeeded");
+    polling::wait_for_operation_status(world, "succeeded");
 }

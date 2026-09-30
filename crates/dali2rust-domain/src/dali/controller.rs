@@ -11,6 +11,14 @@ pub enum Frame24Fault {
     Preempted,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadbackWorkaround {
+    GroupsCorrected,
+    ColourFeaturesCorrected,
+    ExtendedFadeCorrected,
+    ProgramRepair,
+}
+
 pub trait DaliProductController {
     type Error: core::fmt::Debug;
 
@@ -112,5 +120,9 @@ pub trait DaliApplicationController: DaliProductController {
 
     fn transaction_exempt<R>(&mut self, run: impl FnOnce(&mut Self) -> R) -> R {
         run(self)
+    }
+
+    fn note_workaround(&mut self, workaround: ReadbackWorkaround) {
+        let _ = workaround;
     }
 }

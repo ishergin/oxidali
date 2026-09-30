@@ -149,11 +149,8 @@ The session-scoped autouse fixture `production_state` (`hil/prod_state.py`) runs
 for every session that reaches the controller:
 
 - **Before** anything else it primes the registry with an attribute read of every
-  gear (runtime state is unknown after a reboot) and snapshots controller
-  configuration (settings, rules, HCL schedules, device metadata, virtual-lamp
-  bindings, group and scene matrices), gear configuration (fade, power-on and
-  system-failure level, min/max, dimming curve, the gear's own group membership and
-  scene levels) and what every lamp shows.
+  gear (runtime state is unknown after a reboot) and snapshots the controller's and the
+  gear's configuration (the fields it names, below) and what every lamp shows.
 - **During** the session every request `Client` sends and every frame of the WB master
   is noted, by resource and patched field, in a write log next to the snapshot; an MQTT
   command, a forged input event, a rule run, a schedule, clock or role change and a
@@ -175,8 +172,7 @@ for every session that reaches the controller:
   left virtual-gear session ([Virtual gear](#virtual-gear)), then restores every open
   session, newest first, through its own log; without a log it only reports, and `--all`
   writes the whole snapshot back — under read-only never a schedule, override or zone.
-  Every later session ends red until then. `hil state save` and `hil state diff [FILE]`
-  work by hand.
+  Every later session ends red until then.
 - Under `HIL_LAMPS_READ_ONLY=1` the light is reported, never driven — by this
   fixture, by `state_snapshot` and by `hil state restore`. A lamp outside
   `HIL_LAMP_SHORTS` is never driven back, and the lamp guard refuses a repair of its
@@ -311,10 +307,13 @@ ladder and the runtime heap floor. **Classify a red run from this section, not f
 
 Changing a budget against its direction needs a dated measurement line in the file.
 `-1` means "never measured with a counter attached": reported, not gated — replace it
-with the first instrumented figure. A retry is counted, never silent; a dead
-instrument (a blind colour sample) is charged to no budget. A red test keeps its
-strict assert ([05](../../documentation/architecture/05-testing-and-bdd.md)); the budget
-carries the rate the installation imposes.
+with the first instrumented figure. A `watched` row counts what a workaround changed — a
+re-read that disagreed with the first answer, a repair spent after a wrong one — and has
+no budget line: it never gates, and the workaround goes once it stays at zero. A retry is
+counted, never silent; a dead instrument (a blind colour sample) is charged to no budget.
+A red test keeps its strict assert
+([05](../../documentation/architecture/05-testing-and-bdd.md)); the budget carries the
+rate the installation imposes.
 
 ## CLI (`.venv/bin/hil`)
 

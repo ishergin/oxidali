@@ -7,7 +7,6 @@ cast_possible_wrap
 cast_sign_loss
 derivable_impls
 doc_markdown
-field_reassign_with_default
 fn_params_excessive_bools
 if_not_else
 ignored_unit_patterns

@@ -3,7 +3,10 @@ mod support;
 use std::time::Duration;
 
 use dali2rust_bus::BusId;
-use dali2rust_contracts::msg::{LightSetpoint, PowerState, RuntimeRegistryUpdateEntry};
+use dali2rust_contracts::msg::{
+    fixed_text_64, LightSetpoint, PowerState, RuntimeRegistryUpdateEntry,
+    VirtualLampConfigUpdateCommand, VirtualLampUnbindCommand,
+};
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_test_support::wait_until;
 use support::{publish_cmd, seed_bound_group_member, spawn_registry_stack};
@@ -160,4 +163,60 @@ fn a_lamp_switched_on_without_a_level_reads_on() {
     };
     wait_until(|| is_on(&stack), WAIT);
     assert!(is_on(&stack), "the lamp the rules engine reads is on");
+}
+
+const NAMED_ONLY: u8 = 13;
+
+fn lamp_bound(stack: &support::RegistryTestStack, lamp_id: u8) -> Option<bool> {
+    stack
+        .store
+        .rules_lamp_rows()
+        .into_iter()
+        .find(|row| row.1 == u16::from(lamp_id))
+        .map(|row| row.6)
+}
+
+fn api_command<P>(stack: &support::RegistryTestStack, correlation_id: u64, payload: P)
+where
+    dali2rust_contracts::msg::BusCommandPayload: From<P>,
+{
+    publish_cmd(
+        &stack.publisher,
+        dali2rust_contracts::bus::command_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            correlation_id,
+            BusId::default().0,
+            Some(dali2rust_contracts::msg::Origin::Api),
+            payload,
+        ),
+    );
+}
+
+#[test]
+fn a_lamp_reads_bound_only_while_its_binding_stands() {
+    let stack = spawn_registry_stack(1, 32);
+    api_command(
+        &stack,
+        40,
+        VirtualLampConfigUpdateCommand {
+            adapter_id: 0,
+            virtual_lamp_id: NAMED_ONLY,
+            patch_mask: VirtualLampConfigUpdateCommand::PATCH_NAME,
+            name: fixed_text_64("hall"),
+            ha_entity_enabled: false,
+        },
+    );
+    wait_until(|| lamp_bound(&stack, NAMED_ONLY).is_some(), WAIT);
+    assert_eq!(lamp_bound(&stack, NAMED_ONLY), Some(false), "a lamp created by its name alone");
+
+    seed_bound_group_member(&stack, LIT.0, LIT.1, LIT.2, 10);
+    assert_eq!(lamp_bound(&stack, LIT.0), Some(true), "a lamp once it is bound");
+
+    api_command(&stack, 41, VirtualLampUnbindCommand { adapter_id: 0, virtual_lamp_id: LIT.0 });
+    wait_until(|| lamp_bound(&stack, LIT.0) == Some(false), WAIT);
+    assert_eq!(
+        lamp_bound(&stack, LIT.0),
+        Some(false),
+        "the lamp stays in the world after its binding is removed, and reads unbound"
+    );
 }

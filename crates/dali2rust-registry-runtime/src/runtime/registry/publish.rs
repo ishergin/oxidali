@@ -333,6 +333,13 @@ pub(crate) fn publish_adapter_settings_changed(
     );
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct RuntimeCommitMeta {
+    pub(crate) source: dali2rust_contracts::msg::RuntimeSource,
+    pub(crate) dimensions: dali2rust_contracts::msg::SetpointDimensions,
+    pub(crate) holds_hcl: bool,
+}
+
 #[allow(clippy::too_many_arguments, reason = "one event, one call site; a struct here would only rename the fields")]
 pub(crate) fn publish_runtime_state_changed(
     publisher: &BusPublisher,
@@ -343,8 +350,7 @@ pub(crate) fn publish_runtime_state_changed(
     short_address: Option<u8>,
     setpoint: &LightSetpoint,
     observation: &dali2rust_contracts::msg::RuntimeObservation,
-    commit_source: dali2rust_contracts::msg::RuntimeSource,
-    commit_dimensions: dali2rust_contracts::msg::SetpointDimensions,
+    commit: RuntimeCommitMeta,
 ) {
     let ev = event_envelope(
         SOURCE_ID_UNSPECIFIED,
@@ -357,8 +363,9 @@ pub(crate) fn publish_runtime_state_changed(
             short_address,
             state_setpoint: setpoint.clone(),
             state_observation: observation.clone(),
-            commit_source,
-            commit_dimensions,
+            commit_source: commit.source,
+            commit_dimensions: commit.dimensions,
+            commit_holds_hcl: commit.holds_hcl,
         },
     );
     publish_or_drop(

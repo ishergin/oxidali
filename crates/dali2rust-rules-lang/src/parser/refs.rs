@@ -1,7 +1,8 @@
 use crate::cursor::Cursor;
 use crate::lexer::{Pos, TokenKind};
 use dali2rust_rules_model::limits::{
-    MAX_INSTANCE_GROUP, MAX_INSTANCE_NUMBER, MAX_NAME_BYTES, MAX_SHORT_ADDRESS,
+    MAX_GROUP_ID, MAX_INSTANCE_GROUP, MAX_INSTANCE_NUMBER, MAX_LAMP_ID, MAX_NAME_BYTES,
+    MAX_SHORT_ADDRESS,
 };
 use dali2rust_rules_model::{
     CompileError, DeviceRef, GroupRef, InputDeviceRef, InputGroupSelector, InputRef,
@@ -72,6 +73,13 @@ fn check_scope(
     }
 }
 
+fn id_in_range(id: i64, pos: Pos, what: &str, max: u8) -> Result<u16, CompileError> {
+    u16::try_from(id)
+        .ok()
+        .filter(|id| *id <= u16::from(max))
+        .ok_or_else(|| pos.err(format!("{what} {id} out of range 0..={max}")))
+}
+
 pub fn lamp_ref(c: &mut Cursor<'_>) -> Result<LampRef, CompileError> {
     c.expect(&TokenKind::LParen, "`(` after lamp")?;
     let target = name_or_id(c, "lamp")?;
@@ -86,10 +94,8 @@ pub fn lamp_ref(c: &mut Cursor<'_>) -> Result<LampRef, CompileError> {
             Ok(lamp)
         }
         NameOrId::Id(id, pos) => {
-            if !(0..=i64::from(u16::MAX)).contains(&id) {
-                return Err(pos.err(format!("lamp id {id} out of range")));
-            }
-            Ok(LampRef { adapter_id: scope_or_primary(c, explicit), id: id as u16 })
+            let id = id_in_range(id, pos, "lamp id", MAX_LAMP_ID)?;
+            Ok(LampRef { adapter_id: scope_or_primary(c, explicit), id })
         }
     }
 }
@@ -108,10 +114,8 @@ pub fn group_ref(c: &mut Cursor<'_>) -> Result<GroupRef, CompileError> {
             Ok(group)
         }
         NameOrId::Id(id, pos) => {
-            if !(0..=i64::from(u16::MAX)).contains(&id) {
-                return Err(pos.err(format!("group id {id} out of range")));
-            }
-            Ok(GroupRef { adapter_id: scope_or_primary(c, explicit), id: id as u16 })
+            let id = id_in_range(id, pos, "group id", MAX_GROUP_ID)?;
+            Ok(GroupRef { adapter_id: scope_or_primary(c, explicit), id })
         }
     }
 }

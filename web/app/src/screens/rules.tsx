@@ -9,8 +9,60 @@ import type {
   RulesParseResult,
 } from '../api/types'
 import { connection, subscribe, type WsChannel, type WsEvent } from '../api/ws'
-import { deviceClock, timestamp, UNANCHORED_CLOCK_HINT } from '../format'
+import { ADAPTER, deviceClock, timestamp, UNANCHORED_CLOCK_HINT } from '../format'
+import { freshSource, settle } from '../fresh-source'
 import { usePoll } from '../hooks'
+import {
+  acceptable,
+  acceptEdit,
+  applyEdit,
+  byIdHint,
+  clampActive,
+  completionAt,
+  idTag,
+  keyAction,
+  keyTarget,
+  lineAt,
+  listAfterCaret,
+  listAfterInput,
+  MAX_NAME_BYTES,
+  NAMES_FRESH_MS,
+  placeList,
+  rankSuggestions,
+  registryNames,
+  scrollToShow,
+  type CompletionContext,
+  type CompletionList,
+  type Edit,
+  type KeyInput,
+  type NameKind,
+  type Placement,
+  type RegistryNames,
+  type Suggestion,
+  type ByIdReason,
+} from '../rule-completion'
+import {
+  currentScope,
+  editInScope,
+  errorRow,
+  insertBlock,
+  insertionPoint,
+  prependBlock,
+  ruleText,
+  scopeRule,
+  type RuleScope,
+} from '../rule-extents'
+import {
+  appendRow,
+  attachActivation,
+  feedRow,
+  feedSkeleton,
+  nextSettleAt,
+  rowVerdict,
+  type FeedRow,
+  type InputFeedPayload,
+  type RuleActivationPayload,
+} from '../rule-feed'
 import { errorMessage, mutate, notify, opCommitted, trackOp } from '../toast'
 
 const MAX_RULES_SOURCE_BYTES = 12_240
@@ -19,10 +71,31 @@ const PARSE_DEBOUNCE_MS = 500
 
 const LINE_HEIGHT_PX = 20
 const EDITOR_PAD_PX = 12
+const EDITOR_PAD_X_PX = 14
 
-const FEED_CAPACITY = 100
+const NAMES_RECONCILE_MS = 60_000
+
+const SUGGEST_ID = 'rule-suggest'
+
+const KIND_LABEL: Record<NameKind, string> = {
+  lamp: 'Virtual lamps',
+  group: 'Groups',
+  input: 'Input devices',
+  schedule: 'HCL schedules',
+}
+
+const BY_ID_WHY: Record<ByIdReason, string> = {
+  quote: 'The name has a quote, which a rule string cannot hold',
+  line_break: 'The name has a line break, which a rule string cannot hold',
+  too_long: `The name is longer than the ${MAX_NAME_BYTES} bytes a rule string holds`,
+  ambiguous: 'Several entries share this name, and the device would resolve it to any one of them',
+}
 
 const FEED_CHANNELS: WsChannel[] = ['input', 'rules']
+
+const INPUT_EVENT = 'DaliInputEventObservedEvent'
+const LIFECYCLE_EVENT = 'DaliInputDeviceLifecycleEvent'
+const ACTIVATION_EVENT = 'RulesActivationEvent'
 
 const UTF8 = new TextEncoder()
 
@@ -119,76 +192,214 @@ function ruleSummary(r: RuleJson): string {
   return parts.join(' · ')
 }
 
-interface InputFeedPayload {
-  scheme?: number | null
-  short_address?: number | null
-  instance_number?: number | null
-  event?: string | null
-  event_info?: number | null
-}
-
-interface RuleActivationPayload {
-  rule_name?: string | null
-  dry?: boolean | null
-  effects?: number | null
-  partial?: number | null
-  trigger_to_publish_ms?: number | null
-}
-
-interface FeedRow {
-  seq: number
-  at: string
-  short: number | null
-  instance: number | null
-  event: string | null
-  scheme: number | null
-  info: number | null
-  lifecycle: boolean
-  atMs: number
-  rule?: string | null
-  partial?: number
-  ms?: number | null
-}
-
 const PARTIAL_REASONS: Record<number, string> = {
   1: 'partial — condition',
   2: 'partial — effect budget',
   3: 'partial — chain depth',
 }
 
-const RULE_SETTLE_MS = 1000
-
-function ruleSpans(source: string): Map<string, { from: number; to: number }> {
-  const spans = new Map<string, { from: number; to: number }>()
-  const lines = source.split('\n')
-  let name: string | null = null
-  let depth = 0
-  let from = 0
-  lines.forEach((line, i) => {
-    if (name === null) {
-      const m = /^\s*rule\s+"([^"]+)"\s*\{/.exec(line)
-      if (m) {
-        name = m[1]
-        from = i
-        depth = 0
-      }
-    }
-    if (name === null) return
-    for (const ch of line) {
-      if (ch === '{') depth += 1
-      else if (ch === '}') depth -= 1
-    }
-    if (depth <= 0) {
-      spans.set(name, { from, to: i })
-      name = null
-    }
-  })
-  return spans
+async function fetchRegistryNames(previous: RegistryNames | null): Promise<RegistryNames> {
+  const lamps = await settle(() => api.virtualLamps(ADAPTER))
+  const groups = await settle(() => api.groups(ADAPTER))
+  const inputs = await settle(() => api.inputDevices(ADAPTER))
+  const schedules = await settle(() => api.hclSchedules())
+  return registryNames(
+    {
+      lamps: lamps?.virtual_lamps ?? null,
+      groups: groups?.groups ?? null,
+      inputs: inputs?.input_devices ?? null,
+      schedules: schedules?.schedules ?? null,
+    },
+    previous,
+  )
 }
 
-function spliceRule(source: string, span: { from: number; to: number }, text: string): string {
-  const lines = source.split('\n')
-  return [...lines.slice(0, span.from), ...text.split('\n'), ...lines.slice(span.to + 1)].join('\n')
+function useRegistryNames() {
+  const [source] = useState(() => freshSource(fetchRegistryNames, Date.now, NAMES_FRESH_MS))
+  const poll = usePoll(source, NAMES_RECONCILE_MS)
+  return { data: poll.data, refresh: () => void poll.reload() }
+}
+
+let measureCtx: CanvasRenderingContext2D | null = null
+
+function textWidth(ta: HTMLTextAreaElement, text: string): number {
+  measureCtx ??= document.createElement('canvas').getContext('2d')
+  if (measureCtx === null) return 0
+  const style = getComputedStyle(ta)
+  measureCtx.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+  return measureCtx.measureText(text).width
+}
+
+function suggestPlacement(
+  ta: HTMLTextAreaElement,
+  text: string,
+  openAt: number,
+  scroll: { top: number; left: number },
+): Placement | null {
+  const { line, start } = lineAt(text, openAt)
+  return placeList({
+    x: EDITOR_PAD_X_PX + textWidth(ta, text.slice(start, openAt + 1)) - scroll.left,
+    lineTop: EDITOR_PAD_PX + line * LINE_HEIGHT_PX - scroll.top,
+    lineHeight: LINE_HEIGHT_PX,
+    viewWidth: ta.clientWidth,
+    viewHeight: ta.clientHeight,
+  })
+}
+
+function caretContext(ta: HTMLTextAreaElement | null): CompletionContext | null {
+  return ta === null ? null : completionAt(ta.value, ta.selectionStart, ta.selectionEnd)
+}
+
+function insertKeepingUndo(ta: HTMLTextAreaElement, edit: Edit): string | null {
+  ta.setSelectionRange(edit.from, edit.to)
+  if (document.execCommand('insertText', false, edit.insert)) return null
+  const next = applyEdit(ta.value, edit)
+  ta.value = next.text
+  ta.setSelectionRange(next.caret, next.caret)
+  return next.text
+}
+
+function useNameCompletion(
+  taRef: { current: HTMLTextAreaElement | null },
+  names: RegistryNames | null,
+  onOpening: () => void,
+) {
+  const [list, setList] = useState<CompletionList | null>(null)
+  const items =
+    list !== null && names !== null
+      ? rankSuggestions(list.context.prefix, names[list.context.kind])
+      : []
+  const active = list === null ? 0 : clampActive(list.active, items.length)
+
+  const open = () => {
+    const next = listAfterInput(list, caretContext(taRef.current))
+    if (next.opening) onOpening()
+    setList(next.list)
+  }
+
+  const follow = () => setList(listAfterCaret(list, caretContext(taRef.current)))
+
+  const accept = (suggestion: Suggestion | undefined): string | null => {
+    const ta = taRef.current
+    const context = caretContext(ta)
+    const ok = acceptable(list, context)
+    setList(null)
+    if (ta === null || context === null || !ok || suggestion === undefined) return null
+    return insertKeepingUndo(ta, acceptEdit(context, suggestion))
+  }
+
+  const keyDown = (e: KeyInput & { preventDefault: () => void }, visible: boolean): string | null => {
+    const action = keyAction(e, keyTarget(list, items.length, visible))
+    if (action === null) return null
+    e.preventDefault()
+    switch (action.kind) {
+      case 'open':
+        open()
+        return null
+      case 'move':
+        setList(list && { ...list, active: action.active })
+        return null
+      case 'close':
+        setList(null)
+        return null
+      case 'accept':
+        return accept(items[active])
+    }
+  }
+
+  return { list, items, active, open, follow, accept, keyDown, close: () => setList(null) }
+}
+
+function SuggestRow({
+  kind,
+  suggestion,
+  index,
+  active,
+  onPick,
+}: {
+  kind: NameKind
+  suggestion: Suggestion
+  index: number
+  active: boolean
+  onPick: (s: Suggestion) => void
+}) {
+  const { name, id, why } = suggestion
+  const tag = idTag(kind, id)
+  return (
+    <div
+      id={`${SUGGEST_ID}-${index}`}
+      role="option"
+      aria-selected={active}
+      class={`so${active ? ' on' : ''}${why !== null ? ' byid' : ''}`}
+      title={why !== null ? BY_ID_WHY[why] : undefined}
+      onMouseDown={(e) => {
+        e.preventDefault()
+        onPick(suggestion)
+      }}
+    >
+      <span class="nm">{name}</span>
+      {why !== null && id !== null ? (
+        <span class="why">by id → {byIdHint(kind, id)}</span>
+      ) : (
+        tag !== null && <span class="tag">{tag}</span>
+      )}
+    </div>
+  )
+}
+
+function SuggestList({
+  kind,
+  items,
+  active,
+  at,
+  onPick,
+}: {
+  kind: NameKind
+  items: Suggestion[]
+  active: number
+  at: Placement
+  onPick: (s: Suggestion) => void
+}) {
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const body = bodyRef.current
+    const row = body?.children[active]
+    if (!body || !(row instanceof HTMLElement)) return
+    const next = scrollToShow(row.offsetTop, row.offsetHeight, body.scrollTop, body.clientHeight)
+    if (next !== null) body.scrollTop = next
+  }, [active])
+  const vertical = at.top !== null ? { top: `${at.top}px` } : { bottom: `${at.bottom}px` }
+  const box = { left: `${at.left}px`, width: `${at.width}px`, maxHeight: `${at.maxHeight}px` }
+  return (
+    <div
+      class="suggest"
+      id={SUGGEST_ID}
+      role="listbox"
+      aria-label={KIND_LABEL[kind]}
+      style={{ ...box, ...vertical }}
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      <div class="sh">
+        <span>{KIND_LABEL[kind]}</span>
+        <span>{items.length}</span>
+      </div>
+      <div class="sb" ref={bodyRef}>
+        {items.map((s, i) => (
+          <SuggestRow
+            key={s.key}
+            kind={kind}
+            suggestion={s}
+            index={i}
+            active={i === active}
+            onPick={onPick}
+          />
+        ))}
+      </div>
+      <div class="sf">
+        <kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Enter</kbd> <kbd>Tab</kbd> insert · <kbd>Esc</kbd> close
+      </div>
+    </div>
+  )
 }
 
 export function RulesScreen() {
@@ -203,10 +414,13 @@ export function RulesScreen() {
   const [parse, setParse] = useState<RulesParseResult | null>(null)
   const [checking, setChecking] = useState(false)
   const [scrollTop, setScrollTop] = useState(0)
-  const [scoped, setScoped] = useState<string | null>(null)
+  const [scrollLeft, setScrollLeft] = useState(0)
+  const [scope, setScope] = useState<RuleScope | null>(null)
   const parseSeq = useRef(0)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const caretTouched = useRef(false)
+  const names = useRegistryNames()
+  const completion = useNameCompletion(taRef, names.data, names.refresh)
 
   const parseErr = parse !== null && 'error' in parse ? parse : null
 
@@ -234,34 +448,59 @@ export function RulesScreen() {
     return () => clearTimeout(id)
   }, [draft])
 
-  const errLine = parseErr?.line ?? null
+  const full = draft ?? doc.data?.text.source ?? ''
+  const current = currentScope(scope, full)
+  useEffect(() => {
+    if (current !== scope) setScope(current)
+  }, [current, scope])
+  const errRow = parseErr === null ? null : errorRow(parseErr.line, current)
   useEffect(() => {
     const ta = taRef.current
-    if (errLine === null || !ta) return
-    const y = EDITOR_PAD_PX + (errLine - 1) * LINE_HEIGHT_PX
+    if (errRow === null || !ta) return
+    const y = EDITOR_PAD_PX + errRow * LINE_HEIGHT_PX
     if (y < ta.scrollTop || y > ta.scrollTop + ta.clientHeight - LINE_HEIGHT_PX * 2) {
       ta.scrollTop = Math.max(0, y - ta.clientHeight / 2)
       setScrollTop(ta.scrollTop)
     }
-  }, [errLine])
+  }, [errRow])
 
   if (!doc.data) return <div class="empty">Loading rules…</div>
   const data = doc.data
   const text = data.text
   const rules = data.json.rules?.rules ?? null
   const source = text.source
-  const full = draft ?? source
-  const spans = ruleSpans(full)
-  const span = scoped === null ? null : spans.get(scoped) ?? null
-  const shown =
-    span === null ? full : full.split('\n').slice(span.from, span.to + 1).join('\n')
+  const shown = current === null ? full : ruleText(full, current.span)
   const dirty = draft !== null && draft !== source
   const drift = draft !== null && baseRev !== null && text.revision > baseRev
   const bytes = UTF8.encode(full).length
+  const suggestAt =
+    completion.list !== null && completion.items.length > 0 && taRef.current !== null
+      ? suggestPlacement(taRef.current, shown, completion.list.context.openAt, {
+          top: scrollTop,
+          left: scrollLeft,
+        })
+      : null
 
   const editDraft = (value: string) => {
     if (draft === null) setBaseRev(data.text.revision)
-    setDraft(span === null ? value : spliceRule(full, span, value))
+    if (current === null) {
+      setDraft(value)
+      return
+    }
+    const next = editInScope(current, value)
+    setScope(next)
+    setDraft(next.base)
+  }
+
+  const editWhole = (next: string) => {
+    if (draft === null) setBaseRev(data.text.revision)
+    setScope(null)
+    setDraft(next)
+  }
+
+  const pickName = (s: Suggestion) => {
+    const next = completion.accept(s)
+    if (next !== null) editDraft(next)
   }
 
   const discard = () => {
@@ -342,41 +581,15 @@ export function RulesScreen() {
     void mutate(`Rule "${r.name}"`, () => api.patchRule(r.name, !r.enabled), doc.reload)
 
   const insertSnippet = (code: string) => {
-    const current = draft ?? source
     const ta = taRef.current
-    const at = caretTouched.current && ta ? ta.selectionStart : current.length
-    const before = current.slice(0, at)
-    const after = current.slice(at)
-    const lead = before === '' || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n'
-    const tail = after === '' ? '\n' : after.startsWith('\n') ? '\n' : '\n\n'
-    editDraft(before + lead + code.trim() + tail + after)
+    const caret = caretTouched.current && ta ? ta.selectionStart : null
+    editWhole(insertBlock(full, insertionPoint(full, current, caret), code))
   }
 
   const prefill = (row: FeedRow) => {
-    const short = row.short
-    if (short === null) return
-    const inst = row.instance ?? 0
-    const ev = row.event ?? 'short_press'
-    const verb = ev === 'occupied' || ev === 'vacant' ? 'becomes' : 'is'
-    const skeleton = row.lifecycle
-      ? [
-          '# from the live feed',
-          `rule "dev ${short}: power cycled" {`,
-          `  when input device(dev=${short}) power cycled`,
-          `  do   log("TODO")`,
-          '}',
-          '',
-        ].join('\n')
-      : [
-          '# from the live feed',
-          `rule "dev ${short} / inst ${inst}: ${ev}" {`,
-          `  when input(dev=${short}, inst=${inst}) ${verb} ${ev}`,
-          `  do   log("TODO")`,
-          '}',
-          '',
-        ].join('\n')
-    const current = draft ?? source
-    editDraft(current === '' ? skeleton : `${skeleton}\n${current}`)
+    const skeleton = feedSkeleton(row)
+    if (skeleton === null) return
+    editWhole(prependBlock(full, skeleton))
     if (taRef.current) taRef.current.scrollTop = 0
   }
 
@@ -455,12 +668,12 @@ export function RulesScreen() {
         <div class="editor">
           <div class="tabs">
             <span
-              class={scoped === null ? 't on' : 't'}
-              onClick={() => setScoped(null)}
+              class={current === null ? 't on' : 't'}
+              onClick={() => setScope(null)}
             >
               Whole document
             </span>
-            {scoped !== null && <span class="t on">{scoped}</span>}
+            {current !== null && <span class="t on">{current.name}</span>}
           </div>
           <div class="bar">
             <span class={state.cls}>{state.label}</span>
@@ -473,10 +686,10 @@ export function RulesScreen() {
             {dirty && <span>· unsaved</span>}
           </div>
           <div class="editwrap">
-            {parseErr && (
+            {errRow !== null && (
               <div
                 class="errline"
-                style={{ top: `${EDITOR_PAD_PX + (parseErr.line - 1) * LINE_HEIGHT_PX - scrollTop}px` }}
+                style={{ top: `${EDITOR_PAD_PX + errRow * LINE_HEIGHT_PX - scrollTop}px` }}
               />
             )}
             <textarea
@@ -485,12 +698,38 @@ export function RulesScreen() {
               spellcheck={false}
               wrap="off"
               value={shown}
+              aria-autocomplete="list"
+              aria-controls={suggestAt ? SUGGEST_ID : undefined}
+              aria-activedescendant={suggestAt ? `${SUGGEST_ID}-${completion.active}` : undefined}
               onFocus={() => {
                 caretTouched.current = true
+                names.refresh()
               }}
-              onInput={(e) => editDraft(e.currentTarget.value)}
-              onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+              onBlur={completion.close}
+              onInput={(e) => {
+                editDraft(e.currentTarget.value)
+                completion.open()
+              }}
+              onKeyDown={(e) => {
+                const next = completion.keyDown(e, suggestAt !== null)
+                if (next !== null) editDraft(next)
+              }}
+              onKeyUp={completion.follow}
+              onClick={completion.follow}
+              onScroll={(e) => {
+                setScrollTop(e.currentTarget.scrollTop)
+                setScrollLeft(e.currentTarget.scrollLeft)
+              }}
             />
+            {suggestAt && completion.list && (
+              <SuggestList
+                kind={completion.list.context.kind}
+                items={completion.items}
+                active={completion.active}
+                at={suggestAt}
+                onPick={pickName}
+              />
+            )}
           </div>
           {parseErr && (
             <div class="parse-msg">
@@ -505,8 +744,8 @@ export function RulesScreen() {
             diagnostic={text.diagnostic}
             busy={busy}
             onToggle={toggleRule}
-            selected={scoped}
-            onSelect={(name) => setScoped(spans.has(name) ? name : null)}
+            selected={current?.name ?? null}
+            onSelect={(name) => setScope(scopeRule(name, full))}
           />
           <div class="panel">
             <h2>Snippets</h2>
@@ -620,59 +859,26 @@ function LiveFeed({
         setDropped((d) => d + lost)
         return
       }
-      if (event.type === 'RulesActivationEvent') {
-        const a = (event.payload ?? {}) as RuleActivationPayload
-        if (a.dry) return
-        setRows((prev) => {
-          const now = Date.now()
-          const i = prev
-            .map((r) => r.rule === undefined && r.short !== null && now - r.atMs < RULE_SETTLE_MS)
-            .lastIndexOf(true)
-          if (i < 0) return prev
-          const next = prev.slice()
-          next[i] = {
-            ...next[i],
-            rule: a.rule_name ?? null,
-            partial: a.partial ?? 0,
-            ms: a.trigger_to_publish_ms ?? null,
-          }
-          return next
-        })
+      if (event.type === ACTIVATION_EVENT) {
+        const activation = (event.payload ?? {}) as RuleActivationPayload
+        setRows((prev) => attachActivation(prev, activation, Date.now()))
         return
       }
-      if (
-        event.type !== 'DaliInputEventObservedEvent' &&
-        event.type !== 'DaliInputDeviceLifecycleEvent'
-      ) {
-        return
-      }
-      const p = (event.payload ?? {}) as InputFeedPayload
+      if (event.type !== INPUT_EVENT && event.type !== LIFECYCLE_EVENT) return
       seq.current += 1
-      const row: FeedRow = {
-        seq: seq.current,
-        at: timestamp(),
-        short: p.short_address ?? null,
-        instance: p.instance_number ?? null,
-        event: p.event ?? null,
-        scheme: p.scheme ?? null,
-        info: p.event_info ?? null,
-        lifecycle: event.type === 'DaliInputDeviceLifecycleEvent',
-        atMs: Date.now(),
-      }
-      setRows((prev) => {
-        const next = [...prev, row]
-        return next.length > FEED_CAPACITY ? next.slice(next.length - FEED_CAPACITY) : next
-      })
+      const stamp = { seq: seq.current, at: timestamp(), atMs: Date.now() }
+      const row = feedRow(
+        (event.payload ?? {}) as InputFeedPayload,
+        event.type === LIFECYCLE_EVENT,
+        stamp,
+      )
+      setRows((prev) => appendRow(prev, row))
     })
     return dispose
   }, [])
 
   const [, setTick] = useState(0)
-  const settleNow = Date.now()
-  const deadlines = rows
-    .filter((r) => r.rule === undefined && r.atMs + RULE_SETTLE_MS > settleNow)
-    .map((r) => r.atMs + RULE_SETTLE_MS)
-  const dueAt = deadlines.length > 0 ? Math.min(...deadlines) : null
+  const dueAt = nextSettleAt(rows, Date.now())
   useEffect(() => {
     if (dueAt === null) return
     const t = setTimeout(() => setTick((n) => n + 1), Math.max(0, dueAt - Date.now()))
@@ -726,18 +932,30 @@ function FeedLine({ row, onPrefill }: { row: FeedRow; onPrefill: (row: FeedRow) 
       <span class="src">{src}</span>
       <span class="ev">{ev}</span>
       <span class="arrow">→</span>
-      {row.short === null ? (
+      <FeedOutcome row={row} onPrefill={onPrefill} />
+    </div>
+  )
+}
+
+function FeedOutcome({ row, onPrefill }: { row: FeedRow; onPrefill: (row: FeedRow) => void }) {
+  switch (rowVerdict(row, Date.now())) {
+    case 'unattributable':
+      return (
         <>
           <span class="rule">
             <span class="none">source unattributable</span>
           </span>
           <span class="mk amb">ambiguous</span>
         </>
-      ) : row.rule === undefined && Date.now() - row.atMs < RULE_SETTLE_MS ? (
+      )
+    case 'pending':
+      return (
         <span class="rule">
           <span class="none">…</span>
         </span>
-      ) : row.rule ? (
+      )
+    case 'fired':
+      return (
         <>
           <span class="rule">«{row.rule}»</span>
           <span class={`mk ${row.partial ? 'amb' : 'ok'}`}>
@@ -745,7 +963,9 @@ function FeedLine({ row, onPrefill }: { row: FeedRow; onPrefill: (row: FeedRow) 
           </span>
           {row.ms !== null && row.ms !== undefined && <span class="mk mk-ms">{row.ms} ms</span>}
         </>
-      ) : (
+      )
+    case 'unmatched':
+      return (
         <>
           <span class="rule">
             <span class="none">no rule fired</span>
@@ -754,7 +974,6 @@ function FeedLine({ row, onPrefill }: { row: FeedRow; onPrefill: (row: FeedRow) 
             create a rule for this
           </button>
         </>
-      )}
-    </div>
-  )
+      )
+  }
 }

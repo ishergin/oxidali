@@ -3,7 +3,7 @@ use std::time::Duration;
 use cucumber::{given, then, when};
 use dali2rust_test_support::{try_wait_until, wait_until};
 
-use crate::steps::physical_devices_steps::fetch_json;
+use crate::steps::polling::fetch_json;
 use crate::steps::wire::{frame_claim, FrameClaim};
 use crate::DaliWorld;
 

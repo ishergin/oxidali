@@ -103,8 +103,10 @@ pub struct MockDaliTransport {
 impl Default for MockDaliTransport {
     fn default() -> Self {
         let unblock_flag = Arc::new(AtomicBool::new(false));
-        let mut inner = MockInner::default();
-        inner.blocked = Arc::clone(&unblock_flag);
+        let inner = MockInner {
+            blocked: Arc::clone(&unblock_flag),
+            ..MockInner::default()
+        };
         Self {
             inner: Mutex::new(inner),
             unblock_flag,

@@ -94,6 +94,7 @@ mod tests {
                     ..LightSetpoint::default()
                 }
                 .dimensions(),
+                commit_holds_hcl: true,
             },
         )
     }

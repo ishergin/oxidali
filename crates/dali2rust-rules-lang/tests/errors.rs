@@ -1,6 +1,6 @@
 mod support;
 
-use support::{compile, compile_err, wrap_trigger};
+use support::{compile, compile_err, compile_ok, wrap_action, wrap_condition, wrap_trigger};
 
 const TWO_RULES: &str = r#"# comment line
 rule "первое" {
@@ -182,20 +182,71 @@ fn refusing_fade_leaves_durations_working_everywhere_else() {
     let _ = compile(doc);
 }
 
-#[test]
-fn hold_hcl_false_is_refused_at_both_sites() {
-    for source in [
-        "rule \"t\" {\n  when http trigger\n  do lamp(\"коридор\").off(hold_hcl=false)\n}\n",
-        "rule \"t\" hold_hcl false {\n  when http trigger\n  do lamp(\"коридор\").off()\n}\n",
-    ] {
-        let err = compile_err(source);
-        assert!(err.message.contains("ISSUE-96"), "{err}");
-        assert!(err.message.contains("hold_hcl=false"), "{err}");
+fn light_hold(set: &dali2rust_rules_model::RuleSet) -> Option<bool> {
+    match &set.rule("t").expect("rule t").actions[0] {
+        dali2rust_rules_model::Action::Light(light) => light.hold_hcl,
+        other => panic!("expected a light action, got {other:?}"),
     }
 }
 
 #[test]
-fn hold_hcl_true_is_still_accepted() {
-    let _ = compile("rule \"t\" {\n  when http trigger\n  do lamp(\"коридор\").off(hold_hcl=true)\n}\n");
-    let _ = compile("rule \"t\" hold_hcl true {\n  when http trigger\n  do lamp(\"коридор\").off()\n}\n");
+fn hold_hcl_takes_true_or_false_at_both_sites() {
+    for (word, hold) in [("true", true), ("false", false)] {
+        let rule_level = format!(
+            "rule \"t\" hold_hcl {word} {{\n  when http trigger\n  do lamp(\"коридор\").off()\n}}\n"
+        );
+        let set = compile(&rule_level).unwrap_or_else(|e| panic!("{word}: {e}"));
+        assert_eq!(set.rule("t").map(|r| r.hold_hcl), Some(hold), "rule modifier {word}");
+
+        let action_level = format!(
+            "rule \"t\" {{\n  when http trigger\n  do lamp(\"коридор\").off(hold_hcl={word})\n}}\n"
+        );
+        let set = compile(&action_level).unwrap_or_else(|e| panic!("{word}: {e}"));
+        assert_eq!(light_hold(&set), Some(hold), "action modifier {word}");
+        assert_eq!(set.rule("t").map(|r| r.hold_hcl), Some(true), "the rule default stays");
+    }
+}
+
+#[test]
+fn hold_hcl_is_a_word_true_or_false_at_both_sites() {
+    let err = compile_err("rule \"t\" {\n  when http trigger\n  do lamp(\"коридор\").off(hold_hcl=1)\n}\n");
+    assert!(err.message.contains("hold_hcl must be true or false"), "{err}");
+    let err = compile_err("rule \"t\" hold_hcl maybe {\n  when http trigger\n  do lamp(\"коридор\").off()\n}\n");
+    assert!(err.message.contains("true or false"), "{err}");
+}
+
+#[test]
+fn a_lamp_id_beyond_the_virtual_lamps_is_refused_at_the_number() {
+    let err = compile_err(&wrap_action("lamp(300).off()"));
+    assert_eq!((err.line, err.column), (5, 11), "{err}");
+    assert!(err.message.contains("lamp id 300 out of range 0..=63"), "{err}");
+    let err = compile_err(&wrap_action("lamp(64).off()"));
+    assert!(err.message.contains("lamp id 64"), "{err}");
+    let _ = compile_ok(&wrap_action("lamp(63).off()"));
+}
+
+#[test]
+fn a_group_id_beyond_the_dali_groups_is_refused_at_the_number() {
+    let err = compile_err(&wrap_action("group(300).off()"));
+    assert_eq!((err.line, err.column), (5, 12), "{err}");
+    assert!(err.message.contains("group id 300 out of range 0..=15"), "{err}");
+    let err = compile_err(&wrap_action("scene(3).recall(group(16))"));
+    assert!(err.message.contains("group id 16"), "{err}");
+    let _ = compile_ok(&wrap_action("group(15).off()"));
+}
+
+#[test]
+fn an_out_of_range_id_is_refused_wherever_a_reference_is_written() {
+    for (source, what, at) in [
+        (wrap_trigger("lamp(64) turns on"), "lamp id 64", (4, 13)),
+        (wrap_trigger("group(16) becomes any_on"), "group id 16", (4, 14)),
+        (wrap_condition("lamp(64) is on"), "lamp id 64", (5, 11)),
+        (wrap_condition("hcl is overridden for group(16)"), "group id 16", (5, 34)),
+        (wrap_action("hcl.resume(group(16))"), "group id 16", (5, 23)),
+        (wrap_action("broadcast.level(lamp(64).level)"), "lamp id 64", (5, 27)),
+    ] {
+        let err = compile_err(&source);
+        assert!(err.message.contains(what), "{what}: {err}");
+        assert_eq!((err.line, err.column), at, "{what}: {err}");
+    }
 }

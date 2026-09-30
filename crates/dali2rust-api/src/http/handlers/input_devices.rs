@@ -3,7 +3,8 @@ use std::sync::Arc;
 use dali2rust_bus::{BusId, BusPublisher};
 use dali2rust_contracts::msg::{
     Dali103CommissionCommand, Dali103IdentifyCommand, Dali103InstanceConfigureCommand,
-    Dali103ScanCommand, InputDeviceMetadataUpdateCommand, InputDeviceNotesUpdateCommand,
+    Dali103FeedbackConfigureCommand, Dali103ScanCommand, FeedbackPatchField,
+    InputDeviceMetadataUpdateCommand, InputDeviceNotesUpdateCommand, InstancePatchField,
     OperationType,
 };
 use serde_json::Value;
@@ -17,19 +18,6 @@ use crate::http::types::HttpResponse;
 fn path_u8(params: &std::collections::HashMap<String, String>, key: &str) -> Option<u8> {
     params.get(key)?.parse::<u8>().ok()
 }
-
-pub const PATCH_EVENT_SCHEME: u16 = 1 << 0;
-pub const PATCH_EVENT_FILTER: u16 = 1 << 1;
-pub const PATCH_EVENT_PRIORITY: u16 = 1 << 2;
-pub const PATCH_INSTANCE_GROUP_0: u16 = 1 << 3;
-pub const TIMER_PATCH_BITS: [u16; 4] = [1 << 6, 1 << 7, 1 << 8, 1 << 9];
-pub const PATCH_INSTANCE_ENABLED: u16 = 1 << 10;
-
-pub const FB_PATCH_TIMING: u8 = 1 << 0;
-pub const FB_PATCH_ACTIVE_BRIGHTNESS: u8 = 1 << 1;
-pub const FB_PATCH_ACTIVE_COLOUR: u8 = 1 << 2;
-pub const FB_PATCH_INACTIVE_BRIGHTNESS: u8 = 1 << 3;
-pub const FB_PATCH_INACTIVE_COLOUR: u8 = 1 << 4;
 
 const PATCH_NAME: u8 = 1 << 0;
 const PATCH_HA_EXPOSE: u8 = 1 << 1;
@@ -485,7 +473,7 @@ fn parse_timers(
             units
         };
         cmd.timer_multipliers[slot] = Some(u8::try_from(units).unwrap_or(u8::MAX));
-        cmd.patch_mask |= TIMER_PATCH_BITS[slot];
+        cmd.patch(InstancePatchField::TIMERS[slot]);
     }
     Ok(())
 }
@@ -515,9 +503,9 @@ fn parse_feedback_patch(
     short_address: u8,
     instance_number: u8,
     opcode_map: u8,
-) -> Result<dali2rust_contracts::msg::Dali103FeedbackConfigureCommand, HttpResponse> {
+) -> Result<Dali103FeedbackConfigureCommand, HttpResponse> {
     let json: Value = serde_json::from_slice(body).map_err(|_| json_err(400, "invalid_json"))?;
-    let mut cmd = dali2rust_contracts::msg::Dali103FeedbackConfigureCommand {
+    let mut cmd = Dali103FeedbackConfigureCommand {
         registry_adapter_id: adapter_id,
         short_address,
         instance_number,
@@ -538,35 +526,32 @@ fn parse_feedback_patch(
 
 fn parse_feedback_fields(
     json: &Value,
-    cmd: &mut dali2rust_contracts::msg::Dali103FeedbackConfigureCommand,
+    cmd: &mut Dali103FeedbackConfigureCommand,
 ) -> Result<(), HttpResponse> {
-    const FIELDS: [(&str, u8, bool); 5] = [
-        ("timing", FB_PATCH_TIMING, false),
-        ("active_brightness", FB_PATCH_ACTIVE_BRIGHTNESS, false),
-        ("active_colour", FB_PATCH_ACTIVE_COLOUR, true),
-        ("inactive_brightness", FB_PATCH_INACTIVE_BRIGHTNESS, false),
-        ("inactive_colour", FB_PATCH_INACTIVE_COLOUR, true),
-    ];
-    let slots = |cmd: &mut dali2rust_contracts::msg::Dali103FeedbackConfigureCommand,
-                 key: &str,
-                 value: u8| match key {
-        "timing" => cmd.timing = value,
-        "active_brightness" => cmd.active_brightness = value,
-        "active_colour" => cmd.active_colour = value,
-        "inactive_brightness" => cmd.inactive_brightness = value,
-        _ => cmd.inactive_colour = value,
-    };
-    for (key, bit, is_colour) in FIELDS {
-        let Some(value) = json.get(key) else { continue };
+    for field in FeedbackPatchField::ALL {
+        let Some(value) = json.get(feedback_key(field)) else { continue };
         let raw = value.as_u64().ok_or_else(|| json_err(422, "invalid_value"))?;
         let value = u8::try_from(raw).map_err(|_| json_err(422, "invalid_value"))?;
-        if is_colour && !(FEEDBACK_COLOUR_RANGE).contains(&value) {
+        let is_colour = matches!(
+            field,
+            FeedbackPatchField::ActiveColour | FeedbackPatchField::InactiveColour
+        );
+        if is_colour && !FEEDBACK_COLOUR_RANGE.contains(&value) {
             return Err(json_err(422, "invalid_feedback_colour"));
         }
-        slots(cmd, key, value);
-        cmd.patch_mask |= bit;
+        cmd.patch(field, value);
     }
     Ok(())
+}
+
+const fn feedback_key(field: FeedbackPatchField) -> &'static str {
+    match field {
+        FeedbackPatchField::Timing => "timing",
+        FeedbackPatchField::ActiveBrightness => "active_brightness",
+        FeedbackPatchField::ActiveColour => "active_colour",
+        FeedbackPatchField::InactiveBrightness => "inactive_brightness",
+        FeedbackPatchField::InactiveColour => "inactive_colour",
+    }
 }
 
 // IEC 62386-332 §9.5.3
@@ -582,7 +567,7 @@ fn parse_scheme_and_priority(
             return Err(json_err(422, "invalid_value"));
         }
         cmd.event_scheme = u8::try_from(scheme).unwrap_or(0);
-        cmd.patch_mask |= PATCH_EVENT_SCHEME;
+        cmd.patch(InstancePatchField::EventScheme);
     }
     if let Some(priority) = json.get("event_priority") {
         let priority = priority.as_u64().ok_or_else(|| json_err(422, "invalid_value"))?;
@@ -590,11 +575,11 @@ fn parse_scheme_and_priority(
             return Err(json_err(422, "invalid_value"));
         }
         cmd.event_priority = u8::try_from(priority).unwrap_or(3);
-        cmd.patch_mask |= PATCH_EVENT_PRIORITY;
+        cmd.patch(InstancePatchField::EventPriority);
     }
     if let Some(enabled) = json.get("enabled") {
         cmd.instance_enabled = enabled.as_bool().ok_or_else(|| json_err(422, "invalid_value"))?;
-        cmd.patch_mask |= PATCH_INSTANCE_ENABLED;
+        cmd.patch(InstancePatchField::InstanceEnabled);
     }
     Ok(())
 }
@@ -613,13 +598,13 @@ fn parse_filter_and_groups(
             cmd.event_filter[slot] =
                 u8::try_from(value).map_err(|_| json_err(422, "invalid_value"))?;
         }
-        cmd.patch_mask |= PATCH_EVENT_FILTER;
+        cmd.patch(InstancePatchField::EventFilter);
     }
     if let Some(groups) = json.get("instance_groups") {
         let groups = groups.as_array().ok_or_else(|| json_err(422, "invalid_value"))?;
         for (slot, group) in groups.iter().take(3).enumerate() {
             cmd.instance_groups[slot] = parse_group(group)?;
-            cmd.patch_mask |= PATCH_INSTANCE_GROUP_0 << slot;
+            cmd.patch(InstancePatchField::INSTANCE_GROUPS[slot]);
         }
     }
     Ok(())

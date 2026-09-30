@@ -24,7 +24,7 @@ async fn given_mock_transport_with_response(world: &mut DaliWorld, response: u64
         .set_persistent_response(response as u8);
 }
 
-// DIAG-103 DIAG-109 DIAG-116 DIAG-152 DIAG-153 DIAG-213 GRP-030 GRP-063 GRP-070 GRP-072 OP-131 OP-133 SYS-006 SYS-018 SYS-210 SYS-211 SYS-213 SCN-083 SCN-084 SCN-085 SCN-086 SCN-087 SCN-088 DIAG-123 DIAG-133 DIAG-141 DIAG-210 DIAG-211 GRP-073 REG-030 REG-031 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 SCN-081 SCN-082 SCN-089 SCN-090 SCN-091 SCN-092 SCN-093 SYS-241 SYS-251 SYS-252 SYS-253
+// DIAG-103 DIAG-109 DIAG-116 DIAG-152 DIAG-153 DIAG-213 GRP-030 GRP-063 GRP-070 GRP-072 OP-131 OP-133 SYS-006 SYS-018 SYS-210 SYS-211 SYS-213 SCN-083 SCN-084 SCN-085 SCN-086 SCN-087 SCN-088 DIAG-123 DIAG-133 DIAG-141 DIAG-210 DIAG-211 GRP-073 REG-030 REG-031 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 SCN-081 SCN-082 SCN-089 SCN-090 SCN-091 SCN-092 SCN-093 SYS-241 SYS-251 SYS-252 SYS-253 RULE-031 RULE-033 RULE-036 RULE-038
 #[given("a DALI mock transport with no response")]
 async fn given_mock_transport_no_response(world: &mut DaliWorld) {
     world.dali_mock().lock().unwrap().clear();
@@ -143,7 +143,7 @@ async fn dali_mock_frames_adjacent(world: &mut DaliWorld, first_hex: String, sec
     assert_nothing_between_frames(&trace, first, second);
 }
 
-// ADP-023 ADP-024 BUS-013 BUS-014 BUS-016 DIAG-112 DIAG-113 DIAG-114 DIAG-120 DIAG-123 DIAG-130 DIAG-133 DIAG-140 DIAG-141 DIAG-152 DIAG-153 DIAG-210 DIAG-211 DIAG-213 DIAG-400 DIAG-402 DIAG-403 DIAG-404 GRP-001 GRP-020 GRP-030 GRP-061 GRP-063 GRP-072 OP-100 PD-032 PD-033 PD-042 PD-043 PD-182 PD-187 PD-244 PD-255 SCN-001 SCN-010 SCN-020 SCN-030 SCN-040 SCN-041 SCN-046 SCN-050 SCN-061 SCN-063 SYS-003 SYS-005 SYS-006 SYS-007 SYS-212 SYS-213 SYS-214 SYS-215 VL-001 VL-010 WS-001 ADP-025 ADP-026 ADP-027 COMM-098
+// ADP-023 ADP-024 BUS-013 BUS-014 BUS-016 DIAG-112 DIAG-113 DIAG-114 DIAG-120 DIAG-123 DIAG-130 DIAG-133 DIAG-140 DIAG-141 DIAG-152 DIAG-153 DIAG-210 DIAG-211 DIAG-213 DIAG-400 DIAG-402 DIAG-403 DIAG-404 GRP-001 GRP-020 GRP-030 GRP-061 GRP-063 GRP-072 OP-100 PD-032 PD-033 PD-042 PD-043 PD-182 PD-187 PD-244 PD-255 SCN-001 SCN-010 SCN-020 SCN-030 SCN-040 SCN-041 SCN-046 SCN-050 SCN-061 SCN-063 SYS-003 SYS-005 SYS-006 SYS-007 SYS-212 SYS-213 SYS-214 SYS-215 VL-001 VL-010 WS-001 ADP-025 ADP-026 ADP-027 COMM-098 RULE-036
 #[then(regex = r"the DALI mock transport should have received (\d+) forward frame")]
 async fn dali_mock_forward_frames(world: &mut DaliWorld, expected: u64) {
     let frames = world.dali_mock().lock().unwrap().sent_frames();
@@ -521,4 +521,27 @@ async fn diagnostics_uptime_monotonic(world: &mut DaliWorld) {
         now >= before,
         "uptime went backwards: before={before} now={now}"
     );
+}
+
+// COMM-004 COMM-008 COMM-052 COMM-056 COMM-057 INP-001 INP-002 INP-003 INP-004 INP-005 OP-100 PD-042 PD-043 PD-255 RULE-020 RULE-021 RULE-023 SYS-230 SYS-231 SYS-232 SYS-233 SYS-235 SYS-236 SYS-238 SYS-239 SYS-240 COMM-098 RULE-027 RULE-031 RULE-032 RULE-036
+#[given("the DALI mock transport trace is cleared")]
+async fn given_mock_trace_cleared(world: &mut DaliWorld) {
+    world.dali_mock().lock().expect("mock lock").clear();
+}
+
+fn assert_no_script_errors(world: &DaliWorld) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    assert_eq!(
+        mock.scripted_exchanges_remaining(),
+        0,
+        "scripted exchanges remain: {:?}",
+        mock.sent_frames()
+    );
+    assert_eq!(mock.script_error(), None, "unexpected mock script error");
+}
+
+// GRP-066 PD-030 PD-034 PD-040 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 VL-020 VL-054 PD-169 MQTT-012 MQTT-017 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 SCN-083 SCN-084 SCN-085 COMM-010 COMM-034 COMM-038 COMM-080 COMM-081 COMM-092 PD-037 PD-164 PD-165 PD-166 PD-167 PD-168 PD-170 PD-171 PD-189 PD-190 PD-191 PD-194 PD-195 PD-196 PD-197 PD-198 PD-199 PD-240 PD-241 PD-242 PD-243 PD-250 PD-251 PD-252 PD-253 PD-254 SCN-060 SCN-092 SCN-093 SYS-234 PD-267 PD-268 POLICY-010 POLICY-011 COMM-099 PD-271 COMM-100 COMM-101 PD-272 PD-273 RULE-030
+#[then("all scripted DALI exchanges should be consumed without errors")]
+async fn then_all_scripted_exchanges_consumed(world: &mut DaliWorld) {
+    assert_no_script_errors(world);
 }

@@ -21,6 +21,62 @@ pub(crate) struct ExecutionReport {
     pub failed: u8,
 }
 
+impl ExecutionReport {
+    fn note(&mut self, published: bool) {
+        if published {
+            self.executed = self.executed.saturating_add(1);
+        } else {
+            self.failed = self.failed.saturating_add(1);
+        }
+    }
+}
+
+struct MergedLight {
+    at: usize,
+    target: LightTarget,
+    setpoint: LightSetpoint,
+    hold_hcl: bool,
+    bound: bool,
+}
+
+impl MergedLight {
+    fn absorb(&mut self, later: &MergedLight) {
+        self.setpoint.merge_from(&later.setpoint);
+    }
+}
+
+#[derive(Default)]
+struct LightSeries {
+    lights: Vec<MergedLight>,
+    open: Vec<(LightKey, usize)>,
+}
+
+impl LightSeries {
+    fn close(&mut self) {
+        self.open.clear();
+    }
+
+    fn absorb(&mut self, light: MergedLight) {
+        let Some(key) = light_key(&light.target) else {
+            self.lights.push(light);
+            return;
+        };
+        match self.open.iter_mut().find(|(open, _)| *open == key) {
+            Some((_, slot)) if self.lights[*slot].hold_hcl == light.hold_hcl => {
+                self.lights[*slot].absorb(&light);
+            }
+            Some((_, slot)) => {
+                *slot = self.lights.len();
+                self.lights.push(light);
+            }
+            None => {
+                self.open.push((key, self.lights.len()));
+                self.lights.push(light);
+            }
+        }
+    }
+}
+
 pub(crate) struct EffectExecutor<'a> {
     pub publisher: &'a BusPublisher,
     pub bus_id: BusId,
@@ -35,76 +91,107 @@ impl EffectExecutor<'_> {
         snapshot: &WorldSnapshot,
         corr: u64,
     ) -> ExecutionReport {
-        let mut executed: u8 = 0;
-        let mut failed: u8 = 0;
+        let mut report = ExecutionReport::default();
         let mut lights = self.merge_lights(effects, snapshot);
         for (index, effect) in effects.iter().enumerate() {
             let published = match effect {
                 Effect::Light { target, verb: LightVerb::StopFade, .. } => {
-                    self.stop_fade(target, corr)
+                    self.stop_fade(target, snapshot, corr)
                 }
-                Effect::Light { .. } => match lights.iter().position(|(at, _, _)| *at == index) {
-                    Some(slot) => {
-                        let (_, target, setpoint) = lights.remove(slot);
-                        self.publish_light(&target, setpoint, corr)
-                    }
+                Effect::Light { .. } => match lights.iter().position(|light| light.at == index) {
+                    Some(slot) => self.publish_light(lights.remove(slot), corr),
                     None => continue,
                 },
                 other => self.one(other, snapshot, corr),
             };
-            if published {
-                executed = executed.saturating_add(1);
-            } else {
-                failed = failed.saturating_add(1);
-            }
+            report.note(published);
         }
-        ExecutionReport { executed, failed }
+        report
     }
 
-    fn merge_lights(
-        &self,
-        effects: &[Effect],
-        snapshot: &WorldSnapshot,
-    ) -> Vec<(usize, LightTarget, LightSetpoint)> {
-        let mut lights: Vec<(usize, LightTarget, LightSetpoint)> = Vec::new();
-        let mut open: Vec<(LightKey, usize)> = Vec::new();
+    fn merge_lights(&self, effects: &[Effect], snapshot: &WorldSnapshot) -> Vec<MergedLight> {
+        let mut series = LightSeries::default();
         for (index, effect) in effects.iter().enumerate() {
-            let Effect::Light { target, verb, .. } = effect else {
-                open.clear();
+            let Effect::Light { target, verb, hold_hcl } = effect else {
+                series.close();
                 continue;
             };
             if matches!(verb, LightVerb::StopFade) {
-                open.clear();
+                series.close();
                 continue;
             }
-            let Some(sp) = setpoint_of(verb, target, snapshot) else {
-                self.counters.effects_skipped_dark.fetch_add(1, Ordering::Relaxed);
-                continue;
-            };
-            let key = light_key(target);
-            let slot = open.iter().find(|(k, _)| *k == key).map(|(_, slot)| *slot);
-            match slot {
-                Some(slot) => lights[slot].2.merge_from(&sp),
-                None => {
-                    open.push((key, lights.len()));
-                    lights.push((index, *target, sp));
-                }
+            if let Some(light) = self.plan_light(index, target, verb, *hold_hcl, snapshot) {
+                series.absorb(light);
             }
         }
-        lights
+        series.lights
     }
 
-    fn one(&self, effect: &Effect, _snapshot: &WorldSnapshot, corr: u64) -> bool {
-        match effect {
-            Effect::Light { .. } => {
-                debug_assert!(false, "light effects are merged and published by execute()");
-                false
+    fn plan_light(
+        &self,
+        at: usize,
+        target: &LightTarget,
+        verb: &LightVerb,
+        hold_hcl: bool,
+        snapshot: &WorldSnapshot,
+    ) -> Option<MergedLight> {
+        let bound = lamp_bound(target, snapshot);
+        let setpoint = match setpoint_of(verb, target, snapshot) {
+            Some(setpoint) => setpoint,
+            None if bound => {
+                self.counters.effects_skipped_dark.fetch_add(1, Ordering::Relaxed);
+                return None;
             }
-            Effect::SceneRecall { scene, target, .. } => self.scene_recall(*scene, target, corr),
+            None => LightSetpoint::default(),
+        };
+        Some(MergedLight { at, target: *target, setpoint, hold_hcl, bound })
+    }
+
+    fn one(&self, effect: &Effect, snapshot: &WorldSnapshot, corr: u64) -> bool {
+        match effect {
+            Effect::Light { .. } => self.misrouted(),
+            Effect::SceneRecall { .. } | Effect::SceneApply { .. } => {
+                self.scene_effect(effect, snapshot, corr)
+            }
+            Effect::HclResume { .. } | Effect::HclHold { .. } | Effect::HclSchedule { .. } => {
+                self.hcl_effect(effect, corr)
+            }
+            Effect::InputFeedback { .. }
+            | Effect::PanelSelect { .. }
+            | Effect::CancelHold { .. }
+            | Effect::CatchMovement { .. } => self.input_effect(effect, corr),
+            Effect::MqttPublish { .. } | Effect::Log { .. } | Effect::StatCount { .. } => {
+                self.state_effect(effect, corr)
+            }
+        }
+    }
+
+    fn misrouted(&self) -> bool {
+        debug_assert!(false, "an effect reached the executor of another family");
+        false
+    }
+
+    fn scene_effect(&self, effect: &Effect, snapshot: &WorldSnapshot, corr: u64) -> bool {
+        match effect {
+            Effect::SceneRecall { scene, target, hold_hcl } => {
+                self.scene_recall(*scene, target, *hold_hcl, snapshot, corr)
+            }
             Effect::SceneApply { scene, .. } => self.scene_apply(*scene, corr),
+            _ => self.misrouted(),
+        }
+    }
+
+    fn hcl_effect(&self, effect: &Effect, corr: u64) -> bool {
+        match effect {
             Effect::HclResume { target } => self.hcl_resume(target, corr),
             Effect::HclHold { .. } => self.unmapped(&self.counters.hcl_hold_unmapped),
             Effect::HclSchedule { .. } => self.unmapped(&self.counters.hcl_schedule_unmapped),
+            _ => self.misrouted(),
+        }
+    }
+
+    fn input_effect(&self, effect: &Effect, corr: u64) -> bool {
+        match effect {
             Effect::InputFeedback { input, on } => self.feedback_drive(
                 Some(input.device_short_address),
                 Some(input.instance_number),
@@ -120,20 +207,33 @@ impl EffectExecutor<'_> {
             Effect::CancelHold { .. } | Effect::CatchMovement { .. } => {
                 self.unmapped(&self.counters.input_action_unmapped)
             }
-            Effect::MqttPublish { topic, payload, retain } => self.mqtt(topic, payload, *retain, corr),
-            Effect::Log { text: _ } => {
-                self.counters.log_lines.fetch_add(1, Ordering::Relaxed);
-                true
-            }
-            Effect::StatCount { .. } => {
-                self.counters.stat_counts.fetch_add(1, Ordering::Relaxed);
-                true
-            }
+            _ => self.misrouted(),
         }
     }
 
-    fn publish_light(&self, target: &LightTarget, setpoint: LightSetpoint, corr: u64) -> bool {
-        let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target);
+    fn state_effect(&self, effect: &Effect, corr: u64) -> bool {
+        match effect {
+            Effect::MqttPublish { topic, payload, retain } => {
+                self.mqtt(topic, payload, *retain, corr)
+            }
+            Effect::Log { text: _ } => self.counted(&self.counters.log_lines),
+            Effect::StatCount { .. } => self.counted(&self.counters.stat_counts),
+            _ => self.misrouted(),
+        }
+    }
+
+    fn counted(&self, cell: &std::sync::atomic::AtomicU32) -> bool {
+        cell.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+
+    fn publish_light(&self, light: MergedLight, corr: u64) -> bool {
+        let Some((scope, virtual_lamp_id, group_id, adapter)) = scope_of(&light.target) else {
+            return false;
+        };
+        if !light.bound {
+            return self.unbound_lamp();
+        }
         self.publish(
             corr,
             DaliSetTargetStateCommand {
@@ -141,15 +241,21 @@ impl EffectExecutor<'_> {
                 virtual_lamp_id,
                 short_address: 0,
                 group_id,
-                setpoint,
+                setpoint: light.setpoint,
                 registry_adapter_id: adapter,
+                hold_hcl: light.hold_hcl,
             },
         )
     }
 
     // IEC 62386-102 §9.5.9
-    fn stop_fade(&self, target: &LightTarget, corr: u64) -> bool {
-        let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target);
+    fn stop_fade(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {
+        let Some((scope, virtual_lamp_id, group_id, adapter)) = scope_of(target) else {
+            return false;
+        };
+        if !lamp_bound(target, snapshot) {
+            return self.unbound_lamp();
+        }
         self.publish(
             corr,
             DaliStopFadeCommand {
@@ -162,29 +268,21 @@ impl EffectExecutor<'_> {
         )
     }
 
-    fn scene_recall(&self, scene: u8, target: &Option<LightTarget>, corr: u64) -> bool {
-        let (scope, group_id, adapter) = match target {
-            Some(LightTarget::Group(group)) => {
-                (DaliTargetScope::Group, group.id as u8, group.adapter_id)
-            }
-            Some(LightTarget::Broadcast { adapter_id }) => {
-                (DaliTargetScope::Broadcast, 0, *adapter_id)
-            }
-            Some(LightTarget::Lamp(_)) => {
-                return self.unmapped(&self.counters.input_action_unmapped);
-            }
-            None => (DaliTargetScope::Broadcast, 0, 0),
+    fn scene_recall(
+        &self,
+        scene: u8,
+        target: &Option<LightTarget>,
+        hold_hcl: bool,
+        snapshot: &WorldSnapshot,
+        corr: u64,
+    ) -> bool {
+        let Some(command) = recall_command(scene, target) else {
+            return false;
         };
-        self.publish(
-            corr,
-            DaliRecallSceneCommand {
-                registry_adapter_id: adapter,
-                scope,
-                short_address: 0,
-                group_id,
-                scene_id: scene,
-            },
-        )
+        if target.is_some_and(|target| !lamp_bound(&target, snapshot)) {
+            return self.unbound_lamp();
+        }
+        self.publish(corr, DaliRecallSceneCommand { hold_hcl, ..command })
     }
 
     fn scene_apply(&self, scene: u8, corr: u64) -> bool {
@@ -254,6 +352,11 @@ impl EffectExecutor<'_> {
         )
     }
 
+    fn unbound_lamp(&self) -> bool {
+        self.counters.effects_unbound.fetch_add(1, Ordering::Relaxed);
+        false
+    }
+
     fn unmapped(&self, cell: &std::sync::atomic::AtomicU32) -> bool {
         cell.fetch_add(1, Ordering::Relaxed);
         false
@@ -288,13 +391,13 @@ struct LightKey {
     adapter: u8,
 }
 
-fn light_key(target: &LightTarget) -> LightKey {
-    let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target);
-    LightKey {
+fn light_key(target: &LightTarget) -> Option<LightKey> {
+    let (scope, virtual_lamp_id, group_id, adapter) = scope_of(target)?;
+    Some(LightKey {
         scope: scope as u8,
         id: virtual_lamp_id.max(group_id),
         adapter,
-    }
+    })
 }
 
 fn setpoint_of(
@@ -383,17 +486,43 @@ fn lamp_of<'a>(
     }
 }
 
-fn scope_of(target: &LightTarget) -> (DaliTargetScope, u8, u8, u8) {
+fn lamp_bound(target: &LightTarget, snapshot: &WorldSnapshot) -> bool {
     match target {
+        LightTarget::Lamp(_) => lamp_of(target, snapshot).is_some_and(|lamp| lamp.bound),
+        LightTarget::Group(_) | LightTarget::Broadcast { .. } => true,
+    }
+}
+
+fn recall_command(scene: u8, target: &Option<LightTarget>) -> Option<DaliRecallSceneCommand> {
+    Some(match target {
+        Some(LightTarget::Group(group)) => {
+            DaliRecallSceneCommand::for_group(group.adapter_id, u8::try_from(group.id).ok()?, scene)
+        }
+        Some(LightTarget::Lamp(lamp)) => DaliRecallSceneCommand::for_virtual_lamp(
+            lamp.adapter_id,
+            u8::try_from(lamp.id).ok()?,
+            scene,
+        ),
+        Some(LightTarget::Broadcast { adapter_id }) => {
+            DaliRecallSceneCommand::broadcast(*adapter_id, scene)
+        }
+        None => DaliRecallSceneCommand::broadcast(0, scene),
+    })
+}
+
+fn scope_of(target: &LightTarget) -> Option<(DaliTargetScope, u8, u8, u8)> {
+    Some(match target {
         LightTarget::Lamp(lamp) => (
             DaliTargetScope::VirtualLamp,
-            lamp.id as u8,
+            u8::try_from(lamp.id).ok()?,
             0,
             lamp.adapter_id,
         ),
-        LightTarget::Group(group) => (DaliTargetScope::Group, 0, group.id as u8, group.adapter_id),
+        LightTarget::Group(group) => {
+            (DaliTargetScope::Group, 0, u8::try_from(group.id).ok()?, group.adapter_id)
+        }
         LightTarget::Broadcast { adapter_id } => (DaliTargetScope::Broadcast, 0, 0, *adapter_id),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -437,6 +566,20 @@ mod merge_tests {
             Some(ColorMode::Cct),
             "a setpoint that states no colour must leave the stated one alone"
         );
+    }
+
+    fn light(at: usize, target: LightTarget, setpoint: LightSetpoint) -> MergedLight {
+        MergedLight { at, target, setpoint, hold_hcl: true, bound: true }
+    }
+
+    #[test]
+    fn a_target_whose_id_does_not_fit_its_field_opens_no_merge_slot() {
+        let wide = LightTarget::Lamp(dali2rust_rules_model::LampRef { id: 300, adapter_id: 0 });
+        let mut series = LightSeries::default();
+        series.absorb(light(0, wide, sp(PowerState::Off, None, None)));
+        series.absorb(light(1, wide, sp(PowerState::On, Some(10), None)));
+        assert_eq!(series.lights.len(), 2, "each effect stays apart and fails on its own");
+        assert!(series.open.is_empty(), "no merge slot for a key that cannot be built");
     }
 
     #[test]

@@ -134,14 +134,31 @@ fn harness_full(
     harness_hcl(slices, lamps, active, lit_group, Arc::new(std::sync::atomic::AtomicBool::new(false)))
 }
 
+const EFFECT_LAMP: u16 = 6;
+
+fn bound_lamp(id: u16) -> dali2rust_rules_runtime::runtime::engine::LampState {
+    dali2rust_rules_runtime::runtime::engine::LampState {
+        adapter_id: 0,
+        id,
+        is_on: false,
+        level: None,
+        cct_kelvin: None,
+        last_level: None,
+        bound: true,
+    }
+}
+
 fn harness_hcl(
     slices: Arc<dali2rust_bsp::slice_store_files::FileSliceStore>,
-    lamps: Vec<dali2rust_rules_runtime::runtime::engine::LampState>,
+    mut lamps: Vec<dali2rust_rules_runtime::runtime::engine::LampState>,
     active: bool,
     lit_group: Arc<std::sync::atomic::AtomicBool>,
     overridden: Arc<std::sync::atomic::AtomicBool>,
 ) -> Harness {
-    let world = EmptyWorld { started: std::time::Instant::now(), lamps, active, lit_group, overridden };
+    if !lamps.iter().any(|lamp| lamp.id == EFFECT_LAMP) {
+        lamps.push(bound_lamp(EFFECT_LAMP));
+    }
+    let world = EmptyWorld { lamps, active, lit_group, overridden, ..empty_world() };
     harness_spawn(slices, world, Arc::new(StubResolver::permissive()))
 }
 
@@ -443,6 +460,7 @@ fn on_without_a_level_asks_the_gear_for_its_last_active_level() {
             level: Some(0),
             cct_kelvin: None,
             last_level: Some(1),
+            bound: true,
         }],
     );
     publish_document(
@@ -630,6 +648,7 @@ fn runtime_state_changed(lamp_id: u8) -> dali2rust_contracts::msg::RuntimeStateC
         state_observation: dali2rust_contracts::msg::RuntimeObservation::default(),
         commit_source: dali2rust_contracts::msg::RuntimeSource::Api,
         commit_dimensions: state_setpoint.dimensions(),
+        commit_holds_hcl: true,
     }
 }
 
@@ -805,6 +824,51 @@ fn instance_configured(manual: bool) -> dali2rust_contracts::msg::Dali103Instanc
     }
 }
 
+fn scene_recalled(scene_id: u8, failed: bool) -> dali2rust_contracts::msg::DaliSceneRecalledEvent {
+    dali2rust_contracts::msg::DaliSceneRecalledEvent {
+        registry_adapter_id: 0,
+        scope: dali2rust_contracts::msg::DaliTargetScope::Broadcast,
+        short_address: 0,
+        group_id: 0,
+        scene_id,
+        error: failed.then(|| {
+            dali2rust_contracts::msg::CompactErrorPayload::new(
+                dali2rust_contracts::msg::ErrorCode::ExecutionFailed,
+                "execution_failed",
+            )
+        }),
+        recalled_at_mono_ms: 0,
+        source: dali2rust_contracts::msg::RuntimeSource::Api,
+        hold_hcl: true,
+        virtual_lamp_id: None,
+    }
+}
+
+const SCENE_RULES_DOC: &str = "rule \"три\" cooldown 0ms {\n  when scene(3) recalled\n  do lamp(6).level(33)\n}\n\
+rule \"четыре\" cooldown 0ms {\n  when scene(4) recalled\n  do lamp(6).level(44)\n}\n";
+
+#[test]
+fn a_recall_that_failed_wakes_no_scene_rule() {
+    let h = harness("rules-scene-recall-failed");
+    publish_document(&h, 141, SCENE_RULES_DOC, 0);
+    let sig = recv_signal(&h, 141);
+    assert!(sig.error.is_none(), "the document must compile: {sig:?}");
+    wait_revision(&h.store, 1);
+
+    publish_bus_event(&h, 142, scene_recalled(3, true));
+    publish_bus_event(&h, 143, scene_recalled(4, false));
+    let (_, level) = recv_setpoint(&h).expect("the recall that happened must fire its rule");
+    assert_eq!(
+        level,
+        Some(44),
+        "the failed recall of scene 3 reached the funnel first; had it woken its rule, 33 would lead"
+    );
+
+    publish_bus_event(&h, 144, scene_recalled(3, false));
+    let (_, level) = recv_setpoint(&h).expect("a recall of scene 3 that happened fires its rule");
+    assert_eq!(level, Some(33));
+}
+
 
 #[test]
 fn stop_fade_publishes_its_own_command_for_a_group() {
@@ -939,6 +1003,7 @@ fn landing_lamp(level: Option<u8>) -> dali2rust_rules_runtime::runtime::engine::
         level,
         cct_kelvin: Some(3000),
         last_level: level,
+        bound: true,
     }
 }
 
@@ -1065,6 +1130,15 @@ fn every_counted_landing_moves_its_counter() {
 }
 
 fn landing_setpoint(kind: &str, snippet: &str) -> dali2rust_contracts::msg::LightSetpoint {
+    landing_command(kind, &landing_document(snippet)).setpoint
+}
+
+fn landing_command(kind: &str, document: &str) -> dali2rust_contracts::msg::DaliSetTargetStateCommand {
+    let h = landing_run(kind, document);
+    next_setpoint_command(&h).unwrap_or_else(|| panic!("{kind}: {document:?} published no setpoint"))
+}
+
+fn landing_run(kind: &str, document: &str) -> Harness {
     let lamps = vec![landing_lamp(Some(120))];
     let h = harness_with_lamps(
         Arc::new(dali2rust_test_support::fs::temp_slice_store(&format!(
@@ -1072,27 +1146,23 @@ fn landing_setpoint(kind: &str, snippet: &str) -> dali2rust_contracts::msg::Ligh
         ))),
         lamps,
     );
-    publish_document(&h, 1, &landing_document(snippet), 0);
+    publish_document(&h, 1, document, 0);
     let sig = recv_signal(&h, 1);
-    assert!(sig.error.is_none(), "{kind}: {snippet:?} — {sig:?}");
+    assert!(sig.error.is_none(), "{kind}: {document:?} — {sig:?}");
     wait_revision(&h.store, 1);
-    publish(
-        &h,
-        2,
-        dali2rust_contracts::msg::RuleRunCommand {
-            name: dali2rust_contracts::msg::fixed_text_64("под тестом"),
-            dry: false,
-        },
-    );
+    run_rule(&h, 2, "под тестом");
+    h
+}
+
+fn next_setpoint_command(h: &Harness) -> Option<dali2rust_contracts::msg::DaliSetTargetStateCommand> {
     let ce = dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |payload| {
         matches!(
             payload,
             dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(_)
         )
-    })
-    .unwrap_or_else(|| panic!("{kind}: `{snippet}` published no setpoint"));
+    })?;
     match ce.payload {
-        dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(ts) => ts.setpoint,
+        dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(ts) => Some(ts),
         _ => unreachable!("filtered above"),
     }
 }
@@ -1136,6 +1206,33 @@ fn every_light_argument_reaches_the_setpoint() {
 }
 
 #[test]
+fn a_scene_recall_on_a_lamp_is_one_recall_scoped_to_that_lamp() {
+    let h = harness("landing-scene-recall-lamp");
+    publish_document(&h, 1, &landing_document("scene(3).recall(lamp(6))"), 0);
+    assert!(recv_signal(&h, 1).error.is_none());
+    wait_revision(&h.store, 1);
+    run_rule(&h, 2, "под тестом");
+
+    let ce = dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |payload| {
+        matches!(payload, dali2rust_contracts::msg::BusCommandPayload::DaliRecallSceneCommand(_))
+    })
+    .expect("a lamp recall must reach the bus");
+    let dali2rust_contracts::msg::BusCommandPayload::DaliRecallSceneCommand(cmd) = ce.payload else {
+        unreachable!("filtered above")
+    };
+    assert_eq!(
+        (cmd.scope, cmd.virtual_lamp_id, cmd.scene_id),
+        (dali2rust_contracts::msg::DaliTargetScope::VirtualLamp, 6, 3),
+        "the DALI worker resolves the lamp to its short address, as it does for target-state"
+    );
+    assert_eq!(
+        h.counters.input_action_unmapped.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a lamp recall is carried now, not counted as an input action without a carrier"
+    );
+}
+
+#[test]
 fn a_dim_from_an_unknown_level_is_skipped_and_counted() {
     let (seen, counters) = run_landing_on("dim-unknown", "lamp(0).dim(+10)", landing_lamp(None));
     let skipped = || counters.effects_skipped_dark.load(std::sync::atomic::Ordering::Relaxed);
@@ -1161,24 +1258,93 @@ fn a_computed_level_of_zero_goes_out_as_dapc_zero() {
     }
 }
 
+const HOLD_FALSE_RULE_DOC: &str = "rule \"под тестом\" hold_hcl false {\n  when http trigger\n  do lamp(0).level(200)\n}\n";
+
 #[test]
-fn hold_hcl_true_changes_nothing_and_false_never_reaches_the_bus() {
-    let plain = landing_setpoint("hold-hcl-default", "lamp(0).level(200)");
-    let explicit = landing_setpoint("hold-hcl-true", "lamp(0).level(200, hold_hcl=true)");
+fn hold_hcl_true_changes_nothing_and_false_rides_on_the_command() {
+    let plain = landing_command("hold-hcl-default", &landing_document("lamp(0).level(200)"));
+    let explicit =
+        landing_command("hold-hcl-true", &landing_document("lamp(0).level(200, hold_hcl=true)"));
     assert_eq!(
         plain, explicit,
         "`hold_hcl=true` is the default written out; it must not change the \
          published command"
     );
+    assert!(plain.hold_hcl, "a rule's light write holds the schedule by default");
 
-    let h = harness("landing-hold-hcl-false");
-    publish_document(&h, 1, &landing_document("lamp(0).level(200, hold_hcl=false)"), 0);
-    let sig = recv_signal(&h, 1);
-    assert!(
-        sig.error.is_some(),
-        "`hold_hcl=false` must be refused at the commit, not accepted and \
-         silently dropped (ISSUE-96)"
+    let action =
+        landing_command("hold-hcl-false", &landing_document("lamp(0).level(200, hold_hcl=false)"));
+    assert!(!action.hold_hcl, "the action modifier must reach the command");
+    let rule = landing_command("hold-hcl-rule-false", HOLD_FALSE_RULE_DOC);
+    assert!(!rule.hold_hcl, "the rule modifier must reach the command");
+    assert_eq!(action.setpoint, plain.setpoint, "the flag changes nothing else");
+}
+
+#[test]
+fn effects_that_differ_in_hold_hcl_are_separate_commands_in_source_order() {
+    let h = landing_run(
+        "hold-hcl-merge-mixed",
+        &landing_document("lamp(0).level(200, hold_hcl=false)\n     lamp(0).cct(2700)"),
     );
+    let first = next_setpoint_command(&h).expect("the level");
+    let second = next_setpoint_command(&h).expect("the colour");
+    assert_eq!(
+        (first.setpoint.level, first.setpoint.states_color(), first.hold_hcl),
+        (Some(200), false, false)
+    );
+    assert_eq!(
+        (second.setpoint.level, second.setpoint.states_color(), second.hold_hcl),
+        (None, true, true),
+        "merging would have put the level under the colour's claim on the schedule"
+    );
+
+    let h = landing_run(
+        "hold-hcl-merge-order",
+        &landing_document(
+            "lamp(0).level(100, hold_hcl=false)\n     lamp(0).level(150)\n     lamp(0).level(200, hold_hcl=false)",
+        ),
+    );
+    let levels: Vec<(Option<u8>, bool)> = std::iter::from_fn(|| next_setpoint_command(&h))
+        .map(|ts| (ts.setpoint.level, ts.hold_hcl))
+        .collect();
+    assert_eq!(
+        levels,
+        vec![(Some(100), false), (Some(150), true), (Some(200), false)],
+        "a later effect must not jump over an effect on the same lamp with the other claim"
+    );
+}
+
+#[test]
+fn effects_with_one_hold_hcl_still_merge_into_one_command() {
+    let spared = landing_command(
+        "hold-hcl-merge-spared",
+        &landing_document("lamp(0).level(200, hold_hcl=false)\n     lamp(0).cct(2700, hold_hcl=false)"),
+    );
+    assert_eq!(spared.setpoint.level, Some(200), "both verbs are one command");
+    assert!(spared.setpoint.states_color(), "both verbs are one command");
+    assert!(!spared.hold_hcl);
+}
+
+#[test]
+fn a_scene_recall_from_a_rule_that_does_not_hold_says_so() {
+    let h = harness("landing-hold-hcl-recall");
+    publish_document(
+        &h,
+        1,
+        "rule \"под тестом\" hold_hcl false {\n  when http trigger\n  do scene(3).recall(lamp(6))\n}\n",
+        0,
+    );
+    assert!(recv_signal(&h, 1).error.is_none());
+    wait_revision(&h.store, 1);
+    run_rule(&h, 2, "под тестом");
+    let ce = dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |payload| {
+        matches!(payload, dali2rust_contracts::msg::BusCommandPayload::DaliRecallSceneCommand(_))
+    })
+    .expect("the recall must reach the bus");
+    let dali2rust_contracts::msg::BusCommandPayload::DaliRecallSceneCommand(cmd) = ce.payload else {
+        unreachable!("filtered above")
+    };
+    assert!(!cmd.hold_hcl);
 }
 
 #[test]
@@ -1411,5 +1577,130 @@ fn a_wet_run_is_reported_per_rule_and_a_dry_run_is_not_issue100() {
     assert!(
         runtime.iter().all(|r| r.name != "цель"),
         "a dry run is a preview, not a firing: {runtime:?}"
+    );
+}
+
+const UNBOUND_DOC: &str = "rule \"recall\" {\n  when http trigger\n  do scene(3).recall(lamp(8))\n}\n\
+rule \"light\" {\n  when http trigger\n  do lamp(8).off()\n}\n\
+rule \"stop\" {\n  when http trigger\n  do lamp(8).stop_fade()\n}\n\
+rule \"absent\" {\n  when http trigger\n  do lamp(9).level(10)\n}\n\
+rule \"watch\" cooldown 0ms {\n  when rule(\"recall\") fails\n  when rule(\"light\") fails\n  when rule(\"stop\") fails\n  when rule(\"absent\") fails\n  do lamp(6).level(55)\n}\n";
+
+#[test]
+fn an_effect_on_a_lamp_with_no_binding_fails_its_activation_and_reaches_no_bus() {
+    let unbound = dali2rust_rules_runtime::runtime::engine::LampState {
+        bound: false,
+        ..bound_lamp(8)
+    };
+    let h = harness_with_lamps(
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-unbound-lamp")),
+        vec![unbound],
+    );
+    publish_document(&h, 1, UNBOUND_DOC, 0);
+    assert!(recv_signal(&h, 1).error.is_none());
+    wait_revision(&h.store, 1);
+
+    for (corr, rule) in [(2u64, "recall"), (3, "light"), (4, "stop"), (5, "absent")] {
+        run_rule(&h, corr, rule);
+        let ce = dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |_| true)
+            .unwrap_or_else(|| panic!("{rule}: the watching rule must fire"));
+        let dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(ts) = ce.payload else {
+            panic!("{rule}: published {:?} for a lamp nothing is bound to", ce.payload)
+        };
+        assert_eq!(
+            (ts.virtual_lamp_id, ts.setpoint.level),
+            (6, Some(55)),
+            "{rule}: the first command out must be the watcher's"
+        );
+    }
+    assert_eq!(h.counters.effects_unbound.load(std::sync::atomic::Ordering::Relaxed), 4);
+    let runtime = h.store.rule_runtime();
+    let recall = runtime.iter().find(|r| r.name == "recall").expect("the recall fired");
+    assert_eq!(recall.last_outcome, dali2rust_rules_runtime::RuleOutcome::Failed);
+}
+
+const WIDER_THAN_ITS_BUS_FIELD: u16 = 300;
+
+const WIDE_ID_DOC: &str = "rule \"лампа\" {\n  when http trigger\n  do lamp(\"за краем\").off()\n}\n\
+                           rule \"группа\" {\n  when http trigger\n  do group(\"вне поля\").off()\n}\n\
+                           rule \"стоп\" {\n  when http trigger\n  do group(\"вне поля\").stop_fade()\n}\n\
+                           rule \"сцена\" {\n  when http trigger\n  do scene(3).recall(group(\"вне поля\"))\n}\n\
+                           rule \"сцена лампы\" {\n  when http trigger\n  do scene(3).recall(lamp(\"за краем\"))\n}\n\
+                           rule \"метка\" {\n  when http trigger\n  do lamp(6).level(55)\n}\n";
+
+fn empty_world() -> EmptyWorld {
+    EmptyWorld {
+        started: std::time::Instant::now(),
+        lamps: Vec::new(),
+        active: true,
+        lit_group: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        overridden: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    }
+}
+
+fn commands_before_the_marker(
+    h: &Harness,
+    marker_lamp: u8,
+) -> Vec<dali2rust_contracts::msg::BusCommandPayload> {
+    let mut before = Vec::new();
+    loop {
+        let command =
+            dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |_| true)
+                .expect("the marker rule's command must reach the bus");
+        match command.payload {
+            dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(ts)
+                if ts.scope == dali2rust_contracts::msg::DaliTargetScope::VirtualLamp
+                    && ts.virtual_lamp_id == marker_lamp =>
+            {
+                return before;
+            }
+            other => before.push(other),
+        }
+    }
+}
+
+#[test]
+fn an_id_wider_than_its_bus_field_fails_its_effect_instead_of_narrowing() {
+    let resolver = StubResolver::permissive()
+        .with_lamp(
+            "за краем",
+            dali2rust_rules_model::LampRef { adapter_id: 0, id: WIDER_THAN_ITS_BUS_FIELD },
+        )
+        .with_group(
+            "вне поля",
+            dali2rust_rules_model::GroupRef { adapter_id: 0, id: WIDER_THAN_ITS_BUS_FIELD },
+        );
+    let h = harness_spawn(
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-wide-id")),
+        EmptyWorld {
+            lamps: vec![bound_lamp(EFFECT_LAMP), bound_lamp(WIDER_THAN_ITS_BUS_FIELD)],
+            ..empty_world()
+        },
+        Arc::new(resolver),
+    );
+    publish_document(&h, 121, WIDE_ID_DOC, 0);
+    let sig = recv_signal(&h, 121);
+    assert!(sig.error.is_none(), "the document must compile: {sig:?}");
+    wait_revision(&h.store, 1);
+
+    let effects = ["лампа", "группа", "стоп", "сцена", "сцена лампы"];
+    for (corr, name) in (122..).zip(effects.iter().chain(["метка"].iter())) {
+        run_rule(&h, corr, name);
+        recv_signal(&h, corr);
+    }
+
+    let runtime = h.store.rule_runtime();
+    for name in effects {
+        let row = runtime.iter().find(|r| r.name == name).expect("every rule fired once");
+        assert_eq!(
+            row.last_outcome,
+            dali2rust_rules_runtime::RuleOutcome::Failed,
+            "{name}: an effect whose id does not fit its bus field must fail"
+        );
+    }
+    let narrowed = commands_before_the_marker(&h, 6);
+    assert!(
+        narrowed.is_empty(),
+        "no effect may reach the bus with its id taken mod 256: {narrowed:?}"
     );
 }

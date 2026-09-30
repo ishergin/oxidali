@@ -122,3 +122,14 @@ Feature: Adapter discovery runs HTTP contract
     And the last operation eventually succeeds within the full-segment budget
     And adapter 0 physical devices eventually include all 64 short addresses
     And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-272
+  Scenario: A zero colour-type features answer the re-read corrects is counted on the stats surface
+    Given a discovery script where short address 0 first answers zero colour-type features
+    And I remember the stats dali read-back counters
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And adapter 0 physical device 0 eventually exposes the discovered random address and DT8 identity
+    And all scripted DALI exchanges should be consumed without errors
+    And the stats dali read-back counters should eventually have grown by groups 0, colour features 1, extended fade 0 and program repairs 0

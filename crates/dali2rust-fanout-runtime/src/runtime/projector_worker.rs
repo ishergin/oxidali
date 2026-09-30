@@ -191,6 +191,7 @@ struct RuntimeFact {
     observation: RuntimeObservation,
     last_dapc_source: Option<LastDapcSource>,
     source: RuntimeSource,
+    hold_hcl: bool,
     correlation_id: u64,
     observed_at_mono_ms: Option<u32>,
 }
@@ -309,6 +310,7 @@ fn publish_required_fact(
                     last_dapc_source: fact.last_dapc_source,
                     source: fact.source,
                     observed_at_mono_ms: fact.observed_at_mono_ms,
+                    hold_hcl: fact.hold_hcl,
                 },
             ),
         )),
@@ -373,6 +375,7 @@ fn handle_target_state_applied(
                 group_id,
                 setpoint: &body.setpoint,
                 source: body.source,
+                hold_hcl: body.hold_hcl,
                 last_dapc_source: product_last_dapc(body.dapc_applied, true),
                 last_seen_ms: now,
                 observed_at_mono_ms: Some(body.applied_at_mono_ms),
@@ -386,6 +389,7 @@ fn handle_target_state_applied(
                 registry_adapter_id: body.registry_adapter_id,
                 setpoint: &body.setpoint,
                 source: body.source,
+                hold_hcl: body.hold_hcl,
                 last_dapc_source: product_last_dapc(body.dapc_applied, true),
                 last_seen_ms: now,
                 observed_at_mono_ms: Some(body.applied_at_mono_ms),
@@ -417,6 +421,7 @@ fn publish_applied_direct(
             observation: RuntimeObservation::timestamped(body.source, now),
             last_dapc_source: product_last_dapc(body.dapc_applied, false),
             source: body.source,
+            hold_hcl: body.hold_hcl,
             correlation_id: corr,
             observed_at_mono_ms: Some(body.applied_at_mono_ms),
         },
@@ -428,6 +433,7 @@ struct GroupExpansion<'a> {
     group_id: u8,
     setpoint: &'a LightSetpoint,
     source: RuntimeSource,
+    hold_hcl: bool,
     last_dapc_source: Option<LastDapcSource>,
     last_seen_ms: u64,
     observed_at_mono_ms: Option<u32>,
@@ -470,6 +476,7 @@ fn expand_group(
                 observation: RuntimeObservation::timestamped(exp.source, exp.last_seen_ms),
                 last_dapc_source: exp.last_dapc_source,
                 source: exp.source,
+                hold_hcl: exp.hold_hcl,
                 correlation_id: CORRELATION_NONE,
                 observed_at_mono_ms: exp.observed_at_mono_ms,
             },
@@ -482,6 +489,7 @@ struct BroadcastExpansion<'a> {
     registry_adapter_id: u8,
     setpoint: &'a LightSetpoint,
     source: RuntimeSource,
+    hold_hcl: bool,
     last_dapc_source: Option<LastDapcSource>,
     last_seen_ms: u64,
     observed_at_mono_ms: Option<u32>,
@@ -513,6 +521,7 @@ fn expand_broadcast(
                 observation: RuntimeObservation::timestamped(exp.source, exp.last_seen_ms),
                 last_dapc_source: exp.last_dapc_source,
                 source: exp.source,
+                hold_hcl: exp.hold_hcl,
                 correlation_id: CORRELATION_NONE,
                 observed_at_mono_ms: exp.observed_at_mono_ms,
             },
@@ -527,6 +536,7 @@ struct SceneRecallExpansion {
     group_id: Option<u8>,
     short_address: Option<u8>,
     source: RuntimeSource,
+    hold_hcl: bool,
     last_seen_ms: u64,
     observed_at_mono_ms: Option<u32>,
 }
@@ -588,6 +598,7 @@ fn publish_scene_row(
             observation: RuntimeObservation::timestamped(exp.source, exp.last_seen_ms),
             last_dapc_source: Some(LastDapcSource::Scene),
             source: exp.source,
+            hold_hcl: exp.hold_hcl,
             correlation_id: CORRELATION_NONE,
             observed_at_mono_ms: exp.observed_at_mono_ms,
         },
@@ -652,6 +663,10 @@ fn handle_scene_recalled(
     if body.error.is_some() {
         return;
     }
+    let Some((group_id, short_address)) = recalled_reach(body) else {
+        counters.ignored_events.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
     expand_scene_recall(
         publisher,
         bus_id,
@@ -660,13 +675,23 @@ fn handle_scene_recalled(
         SceneRecallExpansion {
             registry_adapter_id: body.registry_adapter_id,
             scene_id: body.scene_id,
-            group_id: (body.scope == DaliTargetScope::Group).then_some(body.group_id),
-            short_address: None,
-            source: RuntimeSource::Api,
+            group_id,
+            short_address,
+            source: body.source,
+            hold_hcl: body.hold_hcl,
             last_seen_ms: dali2rust_bsp::unix_clock::unix_wall_clock_millis(),
             observed_at_mono_ms: Some(body.recalled_at_mono_ms),
         },
     );
+}
+
+fn recalled_reach(body: &DaliSceneRecalledEvent) -> Option<(Option<u8>, Option<u8>)> {
+    match body.scope {
+        DaliTargetScope::Broadcast => Some((None, None)),
+        DaliTargetScope::Group => Some((Some(body.group_id), None)),
+        DaliTargetScope::Short => Some((None, Some(body.short_address))),
+        DaliTargetScope::VirtualLamp | DaliTargetScope::AddressRange => None,
+    }
 }
 
 fn scene_target_to_setpoint(target: &DaliSceneTargetState) -> LightSetpoint {
@@ -696,13 +721,12 @@ fn handle_observed_frame(
         ObservedKind::TargetStateObserved => handle_observed_target_state(
             publisher, bus_id, read_port, counters, body,
         ),
-        ObservedKind::SceneRecallObserved => {
-            handle_observed_scene_recall(publisher, bus_id, read_port, counters, body)
-        }
         ObservedKind::LevelTransitionObserved => {
             handle_observed_level_transition(publisher, bus_id, read_port, counters, body)
         }
-        ObservedKind::SceneWriteObserved | ObservedKind::SceneRemovalObserved => {}
+        ObservedKind::SceneRecallObserved
+        | ObservedKind::SceneWriteObserved
+        | ObservedKind::SceneRemovalObserved => {}
     }
 }
 
@@ -783,43 +807,6 @@ fn handle_observed_level_transition(
         .fetch_add(1, Ordering::Relaxed);
 }
 
-fn handle_observed_scene_recall(
-    publisher: &BusPublisher,
-    bus_id: BusId,
-    read_port: &dyn ProjectorReadPort,
-    counters: &Arc<ProjectorCounters>,
-    body: &DaliObservedFrameEvent,
-) {
-    let Some(scene_id) = body.scene_id else {
-        counters.ignored_events.fetch_add(1, Ordering::Relaxed);
-        return;
-    };
-    let (group_id, short_address) = match (body.scope, body.group_id, body.short_address) {
-        (DaliTargetScope::Group, Some(group_id), _) => (Some(group_id), None),
-        (DaliTargetScope::Short, _, Some(short)) => (None, Some(short)),
-        (DaliTargetScope::Group, None, _) | (DaliTargetScope::Short, _, None) => {
-            counters.ignored_events.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-        _ => (None, None),
-    };
-    expand_scene_recall(
-        publisher,
-        bus_id,
-        read_port,
-        counters,
-        SceneRecallExpansion {
-            registry_adapter_id: body.registry_adapter_id,
-            scene_id,
-            group_id,
-            short_address,
-            source: RuntimeSource::Sniffer,
-            last_seen_ms: body.observed_at_ms,
-            observed_at_mono_ms: Some(body.observed_at_mono_ms),
-        },
-    );
-}
-
 fn handle_observed_target_state(
     publisher: &BusPublisher,
     bus_id: BusId,
@@ -868,6 +855,7 @@ fn observed_mass_fact(
             group_id,
             setpoint,
             source: RuntimeSource::Sniffer,
+            hold_hcl: true,
             last_dapc_source,
             last_seen_ms: body.observed_at_ms,
             observed_at_mono_ms: Some(body.observed_at_mono_ms),
@@ -877,6 +865,7 @@ fn observed_mass_fact(
             registry_adapter_id: body.registry_adapter_id,
             setpoint,
             source: RuntimeSource::Sniffer,
+            hold_hcl: true,
             last_dapc_source,
             last_seen_ms: body.observed_at_ms,
             observed_at_mono_ms: Some(body.observed_at_mono_ms),
@@ -911,6 +900,7 @@ fn observed_short_fact(
             observation: RuntimeObservation::sniffer_timestamped(body.observed_at_ms),
             last_dapc_source: body.dapc_observed.then_some(LastDapcSource::Sniffer),
             source: RuntimeSource::Sniffer,
+            hold_hcl: true,
             correlation_id: CORRELATION_NONE,
             observed_at_mono_ms: Some(body.observed_at_mono_ms),
         },
@@ -939,6 +929,7 @@ fn handle_read_outcomes(
             observation: RuntimeObservation::device_absent(RuntimeSource::Poller),
             last_dapc_source: None,
             source: RuntimeSource::Poller,
+            hold_hcl: true,
             correlation_id: CORRELATION_NONE,
             observed_at_mono_ms: None,
         },
@@ -972,6 +963,7 @@ fn handle_runtime_status_chunk(
             observation: observation.clone(),
             last_dapc_source: None,
             source: RuntimeSource::Readback,
+            hold_hcl: true,
             correlation_id: CORRELATION_NONE,
             observed_at_mono_ms: Some(read_started_mono_ms),
         },

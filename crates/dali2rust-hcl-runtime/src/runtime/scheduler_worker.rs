@@ -300,6 +300,7 @@ fn apply_event(state: &mut SchedulerState, deps: &SchedulerDeps, payload: &BusEv
                 virtual_lamp_id: body.virtual_lamp_id,
                 value_source: Some(body.commit_source),
                 states: body.commit_dimensions,
+                holds_hcl: body.commit_holds_hcl,
             };
             suspend_hit_targets(state, deps, &commit);
         }
@@ -310,7 +311,7 @@ fn apply_event(state: &mut SchedulerState, deps: &SchedulerDeps, payload: &BusEv
 }
 
 fn suspend_hit_targets(state: &mut SchedulerState, deps: &SchedulerDeps, commit: &RuntimeCommit) {
-    if !commit.is_foreign() {
+    if !commit.overrides() {
         return;
     }
     let Some(local) = deps.clock.local() else {
@@ -448,11 +449,10 @@ fn desired_entries(
     schedules: &[HclScheduleView],
     local: LocalCivilTime,
 ) -> Vec<DesiredEntry> {
+    let desired = desired_states(schedules, local);
     let ledger = lock_ledger(&deps.overrides);
-    schedules
-        .iter()
-        .filter(|schedule| runs_today(schedule, local))
-        .filter_map(|schedule| Some((schedule, desired_state(schedule, local)?)))
+    desired
+        .into_iter()
         .flat_map(|(schedule, desired)| {
             schedule
                 .targets
@@ -462,6 +462,20 @@ fn desired_entries(
                 .map(move |key| DesiredEntry { key, state: desired })
         })
         .collect()
+}
+
+#[inline(never)]
+fn desired_states(
+    schedules: &[HclScheduleView],
+    local: LocalCivilTime,
+) -> Vec<(&HclScheduleView, DesiredState)> {
+    let mut desired = Vec::with_capacity(schedules.len());
+    for schedule in schedules.iter().filter(|schedule| runs_today(schedule, local)) {
+        if let Some(state) = desired_state(schedule, local) {
+            desired.push((schedule, state));
+        }
+    }
+    desired
 }
 
 fn runs_today(schedule: &HclScheduleView, local: LocalCivilTime) -> bool {
@@ -570,6 +584,7 @@ fn command_envelope_for(
                 group_id: key.group_id,
                 setpoint: setpoint.clone(),
                 registry_adapter_id: key.adapter_id,
+                hold_hcl: true,
             },
         ),
         PlannedCommand::RecallLastActive { .. } => command_envelope(

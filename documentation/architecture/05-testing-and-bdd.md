@@ -17,6 +17,7 @@ design copies of scenarios.
 | Pure logic, mapping, validation, codec edge case | Unit test (`#[cfg(test)]`) |
 | One runtime slice on the real bus path | Crate integration test (`crates/*/tests/`) |
 | Behaviour observable from the composed host stack | BDD (`tests/dali2rust-bdd`) |
+| A web UI decision the device never sees (editor help, a screen's own state) | Node test over a pure module in `web/app/src/` (`web/app/tests/`, `npm test`) |
 
 - Prove a behaviour at the **lowest layer that proves it without bypassing the
   production path**.
@@ -29,6 +30,9 @@ design copies of scenarios.
   directly. No `bdd` Cargo feature, no `pub fn bdd_*` hooks, no registry seed reach-in.
 - What the host cannot model is proved on the HIL bench, which is not a merge gate
   ([`STRATEGY.md`](../../tools/hil/STRATEGY.md) §1).
+- A web UI component only wires pure modules to the DOM and has no test of its own:
+  logic that needs a test moves into a pure module first. What a screen relies on from
+  the device is proved by BDD through the REST contract, never again by web UI tests.
 
 ## Rules for every test
 
@@ -144,8 +148,12 @@ Decided in [`ADR-004`](decisions/ADR-004-bdd-black-box-boundary.md).
   `verify_bdd_tree_policy.sh`; a new resource adds its directory there. `dali/`, `bus/`,
   `display/` and `registry/` are forbidden, and an empty directory fails the coverage
   gate.
-- Steps live in `src/steps/<domain>_steps.rs`; steps shared across resources live in
-  `system_steps.rs`, `diagnostic_steps.rs` and `contracts_steps.rs`.
+- Steps live in `src/steps/<domain>_steps.rs`, or in `src/steps/<domain>/` split by what
+  they drive, with that domain's mock-transport scripts beside them; steps shared across
+  resources live in `system_steps.rs`, `diagnostic_steps.rs` and `contracts_steps.rs`,
+  and the operation-outcome steps in `operations_steps.rs`.
+- Helpers several step files use sit in `src/steps/`: frame builders in `frames.rs`, HTTP
+  polling in `polling.rs`, frame-order and priority assertions in `wire.rs`.
 
 ## Tags
 

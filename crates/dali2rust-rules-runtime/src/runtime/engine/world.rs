@@ -22,6 +22,7 @@ pub struct LampState {
     pub level: Option<u8>,
     pub cct_kelvin: Option<u16>,
     pub last_level: Option<u8>,
+    pub bound: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
