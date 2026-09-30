@@ -1,3 +1,5 @@
+pub const COMMAND_SUBSCRIPTIONS: usize = 3;
+
 pub fn is_topic_safe(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
@@ -116,7 +118,7 @@ impl HaTopics {
         )
     }
 
-    pub fn command_subscriptions(&self) -> [String; 3] {
+    pub fn command_subscriptions(&self) -> [String; COMMAND_SUBSCRIPTIONS] {
         let root = format!("{}/{}", self.state_prefix, self.controller_id);
         [
             format!("{root}/+/vl/+/set"),

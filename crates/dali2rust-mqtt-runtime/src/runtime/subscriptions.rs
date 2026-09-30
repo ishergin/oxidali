@@ -1,4 +1,13 @@
-use dali2rust_platform::mqtt::MqttSubAck;
+use dali2rust_api::ha::COMMAND_SUBSCRIPTIONS;
+use dali2rust_platform::mqtt::{MqttSubAck, SUBACK_QUEUE_DEPTH};
+use dali2rust_rules_model::limits::MAX_MQTT_TRIGGER_TOPICS;
+
+const SUBSCRIPTIONS_PER_SESSION: usize = COMMAND_SUBSCRIPTIONS + MAX_MQTT_TRIGGER_TOPICS;
+
+const _: () = assert!(
+    SUBACK_QUEUE_DEPTH >= 2 * SUBSCRIPTIONS_PER_SESSION,
+    "the link must hold a session's SUBACKs and those of a document change sent before them"
+);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Suback {
