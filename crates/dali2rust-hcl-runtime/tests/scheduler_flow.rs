@@ -2057,3 +2057,46 @@ fn a_hold_during_a_tick_is_served_while_other_confirmations_keep_arriving() {
     assert_eq!(held, dali2rust_contracts::msg::DeliveryStatus::Ok);
     assert_eq!(harness.commands().len(), 1, "served while the tick waited on its first command");
 }
+
+const ZETA_LEVEL: u8 = 50;
+
+fn wide_and_zeta(zeta_enabled: bool) -> Vec<HclScheduleView> {
+    let mut zeta = schedule(
+        "zeta",
+        vec![broadcast_target(0)],
+        vec![point(0, HclLevelMode::Absolute, Some(ZETA_LEVEL), None)],
+    );
+    zeta.enabled = zeta_enabled;
+    let mut schedules = sixteen_group_registry().schedules;
+    schedules.push(zeta);
+    schedules
+}
+
+#[test]
+fn an_edit_during_a_tick_cuts_only_the_edited_schedules_commands() {
+    let gate = Arc::new(Gate::default());
+    let base = StubRegistry { schedules: wide_and_zeta(true), ..sixteen_group_registry() };
+    let registry = Arc::new(EditableRegistry::new(base));
+    let read_port = Arc::clone(&registry) as Arc<dyn HclSchedulerReadPort>;
+    let harness = spawn_gated_harness(read_port, Arc::new(StubClock::at(600)), &gate);
+    harness.wait_for_commands(1);
+    let tick = harness.counters.ticks.load(Ordering::Relaxed);
+
+    registry.edit(wide_and_zeta(false));
+    let delivered = events_delivered_to_scheduler(&harness);
+    publish_until_queued(&harness, BusChannel::Events, schedule_changed("zeta", false));
+    wait_until(
+        || events_delivered_to_scheduler(&harness) > delivered,
+        Duration::from_secs(3),
+    );
+    harness.clear(95, "none");
+    harness.confirmation_for(95);
+    gate.set(true);
+    wait_for_tick_to_end(&harness, tick);
+
+    let states = target_states(&harness);
+    let wide = states.iter().filter(|(_, level)| *level == Some(120)).count();
+    assert_eq!(wide, SIXTEEN_GROUPS.len(), "the rest of the unedited plan went out: {states:?}");
+    assert!(!states.contains(&(0, Some(ZETA_LEVEL))), "the disabled schedule's command did not");
+    assert_eq!(harness.counters.ticks_cut.load(Ordering::Relaxed), 1, "the cut tick is counted");
+}

@@ -1102,8 +1102,13 @@ export interface StatsReportPayload {
   websocket: StatsWebSocket
   mqtt: StatsMqtt
   input: StatsInput
+  hcl: StatsHcl
   rules: StatsRules
   network: StatsNetwork | null
+}
+
+export type StatsHcl = {
+  ticks_cut_total: number
 }
 
 export type InputDeviceSummary = {

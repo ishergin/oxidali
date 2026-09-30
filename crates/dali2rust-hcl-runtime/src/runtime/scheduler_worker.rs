@@ -66,6 +66,7 @@ pub struct HclSchedulerCounters {
     pub overrides_started: AtomicU32,
     pub overrides_cleared: AtomicU32,
     pub overrides_reset: AtomicU32,
+    pub ticks_cut: AtomicU32,
     pub ignored_events: AtomicU32,
     pub ignored_commands: AtomicU32,
 }
@@ -116,8 +117,25 @@ struct SchedulerState {
 
 #[derive(Default)]
 struct TickScope {
+    sources: Vec<(TargetKey, String)>,
     published: Vec<TargetKey>,
     stood_down: Vec<TargetKey>,
+    edited: Vec<String>,
+    cut: bool,
+}
+
+impl TickScope {
+    fn planned(schedules: &[HclScheduleView], fresh: &[DesiredEntry]) -> Self {
+        let source = |entry: &DesiredEntry| schedules.get(entry.schedule).map(|view| view.schedule_id.clone());
+        let sources = fresh.iter().filter_map(|entry| Some((entry.key, source(entry)?))).collect();
+        Self { sources, ..Self::default() }
+    }
+
+    fn planned_by_an_edited_schedule(&self, target: &TargetKey) -> bool {
+        self.sources
+            .iter()
+            .any(|(key, schedule)| key == target && self.edited.contains(schedule))
+    }
 }
 
 impl SchedulerState {
@@ -147,8 +165,30 @@ impl SchedulerState {
             || self.tick.as_ref().is_some_and(|tick| tick.published.contains(target))
     }
 
-    fn stood_down_in_tick(&self, target: &TargetKey) -> bool {
-        self.tick.as_ref().is_some_and(|tick| tick.stood_down.contains(target))
+    fn skips_in_tick(&mut self, target: &TargetKey) -> bool {
+        let Some(tick) = self.tick.as_mut() else {
+            return false;
+        };
+        let cut = tick.planned_by_an_edited_schedule(target);
+        tick.cut |= cut;
+        cut || tick.stood_down.contains(target)
+    }
+
+    fn edit_during_tick(&mut self, edited: &str, current: &[HclScheduleView]) {
+        let was = self.published_from.as_deref().and_then(|views| schedule_named(views, edited));
+        let now = schedule_named(current, edited);
+        if was == now {
+            return;
+        }
+        let stale: Vec<TargetKey> =
+            was.into_iter().chain(now).flat_map(|view| view.targets.iter().flat_map(expand_target)).collect();
+        for key in &stale {
+            self.last_published.remove(key);
+        }
+        if let Some(tick) = self.tick.as_mut() {
+            tick.published.retain(|key| !stale.contains(key));
+            tick.edited.push(edited.to_owned());
+        }
     }
 
     fn forget_edited(&mut self, current: &[HclScheduleView]) {
@@ -160,10 +200,11 @@ impl SchedulerState {
         }
         self.last_published.clear();
         self.published_from = None;
-        if let Some(tick) = self.tick.as_mut() {
-            tick.published.clear();
-        }
     }
+}
+
+fn schedule_named<'v>(views: &'v [HclScheduleView], schedule_id: &str) -> Option<&'v HclScheduleView> {
+    views.iter().find(|view| view.schedule_id == schedule_id)
 }
 
 struct SchedulerDeps {
@@ -384,7 +425,12 @@ fn confirm_override_command(deps: &SchedulerDeps, correlation_id: u64, refusal: 
 fn apply_event(state: &mut SchedulerState, deps: &SchedulerDeps, payload: &BusEventPayload) {
     match payload {
         BusEventPayload::HclScheduleChangedEvent(body) => {
-            state.forget_edited(&sorted_schedules(deps));
+            let current = sorted_schedules(deps);
+            if state.tick.is_some() {
+                state.edit_during_tick(body.schedule_id.as_str(), &current);
+            } else {
+                state.forget_edited(&current);
+            }
             if body.removed {
                 let lifted = lock_ledger(&deps.overrides).clear_schedule(body.schedule_id.as_str());
                 count_lifted(deps, lifted);
@@ -499,11 +545,18 @@ fn run_tick(
         return;
     };
     let (fresh, tick_plan) = plan_tick(state, deps, local);
-    state.tick = Some(TickScope::default());
+    let schedules = state.published_from.as_deref().unwrap_or_default();
+    state.tick = Some(TickScope::planned(schedules, &fresh));
     let outcomes = publish_plan(rx, conf_rx, deps, &tick_plan.commands, state);
     WORKER_STACK.note("tick:publish");
     let tick = state.tick.take().unwrap_or_default();
-    record_published(state, fresh, &outcomes, &tick.stood_down);
+    record_published(state, fresh, &outcomes, &tick);
+    if tick.cut {
+        deps.counters.ticks_cut.fetch_add(1, Ordering::Relaxed);
+    }
+    if !tick.edited.is_empty() {
+        state.published_from = Some(sorted_schedules(deps));
+    }
 }
 
 fn plan_tick(
@@ -530,16 +583,15 @@ fn record_published(
     state: &mut SchedulerState,
     fresh: Vec<DesiredEntry>,
     outcomes: &PublishOutcomes,
-    stood_down: &[TargetKey],
+    tick: &TickScope,
 ) {
-    let still_current = state.published_from.is_some();
-    for entry in fresh.into_iter().filter(|_| still_current) {
+    for entry in fresh.into_iter().filter(|entry| !tick.planned_by_an_edited_schedule(&entry.key)) {
         if let Some(confirmed) = outcomes.get(&entry.key) {
             let record = PublishRecord { state: entry.state, confirmed };
             state.last_published.insert(entry.key, record);
         }
     }
-    for key in stood_down {
+    for key in &tick.stood_down {
         state.last_published.remove(key);
     }
 }
@@ -571,13 +623,13 @@ fn desired_entries(
     let ledger = lock_ledger(&deps.overrides);
     desired
         .into_iter()
-        .flat_map(|(schedule, desired)| {
+        .flat_map(|(index, schedule, desired)| {
             schedule
                 .targets
                 .iter()
                 .flat_map(expand_target)
                 .filter(|target| !ledger.is_suspended(&schedule.schedule_id, *target))
-                .map(move |key| DesiredEntry { key, state: desired })
+                .map(move |key| DesiredEntry { key, state: desired, schedule: index })
         })
         .collect()
 }
@@ -586,11 +638,14 @@ fn desired_entries(
 fn desired_states(
     schedules: &[HclScheduleView],
     local: LocalCivilTime,
-) -> Vec<(&HclScheduleView, DesiredState)> {
+) -> Vec<(usize, &HclScheduleView, DesiredState)> {
     let mut desired = Vec::with_capacity(schedules.len());
-    for schedule in schedules.iter().filter(|schedule| runs_today(schedule, local)) {
+    for (index, schedule) in schedules.iter().enumerate() {
+        if !runs_today(schedule, local) {
+            continue;
+        }
         if let Some(state) = desired_state(schedule, local) {
-            desired.push((schedule, state));
+            desired.push((index, schedule, state));
         }
     }
     desired
@@ -627,10 +682,7 @@ fn publish_plan(
 ) -> PublishOutcomes {
     let mut outcomes = PublishOutcomes::default();
     for (index, command) in commands.iter().enumerate() {
-        if state.published_from.is_none() {
-            break;
-        }
-        if state.stood_down_in_tick(&command.key()) {
+        if state.skips_in_tick(&command.key()) {
             continue;
         }
         let Some(confirmed) = publish_one(rx, conf_rx, deps, command, state) else {

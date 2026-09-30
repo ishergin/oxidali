@@ -166,6 +166,11 @@ pub struct StatsInputDto {
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct StatsHclDto {
+    pub ticks_cut_total: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct StatsMqttDto {
     pub connected: bool,
     pub publishes_total: u32,
@@ -198,6 +203,7 @@ pub struct StatsReportDto {
     pub websocket: StatsWebSocketDto,
     pub mqtt: StatsMqttDto,
     pub input: StatsInputDto,
+    pub hcl: StatsHclDto,
     pub rules: StatsRulesDto,
     pub network: Option<StatsNetworkDto>,
 }
@@ -274,6 +280,9 @@ declare_widest_dtos! {
         rule_messages_coalesced_total, rule_messages_lost_total, subscriptions_refused_total,
         own_topics_refused_total,
     }
+    StatsHclDto {
+        ticks_cut_total,
+    }
     StatsNetworkDto {
         rx_packets_total, tx_packets_total, rx_dropped_total, tx_dropped_total,
         rx_ring_overruns_total, rx_fifo_overflows_total, link_up_events_total,
@@ -283,7 +292,8 @@ declare_widest_dtos! {
         bus = StatsBusDto::widest(), dali = StatsDaliDto::widest(),
         operations = StatsOperationsDto::widest(), websocket = StatsWebSocketDto::widest(),
         mqtt = StatsMqttDto::widest(), input = StatsInputDto::widest(),
-        rules = StatsRulesDto::widest(), network = Some(StatsNetworkDto::widest()),
+        hcl = StatsHclDto::widest(), rules = StatsRulesDto::widest(),
+        network = Some(StatsNetworkDto::widest()),
     }
 }
 

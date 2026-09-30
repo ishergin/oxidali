@@ -272,6 +272,10 @@ export function StatsScreen() {
           <CounterRows block={data.input} path="input" deltas={deltas} isFault={isFault} />
         </Card>
 
+        <Card title="HCL">
+          <CounterRows block={data.hcl} path="hcl" deltas={deltas} isFault={isFault} />
+        </Card>
+
         <Card title="Rules engine" span2>
           <CounterRows
             block={ruleCounters(data.rules)}

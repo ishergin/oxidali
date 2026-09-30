@@ -29,7 +29,8 @@ use dali2rust_api::http::redundancy_settings_state::{
 };
 use dali2rust_api::http::stats_state::{
     StatsBusDto, StatsControllerDto, StatsDaliBackwardDto, StatsDaliConsoleDto, StatsDaliDto,
-    StatsDaliReadbackDto, StatsDaliTaskTimingDto, StatsHttpState, StatsInputDto, StatsMqttDto,
+    StatsDaliReadbackDto, StatsDaliTaskTimingDto, StatsHclDto, StatsHttpState, StatsInputDto,
+    StatsMqttDto,
     StatsNetworkDto, StatsOperationsDto, StatsReportDto, StatsRuleCountDto, StatsRulesDto,
     StatsWebSocketDto,
 };
@@ -426,6 +427,10 @@ fn stats_mqtt_dto(c: &dali2rust_mqtt_runtime::MqttCounters) -> StatsMqttDto {
     }
 }
 
+fn stats_hcl_dto(counters: &dali2rust_hcl_runtime::HclSchedulerCounters) -> StatsHclDto {
+    StatsHclDto { ticks_cut_total: counters.ticks_cut.load(Relaxed) }
+}
+
 fn stats_rules_dto(counters: &RuntimeCounterHandles) -> StatsRulesDto {
     let c = &counters.rules_engine;
     StatsRulesDto {
@@ -686,6 +691,7 @@ impl StatsHttpState for StatsBridge {
         out.websocket = stats_websocket_dto(&self.counters.websocket);
         out.mqtt = stats_mqtt_dto(&self.counters.mqtt);
         out.input = stats_input_dto(&self.counters);
+        out.hcl = stats_hcl_dto(&self.counters.hcl_scheduler);
         out.rules = stats_rules_dto(&self.counters);
         out.network = self.link.as_ref().map(|l| stats_network_dto(l.stats()));
     }

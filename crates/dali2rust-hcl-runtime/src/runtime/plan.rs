@@ -28,6 +28,7 @@ impl TargetKey {
 pub struct DesiredEntry {
     pub key: TargetKey,
     pub state: DesiredState,
+    pub schedule: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -170,6 +171,7 @@ mod tests {
                 level,
                 color_temperature_kelvin: kelvin,
             },
+            schedule: 0,
         }
     }
 

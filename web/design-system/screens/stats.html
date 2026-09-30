@@ -291,6 +291,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr sub"><span class="k">Scans completed</span><span class="v">3</span><span class="delta"></span></div>
       </div>
 
+      <div class="card">
+        <header><h3>HCL</h3></header>
+        <div class="attr"><span class="k">Ticks cut total</span><span class="v">2</span><span class="delta"></span></div>
+      </div>
+
       <div class="card span2">
         <header>
           <h3>Rules engine</h3>
@@ -346,6 +351,12 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     </div>
   </div>
 
+
+<div class="chgh">2026-09-30 — a tick a schedule change cut</div>
+<p class="chgnote">An <b>HCL</b> card joins the page with one total: <b>Ticks cut total</b>, the
+  publishing ticks whose plan a schedule change cut short — the changed schedule's commands wait
+  for the next tick while the rest of the plan goes out. It is a total and carries the change
+  column; a steady climb means a rule that keeps switching a schedule.</p>
 
 <div class="chgh">2026-09-30 — the counters a rule names</div>
 <p class="chgnote">The <b>Rules engine</b> card ends with one row per counter the rules document
