@@ -8,13 +8,17 @@ export function label(key: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
-export function useDeltas(data: unknown, sampleMs: number | null): Flat {
+export function useDeltas<T>(
+  data: T | null | undefined,
+  sampleMs: number | null,
+  view: (data: T) => unknown = (sample) => sample,
+): Flat {
   const previous = useRef<Flat | null>(null)
   const sampledAt = useRef(-1)
   const deltas = useRef<Flat>({})
 
   if (data && sampleMs !== null && sampleMs !== sampledAt.current) {
-    const flat = flatten(data, '', {})
+    const flat = flatten(view(data), '', {})
     if (sampledAt.current >= 0 && sampleMs < sampledAt.current) {
       deltas.current = {}
     } else if (previous.current) {

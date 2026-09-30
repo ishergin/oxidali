@@ -49,8 +49,8 @@ function ruleCounters(rules: StatsRules): Record<string, number> {
   return counters
 }
 
-function deltaView(data: StatsReportPayload | null | undefined) {
-  return data && { ...data, rules: { ...data.rules, stats: countsByName(data.rules.stats) } }
+function deltaView(data: StatsReportPayload) {
+  return { ...data, rules: { ...data.rules, stats: countsByName(data.rules.stats) } }
 }
 
 function RuleStatRows({ stats, deltas }: { stats: StatsRuleCount[]; deltas: Flat }) {
@@ -157,7 +157,7 @@ export function StatsScreen() {
     onEvent: snapshot.consume,
   })
   const data = snapshot.latest ?? polled
-  const deltas = useDeltas(deltaView(data), data?.sample_ms ?? null)
+  const deltas = useDeltas(data, data?.sample_ms ?? null, deltaView)
 
   if (error) return <div class="empty">Stats unavailable — {error}</div>
   if (!data) return <div class="empty">Loading stats…</div>
