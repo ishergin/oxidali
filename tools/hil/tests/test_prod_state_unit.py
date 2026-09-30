@@ -950,3 +950,32 @@ def test_a_session_whose_log_is_unreadable_or_of_another_controller_stays_open(
     assert restored == [] and prod_state.open_sessions(cfg) == [moved, torn]
     assert any("http://other" in line for line in lines)
     assert any("unreadable" in line for line in lines)
+
+
+def _full_session(cfg, stamp, interval, touched=None):
+    path = prod_state.session_path(cfg, stamp)
+    snap = _snap()
+    snap["settings"]["poller"]["interval_ms"] = interval
+    prod_state.save(dict(snap, taken_at=stamp, session_open=True), path)
+    if touched is not None:
+        write_log.WriteLog(stamp, "http://dut", write_log.writes_path(path)).note(touched)
+    return path
+
+
+def test_a_session_that_never_closes_retires_once_every_older_one_holds_its_snapshot(
+        monkeypatch, tmp_path):
+    cfg = HilConfig(serial_remote="", state_dir=tmp_path)
+    older = _full_session(cfg, OLDER, 5000, [(INTERVAL[0], {INTERVAL[1]})])
+    stuck = _full_session(cfg, NEWER, 6000)
+    now = copy.deepcopy(_snap())
+    now["settings"]["poller"]["interval_ms"] = 6000
+    monkeypatch.setattr(prod_state, "capture", lambda api, prime=True, log=print: now)
+    client, lines = types.SimpleNamespace(base="http://dut"), []
+    assert not prod_state.retire(cfg, client, stuck, log=lines.append)
+    assert prod_state.open_sessions(cfg) == [stuck, older]
+    assert any("settings/poller.interval_ms 5000 -> 6000" in line for line in lines)
+    now["settings"]["poller"]["interval_ms"] = 5000
+    assert prod_state.retire(cfg, client, stuck, log=lines.append)
+    assert prod_state.open_sessions(cfg) == [older]
+    assert prod_state.read_session(stuck)["retired"] is True
+    assert not prod_state.retire(cfg, client, stuck, log=lines.append)

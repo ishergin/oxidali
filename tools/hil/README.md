@@ -227,14 +227,9 @@ the port.
 
 The camera is the oracle for what a lamp really shows.
 The `optical` tests (`test_optical_*`, and the optical cases in `test_scenes`,
-`test_scenarios`, `test_hcl_runtime` and `test_ha_bridge`) check that:
-
-- each lamp in `HIL_OPTICAL_SHORTS` switches on and off;
-- brightness rises strictly along a ladder of levels;
-- RGB primaries come out with the right hue, and a colour sent without a level lights;
-- 2700 K and 6500 K order by their red-to-blue ratio;
-- a group recall, a scene, a scheduled HCL level and a colour temperature sent over MQTT
-  reach the fixtures themselves.
+`test_scenarios`, `test_hcl_runtime` and `test_ha_bridge`) check on the fixtures on and
+off, a strict brightness ladder, RGB hue, colour-only lighting, CCT order, and a group
+recall, scene, HCL level and MQTT colour reaching them.
 
 The camera is a UVC camera on a fixed mount with the lamps, or the patches they light,
 in view. `setup.sh` builds `uvc-util`, which locks exposure and white balance. macOS
@@ -328,7 +323,7 @@ rate the installation imposes.
 | `remote start [--restart]\|stop\|status\|ping\|bootloader\|run\|release\|reacquire` | the WB serial bridge and its tunnel |
 | `flash [--build-only] [--allow-nonbench-build] [--allow-red-isr] [--allow-stale-ui] [--via rfc2217\|wb\|ota]` | the only flash path (below) |
 | `--peer role gear-sim [--via ota\|wb]\|controller [--via ota\|wb]\|status` | lend the peer to the gear emulator and take it back (below) |
-| `state save\|restore\|diff [FILE]` | the installation snapshot |
+| `state save\|restore [--all\|--retire FILE]\|diff [FILE]` | the installation snapshot; `--retire FILE` closes a session that never closes once every older open one's logged fields hold their snapshot; never delete an older session file by hand while a newer one is open |
 | `api <sub> …` | manual API calls; exit 2 means the firmware lacks the capability |
 | `corpus [parts…]` | freeze both boards' configuration, REST, wire replies and serial evidence into `corpus/`; slices in `SECRET_SLICES` (the Home Assistant slice carries the broker password) are withheld unless `--keep-secrets` writes into an untracked `--out` — a slice that comes to carry a secret joins that list, because a pinned file gets committed |
 | `calibrate`, `camera-server`, `camera-bench`, `lamps [--no-baseline]` | optics; `lamps` switches every calibrated lamp **off** for its baseline unless `--no-baseline` |

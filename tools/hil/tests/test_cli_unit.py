@@ -223,3 +223,16 @@ def test_restore_exits_non_zero_while_a_session_stays_open_or_cannot_be_read(
     prod_state.session_path(cfg, "2026-09-30T10:00:00").write_text("{torn")
     assert cli.main(["state", "restore"]) == 1
     assert "UNREADABLE" in capsys.readouterr().out and prod_state.open_sessions(cfg) == []
+
+
+def test_retire_takes_one_session_file_and_never_a_full_restore(monkeypatch, tmp_path):
+    held = tmp_path / "production_state-20260930T100000.json"
+    assert cli.main(["state", "restore", "--retire"]) == cli.EX_USAGE
+    assert cli.main(["state", "restore", "--retire", "--all", str(held)]) == cli.EX_USAGE
+    assert cli.main(["state", "diff", "--retire", str(held)]) == cli.EX_USAGE
+    retired = []
+    monkeypatch.setattr(hil.api, "Client", lambda cfg: type("C", (), {"base": "http://dut"})())
+    monkeypatch.setattr(prod_state, "retire", lambda cfg, client, path, log=print:
+                        retired.append(path) or False)
+    assert cli.main(["state", "restore", "--retire", str(held)]) == 1
+    assert retired == [held]

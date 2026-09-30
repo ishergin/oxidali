@@ -520,6 +520,55 @@ def newer_open_sessions(cfg, path):
             if p.resolve() != path.resolve() and read_session(p)["taken_at"] > taken_at]
 
 
+def restore_command(cfg, client, path, everything, teardown, log=print):
+    refusal = explicit_refusal(cfg, path) if path is not None else None
+    if refusal:
+        log(refusal)
+        return 1
+    leftover = teardown()
+    for line in leftover:
+        log("virtual gear: NOT TORN DOWN: %s" % line)
+    paths = [path] if path is not None else open_sessions(cfg)
+    residual = leftover + restore_sessions(cfg, client, paths, everything, log)
+    return 1 if unfinished(cfg, log) or residual else 0
+
+
+def retire(cfg, client, path, log=print):
+    snap = read_session(path)
+    if not snap.get("session_open"):
+        log("hil state restore --retire: %s is not open" % path)
+        return False
+    older = [p for p in open_sessions(cfg) if read_session(p)["taken_at"] < snap["taken_at"]]
+    left = _left_undone(cfg, client, older, log) if older else []
+    for line in left:
+        log("hil state restore --retire %s refused: %s" % (path.name, line))
+    if left:
+        return False
+    save(dict(snap, session_open=False, retired=True), path)
+    log("hil state restore --retire: %s closed without a restore; every older session's writes "
+        "hold its snapshot, and a bare `hil state restore` closes them" % path.name)
+    return True
+
+
+def _left_undone(cfg, client, older, log):
+    now = capture(client, prime=True, log=log)
+    driven = set() if cfg.lamps_read_only else set(cfg.lamp_short_set())
+    left = []
+    for path in older:
+        snap = read_session(path)
+        try:
+            writes = _session_writes(path, snap, client, False, ())
+        except WriteLogError as exc:
+            left.append("%s: %s" % (path.name, exc))
+            continue
+        if writes is None:
+            left.append("%s has no write log, so what it wrote cannot be checked" % path.name)
+            continue
+        residual, _foreign, _undriven = _classify(differences(snap, now), writes, driven)
+        left += ["%s still differs: %s" % (path.name, line) for line in residual]
+    return left
+
+
 def explicit_refusal(cfg, path):
     try:
         newer = newer_open_sessions(cfg, path)
