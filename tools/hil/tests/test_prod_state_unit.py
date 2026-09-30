@@ -246,6 +246,37 @@ def test_a_policy_that_holds_is_not_written():
     assert api.patches == []
 
 
+def _shown(power, level):
+    return {"state": {"power": power, "level": level}}
+
+
+LIT_AND_DARK = {"devices": {"1": _shown("off", 0), "2": _shown("on", 120), "3": _shown("off", 0),
+                            "4": _shown("on", None)}}
+
+
+def test_only_a_driven_lamp_that_was_dark_loses_its_last_active_level():
+    driven = write_log.WriteLog("t", "http://dut", touched={"shown/1": {"*"}, "shown/2": {"*"}})
+    assert prod_state.last_active_unrestorable(LIT_AND_DARK, driven) == [1]
+    anything = write_log.WriteLog("t", "http://dut", touched={"shown/*": {"*"}})
+    assert prod_state.last_active_unrestorable(LIT_AND_DARK, anything) == [1, 3, 4]
+    assert prod_state.last_active_unrestorable(LIT_AND_DARK, None) == []
+
+
+def test_the_verdict_names_a_last_active_level_it_cannot_put_back():
+    driven = write_log.WriteLog("t", "http://dut", touched={"shown/1": {"*"}})
+    clean, quiet = prod_state.Restoration([], [], True), write_log.WriteLog("t", "http://dut")
+    assert prod_state.restore_verdict(clean, LIT_AND_DARK, quiet) == "; restored completely"
+    assert prod_state.restore_verdict(clean, LIT_AND_DARK, driven) == (
+        "; restored except the last active level of SA1, which no DALI query reads")
+    red = prod_state.Restoration(["a", "b"], [], False)
+    assert prod_state.restore_verdict(red, LIT_AND_DARK, driven) == (
+        "; restored with 2 residual line(s) except the last active level of SA1, which no "
+        "DALI query reads")
+    lines = []
+    prod_state._log_last_active(LIT_AND_DARK, driven, lines.append)
+    assert lines == [prod_state.LAST_ACTIVE_LOST % "SA1"]
+
+
 def _leaf(value, source, confirmed_at):
     return {"value": value, "source": source, "last_write_confirmed_ms": confirmed_at}
 

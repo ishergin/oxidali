@@ -58,6 +58,8 @@ HELD_OPEN = ("prod_state: %s stays open although it is restored: the newer open 
 UNDRIVEN = ("prod_state: putting %s back is a visible action, so this restore only reports "
             "it; rerun `hil state restore` with HIL_LAMPS_READ_ONLY=0 and HIL_LAMP_SHORTS "
             "naming them")
+LAST_ACTIVE_LOST = ("prod_state: the last active level of %s stays as the session left it: no "
+                    "DALI query reads it, so an 'on' without a level recalls the session's level")
 Restoration = namedtuple("Restoration", "residual foreign complete")
 
 DTR0 = 0xA3
@@ -455,7 +457,34 @@ def restore(api, snap, writes, log=print, drive_lamps=True, lamp_shorts=None):
         log("prod_state: NOT RESTORED: %s" % line)
     if undriven:
         log(UNDRIVEN % named(undriven))
+    _log_last_active(snap, writes, log)
     return Restoration(residual, foreign, writes is not None and not residual)
+
+
+def last_active_unrestorable(snap, writes):
+    if writes is None:
+        return []
+    return sorted(int(short) for short, dev in snap["devices"].items()
+                  if writes.changed(SHOWN_KEY + short) and not _lit(dev["state"]))
+
+
+def _lit(state):
+    return state.get("power") == "on" and bool(state.get("level"))
+
+
+def _log_last_active(snap, writes, log):
+    lost = last_active_unrestorable(snap, writes)
+    if lost:
+        log(LAST_ACTIVE_LOST % named(lost))
+
+
+def restore_verdict(done, snap, writes):
+    lost = last_active_unrestorable(snap, writes)
+    verdict = ("; restored with %d residual line(s)" % len(done.residual) if done.residual
+               else "; restored" if lost else "; restored completely")
+    if lost:
+        verdict += " except the last active level of %s, which no DALI query reads" % named(lost)
+    return verdict
 
 
 def _classify(found, writes, driven):
