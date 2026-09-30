@@ -120,6 +120,8 @@ async fn payload_number(world: &mut DaliWorld, topic: String, field: String, exp
 // MQTT-003 MQTT-004 MQTT-006 MQTT-012 MQTT-016 MQTT-017 MQTT-018 MQTT-019 MQTT-020
 #[when(regex = r#"^Home Assistant publishes (.+) on "([^"]*)"$"#)]
 async fn ha_publishes(world: &mut DaliWorld, payload: String, topic: String) {
+    let mock = world.mqtt_mock().clone();
+    wait_until(move || !mock.active_subscriptions().is_empty(), PUBLISH_WAIT);
     world.mqtt_mock().deliver(&topic, payload.as_bytes());
 }
 
