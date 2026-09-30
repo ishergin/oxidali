@@ -4,10 +4,10 @@ use dali2rust_contracts::msg::{
     HclLevelMode, HclOverrideTarget, HclSchedulePointRow, HclTargetScope, RuntimeSource,
     SetpointDimensions,
 };
-use dali2rust_domain::registry::GroupReadPort;
+use dali2rust_domain::registry::{GroupReadPort, HclSchedulerReadPort};
 use dali2rust_platform::small_sort::insertion_sort_by;
 
-use super::plan::TargetKey;
+use super::plan::{expand_target, TargetKey};
 
 use dali2rust_domain::registry::GROUP_COUNT;
 
@@ -177,6 +177,25 @@ pub fn hold_covers_target(
     }
 }
 
+pub fn schedules_holding(
+    read_port: &dyn HclSchedulerReadPort,
+    adapter_id: u8,
+    held: HclOverrideTarget,
+) -> Vec<String> {
+    read_port
+        .list_hcl_schedule_views()
+        .into_iter()
+        .filter(|schedule| {
+            schedule
+                .targets
+                .iter()
+                .flat_map(expand_target)
+                .any(|target| hold_covers_target(read_port, adapter_id, held, target))
+        })
+        .map(|schedule| schedule.schedule_id)
+        .collect()
+}
+
 fn lamp_in_target(
     read_port: &dyn GroupReadPort,
     adapter_id: u8,
@@ -216,27 +235,57 @@ fn lamp_is_in_group(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dali2rust_contracts::msg::{ColorMode, ColorValue, HclTargetScope, LightSetpoint, PowerState};
+    use dali2rust_contracts::msg::{
+        ColorMode, ColorValue, HclAlgorithm, HclTargetRow, HclTargetScope, LightSetpoint,
+        PowerState,
+    };
     use dali2rust_domain::registry::{
         AdapterReadPort, AdapterView, GroupApplyRowView, GroupApplySnapshot,
-        GroupMembershipMatrixView, GroupView,
+        GroupMembershipMatrixView, GroupView, HclScheduleReadPort, HclScheduleView,
     };
 
     struct MembershipStub {
         rows: Vec<GroupApplyRowView>,
+        schedules: Vec<HclScheduleView>,
     }
 
     impl MembershipStub {
         fn with_lamp_in_groups(virtual_lamp_id: u8, groups: &[u8]) -> Self {
+            Self { rows: Vec::new(), schedules: Vec::new() }.and_lamp_in_groups(virtual_lamp_id, groups)
+        }
+
+        fn and_lamp_in_groups(mut self, virtual_lamp_id: u8, groups: &[u8]) -> Self {
             let applied = groups.iter().fold(0u16, |mask, group| mask | (1u16 << group));
-            Self {
-                rows: vec![GroupApplyRowView {
-                    virtual_lamp_id,
-                    desired_groups_mask: applied,
-                    applied_groups_mask: applied,
-                    binding_short: Some(1),
-                }],
-            }
+            self.rows.push(GroupApplyRowView {
+                virtual_lamp_id,
+                desired_groups_mask: applied,
+                applied_groups_mask: applied,
+                binding_short: Some(virtual_lamp_id),
+            });
+            self
+        }
+
+        fn and_schedule(mut self, schedule_id: &str, enabled: bool, targets: Vec<HclTargetRow>) -> Self {
+            self.schedules.push(HclScheduleView {
+                schedule_id: schedule_id.to_string(),
+                enabled,
+                algorithm: HclAlgorithm::Stepped,
+                active_days_mask: u8::MAX,
+                latitude_microdeg: None,
+                longitude_microdeg: None,
+                targets,
+                points: Vec::new(),
+            });
+            self
+        }
+    }
+
+    impl HclScheduleReadPort for MembershipStub {
+        fn hcl_schedule_view(&self, schedule_id: &str) -> Option<HclScheduleView> {
+            self.schedules.iter().find(|view| view.schedule_id == schedule_id).cloned()
+        }
+        fn list_hcl_schedule_views(&self) -> Vec<HclScheduleView> {
+            self.schedules.clone()
         }
     }
 
@@ -571,6 +620,42 @@ mod tests {
         assert!(hold_covers_target(&stub, 0, lamp, group_target(3)));
         assert!(!hold_covers_target(&stub, 0, lamp, group_target(5)));
         assert!(!hold_covers_target(&stub, 1, lamp, broadcast_target()), "another adapter");
+    }
+
+    fn groups_row(groups: &[u8]) -> HclTargetRow {
+        HclTargetRow {
+            adapter_id: 0,
+            scope: HclTargetScope::Group,
+            group_mask: groups.iter().fold(0u16, |mask, group| mask | (1u16 << group)),
+        }
+    }
+
+    fn broadcast_row() -> HclTargetRow {
+        HclTargetRow { adapter_id: 0, scope: HclTargetScope::Broadcast, group_mask: 0 }
+    }
+
+    #[test]
+    fn a_lamp_names_the_schedules_whose_targets_the_gear_put_it_in() {
+        let registry = MembershipStub::with_lamp_in_groups(1, &[7])
+            .and_lamp_in_groups(2, &[8])
+            .and_lamp_in_groups(3, &[])
+            .and_schedule("house", true, vec![groups_row(&[7, 8])])
+            .and_schedule("garden", false, vec![groups_row(&[8])])
+            .and_schedule("porch", true, vec![broadcast_row()]);
+        let lamp = |virtual_lamp_id| HclOverrideTarget::VirtualLamp { virtual_lamp_id };
+        assert_eq!(schedules_holding(&registry, 0, lamp(1)), ["house", "porch"]);
+        assert_eq!(
+            schedules_holding(&registry, 0, lamp(2)),
+            ["house", "garden", "porch"],
+            "a disabled schedule may still hold a flag a resume has to lift"
+        );
+        assert_eq!(schedules_holding(&registry, 0, lamp(3)), ["porch"], "no group, only broadcast");
+        assert_eq!(
+            schedules_holding(&registry, 0, HclOverrideTarget::Group { group_id: 8 }),
+            ["house", "garden"]
+        );
+        assert_eq!(schedules_holding(&registry, 0, HclOverrideTarget::Broadcast), ["porch"]);
+        assert!(schedules_holding(&registry, 1, lamp(1)).is_empty(), "another adapter");
     }
 
     #[test]

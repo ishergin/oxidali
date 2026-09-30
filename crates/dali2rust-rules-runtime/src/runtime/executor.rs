@@ -183,7 +183,7 @@ impl EffectExecutor<'_> {
 
     fn hcl_effect(&self, effect: &Effect, snapshot: &WorldSnapshot, corr: u64) -> bool {
         match effect {
-            Effect::HclResume { target } => self.hcl_resume(target, corr),
+            Effect::HclResume { target } => self.hcl_resume(target, snapshot, corr),
             Effect::HclHold { target } => self.hcl_hold(target, snapshot, corr),
             Effect::HclSchedule { schedule, enabled } => self.hcl_switch(schedule, *enabled, corr),
             _ => self.misrouted(),
@@ -298,8 +298,11 @@ impl EffectExecutor<'_> {
         )
     }
 
-    fn hcl_resume(&self, target: &LightTarget, corr: u64) -> bool {
-        let schedules = self.world.hcl_schedules_for(target);
+    fn hcl_resume(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {
+        let Some((adapter_id, named)) = self.hcl_target(target, snapshot) else {
+            return false;
+        };
+        let schedules = self.world.hcl_schedules_for(adapter_id, named);
         if schedules.is_empty() {
             return false;
         }
@@ -316,13 +319,23 @@ impl EffectExecutor<'_> {
     }
 
     fn hcl_hold(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {
-        let Some((registry_adapter_id, held)) = override_target_of(target) else {
+        let Some((registry_adapter_id, held)) = self.hcl_target(target, snapshot) else {
             return false;
         };
-        if !lamp_bound(target, snapshot) {
-            return self.unbound_lamp();
-        }
         self.publish(corr, HclOverrideHoldCommand { registry_adapter_id, target: held })
+    }
+
+    fn hcl_target(
+        &self,
+        target: &LightTarget,
+        snapshot: &WorldSnapshot,
+    ) -> Option<(u8, HclOverrideTarget)> {
+        let named = override_target_of(target)?;
+        if !lamp_bound(target, snapshot) {
+            self.unbound_lamp();
+            return None;
+        }
+        Some(named)
     }
 
     fn hcl_switch(&self, schedule: &str, enabled: bool, corr: u64) -> bool {

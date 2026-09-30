@@ -1378,13 +1378,12 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
             .unwrap_or([None; 3])
     }
 
-    fn hcl_schedules_for(&self, target: &dali2rust_rules_model::LightTarget) -> Vec<String> {
-        self.hcl_state
-            .list_hcl_schedule_dtos()
-            .into_iter()
-            .filter(|dto| self.schedule_targets(dto).iter().any(|t| t == target))
-            .map(|dto| dto.schedule_id)
-            .collect()
+    fn hcl_schedules_for(
+        &self,
+        adapter_id: u8,
+        target: dali2rust_contracts::msg::HclOverrideTarget,
+    ) -> Vec<String> {
+        dali2rust_hcl_runtime::schedules_holding(self.store.as_ref(), adapter_id, target)
     }
 }
 

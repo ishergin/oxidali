@@ -72,7 +72,11 @@ impl dali2rust_rules_runtime::RulesWorldPort for EmptyWorld {
     fn input_instance_groups(&self, _a: u8, _s: u8, _i: u8) -> [Option<u8>; 3] {
         [None; 3]
     }
-    fn hcl_schedules_for(&self, _t: &dali2rust_rules_model::LightTarget) -> Vec<String> {
+    fn hcl_schedules_for(
+        &self,
+        _adapter_id: u8,
+        _target: dali2rust_contracts::msg::HclOverrideTarget,
+    ) -> Vec<String> {
         vec!["вечер".to_string()]
     }
 }
@@ -1803,4 +1807,41 @@ fn a_hold_names_its_target_and_a_lamp_with_no_binding_holds_nothing() {
     let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);
     assert_eq!(outcome("lamp"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
     assert_eq!(outcome("unbound"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
+}
+
+const RESUME_DOC: &str = "rule \"unbound\" {\n  when http trigger\n  do hcl.resume(lamp(8))\n}\n\
+rule \"bound\" {\n  when http trigger\n  do hcl.resume(lamp(6))\n}\n\
+rule \"marker\" {\n  when http trigger\n  do lamp(6).level(55)\n}\n";
+
+#[test]
+fn a_resume_on_a_lamp_with_no_binding_lifts_nothing() {
+    let unbound = dali2rust_rules_runtime::runtime::engine::LampState {
+        bound: false,
+        ..bound_lamp(8)
+    };
+    let h = harness_with_lamps(
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-resume-unbound")),
+        vec![unbound],
+    );
+    publish_document(&h, 151, RESUME_DOC, 0);
+    assert!(recv_signal(&h, 151).error.is_none());
+    wait_revision(&h.store, 1);
+
+    for (corr, name) in [(152u64, "unbound"), (153, "bound"), (154, "marker")] {
+        run_rule(&h, corr, name);
+        recv_signal(&h, corr);
+    }
+
+    let clears = commands_before_the_marker(&h, 6)
+        .iter()
+        .filter(|payload| {
+            matches!(payload, dali2rust_contracts::msg::BusCommandPayload::HclOverrideClearCommand(_))
+        })
+        .count();
+    assert_eq!(clears, 1, "only the bound lamp's resume reaches the scheduler");
+    assert_eq!(h.counters.effects_unbound.load(std::sync::atomic::Ordering::Relaxed), 1);
+    let runtime = h.store.rule_runtime();
+    let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);
+    assert_eq!(outcome("unbound"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
+    assert_eq!(outcome("bound"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
 }

@@ -217,7 +217,7 @@ fn wait_for_frame(world: &mut DaliWorld, frame: u16) {
     );
 }
 
-// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063
+// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064
 #[given(regex = r"^the controller clock reads (\d+) minutes past midnight$")]
 async fn given_clock_reads(world: &mut DaliWorld, minutes: u64) {
     set_clock(world, minutes);
@@ -238,7 +238,7 @@ async fn when_scheduler_ticks(world: &mut DaliWorld, count: u64) {
     );
 }
 
-// HCL-050 HCL-063 HCL-053 HCL-054 HCL-056 HCL-057 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063
+// HCL-050 HCL-063 HCL-053 HCL-054 HCL-056 HCL-057 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064
 #[then(regex = r"^the scheduler should drive group (\d+) to level (\d+)$")]
 async fn then_group_driven(world: &mut DaliWorld, group_id: u8, level: u8) {
     wait_for_frame(world, dapc_frame(Some(group_id), level));
@@ -364,7 +364,7 @@ fn suspended_groups(port: u16, schedule_id: &str) -> Option<Vec<u64>> {
     )
 }
 
-// RULE-037 RULE-038 RULE-061 RULE-063 RULE-062
+// RULE-037 RULE-038 RULE-061 RULE-063 RULE-062 RULE-064
 #[then(regex = r#"^HCL schedule "([^"]+)" eventually reports group (\d+) suspended$"#)]
 async fn then_group_eventually_suspended(world: &mut DaliWorld, schedule_id: String, group_id: u64) {
     let port = world.server_port();
@@ -406,7 +406,7 @@ async fn then_schedule_eventually_switched(world: &mut DaliWorld, schedule_id: S
     );
 }
 
-// RULE-062
+// RULE-062 RULE-064
 #[then(regex = r#"^HCL schedule "([^"]+)" eventually reports itself running$"#)]
 async fn then_override_eventually_running(world: &mut DaliWorld, schedule_id: String) {
     let port = world.server_port();
