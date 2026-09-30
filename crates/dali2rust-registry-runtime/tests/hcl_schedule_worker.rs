@@ -163,6 +163,20 @@ fn schedule_is_invisible_until_its_last_chunk_commits() {
 }
 
 #[test]
+fn the_rules_see_committed_schedule_ids_and_no_staged_one() {
+    let (publisher, conf_rx, _ev_rx, store, _counters, _host) = spawn_stack();
+    store_porch(&publisher, &conf_rx, 11);
+    publish(
+        &publisher,
+        12,
+        chunk("evening", 0, &[target(0, 0b10)], 0, &[point(360, 80, 2700)], false),
+    );
+    assert_ok(&recv_confirm_for(&conf_rx, 12));
+
+    assert_eq!(store.hcl_schedule_ids(), ["porch"], "a staged schedule is not there to switch");
+}
+
+#[test]
 fn a_staged_id_is_taken_even_though_it_is_not_readable() {
     let (publisher, conf_rx, _ev_rx, store, _counters, _host) = spawn_stack();
 

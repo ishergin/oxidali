@@ -156,6 +156,11 @@ impl RegistryStore {
         self.read_inner().hcl_schedules_revision
     }
 
+    pub fn hcl_schedule_ids(&self) -> Vec<String> {
+        let inner = self.read_inner();
+        inner.hcl_schedules.keys().map(|id| id.as_str().to_owned()).collect()
+    }
+
     pub(crate) fn evict_stale_hcl_schedule_stages(&self, max_age_ms: u64) {
         let now = registry_unix_ms();
         evict_stale(&mut self.write_inner().hcl_schedule_stage, now, max_age_ms);

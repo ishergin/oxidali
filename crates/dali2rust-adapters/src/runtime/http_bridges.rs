@@ -1390,11 +1390,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
     }
 
     fn hcl_schedules(&self) -> Vec<String> {
-        self.hcl_state
-            .list_hcl_schedule_dtos()
-            .into_iter()
-            .map(|dto| dto.schedule_id)
-            .collect()
+        self.store.hcl_schedule_ids()
     }
 
     fn input_instance_groups(
