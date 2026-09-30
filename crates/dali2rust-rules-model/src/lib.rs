@@ -19,7 +19,7 @@ pub use action::{
 pub use compiler::{NameResolver, RuleCompiler};
 pub use condition::{Cmp, Condition, ConditionKind, HclState, VarOperand};
 pub use error::{CompileError, ModelError};
-pub use limits::{expanded_action_count, validate};
+pub use limits::{expanded_action_count, stat_names, validate};
 pub use refs::{
     DeviceRef, GroupRef, InputDeviceRef, InputGroupSelector, InputRef, InputSelector, LampRef,
     LightTarget,

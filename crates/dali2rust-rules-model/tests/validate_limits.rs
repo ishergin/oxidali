@@ -181,3 +181,48 @@ fn after_counts_its_body_plus_itself() {
     let rule = rule_with_actions("delayed", vec![action]);
     assert_eq!(expanded_action_count(&rule, &[]).unwrap(), 3);
 }
+
+fn stat(name: &str) -> Action {
+    Action::State(StateAction::StatCount { name: name.into() })
+}
+
+fn counted_names(first: usize, last: usize) -> Vec<Action> {
+    (first..=last).map(|index| stat(&format!("c{index}"))).collect()
+}
+
+#[test]
+fn a_document_may_name_the_limit_of_stat_counters_and_count_them_as_often_as_it_likes() {
+    use dali2rust_rules_model::limits::MAX_STAT_NAMES;
+    let rules = vec![
+        rule_with_actions("a", counted_names(1, 8)),
+        rule_with_actions("b", counted_names(1, 8)),
+        rule_with_actions("c", vec![repeat(2, vec![stat("c1")])]),
+    ];
+    let blocks = vec![def("tail", counted_names(9, MAX_STAT_NAMES))];
+    let set = set_with(blocks, rules);
+    assert_eq!(validate(&set), Ok(()));
+    assert_eq!(dali2rust_rules_model::stat_names(&set).len(), MAX_STAT_NAMES);
+}
+
+#[test]
+fn one_stat_counter_past_the_limit_is_refused_at_the_owner_that_names_it() {
+    use dali2rust_rules_model::limits::MAX_STAT_NAMES;
+    let rules = vec![
+        rule_with_actions("a", counted_names(1, 8)),
+        rule_with_actions("b", counted_names(5, MAX_STAT_NAMES)),
+        rule_with_actions(
+            "c",
+            vec![Action::Flow(FlowAction::After {
+                delay_ms: dali2rust_rules_model::DurationMs(1_000),
+                actions: vec![stat("c1"), stat("one-more")],
+            })],
+        ),
+    ];
+    match validate(&set_with(vec![], rules)) {
+        Err(ModelError::TooManyStatNames { owner, count }) => {
+            assert_eq!(owner, "c", "the name hides in an after block and is still found");
+            assert_eq!(count, MAX_STAT_NAMES + 1);
+        }
+        other => panic!("expected TooManyStatNames, got {other:?}"),
+    }
+}

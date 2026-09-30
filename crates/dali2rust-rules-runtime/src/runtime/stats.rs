@@ -1,6 +1,13 @@
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use crate::runtime::engine::EngineCountersSnapshot;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleStatCount {
+    pub name: String,
+    pub count: u32,
+}
 
 #[derive(Debug, Default)]
 pub struct RulesEngineCells {
@@ -23,6 +30,7 @@ pub struct RulesEngineCells {
     pub latency_p50_ms: AtomicU32,
     pub latency_p95_ms: AtomicU32,
     pub latency_max_ms: AtomicU32,
+    stats: Mutex<Vec<RuleStatCount>>,
 }
 
 impl RulesEngineCells {
@@ -43,6 +51,26 @@ impl RulesEngineCells {
         self.ticks_time_unsynced.store(snap.ticks_time_unsynced, Ordering::Relaxed);
         self.rules_loaded.store(snap.rules_loaded, Ordering::Relaxed);
         self.vars_in_use.store(snap.vars_in_use, Ordering::Relaxed);
+    }
+
+    pub(crate) fn store_stats<'a>(&self, counts: impl Iterator<Item = (&'a str, u32)> + Clone) {
+        let mut held = self.stats.lock().unwrap_or_else(PoisonError::into_inner);
+        let unchanged = held.len() == counts.clone().count()
+            && held
+                .iter()
+                .zip(counts.clone())
+                .all(|(row, (name, count))| row.name == name && row.count == count);
+        if unchanged {
+            return;
+        }
+        *held = counts
+            .map(|(name, count)| RuleStatCount { name: name.to_owned(), count })
+            .collect();
+    }
+
+    #[must_use]
+    pub fn stat_counts(&self) -> Vec<RuleStatCount> {
+        self.stats.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 }
 

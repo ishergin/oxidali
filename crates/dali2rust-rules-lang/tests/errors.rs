@@ -250,3 +250,28 @@ fn an_out_of_range_id_is_refused_wherever_a_reference_is_written() {
         assert_eq!((err.line, err.column), at, "{what}: {err}");
     }
 }
+
+fn counting_rule(name: &str, counters: &[String]) -> String {
+    let actions: Vec<String> = counters.iter().map(|c| format!("stat(\"{c}\").count()")).collect();
+    format!("rule \"{name}\" {{\n  when http trigger\n  do {}\n}}\n", actions.join("\n     "))
+}
+
+fn counters(first: usize, last: usize) -> Vec<String> {
+    (first..=last).map(|index| format!("c{index}")).collect()
+}
+
+#[test]
+fn the_stat_counter_past_the_limit_points_at_the_rule_that_names_it() {
+    let first_sixteen = format!(
+        "{}{}",
+        counting_rule("a", &counters(1, 8)),
+        counting_rule("b", &counters(9, 16))
+    );
+    let within = format!("{first_sixteen}{}", counting_rule("c", &counters(1, 1)));
+    compile_ok(&within);
+
+    let past = format!("{first_sixteen}{}", counting_rule("c", &["c1".into(), "c17".into()]));
+    let err = compile_err(&past);
+    assert_eq!((err.line, err.column), (23, 6), "the name of rule \"c\": {err}");
+    assert!(err.message.contains("stat counter"), "{err}");
+}

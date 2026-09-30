@@ -75,6 +75,7 @@ pub(crate) struct Volatile {
     pub chain: Vec<ChainEntry>,
     pub hold_marks: BTreeMap<(u8, u8, u8), u64>,
     pub light_edge: BTreeMap<(u8, u8, u8), u16>,
+    pub stats: BTreeMap<String, u32>,
     pub prev_week_min: Option<u32>,
     pub seq: u64,
 }
@@ -120,6 +121,20 @@ impl Volatile {
     pub fn retain_rule_names(&mut self, survives: &dyn Fn(&str) -> bool) {
         self.last_activation_ms.retain(|name, _| survives(name));
         self.cycle_pos.retain(|name, _| survives(name));
+    }
+
+    pub fn keep_stats(&mut self, names: &[&str]) {
+        let kept = std::mem::take(&mut self.stats);
+        self.stats = names
+            .iter()
+            .map(|name| ((*name).to_owned(), kept.get(*name).copied().unwrap_or(0)))
+            .collect();
+    }
+
+    pub fn count_stat(&mut self, name: &str) {
+        if let Some(count) = self.stats.get_mut(name) {
+            *count = count.wrapping_add(1);
+        }
     }
 }
 

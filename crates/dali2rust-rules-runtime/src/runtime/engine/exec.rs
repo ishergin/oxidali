@@ -663,7 +663,12 @@ fn prim_state(
             retain: *retain,
         })),
         StateAction::Log { text } => Ok(Some(Effect::Log { text: text.clone() })),
-        StateAction::StatCount { name } => Ok(Some(Effect::StatCount { name: name.clone() })),
+        StateAction::StatCount { name } => {
+            if !job.dry {
+                env.vol.count_stat(name);
+            }
+            Ok(None)
+        }
     }
 }
 

@@ -789,7 +789,6 @@ export type RulesWorkerCounters = {
   hcl_schedule_unmapped: number
   input_action_unmapped: number
   log_lines: number
-  stat_counts: number
   activations_published: number
 }
 
@@ -1052,6 +1051,12 @@ export type StatsRules = {
   latency_p50_ms: number
   latency_p95_ms: number
   latency_max_ms: number
+  stats: StatsRuleCount[]
+}
+
+export type StatsRuleCount = {
+  name: string
+  count: number
 }
 
 export type StatsInput = {

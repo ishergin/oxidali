@@ -52,7 +52,6 @@ pub struct RulesWorkerCounters {
     pub hcl_schedule_unmapped: AtomicU32,
     pub input_action_unmapped: AtomicU32,
     pub log_lines: AtomicU32,
-    pub stat_counts: AtomicU32,
     pub activations_published: AtomicU32,
 }
 
@@ -325,7 +324,7 @@ impl RulesWorker {
                 failed_rules.push(index);
             }
         }
-        self.engine_cells.store(&self.engine.counters());
+        self.store_engine_cells();
         if from_failure {
             return;
         }
@@ -350,6 +349,7 @@ impl RulesWorker {
             bus_id: self.bus_id,
             world: self.world.as_ref(),
             counters: &self.counters,
+            rule: &outcome.rule,
         };
         let report = if outcome.dry {
             crate::runtime::executor::ExecutionReport::default()
@@ -451,7 +451,7 @@ impl RulesWorker {
         self.store.retain_runtime(doc.compiled.as_ref());
         self.engine.set_rules(doc.compiled, self.world.now_ms());
         self.funnel.set_watch_groups(self.engine.watches_groups());
-        self.engine_cells.store(&self.engine.counters());
+        self.store_engine_cells();
     }
 
     fn reload_engine_if_moved(&mut self) {
@@ -463,7 +463,7 @@ impl RulesWorker {
         self.store.retain_runtime(doc.compiled.as_ref());
         self.engine.set_rules(doc.compiled, self.world.now_ms());
         self.funnel.set_watch_groups(self.engine.watches_groups());
-        self.engine_cells.store(&self.engine.counters());
+        self.store_engine_cells();
     }
 
     fn on_enable(&mut self, toggle: &RuleEnableCommand) {
@@ -478,11 +478,16 @@ impl RulesWorker {
         self.publish_changed();
     }
 
+    fn store_engine_cells(&self) {
+        self.engine_cells.store(&self.engine.counters());
+        self.engine_cells.store_stats(self.engine.stat_counts());
+    }
+
     fn flip_engine_bit(&mut self, name: &str, enabled: bool, revision: u32) {
         let in_step = self.engine_revision == revision.wrapping_sub(1);
         if in_step && self.engine.set_rule_enabled(name, enabled) {
             self.engine_revision = revision;
-            self.engine_cells.store(&self.engine.counters());
+            self.store_engine_cells();
         }
     }
 

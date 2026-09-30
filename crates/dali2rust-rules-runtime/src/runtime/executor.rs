@@ -79,11 +79,14 @@ impl LightSeries {
     }
 }
 
+pub(crate) const RULES_LOG_TARGET: &str = "rules";
+
 pub(crate) struct EffectExecutor<'a> {
     pub publisher: &'a BusPublisher,
     pub bus_id: BusId,
     pub world: &'a dyn RulesWorldPort,
     pub counters: &'a RulesWorkerCounters,
+    pub rule: &'a str,
 }
 
 impl EffectExecutor<'_> {
@@ -162,7 +165,7 @@ impl EffectExecutor<'_> {
             | Effect::PanelSelect { .. }
             | Effect::CancelHold { .. }
             | Effect::CatchMovement { .. } => self.input_effect(effect, snapshot, corr),
-            Effect::MqttPublish { .. } | Effect::Log { .. } | Effect::StatCount { .. } => {
+            Effect::MqttPublish { .. } | Effect::Log { .. } => {
                 self.state_effect(effect, corr)
             }
         }
@@ -221,14 +224,14 @@ impl EffectExecutor<'_> {
             Effect::MqttPublish { topic, payload, retain } => {
                 self.mqtt(topic, payload, *retain, corr)
             }
-            Effect::Log { text: _ } => self.counted(&self.counters.log_lines),
-            Effect::StatCount { .. } => self.counted(&self.counters.stat_counts),
+            Effect::Log { text } => self.log_line(text),
             _ => self.misrouted(),
         }
     }
 
-    fn counted(&self, cell: &std::sync::atomic::AtomicU32) -> bool {
-        cell.fetch_add(1, Ordering::Relaxed);
+    fn log_line(&self, text: &str) -> bool {
+        log::info!(target: RULES_LOG_TARGET, "{}: {text}", self.rule);
+        self.counters.log_lines.fetch_add(1, Ordering::Relaxed);
         true
     }
 

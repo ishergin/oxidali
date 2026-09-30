@@ -31,6 +31,7 @@ const PROJECT_LOG_TARGETS: &[&str] = &[
     "dali2rust_firmware::composition::esp_idf",
     "dali2rust_firmware::composition::host",
     "dali2rust_firmware::persistence_store",
+    "rules",
 ];
 
 macro_rules! parse_env_or {

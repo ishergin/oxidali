@@ -80,7 +80,7 @@ async fn when_open_ws(world: &mut DaliWorld) {
     open_client(world);
 }
 
-// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059
+// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059 RULE-067
 #[given("an open WebSocket connection")]
 async fn given_open_ws(world: &mut DaliWorld) {
     open_client(world);
@@ -456,7 +456,7 @@ async fn given_warning_before_subscribe(world: &mut DaliWorld) {
     provoke_warning(world);
 }
 
-// WS-052 WS-053
+// WS-052 WS-053 RULE-067
 #[given(regex = r#"^the WebSocket client is subscribed to "logs" at level "([^"]+)"$"#)]
 async fn given_subscribed_logs_at(world: &mut DaliWorld, level: String) {
     let client = last_client(world);
@@ -493,6 +493,19 @@ async fn then_lines_carry_identity(world: &mut DaliWorld) {
         );
         assert!(line["seq"].as_u64().is_some(), "line without a seq: {line}");
     }
+}
+
+// RULE-067
+#[then(regex = r#"^the WebSocket client should receive a "([^"]+)" log line reading "([^"]+)"$"#)]
+async fn then_log_line_reading(world: &mut DaliWorld, target: String, text: String) {
+    let carries = move |frame: &Value| {
+        frame["type"] == "LogBatch"
+            && log_lines(frame)
+                .iter()
+                .any(|line| line["target"] == target.as_str() && line["text"] == text.as_str())
+    };
+    let batch = last_client(world).wait_for(carries);
+    assert!(batch.is_some(), "no log line from the rules target carrying the rule's text");
 }
 
 // WS-054

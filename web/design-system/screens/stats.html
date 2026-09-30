@@ -302,6 +302,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr sub"><span class="k">Rules loaded</span><span class="v">6</span><span class="delta"></span></div>
         <div class="attr sub"><span class="k">Timers active</span><span class="v">1</span><span class="delta"></span></div>
         <div class="attr sub"><span class="k">Trigger → publish p50 / p95 / max</span><span class="v">41 / 96 / 180 <span class="unit">ms</span></span><span class="delta"></span></div>
+        <div class="attr sub"><span class="k">stat("presses")</span><span class="v">37</span><span class="delta live">+1</span></div>
+        <div class="attr sub"><span class="k">stat("away")</span><span class="v">4</span><span class="delta"></span></div>
       </div>
 
       <!-- I5. The product view of the push channel: three figures, against the
@@ -343,6 +345,13 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     </div>
   </div>
 
+
+<div class="chgh">2026-09-30 — the counters a rule names</div>
+<p class="chgnote">The <b>Rules engine</b> card ends with one row per counter the rules document
+  names — <code>stat("presses").count()</code> reads as <b>stat("presses")</b>, spelled as the rule
+  spells it, so the row points back at its source. The rows follow the document: a name it brings
+  appears at 0, a name it keeps keeps its count, a name it drops is gone. They are totals and carry
+  the change column like every other total.</p>
 
 <div class="chgh">2026-09-24 — the receive ring, counted</div>
 <p class="chgnote">A <b>Network</b> card: the Ethernet MAC's packet and loss totals. Two are new —

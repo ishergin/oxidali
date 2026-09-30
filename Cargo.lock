@@ -940,6 +940,7 @@ dependencies = [
  "dali2rust-rules-lang",
  "dali2rust-rules-model",
  "dali2rust-test-support",
+ "log",
  "postcard",
  "serde",
 ]

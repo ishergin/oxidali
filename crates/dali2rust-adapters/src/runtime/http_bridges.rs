@@ -30,7 +30,8 @@ use dali2rust_api::http::redundancy_settings_state::{
 use dali2rust_api::http::stats_state::{
     StatsBusDto, StatsControllerDto, StatsDaliBackwardDto, StatsDaliConsoleDto, StatsDaliDto,
     StatsDaliReadbackDto, StatsDaliTaskTimingDto, StatsHttpState, StatsInputDto, StatsMqttDto,
-    StatsNetworkDto, StatsOperationsDto, StatsReportDto, StatsRulesDto, StatsWebSocketDto,
+    StatsNetworkDto, StatsOperationsDto, StatsReportDto, StatsRuleCountDto, StatsRulesDto,
+    StatsWebSocketDto,
 };
 use dali2rust_api::http::{
     physical_device_state::PhysicalDeviceHttpState, AdapterHttpState, AdapterHttpStateBridge,
@@ -280,7 +281,7 @@ declare_counter_mapping! {
         commits_applied, commits_rejected, enable_toggles, hydrate_failed,
         persist_failed, ignored_commands, effects_published, effects_ingress_rejected,
         effects_skipped_dark, hcl_hold_unmapped, hcl_schedule_unmapped,
-        input_action_unmapped, log_lines, stat_counts, activations_published,
+        input_action_unmapped, log_lines, activations_published,
     }
 
     projector_dto(c: dali2rust_fanout_runtime::ProjectorCounters) -> ProjectorDto {
@@ -423,6 +424,11 @@ fn stats_rules_dto(counters: &RuntimeCounterHandles) -> StatsRulesDto {
         latency_p50_ms: c.latency_p50_ms.load(Relaxed),
         latency_p95_ms: c.latency_p95_ms.load(Relaxed),
         latency_max_ms: c.latency_max_ms.load(Relaxed),
+        stats: c
+            .stat_counts()
+            .into_iter()
+            .map(|row| StatsRuleCountDto { name: row.name, count: row.count })
+            .collect(),
     }
 }
 

@@ -110,7 +110,13 @@ pub struct StatsWebSocketDto {
     pub events_dropped_total: u32,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct StatsRuleCountDto {
+    pub name: String,
+    pub count: u32,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct StatsRulesDto {
     pub activations_total: u32,
     pub activations_dry: u32,
@@ -132,6 +138,7 @@ pub struct StatsRulesDto {
     pub latency_p50_ms: u32,
     pub latency_p95_ms: u32,
     pub latency_max_ms: u32,
+    pub stats: Vec<StatsRuleCountDto>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
@@ -169,7 +176,7 @@ pub struct StatsNetworkDto {
     pub link_up_events_total: u32,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct StatsReportDto {
     pub sample_ms: u64,
     pub controller: StatsControllerDto,

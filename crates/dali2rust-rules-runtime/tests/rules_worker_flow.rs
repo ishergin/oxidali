@@ -1001,7 +1001,7 @@ const LANDINGS: &[(&str, &str, Landing)] = &[
     ("rule_disable", "rule(\"другое\").disable()", Landing::NoEffect),
     ("mqtt_publish", "mqtt.publish(\"t\", \"p\")", Landing::Bus("MqttPublishCommand")),
     ("log", "log(\"x\")", Landing::Counted("log_lines")),
-    ("stat_count", "stat(\"имя\").count()", Landing::Counted("stat_counts")),
+    ("stat_count", "stat(\"имя\").count()", Landing::NoEffect),
 ];
 
 #[test]
@@ -1126,7 +1126,6 @@ fn unmapped_counter(counters: &RulesWorkerCounters, name: &str) -> u32 {
         "hcl_schedule_unmapped" => counters.hcl_schedule_unmapped.load(Ordering::Relaxed),
         "input_action_unmapped" => counters.input_action_unmapped.load(Ordering::Relaxed),
         "log_lines" => counters.log_lines.load(Ordering::Relaxed),
-        "stat_counts" => counters.stat_counts.load(Ordering::Relaxed),
         other => panic!("LANDINGS names a counter this test cannot read: {other}"),
     }
 }
@@ -1892,4 +1891,20 @@ fn an_instance_action_goes_to_an_occupancy_sensor_and_fails_on_any_other_instanc
     assert_eq!(outcome("sensor"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
     assert_eq!(outcome("button"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
     assert_eq!(outcome("unknown"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
+}
+
+#[test]
+fn a_named_count_reaches_the_cells_the_stats_are_read_from() {
+    let h = harness("rules-named-stats");
+    publish_document(&h, 171, "rule \"a\" {\n  when http trigger\n  do stat(\"x\").count()\n}\n", 0);
+    assert!(recv_signal(&h, 171).error.is_none());
+    wait_revision(&h.store, 1);
+    let x = |count| vec![dali2rust_rules_runtime::RuleStatCount { name: "x".into(), count }];
+    dali2rust_test_support::wait_until(|| h.cells.stat_counts() == x(0), COMMAND_WAIT);
+    assert_eq!(h.cells.stat_counts(), x(0), "the loaded document's names are listed before any run");
+
+    run_rule(&h, 172, "a");
+    recv_signal(&h, 172);
+    dali2rust_test_support::wait_until(|| h.cells.stat_counts() == x(1), COMMAND_WAIT);
+    assert_eq!(h.cells.stat_counts(), x(1));
 }

@@ -107,3 +107,33 @@ async fn then_rule_last_outcome(world: &mut DaliWorld, name: String, expected: S
     let outcome = rule.pointer("/runtime/last_outcome").and_then(serde_json::Value::as_str);
     assert_eq!(outcome, Some(expected.as_str()), "{rule}");
 }
+
+fn rule_counter(port: u16, name: &str) -> Option<u64> {
+    let json = crate::steps::polling::fetch_json(port, "/api/v1/stats")?;
+    json.pointer("/rules/stats")?
+        .as_array()?
+        .iter()
+        .find(|row| row["name"].as_str() == Some(name))?
+        .get("count")?
+        .as_u64()
+}
+
+// RULE-068
+#[then(regex = r#"^the stats eventually list the rule counter "([^"]+)" at (\d+)$"#)]
+async fn then_rule_counter_eventually(world: &mut DaliWorld, name: String, expected: u64) {
+    let port = world.server_port();
+    wait_until(|| rule_counter(port, &name) == Some(expected), RULE_FIRE_TIMEOUT);
+    assert_eq!(rule_counter(port, &name), Some(expected), "rules.stats row {name}");
+}
+
+// RULE-068
+#[then(regex = r#"^the stats list the rule counter "([^"]+)" at (\d+)$"#)]
+async fn then_rule_counter_is(world: &mut DaliWorld, name: String, expected: u64) {
+    assert_eq!(rule_counter(world.server_port(), &name), Some(expected), "rules.stats row {name}");
+}
+
+// RULE-068
+#[then(regex = r#"^the stats do not list the rule counter "([^"]+)"$"#)]
+async fn then_rule_counter_absent(world: &mut DaliWorld, name: String) {
+    assert_eq!(rule_counter(world.server_port(), &name), None, "a name the document dropped");
+}

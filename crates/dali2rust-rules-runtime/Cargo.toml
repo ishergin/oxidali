@@ -10,6 +10,7 @@ dali2rust-bus = { path = "../dali2rust-bus" }
 dali2rust-bsp = { path = "../dali2rust-bsp" }
 dali2rust-platform = { path = "../dali2rust-platform" }
 dali2rust-rules-model = { path = "../dali2rust-rules-model" }
+log = "0.4"
 postcard = { version = "1.1", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
 
