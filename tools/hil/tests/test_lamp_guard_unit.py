@@ -20,8 +20,9 @@ def _short_wire(short, command=False):
     return (short << 1) | (1 if command else 0)
 
 
-def _guard(segment=(0, 2, 3), read_only=False):
-    return LampGuard(LAMPS, read_only=read_only, segment=lambda: list(segment))
+def _guard(segment=(0, 2, 3), read_only=False, policy_armed=False):
+    return LampGuard(LAMPS, read_only=read_only, segment=lambda: list(segment),
+                     policy_armed=lambda: policy_armed)
 
 
 def test_a_short_outside_the_allowlist_is_refused_and_named():
@@ -251,10 +252,11 @@ class _Response:
 
 
 class _Session:
-    def __init__(self, shorts, bindings=None, rules=()):
+    def __init__(self, shorts, bindings=None, rules=(), policy=None):
         self.shorts = shorts
         self.bindings = bindings or {}
         self.rules = list(rules)
+        self.policy = policy or {}
         self.sent = []
 
     def request(self, method, url, json=None, timeout=None):
@@ -267,6 +269,8 @@ class _Session:
                 {"short_address": s, "present": True} for s in self.shorts]})
         if path == "rules?format=json":
             return _Response({"rules": {"rules": self.rules}})
+        if path == "policies":
+            return _Response(self.policy)
         lamp = re.search(r"virtual-lamps/(\d+)$", path)
         if lamp:
             return _Response({"binding": {
@@ -277,11 +281,11 @@ class _Session:
         pass
 
 
-def _client(shorts=(0, 1, 2, 3), bindings=None, read_only=False, rules=()):
+def _client(shorts=(0, 1, 2, 3), bindings=None, read_only=False, rules=(), policy=None):
     cfg = dataclasses.replace(load_config(), lamp_shorts="0,2,3", gear_shorts="",
                               lamps_read_only=read_only)
     client = hil.api.Client(cfg)
-    client.http = _Session(list(shorts), bindings, rules)
+    client.http = _Session(list(shorts), bindings, rules, policy)
     return client
 
 
@@ -391,6 +395,41 @@ def test_commissioning_never_passes_the_guard_outside_the_virtual_tier(monkeypat
     with pytest.raises(LampNotAllowed, match=r"commissioning never runs"):
         master.raw16(INITIALISE, 0x00)
     assert sent == []
+
+
+SCAN = ("POST", "adapters/0/discovery-runs", {"mode": "refresh_known"})
+ARMED = {"apply_on_discovery": True, "manages_anything": True}
+
+
+def test_a_scan_with_apply_on_discovery_armed_must_be_allowed_every_gear_on_the_segment():
+    _guard(segment=(0, OWNER, 2, 3)).check_request(*SCAN)
+    with pytest.raises(LampNotAllowed, match=r"discovery-runs with apply-on-discovery armed, "
+                                             r"which writes power_on_level .* SA1 is outside"):
+        _guard(segment=(0, OWNER, 2, 3), policy_armed=True).check_request(*SCAN)
+    _guard(policy_armed=True).check_request(*SCAN)
+    _guard(policy_armed=True, read_only=True).check_request(*SCAN)
+
+
+def test_a_policy_apply_must_be_allowed_every_gear_on_the_segment_whatever_the_flag():
+    with pytest.raises(LampNotAllowed, match=r"POST policies/apply, which writes .* SA1 is "
+                                             r"outside"):
+        _guard(segment=(0, OWNER, 2, 3)).check_request("POST", "policies/apply", {})
+    _guard().check_request("POST", "policies/apply", {})
+
+
+def test_a_scan_is_refused_when_no_controller_says_whether_the_policy_is_armed():
+    with pytest.raises(LampNotAllowed, match=r"no controller says whether apply-on-discovery"):
+        LampGuard(LAMPS, segment=lambda: [0, 2, 3]).check_request(*SCAN)
+
+
+def test_the_client_asks_the_controller_whether_a_scan_writes_the_policy():
+    armed = _client(policy=ARMED)
+    with pytest.raises(LampNotAllowed, match=r"apply-on-discovery armed"):
+        armed.discovery("refresh_known")
+    assert armed.http.sent == []
+    managing_nothing = _client(policy=dict(ARMED, manages_anything=False))
+    managing_nothing.discovery("refresh_known")
+    assert managing_nothing.http.sent == [SCAN]
 
 
 GROUP_APPLY, SCENE_APPLY = "adapters/0/groups/apply", "adapters/0/scenes/3/apply"

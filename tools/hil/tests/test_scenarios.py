@@ -4,6 +4,9 @@ import pytest
 
 from hil.camera.calibrate import RGB_PRIMARIES, rgb_setpoint
 
+GEAR_WRITES = ("STORE ", "DT8 STORE", "ADD TO GROUP", "REMOVE FROM ", "WRITE MEMORY",
+               "ENABLE WRITE MEMORY", "RESET ")
+
 
 def _rgb_lamp(lamps, capabilities):
     for label in lamps.labels():
@@ -101,6 +104,8 @@ def test_discovery_scan_is_readonly(api, sniffer, test_artifacts):
                                        [f["decoded"] for f in suspicious])
         assert not readdress, "re-addressing frames during read-only scan: %s" % (
             [f["decoded"] for f in readdress])
+        stored = [f["decoded"] for f in frames if f["decoded"].startswith(GEAR_WRITES)]
+        assert not stored, "gear-writing frames during read-only scan: %s" % stored
     after = {d["short_address"]: d.get("random_address")
              for d in api.devices()["physical_devices"]}
     assert sorted(after) == sorted(before), \

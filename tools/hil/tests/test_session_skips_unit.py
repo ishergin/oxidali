@@ -11,6 +11,7 @@ import test_redundancy
 import test_target_state
 import test_virtual_gear
 import test_ws
+from hil import prod_state, write_log
 from hil.config import HilConfig
 from hil.lamp_guard import LampNotAllowed
 
@@ -171,6 +172,51 @@ def test_a_run_that_drives_no_lamp_leaves_the_owner_schedules_alone():
     findings, suspended = hil_session_guards._neutralize_schedules(api, suspend=True)
     assert api.hcl.patches == [("owner-evening", {"enabled": False})]
     assert suspended == ["owner-evening"]
+
+
+class _PolicyApi:
+    def __init__(self, armed, sticks=True):
+        self.armed, self.sticks, self.sent = armed, sticks, []
+
+    def policy_armed(self):
+        return self.armed
+
+    def _req(self, method, path, body=None):
+        self.sent.append((method, path, body))
+        self.armed = self.armed and not self.sticks
+        return {}
+
+
+class _PolicyNow:
+    def __init__(self, now):
+        self.now, self.patches = dict(now), []
+
+    def _req(self, method, path, body=None):
+        if method == "PATCH":
+            self.patches.append(body)
+            self.now.update(body)
+        return dict(self.now)
+
+
+def test_a_session_disarms_an_armed_apply_on_discovery_and_its_restore_re_arms_it():
+    idle = _PolicyApi(armed=False)
+    assert hil_session_guards._neutralize_policy_apply(idle) == [] and idle.sent == []
+    api = _PolicyApi(armed=True)
+    findings = hil_session_guards._neutralize_policy_apply(api)
+    assert api.sent == [("PATCH", "policies", {"apply_on_discovery": False})]
+    assert "disarmed for the session" in findings[0]
+    log = write_log.WriteLog("t", "http://dut")
+    log.note(write_log.request_keys(*api.sent[0]))
+    controller = _PolicyNow({"apply_on_discovery": False, "manages_anything": True})
+    prod_state.restore_policies(controller, {"apply_on_discovery": True, "manages_anything": True},
+                                log=lambda line: None,
+                                owned=lambda field: log.changed("policies", field))
+    assert controller.patches == [{"apply_on_discovery": True}]
+
+
+def test_a_policy_that_stays_armed_fails_the_session():
+    with pytest.raises(pytest.fail.Exception, match=r"could not disarm apply-on-discovery"):
+        hil_session_guards._neutralize_policy_apply(_PolicyApi(armed=True, sticks=False))
 
 
 def test_only_a_named_lamp_without_read_only_makes_a_run_drive_lamps():
