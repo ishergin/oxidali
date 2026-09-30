@@ -1,3 +1,4 @@
+use core::cmp::Reverse;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
@@ -110,7 +111,7 @@ impl<F: RawFlash> SliceStoreCore<F> {
             }
             found.push((bank, header));
         }
-        found.sort_unstable_by(|(_, a), (_, b)| b.seq.cmp(&a.seq));
+        found.sort_unstable_by_key(|(_, header)| Reverse(header.seq));
         Ok(found)
     }
 

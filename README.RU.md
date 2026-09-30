@@ -220,15 +220,14 @@ sequenceDiagram
 ```bash
 git clone https://github.com/ishergin/oxidali.git && cd oxidali
 # сам Rust: https://rustup.rs
-cargo install espup ldproxy espflash --locked
-espup install    # тулчейн "esp", который выбирает rust-toolchain.toml, в том числе для хоста
+rustup toolchain install    # nightly и компоненты из rust-toolchain.toml, в том числе для хоста
+cargo install ldproxy espflash --locked
 brew install just    # или: cargo install just --locked
 ```
 
-ESP-IDF v5.5.3 скачивается при первой сборке прошивки в `.embuild/`; для этого нужны
-`git` и Python 3. Node.js 22 нужен только для пересборки веб-интерфейса: собранный
-интерфейс лежит в репозитории. Если bindgen не находит libclang, выполните
-`source ~/export-esp.sh` — этот файл создаёт `espup`.
+ESP-IDF v5.5.3 и его инструменты, среди них libclang для bindgen, скачиваются при первой
+сборке прошивки в `.embuild/`; для этого нужны `git` и Python 3. Node.js 22 нужен только
+для пересборки веб-интерфейса: собранный интерфейс лежит в репозитории.
 
 ### 1. Запуск без железа
 
