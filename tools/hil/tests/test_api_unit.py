@@ -1,3 +1,4 @@
+import dataclasses
 import errno
 import socket
 
@@ -32,7 +33,7 @@ class _FakeSession:
 
 
 def _client_with_fake_session():
-    client = hil.api.Client(load_config())
+    client = hil.api.Client(dataclasses.replace(load_config(), lamps_read_only=False))
     client.http = _FakeSession()
     return client
 

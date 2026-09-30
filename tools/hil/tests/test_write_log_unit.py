@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import re
@@ -110,7 +111,7 @@ class _NoRules:
 
 
 def test_a_reboot_the_toolkit_provokes_may_move_any_lamp():
-    client = hil.api.Client(load_config())
+    client = hil.api.Client(dataclasses.replace(load_config(), lamps_read_only=False))
     client.http = _NoRules()
     log = WriteLog("t1", client.base)
     write_log.start(log)

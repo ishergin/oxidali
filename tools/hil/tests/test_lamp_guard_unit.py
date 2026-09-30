@@ -641,8 +641,8 @@ def test_a_read_only_run_never_hands_the_bus_over():
     read_only = LampGuard(LAMPS, read_only=True, restart_rules=lambda: [])
     driving = LampGuard(LAMPS, restart_rules=lambda: [])
     for method, path, body in HANDOVERS:
-        with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY=1 never hands the "
-                                                 r"bus over"):
+        with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY=1 never restarts a "
+                                                 r"controller or hands the bus over"):
             read_only.check_request(method, path, body)
         driving.check_request(method, path, body)
     read_only.check_request("PATCH", "settings/dali", {"device_short_address": 3})
@@ -653,6 +653,24 @@ def test_a_read_only_run_leaves_an_unsettled_pair_as_it_found_it():
     peer = _client(read_only=True)
     for client in (primary, peer):
         client.redundancy.get = lambda: {"active": False}
-    with pytest.raises(LampNotAllowed, match=r"never hands the bus over"):
+    with pytest.raises(LampNotAllowed, match=r"never restarts a controller or hands the bus"):
         pair.settle(primary, peer, timeout_s=0.1)
     assert primary.http.sent == [] and peer.http.sent == []
+
+
+def test_a_read_only_run_restarts_no_controller_and_names_the_go_ahead_it_needs():
+    read_only = LampGuard(LAMPS, read_only=True, restart_rules=lambda: [])
+    for method, path, body in (("POST", "firmware/updates", {"url": "http://x/app.bin"}),) \
+            + HANDOVERS:
+        with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY=0, the owner's go-ahead"):
+            read_only.check_request(method, path, body)
+    client = _client(read_only=True)
+    log = write_log.WriteLog("t", client.base)
+    write_log.start(log)
+    try:
+        with pytest.raises(LampNotAllowed, match=r"a reboot of .* refused: HIL_LAMPS_READ_ONLY=1"):
+            with client.expect_reboot():
+                pass
+    finally:
+        write_log.stop()
+    assert client.http.sent == [] and not log.changed("shown/5")

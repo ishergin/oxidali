@@ -120,9 +120,10 @@ VIRTUAL_ROUTES = (
 )
 
 HANDOVER_ROUTES = (re.compile(r"redundancy/switchover"), re.compile(r"settings/redundancy"))
-HANDOVER_REFUSAL = ("%s refused: HIL_LAMPS_READ_ONLY=1 never hands the bus over, since the "
-                    "unit that becomes active publishes every HCL point afresh and so takes "
-                    "back a lamp the owner set by hand")
+RESTART_REFUSAL = ("%s refused: HIL_LAMPS_READ_ONLY=1 never restarts a controller or hands the "
+                   "bus over, since the unit active afterwards republishes its HCL point over a "
+                   "lamp the owner set by hand; a run that does needs HIL_LAMPS_READ_ONLY=0, the "
+                   "owner's go-ahead")
 
 
 def hands_over(path, body):
@@ -495,7 +496,7 @@ class LampGuard:
         if self.fence is not None and self.fence.check_request(method.upper(), path, body):
             return keys
         if self.read_only and hands_over(path, body):
-            raise LampNotAllowed(HANDOVER_REFUSAL % ("%s %s" % (method.upper(), path)))
+            raise LampNotAllowed(RESTART_REFUSAL % ("%s %s" % (method.upper(), path)))
         if restarts(path, body):
             self.check_restart("%s %s" % (method.upper(), path))
         _refuse_commissioning(method, path, body)
@@ -517,12 +518,9 @@ class LampGuard:
                     kind, key, body, label, visible(body) if callable(visible) else visible)
         return keys
 
-    def check_handover(self, what):
-        if self.read_only:
-            raise LampNotAllowed(HANDOVER_REFUSAL % what)
-        self.check_restart(what)
-
     def check_restart(self, what):
+        if self.read_only:
+            raise LampNotAllowed(RESTART_REFUSAL % what)
         if self._restart_rules is None:
             raise LampNotAllowed("%s refused: no controller lists the owner's rules a restart "
                                  "fires" % what)

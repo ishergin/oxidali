@@ -110,9 +110,11 @@ bench test's setup or run it is reported as a skip that quotes it:
 - Under `HIL_LAMPS_READ_ONLY=1` every visible action is refused: target-state, identify,
   scene recall, and every frame or attribute write that changes what a lit lamp shows
   (`VISIBLE_*` in `hil/lamp_guard.py`; a new level or Tc limit moves a lit lamp into
-  range). Other configuration writes to an allowed lamp still pass (STRATEGY §4). So is a
-  handover — a switchover, an `application_active` or `settings/redundancy` write: the unit
-  that becomes active publishes every HCL point afresh.
+  range). Other configuration writes to an allowed lamp still pass (STRATEGY §4). No
+  restart or handover passes either — a reboot (`Client.expect_reboot`), firmware update,
+  switchover, `application_active` or `settings/redundancy` write: the unit active
+  afterwards republishes its HCL point over a lamp set by hand. A destructive run needs
+  `HIL_LAMPS_READ_ONLY=0`.
 - A `/api/v1/dali/*` body with no frame the guard can read is refused.
 - Commissioning is refused — the steps, address changes, replacements, a
   `commission_unaddressed` run, the input-device commission and every special frame but
@@ -121,7 +123,7 @@ bench test's setup or run it is reported as a skip that quotes it:
 - A group or scene apply passes only when every virtual lamp whose row it writes is bound
   to a lamp of `HIL_LAMP_SHORTS`, and never under read-only.
 - A 24-bit frame from the WB master is refused under read-only, since a forged input event
-  reaches automations the toolkit cannot see (Home Assistant, Node-RED, wb-rules), when an
+  reaches automations the toolkit cannot see, when an
   enabled owner rule could fire on its event, and when it is a command.
 - HCL schedules, rules, MQTT commands and the policy apply reach lamps inside the
   controller, past the guard: a test that uses them asks the guard before its first
@@ -132,9 +134,8 @@ bench test's setup or run it is reported as a skip that quotes it:
 - Every `light` test first skips when an enabled owner rule names its lamps, their virtual
   lamps or their groups. A test moves the controller's clock (`clock_guard`) only on its
   first call, never under read-only, and skips while an owner rule fires at a time of day
-  or at the sun. A switchover, a firmware update, turning `application_active` on and a
-  reboot (`Client.expect_reboot`) are refused in every tier while an owner rule fires
-  when a controller starts or becomes active.
+  or at the sun. With the go-ahead too, a restart or handover is refused while an owner rule
+  fires when a controller starts or becomes active.
 
 A run with no `HIL_*` flag writes only this, each put back by its test or guard: the
 adapter's name; group 15's and a scene's name and Home Assistant exposure (HIL-GRP-03,
@@ -161,7 +162,7 @@ for every session that reaches the controller:
   could not put back prints `PRODUCTION STATE NOT RESTORED`, turns the run red and keeps
   the session open; a change someone else made is printed as such and left.
 - It cannot restore the colour a DT8 gear stored with a scene, or anything outside
-  the controller (the Wiren Board's configuration, Home Assistant).
+  the controller (the Wiren Board, Home Assistant).
 - It restores the rules document only where the difference is whole blocks of rules
   named `hil-…`, against the revision it read, so an owner's edit stays and is reported;
   while the owner's delayed actions are pending (STRATEGY §4.9) it leaves the test rules in

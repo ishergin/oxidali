@@ -12,7 +12,7 @@ def settled(api, peer_api):
 
 def check_handovers(api, peer_api):
     for client in (api, peer_api):
-        client.guard.check_handover("a handover of the bus to and from %s" % client.base)
+        client.guard.check_restart("a handover of the bus to and from %s" % client.base)
 
 
 def settle(api, peer_api, timeout_s=15.0):
