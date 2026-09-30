@@ -4,8 +4,8 @@ use std::time::Duration;
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResult};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
-    BusEventPayload, Origin, RuleCommitCommand, RuleEnableCommand, RuleStageCommand,
-    RULE_SOURCE_CHUNK_BYTES,
+    BusEventPayload, Dali103InstanceAction, Origin, RuleCommitCommand, RuleEnableCommand,
+    RuleStageCommand, RULE_SOURCE_CHUNK_BYTES,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::dali::dev103::instance_type;
@@ -1852,7 +1852,6 @@ rule \"marker\" {\n  when http trigger\n  do lamp(6).level(55)\n}\n";
 
 #[test]
 fn an_instance_action_goes_to_an_occupancy_sensor_and_fails_on_any_other_instance() {
-    use dali2rust_contracts::msg::Dali103InstanceAction as Action;
     let h = harness("rules-instance-action");
     publish_document(&h, 161, INSTANCE_ACTION_DOC, 0);
     assert!(recv_signal(&h, 161).error.is_none());
@@ -1863,7 +1862,7 @@ fn an_instance_action_goes_to_an_occupancy_sensor_and_fails_on_any_other_instanc
         recv_signal(&h, corr);
     }
 
-    let actions: Vec<(u8, u8, u8, Action)> = commands_before_the_marker(&h, 6)
+    let actions: Vec<(u8, u8, u8, Dali103InstanceAction)> = commands_before_the_marker(&h, 6)
         .iter()
         .filter_map(|payload| match payload {
             dali2rust_contracts::msg::BusCommandPayload::Dali103InstanceActionCommand(cmd) => Some((
@@ -1877,7 +1876,10 @@ fn an_instance_action_goes_to_an_occupancy_sensor_and_fails_on_any_other_instanc
         .collect();
     assert_eq!(
         actions,
-        vec![(0, 3, 0, Action::CancelHoldTimer), (0, 3, 0, Action::CatchMovement)],
+        vec![
+            (0, 3, 0, Dali103InstanceAction::CancelHoldTimer),
+            (0, 3, 0, Dali103InstanceAction::CatchMovement),
+        ],
         "only the occupancy sensor is told, in the rule's order"
     );
     let runtime = h.store.rule_runtime();

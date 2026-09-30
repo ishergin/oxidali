@@ -9,7 +9,9 @@ use dali2rust_contracts::msg::{
     DeliveryStatus, DiscoveryMode, ErrorCode, GroupMembershipAction, HclTargetScope,
     LightSetpoint, MemoryBankReadPreset, OperationWorkerSignal, PowerState, SceneProgramAction,
 };
-use dali2rust_contracts::msg::{DaliSetTargetStateCommand, Origin, RuntimeSource};
+use dali2rust_contracts::msg::{
+    Dali103InstanceAction, DaliSetTargetStateCommand, Origin, RuntimeSource,
+};
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_dali_runtime::{spawn_dali_worker, DaliWorkerCounters};
 use dali2rust_domain::dali::commands::{DaliCommand, DaliResponse};
@@ -1028,7 +1030,7 @@ fn sensor_read_port() -> TestReadPort {
 
 fn instance_action(
     instance_number: u8,
-    action: dali2rust_contracts::msg::Dali103InstanceAction,
+    action: Dali103InstanceAction,
 ) -> BusCommandPayload {
     dali2rust_contracts::msg::Dali103InstanceActionCommand {
         registry_adapter_id: 0,
@@ -1041,9 +1043,12 @@ fn instance_action(
 
 #[test]
 fn an_occupancy_sensor_takes_each_instance_action_as_one_24_bit_frame() {
-    use dali2rust_contracts::msg::Dali103InstanceAction as Action;
     let harness = WorkerHarness::new(Arc::new(sensor_read_port()), ControllerMode::NoAnswer);
-    for (corr, action) in [(201u64, Action::CancelHoldTimer), (202, Action::CatchMovement)] {
+    let actions = [
+        (201u64, Dali103InstanceAction::CancelHoldTimer),
+        (202, Dali103InstanceAction::CatchMovement),
+    ];
+    for (corr, action) in actions {
         harness.publish(envelope_on_adapter_0(corr, instance_action(SENSOR_INSTANCE, action)));
         let conf = harness.recv_confirmation_for(corr);
         assert_eq!(conf.status, DeliveryStatus::Ok, "{action:?}");
@@ -1058,11 +1063,11 @@ fn an_occupancy_sensor_takes_each_instance_action_as_one_24_bit_frame() {
 
 #[test]
 fn an_instance_that_is_not_known_as_an_occupancy_sensor_is_refused_by_name() {
-    use dali2rust_contracts::msg::Dali103InstanceAction as Action;
     let unknown_instance = 7;
     for (corr, instance) in [(211u64, BUTTON_INSTANCE), (212, unknown_instance)] {
         let harness = WorkerHarness::new(Arc::new(sensor_read_port()), ControllerMode::NoAnswer);
-        harness.publish(envelope_on_adapter_0(corr, instance_action(instance, Action::CancelHoldTimer)));
+        let cancel = instance_action(instance, Dali103InstanceAction::CancelHoldTimer);
+        harness.publish(envelope_on_adapter_0(corr, cancel));
         let conf = harness.recv_confirmation_for(corr);
         assert_eq!(conf.status, DeliveryStatus::ExecutionFailed, "instance {instance}");
         let error = conf.confirmation.error.as_ref().expect("a refusal names its cause");
@@ -1078,7 +1083,7 @@ fn a_passive_controller_refuses_an_instance_action_on_the_confirmation() {
     let harness = WorkerHarness::new(Arc::new(passive), ControllerMode::NoAnswer);
     harness.publish(envelope_on_adapter_0(
         221,
-        instance_action(SENSOR_INSTANCE, dali2rust_contracts::msg::Dali103InstanceAction::CatchMovement),
+        instance_action(SENSOR_INSTANCE, Dali103InstanceAction::CatchMovement),
     ));
     let conf = harness.recv_confirmation_for(221);
     assert_eq!(conf.status, DeliveryStatus::ExecutionFailed);

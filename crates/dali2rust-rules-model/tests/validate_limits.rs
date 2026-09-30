@@ -1,4 +1,4 @@
-use dali2rust_rules_model::limits::MAX_ACTIONS_EXPANDED;
+use dali2rust_rules_model::limits::{MAX_ACTIONS_EXPANDED, MAX_STAT_NAMES};
 use dali2rust_rules_model::{
     expanded_action_count, validate, Action, DefBlock, FlowAction, ModelError, Rule, RuleSet,
     StateAction, Trigger,
@@ -192,7 +192,6 @@ fn counted_names(first: usize, last: usize) -> Vec<Action> {
 
 #[test]
 fn a_document_may_name_the_limit_of_stat_counters_and_count_them_as_often_as_it_likes() {
-    use dali2rust_rules_model::limits::MAX_STAT_NAMES;
     let rules = vec![
         rule_with_actions("a", counted_names(1, 8)),
         rule_with_actions("b", counted_names(1, 8)),
@@ -206,7 +205,6 @@ fn a_document_may_name_the_limit_of_stat_counters_and_count_them_as_often_as_it_
 
 #[test]
 fn one_stat_counter_past_the_limit_is_refused_at_the_owner_that_names_it() {
-    use dali2rust_rules_model::limits::MAX_STAT_NAMES;
     let rules = vec![
         rule_with_actions("a", counted_names(1, 8)),
         rule_with_actions("b", counted_names(5, MAX_STAT_NAMES)),
