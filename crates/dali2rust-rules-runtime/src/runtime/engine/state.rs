@@ -126,10 +126,10 @@ impl Volatile {
 
     pub fn keep_stats(&mut self, names: &[&str]) {
         let kept = std::mem::take(&mut self.stats);
-        self.stats = names
-            .iter()
-            .map(|name| ((*name).to_owned(), kept.get(*name).copied().unwrap_or(0)))
-            .collect();
+        for name in names {
+            let count = kept.get(*name).copied().unwrap_or(0);
+            self.stats.insert((*name).to_owned(), count);
+        }
     }
 
     pub fn count_stat(&mut self, name: &str) {
