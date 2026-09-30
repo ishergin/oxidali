@@ -31,6 +31,7 @@ const DALI_GAUGES = [
 ] as const
 
 const RULES_GAUGES = [
+  'continuations_pending',
   'timers_active',
   'rules_loaded',
   'vars_in_use',

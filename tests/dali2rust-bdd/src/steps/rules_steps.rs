@@ -39,6 +39,18 @@ async fn then_stats_pointer_reaches(world: &mut DaliWorld, secs: u64, pointer: S
     );
 }
 
+// RULE-069
+#[then(regex = r#"^the stats pointer "([^"]+)" eventually reads (\d+)$"#)]
+async fn then_stats_pointer_reads(world: &mut DaliWorld, pointer: String, expected: u64) {
+    let port = world.server_port();
+    let read = || {
+        crate::steps::polling::fetch_json(port, "/api/v1/stats")
+            .and_then(|json| json.pointer(&pointer).and_then(serde_json::Value::as_u64))
+    };
+    wait_until(|| read() == Some(expected), RULE_FIRE_TIMEOUT);
+    assert_eq!(read(), Some(expected), "stats{pointer}");
+}
+
 // RULE-020
 #[then("the mock transport should have sent a broadcast off frame")]
 async fn then_broadcast_off_sent(world: &mut DaliWorld) {

@@ -131,6 +131,7 @@ pub struct StatsRulesDto {
     pub continuations_scheduled: u32,
     pub continuations_fired: u32,
     pub continuations_dropped: u32,
+    pub continuations_pending: u32,
     pub timers_active: u32,
     pub ticks_time_unsynced: u32,
     pub rules_loaded: u32,

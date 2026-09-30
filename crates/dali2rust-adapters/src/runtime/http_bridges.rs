@@ -417,6 +417,7 @@ fn stats_rules_dto(counters: &RuntimeCounterHandles) -> StatsRulesDto {
         continuations_scheduled: c.continuations_scheduled.load(Relaxed),
         continuations_fired: c.continuations_fired.load(Relaxed),
         continuations_dropped: c.continuations_dropped.load(Relaxed),
+        continuations_pending: c.continuations_pending.load(Relaxed),
         timers_active: c.timers_active.load(Relaxed),
         ticks_time_unsynced: c.ticks_time_unsynced.load(Relaxed),
         rules_loaded: c.rules_loaded.load(Relaxed),

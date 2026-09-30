@@ -23,6 +23,7 @@ pub struct RulesEngineCells {
     pub continuations_scheduled: AtomicU32,
     pub continuations_fired: AtomicU32,
     pub continuations_dropped: AtomicU32,
+    pub continuations_pending: AtomicU32,
     pub timers_active: AtomicU32,
     pub ticks_time_unsynced: AtomicU32,
     pub rules_loaded: AtomicU32,
@@ -47,6 +48,7 @@ impl RulesEngineCells {
         self.continuations_scheduled.store(snap.continuations_scheduled, Ordering::Relaxed);
         self.continuations_fired.store(snap.continuations_fired, Ordering::Relaxed);
         self.continuations_dropped.store(snap.continuations_dropped, Ordering::Relaxed);
+        self.continuations_pending.store(snap.continuations_pending, Ordering::Relaxed);
         self.timers_active.store(snap.timers_active, Ordering::Relaxed);
         self.ticks_time_unsynced.store(snap.ticks_time_unsynced, Ordering::Relaxed);
         self.rules_loaded.store(snap.rules_loaded, Ordering::Relaxed);

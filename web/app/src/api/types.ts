@@ -1044,6 +1044,7 @@ export type StatsRules = {
   continuations_scheduled: number
   continuations_fired: number
   continuations_dropped: number
+  continuations_pending: number
   timers_active: number
   ticks_time_unsynced: number
   rules_loaded: number

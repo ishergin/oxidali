@@ -41,3 +41,18 @@ Feature: Rules and the controller's own records: log lines and named counters
     And the stats eventually list the rule counter "holds" at 0
     And the stats list the rule counter "presses" at 2
     And the stats do not list the rule counter "taps"
+
+  @id:RULE-069
+  Scenario: The stats count a pending continuation until a new document cancels it
+    When I PUT JSON {"base_revision":0,"source":"rule \"later\" {\n  when http trigger\n  do after 1m do { log(\"late\") }\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the stats pointer "/rules/continuations_pending" eventually reads 0
+    When I POST JSON {} to "/api/v1/rules/later/run"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the stats pointer "/rules/continuations_pending" eventually reads 1
+    When I PUT JSON {"base_revision":1,"source":"rule \"later\" {\n  when http trigger\n  do after 1m do { log(\"late\") }\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the stats pointer "/rules/continuations_pending" eventually reads 0

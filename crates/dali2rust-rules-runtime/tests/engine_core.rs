@@ -986,3 +986,22 @@ fn named_counters_count_wet_runs_only_and_a_reload_keeps_the_names_it_keeps() {
         "x survives with its count, y is gone, z starts at 0"
     );
 }
+
+#[test]
+fn a_pending_continuation_is_a_gauge_that_falls_when_it_fires() {
+    let mut eng = engine(
+        "rule \"later\" {\n  when http trigger\n  do after 1s do { log(\"late\") }\n}\n",
+        0,
+    );
+    assert_eq!(eng.counters().continuations_pending, 0);
+    eng.handle(run("later"), &world(0));
+    assert_eq!(eng.counters().continuations_pending, 1, "the after block waits on the wheel");
+
+    let fired = eng.handle(EngineInput::Tick, &world(1_000));
+    assert_eq!(eng.counters().continuations_pending, 0, "a fired continuation is no longer pending");
+    assert!(
+        fired.iter().any(|outcome| outcome.effects.iter().any(|e| matches!(e, Effect::Log { .. }))),
+        "the continuation ran its body: {fired:?}"
+    );
+    assert_eq!(eng.counters().continuations_fired, 1);
+}
