@@ -5,6 +5,7 @@ import pytest
 import hil_session
 import hil_session_guards
 import test_groups
+import test_input_devices
 import test_policies
 import test_target_state
 import test_virtual_gear
@@ -213,4 +214,16 @@ def test_a_run_that_drives_no_lamp_reports_a_wrong_zone_and_never_moves_the_cloc
     assert api.sets == [] and "left as it is" in findings[0]
     findings = hil_session_guards._neutralize_timezone(api, drives_lamps=True)
     assert api.sets == [hil_session_guards.BENCH_BASELINE_TZ] and "restored" in findings[0]
+
+
+def test_every_test_that_forges_an_input_event_is_a_light_test():
+    for name in ("test_an_injected_event_frame_is_received_and_decoded",
+                 "test_an_injected_event_activates_a_rule_and_reaches_the_gear",
+                 "test_a_scheme_2_event_is_retyped_by_the_registry",
+                 "test_the_button_vocabulary_reaches_a_rule_from_a_real_panel",
+                 "test_a_power_notification_is_decoded_as_a_lifecycle_fact",
+                 "test_a_scheme_0_event_is_counted_as_unattributable",
+                 "test_a_press_reaches_home_assistant"):
+        test = getattr(test_input_devices, name)
+        assert "light" in {m.name for m in getattr(test, "pytestmark", [])}, name
 

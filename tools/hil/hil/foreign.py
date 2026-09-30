@@ -249,6 +249,11 @@ class ForeignMaster:
 
     def _check_injection(self, raw):
         what = "24-bit frame %s" % "".join("%02X" % b for b in raw)
+        if self.guard.read_only:
+            raise LampNotAllowed("%s refused: HIL_LAMPS_READ_ONLY=1 forbids a forged input "
+                                 "event, which reaches automations the toolkit cannot see "
+                                 "(Home Assistant, Node-RED, wb-rules) through the bridge and "
+                                 "the WB master" % what)
         if self.api is None:
             raise LampNotAllowed("%s refused: no controller lists the rules it could fire" % what)
         compiled = self.api._req("GET", "rules?format=json").get("rules")

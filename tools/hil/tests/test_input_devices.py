@@ -123,6 +123,7 @@ def _delta(before, after, key):
     return (after[key] - before[key]) % (1 << 32)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-05")
 @pytest.mark.foreign
 def test_an_injected_event_frame_is_received_and_decoded(
@@ -292,6 +293,7 @@ def unkeyed_instance(api, panel):
     return max(free)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-08")
 @pytest.mark.foreign
 def test_a_scheme_2_event_is_retyped_by_the_registry(
@@ -420,6 +422,7 @@ def test_the_button_vocabulary_reaches_a_rule_from_a_real_panel(
         % (panel, unkeyed_instance, last))
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-11")
 @pytest.mark.foreign
 def test_a_power_notification_is_decoded_as_a_lifecycle_fact(
@@ -444,6 +447,7 @@ def test_a_power_notification_is_decoded_as_a_lifecycle_fact(
         "collision Table 20's ordering exists to avoid")
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-12")
 @pytest.mark.foreign
 def test_a_scheme_0_event_is_counted_as_unattributable(
@@ -470,6 +474,7 @@ def test_a_scheme_0_event_is_counted_as_unattributable(
         "the two are different questions and a frame answers both")
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-13")
 @pytest.mark.foreign
 @pytest.mark.ha_bridge

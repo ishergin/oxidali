@@ -471,7 +471,8 @@ def test_an_injected_event_is_refused_when_an_owner_rule_could_fire_on_it(monkey
         def _req(self, method, path, body=None):
             return {"rules": OWNER_INPUT_RULES}
 
-    master = ForeignMaster(dataclasses.replace(load_config(), lamp_shorts="0,2,3"))
+    master = ForeignMaster(dataclasses.replace(load_config(), lamp_shorts="0,2,3",
+                                               lamps_read_only=False))
     with pytest.raises(LampNotAllowed, match=r"no controller lists the rules"):
         master._check(master._normalize([{"bits": 24, "bytes": _event(PANEL, FREE_INSTANCE)}]))
     master.api = _Api()
@@ -540,4 +541,20 @@ def test_the_client_and_the_wb_master_log_what_they_write(monkeypatch):
         write_log.stop()
     assert log.changed("settings/poller", "enabled") and not log.changed("settings/dali")
     assert log.changed("shown/2") and log.changed("gear/3") and not log.changed("shown/0")
+
+
+def test_a_read_only_run_never_injects_an_input_event(monkeypatch):
+    class _Api:
+        adapter = 0
+
+        def _req(self, method, path, body=None):
+            return {"rules": {"rules": []}}
+
+        def segment_shorts(self):
+            return []
+
+    master = ForeignMaster(dataclasses.replace(load_config(), lamp_shorts="",
+                                               lamps_read_only=True), api=_Api())
+    with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY.*automations"):
+        master._check(master._normalize([{"bits": 24, "bytes": _event(PANEL, FREE_INSTANCE)}]))
 
