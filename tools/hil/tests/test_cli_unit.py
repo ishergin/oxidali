@@ -177,3 +177,24 @@ def test_a_bare_restore_takes_every_open_session_newest_first_with_its_own_log(
     assert seen[0][1].refuses("hcl/owner") and seen[0][1].changed("device/9", "name")
     assert "HIL_LAMPS_READ_ONLY=0" in capsys.readouterr().out
 
+
+def test_an_explicit_file_is_refused_while_a_newer_session_is_open(monkeypatch, tmp_path,
+                                                                    capsys):
+    real_load = hil.config.load
+    monkeypatch.setattr(hil.config, "load",
+                        lambda: dataclasses.replace(real_load(), state_dir=tmp_path))
+    cfg = types.SimpleNamespace(state_dir=tmp_path)
+    older, newer = (prod_state.session_path(cfg, stamp)
+                    for stamp in ("2026-09-29T10:00:00", "2026-09-30T10:00:00"))
+    for path in (older, newer):
+        prod_state.save({"taken_at": path.stem[len(prod_state.SESSION_PREFIX):],
+                         "session_open": True}, path)
+    seen = []
+    monkeypatch.setattr(hil.api, "Client", lambda cfg: type("C", (), {"base": "http://dut"})())
+    monkeypatch.setattr(virtual_gear, "teardown", lambda cfg, client: [])
+    monkeypatch.setattr(prod_state, "restore", lambda client, snap, writes, **kw:
+                        seen.append(snap["taken_at"]) or prod_state.Restoration([], [], True))
+    assert cli.main(["state", "restore", str(older)]) == 1
+    assert seen == [] and str(newer) in capsys.readouterr().out
+    cli.main(["state", "restore", str(newer)])
+    assert seen == [newer.stem[len(prod_state.SESSION_PREFIX):]]

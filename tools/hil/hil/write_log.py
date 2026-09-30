@@ -127,6 +127,14 @@ def _candidates(key):
     return [key] + ["/".join(parts[:i] + [ALL]) for i in range(len(parts) - 1, 0, -1)] + [ALL]
 
 
+def _keys_meet(one, other):
+    return one in _candidates(other) or other in _candidates(one)
+
+
+def _fields_meet(one, other):
+    return ALL in one or ALL in other or bool(set(one) & set(other))
+
+
 class WriteLog:
     def __init__(self, session, base, path=None, touched=None, refused=()):
         self.session, self.base, self.path = session, base, path
@@ -158,6 +166,11 @@ class WriteLog:
             have.update(fields)
         if grown:
             self.save()
+
+    def overlaps(self, other):
+        return any(_keys_meet(mine, theirs) and _fields_meet(fields, others)
+                   for mine, fields in self.touched.items()
+                   for theirs, others in other.touched.items())
 
     def changed(self, key, field=None, exact=False):
         for candidate in [key] if exact else _candidates(key):

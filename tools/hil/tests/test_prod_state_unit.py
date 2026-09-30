@@ -12,6 +12,7 @@ import test_attributes
 import test_policies
 from hil import api as api_mod
 from hil import prod_state, write_log
+from hil.config import HilConfig
 from hil.lamp_guard import GROUP_TARGET, TARGET_SEGMENT, LampGuard, LampNotAllowed, http_rule
 
 
@@ -874,3 +875,51 @@ def test_a_lamp_a_test_drives_through_the_controller_is_named_in_the_write_log()
         assert not log.changed("shown/7", exact=True)
     finally:
         write_log.stop()
+
+
+INTERVAL = ("settings/poller", "interval_ms")
+OLDER, NEWER = "2026-09-29T10:00:00", "2026-09-30T10:00:00"
+
+
+def _session(cfg, stamp, interval, touched):
+    path = prod_state.session_path(cfg, stamp)
+    prod_state.save({"taken_at": stamp, "session_open": True,
+                     "settings": {"poller": {"interval_ms": interval}}}, path)
+    write_log.WriteLog(stamp, "http://dut", write_log.writes_path(path)).note(touched)
+    return path
+
+
+def _walk(monkeypatch, cfg, installation, stuck):
+    def restore(client, snap, writes, **kwargs):
+        if writes.changed(*INTERVAL):
+            installation["interval_ms"] = snap["settings"]["poller"]["interval_ms"]
+        held = snap["taken_at"] in stuck
+        return prod_state.Restoration(["rules residue"] if held else [], [], not held)
+
+    monkeypatch.setattr(prod_state, "restore", restore)
+    prod_state.restore_sessions(cfg, types.SimpleNamespace(base="http://dut"),
+                                prod_state.open_sessions(cfg), False, log=lambda line: None)
+
+
+def test_an_older_session_stays_open_while_a_newer_open_one_wrote_the_same_field(
+        monkeypatch, tmp_path):
+    cfg = HilConfig(serial_remote="", state_dir=tmp_path)
+    older = _session(cfg, OLDER, 5000, [(INTERVAL[0], {INTERVAL[1]})])
+    newer = _session(cfg, NEWER, 6000, [(INTERVAL[0], {INTERVAL[1]})])
+    installation = {"interval_ms": 7000}
+    for _ in range(2):
+        _walk(monkeypatch, cfg, installation, stuck={NEWER})
+        assert installation["interval_ms"] == 5000
+        assert prod_state.open_sessions(cfg) == [newer, older]
+    _walk(monkeypatch, cfg, installation, stuck=set())
+    assert installation["interval_ms"] == 5000 and prod_state.open_sessions(cfg) == []
+
+
+def test_an_older_session_closes_when_no_newer_open_one_wrote_what_it_wrote(
+        monkeypatch, tmp_path):
+    cfg = HilConfig(serial_remote="", state_dir=tmp_path)
+    _session(cfg, OLDER, 5000, [(INTERVAL[0], {INTERVAL[1]})])
+    newer = _session(cfg, NEWER, 6000, [("device/9", {"name"})])
+    installation = {"interval_ms": 7000}
+    _walk(monkeypatch, cfg, installation, stuck={NEWER})
+    assert installation["interval_ms"] == 5000 and prod_state.open_sessions(cfg) == [newer]

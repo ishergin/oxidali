@@ -117,3 +117,17 @@ def test_a_reboot_the_toolkit_provokes_may_move_any_lamp():
     finally:
         write_log.stop()
     assert log.changed("shown/5") and not log.changed("gear/5")
+
+
+@pytest.mark.parametrize("mine,theirs,meet", [
+    ({"settings/poller": {"interval_ms"}}, {"settings/poller": {"interval_ms", "enabled"}}, True),
+    ({"settings/poller": {"interval_ms"}}, {"settings/poller": {"enabled"}}, False),
+    ({"gear/*": {"power_on_level"}}, {"gear/3": {"power_on_level"}}, True),
+    ({"gear/3": {"fade_time_ms"}}, {"gear/*": {"power_on_level"}}, False),
+    ({"shown/2": {ALL}}, {"shown/*": {ALL}}, True),
+    ({"device/9": {"name"}}, {ALL: {ALL}}, True),
+    ({"device/9": {"name"}}, {"device/10": {"name"}}, False),
+])
+def test_two_logs_meet_where_a_key_and_a_field_of_one_cover_the_other(mine, theirs, meet):
+    ours, other = WriteLog("a", "b", touched=mine), WriteLog("c", "b", touched=theirs)
+    assert ours.overlaps(other) is meet and other.overlaps(ours) is meet

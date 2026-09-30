@@ -51,6 +51,9 @@ SESSION_PREFIX = "production_state-"
 SESSION_STAMP = re.compile(r"[^0-9T]")
 READ_ONLY_REFUSED = ("hcl/", "hcl_override/", "time")
 SHOWN_KEY = "shown/"
+HELD_OPEN = ("prod_state: %s stays open although it is restored: the newer open session %s "
+             "wrote some of what it wrote, so that one's next restore would put a test value "
+             "back; it closes in the walk that closes that one")
 UNDRIVEN = ("prod_state: putting %s back is a visible action, so this restore only reports "
             "it; rerun `hil state restore` with HIL_LAMPS_READ_ONLY=0 and HIL_LAMP_SHORTS "
             "naming them")
@@ -437,17 +440,33 @@ def restore_sessions(cfg, client, paths, everything, log=print):
     refused = READ_ONLY_REFUSED if cfg.lamps_read_only else ()
     if everything and refused:
         log("hil state restore --all: %s" % READ_ONLY_WHY)
-    residual = []
+    residual, held = [], []
     for path in paths:
         snap = load(path)
         writes = WriteLog.everything(snap.get("taken_at"), client.base, refused) if everything \
             else WriteLog.load(writes_path(path), snap.get("taken_at"))
         done = restore(client, snap, writes, log=log, drive_lamps=not cfg.lamps_read_only,
                        lamp_shorts=cfg.lamp_short_set())
-        if done.complete:
+        blocker = _newer_writer(held, writes)
+        if done.complete and blocker is None:
             mark_restored(path, snap)
+        else:
+            if done.complete:
+                log(HELD_OPEN % (path.name, blocker.name))
+            held.append((path, writes))
         residual += done.residual
     return residual
+
+
+def _newer_writer(held, writes):
+    return next((path for path, newer in held
+                 if newer is None or writes is None or newer.overlaps(writes)), None)
+
+
+def newer_open_sessions(cfg, path):
+    taken_at = load(path).get("taken_at") or ""
+    return [p for p in open_sessions(cfg)
+            if p.resolve() != path.resolve() and (load(p).get("taken_at") or "") > taken_at]
 
 
 def _ours(writes, key, field, driven):

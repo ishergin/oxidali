@@ -164,16 +164,16 @@ for every session that reaches the controller:
   the controller (the Wiren Board's configuration, Home Assistant).
 - It restores the rules document only where the difference is whole blocks of rules
   named `hil-…`, against the revision it read, so an owner's edit stays and is reported;
-  while `rules.continuations_pending` is not 0, or the firmware has no such gauge, it
-  leaves the test rules in place, switched off, and says so, because a commit drops the
-  owner's delayed actions. A commit resets toggles to the text, so it puts back those the
-  commit changed; any other toggle that differs from the snapshot is a residual.
+  while the owner's delayed actions are pending (STRATEGY §4.9) it leaves the test rules in
+  place, switched off, and says so. A commit resets toggles to the text, so it puts back
+  those the commit changed; any other toggle that differs from the snapshot is a residual.
 - Each session keeps `state/production_state-<time>.json` and its `.writes.json`;
   `production_state_last.json` copies the latest snapshot. `hil state restore` finishes a
   left virtual-gear session ([Virtual gear](#virtual-gear)), then restores every open
   session, newest first, through its own log; without a log it only reports, and `--all`
-  writes the whole snapshot back — under read-only never a schedule, override or zone.
-  Every later session ends red until then.
+  writes the whole snapshot back — under read-only never a schedule, override or zone. A
+  session closes only when no newer open session's log names what it wrote, and a FILE is
+  refused while a newer session is open. Every later session ends red until then.
 - Under `HIL_LAMPS_READ_ONLY=1` the light is reported, never driven — by this
   fixture, by `state_snapshot` and by `hil state restore`. A lamp outside
   `HIL_LAMP_SHORTS` is never driven back, and the lamp guard refuses a repair of its
