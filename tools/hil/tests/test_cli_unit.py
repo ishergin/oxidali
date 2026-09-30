@@ -1,6 +1,9 @@
+import dataclasses
 import json
+import types
 
 import hil.api
+import hil.config
 from hil import cli, corpus, flash, prod_state, serialmon, virtual_gear, write_log
 from hil.camera import backend
 
@@ -127,8 +130,8 @@ def _restore_with(monkeypatch, tmp_path, argv):
     snapshot.write_text(json.dumps({"taken_at": "t1"}))
     monkeypatch.setattr(hil.api, "Client", lambda cfg: type("C", (), {"base": "http://dut"})())
     monkeypatch.setattr(virtual_gear, "teardown", lambda cfg, client: [])
-    monkeypatch.setattr(prod_state, "restore",
-                        lambda client, snap, writes, **kw: seen.append(writes) or [])
+    monkeypatch.setattr(prod_state, "restore", lambda client, snap, writes, **kw:
+                        seen.append(writes) or prod_state.Restoration([], [], True))
     assert cli.main(["state", "restore", str(snapshot)] + argv) == 0
     return seen[0], snapshot
 
@@ -143,4 +146,34 @@ def test_a_killed_session_is_restored_only_through_its_own_write_log(monkeypatch
     log.note([("settings/poller", {"enabled"})])
     writes, _ = _restore_with(monkeypatch, tmp_path, [])
     assert writes.changed("settings/poller", "enabled") and not writes.changed("device/9")
+
+
+def test_a_bare_restore_takes_every_open_session_newest_first_with_its_own_log(
+        monkeypatch, tmp_path, capsys):
+    real_load = hil.config.load
+    monkeypatch.setattr(hil.config, "load",
+                        lambda: dataclasses.replace(real_load(), state_dir=tmp_path))
+    cfg = types.SimpleNamespace(state_dir=tmp_path)
+    for stamp in ("2026-09-29T10:00:00", "2026-09-30T10:00:00"):
+        path = prod_state.session_path(cfg, stamp)
+        prod_state.save({"taken_at": stamp, "session_open": True}, path)
+        write_log.WriteLog(stamp, "http://dut", write_log.writes_path(path)).note(
+            [("device/%s" % stamp[8:10], {"name"})])
+    seen = []
+    monkeypatch.setattr(hil.api, "Client", lambda cfg: type("C", (), {"base": "http://dut"})())
+    monkeypatch.setattr(virtual_gear, "teardown", lambda cfg, client: [])
+    monkeypatch.setattr(prod_state, "restore", lambda client, snap, writes, **kw:
+                        seen.append((snap["taken_at"], writes)) or
+                        prod_state.Restoration([], [], True))
+    assert cli.main(["state", "restore"]) == 0
+    assert [stamp for stamp, _ in seen] == ["2026-09-30T10:00:00", "2026-09-29T10:00:00"]
+    assert seen[0][1].changed("device/30") and not seen[0][1].changed("device/29")
+    assert prod_state.open_sessions(cfg) == []
+    monkeypatch.setenv("HIL_LAMPS_READ_ONLY", "1")
+    prod_state.save({"taken_at": "2026-10-01T10:00:00", "session_open": True},
+                    prod_state.session_path(cfg, "2026-10-01T10:00:00"))
+    seen.clear()
+    assert cli.main(["state", "restore", "--all"]) == 0
+    assert seen[0][1].refuses("hcl/owner") and seen[0][1].changed("device/9", "name")
+    assert "HIL_LAMPS_READ_ONLY=0" in capsys.readouterr().out
 

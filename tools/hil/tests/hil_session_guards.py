@@ -46,34 +46,44 @@ def production_state(pytestconfig, request):
         return
     state = validity_of(pytestconfig)
     snap = prod_state.capture(api)
-    last = prod_state.last_path(cfg)
-    pending = prod_state.unrestored(last)
-    writes = write_log.WriteLog(snap["taken_at"], api.base,
-                                None if pending else write_log.writes_path(last))
-    if not pending:
-        prod_state.save(dict(snap, session_open=True), last)
-        writes.save()
+    own, writes = _open_session(cfg, api, snap, state)
     prod_state.save(snap, request.getfixturevalue("run_dir") / "production_state_before.json")
-    state["production_state"] = "captured %d devices at %s" % (
-        len(snap["devices"]), snap["taken_at"])
-    if pending:
-        state["production_state_pending"] = str(last)
     write_log.start(writes)
     try:
         yield snap
     finally:
         write_log.stop()
-        residual = prod_state.restore(api, snap, writes, drive_lamps=not cfg.lamps_read_only,
-                                      lamp_shorts=cfg.lamp_short_set())
-        if not residual and not pending:
-            prod_state.mark_restored(last, snap)
-        state["production_state_residual"] = residual
-        state["production_state"] += "; restored%s" % (
-            " completely" if not residual else " with %d residual line(s)" % len(residual))
-        absorbed = {k: v for k, v in api.retries.items() if v}
-        if absorbed:
-            state["production_state"] += "; the guard's own retries: %s" % ", ".join(
-                "%s=%d" % kv for kv in sorted(absorbed.items()))
+        _close_session(api, cfg, snap, own, writes, state)
+
+
+def _open_session(cfg, api, snap, state):
+    own = prod_state.session_path(cfg, snap["taken_at"])
+    pending = [str(p) for p in prod_state.open_sessions(cfg) if p != own]
+    prod_state.save(dict(snap, session_open=True), own)
+    if not prod_state.unrestored(prod_state.last_path(cfg)):
+        prod_state.save(snap, prod_state.last_path(cfg))
+    writes = write_log.WriteLog(snap["taken_at"], api.base, write_log.writes_path(own))
+    writes.save()
+    state["production_state"] = "captured %d devices at %s" % (
+        len(snap["devices"]), snap["taken_at"])
+    if pending:
+        state["production_state_pending"] = ", ".join(pending)
+    return own, writes
+
+
+def _close_session(api, cfg, snap, own, writes, state):
+    done = prod_state.restore(api, snap, writes, drive_lamps=not cfg.lamps_read_only,
+                              lamp_shorts=cfg.lamp_short_set())
+    if done.complete:
+        prod_state.mark_restored(own, snap)
+    state["production_state_residual"] = done.residual
+    state["production_state_foreign"] = done.foreign
+    state["production_state"] += "; restored%s" % (
+        " completely" if not done.residual else " with %d residual line(s)" % len(done.residual))
+    absorbed = {k: v for k, v in api.retries.items() if v}
+    if absorbed:
+        state["production_state"] += "; the guard's own retries: %s" % ", ".join(
+            "%s=%d" % kv for kv in sorted(absorbed.items()))
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -1,9 +1,12 @@
 import json
 import os
+import re
 import time
+from collections import namedtuple
 
 from hil.api import ApiError, CapabilityUnsupported, _HomeAssistantSettings, _PollerSettings
 from hil.lamp_guard import TEST_RULE_PREFIX, LampNotAllowed, only_hil_rules_appended
+from hil.write_log import WriteLog, writes_path
 
 PRIME_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,groups,scenes,extended"
 
@@ -31,6 +34,23 @@ SETTINGS = {
     "redundancy": ("boot_listen_ms", "enabled", "peer_device_short_address",
                    "peer_url", "probe_interval_ms", "role", "takeover_after_missed"),
 }
+
+SETTING_ROUTES = {"ha": "home-assistant"}
+GROUP_FIELDS = ("name", "ha_entity_enabled")
+MATRIX_FIELDS = ("desired", "applied")
+SCENE_FIELDS = ("name", "ha_select_enabled")
+VL_FIELDS = ("name", "binding", "ha_entity_enabled")
+RECORD_FIELDS = ("name", "notes", "device_type_source", "device_type_effective",
+                 "color_mode_source", "color_mode_effective", "dt8_auto_activation_repair",
+                 "dt8_rgbwaf_control_assert")
+RECORD_WRITES = {"device_type_source": "device_type_override",
+                 "device_type_effective": "device_type_override",
+                 "color_mode_source": "color_mode_override",
+                 "color_mode_effective": "color_mode_override"}
+SESSION_PREFIX = "production_state-"
+SESSION_STAMP = re.compile(r"[^0-9T]")
+READ_ONLY_REFUSED = ("hcl/", "hcl_override/", "time")
+Restoration = namedtuple("Restoration", "residual foreign complete")
 
 DTR0 = 0xA3
 QUERY_CONTENT_DTR0 = 0x98
@@ -192,54 +212,107 @@ def load(path):
 
 
 def diff(before, after, shown_shorts=None):
-    out = []
-    out += _diff_settings(before, after)
-    if before.get("hcl_overrides") is not None and \
-            before["hcl_overrides"] != after.get("hcl_overrides"):
-        out.append("hcl overrides %r -> %r" % (before["hcl_overrides"],
-                                               after.get("hcl_overrides")))
-    for key in ("timezone", "hcl", "groups", "group_matrix", "scenes"):
-        if _norm(before.get(key)) != _norm(after.get(key)):
-            out.append("%s differs" % key)
+    return [line for _key, _field, line in differences(before, after, shown_shorts)]
+
+
+def differences(before, after, shown_shorts=None):
+    out = _diff_settings(before, after) + _diff_overrides(before, after)
+    if before.get("timezone") != after.get("timezone"):
+        out.append(("time", "timezone", "timezone %r -> %r" % (before.get("timezone"),
+                                                             after.get("timezone"))))
+    out += _diff_hcl(before, after) + _diff_groups(before, after) + _diff_scenes(before, after)
     if before["rules"].get("source") != after["rules"].get("source"):
-        out.append("rules source differs")
-    out += toggle_residue(before.get("rule_toggles"), after.get("rule_toggles"))
+        out.append(("rules", None, "rules source differs"))
+    out += [("rule/%s" % name, "enabled", line) for name, line in
+            toggle_differences(before.get("rule_toggles"), after.get("rule_toggles"))]
     if before["adapter"].get("enabled") != after["adapter"].get("enabled"):
-        out.append("adapter enabled %r -> %r" % (before["adapter"].get("enabled"),
-                                                after["adapter"].get("enabled")))
-    out += _diff_vl(before, after)
-    owned = hcl_owned(before)
-    for short, was in before["devices"].items():
-        shown = shown_shorts is None or int(short) in shown_shorts
-        out += _diff_device(short, was, after["devices"].get(short), shown,
-                            owned.get(short, set()))
-    out += ["SA%s is new in the registry" % short
-            for short in sorted(set(after["devices"]) - set(before["devices"]), key=int)]
-    if "policies" in before and _norm(before["policies"]) != _norm(after.get("policies")):
-        out.append("policies %r -> %r" % (before["policies"], after.get("policies")))
+        out.append(("adapter/%s" % before["adapter"].get("adapter_id", 0), "enabled",
+                    "adapter enabled %r -> %r" % (before["adapter"].get("enabled"),
+                                                 after["adapter"].get("enabled"))))
+    out += _diff_vl(before, after) + _diff_devices(before, after, shown_shorts)
+    was, now = before.get("policies"), after.get("policies") or {}
+    out += [("policies", k, "policies %s %r -> %r" % (k, v, now.get(k)))
+            for k, v in sorted((was or {}).items()) if now.get(k) != v]
     return out
 
 
-def toggle_residue(was, now):
-    if was is None:
-        return []
+def toggle_differences(was, now):
     now = now or {}
-    return ["rule %r enabled %r -> %r" % (name, enabled, now.get(name))
-            for name, enabled in sorted(was.items()) if now.get(name) != enabled]
+    return [(name, "rule %r enabled %r -> %r" % (name, enabled, now.get(name)))
+            for name, enabled in sorted((was or {}).items()) if now.get(name) != enabled]
+
+
+def toggle_residue(was, now):
+    return [line for _name, line in toggle_differences(was, now)] if was is not None else []
 
 
 def _norm(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False)
 
 
+def _field_changes(key, label, was, now, fields):
+    return [(key, f, "%s %s %r -> %r" % (label, f, was.get(f), now.get(f)))
+            for f in fields if was.get(f) != now.get(f)]
+
+
 def _diff_settings(before, after):
     out = []
     for name, fields in list(SETTINGS.items()) + [("ha", RESTORABLE_HA)]:
         was, now = before["settings"][name], after["settings"][name]
-        for field in fields:
-            if was.get(field) != now.get(field):
-                out.append("settings/%s.%s %r -> %r" % (name, field, was.get(field),
-                                                         now.get(field)))
+        out += [("settings/%s" % SETTING_ROUTES.get(name, name), f,
+                 "settings/%s.%s %r -> %r" % (name, f, was.get(f), now.get(f)))
+                for f in fields if was.get(f) != now.get(f)]
+    return out
+
+
+def _diff_overrides(before, after):
+    was, now = before.get("hcl_overrides"), after.get("hcl_overrides") or {}
+    if was is None:
+        return []
+    return [("hcl_override/%s" % sid, None, "hcl overrides: %s %r -> %r"
+             % (sid, was.get(sid, False), now.get(sid, False)))
+            for sid in sorted(set(was) | set(now))
+            if bool(was.get(sid, False)) != bool(now.get(sid, False))]
+
+
+def _diff_hcl(before, after):
+    was = {s["schedule_id"]: s for s in before.get("hcl") or []}
+    now = {s["schedule_id"]: s for s in after.get("hcl") or []}
+    out = [("hcl/%s" % sid, None, "hcl %s %s" % (sid, "appeared" if sid in now else "is gone"))
+           for sid in sorted(set(was) ^ set(now))]
+    for sid in sorted(set(was) & set(now)):
+        out += _field_changes("hcl/%s" % sid, "hcl %s" % sid, was[sid], now[sid],
+                              sorted(set(was[sid]) | set(now[sid])))
+    return out
+
+
+def _diff_groups(before, after):
+    was = {g["group_id"]: g for g in before.get("groups") or []}
+    now = {g["group_id"]: g for g in after.get("groups") or []}
+    out = []
+    for gid in sorted(set(was) | set(now)):
+        out += _field_changes("group/%d" % gid, "group %d" % gid, was.get(gid, {}),
+                              now.get(gid, {}), GROUP_FIELDS)
+    rows = [{r["virtual_lamp_id"]: r for r in (snap.get("group_matrix") or {}).get("rows", [])}
+            for snap in (before, after)]
+    for vl in sorted(set(rows[0]) | set(rows[1])):
+        out += _field_changes("group_matrix/%d" % vl, "group matrix VL%d" % vl,
+                              rows[0].get(vl, {}), rows[1].get(vl, {}), MATRIX_FIELDS)
+    return out
+
+
+def _diff_scenes(before, after):
+    was = {s["scene_id"]: s for s in before.get("scenes") or []}
+    now = {s["scene_id"]: s for s in after.get("scenes") or []}
+    out = []
+    for sid in sorted(set(was) | set(now)):
+        a, b = was.get(sid, {}), now.get(sid, {})
+        out += _field_changes("scene/%d" % sid, "scene %d" % sid, a, b, SCENE_FIELDS)
+        rows = [{r["virtual_lamp_id"]: r["desired"] for r in x.get("rows") or []} for x in (a, b)]
+        out += [("scene_matrix/%d/%d" % (sid, vl), "desired", "scene %d VL%d %r -> %r"
+                 % (sid, vl, rows[0].get(vl), rows[1].get(vl)))
+                for vl in sorted(set(rows[0]) | set(rows[1]))
+                if _norm(rows[0].get(vl)) != _norm(rows[1].get(vl))]
     return out
 
 
@@ -247,37 +320,42 @@ def _diff_vl(before, after):
     now = {v["virtual_lamp_id"]: v for v in after["vl"]["virtual_lamps"]}
     out = []
     for v in before["vl"]["virtual_lamps"]:
-        other = now.get(v["virtual_lamp_id"], {})
-        for field in ("name", "binding", "ha_entity_enabled"):
-            if v.get(field) != other.get(field):
-                out.append("VL%d %s %r -> %r" % (v["virtual_lamp_id"], field,
-                                                  v.get(field), other.get(field)))
+        out += _field_changes("vl/%d" % v["virtual_lamp_id"], "VL%d" % v["virtual_lamp_id"],
+                              v, now.get(v["virtual_lamp_id"], {}), VL_FIELDS)
     known = {v["virtual_lamp_id"] for v in before["vl"]["virtual_lamps"]}
     for lid, v in sorted(now.items()):
         if lid not in known:
-            out.append("VL%d is not in the snapshot%s" % (
-                lid, " and is bound %r" % v["binding"] if v.get("binding") else ""))
+            out.append(("vl/%d" % lid, None, "VL%d is not in the snapshot%s" % (
+                lid, " and is bound %r" % v["binding"] if v.get("binding") else "")))
+    return out
+
+
+def _diff_devices(before, after, shown_shorts):
+    owned, out = hcl_owned(before), []
+    for short, was in before["devices"].items():
+        shown = shown_shorts is None or int(short) in shown_shorts
+        out += _diff_device(short, was, after["devices"].get(short), shown,
+                            owned.get(short, set()))
+    out += [("device/%s" % short, None, "SA%s is new in the registry" % short)
+            for short in sorted(set(after["devices"]) - set(before["devices"]), key=int)]
     return out
 
 
 def _diff_device(short, was, now, shown=True, owned=frozenset()):
     if now is None:
-        return ["SA%s is gone from the registry" % short]
-    out = []
-    for field in ("name", "notes", "device_type_source", "device_type_effective",
-                  "color_mode_source", "color_mode_effective",
-                  "dt8_auto_activation_repair", "dt8_rgbwaf_control_assert"):
-        if was["record"].get(field) != now["record"].get(field):
-            out.append("SA%s %s %r -> %r" % (short, field, was["record"].get(field),
-                                             now["record"].get(field)))
-    for key in ("config", "groups", "scenes"):
-        if was[key] != now[key]:
-            out.append("SA%s gear %s %r -> %r" % (short, key, was[key], now[key]))
+        return [("device/%s" % short, None, "SA%s is gone from the registry" % short)]
+    out = [("device/%s" % short, RECORD_WRITES.get(f, f), line) for _k, f, line in
+           _field_changes("", "SA%s" % short, was["record"], now["record"], RECORD_FIELDS)]
+    out += _field_changes("gear/%s" % short, "SA%s gear config" % short, was["config"],
+                          now["config"], sorted(set(was["config"]) | set(now["config"])))
+    out += [("gear/%s" % short, key, "SA%s gear %s %r -> %r" % (short, key, was[key], now[key]))
+            for key in ("groups", "scenes") if was[key] != now[key]]
     fields = [k for k in SHOWN if k not in owned]
     shown_was = {k: was["state"].get(k) for k in fields}
     shown_now = {k: now["state"].get(k) for k in fields}
     if shown and shown_was != shown_now:
-        out.append("SA%s shows %r, was %r" % (short, shown_now, shown_was))
+        out.append(("shown/%s" % short, None,
+                    "SA%s shows %r, was %r" % (short, shown_now, shown_was)))
     return out
 
 
@@ -288,11 +366,30 @@ def last_path(cfg):
     return cfg.state_dir / "production_state_last.json"
 
 
+def session_path(cfg, taken_at):
+    return cfg.state_dir / ("%s%s.json" % (SESSION_PREFIX, SESSION_STAMP.sub("", taken_at)))
+
+
+def open_sessions(cfg):
+    found = [p for p in cfg.state_dir.glob(SESSION_PREFIX + "*.json")
+             if not p.name.endswith(".writes.json") and unrestored(p)]
+    if unrestored(last_path(cfg)):
+        found.append(last_path(cfg))
+    return sorted(found, key=lambda p: load(p).get("taken_at") or "", reverse=True)
+
+
 FULL_RESTORE = "`hil state restore --all`"
+READ_ONLY_WHY = ("a read-only %s (HIL_LAMPS_READ_ONLY=1) writes no HCL schedule, override "
+                 "or time zone, since each can move a lamp at the next tick; rerun it with "
+                 "HIL_LAMPS_READ_ONLY=0 to include them" % FULL_RESTORE)
+
+
+def _schedule_id(schedule):
+    return schedule["schedule_id"]
 
 
 def restore(api, snap, writes, log=print, drive_lamps=True, lamp_shorts=None):
-    driven = lamp_shorts if drive_lamps else set()
+    driven = set(lamp_shorts or ()) if drive_lamps else set()
     if writes is None:
         log("prod_state: no write log of this snapshot's session, so nothing is written back; "
             "the differences follow, and %s writes the whole snapshot back" % FULL_RESTORE)
@@ -305,13 +402,40 @@ def restore(api, snap, writes, log=print, drive_lamps=True, lamp_shorts=None):
             after["hcl_overrides"] = _hcl_overrides(api)
         except Exception as exc:
             log("prod_state: clearing HCL overrides FAILED: %r" % (exc,))
-    residual = diff(snap, after, shown_shorts=driven)
-    for line in diff(snap, after):
-        if line not in residual:
-            log("prod_state: reported, not ours to undo: %s" % line)
+    residual, foreign = [], []
+    for key, field, line in differences(snap, after):
+        (residual if _ours(writes, key, field, driven) else foreign).append(line)
+    for line in foreign:
+        log("prod_state: changed during the session, not by the toolkit, left as it is: %s"
+            % line)
     for line in residual:
         log("prod_state: NOT RESTORED: %s" % line)
+    return Restoration(residual, foreign, writes is not None and not residual)
+
+
+def restore_sessions(cfg, client, paths, everything, log=print):
+    refused = READ_ONLY_REFUSED if cfg.lamps_read_only else ()
+    if everything and refused:
+        log("hil state restore --all: %s" % READ_ONLY_WHY)
+    residual = []
+    for path in paths:
+        snap = load(path)
+        writes = WriteLog.everything(snap.get("taken_at"), client.base, refused) if everything \
+            else WriteLog.load(writes_path(path), snap.get("taken_at"))
+        done = restore(client, snap, writes, log=log, drive_lamps=not cfg.lamps_read_only,
+                       lamp_shorts=cfg.lamp_short_set())
+        if done.complete:
+            mark_restored(path, snap)
+        residual += done.residual
     return residual
+
+
+def _ours(writes, key, field, driven):
+    if writes is None:
+        return False
+    if key.startswith("shown/"):
+        return int(key.split("/", 1)[1]) in driven and writes.changed(key)
+    return writes.changed(key, field)
 
 
 def _restore_steps(api, snap, writes, log, drive_lamps, lamp_shorts):
@@ -363,7 +487,7 @@ def policy_patch(was, now):
 
 def _clear_session_overrides(api, snap, after, log, writes):
     before = snap.get("hcl_overrides")
-    if before is None:
+    if before is None or writes.refuses("hcl_override/"):
         return
     shorts = schedule_shorts(snap)
     for sid, suspended in (after.get("hcl_overrides") or {}).items():
@@ -403,6 +527,9 @@ def _restore_settings(api, snap, log, writes):
 def _restore_timezone(api, snap, log, writes):
     was = snap.get("timezone")
     if not was or api.time_get().get("timezone") == was:
+        return
+    if writes.refuses("time"):
+        log("prod_state: the time zone differs and is left: %s" % READ_ONLY_WHY)
         return
     if not writes.changed("time", "timezone"):
         _left(log, "the controller's", ["timezone"])
@@ -598,6 +725,11 @@ def _scene_desired(desired):
 def _restore_hcl(api, snap, log, writes):
     now = {s["schedule_id"]: s for s in api.hcl.list()}
     wanted = {s["schedule_id"]: s for s in snap["hcl"]}
+    if writes.refuses("hcl/"):
+        if _norm(sorted(now.values(), key=_schedule_id)) != \
+                _norm(sorted(wanted.values(), key=_schedule_id)):
+            log("prod_state: the HCL schedules differ and are left: %s" % READ_ONLY_WHY)
+        return
     for sid in sorted(set(now) - set(wanted)):
         if writes.changed("hcl/%s" % sid):
             log("prod_state: deleting schedule %s the session created" % sid)

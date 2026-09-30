@@ -49,7 +49,7 @@ def test_every_layer_that_moved_is_named():
     dev["config"]["fade_time_ms"] = 700
     dev["state"]["level"] = 40
     lines = "\n".join(prod_state.diff(_snap(), after))
-    for needle in ("settings/ha.controller_id", "hcl differs", "VL10 binding",
+    for needle in ("settings/ha.controller_id", "hcl moscow-cct enabled", "VL10 binding",
                    "SA10 gear groups", "SA10 gear config", "SA10 shows"):
         assert needle in lines, (needle, lines)
 
@@ -739,11 +739,11 @@ def test_without_a_write_log_the_restore_writes_nothing_and_names_the_full_resto
                  "_restore_gear_config", "_restore_rules"):
         monkeypatch.setattr(prod_state, name, refuse)
     monkeypatch.setattr(prod_state, "capture", lambda api, prime=True, log=print: {})
-    monkeypatch.setattr(prod_state, "diff", lambda before, after, shown_shorts=None:
-                        ["settings/poller.enabled False -> True"])
+    monkeypatch.setattr(prod_state, "differences", lambda before, after, shown_shorts=None: [
+        ("settings/poller", "enabled", "settings/poller.enabled False -> True")])
     lines = []
-    residual = prod_state.restore(object(), {}, None, log=lines.append)
-    assert residual == ["settings/poller.enabled False -> True"]
+    done = prod_state.restore(object(), {}, None, log=lines.append)
+    assert done.foreign == ["settings/poller.enabled False -> True"] and not done.complete
     assert any("hil state restore --all" in line for line in lines)
 
 
@@ -770,4 +770,61 @@ def test_an_hcl_override_is_cleared_only_when_the_toolkit_drove_a_lamp_it_target
         api, lines = _Overridden(), []
         prod_state._clear_session_overrides(api, snap, after, lines.append, _writes(touched))
         assert api.cleared == cleared
+
+
+def _restored_with(monkeypatch, snap, after, writes, drive_lamps=False, lamp_shorts=None):
+    monkeypatch.setattr(prod_state, "_restore_steps", lambda *args: None)
+    monkeypatch.setattr(prod_state, "capture", lambda api, prime=True, log=print: after)
+    monkeypatch.setattr(prod_state, "_clear_session_overrides", lambda *args: None)
+    monkeypatch.setattr(prod_state, "_hcl_overrides", lambda api: after.get("hcl_overrides"))
+    return prod_state.restore(object(), snap, writes, log=lambda line: None,
+                              drive_lamps=drive_lamps, lamp_shorts=lamp_shorts)
+
+
+def test_an_owner_change_is_reported_and_never_keeps_the_snapshot_open(monkeypatch):
+    after = copy.deepcopy(_snap())
+    after["settings"]["poller"]["enabled"] = True
+    after["hcl"][0]["enabled"] = False
+    after["devices"]["10"]["state"]["level"] = 40
+    done = _restored_with(monkeypatch, _snap(), after, _writes({"device/10": {"name"}}),
+                          drive_lamps=True, lamp_shorts={10})
+    assert done.complete and done.residual == []
+    assert sorted(done.foreign) == ["SA10 shows {'power': 'on', 'level': 40, 'color_mode': "
+                                    "'cct', 'color_temperature_kelvin': 2702, 'rgb': None}, "
+                                    "was {'power': 'on', 'level': 120, 'color_mode': 'cct', "
+                                    "'color_temperature_kelvin': 2702, 'rgb': None}",
+                                    "hcl moscow-cct enabled True -> False",
+                                    "settings/poller.enabled False -> True"]
+
+
+def test_a_write_of_the_toolkit_left_undone_keeps_the_snapshot_open(monkeypatch):
+    after = copy.deepcopy(_snap())
+    after["settings"]["poller"]["enabled"] = True
+    done = _restored_with(monkeypatch, _snap(), after, _writes({"settings/poller": {"enabled"}}))
+    assert not done.complete and done.residual == ["settings/poller.enabled False -> True"]
+    unlogged = _restored_with(monkeypatch, _snap(), _snap(), None)
+    assert not unlogged.complete and unlogged.residual == []
+
+
+def test_each_session_keeps_its_snapshot_and_log_under_its_own_name(tmp_path):
+    cfg = types.SimpleNamespace(state_dir=tmp_path)
+    older = prod_state.session_path(cfg, "2026-09-29T10:00:00")
+    newer = prod_state.session_path(cfg, "2026-09-30T10:00:00")
+    assert older.name == "production_state-20260929T100000.json"
+    for path, open_ in ((older, True), (newer, True),
+                        (prod_state.session_path(cfg, "2026-09-28T10:00:00"), False)):
+        prod_state.save({"taken_at": path.stem, "session_open": open_}, path)
+        write_log.WriteLog(path.stem, "http://dut", write_log.writes_path(path)).save()
+    assert prod_state.open_sessions(cfg) == [newer, older]
+
+
+def test_a_full_restore_under_read_only_writes_no_schedule_and_no_zone():
+    api, lines = _HclApi([{"schedule_id": "owner", "enabled": False}]), []
+    refusing = write_log.WriteLog.everything("t", "b", refused=prod_state.READ_ONLY_REFUSED)
+    prod_state._restore_hcl(api, {"hcl": [{"schedule_id": "owner", "enabled": True}]},
+                            lines.append, refusing)
+    assert api.calls == [] and any("read-only" in line for line in lines)
+    zone = _ZoneApi()
+    prod_state._restore_timezone(zone, {"timezone": "MSK-3"}, lines.append, refusing)
+    assert zone.sets == []
 

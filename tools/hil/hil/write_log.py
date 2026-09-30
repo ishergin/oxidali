@@ -118,13 +118,17 @@ def _candidates(key):
 
 
 class WriteLog:
-    def __init__(self, session, base, path=None, touched=None):
+    def __init__(self, session, base, path=None, touched=None, refused=()):
         self.session, self.base, self.path = session, base, path
         self.touched = {k: set(v) for k, v in (touched or {}).items()}
+        self.refused = tuple(refused)
 
     @classmethod
-    def everything(cls, session, base):
-        return cls(session, base, touched={ALL: {ALL}})
+    def everything(cls, session, base, refused=()):
+        return cls(session, base, touched={ALL: {ALL}}, refused=refused)
+
+    def refuses(self, key):
+        return any(key.startswith(prefix) for prefix in self.refused)
 
     @classmethod
     def load(cls, path, session):

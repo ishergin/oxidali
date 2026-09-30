@@ -362,7 +362,7 @@ def _cmd_state(rest):
     ap.add_argument("file", nargs="?")
     ap.add_argument("--all", action="store_true", dest="everything")
     args = ap.parse_args(rest)
-    from hil import prod_state, virtual_gear, write_log
+    from hil import prod_state, virtual_gear
     from hil.api import Client
     from hil.config import load as load_config
     cfg = load_config()
@@ -372,24 +372,16 @@ def _cmd_state(rest):
         prod_state.save(prod_state.capture(client), path)
         print("saved %s" % path)
         return 0
-    snap = prod_state.load(path)
     if args.action == "restore":
         leftover = virtual_gear.teardown(cfg, client)
         for line in leftover:
             print("virtual gear: NOT TORN DOWN: %s" % line)
-        writes = write_log.WriteLog.everything(snap.get("taken_at"), client.base) \
-            if args.everything else write_log.WriteLog.load(write_log.writes_path(path),
-                                                            snap.get("taken_at"))
-        residual = prod_state.restore(client, snap, writes,
-                                      drive_lamps=not cfg.lamps_read_only,
-                                      lamp_shorts=cfg.lamp_short_set())
-        if not residual:
-            prod_state.mark_restored(path, snap)
-        residual = leftover + residual
-    else:
-        residual = prod_state.diff(snap, prod_state.capture(client))
-        for line in residual:
-            print(line)
+        residual = leftover + prod_state.restore_sessions(
+            cfg, client, [path] if args.file else prod_state.open_sessions(cfg), args.everything)
+        return 1 if residual else 0
+    residual = prod_state.diff(prod_state.load(path), prod_state.capture(client))
+    for line in residual:
+        print(line)
     return 1 if residual else 0
 
 
