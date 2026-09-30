@@ -167,14 +167,44 @@ pub fn hold_covers_target(
         return false;
     }
     match held {
-        HclOverrideTarget::Broadcast => target.scope == HclTargetScope::Broadcast,
+        HclOverrideTarget::Broadcast => true,
         HclOverrideTarget::Group { group_id } => {
-            target.scope == HclTargetScope::Group && target.group_id == group_id
+            group_covers_target(read_port, adapter_id, group_id, target)
         }
         HclOverrideTarget::VirtualLamp { virtual_lamp_id } => {
             lamp_in_target(read_port, adapter_id, virtual_lamp_id, target)
         }
     }
+}
+
+fn group_covers_target(
+    read_port: &dyn GroupReadPort,
+    adapter_id: u8,
+    group_id: u8,
+    target: TargetKey,
+) -> bool {
+    let members_groups = groups_of_members(read_port, adapter_id, group_id);
+    match target.scope {
+        HclTargetScope::Broadcast => members_groups != 0,
+        HclTargetScope::Group => {
+            target.group_id == group_id
+                || (target.group_id < GROUP_COUNT && members_groups & (1u16 << target.group_id) != 0)
+        }
+    }
+}
+
+fn groups_of_members(read_port: &dyn GroupReadPort, adapter_id: u8, group_id: u8) -> u16 {
+    if group_id >= GROUP_COUNT {
+        return 0;
+    }
+    let Some(snapshot) = read_port.group_apply_snapshot(adapter_id) else {
+        return 0;
+    };
+    snapshot
+        .rows
+        .iter()
+        .filter(|row| row.applied_groups_mask & (1u16 << group_id) != 0)
+        .fold(0, |groups, row| groups | row.applied_groups_mask)
 }
 
 pub fn schedules_holding(
@@ -586,8 +616,8 @@ mod tests {
     }
 
     #[test]
-    fn a_group_hold_covers_that_group_and_not_the_broadcast_key_that_shares_its_id() {
-        let stub = MembershipStub::with_lamp_in_groups(1, &[0]);
+    fn a_group_without_members_covers_itself_and_not_the_broadcast_key_that_shares_its_id() {
+        let stub = MembershipStub::with_lamp_in_groups(1, &[3]);
         let group_zero = HclOverrideTarget::Group { group_id: 0 };
         assert!(hold_covers_target(&stub, 0, group_zero, group_target(0)));
         assert!(
@@ -599,10 +629,30 @@ mod tests {
     }
 
     #[test]
-    fn a_broadcast_hold_covers_only_the_broadcast_key() {
+    fn a_group_hold_covers_what_a_commit_on_any_member_would() {
+        let stub = MembershipStub::with_lamp_in_groups(1, &[3, 5]).and_lamp_in_groups(2, &[6]);
+        let group_three = HclOverrideTarget::Group { group_id: 3 };
+        for target in [group_target(3), group_target(5), group_target(6), broadcast_target()] {
+            let member_commit = commit(RuntimeSource::Api, Some(1));
+            assert_eq!(
+                hold_covers_target(&stub, 0, group_three, target),
+                commit_hits_target(&stub, &member_commit, target, drives_level()),
+                "{target:?}"
+            );
+        }
+        assert!(hold_covers_target(&stub, 0, group_three, broadcast_target()));
+        assert!(hold_covers_target(&stub, 0, group_three, group_target(5)), "a shared member");
+        assert!(!hold_covers_target(&stub, 0, group_three, group_target(6)));
+        assert!(!hold_covers_target(&stub, 1, group_three, broadcast_target()), "another adapter");
+    }
+
+    #[test]
+    fn a_broadcast_hold_covers_every_target_on_its_adapter() {
         let stub = MembershipStub::with_lamp_in_groups(1, &[0]);
-        assert!(hold_covers_target(&stub, 0, HclOverrideTarget::Broadcast, broadcast_target()));
-        assert!(!hold_covers_target(&stub, 0, HclOverrideTarget::Broadcast, group_target(0)));
+        for target in [broadcast_target(), group_target(0), group_target(9)] {
+            assert!(hold_covers_target(&stub, 0, HclOverrideTarget::Broadcast, target), "{target:?}");
+        }
+        assert!(!hold_covers_target(&stub, 1, HclOverrideTarget::Broadcast, group_target(0)));
     }
 
     #[test]
@@ -652,9 +702,13 @@ mod tests {
         assert_eq!(schedules_holding(&registry, 0, lamp(3)), ["porch"], "no group, only broadcast");
         assert_eq!(
             schedules_holding(&registry, 0, HclOverrideTarget::Group { group_id: 8 }),
-            ["house", "garden"]
+            ["house", "garden", "porch"],
+            "a group with a member reaches the broadcast target, as the member's commit would"
         );
-        assert_eq!(schedules_holding(&registry, 0, HclOverrideTarget::Broadcast), ["porch"]);
+        assert_eq!(
+            schedules_holding(&registry, 0, HclOverrideTarget::Broadcast),
+            ["house", "garden", "porch"]
+        );
         assert!(schedules_holding(&registry, 1, lamp(1)).is_empty(), "another adapter");
     }
 

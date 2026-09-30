@@ -1499,16 +1499,64 @@ fn a_hold_on_a_lamp_stands_down_exactly_the_groups_that_hold_the_lamp() {
     harness.hold(72, HclOverrideTarget::VirtualLamp { virtual_lamp_id: 1 });
     harness.confirmation_for(72);
 
-    let groups: Vec<Option<u8>> = harness
-        .override_view("morning")
+    assert_eq!(
+        suspended_groups(&harness, "morning"),
+        vec![Some(3)],
+        "the lamp's group stands down, the group without it keeps its schedule"
+    );
+}
+
+fn suspended_groups(harness: &Harness, schedule_id: &str) -> Vec<Option<u8>> {
+    harness
+        .override_view(schedule_id)
         .targets
         .iter()
         .map(|target| target.group_id)
-        .collect();
+        .collect()
+}
+
+fn five_target_registry() -> StubRegistry {
+    StubRegistry {
+        schedules: vec![schedule(
+            "wide",
+            vec![broadcast_target(0), group_target(0, &[5, 7, 8, 9])],
+            vec![point(0, HclLevelMode::Absolute, Some(80), None)],
+        )],
+        membership: vec![(1, (1u16 << 7) | (1u16 << 8)), (2, 1u16 << 9)],
+    }
+}
+
+#[test]
+fn a_group_hold_stands_down_what_a_commit_on_its_members_would() {
+    let harness = spawn_harness(five_target_registry(), Arc::new(StubClock::at(600)));
+
+    harness.hold(74, HclOverrideTarget::Group { group_id: 7 });
+    harness.confirmation_for(74);
     assert_eq!(
-        groups,
-        vec![Some(3)],
-        "the lamp's group stands down, the group without it keeps its schedule"
+        suspended_groups(&harness, "wide"),
+        vec![None, Some(7), Some(8)],
+        "lamp 1 is in groups 7 and 8 and in the broadcast; group 9 has no lamp of group 7"
+    );
+
+    harness.hold(75, HclOverrideTarget::Group { group_id: 5 });
+    harness.confirmation_for(75);
+    assert_eq!(
+        suspended_groups(&harness, "wide"),
+        vec![None, Some(5), Some(7), Some(8)],
+        "a group without members stands down only itself"
+    );
+}
+
+#[test]
+fn a_broadcast_hold_stands_down_every_target_on_its_adapter() {
+    let harness = spawn_harness(five_target_registry(), Arc::new(StubClock::at(600)));
+
+    harness.hold(76, HclOverrideTarget::Broadcast);
+    harness.confirmation_for(76);
+
+    assert_eq!(
+        suspended_groups(&harness, "wide"),
+        vec![None, Some(5), Some(7), Some(8), Some(9)]
     );
 }
 
