@@ -7,12 +7,13 @@ operation_tracker_worker  10240   4068
 fanout_projector_worker   8192    2600
 sniffer_translator_worker 8192    1900
 apply_orchestrator   8192    5472
-# The deep path is the desired-state tick; it sorts in place, with no library sort scratch.
-hcl-scheduler        8192    2900
+# The deepest use is a runtime commit served between ticks; the desired-state tick, astronomy
+# included, stays below it and sorts in place, with no library sort scratch.
+hcl-scheduler        8192    2840
 poller               8192    2320
 ws_worker            8192    2860
 # The deepest path is a Home Assistant colour command: a JSON set with an RGB object.
-mqtt_worker          8192    6816
+mqtt_worker          8192    4224
 display_worker       6144    1668
 arb-supervisor        3072   1700
 arbitration           4096   1972
