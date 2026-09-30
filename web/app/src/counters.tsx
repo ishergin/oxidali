@@ -1,30 +1,11 @@
 import { useRef } from 'preact/hooks'
-import { deltaOf } from './counter-delta'
+import { deltaOf, type Flat, flatten } from './counter-delta'
 
-export { deltaOf } from './counter-delta'
-
-export type Flat = Record<string, number>
+export { deltaOf, type Flat } from './counter-delta'
 
 export function label(key: string): string {
   const words = key.replace(/_/g, ' ')
   return words.charAt(0).toUpperCase() + words.slice(1)
-}
-
-export function flatten(value: unknown, prefix: string, out: Flat): Flat {
-  if (typeof value === 'number') {
-    out[prefix] = value
-    return out
-  }
-  if (Array.isArray(value)) {
-    value.forEach((v, i) => flatten(v, `${prefix}[${i}]`, out))
-    return out
-  }
-  if (value && typeof value === 'object') {
-    for (const [k, v] of Object.entries(value)) {
-      flatten(v, prefix ? `${prefix}.${k}` : k, out)
-    }
-  }
-  return out
 }
 
 export function useDeltas(data: unknown, sampleMs: number | null): Flat {

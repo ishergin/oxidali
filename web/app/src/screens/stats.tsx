@@ -2,6 +2,7 @@ import { api } from '../api/client'
 import type { StatsReportPayload, StatsRuleCount, StatsRules } from '../api/types'
 import { busLoadPercent } from '../components/bus-load'
 import { Badge, Card, Chip } from '../components/ui'
+import { countsByName } from '../counter-delta'
 import { CounterRows, type Flat, useDeltas } from '../counters'
 import { uptime } from '../format'
 import { useLive, useSnapshotFrames } from '../hooks'
@@ -48,11 +49,15 @@ function ruleCounters(rules: StatsRules): Record<string, number> {
   return counters
 }
 
+function deltaView(data: StatsReportPayload | null | undefined) {
+  return data && { ...data, rules: { ...data.rules, stats: countsByName(data.rules.stats) } }
+}
+
 function RuleStatRows({ stats, deltas }: { stats: StatsRuleCount[]; deltas: Flat }) {
   return (
     <>
-      {stats.map((stat, index) => {
-        const delta = deltas[`rules.stats[${index}].count`] ?? 0
+      {stats.map((stat) => {
+        const delta = deltas[`rules.stats.${stat.name}`] ?? 0
         return (
           <div class="attr sub" key={stat.name}>
             <span class="k">stat("{stat.name}")</span>
@@ -152,7 +157,7 @@ export function StatsScreen() {
     onEvent: snapshot.consume,
   })
   const data = snapshot.latest ?? polled
-  const deltas = useDeltas(data, data?.sample_ms ?? null)
+  const deltas = useDeltas(deltaView(data), data?.sample_ms ?? null)
 
   if (error) return <div class="empty">Stats unavailable — {error}</div>
   if (!data) return <div class="empty">Loading stats…</div>
