@@ -112,7 +112,13 @@ impl PublishOutcomes {
 struct SchedulerState {
     last_published: HashMap<TargetKey, PublishRecord>,
     published_from: Option<Vec<HclScheduleView>>,
-    held_during_tick: Vec<TargetKey>,
+    tick: Option<TickScope>,
+}
+
+#[derive(Default)]
+struct TickScope {
+    stood_down: Vec<TargetKey>,
+    deferred: Vec<BusFrame>,
 }
 
 impl SchedulerState {
@@ -120,7 +126,14 @@ impl SchedulerState {
         Self {
             last_published: HashMap::new(),
             published_from: None,
-            held_during_tick: Vec::new(),
+            tick: None,
+        }
+    }
+
+    fn stand_down(&mut self, target: TargetKey) {
+        self.last_published.remove(&target);
+        if let Some(tick) = self.tick.as_mut() {
+            tick.stood_down.push(target);
         }
     }
 
@@ -332,8 +345,7 @@ fn hold_target(
     if lock_ledger(&deps.overrides).suspend(schedule_id, target, at_minutes) {
         deps.counters.overrides_started.fetch_add(1, Ordering::Relaxed);
     }
-    state.last_published.remove(&target);
-    state.held_during_tick.push(target);
+    state.stand_down(target);
 }
 
 fn confirm_override_command(deps: &SchedulerDeps, correlation_id: u64, refusal: Option<&str>) {
@@ -480,26 +492,21 @@ fn run_tick(
             .fetch_add(tick_plan.dropped as u32, Ordering::Relaxed);
     }
     WORKER_STACK.note("tick:plan");
-    state.held_during_tick.clear();
-    let mut inbox = TickInbox { state, deferred: Vec::new() };
-    let outcomes = publish_plan(rx, conf_rx, deps, &tick_plan.commands, &mut inbox);
+    state.tick = Some(TickScope::default());
+    let outcomes = publish_plan(rx, conf_rx, deps, &tick_plan.commands, state);
     WORKER_STACK.note("tick:publish");
-    let TickInbox { state, deferred } = inbox;
-    record_published(state, fresh, &outcomes);
-    for frame in deferred {
+    let tick = state.tick.take().unwrap_or_default();
+    record_published(state, fresh, &outcomes, &tick.stood_down);
+    for frame in tick.deferred {
         apply_frame(state, deps, &frame);
     }
-}
-
-struct TickInbox<'s> {
-    state: &'s mut SchedulerState,
-    deferred: Vec<BusFrame>,
 }
 
 fn record_published(
     state: &mut SchedulerState,
     fresh: Vec<DesiredEntry>,
     outcomes: &PublishOutcomes,
+    stood_down: &[TargetKey],
 ) {
     for entry in fresh {
         if let Some(confirmed) = outcomes.get(&entry.key) {
@@ -507,8 +514,8 @@ fn record_published(
             state.last_published.insert(entry.key, record);
         }
     }
-    for held in std::mem::take(&mut state.held_during_tick) {
-        state.last_published.remove(&held);
+    for key in stood_down {
+        state.last_published.remove(key);
     }
 }
 
@@ -591,7 +598,7 @@ fn publish_plan(
     conf_rx: &BusSubscriberRx,
     deps: &SchedulerDeps,
     commands: &[PlannedCommand],
-    inbox: &mut TickInbox<'_>,
+    state: &mut SchedulerState,
 ) -> PublishOutcomes {
     let mut outcomes = PublishOutcomes::default();
     for (index, command) in commands.iter().enumerate() {
@@ -613,7 +620,7 @@ fn publish_plan(
             deps,
             correlation_id,
             deps.config.command_timeout_ms,
-            inbox,
+            state,
         );
         outcomes.merge(command.key(), confirmed);
     }
@@ -626,13 +633,16 @@ fn mark_unpublished_keys(outcomes: &mut PublishOutcomes, unpublished: &[PlannedC
     }
 }
 
-fn service_commands(rx: &BusSubscriberRx, deps: &SchedulerDeps, inbox: &mut TickInbox<'_>) {
+fn service_commands(rx: &BusSubscriberRx, deps: &SchedulerDeps, state: &mut SchedulerState) {
     while let Ok(frame) = rx.try_recv() {
         if let BusFrame::Command(envelope) = &frame {
             let correlation_id = envelope.meta.correlation_id;
-            dispatch_scheduler_command(&envelope.payload, inbox.state, deps, correlation_id);
+            dispatch_scheduler_command(&envelope.payload, state, deps, correlation_id);
         } else if can_suspend(&frame) {
-            defer_frame(&deps.counters, &mut inbox.deferred, frame);
+            match state.tick.as_mut() {
+                Some(tick) => defer_frame(&deps.counters, &mut tick.deferred, frame),
+                None => apply_frame(state, deps, &frame),
+            }
         }
     }
 }
@@ -702,7 +712,7 @@ fn wait_for_confirmation(
     deps: &SchedulerDeps,
     correlation_id: u64,
     timeout_ms: u64,
-    inbox: &mut TickInbox<'_>,
+    state: &mut SchedulerState,
 ) -> bool {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     loop {
@@ -726,7 +736,7 @@ fn wait_for_confirmation(
             }
             Ok(_) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                service_commands(rx, deps, inbox);
+                service_commands(rx, deps, state);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 deps.counters.command_timeouts.fetch_add(1, Ordering::Relaxed);
@@ -788,6 +798,23 @@ mod tests {
             outcomes.get(&undriven_key).is_none(),
             "an entry nothing was published for must not arm the override gate"
         );
+    }
+
+    #[test]
+    fn a_stand_down_between_ticks_leaves_nothing_for_a_tick_to_carry() {
+        let key = TargetKey {
+            adapter_id: 0,
+            scope: dali2rust_contracts::msg::HclTargetScope::Group,
+            group_id: 3,
+        };
+        let mut state = SchedulerState::new();
+        state.stand_down(key);
+        assert!(state.tick.is_none(), "a hold between ticks, as on a standby, keeps no list");
+
+        state.tick = Some(TickScope::default());
+        state.stand_down(key);
+        let stood_down = state.tick.take().map(|tick| tick.stood_down);
+        assert_eq!(stood_down, Some(vec![key]), "a tick in progress remembers what to strip");
     }
 
     #[test]
