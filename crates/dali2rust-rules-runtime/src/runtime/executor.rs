@@ -159,10 +159,12 @@ impl EffectExecutor<'_> {
             Effect::HclResume { .. } | Effect::HclHold { .. } | Effect::HclSchedule { .. } => {
                 self.hcl_effect(effect, snapshot, corr)
             }
-            Effect::InputFeedback { .. }
-            | Effect::PanelSelect { .. }
-            | Effect::CancelHold { .. }
-            | Effect::CatchMovement { .. } => self.input_effect(effect, snapshot, corr),
+            Effect::InputFeedback { .. } | Effect::PanelSelect { .. } => {
+                self.input_effect(effect, corr)
+            }
+            Effect::CancelHold { .. } | Effect::CatchMovement { .. } => {
+                self.instance_effect(effect, snapshot, corr)
+            }
             Effect::MqttPublish { .. } | Effect::Log { .. } => {
                 self.state_effect(effect, corr)
             }
@@ -195,7 +197,7 @@ impl EffectExecutor<'_> {
         }
     }
 
-    fn input_effect(&self, effect: &Effect, snapshot: &WorldSnapshot, corr: u64) -> bool {
+    fn input_effect(&self, effect: &Effect, corr: u64) -> bool {
         match effect {
             Effect::InputFeedback { input, on } => self.feedback_drive(
                 Some(input.device_short_address),
@@ -209,14 +211,26 @@ impl EffectExecutor<'_> {
             Effect::PanelSelect { adapter_id, group, selected } => {
                 self.feedback_drive(None, None, Some(*group), 2, *selected, *adapter_id, corr)
             }
-            Effect::CancelHold { input } => {
-                self.instance_action(input, Dali103InstanceAction::CancelHoldTimer, snapshot, corr)
-            }
-            Effect::CatchMovement { input } => {
-                self.instance_action(input, Dali103InstanceAction::CatchMovement, snapshot, corr)
-            }
             _ => self.misrouted(),
         }
+    }
+
+    fn instance_effect(&self, effect: &Effect, snapshot: &WorldSnapshot, corr: u64) -> bool {
+        let (input, action) = match effect {
+            Effect::CancelHold { input } => (input, Dali103InstanceAction::CancelHoldTimer),
+            Effect::CatchMovement { input } => (input, Dali103InstanceAction::CatchMovement),
+            _ => return self.misrouted(),
+        };
+        if !is_occupancy_sensor(snapshot, input) {
+            return false;
+        }
+        let command = Dali103InstanceActionCommand {
+            registry_adapter_id: input.adapter_id,
+            short_address: input.device_short_address,
+            instance_number: input.instance_number,
+            action,
+        };
+        self.publish(corr, command)
     }
 
     fn state_effect(&self, effect: &Effect, corr: u64) -> bool {
@@ -371,30 +385,6 @@ impl EffectExecutor<'_> {
                 feature_group,
                 selected_group: selected,
                 opcode_map: 0,
-            },
-        )
-    }
-
-    fn instance_action(
-        &self,
-        input: &InputRef,
-        action: Dali103InstanceAction,
-        snapshot: &WorldSnapshot,
-        corr: u64,
-    ) -> bool {
-        let known = snapshot
-            .input(input.adapter_id, input.device_short_address, input.instance_number)
-            .and_then(|state| state.instance_type);
-        if known != Some(instance_type::OCCUPANCY) {
-            return false;
-        }
-        self.publish(
-            corr,
-            Dali103InstanceActionCommand {
-                registry_adapter_id: input.adapter_id,
-                short_address: input.device_short_address,
-                instance_number: input.instance_number,
-                action,
             },
         )
     }
@@ -575,6 +565,13 @@ fn override_target_of(target: &LightTarget) -> Option<(u8, HclOverrideTarget)> {
         ),
         LightTarget::Broadcast { adapter_id } => (*adapter_id, HclOverrideTarget::Broadcast),
     })
+}
+
+fn is_occupancy_sensor(snapshot: &WorldSnapshot, input: &InputRef) -> bool {
+    let known = snapshot
+        .input(input.adapter_id, input.device_short_address, input.instance_number)
+        .and_then(|state| state.instance_type);
+    known == Some(instance_type::OCCUPANCY)
 }
 
 fn schedule_id_of(name: &str) -> Option<FixedText32> {

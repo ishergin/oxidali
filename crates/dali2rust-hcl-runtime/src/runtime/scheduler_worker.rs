@@ -299,17 +299,27 @@ fn handle_override_hold(
         return;
     };
     roll_over_ledger(state, deps, local.year_day);
-    for schedule in deps.read_port.list_hcl_schedule_views() {
+    hold_covered_targets(state, deps, body, local);
+    confirm_override_command(deps, correlation_id, None);
+}
+
+fn hold_covered_targets(
+    state: &mut SchedulerState,
+    deps: &SchedulerDeps,
+    body: &HclOverrideHoldCommand,
+    local: LocalCivilTime,
+) {
+    let read_port = deps.read_port.as_ref();
+    for schedule in read_port.list_hcl_schedule_views() {
         if !runs_today(&schedule, local) {
             continue;
         }
         for target in schedule.targets.iter().flat_map(expand_target) {
-            if hold_covers_target(deps.read_port.as_ref(), body.registry_adapter_id, body.target, target) {
+            if hold_covers_target(read_port, body.registry_adapter_id, body.target, target) {
                 hold_target(state, deps, &schedule.schedule_id, target, local.minutes_since_midnight);
             }
         }
     }
-    confirm_override_command(deps, correlation_id, None);
 }
 
 fn hold_target(

@@ -10,8 +10,8 @@ use dali2rust_rules_model::limits::{
     MAX_REPEAT, MAX_SCENE, MAX_SCENE_CYCLE_ENTRIES, MAX_SCHEDULE_ID_BYTES, MAX_VAR_TEXT_BYTES,
 };
 use dali2rust_rules_model::{
-    Action, ActionKind, CompileError, DurationMs, FlowAction, HclAction, InputAction, SceneAction,
-    StateAction, ValueExpr, VarValue,
+    Action, ActionKind, CompileError, DurationMs, FlowAction, HclAction, InputAction, LightTarget,
+    SceneAction, StateAction, ValueExpr, VarValue,
 };
 
 pub const PARSED_ACTION_KINDS: &[ActionKind] = &[
@@ -182,32 +182,31 @@ fn scene_cycle(c: &mut Cursor<'_>) -> Result<Action, CompileError> {
 fn hcl_action(c: &mut Cursor<'_>) -> Result<Action, CompileError> {
     c.expect(&TokenKind::Dot, "`.` and an hcl action")?;
     let (verb, pos) = c.expect_ident("an hcl action")?;
-    match verb.as_str() {
-        "resume" | "hold" => {
-            c.expect(&TokenKind::LParen, "`(`")?;
-            let target = refs::light_target(c)?;
-            c.expect(&TokenKind::RParen, "`)`")?;
-            Ok(Action::Hcl(if verb == "resume" {
-                HclAction::Resume { target }
-            } else {
-                HclAction::Hold { target }
-            }))
-        }
-        "enable" | "disable" => {
-            c.expect(&TokenKind::LParen, "`(`")?;
-            let (schedule, at) = refs::checked_name(c, "schedule id")?;
-            if schedule.len() > MAX_SCHEDULE_ID_BYTES {
-                return Err(at.err(format!("schedule id exceeds {MAX_SCHEDULE_ID_BYTES} bytes")));
-            }
-            c.expect(&TokenKind::RParen, "`)`")?;
-            Ok(Action::Hcl(if verb == "enable" {
-                HclAction::Enable { schedule }
-            } else {
-                HclAction::Disable { schedule }
-            }))
-        }
-        _ => Err(pos.err(format!("unknown hcl action \"{verb}\""))),
+    let action = match verb.as_str() {
+        "resume" => HclAction::Resume { target: hcl_target(c)? },
+        "hold" => HclAction::Hold { target: hcl_target(c)? },
+        "enable" => HclAction::Enable { schedule: schedule_id(c)? },
+        "disable" => HclAction::Disable { schedule: schedule_id(c)? },
+        _ => return Err(pos.err(format!("unknown hcl action \"{verb}\""))),
+    };
+    Ok(Action::Hcl(action))
+}
+
+fn hcl_target(c: &mut Cursor<'_>) -> Result<LightTarget, CompileError> {
+    c.expect(&TokenKind::LParen, "`(`")?;
+    let target = refs::light_target(c)?;
+    c.expect(&TokenKind::RParen, "`)`")?;
+    Ok(target)
+}
+
+fn schedule_id(c: &mut Cursor<'_>) -> Result<String, CompileError> {
+    c.expect(&TokenKind::LParen, "`(`")?;
+    let (schedule, at) = refs::checked_name(c, "schedule id")?;
+    if schedule.len() > MAX_SCHEDULE_ID_BYTES {
+        return Err(at.err(format!("schedule id exceeds {MAX_SCHEDULE_ID_BYTES} bytes")));
     }
+    c.expect(&TokenKind::RParen, "`)`")?;
+    Ok(schedule)
 }
 
 fn input_action(c: &mut Cursor<'_>) -> Result<Action, CompileError> {

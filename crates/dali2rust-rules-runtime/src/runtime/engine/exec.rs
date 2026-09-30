@@ -663,13 +663,15 @@ fn prim_state(
             retain: *retain,
         })),
         StateAction::Log { text } => Ok(Some(Effect::Log { text: text.clone() })),
-        StateAction::StatCount { name } => {
-            if !job.dry {
-                env.vol.count_stat(name);
-            }
-            Ok(None)
-        }
+        StateAction::StatCount { name } => Ok(count_stat(env, job, name)),
     }
+}
+
+fn count_stat(env: &mut ExecEnv<'_>, job: &Job, name: &str) -> Option<Effect> {
+    if !job.dry {
+        env.vol.count_stat(name);
+    }
+    None
 }
 
 fn var_set(env: &mut ExecEnv<'_>, job: &Job, name: &str, value: VarValue) -> Result<(), Unevaluable> {

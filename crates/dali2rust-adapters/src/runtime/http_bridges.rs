@@ -425,12 +425,13 @@ fn stats_rules_dto(counters: &RuntimeCounterHandles) -> StatsRulesDto {
         latency_p50_ms: c.latency_p50_ms.load(Relaxed),
         latency_p95_ms: c.latency_p95_ms.load(Relaxed),
         latency_max_ms: c.latency_max_ms.load(Relaxed),
-        stats: c
-            .stat_counts()
-            .into_iter()
-            .map(|row| StatsRuleCountDto { name: row.name, count: row.count })
-            .collect(),
+        stats: rule_stat_rows(c),
     }
+}
+
+fn rule_stat_rows(cells: &dali2rust_rules_runtime::RulesEngineCells) -> Vec<StatsRuleCountDto> {
+    let rows = cells.stat_counts().into_iter();
+    rows.map(|row| StatsRuleCountDto { name: row.name, count: row.count }).collect()
 }
 
 fn stats_input_dto(counters: &RuntimeCounterHandles) -> StatsInputDto {
