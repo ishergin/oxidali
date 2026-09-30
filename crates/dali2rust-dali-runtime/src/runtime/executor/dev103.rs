@@ -486,8 +486,11 @@ pub fn run_instance_action(
         Dali103InstanceAction::CancelHoldTimer => Occupancy303Command::CancelHoldTimer,
         Dali103InstanceAction::CatchMovement => Occupancy303Command::CatchMovement,
     };
-    let address = Device103Address::Short(short_address);
-    send(controller, command.frame(address, InstanceAddress::Number(instance_number)), false)?;
+    let frame = command.frame(
+        Device103Address::Short(short_address),
+        InstanceAddress::Number(instance_number),
+    );
+    send(controller, frame, command.metadata().expects_backward)?;
     Ok(())
 }
 
