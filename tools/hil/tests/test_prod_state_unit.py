@@ -12,7 +12,7 @@ import test_attributes
 import test_policies
 from hil import api as api_mod
 from hil import prod_state, write_log
-from hil.lamp_guard import GROUP_TARGET, LampNotAllowed, http_rule
+from hil.lamp_guard import GROUP_TARGET, TARGET_SEGMENT, LampGuard, LampNotAllowed, http_rule
 
 
 def _snap():
@@ -772,12 +772,13 @@ def test_an_hcl_override_is_cleared_only_when_the_toolkit_drove_a_lamp_it_target
         assert api.cleared == cleared
 
 
-def _restored_with(monkeypatch, snap, after, writes, drive_lamps=False, lamp_shorts=None):
+def _restored_with(monkeypatch, snap, after, writes, drive_lamps=False, lamp_shorts=None,
+                   log=None):
     monkeypatch.setattr(prod_state, "_restore_steps", lambda *args: None)
     monkeypatch.setattr(prod_state, "capture", lambda api, prime=True, log=print: after)
     monkeypatch.setattr(prod_state, "_clear_session_overrides", lambda *args: None)
     monkeypatch.setattr(prod_state, "_hcl_overrides", lambda api: after.get("hcl_overrides"))
-    return prod_state.restore(object(), snap, writes, log=lambda line: None,
+    return prod_state.restore(object(), snap, writes, log=log or (lambda line: None),
                               drive_lamps=drive_lamps, lamp_shorts=lamp_shorts)
 
 
@@ -828,3 +829,48 @@ def test_a_full_restore_under_read_only_writes_no_schedule_and_no_zone():
     prod_state._restore_timezone(zone, {"timezone": "MSK-3"}, lines.append, refusing)
     assert zone.sets == []
 
+
+
+
+def test_a_lamp_the_log_names_keeps_the_session_open_until_a_restore_may_drive_it(monkeypatch):
+    after = copy.deepcopy(_snap())
+    after["devices"]["10"]["state"]["level"] = 40
+    lines = []
+    for drive_lamps, lamp_shorts in ((False, set()), (False, {10}), (True, {11})):
+        done = _restored_with(monkeypatch, _snap(), after, _writes({"shown/10": {"*"}}),
+                              drive_lamps, lamp_shorts, log=lines.append)
+        assert not done.complete and done.foreign == []
+        assert [line[:9] for line in done.residual] == ["SA10 show"]
+    assert any("SA10" in line and "HIL_LAMPS_READ_ONLY=0" in line and "HIL_LAMP_SHORTS" in line
+               for line in lines)
+    anywhere = _restored_with(monkeypatch, _snap(), after, _writes({"shown/*": {"*"}}))
+    assert anywhere.complete and anywhere.residual == []
+    driven = _restored_with(monkeypatch, _snap(), after, _writes({"shown/*": {"*"}}),
+                            drive_lamps=True, lamp_shorts={10})
+    assert not driven.complete and len(driven.residual) == 1
+
+
+class _Driving:
+    base = "http://dut"
+
+    def __init__(self, allowed, segment):
+        self.guard = LampGuard(allowed, segment=lambda: list(segment))
+        self.segment = list(segment)
+
+    def segment_shorts(self):
+        return self.segment
+
+
+def test_a_lamp_a_test_drives_through_the_controller_is_named_in_the_write_log():
+    api, log = _Driving({2, 3}, [2, 3]), write_log.WriteLog("t", "http://dut")
+    write_log.start(log)
+    try:
+        hil_test_guards.drive_allowed(api, 2, "a rule on SA2")
+        assert log.changed("shown/2", exact=True) and not log.changed("shown/3", exact=True)
+        hil_test_guards.drive_allowed(api, TARGET_SEGMENT, "a broadcast")
+        assert log.changed("shown/3", exact=True)
+        with pytest.raises(pytest.skip.Exception):
+            hil_test_guards.drive_allowed(_Driving({2}, [2]), 7, "a rule on SA7")
+        assert not log.changed("shown/7", exact=True)
+    finally:
+        write_log.stop()

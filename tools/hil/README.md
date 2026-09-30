@@ -177,7 +177,9 @@ for every session that reaches the controller:
 - Under `HIL_LAMPS_READ_ONLY=1` the light is reported, never driven — by this
   fixture, by `state_snapshot` and by `hil state restore`. A lamp outside
   `HIL_LAMP_SHORTS` is never driven back, and the lamp guard refuses a repair of its
-  gear groups and scenes: a difference there stays a residual.
+  gear groups and scenes: a difference there stays a residual. So does the light of a lamp
+  the log names (a test drove it, or `drive_allowed` let the controller drive it), keeping
+  the session open until a restore with `HIL_LAMPS_READ_ONLY=0` and it in `HIL_LAMP_SHORTS`.
 - Across several tiers `hil state diff` the first session's file at the end.
   `HIL_STATE_GUARD=0` is the only opt-out.
 - It compares and restores only the fields it names (the poller's and Home Assistant's
@@ -208,7 +210,7 @@ for the session and fails it on a device still named `hil-…`.
 | Path | Holds |
 | --- | --- |
 | `hil/` | the library and the `hil` CLI |
-| `tests/` | the suites; `conftest.py` lists the `hil_*.py` plugins that hold the fixtures and the safety gates, one per domain: `hil_session` (options, collection, report hooks), `hil_instruments` (clients and instruments), `hil_session_guards` (the autouse guards), `hil_optics`, `hil_test_guards` (per-test guards), `hil_run_validity` (the validity section), `hil_virtual` (the virtual-gear session, its fence and tripwire) |
+| `tests/` | the suites; `conftest.py` lists the `hil_*.py` plugins that hold the fixtures and the safety gates, one per domain (session hooks, instruments, session and per-test guards, optics, run validity, the virtual-gear session) |
 | `wb/serial_bridge.py` | the one file deployed to the Wiren Board |
 | `corpus/` | frozen captures of the installation (`hil corpus`); local, and only the files host tests pin are tracked (`.gitignore`) |
 | `*_budget.txt` | run-validity budgets (below) |

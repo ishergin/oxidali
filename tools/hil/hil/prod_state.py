@@ -5,7 +5,7 @@ import time
 from collections import namedtuple
 
 from hil.api import ApiError, CapabilityUnsupported, _HomeAssistantSettings, _PollerSettings
-from hil.lamp_guard import TEST_RULE_PREFIX, LampNotAllowed, only_hil_rules_appended
+from hil.lamp_guard import TEST_RULE_PREFIX, LampNotAllowed, named, only_hil_rules_appended
 from hil.write_log import WriteLog, writes_path
 
 PRIME_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,groups,scenes,extended"
@@ -50,6 +50,10 @@ RECORD_WRITES = {"device_type_source": "device_type_override",
 SESSION_PREFIX = "production_state-"
 SESSION_STAMP = re.compile(r"[^0-9T]")
 READ_ONLY_REFUSED = ("hcl/", "hcl_override/", "time")
+SHOWN_KEY = "shown/"
+UNDRIVEN = ("prod_state: putting %s back is a visible action, so this restore only reports "
+            "it; rerun `hil state restore` with HIL_LAMPS_READ_ONLY=0 and HIL_LAMP_SHORTS "
+            "naming them")
 Restoration = namedtuple("Restoration", "residual foreign complete")
 
 DTR0 = 0xA3
@@ -402,15 +406,31 @@ def restore(api, snap, writes, log=print, drive_lamps=True, lamp_shorts=None):
             after["hcl_overrides"] = _hcl_overrides(api)
         except Exception as exc:
             log("prod_state: clearing HCL overrides FAILED: %r" % (exc,))
-    residual, foreign = [], []
-    for key, field, line in differences(snap, after):
-        (residual if _ours(writes, key, field, driven) else foreign).append(line)
+    residual, foreign, undriven = _classify(differences(snap, after), writes, driven)
     for line in foreign:
         log("prod_state: changed during the session, not by the toolkit, left as it is: %s"
             % line)
     for line in residual:
         log("prod_state: NOT RESTORED: %s" % line)
+    if undriven:
+        log(UNDRIVEN % named(undriven))
     return Restoration(residual, foreign, writes is not None and not residual)
+
+
+def _classify(found, writes, driven):
+    residual, foreign, undriven = [], [], set()
+    for key, field, line in found:
+        if not _ours(writes, key, field, driven):
+            foreign.append(line)
+            continue
+        residual.append(line)
+        if key.startswith(SHOWN_KEY) and _shown_short(key) not in driven:
+            undriven.add(_shown_short(key))
+    return residual, foreign, undriven
+
+
+def _shown_short(key):
+    return int(key[len(SHOWN_KEY):])
 
 
 def restore_sessions(cfg, client, paths, everything, log=print):
@@ -433,8 +453,9 @@ def restore_sessions(cfg, client, paths, everything, log=print):
 def _ours(writes, key, field, driven):
     if writes is None:
         return False
-    if key.startswith("shown/"):
-        return int(key.split("/", 1)[1]) in driven and writes.changed(key)
+    if key.startswith(SHOWN_KEY):
+        return writes.changed(key, exact=True) or (
+            _shown_short(key) in driven and writes.changed(key))
     return writes.changed(key, field)
 
 
