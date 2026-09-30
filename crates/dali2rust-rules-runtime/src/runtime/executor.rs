@@ -188,7 +188,9 @@ impl EffectExecutor<'_> {
         match effect {
             Effect::HclResume { target } => self.hcl_resume(target, snapshot, corr),
             Effect::HclHold { target } => self.hcl_hold(target, snapshot, corr),
-            Effect::HclSchedule { schedule, enabled } => self.hcl_switch(schedule, *enabled, corr),
+            Effect::HclSchedule { schedule, enabled } => {
+                self.hcl_switch(schedule, *enabled, snapshot, corr)
+            }
             _ => self.misrouted(),
         }
     }
@@ -331,7 +333,16 @@ impl EffectExecutor<'_> {
         Some(named)
     }
 
-    fn hcl_switch(&self, schedule: &str, enabled: bool, corr: u64) -> bool {
+    fn hcl_switch(
+        &self,
+        schedule: &str,
+        enabled: bool,
+        snapshot: &WorldSnapshot,
+        corr: u64,
+    ) -> bool {
+        if !snapshot.hcl_schedules.iter().any(|known| known == schedule) {
+            return false;
+        }
         let Some(schedule_id) = schedule_id_of(schedule) else {
             return false;
         };

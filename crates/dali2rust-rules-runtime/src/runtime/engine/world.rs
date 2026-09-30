@@ -71,6 +71,7 @@ pub struct WorldSnapshot {
     pub devices: Vec<DeviceState>,
     pub inputs: Vec<InputState>,
     pub hcl: Vec<HclTargetState>,
+    pub hcl_schedules: Vec<String>,
 }
 
 impl WorldSnapshot {

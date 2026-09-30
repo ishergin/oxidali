@@ -375,6 +375,7 @@ impl RulesWorker {
             devices: self.world.devices(),
             inputs: self.world.inputs(),
             hcl: self.world.hcl(),
+            hcl_schedules: self.world.hcl_schedules(),
         }
     }
 

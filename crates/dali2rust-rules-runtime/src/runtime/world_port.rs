@@ -13,6 +13,7 @@ pub trait RulesWorldPort: Send + Sync {
     fn devices(&self) -> Vec<DeviceState>;
     fn inputs(&self) -> Vec<InputState>;
     fn hcl(&self) -> Vec<HclTargetState>;
+    fn hcl_schedules(&self) -> Vec<String>;
     fn input_instance_groups(
         &self,
         adapter_id: u8,
