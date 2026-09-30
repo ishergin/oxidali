@@ -77,6 +77,13 @@ pub(crate) enum HclChunkOutcome {
     Committed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HclSwitchOutcome {
+    Switched { joined_waiting_write: bool },
+    Unchanged,
+    Unknown,
+}
+
 fn opens_sequence(command: &HclScheduleUpsertCommand) -> bool {
     command.first_target_index == 0 && command.first_point_index == 0
 }
@@ -111,6 +118,26 @@ impl RegistryStore {
         outcome
     }
 
+    pub(crate) fn switch_hcl_schedule(
+        &self,
+        schedule_id: &FixedText32,
+        enabled: bool,
+    ) -> HclSwitchOutcome {
+        let mut inner = self.write_inner();
+        let Some(record) = inner.hcl_schedules.get_mut(schedule_id) else {
+            return HclSwitchOutcome::Unknown;
+        };
+        if record.enabled == enabled {
+            return HclSwitchOutcome::Unchanged;
+        }
+        record.enabled = enabled;
+        inner.hcl_schedules_revision = inner.hcl_schedules_revision.wrapping_add(1);
+        drop(inner);
+        HclSwitchOutcome::Switched {
+            joined_waiting_write: self.dirty.note_hcl_switch(),
+        }
+    }
+
     pub(crate) fn remove_hcl_schedule(&self, schedule_id: &FixedText32) -> bool {
         let mut inner = self.write_inner();
         inner.hcl_schedule_stage.remove(schedule_id);
@@ -127,6 +154,11 @@ impl RegistryStore {
 
     pub fn hcl_schedules_revision(&self) -> u32 {
         self.read_inner().hcl_schedules_revision
+    }
+
+    pub fn hcl_schedule_ids(&self) -> Vec<String> {
+        let inner = self.read_inner();
+        inner.hcl_schedules.keys().map(|id| id.as_str().to_owned()).collect()
     }
 
     pub(crate) fn evict_stale_hcl_schedule_stages(&self, max_age_ms: u64) {

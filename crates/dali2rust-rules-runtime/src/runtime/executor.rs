@@ -3,17 +3,18 @@ use std::sync::atomic::Ordering;
 use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, PublishResult};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
-    ColorMode, ColorValue, DaliRecallSceneCommand, DaliSetTargetStateCommand, DaliStopFadeCommand,
-    DaliTargetScope,
-    HclOverrideClearCommand, LightSetpoint, MqttPublishCommand, Origin, PowerState,
+    ColorMode, ColorValue, Dali103InstanceAction, Dali103InstanceActionCommand,
+    DaliRecallSceneCommand, DaliSetTargetStateCommand, DaliStopFadeCommand, DaliTargetScope,
+    FixedText32, HclOverrideHoldCommand, HclOverrideResumeCommand, HclOverrideTarget,
+    HclScheduleEnableCommand, LightSetpoint, MqttPublishCommand, Origin, PowerState,
     SceneApplyExecuteCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_rules_model::LightTarget;
+use dali2rust_domain::dali::dev103::instance_type;
+use dali2rust_rules_model::{InputRef, LightTarget};
 
 use crate::runtime::engine::{Effect, LightVerb, WorldSnapshot};
 use crate::runtime::worker::RulesWorkerCounters;
-use crate::runtime::world_port::RulesWorldPort;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ExecutionReport {
@@ -77,11 +78,13 @@ impl LightSeries {
     }
 }
 
+pub(crate) const RULES_LOG_TARGET: &str = "rules";
+
 pub(crate) struct EffectExecutor<'a> {
     pub publisher: &'a BusPublisher,
     pub bus_id: BusId,
-    pub world: &'a dyn RulesWorldPort,
     pub counters: &'a RulesWorkerCounters,
+    pub rule: &'a str,
 }
 
 impl EffectExecutor<'_> {
@@ -154,13 +157,15 @@ impl EffectExecutor<'_> {
                 self.scene_effect(effect, snapshot, corr)
             }
             Effect::HclResume { .. } | Effect::HclHold { .. } | Effect::HclSchedule { .. } => {
-                self.hcl_effect(effect, corr)
+                self.hcl_effect(effect, snapshot, corr)
             }
-            Effect::InputFeedback { .. }
-            | Effect::PanelSelect { .. }
-            | Effect::CancelHold { .. }
-            | Effect::CatchMovement { .. } => self.input_effect(effect, corr),
-            Effect::MqttPublish { .. } | Effect::Log { .. } | Effect::StatCount { .. } => {
+            Effect::InputFeedback { .. } | Effect::PanelSelect { .. } => {
+                self.input_effect(effect, corr)
+            }
+            Effect::CancelHold { .. } | Effect::CatchMovement { .. } => {
+                self.instance_effect(effect, snapshot, corr)
+            }
+            Effect::MqttPublish { .. } | Effect::Log { .. } => {
                 self.state_effect(effect, corr)
             }
         }
@@ -181,11 +186,13 @@ impl EffectExecutor<'_> {
         }
     }
 
-    fn hcl_effect(&self, effect: &Effect, corr: u64) -> bool {
+    fn hcl_effect(&self, effect: &Effect, snapshot: &WorldSnapshot, corr: u64) -> bool {
         match effect {
-            Effect::HclResume { target } => self.hcl_resume(target, corr),
-            Effect::HclHold { .. } => self.unmapped(&self.counters.hcl_hold_unmapped),
-            Effect::HclSchedule { .. } => self.unmapped(&self.counters.hcl_schedule_unmapped),
+            Effect::HclResume { target } => self.hcl_resume(target, snapshot, corr),
+            Effect::HclHold { target } => self.hcl_hold(target, snapshot, corr),
+            Effect::HclSchedule { schedule, enabled } => {
+                self.hcl_switch(schedule, *enabled, snapshot, corr)
+            }
             _ => self.misrouted(),
         }
     }
@@ -204,11 +211,26 @@ impl EffectExecutor<'_> {
             Effect::PanelSelect { adapter_id, group, selected } => {
                 self.feedback_drive(None, None, Some(*group), 2, *selected, *adapter_id, corr)
             }
-            Effect::CancelHold { .. } | Effect::CatchMovement { .. } => {
-                self.unmapped(&self.counters.input_action_unmapped)
-            }
             _ => self.misrouted(),
         }
+    }
+
+    fn instance_effect(&self, effect: &Effect, snapshot: &WorldSnapshot, corr: u64) -> bool {
+        let (input, action) = match effect {
+            Effect::CancelHold { input } => (input, Dali103InstanceAction::CancelHoldTimer),
+            Effect::CatchMovement { input } => (input, Dali103InstanceAction::CatchMovement),
+            _ => return self.misrouted(),
+        };
+        if !is_occupancy_sensor(snapshot, input) {
+            return false;
+        }
+        let command = Dali103InstanceActionCommand {
+            registry_adapter_id: input.adapter_id,
+            short_address: input.device_short_address,
+            instance_number: input.instance_number,
+            action,
+        };
+        self.publish(corr, command)
     }
 
     fn state_effect(&self, effect: &Effect, corr: u64) -> bool {
@@ -216,14 +238,14 @@ impl EffectExecutor<'_> {
             Effect::MqttPublish { topic, payload, retain } => {
                 self.mqtt(topic, payload, *retain, corr)
             }
-            Effect::Log { text: _ } => self.counted(&self.counters.log_lines),
-            Effect::StatCount { .. } => self.counted(&self.counters.stat_counts),
+            Effect::Log { text } => self.log_line(text),
             _ => self.misrouted(),
         }
     }
 
-    fn counted(&self, cell: &std::sync::atomic::AtomicU32) -> bool {
-        cell.fetch_add(1, Ordering::Relaxed);
+    fn log_line(&self, text: &str) -> bool {
+        log::info!(target: RULES_LOG_TARGET, "{}: {text}", self.rule);
+        self.counters.log_lines.fetch_add(1, Ordering::Relaxed);
         true
     }
 
@@ -298,21 +320,47 @@ impl EffectExecutor<'_> {
         )
     }
 
-    fn hcl_resume(&self, target: &LightTarget, corr: u64) -> bool {
-        let schedules = self.world.hcl_schedules_for(target);
-        if schedules.is_empty() {
+    fn hcl_resume(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {
+        let Some((registry_adapter_id, resumed)) = self.hcl_target(target, snapshot) else {
+            return false;
+        };
+        self.publish(corr, HclOverrideResumeCommand { registry_adapter_id, target: resumed })
+    }
+
+    fn hcl_hold(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {
+        let Some((registry_adapter_id, held)) = self.hcl_target(target, snapshot) else {
+            return false;
+        };
+        self.publish(corr, HclOverrideHoldCommand { registry_adapter_id, target: held })
+    }
+
+    fn hcl_target(
+        &self,
+        target: &LightTarget,
+        snapshot: &WorldSnapshot,
+    ) -> Option<(u8, HclOverrideTarget)> {
+        let named = override_target_of(target)?;
+        if !lamp_bound(target, snapshot) {
+            self.unbound_lamp();
+            return None;
+        }
+        Some(named)
+    }
+
+    fn hcl_switch(
+        &self,
+        schedule: &str,
+        enabled: bool,
+        snapshot: &WorldSnapshot,
+        corr: u64,
+    ) -> bool {
+        if !snapshot.hcl_schedules.iter().any(|known| known == schedule) {
             return false;
         }
-        let mut any = false;
-        for schedule in schedules {
-            any |= self.publish(
-                corr,
-                HclOverrideClearCommand {
-                    schedule_id: dali2rust_contracts::msg::fixed_text_32(&schedule),
-                },
-            );
-        }
-        any
+        let Some(schedule_id) = schedule_id_of(schedule) else {
+            return false;
+        };
+        self.publish(corr, HclScheduleEnableCommand { schedule_id, enabled })
     }
 
     #[allow(clippy::too_many_arguments, reason = "one private call shape for both drive forms")]
@@ -354,11 +402,6 @@ impl EffectExecutor<'_> {
 
     fn unbound_lamp(&self) -> bool {
         self.counters.effects_unbound.fetch_add(1, Ordering::Relaxed);
-        false
-    }
-
-    fn unmapped(&self, cell: &std::sync::atomic::AtomicU32) -> bool {
-        cell.fetch_add(1, Ordering::Relaxed);
         false
     }
 
@@ -510,6 +553,33 @@ fn recall_command(scene: u8, target: &Option<LightTarget>) -> Option<DaliRecallS
     })
 }
 
+fn override_target_of(target: &LightTarget) -> Option<(u8, HclOverrideTarget)> {
+    Some(match target {
+        LightTarget::Lamp(lamp) => (
+            lamp.adapter_id,
+            HclOverrideTarget::VirtualLamp { virtual_lamp_id: u8::try_from(lamp.id).ok()? },
+        ),
+        LightTarget::Group(group) => (
+            group.adapter_id,
+            HclOverrideTarget::Group { group_id: u8::try_from(group.id).ok()? },
+        ),
+        LightTarget::Broadcast { adapter_id } => (*adapter_id, HclOverrideTarget::Broadcast),
+    })
+}
+
+fn is_occupancy_sensor(snapshot: &WorldSnapshot, input: &InputRef) -> bool {
+    let known = snapshot
+        .input(input.adapter_id, input.device_short_address, input.instance_number)
+        .and_then(|state| state.instance_type);
+    known == Some(instance_type::OCCUPANCY)
+}
+
+fn schedule_id_of(name: &str) -> Option<FixedText32> {
+    let mut id = FixedText32::new();
+    id.push_str(name).ok()?;
+    Some(id)
+}
+
 fn scope_of(target: &LightTarget) -> Option<(DaliTargetScope, u8, u8, u8)> {
     Some(match target {
         LightTarget::Lamp(lamp) => (
@@ -570,6 +640,13 @@ mod merge_tests {
 
     fn light(at: usize, target: LightTarget, setpoint: LightSetpoint) -> MergedLight {
         MergedLight { at, target, setpoint, hold_hcl: true, bound: true }
+    }
+
+    #[test]
+    fn the_compilers_schedule_id_limit_is_the_bus_fields_capacity() {
+        let longest = "s".repeat(dali2rust_rules_model::limits::MAX_SCHEDULE_ID_BYTES);
+        assert!(schedule_id_of(&longest).is_some());
+        assert!(schedule_id_of(&format!("{longest}s")).is_none());
     }
 
     #[test]

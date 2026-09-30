@@ -918,6 +918,7 @@ dependencies = [
 name = "dali2rust-rules-lang"
 version = "0.1.0"
 dependencies = [
+ "dali2rust-domain",
  "dali2rust-rules-model",
  "serde_json",
 ]
@@ -937,10 +938,12 @@ dependencies = [
  "dali2rust-bsp",
  "dali2rust-bus",
  "dali2rust-contracts",
+ "dali2rust-domain",
  "dali2rust-platform",
  "dali2rust-rules-lang",
  "dali2rust-rules-model",
  "dali2rust-test-support",
+ "log",
  "postcard",
  "serde",
 ]

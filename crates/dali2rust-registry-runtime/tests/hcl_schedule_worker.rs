@@ -5,8 +5,8 @@ use std::time::Duration;
 use dali2rust_bus::{BusChannel, BusFrame, BusId, PublishResult};
 use dali2rust_contracts::msg::{
     fixed_text_32, BusEventPayload, DeliveryStatus, ErrorCode, HclAlgorithm, HclLevelMode,
-    HclPointList, HclSchedulePointRow, HclScheduleDeleteCommand, HclScheduleUpsertCommand,
-    HclTargetList, HclTargetRow, HclTargetScope, HclTimeRef,
+    HclPointList, HclSchedulePointRow, HclScheduleDeleteCommand, HclScheduleEnableCommand,
+    HclScheduleUpsertCommand, HclTargetList, HclTargetRow, HclTargetScope, HclTimeRef,
 };
 use dali2rust_domain::registry::HclScheduleReadPort;
 use dali2rust_registry_runtime::{RegistryStore, RegistryWorkerCounters};
@@ -163,6 +163,20 @@ fn schedule_is_invisible_until_its_last_chunk_commits() {
 }
 
 #[test]
+fn the_rules_see_committed_schedule_ids_and_no_staged_one() {
+    let (publisher, conf_rx, _ev_rx, store, _counters, _host) = spawn_stack();
+    store_porch(&publisher, &conf_rx, 11);
+    publish(
+        &publisher,
+        12,
+        chunk("evening", 0, &[target(0, 0b10)], 0, &[point(360, 80, 2700)], false),
+    );
+    assert_ok(&recv_confirm_for(&conf_rx, 12));
+
+    assert_eq!(store.hcl_schedule_ids(), ["porch"], "a staged schedule is not there to switch");
+}
+
+#[test]
 fn a_staged_id_is_taken_even_though_it_is_not_readable() {
     let (publisher, conf_rx, _ev_rx, store, _counters, _host) = spawn_stack();
 
@@ -313,6 +327,92 @@ fn delete_removes_the_schedule_and_publishes_the_removal() {
     assert_eq!(
         conf.confirmation.error.as_ref().map(|e| e.code),
         Some(ErrorCode::NotFound)
+    );
+}
+
+fn switch(schedule_id: &str, enabled: bool) -> HclScheduleEnableCommand {
+    HclScheduleEnableCommand {
+        schedule_id: fixed_text_32(schedule_id),
+        enabled,
+    }
+}
+
+fn store_porch(publisher: &dali2rust_bus::BusPublisher, conf_rx: &std::sync::mpsc::Receiver<BusFrame>, corr: u64) {
+    publish(
+        publisher,
+        corr,
+        chunk("porch", 0, &[target(0, 0b1)], 0, &[point(1080, 60, 2400)], true),
+    );
+    assert_ok(&recv_confirm_for(conf_rx, corr));
+}
+
+#[test]
+fn a_switch_moves_only_the_enabled_bit_and_publishes_it() {
+    let (publisher, conf_rx, ev_rx, store, _counters, _host) = spawn_stack();
+    store_porch(&publisher, &conf_rx, 71);
+    let revision_before = store.hcl_schedules_revision();
+
+    publish(&publisher, 72, switch("porch", false));
+    assert_ok(&recv_confirm_for(&conf_rx, 72));
+    let changed = recv_schedule_changed(&ev_rx, 72);
+    assert_eq!(changed.schedule_id.as_str(), "porch");
+    assert!(!changed.removed);
+    assert!(!changed.enabled, "the event carries the bit the registry now holds");
+    assert!(!store.hcl_schedule_view("porch").expect("still stored").enabled);
+    assert_ne!(store.hcl_schedules_revision(), revision_before);
+
+    publish(&publisher, 73, switch("porch", true));
+    assert_ok(&recv_confirm_for(&conf_rx, 73));
+    assert!(recv_schedule_changed(&ev_rx, 73).enabled);
+    let view = store.hcl_schedule_view("porch").expect("still stored");
+    assert!(view.enabled);
+    assert_eq!(view.targets, vec![target(0, 0b1)], "the switch leaves the targets alone");
+    assert_eq!(view.points, vec![point(1080, 60, 2400)], "and the curve");
+}
+
+#[test]
+fn a_switch_to_the_bit_already_stored_confirms_and_wakes_nobody() {
+    let (publisher, conf_rx, ev_rx, store, _counters, _host) = spawn_stack();
+    store_porch(&publisher, &conf_rx, 81);
+    let revision_before = store.hcl_schedules_revision();
+
+    publish(&publisher, 82, switch("porch", true));
+    assert_ok(&recv_confirm_for(&conf_rx, 82));
+    assert_eq!(store.hcl_schedules_revision(), revision_before);
+
+    publish(&publisher, 83, switch("porch", false));
+    assert_ok(&recv_confirm_for(&conf_rx, 83));
+    let mut seen = Vec::new();
+    while let Ok(BusFrame::Event(ev)) = ev_rx.recv_timeout(Duration::from_secs(3)) {
+        if let BusEventPayload::HclScheduleChangedEvent(body) = &ev.payload {
+            seen.push((ev.meta.correlation_id, body.enabled));
+            if ev.meta.correlation_id == 83 {
+                break;
+            }
+        }
+    }
+    assert_eq!(
+        seen.iter().filter(|(corr, _)| *corr != 81).copied().collect::<Vec<_>>(),
+        vec![(83, false)],
+        "the switch that changed nothing published nothing ahead of the one that did"
+    );
+}
+
+#[test]
+fn switching_a_schedule_that_does_not_exist_is_refused_by_name() {
+    let (publisher, conf_rx, _ev_rx, store, _counters, _host) = spawn_stack();
+    store_porch(&publisher, &conf_rx, 91);
+
+    publish(&publisher, 92, switch("never-existed", false));
+    let conf = recv_confirm_for(&conf_rx, 92);
+    assert_failed(&conf, "schedule_not_found");
+    assert_eq!(
+        conf.confirmation.error.as_ref().map(|e| e.code),
+        Some(ErrorCode::NotFound)
+    );
+    assert!(
+        store.hcl_schedule_view("porch").expect("untouched").enabled,
+        "a refused switch moves no other schedule"
     );
 }
 
@@ -469,6 +569,44 @@ mod persistence {
             "a deleted schedule must not come back from flash"
         );
         drop(store);
+    }
+
+    #[test]
+    fn switches_apply_at_once_while_flash_keeps_the_last_written_bit() {
+        let slices: Arc<dyn SliceStore> = Arc::new(InMemorySliceStore::new());
+        let s = support::spawn_registry_stack_with(support::RegistryStackOptions {
+            slices: Some(Arc::clone(&slices)),
+            ..support::RegistryStackOptions::default()
+        });
+        store_porch(&s.publisher, &s.conf_rx, 101);
+        wait_until(
+            || slices.load(SliceKey::HclSchedules).is_ok(),
+            Duration::from_secs(3),
+        );
+
+        for (corr, enabled) in [(102, false), (103, true), (104, false)] {
+            publish(&s.publisher, corr, switch("porch", enabled));
+            assert_ok(&recv_confirm_for(&s.conf_rx, corr));
+        }
+        let settled = 105;
+        publish(&s.publisher, settled, switch("porch", false));
+        assert_ok(&recv_confirm_for(&s.conf_rx, settled));
+        let restarted_bit = || {
+            let restarted = RegistryStore::with_adapter_count(1);
+            restarted.hydrate_from_store(slices.as_ref(), 1);
+            restarted.hcl_schedule_view("porch").map(|view| view.enabled)
+        };
+        assert!(!s.store.hcl_schedule_view("porch").expect("stored").enabled);
+        assert_eq!(restarted_bit(), Some(true), "a restart now keeps the bit last written");
+        assert_eq!(
+            s.counters.command.hcl_switches_coalesced.load(Ordering::Relaxed),
+            2,
+            "the two switches after the first joined its waiting write"
+        );
+
+        drop(s._host);
+        wait_until(|| restarted_bit() == Some(false), Duration::from_secs(3));
+        assert_eq!(restarted_bit(), Some(false), "a stopping worker writes what waits");
     }
 
     #[test]

@@ -1,9 +1,10 @@
 use dali2rust_rules_model::limits::{
     MAX_ACTIONS_EXPANDED, MAX_MQTT_PAYLOAD_BYTES, MAX_MQTT_TOPIC_BYTES, MAX_MQTT_TRIGGER_TOPICS,
+    MAX_NAME_BYTES, MAX_SCHEDULE_ID_BYTES, MAX_STAT_NAMES,
 };
 use dali2rust_rules_model::{
-    expanded_action_count, validate, Action, DefBlock, FlowAction, ModelError, Rule, RuleSet,
-    StateAction, Trigger,
+    expanded_action_count, validate, Action, DefBlock, FlowAction, HclAction, ModelError, Rule,
+    RuleSet, StateAction, Trigger,
 };
 
 fn simple_action() -> Action {
@@ -298,4 +299,95 @@ fn a_repeated_topic_is_one_topic_against_the_ceiling() {
     let set = set_with(vec![], rules);
     assert_eq!(set.mqtt_topics().len(), MAX_MQTT_TRIGGER_TOPICS);
     validate(&set).expect("eight distinct topics named sixteen times are eight topics");
+}
+
+fn stat(name: &str) -> Action {
+    Action::State(StateAction::StatCount { name: name.into() })
+}
+
+fn counted_names(first: usize, last: usize) -> Vec<Action> {
+    (first..=last).map(|index| stat(&format!("c{index}"))).collect()
+}
+
+#[test]
+fn a_document_may_name_the_limit_of_stat_counters_and_count_them_as_often_as_it_likes() {
+    let rules = vec![
+        rule_with_actions("a", counted_names(1, 8)),
+        rule_with_actions("b", counted_names(1, 8)),
+        rule_with_actions("c", vec![repeat(2, vec![stat("c1")])]),
+    ];
+    let blocks = vec![def("tail", counted_names(9, MAX_STAT_NAMES))];
+    let set = set_with(blocks, rules);
+    assert_eq!(validate(&set), Ok(()));
+    assert_eq!(dali2rust_rules_model::stat_names(&set).len(), MAX_STAT_NAMES);
+}
+
+#[test]
+fn one_stat_counter_past_the_limit_is_refused_at_the_owner_that_names_it() {
+    let rules = vec![
+        rule_with_actions("a", counted_names(1, 8)),
+        rule_with_actions("b", counted_names(5, MAX_STAT_NAMES)),
+        rule_with_actions(
+            "c",
+            vec![Action::Flow(FlowAction::After {
+                delay_ms: dali2rust_rules_model::DurationMs(1_000),
+                actions: vec![stat("c1"), stat("one-more")],
+            })],
+        ),
+    ];
+    match validate(&set_with(vec![], rules)) {
+        Err(ModelError::TooManyStatNames { owner, count }) => {
+            assert_eq!(owner, "c", "the name hides in an after block and is still found");
+            assert_eq!(count, MAX_STAT_NAMES + 1);
+        }
+        other => panic!("expected TooManyStatNames, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_stat_name_with_a_control_character_is_refused_at_the_owner_that_names_it() {
+    let rules = vec![
+        rule_with_actions("a", vec![stat("door open")]),
+        rule_with_actions("b", vec![stat("door\u{7}open")]),
+    ];
+    match validate(&set_with(vec![], rules)) {
+        Err(ModelError::StatNameNotPrintable { owner, name }) => {
+            assert_eq!(owner, "b");
+            assert_eq!(name, "door\u{7}open");
+        }
+        other => panic!("expected StatNameNotPrintable, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_schedule_id_past_the_bus_field_is_refused_at_its_rule() {
+    let switch = |schedule: String| Action::Hcl(HclAction::Enable { schedule });
+    let fits = "s".repeat(MAX_SCHEDULE_ID_BYTES);
+    let fitting = vec![rule_with_actions("fits", vec![switch(fits.clone())])];
+    assert_eq!(validate(&set_with(vec![], fitting)), Ok(()));
+
+    let past = vec![rule_with_actions("past", vec![switch(format!("{fits}s"))])];
+    match validate(&set_with(vec![], past)) {
+        Err(ModelError::ScheduleIdTooLong { rule, bytes }) => {
+            assert_eq!(rule, "past");
+            assert_eq!(bytes, MAX_SCHEDULE_ID_BYTES + 1);
+        }
+        other => panic!("expected ScheduleIdTooLong, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_stat_name_past_the_name_limit_is_refused_at_the_owner_that_names_it() {
+    let fits = "s".repeat(MAX_NAME_BYTES);
+    let fitting = vec![rule_with_actions("fits", vec![stat(&fits)])];
+    assert_eq!(validate(&set_with(vec![], fitting)), Ok(()));
+
+    let past = vec![rule_with_actions("past", vec![stat(&format!("{fits}s"))])];
+    match validate(&set_with(vec![], past)) {
+        Err(ModelError::StatNameTooLong { owner, bytes }) => {
+            assert_eq!(owner, "past");
+            assert_eq!(bytes, MAX_NAME_BYTES + 1);
+        }
+        other => panic!("expected StatNameTooLong, got {other:?}"),
+    }
 }

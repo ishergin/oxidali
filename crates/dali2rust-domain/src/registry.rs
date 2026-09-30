@@ -1212,7 +1212,7 @@ pub struct OperationView {
     pub attribute_read_outcomes: Option<OperationAttributeReadOutcomesView>,
 }
 
-pub trait RegistryReadPort: Send + Sync {
+pub trait RegistryReadPort: InputInstanceTypeReadPort {
     fn application_controller_active(&self) -> bool;
     fn virtual_lamp_snapshot(&self, adapter_id: u8, virtual_lamp_id: u8) -> VirtualLampSnapshot;
     fn virtual_lamp_binding_short(&self, adapter_id: u8, virtual_lamp_id: u8) -> Option<u8>;

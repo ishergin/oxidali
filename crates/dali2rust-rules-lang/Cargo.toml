@@ -8,6 +8,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+dali2rust-domain = { path = "../dali2rust-domain" }
 dali2rust-rules-model = { path = "../dali2rust-rules-model" }
 
 [dev-dependencies]

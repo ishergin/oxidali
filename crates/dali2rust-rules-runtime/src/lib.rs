@@ -7,7 +7,7 @@ pub use runtime::engine::{
 };
 pub use runtime::rule_runtime::{RuleOutcome, RuleRuntime};
 pub use runtime::store::{RulesDocument, RulesStore};
-pub use runtime::stats::RulesEngineCells;
+pub use runtime::stats::{RuleStatCount, RulesEngineCells};
 pub use runtime::world_port::RulesWorldPort;
 pub use runtime::worker::{
     spawn_rules_worker, RulesWorkerCounters, RulesWorkerSeams, RULES_WORKER_HANDLED_COMMANDS,

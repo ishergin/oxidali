@@ -1,5 +1,6 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::{RecvTimeoutError, Sender};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use dali2rust_bus::{
@@ -8,8 +9,9 @@ use dali2rust_bus::{
 };
 use dali2rust_contracts::msg::{
     BusCommandPayload, ColorMode, ColorValue, DaliTargetScope, HclAlgorithm, HclLevelMode,
-    HclOverrideClearCommand, HclSchedulePointRow, HclTargetRow, HclTargetScope, HclTimeRef,
-    LightSetpoint, PowerState, RuntimeSource,
+    HclOverrideClearCommand, HclOverrideHoldCommand, HclOverrideResumeCommand, HclOverrideTarget,
+    HclSchedulePointRow, HclTargetRow, HclTargetScope, HclTimeRef, LightSetpoint, PowerState,
+    RuntimeSource,
 };
 use dali2rust_domain::registry::{
     AdapterReadPort, AdapterView, GroupApplyRowView, GroupApplySnapshot,
@@ -22,7 +24,7 @@ use dali2rust_hcl_runtime::{
     HCL_SCHEDULER_HANDLED_EVENTS,
 };
 use dali2rust_platform::wall_clock::{LocalCivilTime, TimeError, TimeSource, WallClock};
-use dali2rust_test_support::wait_until;
+use dali2rust_test_support::{try_wait_until, wait_until};
 
 const TEST_TICK_MS: u64 = 300;
 const TEST_COMMAND_TIMEOUT_MS: u64 = 200;
@@ -221,6 +223,7 @@ fn commit_event(
 
 struct Harness {
     publisher: BusPublisher,
+    confirmations: BusSubscriberRx,
     commands: Arc<Mutex<Vec<BusCommandPayload>>>,
     counters: Arc<HclSchedulerCounters>,
     overrides: SharedOverrideLedger,
@@ -229,6 +232,15 @@ struct Harness {
     _pump: Option<std::thread::JoinHandle<()>>,
     _silent_rx: Option<BusSubscriberRx>,
     liveness: Arc<dali2rust_platform::liveness::LivenessBeat>,
+    gate: Option<Arc<Gate>>,
+}
+
+impl Drop for Harness {
+    fn drop(&mut self) {
+        if let Some(gate) = self.gate.as_ref() {
+            gate.set(true);
+        }
+    }
 }
 
 impl Harness {
@@ -279,6 +291,85 @@ impl Harness {
         self.commands()
     }
 
+    fn publish_command<P>(&self, correlation_id: u64, payload: P)
+    where
+        BusCommandPayload: From<P>,
+    {
+        let envelope = dali2rust_contracts::bus::command_envelope(
+            dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
+            correlation_id,
+            BusId::default().0,
+            Some(dali2rust_contracts::msg::Origin::Rules),
+            payload,
+        );
+        assert_eq!(
+            self.publisher
+                .try_publish(BusChannel::Commands, BusFrame::command(envelope)),
+            PublishResult::Queued
+        );
+    }
+
+    fn hold(&self, correlation_id: u64, target: HclOverrideTarget) {
+        self.publish_command(
+            correlation_id,
+            HclOverrideHoldCommand {
+                registry_adapter_id: 0,
+                target,
+            },
+        );
+    }
+
+    fn resume(&self, correlation_id: u64, target: HclOverrideTarget) {
+        self.publish_command(
+            correlation_id,
+            HclOverrideResumeCommand {
+                registry_adapter_id: 0,
+                target,
+            },
+        );
+    }
+
+    fn clear(&self, correlation_id: u64, schedule_id: &str) {
+        self.publish_command(
+            correlation_id,
+            HclOverrideClearCommand {
+                schedule_id: dali2rust_contracts::msg::fixed_text_32(schedule_id),
+            },
+        );
+    }
+
+    fn confirmation_for(
+        &self,
+        correlation_id: u64,
+    ) -> dali2rust_contracts::msg::ConfirmationEnvelope {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            if let Ok(BusFrame::Confirmation(envelope)) =
+                self.confirmations.recv_timeout(Duration::from_millis(50))
+            {
+                if envelope.meta.correlation_id == correlation_id {
+                    return (*envelope).clone();
+                }
+            }
+        }
+        panic!("no confirmation for {correlation_id}");
+    }
+
+    fn confirmation_order(&self, correlation_ids: &[u64]) -> Vec<u64> {
+        let mut order = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while order.len() < correlation_ids.len() && std::time::Instant::now() < deadline {
+            if let Ok(BusFrame::Confirmation(envelope)) =
+                self.confirmations.recv_timeout(Duration::from_millis(50))
+            {
+                if correlation_ids.contains(&envelope.meta.correlation_id) {
+                    order.push(envelope.meta.correlation_id);
+                }
+            }
+        }
+        order
+    }
+
     fn wait_for_ticks(&self, extra: u32) {
         let target = self.counters.ticks.load(Ordering::Relaxed) + extra;
         wait_until(
@@ -288,15 +379,37 @@ impl Harness {
     }
 }
 
+#[derive(Default)]
+struct Gate {
+    open: Mutex<bool>,
+    turned: Condvar,
+}
+
+impl Gate {
+    fn set(&self, open: bool) {
+        *self.open.lock().expect("gate") = open;
+        self.turned.notify_all();
+    }
+
+    fn pass(&self) {
+        let open = self.open.lock().expect("gate");
+        drop(self.turned.wait_while(open, |open| !*open).expect("gate"));
+    }
+}
+
 fn spawn_confirmation_pump(
     cmd_rx: BusSubscriberRx,
     publisher: BusPublisher,
     seen: Arc<Mutex<Vec<BusCommandPayload>>>,
     status: dali2rust_contracts::msg::DeliveryStatus,
+    gate: Option<Arc<Gate>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         while let Ok(BusFrame::Command(envelope)) = cmd_rx.recv() {
             seen.lock().expect("commands").push(envelope.payload.clone());
+            if let Some(gate) = gate.as_ref() {
+                gate.pass();
+            }
             let confirmation = dali2rust_contracts::bus::build_confirmation_envelope(
                 envelope.meta.correlation_id,
                 status,
@@ -339,26 +452,73 @@ fn spawn_harness_without_confirmations(registry: StubRegistry, clock: Arc<StubCl
     spawn_harness_inner(Arc::new(registry), clock, None)
 }
 
+const SCHEDULER_INBOX: usize = 32;
+const DEEP_SCHEDULER_INBOX: usize = 256;
+const GATED_COMMAND_TIMEOUT_MS: u64 = 10_000;
+
+struct HarnessOptions {
+    answer: Option<dali2rust_contracts::msg::DeliveryStatus>,
+    inbox: usize,
+    gate: Option<Arc<Gate>>,
+    command_timeout_ms: u64,
+}
+
+impl Default for HarnessOptions {
+    fn default() -> Self {
+        Self {
+            answer: Some(dali2rust_contracts::msg::DeliveryStatus::Ok),
+            inbox: SCHEDULER_INBOX,
+            gate: None,
+            command_timeout_ms: TEST_COMMAND_TIMEOUT_MS,
+        }
+    }
+}
+
 fn spawn_harness_inner(
     registry: Arc<dyn HclSchedulerReadPort>,
     clock: Arc<StubClock>,
     answer: Option<dali2rust_contracts::msg::DeliveryStatus>,
 ) -> Harness {
-    let (host, publisher, (rx, conf_rx, cmd_rx)) = BusHost::spawn(BusConfig::default(), |reg| {
+    spawn_harness_with(registry, clock, HarnessOptions { answer, ..HarnessOptions::default() })
+}
+
+fn spawn_gated_harness(
+    registry: Arc<dyn HclSchedulerReadPort>,
+    clock: Arc<StubClock>,
+    gate: &Arc<Gate>,
+) -> Harness {
+    let options = HarnessOptions {
+        inbox: DEEP_SCHEDULER_INBOX,
+        gate: Some(Arc::clone(gate)),
+        command_timeout_ms: GATED_COMMAND_TIMEOUT_MS,
+        ..HarnessOptions::default()
+    };
+    spawn_harness_with(registry, clock, options)
+}
+
+fn spawn_harness_with(
+    registry: Arc<dyn HclSchedulerReadPort>,
+    clock: Arc<StubClock>,
+    options: HarnessOptions,
+) -> Harness {
+    let (host, publisher, (rx, conf_rx, cmd_rx, confirmations)) = BusHost::spawn(BusConfig::default(), |reg| {
         (
-            reg.subscribe_commands_and_events(32, HCL_SCHEDULER_HANDLED_COMMANDS, HCL_SCHEDULER_HANDLED_EVENTS),
+            reg.subscribe_commands_and_events(options.inbox, HCL_SCHEDULER_HANDLED_COMMANDS, HCL_SCHEDULER_HANDLED_EVENTS),
             reg.subscribe_confirmations(32),
             reg.subscribe_commands(64, PUMPED_COMMANDS),
+            reg.subscribe_confirmations(32),
         )
     });
     let commands = Arc::new(Mutex::new(Vec::new()));
     let mut silent_rx = None;
-    let pump = if let Some(status) = answer {
+    let gate = options.gate.clone();
+    let pump = if let Some(status) = options.answer {
         Some(spawn_confirmation_pump(
             cmd_rx,
             publisher.clone(),
             Arc::clone(&commands),
             status,
+            options.gate,
         ))
     } else {
         silent_rx = Some(cmd_rx);
@@ -379,7 +539,7 @@ fn spawn_harness_inner(
         Arc::new(CorrelationIdAllocator::new()),
         HclConfig {
             tick_period_ms: TEST_TICK_MS,
-            command_timeout_ms: TEST_COMMAND_TIMEOUT_MS,
+            command_timeout_ms: options.command_timeout_ms,
         },
         Arc::clone(&counters),
         Arc::clone(&overrides),
@@ -389,6 +549,7 @@ fn spawn_harness_inner(
     );
     Harness {
         publisher,
+        confirmations,
         commands,
         counters,
         overrides,
@@ -397,6 +558,7 @@ fn spawn_harness_inner(
         _pump: pump,
         _silent_rx: silent_rx,
         liveness,
+        gate,
     }
 }
 
@@ -970,7 +1132,7 @@ fn the_override_reports_which_target_stopped_and_when() {
 }
 
 #[test]
-fn a_flood_of_events_during_a_publish_window_is_bounded_and_counted() {
+fn a_flood_of_schedule_edits_during_a_publish_window_loses_no_commit() {
     let membership = 1u16 << 3;
     let registry = StubRegistry {
         schedules: vec![schedule(
@@ -980,39 +1142,22 @@ fn a_flood_of_events_during_a_publish_window_is_bounded_and_counted() {
         )],
         membership: vec![(1, membership)],
     };
-    let harness = spawn_harness_without_confirmations(registry, Arc::new(StubClock::at(600)));
-
-    let stop = Arc::new(AtomicBool::new(false));
-    let flood = spawn_commit_flood(harness.publisher.clone(), Arc::clone(&stop));
+    let options = HarnessOptions {
+        answer: None,
+        inbox: DEEP_SCHEDULER_INBOX,
+        ..HarnessOptions::default()
+    };
+    let harness = spawn_harness_with(Arc::new(registry), Arc::new(StubClock::at(600)), options);
     wait_until(
-        || harness.counters.deferred_dropped_cap.load(Ordering::Relaxed) >= 1,
-        Duration::from_secs(10),
+        || harness.counters.commands_published.load(Ordering::Relaxed) >= 3,
+        Duration::from_secs(5),
     );
-    stop.store(true, Ordering::Relaxed);
-    flood.join().expect("flood thread");
 
+    publish_edits(&harness, FLOOD_EVENTS);
+    harness.publish_manual_commit_on_lamp(1);
     wait_for_overrides_started(&harness, 1);
-    assert!(harness.override_view("wide").suspended);
+    assert!(harness.override_view("wide").suspended, "a commit never waits behind the flood");
     harness.wait_for_ticks(1);
-}
-
-fn spawn_commit_flood(
-    publisher: BusPublisher,
-    stop: Arc<AtomicBool>,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        while !stop.load(Ordering::Relaxed) {
-            let _ = publisher.try_publish(
-                BusChannel::Events,
-                BusFrame::event(commit_event(
-                    1,
-                    RuntimeSource::Api,
-                    LightSetpoint::from_level(254, None),
-                )),
-            );
-            std::thread::yield_now();
-        }
-    })
 }
 
 #[test]
@@ -1363,4 +1508,595 @@ fn a_sunrise_point_resolves_from_the_location_next_to_a_schedule_with_no_state_y
         group_levels(&harness.commands()).iter().all(|(group, _)| *group != 4),
         "a schedule whose only point is still ahead sends nothing"
     );
+}
+
+fn evening_before_its_curve() -> StubRegistry {
+    StubRegistry {
+        schedules: vec![schedule(
+            "evening",
+            vec![broadcast_target(0)],
+            vec![point(1080, HclLevelMode::Absolute, Some(80), None)],
+        )],
+        membership: vec![(1, 1u16 << 1)],
+    }
+}
+
+#[test]
+fn a_hold_stands_down_a_target_the_schedule_has_not_driven_yet() {
+    let harness = spawn_harness(evening_before_its_curve(), Arc::new(StubClock::at(600)));
+    harness.wait_for_ticks(2);
+    assert!(harness.commands().is_empty(), "the curve has not started");
+
+    harness.hold(71, HclOverrideTarget::Broadcast);
+    let confirmation = harness.confirmation_for(71);
+
+    assert_eq!(
+        confirmation.status,
+        dali2rust_contracts::msg::DeliveryStatus::Ok,
+        "the hold confirms on the bus like a clear does"
+    );
+    let view = harness.override_view("evening");
+    assert!(
+        view.suspended,
+        "an explicit hold does not wait for the schedule to have driven the target today"
+    );
+    assert_eq!(view.since_local_minutes, Some(600));
+    assert_eq!(harness.counters.overrides_started.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn a_hold_on_a_lamp_stands_down_exactly_the_groups_that_hold_the_lamp() {
+    let registry = StubRegistry {
+        schedules: vec![schedule(
+            "morning",
+            vec![group_target(0, &[3, 5])],
+            vec![point(0, HclLevelMode::Absolute, Some(80), None)],
+        )],
+        membership: vec![(1, 1u16 << 3)],
+    };
+    let harness = spawn_harness(registry, Arc::new(StubClock::at(600)));
+    harness.wait_for_commands(2);
+
+    harness.hold(72, HclOverrideTarget::VirtualLamp { virtual_lamp_id: 1 });
+    harness.confirmation_for(72);
+
+    assert_eq!(
+        suspended_groups(&harness, "morning"),
+        vec![Some(3)],
+        "the lamp's group stands down, the group without it keeps its schedule"
+    );
+}
+
+fn suspended_groups(harness: &Harness, schedule_id: &str) -> Vec<Option<u8>> {
+    harness
+        .override_view(schedule_id)
+        .targets
+        .iter()
+        .map(|target| target.group_id)
+        .collect()
+}
+
+fn five_target_registry() -> StubRegistry {
+    StubRegistry {
+        schedules: vec![schedule(
+            "wide",
+            vec![broadcast_target(0), group_target(0, &[5, 7, 8, 9])],
+            vec![point(0, HclLevelMode::Absolute, Some(80), None)],
+        )],
+        membership: vec![(1, (1u16 << 7) | (1u16 << 8)), (2, 1u16 << 9)],
+    }
+}
+
+#[test]
+fn a_group_hold_stands_down_what_a_commit_on_its_members_would() {
+    let harness = spawn_harness(five_target_registry(), Arc::new(StubClock::at(600)));
+
+    harness.hold(74, HclOverrideTarget::Group { group_id: 7 });
+    harness.confirmation_for(74);
+    assert_eq!(
+        suspended_groups(&harness, "wide"),
+        vec![None, Some(7), Some(8)],
+        "lamp 1 is in groups 7 and 8 and in the broadcast; group 9 has no lamp of group 7"
+    );
+
+    harness.hold(75, HclOverrideTarget::Group { group_id: 5 });
+    harness.confirmation_for(75);
+    assert_eq!(
+        suspended_groups(&harness, "wide"),
+        vec![None, Some(5), Some(7), Some(8)],
+        "a group without members stands down only itself"
+    );
+}
+
+#[test]
+fn a_broadcast_hold_stands_down_every_target_on_its_adapter() {
+    let harness = spawn_harness(five_target_registry(), Arc::new(StubClock::at(600)));
+
+    harness.hold(76, HclOverrideTarget::Broadcast);
+    harness.confirmation_for(76);
+
+    assert_eq!(
+        suspended_groups(&harness, "wide"),
+        vec![None, Some(5), Some(7), Some(8), Some(9)]
+    );
+}
+
+#[test]
+fn a_resume_lifts_only_what_its_own_target_raised() {
+    let harness = spawn_harness(five_target_registry(), Arc::new(StubClock::at(600)));
+    harness.hold(77, HclOverrideTarget::Broadcast);
+    harness.confirmation_for(77);
+    let everything = vec![None, Some(5), Some(7), Some(8), Some(9)];
+
+    harness.resume(78, HclOverrideTarget::Group { group_id: 9 });
+    harness.confirmation_for(78);
+    harness.resume(79, HclOverrideTarget::VirtualLamp { virtual_lamp_id: 1 });
+    harness.confirmation_for(79);
+    assert_eq!(
+        suspended_groups(&harness, "wide"),
+        everything,
+        "a group or a lamp does not undo what a broadcast hold raised"
+    );
+
+    harness.resume(80, HclOverrideTarget::Broadcast);
+    assert_eq!(
+        harness.confirmation_for(80).status,
+        dali2rust_contracts::msg::DeliveryStatus::Ok
+    );
+    assert!(suspended_groups(&harness, "wide").is_empty());
+    assert_eq!(harness.counters.overrides_reset.load(Ordering::Relaxed), 5);
+}
+
+fn one_schedule(schedule_id: &str, targets: Vec<HclTargetRow>, membership: Vec<(u8, u16)>) -> StubRegistry {
+    StubRegistry {
+        schedules: vec![schedule(
+            schedule_id,
+            targets,
+            vec![point(0, HclLevelMode::Absolute, Some(120), None)],
+        )],
+        membership,
+    }
+}
+
+fn broadcast_over_group_three() -> StubRegistry {
+    one_schedule("all", vec![broadcast_target(0)], vec![(1, 1u16 << 3), (2, 1u16 << 3)])
+}
+
+fn floor_and_room() -> StubRegistry {
+    let floor_and_room = (1u16 << 3) | (1u16 << 4);
+    one_schedule("rooms", vec![group_target(0, &[3, 4])], vec![(1, floor_and_room), (2, 1u16 << 3)])
+}
+
+fn hold_then_resume(
+    registry: StubRegistry,
+    schedule_id: &str,
+    held: HclOverrideTarget,
+) -> (Vec<Option<u8>>, Vec<Option<u8>>) {
+    let harness = spawn_harness(registry, Arc::new(StubClock::at(600)));
+    harness.hold(92, held);
+    harness.confirmation_for(92);
+    let after_hold = suspended_groups(&harness, schedule_id);
+    harness.resume(93, held);
+    harness.confirmation_for(93);
+    (after_hold, suspended_groups(&harness, schedule_id))
+}
+
+#[test]
+fn a_group_resume_undoes_its_hold_on_a_broadcast_schedule() {
+    let group_three = HclOverrideTarget::Group { group_id: 3 };
+    let (held, resumed) = hold_then_resume(broadcast_over_group_three(), "all", group_three);
+    assert_eq!(held, [None], "group 3 has lamps, so its hold stands the broadcast down");
+    assert!(resumed.is_empty(), "and its resume lifts it again: {resumed:?}");
+}
+
+#[test]
+fn a_room_resume_undoes_the_floor_its_hold_reached() {
+    let room = HclOverrideTarget::Group { group_id: 4 };
+    let (held, resumed) = hold_then_resume(floor_and_room(), "rooms", room);
+    assert_eq!(held, [Some(3), Some(4)], "lamp 1 is in the room and on the floor");
+    assert!(resumed.is_empty(), "the room's resume lifts both: {resumed:?}");
+}
+
+#[test]
+fn a_lamp_resume_undoes_its_own_hold() {
+    let lamp = HclOverrideTarget::VirtualLamp { virtual_lamp_id: 1 };
+    let (held, resumed) = hold_then_resume(floor_and_room(), "rooms", lamp);
+    assert_eq!(held, [Some(3), Some(4)]);
+    assert!(resumed.is_empty(), "the lamp's resume lifts what its hold raised: {resumed:?}");
+}
+
+#[test]
+fn a_group_resume_lifts_the_broadcast_its_own_lamps_stood_down() {
+    let harness = spawn_harness(broadcast_over_group_three(), Arc::new(StubClock::at(600)));
+    harness.wait_for_commands(1);
+    harness.publish_manual_commit_on_lamp(1);
+    harness.publish_manual_commit_on_lamp(2);
+    wait_until(|| suspended_groups(&harness, "all") == [None], Duration::from_secs(3));
+
+    harness.resume(94, HclOverrideTarget::Group { group_id: 3 });
+    harness.confirmation_for(94);
+
+    assert!(
+        suspended_groups(&harness, "all").is_empty(),
+        "both commits came from lamps of group 3, so its resume lifts the broadcast"
+    );
+}
+
+#[test]
+fn a_group_resume_leaves_the_broadcast_an_owner_commit_on_another_lamp_raised() {
+    let harness = spawn_harness(five_target_registry(), Arc::new(StubClock::at(600)));
+    harness.wait_for_commands(5);
+    harness.publish_manual_commit_on_lamp(1);
+    wait_until(
+        || suspended_groups(&harness, "wide") == [None, Some(7), Some(8)],
+        Duration::from_secs(3),
+    );
+    let published = harness.commands().len();
+
+    harness.resume(86, HclOverrideTarget::Group { group_id: 9 });
+    harness.confirmation_for(86);
+    harness.wait_for_ticks(2);
+
+    assert_eq!(
+        suspended_groups(&harness, "wide"),
+        [None, Some(7), Some(8)],
+        "the broadcast flag is lamp 1's owner's; group 9 does not reach over lamp 1"
+    );
+    assert_eq!(harness.commands().len(), published, "nothing drives over lamp 1 again");
+}
+
+#[test]
+fn a_hold_stands_down_a_colour_curve_that_a_level_command_would_leave_running() {
+    let harness = spawn_harness(colour_only_registry(), Arc::new(StubClock::at(600)));
+    harness.wait_for_commands(1);
+
+    harness.hold(73, HclOverrideTarget::Group { group_id: 3 });
+    harness.confirmation_for(73);
+
+    assert!(
+        harness.override_view("colour-only").suspended,
+        "an explicit hold takes every dimension the schedule drives"
+    );
+}
+
+#[test]
+fn a_hold_without_a_clock_is_refused_by_name_and_holds_nothing() {
+    let harness = spawn_harness(group_three_registry(), Arc::new(StubClock::unanchored()));
+
+    harness.hold(74, HclOverrideTarget::Group { group_id: 3 });
+    let confirmation = harness.confirmation_for(74);
+
+    assert_eq!(
+        confirmation.status,
+        dali2rust_contracts::msg::DeliveryStatus::ExecutionFailed
+    );
+    let error = confirmation.confirmation.error.expect("a named refusal");
+    assert_eq!(error.message.as_str(), "time_unsynced");
+    assert!(!harness.override_view("morning").suspended);
+}
+
+#[test]
+fn a_hold_leaves_a_schedule_that_does_not_run_today_alone() {
+    let mut paused = schedule(
+        "paused",
+        vec![group_target(0, &[3])],
+        vec![point(0, HclLevelMode::Absolute, Some(40), None)],
+    );
+    paused.enabled = false;
+    let mut registry = group_three_registry();
+    registry.schedules.push(paused);
+    let harness = spawn_harness(registry, Arc::new(StubClock::at(600)));
+    harness.wait_for_commands(1);
+
+    harness.hold(75, HclOverrideTarget::Group { group_id: 3 });
+    harness.confirmation_for(75);
+
+    assert!(harness.override_view("morning").suspended);
+    assert!(
+        !harness.override_view("paused").suspended,
+        "a schedule that drives nothing today has nothing to hold"
+    );
+}
+
+const SIXTEEN_GROUPS: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const LAMP_IN_GROUP_THREE: u8 = 1;
+const FLOOD_EVENTS: u32 = 100;
+
+fn sixteen_group_registry() -> StubRegistry {
+    StubRegistry {
+        schedules: vec![schedule(
+            "wide",
+            vec![group_target(0, &SIXTEEN_GROUPS)],
+            vec![point(0, HclLevelMode::Absolute, Some(120), None)],
+        )],
+        membership: vec![(LAMP_IN_GROUP_THREE, 1u16 << 3)],
+    }
+}
+
+fn publishing_tick_held_at_its_gate(gate: &Arc<Gate>) -> Harness {
+    let harness = spawn_gated_harness(Arc::new(sixteen_group_registry()), Arc::new(StubClock::at(600)), gate);
+    harness.wait_for_commands(1);
+    harness
+}
+
+fn publish_until_queued(harness: &Harness, channel: BusChannel, frame: BusFrame) {
+    wait_until(
+        || harness.publisher.try_publish(channel, frame.clone()) == PublishResult::Queued,
+        Duration::from_secs(3),
+    );
+}
+
+fn publish_edits(harness: &Harness, count: u32) {
+    for _ in 0..count {
+        publish_until_queued(harness, BusChannel::Events, schedule_changed("wide", false));
+    }
+}
+
+#[test]
+fn a_hold_and_a_clear_during_a_flooded_tick_are_served_at_once_and_in_order() {
+    let gate = Arc::new(Gate::default());
+    let harness = publishing_tick_held_at_its_gate(&gate);
+    publish_edits(&harness, FLOOD_EVENTS);
+
+    harness.hold(76, HclOverrideTarget::Group { group_id: 3 });
+    harness.clear(77, "wide");
+    let order = harness.confirmation_order(&[76, 77]);
+    let published_when_served = harness.commands().len();
+
+    assert_eq!(order, vec![76, 77], "both commands land, the hold first");
+    assert_eq!(published_when_served, 1, "both were answered while the tick was held at its first command");
+    assert_eq!(harness.counters.overrides_started.load(Ordering::Relaxed), 1);
+    assert!(
+        !harness.override_view("wide").suspended,
+        "the clear came after the hold, so the schedule runs"
+    );
+}
+
+const FIRST_LEVEL: u8 = 120;
+const SECOND_POINT_MINUTES: u16 = 700;
+const SECOND_LEVEL: u8 = 200;
+
+fn two_step_schedule(second_level: u8) -> HclScheduleView {
+    schedule(
+        "wide",
+        vec![group_target(0, &SIXTEEN_GROUPS)],
+        vec![
+            point(0, HclLevelMode::Absolute, Some(FIRST_LEVEL), None),
+            point(SECOND_POINT_MINUTES as i16, HclLevelMode::Absolute, Some(second_level), None),
+        ],
+    )
+}
+
+fn two_step_registry() -> StubRegistry {
+    StubRegistry {
+        schedules: vec![two_step_schedule(SECOND_LEVEL)],
+        membership: vec![(LAMP_IN_GROUP_THREE, 1u16 << 3)],
+    }
+}
+
+fn target_states(harness: &Harness) -> Vec<(u8, Option<u8>)> {
+    harness
+        .commands()
+        .iter()
+        .filter_map(|payload| match payload {
+            BusCommandPayload::DaliSetTargetStateCommand(body) => {
+                Some((body.group_id, body.setpoint.level))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn wait_for_tick_to_end(harness: &Harness, tick: u32) {
+    wait_until(
+        || harness.counters.ticks.load(Ordering::Relaxed) > tick,
+        Duration::from_secs(5),
+    );
+}
+
+fn second_point_tick_held_at_its_gate(harness: &Harness, clock: &StubClock, gate: &Gate) -> u32 {
+    harness.wait_for_commands(SIXTEEN_GROUPS.len());
+    harness.wait_for_ticks(1);
+    gate.set(false);
+    clock.set_local(SECOND_POINT_MINUTES + 1, YEAR_DAY);
+    harness.wait_for_commands(SIXTEEN_GROUPS.len() + 1);
+    harness.counters.ticks.load(Ordering::Relaxed)
+}
+
+fn an_owner_commit_served_mid_tick(harness: &Harness) -> bool {
+    harness.publish_manual_commit_on_lamp(LAMP_IN_GROUP_THREE);
+    try_wait_until(
+        || suspended_groups(harness, "wide") == [Some(3)],
+        Duration::from_secs(1),
+    )
+}
+
+fn lift_after_an_owner_commit_in_one_tick(lift: impl FnOnce(&Harness)) -> (bool, Vec<Option<u8>>) {
+    let gate = Arc::new(Gate::default());
+    gate.set(true);
+    let clock = Arc::new(StubClock::at(600));
+    let harness = spawn_gated_harness(Arc::new(two_step_registry()), Arc::clone(&clock), &gate);
+    let tick = second_point_tick_held_at_its_gate(&harness, &clock, &gate);
+
+    let served_mid_tick = an_owner_commit_served_mid_tick(&harness);
+    lift(&harness);
+    gate.set(true);
+    wait_for_tick_to_end(&harness, tick);
+    (served_mid_tick, suspended_groups(&harness, "wide"))
+}
+
+#[test]
+fn a_clear_after_an_owner_commit_in_one_tick_leaves_the_schedule_running() {
+    let (served_mid_tick, suspended) = lift_after_an_owner_commit_in_one_tick(|harness| {
+        harness.clear(87, "wide");
+        harness.confirmation_for(87);
+    });
+    assert!(suspended.is_empty(), "the clear came after the commit: {suspended:?}");
+    assert!(served_mid_tick, "the owner's commit is served while the tick publishes");
+}
+
+#[test]
+fn a_resume_after_an_owner_commit_in_one_tick_leaves_the_group_running() {
+    let (served_mid_tick, suspended) = lift_after_an_owner_commit_in_one_tick(|harness| {
+        harness.resume(88, HclOverrideTarget::Group { group_id: 3 });
+        harness.confirmation_for(88);
+    });
+    assert!(suspended.is_empty(), "the resume came after the commit: {suspended:?}");
+    assert!(served_mid_tick, "the owner's commit is served while the tick publishes");
+}
+
+#[test]
+fn a_target_held_while_its_tick_publishes_is_not_published_by_that_tick() {
+    let gate = Arc::new(Gate::default());
+    let harness = publishing_tick_held_at_its_gate(&gate);
+    let tick = harness.counters.ticks.load(Ordering::Relaxed);
+
+    harness.hold(81, HclOverrideTarget::Group { group_id: 15 });
+    let held = harness.confirmation_for(81).status;
+    gate.set(true);
+    wait_for_tick_to_end(&harness, tick);
+
+    assert_eq!(held, dali2rust_contracts::msg::DeliveryStatus::Ok);
+    let groups: Vec<u8> = target_states(&harness).into_iter().map(|(group, _)| group).collect();
+    assert!(!groups.contains(&15), "group 15 was held before the tick reached it: {groups:?}");
+    assert_eq!(groups.len(), SIXTEEN_GROUPS.len() - 1, "every other group was driven");
+}
+
+#[test]
+fn an_owner_commit_while_its_tick_publishes_keeps_the_tick_off_its_group() {
+    let gate = Arc::new(Gate::default());
+    gate.set(true);
+    let clock = Arc::new(StubClock::at(600));
+    let harness = spawn_gated_harness(Arc::new(two_step_registry()), Arc::clone(&clock), &gate);
+    let tick = second_point_tick_held_at_its_gate(&harness, &clock, &gate);
+
+    let served_mid_tick = an_owner_commit_served_mid_tick(&harness);
+    gate.set(true);
+    wait_for_tick_to_end(&harness, tick);
+
+    let second_tick = target_states(&harness).split_off(SIXTEEN_GROUPS.len());
+    assert!(
+        !second_tick.contains(&(3, Some(SECOND_LEVEL))),
+        "the owner's value on group 3 was overwritten after it arrived: {second_tick:?}"
+    );
+    assert!(served_mid_tick, "the owner's commit is served while the tick publishes");
+    assert_eq!(suspended_groups(&harness, "wide"), [Some(3)], "and it holds until a lift");
+}
+
+const EDITED_LEVEL: u8 = 150;
+
+fn events_delivered_to_scheduler(harness: &Harness) -> u32 {
+    harness.publisher.counters_snapshot().event_subscribers[0].delivered
+}
+
+#[test]
+fn an_edit_during_a_tick_disarms_its_targets_before_a_later_commit() {
+    let gate = Arc::new(Gate::default());
+    gate.set(true);
+    let clock = Arc::new(StubClock::at(600));
+    let registry = Arc::new(EditableRegistry::new(two_step_registry()));
+    let read_port = Arc::clone(&registry) as Arc<dyn HclSchedulerReadPort>;
+    let harness = spawn_gated_harness(read_port, Arc::clone(&clock), &gate);
+    let tick = second_point_tick_held_at_its_gate(&harness, &clock, &gate);
+
+    registry.edit(vec![two_step_schedule(EDITED_LEVEL)]);
+    let delivered = events_delivered_to_scheduler(&harness);
+    publish_until_queued(&harness, BusChannel::Events, schedule_changed("wide", false));
+    harness.publish_manual_commit_on_lamp(LAMP_IN_GROUP_THREE);
+    wait_until(
+        || events_delivered_to_scheduler(&harness) >= delivered + 2,
+        Duration::from_secs(3),
+    );
+    harness.clear(91, "none");
+    harness.confirmation_for(91);
+    gate.set(true);
+    wait_for_tick_to_end(&harness, tick);
+
+    assert_eq!(
+        harness.counters.overrides_started.load(Ordering::Relaxed),
+        0,
+        "the edit came first, so the commit found nothing the new curve had driven"
+    );
+    wait_until(
+        || target_states(&harness).contains(&(3, Some(EDITED_LEVEL))),
+        Duration::from_secs(5),
+    );
+}
+
+const UNRELATED_CONFIRMATIONS_FROM: u64 = 1_000_000;
+const CONFIRMATION_TRAFFIC_PERIOD: Duration = Duration::from_millis(5);
+
+fn spawn_confirmation_traffic(publisher: BusPublisher) -> Sender<()> {
+    let (stop, stopped) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        let mut correlation_id = UNRELATED_CONFIRMATIONS_FROM;
+        while stopped.recv_timeout(CONFIRMATION_TRAFFIC_PERIOD) == Err(RecvTimeoutError::Timeout) {
+            correlation_id += 1;
+            let confirmation = dali2rust_contracts::bus::build_confirmation_envelope(
+                correlation_id,
+                dali2rust_contracts::msg::DeliveryStatus::Ok,
+                0,
+                dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
+            );
+            let _ = publisher.try_publish(BusChannel::Confirmations, BusFrame::confirmation(confirmation));
+        }
+    });
+    stop
+}
+
+#[test]
+fn a_hold_during_a_tick_is_served_while_other_confirmations_keep_arriving() {
+    let gate = Arc::new(Gate::default());
+    let harness = publishing_tick_held_at_its_gate(&gate);
+    let traffic = spawn_confirmation_traffic(harness.publisher.clone());
+
+    harness.hold(89, HclOverrideTarget::Group { group_id: 15 });
+    let held = harness.confirmation_for(89).status;
+    drop(traffic);
+
+    assert_eq!(held, dali2rust_contracts::msg::DeliveryStatus::Ok);
+    assert_eq!(harness.commands().len(), 1, "served while the tick waited on its first command");
+}
+
+const ZETA_LEVEL: u8 = 50;
+
+fn wide_and_zeta(zeta_enabled: bool) -> Vec<HclScheduleView> {
+    let mut zeta = schedule(
+        "zeta",
+        vec![broadcast_target(0)],
+        vec![point(0, HclLevelMode::Absolute, Some(ZETA_LEVEL), None)],
+    );
+    zeta.enabled = zeta_enabled;
+    let mut schedules = sixteen_group_registry().schedules;
+    schedules.push(zeta);
+    schedules
+}
+
+#[test]
+fn an_edit_during_a_tick_cuts_only_the_edited_schedules_commands() {
+    let gate = Arc::new(Gate::default());
+    let base = StubRegistry { schedules: wide_and_zeta(true), ..sixteen_group_registry() };
+    let registry = Arc::new(EditableRegistry::new(base));
+    let read_port = Arc::clone(&registry) as Arc<dyn HclSchedulerReadPort>;
+    let harness = spawn_gated_harness(read_port, Arc::new(StubClock::at(600)), &gate);
+    harness.wait_for_commands(1);
+    let tick = harness.counters.ticks.load(Ordering::Relaxed);
+
+    registry.edit(wide_and_zeta(false));
+    let delivered = events_delivered_to_scheduler(&harness);
+    publish_until_queued(&harness, BusChannel::Events, schedule_changed("zeta", false));
+    wait_until(
+        || events_delivered_to_scheduler(&harness) > delivered,
+        Duration::from_secs(3),
+    );
+    harness.clear(95, "none");
+    harness.confirmation_for(95);
+    gate.set(true);
+    wait_for_tick_to_end(&harness, tick);
+
+    let states = target_states(&harness);
+    let wide = states.iter().filter(|(_, level)| *level == Some(120)).count();
+    assert_eq!(wide, SIXTEEN_GROUPS.len(), "the rest of the unedited plan went out: {states:?}");
+    assert!(!states.contains(&(0, Some(ZETA_LEVEL))), "the disabled schedule's command did not");
+    assert_eq!(harness.counters.ticks_cut.load(Ordering::Relaxed), 1, "the cut tick is counted");
 }

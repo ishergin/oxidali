@@ -1,4 +1,4 @@
-use crate::action::{Action, FlowAction, SceneAction, StateAction};
+use crate::action::{Action, FlowAction, HclAction, SceneAction, StateAction};
 use crate::condition::{Condition, VarOperand};
 use crate::error::ModelError;
 use crate::rule::{DefBlock, Rule, RuleSet};
@@ -20,6 +20,7 @@ pub const MAX_VAR_TEXT_BYTES: usize = 16;
 pub const MAX_MQTT_TOPIC_BYTES: usize = 48;
 pub const MAX_MQTT_PAYLOAD_BYTES: usize = 48;
 pub const MAX_MQTT_TRIGGER_TOPICS: usize = 8;
+pub const MAX_SCHEDULE_ID_BYTES: usize = 32;
 const UNICODE_NONCHARACTER_BLOCK: core::ops::RangeInclusive<u32> = 0xFDD0..=0xFDEF;
 const UNICODE_PLANE_OFFSET_MASK: u32 = 0xFFFF;
 const UNICODE_FIRST_PLANE_END_NONCHARACTER: u32 = 0xFFFE;
@@ -34,6 +35,7 @@ pub const MAX_GROUP_ID: u8 = 15;
 pub const MAX_INSTANCE_NUMBER: u8 = 31;
 pub const MAX_INSTANCE_GROUP: u8 = 31;
 pub const MAX_INPUT_VALUE_10BIT: u16 = 1023;
+pub const MAX_STAT_NAMES: usize = 16;
 
 #[derive(Clone, Copy)]
 struct Ctx<'a> {
@@ -62,6 +64,7 @@ pub fn validate(set: &RuleSet) -> Result<(), ModelError> {
     check_block_references(set)?;
     check_rule_references(set)?;
     check_mqtt_topic_count(set)?;
+    check_stat_names(set)?;
     for block in &set.blocks {
         check_block_shape(block)?;
     }
@@ -320,6 +323,11 @@ fn check_action_payload(owner: &str, action: &Action) -> Result<(), ModelError> 
         Action::Scene(scene) => check_scene_payload(owner, scene),
         Action::State(state) => check_state_payload(owner, state),
         Action::Flow(flow) => check_flow_payload(owner, flow),
+        Action::Hcl(HclAction::Enable { schedule } | HclAction::Disable { schedule })
+            if schedule.len() > MAX_SCHEDULE_ID_BYTES =>
+        {
+            Err(ModelError::ScheduleIdTooLong { rule: owner.into(), bytes: schedule.len() })
+        }
         _ => Ok(()),
     }
 }
@@ -408,21 +416,78 @@ fn check_block_references(set: &RuleSet) -> Result<(), ModelError> {
 }
 
 fn walk_calls(actions: &[Action], visit: &mut dyn FnMut(&str)) {
+    visit_nested(actions, &mut |action| {
+        if let Action::Flow(FlowAction::Call { block }) = action {
+            visit(block);
+        }
+    });
+}
+
+fn visit_nested<'a>(actions: &'a [Action], visit: &mut dyn FnMut(&'a Action)) {
     for action in actions {
-        if let Action::Flow(flow) = action {
-            match flow {
-                FlowAction::Call { block } => visit(block),
-                FlowAction::After { actions, .. } | FlowAction::Repeat { actions, .. } => {
-                    walk_calls(actions, visit);
-                }
-                FlowAction::Conditional { then_actions, else_actions, .. } => {
-                    walk_calls(then_actions, visit);
-                    walk_calls(else_actions, visit);
-                }
-                _ => {}
+        visit(action);
+        match action {
+            Action::Flow(FlowAction::After { actions, .. } | FlowAction::Repeat { actions, .. }) => {
+                visit_nested(actions, visit);
             }
+            Action::Flow(FlowAction::Conditional { then_actions, else_actions, .. }) => {
+                visit_nested(then_actions, visit);
+                visit_nested(else_actions, visit);
+            }
+            _ => {}
         }
     }
+}
+
+pub fn stat_names(set: &RuleSet) -> Vec<&str> {
+    stat_names_with_owners(set).into_iter().map(|(name, _)| name).collect()
+}
+
+fn stat_names_with_owners(set: &RuleSet) -> Vec<(&str, &str)> {
+    let owners = set
+        .rules
+        .iter()
+        .map(|rule| (rule.name.as_str(), rule.actions.as_slice()))
+        .chain(set.blocks.iter().map(|block| (block.name.as_str(), block.actions.as_slice())));
+    let mut names: Vec<(&str, &str)> = Vec::new();
+    for (owner, actions) in owners {
+        visit_nested(actions, &mut |action| {
+            if let Action::State(StateAction::StatCount { name }) = action {
+                if !names.iter().any(|(known, _)| known == name) {
+                    names.push((name.as_str(), owner));
+                }
+            }
+        });
+    }
+    names
+}
+
+pub fn stat_name_is_printable(name: &str) -> bool {
+    !name.chars().any(char::is_control)
+}
+
+fn check_stat_names(set: &RuleSet) -> Result<(), ModelError> {
+    let names = stat_names_with_owners(set);
+    for (name, owner) in &names {
+        check_stat_name(owner, name)?;
+    }
+    match names.get(MAX_STAT_NAMES) {
+        Some((_, owner)) => Err(ModelError::TooManyStatNames {
+            owner: (*owner).into(),
+            count: names.len(),
+        }),
+        None => Ok(()),
+    }
+}
+
+fn check_stat_name(owner: &str, name: &str) -> Result<(), ModelError> {
+    if !stat_name_is_printable(name) {
+        return Err(ModelError::StatNameNotPrintable { owner: owner.into(), name: name.into() });
+    }
+    if name.len() > MAX_NAME_BYTES {
+        return Err(ModelError::StatNameTooLong { owner: owner.into(), bytes: name.len() });
+    }
+    Ok(())
 }
 
 fn check_rule_references(set: &RuleSet) -> Result<(), ModelError> {

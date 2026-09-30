@@ -1,10 +1,11 @@
 import { api } from '../api/client'
-import type { StatsReportPayload } from '../api/types'
+import type { StatsReportPayload, StatsRuleCount, StatsRules } from '../api/types'
 import { busLoadPercent } from '../components/bus-load'
 import { Badge, Card, Chip } from '../components/ui'
-import { CounterRows, useDeltas } from '../counters'
+import { CounterRows, type Flat, useDeltas } from '../counters'
 import { uptime } from '../format'
 import { useLive, useSnapshotFrames } from '../hooks'
+import { deltaView } from './stats-view'
 
 const STATS_POLL_MS = 5000
 
@@ -31,6 +32,7 @@ const DALI_GAUGES = [
 ] as const
 
 const RULES_GAUGES = [
+  'continuations_pending',
   'timers_active',
   'rules_loaded',
   'vars_in_use',
@@ -38,6 +40,31 @@ const RULES_GAUGES = [
   'latency_p95_ms',
   'latency_max_ms',
 ] as const
+
+function ruleCounters(rules: StatsRules): Record<string, number> {
+  const counters: Record<string, number> = {}
+  for (const [key, value] of Object.entries(rules)) {
+    if (typeof value === 'number') counters[key] = value
+  }
+  return counters
+}
+
+function RuleStatRows({ stats, deltas }: { stats: StatsRuleCount[]; deltas: Flat }) {
+  return (
+    <>
+      {stats.map((stat) => {
+        const delta = deltas[`rules.stats.${stat.name}`] ?? 0
+        return (
+          <div class="attr sub" key={stat.name}>
+            <span class="k">stat("{stat.name}")</span>
+            <span class="v">{stat.count.toLocaleString()}</span>
+            <span class={`delta${delta > 0 ? ' live' : ''}`}>{delta > 0 ? `+${delta}` : ''}</span>
+          </div>
+        )
+      })}
+    </>
+  )
+}
 
 function isFault(key: string, value: number): boolean {
   return FAULT_KEYS.has(key) && value > 0
@@ -126,7 +153,7 @@ export function StatsScreen() {
     onEvent: snapshot.consume,
   })
   const data = snapshot.latest ?? polled
-  const deltas = useDeltas(data, data?.sample_ms ?? null)
+  const deltas = useDeltas(data, data?.sample_ms ?? null, deltaView)
 
   if (error) return <div class="empty">Stats unavailable — {error}</div>
   if (!data) return <div class="empty">Loading stats…</div>
@@ -245,14 +272,19 @@ export function StatsScreen() {
           <CounterRows block={data.input} path="input" deltas={deltas} isFault={isFault} />
         </Card>
 
+        <Card title="HCL">
+          <CounterRows block={data.hcl} path="hcl" deltas={deltas} isFault={isFault} />
+        </Card>
+
         <Card title="Rules engine" span2>
           <CounterRows
-            block={data.rules}
+            block={ruleCounters(data.rules)}
             path="rules"
             deltas={deltas}
             isFault={isFault}
             gauges={RULES_GAUGES}
           />
+          <RuleStatRows stats={data.rules.stats} deltas={deltas} />
         </Card>
 
         {data.network && (

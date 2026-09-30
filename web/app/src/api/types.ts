@@ -790,11 +790,7 @@ export type RulesWorkerCounters = {
   effects_published: number
   effects_ingress_rejected: number
   effects_skipped_dark: number
-  hcl_hold_unmapped: number
-  hcl_schedule_unmapped: number
-  input_action_unmapped: number
   log_lines: number
-  stat_counts: number
   activations_published: number
 }
 
@@ -836,7 +832,6 @@ export type HclSchedulerCounters = {
   ticks_time_unsynced: number
   commands_published: number
   commands_dropped_cap: number
-  deferred_dropped_cap: number
   command_timeouts: number
   command_failures: number
   ingress_rejections: number
@@ -1052,9 +1047,11 @@ export type StatsRules = {
   effects_emitted: number
   actions_failed: number
   effects_unbound: number
+  hcl_switches_coalesced: number
   continuations_scheduled: number
   continuations_fired: number
   continuations_dropped: number
+  continuations_pending: number
   timers_active: number
   ticks_time_unsynced: number
   rules_loaded: number
@@ -1062,6 +1059,12 @@ export type StatsRules = {
   latency_p50_ms: number
   latency_p95_ms: number
   latency_max_ms: number
+  stats: StatsRuleCount[]
+}
+
+export type StatsRuleCount = {
+  name: string
+  count: number
 }
 
 export type StatsInput = {
@@ -1099,8 +1102,13 @@ export interface StatsReportPayload {
   websocket: StatsWebSocket
   mqtt: StatsMqtt
   input: StatsInput
+  hcl: StatsHcl
   rules: StatsRules
   network: StatsNetwork | null
+}
+
+export type StatsHcl = {
+  ticks_cut_total: number
 }
 
 export type InputDeviceSummary = {

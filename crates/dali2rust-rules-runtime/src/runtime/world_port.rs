@@ -13,11 +13,11 @@ pub trait RulesWorldPort: Send + Sync {
     fn devices(&self) -> Vec<DeviceState>;
     fn inputs(&self) -> Vec<InputState>;
     fn hcl(&self) -> Vec<HclTargetState>;
+    fn hcl_schedules(&self) -> Vec<String>;
     fn input_instance_groups(
         &self,
         adapter_id: u8,
         short_address: u8,
         instance_number: u8,
     ) -> [Option<u8>; 3];
-    fn hcl_schedules_for(&self, target: &dali2rust_rules_model::LightTarget) -> Vec<String>;
 }

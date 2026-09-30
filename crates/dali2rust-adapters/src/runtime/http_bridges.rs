@@ -29,8 +29,10 @@ use dali2rust_api::http::redundancy_settings_state::{
 };
 use dali2rust_api::http::stats_state::{
     StatsBusDto, StatsControllerDto, StatsDaliBackwardDto, StatsDaliConsoleDto, StatsDaliDto,
-    StatsDaliReadbackDto, StatsDaliTaskTimingDto, StatsHttpState, StatsInputDto, StatsMqttDto,
-    StatsNetworkDto, StatsOperationsDto, StatsReportDto, StatsRulesDto, StatsWebSocketDto,
+    StatsDaliReadbackDto, StatsDaliTaskTimingDto, StatsHclDto, StatsHttpState, StatsInputDto,
+    StatsMqttDto,
+    StatsNetworkDto, StatsOperationsDto, StatsReportDto, StatsRuleCountDto, StatsRulesDto,
+    StatsWebSocketDto,
 };
 use dali2rust_api::http::{
     physical_device_state::PhysicalDeviceHttpState, AdapterHttpState, AdapterHttpStateBridge,
@@ -299,8 +301,7 @@ declare_counter_mapping! {
     rules_worker_dto(c: dali2rust_rules_runtime::RulesWorkerCounters) -> RulesWorkerDto {
         commits_applied, commits_rejected, enable_toggles, hydrate_failed,
         persist_failed, ignored_commands, effects_published, effects_ingress_rejected,
-        effects_skipped_dark, hcl_hold_unmapped, hcl_schedule_unmapped,
-        input_action_unmapped, log_lines, stat_counts, activations_published,
+        effects_skipped_dark, log_lines, activations_published,
     }
 
     projector_dto(c: dali2rust_fanout_runtime::ProjectorCounters) -> ProjectorDto {
@@ -326,7 +327,7 @@ declare_counter_mapping! {
 
     hcl_scheduler_dto(c: dali2rust_hcl_runtime::HclSchedulerCounters) -> HclSchedulerDto {
         ticks, ticks_time_unsynced, commands_published, commands_dropped_cap,
-        deferred_dropped_cap, command_timeouts, command_failures, ingress_rejections,
+        command_timeouts, command_failures, ingress_rejections,
         overrides_started, overrides_cleared, overrides_reset, ignored_commands,
         ignored_events,
     }
@@ -426,6 +427,10 @@ fn stats_mqtt_dto(c: &dali2rust_mqtt_runtime::MqttCounters) -> StatsMqttDto {
     }
 }
 
+fn stats_hcl_dto(counters: &dali2rust_hcl_runtime::HclSchedulerCounters) -> StatsHclDto {
+    StatsHclDto { ticks_cut_total: counters.ticks_cut.load(Relaxed) }
+}
+
 fn stats_rules_dto(counters: &RuntimeCounterHandles) -> StatsRulesDto {
     let c = &counters.rules_engine;
     StatsRulesDto {
@@ -439,9 +444,11 @@ fn stats_rules_dto(counters: &RuntimeCounterHandles) -> StatsRulesDto {
         effects_emitted: c.effects_emitted.load(Relaxed),
         actions_failed: c.actions_failed.load(Relaxed),
         effects_unbound: counters.rules.effects_unbound.load(Relaxed),
+        hcl_switches_coalesced: counters.registry.command.hcl_switches_coalesced.load(Relaxed),
         continuations_scheduled: c.continuations_scheduled.load(Relaxed),
         continuations_fired: c.continuations_fired.load(Relaxed),
         continuations_dropped: c.continuations_dropped.load(Relaxed),
+        continuations_pending: c.continuations_pending.load(Relaxed),
         timers_active: c.timers_active.load(Relaxed),
         ticks_time_unsynced: c.ticks_time_unsynced.load(Relaxed),
         rules_loaded: c.rules_loaded.load(Relaxed),
@@ -449,7 +456,13 @@ fn stats_rules_dto(counters: &RuntimeCounterHandles) -> StatsRulesDto {
         latency_p50_ms: c.latency_p50_ms.load(Relaxed),
         latency_p95_ms: c.latency_p95_ms.load(Relaxed),
         latency_max_ms: c.latency_max_ms.load(Relaxed),
+        stats: rule_stat_rows(c),
     }
+}
+
+fn rule_stat_rows(cells: &dali2rust_rules_runtime::RulesEngineCells) -> Vec<StatsRuleCountDto> {
+    let rows = cells.stat_counts().into_iter();
+    rows.map(|row| StatsRuleCountDto { name: row.name, count: row.count }).collect()
 }
 
 fn stats_input_dto(counters: &RuntimeCounterHandles) -> StatsInputDto {
@@ -678,6 +691,7 @@ impl StatsHttpState for StatsBridge {
         out.websocket = stats_websocket_dto(&self.counters.websocket);
         out.mqtt = stats_mqtt_dto(&self.counters.mqtt);
         out.input = stats_input_dto(&self.counters);
+        out.hcl = stats_hcl_dto(&self.counters.hcl_scheduler);
         out.rules = stats_rules_dto(&self.counters);
         out.network = self.link.as_ref().map(|l| stats_network_dto(l.stats()));
     }
@@ -1343,11 +1357,12 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
             .rules_input_rows()
             .into_iter()
             .map(
-                |(adapter_id, short_address, instance_number, occupied, light)| {
+                |(adapter_id, short_address, instance_number, instance_type, occupied, light)| {
                     dali2rust_rules_runtime::runtime::engine::InputState {
                         adapter_id,
                         short_address,
                         instance_number,
+                        instance_type,
                         occupied,
                         light,
                         position: None,
@@ -1380,6 +1395,10 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
         rows
     }
 
+    fn hcl_schedules(&self) -> Vec<String> {
+        self.store.hcl_schedule_ids()
+    }
+
     fn input_instance_groups(
         &self,
         adapter_id: u8,
@@ -1403,15 +1422,6 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
             })
             .unwrap_or([None; 3])
     }
-
-    fn hcl_schedules_for(&self, target: &dali2rust_rules_model::LightTarget) -> Vec<String> {
-        self.hcl_state
-            .list_hcl_schedule_dtos()
-            .into_iter()
-            .filter(|dto| self.schedule_targets(dto).iter().any(|t| t == target))
-            .map(|dto| dto.schedule_id)
-            .collect()
-    }
 }
 
 fn suspended_matches(
@@ -1420,10 +1430,13 @@ fn suspended_matches(
 ) -> bool {
     match target {
         dali2rust_rules_model::LightTarget::Group(group) => {
-            suspended.adapter_id == group.adapter_id && u16::from(suspended.group_id) == group.id
+            suspended.scope == dali2rust_contracts::msg::HclTargetScope::Group
+                && suspended.adapter_id == group.adapter_id
+                && u16::from(suspended.group_id) == group.id
         }
         dali2rust_rules_model::LightTarget::Broadcast { adapter_id } => {
-            suspended.adapter_id == *adapter_id && suspended.group_id == 0
+            suspended.scope == dali2rust_contracts::msg::HclTargetScope::Broadcast
+                && suspended.adapter_id == *adapter_id
         }
         dali2rust_rules_model::LightTarget::Lamp(_) => false,
     }
@@ -1472,7 +1485,9 @@ mod tests {
     use core::sync::atomic::Ordering::Relaxed;
     use std::sync::{Arc, Mutex};
 
-    use super::{arbitration_dto, stats_readback_dto};
+    use super::{arbitration_dto, stats_readback_dto, suspended_matches};
+    use dali2rust_contracts::msg::HclTargetScope;
+    use dali2rust_rules_model::{GroupRef, LightTarget};
     use crate::dali::transport::mock::MockDaliTransport;
     use dali2rust_contracts::msg::GroupMembershipAction;
     use dali2rust_dali_runtime::runtime::controller::DaliController;
@@ -1554,5 +1569,20 @@ mod tests {
             row.handover_incomplete,
         ];
         assert_eq!(got, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn a_suspended_broadcast_and_a_suspended_group_zero_are_told_apart_by_scope() {
+        let key = |scope, group_id| dali2rust_hcl_runtime::TargetKey { adapter_id: 0, scope, group_id };
+        let group_zero = LightTarget::Group(GroupRef { adapter_id: 0, id: 0 });
+        let broadcast = LightTarget::Broadcast { adapter_id: 0 };
+
+        assert!(suspended_matches(&key(HclTargetScope::Broadcast, 0), &broadcast));
+        assert!(
+            !suspended_matches(&key(HclTargetScope::Broadcast, 0), &group_zero),
+            "a held broadcast key carries group id 0 and is not group 0"
+        );
+        assert!(suspended_matches(&key(HclTargetScope::Group, 0), &group_zero));
+        assert!(!suspended_matches(&key(HclTargetScope::Group, 0), &broadcast));
     }
 }

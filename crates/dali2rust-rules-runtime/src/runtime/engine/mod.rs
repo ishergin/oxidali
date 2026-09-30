@@ -21,7 +21,7 @@ pub use world::{
 use dali2rust_rules_model::{RuleSet, TriggerKind};
 
 use activate::{activate, Mode};
-use counters::{bump, EngineCounters};
+use counters::{bump, EngineCounters, EngineGauges};
 use exec::ExecEnv;
 use input::EngineInput as In;
 use state::{ChainKey, EventCtx, Volatile};
@@ -58,6 +58,7 @@ impl Engine {
         let next = set.as_ref().unwrap_or(&empty);
         self.vol
             .retain_rule_names(&|name| next.rules.iter().any(|r| r.name == name));
+        self.vol.keep_stats(&dali2rust_rules_model::stat_names(next));
         wheel::rebuild_every(&mut self.vol, next, now_ms);
         self.enabled = next.rules.iter().map(|r| r.enabled).collect();
         self.rules = set;
@@ -110,13 +111,18 @@ impl Engine {
         })
     }
 
+    pub fn stat_counts(&self) -> impl Iterator<Item = (&str, u32)> + Clone {
+        self.vol.stats.iter().map(|(name, count)| (name.as_str(), *count))
+    }
+
     #[must_use]
     pub fn counters(&self) -> EngineCountersSnapshot {
-        self.counters.snapshot(
-            self.vol.timers.len() as u32,
-            self.rules.as_ref().map_or(0, |r| r.rules.len()) as u32,
-            self.vol.vars.len() as u32,
-        )
+        self.counters.snapshot(EngineGauges {
+            continuations_pending: self.vol.continuations.len() as u32,
+            timers_active: self.vol.timers.len() as u32,
+            rules_loaded: self.rules.as_ref().map_or(0, |r| r.rules.len()) as u32,
+            vars_in_use: self.vol.vars.len() as u32,
+        })
     }
 }
 
