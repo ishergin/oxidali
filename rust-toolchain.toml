@@ -1,2 +1,4 @@
 [toolchain]
-channel = "esp"
+channel = "nightly-2026-01-27"
+components = ["rust-src", "clippy", "rustfmt"]
+profile = "minimal"

@@ -217,15 +217,14 @@ pass `default_host=<triple>` to `just` and `--target <triple>` to `cargo`.
 ```bash
 git clone https://github.com/ishergin/oxidali.git && cd oxidali
 # Rust itself: https://rustup.rs
-cargo install espup ldproxy espflash --locked
-espup install    # the "esp" toolchain that rust-toolchain.toml selects, host builds included
+rustup toolchain install    # the nightly and components rust-toolchain.toml pins, host builds included
+cargo install ldproxy espflash --locked
 brew install just    # or: cargo install just --locked
 ```
 
-ESP-IDF v5.5.3 is downloaded by the first firmware build into `.embuild/` and needs
-`git` and Python 3. Node.js 22 is needed only to rebuild the web UI; the built UI is
-committed. If bindgen cannot find libclang, source the `~/export-esp.sh` that `espup`
-writes.
+ESP-IDF v5.5.3 and its tools, the libclang bindgen uses among them, are downloaded by
+the first firmware build into `.embuild/` and need `git` and Python 3. Node.js 22 is
+needed only to rebuild the web UI; the built UI is committed.
 
 ### 1. Run it without hardware
 

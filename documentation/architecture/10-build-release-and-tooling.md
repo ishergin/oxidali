@@ -11,10 +11,11 @@ BDD conventions → [05](05-testing-and-bdd.md); updates over the network →
 
 ## Toolchain and cargo
 
-- `rust-toolchain.toml` pins the `esp` toolchain installed by `espup` for every build:
-  a nightly-channel rustc with `rust-src`, which `[unstable] build-std` needs to build
-  `std` for the tier-3 target `riscv32imafc-esp-espidf`. It lists no `components`;
-  rustup rejects them for a custom toolchain.
+- `rust-toolchain.toml` pins one upstream nightly for every build, host builds included,
+  with `rust-src`, which `[unstable] build-std` needs to build `std` for the tier-3
+  target `riscv32imafc-esp-espidf`; `rustup toolchain install` installs it with its
+  components. bindgen takes libclang from the ESP-IDF tools the first firmware build
+  installs.
 - No workspace `[build] target`, and every build and alias names its triple — an alias
   without one builds a second copy of the workspace into `target/debug` (the cargo
   limitations behind this: [ISSUE-147](../product-design/known-issues.md)). The aliases
