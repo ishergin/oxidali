@@ -15,7 +15,8 @@ use dali2rust_contracts::bus::{
 use dali2rust_contracts::msg::{
     BusCommandPayload, BusEventPayload, DaliRecallLastActiveLevelCommand,
     DaliSetTargetStateCommand, DeliveryStatus, ErrorCode, HclOverrideClearCommand,
-    HclOverrideHoldCommand, HclOverrideResumeCommand, Origin, RuntimeStateChangedEvent,
+    HclOverrideHoldCommand, HclOverrideResumeCommand, HclScheduleChangedEvent, Origin,
+    RuntimeStateChangedEvent,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{HclScheduleView, HclSchedulerReadPort};
@@ -424,24 +425,30 @@ fn confirm_override_command(deps: &SchedulerDeps, correlation_id: u64, refusal: 
 
 fn apply_event(state: &mut SchedulerState, deps: &SchedulerDeps, payload: &BusEventPayload) {
     match payload {
-        BusEventPayload::HclScheduleChangedEvent(body) => {
-            let current = sorted_schedules(deps);
-            if state.tick.is_some() {
-                state.edit_during_tick(body.schedule_id.as_str(), &current);
-            } else {
-                state.forget_edited(&current);
-            }
-            if body.removed {
-                let lifted = lock_ledger(&deps.overrides).clear_schedule(body.schedule_id.as_str());
-                count_lifted(deps, lifted);
-            }
-        }
+        BusEventPayload::HclScheduleChangedEvent(body) => apply_schedule_change(state, deps, body),
         BusEventPayload::RuntimeStateChangedEvent(body) => {
             suspend_hit_targets(state, deps, &runtime_commit(body));
         }
         _ => {
             deps.counters.ignored_events.fetch_add(1, Ordering::Relaxed);
         }
+    }
+}
+
+fn apply_schedule_change(
+    state: &mut SchedulerState,
+    deps: &SchedulerDeps,
+    body: &HclScheduleChangedEvent,
+) {
+    let current = sorted_schedules(deps);
+    if state.tick.is_some() {
+        state.edit_during_tick(body.schedule_id.as_str(), &current);
+    } else {
+        state.forget_edited(&current);
+    }
+    if body.removed {
+        let lifted = lock_ledger(&deps.overrides).clear_schedule(body.schedule_id.as_str());
+        count_lifted(deps, lifted);
     }
 }
 
@@ -493,8 +500,7 @@ fn split_targets(
             split.spared.push(target);
             continue;
         }
-        let at = local.minutes_since_midnight;
-        let cause = Causes::of_commit(commit);
+        let (at, cause) = (local.minutes_since_midnight, Causes::of_commit(commit));
         if lock_ledger(&deps.overrides).suspend(&schedule.schedule_id, target, at, cause) {
             deps.counters.overrides_started.fetch_add(1, Ordering::Relaxed);
         }
@@ -549,8 +555,17 @@ fn run_tick(
     state.tick = Some(TickScope::planned(schedules, &fresh));
     let outcomes = publish_plan(rx, conf_rx, deps, &tick_plan.commands, state);
     WORKER_STACK.note("tick:publish");
+    finish_tick(state, deps, fresh, &outcomes);
+}
+
+fn finish_tick(
+    state: &mut SchedulerState,
+    deps: &SchedulerDeps,
+    fresh: Vec<DesiredEntry>,
+    outcomes: &PublishOutcomes,
+) {
     let tick = state.tick.take().unwrap_or_default();
-    record_published(state, fresh, &outcomes, &tick);
+    record_published(state, fresh, outcomes, &tick);
     if tick.cut {
         deps.counters.ticks_cut.fetch_add(1, Ordering::Relaxed);
     }
