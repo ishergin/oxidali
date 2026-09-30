@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from hil import wsclient
+from hil import provoke, seriallog, tripwire, wsclient
 from hil.wait import wait_until
 from hil.wsclient import OP_BINARY, OP_PONG, WsError
 
@@ -160,7 +160,7 @@ def _log_lines(frame):
     return (frame or {}).get("payload", {}).get("lines", [])
 
 
-@pytest.mark.hil_id("HIL-WS-05")
+@pytest.mark.hil_id("HIL-WS-08")
 @pytest.mark.smoke
 @pytest.mark.serial
 def test_the_log_channel_replays_and_keeps_uart_alive(
@@ -226,4 +226,115 @@ def test_the_log_channel_carries_an_esp_idf_component_line(
             "installed above the C log path, or the component's own level "
             "filter is quieter than the ring's")
 
+    ws_baseline["survived"]()
+
+
+SOAK_CLIENTS = 2
+SOAK_QUIET_S = 300
+SOAK_PROVOKED_S = 300
+SOAK_PATCH_EVERY_S = 3.0
+SOAK_POLL_S = 2.0
+DIAGNOSTICS_PERIOD_S = 2.0
+SNIFFER_BATCH = "SnifferBatch"
+DIAGNOSTICS_SNAPSHOT = "DiagnosticsSnapshot"
+WS_CLIENT_TASK = "ws-client"
+WS_CLIENT_LIMIT = 4
+MIN_DIAGNOSTICS = (SOAK_QUIET_S + SOAK_PROVOKED_S) / DIAGNOSTICS_PERIOD_S / 2
+HEARTBEATS_NEEDED = 9
+LATE_REPORT_INTERVAL_MS = 5000
+LATE_REPORT_SLACK_MS = 1000
+LATE_REPORT_WAIT_S = 30.0
+LATE_REPORT_POLL_S = 1.0
+
+
+def _soak(load, seconds, rewrite=None):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end and not (load.errors or load.closes):
+        if rewrite is not None:
+            rewrite()
+        time.sleep(SOAK_PATCH_EVERY_S if rewrite is not None else SOAK_POLL_S)
+
+
+def _idle_subscribers(kinds):
+    return [index for index, seen in enumerate(kinds)
+            if not seen.get(SNIFFER_BATCH) or seen.get(DIAGNOSTICS_SNAPSHOT, 0) < MIN_DIAGNOSTICS]
+
+
+def _await_next_late_report(api, serial):
+    closed_ms = seriallog.newest_ms(serial.lines())
+    if closed_ms is None:
+        return False
+    past = closed_ms + LATE_REPORT_INTERVAL_MS + LATE_REPORT_SLACK_MS
+    return bool(wait_until(lambda: api.health() and seriallog.logged_past(serial.lines(), past),
+                           LATE_REPORT_WAIT_S, interval_s=LATE_REPORT_POLL_S))
+
+
+def _soaked(api, hil_config, serial_log, rewrite):
+    with serial_log.window() as serial:
+        load = wsclient.Subscribers(hil_config.base, SOAK_CLIENTS)
+        try:
+            _soak(load, SOAK_QUIET_S)
+            _soak(load, SOAK_PROVOKED_S, rewrite)
+        finally:
+            load.close()
+        reported = _await_next_late_report(api, serial)
+        return load, reported, serial.lines()
+
+
+@pytest.mark.hil_id("HIL-WS-07")
+@pytest.mark.slow
+@pytest.mark.serial
+def test_two_sniffer_subscribers_keep_ws_client_out_of_late_isr_entries(
+        api, hil_config, serial_log, ws_baseline, test_artifacts):
+    connected = _clients(api)
+    if connected + SOAK_CLIENTS > WS_CLIENT_LIMIT:
+        pytest.skip("%d WebSocket clients are connected already (a web UI tab counts), and "
+                    "the controller serves %d: two more would be refused"
+                    % (connected, WS_CLIENT_LIMIT))
+    short = provoke.first_registered(api, hil_config.lamp_short_set())
+    rewrite = provoke.NameRewrite(api, short) if short is not None else None
+    losses = tripwire.log_losses(api.stats())
+    try:
+        load, reported, lines = _soaked(api, hil_config, serial_log, rewrite)
+    finally:
+        restored = rewrite.restore() if rewrite is not None else True
+    lost = tripwire.lost_lines(losses, tripwire.log_losses(api.stats()))
+    late, heartbeats = seriallog.late_entries(lines), seriallog.heartbeat_run(lines)
+    kinds = [dict(seen) for seen in load.kinds]
+    test_artifacts.attach_json("soak", {
+        "frames_by_subscriber": kinds, "load_errors": load.errors, "closes": load.closes,
+        "late_entries": late.tasks, "late_unparsed": late.unparsed,
+        "late_truncated": late.truncated, "heartbeat_run": heartbeats,
+        "next_report_seen": reported, "provoked_on": short,
+        "name_writes": rewrite.writes if rewrite else 0, "lost_log_lines": lost})
+
+    offending = late.mentioning(WS_CLIENT_TASK)
+    assert not offending, (
+        "ws-client delayed the PHY interrupt while two subscribers were served: %s"
+        % offending)
+    assert restored, "SA%s's name is not back to %r: restore it by hand" % (
+        short, rewrite.original)
+    assert not load.refused(), (
+        "INCONCLUSIVE, not a product failure: the controller refused subscriber(s) %s for "
+        "capacity (1013) — another client took a slot during the soak" % load.refused())
+    assert not load.errors and not load.closes, (
+        "the WebSocket load did not hold: %s %s" % (load.errors, load.closes))
+    assert serial_log.monitor_alive and heartbeats >= HEARTBEATS_NEEDED, (
+        "INCONCLUSIVE, not a product failure: the serial log holds a run of %d consecutive "
+        "heartbeats, %d needed, and the monitor is %s — the ten minutes were not all read"
+        % (heartbeats, HEARTBEATS_NEEDED, "alive" if serial_log.monitor_alive else "down"))
+    assert reported, (
+        "INCONCLUSIVE, not a product failure: the log never reached the report that follows "
+        "the load, so the last late entries were not read")
+    assert not lost, (
+        "INCONCLUSIVE, not a product failure: the DUT dropped log lines %s, and a "
+        "late-entries line may be among them" % lost)
+    assert not late.unparsed and not late.truncated, (
+        "INCONCLUSIVE, not a product failure: %d late-entry item(s) did not parse and %d "
+        "line(s) reached the firmware's %d-byte report limit"
+        % (late.unparsed, late.truncated, seriallog.LATE_REPORT_BYTES))
+    assert not _idle_subscribers(kinds), (
+        "INCONCLUSIVE, not a product failure: subscriber(s) %s got no sniffer batch or "
+        "fewer than %d diagnostics snapshots, so the send path was not exercised: %s"
+        % (_idle_subscribers(kinds), MIN_DIAGNOSTICS, kinds))
     ws_baseline["survived"]()

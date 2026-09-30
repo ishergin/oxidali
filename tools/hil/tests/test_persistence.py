@@ -33,6 +33,7 @@ def test_adapter_slice_survives_reboot(api, dut_reboot, test_artifacts):
         api.adapter_patch({"name": original}, 0)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-PERS-01")
 @pytest.mark.destructive
 @pytest.mark.serial
@@ -103,6 +104,7 @@ def test_operations_do_not_survive_reboot(api, lamps, dut_reboot,
     assert op["operation_id"] not in api.operations()
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-PERS-04")
 @pytest.mark.destructive
 @pytest.mark.serial

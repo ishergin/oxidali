@@ -16,6 +16,12 @@ UNIT_PROBE = "def test_nothing():\n    assert True\n"
 BENCH_PROBE = "def test_reaches(api):\n    assert api\n"
 HALTING_PROBE = ("from hil import remote_serial\n\n\n"
                  "def test_halts(tmp_path):\n    remote_serial.control(None, 'run')\n")
+SILENT_SKIP_PROBE = "import pytest\n\n\ndef test_skips():\n    pytest.skip('no camera here')\n"
+DECLARED_SKIP_PROBE = ("import pytest\n\n\n@pytest.mark.skip(reason='declared')\n"
+                       "def test_skips():\n    pass\n")
+REFUSED_PROBE = ("from hil.lamp_guard import LampNotAllowed\n\n\n"
+                 "def test_refused():\n    raise LampNotAllowed('SA1 is outside the allowlist')\n")
+MODULE_SKIP_PROBE = "import pytest\n\npytest.skip('gone', allow_module_level=True)\n"
 
 
 @pytest.fixture
@@ -81,3 +87,19 @@ def test_a_session_with_one_bench_test_still_reaches_the_controller(pytester, ex
     result = _session(pytester, test_probe_unit=UNIT_PROBE, test_probe=BENCH_PROBE)
     result.assert_outcomes(passed=1, skipped=1)
     assert ("connect", ("127.0.0.1", 9)) in exits
+
+
+def test_a_unit_test_fails_on_a_guard_refusal_and_on_a_skip_no_marker_declares(pytester,
+                                                                               exits):
+    result = _session(pytester, test_silent_unit=SILENT_SKIP_PROBE,
+                      test_declared_unit=DECLARED_SKIP_PROBE, test_refused_unit=REFUSED_PROBE)
+    result.assert_outcomes(failed=2, skipped=1)
+    result.stdout.fnmatch_lines(["*no skip or skipif marker declares*no camera here*"])
+    result.stdout.fnmatch_lines(["*LampNotAllowed: SA1 is outside the allowlist*"])
+    assert exits == []
+
+
+def test_a_unit_module_that_skips_as_it_loads_is_a_collection_error(pytester, exits):
+    result = _session(pytester, test_gone_unit=MODULE_SKIP_PROBE)
+    result.assert_outcomes(errors=1)
+    assert exits == []

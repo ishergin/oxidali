@@ -3,6 +3,8 @@ import time
 import pytest
 
 from hil.camera.calibrate import rgb_setpoint, RGB_PRIMARIES
+from hil import api as api_mod
+from hil.lamp_guard import LampNotAllowed
 
 ALL_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,groups,scenes,extended"
 
@@ -155,6 +157,7 @@ def test_write_fade_time_roundtrip(api, lamps, sniffer, paced, state_snapshot,
         assert after == expected_ms, (requested_ms, expected_ms, after)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-04")
 @pytest.mark.sniffer
 @pytest.mark.needs_capability("rgb")
@@ -203,6 +206,7 @@ def test_color_mode_override_declares_a_mode_and_erases_none(api, capabilities,
         api.off(short)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-07")
 @pytest.mark.sniffer
 def test_min_level_write_confirms_accepted_value(api, lamps, sniffer, paced,
@@ -233,6 +237,7 @@ def test_min_level_write_confirms_accepted_value(api, lamps, sniffer, paced,
     assert leaf.get("source") == "write_confirmed", leaf
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-08")
 @pytest.mark.sniffer
 def test_min_level_clamp_against_lowered_max_confirms_accepted(
@@ -296,21 +301,23 @@ def test_declared_device_types_are_a_set_or_honestly_absent(api, op_check):
             )
 
 
+def _without_dt8(api):
+    allowed = api.cfg.lamp_short_set()
+    for short in api.addrs():
+        declared = _declared(api, short) if short in allowed else None
+        if isinstance(declared, list) and 8 not in declared:
+            return short, declared
+    return None
+
+
 @pytest.mark.smoke
 def test_a_widening_device_type_override_is_refused(api, op_check):
-    from hil import api as api_mod
-
-    target = None
-    for short in api.addrs():
-        declared = _declared(api, short)
-        if isinstance(declared, list) and 8 not in declared:
-            target = (short, declared)
-            break
+    target = _without_dt8(api)
     if target is None:
         pytest.skip(
-            "every gear on the segment declares DT8 (or none finished its "
-            "walk); there is nothing this rig can widen TO"
-        )
+            "no lamp of HIL_LAMP_SHORTS lacks DT8 (or none finished its walk): the probe "
+            "writes only a record the run may write, and the refusal itself is the "
+            "firmware's contract, proved by its own tests")
 
     short, declared = target
     before = api.state(short).get("device_type_override")
@@ -322,13 +329,14 @@ def test_a_widening_device_type_override_is_refused(api, op_check):
             "must be refused rather than silently enabling frames the gear "
             "ignores; got %s" % (short, declared, exc.value.status)
         )
-
         api.device_patch(short, {"device_type_override": "unknown"})
         assert api.state(short).get("device_type_override") == "unknown"
     finally:
-        api.device_patch(short, {"device_type_override": before})
+        if api.state(short).get("device_type_override") != before:
+            api.device_patch(short, {"device_type_override": before})
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-09")
 @pytest.mark.sniffer
 def test_fade_time_actually_lasts_what_it_says(api, lamps, sniffer, paced,
@@ -380,6 +388,7 @@ def test_fade_time_actually_lasts_what_it_says(api, lamps, sniffer, paced,
         api.off(short)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-10")
 @pytest.mark.sniffer
 @pytest.mark.needs_capability("rgb")
@@ -424,6 +433,7 @@ def _dimming_curve(api, short):
     return cell.get("value"), cell.get("source")
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-11")
 @pytest.mark.smoke
 def test_dimming_curve_writes_and_reports_write_confirmed_provenance(
@@ -455,15 +465,19 @@ def test_a_reserved_dimming_curve_never_reaches_the_bus(api):
     short = next(iter(api.optical_addrs()), None)
     if short is None:
         pytest.skip("no optical fixture configured")
-    status, body = api.raw_request(
-        "POST", "adapters/%d/physical-devices/%d/write-attributes"
-        % (api.adapter, short), {"dimming_curve": 2})
+    try:
+        status, body = api.raw_request(
+            "POST", "adapters/%d/physical-devices/%d/write-attributes"
+            % (api.adapter, short), {"dimming_curve": 2})
+    except LampNotAllowed as exc:
+        pytest.skip("%s — the guard refuses a curve write before the controller can" % exc)
     assert status == 422, (
         "a reserved dimming-curve value must be refused at ingress, got %d: %r"
         % (status, body))
     assert body.get("error") == "invalid_value", body
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-12")
 @pytest.mark.sniffer
 def test_srgb_channels_reach_the_wire_as_linear_dim_levels(

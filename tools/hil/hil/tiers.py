@@ -22,9 +22,13 @@ def session_hardware_free(closures):
     return not any(bench_fixtures_of(fixturenames) for fixturenames in closures)
 
 
+def is_unit(module):
+    return str(module).endswith(UNIT_MODULE_SUFFIX)
+
+
 def unit_violation(name, module, fixturenames):
     reached = bench_fixtures_of(fixturenames)
-    if not str(module).endswith(UNIT_MODULE_SUFFIX) or not reached:
+    if not is_unit(module) or not reached:
         return None
     return ("%s is a unit test and requests %s: a *%s module is hardware-free, so a "
             "session of unit tests runs without the production-state guard"

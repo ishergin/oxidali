@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import requests
 
+import test_ha_bridge
 from hil import api as api_mod
 from hil import sniffer, validity
 from hil.lamp_guard import LampGuard
@@ -52,7 +53,7 @@ def _client(monkeypatch, responses):
     client.timeout_s = 1.0
     client.init_ledger()
     client._rebooting = False
-    client.guard = LampGuard({0})
+    client.guard = LampGuard({0}, restart_rules=lambda: [])
     queue = list(responses)
 
     class _Session:
@@ -771,3 +772,34 @@ def test_task_latency_counters_are_read_from_stats():
     assert out["answer_stage_late"] == 1
     assert out["persist_flush_slow"] == 78
     assert out["persist_gate_waits"] == 5
+
+
+def test_a_named_event_subscriber_is_found_by_its_name():
+    diagnostics = {"bus": {"event_subscribers": [
+        {"name": "ws_fanout", "delivered": 9, "receiver_overflow": 0},
+        {"name": "mqtt_bridge", "delivered": 4, "receiver_overflow": 1}]}}
+    assert validity.event_subscriber(diagnostics, "mqtt_bridge")["delivered"] == 4
+    assert validity.event_subscriber(diagnostics, "display") is None
+    assert validity.event_subscriber({}, "mqtt_bridge") is None
+
+
+class _Diagnostics:
+    def __init__(self, delivered, overflow, coalesced, connected=True, uptime_ms=1000,
+                 discarded=0):
+        self.body = {"uptime_ms": uptime_ms, "bus": {"event_subscribers": [
+            {"name": "mqtt_bridge", "delivered": delivered, "receiver_overflow": overflow}]},
+            "mqtt": {"connected": connected, "bus_coalesced_total": coalesced,
+                     "bus_discarded_total": discarded}}
+
+    def diagnostics(self):
+        return self.body
+
+
+def test_the_bridge_counters_come_from_its_subscriber_and_the_mqtt_block():
+    before = test_ha_bridge._bridge_counters(_Diagnostics(10, 0, 5))
+    after = test_ha_bridge._bridge_counters(_Diagnostics(90, 0, 9, uptime_ms=5000, discarded=2))
+    assert before["named"] and before["connected"] and after["uptime_ms"] == 5000
+    assert test_ha_bridge._moved(before, after) == {
+        "delivered": 80, "receiver_overflow": 0, "bus_coalesced_total": 4,
+        "bus_discarded_total": 2}
+    assert not test_ha_bridge._bridge_counters(_Diagnostics(0, 0, 0, connected=False))["connected"]

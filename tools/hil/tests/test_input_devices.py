@@ -5,6 +5,7 @@ import time
 import pytest
 
 from hil.wait import wait_until
+from hil_test_guards import allowed_bound_lamp, ask_guard
 
 
 @pytest.mark.hil_id("HIL-INP-01")
@@ -122,6 +123,7 @@ def _delta(before, after, key):
     return (after[key] - before[key]) % (1 << 32)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-05")
 @pytest.mark.foreign
 def test_an_injected_event_frame_is_received_and_decoded(
@@ -160,24 +162,12 @@ POST_COMMISSION_SCAN_ATTEMPTS = 3
 POST_COMMISSION_SETTLE_S = 3.0
 
 
-FORBIDDEN_LAMPS = frozenset({4, 5, 6})
-
-
 @pytest.fixture()
 def bound_lamp(api):
-    for lamp in api.vlamps.list()["virtual_lamps"]:
-        short = (lamp.get("binding") or {}).get("physical_short_address")
-        lamp_id = lamp["virtual_lamp_id"]
-        if short is None:
-            continue
-        if short in FORBIDDEN_LAMPS or lamp_id in FORBIDDEN_LAMPS:
-            continue
-        return lamp_id, short
-    pytest.skip("no drivable virtual lamp is bound to a physical device — "
-                "every binding is either absent or one of the lamps this "
-                "module must not touch (%s)" % sorted(FORBIDDEN_LAMPS))
+    return allowed_bound_lamp(api, "a rule that an input event makes drive a lamp")
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-06")
 @pytest.mark.foreign
 def test_an_injected_event_activates_a_rule_and_reaches_the_gear(
@@ -303,6 +293,7 @@ def unkeyed_instance(api, panel):
     return max(free)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-08")
 @pytest.mark.foreign
 def test_a_scheme_2_event_is_retyped_by_the_registry(
@@ -346,6 +337,8 @@ def test_a_scheme_2_event_is_retyped_by_the_registry(
 @pytest.mark.destructive
 def test_commissioning_opens_and_closes_its_session(
         api, panel, sniffer, op_check, test_artifacts):
+    ask_guard(api, "POST", "adapters/%d/input-devices/commission" % api.adapter,
+              {"include_addressed": False})
     with sniffer.window() as win:
         op_check(api.wait_op(api.input_commission(include_addressed=False)))
         time.sleep(2.0)
@@ -396,6 +389,7 @@ def test_commissioning_opens_and_closes_its_session(
         "segment that looks empty and is not (%r)" % (panel, device))
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-10")
 def test_the_button_vocabulary_reaches_a_rule_from_a_real_panel(
         api, foreign, panel, unkeyed_instance, bound_lamp, rules_guard,
@@ -428,6 +422,7 @@ def test_the_button_vocabulary_reaches_a_rule_from_a_real_panel(
         % (panel, unkeyed_instance, last))
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-11")
 @pytest.mark.foreign
 def test_a_power_notification_is_decoded_as_a_lifecycle_fact(
@@ -452,6 +447,7 @@ def test_a_power_notification_is_decoded_as_a_lifecycle_fact(
         "collision Table 20's ordering exists to avoid")
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-12")
 @pytest.mark.foreign
 def test_a_scheme_0_event_is_counted_as_unattributable(
@@ -478,6 +474,7 @@ def test_a_scheme_0_event_is_counted_as_unattributable(
         "the two are different questions and a frame answers both")
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-13")
 @pytest.mark.foreign
 @pytest.mark.ha_bridge

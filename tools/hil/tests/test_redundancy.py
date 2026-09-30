@@ -210,11 +210,13 @@ def test_losing_the_peer_link_moves_no_role(api, peer_api, pair_roles, hil_confi
 
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-RED-05")
 @pytest.mark.serial
 @pytest.mark.destructive
 def test_a_silent_primary_hands_the_bus_over_and_takes_it_back(
         api, peer_api, hil_config, pair_roles, state_snapshot, dut_reboot, test_artifacts):
+    pair.check_handovers(api, peer_api)
     if not remote_serial.enabled(hil_config):
         pytest.skip("halting the primary needs the WB bridge's control port")
     shorts = _present_shorts(api)
@@ -284,9 +286,11 @@ def test_a_silent_primary_hands_the_bus_over_and_takes_it_back(
 
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-RED-06")
 def test_a_planned_switchover_moves_the_bus_and_not_the_light(api, peer_api, pair_roles,
                                                               state_snapshot, test_artifacts):
+    pair.check_handovers(api, peer_api)
     shorts = _present_shorts(api)[:2]
     if not shorts:
         pytest.skip("no gear on the wire to watch")

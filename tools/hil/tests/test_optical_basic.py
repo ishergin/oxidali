@@ -1,6 +1,6 @@
 import pytest
 
-pytestmark = [pytest.mark.smoke, pytest.mark.optical]
+pytestmark = [pytest.mark.smoke, pytest.mark.optical, pytest.mark.light]
 
 
 def test_each_lamp_on_off(api, lamps, camera_oracle, state_snapshot):

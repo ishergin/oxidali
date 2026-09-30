@@ -267,18 +267,24 @@ def pytest_sessionfinish(session, exitstatus):
     if pending:
         lines.append("")
         lines.append("PRODUCTION STATE: an earlier session never restored %s — it "
-                     "was kept, and this session only restored to what it found. "
-                     "Run `hil state restore` to put the owner's installation back."
-                     % pending)
+                     "was kept with its write log, and this session only restored what "
+                     "it wrote itself. Run `hil state restore` to put the owner's "
+                     "installation back." % pending)
         session.exitstatus = session.exitstatus or 1
     residual = state.get("production_state_residual") or []
     if residual:
         lines.append("")
         lines += ["PRODUCTION STATE NOT RESTORED: %s" % line for line in residual]
-        lines.append("The session left the owner's installation different from "
-                     "how it found it. The snapshot is tools/hil/state/"
-                     "production_state_last.json; `hil state restore` retries.")
+        lines.append("The session could not put back what it wrote itself. Its snapshot "
+                     "and write log are tools/hil/state/production_state-<time>.json and "
+                     ".writes.json; `hil state restore` retries.")
         session.exitstatus = session.exitstatus or 1
+    foreign = state.get("production_state_foreign") or []
+    if foreign:
+        lines.append("")
+        lines += ["CHANGED DURING THE SESSION, NOT BY THE TOOLKIT: %s" % line
+                  for line in foreign]
+        lines.append("Left as found: the owner's own changes are reported, never undone.")
     eroded = validity.boot_heap_breaches(state.get("boot_heap") or {},
                                         state.get("boot_heap_budget") or {})
     if eroded:

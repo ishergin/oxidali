@@ -29,9 +29,12 @@ COMMAND_HELP = {
             "other board to the gear emulator and take it back. `ota` installs the emulator "
             "in the inactive slot for one boot (any reset returns the controller); `wb` "
             "writes it by wire from the Wiren Board and keeps it across resets.",
-    "state": "state save|restore|diff [FILE]: the owner's installation as a file. "
-             "FILE defaults to state/production_state_last.json, which every guarded "
-             "session writes, so a killed session is recovered with `hil state restore`.",
+    "state": "state save|restore [--all|--retire FILE]|diff [FILE]: the owner's installation "
+             "as a file. A bare `hil state restore` puts back every open session, newest "
+             "first, through its own write log, and only reports a session without one; "
+             "--all writes the whole snapshot back. --retire FILE closes a session that can "
+             "never close once every older open one's logged fields hold their snapshot; "
+             "an older session file is never deleted by hand while a newer one is open.",
 }
 
 
@@ -358,7 +361,12 @@ def _cmd_state(rest):
     ap = _Parser(prog="hil state")
     ap.add_argument("action", choices=("save", "restore", "diff"))
     ap.add_argument("file", nargs="?")
+    modes = ap.add_mutually_exclusive_group()
+    modes.add_argument("--all", action="store_true", dest="everything")
+    modes.add_argument("--retire", metavar="FILE")
     args = ap.parse_args(rest)
+    if args.retire and (args.action != "restore" or args.file):
+        ap.error("--retire closes one session: `hil state restore --retire FILE`")
     from hil import prod_state, virtual_gear
     from hil.api import Client
     from hil.config import load as load_config
@@ -369,20 +377,15 @@ def _cmd_state(rest):
         prod_state.save(prod_state.capture(client), path)
         print("saved %s" % path)
         return 0
-    snap = prod_state.load(path)
+    if args.retire:
+        return 0 if prod_state.retire(cfg, client, Path(args.retire)) else 1
     if args.action == "restore":
-        leftover = virtual_gear.teardown(cfg, client)
-        for line in leftover:
-            print("virtual gear: NOT TORN DOWN: %s" % line)
-        residual = prod_state.restore(client, snap, drive_lamps=not cfg.lamps_read_only,
-                                      lamp_shorts=cfg.lamp_short_set())
-        if not residual:
-            prod_state.mark_restored(path, snap)
-        residual = leftover + residual
-    else:
-        residual = prod_state.diff(snap, prod_state.capture(client))
-        for line in residual:
-            print(line)
+        return prod_state.restore_command(cfg, client, path if args.file else None,
+                                          args.everything,
+                                          lambda: virtual_gear.teardown(cfg, client))
+    residual = prod_state.diff(prod_state.load(path), prod_state.capture(client))
+    for line in residual:
+        print(line)
     return 1 if residual else 0
 
 

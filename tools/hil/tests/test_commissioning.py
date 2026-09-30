@@ -3,6 +3,7 @@ import time
 import pytest
 
 from hil.api import ApiError
+from hil_test_guards import ask_guard
 
 DISCOVERY_SCAN_TIMEOUT_S = 180
 QUERY_ACTUAL_LEVEL = 0xA0
@@ -58,6 +59,8 @@ def test_random_addresses_stable_across_scans(api, test_artifacts):
 @pytest.mark.hil_id("HIL-DSC-02")
 def test_commission_unaddressed_cycle_is_safe(api, sniffer, lamps,
                                               state_snapshot, test_artifacts):
+    ask_guard(api, "POST", "adapters/%d/discovery-runs" % api.adapter,
+              {"mode": "commission_unaddressed"})
     before = api.addrs()
     with sniffer.window() as win:
         op = api.wait_op(api.discovery("commission_unaddressed"),

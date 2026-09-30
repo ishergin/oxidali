@@ -6,7 +6,7 @@ import requests
 
 from urllib.parse import quote
 
-from hil import lamp_guard
+from hil import lamp_guard, write_log
 from hil.config import HilConfig
 from hil.lamp_guard import LampGuard, LampNotAllowed
 
@@ -17,6 +17,10 @@ ATTR_GROUPS_DEFAULT = "runtime_status,common_102,dt8_color,dt6_led"
 BUS_CONTENDED = "bus_contended"
 
 HTTP_GATEWAY_TIMEOUT = 504
+MIREK_KELVIN = 1_000_000
+DT8_COLOR_SECTION = "dt8_color"
+TC_SLOT = "color_value_2"
+QUERY_ACTUAL_LEVEL = 0xA0
 RULES_RECONCILE_S = 10.0
 RULES_LANDED, RULES_OVERTAKEN, RULES_UNCHANGED = "landed", "overtaken", "unchanged"
 
@@ -25,6 +29,27 @@ def rules_put_outcome(doc, source, base_revision):
     if doc.get("revision") == base_revision:
         return RULES_UNCHANGED
     return RULES_LANDED if doc.get("source") == source else RULES_OVERTAKEN
+
+
+def kelvin_to_mirek(kelvin):
+    return (MIREK_KELVIN + kelvin // 2) // kelvin
+
+
+TIMED_TRIGGERS = frozenset({"at_time", "at_solar"})
+RESTART_TRIGGERS = frozenset({"controller_starts", "controller_becomes_active"})
+
+
+def rules_on(projection, kinds):
+    compiled = (projection or {}).get("rules") or {}
+    return sorted(rule["name"] for rule in compiled.get("rules") or []
+                  if rule.get("enabled", True)
+                  and any(t.get("kind") in kinds for t in rule.get("triggers") or []))
+
+
+def rule_toggles_of(projection):
+    compiled = (projection or {}).get("rules") or {}
+    return {rule["name"]: bool(rule.get("enabled", True))
+            for rule in compiled.get("rules") or []}
 
 
 def op_contended(view) -> bool:
@@ -92,12 +117,20 @@ class Client:
         self.redundancy = _Redundancy(self)
         self.config = _ConfigSlices(self)
         self.guard = LampGuard.for_config(cfg, segment=self.segment_shorts,
-                                          binding=self._bound_short)
+                                          binding=self._bound_short,
+                                          pending=self.pending_lamps,
+                                          restart_rules=self.restart_rules)
         self.init_ledger()
         self._rebooting = False
 
+    def restart_rules(self):
+        fired = rules_on(self._req("GET", "rules?format=json"), RESTART_TRIGGERS)
+        return [name for name in fired if not name.startswith(lamp_guard.TEST_RULE_PREFIX)]
+
     @contextlib.contextmanager
     def expect_reboot(self):
+        self.guard.check_restart("a reboot of %s" % self.base)
+        write_log.note(self.base, [write_log.ANY_LAMP])
         previous = self._rebooting
         self._rebooting = True
         try:
@@ -130,7 +163,7 @@ class Client:
 
     def _http(self, method, path, body=None, conditional=False):
         url = self._url(path)
-        self.guard.check_request(method, path, body)
+        write_log.note(self.base, self.guard.check_request(method, path, body))
         self._drop_pool_after_reboot()
         self._note_diagnostic_write(method, path, body)
         attempts = 3 if method in self.IDEMPOTENT and not conditional else 1
@@ -189,7 +222,7 @@ class Client:
         return status, payload
 
     def raw_response(self, method, path, body=None):
-        self.guard.check_request(method, path, body)
+        write_log.note(self.base, self.guard.check_request(method, path, body))
         return self.http.request(method, self._url(path), json=body,
                                  timeout=self.timeout_s)
 
@@ -226,9 +259,16 @@ class Client:
     def _bound_short(self, lamp_id):
         try:
             lamp = self.vlamps.get(lamp_id)
-        except ApiError:
-            return None
+        except (ApiError, requests.RequestException) as exc:
+            raise LampNotAllowed("a request for VL%d refused: its binding could not be read "
+                                 "(%s), so the guard cannot tell which gear it reaches"
+                                 % (lamp_id, exc)) from exc
         return (lamp.get("binding") or {}).get("physical_short_address")
+
+    def pending_lamps(self, kind, scene):
+        rows = self.groups.matrix().get("rows", []) if kind == "group" \
+            else self.scenes.matrix(scene).get("rows", [])
+        return {r["virtual_lamp_id"] for r in rows if r.get("desired") != r.get("applied")}
 
     def optical_addrs(self):
         wanted = self.cfg.optical_short_set()
@@ -340,6 +380,15 @@ class Client:
                          {"wire_address": (short << 1) | 1, "command": opcode,
                           "repeat_count": repeat})
 
+    def actual_level(self, short: int):
+        reply = self.cmd(short, QUERY_ACTUAL_LEVEL)
+        if not reply.get("success") or reply.get("backward_violation"):
+            return None
+        return reply.get("backward_frame")
+
+    def actual_levels(self, shorts) -> dict:
+        return {short: self.actual_level(short) for short in shorts}
+
     def cmd_wire(self, wire_address: int, opcode: int, repeat: int = 1) -> dict:
         return self._req("POST", "dali/command",
                          {"wire_address": wire_address, "command": opcode,
@@ -450,6 +499,12 @@ class Client:
         return self._req("POST", "rules/%s/run%s"
                          % (quote(name, safe=""), "?dry=1" if dry else ""), {})
 
+    def rules_toggles(self) -> dict:
+        return rule_toggles_of(self._req("GET", "rules?format=json"))
+
+    def rule_enable(self, name: str, enabled: bool) -> dict:
+        return self._req("PATCH", "rules/%s" % quote(name, safe=""), {"enabled": enabled})
+
     def attr_read(self, short, groups=ATTR_GROUPS_DEFAULT, banks="none"):
         return self._req("POST", "adapters/%d/physical-devices/%d/attribute-reads"
                          % (self.adapter, short),
@@ -476,6 +531,12 @@ class Client:
         raise ApiError(500, {"error": "attr_read_not_succeeded",
                              "last": view.get("status"), "view": view},
                        "attribute-reads")
+
+    def held_tc_mirek(self, short):
+        self.attr_read_checked(short, groups=DT8_COLOR_SECTION)
+        section = ((self.attributes(short, [DT8_COLOR_SECTION]).get("attributes") or {})
+                   .get(DT8_COLOR_SECTION) or {})
+        return (section.get(TC_SLOT) or {}).get("value")
 
     def identify(self, short):
         return self._req("POST", "adapters/%d/commissioning/identify" % self.adapter,

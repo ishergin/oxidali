@@ -1,6 +1,7 @@
 import pytest
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-VL-01")
 def test_binding_and_derived_state(api, vl_bindings, lamps, wait_state,
                                    state_snapshot):
@@ -16,6 +17,7 @@ def test_binding_and_derived_state(api, vl_bindings, lamps, wait_state,
     api.off(short)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-VL-02")
 @pytest.mark.sniffer
 def test_vl_target_state_reaches_wire(api, vl_bindings, lamps, sniffer, paced,
@@ -35,6 +37,7 @@ def test_vl_target_state_reaches_wire(api, vl_bindings, lamps, sniffer, paced,
     api.vlamps.ts(lid, {"power": "off"})
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-VL-03")
 def test_unbound_target_state_is_noop(api, vl_bindings, binding_guard, lamps,
                                       wait_state, state_snapshot,

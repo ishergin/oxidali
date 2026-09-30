@@ -42,6 +42,7 @@ def test_adapter_patch_name_roundtrip(api):
     assert api.adapter_info()["name"] == before["name"]
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-SYS-04")
 @pytest.mark.sniffer
 def test_adapter_disable_gates_commands(api, lamps, sniffer, paced,

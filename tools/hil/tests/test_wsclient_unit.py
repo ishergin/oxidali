@@ -1,10 +1,15 @@
 import base64
 import socket
+import struct
 import threading
 
 import pytest
 
+import test_ws
 from hil import wsclient
+from hil.wait import wait_until
+
+DRAIN_WAIT_S = 5.0
 
 
 def test_header_value_matches_the_name_case_insensitively():
@@ -90,3 +95,84 @@ def test_a_digest_for_another_key_is_refused():
     with pytest.raises(wsclient.WsError, match="Sec-WebSocket-Accept"):
         _connect_to(lambda _key: "Sec-WebSocket-Accept: "
                     + wsclient.accept_for_key(other))
+
+
+@pytest.mark.parametrize("opcode,payload,kind", [
+    (wsclient.OP_TEXT, b'{"type":"StatsSnapshot","channel":"stats"}', "StatsSnapshot"),
+    (wsclient.OP_TEXT, b'{"op":"subscribed","channels":["stats"]}', "subscribed"),
+    (wsclient.OP_TEXT, b"[1]", wsclient.UNDECODABLE),
+    (wsclient.OP_TEXT, b"\xff{", wsclient.UNDECODABLE),
+    (wsclient.OP_CLOSE, b"", "opcode 0x8"),
+])
+def test_a_frame_is_counted_by_its_type(opcode, payload, kind):
+    assert wsclient.frame_kind(opcode, payload) == kind
+
+
+class _FakeWs:
+    def __init__(self, frames, drops=False):
+        self.frames, self.drops = list(frames), drops
+        self.channels, self.closed = None, False
+
+    def subscribe(self, channels):
+        self.channels = list(channels)
+
+    def recv(self, timeout=None):
+        if self.frames:
+            return self.frames.pop(0)
+        if self.drops:
+            raise wsclient.WsError("connection closed after 0 of 2 bytes")
+        threading.Event().wait(0.01)
+        raise socket.timeout()
+
+    def close(self):
+        self.closed = True
+
+
+def _text(kind):
+    return wsclient.OP_TEXT, ('{"type":"%s"}' % kind).encode()
+
+
+def test_subscribers_count_what_each_client_received_and_note_a_drop():
+    clients = [_FakeWs([_text("SnifferBatch"), _text("DiagnosticsSnapshot")]),
+               _FakeWs([_text("SnifferBatch")], drops=True)]
+    opened = iter(clients)
+    load = wsclient.Subscribers("http://127.0.0.1:9", 2, opener=lambda base: next(opened))
+    assert wait_until(lambda: not any(client.frames for client in clients) and load.errors,
+                      DRAIN_WAIT_S, interval_s=0.01)
+    load.close()
+    assert [dict(kinds) for kinds in load.kinds] == [
+        {"SnifferBatch": 1, "DiagnosticsSnapshot": 1}, {"SnifferBatch": 1}]
+    assert load.errors == ["subscriber 1 dropped: connection closed after 0 of 2 bytes"]
+    assert all(client.closed and client.channels == list(wsclient.LOAD_CHANNELS)
+               for client in clients)
+
+
+def test_a_client_that_cannot_open_closes_the_ones_that_did():
+    first = _FakeWs([])
+
+    def opener(base):
+        if first.channels is None:
+            return first
+        raise wsclient.WsError("upgrade refused: HTTP/1.1 503")
+    with pytest.raises(wsclient.WsError, match="upgrade refused"):
+        wsclient.Subscribers("http://127.0.0.1:9", 2, opener=opener)
+    assert first.closed
+
+
+def test_a_subscriber_without_a_sniffer_batch_or_enough_snapshots_proves_nothing():
+    busy = {"SnifferBatch": 3, "DiagnosticsSnapshot": test_ws.MIN_DIAGNOSTICS}
+    kinds = [busy, dict(busy, SnifferBatch=0), {"SnifferBatch": 1, "DiagnosticsSnapshot": 1}]
+    assert test_ws._idle_subscribers(kinds) == [1, 2]
+
+
+
+def test_a_close_is_recorded_with_its_code_and_a_capacity_refusal_is_named():
+    close = struct.pack("!H", wsclient.TRY_AGAIN_LATER) + b"busy"
+    clients = [_FakeWs([_text("SnifferBatch"), (wsclient.OP_CLOSE, close)]), _FakeWs([])]
+    opened = iter(clients)
+    load = wsclient.Subscribers("http://127.0.0.1:9", 2, opener=lambda base: next(opened))
+    assert wait_until(lambda: load.closes, DRAIN_WAIT_S, interval_s=0.01)
+    load.close()
+    assert load.closes == [(0, wsclient.TRY_AGAIN_LATER)] and load.refused() == [0]
+    assert dict(load.kinds[0]) == {"SnifferBatch": 1} and load.errors == []
+    assert wsclient.close_code(b"") is None

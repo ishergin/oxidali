@@ -1,3 +1,4 @@
+import dataclasses
 import errno
 import socket
 
@@ -5,6 +6,7 @@ import pytest
 import requests
 
 import hil.api
+import test_target_state
 from hil.config import load as load_config
 
 
@@ -31,7 +33,7 @@ class _FakeSession:
 
 
 def _client_with_fake_session():
-    client = hil.api.Client(load_config())
+    client = hil.api.Client(dataclasses.replace(load_config(), lamps_read_only=False))
     client.http = _FakeSession()
     return client
 
@@ -183,3 +185,82 @@ def test_a_conflict_the_controller_answers_is_raised_not_reconciled(monkeypatch)
         client.rules_replace(SOURCE, BASE)
     assert refused.value.status == 409
     assert client.http.calls == [PUT] and not client.retries
+
+
+def test_rule_toggles_are_read_from_the_compiled_projection():
+    projection = {"rules": {"rules": [{"name": "a", "enabled": False}, {"name": "b"}]}}
+    assert hil.api.rule_toggles_of(projection) == {"a": False, "b": True}
+    assert hil.api.rule_toggles_of({"rules": None, "diagnostic": "x"}) == {}
+
+
+def test_a_toggle_is_read_and_written_by_the_rule_name(monkeypatch):
+    quoted = "rules/%D0%BA%D0%BD%D0%BE%D0%BF%D0%BA%D0%B0%203"
+    client = _scripted(monkeypatch, {
+        ("GET", "rules?format=json"): [(200, {"rules": {"rules": [
+            {"name": "кнопка 3", "enabled": True}]}})],
+        ("PATCH", quoted): [(200, {"name": "кнопка 3", "enabled": False})]})
+    assert client.rules_toggles() == {"кнопка 3": True}
+    assert client.rule_enable("кнопка 3", False)["enabled"] is False
+    assert client.http.calls[-1] == ("PATCH", quoted)
+
+
+def test_kelvin_turns_into_mirek_the_way_the_controller_rounds():
+    assert [hil.api.kelvin_to_mirek(k) for k in (2700, 3000, 3500, 5000, 6000)] == [
+        370, 333, 286, 200, 167]
+
+
+def test_the_actual_level_is_the_answer_and_silence_or_a_violation_is_none(monkeypatch):
+    client = _scripted(monkeypatch, {("POST", "dali/command"): [
+        (200, {"success": True, "backward_frame": 150}),
+        (200, {"success": False, "backward_frame": 0}),
+        (200, {"success": True, "backward_frame": 0, "backward_violation": True})]})
+    assert client.actual_levels([16, 17, 18]) == {16: 150, 17: None, 18: None}
+
+
+def test_the_held_colour_temperature_comes_from_a_fresh_read(monkeypatch):
+    client = _scripted(monkeypatch, {
+        ("POST", "adapters/0/physical-devices/20/attribute-reads"): [ACCEPTED],
+        ("GET", "operations/" + OPERATION): [COMMITTED],
+        ("GET", "adapters/0/physical-devices/20/attributes?sections=dt8_color"): [
+            (200, {"attributes": {"dt8_color": {"color_value_2": {"value": 333}}}})]})
+    assert client.held_tc_mirek(20) == 333
+    assert client.http.calls[0] == ("POST", "adapters/0/physical-devices/20/attribute-reads")
+
+
+
+def test_fade_running_is_bit_4_of_a_clean_status_answer(monkeypatch):
+    client = _scripted(monkeypatch, {("POST", "dali/command"): [
+        (200, {"success": True, "backward_frame": 0x14}),
+        (200, {"success": True, "backward_frame": 0x04}),
+        (200, {"success": True, "backward_frame": 0xFF, "backward_violation": True}),
+        (200, {"success": False, "backward_frame": 0})]})
+    assert [test_target_state._fade_running(client, 20) for _ in range(4)] == [
+        True, False, None, None]
+
+
+def test_a_timed_series_reports_its_widest_gap_the_status_before_the_last_and_retries(
+        monkeypatch):
+    sent = []
+
+    class _Fixture:
+        retries = {}
+
+        def cmd(self, short, opcode):
+            sent.append(("status", short))
+            return {"success": True, "backward_frame": 0x10 if len(sent) < 7 else 0x00}
+
+        def ts(self, short, setpoint):
+            sent.append(setpoint["color_temperature_kelvin"])
+
+        def actual_level(self, short):
+            return 120
+
+        def held_tc_mirek(self, short):
+            return 333
+
+    monkeypatch.setattr(test_target_state.time, "sleep", lambda seconds: None)
+    report = test_target_state._timed_series(_Fixture(), 20, 0.3)
+    assert sent[:7] == [2700, 3500, 4200, 5000, 6000, ("status", 20), 3000]
+    assert report["fade_running_before_last"] is True and report["settled"]
+    assert report["retried"] == 0 and report["held_mirek"] == 333
+    assert 0 <= report["widest_gap_s"] < 1.0

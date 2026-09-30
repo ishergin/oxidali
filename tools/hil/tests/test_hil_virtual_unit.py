@@ -2,7 +2,7 @@ import pytest
 
 import hil_virtual
 from hil import api as api_mod
-from hil import prod_state, tripwire, virtual_gear
+from hil import prod_state, tripwire, virtual_gear, write_log
 from hil.lamp_guard import VirtualFence
 from hil.seriallog import LogWindow
 
@@ -157,5 +157,47 @@ def test_the_session_counts_every_vl_the_controller_holds():
 def test_a_restore_keeps_an_owner_binding_a_narrowed_roster_hides():
     api = _Lamps()
     snap = {"vl": api.list_unfiltered()}
-    prod_state._restore_vl(api, snap, log=lambda line: None)
+    prod_state._restore_vl(api, snap, lambda line: None, write_log.WriteLog.everything("t", "b"))
     assert api.unbound == []
+
+
+def test_the_park_shape_defaults_and_follows_its_variable(monkeypatch):
+    monkeypatch.delenv(hil_virtual.PARK_ENV, raising=False)
+    assert hil_virtual.park_shape() == virtual_gear.DEFAULT_PARK
+    monkeypatch.setenv(hil_virtual.PARK_ENV, "6,5,5")
+    assert hil_virtual.park_shape() == (6, 5, 5)
+    monkeypatch.setenv(hil_virtual.PARK_ENV, "16")
+    with pytest.raises(pytest.UsageError, match=hil_virtual.PARK_ENV):
+        hil_virtual.park_shape()
+
+
+def test_the_bench_names_its_gear_by_kind():
+    bench = hil_virtual.VirtualBench(list(range(16, 28)), [4], {}, (4, 4, 4), None, None)
+    assert bench.of_kind("cct") == [20, 21, 22, 23]
+    assert bench.of_kind("rgb") == [24, 25, 26, 27]
+
+
+def _row(lamp_id, desired, applied):
+    return {"virtual_lamp_id": lamp_id, "desired": desired, "applied": applied}
+
+
+def test_only_the_session_rows_that_moved_are_put_back():
+    before = hil_virtual.session_rows({"rows": [_row(60, [False], [False]),
+                                                _row(61, [True], [True]),
+                                                _row(6, [True], [True])]}, [60, 61])
+    assert sorted(before) == [60, 61]
+    now = {60: _row(60, [True], [True]), 61: _row(61, [True], [True])}
+    assert hil_virtual.rows_to_restore(before, now) == [
+        {"virtual_lamp_id": 60, "desired": [False]}]
+    assert hil_virtual.rows_to_restore(before, {60: _row(60, [False], [True])}) == [
+        {"virtual_lamp_id": 60, "desired": [False]}]
+    assert hil_virtual.rows_to_restore(before, {}) == []
+
+
+def test_an_extended_write_to_an_owner_address_stops_the_session(tmp_path, monkeypatch, quick):
+    _, window = _window(tmp_path, 0xC106, 0x0DE3)
+    found = tripwire.violations(window.lines(), VirtualFence(PARK, [4], [60, 61]))
+    assert len(found) == 1 and "SA6" in found[0]
+    with pytest.raises(pytest.exit.Exception) as stop:
+        _judge(monkeypatch, found=found)
+    assert stop.value.returncode == hil_virtual.EXIT_SAFETY

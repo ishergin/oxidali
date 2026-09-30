@@ -3,10 +3,11 @@ import os
 import re
 import subprocess
 import time
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
-from hil import remote_serial, role, serialmon
+from hil import durable, remote_serial, role, serialmon
 from hil.gearsim import GearSim, GearSimUnavailable
 from hil.lamp_guard import spell
 
@@ -17,6 +18,7 @@ GROUP_COUNT = 16
 VL_ID_LIMIT = 64
 RESERVE_FLOOR = 16
 DEFAULT_PARK = (4, 4, 4)
+PARK_KINDS = ("dt6", "cct", "rgb")
 LADDER_FIRST = 4
 LADDER_COUNTERS = ("sent", "late", "expired")
 
@@ -31,13 +33,18 @@ CONTENTION_COUNTERS = ("collision_restarts_total", "foreign_frames_total")
 EXIT_SETUP, EXIT_SAFETY, EXIT_PEER_RETURNED, EXIT_BLIND = 3, 4, 5, 6
 
 SCAN_MODE = "scan_known_short_addresses"
+VIRTUAL_ENV = "HIL_VIRTUAL_GEAR"
 PARK_VL_NAME = "virtual gear SA%d"
 WB_CONFIG = "/etc/wb-mqtt-dali.conf"
 SSH_TIMEOUT_S = 30
 RETAINED_WAIT_S = 3
 
-RULE_GROUP = re.compile(r"\bgroup\((\d+)\)")
-RULE_LAMP = re.compile(r"\blamp\(\"([^\"]*)\"\)")
+RULE_GROUP = re.compile(r"\bgroup\(\s*([0-9]+)\s*[,)]")
+RULE_GROUP_NAME = re.compile(r"\bgroup\(\s*\"([^\"]*)\"")
+RULE_LAMP = re.compile(r"\blamp\(\s*\"([^\"]*)\"")
+RULE_LAMP_ID = re.compile(r"\blamp\(\s*([0-9]+)\s*[,)]")
+RULE_DEVICE = re.compile(r"(?<![\w.])device\(\s*([0-9]+)\s*[,)]")
+LAMP_SCOPE, GROUP_SCOPE = "virtual_lamp", "group"
 
 
 class VirtualGearError(RuntimeError):
@@ -58,9 +65,7 @@ class Ledger:
 
     def update(self, **fields):
         self.data.update(fields)
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(self.data, indent=1, sort_keys=True, ensure_ascii=False))
-        os.replace(tmp, self.path)
+        durable.write_json(self.path, self.data)
 
     def append(self, key, value):
         self.update(**{key: list(self.data.get(key, [])) + [value]})
@@ -79,6 +84,27 @@ def park_shorts(reserved, count) -> list:
         raise VirtualGearError("%d gear asked, %d addresses are free of the reserve"
                                % (count, len(free)))
     return free[:count]
+
+
+def parse_park(spec) -> tuple:
+    parts = [part.strip() for part in spec.split(",")]
+    if len(parts) != len(PARK_KINDS) or not all(part.isdigit() for part in parts):
+        raise VirtualGearError("a park shape is the %s counts, as in %s; got %r"
+                               % ("/".join(PARK_KINDS), ",".join(map(str, DEFAULT_PARK)), spec))
+    shape = tuple(int(part) for part in parts)
+    if not sum(shape):
+        raise VirtualGearError("a park of no gear leaves the tier nothing to drive: %r" % spec)
+    return shape
+
+
+def run_enabled() -> bool:
+    return os.environ.get(VIRTUAL_ENV) == "1"
+
+
+def park_of_kind(park, shape, kind) -> list:
+    index = PARK_KINDS.index(kind)
+    start = sum(shape[:index])
+    return list(park[start:start + shape[index]])
 
 
 def registry_shorts(api) -> set:
@@ -183,12 +209,109 @@ def prove_groups_empty(api, groups, used):
                            "(%s moved), so silence proved nothing" % ", ".join(CONTENTION_COUNTERS))
 
 
-def rules_conflicts(source, groups, names) -> list:
-    out = ["the owner's rules use group %d" % int(g)
-           for g in RULE_GROUP.findall(source or "") if int(g) in set(groups)]
+@dataclass(frozen=True)
+class SessionScope:
+    groups: frozenset
+    lamps: frozenset
+    park: frozenset
+    names: frozenset
+
+    @classmethod
+    def of(cls, groups, lamps, park):
+        return cls(frozenset(groups), frozenset(lamps), frozenset(park),
+                   frozenset(PARK_VL_NAME % s for s in park))
+
+
+def rule_references(compiled, adapter) -> dict:
+    refs = {"group": set(), "lamp": set(), "device": set()}
+    _collect(compiled, adapter, refs)
+    return refs
+
+
+def _collect(node, adapter, refs):
+    if isinstance(node, list):
+        for item in node:
+            _collect(item, adapter, refs)
+    elif isinstance(node, dict):
+        _note(node, adapter, refs)
+        for value in node.values():
+            _collect(value, adapter, refs)
+
+
+def _ours(ref, adapter):
+    return isinstance(ref, dict) and ref.get("adapter_id", adapter) == adapter
+
+
+def _note(node, adapter, refs):
+    scope = {LAMP_SCOPE: "lamp", GROUP_SCOPE: "group"}.get(node.get("scope"))
+    if scope and isinstance(node.get("id"), int) and _ours(node, adapter):
+        refs[scope].add(node["id"])
+    for key in ("lamp", "group"):
+        ref = node.get(key)
+        if _ours(ref, adapter) and isinstance(ref.get("id"), int):
+            refs[key].add(ref["id"])
+    device = node.get("device")
+    if _ours(device, adapter) and isinstance(device.get("short_address"), int):
+        refs["device"].add(device["short_address"])
+
+
+def text_references(source, group_ids) -> dict:
+    text = source or ""
+    return {"group": {int(g) for g in RULE_GROUP.findall(text)}
+            | {group_ids[n] for n in RULE_GROUP_NAME.findall(text) if n in group_ids},
+            "lamp": {int(n) for n in RULE_LAMP_ID.findall(text)},
+            "lamp_name": set(RULE_LAMP.findall(text)),
+            "device": {int(d) for d in RULE_DEVICE.findall(text)}}
+
+
+def rules_conflicts(source, compiled, scope, group_ids, adapter) -> list:
+    refs = text_references(source, group_ids)
+    for kind, found in rule_references(compiled, adapter).items():
+        refs[kind] |= found
+    out = ["the owner's rules use group %d" % g for g in sorted(refs["group"] & scope.groups)]
+    out += ["the owner's rules use lamp %d" % n for n in sorted(refs["lamp"] & scope.lamps)]
     out += ["the owner's rules name lamp %r" % n
-            for n in RULE_LAMP.findall(source or "") if n in set(names)]
+            for n in sorted(refs["lamp_name"] & scope.names)]
+    out += ["the owner's rules watch device %d" % d
+            for d in sorted(refs["device"] & scope.park)]
     return out
+
+
+def owner_rule_conflicts(api, scope) -> list:
+    group_ids = {g.get("name"): g["group_id"] for g in api.groups.list()["groups"]}
+    compiled = api._req("GET", "rules?format=json").get("rules")
+    return rules_conflicts(api.rules_get().get("source"), compiled, scope, group_ids,
+                           api.adapter)
+
+
+def owner_rule_groups(api) -> set:
+    group_ids = {g.get("name"): g["group_id"] for g in api.groups.list()["groups"]}
+    compiled = api._req("GET", "rules?format=json").get("rules")
+    return (text_references(api.rules_get().get("source"), group_ids)["group"]
+            | rule_references(compiled, api.adapter)["group"])
+
+
+def real_tier_conflicts(api, allowed) -> list:
+    lamps = [v for v in api.vlamps.list_unfiltered()["virtual_lamps"]
+             if (v.get("binding") or {}).get("physical_short_address") in allowed]
+    ids = {v["virtual_lamp_id"] for v in lamps}
+    groups, problems = set(), []
+    for dev in api.devices_unfiltered()["physical_devices"]:
+        if dev["short_address"] not in allowed:
+            continue
+        mask = dev.get("groups_membership")
+        if mask is None:
+            problems.append("SA%d reports no group membership, so an owner rule on its "
+                            "groups cannot be ruled out" % dev["short_address"])
+            continue
+        groups |= {g for g in range(GROUP_COUNT) if mask >> g & 1}
+    for row in api.groups.matrix().get("rows", []):
+        if row["virtual_lamp_id"] in ids:
+            for key in ("desired", "applied"):
+                groups |= {g for g, bit in enumerate(row.get(key) or []) if bit}
+    scope = SessionScope(frozenset(groups), frozenset(ids), frozenset(allowed),
+                         frozenset(v["name"] for v in lamps if v.get("name")))
+    return problems + owner_rule_conflicts(api, scope)
 
 
 def free_vl_ids(existing, count) -> list:
@@ -232,12 +355,12 @@ class VirtualSession:
         reserved = reserve(registry, wb, self.owner_shorts)
         return reserved, park_shorts(reserved, sum(self.shape)), wb
 
-    def precheck(self, groups, park_names=()):
+    def precheck(self, groups, park):
         problems = []
         if remote_serial.enabled(self.cfg) and not serialmon.alive(self.cfg):
             problems.append("the DUT's serial monitor is down: no tripwire without it")
-        problems += rules_conflicts(self.api.rules_get().get("source"), groups, park_names)
-        return problems
+        scope = SessionScope.of(groups, free_vl_ids(vl_ids(self.api), len(park)), park)
+        return problems + owner_rule_conflicts(self.api, scope)
 
     def open(self):
         if self.ledger.exists():
@@ -247,13 +370,14 @@ class VirtualSession:
         used = used_groups(self.api.devices_unfiltered()["physical_devices"],
                            self.api.groups.matrix().get("rows", []))
         groups = free_groups(used)
-        problems = self.precheck(groups, [PARK_VL_NAME % s for s in park])
+        problems = self.precheck(groups, park)
         if problems:
             raise VirtualGearError("; ".join(problems))
         control = prove_groups_empty(self.api, groups, used)
         ha = self._ha_prefixes()
         self.ledger.update(opened_at=time.strftime("%Y-%m-%dT%H:%M:%S"), phase="building",
-                           reserve=sorted(reserved), park=park, groups=groups,
+                           reserve=sorted(reserved), park=park, shape=list(self.shape),
+                           groups=groups,
                            positive_control=control, wb_before=sorted(wb),
                            vl_before=vl_ids(self.api), ha_prefixes=ha,
                            ha_before=self._retained(ha))

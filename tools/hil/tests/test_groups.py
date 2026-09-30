@@ -2,7 +2,9 @@ import time
 
 import pytest
 
+from hil.lamp_guard import GROUP_TARGET, TARGET_SEGMENT, http_rule
 from hil.wait import wait_until
+from hil_test_guards import ask_guard, drive_allowed
 
 
 def _membership(device):
@@ -72,6 +74,7 @@ def test_matrix_patch_marks_dirty_without_frames(api, vl_bindings, lamps,
         win.expect_quiet("ADD TO GROUP", settle_s=2.5)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-GRP-02")
 @pytest.mark.sniffer
 def test_group_apply_programs_gear(api, vl_bindings, lamps, free_group,
@@ -146,6 +149,7 @@ def test_group_apply_programs_gear(api, vl_bindings, lamps, free_group,
 @pytest.mark.hil_id("HIL-GRP-06")
 def test_apply_empty_diff_returns_matrix(api, vl_bindings, ops_quiesce,
                                          test_artifacts):
+    ask_guard(api, "POST", "adapters/%d/groups/apply" % api.adapter)
     converge_applies = 0
     res = {}
     for _ in range(3):
@@ -187,3 +191,54 @@ def test_concurrent_apply_conflicts(api, vl_bindings, lamps, free_group,
         pytest.skip("first apply finished before the second POST landed "
                     "(no overlap window on this run) — observed %d" % status)
     assert body.get("error") == "conflict", body
+
+
+STOP_FADE_RULE = "hil-grp-10-stop-fade"
+STOP_FADE = "stop_fade()"
+STOP_FADE_FADE_MS = 4000
+STOP_FADE_LOW, STOP_FADE_HIGH = 40, 240
+STOP_FADE_CATCH_S = 1.2
+STOP_FADE_SETTLE_S = 6.0
+STOP_FADE_LEVEL_WAIT_S = 12.0
+STOP_FADE_POLL_S = 0.5
+
+
+@pytest.fixture()
+def group_actions_allowed(api):
+    drive_allowed(api, TARGET_SEGMENT, "a stop_fade rule, whose DAPC MASK reaches every "
+                                       "member of its group,")
+
+
+@pytest.mark.light
+@pytest.mark.hil_id("HIL-GRP-10")
+def test_a_stop_fade_rule_leaves_real_members_where_it_caught_them(
+        api, group_actions_allowed, rules_guard, attr_guard, vl_bindings, lamps, free_group,
+        group_matrix_guard, ops_quiesce, state_snapshot, op_check, test_artifacts):
+    members = [lamps.by_label[label] for label in lamps.labels()]
+    for short in members:
+        attr_guard(short, "fade_time_ms", verify=True, required=True)
+        written = api.wait_op(api.write_attrs(short, {"fade_time_ms": STOP_FADE_FADE_MS}))
+        assert written.get("status") == "succeeded", written
+    api.groups.join([label - 1 for label in lamps.labels()], free_group)
+    rules_guard(http_rule(STOP_FADE_RULE, GROUP_TARGET, free_group, STOP_FADE))
+    api.group_ts(free_group, {"power": "on", "level": STOP_FADE_LOW})
+    assert wait_until(lambda: set(api.actual_levels(members).values()) == {STOP_FADE_LOW},
+                      STOP_FADE_LEVEL_WAIT_S, interval_s=STOP_FADE_POLL_S), \
+        api.actual_levels(members)
+
+    api.group_ts(free_group, {"power": "on", "level": STOP_FADE_HIGH})
+    time.sleep(STOP_FADE_CATCH_S)
+    op_check(api.wait_op(api.rules_run(STOP_FADE_RULE)))
+    caught = api.actual_levels(members)
+    time.sleep(STOP_FADE_SETTLE_S)
+    later = api.actual_levels(members)
+    test_artifacts.attach_json("stop_fade", {"group": free_group, "caught": caught,
+                                             "later": later})
+
+    assert all(level is not None and STOP_FADE_LOW < level < STOP_FADE_HIGH
+               for level in caught.values()), (
+        "INCONCLUSIVE, not a product failure: the stop did not land inside the %d ms fade "
+        "from %d to %d (caught %r)" % (STOP_FADE_FADE_MS, STOP_FADE_LOW, STOP_FADE_HIGH, caught))
+    assert later == caught, (
+        "the members went on after .stop_fade(): caught at %r, %.0f s later %r"
+        % (caught, STOP_FADE_SETTLE_S, later))

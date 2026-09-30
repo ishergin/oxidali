@@ -1,9 +1,13 @@
 import json
 import os
+import re
 import time
+from collections import namedtuple
 
+from hil import durable
 from hil.api import ApiError, CapabilityUnsupported, _HomeAssistantSettings, _PollerSettings
-from hil.lamp_guard import LampNotAllowed
+from hil.lamp_guard import TEST_RULE_PREFIX, LampNotAllowed, named, only_hil_rules_appended
+from hil.write_log import WriteLog, WriteLogError, writes_path
 
 PRIME_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,groups,scenes,extended"
 
@@ -32,6 +36,30 @@ SETTINGS = {
                    "peer_url", "probe_interval_ms", "role", "takeover_after_missed"),
 }
 
+SETTING_ROUTES = {"ha": "home-assistant"}
+GROUP_FIELDS = ("name", "ha_entity_enabled")
+MATRIX_FIELDS = ("desired", "applied")
+SCENE_FIELDS = ("name", "ha_select_enabled")
+VL_FIELDS = ("name", "binding", "ha_entity_enabled")
+RECORD_FIELDS = ("name", "notes", "device_type_source", "device_type_effective",
+                 "color_mode_source", "color_mode_effective", "dt8_auto_activation_repair",
+                 "dt8_rgbwaf_control_assert")
+RECORD_WRITES = {"device_type_source": "device_type_override",
+                 "device_type_effective": "device_type_override",
+                 "color_mode_source": "color_mode_override",
+                 "color_mode_effective": "color_mode_override"}
+SESSION_PREFIX = "production_state-"
+SESSION_STAMP = re.compile(r"[^0-9T]")
+READ_ONLY_REFUSED = ("hcl/", "hcl_override/", "time")
+SHOWN_KEY = "shown/"
+HELD_OPEN = ("prod_state: %s stays open although it is restored: the newer open session %s "
+             "wrote some of what it wrote, so that one's next restore would put a test value "
+             "back; it closes in the walk that closes that one")
+UNDRIVEN = ("prod_state: putting %s back is a visible action, so this restore only reports "
+            "it; rerun `hil state restore` with HIL_LAMPS_READ_ONLY=0 and HIL_LAMP_SHORTS "
+            "naming them")
+Restoration = namedtuple("Restoration", "residual foreign complete")
+
 DTR0 = 0xA3
 QUERY_CONTENT_DTR0 = 0x98
 SET_SCENE, REMOVE_FROM_SCENE = 0x40, 0x50
@@ -56,12 +84,14 @@ def capture(api, prime=True, log=print):
     return {
         "hcl_overrides": overrides,
         "taken_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "base": api.base,
         "health": api.health(),
         "devices": {str(s): _device(api, s) for s in shorts},
         "settings": _settings(api),
         "timezone": api.time_get().get("timezone"),
         "adapter": api.adapter_info(),
         "rules": api.rules_get(),
+        "rule_toggles": api.rules_toggles(),
         "hcl": api.hcl.list(),
         "vl": api.vlamps.list_unfiltered(),
         "groups": api.groups.list()["groups"],
@@ -115,7 +145,7 @@ def _hcl_overrides(api):
             for s in api.hcl.list()}
 
 
-def hcl_owned(snap):
+def _members(snap):
     shorts_of_vl = {v["virtual_lamp_id"]: (v.get("binding") or {}).get("physical_short_address")
                     for v in (snap.get("vl") or {}).get("virtual_lamps", [])}
     members = {}
@@ -124,7 +154,21 @@ def hcl_owned(snap):
         for gid, applied in enumerate(row.get("applied") or []):
             if applied and short is not None:
                 members.setdefault(gid, set()).add(str(short))
-    owned = {}
+    return members
+
+
+def _target_shorts(snap, sched, members):
+    shorts = set()
+    for target in sched.get("targets") or []:
+        if target.get("scope") == "broadcast":
+            shorts |= set(snap.get("devices") or {})
+        else:
+            shorts |= set().union(*(members.get(g, set()) for g in target.get("group_ids") or []))
+    return shorts
+
+
+def hcl_owned(snap):
+    members, owned = _members(snap), {}
     for sched in snap.get("hcl") or []:
         if not sched.get("enabled"):
             continue
@@ -134,14 +178,14 @@ def hcl_owned(snap):
             fields += SHOWN_COLOUR
         if any(p.get("level_mode") in ("absolute", "last_active") for p in points):
             fields += SHOWN_LEVEL
-        for target in sched.get("targets") or []:
-            if target.get("scope") == "broadcast":
-                shorts = set(snap.get("devices") or {})
-            else:
-                shorts = set().union(*(members.get(g, set()) for g in target.get("group_ids") or []))
-            for short in shorts:
-                owned.setdefault(short, set()).update(fields)
+        for short in _target_shorts(snap, sched, members):
+            owned.setdefault(short, set()).update(fields)
     return owned
+
+
+def schedule_shorts(snap):
+    members = _members(snap)
+    return {s["schedule_id"]: _target_shorts(snap, s, members) for s in snap.get("hcl") or []}
 
 
 def _settings(api):
@@ -150,15 +194,27 @@ def _settings(api):
 
 
 def save(snap, path):
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(snap, indent=1, ensure_ascii=False, sort_keys=True))
-    os.replace(tmp, path)
+    durable.write_json(path, snap)
+
+
+class SessionFileError(ValueError):
+    pass
+
+
+def read_session(path):
+    try:
+        snap = load(path)
+    except (OSError, ValueError) as exc:
+        raise SessionFileError("%s is unreadable: %s" % (path, exc))
+    if not isinstance(snap, dict) or not isinstance(snap.get("taken_at"), str):
+        raise SessionFileError("%s is no snapshot: it names no taken_at" % path)
+    return snap
 
 
 def unrestored(path):
     try:
-        return bool(load(path).get("session_open"))
-    except (OSError, ValueError):
+        return bool(read_session(path).get("session_open"))
+    except SessionFileError:
         return False
 
 
@@ -177,45 +233,107 @@ def load(path):
 
 
 def diff(before, after, shown_shorts=None):
-    out = []
-    out += _diff_settings(before, after)
-    if before.get("hcl_overrides") is not None and \
-            before["hcl_overrides"] != after.get("hcl_overrides"):
-        out.append("hcl overrides %r -> %r" % (before["hcl_overrides"],
-                                               after.get("hcl_overrides")))
-    for key in ("timezone", "hcl", "groups", "group_matrix", "scenes"):
-        if _norm(before.get(key)) != _norm(after.get(key)):
-            out.append("%s differs" % key)
+    return [line for _key, _field, line in differences(before, after, shown_shorts)]
+
+
+def differences(before, after, shown_shorts=None):
+    out = _diff_settings(before, after) + _diff_overrides(before, after)
+    if before.get("timezone") != after.get("timezone"):
+        out.append(("time", "timezone", "timezone %r -> %r" % (before.get("timezone"),
+                                                             after.get("timezone"))))
+    out += _diff_hcl(before, after) + _diff_groups(before, after) + _diff_scenes(before, after)
     if before["rules"].get("source") != after["rules"].get("source"):
-        out.append("rules source differs")
+        out.append(("rules", None, "rules source differs"))
+    out += [("rule/%s" % name, "enabled", line) for name, line in
+            toggle_differences(before.get("rule_toggles"), after.get("rule_toggles"))]
     if before["adapter"].get("enabled") != after["adapter"].get("enabled"):
-        out.append("adapter enabled %r -> %r" % (before["adapter"].get("enabled"),
-                                                after["adapter"].get("enabled")))
-    out += _diff_vl(before, after)
-    owned = hcl_owned(before)
-    for short, was in before["devices"].items():
-        shown = shown_shorts is None or int(short) in shown_shorts
-        out += _diff_device(short, was, after["devices"].get(short), shown,
-                            owned.get(short, set()))
-    out += ["SA%s is new in the registry" % short
-            for short in sorted(set(after["devices"]) - set(before["devices"]), key=int)]
-    if "policies" in before and _norm(before["policies"]) != _norm(after.get("policies")):
-        out.append("policies %r -> %r" % (before["policies"], after.get("policies")))
+        out.append(("adapter/%s" % before["adapter"].get("adapter_id", 0), "enabled",
+                    "adapter enabled %r -> %r" % (before["adapter"].get("enabled"),
+                                                 after["adapter"].get("enabled"))))
+    out += _diff_vl(before, after) + _diff_devices(before, after, shown_shorts)
+    was, now = before.get("policies"), after.get("policies") or {}
+    out += [("policies", k, "policies %s %r -> %r" % (k, v, now.get(k)))
+            for k, v in sorted((was or {}).items()) if now.get(k) != v]
     return out
+
+
+def toggle_differences(was, now):
+    now = now or {}
+    return [(name, "rule %r enabled %r -> %r" % (name, enabled, now.get(name)))
+            for name, enabled in sorted((was or {}).items()) if now.get(name) != enabled]
+
+
+def toggle_residue(was, now):
+    return [line for _name, line in toggle_differences(was, now)] if was is not None else []
 
 
 def _norm(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False)
 
 
+def _field_changes(key, label, was, now, fields):
+    return [(key, f, "%s %s %r -> %r" % (label, f, was.get(f), now.get(f)))
+            for f in fields if was.get(f) != now.get(f)]
+
+
 def _diff_settings(before, after):
     out = []
     for name, fields in list(SETTINGS.items()) + [("ha", RESTORABLE_HA)]:
         was, now = before["settings"][name], after["settings"][name]
-        for field in fields:
-            if was.get(field) != now.get(field):
-                out.append("settings/%s.%s %r -> %r" % (name, field, was.get(field),
-                                                         now.get(field)))
+        out += [("settings/%s" % SETTING_ROUTES.get(name, name), f,
+                 "settings/%s.%s %r -> %r" % (name, f, was.get(f), now.get(f)))
+                for f in fields if was.get(f) != now.get(f)]
+    return out
+
+
+def _diff_overrides(before, after):
+    was, now = before.get("hcl_overrides"), after.get("hcl_overrides") or {}
+    if was is None:
+        return []
+    return [("hcl_override/%s" % sid, None, "hcl overrides: %s %r -> %r"
+             % (sid, was.get(sid, False), now.get(sid, False)))
+            for sid in sorted(set(was) | set(now))
+            if bool(was.get(sid, False)) != bool(now.get(sid, False))]
+
+
+def _diff_hcl(before, after):
+    was = {s["schedule_id"]: s for s in before.get("hcl") or []}
+    now = {s["schedule_id"]: s for s in after.get("hcl") or []}
+    out = [("hcl/%s" % sid, None, "hcl %s %s" % (sid, "appeared" if sid in now else "is gone"))
+           for sid in sorted(set(was) ^ set(now))]
+    for sid in sorted(set(was) & set(now)):
+        out += _field_changes("hcl/%s" % sid, "hcl %s" % sid, was[sid], now[sid],
+                              sorted(set(was[sid]) | set(now[sid])))
+    return out
+
+
+def _diff_groups(before, after):
+    was = {g["group_id"]: g for g in before.get("groups") or []}
+    now = {g["group_id"]: g for g in after.get("groups") or []}
+    out = []
+    for gid in sorted(set(was) | set(now)):
+        out += _field_changes("group/%d" % gid, "group %d" % gid, was.get(gid, {}),
+                              now.get(gid, {}), GROUP_FIELDS)
+    rows = [{r["virtual_lamp_id"]: r for r in (snap.get("group_matrix") or {}).get("rows", [])}
+            for snap in (before, after)]
+    for vl in sorted(set(rows[0]) | set(rows[1])):
+        out += _field_changes("group_matrix/%d" % vl, "group matrix VL%d" % vl,
+                              rows[0].get(vl, {}), rows[1].get(vl, {}), MATRIX_FIELDS)
+    return out
+
+
+def _diff_scenes(before, after):
+    was = {s["scene_id"]: s for s in before.get("scenes") or []}
+    now = {s["scene_id"]: s for s in after.get("scenes") or []}
+    out = []
+    for sid in sorted(set(was) | set(now)):
+        a, b = was.get(sid, {}), now.get(sid, {})
+        out += _field_changes("scene/%d" % sid, "scene %d" % sid, a, b, SCENE_FIELDS)
+        rows = [{r["virtual_lamp_id"]: r["desired"] for r in x.get("rows") or []} for x in (a, b)]
+        out += [("scene_matrix/%d/%d" % (sid, vl), "desired", "scene %d VL%d %r -> %r"
+                 % (sid, vl, rows[0].get(vl), rows[1].get(vl)))
+                for vl in sorted(set(rows[0]) | set(rows[1]))
+                if _norm(rows[0].get(vl)) != _norm(rows[1].get(vl))]
     return out
 
 
@@ -223,37 +341,42 @@ def _diff_vl(before, after):
     now = {v["virtual_lamp_id"]: v for v in after["vl"]["virtual_lamps"]}
     out = []
     for v in before["vl"]["virtual_lamps"]:
-        other = now.get(v["virtual_lamp_id"], {})
-        for field in ("name", "binding", "ha_entity_enabled"):
-            if v.get(field) != other.get(field):
-                out.append("VL%d %s %r -> %r" % (v["virtual_lamp_id"], field,
-                                                  v.get(field), other.get(field)))
+        out += _field_changes("vl/%d" % v["virtual_lamp_id"], "VL%d" % v["virtual_lamp_id"],
+                              v, now.get(v["virtual_lamp_id"], {}), VL_FIELDS)
     known = {v["virtual_lamp_id"] for v in before["vl"]["virtual_lamps"]}
     for lid, v in sorted(now.items()):
         if lid not in known:
-            out.append("VL%d is not in the snapshot%s" % (
-                lid, " and is bound %r" % v["binding"] if v.get("binding") else ""))
+            out.append(("vl/%d" % lid, None, "VL%d is not in the snapshot%s" % (
+                lid, " and is bound %r" % v["binding"] if v.get("binding") else "")))
+    return out
+
+
+def _diff_devices(before, after, shown_shorts):
+    owned, out = hcl_owned(before), []
+    for short, was in before["devices"].items():
+        shown = shown_shorts is None or int(short) in shown_shorts
+        out += _diff_device(short, was, after["devices"].get(short), shown,
+                            owned.get(short, set()))
+    out += [("device/%s" % short, None, "SA%s is new in the registry" % short)
+            for short in sorted(set(after["devices"]) - set(before["devices"]), key=int)]
     return out
 
 
 def _diff_device(short, was, now, shown=True, owned=frozenset()):
     if now is None:
-        return ["SA%s is gone from the registry" % short]
-    out = []
-    for field in ("name", "notes", "device_type_source", "device_type_effective",
-                  "color_mode_source", "color_mode_effective",
-                  "dt8_auto_activation_repair", "dt8_rgbwaf_control_assert"):
-        if was["record"].get(field) != now["record"].get(field):
-            out.append("SA%s %s %r -> %r" % (short, field, was["record"].get(field),
-                                             now["record"].get(field)))
-    for key in ("config", "groups", "scenes"):
-        if was[key] != now[key]:
-            out.append("SA%s gear %s %r -> %r" % (short, key, was[key], now[key]))
+        return [("device/%s" % short, None, "SA%s is gone from the registry" % short)]
+    out = [("device/%s" % short, RECORD_WRITES.get(f, f), line) for _k, f, line in
+           _field_changes("", "SA%s" % short, was["record"], now["record"], RECORD_FIELDS)]
+    out += _field_changes("gear/%s" % short, "SA%s gear config" % short, was["config"],
+                          now["config"], sorted(set(was["config"]) | set(now["config"])))
+    out += [("gear/%s" % short, key, "SA%s gear %s %r -> %r" % (short, key, was[key], now[key]))
+            for key in ("groups", "scenes") if was[key] != now[key]]
     fields = [k for k in SHOWN if k not in owned]
     shown_was = {k: was["state"].get(k) for k in fields}
     shown_now = {k: now["state"].get(k) for k in fields}
     if shown and shown_was != shown_now:
-        out.append("SA%s shows %r, was %r" % (short, shown_now, shown_was))
+        out.append(("shown/%s" % short, None,
+                    "SA%s shows %r, was %r" % (short, shown_now, shown_was)))
     return out
 
 
@@ -264,11 +387,213 @@ def last_path(cfg):
     return cfg.state_dir / "production_state_last.json"
 
 
-def restore(api, snap, log=print, drive_lamps=True, lamp_shorts=None):
-    driven = lamp_shorts if drive_lamps else set()
+def session_path(cfg, taken_at):
+    return cfg.state_dir / ("%s%s.json" % (SESSION_PREFIX, SESSION_STAMP.sub("", taken_at)))
 
-    def _restore_shown_permitted(api_, snap_, log_):
-        _restore_shown(api_, snap_, log_, driven)
+
+def scan_sessions(cfg):
+    paths = [p for p in cfg.state_dir.glob(SESSION_PREFIX + "*.json")
+             if not p.name.endswith(".writes.json")]
+    found, unreadable = [], []
+    for path in paths + ([last_path(cfg)] if last_path(cfg).exists() else []):
+        try:
+            snap = read_session(path)
+        except SessionFileError as exc:
+            unreadable.append((path, str(exc)))
+            continue
+        if snap.get("session_open"):
+            found.append((snap["taken_at"], path))
+    return [path for _taken, path in sorted(found, reverse=True)], unreadable
+
+
+def open_sessions(cfg):
+    return scan_sessions(cfg)[0]
+
+
+def unreadable_sessions(cfg):
+    return scan_sessions(cfg)[1]
+
+
+def unfinished(cfg, log=print):
+    still, unreadable = scan_sessions(cfg)
+    for path in still:
+        log("hil state restore: %s is still open" % path)
+    for _path, why in unreadable:
+        log("hil state restore: UNREADABLE %s" % why)
+    return bool(still or unreadable)
+
+
+FULL_RESTORE = "`hil state restore --all`"
+READ_ONLY_WHY = ("a read-only %s (HIL_LAMPS_READ_ONLY=1) writes no HCL schedule, override "
+                 "or time zone, since each can move a lamp at the next tick; rerun it with "
+                 "HIL_LAMPS_READ_ONLY=0 to include them" % FULL_RESTORE)
+
+
+def _schedule_id(schedule):
+    return schedule["schedule_id"]
+
+
+def restore(api, snap, writes, log=print, drive_lamps=True, lamp_shorts=None):
+    driven = set(lamp_shorts or ()) if drive_lamps else set()
+    if writes is None:
+        log("prod_state: no write log of this snapshot's session, so nothing is written back; "
+            "the differences follow, and %s writes the whole snapshot back" % FULL_RESTORE)
+    else:
+        _restore_steps(api, snap, writes, log, drive_lamps, lamp_shorts)
+    after = capture(api, prime=True, log=log)
+    if writes is not None:
+        try:
+            _clear_session_overrides(api, snap, after, log, writes)
+            after["hcl_overrides"] = _hcl_overrides(api)
+        except Exception as exc:
+            log("prod_state: clearing HCL overrides FAILED: %r" % (exc,))
+    residual, foreign, undriven = _classify(differences(snap, after), writes, driven)
+    for line in foreign:
+        log("prod_state: changed during the session, not by the toolkit, left as it is: %s"
+            % line)
+    for line in residual:
+        log("prod_state: NOT RESTORED: %s" % line)
+    if undriven:
+        log(UNDRIVEN % named(undriven))
+    return Restoration(residual, foreign, writes is not None and not residual)
+
+
+def _classify(found, writes, driven):
+    residual, foreign, undriven = [], [], set()
+    for key, field, line in found:
+        if not _ours(writes, key, field, driven):
+            foreign.append(line)
+            continue
+        residual.append(line)
+        if key.startswith(SHOWN_KEY) and _shown_short(key) not in driven:
+            undriven.add(_shown_short(key))
+    return residual, foreign, undriven
+
+
+def _shown_short(key):
+    return int(key[len(SHOWN_KEY):])
+
+
+def restore_sessions(cfg, client, paths, everything, log=print):
+    refused = READ_ONLY_REFUSED if cfg.lamps_read_only else ()
+    if everything and refused:
+        log("hil state restore --all: %s" % READ_ONLY_WHY)
+    residual, held = [], []
+    for path in paths:
+        snap = read_session(path)
+        try:
+            writes = _session_writes(path, snap, client, everything, refused)
+        except WriteLogError as exc:
+            log("prod_state: %s stays open and nothing is restored: %s" % (path.name, exc))
+            held.append((path, None))
+            continue
+        done = restore(client, snap, writes, log=log, drive_lamps=not cfg.lamps_read_only,
+                       lamp_shorts=cfg.lamp_short_set())
+        blocker = _newer_writer(held, writes)
+        if done.complete and blocker is None:
+            mark_restored(path, snap)
+        else:
+            if done.complete:
+                log(HELD_OPEN % (path.name, blocker.name))
+            held.append((path, writes))
+        residual += done.residual
+    return residual
+
+
+def _session_writes(path, snap, client, everything, refused):
+    base = snap.get("base", client.base)
+    if base != client.base:
+        raise WriteLogError("the snapshot is of %s, not %s" % (base, client.base))
+    if everything:
+        return WriteLog.everything(snap["taken_at"], client.base, refused)
+    return WriteLog.load(writes_path(path), snap["taken_at"], client.base)
+
+
+def _newer_writer(held, writes):
+    return next((path for path, newer in held
+                 if newer is None or writes is None or newer.overlaps(writes)), None)
+
+
+def newer_open_sessions(cfg, path):
+    taken_at = read_session(path)["taken_at"]
+    return [p for p in open_sessions(cfg)
+            if p.resolve() != path.resolve() and read_session(p)["taken_at"] > taken_at]
+
+
+def restore_command(cfg, client, path, everything, teardown, log=print):
+    refusal = explicit_refusal(cfg, path) if path is not None else None
+    if refusal:
+        log(refusal)
+        return 1
+    leftover = teardown()
+    for line in leftover:
+        log("virtual gear: NOT TORN DOWN: %s" % line)
+    paths = [path] if path is not None else open_sessions(cfg)
+    residual = leftover + restore_sessions(cfg, client, paths, everything, log)
+    return 1 if unfinished(cfg, log) or residual else 0
+
+
+def retire(cfg, client, path, log=print):
+    snap = read_session(path)
+    if not snap.get("session_open"):
+        log("hil state restore --retire: %s is not open" % path)
+        return False
+    older = [p for p in open_sessions(cfg) if read_session(p)["taken_at"] < snap["taken_at"]]
+    left = _left_undone(cfg, client, older, log) if older else []
+    for line in left:
+        log("hil state restore --retire %s refused: %s" % (path.name, line))
+    if left:
+        return False
+    save(dict(snap, session_open=False, retired=True), path)
+    log("hil state restore --retire: %s closed without a restore; every older session's writes "
+        "hold its snapshot, and a bare `hil state restore` closes them" % path.name)
+    return True
+
+
+def _left_undone(cfg, client, older, log):
+    now = capture(client, prime=True, log=log)
+    driven = set() if cfg.lamps_read_only else set(cfg.lamp_short_set())
+    left = []
+    for path in older:
+        snap = read_session(path)
+        try:
+            writes = _session_writes(path, snap, client, False, ())
+        except WriteLogError as exc:
+            left.append("%s: %s" % (path.name, exc))
+            continue
+        if writes is None:
+            left.append("%s has no write log, so what it wrote cannot be checked" % path.name)
+            continue
+        residual, _foreign, _undriven = _classify(differences(snap, now), writes, driven)
+        left += ["%s still differs: %s" % (path.name, line) for line in residual]
+    return left
+
+
+def explicit_refusal(cfg, path):
+    try:
+        newer = newer_open_sessions(cfg, path)
+    except SessionFileError as exc:
+        return "hil state restore refused: %s" % exc
+    if not newer:
+        return None
+    return ("hil state restore %s refused: %s is newer and still open, and restoring the older "
+            "one first would let the newer one put a test value back; a bare `hil state "
+            "restore` walks every open session newest first"
+            % (path, ", ".join(str(p) for p in newer)))
+
+
+def _ours(writes, key, field, driven):
+    if writes is None:
+        return False
+    if key.startswith(SHOWN_KEY):
+        return writes.changed(key, exact=True) or (
+            _shown_short(key) in driven and writes.changed(key))
+    return writes.changed(key, field)
+
+
+def _restore_steps(api, snap, writes, log, drive_lamps, lamp_shorts):
+    def _restore_shown_permitted(api_, snap_, log_, writes_):
+        _restore_shown(api_, snap_, log_, writes_, lamp_shorts)
 
     steps = (_restore_settings, _restore_policies, _restore_timezone, _restore_adapter,
              _restore_rules, _restore_devices, _restore_vl, _restore_groups,
@@ -276,84 +601,160 @@ def restore(api, snap, log=print, drive_lamps=True, lamp_shorts=None):
              _restore_gear_tables) + ((_restore_shown_permitted,) if drive_lamps else ())
     for step in steps:
         try:
-            step(api, snap, log)
+            step(api, snap, log, writes)
         except Exception as exc:
             log("prod_state: %s FAILED: %r" % (step.__name__, exc))
-    after = capture(api, prime=True, log=log)
-    try:
-        _clear_session_overrides(api, snap, after, log)
-        after["hcl_overrides"] = _hcl_overrides(api)
-    except Exception as exc:
-        log("prod_state: clearing HCL overrides FAILED: %r" % (exc,))
-    residual = diff(snap, after, shown_shorts=driven)
-    for line in diff(snap, after):
-        if line not in residual:
-            log("prod_state: reported, not ours to undo: %s" % line)
-    for line in residual:
-        log("prod_state: NOT RESTORED: %s" % line)
-    return residual
 
 
-def _restore_policies(api, snap, log):
+def _owner(writes, key):
+    return lambda field: writes.changed(key, field)
+
+
+def _left(log, label, fields):
+    for field in fields:
+        log("prod_state: %s %s differs from the snapshot and the toolkit did not write it: "
+            "left as it is" % (label, field))
+
+
+def _restore_policies(api, snap, log, writes):
     was = snap.get("policies")
     if was is None:
         return
+    restore_policies(api, was, log, owned=_owner(writes, "policies"))
+
+
+def restore_policies(api, was, log=print, owned=None):
     now = api._req("GET", "policies")
-    patch = {k: v for k, v in was.items() if k != "manages_anything" and now.get(k) != v}
+    patch = policy_patch(was, now)
+    if owned is not None:
+        _left(log, "policies", sorted(k for k in patch if not owned(k)))
+        patch = {k: v for k, v in patch.items() if owned(k)}
     if patch:
         log("prod_state: policies back to %r" % patch)
         api._req("PATCH", "policies", patch)
 
 
-def _clear_session_overrides(api, snap, after, log):
+def policy_patch(was, now):
+    return {k: v for k, v in was.items() if k != "manages_anything" and now.get(k) != v}
+
+
+def _clear_session_overrides(api, snap, after, log, writes):
     before = snap.get("hcl_overrides")
-    if before is None:
+    if before is None or writes.refuses("hcl_override/"):
         return
+    shorts = schedule_shorts(snap)
     for sid, suspended in (after.get("hcl_overrides") or {}).items():
-        if suspended and not before.get(sid, False):
+        if not suspended or before.get(sid, False):
+            continue
+        if writes.changed("hcl_override/%s" % sid, exact=True) or \
+                any(writes.changed("shown/%s" % short, exact=True)
+                    for short in shorts.get(sid, ())):
             log("prod_state: resuming HCL schedule %s (suspended by this session)" % sid)
             api.hcl.clear_override(sid)
+        else:
+            log("prod_state: HCL schedule %s is suspended and the toolkit drove nothing it "
+                "targets: left as it is" % sid)
 
 
-def _patch_if_differs(label, current, wanted, fields, patch, log):
-    body = {f: wanted[f] for f in fields if f in wanted and current.get(f) != wanted[f]}
+def _patch_if_differs(label, current, wanted, fields, patch, log, owned):
+    differs = [f for f in fields if f in wanted and current.get(f) != wanted[f]]
+    body = {f: wanted[f] for f in differs if owned(f)}
+    _left(log, label, [f for f in differs if f not in body])
     if body:
         log("prod_state: restoring %s %s" % (label, sorted(body)))
         patch(body)
 
 
-def _restore_settings(api, snap, log):
-    now = _settings(api)
-    s = snap["settings"]
-    _patch_if_differs("poller", now["poller"], s["poller"], SETTINGS["poller"],
-                      api.poller.patch, log)
-    _patch_if_differs("dali", now["dali"], s["dali"], SETTINGS["dali"],
-                      api.dali_settings.patch, log)
-    _patch_if_differs("redundancy", now["redundancy"], s["redundancy"],
-                      SETTINGS["redundancy"], api.redundancy.patch_settings, log)
-    _patch_if_differs("home-assistant", now["ha"], s["ha"], RESTORABLE_HA,
-                      api.ha.patch, log)
+def _restore_settings(api, snap, log, writes):
+    now, s = _settings(api), snap["settings"]
+    for name, route, fields, patch in (
+            ("poller", "poller", SETTINGS["poller"], api.poller.patch),
+            ("dali", "dali", SETTINGS["dali"], api.dali_settings.patch),
+            ("redundancy", "redundancy", SETTINGS["redundancy"],
+             api.redundancy.patch_settings),
+            ("ha", "home-assistant", RESTORABLE_HA, api.ha.patch)):
+        _patch_if_differs(route, now[name], s[name], fields, patch, log,
+                          _owner(writes, "settings/" + route))
 
 
-def _restore_timezone(api, snap, log):
-    if snap.get("timezone") and api.time_get().get("timezone") != snap["timezone"]:
-        log("prod_state: restoring timezone %s" % snap["timezone"])
-        api.time_set(timezone=snap["timezone"])
+def _restore_timezone(api, snap, log, writes):
+    was = snap.get("timezone")
+    if not was or api.time_get().get("timezone") == was:
+        return
+    if writes.refuses("time"):
+        log("prod_state: the time zone differs and is left: %s" % READ_ONLY_WHY)
+        return
+    if not writes.changed("time", "timezone"):
+        _left(log, "the controller's", ["timezone"])
+        return
+    log("prod_state: restoring timezone %s" % was)
+    api.time_set(timezone=was)
 
 
-def _restore_adapter(api, snap, log):
-    _patch_if_differs("adapter", api.adapter_info(), snap["adapter"],
-                      ("enabled", "name"), api.adapter_patch, log)
+def _restore_adapter(api, snap, log, writes):
+    _patch_if_differs("adapter", api.adapter_info(), snap["adapter"], ("enabled", "name"),
+                      api.adapter_patch, log, _owner(writes, "adapter/%d" % api.adapter))
 
 
-def _restore_rules(api, snap, log):
-    now = api.rules_get()
-    if now.get("source") != snap["rules"].get("source"):
-        log("prod_state: restoring the rules document")
-        api.rules_replace(snap["rules"]["source"], now["revision"])
+CONTINUATIONS_PENDING = "continuations_pending"
 
 
-def _restore_devices(api, snap, log):
+def continuations_pending(api):
+    value = (api.stats().get("rules") or {}).get(CONTINUATIONS_PENDING)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def commit_refusal(pending):
+    if pending is None:
+        return ("the firmware reports no rules.%s, so nothing tells whether a document commit "
+                "would drop the owner's delayed actions (after/wait)" % CONTINUATIONS_PENDING)
+    if pending:
+        return ("%d delayed action(s) of the owner's rules are pending (after/wait), and a "
+                "document commit drops them" % pending)
+    return None
+
+
+def switch_off_test_rules(api):
+    compiled = api._req("GET", "rules?format=json").get("rules") or {}
+    names = sorted(r["name"] for r in compiled.get("rules") or []
+                   if r.get("enabled", True) and r["name"].startswith(TEST_RULE_PREFIX))
+    for name in names:
+        api.rule_enable(name, False)
+    return names
+
+
+def _restore_rules(api, snap, log, writes):
+    was, now = snap["rules"].get("source") or "", api.rules_get()
+    if (now.get("source") or "") == was:
+        return
+    if not writes.changed("rules"):
+        _left(log, "the rules", ["document"])
+        return
+    refusal = commit_refusal(continuations_pending(api))
+    if not only_hil_rules_appended(was, now.get("source") or ""):
+        log("prod_state: the rules document differs from the snapshot by more than test "
+            "rules; someone else edited it, so it is left as it is, and its test rules %s "
+            "are switched off" % switch_off_test_rules(api))
+    elif refusal:
+        log("prod_state: the test rules %s stay in the rules document, switched off, "
+            "because %s; run `hil state restore` once nothing is pending"
+            % (switch_off_test_rules(api), refusal))
+    else:
+        log("prod_state: taking the test rules out of the rules document")
+        before = api.rules_toggles()
+        api.rules_replace(was, now["revision"])
+        _restore_toggles(api, before, log)
+
+
+def _restore_toggles(api, was, log):
+    now = api.rules_toggles()
+    for name, enabled in sorted(was.items()):
+        if name in now and now[name] != enabled:
+            log("prod_state: rule %r back to %s" % (name, "enabled" if enabled else "disabled"))
+            api.rule_enable(name, enabled)
+
+
+def _restore_devices(api, snap, log, writes):
     for short, was in snap["devices"].items():
         now = api.state(int(short))
         body = {f: was["record"][f] for f in ("name", "notes",
@@ -362,6 +763,9 @@ def _restore_devices(api, snap, log):
                 if f in was["record"] and now.get(f) != was["record"][f]}
         body.update(_override_patch(was["record"], now, "device_type"))
         body.update(_override_patch(was["record"], now, "color_mode"))
+        mine = {f: v for f, v in body.items() if writes.changed("device/%s" % short, f)}
+        _left(log, "SA%s" % short, sorted(set(body) - set(mine)))
+        body = mine
         if body:
             log("prod_state: restoring SA%s %s" % (short, sorted(body)))
             api.device_patch(int(short), body)
@@ -385,74 +789,118 @@ def _attempt(log, label, fn):
         log("prod_state: %s FAILED: %s" % (label, exc))
 
 
-def _restore_vl(api, snap, log):
+def _restore_vl(api, snap, log, writes):
     now = {v["virtual_lamp_id"]: v for v in api.vlamps.list_unfiltered()["virtual_lamps"]}
     want = {v["virtual_lamp_id"]: _bound_short(v) for v in snap["vl"]["virtual_lamps"]}
     for lid, have in sorted(now.items()):
         got = _bound_short(have)
-        if got is not None and want.get(lid) != got:
-            log("prod_state: unbinding VL%d from %r" % (lid, got))
-            _attempt(log, "unbind VL%d" % lid, lambda lid=lid: api.vlamps.unbind(lid))
+        if got is None or want.get(lid) == got:
+            continue
+        if not writes.changed("vl/%d" % lid, "binding"):
+            _left(log, "VL%d" % lid, ["binding"])
+            continue
+        log("prod_state: unbinding VL%d from %r" % (lid, got))
+        _attempt(log, "unbind VL%d" % lid, lambda lid=lid: api.vlamps.unbind(lid))
     for v in snap["vl"]["virtual_lamps"]:
         lid, have = v["virtual_lamp_id"], now.get(v["virtual_lamp_id"], {})
-        if want[lid] is not None and want[lid] != _bound_short(have):
+        if want[lid] is not None and want[lid] != _bound_short(have) and \
+                writes.changed("vl/%d" % lid, "binding"):
             log("prod_state: binding VL%d -> %r" % (lid, want[lid]))
             _attempt(log, "bind VL%d" % lid,
                      lambda lid=lid: api.vlamps.bind(lid, want[lid]))
         _attempt(log, "VL%d metadata" % lid, lambda lid=lid, have=have, v=v: _patch_if_differs(
             "VL%d" % lid, have, v, ("name", "ha_entity_enabled"),
-            lambda body: api.vlamps.patch(lid, body), log))
+            lambda body: api.vlamps.patch(lid, body), log, _owner(writes, "vl/%d" % lid)))
 
 
-def _restore_groups(api, snap, log):
+def _restore_groups(api, snap, log, writes):
     now = {g["group_id"]: g for g in api.groups.list()["groups"]}
     for g in snap["groups"]:
         gid = g["group_id"]
         _patch_if_differs("group %d" % gid, now.get(gid, {}), g,
                           ("name", "ha_entity_enabled"),
-                          lambda body, gid=gid: api.groups.patch(gid, body), log)
-    matrix = api.groups.matrix()
-    if _norm(matrix) == _norm(snap["group_matrix"]):
+                          lambda body, gid=gid: api.groups.patch(gid, body), log,
+                          _owner(writes, "group/%d" % gid))
+    now_rows = {r["virtual_lamp_id"]: r for r in api.groups.matrix().get("rows", [])}
+    rows = [r for r in snap["group_matrix"]["rows"]
+            if _norm(now_rows.get(r["virtual_lamp_id"])) != _norm(r)]
+    mine = [r for r in rows if writes.changed("group_matrix/%d" % r["virtual_lamp_id"])]
+    _left(log, "the group matrix", ["row of VL%d" % r["virtual_lamp_id"]
+                                    for r in rows if r not in mine])
+    if not mine:
         return
-    log("prod_state: restoring the group matrix and applying it")
-    rows = [{"virtual_lamp_id": r["virtual_lamp_id"], "desired": r["desired"]}
-            for r in snap["group_matrix"]["rows"]]
-    api.groups.matrix_patch(rows)
+    log("prod_state: restoring the group matrix rows of VL%s and applying them"
+        % ",".join(str(r["virtual_lamp_id"]) for r in mine))
+    api.groups.matrix_patch([{"virtual_lamp_id": r["virtual_lamp_id"], "desired": r["desired"]}
+                             for r in mine])
     res = api.groups.apply()
     if "operation_id" in res:
         api.wait_op(res)
 
 
-def _restore_scenes(api, snap, log):
-    if _norm(api._scene_snapshot()) == _norm(snap["scenes"]):
+def _restore_scenes(api, snap, log, writes):
+    now = {s["scene_id"]: s for s in api._scene_snapshot()}
+    for was in snap["scenes"]:
+        sid, have = was["scene_id"], now.get(was["scene_id"], {})
+        wanted = {"ha_select_enabled": was.get("ha_select_enabled")}
+        if was.get("name"):
+            wanted["name"] = was["name"]
+        _patch_if_differs("scene %d" % sid, have, wanted, ("name", "ha_select_enabled"),
+                          lambda body, sid=sid: api.scenes.patch(sid, body), log,
+                          _owner(writes, "scene/%d" % sid))
+        _restore_scene_rows(api, sid, was.get("rows") or [], have.get("rows") or [], log,
+                            writes)
+
+
+def _restore_scene_rows(api, sid, was_rows, now_rows, log, writes):
+    was = {r["virtual_lamp_id"]: r["desired"] for r in was_rows}
+    now = {r["virtual_lamp_id"]: r["desired"] for r in now_rows}
+    differ = sorted(vl for vl in set(was) | set(now) if _norm(was.get(vl)) != _norm(now.get(vl)))
+    mine = [vl for vl in differ if writes.changed("scene_matrix/%d/%d" % (sid, vl))]
+    _left(log, "scene %d" % sid, ["row of VL%d" % vl for vl in differ if vl not in mine])
+    if not mine:
         return
-    log("prod_state: restoring scene metadata and rows")
-    for scene in api._scene_snapshot():
-        extra = [{"virtual_lamp_id": r["virtual_lamp_id"], "desired": {"included": False}}
-                 for r in scene["rows"]]
-        if extra:
-            api.scenes.matrix_patch(scene["scene_id"], extra)
-    api._scene_restore(snap["scenes"])
-    for scene in snap["scenes"]:
-        if not scene["rows"]:
-            res = api.scenes.apply(scene["scene_id"])
-            if "operation_id" in res:
-                api.wait_op(res)
+    log("prod_state: restoring scene %d rows of VL%s and applying them"
+        % (sid, ",".join(str(vl) for vl in mine)))
+    api.scenes.matrix_patch(sid, [{"virtual_lamp_id": vl, "desired": _scene_desired(was.get(vl))}
+                                  for vl in mine])
+    res = api.scenes.apply(sid)
+    if "operation_id" in res:
+        api.wait_op(res)
 
 
-def _restore_hcl(api, snap, log):
+def _scene_desired(desired):
+    if not desired:
+        return {"included": False}
+    return {k: v for k, v in desired.items() if k != "waf"}
+
+
+def _restore_hcl(api, snap, log, writes):
     now = {s["schedule_id"]: s for s in api.hcl.list()}
     wanted = {s["schedule_id"]: s for s in snap["hcl"]}
-    for sid in set(now) - set(wanted):
-        log("prod_state: deleting schedule %s the session created" % sid)
-        api.hcl.delete(sid)
-    for sid, body in wanted.items():
-        if sid not in now:
+    if writes.refuses("hcl/"):
+        if _norm(sorted(now.values(), key=_schedule_id)) != \
+                _norm(sorted(wanted.values(), key=_schedule_id)):
+            log("prod_state: the HCL schedules differ and are left: %s" % READ_ONLY_WHY)
+        return
+    for sid in sorted(set(now) - set(wanted)):
+        if writes.changed("hcl/%s" % sid):
+            log("prod_state: deleting schedule %s the session created" % sid)
+            api.hcl.delete(sid)
+        else:
+            log("prod_state: schedule %s appeared during the session and the toolkit did not "
+                "create it: left as it is" % sid)
+    for sid, body in sorted(wanted.items()):
+        if sid in now:
+            _patch_if_differs("schedule %s" % sid, now[sid], body,
+                              [k for k in body if k != "schedule_id"],
+                              lambda b, sid=sid: api.hcl.patch(sid, b), log,
+                              _owner(writes, "hcl/%s" % sid))
+        elif writes.changed("hcl/%s" % sid):
             log("prod_state: re-creating schedule %s" % sid)
             api.hcl.create(body)
-        elif _norm(now[sid]) != _norm(body):
-            log("prod_state: restoring schedule %s" % sid)
-            api.hcl.patch(sid, {k: v for k, v in body.items() if k != "schedule_id"})
+        else:
+            _left(log, "schedule %s" % sid, ["existence"])
 
 
 def fast_fade(api, shorts, log=print):
@@ -470,21 +918,28 @@ def fast_fade(api, shorts, log=print):
     return done, failed
 
 
-def _restore_gear_config(api, snap, log):
+def _restore_gear_config(api, snap, log, writes):
     for short, was in snap["devices"].items():
         attrs = api.attributes(int(short)).get("attributes") or {}
         now = _gear_config(attrs)
-        body = {f: v for f, v in was["config"].items() if now.get(f) != v}
+        differs = {f: v for f, v in was["config"].items() if now.get(f) != v}
+        body = {f: v for f, v in differs.items() if writes.changed("gear/%s" % short, f)}
+        _left(log, "SA%s gear config" % short, sorted(set(differs) - set(body)))
         if body:
             log("prod_state: restoring SA%s gear config %s" % (short, body))
-            _attempt(log, "SA%s gear config" % short,
-                     lambda short=short, body=body: api.wait_op(
-                         api.write_attrs(int(short), body)))
+            try:
+                _attempt(log, "SA%s gear config" % short,
+                         lambda short=short, body=body: api.wait_op(
+                             api.write_attrs(int(short), body)))
+            except LampNotAllowed as exc:
+                log("prod_state: SA%s gear config left as it is: %s" % (short, exc))
 
 
-def _restore_gear_tables(api, snap, log):
+def _restore_gear_tables(api, snap, log, writes):
     for short, was in snap["devices"].items():
-        if was["groups"] is None and not any(v is not None for v in was["scenes"]):
+        tables = [t for t in ("groups", "scenes") if writes.changed("gear/%s" % short, t)]
+        if not tables or (was["groups"] is None and
+                          not any(v is not None for v in was["scenes"])):
             continue
         s = int(short)
         try:
@@ -494,8 +949,10 @@ def _restore_gear_tables(api, snap, log):
             continue
         attrs = api.attributes(s).get("attributes") or {}
         try:
-            _repair_groups(api, s, was["groups"], _gear_groups(attrs), log)
-            _repair_scenes(api, s, was["scenes"], _gear_scenes(attrs), log)
+            if "groups" in tables:
+                _repair_groups(api, s, was["groups"], _gear_groups(attrs), log)
+            if "scenes" in tables:
+                _repair_scenes(api, s, was["scenes"], _gear_scenes(attrs), log)
         except LampNotAllowed as exc:
             log("prod_state: SA%d gear tables left as they are: %s" % (s, exc))
 
@@ -547,7 +1004,7 @@ def arm_dtr0(api, short, value, attempts=3):
     return False
 
 
-def _restore_shown(api, snap, log, lamp_shorts=None):
+def _restore_shown(api, snap, log, writes, lamp_shorts=None):
     _prime(api, [int(s) for s in snap["devices"]], log, groups=SHOWN_GROUPS)
     live = {str(d["short_address"]): d.get("state") or {}
             for d in api.devices_unfiltered()["physical_devices"]}
@@ -556,7 +1013,8 @@ def _restore_shown(api, snap, log, lamp_shorts=None):
         state = was["state"]
         if state.get("power") not in ("on", "off"):
             continue
-        if lamp_shorts is not None and int(short) not in lamp_shorts:
+        if lamp_shorts is not None and int(short) not in lamp_shorts or \
+                not writes.changed("shown/%s" % short):
             continue
         mine = [k for k in SHOWN if k not in owned.get(short, set())]
         if "power" not in mine or all(live.get(short, {}).get(k) == state.get(k) for k in mine):

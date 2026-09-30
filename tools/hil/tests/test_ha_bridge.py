@@ -2,8 +2,11 @@ import time
 
 import pytest
 
-from hil import mqtt_tap
+from hil import mqtt_tap, validity, virtual_gear
+from hil.lamp_guard import TARGET_SEGMENT
 from hil.wait import wait_until
+from hil_test_guards import allowed_bound_lamp, drive_allowed
+from hil_virtual import PARK_ENV
 
 pytestmark = pytest.mark.ha_bridge
 
@@ -16,15 +19,24 @@ def _vl_state(api, vl_id):
     return api.vlamps.get(vl_id)["state"]
 
 
+def _exposed_cct(lamp):
+    return lamp["ha_entity_enabled"] and lamp["capabilities"]["cct"]
+
+
 def _cct_lamp(api):
     for lamp in api.vlamps.list()["virtual_lamps"]:
-        if (lamp["ha_entity_enabled"] and lamp["capabilities"]["cct"]
+        if (_exposed_cct(lamp)
                 and (lamp.get("binding") or {}).get("physical_short_address") is not None):
             return lamp["virtual_lamp_id"]
     pytest.skip("no exposed CCT-capable bound virtual lamp on this bench")
 
 
+def _driven_cct_lamp(api):
+    return allowed_bound_lamp(api, "an MQTT command to an exposed CCT lamp", _exposed_cct)[0]
+
+
 def _shared_groups_lamp(api):
+    drive_allowed(api, TARGET_SEGMENT, "a group command over MQTT or the foreign master")
     matrix = api.groups.matrix()
     for row in matrix.get("rows", []):
         applied = [i for i, v in enumerate(row.get("applied", [])) if v]
@@ -85,10 +97,11 @@ def test_session_discovery_and_kelvin_dialect(ha_guard, api, mqtt_counters, hil_
         "both forms sent at once is undefined in HA's schema: %r" % config)
 
 
+@pytest.mark.light
 def test_cct_round_trip_and_colour_only_power(ha_guard, api, mqtt_counters,
                                               hil_config, state_snapshot):
+    vl_id = _driven_cct_lamp(api)
     _enter_and_connect(ha_guard, api, mqtt_counters)
-    vl_id = _cct_lamp(api)
     set_topic = ha_guard.topic("a0/vl/%d/set" % vl_id)
 
     _cct_command_with_ledger(
@@ -113,10 +126,11 @@ def test_cct_round_trip_and_colour_only_power(ha_guard, api, mqtt_counters,
     assert wait_until(lambda: _vl_state(api, vl_id)["power"] == "off", STATE_WAIT_S)
 
 
+@pytest.mark.light
 def test_group_tile_lights_only_for_the_commanded_group(ha_guard, api, mqtt_counters,
                                                         hil_config, state_snapshot):
-    _enter_and_connect(ha_guard, api, mqtt_counters)
     vl_id, g_cmd, g_other = _shared_groups_lamp(api)
+    _enter_and_connect(ha_guard, api, mqtt_counters)
 
     def tile(group_id):
         payload = mqtt_tap.retained_json(
@@ -141,11 +155,12 @@ def test_group_tile_lights_only_for_the_commanded_group(ha_guard, api, mqtt_coun
     assert wait_until(lambda: tile(g_cmd) == "OFF", STATE_WAIT_S)
 
 
+@pytest.mark.light
 @pytest.mark.foreign
 def test_foreign_master_group_frame_arms_the_tile(ha_guard, api, mqtt_counters,
                                                   hil_config, state_snapshot, foreign):
-    _enter_and_connect(ha_guard, api, mqtt_counters)
     _vl, g_cmd, _g_other = _shared_groups_lamp(api)
+    _enter_and_connect(ha_guard, api, mqtt_counters)
 
     def tile():
         payload = mqtt_tap.retained_json(
@@ -160,10 +175,12 @@ def test_foreign_master_group_frame_arms_the_tile(ha_guard, api, mqtt_counters,
         "foreign group DAPC 0 (off) never cleared the tile"
 
 
+@pytest.mark.light
 def test_scene_select_recall_and_reset(ha_guard, api, mqtt_counters,
                                        hil_config, state_snapshot):
+    drive_allowed(api, TARGET_SEGMENT, "an HA scene select, which recalls by broadcast,")
+    vl_id = _driven_cct_lamp(api)
     _enter_and_connect(ha_guard, api, mqtt_counters)
-    vl_id = _cct_lamp(api)
 
     _pub(hil_config, ha_guard.topic("a0/scene_select/set"), "Scene 0")
     time.sleep(1.0)
@@ -199,13 +216,22 @@ def test_exclusion_retracts_immediately(ha_guard, api, mqtt_counters, hil_config
                       STATE_WAIT_S), "re-enabling never re-announced the config"
 
 
+def _absent_vl(api):
+    try:
+        return virtual_gear.free_vl_ids(virtual_gear.vl_ids(api), 1)[0]
+    except virtual_gear.VirtualGearError as exc:
+        pytest.skip("no virtual lamp id is unused, so a command to an existing one could "
+                    "light it: %s" % exc)
+
+
 def test_counters_move_and_unknown_entity_is_unroutable(ha_guard, api, mqtt_counters,
                                                         hil_config):
+    absent = _absent_vl(api)
     received_before = mqtt_counters.get("commands_received_total")
     unroutable_before = mqtt_counters.get("commands_unroutable_total")
     _enter_and_connect(ha_guard, api, mqtt_counters)
 
-    _pub(hil_config, ha_guard.topic("a0/vl/63/set"), '{"state":"ON"}')
+    _pub(hil_config, ha_guard.topic("a0/vl/%d/set" % absent), '{"state":"ON"}')
     assert wait_until(
         lambda: mqtt_counters.delta(
             unroutable_before, mqtt_counters.get("commands_unroutable_total")) >= 1,
@@ -251,6 +277,7 @@ def test_bench_membership_matches_registry(api):
         pytest.skip("no real fixture with a gear-reported membership read")
 
 
+@pytest.mark.light
 @pytest.mark.optical
 def test_cct_over_mqtt_is_optically_real(ha_guard, api,
                                          mqtt_counters, hil_config,
@@ -270,6 +297,7 @@ def test_cct_over_mqtt_is_optically_real(ha_guard, api,
                   and l["ha_entity_enabled"]), None)
     if vl_id is None:
         pytest.skip("fingerprint lamp SA%d is not an exposed virtual lamp" % short)
+    drive_allowed(api, short, "an MQTT command to VL%d" % vl_id)
 
     _enter_and_connect(ha_guard, api, mqtt_counters)
     set_topic = ha_guard.topic("a0/vl/%d/set" % vl_id)
@@ -301,6 +329,7 @@ def _group_members(api, group_id):
     return sorted(shorts)
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-MQTT-11")
 @pytest.mark.sniffer
 def test_a_group_command_reaches_the_lamps_not_only_the_tile(ha_guard, api,
@@ -308,8 +337,8 @@ def test_a_group_command_reaches_the_lamps_not_only_the_tile(ha_guard, api,
                                                             hil_config, sniffer,
                                                             state_snapshot,
                                                             test_artifacts):
-    _enter_and_connect(ha_guard, api, mqtt_counters)
     _vl, g_cmd, _g_other = _shared_groups_lamp(api)
+    _enter_and_connect(ha_guard, api, mqtt_counters)
     members = [s for s in _group_members(api, g_cmd) if s in api.optical_addrs()]
     if not members:
         pytest.skip("group %d has no bound luminaire member on this bench" % g_cmd)
@@ -345,3 +374,85 @@ def test_a_group_command_reaches_the_lamps_not_only_the_tile(ha_guard, api,
         "the colour half of an MQTT group command never activated on %r" % stale
 
     _pub(hil_config, ha_guard.topic("a0/group/%d/set" % g_cmd), '{"state":"OFF"}')
+
+
+BRIDGE_SUBSCRIBER = "mqtt_bridge"
+BRIDGE_INBOX_DEPTH = 64
+BURST_LAMPS = 16
+BURST_OP_S = 90
+BRIDGE_QUIET_S = 2.0
+BRIDGE_SETTLE_MAX_S = 30.0
+BRIDGE_POLL_S = 0.5
+BRIDGE_COUNTERS = ("delivered", "receiver_overflow", "bus_coalesced_total",
+                   "bus_discarded_total")
+
+
+def _bridge_counters(api):
+    diagnostics = api.diagnostics()
+    subscriber = validity.event_subscriber(diagnostics, BRIDGE_SUBSCRIBER) or {}
+    mqtt = diagnostics.get("mqtt") or {}
+    return {"connected": bool(mqtt.get("connected")), "named": bool(subscriber),
+            "uptime_ms": int(diagnostics.get("uptime_ms") or 0),
+            "delivered": int(subscriber.get("delivered") or 0),
+            "receiver_overflow": int(subscriber.get("receiver_overflow") or 0),
+            "bus_coalesced_total": int(mqtt.get("bus_coalesced_total") or 0),
+            "bus_discarded_total": int(mqtt.get("bus_discarded_total") or 0)}
+
+
+def _bridge_settled(api):
+    last, still_since = _bridge_counters(api), time.monotonic()
+    deadline = still_since + BRIDGE_SETTLE_MAX_S
+    while time.monotonic() < deadline:
+        time.sleep(BRIDGE_POLL_S)
+        now = _bridge_counters(api)
+        if now["delivered"] != last["delivered"]:
+            last, still_since = now, time.monotonic()
+        elif time.monotonic() - still_since >= BRIDGE_QUIET_S:
+            return now
+    return last
+
+
+def _moved(before, after):
+    return {name: after[name] - before[name] for name in BRIDGE_COUNTERS}
+
+
+@pytest.mark.hil_id("HIL-MQTT-12")
+@pytest.mark.virtual_gear
+def test_a_read_and_apply_burst_over_the_park_overflows_no_bridge_inbox(
+        api, virtual_bench, session_rows_guard, op_check, test_artifacts):
+    before = _bridge_counters(api)
+    if not before["connected"]:
+        pytest.skip("the Home Assistant bridge is not connected to a broker "
+                    "(diagnostics mqtt.connected is false), so no burst meets a "
+                    "publishing bridge")
+    if not before["named"]:
+        pytest.skip("this firmware names no %r event subscriber in /api/v1/diagnostics"
+                    % BRIDGE_SUBSCRIBER)
+    if len(virtual_bench.park) < BURST_LAMPS:
+        pytest.skip("the park holds %d emulated gear and the burst needs %d: start the "
+                    "session with %s=6,5,5 or larger"
+                    % (len(virtual_bench.park), BURST_LAMPS, PARK_ENV))
+    if not virtual_bench.groups:
+        pytest.skip("no free group: a live lamp's group membership is unknown")
+    shorts, group = virtual_bench.park[:BURST_LAMPS], virtual_bench.groups[0]
+    views = [op_check(api.wait_op(api.attr_read(short), timeout_s=BURST_OP_S))
+             for short in shorts]
+    api.groups.join([virtual_bench.vl(s) for s in shorts], group, apply=False)
+    views.append(op_check(api.wait_op(api.groups.apply(), timeout_s=BURST_OP_S)))
+    after = _bridge_settled(api)
+    moved = _moved(before, after)
+    test_artifacts.attach_json("bridge", {"before": before, "after": after, "moved": moved,
+                                          "operations": [v.get("operation_id")
+                                                         for v in views]})
+
+    assert after["uptime_ms"] >= before["uptime_ms"], (
+        "the controller restarted during the burst (uptime %d -> %d ms), so the bridge's "
+        "counters started again" % (before["uptime_ms"], after["uptime_ms"]))
+    assert moved["receiver_overflow"] == 0 and moved["bus_discarded_total"] == 0, (
+        "the bridge lost events under a burst over %d gear: %r" % (BURST_LAMPS, moved))
+    assert after["connected"], "the bridge lost its broker during the burst: %r" % after
+    assert moved["delivered"] > BRIDGE_INBOX_DEPTH and moved["bus_coalesced_total"], (
+        "INCONCLUSIVE, not a product failure: the bridge was delivered %d event(s), %d needed "
+        "to outrun its %d-slot inbox, and coalesced %d, so the burst never filled the buffer "
+        "that merges them: %r" % (moved["delivered"], BRIDGE_INBOX_DEPTH + 1,
+                                  BRIDGE_INBOX_DEPTH, moved["bus_coalesced_total"], moved))

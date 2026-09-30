@@ -1,5 +1,7 @@
 import pytest
 
+pytestmark = pytest.mark.light
+
 LEVEL = 160
 CCT_K = 2700
 RGB_TARGET = {"r": 0, "g": 0, "b": 255}

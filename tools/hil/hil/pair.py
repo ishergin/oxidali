@@ -10,9 +10,15 @@ def settled(api, peer_api):
     return a["active"] and not s["active"]
 
 
+def check_handovers(api, peer_api):
+    for client in (api, peer_api):
+        client.guard.check_restart("a handover of the bus to and from %s" % client.base)
+
+
 def settle(api, peer_api, timeout_s=15.0):
     if settled(api, peer_api):
         return False
+    check_handovers(api, peer_api)
     a, s = roles(api, peer_api)
     if s["active"] and not a["active"]:
         peer_api.redundancy.switchover()

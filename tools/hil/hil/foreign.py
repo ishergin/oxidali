@@ -4,10 +4,23 @@ import subprocess
 import time
 from pathlib import Path
 
-from hil.lamp_guard import LampGuard
+from hil import write_log
+from hil.lamp_guard import LampGuard, LampNotAllowed
 from hil.sniffer import ssh_argv
 
 WS_PORT = 8080
+TEST_RULE_PREFIX = "hil-"
+COMMAND_BIT = 0x01
+POWER_NOTIFICATION = 0xFE
+POWER_NOTIFICATION_TOP = 0xE0
+ADDRESS_VALID = 0x40
+SHORT_MASK = 0x3F
+FIELD_MASK = 0x1F
+DEVICE_SCHEMES = (0, 1)
+GROUP_SCHEME_TOP = 3
+INSTANCE_TRIGGERS = frozenset({"input_event", "input_occupancy", "input_light_cross",
+                               "input_position_change"})
+POWER_CYCLED = "input_device_power_cycled"
 
 _REMOTE_CLIENT = r"""
 import asyncio, json, sys
@@ -64,6 +77,51 @@ def frames_on_wire(lines, frames):
             wanted[token] -= 1
             seen += 1
     return seen, errors
+
+
+def event_source24(raw):
+    b0, b1, b2 = raw
+    if b0 & COMMAND_BIT:
+        return None
+    if b0 == POWER_NOTIFICATION and b1 & POWER_NOTIFICATION_TOP == POWER_NOTIFICATION_TOP:
+        return {"power": b2 & SHORT_MASK if b2 & ADDRESS_VALID else None}
+    top, numbered = b0 >> 6, b1 >> 7
+    if top in DEVICE_SCHEMES:
+        return {"short": b0 >> 1 & SHORT_MASK,
+                "instance": b1 >> 2 & FIELD_MASK if numbered else None}
+    if top == GROUP_SCHEME_TOP and numbered:
+        return None
+    return {"group": b0 >> 1 & FIELD_MASK if top == GROUP_SCHEME_TOP else None}
+
+
+def _fires(trigger, source, adapter):
+    if trigger.get("adapter_id", adapter) != adapter:
+        return False
+    kind = trigger.get("kind")
+    if "power" in source:
+        return kind == POWER_CYCLED and source["power"] is not None and \
+            trigger.get("device_short_address") == source["power"]
+    if kind not in INSTANCE_TRIGGERS:
+        return False
+    if "instance_group" in trigger:
+        return source.get("instance") is not None or \
+            source.get("group") == trigger["instance_group"]
+    return source.get("instance") is not None and \
+        (trigger.get("device_short_address"), trigger.get("instance_number")) == \
+        (source.get("short"), source["instance"])
+
+
+def injection_refusal(raw, compiled, adapter):
+    source = event_source24(raw)
+    if source is None:
+        return "it is a command to input devices or no event at all, which the guard cannot judge"
+    fired = sorted({rule.get("name") for rule in (compiled or {}).get("rules") or []
+                    if rule.get("enabled", True)
+                    and not str(rule.get("name")).startswith(TEST_RULE_PREFIX)
+                    and any(_fires(t, source, adapter) for t in rule.get("triggers") or [])})
+    if fired:
+        return "the owner's rule(s) %s could fire on the event it carries" % fired
+    return None
 
 
 class ForeignMasterError(RuntimeError):
@@ -185,7 +243,24 @@ class ForeignMaster:
     def _check(self, frames):
         for frame in frames:
             if frame["bits"] == 16:
-                self.guard.check_frame(*frame["bytes"])
+                write_log.note(None, self.guard.check_frame(*frame["bytes"]))
+            else:
+                self._check_injection(frame["bytes"])
+
+    def _check_injection(self, raw):
+        what = "24-bit frame %s" % "".join("%02X" % b for b in raw)
+        if self.guard.read_only:
+            raise LampNotAllowed("%s refused: HIL_LAMPS_READ_ONLY=1 forbids a forged input "
+                                 "event, which reaches automations the toolkit cannot see "
+                                 "(Home Assistant, Node-RED, wb-rules) through the bridge and "
+                                 "the WB master" % what)
+        if self.api is None:
+            raise LampNotAllowed("%s refused: no controller lists the rules it could fire" % what)
+        compiled = self.api._req("GET", "rules?format=json").get("rules")
+        refusal = injection_refusal(raw, compiled, self.api.adapter)
+        if refusal:
+            raise LampNotAllowed("%s refused: %s" % (what, refusal))
+        write_log.note(None, [write_log.ANY_LAMP])
 
     def send_frames(self, frames):
         frames = self._normalize(frames)

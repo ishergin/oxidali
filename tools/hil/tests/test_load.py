@@ -4,7 +4,7 @@ import time
 import pytest
 from requests.exceptions import RequestException
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.light]
 
 SOAK_DURATION_S = 300
 RING_LOSS_BUDGET = 8

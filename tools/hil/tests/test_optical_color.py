@@ -5,7 +5,7 @@ import pytest
 from hil.camera.calibrate import (COLOR_RAMP_S, RGB_PRIMARIES, cct_setpoint,
                                   pick_cct_anchor, rgb_setpoint)
 
-pytestmark = [pytest.mark.smoke, pytest.mark.optical]
+pytestmark = [pytest.mark.smoke, pytest.mark.optical, pytest.mark.light]
 
 
 @pytest.mark.needs_capability("rgb")

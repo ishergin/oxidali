@@ -3,6 +3,8 @@ import time
 
 import pytest
 
+from hil_test_guards import drive_allowed
+
 pytestmark = pytest.mark.slow
 
 QUERY_STATUS = 0x90
@@ -41,6 +43,14 @@ def _first_short(api):
     if not addrs:
         pytest.skip("no addressed gear on the segment")
     return addrs[0]
+
+
+def _driven_short(api):
+    shorts = api.lamp_addrs()
+    if not shorts:
+        pytest.skip("no lamp of HIL_LAMP_SHORTS is addressed on the segment")
+    drive_allowed(api, shorts[0], "a target-state the test drives")
+    return shorts[0]
 
 
 class _ForeignPressure:
@@ -90,8 +100,9 @@ def test_a_quiet_bus_produces_no_protocol_violations(api, gear_sim):
     _assert_pairs_held(gear_sim, before, after, before_pairs)
 
 
+@pytest.mark.light
 def test_a_split_sequence_is_visible_from_the_receiving_end(api, gear_sim, foreign):
-    short = _first_short(api)
+    short = _driven_short(api)
     burst = [
         {"addr": FOREIGN_TARGET_SHORT << 1, "data": 10 + (i % 2) * 190}
         for i in range(FOREIGN_BURST_FRAMES)
@@ -144,8 +155,9 @@ def test_no_forward_frame_is_sent_below_the_priority_one_floor(api, gear_sim):
     )
 
 
+@pytest.mark.light
 def test_the_priority_ladder_is_visible_on_the_wire(api, gear_sim):
-    short = _first_short(api)
+    short = _driven_short(api)
     api.attr_read_checked(short)
     api.ts(short, {"power": "on", "level": 120})
 

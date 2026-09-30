@@ -74,6 +74,7 @@ def test_finished_operation_evicted(api, lamps, test_artifacts, op_check):
     assert not listed_70
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-OP-03")
 def test_untracked_commands_create_no_operations(api, lamps, state_snapshot):
     short = lamps.by_label[lamps.labels()[0]]

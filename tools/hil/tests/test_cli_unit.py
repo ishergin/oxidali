@@ -1,4 +1,10 @@
-from hil import cli, corpus, flash, serialmon
+import dataclasses
+import json
+import types
+
+import hil.api
+import hil.config
+from hil import cli, corpus, flash, prod_state, serialmon, virtual_gear, write_log
 from hil.camera import backend
 
 
@@ -116,3 +122,117 @@ def test_an_unknown_subcommand_is_a_usage_error(capsys):
     assert cli.main(["state", "wipe"]) == cli.EX_USAGE
     assert cli.main(["preflight", "--all"]) == cli.EX_USAGE
     assert "invalid choice" in capsys.readouterr().err
+
+
+def _restore_with(monkeypatch, tmp_path, argv):
+    real_load = hil.config.load
+    monkeypatch.setattr(hil.config, "load",
+                        lambda: dataclasses.replace(real_load(), state_dir=tmp_path))
+    seen = []
+    snapshot = tmp_path / "production_state_last.json"
+    snapshot.write_text(json.dumps({"taken_at": "t1"}))
+    monkeypatch.setattr(hil.api, "Client", lambda cfg: type("C", (), {"base": "http://dut"})())
+    monkeypatch.setattr(virtual_gear, "teardown", lambda cfg, client: [])
+    monkeypatch.setattr(prod_state, "restore", lambda client, snap, writes, **kw:
+                        seen.append(writes) or prod_state.Restoration([], [], True))
+    assert cli.main(["state", "restore", str(snapshot)] + argv) == 0
+    return seen[0], snapshot
+
+
+def test_a_killed_session_is_restored_only_through_its_own_write_log(monkeypatch, tmp_path):
+    writes, _ = _restore_with(monkeypatch, tmp_path, [])
+    assert writes is None
+    writes, _ = _restore_with(monkeypatch, tmp_path, ["--all"])
+    assert writes.changed("device/9", "name")
+    log = write_log.WriteLog("t1", "http://dut",
+                             write_log.writes_path(tmp_path / "production_state_last.json"))
+    log.note([("settings/poller", {"enabled"})])
+    writes, _ = _restore_with(monkeypatch, tmp_path, [])
+    assert writes.changed("settings/poller", "enabled") and not writes.changed("device/9")
+
+
+def test_a_bare_restore_takes_every_open_session_newest_first_with_its_own_log(
+        monkeypatch, tmp_path, capsys):
+    real_load = hil.config.load
+    monkeypatch.setattr(hil.config, "load",
+                        lambda: dataclasses.replace(real_load(), state_dir=tmp_path))
+    cfg = types.SimpleNamespace(state_dir=tmp_path)
+    for stamp in ("2026-09-29T10:00:00", "2026-09-30T10:00:00"):
+        path = prod_state.session_path(cfg, stamp)
+        prod_state.save({"taken_at": stamp, "session_open": True}, path)
+        write_log.WriteLog(stamp, "http://dut", write_log.writes_path(path)).note(
+            [("device/%s" % stamp[8:10], {"name"})])
+    seen = []
+    monkeypatch.setattr(hil.api, "Client", lambda cfg: type("C", (), {"base": "http://dut"})())
+    monkeypatch.setattr(virtual_gear, "teardown", lambda cfg, client: [])
+    monkeypatch.setattr(prod_state, "restore", lambda client, snap, writes, **kw:
+                        seen.append((snap["taken_at"], writes)) or
+                        prod_state.Restoration([], [], True))
+    assert cli.main(["state", "restore"]) == 0
+    assert [stamp for stamp, _ in seen] == ["2026-09-30T10:00:00", "2026-09-29T10:00:00"]
+    assert seen[0][1].changed("device/30") and not seen[0][1].changed("device/29")
+    assert prod_state.open_sessions(cfg) == []
+    monkeypatch.setenv("HIL_LAMPS_READ_ONLY", "1")
+    prod_state.save({"taken_at": "2026-10-01T10:00:00", "session_open": True},
+                    prod_state.session_path(cfg, "2026-10-01T10:00:00"))
+    seen.clear()
+    assert cli.main(["state", "restore", "--all"]) == 0
+    assert seen[0][1].refuses("hcl/owner") and seen[0][1].changed("device/9", "name")
+    assert "HIL_LAMPS_READ_ONLY=0" in capsys.readouterr().out
+
+
+def test_an_explicit_file_is_refused_while_a_newer_session_is_open(monkeypatch, tmp_path,
+                                                                    capsys):
+    real_load = hil.config.load
+    monkeypatch.setattr(hil.config, "load",
+                        lambda: dataclasses.replace(real_load(), state_dir=tmp_path))
+    cfg = types.SimpleNamespace(state_dir=tmp_path)
+    older, newer = (prod_state.session_path(cfg, stamp)
+                    for stamp in ("2026-09-29T10:00:00", "2026-09-30T10:00:00"))
+    for path in (older, newer):
+        prod_state.save({"taken_at": path.stem[len(prod_state.SESSION_PREFIX):],
+                         "session_open": True}, path)
+    seen = []
+    monkeypatch.setattr(hil.api, "Client", lambda cfg: type("C", (), {"base": "http://dut"})())
+    monkeypatch.setattr(virtual_gear, "teardown", lambda cfg, client: [])
+    monkeypatch.setattr(prod_state, "restore", lambda client, snap, writes, **kw:
+                        seen.append(snap["taken_at"]) or prod_state.Restoration([], [], True))
+    assert cli.main(["state", "restore", str(older)]) == 1
+    assert seen == [] and str(newer) in capsys.readouterr().out
+    cli.main(["state", "restore", str(newer)])
+    assert seen == [newer.stem[len(prod_state.SESSION_PREFIX):]]
+
+
+
+def test_restore_exits_non_zero_while_a_session_stays_open_or_cannot_be_read(
+        monkeypatch, tmp_path, capsys):
+    real_load = hil.config.load
+    monkeypatch.setattr(hil.config, "load",
+                        lambda: dataclasses.replace(real_load(), state_dir=tmp_path))
+    cfg = types.SimpleNamespace(state_dir=tmp_path)
+    kept = prod_state.session_path(cfg, "2026-09-29T10:00:00")
+    prod_state.save({"taken_at": "2026-09-29T10:00:00", "session_open": True}, kept)
+    write_log.writes_path(kept).write_text("{torn")
+    monkeypatch.setattr(hil.api, "Client", lambda cfg: type("C", (), {"base": "http://dut"})())
+    monkeypatch.setattr(virtual_gear, "teardown", lambda cfg, client: [])
+    monkeypatch.setattr(prod_state, "restore", lambda client, snap, writes, **kw:
+                        prod_state.Restoration([], [], True))
+    assert cli.main(["state", "restore"]) == 1
+    assert str(kept) in capsys.readouterr().out
+    write_log.WriteLog("2026-09-29T10:00:00", "http://dut", write_log.writes_path(kept)).save()
+    prod_state.session_path(cfg, "2026-09-30T10:00:00").write_text("{torn")
+    assert cli.main(["state", "restore"]) == 1
+    assert "UNREADABLE" in capsys.readouterr().out and prod_state.open_sessions(cfg) == []
+
+
+def test_retire_takes_one_session_file_and_never_a_full_restore(monkeypatch, tmp_path):
+    held = tmp_path / "production_state-20260930T100000.json"
+    assert cli.main(["state", "restore", "--retire"]) == cli.EX_USAGE
+    assert cli.main(["state", "restore", "--retire", "--all", str(held)]) == cli.EX_USAGE
+    assert cli.main(["state", "diff", "--retire", str(held)]) == cli.EX_USAGE
+    retired = []
+    monkeypatch.setattr(hil.api, "Client", lambda cfg: type("C", (), {"base": "http://dut"})())
+    monkeypatch.setattr(prod_state, "retire", lambda cfg, client, path, log=print:
+                        retired.append(path) or False)
+    assert cli.main(["state", "restore", "--retire", str(held)]) == 1
+    assert retired == [held]

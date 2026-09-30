@@ -1,10 +1,78 @@
 import re
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from hil import serialmon
 
 BOOT_MARKER = "HTTP server listening"
+LATE_ENTRIES = re.compile(r"DALI ISR late (?:tick|entries)[^:]*: (.*)$")
+LATE_ITEM = re.compile(r"(?:^|, )([^,×]+)×([0-9]+) \(max ([0-9]+) us")
+ITEM_MARK = "×"
+LATE_REPORT_BYTES = 768
+NESTED_SUFFIX = "+isr"
+HEARTBEAT = re.compile(r"firmware heartbeat: uptime=([0-9]+)s")
+HEARTBEAT_PERIOD_S = 60
+DUT_STAMP = re.compile(r"\b[EWIDV] \(([0-9]+)\) ")
+
+
+@dataclass
+class LateEntries:
+    tasks: dict = field(default_factory=dict)
+    texts: list = field(default_factory=list)
+    unparsed: int = 0
+    truncated: int = 0
+
+    def mentioning(self, task):
+        return [text for text in self.texts if task in text]
+
+
+def late_entries(lines):
+    found = LateEntries()
+    for line in lines:
+        match = LATE_ENTRIES.search(line)
+        if match:
+            _tally(found, match.group(1))
+    return found
+
+
+def _tally(found, text):
+    items = LATE_ITEM.findall(text)
+    found.texts.append(text)
+    found.unparsed += text.count(ITEM_MARK) - len(items)
+    found.truncated += len(text.encode()) >= LATE_REPORT_BYTES
+    for task, count, gap in items:
+        entry = found.tasks.setdefault(task, [0, 0])
+        entry[0] += int(count)
+        entry[1] = max(entry[1], int(gap))
+
+
+def task_of(key):
+    return key[:-len(NESTED_SUFFIX)] if key.endswith(NESTED_SUFFIX) else key
+
+
+def heartbeat_run(lines):
+    best = run = 0
+    last = None
+    for match in filter(None, map(HEARTBEAT.search, lines)):
+        uptime = int(match.group(1))
+        run = run + 1 if last is not None and uptime - last == HEARTBEAT_PERIOD_S else 1
+        best, last = max(best, run), uptime
+    return best
+
+
+def dut_ms(line):
+    match = DUT_STAMP.search(line)
+    return int(match.group(1)) if match else None
+
+
+def newest_ms(lines):
+    return max((stamp for stamp in map(dut_ms, lines) if stamp is not None), default=None)
+
+
+def logged_past(lines, ms):
+    newest = newest_ms(lines)
+    return newest is not None and newest >= ms
 
 
 class SerialLog:

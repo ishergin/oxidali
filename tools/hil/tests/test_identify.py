@@ -2,6 +2,8 @@ import time
 
 import pytest
 
+pytestmark = pytest.mark.light
+
 QUERY_STATUS = 0x90
 QUERY_ACTUAL_LEVEL = 0xA0
 POWER_CYCLE_SEEN = 0x80

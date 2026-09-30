@@ -10,6 +10,7 @@ from hil import remote_serial as remote_serial_mod
 from hil import serialmon as serialmon_mod
 from hil import tiers
 from hil import validity
+from hil.lamp_guard import LampNotAllowed
 from hil.results import failure_line
 from hil.seriallog import SerialLog
 from hil_harness import peer_health
@@ -49,6 +50,31 @@ def _collection_lint(items):
 
 
 NO_SERIAL = "no board attached here and no WB bridge answering"
+LIGHT_MARKER = "light"
+PAIR_MARKER = "redundancy"
+RULE_COMMITS_ENV = "HIL_ALLOW_RULE_COMMITS"
+RULE_COMMITTING_FIXTURE = "rules_guard"
+
+
+def ungated(item, drives_lamps, commits_rules, names_peer):
+    if item.get_closest_marker(LIGHT_MARKER) and not drives_lamps:
+        return True
+    if item.get_closest_marker(PAIR_MARKER) and not names_peer:
+        return True
+    return RULE_COMMITTING_FIXTURE in item.fixturenames and not commits_rules
+
+
+def _deselect_ungated(config, items, cfg):
+    drives_lamps = cfg.drives_lamps()
+    commits_rules = os.environ.get(RULE_COMMITS_ENV) == "1"
+    names_peer = bool(cfg.peer_base)
+    kept, dropped = [], []
+    for item in items:
+        gated = ungated(item, drives_lamps, commits_rules, names_peer)
+        (dropped if gated else kept).append(item)
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = kept
 
 
 def _serial_absence(cfg):
@@ -107,16 +133,55 @@ def pytest_collection_modifyitems(config, items):
     dut_serial_port, serial_absent = None, None
     if not config._hil_hardware_free:
         cfg = config_mod.load()
+        _deselect_ungated(config, items, cfg)
         dut_serial_port, serial_absent = _serial_absence(cfg)
         _take_session_baselines(config, cfg)
     _mark_skips(items, serial_absent, dut_serial_port)
     items.sort(key=_tier)
 
 
+DECLARED_SKIPS = ("skip", "skipif")
+UNDECLARED_SKIP = ("a unit test fails on a skip no skip or skipif marker declares, so a "
+                   "regression never reads as a skip: %s")
+
+
+def fail_undeclared_skip(report, declared):
+    if report.outcome != "skipped" or declared or hasattr(report, "wasxfail"):
+        return
+    reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else report.longrepr
+    report.outcome = "failed"
+    report.longrepr = UNDECLARED_SKIP % reason
+
+
+def judge_report(item, report, call):
+    if not tiers.is_unit(item.path):
+        skip_guard_refusal(report, call)
+        return
+    fail_undeclared_skip(report, any(item.get_closest_marker(name) for name in DECLARED_SKIPS))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    outcome = yield
+    if tiers.is_unit(getattr(collector, "path", "")):
+        fail_undeclared_skip(outcome.get_result(), False)
+
+
+def skip_guard_refusal(report, call):
+    if report.when == "teardown" or report.outcome != "failed" or call.excinfo is None:
+        return
+    if not call.excinfo.errisinstance(LampNotAllowed):
+        return
+    report.outcome = "skipped"
+    report.longrepr = (str(report.location[0]), report.location[1] or 0,
+                       "Skipped: the lamp guard refused it: %s" % call.excinfo.value)
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
+    judge_report(item, report, call)
     if report.when != "call" and not (
             report.when == "setup" and (report.skipped or report.failed)):
         return

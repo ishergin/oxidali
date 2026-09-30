@@ -7,7 +7,8 @@ from hil import api as api_mod
 from hil import config as config_mod
 from hil import prod_state
 from hil import serialmon as serialmon_mod
-from hil import validity
+from hil import validity, write_log
+from hil.virtual_gear import run_enabled as virtual_gear_run
 from hil_harness import ANCHOR_TZ, UPTIME_SLACK_S, track, validity_of
 
 BENCH_BASELINE_TZ = os.environ.get("HIL_BENCH_TZ", "MSK-3")
@@ -45,29 +46,45 @@ def production_state(pytestconfig, request):
         return
     state = validity_of(pytestconfig)
     snap = prod_state.capture(api)
-    last = prod_state.last_path(cfg)
-    pending = prod_state.unrestored(last)
-    if not pending:
-        prod_state.save(dict(snap, session_open=True), last)
+    own, writes = _open_session(cfg, api, snap, state)
     prod_state.save(snap, request.getfixturevalue("run_dir") / "production_state_before.json")
-    state["production_state"] = "captured %d devices at %s" % (
-        len(snap["devices"]), snap["taken_at"])
-    if pending:
-        state["production_state_pending"] = str(last)
+    write_log.start(writes)
     try:
         yield snap
     finally:
-        residual = prod_state.restore(api, snap, drive_lamps=not cfg.lamps_read_only,
-                                      lamp_shorts=cfg.lamp_short_set())
-        if not residual and not pending:
-            prod_state.mark_restored(last, snap)
-        state["production_state_residual"] = residual
-        state["production_state"] += "; restored%s" % (
-            " completely" if not residual else " with %d residual line(s)" % len(residual))
-        absorbed = {k: v for k, v in api.retries.items() if v}
-        if absorbed:
-            state["production_state"] += "; the guard's own retries: %s" % ", ".join(
-                "%s=%d" % kv for kv in sorted(absorbed.items()))
+        write_log.stop()
+        _close_session(api, cfg, snap, own, writes, state)
+
+
+def _open_session(cfg, api, snap, state):
+    own = prod_state.session_path(cfg, snap["taken_at"])
+    still, unreadable = prod_state.scan_sessions(cfg)
+    pending = [str(p) for p in still if p != own] + [why for _p, why in unreadable]
+    prod_state.save(dict(snap, session_open=True), own)
+    if not prod_state.unrestored(prod_state.last_path(cfg)):
+        prod_state.save(snap, prod_state.last_path(cfg))
+    writes = write_log.WriteLog(snap["taken_at"], api.base, write_log.writes_path(own))
+    writes.save()
+    state["production_state"] = "captured %d devices at %s" % (
+        len(snap["devices"]), snap["taken_at"])
+    if pending:
+        state["production_state_pending"] = ", ".join(pending)
+    return own, writes
+
+
+def _close_session(api, cfg, snap, own, writes, state):
+    done = prod_state.restore(api, snap, writes, drive_lamps=not cfg.lamps_read_only,
+                              lamp_shorts=cfg.lamp_short_set())
+    if done.complete:
+        prod_state.mark_restored(own, snap)
+    state["production_state_residual"] = done.residual
+    state["production_state_foreign"] = done.foreign
+    state["production_state"] += "; restored%s" % (
+        " completely" if not done.residual else " with %d residual line(s)" % len(done.residual))
+    absorbed = {k: v for k, v in api.retries.items() if v}
+    if absorbed:
+        state["production_state"] += "; the guard's own retries: %s" % ", ".join(
+            "%s=%d" % kv for kv in sorted(absorbed.items()))
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -85,9 +102,10 @@ def bench_baseline(pytestconfig, production_state):
         return
 
     findings.extend(_neutralize_poller(api))
-    schedule_findings, suspended = _neutralize_schedules(api)
+    schedule_findings, suspended = _neutralize_schedules(
+        api, api.cfg.drives_lamps() or virtual_gear_run())
     findings.extend(schedule_findings)
-    findings.extend(_neutralize_timezone(api))
+    findings.extend(_neutralize_timezone(api, api.cfg.drives_lamps()))
     leaked = _leaked_names(api)
     validity_of(pytestconfig)["observed"] = _observed_baseline(api)
 
@@ -120,10 +138,14 @@ def _neutralize_poller(api):
             "run; see ISSUE-30)"]
 
 
-def _neutralize_schedules(api):
+def _neutralize_schedules(api, suspend):
     enabled = [s["schedule_id"] for s in api.hcl.list() if s.get("enabled")]
     if not enabled:
         return [], []
+    if not suspend:
+        return (["left %d HCL schedule(s) of the owner enabled (%s): a run that drives no "
+                 "lamp neither suspends nor re-enables them" % (len(enabled),
+                                                                ", ".join(enabled))], [])
     for schedule_id in enabled:
         api.hcl.patch(schedule_id, {"enabled": False})
     still_on = [s["schedule_id"] for s in api.hcl.list() if s.get("enabled")]
@@ -136,6 +158,12 @@ def _neutralize_schedules(api):
              % (len(enabled), ", ".join(enabled))], enabled)
 
 
+def refuse_schedule_suspension(api):
+    if not api.cfg.drives_lamps():
+        pytest.skip("a run that drives no lamp leaves the owner's HCL schedules alone, so a "
+                    "test that needs them suspended does not run")
+
+
 def _restore_schedules(api, suspended):
     for schedule_id in suspended:
         try:
@@ -145,10 +173,13 @@ def _restore_schedules(api, suspended):
                   "re-enable it by hand" % (schedule_id, exc))
 
 
-def _neutralize_timezone(api):
+def _neutralize_timezone(api, drives_lamps):
     found = api.time_get().get("timezone")
     if found == BENCH_BASELINE_TZ:
         return []
+    if not drives_lamps:
+        return ["found timezone %r, expected %r — left as it is: a run that drives no lamp "
+                "never moves the controller's clock" % (found, BENCH_BASELINE_TZ)]
     api.time_set(timezone=BENCH_BASELINE_TZ)
     now = api.time_get().get("timezone")
     if now != BENCH_BASELINE_TZ:

@@ -6,8 +6,13 @@ import pytest
 from requests import RequestException
 
 from hil import api as api_mod
+from hil import prod_state
+from hil import virtual_gear, write_log
+from hil.lamp_guard import RULE_SEPARATOR, LampNotAllowed, shown_keys, spell
 from hil.wait import wait_until
 from hil_harness import ANCHOR_TZ
+from hil_session_guards import refuse_schedule_suspension
+from hil_session import LIGHT_MARKER
 
 TEARDOWN_RETRY_S = 2.0
 
@@ -78,6 +83,7 @@ def _teardown_write(api, what, fn):
 
 @pytest.fixture()
 def group_matrix_guard(api):
+    ask_guard(api, "POST", "adapters/%d/groups/apply" % api.adapter)
     before = api.groups.matrix()
     yield before
     rows = [{"virtual_lamp_id": r["virtual_lamp_id"], "desired": r["desired"]}
@@ -104,6 +110,7 @@ def scene_matrix_guard(api):
     guarded = []
 
     def guard(scene_id):
+        ask_guard(api, "POST", "adapters/%d/scenes/%d/apply" % (api.adapter, scene_id))
         snap = api.scenes.matrix(scene_id)
         guarded.append((scene_id, snap))
         return snap
@@ -144,8 +151,17 @@ _ATTR_GUARD_SECTIONS = {
     "fade_time_ms": "common_102",
     "min_level": "common_102",
     "max_level": "common_102",
+    "power_on_level": "common_102",
+    "system_failure_level": "common_102",
     "dimming_curve": "dt6_led",
 }
+
+
+def refuse_unread(short, attrs, values, default):
+    unread = sorted(a for a in attrs if values[a] is None and default is None)
+    if unread:
+        pytest.skip("SA%d did not report %s, so nothing could put it back: the test does "
+                    "not write it" % (short, ", ".join(unread)))
 
 
 @pytest.fixture()
@@ -156,7 +172,7 @@ def attr_guard(api):
         return ((api.attributes(short, [name]).get("attributes") or {})
                 .get(name) or {})
 
-    def guard(short, *attrs, default=None, verify=False):
+    def guard(short, *attrs, default=None, verify=False, required=False):
         for name in sorted({_ATTR_GUARD_SECTIONS[a] for a in attrs}):
             api.attr_read_checked(short, groups=name)
         sections = {name: _section(short, name)
@@ -164,6 +180,8 @@ def attr_guard(api):
         values = {attr: (sections[_ATTR_GUARD_SECTIONS[attr]].get(attr)
                          or {}).get("value")
                   for attr in attrs}
+        if required:
+            refuse_unread(short, attrs, values, default)
         guarded.append((short, attrs, values, default, verify))
         return values
 
@@ -184,6 +202,84 @@ def attr_guard(api):
                     % (attr, short, want, holds))
 
 
+DROPPED = "continuations_dropped"
+U32 = 1 << 32
+
+
+def rules_residue(source, now_source, toggles, now_toggles):
+    out = [] if now_source == source else ["the document is not the one the test found"]
+    out += ["rule %r is %s, was %s" % (name, _toggle(now_toggles.get(name)),
+                                       _toggle(toggles.get(name)))
+            for name in sorted(set(toggles) | set(now_toggles))
+            if now_toggles.get(name) != toggles.get(name)]
+    return out
+
+
+def _toggle(enabled):
+    return {True: "enabled", False: "disabled"}.get(enabled, "absent")
+
+
+def _refuse_a_live_owner_document(toggles, pending):
+    disabled = sorted(name for name, enabled in toggles.items() if not enabled)
+    if disabled:
+        pytest.skip("the owner's rule(s) %s are switched off, and a document commit switches "
+                    "every rule back to its text until the guard reasserts it" % disabled)
+    refusal = prod_state.commit_refusal(pending)
+    if refusal:
+        pytest.skip(refusal)
+
+
+class _RulesCommits:
+    def __init__(self, api, doc, toggles):
+        self.api, self.original, self.toggles = api, doc.get("source") or "", toggles
+        self.base, self.ours, self.owed = doc.get("revision"), None, {}
+
+    def commit(self, source, base, what):
+        wanted = {**self.api.rules_toggles(), **self.owed}
+        try:
+            view = self.api.rules_replace(source, base)
+        except api_mod.ApiError as exc:
+            pytest.fail("rules %s did not commit (%s): the document changed while the test "
+                        "held it, so the owner's edit is kept and the test rules %s stay, "
+                        "switched off, for a hand to remove"
+                        % (what, exc, prod_state.switch_off_test_rules(self.api)),
+                        pytrace=False)
+        if view.get("status") != "succeeded":
+            pytest.fail("rules %s did not commit: %r" % (what, view), pytrace=False)
+        self.ours = (base + 1) % U32
+        now = self.api.rules_toggles()
+        self.owed = {n: e for n, e in wanted.items() if n in now and now[n] != e}
+        for name, enabled in sorted(dict(self.owed).items()):
+            self.api.rule_enable(name, enabled)
+            self.ours = (self.ours + 1) % U32
+            del self.owed[name]
+
+    def append(self, fragment):
+        source = self.original + RULE_SEPARATOR + fragment if self.original else fragment
+        if len(source.encode()) > RULES_SOURCE_LIMIT_BYTES:
+            pytest.skip(
+                "the stored document plus a test rule exceeds the %d-byte "
+                "source limit; this bench cannot add one without evicting the "
+                "owner's" % RULES_SOURCE_LIMIT_BYTES)
+        _refuse_a_live_owner_document(self.api.rules_toggles(),
+                                      prod_state.continuations_pending(self.api))
+        self.commit(source, self.base if self.ours is None else self.ours, "append")
+
+    def restore(self):
+        if self.ours is None:
+            return []
+        source = self.api.rules_get().get("source") or ""
+        if source != self.original:
+            refusal = prod_state.commit_refusal(prod_state.continuations_pending(self.api))
+            if refusal:
+                return ["the test rules %s stay in the document, switched off, for the "
+                        "session restore, because %s"
+                        % (prod_state.switch_off_test_rules(self.api), refusal)]
+            self.commit(self.original, self.ours, "restore")
+        return rules_residue(self.original, self.api.rules_get().get("source") or "",
+                             self.toggles, self.api.rules_toggles())
+
+
 @pytest.fixture()
 def rules_guard(api):
     doc = api.rules_get()
@@ -191,29 +287,36 @@ def rules_guard(api):
         pytest.skip("the stored rules document does not compile (%s) — a test "
                     "rule appended to it would be refused for that reason"
                     % doc["diagnostic"])
-    original = doc.get("source") or ""
-
-    def _commit(source, what):
-        view = api.rules_replace(source, api.rules_get()["revision"])
-        if view.get("status") != "succeeded":
-            pytest.fail("rules %s did not commit: %r" % (what, view),
-                        pytrace=False)
-        return view
-
-    def add(fragment):
-        source = (original + "\n\n" + fragment) if original else fragment
-        if len(source.encode()) > RULES_SOURCE_LIMIT_BYTES:
-            pytest.skip(
-                "the stored document plus a test rule exceeds the %d-byte "
-                "source limit; this bench cannot add one without evicting the "
-                "owner's" % RULES_SOURCE_LIMIT_BYTES)
-        _commit(source, "append")
-
+    toggles, rules_stats = api.rules_toggles(), api.stats().get("rules") or {}
+    _refuse_a_live_owner_document(toggles, prod_state.continuations_pending(api))
+    commits = _RulesCommits(api, doc, toggles)
     try:
-        yield add
+        yield commits.append
     finally:
-        if api.rules_get().get("source") != original:
-            _commit(original, "restore")
+        residue = commits.restore()
+        dropped = (int((api.stats().get("rules") or {}).get(DROPPED) or 0)
+                   - int(rules_stats.get(DROPPED) or 0)) % U32
+        if commits.ours is not None and dropped:
+            residue.append("%d pending delayed action(s) of the owner's rules were dropped"
+                           % dropped)
+        if residue:
+            pytest.fail("RULES NOT RESTORED: %s — a document commit resets every rule's "
+                        "toggle to its text and drops what after/wait still owed"
+                        % "; ".join(residue), pytrace=False)
+
+
+@pytest.fixture()
+def policy_guard(api):
+    before = api._req("GET", "policies")
+    try:
+        yield before
+    finally:
+        prod_state.restore_policies(api, before)
+        left = prod_state.policy_patch(before, api._req("GET", "policies"))
+        if left:
+            pytest.fail("POLICY NOT RESTORED: %r still differ from %r — an armed policy is "
+                        "written into every registered device by the next scan"
+                        % (sorted(left), before), pytrace=False)
 
 
 @pytest.fixture()
@@ -222,26 +325,57 @@ def adapter_enabled_guard(api):
     api.adapter_patch({"enabled": True})
 
 
+def ask_guard(api, method, path, body=None):
+    try:
+        api.guard.check_request(method, path, body)
+    except LampNotAllowed as exc:
+        pytest.skip(str(exc))
+
+
+def drive_allowed(api, target, what):
+    try:
+        reached = api.guard.check_target(target, True, what)
+    except LampNotAllowed as exc:
+        pytest.skip("%s — the controller drives it past the client, so the guard is asked "
+                    "before the test starts" % exc)
+    write_log.note(api.base, shown_keys(reached))
+
+
+def allowed_bound_lamp(api, what, wanted=None):
+    allowed = set(api.lamp_addrs())
+    for lamp in api.vlamps.list()["virtual_lamps"]:
+        short = (lamp.get("binding") or {}).get("physical_short_address")
+        if short in allowed and (wanted is None or wanted(lamp)):
+            drive_allowed(api, short, what)
+            return lamp["virtual_lamp_id"], short
+    pytest.skip("no fitting virtual lamp is bound to a lamp of HIL_LAMP_SHORTS=%s for %s"
+                % (spell(allowed), what))
+
+
+def free_group_of(api):
+    devices = api.devices_unfiltered()["physical_devices"]
+    used = virtual_gear.used_groups(devices, api.groups.matrix().get("rows", []))
+    if used is None:
+        pytest.skip("SA%s report no group membership, so no group can be shown free"
+                    % spell(d["short_address"] for d in devices
+                            if d.get("groups_membership") is None))
+    ruled = virtual_gear.owner_rule_groups(api)
+    free = [g for g in range(virtual_gear.GROUP_COUNT - 1, -1, -1)
+            if g not in used and g not in ruled]
+    if not free:
+        pytest.skip("no DALI group is free of registered gear and of the owner's rules")
+    try:
+        virtual_gear.prove_groups_empty(api, free[:1], used)
+    except virtual_gear.VirtualGearError as exc:
+        pytest.skip("group %d cannot be shown empty on the wire: %s" % (free[0], exc))
+    return free[0]
+
+
 @pytest.fixture()
 def free_group(api, capabilities):
-    matrix = api.groups.matrix()
-    used = set()
-    for row in matrix["rows"]:
-        for gid in range(16):
-            if row["desired"][gid] or row["applied"][gid]:
-                used.add(gid)
     for d in api.devices()["physical_devices"]:
         capabilities.ensure(d["short_address"], "groups")
-    for d in api.devices()["physical_devices"]:
-        bitmask = d.get("groups_membership")
-        if bitmask:
-            for gid in range(16):
-                if bitmask & (1 << gid):
-                    used.add(gid)
-    for gid in range(15, -1, -1):
-        if gid not in used:
-            return gid
-    pytest.skip("no free DALI group available on this rig")
+    return free_group_of(api)
 
 
 @pytest.fixture()
@@ -337,30 +471,62 @@ def ha_guard(api, hil_config):
         api.ha.patch({k: before[k] for k in api_mod._HomeAssistantSettings.RESTORABLE})
 
 
-@pytest.fixture()
-def clock_guard(api):
-    before = api.time_get()
-    api.time_set(timezone=ANCHOR_TZ)
+class _Clock:
+    def __init__(self, api):
+        self.api, self.before = api, None
 
-    def at(hour, minute, day_offset=0):
+    def at(self, hour, minute, day_offset=0):
+        if self.api.cfg.lamps_read_only:
+            pytest.skip("a read-only run never moves the controller's clock: a move fires "
+                        "the owner's timed rules and publishes every HCL schedule's point")
+        timed = api_mod.rules_on(self.api._req("GET", "rules?format=json"),
+                                 api_mod.TIMED_TRIGGERS)
+        if timed:
+            pytest.skip("the owner's rule(s) %s fire at a time of day or at the sun, and a "
+                        "clock move fires each whose time falls in the hour before the new "
+                        "time" % timed)
+        if self.before is None:
+            self.before = self.api.time_get()
+            self.api.time_set(timezone=ANCHOR_TZ)
         day = (datetime.datetime.now(datetime.timezone.utc)
                + datetime.timedelta(days=day_offset)).date()
         target = datetime.datetime(day.year, day.month, day.day, hour, minute,
                                    tzinfo=datetime.timezone.utc)
         unix_ms = int(target.timestamp() * 1000)
-        api.time_set(unix_ms=unix_ms)
+        self.api.time_set(unix_ms=unix_ms)
         return unix_ms
 
+    def restore(self):
+        if self.before is None:
+            return
+        self.api.time_set(unix_ms=int(time.time() * 1000))
+        if self.before.get("timezone"):
+            self.api.time_set(timezone=self.before["timezone"])
+
+
+@pytest.fixture()
+def clock_guard(api):
+    clock = _Clock(api)
     try:
-        yield at
+        yield clock.at
     finally:
-        api.time_set(unix_ms=int(time.time() * 1000))
-        if before.get("timezone"):
-            api.time_set(timezone=before["timezone"])
+        clock.restore()
+
+
+@pytest.fixture(autouse=True)
+def owner_rules_ignore_the_test_lamps(request):
+    if request.node.get_closest_marker(LIGHT_MARKER) is None:
+        return
+    api = request.getfixturevalue("api")
+    conflicts = virtual_gear.real_tier_conflicts(api, api.cfg.lamp_short_set())
+    if conflicts:
+        pytest.skip("an owner rule reacts to the lamps this test drives: %s"
+                    % "; ".join(conflicts))
 
 
 @pytest.fixture()
 def hcl_guard(api):
+    refuse_schedule_suspension(api)
     created = []
     suspended = []
     schedules = api.hcl.list()

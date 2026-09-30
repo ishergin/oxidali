@@ -1,16 +1,16 @@
 import pytest
 
+pytestmark = pytest.mark.virtual_gear
+
 FAILURE_STATUS_OPCODE = 0xF1
 ENABLE_DEVICE_TYPE_6 = "C106"
 
 
-def _dt6_short(api):
-    for short in api.addrs():
-        if short < 4:
-            continue
-        if api.state(short).get("device_type_effective") == "dt6_led":
-            return short
-    return None
+def _dt6_short(bench):
+    gear = bench.of_kind("dt6")
+    if not gear:
+        pytest.skip("the park holds no DT6 gear (its shape is %s)" % (bench.shape,))
+    return gear[0]
 
 
 def _failure_section(api, short):
@@ -27,14 +27,12 @@ def _query_frames(win, short):
 
 
 @pytest.fixture()
-def faulted_gear(api, gear_sim):
-    short = _dt6_short(api)
-    if short is None:
-        pytest.skip("no DT6 gear on the segment — the gear emulator is off the bus")
+def faulted_gear(api, virtual_bench):
+    short = _dt6_short(virtual_bench)
     injected = []
 
     def inject(word, expected_byte):
-        reply = gear_sim.command("fail %d %s" % (short, word))
+        reply = virtual_bench.sim.command("fail %d %s" % (short, word))
         wanted = "failure_status=0x%02X" % expected_byte
         assert any(wanted in line for line in reply), (
             "the emulator did not confirm %s on A%02d: %r" % (wanted, short, reply))
@@ -43,7 +41,7 @@ def faulted_gear(api, gear_sim):
 
     yield inject
     if injected:
-        gear_sim.command("fail %d none" % short)
+        virtual_bench.sim.command("fail %d none" % short)
 
 
 @pytest.mark.hil_id("HIL-DT6-01")
@@ -88,11 +86,9 @@ def test_a_thermal_shut_down_is_found_through_the_masked_level(
 
 @pytest.mark.hil_id("HIL-DT6-03")
 @pytest.mark.sniffer
-def test_a_healthy_dt6_gear_pays_no_207_frames(api, gear_sim, op_check, sniffer):
-    short = _dt6_short(api)
-    if short is None:
-        pytest.skip("no DT6 gear on the segment — the gear emulator is off the bus")
-    gear_sim.command("fail %d none" % short)
+def test_a_healthy_dt6_gear_pays_no_207_frames(api, virtual_bench, op_check, sniffer):
+    short = _dt6_short(virtual_bench)
+    virtual_bench.sim.command("fail %d none" % short)
 
     with sniffer.window() as win:
         op_check(api.wait_op(api.attr_read(short, groups="runtime_status")))

@@ -1,4 +1,5 @@
 import copy
+import re
 import inspect
 import types
 
@@ -6,7 +7,13 @@ import pytest
 
 import hil_session
 import hil_session_guards
-from hil import prod_state
+import hil_test_guards
+import test_attributes
+import test_policies
+from hil import api as api_mod
+from hil import prod_state, write_log
+from hil.config import HilConfig
+from hil.lamp_guard import GROUP_TARGET, TARGET_SEGMENT, LampGuard, LampNotAllowed, http_rule
 
 
 def _snap():
@@ -43,7 +50,7 @@ def test_every_layer_that_moved_is_named():
     dev["config"]["fade_time_ms"] = 700
     dev["state"]["level"] = 40
     lines = "\n".join(prod_state.diff(_snap(), after))
-    for needle in ("settings/ha.controller_id", "hcl differs", "VL10 binding",
+    for needle in ("settings/ha.controller_id", "hcl moscow-cct enabled", "VL10 binding",
                    "SA10 gear groups", "SA10 gear config", "SA10 shows"):
         assert needle in lines, (needle, lines)
 
@@ -194,7 +201,8 @@ def test_fast_fade_comes_after_the_snapshot_and_the_restore_takes_it_back():
         gear.attributes(10)["attributes"])}}}
     done, failed = prod_state.fast_fade(gear, [10], log=lambda _: None)
     assert (done, failed, gear.fade_ms) == ([10], [], 0)
-    prod_state._restore_gear_config(gear, snap, log=lambda _: None)
+    prod_state._restore_gear_config(gear, snap, lambda _: None,
+                                    write_log.WriteLog.everything("t", "b"))
     assert gear.writes == [(10, {"fade_time_ms": 0}), (10, {"fade_time_ms": 700})]
     assert gear.fade_ms == 700
 
@@ -206,3 +214,768 @@ def test_fast_fade_without_the_guard_is_a_usage_error(monkeypatch):
         hil_session._refuse_unguarded_fast_fade(config)
     monkeypatch.setenv("HIL_STATE_GUARD", "1")
     hil_session._refuse_unguarded_fast_fade(config)
+
+
+POLICY = {"system_failure_level": None, "power_on_level": 254, "apply_on_discovery": False,
+          "manages_anything": True}
+
+
+class _Policies:
+    def __init__(self, now):
+        self.now, self.patches = dict(now), []
+
+    def _req(self, method, path, body=None):
+        assert path == "policies"
+        if method == "PATCH":
+            self.patches.append(body)
+            self.now.update(body)
+        return dict(self.now)
+
+
+def test_a_policy_is_put_back_field_by_field_and_never_its_derived_flag():
+    api = _Policies(dict(POLICY, power_on_level=200, apply_on_discovery=True,
+                         manages_anything=False))
+    prod_state.restore_policies(api, POLICY, log=lambda line: None)
+    assert api.patches == [{"power_on_level": 254, "apply_on_discovery": False}]
+    assert prod_state.policy_patch(POLICY, api.now) == {}
+
+
+def test_a_policy_that_holds_is_not_written():
+    api = _Policies(POLICY)
+    prod_state.restore_policies(api, POLICY, log=lambda line: None)
+    assert api.patches == []
+
+
+def _leaf(value, source, confirmed_at):
+    return {"value": value, "source": source, "last_write_confirmed_ms": confirmed_at}
+
+
+def test_a_level_counts_as_written_only_with_a_fresh_confirmed_write():
+    wanted = {"power_on_level": 254}
+    before = {4: {"power_on_level": _leaf(254, "write_confirmed", 100)},
+              5: {"power_on_level": _leaf(200, "readback", None)}}
+    fresh = {4: {"power_on_level": _leaf(254, "write_confirmed", 900)},
+             5: {"power_on_level": _leaf(254, "write_confirmed", 910)}}
+    assert test_policies.unconfirmed_levels(before, fresh, wanted) == []
+    stale = {4: {"power_on_level": _leaf(254, "write_confirmed", 100)},
+             5: {"power_on_level": _leaf(254, "readback", 910)}}
+    assert len(test_policies.unconfirmed_levels(before, stale, wanted)) == 2
+    wrong = {4: {"power_on_level": _leaf(200, "write_confirmed", 900)},
+             5: {"power_on_level": _leaf(254, "write_confirmed", None)}}
+    assert len(test_policies.unconfirmed_levels(before, wrong, wanted)) == 2
+
+
+OWNER_DOC = 'rule "night" {\n  when at 23:00\n  do broadcast.off()\n}'
+RULES_WRITTEN = write_log.WriteLog("t", "http://dut", touched={"rules": {"*"}})
+TEST_RULE = http_rule("hil-vg-06-stop-fade", GROUP_TARGET, 4, "stop_fade()")
+
+
+class _Rules:
+    def __init__(self, source, toggles, revision=7, conflict=False, pending=0):
+        self.source, self.toggles, self.revision = source, dict(toggles), revision
+        self.conflict, self.puts, self.patches = conflict, [], []
+        self.pending = pending
+
+    def stats(self):
+        gauge = {} if self.pending is None else {"continuations_pending": self.pending}
+        return {"rules": dict(gauge, continuations_dropped=0)}
+
+    def rules_get(self):
+        return {"source": self.source, "revision": self.revision, "diagnostic": None}
+
+    def rules_toggles(self):
+        return dict(self.toggles)
+
+    def rules_replace(self, source, base):
+        self.puts.append((source, base))
+        if self.conflict or base != self.revision:
+            raise api_mod.ApiError(409, {"error": "rule_set_conflict"}, "rules")
+        self.source, self.revision = source, self.revision + 1
+        self.toggles = {name: True for name in self.toggles}
+        return {"status": "succeeded"}
+
+    def rule_enable(self, name, enabled):
+        self.patches.append((name, enabled))
+        self.toggles[name] = enabled
+        self.revision += 1
+
+    def _req(self, method, path, body=None):
+        names = re.findall(r'rule "([^"]+)"', self.source)
+        return {"rules": {"rules": [{"name": n, "enabled": self.toggles.get(n, True)}
+                                    for n in names]}}
+
+
+def _snap_rules(source, toggles):
+    return {"rules": {"source": source}, "rule_toggles": dict(toggles)}
+
+
+def test_the_session_takes_its_test_rules_out_and_puts_back_the_toggles_its_commit_reset():
+    api = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": False, "hil-vg-06-stop-fade": True})
+    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None,
+                              RULES_WRITTEN)
+    assert api.puts == [(OWNER_DOC, 7)] and api.patches == [("night", False)]
+    moved = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": True, "hil-vg-06-stop-fade": True})
+    prod_state._restore_rules(moved, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None,
+                              RULES_WRITTEN)
+    assert moved.puts == [(OWNER_DOC, 7)] and moved.patches == [] and moved.toggles["night"]
+
+
+OWNER_NEW = 'rule "porch" {\n  when at 06:00\n  do group(9).on()\n}'
+
+
+def test_an_owner_rule_written_after_a_test_rule_keeps_the_document_as_it_is():
+    for joint in ("\n", "\n\n"):
+        source = OWNER_DOC + "\n\n" + TEST_RULE + joint + OWNER_NEW
+        api, log = _Rules(source, {"night": True}), []
+        prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append,
+                                  RULES_WRITTEN)
+        assert api.puts == [] and api.source == source
+        assert any("someone else edited it" in line for line in log)
+
+
+def test_the_session_leaves_a_toggle_it_did_not_move_and_reports_it():
+    api = _Rules(OWNER_DOC, {"night": True})
+    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None,
+                              RULES_WRITTEN)
+    assert api.puts == [] and api.patches == []
+    assert "rule 'night' enabled False -> True" in prod_state.diff(
+        {"rules": {"source": OWNER_DOC}, "rule_toggles": {"night": False}, **_bare()},
+        {"rules": {"source": OWNER_DOC}, "rule_toggles": {"night": True}, **_bare()})
+
+
+def test_an_owner_edit_is_left_in_place_and_reported():
+    edited = OWNER_DOC.replace("23:00", "22:00")
+    api, log = _Rules(edited, {"night": True}), []
+    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append,
+                                  RULES_WRITTEN)
+    assert api.puts == [] and any("someone else edited it" in line for line in log)
+    assert prod_state.diff(
+        {"rules": {"source": OWNER_DOC}, "rule_toggles": {"night": False}, **_bare()},
+        {"rules": {"source": edited}, "rule_toggles": {"night": True}, **_bare()}) == [
+        "rules source differs", "rule 'night' enabled False -> True"]
+
+
+def _bare():
+    snap = _snap()
+    return {k: v for k, v in snap.items() if k not in ("rules",)}
+
+
+def test_a_gear_config_the_guard_refuses_is_left_and_the_rest_restored(monkeypatch):
+    class _Gear:
+        def __init__(self):
+            self.written = []
+
+        def attributes(self, short):
+            return {"attributes": {"common_102": {"fade_time_ms": {"value": 700}}}}
+
+        def write_attrs(self, short, body):
+            if short == 6:
+                raise LampNotAllowed("attribute write to SA6 refused")
+            self.written.append(short)
+            return {"operation_id": "op"}
+
+        def wait_op(self, op):
+            return {"status": "succeeded"}
+
+    gear, log = _Gear(), []
+    snap = {"devices": {"6": {"config": {"fade_time_ms": 0}},
+                        "7": {"config": {"fade_time_ms": 0}}}}
+    prod_state._restore_gear_config(gear, snap, log.append,
+                                    write_log.WriteLog.everything("t", "b"))
+    assert gear.written == [7] and any("SA6 gear config left" in line for line in log)
+
+
+def test_a_rules_residue_names_the_document_and_every_toggle_that_moved():
+    toggles = {"night": False, "day": True}
+    assert hil_test_guards.rules_residue("a", "a", toggles, dict(toggles)) == []
+    residue = hil_test_guards.rules_residue("a", "a\n\nb", toggles,
+                                            {"night": True, "day": True, "hil-x": True})
+    assert residue == ["the document is not the one the test found",
+                       "rule 'hil-x' is enabled, was absent",
+                       "rule 'night' is enabled, was disabled"]
+
+
+
+def test_pending_delays_are_read_from_the_firmware_gauge_and_never_estimated():
+    assert prod_state.continuations_pending(_Rules(OWNER_DOC, {}, pending=3)) == 3
+    assert prod_state.continuations_pending(_Rules(OWNER_DOC, {}, pending=None)) is None
+    assert prod_state.commit_refusal(0) is None
+    assert "3 delayed action(s)" in prod_state.commit_refusal(3)
+    assert "reports no rules.continuations_pending" in prod_state.commit_refusal(None)
+
+
+def test_a_live_owner_document_refuses_a_commit():
+    with pytest.raises(pytest.skip.Exception, match="switched off"):
+        hil_test_guards._refuse_a_live_owner_document({"night": False}, 0)
+    with pytest.raises(pytest.skip.Exception, match="1 delayed action"):
+        hil_test_guards._refuse_a_live_owner_document({"night": True}, 1)
+    with pytest.raises(pytest.skip.Exception, match="reports no rules.continuations_pending"):
+        hil_test_guards._refuse_a_live_owner_document({"night": True}, None)
+    hil_test_guards._refuse_a_live_owner_document({"night": True}, 0)
+
+
+def test_the_guard_checks_the_owner_document_again_right_before_each_commit():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    api.pending = 2
+    with pytest.raises(pytest.skip.Exception, match="2 delayed action"):
+        commits.append(TEST_RULE)
+    api.pending, api.toggles["night"] = 0, False
+    with pytest.raises(pytest.skip.Exception, match="switched off"):
+        commits.append(TEST_RULE)
+    assert api.puts == [] and commits.restore() == []
+
+
+def test_the_guard_keeps_a_toggle_the_owner_moved_during_the_test_and_reports_it():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    commits.append(TEST_RULE)
+    api.toggles["night"] = False
+    residue = commits.restore()
+    assert api.source == OWNER_DOC and api.toggles["night"] is False
+    assert residue == ["rule 'night' is disabled, was enabled"]
+
+
+def test_a_delay_pending_at_restore_keeps_the_test_rule_and_names_why():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    commits.append(TEST_RULE)
+    api.pending = 1
+    residue = commits.restore()
+    assert len(api.puts) == 1 and api.source.endswith(TEST_RULE)
+    assert api.patches == [("hil-vg-06-stop-fade", False)]
+    assert residue and "switched off" in residue[0] and "1 delayed action(s)" in residue[0]
+
+
+def test_a_commit_that_fails_after_its_replace_still_leaves_the_test_rule_to_restore():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    replace, enable = api.rules_replace, api.rule_enable
+
+    def replace_and_reset(source, base):
+        view = replace(source, base)
+        api.toggles["night"] = False
+        return view
+
+    def overloaded(name, enabled):
+        raise api_mod.ApiError(503, {"error": "commands_ingress_overload"}, "rules")
+
+    api.rules_replace, api.rule_enable = replace_and_reset, overloaded
+    with pytest.raises(api_mod.ApiError):
+        commits.append(TEST_RULE)
+    assert commits.ours == 8
+    api.rules_replace, api.rule_enable = replace, enable
+    assert commits.restore() == [] and api.source == OWNER_DOC
+
+
+def test_the_session_restore_leaves_test_rules_while_the_owner_has_delays_pending():
+    for pending, why in ((1, "1 delayed action(s)"), (None, "reports no rules.")):
+        api, log = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": True}, pending=pending), []
+        prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append,
+                                  RULES_WRITTEN)
+        assert api.puts == [] and any("stay in the rules document" in line and why in line
+                                      and "switched off" in line for line in log)
+        assert api.patches == [("hil-vg-06-stop-fade", False)]
+
+
+def test_the_guard_restores_against_the_revision_its_own_commit_left():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    commits.append(TEST_RULE)
+    assert api.puts == [(OWNER_DOC + "\n\n" + TEST_RULE, 7)] and commits.ours == 8
+    assert commits.restore() == []
+    assert api.puts[-1] == (OWNER_DOC, 8) and api.source == OWNER_DOC
+
+
+def test_an_owner_edit_during_the_test_is_a_named_failure_not_an_overwrite():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    commits.append(TEST_RULE)
+    api.source, api.revision = api.source + "\n# owner", api.revision + 1
+    with pytest.raises(pytest.fail.Exception, match="changed while the test held it"):
+        commits.restore()
+    assert api.source.endswith("# owner")
+    assert api.patches == [("hil-vg-06-stop-fade", False)]
+
+
+def test_a_leftover_test_rule_is_switched_off_after_the_owner_edited_the_document():
+    edited = OWNER_DOC.replace("23:00", "22:00")
+    api, log = _Rules(edited + "\n\n" + TEST_RULE, {"night": True}), []
+    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append,
+                              RULES_WRITTEN)
+    assert api.puts == [] and api.patches == [("hil-vg-06-stop-fade", False)]
+    assert any("switched off" in line for line in log)
+
+
+def test_a_test_that_never_committed_does_not_judge_the_owner_toggles():
+    api = _Rules(OWNER_DOC, {"night": True})
+    commits = hil_test_guards._RulesCommits(api, api.rules_get(), {"night": True})
+    api.toggles["night"] = False
+    assert commits.restore() == [] and api.puts == []
+
+
+def test_an_unread_attribute_the_test_would_write_refuses_the_gear():
+    with pytest.raises(pytest.skip.Exception, match="SA4 did not report power_on_level"):
+        hil_test_guards.refuse_unread(4, ("power_on_level", "system_failure_level"),
+                                      {"power_on_level": None, "system_failure_level": 254},
+                                      None)
+    hil_test_guards.refuse_unread(4, ("power_on_level",), {"power_on_level": None}, 254)
+
+
+TIMED = {"rules": {"rules": [
+    {"name": "dusk", "enabled": True, "triggers": [{"kind": "at_solar", "event": "sunset",
+                                                    "offset_ms": 0}]},
+    {"name": "night", "enabled": False, "triggers": [{"kind": "at_time",
+                                                      "time": {"hour": 23, "minute": 0}}]},
+    {"name": "hall", "enabled": True, "triggers": [{"kind": "http_trigger"}]},
+]}}
+
+
+class _ClockApi:
+    def __init__(self, compiled, read_only=False):
+        self.compiled, self.calls = compiled, []
+        self.cfg = types.SimpleNamespace(lamps_read_only=read_only)
+
+    def _req(self, method, path, body=None):
+        return self.compiled
+
+    def time_get(self):
+        return {"timezone": "MSK-3"}
+
+    def time_set(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+def test_timed_rules_are_the_enabled_ones_a_time_or_the_sun_fires():
+    assert api_mod.rules_on(TIMED, api_mod.TIMED_TRIGGERS) == ["dusk"]
+    assert api_mod.rules_on({"rules": None}, api_mod.TIMED_TRIGGERS) == []
+
+
+def test_the_clock_moves_on_the_first_call_and_never_under_an_owner_timed_rule():
+    quiet = _ClockApi({"rules": {"rules": TIMED["rules"]["rules"][1:]}})
+    clock = hil_test_guards._Clock(quiet)
+    assert quiet.calls == []
+    clock.at(10, 0)
+    assert quiet.calls[0] == {"timezone": hil_test_guards.ANCHOR_TZ} and len(quiet.calls) == 2
+    clock.restore()
+    assert quiet.calls[-1] == {"timezone": "MSK-3"}
+    timed = _ClockApi(TIMED)
+    clock = hil_test_guards._Clock(timed)
+    with pytest.raises(pytest.skip.Exception, match=r"\['dusk'\] fire at a time of day"):
+        clock.at(10, 0)
+    clock.restore()
+    assert timed.calls == []
+    read_only = _ClockApi({"rules": {"rules": []}}, read_only=True)
+    with pytest.raises(pytest.skip.Exception, match=r"read-only run never moves"):
+        hil_test_guards._Clock(read_only).at(10, 0)
+    assert read_only.calls == []
+
+
+class _Overrides:
+    adapter = 0
+
+    def __init__(self, allowed=()):
+        self.cfg = types.SimpleNamespace(lamp_short_set=lambda: frozenset(allowed))
+        self.records = {1: None, 2: None}
+        self.patches = []
+
+    def addrs(self):
+        return sorted(self.records)
+
+    def state(self, short):
+        return {"supported_device_types": [6], "device_type_override": self.records[short]}
+
+    def device_patch(self, short, body):
+        self.patches.append((short, body))
+        if body["device_type_override"] == "dt8_color":
+            raise api_mod.ApiError(422, {"error": "unsupported_device_type"}, "devices")
+        self.records[short] = body["device_type_override"]
+
+
+def test_the_override_probe_writes_nothing_to_a_lamp_the_run_may_not_write():
+    owner = _Overrides()
+    with pytest.raises(pytest.skip.Exception, match=r"no lamp of HIL_LAMP_SHORTS"):
+        test_attributes.test_a_widening_device_type_override_is_refused(owner, None)
+    assert owner.patches == []
+    allowed = _Overrides(allowed={2})
+    test_attributes.test_a_widening_device_type_override_is_refused(allowed, None)
+    assert allowed.patches == [(2, {"device_type_override": "dt8_color"}),
+                               (2, {"device_type_override": "unknown"}),
+                               (2, {"device_type_override": None})]
+
+
+def _writes(touched):
+    return write_log.WriteLog("t", "http://dut", touched=touched)
+
+
+class _Knob:
+    def __init__(self, state):
+        self.state, self.patches = dict(state), []
+
+    def get(self):
+        return dict(self.state)
+
+    def patch(self, body):
+        self.patches.append(body)
+        self.state.update(body)
+
+
+class _SettingsApi:
+    def __init__(self, poller, dali):
+        self.poller, self.dali_settings = _Knob(poller), _Knob(dali)
+        self.ha = _Knob({})
+        self.redundancy = types.SimpleNamespace(settings=lambda: {},
+                                                patch_settings=lambda body: None)
+
+
+def test_the_session_restore_writes_back_only_the_settings_the_toolkit_wrote():
+    api, lines = _SettingsApi({"enabled": True}, {"application_active": False}), []
+    snap = {"settings": {"poller": {"enabled": False}, "dali": {"application_active": True},
+                         "redundancy": {}, "ha": {}}}
+    prod_state._restore_settings(api, snap, lines.append,
+                                 _writes({"settings/poller": {"enabled"}}))
+    assert api.poller.patches == [{"enabled": False}] and api.dali_settings.patches == []
+    assert any("dali application_active" in line and "did not write" in line for line in lines)
+
+
+class _DeviceApi:
+    def __init__(self, record):
+        self.record, self.patches = dict(record), []
+
+    def state(self, short):
+        return dict(self.record)
+
+    def device_patch(self, short, body):
+        self.patches.append((short, body))
+
+
+def test_the_session_restore_leaves_a_device_field_the_owner_changed():
+    api, lines = _DeviceApi({"name": "b", "notes": "owner's"}), []
+    snap = {"devices": {"5": {"record": {"name": "a", "notes": "n"}}}}
+    prod_state._restore_devices(api, snap, lines.append, _writes({"device/5": {"name"}}))
+    assert api.patches == [(5, {"name": "a"})]
+    assert any("SA5 notes" in line and "did not write" in line for line in lines)
+
+
+class _HclApi:
+    def __init__(self, schedules):
+        self.schedules, self.calls = {s["schedule_id"]: s for s in schedules}, []
+        self.hcl = self
+
+    def list(self):
+        return list(self.schedules.values())
+
+    def delete(self, sid):
+        self.calls.append(("delete", sid))
+
+    def create(self, body):
+        self.calls.append(("create", body["schedule_id"]))
+
+    def patch(self, sid, body):
+        self.calls.append(("patch", sid, body))
+
+
+def test_the_session_restore_undoes_only_the_schedules_the_toolkit_wrote():
+    api, lines = _HclApi([{"schedule_id": "owner", "enabled": False, "points": [1]},
+                          {"schedule_id": "hil-x", "enabled": True},
+                          {"schedule_id": "owner-new", "enabled": True}]), []
+    snap = {"hcl": [{"schedule_id": "owner", "enabled": True, "points": [2]}]}
+    prod_state._restore_hcl(api, snap, lines.append,
+                            _writes({"hcl/owner": {"enabled"}, "hcl/hil-x": {"*"}}))
+    assert sorted(api.calls, key=str) == [("delete", "hil-x"),
+                                          ("patch", "owner", {"enabled": True})]
+    assert any("owner-new" in line for line in lines)
+    assert any("owner points" in line and "did not write" in line for line in lines)
+
+
+class _GearApi:
+    def __init__(self, attrs):
+        self.attrs, self.written = attrs, []
+
+    def attributes(self, short, sections=None):
+        return {"attributes": {"common_102": {k: {"value": v} for k, v in self.attrs.items()}}}
+
+    def write_attrs(self, short, body):
+        self.written.append((short, body))
+        return {"operation_id": "op"}
+
+    def wait_op(self, op):
+        return {"status": "succeeded"}
+
+
+def test_the_session_restore_writes_only_the_gear_fields_the_toolkit_wrote():
+    api, lines = _GearApi({"fade_time_ms": 700, "max_level": 200}), []
+    snap = {"devices": {"5": {"config": {"fade_time_ms": 0, "max_level": 254}}}}
+    prod_state._restore_gear_config(api, snap, lines.append,
+                                    _writes({"gear/5": {"fade_time_ms"}}))
+    assert api.written == [(5, {"fade_time_ms": 0})]
+    assert any("max_level" in line and "did not write" in line for line in lines)
+
+
+class _ZoneApi:
+    def __init__(self):
+        self.sets = []
+
+    def time_get(self):
+        return {"timezone": "UTC0"}
+
+    def time_set(self, timezone):
+        self.sets.append(timezone)
+
+
+def test_the_session_restore_moves_the_zone_back_only_if_the_toolkit_moved_it():
+    api, lines = _ZoneApi(), []
+    prod_state._restore_timezone(api, {"timezone": "MSK-3"}, lines.append, _writes({}))
+    assert api.sets == [] and any("did not write" in line for line in lines)
+    prod_state._restore_timezone(api, {"timezone": "MSK-3"}, lines.append,
+                                 _writes({"time": {"timezone"}}))
+    assert api.sets == ["MSK-3"]
+
+
+def test_without_a_write_log_the_restore_writes_nothing_and_names_the_full_restore(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise AssertionError("a restore step ran without a write log")
+
+    for name in ("_restore_settings", "_restore_devices", "_restore_hcl",
+                 "_restore_gear_config", "_restore_rules"):
+        monkeypatch.setattr(prod_state, name, refuse)
+    monkeypatch.setattr(prod_state, "capture", lambda api, prime=True, log=print: {})
+    monkeypatch.setattr(prod_state, "differences", lambda before, after, shown_shorts=None: [
+        ("settings/poller", "enabled", "settings/poller.enabled False -> True")])
+    lines = []
+    done = prod_state.restore(object(), {}, None, log=lines.append)
+    assert done.foreign == ["settings/poller.enabled False -> True"] and not done.complete
+    assert any("hil state restore --all" in line for line in lines)
+
+
+class _Overridden:
+    def __init__(self):
+        self.cleared = []
+        self.hcl = self
+
+    def clear_override(self, sid):
+        self.cleared.append(sid)
+
+
+def test_an_hcl_override_is_cleared_only_when_the_toolkit_drove_a_lamp_it_targets():
+    snap = {"hcl_overrides": {"evening": False},
+            "hcl": [{"schedule_id": "evening", "targets": [{"scope": "group",
+                                                             "group_ids": [3]}]}],
+            "vl": {"virtual_lamps": [{"virtual_lamp_id": 7,
+                                      "binding": {"physical_short_address": 5}}]},
+            "group_matrix": {"rows": [{"virtual_lamp_id": 7,
+                                       "applied": [False] * 3 + [True] + [False] * 12}]}}
+    after = {"hcl_overrides": {"evening": True}}
+    for touched, cleared in (({"shown/*": {"*"}}, []), ({"shown/5": {"*"}}, ["evening"]),
+                             ({"hcl_override/evening": {"*"}}, ["evening"])):
+        api, lines = _Overridden(), []
+        prod_state._clear_session_overrides(api, snap, after, lines.append, _writes(touched))
+        assert api.cleared == cleared
+
+
+def _restored_with(monkeypatch, snap, after, writes, drive_lamps=False, lamp_shorts=None,
+                   log=None):
+    monkeypatch.setattr(prod_state, "_restore_steps", lambda *args: None)
+    monkeypatch.setattr(prod_state, "capture", lambda api, prime=True, log=print: after)
+    monkeypatch.setattr(prod_state, "_clear_session_overrides", lambda *args: None)
+    monkeypatch.setattr(prod_state, "_hcl_overrides", lambda api: after.get("hcl_overrides"))
+    return prod_state.restore(object(), snap, writes, log=log or (lambda line: None),
+                              drive_lamps=drive_lamps, lamp_shorts=lamp_shorts)
+
+
+def test_an_owner_change_is_reported_and_never_keeps_the_snapshot_open(monkeypatch):
+    after = copy.deepcopy(_snap())
+    after["settings"]["poller"]["enabled"] = True
+    after["hcl"][0]["enabled"] = False
+    after["devices"]["10"]["state"]["level"] = 40
+    done = _restored_with(monkeypatch, _snap(), after, _writes({"device/10": {"name"}}),
+                          drive_lamps=True, lamp_shorts={10})
+    assert done.complete and done.residual == []
+    assert sorted(done.foreign) == ["SA10 shows {'power': 'on', 'level': 40, 'color_mode': "
+                                    "'cct', 'color_temperature_kelvin': 2702, 'rgb': None}, "
+                                    "was {'power': 'on', 'level': 120, 'color_mode': 'cct', "
+                                    "'color_temperature_kelvin': 2702, 'rgb': None}",
+                                    "hcl moscow-cct enabled True -> False",
+                                    "settings/poller.enabled False -> True"]
+
+
+def test_a_write_of_the_toolkit_left_undone_keeps_the_snapshot_open(monkeypatch):
+    after = copy.deepcopy(_snap())
+    after["settings"]["poller"]["enabled"] = True
+    done = _restored_with(monkeypatch, _snap(), after, _writes({"settings/poller": {"enabled"}}))
+    assert not done.complete and done.residual == ["settings/poller.enabled False -> True"]
+    unlogged = _restored_with(monkeypatch, _snap(), _snap(), None)
+    assert not unlogged.complete and unlogged.residual == []
+
+
+def test_each_session_keeps_its_snapshot_and_log_under_its_own_name(tmp_path):
+    cfg = types.SimpleNamespace(state_dir=tmp_path)
+    older = prod_state.session_path(cfg, "2026-09-29T10:00:00")
+    newer = prod_state.session_path(cfg, "2026-09-30T10:00:00")
+    assert older.name == "production_state-20260929T100000.json"
+    for path, open_ in ((older, True), (newer, True),
+                        (prod_state.session_path(cfg, "2026-09-28T10:00:00"), False)):
+        prod_state.save({"taken_at": path.stem, "session_open": open_}, path)
+        write_log.WriteLog(path.stem, "http://dut", write_log.writes_path(path)).save()
+    assert prod_state.open_sessions(cfg) == [newer, older]
+
+
+def test_a_full_restore_under_read_only_writes_no_schedule_and_no_zone():
+    api, lines = _HclApi([{"schedule_id": "owner", "enabled": False}]), []
+    refusing = write_log.WriteLog.everything("t", "b", refused=prod_state.READ_ONLY_REFUSED)
+    prod_state._restore_hcl(api, {"hcl": [{"schedule_id": "owner", "enabled": True}]},
+                            lines.append, refusing)
+    assert api.calls == [] and any("read-only" in line for line in lines)
+    zone = _ZoneApi()
+    prod_state._restore_timezone(zone, {"timezone": "MSK-3"}, lines.append, refusing)
+    assert zone.sets == []
+
+
+
+
+def test_a_lamp_the_log_names_keeps_the_session_open_until_a_restore_may_drive_it(monkeypatch):
+    after = copy.deepcopy(_snap())
+    after["devices"]["10"]["state"]["level"] = 40
+    lines = []
+    for drive_lamps, lamp_shorts in ((False, set()), (False, {10}), (True, {11})):
+        done = _restored_with(monkeypatch, _snap(), after, _writes({"shown/10": {"*"}}),
+                              drive_lamps, lamp_shorts, log=lines.append)
+        assert not done.complete and done.foreign == []
+        assert [line[:9] for line in done.residual] == ["SA10 show"]
+    assert any("SA10" in line and "HIL_LAMPS_READ_ONLY=0" in line and "HIL_LAMP_SHORTS" in line
+               for line in lines)
+    anywhere = _restored_with(monkeypatch, _snap(), after, _writes({"shown/*": {"*"}}))
+    assert anywhere.complete and anywhere.residual == []
+    driven = _restored_with(monkeypatch, _snap(), after, _writes({"shown/*": {"*"}}),
+                            drive_lamps=True, lamp_shorts={10})
+    assert not driven.complete and len(driven.residual) == 1
+
+
+class _Driving:
+    base = "http://dut"
+
+    def __init__(self, allowed, segment):
+        self.guard = LampGuard(allowed, segment=lambda: list(segment))
+
+
+def test_a_lamp_a_test_drives_through_the_controller_is_named_in_the_write_log():
+    api, log = _Driving({2, 3}, [2, 3]), write_log.WriteLog("t", "http://dut")
+    write_log.start(log)
+    try:
+        hil_test_guards.drive_allowed(api, 2, "a rule on SA2")
+        assert log.changed("shown/2", exact=True) and not log.changed("shown/3", exact=True)
+        hil_test_guards.drive_allowed(api, TARGET_SEGMENT, "a broadcast")
+        assert log.changed("shown/3", exact=True)
+        with pytest.raises(pytest.skip.Exception):
+            hil_test_guards.drive_allowed(_Driving({2}, [2]), 7, "a rule on SA7")
+        assert not log.changed("shown/7", exact=True)
+    finally:
+        write_log.stop()
+
+
+INTERVAL = ("settings/poller", "interval_ms")
+OLDER, NEWER = "2026-09-29T10:00:00", "2026-09-30T10:00:00"
+
+
+def _session(cfg, stamp, interval, touched):
+    path = prod_state.session_path(cfg, stamp)
+    prod_state.save({"taken_at": stamp, "session_open": True,
+                     "settings": {"poller": {"interval_ms": interval}}}, path)
+    write_log.WriteLog(stamp, "http://dut", write_log.writes_path(path)).note(touched)
+    return path
+
+
+def _walk(monkeypatch, cfg, installation, stuck):
+    def restore(client, snap, writes, **kwargs):
+        if writes.changed(*INTERVAL):
+            installation["interval_ms"] = snap["settings"]["poller"]["interval_ms"]
+        held = snap["taken_at"] in stuck
+        return prod_state.Restoration(["rules residue"] if held else [], [], not held)
+
+    monkeypatch.setattr(prod_state, "restore", restore)
+    prod_state.restore_sessions(cfg, types.SimpleNamespace(base="http://dut"),
+                                prod_state.open_sessions(cfg), False, log=lambda line: None)
+
+
+def test_an_older_session_stays_open_while_a_newer_open_one_wrote_the_same_field(
+        monkeypatch, tmp_path):
+    cfg = HilConfig(serial_remote="", state_dir=tmp_path)
+    older = _session(cfg, OLDER, 5000, [(INTERVAL[0], {INTERVAL[1]})])
+    newer = _session(cfg, NEWER, 6000, [(INTERVAL[0], {INTERVAL[1]})])
+    installation = {"interval_ms": 7000}
+    for _ in range(2):
+        _walk(monkeypatch, cfg, installation, stuck={NEWER})
+        assert installation["interval_ms"] == 5000
+        assert prod_state.open_sessions(cfg) == [newer, older]
+    _walk(monkeypatch, cfg, installation, stuck=set())
+    assert installation["interval_ms"] == 5000 and prod_state.open_sessions(cfg) == []
+
+
+def test_an_older_session_closes_when_no_newer_open_one_wrote_what_it_wrote(
+        monkeypatch, tmp_path):
+    cfg = HilConfig(serial_remote="", state_dir=tmp_path)
+    _session(cfg, OLDER, 5000, [(INTERVAL[0], {INTERVAL[1]})])
+    newer = _session(cfg, NEWER, 6000, [("device/9", {"name"})])
+    installation = {"interval_ms": 7000}
+    _walk(monkeypatch, cfg, installation, stuck={NEWER})
+    assert installation["interval_ms"] == 5000 and prod_state.open_sessions(cfg) == [newer]
+
+
+
+def test_an_unreadable_session_file_is_named_and_never_dropped(tmp_path):
+    cfg = HilConfig(serial_remote="", state_dir=tmp_path)
+    good = _session(cfg, OLDER, 5000, [])
+    torn, listed = (prod_state.session_path(cfg, stamp) for stamp in (NEWER, "2026-10-01"))
+    torn.write_text('{"taken_at": "2026-09-30T1')
+    listed.write_text("[]")
+    assert prod_state.open_sessions(cfg) == [good]
+    named = dict(prod_state.unreadable_sessions(cfg))
+    assert set(named) == {torn, listed}
+    assert "unreadable" in named[torn] and "names no taken_at" in named[listed]
+
+
+def test_a_session_whose_log_is_unreadable_or_of_another_controller_stays_open(
+        monkeypatch, tmp_path):
+    cfg = HilConfig(serial_remote="", state_dir=tmp_path)
+    torn = _session(cfg, OLDER, 5000, [(INTERVAL[0], {INTERVAL[1]})])
+    write_log.writes_path(torn).write_text("{torn")
+    moved = _session(cfg, NEWER, 6000, [(INTERVAL[0], {INTERVAL[1]})])
+    prod_state.save(dict(prod_state.load(moved), base="http://other"), moved)
+    restored, lines = [], []
+    monkeypatch.setattr(prod_state, "restore", lambda client, snap, writes, **kw:
+                        restored.append(snap["taken_at"]) or
+                        prod_state.Restoration([], [], True))
+    prod_state.restore_sessions(cfg, types.SimpleNamespace(base="http://dut"),
+                                prod_state.open_sessions(cfg), False, log=lines.append)
+    assert restored == [] and prod_state.open_sessions(cfg) == [moved, torn]
+    assert any("http://other" in line for line in lines)
+    assert any("unreadable" in line for line in lines)
+
+
+def _full_session(cfg, stamp, interval, touched=None):
+    path = prod_state.session_path(cfg, stamp)
+    snap = _snap()
+    snap["settings"]["poller"]["interval_ms"] = interval
+    prod_state.save(dict(snap, taken_at=stamp, session_open=True), path)
+    if touched is not None:
+        write_log.WriteLog(stamp, "http://dut", write_log.writes_path(path)).note(touched)
+    return path
+
+
+def test_a_session_that_never_closes_retires_once_every_older_one_holds_its_snapshot(
+        monkeypatch, tmp_path):
+    cfg = HilConfig(serial_remote="", state_dir=tmp_path)
+    older = _full_session(cfg, OLDER, 5000, [(INTERVAL[0], {INTERVAL[1]})])
+    stuck = _full_session(cfg, NEWER, 6000)
+    now = copy.deepcopy(_snap())
+    now["settings"]["poller"]["interval_ms"] = 6000
+    monkeypatch.setattr(prod_state, "capture", lambda api, prime=True, log=print: now)
+    client, lines = types.SimpleNamespace(base="http://dut"), []
+    assert not prod_state.retire(cfg, client, stuck, log=lines.append)
+    assert prod_state.open_sessions(cfg) == [stuck, older]
+    assert any("settings/poller.interval_ms 5000 -> 6000" in line for line in lines)
+    now["settings"]["poller"]["interval_ms"] = 5000
+    assert prod_state.retire(cfg, client, stuck, log=lines.append)
+    assert prod_state.open_sessions(cfg) == [older]
+    assert prod_state.read_session(stuck)["retired"] is True
+    assert not prod_state.retire(cfg, client, stuck, log=lines.append)
