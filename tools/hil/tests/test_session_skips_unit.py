@@ -192,6 +192,9 @@ def test_a_guard_refusal_during_a_test_is_a_skip_that_names_its_cause():
 def test_the_default_run_is_read_only(monkeypatch):
     monkeypatch.delenv("HIL_LAMPS_READ_ONLY", raising=False)
     assert HilConfig(serial_remote="").lamps_read_only
+    for value in ("", " ", "false", "no", "1"):
+        monkeypatch.setenv("HIL_LAMPS_READ_ONLY", value)
+        assert HilConfig(serial_remote="").lamps_read_only, value
     monkeypatch.setenv("HIL_LAMPS_READ_ONLY", "0")
     assert not HilConfig(serial_remote="").lamps_read_only
 
