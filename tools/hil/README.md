@@ -90,39 +90,29 @@ HIL_BASE=http://127.0.0.1:9 HIL_SERIAL_REMOTE= HIL_NO_CAMERA=1 \
 
 ## The installation is production
 
-The suite is built to run on production lighting ([STRATEGY.md](STRATEGY.md) §2), and its
-standing rules — the go-ahead for visible actions, what is always allowed, which
-lamps, save and restore, reboots, destructive tests, exclusive use — are STRATEGY §4.
-`HIL_LAMP_SHORTS` names the lamps a test may drive; set `HIL_GEAR_SHORTS` on every
-run — empty, the default, means every gear in the registry.
+The suite runs on production lighting ([STRATEGY.md](STRATEGY.md) §2) under the standing
+rules of STRATEGY §4. `HIL_LAMP_SHORTS` names the lamps a test may drive; set
+`HIL_GEAR_SHORTS` on every run — empty, the default, means every gear in the registry.
 
 The lamp guard (`hil/lamp_guard.py`) enforces `HIL_LAMP_SHORTS` and
-`HIL_LAMPS_READ_ONLY` in the toolkit, whatever a test or a script selects. Every request `Client` sends (`_http`, `raw_request`,
-`raw_response`) and every frame the WB foreign master sends passes it first, and a
-refusal raises `LampNotAllowed`, naming the address and the reason, before anything
-reaches the wire:
+`HIL_LAMPS_READ_ONLY` in the toolkit, whatever a test or a script selects. Every request
+`Client` sends and every frame the WB foreign master sends passes it first, and a refusal
+raises `LampNotAllowed`, naming the address and the reason, before anything reaches the
+wire; during a test's setup or run it is reported as a skip that quotes it:
 
-- A physical-device, virtual-lamp (by its binding) or identify target, an attribute
-  write, or a diagnostic frame that writes the gear (DAPC, an opcode below `0x90`, or an
-  application extended command that the enabled device type makes a write) must address
-  a short in `HIL_LAMP_SHORTS`. Queries always pass. On `dali/raw` and the WB master the
-  enabled device type is the last `ENABLE DEVICE TYPE` that client sent, kept until a
-  frame passes, and with none an extended command is an unknown write; on `dali/command`
-  it is the one the firmware sends itself: DT6 for an opcode of its table, DT8
-  otherwise. A virtual lamp whose binding cannot be read, or an identify naming no
-  short, is refused.
+- A target-state, identify or attribute write, or a diagnostic frame that writes the gear
+  (DAPC, an opcode below `0x90`, an extended command its enabled device type makes a
+  write), must address a short in `HIL_LAMP_SHORTS`; queries always pass. The device type
+  is the last `ENABLE DEVICE TYPE` the client sent (`dali/raw`, the WB master; with none,
+  an unknown write) or the one the firmware sends itself (`dali/command`). A virtual lamp
+  whose binding cannot be read, or an identify naming no short, is refused.
 - A group or broadcast frame, a group target-state and a scene recall pass only when
   every present gear on the segment is in `HIL_LAMP_SHORTS`.
 - Under `HIL_LAMPS_READ_ONLY=1` every visible action is refused: target-state, identify,
-  scene recall, and a frame that is DAPC, an arc-power command (`GO TO SCENE`
-  included), `RESET`, `IDENTIFY DEVICE`, a DT8 `ACTIVATE`, xy or Tc step or
-  `START AUTO CALIBRATION`, a DT6 `REFERENCE SYSTEM POWER` or `SELECT DIMMING CURVE`, or
-  an extended write for a device type the guard does not classify. A new level or Tc
-  limit moves a lit lamp into its range at once, and a new curve changes its output, so
-  `SET MAX LEVEL`, `SET MIN LEVEL`, the DT8 `STORE COLOUR TEMPERATURE Tc LIMIT` and an
-  attribute write of `max_level`, `min_level`, `dimming_curve`, `tc_coolest_mirek` or
-  `tc_warmest_mirek` are visible too. Other configuration writes to an allowed lamp
-  still pass (STRATEGY §4).
+  scene recall, and every frame or attribute write that changes what a lit lamp shows —
+  arc power, colour activation and steps, a new level or Tc limit (it moves a lit lamp
+  into range), a new dimming curve (the lists are `VISIBLE_*` in `hil/lamp_guard.py`).
+  Other configuration writes to an allowed lamp still pass (STRATEGY §4).
 - A `/api/v1/dali/*` request whose body names no frame the guard can read is refused.
 - Commissioning is refused — the steps, address changes, replacements, a
   `commission_unaddressed` run, the input-device commission and every special frame but
@@ -130,8 +120,9 @@ reaches the wire:
   with `HIL_ALLOW_VIRTUAL_COMMISSIONING=1`.
 - A group or scene apply passes only when every virtual lamp whose row it writes is bound
   to a lamp of `HIL_LAMP_SHORTS`, and never under read-only.
-- A 24-bit frame from the WB master is refused when an enabled owner rule could fire on
-  its event, and when it is a command.
+- A 24-bit frame from the WB master is refused under read-only, since a forged input event
+  reaches automations the toolkit cannot see (Home Assistant, Node-RED, wb-rules), when an
+  enabled owner rule could fire on its event, and when it is a command.
 - HCL schedules, rules, MQTT commands and the policy apply reach lamps inside the
   controller, past the guard: a test that uses them asks the guard before its first
   action (`drive_allowed` and `allowed_bound_lamp` in `tests/hil_test_guards.py`) for each
@@ -142,7 +133,14 @@ reaches the wire:
   lamps or their groups. A test moves the controller's clock (`clock_guard`) only on its
   first call, never under read-only, and skips while an owner rule fires at a time of day
   or at the sun.
-- A refusal while a test sets up or runs is reported as a skip that quotes it.
+
+A run with no `HIL_*` flag writes only this, each put back by its test or guard: the
+adapter's name; group 15's and a scene's name and Home Assistant exposure (HIL-GRP-03,
+HIL-SCN-03); the Home Assistant bridge's settings, moved to the `hiltest` namespace (the
+owner's entities are unavailable meanwhile), and one virtual lamp's exposure (`ha_bridge`
+tests, `ha_guard`); the poller's settings (`test_poller`, `poller_guard`); and a poller
+the owner left on, off for the session (`bench_baseline`). HIL-INP-02 and 03 rewrite the
+panel's instance group membership with the value it holds; scans refresh the registry.
 
 ## Save and restore
 
