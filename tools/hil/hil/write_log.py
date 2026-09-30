@@ -1,3 +1,4 @@
+import contextlib
 import json
 import re
 from urllib.parse import unquote
@@ -210,12 +211,14 @@ class WriteLog:
 _SESSION = {"log": None}
 
 
-def start(log):
+@contextlib.contextmanager
+def recording(log):
+    previous = _SESSION["log"]
     _SESSION["log"] = log
-
-
-def stop():
-    _SESSION["log"] = None
+    try:
+        yield log
+    finally:
+        _SESSION["log"] = previous
 
 
 def note(base, keys):

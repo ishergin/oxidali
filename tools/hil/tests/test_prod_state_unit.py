@@ -860,8 +860,7 @@ class _Driving:
 
 def test_a_lamp_a_test_drives_through_the_controller_is_named_in_the_write_log():
     api, log = _Driving({2, 3}, [2, 3]), write_log.WriteLog("t", "http://dut")
-    write_log.start(log)
-    try:
+    with write_log.recording(log):
         hil_test_guards.drive_allowed(api, 2, "a rule on SA2")
         assert log.changed("shown/2", exact=True) and not log.changed("shown/3", exact=True)
         hil_test_guards.drive_allowed(api, TARGET_SEGMENT, "a broadcast")
@@ -869,8 +868,6 @@ def test_a_lamp_a_test_drives_through_the_controller_is_named_in_the_write_log()
         with pytest.raises(pytest.skip.Exception):
             hil_test_guards.drive_allowed(_Driving({2}, [2]), 7, "a rule on SA7")
         assert not log.changed("shown/7", exact=True)
-    finally:
-        write_log.stop()
 
 
 INTERVAL = ("settings/poller", "interval_ms")

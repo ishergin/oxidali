@@ -82,15 +82,37 @@ def test_a_write_log_answers_by_field_and_wildcard_and_survives_a_killed_session
 
 def test_only_the_session_log_of_the_same_controller_is_written():
     log = WriteLog("t1", "http://dut")
-    write_log.start(log)
-    try:
+    with write_log.recording(log):
         write_log.note("http://peer", [("settings/poller", {"enabled"})])
         write_log.note("http://dut", [("device/2", {"name"})])
         write_log.note(None, [("gear/2", {ALL})])
-    finally:
-        write_log.stop()
     write_log.note("http://dut", [("device/3", {"name"})])
     assert sorted(log.touched) == ["device/2", "gear/2"]
+
+
+def test_a_nested_recording_hands_the_session_log_back_when_it_ends():
+    session, unit = WriteLog("t1", "http://dut"), WriteLog("t2", "http://dut")
+    with write_log.recording(session):
+        with write_log.recording(unit):
+            write_log.note("http://dut", [("device/2", {"name"})])
+        write_log.note("http://dut", [("device/3", {"name"})])
+    assert sorted(unit.touched) == ["device/2"]
+    assert sorted(session.touched) == ["device/3"]
+
+
+@pytest.fixture(scope="module")
+def outer_session_log():
+    log = WriteLog("session", "http://dut")
+    with write_log.recording(log):
+        yield log
+
+
+def test_a_unit_test_writes_nothing_into_the_session_log(outer_session_log):
+    write_log.note("http://dut", [("device/5", {"name"})])
+    with write_log.recording(WriteLog("t2", "http://dut")):
+        write_log.note("http://dut", [("device/6", {"name"})])
+    write_log.note(None, [("gear/7", {ALL})])
+    assert outer_session_log.touched == {}
 
 
 def test_an_mqtt_command_may_move_any_lamp_and_a_wildcard_is_no_exact_answer():
@@ -114,12 +136,9 @@ def test_a_reboot_the_toolkit_provokes_may_move_any_lamp():
     client = hil.api.Client(dataclasses.replace(load_config(), lamps_read_only=False))
     client.http = _NoRules()
     log = WriteLog("t1", client.base)
-    write_log.start(log)
-    try:
+    with write_log.recording(log):
         with client.expect_reboot():
             pass
-    finally:
-        write_log.stop()
     assert log.changed("shown/5") and not log.changed("gear/5")
 
 
