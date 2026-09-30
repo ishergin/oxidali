@@ -46,6 +46,7 @@ pub struct InputState {
     pub adapter_id: u8,
     pub short_address: u8,
     pub instance_number: u8,
+    pub instance_type: Option<u8>,
     pub occupied: Option<bool>,
     pub light: Option<u16>,
     pub position: Option<u16>,

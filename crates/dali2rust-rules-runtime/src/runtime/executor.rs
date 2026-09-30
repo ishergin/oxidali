@@ -3,13 +3,15 @@ use std::sync::atomic::Ordering;
 use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, PublishResult};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
-    ColorMode, ColorValue, DaliRecallSceneCommand, DaliSetTargetStateCommand, DaliStopFadeCommand,
-    DaliTargetScope, FixedText32, HclOverrideClearCommand, HclOverrideHoldCommand,
-    HclOverrideTarget, HclScheduleEnableCommand, LightSetpoint, MqttPublishCommand, Origin,
-    PowerState, SceneApplyExecuteCommand,
+    ColorMode, ColorValue, Dali103InstanceAction, Dali103InstanceActionCommand,
+    DaliRecallSceneCommand, DaliSetTargetStateCommand, DaliStopFadeCommand, DaliTargetScope,
+    FixedText32, HclOverrideClearCommand, HclOverrideHoldCommand, HclOverrideTarget,
+    HclScheduleEnableCommand, LightSetpoint, MqttPublishCommand, Origin, PowerState,
+    SceneApplyExecuteCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_rules_model::LightTarget;
+use dali2rust_rules_model::refs::instance_type;
+use dali2rust_rules_model::{InputRef, LightTarget};
 
 use crate::runtime::engine::{Effect, LightVerb, WorldSnapshot};
 use crate::runtime::worker::RulesWorkerCounters;
@@ -159,7 +161,7 @@ impl EffectExecutor<'_> {
             Effect::InputFeedback { .. }
             | Effect::PanelSelect { .. }
             | Effect::CancelHold { .. }
-            | Effect::CatchMovement { .. } => self.input_effect(effect, corr),
+            | Effect::CatchMovement { .. } => self.input_effect(effect, snapshot, corr),
             Effect::MqttPublish { .. } | Effect::Log { .. } | Effect::StatCount { .. } => {
                 self.state_effect(effect, corr)
             }
@@ -190,7 +192,7 @@ impl EffectExecutor<'_> {
         }
     }
 
-    fn input_effect(&self, effect: &Effect, corr: u64) -> bool {
+    fn input_effect(&self, effect: &Effect, snapshot: &WorldSnapshot, corr: u64) -> bool {
         match effect {
             Effect::InputFeedback { input, on } => self.feedback_drive(
                 Some(input.device_short_address),
@@ -204,8 +206,11 @@ impl EffectExecutor<'_> {
             Effect::PanelSelect { adapter_id, group, selected } => {
                 self.feedback_drive(None, None, Some(*group), 2, *selected, *adapter_id, corr)
             }
-            Effect::CancelHold { .. } | Effect::CatchMovement { .. } => {
-                self.unmapped(&self.counters.input_action_unmapped)
+            Effect::CancelHold { input } => {
+                self.instance_action(input, Dali103InstanceAction::CancelHoldTimer, snapshot, corr)
+            }
+            Effect::CatchMovement { input } => {
+                self.instance_action(input, Dali103InstanceAction::CatchMovement, snapshot, corr)
             }
             _ => self.misrouted(),
         }
@@ -371,6 +376,30 @@ impl EffectExecutor<'_> {
         )
     }
 
+    fn instance_action(
+        &self,
+        input: &InputRef,
+        action: Dali103InstanceAction,
+        snapshot: &WorldSnapshot,
+        corr: u64,
+    ) -> bool {
+        let known = snapshot
+            .input(input.adapter_id, input.device_short_address, input.instance_number)
+            .and_then(|state| state.instance_type);
+        if known != Some(instance_type::OCCUPANCY) {
+            return false;
+        }
+        self.publish(
+            corr,
+            Dali103InstanceActionCommand {
+                registry_adapter_id: input.adapter_id,
+                short_address: input.device_short_address,
+                instance_number: input.instance_number,
+                action,
+            },
+        )
+    }
+
     fn mqtt(&self, topic: &str, payload: &str, retain: bool, corr: u64) -> bool {
         self.publish(
             corr,
@@ -384,11 +413,6 @@ impl EffectExecutor<'_> {
 
     fn unbound_lamp(&self) -> bool {
         self.counters.effects_unbound.fetch_add(1, Ordering::Relaxed);
-        false
-    }
-
-    fn unmapped(&self, cell: &std::sync::atomic::AtomicU32) -> bool {
-        cell.fetch_add(1, Ordering::Relaxed);
         false
     }
 

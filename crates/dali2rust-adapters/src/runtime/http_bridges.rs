@@ -1317,11 +1317,12 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
             .rules_input_rows()
             .into_iter()
             .map(
-                |(adapter_id, short_address, instance_number, occupied, light)| {
+                |(adapter_id, short_address, instance_number, instance_type, occupied, light)| {
                     dali2rust_rules_runtime::runtime::engine::InputState {
                         adapter_id,
                         short_address,
                         instance_number,
+                        instance_type,
                         occupied,
                         light,
                         position: None,

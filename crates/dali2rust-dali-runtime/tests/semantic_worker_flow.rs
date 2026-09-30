@@ -111,11 +111,16 @@ struct TestReadPort {
     gear_features: HashMap<(u8, u8), u8>,
     repair_forbidden: std::collections::HashSet<(u8, u8)>,
     passive: bool,
+    instance_types: HashMap<(u8, u8, u8), u8>,
 }
 
 impl RegistryReadPort for TestReadPort {
     fn application_controller_active(&self) -> bool {
         !self.passive
+    }
+
+    fn input_instance_type(&self, adapter_id: u8, short: u8, instance: u8) -> Option<u8> {
+        self.instance_types.get(&(adapter_id, short, instance)).copied()
     }
 
     fn virtual_lamp_snapshot(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> VirtualLampSnapshot {
@@ -378,6 +383,7 @@ fn refused_requests() -> Vec<BusCommandPayload> {
         m::DaliRecallLastActiveLevelCommand { registry_adapter_id: 0, scope: HclTargetScope::Broadcast, group_id: None }.into(),
         m::DaliStopFadeCommand { registry_adapter_id: 0, scope: DaliTargetScope::Broadcast, virtual_lamp_id: 0, short_address: 0, group_id: 0 }.into(),
         m::Dali103FeedbackDriveCommand { registry_adapter_id: 0, action: 0, short_address: Some(5), feature_number: None, feature_group: None, selected_group: 0, opcode_map: 0 }.into(),
+        m::Dali103InstanceActionCommand { registry_adapter_id: 0, short_address: 5, instance_number: 2, action: m::Dali103InstanceAction::CancelHoldTimer }.into(),
         m::Dali103HandoverCommand { registry_adapter_id: 0, peer_short_address: 7 }.into(),
         m::Dali103ArbitrationProbeCommand { registry_adapter_id: 0 }.into(),
         m::DaliBusHealthProbeCommand { registry_adapter_id: 0 }.into(),
@@ -998,4 +1004,82 @@ fn a_passive_controller_refuses_a_feedback_drive_on_the_confirmation() {
     let error = conf.confirmation.error.as_ref().expect("a refusal names its cause");
     assert_eq!(error.message.as_str(), "controller_passive");
     assert!(harness.sent_frames24.lock().unwrap().is_empty());
+}
+
+const SENSOR_SHORT: u8 = 5;
+const SENSOR_INSTANCE: u8 = 2;
+const BUTTON_INSTANCE: u8 = 0;
+const OCCUPANCY_TYPE: u8 = 3;
+const BUTTON_TYPE: u8 = 1;
+
+fn sensor_read_port() -> TestReadPort {
+    TestReadPort {
+        enabled: true,
+        instance_types: HashMap::from([
+            ((0, SENSOR_SHORT, SENSOR_INSTANCE), OCCUPANCY_TYPE),
+            ((0, SENSOR_SHORT, BUTTON_INSTANCE), BUTTON_TYPE),
+        ]),
+        ..Default::default()
+    }
+}
+
+fn instance_action(
+    instance_number: u8,
+    action: dali2rust_contracts::msg::Dali103InstanceAction,
+) -> BusCommandPayload {
+    dali2rust_contracts::msg::Dali103InstanceActionCommand {
+        registry_adapter_id: 0,
+        short_address: SENSOR_SHORT,
+        instance_number,
+        action,
+    }
+    .into()
+}
+
+#[test]
+fn an_occupancy_sensor_takes_each_instance_action_as_one_24_bit_frame() {
+    use dali2rust_contracts::msg::Dali103InstanceAction as Action;
+    let harness = WorkerHarness::new(Arc::new(sensor_read_port()), ControllerMode::NoAnswer);
+    for (corr, action) in [(201u64, Action::CancelHoldTimer), (202, Action::CatchMovement)] {
+        harness.publish(envelope_on_adapter_0(corr, instance_action(SENSOR_INSTANCE, action)));
+        let conf = harness.recv_confirmation_for(corr);
+        assert_eq!(conf.status, DeliveryStatus::Ok, "{action:?}");
+    }
+    assert_eq!(
+        harness.sent_frames24.lock().unwrap().as_slice(),
+        &[[0x0B, 0x02, 0x24], [0x0B, 0x02, 0x20]],
+        "short 5, instance 2: CANCEL HOLD TIMER then CATCH MOVEMENT, each sent once"
+    );
+    assert!(harness.sent_commands.lock().unwrap().is_empty(), "no 16-bit frame");
+}
+
+#[test]
+fn an_instance_that_is_not_known_as_an_occupancy_sensor_is_refused_by_name() {
+    use dali2rust_contracts::msg::Dali103InstanceAction as Action;
+    let unknown_instance = 7;
+    for (corr, instance) in [(211u64, BUTTON_INSTANCE), (212, unknown_instance)] {
+        let harness = WorkerHarness::new(Arc::new(sensor_read_port()), ControllerMode::NoAnswer);
+        harness.publish(envelope_on_adapter_0(corr, instance_action(instance, Action::CancelHoldTimer)));
+        let conf = harness.recv_confirmation_for(corr);
+        assert_eq!(conf.status, DeliveryStatus::ExecutionFailed, "instance {instance}");
+        let error = conf.confirmation.error.as_ref().expect("a refusal names its cause");
+        assert_eq!(error.code, ErrorCode::Conflict);
+        assert_eq!(error.message.as_str(), "input_instance_not_occupancy");
+        assert_nothing_reached_the_wire(&harness, "an instance action");
+    }
+}
+
+#[test]
+fn a_passive_controller_refuses_an_instance_action_on_the_confirmation() {
+    let passive = TestReadPort { passive: true, ..sensor_read_port() };
+    let harness = WorkerHarness::new(Arc::new(passive), ControllerMode::NoAnswer);
+    harness.publish(envelope_on_adapter_0(
+        221,
+        instance_action(SENSOR_INSTANCE, dali2rust_contracts::msg::Dali103InstanceAction::CatchMovement),
+    ));
+    let conf = harness.recv_confirmation_for(221);
+    assert_eq!(conf.status, DeliveryStatus::ExecutionFailed);
+    let error = conf.confirmation.error.as_ref().expect("a refusal names its cause");
+    assert_eq!(error.message.as_str(), "controller_passive");
+    assert_nothing_reached_the_wire(&harness, "an instance action");
 }

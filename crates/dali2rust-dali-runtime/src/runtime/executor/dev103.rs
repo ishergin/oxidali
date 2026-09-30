@@ -1,9 +1,9 @@
 use dali2rust_domain::dali::controller::{DaliApplicationController, Frame24Fault};
+use dali2rust_contracts::msg::Dali103InstanceAction;
 use dali2rust_domain::dali::dev103::{
     Button301Command, Device103Address, Device103Command, EventScheme, InitialiseScope103,
-    ForwardFrame24, Instance103Command, InstanceAddress, ShortAddressOperand, Special103Command,
-    MAX_INSTANCE_INDEX,
-    MAX_SHORT_ADDRESS,
+    ForwardFrame24, Instance103Command, InstanceAddress, Occupancy303Command, ShortAddressOperand,
+    Special103Command, MAX_INSTANCE_INDEX, MAX_SHORT_ADDRESS,
 };
 use dali2rust_domain::dali::pres::DaliResponse;
 
@@ -474,6 +474,21 @@ pub fn identify_device(
         controller,
         Device103Command::IdentifyDevice.frame(Device103Address::Short(short_address)),
     )
+}
+
+pub fn run_instance_action(
+    controller: &mut impl DaliApplicationController,
+    short_address: u8,
+    instance_number: u8,
+    action: Dali103InstanceAction,
+) -> Result<(), SemanticDaliError> {
+    let command = match action {
+        Dali103InstanceAction::CancelHoldTimer => Occupancy303Command::CancelHoldTimer,
+        Dali103InstanceAction::CatchMovement => Occupancy303Command::CatchMovement,
+    };
+    let address = Device103Address::Short(short_address);
+    send(controller, command.frame(address, InstanceAddress::Number(instance_number)), false)?;
+    Ok(())
 }
 
 // IEC 62386-103 §9.9.3

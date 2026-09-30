@@ -607,6 +607,13 @@ pub enum HclOverrideTarget {
     VirtualLamp { virtual_lamp_id: u8 },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum Dali103InstanceAction {
+    CancelHoldTimer = 0,
+    CatchMovement = 1,
+}
+
 #[cfg(test)]
 mod status_name_tests {
     use super::OperationStatus;

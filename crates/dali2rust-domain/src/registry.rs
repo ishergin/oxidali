@@ -1231,6 +1231,12 @@ pub trait RegistryReadPort: Send + Sync {
         adapter_id: u8,
         short_address: u8,
     ) -> bool;
+    fn input_instance_type(
+        &self,
+        adapter_id: u8,
+        short_address: u8,
+        instance_number: u8,
+    ) -> Option<u8>;
 }
 
 pub trait AdapterEnabledReadPort: Send + Sync {

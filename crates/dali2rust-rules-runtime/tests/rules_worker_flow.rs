@@ -57,7 +57,10 @@ impl dali2rust_rules_runtime::RulesWorldPort for EmptyWorld {
         Vec::new()
     }
     fn inputs(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::InputState> {
-        Vec::new()
+        vec![
+            input_state(OCCUPANCY_SENSOR.0, OCCUPANCY_SENSOR.1, OCCUPANCY_TYPE),
+            input_state(PUSH_BUTTON.0, PUSH_BUTTON.1, PUSH_BUTTON_TYPE),
+        ]
     }
     fn hcl(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::HclTargetState> {
         vec![dali2rust_rules_runtime::runtime::engine::HclTargetState {
@@ -81,6 +84,28 @@ impl dali2rust_rules_runtime::RulesWorldPort for EmptyWorld {
     }
 }
 
+const OCCUPANCY_SENSOR: (u8, u8) = (3, 0);
+const PUSH_BUTTON: (u8, u8) = (3, 1);
+const OCCUPANCY_TYPE: u8 = 3;
+const PUSH_BUTTON_TYPE: u8 = 1;
+
+fn input_state(
+    short_address: u8,
+    instance_number: u8,
+    instance_type: u8,
+) -> dali2rust_rules_runtime::runtime::engine::InputState {
+    dali2rust_rules_runtime::runtime::engine::InputState {
+        adapter_id: 0,
+        short_address,
+        instance_number,
+        instance_type: Some(instance_type),
+        occupied: None,
+        light: None,
+        position: None,
+        last_event_age_ms: None,
+    }
+}
+
 const DOC: &str = "rule \"ночь\" {\n  when at 23:00\n  do broadcast.off()\n}\n";
 
 const EXECUTOR_OUTPUT: &[&str] = &[
@@ -93,6 +118,7 @@ const EXECUTOR_OUTPUT: &[&str] = &[
     "MqttPublishCommand",
     "HclScheduleEnableCommand",
     "HclOverrideHoldCommand",
+    "Dali103InstanceActionCommand",
 ];
 
 struct Harness {
@@ -926,7 +952,6 @@ fn stop_fade_publishes_its_own_command_for_a_group() {
 enum Landing {
     Bus(&'static str),
     BusVia(&'static str, &'static str),
-    Unmapped(&'static str),
     Counted(&'static str),
     NoEffect,
 }
@@ -960,8 +985,8 @@ const LANDINGS: &[(&str, &str, Landing)] = &[
     ("input_feedback_on", "input(3,0).feedback.on()", Landing::Bus("Dali103FeedbackDriveCommand")),
     ("input_feedback_off", "input(3,0).feedback.off()", Landing::Bus("Dali103FeedbackDriveCommand")),
     ("panel_select", "panel_select(group=4, selected=1)", Landing::Bus("Dali103FeedbackDriveCommand")),
-    ("input_cancel_hold", "input(3,0).cancel_hold()", Landing::Unmapped("input_action_unmapped")),
-    ("input_catch_movement", "input(3,0).catch_movement()", Landing::Unmapped("input_action_unmapped")),
+    ("input_cancel_hold", "input(3,0).cancel_hold()", Landing::Bus("Dali103InstanceActionCommand")),
+    ("input_catch_movement", "input(3,0).catch_movement()", Landing::Bus("Dali103InstanceActionCommand")),
     ("wait", "wait 1s", Landing::NoEffect),
     ("after", "after 1m do { log(\"x\") }", Landing::NoEffect),
     ("timer_start", "timer(\"t\").start(1m)", Landing::NoEffect),
@@ -1090,25 +1115,6 @@ fn every_bus_landing_reaches_the_bus_as_declared() {
             seen.iter().any(|name| name == expected),
             "{kind}: `{snippet}` was declared to land on {expected} and put \
              {seen:?} on the bus"
-        );
-    }
-}
-
-#[test]
-fn every_unmapped_landing_moves_its_counter_and_nothing_else() {
-    for (kind, snippet, landing) in LANDINGS {
-        let Landing::Unmapped(counter) = landing else {
-            continue;
-        };
-        let (seen, counters) = run_landing(kind, snippet);
-        assert!(
-            seen.is_empty(),
-            "{kind}: declared unmapped, yet it published {seen:?}"
-        );
-        assert!(
-            unmapped_counter(&counters, counter) > 0,
-            "{kind}: declared unmapped via `{counter}`, and that counter did \
-             not move — the no-op is invisible to an operator"
         );
     }
 }
@@ -1844,4 +1850,46 @@ fn a_resume_on_a_lamp_with_no_binding_lifts_nothing() {
     let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);
     assert_eq!(outcome("unbound"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
     assert_eq!(outcome("bound"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
+}
+
+const INSTANCE_ACTION_DOC: &str = "rule \"sensor\" {\n  when http trigger\n  do input(3,0).cancel_hold()\n     input(3,0).catch_movement()\n}\n\
+rule \"button\" {\n  when http trigger\n  do input(3,1).cancel_hold()\n}\n\
+rule \"unknown\" {\n  when http trigger\n  do input(4,0).catch_movement()\n}\n\
+rule \"marker\" {\n  when http trigger\n  do lamp(6).level(55)\n}\n";
+
+#[test]
+fn an_instance_action_goes_to_an_occupancy_sensor_and_fails_on_any_other_instance() {
+    use dali2rust_contracts::msg::Dali103InstanceAction as Action;
+    let h = harness("rules-instance-action");
+    publish_document(&h, 161, INSTANCE_ACTION_DOC, 0);
+    assert!(recv_signal(&h, 161).error.is_none());
+    wait_revision(&h.store, 1);
+
+    for (corr, name) in [(162u64, "button"), (163, "unknown"), (164, "sensor"), (165, "marker")] {
+        run_rule(&h, corr, name);
+        recv_signal(&h, corr);
+    }
+
+    let actions: Vec<(u8, u8, u8, Action)> = commands_before_the_marker(&h, 6)
+        .iter()
+        .filter_map(|payload| match payload {
+            dali2rust_contracts::msg::BusCommandPayload::Dali103InstanceActionCommand(cmd) => Some((
+                cmd.registry_adapter_id,
+                cmd.short_address,
+                cmd.instance_number,
+                cmd.action,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        actions,
+        vec![(0, 3, 0, Action::CancelHoldTimer), (0, 3, 0, Action::CatchMovement)],
+        "only the occupancy sensor is told, in the rule's order"
+    );
+    let runtime = h.store.rule_runtime();
+    let outcome = |name: &str| runtime.iter().find(|r| r.name == name).map(|r| r.last_outcome);
+    assert_eq!(outcome("sensor"), Some(dali2rust_rules_runtime::RuleOutcome::Ok));
+    assert_eq!(outcome("button"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
+    assert_eq!(outcome("unknown"), Some(dali2rust_rules_runtime::RuleOutcome::Failed));
 }

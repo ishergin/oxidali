@@ -202,6 +202,16 @@ async fn then_frames24_trace_exactly(world: &mut DaliWorld, trace: String) {
     );
 }
 
+// RULE-065 RULE-066
+#[then(regex = r#"^the mock transport 24-bit trace should eventually be exactly "([0-9A-Fa-f ,]+)"$"#)]
+async fn then_frames24_trace_eventually_exactly(world: &mut DaliWorld, trace: String) {
+    let expected = parse_frames24(&trace);
+    let mock = world.dali_mock().clone();
+    let sent = || mock.lock().expect("mock lock").sent_frames24();
+    wait_until(|| sent().len() >= expected.len(), PROJECT_TIMEOUT);
+    assert_eq!(sent(), expected, "the frames, their address bytes and their order are the contract");
+}
+
 fn parse_frames24(trace: &str) -> Vec<[u8; 3]> {
     trace
         .split(',')
@@ -231,7 +241,7 @@ async fn given_next_frame24_collides(world: &mut DaliWorld) {
     guard.script_frame24_outcome(TransferOutcome::Collision);
 }
 
-// INP-010 INP-011 INP-013 INP-016 INP-017 INP-019 INP-030 INP-031 INP-032 INP-074 INP-075 INP-076 INP-077 INP-078 RULE-020 RULE-023 INP-083
+// INP-010 INP-011 INP-013 INP-016 INP-017 INP-019 INP-030 INP-031 INP-032 INP-074 INP-075 INP-076 INP-077 INP-078 RULE-020 RULE-023 INP-083 RULE-065 RULE-066
 #[given(regex = r#"^the mock bus answers a control-device scan with a device at address 0 holding instance types "([0-9,]+)"$"#)]
 async fn given_scan_answers(world: &mut DaliWorld, types: String) {
     let types: Vec<u8> = types
@@ -255,7 +265,7 @@ async fn given_empty_segment(world: &mut DaliWorld) {
     guard.clear_frame24_answers();
 }
 
-// INP-006 INP-010 INP-011 INP-013 INP-016 INP-017 INP-018 INP-019 INP-030 INP-031 INP-032 INP-070 INP-071 INP-072 INP-073 INP-074 INP-075 INP-076 INP-077 INP-078 INP-079 INP-080 INP-081 INP-082 INP-083 INP-084 MQTT-025 RULE-020 RULE-023
+// INP-006 INP-010 INP-011 INP-013 INP-016 INP-017 INP-018 INP-019 INP-030 INP-031 INP-032 INP-070 INP-071 INP-072 INP-073 INP-074 INP-075 INP-076 INP-077 INP-078 INP-079 INP-080 INP-081 INP-082 INP-083 INP-084 MQTT-025 RULE-020 RULE-023 RULE-065 RULE-066
 #[when("input devices are scanned on adapter 0 and the scan succeeds")]
 async fn when_scan_succeeds(world: &mut DaliWorld) {
     world.send_http_request("POST", "/api/v1/adapters/0/input-devices/scan", None, "");
@@ -273,7 +283,7 @@ async fn when_scan_succeeds(world: &mut DaliWorld) {
     );
 }
 
-// INP-019 INP-030 INP-070 INP-072 INP-073 INP-076 INP-078
+// INP-019 INP-030 INP-070 INP-072 INP-073 INP-076 INP-078 RULE-065 RULE-066
 #[when("the mock transport 24-bit trace is cleared")]
 async fn when_clear_frames24(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear_sent_frames24();
@@ -291,7 +301,7 @@ async fn then_no_frames24(world: &mut DaliWorld) {
     );
 }
 
-// INP-084
+// INP-084 RULE-065
 #[then(regex = r"^the first 24-bit forward frame should be sent at priority (\d+)$")]
 async fn first_frame24_priority(world: &mut DaliWorld, expected: u8) {
     let settle_us = world.dali_mock().lock().expect("mock lock").sent_frame24_settle_us();
@@ -308,7 +318,7 @@ async fn first_frame24_priority(world: &mut DaliWorld, expected: u8) {
     );
 }
 
-// INP-084
+// INP-084 RULE-065
 #[then(regex = r"^24-bit forward frame (\d+) should be sent at priority (\d+)$")]
 async fn frame24_priority(world: &mut DaliWorld, ordinal: usize, expected: u8) {
     let settle_us = world.dali_mock().lock().expect("mock lock").sent_frame24_settle_us();

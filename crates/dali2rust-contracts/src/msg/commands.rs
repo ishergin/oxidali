@@ -1013,6 +1013,19 @@ declare_bus_payloads! {
         registry_adapter_id: u8::MAX,
         target: crate::msg::kinds::HclOverrideTarget::VirtualLamp { virtual_lamp_id: 63 },
     };
+
+    pub struct Dali103InstanceActionCommand {
+        pub registry_adapter_id: u8,
+        pub short_address: u8,
+        pub instance_number: u8,
+        pub action: super::kinds::Dali103InstanceAction,
+    }
+    budget = Dali103InstanceActionCommand {
+        registry_adapter_id: u8::MAX,
+        short_address: 63,
+        instance_number: 31,
+        action: crate::msg::kinds::Dali103InstanceAction::CatchMovement,
+    };
 }
 
 impl FirmwareUpdateBeginCommand {

@@ -1,4 +1,5 @@
 use dali2rust_contracts::msg::PowerState;
+use dali2rust_domain::dali::dev103::instance_type;
 
 use super::groups::GROUP_COUNT;
 use super::store::RegistryStore;
@@ -6,7 +7,7 @@ use super::store::RegistryStore;
 pub type RulesLampRow = (u8, u16, bool, Option<u8>, Option<u16>, Option<u8>, bool);
 pub type RulesGroupRow = (u8, u16, bool, u8);
 pub type RulesDeviceRow = (u8, u8, bool);
-pub type RulesInputRow = (u8, u8, u8, Option<bool>, Option<u16>);
+pub type RulesInputRow = (u8, u8, u8, Option<u8>, Option<bool>, Option<u16>);
 
 const ONLINE_WINDOW_MS: u64 = 15 * 60 * 1_000;
 
@@ -65,13 +66,13 @@ impl RegistryStore {
         let mut rows = Vec::new();
         for ((adapter, short), record) in &g.input_devices {
             for inst in &record.instances {
-                let occupied = (inst.instance_type == Some(3))
+                let occupied = (inst.instance_type == Some(instance_type::OCCUPANCY))
                     .then(|| inst.input_value.map(|v| v & 0x02 != 0))
                     .flatten();
-                let light = (inst.instance_type == Some(4))
+                let light = (inst.instance_type == Some(instance_type::LIGHT_SENSOR))
                     .then_some(inst.input_value)
                     .flatten();
-                rows.push((*adapter, *short, inst.instance_number, occupied, light));
+                rows.push((*adapter, *short, inst.instance_number, inst.instance_type, occupied, light));
             }
         }
         rows.sort_unstable();

@@ -310,6 +310,15 @@ impl Occupancy303Command {
             uses_dtr0,
         }
     }
+
+    #[must_use]
+    pub const fn frame(
+        self,
+        address: Device103Address,
+        instance: InstanceAddress,
+    ) -> ForwardFrame24 {
+        ForwardFrame24::command(address, instance, self.metadata().opcode)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

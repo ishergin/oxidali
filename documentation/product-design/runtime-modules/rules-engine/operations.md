@@ -403,8 +403,11 @@ Home Assistant, из HCL и из сцен.
 |---|---|
 | `input(d,i).feedback.on()` / `.off()` | `ACTIVATE` / `STOP FEEDBACK` на один инстанс |
 | `panel_select(group=G, selected=N)` | Радиокнопки индикации: `SELECT FEEDBACK(G)` с выбранной опцией `N` — [модуль input devices](../input-devices/README.md) §Индикация |
-| `input(d,i).cancel_hold()` | 303: принудительный переход в vacant, не дожидаясь T_hold — **не исполняется** |
-| `input(d,i).catch_movement()` | 303: одноразовое movement-уведомление при выключенном фильтре — **не исполняется** |
+| `input(d,i).cancel_hold()` | 303 `CANCEL HOLD TIMER`: принудительный переход в vacant, не дожидаясь T_hold |
+| `input(d,i).catch_movement()` | 303 `CATCH MOVEMENT`: одноразовое movement-уведомление при выключенном фильтре |
+
+Оба — один 24-битный кадр на адрес инстанса и только для датчика присутствия: инстанс,
+который реестр не знает как датчик присутствия (тип 3), — отказ эффекта до провода.
 
 ### 4.5 Время, задержки, последовательности
 

@@ -146,6 +146,10 @@ impl RegistryReadPort for EnabledAdapter {
         true
     }
 
+    fn input_instance_type(&self, _adapter_id: u8, _short: u8, _instance: u8) -> Option<u8> {
+        None
+    }
+
     fn virtual_lamp_snapshot(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> VirtualLampSnapshot {
         VirtualLampSnapshot::default()
     }

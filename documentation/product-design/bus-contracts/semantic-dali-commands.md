@@ -136,6 +136,7 @@ target-state, а непривязанная даёт `vl_unbound`. Recall-фак
 | `Dali103IdentifyCommand` | Процедура опознания самого устройства | по кадру |
 | `Dali103FeedbackConfigureCommand` | NVM-переменные видимой индикации Part 332; каждое поле с readback'ом | по шагу |
 | `Dali103FeedbackDriveCommand` | `ACTIVATE` / `STOP` / `SELECT FEEDBACK` одним кадром; REST-двери нет | по кадру |
+| `Dali103InstanceActionCommand` | Part 303 `CANCEL HOLD TIMER` / `CATCH MOVEMENT` одним кадром на адрес инстанса; инстанс, который реестр не знает как датчик присутствия, отвергается `input_instance_not_occupancy`; REST-двери нет | по кадру |
 | `Dali103ArbitrationProbeCommand` | Широковещательный `QUERY APPLICATION CONTROLLER ENABLED` (DiiA 351 §7) на приоритете 5; единственный вид, проходящий гейт пассивного контроллера | никогда |
 | `Dali103HandoverCommand` | Пара `ENABLE APPLICATION CONTROLLER` пиру, затем собственный уход в пассив; направление одно (103 §9.9.1) | никогда |
 

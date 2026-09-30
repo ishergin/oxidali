@@ -230,6 +230,14 @@ const WIRE_CLASSES: &[WireClass] = &[
         false,
         TransactionPriority::UserAction,
     ),
+    // IEC 62386-103 §9.13.1
+    class(
+        "Dali103InstanceActionCommand",
+        WirePriority::Interactive,
+        YieldGranularity::Frame,
+        false,
+        TransactionPriority::UserAction,
+    ),
 ];
 
 fn row(variant: &str) -> Option<&'static WireClass> {

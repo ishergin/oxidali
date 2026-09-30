@@ -53,7 +53,8 @@
   сцены; `HclOverrideClearCommand` — `hcl.resume`; `HclOverrideHoldCommand` — `hcl.hold`;
   `HclScheduleEnableCommand` —
   `hcl.enable` / `hcl.disable` (исполняет реестр); `Dali103FeedbackDriveCommand` —
-  индикация; `MqttPublishCommand` — `mqtt.publish` (исполняет мост, со своим
+  индикация; `Dali103InstanceActionCommand` — `cancel_hold` / `catch_movement` датчика
+  присутствия; `MqttPublishCommand` — `mqtt.publish` (исполняет мост, со своим
   ограничителем); `RulesActivationEvent` на каждую активацию и `RulesChangedEvent` на
   смену документа; сигнал операции записи — через `publish_required`.
 
