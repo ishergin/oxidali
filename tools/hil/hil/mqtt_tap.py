@@ -1,6 +1,7 @@
 import json
 import subprocess
 
+from hil import write_log
 from hil.sniffer import ssh_argv
 
 
@@ -23,6 +24,7 @@ def retained_json(cfg, topic, timeout_s: float = 3.0):
 
 
 def publish(cfg, topic, payload, retain: bool = False):
+    write_log.note(None, write_log.topic_keys(topic))
     flag = " -r" if retain else ""
     cmd = "mosquitto_pub%s -t %s -m %s" % (flag, _sh_quote(topic), _sh_quote(payload))
     subprocess.run(ssh_argv(cfg, cmd), check=True, capture_output=True, timeout=15)

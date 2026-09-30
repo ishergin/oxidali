@@ -7,7 +7,7 @@ from hil import api as api_mod
 from hil import config as config_mod
 from hil import prod_state
 from hil import serialmon as serialmon_mod
-from hil import validity
+from hil import validity, write_log
 from hil.virtual_gear import run_enabled as virtual_gear_run
 from hil_harness import ANCHOR_TZ, UPTIME_SLACK_S, track, validity_of
 
@@ -48,17 +48,22 @@ def production_state(pytestconfig, request):
     snap = prod_state.capture(api)
     last = prod_state.last_path(cfg)
     pending = prod_state.unrestored(last)
+    writes = write_log.WriteLog(snap["taken_at"], api.base,
+                                None if pending else write_log.writes_path(last))
     if not pending:
         prod_state.save(dict(snap, session_open=True), last)
+        writes.save()
     prod_state.save(snap, request.getfixturevalue("run_dir") / "production_state_before.json")
     state["production_state"] = "captured %d devices at %s" % (
         len(snap["devices"]), snap["taken_at"])
     if pending:
         state["production_state_pending"] = str(last)
+    write_log.start(writes)
     try:
         yield snap
     finally:
-        residual = prod_state.restore(api, snap, drive_lamps=not cfg.lamps_read_only,
+        write_log.stop()
+        residual = prod_state.restore(api, snap, writes, drive_lamps=not cfg.lamps_read_only,
                                       lamp_shorts=cfg.lamp_short_set())
         if not residual and not pending:
             prod_state.mark_restored(last, snap)

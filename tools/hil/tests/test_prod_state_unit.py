@@ -10,7 +10,7 @@ import hil_test_guards
 import test_attributes
 import test_policies
 from hil import api as api_mod
-from hil import prod_state
+from hil import prod_state, write_log
 from hil.lamp_guard import GROUP_TARGET, LampNotAllowed, http_rule
 
 
@@ -199,7 +199,8 @@ def test_fast_fade_comes_after_the_snapshot_and_the_restore_takes_it_back():
         gear.attributes(10)["attributes"])}}}
     done, failed = prod_state.fast_fade(gear, [10], log=lambda _: None)
     assert (done, failed, gear.fade_ms) == ([10], [], 0)
-    prod_state._restore_gear_config(gear, snap, log=lambda _: None)
+    prod_state._restore_gear_config(gear, snap, lambda _: None,
+                                    write_log.WriteLog.everything("t", "b"))
     assert gear.writes == [(10, {"fade_time_ms": 0}), (10, {"fade_time_ms": 700})]
     assert gear.fade_ms == 700
 
@@ -263,6 +264,7 @@ def test_a_level_counts_as_written_only_with_a_fresh_confirmed_write():
 
 
 OWNER_DOC = 'rule "night" {\n  when at 23:00\n  do broadcast.off()\n}'
+RULES_WRITTEN = write_log.WriteLog("t", "http://dut", touched={"rules": {"*"}})
 TEST_RULE = http_rule("hil-vg-06-stop-fade", GROUP_TARGET, 4, "stop_fade()")
 
 
@@ -302,10 +304,12 @@ def _snap_rules(source, toggles):
 
 def test_the_session_takes_its_test_rules_out_and_puts_back_the_toggles_its_commit_reset():
     api = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": False, "hil-vg-06-stop-fade": True})
-    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None)
+    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None,
+                              RULES_WRITTEN)
     assert api.puts == [(OWNER_DOC, 7)] and api.patches == [("night", False)]
     moved = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": True, "hil-vg-06-stop-fade": True})
-    prod_state._restore_rules(moved, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None)
+    prod_state._restore_rules(moved, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None,
+                              RULES_WRITTEN)
     assert moved.puts == [(OWNER_DOC, 7)] and moved.patches == [] and moved.toggles["night"]
 
 
@@ -316,14 +320,16 @@ def test_an_owner_rule_written_after_a_test_rule_keeps_the_document_as_it_is():
     for joint in ("\n", "\n\n"):
         source = OWNER_DOC + "\n\n" + TEST_RULE + joint + OWNER_NEW
         api, log = _Rules(source, {"night": True}), []
-        prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append)
+        prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append,
+                                  RULES_WRITTEN)
         assert api.puts == [] and api.source == source
         assert any("someone else edited it" in line for line in log)
 
 
 def test_the_session_leaves_a_toggle_it_did_not_move_and_reports_it():
     api = _Rules(OWNER_DOC, {"night": True})
-    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None)
+    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": False}), lambda line: None,
+                              RULES_WRITTEN)
     assert api.puts == [] and api.patches == []
     assert "rule 'night' enabled False -> True" in prod_state.diff(
         {"rules": {"source": OWNER_DOC}, "rule_toggles": {"night": False}, **_bare()},
@@ -333,7 +339,8 @@ def test_the_session_leaves_a_toggle_it_did_not_move_and_reports_it():
 def test_an_owner_edit_is_left_in_place_and_reported():
     edited = OWNER_DOC.replace("23:00", "22:00")
     api, log = _Rules(edited, {"night": True}), []
-    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append)
+    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append,
+                                  RULES_WRITTEN)
     assert api.puts == [] and any("someone else edited it" in line for line in log)
     assert prod_state.diff(
         {"rules": {"source": OWNER_DOC}, "rule_toggles": {"night": False}, **_bare()},
@@ -366,7 +373,8 @@ def test_a_gear_config_the_guard_refuses_is_left_and_the_rest_restored(monkeypat
     gear, log = _Gear(), []
     snap = {"devices": {"6": {"config": {"fade_time_ms": 0}},
                         "7": {"config": {"fade_time_ms": 0}}}}
-    prod_state._restore_gear_config(gear, snap, log.append)
+    prod_state._restore_gear_config(gear, snap, log.append,
+                                    write_log.WriteLog.everything("t", "b"))
     assert gear.written == [7] and any("SA6 gear config left" in line for line in log)
 
 
@@ -456,7 +464,8 @@ def test_a_commit_that_fails_after_its_replace_still_leaves_the_test_rule_to_res
 def test_the_session_restore_leaves_test_rules_while_the_owner_has_delays_pending():
     for pending, why in ((1, "1 delayed action(s)"), (None, "reports no rules.")):
         api, log = _Rules(OWNER_DOC + "\n\n" + TEST_RULE, {"night": True}, pending=pending), []
-        prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append)
+        prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append,
+                                  RULES_WRITTEN)
         assert api.puts == [] and any("stay in the rules document" in line and why in line
                                       and "switched off" in line for line in log)
         assert api.patches == [("hil-vg-06-stop-fade", False)]
@@ -576,4 +585,173 @@ def test_the_override_probe_writes_only_a_refused_widening_to_a_lamp_it_may_not_
     assert allowed.patches == [(2, {"device_type_override": "dt8_color"}),
                                (2, {"device_type_override": "unknown"}),
                                (2, {"device_type_override": None})]
+
+
+def _writes(touched):
+    return write_log.WriteLog("t", "http://dut", touched=touched)
+
+
+class _Knob:
+    def __init__(self, state):
+        self.state, self.patches = dict(state), []
+
+    def get(self):
+        return dict(self.state)
+
+    def patch(self, body):
+        self.patches.append(body)
+        self.state.update(body)
+
+
+class _SettingsApi:
+    def __init__(self, poller, dali):
+        self.poller, self.dali_settings = _Knob(poller), _Knob(dali)
+        self.ha = _Knob({})
+        self.redundancy = types.SimpleNamespace(settings=lambda: {},
+                                                patch_settings=lambda body: None)
+
+
+def test_the_session_restore_writes_back_only_the_settings_the_toolkit_wrote():
+    api, lines = _SettingsApi({"enabled": True}, {"application_active": False}), []
+    snap = {"settings": {"poller": {"enabled": False}, "dali": {"application_active": True},
+                         "redundancy": {}, "ha": {}}}
+    prod_state._restore_settings(api, snap, lines.append,
+                                 _writes({"settings/poller": {"enabled"}}))
+    assert api.poller.patches == [{"enabled": False}] and api.dali_settings.patches == []
+    assert any("dali application_active" in line and "did not write" in line for line in lines)
+
+
+class _DeviceApi:
+    def __init__(self, record):
+        self.record, self.patches = dict(record), []
+
+    def state(self, short):
+        return dict(self.record)
+
+    def device_patch(self, short, body):
+        self.patches.append((short, body))
+
+
+def test_the_session_restore_leaves_a_device_field_the_owner_changed():
+    api, lines = _DeviceApi({"name": "b", "notes": "owner's"}), []
+    snap = {"devices": {"5": {"record": {"name": "a", "notes": "n"}}}}
+    prod_state._restore_devices(api, snap, lines.append, _writes({"device/5": {"name"}}))
+    assert api.patches == [(5, {"name": "a"})]
+    assert any("SA5 notes" in line and "did not write" in line for line in lines)
+
+
+class _HclApi:
+    def __init__(self, schedules):
+        self.schedules, self.calls = {s["schedule_id"]: s for s in schedules}, []
+        self.hcl = self
+
+    def list(self):
+        return list(self.schedules.values())
+
+    def delete(self, sid):
+        self.calls.append(("delete", sid))
+
+    def create(self, body):
+        self.calls.append(("create", body["schedule_id"]))
+
+    def patch(self, sid, body):
+        self.calls.append(("patch", sid, body))
+
+
+def test_the_session_restore_undoes_only_the_schedules_the_toolkit_wrote():
+    api, lines = _HclApi([{"schedule_id": "owner", "enabled": False, "points": [1]},
+                          {"schedule_id": "hil-x", "enabled": True},
+                          {"schedule_id": "owner-new", "enabled": True}]), []
+    snap = {"hcl": [{"schedule_id": "owner", "enabled": True, "points": [2]}]}
+    prod_state._restore_hcl(api, snap, lines.append,
+                            _writes({"hcl/owner": {"enabled"}, "hcl/hil-x": {"*"}}))
+    assert sorted(api.calls, key=str) == [("delete", "hil-x"),
+                                          ("patch", "owner", {"enabled": True})]
+    assert any("owner-new" in line for line in lines)
+    assert any("owner points" in line and "did not write" in line for line in lines)
+
+
+class _GearApi:
+    def __init__(self, attrs):
+        self.attrs, self.written = attrs, []
+
+    def attributes(self, short, sections=None):
+        return {"attributes": {"common_102": {k: {"value": v} for k, v in self.attrs.items()}}}
+
+    def write_attrs(self, short, body):
+        self.written.append((short, body))
+        return {"operation_id": "op"}
+
+    def wait_op(self, op):
+        return {"status": "succeeded"}
+
+
+def test_the_session_restore_writes_only_the_gear_fields_the_toolkit_wrote():
+    api, lines = _GearApi({"fade_time_ms": 700, "max_level": 200}), []
+    snap = {"devices": {"5": {"config": {"fade_time_ms": 0, "max_level": 254}}}}
+    prod_state._restore_gear_config(api, snap, lines.append,
+                                    _writes({"gear/5": {"fade_time_ms"}}))
+    assert api.written == [(5, {"fade_time_ms": 0})]
+    assert any("max_level" in line and "did not write" in line for line in lines)
+
+
+class _ZoneApi:
+    def __init__(self):
+        self.sets = []
+
+    def time_get(self):
+        return {"timezone": "UTC0"}
+
+    def time_set(self, timezone):
+        self.sets.append(timezone)
+
+
+def test_the_session_restore_moves_the_zone_back_only_if_the_toolkit_moved_it():
+    api, lines = _ZoneApi(), []
+    prod_state._restore_timezone(api, {"timezone": "MSK-3"}, lines.append, _writes({}))
+    assert api.sets == [] and any("did not write" in line for line in lines)
+    prod_state._restore_timezone(api, {"timezone": "MSK-3"}, lines.append,
+                                 _writes({"time": {"timezone"}}))
+    assert api.sets == ["MSK-3"]
+
+
+def test_without_a_write_log_the_restore_writes_nothing_and_names_the_full_restore(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise AssertionError("a restore step ran without a write log")
+
+    for name in ("_restore_settings", "_restore_devices", "_restore_hcl",
+                 "_restore_gear_config", "_restore_rules"):
+        monkeypatch.setattr(prod_state, name, refuse)
+    monkeypatch.setattr(prod_state, "capture", lambda api, prime=True, log=print: {})
+    monkeypatch.setattr(prod_state, "diff", lambda before, after, shown_shorts=None:
+                        ["settings/poller.enabled False -> True"])
+    lines = []
+    residual = prod_state.restore(object(), {}, None, log=lines.append)
+    assert residual == ["settings/poller.enabled False -> True"]
+    assert any("hil state restore --all" in line for line in lines)
+
+
+class _Overridden:
+    def __init__(self):
+        self.cleared = []
+        self.hcl = self
+
+    def clear_override(self, sid):
+        self.cleared.append(sid)
+
+
+def test_an_hcl_override_is_cleared_only_when_the_toolkit_drove_a_lamp_it_targets():
+    snap = {"hcl_overrides": {"evening": False},
+            "hcl": [{"schedule_id": "evening", "targets": [{"scope": "group",
+                                                             "group_ids": [3]}]}],
+            "vl": {"virtual_lamps": [{"virtual_lamp_id": 7,
+                                      "binding": {"physical_short_address": 5}}]},
+            "group_matrix": {"rows": [{"virtual_lamp_id": 7,
+                                       "applied": [False] * 3 + [True] + [False] * 12}]}}
+    after = {"hcl_overrides": {"evening": True}}
+    for touched, cleared in (({"shown/*": {"*"}}, []), ({"shown/5": {"*"}}, ["evening"]),
+                             ({"hcl_override/evening": {"*"}}, ["evening"])):
+        api, lines = _Overridden(), []
+        prod_state._clear_session_overrides(api, snap, after, lines.append, _writes(touched))
+        assert api.cleared == cleared
 

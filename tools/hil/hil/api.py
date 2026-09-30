@@ -6,7 +6,7 @@ import requests
 
 from urllib.parse import quote
 
-from hil import lamp_guard
+from hil import lamp_guard, write_log
 from hil.config import HilConfig
 from hil.lamp_guard import LampGuard, LampNotAllowed
 
@@ -155,7 +155,7 @@ class Client:
 
     def _http(self, method, path, body=None, conditional=False):
         url = self._url(path)
-        self.guard.check_request(method, path, body)
+        write_log.note(self.base, self.guard.check_request(method, path, body))
         self._drop_pool_after_reboot()
         self._note_diagnostic_write(method, path, body)
         attempts = 3 if method in self.IDEMPOTENT and not conditional else 1
@@ -214,7 +214,7 @@ class Client:
         return status, payload
 
     def raw_response(self, method, path, body=None):
-        self.guard.check_request(method, path, body)
+        write_log.note(self.base, self.guard.check_request(method, path, body))
         return self.http.request(method, self._url(path), json=body,
                                  timeout=self.timeout_s)
 

@@ -1,4 +1,7 @@
-from hil import cli, corpus, flash, serialmon
+import json
+
+import hil.api
+from hil import cli, corpus, flash, prod_state, serialmon, virtual_gear, write_log
 from hil.camera import backend
 
 
@@ -116,3 +119,28 @@ def test_an_unknown_subcommand_is_a_usage_error(capsys):
     assert cli.main(["state", "wipe"]) == cli.EX_USAGE
     assert cli.main(["preflight", "--all"]) == cli.EX_USAGE
     assert "invalid choice" in capsys.readouterr().err
+
+
+def _restore_with(monkeypatch, tmp_path, argv):
+    seen = []
+    snapshot = tmp_path / "production_state_last.json"
+    snapshot.write_text(json.dumps({"taken_at": "t1"}))
+    monkeypatch.setattr(hil.api, "Client", lambda cfg: type("C", (), {"base": "http://dut"})())
+    monkeypatch.setattr(virtual_gear, "teardown", lambda cfg, client: [])
+    monkeypatch.setattr(prod_state, "restore",
+                        lambda client, snap, writes, **kw: seen.append(writes) or [])
+    assert cli.main(["state", "restore", str(snapshot)] + argv) == 0
+    return seen[0], snapshot
+
+
+def test_a_killed_session_is_restored_only_through_its_own_write_log(monkeypatch, tmp_path):
+    writes, _ = _restore_with(monkeypatch, tmp_path, [])
+    assert writes is None
+    writes, _ = _restore_with(monkeypatch, tmp_path, ["--all"])
+    assert writes.changed("device/9", "name")
+    log = write_log.WriteLog("t1", "http://dut",
+                             write_log.writes_path(tmp_path / "production_state_last.json"))
+    log.note([("settings/poller", {"enabled"})])
+    writes, _ = _restore_with(monkeypatch, tmp_path, [])
+    assert writes.changed("settings/poller", "enabled") and not writes.changed("device/9")
+

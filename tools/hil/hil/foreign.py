@@ -4,6 +4,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from hil import write_log
 from hil.lamp_guard import LampGuard, LampNotAllowed
 from hil.sniffer import ssh_argv
 
@@ -242,7 +243,7 @@ class ForeignMaster:
     def _check(self, frames):
         for frame in frames:
             if frame["bits"] == 16:
-                self.guard.check_frame(*frame["bytes"])
+                write_log.note(None, self.guard.check_frame(*frame["bytes"]))
             else:
                 self._check_injection(frame["bytes"])
 
@@ -254,6 +255,7 @@ class ForeignMaster:
         refusal = injection_refusal(raw, compiled, self.api.adapter)
         if refusal:
             raise LampNotAllowed("%s refused: %s" % (what, refusal))
+        write_log.note(None, [write_log.ANY_LAMP])
 
     def send_frames(self, frames):
         frames = self._normalize(frames)

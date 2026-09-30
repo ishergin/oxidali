@@ -29,9 +29,11 @@ COMMAND_HELP = {
             "other board to the gear emulator and take it back. `ota` installs the emulator "
             "in the inactive slot for one boot (any reset returns the controller); `wb` "
             "writes it by wire from the Wiren Board and keeps it across resets.",
-    "state": "state save|restore|diff [FILE]: the owner's installation as a file. "
+    "state": "state save|restore [--all]|diff [FILE]: the owner's installation as a file. "
              "FILE defaults to state/production_state_last.json, which every guarded "
-             "session writes, so a killed session is recovered with `hil state restore`.",
+             "session writes, so a killed session is recovered with `hil state restore`: "
+             "it puts back what the session's write log next to FILE names, and only "
+             "reports without that log; --all writes the whole snapshot back.",
 }
 
 
@@ -358,8 +360,9 @@ def _cmd_state(rest):
     ap = _Parser(prog="hil state")
     ap.add_argument("action", choices=("save", "restore", "diff"))
     ap.add_argument("file", nargs="?")
+    ap.add_argument("--all", action="store_true", dest="everything")
     args = ap.parse_args(rest)
-    from hil import prod_state, virtual_gear
+    from hil import prod_state, virtual_gear, write_log
     from hil.api import Client
     from hil.config import load as load_config
     cfg = load_config()
@@ -374,7 +377,11 @@ def _cmd_state(rest):
         leftover = virtual_gear.teardown(cfg, client)
         for line in leftover:
             print("virtual gear: NOT TORN DOWN: %s" % line)
-        residual = prod_state.restore(client, snap, drive_lamps=not cfg.lamps_read_only,
+        writes = write_log.WriteLog.everything(snap.get("taken_at"), client.base) \
+            if args.everything else write_log.WriteLog.load(write_log.writes_path(path),
+                                                            snap.get("taken_at"))
+        residual = prod_state.restore(client, snap, writes,
+                                      drive_lamps=not cfg.lamps_read_only,
                                       lamp_shorts=cfg.lamp_short_set())
         if not residual:
             prod_state.mark_restored(path, snap)

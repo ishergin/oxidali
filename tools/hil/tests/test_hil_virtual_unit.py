@@ -2,7 +2,7 @@ import pytest
 
 import hil_virtual
 from hil import api as api_mod
-from hil import prod_state, tripwire, virtual_gear
+from hil import prod_state, tripwire, virtual_gear, write_log
 from hil.lamp_guard import VirtualFence
 from hil.seriallog import LogWindow
 
@@ -157,7 +157,7 @@ def test_the_session_counts_every_vl_the_controller_holds():
 def test_a_restore_keeps_an_owner_binding_a_narrowed_roster_hides():
     api = _Lamps()
     snap = {"vl": api.list_unfiltered()}
-    prod_state._restore_vl(api, snap, log=lambda line: None)
+    prod_state._restore_vl(api, snap, lambda line: None, write_log.WriteLog.everything("t", "b"))
     assert api.unbound == []
 
 

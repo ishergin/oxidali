@@ -4,6 +4,7 @@ import re
 import pytest
 
 import hil.api
+from hil import write_log
 from hil.config import HilConfig, load as load_config
 from hil.foreign import ForeignMaster, injection_refusal
 from hil.lamp_guard import LampGuard, LampNotAllowed
@@ -513,3 +514,30 @@ def test_the_foreign_master_is_refused_before_it_reaches_the_wb(monkeypatch):
     assert [f[0]["bytes"] for f in sent] == [[_short_wire(2), 100],
                                              [_short_wire(OWNER, command=True),
                                               QUERY_ACTUAL_LEVEL]]
+
+
+def test_the_guard_names_what_a_passed_request_writes(monkeypatch):
+    keys = _applying(pending={7}, bindings={7: 2}).check_request("POST", GROUP_APPLY)
+    assert keys == [("group_matrix/7", frozenset({"applied"})),
+                    ("gear/2", frozenset({"groups"}))]
+    assert _guard().check_frame(_short_wire(2), 100) == [
+        ("gear/2", frozenset({"*"})), ("shown/2", frozenset({"*"}))]
+    assert _guard().check_frame(_short_wire(2, command=True), QUERY_ACTUAL_LEVEL) == []
+
+
+def test_the_client_and_the_wb_master_log_what_they_write(monkeypatch):
+    client = _client(bindings={8: 2})
+    log = write_log.WriteLog("t", client.base)
+    master = ForeignMaster(dataclasses.replace(load_config(), lamp_shorts="0,2,3",
+                                               lamps_read_only=False))
+    monkeypatch.setattr(master, "_run_client", lambda frames: [])
+    write_log.start(log)
+    try:
+        client.poller.patch({"enabled": False})
+        client.vlamps.ts(8, {"power": "on"})
+        master.dapc(3, 100)
+    finally:
+        write_log.stop()
+    assert log.changed("settings/poller", "enabled") and not log.changed("settings/dali")
+    assert log.changed("shown/2") and log.changed("gear/3") and not log.changed("shown/0")
+

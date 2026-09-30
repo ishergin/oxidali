@@ -131,8 +131,7 @@ reaches the wire:
 - A group or scene apply passes only when every virtual lamp whose row it writes is bound
   to a lamp of `HIL_LAMP_SHORTS`, and never under read-only.
 - A 24-bit frame from the WB master is refused when an enabled owner rule could fire on
-  the event it carries (same device and instance, a power cycle of the device, or any
-  instance group), and when it is a command.
+  its event, and when it is a command.
 - HCL schedules, rules, MQTT commands and the policy apply reach lamps inside the
   controller, past the guard: a test that uses them asks the guard before its first
   action (`drive_allowed` and `allowed_bound_lamp` in `tests/hil_test_guards.py`) for each
@@ -156,9 +155,12 @@ for every session that reaches the controller:
   bindings, group and scene matrices), gear configuration (fade, power-on and
   system-failure level, min/max, dimming curve, the gear's own group membership and
   scene levels) and what every lamp shows.
-- **After** the session it restores each layer, re-reads every gear before putting
-  the light back (the diagnostic `/dali/*` path moves a lamp without telling the
-  registry) and diffs against the snapshot. A non-empty residual prints
+- **During** the session every request `Client` sends and every frame of the WB master
+  is noted, by resource and patched field, in a write log next to the snapshot; an MQTT
+  command, a rule run and a schedule or clock change count as moving any lamp.
+- **After** it each layer writes back only what that log names, so an edit the owner made
+  meanwhile is left and reported; it re-reads every gear before putting the light back
+  and diffs against the snapshot. A non-empty residual prints
   `PRODUCTION STATE NOT RESTORED` and turns the run red.
 - It cannot restore the colour a DT8 gear stored with a scene, or anything outside
   the controller (the Wiren Board's configuration, Home Assistant).
@@ -168,9 +170,11 @@ for every session that reaches the controller:
   leaves the test rules in place, switched off, and says so, because a commit drops the
   owner's delayed actions. A commit resets toggles to the text, so it puts back those the
   commit changed; any other toggle that differs from the snapshot is a residual.
-- The snapshot is also `state/production_state_last.json`. A session killed before
-  its teardown is recovered with `hil state restore`, which first finishes a left
-  virtual-gear session from its ledger ([Virtual gear](#virtual-gear)); such a snapshot is kept, and
+- The snapshot is also `state/production_state_last.json`, its log
+  `production_state_last.writes.json`. A session killed before its teardown is recovered
+  with `hil state restore`, which first finishes a left virtual-gear session from its
+  ledger ([Virtual gear](#virtual-gear)); without the log it only reports, and
+  `hil state restore --all` writes the whole snapshot back. Such a snapshot is kept, and
   every later session ends red until it has been restored. `hil state save` and
   `hil state diff [FILE]` take and compare snapshots by hand.
 - Under `HIL_LAMPS_READ_ONLY=1` the light is reported, never driven — by this
@@ -184,10 +188,9 @@ for every session that reaches the controller:
   `RESTORABLE` tuples, `prod_state`'s settings, gear-configuration and device-record
   lists), and so do the settings guards: a writable field the firmware adds is named
   there too, or a test that changes it leaks past the session with no residual.
-- Fields an enabled HCL schedule drives (level, colour or both, on the members of its
-  target groups by the matrix's applied column, or every device for broadcast) are
-  neither compared nor restored: the schedule moves them during a session, and writing
-  one back would be an API write the scheduler takes as an override.
+- Fields an enabled HCL schedule drives (level, colour or both, on its targets'
+  members) are neither compared nor restored: the schedule moves them during a session,
+  and writing one back would be an API write the scheduler takes as an override.
 - Part 103 control devices are neither snapshotted nor restored — their configuration
   lives in the panel's NVM — so a test writes a panel field only with the value the
   panel already holds.

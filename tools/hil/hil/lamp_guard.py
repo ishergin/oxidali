@@ -2,6 +2,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import unquote
 
+from hil.write_log import ALL, EVERY, frame_keys, request_keys
+
 TARGET_SEGMENT = -1
 SHORT_LIMIT = 0x80
 GROUP_LAST = 0x9F
@@ -475,30 +477,29 @@ class LampGuard:
 
     def check_request(self, method, path, body=None):
         if method.upper() in READ_METHODS:
-            return
+            return []
         path = path.lstrip("/").split("?", 1)[0]
+        keys = request_keys(method, path, body)
         if self.fence is not None and self.fence.check_request(method.upper(), path, body):
-            return
+            return keys
         _refuse_commissioning(method, path, body)
         apply = _apply_route(path)
         if apply is not None:
-            self._check_apply(method, *apply)
-            return
+            return keys + self._check_apply(method, *apply)
         if path.startswith(DIAGNOSTIC_PREFIX):
             frame = diagnostic_frame(path, body)
             if frame is None:
                 raise LampNotAllowed(
                     "POST %s %r refused: the lamp guard cannot tell which gear it "
                     "reaches" % (path, body))
-            self.check_frame(*frame)
-            return
+            return self.check_frame(*frame)
         for pattern, kind, label, visible in RESOURCES:
             match = pattern.fullmatch(path)
             if match:
                 key = match.group(1) if pattern.groups else None
-                self._check_resource(kind, key, body, label,
-                                     visible(body) if callable(visible) else visible)
-                return
+                return keys + self._check_resource(
+                    kind, key, body, label, visible(body) if callable(visible) else visible)
+        return keys
 
     def _check_resource(self, kind, key, body, label, visible):
         what = label % (key if key is not None else _short_of(body))
@@ -506,8 +507,10 @@ class LampGuard:
             raise LampNotAllowed("%s refused: HIL_LAMPS_READ_ONLY=1 forbids every visible "
                                  "action" % what)
         target = self._resource_target(kind, key, body, what)
-        if target is not None:
-            self.check_target(target, visible, what)
+        if target is None:
+            return []
+        self.check_target(target, visible, what)
+        return [("shown/%d" % target, EVERY)] if kind == LAMP else []
 
     def _check_apply(self, method, kind, scene):
         what = "%s %s apply" % (method.upper(), kind if scene is None else "scene %d" % scene)
@@ -516,12 +519,18 @@ class LampGuard:
                                  "writes the gear of every row it changes" % what)
         if self._pending is None or self._binding is None:
             raise LampNotAllowed("%s refused: no controller lists the rows it writes" % what)
+        family = "group_matrix" if scene is None else "scene_matrix/%d" % scene
+        table = frozenset({"groups" if scene is None else "scenes"})
+        keys = []
         for lamp in sorted(self._pending(kind, scene)):
             short = self._binding(lamp)
             if short is None:
                 raise LampNotAllowed("%s refused: it writes the row of VL%d, which is bound to "
                                      "no lamp" % (what, lamp))
             self.check_target(short, False, "the %s's row of VL%d" % (what, lamp))
+            keys += [("%s/%d" % (family, lamp), frozenset({"applied"})),
+                     ("gear/%d" % short, table)]
+        return keys
 
     def _resource_target(self, kind, key, body, what):
         if kind == SHORT:
@@ -542,20 +551,23 @@ class LampGuard:
     def check_frame(self, addr, data, enabled=UNSEEN):
         if enabled == UNSEEN and self._enabled is not None:
             enabled = self._enabled
-        self._judge_frame(addr, data, enabled)
+        keys = self._judge_frame(addr, data, enabled)
         self._enabled = enables(addr, data)
+        return keys
 
     def _judge_frame(self, addr, data, enabled):
+        target = wire_target(addr)
+        writes = target is not None and frame_writes(addr, data, enabled)
+        keys = frame_keys(ALL if target == TARGET_SEGMENT else target) if writes else []
         if self.fence is not None and self.fence.check_frame(addr, data, enabled):
-            return
+            return keys
         if SPECIAL_FIRST <= addr < BROADCAST_FIRST:
             _refuse_special(addr)
-            return
-        target = wire_target(addr)
-        if target is None or not frame_writes(addr, data, enabled):
-            return
-        self.check_target(target, frame_visible(addr, data, enabled),
-                          describe_frame(addr, data))
+            return []
+        if writes:
+            self.check_target(target, frame_visible(addr, data, enabled),
+                              describe_frame(addr, data))
+        return keys
 
     def check_target(self, target, visible, what):
         if visible and self.read_only:
