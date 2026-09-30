@@ -4,7 +4,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dali2rust_contracts::msg::{BusCommandPayload, BusEventPayload, MqttRuleMessageEvent};
+use dali2rust_contracts::msg::{
+    BusCommandPayload, BusEventPayload, DaliSetTargetStateCommand, MqttRuleMessageEvent, PowerState,
+};
 use dali2rust_test_support::{recv_command_matching, recv_event_matching, wait_until};
 use dali2rust_domain::registry::HomeAssistantSettingsView;
 use support::{enabled_settings, spawn_bridge, Harness, StubHaReadPort, StubSettings};
@@ -32,6 +34,23 @@ fn next_rule_message(h: &Harness) -> MqttRuleMessageEvent {
         BusEventPayload::MqttRuleMessageEvent(event) => event.clone(),
         other => panic!("matched a different event: {other:?}"),
     }
+}
+
+fn next_light_command(h: &Harness) -> DaliSetTargetStateCommand {
+    let envelope = recv_command_matching(&h.cmd_rx, WAIT, |payload| {
+        matches!(payload, BusCommandPayload::DaliSetTargetStateCommand(_))
+    });
+    match envelope.payload {
+        BusCommandPayload::DaliSetTargetStateCommand(command) => command,
+        other => panic!("matched a different command: {other:?}"),
+    }
+}
+
+fn end_session_with_redial_stalled(h: &Harness) {
+    h.mock.stall_next_connects(1);
+    h.mock.set_connected(false);
+    let mock = Arc::clone(&h.mock);
+    wait_until(move || mock.connect_calls() >= 2, WAIT);
 }
 
 #[test]
@@ -215,4 +234,25 @@ fn a_rule_topic_the_bridge_publishes_itself_is_refused_once_per_session_without_
         1,
         "a refused topic that stays in the document is counted once per session"
     );
+}
+
+#[test]
+fn a_message_queued_when_its_session_ends_is_dropped_and_counted_never_replayed() {
+    let h = connected_bridge();
+    h.rule_topics.set(&[RULE_TOPIC]);
+    following(&h, RULE_TOPIC);
+    end_session_with_redial_stalled(&h);
+    h.mock.deliver(RULE_TOPIC, b"stale");
+    h.mock.deliver("dali/ctl1/a0/vl/1/set", br#"{"state":"ON","brightness":180}"#);
+    h.mock.set_connected(true);
+    following(&h, RULE_TOPIC);
+    h.mock.broker_publish(RULE_TOPIC, b"fresh");
+    h.mock.broker_publish("dali/ctl1/a0/vl/1/set", br#"{"state":"OFF"}"#);
+    assert_eq!(next_rule_message(&h).payload.as_slice(), b"fresh", "the stale message never reaches rules");
+    assert_eq!(next_light_command(&h).setpoint.power, PowerState::Off, "the stale ON never executes");
+    let counters = Arc::clone(&h.counters);
+    wait_until(move || counters.commands_dropped_total.load(Ordering::Relaxed) == 1, WAIT);
+    assert_eq!(h.counters.commands_received_total.load(Ordering::Relaxed), 1);
+    assert_eq!(h.counters.rule_messages_total.load(Ordering::Relaxed), 2);
+    assert_eq!(h.counters.rule_messages_lost_total.load(Ordering::Relaxed), 1);
 }

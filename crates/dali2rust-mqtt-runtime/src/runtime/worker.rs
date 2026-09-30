@@ -806,7 +806,7 @@ fn serve_inbound(cx: &mut ServeTurn<'_>, topics: &HaTopics, session: &Session) -
     let wait = Duration::from_millis(u64::from(cx.rules.pacer.wait_ms(now_ms, WAIT_MS)));
     match cx.incoming.recv_timeout(wait) {
         Ok(message) => {
-            route_inbound(topics, &session.rule_topics, cx.rules, cx.ports, message);
+            route_inbound(cx, topics, session, message, monotonic_ms());
             true
         }
         Err(RecvTimeoutError::Timeout) => true,
@@ -815,29 +815,49 @@ fn serve_inbound(cx: &mut ServeTurn<'_>, topics: &HaTopics, session: &Session) -
 }
 
 fn route_inbound(
+    cx: &mut ServeTurn<'_>,
     topics: &HaTopics,
-    followed: &RuleFollow,
-    rules: &mut RuleTopicCache,
-    ports: &MqttWorkerPorts,
+    session: &Session,
     message: MqttIncoming,
+    now_ms: u32,
 ) {
-    let for_rules = followed.follows(&message.topic);
-    if !for_rules || topics.parse_command_topic(&message.topic).is_some() {
-        bump(&ports.counters.commands_received_total);
-        handle_command(topics, ports, &message);
+    let for_rules = session.rule_topics.follows(&message.topic);
+    let for_commands = !for_rules || topics.parse_command_topic(&message.topic).is_some();
+    if message.session != session.generation {
+        drop_stale(cx, &message, for_rules, for_commands);
+        return;
+    }
+    if for_commands {
+        bump(&cx.ports.counters.commands_received_total);
+        handle_command(topics, cx.ports, &message);
     }
     if for_rules {
-        pace_rule_message(rules, ports, message);
+        pace_rule_message(cx.rules, cx.ports, message, now_ms);
+    }
+}
+
+fn drop_stale(cx: &ServeTurn<'_>, message: &MqttIncoming, for_rules: bool, for_commands: bool) {
+    if for_rules && !message.retained {
+        bump(&cx.ports.counters.rule_messages_total);
+        bump(&cx.ports.counters.rule_messages_lost_total);
+    }
+    if for_commands {
+        cx.link.note_incoming_dropped();
     }
 }
 
 #[inline(never)]
-fn pace_rule_message(rules: &mut RuleTopicCache, ports: &MqttWorkerPorts, message: MqttIncoming) {
+fn pace_rule_message(
+    rules: &mut RuleTopicCache,
+    ports: &MqttWorkerPorts,
+    message: MqttIncoming,
+    now_ms: u32,
+) {
     if message.retained {
         return;
     }
     bump(&ports.counters.rule_messages_total);
-    match rules.pacer.offer(message, monotonic_ms()) {
+    match rules.pacer.offer(message, now_ms) {
         Paced::Now(message) => publish_rule_message(ports, &message),
         Paced::Held { superseded: true } => bump(&ports.counters.rule_messages_coalesced_total),
         Paced::Held { superseded: false } => {}
@@ -1992,6 +2012,7 @@ mod tests {
             topic: topic.to_string(),
             payload: payload.as_bytes().to_vec(),
             retained: false,
+            session: 0,
         };
         assert!(matches!(rules.pacer.offer(message("first"), now), Paced::Now(_)));
         assert!(matches!(rules.pacer.offer(message("held"), now), Paced::Held { superseded: false }));

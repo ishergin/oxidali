@@ -12,7 +12,7 @@ use esp_idf_svc::sys::{
 };
 
 use dali2rust_platform::mqtt::{
-    MqttClient, MqttClientBundle, MqttConnectionState, MqttError, MqttIncoming, MqttLink, MqttQos,
+    MqttClient, MqttClientBundle, MqttConnectionState, MqttError, MqttLink, MqttQos,
     MqttSessionConfig, MqttSubAck,
 };
 
@@ -113,11 +113,7 @@ fn deliver_first_chunk(link: &MqttLink, event: &esp_mqtt_event_t) {
     let (topic, payload) = unsafe {
         (event_bytes(event.topic, event.topic_len), event_bytes(event.data, event.data_len))
     };
-    link.deliver(MqttIncoming {
-        topic: String::from_utf8_lossy(topic).into_owned(),
-        payload: payload.to_vec(),
-        retained: event.retain,
-    });
+    link.deliver(String::from_utf8_lossy(topic).into_owned(), payload.to_vec(), event.retain);
 }
 
 fn note_suback(link: &MqttLink, event: &esp_mqtt_event_t) {

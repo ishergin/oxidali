@@ -150,11 +150,7 @@ impl MockMqttClient {
     }
 
     fn deliver_flagged(&self, topic: &str, payload: &[u8], retained: bool) {
-        self.link.deliver(MqttIncoming {
-            topic: topic.to_string(),
-            payload: payload.to_vec(),
-            retained,
-        });
+        self.link.deliver(topic.to_string(), payload.to_vec(), retained);
     }
 
     pub fn set_connected(&self, up: bool) {

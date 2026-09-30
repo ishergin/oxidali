@@ -57,6 +57,7 @@ pub struct MqttIncoming {
     pub topic: String,
     pub payload: Vec<u8>,
     pub retained: bool,
+    pub session: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,11 +144,16 @@ impl MqttLink {
         self.wake();
     }
 
-    pub fn deliver(&self, message: MqttIncoming) {
-        if self.tx.try_send(message).is_err() {
-            self.dropped_incoming.fetch_add(1, Ordering::Relaxed);
+    pub fn deliver(&self, topic: String, payload: Vec<u8>, retained: bool) {
+        let session = self.session_generation();
+        if self.tx.try_send(MqttIncoming { topic, payload, retained, session }).is_err() {
+            self.note_incoming_dropped();
         }
         self.wake();
+    }
+
+    pub fn note_incoming_dropped(&self) {
+        self.dropped_incoming.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn wake(&self) {
@@ -225,14 +231,22 @@ mod tests {
     fn a_worker_that_is_behind_loses_messages_with_a_count_rather_than_blocking() {
         let (link, rx) = MqttLink::new();
         for i in 0..INCOMING_QUEUE_DEPTH + 3 {
-            link.deliver(MqttIncoming {
-                topic: format!("t/{i}"),
-                payload: Vec::new(),
-                retained: false,
-            });
+            link.deliver(format!("t/{i}"), Vec::new(), false);
         }
         assert_eq!(link.dropped_incoming(), 3);
         assert_eq!(rx.iter().take(INCOMING_QUEUE_DEPTH).count(), INCOMING_QUEUE_DEPTH);
+    }
+
+    #[test]
+    fn a_message_carries_the_session_it_arrived_in() {
+        let (link, rx) = MqttLink::new();
+        link.set_state(MqttConnectionState::Connected);
+        link.deliver("t/a".to_string(), Vec::new(), false);
+        link.set_state(MqttConnectionState::Disconnected);
+        link.set_state(MqttConnectionState::Connected);
+        link.deliver("t/b".to_string(), Vec::new(), false);
+        let sessions: Vec<u32> = rx.try_iter().map(|message| message.session).collect();
+        assert_eq!(sessions, vec![1, 2]);
     }
 
     #[test]

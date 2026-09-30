@@ -120,9 +120,12 @@ messages to every new subscription.
   data and SUBACK events from the ESP-IDF event itself.
 - The stats `mqtt` block counts messages on rule topics (`rule_messages_total`), those a
   newer message replaced (`rule_messages_coalesced_total`) and those lost
-  (`rule_messages_lost_total`): refused by the bus after the backoff, or still waiting out
-  the interval when their session ended or the document dropped their topic. A waiting
-  message never outlives its session. None of them is a received command.
+  (`rule_messages_lost_total`): refused by the bus after the backoff, dropped with their
+  topic when the document lost it, or left over from a session that ended, whether they
+  were waiting out the interval or still queued; none of them is a received command. A
+  message never outlives its session: the link stamps each one with the session it
+  arrived in, and a Home Assistant command left over from an ended session is dropped
+  too.
 - The language and its limits are in
   [mqtt-trigger.md](../../product-design/runtime-modules/rules-engine/mqtt-trigger.md),
   the sessions in

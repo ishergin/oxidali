@@ -336,7 +336,7 @@ mod tests {
     }
 
     fn message(topic: &str, payload: &str) -> MqttIncoming {
-        MqttIncoming { topic: topic.to_string(), payload: payload.as_bytes().to_vec(), retained: false }
+        MqttIncoming { topic: topic.to_string(), payload: payload.as_bytes().to_vec(), retained: false, session: 0 }
     }
 
     fn payload_of(paced: &Paced) -> Option<&[u8]> {
@@ -392,6 +392,7 @@ mod tests {
             topic: "home/scene".to_string(),
             payload: vec![b'a'; MQTT_RULE_PAYLOAD_BYTES],
             retained: false,
+            session: 0,
         };
         let event = message_event(&fits);
         assert_eq!(event.topic.as_str(), "home/scene");
