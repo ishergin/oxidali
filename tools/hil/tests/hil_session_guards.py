@@ -7,7 +7,7 @@ from hil import api as api_mod
 from hil import config as config_mod
 from hil import prod_state
 from hil import serialmon as serialmon_mod
-from hil import validity, write_log
+from hil import tiers, validity, write_log
 from hil.virtual_gear import run_enabled as virtual_gear_run
 from hil_harness import ANCHOR_TZ, UPTIME_SLACK_S, track, validity_of
 
@@ -48,12 +48,20 @@ def production_state(pytestconfig, request):
     snap = prod_state.capture(api)
     own, writes = _open_session(cfg, api, snap, state)
     prod_state.save(snap, request.getfixturevalue("run_dir") / "production_state_before.json")
-    write_log.start(writes)
     try:
-        yield snap
+        with write_log.recording(writes):
+            yield snap
     finally:
-        write_log.stop()
         _close_session(api, cfg, snap, own, writes, state)
+
+
+@pytest.fixture(autouse=True)
+def unit_test_writes_stay_off_the_session_log(request):
+    if not tiers.is_unit(request.node.path):
+        yield
+        return
+    with write_log.recording(None):
+        yield
 
 
 def _open_session(cfg, api, snap, state):

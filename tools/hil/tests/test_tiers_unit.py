@@ -48,7 +48,8 @@ def test_a_mention_in_a_string_is_not_a_call():
 
 
 AUTOUSE = ["production_state", "bench_baseline", "dut_continuity", "optical_session",
-           "_fast_fade_prep", "request", "pytestconfig"]
+           "_fast_fade_prep", "unit_test_writes_stay_off_the_session_log", "request",
+           "pytestconfig"]
 
 
 def test_a_session_of_unit_tests_is_hardware_free():

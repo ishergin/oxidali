@@ -537,13 +537,10 @@ def test_the_client_and_the_wb_master_log_what_they_write(monkeypatch):
     master = ForeignMaster(dataclasses.replace(load_config(), lamp_shorts="0,2,3",
                                                lamps_read_only=False))
     monkeypatch.setattr(master, "_run_client", lambda frames: [])
-    write_log.start(log)
-    try:
+    with write_log.recording(log):
         client.poller.patch({"enabled": False})
         client.vlamps.ts(8, {"power": "on"})
         master.dapc(3, 100)
-    finally:
-        write_log.stop()
     assert log.changed("settings/poller", "enabled") and not log.changed("settings/dali")
     assert log.changed("shown/2") and log.changed("gear/3") and not log.changed("shown/0")
 
@@ -594,16 +591,13 @@ def test_the_client_refuses_a_switchover_and_a_reboot_before_they_start():
     client = _client(rules=RESTART_RULES)
     assert client.restart_rules() == ["failover", "morning"]
     log = write_log.WriteLog("t", client.base)
-    write_log.start(log)
-    try:
+    with write_log.recording(log):
         with pytest.raises(LampNotAllowed, match=r"switchover refused: the owner's rule\(s\) "
                                                  r"failover, morning"):
             client.redundancy.switchover()
         with pytest.raises(LampNotAllowed, match=r"a reboot of .* refused"):
             with client.expect_reboot():
                 pass
-    finally:
-        write_log.stop()
     assert client.http.sent == [] and not log.changed("shown/5")
     quiet = _client(rules=RESTART_RULES[2:])
     quiet.redundancy.switchover()
@@ -666,13 +660,10 @@ def test_a_read_only_run_restarts_no_controller_and_names_the_go_ahead_it_needs(
             read_only.check_request(method, path, body)
     client = _client(read_only=True)
     log = write_log.WriteLog("t", client.base)
-    write_log.start(log)
-    try:
+    with write_log.recording(log):
         with pytest.raises(LampNotAllowed, match=r"a reboot of .* refused: HIL_LAMPS_READ_ONLY=1"):
             with client.expect_reboot():
                 pass
-    finally:
-        write_log.stop()
     assert client.http.sent == [] and not log.changed("shown/5")
 
 
