@@ -856,10 +856,6 @@ class _Driving:
 
     def __init__(self, allowed, segment):
         self.guard = LampGuard(allowed, segment=lambda: list(segment))
-        self.segment = list(segment)
-
-    def segment_shorts(self):
-        return self.segment
 
 
 def test_a_lamp_a_test_drives_through_the_controller_is_named_in_the_write_log():

@@ -674,3 +674,13 @@ def test_a_read_only_run_restarts_no_controller_and_names_the_go_ahead_it_needs(
     finally:
         write_log.stop()
     assert client.http.sent == [] and not log.changed("shown/5")
+
+
+def test_a_segment_command_that_passes_names_every_lamp_it_reaches():
+    guard = _guard(segment=(0, 2, 3))
+    exact = {("shown/%d" % short, frozenset({"*"})) for short in (0, 2, 3)}
+    for method, path in (("PUT", "adapters/0/groups/5/target-state"),
+                         ("POST", "adapters/0/scenes/4/recall")):
+        assert exact <= set(guard.check_request(method, path, {"power": "on"})), path
+    assert exact <= set(guard.check_frame(0xFE, 100))
+    assert guard.check_frame(0xFF, QUERY_ACTUAL_LEVEL) == []

@@ -8,7 +8,7 @@ from requests import RequestException
 from hil import api as api_mod
 from hil import prod_state
 from hil import virtual_gear, write_log
-from hil.lamp_guard import RULE_SEPARATOR, TARGET_SEGMENT, LampNotAllowed, spell
+from hil.lamp_guard import RULE_SEPARATOR, LampNotAllowed, shown_keys, spell
 from hil.wait import wait_until
 from hil_harness import ANCHOR_TZ
 from hil_session_guards import refuse_schedule_suspension
@@ -334,12 +334,11 @@ def ask_guard(api, method, path, body=None):
 
 def drive_allowed(api, target, what):
     try:
-        api.guard.check_target(target, True, what)
+        reached = api.guard.check_target(target, True, what)
     except LampNotAllowed as exc:
         pytest.skip("%s — the controller drives it past the client, so the guard is asked "
                     "before the test starts" % exc)
-    shorts = api.segment_shorts() if target == TARGET_SEGMENT else [target]
-    write_log.note(api.base, [("shown/%d" % short, write_log.EVERY) for short in shorts])
+    write_log.note(api.base, shown_keys(reached))
 
 
 def allowed_bound_lamp(api, what, wanted=None):

@@ -467,6 +467,10 @@ def spell(shorts):
     return ",".join(str(a) if a == b else "%d-%d" % (a, b) for a, b in runs) or "(none)"
 
 
+def shown_keys(shorts):
+    return [("shown/%d" % short, EVERY) for short in shorts]
+
+
 def named(shorts):
     return ", ".join("SA%d" % s for s in sorted(shorts))
 
@@ -537,8 +541,8 @@ class LampGuard:
         target = self._resource_target(kind, key, body, what)
         if target is None:
             return []
-        self.check_target(target, visible, what)
-        return [("shown/%d" % target, EVERY)] if kind == LAMP else []
+        reached = self.check_target(target, visible, what)
+        return shown_keys(reached) if kind in (LAMP, SEGMENT) else []
 
     def _check_apply(self, method, kind, scene):
         what = "%s %s apply" % (method.upper(), kind if scene is None else "scene %d" % scene)
@@ -594,7 +598,9 @@ class LampGuard:
             _refuse_special(addr)
             return []
         if writes:
-            self.check_target(target, visible, describe_frame(addr, data))
+            reached = self.check_target(target, visible, describe_frame(addr, data))
+            if visible and target == TARGET_SEGMENT:
+                keys = keys + shown_keys(reached)
         return keys
 
     def check_target(self, target, visible, what):
@@ -605,14 +611,16 @@ class LampGuard:
             if target not in self.allowed:
                 raise LampNotAllowed("%s refused: SA%d is outside HIL_LAMP_SHORTS=%s"
                                      % (what, target, spell(self.allowed)))
-            return
+            return [target]
         if self._segment is None:
             raise LampNotAllowed("%s refused: it reaches the whole segment, and no "
                                  "controller lists the gear on it" % what)
-        outside = set(self._segment()) - self.allowed
+        segment = list(self._segment())
+        outside = set(segment) - self.allowed
         if outside:
             raise LampNotAllowed("%s refused: it reaches the whole segment, and %s "
                                  "%s outside HIL_LAMP_SHORTS=%s"
                                  % (what, named(outside),
                                     "is" if len(outside) == 1 else "are",
                                     spell(self.allowed)))
+        return segment
