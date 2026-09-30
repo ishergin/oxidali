@@ -1038,6 +1038,7 @@ export type StatsRules = {
   effects_emitted: number
   actions_failed: number
   effects_unbound: number
+  hcl_switches_coalesced: number
   continuations_scheduled: number
   continuations_fired: number
   continuations_dropped: number

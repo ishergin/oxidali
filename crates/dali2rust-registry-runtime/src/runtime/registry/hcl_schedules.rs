@@ -79,7 +79,7 @@ pub(crate) enum HclChunkOutcome {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HclSwitchOutcome {
-    Switched,
+    Switched { joined_waiting_write: bool },
     Unchanged,
     Unknown,
 }
@@ -133,8 +133,9 @@ impl RegistryStore {
         record.enabled = enabled;
         inner.hcl_schedules_revision = inner.hcl_schedules_revision.wrapping_add(1);
         drop(inner);
-        self.dirty.mark_hcl_schedules_dirty();
-        HclSwitchOutcome::Switched
+        HclSwitchOutcome::Switched {
+            joined_waiting_write: self.dirty.note_hcl_switch(),
+        }
     }
 
     pub(crate) fn remove_hcl_schedule(&self, schedule_id: &FixedText32) -> bool {

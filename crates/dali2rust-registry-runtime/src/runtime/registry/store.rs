@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::RwLock;
+use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
+use std::time::{Duration, Instant};
 
 use dali2rust_bsp::psram::PsramBox;
 use dali2rust_bsp::unix_clock::unix_wall_clock_millis;
@@ -59,6 +60,7 @@ pub(crate) struct DirtyFlags {
     pub virtual_lamps: AtomicU32,
     pub scenes: [std::sync::atomic::AtomicU16; MAX_DIRTY_ADAPTERS],
     pub hcl_schedules: AtomicBool,
+    hcl_switches_waiting_since: Mutex<Option<Instant>>,
     pub poller_settings: AtomicBool,
     pub dali_settings: AtomicBool,
     pub redundancy_settings: AtomicBool,
@@ -77,6 +79,7 @@ impl DirtyFlags {
             virtual_lamps: AtomicU32::new(0),
             scenes: std::array::from_fn(|_| std::sync::atomic::AtomicU16::new(0)),
             hcl_schedules: AtomicBool::new(false),
+            hcl_switches_waiting_since: Mutex::new(None),
             poller_settings: AtomicBool::new(false),
             dali_settings: AtomicBool::new(false),
             redundancy_settings: AtomicBool::new(false),
@@ -119,6 +122,25 @@ impl DirtyFlags {
     }
 
     global_dirty_flag!(mark_hcl_schedules_dirty, take_hcl_schedules_dirty, hcl_schedules);
+
+    pub fn note_hcl_switch(&self) -> bool {
+        let mut since = self.hcl_switches_since();
+        let waiting = since.is_some();
+        since.get_or_insert_with(Instant::now);
+        waiting
+    }
+
+    pub fn hcl_switches_due(&self, interval: Duration) -> bool {
+        self.hcl_switches_since().is_some_and(|since| since.elapsed() >= interval)
+    }
+
+    pub fn take_hcl_switches_waiting(&self) -> bool {
+        self.hcl_switches_since().take().is_some()
+    }
+
+    fn hcl_switches_since(&self) -> MutexGuard<'_, Option<Instant>> {
+        self.hcl_switches_waiting_since.lock().unwrap_or_else(PoisonError::into_inner)
+    }
     global_dirty_flag!(mark_dali_settings_dirty, take_dali_settings_dirty, dali_settings);
     global_dirty_flag!(
         mark_redundancy_settings_dirty,

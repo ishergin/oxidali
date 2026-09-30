@@ -392,7 +392,7 @@ fn schedule_enabled(port: u16, schedule_id: &str) -> Option<bool> {
     crate::steps::polling::fetch_json(port, &path)?["enabled"].as_bool()
 }
 
-// RULE-060
+// RULE-060 RULE-070
 #[then(regex = r#"^HCL schedule "([^"]+)" is eventually (enabled|disabled)$"#)]
 async fn then_schedule_eventually_switched(world: &mut DaliWorld, schedule_id: String, state: String) {
     let port = world.server_port();

@@ -43,12 +43,23 @@ async fn then_stats_pointer_reaches(world: &mut DaliWorld, secs: u64, pointer: S
 #[then(regex = r#"^the stats pointer "([^"]+)" eventually reads (\d+)$"#)]
 async fn then_stats_pointer_reads(world: &mut DaliWorld, pointer: String, expected: u64) {
     let port = world.server_port();
-    let read = || {
-        crate::steps::polling::fetch_json(port, "/api/v1/stats")
-            .and_then(|json| json.pointer(&pointer).and_then(serde_json::Value::as_u64))
-    };
-    wait_until(|| read() == Some(expected), RULE_FIRE_TIMEOUT);
-    assert_eq!(read(), Some(expected), "stats{pointer}");
+    wait_until(|| stats_pointer(port, &pointer) == Some(expected), RULE_FIRE_TIMEOUT);
+    assert_eq!(stats_pointer(port, &pointer), Some(expected), "stats{pointer}");
+}
+
+// RULE-070
+#[then(regex = r#"^the stats pointer "([^"]+)" eventually grows by (\d+)$"#)]
+async fn then_stats_pointer_grows_by(world: &mut DaliWorld, pointer: String, delta: u64) {
+    let before = world.remembered_u64.expect("remembered stats pointer");
+    let port = world.server_port();
+    let expected = Some(before + delta);
+    wait_until(|| stats_pointer(port, &pointer) == expected, RULE_FIRE_TIMEOUT);
+    assert_eq!(stats_pointer(port, &pointer), expected, "stats{pointer} grew from {before}");
+}
+
+fn stats_pointer(port: u16, pointer: &str) -> Option<u64> {
+    crate::steps::polling::fetch_json(port, "/api/v1/stats")
+        .and_then(|json| json.pointer(pointer).and_then(serde_json::Value::as_u64))
 }
 
 // RULE-020
@@ -105,7 +116,7 @@ async fn then_rule_eventually_fired_at_least(world: &mut DaliWorld, name: String
     assert!(count.is_some_and(|count| count >= expected), "fire count of rule {name}: {count:?}");
 }
 
-// RULE-032 RULE-060 RULE-061 RULE-064 RULE-065 RULE-066
+// RULE-032 RULE-060 RULE-061 RULE-064 RULE-065 RULE-066 RULE-070
 #[then(regex = r#"^the rule "([^"]+)" should have the last outcome "([a-z_]+)"$"#)]
 async fn then_rule_last_outcome(world: &mut DaliWorld, name: String, expected: String) {
     let port = world.server_port();

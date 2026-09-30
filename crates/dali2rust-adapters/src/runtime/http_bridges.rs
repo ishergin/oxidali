@@ -413,6 +413,7 @@ fn stats_rules_dto(counters: &RuntimeCounterHandles) -> StatsRulesDto {
         effects_emitted: c.effects_emitted.load(Relaxed),
         actions_failed: c.actions_failed.load(Relaxed),
         effects_unbound: counters.rules.effects_unbound.load(Relaxed),
+        hcl_switches_coalesced: counters.registry.command.hcl_switches_coalesced.load(Relaxed),
         continuations_scheduled: c.continuations_scheduled.load(Relaxed),
         continuations_fired: c.continuations_fired.load(Relaxed),
         continuations_dropped: c.continuations_dropped.load(Relaxed),

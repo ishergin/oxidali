@@ -33,6 +33,7 @@ use dispatch::process_one;
 pub use dispatch::REGISTRY_WORKER_HANDLED_COMMANDS;
 
 const PERSISTENCE_DEBOUNCE: Duration = Duration::from_millis(500);
+const HCL_SWITCH_WRITE_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const MEMORY_BANK_STAGING_MAX_AGE_MS: u64 = 30_000;
 
 use crate::runtime::registry::config_write_stage::CONFIG_WRITE_STAGE_MAX_AGE_MS;
@@ -50,6 +51,32 @@ fn command_flush_interval(store: &RegistryStore) -> Duration {
     } else {
         PERSISTENCE_DEBOUNCE
     }
+}
+
+struct FlushClock {
+    last_flush: Instant,
+    switch_interval: Duration,
+}
+
+impl FlushClock {
+    fn new(switch_interval: Duration) -> Self {
+        Self {
+            last_flush: Instant::now(),
+            switch_interval,
+        }
+    }
+}
+
+fn flush_paced(
+    deps: &RegistryWorkerDeps,
+    clock: &mut FlushClock,
+    min_interval: fn(&RegistryStore) -> Duration,
+) {
+    if deps.store.dirty.hcl_switches_due(clock.switch_interval) {
+        deps.store.dirty.mark_hcl_schedules_dirty();
+    }
+    let min_interval = min_interval(&deps.store);
+    flush_persistence(&deps.persistence_slices, &deps.store, &mut clock.last_flush, min_interval);
 }
 
 fn flush_persistence(
@@ -97,6 +124,7 @@ pub struct RegistryCommandCounters {
     pub virtual_lamp_bindings_applied: AtomicU32,
     pub hcl_schedule_upserts_applied: AtomicU32,
     pub hcl_schedule_deletes_applied: AtomicU32,
+    pub hcl_switches_coalesced: AtomicU32,
     pub poller_settings_applied: AtomicU32,
     pub dali_settings_applied: AtomicU32,
     pub redundancy_settings_applied: AtomicU32,
@@ -157,7 +185,7 @@ fn frame_tag(frame: &BusFrame) -> &'static str {
     }
 }
 
-fn apply_frame_and_flush(frame: BusFrame, deps: &RegistryWorkerDeps, last_flush: &mut Instant) {
+fn apply_frame_and_flush(frame: BusFrame, deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
     let tag = frame_tag(&frame);
     match &frame {
         BusFrame::Command(_) => process_one(
@@ -178,28 +206,18 @@ fn apply_frame_and_flush(frame: BusFrame, deps: &RegistryWorkerDeps, last_flush:
         ),
         BusFrame::Confirmation(_) => {}
     }
-    flush_persistence(
-        &deps.persistence_slices,
-        &deps.store,
-        last_flush,
-        command_flush_interval(&deps.store),
-    );
+    flush_paced(deps, clock, command_flush_interval);
     WORKER_STACK.note(tag);
 }
 
-fn evict_and_flush_on_idle(deps: &RegistryWorkerDeps, last_flush: &mut Instant) {
+fn evict_and_flush_on_idle(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
     deps.store
         .evict_stale_memory_bank_staging(MEMORY_BANK_STAGING_MAX_AGE_MS);
     deps.store
         .evict_stale_config_write_stages(CONFIG_WRITE_STAGE_MAX_AGE_MS);
     deps.store
         .evict_stale_hcl_schedule_stages(HCL_SCHEDULE_STAGE_MAX_AGE_MS);
-    flush_persistence(
-        &deps.persistence_slices,
-        &deps.store,
-        last_flush,
-        PERSISTENCE_DEBOUNCE,
-    );
+    flush_paced(deps, clock, |_| PERSISTENCE_DEBOUNCE);
     WORKER_STACK.note("idle");
 }
 
@@ -208,19 +226,20 @@ fn run_registry_worker_loop(
     deps: &RegistryWorkerDeps,
     liveness: &dali2rust_platform::liveness::LivenessBeat,
 ) {
-    let mut last_flush = Instant::now();
+    let mut clock = FlushClock::new(HCL_SWITCH_WRITE_INTERVAL);
     loop {
         liveness.beat(dali2rust_platform::liveness::monotonic_ms());
         let turn = liveness.while_turning(|| {
             recv_then_drain(&rx, RECV_TIMEOUT, |frame| {
-                apply_frame_and_flush(frame, deps, &mut last_flush)
+                apply_frame_and_flush(frame, deps, &mut clock)
             })
         });
         match turn {
             WorkerTurn::Handled => {}
-            WorkerTurn::Idle => evict_and_flush_on_idle(deps, &mut last_flush),
+            WorkerTurn::Idle => evict_and_flush_on_idle(deps, &mut clock),
             WorkerTurn::Disconnected => {
-                flush_persistence(&deps.persistence_slices, &deps.store, &mut last_flush, Duration::ZERO);
+                clock.switch_interval = Duration::ZERO;
+                flush_paced(deps, &mut clock, |_| Duration::ZERO);
                 break;
             }
         }
@@ -255,8 +274,20 @@ pub fn spawn_registry_worker(
 
 #[cfg(test)]
 mod tests {
-    use super::{command_flush_interval, flush_persistence, RegistryStore, PERSISTENCE_DEBOUNCE};
+    use super::{
+        apply_frame_and_flush, command_flush_interval, evict_and_flush_on_idle, flush_persistence,
+        FlushClock, RegistryStore, RegistryWorkerCounters, RegistryWorkerDeps,
+        HCL_SWITCH_WRITE_INTERVAL, PERSISTENCE_DEBOUNCE,
+    };
     use crate::test_support::CountingStore;
+    use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusId};
+    use dali2rust_contracts::bus::command_envelope;
+    use dali2rust_contracts::msg::{
+        fixed_text_32, BusCommandPayload, HclAlgorithm, HclLevelMode, HclPointList,
+        HclSchedulePointRow, HclScheduleEnableCommand, HclScheduleUpsertCommand, HclTargetList,
+        HclTargetRow, HclTargetScope, HclTimeRef,
+    };
+    use dali2rust_domain::registry::HclScheduleReadPort;
     use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
     use std::sync::atomic::Ordering;
     use std::sync::mpsc::{Receiver, Sender};
@@ -423,5 +454,115 @@ mod tests {
         assert!(store.apply_physical_device_attribute_chunk(0, 4, &fade(1000)));
         flush_now(&store);
         assert_eq!(slices.write_count(), 2);
+    }
+
+    const ALL_DAYS: u8 = 0b0111_1111;
+    const SWITCH_BURST: [bool; 5] = [false, true, false, true, false];
+
+    fn worker_on(slices: &Arc<CountingStore>) -> (RegistryWorkerDeps, BusHost) {
+        let (host, publisher, ()) = BusHost::spawn(BusConfig::default(), |_| ());
+        let persistence_slices: Arc<dyn SliceStore> = slices.clone();
+        let deps = RegistryWorkerDeps {
+            publisher,
+            primary_adapter_id: BusId::default(),
+            adapter_count: 1,
+            store: Arc::new(RegistryStore::with_adapter_count(1)),
+            counters: Arc::new(RegistryWorkerCounters::default()),
+            persistence_slices: Some(persistence_slices),
+        };
+        (deps, host)
+    }
+
+    fn command(correlation_id: u64, payload: impl Into<BusCommandPayload>) -> BusFrame {
+        let target = BusId::default().0;
+        BusFrame::command(command_envelope(0, correlation_id, target, None, payload))
+    }
+
+    fn schedule(schedule_id: &str) -> HclScheduleUpsertCommand {
+        let target = HclTargetRow { adapter_id: 0, scope: HclTargetScope::Group, group_mask: 0b1 };
+        let point = HclSchedulePointRow {
+            time_ref: HclTimeRef::Absolute,
+            offset_minutes: 1080,
+            level_mode: HclLevelMode::Absolute,
+            level: Some(60),
+            color_temperature_kelvin: Some(2400),
+        };
+        HclScheduleUpsertCommand {
+            schedule_id: fixed_text_32(schedule_id),
+            enabled: true,
+            algorithm: HclAlgorithm::Interpolated,
+            active_days_mask: ALL_DAYS,
+            latitude_microdeg: None,
+            longitude_microdeg: None,
+            first_target_index: 0,
+            targets: HclTargetList::from_slice(&[target]).expect("one target"),
+            first_point_index: 0,
+            points: HclPointList::from_slice(&[point]).expect("one point"),
+            last_chunk: true,
+        }
+    }
+
+    fn switch(schedule_id: &str, enabled: bool) -> HclScheduleEnableCommand {
+        HclScheduleEnableCommand { schedule_id: fixed_text_32(schedule_id), enabled }
+    }
+
+    fn bit_after_restart(slices: &CountingStore, schedule_id: &str) -> Option<bool> {
+        let restarted = RegistryStore::with_adapter_count(1);
+        restarted.hydrate_from_store(slices, 1);
+        restarted.hcl_schedule_view(schedule_id).map(|view| view.enabled)
+    }
+
+    fn idle_turn(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
+        clock.last_flush = Instant::now() - PERSISTENCE_DEBOUNCE;
+        evict_and_flush_on_idle(deps, clock);
+    }
+
+    #[test]
+    fn a_burst_of_rule_switches_is_written_once_with_the_last_bit() {
+        let slices = Arc::new(CountingStore::default());
+        let (deps, _host) = worker_on(&slices);
+        let mut clock = FlushClock::new(HCL_SWITCH_WRITE_INTERVAL);
+        apply_frame_and_flush(command(1, schedule("porch")), &deps, &mut clock);
+        assert_eq!(slices.write_count(), 1, "a schedule edit is written at once");
+
+        for (correlation_id, enabled) in (2..).zip(SWITCH_BURST) {
+            apply_frame_and_flush(command(correlation_id, switch("porch", enabled)), &deps, &mut clock);
+        }
+        idle_turn(&deps, &mut clock);
+        assert_eq!(slices.write_count(), 1, "the burst waits for its interval");
+        assert_eq!(
+            bit_after_restart(&slices, "porch"),
+            Some(true),
+            "a restart inside the interval keeps the bit last written"
+        );
+        assert_eq!(
+            deps.counters.command.hcl_switches_coalesced.load(Ordering::Relaxed),
+            SWITCH_BURST.len() as u32 - 1,
+            "every switch after the first joined the write already waiting"
+        );
+
+        clock.switch_interval = Duration::ZERO;
+        idle_turn(&deps, &mut clock);
+        idle_turn(&deps, &mut clock);
+        assert_eq!(slices.write_count(), 2, "the whole burst costs one write");
+        assert_eq!(bit_after_restart(&slices, "porch"), Some(false), "and it carries the last bit");
+    }
+
+    #[test]
+    fn a_schedule_edit_writes_a_waiting_switch_at_once() {
+        let slices = Arc::new(CountingStore::default());
+        let (deps, _host) = worker_on(&slices);
+        let mut clock = FlushClock::new(HCL_SWITCH_WRITE_INTERVAL);
+        apply_frame_and_flush(command(1, schedule("porch")), &deps, &mut clock);
+        apply_frame_and_flush(command(2, switch("porch", false)), &deps, &mut clock);
+        assert_eq!(slices.write_count(), 1, "the switch waits");
+
+        apply_frame_and_flush(command(3, schedule("dusk")), &deps, &mut clock);
+        assert_eq!(slices.write_count(), 2, "the edit is written at once");
+        assert_eq!(bit_after_restart(&slices, "porch"), Some(false), "and carries the switch");
+
+        clock.switch_interval = Duration::ZERO;
+        idle_turn(&deps, &mut clock);
+        assert_eq!(slices.write_count(), 2, "nothing is left waiting");
     }
 }

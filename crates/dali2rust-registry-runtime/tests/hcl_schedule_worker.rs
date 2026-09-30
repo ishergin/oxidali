@@ -558,29 +558,41 @@ mod persistence {
     }
 
     #[test]
-    fn a_switched_bit_survives_a_restart() {
+    fn switches_apply_at_once_while_flash_keeps_the_last_written_bit() {
         let slices: Arc<dyn SliceStore> = Arc::new(InMemorySliceStore::new());
-        let (publisher, conf_rx, store, _host) = spawn_stack_with_slices(Arc::clone(&slices));
-        store_porch(&publisher, &conf_rx, 101);
+        let s = support::spawn_registry_stack_with(support::RegistryStackOptions {
+            slices: Some(Arc::clone(&slices)),
+            ..support::RegistryStackOptions::default()
+        });
+        store_porch(&s.publisher, &s.conf_rx, 101);
         wait_until(
             || slices.load(SliceKey::HclSchedules).is_ok(),
             Duration::from_secs(3),
         );
 
-        publish(&publisher, 102, switch("porch", false));
-        assert_ok(&recv_confirm_for(&conf_rx, 102));
+        for (corr, enabled) in [(102, false), (103, true), (104, false)] {
+            publish(&s.publisher, corr, switch("porch", enabled));
+            assert_ok(&recv_confirm_for(&s.conf_rx, corr));
+        }
+        let settled = 105;
+        publish(&s.publisher, settled, switch("porch", false));
+        assert_ok(&recv_confirm_for(&s.conf_rx, settled));
         let restarted_bit = || {
             let restarted = RegistryStore::with_adapter_count(1);
             restarted.hydrate_from_store(slices.as_ref(), 1);
             restarted.hcl_schedule_view("porch").map(|view| view.enabled)
         };
-        wait_until(|| restarted_bit() == Some(false), Duration::from_secs(3));
+        assert!(!s.store.hcl_schedule_view("porch").expect("stored").enabled);
+        assert_eq!(restarted_bit(), Some(true), "a restart now keeps the bit last written");
         assert_eq!(
-            restarted_bit(),
-            Some(false),
-            "a rule's switch is a configuration write and must reach flash"
+            s.counters.command.hcl_switches_coalesced.load(Ordering::Relaxed),
+            2,
+            "the two switches after the first joined its waiting write"
         );
-        drop(store);
+
+        drop(s._host);
+        wait_until(|| restarted_bit() == Some(false), Duration::from_secs(3));
+        assert_eq!(restarted_bit(), Some(false), "a stopping worker writes what waits");
     }
 
     #[test]

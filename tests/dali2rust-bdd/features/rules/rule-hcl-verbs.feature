@@ -41,6 +41,19 @@ Feature: Rules and HCL: a rule enables, disables, holds and resumes a schedule
     And the scheduler should drive group 8 to level 80
     And the rule "off" should have the last outcome "ok"
 
+  @id:RULE-070
+  Scenario: A burst of rule switches lands at once, the last one wins, and the stats count the writes it joined
+    When I PUT JSON {"base_revision":0,"source":"rule \"flap\" {\n  when http trigger\n  do hcl.disable(\"house\")\n     hcl.enable(\"house\")\n     hcl.disable(\"house\")\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given I remember the stats pointer "/rules/hcl_switches_coalesced"
+    When I POST JSON {} to "/api/v1/rules/flap/run"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the stats pointer "/rules/hcl_switches_coalesced" eventually grows by 2
+    And HCL schedule "house" is eventually disabled
+    And the rule "flap" should have the last outcome "ok"
+
   @id:RULE-061
   Scenario: A rule holds one group of a schedule without touching the light, and the hold wakes the override trigger
     When I PUT JSON {"base_revision":0,"source":"rule \"hold\" {\n  when http trigger\n  do hcl.hold(group(7))\n}\nrule \"pulse\" {\n  when every 1s\n  do log(\"p\")\n}\nrule \"watch-7\" {\n  when hcl override starts for group(7)\n  do log(\"7\")\n}\nrule \"watch-8\" {\n  when hcl override starts for group(8)\n  do log(\"8\")\n}\n"} to "/api/v1/rules"

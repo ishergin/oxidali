@@ -120,7 +120,7 @@ async fn dali_executed_increased(world: &mut DaliWorld) {
     );
 }
 
-// RULE-030 RULE-039
+// RULE-030 RULE-039 RULE-070
 #[given(regex = r#"^I remember the stats pointer "([^"]+)"$"#)]
 async fn remember_stats_pointer(world: &mut DaliWorld, pointer: String) {
     let json = stats_snapshot(world);

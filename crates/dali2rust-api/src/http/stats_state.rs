@@ -128,6 +128,7 @@ pub struct StatsRulesDto {
     pub effects_emitted: u32,
     pub actions_failed: u32,
     pub effects_unbound: u32,
+    pub hcl_switches_coalesced: u32,
     pub continuations_scheduled: u32,
     pub continuations_fired: u32,
     pub continuations_dropped: u32,
