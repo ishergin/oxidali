@@ -86,7 +86,11 @@ messages to every new subscription.
    loop shorter than a second. The price is twofold: a loop through another client that
    answers a light change with a message is invisible to the chain and runs at the pace
    of the rule's cooldown, and a message another client sends on a topic a rule published
-   within the window is counted as that publish's echo.
+   within the window is counted as that publish's echo. Two loops inside the controller
+   escape the chain as well: a hop through a timer (`start timer` → `when timer fires` or
+   `every`) starts a fresh chain at depth zero, and a `mqtt.publish` to the controller's
+   own `…/set` command topic executes as a Home Assistant command whose lamp change carries
+   no chain link. With a period of a second or more both run until the document changes.
 9. **The bridge's own topics are not triggers.** A rule on a topic the bridge publishes
    — the state or availability of a lamp, group, scene selector or input, the
    controller's availability, a discovery config — would hear the bridge echo the
