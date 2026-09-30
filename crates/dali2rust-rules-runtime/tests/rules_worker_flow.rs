@@ -660,7 +660,7 @@ fn a_failed_activation_fires_the_rule_that_watches_it() {
     publish_document(
         &h,
         91,
-        "rule \"падает\" {\n  when http trigger\n  do hcl.hold(group(2))\n}\n\
+        "rule \"падает\" {\n  when http trigger\n  do lamp(9).off()\n}\n\
          \nrule \"ловит\" {\n  when rule(\"падает\") fails\n  do lamp(6).level(55)\n}\n",
         0,
     );
@@ -687,7 +687,7 @@ fn a_rule_that_watches_its_own_failure_does_not_recurse() {
     publish_document(
         &h,
         101,
-        "rule \"сам\" {\n  when http trigger\n  when rule(\"сам\") fails\n  do hcl.hold(group(2))\n}\n",
+        "rule \"сам\" cooldown 0ms {\n  when http trigger\n  when rule(\"сам\") fails\n  do lamp(9).off()\n}\n",
         0,
     );
     let sig = recv_signal(&h, 101);
@@ -703,7 +703,7 @@ fn a_rule_that_watches_its_own_failure_does_not_recurse() {
         },
     );
 
-    assert!(recv_setpoint(&h).is_none(), "hcl.hold reaches no command");
+    assert!(recv_setpoint(&h).is_none(), "an effect on a lamp the world does not know reaches no command");
     publish(
         &h,
         103,
@@ -713,6 +713,11 @@ fn a_rule_that_watches_its_own_failure_does_not_recurse() {
         },
     );
     recv_changed(&h, 2);
+    assert_eq!(
+        h.counters.effects_unbound.load(std::sync::atomic::Ordering::Relaxed),
+        2,
+        "the run failed, its failure woke the rule once, and that failure woke nothing"
+    );
 }
 
 #[test]
@@ -721,7 +726,7 @@ fn a_dry_run_reports_no_failure() {
     publish_document(
         &h,
         111,
-        "rule \"падает\" {\n  when http trigger\n  do hcl.hold(group(2))\n}\n\
+        "rule \"падает\" {\n  when http trigger\n  do lamp(9).off()\n}\n\
          \nrule \"ловит\" {\n  when rule(\"падает\") fails\n  do lamp(6).level(55)\n}\n",
         0,
     );
