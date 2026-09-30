@@ -109,10 +109,9 @@ wire; during a test's setup or run it is reported as a skip that quotes it:
 - A group or broadcast frame, a group target-state and a scene recall pass only when
   every present gear on the segment is in `HIL_LAMP_SHORTS`.
 - Under `HIL_LAMPS_READ_ONLY=1` every visible action is refused: target-state, identify,
-  scene recall, and every frame or attribute write that changes what a lit lamp shows —
-  arc power, colour activation and steps, a new level or Tc limit (it moves a lit lamp
-  into range), a new dimming curve (the lists are `VISIBLE_*` in `hil/lamp_guard.py`).
-  Other configuration writes to an allowed lamp still pass (STRATEGY §4).
+  scene recall, and every frame or attribute write that changes what a lit lamp shows
+  (`VISIBLE_*` in `hil/lamp_guard.py`; a new level or Tc limit moves a lit lamp into
+  range). Other configuration writes to an allowed lamp still pass (STRATEGY §4).
 - A `/api/v1/dali/*` request whose body names no frame the guard can read is refused.
 - Commissioning is refused — the steps, address changes, replacements, a
   `commission_unaddressed` run, the input-device commission and every special frame but
@@ -156,7 +155,8 @@ for every session that reaches the controller:
   scene levels) and what every lamp shows.
 - **During** the session every request `Client` sends and every frame of the WB master
   is noted, by resource and patched field, in a write log next to the snapshot; an MQTT
-  command, a rule run and a schedule or clock change count as moving any lamp.
+  command, a forged input event, a rule run, a schedule, clock or role change and a
+  reboot count as moving any lamp.
 - **After** it each layer writes back only what that log names; it re-reads every gear
   before putting the light back and diffs against the snapshot. What the toolkit wrote and
   could not put back prints `PRODUCTION STATE NOT RESTORED`, turns the run red and keeps
