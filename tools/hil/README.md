@@ -151,7 +151,7 @@ The session-scoped autouse fixture `production_state` (`hil/prod_state.py`) runs
 for every session that reaches the controller:
 
 - **Before** anything else it primes the registry with an attribute read of every
-  gear (runtime state is unknown after a reboot) and snapshots the controller's and the
+  gear (runtime state is unknown after a reboot) and snapshots the controller's and
   gear's configuration (the fields it names, below) and what every lamp shows.
 - **During** the session every request `Client` sends and every frame of the WB master
   is noted, by resource and patched field, in a write log next to the snapshot; an MQTT
@@ -161,8 +161,8 @@ for every session that reaches the controller:
   before putting the light back and diffs against the snapshot. What the toolkit wrote and
   could not put back prints `PRODUCTION STATE NOT RESTORED`, turns the run red and keeps
   the session open; a change someone else made is printed as such and left.
-- It cannot restore the colour a DT8 gear stored with a scene, or anything outside
-  the controller (the Wiren Board, Home Assistant).
+- It cannot restore the colour a DT8 gear stored with a scene, a last active level, or
+  anything outside the controller (the Wiren Board, Home Assistant).
 - It restores the rules document only where the difference is whole blocks of rules
   named `hil-…`, against the revision it read, so an owner's edit stays and is reported;
   while the owner's delayed actions are pending (STRATEGY §4.9) it leaves the test rules in
@@ -178,7 +178,7 @@ for every session that reaches the controller:
   another controller, is named and its session left open, and the command exits non-zero
   while a session is open. Every later session ends red until then.
 - Under `HIL_LAMPS_READ_ONLY=1` the light is reported, never driven — by this
-  fixture, by `state_snapshot` and by `hil state restore`. A lamp outside
+  fixture, `state_snapshot` and `hil state restore`. A lamp outside
   `HIL_LAMP_SHORTS` is never driven back, and the lamp guard refuses a repair of its
   gear groups and scenes: a difference there stays a residual. So does the light of a lamp
   the log names, keeping the session open until a restore with `HIL_LAMPS_READ_ONLY=0` and
@@ -191,7 +191,7 @@ for every session that reaches the controller:
   there too, or a test that changes it leaks past the session with no residual.
 - Fields an enabled HCL schedule drives (level, colour or both, on its targets'
   members) are neither compared nor restored: the schedule moves them during a session,
-  and writing one back would be an API write the scheduler takes as an override.
+  and writing one back is an API write the scheduler takes as an override.
 - Part 103 control devices are neither snapshotted nor restored — their configuration
   lives in the panel's NVM — so a test writes a panel field only with the value the
   panel already holds.

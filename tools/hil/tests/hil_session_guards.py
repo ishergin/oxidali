@@ -79,8 +79,7 @@ def _close_session(api, cfg, snap, own, writes, state):
         prod_state.mark_restored(own, snap)
     state["production_state_residual"] = done.residual
     state["production_state_foreign"] = done.foreign
-    state["production_state"] += "; restored%s" % (
-        " completely" if not done.residual else " with %d residual line(s)" % len(done.residual))
+    state["production_state"] += prod_state.restore_verdict(done, snap, writes)
     absorbed = {k: v for k, v in api.retries.items() if v}
     if absorbed:
         state["production_state"] += "; the guard's own retries: %s" % ", ".join(
