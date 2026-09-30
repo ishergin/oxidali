@@ -1,11 +1,12 @@
 use std::time::Duration;
 
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 use dali2rust_platform::dali::ObservedRawFrameKind;
 use dali2rust_test_support::wait_until;
 use serde_json::Value;
 
 use crate::steps::polling::fetch_json;
+use crate::steps::wire::{command_address, go_to_scene, group_command_address, SCENE_NUMBER_MASK};
 use crate::DaliWorld;
 
 const READ_MODEL_TIMEOUT: Duration = Duration::from_secs(4);
@@ -34,12 +35,6 @@ fn inject_forward16(world: &mut DaliWorld, bytes: [u8; 2]) {
 const SET_SCENE_BASE: u8 = 0x40;
 const REMOVE_FROM_SCENE_BASE: u8 = 0x50;
 const QUERY_STATUS_OPCODE: u8 = 0x90;
-const SCENE_NUMBER_MASK: u8 = 0x0F;
-const SHORT_ADDRESS_MASK: u8 = 0x3F;
-
-fn command_address(short: u8) -> u8 {
-    ((short & SHORT_ADDRESS_MASK) << 1) | 0x01
-}
 
 fn inject_pair(world: &mut DaliWorld, frame: [u8; 2]) {
     inject_forward16(world, frame);
@@ -79,7 +74,7 @@ fn lamp_state_field(world: &DaliWorld, lamp: u8, pointer: &str) -> Option<Value>
         .and_then(|json| json.pointer(pointer).cloned())
 }
 
-// SYS-212 SYS-214 SYS-217 WS-042
+// SYS-212 SYS-214 SYS-217 WS-042 RULE-036 RULE-039
 #[when(regex = r"^a foreign DAPC frame for short address (\d+) level (\d+) is observed on the bus$")]
 async fn when_foreign_dapc_observed(world: &mut DaliWorld, short: u8, level: u8) {
     inject_forward16(world, [short << 1, level]);
@@ -92,12 +87,59 @@ async fn when_foreign_last_active_observed(world: &mut DaliWorld, short: u8) {
     inject_forward16(world, [(short << 1) | 0x01, GO_TO_LAST_ACTIVE_LEVEL]);
 }
 
-// SYS-213
+// SYS-213 RULE-034 RULE-035 RULE-036 RULE-040
 #[when(regex = r"^a foreign broadcast recall of scene (\d+) is observed on the bus$")]
 async fn when_foreign_scene_recall_observed(world: &mut DaliWorld, scene: u8) {
-    const BROADCAST_INDIRECT: u8 = 0xFF;
-    const GO_TO_SCENE_BASE: u8 = 0x10;
-    inject_forward16(world, [BROADCAST_INDIRECT, GO_TO_SCENE_BASE | (scene & 0x0F)]);
+    inject_forward16(world, [BROADCAST_INDIRECT, go_to_scene(scene)]);
+}
+
+const BROADCAST_INDIRECT: u8 = 0xFF;
+const UNADDRESSED_BROADCAST_INDIRECT: u8 = 0xFD;
+
+// RULE-035
+#[when(regex = r"^a foreign unaddressed recall of scene (\d+) is observed on the bus$")]
+async fn when_foreign_unaddressed_recall_observed(world: &mut DaliWorld, scene: u8) {
+    inject_forward16(world, [UNADDRESSED_BROADCAST_INDIRECT, go_to_scene(scene)]);
+}
+
+const OFF_OPCODE: u8 = 0x00;
+
+// RULE-039
+#[when("a foreign unaddressed OFF is observed on the bus")]
+async fn when_foreign_unaddressed_off_observed(world: &mut DaliWorld) {
+    inject_forward16(world, [UNADDRESSED_BROADCAST_INDIRECT, OFF_OPCODE]);
+}
+
+// RULE-035 RULE-040
+#[when(regex = r"^a foreign group (\d+) recall of scene (\d+) is observed on the bus$")]
+async fn when_foreign_group_recall_observed(world: &mut DaliWorld, group: u8, scene: u8) {
+    inject_forward16(world, [group_command_address(group), go_to_scene(scene)]);
+}
+
+// RULE-035
+#[when(regex = r"^a foreign short address (\d+) recall of scene (\d+) is observed on the bus$")]
+async fn when_foreign_short_recall_observed(world: &mut DaliWorld, short: u8, scene: u8) {
+    inject_forward16(world, [command_address(short), go_to_scene(scene)]);
+}
+
+fn projector_counter(world: &mut DaliWorld, name: &str) -> u64 {
+    let json = super::get_json(world, "/api/v1/diagnostics");
+    json["projector"][name]
+        .as_u64()
+        .unwrap_or_else(|| panic!("projector.{name} missing or not a number in {json}"))
+}
+
+// RULE-036
+#[given(regex = r#"^I remember the diagnostics projector counter "([a-z_]+)"$"#)]
+async fn remember_projector_counter(world: &mut DaliWorld, name: String) {
+    world.remembered_u64 = Some(projector_counter(world, &name));
+}
+
+// RULE-036
+#[then(regex = r#"^the diagnostics projector counter "([a-z_]+)" should have grown by (\d+)$"#)]
+async fn then_projector_counter_grew_by(world: &mut DaliWorld, name: String, delta: u64) {
+    let before = world.remembered_u64.expect("remembered projector counter");
+    assert_eq!(projector_counter(world, &name), before + delta, "projector.{name}");
 }
 
 // SYS-214
@@ -113,7 +155,7 @@ fn inject_dt8_write(world: &mut DaliWorld, short: u8, value: u16, opcode: u8) {
     inject_forward16(world, [(short << 1) | 1, opcode]);
 }
 
-// SYS-215
+// SYS-215 RULE-040
 #[when(regex = r"^a foreign DT8 CCT (\d+)K write for short address (\d+) is observed on the bus$")]
 async fn when_foreign_dt8_cct_observed(world: &mut DaliWorld, kelvin: u32, short: u8) {
     let mirek = (MIREK_KELVIN_NUMERATOR / kelvin) as u16;
@@ -143,7 +185,7 @@ async fn when_foreign_dt8_rgb_observed(world: &mut DaliWorld, r: u8, g: u8, b: u
     inject_forward16(world, [(short << 1) | 1, DT8_ACTIVATE_OPCODE]);
 }
 
-// SYS-210 SYS-211 SYS-212 SYS-213 SYS-214 SYS-241
+// SYS-210 SYS-211 SYS-212 SYS-213 SYS-214 SYS-241 RULE-031 RULE-036 RULE-038 RULE-039
 #[then(regex = r"^the virtual lamp (\d+) runtime level should eventually be (\d+)$")]
 async fn then_vl_runtime_level_eventually(world: &mut DaliWorld, lamp: u8, level: u8) {
     wait_until(
@@ -180,7 +222,7 @@ async fn then_vl_runtime_cct_eventually(world: &mut DaliWorld, lamp: u8, kelvin:
     );
 }
 
-// SYS-210 SYS-211 SYS-212 SYS-213 SYS-241
+// SYS-210 SYS-211 SYS-212 SYS-213 SYS-241 RULE-031
 #[then(regex = r#"^the virtual lamp (\d+) last_dapc_source should be "([^"]+)"$"#)]
 async fn then_vl_last_dapc_source(world: &mut DaliWorld, lamp: u8, expected: String) {
     let json = lamp_state_field(world, lamp, "/state/last_dapc_source");

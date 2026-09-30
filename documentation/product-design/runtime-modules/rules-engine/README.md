@@ -40,7 +40,7 @@
   документа; `RuleRunCommand` — ручной запуск и сухой прогон.
 - **События-триггеры**: события входа и служебные события устройств ввода,
   `RuntimeStateChangedEvent` (лампы и агрегаты групп), `DaliSceneRecalledEvent`
-  (recall, исполненный этим контроллером), `RedundancyTransitionEvent`
+  (случившийся recall — наш или чужой, увиденный сниффером), `RedundancyTransitionEvent`
   (`controller becomes active`), `DaliSettingsChangedEvent`,
   `Dali103InstanceConfiguredEvent` (`manual config changed`).
 - **События-инвалидации**: `VirtualLampChangedEvent` и `PhysicalDeviceChangedEvent` —
@@ -61,8 +61,8 @@
 вида (почему — `ADR-016`, таблица приоритетов —
 [`../../../architecture/09-dali-protocol-rules.md`](../../../architecture/09-dali-protocol-rules.md)
 §Priority and yielding). В провенансе коммит правила — `rules`, и HCL видит его как
-ручное вмешательство ([`../hcl-scheduler/README.md`](../hcl-scheduler/README.md)
-§Override).
+ручное вмешательство, если правило не сказало `hold_hcl false`
+([`../hcl-scheduler/README.md`](../hcl-scheduler/README.md) §Override).
 
 ## Активация
 
@@ -83,7 +83,8 @@
    ([03](../../../architecture/03-bus-and-backpressure.md) §Coalescing). Сливаются они
    только внутри непрерывной серии световых действий:
    не-световой эффект и `.stop_fade()` закрывают серию, иначе слияние подняло бы более
-   поздний глагол раньше них.
+   поздний глагол раньше них. Эффект с другим `hold_hcl` на ту же цель начинает новую
+   уставку: одна команда не объявила бы расписанию два разных решения.
 7. Исход (`ok`, `partial`, `failed`, `suppressed`) уходит в `RulesActivationEvent`,
    WebSocket-канал `rules` и статистику.
 

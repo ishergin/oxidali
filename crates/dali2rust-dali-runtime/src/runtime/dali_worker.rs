@@ -266,11 +266,15 @@ dali2rust_contracts::dispatch_bus_commands! {
     ),
     DaliRecallSceneCommand(command) => handle_recall_scene(
         controller,
-        publisher,
-        adapter_id,
-        correlation_id,
+        read_port,
+        &scene::RecallOutcome {
+            publisher,
+            adapter_id,
+            correlation_id,
+            source: RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api),
+            counters,
+        },
         command,
-        counters,
     ),
     DaliRecallLastActiveLevelCommand(command) => handle_recall_last_active_level(
         controller,

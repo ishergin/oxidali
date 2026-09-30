@@ -16,7 +16,7 @@ fn payload_json(world: &DaliWorld, topic: &str) -> serde_json::Value {
         .unwrap_or_else(|e| panic!("payload on {topic} is not JSON: {e}"))
 }
 
-// MQTT-003 MQTT-004 MQTT-005 MQTT-006 MQTT-007 MQTT-008 MQTT-009 MQTT-010 MQTT-011 MQTT-012 MQTT-013 MQTT-015 MQTT-016 MQTT-017 MQTT-018 MQTT-019 MQTT-001 MQTT-002 MQTT-014 MQTT-020 SET-HA-020 MQTT-024 COMM-100
+// MQTT-003 MQTT-004 MQTT-005 MQTT-006 MQTT-007 MQTT-008 MQTT-009 MQTT-010 MQTT-011 MQTT-012 MQTT-013 MQTT-015 MQTT-016 MQTT-017 MQTT-018 MQTT-019 MQTT-001 MQTT-002 MQTT-014 MQTT-020 SET-HA-020 MQTT-024 COMM-100 RULE-040
 #[given(regex = r#"^the Home Assistant bridge is enabled with controller id "([^"]*)"$"#)]
 async fn enable_bridge(world: &mut DaliWorld, controller_id: String) {
     let body = format!(
@@ -43,7 +43,7 @@ async fn will_registered(world: &mut DaliWorld, topic: String) {
     assert!(will.retain, "a non-retained will is invisible to a later client");
 }
 
-// MQTT-010 MQTT-011 MQTT-014 MQTT-019 MQTT-001
+// MQTT-010 MQTT-011 MQTT-014 MQTT-019 MQTT-001 RULE-040
 #[then(regex = r#"^MQTT should have a retained "([^"]*)" on "([^"]*)"$"#)]
 async fn retained_text(world: &mut DaliWorld, expected: String, topic: String) {
     let mock = world.mqtt_mock().clone();

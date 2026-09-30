@@ -31,11 +31,15 @@ broadcast и сцены по участникам.
 | Broadcast | все привязанные лампы адаптера |
 | Recall сцены (наш или чужой), broadcast | только **applied**-строки сцены; desired-only строки не проецируются |
 | Recall сцены на группу | applied-строки сцены, чьи лампы — applied-члены группы |
+| Recall сцены на короткий адрес (наш — на лампу — или чужой) | applied-строка лампы, привязанной к адресу |
 | Чужой кадр по короткому адресу | лампа, привязанная к адресу, и само устройство |
 | Арк-команда без уровня (`LevelTransitionObserved`) | `RegistryLevelTransitionCommand` на каждого участника; уровень считает реестр |
 | Секция `RuntimeStatus` чтения | один коммит устройства |
 | Исход чтения «устройство не ответило» | наблюдение отсутствия (`device_absent`) без уровня и без `last_seen_ms` |
 
+- **Recall** — наш и чужой — раскрывается из одного `DaliSceneRecalledEvent`: чужой
+  `GO TO SCENE` транслятор публикует только этим фактом
+  ([`../sniffer-translator/README.md`](../sniffer-translator/README.md)).
 - **Цветовой гейт** при раскрытии на разнородных участников —
   [`../../../architecture/06-registry-and-persistence.md`](../../../architecture/06-registry-and-persistence.md)
   §Colour capability gate; capability участника берётся из вида лампы, то есть с учётом
@@ -54,10 +58,12 @@ broadcast и сцены по участникам.
   [`../../../architecture/06-registry-and-persistence.md`](../../../architecture/06-registry-and-persistence.md)
   §Update path и §Merge rules. Метка applied-факта — момент применения на проводе;
   отсутствие не штампуется.
-- Источник коммита команды — из её `Origin` (`Api`, `Mqtt`, `Hcl`, `Rules`);
-  наблюдения сниффера — `Sniffer`; секция `RuntimeStatus` — `Readback`: чтение ничего
-  не командует, и HCL не должен принимать его за ручное вмешательство; отсутствие
-  устройства — `Poller`.
+- Источник коммита команды — из её `Origin` (`Api`, `Mqtt`, `Hcl`, `Rules`): `DaliWorker`
+  кладёт его в `source` applied-факта и recall-факта рядом с `hold_hcl` команды, и оба
+  проектор переносит в каждую запись раскрытия. Наблюдения сниффера — `Sniffer`;
+  секция `RuntimeStatus` — `Readback`: чтение ничего не командует, и HCL не должен
+  принимать его за ручное вмешательство; отсутствие устройства — `Poller`. Записи без
+  команды за спиной `hold_hcl` не снимают.
 
 ## `last_dapc_source`
 

@@ -11,10 +11,11 @@ use dali2rust_contracts::bus::event_envelope;
 use dali2rust_contracts::msg::{
     Dali103ApplicationControlObservedEvent,
     ColorMode, ColorValue, DaliInputDeviceLifecycleEvent, DaliInputEventObservedEvent,
-    DaliObservedFrameEvent, DaliTargetScope, DecodeStatus, DeviceCommandScope,
-    InputDeviceLifecycleKind,
+    DaliObservedFrameEvent, DaliSceneRecalledEvent, DaliTargetScope, DecodeStatus,
+    DeviceCommandScope, InputDeviceLifecycleKind,
     LevelTransition,
     InputEventKind, LightSetpoint, ObservedFrameWidth, ObservedKind, Origin, PowerState,
+    RuntimeSource,
 };
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::dali::dev103::{
@@ -47,6 +48,7 @@ pub const SNIFFER_TRANSLATOR_REQUIRED_EVENTS: &[&str] = &[
     "DaliInputEventObservedEvent",
     "DaliInputDeviceLifecycleEvent",
     "Dali103ApplicationControlObservedEvent",
+    "DaliSceneRecalledEvent",
 ];
 
 #[derive(Debug, Default)]
@@ -63,9 +65,10 @@ pub struct SnifferTranslatorCounters {
     pub input_events_typed_from_registry: AtomicU32,
     pub input_events_ambiguous_scheme: AtomicU32,
     pub input_lifecycle: AtomicU32,
-    pub input_publish_retried: AtomicU32,
+    pub fact_publish_retried: AtomicU32,
     pub app_control_pairs: AtomicU32,
     pub scene_writes_observed: AtomicU32,
+    pub unaddressed_ignored: AtomicU32,
 }
 
 struct ColourStage {
@@ -285,11 +288,11 @@ fn track_scene_write(
         state.pending_scene_write = Some((raw.bytes, raw.observed_at_mono_ms));
         return;
     }
-    if address == DaliAddress::BroadcastUnaddressed {
+    let Some((scope, short_address, group_id)) = scope_of(address) else {
+        count_unaddressed(publish.counters);
         return;
-    }
+    };
     publish.counters.scene_writes_observed.fetch_add(1, Ordering::Relaxed);
-    let (scope, short_address, group_id) = scope_of(address);
     let fact = ObservedFact {
         kind,
         scope,
@@ -319,9 +322,17 @@ fn publish_standard(
     address: DaliAddress,
     command: StandardCommand,
 ) {
-    match classify_standard(address, command) {
+    let Some(target) = scope_of(address) else {
+        count_unaddressed(counters);
+        return;
+    };
+    if let Some(recall) = foreign_recall(registry_adapter_id, raw, target, command) {
+        publish_required_fact(publisher, bus_id, counters, recall);
+        return;
+    }
+    match classify_standard(target, command) {
         Some(observed) => {
-            publish_observed(publisher, bus_id, registry_adapter_id, counters, raw, observed)
+            publish_observed(publisher, bus_id, registry_adapter_id, counters, raw, observed);
         }
         None if is_unprojectable_dimming(command) => {
             counters
@@ -358,30 +369,33 @@ struct ObservedFact {
     level_transition: Option<LevelTransition>,
 }
 
-fn scope_of(address: DaliAddress) -> (DaliTargetScope, Option<u8>, Option<u8>) {
+type Target = (DaliTargetScope, Option<u8>, Option<u8>);
+
+fn scope_of(address: DaliAddress) -> Option<Target> {
     match address {
-        DaliAddress::Short(a) => (DaliTargetScope::Short, Some(a), None),
-        DaliAddress::Group(g) => (DaliTargetScope::Group, None, Some(g)),
-        DaliAddress::Broadcast | DaliAddress::BroadcastUnaddressed => {
-            (DaliTargetScope::Broadcast, None, None)
-        }
+        DaliAddress::Short(a) => Some((DaliTargetScope::Short, Some(a), None)),
+        DaliAddress::Group(g) => Some((DaliTargetScope::Group, None, Some(g))),
+        DaliAddress::Broadcast => Some((DaliTargetScope::Broadcast, None, None)),
+        DaliAddress::BroadcastUnaddressed => None,
     }
 }
 
-fn classify_standard(address: DaliAddress, command: StandardCommand) -> Option<ObservedFact> {
-    let (scope, short_address, group_id) = scope_of(address);
-    let shape = |(kind, scene_id, setpoint, dapc_observed)| ObservedFact {
-        kind,
+fn classify_standard(
+    (scope, short_address, group_id): Target,
+    command: StandardCommand,
+) -> Option<ObservedFact> {
+    let target_state = |(setpoint, dapc_observed)| ObservedFact {
+        kind: ObservedKind::TargetStateObserved,
         scope,
         short_address,
         group_id,
-        scene_id,
-        setpoint,
+        scene_id: None,
+        setpoint: Some(setpoint),
         dapc_observed,
         level_transition: None,
     };
     classify_product_shape(command)
-        .map(shape)
+        .map(target_state)
         .or_else(|| level_transition_of(command).map(|verb| ObservedFact {
             kind: ObservedKind::LevelTransitionObserved,
             scope,
@@ -394,32 +408,43 @@ fn classify_standard(address: DaliAddress, command: StandardCommand) -> Option<O
         }))
 }
 
-fn classify_product_shape(
-    command: StandardCommand,
-) -> Option<(ObservedKind, Option<u8>, Option<LightSetpoint>, bool)> {
+fn classify_product_shape(command: StandardCommand) -> Option<(LightSetpoint, bool)> {
     match command {
         StandardCommand::DirectArcPower { level } if level == DAPC_MASK_LEVEL => None,
-        StandardCommand::DirectArcPower { level } => Some((
-            ObservedKind::TargetStateObserved,
-            None,
-            Some(level_setpoint(level)),
-            true,
-        )),
+        StandardCommand::DirectArcPower { level } => Some((level_setpoint(level), true)),
         StandardCommand::Off => Some((
-            ObservedKind::TargetStateObserved,
-            None,
-            Some(LightSetpoint {
+            LightSetpoint {
                 power: PowerState::Off,
                 level: Some(0),
                 color: None,
-            }),
+            },
             false,
         )),
-        StandardCommand::GoToScene { scene } => {
-            Some((ObservedKind::SceneRecallObserved, Some(scene), None, false))
-        }
         _ => None,
     }
+}
+
+fn foreign_recall(
+    registry_adapter_id: u8,
+    raw: &ObservedRawFrame,
+    (scope, short_address, group_id): Target,
+    command: StandardCommand,
+) -> Option<DaliSceneRecalledEvent> {
+    let StandardCommand::GoToScene { scene } = command else {
+        return None;
+    };
+    Some(DaliSceneRecalledEvent {
+        registry_adapter_id,
+        scope,
+        short_address: short_address.unwrap_or(0),
+        group_id: group_id.unwrap_or(0),
+        scene_id: scene,
+        error: None,
+        recalled_at_mono_ms: raw.observed_at_mono_ms,
+        source: RuntimeSource::Sniffer,
+        hold_hcl: true,
+        virtual_lamp_id: None,
+    })
 }
 
 fn level_transition_of(command: StandardCommand) -> Option<LevelTransition> {
@@ -467,6 +492,10 @@ fn handle_dt8_outcome(
             count_unknown(counters);
             true
         }
+        Dt8Outcome::Unaddressed => {
+            count_unaddressed(counters);
+            true
+        }
     }
 }
 
@@ -476,6 +505,7 @@ enum Dt8Outcome {
     Observed(ObservedFact),
     Ambiguous,
     Consumed,
+    Unaddressed,
 }
 
 fn decode_dt8(
@@ -536,7 +566,7 @@ fn activate_color(state: &mut DecoderState, wire_address: u8, address: DaliAddre
         return Dt8Outcome::Ambiguous;
     }
     match staged_colour(&stage) {
-        Some(color) => Dt8Outcome::Observed(color_fact(address, color)),
+        Some(color) => color_fact(address, color),
         None => Dt8Outcome::Ambiguous,
     }
 }
@@ -560,7 +590,7 @@ fn decode_cct(state: &DecoderState, address: DaliAddress) -> Dt8Outcome {
     };
     let mut color = sniffer_color(ColorMode::Cct);
     color.color_temperature_kelvin = kelvin;
-    Dt8Outcome::Observed(color_fact(address, color))
+    color_fact(address, color)
 }
 
 fn channel_colour(mode: ColorMode, rgb: [u8; 3], waf: [u8; 3]) -> ColorValue {
@@ -584,9 +614,11 @@ fn sniffer_color(mode: ColorMode) -> ColorValue {
     }
 }
 
-fn color_fact(address: DaliAddress, color: ColorValue) -> ObservedFact {
-    let (scope, short_address, group_id) = scope_of(address);
-    ObservedFact {
+fn color_fact(address: DaliAddress, color: ColorValue) -> Dt8Outcome {
+    let Some((scope, short_address, group_id)) = scope_of(address) else {
+        return Dt8Outcome::Unaddressed;
+    };
+    Dt8Outcome::Observed(ObservedFact {
         kind: ObservedKind::TargetStateObserved,
         scope,
         short_address,
@@ -599,7 +631,7 @@ fn color_fact(address: DaliAddress, color: ColorValue) -> ObservedFact {
         }),
         dapc_observed: false,
         level_transition: None,
-    }
+    })
 }
 
 // IEC 62386-101 Table 20
@@ -643,7 +675,7 @@ fn track_device_command_pair(
                 return;
             };
             counters.app_control_pairs.fetch_add(1, Ordering::Relaxed);
-            publish_input_fact(
+            publish_required_fact(
                 publisher,
                 bus_id,
                 counters,
@@ -684,7 +716,7 @@ fn translate_forward24(
             device_group,
         } => {
             counters.input_lifecycle.fetch_add(1, Ordering::Relaxed);
-            publish_input_fact(
+            publish_required_fact(
                 publisher,
                 bus_id,
                 counters,
@@ -725,7 +757,7 @@ fn publish_instance_event(
 ) {
     count_typed(counters, source, type_event(source.instance_type, info));
     let resolved = resolve_instance_type(registry_adapter_id, source, counters, instance_types);
-    publish_input_fact(
+    publish_required_fact(
         publisher,
         bus_id,
         counters,
@@ -812,7 +844,7 @@ fn count_typed(
     }
 }
 
-fn publish_input_fact<P>(
+fn publish_required_fact<P>(
     publisher: &BusPublisher,
     bus_id: BusId,
     counters: &Arc<SnifferTranslatorCounters>,
@@ -833,7 +865,7 @@ fn publish_input_fact<P>(
         BusFrame::event(env),
         &REQUIRED_PUBLISH_BACKOFF_MS,
         REQUIRED_PUBLISH_UNCAPPED,
-        "sniffer-translator-input-event",
+        "sniffer-translator-fact",
     );
     if outcome.queued {
         counters.observed_published.fetch_add(1, Ordering::Relaxed);
@@ -842,7 +874,7 @@ fn publish_input_fact<P>(
     }
     if outcome.retries > 0 {
         counters
-            .input_publish_retried
+            .fact_publish_retried
             .fetch_add(outcome.retries, Ordering::Relaxed);
     }
 }
@@ -875,6 +907,10 @@ fn publish_observed(
 
 fn count_unknown(counters: &Arc<SnifferTranslatorCounters>) {
     counters.unknown_seen.fetch_add(1, Ordering::Relaxed);
+}
+
+fn count_unaddressed(counters: &Arc<SnifferTranslatorCounters>) {
+    counters.unaddressed_ignored.fetch_add(1, Ordering::Relaxed);
 }
 
 fn publish_event(

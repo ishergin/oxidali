@@ -331,12 +331,9 @@ fn apply_observed(facts: &mut Facts, adapter: u8, body: &DaliObservedFrameEvent)
     if !speaks_for(adapter, body.registry_adapter_id) {
         return;
     }
-    let what = match (body.observed_kind, body.scene_id) {
-        (ObservedKind::SceneRecallObserved, Some(scene)) => {
-            EventLabel::from_fmt(format_args!("SC{scene}"))
-        }
-        (ObservedKind::UnknownObserved, _) => return,
-        (ObservedKind::LevelTransitionObserved, _) => match body.level_transition {
+    let what = match body.observed_kind {
+        ObservedKind::UnknownObserved | ObservedKind::SceneRecallObserved => return,
+        ObservedKind::LevelTransitionObserved => match body.level_transition {
             Some(verb) => EventLabel::from_fmt(format_args!("{}", transition_label(verb))),
             None => return,
         },
@@ -381,15 +378,19 @@ fn apply_scene(facts: &mut Facts, adapter: u8, body: &DaliSceneRecalledEvent) {
     if !speaks_for(adapter, body.registry_adapter_id) {
         return;
     }
+    let scope = match body.virtual_lamp_id {
+        Some(_) => DaliTargetScope::VirtualLamp,
+        None => body.scope,
+    };
     facts.last_action = Some(ActionLine {
         target: target_label(
-            body.scope,
+            scope,
             Some(body.short_address),
             Some(body.group_id),
-            None,
+            body.virtual_lamp_id,
         ),
         what: EventLabel::from_fmt(format_args!("SC{}", body.scene_id)),
-        source: None,
+        source: Some(body.source),
         failed: body.error.is_some(),
         age_ms: 0,
     });

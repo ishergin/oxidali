@@ -771,7 +771,7 @@ export type SnifferTranslatorCounters = {
   input_events_generic: number
   input_events_ambiguous_scheme: number
   input_lifecycle: number
-  input_publish_retried: number
+  fact_publish_retried: number
   app_control_pairs: number
 }
 
@@ -976,6 +976,7 @@ export type StatsDali = {
   foreign_verbs_projected_total: number
   foreign_dimming_unprojected_total: number
   foreign_scene_writes_total: number
+  foreign_unaddressed_ignored_total: number
   backward_undecodable_total: number
   backward_frame_size_total: number
   backward_incomplete_total: number
@@ -1040,6 +1041,7 @@ export type StatsRules = {
   chain_depth_exceeded: number
   effects_emitted: number
   actions_failed: number
+  effects_unbound: number
   continuations_scheduled: number
   continuations_fired: number
   continuations_dropped: number

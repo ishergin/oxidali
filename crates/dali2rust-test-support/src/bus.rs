@@ -65,6 +65,7 @@ pub fn projected_event_frame(correlation_id: u64) -> BusFrame {
             state_observation: dali2rust_contracts::msg::RuntimeObservation::default(),
             commit_source: dali2rust_contracts::msg::RuntimeSource::Api,
             commit_dimensions: SETPOINT.dimensions(),
+            commit_holds_hcl: true,
         },
     ))
 }

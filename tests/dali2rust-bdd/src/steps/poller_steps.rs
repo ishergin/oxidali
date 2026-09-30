@@ -138,7 +138,7 @@ async fn then_no_poller_operations(world: &mut DaliWorld) {
     );
 }
 
-// POL-008
+// POL-008 RULE-033 RULE-036
 #[then(regex = r#"^virtual lamp (\d+) on adapter (\d+) should eventually report level (\d+) from value_source "([a-z_]+)"$"#)]
 async fn then_vl_reports_level_from_source(
     world: &mut DaliWorld,

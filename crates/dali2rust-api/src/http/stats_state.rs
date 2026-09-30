@@ -35,6 +35,7 @@ pub struct StatsDaliDto {
     pub foreign_verbs_projected_total: u32,
     pub foreign_dimming_unprojected_total: u32,
     pub foreign_scene_writes_total: u32,
+    pub foreign_unaddressed_ignored_total: u32,
     #[serde(flatten)]
     pub backward: StatsDaliBackwardDto,
     #[serde(flatten)]
@@ -120,6 +121,7 @@ pub struct StatsRulesDto {
     pub chain_depth_exceeded: u32,
     pub effects_emitted: u32,
     pub actions_failed: u32,
+    pub effects_unbound: u32,
     pub continuations_scheduled: u32,
     pub continuations_fired: u32,
     pub continuations_dropped: u32,

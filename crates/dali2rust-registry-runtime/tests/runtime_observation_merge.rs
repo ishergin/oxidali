@@ -61,6 +61,7 @@ fn runtime_entry(
         last_dapc_source: None,
         source,
         observed_at_mono_ms: None,
+        hold_hcl: true,
     }
 }
 
@@ -272,6 +273,7 @@ fn absence_entry() -> RuntimeRegistryUpdateEntry {
         last_dapc_source: None,
         source: RuntimeSource::Poller,
         observed_at_mono_ms: None,
+        hold_hcl: true,
     }
 }
 
@@ -351,4 +353,25 @@ fn a_repeated_absence_verdict_says_nothing_twice() {
         Some(ErrorCode::DeviceAbsent),
         "and the record still says the gear is silent"
     );
+}
+
+#[test]
+fn a_commit_says_whether_the_fact_behind_it_holds_the_schedule() {
+    let stack = spawn_registry_stack(1, 16);
+    seed_physical_via_discovery(&stack.publisher, 2, SHORT, DeviceType::Dt6Led, &stack.store);
+
+    for (corr, level, hold_hcl) in [(230u64, 90u8, false), (231, 120, true)] {
+        publish_entry(
+            &stack,
+            corr,
+            RuntimeRegistryUpdateEntry {
+                hold_hcl,
+                ..runtime_entry(level, RuntimeSource::Rules, RuntimeObservation::api_timestamped(1_000))
+            },
+        );
+        assert_ok(&recv_confirm_for(&stack.conf_rx, corr));
+        let event = support::recv_runtime_state_changed(&stack.ev_rx, corr);
+        assert_eq!(event.commit_source, RuntimeSource::Rules, "provenance stays the rule's");
+        assert_eq!(event.commit_holds_hcl, hold_hcl, "level {level}");
+    }
 }

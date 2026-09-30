@@ -17,7 +17,7 @@ use std::time::Duration;
 use cucumber::then;
 use dali2rust_test_support::sync::wait_until;
 
-// RULE-020 RULE-021 RULE-023 RULE-024 RULE-027
+// RULE-020 RULE-021 RULE-023 RULE-024 RULE-027 RULE-032
 #[then(regex = r#"^within (\d+) seconds the stats pointer "([^"]+)" reaches (\d+)$"#)]
 async fn then_stats_pointer_reaches(world: &mut DaliWorld, secs: u64, pointer: String, expected: u64) {
     let port = world.server_port();
@@ -49,4 +49,61 @@ async fn then_broadcast_off_sent(world: &mut DaliWorld) {
         frames.iter().any(|f| *f == 0xFE00),
         "expected broadcast off (DAPC 0, 0xFE00) among {frames:04X?}"
     );
+}
+
+const RULE_FIRE_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn rule_fire_count(port: u16, name: &str) -> Option<u64> {
+    let json = crate::steps::polling::fetch_json(port, "/api/v1/rules?format=json")?;
+    json.pointer("/rules/rules")?
+        .as_array()?
+        .iter()
+        .find(|rule| rule["name"].as_str() == Some(name))?
+        .pointer("/runtime/fire_count")?
+        .as_u64()
+}
+
+// RULE-030 RULE-034 RULE-035 RULE-037 RULE-038 RULE-032 RULE-039
+#[then(regex = r#"^the rule "([^"]+)" eventually has fired (\d+) times?$"#)]
+async fn then_rule_eventually_fired(world: &mut DaliWorld, name: String, expected: u64) {
+    let port = world.server_port();
+    wait_until(
+        || rule_fire_count(port, &name).is_some_and(|count| count >= expected),
+        RULE_FIRE_TIMEOUT,
+    );
+    assert_eq!(rule_fire_count(port, &name), Some(expected), "fire count of rule {name}");
+}
+
+// RULE-030 RULE-034 RULE-035 RULE-037 RULE-038 RULE-039
+#[then(regex = r#"^the rule "([^"]+)" should have fired (\d+) times?$"#)]
+async fn then_rule_has_fired(world: &mut DaliWorld, name: String, expected: u64) {
+    let port = world.server_port();
+    assert_eq!(rule_fire_count(port, &name), Some(expected), "fire count of rule {name}");
+}
+
+// RULE-037 RULE-038
+#[then(regex = r#"^the rule "([^"]+)" eventually has fired at least (\d+) times?$"#)]
+async fn then_rule_eventually_fired_at_least(world: &mut DaliWorld, name: String, expected: u64) {
+    let port = world.server_port();
+    wait_until(
+        || rule_fire_count(port, &name).is_some_and(|count| count >= expected),
+        RULE_FIRE_TIMEOUT,
+    );
+    let count = rule_fire_count(port, &name);
+    assert!(count.is_some_and(|count| count >= expected), "fire count of rule {name}: {count:?}");
+}
+
+// RULE-032
+#[then(regex = r#"^the rule "([^"]+)" should have the last outcome "([a-z_]+)"$"#)]
+async fn then_rule_last_outcome(world: &mut DaliWorld, name: String, expected: String) {
+    let port = world.server_port();
+    let json = crate::steps::polling::fetch_json(port, "/api/v1/rules?format=json")
+        .expect("rules projection");
+    let rule = json
+        .pointer("/rules/rules")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|rules| rules.iter().find(|rule| rule["name"].as_str() == Some(name.as_str())))
+        .unwrap_or_else(|| panic!("rule {name} missing from {json}"));
+    let outcome = rule.pointer("/runtime/last_outcome").and_then(serde_json::Value::as_str);
+    assert_eq!(outcome, Some(expected.as_str()), "{rule}");
 }

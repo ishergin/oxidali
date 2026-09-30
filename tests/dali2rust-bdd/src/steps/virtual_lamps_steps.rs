@@ -11,7 +11,7 @@ const TWO_DEVICE_RANDOM_ADDRESSES: [(u8, u32); 2] = [(0, 0x5C1D_C2), (1, 0x2A_0F
 
 const DISCOVERY_DT8_FEATURES: u8 = 0x02;
 
-// VL-036 VL-102
+// VL-036 VL-102 RULE-037 RULE-038 RULE-032
 #[given("adapter 0 has discovered physical devices 0 and 1")]
 async fn given_two_discovered_devices(world: &mut DaliWorld) {
     {
@@ -27,7 +27,7 @@ async fn given_two_discovered_devices(world: &mut DaliWorld) {
     wait_for_operation_status(world, "succeeded");
 }
 
-// VL-036 VL-102
+// VL-036 VL-102 RULE-037 RULE-038
 #[given(regex = r"^physical device (\d+) reports membership of group (\d+) read from the gear$")]
 async fn given_device_reports_group_membership(world: &mut DaliWorld, short: u8, group_id: u8) {
     read_groups_membership_from_gear(world, short, 1u16 << group_id);

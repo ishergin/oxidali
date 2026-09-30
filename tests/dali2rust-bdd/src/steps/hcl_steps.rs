@@ -217,7 +217,7 @@ fn wait_for_frame(world: &mut DaliWorld, frame: u16) {
     );
 }
 
-// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237
+// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038
 #[given(regex = r"^the controller clock reads (\d+) minutes past midnight$")]
 async fn given_clock_reads(world: &mut DaliWorld, minutes: u64) {
     set_clock(world, minutes);
@@ -238,7 +238,7 @@ async fn when_scheduler_ticks(world: &mut DaliWorld, count: u64) {
     );
 }
 
-// HCL-050 HCL-063 HCL-053 HCL-054 HCL-056 HCL-057 SYS-237
+// HCL-050 HCL-063 HCL-053 HCL-054 HCL-056 HCL-057 SYS-237 RULE-037 RULE-038
 #[then(regex = r"^the scheduler should drive group (\d+) to level (\d+)$")]
 async fn then_group_driven(world: &mut DaliWorld, group_id: u8, level: u8) {
     wait_for_frame(world, dapc_frame(Some(group_id), level));
@@ -351,3 +351,38 @@ async fn then_device_holds_stored_colour(world: &mut DaliWorld, short: u64) {
     );
 }
 
+fn suspended_groups(port: u16, schedule_id: &str) -> Option<Vec<u64>> {
+    let path = format!("/api/v1/hcl-schedules/{schedule_id}/override");
+    let json = crate::steps::polling::fetch_json(port, &path)?;
+    Some(
+        json["targets"]
+            .as_array()?
+            .iter()
+            .filter(|target| target["scope"] == "group")
+            .filter_map(|target| target["group_id"].as_u64())
+            .collect(),
+    )
+}
+
+// RULE-037 RULE-038
+#[then(regex = r#"^HCL schedule "([^"]+)" eventually reports group (\d+) suspended$"#)]
+async fn then_group_eventually_suspended(world: &mut DaliWorld, schedule_id: String, group_id: u64) {
+    let port = world.server_port();
+    let suspended = || suspended_groups(port, &schedule_id).is_some_and(|groups| groups.contains(&group_id));
+    dali2rust_test_support::wait_until(suspended, std::time::Duration::from_secs(10));
+    assert!(
+        suspended(),
+        "schedule {schedule_id} should hold group {group_id}: {:?}",
+        suspended_groups(port, &schedule_id)
+    );
+}
+
+// RULE-037 RULE-038
+#[then(regex = r#"^HCL schedule "([^"]+)" should not report group (\d+) suspended$"#)]
+async fn then_group_not_suspended(world: &mut DaliWorld, schedule_id: String, group_id: u64) {
+    let groups = suspended_groups(world.server_port(), &schedule_id).expect("override read");
+    assert!(
+        !groups.contains(&group_id),
+        "schedule {schedule_id} must keep driving group {group_id}: suspended {groups:?}"
+    );
+}

@@ -14,7 +14,7 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_fanout_runtime::{spawn_sniffer_translator_worker, SnifferTranslatorCounters};
 use dali2rust_platform::dali::{ObservedRawFrame, ObservedRawFrameKind};
-use dali2rust_test_support::{recv_event_matching, try_recv_event_matching_envelope};
+use dali2rust_test_support::{recv_event_matching, try_recv_event_matching_envelope, wait_until};
 
 struct Harness {
     tx: std::sync::mpsc::SyncSender<ObservedRawFrame>,
@@ -100,16 +100,114 @@ fn foreign_short_dapc_decodes_to_target_state_observed_snif001() {
     assert_eq!(body.observed_at_ms, 42);
 }
 
+fn recv_recall(harness: &Harness) -> (Origin, dali2rust_contracts::msg::DaliSceneRecalledEvent) {
+    let ev = recv_event_matching(&harness.ev_tap, Duration::from_secs(1), |payload| {
+        matches!(payload, BusEventPayload::DaliSceneRecalledEvent(_))
+    });
+    let BusEventPayload::DaliSceneRecalledEvent(body) = &ev.payload else {
+        unreachable!("predicate selected this variant");
+    };
+    (ev.meta.origin, body.clone())
+}
+
 #[test]
-fn broadcast_go_to_scene_decodes_to_scene_recall_observed_snif002() {
+fn a_foreign_go_to_scene_is_a_recall_fact_for_every_addressed_class() {
+    let harness = spawn_harness();
+    for (frame, scope, short_address, group_id) in [
+        ([0xFF, 0x10 | 3], DaliTargetScope::Broadcast, 0, 0),
+        ([0x80 | (2 << 1) | 0x01, 0x10 | 3], DaliTargetScope::Group, 0, 2),
+        ([(7 << 1) | 0x01, 0x10 | 3], DaliTargetScope::Short, 7, 0),
+    ] {
+        harness.tx.send(forward16(frame)).expect("send");
+        let (origin, body) = recv_recall(&harness);
+        assert_eq!(origin, Origin::Sniffer);
+        assert_eq!(
+            (body.scope, body.short_address, body.group_id, body.scene_id),
+            (scope, short_address, group_id, 3),
+            "{frame:02X?}"
+        );
+        assert_eq!(body.source, dali2rust_contracts::msg::RuntimeSource::Sniffer);
+        assert!(body.error.is_none(), "a frame seen on the wire is a recall that happened");
+        assert_eq!(body.recalled_at_mono_ms, OBSERVED_MONO_MS, "stamped when the wire carried it");
+    }
+}
+
+fn recv_translated(harness: &Harness) -> BusEventPayload {
+    let ev = recv_event_matching(&harness.ev_tap, Duration::from_secs(1), |payload| {
+        matches!(
+            payload,
+            BusEventPayload::DaliObservedFrameEvent(_) | BusEventPayload::DaliSceneRecalledEvent(_)
+        )
+    });
+    ev.payload.clone()
+}
+
+#[test]
+fn a_foreign_go_to_scene_is_its_recall_fact_and_nothing_else_snif002() {
     let harness = spawn_harness();
     harness.tx.send(forward16([0xFF, 0x10 | 3])).expect("send");
+    harness.tx.send(forward16([17 << 1, 90])).expect("send");
 
-    let (_, body) = recv_observed(&harness);
-    assert_eq!(body.observed_kind, ObservedKind::SceneRecallObserved);
-    assert_eq!(body.scope, DaliTargetScope::Broadcast);
-    assert_eq!(body.scene_id, Some(3));
-    assert!(!body.dapc_observed);
+    let BusEventPayload::DaliSceneRecalledEvent(recall) = recv_translated(&harness) else {
+        panic!("a GO TO SCENE is translated into its recall fact first and alone");
+    };
+    assert_eq!((recall.scope, recall.scene_id), (DaliTargetScope::Broadcast, 3));
+    let BusEventPayload::DaliObservedFrameEvent(next) = recv_translated(&harness) else {
+        panic!("the DAPC after it is an observation");
+    };
+    assert_eq!(
+        (next.observed_kind, next.short_address),
+        (ObservedKind::TargetStateObserved, Some(17)),
+        "no recall observation travels beside the fact: every consumer takes the fact"
+    );
+    wait_until(
+        || harness.counters.observed_published.load(Relaxed) >= 2,
+        Duration::from_secs(1),
+    );
+    assert_eq!(
+        harness.counters.observed_published.load(Relaxed),
+        2,
+        "one publish per understood frame"
+    );
+}
+
+const UNADDRESSED_DAPC: u8 = 0xFC;
+const UNADDRESSED_COMMAND: u8 = 0xFD;
+
+#[test]
+fn a_frame_for_gear_without_a_short_address_projects_nothing() {
+    let harness = spawn_harness();
+    for frame in [
+        [UNADDRESSED_DAPC, 180],
+        [UNADDRESSED_COMMAND, 0x00],
+        [UNADDRESSED_COMMAND, 0x05],
+        [UNADDRESSED_COMMAND, 0x10 | 5],
+        [0xA3, 250],
+        [0xC3, 0],
+        [0xC1, 8],
+        [UNADDRESSED_COMMAND, 231],
+        [17 << 1, 90],
+    ] {
+        harness.tx.send(forward16(frame)).expect("send");
+    }
+
+    let BusEventPayload::DaliObservedFrameEvent(body) = recv_translated(&harness) else {
+        panic!("DAPC, OFF, RECALL MAX LEVEL, GO TO SCENE and a colour to 0xFC/0xFD reach only \
+                gear with no short address, which no record describes; nothing may read them \
+                as a broadcast");
+    };
+    assert_eq!(
+        (body.scope, body.short_address, body.setpoint.and_then(|sp| sp.level)),
+        (DaliTargetScope::Short, Some(17), Some(90)),
+        "the first thing translated is the addressed frame that follows them"
+    );
+    assert_eq!(
+        harness.counters.unaddressed_ignored.load(Relaxed),
+        5,
+        "the DAPC, the OFF, the RECALL MAX LEVEL, the GO TO SCENE and the colour are each \
+         counted where they were dropped, so the translator still accounts for the PHY's frames"
+    );
+    assert_eq!(harness.counters.unknown_seen.load(Relaxed), 0, "they were understood, not unknown");
 }
 
 #[test]
@@ -741,4 +839,9 @@ fn an_unaddressed_scene_pair_touches_no_registered_gear() {
     let (_, body) = recv_observed(&harness);
     assert_eq!(body.observed_kind, ObservedKind::TargetStateObserved, "the next fact is the DAPC");
     assert_eq!(scene_writes(&harness), 0);
+    assert_eq!(
+        harness.counters.unaddressed_ignored.load(Relaxed),
+        1,
+        "the pair is one command, dropped once"
+    );
 }

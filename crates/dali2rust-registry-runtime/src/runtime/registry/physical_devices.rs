@@ -52,6 +52,7 @@ pub(crate) struct PhysicalRuntimeCommit<'a> {
     pub observed_at_mono_ms: Option<u32>,
     pub entry_last_dapc_source: Option<LastDapcSource>,
     pub entry_source: RuntimeSource,
+    pub entry_holds_hcl: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1069,6 +1070,7 @@ impl RegistryStore {
             observed_at_mono_ms: commit.observed_at_mono_ms,
             entry_last_dapc_source: None,
             entry_source: commit.source,
+            entry_holds_hcl: true,
         };
         let silent = !setpoint.states_a_value()
             && rec.runtime.observation_adds_nothing(commit.observation);
@@ -1946,6 +1948,7 @@ mod power_cycle_tests {
                 observed_at_mono_ms: None,
                 entry_last_dapc_source: None,
                 entry_source: RuntimeSource::Readback,
+                entry_holds_hcl: true,
             },
         )
     }

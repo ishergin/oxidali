@@ -272,7 +272,7 @@ declare_counter_mapping! {
     sniffer_translator_dto(c: dali2rust_fanout_runtime::SnifferTranslatorCounters) -> SnifferTranslatorDto {
         observed_published, unknown_seen, special_tracked, dt8_staged, backward_ignored,
         publish_failed, input_events_typed, input_events_generic,
-        input_events_ambiguous_scheme, input_lifecycle, input_publish_retried,
+        input_events_ambiguous_scheme, input_lifecycle, fact_publish_retried,
         app_control_pairs,
     }
 
@@ -412,6 +412,7 @@ fn stats_rules_dto(counters: &RuntimeCounterHandles) -> StatsRulesDto {
         chain_depth_exceeded: c.chain_depth_exceeded.load(Relaxed),
         effects_emitted: c.effects_emitted.load(Relaxed),
         actions_failed: c.actions_failed.load(Relaxed),
+        effects_unbound: counters.rules.effects_unbound.load(Relaxed),
         continuations_scheduled: c.continuations_scheduled.load(Relaxed),
         continuations_fired: c.continuations_fired.load(Relaxed),
         continuations_dropped: c.continuations_dropped.load(Relaxed),
@@ -549,6 +550,7 @@ fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
         foreign_verbs_projected_total: h.projector.transitions_expanded.load(Relaxed),
         foreign_dimming_unprojected_total: h.sniffer_translator.dimming_unprojectable.load(Relaxed),
         foreign_scene_writes_total: h.sniffer_translator.scene_writes_observed.load(Relaxed),
+        foreign_unaddressed_ignored_total: h.sniffer_translator.unaddressed_ignored.load(Relaxed),
         backward: stats_backward_dto(&h.phy_sniffer),
         console: stats_console_dto(),
         isr_ticks_deficit_raw_total: h.phy_sniffer.isr_ticks_deficit_raw.load(Relaxed),
@@ -1265,7 +1267,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
         self.store
             .rules_lamp_rows()
             .into_iter()
-            .map(|(adapter_id, id, is_on, level, cct_kelvin, last_level)| {
+            .map(|(adapter_id, id, is_on, level, cct_kelvin, last_level, bound)| {
                 dali2rust_rules_runtime::runtime::engine::LampState {
                     adapter_id,
                     id,
@@ -1273,6 +1275,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
                     level,
                     cct_kelvin,
                     last_level,
+                    bound,
                 }
             })
             .collect()

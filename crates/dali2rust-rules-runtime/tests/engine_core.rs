@@ -38,6 +38,7 @@ fn with_lamp(mut w: WorldSnapshot, lamp: dali2rust_rules_model::LampRef, is_on: 
         level: Some(level),
         cct_kelvin: None,
         last_level: Some(level),
+        bound: true,
     });
     w
 }
@@ -50,6 +51,7 @@ fn with_unknown_level(mut w: WorldSnapshot, lamp: dali2rust_rules_model::LampRef
         level: None,
         cct_kelvin: None,
         last_level: None,
+        bound: true,
     });
     w
 }
