@@ -1,3 +1,4 @@
+import re
 import types
 
 import pytest
@@ -66,12 +67,11 @@ def test_a_write_log_answers_by_field_and_wildcard_and_survives_a_killed_session
     path = tmp_path / "production_state_last.writes.json"
     log = WriteLog("t1", "http://dut", path)
     log.note([("gear/*", {"power_on_level"}), ("settings/poller", {"enabled"})])
-    for held in (log, WriteLog.load(path, "t1")):
+    for held in (log, WriteLog.load(path, "t1", "http://dut")):
         assert held.changed("gear/5", "power_on_level")
         assert not held.changed("gear/5", "fade_time_ms")
         assert held.changed("settings/poller") and not held.changed("settings/dali")
-    assert WriteLog.load(path, "t2") is None
-    assert WriteLog.load(tmp_path / "missing.json", "t1") is None
+    assert WriteLog.load(tmp_path / "missing.json", "t1", "http://dut") is None
     assert WriteLog.everything("t1", "http://dut").changed("device/9", "name")
     assert write_log.writes_path(tmp_path / "production_state_last.json") == path
 
@@ -131,3 +131,21 @@ def test_a_reboot_the_toolkit_provokes_may_move_any_lamp():
 def test_two_logs_meet_where_a_key_and_a_field_of_one_cover_the_other(mine, theirs, meet):
     ours, other = WriteLog("a", "b", touched=mine), WriteLog("c", "b", touched=theirs)
     assert ours.overlaps(other) is meet and other.overlaps(ours) is meet
+
+
+
+@pytest.mark.parametrize("text,why", [
+    ("{not json", "unreadable"),
+    ('["t1"]', "no key-to-fields map"),
+    ('{"session": "t1", "base": "http://dut"}', "no key-to-fields map"),
+    ('{"session": "t1", "base": "http://dut", "touched": {"settings/poller": "enabled"}}',
+     "not a list of field names"),
+    ('{"session": "t0", "base": "http://dut", "touched": {}}', "session 't0'"),
+    ('{"session": "t1", "base": "http://other", "touched": {}}', "http://other, not http://dut"),
+])
+def test_a_log_of_the_wrong_shape_or_another_controller_is_refused_not_read_as_no_writes(
+        tmp_path, text, why):
+    path = tmp_path / "production_state-1.writes.json"
+    path.write_text(text)
+    with pytest.raises(write_log.WriteLogError, match=re.escape(why)):
+        WriteLog.load(path, "t1", "http://dut")

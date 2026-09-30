@@ -6,7 +6,7 @@ from collections import namedtuple
 
 from hil.api import ApiError, CapabilityUnsupported, _HomeAssistantSettings, _PollerSettings
 from hil.lamp_guard import TEST_RULE_PREFIX, LampNotAllowed, named, only_hil_rules_appended
-from hil.write_log import WriteLog, writes_path
+from hil.write_log import WriteLog, WriteLogError, writes_path
 
 PRIME_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,groups,scenes,extended"
 
@@ -83,6 +83,7 @@ def capture(api, prime=True, log=print):
     return {
         "hcl_overrides": overrides,
         "taken_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "base": api.base,
         "health": api.health(),
         "devices": {str(s): _device(api, s) for s in shorts},
         "settings": _settings(api),
@@ -197,10 +198,24 @@ def save(snap, path):
     os.replace(tmp, path)
 
 
+class SessionFileError(ValueError):
+    pass
+
+
+def read_session(path):
+    try:
+        snap = load(path)
+    except (OSError, ValueError) as exc:
+        raise SessionFileError("%s is unreadable: %s" % (path, exc))
+    if not isinstance(snap, dict) or not isinstance(snap.get("taken_at"), str):
+        raise SessionFileError("%s is no snapshot: it names no taken_at" % path)
+    return snap
+
+
 def unrestored(path):
     try:
-        return bool(load(path).get("session_open"))
-    except (OSError, ValueError):
+        return bool(read_session(path).get("session_open"))
+    except SessionFileError:
         return False
 
 
@@ -377,12 +392,36 @@ def session_path(cfg, taken_at):
     return cfg.state_dir / ("%s%s.json" % (SESSION_PREFIX, SESSION_STAMP.sub("", taken_at)))
 
 
+def scan_sessions(cfg):
+    paths = [p for p in cfg.state_dir.glob(SESSION_PREFIX + "*.json")
+             if not p.name.endswith(".writes.json")]
+    found, unreadable = [], []
+    for path in paths + ([last_path(cfg)] if last_path(cfg).exists() else []):
+        try:
+            snap = read_session(path)
+        except SessionFileError as exc:
+            unreadable.append((path, str(exc)))
+            continue
+        if snap.get("session_open"):
+            found.append((snap["taken_at"], path))
+    return [path for _taken, path in sorted(found, reverse=True)], unreadable
+
+
 def open_sessions(cfg):
-    found = [p for p in cfg.state_dir.glob(SESSION_PREFIX + "*.json")
-             if not p.name.endswith(".writes.json") and unrestored(p)]
-    if unrestored(last_path(cfg)):
-        found.append(last_path(cfg))
-    return sorted(found, key=lambda p: load(p).get("taken_at") or "", reverse=True)
+    return scan_sessions(cfg)[0]
+
+
+def unreadable_sessions(cfg):
+    return scan_sessions(cfg)[1]
+
+
+def unfinished(cfg, log=print):
+    still, unreadable = scan_sessions(cfg)
+    for path in still:
+        log("hil state restore: %s is still open" % path)
+    for _path, why in unreadable:
+        log("hil state restore: UNREADABLE %s" % why)
+    return bool(still or unreadable)
 
 
 FULL_RESTORE = "`hil state restore --all`"
@@ -442,9 +481,13 @@ def restore_sessions(cfg, client, paths, everything, log=print):
         log("hil state restore --all: %s" % READ_ONLY_WHY)
     residual, held = [], []
     for path in paths:
-        snap = load(path)
-        writes = WriteLog.everything(snap.get("taken_at"), client.base, refused) if everything \
-            else WriteLog.load(writes_path(path), snap.get("taken_at"))
+        snap = read_session(path)
+        try:
+            writes = _session_writes(path, snap, client, everything, refused)
+        except WriteLogError as exc:
+            log("prod_state: %s stays open and nothing is restored: %s" % (path.name, exc))
+            held.append((path, None))
+            continue
         done = restore(client, snap, writes, log=log, drive_lamps=not cfg.lamps_read_only,
                        lamp_shorts=cfg.lamp_short_set())
         blocker = _newer_writer(held, writes)
@@ -458,15 +501,37 @@ def restore_sessions(cfg, client, paths, everything, log=print):
     return residual
 
 
+def _session_writes(path, snap, client, everything, refused):
+    base = snap.get("base", client.base)
+    if base != client.base:
+        raise WriteLogError("the snapshot is of %s, not %s" % (base, client.base))
+    if everything:
+        return WriteLog.everything(snap["taken_at"], client.base, refused)
+    return WriteLog.load(writes_path(path), snap["taken_at"], client.base)
+
+
 def _newer_writer(held, writes):
     return next((path for path, newer in held
                  if newer is None or writes is None or newer.overlaps(writes)), None)
 
 
 def newer_open_sessions(cfg, path):
-    taken_at = load(path).get("taken_at") or ""
+    taken_at = read_session(path)["taken_at"]
     return [p for p in open_sessions(cfg)
-            if p.resolve() != path.resolve() and (load(p).get("taken_at") or "") > taken_at]
+            if p.resolve() != path.resolve() and read_session(p)["taken_at"] > taken_at]
+
+
+def explicit_refusal(cfg, path):
+    try:
+        newer = newer_open_sessions(cfg, path)
+    except SessionFileError as exc:
+        return "hil state restore refused: %s" % exc
+    if not newer:
+        return None
+    return ("hil state restore %s refused: %s is newer and still open, and restoring the older "
+            "one first would let the newer one put a test value back; a bare `hil state "
+            "restore` walks every open session newest first"
+            % (path, ", ".join(str(p) for p in newer)))
 
 
 def _ours(writes, key, field, driven):

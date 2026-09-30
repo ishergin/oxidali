@@ -135,6 +135,23 @@ def _fields_meet(one, other):
     return ALL in one or ALL in other or bool(set(one) & set(other))
 
 
+class WriteLogError(ValueError):
+    pass
+
+
+def _shape_problem(held, session, base):
+    if not isinstance(held, dict) or not isinstance(held.get("touched"), dict):
+        return "has no key-to-fields map"
+    if held.get("session") != session:
+        return "belongs to session %r, not %r" % (held.get("session"), session)
+    if held.get("base") != base:
+        return "belongs to %s, not %s" % (held.get("base"), base)
+    for key, fields in held["touched"].items():
+        if not isinstance(fields, list) or not all(isinstance(f, str) for f in fields):
+            return "maps %r to %r, not a list of field names" % (key, fields)
+    return None
+
+
 class WriteLog:
     def __init__(self, session, base, path=None, touched=None, refused=()):
         self.session, self.base, self.path = session, base, path
@@ -149,14 +166,17 @@ class WriteLog:
         return any(key.startswith(prefix) for prefix in self.refused)
 
     @classmethod
-    def load(cls, path, session):
+    def load(cls, path, session, base):
         try:
             held = json.loads(path.read_text())
-        except (OSError, ValueError):
+        except FileNotFoundError:
             return None
-        if held.get("session") != session:
-            return None
-        return cls(session, held.get("base"), path, held.get("touched"))
+        except (OSError, ValueError) as exc:
+            raise WriteLogError("%s is unreadable: %s" % (path.name, exc))
+        problem = _shape_problem(held, session, base)
+        if problem:
+            raise WriteLogError("%s %s" % (path.name, problem))
+        return cls(session, base, path, held["touched"])
 
     def note(self, keys):
         grown = False

@@ -58,7 +58,8 @@ def production_state(pytestconfig, request):
 
 def _open_session(cfg, api, snap, state):
     own = prod_state.session_path(cfg, snap["taken_at"])
-    pending = [str(p) for p in prod_state.open_sessions(cfg) if p != own]
+    still, unreadable = prod_state.scan_sessions(cfg)
+    pending = [str(p) for p in still if p != own] + [why for _p, why in unreadable]
     prod_state.save(dict(snap, session_open=True), own)
     if not prod_state.unrestored(prod_state.last_path(cfg)):
         prod_state.save(snap, prod_state.last_path(cfg))

@@ -373,19 +373,16 @@ def _cmd_state(rest):
         print("saved %s" % path)
         return 0
     if args.action == "restore":
-        newer = prod_state.newer_open_sessions(cfg, path) if args.file else []
-        if newer:
-            print("hil state restore %s refused: %s is newer and still open, and restoring "
-                  "the older one first would let the newer one put a test value back; a bare "
-                  "`hil state restore` walks every open session newest first"
-                  % (path, ", ".join(str(p) for p in newer)))
+        refusal = prod_state.explicit_refusal(cfg, path) if args.file else None
+        if refusal:
+            print(refusal)
             return 1
         leftover = virtual_gear.teardown(cfg, client)
         for line in leftover:
             print("virtual gear: NOT TORN DOWN: %s" % line)
         residual = leftover + prod_state.restore_sessions(
             cfg, client, [path] if args.file else prod_state.open_sessions(cfg), args.everything)
-        return 1 if residual else 0
+        return 1 if prod_state.unfinished(cfg) or residual else 0
     residual = prod_state.diff(prod_state.load(path), prod_state.capture(client))
     for line in residual:
         print(line)

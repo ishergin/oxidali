@@ -125,6 +125,9 @@ def test_an_unknown_subcommand_is_a_usage_error(capsys):
 
 
 def _restore_with(monkeypatch, tmp_path, argv):
+    real_load = hil.config.load
+    monkeypatch.setattr(hil.config, "load",
+                        lambda: dataclasses.replace(real_load(), state_dir=tmp_path))
     seen = []
     snapshot = tmp_path / "production_state_last.json"
     snapshot.write_text(json.dumps({"taken_at": "t1"}))
@@ -198,3 +201,25 @@ def test_an_explicit_file_is_refused_while_a_newer_session_is_open(monkeypatch, 
     assert seen == [] and str(newer) in capsys.readouterr().out
     cli.main(["state", "restore", str(newer)])
     assert seen == [newer.stem[len(prod_state.SESSION_PREFIX):]]
+
+
+
+def test_restore_exits_non_zero_while_a_session_stays_open_or_cannot_be_read(
+        monkeypatch, tmp_path, capsys):
+    real_load = hil.config.load
+    monkeypatch.setattr(hil.config, "load",
+                        lambda: dataclasses.replace(real_load(), state_dir=tmp_path))
+    cfg = types.SimpleNamespace(state_dir=tmp_path)
+    kept = prod_state.session_path(cfg, "2026-09-29T10:00:00")
+    prod_state.save({"taken_at": "2026-09-29T10:00:00", "session_open": True}, kept)
+    write_log.writes_path(kept).write_text("{torn")
+    monkeypatch.setattr(hil.api, "Client", lambda cfg: type("C", (), {"base": "http://dut"})())
+    monkeypatch.setattr(virtual_gear, "teardown", lambda cfg, client: [])
+    monkeypatch.setattr(prod_state, "restore", lambda client, snap, writes, **kw:
+                        prod_state.Restoration([], [], True))
+    assert cli.main(["state", "restore"]) == 1
+    assert str(kept) in capsys.readouterr().out
+    write_log.WriteLog("2026-09-29T10:00:00", "http://dut", write_log.writes_path(kept)).save()
+    prod_state.session_path(cfg, "2026-09-30T10:00:00").write_text("{torn")
+    assert cli.main(["state", "restore"]) == 1
+    assert "UNREADABLE" in capsys.readouterr().out and prod_state.open_sessions(cfg) == []

@@ -923,3 +923,34 @@ def test_an_older_session_closes_when_no_newer_open_one_wrote_what_it_wrote(
     installation = {"interval_ms": 7000}
     _walk(monkeypatch, cfg, installation, stuck={NEWER})
     assert installation["interval_ms"] == 5000 and prod_state.open_sessions(cfg) == [newer]
+
+
+
+def test_an_unreadable_session_file_is_named_and_never_dropped(tmp_path):
+    cfg = HilConfig(serial_remote="", state_dir=tmp_path)
+    good = _session(cfg, OLDER, 5000, [])
+    torn, listed = (prod_state.session_path(cfg, stamp) for stamp in (NEWER, "2026-10-01"))
+    torn.write_text('{"taken_at": "2026-09-30T1')
+    listed.write_text("[]")
+    assert prod_state.open_sessions(cfg) == [good]
+    named = dict(prod_state.unreadable_sessions(cfg))
+    assert set(named) == {torn, listed}
+    assert "unreadable" in named[torn] and "names no taken_at" in named[listed]
+
+
+def test_a_session_whose_log_is_unreadable_or_of_another_controller_stays_open(
+        monkeypatch, tmp_path):
+    cfg = HilConfig(serial_remote="", state_dir=tmp_path)
+    torn = _session(cfg, OLDER, 5000, [(INTERVAL[0], {INTERVAL[1]})])
+    write_log.writes_path(torn).write_text("{torn")
+    moved = _session(cfg, NEWER, 6000, [(INTERVAL[0], {INTERVAL[1]})])
+    prod_state.save(dict(prod_state.load(moved), base="http://other"), moved)
+    restored, lines = [], []
+    monkeypatch.setattr(prod_state, "restore", lambda client, snap, writes, **kw:
+                        restored.append(snap["taken_at"]) or
+                        prod_state.Restoration([], [], True))
+    prod_state.restore_sessions(cfg, types.SimpleNamespace(base="http://dut"),
+                                prod_state.open_sessions(cfg), False, log=lines.append)
+    assert restored == [] and prod_state.open_sessions(cfg) == [moved, torn]
+    assert any("http://other" in line for line in lines)
+    assert any("unreadable" in line for line in lines)

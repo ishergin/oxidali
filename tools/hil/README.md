@@ -127,8 +127,8 @@ bench test's setup or run it is reported as a skip that quotes it:
   controller, past the guard: a test that uses them asks the guard before its first
   action (`drive_allowed`, `allowed_bound_lamp`) for each lamp they reach, or for the whole
   segment when they reach a broadcast, the HA scene select or a group other than
-  `free_group`, which no registered gear or owner rule uses and which answers no group
-  query, and into which a test joins only its own lamps.
+  `free_group`, which no registered gear or owner rule uses, which answers no group query
+  and which only a test's own lamps join.
 - Every `light` test first skips when an enabled owner rule names its lamps, their virtual
   lamps or their groups. A test moves the controller's clock (`clock_guard`) only on its
   first call, never under read-only, and skips while an owner rule fires at a time of day
@@ -138,8 +138,8 @@ bench test's setup or run it is reported as a skip that quotes it:
 
 A run with no `HIL_*` flag writes only this, each put back by its test or guard: the
 adapter's name; group 15's and a scene's name and Home Assistant exposure (HIL-GRP-03,
-HIL-SCN-03); the Home Assistant bridge's settings, moved to the `hiltest` namespace (the
-owner's entities are unavailable meanwhile), and one virtual lamp's exposure (`ha_bridge`
+HIL-SCN-03); the Home Assistant bridge's settings, moved to `hiltest` (the owner's
+entities are unavailable meanwhile), and one virtual lamp's exposure (`ha_bridge`
 tests, `ha_guard`); the poller's settings (`test_poller`, `poller_guard`); and a poller
 the owner left on, off for the session (`bench_baseline`). HIL-INP-02 and 03 rewrite the
 panel's instance group membership with the value it holds; scans refresh the registry.
@@ -173,13 +173,15 @@ for every session that reaches the controller:
   session, newest first, through its own log; without a log it only reports, and `--all`
   writes the whole snapshot back — under read-only never a schedule, override or zone. A
   session closes only when no newer open session's log names what it wrote, and a FILE is
-  refused while a newer session is open. Every later session ends red until then.
+  refused while a newer session is open. An unreadable session file or log, or one of
+  another controller, is named and its session left open, and the command exits non-zero
+  while a session is open. Every later session ends red until then.
 - Under `HIL_LAMPS_READ_ONLY=1` the light is reported, never driven — by this
   fixture, by `state_snapshot` and by `hil state restore`. A lamp outside
   `HIL_LAMP_SHORTS` is never driven back, and the lamp guard refuses a repair of its
   gear groups and scenes: a difference there stays a residual. So does the light of a lamp
-  the log names (a test drove it, or `drive_allowed` let the controller drive it), keeping
-  the session open until a restore with `HIL_LAMPS_READ_ONLY=0` and it in `HIL_LAMP_SHORTS`.
+  the log names, keeping the session open until a restore with `HIL_LAMPS_READ_ONLY=0` and
+  it in `HIL_LAMP_SHORTS`.
 - Across several tiers `hil state diff` the first session's file at the end.
   `HIL_STATE_GUARD=0` is the only opt-out.
 - It compares and restores only the fields it names (the poller's and Home Assistant's
@@ -202,8 +204,8 @@ for every session that reaches the controller:
   snapshot first.
 
 Per-test guards (`state_snapshot`, `*_matrix_guard`, `hcl_guard`, …) restore what
-one test changed. `bench_baseline` suspends the poller (and, as above, the HCL schedules)
-for the session and fails it on a device still named `hil-…`.
+one test changed. `bench_baseline` (above) also fails the session on a device still named
+`hil-…`.
 
 ## Layout
 
