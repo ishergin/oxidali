@@ -38,6 +38,7 @@ mod tests {
                 state_observation: RuntimeObservation::default(),
                 commit_source: dali2rust_contracts::msg::RuntimeSource::Api,
                 commit_dimensions: LightSetpoint::from_level(level, None).dimensions(),
+                commit_holds_hcl: true,
             },
         ))
     }

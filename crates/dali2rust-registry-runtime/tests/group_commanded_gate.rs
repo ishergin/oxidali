@@ -163,6 +163,9 @@ fn scene_recalls_and_colour_only_commands_never_arm_a_tile() {
                 scene_id: 5,
                 error: None,
                 recalled_at_mono_ms: 2_000,
+                source: dali2rust_contracts::msg::RuntimeSource::Api,
+                hold_hcl: true,
+                virtual_lamp_id: None,
             },
         ),
     );
@@ -194,6 +197,7 @@ fn scene_recalls_and_colour_only_commands_never_arm_a_tile() {
                 dapc_applied: false,
                 source: dali2rust_contracts::msg::RuntimeSource::Api,
                 applied_at_mono_ms: 2_500,
+                hold_hcl: true,
             },
         ),
     );
@@ -214,6 +218,7 @@ fn scene_recalls_and_colour_only_commands_never_arm_a_tile() {
                 dapc_applied: true,
                 source: dali2rust_contracts::msg::RuntimeSource::Api,
                 applied_at_mono_ms: 2_600,
+                hold_hcl: true,
             },
         ),
     );
@@ -237,6 +242,7 @@ fn scene_recalls_and_colour_only_commands_never_arm_a_tile() {
                 dapc_applied: false,
                 source: dali2rust_contracts::msg::RuntimeSource::Api,
                 applied_at_mono_ms: 2_700,
+                hold_hcl: true,
             },
         ),
     );
@@ -261,6 +267,9 @@ fn a_group_recall_clears_the_adapter_wide_active_scene() {
                 scene_id,
                 error: None,
                 recalled_at_mono_ms: 3_000,
+                source: dali2rust_contracts::msg::RuntimeSource::Api,
+                hold_hcl: true,
+                virtual_lamp_id: None,
             },
         )
     };

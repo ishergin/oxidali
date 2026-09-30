@@ -31,7 +31,7 @@
 | Настройки | `PollerSettingsChangedEvent`, `DaliSettingsChangedEvent`, `HomeAssistantSettingsChangedEvent`, `RedundancySettingsChangedEvent`, `PoliciesChangedEvent` | registry worker | поллер; арбитраж, супервизор и правила; — ; воркер репликации; — | best-effort |
 | Операции | `OperationStatusChangedEvent` | operation tracker | WS, дисплей | best-effort |
 | Сигналы исполнителей | `OperationWorkerSignalEvent` | `DaliWorker`, реестр, оркестратор, MQTT, правила, OTA, HTTP | operation tracker | **required** |
-| Результаты DALI | [ниже](#результаты-dali) | `DaliWorker` | по виду | по виду |
+| Результаты DALI | [ниже](#результаты-dali) | `DaliWorker`; recall сцены — и sniffer translator | по виду | по виду |
 | Наблюдения | `DaliObservedFrameEvent` | sniffer translator | проектор, реестр, дисплей | best-effort |
 | Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `Dali103ApplicationControlObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
 | Результаты Part 103 | `Dali103ScanStartedEvent`, `Dali103ScanProgressEvent`, `Dali103InstanceConfiguredEvent` | `DaliWorker` | реестр; правила (`manual config changed`) | **required** |
@@ -59,10 +59,13 @@
 
 - `state_setpoint` / `state_observation` — **снимок записи после коммита**: `None`
   здесь значит «никому не известно».
-- `commit_source` и `commit_dimensions` описывают **сам коммит**: кто его совершил и
-  какие размерности (яркость, цвет) он заявил. Судить по снимку о том, что сделал
-  коммит, нельзя: гир, несущий цвет от HCL, ответил бы «коммит заявил цвет» на любой
-  чужой `DAPC`. На этих двух полях стоит override-логика HCL.
+- `commit_source`, `commit_dimensions` и `commit_holds_hcl` описывают **сам коммит**:
+  кто его совершил, какие размерности (яркость, цвет) он заявил и объявляет ли он себя
+  ручным вмешательством
+  ([`../runtime-modules/hcl-scheduler/README.md`](../runtime-modules/hcl-scheduler/README.md)
+  §Override). Судить по снимку о том, что сделал коммит, нельзя: гир, несущий цвет от HCL, ответил
+  бы «коммит заявил цвет» на любой чужой `DAPC`. На этих полях стоит override-логика
+  HCL.
 - `virtual_lamp_id` заполняется и для коммита по short address: реестр делает
   обратный поиск привязки, потому что потребитель разрешить её сам не может. Для
   устройства без привязки — `None`.
@@ -79,9 +82,9 @@
 
 | Событие | Потребители | Доставка | Что значит |
 |---|---|---|---|
-| `DaliTargetStateAppliedEvent` | проектор, реестр, дисплей | required | Уставка стала истинной на проводе; несёт scope, идентичности, setpoint, признак DAPC и монотонную метку момента применения |
+| `DaliTargetStateAppliedEvent` | проектор, реестр, дисплей | required | Уставка стала истинной на проводе; несёт scope, идентичности, setpoint, признак DAPC, источник и `hold_hcl` команды и монотонную метку момента применения |
 | `DaliTargetStateFailedEvent` | дисплей | best-effort | Отказ исполнения; ждущий узнаёт о нём по подтверждению |
-| `DaliSceneRecalledEvent` | проектор, реестр, правила, дисплей | required | На шине произошёл нативный recall; реестр запоминает активную сцену |
+| `DaliSceneRecalledEvent` | проектор, реестр, правила, дисплей | required | Recall сцены на адрес, куда ушёл кадр, источник и `hold_hcl` коммита; recall лампы несёт и её `virtual_lamp_id`, по которому дисплей называет лампу и тогда, когда адреса нет. Наш публикует `DaliWorker` — с `error`, если кадр не ушёл на шину, и тогда его показывает только дисплей; чужой — sniffer translator. Без `error` реестр ведёт по нему активную сцену адаптера: broadcast-recall её ставит, recall на группу, адрес или лампу — снимает |
 | `DaliGroupMembershipProgrammedEvent` | реестр, трекер, оркестратор | required | Ячейка членства запрограммирована; несёт маску readback'а |
 | `DaliSceneProgrammedEvent` | реестр, трекер, оркестратор | required | Строка сцены запрограммирована; несёт readback уровня и эхо записанного |
 | `DaliAttributesReadEvent` | реестр, проектор | required | Один чанк на группу атрибутов; секцию `RuntimeStatus` применяет только проектор |
@@ -121,12 +124,15 @@
 `DaliObservedFrameEvent` публикует только sniffer translator; какие кадры он понимает —
 [`../runtime-modules/sniffer-translator/README.md`](../runtime-modules/sniffer-translator/README.md).
 
-- Публикуются только понятые кадры: `TargetStateObserved`, `SceneRecallObserved`,
-  `LevelTransitionObserved`, `SceneWriteObserved` и `SceneRemovalObserved`. Вариант
-  `UnknownObserved` в контракте остаётся, у проектора есть счётчик на случай нового
-  производителя.
+- Публикуются только понятые кадры: `TargetStateObserved`, `LevelTransitionObserved`,
+  `SceneWriteObserved` и `SceneRemovalObserved`. Варианты `UnknownObserved` и
+  `SceneRecallObserved` в контракте остаются без производителя; на первый у проектора
+  есть счётчик на случай нового производителя.
 - `raw_frame` и `decode_status` — диагностическое свидетельство, не продуктовые
   данные.
+- `GO TO SCENE` транслятор публикует не наблюдением, а фактом `DaliSceneRecalledEvent`
+  с источником `Sniffer`: проектор, реестр, правила и дисплей видят recall — наш или
+  чужой — одним событием.
 - Раскрывает наблюдение проектор
   ([`../runtime-modules/state-fanout/README.md`](../runtime-modules/state-fanout/README.md));
   реестр по групповым кадрам взводит «группой командовали» для плиток Home Assistant.

@@ -222,23 +222,47 @@ fn a_group_apply_is_named_as_a_group() {
     wait_row(&view, 6, "G02 ON 200");
 }
 
+fn group_recall(scene_id: u8, source: RuntimeSource) -> DaliSceneRecalledEvent {
+    DaliSceneRecalledEvent {
+        registry_adapter_id: 0,
+        scope: DaliTargetScope::Group,
+        short_address: 0,
+        group_id: 2,
+        scene_id,
+        error: None,
+        recalled_at_mono_ms: 0,
+        source,
+        hold_hcl: true,
+        virtual_lamp_id: None,
+    }
+}
+
 #[test]
 fn a_scene_recall_names_the_scene() {
+    let (_host, publisher, view, _w) =
+        spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
+    publish(&publisher, group_recall(3, RuntimeSource::Api));
+    wait_row(&view, 6, "G02 SC3 WEB");
+}
+
+#[test]
+fn a_failed_recall_on_a_lamp_names_the_lamp() {
     let (_host, publisher, view, _w) =
         spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
     publish(
         &publisher,
         DaliSceneRecalledEvent {
-            registry_adapter_id: 0,
-            scope: DaliTargetScope::Group,
-            short_address: 0,
-            group_id: 2,
-            scene_id: 3,
-            error: None,
-            recalled_at_mono_ms: 0,
+            scope: DaliTargetScope::VirtualLamp,
+            group_id: 0,
+            error: Some(dali2rust_contracts::msg::CompactErrorPayload::new(
+                dali2rust_contracts::msg::ErrorCode::OperationFailed,
+                "dali_transport_error",
+            )),
+            virtual_lamp_id: Some(4),
+            ..group_recall(3, RuntimeSource::Rules)
         },
     );
-    wait_row(&view, 6, "G02 SC3");
+    wait_row(&view, 6, "! L04 SC3");
 }
 
 #[test]
@@ -251,13 +275,26 @@ fn a_foreign_group_command_is_shown_as_a_group() {
 
 #[test]
 fn a_foreign_scene_recall_names_the_scene() {
+    let (_host, publisher, view, _w) =
+        spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
+    publish(&publisher, group_recall(4, RuntimeSource::Sniffer));
+    wait_row(&view, 6, "G02 SC4 BUS");
+}
+
+#[test]
+fn a_recall_observation_is_not_a_second_route_to_the_live_row() {
     let mut ev = observed_group_level(0);
     ev.observed_kind = ObservedKind::SceneRecallObserved;
     ev.scene_id = Some(4);
     let (_host, publisher, view, _w) =
         spawn_display_worker_on_bus(BusConfig::default(), healthy_sample());
     publish(&publisher, ev);
-    wait_row(&view, 6, "G02 SC4 BUS");
+    publish(&publisher, IpAddressAssignedEvent::from_ip_text("10.0.0.9"));
+    wait_row(&view, 0, "10.0.0.9");
+    assert_eq!(
+        view.lines()[6].text, "OK   --",
+        "a foreign recall reaches the live row as its recall fact, once"
+    );
 }
 
 fn observed_group_level(level: u8) -> DaliObservedFrameEvent {
@@ -309,6 +346,7 @@ fn applied(source: RuntimeSource, level: Option<u8>, kelvin: Option<u16>) -> Dal
         dapc_applied: true,
         source,
         applied_at_mono_ms: 0,
+        hold_hcl: true,
     }
 }
 

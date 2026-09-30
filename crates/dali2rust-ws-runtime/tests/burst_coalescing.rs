@@ -54,6 +54,7 @@ fn addressed_runtime_frame(
             commit_source: dali2rust_contracts::msg::RuntimeSource::Api,
             commit_dimensions: dali2rust_contracts::msg::LightSetpoint::from_level(level, None)
                 .dimensions(),
+                commit_holds_hcl: true,
         },
     ))
 }

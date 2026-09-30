@@ -604,6 +604,7 @@ fn registry_runtime_missing_setpoint_and_missing_observation() {
         last_dapc_source: None,
         source: RuntimeSource::Api,
         observed_at_mono_ms: None,
+        hold_hcl: true,
     };
     let c1 = 901u64;
     publish_cmd(
@@ -744,6 +745,7 @@ fn registry_runtime_binding_mismatch_fails() {
         last_dapc_source: None,
         source: RuntimeSource::Api,
         observed_at_mono_ms: None,
+        hold_hcl: true,
     };
     let corr = 2201u64;
     publish_cmd(
@@ -777,6 +779,7 @@ fn registry_runtime_entry_last_dapc_source_overrides_observation() {
         last_dapc_source: Some(LastDapcSource::Scene),
         source: RuntimeSource::Api,
         observed_at_mono_ms: None,
+        hold_hcl: true,
     };
     let corr = 2301u64;
     publish_cmd(
@@ -808,6 +811,7 @@ fn registry_runtime_entry_last_dapc_source_none_preserves_existing_value() {
         last_dapc_source: Some(LastDapcSource::Scene),
         source: RuntimeSource::Api,
         observed_at_mono_ms: None,
+        hold_hcl: true,
     };
     publish_cmd(
         &publisher,
@@ -830,6 +834,7 @@ fn registry_runtime_entry_last_dapc_source_none_preserves_existing_value() {
         last_dapc_source: None,
         source: RuntimeSource::Api,
         observed_at_mono_ms: None,
+        hold_hcl: true,
     };
     let corr = 2351u64;
     publish_cmd(
@@ -860,6 +865,7 @@ fn registry_runtime_missing_virtual_lamp_and_short_fails() {
         last_dapc_source: None,
         source: RuntimeSource::Api,
         observed_at_mono_ms: None,
+        hold_hcl: true,
     };
     let corr = 2401u64;
     publish_cmd(

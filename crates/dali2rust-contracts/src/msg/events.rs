@@ -79,6 +79,7 @@ declare_bus_payloads! {
         pub state_observation: RuntimeObservation,
         pub commit_source: RuntimeSource,
         pub commit_dimensions: SetpointDimensions,
+        pub commit_holds_hcl: bool,
     }
     budget = RuntimeStateChangedEvent {
         adapter_id: u8::MAX,
@@ -88,6 +89,7 @@ declare_bus_payloads! {
         state_observation: crate::msg::payload_test_samples::worst_observation(),
         commit_source: RuntimeSource::AdapterProxy,
         commit_dimensions: crate::msg::SetpointDimensions { level: true, color: true },
+        commit_holds_hcl: true,
     };
 
     pub struct AdapterSettingsChangedEvent {
@@ -215,6 +217,7 @@ declare_bus_payloads! {
         pub dapc_applied: bool,
         pub source: RuntimeSource,
         pub applied_at_mono_ms: u32,
+        pub hold_hcl: bool,
     }
     budget = DaliTargetStateAppliedEvent {
         registry_adapter_id: u8::MAX,
@@ -226,6 +229,7 @@ declare_bus_payloads! {
         dapc_applied: true,
         source: RuntimeSource::Sniffer,
         applied_at_mono_ms: u32::MAX,
+        hold_hcl: true,
     };
 
     pub struct DaliTargetStateFailedEvent {
@@ -433,6 +437,9 @@ declare_bus_payloads! {
         pub scene_id: u8,
         pub error: Option<CompactErrorPayload>,
         pub recalled_at_mono_ms: u32,
+        pub source: RuntimeSource,
+        pub hold_hcl: bool,
+        pub virtual_lamp_id: Option<u8>,
     }
     budget = DaliSceneRecalledEvent {
         registry_adapter_id: u8::MAX,
@@ -442,6 +449,9 @@ declare_bus_payloads! {
         scene_id: 15,
         error: Some(crate::msg::payload_test_samples::worst_compact_error_payload()),
         recalled_at_mono_ms: u32::MAX,
+        source: RuntimeSource::Readback,
+        hold_hcl: true,
+        virtual_lamp_id: Some(63),
     };
 
     pub struct DaliObservedFrameEvent {

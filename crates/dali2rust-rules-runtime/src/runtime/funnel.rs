@@ -51,10 +51,12 @@ impl FunnelState {
                 inputs.extend(self.group_edges(world));
                 inputs
             }
-            BusEventPayload::DaliSceneRecalledEvent(ev) => vec![EngineInput::SceneRecalled {
-                adapter_id: ev.registry_adapter_id,
-                scene_id: ev.scene_id,
-            }],
+            BusEventPayload::DaliSceneRecalledEvent(ev) if ev.error.is_none() => {
+                vec![EngineInput::SceneRecalled {
+                    adapter_id: ev.registry_adapter_id,
+                    scene_id: ev.scene_id,
+                }]
+            }
             BusEventPayload::Dali103InstanceConfiguredEvent(ev) => self.manual_config_edge(ev),
             BusEventPayload::DaliInputDeviceLifecycleEvent(ev) => {
                 vec![EngineInput::PowerCycled {

@@ -335,6 +335,7 @@ pub fn runtime_frame(virtual_lamp_id: u8, level: u8) -> BusFrame {
             state_observation: RuntimeObservation::default(),
             commit_source: dali2rust_contracts::msg::RuntimeSource::Api,
             commit_dimensions: LightSetpoint::from_level(level, None).dimensions(),
+            commit_holds_hcl: true,
         },
     ))
 }
@@ -356,6 +357,7 @@ pub fn absence_frame(short_address: u8) -> BusFrame {
                 dali2rust_contracts::msg::RuntimeSource::Poller,
             ),
             commit_source: dali2rust_contracts::msg::RuntimeSource::Poller,
+            commit_holds_hcl: true,
         },
     ))
 }

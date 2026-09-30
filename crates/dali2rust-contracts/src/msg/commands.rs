@@ -67,6 +67,7 @@ pub struct RuntimeRegistryUpdateEntry {
     pub last_dapc_source: Option<super::kinds::LastDapcSource>,
     pub source: RuntimeSource,
     pub observed_at_mono_ms: Option<u32>,
+    pub hold_hcl: bool,
 }
 
 impl Default for RuntimeRegistryUpdateEntry {
@@ -79,6 +80,7 @@ impl Default for RuntimeRegistryUpdateEntry {
             last_dapc_source: None,
             source: RuntimeSource::Poller,
             observed_at_mono_ms: None,
+            hold_hcl: true,
         }
     }
 }
@@ -241,6 +243,7 @@ declare_bus_payloads! {
         pub group_id: u8,
         pub setpoint: LightSetpoint,
         pub registry_adapter_id: u8,
+        pub hold_hcl: bool,
     }
     budget = DaliSetTargetStateCommand {
         scope: DaliTargetScope::AddressRange,
@@ -249,6 +252,7 @@ declare_bus_payloads! {
         group_id: 15,
         setpoint: crate::msg::payload_test_samples::worst_setpoint(),
         registry_adapter_id: u8::MAX,
+        hold_hcl: true,
     };
 
     pub struct DaliWriteAttributesCommand {
@@ -427,16 +431,20 @@ declare_bus_payloads! {
     pub struct DaliRecallSceneCommand {
         pub registry_adapter_id: u8,
         pub scope: DaliTargetScope,
+        pub virtual_lamp_id: u8,
         pub short_address: u8,
         pub group_id: u8,
         pub scene_id: u8,
+        pub hold_hcl: bool,
     }
     budget = DaliRecallSceneCommand {
         registry_adapter_id: u8::MAX,
         scope: DaliTargetScope::AddressRange,
+        virtual_lamp_id: 63,
         short_address: 63,
         group_id: 15,
         scene_id: 15,
+        hold_hcl: true,
     };
 
     pub struct SceneApplyExecuteCommand {
@@ -1131,24 +1139,133 @@ impl SceneMetadataUpdateCommand {
     pub const PATCH_HA_SELECT_ENABLED: u8 = 2;
 }
 
+macro_rules! patch_fields {
+    ($name:ident: $bits:ty { $($field:ident = $bit:literal,)+ }) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum $name {
+            $($field = $bit,)+
+        }
+
+        impl $name {
+            pub const ALL: [Self; [$($bit),+].len()] = [$(Self::$field),+];
+
+            pub const ALL_BITS: $bits = {
+                let mut bits = 0;
+                let mut index = 0;
+                while index < Self::ALL.len() {
+                    bits |= Self::ALL[index].bit();
+                    index += 1;
+                }
+                bits
+            };
+
+            pub const fn bit(self) -> $bits {
+                1 << self as $bits
+            }
+        }
+    };
+}
+
+// IEC 62386-103 §9.6.3
+patch_fields! {
+    InstancePatchField: u16 {
+        InstanceEnabled = 10,
+        EventFilter = 1,
+        EventPriority = 2,
+        InstanceGroup0 = 3,
+        InstanceGroup1 = 4,
+        InstanceGroup2 = 5,
+        TimerShort = 6,
+        TimerDouble = 7,
+        TimerRepeat = 8,
+        TimerStuck = 9,
+        EventScheme = 0,
+    }
+}
+
+impl InstancePatchField {
+    pub const INSTANCE_GROUPS: [Self; 3] =
+        [Self::InstanceGroup0, Self::InstanceGroup1, Self::InstanceGroup2];
+    pub const TIMERS: [Self; 4] =
+        [Self::TimerShort, Self::TimerDouble, Self::TimerRepeat, Self::TimerStuck];
+}
+
+impl Dali103InstanceConfigureCommand {
+    pub const ALL_PATCH_BITS: u16 = InstancePatchField::ALL_BITS;
+
+    pub const fn patches(&self, field: InstancePatchField) -> bool {
+        self.patch_mask & field.bit() != 0
+    }
+
+    pub fn patch(&mut self, field: InstancePatchField) {
+        self.patch_mask |= field.bit();
+    }
+}
+
+patch_fields! {
+    FeedbackPatchField: u8 {
+        Timing = 0,
+        ActiveBrightness = 1,
+        ActiveColour = 2,
+        InactiveBrightness = 3,
+        InactiveColour = 4,
+    }
+}
+
+impl Dali103FeedbackConfigureCommand {
+    pub const fn patches(&self, field: FeedbackPatchField) -> bool {
+        self.patch_mask & field.bit() != 0
+    }
+
+    pub const fn value(&self, field: FeedbackPatchField) -> u8 {
+        match field {
+            FeedbackPatchField::Timing => self.timing,
+            FeedbackPatchField::ActiveBrightness => self.active_brightness,
+            FeedbackPatchField::ActiveColour => self.active_colour,
+            FeedbackPatchField::InactiveBrightness => self.inactive_brightness,
+            FeedbackPatchField::InactiveColour => self.inactive_colour,
+        }
+    }
+
+    pub fn patch(&mut self, field: FeedbackPatchField, value: u8) {
+        let slot = match field {
+            FeedbackPatchField::Timing => &mut self.timing,
+            FeedbackPatchField::ActiveBrightness => &mut self.active_brightness,
+            FeedbackPatchField::ActiveColour => &mut self.active_colour,
+            FeedbackPatchField::InactiveBrightness => &mut self.inactive_brightness,
+            FeedbackPatchField::InactiveColour => &mut self.inactive_colour,
+        };
+        *slot = value;
+        self.patch_mask |= field.bit();
+    }
+}
+
 impl DaliRecallSceneCommand {
     pub fn broadcast(registry_adapter_id: u8, scene_id: u8) -> Self {
         Self {
             registry_adapter_id,
             scope: DaliTargetScope::Broadcast,
+            virtual_lamp_id: 0,
             short_address: 0,
             group_id: 0,
             scene_id,
+            hold_hcl: true,
         }
     }
 
     pub fn for_group(registry_adapter_id: u8, group_id: u8, scene_id: u8) -> Self {
         Self {
-            registry_adapter_id,
-            scope: DaliTargetScope::Group,
-            short_address: 0,
             group_id,
-            scene_id,
+            scope: DaliTargetScope::Group,
+            ..Self::broadcast(registry_adapter_id, scene_id)
+        }
+    }
+
+    pub fn for_virtual_lamp(registry_adapter_id: u8, virtual_lamp_id: u8, scene_id: u8) -> Self {
+        Self {
+            virtual_lamp_id,
+            scope: DaliTargetScope::VirtualLamp,
+            ..Self::broadcast(registry_adapter_id, scene_id)
         }
     }
 }
@@ -1162,6 +1279,7 @@ impl DaliSetTargetStateCommand {
             group_id: 0,
             setpoint: setpoint.clone(),
             registry_adapter_id,
+            hold_hcl: true,
         }
     }
 
@@ -1174,20 +1292,16 @@ impl DaliSetTargetStateCommand {
             scope: DaliTargetScope::VirtualLamp,
             virtual_lamp_id,
             short_address: 0,
-            group_id: 0,
-            setpoint: setpoint.clone(),
-            registry_adapter_id,
+            ..Self::for_short(registry_adapter_id, 0, setpoint)
         }
     }
 
     pub fn for_group(registry_adapter_id: u8, group_id: u8, setpoint: &LightSetpoint) -> Self {
         Self {
             scope: DaliTargetScope::Group,
-            virtual_lamp_id: 0,
-            short_address: 0,
             group_id,
-            setpoint: setpoint.clone(),
-            registry_adapter_id,
+            short_address: 0,
+            ..Self::for_short(registry_adapter_id, 0, setpoint)
         }
     }
 }
@@ -1215,6 +1329,7 @@ impl RuntimeRegistryUpdateEntry {
             last_dapc_source: None,
             source: RuntimeSource::Sniffer,
             observed_at_mono_ms: None,
+            hold_hcl: true,
         }
     }
 
@@ -1227,6 +1342,7 @@ impl RuntimeRegistryUpdateEntry {
             last_dapc_source: None,
             source: RuntimeSource::Api,
             observed_at_mono_ms: None,
+            hold_hcl: true,
         }
     }
 
@@ -1244,6 +1360,7 @@ impl RuntimeRegistryUpdateEntry {
             last_dapc_source: None,
             source: RuntimeSource::Api,
             observed_at_mono_ms: None,
+            hold_hcl: true,
         }
     }
 }
@@ -1305,6 +1422,116 @@ mod operation_ttl_tests {
             DISCOVERY_TTL_MS,
             "the begin command must carry the kind's budget, not the generic one"
         );
+    }
+}
+
+#[cfg(test)]
+mod instance_patch_tests {
+    use super::*;
+
+    fn declared_bit(field: InstancePatchField) -> u16 {
+        match field {
+            InstancePatchField::EventScheme => 0,
+            InstancePatchField::EventFilter => 1,
+            InstancePatchField::EventPriority => 2,
+            InstancePatchField::InstanceGroup0 => 3,
+            InstancePatchField::InstanceGroup1 => 4,
+            InstancePatchField::InstanceGroup2 => 5,
+            InstancePatchField::TimerShort => 6,
+            InstancePatchField::TimerDouble => 7,
+            InstancePatchField::TimerRepeat => 8,
+            InstancePatchField::TimerStuck => 9,
+            InstancePatchField::InstanceEnabled => 10,
+        }
+    }
+
+    #[test]
+    fn every_patch_field_keeps_its_declared_bit() {
+        for field in InstancePatchField::ALL {
+            assert_eq!(field.bit(), 1 << declared_bit(field), "{field:?}");
+        }
+    }
+
+    #[test]
+    fn the_table_writes_the_instance_state_first_and_the_scheme_last() {
+        assert_eq!(InstancePatchField::ALL.first(), Some(&InstancePatchField::InstanceEnabled));
+        assert_eq!(InstancePatchField::ALL.last(), Some(&InstancePatchField::EventScheme));
+    }
+
+    #[test]
+    fn group_and_timer_runs_list_their_fields_in_slot_order() {
+        let slots = InstancePatchField::INSTANCE_GROUPS
+            .into_iter()
+            .chain(InstancePatchField::TIMERS);
+        for (offset, field) in (3u16..).zip(slots) {
+            assert_eq!(declared_bit(field), offset, "{field:?}");
+            assert!(InstancePatchField::ALL.contains(&field), "{field:?}");
+        }
+    }
+
+    #[test]
+    fn a_patched_field_reads_back_from_the_mask() {
+        let mut cmd = Dali103InstanceConfigureCommand {
+            registry_adapter_id: 0,
+            short_address: 0,
+            instance_number: 0,
+            patch_mask: 0,
+            event_scheme: 0,
+            event_filter: [0; 3],
+            event_priority: 0,
+            instance_groups: [None; 3],
+            timer_multipliers: [None; 4],
+            instance_enabled: false,
+        };
+        cmd.patch(InstancePatchField::TimerRepeat);
+        for field in InstancePatchField::ALL {
+            assert_eq!(cmd.patches(field), field == InstancePatchField::TimerRepeat, "{field:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod feedback_patch_tests {
+    use super::*;
+
+    fn declared_bit(field: FeedbackPatchField) -> u8 {
+        match field {
+            FeedbackPatchField::Timing => 0,
+            FeedbackPatchField::ActiveBrightness => 1,
+            FeedbackPatchField::ActiveColour => 2,
+            FeedbackPatchField::InactiveBrightness => 3,
+            FeedbackPatchField::InactiveColour => 4,
+        }
+    }
+
+    #[test]
+    fn every_feedback_field_keeps_its_declared_bit() {
+        for field in FeedbackPatchField::ALL {
+            assert_eq!(field.bit(), 1 << declared_bit(field), "{field:?}");
+        }
+    }
+
+    #[test]
+    fn a_patched_feedback_field_carries_its_own_value_and_bit() {
+        for (value, field) in (1u8..).zip(FeedbackPatchField::ALL) {
+            let mut cmd = Dali103FeedbackConfigureCommand {
+                registry_adapter_id: 0,
+                short_address: 0,
+                instance_number: 0,
+                patch_mask: 0,
+                timing: 0,
+                active_brightness: 0,
+                active_colour: 0,
+                inactive_brightness: 0,
+                inactive_colour: 0,
+                opcode_map: 0,
+            };
+            cmd.patch(field, value);
+            for other in FeedbackPatchField::ALL {
+                assert_eq!(cmd.patches(other), other == field, "{field:?} patched {other:?}");
+                assert_eq!(cmd.value(other), if other == field { value } else { 0 });
+            }
+        }
     }
 }
 

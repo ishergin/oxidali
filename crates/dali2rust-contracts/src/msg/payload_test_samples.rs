@@ -162,6 +162,7 @@ pub(crate) fn worst_runtime_update_entry() -> crate::msg::RuntimeRegistryUpdateE
         last_dapc_source: Some(crate::msg::LastDapcSource::Scene),
         source: RuntimeSource::Poller,
         observed_at_mono_ms: Some(u32::MAX),
+        hold_hcl: true,
     }
 }
 

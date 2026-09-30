@@ -9,7 +9,6 @@ pub mod trigger;
 use crate::cursor::Cursor;
 use crate::lexer::{lex, Pos, TokenKind};
 use action::Nesting;
-use action_light::HOLD_HCL_FALSE_REFUSAL;
 use dali2rust_rules_model::limits::{
     MAX_ACTIONS_PER_RULE, MAX_CONDITIONS_PER_RULE, MAX_TRIGGERS_PER_RULE,
 };
@@ -117,11 +116,7 @@ fn modifiers(c: &mut Cursor<'_>) -> Result<Modifiers, CompileError> {
             let (ms, _) = c.expect_duration("cooldown")?;
             m.cooldown_ms = Some(ms);
         } else if c.accept_kw("hold_hcl") {
-            let pos = c.here();
-            if !bool_word(c)? {
-                return Err(pos.err(HOLD_HCL_FALSE_REFUSAL));
-            }
-            m.hold_hcl = true;
+            m.hold_hcl = bool_word(c)?;
         } else {
             return Ok(m);
         }

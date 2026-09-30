@@ -300,6 +300,7 @@ fn apply_event(state: &mut SchedulerState, deps: &SchedulerDeps, payload: &BusEv
                 virtual_lamp_id: body.virtual_lamp_id,
                 value_source: Some(body.commit_source),
                 states: body.commit_dimensions,
+                holds_hcl: body.commit_holds_hcl,
             };
             suspend_hit_targets(state, deps, &commit);
         }
@@ -310,7 +311,7 @@ fn apply_event(state: &mut SchedulerState, deps: &SchedulerDeps, payload: &BusEv
 }
 
 fn suspend_hit_targets(state: &mut SchedulerState, deps: &SchedulerDeps, commit: &RuntimeCommit) {
-    if !commit.is_foreign() {
+    if !commit.overrides() {
         return;
     }
     let Some(local) = deps.clock.local() else {
@@ -583,6 +584,7 @@ fn command_envelope_for(
                 group_id: key.group_id,
                 setpoint: setpoint.clone(),
                 registry_adapter_id: key.adapter_id,
+                hold_hcl: true,
             },
         ),
         PlannedCommand::RecallLastActive { .. } => command_envelope(

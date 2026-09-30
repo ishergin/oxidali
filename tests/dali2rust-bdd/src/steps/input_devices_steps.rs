@@ -6,7 +6,7 @@ use dali2rust_platform::dali::ObservedRawFrameKind;
 use dali2rust_test_support::wait_until;
 use serde_json::Value;
 
-use crate::steps::physical_devices_steps::fetch_json;
+use crate::steps::polling::fetch_json;
 use crate::steps::wire::{priorities_of, priority_of_settle_us, RELEASE};
 use crate::DaliWorld;
 
@@ -54,7 +54,7 @@ async fn then_translator_counter_is(world: &mut DaliWorld, name: String, expecte
     );
 }
 
-// INP-005 RULE-021 RULE-023 RULE-027 RULE-081 RULE-084
+// INP-005 RULE-021 RULE-023 RULE-027 RULE-032 RULE-081 RULE-084
 #[then("the mock transport should have sent no frames")]
 async fn then_no_frames_sent(world: &mut DaliWorld) {
     let mock = world.dali_mock();
@@ -71,7 +71,7 @@ async fn then_no_frames_sent(world: &mut DaliWorld) {
 }
 
 use cucumber::given;
-use crate::steps::physical_devices_steps::wait_for_operation_status;
+use crate::steps::polling::wait_for_operation_status;
 
 const PROJECT_TIMEOUT: Duration = Duration::from_secs(3);
 

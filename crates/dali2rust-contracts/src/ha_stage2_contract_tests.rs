@@ -351,6 +351,7 @@ fn registry_runtime_update_command_serde_roundtrip() {
             last_dapc_source: None,
             source: RuntimeSource::Sniffer,
             observed_at_mono_ms: Some(7_654_321),
+            hold_hcl: true,
         },
     };
     let json = serde_json::to_string(&cmd).expect("serialize");

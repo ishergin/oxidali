@@ -2,7 +2,7 @@ use cucumber::given;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 
-use crate::steps::physical_devices_steps::{
+use crate::steps::physical_devices::write_scripts::{
     script_addressed_config_triple, script_addressed_config_triple_answered,
 };
 use crate::DaliWorld;

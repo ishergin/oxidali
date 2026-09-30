@@ -214,6 +214,7 @@ fn commit_event(
                 value_source: Some(value_source),
                 ..Default::default()
             },
+            commit_holds_hcl: true,
         },
     )
 }
@@ -887,6 +888,44 @@ fn a_poller_readback_leaves_the_schedule_running() {
         "a background read is not an override"
     );
     assert!(!harness.override_view("morning").suspended);
+}
+
+#[test]
+fn a_rule_commit_that_does_not_hold_leaves_the_schedule_running() {
+    let registry = StubRegistry {
+        schedules: vec![schedule(
+            "evening",
+            vec![group_target(0, &[3, 5])],
+            vec![point(0, HclLevelMode::Absolute, Some(80), None)],
+        )],
+        membership: vec![(1, 1u16 << 3), (2, 1u16 << 5)],
+    };
+    let harness = spawn_harness(registry, Arc::new(StubClock::at(600)));
+    harness.wait_for_commands(2);
+
+    let level = dali2rust_contracts::msg::LightSetpoint::from_level(200, None);
+    let mut spared = commit_event(1, RuntimeSource::Rules, level);
+    let dali2rust_contracts::msg::BusEventPayload::RuntimeStateChangedEvent(body) =
+        &mut spared.payload
+    else {
+        unreachable!("commit_event builds a runtime commit");
+    };
+    body.commit_holds_hcl = false;
+    assert_eq!(
+        harness.publisher.try_publish(BusChannel::Events, BusFrame::event(spared)),
+        PublishResult::Queued
+    );
+    harness.publish_commit_on_lamp(2, RuntimeSource::Rules);
+    wait_for_overrides_started(&harness, 1);
+
+    let view = harness.override_view("evening");
+    let groups: Vec<Option<u8>> = view.targets.iter().map(|target| target.group_id).collect();
+    assert_eq!(
+        groups,
+        vec![Some(5)],
+        "the rule that held stood group 5 down; the one that said hold_hcl false left group 3 driven"
+    );
+    assert_eq!(harness.counters.overrides_started.load(Ordering::Relaxed), 1);
 }
 
 #[test]

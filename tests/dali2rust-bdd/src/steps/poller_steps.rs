@@ -3,7 +3,7 @@ use std::time::Duration;
 use cucumber::{given, then, when};
 use serde_json::Value;
 
-use crate::steps::physical_devices_steps::fetch_json;
+use crate::steps::polling::fetch_json;
 use crate::DaliWorld;
 
 const SETTINGS_PATH: &str = "/api/v1/settings/poller";
@@ -52,7 +52,7 @@ fn wait_for_counter(port: u16, name: &str, target: u64) {
 async fn given_discovered_unbound_device(world: &mut DaliWorld) {
     {
         let mock = world.dali_mock().lock().expect("mock lock");
-        crate::steps::physical_devices_steps::script_discovery(&mock);
+        crate::steps::physical_devices::discovery_scripts::script_discovery(&mock);
     }
     world.send_http_request(
         "POST",
@@ -60,7 +60,7 @@ async fn given_discovered_unbound_device(world: &mut DaliWorld) {
         Some(br#"{"mode":"scan_known_short_addresses"}"#),
         "application/json",
     );
-    crate::steps::physical_devices_steps::wait_for_operation_status(world, "succeeded");
+    crate::steps::polling::wait_for_operation_status(world, "succeeded");
     world.dali_mock().lock().expect("mock lock").clear();
 }
 
@@ -138,7 +138,7 @@ async fn then_no_poller_operations(world: &mut DaliWorld) {
     );
 }
 
-// POL-008
+// POL-008 RULE-033 RULE-036
 #[then(regex = r#"^virtual lamp (\d+) on adapter (\d+) should eventually report level (\d+) from value_source "([a-z_]+)"$"#)]
 async fn then_vl_reports_level_from_source(
     world: &mut DaliWorld,
