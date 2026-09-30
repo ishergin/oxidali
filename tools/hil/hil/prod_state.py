@@ -3,7 +3,7 @@ import os
 import time
 
 from hil.api import ApiError, CapabilityUnsupported, _HomeAssistantSettings, _PollerSettings
-from hil.lamp_guard import LampNotAllowed, appended_rule_names, only_hil_rules_appended
+from hil.lamp_guard import TEST_RULE_PREFIX, LampNotAllowed, only_hil_rules_appended
 
 PRIME_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,groups,scenes,extended"
 
@@ -434,7 +434,10 @@ def commit_refusal(pending):
     return None
 
 
-def switch_off(api, names):
+def switch_off_test_rules(api):
+    compiled = api._req("GET", "rules?format=json").get("rules") or {}
+    names = sorted(r["name"] for r in compiled.get("rules") or []
+                   if r.get("enabled", True) and r["name"].startswith(TEST_RULE_PREFIX))
     for name in names:
         api.rule_enable(name, False)
     return names
@@ -450,11 +453,12 @@ def _restore_rules(api, snap, log, writes):
     refusal = commit_refusal(continuations_pending(api))
     if not only_hil_rules_appended(was, now.get("source") or ""):
         log("prod_state: the rules document differs from the snapshot by more than test "
-            "rules; someone else edited it, so it is left as it is")
+            "rules; someone else edited it, so it is left as it is, and its test rules %s "
+            "are switched off" % switch_off_test_rules(api))
     elif refusal:
-        names = switch_off(api, appended_rule_names(was, now.get("source") or ""))
         log("prod_state: the test rules %s stay in the rules document, switched off, "
-            "because %s; run `hil state restore` once nothing is pending" % (names, refusal))
+            "because %s; run `hil state restore` once nothing is pending"
+            % (switch_off_test_rules(api), refusal))
     else:
         log("prod_state: taking the test rules out of the rules document")
         before = api.rules_toggles()

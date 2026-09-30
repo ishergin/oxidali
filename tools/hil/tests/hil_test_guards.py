@@ -8,7 +8,7 @@ from requests import RequestException
 from hil import api as api_mod
 from hil import prod_state
 from hil import virtual_gear
-from hil.lamp_guard import RULE_SEPARATOR, LampNotAllowed, appended_rule_names, spell
+from hil.lamp_guard import RULE_SEPARATOR, LampNotAllowed, spell
 from hil.wait import wait_until
 from hil_harness import ANCHOR_TZ
 from hil_session_guards import refuse_schedule_suspension
@@ -240,8 +240,10 @@ class _RulesCommits:
             view = self.api.rules_replace(source, base)
         except api_mod.ApiError as exc:
             pytest.fail("rules %s did not commit (%s): the document changed while the test "
-                        "held it, so the owner's edit is kept and the test rule stays for a "
-                        "hand to remove" % (what, exc), pytrace=False)
+                        "held it, so the owner's edit is kept and the test rules %s stay, "
+                        "switched off, for a hand to remove"
+                        % (what, exc, prod_state.switch_off_test_rules(self.api)),
+                        pytrace=False)
         if view.get("status") != "succeeded":
             pytest.fail("rules %s did not commit: %r" % (what, view), pytrace=False)
         self.ours = (base + 1) % U32
@@ -270,10 +272,9 @@ class _RulesCommits:
         if source != self.original:
             refusal = prod_state.commit_refusal(prod_state.continuations_pending(self.api))
             if refusal:
-                names = prod_state.switch_off(self.api,
-                                              appended_rule_names(self.original, source))
                 return ["the test rules %s stay in the document, switched off, for the "
-                        "session restore, because %s" % (names, refusal)]
+                        "session restore, because %s"
+                        % (prod_state.switch_off_test_rules(self.api), refusal)]
             self.commit(self.original, self.ours, "restore")
         return rules_residue(self.original, self.api.rules_get().get("source") or "",
                              self.toggles, self.api.rules_toggles())

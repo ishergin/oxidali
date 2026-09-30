@@ -326,7 +326,7 @@ def test_a_run_needs_a_rule_the_fence_passed():
 @pytest.mark.parametrize("path,body,refused", [
     ("rules/%D0%BA%D0%BD%D0%BE%D0%BF%D0%BA%D0%B0%203", {"enabled": False}, False),
     ("rules/%D0%BA%D0%BD%D0%BE%D0%BF%D0%BA%D0%B0%203", {"enabled": True}, True),
-    ("rules/hil-a", {"enabled": False}, True),
+    ("rules/hil-a", {"enabled": True}, True),
     ("rules/%D0%BA%D0%BD%D0%BE%D0%BF%D0%BA%D0%B0%203", {"enabled": False, "x": 1}, True),
 ])
 def test_a_toggle_passes_only_back_to_what_the_owner_had(path, body, refused):
@@ -338,10 +338,11 @@ def test_a_toggle_passes_only_back_to_what_the_owner_had(path, body, refused):
         guard.check_request("PATCH", path, body)
 
 
-def test_the_fence_lets_a_test_rule_it_passed_be_switched_off_and_nothing_else():
+def test_the_fence_lets_any_test_rule_be_switched_off_and_nothing_else():
     guard = _guard(_ruled())
     guard.check_request("PUT", "rules", _with(http_rule("hil-a", GROUP_TARGET, 4, "stop_fade()")))
     guard.check_request("PATCH", "rules/hil-a", {"enabled": False})
+    guard.check_request("PATCH", "rules/hil-left-by-a-killed-session", {"enabled": False})
     with pytest.raises(LampNotAllowed):
         guard.check_request("PATCH", "rules/hil-a", {"enabled": True})
 

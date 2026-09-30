@@ -1,4 +1,5 @@
 import copy
+import re
 import inspect
 import types
 
@@ -297,6 +298,11 @@ class _Rules:
         self.toggles[name] = enabled
         self.revision += 1
 
+    def _req(self, method, path, body=None):
+        names = re.findall(r'rule "([^"]+)"', self.source)
+        return {"rules": {"rules": [{"name": n, "enabled": self.toggles.get(n, True)}
+                                    for n in names]}}
+
 
 def _snap_rules(source, toggles):
     return {"rules": {"source": source}, "rule_toggles": dict(toggles)}
@@ -488,6 +494,16 @@ def test_an_owner_edit_during_the_test_is_a_named_failure_not_an_overwrite():
     with pytest.raises(pytest.fail.Exception, match="changed while the test held it"):
         commits.restore()
     assert api.source.endswith("# owner")
+    assert api.patches == [("hil-vg-06-stop-fade", False)]
+
+
+def test_a_leftover_test_rule_is_switched_off_after_the_owner_edited_the_document():
+    edited = OWNER_DOC.replace("23:00", "22:00")
+    api, log = _Rules(edited + "\n\n" + TEST_RULE, {"night": True}), []
+    prod_state._restore_rules(api, _snap_rules(OWNER_DOC, {"night": True}), log.append,
+                              RULES_WRITTEN)
+    assert api.puts == [] and api.patches == [("hil-vg-06-stop-fade", False)]
+    assert any("switched off" in line for line in log)
 
 
 def test_a_test_that_never_committed_does_not_judge_the_owner_toggles():
