@@ -285,6 +285,7 @@ def test_a_silent_primary_hands_the_bus_over_and_takes_it_back(
 
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-RED-06")
 def test_a_planned_switchover_moves_the_bus_and_not_the_light(api, peer_api, pair_roles,
                                                               state_snapshot, test_artifacts):

@@ -39,5 +39,5 @@ markers = [
     "redundancy: needs the pair's second controller (HIL_PEER_BASE) on the same segment",
     "hil_id(id): the HIL scenario id this test implements (HIL-<DOMAIN>-NN)",
     "virtual_gear: runs on the gear the peer emulates (HIL_VIRTUAL_GEAR=1)",
-    "light: changes what a lamp shows; deselected unless HIL_LAMP_SHORTS names a lamp and HIL_LAMPS_READ_ONLY is off",
+    "light: can change what a lamp shows; deselected unless HIL_LAMP_SHORTS names a lamp and HIL_LAMPS_READ_ONLY is off",
 ]

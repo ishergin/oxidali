@@ -138,9 +138,10 @@ A run with no `HIL_*` flag writes only this, each put back by its test or guard:
 adapter's name; group 15's and a scene's name and Home Assistant exposure (HIL-GRP-03,
 HIL-SCN-03); the Home Assistant bridge's settings, moved to the `hiltest` namespace (the
 owner's entities are unavailable meanwhile), and one virtual lamp's exposure (`ha_bridge`
-tests, `ha_guard`); the poller's settings (`test_poller`, `poller_guard`); and a poller
-the owner left on, off for the session (`bench_baseline`). HIL-INP-02 and 03 rewrite the
-panel's instance group membership with the value it holds; scans refresh the registry.
+tests, `ha_guard`); the poller's settings (`test_poller`, `poller_guard`); a poller the
+owner left on, off for the session (`bench_baseline`); and with a named peer, the poller's
+interval (HIL-RED-03) and the peer's `peer_url` (HIL-RED-04). HIL-INP-02 and 03 rewrite
+the panel's instance group membership with the value it holds; scans refresh the registry.
 
 ## Save and restore
 
@@ -271,7 +272,7 @@ hil-slow` wrap the cwd.
   line is part of the firmware's contract with the toolkit.
 - Markers: `smoke`, `optical`, `sniffer`, `serial`, `foreign` (the WB master),
   `ha_bridge`, `redundancy`, `slow`, `destructive`, `needs_capability(name)`,
-  `virtual_gear` (the gear the peer emulates), `light` (changes what a lamp shows).
+  `virtual_gear` (the gear the peer emulates), `light` (can change what a lamp shows).
 - Whatever `-m` says, collection deselects a `light` test unless `HIL_LAMP_SHORTS` names
   a lamp and `HIL_LAMPS_READ_ONLY=0`, and a test that commits the rules document
   (it requests `rules_guard`) unless `HIL_ALLOW_RULE_COMMITS=1`.

@@ -7,6 +7,7 @@ import hil_session_guards
 import test_groups
 import test_input_devices
 import test_policies
+import test_redundancy
 import test_target_state
 import test_virtual_gear
 import test_ws
@@ -103,9 +104,12 @@ def test_no_lamp_is_drivable_unless_the_run_names_one(monkeypatch):
 def test_the_new_light_tests_carry_the_light_marker():
     for test in (test_target_state.test_a_colour_temperature_series_during_a_fade_leaves_the_fixture_at_the_last_value,
                  test_groups.test_a_stop_fade_rule_leaves_real_members_where_it_caught_them):
-        marks = {mark.name for mark in getattr(test, "pytestmark", [])}
-        module = {mark.name for mark in _module_marks(test)}
-        assert "light" in marks | module, test.__name__
+        assert _light(test), test.__name__
+
+
+def _light(test):
+    marks = {mark.name for mark in getattr(test, "pytestmark", [])}
+    return "light" in marks | {mark.name for mark in _module_marks(test)}
 
 
 def _module_marks(test):
@@ -227,6 +231,11 @@ def test_every_test_that_forges_an_input_event_is_a_light_test():
                  "test_a_power_notification_is_decoded_as_a_lifecycle_fact",
                  "test_a_scheme_0_event_is_counted_as_unattributable",
                  "test_a_press_reaches_home_assistant"):
-        test = getattr(test_input_devices, name)
-        assert "light" in {m.name for m in getattr(test, "pytestmark", [])}, name
+        assert _light(getattr(test_input_devices, name)), name
+
+
+def test_every_test_that_hands_the_bus_to_the_peer_is_a_light_test():
+    for name in ("test_a_silent_primary_hands_the_bus_over_and_takes_it_back",
+                 "test_a_planned_switchover_moves_the_bus_and_not_the_light"):
+        assert _light(getattr(test_redundancy, name)), name
 
