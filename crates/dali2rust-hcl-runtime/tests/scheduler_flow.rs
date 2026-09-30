@@ -1,4 +1,5 @@
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::{RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -1923,4 +1924,39 @@ fn an_edit_during_a_tick_disarms_its_targets_before_a_later_commit() {
         || target_states(&harness).contains(&(3, Some(EDITED_LEVEL))),
         Duration::from_secs(5),
     );
+}
+
+const UNRELATED_CONFIRMATIONS_FROM: u64 = 1_000_000;
+const CONFIRMATION_TRAFFIC_PERIOD: Duration = Duration::from_millis(5);
+
+fn spawn_confirmation_traffic(publisher: BusPublisher) -> Sender<()> {
+    let (stop, stopped) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        let mut correlation_id = UNRELATED_CONFIRMATIONS_FROM;
+        while stopped.recv_timeout(CONFIRMATION_TRAFFIC_PERIOD) == Err(RecvTimeoutError::Timeout) {
+            correlation_id += 1;
+            let confirmation = dali2rust_contracts::bus::build_confirmation_envelope(
+                correlation_id,
+                dali2rust_contracts::msg::DeliveryStatus::Ok,
+                0,
+                dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
+            );
+            let _ = publisher.try_publish(BusChannel::Confirmations, BusFrame::confirmation(confirmation));
+        }
+    });
+    stop
+}
+
+#[test]
+fn a_hold_during_a_tick_is_served_while_other_confirmations_keep_arriving() {
+    let gate = Arc::new(Gate::default());
+    let harness = publishing_tick_held_at_its_gate(&gate);
+    let traffic = spawn_confirmation_traffic(harness.publisher.clone());
+
+    harness.hold(89, HclOverrideTarget::Group { group_id: 15 });
+    let held = harness.confirmation_for(89).status;
+    drop(traffic);
+
+    assert_eq!(held, dali2rust_contracts::msg::DeliveryStatus::Ok);
+    assert_eq!(harness.commands().len(), 1, "served while the tick waited on its first command");
 }

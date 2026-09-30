@@ -716,29 +716,28 @@ fn wait_for_confirmation(
             deps.counters.command_timeouts.fetch_add(1, Ordering::Relaxed);
             return false;
         }
-        match deps
-            .liveness
-            .while_turning(|| conf_rx.recv_timeout(remaining.min(CONFIRMATION_POLL_SLICE)))
-        {
-            Ok(BusFrame::Confirmation(envelope)) => {
-                if envelope.meta.correlation_id == correlation_id {
-                    if envelope.status == dali2rust_contracts::msg::DeliveryStatus::Ok {
-                        return true;
-                    }
-                    deps.counters.command_failures.fetch_add(1, Ordering::Relaxed);
-                    return false;
-                }
-            }
-            Ok(_) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                serve_inbox(rx, deps, state);
+        let slice = remaining.min(CONFIRMATION_POLL_SLICE);
+        let received = deps.liveness.while_turning(|| conf_rx.recv_timeout(slice));
+        serve_inbox(rx, deps, state);
+        match received {
+            Ok(BusFrame::Confirmation(envelope)) if envelope.meta.correlation_id == correlation_id => {
+                return confirmed_ok(deps, envelope.status);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 deps.counters.command_timeouts.fetch_add(1, Ordering::Relaxed);
                 return false;
             }
+            _ => {}
         }
     }
+}
+
+fn confirmed_ok(deps: &SchedulerDeps, status: DeliveryStatus) -> bool {
+    if status == DeliveryStatus::Ok {
+        return true;
+    }
+    deps.counters.command_failures.fetch_add(1, Ordering::Relaxed);
+    false
 }
 
 #[cfg(test)]
