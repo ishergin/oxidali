@@ -117,6 +117,7 @@ struct SchedulerState {
 
 #[derive(Default)]
 struct TickScope {
+    published: Vec<TargetKey>,
     stood_down: Vec<TargetKey>,
     deferred: Vec<BusFrame>,
 }
@@ -135,6 +136,17 @@ impl SchedulerState {
         if let Some(tick) = self.tick.as_mut() {
             tick.stood_down.push(target);
         }
+    }
+
+    fn note_published(&mut self, target: TargetKey) {
+        if let Some(tick) = self.tick.as_mut() {
+            tick.published.push(target);
+        }
+    }
+
+    fn driven(&self, target: &TargetKey) -> bool {
+        self.last_published.contains_key(target)
+            || self.tick.as_ref().is_some_and(|tick| tick.published.contains(target))
     }
 
     fn forget_edited(&mut self, current: &[HclScheduleView]) {
@@ -411,7 +423,7 @@ fn suspend_hit_targets(state: &mut SchedulerState, deps: &SchedulerDeps, commit:
         }
         let driven = driven_dimensions(&schedule.points);
         for target in schedule.targets.iter().flat_map(expand_target) {
-            if !state.last_published.contains_key(&target) {
+            if !state.driven(&target) {
                 continue;
             }
             if !commit_hits_target(deps.read_port.as_ref(), commit, target, driven) {
@@ -433,7 +445,7 @@ fn suspend_hit_targets(state: &mut SchedulerState, deps: &SchedulerDeps, commit:
         if spared.contains(&target) {
             continue;
         }
-        state.last_published.remove(&target);
+        state.stand_down(target);
     }
 }
 
@@ -614,6 +626,7 @@ fn publish_plan(
         deps.counters
             .commands_published
             .fetch_add(1, Ordering::Relaxed);
+        state.note_published(command.key());
         let confirmed = wait_for_confirmation(
             rx,
             conf_rx,
@@ -635,25 +648,24 @@ fn mark_unpublished_keys(outcomes: &mut PublishOutcomes, unpublished: &[PlannedC
 
 fn service_commands(rx: &BusSubscriberRx, deps: &SchedulerDeps, state: &mut SchedulerState) {
     while let Ok(frame) = rx.try_recv() {
-        if let BusFrame::Command(envelope) = &frame {
-            let correlation_id = envelope.meta.correlation_id;
-            dispatch_scheduler_command(&envelope.payload, state, deps, correlation_id);
-        } else if can_suspend(&frame) {
-            match state.tick.as_mut() {
-                Some(tick) => defer_frame(&deps.counters, &mut tick.deferred, frame),
-                None => apply_frame(state, deps, &frame),
-            }
+        if serves_in_order(&frame) {
+            apply_frame(state, deps, &frame);
+            continue;
+        }
+        match state.tick.as_mut() {
+            Some(tick) => defer_frame(&deps.counters, &mut tick.deferred, frame),
+            None => apply_frame(state, deps, &frame),
         }
     }
 }
 
-fn can_suspend(frame: &BusFrame) -> bool {
+fn serves_in_order(frame: &BusFrame) -> bool {
     match frame {
-        BusFrame::Event(envelope) => match &envelope.payload {
-            BusEventPayload::RuntimeStateChangedEvent(body) => runtime_commit(body).overrides(),
-            _ => true,
-        },
-        _ => true,
+        BusFrame::Command(_) => true,
+        BusFrame::Event(envelope) => {
+            matches!(envelope.payload, BusEventPayload::RuntimeStateChangedEvent(_))
+        }
+        BusFrame::Confirmation(_) => false,
     }
 }
 
