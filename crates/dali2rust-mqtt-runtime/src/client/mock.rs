@@ -1,10 +1,13 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dali2rust_platform::mqtt::{
     MqttClient, MqttConnectionState, MqttError, MqttIncoming, MqttLastWill, MqttLink, MqttQos,
-    MqttSessionConfig,
+    MqttSessionConfig, MqttSubAck,
 };
+
+use crate::runtime::rule_topics::{topic_filter_matches, RuleTopicsReadPort};
 
 const REFUSAL_REPORT_LATENCY: Duration = Duration::from_millis(20);
 
@@ -20,13 +23,17 @@ pub struct PublishedMessage {
 struct MockInner {
     published: Vec<PublishedMessage>,
     subscriptions: Vec<String>,
+    unsubscriptions: Vec<String>,
+    active: Vec<String>,
     session: Option<MqttSessionConfig>,
     connect_calls: u32,
     disconnect_calls: u32,
     fail_publishes: u32,
     fail_subscribes: u32,
+    last_message_id: u32,
     hold_subacks: bool,
-    held_subacks: u32,
+    held_subacks: Vec<u32>,
+    refuse_subacks: u32,
     fail_connects: u32,
     stall_connects: u32,
     connected: bool,
@@ -86,13 +93,36 @@ impl MockMqttClient {
             g.hold_subacks = false;
             core::mem::take(&mut g.held_subacks)
         };
-        for _ in 0..held {
-            self.link.note_subscription_acked();
+        for message_id in held {
+            self.link.note_suback(MqttSubAck { message_id, granted: true });
         }
     }
 
     pub fn subscriptions(&self) -> Vec<String> {
         self.lock().subscriptions.clone()
+    }
+
+    pub fn unsubscriptions(&self) -> Vec<String> {
+        self.lock().unsubscriptions.clone()
+    }
+
+    pub fn active_subscriptions(&self) -> Vec<String> {
+        self.lock().active.clone()
+    }
+
+    pub fn covers(&self, topic: &str) -> bool {
+        self.matching_subscriptions(topic) > 0
+    }
+
+    pub fn broker_publish(&self, topic: &str, payload: &[u8]) {
+        for _ in 0..self.matching_subscriptions(topic) {
+            self.deliver(topic, payload);
+        }
+    }
+
+    fn matching_subscriptions(&self, topic: &str) -> usize {
+        let g = self.lock();
+        g.active.iter().filter(|filter| topic_filter_matches(filter, topic)).count()
     }
 
     pub fn session_config(&self) -> Option<MqttSessionConfig> {
@@ -112,14 +142,23 @@ impl MockMqttClient {
     }
 
     pub fn deliver(&self, topic: &str, payload: &[u8]) {
-        self.link.deliver(MqttIncoming {
-            topic: topic.to_string(),
-            payload: payload.to_vec(),
-        });
+        self.deliver_flagged(topic, payload, false);
+    }
+
+    pub fn deliver_retained(&self, topic: &str, payload: &[u8]) {
+        self.deliver_flagged(topic, payload, true);
+    }
+
+    fn deliver_flagged(&self, topic: &str, payload: &[u8], retained: bool) {
+        self.link.deliver(topic.to_string(), payload.to_vec(), retained);
     }
 
     pub fn set_connected(&self, up: bool) {
-        self.lock().connected = up;
+        {
+            let mut g = self.lock();
+            g.connected = up;
+            g.active.clear();
+        }
         self.link.set_state(if up {
             MqttConnectionState::Connected
         } else {
@@ -135,6 +174,10 @@ impl MockMqttClient {
         self.lock().fail_subscribes = n;
     }
 
+    pub fn refuse_next_subacks(&self, n: u32) {
+        self.lock().refuse_subacks = n;
+    }
+
     pub fn fail_next_connects(&self, n: u32) {
         self.lock().fail_connects = n;
     }
@@ -147,6 +190,7 @@ impl MockMqttClient {
         let mut g = self.lock();
         g.published.clear();
         g.subscriptions.clear();
+        g.unsubscriptions.clear();
     }
 }
 
@@ -184,6 +228,7 @@ impl MqttClient for MockMqttHandle {
             }
             g.session = Some(config.clone());
             g.connected = true;
+            g.active.clear();
         }
         self.0.link.set_state(MqttConnectionState::Connected);
         Ok(())
@@ -194,6 +239,7 @@ impl MqttClient for MockMqttHandle {
             let mut g = self.0.lock();
             g.disconnect_calls += 1;
             g.connected = false;
+            g.active.clear();
         }
         self.0.link.set_state(MqttConnectionState::Disconnected);
     }
@@ -222,7 +268,7 @@ impl MqttClient for MockMqttHandle {
         Ok(())
     }
 
-    fn subscribe(&mut self, topic_filter: &str, qos: MqttQos) -> Result<(), MqttError> {
+    fn subscribe(&mut self, topic_filter: &str, qos: MqttQos) -> Result<u32, MqttError> {
         let mut g = self.0.lock();
         if !g.connected {
             return Err(MqttError::NotConnected);
@@ -233,16 +279,60 @@ impl MqttClient for MockMqttHandle {
         }
         let _ = qos;
         g.subscriptions.push(topic_filter.to_string());
-        if g.hold_subacks {
-            g.held_subacks += 1;
-        } else {
-            self.0.link.note_subscription_acked();
+        g.last_message_id = g.last_message_id.wrapping_add(1);
+        let message_id = g.last_message_id;
+        if g.refuse_subacks > 0 {
+            g.refuse_subacks -= 1;
+            self.0.link.note_suback(MqttSubAck { message_id, granted: false });
+            return Ok(message_id);
         }
+        if !g.active.iter().any(|t| t == topic_filter) {
+            g.active.push(topic_filter.to_string());
+        }
+        if g.hold_subacks {
+            g.held_subacks.push(message_id);
+        } else {
+            self.0.link.note_suback(MqttSubAck { message_id, granted: true });
+        }
+        Ok(message_id)
+    }
+
+    fn unsubscribe(&mut self, topic_filter: &str) -> Result<(), MqttError> {
+        let mut g = self.0.lock();
+        if !g.connected {
+            return Err(MqttError::NotConnected);
+        }
+        g.unsubscriptions.push(topic_filter.to_string());
+        g.active.retain(|t| t != topic_filter);
         Ok(())
     }
 
     fn link(&self) -> Arc<MqttLink> {
         Arc::clone(&self.0.link)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct MockRuleTopics {
+    generation: AtomicU32,
+    topics: Mutex<Vec<String>>,
+}
+
+impl MockRuleTopics {
+    pub fn set(&self, topics: &[&str]) {
+        *self.topics.lock().unwrap_or_else(|e| e.into_inner()) =
+            topics.iter().map(|topic| (*topic).to_string()).collect();
+        self.generation.fetch_add(1, Ordering::Release);
+    }
+}
+
+impl RuleTopicsReadPort for MockRuleTopics {
+    fn rule_topics_generation(&self) -> u32 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    fn rule_topics(&self) -> Vec<String> {
+        self.topics.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 

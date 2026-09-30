@@ -409,6 +409,7 @@ pub(crate) struct MqttWorkerDeps {
     pub settings_watch: Arc<dyn dali2rust_domain::registry::HomeAssistantSettingsApplyWatchPort>,
     pub role: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
     pub secret: Arc<dyn dali2rust_domain::registry::HomeAssistantSecretReadPort>,
+    pub rule_topics: Arc<dyn dali2rust_mqtt_runtime::RuleTopicsReadPort>,
     pub version: &'static str,
     pub adapter_count: u8,
 }
@@ -436,6 +437,7 @@ fn spawn_mqtt_worker_thread(
             version: deps.version,
             adapter_count: deps.adapter_count,
             role: deps.role,
+            rule_topics: deps.rule_topics,
         },
     )
 }

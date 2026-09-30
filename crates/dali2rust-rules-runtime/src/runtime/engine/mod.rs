@@ -233,6 +233,9 @@ fn input_chain_depth(env: &ExecEnv<'_>, input: &In<'_>) -> u32 {
         In::HclOverride { target, .. } => {
             env.vol.chain_depth_for(&[ChainKey::Hcl(*target)], now)
         }
+        In::MqttMessage { topic, .. } => env
+            .vol
+            .chain_depth_for(&[ChainKey::BrokerTopic((*topic).to_owned())], now),
         _ => 0,
     }
 }
@@ -268,6 +271,18 @@ fn event_ctx(input: &In<'_>) -> EventCtx {
             value: Some(i64::from(*scene_id)),
             ..EventCtx::default()
         },
+        In::MqttMessage { payload, truncated, .. } => EventCtx {
+            value: mqtt_value(payload, *truncated),
+            ..EventCtx::default()
+        },
         _ => EventCtx::default(),
     }
+}
+
+fn mqtt_value(payload: &[u8], truncated: bool) -> Option<i64> {
+    if truncated {
+        return None;
+    }
+    let number: i32 = core::str::from_utf8(payload).ok()?.parse().ok()?;
+    Some(i64::from(number))
 }

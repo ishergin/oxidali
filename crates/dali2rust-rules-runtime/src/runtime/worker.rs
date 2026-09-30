@@ -34,6 +34,7 @@ pub const RULES_WORKER_HANDLED_EVENTS: &[&str] = &[
     "RedundancyTransitionEvent",
     "Dali103InstanceConfiguredEvent",
     "RegistrySliceReloadedEvent",
+    "MqttRuleMessageEvent",
 ];
 
 #[derive(Debug, Default)]

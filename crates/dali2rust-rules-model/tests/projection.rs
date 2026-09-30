@@ -157,3 +157,17 @@ fn cct_relative_and_group_selector_shapes() {
         })
     );
 }
+
+#[test]
+fn an_mqtt_trigger_projects_its_topic_and_only_a_stated_payload() {
+    let any = Trigger::MqttMessage { topic: "home/mode".into(), payload: None };
+    assert_eq!(
+        to_value(&any).unwrap(),
+        json!({ "kind": "mqtt_message", "topic": "home/mode" })
+    );
+    let exact = Trigger::MqttMessage { topic: "home/mode".into(), payload: Some("night".into()) };
+    assert_eq!(
+        to_value(&exact).unwrap(),
+        json!({ "kind": "mqtt_message", "topic": "home/mode", "payload": "night" })
+    );
+}

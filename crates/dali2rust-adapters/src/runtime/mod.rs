@@ -421,13 +421,14 @@ fn boot_mqtt(
     registry: &registry_init::RegistrySlice,
     bus: &bus_host::BusSubscribers,
     dispatch: &HttpBusDispatch,
+    rules: &Arc<dali2rust_rules_runtime::RulesStore>,
 ) -> Option<workers::MqttWorkerDeps> {
     wire_mqtt(
-        &Arc::clone(&registry.deps.store),
+        &registry.deps,
         client,
         &bus.publisher.clone(),
         &Arc::clone(&dispatch.correlation),
-        Arc::clone(&registry.deps.counters),
+        Arc::new(http_bridges::RuleTopicsBridge::new(Arc::clone(rules))),
         adapter_count,
         version,
     )
@@ -441,13 +442,9 @@ fn boot_stack(args: BootArgs) -> Box<BootedStack> {
     let (clock_wiring, registry) = boot_clock_and_registry(&args, &bus);
     let diagnostics_store = Arc::clone(&registry.deps.store);
     let diagnostics_slots = Arc::clone(&dispatch.slots);
+    let rules_store = Arc::new(dali2rust_rules_runtime::RulesStore::new());
     let mqtt = boot_mqtt(
-        args.mqtt_client,
-        args.adapter_count,
-        args.version,
-        &registry,
-        &bus,
-        &dispatch,
+        args.mqtt_client, args.adapter_count, args.version, &registry, &bus, &dispatch, &rules_store,
     );
     let ota = OtaShared::default();
     let scheduling = resolve_scheduling_deps(
@@ -466,7 +463,7 @@ fn boot_stack(args: BootArgs) -> Box<BootedStack> {
         scheduling,
         diagnostics_store,
         diagnostics_slots,
-        rules_store: Arc::new(dali2rust_rules_runtime::RulesStore::new()),
+        rules_store,
         interactive,
         ws: wire_websocket(),
         mqtt: Mutex::new(mqtt),
@@ -476,17 +473,18 @@ fn boot_stack(args: BootArgs) -> Box<BootedStack> {
 }
 
 fn wire_mqtt(
-    store: &Arc<RegistryStore>,
+    registry: &workers::RegistryDeps,
     bundle: Option<dali2rust_platform::mqtt::MqttClientBundle>,
     publisher: &BusPublisher,
     correlation: &Arc<dali2rust_bus::CorrelationIdAllocator>,
-    registry_counters: Arc<dali2rust_registry_runtime::RegistryWorkerCounters>,
+    rule_topics: Arc<dyn dali2rust_mqtt_runtime::RuleTopicsReadPort>,
     adapter_count: u8,
     version: &'static str,
 ) -> Option<workers::MqttWorkerDeps> {
     let bundle = bundle?;
+    let store = &registry.store;
     let settings_watch = Arc::new(dali2rust_registry_runtime::RegistryApplyWatch::new(
-        registry_counters,
+        Arc::clone(&registry.counters),
     ));
     let link = bundle.client.link();
     Some(workers::MqttWorkerDeps {
@@ -500,6 +498,7 @@ fn wire_mqtt(
         settings_watch,
         secret: store.clone(),
         role: store.clone(),
+        rule_topics,
         version,
         adapter_count,
     })

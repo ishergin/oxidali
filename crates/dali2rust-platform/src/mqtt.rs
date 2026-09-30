@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
-use std::sync::{Condvar, Mutex};
+use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +56,14 @@ pub struct MqttSessionConfig {
 pub struct MqttIncoming {
     pub topic: String,
     pub payload: Vec<u8>,
+    pub retained: bool,
+    pub session: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MqttSubAck {
+    pub message_id: u32,
+    pub granted: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -67,12 +75,13 @@ pub enum MqttError {
 }
 
 pub const INCOMING_QUEUE_DEPTH: usize = 16;
+pub const SUBACK_QUEUE_DEPTH: usize = 32;
 
 #[derive(Debug)]
 pub struct MqttLink {
     state: AtomicU8,
     session_generation: AtomicU32,
-    subscriptions_acked: AtomicU32,
+    subacks: Mutex<Vec<MqttSubAck>>,
     dropped_incoming: AtomicU32,
     tx: std::sync::mpsc::SyncSender<MqttIncoming>,
     changed: Condvar,
@@ -85,7 +94,7 @@ impl MqttLink {
         let link = std::sync::Arc::new(Self {
             state: AtomicU8::new(MqttConnectionState::Disconnected.as_u8()),
             session_generation: AtomicU32::new(0),
-            subscriptions_acked: AtomicU32::new(0),
+            subacks: Mutex::new(Vec::new()),
             dropped_incoming: AtomicU32::new(0),
             tx,
             changed: Condvar::new(),
@@ -110,13 +119,18 @@ impl MqttLink {
         self.dropped_incoming.load(Ordering::Relaxed)
     }
 
-    pub fn subscriptions_acked(&self) -> u32 {
-        self.subscriptions_acked.load(Ordering::Relaxed)
+    pub fn note_suback(&self, ack: MqttSubAck) {
+        {
+            let mut subacks = self.subacks.lock().unwrap_or_else(PoisonError::into_inner);
+            if subacks.len() < SUBACK_QUEUE_DEPTH {
+                subacks.push(ack);
+            }
+        }
+        self.wake();
     }
 
-    pub fn note_subscription_acked(&self) {
-        self.subscriptions_acked.fetch_add(1, Ordering::Relaxed);
-        self.wake();
+    pub fn take_subacks(&self) -> Vec<MqttSubAck> {
+        core::mem::take(&mut *self.subacks.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     pub fn set_state(&self, next: MqttConnectionState) {
@@ -124,17 +138,22 @@ impl MqttLink {
             && self.state() != MqttConnectionState::Connected
         {
             self.session_generation.fetch_add(1, Ordering::Relaxed);
-            self.subscriptions_acked.store(0, Ordering::Relaxed);
+            self.subacks.lock().unwrap_or_else(PoisonError::into_inner).clear();
         }
         self.state.store(next.as_u8(), Ordering::Relaxed);
         self.wake();
     }
 
-    pub fn deliver(&self, message: MqttIncoming) {
-        if self.tx.try_send(message).is_err() {
-            self.dropped_incoming.fetch_add(1, Ordering::Relaxed);
+    pub fn deliver(&self, topic: String, payload: Vec<u8>, retained: bool) {
+        let session = self.session_generation();
+        if self.tx.try_send(MqttIncoming { topic, payload, retained, session }).is_err() {
+            self.note_incoming_dropped();
         }
         self.wake();
+    }
+
+    pub fn note_incoming_dropped(&self) {
+        self.dropped_incoming.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn wake(&self) {
@@ -168,7 +187,9 @@ pub trait MqttClient: Send {
         retain: bool,
     ) -> Result<(), MqttError>;
 
-    fn subscribe(&mut self, topic_filter: &str, qos: MqttQos) -> Result<(), MqttError>;
+    fn subscribe(&mut self, topic_filter: &str, qos: MqttQos) -> Result<u32, MqttError>;
+
+    fn unsubscribe(&mut self, topic_filter: &str) -> Result<(), MqttError>;
 
     fn link(&self) -> std::sync::Arc<MqttLink>;
 }
@@ -191,16 +212,41 @@ mod tests {
     }
 
     #[test]
+    fn a_suback_is_handed_over_once_with_its_message_id_and_belongs_to_its_session() {
+        let (link, _rx) = MqttLink::new();
+        link.set_state(MqttConnectionState::Connected);
+        let granted = MqttSubAck { message_id: 7, granted: true };
+        let refused = MqttSubAck { message_id: 9, granted: false };
+        link.note_suback(granted);
+        link.note_suback(refused);
+        assert_eq!(link.take_subacks(), vec![granted, refused]);
+        assert!(link.take_subacks().is_empty(), "a SUBACK is handed over once");
+        link.note_suback(granted);
+        link.set_state(MqttConnectionState::Disconnected);
+        link.set_state(MqttConnectionState::Connected);
+        assert!(link.take_subacks().is_empty(), "a new session starts without the old SUBACKs");
+    }
+
+    #[test]
     fn a_worker_that_is_behind_loses_messages_with_a_count_rather_than_blocking() {
         let (link, rx) = MqttLink::new();
         for i in 0..INCOMING_QUEUE_DEPTH + 3 {
-            link.deliver(MqttIncoming {
-                topic: format!("t/{i}"),
-                payload: Vec::new(),
-            });
+            link.deliver(format!("t/{i}"), Vec::new(), false);
         }
         assert_eq!(link.dropped_incoming(), 3);
         assert_eq!(rx.iter().take(INCOMING_QUEUE_DEPTH).count(), INCOMING_QUEUE_DEPTH);
+    }
+
+    #[test]
+    fn a_message_carries_the_session_it_arrived_in() {
+        let (link, rx) = MqttLink::new();
+        link.set_state(MqttConnectionState::Connected);
+        link.deliver("t/a".to_string(), Vec::new(), false);
+        link.set_state(MqttConnectionState::Disconnected);
+        link.set_state(MqttConnectionState::Connected);
+        link.deliver("t/b".to_string(), Vec::new(), false);
+        let sessions: Vec<u32> = rx.try_iter().map(|message| message.session).collect();
+        assert_eq!(sessions, vec![1, 2]);
     }
 
     #[test]

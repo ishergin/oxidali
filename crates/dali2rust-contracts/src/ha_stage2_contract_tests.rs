@@ -86,7 +86,7 @@ fn bus_command_payload_variant_order_is_frozen() {
     );
 }
 
-const FROZEN_EVENT_ORDER: [&str; 53] = [
+const FROZEN_EVENT_ORDER: [&str; 54] = [
     "DaliEventPayload",
     "IpAddressAssignedEvent",
     "RuntimeStateChangedEvent",
@@ -140,6 +140,7 @@ const FROZEN_EVENT_ORDER: [&str; 53] = [
     "PoliciesChangedEvent",
     "Dali103HandoverSentEvent",
     "RegistrySliceReloadedEvent",
+    "MqttRuleMessageEvent",
 ];
 
 #[test]

@@ -203,7 +203,12 @@ export interface ControllerSummary {
   target_mcu: string
   uptime_ms: number
   network: { hostname: string | null; ip: string | null; mac: string | null }
-  home_assistant: { enabled: boolean; connected: boolean; broker_url: string }
+  home_assistant: {
+    enabled: boolean
+    connected: boolean
+    broker_url: string
+    own_topics_refused: string[]
+  }
   cluster: { enabled: boolean }
   adapter_count: number
   hydrated: boolean
@@ -1029,6 +1034,11 @@ export type StatsMqtt = {
   connected: boolean
   publishes_total: number
   publish_failures_total: number
+  rule_messages_total: number
+  rule_messages_coalesced_total: number
+  rule_messages_lost_total: number
+  subscriptions_refused_total: number
+  own_topics_refused_total: number
 }
 
 export type StatsRules = {

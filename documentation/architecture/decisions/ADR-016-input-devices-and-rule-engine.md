@@ -137,7 +137,8 @@ bracketed `202` protocol of [ADR-012](ADR-012-async-chunked-config-writes.md).
   ([ADR-014](ADR-014-gear-model-and-second-dali-endpoint.md)).
 - Input devices transmit unsolicited, so collisions are ordinary traffic on the segment.
 - MQTT- or Home Assistant-originated triggers, a poller liveness sweep over input devices
-  and closed-loop daylight harvesting are outside this decision.
+  and closed-loop daylight harvesting are outside this decision; the MQTT trigger is
+  [ADR-033](ADR-033-mqtt-rule-trigger.md).
 - The engine's operations and the language are described in
   [runtime-modules/rules-engine](../../product-design/runtime-modules/rules-engine/README.md)
   and [rest-api/resources/rules.md](../../product-design/rest-api/resources/rules.md).

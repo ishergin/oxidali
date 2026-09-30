@@ -48,6 +48,8 @@ const TRIGGER_SNIPPETS: &[&str] = &[
     "controller becomes active",
     "rule(\"ночной режим\") fails",
     "http trigger",
+    "mqtt \"home/mode\"",
+    "mqtt \"home/mode\" is \"night\"",
 ];
 
 #[test]
@@ -92,6 +94,22 @@ fn every_condition_snippet_from_the_doc_parses() {
         let set = compile_ok(&wrap_condition(snippet));
         assert_eq!(the_rule(&set).conditions.len(), 1, "snippet: {snippet}");
     }
+}
+
+#[test]
+fn an_mqtt_trigger_keeps_its_topic_and_its_payload_only_when_stated() {
+    let set = compile_ok(&wrap_trigger("mqtt \"home/mode\" is \"night\""));
+    let rule = the_rule(&set);
+    assert_eq!(
+        rule.triggers[0],
+        Trigger::MqttMessage { topic: "home/mode".into(), payload: Some("night".into()) }
+    );
+    assert_eq!(rule.cooldown_ms, 200, "a broker message is not an input event");
+    let set = compile_ok(&wrap_trigger("mqtt \"home/mode\""));
+    assert_eq!(
+        the_rule(&set).triggers[0],
+        Trigger::MqttMessage { topic: "home/mode".into(), payload: None }
+    );
 }
 
 #[test]

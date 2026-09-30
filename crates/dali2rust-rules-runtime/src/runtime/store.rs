@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::RwLock;
 
 use dali2rust_rules_model::RuleSet;
@@ -19,6 +20,7 @@ pub struct RulesDocument {
 pub struct RulesStore {
     inner: RwLock<RulesDocument>,
     runtime: RwLock<Vec<RuleRuntime>>,
+    generation: AtomicU32,
 }
 
 impl RulesStore {
@@ -35,6 +37,17 @@ impl RulesStore {
         self.inner.read().expect("rules store poisoned").revision
     }
 
+    pub fn generation(&self) -> u32 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    pub fn mqtt_topics(&self) -> Vec<String> {
+        let held = self.inner.read().expect("rules store poisoned");
+        held.compiled.as_ref().map_or_else(Vec::new, |set| {
+            set.mqtt_topics().into_iter().map(str::to_owned).collect()
+        })
+    }
+
     pub fn rule_runtime(&self) -> Vec<RuleRuntime> {
         self.runtime.read().expect("rules runtime poisoned").clone()
     }
@@ -48,7 +61,9 @@ impl RulesStore {
     }
 
     pub(crate) fn replace(&self, doc: RulesDocument) {
-        *self.inner.write().expect("rules store poisoned") = doc;
+        let mut held = self.inner.write().expect("rules store poisoned");
+        *held = doc;
+        self.generation.fetch_add(1, Ordering::Release);
     }
 
     pub(crate) fn set_enabled(&self, name: &str, enabled: bool) -> Option<u32> {
@@ -57,6 +72,7 @@ impl RulesStore {
         set.set_rule_enabled(name, enabled)?;
         record_enabled(&mut g.enable_table, name, enabled);
         g.revision = g.revision.wrapping_add(1);
+        self.generation.fetch_add(1, Ordering::Release);
         Some(g.revision)
     }
 }

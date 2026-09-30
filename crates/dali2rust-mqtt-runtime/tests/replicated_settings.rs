@@ -5,7 +5,7 @@ use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublishe
 use dali2rust_contracts::msg::{fixed_text_32, RegistrySliceReloadCommand};
 use dali2rust_domain::registry::HomeAssistantSettingsReadPort;
 use dali2rust_mqtt_runtime::{
-    spawn_mqtt_worker, MockMqttClient, MqttCounters, MqttWorkerPorts,
+    spawn_mqtt_worker, MockMqttClient, MockRuleTopics, MqttCounters, MqttWorkerPorts,
     MQTT_WORKER_HANDLED_COMMANDS, MQTT_WORKER_HANDLED_EVENTS,
 };
 use dali2rust_platform::liveness::LivenessBeat;
@@ -78,6 +78,7 @@ fn spawn_stack() -> Stack {
             version: "test",
             adapter_count: ADAPTERS,
             role: Arc::clone(&store) as _,
+            rule_topics: Arc::new(MockRuleTopics::default()),
         },
     );
     Stack { mock, publisher, slices, store, _host: host }

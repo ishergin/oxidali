@@ -27,7 +27,7 @@ pub use refs::{
 pub use rule::{DefBlock, Rule, RuleSet};
 pub use time::{DaySet, DurationMs, SolarEvent, TimeBound, TimeOfDay, Weekday};
 pub use trigger::{
-    CrossDirection, GroupAggregate, InputEventMatch, OccupancyState, OnlineTransition,
-    OverrideTransition, PowerTransition, Trigger, TriggerKind,
+    distinct_mqtt_topics, CrossDirection, GroupAggregate, InputEventMatch, OccupancyState,
+    OnlineTransition, OverrideTransition, PowerTransition, Trigger, TriggerKind,
 };
 pub use value::{Reading, ValueExpr, ValueKind, VarValue};

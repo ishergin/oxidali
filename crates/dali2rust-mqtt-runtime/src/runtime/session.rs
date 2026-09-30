@@ -51,17 +51,21 @@ pub fn session_config(
 pub fn announce_and_subscribe(
     client: &mut dyn MqttClient,
     topics: &HaTopics,
-) -> Result<(), MqttError> {
+) -> Result<Vec<(String, u32)>, MqttError> {
     client.publish(
         &topics.availability_topic(),
         PAYLOAD_ONLINE,
         MqttQos::AtLeastOnce,
         true,
     )?;
-    for filter in topics.command_subscriptions() {
-        client.subscribe(&filter, MqttQos::AtLeastOnce)?;
-    }
-    Ok(())
+    topics
+        .command_subscriptions()
+        .into_iter()
+        .map(|filter| {
+            let message_id = client.subscribe(&filter, MqttQos::AtLeastOnce)?;
+            Ok((filter, message_id))
+        })
+        .collect()
 }
 
 pub fn announce_offline(client: &mut dyn MqttClient, topics: &HaTopics) {

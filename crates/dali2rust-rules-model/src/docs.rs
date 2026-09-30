@@ -19,6 +19,7 @@ pub const DOCUMENTED_TRIGGER_KINDS: &[&str] = &[
     "controller_becomes_active",
     "rule_fails",
     "http_trigger",
+    "mqtt_message",
 ];
 
 pub const DOCUMENTED_CONDITION_KINDS: &[&str] = &[

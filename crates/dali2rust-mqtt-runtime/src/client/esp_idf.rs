@@ -1,18 +1,25 @@
+use core::ffi::{c_char, c_int, c_void};
 use std::sync::Arc;
 
+use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::mqtt::client::{
     EspMqttClient, EventPayload, LwtConfiguration, MqttClientConfiguration, QoS,
 };
-use esp_idf_svc::sys::EspError;
+use esp_idf_svc::sys::{
+    esp, esp_event_base_t, esp_mqtt_client_register_event, esp_mqtt_event_id_t_MQTT_EVENT_ANY,
+    esp_mqtt_event_id_t_MQTT_EVENT_DATA, esp_mqtt_event_id_t_MQTT_EVENT_SUBSCRIBED,
+    esp_mqtt_event_t, EspError,
+};
 
 use dali2rust_platform::mqtt::{
-    MqttClient, MqttClientBundle, MqttConnectionState, MqttError, MqttIncoming, MqttLink, MqttQos,
-    MqttSessionConfig,
+    MqttClient, MqttClientBundle, MqttConnectionState, MqttError, MqttLink, MqttQos,
+    MqttSessionConfig, MqttSubAck,
 };
 
 const BUFFER_BYTES: usize = 1024;
 const OUT_BUFFER_BYTES: usize = 2048;
 const TASK_STACK_BYTES: usize = 4096;
+const SUBACK_FAILURE: u8 = 0x80;
 
 fn to_qos(qos: MqttQos) -> QoS {
     match qos {
@@ -57,7 +64,9 @@ impl EspMqttBridgeClient {
             cfg.password = Some(&config.password);
         }
         let link = Arc::clone(&self.link);
-        EspMqttClient::new_cb(&url, &cfg, move |event| dispatch(&link, event.payload()))
+        let client = EspMqttClient::new_cb(&url, &cfg, move |event| dispatch(&link, event.payload()))?;
+        receive_raw_events(&client, &self.link)?;
+        Ok(client)
     }
 }
 
@@ -66,19 +75,64 @@ fn dispatch(link: &Arc<MqttLink>, payload: EventPayload<'_, EspError>) {
     match payload {
         EventPayload::Connected(_) => link.set_state(MqttConnectionState::Connected),
         EventPayload::Disconnected => link.set_state(MqttConnectionState::Disconnected),
-        EventPayload::Subscribed(_) => link.note_subscription_acked(),
-        EventPayload::Received { topic, data, .. } => {
-            if let Some(topic) = topic {
-                link.deliver(MqttIncoming {
-                    topic: topic.to_string(),
-                    payload: data.to_vec(),
-                });
-            }
-        }
         EventPayload::Error(_) => {
             log::warn!("mqtt: transport error (cause not surfaced by esp-idf-svc)");
         }
         _ => {}
+    }
+}
+
+fn receive_raw_events(client: &EspMqttClient<'static>, link: &Arc<MqttLink>) -> Result<(), EspError> {
+    let receiver = Arc::as_ptr(link).cast_mut().cast::<c_void>();
+    // SAFETY: the link outlives `client`, which drops first and unregisters the handler as it is destroyed.
+    esp!(unsafe {
+        esp_mqtt_client_register_event(
+            client.handle(),
+            esp_mqtt_event_id_t_MQTT_EVENT_ANY,
+            Some(on_event),
+            receiver,
+        )
+    })
+}
+
+extern "C" fn on_event(receiver: *mut c_void, _base: esp_event_base_t, _id: i32, event: *mut c_void) {
+    // SAFETY: registered with the bridge's `MqttLink`; every esp-mqtt event carries an `esp_mqtt_event_t`.
+    let (link, event) = unsafe { (&*receiver.cast::<MqttLink>(), &*event.cast::<esp_mqtt_event_t>()) };
+    if event.event_id == esp_mqtt_event_id_t_MQTT_EVENT_DATA {
+        deliver_first_chunk(link, event);
+    } else if event.event_id == esp_mqtt_event_id_t_MQTT_EVENT_SUBSCRIBED {
+        note_suback(link, event);
+    }
+}
+
+fn deliver_first_chunk(link: &MqttLink, event: &esp_mqtt_event_t) {
+    if event.current_data_offset != 0 || event.topic.is_null() {
+        return;
+    }
+    // SAFETY: esp-mqtt points both at their stated byte counts of the PUBLISH until the handler returns.
+    let (topic, payload) = unsafe {
+        (event_bytes(event.topic, event.topic_len), event_bytes(event.data, event.data_len))
+    };
+    link.deliver(String::from_utf8_lossy(topic).into_owned(), payload.to_vec(), event.retain);
+}
+
+fn note_suback(link: &MqttLink, event: &esp_mqtt_event_t) {
+    let Ok(message_id) = u32::try_from(event.msg_id) else {
+        return;
+    };
+    // SAFETY: esp-mqtt points `data` at the SUBACK's return codes until the handler returns.
+    let codes = unsafe { event_bytes(event.data, event.data_len) };
+    let granted = !codes.is_empty() && codes.iter().all(|code| *code < SUBACK_FAILURE);
+    link.note_suback(MqttSubAck { message_id, granted });
+}
+
+unsafe fn event_bytes<'a>(start: *const c_char, len: c_int) -> &'a [u8] {
+    match usize::try_from(len) {
+        Ok(len) if len > 0 && !start.is_null() => {
+            // SAFETY: the caller vouches for `len` readable bytes at `start` for the lifetime it picks.
+            unsafe { core::slice::from_raw_parts(start.cast::<u8>(), len) }
+        }
+        _ => &[],
     }
 }
 
@@ -119,10 +173,17 @@ impl MqttClient for EspMqttBridgeClient {
             .map_err(|e| MqttError::Rejected(e.code()))
     }
 
-    fn subscribe(&mut self, topic_filter: &str, qos: MqttQos) -> Result<(), MqttError> {
+    fn subscribe(&mut self, topic_filter: &str, qos: MqttQos) -> Result<u32, MqttError> {
         let client = self.client.as_mut().ok_or(MqttError::NotConnected)?;
         client
             .subscribe(topic_filter, to_qos(qos))
+            .map_err(|e| MqttError::Rejected(e.code()))
+    }
+
+    fn unsubscribe(&mut self, topic_filter: &str) -> Result<(), MqttError> {
+        let client = self.client.as_mut().ok_or(MqttError::NotConnected)?;
+        client
+            .unsubscribe(topic_filter)
             .map(|_| ())
             .map_err(|e| MqttError::Rejected(e.code()))
     }

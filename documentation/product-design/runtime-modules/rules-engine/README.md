@@ -5,7 +5,8 @@
 панелей и MQTT. Работает целиком на устройстве: кнопка меняет свет без брокера, облака
 и браузера.
 
-Границы: язык и словарь — [`operations.md`](operations.md); REST —
+Границы: язык и словарь — [`operations.md`](operations.md), триггер `when mqtt` —
+[`mqtt-trigger.md`](mqtt-trigger.md); REST —
 [`../../rest-api/resources/rules.md`](../../rest-api/resources/rules.md); экран —
 [`../../web-ui/rules.md`](../../web-ui/rules.md); решения —
 [`ADR-016`](../../../architecture/decisions/ADR-016-input-devices-and-rule-engine.md);
@@ -43,6 +44,10 @@
   (случившийся recall — наш или чужой, увиденный сниффером), `RedundancyTransitionEvent`
   (`controller becomes active`), `DaliSettingsChangedEvent`,
   `Dali103InstanceConfiguredEvent` (`manual config changed`).
+- **Сообщения брокера**: `MqttRuleMessageEvent` (`when mqtt`) публикует мост MQTT. Топики
+  триггеров мост читает из стора правил, когда сдвигается поколение документа — его
+  двигает каждая замена документа, гидрация и перечитка слайсов включительно
+  ([`ADR-033`](../../../architecture/decisions/ADR-033-mqtt-rule-trigger.md)).
 - **События-инвалидации**: `VirtualLampChangedEvent` и `PhysicalDeviceChangedEvent` —
   имя, разрешённое при компиляции, могло перестать разрешаться, и граф
   перекомпилируется; `RegistrySliceReloadedEvent` — слайс-стор сменился под нами
@@ -71,7 +76,8 @@
 2. Cooldown: повтор раньше срока подавляется и считается.
 3. Глубина цепочки: активация, вызванная изменением состояния от другой активации,
    несёт глубину на единицу больше; сверх предела — отказ со счётчиком. Это защита от
-   петли «правило → свет → то же правило».
+   петли «правило → свет → то же правило»; сообщения брокера —
+   [`mqtt-trigger.md`](mqtt-trigger.md) §Петли.
 4. Условия вычисляются по **одному снимку** read-модели: два условия об одной лампе
    видят одно её состояние. С провода движок не читает никогда.
 5. Действия исполняются по развёрнутому графу (блоки и `repeat` разворачиваются
