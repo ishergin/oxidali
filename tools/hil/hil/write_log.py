@@ -34,8 +34,14 @@ SCENE_MATRIX = re.compile(r"adapters/[0-9]+/scenes/([0-9]+)/matrix")
 CREATED = ((re.compile(r"hcl-schedules"), "hcl/%s", "schedule_id"),
            (re.compile(r"adapters/[0-9]+/virtual-lamps"), "vl/%s", "virtual_lamp_id"))
 INDIRECT = (re.compile(r"rules/[^/]+/run"), re.compile(r"hcl-schedules(/[^/]+(/override)?)?"),
-            re.compile(r"time"))
+            re.compile(r"time"), re.compile(r"redundancy/switchover|firmware/updates"))
 ANY_LAMP = ("shown/" + ALL, EVERY)
+SIDE_EFFECTS = (
+    (re.compile(r"adapters/[0-9]+/discovery-runs"), "POST", [("gear/" + ALL, POLICY_FIELDS)]),
+    (re.compile(r"adapters/[0-9]+/physical-devices/[0-9]+"), "DELETE",
+     [("vl/" + ALL, frozenset({"binding"})), ("group_matrix/" + ALL, EVERY),
+      ("scene_matrix/" + ALL, EVERY)]),
+)
 COMMAND_TOPIC = "/set"
 
 
@@ -51,6 +57,9 @@ def request_keys(method, path, body):
         if found is not None:
             keys = found
             break
+    for pattern, verb, effects in SIDE_EFFECTS:
+        if verb == method and pattern.fullmatch(path):
+            keys = keys + effects
     if any(pattern.fullmatch(path) for pattern in INDIRECT):
         keys = keys + [ANY_LAMP]
     return keys

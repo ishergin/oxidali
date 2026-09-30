@@ -1,6 +1,8 @@
 import pytest
 
+import hil.api
 from hil import write_log
+from hil.config import load as load_config
 from hil.write_log import ALL, WriteLog, request_keys
 
 GROUP_ROW = {"virtual_lamp_id": 7, "desired": [False] * 16}
@@ -10,7 +12,9 @@ GROUP_ROW = {"virtual_lamp_id": 7, "desired": [False] * 16}
     ("PATCH", "settings/poller", {"enabled": False}, [("settings/poller", {"enabled"})]),
     ("PATCH", "adapters/0", {"name": "x"}, [("adapter/0", {"name"})]),
     ("PATCH", "adapters/0/physical-devices/5", {"name": "x"}, [("device/5", {"name"})]),
-    ("DELETE", "adapters/0/physical-devices/5", None, [("device/5", {ALL})]),
+    ("DELETE", "adapters/0/physical-devices/5", None,
+     [("device/5", {ALL}), ("vl/*", {"binding"}), ("group_matrix/*", {ALL}),
+      ("scene_matrix/*", {ALL})]),
     ("POST", "adapters/0/physical-devices/5/write-attributes", {"fade_time_ms": 0},
      [("gear/5", {"fade_time_ms"})]),
     ("PUT", "adapters/0/physical-devices/5/target-state", {"power": "on"},
@@ -42,7 +46,11 @@ GROUP_ROW = {"virtual_lamp_id": 7, "desired": [False] * 16}
     ("POST", "policies/apply", None,
      [("gear/*", {"power_on_level", "system_failure_level"})]),
     ("GET", "settings/poller", None, []),
-    ("POST", "adapters/0/discovery-runs", {"mode": "refresh_known"}, []),
+    ("POST", "adapters/0/discovery-runs", {"mode": "refresh_known"},
+     [("gear/*", {"power_on_level", "system_failure_level"})]),
+    ("POST", "redundancy/switchover", {}, [("shown/*", {ALL})]),
+    ("POST", "firmware/updates", {"url": "http://x/app.bin"}, [("shown/*", {ALL})]),
+    ("POST", "adapters/0/input-devices/scan", {}, []),
 ])
 def test_a_request_names_the_resources_and_fields_it_writes(method, path, body, keys):
     assert request_keys(method, path, body) == [(k, frozenset(f)) for k, f in keys]
@@ -82,3 +90,14 @@ def test_an_mqtt_command_may_move_any_lamp_and_a_wildcard_is_no_exact_answer():
     assert log.changed("shown/5") and not log.changed("shown/5", exact=True)
     assert log.changed("shown/4", exact=True)
 
+
+def test_a_reboot_the_toolkit_provokes_may_move_any_lamp():
+    client = hil.api.Client(load_config())
+    log = WriteLog("t1", client.base)
+    write_log.start(log)
+    try:
+        with client.expect_reboot():
+            pass
+    finally:
+        write_log.stop()
+    assert log.changed("shown/5") and not log.changed("gear/5")

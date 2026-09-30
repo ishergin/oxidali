@@ -123,6 +123,7 @@ class Client:
 
     @contextlib.contextmanager
     def expect_reboot(self):
+        write_log.note(self.base, [write_log.ANY_LAMP])
         previous = self._rebooting
         self._rebooting = True
         try:
