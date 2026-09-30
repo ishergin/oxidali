@@ -762,7 +762,7 @@ fn stand_down(
     job: &mut Option<DiscoveryJob>,
     rules: &mut RuleTopicCache,
 ) {
-    drop_held_rule_messages(rules, ports);
+    end_rule_session(rules, ports);
     if let Some(workflow) = job.take().and_then(|stalled| stalled.workflow) {
         refuse_command(ports, workflow);
     }
@@ -916,7 +916,7 @@ fn ensure_session(
 ) -> bool {
     let link = client.link();
     if !link.is_connected() || link.session_generation() != session.generation {
-        drop_held_rule_messages(rules, ports);
+        end_rule_session(rules, ports);
     }
     if !link.is_connected() {
         ports.counters.set_connected(false);
@@ -984,11 +984,13 @@ fn follow_rule_topics(
     let refused =
         session.rule_topics.follow(client, &mut session.subscriptions, rules.topics(), &session.filters);
     dali2rust_bus::worker_counters::bump_by(&ports.counters.own_topics_refused_total, refused);
+    ports.counters.set_own_topics_refused(session.rule_topics.own());
 }
 
-fn drop_held_rule_messages(rules: &mut RuleTopicCache, ports: &MqttWorkerPorts) {
+fn end_rule_session(rules: &mut RuleTopicCache, ports: &MqttWorkerPorts) {
     let lost = rules.pacer.clear();
     dali2rust_bus::worker_counters::bump_by(&ports.counters.rule_messages_lost_total, lost);
+    ports.counters.set_own_topics_refused(&[]);
 }
 
 #[inline(never)]

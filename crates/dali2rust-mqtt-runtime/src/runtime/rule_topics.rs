@@ -145,6 +145,10 @@ impl RuleFollow {
         wanted.iter().all(|topic| self.follows(topic) || self.own.contains(topic))
     }
 
+    pub(crate) fn own(&self) -> &[String] {
+        &self.own
+    }
+
     pub(crate) fn follow(
         &mut self,
         client: &mut dyn MqttClient,

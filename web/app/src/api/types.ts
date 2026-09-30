@@ -203,7 +203,12 @@ export interface ControllerSummary {
   target_mcu: string
   uptime_ms: number
   network: { hostname: string | null; ip: string | null; mac: string | null }
-  home_assistant: { enabled: boolean; connected: boolean; broker_url: string }
+  home_assistant: {
+    enabled: boolean
+    connected: boolean
+    broker_url: string
+    own_topics_refused: string[]
+  }
   cluster: { enabled: boolean }
   adapter_count: number
   hydrated: boolean

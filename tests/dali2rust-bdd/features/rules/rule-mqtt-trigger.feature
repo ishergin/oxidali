@@ -81,3 +81,6 @@ Feature: A broker message fires a rule
     And the MQTT broker should eventually hold a subscription to "home/mode"
     And within 3 seconds the stats pointer "/mqtt/own_topics_refused_total" reaches 1
     And the MQTT broker should never have received a subscription to "dali/ctl1/a0/vl/1/state"
+    And the JSON pointer "/home_assistant/own_topics_refused/0" at "/api/v1/controller" should eventually be "dali/ctl1/a0/vl/1/state"
+    When I send a GET request to "/api/v1/controller"
+    Then the JSON pointer "/home_assistant/own_topics_refused/1" should be absent

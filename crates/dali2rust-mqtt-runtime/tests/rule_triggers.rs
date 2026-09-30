@@ -226,7 +226,7 @@ fn a_rule_topic_the_bridge_publishes_itself_is_refused_once_per_session_without_
     );
     assert_eq!(h.counters.own_topics_refused_total.load(Ordering::Relaxed), 1);
     let counters = Arc::clone(&h.counters);
-    wait_until(move || counters.is_connected(), WAIT);
+    wait_until(move || counters.is_connected() && counters.own_topics_refused() == [own], WAIT);
     h.rule_topics.set(&[own, "home/mode", RULE_TOPIC]);
     following(&h, RULE_TOPIC);
     assert_eq!(
@@ -234,6 +234,9 @@ fn a_rule_topic_the_bridge_publishes_itself_is_refused_once_per_session_without_
         1,
         "a refused topic that stays in the document is counted once per session"
     );
+    h.rule_topics.set(&["home/mode", RULE_TOPIC]);
+    let counters = Arc::clone(&h.counters);
+    wait_until(move || counters.own_topics_refused().is_empty(), WAIT);
 }
 
 #[test]

@@ -93,8 +93,9 @@ messages to every new subscription.
    controller's own state, a loop the chain cannot see because the echo is no
    `mqtt.publish`. The bridge knows these topics from its topic set, so it does not
    subscribe such a rule topic; it logs the topic, counts it once per session
-   (`own_topics_refused_total`) and follows the rest of the document, and `connected` does
-   not wait for it. A rule reacts to the controller's own state with `when lamp(…)`. The
+   (`own_topics_refused_total`), lists the session's refused topics in
+   `/api/v1/controller` and follows the rest of the document, and `connected` does not
+   wait for it. A rule reacts to the controller's own state with `when lamp(…)`. The
    Home Assistant command topics (`…/set`) are not the bridge's own and remain triggers.
 
 ### Rejected alternatives

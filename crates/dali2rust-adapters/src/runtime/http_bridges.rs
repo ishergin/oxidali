@@ -404,6 +404,7 @@ impl dali2rust_api::http::handlers::controller::ControllerSummarySource for Cont
             ha_enabled: view.enabled,
             installation_id: view.controller_id,
             ha_connected: self.counters.is_connected(),
+            ha_own_topics_refused: self.counters.own_topics_refused(),
             mac: link.and_then(|l| l.hardware_address()),
             hostname: link.and_then(|l| l.hostname()),
             ipv4: link.and_then(|l| l.status().ipv4),

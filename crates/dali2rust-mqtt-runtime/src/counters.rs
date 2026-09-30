@@ -1,4 +1,5 @@
 use core::sync::atomic::AtomicU32;
+use std::sync::{Mutex, PoisonError};
 
 #[derive(Debug, Default)]
 pub struct MqttCounters {
@@ -14,6 +15,7 @@ pub struct MqttCounters {
     pub rule_messages_lost_total: AtomicU32,
     pub subscriptions_refused_total: AtomicU32,
     pub own_topics_refused_total: AtomicU32,
+    own_topics_refused: Mutex<Vec<String>>,
     pub commands_unroutable_total: AtomicU32,
     pub commands_ingress_rejected_total: AtomicU32,
     pub discovery_published_total: AtomicU32,
@@ -35,5 +37,16 @@ impl MqttCounters {
 
     pub fn is_connected(&self) -> bool {
         Self::load(&self.connected) != 0
+    }
+
+    pub fn own_topics_refused(&self) -> Vec<String> {
+        self.own_topics_refused.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    pub fn set_own_topics_refused(&self, topics: &[String]) {
+        let mut held = self.own_topics_refused.lock().unwrap_or_else(PoisonError::into_inner);
+        if held.as_slice() != topics {
+            *held = topics.to_vec();
+        }
     }
 }

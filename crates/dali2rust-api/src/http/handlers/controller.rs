@@ -37,12 +37,14 @@ struct ControllerHaBody {
     enabled: bool,
     connected: bool,
     broker_url: String,
+    own_topics_refused: Vec<String>,
 }
 
 pub struct ControllerFacts {
     pub installation_id: String,
     pub ha_enabled: bool,
     pub ha_connected: bool,
+    pub ha_own_topics_refused: Vec<String>,
     pub broker_url: String,
     pub mac: Option<[u8; 6]>,
     pub hostname: Option<String>,
@@ -98,6 +100,7 @@ impl ControllerSummaryHandler {
                 enabled: facts.ha_enabled,
                 connected: facts.ha_connected,
                 broker_url: facts.broker_url,
+                own_topics_refused: facts.ha_own_topics_refused,
             },
             controller_id: facts.installation_id,
             firmware_version: self.firmware_version,
