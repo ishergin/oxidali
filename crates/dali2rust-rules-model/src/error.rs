@@ -55,6 +55,7 @@ pub enum ModelError {
     SceneOutOfRange { rule: String, scene: u8 },
     TooManyStatNames { owner: String, count: usize },
     StatNameNotPrintable { owner: String, name: String },
+    StatNameTooLong { owner: String, bytes: usize },
 }
 
 impl ModelError {
@@ -86,7 +87,8 @@ impl ModelError {
             | ModelError::SceneOutOfRange { rule, .. } => Some(rule),
             ModelError::NoActions { owner }
             | ModelError::TooManyStatNames { owner, .. }
-            | ModelError::StatNameNotPrintable { owner, .. } => Some(owner),
+            | ModelError::StatNameNotPrintable { owner, .. }
+            | ModelError::StatNameTooLong { owner, .. } => Some(owner),
             ModelError::TooManyBlockActions { block, .. } => Some(block),
             ModelError::UnresolvedBlock { referenced_by, .. } => {
                 referenced_by.first().map(String::as_str)
@@ -134,6 +136,7 @@ impl fmt::Display for ModelError {
             E::SceneOutOfRange { rule, scene } => write!(f, "rule \"{rule}\": scene {scene} out of range"),
             E::TooManyStatNames { owner, count } => write!(f, "\"{owner}\" names a stat counter past the limit: the document names {count}, at most {}", crate::limits::MAX_STAT_NAMES),
             E::StatNameNotPrintable { owner, name } => write!(f, "\"{owner}\" names a stat counter with a control character: {name:?}"),
+            E::StatNameTooLong { owner, bytes } => write!(f, "\"{owner}\" names a stat counter of {bytes} bytes, at most {}", crate::limits::MAX_NAME_BYTES),
         }
     }
 }

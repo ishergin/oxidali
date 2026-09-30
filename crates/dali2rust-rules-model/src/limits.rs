@@ -468,11 +468,8 @@ pub fn stat_name_is_printable(name: &str) -> bool {
 
 fn check_stat_names(set: &RuleSet) -> Result<(), ModelError> {
     let names = stat_names_with_owners(set);
-    if let Some((name, owner)) = names.iter().find(|(name, _)| !stat_name_is_printable(name)) {
-        return Err(ModelError::StatNameNotPrintable {
-            owner: (*owner).into(),
-            name: (*name).into(),
-        });
+    for (name, owner) in &names {
+        check_stat_name(owner, name)?;
     }
     match names.get(MAX_STAT_NAMES) {
         Some((_, owner)) => Err(ModelError::TooManyStatNames {
@@ -481,6 +478,16 @@ fn check_stat_names(set: &RuleSet) -> Result<(), ModelError> {
         }),
         None => Ok(()),
     }
+}
+
+fn check_stat_name(owner: &str, name: &str) -> Result<(), ModelError> {
+    if !stat_name_is_printable(name) {
+        return Err(ModelError::StatNameNotPrintable { owner: owner.into(), name: name.into() });
+    }
+    if name.len() > MAX_NAME_BYTES {
+        return Err(ModelError::StatNameTooLong { owner: owner.into(), bytes: name.len() });
+    }
+    Ok(())
 }
 
 fn check_rule_references(set: &RuleSet) -> Result<(), ModelError> {

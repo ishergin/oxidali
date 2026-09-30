@@ -1,6 +1,6 @@
 use dali2rust_rules_model::limits::{
     MAX_ACTIONS_EXPANDED, MAX_MQTT_PAYLOAD_BYTES, MAX_MQTT_TOPIC_BYTES, MAX_MQTT_TRIGGER_TOPICS,
-    MAX_SCHEDULE_ID_BYTES, MAX_STAT_NAMES,
+    MAX_NAME_BYTES, MAX_SCHEDULE_ID_BYTES, MAX_STAT_NAMES,
 };
 use dali2rust_rules_model::{
     expanded_action_count, validate, Action, DefBlock, FlowAction, HclAction, ModelError, Rule,
@@ -373,5 +373,21 @@ fn a_schedule_id_past_the_bus_field_is_refused_at_its_rule() {
             assert_eq!(bytes, MAX_SCHEDULE_ID_BYTES + 1);
         }
         other => panic!("expected ScheduleIdTooLong, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_stat_name_past_the_name_limit_is_refused_at_the_owner_that_names_it() {
+    let fits = "s".repeat(MAX_NAME_BYTES);
+    let fitting = vec![rule_with_actions("fits", vec![stat(&fits)])];
+    assert_eq!(validate(&set_with(vec![], fitting)), Ok(()));
+
+    let past = vec![rule_with_actions("past", vec![stat(&format!("{fits}s"))])];
+    match validate(&set_with(vec![], past)) {
+        Err(ModelError::StatNameTooLong { owner, bytes }) => {
+            assert_eq!(owner, "past");
+            assert_eq!(bytes, MAX_NAME_BYTES + 1);
+        }
+        other => panic!("expected StatNameTooLong, got {other:?}"),
     }
 }
