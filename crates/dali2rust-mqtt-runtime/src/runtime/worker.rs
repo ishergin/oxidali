@@ -1902,23 +1902,24 @@ mod tests {
     fn test_ports() -> (MqttWorkerPorts, dali2rust_bus::BusHost) {
         let (host, publisher, ()) =
             dali2rust_bus::BusHost::spawn(dali2rust_bus::BusConfig::default(), |_reg| ());
-        (
-            MqttWorkerPorts {
-                publisher,
-                bus_id: BusId::default(),
-                correlation: Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
-                read_port: Arc::new(EmptyReadPort),
-                settings: Arc::new(FixedSettings),
-                settings_watch: Arc::new(StillWatch),
-                secret: Arc::new(NoSecret),
-                counters: Arc::new(MqttCounters::default()),
-                version: "test",
-                adapter_count: 1,
-                role: Arc::new(ActiveRole),
-                rule_topics: Arc::new(crate::client::MockRuleTopics::default()),
-            },
-            host,
-        )
+        (ports_on(publisher), host)
+    }
+
+    fn ports_on(publisher: BusPublisher) -> MqttWorkerPorts {
+        MqttWorkerPorts {
+            publisher,
+            bus_id: BusId::default(),
+            correlation: Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
+            read_port: Arc::new(EmptyReadPort),
+            settings: Arc::new(FixedSettings),
+            settings_watch: Arc::new(StillWatch),
+            secret: Arc::new(NoSecret),
+            counters: Arc::new(MqttCounters::default()),
+            version: "test",
+            adapter_count: 1,
+            role: Arc::new(ActiveRole),
+            rule_topics: Arc::new(crate::client::MockRuleTopics::default()),
+        }
     }
 
     struct ActiveRole;
@@ -1996,32 +1997,57 @@ mod tests {
 
     const RULE_MESSAGE_WAIT_PROOF_MS: u32 = 1_000;
 
-    fn ports_following(topic: &str) -> (MqttWorkerPorts, dali2rust_bus::BusHost, RuleTopicCache) {
-        let (mut ports, host) = test_ports();
+    struct Following {
+        ports: MqttWorkerPorts,
+        _host: dali2rust_bus::BusHost,
+        rules: RuleTopicCache,
+        published: BusSubscriberRx,
+    }
+
+    fn ports_following(topic: &str) -> Following {
+        let (host, publisher, published) =
+            dali2rust_bus::BusHost::spawn(dali2rust_bus::BusConfig::default(), |reg| {
+                reg.subscribe_events(8, &["MqttRuleMessageEvent"])
+            });
+        let mut ports = ports_on(publisher);
         let followed = Arc::new(crate::client::MockRuleTopics::default());
         followed.set(&[topic]);
         ports.rule_topics = followed;
         let mut rules = RuleTopicCache::default();
         rules.refresh(ports.rule_topics.as_ref());
-        (ports, host, rules)
+        Following { ports, _host: host, rules, published }
     }
 
-    fn hold_one_rule_message(rules: &mut RuleTopicCache, topic: &str) {
+    fn pace_two_rule_messages(f: &mut Following, topic: &str) {
         let now = monotonic_ms();
-        let message = |payload: &str| MqttIncoming {
-            topic: topic.to_string(),
-            payload: payload.as_bytes().to_vec(),
-            retained: false,
-            session: 0,
-        };
-        assert!(matches!(rules.pacer.offer(message("first"), now), Paced::Now(_)));
-        assert!(matches!(rules.pacer.offer(message("held"), now), Paced::Held { superseded: false }));
+        for payload in ["first", "held"] {
+            let message = MqttIncoming {
+                topic: topic.to_string(),
+                payload: payload.as_bytes().to_vec(),
+                retained: false,
+                session: 0,
+            };
+            pace_rule_message(&mut f.rules, &f.ports, message, now);
+        }
+    }
+
+    fn assert_one_lost_and_the_count_adds_up(f: &mut Following) {
+        let published = f.published.recv_timeout(Duration::from_secs(5)).is_ok();
+        assert!(published, "the first message went out at once");
+        let load = |counter: &std::sync::atomic::AtomicU32| MqttCounters::load(counter);
+        let c = &f.ports.counters;
+        let (total, coalesced, lost) =
+            (load(&c.rule_messages_total), load(&c.rule_messages_coalesced_total), load(&c.rule_messages_lost_total));
+        assert_eq!((total, coalesced, lost), (2, 0, 1));
+        assert_eq!(total, 1 + coalesced + lost, "total = published + coalesced + lost");
+        let later = monotonic_ms().wrapping_add(RULE_MESSAGE_WAIT_PROOF_MS);
+        assert!(f.rules.pacer.take_due(later).is_empty(), "the held message never goes out");
     }
 
     #[test]
     fn a_message_held_when_the_session_ends_is_lost_and_never_reaches_the_next_session() {
-        let (ports, _host, mut rules) = ports_following("home/scene");
-        hold_one_rule_message(&mut rules, "home/scene");
+        let mut f = ports_following("home/scene");
+        pace_two_rule_messages(&mut f, "home/scene");
         let (mock, _incoming) = MockMqttClient::new();
         let mut client: Box<dyn MqttClient> = Box::new(MockMqttHandle::new(Arc::clone(&mock)));
         let settings = HomeAssistantSettingsView {
@@ -2032,26 +2058,22 @@ mod tests {
         let (mut session, mut topics, mut job) = (Session::default(), HaTopics::default(), None);
         let mut pacer = DialPacer::default();
         assert!(ensure_session(
-            &mut client, &mut session, &mut topics, &mut job, &settings, "", &mut pacer, &ports,
-            &mut rules,
+            &mut client, &mut session, &mut topics, &mut job, &settings, "", &mut pacer, &f.ports,
+            &mut f.rules,
         ));
-        assert_eq!(MqttCounters::load(&ports.counters.rule_messages_lost_total), 1);
-        let later = monotonic_ms().wrapping_add(RULE_MESSAGE_WAIT_PROOF_MS);
-        assert!(rules.pacer.take_due(later).is_empty(), "the fresh session inherits nothing");
+        assert_one_lost_and_the_count_adds_up(&mut f);
     }
 
     #[test]
     fn standing_down_loses_a_held_rule_message_with_a_count() {
-        let (ports, _host, mut rules) = ports_following("home/scene");
-        hold_one_rule_message(&mut rules, "home/scene");
+        let mut f = ports_following("home/scene");
+        pace_two_rule_messages(&mut f, "home/scene");
         let (mock, _incoming) = MockMqttClient::new();
         let mut client: Box<dyn MqttClient> = Box::new(MockMqttHandle::new(Arc::clone(&mock)));
         let link = client.link();
         let (mut session, mut job) = (Session::default(), None);
-        stand_down(&mut client, &mut session, &HaTopics::default(), &ports, &link, &mut job, &mut rules);
-        assert_eq!(MqttCounters::load(&ports.counters.rule_messages_lost_total), 1);
-        let later = monotonic_ms().wrapping_add(RULE_MESSAGE_WAIT_PROOF_MS);
-        assert!(rules.pacer.take_due(later).is_empty());
+        stand_down(&mut client, &mut session, &HaTopics::default(), &f.ports, &link, &mut job, &mut f.rules);
+        assert_one_lost_and_the_count_adds_up(&mut f);
     }
 
     #[test]

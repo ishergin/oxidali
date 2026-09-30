@@ -256,3 +256,24 @@ fn a_message_queued_when_its_session_ends_is_dropped_and_counted_never_replayed(
     assert_eq!(h.counters.rule_messages_total.load(Ordering::Relaxed), 2);
     assert_eq!(h.counters.rule_messages_lost_total.load(Ordering::Relaxed), 1);
 }
+
+#[test]
+fn a_message_the_pacer_holds_when_the_link_drops_is_lost_and_the_count_adds_up() {
+    let h = connected_bridge();
+    h.rule_topics.set(&[RULE_TOPIC]);
+    following(&h, RULE_TOPIC);
+    h.mock.broker_publish(RULE_TOPIC, b"1");
+    h.mock.broker_publish(RULE_TOPIC, b"2");
+    end_session_with_redial_stalled(&h);
+    assert_eq!(next_rule_message(&h).payload.as_slice(), b"1");
+    h.mock.set_connected(true);
+    following(&h, RULE_TOPIC);
+    h.mock.broker_publish(RULE_TOPIC, b"fresh");
+    assert_eq!(next_rule_message(&h).payload.as_slice(), b"fresh", "nothing of the old session follows it");
+    let load = |counter: &std::sync::atomic::AtomicU32| counter.load(Ordering::Relaxed);
+    let c = &h.counters;
+    let (total, coalesced, lost) =
+        (load(&c.rule_messages_total), load(&c.rule_messages_coalesced_total), load(&c.rule_messages_lost_total));
+    assert_eq!((total, coalesced, lost), (3, 0, 1));
+    assert_eq!(total, 2 + coalesced + lost, "total = published + coalesced + lost");
+}
