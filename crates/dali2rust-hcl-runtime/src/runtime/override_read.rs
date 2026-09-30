@@ -39,14 +39,15 @@ fn target_view(row: &SuspendedTarget) -> HclOverrideTargetView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::overrides::OverrideLedger;
+    use crate::runtime::overrides::{Causes, OverrideLedger};
+    use dali2rust_contracts::msg::HclOverrideTarget;
     use crate::runtime::plan::TargetKey;
     use std::sync::{Arc, Mutex};
 
     fn ledger_with(entries: &[(TargetKey, u16)]) -> HclOverrideLedgerRead {
         let mut ledger = OverrideLedger::new();
         for (target, since) in entries {
-            ledger.suspend("morning", *target, *since);
+            ledger.suspend("morning", *target, *since, Causes::of_hold(HclOverrideTarget::Broadcast));
         }
         HclOverrideLedgerRead::new(Arc::new(Mutex::new(ledger)))
     }

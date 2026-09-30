@@ -55,10 +55,74 @@ pub struct SuspendedTarget {
     pub since_local_minutes: u16,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Causes {
+    lamps: u64,
+    groups: u16,
+    broadcast: bool,
+}
+
+impl Causes {
+    pub fn of_hold(held: HclOverrideTarget) -> Self {
+        match held {
+            HclOverrideTarget::Broadcast => Self::broadcast(),
+            HclOverrideTarget::Group { group_id } => Self::group(group_id),
+            HclOverrideTarget::VirtualLamp { virtual_lamp_id } => Self::of_lamp(Some(virtual_lamp_id)),
+        }
+    }
+
+    pub fn of_commit(commit: &RuntimeCommit) -> Self {
+        Self::of_lamp(commit.virtual_lamp_id)
+    }
+
+    fn of_lamp(virtual_lamp_id: Option<u8>) -> Self {
+        match virtual_lamp_id.map(lamp_bit).filter(|bit| *bit != 0) {
+            Some(lamps) => Self { lamps, ..Self::default() },
+            None => Self::broadcast(),
+        }
+    }
+
+    fn group(group_id: u8) -> Self {
+        let groups = 1u16.checked_shl(u32::from(group_id)).unwrap_or(0);
+        Self { groups, ..Self::default() }
+    }
+
+    fn broadcast() -> Self {
+        Self { broadcast: true, ..Self::default() }
+    }
+
+    fn join(&mut self, other: Causes) {
+        self.lamps |= other.lamps;
+        self.groups |= other.groups;
+        self.broadcast |= other.broadcast;
+    }
+
+    fn without(self, other: Causes) -> Causes {
+        Causes {
+            lamps: self.lamps & !other.lamps,
+            groups: self.groups & !other.groups,
+            broadcast: self.broadcast && !other.broadcast,
+        }
+    }
+
+    fn is_empty(self) -> bool {
+        self.lamps == 0 && self.groups == 0 && !self.broadcast
+    }
+}
+
+fn lamp_bit(virtual_lamp_id: u8) -> u64 {
+    1u64.checked_shl(u32::from(virtual_lamp_id)).unwrap_or(0)
+}
+
+struct Flag {
+    since: u16,
+    causes: Causes,
+}
+
 #[derive(Default)]
 pub struct OverrideLedger {
     day: Option<u16>,
-    suspended: HashMap<String, HashMap<TargetKey, u16>>,
+    suspended: HashMap<String, HashMap<TargetKey, Flag>>,
 }
 
 impl OverrideLedger {
@@ -91,16 +155,11 @@ impl OverrideLedger {
             .is_some_and(|targets| targets.contains_key(&target))
     }
 
-    pub fn suspend(&mut self, schedule: &str, target: TargetKey, at_minutes: u16) -> bool {
-        let mut started = false;
-        self.suspended
-            .entry(schedule.to_string())
-            .or_default()
-            .entry(target)
-            .or_insert_with(|| {
-                started = true;
-                at_minutes
-            });
+    pub fn suspend(&mut self, schedule: &str, target: TargetKey, at_minutes: u16, cause: Causes) -> bool {
+        let targets = self.suspended.entry(schedule.to_string()).or_default();
+        let started = !targets.contains_key(&target);
+        let fresh = Flag { since: at_minutes, causes: Causes::default() };
+        targets.entry(target).or_insert(fresh).causes.join(cause);
         started
     }
 
@@ -110,24 +169,20 @@ impl OverrideLedger {
             .map_or(0, |targets| targets.len())
     }
 
-    pub fn flags(&self) -> Vec<(String, TargetKey)> {
-        self.suspended
-            .iter()
-            .flat_map(|(schedule, targets)| targets.keys().map(|target| (schedule.clone(), *target)))
-            .collect()
-    }
-
-    pub fn lift(&mut self, flags: &[(String, TargetKey)]) -> usize {
+    pub fn resume(&mut self, adapter_id: u8, removal: Causes) -> usize {
         let mut lifted = 0;
-        for (schedule, target) in flags {
-            let Some(targets) = self.suspended.get_mut(schedule) else {
-                continue;
-            };
-            lifted += usize::from(targets.remove(target).is_some());
-            if targets.is_empty() {
-                self.suspended.remove(schedule);
-            }
+        for targets in self.suspended.values_mut() {
+            targets.retain(|target, flag| {
+                if target.adapter_id != adapter_id {
+                    return true;
+                }
+                flag.causes = flag.causes.without(removal);
+                let holds = !flag.causes.is_empty();
+                lifted += usize::from(!holds);
+                holds
+            });
         }
+        self.suspended.retain(|_, targets| !targets.is_empty());
         lifted
     }
 
@@ -137,9 +192,9 @@ impl OverrideLedger {
         };
         let mut rows: Vec<SuspendedTarget> = targets
             .iter()
-            .map(|(target, since)| SuspendedTarget {
+            .map(|(target, flag)| SuspendedTarget {
                 target: *target,
-                since_local_minutes: *since,
+                since_local_minutes: flag.since,
             })
             .collect();
         insertion_sort_by(&mut rows, |a, b| sort_key(&a.target) > sort_key(&b.target));
@@ -198,38 +253,30 @@ pub fn hold_covers_target(
     }
 }
 
-pub fn resume_covers_target(
+pub fn resume_removal(
     read_port: &dyn GroupReadPort,
     adapter_id: u8,
     resumed: HclOverrideTarget,
-    target: TargetKey,
-) -> bool {
-    match (resumed, target.scope) {
-        _ if adapter_id != target.adapter_id => false,
-        (HclOverrideTarget::Broadcast, _) => true,
-        (_, HclTargetScope::Broadcast) => false,
-        (HclOverrideTarget::Group { group_id }, HclTargetScope::Group) => {
-            target.group_id == group_id
-                || members_all(read_port, adapter_id, target.group_id, |row| in_group(row, group_id))
-        }
-        (HclOverrideTarget::VirtualLamp { virtual_lamp_id }, HclTargetScope::Group) => {
-            let only_the_lamp = |row: &GroupApplyRowView| row.virtual_lamp_id == virtual_lamp_id;
-            members_all(read_port, adapter_id, target.group_id, only_the_lamp)
-        }
+) -> Causes {
+    match resumed {
+        HclOverrideTarget::Broadcast => Causes { lamps: u64::MAX, groups: u16::MAX, broadcast: true },
+        HclOverrideTarget::Group { group_id } => Causes {
+            lamps: member_lamps(read_port, adapter_id, group_id),
+            ..Causes::group(group_id)
+        },
+        HclOverrideTarget::VirtualLamp { virtual_lamp_id } => Causes {
+            lamps: lamp_bit(virtual_lamp_id),
+            ..Causes::default()
+        },
     }
 }
 
-fn members_all(
-    read_port: &dyn GroupReadPort,
-    adapter_id: u8,
-    group_id: u8,
-    inside: impl Fn(&GroupApplyRowView) -> bool,
-) -> bool {
+fn member_lamps(read_port: &dyn GroupReadPort, adapter_id: u8, group_id: u8) -> u64 {
     let Some(snapshot) = read_port.group_apply_snapshot(adapter_id) else {
-        return false;
+        return 0;
     };
-    let mut members = snapshot.rows.iter().filter(|row| in_group(row, group_id)).peekable();
-    members.peek().is_some() && members.all(inside)
+    let members = snapshot.rows.iter().filter(|row| in_group(row, group_id));
+    members.fold(0, |lamps, row| lamps | lamp_bit(row.virtual_lamp_id))
 }
 
 fn in_group(row: &GroupApplyRowView, group_id: u8) -> bool {
@@ -668,27 +715,45 @@ mod tests {
         assert!(!hold_covers_target(&stub, 1, HclOverrideTarget::Broadcast, group_target(0)));
     }
 
-    #[test]
-    fn a_resume_lifts_only_targets_that_lie_inside_its_own() {
-        let stub = MembershipStub::with_lamp_in_groups(1, &[3, 5]).and_lamp_in_groups(2, &[3, 9]);
-        let group = |group_id| HclOverrideTarget::Group { group_id };
-        let lamp = |virtual_lamp_id| HclOverrideTarget::VirtualLamp { virtual_lamp_id };
-        let inside = |resumed, target| resume_covers_target(&stub, 0, resumed, target);
+    fn held(ledger: &mut OverrideLedger, target: TargetKey, cause: Causes) {
+        ledger.suspend("morning", target, 600, cause);
+    }
 
-        assert!(inside(group(3), group_target(3)), "itself");
-        assert!(inside(group(3), group_target(5)), "group 5 is lamp 1, which group 3 holds");
-        assert!(inside(group(3), group_target(9)), "group 9 is lamp 2, which group 3 holds");
-        assert!(!inside(group(5), group_target(3)), "group 3 is wider than group 5");
-        assert!(!inside(group(3), broadcast_target()), "the broadcast is wider than any group");
-        assert!(!inside(group(3), group_target(6)), "an empty group lies inside nothing but itself");
-        assert!(inside(group(6), group_target(6)));
-        assert!(inside(lamp(1), group_target(5)), "group 5 is lamp 1 alone");
-        assert!(!inside(lamp(1), group_target(3)), "group 3 also holds lamp 2");
-        assert!(!inside(lamp(1), broadcast_target()));
-        for target in [broadcast_target(), group_target(3), group_target(12)] {
-            assert!(inside(HclOverrideTarget::Broadcast, target), "{target:?}");
-        }
-        assert!(!resume_covers_target(&stub, 1, HclOverrideTarget::Broadcast, group_target(3)));
+    #[test]
+    fn a_resume_takes_away_only_the_causes_that_lie_inside_its_target() {
+        let stub = MembershipStub::with_lamp_in_groups(1, &[3, 4]).and_lamp_in_groups(2, &[3]);
+        let group = |group_id| HclOverrideTarget::Group { group_id };
+        let mut ledger = OverrideLedger::new();
+        held(&mut ledger, broadcast_target(), Causes::of_hold(group(3)));
+        held(&mut ledger, broadcast_target(), Causes::of_commit(&commit(RuntimeSource::Api, Some(5))));
+
+        assert_eq!(ledger.resume(0, resume_removal(&stub, 0, group(3))), 0, "lamp 5 still holds it");
+        let lamp_five = HclOverrideTarget::VirtualLamp { virtual_lamp_id: 5 };
+        assert_eq!(ledger.resume(0, resume_removal(&stub, 0, lamp_five)), 1, "no cause is left");
+    }
+
+    #[test]
+    fn a_group_resume_takes_the_commits_of_its_lamps_and_nothing_else() {
+        let stub = MembershipStub::with_lamp_in_groups(1, &[3, 4]).and_lamp_in_groups(2, &[3]);
+        let mut ledger = OverrideLedger::new();
+        held(&mut ledger, group_target(3), Causes::of_commit(&commit(RuntimeSource::Api, Some(1))));
+        held(&mut ledger, group_target(4), Causes::of_hold(HclOverrideTarget::Broadcast));
+
+        let room = HclOverrideTarget::Group { group_id: 4 };
+        assert_eq!(ledger.resume(0, resume_removal(&stub, 0, room)), 1, "lamp 1 is in the room");
+        assert!(ledger.is_suspended("morning", group_target(4)), "a broadcast hold waits for a broadcast resume");
+        assert_eq!(ledger.resume(1, resume_removal(&stub, 1, HclOverrideTarget::Broadcast)), 0, "another adapter");
+        assert_eq!(ledger.resume(0, resume_removal(&stub, 0, HclOverrideTarget::Broadcast)), 1);
+    }
+
+    #[test]
+    fn a_commit_without_a_lamp_is_a_broadcast_cause() {
+        let stub = MembershipStub::with_lamp_in_groups(1, &[3]);
+        let mut ledger = OverrideLedger::new();
+        held(&mut ledger, broadcast_target(), Causes::of_commit(&commit(RuntimeSource::Api, None)));
+        let group_three = HclOverrideTarget::Group { group_id: 3 };
+        assert_eq!(ledger.resume(0, resume_removal(&stub, 0, group_three)), 0);
+        assert_eq!(ledger.resume(0, resume_removal(&stub, 0, HclOverrideTarget::Broadcast)), 1);
     }
 
     #[test]
@@ -713,9 +778,9 @@ mod tests {
         let mut ledger = OverrideLedger::new();
         let schedule = "morning";
         ledger.roll_over_to(172);
-        assert!(ledger.suspend(schedule, group_target(3), 861));
+        assert!(ledger.suspend(schedule, group_target(3), 861, Causes::broadcast()));
         assert!(
-            !ledger.suspend(schedule, group_target(3), 900),
+            !ledger.suspend(schedule, group_target(3), 900, Causes::broadcast()),
             "already flagged"
         );
         assert!(ledger.is_suspended(schedule, group_target(3)));
@@ -739,7 +804,7 @@ mod tests {
     fn a_backwards_clock_correction_does_not_wipe_the_ledger() {
         let mut ledger = OverrideLedger::new();
         let _ = ledger.roll_over_to(172);
-        ledger.suspend("morning", group_target(3), 861);
+        ledger.suspend("morning", group_target(3), 861, Causes::broadcast());
         assert_eq!(ledger.roll_over_to(171), None);
         assert!(
             ledger.is_suspended("morning", group_target(3)),
@@ -756,7 +821,7 @@ mod tests {
     fn the_year_wrap_is_a_forward_roll() {
         let mut ledger = OverrideLedger::new();
         let _ = ledger.roll_over_to(365);
-        ledger.suspend("nye", group_target(3), 1420);
+        ledger.suspend("nye", group_target(3), 1420, Causes::broadcast());
         assert_eq!(ledger.roll_over_to(0), Some(1));
         assert!(!ledger.is_suspended("nye", group_target(3)));
     }
@@ -765,7 +830,7 @@ mod tests {
     fn overriding_one_target_leaves_the_schedules_other_targets_running() {
         let mut ledger = OverrideLedger::new();
         let schedule = "morning";
-        ledger.suspend(schedule, group_target(3), 861);
+        ledger.suspend(schedule, group_target(3), 861, Causes::broadcast());
         assert!(!ledger.is_suspended(schedule, group_target(5)));
         assert!(!ledger.is_suspended("evening", group_target(3)));
     }
@@ -773,8 +838,8 @@ mod tests {
     #[test]
     fn a_repeat_commit_keeps_the_time_the_override_started() {
         let mut ledger = OverrideLedger::new();
-        ledger.suspend("morning", group_target(3), 861);
-        ledger.suspend("morning", group_target(3), 1020);
+        ledger.suspend("morning", group_target(3), 861, Causes::broadcast());
+        ledger.suspend("morning", group_target(3), 1020, Causes::broadcast());
         assert_eq!(
             ledger.suspended_targets("morning")[0].since_local_minutes,
             861
@@ -784,9 +849,9 @@ mod tests {
     #[test]
     fn a_reset_lifts_one_schedule_and_reports_what_it_held() {
         let mut ledger = OverrideLedger::new();
-        ledger.suspend("morning", group_target(3), 861);
-        ledger.suspend("morning", broadcast_target(), 870);
-        ledger.suspend("evening", group_target(3), 880);
+        ledger.suspend("morning", group_target(3), 861, Causes::broadcast());
+        ledger.suspend("morning", broadcast_target(), 870, Causes::broadcast());
+        ledger.suspend("evening", group_target(3), 880, Causes::broadcast());
 
         assert_eq!(ledger.clear_schedule("morning"), 2);
         assert!(ledger.suspended_targets("morning").is_empty());
@@ -800,9 +865,9 @@ mod tests {
     #[test]
     fn suspended_targets_report_in_a_stable_order() {
         let mut ledger = OverrideLedger::new();
-        ledger.suspend("morning", group_target(9), 900);
-        ledger.suspend("morning", group_target(3), 861);
-        ledger.suspend("morning", broadcast_target(), 870);
+        ledger.suspend("morning", group_target(9), 900, Causes::broadcast());
+        ledger.suspend("morning", group_target(3), 861, Causes::broadcast());
+        ledger.suspend("morning", broadcast_target(), 870, Causes::broadcast());
         let rows = ledger.suspended_targets("morning");
         let groups: Vec<u8> = rows.iter().map(|row| row.target.group_id).collect();
         assert_eq!(groups, vec![0, 3, 9], "broadcast first, then groups by id");

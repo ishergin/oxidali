@@ -25,7 +25,7 @@ use dali2rust_platform::wall_clock::{LocalCivilTime, WallClock};
 use super::astronomy::Location;
 use super::curve::{effective_points, evaluate, DesiredState};
 use super::overrides::{
-    commit_hits_target, driven_dimensions, hold_covers_target, resume_covers_target,
+    commit_hits_target, driven_dimensions, hold_covers_target, resume_removal, Causes,
     OverrideLedger, RuntimeCommit,
 };
 use super::plan::{
@@ -298,14 +298,9 @@ fn handle_override_clear(deps: &SchedulerDeps, correlation_id: u64, body: &HclOv
 }
 
 fn handle_override_resume(deps: &SchedulerDeps, correlation_id: u64, body: &HclOverrideResumeCommand) {
-    let read_port = deps.read_port.as_ref();
-    let covers = |target: TargetKey| {
-        resume_covers_target(read_port, body.registry_adapter_id, body.target, target)
-    };
-    let flags = lock_ledger(&deps.overrides).flags();
-    let covered: Vec<(String, TargetKey)> =
-        flags.into_iter().filter(|(_, target)| covers(*target)).collect();
-    let lifted = lock_ledger(&deps.overrides).lift(&covered);
+    let adapter_id = body.registry_adapter_id;
+    let removal = resume_removal(deps.read_port.as_ref(), adapter_id, body.target);
+    let lifted = lock_ledger(&deps.overrides).resume(adapter_id, removal);
     count_lifted(deps, lifted);
     confirm_override_command(deps, correlation_id, None);
 }
@@ -346,7 +341,8 @@ fn hold_covered_targets(
         }
         for target in schedule.targets.iter().flat_map(expand_target) {
             if hold_covers_target(read_port, body.registry_adapter_id, body.target, target) {
-                hold_target(state, deps, &schedule.schedule_id, target, local.minutes_since_midnight);
+                let (at, cause) = (local.minutes_since_midnight, Causes::of_hold(body.target));
+                hold_target(state, deps, &schedule.schedule_id, target, at, cause);
             }
         }
     }
@@ -358,8 +354,9 @@ fn hold_target(
     schedule_id: &str,
     target: TargetKey,
     at_minutes: u16,
+    cause: Causes,
 ) {
-    if lock_ledger(&deps.overrides).suspend(schedule_id, target, at_minutes) {
+    if lock_ledger(&deps.overrides).suspend(schedule_id, target, at_minutes, cause) {
         deps.counters.overrides_started.fetch_add(1, Ordering::Relaxed);
     }
     state.stand_down(target);
@@ -451,7 +448,8 @@ fn split_targets(
             continue;
         }
         let at = local.minutes_since_midnight;
-        if lock_ledger(&deps.overrides).suspend(&schedule.schedule_id, target, at) {
+        let cause = Causes::of_commit(commit);
+        if lock_ledger(&deps.overrides).suspend(&schedule.schedule_id, target, at, cause) {
             deps.counters.overrides_started.fetch_add(1, Ordering::Relaxed);
         }
         split.hit.push(target);

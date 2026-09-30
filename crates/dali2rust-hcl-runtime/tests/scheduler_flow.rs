@@ -1622,25 +1622,20 @@ fn a_broadcast_hold_stands_down_every_target_on_its_adapter() {
 }
 
 #[test]
-fn a_resume_lifts_only_the_targets_its_argument_covers() {
+fn a_resume_lifts_only_what_its_own_target_raised() {
     let harness = spawn_harness(five_target_registry(), Arc::new(StubClock::at(600)));
     harness.hold(77, HclOverrideTarget::Broadcast);
     harness.confirmation_for(77);
+    let everything = vec![None, Some(5), Some(7), Some(8), Some(9)];
 
     harness.resume(78, HclOverrideTarget::Group { group_id: 9 });
     harness.confirmation_for(78);
-    assert_eq!(
-        suspended_groups(&harness, "wide"),
-        vec![None, Some(5), Some(7), Some(8)],
-        "group 9 alone lies inside group 9; the broadcast is wider"
-    );
-
     harness.resume(79, HclOverrideTarget::VirtualLamp { virtual_lamp_id: 1 });
     harness.confirmation_for(79);
     assert_eq!(
         suspended_groups(&harness, "wide"),
-        vec![None, Some(5)],
-        "groups 7 and 8 hold lamp 1 and nothing else"
+        everything,
+        "a group or a lamp does not undo what a broadcast hold raised"
     );
 
     harness.resume(80, HclOverrideTarget::Broadcast);
@@ -1650,6 +1645,81 @@ fn a_resume_lifts_only_the_targets_its_argument_covers() {
     );
     assert!(suspended_groups(&harness, "wide").is_empty());
     assert_eq!(harness.counters.overrides_reset.load(Ordering::Relaxed), 5);
+}
+
+fn one_schedule(schedule_id: &str, targets: Vec<HclTargetRow>, membership: Vec<(u8, u16)>) -> StubRegistry {
+    StubRegistry {
+        schedules: vec![schedule(
+            schedule_id,
+            targets,
+            vec![point(0, HclLevelMode::Absolute, Some(120), None)],
+        )],
+        membership,
+    }
+}
+
+fn broadcast_over_group_three() -> StubRegistry {
+    one_schedule("all", vec![broadcast_target(0)], vec![(1, 1u16 << 3), (2, 1u16 << 3)])
+}
+
+fn floor_and_room() -> StubRegistry {
+    let floor_and_room = (1u16 << 3) | (1u16 << 4);
+    one_schedule("rooms", vec![group_target(0, &[3, 4])], vec![(1, floor_and_room), (2, 1u16 << 3)])
+}
+
+fn hold_then_resume(
+    registry: StubRegistry,
+    schedule_id: &str,
+    held: HclOverrideTarget,
+) -> (Vec<Option<u8>>, Vec<Option<u8>>) {
+    let harness = spawn_harness(registry, Arc::new(StubClock::at(600)));
+    harness.hold(92, held);
+    harness.confirmation_for(92);
+    let after_hold = suspended_groups(&harness, schedule_id);
+    harness.resume(93, held);
+    harness.confirmation_for(93);
+    (after_hold, suspended_groups(&harness, schedule_id))
+}
+
+#[test]
+fn a_group_resume_undoes_its_hold_on_a_broadcast_schedule() {
+    let group_three = HclOverrideTarget::Group { group_id: 3 };
+    let (held, resumed) = hold_then_resume(broadcast_over_group_three(), "all", group_three);
+    assert_eq!(held, [None], "group 3 has lamps, so its hold stands the broadcast down");
+    assert!(resumed.is_empty(), "and its resume lifts it again: {resumed:?}");
+}
+
+#[test]
+fn a_room_resume_undoes_the_floor_its_hold_reached() {
+    let room = HclOverrideTarget::Group { group_id: 4 };
+    let (held, resumed) = hold_then_resume(floor_and_room(), "rooms", room);
+    assert_eq!(held, [Some(3), Some(4)], "lamp 1 is in the room and on the floor");
+    assert!(resumed.is_empty(), "the room's resume lifts both: {resumed:?}");
+}
+
+#[test]
+fn a_lamp_resume_undoes_its_own_hold() {
+    let lamp = HclOverrideTarget::VirtualLamp { virtual_lamp_id: 1 };
+    let (held, resumed) = hold_then_resume(floor_and_room(), "rooms", lamp);
+    assert_eq!(held, [Some(3), Some(4)]);
+    assert!(resumed.is_empty(), "the lamp's resume lifts what its hold raised: {resumed:?}");
+}
+
+#[test]
+fn a_group_resume_lifts_the_broadcast_its_own_lamps_stood_down() {
+    let harness = spawn_harness(broadcast_over_group_three(), Arc::new(StubClock::at(600)));
+    harness.wait_for_commands(1);
+    harness.publish_manual_commit_on_lamp(1);
+    harness.publish_manual_commit_on_lamp(2);
+    wait_until(|| suspended_groups(&harness, "all") == [None], Duration::from_secs(3));
+
+    harness.resume(94, HclOverrideTarget::Group { group_id: 3 });
+    harness.confirmation_for(94);
+
+    assert!(
+        suspended_groups(&harness, "all").is_empty(),
+        "both commits came from lamps of group 3, so its resume lifts the broadcast"
+    );
 }
 
 #[test]

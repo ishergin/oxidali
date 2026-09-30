@@ -101,11 +101,11 @@ Feature: Rules and HCL: a rule enables, disables, holds and resumes a schedule
     And HCL schedule "house" should not report group 7 suspended
 
   @id:RULE-064
-  Scenario: A rule's resume lifts only what its target reaches, on every schedule that holds it
+  Scenario: A rule's resume lifts what its own target raised, on every schedule that holds it
     When I POST JSON {"schedule_id":"garden","enabled":true,"algorithm":"stepped","active_days":["mon","tue","wed","thu","fri","sat","sun"],"location":null,"targets":[{"adapter_id":0,"scope":"group","group_ids":[8]}],"points":[{"time_ref":"absolute","offset_minutes":540,"level_mode":"absolute","level":80,"color_temperature_kelvin":null}]} to "/api/v1/hcl-schedules"
     Then the response status should be 202
     And the last operation eventually succeeds
-    When I PUT JSON {"base_revision":0,"source":"rule \"hold\" {\n  when http trigger\n  do hcl.hold(lamp(2))\n}\nrule \"hold-7\" {\n  when http trigger\n  do hcl.hold(group(7))\n}\nrule \"resume-1\" {\n  when http trigger\n  do hcl.resume(lamp(1))\n}\nrule \"resume-2\" {\n  when http trigger\n  do hcl.resume(lamp(2))\n}\n"} to "/api/v1/rules"
+    When I PUT JSON {"base_revision":0,"source":"rule \"hold\" {\n  when http trigger\n  do hcl.hold(lamp(2))\n}\nrule \"hold-7\" {\n  when http trigger\n  do hcl.hold(group(7))\n}\nrule \"resume-1\" {\n  when http trigger\n  do hcl.resume(lamp(1))\n}\nrule \"resume-2\" {\n  when http trigger\n  do hcl.resume(lamp(2))\n}\nrule \"resume-7\" {\n  when http trigger\n  do hcl.resume(group(7))\n}\n"} to "/api/v1/rules"
     Then the response status should be 202
     And the last operation eventually succeeds
     When I POST JSON {} to "/api/v1/rules/hold/run"
@@ -119,11 +119,13 @@ Feature: Rules and HCL: a rule enables, disables, holds and resumes a schedule
     When I POST JSON {} to "/api/v1/rules/resume-1/run"
     Then the response status should be 202
     And the last operation eventually succeeds
-    And HCL schedule "house" eventually reports only group 8 suspended
-    And HCL schedule "garden" eventually reports only group 8 suspended
-    And the rule "resume-1" should have the last outcome "ok"
     When I POST JSON {} to "/api/v1/rules/resume-2/run"
     Then the response status should be 202
     And the last operation eventually succeeds
-    And HCL schedule "house" eventually reports itself running
     And HCL schedule "garden" eventually reports itself running
+    And HCL schedule "house" eventually reports only group 7 suspended
+    And the rule "resume-1" should have the last outcome "ok"
+    When I POST JSON {} to "/api/v1/rules/resume-7/run"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And HCL schedule "house" eventually reports itself running

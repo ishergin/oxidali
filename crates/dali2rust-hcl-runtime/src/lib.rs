@@ -7,7 +7,7 @@ pub use runtime::plan::{
     MAX_COMMANDS_PER_TICK,
 };
 pub use runtime::overrides::{
-    commit_hits_target, driven_dimensions, hold_covers_target, resume_covers_target,
+    commit_hits_target, driven_dimensions, hold_covers_target, resume_removal, Causes,
     OverrideLedger, RuntimeCommit, SuspendedTarget,
 };
 pub use runtime::scheduler_worker::{
