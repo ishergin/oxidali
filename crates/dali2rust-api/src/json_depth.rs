@@ -4,7 +4,7 @@ pub fn json_too_deep(body: &[u8]) -> bool {
     depth_exceeds(body, MAX_JSON_DEPTH)
 }
 
-fn depth_exceeds(body: &[u8], max_depth: usize) -> bool {
+pub(crate) fn depth_exceeds(body: &[u8], max_depth: usize) -> bool {
     let (mut depth, mut in_string, mut escaped) = (0usize, false, false);
     for &b in body {
         if in_string {

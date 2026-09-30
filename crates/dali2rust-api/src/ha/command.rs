@@ -6,6 +6,8 @@ use super::brightness::ha_to_level;
 use crate::http::target_state_request::{parse_light_setpoint, TargetStateBody};
 use crate::http::types::HttpResponse;
 
+const HA_COMMAND_MAX_DEPTH: usize = 2;
+
 pub fn caps_accept(caps: &CapabilityFlagsView, mode: ColorMode) -> bool {
     dali2rust_domain::registry::capability_supports_color_mode(*caps, mode)
 }
@@ -18,7 +20,7 @@ pub fn ha_light_command_to_setpoint(
     payload: &[u8],
     supports_color_mode: impl Fn(ColorMode) -> bool,
 ) -> Result<LightSetpoint, HttpResponse> {
-    if crate::json_depth::json_too_deep(payload) {
+    if crate::json_depth::depth_exceeds(payload, HA_COMMAND_MAX_DEPTH) {
         return Err(crate::http::handlers::common::json_err(400, "invalid_json"));
     }
     let raw: Value = serde_json::from_slice(payload)
@@ -141,10 +143,16 @@ mod tests {
         assert_eq!(parse(r#"{"state":"ON","brightness":255}"#).level, Some(254));
     }
 
+    fn state_on_nested(levels: usize) -> String {
+        format!(r#"{{"state":"ON","x":{}1{}}}"#, r#"{"y":"#.repeat(levels), "}".repeat(levels))
+    }
+
     #[test]
-    fn an_over_deep_command_is_refused_before_parsing() {
-        let deep = crate::json_depth::nested_json(crate::json_depth::MAX_JSON_DEPTH + 1);
-        assert!(ha_light_command_to_setpoint(&deep, anything).is_err());
+    fn a_command_nested_past_the_colour_object_is_refused_before_parsing() {
+        let at_limit = state_on_nested(HA_COMMAND_MAX_DEPTH - 1);
+        assert!(ha_light_command_to_setpoint(at_limit.as_bytes(), anything).is_ok());
+        let past = state_on_nested(HA_COMMAND_MAX_DEPTH);
+        assert!(ha_light_command_to_setpoint(past.as_bytes(), anything).is_err());
     }
 
     #[test]
