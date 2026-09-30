@@ -13,7 +13,7 @@ hcl-scheduler        8192    2840
 poller               8192    2320
 ws_worker            8192    2860
 # The deepest path is a Home Assistant colour command: a JSON set with an RGB object.
-mqtt_worker          8192    4080
+mqtt_worker          8192    4224
 display_worker       6144    1668
 arb-supervisor        3072   1700
 arbitration           4096   1972
