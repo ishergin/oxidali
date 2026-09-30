@@ -100,6 +100,7 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
 - Counters are `u32` on the wire; they wrap as their mechanism does.
 - A new counter goes to `/api/v1/stats`. The controller pair's counters live on
   `/api/v1/redundancy` instead, beside the probes and transitions they explain; that
-  resource is a root of both counter gates. The periodic WebSocket diagnostics frame has
-  a hard ceiling (`DIAGNOSTICS_SNAPSHOT_CEILING_BYTES`) and no headroom; raising the
-  ceiling is not the fix.
+  resource is a root of both counter gates. The periodic WebSocket diagnostics and stats
+  frames have hard ceilings (`DIAGNOSTICS_SNAPSHOT_CEILING_BYTES`,
+  `STATS_SNAPSHOT_CEILING_BYTES`), measured on their widest DTOs, and no headroom;
+  raising a ceiling is not the fix.

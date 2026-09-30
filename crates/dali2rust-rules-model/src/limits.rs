@@ -405,8 +405,18 @@ fn stat_names_with_owners(set: &RuleSet) -> Vec<(&str, &str)> {
     names
 }
 
+pub fn stat_name_is_printable(name: &str) -> bool {
+    !name.chars().any(char::is_control)
+}
+
 fn check_stat_names(set: &RuleSet) -> Result<(), ModelError> {
     let names = stat_names_with_owners(set);
+    if let Some((name, owner)) = names.iter().find(|(name, _)| !stat_name_is_printable(name)) {
+        return Err(ModelError::StatNameNotPrintable {
+            owner: (*owner).into(),
+            name: (*name).into(),
+        });
+    }
     match names.get(MAX_STAT_NAMES) {
         Some((_, owner)) => Err(ModelError::TooManyStatNames {
             owner: (*owner).into(),

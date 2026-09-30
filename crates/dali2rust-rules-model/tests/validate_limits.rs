@@ -226,3 +226,18 @@ fn one_stat_counter_past_the_limit_is_refused_at_the_owner_that_names_it() {
         other => panic!("expected TooManyStatNames, got {other:?}"),
     }
 }
+
+#[test]
+fn a_stat_name_with_a_control_character_is_refused_at_the_owner_that_names_it() {
+    let rules = vec![
+        rule_with_actions("a", vec![stat("door open")]),
+        rule_with_actions("b", vec![stat("door\u{7}open")]),
+    ];
+    match validate(&set_with(vec![], rules)) {
+        Err(ModelError::StatNameNotPrintable { owner, name }) => {
+            assert_eq!(owner, "b");
+            assert_eq!(name, "door\u{7}open");
+        }
+        other => panic!("expected StatNameNotPrintable, got {other:?}"),
+    }
+}

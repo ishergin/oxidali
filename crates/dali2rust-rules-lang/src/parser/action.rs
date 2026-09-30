@@ -6,8 +6,8 @@ use crate::parser::expr;
 use crate::parser::refs;
 use crate::parser::trigger::quoted_ref;
 use dali2rust_rules_model::limits::{
-    MAX_INSTANCE_GROUP, MAX_MQTT_PAYLOAD_BYTES, MAX_MQTT_TOPIC_BYTES, MAX_REPEAT, MAX_SCENE,
-    MAX_SCENE_CYCLE_ENTRIES, MAX_VAR_TEXT_BYTES,
+    stat_name_is_printable, MAX_INSTANCE_GROUP, MAX_MQTT_PAYLOAD_BYTES, MAX_MQTT_TOPIC_BYTES,
+    MAX_REPEAT, MAX_SCENE, MAX_SCENE_CYCLE_ENTRIES, MAX_VAR_TEXT_BYTES,
 };
 use dali2rust_rules_model::{
     Action, ActionKind, CompileError, DurationMs, FlowAction, HclAction, InputAction, SceneAction,
@@ -483,7 +483,12 @@ fn log_action(c: &mut Cursor<'_>) -> Result<Action, CompileError> {
 }
 
 fn stat_action(c: &mut Cursor<'_>) -> Result<Action, CompileError> {
-    let name = quoted_ref(c, "stat name")?;
+    c.expect(&TokenKind::LParen, "`(`")?;
+    let (name, pos) = refs::checked_name(c, "stat name")?;
+    if !stat_name_is_printable(&name) {
+        return Err(pos.err("a stat name holds no control character"));
+    }
+    c.expect(&TokenKind::RParen, "`)`")?;
     c.expect(&TokenKind::Dot, "`.count()`")?;
     c.expect_kw("count")?;
     empty_parens(c)?;

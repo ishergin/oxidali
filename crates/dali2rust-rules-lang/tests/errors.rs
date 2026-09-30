@@ -275,3 +275,13 @@ fn the_stat_counter_past_the_limit_points_at_the_rule_that_names_it() {
     assert_eq!((err.line, err.column), (23, 6), "the name of rule \"c\": {err}");
     assert!(err.message.contains("stat counter"), "{err}");
 }
+
+#[test]
+fn a_control_character_in_a_stat_name_is_refused_at_the_name() {
+    for name in ["door\topen", "bell\u{7}", "del\u{7f}", "nel\u{85}"] {
+        let err = compile_err(&wrap_action(&format!("stat(\"{name}\").count()")));
+        assert_eq!((err.line, err.column), (5, 11), "{name:?}: {err}");
+        assert!(err.message.contains("control character"), "{name:?}: {err}");
+    }
+    compile_ok(&wrap_action("stat(\"дверь\u{a0}открыта\\\").count()"));
+}
