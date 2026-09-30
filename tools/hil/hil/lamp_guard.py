@@ -558,15 +558,15 @@ class LampGuard:
     def _judge_frame(self, addr, data, enabled):
         target = wire_target(addr)
         writes = target is not None and frame_writes(addr, data, enabled)
-        keys = frame_keys(ALL if target == TARGET_SEGMENT else target) if writes else []
+        visible = writes and frame_visible(addr, data, enabled)
+        keys = frame_keys(ALL if target == TARGET_SEGMENT else target, visible) if writes else []
         if self.fence is not None and self.fence.check_frame(addr, data, enabled):
             return keys
         if SPECIAL_FIRST <= addr < BROADCAST_FIRST:
             _refuse_special(addr)
             return []
         if writes:
-            self.check_target(target, frame_visible(addr, data, enabled),
-                              describe_frame(addr, data))
+            self.check_target(target, visible, describe_frame(addr, data))
         return keys
 
     def check_target(self, target, visible, what):

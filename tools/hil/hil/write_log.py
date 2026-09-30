@@ -99,8 +99,8 @@ def _fieldwise_keys(method, path, body):
     return None
 
 
-def frame_keys(target):
-    return [("gear/%s" % target, EVERY), ("shown/%s" % target, EVERY)]
+def frame_keys(target, visible=True):
+    return [("gear/%s" % target, EVERY)] + ([("shown/%s" % target, EVERY)] if visible else [])
 
 
 def _candidates(key):

@@ -524,6 +524,8 @@ def test_the_guard_names_what_a_passed_request_writes(monkeypatch):
     assert _guard().check_frame(_short_wire(2), 100) == [
         ("gear/2", frozenset({"*"})), ("shown/2", frozenset({"*"}))]
     assert _guard().check_frame(_short_wire(2, command=True), QUERY_ACTUAL_LEVEL) == []
+    assert _guard().check_frame(_short_wire(2, command=True), ADD_TO_GROUP_5) == [
+        ("gear/2", frozenset({"*"}))]
 
 
 def test_the_client_and_the_wb_master_log_what_they_write(monkeypatch):
