@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { countsByName, deltaOf, flatten } from '../src/counter-delta.js'
+import { deltaOf, flatten } from '../src/counter-delta.js'
+import { deltaView } from '../src/screens/stats-view.js'
 
 function sample(stats: { name: string; count: number }[]) {
-  return flatten({ rules: { stats: countsByName(stats) } }, '', {})
+  return flatten(deltaView({ sample_ms: 0, rules: { effects_emitted: 0, stats } }), '', {})
 }
 
 test('a named count keeps its delta when a new name sorts in before it', () => {
@@ -16,6 +17,14 @@ test('a named count keeps its delta when a new name sorts in before it', () => {
 
   assert.equal(deltaOf(after['rules.stats.presses'], before['rules.stats.presses']), 2)
   assert.equal(before['rules.stats.away'], undefined, 'a new name has no delta yet')
+})
+
+test('the rest of the sample keeps its paths', () => {
+  const flat = sample([{ name: 'presses', count: 5 }])
+
+  assert.equal(flat['sample_ms'], 0)
+  assert.equal(flat['rules.effects_emitted'], 0)
+  assert.equal(flat['rules.stats.presses'], 5)
 })
 
 test('a count that wraps past u32 reads as its increase', () => {

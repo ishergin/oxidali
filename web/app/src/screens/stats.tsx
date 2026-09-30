@@ -2,10 +2,10 @@ import { api } from '../api/client'
 import type { StatsReportPayload, StatsRuleCount, StatsRules } from '../api/types'
 import { busLoadPercent } from '../components/bus-load'
 import { Badge, Card, Chip } from '../components/ui'
-import { countsByName } from '../counter-delta'
 import { CounterRows, type Flat, useDeltas } from '../counters'
 import { uptime } from '../format'
 import { useLive, useSnapshotFrames } from '../hooks'
+import { deltaView } from './stats-view'
 
 const STATS_POLL_MS = 5000
 
@@ -47,10 +47,6 @@ function ruleCounters(rules: StatsRules): Record<string, number> {
     if (typeof value === 'number') counters[key] = value
   }
   return counters
-}
-
-function deltaView(data: StatsReportPayload) {
-  return { ...data, rules: { ...data.rules, stats: countsByName(data.rules.stats) } }
 }
 
 function RuleStatRows({ stats, deltas }: { stats: StatsRuleCount[]; deltas: Flat }) {
