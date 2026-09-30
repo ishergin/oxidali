@@ -170,6 +170,11 @@ pub struct StatsMqttDto {
     pub connected: bool,
     pub publishes_total: u32,
     pub publish_failures_total: u32,
+    pub rule_messages_total: u32,
+    pub rule_messages_coalesced_total: u32,
+    pub rule_messages_lost_total: u32,
+    pub subscriptions_refused_total: u32,
+    pub own_topics_refused_total: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
@@ -265,7 +270,9 @@ declare_widest_dtos! {
         readbacks_applied,
     }
     StatsMqttDto {
-        connected = false, publishes_total, publish_failures_total,
+        connected = false, publishes_total, publish_failures_total, rule_messages_total,
+        rule_messages_coalesced_total, rule_messages_lost_total, subscriptions_refused_total,
+        own_topics_refused_total,
     }
     StatsNetworkDto {
         rx_packets_total, tx_packets_total, rx_dropped_total, tx_dropped_total,

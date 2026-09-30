@@ -4,7 +4,7 @@ use crate::ws::protocol::{event_frame_reserving, Channel};
 
 pub const DIAGNOSTICS_SNAPSHOT_CEILING_BYTES: usize = 8608;
 
-pub const STATS_SNAPSHOT_CEILING_BYTES: usize = 6144;
+pub const STATS_SNAPSHOT_CEILING_BYTES: usize = 6336;
 
 pub fn stats_snapshot_frame(state: &dyn StatsHttpState, ts_ms: u64) -> String {
     let dto = boxed_stats(state);

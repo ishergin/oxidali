@@ -38,6 +38,7 @@
 | Отказоустойчивость | [ниже](#отказоустойчивость) | `DaliWorker`, арбитраж, реестр | по виду | по виду |
 | Правила | `RulesChangedEvent`, `RulesActivationEvent` | rules worker | WS | best-effort |
 | Home Assistant | `HomeAssistantDiscoveryPublishedEvent` | MQTT bridge | operation tracker | **required** |
+| Сообщения брокера | `MqttRuleMessageEvent` | MQTT bridge | правила (`when mqtt`) | **required** |
 | Загрузка и сервис | `IpAddressAssignedEvent`, `PersistenceLoadResultEvent`, `StatsReportedEvent`, `DaliEventPayload` | композиция; `DaliWorker` | дисплей; остальные observed-only | best-effort |
 
 ## Изменения реестра
@@ -178,6 +179,15 @@
 
 Роль контроллера событием не передаётся — её несут заголовок `X-Dali2rust-Role` и
 `/api/v1/health`.
+
+## Сообщения брокера
+
+`MqttRuleMessageEvent` — одно сообщение на топике, за которым мост следит для триггеров
+`when mqtt`: топик, до 48 байт payload и признак `truncated`, если payload был длиннее.
+Сообщение перечитать неоткуда, поэтому мост публикует событие через `publish_required`.
+Какие сообщения доходят до события и с каким темпом, решает мост
+([`../runtime-modules/mqtt-home-assistant/README.md`](../runtime-modules/mqtt-home-assistant/README.md),
+[`ADR-033`](../../architecture/decisions/ADR-033-mqtt-rule-trigger.md)).
 
 ## Настройки
 

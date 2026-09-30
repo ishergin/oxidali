@@ -29,7 +29,12 @@
   архитектуры, а не записан литералом).
 - `uptime_ms` — от старта HTTP-поверхности, по тем же часам, что `/health`.
 - `home_assistant` — `enabled` и `broker_url` из настроек, `connected` — из самого моста:
-  включённый мост, которому брокер отказывает, виден как неподключённый.
+  истинно, пока брокер подтвердил и не отклонил каждую подписку сессии, топики правил
+  `when mqtt` включительно; включённый мост, которому брокер отказывает, виден как
+  неподключённый ([`../../runtime-modules/mqtt-home-assistant/README.md`](../../runtime-modules/mqtt-home-assistant/README.md)
+  §Сессия). `own_topics_refused` — топики `when mqtt`, на которые мост в текущей сессии
+  не подписался, потому что публикует их сам (не больше восьми, без сессии список пуст;
+  [`../../runtime-modules/rules-engine/mqtt-trigger.md`](../../runtime-modules/rules-engine/mqtt-trigger.md)).
 - `adapter_count` — число DALI-адаптеров, фиксируется при загрузке.
 - `controller_id` — установка: `controller_id` из
   [`settings-home-assistant.md`](settings-home-assistant.md), общий у пары

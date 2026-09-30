@@ -123,3 +123,4 @@ pub use commands::{
 };
 pub use commands::HomeAssistantDiscoveryPublishCommand;
 pub use events::{HomeAssistantDiscoveryPublishedEvent, HomeAssistantSettingsChangedEvent};
+pub use events::{MqttRuleMessageEvent, MQTT_RULE_PAYLOAD_BYTES};

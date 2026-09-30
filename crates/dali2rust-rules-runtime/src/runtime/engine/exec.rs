@@ -759,6 +759,7 @@ pub(crate) fn record_effect_chain(vol: &mut Volatile, effect: &Effect, depth: u3
         Effect::HclResume { target } | Effect::HclHold { target } => {
             push(Some(ChainKey::Hcl(*target)));
         }
+        Effect::MqttPublish { topic, .. } => push(Some(ChainKey::BrokerTopic(topic.clone()))),
         _ => {}
     }
 }

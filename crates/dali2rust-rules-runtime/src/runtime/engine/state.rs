@@ -22,16 +22,17 @@ pub(crate) struct EventCtx {
     pub source: Option<(u8, u8, u8)>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ChainKey {
     Lamp(u8, u16),
     Group(u8, u16),
     AdapterWide(u8),
     Scene(u8),
     Hcl(HclTargetKey),
+    BrokerTopic(String),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct ChainEntry {
     pub key: ChainKey,
     pub depth: u32,

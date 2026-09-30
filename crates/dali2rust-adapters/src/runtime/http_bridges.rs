@@ -99,6 +99,26 @@ impl dali2rust_api::http::rules_state::RulesHttpState for RulesHttpBridge {
     }
 }
 
+pub(crate) struct RuleTopicsBridge {
+    store: std::sync::Arc<dali2rust_rules_runtime::RulesStore>,
+}
+
+impl RuleTopicsBridge {
+    pub(crate) fn new(store: std::sync::Arc<dali2rust_rules_runtime::RulesStore>) -> Self {
+        Self { store }
+    }
+}
+
+impl dali2rust_mqtt_runtime::RuleTopicsReadPort for RuleTopicsBridge {
+    fn rule_topics_generation(&self) -> u32 {
+        self.store.generation()
+    }
+
+    fn rule_topics(&self) -> Vec<String> {
+        self.store.mqtt_topics()
+    }
+}
+
 pub(crate) struct RegistryHttpPorts {
     pub read_port: Arc<dyn RegistryReadPort>,
     pub input_device_state: Arc<dyn dali2rust_api::http::input_device_state::InputDeviceHttpState>,
@@ -384,6 +404,7 @@ impl dali2rust_api::http::handlers::controller::ControllerSummarySource for Cont
             ha_enabled: view.enabled,
             installation_id: view.controller_id,
             ha_connected: self.counters.is_connected(),
+            ha_own_topics_refused: self.counters.own_topics_refused(),
             mac: link.and_then(|l| l.hardware_address()),
             hostname: link.and_then(|l| l.hostname()),
             ipv4: link.and_then(|l| l.status().ipv4),
@@ -397,6 +418,11 @@ fn stats_mqtt_dto(c: &dali2rust_mqtt_runtime::MqttCounters) -> StatsMqttDto {
         connected: c.is_connected(),
         publishes_total: M::load(&c.publishes_total),
         publish_failures_total: M::load(&c.publish_failures_total),
+        rule_messages_total: M::load(&c.rule_messages_total),
+        rule_messages_coalesced_total: M::load(&c.rule_messages_coalesced_total),
+        rule_messages_lost_total: M::load(&c.rule_messages_lost_total),
+        subscriptions_refused_total: M::load(&c.subscriptions_refused_total),
+        own_topics_refused_total: M::load(&c.own_topics_refused_total),
     }
 }
 

@@ -2,7 +2,7 @@ use crate::action::{Action, FlowAction, HclAction, SceneAction, StateAction};
 use crate::condition::{Condition, VarOperand};
 use crate::error::ModelError;
 use crate::rule::{DefBlock, Rule, RuleSet};
-use crate::trigger::Trigger;
+use crate::trigger::{distinct_mqtt_topics, Trigger};
 use crate::value::ValueExpr;
 
 pub const MAX_RULES: usize = 64;
@@ -19,7 +19,11 @@ pub const MAX_NAME_BYTES: usize = 48;
 pub const MAX_VAR_TEXT_BYTES: usize = 16;
 pub const MAX_MQTT_TOPIC_BYTES: usize = 48;
 pub const MAX_MQTT_PAYLOAD_BYTES: usize = 48;
+pub const MAX_MQTT_TRIGGER_TOPICS: usize = 8;
 pub const MAX_SCHEDULE_ID_BYTES: usize = 32;
+const UNICODE_NONCHARACTER_BLOCK: core::ops::RangeInclusive<u32> = 0xFDD0..=0xFDEF;
+const UNICODE_PLANE_OFFSET_MASK: u32 = 0xFFFF;
+const UNICODE_FIRST_PLANE_END_NONCHARACTER: u32 = 0xFFFE;
 pub const MAX_RULES_SOURCE_BYTES: usize = 12240;
 pub const MIN_EVERY_PERIOD_MS: u32 = 1000;
 pub const MAX_SCENE_CYCLE_ENTRIES: usize = 16;
@@ -59,6 +63,7 @@ pub fn validate(set: &RuleSet) -> Result<(), ModelError> {
     check_unique_names(set)?;
     check_block_references(set)?;
     check_rule_references(set)?;
+    check_mqtt_topic_count(set)?;
     check_stat_names(set)?;
     for block in &set.blocks {
         check_block_shape(block)?;
@@ -218,13 +223,61 @@ fn check_rule_shape(rule: &Rule) -> Result<(), ModelError> {
 
 fn check_triggers(rule: &Rule) -> Result<(), ModelError> {
     for trigger in &rule.triggers {
-        if let Trigger::Every { period_ms } = trigger {
-            if period_ms.0 < MIN_EVERY_PERIOD_MS {
+        match trigger {
+            Trigger::Every { period_ms } if period_ms.0 < MIN_EVERY_PERIOD_MS => {
                 return Err(ModelError::EveryPeriodTooShort {
                     rule: rule.name.clone(),
                     period_ms: period_ms.0,
                 });
             }
+            Trigger::MqttMessage { topic, payload } => {
+                check_mqtt_trigger(&rule.name, topic, payload.as_deref())?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+pub fn mqtt_topic_is_exact(topic: &str) -> bool {
+    !topic.is_empty() && !topic.chars().any(refused_in_mqtt_topic)
+}
+
+fn refused_in_mqtt_topic(c: char) -> bool {
+    let code = u32::from(c);
+    matches!(c, '+' | '#')
+        || c.is_control()
+        || UNICODE_NONCHARACTER_BLOCK.contains(&code)
+        || code & UNICODE_PLANE_OFFSET_MASK >= UNICODE_FIRST_PLANE_END_NONCHARACTER
+}
+
+fn check_mqtt_topic(owner: &str, topic: &str) -> Result<(), ModelError> {
+    if !mqtt_topic_is_exact(topic) {
+        return Err(ModelError::MqttTopicNotExact { rule: owner.into(), topic: topic.into() });
+    }
+    if topic.len() > MAX_MQTT_TOPIC_BYTES {
+        return Err(ModelError::MqttTopicTooLong { rule: owner.into(), bytes: topic.len() });
+    }
+    Ok(())
+}
+
+fn check_mqtt_payload(owner: &str, payload: &str) -> Result<(), ModelError> {
+    if payload.len() > MAX_MQTT_PAYLOAD_BYTES {
+        return Err(ModelError::MqttPayloadTooLong { rule: owner.into(), bytes: payload.len() });
+    }
+    Ok(())
+}
+
+fn check_mqtt_trigger(rule: &str, topic: &str, payload: Option<&str>) -> Result<(), ModelError> {
+    check_mqtt_topic(rule, topic)?;
+    payload.map_or(Ok(()), |literal| check_mqtt_payload(rule, literal))
+}
+
+fn check_mqtt_topic_count(set: &RuleSet) -> Result<(), ModelError> {
+    for (index, rule) in set.rules.iter().enumerate() {
+        let count = distinct_mqtt_topics(set.rules[..=index].iter().flat_map(|r| &r.triggers)).len();
+        if count > MAX_MQTT_TRIGGER_TOPICS {
+            return Err(ModelError::TooManyMqttTopics { rule: rule.name.clone(), count });
         }
     }
     Ok(())
@@ -307,11 +360,9 @@ fn check_state_payload(owner: &str, state: &StateAction) -> Result<(), ModelErro
         {
             Err(ModelError::VarTextTooLong { rule: owner.into(), text: text.clone() })
         }
-        StateAction::MqttPublish { topic, .. } if topic.len() > MAX_MQTT_TOPIC_BYTES => {
-            Err(ModelError::MqttTopicTooLong { rule: owner.into(), bytes: topic.len() })
-        }
-        StateAction::MqttPublish { payload, .. } if payload.len() > MAX_MQTT_PAYLOAD_BYTES => {
-            Err(ModelError::MqttPayloadTooLong { rule: owner.into(), bytes: payload.len() })
+        StateAction::MqttPublish { topic, payload, .. } => {
+            check_mqtt_topic(owner, topic)?;
+            check_mqtt_payload(owner, payload)
         }
         _ => Ok(()),
     }

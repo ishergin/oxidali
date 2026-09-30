@@ -12,7 +12,7 @@ use dali2rust_domain::registry::{
     HomeAssistantSettingsReadPort, HomeAssistantSettingsView,
 };
 use dali2rust_mqtt_runtime::{
-    spawn_mqtt_worker, MockMqttClient, MqttCounters, MqttWorkerPorts,
+    spawn_mqtt_worker, MockMqttClient, MockRuleTopics, MqttCounters, MqttWorkerPorts,
     MQTT_WORKER_HANDLED_COMMANDS, MQTT_WORKER_HANDLED_EVENTS,
 };
 
@@ -216,8 +216,11 @@ pub fn enabled_settings() -> HomeAssistantSettingsView {
 
 pub struct Harness {
     pub mock: Arc<MockMqttClient>,
+    #[allow(dead_code, reason = "not every test file publishes on the bus")]
     pub publisher: BusPublisher,
     pub counters: Arc<MqttCounters>,
+    #[allow(dead_code, reason = "one binary per test file; not every file names rule topics")]
+    pub rule_topics: Arc<MockRuleTopics>,
     #[allow(dead_code, reason = "holds the settings port so a test can flip it live")]
     pub settings: Arc<StubSettings>,
     #[allow(dead_code, reason = "not every test file asserts on published commands")]
@@ -252,6 +255,7 @@ pub fn spawn_bridge_with_config(
     let (mock, bundle) = MockMqttClient::bundle();
     let link = bundle.client.link();
     let counters = Arc::new(MqttCounters::default());
+    let rule_topics = Arc::new(MockRuleTopics::default());
     let worker = spawn_mqtt_worker(
         ev_rx,
         bundle.client,
@@ -269,12 +273,14 @@ pub fn spawn_bridge_with_config(
             version: "test",
             adapter_count: 1,
             role: Arc::new(ActiveRole),
+            rule_topics: Arc::clone(&rule_topics) as _,
         },
     );
     Harness {
         mock,
         publisher,
         counters,
+        rule_topics,
         settings,
         cmd_rx,
         ev_obs_rx,

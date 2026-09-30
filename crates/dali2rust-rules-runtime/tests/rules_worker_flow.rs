@@ -1709,6 +1709,59 @@ fn an_id_wider_than_its_bus_field_fails_its_effect_instead_of_narrowing() {
     );
 }
 
+const MQTT_DOC: &str = "rule \"вечер\" {\n  when mqtt \"home/scene\" is \"evening\"\n  do lamp(6).level(33)\n}\nrule \"утро\" {\n  when mqtt \"home/scene\" is \"morning\"\n  do lamp(6).level(66)\n}\n";
+
+fn rule_message(topic: &str, payload: &[u8]) -> dali2rust_contracts::msg::MqttRuleMessageEvent {
+    let mut bytes = dali2rust_contracts::msg::FixedItems::new();
+    for byte in payload {
+        bytes.push(*byte).expect("the fixture payload fits the frame");
+    }
+    dali2rust_contracts::msg::MqttRuleMessageEvent {
+        topic: dali2rust_contracts::msg::fixed_text_48(topic),
+        payload: bytes,
+        truncated: false,
+    }
+}
+
+#[test]
+fn a_broker_message_event_fires_the_rule_its_payload_names() {
+    let h = harness("rules-mqtt-message");
+    publish_document(&h, 81, MQTT_DOC, 0);
+    let sig = recv_signal(&h, 81);
+    assert!(sig.error.is_none(), "the document must compile: {sig:?}");
+    wait_revision(&h.store, 1);
+
+    publish_bus_event(&h, 82, rule_message("home/scene", b"morning"));
+    let (_, level) = recv_setpoint(&h).expect("the morning message must fire its rule");
+    assert_eq!(level, Some(66), "only the rule naming this payload fires");
+    publish_bus_event(&h, 83, rule_message("home/scene", b"evening"));
+    let (_, level) = recv_setpoint(&h).expect("the evening message must fire its rule");
+    assert_eq!(level, Some(33));
+}
+
+#[test]
+fn a_slice_reload_moves_the_topic_generation_even_at_the_same_revision() {
+    let h = harness("rules-mqtt-generation");
+    let hydrated = h.store.generation();
+    publish_document(&h, 91, MQTT_DOC, 0);
+    assert!(recv_signal(&h, 91).error.is_none());
+    wait_revision(&h.store, 1);
+    let committed = h.store.generation();
+    assert_ne!(committed, hydrated, "a commit replaces the document the bridge reads");
+
+    publish_bus_event(
+        &h,
+        92,
+        dali2rust_contracts::msg::RegistrySliceReloadedEvent {
+            slice_name: dali2rust_contracts::msg::fixed_text_32("rules"),
+        },
+    );
+    let store = Arc::clone(&h.store);
+    dali2rust_test_support::wait_until(move || store.generation() != committed, COMMAND_WAIT);
+    assert_eq!(h.store.revision(), 1, "the reloaded document keeps its revision");
+    assert_eq!(h.store.mqtt_topics(), ["home/scene"]);
+}
+
 const SCHEDULE_ID_CAPACITY: usize = 32;
 
 fn schedule_switch_document(fitting: &str) -> String {

@@ -135,6 +135,7 @@ rule "boot" {
 rule "watchdog" {
   when rule("buttons") fails
   when http trigger
+  when mqtt "dali2rust/mode" is "away"
   if var("d") == event.device and var("i") == event.instance
   do lamp("коридор").on(level=10)
 }

@@ -68,6 +68,11 @@ impl FunnelState {
             BusEventPayload::RedundancyTransitionEvent(ev) => {
                 self.controller_edge_from(ev.now_active)
             }
+            BusEventPayload::MqttRuleMessageEvent(ev) => vec![EngineInput::MqttMessage {
+                topic: ev.topic.as_str(),
+                payload: ev.payload.as_slice(),
+                truncated: ev.truncated,
+            }],
             _ => Vec::new(),
         }
     }

@@ -1,6 +1,6 @@
 use crate::action::Action;
 use crate::condition::Condition;
-use crate::trigger::Trigger;
+use crate::trigger::{distinct_mqtt_topics, Trigger};
 use serde::Serialize;
 
 pub const DEFAULT_COOLDOWN_INPUT_MS: u32 = 0;
@@ -53,6 +53,10 @@ impl RuleSet {
 
     pub fn rule(&self, name: &str) -> Option<&Rule> {
         self.rules.iter().find(|r| r.name == name)
+    }
+
+    pub fn mqtt_topics(&self) -> Vec<&str> {
+        distinct_mqtt_topics(self.rules.iter().flat_map(|rule| &rule.triggers))
     }
 
     pub fn set_rule_enabled(&mut self, name: &str, enabled: bool) -> Option<()> {

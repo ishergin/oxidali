@@ -961,6 +961,126 @@ fn an_idle_engine_parks_and_an_empty_document_matches_nothing() {
     assert_eq!(eng.counters().rules_loaded, 0);
 }
 
+const MQTT_SCENES: &str = "rule \"a-вечер\" {\n  when mqtt \"home/scene\" is \"evening\"\n  do broadcast.off()\n}\nrule \"b-любой\" {\n  when mqtt \"home/scene\"\n  do log(\"scene\")\n}\n";
+
+fn mqtt<'a>(topic: &'a str, payload: &'a [u8], truncated: bool) -> EngineInput<'a> {
+    EngineInput::MqttMessage { topic, payload, truncated }
+}
+
+fn fired(out: &[dali2rust_rules_runtime::ActivationOutcome]) -> Vec<&str> {
+    out.iter().map(|o| o.rule.as_str()).collect()
+}
+
+#[test]
+fn a_broker_message_fires_the_rules_on_its_topic_by_payload() {
+    let mut eng = engine(MQTT_SCENES, 0);
+    let out = eng.handle(mqtt("home/scene", b"evening", false), &world(1_000));
+    assert_eq!(fired(&out), ["a-вечер", "b-любой"]);
+    assert_eq!(out[0].trigger_kind, "mqtt_message");
+    assert!(matches!(out[0].effects[0], Effect::Light { verb: LightVerb::Off, .. }));
+
+    let out = eng.handle(mqtt("home/scene", b"morning", false), &world(2_000));
+    assert_eq!(fired(&out), ["b-любой"], "another payload wakes only the payload-less trigger");
+
+    let out = eng.handle(mqtt("home/scenery", b"evening", false), &world(3_000));
+    assert!(out.is_empty(), "a topic is one exact name, not a prefix: {out:?}");
+}
+
+#[test]
+fn a_truncated_payload_never_equals_a_literal_it_starts_with() {
+    let literal = "a".repeat(dali2rust_rules_model::limits::MAX_MQTT_PAYLOAD_BYTES);
+    let source = format!(
+        "rule \"a-точно\" {{\n  when mqtt \"home/scene\" is \"{literal}\"\n  do broadcast.off()\n}}\nrule \"b-любой\" {{\n  when mqtt \"home/scene\"\n  do log(\"scene\")\n}}\n"
+    );
+    let mut eng = engine(&source, 0);
+    let out = eng.handle(mqtt("home/scene", literal.as_bytes(), true), &world(1_000));
+    assert_eq!(fired(&out), ["b-любой"]);
+    let out = eng.handle(mqtt("home/scene", literal.as_bytes(), false), &world(2_000));
+    assert_eq!(fired(&out), ["a-точно", "b-любой"]);
+}
+
+#[test]
+fn a_numeric_payload_is_the_event_value_and_anything_else_is_unevaluable() {
+    let source = "rule \"уровень\" {\n  when mqtt \"home/level\"\n  do broadcast.level(event.value)\n}\n";
+    let mut eng = engine(source, 0);
+    let out = eng.handle(mqtt("home/level", b"128", false), &world(1_000));
+    assert!(
+        matches!(out[0].effects[..], [Effect::Light { verb: LightVerb::Level { level: 128 }, .. }]),
+        "{out:?}"
+    );
+    assert_eq!(out[0].partial, None);
+    for (at, payload) in [(2_000, &b"evening"[..]), (3_000, b"12.5"), (4_000, b" 7"), (5_000, b"2147483648")] {
+        let out = eng.handle(mqtt("home/level", payload, false), &world(at));
+        assert_eq!(
+            out[0].partial,
+            Some(PartialReason::ConditionUnevaluable),
+            "{:?}: {out:?}",
+            String::from_utf8_lossy(payload)
+        );
+        assert!(out[0].effects.is_empty(), "{out:?}");
+    }
+    let out = eng.handle(mqtt("home/level", b"128", true), &world(6_000));
+    assert_eq!(out[0].partial, Some(PartialReason::ConditionUnevaluable), "a cut number is no number");
+}
+
+#[test]
+fn the_rule_payload_ceiling_is_the_bus_frame() {
+    assert_eq!(
+        dali2rust_rules_model::limits::MAX_MQTT_PAYLOAD_BYTES,
+        dali2rust_contracts::msg::MQTT_RULE_PAYLOAD_BYTES,
+        "a literal longer than the frame could never match, a shorter one would be cut short"
+    );
+    assert!(
+        dali2rust_rules_model::limits::MAX_MQTT_TOPIC_BYTES
+            <= dali2rust_contracts::msg::FixedText48::new().capacity(),
+        "every trigger topic fits the event's topic field"
+    );
+}
+
+fn chain_refused(out: &[dali2rust_rules_runtime::ActivationOutcome]) -> bool {
+    out.iter().any(|o| o.partial == Some(PartialReason::ChainDepth))
+}
+
+#[test]
+fn a_rule_that_publishes_to_its_own_topic_stops_at_the_chain_depth() {
+    let source = "rule \"эхо\" cooldown 0ms {\n  when mqtt \"home/echo\"\n  do mqtt.publish(\"home/echo\", \"x\")\n}\n";
+    let mut eng = engine(source, 0);
+    for step in 0..=u64::from(dali2rust_rules_runtime::runtime::engine::MAX_CHAIN_DEPTH) {
+        let out = eng.handle(mqtt("home/echo", b"x", false), &world(1_000 + step * 100));
+        assert!(!chain_refused(&out), "turn {step} of the loop still fires: {out:?}");
+    }
+    let out = eng.handle(mqtt("home/echo", b"x", false), &world(1_600));
+    assert!(chain_refused(&out), "the loop ends at the chain depth: {out:?}");
+    let quiet = 1_600 + dali2rust_rules_runtime::runtime::engine::CHAIN_WINDOW_MS + 1;
+    let out = eng.handle(mqtt("home/echo", b"x", false), &world(quiet));
+    assert!(!chain_refused(&out), "a message after the window starts a fresh chain: {out:?}");
+}
+
+#[test]
+fn a_light_rule_on_an_external_topic_never_counts_its_own_messages_as_a_chain() {
+    let source = "rule \"пульт\" cooldown 0ms {\n  when mqtt \"remote/dim\"\n  do broadcast.level(event.value)\n}\n";
+    let mut eng = engine(source, 0);
+    for step in 0..20u64 {
+        let out = eng.handle(mqtt("remote/dim", b"100", false), &world(1_000 + step * 400));
+        assert_eq!(out.len(), 1, "message {step} fires: {out:?}");
+        assert_eq!(out[0].partial, None, "message {step} is no link of a chain: {out:?}");
+    }
+}
+
+#[test]
+fn a_publish_chains_only_the_messages_on_its_own_topic() {
+    let source = "rule \"эхо\" cooldown 0ms {\n  when mqtt \"home/echo\"\n  do mqtt.publish(\"home/echo\", \"x\")\n}\n\
+                  rule \"пульт\" cooldown 0ms {\n  when mqtt \"remote/dim\"\n  do broadcast.level(event.value)\n}\n";
+    let mut eng = engine(source, 0);
+    for step in 0..=u64::from(dali2rust_rules_runtime::runtime::engine::MAX_CHAIN_DEPTH) {
+        let _ = eng.handle(mqtt("home/echo", b"x", false), &world(1_000 + step * 100));
+    }
+    let out = eng.handle(mqtt("remote/dim", b"100", false), &world(1_550));
+    assert_eq!(out[0].partial, None, "the echo's depth is not the remote's: {out:?}");
+    let out = eng.handle(mqtt("home/echo", b"x", false), &world(1_600));
+    assert!(chain_refused(&out), "while the echo itself is at its limit: {out:?}");
+}
+
 fn stat_counts(eng: &Engine) -> Vec<(String, u32)> {
     eng.stat_counts().map(|(name, count)| (name.to_owned(), count)).collect()
 }

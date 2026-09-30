@@ -30,6 +30,15 @@ pub(crate) fn worst_text48() -> FixedText48 {
     fixed_text_48("012345678901234567890123456789012345678901234567")
 }
 
+pub(crate) fn worst_mqtt_rule_payload(
+) -> crate::msg::FixedItems<u8, { crate::msg::events::MQTT_RULE_PAYLOAD_BYTES }> {
+    let mut bytes = crate::msg::FixedItems::new();
+    for _ in 0..crate::msg::events::MQTT_RULE_PAYLOAD_BYTES {
+        let _ = bytes.push(u8::MAX);
+    }
+    bytes
+}
+
 pub(crate) fn worst_compact_error_payload() -> CompactErrorPayload {
     CompactErrorPayload {
         code: ErrorCode::ExecutionFailed,

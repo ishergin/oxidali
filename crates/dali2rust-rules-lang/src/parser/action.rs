@@ -4,10 +4,10 @@ use crate::parser::action_light::{self, call_args, ArgBag, ArgValue};
 use crate::parser::condition;
 use crate::parser::expr;
 use crate::parser::refs;
-use crate::parser::trigger::quoted_ref;
+use crate::parser::trigger::{mqtt_payload, mqtt_topic, quoted_ref};
 use dali2rust_rules_model::limits::{
-    stat_name_is_printable, MAX_INSTANCE_GROUP, MAX_MQTT_PAYLOAD_BYTES, MAX_MQTT_TOPIC_BYTES,
-    MAX_REPEAT, MAX_SCENE, MAX_SCENE_CYCLE_ENTRIES, MAX_SCHEDULE_ID_BYTES, MAX_VAR_TEXT_BYTES,
+    stat_name_is_printable, MAX_INSTANCE_GROUP, MAX_REPEAT, MAX_SCENE, MAX_SCENE_CYCLE_ENTRIES,
+    MAX_SCHEDULE_ID_BYTES, MAX_VAR_TEXT_BYTES,
 };
 use dali2rust_rules_model::{
     Action, ActionKind, CompileError, DurationMs, FlowAction, HclAction, InputAction, LightTarget,
@@ -449,15 +449,9 @@ fn mqtt_action(c: &mut Cursor<'_>) -> Result<Action, CompileError> {
     c.expect(&TokenKind::Dot, "`.publish`")?;
     c.expect_kw("publish")?;
     c.expect(&TokenKind::LParen, "`(`")?;
-    let (topic, tpos) = c.expect_string("mqtt topic")?;
-    if topic.len() > MAX_MQTT_TOPIC_BYTES {
-        return Err(tpos.err(format!("mqtt topic exceeds {MAX_MQTT_TOPIC_BYTES} bytes")));
-    }
+    let topic = mqtt_topic(c)?;
     c.expect(&TokenKind::Comma, "`,` and a payload")?;
-    let (payload, ppos) = c.expect_string("mqtt payload")?;
-    if payload.len() > MAX_MQTT_PAYLOAD_BYTES {
-        return Err(ppos.err(format!("mqtt payload exceeds {MAX_MQTT_PAYLOAD_BYTES} bytes")));
-    }
+    let payload = mqtt_payload(c)?;
     let retain = mqtt_retain(c)?;
     c.expect(&TokenKind::RParen, "`)`")?;
     Ok(Action::State(StateAction::MqttPublish { topic, payload, retain }))

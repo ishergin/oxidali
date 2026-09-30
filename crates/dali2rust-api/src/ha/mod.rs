@@ -77,4 +77,4 @@ pub use discovery::{
 };
 pub use command::{caps_accept, caps_accept_for_group, ha_light_command_to_setpoint};
 pub use state::{input_event_state_payload, group_state_payload, light_state_payload};
-pub use topics::{is_topic_safe, HaCommandTarget, HaTopics};
+pub use topics::{is_topic_safe, HaCommandTarget, HaTopics, COMMAND_SUBSCRIPTIONS};

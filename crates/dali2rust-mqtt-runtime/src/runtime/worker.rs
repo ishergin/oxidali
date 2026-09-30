@@ -17,22 +17,27 @@ use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, BusSubscriberRx, 
 use dali2rust_contracts::msg::{
     BusEventPayload, DaliRecallSceneCommand, DaliSetTargetStateCommand, Origin,
 };
-use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
+use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::registry::{
     HaPublishReadPort, HomeAssistantSecretReadPort, HomeAssistantSettingsApplyWatchPort,
     HomeAssistantSettingsReadPort, HomeAssistantSettingsView,
 };
+use dali2rust_platform::liveness::monotonic_ms;
 use dali2rust_platform::mqtt::{
     MqttClient, MqttConnectionState, MqttIncoming, MqttLink, MqttQos,
 };
 
 use dali2rust_api::coalesce::BurstCoalescer;
 use crate::counters::MqttCounters;
+use crate::runtime::rule_topics::{
+    self, BridgeFilters, Paced, RuleFollow, RuleTopicCache, RuleTopicsReadPort,
+};
 use crate::runtime::session::{
     announce_and_subscribe, announce_offline, qos_of, session_config, topics_of,
 };
+use crate::runtime::subscriptions::Subscriptions;
 
-const WAIT: Duration = Duration::from_millis(100);
+const WAIT_MS: u32 = 100;
 const PARK: Duration = Duration::from_millis(500);
 
 
@@ -55,12 +60,15 @@ pub struct MqttWorkerPorts {
     pub version: &'static str,
     pub adapter_count: u8,
     pub role: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
+    pub rule_topics: Arc<dyn RuleTopicsReadPort>,
 }
 
 #[derive(Default)]
 struct Session {
     generation: u32,
-    subscriptions_expected: u32,
+    subscriptions: Subscriptions,
+    filters: BridgeFilters,
+    rule_topics: RuleFollow,
     lamp_config_hashes: HashMap<(u8, u8), u64>,
     input_config_hashes: HashMap<(u8, u8, u8), u64>,
     lamp_availability: HashMap<(u8, u8), bool>,
@@ -71,10 +79,12 @@ struct Session {
 }
 
 impl Session {
-    fn begin(&mut self, generation: u32, dialled_with: u64) {
+    fn begin(&mut self, generation: u32, dialled_with: u64, topics: &HaTopics) {
         let Self {
             generation: gen_slot,
-            subscriptions_expected,
+            subscriptions,
+            filters,
+            rule_topics,
             dialled_with: dialled_slot,
             lamp_config_hashes,
             input_config_hashes,
@@ -84,7 +94,9 @@ impl Session {
             announced_selects,
         } = self;
         *gen_slot = generation;
-        *subscriptions_expected = 0;
+        *subscriptions = Subscriptions::default();
+        *filters = BridgeFilters::of(topics);
+        *rule_topics = RuleFollow::default();
         *dialled_slot = dialled_with;
         lamp_config_hashes.clear();
         input_config_hashes.clear();
@@ -244,6 +256,7 @@ struct WorkerLoopState {
     rule_budget: RulePublishBudget,
     config: SettingsCache,
     pacer: DialPacer,
+    rules: RuleTopicCache,
 }
 
 #[inline(never)]
@@ -259,7 +272,7 @@ fn run(
     ports: MqttWorkerPorts,
 ) {
     let mut state = new_loop_state();
-    let WorkerLoopState { burst, session, topics, job, rule_budget, config, pacer } = &mut *state;
+    let WorkerLoopState { burst, session, topics, job, rule_budget, config, pacer, rules } = &mut *state;
     WORKER_STACK.note("start");
     loop {
         config.refresh(&ports);
@@ -269,32 +282,21 @@ fn run(
         } = &*config;
         if !ready(settings, ports.role.as_ref()) {
             discard_bus(&ev_rx, &ports);
-            stand_down(&mut client, session, topics, &ports, &link, job);
+            stand_down(&mut client, session, topics, &ports, &link, job, rules);
             WORKER_STACK.note("stand-down");
             continue;
         }
         restart_if_settings_changed(&mut client, session, topics, settings, password, &ports);
-        if !ensure_session(&mut client, session, topics, job, settings, password, pacer, &ports)
+        if !ensure_session(&mut client, session, topics, job, settings, password, pacer, &ports, rules)
         {
             park_after_failed_dial(&ev_rx, job, pacer, &link, &ports);
             continue;
         }
         WORKER_STACK.note("session");
-        if !serve_turn(
-            ServeTurn {
-                ev_rx: &ev_rx,
-                incoming: &incoming,
-                link: &link,
-                ports: &ports,
-                settings,
-            },
-            burst,
-            &mut client,
-            session,
-            topics,
-            job,
-            rule_budget,
-        ) {
+        let cx = ServeTurn {
+            ev_rx: &ev_rx, incoming: &incoming, link: &link, ports: &ports, settings, rules: &mut *rules,
+        };
+        if !serve_turn(cx, burst, &mut client, session, topics, job, rule_budget) {
             return;
         }
     }
@@ -320,11 +322,12 @@ struct ServeTurn<'a> {
     link: &'a MqttLink,
     ports: &'a MqttWorkerPorts,
     settings: &'a HomeAssistantSettingsView,
+    rules: &'a mut RuleTopicCache,
 }
 
 #[inline(never)]
 fn serve_turn(
-    cx: ServeTurn<'_>,
+    mut cx: ServeTurn<'_>,
     burst: &mut BurstCoalescer<BusFrame>,
     client: &mut Box<dyn MqttClient>,
     session: &mut Session,
@@ -332,7 +335,7 @@ fn serve_turn(
     job: &mut Option<DiscoveryJob>,
     rule_budget: &mut RulePublishBudget,
 ) -> bool {
-    if !service_inbound(cx.incoming, topics, cx.ports) {
+    if !serve_inbound(&mut cx, topics, session) {
         return false;
     }
     WORKER_STACK.note("inbound");
@@ -388,10 +391,30 @@ fn terminal_signal(
 pub const MQTT_WORKER_REQUIRED_EVENTS: &[&str] = &[
     "HomeAssistantDiscoveryPublishedEvent",
     "OperationWorkerSignalEvent",
+    "MqttRuleMessageEvent",
 ];
 
 fn publish_event<P>(ports: &MqttWorkerPorts, correlation_id: u64, payload: P)
 where
+    P: Into<dali2rust_contracts::msg::BusEventPayload>,
+{
+    publish_required_event(
+        ports,
+        correlation_id,
+        payload,
+        dali2rust_bus::RequiredPublishCounters::new(
+            &ports.counters.terminal_event_publish_retried_total,
+            &ports.counters.terminal_event_publish_failed_total,
+        ),
+    );
+}
+
+fn publish_required_event<P>(
+    ports: &MqttWorkerPorts,
+    correlation_id: u64,
+    payload: P,
+    counters: dali2rust_bus::RequiredPublishCounters<'_>,
+) where
     P: Into<dali2rust_contracts::msg::BusEventPayload>,
 {
     let envelope = dali2rust_contracts::bus::event_envelope(
@@ -408,10 +431,7 @@ where
         &dali2rust_bus::REQUIRED_PUBLISH_BACKOFF_MS,
         dali2rust_bus::REQUIRED_PUBLISH_UNCAPPED,
         "mqtt-bridge",
-        dali2rust_bus::RequiredPublishCounters::new(
-            &ports.counters.terminal_event_publish_retried_total,
-            &ports.counters.terminal_event_publish_failed_total,
-        ),
+        counters,
     );
 }
 
@@ -740,7 +760,9 @@ fn stand_down(
     ports: &MqttWorkerPorts,
     link: &Arc<MqttLink>,
     job: &mut Option<DiscoveryJob>,
+    rules: &mut RuleTopicCache,
 ) {
+    end_rule_session(rules, ports);
     if let Some(workflow) = job.take().and_then(|stalled| stalled.workflow) {
         refuse_command(ports, workflow);
     }
@@ -776,20 +798,83 @@ fn fail_job_after_dial_streak(
 }
 
 #[inline(never)]
-fn service_inbound(
-    incoming: &Receiver<MqttIncoming>,
-    topics: &HaTopics,
-    ports: &MqttWorkerPorts,
-) -> bool {
-    match incoming.recv_timeout(WAIT) {
+fn serve_inbound(cx: &mut ServeTurn<'_>, topics: &HaTopics, session: &Session) -> bool {
+    let now_ms = monotonic_ms();
+    for message in cx.rules.pacer.take_due(now_ms) {
+        publish_rule_message(cx.ports, &message);
+    }
+    let wait = Duration::from_millis(u64::from(cx.rules.pacer.wait_ms(now_ms, WAIT_MS)));
+    match cx.incoming.recv_timeout(wait) {
         Ok(message) => {
-            bump(&ports.counters.commands_received_total);
-            handle_command(topics, ports, &message);
+            route_inbound(cx, topics, session, message, monotonic_ms());
             true
         }
         Err(RecvTimeoutError::Timeout) => true,
         Err(RecvTimeoutError::Disconnected) => false,
     }
+}
+
+fn route_inbound(
+    cx: &mut ServeTurn<'_>,
+    topics: &HaTopics,
+    session: &Session,
+    message: MqttIncoming,
+    now_ms: u32,
+) {
+    let for_rules = session.rule_topics.follows(&message.topic);
+    let for_commands = !for_rules || topics.parse_command_topic(&message.topic).is_some();
+    if message.session != session.generation {
+        drop_stale(cx, &message, for_rules, for_commands);
+        return;
+    }
+    if for_commands {
+        bump(&cx.ports.counters.commands_received_total);
+        handle_command(topics, cx.ports, &message);
+    }
+    if for_rules {
+        pace_rule_message(cx.rules, cx.ports, message, now_ms);
+    }
+}
+
+fn drop_stale(cx: &ServeTurn<'_>, message: &MqttIncoming, for_rules: bool, for_commands: bool) {
+    if for_rules && !message.retained {
+        bump(&cx.ports.counters.rule_messages_total);
+        bump(&cx.ports.counters.rule_messages_lost_total);
+    }
+    if for_commands {
+        cx.link.note_incoming_dropped();
+    }
+}
+
+#[inline(never)]
+fn pace_rule_message(
+    rules: &mut RuleTopicCache,
+    ports: &MqttWorkerPorts,
+    message: MqttIncoming,
+    now_ms: u32,
+) {
+    if message.retained {
+        return;
+    }
+    bump(&ports.counters.rule_messages_total);
+    match rules.pacer.offer(message, now_ms) {
+        Paced::Now(message) => publish_rule_message(ports, &message),
+        Paced::Held { superseded: true } => bump(&ports.counters.rule_messages_coalesced_total),
+        Paced::Held { superseded: false } => {}
+    }
+}
+
+#[inline(never)]
+fn publish_rule_message(ports: &MqttWorkerPorts, message: &MqttIncoming) {
+    publish_required_event(
+        ports,
+        CORRELATION_NONE,
+        rule_topics::message_event(message),
+        dali2rust_bus::RequiredPublishCounters {
+            retried: None,
+            failed: Some(&ports.counters.rule_messages_lost_total),
+        },
+    );
 }
 
 #[inline(never)]
@@ -827,8 +912,12 @@ fn ensure_session(
     password: &str,
     pacer: &mut DialPacer,
     ports: &MqttWorkerPorts,
+    rules: &mut RuleTopicCache,
 ) -> bool {
     let link = client.link();
+    if !link.is_connected() || link.session_generation() != session.generation {
+        end_rule_session(rules, ports);
+    }
     if !link.is_connected() {
         ports.counters.set_connected(false);
         if !dial(client, &link, settings, password, pacer, ports) {
@@ -836,28 +925,82 @@ fn ensure_session(
         }
     }
     pacer.established();
-    if link.session_generation() != session.generation {
-        let announced = topics_of(settings);
-        if let Err(e) = announce_and_subscribe(client.as_mut(), &announced) {
+    if link.session_generation() != session.generation
+        && !begin_session(client, &link, session, topics, job, settings, password, ports)
+    {
+        return false;
+    }
+    follow_rule_topics(client.as_mut(), session, rules, ports);
+    settle_subacks(&link, session, ports);
+    ports.counters.set_connected(
+        session.subscriptions.all_granted() && session.rule_topics.complete(rules.topics()),
+    );
+    true
+}
+
+#[allow(clippy::too_many_arguments, reason = "the loop's state is threaded, not rebuilt")]
+#[inline(never)]
+fn begin_session(
+    client: &mut Box<dyn MqttClient>,
+    link: &MqttLink,
+    session: &mut Session,
+    topics: &mut HaTopics,
+    job: &mut Option<DiscoveryJob>,
+    settings: &HomeAssistantSettingsView,
+    password: &str,
+    ports: &MqttWorkerPorts,
+) -> bool {
+    let announced = topics_of(settings);
+    let sent = match announce_and_subscribe(client.as_mut(), &announced) {
+        Ok(sent) => sent,
+        Err(e) => {
             log::warn!("mqtt: could not announce on a fresh session: {e:?}");
             announce_offline(client.as_mut(), &announced);
             return false;
         }
-        let subscriptions = u32::try_from(announced.command_subscriptions().len()).unwrap_or(u32::MAX);
-        *topics = announced;
-        session.begin(
-            link.session_generation(),
-            session_settings_fingerprint(settings, password),
-        );
-        session.subscriptions_expected = subscriptions;
-        plan_session_reannounce(job, ports, settings);
+    };
+    session.begin(
+        link.session_generation(),
+        session_settings_fingerprint(settings, password),
+        &announced,
+    );
+    for (filter, message_id) in &sent {
+        session.subscriptions.sent(filter, *message_id);
     }
-    if !ports.counters.is_connected()
-        && link.subscriptions_acked() >= session.subscriptions_expected
-    {
-        ports.counters.set_connected(true);
-    }
+    *topics = announced;
+    plan_session_reannounce(job, ports, settings);
     true
+}
+
+#[inline(never)]
+fn follow_rule_topics(
+    client: &mut dyn MqttClient,
+    session: &mut Session,
+    rules: &mut RuleTopicCache,
+    ports: &MqttWorkerPorts,
+) {
+    let lost = rules.refresh(ports.rule_topics.as_ref());
+    dali2rust_bus::worker_counters::bump_by(&ports.counters.rule_messages_lost_total, lost);
+    let refused =
+        session.rule_topics.follow(client, &mut session.subscriptions, rules.topics(), &session.filters);
+    dali2rust_bus::worker_counters::bump_by(&ports.counters.own_topics_refused_total, refused);
+    ports.counters.set_own_topics_refused(session.rule_topics.own());
+}
+
+fn end_rule_session(rules: &mut RuleTopicCache, ports: &MqttWorkerPorts) {
+    let lost = rules.pacer.clear();
+    dali2rust_bus::worker_counters::bump_by(&ports.counters.rule_messages_lost_total, lost);
+    ports.counters.set_own_topics_refused(&[]);
+}
+
+#[inline(never)]
+fn settle_subacks(link: &MqttLink, session: &mut Session, ports: &MqttWorkerPorts) {
+    for ack in link.take_subacks() {
+        if let Some(filter) = session.subscriptions.settle(ack) {
+            log::warn!("mqtt: the broker refused the subscription to {filter}");
+            bump(&ports.counters.subscriptions_refused_total);
+        }
+    }
 }
 
 #[inline(never)]
@@ -1761,22 +1904,24 @@ mod tests {
     fn test_ports() -> (MqttWorkerPorts, dali2rust_bus::BusHost) {
         let (host, publisher, ()) =
             dali2rust_bus::BusHost::spawn(dali2rust_bus::BusConfig::default(), |_reg| ());
-        (
-            MqttWorkerPorts {
-                publisher,
-                bus_id: BusId::default(),
-                correlation: Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
-                read_port: Arc::new(EmptyReadPort),
-                settings: Arc::new(FixedSettings),
-                settings_watch: Arc::new(StillWatch),
-                secret: Arc::new(NoSecret),
-                counters: Arc::new(MqttCounters::default()),
-                version: "test",
-                adapter_count: 1,
-                role: Arc::new(ActiveRole),
-            },
-            host,
-        )
+        (ports_on(publisher), host)
+    }
+
+    fn ports_on(publisher: BusPublisher) -> MqttWorkerPorts {
+        MqttWorkerPorts {
+            publisher,
+            bus_id: BusId::default(),
+            correlation: Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
+            read_port: Arc::new(EmptyReadPort),
+            settings: Arc::new(FixedSettings),
+            settings_watch: Arc::new(StillWatch),
+            secret: Arc::new(NoSecret),
+            counters: Arc::new(MqttCounters::default()),
+            version: "test",
+            adapter_count: 1,
+            role: Arc::new(ActiveRole),
+            rule_topics: Arc::new(crate::client::MockRuleTopics::default()),
+        }
     }
 
     struct ActiveRole;
@@ -1834,8 +1979,10 @@ mod tests {
         let mut topics = HaTopics::default();
         let mut job = None;
         let mut pacer = DialPacer::default();
+        let mut rules = RuleTopicCache::default();
         assert!(ensure_session(
-            &mut client, &mut session, &mut topics, &mut job, &settings, "", &mut pacer, &ports
+            &mut client, &mut session, &mut topics, &mut job, &settings, "", &mut pacer, &ports,
+            &mut rules,
         ));
         assert!(!mock.subscriptions().is_empty(), "the fresh session subscribed");
         assert!(
@@ -1844,9 +1991,91 @@ mod tests {
         );
         mock.release_subacks();
         assert!(ensure_session(
-            &mut client, &mut session, &mut topics, &mut job, &settings, "", &mut pacer, &ports
+            &mut client, &mut session, &mut topics, &mut job, &settings, "", &mut pacer, &ports,
+            &mut rules,
         ));
         assert!(ports.counters.is_connected(), "every SUBACK in: the gauge reads 1");
+    }
+
+    const RULE_MESSAGE_WAIT_PROOF_MS: u32 = 1_000;
+
+    struct Following {
+        ports: MqttWorkerPorts,
+        _host: dali2rust_bus::BusHost,
+        rules: RuleTopicCache,
+        published: BusSubscriberRx,
+    }
+
+    fn ports_following(topic: &str) -> Following {
+        let (host, publisher, published) =
+            dali2rust_bus::BusHost::spawn(dali2rust_bus::BusConfig::default(), |reg| {
+                reg.subscribe_events(8, &["MqttRuleMessageEvent"])
+            });
+        let mut ports = ports_on(publisher);
+        let followed = Arc::new(crate::client::MockRuleTopics::default());
+        followed.set(&[topic]);
+        ports.rule_topics = followed;
+        let mut rules = RuleTopicCache::default();
+        rules.refresh(ports.rule_topics.as_ref());
+        Following { ports, _host: host, rules, published }
+    }
+
+    fn pace_two_rule_messages(f: &mut Following, topic: &str) {
+        let now = monotonic_ms();
+        for payload in ["first", "held"] {
+            let message = MqttIncoming {
+                topic: topic.to_string(),
+                payload: payload.as_bytes().to_vec(),
+                retained: false,
+                session: 0,
+            };
+            pace_rule_message(&mut f.rules, &f.ports, message, now);
+        }
+    }
+
+    fn assert_one_lost_and_the_count_adds_up(f: &mut Following) {
+        let published = f.published.recv_timeout(Duration::from_secs(5)).is_ok();
+        assert!(published, "the first message went out at once");
+        let load = |counter: &std::sync::atomic::AtomicU32| MqttCounters::load(counter);
+        let c = &f.ports.counters;
+        let (total, coalesced, lost) =
+            (load(&c.rule_messages_total), load(&c.rule_messages_coalesced_total), load(&c.rule_messages_lost_total));
+        assert_eq!((total, coalesced, lost), (2, 0, 1));
+        assert_eq!(total, 1 + coalesced + lost, "total = published + coalesced + lost");
+        let later = monotonic_ms().wrapping_add(RULE_MESSAGE_WAIT_PROOF_MS);
+        assert!(f.rules.pacer.take_due(later).is_empty(), "the held message never goes out");
+    }
+
+    #[test]
+    fn a_message_held_when_the_session_ends_is_lost_and_never_reaches_the_next_session() {
+        let mut f = ports_following("home/scene");
+        pace_two_rule_messages(&mut f, "home/scene");
+        let (mock, _incoming) = MockMqttClient::new();
+        let mut client: Box<dyn MqttClient> = Box::new(MockMqttHandle::new(Arc::clone(&mock)));
+        let settings = HomeAssistantSettingsView {
+            enabled: true,
+            broker_host: "broker.example".to_string(),
+            ..HomeAssistantSettingsView::default()
+        };
+        let (mut session, mut topics, mut job) = (Session::default(), HaTopics::default(), None);
+        let mut pacer = DialPacer::default();
+        assert!(ensure_session(
+            &mut client, &mut session, &mut topics, &mut job, &settings, "", &mut pacer, &f.ports,
+            &mut f.rules,
+        ));
+        assert_one_lost_and_the_count_adds_up(&mut f);
+    }
+
+    #[test]
+    fn standing_down_loses_a_held_rule_message_with_a_count() {
+        let mut f = ports_following("home/scene");
+        pace_two_rule_messages(&mut f, "home/scene");
+        let (mock, _incoming) = MockMqttClient::new();
+        let mut client: Box<dyn MqttClient> = Box::new(MockMqttHandle::new(Arc::clone(&mock)));
+        let link = client.link();
+        let (mut session, mut job) = (Session::default(), None);
+        stand_down(&mut client, &mut session, &HaTopics::default(), &f.ports, &link, &mut job, &mut f.rules);
+        assert_one_lost_and_the_count_adds_up(&mut f);
     }
 
     #[test]
@@ -1866,6 +2095,7 @@ mod tests {
             &ports,
             &link,
             &mut job,
+            &mut RuleTopicCache::default(),
         );
         assert!(
             !ports.counters.is_connected(),
