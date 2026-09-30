@@ -1823,6 +1823,19 @@ fn two_step_registry() -> StubRegistry {
     }
 }
 
+fn target_states(harness: &Harness) -> Vec<(u8, Option<u8>)> {
+    harness
+        .commands()
+        .iter()
+        .filter_map(|payload| match payload {
+            BusCommandPayload::DaliSetTargetStateCommand(body) => {
+                Some((body.group_id, body.setpoint.level))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 fn wait_for_tick_to_end(harness: &Harness, tick: u32) {
     wait_until(
         || harness.counters.ticks.load(Ordering::Relaxed) > tick,
@@ -1879,4 +1892,42 @@ fn a_resume_after_an_owner_commit_in_one_tick_leaves_the_group_running() {
     });
     assert!(suspended.is_empty(), "the resume came after the commit: {suspended:?}");
     assert!(served_mid_tick, "the owner's commit is served while the tick publishes");
+}
+
+#[test]
+fn a_target_held_while_its_tick_publishes_is_not_published_by_that_tick() {
+    let gate = Arc::new(Gate::default());
+    let harness = publishing_tick_held_at_its_gate(&gate);
+    let tick = harness.counters.ticks.load(Ordering::Relaxed);
+
+    harness.hold(81, HclOverrideTarget::Group { group_id: 15 });
+    let held = harness.confirmation_for(81).status;
+    gate.set(true);
+    wait_for_tick_to_end(&harness, tick);
+
+    assert_eq!(held, dali2rust_contracts::msg::DeliveryStatus::Ok);
+    let groups: Vec<u8> = target_states(&harness).into_iter().map(|(group, _)| group).collect();
+    assert!(!groups.contains(&15), "group 15 was held before the tick reached it: {groups:?}");
+    assert_eq!(groups.len(), SIXTEEN_GROUPS.len() - 1, "every other group was driven");
+}
+
+#[test]
+fn an_owner_commit_while_its_tick_publishes_keeps_the_tick_off_its_group() {
+    let gate = Arc::new(Gate::default());
+    gate.set(true);
+    let clock = Arc::new(StubClock::at(600));
+    let harness = spawn_gated_harness(two_step_registry(), Arc::clone(&clock), &gate);
+    let tick = second_point_tick_held_at_its_gate(&harness, &clock, &gate);
+
+    let served_mid_tick = an_owner_commit_served_mid_tick(&harness);
+    gate.set(true);
+    wait_for_tick_to_end(&harness, tick);
+
+    let second_tick = target_states(&harness).split_off(SIXTEEN_GROUPS.len());
+    assert!(
+        !second_tick.contains(&(3, Some(SECOND_LEVEL))),
+        "the owner's value on group 3 was overwritten after it arrived: {second_tick:?}"
+    );
+    assert!(served_mid_tick, "the owner's commit is served while the tick publishes");
+    assert_eq!(suspended_groups(&harness, "wide"), [Some(3)], "and it holds until a lift");
 }

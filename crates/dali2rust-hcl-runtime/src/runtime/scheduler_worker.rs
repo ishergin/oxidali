@@ -149,6 +149,10 @@ impl SchedulerState {
             || self.tick.as_ref().is_some_and(|tick| tick.published.contains(target))
     }
 
+    fn stood_down_in_tick(&self, target: &TargetKey) -> bool {
+        self.tick.as_ref().is_some_and(|tick| tick.stood_down.contains(target))
+    }
+
     fn forget_edited(&mut self, current: &[HclScheduleView]) {
         if self.published_from.as_deref() == Some(current) {
             for record in self.last_published.values_mut() {
@@ -614,30 +618,35 @@ fn publish_plan(
 ) -> PublishOutcomes {
     let mut outcomes = PublishOutcomes::default();
     for (index, command) in commands.iter().enumerate() {
-        let correlation_id = deps.correlation.next_id();
-        let frame = BusFrame::command(command_envelope_for(deps, command, correlation_id));
-        if deps.publisher.try_publish(BusChannel::Commands, frame) != PublishResult::Queued {
-            deps.counters
-                .ingress_rejections
-                .fetch_add(1, Ordering::Relaxed);
+        if state.stood_down_in_tick(&command.key()) {
+            continue;
+        }
+        let Some(confirmed) = publish_one(rx, conf_rx, deps, command, state) else {
             mark_unpublished_keys(&mut outcomes, &commands[index..]);
             break;
-        }
-        deps.counters
-            .commands_published
-            .fetch_add(1, Ordering::Relaxed);
-        state.note_published(command.key());
-        let confirmed = wait_for_confirmation(
-            rx,
-            conf_rx,
-            deps,
-            correlation_id,
-            deps.config.command_timeout_ms,
-            state,
-        );
+        };
         outcomes.merge(command.key(), confirmed);
     }
     outcomes
+}
+
+fn publish_one(
+    rx: &BusSubscriberRx,
+    conf_rx: &BusSubscriberRx,
+    deps: &SchedulerDeps,
+    command: &PlannedCommand,
+    state: &mut SchedulerState,
+) -> Option<bool> {
+    let correlation_id = deps.correlation.next_id();
+    let frame = BusFrame::command(command_envelope_for(deps, command, correlation_id));
+    if deps.publisher.try_publish(BusChannel::Commands, frame) != PublishResult::Queued {
+        deps.counters.ingress_rejections.fetch_add(1, Ordering::Relaxed);
+        return None;
+    }
+    deps.counters.commands_published.fetch_add(1, Ordering::Relaxed);
+    state.note_published(command.key());
+    let timeout_ms = deps.config.command_timeout_ms;
+    Some(wait_for_confirmation(rx, conf_rx, deps, correlation_id, timeout_ms, state))
 }
 
 fn mark_unpublished_keys(outcomes: &mut PublishOutcomes, unpublished: &[PlannedCommand]) {
