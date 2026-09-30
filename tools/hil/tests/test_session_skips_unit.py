@@ -58,15 +58,37 @@ def test_the_log_channel_test_asks_for_the_serial_console():
 
 def test_a_light_test_is_selected_only_when_the_run_may_drive_lamps():
     light, plain = _Item({"light"}), _Item({"smoke"})
-    assert hil_session.ungated(light, drives_lamps=False, commits_rules=True)
-    assert not hil_session.ungated(light, drives_lamps=True, commits_rules=False)
-    assert not hil_session.ungated(plain, drives_lamps=False, commits_rules=False)
+    assert hil_session.ungated(light, drives_lamps=False, commits_rules=True, names_peer=True)
+    assert not hil_session.ungated(light, drives_lamps=True, commits_rules=False,
+                                   names_peer=True)
+    assert not hil_session.ungated(plain, drives_lamps=False, commits_rules=False,
+                                   names_peer=False)
 
 
 def test_a_rule_committing_test_is_selected_only_with_its_flag():
     rules = _Item(set(), fixturenames=["api", "rules_guard"])
-    assert hil_session.ungated(rules, drives_lamps=True, commits_rules=False)
-    assert not hil_session.ungated(rules, drives_lamps=False, commits_rules=True)
+    assert hil_session.ungated(rules, drives_lamps=True, commits_rules=False, names_peer=True)
+    assert not hil_session.ungated(rules, drives_lamps=False, commits_rules=True,
+                                   names_peer=True)
+
+
+def test_the_pair_tier_is_selected_only_when_hil_peer_base_names_the_peer(tmp_path):
+    pair_test = _Item({"redundancy"})
+    assert hil_session.ungated(pair_test, drives_lamps=True, commits_rules=True,
+                               names_peer=False)
+    assert not hil_session.ungated(pair_test, drives_lamps=True, commits_rules=True,
+                                   names_peer=True)
+    (tmp_path / "peer").mkdir()
+    (tmp_path / "peer" / "base.pin").write_text("http://192.0.2.7\n")
+    pinned = HilConfig(peer_base="", serial_remote="", state_dir=tmp_path)
+    assert pinned.has_peer
+    items, config = [pair_test], _Config()
+    hil_session._deselect_ungated(config, items, pinned)
+    assert items == [] and config.hook.deselected == [pair_test]
+    items = [pair_test]
+    hil_session._deselect_ungated(_Config(), items, HilConfig(
+        peer_base="http://192.0.2.7", serial_remote="", state_dir=tmp_path))
+    assert items == [pair_test]
 
 
 class _Hook:

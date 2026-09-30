@@ -51,12 +51,15 @@ def _collection_lint(items):
 
 NO_SERIAL = "no board attached here and no WB bridge answering"
 LIGHT_MARKER = "light"
+PAIR_MARKER = "redundancy"
 RULE_COMMITS_ENV = "HIL_ALLOW_RULE_COMMITS"
 RULE_COMMITTING_FIXTURE = "rules_guard"
 
 
-def ungated(item, drives_lamps, commits_rules):
+def ungated(item, drives_lamps, commits_rules, names_peer):
     if item.get_closest_marker(LIGHT_MARKER) and not drives_lamps:
+        return True
+    if item.get_closest_marker(PAIR_MARKER) and not names_peer:
         return True
     return RULE_COMMITTING_FIXTURE in item.fixturenames and not commits_rules
 
@@ -64,9 +67,11 @@ def ungated(item, drives_lamps, commits_rules):
 def _deselect_ungated(config, items, cfg):
     drives_lamps = cfg.drives_lamps()
     commits_rules = os.environ.get(RULE_COMMITS_ENV) == "1"
+    names_peer = bool(cfg.peer_base)
     kept, dropped = [], []
     for item in items:
-        (dropped if ungated(item, drives_lamps, commits_rules) else kept).append(item)
+        gated = ungated(item, drives_lamps, commits_rules, names_peer)
+        (dropped if gated else kept).append(item)
     if dropped:
         config.hook.pytest_deselected(items=dropped)
         items[:] = kept

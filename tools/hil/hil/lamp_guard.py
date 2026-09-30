@@ -2,7 +2,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import unquote
 
-from hil.write_log import ALL, EVERY, frame_keys, request_keys, restarts
+from hil.write_log import (ACTIVATION_FIELD, ACTIVATION_ROUTE, ALL, EVERY, frame_keys,
+                           request_keys, restarts)
 
 TARGET_SEGMENT = -1
 SHORT_LIMIT = 0x80
@@ -117,6 +118,19 @@ VIRTUAL_ROUTES = (
     ("rule_toggle", re.compile(r"rules/([^/]+)")),
     ("rule_run", re.compile(r"rules/([^/]+)/run")),
 )
+
+HANDOVER_ROUTES = (re.compile(r"redundancy/switchover"), re.compile(r"settings/redundancy"))
+HANDOVER_REFUSAL = ("%s refused: HIL_LAMPS_READ_ONLY=1 never hands the bus over, since the "
+                    "unit that becomes active publishes every HCL point afresh and so takes "
+                    "back a lamp the owner set by hand")
+
+
+def hands_over(path, body):
+    if any(route.fullmatch(path) for route in HANDOVER_ROUTES):
+        return True
+    return (bool(ACTIVATION_ROUTE.fullmatch(path)) and isinstance(body, dict)
+            and ACTIVATION_FIELD in body)
+
 
 RULE_SEPARATOR = "\n\n"
 TEST_RULE_PREFIX = "hil-"
@@ -480,6 +494,8 @@ class LampGuard:
         keys = request_keys(method, path, body)
         if self.fence is not None and self.fence.check_request(method.upper(), path, body):
             return keys
+        if self.read_only and hands_over(path, body):
+            raise LampNotAllowed(HANDOVER_REFUSAL % ("%s %s" % (method.upper(), path)))
         if restarts(path, body):
             self.check_restart("%s %s" % (method.upper(), path))
         _refuse_commissioning(method, path, body)
@@ -500,6 +516,11 @@ class LampGuard:
                 return keys + self._check_resource(
                     kind, key, body, label, visible(body) if callable(visible) else visible)
         return keys
+
+    def check_handover(self, what):
+        if self.read_only:
+            raise LampNotAllowed(HANDOVER_REFUSAL % what)
+        self.check_restart(what)
 
     def check_restart(self, what):
         if self._restart_rules is None:

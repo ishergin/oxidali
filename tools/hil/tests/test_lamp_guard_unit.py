@@ -628,3 +628,31 @@ def test_an_unsettled_pair_is_left_as_found_while_an_owner_rule_fires_on_a_start
     with pytest.raises(LampNotAllowed, match=r"failover"):
         pair.settle(primary, peer, timeout_s=0.1)
     assert primary.http.sent == [] and peer.http.sent == []
+
+
+
+HANDOVERS = (("POST", "redundancy/switchover", {}),
+             ("PATCH", "settings/dali", {"application_active": True}),
+             ("PATCH", "settings/dali", {"application_active": False}),
+             ("PATCH", "settings/redundancy", {"peer_url": "http://192.0.2.9:81"}))
+
+
+def test_a_read_only_run_never_hands_the_bus_over():
+    read_only = LampGuard(LAMPS, read_only=True, restart_rules=lambda: [])
+    driving = LampGuard(LAMPS, restart_rules=lambda: [])
+    for method, path, body in HANDOVERS:
+        with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY=1 never hands the "
+                                                 r"bus over"):
+            read_only.check_request(method, path, body)
+        driving.check_request(method, path, body)
+    read_only.check_request("PATCH", "settings/dali", {"device_short_address": 3})
+
+
+def test_a_read_only_run_leaves_an_unsettled_pair_as_it_found_it():
+    primary = _client(read_only=True)
+    peer = _client(read_only=True)
+    for client in (primary, peer):
+        client.redundancy.get = lambda: {"active": False}
+    with pytest.raises(LampNotAllowed, match=r"never hands the bus over"):
+        pair.settle(primary, peer, timeout_s=0.1)
+    assert primary.http.sent == [] and peer.http.sent == []

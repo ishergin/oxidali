@@ -20,7 +20,7 @@ knobs and the version string in
 | A DALI line with bus power and at least one lamp the suite may drive | every test that changes the light | `HIL_LAMPS_READ_ONLY=1` keeps the light untouched |
 | A UVC camera on a fixed mount with the lamps in view | `optical` ([Optical tests](#optical-tests)) | `--no-camera` turns optical tests into skips |
 | A second DALI master reachable over ssh and MQTT (WB-MDALI3 on a Wiren Board) | `sniffer`, `foreign`, and `ha_bridge` through its broker | the `sniffer` fixture skips; deselect `foreign` and `ha_bridge` |
-| A second controller on the same line (`HIL_PEER_BASE`) | `redundancy` | those tests skip |
+| A second controller on the same line (`HIL_PEER_BASE`) | `redundancy` | those tests are not collected |
 
 macOS is the tested host: camera discovery goes through AVFoundation, `setup.sh` builds
 `uvc-util` with the macOS frameworks, and the frame server runs in Terminal. The rest is
@@ -110,7 +110,9 @@ bench test's setup or run it is reported as a skip that quotes it:
 - Under `HIL_LAMPS_READ_ONLY=1` every visible action is refused: target-state, identify,
   scene recall, and every frame or attribute write that changes what a lit lamp shows
   (`VISIBLE_*` in `hil/lamp_guard.py`; a new level or Tc limit moves a lit lamp into
-  range). Other configuration writes to an allowed lamp still pass (STRATEGY §4).
+  range). Other configuration writes to an allowed lamp still pass (STRATEGY §4). So is a
+  handover — a switchover, an `application_active` or `settings/redundancy` write: the unit
+  that becomes active publishes every HCL point afresh.
 - A `/api/v1/dali/*` body with no frame the guard can read is refused.
 - Commissioning is refused — the steps, address changes, replacements, a
   `commission_unaddressed` run, the input-device commission and every special frame but
@@ -138,10 +140,9 @@ A run with no `HIL_*` flag writes only this, each put back by its test or guard:
 adapter's name; group 15's and a scene's name and Home Assistant exposure (HIL-GRP-03,
 HIL-SCN-03); the Home Assistant bridge's settings, moved to the `hiltest` namespace (the
 owner's entities are unavailable meanwhile), and one virtual lamp's exposure (`ha_bridge`
-tests, `ha_guard`); the poller's settings (`test_poller`, `poller_guard`); a poller the
-owner left on, off for the session (`bench_baseline`); and with a named peer, the poller's
-interval (HIL-RED-03) and the peer's `peer_url` (HIL-RED-04). HIL-INP-02 and 03 rewrite
-the panel's instance group membership with the value it holds; scans refresh the registry.
+tests, `ha_guard`); the poller's settings (`test_poller`, `poller_guard`); and a poller
+the owner left on, off for the session (`bench_baseline`). HIL-INP-02 and 03 rewrite the
+panel's instance group membership with the value it holds; scans refresh the registry.
 
 ## Save and restore
 
@@ -239,16 +240,14 @@ frames holds a camera AVFoundation no longer hands it: run `vendor/uvc-util/uvc-
 -d`, which enumerates the device again, then `hil camera-server --restart`.
 
 Calibration (`hil calibrate`, or automatically before the first test that needs optics)
-locks the camera, takes two all-off baselines for the noise floor, lights each lamp alone
-to find its mask, tunes the exposure against clipping, measures crosstalk thresholds and
-a brightness ladder, records RGB and colour-temperature fingerprints and picks fiducials
-that reveal a camera that moved. The profile is saved in `state/` and reused for
+locks the camera, takes all-off baselines for the noise floor, finds each lamp's mask,
+tunes the exposure against clipping, measures crosstalk and a brightness ladder, records
+colour fingerprints and picks fiducials that reveal a camera that moved. The profile is saved in `state/` and reused for
 `HIL_CALIBRATION_TTL_S`; `--skip-calibration` reuses it regardless. **Calibration drives
 every lamp in `HIL_OPTICAL_SHORTS`**, so it is a visible action.
 
 A dead optical channel **fails** optical tests; `--no-camera` / `HIL_NO_CAMERA=1` turns
-that into skips. With no calibrated fixture on the wire, `HIL_LAMP_ROSTER=registry`
-takes the lamp roster from the registry's bound virtual lamps.
+that into skips.
 
 ## Running tests
 
@@ -428,7 +427,8 @@ The gear emulator's image goes only through `hil --peer role gear-sim` (below).
 URL (`HIL_PEER_BASE`, or the lease its firmware announces on serial, learned on the
 first `hil --peer flash` into `state/peer/base.pin`), its serial bridge, and its own
 `state/peer/` and `runs/peer/`, so nothing of the primary's is repointed. The
-`redundancy` tier reaches it through `peer_api` and skips without one. A reboot the
+`redundancy` tier is collected only when `HIL_PEER_BASE` names it; the pin serves
+`hil --peer` alone. A reboot the
 suite provokes leaves the peer active and the rebooted board standby; `dut_reboot`
 and the OTA test hand the role back (`hil/pair.py`) before the next assertion.
 
