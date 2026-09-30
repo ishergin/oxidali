@@ -35,7 +35,6 @@ pub const DEFAULT_TICK_PERIOD_MS: u64 = 60_000;
 pub const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 2_000;
 const MAX_IDLE_WAIT: Duration = Duration::from_secs(1);
 const CONFIRMATION_POLL_SLICE: Duration = Duration::from_millis(50);
-const MAX_DEFERRED_FRAMES: usize = 64;
 const DAYS_PER_WEEK: u8 = 7;
 const HOLD_WITHOUT_CLOCK: &str = "time_unsynced";
 
@@ -60,7 +59,6 @@ pub struct HclSchedulerCounters {
     pub ticks_time_unsynced: AtomicU32,
     pub commands_published: AtomicU32,
     pub commands_dropped_cap: AtomicU32,
-    pub deferred_dropped_cap: AtomicU32,
     pub command_timeouts: AtomicU32,
     pub command_failures: AtomicU32,
     pub ingress_rejections: AtomicU32,
@@ -119,7 +117,6 @@ struct SchedulerState {
 struct TickScope {
     published: Vec<TargetKey>,
     stood_down: Vec<TargetKey>,
-    deferred: Vec<BusFrame>,
 }
 
 impl SchedulerState {
@@ -162,6 +159,9 @@ impl SchedulerState {
         }
         self.last_published.clear();
         self.published_from = None;
+        if let Some(tick) = self.tick.as_mut() {
+            tick.published.clear();
+        }
     }
 }
 
@@ -513,9 +513,6 @@ fn run_tick(
     WORKER_STACK.note("tick:publish");
     let tick = state.tick.take().unwrap_or_default();
     record_published(state, fresh, &outcomes, &tick.stood_down);
-    for frame in tick.deferred {
-        apply_frame(state, deps, &frame);
-    }
 }
 
 fn record_published(
@@ -524,7 +521,8 @@ fn record_published(
     outcomes: &PublishOutcomes,
     stood_down: &[TargetKey],
 ) {
-    for entry in fresh {
+    let still_current = state.published_from.is_some();
+    for entry in fresh.into_iter().filter(|_| still_current) {
         if let Some(confirmed) = outcomes.get(&entry.key) {
             let record = PublishRecord { state: entry.state, confirmed };
             state.last_published.insert(entry.key, record);
@@ -618,6 +616,9 @@ fn publish_plan(
 ) -> PublishOutcomes {
     let mut outcomes = PublishOutcomes::default();
     for (index, command) in commands.iter().enumerate() {
+        if state.published_from.is_none() {
+            break;
+        }
         if state.stood_down_in_tick(&command.key()) {
             continue;
         }
@@ -655,37 +656,10 @@ fn mark_unpublished_keys(outcomes: &mut PublishOutcomes, unpublished: &[PlannedC
     }
 }
 
-fn service_commands(rx: &BusSubscriberRx, deps: &SchedulerDeps, state: &mut SchedulerState) {
+fn serve_inbox(rx: &BusSubscriberRx, deps: &SchedulerDeps, state: &mut SchedulerState) {
     while let Ok(frame) = rx.try_recv() {
-        if serves_in_order(&frame) {
-            apply_frame(state, deps, &frame);
-            continue;
-        }
-        match state.tick.as_mut() {
-            Some(tick) => defer_frame(&deps.counters, &mut tick.deferred, frame),
-            None => apply_frame(state, deps, &frame),
-        }
+        apply_frame(state, deps, &frame);
     }
-}
-
-fn serves_in_order(frame: &BusFrame) -> bool {
-    match frame {
-        BusFrame::Command(_) => true,
-        BusFrame::Event(envelope) => {
-            matches!(envelope.payload, BusEventPayload::RuntimeStateChangedEvent(_))
-        }
-        BusFrame::Confirmation(_) => false,
-    }
-}
-
-fn defer_frame(counters: &HclSchedulerCounters, deferred: &mut Vec<BusFrame>, frame: BusFrame) {
-    if deferred.len() >= MAX_DEFERRED_FRAMES {
-        counters
-            .deferred_dropped_cap
-            .fetch_add(1, Ordering::Relaxed);
-        return;
-    }
-    deferred.push(frame);
 }
 
 fn command_envelope_for(
@@ -757,7 +731,7 @@ fn wait_for_confirmation(
             }
             Ok(_) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                service_commands(rx, deps, state);
+                serve_inbox(rx, deps, state);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 deps.counters.command_timeouts.fetch_add(1, Ordering::Relaxed);
@@ -770,24 +744,6 @@ fn wait_for_confirmation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dali2rust_contracts::bus::event_envelope;
-    use dali2rust_contracts::msg::{
-        HclScheduleChangedEvent, fixed_text_32,
-    };
-
-    fn any_event_frame() -> BusFrame {
-        BusFrame::event(event_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            0,
-            BusId::default().0,
-            Some(Origin::Registry),
-            HclScheduleChangedEvent {
-                schedule_id: fixed_text_32("morning"),
-                removed: false,
-                enabled: true,
-            },
-        ))
-    }
 
     #[test]
     fn an_ingress_break_between_a_pairs_halves_unconfirms_the_key_but_keeps_it_driven() {
@@ -836,21 +792,5 @@ mod tests {
         state.stand_down(key);
         let stood_down = state.tick.take().map(|tick| tick.stood_down);
         assert_eq!(stood_down, Some(vec![key]), "a tick in progress remembers what to strip");
-    }
-
-    #[test]
-    fn the_deferred_buffer_holds_its_cap_and_counts_the_rest() {
-        let counters = HclSchedulerCounters::default();
-        let mut deferred = Vec::new();
-        let overflow = 5;
-        for _ in 0..MAX_DEFERRED_FRAMES + overflow {
-            defer_frame(&counters, &mut deferred, any_event_frame());
-        }
-        assert_eq!(deferred.len(), MAX_DEFERRED_FRAMES, "the cap holds");
-        assert_eq!(
-            counters.deferred_dropped_cap.load(Ordering::Relaxed),
-            overflow as u32,
-            "every dropped frame is counted, so the loss is visible"
-        );
     }
 }

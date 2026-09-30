@@ -326,7 +326,7 @@ declare_counter_mapping! {
 
     hcl_scheduler_dto(c: dali2rust_hcl_runtime::HclSchedulerCounters) -> HclSchedulerDto {
         ticks, ticks_time_unsynced, commands_published, commands_dropped_cap,
-        deferred_dropped_cap, command_timeouts, command_failures, ingress_rejections,
+        command_timeouts, command_failures, ingress_rejections,
         overrides_started, overrides_cleared, overrides_reset, ignored_commands,
         ignored_events,
     }

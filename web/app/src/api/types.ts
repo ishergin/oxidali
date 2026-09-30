@@ -832,7 +832,6 @@ export type HclSchedulerCounters = {
   ticks_time_unsynced: number
   commands_published: number
   commands_dropped_cap: number
-  deferred_dropped_cap: number
   command_timeouts: number
   command_failures: number
   ingress_rejections: number

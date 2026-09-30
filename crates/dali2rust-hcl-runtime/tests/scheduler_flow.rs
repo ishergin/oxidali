@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -481,14 +481,18 @@ fn spawn_harness_inner(
     spawn_harness_with(registry, clock, HarnessOptions { answer, ..HarnessOptions::default() })
 }
 
-fn spawn_gated_harness(registry: StubRegistry, clock: Arc<StubClock>, gate: &Arc<Gate>) -> Harness {
+fn spawn_gated_harness(
+    registry: Arc<dyn HclSchedulerReadPort>,
+    clock: Arc<StubClock>,
+    gate: &Arc<Gate>,
+) -> Harness {
     let options = HarnessOptions {
         inbox: DEEP_SCHEDULER_INBOX,
         gate: Some(Arc::clone(gate)),
         command_timeout_ms: GATED_COMMAND_TIMEOUT_MS,
         ..HarnessOptions::default()
     };
-    spawn_harness_with(Arc::new(registry), clock, options)
+    spawn_harness_with(registry, clock, options)
 }
 
 fn spawn_harness_with(
@@ -1127,7 +1131,7 @@ fn the_override_reports_which_target_stopped_and_when() {
 }
 
 #[test]
-fn a_flood_of_schedule_edits_during_a_publish_window_is_bounded_and_counted() {
+fn a_flood_of_schedule_edits_during_a_publish_window_loses_no_commit() {
     let membership = 1u16 << 3;
     let registry = StubRegistry {
         schedules: vec![schedule(
@@ -1137,37 +1141,22 @@ fn a_flood_of_schedule_edits_during_a_publish_window_is_bounded_and_counted() {
         )],
         membership: vec![(1, membership)],
     };
-    let harness = spawn_harness_without_confirmations(registry, Arc::new(StubClock::at(600)));
-
-    let stop = Arc::new(AtomicBool::new(false));
-    let flood = spawn_edit_flood(harness.publisher.clone(), Arc::clone(&stop));
-    wait_until(
-        || harness.counters.deferred_dropped_cap.load(Ordering::Relaxed) >= 1,
-        Duration::from_secs(10),
-    );
-    stop.store(true, Ordering::Relaxed);
-    flood.join().expect("flood thread");
-
+    let options = HarnessOptions {
+        answer: None,
+        inbox: DEEP_SCHEDULER_INBOX,
+        ..HarnessOptions::default()
+    };
+    let harness = spawn_harness_with(Arc::new(registry), Arc::new(StubClock::at(600)), options);
     wait_until(
         || harness.counters.commands_published.load(Ordering::Relaxed) >= 3,
         Duration::from_secs(5),
     );
+
+    publish_edits(&harness, FLOOD_EVENTS);
     harness.publish_manual_commit_on_lamp(1);
     wait_for_overrides_started(&harness, 1);
     assert!(harness.override_view("wide").suspended, "a commit never waits behind the flood");
     harness.wait_for_ticks(1);
-}
-
-fn spawn_edit_flood(
-    publisher: BusPublisher,
-    stop: Arc<AtomicBool>,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        while !stop.load(Ordering::Relaxed) {
-            let _ = publisher.try_publish(BusChannel::Events, schedule_changed("wide", false));
-            std::thread::yield_now();
-        }
-    })
 }
 
 #[test]
@@ -1713,9 +1702,7 @@ fn a_hold_leaves_a_schedule_that_does_not_run_today_alone() {
 
 const SIXTEEN_GROUPS: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const LAMP_IN_GROUP_THREE: u8 = 1;
-const LAMP_IN_NO_GROUP: u8 = 2;
-const TICK_EVENT_BUFFER: u32 = 64;
-const PAST_THE_BUFFER: u32 = 36;
+const FLOOD_EVENTS: u32 = 100;
 
 fn sixteen_group_registry() -> StubRegistry {
     StubRegistry {
@@ -1729,7 +1716,7 @@ fn sixteen_group_registry() -> StubRegistry {
 }
 
 fn publishing_tick_held_at_its_gate(gate: &Arc<Gate>) -> Harness {
-    let harness = spawn_gated_harness(sixteen_group_registry(), Arc::new(StubClock::at(600)), gate);
+    let harness = spawn_gated_harness(Arc::new(sixteen_group_registry()), Arc::new(StubClock::at(600)), gate);
     harness.wait_for_commands(1);
     harness
 }
@@ -1741,43 +1728,23 @@ fn publish_until_queued(harness: &Harness, channel: BusChannel, frame: BusFrame)
     );
 }
 
-fn publish_commits(harness: &Harness, count: u32, virtual_lamp_id: u8, source: RuntimeSource) {
-    for _ in 0..count {
-        let event = commit_event(virtual_lamp_id, source, LightSetpoint::from_level(254, None));
-        publish_until_queued(harness, BusChannel::Events, BusFrame::event(event));
-    }
-}
-
 fn publish_edits(harness: &Harness, count: u32) {
     for _ in 0..count {
         publish_until_queued(harness, BusChannel::Events, schedule_changed("wide", false));
     }
 }
 
-fn wait_for_dropped(harness: &Harness, dropped: u32) {
-    wait_until(
-        || harness.counters.deferred_dropped_cap.load(Ordering::Relaxed) >= dropped,
-        Duration::from_secs(3),
-    );
-}
-
 #[test]
 fn a_hold_and_a_clear_during_a_flooded_tick_are_served_at_once_and_in_order() {
     let gate = Arc::new(Gate::default());
     let harness = publishing_tick_held_at_its_gate(&gate);
-    publish_edits(&harness, TICK_EVENT_BUFFER + PAST_THE_BUFFER);
-    wait_for_dropped(&harness, PAST_THE_BUFFER);
+    publish_edits(&harness, FLOOD_EVENTS);
 
     harness.hold(76, HclOverrideTarget::Group { group_id: 3 });
     harness.clear(77, "wide");
     let order = harness.confirmation_order(&[76, 77]);
     let published_when_served = harness.commands().len();
 
-    assert_eq!(
-        harness.counters.deferred_dropped_cap.load(Ordering::Relaxed),
-        PAST_THE_BUFFER,
-        "the tick's buffer for schedule edits was full before the commands came"
-    );
     assert_eq!(order, vec![76, 77], "both commands land, the hold first");
     assert_eq!(published_when_served, 1, "both were answered while the tick was held at its first command");
     assert_eq!(harness.counters.overrides_started.load(Ordering::Relaxed), 1);
@@ -1787,38 +1754,24 @@ fn a_hold_and_a_clear_during_a_flooded_tick_are_served_at_once_and_in_order() {
     );
 }
 
-#[test]
-fn no_commit_is_kept_for_after_its_tick() {
-    let gate = Arc::new(Gate::default());
-    let harness = publishing_tick_held_at_its_gate(&gate);
-    publish_commits(&harness, TICK_EVENT_BUFFER + PAST_THE_BUFFER, LAMP_IN_GROUP_THREE, RuntimeSource::Hcl);
-    publish_commits(&harness, TICK_EVENT_BUFFER + PAST_THE_BUFFER, LAMP_IN_NO_GROUP, RuntimeSource::Api);
-
-    harness.clear(79, "wide");
-    harness.confirmation_for(79);
-
-    assert_eq!(harness.commands().len(), 1, "every commit came while the tick was held");
-    assert_eq!(
-        harness.counters.deferred_dropped_cap.load(Ordering::Relaxed),
-        0,
-        "a commit is served in its turn and takes no room in the tick's buffer"
-    );
-}
-
 const FIRST_LEVEL: u8 = 120;
 const SECOND_POINT_MINUTES: u16 = 700;
 const SECOND_LEVEL: u8 = 200;
 
+fn two_step_schedule(second_level: u8) -> HclScheduleView {
+    schedule(
+        "wide",
+        vec![group_target(0, &SIXTEEN_GROUPS)],
+        vec![
+            point(0, HclLevelMode::Absolute, Some(FIRST_LEVEL), None),
+            point(SECOND_POINT_MINUTES as i16, HclLevelMode::Absolute, Some(second_level), None),
+        ],
+    )
+}
+
 fn two_step_registry() -> StubRegistry {
     StubRegistry {
-        schedules: vec![schedule(
-            "wide",
-            vec![group_target(0, &SIXTEEN_GROUPS)],
-            vec![
-                point(0, HclLevelMode::Absolute, Some(FIRST_LEVEL), None),
-                point(SECOND_POINT_MINUTES as i16, HclLevelMode::Absolute, Some(SECOND_LEVEL), None),
-            ],
-        )],
+        schedules: vec![two_step_schedule(SECOND_LEVEL)],
         membership: vec![(LAMP_IN_GROUP_THREE, 1u16 << 3)],
     }
 }
@@ -1864,7 +1817,7 @@ fn lift_after_an_owner_commit_in_one_tick(lift: impl FnOnce(&Harness)) -> (bool,
     let gate = Arc::new(Gate::default());
     gate.set(true);
     let clock = Arc::new(StubClock::at(600));
-    let harness = spawn_gated_harness(two_step_registry(), Arc::clone(&clock), &gate);
+    let harness = spawn_gated_harness(Arc::new(two_step_registry()), Arc::clone(&clock), &gate);
     let tick = second_point_tick_held_at_its_gate(&harness, &clock, &gate);
 
     let served_mid_tick = an_owner_commit_served_mid_tick(&harness);
@@ -1916,7 +1869,7 @@ fn an_owner_commit_while_its_tick_publishes_keeps_the_tick_off_its_group() {
     let gate = Arc::new(Gate::default());
     gate.set(true);
     let clock = Arc::new(StubClock::at(600));
-    let harness = spawn_gated_harness(two_step_registry(), Arc::clone(&clock), &gate);
+    let harness = spawn_gated_harness(Arc::new(two_step_registry()), Arc::clone(&clock), &gate);
     let tick = second_point_tick_held_at_its_gate(&harness, &clock, &gate);
 
     let served_mid_tick = an_owner_commit_served_mid_tick(&harness);
@@ -1930,4 +1883,44 @@ fn an_owner_commit_while_its_tick_publishes_keeps_the_tick_off_its_group() {
     );
     assert!(served_mid_tick, "the owner's commit is served while the tick publishes");
     assert_eq!(suspended_groups(&harness, "wide"), [Some(3)], "and it holds until a lift");
+}
+
+const EDITED_LEVEL: u8 = 150;
+
+fn events_delivered_to_scheduler(harness: &Harness) -> u32 {
+    harness.publisher.counters_snapshot().event_subscribers[0].delivered
+}
+
+#[test]
+fn an_edit_during_a_tick_disarms_its_targets_before_a_later_commit() {
+    let gate = Arc::new(Gate::default());
+    gate.set(true);
+    let clock = Arc::new(StubClock::at(600));
+    let registry = Arc::new(EditableRegistry::new(two_step_registry()));
+    let read_port = Arc::clone(&registry) as Arc<dyn HclSchedulerReadPort>;
+    let harness = spawn_gated_harness(read_port, Arc::clone(&clock), &gate);
+    let tick = second_point_tick_held_at_its_gate(&harness, &clock, &gate);
+
+    registry.edit(vec![two_step_schedule(EDITED_LEVEL)]);
+    let delivered = events_delivered_to_scheduler(&harness);
+    publish_until_queued(&harness, BusChannel::Events, schedule_changed("wide", false));
+    harness.publish_manual_commit_on_lamp(LAMP_IN_GROUP_THREE);
+    wait_until(
+        || events_delivered_to_scheduler(&harness) >= delivered + 2,
+        Duration::from_secs(3),
+    );
+    harness.clear(91, "none");
+    harness.confirmation_for(91);
+    gate.set(true);
+    wait_for_tick_to_end(&harness, tick);
+
+    assert_eq!(
+        harness.counters.overrides_started.load(Ordering::Relaxed),
+        0,
+        "the edit came first, so the commit found nothing the new curve had driven"
+    );
+    wait_until(
+        || target_states(&harness).contains(&(3, Some(EDITED_LEVEL))),
+        Duration::from_secs(5),
+    );
 }

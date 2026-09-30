@@ -193,7 +193,6 @@ pub struct HclSchedulerDto {
     pub ticks_time_unsynced: u32,
     pub commands_published: u32,
     pub commands_dropped_cap: u32,
-    pub deferred_dropped_cap: u32,
     pub command_timeouts: u32,
     pub command_failures: u32,
     pub ingress_rejections: u32,
@@ -416,7 +415,7 @@ declare_widest_dtos! {
     }
     HclSchedulerDto {
         ticks, ticks_time_unsynced, commands_published, commands_dropped_cap,
-        deferred_dropped_cap, command_timeouts, command_failures, ingress_rejections,
+        command_timeouts, command_failures, ingress_rejections,
         overrides_started, overrides_cleared, overrides_reset, ignored_commands,
         ignored_events,
     }
