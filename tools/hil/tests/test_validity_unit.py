@@ -53,7 +53,7 @@ def _client(monkeypatch, responses):
     client.timeout_s = 1.0
     client.init_ledger()
     client._rebooting = False
-    client.guard = LampGuard({0})
+    client.guard = LampGuard({0}, restart_rules=lambda: [])
     queue = list(responses)
 
     class _Session:

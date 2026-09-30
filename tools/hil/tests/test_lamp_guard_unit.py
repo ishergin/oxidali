@@ -4,7 +4,7 @@ import re
 import pytest
 
 import hil.api
-from hil import write_log
+from hil import pair, write_log
 from hil.config import HilConfig, load as load_config
 from hil.foreign import ForeignMaster, injection_refusal
 from hil.lamp_guard import LampGuard, LampNotAllowed
@@ -251,9 +251,10 @@ class _Response:
 
 
 class _Session:
-    def __init__(self, shorts, bindings=None):
+    def __init__(self, shorts, bindings=None, rules=()):
         self.shorts = shorts
         self.bindings = bindings or {}
+        self.rules = list(rules)
         self.sent = []
 
     def request(self, method, url, json=None, timeout=None):
@@ -264,6 +265,8 @@ class _Session:
         if path.endswith("/physical-devices"):
             return _Response({"physical_devices": [
                 {"short_address": s, "present": True} for s in self.shorts]})
+        if path == "rules?format=json":
+            return _Response({"rules": {"rules": self.rules}})
         lamp = re.search(r"virtual-lamps/(\d+)$", path)
         if lamp:
             return _Response({"binding": {
@@ -274,11 +277,11 @@ class _Session:
         pass
 
 
-def _client(shorts=(0, 1, 2, 3), bindings=None, read_only=False):
+def _client(shorts=(0, 1, 2, 3), bindings=None, read_only=False, rules=()):
     cfg = dataclasses.replace(load_config(), lamp_shorts="0,2,3", gear_shorts="",
                               lamps_read_only=read_only)
     client = hil.api.Client(cfg)
-    client.http = _Session(list(shorts), bindings)
+    client.http = _Session(list(shorts), bindings, rules)
     return client
 
 
@@ -560,3 +563,68 @@ def test_a_read_only_run_never_injects_an_input_event(monkeypatch):
     with pytest.raises(LampNotAllowed, match=r"HIL_LAMPS_READ_ONLY.*automations"):
         master._check(master._normalize([{"bits": 24, "bytes": _event(PANEL, FREE_INSTANCE)}]))
 
+
+RESTARTS = (("POST", "redundancy/switchover", {}),
+            ("POST", "firmware/updates", {"url": "http://x/app.bin"}),
+            ("PATCH", "settings/dali", {"application_active": True}))
+RESTART_RULES = [
+    _input_rule("morning", {"kind": "controller_starts"}),
+    _input_rule("failover", {"kind": "controller_becomes_active"}),
+    _input_rule("hil-vg-10", {"kind": "controller_becomes_active"}),
+    _input_rule("asleep", {"kind": "controller_starts"}, enabled=False),
+    _input_rule("dusk", {"kind": "at_solar", "event": "sunset", "offset_ms": 0}),
+]
+
+
+def test_a_restart_is_refused_while_an_owner_rule_fires_when_a_controller_starts():
+    owner = LampGuard(LAMPS, restart_rules=lambda: ["failover", "morning"])
+    quiet = LampGuard(LAMPS, restart_rules=lambda: [])
+    for method, path, body in RESTARTS:
+        with pytest.raises(LampNotAllowed, match=r"failover, morning fire when a controller "
+                                                 r"starts or becomes active"):
+            owner.check_request(method, path, body)
+        with pytest.raises(LampNotAllowed, match=r"no controller lists the owner's rules"):
+            LampGuard(LAMPS).check_request(method, path, body)
+        assert ("shown/*", frozenset({"*"})) in quiet.check_request(method, path, body)
+    owner.check_request("PATCH", "settings/dali", {"application_active": False})
+    owner.check_request("PATCH", "settings/poller", {"enabled": False})
+
+
+def test_the_client_refuses_a_switchover_and_a_reboot_before_they_start():
+    client = _client(rules=RESTART_RULES)
+    assert client.restart_rules() == ["failover", "morning"]
+    log = write_log.WriteLog("t", client.base)
+    write_log.start(log)
+    try:
+        with pytest.raises(LampNotAllowed, match=r"switchover refused: the owner's rule\(s\) "
+                                                 r"failover, morning"):
+            client.redundancy.switchover()
+        with pytest.raises(LampNotAllowed, match=r"a reboot of .* refused"):
+            with client.expect_reboot():
+                pass
+    finally:
+        write_log.stop()
+    assert client.http.sent == [] and not log.changed("shown/5")
+    quiet = _client(rules=RESTART_RULES[2:])
+    quiet.redundancy.switchover()
+    with quiet.expect_reboot():
+        pass
+    assert [path for _m, path, _b in quiet.http.sent] == ["redundancy/switchover"]
+
+
+def test_a_handover_asks_both_units_before_the_first_switchover():
+    quiet = _client()
+    stale = _client(rules=RESTART_RULES[1:2])
+    pair.check_handovers(quiet, quiet)
+    with pytest.raises(LampNotAllowed, match=r"handover .* refused: .* failover"):
+        pair.check_handovers(quiet, stale)
+    assert quiet.http.sent == [] and stale.http.sent == []
+
+
+def test_an_unsettled_pair_is_left_as_found_while_an_owner_rule_fires_on_a_start():
+    primary, peer = _client(), _client(rules=RESTART_RULES[1:2])
+    for client in (primary, peer):
+        client.redundancy.get = lambda: {"active": False}
+    with pytest.raises(LampNotAllowed, match=r"failover"):
+        pair.settle(primary, peer, timeout_s=0.1)
+    assert primary.http.sent == [] and peer.http.sent == []

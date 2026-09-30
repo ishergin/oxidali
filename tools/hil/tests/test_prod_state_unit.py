@@ -546,8 +546,8 @@ class _ClockApi:
 
 
 def test_timed_rules_are_the_enabled_ones_a_time_or_the_sun_fires():
-    assert api_mod.timed_rules_of(TIMED) == ["dusk"]
-    assert api_mod.timed_rules_of({"rules": None}) == []
+    assert api_mod.rules_on(TIMED, api_mod.TIMED_TRIGGERS) == ["dusk"]
+    assert api_mod.rules_on({"rules": None}, api_mod.TIMED_TRIGGERS) == []
 
 
 def test_the_clock_moves_on_the_first_call_and_never_under_an_owner_timed_rule():

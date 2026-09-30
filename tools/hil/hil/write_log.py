@@ -34,7 +34,10 @@ SCENE_MATRIX = re.compile(r"adapters/[0-9]+/scenes/([0-9]+)/matrix")
 CREATED = ((re.compile(r"hcl-schedules"), "hcl/%s", "schedule_id"),
            (re.compile(r"adapters/[0-9]+/virtual-lamps"), "vl/%s", "virtual_lamp_id"))
 INDIRECT = (re.compile(r"rules/[^/]+/run"), re.compile(r"hcl-schedules(/[^/]+(/override)?)?"),
-            re.compile(r"time"), re.compile(r"redundancy/switchover|firmware/updates"))
+            re.compile(r"time"))
+RESTART_ROUTE = re.compile(r"redundancy/switchover|firmware/updates")
+ACTIVATION_ROUTE = re.compile(r"settings/dali")
+ACTIVATION_FIELD = "application_active"
 ANY_LAMP = ("shown/" + ALL, EVERY)
 SIDE_EFFECTS = (
     (re.compile(r"adapters/[0-9]+/discovery-runs"), "POST", [("gear/" + ALL, POLICY_FIELDS)]),
@@ -60,9 +63,16 @@ def request_keys(method, path, body):
     for pattern, verb, effects in SIDE_EFFECTS:
         if verb == method and pattern.fullmatch(path):
             keys = keys + effects
-    if any(pattern.fullmatch(path) for pattern in INDIRECT):
+    if restarts(path, body) or any(pattern.fullmatch(path) for pattern in INDIRECT):
         keys = keys + [ANY_LAMP]
     return keys
+
+
+def restarts(path, body):
+    if RESTART_ROUTE.fullmatch(path):
+        return True
+    return (bool(ACTIVATION_ROUTE.fullmatch(path)) and isinstance(body, dict)
+            and body.get(ACTIVATION_FIELD) is True)
 
 
 def topic_keys(topic):

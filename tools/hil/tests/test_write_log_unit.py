@@ -1,3 +1,5 @@
+import types
+
 import pytest
 
 import hil.api
@@ -50,6 +52,10 @@ GROUP_ROW = {"virtual_lamp_id": 7, "desired": [False] * 16}
      [("gear/*", {"power_on_level", "system_failure_level"})]),
     ("POST", "redundancy/switchover", {}, [("shown/*", {ALL})]),
     ("POST", "firmware/updates", {"url": "http://x/app.bin"}, [("shown/*", {ALL})]),
+    ("PATCH", "settings/dali", {"application_active": True},
+     [("settings/dali", {"application_active"}), ("shown/*", {ALL})]),
+    ("PATCH", "settings/dali", {"application_active": False},
+     [("settings/dali", {"application_active"})]),
     ("POST", "adapters/0/input-devices/scan", {}, []),
 ])
 def test_a_request_names_the_resources_and_fields_it_writes(method, path, body, keys):
@@ -91,8 +97,18 @@ def test_an_mqtt_command_may_move_any_lamp_and_a_wildcard_is_no_exact_answer():
     assert log.changed("shown/4", exact=True)
 
 
+class _NoRules:
+    def request(self, method, url, json=None, timeout=None):
+        return types.SimpleNamespace(status_code=200, content=b"{}",
+                                     json=lambda: {"rules": {"rules": []}})
+
+    def close(self):
+        pass
+
+
 def test_a_reboot_the_toolkit_provokes_may_move_any_lamp():
     client = hil.api.Client(load_config())
+    client.http = _NoRules()
     log = WriteLog("t1", client.base)
     write_log.start(log)
     try:

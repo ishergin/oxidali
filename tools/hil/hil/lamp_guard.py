@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import unquote
 
-from hil.write_log import ALL, EVERY, frame_keys, request_keys
+from hil.write_log import ALL, EVERY, frame_keys, request_keys, restarts
 
 TARGET_SEGMENT = -1
 SHORT_LIMIT = 0x80
@@ -457,18 +457,21 @@ def named(shorts):
 
 
 class LampGuard:
-    def __init__(self, allowed, read_only=False, segment=None, binding=None, pending=None):
+    def __init__(self, allowed, read_only=False, segment=None, binding=None, pending=None,
+                 restart_rules=None):
         self.allowed = frozenset(allowed)
         self.read_only = bool(read_only)
         self._segment = segment
         self._binding = binding
         self._pending = pending
+        self._restart_rules = restart_rules
         self.fence = None
         self._enabled = None
 
     @classmethod
-    def for_config(cls, cfg, segment=None, binding=None, pending=None):
-        return cls(cfg.lamp_short_set(), cfg.lamps_read_only, segment, binding, pending)
+    def for_config(cls, cfg, segment=None, binding=None, pending=None, restart_rules=None):
+        return cls(cfg.lamp_short_set(), cfg.lamps_read_only, segment, binding, pending,
+                   restart_rules)
 
     def check_request(self, method, path, body=None):
         if method.upper() in READ_METHODS:
@@ -477,6 +480,8 @@ class LampGuard:
         keys = request_keys(method, path, body)
         if self.fence is not None and self.fence.check_request(method.upper(), path, body):
             return keys
+        if restarts(path, body):
+            self.check_restart("%s %s" % (method.upper(), path))
         _refuse_commissioning(method, path, body)
         apply = _apply_route(path)
         if apply is not None:
@@ -495,6 +500,15 @@ class LampGuard:
                 return keys + self._check_resource(
                     kind, key, body, label, visible(body) if callable(visible) else visible)
         return keys
+
+    def check_restart(self, what):
+        if self._restart_rules is None:
+            raise LampNotAllowed("%s refused: no controller lists the owner's rules a restart "
+                                 "fires" % what)
+        fired = self._restart_rules()
+        if fired:
+            raise LampNotAllowed("%s refused: the owner's rule(s) %s fire when a controller "
+                                 "starts or becomes active" % (what, ", ".join(fired)))
 
     def _check_resource(self, kind, key, body, label, visible):
         what = label % (key if key is not None else _short_of(body))

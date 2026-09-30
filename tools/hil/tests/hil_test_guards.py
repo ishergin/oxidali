@@ -478,7 +478,8 @@ class _Clock:
         if self.api.cfg.lamps_read_only:
             pytest.skip("a read-only run never moves the controller's clock: a move fires "
                         "the owner's timed rules and publishes every HCL schedule's point")
-        timed = api_mod.timed_rules_of(self.api._req("GET", "rules?format=json"))
+        timed = api_mod.rules_on(self.api._req("GET", "rules?format=json"),
+                                 api_mod.TIMED_TRIGGERS)
         if timed:
             pytest.skip("the owner's rule(s) %s fire at a time of day or at the sun, and a "
                         "clock move fires each whose time falls in the hour before the new "

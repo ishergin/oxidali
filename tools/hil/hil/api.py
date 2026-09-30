@@ -36,13 +36,14 @@ def kelvin_to_mirek(kelvin):
 
 
 TIMED_TRIGGERS = frozenset({"at_time", "at_solar"})
+RESTART_TRIGGERS = frozenset({"controller_starts", "controller_becomes_active"})
 
 
-def timed_rules_of(projection):
+def rules_on(projection, kinds):
     compiled = (projection or {}).get("rules") or {}
     return sorted(rule["name"] for rule in compiled.get("rules") or []
                   if rule.get("enabled", True)
-                  and any(t.get("kind") in TIMED_TRIGGERS for t in rule.get("triggers") or []))
+                  and any(t.get("kind") in kinds for t in rule.get("triggers") or []))
 
 
 def rule_toggles_of(projection):
@@ -117,12 +118,18 @@ class Client:
         self.config = _ConfigSlices(self)
         self.guard = LampGuard.for_config(cfg, segment=self.segment_shorts,
                                           binding=self._bound_short,
-                                          pending=self.pending_lamps)
+                                          pending=self.pending_lamps,
+                                          restart_rules=self.restart_rules)
         self.init_ledger()
         self._rebooting = False
 
+    def restart_rules(self):
+        fired = rules_on(self._req("GET", "rules?format=json"), RESTART_TRIGGERS)
+        return [name for name in fired if not name.startswith(lamp_guard.TEST_RULE_PREFIX)]
+
     @contextlib.contextmanager
     def expect_reboot(self):
+        self.guard.check_restart("a reboot of %s" % self.base)
         write_log.note(self.base, [write_log.ANY_LAMP])
         previous = self._rebooting
         self._rebooting = True
