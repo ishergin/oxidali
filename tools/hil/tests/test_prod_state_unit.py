@@ -7,6 +7,7 @@ import pytest
 import hil_session
 import hil_session_guards
 import hil_test_guards
+import test_attributes
 import test_policies
 from hil import api as api_mod
 from hil import prod_state
@@ -542,4 +543,37 @@ def test_the_clock_moves_on_the_first_call_and_never_under_an_owner_timed_rule()
     with pytest.raises(pytest.skip.Exception, match=r"read-only run never moves"):
         hil_test_guards._Clock(read_only).at(10, 0)
     assert read_only.calls == []
+
+
+class _Overrides:
+    adapter = 0
+
+    def __init__(self, allowed=()):
+        self.cfg = types.SimpleNamespace(lamp_short_set=lambda: frozenset(allowed))
+        self.records = {1: None, 2: None}
+        self.patches = []
+
+    def addrs(self):
+        return sorted(self.records)
+
+    def state(self, short):
+        return {"supported_device_types": [6], "device_type_override": self.records[short]}
+
+    def device_patch(self, short, body):
+        self.patches.append((short, body))
+        if body["device_type_override"] == "dt8_color":
+            raise api_mod.ApiError(422, {"error": "unsupported_device_type"}, "devices")
+        self.records[short] = body["device_type_override"]
+
+
+def test_the_override_probe_writes_only_a_refused_widening_to_a_lamp_it_may_not_write():
+    owner = _Overrides()
+    with pytest.raises(pytest.skip.Exception, match=r"SA1 is not a lamp of HIL_LAMP_SHORTS"):
+        test_attributes.test_a_widening_device_type_override_is_refused(owner, None)
+    assert owner.patches == [(1, {"device_type_override": "dt8_color"})]
+    allowed = _Overrides(allowed={2})
+    test_attributes.test_a_widening_device_type_override_is_refused(allowed, None)
+    assert allowed.patches == [(2, {"device_type_override": "dt8_color"}),
+                               (2, {"device_type_override": "unknown"}),
+                               (2, {"device_type_override": None})]
 

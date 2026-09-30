@@ -3,6 +3,7 @@ import time
 import pytest
 
 from hil.camera.calibrate import rgb_setpoint, RGB_PRIMARIES
+from hil import api as api_mod
 from hil.lamp_guard import LampNotAllowed
 
 ALL_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,groups,scenes,extended"
@@ -300,16 +301,17 @@ def test_declared_device_types_are_a_set_or_honestly_absent(api, op_check):
             )
 
 
+def _without_dt8(api):
+    found = [(short, declared) for short in api.addrs()
+             for declared in [_declared(api, short)]
+             if isinstance(declared, list) and 8 not in declared]
+    allowed = api.cfg.lamp_short_set()
+    return next((t for t in found if t[0] in allowed), found[0] if found else None)
+
+
 @pytest.mark.smoke
 def test_a_widening_device_type_override_is_refused(api, op_check):
-    from hil import api as api_mod
-
-    target = None
-    for short in api.addrs():
-        declared = _declared(api, short)
-        if isinstance(declared, list) and 8 not in declared:
-            target = (short, declared)
-            break
+    target = _without_dt8(api)
     if target is None:
         pytest.skip(
             "every gear on the segment declares DT8 (or none finished its "
@@ -326,11 +328,14 @@ def test_a_widening_device_type_override_is_refused(api, op_check):
             "must be refused rather than silently enabling frames the gear "
             "ignores; got %s" % (short, declared, exc.value.status)
         )
-
+        if short not in api.cfg.lamp_short_set():
+            pytest.skip("SA%d is not a lamp of HIL_LAMP_SHORTS, so the narrowing half, which "
+                        "writes its record, does not run" % short)
         api.device_patch(short, {"device_type_override": "unknown"})
         assert api.state(short).get("device_type_override") == "unknown"
     finally:
-        api.device_patch(short, {"device_type_override": before})
+        if api.state(short).get("device_type_override") != before:
+            api.device_patch(short, {"device_type_override": before})
 
 
 @pytest.mark.light
