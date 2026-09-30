@@ -15,7 +15,7 @@ use dali2rust_contracts::bus::{
 use dali2rust_contracts::msg::{
     BusCommandPayload, BusEventPayload, DaliRecallLastActiveLevelCommand,
     DaliSetTargetStateCommand, DeliveryStatus, ErrorCode, HclOverrideClearCommand,
-    HclOverrideHoldCommand, Origin,
+    HclOverrideHoldCommand, Origin, RuntimeStateChangedEvent,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{HclScheduleView, HclSchedulerReadPort};
@@ -112,6 +112,7 @@ impl PublishOutcomes {
 struct SchedulerState {
     last_published: HashMap<TargetKey, PublishRecord>,
     published_from: Option<Vec<HclScheduleView>>,
+    held_during_tick: Vec<TargetKey>,
 }
 
 impl SchedulerState {
@@ -119,6 +120,7 @@ impl SchedulerState {
         Self {
             last_published: HashMap::new(),
             published_from: None,
+            held_during_tick: Vec::new(),
         }
     }
 
@@ -303,6 +305,7 @@ fn hold_target(
         deps.counters.overrides_started.fetch_add(1, Ordering::Relaxed);
     }
     state.last_published.remove(&target);
+    state.held_during_tick.push(target);
 }
 
 fn confirm_override_command(deps: &SchedulerDeps, correlation_id: u64, refusal: Option<&str>) {
@@ -338,18 +341,21 @@ fn apply_event(state: &mut SchedulerState, deps: &SchedulerDeps, payload: &BusEv
             }
         }
         BusEventPayload::RuntimeStateChangedEvent(body) => {
-            let commit = RuntimeCommit {
-                adapter_id: body.adapter_id,
-                virtual_lamp_id: body.virtual_lamp_id,
-                value_source: Some(body.commit_source),
-                states: body.commit_dimensions,
-                holds_hcl: body.commit_holds_hcl,
-            };
-            suspend_hit_targets(state, deps, &commit);
+            suspend_hit_targets(state, deps, &runtime_commit(body));
         }
         _ => {
             deps.counters.ignored_events.fetch_add(1, Ordering::Relaxed);
         }
+    }
+}
+
+fn runtime_commit(body: &RuntimeStateChangedEvent) -> RuntimeCommit {
+    RuntimeCommit {
+        adapter_id: body.adapter_id,
+        virtual_lamp_id: body.virtual_lamp_id,
+        value_source: Some(body.commit_source),
+        states: body.commit_dimensions,
+        holds_hcl: body.commit_holds_hcl,
     }
 }
 
@@ -450,22 +456,35 @@ fn run_tick(
             .fetch_add(tick_plan.dropped as u32, Ordering::Relaxed);
     }
     WORKER_STACK.note("tick:plan");
-    let mut deferred = Vec::new();
-    let outcomes = publish_plan(rx, conf_rx, deps, &tick_plan.commands, &mut deferred);
+    state.held_during_tick.clear();
+    let mut inbox = TickInbox { state, deferred: Vec::new() };
+    let outcomes = publish_plan(rx, conf_rx, deps, &tick_plan.commands, &mut inbox);
     WORKER_STACK.note("tick:publish");
-    for entry in fresh {
-        if let Some(confirmed) = outcomes.get(&entry.key) {
-            state.last_published.insert(
-                entry.key,
-                PublishRecord {
-                    state: entry.state,
-                    confirmed,
-                },
-            );
-        }
-    }
+    let TickInbox { state, deferred } = inbox;
+    record_published(state, fresh, &outcomes);
     for frame in deferred {
         apply_frame(state, deps, &frame);
+    }
+}
+
+struct TickInbox<'s> {
+    state: &'s mut SchedulerState,
+    deferred: Vec<BusFrame>,
+}
+
+fn record_published(
+    state: &mut SchedulerState,
+    fresh: Vec<DesiredEntry>,
+    outcomes: &PublishOutcomes,
+) {
+    for entry in fresh {
+        if let Some(confirmed) = outcomes.get(&entry.key) {
+            let record = PublishRecord { state: entry.state, confirmed };
+            state.last_published.insert(entry.key, record);
+        }
+    }
+    for held in std::mem::take(&mut state.held_during_tick) {
+        state.last_published.remove(&held);
     }
 }
 
@@ -548,7 +567,7 @@ fn publish_plan(
     conf_rx: &BusSubscriberRx,
     deps: &SchedulerDeps,
     commands: &[PlannedCommand],
-    deferred: &mut Vec<BusFrame>,
+    inbox: &mut TickInbox<'_>,
 ) -> PublishOutcomes {
     let mut outcomes = PublishOutcomes::default();
     for (index, command) in commands.iter().enumerate() {
@@ -570,7 +589,7 @@ fn publish_plan(
             deps,
             correlation_id,
             deps.config.command_timeout_ms,
-            deferred,
+            inbox,
         );
         outcomes.merge(command.key(), confirmed);
     }
@@ -583,27 +602,25 @@ fn mark_unpublished_keys(outcomes: &mut PublishOutcomes, unpublished: &[PlannedC
     }
 }
 
-fn service_commands(rx: &BusSubscriberRx, deps: &SchedulerDeps, deferred: &mut Vec<BusFrame>) {
+fn service_commands(rx: &BusSubscriberRx, deps: &SchedulerDeps, inbox: &mut TickInbox<'_>) {
     while let Ok(frame) = rx.try_recv() {
-        match clear_to_serve_now(&frame, deferred) {
-            Some((correlation_id, body)) => handle_override_clear(deps, correlation_id, body),
-            None => defer_frame(&deps.counters, deferred, frame),
+        if let BusFrame::Command(envelope) = &frame {
+            let correlation_id = envelope.meta.correlation_id;
+            dispatch_scheduler_command(&envelope.payload, inbox.state, deps, correlation_id);
+        } else if can_suspend(&frame) {
+            defer_frame(&deps.counters, &mut inbox.deferred, frame);
         }
     }
 }
 
-fn clear_to_serve_now<'f>(
-    frame: &'f BusFrame,
-    deferred: &[BusFrame],
-) -> Option<(u64, &'f HclOverrideClearCommand)> {
-    let BusFrame::Command(envelope) = frame else {
-        return None;
-    };
-    let BusCommandPayload::HclOverrideClearCommand(body) = &envelope.payload else {
-        return None;
-    };
-    let behind_a_command = deferred.iter().any(|held| matches!(held, BusFrame::Command(_)));
-    (!behind_a_command).then_some((envelope.meta.correlation_id, body))
+fn can_suspend(frame: &BusFrame) -> bool {
+    match frame {
+        BusFrame::Event(envelope) => match &envelope.payload {
+            BusEventPayload::RuntimeStateChangedEvent(body) => runtime_commit(body).overrides(),
+            _ => true,
+        },
+        _ => true,
+    }
 }
 
 fn defer_frame(counters: &HclSchedulerCounters, deferred: &mut Vec<BusFrame>, frame: BusFrame) {
@@ -661,7 +678,7 @@ fn wait_for_confirmation(
     deps: &SchedulerDeps,
     correlation_id: u64,
     timeout_ms: u64,
-    deferred: &mut Vec<BusFrame>,
+    inbox: &mut TickInbox<'_>,
 ) -> bool {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     loop {
@@ -685,7 +702,7 @@ fn wait_for_confirmation(
             }
             Ok(_) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                service_commands(rx, deps, deferred);
+                service_commands(rx, deps, inbox);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 deps.counters.command_timeouts.fetch_add(1, Ordering::Relaxed);

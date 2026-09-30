@@ -409,14 +409,26 @@ fn spawn_harness_without_confirmations(registry: StubRegistry, clock: Arc<StubCl
     spawn_harness_inner(Arc::new(registry), clock, None)
 }
 
+const SCHEDULER_INBOX: usize = 32;
+const DEEP_SCHEDULER_INBOX: usize = 256;
+
 fn spawn_harness_inner(
     registry: Arc<dyn HclSchedulerReadPort>,
     clock: Arc<StubClock>,
     answer: Option<dali2rust_contracts::msg::DeliveryStatus>,
 ) -> Harness {
+    spawn_harness_sized(registry, clock, answer, SCHEDULER_INBOX)
+}
+
+fn spawn_harness_sized(
+    registry: Arc<dyn HclSchedulerReadPort>,
+    clock: Arc<StubClock>,
+    answer: Option<dali2rust_contracts::msg::DeliveryStatus>,
+    inbox: usize,
+) -> Harness {
     let (host, publisher, (rx, conf_rx, cmd_rx, confirmations)) = BusHost::spawn(BusConfig::default(), |reg| {
         (
-            reg.subscribe_commands_and_events(32, HCL_SCHEDULER_HANDLED_COMMANDS, HCL_SCHEDULER_HANDLED_EVENTS),
+            reg.subscribe_commands_and_events(inbox, HCL_SCHEDULER_HANDLED_COMMANDS, HCL_SCHEDULER_HANDLED_EVENTS),
             reg.subscribe_confirmations(32),
             reg.subscribe_commands(64, PUMPED_COMMANDS),
             reg.subscribe_confirmations(32),
@@ -1553,33 +1565,98 @@ fn a_hold_leaves_a_schedule_that_does_not_run_today_alone() {
     );
 }
 
-#[test]
-fn a_hold_and_a_clear_that_meet_a_publishing_tick_keep_their_order() {
-    let registry = StubRegistry {
+const SIXTEEN_GROUPS: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const LAMP_IN_GROUP_THREE: u8 = 1;
+const LAMP_IN_NO_GROUP: u8 = 2;
+const TICK_EVENT_BUFFER: u32 = 64;
+const PAST_THE_BUFFER: u32 = 36;
+const SMALL_OVERFLOW: u32 = 6;
+
+fn sixteen_group_registry() -> StubRegistry {
+    StubRegistry {
         schedules: vec![schedule(
             "wide",
-            vec![group_target(0, &[1, 2, 3, 4, 5, 6, 7, 8])],
+            vec![group_target(0, &SIXTEEN_GROUPS)],
             vec![point(0, HclLevelMode::Absolute, Some(120), None)],
         )],
-        membership: vec![(1, 1u16 << 3)],
-    };
-    let harness = spawn_harness_without_confirmations(registry, Arc::new(StubClock::at(600)));
+        membership: vec![(LAMP_IN_GROUP_THREE, 1u16 << 3)],
+    }
+}
+
+fn publishing_tick_on_a_deep_inbox() -> Harness {
+    let harness = spawn_harness_sized(
+        Arc::new(sixteen_group_registry()),
+        Arc::new(StubClock::at(600)),
+        None,
+        DEEP_SCHEDULER_INBOX,
+    );
     wait_until(
         || harness.counters.commands_published.load(Ordering::Relaxed) >= 1,
         Duration::from_secs(3),
     );
+    harness
+}
+
+fn publish_commits(harness: &Harness, count: u32, virtual_lamp_id: u8, source: RuntimeSource) {
+    for _ in 0..count {
+        let event = commit_event(virtual_lamp_id, source, LightSetpoint::from_level(254, None));
+        let frame = BusFrame::event(event);
+        wait_until(
+            || harness.publisher.try_publish(BusChannel::Events, frame.clone()) == PublishResult::Queued,
+            Duration::from_secs(3),
+        );
+    }
+}
+
+fn wait_for_dropped(harness: &Harness, dropped: u32) {
+    wait_until(
+        || harness.counters.deferred_dropped_cap.load(Ordering::Relaxed) >= dropped,
+        Duration::from_secs(3),
+    );
+}
+
+#[test]
+fn a_hold_and_a_clear_during_a_flooded_tick_are_served_at_once_and_in_order() {
+    let harness = publishing_tick_on_a_deep_inbox();
+    publish_commits(&harness, TICK_EVENT_BUFFER + PAST_THE_BUFFER, LAMP_IN_NO_GROUP, RuntimeSource::Api);
+    wait_for_dropped(&harness, PAST_THE_BUFFER);
 
     harness.hold(76, HclOverrideTarget::Group { group_id: 3 });
     harness.clear(77, "wide");
+    let order = harness.confirmation_order(&[76, 77]);
+    let timeouts_when_served = harness.counters.command_timeouts.load(Ordering::Relaxed);
 
     assert_eq!(
-        harness.confirmation_order(&[76, 77]),
-        vec![76, 77],
-        "the tick defers the hold, so the clear behind it waits too"
+        harness.counters.deferred_dropped_cap.load(Ordering::Relaxed),
+        PAST_THE_BUFFER,
+        "the tick's event buffer was full before the commands came"
+    );
+    assert_eq!(order, vec![76, 77], "both commands land, the hold first");
+    assert!(
+        timeouts_when_served < SIXTEEN_GROUPS.len() as u32,
+        "both were answered while the tick was still publishing"
     );
     assert_eq!(harness.counters.overrides_started.load(Ordering::Relaxed), 1);
     assert!(
         !harness.override_view("wide").suspended,
         "the clear came after the hold, so the schedule runs"
+    );
+}
+
+#[test]
+fn the_schedules_own_commits_are_not_kept_for_after_the_tick() {
+    let harness = publishing_tick_on_a_deep_inbox();
+    publish_commits(&harness, TICK_EVENT_BUFFER + PAST_THE_BUFFER, LAMP_IN_GROUP_THREE, RuntimeSource::Hcl);
+    publish_commits(&harness, TICK_EVENT_BUFFER + SMALL_OVERFLOW, LAMP_IN_NO_GROUP, RuntimeSource::Api);
+    wait_for_dropped(&harness, SMALL_OVERFLOW);
+
+    assert!(
+        harness.counters.command_timeouts.load(Ordering::Relaxed) < SIXTEEN_GROUPS.len() as u32,
+        "every commit arrived while the tick was publishing"
+    );
+    assert_eq!(
+        harness.counters.deferred_dropped_cap.load(Ordering::Relaxed),
+        SMALL_OVERFLOW,
+        "a commit that cannot override takes no room in the tick's event buffer"
     );
 }
