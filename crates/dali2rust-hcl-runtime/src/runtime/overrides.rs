@@ -204,10 +204,8 @@ pub fn resume_covers_target(
     resumed: HclOverrideTarget,
     target: TargetKey,
 ) -> bool {
-    if adapter_id != target.adapter_id {
-        return false;
-    }
     match (resumed, target.scope) {
+        _ if adapter_id != target.adapter_id => false,
         (HclOverrideTarget::Broadcast, _) => true,
         (_, HclTargetScope::Broadcast) => false,
         (HclOverrideTarget::Group { group_id }, HclTargetScope::Group) => {

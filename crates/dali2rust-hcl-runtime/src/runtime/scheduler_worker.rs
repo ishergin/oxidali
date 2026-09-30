@@ -29,7 +29,7 @@ use super::overrides::{
     OverrideLedger, RuntimeCommit,
 };
 use super::plan::{
-    coalesce, expand_target, plan, DesiredEntry, PlannedCommand, TargetKey,
+    coalesce, expand_target, plan, DesiredEntry, PlannedCommand, TargetKey, TickPlan,
 };
 
 pub const DEFAULT_TICK_PERIOD_MS: u64 = 60_000;
@@ -420,37 +420,41 @@ fn suspend_hit_targets(state: &mut SchedulerState, deps: &SchedulerDeps, commit:
         return;
     };
     roll_over_ledger(state, deps, local.year_day);
-    let mut hit: Vec<TargetKey> = Vec::new();
-    let mut spared: Vec<TargetKey> = Vec::new();
+    let mut split = HitSplit::default();
     for schedule in deps.read_port.list_hcl_schedule_views() {
-        if !runs_today(&schedule, local) {
-            continue;
-        }
-        let driven = driven_dimensions(&schedule.points);
-        for target in schedule.targets.iter().flat_map(expand_target) {
-            if !state.driven(&target) {
-                continue;
-            }
-            if !commit_hits_target(deps.read_port.as_ref(), commit, target, driven) {
-                spared.push(target);
-                continue;
-            }
-            let started = lock_ledger(&deps.overrides).suspend(
-                &schedule.schedule_id,
-                target,
-                local.minutes_since_midnight,
-            );
-            if started {
-                deps.counters.overrides_started.fetch_add(1, Ordering::Relaxed);
-            }
-            hit.push(target);
+        if runs_today(&schedule, local) {
+            split_targets(state, deps, commit, (&schedule, local), &mut split);
         }
     }
-    for target in hit {
-        if spared.contains(&target) {
+    for target in split.hit.into_iter().filter(|target| !split.spared.contains(target)) {
+        state.stand_down(target);
+    }
+}
+
+#[derive(Default)]
+struct HitSplit {
+    hit: Vec<TargetKey>,
+    spared: Vec<TargetKey>,
+}
+
+fn split_targets(
+    state: &SchedulerState,
+    deps: &SchedulerDeps,
+    commit: &RuntimeCommit,
+    (schedule, local): (&HclScheduleView, LocalCivilTime),
+    split: &mut HitSplit,
+) {
+    let driven = driven_dimensions(&schedule.points);
+    for target in schedule.targets.iter().flat_map(expand_target).filter(|t| state.driven(t)) {
+        if !commit_hits_target(deps.read_port.as_ref(), commit, target, driven) {
+            split.spared.push(target);
             continue;
         }
-        state.stand_down(target);
+        let at = local.minutes_since_midnight;
+        if lock_ledger(&deps.overrides).suspend(&schedule.schedule_id, target, at) {
+            deps.counters.overrides_started.fetch_add(1, Ordering::Relaxed);
+        }
+        split.hit.push(target);
     }
 }
 
@@ -496,6 +500,19 @@ fn run_tick(
     let Some(local) = tick_is_due(deps) else {
         return;
     };
+    let (fresh, tick_plan) = plan_tick(state, deps, local);
+    state.tick = Some(TickScope::default());
+    let outcomes = publish_plan(rx, conf_rx, deps, &tick_plan.commands, state);
+    WORKER_STACK.note("tick:publish");
+    let tick = state.tick.take().unwrap_or_default();
+    record_published(state, fresh, &outcomes, &tick.stood_down);
+}
+
+fn plan_tick(
+    state: &mut SchedulerState,
+    deps: &SchedulerDeps,
+    local: LocalCivilTime,
+) -> (Vec<DesiredEntry>, TickPlan) {
     roll_over_ledger(state, deps, local.year_day);
     state.published_from = Some(sorted_schedules(deps));
     let schedules = state.published_from.as_deref().unwrap_or_default();
@@ -504,16 +521,11 @@ fn run_tick(
     let fresh = unconfirmed_entries(state, entries);
     let tick_plan = plan(&fresh);
     if tick_plan.dropped > 0 {
-        deps.counters
-            .commands_dropped_cap
-            .fetch_add(tick_plan.dropped as u32, Ordering::Relaxed);
+        let dropped = tick_plan.dropped as u32;
+        deps.counters.commands_dropped_cap.fetch_add(dropped, Ordering::Relaxed);
     }
     WORKER_STACK.note("tick:plan");
-    state.tick = Some(TickScope::default());
-    let outcomes = publish_plan(rx, conf_rx, deps, &tick_plan.commands, state);
-    WORKER_STACK.note("tick:publish");
-    let tick = state.tick.take().unwrap_or_default();
-    record_published(state, fresh, &outcomes, &tick.stood_down);
+    (fresh, tick_plan)
 }
 
 fn record_published(
@@ -714,8 +726,7 @@ fn wait_for_confirmation(
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            deps.counters.command_timeouts.fetch_add(1, Ordering::Relaxed);
-            return false;
+            return timed_out(deps);
         }
         let slice = remaining.min(CONFIRMATION_POLL_SLICE);
         let received = deps.liveness.while_turning(|| conf_rx.recv_timeout(slice));
@@ -724,13 +735,15 @@ fn wait_for_confirmation(
             Ok(BusFrame::Confirmation(envelope)) if envelope.meta.correlation_id == correlation_id => {
                 return confirmed_ok(deps, envelope.status);
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                deps.counters.command_timeouts.fetch_add(1, Ordering::Relaxed);
-                return false;
-            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return timed_out(deps),
             _ => {}
         }
     }
+}
+
+fn timed_out(deps: &SchedulerDeps) -> bool {
+    deps.counters.command_timeouts.fetch_add(1, Ordering::Relaxed);
+    false
 }
 
 fn confirmed_ok(deps: &SchedulerDeps, status: DeliveryStatus) -> bool {
