@@ -31,6 +31,9 @@ pub const RULES_WORKER_HANDLED_EVENTS: &[&str] = &[
     "DaliSettingsChangedEvent",
     "VirtualLampChangedEvent",
     "PhysicalDeviceChangedEvent",
+    "GroupChangedEvent",
+    "SceneChangedEvent",
+    "InputDeviceChangedEvent",
     "RedundancyTransitionEvent",
     "Dali103InstanceConfiguredEvent",
     "RegistrySliceReloadedEvent",
@@ -675,5 +678,8 @@ fn names_may_have_moved(payload: &dali2rust_contracts::msg::BusEventPayload) -> 
         payload,
         dali2rust_contracts::msg::BusEventPayload::VirtualLampChangedEvent(_)
             | dali2rust_contracts::msg::BusEventPayload::PhysicalDeviceChangedEvent(_)
+            | dali2rust_contracts::msg::BusEventPayload::GroupChangedEvent(_)
+            | dali2rust_contracts::msg::BusEventPayload::SceneChangedEvent(_)
+            | dali2rust_contracts::msg::BusEventPayload::InputDeviceChangedEvent(_)
     )
 }

@@ -53,7 +53,8 @@
   триггеров мост читает из стора правил, когда сдвигается поколение документа — его
   двигает каждая замена документа, гидрация и перечитка слайсов включительно
   ([`ADR-033`](../../../architecture/decisions/ADR-033-mqtt-rule-trigger.md)).
-- **События-инвалидации**: `VirtualLampChangedEvent` и `PhysicalDeviceChangedEvent` —
+- **События-инвалидации**: `VirtualLampChangedEvent`, `PhysicalDeviceChangedEvent`,
+  `GroupChangedEvent`, `SceneChangedEvent` и `InputDeviceChangedEvent` —
   имя, разрешённое при компиляции, могло перестать разрешаться, и граф
   перекомпилируется; `RegistrySliceReloadedEvent` — слайс-стор сменился под нами
   (импорт или репликация), документ перечитывается и грузится в движок безусловно, а не

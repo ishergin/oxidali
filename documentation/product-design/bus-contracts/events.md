@@ -25,7 +25,7 @@
 
 | Семейство | События | Издатель | Потребители | Доставка |
 |---|---|---|---|---|
-| Изменения реестра | `AdapterSettingsChangedEvent`, `VirtualLampChangedEvent`, `PhysicalDeviceChangedEvent`, `GroupChangedEvent`, `GroupMatrixChangedEvent`, `SceneChangedEvent`, `SceneMatrixChangedEvent`, `InputDeviceChangedEvent` | registry worker | WS; MQTT (лампы, устройства, группы, матрица групп, сцены, устройства ввода); правила (лампы, устройства) | best-effort |
+| Изменения реестра | `AdapterSettingsChangedEvent`, `VirtualLampChangedEvent`, `PhysicalDeviceChangedEvent`, `GroupChangedEvent`, `GroupMatrixChangedEvent`, `SceneChangedEvent`, `SceneMatrixChangedEvent`, `InputDeviceChangedEvent` | registry worker | WS; MQTT (лампы, устройства, группы, матрица групп, сцены, устройства ввода); правила (лампы, устройства, группы, сцены, устройства ввода — перекомпиляция имён) | best-effort |
 | Расписания HCL | `HclScheduleChangedEvent` | registry worker | HCL, дисплей | best-effort |
 | Runtime | `RuntimeStateChangedEvent` | registry worker | WS, MQTT, HCL, правила | best-effort |
 | Настройки | `PollerSettingsChangedEvent`, `DaliSettingsChangedEvent`, `HomeAssistantSettingsChangedEvent`, `RedundancySettingsChangedEvent`, `PoliciesChangedEvent` | registry worker | поллер; арбитраж, супервизор и правила; — ; воркер репликации; — | best-effort |

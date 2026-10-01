@@ -1639,6 +1639,86 @@ fn enabled_bit(h: &Harness, name: &str) -> Option<bool> {
     h.store.document().compiled.as_ref().and_then(|s| s.rule(name)).map(|r| r.enabled)
 }
 
+struct VanishingNames {
+    inner: StubResolver,
+    gone: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl VanishingNames {
+    fn present(&self) -> bool {
+        !self.gone.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl dali2rust_rules_model::NameResolver for VanishingNames {
+    fn primary_adapter(&self) -> u8 {
+        self.inner.primary_adapter()
+    }
+    fn adapter_exists(&self, adapter_id: u8) -> bool {
+        self.inner.adapter_exists(adapter_id)
+    }
+    fn resolve_lamp(&self, name: &str) -> Option<dali2rust_rules_model::LampRef> {
+        self.inner.resolve_lamp(name)
+    }
+    fn resolve_group(&self, name: &str) -> Option<dali2rust_rules_model::GroupRef> {
+        self.inner.resolve_group(name).filter(|_| self.present())
+    }
+    fn resolve_device(&self, name: &str) -> Option<dali2rust_rules_model::DeviceRef> {
+        self.inner.resolve_device(name)
+    }
+    fn resolve_input_device(&self, name: &str) -> Option<dali2rust_rules_model::InputDeviceRef> {
+        self.inner.resolve_input_device(name).filter(|_| self.present())
+    }
+    fn resolve_scene(&self, name: &str) -> Option<u8> {
+        self.inner.resolve_scene(name).filter(|_| self.present())
+    }
+}
+
+#[test]
+fn renaming_a_group_scene_or_input_device_recompiles_the_rules_that_name_it() {
+    let renames: [(&str, dali2rust_contracts::msg::BusEventPayload); 3] = [
+        (
+            "rule \"г\" { when http trigger do group(\"коридор\").off() }\n",
+            dali2rust_contracts::msg::GroupChangedEvent { adapter_id: 0, group_id: 2 }.into(),
+        ),
+        (
+            "rule \"с\" { when http trigger do scene(\"вечер\").recall(broadcast) }\n",
+            dali2rust_contracts::msg::SceneChangedEvent { adapter_id: 0, scene_id: 3 }.into(),
+        ),
+        (
+            "rule \"у\" { when input(\"панель\", inst=0) is press do log(\"p\") }\n",
+            dali2rust_contracts::msg::InputDeviceChangedEvent { adapter_id: 0, short_address: 4 }.into(),
+        ),
+    ];
+    for (document, renamed) in renames {
+        let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let resolver = VanishingNames { inner: StubResolver::permissive(), gone: Arc::clone(&gone) };
+        let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-renamed"));
+        let h = harness_spawn(slices, empty_world(), Arc::new(resolver));
+        publish_document(&h, 1, document, 0);
+        assert!(recv_signal(&h, 1).error.is_none(), "{document}");
+        wait_revision(&h.store, 1);
+
+        gone.store(true, std::sync::atomic::Ordering::Relaxed);
+        let env = dali2rust_contracts::bus::event_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            dali2rust_contracts::CORRELATION_NONE,
+            BusId::default().0,
+            Some(Origin::Api),
+            renamed,
+        );
+        assert_eq!(
+            h.publisher.try_publish(BusChannel::Events, BusFrame::event(env)),
+            PublishResult::Queued
+        );
+        wait_revision(&h.store, 2);
+        assert!(
+            h.store.document().compiled.is_none(),
+            "the name this document uses is gone, so it must have been recompiled: {document}"
+        );
+    }
+}
+
 #[test]
 fn a_disabled_rule_stays_disabled_across_a_document_that_stopped_compiling_issue162() {
     let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
