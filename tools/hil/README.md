@@ -16,15 +16,16 @@ knobs and the version string in
 | Instrument | Enables | Without it |
 | --- | --- | --- |
 | A controller running this firmware, reachable over HTTP (`HIL_BASE`) | every tier | nothing runs |
-| Its serial console, on this host's USB or behind a serial bridge on another host | `serial`, reboot evidence, `hil monitor`, `hil flash` | `hil preflight` reports it; deselect `serial` |
+| Its serial console, on this host's USB or behind a serial bridge on another host | `serial`, reboot evidence, `hil monitor`, `hil flash` | `hil preflight` reports it; `serial` tests skip |
 | A DALI line with bus power and at least one lamp the suite may drive | every test that changes the light | `HIL_LAMPS_READ_ONLY=1` keeps the light untouched |
 | A UVC camera on a fixed mount with the lamps in view | `optical` ([Optical tests](#optical-tests)) | `--no-camera` turns optical tests into skips |
-| A second DALI master reachable over ssh and MQTT (WB-MDALI3 on a Wiren Board) | `sniffer`, `foreign`, and `ha_bridge` through its broker | the `sniffer` fixture skips; deselect `foreign` and `ha_bridge` |
+| A second DALI master reachable over ssh and MQTT (WB-MDALI3 on a Wiren Board) | `sniffer`, `foreign`, and `ha_bridge` through its broker | the `sniffer` and `foreign` fixtures skip; deselect `ha_bridge` |
 | A second controller on the same line (`HIL_PEER_BASE`) | `redundancy` | those tests are not collected |
 
-macOS is the tested host: camera discovery goes through AVFoundation, `setup.sh` builds
-`uvc-util` with the macOS frameworks, and the frame server runs in Terminal. The rest is
-Python 3.9 or later, pyserial and esptool.
+macOS is the tested host: camera discovery goes through ffmpeg's AVFoundation input,
+`setup.sh` builds `uvc-util` with the macOS frameworks, and the frame server runs in
+Terminal. The rest is Python 3.9 or later with the packages `pyproject.toml` lists
+(`setup.sh` installs them), and espflash, with which `hil flash` makes its images.
 
 ## Configuration
 
@@ -57,7 +58,7 @@ to `HIL_BENCH_TZ`, a run that drives none leaves both alone. A session whose eve
 | `HIL_PEER_BASE`, `HIL_PEER_SERIAL_PORT`, `HIL_PEER_SERIAL_REMOTE`, `HIL_PEER_SERIAL_BRIDGE_PORT` | the pair's [second controller](#the-second-controller-hil---peer) | unset, unset, a reference bench's Wiren Board, `4446` |
 | `HIL_ALLOW_DESTRUCTIVE=1`, `HIL_POWER_CUT=1`, `HIL_BUS_SHORT=1` | allow the destructive and the person-at-the-rig tests | off |
 | `HIL_STATE_GUARD=0` | turn the [save and restore](#save-and-restore) guard off | on |
-| `HIL_BENCH_TZ` | the time zone `bench_baseline` holds the controller in during a run that drives lamps | `MSK-3` |
+| `HIL_BENCH_TZ` | the time zone `bench_baseline` holds the controller in during a run that drives lamps | a reference bench's zone |
 | `HIL_VIRTUAL_GEAR=1` | run the [virtual-gear](#virtual-gear) tier on the gear the peer emulates | off |
 | `HIL_VIRTUAL_PARK` | the emulated park's shape: DT6, DT8 Tc and DT8 RGB+Tc gear, built in that order on the first free addresses above the reserve | `4,4,4` |
 | `HIL_OWNER_SHORTS` | live lamps a scan cannot see (unpowered), added to the virtual-gear reserve | empty |
@@ -132,11 +133,12 @@ bench test's setup or run it is reported as a skip that quotes it:
   segment when they reach a broadcast, the HA scene select or a group other than
   `free_group`, which no registered gear or owner rule uses, which answers no group query
   and which only a test's own lamps join.
-- Every `light` test first skips when an enabled owner rule names its lamps, their virtual
-  lamps or their groups. A test moves the controller's clock (`clock_guard`) only on its
-  first call, never under read-only, and skips while an owner rule fires at a time of day
-  or at the sun. With the go-ahead too, a restart or handover is refused while an owner rule
-  fires when a controller starts or becomes active.
+- Every `light` test first skips when any rule of the document, enabled or not, names its
+  lamps, their virtual lamps or their groups. `clock_guard` moves the controller's clock
+  only when a test calls it, never at setup, and each call skips the test under read-only
+  or while an owner rule fires at a time of day or at the sun. With the go-ahead too, a
+  restart or handover is refused while an owner rule fires when a controller starts or
+  becomes active.
 
 A run with no `HIL_*` flag writes only this, each put back by its test or guard: the
 adapter's name; group 15's and a scene's name and Home Assistant exposure (HIL-GRP-03,
@@ -169,7 +171,8 @@ for every session that reaches the controller:
   named `hil-…`, against the revision it read, so an owner's edit stays and is reported;
   while the owner's delayed actions are pending (STRATEGY §4.9) it leaves the test rules in
   place, switched off, and says so. A commit resets toggles to the text, so it puts back
-  those the commit changed; any other toggle that differs from the snapshot is a residual.
+  those the commit changed; any other toggle that differs from the snapshot is reported —
+  a residual when the session's log names it, otherwise someone else's change.
 - Each session keeps `state/production_state-<time>.json` and its `.writes.json`;
   `production_state_last.json` copies the latest snapshot. `hil state restore` finishes a
   left virtual-gear session ([Virtual gear](#virtual-gear)), then restores every open
@@ -216,7 +219,7 @@ one test changed. `bench_baseline` (above) also fails the session on a device st
 | --- | --- |
 | `hil/` | the library and the `hil` CLI |
 | `tests/` | the suites; `conftest.py` lists the `hil_*.py` plugins that hold the fixtures and the safety gates, one per domain (session hooks, instruments, session and per-test guards, optics, run validity, the virtual-gear session) |
-| `wb/serial_bridge.py` | the one file deployed to the Wiren Board |
+| `wb/serial_bridge.py` | the serial bridge, copied to the Wiren Board's `/mnt/data/dali2rust/`, where `hil flash --via wb\|ota` also stages images and `--via wb` its esptool |
 | `corpus/` | frozen captures of the installation (`hil corpus`); local, and only the files host tests pin are tracked (`.gitignore`) |
 | `*_budget.txt` | run-validity budgets (below) |
 | `state/`, `runs/<ts>/` | gitignored bench state (calibration, monitor, serial log, pins, snapshots) and per-run artifacts; `runs/current` is the latest |
@@ -244,9 +247,10 @@ frames holds a camera AVFoundation no longer hands it: run `vendor/uvc-util/uvc-
 Calibration (`hil calibrate`, or automatically before the first test that needs optics)
 locks the camera, takes all-off baselines for the noise floor, finds each lamp's mask,
 tunes the exposure against clipping, measures crosstalk and a brightness ladder, records
-colour fingerprints and picks fiducials that reveal a camera that moved. The profile is saved in `state/` and reused for
-`HIL_CALIBRATION_TTL_S`; `--skip-calibration` reuses it regardless. **Calibration drives
-every lamp in `HIL_OPTICAL_SHORTS`**, so it is a visible action.
+colour fingerprints and picks fiducials that reveal a camera that moved. The profile is
+saved in `state/`; a session calibrates anew, and again before a test once the profile is
+older than `HIL_CALIBRATION_TTL_S`, unless `--skip-calibration` reuses the saved one.
+**Calibration drives every lamp in `HIL_OPTICAL_SHORTS`**, so it is a visible action.
 
 A dead optical channel **fails** optical tests; `--no-camera` / `HIL_NO_CAMERA=1` turns
 that into skips.
@@ -288,7 +292,8 @@ hil-slow` wrap the cwd.
 ## Run validity — how a red run is classified
 
 Every run ends with an `HIL validity` section (also in `runs/<ts>/summary.md`): frame
-servers (FAIL on more than one), DUT uptime continuity (a reboot fails the test it
+servers (more than one is flagged; `hil preflight` fails on it), DUT uptime continuity
+(a reboot fails the test it
 landed in, unless that test uses `dut_reboot`), the baseline and the gear-segment
 restriction (a restricted run is *not an acceptance run*), the peer and its uptime
 from session start to end (a reboot, or a peer that stops answering, fails the run),
@@ -306,7 +311,8 @@ ladder and the runtime heap floor. **Classify a red run from this section, not f
 | `boot_heap_budget.txt` | internal SRAM left at each boot stage | up only (a floor) |
 | `runtime_heap_budget.txt` | internal SRAM minimum since boot, read from `/api/v1/stats` at session end | up only (a floor) |
 
-Changing a budget against its direction needs a dated measurement line in the file.
+Changing a budget against its direction needs the measurement that justifies it in the
+commit that changes it.
 `-1` means "never measured with a counter attached": reported, not gated — replace it
 with the first instrumented figure. A `watched` row counts what a workaround changed — a
 re-read that disagreed with the first answer, a repair spent after a wrong one — and has
@@ -342,7 +348,7 @@ A board on this host's USB needs only `HIL_SERIAL_REMOTE=` (empty) and, to pin i
 `HIL_SERIAL_PORT`. On a reference bench both controllers hang off a Wiren Board's USB
 instead, named by USB serial number under `/dev/serial/by-id/`;
 `HIL_SERIAL_REMOTE` and `HIL_PEER_SERIAL_REMOTE` name them.
-`wb/serial_bridge.py` (pyserial only; nothing is installed on the WB) holds each UART
+`wb/serial_bridge.py` (it needs only pyserial on the WB) holds each UART
 open for its whole life and exposes two loopback listeners: data, speaking RFC2217
 so esptool's baud change reaches the real UART, and one port above it a control
 port: `ping`, `status`, `bootloader`, `run`, and for a write on the WB itself `release`,
@@ -383,30 +389,14 @@ bricked from the LAN), waits for `/api/v1/health` and requires the reported vers
 to equal the one inside the image it wrote — a prefix-of-`HEAD` check only when the
 image yields none — and records that version in the manifest. `MCU` and the sdkconfig
 baseline are read from `.cargo/config.toml` and asserted, never set. From a host
-outside the WB's LAN esptool never syncs: update over the network instead.
+outside the WB's LAN esptool over the bridge never syncs: use `--via wb` or `--via ota`.
 
 A variable set in `bench.env` overrides the same variable exported in the shell, so a
 one-off knob given as `KNOB=… hil flash` takes effect only when `bench.env` does not set
 it.
 
-**Over the network (OTA)** — the second path; what only the wire can do is in
+**Delivery** — `hil flash --via rfc2217|wb|ota` picks it; what only the wire can do is in
 [ADR-024](../../documentation/architecture/decisions/ADR-024-ota-over-ethernet.md).
-
-```bash
-espflash save-image --chip esp32p4 --flash-size 32mb --partition-table partitions-p4.csv \
-  target/riscv32imafc-esp-espidf/debug/dali2rust app.bin   # an app image, not a merged one
-# serve app.bin over HTTP from a host the controller can reach, then:
-curl -X POST http://$DUT/api/v1/firmware/updates -H 'Content-Type: application/json' \
-  -d '{"url":"http://<host>:<port>/app.bin"}'               # 202 + operation id
-curl -s http://$DUT/api/v1/firmware                          # progress, running slot
-```
-
-It passes when `running_slot` has flipped and `pending_verify` has cleared
-([contract](../../documentation/product-design/rest-api/resources/firmware.md)). OTA
-writes no manifest and checks no version — compare `/api/v1/health` by hand.
-
-**From the Wiren Board and through `hil`** — `hil flash --via wb|ota|rfc2217` picks the
-delivery.
 
 - `wb` stages the merged image on the Wiren Board, checks its sha256 and writes it with a
   vendored esptool on the board's own serial device at 921 600 baud, detached from the ssh
@@ -417,9 +407,11 @@ delivery.
 - Before a `wb` write, the board the port names must fall quiet in its ROM loader while the
   other board keeps its uptime. With neither witness the write is refused, and any failure
   before esptool starts sends `run`.
-- `ota` serves the application image from the Wiren Board and installs it through the
-  board's update route, then checks the version inside that image.
-- `rfc2217` is the esptool-over-the-bridge path above.
+- `ota` builds the application image instead of the merged one, serves it from the Wiren
+  Board, posts it to `/api/v1/firmware/updates` and waits for `ready_to_reboot`
+  ([contract](../../documentation/product-design/rest-api/resources/firmware.md)); the
+  gates, the manifest and the version check are those above.
+- `rfc2217`, the default, is the esptool-over-the-bridge path above.
 
 The gear emulator's image goes only through `hil --peer role gear-sim` (below).
 
@@ -429,10 +421,11 @@ The gear emulator's image goes only through `hil --peer role gear-sim` (below).
 URL (`HIL_PEER_BASE`, or the lease its firmware announces on serial, learned on the
 first `hil --peer flash` into `state/peer/base.pin`), its serial bridge, and its own
 `state/peer/` and `runs/peer/`, so nothing of the primary's is repointed. The
-`redundancy` tier is collected only when `HIL_PEER_BASE` names it; the pin serves
-`hil --peer` alone. A reboot the
-suite provokes leaves the peer active and the rebooted board standby; `dut_reboot`
-and the OTA test hand the role back (`hil/pair.py`) before the next assertion.
+`redundancy` tier is collected only when `HIL_PEER_BASE` names the peer; preflight, the
+run-validity peer check, the hand-back below, the gear emulator, `hil corpus` and the
+`--via wb` witness also find it through the pin. A reboot the suite provokes leaves the
+peer active and the rebooted board standby; `dut_reboot` and the OTA test hand the role
+back (`hil/pair.py`) before the next assertion.
 
 `hil --peer role gear-sim [--via ota|wb] | controller | status` lends the peer to the gear
 emulator and takes it back ([ADR-031](../../documentation/architecture/decisions/ADR-031-gear-emulator-on-the-standby.md)):
