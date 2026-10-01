@@ -257,7 +257,7 @@ RAW_PHY = ("dali2rust_adapters: DALI PHY interrupt: level %d, cpu int 17, core 0
 DRIVER_PHY = "dali2rust_adapters: DALI PHY interrupt: level 3, gptimer driver handler"
 BEAT = "dali2rust: firmware heartbeat: uptime=1s"
 PHY_AT_MS, BEAT_AT_MS = 900, 60000
-DRIFT_S = 100
+DRIFT_S, FAR_DRIFT_S = 20, 40
 CRASHED_AT_S = 30
 SMALL_BLOCK = 7
 
@@ -284,6 +284,12 @@ def test_the_running_boot_names_the_phy_level_it_logged():
                   _logged(later, BEAT_AT_MS, BEAT)) == 3
     assert _level(_logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY),
                   _logged(BOOTED_S, 30 * DAY_S * 1000, BEAT, late_s=DRIFT_S)) == 3
+
+
+def test_the_boot_slack_stays_capped_however_long_the_boot():
+    assert seriallog._boot_slack_s(30 * DAY_S * 1000, 0) == seriallog.BOOT_SLACK_CAP_S
+    assert _level(_logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY),
+                  _logged(BOOTED_S, 30 * DAY_S * 1000, BEAT, late_s=FAR_DRIFT_S)) is None
 
 
 def test_a_boot_whose_phy_line_the_log_missed_takes_no_level_from_an_older_boot():

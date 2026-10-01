@@ -274,3 +274,22 @@ def test_a_gate_that_finds_nothing_to_check_says_unchecked_not_red(tmp_path, mon
     assert stopped.value.code == flash.ISR_IRAM_NOTHING_CHECKED
     assert (gate.EXIT_MISSING, gate.EXIT_UNCHECKED, gate.EXIT_RED) == (
         flash.ISR_IRAM_TOOLS_MISSING, flash.ISR_IRAM_NOTHING_CHECKED, GATE_RED)
+
+
+ENTRY_TABLE = ("4ff00010 g F .iram0.text 00000040 dali_phy_raw_isr\n"
+               "4ff00050 g F .iram0.text 00000040 dali_phy_alarm_isr\n")
+ENTRIES_IN_IRAM = ("4ff00010 <dali2rust_dali_phy::dali_phy_raw_isr>:\n"
+                   "4ff00050 <dali2rust_dali_phy::dali_phy_alarm_isr>:\n")
+
+
+def test_an_entry_point_linked_outside_iram_is_red_not_unchecked(tmp_path, monkeypatch, capsys):
+    gate = _isr_gate()
+    elf = tmp_path / "dali2rust"
+    elf.write_bytes(b"")
+    monkeypatch.setattr(gate, "_tool", lambda name, require: name)
+    monkeypatch.setattr(gate.subprocess, "run", _linked({"-S": SECTIONS, "-t": ENTRY_TABLE}))
+    assert gate.main(["gate", "--require-tools", str(elf)]) == GATE_RED
+    assert "linked outside IRAM" in capsys.readouterr().out
+    monkeypatch.setattr(gate.subprocess, "run", _linked(
+        {"-S": SECTIONS, "-t": ENTRY_TABLE, "-d": ENTRIES_IN_IRAM}))
+    assert gate.main(["gate", "--require-tools", str(elf)]) == 0

@@ -494,10 +494,17 @@ class VirtualSession:
         return steps
 
     def _delete_lamp(self, lamp_id):
+        lamp = self.api.vlamps.get(lamp_id)
+        bound = (lamp.get("binding") or {}).get("physical_short_address")
+        if not park_lamp(lamp.get("name"), bound, self.ledger.data.get("park", [])):
+            raise VirtualGearError("VL%d is now %r bound to %r, not the lamp this session made: "
+                                   "left as it is" % (lamp_id, lamp.get("name"), bound))
         with self.api.guard.deleting_created(self.ledger.data.get("created_vls", [])):
             self.api.vlamps.delete(lamp_id)
 
     def _forget(self, short):
+        if short not in registry_shorts(self.api):
+            return
         data = self.ledger.data
         with self.api.guard.forgetting_emulated(data.get("park", []), data.get("reserve", [])):
             self.api.device_forget(short)
@@ -540,6 +547,11 @@ def teardown(cfg, api, log=print) -> list:
         log("virtual gear: no emulator console (%s)" % exc)
         sim = None
     return VirtualSession(cfg, api, sim, log=log).close()
+
+
+def park_lamp(name, bound, park) -> bool:
+    named = [short for short in park if name == PARK_VL_NAME % short]
+    return bool(named) and bound in (None, named[0])
 
 
 def group_mask(groups) -> int:

@@ -4,6 +4,8 @@ import re
 import time
 from collections import namedtuple
 
+import requests
+
 from hil import durable
 from hil.api import ApiError, CapabilityUnsupported, _HomeAssistantSettings, _PollerSettings
 from hil.lamp_guard import TEST_RULE_PREFIX, LampNotAllowed, named, only_hil_rules_appended
@@ -705,7 +707,7 @@ def _restore_settings(api, snap, log, writes):
         try:
             _patch_if_differs(route, now[name], s[name], fields, patch, log,
                               _owner(writes, "settings/" + route))
-        except (ApiError, LampNotAllowed) as exc:
+        except (ApiError, LampNotAllowed, requests.RequestException) as exc:
             log("prod_state: settings/%s FAILED, the next settings still restore: %s"
                 % (route, exc))
 

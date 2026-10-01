@@ -827,3 +827,10 @@ def test_a_destructive_route_is_refused_whatever_the_go_ahead(method, path, body
                   LampGuard(LAMPS, read_only=True)):
         with pytest.raises(LampNotAllowed, match=why):
             guard.check_request(method, path, body)
+
+
+def test_a_diagnostic_write_is_booked_whatever_its_spelling(monkeypatch):
+    client = _client()
+    client.raw_request("post", "/dali/level?x=1", {"wire_address": _short_wire(2), "level": 9})
+    assert client.raw_touched == {2}
+    assert [path for _m, path, _b in client.http.sent] == ["dali/level?x=1"]

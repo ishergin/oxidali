@@ -23,7 +23,8 @@ HOST_STAMP = re.compile(r"^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2
 HOST_STAMP_FORMAT = "%Y-%m-%dT%H:%M:%S"
 MS_PER_S = 1000
 BOOT_START_SLACK_S = 5.0
-CLOCK_DRIFT = 100e-6
+CLOCK_DRIFT = 20e-6
+BOOT_SLACK_CAP_S = 30.0
 REVERSE_BLOCK_BYTES = 1 << 16
 
 
@@ -96,7 +97,8 @@ def host_s(line):
 
 
 def _boot_slack_s(dut_a, dut_b):
-    return BOOT_START_SLACK_S + CLOCK_DRIFT * abs(dut_a - dut_b) / MS_PER_S
+    return min(BOOT_SLACK_CAP_S,
+               BOOT_START_SLACK_S + CLOCK_DRIFT * abs(dut_a - dut_b) / MS_PER_S)
 
 
 def running_boot_phy_level(newest_first):

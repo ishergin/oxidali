@@ -21,10 +21,10 @@ version string: [10](../../documentation/architecture/10-build-release-and-tooli
 | A second DALI master reachable over ssh and MQTT (WB-MDALI3 on a Wiren Board) | `sniffer`, `foreign`, and `ha_bridge` through its broker | the `sniffer` and `foreign` fixtures skip; deselect `ha_bridge` |
 | A second controller on the same line (`HIL_PEER_BASE`) | `redundancy` | those tests are not collected |
 
-macOS is the tested host: camera discovery goes through ffmpeg's AVFoundation input,
-`setup.sh` builds `uvc-util` with the macOS frameworks, and the frame server runs in
-Terminal. The rest is Python 3.9 or later with the packages `pyproject.toml` lists
-(`setup.sh` installs them), and espflash, with which `hil flash` makes its images.
+macOS is the tested host: camera discovery uses ffmpeg's AVFoundation input, `setup.sh`
+builds `uvc-util` with the macOS frameworks, the frame server runs in Terminal. The rest is
+Python 3.9+ with the packages of `pyproject.toml` (`setup.sh` installs them) and espflash,
+which makes `hil flash`'s images.
 
 ## Configuration
 
@@ -78,9 +78,8 @@ export HIL_LAMP_SHORTS=<lamps> HIL_GEAR_SHORTS=<gear> HIL_OPTICAL_SHORTS=<lamps 
   -m "not destructive and not slow and not sniffer and not foreign and not ha_bridge and not redundancy"
 ```
 
-Drop `--no-camera` and the markers of the instruments the bench has. The toolkit's own
-unit tests need no hardware and no controller; pointing `HIL_BASE` at a closed port
-keeps a regressed hook from reaching a bench:
+Drop `--no-camera` and the markers of instruments the bench has. The toolkit's unit tests
+need no hardware; `HIL_BASE` on a closed port keeps a regressed hook off any bench:
 
 ```bash
 HIL_BASE=http://127.0.0.1:9 HIL_SERIAL_REMOTE= HIL_NO_CAMERA=1 \
@@ -117,9 +116,9 @@ bench test's setup or run it is reported as a skip that quotes it:
   `HIL_LAMPS_READ_ONLY=0`.
 - A `/api/v1/dali/*` body with no frame the guard can read is refused, and so is a write
   whose path the client or the firmware would respell: `%` (bar an encoded rule name),
-  `#`, `+`, an empty or dot segment. A device forget writes its short and never passes
-  read-only; a control-device forget and a slice import always fail, a virtual-lamp delete
-  outside the [virtual-gear](#virtual-gear) teardown too.
+  `#`, `+`, an empty or dot segment. A control-device forget and a slice import always
+  fail; a device forget writes its short and, like a virtual-lamp delete, never passes
+  read-only outside the [virtual-gear](#virtual-gear) teardown.
 - Commissioning is refused — the steps, address changes, replacements, a
   `commission_unaddressed` run, the input-device commission and every special frame but
   TERMINATE, DTR0–2, PING and `ENABLE DEVICE TYPE` — except by the virtual tier's fence
@@ -143,8 +142,7 @@ bench test's setup or run it is reported as a skip that quotes it:
 A run with no `HIL_*` flag writes only this, each put back by its test or guard: the
 adapter's name; group 15's and a scene's name and Home Assistant exposure (HIL-GRP-03,
 HIL-SCN-03); the Home Assistant bridge's settings, moved to `hiltest` (the owner's
-entities are unavailable meanwhile), and one virtual lamp's exposure (`ha_bridge`
-tests, `ha_guard`); the poller's settings (`test_poller`, `poller_guard`); and the owner's
+entities are unavailable meanwhile), and a virtual lamp's exposure (`ha_guard`); the poller's settings (`test_poller`, `poller_guard`); and the owner's
 poller and armed apply-on-discovery, off for the session (`bench_baseline`). HIL-INP-02 and
 03 rewrite the panel's instance group membership with the value it holds; scans refresh the
 registry.
@@ -208,9 +206,8 @@ for every session that reaches the controller:
 - A session fixture that changes the installation takes `production_state` as a
   parameter, used or not: only that dependency orders it after the snapshot.
 
-Per-test guards (`state_snapshot`, `*_matrix_guard`, `hcl_guard`, …) restore what
-one test changed. `bench_baseline` (above) also fails the session on a device still named
-`hil-…`.
+Per-test guards (`state_snapshot`, `*_matrix_guard`, `hcl_guard`, …) restore what one test
+changed; `bench_baseline` fails the session on a device still named `hil-…`.
 
 ## Layout
 
@@ -223,9 +220,8 @@ one test changed. `bench_baseline` (above) also fails the session on a device st
 | `*_budget.txt` | run-validity budgets (below) |
 | `state/`, `runs/<ts>/` | gitignored bench state (calibration, monitor, serial log, pins, snapshots) and per-run artifacts; `runs/current` is the latest |
 
-`state/` belongs to the checkout: a monitor started from another checkout or
-worktree is invisible to `hil` run here, and a flash from here then fights it for
-the port.
+`state/` belongs to the checkout: a monitor started from another worktree is unseen here,
+and a flash from here then fights it for the port.
 
 ## Optical tests
 
@@ -235,15 +231,14 @@ The `optical` tests (`test_optical_*`, and the optical cases in `test_scenes`,
 off, a strict brightness ladder, RGB hue, colour-only lighting, CCT order, and a group
 recall, scene, HCL level and MQTT colour reaching them.
 
-The camera is a UVC camera on a fixed mount with the lamps, or the patches they light,
-in view. `setup.sh` builds `uvc-util`, which locks exposure and white balance. macOS
+The camera is a UVC camera on a fixed mount with the lamps or their patches in view. `setup.sh` builds `uvc-util`, which locks exposure and white balance. macOS
 denies an agent the camera, so frames come from a frame server (`hil camera-server
 --spawn-terminal`, approve it in the Terminal). Exactly one may run, and
 `--spawn-terminal` leaves a live one as it is. A server that is alive but serves no
 frames holds a camera AVFoundation no longer hands it: run `vendor/uvc-util/uvc-util
 -d`, which enumerates the device again, then `hil camera-server --restart`.
 
-Calibration (`hil calibrate`, or automatically before the first test that needs optics)
+Calibration (`hil calibrate`, or before the first test that needs optics)
 locks the camera, takes all-off baselines for the noise floor, finds each lamp's mask,
 tunes the exposure against clipping, measures crosstalk and a brightness ladder, records
 colour fingerprints and picks fiducials that reveal a camera that moved. The profile is
@@ -310,13 +305,12 @@ ladder and the runtime heap floor. **Classify a red run from this section, not f
 | `boot_heap_budget.txt` | internal SRAM left at each boot stage | up only (a floor) |
 | `runtime_heap_budget.txt` | internal SRAM minimum since boot, read from `/api/v1/stats` at session end | up only (a floor) |
 
-Changing a budget against its direction needs the measurement that justifies it in the
-commit that changes it.
-`-1` means "never measured with a counter attached": reported, not gated — replace it
-with the first instrumented figure. A `watched` row counts what a workaround changed — a
+A budget moves against its direction only with the justifying measurement in the
+commit. `-1` means "never measured with a counter attached": reported, not gated — replace
+it with the first instrumented figure. A `watched` row counts what a workaround changed — a
 re-read that disagreed with the first answer, a repair spent after a wrong one — and has
 no budget line: it never gates, and the workaround goes once it stays at zero. A retry is
-counted, never silent; a dead instrument (a blind colour sample) is charged to no budget.
+counted, never silent; a dead instrument (blind colour sample) charges no budget.
 A red test keeps its strict assert
 ([05](../../documentation/architecture/05-testing-and-bdd.md)); the budget carries the
 rate the installation imposes.
@@ -369,8 +363,8 @@ bridge, pyserial and esptool this set-up works around are
   `--restart` reopens the port and so resets the controller, which is the operator's
   decision.
 - Reset sequences run on the WB.
-- Logs: `state/persist/serial.log` (peer: `state/peer/persist/`), each line stamped
-  in UTC (`…Z`) like the `runs/<ts>` directories.
+- Logs: `state/persist/serial.log` (peer: `state/peer/persist/`), lines stamped in UTC
+  (`…Z`) like `runs/<ts>`.
 
 ## Flashing
 
@@ -379,7 +373,7 @@ p4-fw-flash` open a local port). It refuses a build without the
 `bench.env` knobs and a stale embedded UI bundle (`--allow-stale-ui` builds with the
 previous one), runs the ISR-IRAM gate on the linked binary (refusing exit 1, red, and
 an unchecked 2, a tool — sought in `.embuild/espressif/tools`, then `~/.espressif` — or the
-ELF missing, or 3, nothing found to check),
+ELF missing, or 3, no entry point or section found; an entry outside IRAM is red),
 records `runs/<ts>/manifest.json` (commit, binary sha, knobs, checks), resets the
 chip into its ROM loader through the bridge, writes with esptool at
 `HIL_FLASH_BAUD`, always asks for `run` afterwards (a board left in the loader looks
@@ -480,16 +474,19 @@ Its rules are STRATEGY §4.8; the mechanics:
    with the same fence.
 4. **The teardown follows** `state/virtual_gear.json`, step by step:
    - silence the fleet;
-   - delete the session's lamps and forget the park — the guard passes these only here,
-     and a forget only above 15, outside the reserve, of a record with the emulator's GTIN;
+   - delete the session's lamps still named for their park address and forget the park —
+     the guard passes these only here, a forget only above 15, outside the reserve, of a
+     record with the emulator's GTIN;
    - restore group flags;
    - compare the registry, the WB list and the retained MQTT topics with the start.
 
    A teardown that leaves residue keeps the ledger: the next session and `hil --peer role
-   controller` refuse until `hil state restore` finishes it.
+   controller` refuse until `hil state restore` finishes it. Check a park record it may not
+   forget (no emulator GTIN) by hand; if emulated, `curl -X DELETE` its
+   `/api/v1/adapters/0/physical-devices/<short>`, which ends the residue.
 
-The session stops the run with exit code 3 when it cannot open, 4 on a `SAFETY` stop, 5
-when the peer came back as a controller and 6 when the tripwire went blind. The emulator
+The session exits 3 when it cannot open, 4 on a `SAFETY` stop, 5 when the peer came back
+as a controller, 6 when the tripwire went blind. The emulator
 takes one reserve per boot: a later session on the same boot proceeds with the same reserve,
 and another reserve needs the emulator restarted — under the OTA role that returns the
 controller.
@@ -541,9 +538,9 @@ visible actions out of tests that do not need them — each costs a go-ahead.
   measurement; a sniffer `resend=` counts itself. A new kind gets a line of 0 in
   `retry_budget.txt`. A conditional write is never repeated blindly: after a lost
   answer `rules_replace` reads `/rules` back and repeats only a write that did not land.
-- **Skips and xfails.** A feature is skipped as absent only on the firmware's own
-  evidence (a `404`, a block missing from `/api/v1/diagnostics`); a probe that fails on
-  a build that has the feature fails the test. A known-failure hatch is a conditional
+- **Skips and xfails.** A feature is skipped as absent only on the firmware's evidence (a
+  `404`, a block missing from `/api/v1/diagnostics`); a failing probe on a build that has it
+  fails the test. A known-failure hatch is a conditional
   `@pytest.mark.xfail(strict=True)`, never an imperative `pytest.xfail()`, which never
   reports XPASS and so hides a fixed defect and its regression alike.
 - **Autouse fixtures** in the `tests/hil_*.py` plugins never take `api` (or anything

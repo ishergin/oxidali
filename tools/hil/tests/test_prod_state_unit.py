@@ -5,6 +5,7 @@ import types
 from pathlib import Path
 
 import pytest
+import requests
 
 import hil_session
 import hil_session_guards
@@ -682,7 +683,7 @@ def test_a_refused_settings_restore_leaves_the_settings_after_it_to_restore():
                                                      "rule(s) failover fire"))
     api.redundancy = types.SimpleNamespace(
         settings=lambda: {"peer_url": "http://192.0.2.9:81"},
-        patch_settings=_refuse(api_mod.ApiError(409, {"error": "conflict"}, "redundancy")))
+        patch_settings=_refuse(requests.ConnectionError("connection reset by the controller")))
     api.ha = _Knob({"expose_input_devices": True})
     snap = {"settings": {"poller": {}, "dali": {"application_active": True},
                          "redundancy": {"peer_url": "http://192.0.2.7:81"},
@@ -692,7 +693,7 @@ def test_a_refused_settings_restore_leaves_the_settings_after_it_to_restore():
         "settings/home-assistant": {"expose_input_devices"}}))
     assert api.ha.patches == [{"expose_input_devices": False}]
     assert any("settings/dali FAILED" in line and "failover" in line for line in lines)
-    assert any("settings/redundancy FAILED" in line and "409" in line for line in lines)
+    assert any("settings/redundancy FAILED" in line and "reset" in line for line in lines)
 
 
 HA_HANDLER = (Path(__file__).resolve().parents[3] / "crates" / "dali2rust-api" / "src" / "http"

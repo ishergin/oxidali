@@ -513,18 +513,31 @@ REAL_GTIN = 8_710_000_000_123
 RESERVE = list(range(RESERVE_FLOOR))
 
 
+def _park_lamp(short, bound=True):
+    return {"name": virtual_gear.PARK_VL_NAME % short,
+            "binding": {"physical_short_address": short} if bound else None}
+
+
 class _TeardownApi:
     def __init__(self, failing=(), gtins=None):
         self.calls, self.failing = [], set(failing)
         self.vlamps = self
         self.groups = self
         self.gtins = {16: EMULATED_16, 17: EMULATED_17} if gtins is None else gtins
+        self.lamps = {60: _park_lamp(16), 61: _park_lamp(17)}
         self.guard = LampGuard((), read_only=True, gtin=self.gtins.get)
 
     def _call(self, entry):
         self.calls.append(entry)
         if entry[0] in self.failing:
             raise RuntimeError("%s failed on the bench" % entry[0])
+
+    def get(self, lamp_id):
+        return dict(self.lamps.get(lamp_id, {}))
+
+    def devices_unfiltered(self):
+        return {"physical_devices": [{"short_address": s, "gtin": g}
+                                     for s, g in self.gtins.items()]}
 
     def delete(self, lamp_id):
         self.guard.check_request("DELETE", "adapters/0/virtual-lamps/%d" % lamp_id)
@@ -807,3 +820,23 @@ def test_a_free_group_is_free_of_every_registered_gear_and_owner_rule_and_silent
     with pytest.raises(pytest.skip.Exception, match=r"group 14 cannot be shown empty.*answer"):
         hil_test_guards.free_group_of(_Groups(owner, answering={15, 3, 14}))
 
+
+def test_the_teardown_leaves_a_lamp_the_owner_took_over(tmp_path, monkeypatch):
+    api = _TeardownApi()
+    api.lamps[60] = {"name": "Кухня", "binding": {"physical_short_address": 4}}
+    api.lamps[61] = _park_lamp(17, bound=False)
+    session = _session(tmp_path, api, _QuietSim(), park=[16, 17], created_vls=[60, 61])
+    monkeypatch.setattr(session, "residual", lambda: [])
+    residue = session.close()
+    assert any("VL60" in line and "Кухня" in line for line in residue)
+    assert ("vl-delete", 60) not in api.calls and ("vl-delete", 61) in api.calls
+    assert session.ledger.exists()
+    assert not virtual_gear.park_lamp(virtual_gear.PARK_VL_NAME % 16, 17, [16, 17])
+
+
+def test_a_park_record_forgotten_by_hand_lets_the_teardown_finish(tmp_path, monkeypatch):
+    api = _TeardownApi(gtins={17: EMULATED_17})
+    session = _session(tmp_path, api, _QuietSim(), park=[16, 17])
+    monkeypatch.setattr(session, "residual", lambda: [])
+    assert session.close() == []
+    assert api.calls == [("forget", 17)] and not session.ledger.exists()

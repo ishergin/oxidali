@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import serial
 
+import hil_optics
 from hil.camera import backend as camera_backend
 
 pytest_plugins = ["pytester"]
@@ -143,3 +144,24 @@ def test_the_destructive_tier_refuses_a_session_that_selects_two_of_its_tests(py
     pytester.runpytest_inprocess("-p", "no:cacheprovider", "-k", "test_one"
                                  ).assert_outcomes(passed=1, deselected=2)
     assert exits == []
+
+
+class _Waking:
+    def __init__(self, failures):
+        self.failures, self.asked = failures, 0
+
+    def health(self):
+        self.asked += 1
+        if self.asked <= self.failures:
+            raise ConnectionError("still booting")
+        return {"status": "ok"}
+
+
+def test_the_optics_probe_gives_a_booting_controller_a_few_seconds(monkeypatch):
+    waits = []
+    monkeypatch.setattr(hil_optics.time, "sleep", waits.append)
+    waking = _Waking(failures=hil_optics.HEALTH_PROBES - 1)
+    assert hil_optics.unreachable(waking) is None and waking.asked == hil_optics.HEALTH_PROBES
+    down = _Waking(failures=hil_optics.HEALTH_PROBES)
+    assert isinstance(hil_optics.unreachable(down), ConnectionError)
+    assert waits == [hil_optics.HEALTH_PROBE_GAP_S] * 2 * (hil_optics.HEALTH_PROBES - 1)

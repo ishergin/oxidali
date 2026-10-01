@@ -168,10 +168,10 @@ class Client:
     IDEMPOTENT = ("GET", "PUT")
 
     def _http(self, method, path, body=None, conditional=False):
-        url = self._url(path)
+        method, url = method.upper(), self._url(path)
         write_log.note(self.base, self.guard.check_request(method, path, body))
         self._drop_pool_after_reboot()
-        self._note_diagnostic_write(method, path, body)
+        self._note_diagnostic_write(method, lamp_guard.route_of(path), body)
         attempts = 3 if method in self.IDEMPOTENT and not conditional else 1
         for attempt in range(attempts):
             try:

@@ -146,15 +146,17 @@ def main(argv):
     table = subprocess.run([objdump, "-t", "-C", elf],
                            capture_output=True, text=True).stdout
     linked = [e for e in ENTRY_SYMBOLS if e in table]
-    missing = [e for e in linked if not any(e in seen for seen in seen_symbols)]
     if not linked:
-        missing = list(ENTRY_SYMBOLS)
-    if missing:
-        print("verify_dali_isr_iram: UNCHECKED — interrupt entry point(s) not in IRAM: %s"
-              % ", ".join(missing))
+        print("verify_dali_isr_iram: UNCHECKED — no interrupt entry point is linked: %s"
+              % ", ".join(ENTRY_SYMBOLS))
         print("The hint list is stale (crate renamed? symbols inlined away?).")
         print("This is not a pass: nothing was actually checked.")
         return EXIT_UNCHECKED
+    outside = [e for e in linked if not any(e in seen for seen in seen_symbols)]
+    if outside:
+        print("verify_dali_isr_iram: FAILED — interrupt entry point(s) linked outside IRAM: %s"
+              % ", ".join(outside))
+        return EXIT_RED
 
     if any(bad.values()):
         print("verify_dali_isr_iram: FAILED — the PHY interrupt reaches flash")

@@ -1,4 +1,5 @@
 import os
+import time
 
 import pytest
 
@@ -15,6 +16,8 @@ def _optical_unavailable(request, reason):
 
 
 _OPTICAL_FIXTURES = frozenset(("camera", "calibration", "geometry", "oracle"))
+HEALTH_PROBES = 3
+HEALTH_PROBE_GAP_S = 2.0
 
 
 def _run_needs_optics(session):
@@ -45,10 +48,9 @@ def _open_optics(request, state):
     from hil.camera.calibrate import load as load_cal
     hil_config = request.getfixturevalue("hil_config")
     client = standalone_client(request.config)
-    try:
-        client.health()
-    except Exception as exc:
-        state["unreachable"] = "DUT unreachable at %s: %s" % (hil_config.base, exc)
+    failure = unreachable(client)
+    if failure is not None:
+        state["unreachable"] = "DUT unreachable at %s: %s" % (hil_config.base, failure)
         print("\noptical_session: %s" % state["unreachable"])
         return
     try:
@@ -59,6 +61,19 @@ def _open_optics(request, state):
     except Exception as exc:
         state["error"] = str(exc)
         print("\noptical_session: %s" % exc)
+
+
+def unreachable(client):
+    failure = None
+    for probe in range(HEALTH_PROBES):
+        if probe:
+            time.sleep(HEALTH_PROBE_GAP_S)
+        try:
+            client.health()
+            return None
+        except Exception as exc:
+            failure = exc
+    return failure
 
 
 def _skip_unreachable(optical_session):

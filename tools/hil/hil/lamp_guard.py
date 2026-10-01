@@ -155,8 +155,12 @@ UNPLAIN_REFUSAL = ("%s %s refused: the guard judges a write by its plain path, a
                    "or the firmware would rewrite into another path")
 
 
+def route_of(path):
+    return path.lstrip("/").split("?", 1)[0]
+
+
 def plain_path(method, path):
-    plain = path.lstrip("/").split("?", 1)[0]
+    plain = route_of(path)
     if FRAGMENT in path or not all(_plain_segment(segment, index, plain)
                                    for index, segment in enumerate(plain.split("/"))):
         raise LampNotAllowed(UNPLAIN_REFUSAL % (method.upper(), path))
