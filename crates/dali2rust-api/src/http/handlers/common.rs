@@ -286,6 +286,27 @@ pub fn parse_json_body(body: &[u8]) -> Result<serde_json::Value, HttpResponse> {
     parse_typed_body(body)
 }
 
+pub fn body_parse_error(
+    error: &serde_json::Error,
+    fallback_status: u16,
+    fallback_code: &str,
+) -> HttpResponse {
+    if error.to_string().starts_with("unknown field") {
+        json_err(400, "unknown_field")
+    } else {
+        json_err(fallback_status, fallback_code)
+    }
+}
+
+pub fn parse_strict_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, HttpResponse> {
+    let body_slice = if body.is_empty() {
+        "{}".as_bytes()
+    } else {
+        body
+    };
+    serde_json::from_slice(body_slice).map_err(|error| body_parse_error(&error, 400, "invalid_json"))
+}
+
 pub fn parse_physical_short(params: &HashMap<String, String>) -> Result<u8, HttpResponse> {
     let Some(ss) = params.get("short") else {
         return Err(json_err(400, "missing_short_address"));

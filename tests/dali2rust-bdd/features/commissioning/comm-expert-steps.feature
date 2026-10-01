@@ -49,6 +49,23 @@ Feature: Commissioning expert steps
     Then the response status should be 422
     And the DALI mock transport should have received 0 forward frames
 
+  @id:COMM-102
+  Scenario: Initialise step refuses a misspelt field instead of reading it as the whole bus
+    When I POST JSON {"scop":"short","short_address":5} to "/api/v1/adapters/0/commissioning/steps/initialise"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"
+    And the DALI mock transport should have received 0 forward frames
+
+  @id:COMM-103
+  Scenario: Address change and replacement refuse a field they do not have
+    When I POST JSON {"short_address":1,"new_short_address":2,"verify":false} to "/api/v1/adapters/0/commissioning/address-changes"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"
+    When I POST JSON {"failed_short_address":1,"replacement_short_address":2,"restore":{"group":false}} to "/api/v1/adapters/0/commissioning/replacements"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"
+    And the DALI mock transport should have received 0 forward frames
+
   @id:COMM-088
   Scenario: Search-address step rejects a value that does not fit 24 bits
     When I POST JSON {"search_address":16777216} to "/api/v1/adapters/0/commissioning/steps/search-address"

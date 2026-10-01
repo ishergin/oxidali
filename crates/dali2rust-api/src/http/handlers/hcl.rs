@@ -14,7 +14,9 @@ use crate::http::dispatcher::{
 };
 use crate::http::hcl_state::{HclScheduleDto, HclScheduleHttpState, HclSchedulesListBody};
 use crate::http::handler::ApiHandler;
-use crate::http::handlers::common::{accepted_config_write_response, json_err, json_stream_dto, parse_typed_body};
+use crate::http::handlers::common::{
+    accepted_config_write_response, body_parse_error, json_err, json_stream_dto, parse_typed_body,
+};
 use crate::http::handlers::hcl_validate::{validate_schedule, validate_schedule_id, ValidatedSchedule};
 use crate::http::handlers::operation_dispatch::publish_begin_then_chunk_series;
 use crate::http::handlers::resource_surface::declare_handler_shell;
@@ -34,19 +36,7 @@ pub struct HclBusContext {
 
 fn parse_schedule_body(body: &[u8]) -> Result<HclScheduleDto, HttpResponse> {
     let value = parse_typed_body::<serde_json::Value>(body)?;
-    serde_json::from_value(value).map_err(|error| schedule_parse_error(&error, 400, "invalid_json"))
-}
-
-fn schedule_parse_error(
-    error: &serde_json::Error,
-    fallback_status: u16,
-    fallback_code: &str,
-) -> HttpResponse {
-    if error.to_string().starts_with("unknown field") {
-        json_err(400, "unknown_field")
-    } else {
-        json_err(fallback_status, fallback_code)
-    }
+    serde_json::from_value(value).map_err(|error| body_parse_error(&error, 400, "invalid_json"))
 }
 
 fn schedule_id_param(params: &HashMap<String, String>) -> Result<String, HttpResponse> {
@@ -188,7 +178,7 @@ fn merge_patch_schedule(current: &HclScheduleDto, body: &[u8]) -> Result<HclSche
     }
     let mut merged = serde_json::to_value(current).map_err(|_| json_err(500, "internal_error"))?;
     apply_merge_patch(&mut merged, &patch);
-    serde_json::from_value(merged).map_err(|error| schedule_parse_error(&error, 422, "invalid_value"))
+    serde_json::from_value(merged).map_err(|error| body_parse_error(&error, 422, "invalid_value"))
 }
 
 fn apply_merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
