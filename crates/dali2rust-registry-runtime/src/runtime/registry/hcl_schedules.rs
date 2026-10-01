@@ -219,6 +219,11 @@ fn remember_refusal(
         inner.hcl_schedule_refused.remove(schedule_id);
         return;
     }
+    if inner.hcl_schedule_refused.len() >= MAX_HCL_SCHEDULES
+        && !inner.hcl_schedule_refused.contains_key(schedule_id)
+    {
+        return;
+    }
     inner.hcl_schedule_refused.insert(
         schedule_id.clone(),
         HclScheduleRefusal {

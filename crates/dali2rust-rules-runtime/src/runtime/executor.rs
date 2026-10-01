@@ -312,7 +312,7 @@ impl EffectExecutor<'_> {
 
     fn scene_apply(&self, scene: u8) -> bool {
         let workflow = self.correlation.next_id();
-        let operation_key = format!("rule-scn-{scene}-{workflow}");
+        let operation_key = format!("scn-apply-0-{scene}-{workflow}");
         let begin = OperationBeginCommand::with_defaults(&operation_key, OperationType::SceneApply);
         if !self.send(workflow, begin) {
             return self.note(false);

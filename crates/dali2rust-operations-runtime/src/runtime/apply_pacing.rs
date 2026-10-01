@@ -106,6 +106,10 @@ pub(crate) fn execute_apply<C: PacedCell>(run: &RunState<'_>, diff: Option<Vec<C
         publish_terminal_signal(run, Some((ErrorCode::NotFound, "adapter_not_found".to_string())));
         return;
     };
+    if run.operation_is_terminal() {
+        run.counters.runs_aborted.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
     if let Some(hard_error) = pace_cells(run, &diff) {
         publish_terminal_signal(run, hard_error);
     }

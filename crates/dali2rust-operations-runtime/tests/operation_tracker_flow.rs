@@ -279,12 +279,12 @@ fn second_begin_supersedes_prior_active_operation_op004() {
     publish(
         &publisher,
         BusChannel::Commands,
-        begin_envelope(9100, "op-a", OperationType::GroupApply, 600_000),
+        begin_envelope(9100, "op-a", OperationType::Discovery, 600_000),
     );
     publish(
         &publisher,
         BusChannel::Commands,
-        begin_envelope(9101, "op-b", OperationType::GroupApply, 600_000),
+        begin_envelope(9101, "op-b", OperationType::Discovery, 600_000),
     );
     wait_until(
         || tail_for(&tracker, "op-a").last().copied() == Some(OperationStatus::Cancelled),
@@ -292,6 +292,35 @@ fn second_begin_supersedes_prior_active_operation_op004() {
     );
     assert_eq!(tail_for(&tracker, "op-a").last().copied(), Some(OperationStatus::Cancelled));
     assert_eq!(last_error_for(&tracker, "op-a"), Some(ErrorCode::Superseded));
+}
+
+#[test]
+fn an_apply_opened_while_another_runs_waits_its_turn_instead_of_cancelling_it() {
+    let (publisher, tracker, _host) = spawn_harness();
+    for (round, op_type) in
+        [OperationType::GroupApply, OperationType::SceneApply, OperationType::PolicyApply].into_iter().enumerate()
+    {
+        let running = 9200 + 2 * round as u64;
+        let first = format!("{}-running", op_type.rest_name());
+        let second = format!("{}-queued", op_type.rest_name());
+        publish(&publisher, BusChannel::Commands, begin_envelope(running, &first, op_type, 600_000));
+        publish(&publisher, BusChannel::Commands, begin_envelope(running + 1, &second, op_type, 600_000));
+        wait_until(
+            || tail_for(&tracker, &second).first().copied() == Some(OperationStatus::Accepted),
+            Duration::from_millis(500),
+        );
+        assert_eq!(
+            tail_for(&tracker, &first),
+            vec![OperationStatus::Accepted],
+            "the orchestrator runs one apply at a time; a second request queues behind it"
+        );
+        orchestrator_ends(&publisher, running, None);
+        orchestrator_ends(&publisher, running + 1, None);
+        wait_until(
+            || tail_for(&tracker, &second).last().copied() == Some(OperationStatus::Succeeded),
+            Duration::from_millis(500),
+        );
+    }
 }
 
 #[test]

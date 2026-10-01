@@ -1262,6 +1262,10 @@ fn opened_scene_apply(published: &[dali2rust_contracts::msg::CommandEnvelope]) -
     assert_eq!(opened.operation_type, OperationType::SceneApply);
     assert_eq!(opened.operation_key.as_str(), run.operation_key.as_str());
     assert_eq!(run.scene_id, 3);
+    assert!(
+        run.operation_key.as_str().starts_with("scn-apply-0-3-"),
+        "the HTTP scene apply's 409 gate finds a running apply by this key prefix"
+    );
     assert_eq!(
         begin.meta.correlation_id, execute.meta.correlation_id,
         "the orchestrator's terminal signal closes the operation the begin opened"

@@ -208,7 +208,10 @@ impl OperationType {
     }
 
     pub const fn coalesces_per_adapter(self) -> bool {
-        !matches!(self, Self::ConfigWrite)
+        !matches!(
+            self,
+            Self::ConfigWrite | Self::GroupApply | Self::SceneApply | Self::PolicyApply
+        )
     }
 }
 
