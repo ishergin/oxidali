@@ -280,7 +280,7 @@ impl InputDeviceActionHandler {
             cmd,
         );
         self.operation(
-            format!("inp-cfg-{adapter_id}-{short_address}-{instance_number}"),
+            format!("inp-cfg-{adapter_id}-{short_address}-{instance_number}-{corr}"),
             semantic,
             OperationType::ConfigWrite,
         )
@@ -323,7 +323,7 @@ impl InputDeviceActionHandler {
             cmd,
         );
         self.operation(
-            format!("inp-fb-{adapter_id}-{short_address}-{instance_number}"),
+            format!("inp-fb-{adapter_id}-{short_address}-{instance_number}-{corr}"),
             semantic,
             OperationType::ConfigWrite,
         )
