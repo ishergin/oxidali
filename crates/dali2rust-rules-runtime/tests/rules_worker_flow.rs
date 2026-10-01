@@ -818,20 +818,18 @@ fn an_override_edge_reaches_the_rule_that_watches_it() {
 
 const STEADY_EVENT_GAP: Duration = Duration::from_millis(100);
 
-const QUEUED_FRAME_WAIT: Duration = Duration::from_millis(1);
 
 fn stream_events_until<T>(
     h: &Harness,
     corr: &mut u64,
     give_up_after: Duration,
-    mut done: impl FnMut(&Harness) -> Option<T>,
+    mut done_within: impl FnMut(&Harness, Duration) -> Option<T>,
 ) -> Option<T> {
     let deadline = std::time::Instant::now() + give_up_after;
     loop {
         publish_bus_event(h, *corr, runtime_state_changed(9));
         *corr += 1;
-        std::thread::sleep(STEADY_EVENT_GAP); // sleep-ok: paces the event stream the test is about
-        if let Some(found) = done(h) {
+        if let Some(found) = done_within(h, STEADY_EVENT_GAP) {
             return Some(found);
         }
         if std::time::Instant::now() >= deadline {
@@ -862,14 +860,18 @@ fn a_steady_event_stream_does_not_starve_the_tick() {
     wait_revision(&h.store, 1);
     let mut corr = 132;
 
-    let ticked = stream_events_until(&h, &mut corr, 3 * COMMAND_WAIT, |h| {
-        (h.cells.ticks_time_unsynced.load(std::sync::atomic::Ordering::Relaxed) >= 1).then_some(())
+    let ticked = stream_events_until(&h, &mut corr, 3 * COMMAND_WAIT, |h, gap| {
+        dali2rust_test_support::try_wait_until(
+            || h.cells.ticks_time_unsynced.load(std::sync::atomic::Ordering::Relaxed) >= 1,
+            gap,
+        )
+        .then_some(())
     });
     assert!(ticked.is_some(), "an event every {STEADY_EVENT_GAP:?} kept the worker from ever ticking");
 
     overridden.store(true, std::sync::atomic::Ordering::Relaxed);
-    let fired = stream_events_until(&h, &mut corr, 3 * COMMAND_WAIT, |h| {
-        dali2rust_test_support::try_recv_command_matching(&h.out_rx, QUEUED_FRAME_WAIT, |payload| {
+    let fired = stream_events_until(&h, &mut corr, 3 * COMMAND_WAIT, |h, gap| {
+        dali2rust_test_support::try_recv_command_matching(&h.out_rx, gap, |payload| {
             matches!(payload, dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(_))
         })
     });
