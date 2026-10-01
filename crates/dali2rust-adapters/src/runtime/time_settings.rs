@@ -91,6 +91,37 @@ mod tests {
         assert_eq!(clock.timezone(), "UTC0", "a refused zone must not be left in force");
     }
 
+    fn put_zone(clock: &Arc<dyn WallClock>, persist: TimezonePersist, zone: &str) -> u16 {
+        use dali2rust_api::http::handler::ApiHandler;
+        let handler = dali2rust_api::http::handlers::time::TimeHandler::new(Arc::clone(clock), persist);
+        let body = format!(r#"{{"timezone":"{zone}"}}"#);
+        handler
+            .handle_request("PUT", "/api/v1/time", body.as_bytes(), &std::collections::HashMap::new())
+            .status
+    }
+
+    #[test]
+    fn a_zone_the_store_failed_to_write_is_refused_and_not_applied() {
+        let clock: Arc<dyn WallClock> = Arc::new(SystemWallClock::new());
+        let failing: TimezonePersist = Arc::new(|_| Err(TimezonePersistRefusal::StoreFailed));
+        assert_eq!(put_zone(&clock, failing, "MSK-3"), 503);
+        assert_eq!(clock.timezone(), "UTC0");
+    }
+
+    #[test]
+    fn the_zone_already_in_force_does_not_touch_the_flash() {
+        let clock: Arc<dyn WallClock> = Arc::new(SystemWallClock::new());
+        let writes = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let counted = Arc::clone(&writes);
+        let persist: TimezonePersist = Arc::new(move |_| {
+            counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        });
+        assert_eq!(put_zone(&clock, Arc::clone(&persist), "MSK-3"), 200);
+        assert_eq!(put_zone(&clock, persist, "MSK-3"), 200);
+        assert_eq!(writes.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
     #[test]
     fn a_controller_without_persistence_keeps_its_default() {
         let clock = SystemWallClock::new();
