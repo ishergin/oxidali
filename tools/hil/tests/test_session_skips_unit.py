@@ -329,7 +329,8 @@ def test_every_test_that_forges_an_input_event_is_a_light_test():
 
 def test_every_test_that_hands_the_bus_to_the_peer_is_a_light_test():
     for name in ("test_a_silent_primary_hands_the_bus_over_and_takes_it_back",
-                 "test_a_planned_switchover_moves_the_bus_and_not_the_light"):
+                 "test_a_planned_switchover_moves_the_bus_and_not_the_light",
+                 "test_losing_the_peer_link_moves_no_role"):
         assert _light(getattr(test_redundancy, name)), name
 
 

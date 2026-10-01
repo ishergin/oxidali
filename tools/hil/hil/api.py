@@ -120,7 +120,8 @@ class Client:
                                           binding=self._bound_short,
                                           pending=self.pending_lamps,
                                           restart_rules=self.restart_rules,
-                                          policy_armed=self.policy_armed)
+                                          policy_armed=self.policy_armed,
+                                          gtin=self.device_gtin)
         self.init_ledger()
         self._rebooting = False
 
@@ -256,6 +257,10 @@ class Client:
     def segment_shorts(self):
         return sorted(d["short_address"] for d in self.devices_unfiltered()["physical_devices"]
                       if d.get("present", True))
+
+    def device_gtin(self, short):
+        return {d["short_address"]: d.get("gtin")
+                for d in self.devices_unfiltered()["physical_devices"]}.get(short)
 
     def lamp_addrs(self):
         allowed = self.cfg.lamp_short_set()

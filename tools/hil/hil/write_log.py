@@ -45,8 +45,7 @@ ANY_LAMP = ("shown/" + ALL, EVERY)
 SIDE_EFFECTS = (
     (re.compile(r"adapters/[0-9]+/discovery-runs"), "POST", [("gear/" + ALL, POLICY_FIELDS)]),
     (re.compile(r"adapters/[0-9]+/physical-devices/[0-9]+"), "DELETE",
-     [("vl/" + ALL, frozenset({"binding"})), ("group_matrix/" + ALL, EVERY),
-      ("scene_matrix/" + ALL, EVERY)]),
+     [("vl/" + ALL, frozenset({"binding"})), ("group_matrix/" + ALL, EVERY)]),
 )
 COMMAND_TOPIC = "/set"
 

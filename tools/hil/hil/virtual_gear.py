@@ -9,14 +9,13 @@ from pathlib import Path
 
 from hil import durable, remote_serial, role, serialmon
 from hil.gearsim import GearSim, GearSimUnavailable
-from hil.lamp_guard import spell
+from hil.lamp_guard import RESERVE_FLOOR, emulated_gtin, spell
 
 LEDGER = role.LEDGER
 
 SHORT_COUNT = 64
 GROUP_COUNT = 16
 VL_ID_LIMIT = 64
-RESERVE_FLOOR = 16
 DEFAULT_PARK = (4, 4, 4)
 PARK_KINDS = ("dt6", "cct", "rgb")
 LADDER_FIRST = 4
@@ -33,6 +32,8 @@ CONTENTION_COUNTERS = ("collision_restarts_total", "foreign_frames_total")
 EXIT_SETUP, EXIT_SAFETY, EXIT_PEER_RETURNED, EXIT_BLIND = 3, 4, 5, 6
 
 SCAN_MODE = "scan_known_short_addresses"
+IDENTITY_GROUPS = "runtime_status"
+IDENTITY_BANKS = "identity"
 VIRTUAL_ENV = "HIL_VIRTUAL_GEAR"
 PARK_VL_NAME = "virtual gear SA%d"
 WB_CONFIG = "/etc/wb-mqtt-dali.conf"
@@ -445,12 +446,23 @@ class VirtualSession:
                  if row["short"] in park and row["groups"] & ~group_mask(groups)]
         if stray:
             raise VirtualGearError("emulated gear %s hold groups outside %s" % (stray, groups))
+        self._prove_emulated(park)
         ids = free_vl_ids(self.ledger.data.get("vl_before", []), len(park))
         for lamp_id, short in zip(ids, park):
             self.ledger.append("created_vls", lamp_id)
             self.api.vlamps.patch(lamp_id, {"name": PARK_VL_NAME % short, "ha_entity_enabled": False})
             self.api.vlamps.bind(lamp_id, short)
         self.ledger.update(vl_of_short={str(s): i for i, s in zip(ids, park)})
+
+    def _prove_emulated(self, park):
+        for short in park:
+            self.api.attr_read_checked(short, groups=IDENTITY_GROUPS, banks=IDENTITY_BANKS)
+        gtins = {d["short_address"]: d.get("gtin")
+                 for d in self.api.devices_unfiltered()["physical_devices"]}
+        foreign = [short for short in park if not emulated_gtin(gtins.get(short))]
+        if foreign:
+            raise VirtualGearError("SA%s carry no gear-emulator GTIN after their identity read: "
+                                   "real gear may answer at the park" % spell(foreign))
 
     def close(self):
         if not self.ledger.exists():
@@ -473,7 +485,7 @@ class VirtualSession:
     def _teardown_steps(self):
         data = self.ledger.data
         steps = [("silencing the emulated fleet", self._silence)]
-        steps += [("deleting VL%d" % i, partial(_ignore_missing, partial(self.api.vlamps.delete, i)))
+        steps += [("deleting VL%d" % i, partial(_ignore_missing, partial(self._delete_lamp, i)))
                   for i in data.get("created_vls", [])]
         steps += [("forgetting SA%d" % s, partial(_ignore_missing, partial(self._forget, s)))
                   for s in data.get("park", [])]
@@ -481,8 +493,13 @@ class VirtualSession:
                   for g, flag in (data.get("group_flags") or {}).items()]
         return steps
 
+    def _delete_lamp(self, lamp_id):
+        with self.api.guard.deleting_created(self.ledger.data.get("created_vls", [])):
+            self.api.vlamps.delete(lamp_id)
+
     def _forget(self, short):
-        with self.api.guard.forgetting_emulated([short]):
+        data = self.ledger.data
+        with self.api.guard.forgetting_emulated(data.get("park", []), data.get("reserve", [])):
             self.api.device_forget(short)
 
     def _silence(self):

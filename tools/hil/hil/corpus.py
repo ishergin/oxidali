@@ -35,6 +35,7 @@ SECRET_SLICES = ("home_assistant_settings",)
 
 GIT_TIMEOUT_S = 20
 NOT_A_REPOSITORY = "not a git repository"
+GIT_LOCALE = {"LC_ALL": "C"}
 
 
 class SecretsRefused(ValueError):
@@ -50,7 +51,8 @@ def _git_work_tree(path: Path):
     while not probe.is_dir():
         probe = probe.parent
     out = subprocess.run(("git", "-C", str(probe), "rev-parse", "--show-toplevel"),
-                         capture_output=True, text=True, timeout=GIT_TIMEOUT_S)
+                         capture_output=True, text=True, timeout=GIT_TIMEOUT_S,
+                         env=dict(os.environ, **GIT_LOCALE))
     if out.returncode == 0:
         return out.stdout.strip()
     if NOT_A_REPOSITORY in out.stderr:
@@ -58,11 +60,8 @@ def _git_work_tree(path: Path):
     raise OSError(out.stderr.strip() or "git rev-parse exited %d" % out.returncode)
 
 
-def _secrets_refusal(out_root):
-    if out_root is None:
-        return ("--keep-secrets writes the broker password, so it needs an --out: the "
-                "default %s is inside the repository" % CORPUS_ROOT)
-    target = Path(out_root).resolve()
+def _secrets_refusal(out):
+    target = Path(out).resolve()
     try:
         tree = _git_work_tree(target)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -154,6 +153,9 @@ class Capture:
                 "adapter_count": controller.get("adapter_count")}
 
     def slices(self, keep_secrets: bool = False) -> None:
+        refusal = _secrets_refusal(self.out) if keep_secrets else None
+        if refusal:
+            raise SecretsRefused(refusal)
         manifest = self.get_json("config/slices")
         if manifest is None:
             return
@@ -527,9 +529,6 @@ CORPUS_ROOT = Path(__file__).resolve().parent.parent / "corpus"
 def run(parts=None, out_root: Path = None, boards: str = "both",
         keep_secrets: bool = False, wire_keep: int = WIRE_KEEP_DEFAULT,
         wire_scan: int = WIRE_SCAN_BYTES_DEFAULT) -> dict:
-    refusal = _secrets_refusal(out_root) if keep_secrets else None
-    if refusal:
-        raise SecretsRefused(refusal)
     parts = set(parts or PARTS)
     if "all" in parts:
         parts = set(PARTS)

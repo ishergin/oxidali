@@ -96,8 +96,16 @@ def test_a_helper_in_the_same_module_is_followed(tmp_path):
 TESTS = Path(__file__).resolve().parent
 PYTEST_OWN_FIXTURES = frozenset({
     "tmp_path", "tmp_path_factory", "tmpdir", "monkeypatch", "capsys", "capsysbinary",
-    "capfd", "capfdbinary", "caplog", "recwarn", "request", "pytestconfig", "pytester",
+    "capfd", "capfdbinary", "caplog", "recwarn", "pytester",
 })
+REACHES_THE_BENCH = """
+def test_reaches(request):
+    request.getfixturevalue("api")
+
+
+def test_reads(pytestconfig):
+    pytestconfig.getoption("--no-camera")
+"""
 PARAMETRIZE = "parametrize"
 
 
@@ -126,3 +134,9 @@ def test_a_module_whose_tests_need_only_pytest_is_a_unit_module_the_unit_run_tak
     missed = [module.name for module in sorted(TESTS.glob("test_*.py"))
               if not tiers.is_unit(module) and _needs_only_pytest(module)]
     assert missed == []
+
+
+def test_a_test_that_can_ask_for_any_fixture_is_not_counted_as_needing_only_pytest(tmp_path):
+    module = tmp_path / "test_reaching.py"
+    module.write_text(REACHES_THE_BENCH)
+    assert not _needs_only_pytest(module)

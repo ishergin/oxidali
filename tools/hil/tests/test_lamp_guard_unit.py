@@ -652,8 +652,10 @@ def test_a_forget_is_a_write_to_its_short_and_never_passes_read_only():
     with pytest.raises(LampNotAllowed, match=r"forget of SA1 refused: SA1 is outside "
                                              r"HIL_LAMP_SHORTS=0,2-3"):
         _guard().check_request("DELETE", FORGET % OWNER)
-    with pytest.raises(LampNotAllowed, match=r"forget of SA2 refused: HIL_LAMPS_READ_ONLY=1"):
+    with pytest.raises(LampNotAllowed, match=r"forget of SA2 refused: HIL_LAMPS_READ_ONLY=1") \
+            as refused:
         _guard(read_only=True).check_request("DELETE", FORGET % 2)
+    assert "group row" in str(refused.value) and "scene" not in str(refused.value)
     assert ("device/2", frozenset({"*"})) in _guard().check_request("DELETE", FORGET % 2)
     _guard(read_only=True).check_request("PATCH", FORGET % OWNER, {"notes": "x"})
 
@@ -772,3 +774,56 @@ def test_a_segment_command_that_passes_names_every_lamp_it_reaches():
         assert exact <= set(guard.check_request(method, path, {"power": "on"})), path
     assert exact <= set(guard.check_frame(0xFE, 100))
     assert guard.check_frame(0xFF, QUERY_ACTUAL_LEVEL) == []
+
+
+UNPLAIN_WRITES = (
+    ("DELETE", "adapters/0/physical-devices/%31", None),
+    ("DELETE", "adapters/0/physical-devices/+1", None),
+    ("DELETE", "adapters/0/physical-devices/1#x", None),
+    ("DELETE", "x/../adapters/0/physical-devices/1", None),
+    ("DELETE", "adapters/0/./physical-devices/1", None),
+    ("DELETE", "adapters/0//physical-devices/1", None),
+    ("PUT", "adapters/0/physical-devices/+1/target-state", {"power": "on"}),
+    ("PATCH", "settings/redundanc%79", {"peer_url": "http://192.0.2.9:81"}),
+    ("PATCH", "rules/%2E%2E", {"enabled": False}),
+    ("POST", "rules/a/../run", {}),
+    ("PATCH", "rules/a%2", {"enabled": False}),
+)
+
+
+@pytest.mark.parametrize("method,path,body", UNPLAIN_WRITES)
+def test_a_write_the_client_or_the_firmware_would_respell_is_refused(method, path, body):
+    allowing = LampGuard(LAMPS | {OWNER}, restart_rules=lambda: [])
+    with pytest.raises(LampNotAllowed, match=r"plain path"):
+        allowing.check_request(method, path, body)
+
+
+def test_an_encoded_rule_name_and_a_read_keep_their_spelling():
+    guard = LampGuard(LAMPS, restart_rules=lambda: [])
+    assert guard.check_request("PATCH", "rules/n%C3%B8tt", {"enabled": True}) == [
+        ("rule/nøtt", frozenset({"enabled"}))]
+    guard.check_request("POST", "rules/hil-a%20b/run?dry=1", {})
+    guard.check_request("PATCH", "/settings/poller?x=1", {"enabled": False})
+    assert guard.check_request("GET", "adapters/0/physical-devices/%31") == []
+
+
+def test_the_client_sends_no_respelled_write(monkeypatch):
+    client = _client()
+    for door in (lambda: client.raw_response("DELETE", "adapters/0/physical-devices/%31"),
+                 lambda: client.raw_request("PUT", "adapters/0/physical-devices/+1/target-state",
+                                            {"power": "on"})):
+        with pytest.raises(LampNotAllowed, match=r"plain path"):
+            door()
+    assert client.http.sent == []
+
+
+@pytest.mark.parametrize("method,path,body,why", [
+    ("DELETE", "adapters/0/input-devices/5", None, "control device"),
+    ("PUT", "config/slices/home_assistant_settings", None, "slice import"),
+    ("DELETE", "adapters/0/virtual-lamps/7", None, "only the virtual-gear teardown"),
+])
+def test_a_destructive_route_is_refused_whatever_the_go_ahead(method, path, body, why):
+    for guard in (LampGuard(LAMPS | {OWNER}, segment=lambda: [0, 1, 2, 3]),
+                  LampGuard(LAMPS, read_only=True)):
+        with pytest.raises(LampNotAllowed, match=why):
+            guard.check_request(method, path, body)

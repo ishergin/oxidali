@@ -52,7 +52,8 @@ CARGO_CONFIG = ".cargo/config.toml"
 BOARD_ENV_KEYS = ("MCU", "ESP_IDF_SDKCONFIG_DEFAULTS")
 
 ISR_IRAM_SCRIPT = "scripts/verify_dali_isr_iram.py"
-ISR_IRAM_TOOLS_MISSING = 2
+ISR_IRAM_TOOLS_MISSING, ISR_IRAM_NOTHING_CHECKED = 2, 3
+ISR_IRAM_UNCHECKED_EXITS = frozenset({ISR_IRAM_TOOLS_MISSING, ISR_IRAM_NOTHING_CHECKED})
 ISR_IRAM_FAILED, ISR_IRAM_UNCHECKED = "failed", "unchecked"
 ISR_IRAM_REFUSALS = {
     ISR_IRAM_FAILED: (
@@ -63,8 +64,9 @@ ISR_IRAM_REFUSALS = {
         "Pass --allow-red-isr to flash it deliberately for diagnosis."),
     ISR_IRAM_UNCHECKED: (
         "\nRefusing to flash: the ISR-IRAM gate could not check the binary — its\n"
-        "SKIP line above names the tool or the ELF it did not find and where it\n"
-        "looked — so nothing proves that the DALI PHY interrupt stays out of flash.\n"
+        "SKIP or UNCHECKED line above names why: a missing tool or ELF, or entry\n"
+        "points or sections it could not find — so nothing proves that the DALI\n"
+        "PHY interrupt stays out of flash.\n"
         "Pass --allow-red-isr to flash the unchecked image deliberately."),
 }
 
@@ -189,7 +191,7 @@ def check_isr_iram(cfg, spec, allow_red=False):
     ).returncode
     if rc == 0:
         return "ok", 0
-    verdict = ISR_IRAM_UNCHECKED if rc == ISR_IRAM_TOOLS_MISSING else ISR_IRAM_FAILED
+    verdict = ISR_IRAM_UNCHECKED if rc in ISR_IRAM_UNCHECKED_EXITS else ISR_IRAM_FAILED
     if allow_red:
         print("isr-iram: %s, proceeding anyway (--allow-red-isr)" % verdict, file=sys.stderr)
         return verdict, 0

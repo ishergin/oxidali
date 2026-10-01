@@ -107,8 +107,8 @@ def test_a_controller_that_is_down_skips_no_unit_test_beside_an_optical_test(pyt
     monkeypatch.delenv("HIL_SKIP_CALIBRATION", raising=False)
     monkeypatch.setattr(camera_backend, "probe_and_select", lambda cfg: _Lens())
     result = _session(pytester, test_probe_unit=UNIT_PROBE, test_optics=OPTICAL_PROBE)
-    result.assert_outcomes(passed=1, errors=1)
-    result.stdout.fnmatch_lines(["*optical channel unavailable*"])
+    result.assert_outcomes(passed=1, skipped=1)
+    result.stdout.fnmatch_lines(["*STEP sees SKIP*DUT unreachable at %s*" % CLOSED])
     assert ("connect", ("127.0.0.1", 9)) in exits
 
 

@@ -6,6 +6,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+EXIT_RED, EXIT_MISSING, EXIT_UNCHECKED = 1, 2, 3
+
 ISR_SYMBOL_HINTS = ("dali2rust_dali_phy",)
 
 ENTRY_SYMBOLS = ("dali_phy_raw_isr", "dali_phy_alarm_isr")
@@ -48,7 +50,7 @@ def _tool(name, require):
             return str(hits[-1])
     print("verify_dali_isr_iram: SKIP (riscv32-esp-elf-%s not installed under %s)"
           % (name, " or ".join(str(root) for root in _tool_roots())))
-    sys.exit(2 if require else 0)
+    sys.exit(EXIT_MISSING if require else 0)
 
 
 def _sections(readelf, elf):
@@ -69,16 +71,17 @@ def _iram_bounds(sections, elf):
     for name, lo, hi in sections:
         if name == ".iram0.text":
             return lo, hi
-    raise SystemExit("verify_dali_isr_iram: no .iram0.text in %s" % elf)
+    print("verify_dali_isr_iram: UNCHECKED — no .iram0.text in %s" % elf)
+    sys.exit(EXIT_UNCHECKED)
 
 
 def _flash_ranges(sections, elf):
     ranges = [(name, lo, hi) for name, lo, hi in sections
               if name.startswith((".flash", ".drom", ".irom")) and hi > lo]
     if not ranges:
-        raise SystemExit(
-            "verify_dali_isr_iram: no flash-mapped sections in %s — the section "
-            "names changed and this check would pass vacuously" % elf)
+        print("verify_dali_isr_iram: UNCHECKED — no flash-mapped sections in %s: the "
+              "section names changed and this check would pass vacuously" % elf)
+        sys.exit(EXIT_UNCHECKED)
     return ranges
 
 
@@ -108,7 +111,7 @@ def main(argv):
     elf = args[0] if args else str(ROOT / "target/riscv32imafc-esp-espidf/debug/dali2rust")
     if not Path(elf).exists():
         print("verify_dali_isr_iram: SKIP (%s not built)" % elf)
-        return 2 if require_tools else 0
+        return EXIT_MISSING if require_tools else 0
 
     objdump, readelf = _tool("objdump", require_tools), _tool("readelf", require_tools)
     sections = _sections(readelf, elf)
@@ -147,11 +150,11 @@ def main(argv):
     if not linked:
         missing = list(ENTRY_SYMBOLS)
     if missing:
-        print("verify_dali_isr_iram: FAILED — interrupt entry point(s) not in IRAM: %s"
+        print("verify_dali_isr_iram: UNCHECKED — interrupt entry point(s) not in IRAM: %s"
               % ", ".join(missing))
         print("The hint list is stale (crate renamed? symbols inlined away?).")
         print("This is not a pass: nothing was actually checked.")
-        return 1
+        return EXIT_UNCHECKED
 
     if any(bad.values()):
         print("verify_dali_isr_iram: FAILED — the PHY interrupt reaches flash")
@@ -164,7 +167,7 @@ def main(argv):
                 print("    %s" % fn)
                 for t in sorted(bad[kind][fn]):
                     print("        -> %s" % t)
-        return 1
+        return EXIT_RED
 
     print("verify_dali_isr_iram: OK (%d PHY symbols in IRAM, none reaches flash)"
           % len(seen_symbols))

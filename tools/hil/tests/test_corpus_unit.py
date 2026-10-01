@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 
@@ -252,3 +253,54 @@ def test_boot_identity_lines_are_classified():
     assert classes["flash_id"].search("I (2086) spi_flash: detected chip: gd")
     assert classes["phy_interrupt"].search(
         "I (900) esp_idf: DALI PHY interrupt: level 5, cpu int 17, core 0")
+
+
+SECRET = b"broker-password"
+SLICE_ANSWERS = {
+    "health": (200, b'{"version": "0.1.1+abc", "role": "standby", "uptime_seconds": 5}'),
+    "controller": (200, b"{}"),
+    "config/slices": (200, b'[{"name": "home_assistant_settings", "bytes": 15}]'),
+    "config/slices/home_assistant_settings": (200, SECRET),
+}
+NOT_FOUND = (404, b"{}")
+GIT_NOT_A_REPOSITORY = 128
+
+
+class _Answer:
+    def __init__(self, status, content):
+        self.status_code, self.content = status, content
+
+
+class SliceController:
+    adapter = 0
+
+    def __init__(self, cfg=None):
+        self.base = "http://dut.invalid"
+
+    def raw_response(self, method, path, body=None):
+        return _Answer(*SLICE_ANSWERS.get(path, NOT_FOUND))
+
+
+def git_repository(path):
+    path.mkdir()
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    return path
+
+
+def test_a_capture_writes_the_broker_password_into_no_repository(tmp_path):
+    inside = git_repository(tmp_path / "repo") / "corpus"
+    with pytest.raises(corpus.SecretsRefused, match="inside the git work tree"):
+        corpus.Capture(SliceController(), inside, "primary").slices(keep_secrets=True)
+    assert not inside.exists() or not [p for p in inside.rglob("*") if p.is_file()]
+
+
+def test_git_is_asked_in_the_c_locale_whatever_the_shell_speaks(monkeypatch, tmp_path):
+    def localized_git(argv, env=None, **kwargs):
+        english = (env or {}).get("LC_ALL") == "C"
+        stderr = ("fatal: not a git repository (or any of the parent directories): .git"
+                  if english else "fatal: Kein Git-Repository (oder irgendeines der "
+                                  "Elternverzeichnisse): .git")
+        return subprocess.CompletedProcess(argv, GIT_NOT_A_REPOSITORY, "", stderr)
+
+    monkeypatch.setattr(corpus.subprocess, "run", localized_git)
+    assert corpus._secrets_refusal(tmp_path) is None

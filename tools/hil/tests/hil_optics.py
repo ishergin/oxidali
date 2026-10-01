@@ -24,7 +24,7 @@ def _run_needs_optics(session):
 
 @pytest.fixture(scope="session", autouse=True)
 def optical_session(request):
-    state = {"backend": None, "calibration": None, "error": None}
+    state = {"backend": None, "calibration": None, "error": None, "unreachable": None}
     opted_out = bool(request.config.getoption("--no-camera")
                      or os.environ.get("HIL_NO_CAMERA"))
     if opted_out or not _run_needs_optics(request.session):
@@ -33,27 +33,42 @@ def optical_session(request):
                           "optical channel opted out (--no-camera)")
         yield state
         return
-
-    from hil.camera.backend import probe_and_select
-    from hil.camera.calibrate import Calibrator
-    from hil.camera.calibrate import load as load_cal
-    hil_config = request.getfixturevalue("hil_config")
-    try:
-        state["backend"] = probe_and_select(hil_config)
-        if not _skip_calibration(request):
-            Calibrator(hil_config, standalone_client(request.config),
-                       state["backend"]).run()
-        state["calibration"] = load_cal(hil_config)
-    except Exception as exc:
-        state["error"] = str(exc)
-        print("\noptical_session: %s" % exc)
+    _open_optics(request, state)
     yield state
     if state["backend"] is not None:
         state["backend"].close()
 
 
+def _open_optics(request, state):
+    from hil.camera.backend import probe_and_select
+    from hil.camera.calibrate import Calibrator
+    from hil.camera.calibrate import load as load_cal
+    hil_config = request.getfixturevalue("hil_config")
+    client = standalone_client(request.config)
+    try:
+        client.health()
+    except Exception as exc:
+        state["unreachable"] = "DUT unreachable at %s: %s" % (hil_config.base, exc)
+        print("\noptical_session: %s" % state["unreachable"])
+        return
+    try:
+        state["backend"] = probe_and_select(hil_config)
+        if not _skip_calibration(request):
+            Calibrator(hil_config, client, state["backend"]).run()
+        state["calibration"] = load_cal(hil_config)
+    except Exception as exc:
+        state["error"] = str(exc)
+        print("\noptical_session: %s" % exc)
+
+
+def _skip_unreachable(optical_session):
+    if optical_session["unreachable"]:
+        pytest.skip(optical_session["unreachable"])
+
+
 @pytest.fixture(scope="session")
 def camera(optical_session, request):
+    _skip_unreachable(optical_session)
     if optical_session["backend"] is None:
         _optical_unavailable(request, optical_session["error"] or "camera unavailable")
     return optical_session["backend"]
@@ -66,6 +81,7 @@ def _skip_calibration(request):
 
 @pytest.fixture(scope="session")
 def calibration(optical_session, camera, request):
+    _skip_unreachable(optical_session)
     if optical_session["calibration"] is None:
         _optical_unavailable(
             request, optical_session["error"] or "calibration unavailable")

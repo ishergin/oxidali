@@ -7,7 +7,8 @@ import pytest
 import hil_test_guards
 
 from hil import tripwire, virtual_gear, wait
-from hil.lamp_guard import (GROUP_TARGET, LampGuard, LampNotAllowed, RulesBaseline, VirtualFence,
+from hil.lamp_guard import (EMULATED_GTIN_BASE, GROUP_TARGET, RESERVE_FLOOR, LampGuard,
+                            LampNotAllowed, RulesBaseline, VirtualFence,
                             appended_test_rules, http_rule, spell)
 
 WB_CONF = {"gateways": [{"device_id": "wb-dali_19", "buses": [
@@ -507,12 +508,18 @@ def test_lost_log_lines_are_reported():
     assert tripwire.lost_lines(before, after) == {"console_log_dropped_total": 2}
 
 
+EMULATED_16, EMULATED_17 = EMULATED_GTIN_BASE | 0x123456, EMULATED_GTIN_BASE | 0x654321
+REAL_GTIN = 8_710_000_000_123
+RESERVE = list(range(RESERVE_FLOOR))
+
+
 class _TeardownApi:
-    def __init__(self, failing=()):
+    def __init__(self, failing=(), gtins=None):
         self.calls, self.failing = [], set(failing)
         self.vlamps = self
         self.groups = self
-        self.guard = LampGuard((), read_only=True)
+        self.gtins = {16: EMULATED_16, 17: EMULATED_17} if gtins is None else gtins
+        self.guard = LampGuard((), read_only=True, gtin=self.gtins.get)
 
     def _call(self, entry):
         self.calls.append(entry)
@@ -520,6 +527,7 @@ class _TeardownApi:
             raise RuntimeError("%s failed on the bench" % entry[0])
 
     def delete(self, lamp_id):
+        self.guard.check_request("DELETE", "adapters/0/virtual-lamps/%d" % lamp_id)
         self._call(("vl-delete", lamp_id))
 
     def device_forget(self, short):
@@ -565,13 +573,36 @@ def test_only_the_teardown_forgets_the_park_past_read_only_and_the_lamp_list():
     api = _TeardownApi()
     with pytest.raises(LampNotAllowed, match=r"forget of SA16 refused: HIL_LAMPS_READ_ONLY=1"):
         api.device_forget(16)
-    with api.guard.forgetting_emulated([16]):
+    with api.guard.forgetting_emulated([16], RESERVE):
         api.device_forget(16)
         with pytest.raises(LampNotAllowed, match=r"forget of SA3 refused"):
             api.device_forget(3)
     with pytest.raises(LampNotAllowed, match=r"forget of SA16 refused"):
         api.device_forget(16)
     assert api.calls == [("forget", 16)]
+
+
+def test_the_teardown_forgets_only_a_park_address_whose_record_is_the_emulator_s():
+    api = _TeardownApi(gtins={5: EMULATED_16, 17: EMULATED_17, 18: REAL_GTIN, 20: None,
+                              21: EMULATED_16})
+    with api.guard.forgetting_emulated([5, 17, 18, 20, 21], RESERVE + [21]):
+        api.device_forget(17)
+        for short, why in ((5, "reserve"), (21, "reserve"), (18, "GTIN %d" % REAL_GTIN),
+                           (20, "GTIN None")):
+            with pytest.raises(LampNotAllowed, match=r"forget of SA%d refused: .*%s" % (short, why)):
+                api.device_forget(short)
+    assert api.calls == [("forget", 17)]
+
+
+def test_a_virtual_lamp_is_deleted_only_by_the_teardown_of_the_session_that_made_it():
+    api = _TeardownApi()
+    with pytest.raises(LampNotAllowed, match=r"deleting VL60 refused"):
+        api.delete(60)
+    with api.guard.deleting_created([60]):
+        api.delete(60)
+        with pytest.raises(LampNotAllowed, match=r"deleting VL6 refused"):
+            api.delete(6)
+    assert api.calls == [("vl-delete", 60)]
 
 
 def test_a_failing_step_leaves_residue_and_the_rest_still_runs(tmp_path, monkeypatch):
@@ -622,8 +653,8 @@ def test_no_ledger_means_nothing_to_tear_down(tmp_path):
 
 
 class _EnrolApi:
-    def __init__(self):
-        self.vlamps, self.bound = self, []
+    def __init__(self, gtin=EMULATED_16):
+        self.vlamps, self.bound, self.identified, self.gtin = self, [], [], gtin
 
     def wait_op(self, op):
         return op
@@ -632,7 +663,10 @@ class _EnrolApi:
         return {"operation_id": 1}
 
     def devices_unfiltered(self):
-        return {"physical_devices": [{"short_address": 16}]}
+        return {"physical_devices": [{"short_address": 16, "gtin": self.gtin}]}
+
+    def attr_read_checked(self, short, groups=None, banks=None):
+        self.identified.append((short, banks))
 
     def patch(self, lamp_id, body):
         raise RuntimeError("the controller refused the VL")
@@ -651,6 +685,16 @@ def test_a_vl_is_ledgered_before_it_is_created(tmp_path):
     with pytest.raises(RuntimeError):
         session._enrol([16], [4])
     assert session.ledger.data["created_vls"] == [63]
+    assert session.api.identified == [(16, virtual_gear.IDENTITY_BANKS)]
+
+
+def test_the_session_refuses_a_park_address_whose_gear_is_not_the_emulator_s(tmp_path):
+    for gtin in (REAL_GTIN, None):
+        session = _session(tmp_path, _EnrolApi(gtin=gtin), _ShowSim(), vl_before=[0, 1])
+        with pytest.raises(virtual_gear.VirtualGearError, match=r"SA16 carry no gear-emulator"):
+            session._enrol([16], [4])
+        assert "created_vls" not in session.ledger.data
+        session.ledger.remove()
 
 
 class _LadderSim:

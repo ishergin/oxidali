@@ -1,11 +1,12 @@
 import ast
+import datetime
 import importlib
 import importlib.util
 from pathlib import Path
 
 import pytest
 
-from hil import provoke, seriallog
+from hil import provoke, seriallog, serialmon
 from hil.config import HilConfig
 
 HIL_ROOT = Path(__file__).resolve().parent.parent
@@ -248,30 +249,66 @@ def test_the_log_is_known_to_have_passed_a_moment_by_the_firmware_stamp():
     assert seriallog.newest_ms(lines[1:]) is None and not seriallog.logged_past([], 0)
 
 
-ROM = "2026-09-30T09:00:00.000Z ESP-ROM:esp32p4-eco2-20240710"
-RESET = "2026-09-30T09:00:00.001Z rst:0x1 (POWERON),boot:0x30f (SPI_FAST_FLASH_BOOT)"
-RAW_PHY = ("2026-09-30T09:00:01.000Z I (900) dali2rust_adapters: DALI PHY interrupt: level %d, "
-           "cpu int 17, core 0, source TG0_T0, raw handler")
-DRIVER_PHY = "2026-09-30T09:00:01.000Z I (900) dali2rust_adapters: DALI PHY interrupt: level 3, " \
-             "gptimer driver handler"
-STAMPED = "2026-09-30T09:00:02.000Z I (%d) dali2rust: firmware heartbeat: uptime=1s"
+BOOTED_S = datetime.datetime(2026, 9, 30, 9, tzinfo=datetime.timezone.utc).timestamp()
+MINUTE_S, HOUR_S, DAY_S = 60, 3600, 86400
+U32_WRAP_MS = 1 << 32
+RAW_PHY = ("dali2rust_adapters: DALI PHY interrupt: level %d, cpu int 17, core 0, source TG0_T0, "
+           "raw handler")
+DRIVER_PHY = "dali2rust_adapters: DALI PHY interrupt: level 3, gptimer driver handler"
+BEAT = "dali2rust: firmware heartbeat: uptime=1s"
+PHY_AT_MS, BEAT_AT_MS = 900, 60000
+DRIFT_S = 100
+CRASHED_AT_S = 30
+SMALL_BLOCK = 7
 
 
-def test_the_phy_level_is_the_one_the_running_boot_logged():
-    assert seriallog.last_boot_phy_level([ROM, RESET, RAW_PHY % 5, STAMPED % 60000]) == 5
-    assert seriallog.last_boot_phy_level([RAW_PHY % 5, ROM, DRIVER_PHY, STAMPED % 9000]) == 3
-    assert seriallog.last_boot_phy_level([DRIVER_PHY, STAMPED % 60000, STAMPED % 59990]) == 3
-    assert seriallog.last_boot_phy_level([STAMPED % 60000]) is None
+def _logged(booted_s, uptime_ms, text, late_s=0.0):
+    return "%s I (%d) %s" % (serialmon.stamp(booted_s + uptime_ms / 1000 + late_s),
+                             uptime_ms % U32_WRAP_MS, text)
 
 
-def test_a_boot_whose_phy_line_the_log_missed_has_no_level():
-    assert seriallog.last_boot_phy_level([DRIVER_PHY, STAMPED % 60000, RESET]) is None
-    assert seriallog.last_boot_phy_level([DRIVER_PHY, STAMPED % 600000, STAMPED % 40000]) is None
+def _rom(at_s):
+    return "%s ESP-ROM:esp32p4-eco2-20240710" % serialmon.stamp(at_s)
 
 
-def test_the_serial_log_reads_the_level_of_the_running_boot_from_its_file(tmp_path):
+def _level(*oldest_first):
+    return seriallog.running_boot_phy_level(list(reversed(oldest_first)))
+
+
+def test_the_running_boot_names_the_phy_level_it_logged():
+    later = BOOTED_S + HOUR_S
+    assert _level(_rom(BOOTED_S), _logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY),
+                  _logged(BOOTED_S, BEAT_AT_MS, BEAT)) == 3
+    assert _level(_logged(BOOTED_S, PHY_AT_MS, RAW_PHY % 5), _logged(BOOTED_S, BEAT_AT_MS, BEAT),
+                  _rom(later), _logged(later, PHY_AT_MS, DRIVER_PHY),
+                  _logged(later, BEAT_AT_MS, BEAT)) == 3
+    assert _level(_logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY),
+                  _logged(BOOTED_S, 30 * DAY_S * 1000, BEAT, late_s=DRIFT_S)) == 3
+
+
+def test_a_boot_whose_phy_line_the_log_missed_takes_no_level_from_an_older_boot():
+    later = BOOTED_S + CRASHED_AT_S + MINUTE_S
+    assert _level(_logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY),
+                  _logged(BOOTED_S, CRASHED_AT_S * 1000, BEAT),
+                  _logged(later, BEAT_AT_MS, BEAT)) is None
+    assert _level(_logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY), _rom(later),
+                  _logged(later, BEAT_AT_MS, BEAT)) is None
+    assert _level(_logged(BOOTED_S, BEAT_AT_MS, BEAT)) is None
+
+
+def test_a_wrapped_firmware_stamp_hides_the_boot_start():
+    assert _level(_logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY),
+                  _logged(BOOTED_S, U32_WRAP_MS + BEAT_AT_MS, BEAT)) is None
+
+
+def test_the_log_is_read_newest_first_across_blocks(tmp_path):
+    text = "\n".join(["first", "", "ünïcode line", "last", ""])
+    path = tmp_path / "serial.log"
+    path.write_text(text)
+    assert list(seriallog.lines_newest_first(path, SMALL_BLOCK)) == list(reversed(text.split("\n")))
     serial = seriallog.SerialLog(_cfg(tmp_path))
     assert serial.boot_phy_level() is None
     serial.log_path.parent.mkdir(parents=True)
-    serial.log_path.write_text("\n".join([RAW_PHY % 5, ROM, DRIVER_PHY, STAMPED % 9000]) + "\n")
-    assert serial.boot_phy_level() == 3
+    serial.log_path.write_text("\n".join([_logged(BOOTED_S, PHY_AT_MS, RAW_PHY % 5),
+                                          _logged(BOOTED_S, BEAT_AT_MS, BEAT)]) + "\n")
+    assert serial.boot_phy_level() == 5

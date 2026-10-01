@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 
 import pytest
 
@@ -204,10 +205,13 @@ def test_the_gate_tells_missing_tools_apart_from_an_interrupt_that_reaches_flash
     _mirror(monkeypatch, flash.ISR_IRAM_TOOLS_MISSING, [])
     assert flash.check_isr_iram(cfg, ISR_SPEC) == (flash.ISR_IRAM_UNCHECKED, 1)
     unchecked = capsys.readouterr().err
-    assert "could not check" in unchecked and "SKIP line" in unchecked
+    assert "could not check" in unchecked and "SKIP or UNCHECKED line" in unchecked
     assert "reaches flash" not in unchecked
     assert flash.check_isr_iram(cfg, ISR_SPEC, allow_red=True) == (flash.ISR_IRAM_UNCHECKED, 0)
     capsys.readouterr()
+    _mirror(monkeypatch, flash.ISR_IRAM_NOTHING_CHECKED, [])
+    assert flash.check_isr_iram(cfg, ISR_SPEC) == (flash.ISR_IRAM_UNCHECKED, 1)
+    assert "reaches flash" not in capsys.readouterr().err
     _mirror(monkeypatch, GATE_RED, [])
     assert flash.check_isr_iram(cfg, ISR_SPEC) == (flash.ISR_IRAM_FAILED, 1)
     assert "reaches flash" in capsys.readouterr().err
@@ -244,3 +248,29 @@ def test_the_gate_takes_the_toolchain_the_firmware_build_installed_first(tmp_pat
         gate._tool("objdump", True)
     assert missing.value.code == flash.ISR_IRAM_TOOLS_MISSING
     assert ".embuild" in capsys.readouterr().out
+
+
+SECTIONS = ("  [ 1] .iram0.text PROGBITS 4ff00000 001000 008000 00 AX 0 0 4\n"
+            "  [ 2] .flash.text PROGBITS 40000000 009000 010000 00 AX 0 0 4\n")
+
+
+def _linked(tools):
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, tools.get(argv[1], ""), "")
+    return run
+
+
+def test_a_gate_that_finds_nothing_to_check_says_unchecked_not_red(tmp_path, monkeypatch, capsys):
+    gate = _isr_gate()
+    elf = tmp_path / "dali2rust"
+    elf.write_bytes(b"")
+    monkeypatch.setattr(gate, "_tool", lambda name, require: name)
+    monkeypatch.setattr(gate.subprocess, "run", _linked({"-S": SECTIONS}))
+    assert gate.main(["gate", "--require-tools", str(elf)]) == flash.ISR_IRAM_NOTHING_CHECKED
+    assert "nothing was actually checked" in capsys.readouterr().out
+    monkeypatch.setattr(gate.subprocess, "run", _linked({"-S": ""}))
+    with pytest.raises(SystemExit) as stopped:
+        gate.main(["gate", "--require-tools", str(elf)])
+    assert stopped.value.code == flash.ISR_IRAM_NOTHING_CHECKED
+    assert (gate.EXIT_MISSING, gate.EXIT_UNCHECKED, gate.EXIT_RED) == (
+        flash.ISR_IRAM_TOOLS_MISSING, flash.ISR_IRAM_NOTHING_CHECKED, GATE_RED)
