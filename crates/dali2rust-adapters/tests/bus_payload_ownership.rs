@@ -37,11 +37,11 @@ const COMMAND_OWNERS: &[(&str, &[&str])] = &[
 
 const EVENT_CONSUMERS: &[(&str, &[&str])] = &[
     (
-        "rules_worker",
+        "rules",
         dali2rust_rules_runtime::RULES_WORKER_HANDLED_EVENTS,
     ),
     (
-        "registry_events_worker",
+        "registry",
         dali2rust_registry_runtime::REGISTRY_EVENTS_HANDLED_EVENTS,
     ),
     (
@@ -49,7 +49,7 @@ const EVENT_CONSUMERS: &[(&str, &[&str])] = &[
         dali2rust_operations_runtime::OPERATION_TRACKER_HANDLED_EVENTS,
     ),
     (
-        "display_worker",
+        "display",
         dali2rust_display_runtime::DISPLAY_WORKER_HANDLED_EVENTS,
     ),
     (
@@ -61,8 +61,16 @@ const EVENT_CONSUMERS: &[(&str, &[&str])] = &[
         dali2rust_fanout_runtime::PROJECTOR_HANDLED_EVENTS,
     ),
     (
-        "arbitration_worker",
+        "arbitration",
         dali2rust_redundancy_runtime::ARBITRATION_HANDLED_EVENTS,
+    ),
+    (
+        "arb-supervisor",
+        dali2rust_redundancy_runtime::SUPERVISOR_HANDLED_EVENTS,
+    ),
+    (
+        "replication",
+        dali2rust_redundancy_runtime::REPLICATION_HANDLED_EVENTS,
     ),
     (
         "hcl_scheduler",
@@ -73,7 +81,7 @@ const EVENT_CONSUMERS: &[(&str, &[&str])] = &[
         dali2rust_poller_runtime::POLLER_HANDLED_EVENTS,
     ),
     (
-        "websocket_projector",
+        "ws_fanout",
         dali2rust_api::ws::WS_PROJECTED_EVENTS,
     ),
     (
@@ -124,10 +132,6 @@ const OBSERVED_ONLY_EVENTS: &[(&str, &str)] = &[
         "the bridge re-reads its settings from the read port on every pass; a dropped event must not park it",
     ),
     (
-        "RedundancySettingsChangedEvent",
-        "the arbitration worker re-reads its settings from the read port on every turn",
-    ),
-    (
         "PoliciesChangedEvent",
         "the policy is read from the port when it is applied, never latched from an event",
     ),
@@ -169,6 +173,19 @@ fn every_event_has_a_consumer_or_is_documented_observed_only() {
              OBSERVED_ONLY_EVENTS — remove the stale entry"
         );
     }
+}
+
+#[test]
+fn the_consumer_table_names_every_composed_event_subscriber() {
+    let mut table: Vec<&str> = EVENT_CONSUMERS.iter().map(|(name, _)| *name).collect();
+    let mut composed = dali2rust_adapters::runtime::NAMED_EVENT_SUBSCRIBERS.to_vec();
+    table.sort_unstable();
+    composed.sort_unstable();
+    assert_eq!(
+        table, composed,
+        "every event subscriber the bus host composes needs its row here, or an event it \
+         consumes can pass as observed-only"
+    );
 }
 
 #[test]
