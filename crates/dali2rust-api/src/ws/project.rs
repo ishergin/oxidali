@@ -292,13 +292,14 @@ pub fn event_channels(envelope: &EventEnvelope) -> &'static [Channel] {
     p.map_or(&[], |p| p.channels)
 }
 
-pub fn project_event(envelope: &EventEnvelope) -> Vec<(Channel, String)> {
-    project_event_where(envelope, &|_| true)
+pub fn project_event(envelope: &EventEnvelope, now_ms: u64) -> Vec<(Channel, String)> {
+    project_event_where(envelope, &|_| true, now_ms)
 }
 
 pub fn project_event_where(
     envelope: &EventEnvelope,
     wanted: &dyn Fn(Channel) -> bool,
+    now_ms: u64,
 ) -> Vec<(Channel, String)> {
     let Some(projection) = projection(&envelope.payload) else {
         return Vec::new();
@@ -314,13 +315,12 @@ pub fn project_event_where(
     }
     let payload = serde_json::to_string(&projection.body.to_payload())
         .unwrap_or_else(|_| "null".into());
-    let ts = envelope.meta.timestamp_ms;
     channels
         .into_iter()
         .map(|channel| {
             (
                 channel,
-                event_frame_with_payload(projection.event_type, channel, ts, &payload),
+                event_frame_with_payload(projection.event_type, channel, now_ms, &payload),
             )
         })
         .collect()
@@ -441,6 +441,15 @@ fn operation_payload(ev: &OperationStatusChangedEvent) -> Value {
 mod tests {
     use super::*;
     use dali2rust_contracts::msg::ColorValue;
+
+    const EVENT_TS_MS: u64 = 1_790_000_000_123;
+
+    #[test]
+    fn a_projected_frame_carries_the_time_it_was_projected_not_the_unstamped_envelope() {
+        let (_, frame) = project_event(&runtime_event(), EVENT_TS_MS).into_iter().next().unwrap();
+        let v: Value = serde_json::from_str(&frame).unwrap();
+        assert_eq!(v["ts_ms"], EVENT_TS_MS);
+    }
     use dali2rust_contracts::bus::event_envelope;
     use dali2rust_contracts::msg::{
         fixed_text_32, ColorMode, CompactErrorPayload, ErrorCode, FailureStatus, LastDapcSource,
@@ -478,7 +487,7 @@ mod tests {
     }
 
     fn input_payload(ev: DaliInputEventObservedEvent) -> Value {
-        let frames = project_event(&envelope(ev));
+        let frames = project_event(&envelope(ev), EVENT_TS_MS);
         assert_eq!(frames.len(), 1, "one channel");
         let frame: Value = serde_json::from_str(&frames[0].1).expect("frame is json");
         frame["payload"].clone()
@@ -584,7 +593,7 @@ mod tests {
 
     #[test]
     fn runtime_state_matches_the_canonical_fixture() {
-        let frames = project_event(&runtime_event());
+        let frames = project_event(&runtime_event(), EVENT_TS_MS);
         let (_, frame) = frames
             .iter()
             .find(|(c, _)| *c == Channel::VirtualLamps)
@@ -613,7 +622,7 @@ mod tests {
 
     #[test]
     fn a_runtime_commit_reaches_both_views_of_the_same_gear() {
-        let channels: Vec<Channel> = project_event(&runtime_event())
+        let channels: Vec<Channel> = project_event(&runtime_event(), EVENT_TS_MS)
             .into_iter()
             .map(|(c, _)| c)
             .collect();
@@ -634,7 +643,7 @@ mod tests {
             ttl_remaining_ms: 60_000,
             operation_key: fixed_text_32("pd-attr-0-17-42"),
         });
-        let (channel, frame) = project_event(&ev).into_iter().next().unwrap();
+        let (channel, frame) = project_event(&ev, EVENT_TS_MS).into_iter().next().unwrap();
         assert_eq!(channel, Channel::Operations);
         let v: Value = serde_json::from_str(&frame).unwrap();
         assert_eq!(v["payload"]["operation_id"], "pd-attr-0-17-42");
@@ -658,7 +667,7 @@ mod tests {
             ttl_remaining_ms: 0,
             operation_key: fixed_text_32("comm-addr-0-17"),
         });
-        let (_, frame) = project_event(&ev).into_iter().next().unwrap();
+        let (_, frame) = project_event(&ev, EVENT_TS_MS).into_iter().next().unwrap();
         let v: Value = serde_json::from_str(&frame).unwrap();
         assert_eq!(v["payload"]["error"]["code"], "verify_failed");
         assert_eq!(v["payload"]["error"]["message"], "readback mismatch");
@@ -670,7 +679,7 @@ mod tests {
             adapter_id: 0,
             virtual_lamp_id: 12,
         });
-        let (channel, frame) = project_event(&ev).into_iter().next().unwrap();
+        let (channel, frame) = project_event(&ev, EVENT_TS_MS).into_iter().next().unwrap();
         assert_eq!(channel, Channel::VirtualLamps);
         let v: Value = serde_json::from_str(&frame).unwrap();
         assert_eq!(v["payload"]["virtual_lamp_id"], 12);
@@ -764,7 +773,7 @@ mod tests {
     #[test]
     fn event_channels_names_exactly_the_channels_the_projection_produces() {
         for ev in one_of_every_projected_event() {
-            let produced: Vec<Channel> = project_event(&ev).into_iter().map(|(c, _)| c).collect();
+            let produced: Vec<Channel> = project_event(&ev, EVENT_TS_MS).into_iter().map(|(c, _)| c).collect();
             assert_eq!(
                 produced,
                 event_channels(&ev).to_vec(),
@@ -794,7 +803,7 @@ mod tests {
     fn an_unprojected_event_reaches_no_channel_either() {
         let ev = envelope(dali2rust_contracts::msg::DaliDiscoveryFailedEvent {});
         assert!(event_channels(&ev).is_empty());
-        assert!(project_event(&ev).is_empty());
+        assert!(project_event(&ev, EVENT_TS_MS).is_empty());
     }
 
     #[test]
@@ -840,15 +849,15 @@ mod tests {
 
     #[test]
     fn a_channel_nobody_watches_is_not_serialized() {
-        let frames = project_event_where(&runtime_event(), &|c| c == Channel::PhysicalDevices);
+        let frames = project_event_where(&runtime_event(), &|c| c == Channel::PhysicalDevices, EVENT_TS_MS);
         let channels: Vec<Channel> = frames.iter().map(|(c, _)| *c).collect();
         assert_eq!(channels, vec![Channel::PhysicalDevices]);
-        assert!(project_event_where(&runtime_event(), &|_| false).is_empty());
+        assert!(project_event_where(&runtime_event(), &|_| false, EVENT_TS_MS).is_empty());
     }
 
     #[test]
     fn the_state_block_is_the_same_shape_the_rest_surface_serializes() {
-        let (_, frame) = project_event(&runtime_event()).into_iter().next().unwrap();
+        let (_, frame) = project_event(&runtime_event(), EVENT_TS_MS).into_iter().next().unwrap();
         let ws: Value = serde_json::from_str(&frame).unwrap();
         let ws_keys: Vec<&String> = ws["payload"]["state"].as_object().unwrap().keys().collect();
         let rest = serde_json::to_value(crate::http::physical_device_state::state_view_to_dto(
@@ -873,7 +882,7 @@ mod tests {
             commit_dimensions: cct_setpoint().dimensions(),
             commit_holds_hcl: true,
         });
-        let (_, frame) = project_event(&ev).into_iter().next().unwrap();
+        let (_, frame) = project_event(&ev, EVENT_TS_MS).into_iter().next().unwrap();
         let v: Value = serde_json::from_str(&frame).unwrap();
         assert_eq!(v["payload"]["state"]["error"]["code"], "vl_unbound");
     }
@@ -899,7 +908,7 @@ mod tests {
             .dimensions(),
             commit_holds_hcl: true,
         });
-        let (_, frame) = project_event(&ev).into_iter().next().unwrap();
+        let (_, frame) = project_event(&ev, EVENT_TS_MS).into_iter().next().unwrap();
         let v: Value = serde_json::from_str(&frame).unwrap();
         assert!(v["payload"]["state"]["color_temperature_kelvin"].is_null());
         assert_eq!(v["payload"]["state"]["color_mode"], "unknown");

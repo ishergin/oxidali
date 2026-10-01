@@ -134,7 +134,7 @@ fn run(
             continue;
         }
         match ev_rx.recv_timeout(timers.next_wait(Instant::now())) {
-            Ok(frame) => drain_events(&hub, &ev_rx, frame, &mut burst),
+            Ok(frame) => drain_events(&hub, &ev_rx, frame, &mut burst, clock_ms()),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
@@ -201,7 +201,13 @@ fn report_inbox_overflow(hub: &WsHub, inbox: &EventInboxProbe, last: &mut u32) {
     hub.note_inbox_overflow(delta);
 }
 
-fn drain_events(hub: &WsHub, ev_rx: &BusSubscriberRx, first: BusFrame, burst: &mut BurstCoalescer) {
+fn drain_events(
+    hub: &WsHub,
+    ev_rx: &BusSubscriberRx,
+    first: BusFrame,
+    burst: &mut BurstCoalescer,
+    now_ms: u64,
+) {
     push_event(burst, first);
     while let Ok(frame) = ev_rx.try_recv() {
         push_event(burst, frame);
@@ -211,7 +217,7 @@ fn drain_events(hub: &WsHub, ev_rx: &BusSubscriberRx, first: BusFrame, burst: &m
         burst.take_superseded(),
     );
     for envelope in burst.drain() {
-        fan_out_envelope(hub, &envelope);
+        fan_out_envelope(hub, &envelope, now_ms);
     }
     burst.release_burst();
 }
@@ -222,7 +228,7 @@ fn push_event(burst: &mut BurstCoalescer, frame: BusFrame) {
     }
 }
 
-fn fan_out_envelope(hub: &WsHub, envelope: &dali2rust_contracts::msg::EventEnvelope) {
+fn fan_out_envelope(hub: &WsHub, envelope: &dali2rust_contracts::msg::EventEnvelope, now_ms: u64) {
     if !hub.has_clients() {
         return;
     }
@@ -232,7 +238,7 @@ fn fan_out_envelope(hub: &WsHub, envelope: &dali2rust_contracts::msg::EventEnvel
     {
         return;
     }
-    for (channel, text) in project_event_where(envelope, &|channel| hub.any_subscriber(channel)) {
+    for (channel, text) in project_event_where(envelope, &|channel| hub.any_subscriber(channel), now_ms) {
         hub.broadcast(channel, &text);
     }
 }

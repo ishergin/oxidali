@@ -177,8 +177,10 @@ Volatile runtime-состояние меняют только `RegistryRuntimeUp
   `Registry`, `Internal`, а также зарезервированные `Cluster` и `AdapterProxy`.
   Происхождение отображается в `RuntimeSource` провенанса и уточняет приоритет
   провода для нескольких видов (см. [`semantic-dali-commands.md`](semantic-dali-commands.md)).
-- `target_adapter_id`, `bus_id` — экземпляр шины; `timestamp_ms` — монотонное время
-  контроллера.
+- `target_adapter_id` — адаптер-адресат, его фильтрует потребитель. `bus_id`,
+  `sequence_no` и `timestamp_ms` после сборки никто не ставит
+  ([04](../../architecture/04-contracts-and-api-bridge.md)); время кадра WebSocket ставит
+  воркер WebSocket.
 - `cluster_origin_id` / `adapter_proxy_origin_id` — зарезервированы под подавление
   петель будущих `I6`/`I7`; вне этих происхождений — `0`.
 - `error` — только на пути отказа, в куче. `ErrorPayload` (код, текст до 64 байт,
