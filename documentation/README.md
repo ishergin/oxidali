@@ -9,13 +9,13 @@ every document follows.
   mechanisms, boundaries and the invariants code must keep; its README gives the
   reading order. English.
 - [`architecture/decisions/`](architecture/decisions/README.md) — **why**: one ADR per
-  locked decision, with its alternatives and consequences. English.
+  decision, accepted or deferred, with its context and consequences. English.
 - [`product-design/`](product-design/README.md) — **what** the product does: external
   contracts (REST, WebSocket, MQTT), bus contract families, runtime modules, web UI,
   glossary and invariants, known issues, the issue registry, status and roadmap; its
   README is the package map. Russian.
-- [`reference/`](reference/) — external standards: IEC 62386 and DiiA digests, the
-  conformance gap list, and the crash-triage runbook. English.
+- [`reference/`](reference/) — the IEC 62386 conformance gap list and the crash-triage
+  runbook; the standards themselves are not in the repository. English.
 - [`../tools/hil/`](../tools/hil/README.md) — the hardware bench: runbook (English),
   strategy and watchlist (Russian).
 - `tests/dali2rust-bdd/features/` — the executable BDD canon.

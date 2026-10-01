@@ -34,7 +34,7 @@ Scope: why the system is built this way. How it works is in the
 | [025](ADR-025-phy-interrupt-above-critical-sections.md) | Interrupt above critical sections | Accepted | Level 5, execute from PSRAM, flash gate |
 | [026](ADR-026-dt8-colour-activation.md) | DT8 colour activation | Accepted | Arc command or `ACTIVATE`; no `ACTIVATE` before a `DAPC` |
 | [027](ADR-027-dtr-operand-proof-and-readback-outcomes.md) | DTR proof, read-back outcomes | Accepted | Arm, prove, act; three read-back outcomes |
-| [028](ADR-028-task-stacks-in-psram-on-the-xip-image.md) | Stacks and Rust heap in PSRAM | Accepted | On the XIP image only mapping flash keeps a stack internal; Rust objects from 256 B in PSRAM |
+| [028](ADR-028-task-stacks-in-psram-on-the-xip-image.md) | Stacks and Rust heap in PSRAM | Accepted | On the XIP image only mapping flash or wire timing keeps a stack internal; Rust objects from 256 B in PSRAM |
 | [029](ADR-029-network-buffers-in-psram-and-a-measured-receive-ring.md) | Network buffers in PSRAM | Accepted | lwIP and received frames in PSRAM; mailbox holds the window; ring sized by its drop counter |
 | [030](ADR-030-controller-as-a-part-103-bus-unit.md) | The controller as a Part 103 bus unit | Deferred | One stateful model answers every device query; five decisions owed before code |
 | [031](ADR-031-gear-emulator-on-the-standby.md) | Gear emulator on the standby | Accepted | Lent by OTA for one boot or by wire; a session envelope keeps it off the owner's lamps |
