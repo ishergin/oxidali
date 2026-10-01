@@ -382,7 +382,7 @@ impl RulesWorker {
             groups: self.world.groups(),
             devices: self.world.devices(),
             inputs: self.world.inputs(),
-            hcl: self.world.hcl(),
+            hcl: crate::runtime::engine::hcl_per_target(self.world.hcl()),
             hcl_schedules: self.world.hcl_schedules(),
         }
     }

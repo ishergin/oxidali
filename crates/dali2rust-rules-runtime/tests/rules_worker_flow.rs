@@ -19,6 +19,7 @@ struct EmptyWorld {
     active: bool,
     lit_group: Arc<std::sync::atomic::AtomicBool>,
     overridden: Arc<std::sync::atomic::AtomicBool>,
+    idle_second_schedule: bool,
 }
 
 const LIT_GROUP_ID: u16 = 2;
@@ -64,14 +65,19 @@ impl dali2rust_rules_runtime::RulesWorldPort for EmptyWorld {
         ]
     }
     fn hcl(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::HclTargetState> {
-        vec![dali2rust_rules_runtime::runtime::engine::HclTargetState {
+        let row = |overridden| dali2rust_rules_runtime::runtime::engine::HclTargetState {
             target: dali2rust_rules_model::LightTarget::Group(dali2rust_rules_model::GroupRef {
                 adapter_id: 0,
                 id: LIT_GROUP_ID,
             }),
             enabled: true,
-            overridden: self.overridden.load(std::sync::atomic::Ordering::Relaxed),
-        }]
+            overridden,
+        };
+        let mut rows = vec![row(self.overridden.load(std::sync::atomic::Ordering::Relaxed))];
+        if self.idle_second_schedule {
+            rows.push(row(false));
+        }
+        rows
     }
     fn hcl_schedules(&self) -> Vec<String> {
         vec![KNOWN_SCHEDULE.to_string(), "s".repeat(SCHEDULE_ID_CAPACITY)]
@@ -868,6 +874,63 @@ fn a_steady_event_stream_does_not_starve_the_tick() {
     assert!(fired.is_some(), "the override edge a tick finds must fire while events keep arriving");
 }
 
+const OVERRIDE_WATCH: Duration = Duration::from_secs(3);
+
+#[test]
+fn a_target_two_schedules_drive_fires_its_override_edge_once() {
+    let overridden = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let h = harness_spawn(
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-hcl-two-schedules")),
+        EmptyWorld {
+            lamps: vec![bound_lamp(EFFECT_LAMP)],
+            overridden: Arc::clone(&overridden),
+            idle_second_schedule: true,
+            ..empty_world()
+        },
+        Arc::new(StubResolver::permissive()),
+    );
+    publish_document(
+        &h,
+        141,
+        "rule \"перехват\" {\n  when hcl override starts for group(2)\n  do lamp(6).level(44)\n}\n\
+         \nrule \"возврат\" {\n  when hcl override clears for group(2)\n  do lamp(6).level(10)\n}\n\
+         \nrule \"часы\" {\n  when at 23:00\n  do log(\"тик\")\n}\n",
+        0,
+    );
+    let sig = recv_signal(&h, 141);
+    assert!(sig.error.is_none(), "the document must compile: {sig:?}");
+    wait_revision(&h.store, 1);
+    dali2rust_test_support::await_counter_u32(
+        &h.cells.ticks_time_unsynced,
+        |ticks| ticks >= 1,
+        Duration::from_secs(3),
+    );
+
+    overridden.store(true, std::sync::atomic::Ordering::Relaxed);
+    let deadline = std::time::Instant::now() + OVERRIDE_WATCH;
+    let mut levels = Vec::new();
+    while std::time::Instant::now() < deadline {
+        if let Some((_, level)) = dali2rust_test_support::try_recv_command_matching(
+            &h.out_rx,
+            deadline.saturating_duration_since(std::time::Instant::now()),
+            |payload| matches!(payload, dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(_)),
+        )
+        .and_then(|ce| match ce.payload {
+            dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(ts) => {
+                Some((ts.setpoint.power, ts.setpoint.level))
+            }
+            _ => None,
+        }) {
+            levels.push(level);
+        }
+    }
+    assert_eq!(
+        levels,
+        vec![Some(44)],
+        "one schedule overridden and one idle is one override, not an edge on every tick"
+    );
+}
+
 #[test]
 fn a_part_333_flag_moving_fires_the_rule_that_watches_the_device() {
     let h = harness("rules-manual-config");
@@ -1585,6 +1648,7 @@ fn a_disabled_rule_stays_disabled_across_a_document_that_stopped_compiling_issue
         active: true,
         lit_group: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         overridden: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        idle_second_schedule: false,
     };
     let resolver = VanishingGroup { inner: StubResolver::permissive(), gone: Arc::clone(&gone) };
     let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-vanishing-name"));
@@ -1699,6 +1763,7 @@ fn empty_world() -> EmptyWorld {
         active: true,
         lit_group: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         overridden: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        idle_second_schedule: false,
     }
 }
 
