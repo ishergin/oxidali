@@ -338,6 +338,30 @@ fn second_begin_supersedes_prior_active_operation_op004() {
 }
 
 #[test]
+fn a_read_of_one_device_does_not_cancel_a_read_of_another() {
+    let (publisher, tracker, _host) = spawn_harness();
+    let begin = |corr, key: &str| begin_envelope(corr, key, OperationType::AttributeRead, 600_000);
+    publish(&publisher, BusChannel::Commands, begin(9800, "pd-attr-0-3-9800"));
+    publish(&publisher, BusChannel::Commands, begin(9801, "pd-attr-0-5-9801"));
+    publish(&publisher, BusChannel::Commands, begin(9802, "pd-attr-0-3-9802"));
+    wait_until(
+        || tail_for(&tracker, "pd-attr-0-3-9802").first().copied() == Some(OperationStatus::Accepted),
+        Duration::from_millis(500),
+    );
+    assert_eq!(
+        tail_for(&tracker, "pd-attr-0-5-9801"),
+        vec![OperationStatus::Accepted],
+        "device 5's read is its own work; a read of device 3 must not cancel it"
+    );
+    assert_eq!(
+        tail_for(&tracker, "pd-attr-0-3-9800").last().copied(),
+        Some(OperationStatus::Cancelled),
+        "a second read of the same device still supersedes the first"
+    );
+    assert_eq!(last_error_for(&tracker, "pd-attr-0-3-9800"), Some(ErrorCode::Superseded));
+}
+
+#[test]
 fn an_apply_opened_while_another_runs_waits_its_turn_instead_of_cancelling_it() {
     let (publisher, tracker, _host) = spawn_harness();
     for (round, op_type) in

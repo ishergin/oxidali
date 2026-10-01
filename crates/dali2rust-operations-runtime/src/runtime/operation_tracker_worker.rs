@@ -219,7 +219,7 @@ pub struct OperationTrackerInner {
     pub events: Vec<RecordedOperationStatus>,
     pub http_by_key: HashMap<String, HttpOpRow>,
     active: HashMap<u64, TrackedOp>,
-    coalesce: HashMap<(u8, u32), u64>,
+    coalesce: HashMap<CoalesceKey, u64>,
     pending_group_apply: PendingMap<Vec<DaliGroupMembershipProgrammedEvent>>,
     pending_scene_apply: PendingMap<Vec<DaliSceneProgrammedEvent>>,
     pending_attribute_read: PendingMap<OperationAttributeReadOutcomesView>,
@@ -554,7 +554,7 @@ fn clear_active_entry(
 ) {
     inner.active.remove(&workflow_correlation_id);
     inner.for_each_pending_buffer(|buf| buf.remove_correlation(workflow_correlation_id));
-    let k = (op.op_type as u8, op.adapter_id);
+    let k = coalesce_key(op.op_type, op.adapter_id, &op.operation_key);
     if inner.coalesce.get(&k).copied() == Some(workflow_correlation_id) {
         inner.coalesce.remove(&k);
     }
@@ -712,10 +712,10 @@ fn handle_operation_begin(
     let op_type = body.operation_type;
     let deadline = Instant::now() + Duration::from_millis(u64::from(body.ttl_ms.max(1)));
     let mut guard = lock_tracker(state);
-    let coalesce_key = (op_type as u8, adapter_id);
+    let key = coalesce_key(op_type, adapter_id, body.operation_key.as_str());
     let coalesces = op_type.coalesces_per_adapter();
     if coalesces {
-        supersede_stale_operation(publisher, bus_id, &mut guard, counters, coalesce_key, corr);
+        supersede_stale_operation(publisher, bus_id, &mut guard, counters, &key, corr);
     }
     let op = TrackedOp {
         workflow_correlation_id: corr,
@@ -739,10 +739,19 @@ fn handle_operation_begin(
         None,
     );
     if coalesces {
-        guard.coalesce.insert(coalesce_key, corr);
+        guard.coalesce.insert(key, corr);
     }
     guard.active.insert(corr, op);
     flush_begin_backlog(publisher, bus_id, &mut guard, counters, corr, op_type);
+}
+
+type CoalesceKey = (u8, u32, String);
+
+fn coalesce_key(op_type: OperationType, adapter_id: u32, operation_key: &str) -> CoalesceKey {
+    let resource = operation_key
+        .rsplit_once('-')
+        .map_or(operation_key, |(resource, _serial)| resource);
+    (op_type as u8, adapter_id, resource.to_owned())
 }
 
 fn supersede_stale_operation(
@@ -750,10 +759,10 @@ fn supersede_stale_operation(
     bus_id: BusId,
     guard: &mut OperationTrackerInner,
     counters: &Arc<OperationTrackerCounters>,
-    coalesce_key: (u8, u32),
+    coalesce_key: &CoalesceKey,
     corr: u64,
 ) {
-    if let Some(old_c) = guard.coalesce.get(&coalesce_key).copied() {
+    if let Some(old_c) = guard.coalesce.get(coalesce_key).copied() {
         if old_c != corr {
             if let Some(old_op) = guard.active.remove(&old_c) {
                 emit_terminal_with_retention(
@@ -765,7 +774,7 @@ fn supersede_stale_operation(
                     OperationStatus::Cancelled,
                     ErrorCode::Superseded,
                 );
-                guard.coalesce.remove(&coalesce_key);
+                guard.coalesce.remove(coalesce_key);
             }
         }
     }
