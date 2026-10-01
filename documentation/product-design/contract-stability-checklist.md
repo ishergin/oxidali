@@ -18,7 +18,8 @@ BDD-конвенции — [`../architecture/05-testing-and-bdd.md`](../architec
       ([`bus-contracts/commands.md`](bus-contracts/commands.md)) и его дисциплину ответа.
 - [ ] Секреты только на запись: в read-DTO — признак (`broker_password_set`), а не
       значение.
-- [ ] Ошибка — `ErrorDto`; новый `ErrorCode` дописан в конец перечисления.
+- [ ] Ошибка — форма из [`rest-api/contracts/error-dto.md`](rest-api/contracts/error-dto.md);
+      новый `ErrorCode` дописан в конец перечисления.
 - [ ] Ответ на чтение укладывается в стек задачи httpd: ресурс, а не дамп; потолок
       размера DTO не поднят ради нового поля.
 - [ ] **Удалённое поле записано ниже**: снаружи это ломающее изменение, а внутри оно
@@ -39,7 +40,7 @@ BDD-конвенции — [`../architecture/05-testing-and-bdd.md`](../architec
       структуры ([`bus-contracts/shared-state-contracts.md`](bus-contracts/shared-state-contracts.md)).
 - [ ] Новый DTO ссылается на `LightSetpoint` / `RuntimeObservation` композицией и не
       дублирует их поля ([`rest-api/contracts/state-contracts.md`](rest-api/contracts/state-contracts.md)).
-- [ ] Runtime-DTO — `RuntimeStateContract`; тело target-state — `TargetStateRequestDto`
+- [ ] Runtime-DTO — `RuntimeStateContract`; тело target-state (`TargetStateBody`) —
       без полей `RuntimeObservation`; строка сцены — `SceneRow` без `transition` и
       runtime-полей.
 - [ ] Capability выводятся одинаково на всех поверхностях; источник override и
@@ -67,7 +68,9 @@ BDD-конвенции — [`../architecture/05-testing-and-bdd.md`](../architec
 ## Реестр
 
 - [ ] Мутация применяется только registry worker'ом; чтение — через read-порт.
-- [ ] Runtime не персистится и меняется только через `RegistryRuntimeUpdateCommand`.
+- [ ] Runtime не персистится и меняется только `RegistryRuntimeUpdateCommand` и
+      `RegistryLevelTransitionCommand` (арк-шаг, уровень которого считает реестр);
+      единственный издатель в проде — проектор state-fanout.
 - [ ] Applied групп и сцен меняется только из readback'ов, desired — только командами.
 - [ ] Доказательства (чтение атрибутов, запись, итог скана, банк памяти) применяются
       прямым путём реестра, а не через runtime-команду.

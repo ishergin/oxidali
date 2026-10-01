@@ -33,11 +33,12 @@
 | Правила | сцены | `DaliRecallSceneCommand` (`Group` / `Broadcast` / `VirtualLamp`), `SceneApplyExecuteCommand` |
 | Правила | индикация панелей | `Dali103FeedbackDriveCommand` |
 | Правила | датчик присутствия (303) | `Dali103InstanceActionCommand` |
-| Поллер | фоновое чтение | `DaliReadAttributesCommand`, `scope = Short`, `Origin::Poller` (серии банков 202-207 — пресетом) |
+| Поллер | фоновое чтение | `DaliReadAttributesCommand` на короткий адрес, `Origin::Poller` (серии банков 202-207 — пресетом) |
 | Поллер | health-probe сегмента | `DaliBusHealthProbeCommand` |
 | Apply orchestrator | ячейки apply | `DaliProgramGroupMembershipCommand`, `DaliProgramSceneCommand` (`target = VirtualLamp`) |
 | Apply orchestrator | ячейки политики | `DaliWriteAttributesCommand` (`signals_operation = false`) |
 | Воркер арбитража | зонд владельца шины | `Dali103ArbitrationProbeCommand` |
+| DALI-воркер | успешный discovery при `apply_on_discovery` | `PolicyApplyExecuteCommand` (ячейки публикует оркестратор) |
 | Проектор state-fanout | проекция фактов в реестр | `RegistryRuntimeUpdateCommand`, `RegistryLevelTransitionCommand` — DALI-команд не публикует |
 | Sniffer translator | чужие кадры | только события (`DaliObservedFrameEvent`, вход Part 103, `DaliSceneRecalledEvent` чужого `GO TO SCENE`) — команд не публикует |
 
@@ -46,6 +47,8 @@
 
 ## Правило тестирования
 
-Каждую строку покрывают хотя бы один BDD-сценарий, утверждающий опубликованный payload
-и кадры провода (как — [`05`](../../architecture/05-testing-and-bdd.md)), и контрактный
-тест сериализации. Сырой payload не появляется нигде, кроме диагностической строки.
+Каждую строку покрывают хотя бы один BDD-сценарий, утверждающий ответ HTTP и кадры
+`MockDaliTransport`, тест крейта-владельца, утверждающий опубликованный payload, и
+контрактный тест сериализации (границы слоёв —
+[`05`](../../architecture/05-testing-and-bdd.md)). Сырой payload не появляется нигде,
+кроме диагностической строки.

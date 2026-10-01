@@ -12,8 +12,8 @@ state-DTO — [`rest-api/contracts/state-contracts.md`](rest-api/contracts/state
 ## Термины
 
 - **Controller** — один контроллер на единственной плате Waveshare ESP32-P4-ETH
-  ([`../architecture/01-overview.md`](../architecture/01-overview.md)) с одним или
-  несколькими DALI-адаптерами.
+  ([`../architecture/01-overview.md`](../architecture/01-overview.md)) с одним
+  DALI-адаптером; несколько адаптеров — стадия `X2` ([`roadmap.md`](roadmap.md)).
 - **Installation / node** — установка — то, что обслуживает контроллер или пара
   отказоустойчивости, её имя — `controller_id` (в настройках Home Assistant — Controller
   ID); узел — одна плата, её имя — `node_id`, оно же hostname
@@ -22,8 +22,9 @@ state-DTO — [`rest-api/contracts/state-contracts.md`](rest-api/contracts/state
   адаптера — 64 коротких адреса gear, 64 виртуальные лампы, 16 групп, 16 сцен и
   отдельно 64 адреса устройств ввода.
 - **`adapter_id`** — логический индекс адаптера (`u8`, `0..N-1`) в реестре и
-  REST-путях. В payload'ах шины он называется `registry_adapter_id` и **не** равен
-  `target_adapter_id` конверта — идентификатору экземпляра шины.
+  REST-путях. В payload'ах шины он называется `registry_adapter_id` или `adapter_id`
+  (имя у каждого payload'а своё) и **не** равен `target_adapter_id` конверта —
+  идентификатору экземпляра шины.
 - **Physical device** — control gear с коротким адресом на адаптере.
 - **Virtual lamp** — стабильная пользовательская сущность UI и Home Assistant
   (`virtual_lamp_id`, `0..63`); привязана к физическому устройству или нет.
@@ -40,7 +41,11 @@ state-DTO — [`rest-api/contracts/state-contracts.md`](rest-api/contracts/state
   сборки опкода или кадра. **Diagnostic raw command** — явное исключение: сырой
   16-битный кадр без продуктовой семантики.
 - **Operation** — долгая работа, на которую маршрут ответил `202` и `operation_id`.
-- **Role** — `active` или `standby` контроллера на общем сегменте; решается проводом.
+- **Role** — два понятия. Роль в работе — `active` или `standby` контроллера на общем
+  сегменте (`applicationActive`, заголовок `X-Dali2rust-Role`); её двигают провод,
+  плановое переключение и ручная запись `application_active`. Настроенная роль пары —
+  `primary` или `standby`, тип DiiA 351 (A/C или B)
+  ([`runtime-modules/redundancy/README.md`](runtime-modules/redundancy/README.md) §Роли).
 - **Slice** — именованная единица персистентной конфигурации (`SliceKey`) со своей
   версией формата.
 
@@ -54,8 +59,9 @@ state-DTO — [`rest-api/contracts/state-contracts.md`](rest-api/contracts/state
   прерывание, транзакции и гейты живут там.
 - **Семантический продуктовый путь** — продукт не собирает опкоды и кадры
   ([09](../architecture/09-dali-protocol-rules.md#product-path-and-diagnostic-path)).
-- **Runtime — только проекцией.** Volatile-состояние лампы меняется только
-  `RegistryRuntimeUpdateCommand`, а его единственный издатель — проектор state-fanout.
+- **Runtime — только проекцией.** Volatile-состояние лампы меняют только
+  `RegistryRuntimeUpdateCommand` и `RegistryLevelTransitionCommand` (арк-шаг, уровень
+  которого считает реестр); единственный издатель в проде — проектор state-fanout.
   Производитель пишет ровно то, что наблюдал: отсутствие поля значит «не наблюдал».
 - **Applied — только из доказательств.** Applied членство и строки сцен выводятся из
   readback'ов программирования и чтения; массовое применение разворачивает
@@ -71,8 +77,9 @@ state-DTO — [`rest-api/contracts/state-contracts.md`](rest-api/contracts/state
   API говорит `adapter_id`, `virtual_lamp_id`, `group_id`, `scene_id`, `short_address`.
 - **Коммиссионинг** на адаптере взаимоисключающий
   ([`commissioning.md`](rest-api/resources/commissioning.md) §Исключение на адаптер).
-- **Цвет** в публичных DTO и событиях — кельвины и sRGB-каналы; миреды и линейные dim
-  level существуют только на проводе.
-- **Роль решает провод**: состояние сети роль контроллера не двигает.
+- **Цвет** уставки в публичных DTO и событиях — кельвины и sRGB-каналы; линейные dim
+  level существуют только на проводе, миреды — на проводе и в Tc-лимитах атрибутов
+  (`tc_*_mirek`).
+- **Сеть роль не двигает**: роль контроллера в работе меняют только провод и оператор.
 
 Что персистится, а что нет — [`bus-contracts/snapshots.md`](bus-contracts/snapshots.md).

@@ -38,15 +38,16 @@
 | Семейство | Виды | Владелец | Кто публикует | Дисциплина |
 |---|---|---|---|---|
 | Конфигурация реестра | адаптер; виртуальная лампа (метаданные, bind/rebind/unbind, удаление записи); физическое устройство (override, notes, удаление); устройство ввода (метаданные, notes); метаданные группы и сцены | registry worker | HTTP | подтверждение + apply-watch |
-| Настройки контроллера | поллер, DALI, Home Assistant (настройки, пароль брокера, префиксы топиков, `controller_id`), отказоустойчивость, политики | registry worker | HTTP | подтверждение + apply-watch |
-| Чанковые записи | матрица групп и матрица сцены (patch/replace) + `ConfigWriteCommitCommand`; `HclScheduleUpsertCommand` / `HclScheduleDeleteCommand` | registry worker | HTTP | `202` + операция `config_write` |
+| Настройки контроллера | поллер, DALI, Home Assistant (настройки, пароль брокера, префиксы топиков, `controller_id`), отказоустойчивость, политики | registry worker | HTTP; флип `applicationActive` — ещё воркер арбитража и `DaliWorker` после передачи шины | подтверждение + apply-watch; флип от воркеров — внутренний факт |
+| Чанковые записи | матрица групп и матрица сцены (patch/replace) + `ConfigWriteCommitCommand`; `HclScheduleUpsertCommand` | registry worker | HTTP | `202` + операция `config_write` |
+| Удаление расписания HCL | `HclScheduleDeleteCommand` | registry worker | HTTP | подтверждение запроса (`204`) |
 | Runtime реестра | `RegistryRuntimeUpdateCommand`, `RegistryLevelTransitionCommand` | registry worker | только проектор state-fanout | подтверждение (short/VL) или внутренний факт |
-| Перечитать слайс | `RegistrySliceReloadCommand` | registry worker | импорт конфигурации (HTTP), воркер репликации | подтверждение |
+| Перечитать слайс | `RegistrySliceReloadCommand` | registry worker | импорт конфигурации (HTTP), воркер репликации | подтверждение (импорт); от репликации — внутренний факт |
 | Семантические DALI (102/207/209) | `Dali*Command` для control gear | `DaliWorker` | HTTP, MQTT, HCL, поллер, правила, оркестратор | по виду, см. [`semantic-dali-commands.md`](semantic-dali-commands.md) |
 | Part 103 | `Dali103*Command` | `DaliWorker` | HTTP, правила, арбитраж | по виду, там же |
 | Диагностический сырой кадр | `DaliCommandPayload` (`raw_mode`) | `DaliWorker` | только диагностический REST | подтверждение запроса |
 | Операции | `OperationBeginCommand`, `OperationRegistryResetCommand` | operation tracker | HTTP, оркестратор | — |
-| Массовое применение | `GroupApplyExecuteCommand`, `SceneApplyExecuteCommand`, `PolicyApplyExecuteCommand` | apply orchestrator | HTTP, правила (`scene.apply`) | `202` + операция |
+| Массовое применение | `GroupApplyExecuteCommand`, `SceneApplyExecuteCommand`, `PolicyApplyExecuteCommand` | apply orchestrator | HTTP, правила (`scene.apply`), `DaliWorker` (политики после скана, если взведён `apply_on_discovery`) | `202` + операция |
 | HCL | `HclOverrideClearCommand` (все флаги расписания), `HclOverrideHoldCommand`, `HclOverrideResumeCommand` (причины флагов внутри цели) | HCL scheduler | HTTP (снятие); правила (`hcl.hold`, `hcl.resume`) | подтверждение запроса; подтверждений от правил никто не ждёт |
 | Бит расписания HCL | `HclScheduleEnableCommand` | registry worker | правила (`hcl.enable` / `hcl.disable`) | подтверждение; его никто не ждёт |
 | Home Assistant | `HomeAssistantDiscoveryPublishCommand`, `MqttPublishCommand` | MQTT bridge | HTTP; правила (`mqtt.publish`) | `202` + операция; без ответа |
@@ -64,9 +65,9 @@
   записи в прибор, и от неё идут и разбор REST, и запись. Бит поля, снятого с контракта, остаётся
   зарезервированным и не переиспользуется. Маска `PollerSettingsUpdateCommand`
   занята целиком: следующий флаг потребует расширить поле.
-- **Текст — в байтах.** Имена и заметки — `FixedText*` фиксированной ёмкости;
-  переполнение отвергается на REST-границе `422 invalid_value`, и отказ называет
-  обе величины в байтах (кириллица занимает два байта на символ).
+- **Текст — в байтах.** Имена и заметки — `FixedText*` фиксированной ёмкости
+  (кириллица занимает два байта на символ); переполнение отвергается на REST-границе
+  `422 invalid_value`, а у физического устройства отказ называет обе величины в байтах.
 - **Заметки — отдельная команда.** `notes` физического устройства и устройства ввода
   едут своими командами, потому что оба текста в одном payload'е не помещаются в
   бюджет кадра. PATCH, несущий и `notes`, и другие поля, публикует две команды под
@@ -119,8 +120,9 @@ correlation id) вытесняет незакрытую. Серия может �
 
 ## Runtime-команды реестра
 
-`RegistryRuntimeUpdateCommand` (RRUC) — единственный вход, меняющий volatile
-runtime-состояние; единственный продовый издатель — проектор state-fanout. Как реестр
+Volatile runtime-состояние меняют только `RegistryRuntimeUpdateCommand` (RRUC) и
+`RegistryLevelTransitionCommand` (арк-шаг, уровень которого считает реестр, — ниже);
+единственный издатель обеих в проде — проектор state-fanout. Как реестр
 сливает запись (частичное наблюдение, порядок по `observed_at_mono_ms`, отсутствие,
 цвет) и какие факты несут корреляцию запроса —
 [`../../architecture/06-registry-and-persistence.md`](../../architecture/06-registry-and-persistence.md).
