@@ -13,13 +13,14 @@ registry locking → [06](06-registry-and-persistence.md).
 
 - Every `std::thread` is a FreeRTOS task. Each runtime crate ([01](01-overview.md))
   owns the spawn function of its workers and the composition starts them
-  (`SpawnedWorkers` in `dali2rust-adapters`). The MQTT bridge, the WebSocket fan-out and
-  the OTA listener are optional: absent when composition wires no client or the build
-  cannot update itself.
+  (`SpawnedWorkers` in `dali2rust-adapters`). The MQTT bridge and the OTA listener are
+  optional: absent when composition wires no client or the build cannot update itself.
+  The WebSocket fan-out always runs, spawned last because it samples the read models.
 - Beside the workers: the bus routing task, the transport's `dali-sniff` drain, the one
   `httpd` task, the UART log writer, the census thread, the IP and SNTP watchers, the
-  OTA boot verifier, and per-occasion threads: `ota-run` per update and one `ws-client`
-  sender per connected WebSocket client, on the device as on the host (its stack:
+  OTA boot verifier, and per-occasion threads: `ota-run` per update, `registry-reload`
+  per slice reload (import, replication) on the device, and one `ws-client` sender per
+  connected WebSocket client, on the device as on the host (its stack:
   [07](07-memory-and-cores.md)).
 - `registry-hydrate` is a one-shot boot thread, joined before any worker starts
   ([06](06-registry-and-persistence.md)).
@@ -30,10 +31,12 @@ registry locking → [06](06-registry-and-persistence.md).
 ## How a worker waits
 
 - The primary channel is read with a blocking `recv()` or a bounded `recv_timeout()`.
-  Secondary inboxes are drained with `try_recv()` only after the primary wait returns;
-  `dali2rust_bus::recv_then_drain` is the shape.
+  Secondary inboxes are drained with `try_recv()` only after the primary wait returns.
+  `dali2rust_bus::recv_then_drain` is the single-inbox shape: one bounded wait, then
+  whatever that inbox already holds.
 - Never a `try_recv()` + `thread::sleep` polling loop. Never `thread::park()` on the main
-  thread; `main` ends in a coarse sleep loop.
+  thread: `main` hands the heartbeat to the `census` thread and returns; only if that
+  spawn fails does the 1 s heartbeat loop run on `main`.
 - Idle back-off ≥ 10 ms, heartbeat or keep-alive ≥ 1 s; anything under 1 ms is a busy
   loop.
 - A self-paced worker waits on its inbox with a timeout, never on a bare timer: its
@@ -85,9 +88,10 @@ registry locking → [06](06-registry-and-persistence.md).
 
 ## WebSocket on the HTTP task
 
-- `httpd_ws_send_frame_async` queues the send as work for the httpd task: the caller
-  does not block, but the send occupies the task every socket shares. `esp-idf-svc`
-  fixes the send timeout at 5 s, so the design case is one 5 s stall of every socket.
+- A send runs on the httpd task (queued there with `httpd_queue_work`, whose callback
+  calls `httpd_ws_send_frame_async`) and occupies the task every socket shares.
+  `esp-idf-svc` fixes the send timeout at 5 s, so the design case is one 5 s stall of
+  every socket.
 - Bounds that keep it there: sniffer records batched into one frame per 100 ms under a
   2048-byte payload budget (a byte cap, enforced where the bytes exist; shed records are
   reported in `dropped_since`); a per-client queue bounded by 32 frames and 16 KiB,

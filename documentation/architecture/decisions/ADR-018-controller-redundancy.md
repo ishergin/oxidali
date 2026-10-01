@@ -41,9 +41,10 @@ this record keeps the decisions and their reasons.
 - **A task decides the answer and the PHY interrupt times it**
   ([08](../08-dali-phy-and-transport.md)), so a controller in the middle of a long scan
   still answers inside Table 20's window.
-- **One lost frame cannot move the bus.** Takeover needs several consecutive unanswered
-  probes, a probe that never reached the wire is no verdict, and a freshly booted
-  controller listens before it claims anything.
+- **By default, one lost frame cannot move the bus.** Takeover needs
+  `takeover_after_missed` consecutive unanswered probes, more than one unless the
+  threshold is set to one; a probe that never reached the wire is no verdict, and a
+  freshly booted controller listens before it claims anything.
 - **The wire alone decides.** The arbitration worker reads no network state: losing
   Ethernet, the broker or the peer's HTTP surface cannot move the role. There is no
   shared virtual IP and no second election; clients reach each unit by its own address

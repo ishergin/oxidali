@@ -52,8 +52,7 @@ operation turns the cache off. Read against ESP-IDF 5.5.3 it is narrower than th
 7. **The Rust heap is counted by placement** in the firmware's global allocator, and the
    bench gates the internal minimum at the end of a session as well as the boot ladder.
 8. **On the XIP image the allocator puts every Rust object from 256 B in PSRAM first**
-   (`PSRAM_FIRST_FROM_BYTES`); smaller ones stay internal first. The count showed the
-   Rust heap holding over 100 KB of internal SRAM, most of it objects of 256 B to 1 KiB.
+   (`PSRAM_FIRST_FROM_BYTES`); smaller ones stay internal first.
    Atomics and mutex data move with their objects: the P4 performs atomic operations on
    PSRAM correctly from both cores, which a boot self-test
    (`DALI2RUST_PSRAM_ATOMIC_SELFTEST`) checks on the device. What must be internal is

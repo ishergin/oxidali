@@ -17,7 +17,8 @@ mutual exclusion.
 
 - **The GPTimer interrupt owns the PHY state machine.** `DaliBitbangPhy` is mutated
   only inside the interrupt. It generates every edge, samples the line, detects
-  collisions, and captures every frame on the wire, ours and foreign.
+  collisions, and captures every frame it receives, foreign forward frames and backward
+  frames alike; a frame of ours ends as a transmit completion.
 - **Tasks talk to it through ISR-safe primitives only** — atomic cells, lock-free
   single-producer/single-consumer rings and atomic counters (the inventory is in
   [08](../08-dali-phy-and-transport.md)). Task code never calls the FSM's transmit, poll

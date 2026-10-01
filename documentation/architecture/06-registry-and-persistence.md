@@ -19,9 +19,10 @@ httpd stack in [07](07-memory-and-cores.md).
   runs on that thread. A write window is an in-memory mutation; the lock is released
   before anything is published. No second thread writes.
 - Single-writer is what makes the flush safe. The persistence flush streams slices to
-  flash while holding the **read** lock. ESP-IDF's `RwLock` prefers writers — a queued
-  writer parks new readers — but the only thread that could queue a write is the one
-  flushing, so readers keep sharing the lock; commands and events wait in the inbox.
+  flash while holding the **read** lock. The standard library's `RwLock` on this target
+  prefers writers — a queued writer parks new readers — but the only thread that could
+  queue a write is the one flushing, so readers keep sharing the lock; commands and
+  events wait in the inbox.
 - Everyone else reads through `RegistryReadPort` and the narrower read-port traits of
   `dali2rust-domain`. A read takes the lock and returns an owned view; no mutable
   reference or write method is reachable through a port. HTTP reads go through the
@@ -35,9 +36,10 @@ httpd stack in [07](07-memory-and-cores.md).
 - Runtime fields — power, level, colour, status and failure flags, `last_seen_ms`, the
   last DAPC source, the `last_active_level` shadow — live on the physical-device record;
   virtual-lamp state is a projection through the binding.
-- They change only through `RegistryRuntimeUpdateCommand` (RRUC), and the state-fanout
-  projector is its only production publisher. An entry that names a virtual lamp with no
-  binding is refused (`VlUnbound`).
+- They change only through `RegistryRuntimeUpdateCommand` (RRUC) and
+  `RegistryLevelTransitionCommand` (an arc step whose level the registry computes); in
+  production the state-fanout projector is their only publisher. An entry that names a
+  virtual lamp with no binding is refused (`VlUnbound`).
 - Every successful runtime commit publishes `RuntimeStateChangedEvent` carrying the
   committed observation; an empty or default payload is forbidden.
 - Runtime fields are not persisted, and neither is operation status. After a reboot
@@ -49,7 +51,8 @@ httpd stack in [07](07-memory-and-cores.md).
    of an attribute read, a scene recall. The sniffer translator publishes observed
    foreign frames.
 2. The projector resolves scope through `ProjectorReadPort` — group membership, scene
-   rows, bindings — and publishes RRUC.
+   rows, bindings — and publishes RRUC, or `RegistryLevelTransitionCommand` for an
+   observed arc command without a level.
 3. The registry worker commits and publishes `RuntimeStateChangedEvent`.
 
 - A single-target fact keeps the request's correlation id to the end, so the registry
@@ -97,9 +100,10 @@ httpd stack in [07](07-memory-and-cores.md).
   level and the power `commanded_power()` names, so a bare 0 is recorded as off. The
   registry keeps `last_active_level`, the level the gear is known to be lit at, across the
   OFF that zeroes the level, and records it as the level a `GO TO LAST ACTIVE LEVEL`
-  restores. It is a prediction: a read repairs it, a reboot empties it, and a gear never
-  seen lit has none — then the level is honestly unknown. Surfaces reporting brightness
-  omit it rather than publish 0.
+  restores. It is a prediction: a read repairs it, a reboot empties it, a power cycle the
+  status byte newly reports resets it to the record's MAX LEVEL and forgets the colour,
+  and a gear never seen lit has none — then the level is honestly unknown. Surfaces
+  reporting brightness omit it rather than publish 0.
 - **A setpoint states a colour only if `states_color()` says so.** Parsed setpoints
   always carry a colour slot, so `color.is_some()` is not the test.
 
@@ -132,8 +136,9 @@ filtered: they address one device.
 - Physical devices are stored in banks of four short addresses. The legacy
   whole-adapter slot keeps its place: hydration falls back to it when the banks hold
   nothing and the next flush rewrites the adapter as banks.
-- The registry worker flushes dirty slices after a short debounce, and at once after a
-  deliberate single configuration write, through one reused 1 KiB chunk buffer.
+- The registry worker flushes dirty slices after a short debounce, and at once after the
+  configuration writes `command_flush_interval` names, through one reused 1 KiB chunk
+  buffer.
 - A schedule switch (`HclScheduleEnableCommand`, the rules' verb) changes the record and
   publishes at once, but its write is paced: the first unwritten switch opens
   `HCL_SWITCH_WRITE_INTERVAL`, the slice is written when it closes, and any earlier write
@@ -168,7 +173,7 @@ filtered: they address one device.
   no version. It is blank after a reboot until re-read, and the provenance shown with it
   says so.
 - A bump whose only purpose is to discard stored data is legitimate once per reason,
-  with the reason written beside the constant; a second one needs a real mechanism.
+  named in the commit that bumps it; a second one needs a real mechanism.
 
 ### Hydration
 
