@@ -6,6 +6,7 @@ pub mod firmware;
 pub mod flash_gate;
 pub mod fs;
 pub mod heap;
+pub mod knob;
 pub mod http_fetch;
 pub mod hal;
 pub mod liveness;

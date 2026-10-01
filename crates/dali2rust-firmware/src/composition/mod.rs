@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use dali2rust_platform::knob::flag_knob;
 use dali2rust_platform::slice_store::SliceStore;
 
 pub const VERSION: &str = env!("DALI2RUST_VERSION");
@@ -39,22 +40,6 @@ const fn version_is_shaped(v: &str) -> bool {
     }
     false
 }
-
-pub(crate) const fn flag_knob(raw: Option<&str>) -> Option<bool> {
-    match raw {
-        None => None,
-        Some(value) => match value.as_bytes() {
-            b"" => None,
-            b"1" => Some(true),
-            b"0" => Some(false),
-            _ => panic!("a DALI2RUST_* flag knob is 1, 0 or unset"),
-        },
-    }
-}
-
-const _: () = assert!(matches!(flag_knob(Some("1")), Some(true)));
-const _: () = assert!(matches!(flag_knob(Some("0")), Some(false)));
-const _: () = assert!(flag_knob(Some("")).is_none() && flag_knob(None).is_none());
 
 const PERSIST_DISABLED: bool = matches!(flag_knob(option_env!("DALI2RUST_PERSIST_DISABLE")), Some(true));
 const STACKS_INTERNAL: bool = matches!(flag_knob(option_env!("DALI2RUST_STACKS_INTERNAL")), Some(true));
