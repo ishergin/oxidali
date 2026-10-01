@@ -80,8 +80,8 @@
   компактной ошибкой ([`../runtime-modules/operation-tracker/README.md`](../runtime-modules/operation-tracker/README.md)).
 - `OperationWorkerSignalEvent` (`WorkerStarted` / `WorkerSucceeded` / `WorkerFailed`
   по workflow correlation id) — единственный носитель исхода работы. Другие концы
-  операции (отказ доставки,
-  вытеснение, сброс, TTL) — [`operation-tracker`](../runtime-modules/operation-tracker/README.md).
+  операции (отказ доставки, вытеснение, сброс, TTL) —
+  [`operation-tracker`](../runtime-modules/operation-tracker/README.md).
 
 ## Результаты DALI
 

@@ -5,7 +5,6 @@ pub enum LightVerb {
     On { level: Option<u8> },
     Off,
     Level { level: u8 },
-    LevelRelative { delta: i16 },
     Dim { delta: i16 },
     Cct { kelvin: u16 },
     CctRelative { delta_k: i32 },

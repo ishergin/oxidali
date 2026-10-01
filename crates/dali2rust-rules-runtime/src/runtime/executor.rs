@@ -478,7 +478,7 @@ fn setpoint_of(
         LightVerb::On { level } => LightSetpoint { level: *level, ..powered(PowerState::On) },
         LightVerb::Off => powered(PowerState::Off),
         LightVerb::Level { level } => LightSetpoint::from_level(*level, None),
-        LightVerb::LevelRelative { delta } | LightVerb::Dim { delta } => {
+        LightVerb::Dim { delta } => {
             let lamp = current.filter(|lamp| lamp.is_on)?;
             LightSetpoint::from_level(clamp_level(i32::from(lamp.level?) + i32::from(*delta)), None)
         }
