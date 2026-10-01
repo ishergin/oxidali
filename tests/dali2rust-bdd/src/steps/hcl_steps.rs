@@ -48,7 +48,15 @@ async fn given_schedule_exists(world: &mut DaliWorld, schedule_id: String) {
     post_schedule_and_wait(world, &valid_schedule(&schedule_id));
 }
 
-// HCL-021 HCL-024 HCL-025 HCL-026 HCL-032 HCL-033 HCL-034 HCL-035 HCL-036 HCL-037 HCL-038 HCL-039 HCL-040 HCL-041 HCL-042 HCL-044 HCL-045 HCL-023
+// HCL-079
+#[given(regex = r"^(\d+) HCL schedules exist$")]
+async fn given_schedules_exist(world: &mut DaliWorld, count: usize) {
+    for index in 1..=count {
+        post_schedule_and_wait(world, &valid_schedule(&format!("stored-{index}")));
+    }
+}
+
+// HCL-079 HCL-021 HCL-024 HCL-025 HCL-026 HCL-032 HCL-033 HCL-034 HCL-035 HCL-036 HCL-037 HCL-038 HCL-039 HCL-040 HCL-041 HCL-042 HCL-044 HCL-045 HCL-023
 #[when(regex = r#"^I POST an HCL schedule whose "([^"]+)" is (.+)$"#)]
 async fn when_post_schedule_with_override(world: &mut DaliWorld, field: String, raw: String) {
     let value: Value = serde_json::from_str(&raw).expect("override value should be JSON");
@@ -134,7 +142,7 @@ async fn then_no_dali_frames(world: &mut DaliWorld) {
     assert!(frames.is_empty(), "unexpected DALI traffic: {frames:?}");
 }
 
-// HCL-043
+// HCL-043 HCL-079
 #[then(regex = r#"^HCL schedule "([^"]+)" should be gone$"#)]
 async fn then_schedule_is_gone(world: &mut DaliWorld, schedule_id: String) {
     let path = format!("{HCL_SCHEDULES_PATH}/{schedule_id}");

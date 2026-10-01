@@ -234,6 +234,7 @@ pub(crate) struct Inner {
     pub(crate) memory_bank_stage: HashMap<u64, MemoryBankStaging>,
     pub(crate) hcl_schedules: HclScheduleMap,
     pub(crate) hcl_schedule_stage: super::hcl_schedules::HclScheduleStageMap,
+    pub(crate) hcl_schedule_refused: super::hcl_schedules::HclScheduleRefusalMap,
     pub(crate) config_write_stage: HashMap<
         super::config_write_stage::ConfigWriteStageKey,
         super::config_write_stage::ConfigWriteStage,
@@ -281,6 +282,7 @@ impl Inner {
             memory_bank_stage: HashMap::with_capacity(cap::STAGING),
             hcl_schedules: HashMap::with_capacity(cap::SCHEDULES),
             hcl_schedule_stage: HashMap::with_capacity(cap::SCHEDULES),
+            hcl_schedule_refused: HashMap::with_capacity(cap::SCHEDULES),
             input_devices: HashMap::with_capacity(cap::SMALL_ROWS),
             config_write_stage: HashMap::with_capacity(
                 super::config_write_stage::MAX_CONFIG_WRITE_STAGES,
