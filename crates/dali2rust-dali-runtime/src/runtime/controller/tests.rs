@@ -1322,3 +1322,55 @@ fn a_24_bit_step_unit_holds_the_yield_until_its_boundary() {
         "the yielded frame must not reach the wire"
     );
 }
+
+struct UnsentFrame24Transport {
+    inner: MockDaliTransport,
+}
+
+impl DaliTransport for UnsentFrame24Transport {
+    type Error = <MockDaliTransport as DaliTransport>::Error;
+
+    fn send_forward_frame(&mut self, frame: u16) -> Result<(), Self::Error> {
+        self.inner.send_forward_frame(frame)
+    }
+
+    fn receive_backward_frame(&mut self) -> Result<Option<u8>, Self::Error> {
+        self.inner.receive_backward_frame()
+    }
+
+    fn is_bus_idle(&self) -> Result<bool, Self::Error> {
+        self.inner.is_bus_idle()
+    }
+
+    fn exchange_frame24_with_settle(
+        &mut self,
+        _frame: [u8; 3],
+        _expects_backward: bool,
+        _min_idle_us: u32,
+    ) -> Result<TransferOutcome, Frame24Error<Self::Error>> {
+        Err(Frame24Error::Transport(()))
+    }
+
+    fn supports_frame24(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn a_24_bit_frame_the_transport_never_sent_is_not_silence() {
+    let transport = Arc::new(Mutex::new(UnsentFrame24Transport {
+        inner: MockDaliTransport::new(),
+    }));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+
+    assert_eq!(
+        controller.send_frame24_once(PROBE_24, true),
+        Err(Frame24Fault::Contended),
+        "a query whose frame never left proves nothing about the bus"
+    );
+    assert_eq!(
+        controller.send_frame24(PROBE_24, false),
+        Err(Frame24Fault::Contended),
+        "a command whose frame never left did not happen"
+    );
+}

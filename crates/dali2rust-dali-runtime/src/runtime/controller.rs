@@ -408,8 +408,9 @@ impl<T: DaliTransport + Send> DaliController<T> {
             WireFrame::Forward24(bytes) => {
                 match t.exchange_frame24_with_settle(bytes, expects_backward, settle_us) {
                     Ok(outcome) => outcome,
-                    Err(Frame24Error::Transport(_)) => TransferOutcome::NoAnswer,
-                    Err(Frame24Error::Unsupported) => return Err(FrameError::TransportError),
+                    Err(Frame24Error::Transport(_) | Frame24Error::Unsupported) => {
+                        return Err(FrameError::TransportError)
+                    }
                 }
             }
         };
