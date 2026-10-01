@@ -122,6 +122,14 @@ impl DaliAttributeGroup {
         }
     }
 
+    pub const fn polled(self) -> bool {
+        !matches!(self, Self::SceneColours)
+    }
+
+    pub const fn polled_mask(mask: u8) -> u8 {
+        mask & !Self::SceneColours.mask_bit()
+    }
+
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|g| g.as_str() == s)
     }

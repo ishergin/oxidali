@@ -325,7 +325,7 @@ fn already_outstanding(state: &PollerState, adapter_id: u8, short_address: u8) -
 }
 
 fn groups_mask_for(settings: &PollerSettingsView, target: &PollTargetView) -> u8 {
-    let mut mask = settings.attribute_groups_mask & !DaliAttributeGroup::SceneColours.mask_bit();
+    let mut mask = DaliAttributeGroup::polled_mask(settings.attribute_groups_mask);
     if settings.include_dt8_color && target.is_dt8 {
         mask |= DaliAttributeGroup::Dt8Color.mask_bit();
     }
