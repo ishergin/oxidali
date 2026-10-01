@@ -904,10 +904,6 @@ function LiveFeed({
           list.map((row) => <FeedLine key={row.seq} row={row} onPrefill={onPrefill} />)
         )}
       </div>
-      <div class="fnote">
-        Rule activations — which rule fired, outcome, duration — join this feed with the
-        engine (I10-B).
-      </div>
     </div>
   )
 }

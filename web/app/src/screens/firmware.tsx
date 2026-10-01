@@ -31,6 +31,8 @@ const WHY: Record<string, string> = {
   invalid_image:
     'The downloaded image is not a valid application — the controller refused to select it.',
   cancelled: 'The update was cancelled.',
+  no_memory:
+    'The controller had no memory to start the update. Nothing was written; try again once it is less busy.',
 }
 
 function isActive(state: FirmwareState['update']['state']): boolean {
@@ -39,7 +41,8 @@ function isActive(state: FirmwareState['update']['state']): boolean {
 
 function urlProblem(url: string): string | null {
   if (!/^https?:\/\//.test(url)) return 'Must start with http:// or https://'
-  if (url.length > URL_MAX) return `Too long: ${url.length} of ${URL_MAX} characters`
+  const size = new TextEncoder().encode(url).length
+  if (size > URL_MAX) return `Too long: ${size} of ${URL_MAX} bytes (a non-ASCII character takes several)`
   return null
 }
 

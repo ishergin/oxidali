@@ -13,10 +13,11 @@ import type {
   HclTimeRef,
   Weekday,
 } from '../api/types'
-import { Card, EditableText, SelChip } from '../components/ui'
+import { Card, EditableText, SelChip, useConfirmTap } from '../components/ui'
 import { usePoll } from '../hooks'
 import { nav } from '../router'
 import { errorMessage, mutateBusy, notify, opCommitted, trackOp } from '../toast'
+import { levelRuns } from './hcl-curve'
 
 const POLL_MS = 5000
 const WEEKDAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
@@ -327,9 +328,10 @@ function DayCurve({ points }: { points: HclSchedulePoint[] }) {
     (Math.min(Math.max(kelvin - CCT_FLOOR_K, 0), CCT_SPAN_K) / CCT_SPAN_K) *
       (CURVE_BASE - CURVE_TOP)
 
-  const levelPts = absolute
-    .filter((p) => p.level_mode === 'absolute' && p.level != null)
-    .map((p) => `${x(p.offset_minutes)},${yLevel(p.level ?? 0)}`)
+  const levelLines = levelRuns(absolute).map((run) =>
+    run.map((p) => `${x(p.offset_minutes)},${yLevel(p.level ?? 0)}`),
+  )
+  const levelPts = levelLines.flat()
   const cctPts = absolute
     .filter((p) => p.color_temperature_kelvin != null)
     .map((p) => `${x(p.offset_minutes)},${yCct(p.color_temperature_kelvin ?? 0)}`)
@@ -346,7 +348,9 @@ function DayCurve({ points }: { points: HclSchedulePoint[] }) {
           <line key={h} class="grid" x1={x(h * 60)} y1="6" x2={x(h * 60)} y2="134" opacity=".45" />
         ))}
         {cctPts.length > 1 && <polyline class="cct-line" points={cctPts.join(' ')} />}
-        {levelPts.length > 1 && <polyline class="lvl-line" points={levelPts.join(' ')} />}
+        {levelLines
+          .filter((line) => line.length > 1)
+          .map((line) => <polyline key={line[0]} class="lvl-line" points={line.join(' ')} />)}
         {levelPts.map((p) => {
           const [cx, cy] = p.split(',')
           return <circle key={p} class="lvl-dot" cx={cx} cy={cy} r="3.5" />
@@ -384,6 +388,7 @@ export function HclScheduleEditor({ id }: { id: string }) {
   )
   const [draft, setDraft] = useState<HclSchedule | null>(null)
   const [busy, setBusy] = useState(false)
+  const [armed, confirmTap] = useConfirmTap()
 
   if (error) return <div class="empty">Failed to load schedule: {error}</div>
   if (!data) return <div class="empty">Loading schedule…</div>
@@ -436,7 +441,8 @@ export function HclScheduleEditor({ id }: { id: string }) {
         <h1>Schedule</h1>
         <span class="sid">{id}</span>
         <span class="spacer" />
-        <button class="btn ghost" disabled={busy} onClick={() => void remove()}>Delete</button>
+        <button class={armed ? 'btn sure' : 'btn ghost'} disabled={busy}
+          onClick={() => confirmTap(() => void remove())}>{armed ? 'Sure?' : 'Delete'}</button>
         <button class="btn" disabled={busy || !draft} onClick={() => setDraft(null)}>Cancel</button>
         <button class="btn primary" disabled={busy || !draft} onClick={() => void save()}>Save</button>
       </div>

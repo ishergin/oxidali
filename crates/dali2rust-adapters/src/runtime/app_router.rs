@@ -692,7 +692,7 @@ fn wire_input_devices(
     let builder = builder
         .with_handler(
             RouteKey::InputDevicesList,
-            Box::new(InputDeviceListHandler::new(Arc::clone(state))),
+            Box::new(InputDeviceListHandler::new(Arc::clone(state), Arc::clone(&wall))),
         )
         .with_handler(
             RouteKey::InputDeviceGet,

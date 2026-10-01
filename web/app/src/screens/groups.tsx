@@ -65,9 +65,9 @@ export function Groups() {
     })
   }
 
-  let serverDirty = 0
-  for (const row of matrix.rows)
-    for (let g = 0; g < GROUP_COUNT; g++) if (row.desired[g] !== row.applied[g]) serverDirty++
+  const serverDirty = matrix.rows.filter((row) =>
+    row.desired.some((wanted, g) => wanted !== row.applied[g]),
+  ).length
   const localAdd = [...edits.entries()].filter(([, v]) => v).length
   const localRm = edits.size - localAdd
 
@@ -203,7 +203,7 @@ export function Groups() {
                     {rowDirty && isBound && (
                       <button
                         class="act"
-                        title="Re-read the gear's group membership — heals a corrupted readback (ISSUE-18)"
+                        title="Re-read the gear's group membership — heals a corrupted readback"
                         onClick={() => void rereadGroups(vl)}
                       >
                         re-read

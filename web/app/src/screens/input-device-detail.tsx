@@ -1,6 +1,15 @@
 import { api } from '../api/client'
 import type { InputDeviceDetail, InputInstance, ReadValue } from '../api/types'
-import { Badge, BitChips, Card, Chip, EditableName, EditableText, Switch } from '../components/ui'
+import {
+  Badge,
+  BitChips,
+  Card,
+  Chip,
+  EditableName,
+  EditableText,
+  Switch,
+  useConfirmTap,
+} from '../components/ui'
 import { ADAPTER, ago, daliVersion, deviceNow, hex2, pad2, registerDeviceNow } from '../format'
 import { useLive } from '../hooks'
 import { nav } from '../router'
@@ -455,6 +464,7 @@ export function InputDeviceDetailScreen({
     ['input'],
     { deps: [short] },
   )
+  const [armed, confirmTap] = useConfirmTap()
   if (!d) return <div class="empty">Loading control device SA {pad2(short)}…</div>
   registerDeviceNow(d.now_ms)
 
@@ -518,16 +528,18 @@ export function InputDeviceDetailScreen({
           ⚲ Identify
         </button>
         <button
-          class="btn ghost danger"
+          class={armed ? 'btn sure' : 'btn ghost danger'}
           title="Forget this device's record. It stays on the bus and the next scan finds it again."
-          onClick={() => {
-            void mutate('Forget input device', () => api.forgetInputDevice(ADAPTER, short), () => {
-              notify(`SA ${pad2(short)} forgotten`, 'succeeded')
-              nav('/input-devices')
+          onClick={() =>
+            confirmTap(() => {
+              void mutate('Forget input device', () => api.forgetInputDevice(ADAPTER, short), () => {
+                notify(`SA ${pad2(short)} forgotten`, 'succeeded')
+                nav('/input-devices')
+              })
             })
-          }}
+          }
         >
-          Forget
+          {armed ? 'Sure?' : 'Forget'}
         </button>
       </div>
 
