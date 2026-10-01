@@ -157,7 +157,9 @@ tr:hover td { background: rgba(35,44,56,.5); }
     <h1>Schedule</h1>
     <span class="sid">morning</span>
     <span class="spacer"></span>
-    <button class="btn ghost" title="Two taps: the first turns it into Sure? for 3 s, as in the data-table card">Delete</button>
+    <!-- Delete takes two taps: the first turns it into the armed `btn sure` "Sure?"
+         drawn in components/data-table.html, and only a second tap deletes. -->
+    <button class="btn ghost">Delete</button>
     <button class="btn">Cancel</button>
     <button class="btn primary">Save</button>
   </div>

@@ -3,7 +3,7 @@ import { signal } from '@preact/signals'
 import { subscribe as subscribeWs } from './ws'
 import type {
   InputDeviceDetail,
-  InputDeviceSummary,
+  InputDeviceList,
   Adapter,
   AttributeReadsRequest,
   ControllerSummary,
@@ -208,7 +208,7 @@ export const api = {
   adapters: () => get<{ adapters: Adapter[] }>('/adapters'),
 
   inputDevices: (a: number) =>
-    get<{ now_ms: number; input_devices: InputDeviceSummary[] }>(`/adapters/${a}/input-devices`),
+    get<InputDeviceList>(`/adapters/${a}/input-devices`),
   inputDevice: (a: number, short: number) =>
     get<InputDeviceDetail>(`/adapters/${a}/input-devices/${short}`),
   patchInputDevice: (a: number, short: number, body: Record<string, unknown>) =>

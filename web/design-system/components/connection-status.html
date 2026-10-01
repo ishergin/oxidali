@@ -125,9 +125,10 @@ p.note { color: var(--text-muted); font-size: 12px; max-width: 60ch; }
     httpd task.
   </p>
   <p class="note">
-    A full house (close code <code>1013</code>) deliberately stays
-    <b>Reconnecting</b>, at least a minute apart: a client slot frees the moment
-    another tab closes, so that one is transient.
+    A full house (close code <code>1013</code>) is retried, at least a minute apart:
+    a client slot frees the moment another tab closes, so that one is transient. It
+    reads <b>Reconnecting</b>, then <b>Offline</b> once the outage passes a minute —
+    never <b>Refused</b>.
   </p>
 
   <h2>In the sidebar, beside the theme toggle</h2>

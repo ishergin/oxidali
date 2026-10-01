@@ -464,7 +464,7 @@ export function InputDeviceDetailScreen({
     ['input'],
     { deps: [short] },
   )
-  const [armed, confirmTap] = useConfirmTap()
+  const [armed, confirmTap] = useConfirmTap<'forget'>()
   if (!d) return <div class="empty">Loading control device SA {pad2(short)}…</div>
   registerDeviceNow(d.now_ms)
 
@@ -531,7 +531,7 @@ export function InputDeviceDetailScreen({
           class={armed ? 'btn sure' : 'btn ghost danger'}
           title="Forget this device's record. It stays on the bus and the next scan finds it again."
           onClick={() =>
-            confirmTap(() => {
+            confirmTap('forget', () => {
               void mutate('Forget input device', () => api.forgetInputDevice(ADAPTER, short), () => {
                 notify(`SA ${pad2(short)} forgotten`, 'succeeded')
                 nav('/input-devices')

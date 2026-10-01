@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { opFailure } from '../src/format.js'
+import { opFailure, opFailureDetail } from '../src/format.js'
 
 test('each read-back refusal names what the operator should check', () => {
   for (const code of ['verify_failed', 'verify_unanswered', 'verify_contended']) {
@@ -20,7 +20,15 @@ test('any other refusal shows its code and the message the server gave', () => {
   assert.equal(opFailure({ status: 'timed_out', error: { code: 'timeout', message: 'timeout' } }), 'timeout')
 })
 
+test('the operation detail names the hint or the message beside the code, never the code twice', () => {
+  assert.match(opFailureDetail({ status: 'failed', error: { code: 'verify_failed', message: 'verify_failed' } }) ?? '', /check the device/)
+  assert.match(opFailureDetail({ status: 'failed', error: { code: 'read_contended', message: 'read_contended' } }) ?? '', /duplicate address/)
+  assert.equal(opFailureDetail({ status: 'failed', error: { code: 'device_not_found', message: 'no gear at 7' } }), 'no gear at 7')
+  assert.equal(opFailureDetail({ status: 'failed', error: { code: 'timeout', message: 'timeout' } }), null)
+})
+
 test('a preemption and an operation without an error have nothing to explain', () => {
   assert.equal(opFailure({ status: 'failed', error: { code: 'preempted' } }), null)
   assert.equal(opFailure({ status: 'succeeded' }), null)
+  assert.equal(opFailureDetail({ status: 'failed', error: { code: 'preempted' } }), null)
 })

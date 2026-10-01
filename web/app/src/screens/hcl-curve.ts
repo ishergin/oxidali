@@ -1,20 +1,26 @@
-export interface CurveLevelPoint {
+export interface CurveSample {
   offset_minutes: number
-  level_mode: string
-  level: number | null
+  value: number | null
 }
 
-export function levelRuns<P extends CurveLevelPoint>(sortedPoints: P[]): P[][] {
-  const runs: P[][] = []
-  let run: P[] = []
-  for (const point of sortedPoints) {
-    if (point.level_mode === 'absolute' && point.level != null) {
-      run.push(point)
+export type CurveVertex = readonly [minutes: number, value: number]
+
+export function curveLines(sortedSamples: CurveSample[], stepped: boolean): CurveVertex[][] {
+  const lines: CurveVertex[][] = []
+  let line: CurveVertex[] = []
+  for (const { offset_minutes: at, value } of sortedSamples) {
+    const held = line.length > 0 ? line[line.length - 1][1] : null
+    if (value == null) {
+      if (held != null) {
+        line.push([at, held])
+        lines.push(line)
+      }
+      line = []
       continue
     }
-    if (run.length > 0) runs.push(run)
-    run = []
+    if (held != null && stepped) line.push([at, held])
+    line.push([at, value])
   }
-  if (run.length > 0) runs.push(run)
-  return runs
+  if (line.length > 0) lines.push(line)
+  return lines
 }

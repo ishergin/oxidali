@@ -260,7 +260,9 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         </header>
         <div class="attr"><span class="k">Running</span><span class="v">1</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Succeeded</span><span class="v">118</span><span class="delta live">+1</span></div>
-        <div class="attr"><span class="k">Failed</span><span class="v fault">2</span><span class="delta"></span></div>
+        <!-- Failed is not a fault colour: an operation an operator command stood down ends
+             failed/preempted and is counted here, and preemption is routine (ADR-009). -->
+        <div class="attr"><span class="k">Failed</span><span class="v">2</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Timed out</span><span class="v fault">1</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Cancelled</span><span class="v">0</span><span class="delta"></span></div>
       </div>

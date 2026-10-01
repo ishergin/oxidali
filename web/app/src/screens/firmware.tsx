@@ -6,6 +6,7 @@ import { Card, FieldRow } from '../components/ui'
 import { usePoll } from '../hooks'
 import { bytes } from '../format'
 import { errorMessage, notify } from '../toast'
+import { urlProblem } from './firmware-url'
 
 const POLL_MS = 2000
 
@@ -37,13 +38,6 @@ const WHY: Record<string, string> = {
 
 function isActive(state: FirmwareState['update']['state']): boolean {
   return state === 'downloading' || state === 'finishing' || state === 'ready_to_reboot'
-}
-
-function urlProblem(url: string): string | null {
-  if (!/^https?:\/\//.test(url)) return 'Must start with http:// or https://'
-  const size = new TextEncoder().encode(url).length
-  if (size > URL_MAX) return `Too long: ${size} of ${URL_MAX} bytes (a non-ASCII character takes several)`
-  return null
 }
 
 function Progress({ update }: { update: FirmwareState['update'] }) {
@@ -90,7 +84,7 @@ function UpdateForm({
 }) {
   const [draft, setDraft] = useState(state.update.url)
   const [busy, setBusy] = useState(false)
-  const problem = draft ? urlProblem(draft) : null
+  const problem = draft ? urlProblem(draft, URL_MAX) : null
   const active = isActive(state.update.state)
 
   async function start() {
@@ -126,7 +120,7 @@ function UpdateForm({
       </div>
       <div class={`fw-hint${problem ? ' err' : ''}`}>
         {problem ??
-          `http or https, up to ${URL_MAX} characters. The controller downloads it, writes the other slot and reboots — about a minute.`}
+          `http or https, up to ${URL_MAX} bytes. The controller downloads it, writes the other slot and reboots — about a minute.`}
       </div>
     </div>
   )

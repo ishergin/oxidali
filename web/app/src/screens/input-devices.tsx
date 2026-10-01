@@ -29,11 +29,11 @@ function instanceTypeLabel(d: InputDeviceSummary) {
 }
 
 export function InputDevicesScreen() {
-  const list = useLive<{ now_ms: number; input_devices: InputDeviceSummary[] }>(
-    () => api.inputDevices(ADAPTER),
-    ['input'],
-  )
-  registerDeviceNow(list.data?.now_ms)
+  const list = useLive(async () => {
+    const devices = await api.inputDevices(ADAPTER)
+    registerDeviceNow(devices.now_ms)
+    return devices
+  }, ['input'])
   const rows = list.data?.input_devices ?? []
   const silent = rows.filter((d) => !d.present).length
 

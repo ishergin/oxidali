@@ -17,7 +17,7 @@ import { Card, EditableText, SelChip, useConfirmTap } from '../components/ui'
 import { usePoll } from '../hooks'
 import { nav } from '../router'
 import { errorMessage, mutateBusy, notify, opCommitted, trackOp } from '../toast'
-import { levelRuns } from './hcl-curve'
+import { type CurveVertex, curveLines } from './hcl-curve'
 
 const POLL_MS = 5000
 const WEEKDAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
@@ -316,7 +316,7 @@ function blankSchedule(): Partial<HclSchedule> {
   }
 }
 
-function DayCurve({ points }: { points: HclSchedulePoint[] }) {
+function DayCurve({ points, algorithm }: { points: HclSchedulePoint[]; algorithm: HclAlgorithm }) {
   const absolute = points
     .filter((p) => p.time_ref === 'absolute')
     .sort((a, b) => a.offset_minutes - b.offset_minutes)
@@ -328,13 +328,21 @@ function DayCurve({ points }: { points: HclSchedulePoint[] }) {
     (Math.min(Math.max(kelvin - CCT_FLOOR_K, 0), CCT_SPAN_K) / CCT_SPAN_K) *
       (CURVE_BASE - CURVE_TOP)
 
-  const levelLines = levelRuns(absolute).map((run) =>
-    run.map((p) => `${x(p.offset_minutes)},${yLevel(p.level ?? 0)}`),
-  )
-  const levelPts = levelLines.flat()
-  const cctPts = absolute
-    .filter((p) => p.color_temperature_kelvin != null)
-    .map((p) => `${x(p.offset_minutes)},${yCct(p.color_temperature_kelvin ?? 0)}`)
+  const stepped = algorithm === 'stepped'
+  const polyline = (line: CurveVertex[], y: (value: number) => number) =>
+    line.map(([minutes, value]) => `${x(minutes)},${y(value)}`).join(' ')
+  const levelLines = curveLines(
+    absolute.map((p) => ({
+      offset_minutes: p.offset_minutes,
+      value: p.level_mode === 'absolute' ? p.level : null,
+    })),
+    stepped,
+  ).filter((line) => line.length > 1)
+  const cctLines = curveLines(
+    absolute.map((p) => ({ offset_minutes: p.offset_minutes, value: p.color_temperature_kelvin })),
+    stepped,
+  ).filter((line) => line.length > 1)
+  const levelDots = absolute.filter((p) => p.level_mode === 'absolute' && p.level != null)
   const astro = points.filter((p) => p.time_ref !== 'absolute')
 
   return (
@@ -347,14 +355,15 @@ function DayCurve({ points }: { points: HclSchedulePoint[] }) {
         {[6, 12, 18].map((h) => (
           <line key={h} class="grid" x1={x(h * 60)} y1="6" x2={x(h * 60)} y2="134" opacity=".45" />
         ))}
-        {cctPts.length > 1 && <polyline class="cct-line" points={cctPts.join(' ')} />}
-        {levelLines
-          .filter((line) => line.length > 1)
-          .map((line) => <polyline key={line[0]} class="lvl-line" points={line.join(' ')} />)}
-        {levelPts.map((p) => {
-          const [cx, cy] = p.split(',')
-          return <circle key={p} class="lvl-dot" cx={cx} cy={cy} r="3.5" />
-        })}
+        {cctLines.map((line, i) => (
+          <polyline key={`cct${i}`} class="cct-line" points={polyline(line, yCct)} />
+        ))}
+        {levelLines.map((line, i) => (
+          <polyline key={`lvl${i}`} class="lvl-line" points={polyline(line, yLevel)} />
+        ))}
+        {levelDots.map((p, i) => (
+          <circle key={`dot${i}`} class="lvl-dot" cx={x(p.offset_minutes)} cy={yLevel(p.level ?? 0)} r="3.5" />
+        ))}
         {astro.length > 0 && (
           <text class="astro-lab" x="6" y="24">
             + {astro.length} point{astro.length > 1 ? 's' : ''} at sunrise/sunset
@@ -388,7 +397,7 @@ export function HclScheduleEditor({ id }: { id: string }) {
   )
   const [draft, setDraft] = useState<HclSchedule | null>(null)
   const [busy, setBusy] = useState(false)
-  const [armed, confirmTap] = useConfirmTap()
+  const [armed, confirmTap] = useConfirmTap<'delete'>()
 
   if (error) return <div class="empty">Failed to load schedule: {error}</div>
   if (!data) return <div class="empty">Loading schedule…</div>
@@ -442,7 +451,7 @@ export function HclScheduleEditor({ id }: { id: string }) {
         <span class="sid">{id}</span>
         <span class="spacer" />
         <button class={armed ? 'btn sure' : 'btn ghost'} disabled={busy}
-          onClick={() => confirmTap(() => void remove())}>{armed ? 'Sure?' : 'Delete'}</button>
+          onClick={() => confirmTap('delete', () => void remove())}>{armed ? 'Sure?' : 'Delete'}</button>
         <button class="btn" disabled={busy || !draft} onClick={() => setDraft(null)}>Cancel</button>
         <button class="btn primary" disabled={busy || !draft} onClick={() => void save()}>Save</button>
       </div>
@@ -450,7 +459,7 @@ export function HclScheduleEditor({ id }: { id: string }) {
       <OverrideStrip override={data.override} busy={busy} onResume={() => void resume()} />
 
       <Card title="Day curve">
-        <DayCurve points={s.points} />
+        <DayCurve points={s.points} algorithm={s.algorithm} />
       </Card>
 
       <PointsPanel points={s.points} onChange={(points) => edit({ points })} />
