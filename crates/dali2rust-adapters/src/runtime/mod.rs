@@ -274,7 +274,7 @@ struct RouterParts {
     dispatch: HttpBusDispatch,
     registry_http: http_bridges::RegistryHttpPorts,
     wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
-    persist_timezone: Arc<dyn Fn(&str) + Send + Sync>,
+    persist_timezone: dali2rust_api::http::handlers::time::TimezonePersist,
     read_models: ReadModelPorts,
     clock: Arc<dyn dali2rust_platform::clock::Clock>,
     controller_summary: Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
@@ -524,7 +524,7 @@ struct SchedulingDeps {
     hcl: HclSchedulerDeps,
     poller: PollerWorkerDeps,
     wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
-    persist_timezone: Arc<dyn Fn(&str) + Send + Sync>,
+    persist_timezone: dali2rust_api::http::handlers::time::TimezonePersist,
 }
 
 fn resolve_scheduling_deps(
@@ -547,7 +547,7 @@ fn resolve_scheduling_deps(
 
 type ClockWiring = (
     Arc<dyn dali2rust_platform::wall_clock::WallClock>,
-    Arc<dyn Fn(&str) + Send + Sync>,
+    dali2rust_api::http::handlers::time::TimezonePersist,
 );
 
 fn wire_wall_clock(

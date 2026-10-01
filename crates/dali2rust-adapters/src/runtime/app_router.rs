@@ -260,7 +260,7 @@ pub(crate) fn build_app_router(
     read_models: ReadModelPorts,
     clock: Arc<dyn Clock>,
     wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
-    persist_timezone: Arc<dyn Fn(&str) + Send + Sync>,
+    persist_timezone: dali2rust_api::http::handlers::time::TimezonePersist,
     web_assets: &'static [StaticAsset],
     controller_summary: Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
     rules: RulesHttpDeps,

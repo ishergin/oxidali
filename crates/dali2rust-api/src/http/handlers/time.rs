@@ -19,9 +19,16 @@ struct TimeBody {
     utc_offset_minutes: Option<i16>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimezonePersistRefusal {
+    FlashBusy,
+}
+
+pub type TimezonePersist = Arc<dyn Fn(&str) -> Result<(), TimezonePersistRefusal> + Send + Sync>;
+
 declare_handler_shell!(TimeHandler {
     clock: Arc<dyn WallClock>,
-    persist_timezone: Arc<dyn Fn(&str) + Send + Sync>,
+    persist_timezone: TimezonePersist,
 });
 
 impl TimeHandler {
@@ -43,16 +50,25 @@ impl TimeHandler {
 
         if let Some(tz) = object.get("timezone") {
             let tz = tz.as_str().ok_or_else(|| json_err(422, "invalid_value"))?;
-            self.clock
-                .set_timezone(tz)
-                .map_err(|e| time_error_response(&e))?;
-            (self.persist_timezone)(tz);
+            self.set_and_persist_timezone(tz)?;
         }
         if let Some(unix_ms) = object.get("unix_ms") {
             let unix_ms = unix_ms.as_u64().ok_or_else(|| json_err(422, "invalid_value"))?;
             self.clock
                 .set_manual_ms(unix_ms)
                 .map_err(|e| time_error_response(&e))?;
+        }
+        Ok(())
+    }
+}
+
+impl TimeHandler {
+    fn set_and_persist_timezone(&self, tz: &str) -> Result<(), HttpResponse> {
+        let previous = self.clock.timezone();
+        self.clock.set_timezone(tz).map_err(|e| time_error_response(&e))?;
+        if let Err(TimezonePersistRefusal::FlashBusy) = (self.persist_timezone)(tz) {
+            let _ = self.clock.set_timezone(&previous);
+            return Err(json_err(503, "flash_busy"));
         }
         Ok(())
     }

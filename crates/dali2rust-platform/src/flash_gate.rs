@@ -17,6 +17,10 @@ pub fn try_hold() -> Option<MutexGuard<'static, ()>> {
     }
 }
 
+pub fn writable_now() -> bool {
+    !firmware_write_open() && try_hold().is_some()
+}
+
 pub fn set_firmware_write_open(open: bool) {
     FIRMWARE_WRITE_OPEN.store(open, Ordering::Release);
 }
@@ -37,6 +41,14 @@ mod tests {
         drop(guard);
         let admitted = std::thread::spawn(|| try_hold().is_some()).join().unwrap();
         assert!(admitted);
+    }
+
+    #[test]
+    fn a_held_gate_is_not_writable_now_from_another_thread() {
+        let guard = hold();
+        let writable = std::thread::spawn(writable_now).join().unwrap();
+        assert!(!writable, "an httpd write must answer busy, not wait behind the holder");
+        drop(guard);
     }
 
     #[test]

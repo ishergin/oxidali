@@ -761,6 +761,9 @@ impl dali2rust_api::http::handlers::config_transfer::ConfigTransferPort for Conf
             .as_ref()
             .ok_or(ImportRefusal::PersistenceDisabled)?;
         let key = self.key(name).ok_or(ImportRefusal::UnknownSlice)?;
+        if !dali2rust_platform::flash_gate::writable_now() {
+            return Err(ImportRefusal::FlashBusy);
+        }
         self.store
             .import_slice(slices.as_ref(), key, bytes)
             .map_err(|e| ImportRefusal::StoreFailed(format!("{e:?}")))?;
