@@ -1,9 +1,9 @@
+import contextlib
 import re
 from dataclasses import dataclass
 from urllib.parse import unquote
 
-from hil.write_log import (ACTIVATION_FIELD, ACTIVATION_ROUTE, ALL, EVERY, frame_keys,
-                           request_keys, restarts)
+from hil.write_log import ALL, EVERY, frame_keys, hands_over, request_keys, restarts
 
 TARGET_SEGMENT = -1
 SHORT_LIMIT = 0x80
@@ -120,18 +120,15 @@ VIRTUAL_ROUTES = (
     ("rule_run", re.compile(r"rules/([^/]+)/run")),
 )
 
-HANDOVER_ROUTES = (re.compile(r"redundancy/switchover"), re.compile(r"settings/redundancy"))
 RESTART_REFUSAL = ("%s refused: HIL_LAMPS_READ_ONLY=1 never restarts a controller or hands the "
                    "bus over, since the unit active afterwards republishes its HCL point over a "
                    "lamp the owner set by hand; a run that does needs HIL_LAMPS_READ_ONLY=0, the "
                    "owner's go-ahead")
-
-
-def hands_over(path, body):
-    if any(route.fullmatch(path) for route in HANDOVER_ROUTES):
-        return True
-    return (bool(ACTIVATION_ROUTE.fullmatch(path)) and isinstance(body, dict)
-            and ACTIVATION_FIELD in body)
+FORGET_ROUTE = re.compile(r"adapters/[0-9]+/physical-devices/([0-9]+)")
+DELETE = "DELETE"
+FORGET_REFUSAL = ("%s refused: HIL_LAMPS_READ_ONLY=1 forgets no device, since the forget "
+                  "unbinds its virtual lamp and drops its group and scene rows, and only an "
+                  "apply puts them back")
 
 
 RULE_SEPARATOR = "\n\n"
@@ -488,6 +485,7 @@ class LampGuard:
         self._policy_armed = policy_armed
         self.fence = None
         self._enabled = None
+        self._emulated = frozenset()
 
     @classmethod
     def for_config(cls, cfg, segment=None, binding=None, pending=None, restart_rules=None,
@@ -502,12 +500,14 @@ class LampGuard:
         keys = request_keys(method, path, body)
         if self.fence is not None and self.fence.check_request(method.upper(), path, body):
             return keys
-        if self.read_only and hands_over(path, body):
-            raise LampNotAllowed(RESTART_REFUSAL % ("%s %s" % (method.upper(), path)))
-        if restarts(path, body):
+        if hands_over(path, body) or restarts(path, body):
             self.check_restart("%s %s" % (method.upper(), path))
         _refuse_commissioning(method, path, body)
         self._check_policy_write(method, path)
+        forget = FORGET_ROUTE.fullmatch(path) if method.upper() == DELETE else None
+        if forget is not None:
+            self._check_forget(int(forget.group(1)))
+            return keys
         apply = _apply_route(path)
         if apply is not None:
             return keys + self._check_apply(method, *apply)
@@ -536,6 +536,23 @@ class LampGuard:
         if fired:
             raise LampNotAllowed("%s refused: the owner's rule(s) %s fire when a controller "
                                  "starts or becomes active" % (what, ", ".join(fired)))
+
+    def _check_forget(self, short):
+        what = "the forget of SA%d" % short
+        if short in self._emulated:
+            return
+        if self.read_only:
+            raise LampNotAllowed(FORGET_REFUSAL % what)
+        self.check_target(short, False, what)
+
+    @contextlib.contextmanager
+    def forgetting_emulated(self, shorts):
+        held = self._emulated
+        self._emulated = held | frozenset(shorts)
+        try:
+            yield
+        finally:
+            self._emulated = held
 
     def _check_resource(self, kind, key, body, label, visible):
         what = label % (key if key is not None else _short_of(body))

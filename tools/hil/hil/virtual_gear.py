@@ -475,11 +475,15 @@ class VirtualSession:
         steps = [("silencing the emulated fleet", self._silence)]
         steps += [("deleting VL%d" % i, partial(_ignore_missing, partial(self.api.vlamps.delete, i)))
                   for i in data.get("created_vls", [])]
-        steps += [("forgetting SA%d" % s, partial(_ignore_missing, partial(self.api.device_forget, s)))
+        steps += [("forgetting SA%d" % s, partial(_ignore_missing, partial(self._forget, s)))
                   for s in data.get("park", [])]
         steps += [("restoring group %s's HA flag" % g, partial(self._restore_flag, int(g), flag))
                   for g, flag in (data.get("group_flags") or {}).items()]
         return steps
+
+    def _forget(self, short):
+        with self.api.guard.forgetting_emulated([short]):
+            self.api.device_forget(short)
 
     def _silence(self):
         if self.sim is None:

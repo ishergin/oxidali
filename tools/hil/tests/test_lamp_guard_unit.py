@@ -4,6 +4,7 @@ import re
 import pytest
 
 import hil.api
+import test_pd_forget
 from hil import pair, write_log
 from hil.config import HilConfig, load as load_config
 from hil.foreign import ForeignMaster, injection_refusal
@@ -311,6 +312,7 @@ def test_every_client_door_to_a_forbidden_lamp_is_shut_before_the_wire(monkeypat
                                     {"power": "on"}),
         lambda: client.raw_response("POST", "dali/command",
                                     {"wire_address": 0xFF, "command": 0x10}),
+        lambda: client.device_forget(OWNER),
     )
     for door in doors:
         with pytest.raises(LampNotAllowed):
@@ -612,18 +614,74 @@ RESTART_RULES = [
 ]
 
 
-def test_a_restart_is_refused_while_an_owner_rule_fires_when_a_controller_starts():
+def test_a_restart_or_handover_is_refused_while_an_owner_rule_fires_when_a_controller_starts():
     owner = LampGuard(LAMPS, restart_rules=lambda: ["failover", "morning"])
     quiet = LampGuard(LAMPS, restart_rules=lambda: [])
-    for method, path, body in RESTARTS:
+    for method, path, body in RESTARTS + HANDOVERS:
         with pytest.raises(LampNotAllowed, match=r"failover, morning fire when a controller "
                                                  r"starts or becomes active"):
             owner.check_request(method, path, body)
         with pytest.raises(LampNotAllowed, match=r"no controller lists the owner's rules"):
             LampGuard(LAMPS).check_request(method, path, body)
         assert ("shown/*", frozenset({"*"})) in quiet.check_request(method, path, body)
-    owner.check_request("PATCH", "settings/dali", {"application_active": False})
+    owner.check_request("PATCH", "settings/dali", {"device_short_address": 3})
     owner.check_request("PATCH", "settings/poller", {"enabled": False})
+
+
+def test_the_client_asks_the_owner_rules_before_a_handover_and_books_it_as_moving_any_lamp():
+    owner = _client(rules=RESTART_RULES)
+    log = write_log.WriteLog("t", owner.base)
+    with write_log.recording(log):
+        with pytest.raises(LampNotAllowed, match=r"settings/redundancy refused: the owner's "
+                                                 r"rule\(s\) failover, morning"):
+            owner.redundancy.patch_settings({"peer_url": "http://192.0.2.9:81"})
+        with pytest.raises(LampNotAllowed, match=r"settings/dali refused: .* failover"):
+            owner.dali_settings.patch({"application_active": False})
+    assert owner.http.sent == [] and not log.changed("shown/5")
+    quiet = _client(rules=RESTART_RULES[2:])
+    with write_log.recording(log):
+        quiet.redundancy.patch_settings({"peer_url": "http://192.0.2.9:81"})
+    assert [path for _m, path, _b in quiet.http.sent] == ["settings/redundancy"]
+    assert log.changed("shown/5")
+
+
+FORGET = "adapters/0/physical-devices/%d"
+
+
+def test_a_forget_is_a_write_to_its_short_and_never_passes_read_only():
+    with pytest.raises(LampNotAllowed, match=r"forget of SA1 refused: SA1 is outside "
+                                             r"HIL_LAMP_SHORTS=0,2-3"):
+        _guard().check_request("DELETE", FORGET % OWNER)
+    with pytest.raises(LampNotAllowed, match=r"forget of SA2 refused: HIL_LAMPS_READ_ONLY=1"):
+        _guard(read_only=True).check_request("DELETE", FORGET % 2)
+    assert ("device/2", frozenset({"*"})) in _guard().check_request("DELETE", FORGET % 2)
+    _guard(read_only=True).check_request("PATCH", FORGET % OWNER, {"notes": "x"})
+
+
+class _ForgetApi:
+    adapter = 0
+
+    def __init__(self, lamp_shorts, read_only, registry=(1, 3), present=(1, 3)):
+        self.cfg = HilConfig(lamp_shorts=lamp_shorts, lamps_read_only=read_only,
+                             serial_remote="")
+        self.guard = LampGuard.for_config(self.cfg)
+        self.registry, self.present = list(registry), list(present)
+
+    def lamp_addrs(self):
+        return [short for short in self.registry if short in self.cfg.lamp_short_set()]
+
+    def present_addrs(self):
+        return list(self.present)
+
+
+def test_the_forget_test_takes_a_present_lamp_the_guard_lets_it_forget():
+    assert test_pd_forget.forget_target(_ForgetApi("3", read_only=False)) == 3
+    for api, why in ((_ForgetApi("3", read_only=True), r"forget of SA3 refused: "
+                                                         r"HIL_LAMPS_READ_ONLY=1"),
+                     (_ForgetApi("3", read_only=False, present=(1,)), r"no present lamp"),
+                     (_ForgetApi("", read_only=False), r"HIL_LAMP_SHORTS=\(none\)")):
+        with pytest.raises(pytest.skip.Exception, match=why):
+            test_pd_forget.forget_target(api)
 
 
 def test_the_client_refuses_a_switchover_and_a_reboot_before_they_start():

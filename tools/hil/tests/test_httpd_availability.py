@@ -89,7 +89,8 @@ def test_health_stays_served_during_a_64_row_scene_write(api, scene_matrix_guard
     blocked = max(latencies) - idle_s
     assert blocked < MAX_HEALTH_LATENCY_S, (
         "health blocked for %.2f s beyond its idle %.3f s while a 64-row scene "
-        "write ran; the httpd task was monopolised (ISSUE-25 defect 2). probes=%d "
+        "write ran; the httpd task was monopolised (documentation/architecture/"
+        "02-runtime-and-threading.md §The HTTP task). probes=%d "
         "median=%.3f write=%.2f s"
         % (blocked, idle_s, len(latencies), statistics.median(latencies), write_elapsed)
     )
@@ -130,9 +131,9 @@ def test_every_read_surface_answers_without_faulting_the_httpd_stack(
         for name, v in sizes.items()
     })
     assert not rebooted, (
-        "the DUT rebooted while building read responses — this is the ISSUE-49 "
-        "shape (a response assembled on the httpd task's 36 KiB stack), and the "
-        "serial log holds the fault"
+        "the DUT rebooted while building read responses — a response assembled "
+        "on the httpd task's stack (documentation/architecture/07-memory-and-cores.md "
+        "§The httpd stack is a budget), and the serial log holds the fault"
     )
     assert max(sizes["one-section"]) < max(sizes["attributes"]), (
         "a single-section response is no smaller than the full one; "

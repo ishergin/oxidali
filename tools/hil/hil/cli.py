@@ -330,7 +330,7 @@ def _cmd_corpus(rest):
     ap.add_argument("--peer-only", action="store_true")
     ap.add_argument("--keep-secrets", action="store_true",
                     help="include the HA settings slice (broker password) — "
-                         "only into an untracked --out")
+                         "only into an --out outside every repository")
     ap.add_argument("--wire-keep", type=int, default=corpus.WIRE_KEEP_DEFAULT)
     ap.add_argument("--panel-seconds", type=int, default=300,
                     help="with `panel`: how long to record button presses")
@@ -347,10 +347,13 @@ def _cmd_corpus(rest):
         boards = "primary"
     if args.peer_only or os.environ.get("HIL_PEER") == "1":
         boards = "peer"
-    index = corpus.run(parts=args.parts, out_root=args.out, boards=boards,
-                       keep_secrets=args.keep_secrets,
-                       wire_keep=args.wire_keep,
-                       wire_scan=args.wire_scan_mb * 1024 * 1024)
+    try:
+        index = corpus.run(parts=args.parts, out_root=args.out, boards=boards,
+                           keep_secrets=args.keep_secrets,
+                           wire_keep=args.wire_keep,
+                           wire_scan=args.wire_scan_mb * 1024 * 1024)
+    except corpus.SecretsRefused as exc:
+        ap.error(str(exc))
     return 1 if any(b["rebooted_during_capture"]
                     for b in index["boards"].values()) else 0
 

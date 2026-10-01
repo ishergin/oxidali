@@ -175,8 +175,8 @@ def test_required_delivery_is_exercised_and_holds(api, serial_log, test_artifact
         "and mean nothing"
     )
     assert delta["event_publish_failed"] == 0, (
-        "a required event was lost even with the backoff: %r. This is the "
-        "ISSUE-50 shape — the fact has no second carrier." % (delta,)
+        "a required event was lost even with the backoff: %r. The fact has "
+        "no second carrier (ADR-021)." % (delta,)
     )
     if delta["event_publish_retried"] == 0:
         pytest.skip(
@@ -188,8 +188,8 @@ def test_required_delivery_is_exercised_and_holds(api, serial_log, test_artifact
             "move. That is Ф2 working, not a rig shortfall: streaming the "
             "progress events one device at a time puts a full identity probe "
             "between consecutive publishes, so the queue drains faster than the "
-            "scan fills it. The burst ISSUE-50 lost its tail to no longer "
-            "exists on this path.\n"
+            "scan fills it. The burst whose tail the queue once dropped no "
+            "longer exists on this path.\n"
             "\n"
             "So a realistic workload can no longer reach Ф1 here, and a bench "
             "run leaving this at 0 is a HEALTH signal rather than a coverage "

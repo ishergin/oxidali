@@ -105,6 +105,24 @@ def test_corpus_does_not_take_peer_for_peer_only(monkeypatch, capsys):
     capsys.readouterr()
 
 
+def test_secrets_are_kept_only_in_an_out_outside_every_repository(monkeypatch, tmp_path, capsys):
+    reached = []
+    monkeypatch.setattr(corpus, "_boards", lambda primary, boards: reached.append(boards) or [])
+    for argv in (["corpus", "all", "--keep-secrets"],
+                 ["corpus", "all", "--keep-secrets", "--out",
+                  str(corpus.CORPUS_ROOT / "with-secrets")]):
+        assert cli.main(argv) == cli.EX_USAGE
+    assert reached == []
+    refused = capsys.readouterr().err
+    assert "needs an --out" in refused and "is inside the git work tree" in refused
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.resolve().parent))
+    out = tmp_path / "with-secrets"
+    assert cli.main(["corpus", "all", "--keep-secrets", "--primary-only", "--out",
+                     str(out)]) == 0
+    assert reached and list(out.glob("*/index.json"))
+    capsys.readouterr()
+
+
 def test_peer_after_the_command_is_refused(monkeypatch, capsys):
     ran = []
     monkeypatch.setattr(flash, "run", _never("flash", ran))

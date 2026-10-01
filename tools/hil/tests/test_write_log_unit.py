@@ -60,7 +60,11 @@ GROUP_ROW = {"virtual_lamp_id": 7, "desired": [False] * 16}
     ("PATCH", "settings/dali", {"application_active": True},
      [("settings/dali", {"application_active"}), ("shown/*", {ALL})]),
     ("PATCH", "settings/dali", {"application_active": False},
-     [("settings/dali", {"application_active"})]),
+     [("settings/dali", {"application_active"}), ("shown/*", {ALL})]),
+    ("PATCH", "settings/redundancy", {"peer_url": "http://192.0.2.9:81"},
+     [("settings/redundancy", {"peer_url"}), ("shown/*", {ALL})]),
+    ("PATCH", "settings/dali", {"device_short_address": 3},
+     [("settings/dali", {"device_short_address"})]),
     ("POST", "adapters/0/input-devices/scan", {}, []),
 ])
 def test_a_request_names_the_resources_and_fields_it_writes(method, path, body, keys):

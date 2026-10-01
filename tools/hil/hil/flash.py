@@ -52,6 +52,21 @@ CARGO_CONFIG = ".cargo/config.toml"
 BOARD_ENV_KEYS = ("MCU", "ESP_IDF_SDKCONFIG_DEFAULTS")
 
 ISR_IRAM_SCRIPT = "scripts/verify_dali_isr_iram.py"
+ISR_IRAM_TOOLS_MISSING = 2
+ISR_IRAM_FAILED, ISR_IRAM_UNCHECKED = "failed", "unchecked"
+ISR_IRAM_REFUSALS = {
+    ISR_IRAM_FAILED: (
+        "\nRefusing to flash: the DALI PHY interrupt reaches flash, and it runs\n"
+        "with the flash cache off (CONFIG_GPTIMER_ISR_CACHE_SAFE). On the bench\n"
+        "that is a Cache error panic during any persistence write, and the panic\n"
+        "handler cannot print it — you would see resets with no message.\n"
+        "Pass --allow-red-isr to flash it deliberately for diagnosis."),
+    ISR_IRAM_UNCHECKED: (
+        "\nRefusing to flash: the ISR-IRAM gate could not check the binary — its\n"
+        "SKIP line above names the tool or the ELF it did not find and where it\n"
+        "looked — so nothing proves that the DALI PHY interrupt stays out of flash.\n"
+        "Pass --allow-red-isr to flash the unchecked image deliberately."),
+}
 
 UI_MIRROR_SCRIPT = "scripts/verify_web_mirror_fresh.sh"
 
@@ -174,18 +189,12 @@ def check_isr_iram(cfg, spec, allow_red=False):
     ).returncode
     if rc == 0:
         return "ok", 0
+    verdict = ISR_IRAM_UNCHECKED if rc == ISR_IRAM_TOOLS_MISSING else ISR_IRAM_FAILED
     if allow_red:
-        print("isr-iram: proceeding anyway (--allow-red-isr)", file=sys.stderr)
-        return "failed", 0
-    print(
-        "\nRefusing to flash: the DALI PHY interrupt reaches flash, and it runs\n"
-        "with the flash cache off (CONFIG_GPTIMER_ISR_CACHE_SAFE). On the bench\n"
-        "that is a Cache error panic during any persistence write, and the panic\n"
-        "handler cannot print it — you would see resets with no message.\n"
-        "Pass --allow-red-isr to flash it deliberately for diagnosis.",
-        file=sys.stderr,
-    )
-    return "failed", 1
+        print("isr-iram: %s, proceeding anyway (--allow-red-isr)" % verdict, file=sys.stderr)
+        return verdict, 0
+    print(ISR_IRAM_REFUSALS[verdict], file=sys.stderr)
+    return verdict, 1
 
 
 def merged_image(spec, root: Path) -> Path:
@@ -620,7 +629,8 @@ def verify_running_version(health, root, manifest, image=None):
         return 1
     if image:
         print("could not read a version out of %s — falling back to the weaker "
-              "HEAD comparison (see ISSUE-102)" % image)
+              "HEAD comparison, which passes any image built from this commit "
+              "(tools/hil/README.md §Flashing)" % image)
     identity = reported.partition("+")[2].partition(".")[0]
     head = benchenv.head_commit(root)
     if identity == "unknown":

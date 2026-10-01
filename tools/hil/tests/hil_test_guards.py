@@ -468,7 +468,8 @@ def ha_guard(api, hil_config):
                     mqtt_tap.clear_retained(hil_config, topic)
             except Exception:
                 pass
-        api.ha.patch({k: before[k] for k in api_mod._HomeAssistantSettings.RESTORABLE})
+        api.ha.patch({k: before[k] for k in api_mod._HomeAssistantSettings.RESTORABLE
+                      if k in before})
 
 
 class _Clock:

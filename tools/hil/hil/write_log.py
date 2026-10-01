@@ -40,6 +40,7 @@ INDIRECT = (re.compile(r"rules/[^/]+/run"), re.compile(r"hcl-schedules(/[^/]+(/o
 RESTART_ROUTE = re.compile(r"redundancy/switchover|firmware/updates")
 ACTIVATION_ROUTE = re.compile(r"settings/dali")
 ACTIVATION_FIELD = "application_active"
+HANDOVER_ROUTES = (re.compile(r"redundancy/switchover"), re.compile(r"settings/redundancy"))
 ANY_LAMP = ("shown/" + ALL, EVERY)
 SIDE_EFFECTS = (
     (re.compile(r"adapters/[0-9]+/discovery-runs"), "POST", [("gear/" + ALL, POLICY_FIELDS)]),
@@ -65,7 +66,8 @@ def request_keys(method, path, body):
     for pattern, verb, effects in SIDE_EFFECTS:
         if verb == method and pattern.fullmatch(path):
             keys = keys + effects
-    if restarts(path, body) or any(pattern.fullmatch(path) for pattern in INDIRECT):
+    if restarts(path, body) or hands_over(path, body) or \
+            any(pattern.fullmatch(path) for pattern in INDIRECT):
         keys = keys + [ANY_LAMP]
     return keys
 
@@ -75,6 +77,13 @@ def restarts(path, body):
         return True
     return (bool(ACTIVATION_ROUTE.fullmatch(path)) and isinstance(body, dict)
             and body.get(ACTIVATION_FIELD) is True)
+
+
+def hands_over(path, body):
+    if any(route.fullmatch(path) for route in HANDOVER_ROUTES):
+        return True
+    return (bool(ACTIVATION_ROUTE.fullmatch(path)) and isinstance(body, dict)
+            and ACTIVATION_FIELD in body)
 
 
 def topic_keys(topic):

@@ -1,3 +1,4 @@
+import importlib.util
 import json
 
 import pytest
@@ -190,3 +191,56 @@ def test_allow_stale_ui_builds_with_the_previous_bundle(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, P4, pinned=True)
     assert flash.run(cfg, build_only=True, allow_stale_ui=True) == 0
     assert built == [1]
+
+
+ISR_SPEC = {"isr_iram_check": True, "firmware_bin": "target/riscv32imafc-esp-espidf/debug/x"}
+GATE_RED = 1
+TOOL_VERSION = "esp-14.2.0_20251107"
+
+
+def test_the_gate_tells_missing_tools_apart_from_an_interrupt_that_reaches_flash(
+        tmp_path, monkeypatch, capsys):
+    cfg = _cfg(tmp_path, P4, pinned=True)
+    _mirror(monkeypatch, flash.ISR_IRAM_TOOLS_MISSING, [])
+    assert flash.check_isr_iram(cfg, ISR_SPEC) == (flash.ISR_IRAM_UNCHECKED, 1)
+    unchecked = capsys.readouterr().err
+    assert "could not check" in unchecked and "SKIP line" in unchecked
+    assert "reaches flash" not in unchecked
+    assert flash.check_isr_iram(cfg, ISR_SPEC, allow_red=True) == (flash.ISR_IRAM_UNCHECKED, 0)
+    capsys.readouterr()
+    _mirror(monkeypatch, GATE_RED, [])
+    assert flash.check_isr_iram(cfg, ISR_SPEC) == (flash.ISR_IRAM_FAILED, 1)
+    assert "reaches flash" in capsys.readouterr().err
+
+
+def _isr_gate():
+    spec = importlib.util.spec_from_file_location(
+        "verify_dali_isr_iram", flash.REPO_ROOT / flash.ISR_IRAM_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _install_tool(tools_root, name):
+    path = (tools_root / "riscv32-esp-elf" / TOOL_VERSION / "riscv32-esp-elf" / "bin"
+            / ("riscv32-esp-elf-" + name))
+    path.parent.mkdir(parents=True)
+    path.write_text("")
+    return path
+
+
+def test_the_gate_takes_the_toolchain_the_firmware_build_installed_first(tmp_path, monkeypatch,
+                                                                          capsys):
+    gate = _isr_gate()
+    monkeypatch.setattr(gate, "ROOT", tmp_path / "repo")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    built = _install_tool(tmp_path / "repo" / ".embuild" / "espressif" / "tools", "objdump")
+    shared = _install_tool(tmp_path / "home" / ".espressif" / "tools", "objdump")
+    assert gate._tool("objdump", True) == str(built)
+    built.unlink()
+    assert gate._tool("objdump", True) == str(shared)
+    shared.unlink()
+    with pytest.raises(SystemExit) as missing:
+        gate._tool("objdump", True)
+    assert missing.value.code == flash.ISR_IRAM_TOOLS_MISSING
+    assert ".embuild" in capsys.readouterr().out

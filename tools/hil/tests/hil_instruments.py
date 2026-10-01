@@ -162,7 +162,8 @@ def sniffer(request, hil_config, run_dir):
     validity_state["wb"] = "reachable, tap live (%s); delivered %d bus frames, " \
         "%d monitor lines%s" % (
             hil_config.wb_ssh, sporadic, monitor,
-            "  <-- JAMMED? see ISSUE-48, `systemctl restart wb-mqtt-dali`"
+            "  <-- JAMMED? a dead instrument, not a verdict (tools/hil/STRATEGY.md "
+            "§3.7): `systemctl restart wb-mqtt-dali`"
             if sporadic == 0 or monitor == 0 else "")
     tap.close()
 
@@ -211,7 +212,8 @@ def op_check(request):
             "the operation never got the DALI bus (%s) — this is bench load, "
             "not a product failure: something else was driving the wire "
             "(the WB foreign master, or a leaked poller). Re-run alone to "
-            "confirm; if it is reproducible, it is ours (ISSUE-31 п.5).\n%r"
+            "confirm; if it is reproducible, it is ours (tools/hil/README.md "
+            "§Run validity).\n%r"
             % (api_mod.BUS_CONTENDED, view), pytrace=False)
     return check
 

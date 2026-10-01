@@ -14,6 +14,9 @@ NESTED_SUFFIX = "+isr"
 HEARTBEAT = re.compile(r"firmware heartbeat: uptime=([0-9]+)s")
 HEARTBEAT_PERIOD_S = 60
 DUT_STAMP = re.compile(r"\b[EWIDV] \(([0-9]+)\) ")
+PHY_LEVEL = re.compile(r"DALI PHY interrupt: level ([0-9]+)")
+RESET_BANNER = re.compile(r"ESP-ROM:|rst:0x")
+STAMP_REORDER_SLACK_MS = 1000
 
 
 @dataclass
@@ -75,6 +78,26 @@ def logged_past(lines, ms):
     return newest is not None and newest >= ms
 
 
+def last_boot_phy_level(lines):
+    level = last = None
+    for line in lines:
+        found = PHY_LEVEL.search(line)
+        stamp = dut_ms(line)
+        if found:
+            level = int(found.group(1))
+        elif _a_later_boot(line, stamp, last):
+            level = None
+        if stamp is not None:
+            last = stamp
+    return level
+
+
+def _a_later_boot(line, stamp, last):
+    if RESET_BANNER.search(line):
+        return True
+    return stamp is not None and last is not None and stamp + STAMP_REORDER_SLACK_MS < last
+
+
 class SerialLog:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -89,6 +112,13 @@ class SerialLog:
 
     def window(self):
         return LogWindow(self.log_path)
+
+    def boot_phy_level(self):
+        path = Path(self.log_path)
+        if not path.exists():
+            return None
+        with open(path, errors="replace") as fh:
+            return last_boot_phy_level(fh)
 
 
 class LogWindow:

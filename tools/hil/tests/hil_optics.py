@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from hil_harness import track, validity_of
+from hil_harness import standalone_client, track, validity_of
 
 def _optical_unavailable(request, reason):
     if request.config.getoption("--no-camera") \
@@ -41,11 +41,12 @@ def optical_session(request):
     try:
         state["backend"] = probe_and_select(hil_config)
         if not _skip_calibration(request):
-            Calibrator(hil_config, request.getfixturevalue("api"),
+            Calibrator(hil_config, standalone_client(request.config),
                        state["backend"]).run()
         state["calibration"] = load_cal(hil_config)
     except Exception as exc:
         state["error"] = str(exc)
+        print("\noptical_session: %s" % exc)
     yield state
     if state["backend"] is not None:
         state["backend"].close()

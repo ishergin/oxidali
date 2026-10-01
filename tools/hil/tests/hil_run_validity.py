@@ -215,8 +215,9 @@ def pytest_sessionfinish(session, exitstatus):
     if over:
         lines.append("")
         lines += ["OVER BUDGET: %s absorbed %d, budget %d" % row for row in over]
-        lines.append("A budget is raised with a dated measurement in "
-                     "tools/hil/retry_budget.txt, never to make a run green.")
+        lines.append("A budget in tools/hil/retry_budget.txt is raised only with the "
+                     "measurement in the commit that moves it, never to make a run "
+                     "green.")
         session.exitstatus = session.exitstatus or 1
     shed = validity.bus_drop_breaches(state, budget)
     if shed:
@@ -225,7 +226,7 @@ def pytest_sessionfinish(session, exitstatus):
         lines.append("A frame the bus shed is a fact nobody will re-send. If it "
                      "carried an operation's terminal outcome the operation ends "
                      "by TTL reporting a timeout for work that finished "
-                     "(ISSUE-50, ADR-021) — find the producer, do not raise "
+                     "(ADR-021) — find the producer, do not raise "
                      "tools/hil/retry_budget.txt.")
         session.exitstatus = session.exitstatus or 1
     deep = validity.stack_breaches(state.get("stack_min_free") or {},
@@ -234,9 +235,10 @@ def pytest_sessionfinish(session, exitstatus):
         lines.append("")
         lines += ["STACK OVER BUDGET: %s used %d B, budget %d B" % row for row in deep]
         lines.append("A task deeper than its budget is one section away from a "
-                     "Stack protection fault (ISSUE-49). Shorten the path the "
-                     "probe names, or move the growth off the stack — raising "
-                     "tools/hil/stack_budget.txt is not the fix.")
+                     "Stack protection fault (documentation/architecture/"
+                     "07-memory-and-cores.md §The stack census is a gate). Shorten "
+                     "the path the probe names, or move the growth off the stack — "
+                     "raising tools/hil/stack_budget.txt is not the fix.")
         session.exitstatus = session.exitstatus or 1
     dead = validity.stack_budget_dead_lines(state.get("stack_min_free") or {},
                                             state.get("stack_budget") or {})
@@ -295,8 +297,8 @@ def pytest_sessionfinish(session, exitstatus):
                      "than the last one did, and every later dip starts from "
                      "that floor. The failure at the bottom is ESP_ERR_HTTPD_TASK "
                      "and a boot loop. Find what the stage named above now "
-                     "allocates; lowering tools/hil/boot_heap_budget.txt needs a "
-                     "dated reason.")
+                     "allocates; lowering tools/hil/boot_heap_budget.txt needs the "
+                     "measurement in the commit that moves it.")
         session.exitstatus = session.exitstatus or 1
     thin = validity.runtime_heap_breaches(state.get("runtime_heap") or {},
                                           state.get("runtime_heap_budget") or {})
@@ -308,7 +310,8 @@ def pytest_sessionfinish(session, exitstatus):
                      "allows. What needs internal SRAM at that moment — a new "
                      "task stack, httpd, DMA, TLS — fails. The serial line "
                      "`internal SRAM low-water` names the moment; lowering "
-                     "tools/hil/runtime_heap_budget.txt needs a dated reason.")
+                     "tools/hil/runtime_heap_budget.txt needs the measurement in the "
+                     "commit that moves it.")
         session.exitstatus = session.exitstatus or 1
     lines += _virtual_gear_lines(state)
     if state.get("virtual_gear_safety"):

@@ -799,7 +799,7 @@ class _HomeAssistantSettings(_Namespace):
     RESTORABLE = (
         "enabled", "broker_host", "broker_port", "broker_username",
         "discovery_prefix", "state_topic_prefix", "controller_id",
-        "publish_qos", "retain_state", "retain_discovery",
+        "publish_qos", "retain_state", "retain_discovery", "expose_input_devices",
     )
 
     def get(self) -> dict:

@@ -34,13 +34,21 @@ _WHY = {
 }
 
 
+TOOLCHAIN = "riscv32-esp-elf/*/riscv32-esp-elf/bin/riscv32-esp-elf-"
+
+
+def _tool_roots():
+    return (ROOT / ".embuild" / "espressif" / "tools", Path.home() / ".espressif" / "tools")
+
+
 def _tool(name, require):
-    hits = sorted(Path.home().glob(
-        ".espressif/tools/riscv32-esp-elf/*/riscv32-esp-elf/bin/riscv32-esp-elf-" + name))
-    if not hits:
-        print("verify_dali_isr_iram: SKIP (riscv32-esp-elf-%s not installed)" % name)
-        sys.exit(2 if require else 0)
-    return str(hits[-1])
+    for root in _tool_roots():
+        hits = sorted(root.glob(TOOLCHAIN + name))
+        if hits:
+            return str(hits[-1])
+    print("verify_dali_isr_iram: SKIP (riscv32-esp-elf-%s not installed under %s)"
+          % (name, " or ".join(str(root) for root in _tool_roots())))
+    sys.exit(2 if require else 0)
 
 
 def _sections(readelf, elf):
@@ -147,7 +155,7 @@ def main(argv):
 
     if any(bad.values()):
         print("verify_dali_isr_iram: FAILED — the PHY interrupt reaches flash")
-        print("IRAM is 0x%08x..0x%08x; see ISSUE-27 and ADR-010." % (lo, hi))
+        print("IRAM is 0x%08x..0x%08x; see ADR-010." % (lo, hi))
         for kind in ("call", "load", "address"):
             if not bad[kind]:
                 continue

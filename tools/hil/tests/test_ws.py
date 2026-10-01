@@ -245,6 +245,21 @@ LATE_REPORT_INTERVAL_MS = 5000
 LATE_REPORT_SLACK_MS = 1000
 LATE_REPORT_WAIT_S = 30.0
 LATE_REPORT_POLL_S = 1.0
+PHY_DRIVER_LEVEL = 3
+BELOW_THE_CRITICAL_SECTION = (
+    "INCONCLUSIVE on this image: %s. ws-client can delay the PHY interrupt only at level "
+    "%d, which a critical section masks; above it the late-entries line stays clean "
+    "whatever the send path does, so the check needs an image built with "
+    "DALI2RUST_PHY_ISR_LEVEL=%d")
+
+
+def require_the_driver_level(serial_log):
+    level = serial_log.boot_phy_level()
+    if level == PHY_DRIVER_LEVEL:
+        return
+    found = ("the serial log holds no `DALI PHY interrupt` line of the running boot"
+             if level is None else "the running boot put the PHY interrupt at level %d" % level)
+    pytest.skip(BELOW_THE_CRITICAL_SECTION % (found, PHY_DRIVER_LEVEL, PHY_DRIVER_LEVEL))
 
 
 def _soak(load, seconds, rewrite=None):
@@ -286,6 +301,7 @@ def _soaked(api, hil_config, serial_log, rewrite):
 @pytest.mark.serial
 def test_two_sniffer_subscribers_keep_ws_client_out_of_late_isr_entries(
         api, hil_config, serial_log, ws_baseline, test_artifacts):
+    require_the_driver_level(serial_log)
     connected = _clients(api)
     if connected + SOAK_CLIENTS > WS_CLIENT_LIMIT:
         pytest.skip("%d WebSocket clients are connected already (a web UI tab counts), and "

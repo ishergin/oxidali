@@ -1,3 +1,5 @@
+import ast
+import importlib
 import importlib.util
 from pathlib import Path
 
@@ -7,6 +9,8 @@ from hil import provoke, seriallog
 from hil.config import HilConfig
 
 HIL_ROOT = Path(__file__).resolve().parent.parent
+TOOLKIT_SCRIPTS = sorted(HIL_ROOT.glob("*.py"))
+BENCH_MARKS = ("192.168.", "/Users/")
 BOOT = "I (1) dali2rust: boot\n"
 HCL_STALE = "W (2) redundancy: worker has not turned for 61 s: hcl-scheduler"
 QUALIFYING = [{"d_ticks": 1, "d_timeouts": 2}]
@@ -23,7 +27,7 @@ def _script(name):
 
 
 ISSUE86 = _script("issue86_acceptance")
-ISSUE89 = _script("issue89_flush_stall_ab")
+FLUSH_STALL = _script("flush_stall_ab")
 SOAK = _script("soak_abab")
 LATE = ("2026-09-26T08:00:02.000Z W (5) dali: DALI ISR late entries (delayed; see raw deficit "
         "for losses): ws-client×2 (max 140 us @0x40001234<0x40005678), (none)×1 (max 9 us "
@@ -90,14 +94,14 @@ def test_issue86_never_ends_a_window_on_a_sample_with_a_missing_read():
     assert [w["gaps"] for w in windows] == [2, 0]
 
 
-def test_issue89_reads_its_windows_by_offset_whatever_the_stamps(tmp_path):
+def test_the_flush_stall_ab_reads_its_windows_by_offset_whatever_the_stamps(tmp_path):
     log = tmp_path / "serial.log"
     log.write_text(BOOT)
-    start = ISSUE89.log_size(log)
-    assert ISSUE89.log_lines(log, start) is None
+    start = FLUSH_STALL.log_size(log)
+    assert FLUSH_STALL.log_lines(log, start) is None
     with log.open("a") as fh:
         fh.write("%s\n%s\nnoise\n" % (TIMING, FLUSH))
-    assert ISSUE89.window(ISSUE89.log_lines(log, start)) == ([7], 2, 40, [900], [310])
+    assert FLUSH_STALL.window(FLUSH_STALL.log_lines(log, start)) == ([7], 2, 40, [900], [310])
 
 
 class _Registry:
@@ -115,26 +119,44 @@ class _Registry:
         return {"physical_devices": [{"short_address": s} for s in (1, 2, 4)]}
 
 
-def test_issue89_provokes_with_notes_it_restores_and_never_writes_a_name():
+def test_the_flush_stall_ab_provokes_with_notes_it_restores_and_never_writes_a_name():
     registry = _Registry({"name": "Kitchen", "notes": "the owner's note"})
-    toggle = ISSUE89.NotesToggle(registry, 2)
+    toggle = FLUSH_STALL.NotesToggle(registry, 2)
     for _ in range(3):
         toggle()
-    assert registry.record["notes"] == ISSUE89.MARKER
+    assert registry.record["notes"] == FLUSH_STALL.MARKER
     toggle.restore()
     assert registry.record == {"name": "Kitchen", "notes": "the owner's note"}
     assert all(set(body) == {"notes"} for body in registry.patches)
 
 
-def test_issue89_writes_only_gear_the_bench_may_write(tmp_path):
-    assert ISSUE89.probe_target(_Registry({}), _cfg(tmp_path)) == 2
+def test_the_flush_stall_ab_writes_only_gear_the_bench_may_write(tmp_path):
+    assert FLUSH_STALL.probe_target(_Registry({}), _cfg(tmp_path)) == 2
     with pytest.raises(SystemExit, match="HIL_LAMP_SHORTS"):
-        ISSUE89.probe_target(_Registry({}), _cfg(tmp_path, lamp_shorts="7"))
+        FLUSH_STALL.probe_target(_Registry({}), _cfg(tmp_path, lamp_shorts="7"))
 
 
-def test_issue89_names_no_bench_address_and_no_checkout_path():
-    source = (HIL_ROOT / "issue89_flush_stall_ab.py").read_text()
-    assert "192.168." not in source and "/Users/" not in source
+def test_no_toolkit_script_names_a_bench_address_or_a_checkout_path():
+    named = [path.name for path in TOOLKIT_SCRIPTS
+             if any(mark in path.read_text() for mark in BENCH_MARKS)]
+    assert named == []
+
+
+def _missing_from(module, names):
+    imported = importlib.import_module(module)
+    return [name for name in names if not hasattr(imported, name) and not (
+        hasattr(imported, "__path__")
+        and importlib.util.find_spec("%s.%s" % (module, name)) is not None)]
+
+
+def test_every_name_a_toolkit_script_imports_from_hil_exists():
+    missing = []
+    for path in TOOLKIT_SCRIPTS:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "hil":
+                missing += ["%s: %s.%s" % (path.name, node.module, name) for name in
+                            _missing_from(node.module, [alias.name for alias in node.names])]
+    assert missing == []
 
 
 def test_late_entries_are_tallied_by_task_and_nesting():
@@ -224,3 +246,32 @@ def test_the_log_is_known_to_have_passed_a_moment_by_the_firmware_stamp():
     assert seriallog.logged_past(lines, 4999) and not seriallog.logged_past(lines, 5000)
     assert seriallog.newest_ms(lines + ["x W (12) y"]) == 4999
     assert seriallog.newest_ms(lines[1:]) is None and not seriallog.logged_past([], 0)
+
+
+ROM = "2026-09-30T09:00:00.000Z ESP-ROM:esp32p4-eco2-20240710"
+RESET = "2026-09-30T09:00:00.001Z rst:0x1 (POWERON),boot:0x30f (SPI_FAST_FLASH_BOOT)"
+RAW_PHY = ("2026-09-30T09:00:01.000Z I (900) dali2rust_adapters: DALI PHY interrupt: level %d, "
+           "cpu int 17, core 0, source TG0_T0, raw handler")
+DRIVER_PHY = "2026-09-30T09:00:01.000Z I (900) dali2rust_adapters: DALI PHY interrupt: level 3, " \
+             "gptimer driver handler"
+STAMPED = "2026-09-30T09:00:02.000Z I (%d) dali2rust: firmware heartbeat: uptime=1s"
+
+
+def test_the_phy_level_is_the_one_the_running_boot_logged():
+    assert seriallog.last_boot_phy_level([ROM, RESET, RAW_PHY % 5, STAMPED % 60000]) == 5
+    assert seriallog.last_boot_phy_level([RAW_PHY % 5, ROM, DRIVER_PHY, STAMPED % 9000]) == 3
+    assert seriallog.last_boot_phy_level([DRIVER_PHY, STAMPED % 60000, STAMPED % 59990]) == 3
+    assert seriallog.last_boot_phy_level([STAMPED % 60000]) is None
+
+
+def test_a_boot_whose_phy_line_the_log_missed_has_no_level():
+    assert seriallog.last_boot_phy_level([DRIVER_PHY, STAMPED % 60000, RESET]) is None
+    assert seriallog.last_boot_phy_level([DRIVER_PHY, STAMPED % 600000, STAMPED % 40000]) is None
+
+
+def test_the_serial_log_reads_the_level_of_the_running_boot_from_its_file(tmp_path):
+    serial = seriallog.SerialLog(_cfg(tmp_path))
+    assert serial.boot_phy_level() is None
+    serial.log_path.parent.mkdir(parents=True)
+    serial.log_path.write_text("\n".join([RAW_PHY % 5, ROM, DRIVER_PHY, STAMPED % 9000]) + "\n")
+    assert serial.boot_phy_level() == 3

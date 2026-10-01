@@ -512,6 +512,7 @@ class _TeardownApi:
         self.calls, self.failing = [], set(failing)
         self.vlamps = self
         self.groups = self
+        self.guard = LampGuard((), read_only=True)
 
     def _call(self, entry):
         self.calls.append(entry)
@@ -522,6 +523,7 @@ class _TeardownApi:
         self._call(("vl-delete", lamp_id))
 
     def device_forget(self, short):
+        self.guard.check_request("DELETE", "adapters/0/physical-devices/%d" % short)
         self._call(("forget", short))
 
     def patch(self, group, body):
@@ -557,6 +559,19 @@ def test_teardown_deletes_vls_before_devices_and_restores_flags(tmp_path, monkey
     assert api.calls == [("vl-delete", 60), ("vl-delete", 61), ("forget", 16), ("forget", 17),
                          ("group", 4, {"ha_entity_enabled": True})]
     assert not session.ledger.exists()
+
+
+def test_only_the_teardown_forgets_the_park_past_read_only_and_the_lamp_list():
+    api = _TeardownApi()
+    with pytest.raises(LampNotAllowed, match=r"forget of SA16 refused: HIL_LAMPS_READ_ONLY=1"):
+        api.device_forget(16)
+    with api.guard.forgetting_emulated([16]):
+        api.device_forget(16)
+        with pytest.raises(LampNotAllowed, match=r"forget of SA3 refused"):
+            api.device_forget(3)
+    with pytest.raises(LampNotAllowed, match=r"forget of SA16 refused"):
+        api.device_forget(16)
+    assert api.calls == [("forget", 16)]
 
 
 def test_a_failing_step_leaves_residue_and_the_rest_still_runs(tmp_path, monkeypatch):
