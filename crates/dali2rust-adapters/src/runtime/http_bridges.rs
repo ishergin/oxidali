@@ -1353,7 +1353,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
     }
 
     fn inputs(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::InputState> {
-        let now = dali2rust_bsp::unix_clock::unix_wall_clock_millis();
+        let now = dali2rust_bsp::monotonic_clock::observation_stamp_ms();
         self.store
             .rules_input_rows()
             .into_iter()
@@ -1365,9 +1365,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
                 occupied: row.occupied,
                 light: row.light,
                 position: row.position,
-                last_event_age_ms: row
-                    .last_event_at_ms
-                    .map(|at| u32::try_from(now.saturating_sub(at)).unwrap_or(u32::MAX)),
+                last_event_age_ms: row.last_event_mono_ms.map(|at| now.wrapping_sub(at)),
             })
             .collect()
     }

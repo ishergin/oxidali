@@ -45,6 +45,7 @@ pub(crate) struct InstanceRecord {
     pub(crate) resolution: Option<u8>,
     pub(crate) last_event_info: Option<u16>,
     pub(crate) last_event_at_ms: Option<u64>,
+    pub(crate) last_event_mono_ms: Option<u32>,
     pub(crate) event_count: u32,
     pub(crate) input_value: Option<u16>,
     pub(crate) feedback_probe: Option<u8>,
@@ -72,6 +73,7 @@ impl InstanceRecord {
             manual_config_active: false,
             last_event_info: None,
             last_event_at_ms: None,
+            last_event_mono_ms: None,
             event_count: 0,
             input_value: None,
             feedback_probe: None,
@@ -177,6 +179,7 @@ impl InputDeviceRecord {
         };
         instance.last_event_info = Some(event.event_info);
         instance.last_event_at_ms = Some(event.observed_at_ms);
+        instance.last_event_mono_ms = Some(event.observed_at_mono_ms);
         instance.event_count = instance.event_count.saturating_add(1);
         if matches!(
             event.typed,

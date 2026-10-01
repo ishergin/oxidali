@@ -16,7 +16,7 @@ pub struct RulesInputRow {
     pub occupied: Option<bool>,
     pub light: Option<u16>,
     pub position: Option<u16>,
-    pub last_event_at_ms: Option<u64>,
+    pub last_event_mono_ms: Option<u32>,
 }
 
 const ONLINE_WINDOW_MS: u64 = 15 * 60 * 1_000;
@@ -90,7 +90,7 @@ impl RegistryStore {
                     occupied,
                     light: reading_of(instance_type::LIGHT_SENSOR),
                     position: reading_of(instance_type::ABSOLUTE_INPUT),
-                    last_event_at_ms: inst.last_event_at_ms,
+                    last_event_mono_ms: inst.last_event_mono_ms,
                 });
             }
         }
@@ -109,6 +109,7 @@ mod tests {
 
     const SHORT: u8 = 3;
     const EVENT_AT_MS: u64 = 1_790_000_000_000;
+    const EVENT_AT_MONO_MS: u32 = 4_200;
 
     fn store_with(types: &[u8]) -> RegistryStore {
         let store = RegistryStore::with_adapter_count(1);
@@ -144,7 +145,7 @@ mod tests {
             typed,
             typed_value: value,
             observed_at_ms: EVENT_AT_MS,
-            observed_at_mono_ms: 10,
+            observed_at_mono_ms: EVENT_AT_MONO_MS,
         }
     }
 
@@ -164,7 +165,10 @@ mod tests {
         assert_eq!(rows[0].occupied, Some(true));
         assert_eq!(rows[1].light, Some(300));
         assert_eq!(rows[2].position, Some(512));
-        assert!(rows.iter().all(|row| row.last_event_at_ms == Some(EVENT_AT_MS)));
+        assert!(
+            rows.iter().all(|row| row.last_event_mono_ms == Some(EVENT_AT_MONO_MS)),
+            "the event's age is taken on the monotonic clock, which a wall-clock step cannot move"
+        );
         assert_eq!((rows[0].light, rows[1].position, rows[2].occupied), (None, None, None));
     }
 }
