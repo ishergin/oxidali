@@ -69,7 +69,8 @@ BDD-конвенции — [`../architecture/05-testing-and-bdd.md`](../architec
 
 - [ ] Мутация применяется только registry worker'ом; чтение — через read-порт.
 - [ ] Runtime не персистится и меняется только `RegistryRuntimeUpdateCommand` и
-      `RegistryLevelTransitionCommand` (арк-шаг, уровень которого считает реестр);
+      `RegistryLevelTransitionCommand` ([`commands.md`](bus-contracts/commands.md)
+      §Runtime-команды реестра);
       единственный издатель в проде — проектор state-fanout.
 - [ ] Applied групп и сцен меняется только из readback'ов, desired — только командами.
 - [ ] Доказательства (чтение атрибутов, запись, итог скана, банк памяти) применяются

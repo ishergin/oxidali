@@ -163,11 +163,9 @@ Changing the table takes a wired flash.
   changing one list without the other breaks the mirror-freshness gate.
 - Every screen and component has a card in `web/design-system/`, written in the same
   change as the UI, with the `:root` block of `web/design-system/tokens.css` inlined
-  verbatim. A change
-  to screens, components or `app.css` that leaves the look as it was carries the commit
-  trailer `UI-Design: unchanged` instead. The
-  design language the cards and the app share is in
-  [`web-ui/README.md`](../product-design/web-ui/README.md).
+  verbatim. A change to screens, components or `app.css` that leaves the look as it was
+  carries the commit trailer `UI-Design: unchanged` instead. The design language the
+  cards and the app share is in [`web-ui/README.md`](../product-design/web-ui/README.md).
 - The maintainer pushes the cards, when syncing, to the Claude Design project "dali2rust Web UI"
   (`0f3fcd66-9619-445b-b9bc-51bc578eefd9`) with `DesignSync`: `list_files` / `get_file`
   first (the owner edits there; never replace the project), `finalize_plan` (`deletes:
@@ -177,10 +175,11 @@ Changing the table takes a wired flash.
 ## Merge gates (`just verify`)
 
 A missing tool fails its gate (`DALI2RUST_SKIP_JSCPD=1`, `DALI2RUST_SKIP_TSC=1` are the
-explicit opt-outs; `verify_dali_isr_iram.py` is soft here and hard in `hil flash`), and
-no gate keeps its own crate list. The `scripts/*budget*.txt`
+explicit opt-outs), and no gate keeps its own crate list. The `scripts/*budget*.txt`
 files only go down; the bench's own budgets are in the
-[HIL runbook](../../tools/hil/README.md).
+[HIL runbook](../../tools/hil/README.md). The interrupt's flash check needs a linked
+image, so it is not here: `p4-isr-iram-check` and `hil flash` run it and refuse a binary
+it could not check.
 
 - A new host-buildable crate is added to `scripts/host_crates.txt` only — the one list
   that `just check` / `test` / `clippy`, `verify_fn_length.sh` and the pedantic advisory
@@ -200,7 +199,7 @@ files only go down; the bench's own budgets are in the
 | `verify_issue_ids.py` | every `ISSUE-NN` resolves to one issue-registry row |
 | `verify_bdd_ids.sh`, `verify_bdd_coverage.sh` (+ tree policy), `verify_bdd_layers.sh`, `verify_no_bdd_production_hooks.sh`, `verify_test_layers.sh` (+ `verify_duplication.sh`) | [05](05-testing-and-bdd.md) |
 | `verify_runtime_boundaries.sh` | no `#[path]` in runtime crates; fixed composition file set |
-| `verify_fixed_bus_guardrails.sh` | no `String`/`Vec`/`serde_json::Value` in bus messages, no JSON in registry state, no `serde_json` outside `dali2rust-api`; test code is outside it |
+| `verify_fixed_bus_guardrails.sh` | no `String`/`Vec`/`serde_json::Value` in bus messages, no JSON in registry state, no `serde_json` in the non-API crates it lists; test code is outside it |
 | `verify_comments.py` | no comment outside the one-line markers; budget `scripts/comment_budget.txt` |
 | `verify_web_assets.sh` | every embedded file present, `tsc -b`, UI tests |
 | `verify_web_classes_styled.py` | every `web/app` class has a CSS rule |
@@ -210,7 +209,6 @@ files only go down; the bench's own budgets are in the
 | `verify_counter_surface.py` | counter names agree across spellings ([04](04-contracts-and-api-bridge.md)) |
 | `verify_read_surface.py` | every read-payload block reaches a screen: rendered, or the clock its delta column keys on |
 | `verify_rest_docs.py` | every route the router serves and every error code the API answers is named in a REST resource document, and every documented route is served |
-| `verify_dali_isr_iram.py` | the PHY interrupt reaches no flash; soft here, hard in `hil flash` |
 
 ## Comments
 

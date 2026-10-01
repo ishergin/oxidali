@@ -15,7 +15,7 @@
 
 | Класс | Где | Кто меняет | Переживает перезагрузку |
 |---|---|---|---|
-| Runtime | `state.*`: питание, уровень, цвет, флаги статуса, сводка отказов, `last_seen_ms`, источник значения, источник последнего DAPC, ошибка отсутствия | только `RegistryRuntimeUpdateCommand` и `RegistryLevelTransitionCommand` (арк-шаг, уровень которого считает реестр); единственный издатель в проде — проектор state-fanout | нет |
+| Runtime | `state.*`: питание, уровень, цвет, флаги статуса, сводка отказов, `last_seen_ms`, источник значения, источник последнего DAPC, ошибка отсутствия | только `RegistryRuntimeUpdateCommand` и `RegistryLevelTransitionCommand` ([`commands.md`](commands.md) §Runtime-команды реестра); единственный издатель в проде — проектор state-fanout | нет |
 | Доказательства | `attributes.*`, набор типов устройства, биты capability, Tc-диапазон, random address | чтение атрибутов, discovery, readback записи — реестр напрямую | да, кроме секций вне `attributes` (ниже) |
 | Записываемая конфигурация | подмножество листьев доказательств | `DaliWriteAttributesCommand`; членство и сцены — своими семействами | да (как доказательство) |
 | Метаданные оператора | имя, заметки, `device_type_override` / `color_mode_override`, привязка лампы, гейты Home Assistant | REST PATCH → команды реестра | да |

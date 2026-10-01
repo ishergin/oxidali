@@ -21,7 +21,7 @@ Rust DTO в `crates/dali2rust-api` (они канон); шинная сторо�
   запуск операции, `DELETE` — удаление записи или связи. Правила merge-patch и матриц —
   [`stability-and-versioning.md`](stability-and-versioning.md); форма и словарь ошибок —
   [`contracts/error-dto.md`](contracts/error-dto.md).
-- Каждый маршрут, кроме `PUT /time`, отвечает по одной из трёх дисциплин —
+- Каждый мутирующий маршрут, кроме `PUT /time`, отвечает по одной из трёх дисциплин —
   [`stability-and-versioning.md`](stability-and-versioning.md) §Дисциплины ответа.
 - Роль контроллера в каждом ответе и отказ записи на стэндбае —
   [`resources/redundancy.md`](resources/redundancy.md).

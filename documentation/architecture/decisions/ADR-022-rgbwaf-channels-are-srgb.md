@@ -57,7 +57,7 @@ the wire boundary, in both directions, from one definition.**
 
 - A stored colour is an sRGB byte triple and lights as sRGB describes it; primaries,
   white and black are fixed points of the conversion.
-- The dark end is coarse: seventeen sRGB codes (1–17) share dim level 1, and a very dark
+- The dark end is coarse: the darkest sRGB codes share dim level 1, and a very dark
   value reads back as the lowest code of its level — visible only in the registry, never
   as a dirty scene row, because convergence compares through the encoder.
 - Home Assistant needs no conversion of its own; the bridge passes the product space

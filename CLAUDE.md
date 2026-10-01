@@ -15,9 +15,9 @@ wins and the document is fixed. Documentation map:
 1. **BDD-first.** New behaviour starts with a failing scenario and merges when the new
    and the existing scenarios pass; infrastructure-only changes (refactors, docs, CI)
    are exempt.
-2. **Bus-only delivery.** HTTP, MQTT, WebSocket, HCL, rules, cluster and proxy code
-   publish typed commands on the bus; they never call `DaliTransport` and never mutate
-   the registry.
+2. **Bus-only delivery.** HTTP, MQTT, HCL, rules, cluster and proxy code publish typed
+   commands on the bus; none of them, nor the WebSocket hub, calls `DaliTransport` or
+   mutates the registry.
 3. **Function size (STRICT).** Over 20 lines needs a justification in the PR; over 40 is
    forbidden — decompose. `handle_request` stays within 30 lines as validate → build →
    publish → respond; a `match` with more than 10 arms is extracted.
@@ -64,8 +64,8 @@ Detail: [01](documentation/architecture/01-overview.md).
   `HomeAssistant*` commands belong to the registry worker.
 - `dali2rust-rules-model` — typed rule graph, limits, `RuleCompiler` / `NameResolver`.
 - `dali2rust-rules-lang` — the one rule compiler, source text → model; no printer.
-- `dali2rust-rules-runtime` — rules store, worker and engine; holds the source text only
-  to hand it to `dyn RuleCompiler`, never parses it.
+- `dali2rust-rules-runtime` — rules store, worker and engine; stores and persists the
+  source text and hands it to `dyn RuleCompiler`, never parses it.
 - `dali2rust-redundancy-runtime` — active/standby arbitration, config pull (ADR-018).
 - `dali2rust-ota-runtime` — firmware update over the network (ADR-024).
 - `dali2rust-bsp` — board support: spawner, stack classes, `PsramBox`, flash binding.
@@ -103,7 +103,8 @@ Detail: [03](documentation/architecture/03-bus-and-backpressure.md).
   where it filters by hand; confirmations broadcast. `bus_payload_ownership.rs` checks
   one owner per command and a consumer or `OBSERVED_ONLY_EVENTS` entry per event
   (ADR-006, ADR-015).
-- A command nobody accepts becomes a synthetic `DeliveryRejected` and an HTTP `503`; an
+- A command nobody accepts becomes a synthetic `DeliveryRejected` and an HTTP `503` (the
+  diagnostic `/api/v1/dali/*` routes answer `200` with the confirmation body); an
   undeclared event is dropped silently, which is legal.
 - `target_adapter_id` is filtered by the consumer; `sender_id` and `Origin` never route.
 - Ingress never blocks (`Queued` / `DroppedIngressFull` / `RejectedFrameTooLarge` /
@@ -135,10 +136,11 @@ Detail: [06](documentation/architecture/06-registry-and-persistence.md),
 - Everyone else reads through the read-port traits; the full `PhysicalDeviceView` is on
   none of them.
 - Runtime fields live on the physical-device record and change only through
-  `RegistryRuntimeUpdateCommand` and `RegistryLevelTransitionCommand` (an arc step whose
-  level the registry computes); in production the state-fanout projector is their only
-  publisher. Every commit publishes a `RuntimeStateChangedEvent` with the real
-  observation; an entry naming an unbound virtual lamp is refused (`VlUnbound`).
+  `RegistryRuntimeUpdateCommand` and `RegistryLevelTransitionCommand` (an observed arc
+  command without a level, whose level the registry computes); in production the
+  state-fanout projector is their only publisher. Every commit publishes a
+  `RuntimeStateChangedEvent` with the real observation; an entry naming an unbound
+  virtual lamp is refused (`VlUnbound`).
 - Runtime fields and operation status are not persisted. Group and scene diffs are
   expanded by the apply orchestrator, never by the registry or a handler.
 - A lamp is on because its power says so; a level of 0 is a level, and an unknown one is
@@ -168,9 +170,10 @@ Detail: [02](documentation/architecture/02-runtime-and-threading.md),
 
 - Every thread is a FreeRTOS task on a dual-core SMP chip: never rely on single-core
   interleaving. No 64-bit atomics; use `AtomicU32`.
-- Spawn through `dali2rust_bsp::esp_thread`: `spawn_named_stack` at boot,
-  `try_spawn_named_stack` for anything a client can trigger. The task name comes from
-  there, never from `std::thread::Builder::name`.
+- Spawn through `dali2rust_bsp::esp_thread`: `spawn_named_stack_in` at boot,
+  `try_spawn_named_stack_in` for anything a client can trigger, each with the stack home
+  07 §Placement gives the thread. The task name comes from there, never from
+  `std::thread::Builder::name`.
 - Wait with blocking `recv()` / `recv_timeout()` on the primary channel and drain other
   inboxes with `try_recv()` afterwards. Never a `try_recv()` + `sleep` loop, never
   `thread::park()` on main; idle back-off ≥ 10 ms, heartbeat ≥ 1 s.
@@ -274,8 +277,9 @@ Detail: [05](documentation/architecture/05-testing-and-bdd.md).
 - Layers: a unit test for logic, mapping and codecs; a crate integration test
   (`crates/*/tests/`) for one runtime slice on the real bus path; BDD for behaviour of
   the composed host stack.
-- BDD is black-box: drive through HTTP and the WebSocket; assert responses, DTOs,
-  WebSocket frames, `MockDaliTransport` frames and effects at mocked ports. Never reach
+- BDD is black-box: drive through HTTP, the WebSocket and the broker side of
+  `MockMqttClient`; assert responses, DTOs, WebSocket frames, MQTT messages,
+  `MockDaliTransport` frames and effects at mocked ports. Never reach
   into `BusStackRuntime`, the bus, `RegistryStore`, slots or counters (ADR-004); a
   behaviour that needs internals is tested in its owning crate.
 - Tests use production builders, codecs and composition; mocks sit only at port
@@ -291,8 +295,9 @@ Detail: [05](documentation/architecture/05-testing-and-bdd.md).
   [`ids-registry.md`](documentation/product-design/bdd/ids-registry.md); a file has one
   default `@stage-*`, which a scenario's own tag overrides; unfinished work is `@wip`;
   each step carries its `// <ID list>`; the runner fails skipped steps.
-- Features live in `features/<resource>/`, `diagnostic/`, `system/` or `contracts/`;
-  `dali/`, `bus/`, `display/` and `registry/` are forbidden.
+- Features live in `features/<resource>/`, `diagnostic/`, `system/`, `contracts/` or a
+  per-surface directory from the set in `verify_bdd_tree_policy.sh`; `dali/`, `bus/`,
+  `display/` and `registry/` are forbidden.
 - Shared helpers live in `dali2rust-test-support`; no per-crate copies.
 - A test proves a mechanism only if it exercises it: a counter the run never moved makes
   the result inconclusive, not green.
@@ -396,9 +401,8 @@ Changes reach `main` through pull requests only. `just verify` runs every gate; 
 [10](documentation/architecture/10-build-release-and-tooling.md) §Merge gates.
 
 - A gate that passes when its tool is missing is not a gate: `DALI2RUST_SKIP_JSCPD=1`
-  and `DALI2RUST_SKIP_TSC=1` are the only explicit opt-outs (in a fresh worktree run
-  `npm ci` in `web/app`), and `verify_dali_isr_iram.py` is soft in `just verify`, hard in
-  `hil flash`.
+  and `DALI2RUST_SKIP_TSC=1` are the only, explicit opt-outs (in a fresh worktree run
+  `npm ci` in `web/app`).
 - Budgets and allowlists move only in their direction; widening one to turn a gate green
   is forbidden.
 - rustfmt is not a gate: never reformat a whole file; wrap only the lines you touch.

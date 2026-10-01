@@ -30,7 +30,7 @@
 |---|---|---|
 | Подтверждение запроса | HTTP-хендлер, один дедлайн на запрос | `DeliveryStatus` на канале подтверждений |
 | Подтверждение + apply-watch | Хендлер настроек | Подтверждение, затем счётчик применения реестра |
-| `202` + операция | Никто; оператор смотрит операцию | Только `OperationWorkerSignalEvent` |
+| `202` + операция | Никто; оператор смотрит операцию | Исход работы — `OperationWorkerSignalEvent` (у применения групп и сцен — и счёт исходов ячеек) |
 | Внутренний факт | Никто | `CORRELATION_NONE`; реестр не подтверждает |
 
 ## Семейства
@@ -47,7 +47,7 @@
 | Part 103 | `Dali103*Command` | `DaliWorker` | HTTP, правила, арбитраж | по виду, там же |
 | Диагностический сырой кадр | `DaliCommandPayload` (`raw_mode`) | `DaliWorker` | только диагностический REST | подтверждение запроса |
 | Операции | `OperationBeginCommand`, `OperationRegistryResetCommand` | operation tracker | HTTP, оркестратор | — |
-| Массовое применение | `GroupApplyExecuteCommand`, `SceneApplyExecuteCommand`, `PolicyApplyExecuteCommand` | apply orchestrator | HTTP, правила (`scene.apply`), `DaliWorker` (политики после скана, если взведён `apply_on_discovery`) | `202` + операция |
+| Массовое применение | `GroupApplyExecuteCommand`, `SceneApplyExecuteCommand`, `PolicyApplyExecuteCommand` | apply orchestrator | HTTP, правила (`scene.apply`), `DaliWorker` (политики после скана, если взведён `apply_on_discovery`) | `202` + операция; от правил и `DaliWorker` — операция без ответа, её открывает оркестратор |
 | HCL | `HclOverrideClearCommand` (все флаги расписания), `HclOverrideHoldCommand`, `HclOverrideResumeCommand` (причины флагов внутри цели) | HCL scheduler | HTTP (снятие); правила (`hcl.hold`, `hcl.resume`) | подтверждение запроса; подтверждений от правил никто не ждёт |
 | Бит расписания HCL | `HclScheduleEnableCommand` | registry worker | правила (`hcl.enable` / `hcl.disable`) | подтверждение; его никто не ждёт |
 | Home Assistant | `HomeAssistantDiscoveryPublishCommand`, `MqttPublishCommand` | MQTT bridge | HTTP; правила (`mqtt.publish`) | `202` + операция; без ответа |
@@ -104,13 +104,14 @@
 **Расписание HCL** — собственный протокол без закрывающей команды: заголовок
 расписания повторяется в каждом чанке; чанк с нулевыми начальными индексами targets и
 points открывает серию; индексы остальных обязаны равняться накопленной длине
-(`409 chunk_out_of_order`); чанк с `last_chunk` коммитит, и
+(`conflict`, `chunk_out_of_order`); чанк с `last_chunk` коммитит, и
 `HclScheduleChangedEvent` публикуется один раз — на коммите, удалении или смене бита
 `enabled` (`HclScheduleEnableCommand`; бит, который уже стоит, ничего не публикует, а
 неизвестное расписание отвергается `schedule_not_found`). Координаты
 едут микроградусами (`i32`), чтобы payload оставался `Eq`. Реестр как единственный
-писатель отвергает неисполнимое расписание (`422`) и девятое расписание
-(`409 schedule_limit_reached`). Staging не персистится и выселяется по возрасту.
+писатель отвергает неисполнимое расписание (`invalid_value`) и девятое (`conflict`,
+`schedule_limit_reached`): запись кончается операцией `failed`, HTTP-ответа с этими
+кодами нет. Staging не персистится и выселяется по возрасту.
 
 **Документ правил** — та же схема staging + скобка: `RuleStageCommand` несёт куски
 исходника, `RuleCommitCommand` применяет документ одним разбором, одной заменой
@@ -121,8 +122,8 @@ correlation id) вытесняет незакрытую. Серия может �
 ## Runtime-команды реестра
 
 Volatile runtime-состояние меняют только `RegistryRuntimeUpdateCommand` (RRUC) и
-`RegistryLevelTransitionCommand` (арк-шаг, уровень которого считает реестр, — ниже);
-единственный издатель обеих в проде — проектор state-fanout. Как реестр
+`RegistryLevelTransitionCommand` (чужая арк-команда без уровня: уровень считает
+реестр, — ниже); единственный издатель обеих в проде — проектор state-fanout. Как реестр
 сливает запись (частичное наблюдение, порядок по `observed_at_mono_ms`, отсутствие,
 цвет) и какие факты несут корреляцию запроса —
 [`../../architecture/06-registry-and-persistence.md`](../../architecture/06-registry-and-persistence.md).

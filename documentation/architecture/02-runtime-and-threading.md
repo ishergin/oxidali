@@ -58,10 +58,12 @@ registry locking → [06](06-registry-and-persistence.md).
 
 ## Spawning
 
-- Every thread spawns through `dali2rust_bsp::esp_thread`. `spawn_named_stack` is for
+- Every thread spawns through `dali2rust_bsp::esp_thread`. `spawn_named_stack_in` is for
   boot-time workers and panics if the spawn fails, because an incomplete stack must not
-  run. `try_spawn_named_stack` is for anything a client can drive: under
-  `panic = abort` a failed spawn there would be a remote reboot switch.
+  run. `try_spawn_named_stack_in` is for anything a client can drive: under
+  `panic = abort` a failed spawn there would be a remote reboot switch. Each takes the
+  thread's `StackHome` ([07](07-memory-and-cores.md) §Placement); `spawn_named_stack`
+  and `try_spawn_named_stack` are the same pair with the stack fixed internal.
 - The FreeRTOS task name comes from the `ThreadSpawnConfiguration` that helper sets
   (truncated to 15 characters). `std::thread::Builder::name` never reaches the task, so a
   thread spawned any other way reads `pthread` in every watchdog dump, coredump and

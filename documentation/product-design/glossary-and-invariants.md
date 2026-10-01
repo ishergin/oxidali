@@ -60,8 +60,9 @@ state-DTO — [`rest-api/contracts/state-contracts.md`](rest-api/contracts/state
 - **Семантический продуктовый путь** — продукт не собирает опкоды и кадры
   ([09](../architecture/09-dali-protocol-rules.md#product-path-and-diagnostic-path)).
 - **Runtime — только проекцией.** Volatile-состояние лампы меняют только
-  `RegistryRuntimeUpdateCommand` и `RegistryLevelTransitionCommand` (арк-шаг, уровень
-  которого считает реестр); единственный издатель в проде — проектор state-fanout.
+  `RegistryRuntimeUpdateCommand` и `RegistryLevelTransitionCommand`
+  ([`commands.md`](bus-contracts/commands.md) §Runtime-команды реестра); единственный
+  издатель в проде — проектор state-fanout.
   Производитель пишет ровно то, что наблюдал: отсутствие поля значит «не наблюдал».
 - **Applied — только из доказательств.** Applied членство и строки сцен выводятся из
   readback'ов программирования и чтения; массовое применение разворачивает
@@ -78,8 +79,8 @@ state-DTO — [`rest-api/contracts/state-contracts.md`](rest-api/contracts/state
 - **Коммиссионинг** на адаптере взаимоисключающий
   ([`commissioning.md`](rest-api/resources/commissioning.md) §Исключение на адаптер).
 - **Цвет** уставки в публичных DTO и событиях — кельвины и sRGB-каналы; линейные dim
-  level существуют только на проводе, миреды — на проводе и в Tc-лимитах атрибутов
-  (`tc_*_mirek`).
+  level и миреды — только на проводе и в сырых DT8-значениях (`color_value_*`, чанк
+  цвета сцены, Tc-лимиты `tc_*_mirek`).
 - **Сеть роль не двигает**: роль контроллера в работе меняют только провод и оператор.
 
 Что персистится, а что нет — [`bus-contracts/snapshots.md`](bus-contracts/snapshots.md).

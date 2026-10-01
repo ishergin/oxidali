@@ -2,11 +2,12 @@
 
 pytest-based hardware-in-the-loop tests of the firmware on a real controller and a real
 DALI line. The oracles are the controller's HTTP/WebSocket API and serial console, a
-second DALI master as an independent bus sniffer and foreign master (a Wiren Board
-WB-MDALI3, for example), and, when one is attached, a USB camera. This file is
-the runbook: what a bench needs, how to configure it, and how to run and read the suite.
+second DALI master as an independent bus sniffer and foreign master (for example a Wiren
+Board WB-MDALI3 under `wb-mqtt-dali` on `python3-dali`, source in the board's
+`/usr/lib/python3/dist-packages/dali/`), and, when one is attached, a USB camera.
 
-Scope: setting up, running and reading the suite. Strategy, the coverage map and
+Scope: this runbook — what a bench needs, setting up, running and reading the suite.
+Strategy, the coverage map and
 the issue watchlist live in [STRATEGY.md](STRATEGY.md) (Russian); firmware build
 knobs and the version string in
 [10-build-release-and-tooling.md](../../documentation/architecture/10-build-release-and-tooling.md).
@@ -388,30 +389,30 @@ chip into its ROM loader through the bridge, writes with esptool at
 bricked from the LAN), waits for `/api/v1/health` and requires the reported version
 to equal the one inside the image it wrote — a prefix-of-`HEAD` check only when the
 image yields none — and records that version in the manifest. `MCU` and the sdkconfig
-baseline are read from `.cargo/config.toml` and asserted, never set. From a host
-outside the WB's LAN esptool over the bridge never syncs: use `--via wb` or `--via ota`.
+baseline are read from `.cargo/config.toml` and asserted, never set. Off the WB's LAN
+esptool over the bridge never syncs: use `--via wb|ota`.
 
-A variable set in `bench.env` overrides the same variable exported in the shell, so a
-one-off knob given as `KNOB=… hil flash` takes effect only when `bench.env` does not set
-it.
+`bench.env` overrides the shell's exports, so a one-off `KNOB=… hil flash` applies only
+when `bench.env` does not set it.
 
 **Delivery** — `hil flash --via rfc2217|wb|ota` picks it; what only the wire can do is in
 [ADR-024](../../documentation/architecture/decisions/ADR-024-ota-over-ethernet.md).
 
 - `wb` stages the merged image on the Wiren Board, checks its sha256 and writes it with a
   vendored esptool on the board's own serial device at 921 600 baud, detached from the ssh
-  session: its exit code comes back through a file, so the Mac's link to the Wiren Board
-  does not decide whether the write lands. The bridge releases the port for the write and
+  session: its exit code comes back through a file, so the host's link to it does not
+  decide whether the write lands. The bridge releases the port for the write and
   reacquires it after, which is the one reset; a bridge that cannot release is refused
   before any reset (`hil remote start --restart` runs the current one, and resets the board).
 - Before a `wb` write, the board the port names must fall quiet in its ROM loader while the
   other board keeps its uptime. With neither witness the write is refused, and any failure
   before esptool starts sends `run`.
 - `ota` builds the application image instead of the merged one, serves it from the Wiren
-  Board, posts it to `/api/v1/firmware/updates` and waits for `ready_to_reboot`
-  ([contract](../../documentation/product-design/rest-api/resources/firmware.md)); the
-  gates, the manifest and the version check are those above.
-- `rfc2217`, the default, is the esptool-over-the-bridge path above.
+  Board, posts it to `/api/v1/firmware/updates` and waits for `ready_to_reboot`, with the
+  gates, manifest and version check above. It does not wait for `pending_verify` to clear,
+  and until then a reset boots the previous slot
+  ([contract](../../documentation/product-design/rest-api/resources/firmware.md)).
+- `rfc2217` (default): esptool over the bridge above, or espflash on this host's USB.
 
 The gear emulator's image goes only through `hil --peer role gear-sim` (below).
 

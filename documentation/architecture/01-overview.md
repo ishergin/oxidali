@@ -93,10 +93,11 @@ flowchart LR
   strings ([04](04-contracts-and-api-bridge.md)).
 - **The rule language is three crates.** `rules-model` is the stable contract,
   `rules-lang` is one compiler behind `dyn RuleCompiler`, `rules-runtime` consumes the
-  model and never parses text, holding the source only to hand it to the compiler. The
-  stored canon is the operator's source text, tagged with the `lang_id` that compiled
-  it; there is no printer. A replacement language is a new crate and a new id, not an
-  engine change ([ADR-016](decisions/ADR-016-input-devices-and-rule-engine.md)).
+  model and never parses text; it stores and persists the source and hands it to the
+  compiler. The stored canon is the operator's source text, tagged with the `lang_id`
+  that compiled it; there is no printer. A replacement language is a new crate and a
+  new id, not an engine change
+  ([ADR-016](decisions/ADR-016-input-devices-and-rule-engine.md)).
 - **There is no input-device runtime.** Part 103 commissioning, instance enumeration
   and configuration are semantic commands executed inside `DaliWorker`: one wire owner,
   one priority table, one transaction mechanism (ADR-016).

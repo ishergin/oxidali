@@ -37,8 +37,9 @@ httpd stack in [07](07-memory-and-cores.md).
   last DAPC source, the `last_active_level` shadow — live on the physical-device record;
   virtual-lamp state is a projection through the binding.
 - They change only through `RegistryRuntimeUpdateCommand` (RRUC) and
-  `RegistryLevelTransitionCommand` (an arc step whose level the registry computes); in
-  production the state-fanout projector is their only publisher. An entry that names a
+  `RegistryLevelTransitionCommand` (an observed arc command without a level, whose level
+  the registry computes); in production the state-fanout projector is their only
+  publisher. An entry that names a
   virtual lamp with no binding is refused (`VlUnbound`).
 - Every successful runtime commit publishes `RuntimeStateChangedEvent` carrying the
   committed observation; an empty or default payload is forbidden.

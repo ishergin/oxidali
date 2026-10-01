@@ -89,6 +89,12 @@ cannot resolve.
   cycle, and its exception list does not name this variable. With 209 footnote b calling
   `1 byte RAM` non-persistent, the two clauses read as complementary and a gear that keeps
   the byte deviates — probably, since 102 never defines "configuration".
+- One installed RGBWAF gear keeps the byte across mains loss: after a cycle that set
+  `powerCycleSeen` it still answers the `0x80` the product asserted. Telling whether the
+  `0xC0` it held before (extended colour control, 098bp §10.6.13.5) is a vendor default
+  or earlier writes takes a factory-reset gear or a second vendor
+  (`tools/hil/rgbwaf_control_probe.py` reads the evidence). Untested: whether the same
+  gear honours footnote d for its other RAM variables.
 - The controller does not depend on the answer: it never assumes the boot state
   ([09](../architecture/09-dali-protocol-rules.md)).
 
@@ -125,7 +131,9 @@ although 103 §11.6.16 ties it to `applicationActive` alone.
 Not built for the controller as a bus unit: `QUERY DEVICE STATUS` and the other device
 queries — status, capabilities, version, DTR content (answering with bits it cannot
 vouch for would be worse than silence); memory bank 0 with its identity per logical
-unit (no bank 201: 103 §9.10.9 reserves banks 200–255); being commissioned by another
+unit, and DiiA 351's bank 201 (§8.2: device type and the type B arbitration byte, which
+is never written `0x00`: that value disables arbitration; ADR-030 proposes omitting the
+bank, since 103:2014 §9.10.9 reserves banks 200–255); being commissioned by another
 controller (`INITIALISE`, `RANDOMISE`, address search, `COMPARE`, address programming);
 `POWER NOTIFICATION`; and quiescent mode. DALI-2 certification is out of reach until
 they are. The design to build them from, and the decisions it owes, is

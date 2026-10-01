@@ -44,8 +44,8 @@
 ## Изменения реестра
 
 - **Уведомление, а не снимок.** Payload изменённого ресурса — идентичность
-  (`adapter_id` + id); потребитель перечитывает состояние через read-port, а поля
-  настроек в `AdapterSettingsChangedEvent` не читает. Поэтому
+  (`adapter_id` + id); `AdapterSettingsChangedEvent` несёт ещё имя и `enabled`, но их
+  никто не читает: потребитель перечитывает состояние через read-port. Поэтому
   потерянное событие стоит устаревшего экрана до следующего изменения, а не
   испорченного состояния.
 - Одно событие на эффективный коммит; чанковая серия — одно на коммит серии.
@@ -55,9 +55,10 @@
 ## `RuntimeStateChangedEvent`
 
 Единственное событие о volatile-состоянии лампы; публикуется реестром **только после**
-коммита `RegistryRuntimeUpdateCommand` или `RegistryLevelTransitionCommand` (арк-шаг,
-уровень которого считает реестр). MQTT, WebSocket, HCL и правила строят видимое
-состояние из него, а не из результатов DALI и не из наблюдений сниффера.
+коммита `RegistryRuntimeUpdateCommand` или `RegistryLevelTransitionCommand`
+([`commands.md`](commands.md) §Runtime-команды реестра). MQTT, WebSocket, HCL и
+правила строят видимое состояние из него, а не из результатов DALI и не из наблюдений
+сниффера.
 
 - `state_setpoint` / `state_observation` — **снимок записи после коммита**: `None`
   здесь значит «никому не известно».
@@ -78,7 +79,9 @@
 - `OperationStatusChangedEvent` — каждый переход статуса операции с ключом и
   компактной ошибкой ([`../runtime-modules/operation-tracker/README.md`](../runtime-modules/operation-tracker/README.md)).
 - `OperationWorkerSignalEvent` (`WorkerStarted` / `WorkerSucceeded` / `WorkerFailed`
-  по workflow correlation id) — единственный путь, которым операция заканчивается.
+  по workflow correlation id) — носитель исхода работы; применение групп и сцен
+  кончается и по счёту исходов ячеек. Другие концы операции (отказ доставки,
+  вытеснение, сброс, TTL) — [`operation-tracker`](../runtime-modules/operation-tracker/README.md).
 
 ## Результаты DALI
 

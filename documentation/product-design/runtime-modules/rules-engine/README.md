@@ -111,7 +111,8 @@
 а отметка живости обновляется и у простаивающего движка.
 Сухой прогон (`POST /rules/{name}/run?dry=1`) берёт правило по имени, выключенное тоже,
 мимо триггера и cooldown, вычисляет условия и не исполняет ни одного эффекта: итог —
-`RulesActivationEvent` с `dry: true`, а не список действий
+`RulesActivationEvent` с `dry: true`, а не список действий; при невыполненных условиях
+события нет, растёт только `conditions_rejected`, а операция всё равно `succeeded`
 ([`../../rest-api/resources/rules.md`](../../rest-api/resources/rules.md)
 §`POST /rules/{name}/run`).
 
