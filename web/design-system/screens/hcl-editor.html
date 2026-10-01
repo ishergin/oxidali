@@ -101,10 +101,9 @@ tr:hover td { background: rgba(35,44,56,.5); }
 .inp:disabled, .sel:disabled { color: var(--text-faint); background: transparent; border-color: transparent; }
 
 .chips { display: flex; gap: 4px; flex-wrap: wrap; }
-.chip { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
-  background: var(--raised); color: var(--text-muted); cursor: pointer; }
-.chip.on { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
-.chip.g { font-family: var(--mono); }
+.selchip { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--raised); color: var(--text-muted); cursor: pointer; font-family: var(--mono); }
+.selchip.on { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .field { margin-bottom: 12px; }
@@ -139,14 +138,10 @@ tr:hover td { background: rgba(35,44,56,.5); }
 .standdown .txt { font-size: 12px; color: var(--text-muted); }
 .standdown .txt b { color: var(--info); font-weight: 600; font-family: var(--mono); }
 .standdown .txt .g { font-family: var(--mono); color: var(--text); }
-.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
-.crumbs a { color: var(--text-muted); text-decoration: none; }
 </style>
 </head>
 <body>
 <div class="page">
-  <div class="crumbs"><a href="#">Adapter 0</a> / HCL schedules · Editor</div>
-
   <div class="head">
     <h1>Schedule</h1>
     <span class="sid">morning</span>
@@ -162,7 +157,7 @@ tr:hover td { background: rgba(35,44,56,.5); }
     <span class="ico">&#8214;</span>
     <span class="txt">
       Standing down since <b>14:21</b> — <span class="g">G1</span> on A0 was set by hand, so
-      this schedule stops driving it until midnight. Editing the curve does not resume it.
+      this schedule stops driving it until midnight.
     </span>
     <span class="spacer"></span>
     <button class="btn ghost">Resume now</button>
@@ -180,16 +175,16 @@ tr:hover td { background: rgba(35,44,56,.5); }
         <line class="grid" x1="540" y1="6" x2="540" y2="134" opacity=".45"></line>
 
         <polyline class="cct-line" points="180,102 240,50 540,90 720,90"></polyline>
-        <polyline class="lvl-line" points="180,92 240,36 540,54 720,54"></polyline>
+        <polyline class="lvl-line" points="180,92 240,36 540,10 720,10"></polyline>
         <circle class="lvl-dot" cx="180" cy="92" r="3.5"></circle>
         <circle class="lvl-dot" cx="240" cy="36" r="3.5"></circle>
-        <circle class="lvl-dot" cx="540" cy="54" r="3.5"></circle>
+        <circle class="lvl-dot" cx="540" cy="10" r="3.5"></circle>
         <text class="astro-lab" x="6" y="24">+ 1 point at sunrise/sunset</text>
 
         <text class="gridlab" x="2" y="146">00:00</text>
-        <text class="gridlab" x="166" y="146">06:00</text>
-        <text class="gridlab" x="346" y="146">12:00</text>
-        <text class="gridlab" x="526" y="146">18:00</text>
+        <text class="gridlab" x="182" y="146">06:00</text>
+        <text class="gridlab" x="362" y="146">12:00</text>
+        <text class="gridlab" x="542" y="146">18:00</text>
         <text class="gridlab" x="686" y="146">24:00</text>
       </svg>
       <div class="legend">
@@ -256,8 +251,7 @@ tr:hover td { background: rgba(35,44,56,.5); }
         <div class="trow">
           <select class="sel"><option>group</option></select>
           <span class="chips">
-            <span class="chip g on">1</span><span class="chip g">2</span><span class="chip g">3</span>
-            <span class="chip g">4</span><span class="chip g on">5</span><span class="chip g">6</span>
+            <span class="selchip">0</span><span class="selchip on">1</span><span class="selchip">2</span><span class="selchip">3</span><span class="selchip">4</span><span class="selchip on">5</span><span class="selchip">6</span><span class="selchip">7</span><span class="selchip">8</span><span class="selchip">9</span><span class="selchip">10</span><span class="selchip">11</span><span class="selchip">12</span><span class="selchip">13</span><span class="selchip">14</span><span class="selchip">15</span>
           </span>
           <span class="spacer"></span>
           <button class="btn sm ghost">&times;</button>
@@ -286,15 +280,14 @@ tr:hover td { background: rgba(35,44,56,.5); }
         <div class="field">
           <div class="k">Active days</div>
           <div class="chips">
-            <span class="chip on">Mon</span><span class="chip on">Tue</span><span class="chip on">Wed</span>
-            <span class="chip on">Thu</span><span class="chip on">Fri</span><span class="chip">Sat</span><span class="chip">Sun</span>
+            <span class="selchip on">Mo</span><span class="selchip on">Tu</span><span class="selchip on">We</span><span class="selchip on">Th</span><span class="selchip on">Fr</span><span class="selchip">Sa</span><span class="selchip">Su</span>
           </div>
         </div>
         <div class="field">
           <div class="k">Location</div>
-          <input class="inp" style="width:96px" value="55.7558">
-          <input class="inp" style="width:96px" value="37.6173">
-          <div class="req">Required: a sunset point cannot be placed without one.</div>
+          <input class="inp" style="width:96px" placeholder="latitude">
+          <input class="inp" style="width:96px" placeholder="longitude">
+          <div class="req">Required: a sunrise/sunset point cannot be placed without one.</div>
         </div>
       </div>
     </div>

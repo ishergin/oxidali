@@ -331,8 +331,8 @@ function DayCurve({ points, algorithm }: { points: HclSchedulePoint[]; algorithm
   const stepped = algorithm === 'stepped'
   const polyline = (line: CurveVertex[], y: (value: number) => number) =>
     line.map(([minutes, value]) => `${x(minutes)},${y(value)}`).join(' ')
-  const levelLines = curveLines(levelSamples(absolute), stepped).filter((line) => line.length > 1)
-  const cctLines = curveLines(cctSamples(absolute), stepped).filter((line) => line.length > 1)
+  const levelLines = curveLines(levelSamples(absolute), stepped)
+  const cctLines = curveLines(cctSamples(absolute), stepped)
   const levelDots = absolute.filter((p) => p.level_mode === 'absolute' && p.level != null)
   const astro = points.filter((p) => p.time_ref !== 'absolute')
 
@@ -362,7 +362,7 @@ function DayCurve({ points, algorithm }: { points: HclSchedulePoint[]; algorithm
         )}
         {[0, 6, 12, 18, 24].map((h) => (
           <text key={h} class="gridlab" x={Math.min(x(h * 60) + 2, CURVE_W - 34)} y="146">
-            {hhmm(h * 60 === MINUTES_PER_DAY ? 0 : h * 60)}
+            {h * 60 === MINUTES_PER_DAY ? '24:00' : hhmm(h * 60)}
           </text>
         ))}
       </svg>

@@ -299,19 +299,30 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       </div>
 
       <div class="card span2">
-        <header>
-          <h3>Rules engine</h3>
-          <span class="note">live counts and the latency window are gauges</span>
-        </header>
-        <div class="attr"><span class="k">Activations</span><span class="v">412</span><span class="delta live">+1</span></div>
-        <div class="attr"><span class="k">Suppressed (cooldown)</span><span class="v">37</span><span class="delta"></span></div>
+        <header><h3>Rules engine</h3></header>
+        <div class="attr"><span class="k">Activations total</span><span class="v">412</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Activations dry</span><span class="v">3</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Suppressed cooldown</span><span class="v">37</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Suppressed disabled</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Conditions rejected</span><span class="v">5</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Partial outcomes</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Chain depth exceeded</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Effects emitted</span><span class="v">655</span><span class="delta live">+2</span></div>
         <div class="attr"><span class="k">Actions failed</span><span class="v">2</span><span class="delta"></span></div>
-        <div class="attr sub"><span class="k">Rules loaded</span><span class="v">6</span><span class="delta"></span></div>
-        <div class="attr sub"><span class="k">Timers active</span><span class="v">1</span><span class="delta"></span></div>
-        <div class="attr sub"><span class="k">Continuations pending</span><span class="v">2</span><span class="delta"></span></div>
-        <div class="attr sub"><span class="k">Trigger → publish p50 / p95 / max</span><span class="v">41 / 96 / 180 <span class="unit">ms</span></span><span class="delta"></span></div>
-        <div class="attr sub"><span class="k">stat("presses")</span><span class="v">37</span><span class="delta live">+1</span></div>
-        <div class="attr sub"><span class="k">stat("away")</span><span class="v">4</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Effects unbound</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Hcl switches coalesced</span><span class="v">4</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Continuations scheduled</span><span class="v">58</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Continuations fired</span><span class="v">56</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Continuations dropped</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Continuations pending</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Timers active</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ticks time unsynced</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Rules loaded</span><span class="v">6</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Vars in use</span><span class="v">3</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Latency p50 ms</span><span class="v">41</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Latency p95 ms</span><span class="v">96</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Latency max ms</span><span class="v">180</span><span class="delta"></span></div>
+        <div class="attr sub"><span class="k">stat("hall_button")</span><span class="v">27</span><span class="delta live">+1</span></div>
       </div>
 
       <!-- I5. The product view of the push channel: three figures, against the
