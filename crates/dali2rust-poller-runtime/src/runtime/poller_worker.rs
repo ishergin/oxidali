@@ -325,7 +325,7 @@ fn already_outstanding(state: &PollerState, adapter_id: u8, short_address: u8) -
 }
 
 fn groups_mask_for(settings: &PollerSettingsView, target: &PollTargetView) -> u8 {
-    let mut mask = settings.attribute_groups_mask;
+    let mut mask = DaliAttributeGroup::polled_mask(settings.attribute_groups_mask);
     if settings.include_dt8_color && target.is_dt8 {
         mask |= DaliAttributeGroup::Dt8Color.mask_bit();
     }
@@ -789,6 +789,31 @@ mod tests {
             ReadVerdict::Failed,
             "a transport abort keeps the flat failure cooldown"
         );
+    }
+
+    #[test]
+    fn scene_colours_are_never_polled_whatever_the_settings_hold() {
+        let settings = PollerSettingsView {
+            enabled: true,
+            interval_ms: 5_000,
+            attribute_groups_mask: DaliAttributeGroup::RuntimeStatus.mask_bit()
+                | DaliAttributeGroup::SceneColours.mask_bit(),
+            include_dt8_color: true,
+            include_energy: false,
+            include_diagnostics: false,
+            skip_unbound_virtual_lamps: true,
+        };
+        let target = PollTargetView {
+            short_address: 3,
+            is_dt8: true,
+            is_dt6: false,
+            declares_energy: false,
+            declares_diagnostics: false,
+        };
+        let mask = groups_mask_for(&settings, &target);
+        assert_eq!(mask & DaliAttributeGroup::SceneColours.mask_bit(), 0);
+        assert_ne!(mask & DaliAttributeGroup::RuntimeStatus.mask_bit(), 0);
+        assert_ne!(mask & DaliAttributeGroup::Dt8Color.mask_bit(), 0);
     }
 
     #[test]

@@ -83,24 +83,28 @@ design copies of scenarios.
 
 Decided in [`ADR-004`](decisions/ADR-004-bdd-black-box-boundary.md).
 
-- **Drive** the composed host stack through HTTP, and through the WebSocket endpoint
-  with a real client. Foreign bus traffic enters through the transport's observed-frame
-  seam (`MockDaliTransport::inject_observed_frame`), the same channel the hardware
-  transport feeds.
-- **Assert** only HTTP status and bodies, response DTOs, WebSocket frames, frames
-  recorded by `MockDaliTransport`, and effects visible at a mocked port such as the
-  slice store.
+- **Drive** the composed host stack through HTTP, through the WebSocket endpoint with a
+  real client, and through the broker side of `MockMqttClient` when the MQTT surface is
+  the feature under test. Foreign bus traffic enters through the transport's
+  observed-frame seam (`MockDaliTransport::inject_observed_frame`), the same channel the
+  hardware transport feeds.
+- **Assert** only HTTP status and bodies, response DTOs, WebSocket frames, MQTT
+  messages, frames recorded by `MockDaliTransport`, and effects visible at a mocked port
+  such as the slice store.
 - **Never** call into `BusStackRuntime` (the World may hold it only as an inert
   keep-alive), bus channels or publishers, `RegistryStore` or read ports, confirmation
   slots, or worker counters.
 
 ## Host models and the mock transport
 
-- The gear and control-device models keep no clock. Fades are stored but instant; the
-  send-twice 100 ms window, the identification and commissioning timers and the running
-  of the Part 301/303 timers (their variables are modelled) are not simulated; neither
-  are power-on and system-failure behaviour, memory-bank writes and the bank-1 lock, the
-  xy gamut, or Part 302/304 instances. No host test proves any of them.
+- The control-device model keeps no clock; the gear fleet keeps only the time its driver
+  passes in (`GearFleet::advance_to_ms`), which RANDOMISE's 100 ms settling alone reads.
+  Fades are stored but instant; the send-twice 100 ms window, the identification and
+  commissioning timers and the running of the Part 301/303 timers (their variables are
+  modelled) are not simulated; neither are system-failure behaviour, memory-bank writes
+  and the bank-1 lock, the xy gamut, or Part 302/304 instances. No host test proves any
+  of them. A power cycle (`GearFleet::power_cycle`: power-on level, `powerCycleSeen`)
+  is modelled, but only the model's own tests drive it.
 - The gear model's bench-conformance allowlist (`KNOWN_DIVERGENCE`) is pinned to one
   corpus capture, never "the latest", and only shrinks: every entry states its reason,
   "not modelled yet" is not one, and an entry that no longer diverges is removed.
@@ -140,10 +144,11 @@ Decided in [`ADR-004`](decisions/ADR-004-bdd-black-box-boundary.md).
 
 ## Feature tree
 
-- `features/<resource>/`, one directory per REST resource, plus three non-resource
-  layers: `diagnostic/` (the low-level `/api/v1/dali/*` surface and
-  `/api/v1/diagnostics`), `system/` (boot, health, composition and cross-resource
-  integration), `contracts/` (HTTP → bus → wire contracts).
+- `features/<resource>/`, one directory per REST resource, plus non-resource layers:
+  `diagnostic/` (the low-level `/api/v1/dali/*` surface and `/api/v1/diagnostics`),
+  `system/` (boot, health, composition and cross-resource integration), `contracts/`
+  (HTTP → bus → wire contracts), and one directory per surface or mechanism no resource
+  owns (`mqtt_home_assistant/`, `web_ui/`, `persistence/`, `poller/`).
 - Directory names are snake_case. The allowed set is the list in
   `verify_bdd_tree_policy.sh`; a new resource adds its directory there. `dali/`, `bus/`,
   `display/` and `registry/` are forbidden, and an empty directory fails the coverage

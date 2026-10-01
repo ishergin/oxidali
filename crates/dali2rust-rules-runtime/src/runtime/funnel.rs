@@ -228,7 +228,7 @@ impl FunnelState {
 
     pub(crate) fn hcl_edges<'a>(&mut self, world: &dyn RulesWorldPort) -> Vec<EngineInput<'a>> {
         let mut inputs = Vec::new();
-        for state in world.hcl() {
+        for state in crate::runtime::engine::hcl_per_target(world.hcl()) {
             let previous = self.hcl.insert(state.target, state.overridden);
             if previous.is_some() && previous != Some(state.overridden) {
                 inputs.push(EngineInput::HclOverride {

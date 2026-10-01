@@ -41,17 +41,16 @@ invalid_value`.
 - Worker шлёт одну пару `IDENTIFY DEVICE` и ничего больше; окно около 10 с принадлежит
   прибору, поэтому длительности в запросе нет, а индикация не обязана быть светом
   ([09 §Faults and identification](../../../architecture/09-dali-protocol-rules.md#faults-and-identification)).
-- Результат операции: `{short_address, identify_mechanism}`. Живой механизм —
-  `identify_device`; `blink_recall_max_min` остаётся в перечислении только как подпись
-  старых записей.
+- Результат операции: `{short_address, identify_mechanism: "identify_device"}`.
 
 ## `POST address-changes`
 
 Тело: `short_address`, `new_short_address`, `verify_after_program` (по умолчанию
 `true`).
 
-- Ошибки: адрес вне `0..63` или адреса равны — `422 invalid_value`; исходного прибора
-  нет — `404 not_found`; целевой адрес занят другим прибором — `409 conflict`.
+- Ошибки: неизвестный ключ тела — `400 unknown_field`; адрес вне `0..63` или адреса
+  равны — `422 invalid_value`; исходного прибора нет — `404 not_found`; целевой адрес
+  занят другим прибором — `409 conflict`.
 - Операнд доказывается до `SET SHORT ADDRESS`
   ([`ADR-027`](../../../architecture/decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md)),
   проверка идёт по новому адресу
@@ -68,8 +67,9 @@ invalid_value`.
 адаптера) и `restore` — флаги `metadata_and_overrides`, `attributes`, `groups`,
 `scenes` (все по умолчанию `true`, хотя бы один обязан остаться `true`).
 
-- Ошибки: любого из приборов нет — `404`; адреса вне диапазона, равны или все флаги
-  `false` — `422 invalid_value`.
+- Ошибки: неизвестный ключ тела (и в `restore`) — `400 unknown_field`; любого из
+  приборов нет — `404`; адреса вне диапазона, равны или все флаги `false` — `422
+  invalid_value`.
 - Worker переадресует заменитель на адрес отказавшего прибора, реестр ставит на этот адрес
   его запись и переносит в неё из записи отказавшего метаданные и override'ы, если выбран
   `metadata_and_overrides`, и блок атрибутов, если выбран `attributes`. На сам прибор
@@ -89,7 +89,7 @@ invalid_value`.
 
 | `step` | Тело | Добавки в ответе |
 |---|---|---|
-| `initialise` | `{scope: all \| unaddressed \| short, short_address?}` | — |
+| `initialise` | `{scope?: all (по умолчанию) \| unaddressed \| short, short_address?}` | — |
 | `randomise` | `{}` | — |
 | `search-address` | `{search_address}` (24 бита) | — |
 | `compare` | `{}` | `match` |
@@ -98,8 +98,11 @@ invalid_value`.
 | `query-short-address` | `{}` | `short_address`, `answer` |
 | `withdraw`, `terminate` | `{}` | — |
 
+- Неизвестный ключ тела — `400 unknown_field`; шаг, команду которого никто не принял,
+  — `503 delivery_rejected`.
 - Ответ — `success`, `backward_frame` и добавки шага; отсутствующее поле значит «к
-  шагу не относится». Отказ исполнения тоже приходит `200` с `success: false`, и тогда
+  шагу не относится» или, при `success: false`, «шаг не исполнен». Отказ исполнения
+  тоже приходит `200` с `success: false`, и тогда
   в ответе есть `error_code` и `message`, если исполнитель назвал причину (например,
   `adapter_disabled`), — чтобы собственный выключатель оператора не читался как мёртвый
   прибор.

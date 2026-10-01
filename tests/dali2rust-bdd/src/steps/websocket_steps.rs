@@ -318,6 +318,14 @@ async fn then_input_event_named(world: &mut DaliWorld, want: String) {
 }
 
 // WS-010
+#[then("the frame should carry the controller's time of the event")]
+async fn then_frame_carries_event_time(world: &mut DaliWorld) {
+    let frame = world.remembered_json.clone().expect("no remembered frame");
+    let ts = frame["ts_ms"].as_u64();
+    assert!(ts.is_some_and(|ms| ms > 0), "ts_ms must be stamped, frame was {frame}");
+}
+
+// WS-010
 #[then("the operation payload should carry a string operation_id")]
 async fn then_operation_id_is_string(world: &mut DaliWorld) {
     let frame = world.remembered_json.clone().expect("no remembered frame");

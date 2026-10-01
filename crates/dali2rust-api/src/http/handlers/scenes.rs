@@ -250,6 +250,7 @@ impl crate::http::handlers::common::MutatingHandler for SceneApplyHandler {
         );
         publish_apply_execute(
             &self.publisher,
+            self.bus_id,
             OperationType::SceneApply,
             operation_id,
             execute,

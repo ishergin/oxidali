@@ -92,7 +92,7 @@ Home Assistant: что значит каждое поле и какие инва
 | Поле `RuntimeObservation`, `included` / `setpoint` строки сцены, `waf` (read-only имя шести каналов) | `422 unsupported_field` |
 | Неизвестное поле, в том числе `brightness` и `mired` | `400 unknown_field` |
 | `level > 254`, кельвины вне `1000..20000`, `xy` вне `0..1` или `(0, 0)` | `422 invalid_value` |
-| Режим, которого нет в effective capabilities цели | `422 unsupported_capability` |
+| Режим, которого нет в effective capabilities цели (исключение у группы — [`../resources/groups.md`](../resources/groups.md)) | `422 unsupported_capability` |
 | Неизвестное значение enum'а | `422 invalid_enum` |
 
 ## `SceneRow` — строка матрицы сцены

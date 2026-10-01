@@ -286,6 +286,27 @@ pub fn parse_json_body(body: &[u8]) -> Result<serde_json::Value, HttpResponse> {
     parse_typed_body(body)
 }
 
+pub fn body_parse_error(
+    error: &serde_json::Error,
+    fallback_status: u16,
+    fallback_code: &str,
+) -> HttpResponse {
+    if error.to_string().starts_with("unknown field") {
+        json_err(400, "unknown_field")
+    } else {
+        json_err(fallback_status, fallback_code)
+    }
+}
+
+pub fn parse_strict_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, HttpResponse> {
+    let body_slice = if body.is_empty() {
+        "{}".as_bytes()
+    } else {
+        body
+    };
+    serde_json::from_slice(body_slice).map_err(|error| body_parse_error(&error, 400, "invalid_json"))
+}
+
 pub fn parse_physical_short(params: &HashMap<String, String>) -> Result<u8, HttpResponse> {
     let Some(ss) = params.get("short") else {
         return Err(json_err(400, "missing_short_address"));
@@ -402,17 +423,20 @@ pub fn reject_if_apply_active(
 
 pub fn publish_apply_execute(
     publisher: &dali2rust_bus::BusPublisher,
+    bus_id: dali2rust_bus::BusId,
     operation_type: OperationType,
     operation_id: String,
     execute: dali2rust_contracts::msg::CommandEnvelope,
 ) -> Result<HttpResponse, HttpResponse> {
-    if publisher.try_publish(
-        dali2rust_bus::BusChannel::Commands,
-        dali2rust_bus::BusFrame::command(execute),
-    ) != dali2rust_bus::PublishResult::Queued
-    {
-        return Err(json_err(503, "commands_ingress_overload"));
-    }
+    let workflow = execute.meta.correlation_id;
+    crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command_pair(
+        publisher,
+        bus_id,
+        workflow,
+        &operation_id,
+        operation_type,
+        execute,
+    )?;
     Ok(accepted_operation_response(operation_id, operation_type))
 }
 

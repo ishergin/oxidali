@@ -84,9 +84,10 @@ flash, XIP and cache discipline → [08](08-dali-phy-and-transport.md); threadin
   inlined, its frame is added to the caller's for the caller's whole body. The two DTOs
   are filled in place in a `Box` (`*_dto_into`), never returned by value.
 - The standard slice sorts keep their scratch in their own frame: 4 KiB for `sort*`
-  (driftsort), up to 48 elements for `sort_unstable*`. Firmware code orders its lists,
-  which product limits bound, with the in-place, stable
-  `dali2rust_platform::small_sort::insertion_sort_by`. A `BTreeMap` (a `serde_json::Map`
+  (driftsort), up to 48 elements for `sort_unstable*`. Firmware code calls no stable std
+  sort: it orders its lists, which product limits bound, with the in-place, stable
+  `dali2rust_platform::small_sort::insertion_sort_by` or, where the order of equal
+  elements cannot matter, with `sort_unstable*`. A `BTreeMap` (a `serde_json::Map`
   included) collected from an array or an iterator runs the same stable sort, so one is
   filled with `insert`.
 
@@ -98,12 +99,12 @@ unless named.
 
 | Class | Size | For |
 | --- | --- | --- |
-| `HYDRATION_WORKER` | 48 KiB | One-shot boot hydration, joined; the standby's slice reload |
+| `HYDRATION_WORKER` | 48 KiB | One-shot boot hydration, joined; a slice reload (import, replication) |
 | `HTTPD_TASK_STACK_BYTES` (adapters) | 20 KiB | The one httpd task |
 | `OTA_UPDATE_STACK` | 16 KiB | One update, spawned fallibly when it starts |
 | `COMMAND_WORKER_STACK` | 12 KiB | Deep executors: DALI worker, rules worker |
 | `STATE_WORKER_STACK` | 10 KiB | Workers that own state and build views: registry, operation tracker |
-| `EVENT_WORKER_STACK` | 8 KiB | Workers that route small payloads: projector, sniffer translator, apply orchestrator, HCL, poller, WebSocket, MQTT, replication; one `ws-client` sender per connected client, so the four-client cap holds 32 KiB |
+| `EVENT_WORKER_STACK` | 8 KiB | Workers that route small payloads: projector, sniffer translator, apply orchestrator, HCL, poller, WebSocket, MQTT, replication; the boot verifier; one `ws-client` sender per connected client, so the four-client cap holds 32 KiB |
 | `RING_CONSUMER_STACK` | 8 KiB | Ring and driver pollers: `dali-sniff`, IP watcher |
 | `DISPLAY_WORKER` | 6 KiB | Display worker, SNTP watcher |
 | `ARBITRATION_WORKER_STACK` | 4 KiB | Arbitration probe worker |
@@ -112,10 +113,11 @@ unless named.
 - A task that idles for the whole uptime — a listener, a supervisor, a feature that is
   off by default — gets the smallest class; the work it triggers runs on a thread
   created for the occasion.
-- The bus task and the confirmation bridge use 8 KiB constants local to their crates;
-  `main` has the sdkconfig's 12 KiB for the composition boot and returns afterwards, so
-  that stack is freed. The census thread carries the heartbeat. `mqtt_task` is sized by
-  the bridge (`task_stack`); ESP-IDF allocates it internal.
+- The bus task and the confirmation bridge use 8 KiB constants local to their crates, and
+  the UART log writer a 4 KiB one (`console.rs`); `main` has the sdkconfig's 12 KiB for
+  the composition boot and returns afterwards, so that stack is freed. The census thread
+  carries the heartbeat. `mqtt_task` is sized by the bridge (`task_stack`); ESP-IDF
+  allocates it internal.
 
 ## The stack census is a gate
 

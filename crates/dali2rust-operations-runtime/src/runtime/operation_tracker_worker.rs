@@ -155,7 +155,6 @@ fn lock_tracker(state: &Mutex<OperationTrackerInner>) -> MutexGuard<'_, Operatio
 
 #[derive(Clone, Default)]
 struct GroupApplyAccumulator {
-    expected_outcomes: u16,
     programmed: Vec<OperationGroupApplyOutcomeView>,
     skipped: Vec<OperationGroupApplyOutcomeView>,
     failed: Vec<OperationGroupApplyOutcomeView>,
@@ -163,12 +162,10 @@ struct GroupApplyAccumulator {
     skipped_total: u16,
     failed_total: u16,
     seen_cells: [u64; 16],
-    terminal_error: Option<(ErrorCode, String)>,
 }
 
 #[derive(Clone, Default)]
 struct SceneApplyAccumulator {
-    expected_outcomes: u16,
     written: Vec<OperationSceneApplyOutcomeView>,
     updated: Vec<OperationSceneApplyOutcomeView>,
     cleared: Vec<OperationSceneApplyOutcomeView>,
@@ -180,7 +177,6 @@ struct SceneApplyAccumulator {
     skipped_total: u16,
     failed_total: u16,
     seen_rows: u64,
-    terminal_error: Option<(ErrorCode, String)>,
 }
 
 fn push_capped<T>(list: &mut Vec<T>, outcome: T) {
@@ -223,7 +219,7 @@ pub struct OperationTrackerInner {
     pub events: Vec<RecordedOperationStatus>,
     pub http_by_key: HashMap<String, HttpOpRow>,
     active: HashMap<u64, TrackedOp>,
-    coalesce: HashMap<(u8, u32), u64>,
+    coalesce: HashMap<CoalesceKey, u64>,
     pending_group_apply: PendingMap<Vec<DaliGroupMembershipProgrammedEvent>>,
     pending_scene_apply: PendingMap<Vec<DaliSceneProgrammedEvent>>,
     pending_attribute_read: PendingMap<OperationAttributeReadOutcomesView>,
@@ -357,16 +353,10 @@ impl SceneApplyAccumulator {
 }
 
 impl OperationDetailState {
-    fn from_begin(op_type: OperationType, expected_outcomes: u16) -> Self {
+    fn from_begin(op_type: OperationType) -> Self {
         match op_type {
-            OperationType::GroupApply => Self::GroupApply(GroupApplyAccumulator {
-                expected_outcomes,
-                ..GroupApplyAccumulator::default()
-            }),
-            OperationType::SceneApply => Self::SceneApply(SceneApplyAccumulator {
-                expected_outcomes,
-                ..SceneApplyAccumulator::default()
-            }),
+            OperationType::GroupApply => Self::GroupApply(GroupApplyAccumulator::default()),
+            OperationType::SceneApply => Self::SceneApply(SceneApplyAccumulator::default()),
             _ => Self::None,
         }
     }
@@ -564,7 +554,7 @@ fn clear_active_entry(
 ) {
     inner.active.remove(&workflow_correlation_id);
     inner.for_each_pending_buffer(|buf| buf.remove_correlation(workflow_correlation_id));
-    let k = (op.op_type as u8, op.adapter_id);
+    let k = coalesce_key(op.op_type, op.adapter_id, &op.operation_key);
     if inner.coalesce.get(&k).copied() == Some(workflow_correlation_id) {
         inner.coalesce.remove(&k);
     }
@@ -722,10 +712,10 @@ fn handle_operation_begin(
     let op_type = body.operation_type;
     let deadline = Instant::now() + Duration::from_millis(u64::from(body.ttl_ms.max(1)));
     let mut guard = lock_tracker(state);
-    let coalesce_key = (op_type as u8, adapter_id);
-    let coalesces = op_type.coalesces_per_adapter();
+    let key = coalesce_key(op_type, adapter_id, body.operation_key.as_str());
+    let coalesces = op_type.coalesces_per_resource();
     if coalesces {
-        supersede_stale_operation(publisher, bus_id, &mut guard, counters, coalesce_key, corr);
+        supersede_stale_operation(publisher, bus_id, &mut guard, counters, &key, corr);
     }
     let op = TrackedOp {
         workflow_correlation_id: corr,
@@ -736,7 +726,7 @@ fn handle_operation_begin(
         deadline,
         finished_retention_ms: body.finished_retention_ms.max(1),
         started_at_unix_ms: unix_wall_clock_millis(),
-        detail: OperationDetailState::from_begin(op_type, body.expected_outcomes),
+        detail: OperationDetailState::from_begin(op_type),
     };
     emit_transition(
         publisher,
@@ -749,10 +739,19 @@ fn handle_operation_begin(
         None,
     );
     if coalesces {
-        guard.coalesce.insert(coalesce_key, corr);
+        guard.coalesce.insert(key, corr);
     }
     guard.active.insert(corr, op);
     flush_begin_backlog(publisher, bus_id, &mut guard, counters, corr, op_type);
+}
+
+type CoalesceKey = (u8, u32, String);
+
+fn coalesce_key(op_type: OperationType, adapter_id: u32, operation_key: &str) -> CoalesceKey {
+    let resource = operation_key
+        .rsplit_once('-')
+        .map_or(operation_key, |(resource, _serial)| resource);
+    (op_type as u8, adapter_id, resource.to_owned())
 }
 
 fn supersede_stale_operation(
@@ -760,10 +759,10 @@ fn supersede_stale_operation(
     bus_id: BusId,
     guard: &mut OperationTrackerInner,
     counters: &Arc<OperationTrackerCounters>,
-    coalesce_key: (u8, u32),
+    coalesce_key: &CoalesceKey,
     corr: u64,
 ) {
-    if let Some(old_c) = guard.coalesce.get(&coalesce_key).copied() {
+    if let Some(old_c) = guard.coalesce.get(coalesce_key).copied() {
         if old_c != corr {
             if let Some(old_op) = guard.active.remove(&old_c) {
                 emit_terminal_with_retention(
@@ -775,7 +774,7 @@ fn supersede_stale_operation(
                     OperationStatus::Cancelled,
                     ErrorCode::Superseded,
                 );
-                guard.coalesce.remove(&coalesce_key);
+                guard.coalesce.remove(coalesce_key);
             }
         }
     }
@@ -1069,8 +1068,6 @@ trait ApplyFamily: Sized {
         body: &Self::Body,
         bucket: OutcomeBucket,
     ) -> Bucket<'_, Self::Outcome>;
-    fn terminal_error_mut(&mut self) -> &mut Option<(ErrorCode, String)>;
-    fn finished(&self) -> bool;
 }
 
 impl ApplyFamily for GroupApplyAccumulator {
@@ -1130,16 +1127,7 @@ impl ApplyFamily for GroupApplyAccumulator {
         }
     }
 
-    fn terminal_error_mut(&mut self) -> &mut Option<(ErrorCode, String)> {
-        &mut self.terminal_error
-    }
 
-    fn finished(&self) -> bool {
-        let total = usize::from(self.programmed_total)
-            + usize::from(self.skipped_total)
-            + usize::from(self.failed_total);
-        total >= usize::from(self.expected_outcomes)
-    }
 }
 
 impl ApplyFamily for SceneApplyAccumulator {
@@ -1201,18 +1189,7 @@ impl ApplyFamily for SceneApplyAccumulator {
         }
     }
 
-    fn terminal_error_mut(&mut self) -> &mut Option<(ErrorCode, String)> {
-        &mut self.terminal_error
-    }
 
-    fn finished(&self) -> bool {
-        let total = usize::from(self.written_total)
-            + usize::from(self.updated_total)
-            + usize::from(self.cleared_total)
-            + usize::from(self.skipped_total)
-            + usize::from(self.failed_total);
-        total >= usize::from(self.expected_outcomes)
-    }
 }
 
 fn route_apply_outcome<F: ApplyFamily>(result: &mut F, body: &F::Body) {
@@ -1220,27 +1197,20 @@ fn route_apply_outcome<F: ApplyFamily>(result: &mut F, body: &F::Body) {
     let bucket = match F::error(body).map(|error| error.code) {
         None => OutcomeBucket::Success,
         Some(ErrorCode::VlUnbound) => OutcomeBucket::Skipped,
-        Some(code) => {
-            let message = F::error(body)
-                .map(|error| error.message.as_str().to_string())
-                .unwrap_or_default();
-            *result.terminal_error_mut() = Some((code, message));
-            OutcomeBucket::Failed
-        }
+        Some(_) => OutcomeBucket::Failed,
     };
     bump_bucket(result.bucket_mut(body, bucket), outcome);
 }
 
-fn record_apply_outcome<F: ApplyFamily>(
-    detail: &mut OperationDetailState,
-    body: &F::Body,
-) -> Option<(bool, Option<(ErrorCode, String)>)> {
-    let result = F::from_detail(detail)?;
+fn record_apply_outcome<F: ApplyFamily>(detail: &mut OperationDetailState, body: &F::Body) -> bool {
+    let Some(result) = F::from_detail(detail) else {
+        return false;
+    };
     if result.already_counted(body) {
-        return None;
+        return false;
     }
     route_apply_outcome(result, body);
-    Some((result.finished(), result.terminal_error_mut().clone()))
+    true
 }
 
 fn apply_apply_outcome<F: ApplyFamily>(
@@ -1259,21 +1229,14 @@ fn apply_apply_outcome<F: ApplyFamily>(
     let Some(slot) = guard.active.get_mut(&workflow_c) else {
         return;
     };
-    let Some((finished, terminal_error)) = record_apply_outcome::<F>(&mut slot.detail, body)
-    else {
+    if !record_apply_outcome::<F>(&mut slot.detail, body) {
         return;
-    };
+    }
     let current = slot.clone();
     guard.upsert_http(
         &current.operation_key,
         operation_view_for(&current, current.status, None),
         None,
-    );
-    if !finished {
-        return;
-    }
-    finish_apply_operation(
-        publisher, bus_id, guard, counters, workflow_c, &current, terminal_error,
     );
 }
 
@@ -1289,23 +1252,6 @@ fn flush_pending_apply_outcomes<F: ApplyFamily>(
     });
 }
 
-fn finish_apply_operation(
-    publisher: &BusPublisher,
-    bus_id: BusId,
-    guard: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
-    workflow_c: u64,
-    current: &TrackedOp,
-    terminal_error: Option<(ErrorCode, String)>,
-) {
-    let (status, error_payload) = match &terminal_error {
-        Some((code, message)) => (OperationStatus::Failed, Some((*code, message.as_str()))),
-        None => (OperationStatus::Succeeded, None),
-    };
-    apply_terminal(
-        publisher, bus_id, guard, counters, workflow_c, current, status, error_payload,
-    );
-}
 
 fn scene_action_name(action: SceneProgramAction) -> &'static str {
     match action {
@@ -1520,6 +1466,7 @@ fn drain_rejected_deliveries(
         let correlation = conf.meta.correlation_id;
         let mut guard = lock_tracker(state);
         let Some(op) = guard.active.get(&correlation).cloned() else {
+            park_rejection(&mut guard, correlation);
             continue;
         };
         emit_terminal_with_retention(
@@ -1533,6 +1480,16 @@ fn drain_rejected_deliveries(
         );
         clear_active_entry(&mut guard, correlation, &op);
     }
+}
+
+fn park_rejection(guard: &mut OperationTrackerInner, correlation: u64) {
+    let failed = dali2rust_contracts::msg::OperationWorkerSignalEvent::failed(
+        correlation,
+        ErrorCode::CommandsIngressOverload,
+        "delivery_rejected",
+    );
+    let signals = pending_worker_signals_mut(guard);
+    queue_pending_list(signals, correlation, failed, MAX_PENDING_SIGNALS);
 }
 
 fn evict_expired_pending_outcomes(
@@ -1631,6 +1588,7 @@ fn adapter_scoped_key_prefix(operation_type: OperationType, adapter_id: u8) -> O
     let family = match operation_type {
         OperationType::GroupApply => "grp-apply",
         OperationType::SceneApply => "scn-apply",
+        OperationType::PolicyApply => "policy-apply",
         OperationType::CommissioningIdentify => "comm-ident",
         OperationType::CommissioningAddressChange => "comm-addr",
         OperationType::CommissioningReplaceDevice => "comm-repl",

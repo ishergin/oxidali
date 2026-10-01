@@ -169,7 +169,7 @@ pub fn send_standard_query_observed(
     let (response, contended) = controller
         .send_command_observed(&DaliCommand::Standard { address, command })
         .map_err(|error| map_transport_error(&error))?;
-    Ok((response.value(), contended))
+    Ok((response.value(), contended || response == DaliResponse::Violation))
 }
 
 pub fn send_standard_response(
@@ -289,7 +289,7 @@ pub fn send_extended_query_observed(
     let (response, contended) = controller
         .send_command_observed(&DaliCommand::Extended { address, command })
         .map_err(|error| map_transport_error(&error))?;
-    Ok((response.value(), contended))
+    Ok((response.value(), contended || response == DaliResponse::Violation))
 }
 
 pub fn send_extended_query(
@@ -609,6 +609,42 @@ mod tests {
 
         assert_eq!(value, Some(0x01));
         assert_eq!(controller.commands.len(), 3);
+    }
+
+    #[test]
+    fn violating_answers_are_heard_and_never_make_a_gear_absent() {
+        let mut controller =
+            ObservedQueryController::new(&[(DaliResponse::Violation, false); 3]);
+        let mut breaker = MandatorySilenceBreaker::new();
+        for _ in 0..3 {
+            let value = send_mandatory_query(
+                &mut breaker,
+                &mut controller,
+                short_address_one(),
+                StandardCommand::QueryGroups0To7,
+            )
+            .expect("a violation is an answer, not a silence");
+            assert_eq!(value, None, "a violation carries no value");
+        }
+    }
+
+    #[test]
+    fn three_silences_still_make_a_gear_absent() {
+        let mut controller =
+            ObservedQueryController::new(&[(DaliResponse::NoAnswer, false); 3]);
+        let mut breaker = MandatorySilenceBreaker::new();
+        let outcomes: Vec<_> = (0..3)
+            .map(|_| {
+                send_mandatory_query(
+                    &mut breaker,
+                    &mut controller,
+                    short_address_one(),
+                    StandardCommand::QueryGroups0To7,
+                )
+            })
+            .collect();
+        assert!(outcomes[..2].iter().all(Result::is_ok));
+        assert!(outcomes[2].is_err());
     }
 
     #[test]

@@ -37,6 +37,12 @@ Feature: Settings — Poller
     Then the response status should be 422
     And the JSON error should be "invalid_enum"
 
+  @id:SET-POL-020
+  Scenario: PATCH refuses scene colours, which the poller never reads
+    When I PATCH JSON {"attribute_groups_default":["runtime_status","scene_colours"]} to "/api/v1/settings/poller"
+    Then the response status should be 422
+    And the JSON error should be "invalid_enum"
+
   @id:SET-POL-013
   Scenario: PATCH rejects the retired max_concurrent field
     When I PATCH JSON {"max_concurrent":2} to "/api/v1/settings/poller"

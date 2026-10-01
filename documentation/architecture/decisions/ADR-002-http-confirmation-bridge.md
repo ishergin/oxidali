@@ -33,8 +33,11 @@ downtime for every client.
 
 ## Consequences
 
-- Confirmation semantics and HTTP status codes are identical across handlers; a
-  synthetic rejection behaves like any other confirmation at the bridge boundary.
+- Confirmation semantics and HTTP status codes are identical across the resource
+  handlers; a synthetic rejection behaves like any other confirmation at the bridge
+  boundary. The diagnostic `/api/v1/dali/*` routes alone answer `200` with the
+  confirmation body itself, whose `error` names the outcome, `delivery_rejected`
+  included ([diagnostic DALI](../../product-design/rest-api/resources/diagnostic-dali.md)).
 - The confirmation path stays typed end to end inside the runtime; JSON appears only
   when the reply formatter renders the HTTP body.
 - The full status-code mapping and the reply formatters are described in

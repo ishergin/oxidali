@@ -48,6 +48,14 @@ Feature: IEC 62386-103 input devices as a REST resource
     When I send a GET request to "/api/v1/adapters/0/input-devices/0"
     Then the response status should be 404
 
+  @id:INP-086
+  Scenario: A name over its 64 bytes is refused, not cut
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And I PATCH JSON {"name":"ййййййййййййййййййййййййййййййййй"} to "/api/v1/adapters/0/input-devices/0"
+    Then the response status should be 422
+    And the JSON error should be "invalid_value"
+
   @id:INP-017
   Scenario: An empty metadata patch is a client error, not a silent write
     Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
@@ -96,6 +104,17 @@ Feature: IEC 62386-103 input devices as a REST resource
     And the mock bus answers 24-bit query "01 00 83" with "00"
     And I PATCH JSON {"enabled":false} to "/api/v1/adapters/0/input-devices/0/instances/0" and the operation succeeds
     Then the mock transport 24-bit trace should be exactly "01 00 63, 01 00 63, 01 00 83"
+
+  @id:INP-085
+  Scenario: Two writes to one instance are two operations, each with its own outcome
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock bus answers 24-bit query "01 00 83" with "00"
+    And I PATCH JSON {"enabled":false} to "/api/v1/adapters/0/input-devices/0/instances/0" and the operation succeeds
+    And I PATCH JSON {"enabled":false} to "/api/v1/adapters/0/input-devices/0/instances/0" and the operation succeeds
+    And I send a GET request to "/api/v1/operations"
+    Then the response status should be 200
+    And the operations list should contain exactly 3 operations
 
   @id:INP-082
   Scenario: A device that answered an earlier scan and stays silent in the next loses presence

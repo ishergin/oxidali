@@ -9,7 +9,7 @@ rules — crate boundaries, threading, contracts, testing and merge gates — ar
 
 ```bash
 (cd web/app && npm ci)   # once: the gates type-check and test the web UI
-just ci                  # clippy, host tests, BDD, merge gates, firmware type-check
+just ci                  # clippy, host tests, BDD, gates, firmware and emulator type-checks
 ```
 
 New behaviour starts with a failing BDD scenario. Keep one logical change per commit,

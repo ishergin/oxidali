@@ -104,8 +104,10 @@ impl Write for FixedWriter<'_> {
     }
 }
 
+const ESP_VERBOSE: bool = dali2rust_platform::knob::flag_knob_on(option_env!("DALI2RUST_ESP_VERBOSE"));
+
 fn uart_accepts(metadata: &log::Metadata) -> bool {
-    if option_env!("DALI2RUST_ESP_VERBOSE").is_some() {
+    if ESP_VERBOSE {
         return true;
     }
     metadata.level() <= log::Level::Warn

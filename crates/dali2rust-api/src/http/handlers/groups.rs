@@ -199,6 +199,7 @@ impl crate::http::handlers::common::MutatingHandler for GroupApplyHandler {
         let execute = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, workflow, self.bus_id.0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::GroupApplyExecuteCommand { registry_adapter_id: adapter_id, operation_key: dali2rust_contracts::msg::fixed_text_32(&operation_id) });
         publish_apply_execute(
             &self.publisher,
+            self.bus_id,
             OperationType::GroupApply,
             operation_id,
             execute,

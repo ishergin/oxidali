@@ -68,6 +68,16 @@ Feature: HCL schedule CRUD
     Then the response status should be 409
     And the JSON error should be "conflict"
 
+  @id:HCL-079
+  Scenario: A ninth schedule written in several chunks fails with the limit as its cause
+    Given 8 HCL schedules exist
+    When I POST an HCL schedule whose "points" is [{"time_ref":"absolute","offset_minutes":60,"level_mode":"none","level":null,"color_temperature_kelvin":2700},{"time_ref":"absolute","offset_minutes":120,"level_mode":"none","level":null,"color_temperature_kelvin":2700},{"time_ref":"absolute","offset_minutes":180,"level_mode":"none","level":null,"color_temperature_kelvin":2700},{"time_ref":"absolute","offset_minutes":240,"level_mode":"none","level":null,"color_temperature_kelvin":2700},{"time_ref":"absolute","offset_minutes":300,"level_mode":"none","level":null,"color_temperature_kelvin":2700}]
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error code should be "conflict"
+    And the operation error message should be "schedule_limit_reached"
+    And HCL schedule "candidate" should be gone
+
   @id:HCL-024
   Scenario: A location outside the globe is refused
     When I POST an HCL schedule whose "location" is {"latitude_deg":95.0,"longitude_deg":37.6}
