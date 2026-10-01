@@ -1094,6 +1094,13 @@ impl PhysicalDeviceOverrideCommand {
     pub const PATCH_DT8_RGBWAF_CONTROL_ASSERT: u8 = 32;
 }
 
+impl InputDeviceMetadataUpdateCommand {
+    pub const PATCH_NAME: u8 = 1 << 0;
+    pub const PATCH_HA_EXPOSE: u8 = 1 << 1;
+    pub const PATCH_CLEAR_NAME: u8 = 1 << 2;
+    pub const PATCH_FORGET: u8 = 1 << 3;
+}
+
 impl PoliciesUpdateCommand {
     pub const PATCH_SYSTEM_FAILURE_LEVEL: u8 = 1;
     pub const PATCH_POWER_ON_LEVEL: u8 = 2;

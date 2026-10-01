@@ -708,17 +708,19 @@ fn wire_input_device_actions(
     registry: &RegistryHttpPorts,
 ) -> AppBuilder {
     use dali2rust_api::http::handlers::input_devices::{
-        InputDeviceAction, InputDeviceActionHandler,
+        InputDeviceAction, InputDeviceActionHandler, InputDeviceBus,
     };
     let state = &registry.input_device_state;
     let action = |kind: InputDeviceAction| -> Box<InputDeviceActionHandler> {
-        Box::new(InputDeviceActionHandler::new(
-            bus.publisher.clone(),
-            bus.bus_id,
-            Arc::clone(&bus.correlation),
-            Arc::clone(state),
-            kind,
-        ))
+        let bus = InputDeviceBus {
+            publisher: bus.publisher.clone(),
+            bus_id: bus.bus_id,
+            correlation: Arc::clone(&bus.correlation),
+            slots: Arc::clone(&bus.slots),
+            timeout_ms: bus.confirmation_timeout_ms,
+            wall: Arc::new(dali2rust_bsp::unix_clock::StdUnixTimeMs),
+        };
+        Box::new(InputDeviceActionHandler::new(bus, Arc::clone(state), kind))
     };
     builder
         .with_handler(RouteKey::InputDevicesScan, action(InputDeviceAction::Scan))

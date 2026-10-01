@@ -10,7 +10,11 @@ use dali2rust_contracts::msg::{
 use serde_json::Value;
 
 use crate::http::handler::ApiHandler;
-use crate::http::handlers::common::{accepted_operation_response, json_err, json_stream_dto};
+use crate::confirmation_bridge::PendingConfirmationSlots;
+use crate::http::dispatcher::publish_batch_and_wait_for_success;
+use crate::http::handlers::common::{
+    accepted_operation_response, json_err, json_err_with_message, json_stream_dto,
+};
 use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command;
 use crate::http::input_device_state::InputDeviceHttpState;
 use crate::http::types::HttpResponse;
@@ -19,10 +23,9 @@ fn path_u8(params: &std::collections::HashMap<String, String>, key: &str) -> Opt
     params.get(key)?.parse::<u8>().ok()
 }
 
-const PATCH_NAME: u8 = 1 << 0;
-const PATCH_HA_EXPOSE: u8 = 1 << 1;
-const PATCH_CLEAR_NAME: u8 = 1 << 2;
-const PATCH_FORGET: u8 = 1 << 3;
+const PATCH_NAME: u8 = InputDeviceMetadataUpdateCommand::PATCH_NAME;
+const PATCH_HA_EXPOSE: u8 = InputDeviceMetadataUpdateCommand::PATCH_HA_EXPOSE;
+const PATCH_CLEAR_NAME: u8 = InputDeviceMetadataUpdateCommand::PATCH_CLEAR_NAME;
 
 // IEC 62386-103 §9.4.1
 const RESERVED_EVENT_PRIORITY: u64 = 2;
@@ -91,10 +94,22 @@ impl ApiHandler for InputDeviceGetHandler {
     }
 }
 
+pub struct InputDeviceBus {
+    pub publisher: BusPublisher,
+    pub bus_id: BusId,
+    pub correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
+    pub slots: Arc<PendingConfirmationSlots>,
+    pub timeout_ms: u64,
+    pub wall: Arc<dyn dali2rust_platform::clock::UnixTimeMs>,
+}
+
 pub struct InputDeviceActionHandler {
     publisher: BusPublisher,
     bus_id: BusId,
     correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
+    slots: Arc<PendingConfirmationSlots>,
+    timeout_ms: u64,
+    wall: Arc<dyn dali2rust_platform::clock::UnixTimeMs>,
     state: Arc<dyn InputDeviceHttpState>,
     action: InputDeviceAction,
 }
@@ -112,16 +127,17 @@ pub enum InputDeviceAction {
 
 impl InputDeviceActionHandler {
     pub fn new(
-        publisher: BusPublisher,
-        bus_id: BusId,
-        correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
+        bus: InputDeviceBus,
         state: Arc<dyn InputDeviceHttpState>,
         action: InputDeviceAction,
     ) -> Self {
         Self {
-            publisher,
-            bus_id,
-            correlation,
+            publisher: bus.publisher,
+            bus_id: bus.bus_id,
+            correlation: bus.correlation,
+            slots: bus.slots,
+            timeout_ms: bus.timeout_ms,
+            wall: bus.wall,
             state,
             action,
         }
@@ -350,16 +366,21 @@ impl InputDeviceActionHandler {
             Ok(parsed) => parsed,
             Err(response) => return response,
         };
-        let before = self.state.revision();
+        let mut batch = Vec::with_capacity(2);
         if meta.patch_mask != 0 {
-            self.publish(meta);
+            batch.push(self.frame(meta));
         }
         if let Some(notes) = notes {
-            self.publish(notes);
+            batch.push(self.frame(notes));
         }
-        self.wait_for_revision(before);
+        if let Err(response) = self.publish_confirmed(batch) {
+            return response;
+        }
         match self.state.detail(adapter_id, short_address) {
-            Some(dto) => json_stream_dto(dto),
+            Some(mut dto) => {
+                dto.now_ms = self.wall.unix_millis();
+                json_stream_dto(dto)
+            }
             None => json_err(404, "input_device_not_found"),
         }
     }
@@ -375,49 +396,39 @@ impl InputDeviceActionHandler {
         if self.state.detail(adapter_id, short_address).is_none() {
             return json_err(404, "input_device_not_found");
         }
-        let before = self.state.revision();
-        self.publish(dali2rust_contracts::msg::InputDeviceMetadataUpdateCommand {
+        let forget = self.frame(dali2rust_contracts::msg::InputDeviceMetadataUpdateCommand {
             registry_adapter_id: adapter_id,
             short_address,
-            patch_mask: PATCH_FORGET,
+            patch_mask: InputDeviceMetadataUpdateCommand::PATCH_FORGET,
             name: dali2rust_contracts::msg::fixed_text_64(""),
             ha_expose: false,
         });
-        self.wait_for_revision(before);
+        if let Err(response) = self.publish_confirmed(vec![forget]) {
+            return response;
+        }
         HttpResponse::json(200, br#"{"forgotten":true}"#.to_vec())
     }
 
-    fn publish<P>(&self, payload: P)
+    fn frame<P>(&self, payload: P) -> (u64, dali2rust_bus::BusFrame)
     where
         dali2rust_contracts::msg::BusCommandPayload: From<P>,
     {
+        let correlation_id = self.correlation();
         let env = dali2rust_contracts::bus::command_envelope(
             dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
-            self.correlation(),
+            correlation_id,
             self.bus_id.0,
             Some(dali2rust_contracts::msg::Origin::Api),
             payload,
         );
-        let _ = self.publisher.try_publish(
-            dali2rust_bus::BusChannel::Commands,
-            dali2rust_bus::BusFrame::command(env),
-        );
+        (correlation_id, dali2rust_bus::BusFrame::command(env))
     }
 
-    fn wait_for_revision(&self, before: u32) {
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_millis(METADATA_APPLY_BUDGET_MS);
-        while std::time::Instant::now() < deadline {
-            if self.state.revision() != before {
-                return;
-            }
-            // sleep-ok: bounded apply-watch read-after-write poll (>= 10 ms step)
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+    fn publish_confirmed(&self, batch: Vec<(u64, dali2rust_bus::BusFrame)>) -> Result<(), HttpResponse> {
+        publish_batch_and_wait_for_success(&self.publisher, &self.slots, self.timeout_ms, batch)
     }
 }
 
-const METADATA_APPLY_BUDGET_MS: u64 = 200;
 
 fn parse_instance_patch(
     body: &[u8],
@@ -628,6 +639,17 @@ fn parse_group(group: &Value) -> Result<Option<u8>, HttpResponse> {
     }
 }
 
+const NAME_MAX_BYTES: usize = 64;
+const NOTES_MAX_BYTES: usize = 48;
+
+fn within_bytes(field: &str, text: &str, cap: usize) -> Result<(), HttpResponse> {
+    if text.len() <= cap {
+        return Ok(());
+    }
+    let message = format!("{field} is {} bytes; the limit is {cap}", text.len());
+    Err(json_err_with_message(422, "invalid_value", &message))
+}
+
 fn parse_metadata_patch(
     body: &[u8],
     adapter_id: u8,
@@ -646,6 +668,7 @@ fn parse_metadata_patch(
     match json.get("name") {
         Some(Value::Null) => cmd.patch_mask |= PATCH_CLEAR_NAME,
         Some(Value::String(name)) => {
+            within_bytes("name", name, NAME_MAX_BYTES)?;
             cmd.name = dali2rust_contracts::msg::fixed_text_64(name);
             cmd.patch_mask |= PATCH_NAME;
         }
@@ -662,11 +685,14 @@ fn parse_metadata_patch(
             short_address,
             notes: dali2rust_contracts::msg::fixed_text_48(""),
         }),
-        Some(Value::String(text)) => Some(InputDeviceNotesUpdateCommand {
-            registry_adapter_id: adapter_id,
-            short_address,
-            notes: dali2rust_contracts::msg::fixed_text_48(text),
-        }),
+        Some(Value::String(text)) => {
+            within_bytes("notes", text, NOTES_MAX_BYTES)?;
+            Some(InputDeviceNotesUpdateCommand {
+                registry_adapter_id: adapter_id,
+                short_address,
+                notes: dali2rust_contracts::msg::fixed_text_48(text),
+            })
+        }
         Some(_) => return Err(json_err(422, "invalid_value")),
         None => None,
     };

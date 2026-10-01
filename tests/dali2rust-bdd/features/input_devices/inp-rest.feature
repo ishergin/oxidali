@@ -48,6 +48,14 @@ Feature: IEC 62386-103 input devices as a REST resource
     When I send a GET request to "/api/v1/adapters/0/input-devices/0"
     Then the response status should be 404
 
+  @id:INP-086
+  Scenario: A name over its 64 bytes is refused, not cut
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And I PATCH JSON {"name":"ййййййййййййййййййййййййййййййййй"} to "/api/v1/adapters/0/input-devices/0"
+    Then the response status should be 422
+    And the JSON error should be "invalid_value"
+
   @id:INP-017
   Scenario: An empty metadata patch is a client error, not a silent write
     Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"

@@ -5,12 +5,13 @@ use dali2rust_contracts::msg::{
 
 use crate::runtime::registry::RegistryStore;
 
+use super::confirm::{publish_correlation_failed, publish_correlation_ok};
 use super::RegistryCommandCounters;
 
-pub const PATCH_NAME: u8 = 1 << 0;
-pub const PATCH_HA_EXPOSE: u8 = 1 << 1;
-pub const PATCH_CLEAR_NAME: u8 = 1 << 2;
-pub const PATCH_FORGET: u8 = 1 << 3;
+const PATCH_NAME: u8 = InputDeviceMetadataUpdateCommand::PATCH_NAME;
+const PATCH_HA_EXPOSE: u8 = InputDeviceMetadataUpdateCommand::PATCH_HA_EXPOSE;
+const PATCH_CLEAR_NAME: u8 = InputDeviceMetadataUpdateCommand::PATCH_CLEAR_NAME;
+const PATCH_FORGET: u8 = InputDeviceMetadataUpdateCommand::PATCH_FORGET;
 
 pub(super) fn handle_input_device_metadata(
     publisher: &BusPublisher,
@@ -81,10 +82,17 @@ fn finish(
             adapter_id,
             short_address,
         );
+        publish_correlation_ok(publisher, corr);
     } else {
         counters
             .input_device_metadata_rejected
             .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        publish_correlation_failed(
+            publisher,
+            corr,
+            dali2rust_contracts::msg::ErrorCode::NotFound,
+            "input_device_not_found",
+        );
     }
     let _ = store;
 }
