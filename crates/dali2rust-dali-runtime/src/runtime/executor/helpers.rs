@@ -289,7 +289,7 @@ pub fn send_extended_query_observed(
     let (response, contended) = controller
         .send_command_observed(&DaliCommand::Extended { address, command })
         .map_err(|error| map_transport_error(&error))?;
-    Ok((response.value(), contended))
+    Ok((response.value(), contended || response == DaliResponse::Violation))
 }
 
 pub fn send_extended_query(

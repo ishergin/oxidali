@@ -12,7 +12,7 @@ use dali2rust_contracts::msg::OperationType;
 
 use crate::http::handlers::common::{
     json_err, json_stream_dto, parse_bool_field, parse_json_body, publish_and_await_apply,
-    publish_apply_execute, require_get,
+    publish_apply_execute, reject_if_apply_active, require_get,
 };
 use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::policies_state::{PoliciesApplyWatch, PoliciesHttpState};
@@ -159,6 +159,7 @@ declare_handler_shell!(PoliciesApplyHandler {
     state: Arc<dyn PoliciesHttpState>,
     bus_id: BusId,
     registry_adapter_id: u8,
+    operations: Arc<dyn dali2rust_domain::registry::OperationReadPort>,
 });
 
 impl crate::http::handlers::common::MutatingHandler for PoliciesApplyHandler {
@@ -177,7 +178,11 @@ impl crate::http::handlers::common::MutatingHandler for PoliciesApplyHandler {
         if !self.state.policies_dto().manages_anything {
             return Err(json_err(409, "nothing_managed"));
         }
-        Ok(())
+        reject_if_apply_active(
+            self.operations.as_ref(),
+            OperationType::PolicyApply,
+            self.registry_adapter_id,
+        )
     }
 
     fn execute(&self, (): ()) -> Result<HttpResponse, HttpResponse> {

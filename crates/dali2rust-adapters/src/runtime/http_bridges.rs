@@ -1353,10 +1353,9 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
     }
 
     fn inputs(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::InputState> {
+        let rows = self.store.rules_input_rows();
         let now = dali2rust_bsp::monotonic_clock::observation_stamp_ms();
-        self.store
-            .rules_input_rows()
-            .into_iter()
+        rows.into_iter()
             .map(|row| dali2rust_rules_runtime::runtime::engine::InputState {
                 adapter_id: row.adapter_id,
                 short_address: row.short_address,
@@ -1365,7 +1364,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
                 occupied: row.occupied,
                 light: row.light,
                 position: row.position,
-                last_event_age_ms: row.last_event_mono_ms.map(|at| now.wrapping_sub(at)),
+                last_event_age_ms: row.last_event_mono_ms.map(|at| age_since(now, at)),
             })
             .collect()
     }
@@ -1477,8 +1476,24 @@ impl dali2rust_api::http::firmware_state::FirmwareHttpState for FirmwareBridge {
     }
 }
 
+fn age_since(now_mono_ms: u32, at_mono_ms: u32) -> u32 {
+    let age = now_mono_ms.wrapping_sub(at_mono_ms);
+    if age > u32::MAX / 2 {
+        0
+    } else {
+        age
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_event_stamped_after_the_clock_was_read_is_new_not_49_days_old() {
+        assert_eq!(super::age_since(1_000, 1_500), 0);
+        assert_eq!(super::age_since(1_500, 1_000), 500);
+        assert_eq!(super::age_since(10, u32::MAX - 9), 20, "the stamp wraps with the clock");
+    }
+
     use core::sync::atomic::Ordering::Relaxed;
     use std::sync::{Arc, Mutex};
 

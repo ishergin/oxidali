@@ -1457,6 +1457,7 @@ fn drain_rejected_deliveries(
         let correlation = conf.meta.correlation_id;
         let mut guard = lock_tracker(state);
         let Some(op) = guard.active.get(&correlation).cloned() else {
+            park_rejection(&mut guard, correlation);
             continue;
         };
         emit_terminal_with_retention(
@@ -1470,6 +1471,16 @@ fn drain_rejected_deliveries(
         );
         clear_active_entry(&mut guard, correlation, &op);
     }
+}
+
+fn park_rejection(guard: &mut OperationTrackerInner, correlation: u64) {
+    let failed = dali2rust_contracts::msg::OperationWorkerSignalEvent::failed(
+        correlation,
+        ErrorCode::CommandsIngressOverload,
+        "delivery_rejected",
+    );
+    let signals = pending_worker_signals_mut(guard);
+    queue_pending_list(signals, correlation, failed, MAX_PENDING_SIGNALS);
 }
 
 fn evict_expired_pending_outcomes(
@@ -1568,6 +1579,7 @@ fn adapter_scoped_key_prefix(operation_type: OperationType, adapter_id: u8) -> O
     let family = match operation_type {
         OperationType::GroupApply => "grp-apply",
         OperationType::SceneApply => "scn-apply",
+        OperationType::PolicyApply => "policy-apply",
         OperationType::CommissioningIdentify => "comm-ident",
         OperationType::CommissioningAddressChange => "comm-addr",
         OperationType::CommissioningReplaceDevice => "comm-repl",

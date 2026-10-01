@@ -111,7 +111,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - A query window has three outcomes: an answer, silence (NO), and a violation. A
   frame-size or bit-timing violation in the backward window is a backward frame
   (101 §8.2.5): `DaliResponse::Violation`, whose `value()` is `None` and whose `is_yes()`
-  is true. It is terminal, never retried, and not a collision. `COMPARE`,
+  is true. It is terminal and not a collision: no frame is retried for it, though a
+  content-confirmed read asks again, as after any contended answer. `COMPARE`,
   `VERIFY SHORT ADDRESS` and `QUERY CONTROL GEAR PRESENT` read it as YES;
   `QUERY SHORT ADDRESS` reads it as "several gear hold this address"
   ([ADR-020](decisions/ADR-020-violating-backward-frame-is-an-answer.md)).

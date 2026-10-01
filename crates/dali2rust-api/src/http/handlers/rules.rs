@@ -244,6 +244,23 @@ impl RulesHandler {
         accepted_operation_response(key, OperationType::ConfigWrite)
     }
 
+    fn toggle_confirmed(&self, name: &str, enabled: bool) -> Result<(), HttpResponse> {
+        let correlation_id = self.shared.correlation.next_id();
+        let env = dali2rust_contracts::bus::command_envelope(
+            crate::bus_codec::SOURCE_ID_UNSPECIFIED,
+            correlation_id,
+            self.shared.bus_id.0,
+            Some(dali2rust_contracts::msg::Origin::Api),
+            RuleEnableCommand { name: dali2rust_contracts::msg::fixed_text_64(name), enabled },
+        );
+        crate::http::dispatcher::publish_batch_and_wait_for_success(
+            &self.shared.publisher,
+            &self.shared.confirmation.slots,
+            self.shared.confirmation.timeout_ms,
+            vec![(correlation_id, BusFrame::command(env))],
+        )
+    }
+
     fn patch_rule(
         &self,
         params: &std::collections::HashMap<String, String>,
@@ -266,23 +283,7 @@ impl RulesHandler {
         if doc.compiled.as_ref().and_then(|set| set.rule(name)).is_none() {
             return json_err(404, "rule_not_found");
         }
-        let correlation_id = self.shared.correlation.next_id();
-        let env = dali2rust_contracts::bus::command_envelope(
-            crate::bus_codec::SOURCE_ID_UNSPECIFIED,
-            correlation_id,
-            self.shared.bus_id.0,
-            Some(dali2rust_contracts::msg::Origin::Api),
-            RuleEnableCommand {
-                name: dali2rust_contracts::msg::fixed_text_64(name),
-                enabled,
-            },
-        );
-        if let Err(response) = crate::http::dispatcher::publish_batch_and_wait_for_success(
-            &self.shared.publisher,
-            &self.shared.confirmation.slots,
-            self.shared.confirmation.timeout_ms,
-            vec![(correlation_id, BusFrame::command(env))],
-        ) {
+        if let Err(response) = self.toggle_confirmed(name, enabled) {
             return response;
         }
         HttpResponse::json(

@@ -650,6 +650,27 @@ fn within_bytes(field: &str, text: &str, cap: usize) -> Result<(), HttpResponse>
     Err(json_err_with_message(422, "invalid_value", &message))
 }
 
+fn parse_notes_patch(
+    json: &Value,
+    adapter_id: u8,
+    short_address: u8,
+) -> Result<Option<InputDeviceNotesUpdateCommand>, HttpResponse> {
+    let text = match json.get("notes") {
+        None => return Ok(None),
+        Some(Value::Null) => "",
+        Some(Value::String(text)) => {
+            within_bytes("notes", text, NOTES_MAX_BYTES)?;
+            text.as_str()
+        }
+        Some(_) => return Err(json_err(422, "invalid_value")),
+    };
+    Ok(Some(InputDeviceNotesUpdateCommand {
+        registry_adapter_id: adapter_id,
+        short_address,
+        notes: dali2rust_contracts::msg::fixed_text_48(text),
+    }))
+}
+
 fn parse_metadata_patch(
     body: &[u8],
     adapter_id: u8,
@@ -679,23 +700,7 @@ fn parse_metadata_patch(
         cmd.ha_expose = expose.as_bool().ok_or_else(|| json_err(422, "invalid_value"))?;
         cmd.patch_mask |= PATCH_HA_EXPOSE;
     }
-    let notes = match json.get("notes") {
-        Some(Value::Null) => Some(InputDeviceNotesUpdateCommand {
-            registry_adapter_id: adapter_id,
-            short_address,
-            notes: dali2rust_contracts::msg::fixed_text_48(""),
-        }),
-        Some(Value::String(text)) => {
-            within_bytes("notes", text, NOTES_MAX_BYTES)?;
-            Some(InputDeviceNotesUpdateCommand {
-                registry_adapter_id: adapter_id,
-                short_address,
-                notes: dali2rust_contracts::msg::fixed_text_48(text),
-            })
-        }
-        Some(_) => return Err(json_err(422, "invalid_value")),
-        None => None,
-    };
+    let notes = parse_notes_patch(&json, adapter_id, short_address)?;
     if cmd.patch_mask == 0 && notes.is_none() {
         return Err(json_err(400, "empty_patch"));
     }

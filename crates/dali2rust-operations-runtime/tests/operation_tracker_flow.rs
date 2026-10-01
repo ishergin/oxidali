@@ -255,6 +255,49 @@ fn a_rejected_delivery_fails_the_operation_instead_of_waiting_out_the_ttl() {
 }
 
 #[test]
+fn a_rejection_that_arrives_before_the_begin_still_fails_the_operation() {
+    let (publisher, tracker, _host) = spawn_harness();
+    let workflow = 9111;
+    let execute = dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        workflow,
+        BusId::default().0,
+        Some(dali2rust_contracts::msg::Origin::Api),
+        dali2rust_contracts::msg::SceneApplyExecuteCommand {
+            registry_adapter_id: 0,
+            scene_id: 3,
+            operation_key: dali2rust_contracts::msg::fixed_text_32("scn-apply-0-3-9111"),
+        },
+    );
+    let rejection = dali2rust_contracts::bus::synthetic_delivery_rejected_envelope(&execute)
+        .expect("the bus builds one for every rejected command");
+    publish(
+        &publisher,
+        BusChannel::Confirmations,
+        BusFrame::Confirmation(std::sync::Arc::new(rejection)),
+    );
+    wait_until(
+        || tracker.lock().expect("tracker").pending_worker_signal_correlations() == 1,
+        Duration::from_millis(500),
+    );
+    publish(
+        &publisher,
+        BusChannel::Commands,
+        begin_envelope(workflow, "scn-apply-0-3-9111", OperationType::SceneApply, 600_000),
+    );
+    wait_until(
+        || tail_for(&tracker, "scn-apply-0-3-9111").last().copied() == Some(OperationStatus::Failed),
+        Duration::from_millis(500),
+    );
+    assert_eq!(
+        last_error_for(&tracker, "scn-apply-0-3-9111"),
+        Some(ErrorCode::CommandsIngressOverload),
+        "a full orchestrator inbox must not leave the apply accepted for its TTL, \
+         holding the 409 gate shut"
+    );
+}
+
+#[test]
 fn operation_times_out_without_worker_signals_op003() {
     let (publisher, tracker, _host) = spawn_harness();
     publish(
