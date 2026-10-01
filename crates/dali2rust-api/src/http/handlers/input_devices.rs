@@ -5,13 +5,13 @@ use dali2rust_contracts::msg::{
     Dali103CommissionCommand, Dali103IdentifyCommand, Dali103InstanceConfigureCommand,
     Dali103FeedbackConfigureCommand, Dali103ScanCommand, FeedbackPatchField,
     InputDeviceMetadataUpdateCommand, InputDeviceNotesUpdateCommand, InstancePatchField,
-    OperationType,
+    OperationBeginCommand, OperationType,
 };
 use serde_json::Value;
 
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::common::{accepted_operation_response, json_err, json_stream_dto};
-use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command_pair;
+use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command;
 use crate::http::input_device_state::InputDeviceHttpState;
 use crate::http::types::HttpResponse;
 
@@ -129,15 +129,22 @@ impl InputDeviceActionHandler {
 
     fn operation(&self, key: String, semantic: dali2rust_contracts::msg::CommandEnvelope,
                  operation_type: OperationType) -> HttpResponse {
+        let begin = OperationBeginCommand::with_defaults(&key, operation_type);
+        self.begin_then(key, semantic, begin)
+    }
+
+    fn wire_config_write(&self, key: String, semantic: dali2rust_contracts::msg::CommandEnvelope) -> HttpResponse {
+        let begin = OperationBeginCommand::wire_config_write(&key);
+        self.begin_then(key, semantic, begin)
+    }
+
+    fn begin_then(&self, key: String, semantic: dali2rust_contracts::msg::CommandEnvelope,
+                  begin: OperationBeginCommand) -> HttpResponse {
         let workflow = semantic.meta.correlation_id;
-        if let Err(response) = publish_begin_then_semantic_command_pair(
-            &self.publisher,
-            self.bus_id,
-            workflow,
-            &key,
-            operation_type,
-            semantic,
-        ) {
+        let operation_type = begin.operation_type;
+        if let Err(response) =
+            publish_begin_then_semantic_command(&self.publisher, self.bus_id, workflow, begin, semantic)
+        {
             return response;
         }
         accepted_operation_response(key, operation_type)
@@ -279,10 +286,9 @@ impl InputDeviceActionHandler {
             Some(dali2rust_contracts::msg::Origin::Api),
             cmd,
         );
-        self.operation(
+        self.wire_config_write(
             format!("inp-cfg-{adapter_id}-{short_address}-{instance_number}-{corr}"),
             semantic,
-            OperationType::ConfigWrite,
         )
     }
 
@@ -322,10 +328,9 @@ impl InputDeviceActionHandler {
             Some(dali2rust_contracts::msg::Origin::Api),
             cmd,
         );
-        self.operation(
+        self.wire_config_write(
             format!("inp-fb-{adapter_id}-{short_address}-{instance_number}-{corr}"),
             semantic,
-            OperationType::ConfigWrite,
         )
     }
 

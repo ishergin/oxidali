@@ -1077,6 +1077,13 @@ impl OperationBeginCommand {
             finished_retention_ms: OPERATION_FINISHED_RETENTION_MS,
         }
     }
+
+    pub fn wire_config_write(operation_key: &str) -> Self {
+        Self {
+            ttl_ms: OPERATION_TTL_MS,
+            ..Self::with_defaults(operation_key, OperationType::ConfigWrite)
+        }
+    }
 }
 
 impl PhysicalDeviceOverrideCommand {
@@ -1454,6 +1461,17 @@ mod operation_ttl_tests {
             OperationBeginCommand::with_defaults("k", OperationType::Discovery).ttl_ms,
             DISCOVERY_TTL_MS,
             "the begin command must carry the kind's budget, not the generic one"
+        );
+    }
+
+    #[test]
+    fn a_config_write_done_on_the_wire_waits_as_long_as_wire_work() {
+        let begin = OperationBeginCommand::wire_config_write("k");
+        assert_eq!(begin.operation_type, OperationType::ConfigWrite);
+        assert_eq!(
+            begin.ttl_ms, OPERATION_TTL_MS,
+            "a gear configuration queued behind a scan must not time out under \
+             the registry walk's budget and then land"
         );
     }
 }
