@@ -18,7 +18,7 @@ reach state that the real path should produce.
   transport and the mock MQTT client at the port boundaries, and drives it over HTTP —
   or over the WebSocket or MQTT when that surface is the feature under test.
 - **Assert only externally visible evidence:** HTTP responses and their DTOs, frames
-  recorded by `MockDaliTransport`, WebSocket and MQTT messages, and file-system
+  recorded by `MockDaliTransport`, WebSocket and MQTT messages, and slice-store
   effects.
 - **No harness internals.** Scenarios never call into `BusStackRuntime`, the registry
   store, counters or slot internals, and never seed state by writing records directly.
@@ -37,5 +37,5 @@ reach state that the real path should produce.
   it survives internal refactors.
 - `verify_bdd_layers.sh` and `verify_no_bdd_production_hooks.sh` enforce the boundary
   as merge gates.
-- Feature layout, tags, step conventions and the executable/design mapping are
-  described in [05-testing-and-bdd.md](../05-testing-and-bdd.md).
+- Feature layout, tags and step conventions are described in
+  [05-testing-and-bdd.md](../05-testing-and-bdd.md).

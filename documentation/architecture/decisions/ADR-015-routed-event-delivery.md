@@ -54,8 +54,8 @@ display.
 - Per-subscriber `delivered` totals count only declared kinds, and `receiver_overflow`
   (and with it the WebSocket drop notice) reports only drops of frames the subscriber
   could have wanted.
-- A subscriber that has nothing to do is not woken: the display worker declares a
-  handful of rare kinds and nothing else.
+- A subscriber that has nothing to do is not woken: the display worker declares only
+  the kinds its screens show.
 - A consumed-but-undeclared kind is silent starvation, the event analogue of an unrouted
   command with no rejection to report it. The fence is that subscriptions and ownership
   rows use the same consts; the residual exposure is a consumer that matches events

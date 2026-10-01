@@ -79,7 +79,8 @@ target-state, а непривязанная даёт `vl_unbound`. Recall-фак
 **`DaliProgramSceneCommand`** — одна строка сцены (`Write`, `Update`, `Clear`).
 Целевое состояние несёт `ColorValue` целиком, со всеми шестью каналами RGBWAF, и без
 провенанса — это запрограммированное, а не наблюдённое состояние. После записи
-воркер читает уровень сцены и, для цветного гира, её цвет через регистры REPORT.
+воркер читает уровень сцены и её цвет через регистры REPORT (гир без DT8 на запрос цвета
+молчит).
 `error = None` ⟺ строка запрограммирована; запрограммированная строка без
 подтверждённого readback'а оставляет derived `applied` прежним.
 
@@ -96,10 +97,10 @@ target-state, а непривязанная даёт `vl_unbound`. Recall-фак
 - **`DaliDiscoverDevicesCommand`** — режимы `ScanKnownShortAddresses`,
   `CommissionUnaddressed`, `RefreshKnown` на один адаптер.
 - **`DaliReadAttributesCommand`** — один короткий адрес: маска групп атрибутов плюс
-  пресет банков памяти. Результат — чанк на группу и итог исходов по группам
-  ([`dali-attribute-taxonomy.md`](dali-attribute-taxonomy.md)).
-- **`DaliReadMemoryBankCommand`** — внутренний путь; публичный доступ к банкам — через
-  пресет чтения атрибутов.
+  пресет банков памяти. Результат — чанки групп (сколько у какой —
+  [`dali-attribute-taxonomy.md`](dali-attribute-taxonomy.md)) и итог исходов по группам.
+- **`DaliReadMemoryBankCommand`** — чтение участка одного банка; продуктовые источники
+  его не публикуют, банки читаются пресетом чтения атрибутов.
 - **`DaliBusHealthProbeCommand`** — широковещательный опрос сегмента об отказах ламп
   с положительным контролем (правило чтения —
   [09 §Reading answers](../../architecture/09-dali-protocol-rules.md#reading-answers)).

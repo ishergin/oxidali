@@ -49,7 +49,8 @@ configured for the controller image ([ADR-011](ADR-011-retire-esp32s3.md)).
    rejects a pair with any active state in between — and counts what it discards, per
    gear, so a foreign master's traffic to its own fixtures is not reported as our
    violation. The 100 ms half of the clause is measured by the controller's own PHY, not
-   by the model, which has no clock.
+   by the model, whose only clock is the time its driver passes in, read for RANDOMISE's
+   100 ms settling alone.
 6. **The host simulator also plays the other master.** `SimDaliTransport` implements the
    observed-frame seam with foreign traffic only (our own frames reach the sniffer window
    where they are transmitted). Button events come from the model, so a masked edge, a
@@ -80,5 +81,6 @@ configured for the controller image ([ADR-011](ADR-011-retire-esp32s3.md)).
   answers through the PHY's answer cell, stays on the gptimer driver's interrupt path
   ([ADR-025](ADR-025-phy-interrupt-above-critical-sections.md)), and
   `verify_dali_isr_iram.py` applies to its binary as to the firmware's.
-- Both shared crates are listed in `scripts/host_crates.txt`, so the function-length and
-  duplication gates cover them.
+- Both shared crates are listed in `scripts/host_crates.txt`, so the host check, tests,
+  clippy and the function-length gate cover them; the duplication gate scans all of
+  `crates/` regardless.

@@ -17,7 +17,9 @@ Set in `sdkconfig.p4.defaults`; keep them on, they are the whole post-mortem:
   on panic the chip prints an ELF core dump as base64 to the UART.
 - `CONFIG_ESP_PANIC_HANDLER_IRAM` — the panic handler runs with the flash
   cache off.
-- `panic = abort` — every Rust panic becomes an abort and a core dump.
+
+Every Rust panic becomes an abort and a core dump: the `riscv32imafc-esp-espidf` target
+aborts on panic, and `.cargo/config.toml` builds `std` with `panic_abort`.
 
 ## Where the evidence lands
 
@@ -55,7 +57,9 @@ For a panic without a usable dump, the register block is enough:
 - A dump can describe the panic path failing rather than the defect. Read the
   instructions at the reported PC before trusting the signature.
 - A stack-overflow watchpoint names the task. The fix is the depth, not a
-  bigger stack: task stacks are internal SRAM, which is the scarce pool.
+  bigger stack: every stack is a budget, and an internal one draws on the
+  scarce pool
+  ([ADR-028](../architecture/decisions/ADR-028-task-stacks-in-psram-on-the-xip-image.md)).
 - A dump whose task pointer is stale (a freed and reused TCB) points at
   whatever took its place. Check that the handle was still alive.
 
@@ -70,6 +74,6 @@ For a panic without a usable dump, the register block is enough:
 | `alloc-failure probe armed` / `alloc failures: count=…` | Allocation-failure hook. Any `alloc failures` line is a signal; `last_caps` says which pool refused. |
 | `HTTP slow/failed` | Per-URI timing and heap diagnostics for slow or failed responses. |
 | `registry flush: slow` | A persistence flush exceeded its budget. |
-| `DALI ISR late ticks` | The PHY interrupt found a gap between alarms; names the task and return address that held it off. |
+| `DALI ISR late entries` | The PHY interrupt was entered late (delayed, not lost): each task that held it off, with its count, largest gap, PC and return address. Lost ticks are the `raw deficit` of `DALI sniff timing`. |
 | `registry persistence DISABLED` | Built with `DALI2RUST_PERSIST_DISABLE=1`; diagnosis builds only. |
 | `heap integrity sweeps armed` / `heap integrity check FAILED` | Built with `DALI2RUST_HEAP_CHECK_S`; on corruption it panics so the dump lands near the event. |

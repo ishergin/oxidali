@@ -16,9 +16,11 @@ BDD conventions → [05](05-testing-and-bdd.md); DALI rules → [09](09-dali-pro
 2. `pres/extended.rs`: an `ExtendedCommand::DtX(DtXCommand)` variant delegating
    `from_opcode`, `to_forward_frame`, `is_query`, `requires_repeat` and
    `enable_device_type`.
-3. `pres/codec.rs`: `try_decode_extended` maps the opcodes, routing by the live
-   `ENABLE DEVICE TYPE` prelude where opcodes collide with another part; a query also
-   joins `QUERY_OPCODES` in `pres/opcode.rs`.
+3. `ExtendedCommand::from_opcode` tries the parts in a fixed order (`pres/extended.rs`),
+   so an opcode two parts share decodes as the earlier one. `pres/describe.rs` names a
+   frame by the observed `ENABLE DEVICE TYPE` prelude: the part's name table and its
+   first query opcode go there. A query is one by its own `is_query`; `QUERY_OPCODES`
+   (`pres/opcode.rs`) is Part 102's standard table, not a home for a device-type query.
 4. Nothing to wire for the prelude: the controller sends `ENABLE DEVICE TYPE` inside the
    same unit before every extended command.
 5. A product caller is a semantic command (below), never the raw diagnostic route.
@@ -67,15 +69,21 @@ BDD conventions → [05](05-testing-and-bdd.md); DALI rules → [09](09-dali-pro
 
 1. The worker and its spawn function live in the owning runtime crate
    (`crates/dali2rust-<area>-runtime/src/runtime/<name>_worker.rs`), spawned with
-   `dali2rust_bsp::esp_thread::spawn_named_stack` (or `try_spawn_named_stack` for
-   anything a client can trigger) and a `std_thread_stack` class. The primary inbox is
-   read with `recv` or `recv_timeout` ([02](02-runtime-and-threading.md)).
+   `dali2rust_bsp::esp_thread::spawn_named_stack_in` (`try_spawn_named_stack_in` for
+   anything a client can trigger), a `std_thread_stack` class and
+   `StackHome::ExternalOnXip`; a thread that maps flash or carries wire timing keeps an
+   internal stack ([07](07-memory-and-cores.md) §Placement). The primary inbox is read
+   with `recv` or `recv_timeout` ([02](02-runtime-and-threading.md)).
 2. Subscribe in `service_channels()` (`adapters/src/runtime/bus_host.rs`) with the
    declared kind set — `subscribe_commands(capacity, <WORKER>_HANDLED_COMMANDS)`,
    `subscribe_events_named(capacity, <WORKER>_HANDLED_EVENTS, "<name>")`, the name being
    what the overflow counters report
    ([ADR-023](decisions/ADR-023-named-subscribers-and-shared-coalescing.md)) — and add
-   the receiver to `ServiceChannels` (`workers.rs`).
+   the receiver to `ServiceChannels` (`workers.rs`). List the worker's consts in
+   `COMMAND_OWNERS` / `EVENT_CONSUMERS` of `adapters/tests/bus_payload_ownership.rs`,
+   an event subscriber's name in `NAMED_EVENT_SUBSCRIBERS` (`bus_host.rs`), and move the
+   channel's `WORST_*_SUBSCRIBERS` count (`api/src/http/diagnostics_state.rs`); the
+   composed-bus tests in `bus_host.rs` fail on the last two.
 3. Spawn it from `spawn_service_workers` (`workers.rs`); the compiler then leads through
    `SpawnedWorkers` and `collect_spawned`, and for counters through
    `RuntimeCounterHandles`, the DTO and the counter surface

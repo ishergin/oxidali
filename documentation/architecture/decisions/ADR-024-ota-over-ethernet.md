@@ -83,8 +83,8 @@ staying up.
 OTA is additive. Only a wired flash can change the partition table, recover a board whose
 both slots are bad, or provision a new board. `hil flash` remains the bench's flashing
 path and the one that carries the bookkeeping (knob pinning, the ISR-IRAM gate, the run
-manifest); a bench-side OTA transport, if added, is a transport choice inside it, not a
-second mechanism.
+manifest); its OTA transport (`hil flash --via ota`) is a transport choice inside it, not
+a second mechanism.
 
 ### Rejected alternatives
 

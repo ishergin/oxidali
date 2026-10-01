@@ -35,7 +35,7 @@ REST DTO — проекции поверх реестра ([`../rest-api/README.
 | `HclSchedules` | все расписания HCL |
 | `PollerSettings` | настройки поллера |
 | `InputDevices { bank }` | устройства Part 103: идентичность, метаданные, компактное резюме инстансов (тип и конфигурация событий) |
-| `Rules { bank }` | исходник документа правил байт-в-байт и манифест (язык, CRC, биты включения); пишет rules runtime |
+| `Rules { bank }` | исходник документа правил байт-в-байт и манифест (язык, хеш FNV-1a, биты включения); пишет rules runtime |
 | `HomeAssistantSettings` | брокер, пароль, префиксы, `controller_id`, гейты экспонирования |
 | `DaliSettings` | политика DT8, `applicationActive`, собственный адрес контроллера как control device |
 | `RedundancySettings` | роль, период зонда, порог захвата, адрес пира |
