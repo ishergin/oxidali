@@ -17,7 +17,7 @@ import { Card, EditableText, SelChip, useConfirmTap } from '../components/ui'
 import { usePoll } from '../hooks'
 import { nav } from '../router'
 import { errorMessage, mutateBusy, notify, opCommitted, trackOp } from '../toast'
-import { type CurveVertex, curveLines } from './hcl-curve'
+import { type CurveVertex, cctSamples, curveLines, levelSamples } from './hcl-curve'
 
 const POLL_MS = 5000
 const WEEKDAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
@@ -331,17 +331,8 @@ function DayCurve({ points, algorithm }: { points: HclSchedulePoint[]; algorithm
   const stepped = algorithm === 'stepped'
   const polyline = (line: CurveVertex[], y: (value: number) => number) =>
     line.map(([minutes, value]) => `${x(minutes)},${y(value)}`).join(' ')
-  const levelLines = curveLines(
-    absolute.map((p) => ({
-      offset_minutes: p.offset_minutes,
-      value: p.level_mode === 'absolute' ? p.level : null,
-    })),
-    stepped,
-  ).filter((line) => line.length > 1)
-  const cctLines = curveLines(
-    absolute.map((p) => ({ offset_minutes: p.offset_minutes, value: p.color_temperature_kelvin })),
-    stepped,
-  ).filter((line) => line.length > 1)
+  const levelLines = curveLines(levelSamples(absolute), stepped).filter((line) => line.length > 1)
+  const cctLines = curveLines(cctSamples(absolute), stepped).filter((line) => line.length > 1)
   const levelDots = absolute.filter((p) => p.level_mode === 'absolute' && p.level != null)
   const astro = points.filter((p) => p.time_ref !== 'absolute')
 
