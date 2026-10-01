@@ -6,6 +6,7 @@ import { Card, FieldRow } from '../components/ui'
 import { usePoll } from '../hooks'
 import { bytes } from '../format'
 import { errorMessage, notify } from '../toast'
+import { urlProblem } from './firmware-url'
 
 const POLL_MS = 2000
 
@@ -31,16 +32,12 @@ const WHY: Record<string, string> = {
   invalid_image:
     'The downloaded image is not a valid application — the controller refused to select it.',
   cancelled: 'The update was cancelled.',
+  no_memory:
+    'The controller had no memory to start the update. Nothing was written; try again once it is less busy.',
 }
 
 function isActive(state: FirmwareState['update']['state']): boolean {
   return state === 'downloading' || state === 'finishing' || state === 'ready_to_reboot'
-}
-
-function urlProblem(url: string): string | null {
-  if (!/^https?:\/\//.test(url)) return 'Must start with http:// or https://'
-  if (url.length > URL_MAX) return `Too long: ${url.length} of ${URL_MAX} characters`
-  return null
 }
 
 function Progress({ update }: { update: FirmwareState['update'] }) {
@@ -87,7 +84,7 @@ function UpdateForm({
 }) {
   const [draft, setDraft] = useState(state.update.url)
   const [busy, setBusy] = useState(false)
-  const problem = draft ? urlProblem(draft) : null
+  const problem = draft ? urlProblem(draft, URL_MAX) : null
   const active = isActive(state.update.state)
 
   async function start() {
@@ -123,7 +120,7 @@ function UpdateForm({
       </div>
       <div class={`fw-hint${problem ? ' err' : ''}`}>
         {problem ??
-          `http or https, up to ${URL_MAX} characters. The controller downloads it, writes the other slot and reboots — about a minute.`}
+          `http or https, up to ${URL_MAX} bytes. The controller downloads it, writes the other slot and reboots — about a minute.`}
       </div>
     </div>
   )

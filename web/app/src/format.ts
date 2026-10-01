@@ -421,6 +421,27 @@ export function opTitle(op: Pick<Operation, 'operation_id' | 'type'>): string {
   }
 }
 
+const VERIFY_HINTS: Record<string, string> = {
+  verify_failed: 'the gear read back another value, so the write did not take — check the device',
+  verify_unanswered: 'the gear did not answer the read-back, so the write is unconfirmed — check the device',
+  verify_contended: 'several gear answered the read-back — look for a duplicate address',
+  read_contended: 'several gear answered the read — look for a duplicate address; nothing was written',
+}
+
+export function opFailureDetail(op: Pick<Operation, 'status' | 'error'>): string | null {
+  const error = op.error
+  if (!error || isPreempted(op)) return null
+  return VERIFY_HINTS[error.code] ?? (error.message && error.message !== error.code ? error.message : null)
+}
+
+export function opFailure(op: Pick<Operation, 'status' | 'error'>): string | null {
+  const error = op.error
+  if (!error || isPreempted(op)) return null
+  const detail = opFailureDetail(op)
+  if (error.code in VERIFY_HINTS) return detail
+  return detail ? `${error.code} — ${detail}` : error.code
+}
+
 export function opSummary(op: Operation): string | null {
   const r = op.result
   if (!r) return null

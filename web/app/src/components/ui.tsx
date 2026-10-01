@@ -12,6 +12,31 @@ function isImeComposing(e: KeyboardEvent): boolean {
   return e.isComposing || e.keyCode === IME_PROCESS_KEY_CODE
 }
 
+const CONFIRM_MS = 3000
+
+export function useConfirmTap<K extends string>(): [K | null, (key: K, act: () => void) => void] {
+  const [armed, setArmed] = useState<K | null>(null)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (timer.current != null) clearTimeout(timer.current)
+    },
+    [],
+  )
+  const tap = (key: K, act: () => void) => {
+    if (timer.current != null) clearTimeout(timer.current)
+    timer.current = null
+    if (armed !== key) {
+      setArmed(key)
+      timer.current = setTimeout(() => setArmed(null), CONFIRM_MS)
+      return
+    }
+    setArmed(null)
+    act()
+  }
+  return [armed, tap]
+}
+
 export function Chip({
   cls,
   spin,

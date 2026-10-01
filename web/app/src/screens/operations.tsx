@@ -1,7 +1,15 @@
 import { api } from '../api/client'
 import type { GroupApplyOutcome, Operation, SceneApplyOutcome } from '../api/types'
 import { Badge, Chip } from '../components/ui'
-import { isPreempted, opStatusChip, opStatusLabel, opSummary, opTitle, pad2 } from '../format'
+import {
+  isPreempted,
+  opFailureDetail,
+  opStatusChip,
+  opStatusLabel,
+  opSummary,
+  opTitle,
+  pad2,
+} from '../format'
 import { useLive } from '../hooks'
 import { nav } from '../router'
 
@@ -97,7 +105,7 @@ function OpDetail({ op }: { op: Operation }) {
         op.error && (
           <div class="err-box">
             <span class="code">{op.error.code}</span>
-            {op.error.message ? <> — {op.error.message}</> : null}
+            {opFailureDetail(op) ? <> — {opFailureDetail(op)}</> : null}
           </div>
         )
       )}

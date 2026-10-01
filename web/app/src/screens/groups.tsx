@@ -5,6 +5,7 @@ import { Chip, EditableName, MatrixCell, Switch } from '../components/ui'
 import { ADAPTER, GROUP_COUNT, pad2 } from '../format'
 import { useLive } from '../hooks'
 import { errorMessage, mutate, notify, saveThenApply, trackOp } from '../toast'
+import { gearDiffers } from './groups-view'
 
 const MATRIX_POLL_MS = 10_000
 
@@ -65,9 +66,7 @@ export function Groups() {
     })
   }
 
-  let serverDirty = 0
-  for (const row of matrix.rows)
-    for (let g = 0; g < GROUP_COUNT; g++) if (row.desired[g] !== row.applied[g]) serverDirty++
+  const serverDirty = matrix.rows.filter(gearDiffers).length
   const localAdd = [...edits.entries()].filter(([, v]) => v).length
   const localRm = edits.size - localAdd
 
@@ -192,8 +191,7 @@ export function Groups() {
               const isBound = bound.has(vl)
               const name = names.get(vl) || row.name
               const rowDirty =
-                row.desired.some((d, g) => d !== row.applied[g]) ||
-                [...edits.keys()].some((k) => k.startsWith(`${vl}:`))
+                gearDiffers(row) || [...edits.keys()].some((k) => k.startsWith(`${vl}:`))
               return (
                 <tr key={vl} class={rowDirty ? 'rowdirty' : undefined}>
                   <td class="lamp">
@@ -203,7 +201,7 @@ export function Groups() {
                     {rowDirty && isBound && (
                       <button
                         class="act"
-                        title="Re-read the gear's group membership — heals a corrupted readback (ISSUE-18)"
+                        title="Re-read the gear's group membership — heals a corrupted readback"
                         onClick={() => void rereadGroups(vl)}
                       >
                         re-read

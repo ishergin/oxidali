@@ -1123,6 +1123,11 @@ export type InputDeviceSummary = {
   last_event_at_ms: number | null
 }
 
+export type InputDeviceList = {
+  now_ms: number
+  input_devices: InputDeviceSummary[]
+}
+
 export type ReadValue<T> = { value: T | null; read_at_ms: number | null }
 
 export type InputInstance = {

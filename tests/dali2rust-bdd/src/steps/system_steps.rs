@@ -205,7 +205,7 @@ async fn json_pointer_absent(world: &mut DaliWorld, pointer: String) {
     );
 }
 
-// PD-266
+// PD-266 INP-010
 #[then(regex = r#"^the JSON pointer "([^"]*)" should be greater than (\d+)$"#)]
 async fn json_pointer_greater_than(world: &mut DaliWorld, pointer: String, floor: u64) {
     let val = last_json(world);
