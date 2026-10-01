@@ -178,8 +178,8 @@ A missing tool fails its gate (`DALI2RUST_SKIP_JSCPD=1`, `DALI2RUST_SKIP_TSC=1` 
 explicit opt-outs), and no gate keeps its own crate list. The `scripts/*budget*.txt`
 files only go down; the bench's own budgets are in the
 [HIL runbook](../../tools/hil/README.md). The interrupt's flash check needs a linked
-image, so it is not here: `p4-isr-iram-check` and `hil flash` run it and refuse a binary
-it could not check.
+image, so it is not here, nor in `just ci`: `p4-isr-iram-check` fails on a red or
+unchecked image, and `hil flash` refuses one unless told `--allow-red-isr`.
 
 - A new host-buildable crate is added to `scripts/host_crates.txt` only — the one list
   that `just check` / `test` / `clippy`, `verify_fn_length.sh` and the pedantic advisory

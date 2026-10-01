@@ -90,7 +90,8 @@ cannot resolve.
   `1 byte RAM` non-persistent, the two clauses read as complementary and a gear that keeps
   the byte deviates — probably, since 102 never defines "configuration".
 - One installed RGBWAF gear keeps the byte across mains loss: after a cycle that set
-  `powerCycleSeen` it still answers the `0x80` the product asserted. Telling whether the
+  `powerCycleSeen` on every gear it still answers the `0x80` the product asserted, with
+  nothing rewritten. Telling whether the
   `0xC0` it held before (extended colour control, 098bp §10.6.13.5) is a vendor default
   or earlier writes takes a factory-reset gear or a second vendor
   (`tools/hil/rgbwaf_control_probe.py` reads the evidence). Untested: whether the same
