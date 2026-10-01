@@ -88,7 +88,13 @@ impl RegistryStore {
             session.abort();
             return Err(e);
         }
-        session.commit()
+        session.commit()?;
+        self.import_fence.raise(key);
+        Ok(())
+    }
+
+    pub fn lower_import_fence(&self) {
+        self.import_fence.lower_all();
     }
 }
 

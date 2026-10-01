@@ -332,6 +332,7 @@ pub struct RegistryStore {
     pub(crate) dirty: DirtyFlags,
     pub(crate) persist_counters: PersistenceCounters,
     pub(crate) flush_buf: std::sync::Mutex<Vec<u8>>,
+    pub(crate) import_fence: super::import_fence::ImportFence,
 }
 
 impl RegistryStore {
@@ -473,6 +474,7 @@ impl RegistryStore {
             flush_buf: std::sync::Mutex::new(Vec::with_capacity(
                 super::persistence_stream::FLUSH_CHUNK_BYTES,
             )),
+            import_fence: super::import_fence::ImportFence::default(),
         }
     }
 

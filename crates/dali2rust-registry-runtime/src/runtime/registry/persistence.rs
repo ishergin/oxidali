@@ -136,6 +136,8 @@ impl crate::runtime::registry::store::RegistryStore {
         if !self.dirty.any_dirty() {
             return;
         }
+        let fenced = self.import_fence.guard(slices);
+        let slices: &dyn SliceStore = &fenced;
         self.flush_adapters_if_dirty(slices);
         self.flush_masked_slice(
             slices,

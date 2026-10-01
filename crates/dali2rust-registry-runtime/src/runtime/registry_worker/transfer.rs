@@ -38,6 +38,7 @@ pub(super) fn handle_slice_reload(
         refuse_reload(publisher, corr, store);
         return;
     };
+    store.lower_import_fence();
     log::info!(
         "registry: reload after import of {} — {} loaded, {} defaulted, {} errors",
         body.slice_name.as_str(),
