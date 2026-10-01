@@ -195,6 +195,7 @@ impl crate::http::handlers::common::MutatingHandler for PoliciesApplyHandler {
         );
         publish_apply_execute(
             &self.publisher,
+            self.bus_id,
             OperationType::PolicyApply,
             operation_id,
             execute,

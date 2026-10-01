@@ -423,17 +423,20 @@ pub fn reject_if_apply_active(
 
 pub fn publish_apply_execute(
     publisher: &dali2rust_bus::BusPublisher,
+    bus_id: dali2rust_bus::BusId,
     operation_type: OperationType,
     operation_id: String,
     execute: dali2rust_contracts::msg::CommandEnvelope,
 ) -> Result<HttpResponse, HttpResponse> {
-    if publisher.try_publish(
-        dali2rust_bus::BusChannel::Commands,
-        dali2rust_bus::BusFrame::command(execute),
-    ) != dali2rust_bus::PublishResult::Queued
-    {
-        return Err(json_err(503, "commands_ingress_overload"));
-    }
+    let workflow = execute.meta.correlation_id;
+    crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command_pair(
+        publisher,
+        bus_id,
+        workflow,
+        &operation_id,
+        operation_type,
+        execute,
+    )?;
     Ok(accepted_operation_response(operation_id, operation_type))
 }
 

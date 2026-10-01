@@ -9,29 +9,33 @@ A bulk apply — writing the desired group-membership matrix, a scene, or a gear
 every affected device — expands into one DALI command per changed cell, up to 64 lamps
 × 16 groups. Expanding it in the HTTP handler and publishing the expansion as one burst
 couples the request to every queue depth on its path, fails half-way with commands
-already executing, splits the declared outcome count from the component that produces
-the outcomes, and holds the single httpd task for as long as the diff is large.
+already executing, separates the end of the operation from the component that produces
+its outcomes, and holds the single httpd task for as long as the diff is large.
 
 ## Decision
 
 A dedicated **apply orchestrator** worker (`dali2rust-operations-runtime`, its own task)
 executes every bulk apply.
 
-- **HTTP publishes one command and answers `202`.** `GroupApplyExecuteCommand`,
-  `SceneApplyExecuteCommand` and `PolicyApplyExecuteCommand` are a few dozen bytes
-  whatever the diff size. The handlers keep only request validation: the group and
-  scene routes refuse with `409` while an apply of the same kind is running and answer
-  an empty diff at once (`200` with the matrix, from a non-authoritative peek).
+- **The requester opens the operation and publishes one command.** HTTP publishes
+  `OperationBeginCommand`, then `GroupApplyExecuteCommand`, `SceneApplyExecuteCommand` or
+  `PolicyApplyExecuteCommand` — a few dozen bytes whatever the diff size — and answers
+  `202`; an execute refused at ingress fails the operation it opened, and one nobody
+  accepts fails it through the tracker's delivery listener. A rule's `scene(N).apply()`
+  and the policy apply armed for discovery open their own operation the same way. The
+  handlers keep only request validation: the group and scene routes refuse with `409`
+  while an apply of the same kind is running and answer an empty diff at once (`200`
+  with the matrix, from a non-authoritative peek).
 - **The orchestrator owns the diff.** It expands the desired-versus-applied diff from its
-  own registry snapshot, publishes `OperationBeginCommand` with the authoritative
-  expected-outcome count, and paces execution through one shared pacing core so that the
+  own registry snapshot and paces execution through one shared pacing core so that the
   DALI wire clocks the pipeline: at most one apply command is in flight, and cells that
   need no wire time are skipped in small batches. A missing outcome is re-published once
   (program commands and their readbacks are idempotent) and then replaced by a synthetic
-  failure, and a terminal worker signal follows the last cell, so the tracker's count
-  always converges. The run aborts by polling the tracker's own state, not by hearing a
-  status event: a best-effort event could be dropped exactly when the abort matters. The
-  pacing parameters are in the
+  failure, so every cell has an outcome in the result. Outcomes only fill the result; the
+  terminal worker signal that follows the last cell is the one route that ends the
+  operation ([ADR-021](ADR-021-required-event-delivery.md)). The run aborts by polling
+  the tracker's own state, not by hearing a status event: a best-effort event could be
+  dropped exactly when the abort matters. The pacing parameters are in the
   [module document](../../product-design/runtime-modules/apply-orchestrator/README.md).
 - **Boundaries.** The registry never computes a diff or publishes a DALI command, and
   the operation tracker runs no business logic. The events the orchestrator

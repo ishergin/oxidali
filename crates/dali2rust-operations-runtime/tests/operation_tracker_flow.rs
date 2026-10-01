@@ -66,24 +66,13 @@ fn begin_envelope_full(
     op_type: OperationType,
     ttl_ms: u32,
     finished_retention_ms: u32,
-    expected_outcomes: u16,
     target_adapter_id: u16,
 ) -> BusFrame {
-    BusFrame::command(dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, target_adapter_id, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::OperationBeginCommand { operation_key: dali2rust_contracts::msg::fixed_text_32(key), operation_type: op_type, ttl_ms, finished_retention_ms, expected_outcomes }))
+    BusFrame::command(dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, target_adapter_id, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::OperationBeginCommand { operation_key: dali2rust_contracts::msg::fixed_text_32(key), operation_type: op_type, ttl_ms, finished_retention_ms }))
 }
 
 fn begin_envelope(correlation_id: u64, key: &str, op_type: OperationType, ttl_ms: u32) -> BusFrame {
-    begin_envelope_full(correlation_id, key, op_type, ttl_ms, DEFAULT_FINISHED_RETENTION_MS, 0, BusId::default().0)
-}
-
-fn begin_envelope_with_expected_outcomes(
-    correlation_id: u64,
-    key: &str,
-    op_type: OperationType,
-    ttl_ms: u32,
-    expected_outcomes: u16,
-) -> BusFrame {
-    begin_envelope_full(correlation_id, key, op_type, ttl_ms, DEFAULT_FINISHED_RETENTION_MS, expected_outcomes, BusId::default().0)
+    begin_envelope_full(correlation_id, key, op_type, ttl_ms, DEFAULT_FINISHED_RETENTION_MS, BusId::default().0)
 }
 
 fn signal_event(correlation_id: u64, signal: OperationWorkerSignal, code: ErrorCode) -> BusFrame {
@@ -114,6 +103,25 @@ fn signal_event_with_origin(
         Some(origin),
         body,
     ))
+}
+
+fn orchestrator_ends(publisher: &dali2rust_bus::BusPublisher, correlation_id: u64, error: Option<(ErrorCode, &str)>) {
+    use dali2rust_contracts::msg::OperationWorkerSignalEvent as Sig;
+    let body = match error {
+        None => Sig::succeeded(correlation_id),
+        Some((code, message)) => Sig::failed(correlation_id, code, message),
+    };
+    publish(
+        publisher,
+        BusChannel::Events,
+        BusFrame::event(dali2rust_contracts::bus::event_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            correlation_id,
+            BusId::default().0,
+            Some(dali2rust_contracts::msg::Origin::Internal),
+            body,
+        )),
+    );
 }
 
 fn poller_signal_event(correlation_id: u64, signal: OperationWorkerSignal, code: ErrorCode) -> BusFrame {
@@ -311,7 +319,7 @@ fn terminal_operation_is_evicted_after_retention_op006() {
     publish(
         &publisher,
         BusChannel::Commands,
-        begin_envelope_full(9600, "op-evict", OperationType::Discovery, 600_000, 40, 0, BusId::default().0),
+        begin_envelope_full(9600, "op-evict", OperationType::Discovery, 600_000, 40, BusId::default().0),
     );
     publish(
         &publisher,
@@ -347,7 +355,7 @@ fn begin_for_another_adapter_does_not_supersede_op141() {
     publish(
         &publisher,
         BusChannel::Commands,
-        begin_envelope_full(9701, "op-b", OperationType::GroupApply, 600_000, DEFAULT_FINISHED_RETENTION_MS, 0, other_adapter),
+        begin_envelope_full(9701, "op-b", OperationType::GroupApply, 600_000, DEFAULT_FINISHED_RETENTION_MS, other_adapter),
     );
     publish(
         &publisher,
@@ -370,13 +378,7 @@ fn group_apply_outcomes_aggregate_into_operation_view() {
     publish(
         &publisher,
         BusChannel::Commands,
-        begin_envelope_with_expected_outcomes(
-            9300,
-            "grp-apply-0-9300",
-            OperationType::GroupApply,
-            600_000,
-            3,
-        ),
+        begin_envelope(9300, "grp-apply-0-9300", OperationType::GroupApply, 600_000),
     );
     publish(
         &publisher,
@@ -393,6 +395,7 @@ fn group_apply_outcomes_aggregate_into_operation_view() {
         BusChannel::Events,
         BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 9300, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliGroupMembershipProgrammedEvent { registry_adapter_id: 0, target: DaliProgramTarget::VirtualLamp { virtual_lamp_id: 3 }, group_id: 6, action: GroupMembershipAction::Add, physical_short_address: Some(9), membership: None, error: (Some((ErrorCode::OperationFailed, "dali_transport_error"))).map(|(code, message)| dali2rust_contracts::msg::CompactErrorPayload::new(code, message)) })),
     );
+    orchestrator_ends(&publisher, 9300, Some((ErrorCode::OperationFailed, "dali_transport_error")));
 
     wait_until(
         || {
@@ -437,13 +440,7 @@ fn group_apply_succeeds_when_all_programmed() {
     publish(
         &publisher,
         BusChannel::Commands,
-        begin_envelope_with_expected_outcomes(
-            9400,
-            "grp-apply-0-9400",
-            OperationType::GroupApply,
-            600_000,
-            3,
-        ),
+        begin_envelope(9400, "grp-apply-0-9400", OperationType::GroupApply, 600_000),
     );
     for (vl, group, action, short) in [
         (1u8, 2u8, GroupMembershipAction::Add, 1u8),
@@ -456,6 +453,7 @@ fn group_apply_succeeds_when_all_programmed() {
             BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 9400, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliGroupMembershipProgrammedEvent { registry_adapter_id: 0, target: DaliProgramTarget::VirtualLamp { virtual_lamp_id: vl }, group_id: group, action, physical_short_address: Some(short), membership: None, error: None })),
         );
     }
+    orchestrator_ends(&publisher, 9400, None);
     wait_until(
         || {
             read.operation_view("grp-apply-0-9400")
@@ -472,6 +470,47 @@ fn group_apply_succeeds_when_all_programmed() {
 }
 
 #[test]
+fn only_the_orchestrators_signal_closes_an_apply_and_it_is_never_parked() {
+    let (publisher, tracker, _host) = spawn_harness();
+    let read = OperationTrackerHttpRead(Arc::clone(&tracker));
+    publish(
+        &publisher,
+        BusChannel::Commands,
+        begin_envelope(9450, "grp-apply-0-9450", OperationType::GroupApply, 600_000),
+    );
+    publish(
+        &publisher,
+        BusChannel::Events,
+        BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 9450, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliGroupMembershipProgrammedEvent { registry_adapter_id: 0, target: DaliProgramTarget::VirtualLamp { virtual_lamp_id: 1 }, group_id: 2, action: GroupMembershipAction::Add, physical_short_address: Some(1), membership: Some(1 << 2), error: None })),
+    );
+    wait_until(
+        || {
+            read.operation_view("grp-apply-0-9450")
+                .and_then(|view| view.result)
+                .and_then(|r| r.as_group_apply().map(|g| g.programmed_total))
+                == Some(1)
+        },
+        Duration::from_millis(500),
+    );
+    assert_eq!(
+        read.operation_view("grp-apply-0-9450").map(|v| v.status.to_string()),
+        Some("running".to_string()),
+        "an outcome is a row of the result, not the end of the run"
+    );
+
+    orchestrator_ends(&publisher, 9450, None);
+    wait_until(
+        || read.operation_view("grp-apply-0-9450").is_some_and(|v| v.status == "succeeded"),
+        Duration::from_millis(500),
+    );
+    assert_eq!(
+        tracker.lock().expect("tracker").pending_worker_signal_correlations(),
+        0,
+        "the closing signal found its operation open instead of being parked as early"
+    );
+}
+
+#[test]
 fn group_apply_buffers_outcome_until_begin() {
     let (publisher, tracker, _host) = spawn_harness();
     let read = OperationTrackerHttpRead(Arc::clone(&tracker));
@@ -483,14 +522,9 @@ fn group_apply_buffers_outcome_until_begin() {
     publish(
         &publisher,
         BusChannel::Commands,
-        begin_envelope_with_expected_outcomes(
-            9500,
-            "grp-apply-0-9500",
-            OperationType::GroupApply,
-            600_000,
-            1,
-        ),
+        begin_envelope(9500, "grp-apply-0-9500", OperationType::GroupApply, 600_000),
     );
+    orchestrator_ends(&publisher, 9500, None);
     wait_until(
         || {
             read.operation_view("grp-apply-0-9500")
@@ -564,13 +598,7 @@ fn group_apply_detail_rows_are_capped_but_totals_stay_exact() {
     publish(
         &publisher,
         BusChannel::Commands,
-        begin_envelope_with_expected_outcomes(
-            9700,
-            "grp-apply-0-9700",
-            OperationType::GroupApply,
-            600_000,
-            EXPECTED,
-        ),
+        begin_envelope(9700, "grp-apply-0-9700", OperationType::GroupApply, 600_000),
     );
     for i in 0..EXPECTED {
         let vl = (i % 64) as u8;
@@ -606,6 +634,7 @@ fn group_apply_detail_rows_are_capped_but_totals_stay_exact() {
             Duration::from_secs(1),
         );
     }
+    orchestrator_ends(&publisher, 9700, None);
     wait_until(
         || {
             read.operation_view("grp-apply-0-9700")
@@ -632,13 +661,7 @@ fn duplicate_cell_outcome_is_counted_once() {
     publish(
         &publisher,
         BusChannel::Commands,
-        begin_envelope_with_expected_outcomes(
-            9800,
-            "grp-apply-0-9800",
-            OperationType::GroupApply,
-            600_000,
-            2,
-        ),
+        begin_envelope(9800, "grp-apply-0-9800", OperationType::GroupApply, 600_000),
     );
     let cell_outcome = |vl: u8, group: u8| {
         BusFrame::event(dali2rust_contracts::bus::event_envelope(
@@ -683,6 +706,7 @@ fn duplicate_cell_outcome_is_counted_once() {
     );
 
     publish(&publisher, BusChannel::Events, cell_outcome(2, 2));
+    orchestrator_ends(&publisher, 9800, None);
     wait_until(
         || {
             read.operation_view("grp-apply-0-9800")
@@ -733,13 +757,7 @@ fn scene_apply_buckets_written_updated_cleared_skipped_and_failed() {
     publish(
         &publisher,
         BusChannel::Commands,
-        begin_envelope_with_expected_outcomes(
-            9900,
-            "scn-apply-0-3-9900",
-            OperationType::SceneApply,
-            600_000,
-            5,
-        ),
+        begin_envelope(9900, "scn-apply-0-3-9900", OperationType::SceneApply, 600_000),
     );
     publish(&publisher, BusChannel::Events, scene_row_outcome(9900, 1, SceneProgramAction::Write, None));
     publish(&publisher, BusChannel::Events, scene_row_outcome(9900, 2, SceneProgramAction::Update, None));
@@ -755,6 +773,7 @@ fn scene_apply_buckets_written_updated_cleared_skipped_and_failed() {
         BusChannel::Events,
         scene_row_outcome(9900, 4, SceneProgramAction::Update, Some((ErrorCode::OperationFailed, "dali_transport_error"))),
     );
+    orchestrator_ends(&publisher, 9900, Some((ErrorCode::OperationFailed, "dali_transport_error")));
     wait_until(
         || {
             read.operation_view("scn-apply-0-3-9900")

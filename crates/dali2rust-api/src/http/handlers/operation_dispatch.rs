@@ -44,7 +44,7 @@ pub fn publish_begin_then_chunk_series(
     op_key: &str,
     frames: Vec<BusFrame>,
 ) -> Result<(), HttpResponse> {
-    let begin = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, workflow, bus_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::OperationBeginCommand::with_defaults(op_key, OperationType::ConfigWrite, 0));
+    let begin = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, workflow, bus_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::OperationBeginCommand::with_defaults(op_key, OperationType::ConfigWrite));
     if publisher.try_publish(BusChannel::Commands, BusFrame::command(begin)) != PublishResult::Queued
     {
         return Err(json_err(503, "commands_ingress_overload"));
@@ -70,11 +70,7 @@ pub fn publish_begin_then_paced_series(
         workflow,
         bus_id.0,
         Some(dali2rust_contracts::msg::Origin::Internal),
-        dali2rust_contracts::msg::OperationBeginCommand::with_defaults(
-            op_key,
-            OperationType::ConfigWrite,
-            0,
-        ),
+        dali2rust_contracts::msg::OperationBeginCommand::with_defaults(op_key, OperationType::ConfigWrite),
     );
     if publisher.try_publish(BusChannel::Commands, BusFrame::command(begin)) != PublishResult::Queued
     {
@@ -105,7 +101,7 @@ pub fn publish_begin_then_semantic_command_pair(
     op_type: OperationType,
     semantic: CommandEnvelope,
 ) -> Result<(), HttpResponse> {
-    let begin = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, workflow, bus_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::OperationBeginCommand::with_defaults(op_key, op_type, 0));
+    let begin = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, workflow, bus_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::OperationBeginCommand::with_defaults(op_key, op_type));
     let begin_frame = BusFrame::command(begin);
     if publisher.try_publish(BusChannel::Commands, begin_frame) != PublishResult::Queued {
         return Err(json_err(503, "commands_ingress_overload"));

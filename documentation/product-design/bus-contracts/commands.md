@@ -30,7 +30,7 @@
 |---|---|---|
 | Подтверждение запроса | HTTP-хендлер, один дедлайн на запрос | `DeliveryStatus` на канале подтверждений |
 | Подтверждение + apply-watch | Хендлер настроек | Подтверждение, затем счётчик применения реестра |
-| `202` + операция | Никто; оператор смотрит операцию | Исход работы — `OperationWorkerSignalEvent` (у применения групп и сцен — и счёт исходов ячеек) |
+| `202` + операция | Никто; оператор смотрит операцию | Исход работы — только `OperationWorkerSignalEvent` |
 | Внутренний факт | Никто | `CORRELATION_NONE`; реестр не подтверждает |
 
 ## Семейства
@@ -46,8 +46,8 @@
 | Семантические DALI (102/207/209) | `Dali*Command` для control gear | `DaliWorker` | HTTP, MQTT, HCL, поллер, правила, оркестратор | по виду, см. [`semantic-dali-commands.md`](semantic-dali-commands.md) |
 | Part 103 | `Dali103*Command` | `DaliWorker` | HTTP, правила, арбитраж | по виду, там же |
 | Диагностический сырой кадр | `DaliCommandPayload` (`raw_mode`) | `DaliWorker` | только диагностический REST | подтверждение запроса |
-| Операции | `OperationBeginCommand`, `OperationRegistryResetCommand` | operation tracker | HTTP, оркестратор (у `OperationRegistryResetCommand` продового издателя нет) | — |
-| Массовое применение | `GroupApplyExecuteCommand`, `SceneApplyExecuteCommand`, `PolicyApplyExecuteCommand` | apply orchestrator | HTTP, правила (`scene.apply`), `DaliWorker` (политики после скана, если взведён `apply_on_discovery`) | `202` + операция (её открывает оркестратор); от правил и `DaliWorker` — та же операция, но ответа нет |
+| Операции | `OperationBeginCommand`, `OperationRegistryResetCommand` | operation tracker | HTTP; правила и `DaliWorker` — начало своего применения (у `OperationRegistryResetCommand` продового издателя нет) | — |
+| Массовое применение | `GroupApplyExecuteCommand`, `SceneApplyExecuteCommand`, `PolicyApplyExecuteCommand` | apply orchestrator | HTTP, правила (`scene(N).apply()`), `DaliWorker` (политики после скана, если взведён `apply_on_discovery`) | `202` + операция; открывает её публикующий, от правил и `DaliWorker` ответа нет |
 | HCL | `HclOverrideClearCommand` (все флаги расписания), `HclOverrideHoldCommand`, `HclOverrideResumeCommand` (причины флагов внутри цели) | HCL scheduler | HTTP (снятие); правила (`hcl.hold`, `hcl.resume`) | подтверждение запроса; подтверждений от правил никто не ждёт |
 | Бит расписания HCL | `HclScheduleEnableCommand` | registry worker | правила (`hcl.enable` / `hcl.disable`) | подтверждение; его никто не ждёт |
 | Home Assistant | `HomeAssistantDiscoveryPublishCommand`, `MqttPublishCommand` | MQTT bridge | HTTP; правила (`mqtt.publish`) | `202` + операция; без ответа |

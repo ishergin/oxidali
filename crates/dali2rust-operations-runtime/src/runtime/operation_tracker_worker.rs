@@ -155,7 +155,6 @@ fn lock_tracker(state: &Mutex<OperationTrackerInner>) -> MutexGuard<'_, Operatio
 
 #[derive(Clone, Default)]
 struct GroupApplyAccumulator {
-    expected_outcomes: u16,
     programmed: Vec<OperationGroupApplyOutcomeView>,
     skipped: Vec<OperationGroupApplyOutcomeView>,
     failed: Vec<OperationGroupApplyOutcomeView>,
@@ -163,12 +162,10 @@ struct GroupApplyAccumulator {
     skipped_total: u16,
     failed_total: u16,
     seen_cells: [u64; 16],
-    terminal_error: Option<(ErrorCode, String)>,
 }
 
 #[derive(Clone, Default)]
 struct SceneApplyAccumulator {
-    expected_outcomes: u16,
     written: Vec<OperationSceneApplyOutcomeView>,
     updated: Vec<OperationSceneApplyOutcomeView>,
     cleared: Vec<OperationSceneApplyOutcomeView>,
@@ -180,7 +177,6 @@ struct SceneApplyAccumulator {
     skipped_total: u16,
     failed_total: u16,
     seen_rows: u64,
-    terminal_error: Option<(ErrorCode, String)>,
 }
 
 fn push_capped<T>(list: &mut Vec<T>, outcome: T) {
@@ -357,16 +353,10 @@ impl SceneApplyAccumulator {
 }
 
 impl OperationDetailState {
-    fn from_begin(op_type: OperationType, expected_outcomes: u16) -> Self {
+    fn from_begin(op_type: OperationType) -> Self {
         match op_type {
-            OperationType::GroupApply => Self::GroupApply(GroupApplyAccumulator {
-                expected_outcomes,
-                ..GroupApplyAccumulator::default()
-            }),
-            OperationType::SceneApply => Self::SceneApply(SceneApplyAccumulator {
-                expected_outcomes,
-                ..SceneApplyAccumulator::default()
-            }),
+            OperationType::GroupApply => Self::GroupApply(GroupApplyAccumulator::default()),
+            OperationType::SceneApply => Self::SceneApply(SceneApplyAccumulator::default()),
             _ => Self::None,
         }
     }
@@ -736,7 +726,7 @@ fn handle_operation_begin(
         deadline,
         finished_retention_ms: body.finished_retention_ms.max(1),
         started_at_unix_ms: unix_wall_clock_millis(),
-        detail: OperationDetailState::from_begin(op_type, body.expected_outcomes),
+        detail: OperationDetailState::from_begin(op_type),
     };
     emit_transition(
         publisher,
@@ -1069,8 +1059,6 @@ trait ApplyFamily: Sized {
         body: &Self::Body,
         bucket: OutcomeBucket,
     ) -> Bucket<'_, Self::Outcome>;
-    fn terminal_error_mut(&mut self) -> &mut Option<(ErrorCode, String)>;
-    fn finished(&self) -> bool;
 }
 
 impl ApplyFamily for GroupApplyAccumulator {
@@ -1130,16 +1118,7 @@ impl ApplyFamily for GroupApplyAccumulator {
         }
     }
 
-    fn terminal_error_mut(&mut self) -> &mut Option<(ErrorCode, String)> {
-        &mut self.terminal_error
-    }
 
-    fn finished(&self) -> bool {
-        let total = usize::from(self.programmed_total)
-            + usize::from(self.skipped_total)
-            + usize::from(self.failed_total);
-        total >= usize::from(self.expected_outcomes)
-    }
 }
 
 impl ApplyFamily for SceneApplyAccumulator {
@@ -1201,18 +1180,7 @@ impl ApplyFamily for SceneApplyAccumulator {
         }
     }
 
-    fn terminal_error_mut(&mut self) -> &mut Option<(ErrorCode, String)> {
-        &mut self.terminal_error
-    }
 
-    fn finished(&self) -> bool {
-        let total = usize::from(self.written_total)
-            + usize::from(self.updated_total)
-            + usize::from(self.cleared_total)
-            + usize::from(self.skipped_total)
-            + usize::from(self.failed_total);
-        total >= usize::from(self.expected_outcomes)
-    }
 }
 
 fn route_apply_outcome<F: ApplyFamily>(result: &mut F, body: &F::Body) {
@@ -1220,27 +1188,20 @@ fn route_apply_outcome<F: ApplyFamily>(result: &mut F, body: &F::Body) {
     let bucket = match F::error(body).map(|error| error.code) {
         None => OutcomeBucket::Success,
         Some(ErrorCode::VlUnbound) => OutcomeBucket::Skipped,
-        Some(code) => {
-            let message = F::error(body)
-                .map(|error| error.message.as_str().to_string())
-                .unwrap_or_default();
-            *result.terminal_error_mut() = Some((code, message));
-            OutcomeBucket::Failed
-        }
+        Some(_) => OutcomeBucket::Failed,
     };
     bump_bucket(result.bucket_mut(body, bucket), outcome);
 }
 
-fn record_apply_outcome<F: ApplyFamily>(
-    detail: &mut OperationDetailState,
-    body: &F::Body,
-) -> Option<(bool, Option<(ErrorCode, String)>)> {
-    let result = F::from_detail(detail)?;
+fn record_apply_outcome<F: ApplyFamily>(detail: &mut OperationDetailState, body: &F::Body) -> bool {
+    let Some(result) = F::from_detail(detail) else {
+        return false;
+    };
     if result.already_counted(body) {
-        return None;
+        return false;
     }
     route_apply_outcome(result, body);
-    Some((result.finished(), result.terminal_error_mut().clone()))
+    true
 }
 
 fn apply_apply_outcome<F: ApplyFamily>(
@@ -1259,21 +1220,14 @@ fn apply_apply_outcome<F: ApplyFamily>(
     let Some(slot) = guard.active.get_mut(&workflow_c) else {
         return;
     };
-    let Some((finished, terminal_error)) = record_apply_outcome::<F>(&mut slot.detail, body)
-    else {
+    if !record_apply_outcome::<F>(&mut slot.detail, body) {
         return;
-    };
+    }
     let current = slot.clone();
     guard.upsert_http(
         &current.operation_key,
         operation_view_for(&current, current.status, None),
         None,
-    );
-    if !finished {
-        return;
-    }
-    finish_apply_operation(
-        publisher, bus_id, guard, counters, workflow_c, &current, terminal_error,
     );
 }
 
@@ -1289,23 +1243,6 @@ fn flush_pending_apply_outcomes<F: ApplyFamily>(
     });
 }
 
-fn finish_apply_operation(
-    publisher: &BusPublisher,
-    bus_id: BusId,
-    guard: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
-    workflow_c: u64,
-    current: &TrackedOp,
-    terminal_error: Option<(ErrorCode, String)>,
-) {
-    let (status, error_payload) = match &terminal_error {
-        Some((code, message)) => (OperationStatus::Failed, Some((*code, message.as_str()))),
-        None => (OperationStatus::Succeeded, None),
-    };
-    apply_terminal(
-        publisher, bus_id, guard, counters, workflow_c, current, status, error_payload,
-    );
-}
 
 fn scene_action_name(action: SceneProgramAction) -> &'static str {
     match action {

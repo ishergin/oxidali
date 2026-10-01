@@ -73,6 +73,7 @@ struct RulesWorker {
     liveness: Arc<dali2rust_platform::liveness::LivenessBeat>,
     staging: Staging,
     world: Arc<dyn crate::runtime::world_port::RulesWorldPort>,
+    correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
     engine: crate::runtime::engine::Engine,
     engine_cells: Arc<crate::runtime::stats::RulesEngineCells>,
     engine_revision: u32,
@@ -104,6 +105,7 @@ pub struct RulesWorkerSeams {
     pub resolver: Arc<dyn NameResolver>,
     pub slices: Option<Arc<dyn SliceStore>>,
     pub world: Arc<dyn crate::runtime::world_port::RulesWorldPort>,
+    pub correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
 }
 
 pub fn spawn_rules_worker(
@@ -132,6 +134,7 @@ pub fn spawn_rules_worker(
                 liveness,
                 staging: Staging::default(),
                 world: seams.world,
+                correlation: seams.correlation,
                 engine: crate::runtime::engine::Engine::new(now),
                 engine_cells,
                 engine_revision: u32::MAX,
@@ -357,6 +360,8 @@ impl RulesWorker {
             bus_id: self.bus_id,
             counters: &self.counters,
             rule: &outcome.rule,
+            correlation: &self.correlation,
+            liveness: &self.liveness,
         };
         let report = if outcome.dry {
             crate::runtime::executor::ExecutionReport::default()
@@ -531,23 +536,7 @@ impl RulesWorker {
                 message,
             ),
         };
-        let ev = event_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            correlation_id,
-            self.bus_id.0,
-            Some(Origin::Api),
-            signal,
-        );
-        let _ = self.liveness.while_turning(|| {
-            publish_required(
-                &self.publisher,
-                BusChannel::Events,
-                BusFrame::event(ev),
-                &REQUIRED_PUBLISH_BACKOFF_MS,
-                REQUIRED_PUBLISH_UNCAPPED,
-                "rules-worker-signal",
-            )
-        });
+        publish_signal(&self.publisher, self.bus_id, &self.liveness, Origin::Api, signal);
     }
 
     fn persist(&self, doc: &RulesDocument) {
@@ -592,6 +581,32 @@ fn error_code(message: &str) -> ErrorCode {
         "rule_set_conflict" => ErrorCode::Conflict,
         _ => ErrorCode::OperationFailed,
     }
+}
+
+pub(crate) fn publish_signal(
+    publisher: &BusPublisher,
+    bus_id: BusId,
+    liveness: &dali2rust_platform::liveness::LivenessBeat,
+    origin: Origin,
+    signal: dali2rust_contracts::msg::OperationWorkerSignalEvent,
+) {
+    let ev = event_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        signal.workflow_correlation_id,
+        bus_id.0,
+        Some(origin),
+        signal,
+    );
+    let _ = liveness.while_turning(|| {
+        publish_required(
+            publisher,
+            BusChannel::Events,
+            BusFrame::event(ev),
+            &REQUIRED_PUBLISH_BACKOFF_MS,
+            REQUIRED_PUBLISH_UNCAPPED,
+            "rules-worker-signal",
+        )
+    });
 }
 
 fn write_banks(slices: &dyn SliceStore, doc: &RulesDocument) -> Result<(), ()> {

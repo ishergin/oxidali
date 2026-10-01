@@ -79,8 +79,8 @@
 - `OperationStatusChangedEvent` — каждый переход статуса операции с ключом и
   компактной ошибкой ([`../runtime-modules/operation-tracker/README.md`](../runtime-modules/operation-tracker/README.md)).
 - `OperationWorkerSignalEvent` (`WorkerStarted` / `WorkerSucceeded` / `WorkerFailed`
-  по workflow correlation id) — носитель исхода работы; применение групп и сцен
-  кончается и по счёту исходов ячеек. Другие концы операции (отказ доставки,
+  по workflow correlation id) — единственный носитель исхода работы. Другие концы
+  операции (отказ доставки,
   вытеснение, сброс, TTL) — [`operation-tracker`](../runtime-modules/operation-tracker/README.md).
 
 ## Результаты DALI

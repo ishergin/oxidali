@@ -116,6 +116,7 @@ const EXECUTOR_OUTPUT: &[&str] = &[
     "DaliRecallSceneCommand",
     "DaliStopFadeCommand",
     "SceneApplyExecuteCommand",
+    "OperationBeginCommand",
     "Dali103FeedbackDriveCommand",
     "MqttPublishCommand",
     "HclScheduleEnableCommand",
@@ -226,6 +227,7 @@ fn harness_spawn(
             resolver,
             slices: Some(slices.clone() as Arc<dyn dali2rust_platform::slice_store::SliceStore>),
             world: Arc::new(world),
+            correlation: Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
         },
         Arc::clone(&counters),
         Arc::clone(&cells),
@@ -1237,6 +1239,44 @@ fn every_bus_landing_reaches_the_bus_as_declared() {
              {seen:?} on the bus"
         );
     }
+}
+
+fn drain_commands(h: &Harness) -> Vec<dali2rust_contracts::msg::CommandEnvelope> {
+    std::iter::from_fn(|| {
+        dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |_| true)
+    })
+    .collect()
+}
+
+fn opened_scene_apply(published: &[dali2rust_contracts::msg::CommandEnvelope]) -> (u64, String) {
+    use dali2rust_contracts::msg::{BusCommandPayload, OperationType};
+    let [begin, execute] = published else {
+        panic!("a scene apply is one begin and one execute, got {published:?}");
+    };
+    let BusCommandPayload::OperationBeginCommand(opened) = &begin.payload else {
+        panic!("the operation must be opened before the run is asked for: {published:?}");
+    };
+    let BusCommandPayload::SceneApplyExecuteCommand(run) = &execute.payload else {
+        panic!("the execute must follow the begin: {published:?}");
+    };
+    assert_eq!(opened.operation_type, OperationType::SceneApply);
+    assert_eq!(opened.operation_key.as_str(), run.operation_key.as_str());
+    assert_eq!(run.scene_id, 3);
+    assert_eq!(
+        begin.meta.correlation_id, execute.meta.correlation_id,
+        "the orchestrator's terminal signal closes the operation the begin opened"
+    );
+    (execute.meta.correlation_id, run.operation_key.as_str().to_string())
+}
+
+#[test]
+fn a_rule_scene_apply_opens_its_own_operation_before_the_run() {
+    let h = landing_run("scene-apply-opens", &landing_document("scene(3).apply()"));
+    let (first_workflow, first_key) = opened_scene_apply(&drain_commands(&h));
+    run_rule(&h, 3, "под тестом");
+    let (second_workflow, second_key) = opened_scene_apply(&drain_commands(&h));
+    assert_ne!(first_workflow, second_workflow, "two firings share one tracker row");
+    assert_ne!(first_key, second_key, "two firings share one operation key");
 }
 
 fn landing_counter(counters: &RulesWorkerCounters, name: &str) -> u32 {

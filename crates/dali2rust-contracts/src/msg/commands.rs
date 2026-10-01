@@ -197,14 +197,12 @@ declare_bus_payloads! {
         pub operation_type: OperationType,
         pub ttl_ms: u32,
         pub finished_retention_ms: u32,
-        pub expected_outcomes: u16,
     }
     budget = OperationBeginCommand {
         operation_key: crate::msg::payload_test_samples::worst_text32(),
         operation_type: OperationType::CommissioningReplaceDevice,
         ttl_ms: u32::MAX,
         finished_retention_ms: u32::MAX,
-        expected_outcomes: u16::MAX,
     };
 
     #[derive(Default)]
@@ -1071,17 +1069,12 @@ pub const FIRMWARE_UPDATE_TTL_MS: u32 = 300_000;
 pub const OPERATION_FINISHED_RETENTION_MS: u32 = 60_000;
 
 impl OperationBeginCommand {
-    pub fn with_defaults(
-        operation_key: &str,
-        operation_type: OperationType,
-        expected_outcomes: u16,
-    ) -> Self {
+    pub fn with_defaults(operation_key: &str, operation_type: OperationType) -> Self {
         Self {
             operation_key: super::bounded::fixed_text_32(operation_key),
             operation_type,
             ttl_ms: operation_ttl_ms(operation_type),
             finished_retention_ms: OPERATION_FINISHED_RETENTION_MS,
-            expected_outcomes,
         }
     }
 }
@@ -1458,7 +1451,7 @@ mod operation_ttl_tests {
         assert_eq!(operation_ttl_ms(OperationType::ConfigWrite), CONFIG_WRITE_TTL_MS);
         assert_eq!(operation_ttl_ms(OperationType::GroupApply), OPERATION_TTL_MS);
         assert_eq!(
-            OperationBeginCommand::with_defaults("k", OperationType::Discovery, 0).ttl_ms,
+            OperationBeginCommand::with_defaults("k", OperationType::Discovery).ttl_ms,
             DISCOVERY_TTL_MS,
             "the begin command must carry the kind's budget, not the generic one"
         );

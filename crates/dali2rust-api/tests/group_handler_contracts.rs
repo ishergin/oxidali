@@ -218,7 +218,7 @@ fn group_apply_noop_returns_matrix_without_operation() {
 }
 
 #[test]
-fn group_apply_publishes_one_execute_command_for_the_orchestrator() {
+fn group_apply_opens_its_operation_then_hands_the_orchestrator_one_execute_command() {
     let harness = PublishProbe::new();
     let handler = GroupApplyHandler::new(
         harness.publisher.clone(),
@@ -265,6 +265,20 @@ fn group_apply_publishes_one_execute_command_for_the_orchestrator() {
         .expect("workflow suffix")
         .parse::<u64>()
         .expect("workflow id");
+
+    let BusFrame::Command(begin) = harness
+        .commands
+        .recv_timeout(Duration::from_millis(200))
+        .expect("operation begin frame")
+    else {
+        panic!("expected command frame");
+    };
+    assert_eq!(begin.meta.correlation_id, correlation_id);
+    let BusCommandPayload::OperationBeginCommand(begin) = &begin.payload else {
+        panic!("the route opens its operation first, got {:?}", begin.payload);
+    };
+    assert_eq!(begin.operation_key.as_str(), operation_id);
+    assert_eq!(begin.operation_type, OperationType::GroupApply);
 
     let BusFrame::Command(command) = harness
         .commands

@@ -2,10 +2,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, BusSubscriberRx};
-use dali2rust_contracts::bus::{command_envelope, event_envelope};
+use dali2rust_contracts::bus::event_envelope;
 use dali2rust_contracts::msg::{
-    CommandEnvelope, ErrorCode, EventEnvelope, OperationStatus, OperationType,
-    OperationWorkerSignalEvent, Origin, OPERATION_TTL_MS,
+    CommandEnvelope, ErrorCode, EventEnvelope, OperationStatus, OperationWorkerSignalEvent,
+    Origin, OPERATION_TTL_MS,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::OperationReadPort;
@@ -62,7 +62,6 @@ pub(crate) struct RunState<'a> {
     pub workflow: u64,
     pub registry_adapter_id: u8,
     pub operation_key: &'a str,
-    pub op_type: OperationType,
     pub operations: &'a dyn OperationReadPort,
     deadline: Instant,
 }
@@ -77,7 +76,6 @@ impl<'a> RunState<'a> {
         workflow: u64,
         registry_adapter_id: u8,
         operation_key: &'a str,
-        op_type: OperationType,
         operations: &'a dyn OperationReadPort,
     ) -> Self {
         Self {
@@ -88,7 +86,6 @@ impl<'a> RunState<'a> {
             workflow,
             registry_adapter_id,
             operation_key,
-            op_type,
             operations,
             deadline: Instant::now() + Duration::from_millis(u64::from(OPERATION_TTL_MS)),
         }
@@ -106,17 +103,9 @@ impl<'a> RunState<'a> {
 
 pub(crate) fn execute_apply<C: PacedCell>(run: &RunState<'_>, diff: Option<Vec<C>>) {
     let Some(diff) = diff else {
-        publish_begin(run, 0);
         publish_terminal_signal(run, Some((ErrorCode::NotFound, "adapter_not_found".to_string())));
         return;
     };
-    if !publish_begin(run, diff.len()) {
-        warn!(
-            "apply-orchestrator: OperationBegin publish failed for {}",
-            run.operation_key
-        );
-        return;
-    }
     if let Some(hard_error) = pace_cells(run, &diff) {
         publish_terminal_signal(run, hard_error);
     }
@@ -309,20 +298,6 @@ fn pump_events_until(
 
 const ABORT_POLL: Duration = Duration::from_millis(250);
 
-fn publish_begin(run: &RunState<'_>, expected_outcomes: usize) -> bool {
-    let begin = command_envelope(
-        SOURCE_ID_UNSPECIFIED,
-        run.workflow,
-        run.bus_id.0,
-        Some(Origin::Internal),
-        dali2rust_contracts::msg::OperationBeginCommand::with_defaults(
-            run.operation_key,
-            run.op_type,
-            expected_outcomes.min(usize::from(u16::MAX)) as u16,
-        ),
-    );
-    publish_with_backoff(run, BusChannel::Commands, BusFrame::command(begin))
-}
 
 fn publish_terminal_signal(run: &RunState<'_>, hard_error: Option<(ErrorCode, String)>) {
     let signal = match hard_error {

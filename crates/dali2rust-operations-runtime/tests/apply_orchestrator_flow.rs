@@ -311,7 +311,27 @@ fn unbound_row(vl: u8, changed_groups: u16) -> GroupApplyRowView {
     }
 }
 
+fn open_operation(
+    publisher: &BusPublisher,
+    workflow: u64,
+    operation_key: &str,
+    operation_type: dali2rust_contracts::msg::OperationType,
+) {
+    let begin = dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        workflow,
+        BusId::default().0,
+        Some(Origin::Api),
+        dali2rust_contracts::msg::OperationBeginCommand::with_defaults(operation_key, operation_type),
+    );
+    assert_eq!(
+        publisher.try_publish(BusChannel::Commands, BusFrame::command(begin)),
+        PublishResult::Queued
+    );
+}
+
 fn publish_execute(publisher: &BusPublisher, workflow: u64, operation_key: &str) {
+    open_operation(publisher, workflow, operation_key, dali2rust_contracts::msg::OperationType::GroupApply);
     let execute = dali2rust_contracts::bus::command_envelope(
         SOURCE_ID_UNSPECIFIED,
         workflow,
@@ -381,6 +401,12 @@ fn paced_apply_converges_through_a_one_slot_worker_inbox() {
 #[test]
 fn missing_adapter_snapshot_fails_the_operation() {
     let harness = spawn_harness(Vec::new());
+    open_operation(
+        &harness.publisher,
+        7002,
+        "grp-apply-3-7002",
+        dali2rust_contracts::msg::OperationType::GroupApply,
+    );
     let execute = dali2rust_contracts::bus::command_envelope(
         SOURCE_ID_UNSPECIFIED,
         7002,
@@ -562,6 +588,7 @@ fn a_policy_apply_reaches_every_device_and_not_only_the_first() {
 }
 
 fn publish_policy_execute(publisher: &BusPublisher, workflow: u64, operation_key: &str) {
+    open_operation(publisher, workflow, operation_key, dali2rust_contracts::msg::OperationType::PolicyApply);
     let execute = dali2rust_contracts::bus::command_envelope(
         SOURCE_ID_UNSPECIFIED,
         workflow,

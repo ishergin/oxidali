@@ -1,20 +1,21 @@
 use std::sync::atomic::Ordering;
 
-use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, PublishResult};
+use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, CorrelationIdAllocator, PublishResult};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
     ColorMode, ColorValue, Dali103InstanceAction, Dali103InstanceActionCommand,
     DaliRecallSceneCommand, DaliSetTargetStateCommand, DaliStopFadeCommand, DaliTargetScope,
-    FixedText32, HclOverrideHoldCommand, HclOverrideResumeCommand, HclOverrideTarget,
-    HclScheduleEnableCommand, LightSetpoint, MqttPublishCommand, Origin, PowerState,
-    SceneApplyExecuteCommand,
+    ErrorCode, FixedText32, HclOverrideHoldCommand, HclOverrideResumeCommand, HclOverrideTarget,
+    HclScheduleEnableCommand, LightSetpoint, MqttPublishCommand, OperationBeginCommand,
+    OperationType, OperationWorkerSignalEvent, Origin, PowerState, SceneApplyExecuteCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::dali::dev103::instance_type;
+use dali2rust_platform::liveness::LivenessBeat;
 use dali2rust_rules_model::{InputRef, LightTarget};
 
 use crate::runtime::engine::{Effect, LightVerb, WorldSnapshot};
-use crate::runtime::worker::RulesWorkerCounters;
+use crate::runtime::worker::{publish_signal, RulesWorkerCounters};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ExecutionReport {
@@ -85,6 +86,8 @@ pub(crate) struct EffectExecutor<'a> {
     pub bus_id: BusId,
     pub counters: &'a RulesWorkerCounters,
     pub rule: &'a str,
+    pub correlation: &'a CorrelationIdAllocator,
+    pub liveness: &'a LivenessBeat,
 }
 
 impl EffectExecutor<'_> {
@@ -181,7 +184,7 @@ impl EffectExecutor<'_> {
             Effect::SceneRecall { scene, target, hold_hcl } => {
                 self.scene_recall(*scene, target, *hold_hcl, snapshot, corr)
             }
-            Effect::SceneApply { scene, .. } => self.scene_apply(*scene, corr),
+            Effect::SceneApply { scene, .. } => self.scene_apply(*scene),
             _ => self.misrouted(),
         }
     }
@@ -307,17 +310,28 @@ impl EffectExecutor<'_> {
         self.publish(corr, DaliRecallSceneCommand { hold_hcl, ..command })
     }
 
-    fn scene_apply(&self, scene: u8, corr: u64) -> bool {
-        self.publish(
-            corr,
-            SceneApplyExecuteCommand {
-                registry_adapter_id: 0,
-                scene_id: scene,
-                operation_key: dali2rust_contracts::msg::fixed_text_32(&format!(
-                    "rule-scn-{scene}-{corr}"
-                )),
-            },
-        )
+    fn scene_apply(&self, scene: u8) -> bool {
+        let workflow = self.correlation.next_id();
+        let operation_key = format!("rule-scn-{scene}-{workflow}");
+        let begin = OperationBeginCommand::with_defaults(&operation_key, OperationType::SceneApply);
+        if !self.send(workflow, begin) {
+            return self.note(false);
+        }
+        let execute = SceneApplyExecuteCommand {
+            registry_adapter_id: 0,
+            scene_id: scene,
+            operation_key: dali2rust_contracts::msg::fixed_text_32(&operation_key),
+        };
+        let queued = self.publish(workflow, execute);
+        if !queued {
+            let failed = OperationWorkerSignalEvent::failed(
+                workflow,
+                ErrorCode::CommandsIngressOverload,
+                "semantic_ingress_overload",
+            );
+            publish_signal(self.publisher, self.bus_id, self.liveness, Origin::Rules, failed);
+        }
+        queued
     }
 
     fn hcl_resume(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {
@@ -409,6 +423,13 @@ impl EffectExecutor<'_> {
     where
         dali2rust_contracts::msg::BusCommandPayload: From<P>,
     {
+        self.note(self.send(corr, payload))
+    }
+
+    fn send<P>(&self, corr: u64, payload: P) -> bool
+    where
+        dali2rust_contracts::msg::BusCommandPayload: From<P>,
+    {
         let env = command_envelope(
             SOURCE_ID_UNSPECIFIED,
             corr,
@@ -416,8 +437,11 @@ impl EffectExecutor<'_> {
             Some(Origin::Rules),
             payload,
         );
-        let queued = self.publisher.try_publish(BusChannel::Commands, BusFrame::command(env))
-            == PublishResult::Queued;
+        self.publisher.try_publish(BusChannel::Commands, BusFrame::command(env))
+            == PublishResult::Queued
+    }
+
+    fn note(&self, queued: bool) -> bool {
         if queued {
             self.counters.effects_published.fetch_add(1, Ordering::Relaxed);
         } else {
