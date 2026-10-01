@@ -713,7 +713,7 @@ fn handle_operation_begin(
     let deadline = Instant::now() + Duration::from_millis(u64::from(body.ttl_ms.max(1)));
     let mut guard = lock_tracker(state);
     let key = coalesce_key(op_type, adapter_id, body.operation_key.as_str());
-    let coalesces = op_type.coalesces_per_adapter();
+    let coalesces = op_type.coalesces_per_resource();
     if coalesces {
         supersede_stale_operation(publisher, bus_id, &mut guard, counters, &key, corr);
     }

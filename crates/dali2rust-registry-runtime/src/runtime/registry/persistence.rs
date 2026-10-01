@@ -164,6 +164,16 @@ impl crate::runtime::registry::store::RegistryStore {
         self.flush_input_devices_if_dirty(slices);
     }
 
+    fn note_flush_failure(&self, what: core::fmt::Arguments<'_>, e: &StoreError) {
+        if matches!(e, StoreError::Deferred) {
+            return;
+        }
+        warn!("persistence: {what} flush failed: {e}");
+        self.persist_counters
+            .flush_error_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     fn flush_physical_device_banks(&self, slices: &dyn SliceStore) {
         let _ = self.dirty.take_physical_devices_dirty();
         let g = self.read_inner();
@@ -179,14 +189,11 @@ impl crate::runtime::registry::store::RegistryStore {
                     continue;
                 }
                 if let Err(e) = self.flush_physical_device_bank(slices, adapter_id, bank) {
-                    warn!("persistence: PD a{adapter_id}/b{bank} flush failed: {e}");
+                    self.note_flush_failure(format_args!("PD a{adapter_id}/b{bank}"), &e);
                     self.dirty.mark_physical_device_dirty(
                         adapter_id,
                         bank * dali2rust_platform::slice_store::SliceKey::DEVICES_PER_BANK,
                     );
-                    self.persist_counters
-                        .flush_error_total
-                        .fetch_add(1, Ordering::Relaxed);
                 } else {
                     self.persist_counters
                         .flush_success_total
@@ -210,11 +217,8 @@ impl crate::runtime::registry::store::RegistryStore {
             return;
         }
         if let Err(e) = self.flush_global_slice(slices, key, version, name, snapshot) {
-            warn!("persistence: {name} flush failed: {e}");
+            self.note_flush_failure(format_args!("{name}"), &e);
             remark();
-            self.persist_counters
-                .flush_error_total
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return;
         }
         self.persist_counters
@@ -270,11 +274,8 @@ impl crate::runtime::registry::store::RegistryStore {
                     crate::runtime::registry::input_devices::persistable_snapshot_bank(inner, bank)
                 },
             ) {
-                warn!("persistence: {name} flush failed: {e}");
+                self.note_flush_failure(format_args!("{name}"), &e);
                 self.dirty.mark_input_devices_dirty();
-                self.persist_counters
-                    .flush_error_total
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return;
             }
             self.persist_counters
@@ -414,11 +415,8 @@ impl crate::runtime::registry::store::RegistryStore {
                     continue;
                 }
                 if let Err(e) = self.flush_scene(slices, adapter_id, scene_id) {
-                    warn!("persistence: scene a{adapter_id}/s{scene_id} flush failed: {e}");
+                    self.note_flush_failure(format_args!("scene a{adapter_id}/s{scene_id}"), &e);
                     self.dirty.mark_scene_dirty(adapter_id, scene_id);
-                    self.persist_counters
-                        .flush_error_total
-                        .fetch_add(1, Ordering::Relaxed);
                 } else {
                     self.persist_counters
                         .flush_success_total
@@ -433,10 +431,7 @@ impl crate::runtime::registry::store::RegistryStore {
             return;
         }
         if let Err(e) = self.flush_adapters(slices) {
-            warn!("persistence: adapters flush failed: {e}");
-            self.persist_counters
-                .flush_error_total
-                .fetch_add(1, Ordering::Relaxed);
+            self.note_flush_failure(format_args!("adapters"), &e);
         } else {
             self.dirty.adapters.store(false, Ordering::Release);
             self.persist_counters
@@ -464,11 +459,8 @@ impl crate::runtime::registry::store::RegistryStore {
                 continue;
             }
             if let Err(e) = flush_one(self, slices, adapter_id) {
-                warn!("persistence: {label} a{adapter_id} flush failed: {e}");
+                self.note_flush_failure(format_args!("{label} a{adapter_id}"), &e);
                 remark_dirty(self, adapter_id);
-                self.persist_counters
-                    .flush_error_total
-                    .fetch_add(1, Ordering::Relaxed);
             } else {
                 self.persist_counters
                     .flush_success_total

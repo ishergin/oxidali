@@ -765,8 +765,11 @@ impl dali2rust_api::http::handlers::config_transfer::ConfigTransferPort for Conf
             return Err(ImportRefusal::FlashBusy);
         }
         self.store
-            .import_slice(slices.as_ref(), key, bytes)
-            .map_err(|e| ImportRefusal::StoreFailed(format!("{e:?}")))?;
+            .import_slice_without_waiting(slices.as_ref(), key, bytes)
+            .map_err(|e| match e {
+                dali2rust_platform::slice_store::StoreError::Deferred => ImportRefusal::FlashBusy,
+                other => ImportRefusal::StoreFailed(format!("{other:?}")),
+            })?;
         apply_imported_timezone(key, self.wall_clock.as_ref(), Some(slices));
         Ok(())
     }

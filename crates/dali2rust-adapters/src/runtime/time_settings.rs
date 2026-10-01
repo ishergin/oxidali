@@ -45,17 +45,15 @@ pub fn timezone_writer(slices: Option<Arc<dyn SliceStore>>) -> TimezonePersist {
         };
         let Ok(bytes) = postcard::to_allocvec(&slice) else {
             log::warn!("time: timezone {timezone:?} did not encode");
-            return Ok(());
+            return Err(TimezonePersistRefusal::StoreFailed);
         };
-        match store.begin_write(SliceKey::ControllerSettings) {
-            Ok(mut session) => {
-                if let Err(e) = session.append(&bytes).and_then(|()| session.commit()) {
-                    log::warn!("time: timezone persist failed: {e}");
-                }
-            }
-            Err(e) => log::warn!("time: timezone persist could not start: {e}"),
-        }
-        Ok(())
+        let written = store
+            .begin_write(SliceKey::ControllerSettings)
+            .and_then(|mut session| session.append(&bytes).and_then(|()| session.commit()));
+        written.map_err(|e| {
+            log::warn!("time: timezone persist failed: {e}");
+            TimezonePersistRefusal::StoreFailed
+        })
     })
 }
 

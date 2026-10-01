@@ -34,11 +34,12 @@ pub(super) fn handle_slice_reload(
         );
         return;
     };
+    let imported_before = store.import_fence_generation();
     let Some(counts) = reload_on_hydration_stack(store, slices.as_ref(), adapter_count) else {
         refuse_reload(publisher, corr, store);
         return;
     };
-    store.lower_import_fence();
+    store.lower_import_fence(imported_before);
     log::info!(
         "registry: reload after import of {} — {} loaded, {} defaulted, {} errors",
         body.slice_name.as_str(),

@@ -22,6 +22,7 @@ struct TimeBody {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimezonePersistRefusal {
     FlashBusy,
+    StoreFailed,
 }
 
 pub type TimezonePersist = Arc<dyn Fn(&str) -> Result<(), TimezonePersistRefusal> + Send + Sync>;
@@ -66,11 +67,17 @@ impl TimeHandler {
     fn set_and_persist_timezone(&self, tz: &str) -> Result<(), HttpResponse> {
         let previous = self.clock.timezone();
         self.clock.set_timezone(tz).map_err(|e| time_error_response(&e))?;
-        if let Err(TimezonePersistRefusal::FlashBusy) = (self.persist_timezone)(tz) {
-            let _ = self.clock.set_timezone(&previous);
-            return Err(json_err(503, "flash_busy"));
+        if previous == tz {
+            return Ok(());
         }
-        Ok(())
+        let Err(refusal) = (self.persist_timezone)(tz) else {
+            return Ok(());
+        };
+        let _ = self.clock.set_timezone(&previous);
+        Err(match refusal {
+            TimezonePersistRefusal::FlashBusy => json_err(503, "flash_busy"),
+            TimezonePersistRefusal::StoreFailed => json_err(503, "store_failed"),
+        })
     }
 }
 

@@ -195,6 +195,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn an_import_from_the_httpd_task_does_not_wait_behind_a_flush() {
+        use dali2rust_platform::slice_store::{SliceKey, StoreError};
+        let slices = dali2rust_test_support::temp_slice_store("import-no-wait");
+        let store = RegistryStore::with_adapter_count(1);
+        let flushing = store.flush_buf.lock().expect("flush buffer");
+        let refused =
+            store.import_slice_without_waiting(&slices, SliceKey::PollerSettings, &imported_poller_slice(9_000));
+        drop(flushing);
+        assert!(matches!(refused, Err(StoreError::Deferred)));
+    }
+
     fn imported_poller_slice(interval_ms: u32) -> Vec<u8> {
         let envelope = crate::runtime::registry::persistence_slices::PersistenceEnvelope::new(
             crate::runtime::registry::persistence_slices::POLLER_SETTINGS_SLICE_VERSION,
@@ -230,8 +242,13 @@ mod tests {
             imported,
             "the registry worker flushed its stale copy over the import before the reload"
         );
+        assert_eq!(
+            store.persist_counters.flush_error_total.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a write deferred behind an import is not a flush failure"
+        );
 
-        store.lower_import_fence();
+        store.lower_import_fence(store.import_fence_generation());
         let _ = store.hydrate_from_store(&slices, 1);
         store.flush_dirty_slices(&slices);
         assert_eq!(store.poller_settings_row().interval_ms, IMPORTED_MS);

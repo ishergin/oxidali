@@ -215,7 +215,7 @@ impl OperationType {
         }
     }
 
-    pub const fn coalesces_per_adapter(self) -> bool {
+    pub const fn coalesces_per_resource(self) -> bool {
         !matches!(
             self,
             Self::ConfigWrite | Self::GroupApply | Self::SceneApply | Self::PolicyApply

@@ -83,6 +83,29 @@ impl RegistryStore {
         let _serialised = self.flush_buf.lock().map_err(|_| {
             StoreError::Backend("flush buffer poisoned".to_string())
         })?;
+        self.write_import(slices, key, bytes)
+    }
+
+    pub fn import_slice_without_waiting(
+        &self,
+        slices: &dyn SliceStore,
+        key: SliceKey,
+        bytes: &[u8],
+    ) -> Result<(), StoreError> {
+        if dali2rust_platform::flash_gate::firmware_write_open() {
+            return Err(StoreError::Deferred);
+        }
+        let _serialised = match self.flush_buf.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::WouldBlock) => return Err(StoreError::Deferred),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(StoreError::Backend("flush buffer poisoned".to_string()))
+            }
+        };
+        self.write_import(slices, key, bytes)
+    }
+
+    fn write_import(&self, slices: &dyn SliceStore, key: SliceKey, bytes: &[u8]) -> Result<(), StoreError> {
         let mut session = slices.begin_write(key)?;
         if let Err(e) = session.append(bytes) {
             session.abort();
@@ -93,8 +116,12 @@ impl RegistryStore {
         Ok(())
     }
 
-    pub fn lower_import_fence(&self) {
-        self.import_fence.lower_all();
+    pub fn import_fence_generation(&self) -> u64 {
+        self.import_fence.generation()
+    }
+
+    pub fn lower_import_fence(&self, up_to_generation: u64) {
+        self.import_fence.lower_up_to(up_to_generation);
     }
 }
 
