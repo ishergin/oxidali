@@ -755,7 +755,9 @@ pub(crate) struct RulesHttpDeps {
 
 #[inline(never)]
 fn wire_rules(builder: AppBuilder, bus: &HttpBusDispatch, deps: &RulesHttpDeps) -> AppBuilder {
-    use dali2rust_api::http::handlers::rules::{RulesAction, RulesHandler, RulesHandlerShared};
+    use dali2rust_api::http::handlers::rules::{
+        RulesAction, RulesConfirmation, RulesHandler, RulesHandlerShared,
+    };
     let shared = Arc::new(RulesHandlerShared::new(
         Arc::clone(&deps.state),
         Arc::clone(&deps.compiler),
@@ -763,6 +765,10 @@ fn wire_rules(builder: AppBuilder, bus: &HttpBusDispatch, deps: &RulesHttpDeps) 
         bus.publisher.clone(),
         bus.bus_id,
         Arc::clone(&bus.correlation),
+        RulesConfirmation {
+            slots: Arc::clone(&bus.slots),
+            timeout_ms: bus.confirmation_timeout_ms,
+        },
     ));
     let handler = |action: RulesAction| -> Box<RulesHandler> {
         Box::new(RulesHandler::new(Arc::clone(&shared), action))

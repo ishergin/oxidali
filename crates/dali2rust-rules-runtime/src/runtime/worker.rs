@@ -95,7 +95,7 @@ dali2rust_contracts::dispatch_bus_commands! {
     ignored = { worker.counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
     RuleStageCommand(chunk) => worker.on_stage(correlation_id, chunk),
     RuleCommitCommand(commit) => worker.on_commit(correlation_id, commit),
-    RuleEnableCommand(toggle) => worker.on_enable(toggle),
+    RuleEnableCommand(toggle) => worker.on_enable(correlation_id, toggle),
     RuleRunCommand(run) => worker.on_run(correlation_id, run),
 }
 
@@ -479,16 +479,45 @@ impl RulesWorker {
         self.store_engine_cells();
     }
 
-    fn on_enable(&mut self, toggle: &RuleEnableCommand) {
+    fn on_enable(&mut self, correlation_id: u64, toggle: &RuleEnableCommand) {
         let name = toggle.name.as_str();
         let Some(revision) = self.store.set_enabled(name, toggle.enabled) else {
             self.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
+            self.confirm(correlation_id, Err((ErrorCode::NotFound, "rule_not_found")));
             return;
         };
         self.counters.enable_toggles.fetch_add(1, Ordering::Relaxed);
         self.persist(&self.store.document());
         self.flip_engine_bit(name, toggle.enabled, revision);
         self.publish_changed();
+        self.confirm(correlation_id, Ok(()));
+    }
+
+    fn confirm(&self, correlation_id: u64, outcome: Result<(), (ErrorCode, &'static str)>) {
+        if correlation_id == CORRELATION_NONE {
+            return;
+        }
+        let envelope = match outcome {
+            Ok(()) => dali2rust_contracts::bus::build_confirmation_envelope(
+                correlation_id,
+                dali2rust_contracts::msg::DeliveryStatus::Ok,
+                0,
+                SOURCE_ID_UNSPECIFIED,
+            ),
+            Err(error) => dali2rust_contracts::bus::build_confirmation_envelope_with_product_error(
+                correlation_id,
+                dali2rust_contracts::msg::DeliveryStatus::ExecutionFailed,
+                0,
+                SOURCE_ID_UNSPECIFIED,
+                Some(error),
+            ),
+        };
+        dali2rust_bus::publish_or_drop(
+            &self.publisher,
+            BusChannel::Confirmations,
+            BusFrame::confirmation(envelope),
+            "rules-confirm",
+        );
     }
 
     fn store_engine_cells(&self) {

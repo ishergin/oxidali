@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, PublishResult};
+use dali2rust_bus::{BusFrame, BusId, BusPublisher};
 use dali2rust_contracts::msg::{
     OperationType, RuleCommitCommand, RuleEnableCommand, RuleStageCommand,
     MAX_RULES_SOURCE_BYTES, RULE_SOURCE_CHUNK_BYTES,
@@ -37,6 +37,12 @@ pub struct RulesHandlerShared {
     publisher: BusPublisher,
     bus_id: BusId,
     correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
+    confirmation: RulesConfirmation,
+}
+
+pub struct RulesConfirmation {
+    pub slots: Arc<crate::confirmation_bridge::PendingConfirmationSlots>,
+    pub timeout_ms: u64,
 }
 
 impl RulesHandlerShared {
@@ -47,6 +53,7 @@ impl RulesHandlerShared {
         publisher: BusPublisher,
         bus_id: BusId,
         correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
+        confirmation: RulesConfirmation,
     ) -> Self {
         Self {
             state,
@@ -55,6 +62,7 @@ impl RulesHandlerShared {
             publisher,
             bus_id,
             correlation,
+            confirmation,
         }
     }
 }
@@ -258,10 +266,10 @@ impl RulesHandler {
         if doc.compiled.as_ref().and_then(|set| set.rule(name)).is_none() {
             return json_err(404, "rule_not_found");
         }
-        let before = self.shared.state.revision();
+        let correlation_id = self.shared.correlation.next_id();
         let env = dali2rust_contracts::bus::command_envelope(
             crate::bus_codec::SOURCE_ID_UNSPECIFIED,
-            self.shared.correlation.next_id(),
+            correlation_id,
             self.shared.bus_id.0,
             Some(dali2rust_contracts::msg::Origin::Api),
             RuleEnableCommand {
@@ -269,12 +277,14 @@ impl RulesHandler {
                 enabled,
             },
         );
-        if self.shared.publisher.try_publish(BusChannel::Commands, BusFrame::command(env))
-            != PublishResult::Queued
-        {
-            return json_err(503, "commands_ingress_overload");
+        if let Err(response) = crate::http::dispatcher::publish_batch_and_wait_for_success(
+            &self.shared.publisher,
+            &self.shared.confirmation.slots,
+            self.shared.confirmation.timeout_ms,
+            vec![(correlation_id, BusFrame::command(env))],
+        ) {
+            return response;
         }
-        wait_revision_past(self.shared.state.as_ref(), before);
         HttpResponse::json(
             200,
             serde_json::to_vec(&json!({ "name": name, "enabled": enabled }))
@@ -374,13 +384,3 @@ fn document_frames(
     frames
 }
 
-fn wait_revision_past(state: &dyn RulesHttpState, before: u32) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
-    while std::time::Instant::now() < deadline {
-        if state.revision() != before {
-            return;
-        }
-        // sleep-ok: bounded apply-watch read-after-write poll (>= 10 ms step)
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-}
