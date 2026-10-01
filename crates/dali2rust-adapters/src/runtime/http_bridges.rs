@@ -1353,23 +1353,22 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
     }
 
     fn inputs(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::InputState> {
+        let now = dali2rust_bsp::unix_clock::unix_wall_clock_millis();
         self.store
             .rules_input_rows()
             .into_iter()
-            .map(
-                |(adapter_id, short_address, instance_number, instance_type, occupied, light)| {
-                    dali2rust_rules_runtime::runtime::engine::InputState {
-                        adapter_id,
-                        short_address,
-                        instance_number,
-                        instance_type,
-                        occupied,
-                        light,
-                        position: None,
-                        last_event_age_ms: None,
-                    }
-                },
-            )
+            .map(|row| dali2rust_rules_runtime::runtime::engine::InputState {
+                adapter_id: row.adapter_id,
+                short_address: row.short_address,
+                instance_number: row.instance_number,
+                instance_type: row.instance_type,
+                occupied: row.occupied,
+                light: row.light,
+                position: row.position,
+                last_event_age_ms: row
+                    .last_event_at_ms
+                    .map(|at| u32::try_from(now.saturating_sub(at)).unwrap_or(u32::MAX)),
+            })
             .collect()
     }
 

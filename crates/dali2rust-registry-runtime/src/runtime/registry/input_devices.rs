@@ -1,4 +1,6 @@
-use dali2rust_contracts::msg::{Dali103ScanProgressEvent, DaliInputEventObservedEvent};
+use dali2rust_contracts::msg::{
+    Dali103ScanProgressEvent, DaliInputEventObservedEvent, InputEventKind,
+};
 use dali2rust_platform::small_sort::insertion_sort_by;
 
 use super::store::Inner;
@@ -176,6 +178,12 @@ impl InputDeviceRecord {
         instance.last_event_info = Some(event.event_info);
         instance.last_event_at_ms = Some(event.observed_at_ms);
         instance.event_count = instance.event_count.saturating_add(1);
+        if matches!(
+            event.typed,
+            InputEventKind::Occupancy | InputEventKind::Position | InputEventKind::Illuminance
+        ) {
+            instance.input_value = Some(event.typed_value);
+        }
         self.present = true;
         self.last_seen_ms = Some(event.observed_at_ms);
         true
@@ -259,6 +267,23 @@ mod tests {
 
         assert!(!record.apply_input_event(&event(None, 0x002)));
         assert_eq!(record.instances[0].event_count, 1);
+        assert_eq!(record.instances[0].input_value, None, "a generic event carries no value");
+    }
+
+    #[test]
+    fn a_sensor_event_records_the_value_it_carries() {
+        let mut record = InputDeviceRecord::empty(0, 3);
+        record.apply_scan_progress(&progress(1), 500);
+        let mut lux = event(Some(0), 0x155);
+        lux.typed = InputEventKind::Illuminance;
+        lux.typed_value = 0x155;
+        assert!(record.apply_input_event(&lux));
+        assert_eq!(record.instances[0].input_value, Some(0x155));
+        let mut press = event(Some(0), 0x001);
+        press.typed = InputEventKind::Button;
+        press.typed_value = 0x001;
+        assert!(record.apply_input_event(&press));
+        assert_eq!(record.instances[0].input_value, Some(0x155), "a button press is not a reading");
     }
 
     #[test]
