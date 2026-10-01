@@ -118,7 +118,9 @@ tr:hover td { background: rgba(35,44,56,.5); }
 .ropt .rd { font-size: 10.5px; color: var(--text-faint); margin-top: 1px; }
 
 .hint { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
-.hint a { color: var(--info); text-decoration: none; }
+.inp.wide { width: 96px; margin-right: 6px; }
+.panel-foot { padding: 12px 15px; border-top: 1px solid var(--border); }
+.panel-foot .hint { margin: 8px 0 0; }
 /* Location is optional until an astronomical point needs it — then the form
    says why, instead of failing at save time. */
 .req { background: var(--warn-soft); border: 1px solid rgba(227,160,8,.35); border-radius: var(--radius-sm);
@@ -156,7 +158,7 @@ tr:hover td { background: rgba(35,44,56,.5); }
   <div class="standdown">
     <span class="ico">&#8214;</span>
     <span class="txt">
-      Standing down since <b>14:21</b> — <span class="g">G1</span> on A0 was set by hand, so
+      Standing down since <b>14:21</b> — <span class="g">G1 on A0</span> was set by hand, so
       this schedule stops driving it until midnight.
     </span>
     <span class="spacer"></span>
@@ -239,7 +241,7 @@ tr:hover td { background: rgba(35,44,56,.5); }
       <button class="btn sm">Add point</button>
       <div class="hint">
         <b>last active</b> returns each gear to the brightness its user last set; the curve still drives colour.
-        Transition smoothness is a per-device fade time &mdash; set it on the <a href="#">device card</a>, not here.
+        Transition smoothness is a per-device fade time &mdash; set it on the device card, not here.
       </div>
     </div>
   </div>
@@ -262,7 +264,9 @@ tr:hover td { background: rgba(35,44,56,.5); }
           <span class="spacer"></span>
           <button class="btn sm ghost">&times;</button>
         </div>
-        <div style="margin-top:10px"><button class="btn sm">Add target</button></div>
+      </div>
+      <div class="panel-foot">
+        <button class="btn sm">Add target</button>
         <div class="hint">Groups and broadcast only &mdash; a schedule never addresses a single lamp.</div>
       </div>
     </div>
@@ -285,8 +289,8 @@ tr:hover td { background: rgba(35,44,56,.5); }
         </div>
         <div class="field">
           <div class="k">Location</div>
-          <input class="inp" style="width:96px" placeholder="latitude">
-          <input class="inp" style="width:96px" placeholder="longitude">
+          <input class="inp wide" placeholder="latitude">
+          <input class="inp wide" placeholder="longitude">
           <div class="req">Required: a sunrise/sunset point cannot be placed without one.</div>
         </div>
       </div>
