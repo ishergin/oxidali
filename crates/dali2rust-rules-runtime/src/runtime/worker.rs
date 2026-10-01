@@ -227,21 +227,28 @@ impl RulesWorker {
     }
 
     fn serve(&mut self, rx: &dali2rust_bus::BusSubscriberRx) {
+        let mut last_tick_ms = self.world.now_ms();
         loop {
             self.liveness.beat(dali2rust_platform::liveness::monotonic_ms());
             let now = self.world.now_ms();
-            let deadline = self
-                .engine
-                .next_deadline_ms()
-                .unwrap_or(now + TICK_CAP_MS)
-                .clamp(now, now + TICK_CAP_MS);
-            let wait = std::time::Duration::from_millis(deadline.saturating_sub(now).max(1));
+            let due = self.tick_due_ms(last_tick_ms);
+            let wait = std::time::Duration::from_millis(due.saturating_sub(now).max(1));
             match self.liveness.while_turning(|| rx.recv_timeout(wait)) {
                 Ok(frame) => self.on_frame(frame),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => self.on_tick(),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
             }
+            let now = self.world.now_ms();
+            if now >= self.tick_due_ms(last_tick_ms) {
+                self.on_tick();
+                last_tick_ms = now;
+            }
         }
+    }
+
+    fn tick_due_ms(&self, last_tick_ms: u64) -> u64 {
+        let cap = last_tick_ms.saturating_add(TICK_CAP_MS);
+        self.engine.next_deadline_ms().map_or(cap, |deadline| deadline.min(cap))
     }
 
     fn on_frame(&mut self, frame: BusFrame) {

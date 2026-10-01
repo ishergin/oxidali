@@ -808,6 +808,66 @@ fn an_override_edge_reaches_the_rule_that_watches_it() {
     assert_eq!(level, Some(44));
 }
 
+const STEADY_EVENT_GAP: Duration = Duration::from_millis(100);
+
+const QUEUED_FRAME_WAIT: Duration = Duration::from_millis(1);
+
+fn stream_events_until<T>(
+    h: &Harness,
+    corr: &mut u64,
+    give_up_after: Duration,
+    mut done: impl FnMut(&Harness) -> Option<T>,
+) -> Option<T> {
+    let deadline = std::time::Instant::now() + give_up_after;
+    loop {
+        publish_bus_event(h, *corr, runtime_state_changed(9));
+        *corr += 1;
+        std::thread::sleep(STEADY_EVENT_GAP); // sleep-ok: paces the event stream the test is about
+        if let Some(found) = done(h) {
+            return Some(found);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+    }
+}
+
+#[test]
+fn a_steady_event_stream_does_not_starve_the_tick() {
+    let overridden = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let h = harness_hcl(
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-tick-busy-inbox")),
+        Vec::new(),
+        true,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        Arc::clone(&overridden),
+    );
+    publish_document(
+        &h,
+        131,
+        "rule \"перехват\" {\n  when hcl override starts for group(2)\n  do lamp(6).level(44)\n}\n\
+         \nrule \"часы\" {\n  when at 23:00\n  do log(\"тик\")\n}\n",
+        0,
+    );
+    let sig = recv_signal(&h, 131);
+    assert!(sig.error.is_none(), "the document must compile: {sig:?}");
+    wait_revision(&h.store, 1);
+    let mut corr = 132;
+
+    let ticked = stream_events_until(&h, &mut corr, 3 * COMMAND_WAIT, |h| {
+        (h.cells.ticks_time_unsynced.load(std::sync::atomic::Ordering::Relaxed) >= 1).then_some(())
+    });
+    assert!(ticked.is_some(), "an event every {STEADY_EVENT_GAP:?} kept the worker from ever ticking");
+
+    overridden.store(true, std::sync::atomic::Ordering::Relaxed);
+    let fired = stream_events_until(&h, &mut corr, 3 * COMMAND_WAIT, |h| {
+        dali2rust_test_support::try_recv_command_matching(&h.out_rx, QUEUED_FRAME_WAIT, |payload| {
+            matches!(payload, dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(_))
+        })
+    });
+    assert!(fired.is_some(), "the override edge a tick finds must fire while events keep arriving");
+}
+
 #[test]
 fn a_part_333_flag_moving_fires_the_rule_that_watches_the_device() {
     let h = harness("rules-manual-config");
