@@ -40,7 +40,8 @@
 
 ## Запись матрицы
 
-Внутри строки `desired` действует merge-patch объекта.
+`desired` строки заменяется целиком: `included` обязателен, при `included: true` — и
+`level` (кроме `power: off`); не присланное поле setpoint очищается.
 
 - `included: true` — setpoint валидируется по capabilities строки (`422
   unsupported_capability`); `included: false` — все поля setpoint обязаны быть `null`

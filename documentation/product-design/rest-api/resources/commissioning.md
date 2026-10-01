@@ -41,9 +41,7 @@ invalid_value`.
 - Worker шлёт одну пару `IDENTIFY DEVICE` и ничего больше; окно около 10 с принадлежит
   прибору, поэтому длительности в запросе нет, а индикация не обязана быть светом
   ([09 §Faults and identification](../../../architecture/09-dali-protocol-rules.md#faults-and-identification)).
-- Результат операции: `{short_address, identify_mechanism}`. Живой механизм —
-  `identify_device`; `blink_recall_max_min` остаётся в перечислении только как подпись
-  старых записей.
+- Результат операции: `{short_address, identify_mechanism: "identify_device"}`.
 
 ## `POST address-changes`
 
@@ -89,7 +87,7 @@ invalid_value`.
 
 | `step` | Тело | Добавки в ответе |
 |---|---|---|
-| `initialise` | `{scope: all \| unaddressed \| short, short_address?}` | — |
+| `initialise` | `{scope?: all (по умолчанию) \| unaddressed \| short, short_address?}` | — |
 | `randomise` | `{}` | — |
 | `search-address` | `{search_address}` (24 бита) | — |
 | `compare` | `{}` | `match` |
