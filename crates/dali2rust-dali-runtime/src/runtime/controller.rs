@@ -183,6 +183,14 @@ impl<T: DaliTransport + Send> DaliApplicationController for DaliController<T> {
         self.perform_exchange24(frame, expects_backward, 1)
     }
 
+    fn send_frame24_twice(&mut self, frame: [u8; 3]) -> Result<(), Frame24Fault> {
+        if !self.supports_frame24() {
+            return Err(Frame24Fault::Unsupported);
+        }
+        self.run_transaction(false, |c| c.send_unit24_twice(frame))
+            .map_err(fault24_from_error)
+    }
+
     fn supports_frame24(&self) -> bool {
         self.transport
             .lock()
@@ -299,6 +307,27 @@ impl<T: DaliTransport + Send> DaliController<T> {
             }
         }
         Err(FrameError::TransportError)
+    }
+
+    fn send_unit24_twice(&mut self, frame: [u8; 3]) -> Result<(), FrameError> {
+        let attempts = self.retry_policy.effective_max_attempts();
+        for attempt in 0..attempts {
+            match self.try_pair24_once(frame) {
+                Ok(()) => return Ok(()),
+                Err(error) if !unit_retryable(error) => return Err(error),
+                Err(error) => {
+                    self.retry_or_fail(attempt, attempts, error)?;
+                    self.note_unit_reopened();
+                }
+            }
+        }
+        Err(FrameError::TransportError)
+    }
+
+    fn try_pair24_once(&mut self, frame: [u8; 3]) -> Result<(), FrameError> {
+        self.exchange_with_attempts(WireFrame::Forward24(frame), false, 1)?;
+        self.exchange_with_attempts(WireFrame::Forward24(frame), false, 1)?;
+        self.judge_send_twice_interval()
     }
 
     fn try_unit_once(
