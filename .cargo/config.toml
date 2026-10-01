@@ -1,7 +1,7 @@
 [alias]
 bdd = "test --target aarch64-apple-darwin -p dali2rust-bdd --test bdd"
 fw = "build -p dali2rust-firmware --target riscv32imafc-esp-espidf"
-flash = "run -p dali2rust-firmware --target riscv32imafc-esp-espidf"
+flash = "run -p dali2rust-firmware --bin dali2rust --target riscv32imafc-esp-espidf"
 
 [target.riscv32imafc-esp-espidf]
 linker = "ldproxy"

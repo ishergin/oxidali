@@ -71,7 +71,8 @@ BDD conventions → [05](05-testing-and-bdd.md); updates over the network →
 ## Build-time knobs
 
 Read with `option_env!`, which records each name in the crate's dep-info; cargo rebuilds
-the crate when one changes, so a knob needs no build-script edit.
+the crate when one changes, so a knob needs no build-script edit. A flag knob is `1` or
+`0` (unset or empty keeps its default); any other value fails the build (`flag_knob`).
 `hil flash` builds for itself: pass knobs to it, and check the flip reached the binary.
 
 | Knob | Effect |

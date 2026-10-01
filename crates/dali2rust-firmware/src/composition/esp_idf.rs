@@ -42,6 +42,12 @@ macro_rules! parse_env_or {
     };
 }
 
+const QUERY_CONTENTION_RETRY: Option<bool> =
+    super::flag_knob(option_env!("DALI2RUST_DALI_QUERY_CONTENTION_RETRY"));
+const QUERY_CONTENT_CONFIRM: Option<bool> =
+    super::flag_knob(option_env!("DALI2RUST_DALI_QUERY_CONTENT_CONFIRM"));
+const ESP_VERBOSE: bool = matches!(super::flag_knob(option_env!("DALI2RUST_ESP_VERBOSE")), Some(true));
+
 static HTTPD_STACK_RESERVE: Mutex<Option<dali2rust_adapters::http::esp_idf::HttpdStackReserve>> =
     Mutex::new(None);
 
@@ -166,18 +172,14 @@ fn retry_policy_from_env() -> RetryPolicy {
             RetryPolicy::default().jitter_ms
         ),
     )
-    .with_query_contention_retry(parse_env_or!(
-        "DALI2RUST_DALI_QUERY_CONTENTION_RETRY",
-        RetryPolicy::default().query_contention_retry
-    ))
+    .with_query_contention_retry(
+        QUERY_CONTENTION_RETRY.unwrap_or(RetryPolicy::default().query_contention_retry),
+    )
 }
 
 fn content_confirm_from_env() -> ContentConfirmPolicy {
     ContentConfirmPolicy::new(
-        parse_env_or!(
-            "DALI2RUST_DALI_QUERY_CONTENT_CONFIRM",
-            DaliRuntimeConfig::default().content_confirm.enabled
-        ),
+        QUERY_CONTENT_CONFIRM.unwrap_or(DaliRuntimeConfig::default().content_confirm.enabled),
         parse_env_or!(
             "DALI2RUST_DALI_QUERY_CONTENT_CONFIRM_MAX_SAMPLES",
             DaliRuntimeConfig::default().content_confirm.max_samples
@@ -193,7 +195,7 @@ fn init_logging() {
     let logger = dali2rust_adapters::log::esp_idf::install_facade(PROJECT_LOG_TARGETS);
     dali2rust_adapters::log::esp_idf::install();
     install_panic_drain();
-    if option_env!("DALI2RUST_ESP_VERBOSE").is_some() {
+    if ESP_VERBOSE {
         set_target_levels(logger, &["*"], log::LevelFilter::Trace);
         log::warn!("logging: verbose ESP-IDF component logs enabled via DALI2RUST_ESP_VERBOSE");
         return;
