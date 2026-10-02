@@ -15,11 +15,11 @@ def wait_until(predicate, timeout_s: float, interval_s: float = 0.5,
     return value
 
 
-def settled(read, quiet_s: float, max_s: float, poll_s: float):
+def settled(read, quiet_s: float, max_s: float, poll_s: float, key=len):
     deadline = time.monotonic() + max_s
-    count, still_since = -1, time.monotonic()
+    count, still_since = object(), time.monotonic()
     while time.monotonic() < deadline:
-        now = len(read())
+        now = key(read())
         if now != count:
             count, still_since = now, time.monotonic()
         elif time.monotonic() - still_since >= quiet_s:

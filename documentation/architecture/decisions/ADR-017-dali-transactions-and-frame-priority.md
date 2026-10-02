@@ -101,9 +101,9 @@ mechanisms: [08](../08-dali-phy-and-transport.md)).
 
 ### D7 — Collision recovery has one owner
 
-The PHY drives the break and waits out the Table 25 recovery (08); the controller adds no
-delay of its own. The reduced-settling restart §9.1.4 asks for is not built — a
-[conformance gap](../../reference/iec62386-conformance-gaps.md).
+The PHY drives the break and, when the line is idle after it, restarts the frame once
+t_RECOVER after the release; a line still held is reported as `Collision` (both: 08). The
+controller adds no delay of its own.
 
 ### D8 — The unit is retried, not the frame
 
@@ -141,7 +141,7 @@ as a unit (09).
   wait longer for a gap on a busy segment, which is what a reader should do.
 - The worst operator wait during a read is one transaction, not one frame; memory-bank
   chunk boundaries are yield points.
-- A command kind without a wire class fails the build; that is the cost of having no
+- A command kind without a wire class fails a test; that is the cost of having no
   default.
 - The Table 20/22 constants and the PHY gate are described in
   [08-dali-phy-and-transport.md](../08-dali-phy-and-transport.md); the protocol rules

@@ -120,7 +120,8 @@ class Client:
                                           binding=self._bound_short,
                                           pending=self.pending_lamps,
                                           restart_rules=self.restart_rules,
-                                          policy_armed=self.policy_armed)
+                                          policy_armed=self.policy_armed,
+                                          gtin=self.device_gtin)
         self.init_ledger()
         self._rebooting = False
 
@@ -167,10 +168,10 @@ class Client:
     IDEMPOTENT = ("GET", "PUT")
 
     def _http(self, method, path, body=None, conditional=False):
-        url = self._url(path)
+        method, url = method.upper(), self._url(path)
         write_log.note(self.base, self.guard.check_request(method, path, body))
         self._drop_pool_after_reboot()
-        self._note_diagnostic_write(method, path, body)
+        self._note_diagnostic_write(method, lamp_guard.route_of(path), body)
         attempts = 3 if method in self.IDEMPOTENT and not conditional else 1
         for attempt in range(attempts):
             try:
@@ -256,6 +257,10 @@ class Client:
     def segment_shorts(self):
         return sorted(d["short_address"] for d in self.devices_unfiltered()["physical_devices"]
                       if d.get("present", True))
+
+    def device_gtin(self, short):
+        return {d["short_address"]: d.get("gtin")
+                for d in self.devices_unfiltered()["physical_devices"]}.get(short)
 
     def lamp_addrs(self):
         allowed = self.cfg.lamp_short_set()
@@ -799,7 +804,7 @@ class _HomeAssistantSettings(_Namespace):
     RESTORABLE = (
         "enabled", "broker_host", "broker_port", "broker_username",
         "discovery_prefix", "state_topic_prefix", "controller_id",
-        "publish_qos", "retain_state", "retain_discovery",
+        "publish_qos", "retain_state", "retain_discovery", "expose_input_devices",
     )
 
     def get(self) -> dict:

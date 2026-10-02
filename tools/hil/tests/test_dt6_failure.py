@@ -77,7 +77,7 @@ def test_a_thermal_shut_down_is_found_through_the_masked_level(
         "says otherwise): %r" % core["status"])
     assert core["level"] != 255, (
         "MASK reached the registry as a level again — a dark luminaire would "
-        "render at full brightness (ISSUE-66): %r" % core)
+        "render at full brightness (MASK in an answer is never a value): %r" % core)
     section = _failure_section(api, short)
     assert _cell(section, "failure_status") == 0x20, (
         "the thermal bit is what the escalation went to fetch: %r" % section)

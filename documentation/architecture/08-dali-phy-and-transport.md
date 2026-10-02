@@ -39,7 +39,9 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   5 ms of enabling; any failure fails composition by name.
 - Level 5 is above every critical section and above ESP-IDF's level-4 IPC interrupt, so
   the tick may run inside a critical section of its own core. Nothing it touches may be
-  protected by one: atomics, SPSC cells, GPIO set/clear and the timer's registers only.
+  protected by one: atomics, SPSC cells, GPIO set/clear and the timer's registers, plus
+  the late-tick probe's lock-free reads of the kernel's per-core words and the interrupted
+  frame (below).
 - `DALI2RUST_PHY_ISR_LEVEL=3` rebuilds the driver-owned interrupt
   (`dali_phy_alarm_isr`) as the rollback path; the boot log names the level in use.
 - The raw path owns timer group 0, timer 0, and read-modify-writes `TIMG0 INT_ENA`
@@ -63,11 +65,11 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   A many-arm `match` can lower to a lookup table in `.flash.rodata`, so result reports
   are `if` chains.
 - Interrupt code carries `link_section = ".iram1.dali_phy"`, and
-  `scripts/verify_dali_isr_iram.py` proves the result on the linked binary: every CALL,
-  LOAD or ADDRESS reference out of the interrupt's IRAM text must land in IRAM, internal
-  RAM or ROM, every linked entry point must sit in IRAM, and a run that matched no
-  interrupt symbol fails rather than passes. No source review or `cargo check` can see
-  these calls; `hil flash` refuses a binary that fails.
+  `scripts/verify_dali_isr_iram.py` proves the result on the linked binary: no CALL, LOAD
+  or ADDRESS reference out of the interrupt's IRAM text may land in a flash-mapped section
+  (`.flash*`, `.drom*`, `.irom*`), every linked entry point must sit in IRAM, and a run
+  that matched no interrupt symbol fails rather than passes. No source review or
+  `cargo check` can see these calls; `hil flash` refuses a binary that fails.
 - The gate finds interrupt code by the crate name in the mangled symbol, so interrupt
   functions keep Rust mangling (no `#[no_mangle]`): an unmangled one escapes it. A call
   through a function pointer is invisible to it too, so whatever the late-tick probe
@@ -150,8 +152,9 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   moved the epoch, and discards it once the window has passed.
 - The sniffer stages the answer before it logs, forwards or dumps the capture;
   everything after staging is diagnostic.
-- The window constants live in `dali-phy::backward_window` beside `TX_ARM_LEAD_TICKS`,
-  bounded at compile time; the gear emulator stages its answers in the same cell.
+- The window constants live in `dali-phy::backward_window`, derived from
+  `fsm::TX_ARM_LEAD_TICKS` and bounded at compile time; the gear emulator stages its
+  answers in the same cell.
 
 ## Transports
 

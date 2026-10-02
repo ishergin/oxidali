@@ -20,9 +20,8 @@ executes every bulk apply.
 - **HTTP publishes one command and answers `202`.** `GroupApplyExecuteCommand`,
   `SceneApplyExecuteCommand` and `PolicyApplyExecuteCommand` are a few dozen bytes
   whatever the diff size. The handlers keep only request validation: the group and
-  scene routes refuse with `409` while an apply of the same kind is running, and the
-  group route answers an empty diff at once (`200` with the matrix, from a
-  non-authoritative peek).
+  scene routes refuse with `409` while an apply of the same kind is running and answer
+  an empty diff at once (`200` with the matrix, from a non-authoritative peek).
 - **The orchestrator owns the diff.** It expands the desired-versus-applied diff from its
   own registry snapshot, publishes `OperationBeginCommand` with the authoritative
   expected-outcome count, and paces execution through one shared pacing core so that the

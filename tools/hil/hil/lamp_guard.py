@@ -1,9 +1,9 @@
+import contextlib
 import re
 from dataclasses import dataclass
 from urllib.parse import unquote
 
-from hil.write_log import (ACTIVATION_FIELD, ACTIVATION_ROUTE, ALL, EVERY, frame_keys,
-                           request_keys, restarts)
+from hil.write_log import ALL, EVERY, frame_keys, hands_over, request_keys, restarts
 
 TARGET_SEGMENT = -1
 SHORT_LIMIT = 0x80
@@ -120,18 +120,62 @@ VIRTUAL_ROUTES = (
     ("rule_run", re.compile(r"rules/([^/]+)/run")),
 )
 
-HANDOVER_ROUTES = (re.compile(r"redundancy/switchover"), re.compile(r"settings/redundancy"))
 RESTART_REFUSAL = ("%s refused: HIL_LAMPS_READ_ONLY=1 never restarts a controller or hands the "
                    "bus over, since the unit active afterwards republishes its HCL point over a "
                    "lamp the owner set by hand; a run that does needs HIL_LAMPS_READ_ONLY=0, the "
                    "owner's go-ahead")
+DELETE = "DELETE"
+FORGET_REFUSAL = ("%s refused: HIL_LAMPS_READ_ONLY=1 forgets no device, since the forget "
+                  "unbinds its virtual lamps and clears a group row the controller adopted "
+                  "from the gear, and only a rebind and an apply put them back")
+REMOVALS = (
+    (DELETE, re.compile(r"adapters/[0-9]+/physical-devices/([0-9]+)"), "_check_forget"),
+    (DELETE, re.compile(r"adapters/[0-9]+/virtual-lamps/([0-9]+)"), "_check_lamp_delete"),
+)
+REFUSED_ROUTES = (
+    (DELETE, re.compile(r"adapters/[0-9]+/input-devices/[0-9]+"),
+     "forgetting a control device drops the configuration the controller holds for it, "
+     "which no restore writes back"),
+    (PUT, re.compile(r"config/slices/.+"),
+     "a slice import replaces a persisted part of the installation's configuration whole"),
+)
+LAMP_DELETE_REFUSAL = ("%s refused: only the virtual-gear teardown deletes a virtual lamp, "
+                       "and only one its session created")
+RESERVE_FLOOR = 16
+EMULATED_GTIN_BASE = 0x4000_0000_0000
+RANDOM_ADDRESS_MASK = 0xFF_FFFF
+FRAGMENT = "#"
+PLAIN_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
+ESCAPED_SEGMENT = re.compile(r"(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+")
+RULE_NAME_ROUTE = re.compile(r"rules/[^/]+(?:/run)?")
+RULE_NAME_SEGMENT = 1
+DOT_SEGMENTS = frozenset({".", ".."})
+UNPLAIN_REFUSAL = ("%s %s refused: the guard judges a write by its plain path, and this one "
+                   "holds a fragment, a sign, an escape or an empty or dot segment the client "
+                   "or the firmware would rewrite into another path")
 
 
-def hands_over(path, body):
-    if any(route.fullmatch(path) for route in HANDOVER_ROUTES):
-        return True
-    return (bool(ACTIVATION_ROUTE.fullmatch(path)) and isinstance(body, dict)
-            and ACTIVATION_FIELD in body)
+def route_of(path):
+    return path.lstrip("/").split("?", 1)[0]
+
+
+def plain_path(method, path):
+    plain = route_of(path)
+    if FRAGMENT in path or not all(_plain_segment(segment, index, plain)
+                                   for index, segment in enumerate(plain.split("/"))):
+        raise LampNotAllowed(UNPLAIN_REFUSAL % (method.upper(), path))
+    return plain
+
+
+def _plain_segment(segment, index, path):
+    named = index == RULE_NAME_SEGMENT and RULE_NAME_ROUTE.fullmatch(path) is not None
+    spelled = (ESCAPED_SEGMENT if named else PLAIN_SEGMENT).fullmatch(segment)
+    return spelled is not None and unquote(segment) not in DOT_SEGMENTS
+
+
+def emulated_gtin(gtin):
+    return (isinstance(gtin, int) and not isinstance(gtin, bool)
+            and gtin & ~RANDOM_ADDRESS_MASK == EMULATED_GTIN_BASE)
 
 
 RULE_SEPARATOR = "\n\n"
@@ -478,7 +522,7 @@ def named(shorts):
 
 class LampGuard:
     def __init__(self, allowed, read_only=False, segment=None, binding=None, pending=None,
-                 restart_rules=None, policy_armed=None):
+                 restart_rules=None, policy_armed=None, gtin=None):
         self.allowed = frozenset(allowed)
         self.read_only = bool(read_only)
         self._segment = segment
@@ -486,28 +530,30 @@ class LampGuard:
         self._pending = pending
         self._restart_rules = restart_rules
         self._policy_armed = policy_armed
+        self._gtin = gtin
         self.fence = None
         self._enabled = None
+        self._emulated = self._reserve = self._created_lamps = frozenset()
 
     @classmethod
     def for_config(cls, cfg, segment=None, binding=None, pending=None, restart_rules=None,
-                   policy_armed=None):
+                   policy_armed=None, gtin=None):
         return cls(cfg.lamp_short_set(), cfg.lamps_read_only, segment, binding, pending,
-                   restart_rules, policy_armed)
+                   restart_rules, policy_armed, gtin)
 
     def check_request(self, method, path, body=None):
         if method.upper() in READ_METHODS:
             return []
-        path = path.lstrip("/").split("?", 1)[0]
+        path = plain_path(method, path)
         keys = request_keys(method, path, body)
         if self.fence is not None and self.fence.check_request(method.upper(), path, body):
             return keys
-        if self.read_only and hands_over(path, body):
-            raise LampNotAllowed(RESTART_REFUSAL % ("%s %s" % (method.upper(), path)))
-        if restarts(path, body):
+        if hands_over(path, body) or restarts(path, body):
             self.check_restart("%s %s" % (method.upper(), path))
         _refuse_commissioning(method, path, body)
         self._check_policy_write(method, path)
+        if self._check_removal(method.upper(), path):
+            return keys
         apply = _apply_route(path)
         if apply is not None:
             return keys + self._check_apply(method, *apply)
@@ -536,6 +582,56 @@ class LampGuard:
         if fired:
             raise LampNotAllowed("%s refused: the owner's rule(s) %s fire when a controller "
                                  "starts or becomes active" % (what, ", ".join(fired)))
+
+    def _check_removal(self, method, path):
+        for verb, route, why in REFUSED_ROUTES:
+            if verb == method and route.fullmatch(path):
+                raise LampNotAllowed("%s %s refused: %s" % (method, path, why))
+        for verb, route, check in REMOVALS:
+            match = route.fullmatch(path) if verb == method else None
+            if match:
+                getattr(self, check)(int(match.group(1)))
+                return True
+        return False
+
+    def _check_forget(self, short):
+        what = "the forget of SA%d" % short
+        if short in self._emulated:
+            self._check_emulated(short, what)
+            return
+        if self.read_only:
+            raise LampNotAllowed(FORGET_REFUSAL % what)
+        self.check_target(short, False, what)
+
+    def _check_emulated(self, short, what):
+        if short < RESERVE_FLOOR or short in self._reserve:
+            raise LampNotAllowed("%s refused: SA%d is in the virtual-gear reserve, which holds "
+                                 "the installation's gear" % (what, short))
+        gtin = self._gtin(short) if self._gtin is not None else None
+        if not emulated_gtin(gtin):
+            raise LampNotAllowed("%s refused: its record carries GTIN %r, not the gear "
+                                 "emulator's, so real gear may answer there" % (what, gtin))
+
+    def _check_lamp_delete(self, lamp_id):
+        if lamp_id not in self._created_lamps:
+            raise LampNotAllowed(LAMP_DELETE_REFUSAL % ("deleting VL%d" % lamp_id))
+
+    def forgetting_emulated(self, park, reserve):
+        return self._excepting(_emulated=park, _reserve=reserve)
+
+    def deleting_created(self, lamp_ids):
+        return self._excepting(_created_lamps=lamp_ids)
+
+    @contextlib.contextmanager
+    def _excepting(self, **scopes):
+        held = {name: getattr(self, name) for name in scopes}
+        for name, values in scopes.items():
+            setattr(self, name, frozenset(values))
+        try:
+            yield
+        finally:
+            for name, values in held.items():
+                setattr(self, name, values)
 
     def _check_resource(self, kind, key, body, label, visible):
         what = label % (key if key is not None else _short_of(body))

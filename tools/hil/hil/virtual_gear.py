@@ -9,14 +9,14 @@ from pathlib import Path
 
 from hil import durable, remote_serial, role, serialmon
 from hil.gearsim import GearSim, GearSimUnavailable
-from hil.lamp_guard import spell
+from hil.lamp_guard import RESERVE_FLOOR, emulated_gtin, spell
+from hil.wait import settled
 
 LEDGER = role.LEDGER
 
 SHORT_COUNT = 64
 GROUP_COUNT = 16
 VL_ID_LIMIT = 64
-RESERVE_FLOOR = 16
 DEFAULT_PARK = (4, 4, 4)
 PARK_KINDS = ("dt6", "cct", "rgb")
 LADDER_FIRST = 4
@@ -29,10 +29,22 @@ QUERY_CONTROL_GEAR_PRESENT = 0x91
 YES = 0xFF
 PROOF_PROBES = 3
 PROOF_ATTEMPTS = 3
-CONTENTION_COUNTERS = ("collision_restarts_total", "foreign_frames_total")
+CONTENTION_COUNTERS = ("collision_restarts_total", "foreign_frames_total",
+                       "backward_early_rejected_total", "backward_late_rejected_total")
+WIRE_CONTENTION = ("collisions", "foreign_in_window", "bus_acquire_timeout", "exchange_retries",
+                   "retry_exhausted")
+ANSWER_DAMAGE = ("backward_undecodable_total", "backward_frame_size_total",
+                 "backward_incomplete_total", "backward_multi_answer_total")
+WIRE_DAMAGE = ("corrupted_in_window",)
+FRAMES_SENT = "frames_sent_by_priority"
+QUIET_WIRE_S = 3.0
+QUIET_WAIT_MAX_S = 30.0
+QUIET_POLL_S = 0.5
 EXIT_SETUP, EXIT_SAFETY, EXIT_PEER_RETURNED, EXIT_BLIND = 3, 4, 5, 6
 
 SCAN_MODE = "scan_known_short_addresses"
+IDENTITY_GROUPS = "runtime_status"
+IDENTITY_BANKS = "identity"
 VIRTUAL_ENV = "HIL_VIRTUAL_GEAR"
 PARK_VL_NAME = "virtual gear SA%d"
 WB_CONFIG = "/etc/wb-mqtt-dali.conf"
@@ -173,40 +185,86 @@ def answered_cleanly(resp) -> bool:
     return bool(resp.get("success")) and not resp.get("backward_violation")
 
 
-def contention(api) -> tuple:
+def answered_any(resp) -> bool:
+    return bool(resp.get("success")) or bool(resp.get("backward_violation"))
+
+
+def _counters(source, names, where) -> tuple:
+    missing = [name for name in names if name not in source]
+    if missing:
+        raise VirtualGearError("%s lacks %s, so the group proof cannot see the wire"
+                               % (where, ", ".join(missing)))
+    return tuple(source[name] for name in names)
+
+
+def wire_window(api) -> tuple:
     dali = api.stats().get("dali") or {}
-    return tuple(dali.get(name, 0) for name in CONTENTION_COUNTERS)
+    wire = api.diagnostics().get("dali_wire") or {}
+    contended = (_counters(dali, CONTENTION_COUNTERS, "stats.dali")
+                 + _counters(wire, WIRE_CONTENTION, "diagnostics.dali_wire"))
+    damaged = (_counters(dali, ANSWER_DAMAGE, "stats.dali")
+               + _counters(wire, WIRE_DAMAGE, "diagnostics.dali_wire"))
+    return contended, damaged, sum(_counters(wire, (FRAMES_SENT,), "diagnostics.dali_wire")[0])
 
 
-def _answers(api, group) -> list:
-    return [answered_yes(api.cmd_wire(group_address(group), QUERY_CONTROL_GEAR_PRESENT))
+def _replies(api, group) -> list:
+    return [api.cmd_wire(group_address(group), QUERY_CONTROL_GEAR_PRESENT)
             for _ in range(PROOF_PROBES)]
 
 
-def _probe_groups(api, groups, used):
-    control = next((g for g in sorted(used) if all(_answers(api, g))), None)
-    occupied = [g for g in groups if any(_answers(api, g))]
-    return control, occupied
+def _windowed_replies(api, group):
+    before = wire_window(api)
+    replies = _replies(api, group)
+    after = wire_window(api)
+    contended = after[0] != before[0] or after[2] - before[2] != PROOF_PROBES
+    return replies, contended, after[1] != before[1]
+
+
+def await_quiet_wire(api):
+    settled(lambda: wire_window(api)[0], QUIET_WIRE_S, QUIET_WAIT_MAX_S, QUIET_POLL_S,
+            key=tuple)
+
+
+def _is_control(api, group) -> bool:
+    contended = False
+    for _ in range(PROOF_ATTEMPTS):
+        if contended:
+            await_quiet_wire(api)
+        replies, contended, damaged = _windowed_replies(api, group)
+        if not (contended or damaged):
+            return all(answered_yes(r) for r in replies)
+    return False
+
+
+def _is_occupied(api, group) -> bool:
+    for attempt in range(PROOF_ATTEMPTS):
+        if attempt:
+            await_quiet_wire(api)
+        replies, contended, damaged = _windowed_replies(api, group)
+        if any(answered_any(r) for r in replies):
+            return True
+        if not contended:
+            return damaged
+    raise VirtualGearError("another transmitter shared the wire, or a probe did not go out, "
+                           "during every proof of group %d, each retried after waiting up to "
+                           "%ds for a quiet wire (%s moved), so silence proved nothing"
+                           % (group, QUIET_WAIT_MAX_S,
+                              ", ".join(CONTENTION_COUNTERS + WIRE_CONTENTION)))
 
 
 def prove_groups_empty(api, groups, used):
     if not groups:
         return None
-    for _ in range(PROOF_ATTEMPTS):
-        before = contention(api)
-        control, occupied = _probe_groups(api, groups, used)
-        if contention(api) != before:
-            continue
-        if control is None:
-            raise VirtualGearError(
-                "no group live lamps hold answered QUERY CONTROL GEAR PRESENT on every probe, "
-                "so silence from the free groups would prove nothing")
-        if occupied:
-            raise VirtualGearError("groups %s answer on the wire: real gear sits in them"
-                                   % occupied)
-        return control
-    raise VirtualGearError("another transmitter shared the wire during every group proof "
-                           "(%s moved), so silence proved nothing" % ", ".join(CONTENTION_COUNTERS))
+    control = next((g for g in sorted(used) if _is_control(api, g)), None)
+    if control is None:
+        raise VirtualGearError(
+            "no group live lamps hold answered QUERY CONTROL GEAR PRESENT on every probe of a "
+            "quiet window, so silence from the free groups would prove nothing")
+    occupied = [g for g in groups if _is_occupied(api, g)]
+    if occupied:
+        raise VirtualGearError("groups %s answer on the wire, or garble an answer: real gear may "
+                               "sit in them" % occupied)
+    return control
 
 
 @dataclass(frozen=True)
@@ -445,12 +503,23 @@ class VirtualSession:
                  if row["short"] in park and row["groups"] & ~group_mask(groups)]
         if stray:
             raise VirtualGearError("emulated gear %s hold groups outside %s" % (stray, groups))
+        self._prove_emulated(park)
         ids = free_vl_ids(self.ledger.data.get("vl_before", []), len(park))
         for lamp_id, short in zip(ids, park):
             self.ledger.append("created_vls", lamp_id)
             self.api.vlamps.patch(lamp_id, {"name": PARK_VL_NAME % short, "ha_entity_enabled": False})
             self.api.vlamps.bind(lamp_id, short)
         self.ledger.update(vl_of_short={str(s): i for i, s in zip(ids, park)})
+
+    def _prove_emulated(self, park):
+        for short in park:
+            self.api.attr_read_checked(short, groups=IDENTITY_GROUPS, banks=IDENTITY_BANKS)
+        gtins = {d["short_address"]: d.get("gtin")
+                 for d in self.api.devices_unfiltered()["physical_devices"]}
+        foreign = [short for short in park if not emulated_gtin(gtins.get(short))]
+        if foreign:
+            raise VirtualGearError("SA%s carry no gear-emulator GTIN after their identity read: "
+                                   "real gear may answer at the park" % spell(foreign))
 
     def close(self):
         if not self.ledger.exists():
@@ -473,13 +542,29 @@ class VirtualSession:
     def _teardown_steps(self):
         data = self.ledger.data
         steps = [("silencing the emulated fleet", self._silence)]
-        steps += [("deleting VL%d" % i, partial(_ignore_missing, partial(self.api.vlamps.delete, i)))
+        steps += [("deleting VL%d" % i, partial(_ignore_missing, partial(self._delete_lamp, i)))
                   for i in data.get("created_vls", [])]
-        steps += [("forgetting SA%d" % s, partial(_ignore_missing, partial(self.api.device_forget, s)))
+        steps += [("forgetting SA%d" % s, partial(_ignore_missing, partial(self._forget, s)))
                   for s in data.get("park", [])]
         steps += [("restoring group %s's HA flag" % g, partial(self._restore_flag, int(g), flag))
                   for g, flag in (data.get("group_flags") or {}).items()]
         return steps
+
+    def _delete_lamp(self, lamp_id):
+        lamp = self.api.vlamps.get(lamp_id)
+        bound = (lamp.get("binding") or {}).get("physical_short_address")
+        if not park_lamp(lamp.get("name"), bound, self.ledger.data.get("park", [])):
+            raise VirtualGearError("VL%d is now %r bound to %r, not the lamp this session made: "
+                                   "left as it is" % (lamp_id, lamp.get("name"), bound))
+        with self.api.guard.deleting_created(self.ledger.data.get("created_vls", [])):
+            self.api.vlamps.delete(lamp_id)
+
+    def _forget(self, short):
+        if short not in registry_shorts(self.api):
+            return
+        data = self.ledger.data
+        with self.api.guard.forgetting_emulated(data.get("park", []), data.get("reserve", [])):
+            self.api.device_forget(short)
 
     def _silence(self):
         if self.sim is None:
@@ -519,6 +604,11 @@ def teardown(cfg, api, log=print) -> list:
         log("virtual gear: no emulator console (%s)" % exc)
         sim = None
     return VirtualSession(cfg, api, sim, log=log).close()
+
+
+def park_lamp(name, bound, park) -> bool:
+    named = [short for short in park if name == PARK_VL_NAME % short]
+    return bool(named) and bound in (None, named[0])
 
 
 def group_mask(groups) -> int:

@@ -534,8 +534,8 @@ def test_a_dt8_colour_read_keeps_its_transactions_inside_the_92_budget(
         "the read did not reach the wire, so nothing below means anything"
     )
     assert delta["transaction_budget_exceeded"] == 0, (
-        "the DT8 sample bracket ran past §9.2's 400 ms: it is five exchanges "
-        "since ISSUE-58 п.5, and this is the measurement that says whether "
+        "the DT8 sample bracket ran past §9.2's 400 ms: it is five exchanges, "
+        "and this is the measurement that says whether "
         "five fits. Shorten the unit — do not widen the guidance"
     )
     assert delta["transaction_leaks"] == 0, (

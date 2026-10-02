@@ -6,6 +6,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+EXIT_RED, EXIT_MISSING, EXIT_UNCHECKED = 1, 2, 3
+
 ISR_SYMBOL_HINTS = ("dali2rust_dali_phy",)
 
 ENTRY_SYMBOLS = ("dali_phy_raw_isr", "dali_phy_alarm_isr")
@@ -34,13 +36,21 @@ _WHY = {
 }
 
 
+TOOLCHAIN = "riscv32-esp-elf/*/riscv32-esp-elf/bin/riscv32-esp-elf-"
+
+
+def _tool_roots():
+    return (ROOT / ".embuild" / "espressif" / "tools", Path.home() / ".espressif" / "tools")
+
+
 def _tool(name, require):
-    hits = sorted(Path.home().glob(
-        ".espressif/tools/riscv32-esp-elf/*/riscv32-esp-elf/bin/riscv32-esp-elf-" + name))
-    if not hits:
-        print("verify_dali_isr_iram: SKIP (riscv32-esp-elf-%s not installed)" % name)
-        sys.exit(2 if require else 0)
-    return str(hits[-1])
+    for root in _tool_roots():
+        hits = sorted(root.glob(TOOLCHAIN + name))
+        if hits:
+            return str(hits[-1])
+    print("verify_dali_isr_iram: SKIP (riscv32-esp-elf-%s not installed under %s)"
+          % (name, " or ".join(str(root) for root in _tool_roots())))
+    sys.exit(EXIT_MISSING if require else 0)
 
 
 def _sections(readelf, elf):
@@ -61,16 +71,17 @@ def _iram_bounds(sections, elf):
     for name, lo, hi in sections:
         if name == ".iram0.text":
             return lo, hi
-    raise SystemExit("verify_dali_isr_iram: no .iram0.text in %s" % elf)
+    print("verify_dali_isr_iram: UNCHECKED — no .iram0.text in %s" % elf)
+    sys.exit(EXIT_UNCHECKED)
 
 
 def _flash_ranges(sections, elf):
     ranges = [(name, lo, hi) for name, lo, hi in sections
               if name.startswith((".flash", ".drom", ".irom")) and hi > lo]
     if not ranges:
-        raise SystemExit(
-            "verify_dali_isr_iram: no flash-mapped sections in %s — the section "
-            "names changed and this check would pass vacuously" % elf)
+        print("verify_dali_isr_iram: UNCHECKED — no flash-mapped sections in %s: the "
+              "section names changed and this check would pass vacuously" % elf)
+        sys.exit(EXIT_UNCHECKED)
     return ranges
 
 
@@ -100,7 +111,7 @@ def main(argv):
     elf = args[0] if args else str(ROOT / "target/riscv32imafc-esp-espidf/debug/dali2rust")
     if not Path(elf).exists():
         print("verify_dali_isr_iram: SKIP (%s not built)" % elf)
-        return 2 if require_tools else 0
+        return EXIT_MISSING if require_tools else 0
 
     objdump, readelf = _tool("objdump", require_tools), _tool("readelf", require_tools)
     sections = _sections(readelf, elf)
@@ -135,19 +146,21 @@ def main(argv):
     table = subprocess.run([objdump, "-t", "-C", elf],
                            capture_output=True, text=True).stdout
     linked = [e for e in ENTRY_SYMBOLS if e in table]
-    missing = [e for e in linked if not any(e in seen for seen in seen_symbols)]
     if not linked:
-        missing = list(ENTRY_SYMBOLS)
-    if missing:
-        print("verify_dali_isr_iram: FAILED — interrupt entry point(s) not in IRAM: %s"
-              % ", ".join(missing))
+        print("verify_dali_isr_iram: UNCHECKED — no interrupt entry point is linked: %s"
+              % ", ".join(ENTRY_SYMBOLS))
         print("The hint list is stale (crate renamed? symbols inlined away?).")
         print("This is not a pass: nothing was actually checked.")
-        return 1
+        return EXIT_UNCHECKED
+    outside = [e for e in linked if not any(e in seen for seen in seen_symbols)]
+    if outside:
+        print("verify_dali_isr_iram: FAILED — interrupt entry point(s) linked outside IRAM: %s"
+              % ", ".join(outside))
+        return EXIT_RED
 
     if any(bad.values()):
         print("verify_dali_isr_iram: FAILED — the PHY interrupt reaches flash")
-        print("IRAM is 0x%08x..0x%08x; see ISSUE-27 and ADR-010." % (lo, hi))
+        print("IRAM is 0x%08x..0x%08x; see ADR-010." % (lo, hi))
         for kind in ("call", "load", "address"):
             if not bad[kind]:
                 continue
@@ -156,7 +169,7 @@ def main(argv):
                 print("    %s" % fn)
                 for t in sorted(bad[kind][fn]):
                     print("        -> %s" % t)
-        return 1
+        return EXIT_RED
 
     print("verify_dali_isr_iram: OK (%d PHY symbols in IRAM, none reaches flash)"
           % len(seen_symbols))

@@ -24,8 +24,9 @@ GPIO store that writes a bus edge out of line, in flash. Two facts decide the sh
 ## Decision
 
 1. **Everything the DALI PHY interrupt executes lives in `dali2rust-dali-phy`, and
-   nothing else does.** The crate is `#![no_std]`, so "the interrupt never allocates,
-   logs or blocks" is a compiler error rather than a review rule.
+   nothing else does.** The crate is `#![no_std]`, so its own source cannot allocate,
+   log or block; its dependency `dali2rust-platform` is a `std` crate, so what interrupt
+   code uses from it is held by review and the linked-binary gate.
 2. **That crate alone gives up `debug-assertions` in firmware** — the one switch that
    removes the MIR-inserted checks — and keeps them in its tests.
 3. **`overflow-checks` stay on and `opt-level` is not overridden.** A future plain `+`

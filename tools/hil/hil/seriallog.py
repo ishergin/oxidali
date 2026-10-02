@@ -1,3 +1,6 @@
+import contextlib
+import datetime
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -14,6 +17,15 @@ NESTED_SUFFIX = "+isr"
 HEARTBEAT = re.compile(r"firmware heartbeat: uptime=([0-9]+)s")
 HEARTBEAT_PERIOD_S = 60
 DUT_STAMP = re.compile(r"\b[EWIDV] \(([0-9]+)\) ")
+PHY_LEVEL = re.compile(r"DALI PHY interrupt: level ([0-9]+)")
+RESET_BANNER = re.compile(r"ESP-ROM:|rst:0x")
+HOST_STAMP = re.compile(r"^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\.[0-9]+)?Z? ")
+HOST_STAMP_FORMAT = "%Y-%m-%dT%H:%M:%S"
+MS_PER_S = 1000
+BOOT_START_SLACK_S = 5.0
+CLOCK_DRIFT = 20e-6
+BOOT_SLACK_CAP_S = 30.0
+REVERSE_BLOCK_BYTES = 1 << 16
 
 
 @dataclass
@@ -75,6 +87,51 @@ def logged_past(lines, ms):
     return newest is not None and newest >= ms
 
 
+def host_s(line):
+    found = HOST_STAMP.match(line)
+    if found is None:
+        return None
+    whole = datetime.datetime.strptime(found.group(1), HOST_STAMP_FORMAT)
+    return (whole.replace(tzinfo=datetime.timezone.utc).timestamp()
+            + float(found.group(2) or 0))
+
+
+def _boot_slack_s(dut_a, dut_b):
+    return min(BOOT_SLACK_CAP_S,
+               BOOT_START_SLACK_S + CLOCK_DRIFT * abs(dut_a - dut_b) / MS_PER_S)
+
+
+def running_boot_phy_level(newest_first):
+    newest = None
+    for line in newest_first:
+        if RESET_BANNER.search(line):
+            return None
+        host, dut = host_s(line), dut_ms(line)
+        if host is None or dut is None:
+            continue
+        start = host - dut / MS_PER_S
+        newest = newest or (start, dut)
+        if host < newest[0] - _boot_slack_s(newest[1], 0):
+            return None
+        found = PHY_LEVEL.search(line)
+        if found:
+            same = abs(start - newest[0]) <= _boot_slack_s(newest[1], dut)
+            return int(found.group(1)) if same else None
+    return None
+
+
+def lines_newest_first(path, block=REVERSE_BLOCK_BYTES):
+    with open(path, "rb") as fh:
+        end, tail = fh.seek(0, os.SEEK_END), b""
+        while end > 0:
+            start = max(0, end - block)
+            fh.seek(start)
+            parts = (fh.read(end - start) + tail).split(b"\n")
+            tail, end = parts[0], start
+            yield from (raw.decode("utf-8", "replace") for raw in reversed(parts[1:]))
+        yield tail.decode("utf-8", "replace")
+
+
 class SerialLog:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -89,6 +146,13 @@ class SerialLog:
 
     def window(self):
         return LogWindow(self.log_path)
+
+    def boot_phy_level(self):
+        path = Path(self.log_path)
+        if not path.exists():
+            return None
+        with contextlib.closing(lines_newest_first(path)) as lines:
+            return running_boot_phy_level(lines)
 
 
 class LogWindow:

@@ -19,7 +19,8 @@
 строить тяжёлые представления на стеке воркера. Поэтому:
 
 - **Полная проекция** — там, где шинное событие уже несёт всё или где перечитывать
-  нечего: состояние света, операции, события устройств ввода, активации правил.
+  нечего: состояние света, события устройств ввода, активации правил. Статус операции
+  приходит так же, но без итогов (ниже).
 - **Тонкий триггер** — для изменений записей: полезная нагрузка — только
   идентификаторы (`adapter_id` и, где применимо, `virtual_lamp_id`, `short_address`,
   `group_id`, `scene_id`; отсутствующие опущены, а не `null`). Клиент дебаунсит и
@@ -31,7 +32,7 @@
 | `type` | Канал | Полезная нагрузка |
 |---|---|---|
 | `RuntimeStateChangedEvent` | `virtual_lamps`, `physical_devices` | Полная: идентификаторы плюс `state` = `RuntimeStateContract`. |
-| `OperationStatusChangedEvent` | `operations` | Полная, в форме `OperationView` (строковый `operation_id`, `type`, `status`, в терминальном статусе — те же поля, что у REST). |
+| `OperationStatusChangedEvent` | `operations` | Поля `OperationView`, но не все: строковый `operation_id`, `type`, `status` и `error {code, message}`, когда он есть. `result` и `attribute_read_outcomes` кадр не несёт — за ними `GET /operations/{id}`. |
 | `AdapterSettingsChangedEvent` | `adapters` | Триггер. |
 | `PhysicalDeviceChangedEvent` | `physical_devices` | Триггер. |
 | `VirtualLampChangedEvent` | `virtual_lamps` | Триггер. |
@@ -61,7 +62,11 @@
 - `scheme` — схема событий устройства, и это **диагноз**: при схеме 0 событие не несёт
   идентичности устройства (`short_address: null`), и ни одно правило по конкретной
   панели под ней не сработает.
-- `event` — продуктовое имя события (то же написание, что в REST, Home Assistant и языке
-  правил), `null` для немоделированного типа; тогда клиент показывает сырые десять бит
+- `event` — продуктовое имя события: у кнопки — то же написание, что `event_type` в
+  Home Assistant и событие в языке правил (`short_press`); у присутствия —
+  `becomes occupied` / `becomes vacant`, как в языке правил, и `still occupied` /
+  `still vacant`, которых нет больше нигде (Home Assistant видит только `ON` / `OFF`);
+  у датчика света и абсолютного входа — `illuminance` / `position`. `null` — для
+  немоделированного типа; тогда клиент показывает сырые десять бит
   `event_info`. `value` — типизированная величина (код кнопки, битовое поле
   присутствия, сырое значение датчика), `0` при `event: null`.

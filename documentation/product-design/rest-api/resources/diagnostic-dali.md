@@ -30,11 +30,14 @@ commissioning, атрибуты); правило «продукт не соби�
 - `success`, `backward_frame` (`0`, если обратного кадра не было);
 - `error` — **статус доставки** плоской строкой (`delivery_rejected` /
   `execution_failed` / `timeout`, `null` при успехе), при наличии — `error_code`
-  (продуктовый код) и `message`;
-- `backward_violation: true` — в окне ответа пришёл нарушающий кадр.
+  (продуктовый код) и `message`.
 
 **`backward_frame: 0` при `success: false` — не ответ `0x00`, а отсутствие ответа.**
-Читать байт, не проверив `success`, значит сфабриковать ответ из тишины.
+Читать байт, не проверив `success`, значит сфабриковать ответ из тишины. Нарушающий
+кадр в окне ответа здесь — тоже отказ `execution_failed`: читаемого содержимого у него
+нет ([`ADR-020`](../../../architecture/decisions/ADR-020-violating-backward-frame-is-an-answer.md)),
+и от тишины он не отличим; ответом его читают только expert-шаги
+[commissioning](commissioning.md).
 
 Отказы самого конверта — обычные `{"error": …}`: `503 commands_ingress_overload` /
 `confirmation_slots_exhausted`, `504 confirmation_timeout`; тело не JSON — `400

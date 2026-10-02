@@ -14,17 +14,21 @@ Rust DTO в `crates/dali2rust-api` (они канон); шинная сторо�
 - Префикс `/api/v1`, тела — JSON.
 - `GET` читает read-модель и ничего не публикует; мутирующий маршрут публикует
   typed-команду на шину ([API gateway](../runtime-modules/api-gateway/README.md)).
+  Исключение — `PUT /time`: часы и зону он ставит сам, без шины
+  ([`resources/controller.md`](resources/controller.md) §`/time`).
 - `PATCH` — `application/merge-patch+json` (RFC 7396), `PUT` — полная замена ресурса
-  или матрицы, `POST` — действие или запуск операции, `DELETE` — удаление записи или
-  связи. Правила merge-patch и матриц —
+  или матрицы (у `…/target-state` и `/time` поля необязательны), `POST` — действие или
+  запуск операции, `DELETE` — удаление записи или связи. Правила merge-patch и матриц —
   [`stability-and-versioning.md`](stability-and-versioning.md); форма и словарь ошибок —
   [`contracts/error-dto.md`](contracts/error-dto.md).
-- Каждый маршрут отвечает по одной из трёх дисциплин —
+- Каждый мутирующий маршрут, кроме `PUT /time`, отвечает по одной из трёх дисциплин —
   [`stability-and-versioning.md`](stability-and-versioning.md) §Дисциплины ответа.
 - Роль контроллера в каждом ответе и отказ записи на стэндбае —
   [`resources/redundancy.md`](resources/redundancy.md).
 - Безопасность: `/api/v1` и `/api/v1/ws` — trusted-local, аутентификации нет;
-  секреты (пароль брокера MQTT) только на запись.
+  секреты (пароль брокера MQTT) ресурсы настроек не отдают, но экспорт слайса
+  `home_assistant_settings` несёт их
+  ([`resources/config-transfer.md`](resources/config-transfer.md)).
 - `GET /` и любой другой не-API `GET` отдают встроенный web UI из флеша.
 
 ## Ресурсы

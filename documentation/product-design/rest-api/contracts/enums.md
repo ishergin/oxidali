@@ -4,15 +4,15 @@ Enum'ы, которые встречаются в нескольких ресу�
 контракт, с тем смыслом значений, который не выводится из имени.
 
 **Границы:** набор значений задают Rust-enum'ы в `dali2rust-contracts::msg` (и
-`dali2rust-domain::registry` для проекций реестра) — они канон; JSON-имя даёт их
-`rest_name()` / `as_str()`, общее для REST и WebSocket. Enum'ы одного ресурса
+`dali2rust-domain::registry` для проекций реестра) — они канон. Enum'ы одного ресурса
 описаны в нём самом: HCL — [`../resources/hcl.md`](../resources/hcl.md), шаги и
 области commissioning — [`../resources/commissioning.md`](../resources/commissioning.md),
 причины переходов роли — [`../resources/redundancy.md`](../resources/redundancy.md),
 состояния обновления прошивки — [`../resources/firmware.md`](../resources/firmware.md).
 Чисто шинные enum'ы (`Origin`, `DaliTargetScope`, …) — в
 [`../../bus-contracts/`](../../bus-contracts/). Правило написания (PascalCase →
-snake_case) — [`../stability-and-versioning.md`](../stability-and-versioning.md).
+snake_case) и где задаётся JSON-имя —
+[`../stability-and-versioning.md`](../stability-and-versioning.md).
 
 ## Тип устройства — `device_type_*`
 

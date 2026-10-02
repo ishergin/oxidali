@@ -48,6 +48,31 @@ def test_a_serial_test_runs_while_the_console_answers():
     assert _skip_reasons(uart) == []
 
 
+def test_a_destructive_test_without_the_flag_skips_naming_the_one_test_rule(monkeypatch):
+    monkeypatch.delenv(hil_session.DESTRUCTIVE_ENV, raising=False)
+    destructive = _Item({"destructive"})
+    hil_session._mark_skips([destructive], None, UART)
+    assert _skip_reasons(destructive) == [hil_session.DESTRUCTIVE_SKIP]
+    assert "STRATEGY.md §4.5" in hil_session.DESTRUCTIVE_SKIP
+
+
+def _selected(nodeid, *markers):
+    item = _Item(markers)
+    item.nodeid = nodeid
+    return item
+
+
+def test_a_session_selects_one_destructive_test_at_most():
+    one = _selected("tests/test_pd_forget.py::test_forget", "destructive")
+    other = _selected("tests/test_policies.py::test_apply", "destructive")
+    plain = _selected("tests/test_ws.py::test_subscribe", "smoke")
+    assert hil_session.destructive_burst([one, plain]) is None
+    assert hil_session.destructive_burst([]) is None
+    burst = hil_session.destructive_burst([one, plain, other])
+    assert "STRATEGY.md §4.5" in burst and "selected 2" in burst
+    assert one.nodeid in burst and other.nodeid in burst and plain.nodeid not in burst
+
+
 def test_the_log_channel_test_asks_for_the_serial_console():
     marks = {mark.name for mark in test_ws.test_the_log_channel_replays_and_keeps_uart_alive.pytestmark}
     assert {"smoke", "serial"} <= marks, (
@@ -304,6 +329,23 @@ def test_every_test_that_forges_an_input_event_is_a_light_test():
 
 def test_every_test_that_hands_the_bus_to_the_peer_is_a_light_test():
     for name in ("test_a_silent_primary_hands_the_bus_over_and_takes_it_back",
-                 "test_a_planned_switchover_moves_the_bus_and_not_the_light"):
+                 "test_a_planned_switchover_moves_the_bus_and_not_the_light",
+                 "test_losing_the_peer_link_moves_no_role"):
         assert _light(getattr(test_redundancy, name)), name
 
+
+class _BootLog:
+    def __init__(self, level):
+        self.level = level
+
+    def boot_phy_level(self):
+        return self.level
+
+
+def test_the_ws_client_soak_is_inconclusive_unless_the_interrupt_runs_at_the_driver_level():
+    for level, found in ((5, "at level 5"), (None, "no `DALI PHY interrupt` line")):
+        with pytest.raises(pytest.skip.Exception, match="INCONCLUSIVE on this image: .*" + found):
+            test_ws.test_two_sniffer_subscribers_keep_ws_client_out_of_late_isr_entries(
+                api=None, hil_config=None, serial_log=_BootLog(level), ws_baseline=None,
+                test_artifacts=None)
+    test_ws.require_the_driver_level(_BootLog(test_ws.PHY_DRIVER_LEVEL))
