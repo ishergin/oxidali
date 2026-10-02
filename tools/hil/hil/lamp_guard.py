@@ -118,7 +118,12 @@ VIRTUAL_ROUTES = (
     ("rules", re.compile(r"rules")),
     ("rule_toggle", re.compile(r"rules/([^/]+)")),
     ("rule_run", re.compile(r"rules/([^/]+)/run")),
+    ("lamp_patch", re.compile(r"adapters/\d+/virtual-lamps/(\d+)")),
+    ("ha_settings", re.compile(r"settings/home-assistant")),
 )
+HA_ENTITY_FLAG = "ha_entity_enabled"
+HA_TEST_NAMESPACE = {"discovery_prefix": "hiltest", "state_topic_prefix": "hiltest-dali",
+                     "controller_id": "hiltest"}
 
 RESTART_REFUSAL = ("%s refused: HIL_LAMPS_READ_ONLY=1 never restarts a controller or hands the "
                    "bus over, since the unit active afterwards republishes its HCL point over a "
@@ -229,9 +234,18 @@ def appended_test_rules(baseline, source):
     return found
 
 
+def enters_test_namespace(body) -> bool:
+    return all(body.get(name) == value for name, value in HA_TEST_NAMESPACE.items()) and \
+        body.get("enabled") is not False
+
+
+def restores_settings(body, owner) -> bool:
+    return body == owner
+
+
 class VirtualFence:
     def __init__(self, park, groups, session_vls, commissioning=False, pending=None,
-                 rules=None):
+                 rules=None, ha_settings=None):
         self.park = frozenset(park)
         self.groups = frozenset(groups)
         self.session_vls = frozenset(session_vls)
@@ -239,6 +253,9 @@ class VirtualFence:
         self._pending = pending
         self.rules = rules
         self.test_rules = set()
+        self.ha_settings = ha_settings
+        self.bridge_in_test = False
+        self.announced = set()
 
     def check_request(self, method, path, body):
         if path.startswith(DIAGNOSTIC_PREFIX):
@@ -318,6 +335,33 @@ class VirtualFence:
             if target not in (self.groups if kind == GROUP_TARGET else self.session_vls):
                 self.refuse("test rule %r on %s(%d)" % (name, kind, target))
         self.test_rules.update(name for name, _, _ in added)
+
+    def _lamp_patch(self, method, key, body):
+        if method != PATCH or int(key) not in self.session_vls or \
+                not isinstance(body, dict) or set(body) != {HA_ENTITY_FLAG}:
+            self.refuse("%s of VL%s other than its %s" % (method, key, HA_ENTITY_FLAG))
+        if not body[HA_ENTITY_FLAG]:
+            return
+        if not self.bridge_in_test:
+            self.refuse("announcing VL%s while the bridge publishes into the owner's "
+                        "namespace" % key)
+        self.announced.add(int(key))
+
+    def unannounced(self, lamp_id):
+        self.announced.discard(lamp_id)
+
+    def _ha_settings(self, method, key, body):
+        body = body if isinstance(body, dict) else {}
+        if method == PATCH and self.ha_settings is not None:
+            if enters_test_namespace(body):
+                self.bridge_in_test = True
+                return
+            if restores_settings(body, self.ha_settings) and not self.announced:
+                self.bridge_in_test = False
+                return
+        self.refuse("%s of the Home Assistant settings other than into the HIL test namespace "
+                    "and back to the owner's %r with no session lamp announced (VL%s)"
+                    % (method, self.ha_settings, spell(self.announced)))
 
     def _rule_toggle(self, method, key, body):
         name = unquote(key)

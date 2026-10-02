@@ -1,9 +1,12 @@
+import types
+
 import pytest
+import requests
 
 import hil_virtual
 from hil import api as api_mod
 from hil import prod_state, tripwire, virtual_gear, write_log
-from hil.lamp_guard import VirtualFence
+from hil.lamp_guard import HA_TEST_NAMESPACE, VirtualFence
 from hil.seriallog import LogWindow
 
 PARK = [16, 17]
@@ -201,3 +204,35 @@ def test_an_extended_write_to_an_owner_address_stops_the_session(tmp_path, monke
     with pytest.raises(pytest.exit.Exception) as stop:
         _judge(monkeypatch, found=found)
     assert stop.value.returncode == hil_virtual.EXIT_SAFETY
+
+
+class _HaApi:
+    def __init__(self, settings=None, error=None):
+        self.ha = types.SimpleNamespace(get=self._get)
+        self.settings, self.error = settings, error
+
+    def _get(self):
+        if self.error is not None:
+            raise self.error
+        return dict(self.settings)
+
+
+OWNER_HA = {"enabled": True, "discovery_prefix": "homeassistant", "state_topic_prefix": "dali",
+            "controller_id": "dali-e0d190", "broker_password_set": False}
+
+
+def test_the_fence_takes_the_owner_restorable_home_assistant_settings():
+    owner = hil_virtual._owner_ha_settings(_HaApi(OWNER_HA))
+    assert owner == {k: v for k, v in OWNER_HA.items() if k != "broker_password_set"}
+
+
+@pytest.mark.parametrize("client", [
+    _HaApi(dict(OWNER_HA, controller_id=None)),
+    _HaApi({k: v for k, v in OWNER_HA.items() if k != "state_topic_prefix"}),
+    _HaApi(dict(OWNER_HA, **HA_TEST_NAMESPACE)),
+    _HaApi(dict(OWNER_HA, controller_id=HA_TEST_NAMESPACE["controller_id"])),
+    _HaApi(error=api_mod.ApiError(503, {}, "settings/home-assistant")),
+    _HaApi(error=requests.ConnectionError()),
+])
+def test_unknown_owner_settings_leave_the_fence_without_a_way_back(client):
+    assert hil_virtual._owner_ha_settings(client) is None

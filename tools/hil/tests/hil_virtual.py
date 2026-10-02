@@ -9,7 +9,7 @@ from hil import config as config_mod
 from hil import role, serialmon, tripwire, virtual_gear
 from hil.config import PeerUnconfigured, _parse_shorts
 from hil.gearsim import GearOracle, GearSim, GearSimUnavailable
-from hil.lamp_guard import RulesBaseline, VirtualFence, spell
+from hil.lamp_guard import HA_TEST_NAMESPACE, RulesBaseline, VirtualFence, spell
 from hil.seriallog import LogWindow
 from hil.wait import wait_until
 from hil_harness import validity_of
@@ -182,11 +182,24 @@ def virtual_gear_fence(request, virtual_gear_session):
     bench = virtual_gear_session
     api.guard.fence = VirtualFence(bench.park, bench.groups, bench.vl_of_short.values(),
                                    commissioning=commissioning_allowed(),
-                                   pending=api.pending_lamps, rules=_rules_baseline(api))
+                                   pending=api.pending_lamps, rules=_rules_baseline(api),
+                                   ha_settings=_owner_ha_settings(api))
     try:
         yield api.guard.fence
     finally:
         api.guard.fence = None
+
+
+def _owner_ha_settings(api):
+    try:
+        settings = api.ha.get()
+    except (api_mod.ApiError, requests.RequestException):
+        return None
+    owner = {name: settings[name] for name in api_mod._HomeAssistantSettings.RESTORABLE
+             if name in settings}
+    if any(owner.get(name) in (None, value) for name, value in HA_TEST_NAMESPACE.items()):
+        return None
+    return owner
 
 
 def _rules_baseline(api):
