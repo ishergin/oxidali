@@ -10,6 +10,7 @@ from pathlib import Path
 from hil import durable, remote_serial, role, serialmon
 from hil.gearsim import GearSim, GearSimUnavailable
 from hil.lamp_guard import RESERVE_FLOOR, emulated_gtin, spell
+from hil.wait import settled
 
 LEDGER = role.LEDGER
 
@@ -36,6 +37,9 @@ ANSWER_DAMAGE = ("backward_undecodable_total", "backward_frame_size_total",
                  "backward_incomplete_total", "backward_multi_answer_total")
 WIRE_DAMAGE = ("corrupted_in_window",)
 FRAMES_SENT = "frames_sent_by_priority"
+QUIET_WIRE_S = 3.0
+QUIET_WAIT_MAX_S = 30.0
+QUIET_POLL_S = 0.5
 EXIT_SETUP, EXIT_SAFETY, EXIT_PEER_RETURNED, EXIT_BLIND = 3, 4, 5, 6
 
 SCAN_MODE = "scan_known_short_addresses"
@@ -216,8 +220,16 @@ def _windowed_replies(api, group):
     return replies, contended, after[1] != before[1]
 
 
+def await_quiet_wire(api):
+    settled(lambda: wire_window(api)[0], QUIET_WIRE_S, QUIET_WAIT_MAX_S, QUIET_POLL_S,
+            key=tuple)
+
+
 def _is_control(api, group) -> bool:
+    contended = False
     for _ in range(PROOF_ATTEMPTS):
+        if contended:
+            await_quiet_wire(api)
         replies, contended, damaged = _windowed_replies(api, group)
         if not (contended or damaged):
             return all(answered_yes(r) for r in replies)
@@ -225,15 +237,19 @@ def _is_control(api, group) -> bool:
 
 
 def _is_occupied(api, group) -> bool:
-    for _ in range(PROOF_ATTEMPTS):
+    for attempt in range(PROOF_ATTEMPTS):
+        if attempt:
+            await_quiet_wire(api)
         replies, contended, damaged = _windowed_replies(api, group)
         if any(answered_any(r) for r in replies):
             return True
         if not contended:
             return damaged
     raise VirtualGearError("another transmitter shared the wire, or a probe did not go out, "
-                           "during every proof of group %d (%s moved), so silence proved nothing"
-                           % (group, ", ".join(CONTENTION_COUNTERS + WIRE_CONTENTION)))
+                           "during every proof of group %d, each retried after waiting up to "
+                           "%ds for a quiet wire (%s moved), so silence proved nothing"
+                           % (group, QUIET_WAIT_MAX_S,
+                              ", ".join(CONTENTION_COUNTERS + WIRE_CONTENTION)))
 
 
 def prove_groups_empty(api, groups, used):

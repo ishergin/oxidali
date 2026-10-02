@@ -81,6 +81,24 @@ def test_an_unread_membership_frees_no_group():
     assert virtual_gear.free_groups(virtual_gear.used_groups(devices, [])) == []
 
 
+class _Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+@pytest.fixture(autouse=True)
+def clock(monkeypatch):
+    fake = _Clock()
+    monkeypatch.setattr(wait, "time", fake)
+    return fake
+
+
 class _WireApi:
     def __init__(self, answering, contended=0, contended_calls=(), damaged_calls=(),
                  missing=(), moved=None, unsent_calls=(), replies=None):
@@ -245,6 +263,72 @@ def test_any_decoded_answer_occupies_a_free_group():
 def test_a_counter_the_firmware_does_not_report_stops_the_proof(name):
     with pytest.raises(virtual_gear.VirtualGearError, match="lacks %s" % name):
         virtual_gear.prove_groups_empty(_WireApi({0}, missing={name}), [4], {0})
+
+
+class _SweepingWire(_WireApi):
+    def __init__(self, clock, sweep_polls):
+        super().__init__({0})
+        self.clock, self.sweep_polls, self.last_move = clock, sweep_polls, None
+
+    def stats(self):
+        if self.sweep_polls:
+            self.sweep_polls -= 1
+            self.counts["foreign_frames_total"] += 1
+            self.last_move = self.clock.now
+        return super().stats()
+
+
+def test_a_quiet_wire_is_one_still_for_the_quiet_time_after_the_sweep(clock):
+    api = _SweepingWire(clock, sweep_polls=5)
+    virtual_gear.await_quiet_wire(api)
+    still = clock.now - api.last_move
+    assert api.sweep_polls == 0
+    assert virtual_gear.QUIET_WIRE_S <= still < \
+        virtual_gear.QUIET_WIRE_S + 2 * virtual_gear.QUIET_POLL_S
+
+
+def test_a_wire_that_never_quietens_is_waited_for_no_longer_than_the_bound(clock):
+    virtual_gear.await_quiet_wire(_SweepingWire(clock, sweep_polls=10 ** 6))
+    assert virtual_gear.QUIET_WAIT_MAX_S <= clock.now < \
+        virtual_gear.QUIET_WAIT_MAX_S + 2 * virtual_gear.QUIET_POLL_S
+
+
+def _record_waits(monkeypatch, api):
+    original = virtual_gear.await_quiet_wire
+
+    def waited(wire):
+        api.sent.append("quiet")
+        original(wire)
+    monkeypatch.setattr(virtual_gear, "await_quiet_wire", waited)
+
+
+def test_a_retry_after_a_contended_window_starts_on_a_quiet_wire(monkeypatch):
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, contended_calls={probes + 1})
+    _record_waits(monkeypatch, api)
+    assert virtual_gear.prove_groups_empty(api, [4], {0}) == 0
+    assert api.sent == [(0x81, 0x91)] * probes + [(0x89, 0x91)] * probes + ["quiet"] + \
+        [(0x89, 0x91)] * probes
+
+
+def test_no_wait_follows_the_last_contended_attempt(monkeypatch):
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, contended_calls=range(probes + 1, 100))
+    _record_waits(monkeypatch, api)
+    with pytest.raises(virtual_gear.VirtualGearError, match="shared the wire"):
+        virtual_gear.prove_groups_empty(api, [4], {0})
+    assert api.sent.count("quiet") == virtual_gear.PROOF_ATTEMPTS - 1
+
+
+def test_a_contended_control_waits_and_a_damaged_one_does_not(monkeypatch):
+    contended = _WireApi({0}, contended_calls={1})
+    _record_waits(monkeypatch, contended)
+    assert virtual_gear.prove_groups_empty(contended, [4], {0}) == 0
+    assert contended.sent.count("quiet") == 1
+    damaged = _WireApi({0}, damaged_calls={1})
+    _record_waits(monkeypatch, damaged)
+    assert virtual_gear.prove_groups_empty(damaged, [4], {0}) == 0
+    assert damaged.sent.count("quiet") == 0
 
 
 def test_a_wire_contended_on_every_attempt_proves_nothing():
