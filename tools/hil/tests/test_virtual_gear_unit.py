@@ -82,21 +82,47 @@ def test_an_unread_membership_frees_no_group():
 
 
 class _WireApi:
-    def __init__(self, answering, contended=0):
+    def __init__(self, answering, contended=0, contended_calls=(), damaged_calls=(),
+                 missing=(), moved=None, unsent_calls=(), replies=None):
         self.answering, self.sent, self.contended = set(answering), [], contended
-        self.frames = 0
+        self.moved = dict(moved or {})
+        for call in contended_calls:
+            self.moved.setdefault(call, []).append("foreign_frames_total")
+        for call in damaged_calls:
+            self.moved.setdefault(call, []).append("backward_multi_answer_total")
+        self.missing, self.unsent_calls, self.replies = set(missing), set(unsent_calls), replies or {}
+        self.counts = dict.fromkeys(virtual_gear.CONTENTION_COUNTERS + virtual_gear.ANSWER_DAMAGE
+                                    + virtual_gear.WIRE_CONTENTION + virtual_gear.WIRE_DAMAGE, 0)
+        self.frames_out = 0
 
     def cmd_wire(self, addr, opcode):
         self.sent.append((addr, opcode))
+        call = len(self.sent)
+        self.frames_out += call not in self.unsent_calls
+        for name in self.moved.get(call, []):
+            self.counts[name] += 1
         if self.contended:
             self.contended -= 1
-            self.frames += 1
+            self.counts["foreign_frames_total"] += 1
         group = (addr >> 1) & 0x0F
+        if group in self.replies:
+            return self.replies[group]
         return {"success": group in self.answering, "backward_frame": 0xFF
                 if group in self.answering else 0}
 
+    def _present(self, names, extra=None):
+        found = {name: self.counts[name] for name in names}
+        found.update(extra or {})
+        return {k: v for k, v in found.items() if k not in self.missing}
+
     def stats(self):
-        return {"dali": {"collision_restarts_total": 0, "foreign_frames_total": self.frames}}
+        return {"dali": self._present(virtual_gear.CONTENTION_COUNTERS
+                                      + virtual_gear.ANSWER_DAMAGE)}
+
+    def diagnostics(self):
+        return {"dali_wire": self._present(
+            virtual_gear.WIRE_CONTENTION + virtual_gear.WIRE_DAMAGE,
+            {virtual_gear.FRAMES_SENT: [self.frames_out, 0, 0, 0, 0]})}
 
 
 def test_free_groups_are_proven_silent_after_a_positive_control():
@@ -124,13 +150,113 @@ def test_a_free_group_that_answers_is_occupied():
 def test_a_proof_on_a_shared_wire_is_repeated():
     api = _WireApi({0}, contended=1)
     assert virtual_gear.prove_groups_empty(api, [4], {0}) == 0
-    assert api.sent.count((0x89, 0x91)) == 2 * virtual_gear.PROOF_PROBES
+    assert api.sent.count((0x81, 0x91)) == 2 * virtual_gear.PROOF_PROBES
+    assert api.sent.count((0x89, 0x91)) == virtual_gear.PROOF_PROBES
+
+
+def test_a_foreign_frame_repeats_only_the_group_whose_probes_it_shared():
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, contended_calls={2 * probes + 1})
+    assert virtual_gear.prove_groups_empty(api, [4, 5, 6], {0}) == 0
+    assert [api.sent.count((0x81 + 2 * g, 0x91)) for g in (0, 4, 5, 6)] == \
+        [probes, probes, 2 * probes, probes]
+
+
+def test_a_garbled_answer_in_a_quiet_window_occupies_the_group():
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, damaged_calls={probes + 2})
+    with pytest.raises(virtual_gear.VirtualGearError, match=r"\[4\]"):
+        virtual_gear.prove_groups_empty(api, [4, 5], {0})
+
+
+def test_a_yes_heard_on_a_shared_wire_still_occupies_the_group():
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0, 4}, contended_calls={probes + 1})
+    with pytest.raises(virtual_gear.VirtualGearError, match="real gear"):
+        virtual_gear.prove_groups_empty(api, [4], {0})
+    assert api.sent.count((0x89, 0x91)) == probes
+
+
+def test_a_used_group_on_a_shared_wire_gives_way_to_the_next_control():
+    probes = virtual_gear.PROOF_PROBES
+    calls = {n * probes + 1 for n in range(virtual_gear.PROOF_ATTEMPTS)}
+    assert virtual_gear.prove_groups_empty(_WireApi({0, 2}, contended_calls=calls), [4],
+                                           {0, 2}) == 2
+
+
+CONTENTION_NAMES = ("collision_restarts_total", "foreign_frames_total",
+                    "backward_early_rejected_total", "backward_late_rejected_total", "collisions",
+                    "foreign_in_window", "bus_acquire_timeout", "exchange_retries",
+                    "retry_exhausted")
+DAMAGE_NAMES = ("backward_undecodable_total", "backward_frame_size_total",
+                "backward_incomplete_total", "backward_multi_answer_total", "corrupted_in_window")
+
+
+def test_the_proof_watches_every_named_counter():
+    assert set(virtual_gear.CONTENTION_COUNTERS + virtual_gear.WIRE_CONTENTION) == \
+        set(CONTENTION_NAMES)
+    assert set(virtual_gear.ANSWER_DAMAGE + virtual_gear.WIRE_DAMAGE) == set(DAMAGE_NAMES)
+
+
+@pytest.mark.parametrize("name", CONTENTION_NAMES)
+def test_every_contention_counter_repeats_the_window_it_moved_in(name):
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, moved={probes + 1: [name]})
+    assert virtual_gear.prove_groups_empty(api, [4], {0}) == 0
+    assert api.sent.count((0x89, 0x91)) == 2 * probes
+
+
+@pytest.mark.parametrize("name", DAMAGE_NAMES)
+def test_every_damage_counter_occupies_a_free_group_whose_quiet_window_it_moved_in(name):
+    api = _WireApi({0}, moved={virtual_gear.PROOF_PROBES + 1: [name]})
+    with pytest.raises(virtual_gear.VirtualGearError, match=r"\[4\]"):
+        virtual_gear.prove_groups_empty(api, [4], {0})
+
+
+def test_damage_in_a_contended_window_repeats_it_instead_of_occupying_the_group():
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, contended_calls={probes + 1}, damaged_calls={probes + 1})
+    assert virtual_gear.prove_groups_empty(api, [4], {0}) == 0
+    assert api.sent.count((0x89, 0x91)) == 2 * probes
+
+
+def test_damage_in_the_control_window_repeats_the_control():
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, damaged_calls={1})
+    assert virtual_gear.prove_groups_empty(api, [4], {0}) == 0
+    assert api.sent.count((0x81, 0x91)) == 2 * probes
+
+
+def test_a_probe_that_did_not_go_out_repeats_the_window():
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, unsent_calls={probes + 1})
+    assert virtual_gear.prove_groups_empty(api, [4], {0}) == 0
+    assert api.sent.count((0x89, 0x91)) == 2 * probes
+
+
+def test_any_decoded_answer_occupies_a_free_group():
+    api = _WireApi({0}, replies={4: {"success": True, "backward_frame": 0x12}})
+    with pytest.raises(virtual_gear.VirtualGearError, match=r"\[4\]"):
+        virtual_gear.prove_groups_empty(api, [4], {0})
+
+
+@pytest.mark.parametrize("name", ["foreign_frames_total", "corrupted_in_window",
+                                  virtual_gear.FRAMES_SENT])
+def test_a_counter_the_firmware_does_not_report_stops_the_proof(name):
+    with pytest.raises(virtual_gear.VirtualGearError, match="lacks %s" % name):
+        virtual_gear.prove_groups_empty(_WireApi({0}, missing={name}), [4], {0})
 
 
 def test_a_wire_contended_on_every_attempt_proves_nothing():
-    api = _WireApi({0}, contended=100)
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, contended_calls=range(probes + 1, 100))
     with pytest.raises(virtual_gear.VirtualGearError, match="shared the wire"):
         virtual_gear.prove_groups_empty(api, [4], {0})
+
+
+def test_a_control_contended_on_every_attempt_proves_nothing():
+    with pytest.raises(virtual_gear.VirtualGearError, match="quiet window"):
+        virtual_gear.prove_groups_empty(_WireApi({0}, contended=100), [4], {0})
 
 
 def test_a_violating_answer_counts_as_present():
@@ -799,12 +925,16 @@ def test_owner_rules_that_watch_a_test_lamp_stop_the_light_tests():
 class _Groups(_RealTier):
     def __init__(self, masks, source="", answering=(), rows=()):
         super().__init__(source, masks=masks, rows=rows)
-        self.answering, self.probed = set(answering), []
+        self.answering, self.probed, self.wire = set(answering), [], _WireApi(())
 
     def stats(self):
-        return {"dali": {}}
+        return self.wire.stats()
+
+    def diagnostics(self):
+        return self.wire.diagnostics()
 
     def cmd_wire(self, wire_address, opcode):
+        self.wire.frames_out += 1
         group = (wire_address >> 1) & 0x0F
         self.probed.append(group)
         return {"success": True, "backward_frame": 0xFF} if group in self.answering else {}

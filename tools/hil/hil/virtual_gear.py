@@ -28,7 +28,14 @@ QUERY_CONTROL_GEAR_PRESENT = 0x91
 YES = 0xFF
 PROOF_PROBES = 3
 PROOF_ATTEMPTS = 3
-CONTENTION_COUNTERS = ("collision_restarts_total", "foreign_frames_total")
+CONTENTION_COUNTERS = ("collision_restarts_total", "foreign_frames_total",
+                       "backward_early_rejected_total", "backward_late_rejected_total")
+WIRE_CONTENTION = ("collisions", "foreign_in_window", "bus_acquire_timeout", "exchange_retries",
+                   "retry_exhausted")
+ANSWER_DAMAGE = ("backward_undecodable_total", "backward_frame_size_total",
+                 "backward_incomplete_total", "backward_multi_answer_total")
+WIRE_DAMAGE = ("corrupted_in_window",)
+FRAMES_SENT = "frames_sent_by_priority"
 EXIT_SETUP, EXIT_SAFETY, EXIT_PEER_RETURNED, EXIT_BLIND = 3, 4, 5, 6
 
 SCAN_MODE = "scan_known_short_addresses"
@@ -174,40 +181,74 @@ def answered_cleanly(resp) -> bool:
     return bool(resp.get("success")) and not resp.get("backward_violation")
 
 
-def contention(api) -> tuple:
+def answered_any(resp) -> bool:
+    return bool(resp.get("success")) or bool(resp.get("backward_violation"))
+
+
+def _counters(source, names, where) -> tuple:
+    missing = [name for name in names if name not in source]
+    if missing:
+        raise VirtualGearError("%s lacks %s, so the group proof cannot see the wire"
+                               % (where, ", ".join(missing)))
+    return tuple(source[name] for name in names)
+
+
+def wire_window(api) -> tuple:
     dali = api.stats().get("dali") or {}
-    return tuple(dali.get(name, 0) for name in CONTENTION_COUNTERS)
+    wire = api.diagnostics().get("dali_wire") or {}
+    contended = (_counters(dali, CONTENTION_COUNTERS, "stats.dali")
+                 + _counters(wire, WIRE_CONTENTION, "diagnostics.dali_wire"))
+    damaged = (_counters(dali, ANSWER_DAMAGE, "stats.dali")
+               + _counters(wire, WIRE_DAMAGE, "diagnostics.dali_wire"))
+    return contended, damaged, sum(_counters(wire, (FRAMES_SENT,), "diagnostics.dali_wire")[0])
 
 
-def _answers(api, group) -> list:
-    return [answered_yes(api.cmd_wire(group_address(group), QUERY_CONTROL_GEAR_PRESENT))
+def _replies(api, group) -> list:
+    return [api.cmd_wire(group_address(group), QUERY_CONTROL_GEAR_PRESENT)
             for _ in range(PROOF_PROBES)]
 
 
-def _probe_groups(api, groups, used):
-    control = next((g for g in sorted(used) if all(_answers(api, g))), None)
-    occupied = [g for g in groups if any(_answers(api, g))]
-    return control, occupied
+def _windowed_replies(api, group):
+    before = wire_window(api)
+    replies = _replies(api, group)
+    after = wire_window(api)
+    contended = after[0] != before[0] or after[2] - before[2] != PROOF_PROBES
+    return replies, contended, after[1] != before[1]
+
+
+def _is_control(api, group) -> bool:
+    for _ in range(PROOF_ATTEMPTS):
+        replies, contended, damaged = _windowed_replies(api, group)
+        if not (contended or damaged):
+            return all(answered_yes(r) for r in replies)
+    return False
+
+
+def _is_occupied(api, group) -> bool:
+    for _ in range(PROOF_ATTEMPTS):
+        replies, contended, damaged = _windowed_replies(api, group)
+        if any(answered_any(r) for r in replies):
+            return True
+        if not contended:
+            return damaged
+    raise VirtualGearError("another transmitter shared the wire, or a probe did not go out, "
+                           "during every proof of group %d (%s moved), so silence proved nothing"
+                           % (group, ", ".join(CONTENTION_COUNTERS + WIRE_CONTENTION)))
 
 
 def prove_groups_empty(api, groups, used):
     if not groups:
         return None
-    for _ in range(PROOF_ATTEMPTS):
-        before = contention(api)
-        control, occupied = _probe_groups(api, groups, used)
-        if contention(api) != before:
-            continue
-        if control is None:
-            raise VirtualGearError(
-                "no group live lamps hold answered QUERY CONTROL GEAR PRESENT on every probe, "
-                "so silence from the free groups would prove nothing")
-        if occupied:
-            raise VirtualGearError("groups %s answer on the wire: real gear sits in them"
-                                   % occupied)
-        return control
-    raise VirtualGearError("another transmitter shared the wire during every group proof "
-                           "(%s moved), so silence proved nothing" % ", ".join(CONTENTION_COUNTERS))
+    control = next((g for g in sorted(used) if _is_control(api, g)), None)
+    if control is None:
+        raise VirtualGearError(
+            "no group live lamps hold answered QUERY CONTROL GEAR PRESENT on every probe of a "
+            "quiet window, so silence from the free groups would prove nothing")
+    occupied = [g for g in groups if _is_occupied(api, g)]
+    if occupied:
+        raise VirtualGearError("groups %s answer on the wire, or garble an answer: real gear may "
+                               "sit in them" % occupied)
+    return control
 
 
 @dataclass(frozen=True)
