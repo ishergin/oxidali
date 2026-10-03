@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -190,3 +191,26 @@ def test_allow_stale_ui_builds_with_the_previous_bundle(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, P4, pinned=True)
     assert flash.run(cfg, build_only=True, allow_stale_ui=True) == 0
     assert built == [1]
+
+
+IMAGE_SPEC = {"mcu": "esp32p4", "flash_size": "16mb", "firmware_bin": "fw.elf",
+              "bootloader": "boot.bin", "partition_table": "parts.csv",
+              "merged_bin": "target/riscv32imafc-esp-espidf/debug/fw-merged.bin",
+              "app_bin": "target/riscv32imafc-esp-espidf/debug/fw-app.bin"}
+
+
+def _image_dir_seen(monkeypatch, seen):
+    def fake_run(cmd, cwd=None, **kwargs):
+        seen.append((cmd[-1], Path(cmd[-1]).parent.is_dir()))
+        return _Ran(0)
+    monkeypatch.setattr(flash.subprocess, "run", fake_run)
+
+
+@pytest.mark.parametrize("make,key", [(flash.app_image, "app_bin"),
+                                      (flash.merged_image, "merged_bin")])
+def test_an_image_lands_in_a_directory_a_fresh_checkout_lacks(tmp_path, monkeypatch, make, key):
+    (tmp_path / IMAGE_SPEC["bootloader"]).write_bytes(b"")
+    seen = []
+    _image_dir_seen(monkeypatch, seen)
+    assert make(IMAGE_SPEC, tmp_path) == tmp_path / IMAGE_SPEC[key]
+    assert seen == [(str(tmp_path / IMAGE_SPEC[key]), True)]
