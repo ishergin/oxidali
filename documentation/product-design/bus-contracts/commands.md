@@ -30,7 +30,7 @@
 |---|---|---|
 | Подтверждение запроса | HTTP-хендлер, один дедлайн на запрос | `DeliveryStatus` на канале подтверждений |
 | Подтверждение + apply-watch | Хендлер настроек | Подтверждение, затем счётчик применения реестра |
-| `202` + операция | Никто; оператор смотрит операцию | Только `OperationWorkerSignalEvent` |
+| `202` + операция | Никто; оператор смотрит операцию | Исход работы — только `OperationWorkerSignalEvent` |
 | Внутренний факт | Никто | `CORRELATION_NONE`; реестр не подтверждает |
 
 ## Семейства
@@ -38,15 +38,16 @@
 | Семейство | Виды | Владелец | Кто публикует | Дисциплина |
 |---|---|---|---|---|
 | Конфигурация реестра | адаптер; виртуальная лампа (метаданные, bind/rebind/unbind, удаление записи); физическое устройство (override, notes, удаление); устройство ввода (метаданные, notes); метаданные группы и сцены | registry worker | HTTP | подтверждение + apply-watch |
-| Настройки контроллера | поллер, DALI, Home Assistant (настройки, пароль брокера, префиксы топиков, `controller_id`), отказоустойчивость, политики | registry worker | HTTP | подтверждение + apply-watch |
-| Чанковые записи | матрица групп и матрица сцены (patch/replace) + `ConfigWriteCommitCommand`; `HclScheduleUpsertCommand` / `HclScheduleDeleteCommand` | registry worker | HTTP | `202` + операция `config_write` |
+| Настройки контроллера | поллер, DALI, Home Assistant (настройки, пароль брокера, префиксы топиков, `controller_id`), отказоустойчивость, политики | registry worker | HTTP; флип `applicationActive` — ещё воркер арбитража и `DaliWorker` после передачи шины | подтверждение + apply-watch; флип от воркеров — внутренний факт |
+| Чанковые записи | матрица групп и матрица сцены (patch/replace) + `ConfigWriteCommitCommand`; `HclScheduleUpsertCommand` | registry worker | HTTP | `202` + операция `config_write` |
+| Удаление расписания HCL | `HclScheduleDeleteCommand` | registry worker | HTTP | подтверждение запроса (`204`) |
 | Runtime реестра | `RegistryRuntimeUpdateCommand`, `RegistryLevelTransitionCommand` | registry worker | только проектор state-fanout | подтверждение (short/VL) или внутренний факт |
-| Перечитать слайс | `RegistrySliceReloadCommand` | registry worker | импорт конфигурации (HTTP), воркер репликации | подтверждение |
+| Перечитать слайс | `RegistrySliceReloadCommand` | registry worker | импорт конфигурации (HTTP), воркер репликации | подтверждение (импорт); от репликации — внутренний факт |
 | Семантические DALI (102/207/209) | `Dali*Command` для control gear | `DaliWorker` | HTTP, MQTT, HCL, поллер, правила, оркестратор | по виду, см. [`semantic-dali-commands.md`](semantic-dali-commands.md) |
 | Part 103 | `Dali103*Command` | `DaliWorker` | HTTP, правила, арбитраж | по виду, там же |
 | Диагностический сырой кадр | `DaliCommandPayload` (`raw_mode`) | `DaliWorker` | только диагностический REST | подтверждение запроса |
-| Операции | `OperationBeginCommand`, `OperationRegistryResetCommand` | operation tracker | HTTP, оркестратор | — |
-| Массовое применение | `GroupApplyExecuteCommand`, `SceneApplyExecuteCommand`, `PolicyApplyExecuteCommand` | apply orchestrator | HTTP, правила (`scene.apply`) | `202` + операция |
+| Операции | `OperationBeginCommand`, `OperationRegistryResetCommand` | operation tracker | HTTP; правила и `DaliWorker` — начало своего применения (у `OperationRegistryResetCommand` продового издателя нет) | — |
+| Массовое применение | `GroupApplyExecuteCommand`, `SceneApplyExecuteCommand`, `PolicyApplyExecuteCommand` | apply orchestrator | HTTP, правила (`scene(N).apply()`), `DaliWorker` (политики после скана, если взведён `apply_on_discovery`) | `202` + операция; открывает её публикующий, от правил и `DaliWorker` ответа нет |
 | HCL | `HclOverrideClearCommand` (все флаги расписания), `HclOverrideHoldCommand`, `HclOverrideResumeCommand` (причины флагов внутри цели) | HCL scheduler | HTTP (снятие); правила (`hcl.hold`, `hcl.resume`) | подтверждение запроса; подтверждений от правил никто не ждёт |
 | Бит расписания HCL | `HclScheduleEnableCommand` | registry worker | правила (`hcl.enable` / `hcl.disable`) | подтверждение; его никто не ждёт |
 | Home Assistant | `HomeAssistantDiscoveryPublishCommand`, `MqttPublishCommand` | MQTT bridge | HTTP; правила (`mqtt.publish`) | `202` + операция; без ответа |
@@ -64,9 +65,9 @@
   записи в прибор, и от неё идут и разбор REST, и запись. Бит поля, снятого с контракта, остаётся
   зарезервированным и не переиспользуется. Маска `PollerSettingsUpdateCommand`
   занята целиком: следующий флаг потребует расширить поле.
-- **Текст — в байтах.** Имена и заметки — `FixedText*` фиксированной ёмкости;
-  переполнение отвергается на REST-границе `422 invalid_value`, и отказ называет
-  обе величины в байтах (кириллица занимает два байта на символ).
+- **Текст — в байтах.** Имена и заметки — `FixedText*` фиксированной ёмкости
+  (кириллица занимает два байта на символ); переполнение отвергается на REST-границе
+  `422 invalid_value`, а у физического устройства отказ называет обе величины в байтах.
 - **Заметки — отдельная команда.** `notes` физического устройства и устройства ввода
   едут своими командами, потому что оба текста в одном payload'е не помещаются в
   бюджет кадра. PATCH, несущий и `notes`, и другие поля, публикует две команды под
@@ -103,13 +104,14 @@
 **Расписание HCL** — собственный протокол без закрывающей команды: заголовок
 расписания повторяется в каждом чанке; чанк с нулевыми начальными индексами targets и
 points открывает серию; индексы остальных обязаны равняться накопленной длине
-(`409 chunk_out_of_order`); чанк с `last_chunk` коммитит, и
+(`conflict`, `chunk_out_of_order`); чанк с `last_chunk` коммитит, и
 `HclScheduleChangedEvent` публикуется один раз — на коммите, удалении или смене бита
 `enabled` (`HclScheduleEnableCommand`; бит, который уже стоит, ничего не публикует, а
 неизвестное расписание отвергается `schedule_not_found`). Координаты
 едут микроградусами (`i32`), чтобы payload оставался `Eq`. Реестр как единственный
-писатель отвергает неисполнимое расписание (`422`) и девятое расписание
-(`409 schedule_limit_reached`). Staging не персистится и выселяется по возрасту.
+писатель отвергает неисполнимое расписание (`invalid_value`) и девятое (`conflict`,
+`schedule_limit_reached`): запись кончается операцией `failed`, HTTP-ответа с этими
+кодами нет. Staging не персистится и выселяется по возрасту.
 
 **Документ правил** — та же схема staging + скобка: `RuleStageCommand` несёт куски
 исходника, `RuleCommitCommand` применяет документ одним разбором, одной заменой
@@ -119,8 +121,9 @@ correlation id) вытесняет незакрытую. Серия может �
 
 ## Runtime-команды реестра
 
-`RegistryRuntimeUpdateCommand` (RRUC) — единственный вход, меняющий volatile
-runtime-состояние; единственный продовый издатель — проектор state-fanout. Как реестр
+Volatile runtime-состояние меняют только `RegistryRuntimeUpdateCommand` (RRUC) и
+`RegistryLevelTransitionCommand` (чужая арк-команда без уровня: уровень считает
+реестр, — ниже); единственный издатель обеих в проде — проектор state-fanout. Как реестр
 сливает запись (частичное наблюдение, порядок по `observed_at_mono_ms`, отсутствие,
 цвет) и какие факты несут корреляцию запроса —
 [`../../architecture/06-registry-and-persistence.md`](../../architecture/06-registry-and-persistence.md).
@@ -174,8 +177,10 @@ runtime-состояние; единственный продовый издат
   `Registry`, `Internal`, а также зарезервированные `Cluster` и `AdapterProxy`.
   Происхождение отображается в `RuntimeSource` провенанса и уточняет приоритет
   провода для нескольких видов (см. [`semantic-dali-commands.md`](semantic-dali-commands.md)).
-- `target_adapter_id`, `bus_id` — экземпляр шины; `timestamp_ms` — монотонное время
-  контроллера.
+- `target_adapter_id` — адаптер-адресат, его фильтрует потребитель. `bus_id`,
+  `sequence_no` и `timestamp_ms` после сборки никто не ставит
+  ([04](../../architecture/04-contracts-and-api-bridge.md)); время кадра WebSocket ставит
+  воркер WebSocket.
 - `cluster_origin_id` / `adapter_proxy_origin_id` — зарезервированы под подавление
   петель будущих `I6`/`I7`; вне этих происхождений — `0`.
 - `error` — только на пути отказа, в куче. `ErrorPayload` (код, текст до 64 байт,

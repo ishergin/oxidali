@@ -4,7 +4,7 @@ use crate::parser::expr;
 use crate::parser::refs;
 use dali2rust_rules_model::limits::MAX_LEVEL;
 use dali2rust_rules_model::{
-    Action, CctSpec, CompileError, LevelSpec, LightAction, LightOp, ValueExpr,
+    Action, CctSpec, CompileError, LevelSpec, LightAction, LightOp, LightTarget, ValueExpr,
 };
 
 const MAX_XY_1E4: u32 = 10_000;
@@ -256,6 +256,16 @@ fn light_op(verb: &str, pos: Pos, bag: &mut ArgBag) -> Result<LightOp, CompileEr
     }
 }
 
+fn steps_from_current(op: &LightOp) -> bool {
+    matches!(
+        op,
+        LightOp::Level { level: LevelSpec::Relative { .. } }
+            | LightOp::Dim { .. }
+            | LightOp::DimHold { .. }
+            | LightOp::Cct { cct: CctSpec::Relative { .. } }
+    )
+}
+
 pub fn light_action(c: &mut Cursor<'_>) -> Result<Action, CompileError> {
     let target = refs::light_target(c)?;
     c.expect(&TokenKind::Dot, "`.` and a light action")?;
@@ -263,6 +273,12 @@ pub fn light_action(c: &mut Cursor<'_>) -> Result<Action, CompileError> {
     c.expect(&TokenKind::LParen, "`(`")?;
     let mut bag = call_args(c)?;
     let op = light_op(&verb, pos, &mut bag)?;
+    if steps_from_current(&op) && !matches!(target, LightTarget::Lamp(_)) {
+        return Err(pos.err(format!(
+            ".{verb} with a step needs one lamp: a group or broadcast has no single \
+             current level or colour to step from"
+        )));
+    }
     reject_fade(&mut bag)?;
     let hold_hcl = hold_hcl_of(&mut bag)?;
     bag.finish(&format!(".{verb}"))?;

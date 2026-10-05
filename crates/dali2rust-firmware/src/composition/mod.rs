@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use dali2rust_platform::knob::flag_knob;
 use dali2rust_platform::slice_store::SliceStore;
 
 pub const VERSION: &str = env!("DALI2RUST_VERSION");
@@ -39,6 +40,16 @@ const fn version_is_shaped(v: &str) -> bool {
     }
     false
 }
+
+const PERSIST_DISABLED: bool = matches!(flag_knob(option_env!("DALI2RUST_PERSIST_DISABLE")), Some(true));
+const STACKS_INTERNAL: bool = matches!(flag_knob(option_env!("DALI2RUST_STACKS_INTERNAL")), Some(true));
+const RUST_HEAP_INTERNAL: bool =
+    matches!(flag_knob(option_env!("DALI2RUST_RUST_HEAP_INTERNAL")), Some(true));
+#[cfg(target_os = "espidf")]
+const ETH_RX_INTERNAL: bool = matches!(flag_knob(option_env!("DALI2RUST_ETH_RX_INTERNAL")), Some(true));
+#[cfg(target_os = "espidf")]
+const PSRAM_ATOMIC_SELFTEST: bool =
+    matches!(flag_knob(option_env!("DALI2RUST_PSRAM_ATOMIC_SELFTEST")), Some(true));
 
 const HEARTBEAT_LOG_INTERVAL_SECS: u64 = 60;
 
@@ -310,14 +321,14 @@ fn log_internal_pressure() {
 fn log_internal_pressure() {}
 
 fn apply_placement_knobs() {
-    if option_env!("DALI2RUST_STACKS_INTERNAL") == Some("1") {
+    if STACKS_INTERNAL {
         dali2rust_bsp::esp_thread::keep_stacks_internal();
     }
-    if option_env!("DALI2RUST_RUST_HEAP_INTERNAL") == Some("1") {
+    if RUST_HEAP_INTERNAL {
         dali2rust_bsp::rust_heap::keep_rust_heap_internal();
     }
     #[cfg(target_os = "espidf")]
-    if option_env!("DALI2RUST_ETH_RX_INTERNAL") == Some("1") {
+    if ETH_RX_INTERNAL {
         dali2rust_bsp::esp32p4::eth::keep_rx_frames_internal();
     }
 }
@@ -351,7 +362,7 @@ fn log_stack_home() {}
 
 #[cfg(target_os = "espidf")]
 fn run_psram_atomic_selftest() {
-    if option_env!("DALI2RUST_PSRAM_ATOMIC_SELFTEST") != Some("1") {
+    if !PSRAM_ATOMIC_SELFTEST {
         return;
     }
     match dali2rust_bsp::psram_selftest::run() {
@@ -369,10 +380,7 @@ fn run_psram_atomic_selftest() {
 fn run_psram_atomic_selftest() {}
 
 fn persistence_enabled() -> bool {
-    match option_env!("DALI2RUST_PERSIST_DISABLE") {
-        None => true,
-        Some(raw) => raw.is_empty() || raw == "0",
-    }
+    !PERSIST_DISABLED
 }
 
 fn heap_check_period_s() -> u64 {

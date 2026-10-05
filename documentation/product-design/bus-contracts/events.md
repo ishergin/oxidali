@@ -25,13 +25,13 @@
 
 | Семейство | События | Издатель | Потребители | Доставка |
 |---|---|---|---|---|
-| Изменения реестра | `AdapterSettingsChangedEvent`, `VirtualLampChangedEvent`, `PhysicalDeviceChangedEvent`, `GroupChangedEvent`, `GroupMatrixChangedEvent`, `SceneChangedEvent`, `SceneMatrixChangedEvent`, `InputDeviceChangedEvent` | registry worker | WS; MQTT (лампы, устройства, группы, матрица групп, сцены, устройства ввода); правила (лампы, устройства) | best-effort |
+| Изменения реестра | `AdapterSettingsChangedEvent`, `VirtualLampChangedEvent`, `PhysicalDeviceChangedEvent`, `GroupChangedEvent`, `GroupMatrixChangedEvent`, `SceneChangedEvent`, `SceneMatrixChangedEvent`, `InputDeviceChangedEvent` | registry worker | WS; MQTT (лампы, устройства, группы, матрица групп, сцены, устройства ввода); правила (лампы, устройства, группы, сцены, устройства ввода — перекомпиляция имён) | best-effort |
 | Расписания HCL | `HclScheduleChangedEvent` | registry worker | HCL, дисплей | best-effort |
 | Runtime | `RuntimeStateChangedEvent` | registry worker | WS, MQTT, HCL, правила | best-effort |
 | Настройки | `PollerSettingsChangedEvent`, `DaliSettingsChangedEvent`, `HomeAssistantSettingsChangedEvent`, `RedundancySettingsChangedEvent`, `PoliciesChangedEvent` | registry worker | поллер; арбитраж, супервизор и правила; — ; воркер репликации; — | best-effort |
 | Операции | `OperationStatusChangedEvent` | operation tracker | WS, дисплей | best-effort |
 | Сигналы исполнителей | `OperationWorkerSignalEvent` | `DaliWorker`, реестр, оркестратор, MQTT, правила, OTA, HTTP | operation tracker | **required** |
-| Результаты DALI | [ниже](#результаты-dali) | `DaliWorker`; recall сцены — и sniffer translator | по виду | по виду |
+| Результаты DALI | [ниже](#результаты-dali) | `DaliWorker`; recall сцены — и sniffer translator; синтетический исход ячейки применения с ошибкой — оркестратор | по виду | по виду |
 | Наблюдения | `DaliObservedFrameEvent` | sniffer translator | проектор, реестр, дисплей | best-effort |
 | Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `Dali103ApplicationControlObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
 | Результаты Part 103 | `Dali103ScanStartedEvent`, `Dali103ScanProgressEvent`, `Dali103InstanceConfiguredEvent` | `DaliWorker` | реестр; правила (`manual config changed`) | **required** |
@@ -43,8 +43,9 @@
 
 ## Изменения реестра
 
-- **Уведомление, а не снимок.** Payload изменённого ресурса — только идентичность
-  (`adapter_id` + id); потребитель перечитывает состояние через read-port. Поэтому
+- **Уведомление, а не снимок.** Payload изменённого ресурса — идентичность
+  (`adapter_id` + id); `AdapterSettingsChangedEvent` несёт ещё имя и `enabled`, но их
+  никто не читает: потребитель перечитывает состояние через read-port. Поэтому
   потерянное событие стоит устаревшего экрана до следующего изменения, а не
   испорченного состояния.
 - Одно событие на эффективный коммит; чанковая серия — одно на коммит серии.
@@ -54,8 +55,10 @@
 ## `RuntimeStateChangedEvent`
 
 Единственное событие о volatile-состоянии лампы; публикуется реестром **только после**
-коммита `RegistryRuntimeUpdateCommand`. MQTT, WebSocket, HCL и правила строят видимое
-состояние из него, а не из результатов DALI и не из наблюдений сниффера.
+коммита `RegistryRuntimeUpdateCommand` или `RegistryLevelTransitionCommand`
+([`commands.md`](commands.md) §Runtime-команды реестра). MQTT, WebSocket, HCL и
+правила строят видимое состояние из него, а не из результатов DALI и не из наблюдений
+сниффера.
 
 - `state_setpoint` / `state_observation` — **снимок записи после коммита**: `None`
   здесь значит «никому не известно».
@@ -76,7 +79,9 @@
 - `OperationStatusChangedEvent` — каждый переход статуса операции с ключом и
   компактной ошибкой ([`../runtime-modules/operation-tracker/README.md`](../runtime-modules/operation-tracker/README.md)).
 - `OperationWorkerSignalEvent` (`WorkerStarted` / `WorkerSucceeded` / `WorkerFailed`
-  по workflow correlation id) — единственный путь, которым операция заканчивается.
+  по workflow correlation id) — единственный носитель исхода работы. Другие концы
+  операции (отказ доставки, вытеснение, сброс, TTL) —
+  [`operation-tracker`](../runtime-modules/operation-tracker/README.md).
 
 ## Результаты DALI
 
@@ -99,7 +104,8 @@
 
 Правила, которые потребитель вправе предполагать:
 
-- **Runtime — только через проектор** и `RegistryRuntimeUpdateCommand`
+- **Runtime — только через проектор** и `RegistryRuntimeUpdateCommand` /
+  `RegistryLevelTransitionCommand`
   ([`../runtime-modules/state-fanout/README.md`](../runtime-modules/state-fanout/README.md));
   доказательства (чанки чтения, запись, итог скана, чтение банка) реестр коммитит сам
   и публикует `PhysicalDeviceChangedEvent`.
@@ -151,15 +157,18 @@
   ([`../runtime-modules/sniffer-translator/README.md`](../runtime-modules/sniffer-translator/README.md));
   схема 0 идентичности устройства не несёт
   ([`../../architecture/09-dali-protocol-rules.md`](../../architecture/09-dali-protocol-rules.md)).
-- `DaliInputDeviceLifecycleEvent` — служебные события устройства (power cycle,
-  локальная перенастройка Part 333).
+- `DaliInputDeviceLifecycleEvent` — power cycle устройства ввода.
 - `Dali103ApplicationControlObservedEvent` — подтверждённая send-twice пара чужого
   `ENABLE` / `DISABLE APPLICATION CONTROLLER` и её `DeviceCommandScope`; реестр решает,
   касается ли она нас: `Unaddressed` — только пока у контроллера нет короткого адреса.
 
 Результаты команд Part 103 (`Dali103Scan*`, `Dali103InstanceConfiguredEvent`)
 реестр проецирует в записи устройств ввода; флаг Part 333 из
-`Dali103InstanceConfiguredEvent` — вход триггера правил `manual config changed`.
+`Dali103InstanceConfiguredEvent` — вход триггера правил `manual config changed`. Пока
+Part 333 не читается, флаг и триггер инертны: единственный производитель шлёт
+`manual_config_active: None`, поле REST всегда `false`, а триггер не срабатывает
+([`../../reference/iec62386-conformance-gaps.md`](../../reference/iec62386-conformance-gaps.md)
+§9.4, строка 333).
 
 ## Отказоустойчивость
 
@@ -171,14 +180,15 @@
 - `RedundancyTransitionEvent` (best-effort, правила: `controller becomes active`) —
   смена роли с причиной и метками; журнал переходов хранит сам воркер арбитража и
   отдаёт REST.
-- `RegistrySliceReloadedEvent` (required, правила) — слайс-стор на узле изменился и
-  реестр перечитал себя. Это событие, а не команда, потому что команда доходит ровно
+- `RegistrySliceReloadedEvent` (required, правила и поллер) — слайс-стор на узле изменился
+  и реестр перечитал себя. Это событие, а не команда, потому что команда доходит ровно
   до одного владельца, а перечитать своё обязан каждый держатель персистентного
   состояния. Имя слайса в payload'е — повод, а не фильтр: перечитывать нужно по
   самому факту события.
 
-Роль контроллера событием не передаётся — её несут заголовок `X-Dali2rust-Role` и
-`/api/v1/health`.
+На шине роль контроллера несут `DaliSettingsChangedEvent` и `RedundancyTransitionEvent`;
+клиентам (WebSocket, MQTT) она событием не передаётся — её несут заголовок
+`X-Dali2rust-Role` и `/api/v1/health`.
 
 ## Сообщения брокера
 
@@ -195,9 +205,8 @@
   значений. Поллер перенастраивается по своему событию без рестарта; `DaliWorker` читает
   настройки DALI из read-port в момент применения, а событие будит арбитраж,
   супервизор и правила.
-- `HomeAssistantSettingsChangedEvent` — уведомление без секрета (`enabled` и два
-  флага цены: нужен ли реконнект, нужен ли переанонс). Мост на него сознательно не
-  подписан (`ADR-015`).
+- `HomeAssistantSettingsChangedEvent` — уведомление без секрета, только `enabled`. Мост
+  на него сознательно не подписан (`ADR-015`).
 - `RedundancySettingsChangedEvent` будит простаивающий воркер репликации — свежий
   `peer_url` пробуется сразу. Арбитраж и применение политик читают свои настройки
   из read-port и событием не управляются.

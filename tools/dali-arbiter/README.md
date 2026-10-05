@@ -45,6 +45,4 @@ idf.py -p <port> flash
 ## Host side
 
 `hil/arbiter.py` parses, Manchester-decodes and scores captures (`capture`,
-`summary`, `dump`). The `hil/issue27_*.py` scripts built on it compare our
-transmitter with the Wiren Board's on the same wire (A/B by trial window), measure
-the opening-half-bit deficit against idle time, and run a product-level loss soak.
+`summary`, `dump`).

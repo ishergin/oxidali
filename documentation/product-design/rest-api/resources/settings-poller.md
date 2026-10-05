@@ -45,5 +45,5 @@
 | Случай | Ответ |
 |---|---|
 | `interval_ms` вне диапазона, пустой `attribute_groups_default`, значение неверного типа | `422 invalid_value` |
-| Неизвестная группа атрибутов | `422 invalid_enum` |
+| Неизвестная группа атрибутов или `scene_colours`, которую поллер не читает | `422 invalid_enum` |
 | Неизвестное поле (в том числе любые `backoff_*`, `max_concurrent`) | `400 unknown_field` |

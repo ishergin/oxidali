@@ -71,9 +71,10 @@ two. The three are distinct, append-only error codes.
 - **`Collision` and `BusBusy` are retried** under the same retry policy as 16-bit frames:
   a collision destroys the frame for every receiver and a busy bus transmitted nothing, so
   the resend is the first delivery.
-- **A foreign frame or a violation in a 24-bit frame's window is terminal**
-  (`Frame24Fault::Contended`): the device may have executed what it heard, so the unit
-  that may repeat is the sequence, and the executor decides. A frame that expected no
+- **A foreign frame or a violation in a 24-bit frame's window is terminal**: a foreign
+  frame is `Frame24Fault::Contended`, a violation the answer `DaliResponse::Violation`
+  (`VerifyContended` in a read-back). The device may have executed what it heard, so the
+  unit that may repeat is the sequence, and the executor decides. A frame that expected no
   answer (`send_twice`, `IDENTIFY DEVICE`, the `TERMINATE` that closes a commissioning
   session) and was destroyed is reported as a fault, never as success.
 - **The arbitration probe is sent once and never retried**

@@ -39,7 +39,7 @@ BDD conventions → [05](05-testing-and-bdd.md); updates over the network →
 | --- | --- |
 | Host | `check`, `test` (`--all-targets` over `scripts/host_crates.txt`, so no doc-tests), `quick <crates…>` (check all, test the named crates and BDD), `clippy` (`-D warnings`), `clippy-pedantic-advisory`, `fmt` (manual; rustfmt is no gate — wrap only lines you touch) |
 | BDD | `bdd` (`bdd_shards=N` over N processes), `bdd-check`, `bdd-stage`, `check-stage-clean` |
-| Gates | `verify`; `ci` = clippy, test, bdd, verify, `esp-check`, `gear-sim-check`; `contracts-check` |
+| Gates | `verify`; `ci` = clippy, test, bdd, verify, `esp-check`, `gear-sim-check`; `contracts-check`; `verify-release` (the maintainer's sync state: UI bundle, pushed cards) |
 | Firmware | `esp-check` (`cargo check` on the P4 triple), `p4-fw-build`, `p4-isr-iram-check`, `p4-fw-flash` |
 | Other | emulator `gear-sim-check` / `gear-sim-isr-iram-check`; `gc`, `gc-status`; `hil-preflight`, `hil-smoke`, `hil-default`, `hil-slow` |
 
@@ -71,7 +71,8 @@ BDD conventions → [05](05-testing-and-bdd.md); updates over the network →
 ## Build-time knobs
 
 Read with `option_env!`, which records each name in the crate's dep-info; cargo rebuilds
-the crate when one changes, so a knob needs no build-script edit.
+the crate when one changes, so a knob needs no build-script edit. A flag knob is `1` or
+`0` (unset or empty keeps its default); any other value fails the build (`flag_knob`).
 `hil flash` builds for itself: pass knobs to it, and check the flip reached the binary.
 
 | Knob | Effect |
@@ -112,7 +113,7 @@ abort the boot where no `cargo check` sees it. Experiments layer on top
 | `ETH_TRANSMIT_MUTEX` | `y` | one mutex against silent frame corruption when several tasks transmit |
 | `LWIP_STATS` | `y` | the httpd slow-socket line reads lwIP's TCP and link counters to tell "sent and lost" from "never sent" |
 | `LWIP_TCP_SND_BUF_DEFAULT`, `_WND_DEFAULT` | `23040` | 16 × MSS keeps fast retransmit reachable; no window scaling on a wired LAN; the buffers are in PSRAM ([ADR-029](decisions/ADR-029-network-buffers-in-psram-and-a-measured-receive-ring.md)) |
-| `LWIP_TCP_RECVMBOX_SIZE` | `18` | window / MSS + 2: a smaller mailbox refuses the rest of the window and the sender waits for a retransmit — three concurrent uploads ran at a tenth of one |
+| `LWIP_TCP_RECVMBOX_SIZE` | `18` | window / MSS + 2: a smaller mailbox refuses the rest of the window and the sender waits for a retransmit |
 | `LWIP_TCP_OOSEQ_MAX_PBUFS` | `4` | out-of-order segments held per connection; with lwIP in PSRAM ESP-IDF's default would be unbounded |
 | `LWIP_MAX_SOCKETS` | `16` | ≥ httpd's `max_open_sockets` ([02](02-runtime-and-threading.md)) + its 3 internal descriptors, or `httpd_start` fails and the boot aborts |
 | `FREERTOS_HZ` | `1000` | short sleeps park instead of spinning ([02](02-runtime-and-threading.md)) |
@@ -149,9 +150,10 @@ Changing the table takes a wired flash.
   stale bundle (`--allow-stale-ui` builds with the previous one), and `just
   verify-release` and an advisory CI job on `main` report it. The product-name table (`dali-products.json`) ships empty; a gitignored
   `crates/dali2rust-firmware/assets/local/dali-products.json.gz` replaces it in the image
-  when present. A new bundle file needs a row in the firmware's `src/web_assets.rs` (or it
-  is a silent 404), in `MANIFEST_FILES` of `build_web_ui.sh` and in the host dev server's
-  `asset_route`; no gate checks the dev server's copy.
+  when present. A new bundle file needs a row in the firmware's `src/web_assets.rs` (or
+  the fallback silently serves `index.html` in its place), in `MANIFEST_FILES` of
+  `build_web_ui.sh` and in the host dev server's `asset_route` and `load_web_assets`; no
+  gate checks the dev server's copies.
 - `/assets/*` is served immutable for a year and `index.html` no-cache, so the
   `?v=<bundle hash>` that `build_web_ui.sh` stamps on every `/assets/` reference is the
   bundle's only freshness mechanism.
@@ -161,11 +163,10 @@ Changing the table takes a wired flash.
   (sources, `public/`, the entry HTML, the lockfile, the TypeScript and Vite configs);
   changing one list without the other breaks the mirror-freshness gate.
 - Every screen and component has a card in `web/design-system/`, written in the same
-  change as the UI, with the shared `:root` block spliced from an existing card. A change
-  to screens, components or `app.css` that leaves the look as it was carries the commit
-  trailer `UI-Design: unchanged` instead. The
-  design language the cards and the app share is in
-  [`web-ui/README.md`](../product-design/web-ui/README.md).
+  change as the UI, with the `:root` block of `web/design-system/tokens.css` inlined
+  verbatim. A change to screens, components or `app.css` that leaves the look as it was
+  carries the commit trailer `UI-Design: unchanged` instead. The design language the
+  cards and the app share is in [`web-ui/README.md`](../product-design/web-ui/README.md).
 - The maintainer pushes the cards, when syncing, to the Claude Design project "dali2rust Web UI"
   (`0f3fcd66-9619-445b-b9bc-51bc578eefd9`) with `DesignSync`: `list_files` / `get_file`
   first (the owner edits there; never replace the project), `finalize_plan` (`deletes:
@@ -177,7 +178,9 @@ Changing the table takes a wired flash.
 A missing tool fails its gate (`DALI2RUST_SKIP_JSCPD=1`, `DALI2RUST_SKIP_TSC=1` are the
 explicit opt-outs), and no gate keeps its own crate list. The `scripts/*budget*.txt`
 files only go down; the bench's own budgets are in the
-[HIL runbook](../../tools/hil/README.md).
+[HIL runbook](../../tools/hil/README.md). The interrupt's flash check needs a linked
+image, so it is not here, nor in `just ci`: `p4-isr-iram-check` fails on a red or
+unchecked image, and `hil flash` refuses one unless told `--allow-red-isr`.
 
 - A new host-buildable crate is added to `scripts/host_crates.txt` only — the one list
   that `just check` / `test` / `clippy`, `verify_fn_length.sh` and the pedantic advisory
@@ -186,8 +189,9 @@ files only go down; the bench's own budgets are in the
   `--lib` targets, so unit-test modules, integration tests and the BDD crate are outside
   it. `verify_fn_length_esp.py` finds ESP-only code by the literal
   `target_os = "espidf"` in a file, by `#[cfg(target_os = "espidf")] mod name;` on its
-  declaration, by the `esp_idf.rs` / `esp_ws.rs` file names, or by the firmware and BSP
-  paths; a module gated any other way is measured by neither gate.
+  declaration, by the `esp_idf.rs` / `esp_ws.rs` file names, or by the firmware, BSP and
+  gear-emulator (`tools/dali-gear-sim/src`) paths; a module gated any other way is
+  measured by neither gate.
 
 | Script | Holds |
 | --- | --- |
@@ -196,23 +200,24 @@ files only go down; the bench's own budgets are in the
 | `verify_issue_ids.py` | every `ISSUE-NN` resolves to one issue-registry row |
 | `verify_bdd_ids.sh`, `verify_bdd_coverage.sh` (+ tree policy), `verify_bdd_layers.sh`, `verify_no_bdd_production_hooks.sh`, `verify_test_layers.sh` (+ `verify_duplication.sh`) | [05](05-testing-and-bdd.md) |
 | `verify_runtime_boundaries.sh` | no `#[path]` in runtime crates; fixed composition file set |
-| `verify_fixed_bus_guardrails.sh` | no `String`/`Vec`/JSON in bus messages or registry state; test code is outside it |
+| `verify_fixed_bus_guardrails.sh` | no `String`/`Vec`/`serde_json::Value` in bus messages, no JSON in registry state, no `serde_json` in the non-API crates it lists; test code is outside it |
 | `verify_comments.py` | no comment outside the one-line markers; budget `scripts/comment_budget.txt` |
 | `verify_web_assets.sh` | every embedded file present, `tsc -b`, UI tests |
 | `verify_web_classes_styled.py` | every `web/app` class has a CSS rule |
-| `verify_design_vocabulary.py` | one `:root` per card; `web/app` speaks card vocabulary |
+| `verify_design_vocabulary.py` | every card's `:root` is the one in `tokens.css`; every class a card uses has a rule; `web/app` speaks card vocabulary |
 | `verify_ui_follows_design.sh` | a visual `web/app` change since `origin/main` changes a card, or declares `UI-Design: unchanged` |
 | `verify_fn_length.sh`, `verify_fn_length_esp.py` | no function over 40 lines, host and ESP-only code |
 | `verify_counter_surface.py` | counter names agree across spellings ([04](04-contracts-and-api-bridge.md)) |
 | `verify_read_surface.py` | every read-payload block reaches a screen: rendered, or the clock its delta column keys on |
 | `verify_rest_docs.py` | every route the router serves and every error code the API answers is named in a REST resource document, and every documented route is served |
-| `verify_dali_isr_iram.py` | the PHY interrupt reaches no flash; soft here, hard in `hil flash` |
 
 ## Comments
 
 - Source comments are banned except one-line markers: `// SAFETY:` (and `/// # Safety`
   plus one line on a public `unsafe fn`), `// sleep-ok:`, `// busy-wait-ok:`, a BDD
-  step's `// <ID list>`, and a citation such as `// IEC 62386-102 §9.4`.
+  step's `// <ID list>`, and a citation such as `// IEC 62386-102 §9.4`. Tool directives
+  pass too: a shebang, `# shellcheck …`, a Gherkin `# language:`, sdkconfig's
+  `# CONFIG_… is not set` and `// @ts-expect-error`.
 - Rationale lives in this directory and the ADRs; a workaround for an external defect in
   [`known-issues.md`](../product-design/known-issues.md).
 - An `#[allow(…)]` carries `reason = "…"` instead of a comment; `just clippy` denies one

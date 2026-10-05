@@ -410,6 +410,21 @@ fn state_trigger_default_cooldown_suppresses_and_counts() {
 }
 
 #[test]
+fn one_occupancy_report_wakes_an_any_event_rule_once() {
+    for trigger in ["any_event", "event(data=0)"] {
+        let src = format!("rule \"любое\" {{ when input(dev=5, inst=0) is {trigger} do log(\"a\") }}");
+        let mut eng = engine(&src, 0);
+        let wire = eng.handle(occupancy(5, 0, InputEventKind::Movement), &world(1_000)).len();
+        let edge = eng.handle(occupancy(5, 0, InputEventKind::BecameOccupied), &world(1_000)).len();
+        assert_eq!(
+            (wire, edge),
+            (1, 0),
+            "{trigger}: the occupancy edge is derived from the same report, not a second event"
+        );
+    }
+}
+
+#[test]
 fn input_class_default_cooldown_is_zero() {
     let src = r#"rule "и" { when input(dev=1, inst=0) is press do log("p") }"#;
     let mut eng = engine(src, 0);

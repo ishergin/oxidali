@@ -70,10 +70,11 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   (101 §9.2), so the owner wins each following slot
   ([ADR-017](decisions/ADR-017-dali-transactions-and-frame-priority.md)).
   `transaction_exempt` marks an indivisible unit that may exceed §9.2's 400 ms guidance.
-  The exempt kinds are closed: DT8
-  colour staging with the command that activates it (including a target-state write and a
-  scene programme), a scene-colour read, and 102/103 commissioning and discovery sessions.
-  A new exempt call site is one of these kinds, or this list grows.
+  The exempt kinds are closed: DT8 colour staging with the command that activates it
+  (including a target-state write and a scene programme), a scene-colour read, the
+  §11.5.13 device-type walk (from discovery and attribute reads), and 102/103
+  commissioning and discovery sessions. A new exempt call site is one of these kinds, or
+  this list grows.
 - A collision or `BusBusy` on the first frame does not start a transaction: the destroyed
   frame is still a first frame, and priority 1 is forbidden for it. A collision on a later
   frame does not un-start one: the retransmission stays at priority 1 and the yield shield
@@ -110,7 +111,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - A query window has three outcomes: an answer, silence (NO), and a violation. A
   frame-size or bit-timing violation in the backward window is a backward frame
   (101 §8.2.5): `DaliResponse::Violation`, whose `value()` is `None` and whose `is_yes()`
-  is true. It is terminal, never retried, and not a collision. `COMPARE`,
+  is true. It is terminal and not a collision: no frame is retried for it, though a
+  content-confirmed read asks again, as after any contended answer. `COMPARE`,
   `VERIFY SHORT ADDRESS` and `QUERY CONTROL GEAR PRESENT` read it as YES;
   `QUERY SHORT ADDRESS` reads it as "several gear hold this address"
   ([ADR-020](decisions/ADR-020-violating-backward-frame-is-an-answer.md)).
@@ -289,7 +291,6 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 ## Sharing the bus with a foreign master
 
 - When our path and a known-good foreign master drive the same gear differently, diff
-  the two frame sequences before guessing. The Wiren Board master runs `wb-mqtt-dali` on
-  `python3-dali`, whose source is on that board (`/usr/lib/python3/dist-packages/dali/`).
+  the two frame sequences before guessing.
 - Judging our signal's reliability against the foreign master's is a bench measurement;
   its oracles and their limits are in [`tools/hil/STRATEGY.md`](../../tools/hil/STRATEGY.md) §3.

@@ -73,14 +73,16 @@ so any stored copy can lie; they are shown with their read time and re-read on d
   commit and at boot.
 - **The language is a replaceable crate.** `dali2rust-rules-model` owns the typed graph,
   the limits and the `RuleCompiler` / `NameResolver` traits; `dali2rust-rules-lang` is one
-  compiler (`LANG_RULES_V1` = 1); `dali2rust-rules-runtime` consumes only the model and
-  never sees source. A new language is a new compiler crate with a new `lang_id`.
-- **One grammar, on the device.** The parser runs on the httpd task (iterative, bounded
-  temporaries). The web UI is a text editor with no grammar of its own: it posts source to
-  `POST /api/v1/rules/parse` and renders the device's diagnostics with line and column.
-  For editing help it may know the lexical extent of strings and comments, where a `rule`
-  block begins and ends, and which calls take a registry name — never whether a text is
-  valid.
+  compiler (`LANG_RULES_V1` = 1); `dali2rust-rules-runtime` never parses source: it stores
+  and persists the text and hands it to `dyn RuleCompiler`. A new language is a new
+  compiler crate with a new `lang_id`.
+- **One grammar, on the device.** The parser runs on the httpd task for a parse or a
+  commit request and on the rules worker at commit, at boot and when a name moves
+  (recursive descent whose depth the grammar bounds, bounded temporaries). The web UI is a text editor with
+  no grammar of its own: it posts source to `POST /api/v1/rules/parse` and renders the
+  device's diagnostics with line and column. For editing help it may know the lexical
+  extent of strings and comments, where a `rule` block begins and ends, and which calls
+  take a registry name — never whether a text is valid.
 - **The document compiles as a whole.** A stored document that fails to compile — at
   boot, or when a name it references stops resolving — keeps its source and runs no
   rules; one that cannot be loaded whole (an unknown `lang_id`, torn banks) runs none
@@ -131,7 +133,7 @@ bracketed `202` protocol of [ADR-012](ADR-012-async-chunked-config-writes.md).
 
 - One defaulted transport method; a transport without a 24-bit path answers honestly
   instead of timing out.
-- Part 103 adds no thread; the rule engine adds one (`rules_worker`).
+- Part 103 adds no thread; the rule engine adds one (`rules-worker`).
 - The host gear model carries a Part 103 device fleet, so event schemes, radio buttons and
   rule triggers are testable without hardware
   ([ADR-014](ADR-014-gear-model-and-second-dali-endpoint.md)).

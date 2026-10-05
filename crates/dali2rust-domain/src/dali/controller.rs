@@ -65,6 +65,12 @@ pub trait DaliApplicationController: DaliProductController {
         self.send_frame24(frame, expects_backward)
     }
 
+    // IEC 62386-101 §9.3
+    fn send_frame24_twice(&mut self, frame: [u8; 3]) -> Result<(), Frame24Fault> {
+        self.send_frame24(frame, false)?;
+        self.send_frame24(frame, false).map(|_| ())
+    }
+
     fn supports_frame24(&self) -> bool {
         false
     }

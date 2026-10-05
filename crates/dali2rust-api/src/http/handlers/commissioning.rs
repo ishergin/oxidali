@@ -13,7 +13,7 @@ use crate::http::dispatcher::CorrelationIdAllocator;
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::common::{
     accepted_operation_response, json_err, parse_adapter_id, parse_json_body,
-    parse_typed_body, reject_if_commissioning_active, MutatingHandler,
+    parse_strict_body, parse_typed_body, reject_if_commissioning_active, MutatingHandler,
 };
 use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command_pair;
 use crate::http::handlers::resource_surface::declare_handler_shell;
@@ -133,6 +133,7 @@ fn _assert_api_handler(h: &CommissioningIdentifyHandler) -> &dyn ApiHandler {
 }
 
 #[derive(Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommissioningAddressChangeRequest {
     pub short_address: u8,
     pub new_short_address: u8,
@@ -163,7 +164,7 @@ impl MutatingHandler for CommissioningAddressChangeHandler {
     ) -> Result<Self::Validated, HttpResponse> {
         let adapter_id = parse_adapter_id(self.state.adapter_count(), params)?;
         reject_if_commissioning_active(self.operations.as_ref(), adapter_id)?;
-        let req: CommissioningAddressChangeRequest = parse_typed_body(body)?;
+        let req: CommissioningAddressChangeRequest = parse_strict_body(body)?;
 
         if req.short_address > MAX_SHORT_ADDRESS || req.new_short_address > MAX_SHORT_ADDRESS {
             return Err(json_err(422, "invalid_value"));
@@ -243,7 +244,10 @@ fn parse_scope(scope: &str) -> Option<InitialiseScope> {
 
 const MAX_SEARCH_ADDRESS: u32 = 0x00FF_FFFF;
 
+const DELIVERY_REJECTED: &str = "delivery_rejected";
+
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CommissioningStepRequest {
     #[serde(default)]
     pub scope: Option<String>,
@@ -267,9 +271,16 @@ declare_handler_shell! {
 
 impl CommissioningStepHandler {
 
-    fn typed_result(step: CommissioningStep, confirmation: &[u8]) -> Vec<u8> {
+    fn step_response(step: CommissioningStep, confirmation: &[u8]) -> Result<HttpResponse, HttpResponse> {
         let base: serde_json::Value =
             serde_json::from_slice(confirmation).unwrap_or(serde_json::Value::Null);
+        if base.get("error").and_then(serde_json::Value::as_str) == Some(DELIVERY_REJECTED) {
+            return Err(json_err(503, DELIVERY_REJECTED));
+        }
+        Ok(HttpResponse::json(200, Self::typed_result(step, &base)))
+    }
+
+    fn typed_result(step: CommissioningStep, base: &serde_json::Value) -> Vec<u8> {
         let success = base.get("success").and_then(serde_json::Value::as_bool).unwrap_or(false);
         let backward = base.get("backward_frame").and_then(serde_json::Value::as_u64);
         let violation = base
@@ -281,8 +292,10 @@ impl CommissioningStepHandler {
         if let Some(b) = backward {
             out.insert("backward_frame".into(), b.into());
         }
-        Self::carry_named_cause(&base, &mut out);
-        Self::insert_step_reading(step, success, backward, violation, &mut out);
+        Self::carry_named_cause(base, &mut out);
+        if success {
+            Self::insert_step_reading(step, backward, violation, &mut out);
+        }
         serde_json::to_vec(&serde_json::Value::Object(out)).unwrap_or_default()
     }
 
@@ -296,7 +309,6 @@ impl CommissioningStepHandler {
 
     fn insert_step_reading(
         step: CommissioningStep,
-        success: bool,
         backward: Option<u64>,
         violation: bool,
         out: &mut serde_json::Map<String, serde_json::Value>,
@@ -304,20 +316,13 @@ impl CommissioningStepHandler {
         match step {
             // IEC 62386-101 §8.2.5
             CommissioningStep::Compare | CommissioningStep::VerifyShortAddress => {
-                out.insert(
-                    "match".into(),
-                    (success && (violation || backward.unwrap_or(0) != 0)).into(),
-                );
+                out.insert("match".into(), (violation || backward.unwrap_or(0) != 0).into());
             }
             CommissioningStep::QueryShortAddress => {
-                let answer = if success {
-                    QueryShortAddressAnswer::decode(
-                        backward.and_then(|raw| u8::try_from(raw).ok()),
-                        violation,
-                    )
-                } else {
-                    QueryShortAddressAnswer::None
-                };
+                let answer = QueryShortAddressAnswer::decode(
+                    backward.and_then(|raw| u8::try_from(raw).ok()),
+                    violation,
+                );
                 out.insert(
                     "short_address".into(),
                     answer.address().map_or(serde_json::Value::Null, |s| s.into()),
@@ -397,7 +402,7 @@ impl MutatingHandler for CommissioningStepHandler {
         let req: CommissioningStepRequest = if body.is_empty() {
             CommissioningStepRequest::default()
         } else {
-            parse_typed_body(body)?
+            parse_strict_body(body)?
         };
         let scope = resolve_scope(step, req.scope.as_deref())?;
         check_step_params(step, scope, req.short_address, req.search_address)?;
@@ -443,10 +448,7 @@ impl MutatingHandler for CommissioningStepHandler {
             &self.slots,
             correlation_id,
         )?;
-        Ok(HttpResponse::json(
-            200,
-            Self::typed_result(validated.step, &bytes),
-        ))
+        Self::step_response(validated.step, &bytes)
     }
 
     fn respond(&self, executed: Self::Executed) -> HttpResponse {
@@ -455,6 +457,7 @@ impl MutatingHandler for CommissioningStepHandler {
 }
 
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct RestoreScopeRequest {
     #[serde(default = "default_true")]
     pub metadata_and_overrides: bool,
@@ -471,6 +474,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommissioningReplacementRequest {
     pub failed_short_address: u8,
     pub replacement_short_address: u8,
@@ -517,7 +521,7 @@ impl MutatingHandler for CommissioningReplacementHandler {
     ) -> Result<Self::Validated, HttpResponse> {
         let adapter_id = parse_adapter_id(self.state.adapter_count(), params)?;
         reject_if_commissioning_active(self.operations.as_ref(), adapter_id)?;
-        let req: CommissioningReplacementRequest = parse_typed_body(body)?;
+        let req: CommissioningReplacementRequest = parse_strict_body(body)?;
 
         if req.failed_short_address > MAX_SHORT_ADDRESS
             || req.replacement_short_address > MAX_SHORT_ADDRESS
@@ -573,5 +577,61 @@ impl MutatingHandler for CommissioningReplacementHandler {
 
     fn respond(&self, executed: Self::Executed) -> HttpResponse {
         executed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(response: HttpResponse) -> serde_json::Value {
+        serde_json::from_slice(&response.body.into_bytes()).expect("a JSON body")
+    }
+
+    fn respond(step: CommissioningStep, confirmation: serde_json::Value) -> Result<HttpResponse, HttpResponse> {
+        CommissioningStepHandler::step_response(step, confirmation.to_string().as_bytes())
+    }
+
+    fn answered(step: CommissioningStep, confirmation: serde_json::Value) -> HttpResponse {
+        let Ok(response) = respond(step, confirmation) else {
+            panic!("a confirmation the wire produced answers 200");
+        };
+        response
+    }
+
+    #[test]
+    fn a_step_the_bus_rejected_is_a_503_not_a_wire_reading() {
+        let rejected = serde_json::json!({"success": false, "backward_frame": 0, "error": "delivery_rejected"});
+        for step in [CommissioningStep::QueryShortAddress, CommissioningStep::Compare] {
+            let Err(response) = respond(step, rejected.clone()) else {
+                panic!("a frame that never reached the wire must not read as silence");
+            };
+            assert_eq!(response.status, 503);
+            assert_eq!(body(response)["error"], "delivery_rejected");
+        }
+    }
+
+    #[test]
+    fn a_failed_step_carries_its_cause_and_no_reading() {
+        let failed = serde_json::json!({
+            "success": false, "backward_frame": 0, "error": "execution_failed",
+            "error_code": "conflict", "message": "adapter_disabled",
+        });
+        let response = answered(CommissioningStep::QueryShortAddress, failed);
+        let json = body(response);
+        assert_eq!(json["success"], false);
+        assert_eq!(json["error_code"], "conflict");
+        assert!(json.get("answer").is_none(), "no answer was read: {json}");
+        assert!(json.get("short_address").is_none(), "no address was read: {json}");
+    }
+
+    #[test]
+    fn a_completed_step_still_reports_what_the_wire_said() {
+        let silent = serde_json::json!({"success": true, "backward_frame": null, "error": null});
+        let json = body(answered(CommissioningStep::QueryShortAddress, silent));
+        assert_eq!(json["answer"], "none");
+        let violating = serde_json::json!({"success": true, "backward_frame": 0, "error": null, "backward_violation": true});
+        let json = body(answered(CommissioningStep::Compare, violating));
+        assert_eq!(json["match"], true);
     }
 }

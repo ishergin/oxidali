@@ -13,7 +13,7 @@ and a Home Assistant bridge. Scheduling covers human-centric lighting (HCL) and 
 rules engine. Two controllers can share one line as an active/standby pair.
 
 Inside the code the project keeps its working name, `dali2rust`: in crate names, the
-`DALI2RUST_*` build knobs and the Home Assistant manufacturer string.
+`DALI2RUST_*` variables and the Home Assistant manufacturer string.
 
 <p align="center">
   <img src="hardware/photos/installed-in-cabinet.jpg" alt="Two Oxidali controllers, an active/standby pair, on a DIN rail in a distribution cabinet next to a DALI gateway, a Wiren Board controller and a LAN switch" width="55%">
@@ -52,8 +52,9 @@ Inside the code the project keeps its working name, `dali2rust`: in crate names,
   events.
 - HCL schedules: colour-temperature and level curves, sunrise and sunset, SNTP time and
   time zones, and manual override tracking.
-- A rules engine with its own small language. Rules react to button and sensor events;
-  they are compiled on the device and can be dry-run.
+- A rules engine with its own small language. Rules react to input-device events, time
+  of day and the sun, lamp, group and scene changes, timers, HTTP calls and MQTT
+  messages; they are compiled on the device and can be dry-run.
 - Active/standby redundancy. The two units arbitrate roles on the DALI line (DiiA Part
   351) and replicate configuration over HTTP.
 - Firmware updates over Ethernet: the controller pulls the image from a URL and rolls
@@ -120,7 +121,7 @@ The line also needs a DALI bus power supply.
 | --- | --- | --- |
 | DALI TX (the Pico-DALI2 inverts it) | 14 | pin 9 / Pico GP6 |
 | DALI RX | 17 | pin 5 / Pico GP3 |
-| DALI high-voltage receive tap (never driven) | 18 | pin 4 / Pico GP2 |
+| DALI high-voltage receive tap (unused, never driven) | 18 | pin 4 / Pico GP2 |
 | OLED SDA | 33 | — |
 | OLED SCL | 32 | — |
 
@@ -181,7 +182,7 @@ sequenceDiagram
   participant R as Registry worker
   participant O as WebSocket / MQTT
 
-  C->>H: PUT /api/v1/virtual-lamps/{id}/target-state
+  C->>H: PUT /api/v1/adapters/{adapter_id}/virtual-lamps/{lamp_id}/target-state
   H->>H: validate, build a typed command
   H->>B: publish (never blocks)
   B->>W: route to the owner
@@ -198,8 +199,9 @@ sequenceDiagram
   O-->>C: WebSocket frame, MQTT state
 ```
 
-On the host, the same composition runs over `SimDaliTransport`, a model of real gear.
-The BDD suite and the dev server below both use it. The architecture documents start at
+On the host, the same composition runs over a simulated transport: the BDD suite over
+`MockDaliTransport` with scripted answers, the dev server below over `SimDaliTransport`,
+a model of real gear. The architecture documents start at
 [`documentation/architecture/01-overview.md`](documentation/architecture/01-overview.md),
 and the decisions behind them are the [ADRs](documentation/architecture/decisions/README.md).
 
@@ -210,7 +212,8 @@ The system and component drawings are Excalidraw SVGs with the scene embedded: o
 
 macOS on Apple silicon is the tested host. The host triple `aarch64-apple-darwin` is
 written into the `justfile` (`default_host`) and the cargo aliases. On another host,
-pass `default_host=<triple>` to `just` and `--target <triple>` to `cargo`.
+pass `default_host=<triple>` to `just` and put your triple in the `cargo run` commands;
+the `cargo bdd` alias keeps the Apple one, so run the suite with `just bdd`.
 
 ### Prerequisites
 
@@ -224,7 +227,8 @@ brew install just    # or: cargo install just --locked
 
 ESP-IDF v5.5.3 and its tools, the libclang bindgen uses among them, are downloaded by
 the first firmware build into `.embuild/` and need `git` and Python 3. Node.js 22 is
-needed only to rebuild the web UI; the built UI is committed.
+needed to rebuild the web UI and by the merge gates (`just verify`, `just ci`); the built
+UI is committed.
 
 ### 1. Run it without hardware
 
@@ -255,7 +259,7 @@ cd web/app && npm ci && npm run dev    # http://localhost:5173, proxies /api to 
 just check     # type-check every host crate, test targets included
 just test      # unit and integration tests
 just bdd       # the black-box BDD suite
-just ci        # everything a change must pass: clippy, tests, BDD, gates, ESP type-check
+just ci        # everything a change must pass: clippy, tests, BDD, gates, ESP type-checks
 ```
 
 `just verify` and `just ci` type-check and test the web UI too, so run
@@ -336,7 +340,7 @@ Two more instruments sit beside the toolkit:
 | `hardware/enclosure/` | The DIN-rail enclosure: the FreeCAD model and its exports |
 | `tools/hil/` | The hardware-in-the-loop test toolkit |
 | `tools/dali-gear-sim/`, `tools/dali-arbiter/` | The gear emulator (the pair's second ESP32-P4) and the wire witness (ESP32-C6, not ported) |
-| `scripts/` | Merge-gate scripts (`just verify` runs them all) |
+| `scripts/` | The merge-gate scripts `just verify` runs and their budgets, plus build, release and measurement helpers |
 | `documentation/` | Architecture, decision records and the product design |
 
 ## Documentation

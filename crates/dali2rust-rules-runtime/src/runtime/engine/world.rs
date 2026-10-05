@@ -60,6 +60,20 @@ pub struct HclTargetState {
     pub overridden: bool,
 }
 
+pub fn hcl_per_target(rows: Vec<HclTargetState>) -> Vec<HclTargetState> {
+    let mut merged: Vec<HclTargetState> = Vec::with_capacity(rows.len());
+    for row in rows {
+        match merged.iter_mut().find(|m| m.target == row.target) {
+            Some(target) => {
+                target.enabled |= row.enabled;
+                target.overridden |= row.overridden;
+            }
+            None => merged.push(row),
+        }
+    }
+    merged
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WorldSnapshot {
     pub now_ms: u64,

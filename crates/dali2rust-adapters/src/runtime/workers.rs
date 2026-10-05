@@ -191,6 +191,7 @@ pub(crate) struct RulesWorkerDeps {
     pub registry: Arc<RegistryStore>,
     pub wall: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
     pub hcl_state: Arc<dyn dali2rust_api::http::hcl_state::HclScheduleHttpState>,
+    pub correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
 }
 
 #[allow(clippy::too_many_arguments, reason = "one call site; each argument is a distinct dependency")]
@@ -626,6 +627,7 @@ fn spawn_rules(
             resolver: rules_deps.resolver,
             slices: rules_deps.slices,
             world,
+            correlation: rules_deps.correlation,
         },
         Arc::clone(&rules_counters),
         Arc::clone(&rules_engine_cells),

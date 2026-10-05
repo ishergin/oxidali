@@ -2,6 +2,7 @@ mod adapters;
 pub(crate) mod config_write_stage;
 mod conversions;
 mod groups;
+pub(crate) mod import_fence;
 mod ha_publish;
 pub(crate) mod hcl_schedules;
 pub mod input_devices;

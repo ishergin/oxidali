@@ -35,12 +35,36 @@ pub(crate) fn poller_settings_view_to_dto(view: PollerSettingsView) -> PollerSet
         interval_ms: view.interval_ms,
         attribute_groups_default: DaliAttributeGroup::ALL
             .into_iter()
-            .filter(|g| view.attribute_groups_mask & g.mask_bit() != 0)
+            .filter(|g| g.polled() && view.attribute_groups_mask & g.mask_bit() != 0)
             .map(DaliAttributeGroup::as_str)
             .collect(),
         include_dt8_color: view.include_dt8_color,
         include_energy: view.include_energy,
         include_diagnostics: view.include_diagnostics,
         skip_unbound_virtual_lamps: view.skip_unbound_virtual_lamps,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stored_scene_colours_bit_is_not_shown_so_a_read_patches_back_unchanged() {
+        let view = PollerSettingsView {
+            enabled: true,
+            interval_ms: 5_000,
+            attribute_groups_mask: DaliAttributeGroup::RuntimeStatus.mask_bit()
+                | DaliAttributeGroup::SceneColours.mask_bit(),
+            include_dt8_color: false,
+            include_energy: false,
+            include_diagnostics: false,
+            skip_unbound_virtual_lamps: true,
+        };
+        assert_eq!(
+            poller_settings_view_to_dto(view).attribute_groups_default,
+            vec![DaliAttributeGroup::RuntimeStatus.as_str()],
+            "the poller never reads scene colours, and PATCH refuses the name"
+        );
     }
 }

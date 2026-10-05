@@ -197,14 +197,12 @@ declare_bus_payloads! {
         pub operation_type: OperationType,
         pub ttl_ms: u32,
         pub finished_retention_ms: u32,
-        pub expected_outcomes: u16,
     }
     budget = OperationBeginCommand {
         operation_key: crate::msg::payload_test_samples::worst_text32(),
         operation_type: OperationType::CommissioningReplaceDevice,
         ttl_ms: u32::MAX,
         finished_retention_ms: u32::MAX,
-        expected_outcomes: u16::MAX,
     };
 
     #[derive(Default)]
@@ -1071,17 +1069,19 @@ pub const FIRMWARE_UPDATE_TTL_MS: u32 = 300_000;
 pub const OPERATION_FINISHED_RETENTION_MS: u32 = 60_000;
 
 impl OperationBeginCommand {
-    pub fn with_defaults(
-        operation_key: &str,
-        operation_type: OperationType,
-        expected_outcomes: u16,
-    ) -> Self {
+    pub fn with_defaults(operation_key: &str, operation_type: OperationType) -> Self {
         Self {
             operation_key: super::bounded::fixed_text_32(operation_key),
             operation_type,
             ttl_ms: operation_ttl_ms(operation_type),
             finished_retention_ms: OPERATION_FINISHED_RETENTION_MS,
-            expected_outcomes,
+        }
+    }
+
+    pub fn wire_config_write(operation_key: &str) -> Self {
+        Self {
+            ttl_ms: OPERATION_TTL_MS,
+            ..Self::with_defaults(operation_key, OperationType::ConfigWrite)
         }
     }
 }
@@ -1092,6 +1092,13 @@ impl PhysicalDeviceOverrideCommand {
     pub const PATCH_COLOR_MODE_OVERRIDE: u8 = 8;
     pub const PATCH_DT8_AUTO_ACTIVATION_REPAIR: u8 = 16;
     pub const PATCH_DT8_RGBWAF_CONTROL_ASSERT: u8 = 32;
+}
+
+impl InputDeviceMetadataUpdateCommand {
+    pub const PATCH_NAME: u8 = 1 << 0;
+    pub const PATCH_HA_EXPOSE: u8 = 1 << 1;
+    pub const PATCH_CLEAR_NAME: u8 = 1 << 2;
+    pub const PATCH_FORGET: u8 = 1 << 3;
 }
 
 impl PoliciesUpdateCommand {
@@ -1458,9 +1465,20 @@ mod operation_ttl_tests {
         assert_eq!(operation_ttl_ms(OperationType::ConfigWrite), CONFIG_WRITE_TTL_MS);
         assert_eq!(operation_ttl_ms(OperationType::GroupApply), OPERATION_TTL_MS);
         assert_eq!(
-            OperationBeginCommand::with_defaults("k", OperationType::Discovery, 0).ttl_ms,
+            OperationBeginCommand::with_defaults("k", OperationType::Discovery).ttl_ms,
             DISCOVERY_TTL_MS,
             "the begin command must carry the kind's budget, not the generic one"
+        );
+    }
+
+    #[test]
+    fn a_config_write_done_on_the_wire_waits_as_long_as_wire_work() {
+        let begin = OperationBeginCommand::wire_config_write("k");
+        assert_eq!(begin.operation_type, OperationType::ConfigWrite);
+        assert_eq!(
+            begin.ttl_ms, OPERATION_TTL_MS,
+            "a gear configuration queued behind a scan must not time out under \
+             the registry walk's budget and then land"
         );
     }
 }

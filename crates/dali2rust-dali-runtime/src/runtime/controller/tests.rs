@@ -1322,3 +1322,144 @@ fn a_24_bit_step_unit_holds_the_yield_until_its_boundary() {
         "the yielded frame must not reach the wire"
     );
 }
+
+struct UnsentFrame24Transport {
+    inner: MockDaliTransport,
+}
+
+impl DaliTransport for UnsentFrame24Transport {
+    type Error = <MockDaliTransport as DaliTransport>::Error;
+
+    fn send_forward_frame(&mut self, frame: u16) -> Result<(), Self::Error> {
+        self.inner.send_forward_frame(frame)
+    }
+
+    fn receive_backward_frame(&mut self) -> Result<Option<u8>, Self::Error> {
+        self.inner.receive_backward_frame()
+    }
+
+    fn is_bus_idle(&self) -> Result<bool, Self::Error> {
+        self.inner.is_bus_idle()
+    }
+
+    fn exchange_frame24_with_settle(
+        &mut self,
+        _frame: [u8; 3],
+        _expects_backward: bool,
+        _min_idle_us: u32,
+    ) -> Result<TransferOutcome, Frame24Error<Self::Error>> {
+        Err(Frame24Error::Transport(()))
+    }
+
+    fn supports_frame24(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn a_24_bit_frame_the_transport_never_sent_is_not_silence() {
+    let transport = Arc::new(Mutex::new(UnsentFrame24Transport {
+        inner: MockDaliTransport::new(),
+    }));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+
+    assert_eq!(
+        controller.send_frame24_once(PROBE_24, true),
+        Err(Frame24Fault::Contended),
+        "a query whose frame never left proves nothing about the bus"
+    );
+    assert_eq!(
+        controller.send_frame24(PROBE_24, false),
+        Err(Frame24Fault::Contended),
+        "a command whose frame never left did not happen"
+    );
+}
+
+struct ScriptedFrame24Transport {
+    inner: MockDaliTransport,
+    outcomes: std::collections::VecDeque<TransferOutcome>,
+    sent: Vec<[u8; 3]>,
+    settle_ticks: Option<u16>,
+}
+
+impl ScriptedFrame24Transport {
+    fn new(outcomes: &[TransferOutcome], settle_ticks: Option<u16>) -> Self {
+        Self {
+            inner: MockDaliTransport::new(),
+            outcomes: outcomes.iter().copied().collect(),
+            sent: Vec::new(),
+            settle_ticks,
+        }
+    }
+}
+
+impl DaliTransport for ScriptedFrame24Transport {
+    type Error = <MockDaliTransport as DaliTransport>::Error;
+
+    fn send_forward_frame(&mut self, frame: u16) -> Result<(), Self::Error> {
+        self.inner.send_forward_frame(frame)
+    }
+
+    fn receive_backward_frame(&mut self) -> Result<Option<u8>, Self::Error> {
+        self.inner.receive_backward_frame()
+    }
+
+    fn is_bus_idle(&self) -> Result<bool, Self::Error> {
+        self.inner.is_bus_idle()
+    }
+
+    fn exchange_frame24_with_settle(
+        &mut self,
+        frame: [u8; 3],
+        _expects_backward: bool,
+        _min_idle_us: u32,
+    ) -> Result<TransferOutcome, Frame24Error<Self::Error>> {
+        self.sent.push(frame);
+        Ok(self.outcomes.pop_front().unwrap_or(TransferOutcome::NoAnswer))
+    }
+
+    fn supports_frame24(&self) -> bool {
+        true
+    }
+
+    fn last_tx_settle_ticks(&self) -> Option<u16> {
+        self.settle_ticks
+    }
+}
+
+#[test]
+fn a_24_bit_send_twice_pair_broken_by_a_collision_is_resent_whole() {
+    let transport = Arc::new(Mutex::new(ScriptedFrame24Transport::new(
+        &[TransferOutcome::NoAnswer, TransferOutcome::Collision],
+        None,
+    )));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+    controller.retry_policy = retry_policy(3);
+
+    controller
+        .send_frame24_twice(PROBE_24)
+        .expect("the second attempt lands both halves");
+
+    assert_eq!(
+        transport.lock().unwrap().sent,
+        vec![PROBE_24; 4],
+        "a lone second half is ignored by the gear; the unit is the pair (101 §9.3)"
+    );
+}
+
+#[test]
+fn a_24_bit_send_twice_pair_split_past_the_interval_is_not_executed() {
+    let transport = Arc::new(Mutex::new(ScriptedFrame24Transport::new(&[], Some(904))));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+    controller.retry_policy = retry_policy(1);
+
+    assert_eq!(
+        controller.send_frame24_twice(PROBE_24),
+        Err(Frame24Fault::Contended),
+        "a pair split past 94 ms cannot be trusted as executed"
+    );
+    assert_eq!(
+        controller.wire_counters.send_twice_split.load(Ordering::Relaxed),
+        1
+    );
+}

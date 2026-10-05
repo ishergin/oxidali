@@ -31,6 +31,9 @@ pub const RULES_WORKER_HANDLED_EVENTS: &[&str] = &[
     "DaliSettingsChangedEvent",
     "VirtualLampChangedEvent",
     "PhysicalDeviceChangedEvent",
+    "GroupChangedEvent",
+    "SceneChangedEvent",
+    "InputDeviceChangedEvent",
     "RedundancyTransitionEvent",
     "Dali103InstanceConfiguredEvent",
     "RegistrySliceReloadedEvent",
@@ -70,6 +73,7 @@ struct RulesWorker {
     liveness: Arc<dali2rust_platform::liveness::LivenessBeat>,
     staging: Staging,
     world: Arc<dyn crate::runtime::world_port::RulesWorldPort>,
+    correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
     engine: crate::runtime::engine::Engine,
     engine_cells: Arc<crate::runtime::stats::RulesEngineCells>,
     engine_revision: u32,
@@ -91,7 +95,7 @@ dali2rust_contracts::dispatch_bus_commands! {
     ignored = { worker.counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
     RuleStageCommand(chunk) => worker.on_stage(correlation_id, chunk),
     RuleCommitCommand(commit) => worker.on_commit(correlation_id, commit),
-    RuleEnableCommand(toggle) => worker.on_enable(toggle),
+    RuleEnableCommand(toggle) => worker.on_enable(correlation_id, toggle),
     RuleRunCommand(run) => worker.on_run(correlation_id, run),
 }
 
@@ -101,6 +105,7 @@ pub struct RulesWorkerSeams {
     pub resolver: Arc<dyn NameResolver>,
     pub slices: Option<Arc<dyn SliceStore>>,
     pub world: Arc<dyn crate::runtime::world_port::RulesWorldPort>,
+    pub correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
 }
 
 pub fn spawn_rules_worker(
@@ -129,6 +134,7 @@ pub fn spawn_rules_worker(
                 liveness,
                 staging: Staging::default(),
                 world: seams.world,
+                correlation: seams.correlation,
                 engine: crate::runtime::engine::Engine::new(now),
                 engine_cells,
                 engine_revision: u32::MAX,
@@ -227,21 +233,28 @@ impl RulesWorker {
     }
 
     fn serve(&mut self, rx: &dali2rust_bus::BusSubscriberRx) {
+        let mut last_tick_ms = self.world.now_ms();
         loop {
             self.liveness.beat(dali2rust_platform::liveness::monotonic_ms());
             let now = self.world.now_ms();
-            let deadline = self
-                .engine
-                .next_deadline_ms()
-                .unwrap_or(now + TICK_CAP_MS)
-                .clamp(now, now + TICK_CAP_MS);
-            let wait = std::time::Duration::from_millis(deadline.saturating_sub(now).max(1));
+            let due = self.tick_due_ms(last_tick_ms);
+            let wait = std::time::Duration::from_millis(due.saturating_sub(now).max(1));
             match self.liveness.while_turning(|| rx.recv_timeout(wait)) {
                 Ok(frame) => self.on_frame(frame),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => self.on_tick(),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
             }
+            let now = self.world.now_ms();
+            if now >= self.tick_due_ms(last_tick_ms) {
+                self.on_tick();
+                last_tick_ms = now;
+            }
         }
+    }
+
+    fn tick_due_ms(&self, last_tick_ms: u64) -> u64 {
+        let cap = last_tick_ms.saturating_add(TICK_CAP_MS);
+        self.engine.next_deadline_ms().map_or(cap, |deadline| deadline.min(cap))
     }
 
     fn on_frame(&mut self, frame: BusFrame) {
@@ -347,6 +360,8 @@ impl RulesWorker {
             bus_id: self.bus_id,
             counters: &self.counters,
             rule: &outcome.rule,
+            correlation: &self.correlation,
+            liveness: &self.liveness,
         };
         let report = if outcome.dry {
             crate::runtime::executor::ExecutionReport::default()
@@ -375,7 +390,7 @@ impl RulesWorker {
             groups: self.world.groups(),
             devices: self.world.devices(),
             inputs: self.world.inputs(),
-            hcl: self.world.hcl(),
+            hcl: crate::runtime::engine::hcl_per_target(self.world.hcl()),
             hcl_schedules: self.world.hcl_schedules(),
         }
     }
@@ -464,16 +479,45 @@ impl RulesWorker {
         self.store_engine_cells();
     }
 
-    fn on_enable(&mut self, toggle: &RuleEnableCommand) {
+    fn on_enable(&mut self, correlation_id: u64, toggle: &RuleEnableCommand) {
         let name = toggle.name.as_str();
         let Some(revision) = self.store.set_enabled(name, toggle.enabled) else {
             self.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
+            self.confirm(correlation_id, Err((ErrorCode::NotFound, "rule_not_found")));
             return;
         };
         self.counters.enable_toggles.fetch_add(1, Ordering::Relaxed);
-        self.persist(&self.store.document());
         self.flip_engine_bit(name, toggle.enabled, revision);
         self.publish_changed();
+        self.confirm(correlation_id, Ok(()));
+        self.persist(&self.store.document());
+    }
+
+    fn confirm(&self, correlation_id: u64, outcome: Result<(), (ErrorCode, &'static str)>) {
+        if correlation_id == CORRELATION_NONE {
+            return;
+        }
+        let envelope = match outcome {
+            Ok(()) => dali2rust_contracts::bus::build_confirmation_envelope(
+                correlation_id,
+                dali2rust_contracts::msg::DeliveryStatus::Ok,
+                0,
+                SOURCE_ID_UNSPECIFIED,
+            ),
+            Err(error) => dali2rust_contracts::bus::build_confirmation_envelope_with_product_error(
+                correlation_id,
+                dali2rust_contracts::msg::DeliveryStatus::ExecutionFailed,
+                0,
+                SOURCE_ID_UNSPECIFIED,
+                Some(error),
+            ),
+        };
+        dali2rust_bus::publish_or_drop(
+            &self.publisher,
+            BusChannel::Confirmations,
+            BusFrame::confirmation(envelope),
+            "rules-confirm",
+        );
     }
 
     fn store_engine_cells(&self) {
@@ -521,23 +565,7 @@ impl RulesWorker {
                 message,
             ),
         };
-        let ev = event_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            correlation_id,
-            self.bus_id.0,
-            Some(Origin::Api),
-            signal,
-        );
-        let _ = self.liveness.while_turning(|| {
-            publish_required(
-                &self.publisher,
-                BusChannel::Events,
-                BusFrame::event(ev),
-                &REQUIRED_PUBLISH_BACKOFF_MS,
-                REQUIRED_PUBLISH_UNCAPPED,
-                "rules-worker-signal",
-            )
-        });
+        publish_signal(&self.publisher, self.bus_id, &self.liveness, Origin::Api, signal);
     }
 
     fn persist(&self, doc: &RulesDocument) {
@@ -582,6 +610,32 @@ fn error_code(message: &str) -> ErrorCode {
         "rule_set_conflict" => ErrorCode::Conflict,
         _ => ErrorCode::OperationFailed,
     }
+}
+
+pub(crate) fn publish_signal(
+    publisher: &BusPublisher,
+    bus_id: BusId,
+    liveness: &dali2rust_platform::liveness::LivenessBeat,
+    origin: Origin,
+    signal: dali2rust_contracts::msg::OperationWorkerSignalEvent,
+) {
+    let ev = event_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        signal.workflow_correlation_id,
+        bus_id.0,
+        Some(origin),
+        signal,
+    );
+    let _ = liveness.while_turning(|| {
+        publish_required(
+            publisher,
+            BusChannel::Events,
+            BusFrame::event(ev),
+            &REQUIRED_PUBLISH_BACKOFF_MS,
+            REQUIRED_PUBLISH_UNCAPPED,
+            "rules-worker-signal",
+        )
+    });
 }
 
 fn write_banks(slices: &dyn SliceStore, doc: &RulesDocument) -> Result<(), ()> {
@@ -668,5 +722,8 @@ fn names_may_have_moved(payload: &dali2rust_contracts::msg::BusEventPayload) -> 
         payload,
         dali2rust_contracts::msg::BusEventPayload::VirtualLampChangedEvent(_)
             | dali2rust_contracts::msg::BusEventPayload::PhysicalDeviceChangedEvent(_)
+            | dali2rust_contracts::msg::BusEventPayload::GroupChangedEvent(_)
+            | dali2rust_contracts::msg::BusEventPayload::SceneChangedEvent(_)
+            | dali2rust_contracts::msg::BusEventPayload::InputDeviceChangedEvent(_)
     )
 }

@@ -89,14 +89,13 @@ cannot resolve.
   cycle, and its exception list does not name this variable. With 209 footnote b calling
   `1 byte RAM` non-persistent, the two clauses read as complementary and a gear that keeps
   the byte deviates — probably, since 102 never defines "configuration".
-- The installed RGBWAF fixture keeps the byte across mains loss: after a cycle that set
-  `powerCycleSeen` on every fixture it still answers the `0x80` the product asserted,
-  with nothing rewritten. So the origin of the `0xC0` (extended colour control under
-  098bp §10.6.13.5) it held before the product first asserted `0x80` — a vendor default
-  or earlier writes — cannot be read off a reboot. Settling it needs a factory-reset
-  fixture or a second vendor; `tools/hil/rgbwaf_control_probe.py` reads the evidence.
-- Untested: whether the same gear honours footnote d for its other RAM variables (a RAM
-  variable parked off its default, then a mains cycle).
+- One installed RGBWAF gear keeps the byte across mains loss: after a cycle that set
+  `powerCycleSeen` on every gear it still answers the `0x80` the product asserted, with
+  nothing rewritten. Telling whether the
+  `0xC0` it held before (extended colour control, 098bp §10.6.13.5) is a vendor default
+  or earlier writes takes a factory-reset gear or a second vendor
+  (`tools/hil/rgbwaf_control_probe.py` reads the evidence). Untested: whether the same
+  gear honours footnote d for its other RAM variables.
 - The controller does not depend on the answer: it never assumes the boot state
   ([09](../architecture/09-dali-protocol-rules.md)).
 
@@ -123,11 +122,19 @@ answer to `QUERY APPLICATION CONTROLLER ENABLED` (DiiA 351 §7's arbitration pro
 `applicationActive`, obedience to `ENABLE` / `DISABLE APPLICATION CONTROLLER` from
 another controller, and a short address set in `/api/v1/settings/dali`.
 
+Two deviations are `ACCEPTED`, both decided in
+[ADR-018](../architecture/decisions/ADR-018-controller-redundancy.md): a passive standby
+still sends the arbitration probe, which is how it finds an unowned bus, although 103
+§9.9.1 allows a passive controller no forward frame but the power notification; and the
+answer lapses with the liveness lease, so a wedged controller stops holding the bus,
+although 103 §11.6.16 ties it to `applicationActive` alone.
+
 Not built for the controller as a bus unit: `QUERY DEVICE STATUS` and the other device
 queries — status, capabilities, version, DTR content (answering with bits it cannot
 vouch for would be worse than silence); memory bank 0 with its identity per logical
-unit, and DiiA 351's bank 201 (device type and the type B arbitration byte, which is
-never written `0x00`: that value disables arbitration); being commissioned by another
+unit, and DiiA 351's bank 201 (§8.2: device type and the type B arbitration byte, which
+is never written `0x00`: that value disables arbitration; ADR-030 proposes omitting the
+bank, since 103:2014 §9.10.9 reserves banks 200–255); being commissioned by another
 controller (`INITIALISE`, `RANDOMISE`, address search, `COMPARE`, address programming);
 `POWER NOTIFICATION`; and quiescent mode. DALI-2 certification is out of reach until
 they are. The design to build them from, and the decisions it owes, is
@@ -168,7 +175,7 @@ supersedes both.
 | --- | --- |
 | 305, 306 | Colour and general-purpose sensor events are carried untyped (instance type and raw value). |
 | 302, 304 | Input values travel as the raw 10-bit magnitude: the scaling (103 AMD1 §9.8.2) is not available. |
-| 333 | Manual configuration: not implemented. |
+| 333 | Manual configuration: not implemented. Neither its event nor an instance's manual-configuration state is read, so the REST field `manual_config_active` stays `false` and the rules trigger `manual config changed` never fires. |
 | DiiA 341, 342 | Bluetooth Mesh and Zigbee gateways: relevant only if the controller becomes a gateway. |
 | DiiA 351 | Luminaire-mounted control devices: not implemented as a device; the controller answers their arbitration probe (§8). |
 | 104, 105, DiiA 150 | Not needed: alternative media, firmware update over DALI, auxiliary supply. |

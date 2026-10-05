@@ -22,6 +22,7 @@ pub trait ConfigTransferPort: Send + Sync {
 pub enum ImportRefusal {
     UnknownSlice,
     PersistenceDisabled,
+    FlashBusy,
     StoreFailed(String),
 }
 
@@ -85,6 +86,7 @@ impl ConfigSliceHandler {
             return match refusal {
                 ImportRefusal::UnknownSlice => json_err(404, "not_found"),
                 ImportRefusal::PersistenceDisabled => json_err(409, "persistence_disabled"),
+                ImportRefusal::FlashBusy => json_err(503, "flash_busy"),
                 ImportRefusal::StoreFailed(_) => json_err(503, "store_failed"),
             };
         }
