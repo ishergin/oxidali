@@ -32,11 +32,15 @@ const RESERVED_EVENT_PRIORITY: u64 = 2;
 
 pub struct InputDeviceListHandler {
     state: Arc<dyn InputDeviceHttpState>,
+    wall: Arc<dyn dali2rust_platform::clock::UnixTimeMs>,
 }
 
 impl InputDeviceListHandler {
-    pub fn new(state: Arc<dyn InputDeviceHttpState>) -> Self {
-        Self { state }
+    pub fn new(
+        state: Arc<dyn InputDeviceHttpState>,
+        wall: Arc<dyn dali2rust_platform::clock::UnixTimeMs>,
+    ) -> Self {
+        Self { state, wall }
     }
 }
 
@@ -52,6 +56,7 @@ impl ApiHandler for InputDeviceListHandler {
             return json_err(400, "invalid_resource_id");
         };
         json_stream_dto(serde_json::json!({
+            "now_ms": self.wall.unix_millis(),
             "input_devices": self.state.list(adapter_id),
         }))
     }

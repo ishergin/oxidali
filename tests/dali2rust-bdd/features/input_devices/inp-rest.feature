@@ -13,6 +13,7 @@ Feature: IEC 62386-103 input devices as a REST resource
     And the JSON pointer "/input_devices/0/short_address" should be 0
     And the JSON pointer "/input_devices/0/instance_count" should be 2
     And the JSON pointer "/input_devices/0/present" should be true
+    And the JSON pointer "/now_ms" should be greater than 0
 
   @id:INP-011
   Scenario: The detail shows instances, and an unread timer is null with null provenance

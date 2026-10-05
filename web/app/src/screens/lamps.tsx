@@ -1,12 +1,11 @@
-import { useEffect, useRef, useState } from 'preact/hooks'
+import { useState } from 'preact/hooks'
 import { api } from '../api/client'
 import type { PhysicalDeviceSummary, VirtualLamp, VirtualLampPatch } from '../api/types'
-import { EditableName, LampState, LevelSlider, Switch } from '../components/ui'
+import { EditableName, LampState, LevelSlider, Switch, useConfirmTap } from '../components/ui'
 import { ADAPTER, pad2 } from '../format'
 import { useLive } from '../hooks'
 import { errorMessage, mutate, notify } from '../toast'
 
-const CONFIRM_MS = 3000
 const VL_ID_MAX = 63
 
 interface FreeDevice {
@@ -33,23 +32,7 @@ function LampRow({
 
   const [editingBind, setEditingBind] = useState(false)
   const [bindSel, setBindSel] = useState('')
-  const [armed, setArmed] = useState<'unbind' | 'delete' | null>(null)
-  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(
-    () => () => {
-      if (confirmTimer.current != null) clearTimeout(confirmTimer.current)
-    },
-    [],
-  )
-  const arm = (what: 'unbind' | 'delete') => {
-    if (confirmTimer.current != null) clearTimeout(confirmTimer.current)
-    setArmed(what)
-    confirmTimer.current = setTimeout(() => setArmed(null), CONFIRM_MS)
-  }
-  const disarm = () => {
-    if (confirmTimer.current != null) clearTimeout(confirmTimer.current)
-    setArmed(null)
-  }
+  const [armed, confirmTap] = useConfirmTap<'unbind' | 'delete'>()
 
   const saveName = async (name: string) => {
     if (name === lamp.name) return
@@ -74,23 +57,15 @@ function LampRow({
     await mutate('Bind lamp', () => api.bindVirtualLamp(ADAPTER, id, target), onDone)
   }
 
-  const unbind = async () => {
-    if (armed !== 'unbind') {
-      arm('unbind')
-      return
-    }
-    disarm()
-    await mutate('Unbind lamp', () => api.unbindVirtualLamp(ADAPTER, id), onDone)
-  }
+  const unbind = () =>
+    confirmTap('unbind', () => {
+      void mutate('Unbind lamp', () => api.unbindVirtualLamp(ADAPTER, id), onDone)
+    })
 
-  const remove = async () => {
-    if (armed !== 'delete') {
-      arm('delete')
-      return
-    }
-    disarm()
-    await mutate('Delete lamp', () => api.deleteVirtualLamp(ADAPTER, id), onDone)
-  }
+  const remove = () =>
+    confirmTap('delete', () => {
+      void mutate('Delete lamp', () => api.deleteVirtualLamp(ADAPTER, id), onDone)
+    })
 
   const patchLamp = async (title: string, body: VirtualLampPatch) => {
     try {

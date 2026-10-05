@@ -2,7 +2,7 @@ import { signal } from '@preact/signals'
 import { ApiError, awaitOperation } from './api/client'
 import type { Operation, OperationAccepted } from './api/types'
 import { Chip } from './components/ui'
-import { isPreempted, opStatusChip, opStatusLabel, opSummary } from './format'
+import { isPreempted, opFailure, opStatusChip, opStatusLabel, opSummary } from './format'
 
 export interface Toast {
   id: number
@@ -93,7 +93,7 @@ export async function trackOp(
       errorCode: op.error?.code,
       detail: isPreempted(op)
         ? `Stood down for an operator command${willRetry ? ' — retrying' : ''}`
-        : (opSummary(op) ?? accepted.operation_id),
+        : ([opFailure(op), opSummary(op)].filter(Boolean).join(' · ') || accepted.operation_id),
     })
     setTimeout(
       () => dismissToast(id),
