@@ -206,6 +206,7 @@ def merged_image(spec, root: Path) -> Path:
             "bootloader, so build the controller once (`hil flash --build-only`)"
             % spec["bootloader"])
     out = root / spec["merged_bin"]
+    out.parent.mkdir(parents=True, exist_ok=True)
     rc = subprocess.run(
         ["espflash", "save-image", "--chip", spec["mcu"],
          "--flash-size", spec["flash_size"], "--merge", "--skip-padding",
@@ -220,6 +221,7 @@ def merged_image(spec, root: Path) -> Path:
 
 def app_image(spec, root: Path) -> Path:
     out = root / spec["app_bin"]
+    out.parent.mkdir(parents=True, exist_ok=True)
     rc = subprocess.run(
         ["espflash", "save-image", "--chip", spec["mcu"],
          "--flash-size", spec["flash_size"], spec["firmware_bin"], str(out)],

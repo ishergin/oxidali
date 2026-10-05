@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -293,3 +294,26 @@ def test_an_entry_point_linked_outside_iram_is_red_not_unchecked(tmp_path, monke
     monkeypatch.setattr(gate.subprocess, "run", _linked(
         {"-S": SECTIONS, "-t": ENTRY_TABLE, "-d": ENTRIES_IN_IRAM}))
     assert gate.main(["gate", "--require-tools", str(elf)]) == 0
+
+
+IMAGE_SPEC = {"mcu": "esp32p4", "flash_size": "16mb", "firmware_bin": "fw.elf",
+              "bootloader": "boot.bin", "partition_table": "parts.csv",
+              "merged_bin": "target/riscv32imafc-esp-espidf/debug/fw-merged.bin",
+              "app_bin": "target/riscv32imafc-esp-espidf/debug/fw-app.bin"}
+
+
+def _image_dir_seen(monkeypatch, seen):
+    def fake_run(cmd, cwd=None, **kwargs):
+        seen.append((cmd[-1], Path(cmd[-1]).parent.is_dir()))
+        return _Ran(0)
+    monkeypatch.setattr(flash.subprocess, "run", fake_run)
+
+
+@pytest.mark.parametrize("make,key", [(flash.app_image, "app_bin"),
+                                      (flash.merged_image, "merged_bin")])
+def test_an_image_lands_in_a_directory_a_fresh_checkout_lacks(tmp_path, monkeypatch, make, key):
+    (tmp_path / IMAGE_SPEC["bootloader"]).write_bytes(b"")
+    seen = []
+    _image_dir_seen(monkeypatch, seen)
+    assert make(IMAGE_SPEC, tmp_path) == tmp_path / IMAGE_SPEC[key]
+    assert seen == [(str(tmp_path / IMAGE_SPEC[key]), True)]
