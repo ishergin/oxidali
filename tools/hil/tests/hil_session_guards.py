@@ -9,7 +9,7 @@ from hil import prod_state
 from hil import serialmon as serialmon_mod
 from hil import tiers, validity, write_log
 from hil.virtual_gear import run_enabled as virtual_gear_run
-from hil_harness import ANCHOR_TZ, UPTIME_SLACK_S, track, validity_of
+from hil_harness import ANCHOR_TZ, UPTIME_SLACK_S, standalone_client, track, validity_of
 
 BENCH_BASELINE_TZ = os.environ.get("HIL_BENCH_TZ", "MSK-3")
 
@@ -19,14 +19,6 @@ LEAKED_NAME_PREFIX = "hil-"
 
 def _hardware_free(config):
     return getattr(config, "_hil_hardware_free", False)
-
-
-def _standalone_client(config):
-    client = getattr(config, "_hil_standalone_client", None)
-    if client is None:
-        client = track(config, api_mod.Client(config_mod.load()))
-        config._hil_standalone_client = client
-    return client
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -101,7 +93,7 @@ def bench_baseline(pytestconfig, production_state):
         yield
         return
     try:
-        api = _standalone_client(pytestconfig)
+        api = standalone_client(pytestconfig)
         api.health()
     except Exception as exc:
         print("\nbench_baseline: could not reach the DUT (%s) — not enforcing" % exc)
@@ -127,7 +119,7 @@ def bench_baseline(pytestconfig, production_state):
                 "the bench carries state leaked by a previous run:\n  %s\n"
                 "These are persisted in flash and survive both a reboot and a "
                 "reflash, so every measurement below them is of a bench nobody "
-                "reset. Clear them, then re-run (ISSUE-31 п.4)."
+                "reset. Clear them, then re-run (tools/hil/README.md §Run validity)."
                 % "\n  ".join(leaked), pytrace=False)
         yield
     finally:
@@ -143,7 +135,7 @@ def _neutralize_poller(api):
                     "below would measure a bus under continuous read traffic",
                     pytrace=False)
     return ["found the poller ENABLED — disabled it (leftover from an earlier "
-            "run; see ISSUE-30)"]
+            "run; its background reads race what a test measures)"]
 
 
 def _neutralize_policy_apply(api):
@@ -236,7 +228,7 @@ def dut_continuity(request):
         config._hil_uptime = None
         return
     try:
-        now, uptime = time.time(), float(_standalone_client(config)
+        now, uptime = time.time(), float(standalone_client(config)
                                          .health()["uptime_seconds"])
     except Exception as exc:
         config._hil_uptime = None
@@ -250,7 +242,7 @@ def dut_continuity(request):
             "A reboot presents exactly this way, and the probe's few seconds "
             "of retries cannot outwait a boot. Everything measured after this "
             "point may be against a freshly booted device: check whether "
-            "anything touched %s mid-run (ISSUE-31 п.3)."
+            "anything touched %s mid-run (tools/hil/README.md §Run validity)."
             % (breach, serialmon_mod.effective_port(config_mod.load())[0]),
             pytrace=False)
     config._hil_uptime = (now, uptime)
@@ -264,7 +256,7 @@ def dut_continuity(request):
         "the DUT REBOOTED during this test — %s.\n"
         "Everything measured here, and in every test after it, ran against a "
         "freshly booted device. Opening the serial port asserts reset: check "
-        "whether anything touched %s mid-run (ISSUE-31 п.3)."
+        "whether anything touched %s mid-run (tools/hil/README.md §Run validity)."
         % (breach, serialmon_mod.effective_port(config_mod.load())[0]),
         pytrace=False)
 

@@ -607,7 +607,8 @@ def _bus_drop_lines(state, budget):
     drops = state.get("bus_drops")
     if not drops:
         return ["bus drops: /api/v1/diagnostics not read for this run — the DUT's "
-                "own drop counters are the ISSUE-50 evidence and this run has none"]
+                "own drop counters are the only evidence of a frame the bus shed "
+                "(ADR-021), and this run has none"]
     lines = ["bus drops (budget from retry_budget.txt):"]
     for name, count in sorted(drops.items()):
         lines.append("  %-28s %5d   %s" % (name, count, _drop_verdict(name, count, budget)))

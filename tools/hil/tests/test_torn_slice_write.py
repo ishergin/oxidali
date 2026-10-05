@@ -45,8 +45,9 @@ def _wait_back(api, timeout_s):
 def test_a_torn_slice_write_comes_back_as_the_stored_revision(api, test_artifacts):
     if os.environ.get("HIL_POWER_CUT") != "1":
         pytest.skip(
-            "ISSUE-56 needs a person to cut the controller's power mid-write — "
-            "set HIL_POWER_CUT=1 and run this test alone when you are at the rig")
+            "a torn slice write needs a person to cut the controller's power "
+            "mid-write — set HIL_POWER_CUT=1 and run this test alone when you are "
+            "at the rig")
 
     short = api.addrs()[0]
     marker = "torn-%d" % int(time.time())
@@ -86,7 +87,7 @@ def test_a_torn_slice_write_comes_back_as_the_stored_revision(api, test_artifact
     loaded_2, defaulted_2, errored_2 = _hydrate(api)
     name_2 = api.state(short).get("name")
 
-    test_artifacts.attach_json("issue56_torn_write", {
+    test_artifacts.attach_json("torn_write", {
         "marker": marker,
         "first_boot": {"loaded": loaded_1, "defaulted": defaulted_1,
                        "errored": errored_1, "name": name_1},
@@ -105,4 +106,6 @@ def test_a_torn_slice_write_comes_back_as_the_stored_revision(api, test_artifact
         "slices hydrated from defaults: %d then %d" % (defaulted_1, defaulted_2))
     assert errored_1 == 0 and errored_2 == 0, (
         "hydrate errors: %d then %d — a torn slice that neither loaded nor fell "
-        "back is the failure ISSUE-56 is about" % (errored_1, errored_2))
+        "back lost the last copy (documentation/architecture/"
+        "06-registry-and-persistence.md §Persistence)"
+        % (errored_1, errored_2))

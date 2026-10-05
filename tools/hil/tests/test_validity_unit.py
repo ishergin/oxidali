@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import requests
 
+import hil_run_validity
 import test_ha_bridge
 from hil import api as api_mod
 from hil import sniffer, validity
@@ -803,3 +804,28 @@ def test_the_bridge_counters_come_from_its_subscriber_and_the_mqtt_block():
         "delivered": 80, "receiver_overflow": 0, "bus_coalesced_total": 4,
         "bus_discarded_total": 2}
     assert not test_ha_bridge._bridge_counters(_Diagnostics(0, 0, 0, connected=False))["connected"]
+
+
+BREACHED = (("breaches", ("http_503", 2, 0)),
+            ("bus_drop_breaches", ("bus_events_ingress_overflow", 1, 0)),
+            ("stack_breaches", ("httpd", 9000, 8000)),
+            ("boot_heap_breaches", ("post_network", 100, 200)),
+            ("runtime_heap_breaches", ("internal_min_free_bytes", 100, 200)))
+BUDGET_MOVES = "the measurement in the commit that moves it"
+FLOORS_AND_RETRIES = 3
+
+
+def test_a_breached_budget_names_how_it_moves_and_no_closed_record(monkeypatch):
+    monkeypatch.setattr(hil_run_validity, "_validity_state", lambda config: {})
+    monkeypatch.setattr(hil_run_validity, "_write_summary", lambda config, lines: None)
+    monkeypatch.setattr(validity, "load_budget", lambda: {})
+    monkeypatch.setattr(validity, "format_report", lambda state, budget: [])
+    monkeypatch.setattr(validity, "stack_budget_dead_lines", lambda *args: [])
+    for name, row in BREACHED:
+        monkeypatch.setattr(validity, name, lambda *args, row=row: [row])
+    config = types.SimpleNamespace(getoption=lambda name: False, _hil_hardware_free=False)
+    session = types.SimpleNamespace(config=config, exitstatus=0)
+    hil_run_validity.pytest_sessionfinish(session, 0)
+    report = "\n".join(config._hil_validity_report)
+    assert report.count(BUDGET_MOVES) == FLOORS_AND_RETRIES and session.exitstatus == 1
+    assert "dated" not in report and not re.search(r"ISSUE-[0-9]", report)

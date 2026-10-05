@@ -20,8 +20,7 @@ GROUP_ROW = {"virtual_lamp_id": 7, "desired": [False] * 16}
     ("PATCH", "adapters/0", {"name": "x"}, [("adapter/0", {"name"})]),
     ("PATCH", "adapters/0/physical-devices/5", {"name": "x"}, [("device/5", {"name"})]),
     ("DELETE", "adapters/0/physical-devices/5", None,
-     [("device/5", {ALL}), ("vl/*", {"binding"}), ("group_matrix/*", {ALL}),
-      ("scene_matrix/*", {ALL})]),
+     [("device/5", {ALL}), ("vl/*", {"binding"}), ("group_matrix/*", {ALL})]),
     ("POST", "adapters/0/physical-devices/5/write-attributes", {"fade_time_ms": 0},
      [("gear/5", {"fade_time_ms"})]),
     ("PUT", "adapters/0/physical-devices/5/target-state", {"power": "on"},
@@ -60,7 +59,11 @@ GROUP_ROW = {"virtual_lamp_id": 7, "desired": [False] * 16}
     ("PATCH", "settings/dali", {"application_active": True},
      [("settings/dali", {"application_active"}), ("shown/*", {ALL})]),
     ("PATCH", "settings/dali", {"application_active": False},
-     [("settings/dali", {"application_active"})]),
+     [("settings/dali", {"application_active"}), ("shown/*", {ALL})]),
+    ("PATCH", "settings/redundancy", {"peer_url": "http://192.0.2.9:81"},
+     [("settings/redundancy", {"peer_url"}), ("shown/*", {ALL})]),
+    ("PATCH", "settings/dali", {"device_short_address": 3},
+     [("settings/dali", {"device_short_address"})]),
     ("POST", "adapters/0/input-devices/scan", {}, []),
 ])
 def test_a_request_names_the_resources_and_fields_it_writes(method, path, body, keys):

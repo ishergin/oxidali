@@ -107,23 +107,51 @@ def _take_session_baselines(config, cfg):
     config._hil_peer_start = peer_health(cfg.peer())[1] if cfg.has_peer else None
 
 
+DESTRUCTIVE_MARKER = "destructive"
+DESTRUCTIVE_ENV = "HIL_ALLOW_DESTRUCTIVE"
+DESTRUCTIVE_RULE = "tools/hil/STRATEGY.md §4.5"
+DESTRUCTIVE_SKIP = ("destructive tier needs %s=1 and runs one test per session (%s)"
+                    % (DESTRUCTIVE_ENV, DESTRUCTIVE_RULE))
+DESTRUCTIVE_BURST = ("%s=1 runs one destructive test per session (%s), and this one selected "
+                     "%d: %s — select one")
+
+
 def _tier(item):
-    if item.get_closest_marker("destructive"):
+    if item.get_closest_marker(DESTRUCTIVE_MARKER):
         return 2 if "commissioning" in item.nodeid else 1
     return 0
 
 
+def destructive_allowed():
+    return os.environ.get(DESTRUCTIVE_ENV) == "1"
+
+
+def destructive_burst(items):
+    chosen = [item.nodeid for item in items if item.get_closest_marker(DESTRUCTIVE_MARKER)]
+    if len(chosen) <= 1:
+        return None
+    return DESTRUCTIVE_BURST % (DESTRUCTIVE_ENV, DESTRUCTIVE_RULE, len(chosen), ", ".join(chosen))
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtestloop(session):
+    if session.config.getoption("--collect-only") or not destructive_allowed():
+        return None
+    burst = destructive_burst(session.items)
+    if burst:
+        raise pytest.UsageError(burst)
+    return None
+
+
 def _mark_skips(items, serial_absent, dut_serial_port):
-    allow_destructive = os.environ.get("HIL_ALLOW_DESTRUCTIVE") == "1"
+    allow_destructive = destructive_allowed()
     for item in items:
         if serial_absent and item.get_closest_marker("serial"):
             item.add_marker(pytest.mark.skip(
                 reason="serial port %s unreachable — %s" % (dut_serial_port,
                                                            serial_absent)))
-        if not allow_destructive and item.get_closest_marker("destructive"):
-            item.add_marker(pytest.mark.skip(
-                reason="destructive tier needs HIL_ALLOW_DESTRUCTIVE=1 "
-                       "(run one test at a time; see tools/hil/README.md)"))
+        if not allow_destructive and item.get_closest_marker(DESTRUCTIVE_MARKER):
+            item.add_marker(pytest.mark.skip(reason=DESTRUCTIVE_SKIP))
 
 
 def pytest_collection_modifyitems(config, items):
