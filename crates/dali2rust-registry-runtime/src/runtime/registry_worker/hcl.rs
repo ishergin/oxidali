@@ -31,13 +31,10 @@ pub(super) fn handle_hcl_schedule_upsert(
     if check_primary_adapter(publisher, tid, primary_adapter_id, corr).is_err() {
         return;
     }
-    let terminal = body.last_chunk;
     if let Err((code, message)) = validate_upsert_chunk(body) {
-        counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        publish_correlation_failed(publisher, corr, code, message);
-        if terminal {
-            publish_config_write_signal(publisher, corr, primary_adapter_id, Some((code, message)), counters);
-        }
+        let invalid = HclChunkRejection::Invalid(code, message);
+        let rejection = store.refuse_hcl_schedule_chunk(&body.schedule_id, body, invalid);
+        refuse_chunk(publisher, corr, primary_adapter_id, counters, body.last_chunk, rejection);
         return;
     }
     match store.apply_hcl_schedule_chunk(&body.schedule_id, body) {
@@ -59,13 +56,24 @@ pub(super) fn handle_hcl_schedule_upsert(
             publish_config_write_signal(publisher, corr, primary_adapter_id, None, counters);
         }
         Err(rejection) => {
-            counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-            let (code, message) = chunk_rejection_error(rejection);
-            publish_correlation_failed(publisher, corr, code, message);
-            if terminal {
-                publish_config_write_signal(publisher, corr, primary_adapter_id, Some((code, message)), counters);
-            }
+            refuse_chunk(publisher, corr, primary_adapter_id, counters, body.last_chunk, rejection);
         }
+    }
+}
+
+fn refuse_chunk(
+    publisher: &BusPublisher,
+    corr: u64,
+    primary_adapter_id: BusId,
+    counters: &RegistryCommandCounters,
+    terminal: bool,
+    rejection: HclChunkRejection,
+) {
+    counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
+    let (code, message) = chunk_rejection_error(rejection);
+    publish_correlation_failed(publisher, corr, code, message);
+    if terminal {
+        publish_config_write_signal(publisher, corr, primary_adapter_id, Some((code, message)), counters);
     }
 }
 
@@ -195,5 +203,6 @@ fn chunk_rejection_error(rejection: HclChunkRejection) -> Rejection {
         HclChunkRejection::OutOfOrder => (ErrorCode::Conflict, "chunk_out_of_order"),
         HclChunkRejection::TooManyRows => (ErrorCode::InvalidValue, "schedule_rows_exceeded"),
         HclChunkRejection::ScheduleLimit => (ErrorCode::Conflict, "schedule_limit_reached"),
+        HclChunkRejection::Invalid(code, message) => (code, message),
     }
 }

@@ -1,9 +1,12 @@
+import contextlib
 import time
 
 import pytest
+import requests
 
 from hil import mqtt_tap, validity, virtual_gear
-from hil.lamp_guard import TARGET_SEGMENT
+from hil.api import ApiError
+from hil.lamp_guard import HA_ENTITY_FLAG, TARGET_SEGMENT, LampNotAllowed
 from hil.wait import wait_until
 from hil_test_guards import allowed_bound_lamp, drive_allowed
 from hil_virtual import PARK_ENV
@@ -379,6 +382,7 @@ def test_a_group_command_reaches_the_lamps_not_only_the_tile(ha_guard, api,
 BRIDGE_SUBSCRIBER = "mqtt_bridge"
 BRIDGE_INBOX_DEPTH = 64
 BURST_LAMPS = 16
+BURST_LEVELS = (60, 200, 80, 220, 100, 240, 120, 254, 140, 230, 160, 250)
 BURST_OP_S = 90
 BRIDGE_QUIET_S = 2.0
 BRIDGE_SETTLE_MAX_S = 30.0
@@ -416,16 +420,51 @@ def _moved(before, after):
     return {name: after[name] - before[name] for name in BRIDGE_COUNTERS}
 
 
+def _set_ha_flag(api, lamps, enabled):
+    refused = []
+    for lamp in lamps:
+        try:
+            api.vlamps.patch(lamp, {HA_ENTITY_FLAG: enabled})
+        except (ApiError, LampNotAllowed, requests.RequestException) as exc:
+            refused.append(exc)
+    return refused
+
+
+def _confirm_unannounced(api, lamps):
+    for lamp in lamps:
+        try:
+            flag = api.vlamps.get(lamp).get(HA_ENTITY_FLAG)
+        except (ApiError, requests.RequestException):
+            continue
+        if flag is False:
+            api.guard.fence.unannounced(lamp)
+
+
+@contextlib.contextmanager
+def _announced(api, lamps):
+    try:
+        refused = _set_ha_flag(api, lamps, True)
+        if refused:
+            raise refused[0]
+        yield _bridge_settled(api)
+    finally:
+        _set_ha_flag(api, lamps, False)
+        _confirm_unannounced(api, lamps)
+        _bridge_settled(api)
+
+
+def _group_burst(api, group):
+    for level in BURST_LEVELS:
+        api.groups.ts(group, {"power": "on", "level": level})
+    return _bridge_settled(api)
+
+
 @pytest.mark.hil_id("HIL-MQTT-12")
 @pytest.mark.virtual_gear
-def test_a_read_and_apply_burst_over_the_park_overflows_no_bridge_inbox(
-        api, virtual_bench, session_rows_guard, op_check, test_artifacts):
-    before = _bridge_counters(api)
-    if not before["connected"]:
-        pytest.skip("the Home Assistant bridge is not connected to a broker "
-                    "(diagnostics mqtt.connected is false), so no burst meets a "
-                    "publishing bridge")
-    if not before["named"]:
+def test_a_group_burst_over_the_announced_park_overflows_no_bridge_inbox(
+        api, virtual_bench, session_rows_guard, op_check, ha_guard, mqtt_counters,
+        test_artifacts):
+    if not _bridge_counters(api)["named"]:
         pytest.skip("this firmware names no %r event subscriber in /api/v1/diagnostics"
                     % BRIDGE_SUBSCRIBER)
     if len(virtual_bench.park) < BURST_LAMPS:
@@ -434,22 +473,22 @@ def test_a_read_and_apply_burst_over_the_park_overflows_no_bridge_inbox(
                     % (len(virtual_bench.park), BURST_LAMPS, PARK_ENV))
     if not virtual_bench.groups:
         pytest.skip("no free group: a live lamp's group membership is unknown")
-    shorts, group = virtual_bench.park[:BURST_LAMPS], virtual_bench.groups[0]
-    views = [op_check(api.wait_op(api.attr_read(short), timeout_s=BURST_OP_S))
-             for short in shorts]
-    api.groups.join([virtual_bench.vl(s) for s in shorts], group, apply=False)
-    views.append(op_check(api.wait_op(api.groups.apply(), timeout_s=BURST_OP_S)))
-    after = _bridge_settled(api)
+    group = virtual_bench.groups[0]
+    lamps = [virtual_bench.vl(s) for s in virtual_bench.park]
+    api.groups.join(lamps, group, apply=False)
+    op_check(api.wait_op(api.groups.apply(), timeout_s=BURST_OP_S))
+    _enter_and_connect(ha_guard, api, mqtt_counters)
+    with _announced(api, lamps) as before:
+        after = _group_burst(api, group)
     moved = _moved(before, after)
-    test_artifacts.attach_json("bridge", {"before": before, "after": after, "moved": moved,
-                                          "operations": [v.get("operation_id")
-                                                         for v in views]})
+    test_artifacts.attach_json("bridge", {"before": before, "after": after, "moved": moved})
 
     assert after["uptime_ms"] >= before["uptime_ms"], (
         "the controller restarted during the burst (uptime %d -> %d ms), so the bridge's "
         "counters started again" % (before["uptime_ms"], after["uptime_ms"]))
     assert moved["receiver_overflow"] == 0 and moved["bus_discarded_total"] == 0, (
-        "the bridge lost events under a burst over %d gear: %r" % (BURST_LAMPS, moved))
+        "the bridge lost events under a burst over %d announced lamps: %r"
+        % (len(lamps), moved))
     assert after["connected"], "the bridge lost its broker during the burst: %r" % after
     assert moved["delivered"] > BRIDGE_INBOX_DEPTH and moved["bus_coalesced_total"], (
         "INCONCLUSIVE, not a product failure: the bridge was delivered %d event(s), %d needed "

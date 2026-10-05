@@ -116,17 +116,19 @@ p.note { color: var(--text-muted); font-size: 12px; max-width: 60ch; }
   <p class="note">
     <b>Offline</b> means nobody answered and the ladder is still climbing.
     <b>Refused</b> means the controller answered at once and said no for a reason
-    that cannot change while the page is loaded — today only
-    <code>ws_origin_rejected</code>, i.e. this page was not served by the
-    controller. Nothing is retrying behind it: the dot is hollow, it does not
-    pulse, and the caption says <em>screens poll instead</em> rather than
-    <em>reconnecting</em>. Retrying a permanent refusal cost a handshake, an
-    error frame and a close every 15 s per tab, all of it through the
-    controller's single httpd task.
+    that cannot change while the page is loaded — today only a foreign
+    <code>Origin</code>, i.e. this page was not served by the controller, closed
+    with code <code>1008</code>. Nothing is retrying behind it: the dot is hollow,
+    it does not pulse, and the caption says <em>screens poll instead</em> rather
+    than <em>reconnecting</em>. Retrying a permanent refusal would cost a handshake
+    and a close every 15 s per tab, all of it through the controller's single
+    httpd task.
   </p>
   <p class="note">
-    <code>ws_clients_exhausted</code> deliberately stays <b>Reconnecting</b>: a
-    client slot frees the moment another tab closes, so that one is transient.
+    A full house (close code <code>1013</code>) is retried, at least a minute apart:
+    a client slot frees the moment another tab closes, so that one is transient. It
+    reads <b>Reconnecting</b>, then <b>Offline</b> once the outage passes a minute —
+    never <b>Refused</b>.
   </p>
 
   <h2>In the sidebar, beside the theme toggle</h2>

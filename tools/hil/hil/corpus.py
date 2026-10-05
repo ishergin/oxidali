@@ -33,15 +33,50 @@ SINGLETON_PATHS = (
 
 SECRET_SLICES = ("home_assistant_settings",)
 
+GIT_TIMEOUT_S = 20
+NOT_A_REPOSITORY = "not a git repository"
+GIT_LOCALE = {"LC_ALL": "C"}
+
+
+class SecretsRefused(ValueError):
+    pass
+
 
 def _utc_stamp() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
 
 
+def _git_work_tree(path: Path):
+    probe = path
+    while not probe.is_dir():
+        probe = probe.parent
+    out = subprocess.run(("git", "-C", str(probe), "rev-parse", "--show-toplevel"),
+                         capture_output=True, text=True, timeout=GIT_TIMEOUT_S,
+                         env=dict(os.environ, **GIT_LOCALE))
+    if out.returncode == 0:
+        return out.stdout.strip()
+    if NOT_A_REPOSITORY in out.stderr:
+        return None
+    raise OSError(out.stderr.strip() or "git rev-parse exited %d" % out.returncode)
+
+
+def _secrets_refusal(out):
+    target = Path(out).resolve()
+    try:
+        tree = _git_work_tree(target)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return ("--keep-secrets writes the broker password, and git cannot show that %s "
+                "is outside every repository: %s" % (target, exc))
+    if tree is not None:
+        return ("--keep-secrets writes the broker password, and %s is inside the git work "
+                "tree %s: point --out outside every repository" % (target, tree))
+    return None
+
+
 def _git_head(root: Path) -> dict:
     def _git(*args):
         out = subprocess.run(("git", "-C", str(root)) + args,
-                             capture_output=True, text=True, timeout=20)
+                             capture_output=True, text=True, timeout=GIT_TIMEOUT_S)
         return out.stdout.strip() if out.returncode == 0 else None
 
     commit = _git("rev-parse", "HEAD")
@@ -118,6 +153,9 @@ class Capture:
                 "adapter_count": controller.get("adapter_count")}
 
     def slices(self, keep_secrets: bool = False) -> None:
+        refusal = _secrets_refusal(self.out) if keep_secrets else None
+        if refusal:
+            raise SecretsRefused(refusal)
         manifest = self.get_json("config/slices")
         if manifest is None:
             return
@@ -133,8 +171,8 @@ class Capture:
                                       "status": "withheld",
                                       "body": "carries broker credentials "
                                               "(ADR-018 A10); re-run with "
-                                              "--keep-secrets into an "
-                                              "untracked --out"})
+                                              "--keep-secrets into an --out "
+                                              "outside every repository"})
                 continue
             quoted = name.replace("/", "%2F")
             status, blob = self._get_raw("config/slices/" + quoted)
@@ -616,8 +654,9 @@ Repo at capture time: `{commit}`{dirty}
 - **Broker credentials.** The `home_assistant_settings` slice carries the
   password (owner's call, `ADR-018` A10, so a standby announces the same
   installation). A corpus lives in the repository, which is a different
-  audience: the slice is withheld unless `--keep-secrets` is passed, and the
-  withholding is recorded in `index.json` rather than left silent.
+  audience: the slice is withheld unless `--keep-secrets` writes into an `--out`
+  outside every repository, and the withholding is recorded in `index.json`
+  rather than left silent.
 
 ## Reading `index.json`
 

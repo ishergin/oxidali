@@ -260,7 +260,7 @@ pub(crate) fn build_app_router(
     read_models: ReadModelPorts,
     clock: Arc<dyn Clock>,
     wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
-    persist_timezone: Arc<dyn Fn(&str) + Send + Sync>,
+    persist_timezone: dali2rust_api::http::handlers::time::TimezonePersist,
     web_assets: &'static [StaticAsset],
     controller_summary: Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
     rules: RulesHttpDeps,
@@ -282,8 +282,7 @@ pub(crate) fn build_app_router(
     let builder = wire_operations(builder, &op_read);
     let builder = wire_physical_devices(builder, adapter_count, &bus, &registry);
     let builder = wire_commissioning(builder, adapter_count, &bus, &registry, &op_read);
-    let builder = wire_groups(builder, &bus, &registry, &op_read);
-    let builder = wire_scenes(builder, &bus, &registry, &op_read);
+    let builder = wire_applies(builder, &bus, &registry, &op_read);
     let builder = wire_hcl(builder, &bus, &registry, &hcl_overrides);
     let builder = wire_input_devices(builder, &bus, &registry);
     let builder = wire_rules(builder, &bus, &rules);
@@ -692,7 +691,7 @@ fn wire_input_devices(
     let builder = builder
         .with_handler(
             RouteKey::InputDevicesList,
-            Box::new(InputDeviceListHandler::new(Arc::clone(state))),
+            Box::new(InputDeviceListHandler::new(Arc::clone(state), Arc::clone(&wall))),
         )
         .with_handler(
             RouteKey::InputDeviceGet,
@@ -708,17 +707,19 @@ fn wire_input_device_actions(
     registry: &RegistryHttpPorts,
 ) -> AppBuilder {
     use dali2rust_api::http::handlers::input_devices::{
-        InputDeviceAction, InputDeviceActionHandler,
+        InputDeviceAction, InputDeviceActionHandler, InputDeviceBus,
     };
     let state = &registry.input_device_state;
     let action = |kind: InputDeviceAction| -> Box<InputDeviceActionHandler> {
-        Box::new(InputDeviceActionHandler::new(
-            bus.publisher.clone(),
-            bus.bus_id,
-            Arc::clone(&bus.correlation),
-            Arc::clone(state),
-            kind,
-        ))
+        let bus = InputDeviceBus {
+            publisher: bus.publisher.clone(),
+            bus_id: bus.bus_id,
+            correlation: Arc::clone(&bus.correlation),
+            slots: Arc::clone(&bus.slots),
+            timeout_ms: bus.confirmation_timeout_ms,
+            wall: Arc::new(dali2rust_bsp::unix_clock::StdUnixTimeMs),
+        };
+        Box::new(InputDeviceActionHandler::new(bus, Arc::clone(state), kind))
     };
     builder
         .with_handler(RouteKey::InputDevicesScan, action(InputDeviceAction::Scan))
@@ -753,7 +754,9 @@ pub(crate) struct RulesHttpDeps {
 
 #[inline(never)]
 fn wire_rules(builder: AppBuilder, bus: &HttpBusDispatch, deps: &RulesHttpDeps) -> AppBuilder {
-    use dali2rust_api::http::handlers::rules::{RulesAction, RulesHandler, RulesHandlerShared};
+    use dali2rust_api::http::handlers::rules::{
+        RulesAction, RulesConfirmation, RulesHandler, RulesHandlerShared,
+    };
     let shared = Arc::new(RulesHandlerShared::new(
         Arc::clone(&deps.state),
         Arc::clone(&deps.compiler),
@@ -761,6 +764,10 @@ fn wire_rules(builder: AppBuilder, bus: &HttpBusDispatch, deps: &RulesHttpDeps) 
         bus.publisher.clone(),
         bus.bus_id,
         Arc::clone(&bus.correlation),
+        RulesConfirmation {
+            slots: Arc::clone(&bus.slots),
+            timeout_ms: bus.confirmation_timeout_ms,
+        },
     ));
     let handler = |action: RulesAction| -> Box<RulesHandler> {
         Box::new(RulesHandler::new(Arc::clone(&shared), action))
@@ -882,16 +889,38 @@ fn wire_policies(
                 PoliciesPatchHandler::new,
             ),
         )
-        .with_handler(
-            RouteKey::PoliciesApply,
-            Box::new(PoliciesApplyHandler::new(
-                bus.publisher.clone(),
-                Arc::clone(&bus.correlation),
-                Arc::clone(state),
-                bus.bus_id,
-                REDUNDANCY_REGISTRY_ADAPTER_ID,
-            )),
-        )
+}
+
+#[inline(never)]
+fn wire_applies(
+    builder: AppBuilder,
+    bus: &HttpBusDispatch,
+    registry: &RegistryHttpPorts,
+    op_read: &Arc<dyn OperationReadPort>,
+) -> AppBuilder {
+    let builder = wire_groups(builder, bus, registry, op_read);
+    let builder = wire_scenes(builder, bus, registry, op_read);
+    wire_policy_apply(builder, bus, registry, op_read)
+}
+
+#[inline(never)]
+fn wire_policy_apply(
+    builder: AppBuilder,
+    bus: &HttpBusDispatch,
+    registry: &RegistryHttpPorts,
+    op_read: &Arc<dyn OperationReadPort>,
+) -> AppBuilder {
+    builder.with_handler(
+        RouteKey::PoliciesApply,
+        Box::new(PoliciesApplyHandler::new(
+            bus.publisher.clone(),
+            Arc::clone(&bus.correlation),
+            Arc::clone(&registry.policies_state),
+            bus.bus_id,
+            REDUNDANCY_REGISTRY_ADAPTER_ID,
+            Arc::clone(op_read),
+        )),
+    )
 }
 
 #[inline(never)]

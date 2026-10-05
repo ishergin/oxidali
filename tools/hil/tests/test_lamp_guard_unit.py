@@ -4,6 +4,7 @@ import re
 import pytest
 
 import hil.api
+import test_pd_forget
 from hil import pair, write_log
 from hil.config import HilConfig, load as load_config
 from hil.foreign import ForeignMaster, injection_refusal
@@ -311,6 +312,7 @@ def test_every_client_door_to_a_forbidden_lamp_is_shut_before_the_wire(monkeypat
                                     {"power": "on"}),
         lambda: client.raw_response("POST", "dali/command",
                                     {"wire_address": 0xFF, "command": 0x10}),
+        lambda: client.device_forget(OWNER),
     )
     for door in doors:
         with pytest.raises(LampNotAllowed):
@@ -612,18 +614,76 @@ RESTART_RULES = [
 ]
 
 
-def test_a_restart_is_refused_while_an_owner_rule_fires_when_a_controller_starts():
+def test_a_restart_or_handover_is_refused_while_an_owner_rule_fires_when_a_controller_starts():
     owner = LampGuard(LAMPS, restart_rules=lambda: ["failover", "morning"])
     quiet = LampGuard(LAMPS, restart_rules=lambda: [])
-    for method, path, body in RESTARTS:
+    for method, path, body in RESTARTS + HANDOVERS:
         with pytest.raises(LampNotAllowed, match=r"failover, morning fire when a controller "
                                                  r"starts or becomes active"):
             owner.check_request(method, path, body)
         with pytest.raises(LampNotAllowed, match=r"no controller lists the owner's rules"):
             LampGuard(LAMPS).check_request(method, path, body)
         assert ("shown/*", frozenset({"*"})) in quiet.check_request(method, path, body)
-    owner.check_request("PATCH", "settings/dali", {"application_active": False})
+    owner.check_request("PATCH", "settings/dali", {"device_short_address": 3})
     owner.check_request("PATCH", "settings/poller", {"enabled": False})
+
+
+def test_the_client_asks_the_owner_rules_before_a_handover_and_books_it_as_moving_any_lamp():
+    owner = _client(rules=RESTART_RULES)
+    log = write_log.WriteLog("t", owner.base)
+    with write_log.recording(log):
+        with pytest.raises(LampNotAllowed, match=r"settings/redundancy refused: the owner's "
+                                                 r"rule\(s\) failover, morning"):
+            owner.redundancy.patch_settings({"peer_url": "http://192.0.2.9:81"})
+        with pytest.raises(LampNotAllowed, match=r"settings/dali refused: .* failover"):
+            owner.dali_settings.patch({"application_active": False})
+    assert owner.http.sent == [] and not log.changed("shown/5")
+    quiet = _client(rules=RESTART_RULES[2:])
+    with write_log.recording(log):
+        quiet.redundancy.patch_settings({"peer_url": "http://192.0.2.9:81"})
+    assert [path for _m, path, _b in quiet.http.sent] == ["settings/redundancy"]
+    assert log.changed("shown/5")
+
+
+FORGET = "adapters/0/physical-devices/%d"
+
+
+def test_a_forget_is_a_write_to_its_short_and_never_passes_read_only():
+    with pytest.raises(LampNotAllowed, match=r"forget of SA1 refused: SA1 is outside "
+                                             r"HIL_LAMP_SHORTS=0,2-3"):
+        _guard().check_request("DELETE", FORGET % OWNER)
+    with pytest.raises(LampNotAllowed, match=r"forget of SA2 refused: HIL_LAMPS_READ_ONLY=1") \
+            as refused:
+        _guard(read_only=True).check_request("DELETE", FORGET % 2)
+    assert "group row" in str(refused.value) and "scene" not in str(refused.value)
+    assert ("device/2", frozenset({"*"})) in _guard().check_request("DELETE", FORGET % 2)
+    _guard(read_only=True).check_request("PATCH", FORGET % OWNER, {"notes": "x"})
+
+
+class _ForgetApi:
+    adapter = 0
+
+    def __init__(self, lamp_shorts, read_only, registry=(1, 3), present=(1, 3)):
+        self.cfg = HilConfig(lamp_shorts=lamp_shorts, lamps_read_only=read_only,
+                             serial_remote="")
+        self.guard = LampGuard.for_config(self.cfg)
+        self.registry, self.present = list(registry), list(present)
+
+    def lamp_addrs(self):
+        return [short for short in self.registry if short in self.cfg.lamp_short_set()]
+
+    def present_addrs(self):
+        return list(self.present)
+
+
+def test_the_forget_test_takes_a_present_lamp_the_guard_lets_it_forget():
+    assert test_pd_forget.forget_target(_ForgetApi("3", read_only=False)) == 3
+    for api, why in ((_ForgetApi("3", read_only=True), r"forget of SA3 refused: "
+                                                         r"HIL_LAMPS_READ_ONLY=1"),
+                     (_ForgetApi("3", read_only=False, present=(1,)), r"no present lamp"),
+                     (_ForgetApi("", read_only=False), r"HIL_LAMP_SHORTS=\(none\)")):
+        with pytest.raises(pytest.skip.Exception, match=why):
+            test_pd_forget.forget_target(api)
 
 
 def test_the_client_refuses_a_switchover_and_a_reboot_before_they_start():
@@ -714,3 +774,63 @@ def test_a_segment_command_that_passes_names_every_lamp_it_reaches():
         assert exact <= set(guard.check_request(method, path, {"power": "on"})), path
     assert exact <= set(guard.check_frame(0xFE, 100))
     assert guard.check_frame(0xFF, QUERY_ACTUAL_LEVEL) == []
+
+
+UNPLAIN_WRITES = (
+    ("DELETE", "adapters/0/physical-devices/%31", None),
+    ("DELETE", "adapters/0/physical-devices/+1", None),
+    ("DELETE", "adapters/0/physical-devices/1#x", None),
+    ("DELETE", "x/../adapters/0/physical-devices/1", None),
+    ("DELETE", "adapters/0/./physical-devices/1", None),
+    ("DELETE", "adapters/0//physical-devices/1", None),
+    ("PUT", "adapters/0/physical-devices/+1/target-state", {"power": "on"}),
+    ("PATCH", "settings/redundanc%79", {"peer_url": "http://192.0.2.9:81"}),
+    ("PATCH", "rules/%2E%2E", {"enabled": False}),
+    ("POST", "rules/a/../run", {}),
+    ("PATCH", "rules/a%2", {"enabled": False}),
+)
+
+
+@pytest.mark.parametrize("method,path,body", UNPLAIN_WRITES)
+def test_a_write_the_client_or_the_firmware_would_respell_is_refused(method, path, body):
+    allowing = LampGuard(LAMPS | {OWNER}, restart_rules=lambda: [])
+    with pytest.raises(LampNotAllowed, match=r"plain path"):
+        allowing.check_request(method, path, body)
+
+
+def test_an_encoded_rule_name_and_a_read_keep_their_spelling():
+    guard = LampGuard(LAMPS, restart_rules=lambda: [])
+    assert guard.check_request("PATCH", "rules/n%C3%B8tt", {"enabled": True}) == [
+        ("rule/nøtt", frozenset({"enabled"}))]
+    guard.check_request("POST", "rules/hil-a%20b/run?dry=1", {})
+    guard.check_request("PATCH", "/settings/poller?x=1", {"enabled": False})
+    assert guard.check_request("GET", "adapters/0/physical-devices/%31") == []
+
+
+def test_the_client_sends_no_respelled_write(monkeypatch):
+    client = _client()
+    for door in (lambda: client.raw_response("DELETE", "adapters/0/physical-devices/%31"),
+                 lambda: client.raw_request("PUT", "adapters/0/physical-devices/+1/target-state",
+                                            {"power": "on"})):
+        with pytest.raises(LampNotAllowed, match=r"plain path"):
+            door()
+    assert client.http.sent == []
+
+
+@pytest.mark.parametrize("method,path,body,why", [
+    ("DELETE", "adapters/0/input-devices/5", None, "control device"),
+    ("PUT", "config/slices/home_assistant_settings", None, "slice import"),
+    ("DELETE", "adapters/0/virtual-lamps/7", None, "only the virtual-gear teardown"),
+])
+def test_a_destructive_route_is_refused_whatever_the_go_ahead(method, path, body, why):
+    for guard in (LampGuard(LAMPS | {OWNER}, segment=lambda: [0, 1, 2, 3]),
+                  LampGuard(LAMPS, read_only=True)):
+        with pytest.raises(LampNotAllowed, match=why):
+            guard.check_request(method, path, body)
+
+
+def test_a_diagnostic_write_is_booked_whatever_its_spelling(monkeypatch):
+    client = _client()
+    client.raw_request("post", "/dali/level?x=1", {"wire_address": _short_wire(2), "level": 9})
+    assert client.raw_touched == {2}
+    assert [path for _m, path, _b in client.http.sent] == ["dali/level?x=1"]

@@ -137,7 +137,7 @@ fn publish_discovery_succeeded(
     let done =
         dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, w, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryCompletedEvent { registry_adapter_id: reg_aid });
     publish_event_typed(publisher, done);
-    publish_policy_apply_if_armed(publisher, adapter_id, reg_aid, read_port, correlation);
+    publish_policy_apply_if_armed(publisher, adapter_id, reg_aid, read_port, correlation, counters);
     publish_operation_worker_signal(
         publisher,
         adapter_id,
@@ -156,31 +156,57 @@ fn publish_policy_apply_if_armed(
     reg_aid: u8,
     read_port: &dyn RegistryReadPort,
     correlation: &dali2rust_bus::CorrelationIdAllocator,
+    counters: &DaliWorkerCounters,
 ) {
     if !read_port.apply_on_discovery_armed(reg_aid) {
         return;
     }
     let workflow = correlation.next_id();
     let operation_id = format!("policy-apply-{reg_aid}-{workflow}");
-    let execute = dali2rust_contracts::bus::command_envelope(
+    let begin = dali2rust_contracts::msg::OperationBeginCommand::with_defaults(
+        &operation_id,
+        dali2rust_contracts::msg::OperationType::PolicyApply,
+    );
+    if !publish_internal_command(publisher, adapter_id, workflow, begin) {
+        log::warn!(
+            "policy apply on discovery refused at ingress (adapter {reg_aid}, workflow {workflow}); \
+             the policy is unwritten until POST /policies/apply"
+        );
+        return;
+    }
+    let execute = dali2rust_contracts::msg::PolicyApplyExecuteCommand {
+        registry_adapter_id: reg_aid,
+        operation_key: dali2rust_contracts::msg::fixed_text_32(&operation_id),
+    };
+    if !publish_internal_command(publisher, adapter_id, workflow, execute) {
+        publish_operation_worker_signal(
+            publisher,
+            adapter_id,
+            workflow,
+            OperationWorkerSignal::WorkerFailed,
+            Some(ErrorCode::CommandsIngressOverload),
+            "policy_apply_ingress_overload",
+            Origin::Internal,
+            counters,
+        );
+    }
+}
+
+fn publish_internal_command<P>(publisher: &BusPublisher, adapter_id: BusId, workflow: u64, payload: P) -> bool
+where
+    dali2rust_contracts::msg::BusCommandPayload: From<P>,
+{
+    let envelope = dali2rust_contracts::bus::command_envelope(
         SOURCE_ID_UNSPECIFIED,
         workflow,
         adapter_id.0,
-        Some(dali2rust_contracts::msg::Origin::Internal),
-        dali2rust_contracts::msg::PolicyApplyExecuteCommand {
-            registry_adapter_id: reg_aid,
-            operation_key: dali2rust_contracts::msg::fixed_text_32(&operation_id),
-        },
+        Some(Origin::Internal),
+        payload,
     );
-    if publisher.try_publish(
+    publisher.try_publish(
         dali2rust_bus::BusChannel::Commands,
-        dali2rust_bus::BusFrame::command(execute),
-    ) != dali2rust_bus::PublishResult::Queued
-    {
-        log::warn!(
-            "policy apply on discovery refused at ingress (adapter {reg_aid},              workflow {workflow}); the policy is unwritten until POST /policies/apply"
-        );
-    }
+        dali2rust_bus::BusFrame::command(envelope),
+    ) == dali2rust_bus::PublishResult::Queued
 }
 
 fn discover_refresh_known(

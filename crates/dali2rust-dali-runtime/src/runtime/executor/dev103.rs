@@ -76,11 +76,9 @@ pub(super) fn send_twice(
     controller: &mut impl DaliApplicationController,
     frame: ForwardFrame24,
 ) -> Result<(), SemanticDaliError> {
-    controller.transaction(|c| {
-        send(c, frame, false)?;
-        send(c, frame, false)?;
-        Ok(())
-    })
+    controller
+        .send_frame24_twice(frame.as_bytes())
+        .map_err(fault_to_error)
 }
 
 pub(super) fn verify_readback(

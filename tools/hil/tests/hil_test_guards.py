@@ -8,7 +8,8 @@ from requests import RequestException
 from hil import api as api_mod
 from hil import prod_state
 from hil import virtual_gear, write_log
-from hil.lamp_guard import RULE_SEPARATOR, LampNotAllowed, shown_keys, spell
+from hil.lamp_guard import (HA_TEST_NAMESPACE, RULE_SEPARATOR, LampNotAllowed, shown_keys,
+                            spell)
 from hil.wait import wait_until
 from hil_harness import ANCHOR_TZ
 from hil_session_guards import refuse_schedule_suspension
@@ -412,7 +413,7 @@ def poller_guard(api):
 
 
 def namespace_controller_id():
-    return "hiltest"
+    return HA_TEST_NAMESPACE["controller_id"]
 
 
 @pytest.fixture()
@@ -435,16 +436,15 @@ def ha_guard(api, hil_config):
         "enabled": True,
         "broker_host": hil_config.mqtt_broker_host,
         "broker_port": hil_config.mqtt_broker_port,
-        "discovery_prefix": "hiltest",
-        "state_topic_prefix": "hiltest-dali",
-        "controller_id": namespace_controller_id(),
+        **HA_TEST_NAMESPACE,
         "publish_qos": 1,
         "retain_state": True,
         "retain_discovery": True,
     }
 
     class Guard:
-        retained_filters = ("hiltest/#", "hiltest-dali/#")
+        retained_filters = ("%s/#" % HA_TEST_NAMESPACE["discovery_prefix"],
+                            "%s/#" % HA_TEST_NAMESPACE["state_topic_prefix"])
 
         def enter(self, **overrides):
             body = dict(namespace)
@@ -453,11 +453,13 @@ def ha_guard(api, hil_config):
 
         @staticmethod
         def topic(suffix):
-            return "hiltest-dali/hiltest/%s" % suffix
+            return "%s/%s/%s" % (HA_TEST_NAMESPACE["state_topic_prefix"],
+                                 HA_TEST_NAMESPACE["controller_id"], suffix)
 
         @staticmethod
         def config_topic(component, object_id):
-            return "hiltest/%s/hiltest/%s/config" % (component, object_id)
+            return "%s/%s/%s/%s/config" % (HA_TEST_NAMESPACE["discovery_prefix"], component,
+                                           HA_TEST_NAMESPACE["controller_id"], object_id)
 
     try:
         yield Guard()
@@ -468,7 +470,8 @@ def ha_guard(api, hil_config):
                     mqtt_tap.clear_retained(hil_config, topic)
             except Exception:
                 pass
-        api.ha.patch({k: before[k] for k in api_mod._HomeAssistantSettings.RESTORABLE})
+        api.ha.patch({k: before[k] for k in api_mod._HomeAssistantSettings.RESTORABLE
+                      if k in before})
 
 
 class _Clock:

@@ -241,7 +241,7 @@ async fn given_next_frame24_collides(world: &mut DaliWorld) {
     guard.script_frame24_outcome(TransferOutcome::Collision);
 }
 
-// INP-010 INP-011 INP-013 INP-016 INP-017 INP-019 INP-030 INP-031 INP-032 INP-074 INP-075 INP-076 INP-077 INP-078 RULE-020 RULE-023 INP-083 RULE-065 RULE-066
+// INP-010 INP-011 INP-013 INP-016 INP-017 INP-019 INP-030 INP-031 INP-032 INP-074 INP-075 INP-076 INP-077 INP-078 RULE-020 RULE-023 INP-083 RULE-065 RULE-066 INP-086
 #[given(regex = r#"^the mock bus answers a control-device scan with a device at address 0 holding instance types "([0-9,]+)"$"#)]
 async fn given_scan_answers(world: &mut DaliWorld, types: String) {
     let types: Vec<u8> = types
@@ -265,7 +265,7 @@ async fn given_empty_segment(world: &mut DaliWorld) {
     guard.clear_frame24_answers();
 }
 
-// INP-006 INP-010 INP-011 INP-013 INP-016 INP-017 INP-018 INP-019 INP-030 INP-031 INP-032 INP-070 INP-071 INP-072 INP-073 INP-074 INP-075 INP-076 INP-077 INP-078 INP-079 INP-080 INP-081 INP-082 INP-083 INP-084 MQTT-025 RULE-020 RULE-023 RULE-065 RULE-066
+// INP-006 INP-010 INP-011 INP-013 INP-016 INP-017 INP-018 INP-019 INP-030 INP-031 INP-032 INP-070 INP-071 INP-072 INP-073 INP-074 INP-075 INP-076 INP-077 INP-078 INP-079 INP-080 INP-081 INP-082 INP-083 INP-084 MQTT-025 RULE-020 RULE-023 RULE-065 RULE-066 INP-086
 #[when("input devices are scanned on adapter 0 and the scan succeeds")]
 async fn when_scan_succeeds(world: &mut DaliWorld) {
     world.send_http_request("POST", "/api/v1/adapters/0/input-devices/scan", None, "");

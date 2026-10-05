@@ -26,7 +26,7 @@ rule "buttons" {
      lamp("коридор").off()
      lamp("коридор").toggle(hold_hcl=true)
      lamp("коридор").level(event.value)
-     group("кухня").dim(-8)
+     lamp("кухня").dim(-8)
      lamp("коридор").dim_hold(+60)
      lamp("коридор").cct(2700)
      broadcast.xy(0.313, 0.329)

@@ -112,6 +112,7 @@ Feature: WebSocket subscribe and event envelope
     When I start a discovery run for adapter 0
     Then the response status should be 202
     And the WebSocket client should receive a "OperationStatusChangedEvent" frame on channel "operations"
+    And the frame should carry the controller's time of the event
     And the operation payload should carry a string operation_id
     And the operation payload should carry snake_case type and status
     And the operation payload should not carry a correlation_id

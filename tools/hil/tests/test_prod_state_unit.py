@@ -2,8 +2,10 @@ import copy
 import re
 import inspect
 import types
+from pathlib import Path
 
 import pytest
+import requests
 
 import hil_session
 import hil_session_guards
@@ -667,6 +669,55 @@ def test_the_session_restore_writes_back_only_the_settings_the_toolkit_wrote():
                                  _writes({"settings/poller": {"enabled"}}))
     assert api.poller.patches == [{"enabled": False}] and api.dali_settings.patches == []
     assert any("dali application_active" in line and "did not write" in line for line in lines)
+
+
+def _refuse(refusal):
+    def patch(body):
+        raise refusal
+    return patch
+
+
+def test_a_refused_settings_restore_leaves_the_settings_after_it_to_restore():
+    api, lines = _SettingsApi({}, {"application_active": False}), []
+    api.dali_settings.patch = _refuse(LampNotAllowed("PATCH settings/dali refused: the owner's "
+                                                     "rule(s) failover fire"))
+    api.redundancy = types.SimpleNamespace(
+        settings=lambda: {"peer_url": "http://192.0.2.9:81"},
+        patch_settings=_refuse(requests.ConnectionError("connection reset by the controller")))
+    api.ha = _Knob({"expose_input_devices": True})
+    snap = {"settings": {"poller": {}, "dali": {"application_active": True},
+                         "redundancy": {"peer_url": "http://192.0.2.7:81"},
+                         "ha": {"expose_input_devices": False}}}
+    prod_state._restore_settings(api, snap, lines.append, _writes({
+        "settings/dali": {"application_active"}, "settings/redundancy": {"peer_url"},
+        "settings/home-assistant": {"expose_input_devices"}}))
+    assert api.ha.patches == [{"expose_input_devices": False}]
+    assert any("settings/dali FAILED" in line and "failover" in line for line in lines)
+    assert any("settings/redundancy FAILED" in line and "reset" in line for line in lines)
+
+
+HA_HANDLER = (Path(__file__).resolve().parents[3] / "crates" / "dali2rust-api" / "src" / "http"
+              / "handlers" / "settings_home_assistant.rs")
+HA_WRITABLE = re.compile(r"const WRITABLE_KEYS: &\[&str\] = &\[(.*?)\];", re.S)
+HA_WRITE_ONLY_SECRET = "broker_password"
+
+
+def test_every_home_assistant_field_the_firmware_takes_is_compared_and_restored():
+    writable = set(re.findall(r'"([a-z_]+)"', HA_WRITABLE.search(HA_HANDLER.read_text()).group(1)))
+    assert set(api_mod._HomeAssistantSettings.RESTORABLE) == writable - {HA_WRITE_ONLY_SECRET}
+
+
+def test_a_session_that_exposed_input_devices_to_home_assistant_puts_the_owner_value_back():
+    api, lines = _SettingsApi({}, {}), []
+    api.ha = _Knob({"expose_input_devices": True})
+    snap = {"settings": {"poller": {}, "dali": {}, "redundancy": {},
+                         "ha": {"expose_input_devices": False}}}
+    prod_state._restore_settings(api, snap, lines.append,
+                                 _writes({"settings/home-assistant": {"expose_input_devices"}}))
+    assert api.ha.patches == [{"expose_input_devices": False}]
+    after = copy.deepcopy(_snap())
+    after["settings"]["ha"]["expose_input_devices"] = True
+    assert "settings/ha.expose_input_devices None -> True" in prod_state.diff(_snap(), after)
 
 
 class _DeviceApi:

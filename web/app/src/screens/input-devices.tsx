@@ -1,7 +1,7 @@
 import { api } from '../api/client'
 import type { InputDeviceSummary } from '../api/types'
 import { Badge, Chip } from '../components/ui'
-import { ADAPTER, ago, pad2 } from '../format'
+import { ADAPTER, ago, pad2, registerDeviceNow } from '../format'
 import { useLive } from '../hooks'
 import { nav } from '../router'
 import { runOp } from '../toast'
@@ -29,10 +29,11 @@ function instanceTypeLabel(d: InputDeviceSummary) {
 }
 
 export function InputDevicesScreen() {
-  const list = useLive<{ input_devices: InputDeviceSummary[] }>(
-    () => api.inputDevices(ADAPTER),
-    ['input'],
-  )
+  const list = useLive(async () => {
+    const devices = await api.inputDevices(ADAPTER)
+    registerDeviceNow(devices.now_ms)
+    return devices
+  }, ['input'])
   const rows = list.data?.input_devices ?? []
   const silent = rows.filter((d) => !d.present).length
 

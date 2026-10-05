@@ -37,12 +37,14 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   struct literal or an associated constructor; confirmations from the
   `dali2rust_contracts::bus::confirm_build` helpers.
   Patch-mask bits are associated consts.
-- Dispatch is table-driven: `dispatch_bus_commands!` / `dispatch_bus_events!` generate
-  the `<WORKER>_HANDLED_*` consts the subscriptions declare. No hand-written catch-all
-  arm.
+- Dispatch is table-driven where a worker dispatches by `match`: `dispatch_bus_commands!`
+  / `dispatch_bus_events!` generate the `<WORKER>_HANDLED_*` consts the subscriptions
+  declare; a worker that filters by hand declares its list by hand. No hand-written
+  catch-all arm.
 - The wire codec is `postcard`, and an encoded frame is at most `MAX_BUS_WIRE_BYTES`
-  (128) or the publish fails. Bus messages and registry state are fixed-size: no
-  `String`, `Vec` or `serde_json` (`verify_fixed_bus_guardrails.sh`).
+  (128) or the publish fails. Bus messages are fixed-size: no `String`, `Vec` or
+  `serde_json::Value` in `msg/`; the registry holds no JSON
+  (`verify_fixed_bus_guardrails.sh`).
 - The DALI wire byte field is `wire_address`, never a bare `address`.
 - A 16-bit control-gear frame travels as `DaliCommandPayload`; Part 103's 24-bit frames
   have payload shapes of their own and are never squeezed into that tuple. Product code
@@ -70,8 +72,10 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   confirmations channel. It is the only place an HTTP request meets its confirmation.
 - Correlation ids come from one `CorrelationIdAllocator` shared by the router.
 - No free slot, or command ingress full → `503`. A synthetic `DeliveryRejected` frees the
-  slot like a real confirmation and answers `503`. No confirmation within
-  `confirmation_timeout_ms` (2000 ms) → `504`.
+  slot like a real confirmation and answers `503`; the diagnostic `/api/v1/dali/*` routes
+  instead answer `200` with the confirmation body, whose `error` names `delivery_rejected`
+  ([diagnostic DALI](../product-design/rest-api/resources/diagnostic-dali.md)). No
+  confirmation within `confirmation_timeout_ms` (2000 ms) → `504`.
 - A timeout releases the slot, not the command, which may still execute.
 - A slot is freed only by its confirmation or by `cancel` (`ConfirmationHandle` has no
   `Drop`), so every early exit cancels the registrations it will not collect, or the pool
@@ -86,13 +90,14 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
 ## Counter surface
 
 - A counter is spelled in several places: the `AtomicU32` in its runtime crate, the DTO
-  in `api`, the mapping in `adapters`, the worst-case sample in `api/src/ws/snapshot.rs`,
+  in `api`, the mapping in `adapters`, the worst-case sample in the DTO's
+  `declare_widest_dtos!` block (measured by `api/src/ws/snapshot.rs`),
   the TypeScript mirror in `web/app/src/api/types.ts`, string keys in the HIL suite and
   BDD steps, and the product-design documents of the resource that carries it. The
   compiler holds only DTO → mapping → sample; `scripts/verify_counter_surface.py`
   compares the names of the rest, and a counter that counts the wrong thing is still a
   test's job.
-- The gate finds a counter by its shape — a one-line `pub name: AtomicU32,` field of a
+- The gate finds a counter by its shape — a one-line `pub name: Atomic…,` field of a
   top-level `pub struct …Counters` — and silently misses any other spelling.
 - A counter kept off the surface is listed with a reason in
   `scripts/counter_surface_internal.txt`, whose entry count is frozen in

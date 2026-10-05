@@ -191,7 +191,9 @@ fn parse_attribute_groups_field(
     let mut mask: u8 = 0;
     for el in arr {
         let s = el.as_str().ok_or_else(|| json_err(422, "invalid_enum"))?;
-        let g = DaliAttributeGroup::parse(s).ok_or_else(|| json_err(422, "invalid_enum"))?;
+        let g = DaliAttributeGroup::parse(s)
+            .filter(|g| g.polled())
+            .ok_or_else(|| json_err(422, "invalid_enum"))?;
         mask |= g.mask_bit();
     }
     Ok(Some(mask))

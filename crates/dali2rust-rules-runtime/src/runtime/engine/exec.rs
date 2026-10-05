@@ -461,7 +461,7 @@ fn level_verb(
                     level: clamp_level(i64::from(lamp.level.ok_or(Unevaluable)?) + i64::from(*delta)),
                 })
             }
-            _ => Ok(LightVerb::LevelRelative { delta: *delta }),
+            _ => Err(Unevaluable),
         },
     }
 }
@@ -483,7 +483,7 @@ fn cct_verb(
                 }),
                 None => Ok(LightVerb::CctRelative { delta_k: *delta_k }),
             },
-            _ => Ok(LightVerb::CctRelative { delta_k: *delta_k }),
+            _ => Err(Unevaluable),
         },
     }
 }

@@ -10,8 +10,9 @@ triggers a frame-size or bit-timing violation there "shall be interpreted as a b
 frame". §9.5.2 makes it a channel the standard uses on purpose — a bus unit whose logical
 units disagree shall transmit a corrupted backward frame — and independent gear produce
 the same thing without meaning to: Table 22 gives an answer a 5,5–10,5 ms start window
-and Table 21 allows ±4 % on the half-bit, so several gear answering one query cannot
-align, whatever their bytes.
+and Table 21 allows ±4 % on the half-bit, so several gear answering one query usually
+violate; answers that start less than 0,4 ms apart can instead merge into one clean byte
+([09](../09-dali-protocol-rules.md) §Reading answers).
 
 Collapsing that case into a collision or into foreign traffic costs exactly where it
 matters: `COMPARE` during discovery (many gear matching one search address is normatively
@@ -33,8 +34,7 @@ gear must not read as absent), and a broadcast boolean probe of the whole segmen
   transmitting. So the outcome ends the exchange on the first frame whatever the retry
   budget says, and recovery belongs to the caller, which re-arms first (the verify unit
   re-reads the random address and re-establishes the search address before asking
-  again). On a 24-bit frame the same outcome is `Frame24Fault::Contended`, because there
-  the unit that may repeat is the sequence.
+  again). A 24-bit frame reports it the same way: `DaliResponse::Violation`, terminal.
 - **`DaliResponse::Violation` carries it, with two named readings.** `value()` is `None`
   — a violation has no readable content, and the diagnostic raw path reports it as a
   failure rather than manufacturing a `0x00`. `is_yes()` is `true` — something answered,
@@ -43,8 +43,8 @@ gear must not read as absent), and a broadcast boolean probe of the whole segmen
 - **The verify unit keeps the reason it found.** Several gear on one short address
   reports `query_short_address_multiple`, not a generic `bus_contended`.
 - **The gear model decides by the count of responders**: none is `NoAnswer`, one is an
-  answer, two or more is a violation, because independent gear cannot align even when
-  they agree on the byte.
+  answer, two or more is a violation; `SimDaliTransport` then overlays those answers on
+  the wire, so some decode as one clean byte (09).
 
 ### Rejected alternatives
 

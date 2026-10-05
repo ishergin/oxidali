@@ -19,6 +19,7 @@ struct EmptyWorld {
     active: bool,
     lit_group: Arc<std::sync::atomic::AtomicBool>,
     overridden: Arc<std::sync::atomic::AtomicBool>,
+    idle_second_schedule: bool,
 }
 
 const LIT_GROUP_ID: u16 = 2;
@@ -64,14 +65,19 @@ impl dali2rust_rules_runtime::RulesWorldPort for EmptyWorld {
         ]
     }
     fn hcl(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::HclTargetState> {
-        vec![dali2rust_rules_runtime::runtime::engine::HclTargetState {
+        let row = |overridden| dali2rust_rules_runtime::runtime::engine::HclTargetState {
             target: dali2rust_rules_model::LightTarget::Group(dali2rust_rules_model::GroupRef {
                 adapter_id: 0,
                 id: LIT_GROUP_ID,
             }),
             enabled: true,
-            overridden: self.overridden.load(std::sync::atomic::Ordering::Relaxed),
-        }]
+            overridden,
+        };
+        let mut rows = vec![row(self.overridden.load(std::sync::atomic::Ordering::Relaxed))];
+        if self.idle_second_schedule {
+            rows.push(row(false));
+        }
+        rows
     }
     fn hcl_schedules(&self) -> Vec<String> {
         vec![KNOWN_SCHEDULE.to_string(), "s".repeat(SCHEDULE_ID_CAPACITY)]
@@ -110,6 +116,7 @@ const EXECUTOR_OUTPUT: &[&str] = &[
     "DaliRecallSceneCommand",
     "DaliStopFadeCommand",
     "SceneApplyExecuteCommand",
+    "OperationBeginCommand",
     "Dali103FeedbackDriveCommand",
     "MqttPublishCommand",
     "HclScheduleEnableCommand",
@@ -220,6 +227,7 @@ fn harness_spawn(
             resolver,
             slices: Some(slices.clone() as Arc<dyn dali2rust_platform::slice_store::SliceStore>),
             world: Arc::new(world),
+            correlation: Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
         },
         Arc::clone(&counters),
         Arc::clone(&cells),
@@ -808,6 +816,125 @@ fn an_override_edge_reaches_the_rule_that_watches_it() {
     assert_eq!(level, Some(44));
 }
 
+const STEADY_EVENT_GAP: Duration = Duration::from_millis(100);
+
+
+fn stream_events_until<T>(
+    h: &Harness,
+    corr: &mut u64,
+    give_up_after: Duration,
+    mut done_within: impl FnMut(&Harness, Duration) -> Option<T>,
+) -> Option<T> {
+    let deadline = std::time::Instant::now() + give_up_after;
+    loop {
+        publish_bus_event(h, *corr, runtime_state_changed(9));
+        *corr += 1;
+        if let Some(found) = done_within(h, STEADY_EVENT_GAP) {
+            return Some(found);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+    }
+}
+
+#[test]
+fn a_steady_event_stream_does_not_starve_the_tick() {
+    let overridden = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let h = harness_hcl(
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-tick-busy-inbox")),
+        Vec::new(),
+        true,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        Arc::clone(&overridden),
+    );
+    publish_document(
+        &h,
+        131,
+        "rule \"перехват\" {\n  when hcl override starts for group(2)\n  do lamp(6).level(44)\n}\n\
+         \nrule \"часы\" {\n  when at 23:00\n  do log(\"тик\")\n}\n",
+        0,
+    );
+    let sig = recv_signal(&h, 131);
+    assert!(sig.error.is_none(), "the document must compile: {sig:?}");
+    wait_revision(&h.store, 1);
+    let mut corr = 132;
+
+    let ticked = stream_events_until(&h, &mut corr, 3 * COMMAND_WAIT, |h, gap| {
+        dali2rust_test_support::try_wait_until(
+            || h.cells.ticks_time_unsynced.load(std::sync::atomic::Ordering::Relaxed) >= 1,
+            gap,
+        )
+        .then_some(())
+    });
+    assert!(ticked.is_some(), "an event every {STEADY_EVENT_GAP:?} kept the worker from ever ticking");
+
+    overridden.store(true, std::sync::atomic::Ordering::Relaxed);
+    let fired = stream_events_until(&h, &mut corr, 3 * COMMAND_WAIT, |h, gap| {
+        dali2rust_test_support::try_recv_command_matching(&h.out_rx, gap, |payload| {
+            matches!(payload, dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(_))
+        })
+    });
+    assert!(fired.is_some(), "the override edge a tick finds must fire while events keep arriving");
+}
+
+const OVERRIDE_WATCH: Duration = Duration::from_secs(3);
+
+#[test]
+fn a_target_two_schedules_drive_fires_its_override_edge_once() {
+    let overridden = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let h = harness_spawn(
+        Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-hcl-two-schedules")),
+        EmptyWorld {
+            lamps: vec![bound_lamp(EFFECT_LAMP)],
+            overridden: Arc::clone(&overridden),
+            idle_second_schedule: true,
+            ..empty_world()
+        },
+        Arc::new(StubResolver::permissive()),
+    );
+    publish_document(
+        &h,
+        141,
+        "rule \"перехват\" {\n  when hcl override starts for group(2)\n  do lamp(6).level(44)\n}\n\
+         \nrule \"возврат\" {\n  when hcl override clears for group(2)\n  do lamp(6).level(10)\n}\n\
+         \nrule \"часы\" {\n  when at 23:00\n  do log(\"тик\")\n}\n",
+        0,
+    );
+    let sig = recv_signal(&h, 141);
+    assert!(sig.error.is_none(), "the document must compile: {sig:?}");
+    wait_revision(&h.store, 1);
+    dali2rust_test_support::await_counter_u32(
+        &h.cells.ticks_time_unsynced,
+        |ticks| ticks >= 1,
+        Duration::from_secs(3),
+    );
+
+    overridden.store(true, std::sync::atomic::Ordering::Relaxed);
+    let deadline = std::time::Instant::now() + OVERRIDE_WATCH;
+    let mut levels = Vec::new();
+    while std::time::Instant::now() < deadline {
+        if let Some((_, level)) = dali2rust_test_support::try_recv_command_matching(
+            &h.out_rx,
+            deadline.saturating_duration_since(std::time::Instant::now()),
+            |payload| matches!(payload, dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(_)),
+        )
+        .and_then(|ce| match ce.payload {
+            dali2rust_contracts::msg::BusCommandPayload::DaliSetTargetStateCommand(ts) => {
+                Some((ts.setpoint.power, ts.setpoint.level))
+            }
+            _ => None,
+        }) {
+            levels.push(level);
+        }
+    }
+    assert_eq!(
+        levels,
+        vec![Some(44)],
+        "one schedule overridden and one idle is one override, not an edge on every tick"
+    );
+}
+
 #[test]
 fn a_part_333_flag_moving_fires_the_rule_that_watches_the_device() {
     let h = harness("rules-manual-config");
@@ -1114,6 +1241,48 @@ fn every_bus_landing_reaches_the_bus_as_declared() {
              {seen:?} on the bus"
         );
     }
+}
+
+fn drain_commands(h: &Harness) -> Vec<dali2rust_contracts::msg::CommandEnvelope> {
+    std::iter::from_fn(|| {
+        dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |_| true)
+    })
+    .collect()
+}
+
+fn opened_scene_apply(published: &[dali2rust_contracts::msg::CommandEnvelope]) -> (u64, String) {
+    use dali2rust_contracts::msg::{BusCommandPayload, OperationType};
+    let [begin, execute] = published else {
+        panic!("a scene apply is one begin and one execute, got {published:?}");
+    };
+    let BusCommandPayload::OperationBeginCommand(opened) = &begin.payload else {
+        panic!("the operation must be opened before the run is asked for: {published:?}");
+    };
+    let BusCommandPayload::SceneApplyExecuteCommand(run) = &execute.payload else {
+        panic!("the execute must follow the begin: {published:?}");
+    };
+    assert_eq!(opened.operation_type, OperationType::SceneApply);
+    assert_eq!(opened.operation_key.as_str(), run.operation_key.as_str());
+    assert_eq!(run.scene_id, 3);
+    assert!(
+        run.operation_key.as_str().starts_with("scn-apply-0-3-"),
+        "the HTTP scene apply's 409 gate finds a running apply by this key prefix"
+    );
+    assert_eq!(
+        begin.meta.correlation_id, execute.meta.correlation_id,
+        "the orchestrator's terminal signal closes the operation the begin opened"
+    );
+    (execute.meta.correlation_id, run.operation_key.as_str().to_string())
+}
+
+#[test]
+fn a_rule_scene_apply_opens_its_own_operation_before_the_run() {
+    let h = landing_run("scene-apply-opens", &landing_document("scene(3).apply()"));
+    let (first_workflow, first_key) = opened_scene_apply(&drain_commands(&h));
+    run_rule(&h, 3, "под тестом");
+    let (second_workflow, second_key) = opened_scene_apply(&drain_commands(&h));
+    assert_ne!(first_workflow, second_workflow, "two firings share one tracker row");
+    assert_ne!(first_key, second_key, "two firings share one operation key");
 }
 
 fn landing_counter(counters: &RulesWorkerCounters, name: &str) -> u32 {
@@ -1516,6 +1685,86 @@ fn enabled_bit(h: &Harness, name: &str) -> Option<bool> {
     h.store.document().compiled.as_ref().and_then(|s| s.rule(name)).map(|r| r.enabled)
 }
 
+struct VanishingNames {
+    inner: StubResolver,
+    gone: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl VanishingNames {
+    fn present(&self) -> bool {
+        !self.gone.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl dali2rust_rules_model::NameResolver for VanishingNames {
+    fn primary_adapter(&self) -> u8 {
+        self.inner.primary_adapter()
+    }
+    fn adapter_exists(&self, adapter_id: u8) -> bool {
+        self.inner.adapter_exists(adapter_id)
+    }
+    fn resolve_lamp(&self, name: &str) -> Option<dali2rust_rules_model::LampRef> {
+        self.inner.resolve_lamp(name)
+    }
+    fn resolve_group(&self, name: &str) -> Option<dali2rust_rules_model::GroupRef> {
+        self.inner.resolve_group(name).filter(|_| self.present())
+    }
+    fn resolve_device(&self, name: &str) -> Option<dali2rust_rules_model::DeviceRef> {
+        self.inner.resolve_device(name)
+    }
+    fn resolve_input_device(&self, name: &str) -> Option<dali2rust_rules_model::InputDeviceRef> {
+        self.inner.resolve_input_device(name).filter(|_| self.present())
+    }
+    fn resolve_scene(&self, name: &str) -> Option<u8> {
+        self.inner.resolve_scene(name).filter(|_| self.present())
+    }
+}
+
+#[test]
+fn renaming_a_group_scene_or_input_device_recompiles_the_rules_that_name_it() {
+    let renames: [(&str, dali2rust_contracts::msg::BusEventPayload); 3] = [
+        (
+            "rule \"г\" { when http trigger do group(\"коридор\").off() }\n",
+            dali2rust_contracts::msg::GroupChangedEvent { adapter_id: 0, group_id: 2 }.into(),
+        ),
+        (
+            "rule \"с\" { when http trigger do scene(\"вечер\").recall(broadcast) }\n",
+            dali2rust_contracts::msg::SceneChangedEvent { adapter_id: 0, scene_id: 3 }.into(),
+        ),
+        (
+            "rule \"у\" { when input(\"панель\", inst=0) is press do log(\"p\") }\n",
+            dali2rust_contracts::msg::InputDeviceChangedEvent { adapter_id: 0, short_address: 4 }.into(),
+        ),
+    ];
+    for (document, renamed) in renames {
+        let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let resolver = VanishingNames { inner: StubResolver::permissive(), gone: Arc::clone(&gone) };
+        let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-renamed"));
+        let h = harness_spawn(slices, empty_world(), Arc::new(resolver));
+        publish_document(&h, 1, document, 0);
+        assert!(recv_signal(&h, 1).error.is_none(), "{document}");
+        wait_revision(&h.store, 1);
+
+        gone.store(true, std::sync::atomic::Ordering::Relaxed);
+        let env = dali2rust_contracts::bus::event_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            dali2rust_contracts::CORRELATION_NONE,
+            BusId::default().0,
+            Some(Origin::Api),
+            renamed,
+        );
+        assert_eq!(
+            h.publisher.try_publish(BusChannel::Events, BusFrame::event(env)),
+            PublishResult::Queued
+        );
+        wait_revision(&h.store, 2);
+        assert!(
+            h.store.document().compiled.is_none(),
+            "the name this document uses is gone, so it must have been recompiled: {document}"
+        );
+    }
+}
+
 #[test]
 fn a_disabled_rule_stays_disabled_across_a_document_that_stopped_compiling_issue162() {
     let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1525,6 +1774,7 @@ fn a_disabled_rule_stays_disabled_across_a_document_that_stopped_compiling_issue
         active: true,
         lit_group: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         overridden: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        idle_second_schedule: false,
     };
     let resolver = VanishingGroup { inner: StubResolver::permissive(), gone: Arc::clone(&gone) };
     let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-vanishing-name"));
@@ -1639,6 +1889,7 @@ fn empty_world() -> EmptyWorld {
         active: true,
         lit_group: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         overridden: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        idle_second_schedule: false,
     }
 }
 

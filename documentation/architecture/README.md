@@ -21,4 +21,4 @@ Scope: as-built mechanisms and invariants. Why a decision was taken →
 10. [10 Build, release and tooling](10-build-release-and-tooling.md) — builds, versions, knobs, partitions, merge gates.
 11. [11 Extension recipes](11-extension-recipes.md) — checklists for extending the system.
 
-[Decisions](decisions/README.md) — one ADR per locked decision.
+[Decisions](decisions/README.md) — one ADR per decision, accepted or deferred.

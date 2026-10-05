@@ -7,7 +7,7 @@ use dali2rust_bus::{BusFrame, BusId, BusPublisher, BusSubscriberRx};
 use dali2rust_contracts::bus::{command_envelope, event_envelope};
 use dali2rust_contracts::msg::{
     BusCommandPayload, BusEventPayload, CommandEnvelope, CompactErrorPayload, DaliProgramTarget,
-    ErrorCode, EventEnvelope, OperationType, Origin,
+    ErrorCode, EventEnvelope, Origin,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
@@ -164,7 +164,6 @@ fn run_group_apply(
         workflow,
         registry_adapter_id,
         operation_key,
-        OperationType::GroupApply,
         operations,
     );
     execute_apply(&run, diff);
@@ -194,7 +193,6 @@ fn run_policy_apply(
         workflow,
         registry_adapter_id,
         operation_key,
-        OperationType::PolicyApply,
         operations,
     );
     execute_apply(&run, diff);
@@ -227,7 +225,6 @@ fn run_scene_apply(
         workflow,
         registry_adapter_id,
         operation_key,
-        OperationType::SceneApply,
         operations,
     );
     execute_apply(&run, diff);

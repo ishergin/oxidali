@@ -23,7 +23,7 @@ BDD — [`adapters`](../../../../tests/dali2rust-bdd/features/adapters/).
 - `limits` — постоянные пределы адаптера: 64 виртуальные лампы, 16 групп, 16 сцен.
 - `bus_status` — **не наблюдение провода**: `idle` при `enabled: true` и `disabled`
   при `false`. Загрузка и отказы провода — в `stats.dali`.
-- `counters` — сводные счётчики команд, таймаутов и ошибок адаптера на момент чтения.
+- `counters` — не заполняются (всегда `0`); счётчики провода — `stats.dali`.
 - Нечисловой `adapter_id` — `400 invalid_resource_id`; адаптера с таким номером нет —
   `404 not_found` (так на всех адаптерных маршрутах).
 
@@ -52,5 +52,4 @@ target-state, чтения и записи атрибутов, discovery, commis
 
 Фоновые производители работы на выключенный адаптер не заводят: поллер его не читает и не
 зондирует ([poller](../../runtime-modules/poller/README.md)), зонд арбитража не уходит
-([redundancy](../../runtime-modules/redundancy/README.md) §Обнаружение). Счётчики при
-выключении не обнуляются.
+([redundancy](../../runtime-modules/redundancy/README.md) §Обнаружение).

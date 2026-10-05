@@ -11,7 +11,7 @@
 
 | Модуль | Крейт | Отвечает за |
 |---|---|---|
-| [`api-gateway`](api-gateway/README.md) | `dali2rust-api` | HTTP: валидация, публикация команд, ответ; ни одной мутации мимо шины |
+| [`api-gateway`](api-gateway/README.md) | `dali2rust-api` | HTTP: валидация, публикация команд, ответ; реестр не мутирует |
 | [`registry`](registry/README.md) ([read-port](registry/read-port.md)) | `dali2rust-registry-runtime` | Единственный писатель состояния: конфигурация, доказательства, runtime, персист |
 | [`operation-tracker`](operation-tracker/README.md) | `dali2rust-operations-runtime` | Жизненный цикл долгих операций и их read-модель |
 | [`apply-orchestrator`](apply-orchestrator/README.md) | `dali2rust-operations-runtime` | Развёртка и пейсинг массового применения: матрицы групп и сцен, политики |

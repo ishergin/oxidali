@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use dali2rust_contracts::msg::{
-    fixed_text_32, FixedItems, FixedText32, HclAlgorithm, HclLevelMode, HclSchedulePointRow,
+    fixed_text_32, ErrorCode, FixedItems, FixedText32, HclAlgorithm, HclLevelMode, HclSchedulePointRow,
     HclScheduleUpsertCommand, HclTargetRow, HclTargetScope, HclTimeRef,
 };
 use dali2rust_domain::registry::{HclScheduleReadPort, HclScheduleView};
@@ -17,6 +17,7 @@ pub(crate) type HclTargetRows = FixedItems<HclTargetRow, MAX_HCL_TARGETS>;
 pub(crate) type HclPointRows = FixedItems<HclSchedulePointRow, MAX_HCL_POINTS>;
 pub(crate) type HclScheduleMap = HashMap<FixedText32, HclScheduleRecord>;
 pub(crate) type HclScheduleStageMap = HashMap<FixedText32, HclScheduleStage>;
+pub(crate) type HclScheduleRefusalMap = HashMap<FixedText32, HclScheduleRefusal>;
 
 pub(crate) const HCL_SCHEDULE_STAGE_MAX_AGE_MS: u64 = STAGE_MAX_AGE_MS;
 
@@ -24,6 +25,12 @@ pub(crate) const HCL_SCHEDULE_STAGE_MAX_AGE_MS: u64 = STAGE_MAX_AGE_MS;
 pub(crate) struct HclScheduleStage {
     pub(crate) record: HclScheduleRecord,
     pub(crate) staged_at_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HclScheduleRefusal {
+    pub(crate) rejection: HclChunkRejection,
+    pub(crate) refused_at_ms: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +76,7 @@ pub(crate) enum HclChunkRejection {
     OutOfOrder,
     TooManyRows,
     ScheduleLimit,
+    Invalid(ErrorCode, &'static str),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,15 +115,32 @@ impl RegistryStore {
         command: &HclScheduleUpsertCommand,
     ) -> Result<HclChunkOutcome, HclChunkRejection> {
         let mut inner = self.write_inner();
-        let outcome = stage_chunk(&mut inner, schedule_id, command);
-        if outcome.is_err() {
+        let outcome = match earlier_refusal(&mut inner, schedule_id, command) {
+            Some(rejection) => Err(rejection),
+            None => stage_chunk(&mut inner, schedule_id, command),
+        };
+        if let Err(rejection) = outcome {
             inner.hcl_schedule_stage.remove(schedule_id);
+            remember_refusal(&mut inner, schedule_id, command, rejection);
         }
         drop(inner);
         if outcome == Ok(HclChunkOutcome::Committed) {
             self.dirty.mark_hcl_schedules_dirty();
         }
         outcome
+    }
+
+    pub(crate) fn refuse_hcl_schedule_chunk(
+        &self,
+        schedule_id: &FixedText32,
+        command: &HclScheduleUpsertCommand,
+        rejection: HclChunkRejection,
+    ) -> HclChunkRejection {
+        let mut inner = self.write_inner();
+        let reported = earlier_refusal(&mut inner, schedule_id, command).unwrap_or(rejection);
+        inner.hcl_schedule_stage.remove(schedule_id);
+        remember_refusal(&mut inner, schedule_id, command, reported);
+        reported
     }
 
     pub(crate) fn switch_hcl_schedule(
@@ -163,8 +188,49 @@ impl RegistryStore {
 
     pub(crate) fn evict_stale_hcl_schedule_stages(&self, max_age_ms: u64) {
         let now = registry_unix_ms();
-        evict_stale(&mut self.write_inner().hcl_schedule_stage, now, max_age_ms);
+        let mut inner = self.write_inner();
+        evict_stale(&mut inner.hcl_schedule_stage, now, max_age_ms);
+        evict_stale(&mut inner.hcl_schedule_refused, now, max_age_ms);
     }
+}
+
+fn earlier_refusal(
+    inner: &mut Inner,
+    schedule_id: &FixedText32,
+    command: &HclScheduleUpsertCommand,
+) -> Option<HclChunkRejection> {
+    if opens_sequence(command) {
+        inner.hcl_schedule_refused.remove(schedule_id);
+        return None;
+    }
+    inner
+        .hcl_schedule_refused
+        .get(schedule_id)
+        .map(|refusal| refusal.rejection)
+}
+
+fn remember_refusal(
+    inner: &mut Inner,
+    schedule_id: &FixedText32,
+    command: &HclScheduleUpsertCommand,
+    rejection: HclChunkRejection,
+) {
+    if command.last_chunk {
+        inner.hcl_schedule_refused.remove(schedule_id);
+        return;
+    }
+    if inner.hcl_schedule_refused.len() >= MAX_HCL_SCHEDULES
+        && !inner.hcl_schedule_refused.contains_key(schedule_id)
+    {
+        return;
+    }
+    inner.hcl_schedule_refused.insert(
+        schedule_id.clone(),
+        HclScheduleRefusal {
+            rejection,
+            refused_at_ms: registry_unix_ms(),
+        },
+    );
 }
 
 fn stage_chunk(
@@ -410,6 +476,12 @@ pub(crate) fn hydrate_hcl_schedules_inner(inner: &mut Inner, slice: &Persistable
             .insert(fixed_text_32(&stored.schedule_id), record);
     }
     inner.hcl_schedules_revision = inner.hcl_schedules_revision.wrapping_add(1);
+}
+
+impl Staged for HclScheduleRefusal {
+    fn staged_at_ms(&self) -> u64 {
+        self.refused_at_ms
+    }
 }
 
 impl Staged for HclScheduleStage {

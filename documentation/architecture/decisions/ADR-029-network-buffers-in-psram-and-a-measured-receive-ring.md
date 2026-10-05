@@ -28,19 +28,6 @@ a window of 16. lwIP refuses a segment the mailbox cannot take, drops the ones b
 while refused data is pending, and retries only from its 250 ms timer, so the sender
 waits for a retransmit. Three concurrent uploads ran at a tenth of the rate of one.
 
-Measured on the standby from the Wiren Board, 20 s per run: uploads are 60 KB bodies to a
-path that answers `404` after reading them, downloads the 68 KB web bundle. Overruns are
-`rx_ring_overruns_total` over the run; internal is the lowest free internal SRAM sampled.
-
-| Configuration | 1 upload | 3 uploads | 3 up + 3 down | Internal under 3 + 3 |
-| --- | --- | --- | --- | --- |
-| Before (mailbox 6, lwIP internal, ring 1600 B × 20/10) | 737 KB/s, 0 | 94 KB/s, 0 | 100 + 72 KB/s, 0–4 | 335 KB |
-| Mailbox 18 | 920 KB/s, 0 | 2 639 KB/s, 7 | 1 703 + 1 819 KB/s, 24 | 291 KB |
-| + lwIP in PSRAM | 922 KB/s, 0 | 2 633 KB/s, 0 | 1 700 + 1 744 KB/s, 39 | 295 KB |
-| + received frames in PSRAM | 891 KB/s, 0 | 2 549 KB/s, 7 | 1 593 + 1 673 KB/s, 33 | 368 KB (idle 369) |
-| + ring 512 B × 30/15 | 857 KB/s, 79 | 1 860 KB/s, 431 | 1 304 + 1 319 KB/s, 462 | 392 KB |
-| + ring 768 B × 30/15 | 879 KB/s, 0 | 2 452 KB/s, 106 | 1 481 + 1 619 KB/s, 191 | 379 KB |
-
 ## Decision
 
 1. **lwIP allocates from PSRAM first** (`SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`). The

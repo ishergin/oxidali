@@ -1,4 +1,6 @@
+import ast
 import importlib.util
+from pathlib import Path
 
 from hil import tiers
 
@@ -89,3 +91,52 @@ def test_a_helper_in_the_same_module_is_followed(tmp_path):
         "t", ["hil_config"], set(), tiers.reach_sources(module.test_through_a_helper))
     assert tiers.reboot_violation(
         "t", ["api"], set(), tiers.reach_sources(module.test_innocent)) is None
+
+
+TESTS = Path(__file__).resolve().parent
+PYTEST_OWN_FIXTURES = frozenset({
+    "tmp_path", "tmp_path_factory", "tmpdir", "monkeypatch", "capsys", "capsysbinary",
+    "capfd", "capfdbinary", "caplog", "recwarn", "pytester",
+})
+REACHES_THE_BENCH = """
+def test_reaches(request):
+    request.getfixturevalue("api")
+
+
+def test_reads(pytestconfig):
+    pytestconfig.getoption("--no-camera")
+"""
+PARAMETRIZE = "parametrize"
+
+
+def _arguments(test):
+    args = test.args
+    return {arg.arg for arg in args.posonlyargs + args.args + args.kwonlyargs}
+
+
+def _parametrized(test):
+    names = set()
+    for decorator in test.decorator_list:
+        if isinstance(decorator, ast.Call) and getattr(decorator.func, "attr", "") == PARAMETRIZE \
+                and decorator.args and isinstance(decorator.args[0], ast.Constant):
+            names |= {name.strip() for name in decorator.args[0].value.split(",")}
+    return names
+
+
+def _needs_only_pytest(module):
+    tests = [node for node in ast.walk(ast.parse(module.read_text()))
+             if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")]
+    return bool(tests) and all(_arguments(test) - _parametrized(test) <= PYTEST_OWN_FIXTURES
+                               for test in tests)
+
+
+def test_a_module_whose_tests_need_only_pytest_is_a_unit_module_the_unit_run_takes():
+    missed = [module.name for module in sorted(TESTS.glob("test_*.py"))
+              if not tiers.is_unit(module) and _needs_only_pytest(module)]
+    assert missed == []
+
+
+def test_a_test_that_can_ask_for_any_fixture_is_not_counted_as_needing_only_pytest(tmp_path):
+    module = tmp_path / "test_reaching.py"
+    module.write_text(REACHES_THE_BENCH)
+    assert not _needs_only_pytest(module)

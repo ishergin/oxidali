@@ -14,8 +14,8 @@ pub use input::{EngineInput, InputEventKind};
 pub use outcome::{ActivationOutcome, Effect, LightVerb, PartialReason};
 pub use state::{CHAIN_WINDOW_MS, MAX_CHAIN_DEPTH, MAX_PENDING_CONTINUATIONS, MAX_TIMERS, MAX_VARS};
 pub use world::{
-    DeviceState, GroupState, HclTargetKey, HclTargetState, InputState, LampState, SunTimes,
-    WallTime, WorldSnapshot,
+    hcl_per_target, DeviceState, GroupState, HclTargetKey, HclTargetState, InputState, LampState,
+    SunTimes, WallTime, WorldSnapshot,
 };
 
 use dali2rust_rules_model::{RuleSet, TriggerKind};

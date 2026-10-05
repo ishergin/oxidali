@@ -15,7 +15,6 @@ const FAULT_KEYS = new Set([
   'commands_ingress_overflow_total',
   'errors_total',
   'confirmation_timeouts_total',
-  'failed_total',
   'timed_out_total',
   'events_dropped_total',
 ])
@@ -29,6 +28,9 @@ const DALI_GAUGES = [
   'wire_load_own_permille',
   'isr_late_ticks_total',
   'isr_max_gap_us',
+  'answer_stage_max_ticks',
+  'sniff_poll_gap_max_us',
+  'persist_flush_max_ms',
 ] as const
 
 const RULES_GAUGES = [

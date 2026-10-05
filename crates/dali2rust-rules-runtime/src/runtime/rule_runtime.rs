@@ -48,6 +48,9 @@ pub(crate) fn classify(
 ) -> (RuleOutcome, Option<&'static str>) {
     match partial {
         Some(PartialReason::ChainDepth) => (RuleOutcome::Refused, Some("chain_depth_exceeded")),
+        Some(PartialReason::ConditionUnevaluable) if executed > 0 => {
+            (RuleOutcome::Partial, Some("condition_unevaluable"))
+        }
         Some(PartialReason::ConditionUnevaluable) => {
             (RuleOutcome::Refused, Some("condition_unevaluable"))
         }
@@ -109,6 +112,11 @@ mod tests {
         assert_eq!(
             classify(Some(PartialReason::ConditionUnevaluable), 0, 0).0,
             RuleOutcome::Refused
+        );
+        assert_eq!(
+            classify(Some(PartialReason::ConditionUnevaluable), 2, 0),
+            (RuleOutcome::Partial, Some("condition_unevaluable")),
+            "an unevaluable argument skips its action; the others ran"
         );
         assert_eq!(
             classify(Some(PartialReason::EffectBudget), 3, 0),

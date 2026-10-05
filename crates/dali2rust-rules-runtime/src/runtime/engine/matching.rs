@@ -180,9 +180,13 @@ fn event_matches(matcher: &InputEventMatch, kind: InputEventKind, value: u16) ->
         InputEventMatch::ButtonStuck => kind == InputEventKind::ButtonStuck,
         InputEventMatch::Movement => kind == InputEventKind::Movement,
         InputEventMatch::NoMovement => kind == InputEventKind::NoMovement,
-        InputEventMatch::AnyEvent => true,
-        InputEventMatch::Raw { data } => value == *data,
+        InputEventMatch::AnyEvent => !derived_from_a_report(kind),
+        InputEventMatch::Raw { data } => !derived_from_a_report(kind) && value == *data,
     }
+}
+
+fn derived_from_a_report(kind: InputEventKind) -> bool {
+    matches!(kind, InputEventKind::BecameOccupied | InputEventKind::BecameVacant)
 }
 
 fn occupancy_matches(becomes: OccupancyState, kind: InputEventKind) -> bool {

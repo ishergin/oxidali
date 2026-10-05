@@ -7,7 +7,8 @@ import pytest
 import hil_test_guards
 
 from hil import tripwire, virtual_gear, wait
-from hil.lamp_guard import (GROUP_TARGET, LampGuard, LampNotAllowed, RulesBaseline, VirtualFence,
+from hil.lamp_guard import (EMULATED_GTIN_BASE, GROUP_TARGET, HA_TEST_NAMESPACE,
+                            RESERVE_FLOOR, LampGuard, LampNotAllowed, RulesBaseline, VirtualFence,
                             appended_test_rules, http_rule, spell)
 
 WB_CONF = {"gateways": [{"device_id": "wb-dali_19", "buses": [
@@ -80,22 +81,66 @@ def test_an_unread_membership_frees_no_group():
     assert virtual_gear.free_groups(virtual_gear.used_groups(devices, [])) == []
 
 
+class _Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+@pytest.fixture(autouse=True)
+def clock(monkeypatch):
+    fake = _Clock()
+    monkeypatch.setattr(wait, "time", fake)
+    return fake
+
+
 class _WireApi:
-    def __init__(self, answering, contended=0):
+    def __init__(self, answering, contended=0, contended_calls=(), damaged_calls=(),
+                 missing=(), moved=None, unsent_calls=(), replies=None):
         self.answering, self.sent, self.contended = set(answering), [], contended
-        self.frames = 0
+        self.moved = dict(moved or {})
+        for call in contended_calls:
+            self.moved.setdefault(call, []).append("foreign_frames_total")
+        for call in damaged_calls:
+            self.moved.setdefault(call, []).append("backward_multi_answer_total")
+        self.missing, self.unsent_calls, self.replies = set(missing), set(unsent_calls), replies or {}
+        self.counts = dict.fromkeys(virtual_gear.CONTENTION_COUNTERS + virtual_gear.ANSWER_DAMAGE
+                                    + virtual_gear.WIRE_CONTENTION + virtual_gear.WIRE_DAMAGE, 0)
+        self.frames_out = 0
 
     def cmd_wire(self, addr, opcode):
         self.sent.append((addr, opcode))
+        call = len(self.sent)
+        self.frames_out += call not in self.unsent_calls
+        for name in self.moved.get(call, []):
+            self.counts[name] += 1
         if self.contended:
             self.contended -= 1
-            self.frames += 1
+            self.counts["foreign_frames_total"] += 1
         group = (addr >> 1) & 0x0F
+        if group in self.replies:
+            return self.replies[group]
         return {"success": group in self.answering, "backward_frame": 0xFF
                 if group in self.answering else 0}
 
+    def _present(self, names, extra=None):
+        found = {name: self.counts[name] for name in names}
+        found.update(extra or {})
+        return {k: v for k, v in found.items() if k not in self.missing}
+
     def stats(self):
-        return {"dali": {"collision_restarts_total": 0, "foreign_frames_total": self.frames}}
+        return {"dali": self._present(virtual_gear.CONTENTION_COUNTERS
+                                      + virtual_gear.ANSWER_DAMAGE)}
+
+    def diagnostics(self):
+        return {"dali_wire": self._present(
+            virtual_gear.WIRE_CONTENTION + virtual_gear.WIRE_DAMAGE,
+            {virtual_gear.FRAMES_SENT: [self.frames_out, 0, 0, 0, 0]})}
 
 
 def test_free_groups_are_proven_silent_after_a_positive_control():
@@ -123,13 +168,179 @@ def test_a_free_group_that_answers_is_occupied():
 def test_a_proof_on_a_shared_wire_is_repeated():
     api = _WireApi({0}, contended=1)
     assert virtual_gear.prove_groups_empty(api, [4], {0}) == 0
-    assert api.sent.count((0x89, 0x91)) == 2 * virtual_gear.PROOF_PROBES
+    assert api.sent.count((0x81, 0x91)) == 2 * virtual_gear.PROOF_PROBES
+    assert api.sent.count((0x89, 0x91)) == virtual_gear.PROOF_PROBES
+
+
+def test_a_foreign_frame_repeats_only_the_group_whose_probes_it_shared():
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, contended_calls={2 * probes + 1})
+    assert virtual_gear.prove_groups_empty(api, [4, 5, 6], {0}) == 0
+    assert [api.sent.count((0x81 + 2 * g, 0x91)) for g in (0, 4, 5, 6)] == \
+        [probes, probes, 2 * probes, probes]
+
+
+def test_a_garbled_answer_in_a_quiet_window_occupies_the_group():
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, damaged_calls={probes + 2})
+    with pytest.raises(virtual_gear.VirtualGearError, match=r"\[4\]"):
+        virtual_gear.prove_groups_empty(api, [4, 5], {0})
+
+
+def test_a_yes_heard_on_a_shared_wire_still_occupies_the_group():
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0, 4}, contended_calls={probes + 1})
+    with pytest.raises(virtual_gear.VirtualGearError, match="real gear"):
+        virtual_gear.prove_groups_empty(api, [4], {0})
+    assert api.sent.count((0x89, 0x91)) == probes
+
+
+def test_a_used_group_on_a_shared_wire_gives_way_to_the_next_control():
+    probes = virtual_gear.PROOF_PROBES
+    calls = {n * probes + 1 for n in range(virtual_gear.PROOF_ATTEMPTS)}
+    assert virtual_gear.prove_groups_empty(_WireApi({0, 2}, contended_calls=calls), [4],
+                                           {0, 2}) == 2
+
+
+CONTENTION_NAMES = ("collision_restarts_total", "foreign_frames_total",
+                    "backward_early_rejected_total", "backward_late_rejected_total", "collisions",
+                    "foreign_in_window", "bus_acquire_timeout", "exchange_retries",
+                    "retry_exhausted")
+DAMAGE_NAMES = ("backward_undecodable_total", "backward_frame_size_total",
+                "backward_incomplete_total", "backward_multi_answer_total", "corrupted_in_window")
+
+
+def test_the_proof_watches_every_named_counter():
+    assert set(virtual_gear.CONTENTION_COUNTERS + virtual_gear.WIRE_CONTENTION) == \
+        set(CONTENTION_NAMES)
+    assert set(virtual_gear.ANSWER_DAMAGE + virtual_gear.WIRE_DAMAGE) == set(DAMAGE_NAMES)
+
+
+@pytest.mark.parametrize("name", CONTENTION_NAMES)
+def test_every_contention_counter_repeats_the_window_it_moved_in(name):
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, moved={probes + 1: [name]})
+    assert virtual_gear.prove_groups_empty(api, [4], {0}) == 0
+    assert api.sent.count((0x89, 0x91)) == 2 * probes
+
+
+@pytest.mark.parametrize("name", DAMAGE_NAMES)
+def test_every_damage_counter_occupies_a_free_group_whose_quiet_window_it_moved_in(name):
+    api = _WireApi({0}, moved={virtual_gear.PROOF_PROBES + 1: [name]})
+    with pytest.raises(virtual_gear.VirtualGearError, match=r"\[4\]"):
+        virtual_gear.prove_groups_empty(api, [4], {0})
+
+
+def test_damage_in_a_contended_window_repeats_it_instead_of_occupying_the_group():
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, contended_calls={probes + 1}, damaged_calls={probes + 1})
+    assert virtual_gear.prove_groups_empty(api, [4], {0}) == 0
+    assert api.sent.count((0x89, 0x91)) == 2 * probes
+
+
+def test_damage_in_the_control_window_repeats_the_control():
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, damaged_calls={1})
+    assert virtual_gear.prove_groups_empty(api, [4], {0}) == 0
+    assert api.sent.count((0x81, 0x91)) == 2 * probes
+
+
+def test_a_probe_that_did_not_go_out_repeats_the_window():
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, unsent_calls={probes + 1})
+    assert virtual_gear.prove_groups_empty(api, [4], {0}) == 0
+    assert api.sent.count((0x89, 0x91)) == 2 * probes
+
+
+def test_any_decoded_answer_occupies_a_free_group():
+    api = _WireApi({0}, replies={4: {"success": True, "backward_frame": 0x12}})
+    with pytest.raises(virtual_gear.VirtualGearError, match=r"\[4\]"):
+        virtual_gear.prove_groups_empty(api, [4], {0})
+
+
+@pytest.mark.parametrize("name", ["foreign_frames_total", "corrupted_in_window",
+                                  virtual_gear.FRAMES_SENT])
+def test_a_counter_the_firmware_does_not_report_stops_the_proof(name):
+    with pytest.raises(virtual_gear.VirtualGearError, match="lacks %s" % name):
+        virtual_gear.prove_groups_empty(_WireApi({0}, missing={name}), [4], {0})
+
+
+class _SweepingWire(_WireApi):
+    def __init__(self, clock, sweep_polls):
+        super().__init__({0})
+        self.clock, self.sweep_polls, self.last_move = clock, sweep_polls, None
+
+    def stats(self):
+        if self.sweep_polls:
+            self.sweep_polls -= 1
+            self.counts["foreign_frames_total"] += 1
+            self.last_move = self.clock.now
+        return super().stats()
+
+
+def test_a_quiet_wire_is_one_still_for_the_quiet_time_after_the_sweep(clock):
+    api = _SweepingWire(clock, sweep_polls=5)
+    virtual_gear.await_quiet_wire(api)
+    still = clock.now - api.last_move
+    assert api.sweep_polls == 0
+    assert virtual_gear.QUIET_WIRE_S <= still < \
+        virtual_gear.QUIET_WIRE_S + 2 * virtual_gear.QUIET_POLL_S
+
+
+def test_a_wire_that_never_quietens_is_waited_for_no_longer_than_the_bound(clock):
+    virtual_gear.await_quiet_wire(_SweepingWire(clock, sweep_polls=10 ** 6))
+    assert virtual_gear.QUIET_WAIT_MAX_S <= clock.now < \
+        virtual_gear.QUIET_WAIT_MAX_S + 2 * virtual_gear.QUIET_POLL_S
+
+
+def _record_waits(monkeypatch, api):
+    original = virtual_gear.await_quiet_wire
+
+    def waited(wire):
+        api.sent.append("quiet")
+        original(wire)
+    monkeypatch.setattr(virtual_gear, "await_quiet_wire", waited)
+
+
+def test_a_retry_after_a_contended_window_starts_on_a_quiet_wire(monkeypatch):
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, contended_calls={probes + 1})
+    _record_waits(monkeypatch, api)
+    assert virtual_gear.prove_groups_empty(api, [4], {0}) == 0
+    assert api.sent == [(0x81, 0x91)] * probes + [(0x89, 0x91)] * probes + ["quiet"] + \
+        [(0x89, 0x91)] * probes
+
+
+def test_no_wait_follows_the_last_contended_attempt(monkeypatch):
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, contended_calls=range(probes + 1, 100))
+    _record_waits(monkeypatch, api)
+    with pytest.raises(virtual_gear.VirtualGearError, match="shared the wire"):
+        virtual_gear.prove_groups_empty(api, [4], {0})
+    assert api.sent.count("quiet") == virtual_gear.PROOF_ATTEMPTS - 1
+
+
+def test_a_contended_control_waits_and_a_damaged_one_does_not(monkeypatch):
+    contended = _WireApi({0}, contended_calls={1})
+    _record_waits(monkeypatch, contended)
+    assert virtual_gear.prove_groups_empty(contended, [4], {0}) == 0
+    assert contended.sent.count("quiet") == 1
+    damaged = _WireApi({0}, damaged_calls={1})
+    _record_waits(monkeypatch, damaged)
+    assert virtual_gear.prove_groups_empty(damaged, [4], {0}) == 0
+    assert damaged.sent.count("quiet") == 0
 
 
 def test_a_wire_contended_on_every_attempt_proves_nothing():
-    api = _WireApi({0}, contended=100)
+    probes = virtual_gear.PROOF_PROBES
+    api = _WireApi({0}, contended_calls=range(probes + 1, 100))
     with pytest.raises(virtual_gear.VirtualGearError, match="shared the wire"):
         virtual_gear.prove_groups_empty(api, [4], {0})
+
+
+def test_a_control_contended_on_every_attempt_proves_nothing():
+    with pytest.raises(virtual_gear.VirtualGearError, match="quiet window"):
+        virtual_gear.prove_groups_empty(_WireApi({0}, contended=100), [4], {0})
 
 
 def test_a_violating_answer_counts_as_present():
@@ -248,7 +459,11 @@ def test_the_fence_lets_the_session_reach_its_own_gear(method, path, body):
      {"rows": [{"virtual_lamp_id": 60, "desired": GROUP_0}]}),
     ("PATCH", "adapters/0/groups/4", {"ha_entity_enabled": True}),
     ("PATCH", "adapters/0/scenes/2", {"name": "x"}),
+    ("PATCH", "adapters/0/virtual-lamps/6", {"ha_entity_enabled": True}),
     ("PATCH", "adapters/0/virtual-lamps/60", {"ha_entity_enabled": True}),
+    ("PATCH", "adapters/0/virtual-lamps/60", {"name": "x"}),
+    ("PATCH", "adapters/0/virtual-lamps/60", {"ha_entity_enabled": True, "name": "x"}),
+    ("DELETE", "adapters/0/virtual-lamps/60", None),
     ("PUT", "adapters/0/virtual-lamps/60/binding", {"physical_short_address": 16}),
     ("DELETE", "adapters/0/virtual-lamps/6", None),
     ("DELETE", "adapters/0/physical-devices/16", None),
@@ -272,6 +487,111 @@ def test_the_fence_lets_the_session_reach_its_own_gear(method, path, body):
 def test_the_fence_refuses_everything_else(method, path, body):
     with pytest.raises(LampNotAllowed):
         _guard(_fence()).check_request(method, path, body)
+
+
+OWNER_HA = {"enabled": True, "broker_host": "192.0.2.1", "broker_port": 1883,
+            "discovery_prefix": "homeassistant", "state_topic_prefix": "dali",
+            "controller_id": "dali-e0d190", "publish_qos": 1, "retain_state": True,
+            "retain_discovery": True, "expose_input_devices": True}
+HA_ROUTE, VL60 = "settings/home-assistant", "adapters/0/virtual-lamps/60"
+
+
+def _ha_fence(owner=OWNER_HA):
+    return _guard(_fence(ha_settings=owner))
+
+
+def _enter(guard):
+    guard.check_request("PATCH", HA_ROUTE, dict(HA_TEST_NAMESPACE, enabled=True,
+                                                broker_host="192.0.2.9"))
+
+
+def test_the_fence_announces_session_lamps_only_inside_the_test_namespace_and_back():
+    guard = _ha_fence()
+    _enter(guard)
+    for enabled in (True, False):
+        guard.check_request("PATCH", VL60, {"ha_entity_enabled": enabled})
+    guard.fence.unannounced(60)
+    guard.check_request("PATCH", HA_ROUTE, dict(OWNER_HA))
+
+
+def test_an_unannounce_the_firmware_did_not_confirm_keeps_the_bridge_in_the_test_namespace():
+    guard = _ha_fence()
+    _enter(guard)
+    guard.check_request("PATCH", VL60, {"ha_entity_enabled": True})
+    guard.check_request("PATCH", VL60, {"ha_entity_enabled": False})
+    with pytest.raises(LampNotAllowed, match="VL60"):
+        guard.check_request("PATCH", HA_ROUTE, dict(OWNER_HA))
+
+
+def test_a_session_lamp_is_never_announced_in_the_owner_namespace():
+    guard = _ha_fence()
+    with pytest.raises(LampNotAllowed, match="owner's namespace"):
+        guard.check_request("PATCH", VL60, {"ha_entity_enabled": True})
+    _enter(guard)
+    guard.check_request("PATCH", HA_ROUTE, dict(OWNER_HA))
+    with pytest.raises(LampNotAllowed, match="owner's namespace"):
+        guard.check_request("PATCH", VL60, {"ha_entity_enabled": True})
+
+
+def test_the_bridge_stays_in_the_test_namespace_while_a_session_lamp_is_announced():
+    guard = _ha_fence()
+    _enter(guard)
+    guard.check_request("PATCH", VL60, {"ha_entity_enabled": True})
+    with pytest.raises(LampNotAllowed, match="VL60"):
+        guard.check_request("PATCH", HA_ROUTE, dict(OWNER_HA))
+
+
+def test_an_owner_whose_bridge_is_off_gets_it_back_off():
+    owner = dict(OWNER_HA, enabled=False)
+    guard = _ha_fence(owner)
+    _enter(guard)
+    guard.check_request("PATCH", HA_ROUTE, dict(owner))
+
+
+@pytest.mark.parametrize("change", [
+    {"controller_id": "other"}, {"broker_host": "192.0.2.66"}, {"broker_port": 8883},
+    {"expose_input_devices": False}, {"retain_state": False}, {"enabled": False},
+    {"broker_password": "x"},
+])
+def test_the_way_back_is_the_owner_settings_and_nothing_else(change):
+    guard = _ha_fence()
+    _enter(guard)
+    with pytest.raises(LampNotAllowed):
+        guard.check_request("PATCH", HA_ROUTE, dict(OWNER_HA, **change))
+
+
+def test_the_way_back_restores_every_owner_setting_not_only_the_namespace():
+    guard = _ha_fence()
+    _enter(guard)
+    with pytest.raises(LampNotAllowed):
+        guard.check_request("PATCH", HA_ROUTE, {name: OWNER_HA[name] for name in HA_TEST_NAMESPACE})
+
+
+@pytest.mark.parametrize("method,body", [
+    ("PATCH", dict(HA_TEST_NAMESPACE, discovery_prefix="homeassistant")),
+    ("PATCH", dict(HA_TEST_NAMESPACE, enabled=False)),
+    ("PATCH", {"enabled": True}),
+    ("PATCH", {"expose_input_devices": False}),
+    ("PUT", dict(HA_TEST_NAMESPACE)),
+    ("PUT", dict(OWNER_HA)),
+])
+def test_the_fence_refuses_any_other_home_assistant_settings(method, body):
+    with pytest.raises(LampNotAllowed):
+        _ha_fence().check_request(method, HA_ROUTE, body)
+
+
+def test_a_flag_is_patched_and_only_on_a_session_lamp():
+    guard = _ha_fence()
+    _enter(guard)
+    for method, path in (("PUT", VL60), ("PATCH", "adapters/0/virtual-lamps/6")):
+        with pytest.raises(LampNotAllowed):
+            guard.check_request(method, path, {"ha_entity_enabled": True})
+
+
+@pytest.mark.parametrize("namespace", [HA_TEST_NAMESPACE, OWNER_HA])
+def test_without_the_owner_settings_the_fence_moves_the_bridge_nowhere(namespace):
+    with pytest.raises(LampNotAllowed):
+        _guard(_fence()).check_request("PATCH", HA_ROUTE, dict(namespace))
 
 
 OWNER_TOGGLES = {"подсветка: включить": True, "кнопка 3": False}
@@ -507,21 +827,43 @@ def test_lost_log_lines_are_reported():
     assert tripwire.lost_lines(before, after) == {"console_log_dropped_total": 2}
 
 
+EMULATED_16, EMULATED_17 = EMULATED_GTIN_BASE | 0x123456, EMULATED_GTIN_BASE | 0x654321
+REAL_GTIN = 8_710_000_000_123
+RESERVE = list(range(RESERVE_FLOOR))
+
+
+def _park_lamp(short, bound=True):
+    return {"name": virtual_gear.PARK_VL_NAME % short,
+            "binding": {"physical_short_address": short} if bound else None}
+
+
 class _TeardownApi:
-    def __init__(self, failing=()):
+    def __init__(self, failing=(), gtins=None):
         self.calls, self.failing = [], set(failing)
         self.vlamps = self
         self.groups = self
+        self.gtins = {16: EMULATED_16, 17: EMULATED_17} if gtins is None else gtins
+        self.lamps = {60: _park_lamp(16), 61: _park_lamp(17)}
+        self.guard = LampGuard((), read_only=True, gtin=self.gtins.get)
 
     def _call(self, entry):
         self.calls.append(entry)
         if entry[0] in self.failing:
             raise RuntimeError("%s failed on the bench" % entry[0])
 
+    def get(self, lamp_id):
+        return dict(self.lamps.get(lamp_id, {}))
+
+    def devices_unfiltered(self):
+        return {"physical_devices": [{"short_address": s, "gtin": g}
+                                     for s, g in self.gtins.items()]}
+
     def delete(self, lamp_id):
+        self.guard.check_request("DELETE", "adapters/0/virtual-lamps/%d" % lamp_id)
         self._call(("vl-delete", lamp_id))
 
     def device_forget(self, short):
+        self.guard.check_request("DELETE", "adapters/0/physical-devices/%d" % short)
         self._call(("forget", short))
 
     def patch(self, group, body):
@@ -557,6 +899,52 @@ def test_teardown_deletes_vls_before_devices_and_restores_flags(tmp_path, monkey
     assert api.calls == [("vl-delete", 60), ("vl-delete", 61), ("forget", 16), ("forget", 17),
                          ("group", 4, {"ha_entity_enabled": True})]
     assert not session.ledger.exists()
+
+
+def test_the_teardown_unannounces_a_park_lamp_before_deleting_it(tmp_path, monkeypatch):
+    api, sim = _TeardownApi(), _QuietSim()
+    api.lamps[60]["ha_entity_enabled"] = True
+    session = _session(tmp_path, api, sim, park=[16, 17], created_vls=[60, 61])
+    monkeypatch.setattr(session, "residual", lambda: [])
+    assert session.close() == []
+    assert api.calls[:3] == [("group", 60, {"ha_entity_enabled": False}), ("vl-delete", 60),
+                             ("vl-delete", 61)]
+
+
+def test_only_the_teardown_forgets_the_park_past_read_only_and_the_lamp_list():
+    api = _TeardownApi()
+    with pytest.raises(LampNotAllowed, match=r"forget of SA16 refused: HIL_LAMPS_READ_ONLY=1"):
+        api.device_forget(16)
+    with api.guard.forgetting_emulated([16], RESERVE):
+        api.device_forget(16)
+        with pytest.raises(LampNotAllowed, match=r"forget of SA3 refused"):
+            api.device_forget(3)
+    with pytest.raises(LampNotAllowed, match=r"forget of SA16 refused"):
+        api.device_forget(16)
+    assert api.calls == [("forget", 16)]
+
+
+def test_the_teardown_forgets_only_a_park_address_whose_record_is_the_emulator_s():
+    api = _TeardownApi(gtins={5: EMULATED_16, 17: EMULATED_17, 18: REAL_GTIN, 20: None,
+                              21: EMULATED_16})
+    with api.guard.forgetting_emulated([5, 17, 18, 20, 21], RESERVE + [21]):
+        api.device_forget(17)
+        for short, why in ((5, "reserve"), (21, "reserve"), (18, "GTIN %d" % REAL_GTIN),
+                           (20, "GTIN None")):
+            with pytest.raises(LampNotAllowed, match=r"forget of SA%d refused: .*%s" % (short, why)):
+                api.device_forget(short)
+    assert api.calls == [("forget", 17)]
+
+
+def test_a_virtual_lamp_is_deleted_only_by_the_teardown_of_the_session_that_made_it():
+    api = _TeardownApi()
+    with pytest.raises(LampNotAllowed, match=r"deleting VL60 refused"):
+        api.delete(60)
+    with api.guard.deleting_created([60]):
+        api.delete(60)
+        with pytest.raises(LampNotAllowed, match=r"deleting VL6 refused"):
+            api.delete(6)
+    assert api.calls == [("vl-delete", 60)]
 
 
 def test_a_failing_step_leaves_residue_and_the_rest_still_runs(tmp_path, monkeypatch):
@@ -607,8 +995,8 @@ def test_no_ledger_means_nothing_to_tear_down(tmp_path):
 
 
 class _EnrolApi:
-    def __init__(self):
-        self.vlamps, self.bound = self, []
+    def __init__(self, gtin=EMULATED_16):
+        self.vlamps, self.bound, self.identified, self.gtin = self, [], [], gtin
 
     def wait_op(self, op):
         return op
@@ -617,7 +1005,10 @@ class _EnrolApi:
         return {"operation_id": 1}
 
     def devices_unfiltered(self):
-        return {"physical_devices": [{"short_address": 16}]}
+        return {"physical_devices": [{"short_address": 16, "gtin": self.gtin}]}
+
+    def attr_read_checked(self, short, groups=None, banks=None):
+        self.identified.append((short, banks))
 
     def patch(self, lamp_id, body):
         raise RuntimeError("the controller refused the VL")
@@ -636,6 +1027,16 @@ def test_a_vl_is_ledgered_before_it_is_created(tmp_path):
     with pytest.raises(RuntimeError):
         session._enrol([16], [4])
     assert session.ledger.data["created_vls"] == [63]
+    assert session.api.identified == [(16, virtual_gear.IDENTITY_BANKS)]
+
+
+def test_the_session_refuses_a_park_address_whose_gear_is_not_the_emulator_s(tmp_path):
+    for gtin in (REAL_GTIN, None):
+        session = _session(tmp_path, _EnrolApi(gtin=gtin), _ShowSim(), vl_before=[0, 1])
+        with pytest.raises(virtual_gear.VirtualGearError, match=r"SA16 carry no gear-emulator"):
+            session._enrol([16], [4])
+        assert "created_vls" not in session.ledger.data
+        session.ledger.remove()
 
 
 class _LadderSim:
@@ -727,12 +1128,16 @@ def test_owner_rules_that_watch_a_test_lamp_stop_the_light_tests():
 class _Groups(_RealTier):
     def __init__(self, masks, source="", answering=(), rows=()):
         super().__init__(source, masks=masks, rows=rows)
-        self.answering, self.probed = set(answering), []
+        self.answering, self.probed, self.wire = set(answering), [], _WireApi(())
 
     def stats(self):
-        return {"dali": {}}
+        return self.wire.stats()
+
+    def diagnostics(self):
+        return self.wire.diagnostics()
 
     def cmd_wire(self, wire_address, opcode):
+        self.wire.frames_out += 1
         group = (wire_address >> 1) & 0x0F
         self.probed.append(group)
         return {"success": True, "backward_frame": 0xFF} if group in self.answering else {}
@@ -748,3 +1153,23 @@ def test_a_free_group_is_free_of_every_registered_gear_and_owner_rule_and_silent
     with pytest.raises(pytest.skip.Exception, match=r"group 14 cannot be shown empty.*answer"):
         hil_test_guards.free_group_of(_Groups(owner, answering={15, 3, 14}))
 
+
+def test_the_teardown_leaves_a_lamp_the_owner_took_over(tmp_path, monkeypatch):
+    api = _TeardownApi()
+    api.lamps[60] = {"name": "Кухня", "binding": {"physical_short_address": 4}}
+    api.lamps[61] = _park_lamp(17, bound=False)
+    session = _session(tmp_path, api, _QuietSim(), park=[16, 17], created_vls=[60, 61])
+    monkeypatch.setattr(session, "residual", lambda: [])
+    residue = session.close()
+    assert any("VL60" in line and "Кухня" in line for line in residue)
+    assert ("vl-delete", 60) not in api.calls and ("vl-delete", 61) in api.calls
+    assert session.ledger.exists()
+    assert not virtual_gear.park_lamp(virtual_gear.PARK_VL_NAME % 16, 17, [16, 17])
+
+
+def test_a_park_record_forgotten_by_hand_lets_the_teardown_finish(tmp_path, monkeypatch):
+    api = _TeardownApi(gtins={17: EMULATED_17})
+    session = _session(tmp_path, api, _QuietSim(), park=[16, 17])
+    monkeypatch.setattr(session, "residual", lambda: [])
+    assert session.close() == []
+    assert api.calls == [("forget", 17)] and not session.ledger.exists()

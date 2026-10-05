@@ -182,6 +182,7 @@ def test_configuration_replicates_from_the_active_unit(api, peer_api, pair_roles
 
 
 
+@pytest.mark.light
 @pytest.mark.hil_id("HIL-RED-04")
 def test_losing_the_peer_link_moves_no_role(api, peer_api, pair_roles, hil_config,
                                             test_artifacts):

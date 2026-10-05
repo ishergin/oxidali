@@ -4,6 +4,7 @@ import types
 
 import hil.api
 import hil.config
+import test_corpus_unit
 from hil import cli, corpus, flash, prod_state, serialmon, virtual_gear, write_log
 from hil.camera import backend
 
@@ -102,6 +103,21 @@ def test_corpus_does_not_take_peer_for_peer_only(monkeypatch, capsys):
     monkeypatch.setattr(corpus, "run", _never("corpus", ran))
     assert cli.main(["corpus", "--peer"]) == cli.EX_USAGE
     assert ran == []
+    capsys.readouterr()
+
+
+def test_secrets_are_kept_only_in_an_out_outside_every_repository(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(corpus, "Client", test_corpus_unit.SliceController)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.resolve().parent))
+    inside = test_corpus_unit.git_repository(tmp_path / "repo") / "corpus"
+    outside = tmp_path / "kept"
+    argv = ["corpus", "slices", "--keep-secrets", "--primary-only", "--out"]
+    assert cli.main(argv + [str(inside)]) == cli.EX_USAGE
+    assert "is inside the git work tree" in capsys.readouterr().err
+    assert not list(inside.rglob("*.bin"))
+    assert cli.main(argv + [str(outside)]) == 0
+    assert [p.read_bytes() for p in outside.rglob("home_assistant_settings.bin")] == [
+        test_corpus_unit.SECRET]
     capsys.readouterr()
 
 

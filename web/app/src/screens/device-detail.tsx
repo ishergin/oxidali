@@ -28,6 +28,7 @@ import {
   RgbInputs,
   type RgbwafChannel,
   Src,
+  useConfirmTap,
 } from '../components/ui'
 import { ensureProductsLoaded, productName } from '../products'
 import {
@@ -256,8 +257,6 @@ const WRITABLE_FIELDS: WritableField[] = [
   },
 ]
 
-const CONFIRM_MS = 3000
-
 function CommissioningCard({
   short,
   knownShorts,
@@ -275,7 +274,7 @@ function CommissioningCard({
   const [newShort, setNewShort] = useState<number | null>(null)
   const [verify, setVerify] = useState(true)
   const [replacement, setReplacement] = useState<number | null>(null)
-  const [armed, setArmed] = useState(false)
+  const [armed, confirmTap] = useConfirmTap<'forget'>()
   const [restore, setRestore] = useState({
     metadata_and_overrides: true,
     attributes: true,
@@ -319,13 +318,9 @@ function CommissioningCard({
     if (opCommitted(op)) onMoved(target)
   }
 
-  const forget = async () => {
-    if (!armed) {
-      setArmed(true)
-      setTimeout(() => setArmed(false), CONFIRM_MS)
-      return
-    }
-    setArmed(false)
+  const forget = () => confirmTap('forget', () => void forgetNow())
+
+  const forgetNow = async () => {
     setBusy(true)
     const ok = await mutate(`Forget · SA ${pad2(short)}`, () =>
       api.deletePhysicalDevice(ADAPTER, short),

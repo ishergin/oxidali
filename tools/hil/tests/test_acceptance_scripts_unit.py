@@ -1,12 +1,17 @@
+import ast
+import datetime
+import importlib
 import importlib.util
 from pathlib import Path
 
 import pytest
 
-from hil import provoke, seriallog
+from hil import provoke, seriallog, serialmon
 from hil.config import HilConfig
 
 HIL_ROOT = Path(__file__).resolve().parent.parent
+TOOLKIT_SCRIPTS = sorted(HIL_ROOT.glob("*.py"))
+BENCH_MARKS = ("192.168.", "/Users/")
 BOOT = "I (1) dali2rust: boot\n"
 HCL_STALE = "W (2) redundancy: worker has not turned for 61 s: hcl-scheduler"
 QUALIFYING = [{"d_ticks": 1, "d_timeouts": 2}]
@@ -23,7 +28,7 @@ def _script(name):
 
 
 ISSUE86 = _script("issue86_acceptance")
-ISSUE89 = _script("issue89_flush_stall_ab")
+FLUSH_STALL = _script("flush_stall_ab")
 SOAK = _script("soak_abab")
 LATE = ("2026-09-26T08:00:02.000Z W (5) dali: DALI ISR late entries (delayed; see raw deficit "
         "for losses): ws-client×2 (max 140 us @0x40001234<0x40005678), (none)×1 (max 9 us "
@@ -90,14 +95,14 @@ def test_issue86_never_ends_a_window_on_a_sample_with_a_missing_read():
     assert [w["gaps"] for w in windows] == [2, 0]
 
 
-def test_issue89_reads_its_windows_by_offset_whatever_the_stamps(tmp_path):
+def test_the_flush_stall_ab_reads_its_windows_by_offset_whatever_the_stamps(tmp_path):
     log = tmp_path / "serial.log"
     log.write_text(BOOT)
-    start = ISSUE89.log_size(log)
-    assert ISSUE89.log_lines(log, start) is None
+    start = FLUSH_STALL.log_size(log)
+    assert FLUSH_STALL.log_lines(log, start) is None
     with log.open("a") as fh:
         fh.write("%s\n%s\nnoise\n" % (TIMING, FLUSH))
-    assert ISSUE89.window(ISSUE89.log_lines(log, start)) == ([7], 2, 40, [900], [310])
+    assert FLUSH_STALL.window(FLUSH_STALL.log_lines(log, start)) == ([7], 2, 40, [900], [310])
 
 
 class _Registry:
@@ -115,26 +120,44 @@ class _Registry:
         return {"physical_devices": [{"short_address": s} for s in (1, 2, 4)]}
 
 
-def test_issue89_provokes_with_notes_it_restores_and_never_writes_a_name():
+def test_the_flush_stall_ab_provokes_with_notes_it_restores_and_never_writes_a_name():
     registry = _Registry({"name": "Kitchen", "notes": "the owner's note"})
-    toggle = ISSUE89.NotesToggle(registry, 2)
+    toggle = FLUSH_STALL.NotesToggle(registry, 2)
     for _ in range(3):
         toggle()
-    assert registry.record["notes"] == ISSUE89.MARKER
+    assert registry.record["notes"] == FLUSH_STALL.MARKER
     toggle.restore()
     assert registry.record == {"name": "Kitchen", "notes": "the owner's note"}
     assert all(set(body) == {"notes"} for body in registry.patches)
 
 
-def test_issue89_writes_only_gear_the_bench_may_write(tmp_path):
-    assert ISSUE89.probe_target(_Registry({}), _cfg(tmp_path)) == 2
+def test_the_flush_stall_ab_writes_only_gear_the_bench_may_write(tmp_path):
+    assert FLUSH_STALL.probe_target(_Registry({}), _cfg(tmp_path)) == 2
     with pytest.raises(SystemExit, match="HIL_LAMP_SHORTS"):
-        ISSUE89.probe_target(_Registry({}), _cfg(tmp_path, lamp_shorts="7"))
+        FLUSH_STALL.probe_target(_Registry({}), _cfg(tmp_path, lamp_shorts="7"))
 
 
-def test_issue89_names_no_bench_address_and_no_checkout_path():
-    source = (HIL_ROOT / "issue89_flush_stall_ab.py").read_text()
-    assert "192.168." not in source and "/Users/" not in source
+def test_no_toolkit_script_names_a_bench_address_or_a_checkout_path():
+    named = [path.name for path in TOOLKIT_SCRIPTS
+             if any(mark in path.read_text() for mark in BENCH_MARKS)]
+    assert named == []
+
+
+def _missing_from(module, names):
+    imported = importlib.import_module(module)
+    return [name for name in names if not hasattr(imported, name) and not (
+        hasattr(imported, "__path__")
+        and importlib.util.find_spec("%s.%s" % (module, name)) is not None)]
+
+
+def test_every_name_a_toolkit_script_imports_from_hil_exists():
+    missing = []
+    for path in TOOLKIT_SCRIPTS:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "hil":
+                missing += ["%s: %s.%s" % (path.name, node.module, name) for name in
+                            _missing_from(node.module, [alias.name for alias in node.names])]
+    assert missing == []
 
 
 def test_late_entries_are_tallied_by_task_and_nesting():
@@ -224,3 +247,74 @@ def test_the_log_is_known_to_have_passed_a_moment_by_the_firmware_stamp():
     assert seriallog.logged_past(lines, 4999) and not seriallog.logged_past(lines, 5000)
     assert seriallog.newest_ms(lines + ["x W (12) y"]) == 4999
     assert seriallog.newest_ms(lines[1:]) is None and not seriallog.logged_past([], 0)
+
+
+BOOTED_S = datetime.datetime(2026, 9, 30, 9, tzinfo=datetime.timezone.utc).timestamp()
+MINUTE_S, HOUR_S, DAY_S = 60, 3600, 86400
+U32_WRAP_MS = 1 << 32
+RAW_PHY = ("dali2rust_adapters: DALI PHY interrupt: level %d, cpu int 17, core 0, source TG0_T0, "
+           "raw handler")
+DRIVER_PHY = "dali2rust_adapters: DALI PHY interrupt: level 3, gptimer driver handler"
+BEAT = "dali2rust: firmware heartbeat: uptime=1s"
+PHY_AT_MS, BEAT_AT_MS = 900, 60000
+DRIFT_S, FAR_DRIFT_S = 20, 40
+CRASHED_AT_S = 30
+SMALL_BLOCK = 7
+
+
+def _logged(booted_s, uptime_ms, text, late_s=0.0):
+    return "%s I (%d) %s" % (serialmon.stamp(booted_s + uptime_ms / 1000 + late_s),
+                             uptime_ms % U32_WRAP_MS, text)
+
+
+def _rom(at_s):
+    return "%s ESP-ROM:esp32p4-eco2-20240710" % serialmon.stamp(at_s)
+
+
+def _level(*oldest_first):
+    return seriallog.running_boot_phy_level(list(reversed(oldest_first)))
+
+
+def test_the_running_boot_names_the_phy_level_it_logged():
+    later = BOOTED_S + HOUR_S
+    assert _level(_rom(BOOTED_S), _logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY),
+                  _logged(BOOTED_S, BEAT_AT_MS, BEAT)) == 3
+    assert _level(_logged(BOOTED_S, PHY_AT_MS, RAW_PHY % 5), _logged(BOOTED_S, BEAT_AT_MS, BEAT),
+                  _rom(later), _logged(later, PHY_AT_MS, DRIVER_PHY),
+                  _logged(later, BEAT_AT_MS, BEAT)) == 3
+    assert _level(_logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY),
+                  _logged(BOOTED_S, 30 * DAY_S * 1000, BEAT, late_s=DRIFT_S)) == 3
+
+
+def test_the_boot_slack_stays_capped_however_long_the_boot():
+    assert seriallog._boot_slack_s(30 * DAY_S * 1000, 0) == seriallog.BOOT_SLACK_CAP_S
+    assert _level(_logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY),
+                  _logged(BOOTED_S, 30 * DAY_S * 1000, BEAT, late_s=FAR_DRIFT_S)) is None
+
+
+def test_a_boot_whose_phy_line_the_log_missed_takes_no_level_from_an_older_boot():
+    later = BOOTED_S + CRASHED_AT_S + MINUTE_S
+    assert _level(_logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY),
+                  _logged(BOOTED_S, CRASHED_AT_S * 1000, BEAT),
+                  _logged(later, BEAT_AT_MS, BEAT)) is None
+    assert _level(_logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY), _rom(later),
+                  _logged(later, BEAT_AT_MS, BEAT)) is None
+    assert _level(_logged(BOOTED_S, BEAT_AT_MS, BEAT)) is None
+
+
+def test_a_wrapped_firmware_stamp_hides_the_boot_start():
+    assert _level(_logged(BOOTED_S, PHY_AT_MS, DRIVER_PHY),
+                  _logged(BOOTED_S, U32_WRAP_MS + BEAT_AT_MS, BEAT)) is None
+
+
+def test_the_log_is_read_newest_first_across_blocks(tmp_path):
+    text = "\n".join(["first", "", "ünïcode line", "last", ""])
+    path = tmp_path / "serial.log"
+    path.write_text(text)
+    assert list(seriallog.lines_newest_first(path, SMALL_BLOCK)) == list(reversed(text.split("\n")))
+    serial = seriallog.SerialLog(_cfg(tmp_path))
+    assert serial.boot_phy_level() is None
+    serial.log_path.parent.mkdir(parents=True)
+    serial.log_path.write_text("\n".join([_logged(BOOTED_S, PHY_AT_MS, RAW_PHY % 5),
+                                          _logged(BOOTED_S, BEAT_AT_MS, BEAT)]) + "\n")
+    assert serial.boot_phy_level() == 5

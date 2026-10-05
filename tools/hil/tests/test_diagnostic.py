@@ -133,8 +133,9 @@ def test_the_restored_102_queries_are_accepted_and_reach_the_wire(
                  "repeat_count": 1})
             observed["%#04x" % opcode] = {"status": status, "body": body}
             assert status == 200, (
-                "%s (%#04x) must reach the validated path; 400 here is the "
-                "ISSUE-58 gap reopening: %r" % (name, opcode, (status, body))
+                "%s (%#04x) must reach the validated path; a 400 here means the "
+                "diagnostic path refuses a standard query again: %r"
+                % (name, opcode, (status, body))
             )
             win.expect_frame("short %d" % short)
     test_artifacts.attach_json("restored_102_queries", observed)
