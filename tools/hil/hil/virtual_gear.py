@@ -9,7 +9,7 @@ from pathlib import Path
 
 from hil import durable, remote_serial, role, serialmon
 from hil.gearsim import GearSim, GearSimUnavailable
-from hil.lamp_guard import RESERVE_FLOOR, emulated_gtin, spell
+from hil.lamp_guard import HA_ENTITY_FLAG, RESERVE_FLOOR, emulated_gtin, spell
 from hil.wait import settled
 
 LEDGER = role.LEDGER
@@ -556,6 +556,8 @@ class VirtualSession:
         if not park_lamp(lamp.get("name"), bound, self.ledger.data.get("park", [])):
             raise VirtualGearError("VL%d is now %r bound to %r, not the lamp this session made: "
                                    "left as it is" % (lamp_id, lamp.get("name"), bound))
+        if lamp.get(HA_ENTITY_FLAG):
+            self.api.vlamps.patch(lamp_id, {HA_ENTITY_FLAG: False})
         with self.api.guard.deleting_created(self.ledger.data.get("created_vls", [])):
             self.api.vlamps.delete(lamp_id)
 

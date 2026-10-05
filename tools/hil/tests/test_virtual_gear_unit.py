@@ -7,8 +7,8 @@ import pytest
 import hil_test_guards
 
 from hil import tripwire, virtual_gear, wait
-from hil.lamp_guard import (EMULATED_GTIN_BASE, GROUP_TARGET, RESERVE_FLOOR, LampGuard,
-                            LampNotAllowed, RulesBaseline, VirtualFence,
+from hil.lamp_guard import (EMULATED_GTIN_BASE, GROUP_TARGET, HA_TEST_NAMESPACE,
+                            RESERVE_FLOOR, LampGuard, LampNotAllowed, RulesBaseline, VirtualFence,
                             appended_test_rules, http_rule, spell)
 
 WB_CONF = {"gateways": [{"device_id": "wb-dali_19", "buses": [
@@ -459,7 +459,11 @@ def test_the_fence_lets_the_session_reach_its_own_gear(method, path, body):
      {"rows": [{"virtual_lamp_id": 60, "desired": GROUP_0}]}),
     ("PATCH", "adapters/0/groups/4", {"ha_entity_enabled": True}),
     ("PATCH", "adapters/0/scenes/2", {"name": "x"}),
+    ("PATCH", "adapters/0/virtual-lamps/6", {"ha_entity_enabled": True}),
     ("PATCH", "adapters/0/virtual-lamps/60", {"ha_entity_enabled": True}),
+    ("PATCH", "adapters/0/virtual-lamps/60", {"name": "x"}),
+    ("PATCH", "adapters/0/virtual-lamps/60", {"ha_entity_enabled": True, "name": "x"}),
+    ("DELETE", "adapters/0/virtual-lamps/60", None),
     ("PUT", "adapters/0/virtual-lamps/60/binding", {"physical_short_address": 16}),
     ("DELETE", "adapters/0/virtual-lamps/6", None),
     ("DELETE", "adapters/0/physical-devices/16", None),
@@ -483,6 +487,111 @@ def test_the_fence_lets_the_session_reach_its_own_gear(method, path, body):
 def test_the_fence_refuses_everything_else(method, path, body):
     with pytest.raises(LampNotAllowed):
         _guard(_fence()).check_request(method, path, body)
+
+
+OWNER_HA = {"enabled": True, "broker_host": "192.0.2.1", "broker_port": 1883,
+            "discovery_prefix": "homeassistant", "state_topic_prefix": "dali",
+            "controller_id": "dali-e0d190", "publish_qos": 1, "retain_state": True,
+            "retain_discovery": True, "expose_input_devices": True}
+HA_ROUTE, VL60 = "settings/home-assistant", "adapters/0/virtual-lamps/60"
+
+
+def _ha_fence(owner=OWNER_HA):
+    return _guard(_fence(ha_settings=owner))
+
+
+def _enter(guard):
+    guard.check_request("PATCH", HA_ROUTE, dict(HA_TEST_NAMESPACE, enabled=True,
+                                                broker_host="192.0.2.9"))
+
+
+def test_the_fence_announces_session_lamps_only_inside_the_test_namespace_and_back():
+    guard = _ha_fence()
+    _enter(guard)
+    for enabled in (True, False):
+        guard.check_request("PATCH", VL60, {"ha_entity_enabled": enabled})
+    guard.fence.unannounced(60)
+    guard.check_request("PATCH", HA_ROUTE, dict(OWNER_HA))
+
+
+def test_an_unannounce_the_firmware_did_not_confirm_keeps_the_bridge_in_the_test_namespace():
+    guard = _ha_fence()
+    _enter(guard)
+    guard.check_request("PATCH", VL60, {"ha_entity_enabled": True})
+    guard.check_request("PATCH", VL60, {"ha_entity_enabled": False})
+    with pytest.raises(LampNotAllowed, match="VL60"):
+        guard.check_request("PATCH", HA_ROUTE, dict(OWNER_HA))
+
+
+def test_a_session_lamp_is_never_announced_in_the_owner_namespace():
+    guard = _ha_fence()
+    with pytest.raises(LampNotAllowed, match="owner's namespace"):
+        guard.check_request("PATCH", VL60, {"ha_entity_enabled": True})
+    _enter(guard)
+    guard.check_request("PATCH", HA_ROUTE, dict(OWNER_HA))
+    with pytest.raises(LampNotAllowed, match="owner's namespace"):
+        guard.check_request("PATCH", VL60, {"ha_entity_enabled": True})
+
+
+def test_the_bridge_stays_in_the_test_namespace_while_a_session_lamp_is_announced():
+    guard = _ha_fence()
+    _enter(guard)
+    guard.check_request("PATCH", VL60, {"ha_entity_enabled": True})
+    with pytest.raises(LampNotAllowed, match="VL60"):
+        guard.check_request("PATCH", HA_ROUTE, dict(OWNER_HA))
+
+
+def test_an_owner_whose_bridge_is_off_gets_it_back_off():
+    owner = dict(OWNER_HA, enabled=False)
+    guard = _ha_fence(owner)
+    _enter(guard)
+    guard.check_request("PATCH", HA_ROUTE, dict(owner))
+
+
+@pytest.mark.parametrize("change", [
+    {"controller_id": "other"}, {"broker_host": "192.0.2.66"}, {"broker_port": 8883},
+    {"expose_input_devices": False}, {"retain_state": False}, {"enabled": False},
+    {"broker_password": "x"},
+])
+def test_the_way_back_is_the_owner_settings_and_nothing_else(change):
+    guard = _ha_fence()
+    _enter(guard)
+    with pytest.raises(LampNotAllowed):
+        guard.check_request("PATCH", HA_ROUTE, dict(OWNER_HA, **change))
+
+
+def test_the_way_back_restores_every_owner_setting_not_only_the_namespace():
+    guard = _ha_fence()
+    _enter(guard)
+    with pytest.raises(LampNotAllowed):
+        guard.check_request("PATCH", HA_ROUTE, {name: OWNER_HA[name] for name in HA_TEST_NAMESPACE})
+
+
+@pytest.mark.parametrize("method,body", [
+    ("PATCH", dict(HA_TEST_NAMESPACE, discovery_prefix="homeassistant")),
+    ("PATCH", dict(HA_TEST_NAMESPACE, enabled=False)),
+    ("PATCH", {"enabled": True}),
+    ("PATCH", {"expose_input_devices": False}),
+    ("PUT", dict(HA_TEST_NAMESPACE)),
+    ("PUT", dict(OWNER_HA)),
+])
+def test_the_fence_refuses_any_other_home_assistant_settings(method, body):
+    with pytest.raises(LampNotAllowed):
+        _ha_fence().check_request(method, HA_ROUTE, body)
+
+
+def test_a_flag_is_patched_and_only_on_a_session_lamp():
+    guard = _ha_fence()
+    _enter(guard)
+    for method, path in (("PUT", VL60), ("PATCH", "adapters/0/virtual-lamps/6")):
+        with pytest.raises(LampNotAllowed):
+            guard.check_request(method, path, {"ha_entity_enabled": True})
+
+
+@pytest.mark.parametrize("namespace", [HA_TEST_NAMESPACE, OWNER_HA])
+def test_without_the_owner_settings_the_fence_moves_the_bridge_nowhere(namespace):
+    with pytest.raises(LampNotAllowed):
+        _guard(_fence()).check_request("PATCH", HA_ROUTE, dict(namespace))
 
 
 OWNER_TOGGLES = {"подсветка: включить": True, "кнопка 3": False}
@@ -790,6 +899,16 @@ def test_teardown_deletes_vls_before_devices_and_restores_flags(tmp_path, monkey
     assert api.calls == [("vl-delete", 60), ("vl-delete", 61), ("forget", 16), ("forget", 17),
                          ("group", 4, {"ha_entity_enabled": True})]
     assert not session.ledger.exists()
+
+
+def test_the_teardown_unannounces_a_park_lamp_before_deleting_it(tmp_path, monkeypatch):
+    api, sim = _TeardownApi(), _QuietSim()
+    api.lamps[60]["ha_entity_enabled"] = True
+    session = _session(tmp_path, api, sim, park=[16, 17], created_vls=[60, 61])
+    monkeypatch.setattr(session, "residual", lambda: [])
+    assert session.close() == []
+    assert api.calls[:3] == [("group", 60, {"ha_entity_enabled": False}), ("vl-delete", 60),
+                             ("vl-delete", 61)]
 
 
 def test_only_the_teardown_forgets_the_park_past_read_only_and_the_lamp_list():
