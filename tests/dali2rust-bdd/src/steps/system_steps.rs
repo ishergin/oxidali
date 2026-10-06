@@ -456,3 +456,9 @@ async fn one_forward_frame_priority(world: &mut DaliWorld, frame_hex: String, ex
         priorities_of(&settle_us)
     );
 }
+
+// SYS-255
+#[when(regex = r#"^I POST a body declared as (\d+) bytes but carrying (\d+) to "([^"]+)"$"#)]
+async fn post_declared_body(world: &mut DaliWorld, declared: usize, carried: usize, path: String) {
+    world.send_declared_body(&path, declared, carried);
+}

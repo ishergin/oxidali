@@ -2,6 +2,30 @@ use super::handler::ApiHandler;
 use super::types::{HttpMethod, HttpResponse, RouteRegisterError};
 use std::collections::HashMap;
 
+pub const MAX_REQUEST_BODY_BYTES: usize = 65_536;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BodyRefusal {
+    TooLarge,
+    Incomplete,
+}
+
+impl BodyRefusal {
+    pub const fn status(self) -> u16 {
+        match self {
+            Self::TooLarge => 413,
+            Self::Incomplete => 400,
+        }
+    }
+
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::TooLarge => "payload_too_large",
+            Self::Incomplete => "incomplete_body",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RequestBody {
     Json,
@@ -75,6 +99,10 @@ impl Router {
     ) -> Self {
         self.role = Some(role);
         self
+    }
+
+    pub fn refuse_body(&self, refusal: BodyRefusal) -> HttpResponse {
+        self.stamped(crate::http::handlers::common::json_err(refusal.status(), refusal.code()))
     }
 
     fn stamped(&self, mut response: HttpResponse) -> HttpResponse {
@@ -217,6 +245,30 @@ mod tests {
 
     fn body_text(body: crate::http::types::HttpBody) -> String {
         String::from_utf8(body.into_bytes()).expect("utf-8")
+    }
+
+    struct Standby;
+    impl crate::http::role::ControllerRolePort for Standby {
+        fn is_active(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn a_body_the_server_could_not_take_is_answered_in_the_api_shape_with_the_role() {
+        let router = Router::new().with_role_port(std::sync::Arc::new(Standby));
+        for (refusal, status, code) in [
+            (BodyRefusal::TooLarge, 413, "payload_too_large"),
+            (BodyRefusal::Incomplete, 400, "incomplete_body"),
+        ] {
+            let response = router.refuse_body(refusal);
+            assert_eq!(response.status, status);
+            assert_eq!(response.content_type, "application/json");
+            assert!(response
+                .extra_headers
+                .contains(&(crate::http::role::ROLE_HEADER, "standby")));
+            assert_eq!(body_text(response.body), format!(r#"{{"error":"{code}"}}"#));
+        }
     }
 
     struct EchoParamsHandler;
