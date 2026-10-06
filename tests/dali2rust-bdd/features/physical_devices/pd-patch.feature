@@ -162,3 +162,29 @@ Feature: Physical-device patch metadata caps
     When I PATCH JSON {"name":"Desk"} to "/api/v1/adapters/0/physical-devices/5"
     Then the response status should be 404
     And the JSON error should be "not_found"
+
+  @id:PD-278
+  Scenario Outline: A device field PATCH does not write is read-only, not unknown
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    When I PATCH JSON {"<field>":<value>} to "/api/v1/adapters/0/physical-devices/0"
+    Then the response status should be 422
+    And the JSON error should be "unsupported_field"
+
+    Examples:
+      | field                   | value                    |
+      | min_level               | 10                       |
+      | dimming_curve           | 1                        |
+      | tc_coolest_mirek        | 153                      |
+      | color_temperature_range | {"coolest_kelvin":6500}  |
+      | random_address          | 1                        |
+
+  @id:PD-279
+  Scenario: A min-level PATCH names write-attributes as the way
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    When I PATCH JSON {"min_level":10} to "/api/v1/adapters/0/physical-devices/0"
+    Then the response status should be 422
+    And the JSON field "message" should be "use POST .../write-attributes"

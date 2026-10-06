@@ -22,7 +22,7 @@ use crate::http::types::HttpResponse;
 use dali2rust_domain::registry::AttributeSectionKind;
 
 use super::common::{
-    accepted_operation_response, json_err, json_err_with_message, json_stream_dto, parse_adapter_id,
+    accepted_operation_response, first_key_outside, json_err, json_err_with_message, json_stream_dto, parse_adapter_id,
     parse_color_mode, parse_device_type, parse_json_body, parse_physical_short, parse_typed_body,
     pd_cap_supports_color_mode, wait_apply_counter, write_json_array_items,
     APPLY_WATCH_BUDGET_MS,
@@ -407,7 +407,7 @@ fn parse_sections(params: &HashMap<String, String>) -> Result<Vec<AttributeSecti
     let mut wanted: u16 = 0;
     for name in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         let kind = AttributeSectionKind::from_wire_name(name)
-            .ok_or_else(|| json_err_with_message(400, "invalid_value", &format!("unknown section '{name}'")))?;
+            .ok_or_else(|| json_err_with_message(422, "invalid_value", &format!("unknown section '{name}'")))?;
         let bit = AttributeSectionKind::ALL
             .iter()
             .position(|k| *k == kind)
@@ -640,20 +640,40 @@ fn parse_existing_physical_device(
     Ok((adapter_id, short))
 }
 
+const PD_WRITE_ATTRIBUTE_KEYS: &[&str] = &[
+    "fade_time_ms",
+    "fade_rate",
+    "power_on_level",
+    "system_failure_level",
+    "extended_fade_time_ms",
+    "tc_coolest_mirek",
+    "tc_warmest_mirek",
+    "min_level",
+    "max_level",
+    "dimming_curve",
+];
+
+const PD_PATCH_KEYS: &[&str] = &[
+    "name",
+    "notes",
+    "device_type_override",
+    "color_mode_override",
+    "dt8_auto_activation_repair",
+    "dt8_rgbwaf_control_assert",
+];
+
+fn is_physical_device_field(key: &str) -> bool {
+    PD_READ_ONLY_KEYS.contains(&key) || PD_PATCH_KEYS.contains(&key)
+}
+
 fn validate_pd_write_attr_keys(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), HttpResponse> {
-    for k in obj.keys() {
-        if !matches!(
-            k.as_str(),
-            "fade_time_ms" | "fade_rate" | "power_on_level" | "system_failure_level"
-                | "extended_fade_time_ms" | "tc_coolest_mirek" | "tc_warmest_mirek"
-                | "min_level" | "max_level" | "dimming_curve"
-        ) {
-            return Err(json_err(422, "unsupported_field"));
-        }
+    match first_key_outside(obj, PD_WRITE_ATTRIBUTE_KEYS) {
+        None => Ok(()),
+        Some(key) if is_physical_device_field(key) => Err(json_err(422, "unsupported_field")),
+        Some(_) => Err(json_err(400, "unknown_field")),
     }
-    Ok(())
 }
 
 fn parse_bounded_attr_field(
@@ -746,45 +766,30 @@ const PD_READ_ONLY_KEYS: &[&str] = &[
     "capabilities",
     "adapter_id",
     "short_address",
+    "now_ms",
+    "random_address",
     "device_type_discovered",
     "device_type_effective",
     "device_type_source",
     "supported_device_types",
+    "extended_versions",
     "color_mode_discovered",
     "color_mode_effective",
     "color_mode_source",
+    "color_temperature_range",
 ];
 
 fn validate_pd_patch_keys(obj: &serde_json::Map<String, serde_json::Value>) -> Result<(), HttpResponse> {
-    for k in obj.keys() {
-        if matches!(
-            k.as_str(),
-            "name"
-                | "notes"
-                | "device_type_override"
-                | "color_mode_override"
-                | "dt8_auto_activation_repair"
-                | "dt8_rgbwaf_control_assert"
-        ) {
-            continue;
-        }
-        if PD_READ_ONLY_KEYS.contains(&k.as_str()) {
-            return Err(json_err(422, "unsupported_field"));
-        }
-        if k.contains("fade_time")
-            || k.contains("fade_rate")
-            || k.contains("power_on")
-            || k.contains("extended_fade")
-        {
-            return Err(json_err_with_message(
-                422,
-                "unsupported_field",
-                "use POST .../write-attributes",
-            ));
-        }
-        return Err(json_err(400, "unknown_field"));
+    match first_key_outside(obj, PD_PATCH_KEYS) {
+        None => Ok(()),
+        Some(key) if PD_WRITE_ATTRIBUTE_KEYS.contains(&key) => Err(json_err_with_message(
+            422,
+            "unsupported_field",
+            "use POST .../write-attributes",
+        )),
+        Some(key) if PD_READ_ONLY_KEYS.contains(&key) => Err(json_err(422, "unsupported_field")),
+        Some(_) => Err(json_err(400, "unknown_field")),
     }
-    Ok(())
 }
 
 const MAX_PD_NAME_BYTES: usize = 64;

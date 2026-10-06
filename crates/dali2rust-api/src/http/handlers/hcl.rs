@@ -20,7 +20,9 @@ use crate::http::handlers::common::{
     accepted_config_write_response, body_parse_error, json_err, json_err_with_message,
     json_stream_dto, parse_typed_body,
 };
-use crate::http::handlers::hcl_validate::{validate_schedule, validate_schedule_id, ValidatedSchedule};
+use crate::http::handlers::hcl_validate::{
+    schedule_id_path, validate_schedule, validate_schedule_id, ValidatedSchedule,
+};
 use crate::http::handlers::operation_dispatch::publish_begin_then_chunk_series;
 use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::types::HttpResponse;
@@ -48,7 +50,7 @@ fn schedule_id_param(params: &HashMap<String, String>) -> Result<String, HttpRes
     let Some(raw) = params.get("schedule_id") else {
         return Err(json_err(400, "missing_resource_id"));
     };
-    validate_schedule_id(raw)?;
+    schedule_id_path(raw)?;
     Ok(raw.clone())
 }
 

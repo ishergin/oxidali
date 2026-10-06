@@ -888,7 +888,7 @@ fn virtual_lamp_patch_validation_errors() {
     );
     assert_eq!(
         error_code(handler.handle_request("PATCH", "", br#"{}"#, &request_params)),
-        "invalid_json"
+        "empty_patch"
     );
 }
 

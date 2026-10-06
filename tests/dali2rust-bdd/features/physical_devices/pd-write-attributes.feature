@@ -337,3 +337,14 @@ Feature: Physical device write-attributes
       | null  |
       | "5"   |
       | 1.5   |
+
+  @id:PD-280
+  Scenario: A write-attributes key no device has is unknown, not unsupported
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    And the DALI mock transport frame log should be cleared
+    When I POST JSON {"fade_tme_ms":500} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"
+    And the DALI mock transport should have received 0 forward frame

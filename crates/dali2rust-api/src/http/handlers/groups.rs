@@ -31,7 +31,7 @@ use crate::http::handlers::common::{
 };
 use crate::http::target_state_request::TargetStateBody;
 use crate::http::types::HttpResponse;
-use crate::http::handlers::common::{publish_apply_execute, reject_if_apply_active};
+use crate::http::handlers::common::{check_body_keys, publish_apply_execute, reject_if_apply_active};
 use dali2rust_domain::registry::OperationReadPort;
 
 use dali2rust_domain::registry::{GROUP_COUNT, VIRTUAL_LAMP_COUNT};
@@ -315,11 +315,7 @@ fn parse_group_patch_data(
 
 fn parse_matrix_rows(value: &Value, full_replace: bool) -> Result<Vec<GroupMatrixDesiredRow>, HttpResponse> {
     let object = value.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
-    for key in object.keys() {
-        if key != "rows" {
-            return Err(matrix_root_field_error(key));
-        }
-    }
+    check_body_keys(object, &["rows"], &["groups", "dirty", "adapter_id"])?;
     let rows = object
         .get("rows")
         .and_then(Value::as_array)
@@ -331,13 +327,6 @@ fn parse_matrix_rows(value: &Value, full_replace: bool) -> Result<Vec<GroupMatri
         return Err(json_err(422, "invalid_value"));
     }
     parse_matrix_row_array(rows, full_replace)
-}
-
-fn matrix_root_field_error(key: &str) -> HttpResponse {
-    match key {
-        "groups" | "dirty" => json_err(422, "unsupported_field"),
-        _ => json_err(400, "unknown_field"),
-    }
 }
 
 fn parse_matrix_row_array(

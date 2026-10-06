@@ -37,7 +37,7 @@ use crate::http::target_state_request::{
     apply_setpoint_fields, SetpointFields, TARGET_STATE_RUNTIME_READONLY_KEYS,
 };
 use crate::http::types::HttpResponse;
-use crate::http::handlers::common::{publish_apply_execute, reject_if_apply_active};
+use crate::http::handlers::common::{check_body_keys, publish_apply_execute, reject_if_apply_active};
 use dali2rust_domain::registry::OperationReadPort;
 
 use dali2rust_domain::registry::{SCENE_COUNT, VIRTUAL_LAMP_COUNT};
@@ -308,9 +308,7 @@ fn parse_recall_scope(
     }
     let v = parse_json_body(body)?;
     let obj = v.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
-    if obj.keys().any(|k| k != "scope" && k != "group_id") {
-        return Err(json_err(422, "unsupported_field"));
-    }
+    check_body_keys(obj, &["scope", "group_id"], &[])?;
     match recall_scope_str(obj)? {
         None | Some("broadcast") if !obj.contains_key("group_id") => {
             Ok(DaliRecallSceneCommand::broadcast(adapter_id, scene_id))

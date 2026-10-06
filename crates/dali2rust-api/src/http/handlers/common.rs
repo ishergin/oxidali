@@ -300,12 +300,19 @@ pub fn parse_json_body(body: &[u8]) -> Result<serde_json::Value, HttpResponse> {
     parse_typed_body(body)
 }
 
+pub fn first_key_outside<'a>(
+    obj: &'a serde_json::Map<String, serde_json::Value>,
+    writable: &[&str],
+) -> Option<&'a str> {
+    obj.keys().map(String::as_str).find(|key| !writable.contains(key))
+}
+
 pub fn check_body_keys(
     obj: &serde_json::Map<String, serde_json::Value>,
     writable: &[&str],
     read_only: &[&str],
 ) -> Result<(), HttpResponse> {
-    let Some(key) = obj.keys().map(String::as_str).find(|key| !writable.contains(key)) else {
+    let Some(key) = first_key_outside(obj, writable) else {
         return Ok(());
     };
     if read_only.contains(&key) {

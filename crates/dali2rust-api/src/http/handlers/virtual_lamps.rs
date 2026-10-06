@@ -354,6 +354,7 @@ fn validate_vl_patch_keys(obj: &serde_json::Map<String, serde_json::Value>) -> R
         "color_mode_effective",
         "color_mode_source",
         "binding",
+        "color_temperature_range",
     ];
     for k in obj.keys() {
         if matches!(

@@ -12,7 +12,7 @@ use crate::confirmation_bridge::PendingConfirmationSlots;
 use crate::http::dispatcher::CorrelationIdAllocator;
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::common::{
-    accepted_operation_response, json_err, parse_adapter_id, parse_json_body,
+    accepted_operation_response, check_body_keys, json_err, parse_adapter_id, parse_json_body,
     parse_strict_body, parse_typed_body, refusal_before_the_wire, reject_if_commissioning_active,
     MutatingHandler,
 };
@@ -60,10 +60,7 @@ fn validate_identify_keys(body: &[u8]) -> Result<(), HttpResponse> {
     let Some(obj) = value.as_object() else {
         return Ok(());
     };
-    if obj.keys().any(|key| key.as_str() != "short_address") {
-        return Err(json_err(422, "unsupported_field"));
-    }
-    Ok(())
+    check_body_keys(obj, &["short_address"], &[])
 }
 
 declare_handler_shell!(CommissioningIdentifyHandler {

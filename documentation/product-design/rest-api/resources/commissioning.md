@@ -34,7 +34,7 @@ expert-шагов; последовательность IEC строит DALI wo
 
 ## `POST identify`
 
-Тело — только `{"short_address": N}`; любой другой ключ — `422 unsupported_field`.
+Тело — только `{"short_address": N}`; любой другой ключ — `400 unknown_field`.
 Прибор должен быть известен реестру (`404 not_found`), адрес вне `0..63` — `422
 invalid_value`.
 

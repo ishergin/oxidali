@@ -43,7 +43,8 @@ BDD — [`groups`](../../../../tests/dali2rust-bdd/features/groups/).
 ## Запись матрицы
 
 `desired` строки — массив ровно из 16 bool (индекс — `group_id`), заменяется целиком.
-`applied`, `name` в строке и `groups`, `dirty` в корне — `422 unsupported_field`;
+`applied`, `name` в строке и `groups`, `dirty`, `adapter_id` в корне — `422
+unsupported_field`;
 неверная длина, число строк или дубли — `422 invalid_value`. Ответ — `202`
 `config_write`, чанковая запись.
 
@@ -61,7 +62,7 @@ readback, частичный отказ) — [`../workflows.md`](../workflows.md
 ## `PATCH groups/{group_id}`
 
 Merge-patch: `name`, `ha_entity_enabled`. Derived-поля и идентификаторы — `422
-unsupported_field`. Мост Home Assistant переобъявляет или отзывает сущность группы.
+unsupported_field`; пустое тело — `400 empty_patch`. Мост Home Assistant переобъявляет или отзывает сущность группы.
 
 ## `PUT groups/{group_id}/target-state`
 
