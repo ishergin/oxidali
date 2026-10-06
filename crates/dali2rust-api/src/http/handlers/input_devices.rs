@@ -14,7 +14,7 @@ use crate::confirmation_bridge::PendingConfirmationSlots;
 use crate::http::dispatcher::publish_batch_and_wait_for_success;
 use crate::http::handlers::common::{
     accepted_operation_response, json_err, json_err_with_message, json_stream_dto,
-    parse_adapter_id, parse_resource_id_param,
+    check_body_keys, parse_adapter_id, parse_body_object, parse_resource_id_param,
 };
 use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command;
 use crate::http::input_device_state::InputDeviceHttpState;
@@ -200,7 +200,10 @@ impl ApiHandler for InputDeviceActionHandler {
             Err(response) => return response,
         };
         match self.action {
-            InputDeviceAction::Scan => self.scan(adapter_id),
+            InputDeviceAction::Scan => match parse_body_object(body, &[]) {
+                Ok(_) => self.scan(adapter_id),
+                Err(response) => response,
+            },
             InputDeviceAction::Commission => self.commission(adapter_id, body),
             InputDeviceAction::Identify => self.per_device(adapter_id, params, body),
             InputDeviceAction::ConfigureInstance => self.configure(adapter_id, params, body),
@@ -237,13 +240,9 @@ impl InputDeviceActionHandler {
     }
 
     fn commission(&self, adapter_id: u8, body: &[u8]) -> HttpResponse {
-        let include_addressed = match serde_json::from_slice::<Value>(body) {
-            Ok(json) => json
-                .get("include_addressed")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            Err(_) if body.is_empty() => false,
-            Err(_) => return json_err(400, "invalid_json"),
+        let include_addressed = match parse_commission_body(body) {
+            Ok(include_addressed) => include_addressed,
+            Err(response) => return response,
         };
         let corr = self.correlation();
         let semantic = dali2rust_contracts::bus::command_envelope(
@@ -267,12 +266,15 @@ impl InputDeviceActionHandler {
         &self,
         adapter_id: u8,
         params: &std::collections::HashMap<String, String>,
-        _body: &[u8],
+        body: &[u8],
     ) -> HttpResponse {
         let short_address = match device_path(params) {
             Ok(short_address) => short_address,
             Err(response) => return response,
         };
+        if let Err(response) = parse_body_object(body, &[]) {
+            return response;
+        }
         if self.state.detail(adapter_id, short_address).is_none() {
             return json_err(404, "input_device_not_found");
         }
@@ -350,16 +352,14 @@ impl InputDeviceActionHandler {
         if instance_number >= device.summary.instance_count {
             return json_err(404, "instance_not_found");
         }
-        let opcode_map = match feedback_dialect(&device, instance_number) {
+        let mut cmd = match parse_feedback_patch(body, adapter_id, short_address, instance_number) {
+            Ok(cmd) => cmd,
+            Err(response) => return response,
+        };
+        cmd.opcode_map = match feedback_dialect(&device, instance_number) {
             Ok(map) => map,
             Err(response) => return response,
         };
-        let cmd =
-            match parse_feedback_patch(body, adapter_id, short_address, instance_number, opcode_map)
-            {
-                Ok(cmd) => cmd,
-                Err(response) => return response,
-            };
         let corr = self.correlation();
         let semantic = dali2rust_contracts::bus::command_envelope(
             dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
@@ -456,14 +456,31 @@ impl InputDeviceActionHandler {
 }
 
 
+fn parse_commission_body(body: &[u8]) -> Result<bool, HttpResponse> {
+    let json = parse_body_object(body, &["include_addressed"])?;
+    match json.get("include_addressed") {
+        None => Ok(false),
+        Some(value) => value.as_bool().ok_or_else(|| json_err(422, "invalid_value")),
+    }
+}
+
+const INSTANCE_PATCH_KEYS: [&str; 6] = [
+    "event_scheme",
+    "event_priority",
+    "enabled",
+    "event_filter",
+    "instance_groups",
+    "timers",
+];
+const INSTANCE_GROUP_SLOTS: usize = 3;
+
 fn parse_instance_patch(
     body: &[u8],
     adapter_id: u8,
     short_address: u8,
     instance_number: u8,
 ) -> Result<Dali103InstanceConfigureCommand, HttpResponse> {
-    let json: Value =
-        serde_json::from_slice(body).map_err(|_| json_err(400, "invalid_json"))?;
+    let json = Value::Object(parse_body_object(body, &INSTANCE_PATCH_KEYS)?);
     let mut cmd = Dali103InstanceConfigureCommand {
         registry_adapter_id: adapter_id,
         short_address,
@@ -499,6 +516,7 @@ fn parse_timers(
         ("t_repeat_ms", 2, 20, 5, 100, false),
         ("t_stuck_s", 3, 1, 5, 255, false),
     ];
+    check_body_keys(timers, &SPECS.map(|(key, ..)| key), &[])?;
     for (key, slot, unit, min_units, max_units, zero_ok) in SPECS {
         let Some(value) = timers.get(key) else { continue };
         let raw = value.as_u64().ok_or_else(|| json_err(422, "invalid_value"))?;
@@ -544,9 +562,8 @@ fn parse_feedback_patch(
     adapter_id: u8,
     short_address: u8,
     instance_number: u8,
-    opcode_map: u8,
 ) -> Result<Dali103FeedbackConfigureCommand, HttpResponse> {
-    let json: Value = serde_json::from_slice(body).map_err(|_| json_err(400, "invalid_json"))?;
+    let json = Value::Object(parse_body_object(body, &FeedbackPatchField::ALL.map(feedback_key))?);
     let mut cmd = Dali103FeedbackConfigureCommand {
         registry_adapter_id: adapter_id,
         short_address,
@@ -557,7 +574,7 @@ fn parse_feedback_patch(
         active_colour: 0,
         inactive_brightness: 0,
         inactive_colour: 0,
-        opcode_map,
+        opcode_map: 0,
     };
     parse_feedback_fields(&json, &mut cmd)?;
     if cmd.patch_mask == 0 {
@@ -644,7 +661,10 @@ fn parse_filter_and_groups(
     }
     if let Some(groups) = json.get("instance_groups") {
         let groups = groups.as_array().ok_or_else(|| json_err(422, "invalid_value"))?;
-        for (slot, group) in groups.iter().take(3).enumerate() {
+        if groups.len() > INSTANCE_GROUP_SLOTS {
+            return Err(json_err(422, "invalid_value"));
+        }
+        for (slot, group) in groups.iter().enumerate() {
             cmd.instance_groups[slot] = parse_group(group)?;
             cmd.patch(InstancePatchField::INSTANCE_GROUPS[slot]);
         }
@@ -703,8 +723,7 @@ fn parse_metadata_patch(
     short_address: u8,
 ) -> Result<(InputDeviceMetadataUpdateCommand, Option<InputDeviceNotesUpdateCommand>), HttpResponse>
 {
-    let json: Value =
-        serde_json::from_slice(body).map_err(|_| json_err(400, "invalid_json"))?;
+    let json = Value::Object(parse_body_object(body, &["name", "ha_expose", "notes"])?);
     let mut cmd = InputDeviceMetadataUpdateCommand {
         registry_adapter_id: adapter_id,
         short_address,

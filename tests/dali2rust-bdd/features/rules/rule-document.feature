@@ -83,3 +83,14 @@ Feature: The rules document: parse, store, read back byte-for-byte
     When I PUT an oversized rules document
     Then the response status should be 413
     And the response body should contain "rule_document_too_large"
+
+  @id:RULE-086
+  Scenario: PATCH of a rule with a field besides enabled is refused, and the bit stays
+    When I PUT JSON {"base_revision":0,"source":"rule \"night\" {\n  when at 23:00\n  do broadcast.off()\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I PATCH JSON {"enabled":false,"name":"day"} to "/api/v1/rules/night"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"
+    When I send a GET request to "/api/v1/rules?format=json"
+    Then the JSON pointer "/rules/rules/0/enabled" should be true

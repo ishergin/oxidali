@@ -183,3 +183,54 @@ Feature: IEC 62386-103 input devices as a REST resource
       | GET    | /api/v1/adapters/0/input-devices/64            |
       | DELETE | /api/v1/adapters/0/input-devices/64            |
       | POST   | /api/v1/adapters/0/input-devices/64/identify   |
+
+  @id:INP-089
+  Scenario Outline: A body field the route does not know is refused, not dropped
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock transport 24-bit trace is cleared
+    And I PATCH JSON <body> to "<path>"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"
+    And the mock transport should have sent no 24-bit frames
+
+    Examples:
+      | path                                                 | body                                  |
+      | /api/v1/adapters/0/input-devices/0                   | {"name":"panel","colour":"red"}       |
+      | /api/v1/adapters/0/input-devices/0/instances/0       | {"event_scheme":2,"scheme":2}         |
+      | /api/v1/adapters/0/input-devices/0/instances/0       | {"timers":{"t_long_ms":400}}          |
+      | /api/v1/adapters/0/input-devices/0/instances/0/feedback | {"timing":3,"blink":true}          |
+
+  @id:INP-090
+  Scenario: Four instance groups are refused rather than cut to three
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock transport 24-bit trace is cleared
+    And I PATCH JSON {"instance_groups":[1,2,3,4]} to "/api/v1/adapters/0/input-devices/0/instances/0"
+    Then the response status should be 422
+    And the JSON error should be "invalid_value"
+    And the mock transport should have sent no 24-bit frames
+
+  @id:INP-091
+  Scenario Outline: A commission body the route cannot honour is refused before the wire
+    When I POST JSON <body> to "/api/v1/adapters/0/input-devices/commission"
+    Then the response status should be <status>
+    And the JSON error should be "<error>"
+    And the mock transport should have sent no 24-bit frames
+
+    Examples:
+      | body                            | status | error         |
+      | {"include_adressed":true}       | 400    | unknown_field |
+      | {"include_addressed":"yes"}     | 422    | invalid_value |
+
+  @id:INP-092
+  Scenario Outline: A scan or identify body with a field is refused, the routes take none
+    When I POST JSON {"force":true} to "<path>"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"
+    And the mock transport should have sent no 24-bit frames
+
+    Examples:
+      | path                                          |
+      | /api/v1/adapters/0/input-devices/scan         |
+      | /api/v1/adapters/0/input-devices/0/identify   |

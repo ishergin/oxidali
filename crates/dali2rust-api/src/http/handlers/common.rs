@@ -300,6 +300,32 @@ pub fn parse_json_body(body: &[u8]) -> Result<serde_json::Value, HttpResponse> {
     parse_typed_body(body)
 }
 
+pub fn check_body_keys(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    writable: &[&str],
+    read_only: &[&str],
+) -> Result<(), HttpResponse> {
+    let Some(key) = obj.keys().map(String::as_str).find(|key| !writable.contains(key)) else {
+        return Ok(());
+    };
+    if read_only.contains(&key) {
+        Err(json_err(422, "unsupported_field"))
+    } else {
+        Err(json_err(400, "unknown_field"))
+    }
+}
+
+pub fn parse_body_object(
+    body: &[u8],
+    writable: &[&str],
+) -> Result<serde_json::Map<String, serde_json::Value>, HttpResponse> {
+    let serde_json::Value::Object(obj) = parse_json_body(body)? else {
+        return Err(json_err(400, "invalid_json"));
+    };
+    check_body_keys(&obj, writable, &[])?;
+    Ok(obj)
+}
+
 pub fn body_parse_error(
     error: &serde_json::Error,
     fallback_status: u16,

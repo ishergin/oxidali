@@ -28,7 +28,8 @@ control gear ([09 §Part 103](../../../architecture/09-dali-protocol-rules.md#pa
 | `PATCH` | `{short_address}/instances/{n}/feedback` | Индикация (Part 332) | `202` `config_write` |
 
 `scan` не открывает сессию `INITIALISE` и безопасен на живой шине. `commission` с
-пустым телом адресует только устройства без адреса; `{"include_addressed": true}` —
+пустым телом адресует только устройства без адреса (не bool в `include_addressed` —
+`422 invalid_value`); `{"include_addressed": true}` —
 переадресация работающего сегмента, разрушительный вариант, который надо попросить
 явно. Commissioning держит шину целиком, как и у control gear.
 
@@ -75,7 +76,8 @@ ingress — `503`, запись исчезла до исполнения — `40
 
 Поля (все необязательны, пустое тело — `400 empty_patch`): `event_scheme` (`0..4`),
 `event_priority` (`3..5`), `enabled` (bool), `event_filter` (до трёх байт фильтра
-событий), `instance_groups` (до трёх, `0..31` или `null` — не состоит), `timers`
+событий), `instance_groups` (до трёх, `0..31` или `null` — не состоит; больше трёх —
+`422 invalid_value`), `timers`
 (`t_short_ms`, `t_double_ms`, `t_repeat_ms` — кратно 20 мс, `t_stuck_s`).
 
 - Каждое поле — отдельная 24-битная запись **с обязательным чтением обратно**:
@@ -116,6 +118,7 @@ ingress — `503`, запись исчезла до исполнения — `40
 | `not_found` | 404 | Адаптера с таким номером нет |
 | `input_device_not_found` | 404 | Адреса нет в реестре |
 | `instance_not_found` | 404 | Инстанс вне объявленных |
+| `unknown_field` | 400 | Поле тела, которого у маршрута нет (у `scan` и `identify` полей нет) |
 | `empty_patch` | 400 | Тело без полей |
 | `invalid_value`, `invalid_timer_range`, `invalid_feedback_colour`, `feedback_not_supported` | 422 | См. выше |
 

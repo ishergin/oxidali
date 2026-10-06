@@ -9,7 +9,7 @@ use dali2rust_rules_model::{NameResolver, RuleCompiler};
 use serde_json::{json, Value};
 
 use crate::http::handler::ApiHandler;
-use crate::http::handlers::common::{accepted_operation_response, json_err};
+use crate::http::handlers::common::{accepted_operation_response, json_err, parse_body_object};
 use crate::http::rules_state::{RuleRuntimeView, RulesHttpState};
 use crate::http::types::HttpResponse;
 
@@ -269,9 +269,9 @@ impl RulesHandler {
         let Some(name) = params.get("rule_name") else {
             return json_err(400, "invalid_resource_id");
         };
-        let json: Value = match serde_json::from_slice(body) {
+        let json = match parse_body_object(body, &["enabled"]) {
             Ok(json) => json,
-            Err(_) => return json_err(400, "invalid_json"),
+            Err(response) => return response,
         };
         let Some(enabled) = json.get("enabled").and_then(Value::as_bool) else {
             return json_err(400, "missing_enabled");

@@ -319,3 +319,21 @@ Feature: Physical device write-attributes
     And the JSON error should be "not_found"
     And the operations list should contain exactly 0 operations
     And the DALI mock transport should have received 0 forward frame
+
+  @id:PD-277
+  Scenario Outline: A write-attributes value of the wrong type is refused, not dropped
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    And the DALI mock transport frame log should be cleared
+    When I POST JSON {"min_level":<value>} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 422
+    And the JSON error should be "invalid_value"
+    And the DALI mock transport should have received 0 forward frame
+
+    Examples:
+      | value |
+      | -1    |
+      | null  |
+      | "5"   |
+      | 1.5   |

@@ -661,9 +661,12 @@ fn parse_bounded_attr_field(
     key: &str,
     max: u64,
 ) -> Result<Option<u64>, HttpResponse> {
-    match obj.get(key).and_then(|v| v.as_u64()) {
-        Some(x) if x > max => Err(json_err(422, "invalid_value")),
-        other => Ok(other),
+    let Some(value) = obj.get(key) else {
+        return Ok(None);
+    };
+    match value.as_u64() {
+        Some(x) if x <= max => Ok(Some(x)),
+        _ => Err(json_err(422, "invalid_value")),
     }
 }
 
