@@ -182,3 +182,16 @@ Feature: IEC 62386-103 input devices as a REST resource
     And the last operation eventually fails
     And the operation error message should be "verify_failed"
     And the mock transport 24-bit trace should be exactly "C1 32 01, C1 31 80, C1 30 0F, 01 FE 36, 01 00 68, 01 00 68, 01 00 90, 01 00 91"
+
+  @id:INP-097
+  Scenario: A narrowed event filter keeps only the byte the instance has
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock bus answers 24-bit query "01 FE 36" with "0F"
+    And the mock bus answers 24-bit query "01 00 90" with "0F"
+    And I PATCH JSON {"event_filter":[15,128,1]} to "/api/v1/adapters/0/input-devices/0/instances/0" and the operation succeeds
+    And I send a GET request to "/api/v1/adapters/0/input-devices/0"
+    Then the response status should be 200
+    And the JSON pointer "/instances/0/event_filter/value/0" should be 15
+    And the JSON pointer "/instances/0/event_filter/value/1" should be 0
+    And the JSON pointer "/instances/0/event_filter/value/2" should be 0

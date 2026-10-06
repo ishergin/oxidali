@@ -371,7 +371,7 @@ pub fn set_event_filter_verified(
     short_address: u8,
     instance_number: u8,
     filter: [u8; 3],
-) -> Result<(), SemanticDaliError> {
+) -> Result<[u8; 3], SemanticDaliError> {
     let address = Device103Address::Short(short_address);
     let instance = InstanceAddress::Number(instance_number);
     controller.unit(|c| {
@@ -389,7 +389,7 @@ fn verify_event_filter(
     address: Device103Address,
     instance: InstanceAddress,
     filter: [u8; 3],
-) -> Result<(), SemanticDaliError> {
+) -> Result<[u8; 3], SemanticDaliError> {
     let low = send(
         controller,
         Instance103Command::QueryEventFilter0To7.frame(address, instance),
@@ -397,17 +397,20 @@ fn verify_event_filter(
     )?;
     verify_readback(low, |actual| actual == filter[0])?;
     let upper = [
-        (Instance103Command::QueryEventFilter8To15, filter[1]),
-        (Instance103Command::QueryEventFilter16To23, filter[2]),
+        (Instance103Command::QueryEventFilter8To15, 1),
+        (Instance103Command::QueryEventFilter16To23, 2),
     ];
-    for (query, wanted) in upper {
+    let mut held = [filter[0], NARROWED_FILTER_BYTE, NARROWED_FILTER_BYTE];
+    for (query, byte) in upper {
         let seen = send(controller, query.frame(address, instance), true)?;
         if seen != DaliResponse::NoAnswer {
-            verify_readback(seen, |actual| actual == wanted)?;
+            held[byte] = verify_readback(seen, |actual| actual == filter[byte])?;
         }
     }
-    Ok(())
+    Ok(held)
 }
+
+const NARROWED_FILTER_BYTE: u8 = 0;
 
 pub fn set_instance_enabled_verified(
     controller: &mut impl DaliApplicationController,

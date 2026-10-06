@@ -148,7 +148,7 @@ async fn given_scan_with_ed1_feedback(world: &mut DaliWorld, types: String, capa
     seed_scan_with_feedback(world, &types, 0x2F, parse_hex_byte(&capability), None);
 }
 
-// INP-019 INP-070 INP-071 INP-073 INP-076 INP-077 INP-079 INP-080 INP-081 RULE-020 RULE-023 INP-095 INP-096
+// INP-019 INP-070 INP-071 INP-073 INP-076 INP-077 INP-079 INP-080 INP-081 RULE-020 RULE-023 INP-095 INP-096 INP-097
 #[when(regex = r#"^the mock bus answers 24-bit query "([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2})" with "([0-9A-Fa-f]{2})"$"#)]
 #[given(regex = r#"^the mock bus answers 24-bit query "([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2})" with "([0-9A-Fa-f]{2})"$"#)]
 async fn given_frame24_answer(
@@ -168,7 +168,7 @@ async fn given_frame24_answer(
     );
 }
 
-// INP-019 INP-070 INP-071 INP-073 INP-076 INP-079 INP-095
+// INP-019 INP-070 INP-071 INP-073 INP-076 INP-079 INP-095 INP-097
 #[when(regex = r#"^I PATCH JSON (.+?) to "([^"]+)" and the operation succeeds$"#)]
 async fn when_patch_and_operation_succeeds(world: &mut DaliWorld, body: String, path: String) {
     let before = fetch_json(world.server_port(), &detail_path_of(&path)).map(|v| v.to_string());
@@ -241,7 +241,7 @@ async fn given_next_frame24_collides(world: &mut DaliWorld) {
     guard.script_frame24_outcome(TransferOutcome::Collision);
 }
 
-// INP-010 INP-011 INP-013 INP-016 INP-017 INP-019 INP-030 INP-031 INP-032 INP-074 INP-075 INP-076 INP-077 INP-078 RULE-020 RULE-023 INP-083 RULE-065 RULE-066 INP-086 INP-095 INP-096
+// INP-010 INP-011 INP-013 INP-016 INP-017 INP-019 INP-030 INP-031 INP-032 INP-074 INP-075 INP-076 INP-077 INP-078 RULE-020 RULE-023 INP-083 RULE-065 RULE-066 INP-086 INP-095 INP-096 INP-097
 #[given(regex = r#"^the mock bus answers a control-device scan with a device at address 0 holding instance types "([0-9,]+)"$"#)]
 async fn given_scan_answers(world: &mut DaliWorld, types: String) {
     let types: Vec<u8> = types
@@ -265,7 +265,7 @@ async fn given_empty_segment(world: &mut DaliWorld) {
     guard.clear_frame24_answers();
 }
 
-// INP-006 INP-010 INP-011 INP-013 INP-016 INP-017 INP-018 INP-019 INP-030 INP-031 INP-032 INP-070 INP-071 INP-072 INP-073 INP-074 INP-075 INP-076 INP-077 INP-078 INP-079 INP-080 INP-081 INP-082 INP-083 INP-084 MQTT-025 RULE-020 RULE-023 RULE-065 RULE-066 INP-086 INP-095 INP-096
+// INP-006 INP-010 INP-011 INP-013 INP-016 INP-017 INP-018 INP-019 INP-030 INP-031 INP-032 INP-070 INP-071 INP-072 INP-073 INP-074 INP-075 INP-076 INP-077 INP-078 INP-079 INP-080 INP-081 INP-082 INP-083 INP-084 MQTT-025 RULE-020 RULE-023 RULE-065 RULE-066 INP-086 INP-095 INP-096 INP-097
 #[when("input devices are scanned on adapter 0 and the scan succeeds")]
 async fn when_scan_succeeds(world: &mut DaliWorld) {
     world.send_http_request("POST", "/api/v1/adapters/0/input-devices/scan", None, "");

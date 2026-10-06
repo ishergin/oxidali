@@ -255,7 +255,8 @@ fn an_event_filter_reads_back_every_byte_it_set() {
     let (mut controller, transport) = controller();
     answer_filter_write(&transport, FILTER.map(Some));
 
-    set_event_filter_verified(&mut controller, 3, 0, FILTER).expect("every byte read back");
+    let held = set_event_filter_verified(&mut controller, 3, 0, FILTER).expect("every byte read back");
+    assert_eq!(held, FILTER);
 
     let address = Device103Address::Short(3);
     let instance = InstanceAddress::Number(0);
@@ -300,8 +301,13 @@ fn a_narrowed_filter_answers_no_for_the_bytes_it_does_not_have() {
     let (mut controller, transport) = controller();
     answer_filter_write(&transport, [Some(FILTER[0]), None, None]);
 
-    set_event_filter_verified(&mut controller, 3, 0, FILTER)
+    let held = set_event_filter_verified(&mut controller, 3, 0, FILTER)
         .expect("a one-byte filter ignores DTR1 and DTR2 and says so with NO");
+    assert_eq!(
+        held,
+        [FILTER[0], 0, 0],
+        "the bytes the instance does not have are not reported as written"
+    );
 }
 
 #[test]
