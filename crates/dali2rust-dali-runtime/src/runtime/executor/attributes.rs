@@ -71,7 +71,7 @@ use outcomes::{track, track_gated};
 pub use scene_colours::read_scene_colour_readback;
 use scene_colours::read_scene_colours;
 pub use write::{write_short_attributes, ConfirmedWritableAttributes, WriteAttributesExecution};
-use write::{reread_physical_minimum, send_dtr0_config_verified, WriteTally};
+use write::{reread_physical_minimum, send_dtr0_config_verified, ReadBack, WriteTally};
 
 #[derive(Debug, Clone)]
 pub struct AttributeReadExecution {

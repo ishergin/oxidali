@@ -40,7 +40,8 @@ pub(super) fn write_extended_fade_time(
         return Ok(());
     };
     let dtr0 = extended_fade_time_byte_from_ms(ms);
-    let verify = |c: &mut _| send_standard_query(c, address, StandardCommand::QueryExtendedFadeTime);
+    let verify =
+        |c: &mut _| send_standard_response(c, address, StandardCommand::QueryExtendedFadeTime);
     let read_back =
         send_dtr0_config_verified(controller, address, dtr0, StandardCommand::SetExtendedFadeTime, verify)?;
     if tally.proved(read_back).is_some() {

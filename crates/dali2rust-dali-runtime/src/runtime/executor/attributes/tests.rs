@@ -1,5 +1,6 @@
 use super::*;
 use dali2rust_contracts::msg::PowerState;
+use crate::runtime::executor::helpers::VERIFY_CONTENDED_MESSAGE;
 use crate::runtime::executor::test_helpers::shared::{
     assert_script_consumed, setup_controller, short_address, wire_counters,
 };
@@ -729,6 +730,122 @@ fn an_unanswered_dimming_curve_read_back_is_named_and_confirms_nothing() {
     assert_eq!(
         execution.error,
         Some(SemanticDaliError::OperationFailed(VERIFY_UNANSWERED_MESSAGE))
+    );
+    assert_script_consumed(&transport);
+}
+
+fn expect_unconfirmed_armed_write(
+    mock: &MockDaliTransport,
+    short: u8,
+    (set, query): (StandardCommand, StandardCommand),
+    dtr0: u8,
+) {
+    mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(dtr0)).to_forward_frame().raw());
+    mock.expect_forward_frame(standard_query_frame(short, set));
+    mock.expect_forward_frame(standard_query_frame(short, set));
+    mock.expect_forward_frame_corrupted_in_window(standard_query_frame(short, query));
+}
+
+#[test]
+fn a_violating_read_back_is_named_contended_not_silent() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_unconfirmed_armed_write(
+        &mock,
+        short,
+        (StandardCommand::SetFadeTime, StandardCommand::QueryFadeTimeFadeRate),
+        1,
+    );
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None,
+    );
+
+    assert_eq!(execution.confirmed.fade_time_ms, None, "a violation proves nothing");
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_CONTENDED_MESSAGE)),
+        "several answers in one window are not silence (101 §8.2.5)"
+    );
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_violating_bound_read_back_is_named_contended() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_unconfirmed_armed_write(
+        &mock,
+        short,
+        (StandardCommand::SetMinLevel, StandardCommand::QueryMinLevel),
+        100,
+    );
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, None, None, None, None, None, (None, None), (Some(100), None), None,
+    );
+
+    assert_eq!(execution.confirmed.min_level, None);
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_CONTENDED_MESSAGE))
+    );
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_violating_dimming_curve_read_back_is_named_contended() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let curve = 1;
+    let enable_dt6 = DaliCommand::Special(SpecialCommand::EnableDeviceType(6)).to_forward_frame().raw();
+    mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(curve)).to_forward_frame().raw());
+    mock.expect_forward_frame_with_backward(
+        standard_query_frame(short, StandardCommand::QueryContentDtr0),
+        Some(curve),
+    );
+    mock.expect_forward_frame(enable_dt6);
+    mock.expect_forward_frame(dt6_frame(short, Dt6Command::SelectDimmingCurve));
+    mock.expect_forward_frame(dt6_frame(short, Dt6Command::SelectDimmingCurve));
+    mock.expect_forward_frame(enable_dt6);
+    mock.expect_forward_frame_corrupted_in_window(dt6_frame(short, Dt6Command::QueryDimmingCurve));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve),
+    );
+
+    assert_eq!(execution.confirmed.dimming_curve, None);
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_CONTENDED_MESSAGE))
+    );
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_contended_field_outranks_a_silent_one_in_the_named_outcome() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_fade_time_write(&mock, short, 1, None);
+    expect_unconfirmed_armed_write(
+        &mock,
+        short,
+        (StandardCommand::SetPowerOnLevel, StandardCommand::QueryPowerOnLevel),
+        200,
+    );
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None,
+    );
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_CONTENDED_MESSAGE)),
+        "a violation says something about the segment that silence does not"
     );
     assert_script_consumed(&transport);
 }

@@ -1,4 +1,5 @@
 use super::*;
+use dali2rust_domain::dali::commands::DaliResponse;
 
 pub(super) fn write_dimming_curve(
     controller: &mut impl DaliApplicationController,
@@ -19,22 +20,18 @@ pub(super) fn write_dimming_curve(
         )? {
             continue;
         }
-        let read = send_extended_query_stable(
+        let read = send_extended_command(
             controller,
-            ContentConfirmPolicy::default(),
             address,
             ExtendedCommand::Dt6(Dt6Command::QueryDimmingCurve),
         )?;
-        match read {
-            Some(v) if v == curve => {
-                tally.confirmed.dimming_curve = Some(v);
-                return reread_physical_minimum(controller, address, &mut tally.confirmed);
-            }
-            None => {
-                tally.unanswered = true;
-                return Ok(());
-            }
-            Some(_) => {}
+        if let Some(unconfirmed) = ReadBack::without_value(read) {
+            tally.proved(unconfirmed);
+            return Ok(());
+        }
+        if read == DaliResponse::Answer(curve) {
+            tally.confirmed.dimming_curve = Some(curve);
+            return reread_physical_minimum(controller, address, &mut tally.confirmed);
         }
     }
     Ok(())
