@@ -41,7 +41,7 @@ async fn then_operations_list_lacks_key_with_prefix(world: &mut DaliWorld, prefi
     assert!(found.is_empty(), "unexpected operations {found:?}");
 }
 
-// OP-100 OP-130 OP-131 OP-132 PD-041 COMM-080 PD-275 PD-283
+// OP-100 OP-130 OP-131 OP-132 PD-041 COMM-080 PD-275 PD-283 PD-284
 #[then(regex = r"^the operations list should contain exactly (\d+) operations?$")]
 async fn then_operations_list_count(world: &mut DaliWorld, expected: usize) {
     world.send_http_request("GET", "/api/v1/operations", None, "");

@@ -20,6 +20,7 @@ use crate::http::virtual_lamp_state::{
 use super::common::{
     check_body_keys, json_err, json_stream_dto, parse_adapter_id, parse_resource_id_param,
     parse_typed_body, vl_cap_supports_color_mode, publish_and_await_apply, write_json_array_items,
+    MAX_SHORT_ADDRESS,
 };
 use crate::http::target_state_request::TargetStateBody;
 
@@ -120,7 +121,7 @@ impl crate::http::handlers::common::MutatingHandler for VirtualLampBindingPutHan
             .as_u64()
             .ok_or_else(|| json_err(422, "invalid_value"))?;
 
-        if sa_u > 63 {
+        if sa_u > u64::from(MAX_SHORT_ADDRESS) {
             return Err(json_err(422, "invalid_value"));
         }
         let short = sa_u as u8;

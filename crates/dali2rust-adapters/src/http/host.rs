@@ -11,7 +11,6 @@ use dali2rust_ws_runtime::WsHub;
 use super::host_ws;
 use super::wire_method::wire_method;
 
-
 pub struct HostServer {
     public: TcpListener,
     inner: Server,

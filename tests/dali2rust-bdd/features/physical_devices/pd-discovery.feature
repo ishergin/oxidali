@@ -140,3 +140,10 @@ Feature: Adapter discovery runs HTTP contract
     Then the response status should be 400
     And the JSON error should be "unknown_field"
     And the operations list should contain exactly 0 operations
+
+  @id:PD-284
+  Scenario: A discovery run with no body names the mode it lacks
+    When I send a POST request to "/api/v1/adapters/0/discovery-runs" with empty body
+    Then the response status should be 422
+    And the JSON error should be "invalid_enum"
+    And the operations list should contain exactly 0 operations

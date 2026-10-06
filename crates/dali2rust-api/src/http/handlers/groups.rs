@@ -278,6 +278,15 @@ impl ApiHandler for GroupTargetStateHandler {
     }
 }
 
+const GROUP_READ_ONLY_KEYS: &[&str] = &[
+    "capabilities_summary",
+    "dirty",
+    "member_count_desired",
+    "member_count_applied",
+    "group_id",
+    "adapter_id",
+];
+
 fn parse_group_patch_data(
     object: &serde_json::Map<String, Value>,
 ) -> Result<GroupPatchData, HttpResponse> {
@@ -286,18 +295,7 @@ fn parse_group_patch_data(
         name: None,
         ha_flag: None,
     };
-    check_body_keys(
-        object,
-        &["name", "ha_entity_enabled"],
-        &[
-            "capabilities_summary",
-            "dirty",
-            "member_count_desired",
-            "member_count_applied",
-            "group_id",
-            "adapter_id",
-        ],
-    )?;
+    check_body_keys(object, &["name", "ha_entity_enabled"], GROUP_READ_ONLY_KEYS)?;
     if let Some(value) = object.get("name") {
         let name = value.as_str().ok_or_else(|| json_err(422, "invalid_value"))?;
         if name.is_empty() || name.as_bytes().len() > 64 {

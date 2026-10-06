@@ -269,14 +269,9 @@ impl RulesHandler {
         let Some(name) = params.get("rule_name") else {
             return json_err(400, "invalid_resource_id");
         };
-        let json = match parse_body_object(body, &["enabled"]) {
-            Ok(json) => json,
+        let enabled = match parse_enabled(body) {
+            Ok(enabled) => enabled,
             Err(response) => return response,
-        };
-        let enabled = match json.get("enabled").map(Value::as_bool) {
-            Some(Some(enabled)) => enabled,
-            Some(None) => return json_err(422, "invalid_value"),
-            None => return json_err(400, "missing_enabled"),
         };
         let doc = self.shared.state.document();
         if doc.compiled.is_none() && doc.diagnostic.is_some() {
@@ -293,6 +288,14 @@ impl RulesHandler {
             serde_json::to_vec(&json!({ "name": name, "enabled": enabled }))
                 .unwrap_or_default(),
         )
+    }
+}
+
+fn parse_enabled(body: &[u8]) -> Result<bool, HttpResponse> {
+    let json = parse_body_object(body, &["enabled"], &[])?;
+    match json.get("enabled") {
+        None => Err(json_err(400, "missing_enabled")),
+        Some(value) => value.as_bool().ok_or_else(|| json_err(422, "invalid_value")),
     }
 }
 

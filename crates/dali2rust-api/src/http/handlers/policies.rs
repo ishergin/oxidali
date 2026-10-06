@@ -99,7 +99,7 @@ impl crate::http::handlers::common::MutatingHandler for PoliciesPatchHandler {
     ) -> Result<PoliciesPatchData, HttpResponse> {
         let v = parse_json_body(body)?;
         let obj = v.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
-        check_body_keys(obj, ALLOWED_KEYS, &[])?;
+        check_body_keys(obj, ALLOWED_KEYS, &["manages_anything"])?;
         let mut data = PoliciesPatchData::default();
         if let Some(level) = parse_level(obj, "system_failure_level")? {
             data.patch_mask |= PoliciesUpdateCommand::PATCH_SYSTEM_FAILURE_LEVEL;

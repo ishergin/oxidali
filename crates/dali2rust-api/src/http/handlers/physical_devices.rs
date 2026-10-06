@@ -549,7 +549,7 @@ impl ApiHandler for AdapterDiscoveryRunsHandler {
             Ok(a) => a,
             Err(e) => return e,
         };
-        let v = match parse_body_object(body, &["mode"]) {
+        let v = match parse_body_object(body, &["mode"], &[]) {
             Ok(v) => v,
             Err(e) => return e,
         };
@@ -737,7 +737,7 @@ fn parse_pd_write_attr_fields(
 }
 
 fn parse_attribute_groups_body(body: &[u8]) -> Result<(u8, MemoryBankReadPreset), HttpResponse> {
-    let v = parse_body_object(body, &["attribute_groups", "memory_banks"])?;
+    let v = parse_body_object(body, &["attribute_groups", "memory_banks"], &[])?;
     let Some(arr) = v.get("attribute_groups").and_then(|x| x.as_array()) else {
         return Err(json_err(400, "invalid_json"));
     };

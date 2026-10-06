@@ -237,11 +237,13 @@ impl InputDeviceActionHandler {
         params: &PathParams,
     ) -> Result<(u8, InputDeviceDto), HttpResponse> {
         let short_address = device_path(params)?;
-        let device = self
-            .state
+        Ok((short_address, self.record(adapter_id, short_address)?))
+    }
+
+    fn record(&self, adapter_id: u8, short_address: u8) -> Result<InputDeviceDto, HttpResponse> {
+        self.state
             .detail(adapter_id, short_address)
-            .ok_or_else(|| json_err(404, "input_device_not_found"))?;
-        Ok((short_address, device))
+            .ok_or_else(|| json_err(404, "input_device_not_found"))
     }
 
     fn instance(
@@ -252,7 +254,7 @@ impl InputDeviceActionHandler {
         let short_address = device_path(params)?;
         let instance_number =
             path_u8(params, "instance_number").ok_or_else(|| json_err(400, "invalid_resource_id"))?;
-        let (_, device) = self.device(adapter_id, params)?;
+        let device = self.record(adapter_id, short_address)?;
         if instance_number >= device.summary.instance_count {
             return Err(json_err(404, "instance_not_found"));
         }
@@ -260,7 +262,7 @@ impl InputDeviceActionHandler {
     }
 
     fn scan(&self, adapter_id: u8, body: &[u8]) -> Answer {
-        parse_body_object(body, &[])?;
+        parse_body_object(body, &[], &[])?;
         let (corr, semantic) = self.envelope(Dali103ScanCommand {
             registry_adapter_id: adapter_id,
         });
@@ -280,7 +282,7 @@ impl InputDeviceActionHandler {
 
     fn identify(&self, adapter_id: u8, params: &PathParams, body: &[u8]) -> Answer {
         let (short_address, _) = self.device(adapter_id, params)?;
-        parse_body_object(body, &[])?;
+        parse_body_object(body, &[], &[])?;
         let (corr, semantic) = self.envelope(Dali103IdentifyCommand {
             registry_adapter_id: adapter_id,
             short_address,
@@ -348,9 +350,8 @@ impl InputDeviceActionHandler {
     }
 }
 
-
 fn parse_commission_body(body: &[u8]) -> Result<bool, HttpResponse> {
-    let json = parse_body_object(body, &["include_addressed"])?;
+    let json = parse_body_object(body, &["include_addressed"], &[])?;
     match json.get("include_addressed") {
         None => Ok(false),
         Some(value) => value.as_bool().ok_or_else(|| json_err(422, "invalid_value")),
@@ -366,6 +367,34 @@ const INSTANCE_PATCH_KEYS: [&str; 6] = [
     "timers",
 ];
 const INSTANCE_GROUP_SLOTS: usize = 3;
+const INSTANCE_READ_ONLY_KEYS: &[&str] = &[
+    "instance_number",
+    "instance_type",
+    "instance_type_name",
+    "instance_status",
+    "resolution",
+    "event_scheme_confirmed",
+    "manual_config_active",
+    "feedback",
+    "runtime",
+];
+const FEEDBACK_READ_ONLY_KEYS: &[&str] =
+    &["probed", "present", "opcode_map", "capability", "colour_capability"];
+const DEVICE_READ_ONLY_KEYS: &[&str] = &[
+    "adapter_id",
+    "short_address",
+    "present",
+    "instance_count",
+    "first_instance_type",
+    "last_seen_ms",
+    "last_event_at_ms",
+    "device_capabilities",
+    "device_status",
+    "version_number",
+    "now_ms",
+    "nvm_settling_until_ms",
+    "instances",
+];
 
 fn parse_instance_patch(
     body: &[u8],
@@ -373,7 +402,7 @@ fn parse_instance_patch(
     short_address: u8,
     instance_number: u8,
 ) -> Result<Dali103InstanceConfigureCommand, HttpResponse> {
-    let json = Value::Object(parse_body_object(body, &INSTANCE_PATCH_KEYS)?);
+    let json = Value::Object(parse_body_object(body, &INSTANCE_PATCH_KEYS, INSTANCE_READ_ONLY_KEYS)?);
     let mut cmd = Dali103InstanceConfigureCommand {
         registry_adapter_id: adapter_id,
         short_address,
@@ -456,7 +485,8 @@ fn parse_feedback_patch(
     short_address: u8,
     instance_number: u8,
 ) -> Result<Dali103FeedbackConfigureCommand, HttpResponse> {
-    let json = Value::Object(parse_body_object(body, &FeedbackPatchField::ALL.map(feedback_key))?);
+    let writable = FeedbackPatchField::ALL.map(feedback_key);
+    let json = Value::Object(parse_body_object(body, &writable, FEEDBACK_READ_ONLY_KEYS)?);
     let mut cmd = Dali103FeedbackConfigureCommand {
         registry_adapter_id: adapter_id,
         short_address,
@@ -616,7 +646,8 @@ fn parse_metadata_patch(
     short_address: u8,
 ) -> Result<(InputDeviceMetadataUpdateCommand, Option<InputDeviceNotesUpdateCommand>), HttpResponse>
 {
-    let json = Value::Object(parse_body_object(body, &["name", "ha_expose", "notes"])?);
+    let writable = ["name", "ha_expose", "notes"];
+    let json = Value::Object(parse_body_object(body, &writable, DEVICE_READ_ONLY_KEYS)?);
     let mut cmd = InputDeviceMetadataUpdateCommand {
         registry_adapter_id: adapter_id,
         short_address,

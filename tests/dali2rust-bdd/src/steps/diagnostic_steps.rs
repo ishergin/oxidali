@@ -310,7 +310,7 @@ async fn when_send_dali_command_background(world: &mut DaliWorld) {
     );
 }
 
-// DIAG-402 POLICY-010 POLICY-011
+// DIAG-402 POLICY-010 POLICY-011 PD-284
 #[when(regex = r#"I send a POST request to "([^"]+)" with empty body"#)]
 async fn when_send_post_empty_body(world: &mut DaliWorld, path: String) {
     world.send_http_request("POST", &path, Some(b""), "");

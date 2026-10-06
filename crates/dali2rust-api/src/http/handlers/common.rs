@@ -325,11 +325,12 @@ pub fn check_body_keys(
 pub fn parse_body_object(
     body: &[u8],
     writable: &[&str],
+    read_only: &[&str],
 ) -> Result<serde_json::Map<String, serde_json::Value>, HttpResponse> {
     let serde_json::Value::Object(obj) = parse_json_body(body)? else {
         return Err(json_err(400, "invalid_json"));
     };
-    check_body_keys(&obj, writable, &[])?;
+    check_body_keys(&obj, writable, read_only)?;
     Ok(obj)
 }
 

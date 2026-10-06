@@ -370,6 +370,8 @@ impl ApiHandler for SceneRecallHandler {
     }
 }
 
+const SCENE_READ_ONLY_KEYS: &[&str] = &["row_count_included", "dirty", "scene_id", "adapter_id"];
+
 fn parse_scene_patch_data(
     object: &serde_json::Map<String, Value>,
 ) -> Result<ScenePatchData, HttpResponse> {
@@ -378,11 +380,7 @@ fn parse_scene_patch_data(
         name: None,
         ha_flag: None,
     };
-    check_body_keys(
-        object,
-        &["name", "ha_select_enabled"],
-        &["row_count_included", "dirty", "scene_id", "adapter_id"],
-    )?;
+    check_body_keys(object, &["name", "ha_select_enabled"], SCENE_READ_ONLY_KEYS)?;
     if let Some(value) = object.get("name") {
         let name = value.as_str().ok_or_else(|| json_err(422, "invalid_value"))?;
         if name.is_empty() || name.as_bytes().len() > 64 {

@@ -119,6 +119,7 @@ ingress — `503`, запись исчезла до исполнения — `40
 | `input_device_not_found` | 404 | Адреса нет в реестре |
 | `instance_not_found` | 404 | Инстанс вне объявленных |
 | `unknown_field` | 400 | Поле тела, которого у маршрута нет (у `scan` и `identify` полей нет) |
+| `unsupported_field` | 422 | Поле ответа устройства, инстанса или индикации, которое `PATCH` не пишет |
 | `empty_patch` | 400 | Тело без полей |
 | `invalid_value`, `invalid_timer_range`, `invalid_feedback_colour`, `feedback_not_supported` | 422 | См. выше |
 
