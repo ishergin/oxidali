@@ -147,7 +147,12 @@ fn collect_memory_bank_bytes(
     let mut bytes = Vec::with_capacity(length as usize);
     let stop = match read_in_chunks(controller, address, bank, start, length, &mut bytes) {
         Ok(stop) => stop,
-        Err(error) => return MemoryReadExecution { bytes, error: Some(error) },
+        Err(error) => {
+            return MemoryReadExecution {
+                bytes: Vec::new(),
+                error: Some(error),
+            }
+        }
     };
     let read = bytes.len() as u16;
     match confirm_final_position(controller, address, bank, (start, read), stop) {
@@ -207,7 +212,8 @@ fn rearm_first_chunk(
     arm_memory_pointer(controller, address, bank, chunk_start)
 }
 
-// IEC 62386-102 §9.10.4; DiiA 252 §9.2.2
+// IEC 62386-102 §9.10.4
+// DiiA 252 §9.2.2
 fn read_proved_chunk(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
@@ -278,8 +284,7 @@ fn read_memory_location_with_retries(
         match send_raw_query_once(controller, address, READ_MEMORY_LOCATION_OPCODE) {
             Ok(Some(value)) => return Ok(LocationRead::Value(value)),
             Ok(None) if absolute_offset == MEMORY_RESERVED_OFFSET => {
-                arm_memory_pointer(controller, address, bank, absolute_offset + 1)?;
-                return Ok(LocationRead::Value(MEMORY_NO_ANSWER_PLACEHOLDER));
+                return Ok(LocationRead::Value(MEMORY_NO_ANSWER_PLACEHOLDER))
             }
             outcome if attempt == MEMORY_READ_LOCATION_RETRIES => {
                 return outcome.map(|answered| match answered {

@@ -102,7 +102,6 @@ pub(super) fn script_memory_bank_read(mock: &MockDaliTransport, bank: u8, bytes:
         script_chunk_start(mock, bank, &starts, offset);
         if offset == 1 {
             mock.expect_forward_frame_with_backward(read, None);
-            script_memory_pointer_arm(mock, bank, 2);
             continue;
         }
         mock.expect_forward_frame_with_backward(read, Some(*byte));
@@ -119,7 +118,6 @@ pub(super) fn script_memory_bank_short_read(mock: &MockDaliTransport, bank: u8, 
         script_chunk_start(mock, bank, &starts, offset);
         if offset == 1 {
             mock.expect_forward_frame_with_backward(read, None);
-            script_memory_pointer_arm(mock, bank, 2);
             continue;
         }
         mock.expect_forward_frame_with_backward(read, Some(*byte));

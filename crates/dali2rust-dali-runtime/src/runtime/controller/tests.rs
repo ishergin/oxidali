@@ -3,26 +3,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::commands::{SpecialCommand, StandardCommand};
 use dali2rust_domain::dali::types::DaliAddress;
+use crate::runtime::executor::test_helpers::shared::priorities_of;
 use dali2rust_test_support::AdvancingClock;
-
-fn priorities_of(settle_us: &[u32]) -> Vec<DaliPriority> {
-    settle_us
-        .iter()
-        .map(|requested| requested + u32::from(TX_ARM_LEAD_TICKS) * PHY_TICK_US)
-        .map(|us| {
-            [
-                DaliPriority::Transaction,
-                DaliPriority::UserAction,
-                DaliPriority::Configuration,
-                DaliPriority::Automatic,
-                DaliPriority::PeriodicQuery,
-            ]
-            .into_iter()
-            .find(|p| p.contains_settle_us(us))
-            .unwrap_or_else(|| panic!("{us} µs on the wire falls in no Table 22 band"))
-        })
-        .collect()
-}
 
 fn test_clock() -> Box<dyn Clock> {
     Box::new(AdvancingClock::new(20))

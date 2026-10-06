@@ -1,8 +1,10 @@
 use super::*;
 use crate::runtime::controller::DaliController;
 use crate::runtime::executor::test_helpers::shared::{
-    assert_script_consumed, setup_controller, short_address, short_raw_query_frame, wire_counters,
+    assert_script_consumed, priorities_of, setup_controller, short_address, short_raw_query_frame,
+    wire_counters,
 };
+use dali2rust_domain::dali::ses::DaliPriority;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::commands::DaliCommand;
 use dali2rust_test_support::AdvancingClock;
@@ -80,9 +82,6 @@ fn expect_bank_read(mock: &MockDaliTransport, short: u8, bank: u8, values: &[Opt
     for (offset, value) in values.iter().enumerate() {
         expect_chunk_start(mock, short, bank, offset as u16, length);
         mock.expect_forward_frame_with_backward(read, *value);
-        if value.is_none() && offset as u16 == MEMORY_RESERVED_OFFSET {
-            expect_prepare(mock, short, bank, (offset + 1) as u8);
-        }
     }
     expect_pointer_check(mock, short, bank, Some(values.len() as u8));
 }
@@ -178,8 +177,9 @@ fn read_memory_bank_stops_on_dtr0_failure() {
     assert_script_consumed(&transport);
 }
 
+// IEC 62386-102 §9.10.4, Table 9
 #[test]
-fn read_memory_bank_skips_reserved_no_answer_and_repositions() {
+fn the_reserved_location_reads_as_a_placeholder_without_a_rearm() {
     let mock = MockDaliTransport::new();
     let short = 5;
     expect_prepare(&mock, short, 0, 0);
@@ -187,7 +187,6 @@ fn read_memory_bank_skips_reserved_no_answer_and_repositions() {
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
     mock.expect_forward_frame_with_backward(read, Some(0x1C));
     mock.expect_forward_frame_with_backward(read, None);
-    expect_prepare(&mock, short, 0, 2);
     mock.expect_forward_frame_with_backward(read, Some(0x01));
     expect_pointer_check(&mock, short, 0, Some(3));
 
@@ -393,6 +392,35 @@ fn a_pointer_that_overran_the_read_returns_nothing() {
     assert_script_consumed(&transport);
 }
 
+#[test]
+fn the_pointer_proof_shares_its_chunks_transaction() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(&mock, short, 1, 2);
+    expect_pointer_check(&mock, short, 1, Some(2));
+    mock.expect_forward_frame_with_backward(read, Some(0x11));
+    mock.expect_forward_frame_with_backward(read, Some(0x22));
+    expect_pointer_check(&mock, short, 1, Some(4));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 1, 2, 2);
+
+    assert_eq!(execution.error, None);
+    let priorities = priorities_of(&transport.lock().expect("mock lock").sent_frame_settle_us());
+    assert_eq!(
+        priorities[4..8],
+        [
+            DaliPriority::Configuration,
+            DaliPriority::Transaction,
+            DaliPriority::Transaction,
+            DaliPriority::Transaction,
+        ],
+        "the proof opens the chunk's transaction and the reads follow it at priority 1"
+    );
+    assert_script_consumed(&transport);
+}
+
 const FOREIGN_BANK: u8 = 7;
 
 fn expect_foreign_bank(mock: &MockDaliTransport, short: u8, offset: u8) {
@@ -446,6 +474,7 @@ fn a_foreign_bank_before_a_later_chunk_refuses_the_read() {
         Some(SemanticDaliError::OperationFailed(MEMORY_MISALIGNED)),
         "a chunk read from an unproved bank is not a result"
     );
+    assert!(execution.bytes.is_empty(), "the chunk before the refusal may be another bank's");
     assert_script_consumed(&transport);
 }
 
