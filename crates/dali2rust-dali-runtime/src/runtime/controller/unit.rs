@@ -8,6 +8,7 @@ pub(super) struct UnitAttempt {
 
 impl<T: DaliTransport + Send> DaliController<T> {
     // IEC 62386-101 §9.1.4, §9.2
+    #[inline(always)]
     pub(super) fn run_unit<R>(&mut self, exempt: bool, mut run: impl FnMut(&mut Self) -> R) -> R {
         if self.unit.is_some() {
             return self.run_transaction(exempt, |c| run(c));
