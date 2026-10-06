@@ -277,6 +277,20 @@ Feature: Physical device write-attributes
     And physical device 0 dt6_led dimming_curve carries no write provenance
     And all scripted DALI exchanges should be consumed without errors
 
+  @id:PD-274
+  Scenario: A fade-time write whose read-back holds a violation is named contended and confirms nothing
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given a fade-time 500ms write script for short address 0 whose read-back holds a violation
+    When I POST JSON {"fade_time_ms":500} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error code should be "verify_contended"
+    And physical device 0 common_102 fade_time_ms carries no write provenance
+    And all scripted DALI exchanges should be consumed without errors
+
   @id:PD-255
   Scenario: A reserved dimming-curve value is refused before it reaches the wire
     Given a golden control-gear discovery script for short address 0

@@ -11,7 +11,8 @@ use super::attribute_read_scripts::script_dt8_colour_value;
 use super::read_model::{fetch_physical_device_full, wait_for_physical_device, READ_MODEL_TIMEOUT};
 use super::write_scripts::{
     script_dimming_curve_write, script_dimming_curve_write_no_clear, script_fade_time_write,
-    script_fade_time_write_answered, script_max_triple, script_min_triple,
+    script_fade_time_write_answered, script_fade_time_write_violated, script_max_triple,
+    script_min_triple,
     script_tc_limit_physical_pair, script_tc_limit_store_frames,
 };
 use super::{TEST_ADAPTER_ID, TEST_SHORT_ADDRESS};
@@ -143,7 +144,13 @@ async fn given_fade_time_write_unanswered_script(world: &mut DaliWorld) {
     script_fade_time_write_answered(&world.dali_mock().lock().expect("mock lock"), 1, None);
 }
 
-// PD-267 PD-268
+// PD-274
+#[given("a fade-time 500ms write script for short address 0 whose read-back holds a violation")]
+async fn given_fade_time_write_violated_script(world: &mut DaliWorld) {
+    script_fade_time_write_violated(&world.dali_mock().lock().expect("mock lock"), 1);
+}
+
+// PD-267 PD-268 PD-274
 #[then(
     regex = r"^physical device (\d+) (common_102|dt6_led) (fade_time_ms|dimming_curve) carries no write provenance$"
 )]
