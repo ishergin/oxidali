@@ -6,16 +6,17 @@ use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
 use dali2rust_dali_runtime::runtime::controller::DaliController;
 use dali2rust_dali_runtime::runtime::executor::arbitration::probe_application_controller;
 use dali2rust_dali_runtime::runtime::executor::dev103::{
-    identify_device, scan_control_devices, set_event_scheme_verified, ScannedDevice,
-    FRAME24_CONTENDED,
+    identify_device, scan_control_devices, set_event_filter_verified, set_event_scheme_verified,
+    ScannedDevice, FRAME24_CONTENDED,
 };
+use dali2rust_dali_runtime::runtime::executor::helpers::VERIFY_FAILED_MESSAGE;
 use dali2rust_domain::dali::dev103::{
     Device103Address, Device103Command, EventScheme, Instance103Command, InstanceAddress,
     Special103Command,
 };
 use dali2rust_domain::dali::ses::RetryPolicy;
 use dali2rust_platform::dali::{DaliWireCounters, TransferOutcome};
-use dali2rust_test_support::StoppedClock;
+use dali2rust_test_support::{AdvancingClock, StoppedClock};
 
 fn controller() -> (DaliController<MockDaliTransport>, Arc<Mutex<MockDaliTransport>>) {
     let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
@@ -221,6 +222,100 @@ fn a_collided_24_bit_write_is_rearmed_and_reproved_before_it_goes_again() {
         "the pair goes again only behind a DTR0 that was armed and proved again"
     );
 }
+
+const FILTER: [u8; 3] = [0x0F, 0x80, 0x01];
+
+fn answer_dtr_proofs(transport: &Arc<Mutex<MockDaliTransport>>, held: [u8; 3]) {
+    let guard = transport.lock().expect("mock lock");
+    let address = Device103Address::Short(3);
+    let proofs = [
+        Device103Command::QueryContentDtr0,
+        Device103Command::QueryContentDtr1,
+        Device103Command::QueryContentDtr2,
+    ];
+    for (proof, value) in proofs.into_iter().zip(held) {
+        guard.script_frame24_answer(proof.frame(address).as_bytes(), value);
+    }
+    guard.script_frame24_answer(
+        Instance103Command::QueryEventFilter0To7
+            .frame(address, InstanceAddress::Number(0))
+            .as_bytes(),
+        held[0],
+    );
+}
+
+#[test]
+fn an_event_filter_proves_every_byte_of_its_operand_before_the_pair() {
+    let (mut controller, transport) = controller();
+    answer_dtr_proofs(&transport, FILTER);
+
+    set_event_filter_verified(&mut controller, 3, 0, FILTER).expect("every operand proved");
+
+    let address = Device103Address::Short(3);
+    let instance = InstanceAddress::Number(0);
+    let set = Instance103Command::SetEventFilter.frame(address, instance).as_bytes();
+    assert_eq!(
+        frames24(&transport),
+        vec![
+            Special103Command::Dtr2.frame(FILTER[2]).as_bytes(),
+            Device103Command::QueryContentDtr2.frame(address).as_bytes(),
+            Special103Command::Dtr1.frame(FILTER[1]).as_bytes(),
+            Device103Command::QueryContentDtr1.frame(address).as_bytes(),
+            Special103Command::Dtr0.frame(FILTER[0]).as_bytes(),
+            Device103Command::QueryContentDtr0.frame(address).as_bytes(),
+            set,
+            set,
+            Instance103Command::QueryEventFilter0To7.frame(address, instance).as_bytes(),
+        ],
+        "SET EVENT FILTER takes bits 8-23 from DTR1 and DTR2, so both are proved like DTR0"
+    );
+}
+
+#[test]
+fn a_foreign_upper_filter_byte_refuses_the_write() {
+    for corrupted in [1usize, 2] {
+        let (mut controller, transport) = controller();
+        let mut held = FILTER;
+        held[corrupted] ^= 0xFF;
+        answer_dtr_proofs(&transport, held);
+
+        let outcome = set_event_filter_verified(&mut controller, 3, 0, FILTER);
+
+        assert_eq!(
+            outcome.err().map(|error| error.message()),
+            Some(VERIFY_FAILED_MESSAGE),
+            "DTR{corrupted} holds another master's byte: the filter would gain or lose events"
+        );
+        let set = Instance103Command::SetEventFilter
+            .frame(Device103Address::Short(3), InstanceAddress::Number(0))
+            .as_bytes();
+        assert!(
+            !frames24(&transport).contains(&set),
+            "DTR{corrupted}: nothing is set from an unproved operand"
+        );
+    }
+}
+
+#[test]
+fn an_event_filter_write_is_one_exempt_unit() {
+    let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
+    let every_call_a_breach = Box::new(AdvancingClock::new(TRANSACTION_BUDGET_BREACH_MS));
+    let mut controller = DaliController::new(Arc::clone(&transport), every_call_a_breach);
+    let counters = Arc::new(DaliWireCounters::default());
+    controller.set_wire_counters(Arc::clone(&counters));
+    answer_dtr_proofs(&transport, FILTER);
+
+    set_event_filter_verified(&mut controller, 3, 0, FILTER).expect("every operand proved");
+
+    assert_eq!(
+        counters.transaction_should_exceedances.load(Relaxed),
+        1,
+        "three proved operands and the pair outgrow 400 ms, and none of them may be split off"
+    );
+    assert_eq!(counters.transaction_budget_exceeded.load(Relaxed), 0);
+}
+
+const TRANSACTION_BUDGET_BREACH_MS: u64 = 401;
 
 #[test]
 fn a_foreign_frame_in_a_24_bit_window_is_terminal_and_not_resent() {

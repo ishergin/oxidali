@@ -73,9 +73,9 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   The exempt kinds are closed: DT8 colour staging with the command that activates it
   (including a target-state write and a scene programme), a scene-colour read, the
   §11.5.13 device-type walk (from discovery and attribute reads), a memory-bank chunk that
-  is one latched value wider than a chunk (DiiA 252 §9.2.2), and 102/103 commissioning
-  and discovery sessions. A new exempt call site is one of these kinds, or this list
-  grows.
+  is one latched value wider than a chunk (DiiA 252 §9.2.2), a Part 103
+  `SET EVENT FILTER` with its three proved operands, and 102/103 commissioning and
+  discovery sessions. A new exempt call site is one of these kinds, or this list grows.
 - A collision or `BusBusy` on the first frame does not start a transaction: the destroyed
   frame is still a first frame, and priority 1 is forbidden for it. A collision on a later
   frame does not un-start one: the retransmission stays at priority 1 and the yield shield

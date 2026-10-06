@@ -619,7 +619,7 @@ mod tests {
         let mut cmd = command_patching(InstancePatchField::EventScheme);
         cmd.patch_mask = Dali103InstanceConfigureCommand::ALL_PATCH_BITS;
         cmd.event_scheme = EVERY_ANSWER;
-        cmd.event_filter = [EVERY_ANSWER, 0, 0];
+        cmd.event_filter = [EVERY_ANSWER; 3];
         cmd.event_priority = EVERY_ANSWER;
         cmd.instance_groups = [Some(EVERY_ANSWER); 3];
         cmd.timer_multipliers = [Some(EVERY_ANSWER); 4];

@@ -37,8 +37,9 @@ IEC 62386-101 §9.1.3–9.1.4 make a collision destroy the frame for every recei
   `QUERY COLOUR VALUE` selector, re-armed and re-proved before every attempt because the
   gear replaces `DTR0` with the answer's low byte; `SET SHORT ADDRESS`; and the colour
   stagings of a scene row.
-- **Proved operands (Part 103):** every DTR-armed write proves `DTR0` with an **addressed**
-  `QUERY CONTENT DTR0`. The special write reaches every device, but the proof must name
+- **Proved operands (Part 103):** every DTR-armed write proves each register it stages —
+  `DTR0`, and `DTR1` and `DTR2` for `SET EVENT FILTER` — with an **addressed**
+  `QUERY CONTENT DTRn`. The special write reaches every device, but the proof must name
   one: broadcast, every control device answers one window and the answers collide.
 - **An effect read-back instead of a DTR proof** for `SET SCENE` (re-driven until
   `QUERY SCENE LEVEL` converges, within a bounded repair budget) and the `SET FADE TIME`
