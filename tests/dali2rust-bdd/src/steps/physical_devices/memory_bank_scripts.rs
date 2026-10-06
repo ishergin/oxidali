@@ -128,6 +128,7 @@ pub(super) fn script_memory_bank_short_read(mock: &MockDaliTransport, bank: u8, 
         mock.expect_forward_frame_with_backward(read, None);
         if attempt < LOCATION_RETRIES {
             script_memory_pointer_arm(mock, bank, declined);
+            script_memory_pointer_check(mock, bank, declined);
         }
     }
     script_memory_pointer_check(mock, bank, declined);

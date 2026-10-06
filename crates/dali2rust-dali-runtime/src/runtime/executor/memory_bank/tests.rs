@@ -86,6 +86,11 @@ fn expect_bank_read(mock: &MockDaliTransport, short: u8, bank: u8, values: &[Opt
     expect_pointer_check(mock, short, bank, Some(values.len() as u8));
 }
 
+fn expect_rearmed_chunk(mock: &MockDaliTransport, short: u8, bank: u8, offset: u8) {
+    expect_prepare(mock, short, bank, offset);
+    expect_pointer_check(mock, short, bank, Some(offset));
+}
+
 fn expect_short_bank_read(
     mock: &MockDaliTransport,
     short: u8,
@@ -105,7 +110,7 @@ fn expect_short_bank_read(
     for attempt in 0..=MEMORY_READ_LOCATION_RETRIES {
         mock.expect_forward_frame_with_backward(read, None);
         if attempt < MEMORY_READ_LOCATION_RETRIES {
-            expect_prepare(mock, short, bank, declined);
+            expect_rearmed_chunk(mock, short, bank, declined);
         }
     }
     expect_pointer_check(mock, short, bank, closing);
@@ -206,7 +211,7 @@ fn read_memory_bank_retries_transient_no_answer_for_data_offset() {
     expect_pointer_check(&mock, short, 1, Some(2));
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
     mock.expect_forward_frame_with_backward(read, None);
-    expect_prepare(&mock, short, 1, 2);
+    expect_rearmed_chunk(&mock, short, 1, 2);
     mock.expect_forward_frame_with_backward(read, Some(0x33));
     expect_pointer_check(&mock, short, 1, Some(3));
 
@@ -226,9 +231,9 @@ fn a_location_the_gear_proves_it_declines_ends_the_bank() {
     expect_pointer_check(&mock, short, 1, Some(2));
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
     mock.expect_forward_frame_with_backward(read, None);
-    expect_prepare(&mock, short, 1, 2);
+    expect_rearmed_chunk(&mock, short, 1, 2);
     mock.expect_forward_frame_with_backward(read, None);
-    expect_prepare(&mock, short, 1, 2);
+    expect_rearmed_chunk(&mock, short, 1, 2);
     mock.expect_forward_frame_with_backward(read, None);
     expect_pointer_check(&mock, short, 1, Some(2));
 
@@ -298,7 +303,7 @@ fn a_mangled_answer_mid_bank_realigns_instead_of_shifting() {
     expect_pointer_check(&mock, short, 0, Some(3));
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
     mock.expect_forward_frame_corrupted_in_window(read);
-    expect_prepare(&mock, short, 0, 3);
+    expect_rearmed_chunk(&mock, short, 0, 3);
     mock.expect_forward_frame_with_backward(read, Some(0x06));
     mock.expect_forward_frame_with_backward(read, Some(0x58));
     expect_pointer_check(&mock, short, 0, Some(5));
@@ -310,6 +315,93 @@ fn a_mangled_answer_mid_bank_realigns_instead_of_shifting() {
         execution.bytes,
         vec![0x06, 0x58],
         "the retried offset must return its own value, not its neighbour's"
+    );
+    assert_eq!(execution.error, None);
+    assert_script_consumed(&transport);
+}
+
+// IEC 62386-102 §9.10.4, Table 9
+#[test]
+fn a_read_lost_at_the_reserved_location_is_caught_at_the_next_offset() {
+    let mock = MockDaliTransport::new();
+    let short = 5;
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(&mock, short, 0, 0);
+    expect_pointer_check(&mock, short, 0, Some(0));
+    mock.expect_forward_frame_with_backward(read, Some(0x1C));
+    mock.expect_forward_frame_with_backward(read, None);
+    mock.expect_forward_frame_with_backward(read, None);
+    expect_rearmed_chunk(&mock, short, 0, 2);
+    mock.expect_forward_frame_with_backward(read, Some(0x01));
+    mock.expect_forward_frame_with_backward(read, Some(0x00));
+    expect_pointer_check(&mock, short, 0, Some(4));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 0, 0, 4);
+
+    assert_eq!(
+        execution.bytes,
+        vec![0x1C, 0xFF, 0x01, 0x00],
+        "the gear that missed the reserved READ answers its silence one offset later"
+    );
+    assert_eq!(execution.error, None);
+    let priorities = priorities_of(&transport.lock().expect("mock lock").sent_frame_settle_us());
+    assert_eq!(
+        [priorities[8], priorities[9], priorities[13]],
+        [DaliPriority::Transaction, DaliPriority::Configuration, DaliPriority::Configuration],
+        "the silence ends its chunk: the re-arm and the next chunk open transactions of their own"
+    );
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn silences_at_different_offsets_each_get_their_own_retries() {
+    let mock = MockDaliTransport::new();
+    let short = 5;
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(&mock, short, 0, 2);
+    expect_pointer_check(&mock, short, 0, Some(2));
+    for (offset, value) in [(2, 0x11), (3, 0x22), (4, 0x33)] {
+        mock.expect_forward_frame_with_backward(read, None);
+        expect_rearmed_chunk(&mock, short, 0, offset);
+        mock.expect_forward_frame_with_backward(read, Some(value));
+    }
+    expect_pointer_check(&mock, short, 0, Some(5));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 0, 2, 3);
+
+    assert_eq!(execution.bytes, vec![0x11, 0x22, 0x33], "three lost frames are not an end of bank");
+    assert_eq!(execution.error, None);
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_foreign_pointer_after_a_rearm_mid_read_is_armed_again() {
+    let mock = MockDaliTransport::new();
+    let short = 5;
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(&mock, short, 0, 2);
+    expect_pointer_check(&mock, short, 0, Some(2));
+    for value in [0x11, 0x22, 0x33, 0x44] {
+        mock.expect_forward_frame_with_backward(read, Some(value));
+    }
+    expect_pointer_check(&mock, short, 0, Some(6));
+    mock.expect_forward_frame_with_backward(read, None);
+    expect_prepare(&mock, short, 0, 6);
+    expect_foreign_bank(&mock, short, 6);
+    expect_rearmed_chunk(&mock, short, 0, 6);
+    mock.expect_forward_frame_with_backward(read, Some(0x55));
+    mock.expect_forward_frame_with_backward(read, Some(0x66));
+    expect_pointer_check(&mock, short, 0, Some(8));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 0, 2, 6);
+
+    assert_eq!(
+        execution.bytes,
+        vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+        "nothing was read between our proved re-arm and the foreign pointer"
     );
     assert_eq!(execution.error, None);
     assert_script_consumed(&transport);
@@ -662,7 +754,7 @@ fn a_reread_inside_a_latched_value_restarts_it_from_its_first_byte() {
     mock.expect_forward_frame_with_backward(read, Some(0xAA));
     mock.expect_forward_frame_with_backward(read, Some(0xAA));
     mock.expect_forward_frame_with_backward(read, None);
-    expect_prepare(&mock, short, 202, 0x05);
+    expect_rearmed_chunk(&mock, short, 202, 0x05);
     for _ in 0..6 {
         mock.expect_forward_frame_with_backward(read, Some(0x01));
     }
@@ -687,11 +779,13 @@ fn a_latched_value_that_never_completes_fails_rather_than_stitching() {
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
     expect_prepare(&mock, short, 202, 0x05);
     expect_pointer_check(&mock, short, 202, Some(0x05));
-    for _ in 0..=MEMORY_FIELD_RESTARTS {
+    for attempt in 0..=MEMORY_READ_LOCATION_RETRIES {
         mock.expect_forward_frame_with_backward(read, Some(0xAA));
         mock.expect_forward_frame_with_backward(read, Some(0xAA));
         mock.expect_forward_frame_with_backward(read, None);
-        expect_prepare(&mock, short, 202, 0x05);
+        if attempt < MEMORY_READ_LOCATION_RETRIES {
+            expect_rearmed_chunk(&mock, short, 202, 0x05);
+        }
     }
 
     let (transport, mut controller) = setup_controller(mock);
