@@ -26,6 +26,7 @@ use crate::http::handlers::common::{
     accepted_operation_response, cap_supports_color_mode, json_err, json_stream_dto, parse_adapter_id,
     parse_json_body, parse_resource_id_param, parse_typed_body, serialize_or_log,
     write_json_array_items,
+    MAX_NAME_BYTES,
 };
 use crate::http::lenient::{MaybeBool, MaybeObj, MaybeSeq, MaybeU64};
 use crate::http::physical_device_state::CapabilityFlagsDto;
@@ -383,7 +384,7 @@ fn parse_scene_patch_data(
     check_body_keys(object, &["name", "ha_select_enabled"], SCENE_READ_ONLY_KEYS)?;
     if let Some(value) = object.get("name") {
         let name = value.as_str().ok_or_else(|| json_err(422, "invalid_value"))?;
-        if name.is_empty() || name.as_bytes().len() > 64 {
+        if name.is_empty() || name.len() > MAX_NAME_BYTES {
             return Err(json_err(422, "invalid_value"));
         }
         data.patch_mask |= SceneMetadataUpdateCommand::PATCH_NAME;

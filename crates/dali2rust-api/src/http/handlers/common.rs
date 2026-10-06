@@ -300,11 +300,23 @@ pub fn parse_json_body(body: &[u8]) -> Result<serde_json::Value, HttpResponse> {
     parse_typed_body(body)
 }
 
-pub fn first_key_outside<'a>(
-    obj: &'a serde_json::Map<String, serde_json::Value>,
+pub const MAX_NAME_BYTES: usize = 64;
+
+pub fn refuse_unwritable_keys(
+    obj: &serde_json::Map<String, serde_json::Value>,
     writable: &[&str],
-) -> Option<&'a str> {
-    obj.keys().map(String::as_str).find(|key| !writable.contains(key))
+    known: impl Fn(&str) -> Option<HttpResponse>,
+) -> Result<(), HttpResponse> {
+    let mut refusal = None;
+    for key in obj.keys().map(String::as_str).filter(|key| !writable.contains(key)) {
+        match known(key) {
+            None => return Err(json_err(400, "unknown_field")),
+            Some(response) => {
+                refusal.get_or_insert(response);
+            }
+        }
+    }
+    refusal.map_or(Ok(()), Err)
 }
 
 pub fn check_body_keys(
@@ -312,14 +324,9 @@ pub fn check_body_keys(
     writable: &[&str],
     read_only: &[&str],
 ) -> Result<(), HttpResponse> {
-    let Some(key) = first_key_outside(obj, writable) else {
-        return Ok(());
-    };
-    if read_only.contains(&key) {
-        Err(json_err(422, "unsupported_field"))
-    } else {
-        Err(json_err(400, "unknown_field"))
-    }
+    refuse_unwritable_keys(obj, writable, |key| {
+        read_only.contains(&key).then(|| json_err(422, "unsupported_field"))
+    })
 }
 
 pub fn parse_body_object(
@@ -569,3 +576,26 @@ impl<H: MutatingHandler> crate::http::handler::ApiHandler for H {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refusal(body: &str) -> (u16, String) {
+        let Err(response) = parse_body_object(body.as_bytes(), &["name"], &["present"]) else {
+            panic!("{body} must be refused");
+        };
+        let status = response.status;
+        let json: serde_json::Value =
+            serde_json::from_slice(&response.into_body_bytes()).expect("a JSON body");
+        (status, json["error"].as_str().unwrap_or_default().to_string())
+    }
+
+    #[test]
+    fn an_unknown_key_outranks_a_read_only_one_wherever_it_sorts() {
+        for body in [r#"{"aaa":1,"present":false}"#, r#"{"present":false,"zzz":1}"#] {
+            assert_eq!(refusal(body), (400, "unknown_field".to_string()), "{body}");
+        }
+        assert_eq!(refusal(r#"{"present":false}"#), (422, "unsupported_field".to_string()));
+    }
+}

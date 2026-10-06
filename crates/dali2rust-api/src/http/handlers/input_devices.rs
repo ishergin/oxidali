@@ -16,6 +16,7 @@ use crate::http::handlers::common::{
     accepted_operation_response, json_err, json_err_with_message, json_stream_dto,
     check_body_keys, parse_adapter_id, parse_body_object, parse_resource_id_param,
     MAX_SHORT_ADDRESS,
+    MAX_NAME_BYTES,
 };
 use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command;
 use crate::http::input_device_state::{InputDeviceDto, InputDeviceHttpState};
@@ -402,7 +403,8 @@ fn parse_instance_patch(
     short_address: u8,
     instance_number: u8,
 ) -> Result<Dali103InstanceConfigureCommand, HttpResponse> {
-    let json = Value::Object(parse_body_object(body, &INSTANCE_PATCH_KEYS, INSTANCE_READ_ONLY_KEYS)?);
+    let json =
+        Value::Object(parse_body_object(body, &INSTANCE_PATCH_KEYS, INSTANCE_READ_ONLY_KEYS)?);
     let mut cmd = Dali103InstanceConfigureCommand {
         registry_adapter_id: adapter_id,
         short_address,
@@ -608,7 +610,6 @@ fn parse_group(group: &Value) -> Result<Option<u8>, HttpResponse> {
     }
 }
 
-const NAME_MAX_BYTES: usize = 64;
 const NOTES_MAX_BYTES: usize = 48;
 
 fn within_bytes(field: &str, text: &str, cap: usize) -> Result<(), HttpResponse> {
@@ -658,7 +659,7 @@ fn parse_metadata_patch(
     match json.get("name") {
         Some(Value::Null) => cmd.patch_mask |= PATCH_CLEAR_NAME,
         Some(Value::String(name)) => {
-            within_bytes("name", name, NAME_MAX_BYTES)?;
+            within_bytes("name", name, MAX_NAME_BYTES)?;
             cmd.name = dali2rust_contracts::msg::fixed_text_64(name);
             cmd.patch_mask |= PATCH_NAME;
         }

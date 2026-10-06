@@ -292,7 +292,7 @@ impl RulesHandler {
 }
 
 fn parse_enabled(body: &[u8]) -> Result<bool, HttpResponse> {
-    let json = parse_body_object(body, &["enabled"], &[])?;
+    let json = parse_body_object(body, &["enabled"], &["name"])?;
     match json.get("enabled") {
         None => Err(json_err(400, "missing_enabled")),
         Some(value) => value.as_bool().ok_or_else(|| json_err(422, "invalid_value")),

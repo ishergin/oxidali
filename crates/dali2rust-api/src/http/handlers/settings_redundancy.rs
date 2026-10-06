@@ -18,6 +18,7 @@ use crate::http::types::HttpResponse;
 use super::common::{
     check_body_keys, json_err, json_stream_dto, parse_bool_field, parse_json_body,
     publish_and_await_apply,
+    MAX_SHORT_ADDRESS,
 };
 
 const ALLOWED_KEYS: &[&str] = &[
@@ -35,7 +36,6 @@ const MAX_PROBE_INTERVAL_MS: u64 = 60_000;
 const MIN_TAKEOVER_AFTER_MISSED: u64 = 1;
 const MAX_TAKEOVER_AFTER_MISSED: u64 = 5;
 const MAX_BOOT_LISTEN_MS: u64 = 120_000;
-const MAX_DEVICE_SHORT_ADDRESS: u64 = 63;
 const MAX_PEER_URL_LEN: usize = 64;
 
 declare_handler_shell! {
@@ -236,7 +236,7 @@ fn parse_peer(
         serde_json::Value::Null => u8::MAX,
         other => {
             let n = other.as_u64().ok_or_else(|| json_err(422, "invalid_value"))?;
-            if n > MAX_DEVICE_SHORT_ADDRESS {
+            if n > u64::from(MAX_SHORT_ADDRESS) {
                 return Err(json_err(422, "out_of_range"));
             }
             u8::try_from(n).unwrap_or(u8::MAX)

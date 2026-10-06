@@ -22,10 +22,11 @@ use crate::http::types::HttpResponse;
 use dali2rust_domain::registry::AttributeSectionKind;
 
 use super::common::{
-    accepted_operation_response, first_key_outside, json_err, parse_body_object,
+    accepted_operation_response, json_err, parse_body_object, refuse_unwritable_keys,
     json_err_with_message, json_stream_dto, parse_adapter_id, parse_color_mode, parse_device_type,
     parse_json_body, parse_physical_short, parse_typed_body, pd_cap_supports_color_mode,
     wait_apply_counter, write_json_array_items, APPLY_WATCH_BUDGET_MS,
+    MAX_NAME_BYTES,
 };
 use crate::http::target_state_request::TargetStateBody;
 use super::operation_dispatch::{
@@ -672,11 +673,9 @@ fn is_physical_device_field(key: &str) -> bool {
 fn validate_pd_write_attr_keys(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), HttpResponse> {
-    match first_key_outside(obj, PD_WRITE_ATTRIBUTE_KEYS) {
-        None => Ok(()),
-        Some(key) if is_physical_device_field(key) => Err(json_err(422, "unsupported_field")),
-        Some(_) => Err(json_err(400, "unknown_field")),
-    }
+    refuse_unwritable_keys(obj, PD_WRITE_ATTRIBUTE_KEYS, |key| {
+        is_physical_device_field(key).then(|| json_err(422, "unsupported_field"))
+    })
 }
 
 fn parse_bounded_attr_field(
@@ -783,19 +782,15 @@ const PD_READ_ONLY_KEYS: &[&str] = &[
 ];
 
 fn validate_pd_patch_keys(obj: &serde_json::Map<String, serde_json::Value>) -> Result<(), HttpResponse> {
-    match first_key_outside(obj, PD_PATCH_KEYS) {
-        None => Ok(()),
-        Some(key) if PD_WRITE_ATTRIBUTE_KEYS.contains(&key) => Err(json_err_with_message(
-            422,
-            "unsupported_field",
-            "use POST .../write-attributes",
-        )),
-        Some(key) if PD_READ_ONLY_KEYS.contains(&key) => Err(json_err(422, "unsupported_field")),
-        Some(_) => Err(json_err(400, "unknown_field")),
-    }
+    refuse_unwritable_keys(obj, PD_PATCH_KEYS, |key| {
+        if PD_WRITE_ATTRIBUTE_KEYS.contains(&key) {
+            Some(json_err_with_message(422, "unsupported_field", "use POST .../write-attributes"))
+        } else {
+            PD_READ_ONLY_KEYS.contains(&key).then(|| json_err(422, "unsupported_field"))
+        }
+    })
 }
 
-const MAX_PD_NAME_BYTES: usize = 64;
 const MAX_PD_NOTES_BYTES: usize = 48;
 
 fn pd_cap_error(field: &str, actual: usize, cap: usize) -> HttpResponse {
@@ -807,8 +802,8 @@ fn pd_cap_error(field: &str, actual: usize, cap: usize) -> HttpResponse {
 }
 
 fn validate_pd_patch_caps(data: &PdPatchData) -> Result<(), HttpResponse> {
-    if data.name.len() > MAX_PD_NAME_BYTES {
-        return Err(pd_cap_error("name", data.name.len(), MAX_PD_NAME_BYTES));
+    if data.name.len() > MAX_NAME_BYTES {
+        return Err(pd_cap_error("name", data.name.len(), MAX_NAME_BYTES));
     }
     match &data.notes {
         Some(notes) if notes.len() > MAX_PD_NOTES_BYTES => Err(pd_cap_error(

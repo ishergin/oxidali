@@ -15,6 +15,7 @@ use crate::http::types::HttpResponse;
 use super::common::{
     check_body_keys, json_err, json_stream_dto, parse_adapter_route_id, parse_json_body,
     publish_and_await_apply,
+    MAX_NAME_BYTES,
 };
 use crate::http::handlers::common::{require_get};
 
@@ -151,7 +152,7 @@ fn parse_adapter_patch_fields(
             Some(s) => s.to_string(),
             None => return Err(json_err(422, "invalid_value")),
         };
-        if s.is_empty() || s.as_bytes().len() > 64 {
+        if s.is_empty() || s.len() > MAX_NAME_BYTES {
             return Err(json_err(422, "invalid_value"));
         }
         patch_mask |= AdapterSettingsUpdateCommand::PATCH_NAME;
