@@ -107,7 +107,10 @@ boundaries).
 | `invalid_json` | 400 | Тело не JSON (в том числе `text/plain`) |
 | `missing_source` | 400 | В `PUT` / `parse` нет строкового `source` |
 | `missing_base_revision` | 400 | В `PUT` нет числового `base_revision` |
-| `missing_enabled` | 400 | В `PATCH` нет булева `enabled` |
+| `missing_enabled` | 400 | В `PATCH` нет `enabled` |
+| `unknown_field` | 400 | В теле `PATCH` есть поле, которого у правила нет |
+| `unsupported_field` | 422 | В теле `PATCH` есть `name`: имя меняет только документ |
+| `invalid_value` | 422 | `enabled` в `PATCH` не bool |
 | `parse_error` | 400 | Синтаксис или неизвестное имя цели, с `line` / `column` / `message` |
 | `rule_not_found` | 404 | Правила `{name}` нет в документе (`PATCH`, `run`) — до публикации |
 | `rules_not_compiled` | 409 | `PATCH` по документу, который не скомпилировался |

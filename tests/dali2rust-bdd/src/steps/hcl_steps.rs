@@ -42,7 +42,7 @@ fn get_schedule(world: &mut DaliWorld, schedule_id: &str) -> Value {
     last_json(world)
 }
 
-// HCL-001 HCL-010 HCL-023 HCL-028 HCL-030 HCL-031 HCL-043 HCL-046 HCL-047 HCL-048 HCL-049 HCL-050 HCL-053 PERS-004 HCL-072 HCL-075 HCL-076 SYS-237
+// HCL-001 HCL-010 HCL-023 HCL-028 HCL-030 HCL-031 HCL-043 HCL-046 HCL-047 HCL-048 HCL-049 HCL-050 HCL-053 PERS-004 HCL-072 HCL-075 HCL-076 SYS-237 HCL-082
 #[given(regex = r#"^HCL schedule "([^"]+)" exists$"#)]
 async fn given_schedule_exists(world: &mut DaliWorld, schedule_id: String) {
     post_schedule_and_wait(world, &valid_schedule(&schedule_id));
@@ -56,7 +56,7 @@ async fn given_schedules_exist(world: &mut DaliWorld, count: usize) {
     }
 }
 
-// HCL-079 HCL-021 HCL-024 HCL-025 HCL-026 HCL-032 HCL-033 HCL-034 HCL-035 HCL-036 HCL-037 HCL-038 HCL-039 HCL-040 HCL-041 HCL-042 HCL-044 HCL-045 HCL-023
+// HCL-079 HCL-021 HCL-024 HCL-025 HCL-026 HCL-032 HCL-033 HCL-034 HCL-035 HCL-036 HCL-037 HCL-038 HCL-039 HCL-040 HCL-041 HCL-042 HCL-044 HCL-045 HCL-023 HCL-081 HCL-082
 #[when(regex = r#"^I POST an HCL schedule whose "([^"]+)" is (.+)$"#)]
 async fn when_post_schedule_with_override(world: &mut DaliWorld, field: String, raw: String) {
     let value: Value = serde_json::from_str(&raw).expect("override value should be JSON");

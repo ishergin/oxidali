@@ -19,3 +19,9 @@ Feature: Adapters patch contract
     When I PATCH JSON {"limits":{}} to "/api/v1/adapters/0"
     Then the response status should be 422
     And the JSON error should be "unsupported_field"
+
+  @id:ADP-035
+  Scenario: PATCH adapter rejects counters as a field it does not have
+    When I PATCH JSON {"counters":{}} to "/api/v1/adapters/0"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"

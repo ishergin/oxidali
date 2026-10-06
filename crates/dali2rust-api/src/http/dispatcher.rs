@@ -5,6 +5,7 @@ use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, PublishResult};
 
 use crate::bus_codec::SOURCE_ID_UNSPECIFIED;
 use crate::confirmation_bridge::{PendingConfirmationSlots, ReplyFormatter};
+use crate::http::handlers::common::refusal_before_the_wire;
 use crate::http::types::{HttpBody, HttpResponse, NO_EXTRA_HEADERS};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::DaliCommandPayload;
@@ -123,14 +124,21 @@ impl BusCommandDispatcher {
         }
 
         match recv_confirmation_bytes(wait, self.timeout_ms, &self.slots, correlation_id) {
-            Ok(bytes) => HttpResponse {
-                status: 200,
-                content_type: self.success_content_type,
-                extra_headers: NO_EXTRA_HEADERS,
-                body: HttpBody::Buffered(bytes),
-            },
+            Ok(bytes) => self.wire_outcome(bytes),
             Err(resp) => resp,
         }
+    }
+
+    fn wire_outcome(&self, bytes: Vec<u8>) -> HttpResponse {
+        let refusal = serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|confirmation| refusal_before_the_wire(&confirmation));
+        refusal.unwrap_or(HttpResponse {
+            status: 200,
+            content_type: self.success_content_type,
+            extra_headers: NO_EXTRA_HEADERS,
+            body: HttpBody::Buffered(bytes),
+        })
     }
 }
 
@@ -428,6 +436,88 @@ mod tests {
 
         assert_eq!(command_json["backward_frame"].as_u64(), Some(0x11));
         assert_eq!(level_json["backward_frame"].as_u64(), Some(0x22));
+    }
+
+    fn answer_one_dali_command(
+        confirm: impl FnOnce(u64) -> dali2rust_contracts::msg::ConfirmationEnvelope,
+    ) -> HttpResponse {
+        let (_host, publisher, (cmd_rx, conf_rx)) = BusHost::spawn(BusConfig::default(), |reg| {
+            (
+                reg.subscribe_commands(4, dali2rust_contracts::msg::COMMAND_VARIANT_NAMES),
+                reg.subscribe_confirmations(4),
+            )
+        });
+        let slots = Arc::new(PendingConfirmationSlots::with_capacity(4));
+        let _bridge = spawn_confirmation_bridge(conf_rx, Arc::clone(&slots));
+        let dispatcher = BusCommandDispatcher::new(
+            publisher.clone(),
+            slots,
+            Arc::new(CorrelationIdAllocator::new()),
+            confirmation_to_json_body,
+            "application/json",
+            BusId(1),
+            1000,
+        );
+        let pending = std::thread::spawn(move || dispatcher.dispatch(0x01, 0xA0, 1));
+        let command = cmd_rx.recv_timeout(Duration::from_millis(500)).expect("the command");
+        let confirmation = BusFrame::confirmation(confirm(parsed_command(&command).correlation_id));
+        assert_eq!(
+            publisher.try_publish(BusChannel::Confirmations, confirmation),
+            PublishResult::Queued
+        );
+        pending.join().expect("the response")
+    }
+
+    fn error_of(response: HttpResponse) -> serde_json::Value {
+        let json: serde_json::Value =
+            serde_json::from_slice(&response.into_body_bytes()).expect("a JSON body");
+        json["error"].clone()
+    }
+
+    #[test]
+    fn a_dali_command_the_bus_rejected_is_a_503() {
+        let response = answer_one_dali_command(|correlation| {
+            build_confirmation_envelope(
+                correlation,
+                DeliveryStatus::DeliveryRejected,
+                0,
+                SOURCE_ID_UNSPECIFIED,
+            )
+        });
+        assert_eq!(response.status, 503);
+        assert_eq!(error_of(response), "delivery_rejected");
+    }
+
+    #[test]
+    fn a_dali_command_a_disabled_adapter_refused_is_a_409_naming_it() {
+        let response = answer_one_dali_command(|correlation| {
+            dali2rust_contracts::bus::build_confirmation_envelope_with_product_error(
+                correlation,
+                DeliveryStatus::ExecutionFailed,
+                0,
+                SOURCE_ID_UNSPECIFIED,
+                Some((dali2rust_contracts::msg::ErrorCode::Conflict, "adapter_disabled")),
+            )
+        });
+        assert_eq!(response.status, 409);
+        let json: serde_json::Value =
+            serde_json::from_slice(&response.into_body_bytes()).expect("a JSON body");
+        assert_eq!(json["error"], "conflict");
+        assert_eq!(json["message"], "adapter_disabled");
+    }
+
+    #[test]
+    fn a_dali_query_nobody_answered_is_still_a_200_reading() {
+        let response = answer_one_dali_command(|correlation| {
+            build_confirmation_envelope(
+                correlation,
+                DeliveryStatus::ExecutionFailed,
+                0,
+                SOURCE_ID_UNSPECIFIED,
+            )
+        });
+        assert_eq!(response.status, 200);
+        assert_eq!(error_of(response), "execution_failed");
     }
 
     #[test]

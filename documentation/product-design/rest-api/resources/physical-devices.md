@@ -50,7 +50,7 @@ BDD — [`physical_devices`](../../../../tests/dali2rust-bdd/features/physical_d
   `extended`, `groups`, `scenes`, `memory_identity`, `memory_profile`,
   `memory_bus_unit`, `memory_luminaire`, `memory_energy`, `memory_diagnostics`; без
   параметра — все. Порядок ответа канонический (отфильтрованный ответ — срез
-  полного). Неизвестное имя — `400 invalid_value`, а не молчаливый `{}`, который не
+  полного). Неизвестное имя — `422 invalid_value`, а не молчаливый `{}`, который не
   отличить от непрочитанного прибора. Это имена **секций ответа**, а не план чтения
   `attribute_groups`.
 - **Банки** — какие диапазоны каких банков успешно прочитаны и когда. Сырые байты
@@ -130,10 +130,11 @@ Merge-patch. Пишутся:
 - `color_mode_override` — режим или `null`.
 - `dt8_auto_activation_repair`, `dt8_rgbwaf_control_assert` — bool, не nullable.
 
-Запрещены — `422 unsupported_field`: `state`, `attributes`, `memory_banks`,
-`capabilities`, `short_address`, все `*_discovered` / `*_effective` / `*_source`,
-`supported_device_types`. Атрибуты прибора (fade, power-on и т. п.) — тот же код с
-подсказкой `write-attributes`. Адрес меняет только
+Запрещены — `422 unsupported_field`: остальные поля DTO (`state`, `capabilities`,
+`random_address`, `color_temperature_range`, все `*_discovered` / `*_effective` /
+`*_source` и т. п.), а также `attributes` и `memory_banks`. Поля `write-attributes`
+(fade, power-on, уровни, Tc-лимиты, кривая) — тот же код с подсказкой
+`write-attributes`. Неизвестный ключ — `400 unknown_field`. Адрес меняет только
 [`commissioning.md`](commissioning.md).
 
 Публикуется `PhysicalDeviceOverrideCommand` и, если есть `notes`, вторая команда
@@ -166,7 +167,8 @@ effective-значений распространяется на привяза�
 
 ## `POST …/write-attributes`
 
-Тело — любое подмножество записываемых атрибутов; отсутствующее поле не пишется:
+Тело — любое непустое подмножество записываемых атрибутов (пустое — `400 empty_patch`);
+отсутствующее поле не пишется:
 
 | Поле | Диапазон | Прибор |
 |---|---|---|
@@ -180,8 +182,9 @@ effective-значений распространяется на привяза�
 
 - `min_level > max_level` или `tc_coolest_mirek > tc_warmest_mirek` в одном теле —
   `422 invalid_value`: исполнитель пишет их по порядку, и пересечение границы на
-  середине было бы каскадом, о котором никто не просил. Значение вне диапазона — `422
-  invalid_value`; любое другое поле — `422 unsupported_field`.
+  середине было бы каскадом, о котором никто не просил. Значение вне диапазона или не
+  целое число (`-1`, `null`, строка, дробь) — `422 invalid_value`; поле прибора, которое
+  здесь не пишется, — `422 unsupported_field`; неизвестный ключ — `400 unknown_field`.
 - Каждая запись проверяется read-back'ом, и в реестр попадает **принятое** прибором, а
   не запрошенное (прибор вправе клампить). Поле, чей read-back ответил другим
   значением, остаётся без провенанса `write_confirmed`, и операция всё равно успешна: на
@@ -216,7 +219,8 @@ scope `Short`), синхронное подтверждение, ответ `200
 
 Тело `{"mode": …}` — `scan_known_short_addresses` · `refresh_known` ·
 `commission_unaddressed` ([`../contracts/enums.md`](../contracts/enums.md)); диапазон
-адресов клиент не задаёт. Неизвестный режим — `422 invalid_enum`.
+адресов клиент не задаёт. Неизвестный или отсутствующий режим — `422 invalid_enum`;
+другое поле тела — `400 unknown_field`.
 
 - Прибор попадает в реестр только после подтверждения: стабильный random address,
   затем проверка пары «short + random» последовательностью поиска. При занятой шине
@@ -230,7 +234,7 @@ scope `Short`), синхронное подтверждение, ответ `200
 Тело: `attribute_groups` — непустой список групп (план чтения,
 [`../contracts/enums.md`](../contracts/enums.md)), и необязательный `memory_banks` —
 пресет. Нет списка — `400 invalid_json`; пустой — `422 invalid_value`; неизвестное имя
-группы или пресета — `422 invalid_enum`.
+группы или пресета — `422 invalid_enum`; другое поле тела — `400 unknown_field`.
 
 - Группы `groups` и `scenes` здесь — readback прибора в его атрибуты, а не
   adapter-level матрицы.

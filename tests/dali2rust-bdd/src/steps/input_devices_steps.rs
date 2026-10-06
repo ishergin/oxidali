@@ -125,7 +125,7 @@ async fn given_scan_with_declarations(
     guard.script_frame24_answer([0x01, 0xFE, 0x34], parse_hex_byte(&version));
 }
 
-// INP-070 INP-071 INP-072 INP-079 INP-080 INP-081
+// INP-070 INP-071 INP-072 INP-079 INP-080 INP-081 INP-089 INP-094
 #[given(regex = r#"^the mock bus answers a control-device scan with a device at address 0 holding instance types "([0-9,]+)" and a corrected-map feedback answering capability ([0-9A-Fa-f]{2}) and colour capability ([0-9A-Fa-f]{2})$"#)]
 async fn given_scan_with_corrected_feedback(
     world: &mut DaliWorld,
@@ -241,7 +241,7 @@ async fn given_next_frame24_collides(world: &mut DaliWorld) {
     guard.script_frame24_outcome(TransferOutcome::Collision);
 }
 
-// INP-010 INP-011 INP-013 INP-016 INP-017 INP-019 INP-030 INP-031 INP-032 INP-074 INP-075 INP-076 INP-077 INP-078 RULE-020 RULE-023 INP-083 RULE-065 RULE-066 INP-086 INP-095 INP-096 INP-097
+// INP-010 INP-011 INP-013 INP-016 INP-017 INP-019 INP-030 INP-031 INP-032 INP-074 INP-075 INP-076 INP-077 INP-078 RULE-020 RULE-023 INP-083 RULE-065 RULE-066 INP-086 INP-095 INP-096 INP-097 INP-090 INP-092
 #[given(regex = r#"^the mock bus answers a control-device scan with a device at address 0 holding instance types "([0-9,]+)"$"#)]
 async fn given_scan_answers(world: &mut DaliWorld, types: String) {
     let types: Vec<u8> = types
@@ -265,7 +265,7 @@ async fn given_empty_segment(world: &mut DaliWorld) {
     guard.clear_frame24_answers();
 }
 
-// INP-006 INP-010 INP-011 INP-013 INP-016 INP-017 INP-018 INP-019 INP-030 INP-031 INP-032 INP-070 INP-071 INP-072 INP-073 INP-074 INP-075 INP-076 INP-077 INP-078 INP-079 INP-080 INP-081 INP-082 INP-083 INP-084 MQTT-025 RULE-020 RULE-023 RULE-065 RULE-066 INP-086 INP-095 INP-096 INP-097
+// INP-006 INP-010 INP-011 INP-013 INP-016 INP-017 INP-018 INP-019 INP-030 INP-031 INP-032 INP-070 INP-071 INP-072 INP-073 INP-074 INP-075 INP-076 INP-077 INP-078 INP-079 INP-080 INP-081 INP-082 INP-083 INP-084 MQTT-025 RULE-020 RULE-023 RULE-065 RULE-066 INP-086 INP-095 INP-096 INP-097 INP-089 INP-090 INP-092 INP-094
 #[when("input devices are scanned on adapter 0 and the scan succeeds")]
 async fn when_scan_succeeds(world: &mut DaliWorld) {
     world.send_http_request("POST", "/api/v1/adapters/0/input-devices/scan", None, "");
@@ -283,13 +283,13 @@ async fn when_scan_succeeds(world: &mut DaliWorld) {
     );
 }
 
-// INP-019 INP-030 INP-070 INP-072 INP-073 INP-076 INP-078 RULE-065 RULE-066 INP-095 INP-096
+// INP-019 INP-030 INP-070 INP-072 INP-073 INP-076 INP-078 RULE-065 RULE-066 INP-095 INP-096 INP-089 INP-090 INP-092 INP-094
 #[when("the mock transport 24-bit trace is cleared")]
 async fn when_clear_frames24(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear_sent_frames24();
 }
 
-// INP-030 INP-072 INP-078 ADP-025
+// INP-030 INP-072 INP-078 ADP-025 INP-087 INP-089 INP-090 INP-091 INP-092 INP-094
 #[then("the mock transport should have sent no 24-bit frames")]
 async fn then_no_frames24(world: &mut DaliWorld) {
     let mock = world.dali_mock();

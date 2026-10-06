@@ -13,7 +13,9 @@ use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::types::HttpResponse;
 
 use super::common::{
-    json_err, json_stream_dto, parse_bool_field, parse_json_body, publish_and_await_apply,
+    check_body_keys, json_err, json_stream_dto, parse_bool_field, parse_json_body,
+    publish_and_await_apply,
+    MAX_SHORT_ADDRESS,
 };
 use crate::http::handlers::common::require_get;
 
@@ -79,11 +81,7 @@ impl crate::http::handlers::common::MutatingHandler for DaliSettingsPatchHandler
     ) -> Result<DaliSettingsPatchData, HttpResponse> {
         let v = parse_json_body(body)?;
         let obj = v.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
-        for key in obj.keys() {
-            if !ALLOWED_KEYS.contains(&key.as_str()) {
-                return Err(json_err(400, "unknown_field"));
-            }
-        }
+        check_body_keys(obj, ALLOWED_KEYS, &[])?;
         let mut data = DaliSettingsPatchData::default();
         if let Some(value) = parse_bool_field(obj, "dt8_auto_activation_repair")? {
             data.patch_mask |= DaliSettingsUpdateCommand::PATCH_DT8_AUTO_ACTIVATION_REPAIR;
@@ -103,7 +101,7 @@ impl crate::http::handlers::common::MutatingHandler for DaliSettingsPatchHandler
                 serde_json::Value::Null => 0xFF,
                 other => {
                     let n = other.as_u64().ok_or_else(|| json_err(422, "invalid_value"))?;
-                    if n > 63 {
+                    if n > u64::from(MAX_SHORT_ADDRESS) {
                         return Err(json_err(422, "invalid_value"));
                     }
                     u8::try_from(n).unwrap_or(0xFF)

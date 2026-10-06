@@ -10,7 +10,7 @@ use crate::http::dispatcher::dispatch_and_wait_for_success;
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::common::{json_err, json_stream_dto};
 use crate::http::handlers::hcl::HclBusContext;
-use crate::http::handlers::hcl_validate::validate_schedule_id;
+use crate::http::handlers::hcl_validate::schedule_id_path;
 use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::hcl_state::{hcl_override_view_to_dto, HclScheduleHttpState};
 use crate::http::types::HttpResponse;
@@ -23,7 +23,7 @@ fn known_schedule_id(
     let Some(raw) = params.get("schedule_id") else {
         return Err(json_err(400, "missing_resource_id"));
     };
-    validate_schedule_id(raw)?;
+    schedule_id_path(raw)?;
     if state.hcl_schedule_dto(raw).is_none() {
         return Err(json_err(404, "not_found"));
     }

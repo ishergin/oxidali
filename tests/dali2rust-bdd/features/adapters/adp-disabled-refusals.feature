@@ -3,6 +3,9 @@ Feature: A disabled adapter refuses work, and says so before its TTL
 
   @id:ADP-021
   Scenario: Write-attributes on a disabled adapter fails the operation instead of timing out
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
     When I PATCH JSON {"enabled":false} to "/api/v1/adapters/0"
     Then the response status should be 200
     And the JSON boolean field "enabled" should be false
@@ -47,9 +50,8 @@ Feature: A disabled adapter refuses work, and says so before its TTL
     When I PATCH JSON {"enabled":false} to "/api/v1/adapters/0"
     Then the response status should be 200
     When I POST JSON {} to "/api/v1/adapters/0/commissioning/steps/terminate"
-    Then the response status should be 200
-    And the JSON boolean field "success" should be false
-    And the JSON field "error_code" should be "conflict"
+    Then the response status should be 409
+    And the JSON error should be "conflict"
     And the JSON field "message" should be "adapter_disabled"
     And the DALI mock transport should have received 0 forward frame
 
@@ -90,5 +92,16 @@ Feature: A disabled adapter refuses work, and says so before its TTL
     When I PUT JSON {"power":"on","level":180} to "/api/v1/adapters/0/physical-devices/0/target-state"
     Then the response status should be 409
     And the JSON field "error" should be "conflict"
+    And the JSON field "message" should be "adapter_disabled"
+    And the DALI mock transport should have received 0 forward frame
+
+  @id:ADP-036
+  Scenario: A diagnostic DALI frame on a disabled adapter is a 409, not a wire reading
+    When I PATCH JSON {"enabled":false} to "/api/v1/adapters/0"
+    Then the response status should be 200
+    And the DALI mock transport frame log should be cleared
+    When I POST JSON {"wire_address":2,"level":100} to "/api/v1/dali/level"
+    Then the response status should be 409
+    And the JSON error should be "conflict"
     And the JSON field "message" should be "adapter_disabled"
     And the DALI mock transport should have received 0 forward frame

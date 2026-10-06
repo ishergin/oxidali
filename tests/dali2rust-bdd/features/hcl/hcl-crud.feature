@@ -245,3 +245,24 @@ Feature: HCL schedule CRUD
     When I PATCH JSON {"points":[{"time_ref":"absolute","offset_minutes":1500,"level_mode":"none","level":null,"color_temperature_kelvin":3000}]} to "/api/v1/hcl-schedules/morning"
     Then the response status should be 422
     And the JSON error should be "invalid_value"
+
+  @id:HCL-080
+  Scenario: A schedule id in the path that is not a slug is an invalid resource id
+    When I send a GET request to "/api/v1/hcl-schedules/Not_A_Slug"
+    Then the response status should be 400
+    And the JSON error should be "invalid_resource_id"
+
+  @id:HCL-081
+  Scenario: A schedule id in the body that is not a slug is an invalid value
+    When I POST an HCL schedule whose "schedule_id" is "Not_A_Slug"
+    Then the response status should be 422
+    And the JSON error should be "invalid_value"
+
+  @id:HCL-082
+  Scenario: A schedule deleted after its creation ended can be created again at once
+    Given HCL schedule "morning" exists
+    When I send a DELETE request to "/api/v1/hcl-schedules/morning"
+    Then the response status should be 204
+    When I POST an HCL schedule whose "schedule_id" is "morning"
+    Then the response status should be 202
+    And the last operation eventually succeeds

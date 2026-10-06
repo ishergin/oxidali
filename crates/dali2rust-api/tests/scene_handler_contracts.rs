@@ -2,9 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use dali2rust_api::http::adapter_state::{
-    AdapterCountersDto, AdapterDto, AdapterHttpState, AdapterLimitsDto,
-};
+use dali2rust_api::http::adapter_state::{AdapterDto, AdapterHttpState, AdapterLimitsDto};
 use dali2rust_api::http::dispatcher::CorrelationIdAllocator;
 use dali2rust_api::http::handler::ApiHandler;
 use dali2rust_api::http::handlers::scenes::{SceneApplyHandler, SceneMatrixWriteHandler};
@@ -34,11 +32,6 @@ fn base_adapter() -> AdapterDto {
             scenes: 16,
         },
         bus_status: "ok".to_string(),
-        counters: AdapterCountersDto {
-            commands: 0,
-            timeouts: 0,
-            errors: 0,
-        },
     }
 }
 

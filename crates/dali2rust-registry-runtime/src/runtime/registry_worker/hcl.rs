@@ -5,6 +5,7 @@ use dali2rust_contracts::msg::{
     ErrorCode, HclLevelMode, HclSchedulePointRow, HclScheduleDeleteCommand,
     HclScheduleEnableCommand, HclScheduleUpsertCommand, HclTargetRow, HclTargetScope, HclTimeRef,
 };
+use dali2rust_domain::registry::HCL_SCHEDULE_LIMIT_REACHED;
 
 use crate::runtime::registry::hcl_schedules::{HclChunkOutcome, HclChunkRejection, HclSwitchOutcome};
 use crate::runtime::registry::publish::{publish_config_write_signal, publish_hcl_schedule_changed};
@@ -202,7 +203,7 @@ fn chunk_rejection_error(rejection: HclChunkRejection) -> Rejection {
     match rejection {
         HclChunkRejection::OutOfOrder => (ErrorCode::Conflict, "chunk_out_of_order"),
         HclChunkRejection::TooManyRows => (ErrorCode::InvalidValue, "schedule_rows_exceeded"),
-        HclChunkRejection::ScheduleLimit => (ErrorCode::Conflict, "schedule_limit_reached"),
+        HclChunkRejection::ScheduleLimit => (ErrorCode::Conflict, HCL_SCHEDULE_LIMIT_REACHED),
         HclChunkRejection::Invalid(code, message) => (code, message),
     }
 }

@@ -64,7 +64,8 @@
   идёт по занятости, поэтому два быстрых `POST` не получат один сгенерированный id.
   Брошенная серия освобождает имя через 15 с.
 - Расписаний не больше восьми: девятое завершает операцию `failed` с `conflict` и
-  `message = schedule_limit_reached`.
+  `message = schedule_limit_reached`; если восемь созданий ещё не дошли до реестра,
+  девятый `POST` получает этот отказ сразу, `409`.
 - `PATCH` — merge-patch; массивы (`active_days`, `targets`, `points`) заменяются
   целиком; `schedule_id` не меняется.
 - `DELETE` — синхронное подтверждение, `204`.
@@ -74,7 +75,8 @@
 | Нарушение | Ответ |
 |---|---|
 | Неизвестное поле | `400 unknown_field` |
-| `schedule_id` не slug | `422 invalid_resource_id` |
+| `schedule_id` в теле не slug | `422 invalid_value` |
+| `schedule_id` в пути не slug | `400 invalid_resource_id` |
 | Цель `virtual_lamp` / `scene` | `422 unsupported_field` |
 | Неизвестный `algorithm`, `scope`, `time_ref`, `level_mode`, день недели | `422 invalid_enum` |
 | Пустые или сверх лимита `targets` / `points` / `active_days`; `group` без `group_ids` или `broadcast` с ними; группа > 15; координаты вне диапазона; астрономическая точка без `location`; смещение вне диапазона; `level` не по правилу `level_mode`; дубль `(time_ref, offset_minutes)`; кельвины вне `1000..20000` | `422 invalid_value` |

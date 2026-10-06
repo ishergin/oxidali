@@ -41,6 +41,7 @@ export function Dashboard() {
   if (!data) return <div class="empty">Loading controller…</div>
   const { controller: c, health: h, adapter: a, ops, deviceCount } = data
   const controllerStats = pushedStats.latest ?? data.stats
+  const dali = controllerStats.dali
   const diag = pushedDiag.latest ?? data.diagnostics
   const wire = diag.dali_wire
   const bus = busHealth(wire, { enabled: a.enabled })
@@ -184,16 +185,12 @@ export function Dashboard() {
         >
           <div class="counters">
             <div class="counter">
-              <div class="n">{a.counters.commands}</div>
-              <div class="l">commands</div>
+              <div class="n">{dali.commands_executed_total}</div>
+              <div class="l">DALI commands</div>
             </div>
             <div class="counter">
-              <div class={`n${a.counters.timeouts > 0 ? ' warn' : ''}`}>{a.counters.timeouts}</div>
-              <div class="l">timeouts</div>
-            </div>
-            <div class="counter">
-              <div class={`n${a.counters.errors > 0 ? ' err' : ''}`}>{a.counters.errors}</div>
-              <div class="l">errors</div>
+              <div class={`n${dali.errors_total > 0 ? ' err' : ''}`}>{dali.errors_total}</div>
+              <div class="l">DALI errors</div>
             </div>
           </div>
           <div class="attr">

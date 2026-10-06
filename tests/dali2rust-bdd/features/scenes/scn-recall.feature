@@ -72,6 +72,6 @@ Feature: Scene recall
   Scenario: A recall body with an unknown key is refused, not silently accepted
     Given a DALI mock transport with no response
     When I POST JSON {"scope":"group","gruop_id":5} to "/api/v1/adapters/0/scenes/3/recall"
-    Then the response status should be 422
-    And the JSON error should be "unsupported_field"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"
     And no DALI frames should have been sent

@@ -107,7 +107,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .attr .v .unit { color: var(--text-faint); font-size: 11px; }
 
 /* Counters row inside adapter card */
-.counters { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--border); }
+.counters { display: grid; grid-template-columns: repeat(2, 1fr); border-bottom: 1px solid var(--border); }
 .counter { padding: 12px 14px; text-align: center; border-right: 1px solid var(--border); }
 .counter:last-child { border-right: none; }
 .counter .n { font-family: var(--mono); font-size: 22px; font-weight: 500; }
@@ -277,9 +277,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <div class="card">
         <header><h3>Adapter 0 · Main DALI</h3><span class="chip idle"><span class="dot"></span>bus idle</span></header>
         <div class="counters">
-          <div class="counter"><div class="n">4 812</div><div class="l">commands</div></div>
-          <div class="counter"><div class="n warn">3</div><div class="l">timeouts</div></div>
-          <div class="counter"><div class="n err">0</div><div class="l">errors</div></div>
+          <div class="counter"><div class="n">4 812</div><div class="l">DALI commands</div></div>
+          <div class="counter"><div class="n">0</div><div class="l">DALI errors</div></div>
         </div>
         <div class="attr"><span class="k">Physical devices</span><span class="v">14 <span class="unit">discovered</span></span></div>
         <div class="attr"><span class="k">Capacity</span><span class="v">64 VL · 16 groups · 16 scenes</span></div>
@@ -320,6 +319,14 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     </div>
   </div>
 
+
+<div class="chgh">2026-10-06 — counters the wire actually keeps</div>
+<p class="chgnote">The adapter card's <b>commands / timeouts / errors</b> row read a
+  <code>counters</code> object on the adapter resource that nothing ever wrote, so it showed
+  zeros as if they were live. The resource no longer has the field. The row now shows the
+  wire's own totals from <code>stats.dali</code>: <b>DALI commands</b> executed (the diagnostic
+  path included) and <b>DALI errors</b>, red once non-zero. Timeouts are gone from the card: the
+  confirmation bridge is shared, and a timed-out registry write says nothing about the wire.</p>
 
 <div class="chgh">2026-09-28 — which installation, which board</div>
 <p class="chgnote">The Controller card showed a hostname and an address the firmware never

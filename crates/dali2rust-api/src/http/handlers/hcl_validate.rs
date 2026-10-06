@@ -66,9 +66,15 @@ pub(crate) fn validate_schedule_id(raw: &str) -> Result<FixedText32, HttpRespons
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-');
     if !valid {
-        return Err(json_err(422, "invalid_resource_id"));
+        return Err(json_err(422, "invalid_value"));
     }
     Ok(fixed_text_32(raw))
+}
+
+pub(crate) fn schedule_id_path(raw: &str) -> Result<(), HttpResponse> {
+    validate_schedule_id(raw)
+        .map(|_| ())
+        .map_err(|_| json_err(400, "invalid_resource_id"))
 }
 
 fn validate_active_days(days: &[String]) -> Result<u8, HttpResponse> {

@@ -24,3 +24,15 @@ Feature: Group metadata PATCH
       | member_count_desired | 5     |
       | member_count_applied | 5     |
       | group_id             | 7     |
+
+  @id:GRP-074
+  Scenario: An empty group PATCH is an empty patch, not malformed JSON
+    When I PATCH JSON {} to "/api/v1/adapters/0/groups/7"
+    Then the response status should be 400
+    And the JSON error should be "empty_patch"
+
+  @id:GRP-075
+  Scenario: The matrix's own adapter_id in a write body is a read-only field
+    When I PATCH JSON {"adapter_id":0} to "/api/v1/adapters/0/group-membership-matrix"
+    Then the response status should be 422
+    And the JSON error should be "unsupported_field"

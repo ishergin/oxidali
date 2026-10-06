@@ -139,7 +139,7 @@ macro_rules! declare_metadata_patch_handler {
                 })?;
                 let data = $parse(object)?;
                 if data.patch_mask == 0 {
-                    return Err($crate::http::handlers::common::json_err(400, "invalid_json"));
+                    return Err($crate::http::handlers::common::json_err(400, "empty_patch"));
                 }
                 Ok((adapter_id, resource_id, data))
             }

@@ -283,7 +283,7 @@ pub(crate) fn build_app_router(
     let builder = wire_physical_devices(builder, adapter_count, &bus, &registry);
     let builder = wire_commissioning(builder, adapter_count, &bus, &registry, &op_read);
     let builder = wire_applies(builder, &bus, &registry, &op_read);
-    let builder = wire_hcl(builder, &bus, &registry, &hcl_overrides);
+    let builder = wire_hcl(builder, &bus, &registry, &hcl_overrides, &op_read);
     let builder = wire_input_devices(builder, &bus, &registry);
     let builder = wire_rules(builder, &bus, &rules);
     let builder = wire_settings_and_lamps(builder, &bus, &registry, &redundancy_read);
@@ -545,7 +545,7 @@ fn wire_physical_device_diagnostics(
                 bus.publisher.clone(),
                 Arc::clone(&bus.correlation),
                 bus.bus_id,
-                adapter_count,
+                Arc::clone(&registry.physical_state),
             ),
         ))
         .with_handler(RouteKey::AdapterDiscoveryRuns, Box::new(AdapterDiscoveryRunsHandler::new(
@@ -639,6 +639,7 @@ fn wire_hcl(
     bus: &HttpBusDispatch,
     registry: &RegistryHttpPorts,
     overrides: &Arc<dyn HclOverrideReadPort>,
+    op_read: &Arc<dyn OperationReadPort>,
 ) -> AppBuilder {
     let state = &registry.hcl_state;
     let ctx = HclBusContext {
@@ -653,7 +654,7 @@ fn wire_hcl(
         .with_handler(RouteKey::HclScheduleGet, read(state, HclScheduleDetailHandler::new))
         .with_handler(
             RouteKey::HclScheduleCreate,
-            Box::new(HclScheduleCreateHandler::new(Arc::clone(state), ctx.clone())),
+            Box::new(HclScheduleCreateHandler::new(Arc::clone(state), Arc::clone(op_read), ctx.clone())),
         )
         .with_handler(
             RouteKey::HclSchedulePatch,

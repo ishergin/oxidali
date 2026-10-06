@@ -459,9 +459,6 @@ impl RegistryStore {
             adapters.push(AdapterRow {
                 name,
                 enabled: true,
-                commands: 0,
-                timeouts: 0,
-                errors: 0,
             });
         }
         Self {

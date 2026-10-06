@@ -35,3 +35,9 @@ Feature: Firmware update over the network
     And the firmware operation should end as "failed"
     And the firmware update state should be "failed"
     And the firmware update error should be "fetch_failed"
+
+  @id:SYS-254
+  Scenario: A field besides the URL is refused as unknown, not accepted and ignored
+    When I POST JSON {"url":"http://127.0.0.1:9/x.bin","sha256":"00"} to "/api/v1/firmware/updates"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"

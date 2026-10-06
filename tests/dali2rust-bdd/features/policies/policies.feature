@@ -120,3 +120,9 @@ Feature: Policies — what a luminaire does without a controller
     And the operation error code should be "verify_unanswered"
     And the operation error message should be "verify_unanswered"
     And all scripted DALI exchanges should be consumed without errors
+
+  @id:POLICY-012
+  Scenario: The derived manages_anything is read-only, not unknown
+    When I PATCH JSON {"manages_anything":true} to "/api/v1/policies"
+    Then the response status should be 422
+    And the JSON error should be "unsupported_field"

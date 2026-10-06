@@ -58,8 +58,8 @@ Feature: Commissioning identify / locate
     Then the response status should be 202
     And the last operation eventually succeeds
     When I POST JSON {"short_address":0,"duration_ms":5000} to "/api/v1/adapters/0/commissioning/identify"
-    Then the response status should be 422
-    And the JSON error should be "unsupported_field"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"
 
   @id:COMM-038
   Scenario: Identify puts exactly one send-twice IDENTIFY DEVICE pair on the wire

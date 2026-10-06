@@ -5,22 +5,11 @@ use std::sync::Arc;
 
 use tiny_http::{Header, Request, Response, Server, StatusCode};
 
-use dali2rust_api::http::router::Router;
+use dali2rust_api::http::router::{BodyRefusal, Router, MAX_REQUEST_BODY_BYTES};
 use dali2rust_ws_runtime::WsHub;
 
 use super::host_ws;
 use super::wire_method::wire_method;
-
-const MAX_BODY_LEN: usize = 65_536;
-const JSON_CONTENT_TYPE: &str = "application/json";
-const ERR_PAYLOAD_TOO_LARGE: &[u8] = br#"{"error":"payload_too_large"}"#;
-const ERR_INCOMPLETE_BODY: &[u8] = br#"{"error":"incomplete_body"}"#;
-
-#[derive(Debug)]
-enum ReadBodyError {
-    TooLarge,
-    Incomplete,
-}
 
 pub struct HostServer {
     public: TcpListener,
@@ -86,19 +75,10 @@ fn handle_one_request(router: &Router, mut req: Request) {
     let method = wire_method(req.method()).to_string();
     let url = req.url().to_string();
     let declared_len = declared_content_length(&req);
-    let body = match read_body(declared_len, req.as_reader()) {
-        Ok(b) => b,
-        Err(ReadBodyError::TooLarge) => {
-            respond_json(req, 413, ERR_PAYLOAD_TOO_LARGE);
-            return;
-        }
-        Err(ReadBodyError::Incomplete) => {
-            respond_json(req, 400, ERR_INCOMPLETE_BODY);
-            return;
-        }
+    let res = match read_body(declared_len, req.as_reader()) {
+        Ok(body) => router.dispatch(&method, &url, &body),
+        Err(refusal) => router.refuse_body(refusal),
     };
-
-    let res = router.dispatch(&method, &url, &body);
     let body_vec = res.body.into_bytes();
     let mut r = Response::from_data(body_vec).with_status_code(StatusCode(res.status));
     let ct = Header::from_bytes(&b"Content-Type"[..], res.content_type.as_bytes())
@@ -112,14 +92,6 @@ fn handle_one_request(router: &Router, mut req: Request) {
     let _ = req.respond(r);
 }
 
-fn respond_json(req: Request, status: u16, body: &[u8]) {
-    let mut r = Response::from_data(body).with_status_code(StatusCode(status));
-    let ct = Header::from_bytes(&b"Content-Type"[..], JSON_CONTENT_TYPE.as_bytes())
-        .expect("static header");
-    r.add_header(ct);
-    let _ = req.respond(r);
-}
-
 fn declared_content_length(req: &Request) -> Option<usize> {
     req.headers()
         .iter()
@@ -130,9 +102,9 @@ fn declared_content_length(req: &Request) -> Option<usize> {
 fn read_body(
     declared_len: Option<usize>,
     mut reader: impl Read,
-) -> Result<Vec<u8>, ReadBodyError> {
-    if declared_len.is_some_and(|len| len > MAX_BODY_LEN) {
-        return Err(ReadBodyError::TooLarge);
+) -> Result<Vec<u8>, BodyRefusal> {
+    if declared_len.is_some_and(|len| len > MAX_REQUEST_BODY_BYTES) {
+        return Err(BodyRefusal::TooLarge);
     }
 
     let mut body_buf = Vec::new();
@@ -141,17 +113,17 @@ fn read_body(
         match reader.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => {
-                let remaining = MAX_BODY_LEN.saturating_sub(body_buf.len());
+                let remaining = MAX_REQUEST_BODY_BYTES.saturating_sub(body_buf.len());
                 if remaining == 0 {
-                    return Err(ReadBodyError::TooLarge);
+                    return Err(BodyRefusal::TooLarge);
                 }
                 let take = n.min(remaining);
                 body_buf.extend_from_slice(&chunk[..take]);
                 if take < n {
-                    return Err(ReadBodyError::TooLarge);
+                    return Err(BodyRefusal::TooLarge);
                 }
             }
-            Err(_) => return Err(ReadBodyError::Incomplete),
+            Err(_) => return Err(BodyRefusal::Incomplete),
         }
     }
     Ok(body_buf)
@@ -165,8 +137,8 @@ mod tests {
     #[test]
     fn declared_length_over_limit_is_fail_fast() {
         let mut reader = Cursor::new(vec![0u8; 16]);
-        let err = read_body(Some(MAX_BODY_LEN + 1), &mut reader).unwrap_err();
-        assert!(matches!(err, ReadBodyError::TooLarge));
+        let err = read_body(Some(MAX_REQUEST_BODY_BYTES + 1), &mut reader).unwrap_err();
+        assert!(matches!(err, BodyRefusal::TooLarge));
         assert_eq!(reader.position(), 0);
     }
 
@@ -180,10 +152,10 @@ mod tests {
 
     #[test]
     fn streaming_body_over_limit_without_drain() {
-        let mut reader = Cursor::new(vec![0u8; MAX_BODY_LEN + 1]);
+        let mut reader = Cursor::new(vec![0u8; MAX_REQUEST_BODY_BYTES + 1]);
         let err = read_body(None, &mut reader).unwrap_err();
-        assert!(matches!(err, ReadBodyError::TooLarge));
-        assert!(reader.position() <= MAX_BODY_LEN as u64 + 4096);
-        assert!(reader.position() > MAX_BODY_LEN as u64);
+        assert!(matches!(err, BodyRefusal::TooLarge));
+        assert!(reader.position() <= MAX_REQUEST_BODY_BYTES as u64 + 4096);
+        assert!(reader.position() > MAX_REQUEST_BODY_BYTES as u64);
     }
 }

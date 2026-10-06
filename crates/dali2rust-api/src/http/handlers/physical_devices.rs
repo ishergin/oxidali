@@ -22,10 +22,11 @@ use crate::http::types::HttpResponse;
 use dali2rust_domain::registry::AttributeSectionKind;
 
 use super::common::{
-    accepted_operation_response, json_err, json_err_with_message, json_stream_dto, parse_adapter_id,
-    parse_color_mode, parse_device_type, parse_json_body, parse_physical_short, parse_typed_body,
-    pd_cap_supports_color_mode, wait_apply_counter, write_json_array_items,
-    APPLY_WATCH_BUDGET_MS,
+    accepted_operation_response, json_err, parse_body_object, refuse_unwritable_keys,
+    json_err_with_message, json_stream_dto, parse_adapter_id, parse_color_mode, parse_device_type,
+    parse_json_body, parse_physical_short, parse_typed_body, pd_cap_supports_color_mode,
+    wait_apply_counter, write_json_array_items, APPLY_WATCH_BUDGET_MS,
+    MAX_NAME_BYTES,
 };
 use crate::http::target_state_request::TargetStateBody;
 use super::operation_dispatch::{
@@ -199,8 +200,7 @@ impl crate::http::handlers::common::MutatingHandler for PhysicalDevicePatchHandl
         params: &HashMap<String, String>,
         body: &[u8],
     ) -> Result<(u8, u8, PdPatchData), HttpResponse> {
-        let aid = parse_adapter_id(self.state.adapter_count(), params)?;
-        let short = parse_physical_short(params)?;
+        let (aid, short) = parse_existing_physical_device(self.state.as_ref(), params)?;
         let v = parse_json_body(body)?;
         let obj = v.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
         validate_pd_patch_keys(obj)?;
@@ -273,7 +273,7 @@ declare_handler_shell!(
         publisher: BusPublisher,
         correlation: Arc<CorrelationIdAllocator>,
         bus_id: BusId,
-        adapter_count: u8,
+        state: Arc<dyn PhysicalDeviceHttpState>,
     }
 );
 
@@ -303,10 +303,12 @@ impl crate::http::handlers::common::MutatingHandler for PhysicalDeviceWriteAttri
         params: &HashMap<String, String>,
         body: &[u8],
     ) -> Result<(u8, u8, PdWriteAttrData), HttpResponse> {
-        let aid = parse_adapter_id(self.adapter_count, params)?;
-        let short = parse_physical_short(params)?;
+        let (aid, short) = parse_existing_physical_device(self.state.as_ref(), params)?;
         let v = parse_json_body(body)?;
         let obj = v.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
+        if obj.is_empty() {
+            return Err(json_err(400, "empty_patch"));
+        }
         validate_pd_write_attr_keys(obj)?;
         let data = parse_pd_write_attr_fields(obj)?;
         Ok((aid, short, data))
@@ -360,17 +362,7 @@ impl crate::http::handlers::common::MutatingHandler for PhysicalDeviceTargetStat
         body: &[u8],
     ) -> Result<(u8, u8, LightSetpoint), HttpResponse> {
         let aid = parse_adapter_id(self.state.adapter_count(), params)?;
-        let ss = params
-            .get("short")
-            .ok_or_else(|| json_err(400, "missing_short_address"))?;
-        let sa = ss
-            .parse::<u16>()
-            .map_err(|_| json_err(400, "invalid_resource_id"))?;
-        if sa > 63 {
-            return Err(json_err(422, "invalid_value"));
-        }
-        let short = sa as u8;
-
+        let short = parse_physical_short(params)?;
         let caps = self
             .state
             .physical_device_capabilities(aid, short)
@@ -419,7 +411,7 @@ fn parse_sections(params: &HashMap<String, String>) -> Result<Vec<AttributeSecti
     let mut wanted: u16 = 0;
     for name in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         let kind = AttributeSectionKind::from_wire_name(name)
-            .ok_or_else(|| json_err_with_message(400, "invalid_value", &format!("unknown section '{name}'")))?;
+            .ok_or_else(|| json_err_with_message(422, "invalid_value", &format!("unknown section '{name}'")))?;
         let bit = AttributeSectionKind::ALL
             .iter()
             .position(|k| *k == kind)
@@ -558,9 +550,9 @@ impl ApiHandler for AdapterDiscoveryRunsHandler {
             Ok(a) => a,
             Err(e) => return e,
         };
-        let v: serde_json::Value = match serde_json::from_slice(body) {
+        let v = match parse_body_object(body, &["mode"], &[]) {
             Ok(v) => v,
-            Err(_) => return json_err(400, "invalid_json"),
+            Err(e) => return e,
         };
         let mode_s = v.get("mode").and_then(|x| x.as_str()).unwrap_or_default();
         let Some(mode) = parse_discovery_mode(mode_s) else {
@@ -637,6 +629,13 @@ fn validate_pd_operation_request(
     if method != "POST" {
         return Err(HttpResponse::method_not_allowed());
     }
+    parse_existing_physical_device(state, params)
+}
+
+fn parse_existing_physical_device(
+    state: &dyn PhysicalDeviceHttpState,
+    params: &HashMap<String, String>,
+) -> Result<(u8, u8), HttpResponse> {
     let adapter_id = parse_adapter_id(state.adapter_count(), params)?;
     let short = parse_physical_short(params)?;
     if !state.physical_device_exists(adapter_id, short) {
@@ -645,20 +644,38 @@ fn validate_pd_operation_request(
     Ok((adapter_id, short))
 }
 
+const PD_WRITE_ATTRIBUTE_KEYS: &[&str] = &[
+    "fade_time_ms",
+    "fade_rate",
+    "power_on_level",
+    "system_failure_level",
+    "extended_fade_time_ms",
+    "tc_coolest_mirek",
+    "tc_warmest_mirek",
+    "min_level",
+    "max_level",
+    "dimming_curve",
+];
+
+const PD_PATCH_KEYS: &[&str] = &[
+    "name",
+    "notes",
+    "device_type_override",
+    "color_mode_override",
+    "dt8_auto_activation_repair",
+    "dt8_rgbwaf_control_assert",
+];
+
+fn is_physical_device_field(key: &str) -> bool {
+    PD_READ_ONLY_KEYS.contains(&key) || PD_PATCH_KEYS.contains(&key)
+}
+
 fn validate_pd_write_attr_keys(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), HttpResponse> {
-    for k in obj.keys() {
-        if !matches!(
-            k.as_str(),
-            "fade_time_ms" | "fade_rate" | "power_on_level" | "system_failure_level"
-                | "extended_fade_time_ms" | "tc_coolest_mirek" | "tc_warmest_mirek"
-                | "min_level" | "max_level" | "dimming_curve"
-        ) {
-            return Err(json_err(422, "unsupported_field"));
-        }
-    }
-    Ok(())
+    refuse_unwritable_keys(obj, PD_WRITE_ATTRIBUTE_KEYS, |key| {
+        is_physical_device_field(key).then(|| json_err(422, "unsupported_field"))
+    })
 }
 
 fn parse_bounded_attr_field(
@@ -666,9 +683,12 @@ fn parse_bounded_attr_field(
     key: &str,
     max: u64,
 ) -> Result<Option<u64>, HttpResponse> {
-    match obj.get(key).and_then(|v| v.as_u64()) {
-        Some(x) if x > max => Err(json_err(422, "invalid_value")),
-        other => Ok(other),
+    let Some(value) = obj.get(key) else {
+        return Ok(None);
+    };
+    match value.as_u64() {
+        Some(x) if x <= max => Ok(Some(x)),
+        _ => Err(json_err(422, "invalid_value")),
     }
 }
 
@@ -716,7 +736,7 @@ fn parse_pd_write_attr_fields(
 }
 
 fn parse_attribute_groups_body(body: &[u8]) -> Result<(u8, MemoryBankReadPreset), HttpResponse> {
-    let v = parse_json_body(body)?;
+    let v = parse_body_object(body, &["attribute_groups", "memory_banks"], &[])?;
     let Some(arr) = v.get("attribute_groups").and_then(|x| x.as_array()) else {
         return Err(json_err(400, "invalid_json"));
     };
@@ -748,48 +768,29 @@ const PD_READ_ONLY_KEYS: &[&str] = &[
     "capabilities",
     "adapter_id",
     "short_address",
+    "now_ms",
+    "random_address",
     "device_type_discovered",
     "device_type_effective",
     "device_type_source",
     "supported_device_types",
+    "extended_versions",
     "color_mode_discovered",
     "color_mode_effective",
     "color_mode_source",
+    "color_temperature_range",
 ];
 
 fn validate_pd_patch_keys(obj: &serde_json::Map<String, serde_json::Value>) -> Result<(), HttpResponse> {
-    for k in obj.keys() {
-        if matches!(
-            k.as_str(),
-            "name"
-                | "notes"
-                | "device_type_override"
-                | "color_mode_override"
-                | "dt8_auto_activation_repair"
-                | "dt8_rgbwaf_control_assert"
-        ) {
-            continue;
+    refuse_unwritable_keys(obj, PD_PATCH_KEYS, |key| {
+        if PD_WRITE_ATTRIBUTE_KEYS.contains(&key) {
+            Some(json_err_with_message(422, "unsupported_field", "use POST .../write-attributes"))
+        } else {
+            PD_READ_ONLY_KEYS.contains(&key).then(|| json_err(422, "unsupported_field"))
         }
-        if PD_READ_ONLY_KEYS.contains(&k.as_str()) {
-            return Err(json_err(422, "unsupported_field"));
-        }
-        if k.contains("fade_time")
-            || k.contains("fade_rate")
-            || k.contains("power_on")
-            || k.contains("extended_fade")
-        {
-            return Err(json_err_with_message(
-                422,
-                "unsupported_field",
-                "use POST .../write-attributes",
-            ));
-        }
-        return Err(json_err(400, "unknown_field"));
-    }
-    Ok(())
+    })
 }
 
-const MAX_PD_NAME_BYTES: usize = 64;
 const MAX_PD_NOTES_BYTES: usize = 48;
 
 fn pd_cap_error(field: &str, actual: usize, cap: usize) -> HttpResponse {
@@ -801,8 +802,8 @@ fn pd_cap_error(field: &str, actual: usize, cap: usize) -> HttpResponse {
 }
 
 fn validate_pd_patch_caps(data: &PdPatchData) -> Result<(), HttpResponse> {
-    if data.name.len() > MAX_PD_NAME_BYTES {
-        return Err(pd_cap_error("name", data.name.len(), MAX_PD_NAME_BYTES));
+    if data.name.len() > MAX_NAME_BYTES {
+        return Err(pd_cap_error("name", data.name.len(), MAX_NAME_BYTES));
     }
     match &data.notes {
         Some(notes) if notes.len() > MAX_PD_NOTES_BYTES => Err(pd_cap_error(

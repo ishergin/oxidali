@@ -179,14 +179,11 @@ pub fn ensure_confirmation_success(body: &[u8]) -> Result<(), HttpResponse> {
         .and_then(|value| value.as_str())
         .unwrap_or("execution_failed");
     let message = parsed.get("message").and_then(|v| v.as_str()).unwrap_or("");
-    if code == "conflict" && message == CONTROLLER_PASSIVE {
-        return Err(standby_refusal());
-    }
     Err(match code {
         "superseded" => json_err(409, "superseded"),
         "vl_unbound" => json_err(422, "vl_unbound"),
         "confirmation_timeout" => json_err(504, "confirmation_timeout"),
-        "conflict" => conflict_naming_its_cause(message),
+        "conflict" => gate_refusal(message),
         "not_found" => json_err(404, "not_found"),
         "invalid_value" => json_err(422, "invalid_value"),
         "invalid_resource_id" => json_err(400, "invalid_resource_id"),
@@ -202,6 +199,23 @@ pub fn ensure_confirmation_success(body: &[u8]) -> Result<(), HttpResponse> {
 }
 
 const CONTROLLER_PASSIVE: &str = "controller_passive";
+const DELIVERY_REJECTED: &str = "delivery_rejected";
+
+pub fn refusal_before_the_wire(confirmation: &serde_json::Value) -> Option<HttpResponse> {
+    let field = |key: &str| confirmation.get(key).and_then(serde_json::Value::as_str);
+    if field("error") == Some(DELIVERY_REJECTED) {
+        return Some(json_err(503, DELIVERY_REJECTED));
+    }
+    (field("error_code") == Some("conflict")).then(|| gate_refusal(field("message").unwrap_or("")))
+}
+
+fn gate_refusal(message: &str) -> HttpResponse {
+    if message == CONTROLLER_PASSIVE {
+        standby_refusal()
+    } else {
+        conflict_naming_its_cause(message)
+    }
+}
 
 fn conflict_naming_its_cause(message: &str) -> HttpResponse {
     if message.is_empty() {
@@ -286,6 +300,47 @@ pub fn parse_json_body(body: &[u8]) -> Result<serde_json::Value, HttpResponse> {
     parse_typed_body(body)
 }
 
+pub const MAX_NAME_BYTES: usize = 64;
+
+pub fn refuse_unwritable_keys(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    writable: &[&str],
+    known: impl Fn(&str) -> Option<HttpResponse>,
+) -> Result<(), HttpResponse> {
+    let mut refusal = None;
+    for key in obj.keys().map(String::as_str).filter(|key| !writable.contains(key)) {
+        match known(key) {
+            None => return Err(json_err(400, "unknown_field")),
+            Some(response) => {
+                refusal.get_or_insert(response);
+            }
+        }
+    }
+    refusal.map_or(Ok(()), Err)
+}
+
+pub fn check_body_keys(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    writable: &[&str],
+    read_only: &[&str],
+) -> Result<(), HttpResponse> {
+    refuse_unwritable_keys(obj, writable, |key| {
+        read_only.contains(&key).then(|| json_err(422, "unsupported_field"))
+    })
+}
+
+pub fn parse_body_object(
+    body: &[u8],
+    writable: &[&str],
+    read_only: &[&str],
+) -> Result<serde_json::Map<String, serde_json::Value>, HttpResponse> {
+    let serde_json::Value::Object(obj) = parse_json_body(body)? else {
+        return Err(json_err(400, "invalid_json"));
+    };
+    check_body_keys(&obj, writable, read_only)?;
+    Ok(obj)
+}
+
 pub fn body_parse_error(
     error: &serde_json::Error,
     fallback_status: u16,
@@ -307,17 +362,13 @@ pub fn parse_strict_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<
     serde_json::from_slice(body_slice).map_err(|error| body_parse_error(&error, 400, "invalid_json"))
 }
 
+pub const MAX_SHORT_ADDRESS: u8 = 63;
+
 pub fn parse_physical_short(params: &HashMap<String, String>) -> Result<u8, HttpResponse> {
-    let Some(ss) = params.get("short") else {
+    if !params.contains_key("short") {
         return Err(json_err(400, "missing_short_address"));
-    };
-    let sa = ss
-        .parse::<u16>()
-        .map_err(|_| json_err(400, "invalid_resource_id"))?;
-    if sa > 63 {
-        return Err(json_err(400, "invalid_resource_id"));
     }
-    Ok(sa as u8)
+    parse_resource_id_param(params, "short", u16::from(MAX_SHORT_ADDRESS))
 }
 
 pub fn parse_adapter_route_id(
@@ -525,3 +576,26 @@ impl<H: MutatingHandler> crate::http::handler::ApiHandler for H {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refusal(body: &str) -> (u16, String) {
+        let Err(response) = parse_body_object(body.as_bytes(), &["name"], &["present"]) else {
+            panic!("{body} must be refused");
+        };
+        let status = response.status;
+        let json: serde_json::Value =
+            serde_json::from_slice(&response.into_body_bytes()).expect("a JSON body");
+        (status, json["error"].as_str().unwrap_or_default().to_string())
+    }
+
+    #[test]
+    fn an_unknown_key_outranks_a_read_only_one_wherever_it_sorts() {
+        for body in [r#"{"aaa":1,"present":false}"#, r#"{"present":false,"zzz":1}"#] {
+            assert_eq!(refusal(body), (400, "unknown_field".to_string()), "{body}");
+        }
+        assert_eq!(refusal(r#"{"present":false}"#), (422, "unsupported_field".to_string()));
+    }
+}

@@ -68,3 +68,15 @@ Feature: Virtual lamp PATCH metadata and inherited type/colour
       | field               |
       | declared_type       |
       | declared_color_mode |
+
+  @id:VL-105
+  Scenario: An empty lamp PATCH is an empty patch, not malformed JSON
+    When I PATCH JSON {} to "/api/v1/adapters/0/virtual-lamps/1"
+    Then the response status should be 400
+    And the JSON error should be "empty_patch"
+
+  @id:VL-106
+  Scenario: The lamp's colour-temperature range is read-only, not unknown
+    When I PATCH JSON {"color_temperature_range":{"coolest_kelvin":6500}} to "/api/v1/adapters/0/virtual-lamps/1"
+    Then the response status should be 422
+    And the JSON error should be "unsupported_field"

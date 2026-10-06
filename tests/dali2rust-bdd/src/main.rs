@@ -227,7 +227,25 @@ impl DaliWorld {
         if content_length > 0 {
             stream.write_all(&body_content).expect("write body");
         }
+        Self::read_test_response(stream)
+    }
 
+    pub fn send_declared_body(&mut self, path: &str, declared: usize, carried: usize) {
+        let mut stream = TcpStream::connect(("127.0.0.1", self.server_port)).expect("tcp connect");
+        let head = format!(
+            "POST {path} HTTP/1.1\r\n\
+             Host: 127.0.0.1\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {declared}\r\n\
+             Connection: close\r\n\r\n"
+        );
+        stream.write_all(head.as_bytes()).expect("write request");
+        stream.write_all(&vec![b' '; carried]).expect("write body");
+        stream.shutdown(std::net::Shutdown::Write).expect("half-close");
+        self.last_response = Some(Self::read_test_response(stream));
+    }
+
+    fn read_test_response(mut stream: TcpStream) -> TestResponse {
         let mut buf = Vec::new();
         stream.read_to_end(&mut buf).expect("read response");
         let s = String::from_utf8_lossy(&buf);
