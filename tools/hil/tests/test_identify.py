@@ -89,11 +89,11 @@ def test_identify_refuses_a_duration(api, identify_target):
         "adapters/%d/commissioning/identify" % api.adapter,
         {"short_address": identify_target, "duration_ms": 5000},
     )
-    assert status == 422, (
+    assert status == 400, (
         "a field the gear cannot obey must be refused, not discarded: got %s %r"
         % (status, payload)
     )
-    assert (payload or {}).get("error") == "unsupported_field", (
+    assert (payload or {}).get("error") == "unknown_field", (
         "the refusal must name the field as the reason: %r" % (payload,)
     )
 

@@ -11,8 +11,8 @@ use crate::http::handler::ApiHandler;
 use dali2rust_contracts::msg::OperationType;
 
 use crate::http::handlers::common::{
-    json_err, json_stream_dto, parse_bool_field, parse_json_body, publish_and_await_apply,
-    publish_apply_execute, reject_if_apply_active, require_get,
+    check_body_keys, json_err, json_stream_dto, parse_bool_field, parse_json_body,
+    publish_and_await_apply, publish_apply_execute, reject_if_apply_active, require_get,
 };
 use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::policies_state::{PoliciesApplyWatch, PoliciesHttpState};
@@ -23,6 +23,8 @@ const ALLOWED_KEYS: &[&str] = &[
     "power_on_level",
     "apply_on_discovery",
 ];
+
+const READ_ONLY_KEYS: &[&str] = &["manages_anything"];
 
 const MAX_MANAGED_LEVEL: u64 = 254;
 
@@ -99,11 +101,7 @@ impl crate::http::handlers::common::MutatingHandler for PoliciesPatchHandler {
     ) -> Result<PoliciesPatchData, HttpResponse> {
         let v = parse_json_body(body)?;
         let obj = v.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
-        for key in obj.keys() {
-            if !ALLOWED_KEYS.contains(&key.as_str()) {
-                return Err(json_err(400, "unknown_field"));
-            }
-        }
+        check_body_keys(obj, ALLOWED_KEYS, READ_ONLY_KEYS)?;
         let mut data = PoliciesPatchData::default();
         if let Some(level) = parse_level(obj, "system_failure_level")? {
             data.patch_mask |= PoliciesUpdateCommand::PATCH_SYSTEM_FAILURE_LEVEL;

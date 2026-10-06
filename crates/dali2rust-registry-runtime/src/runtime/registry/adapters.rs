@@ -6,9 +6,6 @@ use dali2rust_domain::registry::{AdapterEnabledReadPort, AdapterReadPort, Adapte
 pub(crate) struct AdapterRow {
     pub name: FixedText64,
     pub enabled: bool,
-    pub commands: u64,
-    pub timeouts: u64,
-    pub errors: u64,
 }
 
 impl AdapterRow {
@@ -17,9 +14,6 @@ impl AdapterRow {
             adapter_id,
             name: self.name.as_str().to_string(),
             enabled: self.enabled,
-            commands: self.commands,
-            timeouts: self.timeouts,
-            errors: self.errors,
         }
     }
 }

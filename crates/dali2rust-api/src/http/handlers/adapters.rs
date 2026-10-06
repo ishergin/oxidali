@@ -13,8 +13,9 @@ use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::types::HttpResponse;
 
 use super::common::{
-    json_err, json_stream_dto, parse_adapter_route_id, parse_json_body,
+    check_body_keys, json_err, json_stream_dto, parse_adapter_route_id, parse_json_body,
     publish_and_await_apply,
+    MAX_NAME_BYTES,
 };
 use crate::http::handlers::common::{require_get};
 
@@ -135,17 +136,7 @@ impl crate::http::handlers::common::MutatingHandler for AdapterPatchHandler {
 fn validate_adapter_patch_keys(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), HttpResponse> {
-    const RO: &[&str] = &["limits", "bus_status", "counters", "adapter_id"];
-    for k in obj.keys() {
-        if k == "name" || k == "enabled" {
-            continue;
-        }
-        if RO.iter().any(|r| *r == k.as_str()) {
-            return Err(json_err(422, "unsupported_field"));
-        }
-        return Err(json_err(400, "unknown_field"));
-    }
-    Ok(())
+    check_body_keys(obj, &["name", "enabled"], &["limits", "bus_status", "adapter_id"])
 }
 
 fn parse_adapter_patch_fields(
@@ -161,7 +152,7 @@ fn parse_adapter_patch_fields(
             Some(s) => s.to_string(),
             None => return Err(json_err(422, "invalid_value")),
         };
-        if s.is_empty() || s.as_bytes().len() > 64 {
+        if s.is_empty() || s.len() > MAX_NAME_BYTES {
             return Err(json_err(422, "invalid_value"));
         }
         patch_mask |= AdapterSettingsUpdateCommand::PATCH_NAME;

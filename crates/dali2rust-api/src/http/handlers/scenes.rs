@@ -26,6 +26,7 @@ use crate::http::handlers::common::{
     accepted_operation_response, cap_supports_color_mode, json_err, json_stream_dto, parse_adapter_id,
     parse_json_body, parse_resource_id_param, parse_typed_body, serialize_or_log,
     write_json_array_items,
+    MAX_NAME_BYTES,
 };
 use crate::http::lenient::{MaybeBool, MaybeObj, MaybeSeq, MaybeU64};
 use crate::http::physical_device_state::CapabilityFlagsDto;
@@ -37,7 +38,7 @@ use crate::http::target_state_request::{
     apply_setpoint_fields, SetpointFields, TARGET_STATE_RUNTIME_READONLY_KEYS,
 };
 use crate::http::types::HttpResponse;
-use crate::http::handlers::common::{publish_apply_execute, reject_if_apply_active};
+use crate::http::handlers::common::{check_body_keys, publish_apply_execute, reject_if_apply_active};
 use dali2rust_domain::registry::OperationReadPort;
 
 use dali2rust_domain::registry::{SCENE_COUNT, VIRTUAL_LAMP_COUNT};
@@ -308,9 +309,7 @@ fn parse_recall_scope(
     }
     let v = parse_json_body(body)?;
     let obj = v.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
-    if obj.keys().any(|k| k != "scope" && k != "group_id") {
-        return Err(json_err(422, "unsupported_field"));
-    }
+    check_body_keys(obj, &["scope", "group_id"], &[])?;
     match recall_scope_str(obj)? {
         None | Some("broadcast") if !obj.contains_key("group_id") => {
             Ok(DaliRecallSceneCommand::broadcast(adapter_id, scene_id))
@@ -372,6 +371,8 @@ impl ApiHandler for SceneRecallHandler {
     }
 }
 
+const SCENE_READ_ONLY_KEYS: &[&str] = &["row_count_included", "dirty", "scene_id", "adapter_id"];
+
 fn parse_scene_patch_data(
     object: &serde_json::Map<String, Value>,
 ) -> Result<ScenePatchData, HttpResponse> {
@@ -380,18 +381,10 @@ fn parse_scene_patch_data(
         name: None,
         ha_flag: None,
     };
-    for key in object.keys() {
-        match key.as_str() {
-            "name" | "ha_select_enabled" => {}
-            "row_count_included" | "dirty" | "scene_id" | "adapter_id" => {
-                return Err(json_err(422, "unsupported_field"))
-            }
-            _ => return Err(json_err(400, "unknown_field")),
-        }
-    }
+    check_body_keys(object, &["name", "ha_select_enabled"], SCENE_READ_ONLY_KEYS)?;
     if let Some(value) = object.get("name") {
         let name = value.as_str().ok_or_else(|| json_err(422, "invalid_value"))?;
-        if name.is_empty() || name.as_bytes().len() > 64 {
+        if name.is_empty() || name.len() > MAX_NAME_BYTES {
             return Err(json_err(422, "invalid_value"));
         }
         data.patch_mask |= SceneMetadataUpdateCommand::PATCH_NAME;

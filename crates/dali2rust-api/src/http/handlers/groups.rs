@@ -28,10 +28,11 @@ use crate::http::handlers::common::{
     accepted_correlation_response, accepted_operation_response, cap_accepts_color_mode, json_err,
     json_stream_dto, parse_adapter_id, parse_json_body, parse_resource_id_param, parse_typed_body,
     write_json_array_items,
+    MAX_NAME_BYTES,
 };
 use crate::http::target_state_request::TargetStateBody;
 use crate::http::types::HttpResponse;
-use crate::http::handlers::common::{publish_apply_execute, reject_if_apply_active};
+use crate::http::handlers::common::{check_body_keys, publish_apply_execute, reject_if_apply_active};
 use dali2rust_domain::registry::OperationReadPort;
 
 use dali2rust_domain::registry::{GROUP_COUNT, VIRTUAL_LAMP_COUNT};
@@ -278,6 +279,15 @@ impl ApiHandler for GroupTargetStateHandler {
     }
 }
 
+const GROUP_READ_ONLY_KEYS: &[&str] = &[
+    "capabilities_summary",
+    "dirty",
+    "member_count_desired",
+    "member_count_applied",
+    "group_id",
+    "adapter_id",
+];
+
 fn parse_group_patch_data(
     object: &serde_json::Map<String, Value>,
 ) -> Result<GroupPatchData, HttpResponse> {
@@ -286,17 +296,10 @@ fn parse_group_patch_data(
         name: None,
         ha_flag: None,
     };
-    for key in object.keys() {
-        match key.as_str() {
-            "name" | "ha_entity_enabled" => {}
-            "capabilities_summary" | "dirty" | "member_count_desired" | "member_count_applied"
-            | "group_id" | "adapter_id" => return Err(json_err(422, "unsupported_field")),
-            _ => return Err(json_err(400, "unknown_field")),
-        }
-    }
+    check_body_keys(object, &["name", "ha_entity_enabled"], GROUP_READ_ONLY_KEYS)?;
     if let Some(value) = object.get("name") {
         let name = value.as_str().ok_or_else(|| json_err(422, "invalid_value"))?;
-        if name.is_empty() || name.as_bytes().len() > 64 {
+        if name.is_empty() || name.len() > MAX_NAME_BYTES {
             return Err(json_err(422, "invalid_value"));
         }
         data.patch_mask |= GroupMetadataUpdateCommand::PATCH_NAME;
@@ -315,11 +318,7 @@ fn parse_group_patch_data(
 
 fn parse_matrix_rows(value: &Value, full_replace: bool) -> Result<Vec<GroupMatrixDesiredRow>, HttpResponse> {
     let object = value.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
-    for key in object.keys() {
-        if key != "rows" {
-            return Err(matrix_root_field_error(key));
-        }
-    }
+    check_body_keys(object, &["rows"], &["groups", "dirty", "adapter_id"])?;
     let rows = object
         .get("rows")
         .and_then(Value::as_array)
@@ -331,13 +330,6 @@ fn parse_matrix_rows(value: &Value, full_replace: bool) -> Result<Vec<GroupMatri
         return Err(json_err(422, "invalid_value"));
     }
     parse_matrix_row_array(rows, full_replace)
-}
-
-fn matrix_root_field_error(key: &str) -> HttpResponse {
-    match key {
-        "groups" | "dirty" => json_err(422, "unsupported_field"),
-        _ => json_err(400, "unknown_field"),
-    }
 }
 
 fn parse_matrix_row_array(
@@ -361,13 +353,7 @@ fn parse_matrix_row_array(
 
 fn parse_matrix_row(row: &Value) -> Result<GroupMatrixDesiredRow, HttpResponse> {
     let object = row.as_object().ok_or_else(|| json_err(422, "invalid_value"))?;
-    for key in object.keys() {
-        match key.as_str() {
-            "virtual_lamp_id" | "desired" => {}
-            "applied" | "name" => return Err(json_err(422, "unsupported_field")),
-            _ => return Err(json_err(400, "unknown_field")),
-        }
-    }
+    check_body_keys(object, &["virtual_lamp_id", "desired"], &["applied", "name"])?;
     let virtual_lamp_id = parse_virtual_lamp_id(object.get("virtual_lamp_id"))?;
     let desired_groups_mask = parse_desired_mask(object.get("desired"))?;
     Ok(GroupMatrixDesiredRow {

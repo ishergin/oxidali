@@ -25,12 +25,12 @@ commissioning, атрибуты); правило «продукт не соби�
 
 ## Ответ
 
-Не ресурсный DTO, а тело подтверждения — одинаковое у трёх ручек:
+Не ресурсный DTO, а тело подтверждения — одинаковое у трёх ручек. Оно приходит `200`,
+только когда кадр дошёл до провода, и говорит, что ответил провод:
 
 - `success`, `backward_frame` (`0`, если обратного кадра не было);
-- `error` — **статус доставки** плоской строкой (`delivery_rejected` /
-  `execution_failed` / `timeout`, `null` при успехе), при наличии — `error_code`
-  (продуктовый код) и `message`.
+- `error` — **статус исполнения** плоской строкой (`execution_failed` / `timeout`,
+  `null` при успехе), при наличии — `error_code` (продуктовый код) и `message`.
 
 **`backward_frame: 0` при `success: false` — не ответ `0x00`, а отсутствие ответа.**
 Читать байт, не проверив `success`, значит сфабриковать ответ из тишины. Нарушающий
@@ -39,7 +39,9 @@ commissioning, атрибуты); правило «продукт не соби�
 и от тишины он не отличим; ответом его читают только expert-шаги
 [commissioning](commissioning.md).
 
-Отказы самого конверта — обычные `{"error": …}`: `503 commands_ingress_overload` /
-`confirmation_slots_exhausted`, `504 confirmation_timeout`; тело не JSON — `400
-invalid_json`; пара «адрес + команда», которую домен не декодирует (для `command` и
+Отказы до провода — обычные `{"error": …}`, как у любого синхронного маршрута:
+`503 commands_ingress_overload` / `confirmation_slots_exhausted` / `delivery_rejected`,
+`504 confirmation_timeout`; выключенный адаптер — `409 conflict` с `message =
+adapter_disabled`, пассивный контроллер — `409 controller_standby` с `Retry-After: 1`;
+тело не JSON — `400 invalid_json`; пара «адрес + команда», которую домен не декодирует (для `command` и
 `level`), — `400 invalid_dali_command`.

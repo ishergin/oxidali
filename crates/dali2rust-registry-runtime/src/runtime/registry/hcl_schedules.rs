@@ -4,12 +4,11 @@ use dali2rust_contracts::msg::{
     fixed_text_32, ErrorCode, FixedItems, FixedText32, HclAlgorithm, HclLevelMode, HclSchedulePointRow,
     HclScheduleUpsertCommand, HclTargetRow, HclTargetScope, HclTimeRef,
 };
-use dali2rust_domain::registry::{HclScheduleReadPort, HclScheduleView};
+use dali2rust_domain::registry::{HclScheduleReadPort, HclScheduleView, MAX_HCL_SCHEDULES};
 use dali2rust_platform::small_sort::insertion_sort_by;
 
 use crate::runtime::registry::store::{evict_stale, registry_unix_ms, Inner, RegistryStore, Staged, STAGE_MAX_AGE_MS};
 
-pub(crate) const MAX_HCL_SCHEDULES: usize = 8;
 pub(crate) const MAX_HCL_TARGETS: usize = 16;
 pub(crate) const MAX_HCL_POINTS: usize = 24;
 

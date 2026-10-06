@@ -30,7 +30,7 @@ pub mod types;
 pub mod virtual_lamp_state;
 
 pub use adapter_state::{
-    AdapterCountersDto, AdapterDto, AdapterHttpState, AdapterHttpStateBridge, AdapterLimitsDto,
+    AdapterDto, AdapterHttpState, AdapterHttpStateBridge, AdapterLimitsDto,
     AdapterSettingsApplyWatch, AdapterSettingsApplyWatchBridge, AdaptersListBody,
 };
 pub use hcl_state::{

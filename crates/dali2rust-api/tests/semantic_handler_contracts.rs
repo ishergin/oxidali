@@ -581,7 +581,7 @@ fn physical_device_write_attributes_validation_and_happy_path() {
         harness.publisher.clone(),
         Arc::clone(&harness.correlation),
         BusId::default(),
-        1,
+        Arc::new(TestState::new().with_pd(sample_pd(1, false, false, false))),
     );
     let request_params = params(&[("adapter_id", "0"), ("short", "1")]);
 
@@ -676,7 +676,7 @@ fn physical_device_target_state_validation_and_happy_path() {
         error_code(
             handler.handle_request("PUT", "", br#"{}"#, &params(&[("adapter_id", "0"), ("short", "99")]))
         ),
-        "invalid_value"
+        "invalid_resource_id"
     );
     assert_eq!(
         error_code(
@@ -888,7 +888,7 @@ fn virtual_lamp_patch_validation_errors() {
     );
     assert_eq!(
         error_code(handler.handle_request("PATCH", "", br#"{}"#, &request_params)),
-        "invalid_json"
+        "empty_patch"
     );
 }
 

@@ -104,3 +104,16 @@ Feature: Redundancy — state and the planned handover
     When I PATCH JSON {"enabled":true,"role":"standby","boot_listen_ms":0} to "/api/v1/settings/redundancy"
     Then the response status should be 200
     And the standby's arbitration probe should eventually be sent at priority 5
+
+  @id:RED-030
+  Scenario: A passive controller refuses a diagnostic frame and an expert step as standby
+    Given this controller has stood down
+    When I POST JSON {"wire_address":2,"level":100} to "/api/v1/dali/level"
+    Then the response status should be 409
+    And the JSON error should be "controller_standby"
+    And the response header "Retry-After" should be "1"
+    When I POST JSON {} to "/api/v1/adapters/0/commissioning/steps/terminate"
+    Then the response status should be 409
+    And the JSON error should be "controller_standby"
+    And the response header "Retry-After" should be "1"
+    And the DALI mock transport should have received 0 forward frame

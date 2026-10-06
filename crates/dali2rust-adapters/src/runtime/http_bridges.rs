@@ -45,7 +45,7 @@ use dali2rust_api::http::{
     VirtualLampPatchWatch, VirtualLampPatchWatchBridge,
 };
 use dali2rust_bus::BusPublisher;
-use dali2rust_domain::registry::RegistryReadPort;
+use dali2rust_domain::registry::{AdapterReadPort, RegistryReadPort};
 use dali2rust_operations_runtime::{ApplyOrchestratorCounters, OperationTrackerCounters};
 use dali2rust_platform::clock::Clock;
 use dali2rust_platform::heap::{HeapStats, HeapStatsPort};
@@ -1036,6 +1036,10 @@ impl InputDeviceHttpStateBridge {
 const FORCED_EVENT_SCHEME: u8 = 2;
 
 impl InputDeviceHttpState for InputDeviceHttpStateBridge {
+    fn adapter_count(&self) -> u8 {
+        AdapterReadPort::adapter_count(self.store.as_ref())
+    }
+
     fn list(&self, adapter_id: u8) -> Vec<InputDeviceSummaryDto> {
         self.store
             .input_device_summaries(adapter_id)

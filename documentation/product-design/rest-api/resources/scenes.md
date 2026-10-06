@@ -46,8 +46,8 @@
 - `included: true` — setpoint валидируется по capabilities строки (`422
   unsupported_capability`); `included: false` — все поля setpoint обязаны быть `null`
   (`422 invalid_value`).
-- `applied`, `capabilities`, `dirty`, `name`, runtime-поля и `transition` в теле —
-  `422 unsupported_field`; `virtual_lamp_id` вне `0..63`, неверное число строк или
+- `applied`, `capabilities`, `dirty`, `name`, runtime-поля и `transition` в строке,
+  `adapter_id` и `scene_id` в корне — `422 unsupported_field`; `virtual_lamp_id` вне `0..63`, неверное число строк или
   дубли — `422 invalid_value`.
 - Ответ — `202` `config_write`, чанковая запись.
 
@@ -70,8 +70,8 @@ applied-строки.
 
 - Тело необязательно. Пустое — вызов для всего адаптера (broadcast);
   `{"scope": "group", "group_id": N}` — вызов для группы. Разбор строгий, потому что
-  ошибка нестрогого разбора — молчаливый broadcast: неизвестный ключ — `422
-  unsupported_field`, иной `scope` или `group_id` вне `0..15` — `422 invalid_value`.
+  ошибка нестрогого разбора — молчаливый broadcast: неизвестный ключ — `400
+  unknown_field`, иной `scope` или `group_id` вне `0..15` — `422 invalid_value`.
 - Синхронное подтверждение: `200 {correlation_id, status: "confirmed"}`; операции нет.
   `504 confirmation_timeout`, `503` — обычные; более новый вызов той же сцены с той же
   областью вытесняет неисполненный (`409 superseded`).

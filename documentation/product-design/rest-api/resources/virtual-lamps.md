@@ -38,7 +38,8 @@ BDD — [`virtual_lamps`](../../../../tests/dali2rust-bdd/features/virtual_lamps
 ## `PATCH`
 
 Merge-patch: `name` (1..64 байта) и `ha_entity_enabled`. Всё остальное, что есть в
-DTO, — `422 unsupported_field`; неизвестный ключ — `400 unknown_field`. На провод
+DTO, — `422 unsupported_field`; неизвестный ключ — `400 unknown_field`; пустое тело — `400
+empty_patch`. На провод
 ничего не уходит; мост Home Assistant переобъявляет сущность лампы по событию
 изменения.
 

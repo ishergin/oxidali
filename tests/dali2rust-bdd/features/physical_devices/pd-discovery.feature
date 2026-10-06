@@ -133,3 +133,17 @@ Feature: Adapter discovery runs HTTP contract
     And adapter 0 physical device 0 eventually exposes the discovered random address and DT8 identity
     And all scripted DALI exchanges should be consumed without errors
     And the stats dali read-back counters should eventually have grown by groups 0, colour features 1, extended fade 0 and program repairs 0
+
+  @id:PD-283
+  Scenario: A discovery body field the route does not know is refused, not dropped
+    When I POST JSON {"mode":"scan_known_short_addresses","first_short":5} to "/api/v1/adapters/0/discovery-runs"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"
+    And the operations list should contain exactly 0 operations
+
+  @id:PD-284
+  Scenario: A discovery run with no body names the mode it lacks
+    When I send a POST request to "/api/v1/adapters/0/discovery-runs" with empty body
+    Then the response status should be 422
+    And the JSON error should be "invalid_enum"
+    And the operations list should contain exactly 0 operations

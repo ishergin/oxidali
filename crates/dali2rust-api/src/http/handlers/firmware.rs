@@ -10,7 +10,8 @@ use crate::http::dispatcher::CorrelationIdAllocator;
 use crate::http::firmware_state::FirmwareHttpState;
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::common::{
-    accepted_operation_response, json_err, json_stream_dto, parse_json_body, require_get,
+    accepted_operation_response, check_body_keys, json_err, json_stream_dto, parse_json_body,
+    require_get,
 };
 use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command_pair;
 use crate::http::handlers::resource_surface::declare_handler_shell;
@@ -55,9 +56,7 @@ fn parse_url(body: &[u8]) -> Result<String, HttpResponse> {
     let Some(object) = value.as_object() else {
         return Err(json_err(400, "invalid_body"));
     };
-    if object.keys().any(|key| key.as_str() != "url") {
-        return Err(json_err(422, "unsupported_field"));
-    }
+    check_body_keys(object, &["url"], &[])?;
     let Some(url) = object.get("url").and_then(|v| v.as_str()) else {
         return Err(json_err(400, "missing_url"));
     };
@@ -159,6 +158,6 @@ mod tests {
         let Err(response) = parse_url(body.as_bytes()) else {
             panic!("a field this route does not honour must be named, not ignored");
         };
-        assert_eq!(response.status, 422);
+        assert_eq!(response.status, 400);
     }
 }

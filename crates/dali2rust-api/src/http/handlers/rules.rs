@@ -9,7 +9,7 @@ use dali2rust_rules_model::{NameResolver, RuleCompiler};
 use serde_json::{json, Value};
 
 use crate::http::handler::ApiHandler;
-use crate::http::handlers::common::{accepted_operation_response, json_err};
+use crate::http::handlers::common::{accepted_operation_response, json_err, parse_body_object};
 use crate::http::rules_state::{RuleRuntimeView, RulesHttpState};
 use crate::http::types::HttpResponse;
 
@@ -269,12 +269,9 @@ impl RulesHandler {
         let Some(name) = params.get("rule_name") else {
             return json_err(400, "invalid_resource_id");
         };
-        let json: Value = match serde_json::from_slice(body) {
-            Ok(json) => json,
-            Err(_) => return json_err(400, "invalid_json"),
-        };
-        let Some(enabled) = json.get("enabled").and_then(Value::as_bool) else {
-            return json_err(400, "missing_enabled");
+        let enabled = match parse_enabled(body) {
+            Ok(enabled) => enabled,
+            Err(response) => return response,
         };
         let doc = self.shared.state.document();
         if doc.compiled.is_none() && doc.diagnostic.is_some() {
@@ -291,6 +288,14 @@ impl RulesHandler {
             serde_json::to_vec(&json!({ "name": name, "enabled": enabled }))
                 .unwrap_or_default(),
         )
+    }
+}
+
+fn parse_enabled(body: &[u8]) -> Result<bool, HttpResponse> {
+    let json = parse_body_object(body, &["enabled"], &["name"])?;
+    match json.get("enabled") {
+        None => Err(json_err(400, "missing_enabled")),
+        Some(value) => value.as_bool().ok_or_else(|| json_err(422, "invalid_value")),
     }
 }
 

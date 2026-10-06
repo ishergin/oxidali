@@ -91,6 +91,7 @@ pub fn instance_type_name(instance_type: u8) -> Option<&'static str> {
 }
 
 pub trait InputDeviceHttpState: Send + Sync {
+    fn adapter_count(&self) -> u8;
     fn list(&self, adapter_id: u8) -> Vec<InputDeviceSummaryDto>;
     fn detail(&self, adapter_id: u8, short_address: u8) -> Option<InputDeviceDto>;
     fn revision(&self) -> u32;

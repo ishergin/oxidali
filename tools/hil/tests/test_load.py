@@ -113,6 +113,7 @@ def test_unpaced_burst_yields_honest_backpressure(api, lamps, state_snapshot,
         if status == 503:
             assert body.get("error") in ("confirmation_slots_exhausted",
                                          "commands_ingress_overload",
+                                         "delivery_rejected",
                                          "execution_failed"), body
     time.sleep(1.5)
     resp = api.dapc(short, 90)

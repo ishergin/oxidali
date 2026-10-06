@@ -22,3 +22,9 @@ Feature: Scene metadata PATCH
       | row_count_included | 5     |
       | dirty              | false |
       | scene_id           | 4     |
+
+  @id:SCN-094
+  Scenario: An empty scene PATCH is an empty patch, not malformed JSON
+    When I PATCH JSON {} to "/api/v1/adapters/0/scenes/3"
+    Then the response status should be 400
+    And the JSON error should be "empty_patch"

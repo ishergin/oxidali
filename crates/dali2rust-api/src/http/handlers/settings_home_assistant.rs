@@ -20,9 +20,8 @@ use crate::ha::topics::is_topic_safe;
 use crate::http::types::HttpResponse;
 
 use super::common::{
-    accepted_operation_response, json_err, json_stream_dto, parse_bool_field, parse_json_body,
-    require_get,
-    wait_apply_counter, APPLY_WATCH_BUDGET_MS,
+    check_body_keys, accepted_operation_response, json_err, json_stream_dto, parse_bool_field,
+    parse_json_body, require_get, wait_apply_counter, APPLY_WATCH_BUDGET_MS,
 };
 use super::operation_dispatch::publish_begin_then_semantic_command_pair;
 
@@ -226,16 +225,7 @@ impl crate::http::handlers::common::MutatingHandler for HomeAssistantSettingsPat
 fn validate_ha_patch_keys(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), HttpResponse> {
-    for k in obj.keys() {
-        if WRITABLE_KEYS.contains(&k.as_str()) {
-            continue;
-        }
-        if READ_ONLY_KEYS.contains(&k.as_str()) {
-            return Err(json_err(422, "unsupported_field"));
-        }
-        return Err(json_err(400, "unknown_field"));
-    }
-    Ok(())
+    check_body_keys(obj, WRITABLE_KEYS, READ_ONLY_KEYS)
 }
 
 fn parse_ha_broker_fields(

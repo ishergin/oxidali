@@ -73,7 +73,7 @@ Feature: Physical-device read surface is split into list, core, sections and ban
     Then the response status should be 202
     And the last operation eventually succeeds
     When I send a GET request to "/api/v1/adapters/0/physical-devices/0/attributes?sections=common_102,not_a_section"
-    Then the response status should be 400
+    Then the response status should be 422
     And the JSON error should be "invalid_value"
 
   @id:PD-223

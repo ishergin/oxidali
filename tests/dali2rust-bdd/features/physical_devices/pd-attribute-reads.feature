@@ -347,3 +347,12 @@ Feature: Physical-device attribute reads
     And adapter 0 physical device 0 eventually reports Part 207 failure byte 32
     And the physical device 0 state level should eventually be 127
     And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-282
+  Scenario: An attribute-read body field the route does not know is refused, not dropped
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    When I POST JSON {"attribute_groups":["groups"],"memory_bank":"all"} to "/api/v1/adapters/0/physical-devices/0/attribute-reads"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"

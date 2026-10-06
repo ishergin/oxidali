@@ -7,7 +7,7 @@ use esp_idf_svc::http::server::{Configuration, EspHttpConnection, EspHttpServer,
 use esp_idf_svc::io::{EspIOError, Write};
 use esp_idf_svc::sys::{EspError, ESP_FAIL};
 
-use dali2rust_api::http::router::Router;
+use dali2rust_api::http::router::{BodyRefusal, Router, MAX_REQUEST_BODY_BYTES};
 use dali2rust_api::http::types::{HttpBody, HttpResponse};
 
 use super::wire_method::wire_method;
@@ -126,7 +126,6 @@ pub fn mount(
     Ok(server)
 }
 
-const MAX_BODY_LEN: usize = 65_536;
 const ACCESS_BODY_PREVIEW_BYTES: usize = 256;
 
 const RESPONSE_BUFFER_BYTES: usize = 2048;
@@ -148,11 +147,6 @@ pub fn httpd_core_id() -> Option<u32> {
         u32::MAX => None,
         id => Some(id),
     }
-}
-
-enum ReadBodyError {
-    TooLarge,
-    Incomplete,
 }
 
 struct StdIoBridge<'a, W>(&'a mut W);
@@ -210,13 +204,13 @@ impl<W: StdWrite> StdWrite for MeteredWrite<'_, W> {
     }
 }
 
-fn read_body(req: &mut Request<&mut EspHttpConnection<'_>>) -> Result<Vec<u8>, ReadBodyError> {
+fn read_body(req: &mut Request<&mut EspHttpConnection<'_>>) -> Result<Vec<u8>, BodyRefusal> {
     let len = req
         .header("Content-Length")
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(0);
-    if len > MAX_BODY_LEN {
-        return Err(ReadBodyError::TooLarge);
+    if len > MAX_REQUEST_BODY_BYTES {
+        return Err(BodyRefusal::TooLarge);
     }
     let mut buf = vec![0u8; len];
     if len == 0 {
@@ -224,7 +218,7 @@ fn read_body(req: &mut Request<&mut EspHttpConnection<'_>>) -> Result<Vec<u8>, R
     }
     match esp_idf_svc::io::utils::try_read_full(req, &mut buf) {
         Ok(_) => Ok(buf),
-        Err(_) => Err(ReadBodyError::Incomplete),
+        Err(_) => Err(BodyRefusal::Incomplete),
     }
 }
 
@@ -326,23 +320,21 @@ fn handle_request(
     let uri = req.uri().to_string();
     match read_body(&mut req) {
         Ok(body) => serve(router, req, method, &uri, &body),
-        Err(err) => respond_read_error(req, method, &uri, err),
+        Err(refusal) => respond_read_error(router, req, method, &uri, refusal),
     }
 }
 
 fn respond_read_error(
+    router: &Router,
     req: Request<&mut EspHttpConnection<'_>>,
     method: &str,
     uri: &str,
-    err: ReadBodyError,
+    refusal: BodyRefusal,
 ) -> Result<(), EspIOError> {
-    let (status, detail) = match err {
-        ReadBodyError::TooLarge => (413u16, "payload_too_large"),
-        ReadBodyError::Incomplete => (400u16, "incomplete_body"),
-    };
-    log_access_error(method, uri, status, detail);
-    let mut w = req.into_response(status, None, &[("Content-Type", "application/json")])?;
-    w.write_all(format!(r#"{{"error":"{detail}"}}"#).as_bytes())?;
+    log_access_error(method, uri, refusal.status(), refusal.code());
+    let res = router.refuse_body(refusal);
+    let mut w = req.into_response(res.status, None, &response_headers(&res))?;
+    w.write_all(&res.body.into_bytes())?;
     Ok(())
 }
 

@@ -156,3 +156,106 @@ Feature: IEC 62386-103 input devices as a REST resource
     And 24-bit forward frame 3 should be sent at priority 1
     And 24-bit forward frame 4 should be sent at priority 1
     And 24-bit forward frame 5 should be sent at priority 3
+
+  @id:INP-087
+  Scenario Outline: An input-device route on an adapter that does not exist is 404
+    When I send a <method> request to "<path>"
+    Then the response status should be 404
+    And the JSON error should be "not_found"
+    And the mock transport should have sent no 24-bit frames
+
+    Examples:
+      | method | path                                         |
+      | GET    | /api/v1/adapters/9/input-devices             |
+      | POST   | /api/v1/adapters/9/input-devices/scan        |
+      | POST   | /api/v1/adapters/9/input-devices/commission  |
+      | GET    | /api/v1/adapters/9/input-devices/3           |
+      | DELETE | /api/v1/adapters/9/input-devices/3           |
+
+  @id:INP-088
+  Scenario Outline: A short address outside 0..63 is not a resource id
+    When I send a <method> request to "<path>"
+    Then the response status should be 400
+    And the JSON error should be "invalid_resource_id"
+
+    Examples:
+      | method | path                                           |
+      | GET    | /api/v1/adapters/0/input-devices/64            |
+      | DELETE | /api/v1/adapters/0/input-devices/64            |
+      | POST   | /api/v1/adapters/0/input-devices/64/identify   |
+
+  @id:INP-089
+  Scenario Outline: A body field the route does not know is refused, not dropped
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1" and a corrected-map feedback answering capability 07 and colour capability 1F
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock transport 24-bit trace is cleared
+    And I PATCH JSON <body> to "<path>"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"
+    And the mock transport should have sent no 24-bit frames
+
+    Examples:
+      | path                                                 | body                                  |
+      | /api/v1/adapters/0/input-devices/0                   | {"name":"panel","colour":"red"}       |
+      | /api/v1/adapters/0/input-devices/0/instances/0       | {"event_scheme":2,"scheme":2}         |
+      | /api/v1/adapters/0/input-devices/0/instances/0       | {"timers":{"t_long_ms":400}}          |
+      | /api/v1/adapters/0/input-devices/0/instances/0/feedback | {"timing":3,"blink":true}          |
+
+  @id:INP-090
+  Scenario: Four instance groups are refused rather than cut to three
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock transport 24-bit trace is cleared
+    And I PATCH JSON {"instance_groups":[1,2,3,4]} to "/api/v1/adapters/0/input-devices/0/instances/0"
+    Then the response status should be 422
+    And the JSON error should be "invalid_value"
+    And the mock transport should have sent no 24-bit frames
+
+  @id:INP-091
+  Scenario Outline: A commission body the route cannot honour is refused before the wire
+    When I POST JSON <body> to "/api/v1/adapters/0/input-devices/commission"
+    Then the response status should be <status>
+    And the JSON error should be "<error>"
+    And the mock transport should have sent no 24-bit frames
+
+    Examples:
+      | body                            | status | error         |
+      | {"include_adressed":true}       | 400    | unknown_field |
+      | {"include_addressed":"yes"}     | 422    | invalid_value |
+
+  @id:INP-092
+  Scenario Outline: A scan or identify body with a field is refused, the routes take none
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock transport 24-bit trace is cleared
+    And I POST JSON {"force":true} to "<path>"
+    Then the response status should be 400
+    And the JSON error should be "unknown_field"
+    And the mock transport should have sent no 24-bit frames
+
+    Examples:
+      | path                                          |
+      | /api/v1/adapters/0/input-devices/scan         |
+      | /api/v1/adapters/0/input-devices/0/identify   |
+
+  @id:INP-093
+  Scenario: Identify of an address nothing was scanned at is 404, whatever its body says
+    When I POST JSON {"force":true} to "/api/v1/adapters/0/input-devices/5/identify"
+    Then the response status should be 404
+    And the JSON error should be "input_device_not_found"
+
+  @id:INP-094
+  Scenario Outline: A field the device reports but PATCH does not write is read-only, not unknown
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1" and a corrected-map feedback answering capability 07 and colour capability 1F
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock transport 24-bit trace is cleared
+    And I PATCH JSON <body> to "<path>"
+    Then the response status should be 422
+    And the JSON error should be "unsupported_field"
+    And the mock transport should have sent no 24-bit frames
+
+    Examples:
+      | path                                                    | body                          |
+      | /api/v1/adapters/0/input-devices/0                      | {"present":false}             |
+      | /api/v1/adapters/0/input-devices/0/instances/0          | {"instance_type":3}           |
+      | /api/v1/adapters/0/input-devices/0/instances/0/feedback | {"probed":false}              |

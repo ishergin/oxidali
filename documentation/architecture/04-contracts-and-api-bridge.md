@@ -72,8 +72,11 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   confirmations channel. It is the only place an HTTP request meets its confirmation.
 - Correlation ids come from one `CorrelationIdAllocator` shared by the router.
 - No free slot, or command ingress full → `503`. A synthetic `DeliveryRejected` frees the
-  slot like a real confirmation and answers `503`; the diagnostic `/api/v1/dali/*` routes
-  instead answer `200` with the confirmation body, whose `error` names `delivery_rejected`
+  slot like a real confirmation and answers `503`. A gate's refusal before the wire answers
+  `409`: `conflict` naming its cause, or `controller_standby` on a passive controller.
+  Every route that waits for its confirmation keeps this mapping; the diagnostic
+  `/api/v1/dali/*` routes and the expert commissioning steps answer `200` only with what
+  the wire said, failure included
   ([diagnostic DALI](../product-design/rest-api/resources/diagnostic-dali.md)). No
   confirmation within `confirmation_timeout_ms` (2000 ms) → `504`.
 - A timeout releases the slot, not the command, which may still execute.
