@@ -70,6 +70,8 @@ fn script_memory_pointer_check(mock: &MockDaliTransport, bank: u8, offset: u8) {
 
 const MEMORY_READ_CHUNK: usize = 4;
 
+const RESERVED_OFFSET: u16 = 1;
+
 fn chunk_starts(bank: u8, total: usize) -> Vec<usize> {
     let mut starts = Vec::new();
     let mut offset = 0u16;
@@ -81,8 +83,10 @@ fn chunk_starts(bank: u8, total: usize) -> Vec<usize> {
             offset,
             total - offset,
             MEMORY_READ_CHUNK as u16,
-        );
-        offset += taken.max(1);
+        )
+        .max(1);
+        let holds_placeholder = (offset..offset + taken).contains(&RESERVED_OFFSET);
+        offset = if holds_placeholder { RESERVED_OFFSET + 1 } else { offset + taken };
     }
     starts
 }
@@ -100,7 +104,7 @@ pub(super) fn script_memory_bank_read(mock: &MockDaliTransport, bank: u8, bytes:
     let starts = chunk_starts(bank, bytes.len());
     for (offset, byte) in bytes.iter().enumerate() {
         script_chunk_start(mock, bank, &starts, offset);
-        if offset == 1 {
+        if offset == usize::from(RESERVED_OFFSET) {
             mock.expect_forward_frame_with_backward(read, None);
             continue;
         }
@@ -116,7 +120,7 @@ pub(super) fn script_memory_bank_short_read(mock: &MockDaliTransport, bank: u8, 
     let starts = chunk_starts(bank, usize::from(BANK0_BYTES[0]) + 1);
     for (offset, byte) in bytes.iter().enumerate() {
         script_chunk_start(mock, bank, &starts, offset);
-        if offset == 1 {
+        if offset == usize::from(RESERVED_OFFSET) {
             mock.expect_forward_frame_with_backward(read, None);
             continue;
         }
