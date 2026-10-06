@@ -853,21 +853,33 @@ fn a_violating_dimming_curve_read_back_is_named_contended() {
     assert_script_consumed(&transport);
 }
 
+#[derive(Clone, Copy)]
+enum CurveEcho {
+    Silent,
+    Violating,
+    Other,
+}
+
 #[test]
 fn a_curve_operand_that_never_proves_names_why_instead_of_succeeding() {
-    for (proof, named) in [
-        (None, VERIFY_UNANSWERED_MESSAGE),
-        (Some(()), VERIFY_CONTENDED_MESSAGE),
+    use CurveEcho::{Other, Silent, Violating};
+    for (echoes, named) in [
+        ([Silent; 3], VERIFY_UNANSWERED_MESSAGE),
+        ([Violating; 3], VERIFY_CONTENDED_MESSAGE),
+        ([Silent, Silent, Other], VERIFY_UNANSWERED_MESSAGE),
+        ([Violating, Silent, Silent], VERIFY_CONTENDED_MESSAGE),
+        ([Other; 3], "dimming_curve_arm_unconfirmed"),
     ] {
         let mock = MockDaliTransport::new();
         let short = 17;
         let curve = 1;
         let echo = standard_query_frame(short, StandardCommand::QueryContentDtr0);
-        for _ in 0..=PROGRAM_VERIFY_REPAIRS {
+        for answer in echoes {
             mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(curve)).to_forward_frame().raw());
-            match proof {
-                None => mock.expect_forward_frame_with_backward(echo, None),
-                Some(()) => mock.expect_forward_frame_corrupted_in_window(echo),
+            match answer {
+                Silent => mock.expect_forward_frame_with_backward(echo, None),
+                Violating => mock.expect_forward_frame_corrupted_in_window(echo),
+                Other => mock.expect_forward_frame_with_backward(echo, Some(curve + 1)),
             }
         }
 
