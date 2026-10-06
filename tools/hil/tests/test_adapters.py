@@ -67,7 +67,7 @@ def test_adapter_disable_gates_commands(api, lamps, sniffer, paced,
     assert op_view.get("status") == "failed", observed
     assert (op_view.get("error") or {}).get("message") == ADAPTER_DISABLED, observed
     assert (ts_status, ts_body.get("error")) == (HTTP_CONFLICT, "conflict"), observed
-    assert dapc_body.get("success") is False, observed
+    assert (dapc_status, dapc_body.get("error")) == (HTTP_CONFLICT, "conflict"), observed
     assert dapc_body.get("message") == ADAPTER_DISABLED, observed
 
     api.adapter_patch({"enabled": True})

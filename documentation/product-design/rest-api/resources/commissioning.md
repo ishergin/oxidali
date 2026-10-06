@@ -99,13 +99,13 @@ invalid_value`.
 | `withdraw`, `terminate` | `{}` | — |
 
 - Неизвестный ключ тела — `400 unknown_field`; шаг, команду которого никто не принял,
-  — `503 delivery_rejected`.
+  — `503 delivery_rejected`. Отказ до провода — как у любого синхронного маршрута:
+  выключенный адаптер — `409 conflict` с `message = adapter_disabled`, пассивный
+  контроллер — `409 controller_standby` с `Retry-After: 1`.
 - Ответ — `success`, `backward_frame` и добавки шага; отсутствующее поле значит «к
-  шагу не относится» или, при `success: false`, «шаг не исполнен». Отказ исполнения
-  тоже приходит `200` с `success: false`, и тогда
-  в ответе есть `error_code` и `message`, если исполнитель назвал причину (например,
-  `adapter_disabled`), — чтобы собственный выключатель оператора не читался как мёртвый
-  прибор.
+  шагу не относится» или, при `success: false`, «шаг не исполнен». Отказ исполнения на
+  проводе тоже приходит `200` с `success: false`, и тогда в ответе есть `error_code` и
+  `message`, если исполнитель назвал причину (например, `preempted`).
 - **Нарушающий кадр — это ответ**
   ([09 §Reading answers](../../../architecture/09-dali-protocol-rules.md#reading-answers)):
   для `compare` и `verify-short-address` он даёт `match: true`.

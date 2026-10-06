@@ -179,14 +179,11 @@ pub fn ensure_confirmation_success(body: &[u8]) -> Result<(), HttpResponse> {
         .and_then(|value| value.as_str())
         .unwrap_or("execution_failed");
     let message = parsed.get("message").and_then(|v| v.as_str()).unwrap_or("");
-    if code == "conflict" && message == CONTROLLER_PASSIVE {
-        return Err(standby_refusal());
-    }
     Err(match code {
         "superseded" => json_err(409, "superseded"),
         "vl_unbound" => json_err(422, "vl_unbound"),
         "confirmation_timeout" => json_err(504, "confirmation_timeout"),
-        "conflict" => conflict_naming_its_cause(message),
+        "conflict" => gate_refusal(message),
         "not_found" => json_err(404, "not_found"),
         "invalid_value" => json_err(422, "invalid_value"),
         "invalid_resource_id" => json_err(400, "invalid_resource_id"),
@@ -202,6 +199,23 @@ pub fn ensure_confirmation_success(body: &[u8]) -> Result<(), HttpResponse> {
 }
 
 const CONTROLLER_PASSIVE: &str = "controller_passive";
+const DELIVERY_REJECTED: &str = "delivery_rejected";
+
+pub fn refusal_before_the_wire(confirmation: &serde_json::Value) -> Option<HttpResponse> {
+    let field = |key: &str| confirmation.get(key).and_then(serde_json::Value::as_str);
+    if field("error") == Some(DELIVERY_REJECTED) {
+        return Some(json_err(503, DELIVERY_REJECTED));
+    }
+    (field("error_code") == Some("conflict")).then(|| gate_refusal(field("message").unwrap_or("")))
+}
+
+fn gate_refusal(message: &str) -> HttpResponse {
+    if message == CONTROLLER_PASSIVE {
+        standby_refusal()
+    } else {
+        conflict_naming_its_cause(message)
+    }
+}
 
 fn conflict_naming_its_cause(message: &str) -> HttpResponse {
     if message.is_empty() {

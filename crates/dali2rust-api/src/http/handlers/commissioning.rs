@@ -13,7 +13,8 @@ use crate::http::dispatcher::CorrelationIdAllocator;
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::common::{
     accepted_operation_response, json_err, parse_adapter_id, parse_json_body,
-    parse_strict_body, parse_typed_body, reject_if_commissioning_active, MutatingHandler,
+    parse_strict_body, parse_typed_body, refusal_before_the_wire, reject_if_commissioning_active,
+    MutatingHandler,
 };
 use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command_pair;
 use crate::http::handlers::resource_surface::declare_handler_shell;
@@ -244,7 +245,6 @@ fn parse_scope(scope: &str) -> Option<InitialiseScope> {
 
 const MAX_SEARCH_ADDRESS: u32 = 0x00FF_FFFF;
 
-const DELIVERY_REJECTED: &str = "delivery_rejected";
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -274,8 +274,8 @@ impl CommissioningStepHandler {
     fn step_response(step: CommissioningStep, confirmation: &[u8]) -> Result<HttpResponse, HttpResponse> {
         let base: serde_json::Value =
             serde_json::from_slice(confirmation).unwrap_or(serde_json::Value::Null);
-        if base.get("error").and_then(serde_json::Value::as_str) == Some(DELIVERY_REJECTED) {
-            return Err(json_err(503, DELIVERY_REJECTED));
+        if let Some(refusal) = refusal_before_the_wire(&base) {
+            return Err(refusal);
         }
         Ok(HttpResponse::json(200, Self::typed_result(step, &base)))
     }
@@ -612,15 +612,44 @@ mod tests {
     }
 
     #[test]
+    fn a_step_a_gate_refused_is_a_409_naming_its_cause() {
+        let refused = serde_json::json!({
+            "success": false, "backward_frame": 0, "error": "execution_failed",
+            "error_code": "conflict", "message": "adapter_disabled",
+        });
+        let Err(response) = respond(CommissioningStep::QueryShortAddress, refused) else {
+            panic!("a step the gate refused before the wire must not answer 200");
+        };
+        assert_eq!(response.status, 409);
+        let json = body(response);
+        assert_eq!(json["error"], "conflict");
+        assert_eq!(json["message"], "adapter_disabled");
+    }
+
+    #[test]
+    fn a_step_on_a_standby_controller_is_the_standby_refusal() {
+        let passive = serde_json::json!({
+            "success": false, "backward_frame": 0, "error": "execution_failed",
+            "error_code": "conflict", "message": "controller_passive",
+        });
+        let Err(response) = respond(CommissioningStep::Terminate, passive) else {
+            panic!("a passive controller refuses the step");
+        };
+        assert_eq!(response.status, 409);
+        assert!(response.extra_headers.contains(&("Retry-After", "1")));
+        assert_eq!(body(response)["error"], "controller_standby");
+    }
+
+    #[test]
     fn a_failed_step_carries_its_cause_and_no_reading() {
         let failed = serde_json::json!({
             "success": false, "backward_frame": 0, "error": "execution_failed",
-            "error_code": "conflict", "message": "adapter_disabled",
+            "error_code": "preempted", "message": "preempted",
         });
         let response = answered(CommissioningStep::QueryShortAddress, failed);
         let json = body(response);
         assert_eq!(json["success"], false);
-        assert_eq!(json["error_code"], "conflict");
+        assert_eq!(json["error_code"], "preempted");
         assert!(json.get("answer").is_none(), "no answer was read: {json}");
         assert!(json.get("short_address").is_none(), "no address was read: {json}");
     }
