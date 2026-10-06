@@ -192,14 +192,16 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   whole, and its chunk is exempt. A failed proof right after an arm re-arms the pointer,
   at most twice in one read (`memory_bank_pointer_unconfirmed`); before any other chunk
   it fails the read (`memory_bank_read_misaligned`), since the chunk before it may have
-  read under a foreign pointer. A READ that answers nothing, answers with a violation,
-  crosses a foreign frame or fails yields no value and ends its chunk: the pointer is
-  re-armed in a transaction of its own at that location, or at the start of the latched
-  value holding it, and a fresh chunk goes on from there, so no recovery stretches a
-  chunk past the budget. The third failure at one such offset ends the read: silence ends
-  the bank there, contention fails `bus_contended`, an error is returned, and a latched
-  value whose first byte had answered fails `memory_bank_latch_lost`. The read closes by
-  comparing both registers (102 §9.10.4).
+  read under a foreign pointer. A READ that answers nothing (except at offset 0x01, read
+  as a placeholder), answers with a violation, crosses a foreign frame or fails yields no
+  value and ends its chunk: the pointer is re-armed in a transaction of its own at that
+  location, or at the start of the latched value holding it, and a fresh chunk goes on
+  from there, so no recovery stretches a chunk past the budget. The third failure at one
+  such offset ends the read. The bank ends there only if nothing ever answered at that
+  offset and it fell cleanly silent at least once; a latched value whose later byte had
+  answered fails `memory_bank_latch_lost`, an offset that answered under contention or
+  never fell clean fails `bus_contended`, and a failing transport returns its error. The
+  read closes by comparing both registers (102 §9.10.4).
 
 ## Faults and identification
 

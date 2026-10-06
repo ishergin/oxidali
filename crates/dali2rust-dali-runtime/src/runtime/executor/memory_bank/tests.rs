@@ -512,6 +512,70 @@ fn a_violation_at_the_reserved_location_is_read_again_not_taken_as_its_silence()
     assert_script_consumed(&transport);
 }
 
+#[derive(Clone, Copy)]
+enum ReadAttempt {
+    Silent,
+    ContendedAnswer,
+    ContendedSilence,
+    Violated,
+}
+
+fn expect_attempts_at_3(mock: &MockDaliTransport, short: u8, attempts: [ReadAttempt; 3]) {
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(mock, short, 0, 3);
+    expect_pointer_check(mock, short, 0, Some(3));
+    for (index, attempt) in attempts.into_iter().enumerate() {
+        if index > 0 {
+            expect_rearmed_chunk(mock, short, 0, 3);
+        }
+        match attempt {
+            ReadAttempt::Silent => mock.expect_forward_frame_with_backward(read, None),
+            ReadAttempt::ContendedAnswer => {
+                mock.expect_forward_frame_with_backward_contended(read, Some(0x55));
+            }
+            ReadAttempt::ContendedSilence => {
+                mock.expect_forward_frame_with_backward_contended(read, None);
+            }
+            ReadAttempt::Violated => mock.expect_forward_frame_corrupted_in_window(read),
+        }
+    }
+}
+
+// IEC 62386-101 §8.2.5
+#[test]
+fn an_offset_that_answered_under_contention_is_no_end_of_bank() {
+    use ReadAttempt::{ContendedAnswer, Silent, Violated};
+    for attempts in [[ContendedAnswer, Violated, Silent], [Violated, Violated, Silent]] {
+        let mock = MockDaliTransport::new();
+        expect_attempts_at_3(&mock, 5, attempts);
+
+        let (transport, mut controller) = setup_controller(mock);
+        let execution = read_memory_bank(&mut controller, 5, 0, 3, 1);
+
+        assert_eq!(
+            execution.error,
+            Some(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
+            "something answered at the offset, so its last silence does not end the bank"
+        );
+        assert_script_consumed(&transport);
+    }
+}
+
+#[test]
+fn clean_silences_end_the_bank_though_the_last_read_crossed_traffic() {
+    use ReadAttempt::{ContendedSilence, Silent};
+    let mock = MockDaliTransport::new();
+    expect_attempts_at_3(&mock, 5, [Silent, Silent, ContendedSilence]);
+    expect_pointer_check(&mock, 5, 0, Some(3));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, 5, 0, 3, 1);
+
+    assert_eq!(execution.error, None, "nothing ever answered there");
+    assert!(execution.bytes.is_empty());
+    assert_script_consumed(&transport);
+}
+
 #[test]
 fn a_read_answered_during_foreign_traffic_is_read_again() {
     let mock = MockDaliTransport::new();

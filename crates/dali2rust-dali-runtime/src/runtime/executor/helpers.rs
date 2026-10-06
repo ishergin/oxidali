@@ -463,14 +463,6 @@ pub fn send_raw_query(
         .value())
 }
 
-pub fn send_raw_query_once(
-    controller: &mut impl DaliApplicationController,
-    address: DaliAddress,
-    opcode: u8,
-) -> Result<Option<u8>, SemanticDaliError> {
-    send_raw_query_once_observed(controller, address, opcode).map(|(value, _)| value)
-}
-
 pub fn send_raw_query_once_observed(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,

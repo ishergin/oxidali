@@ -197,8 +197,23 @@ fn chunk_take(bank: u8, chunk_start: u16, remaining: u16) -> u16 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReadFailure {
     Silent,
-    Contended,
+    Contended { responded: bool },
     Failed(SemanticDaliError),
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ResumeEvidence {
+    later_byte_answered: bool,
+    responded: bool,
+    silenced: bool,
+}
+
+impl ResumeEvidence {
+    fn note(&mut self, later_byte: bool, failure: ReadFailure) {
+        self.later_byte_answered |= later_byte;
+        self.responded |= failure == ReadFailure::Contended { responded: true };
+        self.silenced |= failure == ReadFailure::Silent;
+    }
 }
 
 enum ChunkRead {
@@ -216,7 +231,7 @@ struct ChunkCursor {
     rearms: u8,
     resume: Option<u16>,
     retries: u8,
-    resume_answered: bool,
+    evidence: ResumeEvidence,
 }
 
 impl ChunkCursor {
@@ -230,7 +245,11 @@ impl ChunkCursor {
             rearms: 0,
             resume: None,
             retries: 0,
-            resume_answered: false,
+            evidence: ResumeEvidence {
+                later_byte_answered: false,
+                responded: false,
+                silenced: false,
+            },
         }
     }
 
@@ -300,24 +319,28 @@ impl ChunkCursor {
         if self.resume != Some(resume) {
             self.resume = Some(resume);
             self.retries = 0;
-            self.resume_answered = false;
+            self.evidence = ResumeEvidence::default();
         }
-        self.resume_answered |= at > resume;
+        self.evidence.note(at > resume, failure);
         if self.retries < MEMORY_READ_LOCATION_RETRIES {
             self.retries += 1;
             return Ok(None);
         }
-        give_up(failure, self.resume_answered).map(Some)
+        give_up(failure, self.evidence).map(Some)
     }
 }
 
+// IEC 62386-101 §8.2.5
 // DiiA 252 §9.2.2
-fn give_up(failure: ReadFailure, resume_answered: bool) -> Result<ReadStop, SemanticDaliError> {
+fn give_up(failure: ReadFailure, evidence: ResumeEvidence) -> Result<ReadStop, SemanticDaliError> {
     match failure {
-        _ if resume_answered => Err(SemanticDaliError::OperationFailed(MEMORY_LATCH_LOST)),
-        ReadFailure::Silent => Ok(ReadStop::BankEnded),
-        ReadFailure::Contended => Err(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
+        _ if evidence.later_byte_answered => {
+            Err(SemanticDaliError::OperationFailed(MEMORY_LATCH_LOST))
+        }
+        _ if evidence.responded => Err(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
         ReadFailure::Failed(error) => Err(error),
+        _ if evidence.silenced => Ok(ReadStop::BankEnded),
+        _ => Err(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
     }
 }
 
@@ -366,12 +389,15 @@ fn read_location(
     offset: u16,
 ) -> Result<u8, ReadFailure> {
     match send_raw_query_once_response(controller, address, READ_MEMORY_LOCATION_OPCODE) {
-        Ok((_, true) | (DaliResponse::Violation, false)) => Err(ReadFailure::Contended),
         Ok((DaliResponse::Answer(value), false)) => Ok(value),
         Ok((DaliResponse::NoAnswer, false)) if offset == MEMORY_RESERVED_OFFSET => {
             Ok(MEMORY_NO_ANSWER_PLACEHOLDER)
         }
         Ok((DaliResponse::NoAnswer, false)) => Err(ReadFailure::Silent),
+        Ok((response, _)) => Err(ReadFailure::Contended {
+            responded: response != DaliResponse::NoAnswer,
+        }),
+        Err(error) if error.is_bus_contended() => Err(ReadFailure::Contended { responded: false }),
         Err(error) => Err(ReadFailure::Failed(error)),
     }
 }
