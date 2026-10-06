@@ -97,28 +97,17 @@ pub(super) fn verify_readback(
     }
 }
 
-const DTR_STAGES: [(Special103Command, Device103Command); 3] = [
-    (Special103Command::Dtr0, Device103Command::QueryContentDtr0),
-    (Special103Command::Dtr1, Device103Command::QueryContentDtr1),
-    (Special103Command::Dtr2, Device103Command::QueryContentDtr2),
-];
-
 pub(super) fn stage_dtr0(
     controller: &mut impl DaliApplicationController,
     address: Device103Address,
     value: u8,
 ) -> Result<(), SemanticDaliError> {
-    stage_dtr(controller, address, DTR_STAGES[0], value)
-}
-
-fn stage_dtr(
-    controller: &mut impl DaliApplicationController,
-    address: Device103Address,
-    (arm, prove): (Special103Command, Device103Command),
-    value: u8,
-) -> Result<(), SemanticDaliError> {
-    send(controller, arm.frame(value), false)?;
-    let readback = send(controller, prove.frame(address), true)?;
+    send(controller, Special103Command::Dtr0.frame(value), false)?;
+    let readback = send(
+        controller,
+        Device103Command::QueryContentDtr0.frame(address),
+        true,
+    )?;
     verify_readback(readback, |seen| seen == value).map(|_| ())
 }
 
@@ -385,18 +374,39 @@ pub fn set_event_filter_verified(
 ) -> Result<(), SemanticDaliError> {
     let address = Device103Address::Short(short_address);
     let instance = InstanceAddress::Number(instance_number);
-    controller.unit_exempt(|c| {
-        for (stage, value) in DTR_STAGES.into_iter().zip(filter).rev() {
-            stage_dtr(c, address, stage, value)?;
-        }
+    controller.unit(|c| {
+        send(c, Special103Command::Dtr2.frame(filter[2]), false)?;
+        send(c, Special103Command::Dtr1.frame(filter[1]), false)?;
+        stage_dtr0(c, address, filter[0])?;
         send_twice(c, Instance103Command::SetEventFilter.frame(address, instance))
     })?;
-    let seen = send(
+    verify_event_filter(controller, address, instance, filter)
+}
+
+// IEC 62386-103 §9.6.4
+fn verify_event_filter(
+    controller: &mut impl DaliApplicationController,
+    address: Device103Address,
+    instance: InstanceAddress,
+    filter: [u8; 3],
+) -> Result<(), SemanticDaliError> {
+    let low = send(
         controller,
         Instance103Command::QueryEventFilter0To7.frame(address, instance),
         true,
     )?;
-    verify_readback(seen, |actual| actual == filter[0]).map(|_| ())
+    verify_readback(low, |actual| actual == filter[0])?;
+    let upper = [
+        (Instance103Command::QueryEventFilter8To15, filter[1]),
+        (Instance103Command::QueryEventFilter16To23, filter[2]),
+    ];
+    for (query, wanted) in upper {
+        let seen = send(controller, query.frame(address, instance), true)?;
+        if seen != DaliResponse::NoAnswer {
+            verify_readback(seen, |actual| actual == wanted)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn set_instance_enabled_verified(

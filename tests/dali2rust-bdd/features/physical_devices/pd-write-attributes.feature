@@ -277,7 +277,7 @@ Feature: Physical device write-attributes
     And physical device 0 dt6_led dimming_curve carries no write provenance
     And all scripted DALI exchanges should be consumed without errors
 
-  @id:PD-274
+  @id:PD-285
   Scenario: A fade-time write whose read-back holds a violation is named contended and confirms nothing
     Given a golden control-gear discovery script for short address 0
     When I start a discovery run for adapter 0

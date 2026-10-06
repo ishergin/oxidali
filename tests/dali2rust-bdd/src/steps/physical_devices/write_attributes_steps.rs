@@ -144,13 +144,13 @@ async fn given_fade_time_write_unanswered_script(world: &mut DaliWorld) {
     script_fade_time_write_answered(&world.dali_mock().lock().expect("mock lock"), 1, None);
 }
 
-// PD-274
+// PD-285
 #[given("a fade-time 500ms write script for short address 0 whose read-back holds a violation")]
 async fn given_fade_time_write_violated_script(world: &mut DaliWorld) {
     script_fade_time_write_violated(&world.dali_mock().lock().expect("mock lock"), 1);
 }
 
-// PD-267 PD-268 PD-274
+// PD-267 PD-268 PD-285
 #[then(
     regex = r"^physical device (\d+) (common_102|dt6_led) (fade_time_ms|dimming_curve) carries no write provenance$"
 )]
