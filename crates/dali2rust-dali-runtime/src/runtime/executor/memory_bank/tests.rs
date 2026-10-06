@@ -7,7 +7,7 @@ use crate::runtime::executor::test_helpers::shared::{
 use dali2rust_domain::dali::ses::DaliPriority;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::commands::DaliCommand;
-use dali2rust_test_support::AdvancingClock;
+use dali2rust_test_support::{AdvancingClock, StoppedClock};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use ProofAnswer::{Garbled, Quiet, Says};
@@ -205,7 +205,9 @@ fn the_reserved_location_reads_as_a_placeholder_without_a_rearm() {
     mock.expect_forward_frame_with_backward(read, Some(0x01));
     expect_pointer_check(&mock, short, 0, Some(3));
 
-    let (transport, mut controller) = setup_controller(mock);
+    let transport = Arc::new(Mutex::new(mock));
+    let mut controller =
+        DaliController::new(Arc::clone(&transport), Box::new(StoppedClock::at(0)));
     let execution = read_memory_bank(&mut controller, short, 0, 0, 3);
 
     assert_eq!(execution.bytes, vec![0x1C, 0xFF, 0x01]);
@@ -899,7 +901,9 @@ fn the_pointer_proof_shares_its_chunks_transaction() {
     mock.expect_forward_frame_with_backward(read, Some(0x22));
     expect_pointer_check(&mock, short, 1, Some(4));
 
-    let (transport, mut controller) = setup_controller(mock);
+    let transport = Arc::new(Mutex::new(mock));
+    let mut controller =
+        DaliController::new(Arc::clone(&transport), Box::new(StoppedClock::at(0)));
     let execution = read_memory_bank(&mut controller, short, 1, 2, 2);
 
     assert_eq!(execution.error, None);
