@@ -137,32 +137,30 @@ fn apply_target_state(
     setpoint: &LightSetpoint,
     assert_control: AssertRgbwafControl,
 ) -> Result<(), SemanticDaliError> {
-    controller.unit_exempt(|controller| {
-        apply_target_state_unit(controller, address, setpoint, assert_control)
-    })
-}
-
-fn apply_target_state_unit(
-    controller: &mut impl DaliApplicationController,
-    address: DaliAddress,
-    setpoint: &LightSetpoint,
-    assert_control: AssertRgbwafControl,
-) -> Result<(), SemanticDaliError> {
-    let color_staged = setpoint.states_color();
-    if color_staged {
-        if let Some(color) = setpoint.color.as_ref() {
-            apply_color(controller, address, color, assert_control)?;
-        }
-    }
-
-    let activated = send_arc_command(controller, address, setpoint, color_staged)?;
-
+    let activated = controller.unit_exempt(|controller| {
+        stage_and_activate(controller, address, setpoint, assert_control)
+    })?;
     if activated {
         if let Some(driven) = rgbwaf_driven_channels(setpoint, assert_control) {
             verify_rgbwaf_control(controller, address, driven)?;
         }
     }
     Ok(())
+}
+
+fn stage_and_activate(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    setpoint: &LightSetpoint,
+    assert_control: AssertRgbwafControl,
+) -> Result<bool, SemanticDaliError> {
+    let color_staged = setpoint.states_color();
+    if color_staged {
+        if let Some(color) = setpoint.color.as_ref() {
+            apply_color(controller, address, color, assert_control)?;
+        }
+    }
+    send_arc_command(controller, address, setpoint, color_staged)
 }
 
 fn send_arc_command(

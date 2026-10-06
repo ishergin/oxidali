@@ -535,6 +535,34 @@ fn a_collided_configuration_write_is_rearmed_before_it_goes_again() {
 }
 
 #[test]
+fn a_collided_read_back_is_asked_again_without_writing_again() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let set_fade = DaliCommand::Standard {
+        address: short_address(short),
+        command: StandardCommand::SetFadeTime,
+    }
+    .to_forward_frame()
+    .raw();
+    mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(1)).to_forward_frame().raw());
+    mock.expect_forward_frame(set_fade);
+    mock.expect_forward_frame(set_fade);
+    mock.expect_forward_frame_collision(standard_query_frame(
+        short,
+        StandardCommand::QueryFadeTimeFadeRate,
+    ));
+    expect_fade_time_readback(&mock, short, 1);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution =
+        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None);
+
+    assert_eq!(execution.error, None);
+    assert_eq!(execution.confirmed.fade_time_ms, Some(700));
+    assert_script_consumed(&transport);
+}
+
+#[test]
 fn write_attributes_small_fade_time_never_selects_the_extended_fade_code() {
     let mock = MockDaliTransport::new();
     let short = 17;

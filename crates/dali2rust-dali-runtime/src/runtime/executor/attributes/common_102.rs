@@ -69,7 +69,7 @@ pub(super) fn read_light_source_type(
     address: DaliAddress,
     content_confirm: ContentConfirmPolicy,
 ) -> Result<(Option<u8>, Option<u32>), SemanticDaliError> {
-    controller.transaction(|controller| {
+    controller.unit(|controller| {
         let mut query = |cmd| send_standard_query_stable(controller, content_confirm, address, cmd);
         let answered = query(StandardCommand::QueryLightSourceType)?;
         if answered != Some(LIGHT_SOURCE_TYPE_MASK) {

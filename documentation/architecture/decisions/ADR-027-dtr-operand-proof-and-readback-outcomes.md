@@ -71,7 +71,8 @@ two. The three are distinct, append-only error codes.
 
 - **`Collision` and `BusBusy` are retried** under the same retry policy as 16-bit frames:
   a collision destroys the frame for every receiver and a busy bus transmitted nothing, so
-  the resend is the first delivery.
+  the resend is the first delivery. Inside a DTR-armed unit the whole unit is re-run
+  instead ([09](../09-dali-protocol-rules.md) §Transactions).
 - **A foreign frame or a violation in a 24-bit frame's window is terminal**: a foreign
   frame is `Frame24Fault::Contended`, a violation the answer `DaliResponse::Violation`
   (`VerifyContended` in a read-back). The device may have executed what it heard, so the

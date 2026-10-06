@@ -66,20 +66,22 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 
 - A unit the gear treats as one (DTR arming and its command, `ENABLE DEVICE TYPE` and its
   extended command, a send-twice pair, the device-type walk, a memory-bank chunk) runs in
-  `controller.transaction(|c| …)`; every frame after the first goes at priority 1
+  `controller.transaction(|c| …)`, or in `controller.unit` when it stages what its
+  command consumes (below); every frame after the first goes at priority 1
   (101 §9.2), so the owner wins each following slot
   ([ADR-017](decisions/ADR-017-dali-transactions-and-frame-priority.md)).
   `transaction_exempt` marks an indivisible unit that may exceed §9.2's 400 ms guidance.
-  The exempt kinds are closed: DT8 colour staging with the command that activates it
-  (including a target-state write and a scene programme), a scene-colour read, the
+  The exempt kinds are closed: DT8 colour staging with the command that consumes it
+  (including a target-state write, a scene programme and a colour-limit store), a
+  scene-colour read, the
   §11.5.13 device-type walk (from discovery and attribute reads), a memory-bank chunk that
   is one latched value wider than a chunk (DiiA 252 §9.2.2), a Part 103
   `SET EVENT FILTER` with its three proved operands, and 102/103 commissioning and
   discovery sessions. A new exempt call site is one of these kinds, or this list grows.
 - A collision or `BusBusy` on the first frame does not start a transaction: the destroyed
-  frame is still a first frame, and priority 1 is forbidden for it. A collision on a later
-  frame does not un-start one: the retransmission stays at priority 1 and the yield shield
-  holds until the bracket closes.
+  frame is still a first frame, and priority 1 is forbidden for it. Outside a unit, a
+  collision on a later frame does not un-start one: the retransmission stays at priority 1
+  and the yield shield holds until the bracket closes.
 - No yield lands inside a started transaction, not even for our own interactive work.
   Operator-first rests on small units: a read is a series of short transactions, and
   `step_boundary` closes the open one when something is waiting.
@@ -91,14 +93,20 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   `ENABLE DEVICE TYPE` prelude, a temporary colour — runs in `controller.unit(|c| …)`, and
   nothing inside it is retried on its own: a `Collision` or `BusBusy` anywhere in it ends
   the attempt, no later exchange of that attempt reaches the wire, and the controller
-  re-runs the unit from its first frame under the retry policy. Another master's frames
-  may have landed in the gap, so a retry that resumed at the command would act on
-  operands nothing proved
-  ([ADR-027](decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md)). A unit
-  inside a unit is part of it.
+  re-runs the unit from its first frame under the retry policy, counted as a re-run.
+  Another master's frames may have landed in the gap, so a retry that resumed at the
+  command would act on operands nothing proved
+  ([ADR-027](decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md)). The unit
+  ends with the command that consumes what it staged: a check after that command (a
+  read-back, a verification) runs outside it, so a break there never repeats a command
+  that executed. An outermost unit's re-run is a new transaction at its class priority;
+  inside a started transaction it re-runs at priority 1, and a unit inside a unit is part
+  of it.
 - The two halves of a send-twice pair are judged by the settling the interrupt measured
   before the second: past Table 17's 75 ms the pair is our breach and is counted; past
-  Table 20's 94 ms the gear cannot have read a pair, and the unit is re-run as `BusBusy`.
+  Table 20's 94 ms the gear is no longer bound to read a pair (up to 105 ms it still may),
+  and the unit is re-run as `BusBusy`. A re-run of `SET SHORT ADDRESS` that finds the
+  source address silent therefore asks the target before it reports the move unproved.
 - A 16-bit frame sent on its own (`send_raw`) is retried frame by frame on the same
   outcomes, at priority 1 inside a started transaction, except inside a unit; a frame that
   expected no answer reads anything in its window as no answer.

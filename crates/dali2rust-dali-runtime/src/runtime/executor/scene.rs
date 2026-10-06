@@ -75,9 +75,9 @@ fn program_scene_write(
             controller,
             address,
             StandardCommand::SetScene { scene: scene_id },
-        )?;
-        read_scene_level(controller, address, scene_id)
-    })
+        )
+    })?;
+    read_scene_level(controller, address, scene_id)
 }
 
 fn program_scene_clear(

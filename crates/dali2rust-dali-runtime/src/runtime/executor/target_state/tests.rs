@@ -225,6 +225,12 @@ fn a_collided_dt8_command_restages_its_operands_behind_a_fresh_prelude() {
         .expect("the restarted unit lands the colour");
 
     assert_script_consumed(&transport);
+    let sent = transport.lock().expect("mock lock").sent_frames();
+    assert_eq!(
+        sent[sent.len() - 2..],
+        [enable_dt8, short_raw_query_frame(short_address(short), DT8_ACTIVATE)],
+        "the restarted unit still ends with its activation"
+    );
 }
 
 #[test]
@@ -840,15 +846,12 @@ fn an_rgb_write_asserts_the_control_byte_when_the_gear_is_not_already_there() {
     assert_script_consumed(&transport);
 }
 
-#[test]
-fn a_gear_already_in_normalised_control_is_not_written_to() {
-    let mock = MockDaliTransport::new();
-    let short = 17;
-    expect_rgbwaf_control_read(&mock, short, Some(0x80));
-    expect_staged_dtrs(&mock, short, &[254, 0, 0]);
-    expect_dt8_raw(&mock, short, DT8_SET_TEMPORARY_RGB_DIMLEVEL);
-    expect_staged_dtrs(&mock, short, &[0, 0, 0]);
-    expect_dt8_raw(&mock, short, DT8_SET_TEMPORARY_WAF_DIMLEVEL);
+fn expect_normalised_red_at_200(mock: &MockDaliTransport, short: u8) -> u16 {
+    expect_rgbwaf_control_read(mock, short, Some(0x80));
+    expect_staged_dtrs(mock, short, &[254, 0, 0]);
+    expect_dt8_raw(mock, short, DT8_SET_TEMPORARY_RGB_DIMLEVEL);
+    expect_staged_dtrs(mock, short, &[0, 0, 0]);
+    expect_dt8_raw(mock, short, DT8_SET_TEMPORARY_WAF_DIMLEVEL);
     mock.expect_forward_frame(
         DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
             .to_forward_frame()
@@ -858,10 +861,43 @@ fn a_gear_already_in_normalised_control_is_not_written_to() {
         short_raw_query_frame(short_address(short), DT8_QUERY_COLOUR_STATUS),
         Some(DT8_STATUS_RGB_ACTIVE),
     );
+    let dapc = DaliCommand::Standard {
+        address: short_address(short),
+        command: StandardCommand::DirectArcPower { level: 200 },
+    }
+    .to_forward_frame()
+    .raw();
+    mock.expect_forward_frame(dapc);
+    dapc
+}
+
+#[test]
+fn a_gear_already_in_normalised_control_is_not_written_to() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_normalised_red_at_200(&mock, short);
+    expect_rgbwaf_control_read(&mock, short, Some(0x80));
+
+    let (transport, mut controller) = setup_controller(mock);
+    apply_short_target_state(&mut controller, short, &rgb_setpoint(255, 0, 0, 200), assert_policy())
+        .expect("target-state");
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_collided_check_after_the_arc_command_never_sends_it_again() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let dapc = expect_normalised_red_at_200(&mock, short);
     mock.expect_forward_frame(
-        DaliCommand::Standard {
+        DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
+            .to_forward_frame()
+            .raw(),
+    );
+    mock.expect_forward_frame_collision(
+        DaliCommand::Extended {
             address: short_address(short),
-            command: StandardCommand::DirectArcPower { level: 200 },
+            command: ExtendedCommand::Dt8(Dt8Command::QueryRgbwafControl),
         }
         .to_forward_frame()
         .raw(),
@@ -870,8 +906,14 @@ fn a_gear_already_in_normalised_control_is_not_written_to() {
 
     let (transport, mut controller) = setup_controller(mock);
     apply_short_target_state(&mut controller, short, &rgb_setpoint(255, 0, 0, 200), assert_policy())
-        .expect("target-state");
+        .expect("the check is asked again, the light command is not");
     assert_script_consumed(&transport);
+    let sent = transport.lock().expect("mock lock").sent_frames();
+    assert_eq!(
+        sent.iter().filter(|frame| **frame == dapc).count(),
+        1,
+        "the DAPC executed; a break in the check after it must not restart its fade"
+    );
 }
 
 #[test]

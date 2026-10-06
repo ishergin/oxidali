@@ -576,6 +576,24 @@ mod address_change {
         assert_script_consumed(&transport);
     }
 
+    // IEC 62386-101 Table 20
+    #[test]
+    fn a_pair_split_into_the_grey_area_that_moved_the_gear_reports_the_move() {
+        const SPLIT_INTO_THE_GREY_AREA_TICKS: u16 = 950;
+        let mock = MockDaliTransport::new();
+        mock.set_last_tx_settle_ticks(Some(SPLIT_INTO_THE_GREY_AREA_TICKS));
+        expect_arm(&mock, Some(ENCODED));
+        expect_write(&mock);
+        for _ in 0..3 {
+            expect_arm(&mock, None);
+        }
+        mock.expect_forward_frame_with_backward(standard_frame(TO, StandardCommand::QueryStatus), Some(0));
+        let (transport, mut controller) = setup_controller(mock);
+        change_short_address(&mut controller, FROM, TO, false)
+            .expect("the gear answers at the target, so the split pair did move it");
+        assert_script_consumed(&transport);
+    }
+
     #[test]
     fn an_unprovable_operand_never_reaches_set_short_address() {
         let mock = MockDaliTransport::new();

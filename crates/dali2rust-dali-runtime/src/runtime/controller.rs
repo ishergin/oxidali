@@ -241,6 +241,7 @@ impl<T: DaliTransport + Send> DaliApplicationController for DaliController<T> {
             self.wire_counters.transaction_leaks.fetch_add(1, Relaxed);
             debug_assert_eq!(self.tx.depth, 0, "transaction leaked past its command");
             self.tx = TransactionState::default();
+            self.unit = None;
         }
         result
     }

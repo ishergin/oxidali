@@ -38,7 +38,8 @@ pub struct WriteAttributesExecution {
     pub error: Option<SemanticDaliError>,
 }
 
-// IEC 62386-102 §3.13; IEC 62386-101 §8.2.5
+// IEC 62386-102 §3.13
+// IEC 62386-101 §8.2.5
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ReadBack {
     Proved(u8),
@@ -181,10 +182,8 @@ pub(super) fn send_dtr0_config_verified<C: DaliApplicationController>(
 ) -> Result<ReadBack, SemanticDaliError> {
     controller.step_boundary();
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        let verified = controller.unit(|controller| {
-            send_dtr0_backed_standard(controller, address, dtr0, command)?;
-            read_back(controller)
-        })?;
+        send_dtr0_backed_standard(controller, address, dtr0, command)?;
+        let verified = read_back(controller)?;
         if let Some(unconfirmed) = ReadBack::without_value(verified) {
             return Ok(unconfirmed);
         }
@@ -205,10 +204,8 @@ fn send_dtr0_config_accepted<C: DaliApplicationController>(
     controller.step_boundary();
     let mut previous: Option<u8> = None;
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        let answer = controller.unit(|controller| {
-            send_dtr0_backed_standard(controller, address, dtr0, command)?;
-            read_back(controller)
-        })?;
+        send_dtr0_backed_standard(controller, address, dtr0, command)?;
+        let answer = read_back(controller)?;
         match answer {
             DaliResponse::Answer(v) if v == dtr0 || previous == Some(v) => {
                 return Ok(ReadBack::Proved(v))

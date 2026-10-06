@@ -43,7 +43,7 @@ fn store_tc_limit_verified(
 ) -> Result<(), SemanticDaliError> {
     let expected = tc_limit_expected(mirek, physical);
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        let landed = controller.unit(|controller| {
+        let stored = controller.unit_exempt(|controller| {
             if !stage_tc_limit_dtrs(controller, address, mirek, selector)? {
                 return Ok(false);
             }
@@ -52,16 +52,13 @@ fn store_tc_limit_verified(
                 address,
                 ExtendedCommand::Dt8(Dt8Command::StoreColourTemperatureTcLimit),
             )?;
-            Ok(
-                read_dt8_color_value_u16(
-                    controller,
-                    address,
-                    readback_id,
-                    ContentConfirmPolicy::default(),
-                )? == Some(expected),
-            )
+            Ok(true)
         })?;
-        if landed {
+        if !stored {
+            continue;
+        }
+        let policy = ContentConfirmPolicy::default();
+        if read_dt8_color_value_u16(controller, address, readback_id, policy)? == Some(expected) {
             return Ok(());
         }
     }

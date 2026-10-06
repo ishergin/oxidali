@@ -23,7 +23,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
             if self.retry_or_fail(attempt, attempts, error).is_err() {
                 return result;
             }
-            self.note_unit_reopened();
+            self.wire_counters.transaction_reopened.fetch_add(1, Relaxed);
             attempt += 1;
         }
     }

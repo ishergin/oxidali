@@ -1510,7 +1510,45 @@ fn a_refused_action_reruns_its_unit_from_the_arming_frame() {
         );
         assert_eq!(guard.script_error(), None);
         assert_eq!(controller.wire_counters.exchange_retries.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            controller.wire_counters.transaction_reopened.load(Ordering::Relaxed),
+            1,
+            "a unit re-run is a re-run, whether or not it reopens the same transaction"
+        );
     }
+}
+
+#[test]
+fn a_unit_inside_a_started_transaction_reruns_at_priority_one() {
+    let f = armed_frames();
+    let lead = query_status_frame(ARMED_SHORT);
+    let mock = MockDaliTransport::new();
+    mock.expect_forward_frame_with_backward(lead, Some(0));
+    expect_armed_unit(&mock, &f);
+    mock.expect_forward_frame_collision(f.act);
+    expect_armed_unit(&mock, &f);
+    mock.expect_forward_frame(f.act);
+    mock.expect_forward_frame(f.act);
+    let transport = Arc::new(Mutex::new(mock));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+
+    let written = controller.transaction(|c| {
+        c.send_command(&query_status_command(ARMED_SHORT))?;
+        c.unit(arm_prove_and_act)
+    });
+
+    assert_eq!(written, Ok(true));
+    let guard = transport.lock().unwrap();
+    assert_eq!(
+        guard.sent_frames(),
+        vec![lead, f.arm, f.proof, f.act, f.arm, f.proof, f.act, f.act],
+        "only the unit restarts; what the enclosing transaction sent before it stands"
+    );
+    assert_eq!(
+        priorities_of(&guard.sent_frame_settle_us())[1..],
+        [DaliPriority::Transaction; 7],
+        "the transaction stays open, so the re-run keeps priority 1"
+    );
 }
 
 #[test]

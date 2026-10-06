@@ -116,9 +116,10 @@ same reason a send-twice pair whose halves the gear cannot have read as a pair i
 as a unit (09).
 
 A unit whose command consumes operands staged by commands of its own, such as DTR arming
-and its proof, is restarted whole the same way (the rule is in 09): resuming at the
-consuming command acts on whatever another master left in the registers
-([ADR-027](ADR-027-dtr-operand-proof-and-readback-outcomes.md)).
+and its proof, is restarted whole the same way and ends at that command (the rule is in
+09): resuming at the consuming command acts on whatever another master left in the
+registers ([ADR-027](ADR-027-dtr-operand-proof-and-readback-outcomes.md)), and a check
+left inside the unit would repeat a command that already executed.
 
 ### Rejected alternatives
 
