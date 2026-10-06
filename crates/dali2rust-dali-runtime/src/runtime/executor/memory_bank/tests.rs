@@ -365,25 +365,56 @@ fn a_read_lost_at_the_reserved_location_is_caught_by_the_next_proof() {
 }
 
 #[test]
-fn a_foreign_pointer_after_the_placeholder_is_misaligned_not_a_lost_read() {
+fn a_pointer_after_the_placeholder_that_is_not_one_read_behind_is_misaligned() {
+    let proofs = [
+        (Says(FOREIGN_BANK), Says(2)),
+        (Says(FOREIGN_BANK), Says(1)),
+        (Says(0), Says(0)),
+        (Quiet, Says(1)),
+    ];
+    for proof in proofs {
+        let mock = MockDaliTransport::new();
+        let short = 5;
+        let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+        expect_prepare(&mock, short, 0, 0);
+        expect_pointer_check(&mock, short, 0, Some(0));
+        mock.expect_forward_frame_with_backward(read, Some(0x1C));
+        mock.expect_forward_frame_with_backward(read, None);
+        expect_proof(&mock, short, proof);
+
+        let (transport, mut controller) = setup_controller(mock);
+        let execution = read_memory_bank(&mut controller, short, 0, 0, 4);
+
+        assert_eq!(
+            execution.error,
+            Some(SemanticDaliError::OperationFailed(MEMORY_MISALIGNED)),
+            "only the bank held with DTR0 still at 0x01 is a lost READ; another pointer may have fed byte 0"
+        );
+        assert!(execution.bytes.is_empty());
+        assert_script_consumed(&transport);
+    }
+}
+
+#[test]
+fn a_bank_ending_at_the_last_location_accepts_no_wrapped_pointer() {
     let mock = MockDaliTransport::new();
     let short = 5;
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
-    expect_prepare(&mock, short, 0, 0);
-    expect_pointer_check(&mock, short, 0, Some(0));
-    mock.expect_forward_frame_with_backward(read, Some(0x1C));
+    expect_prepare(&mock, short, 0, 0xFF);
+    expect_pointer_check(&mock, short, 0, Some(0xFF));
     mock.expect_forward_frame_with_backward(read, None);
-    expect_foreign_bank(&mock, short, 2);
+    expect_rearmed_chunk(&mock, short, 0, 0xFF);
+    mock.expect_forward_frame_with_backward(read, None);
+    expect_pointer_check(&mock, short, 0, Some(0x00));
 
     let (transport, mut controller) = setup_controller(mock);
-    let execution = read_memory_bank(&mut controller, short, 0, 0, 4);
+    let execution = read_memory_bank(&mut controller, short, 0, 0xFF, 1);
 
     assert_eq!(
         execution.error,
         Some(SemanticDaliError::OperationFailed(MEMORY_MISALIGNED)),
-        "only a pointer one READ behind is a lost READ at 0x01; another bank may have fed byte 0"
+        "DTR0 never moves past 0xFF (IEC 62386-102 §9.10.4), so 0x00 there is a foreign pointer"
     );
-    assert!(execution.bytes.is_empty());
     assert_script_consumed(&transport);
 }
 

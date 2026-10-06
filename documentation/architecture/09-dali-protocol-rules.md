@@ -190,18 +190,20 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   `DTR1` and `DTR0`, and reads at most four locations: proof and reads together stay
   under 101 §9.2's 400 ms guidance on real gear. A latched value wider than that stays
   whole, and its chunk is exempt. A proof tells a moved pointer from silence and a
-  violation, as a read-back does. An arm whose proof never holds fails
-  `memory_bank_pointer_unconfirmed`, or `bus_contended` when its last proof was
-  violated. A failed proof right after an arm re-arms the pointer; before any other chunk
-  it fails the read — `memory_bank_read_misaligned` when the pointer moved, since the
-  chunk before it may have read under a foreign pointer, `memory_bank_pointer_unconfirmed`
-  when it went unanswered, `bus_contended` when it was violated. The read closes by
-  checking both registers the same way (102 §9.10.4).
+  violation, as a read-back does, in that order: a register that answers a wrong value
+  outranks a violation, and a violation outranks silence. An arm whose proof never holds
+  fails `memory_bank_pointer_unconfirmed`, or `bus_contended` when its last proof was
+  violated and no register moved. A failed proof right after an arm re-arms the pointer;
+  before any other chunk it fails the read — `memory_bank_read_misaligned` when the
+  pointer moved, since the chunk before it may have read under a foreign pointer,
+  `memory_bank_pointer_unconfirmed` when it went unanswered, `bus_contended` when it was
+  violated. The read closes by checking both registers the same way (102 §9.10.4).
 - A silent READ at offset 0x01 reads as a placeholder and ends its chunk: the next
   chunk's proof shows whether the READ reached the gear. Only a pointer one READ behind,
   the bank held and `DTR0` still at 0x01, has 0x01 read again; any other failed proof
   follows the rule above, and a read that ends at 0x01 is judged by its closing check.
-  These re-arms and the ones after an arm share two per read. Any other READ that answers nothing, answers with a violation,
+  These re-arms and the ones after an arm share two per read. Any other READ that
+  answers nothing, answers with a violation,
   crosses a foreign frame or fails yields no value and ends its chunk: the pointer is
   re-armed in a transaction of its own at that location, or at the start of the latched
   value holding it, and a fresh chunk goes on from there, so no recovery stretches a

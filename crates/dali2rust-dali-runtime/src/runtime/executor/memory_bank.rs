@@ -120,7 +120,7 @@ impl PointerProof {
     ) -> Self {
         let bank_held = armed_bank == DaliResponse::Answer(bank);
         let offset_held = armed_offset == DaliResponse::Answer(expected)
-            || (ended && armed_offset == DaliResponse::Answer(expected.wrapping_add(1)));
+            || (ended && armed_offset == DaliResponse::Answer(expected.saturating_add(1)));
         let answers = [armed_bank, armed_offset];
         let shown = |kind: DaliResponse| answers.contains(&kind);
         let answered = |response: DaliResponse| matches!(response, DaliResponse::Answer(_));
