@@ -73,7 +73,7 @@ pub fn read_memory_bank(
     collect_memory_bank_bytes(controller, address, bank, start, length)
 }
 
-const MEMORY_READ_CHUNK: u16 = 5;
+const MEMORY_READ_CHUNK: u16 = 4;
 
 fn validate_memory_read_range(start: u16, length: u16) -> Result<(), SemanticDaliError> {
     if start > u16::from(u8::MAX) || u32::from(start) + u32::from(length) > 256 {
@@ -118,16 +118,21 @@ fn pointer_confirmed(
 fn confirm_final_position(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
-    start: u16,
-    read: u16,
+    bank: u8,
+    (start, read): (u16, u16),
     stop: ReadStop,
 ) -> Result<(), SemanticDaliError> {
     // IEC 62386-102 §11.6.4
     let counted = start.saturating_add(read).min(u16::from(u8::MAX)) as u8;
-    let answered = send_standard_query(controller, address, StandardCommand::QueryContentDtr0)?;
-    let accepted = answered == Some(counted)
+    let (armed_bank, answered) = controller.transaction(|controller| {
+        let armed_bank =
+            send_standard_query(controller, address, StandardCommand::QueryContentDtr1)?;
+        let answered = send_standard_query(controller, address, StandardCommand::QueryContentDtr0)?;
+        Ok::<_, SemanticDaliError>((armed_bank, answered))
+    })?;
+    let offset_accepted = answered == Some(counted)
         || (stop == ReadStop::BankEnded && answered == Some(counted.saturating_add(1)));
-    accepted
+    (armed_bank == Some(bank) && offset_accepted)
         .then_some(())
         .ok_or(SemanticDaliError::OperationFailed(MEMORY_MISALIGNED))
 }
@@ -145,7 +150,7 @@ fn collect_memory_bank_bytes(
         Err(error) => return MemoryReadExecution { bytes, error: Some(error) },
     };
     let read = bytes.len() as u16;
-    match confirm_final_position(controller, address, start, read, stop) {
+    match confirm_final_position(controller, address, bank, (start, read), stop) {
         Ok(()) => MemoryReadExecution { bytes, error: None },
         Err(error) => MemoryReadExecution {
             bytes: Vec::new(),
@@ -163,40 +168,64 @@ fn read_in_chunks(
     bytes: &mut Vec<u8>,
 ) -> Result<ReadStop, SemanticDaliError> {
     let mut done = 0u16;
+    let mut rearms: u8 = 0;
     while done < length {
         let chunk_start = start + done;
-        debug_assert!(
-            is_field_boundary(bank, chunk_start),
-            "bank {bank} chunk starting at {chunk_start} is inside a latched value"
-        );
-        let take = chunk_len(bank, chunk_start, length - done, MEMORY_READ_CHUNK);
+        let take = chunk_take(bank, chunk_start, length - done);
         controller.step_boundary();
-        let stop = controller.transaction(|controller| {
-            confirm_chunk_position(controller, address, chunk_start, done)?;
-            read_planned_locations(controller, address, bank, chunk_start, take, bytes)
-        })?;
-        if stop == ReadStop::BankEnded {
-            return Ok(stop);
+        match read_proved_chunk(controller, address, bank, (chunk_start, take), bytes)? {
+            Some(ReadStop::BankEnded) => return Ok(ReadStop::BankEnded),
+            Some(ReadStop::Planned) => done += take,
+            None if done == 0 => {
+                rearm_first_chunk(controller, address, bank, chunk_start, &mut rearms)?;
+            }
+            None => return Err(SemanticDaliError::OperationFailed(MEMORY_MISALIGNED)),
         }
-        done += take;
     }
     Ok(ReadStop::Planned)
 }
 
-fn confirm_chunk_position(
+fn chunk_take(bank: u8, chunk_start: u16, remaining: u16) -> u16 {
+    debug_assert!(
+        is_field_boundary(bank, chunk_start),
+        "bank {bank} chunk starting at {chunk_start} is inside a latched value"
+    );
+    chunk_len(bank, chunk_start, remaining, MEMORY_READ_CHUNK)
+}
+
+fn rearm_first_chunk(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
+    bank: u8,
     chunk_start: u16,
-    already_read: u16,
+    rearms: &mut u8,
 ) -> Result<(), SemanticDaliError> {
-    if already_read == 0 {
-        return Ok(());
+    if *rearms >= BANK_ARM_RETRIES {
+        return Err(SemanticDaliError::OperationFailed(MEMORY_POINTER_UNCONFIRMED));
     }
-    let expected = chunk_start.min(u16::from(u8::MAX)) as u8;
-    let answered = send_standard_query(controller, address, StandardCommand::QueryContentDtr0)?;
-    (answered == Some(expected))
-        .then_some(())
-        .ok_or(SemanticDaliError::OperationFailed(MEMORY_MISALIGNED))
+    *rearms += 1;
+    arm_memory_pointer(controller, address, bank, chunk_start)
+}
+
+// IEC 62386-102 §9.10.4; DiiA 252 §9.2.2
+fn read_proved_chunk(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    bank: u8,
+    (chunk_start, take): (u16, u16),
+    bytes: &mut Vec<u8>,
+) -> Result<Option<ReadStop>, SemanticDaliError> {
+    let read = |controller: &mut _| {
+        if !pointer_confirmed(controller, address, bank, chunk_start as u8)? {
+            return Ok(None);
+        }
+        read_planned_locations(controller, address, bank, chunk_start, take, bytes).map(Some)
+    };
+    if take > MEMORY_READ_CHUNK {
+        controller.transaction_exempt(read)
+    } else {
+        controller.transaction(read)
+    }
 }
 
 enum LocationRead {

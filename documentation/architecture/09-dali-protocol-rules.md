@@ -72,9 +72,10 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   `transaction_exempt` marks an indivisible unit that may exceed §9.2's 400 ms guidance.
   The exempt kinds are closed: DT8 colour staging with the command that activates it
   (including a target-state write and a scene programme), a scene-colour read, the
-  §11.5.13 device-type walk (from discovery and attribute reads), and 102/103
-  commissioning and discovery sessions. A new exempt call site is one of these kinds, or
-  this list grows.
+  §11.5.13 device-type walk (from discovery and attribute reads), a memory-bank chunk that
+  is one latched value wider than a chunk (DiiA 252 §9.2.2), and 102/103 commissioning
+  and discovery sessions. A new exempt call site is one of these kinds, or this list
+  grows.
 - A collision or `BusBusy` on the first frame does not start a transaction: the destroyed
   frame is still a first frame, and priority 1 is forbidden for it. A collision on a later
   frame does not un-start one: the retransmission stays at priority 1 and the yield shield
@@ -161,9 +162,13 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   field-aligned, a re-arm restarts the value, and a value no latch covers fails
   (`memory_bank_latch_lost`) rather than being stitched. MASK and TMASK are per width,
   signed widths included; value, MASK, TMASK and "not read" are four states.
-- A memory-bank read chunk spans at most five locations (a latched value wider than that
-  stays whole) and is one transaction: a longer one runs past 101 §9.2's 400 ms guidance
-  on real gear.
+- A memory-bank read chunk is one transaction that opens by proving the whole pointer,
+  `DTR1` and `DTR0`, and reads at most four locations: proof and reads together stay
+  under 101 §9.2's 400 ms guidance on real gear. A latched value wider than that stays
+  whole, and its chunk is exempt. A failed proof before the first chunk re-arms the
+  pointer; before a later one it fails the read (`memory_bank_read_misaligned`), since the
+  chunk before it may have read under a foreign pointer. The read closes by comparing
+  both registers (102 §9.10.4).
 
 ## Faults and identification
 

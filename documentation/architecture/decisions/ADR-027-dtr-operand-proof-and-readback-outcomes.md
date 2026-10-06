@@ -30,9 +30,9 @@ IEC 62386-101 §9.1.3–9.1.4 make a collision destroy the frame for every recei
   or a violation all mean "not proved": re-arm within a bounded budget, then fail with a
   named reason. Never vote over repeated reads — a majority buys probability at many
   times the wire cost, and a read-back buys proof.
-- **Proved operands (control gear):** the memory pointer before a memory-bank read (bank
-  in `DTR1`, offset in `DTR0`), with the final `DTR0` position compared after the read
-  as §9.10.4 recommends; the DT8 colour stagings (`DTR0`–`DTR2`), colour-limit stagings
+- **Proved operands (control gear):** the memory pointer at the start of every chunk of a
+  memory-bank read (bank in `DTR1`, offset in `DTR0`), with the final pointer compared
+  after the read as §9.10.4 recommends; the DT8 colour stagings (`DTR0`–`DTR2`), colour-limit stagings
   and DT8 configuration writes such as `STORE GEAR FEATURES/STATUS`; the
   `QUERY COLOUR VALUE` selector, re-armed and re-proved before every attempt because the
   gear replaces `DTR0` with the answer's low byte; `SET SHORT ADDRESS`; and the colour

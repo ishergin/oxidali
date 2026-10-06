@@ -3,26 +3,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::commands::{SpecialCommand, StandardCommand};
 use dali2rust_domain::dali::types::DaliAddress;
-
-struct AutoAdvanceClock {
-    now_ms: AtomicU64,
-    step_ms: u64,
-}
-
-impl AutoAdvanceClock {
-    fn new(step_ms: u64) -> Self {
-        Self {
-            now_ms: AtomicU64::new(0),
-            step_ms,
-        }
-    }
-}
-
-impl Clock for AutoAdvanceClock {
-    fn monotonic_ms(&self) -> u64 {
-        self.now_ms.fetch_add(self.step_ms, Ordering::SeqCst)
-    }
-}
+use dali2rust_test_support::AdvancingClock;
 
 fn priorities_of(settle_us: &[u32]) -> Vec<DaliPriority> {
     settle_us
@@ -44,7 +25,7 @@ fn priorities_of(settle_us: &[u32]) -> Vec<DaliPriority> {
 }
 
 fn test_clock() -> Box<dyn Clock> {
-    Box::new(AutoAdvanceClock::new(20))
+    Box::new(AdvancingClock::new(20))
 }
 
 fn retry_policy(max_attempts: u8) -> RetryPolicy {
@@ -1237,7 +1218,7 @@ fn a_foreign_frame_in_a_24_bit_window_is_terminal_and_leaves_the_bracket_started
 fn a_24_bit_walk_earns_the_deliberate_release_every_budget() {
     let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
     let mut controller =
-        DaliController::new(Arc::clone(&transport), Box::new(AutoAdvanceClock::new(4)));
+        DaliController::new(Arc::clone(&transport), Box::new(AdvancingClock::new(4)));
 
     controller.with_wire_class(Some(TransactionPriority::Configuration), |c| {
         for short in 0..30u8 {
