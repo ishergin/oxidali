@@ -17,6 +17,8 @@ pub const SCENE_COUNT: u8 = 16;
 
 pub const MAX_SHORT_ADDRESSES: usize = 64;
 
+pub const MAX_HCL_SCHEDULES: usize = 8;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VirtualLampSnapshot {
     pub name: String,
