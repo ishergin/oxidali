@@ -854,6 +854,39 @@ fn a_violating_dimming_curve_read_back_is_named_contended() {
 }
 
 #[test]
+fn a_curve_operand_that_never_proves_names_why_instead_of_succeeding() {
+    for (proof, named) in [
+        (None, VERIFY_UNANSWERED_MESSAGE),
+        (Some(()), VERIFY_CONTENDED_MESSAGE),
+    ] {
+        let mock = MockDaliTransport::new();
+        let short = 17;
+        let curve = 1;
+        let echo = standard_query_frame(short, StandardCommand::QueryContentDtr0);
+        for _ in 0..=PROGRAM_VERIFY_REPAIRS {
+            mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(curve)).to_forward_frame().raw());
+            match proof {
+                None => mock.expect_forward_frame_with_backward(echo, None),
+                Some(()) => mock.expect_forward_frame_corrupted_in_window(echo),
+            }
+        }
+
+        let (transport, mut controller) = setup_controller(mock);
+        let execution = write_short_attributes(
+            &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve),
+        );
+
+        assert_eq!(execution.confirmed.dimming_curve, None);
+        assert_eq!(
+            execution.error,
+            Some(SemanticDaliError::OperationFailed(named)),
+            "an operand nothing proved was never written, and that is not a success"
+        );
+        assert_script_consumed(&transport);
+    }
+}
+
+#[test]
 fn a_contended_field_outranks_a_silent_one_in_the_named_outcome() {
     let mock = MockDaliTransport::new();
     let short = 17;

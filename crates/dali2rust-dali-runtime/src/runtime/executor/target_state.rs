@@ -7,7 +7,7 @@ use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_contracts::msg::ColorValue;
 
 use crate::runtime::executor::helpers::{
-    dali_short_address, kelvin_to_mirek, send_dt8_raw, send_dt8_raw_query,
+    ArmedCommand, dali_short_address, kelvin_to_mirek, send_dt8_raw, send_dt8_raw_query,
     send_dtr0_backed_extended, send_extended_query, send_special, send_standard,
     send_standard_query, SemanticDaliError, DT8_ACTIVATE, DT8_QUERY_COLOUR_STATUS,
     DT8_SET_TEMPERATURE_TC,
@@ -94,7 +94,7 @@ fn ensure_automatic_activation(
             gear_features_store_operand(true),
             ExtendedCommand::Dt8(Dt8Command::StoreGearFeaturesStatus),
         )?;
-        if armed {
+        if armed == ArmedCommand::Sent {
             let answer = send_extended_query(
                 controller,
                 address,
@@ -258,12 +258,13 @@ fn ensure_rgbwaf_control(
         return Ok(());
     }
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        if send_dtr0_backed_extended(
+        let armed = send_dtr0_backed_extended(
             controller,
             address,
             rgbwaf_control_operand(),
             ExtendedCommand::Dt8(Dt8Command::SetTemporaryRgbwafControl),
-        )? {
+        )?;
+        if armed == ArmedCommand::Sent {
             return Ok(());
         }
     }

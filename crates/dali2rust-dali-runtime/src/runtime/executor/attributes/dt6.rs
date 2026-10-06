@@ -11,15 +11,16 @@ pub(super) fn write_dimming_curve(
         return Ok(());
     };
     controller.step_boundary();
+    let select = ExtendedCommand::Dt6(Dt6Command::SelectDimmingCurve);
+    let mut unproved = None;
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        if !send_dtr0_backed_extended(
-            controller,
-            address,
-            curve,
-            ExtendedCommand::Dt6(Dt6Command::SelectDimmingCurve),
-        )? {
+        if let ArmedCommand::Unproved(echo) =
+            send_dtr0_backed_extended(controller, address, curve, select)?
+        {
+            unproved = ReadBack::without_value(echo);
             continue;
         }
+        unproved = None;
         let read = send_extended_command(
             controller,
             address,
@@ -33,6 +34,9 @@ pub(super) fn write_dimming_curve(
             tally.confirmed.dimming_curve = Some(curve);
             return reread_physical_minimum(controller, address, &mut tally.confirmed);
         }
+    }
+    if let Some(outcome) = unproved {
+        tally.proved(outcome);
     }
     Ok(())
 }

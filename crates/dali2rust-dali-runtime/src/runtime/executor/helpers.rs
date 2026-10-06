@@ -377,21 +377,27 @@ pub fn send_dt8_raw(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArmedCommand {
+    Sent,
+    Unproved(DaliResponse),
+}
+
 // IEC 62386-102 §12.3.15
 pub fn send_dtr0_backed_extended(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     dtr0: u8,
     command: ExtendedCommand,
-) -> Result<bool, SemanticDaliError> {
+) -> Result<ArmedCommand, SemanticDaliError> {
     controller.unit(|controller| {
         send_special(controller, SpecialCommand::Dtr0(dtr0))?;
-        let echo = send_standard_query(controller, address, StandardCommand::QueryContentDtr0)?;
-        if echo != Some(dtr0) {
-            return Ok(false);
+        let echo = send_standard_response(controller, address, StandardCommand::QueryContentDtr0)?;
+        if echo != DaliResponse::Answer(dtr0) {
+            return Ok(ArmedCommand::Unproved(echo));
         }
         send_extended_command(controller, address, command)?;
-        Ok(true)
+        Ok(ArmedCommand::Sent)
     })
 }
 

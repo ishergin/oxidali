@@ -22,6 +22,7 @@ use crate::runtime::executor::discovery::{
     probe_device_identity_with_policy, Dt8Capabilities, Dt8ProbePolicy, Dt8Status,
 };
 use crate::runtime::executor::helpers::{
+    ArmedCommand,
     send_mandatory_query, send_mandatory_query_stable, MandatorySilenceBreaker,
     dali_short_address, fade_time_dtr0_from_ms, fade_time_ms_from_dtr0, send_dtr0_backed_extended,
     send_dtr0_backed_standard,
