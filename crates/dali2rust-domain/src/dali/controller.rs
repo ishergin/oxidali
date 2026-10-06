@@ -104,6 +104,15 @@ pub trait DaliApplicationController: DaliProductController {
         run(self)
     }
 
+    // IEC 62386-101 §9.1.4, §9.2
+    fn unit<R>(&mut self, mut run: impl FnMut(&mut Self) -> R) -> R {
+        self.transaction(|c| run(c))
+    }
+
+    fn unit_exempt<R>(&mut self, mut run: impl FnMut(&mut Self) -> R) -> R {
+        self.transaction_exempt(|c| run(c))
+    }
+
     fn send_raw_pair(
         &mut self,
         frame: ForwardFrame,

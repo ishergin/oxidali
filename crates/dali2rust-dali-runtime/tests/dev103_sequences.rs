@@ -195,6 +195,34 @@ fn a_collided_24_bit_frame_is_sent_again_and_the_sequence_completes() {
 }
 
 #[test]
+fn a_collided_24_bit_write_is_rearmed_and_reproved_before_it_goes_again() {
+    let (mut controller, transport) = controller();
+    let scheme = EventScheme::DeviceInstance.code();
+    {
+        let guard = transport.lock().expect("mock lock");
+        guard.script_frame24_outcome(TransferOutcome::NoAnswer);
+        guard.script_frame24_outcome(TransferOutcome::Answer(scheme));
+        guard.script_frame24_outcome(TransferOutcome::Collision);
+        guard.set_persistent_response(scheme);
+    }
+
+    set_event_scheme_verified(&mut controller, 3, 0, EventScheme::DeviceInstance)
+        .expect("the restarted unit lands the scheme");
+
+    let address = Device103Address::Short(3);
+    let instance = InstanceAddress::Number(0);
+    let arm = Special103Command::Dtr0.frame(scheme).as_bytes();
+    let proof = Device103Command::QueryContentDtr0.frame(address).as_bytes();
+    let set = Instance103Command::SetEventScheme.frame(address, instance).as_bytes();
+    let query = Instance103Command::QueryEventScheme.frame(address, instance).as_bytes();
+    assert_eq!(
+        frames24(&transport),
+        vec![arm, proof, set, arm, proof, set, set, query],
+        "the pair goes again only behind a DTR0 that was armed and proved again"
+    );
+}
+
+#[test]
 fn a_foreign_frame_in_a_24_bit_window_is_terminal_and_not_resent() {
     let (mut controller, transport) = controller();
     transport

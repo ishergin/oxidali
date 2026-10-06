@@ -87,12 +87,21 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   retry it, and a 16-bit query whose window held a whole foreign forward frame (or, with
   the contention-retry knob, went unanswered while foreign traffic was seen) counts as a
   collision. `Preempted` and transport errors propagate.
+- A unit that stages what its command consumes — DTR arming and its proof, an
+  `ENABLE DEVICE TYPE` prelude, a temporary colour — runs in `controller.unit(|c| …)`, and
+  nothing inside it is retried on its own: a `Collision` or `BusBusy` anywhere in it ends
+  the attempt, no later exchange of that attempt reaches the wire, and the controller
+  re-runs the unit from its first frame under the retry policy. Another master's frames
+  may have landed in the gap, so a retry that resumed at the command would act on
+  operands nothing proved
+  ([ADR-027](decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md)). A unit
+  inside a unit is part of it.
 - The two halves of a send-twice pair are judged by the settling the interrupt measured
   before the second: past Table 17's 75 ms the pair is our breach and is counted; past
   Table 20's 94 ms the gear cannot have read a pair, and the unit is re-run as `BusBusy`.
 - A 16-bit frame sent on its own (`send_raw`) is retried frame by frame on the same
-  outcomes, at priority 1 inside a started transaction; a frame that expected no answer
-  reads anything in its window as no answer.
+  outcomes, at priority 1 inside a started transaction, except inside a unit; a frame that
+  expected no answer reads anything in its window as no answer.
 - A query that advances gear state on every frame the gear hears — `READ MEMORY
   LOCATION` (the DTR0 post-increment), `QUERY NEXT DEVICE TYPE` (the §11.5.13 cursor) — is
   sent once with no frame-level retry (`send_raw_once`); the caller re-arms or restarts the

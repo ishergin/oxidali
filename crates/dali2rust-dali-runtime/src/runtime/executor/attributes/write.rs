@@ -152,7 +152,7 @@ pub(super) fn send_dtr0_config_verified<C: DaliApplicationController>(
 ) -> Result<ReadBack, SemanticDaliError> {
     controller.step_boundary();
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        let verified = controller.transaction(|controller| {
+        let verified = controller.unit(|controller| {
             send_dtr0_backed_standard(controller, address, dtr0, command)?;
             read_back(controller)
         })?;
@@ -175,7 +175,7 @@ fn send_dtr0_config_accepted<C: DaliApplicationController>(
     controller.step_boundary();
     let mut previous: Option<u8> = None;
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        let answer = controller.transaction(|controller| {
+        let answer = controller.unit(|controller| {
             send_dtr0_backed_standard(controller, address, dtr0, command)?;
             read_back(controller)
         })?;

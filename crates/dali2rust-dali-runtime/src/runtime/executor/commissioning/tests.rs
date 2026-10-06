@@ -565,6 +565,18 @@ mod address_change {
     }
 
     #[test]
+    fn a_collided_write_is_rearmed_and_reproved_before_it_goes_again() {
+        let mock = MockDaliTransport::new();
+        expect_arm(&mock, Some(ENCODED));
+        mock.expect_forward_frame_collision(standard_frame(FROM, StandardCommand::SetShortAddress));
+        expect_arm(&mock, Some(ENCODED));
+        expect_write(&mock);
+        let (transport, mut controller) = setup_controller(mock);
+        change_short_address(&mut controller, FROM, TO, false).expect("the unit carries the move");
+        assert_script_consumed(&transport);
+    }
+
+    #[test]
     fn an_unprovable_operand_never_reaches_set_short_address() {
         let mock = MockDaliTransport::new();
         for _ in 0..3 {

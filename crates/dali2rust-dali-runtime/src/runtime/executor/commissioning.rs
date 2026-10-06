@@ -300,7 +300,7 @@ fn set_short_address_proved(
     encoded: u8,
 ) -> Result<(), SemanticDaliError> {
     for _ in 0..=ADDRESS_ARM_RETRIES {
-        let written = controller.transaction_exempt(|controller| {
+        let written = controller.unit_exempt(|controller| {
             send_special(controller, SpecialCommand::Dtr0(encoded))?;
             let armed =
                 send_standard_query(controller, current, StandardCommand::QueryContentDtr0)?;

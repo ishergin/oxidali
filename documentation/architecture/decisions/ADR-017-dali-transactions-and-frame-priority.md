@@ -115,6 +115,11 @@ its prelude was spent, which the gear decodes as a different standard command. F
 same reason a send-twice pair whose halves the gear cannot have read as a pair is re-run
 as a unit (09).
 
+A unit whose command consumes operands staged by commands of its own, such as DTR arming
+and its proof, is restarted whole the same way (the rule is in 09): resuming at the
+consuming command acts on whatever another master left in the registers
+([ADR-027](ADR-027-dtr-operand-proof-and-readback-outcomes.md)).
+
 ### Rejected alternatives
 
 - **Opcode-derived priority as a fallback** — a second source of truth that fires exactly

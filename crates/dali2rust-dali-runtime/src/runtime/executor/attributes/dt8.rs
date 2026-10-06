@@ -43,7 +43,7 @@ fn store_tc_limit_verified(
 ) -> Result<(), SemanticDaliError> {
     let expected = tc_limit_expected(mirek, physical);
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        let landed = controller.transaction(|controller| {
+        let landed = controller.unit(|controller| {
             if !stage_tc_limit_dtrs(controller, address, mirek, selector)? {
                 return Ok(false);
             }
@@ -174,7 +174,7 @@ pub(super) fn dt8_value_sample(
     value_id: u8,
 ) -> Result<(Option<u16>, bool), SemanticDaliError> {
     for attempt in 0..=DT8_VALUE_ARM_RETRIES {
-        let sample = controller.transaction(|controller| {
+        let sample = controller.unit(|controller| {
             send_special(controller, SpecialCommand::Dtr0(value_id))?;
             let echo = send_standard_query(controller, address, StandardCommand::QueryContentDtr0)?;
             if echo != Some(value_id) {

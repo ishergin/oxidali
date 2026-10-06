@@ -137,7 +137,7 @@ fn apply_target_state(
     setpoint: &LightSetpoint,
     assert_control: AssertRgbwafControl,
 ) -> Result<(), SemanticDaliError> {
-    controller.transaction_exempt(|controller| {
+    controller.unit_exempt(|controller| {
         apply_target_state_unit(controller, address, setpoint, assert_control)
     })
 }
@@ -406,7 +406,7 @@ pub(crate) fn apply_dt8_xy(
     x: u16,
     y: u16,
 ) -> Result<(), SemanticDaliError> {
-    controller.transaction_exempt(|controller| {
+    controller.unit_exempt(|controller| {
         stage_dtrs_verified(controller, address, &[(x & 0x00FF) as u8, (x >> 8) as u8])?;
         send_dt8_raw(controller, address, DT8_SET_TEMPORARY_X_COORDINATE)?;
 

@@ -343,7 +343,7 @@ pub fn send_dtr0_backed_standard(
     dtr0: u8,
     command: StandardCommand,
 ) -> Result<(), SemanticDaliError> {
-    controller.transaction(|controller| {
+    controller.unit(|controller| {
         send_special(controller, SpecialCommand::Dtr0(dtr0))?;
         let _ = send_standard(controller, address, command)?;
         Ok(())
@@ -362,7 +362,7 @@ pub fn send_dt8_raw(
         send_extended_command(controller, address, ExtendedCommand::Dt8(command))?;
         return Ok(());
     }
-    controller.transaction(|controller| {
+    controller.unit(|controller| {
         send_special(
             controller,
             SpecialCommand::EnableDeviceType(DT8_DEVICE_TYPE),
@@ -384,7 +384,7 @@ pub fn send_dtr0_backed_extended(
     dtr0: u8,
     command: ExtendedCommand,
 ) -> Result<bool, SemanticDaliError> {
-    controller.transaction(|controller| {
+    controller.unit(|controller| {
         send_special(controller, SpecialCommand::Dtr0(dtr0))?;
         let echo = send_standard_query(controller, address, StandardCommand::QueryContentDtr0)?;
         if echo != Some(dtr0) {

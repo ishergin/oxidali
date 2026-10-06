@@ -68,7 +68,7 @@ fn program_scene_write(
     scene_id: u8,
     target: &DaliSceneTargetState,
 ) -> Result<Option<u8>, SemanticDaliError> {
-    controller.transaction_exempt(|controller| {
+    controller.unit_exempt(|controller| {
         apply_scene_color(controller, address, target)?;
         send_special(controller, SpecialCommand::Dtr0(scene_level_byte(target)))?;
         send_standard(

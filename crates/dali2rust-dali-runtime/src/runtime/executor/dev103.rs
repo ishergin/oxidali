@@ -336,7 +336,7 @@ pub fn set_button_timer_verified(
             return Err(SemanticDaliError::OperationFailed("below_device_minimum"));
         }
     }
-    controller.transaction(|c| {
+    controller.unit(|c| {
         stage_dtr0(c, address, value)?;
         send_twice(c, frame(set))
     })?;
@@ -353,7 +353,7 @@ pub fn set_event_scheme_verified(
 ) -> Result<(), SemanticDaliError> {
     let address = Device103Address::Short(short_address);
     let instance = InstanceAddress::Number(instance_number);
-    controller.transaction(|c| {
+    controller.unit(|c| {
         stage_dtr0(c, address, scheme.code())?;
         send_twice(c, Instance103Command::SetEventScheme.frame(address, instance))
     })?;
@@ -373,7 +373,7 @@ pub fn set_event_filter_verified(
 ) -> Result<(), SemanticDaliError> {
     let address = Device103Address::Short(short_address);
     let instance = InstanceAddress::Number(instance_number);
-    controller.transaction(|c| {
+    controller.unit(|c| {
         send(c, Special103Command::Dtr2.frame(filter[2]), false)?;
         send(c, Special103Command::Dtr1.frame(filter[1]), false)?;
         stage_dtr0(c, address, filter[0])?;
@@ -419,7 +419,7 @@ pub fn set_event_priority_verified(
 ) -> Result<(), SemanticDaliError> {
     let address = Device103Address::Short(short_address);
     let instance = InstanceAddress::Number(instance_number);
-    controller.transaction(|c| {
+    controller.unit(|c| {
         stage_dtr0(c, address, priority)?;
         send_twice(c, Instance103Command::SetEventPriority.frame(address, instance))
     })?;
@@ -456,7 +456,7 @@ pub fn set_instance_group_verified(
         _ => return Err(SemanticDaliError::OperationFailed("invalid_request")),
     };
     let operand = group.unwrap_or(0xFF);
-    controller.transaction(|c| {
+    controller.unit(|c| {
         stage_dtr0(c, address, operand)?;
         send_twice(c, set.frame(address, instance))
     })?;

@@ -1444,3 +1444,165 @@ fn a_24_bit_send_twice_pair_split_past_the_interval_is_not_executed() {
         1
     );
 }
+
+const ARMED_SHORT: u8 = 3;
+const ARMED_OPERAND: u8 = 0x0B;
+
+fn armed_short(command: StandardCommand) -> DaliCommand {
+    DaliCommand::Standard {
+        address: DaliAddress::short(ARMED_SHORT).unwrap(),
+        command,
+    }
+}
+
+struct ArmedFrames {
+    arm: u16,
+    proof: u16,
+    act: u16,
+}
+
+fn armed_frames() -> ArmedFrames {
+    ArmedFrames {
+        arm: DaliCommand::Special(SpecialCommand::Dtr0(ARMED_OPERAND))
+            .to_forward_frame()
+            .raw(),
+        proof: armed_short(StandardCommand::QueryContentDtr0)
+            .to_forward_frame()
+            .raw(),
+        act: armed_short(StandardCommand::SetShortAddress)
+            .to_forward_frame()
+            .raw(),
+    }
+}
+
+// IEC 62386-102 §11.4.12
+fn arm_prove_and_act<T: DaliTransport + Send>(
+    controller: &mut DaliController<T>,
+) -> Result<bool, FrameError> {
+    controller.send_command(&DaliCommand::Special(SpecialCommand::Dtr0(ARMED_OPERAND)))?;
+    let proof = controller.send_command(&armed_short(StandardCommand::QueryContentDtr0))?;
+    if proof != DaliResponse::Answer(ARMED_OPERAND) {
+        return Ok(false);
+    }
+    controller.send_command(&armed_short(StandardCommand::SetShortAddress))?;
+    Ok(true)
+}
+
+fn expect_armed_unit(mock: &MockDaliTransport, f: &ArmedFrames) {
+    mock.expect_forward_frame(f.arm);
+    mock.expect_forward_frame_with_backward(f.proof, Some(ARMED_OPERAND));
+}
+
+type ScriptRefusal = fn(&MockDaliTransport, u16);
+
+#[test]
+fn a_refused_action_reruns_its_unit_from_the_arming_frame() {
+    let refusals: [(ScriptRefusal, bool); 2] = [
+        (MockDaliTransport::expect_forward_frame_collision, true),
+        (MockDaliTransport::expect_forward_frame_bus_busy, false),
+    ];
+    for (refuse, reached_the_wire) in refusals {
+        let f = armed_frames();
+        let mock = MockDaliTransport::new();
+        expect_armed_unit(&mock, &f);
+        refuse(&mock, f.act);
+        expect_armed_unit(&mock, &f);
+        mock.expect_forward_frame(f.act);
+        mock.expect_forward_frame(f.act);
+        let transport = Arc::new(Mutex::new(mock));
+        let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+
+        let written = controller.unit(arm_prove_and_act);
+
+        assert_eq!(written, Ok(true));
+        let mut expected = vec![f.arm, f.proof];
+        if reached_the_wire {
+            expected.push(f.act);
+        }
+        expected.extend([f.arm, f.proof, f.act, f.act]);
+        let guard = transport.lock().unwrap();
+        assert_eq!(
+            guard.sent_frames(),
+            expected,
+            "the retry re-arms and re-proves DTR0, which another master may have written"
+        );
+        assert_eq!(guard.script_error(), None);
+        assert_eq!(controller.wire_counters.exchange_retries.load(Ordering::Relaxed), 1);
+    }
+}
+
+#[test]
+fn a_unit_inside_a_unit_is_rerun_with_the_outer_one() {
+    let f = armed_frames();
+    let lead = query_status_frame(ARMED_SHORT);
+    let mock = MockDaliTransport::new();
+    mock.expect_forward_frame_with_backward(lead, Some(0));
+    expect_armed_unit(&mock, &f);
+    mock.expect_forward_frame_collision(f.act);
+    mock.expect_forward_frame_with_backward(lead, Some(0));
+    expect_armed_unit(&mock, &f);
+    mock.expect_forward_frame(f.act);
+    mock.expect_forward_frame(f.act);
+    let transport = Arc::new(Mutex::new(mock));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+
+    let written = controller.unit(|c| {
+        c.send_command(&query_status_command(ARMED_SHORT))?;
+        c.unit(arm_prove_and_act)
+    });
+
+    assert_eq!(written, Ok(true));
+    let guard = transport.lock().unwrap();
+    assert_eq!(
+        guard.sent_frames(),
+        vec![lead, f.arm, f.proof, f.act, lead, f.arm, f.proof, f.act, f.act],
+        "the inner unit is a part of the outer one and restarts with it"
+    );
+    assert_eq!(guard.script_error(), None);
+}
+
+#[test]
+fn nothing_more_of_a_broken_attempt_reaches_the_wire() {
+    let f = armed_frames();
+    let lead = query_status_frame(ARMED_SHORT);
+    let mock = MockDaliTransport::new();
+    mock.expect_forward_frame_collision(f.arm);
+    mock.expect_forward_frame(f.arm);
+    mock.expect_forward_frame_with_backward(lead, Some(0x42));
+    let transport = Arc::new(Mutex::new(mock));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+
+    let answer = controller.unit(|c| {
+        let _ignored = c.send_command(&DaliCommand::Special(SpecialCommand::Dtr0(ARMED_OPERAND)));
+        c.send_command(&query_status_command(ARMED_SHORT))
+    });
+
+    assert_eq!(answer, Ok(DaliResponse::Answer(0x42)));
+    assert_eq!(
+        transport.lock().unwrap().sent_frames(),
+        vec![f.arm, f.arm, lead],
+        "the query of the broken attempt never left: the operand it follows was not staged"
+    );
+}
+
+#[test]
+fn a_unit_refused_on_every_attempt_fails_with_the_wire_error() {
+    let f = armed_frames();
+    let mock = MockDaliTransport::new();
+    for _ in 0..2 {
+        expect_armed_unit(&mock, &f);
+        mock.expect_forward_frame_collision(f.act);
+    }
+    let transport = Arc::new(Mutex::new(mock));
+    let mut controller =
+        DaliController::with_retry_policy(Arc::clone(&transport), test_clock(), retry_policy(2));
+
+    assert_eq!(controller.unit(arm_prove_and_act), Err(FrameError::Collision));
+    let guard = transport.lock().unwrap();
+    assert_eq!(
+        guard.sent_frames(),
+        vec![f.arm, f.proof, f.act, f.arm, f.proof, f.act],
+        "every attempt is the whole unit, and there are no more attempts than the policy allows"
+    );
+    assert_eq!(guard.scripted_exchanges_remaining(), 0);
+}

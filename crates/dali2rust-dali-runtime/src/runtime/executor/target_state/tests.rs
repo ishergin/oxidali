@@ -193,6 +193,41 @@ fn target_state_cct_uses_dtr_pair_then_dt8_temperature_command() {
 }
 
 #[test]
+fn a_collided_dt8_command_restages_its_operands_behind_a_fresh_prelude() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let enable_dt8 = DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
+        .to_forward_frame()
+        .raw();
+    let set_tc = short_raw_query_frame(short_address(short), DT8_SET_TEMPERATURE_TC);
+    expect_staged_dtrs(&mock, short, &[250, 0]);
+    mock.expect_forward_frame(enable_dt8);
+    mock.expect_forward_frame_collision(set_tc);
+    expect_staged_dtrs(&mock, short, &[250, 0]);
+    mock.expect_forward_frame(enable_dt8);
+    mock.expect_forward_frame(set_tc);
+    mock.expect_forward_frame(enable_dt8);
+    mock.expect_forward_frame_with_backward(
+        short_raw_query_frame(short_address(short), DT8_QUERY_COLOUR_STATUS),
+        Some(DT8_STATUS_TC_ACTIVE),
+    );
+
+    let (transport, mut controller) = setup_controller(mock);
+    let setpoint = LightSetpoint {
+        color: Some(dali2rust_contracts::msg::ColorValue {
+            mode: ColorMode::Cct,
+            color_temperature_kelvin: 4000,
+            ..Default::default()
+        }),
+        ..LightSetpoint::default()
+    };
+    apply_short_target_state(&mut controller, short, &setpoint, ColorWritePolicy::NONE)
+        .expect("the restarted unit lands the colour");
+
+    assert_script_consumed(&transport);
+}
+
+#[test]
 fn a_level_carrying_colour_write_never_sends_activate() {
     for mode in [ColorMode::Cct, ColorMode::Xy, ColorMode::Rgb] {
         let mock = MockDaliTransport::new();
