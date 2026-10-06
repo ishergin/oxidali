@@ -378,15 +378,11 @@ fn parse_scene_patch_data(
         name: None,
         ha_flag: None,
     };
-    for key in object.keys() {
-        match key.as_str() {
-            "name" | "ha_select_enabled" => {}
-            "row_count_included" | "dirty" | "scene_id" | "adapter_id" => {
-                return Err(json_err(422, "unsupported_field"))
-            }
-            _ => return Err(json_err(400, "unknown_field")),
-        }
-    }
+    check_body_keys(
+        object,
+        &["name", "ha_select_enabled"],
+        &["row_count_included", "dirty", "scene_id", "adapter_id"],
+    )?;
     if let Some(value) = object.get("name") {
         let name = value.as_str().ok_or_else(|| json_err(422, "invalid_value"))?;
         if name.is_empty() || name.as_bytes().len() > 64 {

@@ -286,14 +286,18 @@ fn parse_group_patch_data(
         name: None,
         ha_flag: None,
     };
-    for key in object.keys() {
-        match key.as_str() {
-            "name" | "ha_entity_enabled" => {}
-            "capabilities_summary" | "dirty" | "member_count_desired" | "member_count_applied"
-            | "group_id" | "adapter_id" => return Err(json_err(422, "unsupported_field")),
-            _ => return Err(json_err(400, "unknown_field")),
-        }
-    }
+    check_body_keys(
+        object,
+        &["name", "ha_entity_enabled"],
+        &[
+            "capabilities_summary",
+            "dirty",
+            "member_count_desired",
+            "member_count_applied",
+            "group_id",
+            "adapter_id",
+        ],
+    )?;
     if let Some(value) = object.get("name") {
         let name = value.as_str().ok_or_else(|| json_err(422, "invalid_value"))?;
         if name.is_empty() || name.as_bytes().len() > 64 {
@@ -350,13 +354,7 @@ fn parse_matrix_row_array(
 
 fn parse_matrix_row(row: &Value) -> Result<GroupMatrixDesiredRow, HttpResponse> {
     let object = row.as_object().ok_or_else(|| json_err(422, "invalid_value"))?;
-    for key in object.keys() {
-        match key.as_str() {
-            "virtual_lamp_id" | "desired" => {}
-            "applied" | "name" => return Err(json_err(422, "unsupported_field")),
-            _ => return Err(json_err(400, "unknown_field")),
-        }
-    }
+    check_body_keys(object, &["virtual_lamp_id", "desired"], &["applied", "name"])?;
     let virtual_lamp_id = parse_virtual_lamp_id(object.get("virtual_lamp_id"))?;
     let desired_groups_mask = parse_desired_mask(object.get("desired"))?;
     Ok(GroupMatrixDesiredRow {

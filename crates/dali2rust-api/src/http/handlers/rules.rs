@@ -273,8 +273,10 @@ impl RulesHandler {
             Ok(json) => json,
             Err(response) => return response,
         };
-        let Some(enabled) = json.get("enabled").and_then(Value::as_bool) else {
-            return json_err(400, "missing_enabled");
+        let enabled = match json.get("enabled").map(Value::as_bool) {
+            Some(Some(enabled)) => enabled,
+            Some(None) => return json_err(422, "invalid_value"),
+            None => return json_err(400, "missing_enabled"),
         };
         let doc = self.shared.state.document();
         if doc.compiled.is_none() && doc.diagnostic.is_some() {

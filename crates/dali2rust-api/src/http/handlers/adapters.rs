@@ -13,7 +13,7 @@ use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::types::HttpResponse;
 
 use super::common::{
-    json_err, json_stream_dto, parse_adapter_route_id, parse_json_body,
+    check_body_keys, json_err, json_stream_dto, parse_adapter_route_id, parse_json_body,
     publish_and_await_apply,
 };
 use crate::http::handlers::common::{require_get};
@@ -135,17 +135,7 @@ impl crate::http::handlers::common::MutatingHandler for AdapterPatchHandler {
 fn validate_adapter_patch_keys(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), HttpResponse> {
-    const RO: &[&str] = &["limits", "bus_status", "adapter_id"];
-    for k in obj.keys() {
-        if k == "name" || k == "enabled" {
-            continue;
-        }
-        if RO.iter().any(|r| *r == k.as_str()) {
-            return Err(json_err(422, "unsupported_field"));
-        }
-        return Err(json_err(400, "unknown_field"));
-    }
-    Ok(())
+    check_body_keys(obj, &["name", "enabled"], &["limits", "bus_status", "adapter_id"])
 }
 
 fn parse_adapter_patch_fields(

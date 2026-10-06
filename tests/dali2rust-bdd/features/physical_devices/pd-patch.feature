@@ -158,7 +158,7 @@ Feature: Physical-device patch metadata caps
     And the JSON error should be "invalid_value"
 
   @id:PD-274
-  Scenario: PATCH of a short address with no record is 404, and nothing is published
+  Scenario: PATCH of a short address with no record is 404
     When I PATCH JSON {"name":"Desk"} to "/api/v1/adapters/0/physical-devices/5"
     Then the response status should be 404
     And the JSON error should be "not_found"

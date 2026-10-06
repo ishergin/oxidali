@@ -15,21 +15,20 @@ use crate::http::dispatcher::publish_batch_and_wait_for_success;
 use crate::http::handlers::common::{
     accepted_operation_response, json_err, json_err_with_message, json_stream_dto,
     check_body_keys, parse_adapter_id, parse_body_object, parse_resource_id_param,
+    MAX_SHORT_ADDRESS,
 };
 use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command;
-use crate::http::input_device_state::InputDeviceHttpState;
+use crate::http::input_device_state::{InputDeviceDto, InputDeviceHttpState};
 use crate::http::types::HttpResponse;
 
 type PathParams = std::collections::HashMap<String, String>;
-
-const MAX_SHORT_ADDRESS: u16 = 63;
 
 fn path_u8(params: &PathParams, key: &str) -> Option<u8> {
     params.get(key)?.parse::<u8>().ok()
 }
 
 fn device_path(params: &PathParams) -> Result<u8, HttpResponse> {
-    parse_resource_id_param(params, "short_address", MAX_SHORT_ADDRESS)
+    parse_resource_id_param(params, "short_address", u16::from(MAX_SHORT_ADDRESS))
 }
 
 fn adapter_path(state: &dyn InputDeviceHttpState, params: &PathParams) -> Result<u8, HttpResponse> {
@@ -193,19 +192,21 @@ impl ApiHandler for InputDeviceActionHandler {
         _method: &str,
         _path: &str,
         body: &[u8],
-        params: &std::collections::HashMap<String, String>,
+        params: &PathParams,
     ) -> HttpResponse {
-        let adapter_id = match adapter_path(self.state.as_ref(), params) {
-            Ok(adapter_id) => adapter_id,
-            Err(response) => return response,
-        };
+        self.act(params, body).unwrap_or_else(|refusal| refusal)
+    }
+}
+
+type Answer = Result<HttpResponse, HttpResponse>;
+
+impl InputDeviceActionHandler {
+    fn act(&self, params: &PathParams, body: &[u8]) -> Answer {
+        let adapter_id = adapter_path(self.state.as_ref(), params)?;
         match self.action {
-            InputDeviceAction::Scan => match parse_body_object(body, &[]) {
-                Ok(_) => self.scan(adapter_id),
-                Err(response) => response,
-            },
+            InputDeviceAction::Scan => self.scan(adapter_id, body),
             InputDeviceAction::Commission => self.commission(adapter_id, body),
-            InputDeviceAction::Identify => self.per_device(adapter_id, params, body),
+            InputDeviceAction::Identify => self.identify(adapter_id, params, body),
             InputDeviceAction::ConfigureInstance => self.configure(adapter_id, params, body),
             InputDeviceAction::ConfigureFeedback => {
                 self.configure_feedback(adapter_id, params, body)
@@ -214,183 +215,100 @@ impl ApiHandler for InputDeviceActionHandler {
             InputDeviceAction::Forget => self.forget(adapter_id, params),
         }
     }
-}
 
-impl InputDeviceActionHandler {
-    fn correlation(&self) -> u64 {
-        self.correlation.next_id()
-    }
-
-    fn scan(&self, adapter_id: u8) -> HttpResponse {
-        let corr = self.correlation();
-        let semantic = dali2rust_contracts::bus::command_envelope(
+    fn envelope<P>(&self, payload: P) -> (u64, dali2rust_contracts::msg::CommandEnvelope)
+    where
+        dali2rust_contracts::msg::BusCommandPayload: From<P>,
+    {
+        let correlation_id = self.correlation.next_id();
+        let envelope = dali2rust_contracts::bus::command_envelope(
             dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
-            corr,
+            correlation_id,
             self.bus_id.0,
             Some(dali2rust_contracts::msg::Origin::Api),
-            Dali103ScanCommand {
-                registry_adapter_id: adapter_id,
-            },
+            payload,
         );
-        self.operation(
-            format!("inp-scan-{adapter_id}-{corr}"),
-            semantic,
-            OperationType::Discovery,
-        )
+        (correlation_id, envelope)
     }
 
-    fn commission(&self, adapter_id: u8, body: &[u8]) -> HttpResponse {
-        let include_addressed = match parse_commission_body(body) {
-            Ok(include_addressed) => include_addressed,
-            Err(response) => return response,
-        };
-        let corr = self.correlation();
-        let semantic = dali2rust_contracts::bus::command_envelope(
-            dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
-            corr,
-            self.bus_id.0,
-            Some(dali2rust_contracts::msg::Origin::Api),
-            Dali103CommissionCommand {
-                registry_adapter_id: adapter_id,
-                include_addressed,
-            },
-        );
-        self.operation(
-            format!("inp-comm-{adapter_id}-{corr}"),
-            semantic,
-            OperationType::CommissioningAddressChange,
-        )
-    }
-
-    fn per_device(
+    fn device(
         &self,
         adapter_id: u8,
-        params: &std::collections::HashMap<String, String>,
-        body: &[u8],
-    ) -> HttpResponse {
-        let short_address = match device_path(params) {
-            Ok(short_address) => short_address,
-            Err(response) => return response,
-        };
-        if let Err(response) = parse_body_object(body, &[]) {
-            return response;
-        }
-        if self.state.detail(adapter_id, short_address).is_none() {
-            return json_err(404, "input_device_not_found");
-        }
-        let corr = self.correlation();
-        let semantic = dali2rust_contracts::bus::command_envelope(
-            dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
-            corr,
-            self.bus_id.0,
-            Some(dali2rust_contracts::msg::Origin::Api),
-            Dali103IdentifyCommand {
-                registry_adapter_id: adapter_id,
-                short_address,
-            },
-        );
-        self.operation(
-            format!("inp-id-{adapter_id}-{short_address}-{corr}"),
-            semantic,
-            OperationType::CommissioningIdentify,
-        )
+        params: &PathParams,
+    ) -> Result<(u8, InputDeviceDto), HttpResponse> {
+        let short_address = device_path(params)?;
+        let device = self
+            .state
+            .detail(adapter_id, short_address)
+            .ok_or_else(|| json_err(404, "input_device_not_found"))?;
+        Ok((short_address, device))
     }
 
-    fn configure(
+    fn instance(
         &self,
         adapter_id: u8,
-        params: &std::collections::HashMap<String, String>,
-        body: &[u8],
-    ) -> HttpResponse {
-        let short_address = match device_path(params) {
-            Ok(short_address) => short_address,
-            Err(response) => return response,
-        };
-        let Some(instance_number) = path_u8(params, "instance_number") else {
-            return json_err(400, "invalid_resource_id");
-        };
-        let Some(device) = self.state.detail(adapter_id, short_address) else {
-            return json_err(404, "input_device_not_found");
-        };
+        params: &PathParams,
+    ) -> Result<(u8, u8, InputDeviceDto), HttpResponse> {
+        let short_address = device_path(params)?;
+        let instance_number =
+            path_u8(params, "instance_number").ok_or_else(|| json_err(400, "invalid_resource_id"))?;
+        let (_, device) = self.device(adapter_id, params)?;
         if instance_number >= device.summary.instance_count {
-            return json_err(404, "instance_not_found");
+            return Err(json_err(404, "instance_not_found"));
         }
-        let cmd = match parse_instance_patch(body, adapter_id, short_address, instance_number) {
-            Ok(cmd) => cmd,
-            Err(response) => return response,
-        };
-        let corr = self.correlation();
-        let semantic = dali2rust_contracts::bus::command_envelope(
-            dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
-            corr,
-            self.bus_id.0,
-            Some(dali2rust_contracts::msg::Origin::Api),
-            cmd,
-        );
-        self.wire_config_write(
-            format!("inp-cfg-{adapter_id}-{short_address}-{instance_number}-{corr}"),
-            semantic,
-        )
+        Ok((short_address, instance_number, device))
     }
 
-    fn configure_feedback(
-        &self,
-        adapter_id: u8,
-        params: &std::collections::HashMap<String, String>,
-        body: &[u8],
-    ) -> HttpResponse {
-        let short_address = match device_path(params) {
-            Ok(short_address) => short_address,
-            Err(response) => return response,
-        };
-        let Some(instance_number) = path_u8(params, "instance_number") else {
-            return json_err(400, "invalid_resource_id");
-        };
-        let Some(device) = self.state.detail(adapter_id, short_address) else {
-            return json_err(404, "input_device_not_found");
-        };
-        if instance_number >= device.summary.instance_count {
-            return json_err(404, "instance_not_found");
-        }
-        let mut cmd = match parse_feedback_patch(body, adapter_id, short_address, instance_number) {
-            Ok(cmd) => cmd,
-            Err(response) => return response,
-        };
-        cmd.opcode_map = match feedback_dialect(&device, instance_number) {
-            Ok(map) => map,
-            Err(response) => return response,
-        };
-        let corr = self.correlation();
-        let semantic = dali2rust_contracts::bus::command_envelope(
-            dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
-            corr,
-            self.bus_id.0,
-            Some(dali2rust_contracts::msg::Origin::Api),
-            cmd,
-        );
-        self.wire_config_write(
-            format!("inp-fb-{adapter_id}-{short_address}-{instance_number}-{corr}"),
-            semantic,
-        )
+    fn scan(&self, adapter_id: u8, body: &[u8]) -> Answer {
+        parse_body_object(body, &[])?;
+        let (corr, semantic) = self.envelope(Dali103ScanCommand {
+            registry_adapter_id: adapter_id,
+        });
+        let key = format!("inp-scan-{adapter_id}-{corr}");
+        Ok(self.operation(key, semantic, OperationType::Discovery))
     }
 
-    fn patch_metadata(
-        &self,
-        adapter_id: u8,
-        params: &std::collections::HashMap<String, String>,
-        body: &[u8],
-    ) -> HttpResponse {
-        let short_address = match device_path(params) {
-            Ok(short_address) => short_address,
-            Err(response) => return response,
-        };
-        if self.state.detail(adapter_id, short_address).is_none() {
-            return json_err(404, "input_device_not_found");
-        }
-        let (meta, notes) = match parse_metadata_patch(body, adapter_id, short_address) {
-            Ok(parsed) => parsed,
-            Err(response) => return response,
-        };
+    fn commission(&self, adapter_id: u8, body: &[u8]) -> Answer {
+        let include_addressed = parse_commission_body(body)?;
+        let (corr, semantic) = self.envelope(Dali103CommissionCommand {
+            registry_adapter_id: adapter_id,
+            include_addressed,
+        });
+        let key = format!("inp-comm-{adapter_id}-{corr}");
+        Ok(self.operation(key, semantic, OperationType::CommissioningAddressChange))
+    }
+
+    fn identify(&self, adapter_id: u8, params: &PathParams, body: &[u8]) -> Answer {
+        let (short_address, _) = self.device(adapter_id, params)?;
+        parse_body_object(body, &[])?;
+        let (corr, semantic) = self.envelope(Dali103IdentifyCommand {
+            registry_adapter_id: adapter_id,
+            short_address,
+        });
+        let key = format!("inp-id-{adapter_id}-{short_address}-{corr}");
+        Ok(self.operation(key, semantic, OperationType::CommissioningIdentify))
+    }
+
+    fn configure(&self, adapter_id: u8, params: &PathParams, body: &[u8]) -> Answer {
+        let (short_address, instance_number, _) = self.instance(adapter_id, params)?;
+        let cmd = parse_instance_patch(body, adapter_id, short_address, instance_number)?;
+        let (corr, semantic) = self.envelope(cmd);
+        let key = format!("inp-cfg-{adapter_id}-{short_address}-{instance_number}-{corr}");
+        Ok(self.wire_config_write(key, semantic))
+    }
+
+    fn configure_feedback(&self, adapter_id: u8, params: &PathParams, body: &[u8]) -> Answer {
+        let (short_address, instance_number, device) = self.instance(adapter_id, params)?;
+        let mut cmd = parse_feedback_patch(body, adapter_id, short_address, instance_number)?;
+        cmd.opcode_map = feedback_dialect(&device, instance_number)?;
+        let (corr, semantic) = self.envelope(cmd);
+        let key = format!("inp-fb-{adapter_id}-{short_address}-{instance_number}-{corr}");
+        Ok(self.wire_config_write(key, semantic))
+    }
+
+    fn patch_metadata(&self, adapter_id: u8, params: &PathParams, body: &[u8]) -> Answer {
+        let (short_address, _) = self.device(adapter_id, params)?;
+        let (meta, notes) = parse_metadata_patch(body, adapter_id, short_address)?;
         let mut batch = Vec::with_capacity(2);
         if meta.patch_mask != 0 {
             batch.push(self.frame(meta));
@@ -398,30 +316,14 @@ impl InputDeviceActionHandler {
         if let Some(notes) = notes {
             batch.push(self.frame(notes));
         }
-        if let Err(response) = self.publish_confirmed(batch) {
-            return response;
-        }
-        match self.state.detail(adapter_id, short_address) {
-            Some(mut dto) => {
-                dto.now_ms = self.wall.unix_millis();
-                json_stream_dto(dto)
-            }
-            None => json_err(404, "input_device_not_found"),
-        }
+        self.publish_confirmed(batch)?;
+        let (_, mut dto) = self.device(adapter_id, params)?;
+        dto.now_ms = self.wall.unix_millis();
+        Ok(json_stream_dto(dto))
     }
 
-    fn forget(
-        &self,
-        adapter_id: u8,
-        params: &std::collections::HashMap<String, String>,
-    ) -> HttpResponse {
-        let short_address = match device_path(params) {
-            Ok(short_address) => short_address,
-            Err(response) => return response,
-        };
-        if self.state.detail(adapter_id, short_address).is_none() {
-            return json_err(404, "input_device_not_found");
-        }
+    fn forget(&self, adapter_id: u8, params: &PathParams) -> Answer {
+        let (short_address, _) = self.device(adapter_id, params)?;
         let forget = self.frame(dali2rust_contracts::msg::InputDeviceMetadataUpdateCommand {
             registry_adapter_id: adapter_id,
             short_address,
@@ -429,25 +331,16 @@ impl InputDeviceActionHandler {
             name: dali2rust_contracts::msg::fixed_text_64(""),
             ha_expose: false,
         });
-        if let Err(response) = self.publish_confirmed(vec![forget]) {
-            return response;
-        }
-        HttpResponse::json(200, br#"{"forgotten":true}"#.to_vec())
+        self.publish_confirmed(vec![forget])?;
+        Ok(HttpResponse::json(200, br#"{"forgotten":true}"#.to_vec()))
     }
 
     fn frame<P>(&self, payload: P) -> (u64, dali2rust_bus::BusFrame)
     where
         dali2rust_contracts::msg::BusCommandPayload: From<P>,
     {
-        let correlation_id = self.correlation();
-        let env = dali2rust_contracts::bus::command_envelope(
-            dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
-            correlation_id,
-            self.bus_id.0,
-            Some(dali2rust_contracts::msg::Origin::Api),
-            payload,
-        );
-        (correlation_id, dali2rust_bus::BusFrame::command(env))
+        let (correlation_id, envelope) = self.envelope(payload);
+        (correlation_id, dali2rust_bus::BusFrame::command(envelope))
     }
 
     fn publish_confirmed(&self, batch: Vec<(u64, dali2rust_bus::BusFrame)>) -> Result<(), HttpResponse> {
@@ -539,7 +432,7 @@ fn parse_timers(
 }
 
 fn feedback_dialect(
-    device: &crate::http::input_device_state::InputDeviceDto,
+    device: &InputDeviceDto,
     instance_number: u8,
 ) -> Result<u8, HttpResponse> {
     let Some(instance) = device

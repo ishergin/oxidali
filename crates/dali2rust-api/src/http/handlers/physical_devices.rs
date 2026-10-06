@@ -22,10 +22,10 @@ use crate::http::types::HttpResponse;
 use dali2rust_domain::registry::AttributeSectionKind;
 
 use super::common::{
-    accepted_operation_response, first_key_outside, json_err, json_err_with_message, json_stream_dto, parse_adapter_id,
-    parse_color_mode, parse_device_type, parse_json_body, parse_physical_short, parse_typed_body,
-    pd_cap_supports_color_mode, wait_apply_counter, write_json_array_items,
-    APPLY_WATCH_BUDGET_MS,
+    accepted_operation_response, first_key_outside, json_err, parse_body_object,
+    json_err_with_message, json_stream_dto, parse_adapter_id, parse_color_mode, parse_device_type,
+    parse_json_body, parse_physical_short, parse_typed_body, pd_cap_supports_color_mode,
+    wait_apply_counter, write_json_array_items, APPLY_WATCH_BUDGET_MS,
 };
 use crate::http::target_state_request::TargetStateBody;
 use super::operation_dispatch::{
@@ -305,6 +305,9 @@ impl crate::http::handlers::common::MutatingHandler for PhysicalDeviceWriteAttri
         let (aid, short) = parse_existing_physical_device(self.state.as_ref(), params)?;
         let v = parse_json_body(body)?;
         let obj = v.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
+        if obj.is_empty() {
+            return Err(json_err(400, "empty_patch"));
+        }
         validate_pd_write_attr_keys(obj)?;
         let data = parse_pd_write_attr_fields(obj)?;
         Ok((aid, short, data))
@@ -546,9 +549,9 @@ impl ApiHandler for AdapterDiscoveryRunsHandler {
             Ok(a) => a,
             Err(e) => return e,
         };
-        let v: serde_json::Value = match serde_json::from_slice(body) {
+        let v = match parse_body_object(body, &["mode"]) {
             Ok(v) => v,
-            Err(_) => return json_err(400, "invalid_json"),
+            Err(e) => return e,
         };
         let mode_s = v.get("mode").and_then(|x| x.as_str()).unwrap_or_default();
         let Some(mode) = parse_discovery_mode(mode_s) else {
@@ -734,7 +737,7 @@ fn parse_pd_write_attr_fields(
 }
 
 fn parse_attribute_groups_body(body: &[u8]) -> Result<(u8, MemoryBankReadPreset), HttpResponse> {
-    let v = parse_json_body(body)?;
+    let v = parse_body_object(body, &["attribute_groups", "memory_banks"])?;
     let Some(arr) = v.get("attribute_groups").and_then(|x| x.as_array()) else {
         return Err(json_err(400, "invalid_json"));
     };

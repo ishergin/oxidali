@@ -18,9 +18,8 @@ use crate::http::virtual_lamp_state::{
 };
 
 use super::common::{
-    json_err, json_stream_dto, parse_adapter_id,
-    parse_resource_id_param, parse_typed_body, vl_cap_supports_color_mode, publish_and_await_apply,
-    write_json_array_items,
+    check_body_keys, json_err, json_stream_dto, parse_adapter_id, parse_resource_id_param,
+    parse_typed_body, vl_cap_supports_color_mode, publish_and_await_apply, write_json_array_items,
 };
 use crate::http::target_state_request::TargetStateBody;
 
@@ -356,19 +355,7 @@ fn validate_vl_patch_keys(obj: &serde_json::Map<String, serde_json::Value>) -> R
         "binding",
         "color_temperature_range",
     ];
-    for k in obj.keys() {
-        if matches!(
-            k.as_str(),
-            "name" | "ha_entity_enabled"
-        ) {
-            continue;
-        }
-        if RO.contains(&k.as_str()) {
-            return Err(json_err(422, "unsupported_field"));
-        }
-        return Err(json_err(400, "unknown_field"));
-    }
-    Ok(())
+    check_body_keys(obj, &["name", "ha_entity_enabled"], RO)
 }
 
 fn parse_vl_patch_data(

@@ -28,10 +28,10 @@ control gear ([09 §Part 103](../../../architecture/09-dali-protocol-rules.md#pa
 | `PATCH` | `{short_address}/instances/{n}/feedback` | Индикация (Part 332) | `202` `config_write` |
 
 `scan` не открывает сессию `INITIALISE` и безопасен на живой шине. `commission` с
-пустым телом адресует только устройства без адреса (не bool в `include_addressed` —
-`422 invalid_value`); `{"include_addressed": true}` —
+пустым телом адресует только устройства без адреса; `{"include_addressed": true}` —
 переадресация работающего сегмента, разрушительный вариант, который надо попросить
-явно. Commissioning держит шину целиком, как и у control gear.
+явно; `include_addressed` не bool — `422 invalid_value`. Commissioning держит шину
+целиком, как и у control gear.
 
 ## Список и деталь
 

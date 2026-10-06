@@ -186,7 +186,7 @@ Feature: IEC 62386-103 input devices as a REST resource
 
   @id:INP-089
   Scenario Outline: A body field the route does not know is refused, not dropped
-    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1" and a corrected-map feedback answering capability 07 and colour capability 1F
     When input devices are scanned on adapter 0 and the scan succeeds
     And the mock transport 24-bit trace is cleared
     And I PATCH JSON <body> to "<path>"
@@ -225,7 +225,10 @@ Feature: IEC 62386-103 input devices as a REST resource
 
   @id:INP-092
   Scenario Outline: A scan or identify body with a field is refused, the routes take none
-    When I POST JSON {"force":true} to "<path>"
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock transport 24-bit trace is cleared
+    And I POST JSON {"force":true} to "<path>"
     Then the response status should be 400
     And the JSON error should be "unknown_field"
     And the mock transport should have sent no 24-bit frames

@@ -13,7 +13,8 @@ use crate::http::poller_settings_state::{PollerSettingsApplyWatch, PollerSetting
 use crate::http::types::HttpResponse;
 
 use super::common::{
-    json_err, json_stream_dto, parse_bool_field, parse_json_body, publish_and_await_apply,
+    check_body_keys, json_err, json_stream_dto, parse_bool_field, parse_json_body,
+    publish_and_await_apply,
 };
 use crate::http::handlers::common::require_get;
 
@@ -116,12 +117,7 @@ impl crate::http::handlers::common::MutatingHandler for PollerSettingsPatchHandl
 fn validate_poller_settings_patch_keys(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), HttpResponse> {
-    for k in obj.keys() {
-        if !ALLOWED_KEYS.contains(&k.as_str()) {
-            return Err(json_err(400, "unknown_field"));
-        }
-    }
-    Ok(())
+    check_body_keys(obj, ALLOWED_KEYS, &[])
 }
 
 fn parse_poller_settings_patch_fields(

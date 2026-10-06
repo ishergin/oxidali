@@ -354,17 +354,13 @@ pub fn parse_strict_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<
     serde_json::from_slice(body_slice).map_err(|error| body_parse_error(&error, 400, "invalid_json"))
 }
 
+pub const MAX_SHORT_ADDRESS: u8 = 63;
+
 pub fn parse_physical_short(params: &HashMap<String, String>) -> Result<u8, HttpResponse> {
-    let Some(ss) = params.get("short") else {
+    if !params.contains_key("short") {
         return Err(json_err(400, "missing_short_address"));
-    };
-    let sa = ss
-        .parse::<u16>()
-        .map_err(|_| json_err(400, "invalid_resource_id"))?;
-    if sa > 63 {
-        return Err(json_err(400, "invalid_resource_id"));
     }
-    Ok(sa as u8)
+    parse_resource_id_param(params, "short", u16::from(MAX_SHORT_ADDRESS))
 }
 
 pub fn parse_adapter_route_id(

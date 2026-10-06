@@ -14,14 +14,13 @@ use crate::http::handler::ApiHandler;
 use crate::http::handlers::common::{
     accepted_operation_response, check_body_keys, json_err, parse_adapter_id, parse_json_body,
     parse_strict_body, parse_typed_body, refusal_before_the_wire, reject_if_commissioning_active,
-    MutatingHandler,
+    MutatingHandler, MAX_SHORT_ADDRESS,
 };
 use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command_pair;
 use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::physical_device_state::PhysicalDeviceHttpState;
 use crate::http::types::HttpResponse;
 
-const MAX_SHORT_ADDRESS: u8 = 63;
 // IEC 62386-102 §9.14.3.2
 #[derive(Deserialize, serde::Serialize)]
 pub struct CommissioningIdentifyRequest {

@@ -348,3 +348,12 @@ Feature: Physical device write-attributes
     Then the response status should be 400
     And the JSON error should be "unknown_field"
     And the DALI mock transport should have received 0 forward frame
+
+  @id:PD-281
+  Scenario: An empty write-attributes body is an empty patch, not an operation that writes nothing
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    When I POST JSON {} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 400
+    And the JSON error should be "empty_patch"

@@ -94,3 +94,12 @@ Feature: The rules document: parse, store, read back byte-for-byte
     And the JSON error should be "unknown_field"
     When I send a GET request to "/api/v1/rules?format=json"
     Then the JSON pointer "/rules/rules/0/enabled" should be true
+
+  @id:RULE-087
+  Scenario: PATCH of a rule with a non-boolean enabled is an invalid value
+    When I PUT JSON {"base_revision":0,"source":"rule \"night\" {\n  when at 23:00\n  do broadcast.off()\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I PATCH JSON {"enabled":"no"} to "/api/v1/rules/night"
+    Then the response status should be 422
+    And the JSON error should be "invalid_value"
