@@ -51,21 +51,14 @@ impl ObservedCoalescer {
         (body.registry_adapter_id, body.scope, id)
     }
 
-    fn matches(&self, body: &DaliObservedFrameEvent) -> bool {
-        self.pending
-            .as_ref()
-            .is_some_and(|prev| Self::coalesce_key(prev) == Self::coalesce_key(body))
+    fn folds_into(&self, body: &DaliObservedFrameEvent) -> bool {
+        self.pending.as_ref().is_some_and(|prev| {
+            Self::coalesce_key(prev) == Self::coalesce_key(body) && restates(body, prev)
+        })
     }
 
     fn set(&mut self, body: &DaliObservedFrameEvent) {
         self.pending = Some(body.clone());
-    }
-
-    fn merge(&mut self, body: &DaliObservedFrameEvent) {
-        match self.pending.as_mut() {
-            Some(pending) => *pending = merged_observation(pending, body),
-            None => self.set(body),
-        }
     }
 
     fn take(&mut self) -> Option<DaliObservedFrameEvent> {
@@ -73,23 +66,20 @@ impl ObservedCoalescer {
     }
 }
 
-fn merged_observation(
-    earlier: &DaliObservedFrameEvent,
-    later: &DaliObservedFrameEvent,
-) -> DaliObservedFrameEvent {
-    let setpoint = match (&earlier.setpoint, &later.setpoint) {
-        (Some(earlier), Some(later)) => {
-            let mut merged = earlier.clone();
-            merged.merge_from(later);
-            Some(merged)
-        }
-        (earlier, later) => later.clone().or_else(|| earlier.clone()),
+fn restates(later: &DaliObservedFrameEvent, earlier: &DaliObservedFrameEvent) -> bool {
+    let (Some(now), Some(then)) = (&later.setpoint, &earlier.setpoint) else {
+        return false;
     };
-    DaliObservedFrameEvent {
-        setpoint,
-        dapc_observed: earlier.dapc_observed || later.dapc_observed,
-        ..later.clone()
-    }
+    let (states, stated) = (now.dimensions(), then.dimensions());
+    (states.level || !stated.level)
+        && (states.color || !stated.color)
+        && (later.dapc_observed || !earlier.dapc_observed)
+        && (sets_last_active_level(now) || !sets_last_active_level(then))
+}
+
+// IEC 62386-102 §9.4
+fn sets_last_active_level(setpoint: &LightSetpoint) -> bool {
+    setpoint.dapc_level().is_some_and(|level| level > 0)
 }
 
 pub fn spawn_projector_worker(
@@ -146,15 +136,14 @@ fn handle_event_frame(frame: &BusFrame, ctx: &Ctx<'_>, coalescer: &mut ObservedC
     let meta = &ev.meta;
     if let BusEventPayload::DaliObservedFrameEvent(body) = &ev.payload {
         if body.observed_kind == ObservedKind::TargetStateObserved {
-            if coalescer.matches(body) {
+            if coalescer.folds_into(body) {
                 ctx.counters
                     .coalesced_observed
                     .fetch_add(1, Ordering::Relaxed);
-                coalescer.merge(body);
             } else {
                 flush_coalesced(ctx, coalescer);
-                coalescer.set(body);
             }
+            coalescer.set(body);
             return;
         }
     }

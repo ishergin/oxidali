@@ -1410,8 +1410,10 @@ fn observed_burst_for_same_target_coalesces_to_final_value() {
     assert_eq!(projected.counters.coalesced_observed.load(Ordering::Relaxed), 2);
 }
 
+const LATER_MONO_MS: u32 = PRODUCER_MONO_MS + 40;
+
 #[test]
-fn a_burst_that_drives_a_level_and_a_colour_commits_both() {
+fn a_burst_that_drives_a_level_and_a_colour_commits_both_under_their_own_stamps() {
     let dapc = sniffed_at_17(LightSetpoint::from_level(120, None), true);
     let activated = LightSetpoint {
         power: PowerState::Unknown,
@@ -1419,17 +1421,47 @@ fn a_burst_that_drives_a_level_and_a_colour_commits_both() {
         color: Some(cct_color(3000)),
     };
     let colour = sniffed_at_17(activated, false);
-    for burst in [vec![dapc.clone(), colour.clone()], vec![colour, dapc]] {
-        let projected = project_queued_burst(burst);
+    for [mut first, mut second] in [[dapc.clone(), colour.clone()], [colour, dapc]] {
+        first.observed_at_mono_ms = PRODUCER_MONO_MS;
+        second.observed_at_mono_ms = LATER_MONO_MS;
+        let projected = project_queued_burst(vec![first.clone(), second.clone()]);
 
-        let (_, cmd) = recv_runtime_update(&projected.tap);
-        let committed = cmd.update.setpoint.expect("the coalesced fact carries a setpoint");
-        assert_eq!(committed.level, Some(120), "the DAPC level survives the colour");
-        assert_eq!(committed.color, Some(cct_color(3000)), "the colour survives the DAPC");
-        assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Sniffer));
+        for sent in [&first, &second] {
+            let (_, cmd) = recv_runtime_update(&projected.tap);
+            assert_eq!(
+                cmd.update.setpoint,
+                sent.setpoint,
+                "a fact the next one does not restate is committed, not folded away"
+            );
+            assert_eq!(
+                cmd.update.observed_at_mono_ms,
+                Some(sent.observed_at_mono_ms),
+                "each fact keeps its stamp, so the registry orders it against its own commits"
+            );
+        }
         assert_no_more_updates(&projected.tap);
-        assert_eq!(projected.counters.coalesced_observed.load(Ordering::Relaxed), 1);
+        assert_eq!(projected.counters.coalesced_observed.load(Ordering::Relaxed), 0);
     }
+}
+
+#[test]
+fn a_fade_to_zero_keeps_the_last_level_that_was_on() {
+    let burst = [200u8, 150, 0]
+        .into_iter()
+        .map(|level| sniffed_at_17(LightSetpoint::from_level(level, None), true))
+        .collect();
+    let projected = project_queued_burst(burst);
+
+    for level in [150u8, 0] {
+        let (_, cmd) = recv_runtime_update(&projected.tap);
+        assert_eq!(
+            cmd.update.setpoint.as_ref().and_then(|sp| sp.level),
+            Some(level),
+            "a zero does not restate the level lastActiveLevel takes (IEC 62386-102 §9.4)"
+        );
+    }
+    assert_no_more_updates(&projected.tap);
+    assert_eq!(projected.counters.coalesced_observed.load(Ordering::Relaxed), 1);
 }
 
 #[test]
