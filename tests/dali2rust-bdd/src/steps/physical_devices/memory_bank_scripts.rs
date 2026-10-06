@@ -110,7 +110,7 @@ pub(super) fn script_memory_bank_read(mock: &MockDaliTransport, bank: u8, bytes:
 }
 
 pub(super) fn script_memory_bank_short_read(mock: &MockDaliTransport, bank: u8, bytes: &[u8]) {
-    const LOCATION_RETRIES: usize = 2;
+    const BANK_END_SILENCES: usize = 2;
     let read = dt8_raw_query_frame(TEST_SHORT_ADDRESS, READ_MEMORY_LOCATION_OPCODE);
     script_memory_pointer_arm(mock, bank, 0);
     let starts = chunk_starts(bank, usize::from(BANK0_BYTES[0]) + 1);
@@ -124,9 +124,9 @@ pub(super) fn script_memory_bank_short_read(mock: &MockDaliTransport, bank: u8, 
     }
     let declined = bytes.len() as u8;
     script_chunk_start(mock, bank, &starts, usize::from(declined));
-    for attempt in 0..=LOCATION_RETRIES {
+    for attempt in 1..=BANK_END_SILENCES {
         mock.expect_forward_frame_with_backward(read, None);
-        if attempt < LOCATION_RETRIES {
+        if attempt < BANK_END_SILENCES {
             script_memory_pointer_arm(mock, bank, declined);
             script_memory_pointer_check(mock, bank, declined);
         }

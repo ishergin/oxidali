@@ -201,22 +201,57 @@ enum ReadFailure {
     Failed(SemanticDaliError),
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 struct ResumeEvidence {
     first_byte_answered: bool,
     responded: bool,
     silences: u8,
+    telling: u8,
+    idle: u8,
 }
 
 impl ResumeEvidence {
-    fn note(&mut self, past_first_byte: bool, failure: ReadFailure) {
-        self.first_byte_answered |= past_first_byte;
-        self.responded |= failure == ReadFailure::Contended { responded: true };
-        self.silences += u8::from(failure == ReadFailure::Silent);
+    const NONE: Self = Self {
+        first_byte_answered: false,
+        responded: false,
+        silences: 0,
+        telling: 0,
+        idle: 0,
+    };
+
+    fn note(&mut self, (resume, at): (u16, u16), failure: ReadFailure) {
+        let answered = failure == ReadFailure::Contended { responded: true };
+        let silent = failure == ReadFailure::Silent;
+        self.first_byte_answered |= at > resume;
+        self.responded |= answered;
+        self.silences += u8::from(silent && silence_may_end_bank(at));
+        if at > resume || answered || silent {
+            self.telling += 1;
+        } else {
+            self.idle += 1;
+        }
+    }
+
+    const fn ends_bank(&self) -> bool {
+        !self.first_byte_answered && !self.responded && self.silences >= MEMORY_BANK_END_SILENCES
+    }
+
+    const fn exhausted(&self) -> bool {
+        self.telling > MEMORY_READ_LOCATION_RETRIES || self.idle > MEMORY_READ_IDLE_RETRIES
     }
 }
 
 const MEMORY_BANK_END_SILENCES: u8 = 2;
+
+const MEMORY_READ_IDLE_RETRIES: u8 = 2;
+
+const ALWAYS_ANSWERED_OFFSET: u16 = 0x02;
+
+// IEC 62386-102 §9.10.2, Table 8
+// IEC 62386-102 §9.10.6, Table 9
+const fn silence_may_end_bank(offset: u16) -> bool {
+    offset != ALWAYS_ANSWERED_OFFSET
+}
 
 enum ChunkRead {
     Complete,
@@ -232,7 +267,6 @@ struct ChunkCursor {
     freshly_armed: bool,
     rearms: u8,
     resume: Option<u16>,
-    retries: u8,
     evidence: ResumeEvidence,
 }
 
@@ -246,12 +280,7 @@ impl ChunkCursor {
             freshly_armed: true,
             rearms: 0,
             resume: None,
-            retries: 0,
-            evidence: ResumeEvidence {
-                first_byte_answered: false,
-                responded: false,
-                silences: 0,
-            },
+            evidence: ResumeEvidence::NONE,
         }
     }
 
@@ -320,15 +349,16 @@ impl ChunkCursor {
     ) -> Result<Option<ReadStop>, SemanticDaliError> {
         if self.resume != Some(resume) {
             self.resume = Some(resume);
-            self.retries = 0;
-            self.evidence = ResumeEvidence::default();
+            self.evidence = ResumeEvidence::NONE;
         }
-        self.evidence.note(at > resume, failure);
-        if self.retries < MEMORY_READ_LOCATION_RETRIES {
-            self.retries += 1;
-            return Ok(None);
+        self.evidence.note((resume, at), failure);
+        if self.evidence.ends_bank() {
+            return Ok(Some(ReadStop::BankEnded));
         }
-        give_up(failure, self.evidence).map(Some)
+        if self.evidence.exhausted() {
+            return give_up(failure, self.evidence).map(Some);
+        }
+        Ok(None)
     }
 }
 
@@ -339,9 +369,7 @@ fn give_up(failure: ReadFailure, evidence: ResumeEvidence) -> Result<ReadStop, S
         _ if evidence.first_byte_answered => {
             Err(SemanticDaliError::OperationFailed(MEMORY_LATCH_LOST))
         }
-        _ if evidence.responded => Err(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
-        ReadFailure::Failed(error) => Err(error),
-        _ if evidence.silences >= MEMORY_BANK_END_SILENCES => Ok(ReadStop::BankEnded),
+        ReadFailure::Failed(error) if !evidence.responded => Err(error),
         _ => Err(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
     }
 }

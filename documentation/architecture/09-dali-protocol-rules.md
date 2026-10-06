@@ -196,13 +196,15 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   as a placeholder), answers with a violation, crosses a foreign frame or fails yields no
   value and ends its chunk: the pointer is re-armed in a transaction of its own at that
   location, or at the start of the latched value holding it, and a fresh chunk goes on
-  from there, so no recovery stretches a chunk past the budget. The third failure at one
-  such offset ends the read, judged on everything its attempts showed, in this order: a
-  latched value whose first byte had answered fails `memory_bank_latch_lost`; an offset
-  that answered — a violation or a contended answer — fails `bus_contended`; a transport
-  error on the last attempt is returned; two clean silences end the bank there; anything
-  else fails `bus_contended`, since one silence may be a lost READ. The read closes by
-  comparing both registers (102 §9.10.4).
+  from there, so no recovery stretches a chunk past the budget. Two clean silences at an
+  offset where nothing ever answered end the bank there — never at 0x02, which every
+  implemented bank answers (102 Table 8), so a silence there is a lost READ. Attempts that
+  showed something (a silence, a violation, a contended answer, a failure inside a latched
+  value) and attempts the bus never let through (busy, a contended silence, a transport
+  error) each have a budget of three. When one runs out, a latched value whose first byte
+  had answered fails `memory_bank_latch_lost`, a transport error on the last attempt is
+  returned unless the offset had answered, and anything else fails `bus_contended`. The
+  read closes by comparing both registers (102 §9.10.4).
 
 ## Faults and identification
 

@@ -10,6 +10,9 @@ use dali2rust_domain::dali::commands::DaliCommand;
 use dali2rust_test_support::AdvancingClock;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
+use ReadAttempt::{
+    BusBusy, ContendedAnswer, ContendedSilence, Silent, TransportFailed, Violated,
+};
 
 fn special_frame(cmd: SpecialCommand) -> u16 {
     DaliCommand::Special(cmd).to_forward_frame().raw()
@@ -107,12 +110,9 @@ fn expect_short_bank_read(
     }
     let declined = values.len() as u8;
     expect_chunk_start(mock, short, bank, u16::from(declined), length);
-    for attempt in 0..=MEMORY_READ_LOCATION_RETRIES {
-        mock.expect_forward_frame_with_backward(read, None);
-        if attempt < MEMORY_READ_LOCATION_RETRIES {
-            expect_rearmed_chunk(mock, short, bank, declined);
-        }
-    }
+    mock.expect_forward_frame_with_backward(read, None);
+    expect_rearmed_chunk(mock, short, bank, declined);
+    mock.expect_forward_frame_with_backward(read, None);
     expect_pointer_check(mock, short, bank, closing);
 }
 
@@ -227,18 +227,16 @@ fn read_memory_bank_retries_transient_no_answer_for_data_offset() {
 fn a_location_the_gear_proves_it_declines_ends_the_bank() {
     let mock = MockDaliTransport::new();
     let short = 17;
-    expect_prepare(&mock, short, 1, 2);
-    expect_pointer_check(&mock, short, 1, Some(2));
+    expect_prepare(&mock, short, 0, 4);
+    expect_pointer_check(&mock, short, 0, Some(4));
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
     mock.expect_forward_frame_with_backward(read, None);
-    expect_rearmed_chunk(&mock, short, 1, 2);
+    expect_rearmed_chunk(&mock, short, 0, 4);
     mock.expect_forward_frame_with_backward(read, None);
-    expect_rearmed_chunk(&mock, short, 1, 2);
-    mock.expect_forward_frame_with_backward(read, None);
-    expect_pointer_check(&mock, short, 1, Some(2));
+    expect_pointer_check(&mock, short, 0, Some(4));
 
     let (transport, mut controller) = setup_controller(mock);
-    let execution = read_memory_bank(&mut controller, short, 1, 2, 1);
+    let execution = read_memory_bank(&mut controller, short, 0, 4, 1);
 
     assert!(execution.bytes.is_empty(), "the bank ended before this offset");
     assert_eq!(execution.error, None, "a declined location is an answer");
@@ -522,11 +520,11 @@ enum ReadAttempt {
     TransportFailed,
 }
 
-fn expect_attempts_at_3(mock: &MockDaliTransport, short: u8, attempts: [ReadAttempt; 3]) {
+fn expect_attempts_at_3(mock: &MockDaliTransport, short: u8, attempts: &[ReadAttempt]) {
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
     expect_prepare(mock, short, 0, 3);
     expect_pointer_check(mock, short, 0, Some(3));
-    for (index, attempt) in attempts.into_iter().enumerate() {
+    for (index, attempt) in attempts.iter().copied().enumerate() {
         if index > 0 {
             expect_rearmed_chunk(mock, short, 0, 3);
         }
@@ -548,10 +546,9 @@ fn expect_attempts_at_3(mock: &MockDaliTransport, short: u8, attempts: [ReadAtte
 // IEC 62386-101 §8.2.5
 #[test]
 fn an_offset_that_answered_under_contention_is_no_end_of_bank() {
-    use ReadAttempt::{ContendedAnswer, Silent, Violated};
-    for attempts in [[ContendedAnswer, Silent, Silent], [Violated, Violated, Silent]] {
+    for attempts in [[ContendedAnswer, Silent, Silent], [Violated, Silent, Silent]] {
         let mock = MockDaliTransport::new();
-        expect_attempts_at_3(&mock, 5, attempts);
+        expect_attempts_at_3(&mock, 5, &attempts);
 
         let (transport, mut controller) = setup_controller(mock);
         let execution = read_memory_bank(&mut controller, 5, 0, 3, 1);
@@ -566,10 +563,9 @@ fn an_offset_that_answered_under_contention_is_no_end_of_bank() {
 }
 
 #[test]
-fn clean_silences_end_the_bank_though_the_last_read_crossed_traffic() {
-    use ReadAttempt::{ContendedSilence, Silent};
+fn clean_silences_end_the_bank_though_reads_between_them_crossed_traffic() {
     let mock = MockDaliTransport::new();
-    expect_attempts_at_3(&mock, 5, [Silent, Silent, ContendedSilence]);
+    expect_attempts_at_3(&mock, 5, &[Silent, BusBusy, ContendedSilence, Silent]);
     expect_pointer_check(&mock, 5, 0, Some(3));
 
     let (transport, mut controller) = setup_controller(mock);
@@ -582,10 +578,12 @@ fn clean_silences_end_the_bank_though_the_last_read_crossed_traffic() {
 
 #[test]
 fn one_clean_silence_among_contended_reads_is_no_end_of_bank() {
-    use ReadAttempt::{BusBusy, ContendedSilence, Silent};
-    for attempts in [[Silent, BusBusy, BusBusy], [ContendedSilence, Silent, BusBusy]] {
+    for attempts in [
+        [Silent, BusBusy, BusBusy, BusBusy],
+        [ContendedSilence, Silent, BusBusy, BusBusy],
+    ] {
         let mock = MockDaliTransport::new();
-        expect_attempts_at_3(&mock, 5, attempts);
+        expect_attempts_at_3(&mock, 5, &attempts);
 
         let (transport, mut controller) = setup_controller(mock);
         let execution = read_memory_bank(&mut controller, 5, 0, 3, 1);
@@ -600,10 +598,9 @@ fn one_clean_silence_among_contended_reads_is_no_end_of_bank() {
 }
 
 #[test]
-fn a_transport_that_fails_on_the_last_attempt_is_named_over_the_silences() {
-    use ReadAttempt::{Silent, TransportFailed};
+fn a_failing_transport_is_named_over_an_earlier_silence() {
     let mock = MockDaliTransport::new();
-    expect_attempts_at_3(&mock, 5, [Silent, Silent, TransportFailed]);
+    expect_attempts_at_3(&mock, 5, &[Silent, TransportFailed, TransportFailed, TransportFailed]);
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = read_memory_bank(&mut controller, 5, 0, 3, 1);
@@ -615,9 +612,9 @@ fn a_transport_that_fails_on_the_last_attempt_is_named_over_the_silences() {
     assert_script_consumed(&transport);
 }
 
-// IEC 62386-102 §9.10.4, Table 9
+// IEC 62386-102 §9.10.2, Table 8
 #[test]
-fn a_header_read_that_lost_its_reserved_read_never_reports_a_two_byte_bank() {
+fn a_header_read_that_lost_its_reserved_read_never_ends_at_offset_2() {
     let mock = MockDaliTransport::new();
     let short = 5;
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
@@ -626,21 +623,21 @@ fn a_header_read_that_lost_its_reserved_read_never_reports_a_two_byte_bank() {
     mock.expect_forward_frame_with_backward(read, Some(0x1C));
     mock.expect_forward_frame_with_backward(read, None);
     mock.expect_forward_frame_with_backward(read, None);
-    for _ in 0..MEMORY_READ_LOCATION_RETRIES {
-        expect_rearmed_chunk(&mock, short, 0, 2);
-        mock.expect_forward_frame_bus_busy(read);
-    }
+    expect_rearmed_chunk(&mock, short, 0, 2);
+    mock.expect_forward_frame_with_backward(read, None);
+    expect_rearmed_chunk(&mock, short, 0, 2);
+    mock.expect_forward_frame_with_backward(read, Some(0x01));
+    expect_pointer_check(&mock, short, 0, Some(3));
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = read_memory_bank(&mut controller, short, 0, 0, 3);
 
     assert_eq!(
-        execution.error,
-        Some(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
-        "the silence at 0x02 was location 0x01 answering late; reading it as the bank's end \
-         would report last bank 0 and skip every bank above"
+        execution.bytes,
+        vec![0x1C, 0xFF, 0x01],
+        "every implemented bank answers at 0x02, so its silences are lost READs, never the end"
     );
-    assert!(execution.bytes.is_empty());
+    assert_eq!(execution.error, None);
     assert_script_consumed(&transport);
 }
 
