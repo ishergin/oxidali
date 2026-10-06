@@ -189,13 +189,16 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - A memory-bank read chunk is one transaction that opens by proving the whole pointer,
   `DTR1` and `DTR0`, and reads at most four locations: proof and reads together stay
   under 101 §9.2's 400 ms guidance on real gear. A latched value wider than that stays
-  whole, and its chunk is exempt. A failed proof right after an arm re-arms the pointer;
-  before any other chunk it fails the read (`memory_bank_read_misaligned`), since the
-  chunk before it may have read under a foreign pointer. A location that answers nothing
-  or a READ that fails ends its chunk: the pointer is re-armed in a transaction of its own
-  at that location, or at the start of the latched value holding it, and a fresh chunk
-  goes on from there, so no recovery stretches a chunk past the budget. The third failure
-  at one location ends the bank there, or fails the latched value. The read closes by
+  whole, and its chunk is exempt. A failed proof right after an arm re-arms the pointer,
+  at most twice in one read (`memory_bank_pointer_unconfirmed`); before any other chunk
+  it fails the read (`memory_bank_read_misaligned`), since the chunk before it may have
+  read under a foreign pointer. A READ that answers nothing, answers with a violation,
+  crosses a foreign frame or fails yields no value and ends its chunk: the pointer is
+  re-armed in a transaction of its own at that location, or at the start of the latched
+  value holding it, and a fresh chunk goes on from there, so no recovery stretches a
+  chunk past the budget. The third failure at one such offset ends the read: silence ends
+  the bank there, contention fails `bus_contended`, an error is returned, and a latched
+  value whose first byte had answered fails `memory_bank_latch_lost`. The read closes by
   comparing both registers (102 §9.10.4).
 
 ## Faults and identification

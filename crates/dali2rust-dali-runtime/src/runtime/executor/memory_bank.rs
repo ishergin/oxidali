@@ -1,4 +1,5 @@
 use dali2rust_domain::dali::banks::{chunk_len, field_containing, is_field_boundary, BANK_META_LEN};
+use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::controller::DaliApplicationController;
 use dali2rust_domain::dali::net::address::DaliAddress;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
@@ -7,8 +8,8 @@ use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_contracts::msg::MemoryBankReadPreset;
 
 use crate::runtime::executor::helpers::{
-    dali_short_address, send_raw_query_once, send_special, send_standard_query, SemanticDaliError,
-    READ_MEMORY_LOCATION_OPCODE,
+    dali_short_address, send_raw_query_once_response, send_special, send_standard_query,
+    SemanticDaliError, READ_MEMORY_LOCATION_OPCODE,
 };
 
 const BANK0_IDENTITY_LAST_OFFSET: u16 =
@@ -22,6 +23,7 @@ const BANK_ARM_RETRIES: u8 = 2;
 const MEMORY_MISALIGNED: &str = "memory_bank_read_misaligned";
 const MEMORY_POINTER_UNCONFIRMED: &str = "memory_bank_pointer_unconfirmed";
 const MEMORY_LATCH_LOST: &str = "memory_bank_latch_lost";
+const BUS_CONTENDED: &str = "bus_contended";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryReadExecution {
@@ -172,23 +174,13 @@ fn read_in_chunks(
     length: u16,
     bytes: &mut Vec<u8>,
 ) -> Result<ReadStop, SemanticDaliError> {
-    let mut cursor = ChunkCursor::armed();
+    let mut cursor = ChunkCursor::armed(address, bank, start);
     while cursor.done < length {
-        let chunk_start = start + cursor.done;
-        let take = chunk_take(bank, chunk_start, length - cursor.done);
+        let (chunk_start, take) = cursor.next_chunk(length);
         controller.step_boundary();
-        match read_proved_chunk(controller, address, bank, (chunk_start, take), bytes)? {
-            ChunkRead::Complete => cursor.complete(take),
-            ChunkRead::Unproved => cursor.rearm_unproved(controller, address, bank, chunk_start)?,
-            ChunkRead::Interrupted { at, error } => {
-                let resume = latched_field_start(bank, at).map_or(at, |field| field.max(chunk_start));
-                bytes.truncate(usize::from(resume - start));
-                if let Some(stop) = cursor.spend_retry(resume, at, error)? {
-                    return Ok(stop);
-                }
-                arm_memory_pointer(controller, address, bank, resume)?;
-                cursor.rearmed(resume - start);
-            }
+        let read = read_proved_chunk(controller, address, bank, (chunk_start, take), bytes)?;
+        if let Some(stop) = cursor.settle(controller, (chunk_start, take), read, bytes)? {
+            return Ok(stop);
         }
     }
     Ok(ReadStop::Planned)
@@ -202,49 +194,74 @@ fn chunk_take(bank: u8, chunk_start: u16, remaining: u16) -> u16 {
     chunk_len(bank, chunk_start, remaining, MEMORY_READ_CHUNK)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadFailure {
+    Silent,
+    Contended,
+    Failed(SemanticDaliError),
+}
+
 enum ChunkRead {
     Complete,
     Unproved,
-    Interrupted {
-        at: u16,
-        error: Option<SemanticDaliError>,
-    },
+    Interrupted { at: u16, failure: ReadFailure },
 }
 
 struct ChunkCursor {
+    address: DaliAddress,
+    bank: u8,
+    start: u16,
     done: u16,
     freshly_armed: bool,
     rearms: u8,
     resume: Option<u16>,
     retries: u8,
+    resume_answered: bool,
 }
 
 impl ChunkCursor {
-    const fn armed() -> Self {
+    const fn armed(address: DaliAddress, bank: u8, start: u16) -> Self {
         Self {
+            address,
+            bank,
+            start,
             done: 0,
             freshly_armed: true,
             rearms: 0,
             resume: None,
             retries: 0,
+            resume_answered: false,
         }
     }
 
-    fn complete(&mut self, take: u16) {
-        self.done += take;
-        self.freshly_armed = false;
+    fn next_chunk(&self, length: u16) -> (u16, u16) {
+        let chunk_start = self.start + self.done;
+        (chunk_start, chunk_take(self.bank, chunk_start, length - self.done))
     }
 
-    fn rearmed(&mut self, done: u16) {
-        self.done = done;
-        self.freshly_armed = true;
+    fn settle(
+        &mut self,
+        controller: &mut impl DaliApplicationController,
+        (chunk_start, take): (u16, u16),
+        read: ChunkRead,
+        bytes: &mut Vec<u8>,
+    ) -> Result<Option<ReadStop>, SemanticDaliError> {
+        match read {
+            ChunkRead::Complete => {
+                self.done += take;
+                self.freshly_armed = false;
+                Ok(None)
+            }
+            ChunkRead::Unproved => self.rearm_unproved(controller, chunk_start).map(|()| None),
+            ChunkRead::Interrupted { at, failure } => {
+                self.resume_after(controller, (chunk_start, at), failure, bytes)
+            }
+        }
     }
 
     fn rearm_unproved(
         &mut self,
         controller: &mut impl DaliApplicationController,
-        address: DaliAddress,
-        bank: u8,
         chunk_start: u16,
     ) -> Result<(), SemanticDaliError> {
         if !self.freshly_armed {
@@ -254,28 +271,53 @@ impl ChunkCursor {
             return Err(SemanticDaliError::OperationFailed(MEMORY_POINTER_UNCONFIRMED));
         }
         self.rearms += 1;
-        arm_memory_pointer(controller, address, bank, chunk_start)
+        arm_memory_pointer(controller, self.address, self.bank, chunk_start)
+    }
+
+    fn resume_after(
+        &mut self,
+        controller: &mut impl DaliApplicationController,
+        (chunk_start, at): (u16, u16),
+        failure: ReadFailure,
+        bytes: &mut Vec<u8>,
+    ) -> Result<Option<ReadStop>, SemanticDaliError> {
+        let resume = latched_field_start(self.bank, at).map_or(at, |field| field.max(chunk_start));
+        bytes.truncate(usize::from(resume - self.start));
+        if let Some(stop) = self.spend_retry((resume, at), failure)? {
+            return Ok(Some(stop));
+        }
+        arm_memory_pointer(controller, self.address, self.bank, resume)?;
+        self.done = resume - self.start;
+        self.freshly_armed = true;
+        Ok(None)
     }
 
     fn spend_retry(
         &mut self,
-        resume: u16,
-        at: u16,
-        error: Option<SemanticDaliError>,
+        (resume, at): (u16, u16),
+        failure: ReadFailure,
     ) -> Result<Option<ReadStop>, SemanticDaliError> {
         if self.resume != Some(resume) {
             self.resume = Some(resume);
             self.retries = 0;
+            self.resume_answered = false;
         }
+        self.resume_answered |= at > resume;
         if self.retries < MEMORY_READ_LOCATION_RETRIES {
             self.retries += 1;
             return Ok(None);
         }
-        match error {
-            _ if resume < at => Err(SemanticDaliError::OperationFailed(MEMORY_LATCH_LOST)),
-            Some(error) => Err(error),
-            None => Ok(Some(ReadStop::BankEnded)),
-        }
+        give_up(failure, self.resume_answered).map(Some)
+    }
+}
+
+// DiiA 252 §9.2.2
+fn give_up(failure: ReadFailure, resume_answered: bool) -> Result<ReadStop, SemanticDaliError> {
+    match failure {
+        _ if resume_answered => Err(SemanticDaliError::OperationFailed(MEMORY_LATCH_LOST)),
+        ReadFailure::Silent => Ok(ReadStop::BankEnded),
+        ReadFailure::Contended => Err(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
+        ReadFailure::Failed(error) => Err(error),
     }
 }
 
@@ -308,21 +350,30 @@ fn read_planned_locations(
     bytes: &mut Vec<u8>,
 ) -> ChunkRead {
     for offset in start..start + length {
-        match send_raw_query_once(controller, address, READ_MEMORY_LOCATION_OPCODE) {
-            Ok(Some(value)) => bytes.push(value),
-            Ok(None) if offset == MEMORY_RESERVED_OFFSET => {
-                bytes.push(MEMORY_NO_ANSWER_PLACEHOLDER);
-            }
-            Ok(None) => return ChunkRead::Interrupted { at: offset, error: None },
-            Err(error) => {
-                return ChunkRead::Interrupted {
-                    at: offset,
-                    error: Some(error),
-                }
-            }
+        match read_location(controller, address, offset) {
+            Ok(value) => bytes.push(value),
+            Err(failure) => return ChunkRead::Interrupted { at: offset, failure },
         }
     }
     ChunkRead::Complete
+}
+
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §9.10.4, Table 9
+fn read_location(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    offset: u16,
+) -> Result<u8, ReadFailure> {
+    match send_raw_query_once_response(controller, address, READ_MEMORY_LOCATION_OPCODE) {
+        Ok((_, true) | (DaliResponse::Violation, false)) => Err(ReadFailure::Contended),
+        Ok((DaliResponse::Answer(value), false)) => Ok(value),
+        Ok((DaliResponse::NoAnswer, false)) if offset == MEMORY_RESERVED_OFFSET => {
+            Ok(MEMORY_NO_ANSWER_PLACEHOLDER)
+        }
+        Ok((DaliResponse::NoAnswer, false)) => Err(ReadFailure::Silent),
+        Err(error) => Err(ReadFailure::Failed(error)),
+    }
 }
 
 // DiiA 252 §9.2.2

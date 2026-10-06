@@ -476,13 +476,21 @@ pub fn send_raw_query_once_observed(
     address: DaliAddress,
     opcode: u8,
 ) -> Result<(Option<u8>, bool), SemanticDaliError> {
-    let (frame, contended) = controller
+    send_raw_query_once_response(controller, address, opcode)
+        .map(|(response, contended)| (response.value(), contended))
+}
+
+pub fn send_raw_query_once_response(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    opcode: u8,
+) -> Result<(DaliResponse, bool), SemanticDaliError> {
+    controller
         .send_raw_once(
             ForwardFrame::new(address.encode_address_byte() | 0x01, opcode),
             true,
         )
-        .map_err(|error| map_transport_error(&error))?;
-    Ok((frame.value(), contended))
+        .map_err(|error| map_transport_error(&error))
 }
 
 pub(crate) fn program_with_verify_repair<C: DaliApplicationController, V: Copy>(
