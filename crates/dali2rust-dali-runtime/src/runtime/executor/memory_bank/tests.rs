@@ -10,6 +10,7 @@ use dali2rust_domain::dali::commands::DaliCommand;
 use dali2rust_test_support::AdvancingClock;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
+use ProofAnswer::{Garbled, Quiet, Says};
 use ReadAttempt::{
     BusBusy, ContendedAnswer, ContendedSilence, Silent, TransportFailed, Violated,
 };
@@ -209,6 +210,12 @@ fn the_reserved_location_reads_as_a_placeholder_without_a_rearm() {
 
     assert_eq!(execution.bytes, vec![0x1C, 0xFF, 0x01]);
     assert_eq!(execution.error, None);
+    let priorities = priorities_of(&transport.lock().expect("mock lock").sent_frame_settle_us());
+    assert_eq!(
+        priorities[7..9],
+        [DaliPriority::Transaction, DaliPriority::Configuration],
+        "the placeholder closes its chunk, and the proof after it opens a transaction of its own"
+    );
     assert_script_consumed(&transport);
 }
 
@@ -354,6 +361,55 @@ fn a_read_lost_at_the_reserved_location_is_caught_by_the_next_proof() {
         "the pointer still at 0x01 shows the silence was a lost READ, so 0x01 is read again"
     );
     assert_eq!(execution.error, None);
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_foreign_pointer_after_the_placeholder_is_misaligned_not_a_lost_read() {
+    let mock = MockDaliTransport::new();
+    let short = 5;
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(&mock, short, 0, 0);
+    expect_pointer_check(&mock, short, 0, Some(0));
+    mock.expect_forward_frame_with_backward(read, Some(0x1C));
+    mock.expect_forward_frame_with_backward(read, None);
+    expect_foreign_bank(&mock, short, 2);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 0, 0, 4);
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(MEMORY_MISALIGNED)),
+        "only a pointer one READ behind is a lost READ at 0x01; another bank may have fed byte 0"
+    );
+    assert!(execution.bytes.is_empty());
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_pointer_one_behind_later_in_the_bank_is_misaligned() {
+    let mock = MockDaliTransport::new();
+    let short = 5;
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(&mock, short, 0, 0);
+    expect_pointer_check(&mock, short, 0, Some(0));
+    mock.expect_forward_frame_with_backward(read, Some(0x1C));
+    mock.expect_forward_frame_with_backward(read, None);
+    expect_pointer_check(&mock, short, 0, Some(2));
+    for value in [0x01, 0x00, 0x9D, 0xAD] {
+        mock.expect_forward_frame_with_backward(read, Some(value));
+    }
+    expect_pointer_check(&mock, short, 0, Some(5));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 0, 0, 7);
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(MEMORY_MISALIGNED)),
+        "the placeholder was proved by the chunk after it; a later lag is a lost READ there"
+    );
     assert_script_consumed(&transport);
 }
 
@@ -830,11 +886,36 @@ fn the_pointer_proof_shares_its_chunks_transaction() {
     assert_script_consumed(&transport);
 }
 
+#[derive(Clone, Copy)]
+enum ProofAnswer {
+    Says(u8),
+    Quiet,
+    Garbled,
+}
+
+fn expect_proof_answer(mock: &MockDaliTransport, frame: u16, answer: ProofAnswer) {
+    match answer {
+        ProofAnswer::Says(value) => mock.expect_forward_frame_with_backward(frame, Some(value)),
+        ProofAnswer::Quiet => mock.expect_forward_frame_with_backward(frame, None),
+        ProofAnswer::Garbled => mock.expect_forward_frame_corrupted_in_window(frame),
+    }
+}
+
+fn expect_proof(mock: &MockDaliTransport, short: u8, (bank, offset): (ProofAnswer, ProofAnswer)) {
+    expect_proof_answer(mock, standard_frame(short, StandardCommand::QueryContentDtr1), bank);
+    expect_proof_answer(mock, standard_frame(short, StandardCommand::QueryContentDtr0), offset);
+}
+
 // IEC 62386-101 §8.2.5
 #[test]
 fn a_later_proof_names_silence_and_a_violation_apart_from_a_moved_pointer() {
-    let expectations = [(false, MEMORY_POINTER_UNCONFIRMED), (true, BUS_CONTENDED)];
-    for (violated, error) in expectations {
+    let expectations = [
+        ((Quiet, Says(7)), MEMORY_POINTER_UNCONFIRMED),
+        ((Garbled, Says(7)), BUS_CONTENDED),
+        ((Garbled, Says(9)), MEMORY_MISALIGNED),
+        ((Quiet, Garbled), BUS_CONTENDED),
+    ];
+    for (proof, error) in expectations {
         let mock = MockDaliTransport::new();
         let short = 5;
         let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
@@ -843,42 +924,53 @@ fn a_later_proof_names_silence_and_a_violation_apart_from_a_moved_pointer() {
         for value in [0x11, 0x22, 0x33, 0x44] {
             mock.expect_forward_frame_with_backward(read, Some(value));
         }
-        let dtr1 = standard_frame(short, StandardCommand::QueryContentDtr1);
-        if violated {
-            mock.expect_forward_frame_corrupted_in_window(dtr1);
-        } else {
-            mock.expect_forward_frame_with_backward(dtr1, None);
-        }
-        mock.expect_forward_frame_with_backward(
-            standard_frame(short, StandardCommand::QueryContentDtr0),
-            Some(7),
-        );
+        expect_proof(&mock, short, proof);
 
         let (transport, mut controller) = setup_controller(mock);
         let execution = read_memory_bank(&mut controller, short, 0, 3, 6);
 
-        assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(error)));
+        assert_eq!(
+            execution.error,
+            Some(SemanticDaliError::OperationFailed(error)),
+            "a wrong value outranks a violation, and a violation outranks silence"
+        );
         assert!(execution.bytes.is_empty());
         assert_script_consumed(&transport);
     }
 }
 
 #[test]
-fn a_violated_closing_check_is_contended_not_misaligned() {
+fn a_closing_check_names_silence_and_a_violation() {
+    let expectations = [
+        ((Says(0), Garbled), BUS_CONTENDED),
+        ((Quiet, Says(4)), MEMORY_POINTER_UNCONFIRMED),
+    ];
+    for (proof, error) in expectations {
+        let mock = MockDaliTransport::new();
+        let short = 5;
+        let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+        expect_prepare(&mock, short, 0, 3);
+        expect_pointer_check(&mock, short, 0, Some(3));
+        mock.expect_forward_frame_with_backward(read, Some(0x11));
+        expect_proof(&mock, short, proof);
+
+        let (transport, mut controller) = setup_controller(mock);
+        let execution = read_memory_bank(&mut controller, short, 0, 3, 1);
+
+        assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(error)));
+        assert_script_consumed(&transport);
+    }
+}
+
+#[test]
+fn an_arm_whose_proof_stays_violated_is_contended() {
     let mock = MockDaliTransport::new();
     let short = 5;
-    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
-    expect_prepare(&mock, short, 0, 3);
-    expect_pointer_check(&mock, short, 0, Some(3));
-    mock.expect_forward_frame_with_backward(read, Some(0x11));
-    mock.expect_forward_frame_with_backward(
-        standard_frame(short, StandardCommand::QueryContentDtr1),
-        Some(0),
-    );
-    mock.expect_forward_frame_corrupted_in_window(standard_frame(
-        short,
-        StandardCommand::QueryContentDtr0,
-    ));
+    for _ in 0..=BANK_ARM_RETRIES {
+        mock.expect_forward_frame(special_frame(SpecialCommand::Dtr1(0)));
+        mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(3)));
+        expect_proof(&mock, short, (Garbled, Says(3)));
+    }
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = read_memory_bank(&mut controller, short, 0, 3, 1);

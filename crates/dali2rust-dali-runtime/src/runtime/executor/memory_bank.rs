@@ -95,7 +95,7 @@ fn arm_memory_pointer(
         proof = controller.transaction(|controller| {
             send_special(controller, SpecialCommand::Dtr1(bank))?;
             send_special(controller, SpecialCommand::Dtr0(offset as u8))?;
-            pointer_proof(controller, address, bank, |seen| u16::from(seen) == offset)
+            pointer_proof(controller, address, bank, (offset as u8, false))
         })?;
         if proof == PointerProof::Held {
             return Ok(());
@@ -107,16 +107,26 @@ fn arm_memory_pointer(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PointerProof {
     Held,
-    Moved,
+    Moved { one_behind: bool },
     Unanswered,
     Contended,
 }
 
 impl PointerProof {
-    fn of(answers: [(DaliResponse, bool); 2]) -> Self {
-        let shown = |kind: DaliResponse| answers.iter().any(|(answer, _)| *answer == kind);
-        if answers.iter().any(|(answer, held)| matches!(answer, DaliResponse::Answer(_)) && !held) {
-            Self::Moved
+    fn of(
+        bank: u8,
+        (expected, ended): (u8, bool),
+        [armed_bank, armed_offset]: [DaliResponse; 2],
+    ) -> Self {
+        let bank_held = armed_bank == DaliResponse::Answer(bank);
+        let offset_held = armed_offset == DaliResponse::Answer(expected)
+            || (ended && armed_offset == DaliResponse::Answer(expected.wrapping_add(1)));
+        let answers = [armed_bank, armed_offset];
+        let shown = |kind: DaliResponse| answers.contains(&kind);
+        let answered = |response: DaliResponse| matches!(response, DaliResponse::Answer(_));
+        if (answered(armed_bank) && !bank_held) || (answered(armed_offset) && !offset_held) {
+            let one_behind = bank_held && armed_offset == DaliResponse::Answer(expected.wrapping_sub(1));
+            Self::Moved { one_behind }
         } else if shown(DaliResponse::Violation) {
             Self::Contended
         } else if shown(DaliResponse::NoAnswer) {
@@ -128,7 +138,7 @@ impl PointerProof {
 
     const fn failure(self, moved: &'static str) -> SemanticDaliError {
         SemanticDaliError::OperationFailed(match self {
-            Self::Moved => moved,
+            Self::Moved { .. } => moved,
             Self::Contended => BUS_CONTENDED,
             Self::Held | Self::Unanswered => MEMORY_POINTER_UNCONFIRMED,
         })
@@ -140,15 +150,12 @@ fn pointer_proof(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     bank: u8,
-    offset_held: impl Fn(u8) -> bool,
+    expected: (u8, bool),
 ) -> Result<PointerProof, SemanticDaliError> {
     let armed_bank = send_standard_response(controller, address, StandardCommand::QueryContentDtr1)?;
     let armed_offset =
         send_standard_response(controller, address, StandardCommand::QueryContentDtr0)?;
-    Ok(PointerProof::of([
-        (armed_bank, armed_bank == DaliResponse::Answer(bank)),
-        (armed_offset, matches!(armed_offset, DaliResponse::Answer(seen) if offset_held(seen))),
-    ]))
+    Ok(PointerProof::of(bank, expected, [armed_bank, armed_offset]))
 }
 
 // IEC 62386-102 §9.10.4
@@ -162,11 +169,8 @@ fn confirm_final_position(
     // IEC 62386-102 §11.6.4
     let counted = start.saturating_add(read).min(u16::from(u8::MAX)) as u8;
     let ended = stop == ReadStop::BankEnded;
-    let proof = controller.transaction(|controller| {
-        pointer_proof(controller, address, bank, |seen| {
-            seen == counted || (ended && seen == counted.saturating_add(1))
-        })
-    })?;
+    let proof = controller
+        .transaction(|controller| pointer_proof(controller, address, bank, (counted, ended)))?;
     match proof {
         PointerProof::Held => Ok(()),
         other => Err(other.failure(MEMORY_MISALIGNED)),
@@ -358,7 +362,8 @@ impl ChunkCursor {
         (chunk_start, proof): (u16, PointerProof),
         bytes: &mut Vec<u8>,
     ) -> Result<(), SemanticDaliError> {
-        let resume = match (self.placeholder_pending, self.freshly_armed) {
+        let lost_placeholder_read = proof == PointerProof::Moved { one_behind: true };
+        let resume = match (self.placeholder_pending && lost_placeholder_read, self.freshly_armed) {
             (true, _) => MEMORY_RESERVED_OFFSET,
             (false, true) => chunk_start,
             (false, false) => return Err(proof.failure(MEMORY_MISALIGNED)),
@@ -434,7 +439,7 @@ fn read_proved_chunk(
     bytes: &mut Vec<u8>,
 ) -> Result<ChunkRead, SemanticDaliError> {
     let read = |controller: &mut _| {
-        let proof = pointer_proof(controller, address, bank, |seen| u16::from(seen) == chunk_start)?;
+        let proof = pointer_proof(controller, address, bank, (chunk_start as u8, false))?;
         if proof != PointerProof::Held {
             return Ok(ChunkRead::Unproved(proof));
         }
