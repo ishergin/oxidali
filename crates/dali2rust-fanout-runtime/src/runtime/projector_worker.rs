@@ -148,6 +148,7 @@ fn flush_coalesced(ctx: &Ctx<'_>, coalescer: &mut ObservedCoalescer) {
     }
 }
 
+#[inline(never)]
 fn hold_observed(ctx: &Ctx<'_>, coalescer: &mut ObservedCoalescer, body: &DaliObservedFrameEvent) {
     if coalescer.holds_another_target(body) {
         flush_coalesced(ctx, coalescer);

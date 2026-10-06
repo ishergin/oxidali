@@ -1597,6 +1597,25 @@ fn a_group_colour_in_another_mode_does_not_fold_the_colour_before_it() {
 }
 
 #[test]
+fn a_fact_for_another_target_commits_the_held_ones_first() {
+    let mut other = sniffed_at_17(LightSetpoint::from_level(50, None), true);
+    other.short_address = Some(18);
+    let burst = vec![
+        stamped(sniffed_at_17(LightSetpoint::from_level(100, None), true), 0),
+        stamped(other, 40),
+        stamped(sniffed_at_17(LightSetpoint::from_level(80, None), true), 80),
+    ];
+    let projected = project_queued_burst(burst.clone());
+
+    assert_commits_in_order(
+        &projected,
+        &burst,
+        "a level for one address never restates the level another address was given",
+    );
+    assert_eq!(projected.counters.coalesced_observed.load(Ordering::Relaxed), 0);
+}
+
+#[test]
 fn our_own_command_between_two_foreign_facts_keeps_its_place() {
     let foreign_level = stamped(sniffed_at_17(LightSetpoint::from_level(100, None), true), 0);
     let mut own = applied(DaliTargetScope::Short, setpoint(200), true);
