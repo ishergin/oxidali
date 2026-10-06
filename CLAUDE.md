@@ -103,10 +103,10 @@ Detail: [03](documentation/architecture/03-bus-and-backpressure.md).
   where it filters by hand; confirmations broadcast. `bus_payload_ownership.rs` checks
   one owner per command and a consumer or `OBSERVED_ONLY_EVENTS` entry per event
   (ADR-006, ADR-015).
-- A command nobody accepts becomes a synthetic `DeliveryRejected` and an HTTP `503`, and a
-  gate's refusal before the wire a `409`, on every route; the diagnostic `/api/v1/dali/*`
-  routes and the expert commissioning steps answer `200` only with what the wire said. An
-  undeclared event is dropped silently, which is legal.
+- On a route that waits for its confirmation, a command nobody accepts becomes a synthetic
+  `DeliveryRejected` and an HTTP `503`, and a gate's refusal before the wire a `409`; the
+  diagnostic `/api/v1/dali/*` routes and the expert commissioning steps answer `200` only
+  with what the wire said. An undeclared event is dropped silently, which is legal.
 - `target_adapter_id` is filtered by the consumer; `sender_id` and `Origin` never route.
 - Ingress never blocks (`Queued` / `DroppedIngressFull` / `RejectedFrameTooLarge` /
   `RejectedKindMismatch`); a stuck subscriber overflows only its own inbox.

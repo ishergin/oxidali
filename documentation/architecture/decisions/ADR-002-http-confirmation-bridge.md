@@ -33,11 +33,11 @@ downtime for every client.
 
 ## Consequences
 
-- Confirmation semantics and HTTP status codes are identical across the handlers; a
-  synthetic rejection behaves like any other confirmation at the bridge boundary, and a
-  gate's refusal before the wire is a `409` everywhere. The diagnostic `/api/v1/dali/*`
-  routes and the expert commissioning steps answer `200` only with what the wire said,
-  failure included ([diagnostic DALI](../../product-design/rest-api/resources/diagnostic-dali.md)).
+- Confirmation semantics and HTTP status codes are identical across the handlers that
+  wait for a confirmation; a synthetic rejection behaves like any other confirmation at
+  the bridge boundary, and a gate's refusal before the wire is a `409`. The diagnostic
+  `/api/v1/dali/*` routes and the expert commissioning steps answer `200` only with what
+  the wire said, failure included ([diagnostic DALI](../../product-design/rest-api/resources/diagnostic-dali.md)).
 - The confirmation path stays typed end to end inside the runtime; JSON appears only
   when the reply formatter renders the HTTP body.
 - The full status-code mapping and the reply formatters are described in
