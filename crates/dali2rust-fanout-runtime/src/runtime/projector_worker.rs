@@ -37,9 +37,18 @@ pub struct ProjectorCounters {
     pub ignored_events: AtomicU32,
 }
 
-#[derive(Default)]
+const PENDING_OBSERVED_FACTS: usize = 4;
+
 struct ObservedCoalescer {
-    pending: Option<DaliObservedFrameEvent>,
+    pending: Vec<DaliObservedFrameEvent>,
+}
+
+impl Default for ObservedCoalescer {
+    fn default() -> Self {
+        Self {
+            pending: Vec::with_capacity(PENDING_OBSERVED_FACTS),
+        }
+    }
 }
 
 impl ObservedCoalescer {
@@ -51,18 +60,24 @@ impl ObservedCoalescer {
         (body.registry_adapter_id, body.scope, id)
     }
 
-    fn folds_into(&self, body: &DaliObservedFrameEvent) -> bool {
-        self.pending.as_ref().is_some_and(|prev| {
-            Self::coalesce_key(prev) == Self::coalesce_key(body) && restates(body, prev)
-        })
+    fn holds_another_target(&self, body: &DaliObservedFrameEvent) -> bool {
+        self.pending
+            .first()
+            .is_some_and(|held| Self::coalesce_key(held) != Self::coalesce_key(body))
     }
 
-    fn set(&mut self, body: &DaliObservedFrameEvent) {
-        self.pending = Some(body.clone());
+    fn fold(&mut self, body: &DaliObservedFrameEvent) -> u32 {
+        let held = self.pending.len();
+        self.pending.retain(|earlier| !restates(body, earlier));
+        u32::try_from(held - self.pending.len()).unwrap_or(u32::MAX)
     }
 
-    fn take(&mut self) -> Option<DaliObservedFrameEvent> {
-        self.pending.take()
+    fn oldest_if_full(&mut self) -> Option<DaliObservedFrameEvent> {
+        (self.pending.len() >= PENDING_OBSERVED_FACTS).then(|| self.pending.remove(0))
+    }
+
+    fn push(&mut self, body: &DaliObservedFrameEvent) {
+        self.pending.push(body.clone());
     }
 }
 
@@ -70,11 +85,15 @@ fn restates(later: &DaliObservedFrameEvent, earlier: &DaliObservedFrameEvent) ->
     let (Some(now), Some(then)) = (&later.setpoint, &earlier.setpoint) else {
         return false;
     };
-    let (states, stated) = (now.dimensions(), then.dimensions());
-    (states.level || !stated.level)
-        && (states.color || !stated.color)
+    (now.states_level() || !then.states_level())
+        && restates_colour(now, then)
         && (later.dapc_observed || !earlier.dapc_observed)
         && (sets_last_active_level(now) || !sets_last_active_level(then))
+}
+
+fn restates_colour(now: &LightSetpoint, then: &LightSetpoint) -> bool {
+    let mode = |setpoint: &LightSetpoint| setpoint.color.as_ref().map(|color| color.mode);
+    !then.states_color() || (now.states_color() && mode(now) == mode(then))
 }
 
 // IEC 62386-102 §9.4
@@ -124,9 +143,23 @@ struct Ctx<'a> {
 
 #[inline(never)]
 fn flush_coalesced(ctx: &Ctx<'_>, coalescer: &mut ObservedCoalescer) {
-    if let Some(body) = coalescer.take() {
+    for body in coalescer.pending.drain(..) {
         handle_observed_frame(ctx.publisher, ctx.bus_id, ctx.read_port, ctx.counters, &body);
     }
+}
+
+fn hold_observed(ctx: &Ctx<'_>, coalescer: &mut ObservedCoalescer, body: &DaliObservedFrameEvent) {
+    if coalescer.holds_another_target(body) {
+        flush_coalesced(ctx, coalescer);
+    }
+    let folded = coalescer.fold(body);
+    ctx.counters
+        .coalesced_observed
+        .fetch_add(folded, Ordering::Relaxed);
+    if let Some(oldest) = coalescer.oldest_if_full() {
+        handle_observed_frame(ctx.publisher, ctx.bus_id, ctx.read_port, ctx.counters, &oldest);
+    }
+    coalescer.push(body);
 }
 
 fn handle_event_frame(frame: &BusFrame, ctx: &Ctx<'_>, coalescer: &mut ObservedCoalescer) {
@@ -136,14 +169,7 @@ fn handle_event_frame(frame: &BusFrame, ctx: &Ctx<'_>, coalescer: &mut ObservedC
     let meta = &ev.meta;
     if let BusEventPayload::DaliObservedFrameEvent(body) = &ev.payload {
         if body.observed_kind == ObservedKind::TargetStateObserved {
-            if coalescer.folds_into(body) {
-                ctx.counters
-                    .coalesced_observed
-                    .fetch_add(1, Ordering::Relaxed);
-            } else {
-                flush_coalesced(ctx, coalescer);
-            }
-            coalescer.set(body);
+            hold_observed(ctx, coalescer, body);
             return;
         }
     }

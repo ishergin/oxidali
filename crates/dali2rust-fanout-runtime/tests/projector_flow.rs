@@ -9,7 +9,8 @@ use dali2rust_bus::{
     BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublisher, BusSubscriberRx, PublishResult,
 };
 use dali2rust_contracts::msg::{
-    AttributeGroupReadOutcome, BusCommandPayload, ColorMode, ColorValue, DaliAttributeReadChunk,
+    AttributeGroupReadOutcome, BusCommandPayload, BusEventPayload, ColorMode, ColorValue,
+    DaliAttributeReadChunk,
     DaliAttributeReadOutcomesEvent, DaliAttributesReadEvent,
     DaliObservedFrameEvent, DaliSceneRecalledEvent, DaliSceneTargetState, DaliTargetScope,
     DaliTargetStateAppliedEvent, DecodeStatus, LastDapcSource, LightSetpoint,
@@ -1342,20 +1343,27 @@ struct QueuedBurst {
     _host: BusHost,
 }
 
-fn project_queued_burst(bodies: Vec<DaliObservedFrameEvent>) -> QueuedBurst {
-    let port = FakeReadPort {
+fn lamp_17_port() -> FakeReadPort {
+    FakeReadPort {
         lamps: vec![bound_lamp(12, 17)],
         ..FakeReadPort::default()
-    };
+    }
+}
+
+fn project_queued_burst(bodies: Vec<DaliObservedFrameEvent>) -> QueuedBurst {
+    project_queued_events(lamp_17_port(), bodies.into_iter().map(BusEventPayload::from).collect())
+}
+
+fn project_queued_events(port: FakeReadPort, events: Vec<BusEventPayload>) -> QueuedBurst {
     let (host, publisher, (ev_rx, cmd_tap)) = BusHost::spawn(BusConfig::default(), |reg| {
         (
             reg.subscribe_events(32, dali2rust_fanout_runtime::PROJECTOR_HANDLED_EVENTS),
             reg.subscribe_commands(32, dali2rust_contracts::msg::COMMAND_VARIANT_NAMES),
         )
     });
-    let queued = u32::try_from(bodies.len()).expect("a short burst");
-    for body in bodies {
-        publish_event(&publisher, CORRELATION_NONE, body);
+    let queued = u32::try_from(events.len()).expect("a short burst");
+    for event in events {
+        publish_event(&publisher, CORRELATION_NONE, event);
     }
     wait_until(
         || {
@@ -1462,6 +1470,153 @@ fn a_fade_to_zero_keeps_the_last_level_that_was_on() {
     }
     assert_no_more_updates(&projected.tap);
     assert_eq!(projected.counters.coalesced_observed.load(Ordering::Relaxed), 1);
+}
+
+fn stamped(mut body: DaliObservedFrameEvent, after_ms: u32) -> DaliObservedFrameEvent {
+    body.observed_at_mono_ms = PRODUCER_MONO_MS + after_ms;
+    body
+}
+
+fn colour_only(color: ColorValue) -> LightSetpoint {
+    LightSetpoint {
+        power: PowerState::Unknown,
+        level: None,
+        color: Some(color),
+    }
+}
+
+fn assert_commits_in_order(projected: &QueuedBurst, sent: &[DaliObservedFrameEvent], why: &str) {
+    for fact in sent {
+        let (_, cmd) = recv_runtime_update(&projected.tap);
+        assert_eq!(cmd.update.setpoint, fact.setpoint, "{why}");
+        assert_eq!(cmd.update.observed_at_mono_ms, Some(fact.observed_at_mono_ms), "{why}");
+    }
+    assert_no_more_updates(&projected.tap);
+}
+
+#[test]
+fn an_interleaved_level_and_colour_burst_commits_the_last_fact_of_each() {
+    let burst = vec![
+        stamped(sniffed_at_17(LightSetpoint::from_level(100, None), true), 0),
+        stamped(sniffed_at_17(colour_only(cct_color(3000)), false), 40),
+        stamped(sniffed_at_17(LightSetpoint::from_level(120, None), true), 80),
+        stamped(sniffed_at_17(colour_only(cct_color(3500)), false), 120),
+    ];
+    let last_of_each = [burst[2].clone(), burst[3].clone()];
+    let projected = project_queued_burst(burst);
+
+    assert_commits_in_order(
+        &projected,
+        &last_of_each,
+        "a tunable-white fade folds per dimension, each fact under its own stamp",
+    );
+    assert_eq!(projected.counters.coalesced_observed.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn an_off_after_a_zero_arc_power_keeps_the_arc_power_commit() {
+    let off = LightSetpoint {
+        power: PowerState::Off,
+        level: Some(0),
+        color: None,
+    };
+    let burst = vec![
+        stamped(sniffed_at_17(LightSetpoint::from_level(0, None), true), 0),
+        stamped(sniffed_at_17(off, false), 40),
+    ];
+    let projected = project_queued_burst(burst);
+
+    let sources: Vec<_> = (0..2)
+        .map(|_| recv_runtime_update(&projected.tap).1.update.last_dapc_source)
+        .collect();
+    assert_eq!(
+        sources,
+        [Some(LastDapcSource::Sniffer), None],
+        "an OFF is no arc power command, so it does not restate the DAPC before it"
+    );
+    assert_no_more_updates(&projected.tap);
+    assert_eq!(projected.counters.coalesced_observed.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn a_burst_wider_than_the_held_facts_commits_every_fact_in_order() {
+    let off = LightSetpoint {
+        power: PowerState::Off,
+        level: Some(0),
+        color: None,
+    };
+    let burst = vec![
+        stamped(sniffed_at_17(LightSetpoint::from_level(200, None), true), 0),
+        stamped(sniffed_at_17(LightSetpoint::from_level(0, None), true), 40),
+        stamped(sniffed_at_17(off, false), 80),
+        stamped(sniffed_at_17(colour_only(cct_color(3000)), false), 120),
+        stamped(sniffed_at_17(colour_only(xy_color(20_000, 20_000)), false), 160),
+        stamped(sniffed_at_17(colour_only(rgb_color(4, 5, 6)), false), 200),
+    ];
+    let projected = project_queued_burst(burst.clone());
+
+    assert_commits_in_order(&projected, &burst, "no fact restates another, so every one commits");
+    assert_eq!(projected.counters.coalesced_observed.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn a_group_colour_in_another_mode_does_not_fold_the_colour_before_it() {
+    let port = FakeReadPort {
+        group_rows: vec![group_row(1, 2), group_row(2, 3)],
+        lamps: vec![
+            lamp_with_caps(1, 2, caps(true, false, false)),
+            lamp_with_caps(2, 3, caps(false, true, false)),
+        ],
+        ..FakeReadPort::default()
+    };
+    let group_colour = |color, after_ms| {
+        let mut body = observed(
+            ObservedKind::TargetStateObserved,
+            DaliTargetScope::Group,
+            Some(colour_only(color)),
+            false,
+        );
+        body.group_id = Some(7);
+        BusEventPayload::from(stamped(body, after_ms))
+    };
+    let projected = project_queued_events(
+        port,
+        vec![group_colour(cct_color(3000), 0), group_colour(xy_color(20_000, 20_000), 40)],
+    );
+
+    let tc = color_by_vl(&projected.tap, 2);
+    assert_eq!(
+        tc[&1].as_ref().map(|c| c.mode),
+        Some(ColorMode::Cct),
+        "the Tc-only member keeps the Tc, since it cannot take the xy that follows"
+    );
+    let xy = color_by_vl(&projected.tap, 2);
+    assert_eq!(xy[&2].as_ref().map(|c| c.mode), Some(ColorMode::Xy));
+    assert!(xy[&1].is_none());
+    assert_no_more_updates(&projected.tap);
+}
+
+#[test]
+fn our_own_command_between_two_foreign_facts_keeps_its_place() {
+    let foreign_level = stamped(sniffed_at_17(LightSetpoint::from_level(100, None), true), 0);
+    let mut own = applied(DaliTargetScope::Short, setpoint(200), true);
+    own.short_address = Some(17);
+    own.applied_at_mono_ms = PRODUCER_MONO_MS + 40;
+    let foreign_colour = stamped(sniffed_at_17(colour_only(cct_color(3000)), false), 80);
+    let projected = project_queued_events(
+        lamp_17_port(),
+        vec![foreign_level.into(), own.into(), foreign_colour.into()],
+    );
+
+    let stamps: Vec<_> = (0..3)
+        .map(|_| recv_runtime_update(&projected.tap).1.update.observed_at_mono_ms)
+        .collect();
+    assert_eq!(
+        stamps,
+        [0, 40, 80].map(|after| Some(PRODUCER_MONO_MS + after)),
+        "a foreign fact is never merged across our own commit, so the registry orders all three"
+    );
+    assert_no_more_updates(&projected.tap);
 }
 
 #[test]
