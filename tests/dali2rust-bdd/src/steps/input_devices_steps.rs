@@ -191,7 +191,7 @@ fn detail_path_of(patch_path: &str) -> String {
     }
 }
 
-// INP-019 INP-070 INP-073 INP-076 INP-095 INP-096
+// INP-019 INP-070 INP-073 INP-076 INP-095 INP-096 INP-097
 #[then(regex = r#"^the mock transport 24-bit trace should be exactly "([0-9A-Fa-f ,]+)"$"#)]
 async fn then_frames24_trace_exactly(world: &mut DaliWorld, trace: String) {
     let expected = parse_frames24(&trace);
@@ -283,7 +283,7 @@ async fn when_scan_succeeds(world: &mut DaliWorld) {
     );
 }
 
-// INP-019 INP-030 INP-070 INP-072 INP-073 INP-076 INP-078 RULE-065 RULE-066 INP-095 INP-096 INP-089 INP-090 INP-092 INP-094
+// INP-019 INP-030 INP-070 INP-072 INP-073 INP-076 INP-078 RULE-065 RULE-066 INP-095 INP-096 INP-089 INP-090 INP-092 INP-094 INP-097
 #[when("the mock transport 24-bit trace is cleared")]
 async fn when_clear_frames24(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear_sent_frames24();

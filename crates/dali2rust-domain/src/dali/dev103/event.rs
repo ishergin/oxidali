@@ -122,6 +122,7 @@ pub mod instance_type {
     pub const ABSOLUTE_INPUT: u8 = 2;
     pub const OCCUPANCY: u8 = 3;
     pub const LIGHT_SENSOR: u8 = 4;
+    pub const COLOUR_SENSOR: u8 = 5;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

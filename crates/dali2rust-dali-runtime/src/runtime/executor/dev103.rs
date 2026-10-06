@@ -1,9 +1,9 @@
 use dali2rust_domain::dali::controller::{DaliApplicationController, Frame24Fault};
 use dali2rust_contracts::msg::Dali103InstanceAction;
 use dali2rust_domain::dali::dev103::{
-    Button301Command, Device103Address, Device103Command, EventScheme, InitialiseScope103,
-    ForwardFrame24, Instance103Command, InstanceAddress, Occupancy303Command, ShortAddressOperand,
-    Special103Command, MAX_INSTANCE_INDEX, MAX_SHORT_ADDRESS,
+    instance_type, Button301Command, Device103Address, Device103Command, EventScheme,
+    InitialiseScope103, ForwardFrame24, Instance103Command, InstanceAddress, Occupancy303Command,
+    ShortAddressOperand, Special103Command, MAX_INSTANCE_INDEX, MAX_SHORT_ADDRESS,
 };
 use dali2rust_domain::dali::pres::DaliResponse;
 
@@ -390,27 +390,55 @@ fn verify_event_filter(
     instance: InstanceAddress,
     filter: [u8; 3],
 ) -> Result<[u8; 3], SemanticDaliError> {
-    let low = send(
-        controller,
-        Instance103Command::QueryEventFilter0To7.frame(address, instance),
-        true,
-    )?;
-    verify_readback(low, |actual| actual == filter[0])?;
-    let upper = [
-        (Instance103Command::QueryEventFilter8To15, 1),
-        (Instance103Command::QueryEventFilter16To23, 2),
+    let width = event_filter_width(controller, address, instance)?;
+    let queries = [
+        Instance103Command::QueryEventFilter0To7,
+        Instance103Command::QueryEventFilter8To15,
+        Instance103Command::QueryEventFilter16To23,
     ];
-    let mut held = [filter[0], NARROWED_FILTER_BYTE, NARROWED_FILTER_BYTE];
-    for (query, byte) in upper {
+    let mut held = [ABSENT_FILTER_BYTE; 3];
+    for (byte, query) in queries.into_iter().enumerate().take(width) {
         let seen = send(controller, query.frame(address, instance), true)?;
-        if seen != DaliResponse::NoAnswer {
-            held[byte] = verify_readback(seen, |actual| actual == filter[byte])?;
-        }
+        held[byte] = verify_readback(seen, |actual| actual == filter[byte])?;
     }
     Ok(held)
 }
 
-const NARROWED_FILTER_BYTE: u8 = 0;
+const ABSENT_FILTER_BYTE: u8 = 0;
+
+const FULL_EVENT_FILTER_BYTES: usize = 3;
+
+const NARROWED_EVENT_FILTER_BYTES: usize = 1;
+
+fn event_filter_width(
+    controller: &mut impl DaliApplicationController,
+    address: Device103Address,
+    instance: InstanceAddress,
+) -> Result<usize, SemanticDaliError> {
+    let seen = send(controller, Instance103Command::QueryInstanceType.frame(address, instance), true)?;
+    let instance_type = verify_readback(seen, |_| true)?;
+    Ok(if narrows_event_filter(instance_type) {
+        NARROWED_EVENT_FILTER_BYTES
+    } else {
+        FULL_EVENT_FILTER_BYTES
+    })
+}
+
+// IEC 62386-301 §9.4.6
+// IEC 62386-302 §9.4.4
+// IEC 62386-303 §9.4.4
+// IEC 62386-304 §9.4.4
+// IEC 62386-305 §9.4.4
+const fn narrows_event_filter(instance_type: u8) -> bool {
+    matches!(
+        instance_type,
+        instance_type::PUSH_BUTTON
+            | instance_type::ABSOLUTE_INPUT
+            | instance_type::OCCUPANCY
+            | instance_type::LIGHT_SENSOR
+            | instance_type::COLOUR_SENSOR
+    )
+}
 
 pub fn set_instance_enabled_verified(
     controller: &mut impl DaliApplicationController,

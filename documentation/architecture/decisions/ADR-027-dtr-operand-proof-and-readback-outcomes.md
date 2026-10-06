@@ -46,8 +46,10 @@ IEC 62386-101 §9.1.3–9.1.4 make a collision destroy the frame for every recei
   minimum and maximum level — each of which queries the variable it set. For fade time
   that is stronger than proving `DTR0`; for a scene it is convergence rather than proof.
   The upper bytes of a Part 103 `SET EVENT FILTER` (`DTR1`, `DTR2`) are read back the
-  same way: a part that narrows the filter ignores those registers and answers NO for the
-  bytes it lacks (103 §9.6.4), so a proof would fail where nothing is at stake.
+  same way, as many bytes as the instance type holds: Parts 301-305 narrow the filter to
+  one byte and ignore those registers (103 §9.6.4), so a proof would fail where nothing
+  is at stake. The type is queried after the write; a byte the type holds goes through
+  the classifier below, and a byte it lacks is held as 0.
   This is a deliberate divergence from the list above, not a hole.
 - **Group and broadcast operands cannot be proved:** the read-back is an addressed query
   by construction. Those writes keep effect-level verification only, and that gap is

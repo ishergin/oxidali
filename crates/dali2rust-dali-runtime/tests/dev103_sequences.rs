@@ -9,10 +9,12 @@ use dali2rust_dali_runtime::runtime::executor::dev103::{
     identify_device, scan_control_devices, set_event_filter_verified, set_event_scheme_verified,
     ScannedDevice, FRAME24_CONTENDED,
 };
-use dali2rust_dali_runtime::runtime::executor::helpers::VERIFY_FAILED_MESSAGE;
+use dali2rust_dali_runtime::runtime::executor::helpers::{
+    VERIFY_CONTENDED_MESSAGE, VERIFY_FAILED_MESSAGE, VERIFY_UNANSWERED_MESSAGE,
+};
 use dali2rust_domain::dali::dev103::{
-    Device103Address, Device103Command, EventScheme, Instance103Command, InstanceAddress,
-    Special103Command,
+    instance_type, Device103Address, Device103Command, EventScheme, Instance103Command,
+    InstanceAddress, Special103Command,
 };
 use dali2rust_domain::dali::ses::RetryPolicy;
 use dali2rust_platform::dali::{DaliWireCounters, TransferOutcome};
@@ -225,6 +227,8 @@ fn a_collided_24_bit_write_is_rearmed_and_reproved_before_it_goes_again() {
 
 const FILTER: [u8; 3] = [0x0F, 0x80, 0x01];
 
+const GENERIC: u8 = instance_type::GENERIC;
+
 fn filter_queries() -> [Instance103Command; 3] {
     [
         Instance103Command::QueryEventFilter0To7,
@@ -233,46 +237,58 @@ fn filter_queries() -> [Instance103Command; 3] {
     ]
 }
 
-fn answer_filter_write(transport: &Arc<Mutex<MockDaliTransport>>, read_back: [Option<u8>; 3]) {
+fn instance_frame(command: Instance103Command) -> [u8; 3] {
+    command
+        .frame(Device103Address::Short(3), InstanceAddress::Number(0))
+        .as_bytes()
+}
+
+fn answer_filter_write(
+    transport: &Arc<Mutex<MockDaliTransport>>,
+    kind: Option<u8>,
+    read_back: [Option<u8>; 3],
+) {
     let guard = transport.lock().expect("mock lock");
-    let address = Device103Address::Short(3);
     guard.script_frame24_answer(
-        Device103Command::QueryContentDtr0.frame(address).as_bytes(),
+        Device103Command::QueryContentDtr0.frame(Device103Address::Short(3)).as_bytes(),
         FILTER[0],
     );
+    if let Some(kind) = kind {
+        guard.script_frame24_answer(instance_frame(Instance103Command::QueryInstanceType), kind);
+    }
     for (query, answer) in filter_queries().into_iter().zip(read_back) {
         if let Some(answer) = answer {
-            guard.script_frame24_answer(
-                query.frame(address, InstanceAddress::Number(0)).as_bytes(),
-                answer,
-            );
+            guard.script_frame24_answer(instance_frame(query), answer);
         }
     }
+}
+
+fn filter_write_frames(read_back: usize) -> Vec<[u8; 3]> {
+    let set = instance_frame(Instance103Command::SetEventFilter);
+    let mut expected = vec![
+        Special103Command::Dtr2.frame(FILTER[2]).as_bytes(),
+        Special103Command::Dtr1.frame(FILTER[1]).as_bytes(),
+        Special103Command::Dtr0.frame(FILTER[0]).as_bytes(),
+        Device103Command::QueryContentDtr0.frame(Device103Address::Short(3)).as_bytes(),
+        set,
+        set,
+        instance_frame(Instance103Command::QueryInstanceType),
+    ];
+    expected.extend(filter_queries().into_iter().take(read_back).map(instance_frame));
+    expected
 }
 
 #[test]
 fn an_event_filter_reads_back_every_byte_it_set() {
     let (mut controller, transport) = controller();
-    answer_filter_write(&transport, FILTER.map(Some));
+    answer_filter_write(&transport, Some(GENERIC), FILTER.map(Some));
 
     let held = set_event_filter_verified(&mut controller, 3, 0, FILTER).expect("every byte read back");
-    assert_eq!(held, FILTER);
 
-    let address = Device103Address::Short(3);
-    let instance = InstanceAddress::Number(0);
-    let set = Instance103Command::SetEventFilter.frame(address, instance).as_bytes();
-    let mut expected = vec![
-        Special103Command::Dtr2.frame(FILTER[2]).as_bytes(),
-        Special103Command::Dtr1.frame(FILTER[1]).as_bytes(),
-        Special103Command::Dtr0.frame(FILTER[0]).as_bytes(),
-        Device103Command::QueryContentDtr0.frame(address).as_bytes(),
-        set,
-        set,
-    ];
-    expected.extend(filter_queries().map(|query| query.frame(address, instance).as_bytes()));
+    assert_eq!(held, FILTER);
     assert_eq!(
         frames24(&transport),
-        expected,
+        filter_write_frames(3),
         "SET EVENT FILTER takes bits 8-23 from DTR1 and DTR2, so bits 8-23 are read back too"
     );
 }
@@ -283,7 +299,7 @@ fn an_upper_filter_byte_that_did_not_land_refuses_the_write() {
         let (mut controller, transport) = controller();
         let mut read_back = FILTER.map(Some);
         read_back[corrupted] = Some(FILTER[corrupted] ^ 0xFF);
-        answer_filter_write(&transport, read_back);
+        answer_filter_write(&transport, Some(GENERIC), read_back);
 
         let outcome = set_event_filter_verified(&mut controller, 3, 0, FILTER);
 
@@ -295,19 +311,92 @@ fn an_upper_filter_byte_that_did_not_land_refuses_the_write() {
     }
 }
 
+#[test]
+fn a_full_width_filter_byte_that_goes_unanswered_proves_nothing() {
+    for silent in [1usize, 2] {
+        let (mut controller, transport) = controller();
+        let mut read_back = FILTER.map(Some);
+        read_back[silent] = None;
+        answer_filter_write(&transport, Some(GENERIC), read_back);
+
+        let outcome = set_event_filter_verified(&mut controller, 3, 0, FILTER);
+
+        assert_eq!(
+            outcome.err().map(|error| error.message()),
+            Some(VERIFY_UNANSWERED_MESSAGE),
+            "a generic instance holds all 24 bits, so silence on byte {silent} is no answer"
+        );
+    }
+}
+
+#[test]
+fn an_instance_whose_type_goes_unanswered_proves_nothing() {
+    let (mut controller, transport) = controller();
+    answer_filter_write(&transport, None, FILTER.map(Some));
+
+    let outcome = set_event_filter_verified(&mut controller, 3, 0, FILTER);
+
+    assert_eq!(
+        outcome.err().map(|error| error.message()),
+        Some(VERIFY_UNANSWERED_MESSAGE),
+        "without the type the filter width is unknown"
+    );
+}
+
+#[test]
+fn a_violation_on_an_upper_filter_byte_is_contended() {
+    let (mut controller, transport) = controller();
+    {
+        let guard = transport.lock().expect("mock lock");
+        let staged = [
+            TransferOutcome::NoAnswer,
+            TransferOutcome::NoAnswer,
+            TransferOutcome::NoAnswer,
+            TransferOutcome::Answer(FILTER[0]),
+            TransferOutcome::NoAnswer,
+            TransferOutcome::NoAnswer,
+            TransferOutcome::Answer(GENERIC),
+            TransferOutcome::Answer(FILTER[0]),
+            TransferOutcome::CorruptedInWindow,
+        ];
+        for outcome in staged {
+            guard.script_frame24_outcome(outcome);
+        }
+    }
+
+    let outcome = set_event_filter_verified(&mut controller, 3, 0, FILTER);
+
+    assert_eq!(
+        outcome.err().map(|error| error.message()),
+        Some(VERIFY_CONTENDED_MESSAGE)
+    );
+    assert_eq!(frames24(&transport), filter_write_frames(2));
+}
+
 // IEC 62386-103 §9.6.4
 #[test]
-fn a_narrowed_filter_answers_no_for_the_bytes_it_does_not_have() {
-    let (mut controller, transport) = controller();
-    answer_filter_write(&transport, [Some(FILTER[0]), None, None]);
+fn a_narrowed_filter_reads_back_only_the_byte_it_has() {
+    let narrowed = [
+        instance_type::PUSH_BUTTON,
+        instance_type::ABSOLUTE_INPUT,
+        instance_type::OCCUPANCY,
+        instance_type::LIGHT_SENSOR,
+        instance_type::COLOUR_SENSOR,
+    ];
+    for kind in narrowed {
+        let (mut controller, transport) = controller();
+        answer_filter_write(&transport, Some(kind), [Some(FILTER[0]), None, None]);
 
-    let held = set_event_filter_verified(&mut controller, 3, 0, FILTER)
-        .expect("a one-byte filter ignores DTR1 and DTR2 and says so with NO");
-    assert_eq!(
-        held,
-        [FILTER[0], 0, 0],
-        "the bytes the instance does not have are not reported as written"
-    );
+        let held = set_event_filter_verified(&mut controller, 3, 0, FILTER)
+            .expect("Parts 301-305 reduce eventFilter to one byte");
+
+        assert_eq!(
+            held,
+            [FILTER[0], 0, 0],
+            "type {kind}: the bytes the instance does not have are not reported as written"
+        );
+        assert_eq!(frames24(&transport), filter_write_frames(1));
+    }
 }
 
 #[test]
