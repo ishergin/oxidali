@@ -1,13 +1,16 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use dali2rust_bus::{BusFrame, BusId, BusPublisher};
 use dali2rust_contracts::msg::{
     fixed_text_32, FixedText32, HclPointList, HclScheduleDeleteCommand, HclScheduleUpsertCommand,
-    HclTargetList, CONFIG_WRITE_TTL_MS, MAX_HCL_POINTS_PER_COMMAND, MAX_HCL_TARGETS_PER_COMMAND,
+    HclTargetList, OperationStatus, CONFIG_WRITE_TTL_MS, MAX_HCL_POINTS_PER_COMMAND,
+    MAX_HCL_TARGETS_PER_COMMAND,
 };
-use dali2rust_domain::registry::MAX_HCL_SCHEDULES;
+use dali2rust_domain::registry::{
+    OperationReadPort, HCL_SCHEDULE_LIMIT_REACHED, MAX_HCL_SCHEDULES,
+};
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 
 use crate::confirmation_bridge::PendingConfirmationSlots;
@@ -30,7 +33,6 @@ use crate::http::types::HttpResponse;
 const GENERATED_ID_PREFIX: &str = "schedule-";
 const GENERATED_ID_LIMIT: u16 = 64;
 const PENDING_ID_HOLD: Duration = Duration::from_millis(CONFIG_WRITE_TTL_MS as u64);
-const ACCEPTED: u16 = 202;
 
 #[derive(Clone)]
 pub struct HclBusContext {
@@ -99,50 +101,98 @@ impl ApiHandler for HclScheduleDetailHandler {
     }
 }
 
+struct HeldScheduleId {
+    id: FixedText32,
+    operation: Option<FixedText32>,
+    since: Instant,
+}
+
 pub struct HclScheduleCreateHandler {
     state: Arc<dyn HclScheduleHttpState>,
+    operations: Arc<dyn OperationReadPort>,
     bus: HclBusContext,
-    pending: Mutex<Vec<(FixedText32, Instant)>>,
+    held: Mutex<Vec<HeldScheduleId>>,
 }
 
 impl HclScheduleCreateHandler {
-    pub fn new(state: Arc<dyn HclScheduleHttpState>, bus: HclBusContext) -> Self {
+    pub fn new(
+        state: Arc<dyn HclScheduleHttpState>,
+        operations: Arc<dyn OperationReadPort>,
+        bus: HclBusContext,
+    ) -> Self {
         Self {
             state,
+            operations,
             bus,
-            pending: Mutex::new(Vec::with_capacity(MAX_HCL_SCHEDULES)),
+            held: Mutex::new(Vec::with_capacity(MAX_HCL_SCHEDULES)),
         }
     }
 
     fn claim_id(&self, requested: &str) -> Result<String, HttpResponse> {
-        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
-        let now = Instant::now();
-        pending.retain(|(id, since)| {
-            now.duration_since(*since) < PENDING_ID_HOLD
-                && !self.state.hcl_schedule_id_taken(id.as_str())
-        });
-        if pending.len() >= MAX_HCL_SCHEDULES {
-            return Err(json_err_with_message(409, "conflict", "schedule_limit_reached"));
-        }
-        let taken = |id: &str| {
-            self.state.hcl_schedule_id_taken(id) || pending.iter().any(|(held, _)| held.as_str() == id)
-        };
-        let id = if requested.is_empty() {
-            generate_id(taken)?
-        } else {
+        if !requested.is_empty() {
             validate_schedule_id(requested)?;
-            if taken(requested) {
-                return Err(json_err(409, "conflict"));
-            }
-            requested.to_string()
+        }
+        let mut held = self.lock_held();
+        let now = Instant::now();
+        held.retain(|entry| self.still_held(entry, now));
+        let taken = |id: &str| {
+            self.state.hcl_schedule_id_taken(id) || held.iter().any(|entry| entry.id.as_str() == id)
         };
-        pending.push((fixed_text_32(&id), now));
+        let id = match requested {
+            "" => generate_id(taken)?,
+            requested if taken(requested) => return Err(json_err(409, "conflict")),
+            requested => requested.to_string(),
+        };
+        if held.len() >= MAX_HCL_SCHEDULES {
+            return Err(json_err_with_message(409, "conflict", HCL_SCHEDULE_LIMIT_REACHED));
+        }
+        held.push(HeldScheduleId { id: fixed_text_32(&id), operation: None, since: now });
         Ok(id)
     }
 
+    fn still_held(&self, entry: &HeldScheduleId, now: Instant) -> bool {
+        now.duration_since(entry.since) < PENDING_ID_HOLD
+            && !self.state.hcl_schedule_id_taken(entry.id.as_str())
+            && !entry
+                .operation
+                .as_ref()
+                .is_some_and(|operation| self.operation_finished(operation.as_str()))
+    }
+
+    fn operation_finished(&self, operation: &str) -> bool {
+        self.operations
+            .operation_status(operation)
+            .and_then(|status| OperationStatus::from_rest_name(&status))
+            .is_some_and(OperationStatus::is_terminal)
+    }
+
+    fn bind_operation(&self, id: &str, operation: &str) {
+        if let Some(entry) = self.lock_held().iter_mut().find(|entry| entry.id.as_str() == id) {
+            entry.operation = Some(fixed_text_32(operation));
+        }
+    }
+
     fn release_id(&self, id: &str) {
-        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
-        pending.retain(|(held, _)| held.as_str() != id);
+        self.lock_held().retain(|entry| entry.id.as_str() != id);
+    }
+
+    fn lock_held(&self) -> MutexGuard<'_, Vec<HeldScheduleId>> {
+        self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn publish_held(&self, dto: &HclScheduleDto) -> HttpResponse {
+        let published = validate_schedule(dto)
+            .and_then(|schedule| publish_schedule_chunks(&self.bus, &schedule));
+        match published {
+            Ok(operation) => {
+                self.bind_operation(&dto.schedule_id, &operation);
+                accepted_config_write_response(operation, &dto.schedule_id)
+            }
+            Err(response) => {
+                self.release_id(&dto.schedule_id);
+                response
+            }
+        }
     }
 }
 
@@ -169,11 +219,7 @@ impl ApiHandler for HclScheduleCreateHandler {
             Ok(id) => id,
             Err(response) => return response,
         };
-        let response = write_schedule(&self.bus, &dto);
-        if response.status != ACCEPTED {
-            self.release_id(&dto.schedule_id);
-        }
-        response
+        self.publish_held(&dto)
     }
 }
 
@@ -392,7 +438,49 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct OperationsByKey {
+        statuses: Mutex<HashMap<String, &'static str>>,
+    }
+
+    impl OperationsByKey {
+        fn set(&self, operation: &serde_json::Value, status: &'static str) {
+            let key = operation.as_str().expect("an operation id").to_string();
+            self.statuses.lock().expect("statuses").insert(key, status);
+        }
+    }
+
+    impl OperationReadPort for OperationsByKey {
+        fn operation_status(&self, operation_id: &str) -> Option<std::borrow::Cow<'static, str>> {
+            let statuses = self.statuses.lock().expect("statuses");
+            statuses.get(operation_id).map(|status| std::borrow::Cow::Borrowed(*status))
+        }
+
+        fn operation_view(&self, _operation_id: &str) -> Option<dali2rust_domain::registry::OperationView> {
+            None
+        }
+
+        fn list_operation_keys(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn has_active_operation(
+            &self,
+            _operation_type: dali2rust_contracts::msg::OperationType,
+            _adapter_id: u8,
+        ) -> bool {
+            false
+        }
+    }
+
     fn create_handler(state: Arc<RegistryNotYetStaged>) -> (BusHost, HclScheduleCreateHandler) {
+        create_handler_with(state, Arc::default())
+    }
+
+    fn create_handler_with(
+        state: Arc<RegistryNotYetStaged>,
+        operations: Arc<OperationsByKey>,
+    ) -> (BusHost, HclScheduleCreateHandler) {
         let (host, publisher, ()) = BusHost::spawn(BusConfig::default(), |reg| {
             let _ = reg.subscribe_commands(64, dali2rust_contracts::msg::COMMAND_VARIANT_NAMES);
         });
@@ -403,7 +491,7 @@ mod tests {
             bus_id: BusId(1),
             timeout_ms: 1000,
         };
-        (host, HclScheduleCreateHandler::new(state, bus))
+        (host, HclScheduleCreateHandler::new(state, operations, bus))
     }
 
     fn post(handler: &HclScheduleCreateHandler, schedule_id: Option<&str>) -> (u16, serde_json::Value) {
@@ -466,6 +554,33 @@ mod tests {
         );
         assert_eq!(refused.status, 422);
         assert_eq!(post(&handler, Some("morning")).0, 202);
+    }
+
+    #[test]
+    fn a_name_is_free_again_once_its_operation_has_ended() {
+        let operations = Arc::new(OperationsByKey::default());
+        let (_host, handler) = create_handler_with(Arc::default(), Arc::clone(&operations));
+        let (status, first) = post(&handler, Some("morning"));
+        assert_eq!(status, 202);
+        operations.set(&first["operation_id"], "running");
+        assert_eq!(post(&handler, Some("morning")).0, 409, "a running creation keeps its name");
+        operations.set(&first["operation_id"], "failed");
+        assert_eq!(post(&handler, Some("morning")).0, 202, "an ended one lets it go");
+    }
+
+    #[test]
+    fn an_existing_name_is_a_conflict_even_with_the_limit_in_flight() {
+        let state = Arc::new(RegistryNotYetStaged::default());
+        let (_host, handler) = create_handler(Arc::clone(&state));
+        for _ in 0..MAX_HCL_SCHEDULES {
+            assert_eq!(post(&handler, None).0, 202);
+        }
+        state.set_taken("evening", true);
+        let (status, json) = post(&handler, Some("evening"));
+        assert_eq!(status, 409);
+        assert!(json.get("message").is_none(), "a taken name is a plain conflict: {json}");
+        let (status, json) = post(&handler, Some("Not A Slug"));
+        assert_eq!((status, json["error"].as_str()), (422, Some("invalid_value")));
     }
 
     #[test]

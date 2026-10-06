@@ -19,6 +19,8 @@ pub const MAX_SHORT_ADDRESSES: usize = 64;
 
 pub const MAX_HCL_SCHEDULES: usize = 8;
 
+pub const HCL_SCHEDULE_LIMIT_REACHED: &str = "schedule_limit_reached";
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VirtualLampSnapshot {
     pub name: String,

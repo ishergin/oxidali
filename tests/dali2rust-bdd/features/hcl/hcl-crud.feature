@@ -257,3 +257,12 @@ Feature: HCL schedule CRUD
     When I POST an HCL schedule whose "schedule_id" is "Not_A_Slug"
     Then the response status should be 422
     And the JSON error should be "invalid_value"
+
+  @id:HCL-082
+  Scenario: A schedule deleted after its creation ended can be created again at once
+    Given HCL schedule "morning" exists
+    When I send a DELETE request to "/api/v1/hcl-schedules/morning"
+    Then the response status should be 204
+    When I POST an HCL schedule whose "schedule_id" is "morning"
+    Then the response status should be 202
+    And the last operation eventually succeeds
