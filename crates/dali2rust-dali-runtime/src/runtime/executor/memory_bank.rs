@@ -203,18 +203,20 @@ enum ReadFailure {
 
 #[derive(Debug, Clone, Copy, Default)]
 struct ResumeEvidence {
-    later_byte_answered: bool,
+    first_byte_answered: bool,
     responded: bool,
-    silenced: bool,
+    silences: u8,
 }
 
 impl ResumeEvidence {
-    fn note(&mut self, later_byte: bool, failure: ReadFailure) {
-        self.later_byte_answered |= later_byte;
+    fn note(&mut self, past_first_byte: bool, failure: ReadFailure) {
+        self.first_byte_answered |= past_first_byte;
         self.responded |= failure == ReadFailure::Contended { responded: true };
-        self.silenced |= failure == ReadFailure::Silent;
+        self.silences += u8::from(failure == ReadFailure::Silent);
     }
 }
+
+const MEMORY_BANK_END_SILENCES: u8 = 2;
 
 enum ChunkRead {
     Complete,
@@ -246,9 +248,9 @@ impl ChunkCursor {
             resume: None,
             retries: 0,
             evidence: ResumeEvidence {
-                later_byte_answered: false,
+                first_byte_answered: false,
                 responded: false,
-                silenced: false,
+                silences: 0,
             },
         }
     }
@@ -334,12 +336,12 @@ impl ChunkCursor {
 // DiiA 252 §9.2.2
 fn give_up(failure: ReadFailure, evidence: ResumeEvidence) -> Result<ReadStop, SemanticDaliError> {
     match failure {
-        _ if evidence.later_byte_answered => {
+        _ if evidence.first_byte_answered => {
             Err(SemanticDaliError::OperationFailed(MEMORY_LATCH_LOST))
         }
         _ if evidence.responded => Err(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
         ReadFailure::Failed(error) => Err(error),
-        _ if evidence.silenced => Ok(ReadStop::BankEnded),
+        _ if evidence.silences >= MEMORY_BANK_END_SILENCES => Ok(ReadStop::BankEnded),
         _ => Err(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
     }
 }

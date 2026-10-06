@@ -197,11 +197,12 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   value and ends its chunk: the pointer is re-armed in a transaction of its own at that
   location, or at the start of the latched value holding it, and a fresh chunk goes on
   from there, so no recovery stretches a chunk past the budget. The third failure at one
-  such offset ends the read. The bank ends there only if nothing ever answered at that
-  offset and it fell cleanly silent at least once; a latched value whose later byte had
-  answered fails `memory_bank_latch_lost`, an offset that answered under contention or
-  never fell clean fails `bus_contended`, and a failing transport returns its error. The
-  read closes by comparing both registers (102 §9.10.4).
+  such offset ends the read, judged on everything its attempts showed, in this order: a
+  latched value whose first byte had answered fails `memory_bank_latch_lost`; an offset
+  that answered — a violation or a contended answer — fails `bus_contended`; a transport
+  error on the last attempt is returned; two clean silences end the bank there; anything
+  else fails `bus_contended`, since one silence may be a lost READ. The read closes by
+  comparing both registers (102 §9.10.4).
 
 ## Faults and identification
 

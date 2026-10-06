@@ -518,6 +518,8 @@ enum ReadAttempt {
     ContendedAnswer,
     ContendedSilence,
     Violated,
+    BusBusy,
+    TransportFailed,
 }
 
 fn expect_attempts_at_3(mock: &MockDaliTransport, short: u8, attempts: [ReadAttempt; 3]) {
@@ -537,6 +539,8 @@ fn expect_attempts_at_3(mock: &MockDaliTransport, short: u8, attempts: [ReadAtte
                 mock.expect_forward_frame_with_backward_contended(read, None);
             }
             ReadAttempt::Violated => mock.expect_forward_frame_corrupted_in_window(read),
+            ReadAttempt::BusBusy => mock.expect_forward_frame_bus_busy(read),
+            ReadAttempt::TransportFailed => mock.expect_forward_frame_send_error(read),
         }
     }
 }
@@ -545,7 +549,7 @@ fn expect_attempts_at_3(mock: &MockDaliTransport, short: u8, attempts: [ReadAtte
 #[test]
 fn an_offset_that_answered_under_contention_is_no_end_of_bank() {
     use ReadAttempt::{ContendedAnswer, Silent, Violated};
-    for attempts in [[ContendedAnswer, Violated, Silent], [Violated, Violated, Silent]] {
+    for attempts in [[ContendedAnswer, Silent, Silent], [Violated, Violated, Silent]] {
         let mock = MockDaliTransport::new();
         expect_attempts_at_3(&mock, 5, attempts);
 
@@ -572,6 +576,70 @@ fn clean_silences_end_the_bank_though_the_last_read_crossed_traffic() {
     let execution = read_memory_bank(&mut controller, 5, 0, 3, 1);
 
     assert_eq!(execution.error, None, "nothing ever answered there");
+    assert!(execution.bytes.is_empty());
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn one_clean_silence_among_contended_reads_is_no_end_of_bank() {
+    use ReadAttempt::{BusBusy, ContendedSilence, Silent};
+    for attempts in [[Silent, BusBusy, BusBusy], [ContendedSilence, Silent, BusBusy]] {
+        let mock = MockDaliTransport::new();
+        expect_attempts_at_3(&mock, 5, attempts);
+
+        let (transport, mut controller) = setup_controller(mock);
+        let execution = read_memory_bank(&mut controller, 5, 0, 3, 1);
+
+        assert_eq!(
+            execution.error,
+            Some(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
+            "one silence may be a lost READ; the bus never let the others through"
+        );
+        assert_script_consumed(&transport);
+    }
+}
+
+#[test]
+fn a_transport_that_fails_on_the_last_attempt_is_named_over_the_silences() {
+    use ReadAttempt::{Silent, TransportFailed};
+    let mock = MockDaliTransport::new();
+    expect_attempts_at_3(&mock, 5, [Silent, Silent, TransportFailed]);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, 5, 0, 3, 1);
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed("dali_transport_error"))
+    );
+    assert_script_consumed(&transport);
+}
+
+// IEC 62386-102 §9.10.4, Table 9
+#[test]
+fn a_header_read_that_lost_its_reserved_read_never_reports_a_two_byte_bank() {
+    let mock = MockDaliTransport::new();
+    let short = 5;
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(&mock, short, 0, 0);
+    expect_pointer_check(&mock, short, 0, Some(0));
+    mock.expect_forward_frame_with_backward(read, Some(0x1C));
+    mock.expect_forward_frame_with_backward(read, None);
+    mock.expect_forward_frame_with_backward(read, None);
+    for _ in 0..MEMORY_READ_LOCATION_RETRIES {
+        expect_rearmed_chunk(&mock, short, 0, 2);
+        mock.expect_forward_frame_bus_busy(read);
+    }
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 0, 0, 3);
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
+        "the silence at 0x02 was location 0x01 answering late; reading it as the bank's end \
+         would report last bank 0 and skip every bank above"
+    );
     assert!(execution.bytes.is_empty());
     assert_script_consumed(&transport);
 }
