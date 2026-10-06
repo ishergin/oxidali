@@ -72,6 +72,10 @@ Feature: Physical device write-attributes
 
   @id:PD-244
   Scenario: Write-attributes rejects a fade time past the end of the IEC table
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    And the DALI mock transport frame log should be cleared
     When I POST JSON {"fade_time_ms":90501} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
     Then the response status should be 422
     And the DALI mock transport should have received 0 forward frame
@@ -96,7 +100,10 @@ Feature: Physical device write-attributes
   @id:PD-038
   Scenario: Write-attributes answers 202 without waiting for the bus
     Given a bus with confirmation timeout of 500 milliseconds
-    And the DALI transport blocks indefinitely
+    And a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given the DALI transport blocks indefinitely
     When I POST JSON {"fade_time_ms":500} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
     Then the response arrives within 250 milliseconds
     And the response status should be 202
@@ -104,6 +111,10 @@ Feature: Physical device write-attributes
 
   @id:PD-032
   Scenario: Write-attributes rejects discovered and runtime fields in the body
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    And the DALI mock transport frame log should be cleared
     When I POST JSON {"device_type_discovered":"dt6_led"} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
     Then the response status should be 422
     And the JSON error should be "unsupported_field"
@@ -111,6 +122,10 @@ Feature: Physical device write-attributes
 
   @id:PD-033
   Scenario: Write-attributes rejects an out-of-range fade_rate
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    And the DALI mock transport frame log should be cleared
     When I POST JSON {"fade_rate":16} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
     Then the response status should be 422
     And the JSON error should be "invalid_value"
@@ -132,6 +147,10 @@ Feature: Physical device write-attributes
 
   @id:PD-182
   Scenario: A Tc-limit pair with coolest above warmest never reaches the wire
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    And the DALI mock transport frame log should be cleared
     When I POST JSON {"tc_coolest_mirek":350,"tc_warmest_mirek":200} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
     Then the response status should be 422
     And the JSON error should be "invalid_value"
@@ -180,6 +199,10 @@ Feature: Physical device write-attributes
 
   @id:PD-187
   Scenario: A min level above the max level in one body never reaches the wire
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    And the DALI mock transport frame log should be cleared
     When I POST JSON {"min_level":200,"max_level":100} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
     Then the response status should be 422
     And the JSON error should be "invalid_value"
@@ -286,4 +309,13 @@ Feature: Physical device write-attributes
     When I POST JSON {"dimming_curve":2} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
     Then the response status should be 422
     And the JSON error should be "invalid_value"
+    And the DALI mock transport should have received 0 forward frame
+
+  @id:PD-275
+  Scenario: Write-attributes to a short address with no record is 404 and opens no operation
+    Given the DALI mock transport trace is cleared
+    When I POST JSON {"fade_time_ms":500} to "/api/v1/adapters/0/physical-devices/5/write-attributes"
+    Then the response status should be 404
+    And the JSON error should be "not_found"
+    And the operations list should contain exactly 0 operations
     And the DALI mock transport should have received 0 forward frame

@@ -149,3 +149,9 @@ Feature: Physical device direct target state
     When I PUT JSON {"rgbwaf":{"r":254,"g":0,"b":0}} to "/api/v1/adapters/0/physical-devices/0/target-state"
     Then the response status should be 422
     And the JSON error should be "invalid_value"
+
+  @id:PD-276
+  Scenario: Target-state at a short address above 63 is an invalid resource id
+    When I PUT JSON {"power":"on","level":100} to "/api/v1/adapters/0/physical-devices/64/target-state"
+    Then the response status should be 400
+    And the JSON error should be "invalid_resource_id"

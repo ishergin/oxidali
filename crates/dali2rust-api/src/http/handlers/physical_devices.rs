@@ -199,8 +199,7 @@ impl crate::http::handlers::common::MutatingHandler for PhysicalDevicePatchHandl
         params: &HashMap<String, String>,
         body: &[u8],
     ) -> Result<(u8, u8, PdPatchData), HttpResponse> {
-        let aid = parse_adapter_id(self.state.adapter_count(), params)?;
-        let short = parse_physical_short(params)?;
+        let (aid, short) = parse_existing_physical_device(self.state.as_ref(), params)?;
         let v = parse_json_body(body)?;
         let obj = v.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
         validate_pd_patch_keys(obj)?;
@@ -273,7 +272,7 @@ declare_handler_shell!(
         publisher: BusPublisher,
         correlation: Arc<CorrelationIdAllocator>,
         bus_id: BusId,
-        adapter_count: u8,
+        state: Arc<dyn PhysicalDeviceHttpState>,
     }
 );
 
@@ -303,8 +302,7 @@ impl crate::http::handlers::common::MutatingHandler for PhysicalDeviceWriteAttri
         params: &HashMap<String, String>,
         body: &[u8],
     ) -> Result<(u8, u8, PdWriteAttrData), HttpResponse> {
-        let aid = parse_adapter_id(self.adapter_count, params)?;
-        let short = parse_physical_short(params)?;
+        let (aid, short) = parse_existing_physical_device(self.state.as_ref(), params)?;
         let v = parse_json_body(body)?;
         let obj = v.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
         validate_pd_write_attr_keys(obj)?;
@@ -360,17 +358,7 @@ impl crate::http::handlers::common::MutatingHandler for PhysicalDeviceTargetStat
         body: &[u8],
     ) -> Result<(u8, u8, LightSetpoint), HttpResponse> {
         let aid = parse_adapter_id(self.state.adapter_count(), params)?;
-        let ss = params
-            .get("short")
-            .ok_or_else(|| json_err(400, "missing_short_address"))?;
-        let sa = ss
-            .parse::<u16>()
-            .map_err(|_| json_err(400, "invalid_resource_id"))?;
-        if sa > 63 {
-            return Err(json_err(422, "invalid_value"));
-        }
-        let short = sa as u8;
-
+        let short = parse_physical_short(params)?;
         let caps = self
             .state
             .physical_device_capabilities(aid, short)
@@ -637,6 +625,13 @@ fn validate_pd_operation_request(
     if method != "POST" {
         return Err(HttpResponse::method_not_allowed());
     }
+    parse_existing_physical_device(state, params)
+}
+
+fn parse_existing_physical_device(
+    state: &dyn PhysicalDeviceHttpState,
+    params: &HashMap<String, String>,
+) -> Result<(u8, u8), HttpResponse> {
     let adapter_id = parse_adapter_id(state.adapter_count(), params)?;
     let short = parse_physical_short(params)?;
     if !state.physical_device_exists(adapter_id, short) {

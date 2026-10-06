@@ -545,7 +545,7 @@ fn wire_physical_device_diagnostics(
                 bus.publisher.clone(),
                 Arc::clone(&bus.correlation),
                 bus.bus_id,
-                adapter_count,
+                Arc::clone(&registry.physical_state),
             ),
         ))
         .with_handler(RouteKey::AdapterDiscoveryRuns, Box::new(AdapterDiscoveryRunsHandler::new(

@@ -156,3 +156,30 @@ Feature: IEC 62386-103 input devices as a REST resource
     And 24-bit forward frame 3 should be sent at priority 1
     And 24-bit forward frame 4 should be sent at priority 1
     And 24-bit forward frame 5 should be sent at priority 3
+
+  @id:INP-087
+  Scenario Outline: An input-device route on an adapter that does not exist is 404
+    When I send a <method> request to "<path>"
+    Then the response status should be 404
+    And the JSON error should be "not_found"
+    And the mock transport should have sent no 24-bit frames
+
+    Examples:
+      | method | path                                         |
+      | GET    | /api/v1/adapters/9/input-devices             |
+      | POST   | /api/v1/adapters/9/input-devices/scan        |
+      | POST   | /api/v1/adapters/9/input-devices/commission  |
+      | GET    | /api/v1/adapters/9/input-devices/3           |
+      | DELETE | /api/v1/adapters/9/input-devices/3           |
+
+  @id:INP-088
+  Scenario Outline: A short address outside 0..63 is not a resource id
+    When I send a <method> request to "<path>"
+    Then the response status should be 400
+    And the JSON error should be "invalid_resource_id"
+
+    Examples:
+      | method | path                                           |
+      | GET    | /api/v1/adapters/0/input-devices/64            |
+      | DELETE | /api/v1/adapters/0/input-devices/64            |
+      | POST   | /api/v1/adapters/0/input-devices/64/identify   |

@@ -14,13 +14,26 @@ use crate::confirmation_bridge::PendingConfirmationSlots;
 use crate::http::dispatcher::publish_batch_and_wait_for_success;
 use crate::http::handlers::common::{
     accepted_operation_response, json_err, json_err_with_message, json_stream_dto,
+    parse_adapter_id, parse_resource_id_param,
 };
 use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command;
 use crate::http::input_device_state::InputDeviceHttpState;
 use crate::http::types::HttpResponse;
 
-fn path_u8(params: &std::collections::HashMap<String, String>, key: &str) -> Option<u8> {
+type PathParams = std::collections::HashMap<String, String>;
+
+const MAX_SHORT_ADDRESS: u16 = 63;
+
+fn path_u8(params: &PathParams, key: &str) -> Option<u8> {
     params.get(key)?.parse::<u8>().ok()
+}
+
+fn device_path(params: &PathParams) -> Result<u8, HttpResponse> {
+    parse_resource_id_param(params, "short_address", MAX_SHORT_ADDRESS)
+}
+
+fn adapter_path(state: &dyn InputDeviceHttpState, params: &PathParams) -> Result<u8, HttpResponse> {
+    parse_adapter_id(state.adapter_count(), params)
 }
 
 const PATCH_NAME: u8 = InputDeviceMetadataUpdateCommand::PATCH_NAME;
@@ -52,8 +65,9 @@ impl ApiHandler for InputDeviceListHandler {
         _body: &[u8],
         params: &std::collections::HashMap<String, String>,
     ) -> HttpResponse {
-        let Some(adapter_id) = path_u8(params, "adapter_id") else {
-            return json_err(400, "invalid_resource_id");
+        let adapter_id = match adapter_path(self.state.as_ref(), params) {
+            Ok(adapter_id) => adapter_id,
+            Err(response) => return response,
         };
         json_stream_dto(serde_json::json!({
             "now_ms": self.wall.unix_millis(),
@@ -84,10 +98,11 @@ impl ApiHandler for InputDeviceGetHandler {
         _body: &[u8],
         params: &std::collections::HashMap<String, String>,
     ) -> HttpResponse {
-        let (Some(adapter_id), Some(short_address)) =
-            (path_u8(params, "adapter_id"), path_u8(params, "short_address"))
-        else {
-            return json_err(400, "invalid_resource_id");
+        let path = adapter_path(self.state.as_ref(), params)
+            .and_then(|adapter_id| Ok((adapter_id, device_path(params)?)));
+        let (adapter_id, short_address) = match path {
+            Ok(path) => path,
+            Err(response) => return response,
         };
         match self.state.detail(adapter_id, short_address) {
             Some(mut dto) => {
@@ -180,8 +195,9 @@ impl ApiHandler for InputDeviceActionHandler {
         body: &[u8],
         params: &std::collections::HashMap<String, String>,
     ) -> HttpResponse {
-        let Some(adapter_id) = path_u8(params, "adapter_id") else {
-            return json_err(400, "invalid_resource_id");
+        let adapter_id = match adapter_path(self.state.as_ref(), params) {
+            Ok(adapter_id) => adapter_id,
+            Err(response) => return response,
         };
         match self.action {
             InputDeviceAction::Scan => self.scan(adapter_id),
@@ -253,8 +269,9 @@ impl InputDeviceActionHandler {
         params: &std::collections::HashMap<String, String>,
         _body: &[u8],
     ) -> HttpResponse {
-        let Some(short_address) = path_u8(params, "short_address") else {
-            return json_err(400, "invalid_resource_id");
+        let short_address = match device_path(params) {
+            Ok(short_address) => short_address,
+            Err(response) => return response,
         };
         if self.state.detail(adapter_id, short_address).is_none() {
             return json_err(404, "input_device_not_found");
@@ -283,10 +300,11 @@ impl InputDeviceActionHandler {
         params: &std::collections::HashMap<String, String>,
         body: &[u8],
     ) -> HttpResponse {
-        let (Some(short_address), Some(instance_number)) = (
-            path_u8(params, "short_address"),
-            path_u8(params, "instance_number"),
-        ) else {
+        let short_address = match device_path(params) {
+            Ok(short_address) => short_address,
+            Err(response) => return response,
+        };
+        let Some(instance_number) = path_u8(params, "instance_number") else {
             return json_err(400, "invalid_resource_id");
         };
         let Some(device) = self.state.detail(adapter_id, short_address) else {
@@ -319,10 +337,11 @@ impl InputDeviceActionHandler {
         params: &std::collections::HashMap<String, String>,
         body: &[u8],
     ) -> HttpResponse {
-        let (Some(short_address), Some(instance_number)) = (
-            path_u8(params, "short_address"),
-            path_u8(params, "instance_number"),
-        ) else {
+        let short_address = match device_path(params) {
+            Ok(short_address) => short_address,
+            Err(response) => return response,
+        };
+        let Some(instance_number) = path_u8(params, "instance_number") else {
             return json_err(400, "invalid_resource_id");
         };
         let Some(device) = self.state.detail(adapter_id, short_address) else {
@@ -361,8 +380,9 @@ impl InputDeviceActionHandler {
         params: &std::collections::HashMap<String, String>,
         body: &[u8],
     ) -> HttpResponse {
-        let Some(short_address) = path_u8(params, "short_address") else {
-            return json_err(400, "invalid_resource_id");
+        let short_address = match device_path(params) {
+            Ok(short_address) => short_address,
+            Err(response) => return response,
         };
         if self.state.detail(adapter_id, short_address).is_none() {
             return json_err(404, "input_device_not_found");
@@ -395,8 +415,9 @@ impl InputDeviceActionHandler {
         adapter_id: u8,
         params: &std::collections::HashMap<String, String>,
     ) -> HttpResponse {
-        let Some(short_address) = path_u8(params, "short_address") else {
-            return json_err(400, "invalid_resource_id");
+        let short_address = match device_path(params) {
+            Ok(short_address) => short_address,
+            Err(response) => return response,
         };
         if self.state.detail(adapter_id, short_address).is_none() {
             return json_err(404, "input_device_not_found");

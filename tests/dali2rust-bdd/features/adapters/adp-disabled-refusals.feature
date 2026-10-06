@@ -3,6 +3,9 @@ Feature: A disabled adapter refuses work, and says so before its TTL
 
   @id:ADP-021
   Scenario: Write-attributes on a disabled adapter fails the operation instead of timing out
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
     When I PATCH JSON {"enabled":false} to "/api/v1/adapters/0"
     Then the response status should be 200
     And the JSON boolean field "enabled" should be false
