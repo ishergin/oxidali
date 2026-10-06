@@ -1336,8 +1336,13 @@ fn group_recall_without_a_group_snapshot_is_ignored_not_a_success() {
     assert_eq!(counters.scene_expansions.load(Ordering::Relaxed), 0);
 }
 
-#[test]
-fn observed_burst_for_same_target_coalesces_to_final_value() {
+struct QueuedBurst {
+    tap: BusSubscriberRx,
+    counters: Arc<ProjectorCounters>,
+    _host: BusHost,
+}
+
+fn project_queued_burst(bodies: Vec<DaliObservedFrameEvent>) -> QueuedBurst {
     let port = FakeReadPort {
         lamps: vec![bound_lamp(12, 17)],
         ..FakeReadPort::default()
@@ -1348,53 +1353,83 @@ fn observed_burst_for_same_target_coalesces_to_final_value() {
             reg.subscribe_commands(32, dali2rust_contracts::msg::COMMAND_VARIANT_NAMES),
         )
     });
-    for level in [10u8, 20, 30] {
-        let mut body = observed(
-            ObservedKind::TargetStateObserved,
-            DaliTargetScope::Short,
-            Some(setpoint(level)),
-            true,
-        );
-        body.short_address = Some(17);
-        let env = dali2rust_contracts::bus::event_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            CORRELATION_NONE,
-            BusId::default().0,
-            Some(Origin::Internal),
-            body,
-        );
-        assert_eq!(
-            publisher.try_publish(BusChannel::Events, BusFrame::event(env)),
-            PublishResult::Queued
-        );
+    let queued = u32::try_from(bodies.len()).expect("a short burst");
+    for body in bodies {
+        publish_event(&publisher, CORRELATION_NONE, body);
     }
     wait_until(
         || {
             host.counters_snapshot()
                 .event_subscribers
                 .first()
-                .is_some_and(|s| s.delivered >= 3)
+                .is_some_and(|s| s.delivered >= queued)
         },
         Duration::from_secs(2),
     );
-
     let counters = Arc::new(ProjectorCounters::default());
     let _join = spawn_projector_worker(
         ev_rx,
-        publisher.clone(),
+        publisher,
         BusId::default(),
         Arc::new(port),
         Arc::clone(&counters),
     );
+    QueuedBurst {
+        tap: cmd_tap,
+        counters,
+        _host: host,
+    }
+}
 
-    let (_, cmd) = recv_runtime_update(&cmd_tap);
+fn sniffed_at_17(sp: LightSetpoint, dapc: bool) -> DaliObservedFrameEvent {
+    let mut body = observed(
+        ObservedKind::TargetStateObserved,
+        DaliTargetScope::Short,
+        Some(sp),
+        dapc,
+    );
+    body.short_address = Some(17);
+    body
+}
+
+#[test]
+fn observed_burst_for_same_target_coalesces_to_final_value() {
+    let burst = [10u8, 20, 30]
+        .into_iter()
+        .map(|level| sniffed_at_17(setpoint(level), true))
+        .collect();
+    let projected = project_queued_burst(burst);
+
+    let (_, cmd) = recv_runtime_update(&projected.tap);
     assert_eq!(
         cmd.update.setpoint.as_ref().map(|sp| sp.level),
         Some(Some(30)),
         "only the final value of the burst projects"
     );
-    assert_no_more_updates(&cmd_tap);
-    assert_eq!(counters.coalesced_observed.load(Ordering::Relaxed), 2);
+    assert_no_more_updates(&projected.tap);
+    assert_eq!(projected.counters.coalesced_observed.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn a_burst_that_drives_a_level_and_a_colour_commits_both() {
+    let dapc = sniffed_at_17(LightSetpoint::from_level(120, None), true);
+    let activated = LightSetpoint {
+        power: PowerState::Unknown,
+        level: None,
+        color: Some(cct_color(3000)),
+    };
+    let colour = sniffed_at_17(activated, false);
+    for burst in [vec![dapc.clone(), colour.clone()], vec![colour, dapc]] {
+        let projected = project_queued_burst(burst);
+
+        let (_, cmd) = recv_runtime_update(&projected.tap);
+        let committed = cmd.update.setpoint.expect("the coalesced fact carries a setpoint");
+        assert_eq!(committed.level, Some(120), "the DAPC level survives the colour");
+        assert_eq!(committed.color, Some(cct_color(3000)), "the colour survives the DAPC");
+        assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Sniffer));
+        assert_no_more_updates(&projected.tap);
+        assert_eq!(projected.counters.coalesced_observed.load(Ordering::Relaxed), 1);
+    }
 }
 
 #[test]

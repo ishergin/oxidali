@@ -61,8 +61,34 @@ impl ObservedCoalescer {
         self.pending = Some(body.clone());
     }
 
+    fn merge(&mut self, body: &DaliObservedFrameEvent) {
+        match self.pending.as_mut() {
+            Some(pending) => *pending = merged_observation(pending, body),
+            None => self.set(body),
+        }
+    }
+
     fn take(&mut self) -> Option<DaliObservedFrameEvent> {
         self.pending.take()
+    }
+}
+
+fn merged_observation(
+    earlier: &DaliObservedFrameEvent,
+    later: &DaliObservedFrameEvent,
+) -> DaliObservedFrameEvent {
+    let setpoint = match (&earlier.setpoint, &later.setpoint) {
+        (Some(earlier), Some(later)) => {
+            let mut merged = earlier.clone();
+            merged.merge_from(later);
+            Some(merged)
+        }
+        (earlier, later) => later.clone().or_else(|| earlier.clone()),
+    };
+    DaliObservedFrameEvent {
+        setpoint,
+        dapc_observed: earlier.dapc_observed || later.dapc_observed,
+        ..later.clone()
     }
 }
 
@@ -124,10 +150,11 @@ fn handle_event_frame(frame: &BusFrame, ctx: &Ctx<'_>, coalescer: &mut ObservedC
                 ctx.counters
                     .coalesced_observed
                     .fetch_add(1, Ordering::Relaxed);
+                coalescer.merge(body);
             } else {
                 flush_coalesced(ctx, coalescer);
+                coalescer.set(body);
             }
-            coalescer.set(body);
             return;
         }
     }
