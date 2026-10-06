@@ -375,27 +375,31 @@ fn a_violation_on_an_upper_filter_byte_is_contended() {
 
 // IEC 62386-103 §9.6.4
 #[test]
-fn a_narrowed_filter_reads_back_only_the_byte_it_has() {
+fn a_narrowed_filter_reads_back_only_the_bytes_it_has() {
     let narrowed = [
-        instance_type::PUSH_BUTTON,
-        instance_type::ABSOLUTE_INPUT,
-        instance_type::OCCUPANCY,
-        instance_type::LIGHT_SENSOR,
-        instance_type::COLOUR_SENSOR,
+        (instance_type::PUSH_BUTTON, 1),
+        (instance_type::ABSOLUTE_INPUT, 1),
+        (instance_type::OCCUPANCY, 1),
+        (instance_type::LIGHT_SENSOR, 1),
+        (instance_type::COLOUR_SENSOR, 1),
+        (instance_type::GENERAL_PURPOSE_SENSOR, 2),
     ];
-    for kind in narrowed {
+    for (kind, width) in narrowed {
         let (mut controller, transport) = controller();
-        answer_filter_write(&transport, Some(kind), [Some(FILTER[0]), None, None]);
+        let mut read_back = [None; 3];
+        read_back[..width].copy_from_slice(&FILTER.map(Some)[..width]);
+        answer_filter_write(&transport, Some(kind), read_back);
 
         let held = set_event_filter_verified(&mut controller, 3, 0, FILTER)
-            .expect("Parts 301-305 reduce eventFilter to one byte");
+            .expect("a narrowed filter ignores the registers past its width");
 
+        let mut expected = [0; 3];
+        expected[..width].copy_from_slice(&FILTER[..width]);
         assert_eq!(
-            held,
-            [FILTER[0], 0, 0],
+            held, expected,
             "type {kind}: the bytes the instance does not have are not reported as written"
         );
-        assert_eq!(frames24(&transport), filter_write_frames(1));
+        assert_eq!(frames24(&transport), filter_write_frames(width));
     }
 }
 

@@ -408,7 +408,9 @@ const ABSENT_FILTER_BYTE: u8 = 0;
 
 const FULL_EVENT_FILTER_BYTES: usize = 3;
 
-const NARROWED_EVENT_FILTER_BYTES: usize = 1;
+const BUTTON_AND_SENSOR_FILTER_BYTES: usize = 1;
+
+const GENERAL_SENSOR_FILTER_BYTES: usize = 2;
 
 fn event_filter_width(
     controller: &mut impl DaliApplicationController,
@@ -416,12 +418,7 @@ fn event_filter_width(
     instance: InstanceAddress,
 ) -> Result<usize, SemanticDaliError> {
     let seen = send(controller, Instance103Command::QueryInstanceType.frame(address, instance), true)?;
-    let instance_type = verify_readback(seen, |_| true)?;
-    Ok(if narrows_event_filter(instance_type) {
-        NARROWED_EVENT_FILTER_BYTES
-    } else {
-        FULL_EVENT_FILTER_BYTES
-    })
+    verify_readback(seen, |_| true).map(event_filter_bytes)
 }
 
 // IEC 62386-301 §9.4.6
@@ -429,15 +426,17 @@ fn event_filter_width(
 // IEC 62386-303 §9.4.4
 // IEC 62386-304 §9.4.4
 // IEC 62386-305 §9.4.4
-const fn narrows_event_filter(instance_type: u8) -> bool {
-    matches!(
-        instance_type,
+// IEC 62386-306 §11.8.2
+const fn event_filter_bytes(instance_type: u8) -> usize {
+    match instance_type {
         instance_type::PUSH_BUTTON
-            | instance_type::ABSOLUTE_INPUT
-            | instance_type::OCCUPANCY
-            | instance_type::LIGHT_SENSOR
-            | instance_type::COLOUR_SENSOR
-    )
+        | instance_type::ABSOLUTE_INPUT
+        | instance_type::OCCUPANCY
+        | instance_type::LIGHT_SENSOR
+        | instance_type::COLOUR_SENSOR => BUTTON_AND_SENSOR_FILTER_BYTES,
+        instance_type::GENERAL_PURPOSE_SENSOR => GENERAL_SENSOR_FILTER_BYTES,
+        _ => FULL_EVENT_FILTER_BYTES,
+    }
 }
 
 pub fn set_instance_enabled_verified(
