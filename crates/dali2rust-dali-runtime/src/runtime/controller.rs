@@ -473,6 +473,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
             return;
         }
         self.session.record_transmission(self.clock.as_ref());
+        self.note_unit_started();
         self.busy_since_release = true;
         self.wire_counters.note_frame_sent(priority as u8);
         self.note_settle_window(priority);

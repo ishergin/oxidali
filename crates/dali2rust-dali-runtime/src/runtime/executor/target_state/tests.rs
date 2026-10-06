@@ -8,6 +8,7 @@ use crate::runtime::executor::test_helpers::shared::{
 };
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::commands::DaliCommand;
+use dali2rust_domain::dali::ses::RetryPolicy;
 
 fn expect_staged_dtrs_unproved(mock: &MockDaliTransport, values: &[u8]) {
     for (write, value) in DTR_WRITE.iter().zip(values) {
@@ -344,7 +345,39 @@ fn a_level_only_setpoint_leaves_automatic_activation_alone_issue117() {
 fn target_state_color_only_power_on_activates_then_switches_on() {
     let mock = MockDaliTransport::new();
     let short = 17;
-    expect_staged_dtrs(&mock, short, &[252, 0, 147]);
+    expect_colour_only_power_on_up_to_activate(&mock, short);
+    mock.expect_forward_frame(
+        DaliCommand::Standard {
+            address: short_address(short),
+            command: StandardCommand::GoToLastActiveLevel,
+        }
+        .to_forward_frame()
+        .raw(),
+    );
+
+    let (transport, mut controller) = setup_controller(mock);
+    apply_short_target_state(&mut controller, short, &colour_only_power_on(), ColorWritePolicy::NONE)
+        .expect("target-state");
+
+    assert_script_consumed(&transport);
+}
+
+fn colour_only_power_on() -> LightSetpoint {
+    LightSetpoint {
+        power: PowerState::On,
+        color: Some(dali2rust_contracts::msg::ColorValue {
+            mode: ColorMode::Rgb,
+            r: 254,
+            g: 0,
+            b: 200,
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+fn expect_colour_only_power_on_up_to_activate(mock: &MockDaliTransport, short: u8) -> u16 {
+    expect_staged_dtrs(mock, short, &[252, 0, 147]);
     mock.expect_forward_frame(
         DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
             .to_forward_frame()
@@ -354,7 +387,7 @@ fn target_state_color_only_power_on_activates_then_switches_on() {
         short_address(short),
         DT8_SET_TEMPORARY_RGB_DIMLEVEL,
     ));
-    expect_staged_dtrs(&mock, short, &[0, 0, 0]);
+    expect_staged_dtrs(mock, short, &[0, 0, 0]);
     mock.expect_forward_frame(
         DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
             .to_forward_frame()
@@ -378,32 +411,39 @@ fn target_state_color_only_power_on_activates_then_switches_on() {
             .to_forward_frame()
             .raw(),
     );
-    mock.expect_forward_frame(short_raw_query_frame(short_address(short), DT8_ACTIVATE));
-    mock.expect_forward_frame(
-        DaliCommand::Standard {
-            address: short_address(short),
-            command: StandardCommand::GoToLastActiveLevel,
-        }
-        .to_forward_frame()
-        .raw(),
-    );
+    let activate = short_raw_query_frame(short_address(short), DT8_ACTIVATE);
+    mock.expect_forward_frame(activate);
+    activate
+}
+
+#[test]
+fn a_switch_on_that_never_lands_after_activate_is_named_and_activates_once() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let activate = expect_colour_only_power_on_up_to_activate(&mock, short);
+    let switch_on = DaliCommand::Standard {
+        address: short_address(short),
+        command: StandardCommand::GoToLastActiveLevel,
+    }
+    .to_forward_frame()
+    .raw();
+    for _ in 0..RetryPolicy::default().effective_max_attempts() {
+        mock.expect_forward_frame_collision(switch_on);
+    }
 
     let (transport, mut controller) = setup_controller(mock);
-    let mut setpoint = LightSetpoint {
-        power: PowerState::On,
-        ..Default::default()
-    };
-    let color = dali2rust_contracts::msg::ColorValue {
-        mode: ColorMode::Rgb,
-        r: 254,
-        g: 0,
-        b: 200,
-        ..Default::default()
-    };
-    setpoint.color = Some(color);
-    apply_short_target_state(&mut controller, short, &setpoint, ColorWritePolicy::NONE).expect("target-state");
+    let outcome = apply_with_sequence_retry(1, || {
+        apply_short_target_state(&mut controller, short, &colour_only_power_on(), ColorWritePolicy::NONE)
+    });
 
+    assert_eq!(outcome, Err(SemanticDaliError::OperationFailed(TARGET_STATE_UNFINISHED)));
     assert_script_consumed(&transport);
+    let sent = transport.lock().expect("mock lock").sent_frames();
+    assert_eq!(
+        sent.iter().filter(|frame| **frame == activate).count(),
+        1,
+        "ACTIVATE executed; the sequence retry must not restart its colour fade"
+    );
 }
 
 #[test]
@@ -882,6 +922,36 @@ fn a_gear_already_in_normalised_control_is_not_written_to() {
     apply_short_target_state(&mut controller, short, &rgb_setpoint(255, 0, 0, 200), assert_policy())
         .expect("target-state");
     assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_check_the_bus_never_lets_through_is_unknown_and_reruns_nothing() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let dapc = expect_normalised_red_at_200(&mock, short);
+    let enable = DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
+        .to_forward_frame()
+        .raw();
+    let control = DaliCommand::Extended {
+        address: short_address(short),
+        command: ExtendedCommand::Dt8(Dt8Command::QueryRgbwafControl),
+    }
+    .to_forward_frame()
+    .raw();
+    for _ in 0..RetryPolicy::default().effective_max_attempts() {
+        mock.expect_forward_frame(enable);
+        mock.expect_forward_frame_collision(control);
+    }
+
+    let (transport, mut controller) = setup_controller(mock);
+    apply_with_sequence_retry(1, || {
+        apply_short_target_state(&mut controller, short, &rgb_setpoint(255, 0, 0, 200), assert_policy())
+    })
+    .expect("a control byte nobody could read is unknown, like a gear that does not answer 251");
+
+    assert_script_consumed(&transport);
+    let sent = transport.lock().expect("mock lock").sent_frames();
+    assert_eq!(sent.iter().filter(|frame| **frame == dapc).count(), 1);
 }
 
 #[test]

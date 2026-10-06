@@ -43,26 +43,37 @@ fn store_tc_limit_verified(
 ) -> Result<(), SemanticDaliError> {
     let expected = tc_limit_expected(mirek, physical);
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        let stored = controller.unit_exempt(|controller| {
-            if !stage_tc_limit_dtrs(controller, address, mirek, selector)? {
+        let landed = controller.transaction_exempt(|controller| {
+            if !store_tc_limit_unit(controller, address, mirek, selector)? {
                 return Ok(false);
             }
-            send_extended_command(
-                controller,
-                address,
-                ExtendedCommand::Dt8(Dt8Command::StoreColourTemperatureTcLimit),
-            )?;
-            Ok(true)
+            let policy = ContentConfirmPolicy::default();
+            Ok(read_dt8_color_value_u16(controller, address, readback_id, policy)? == Some(expected))
         })?;
-        if !stored {
-            continue;
-        }
-        let policy = ContentConfirmPolicy::default();
-        if read_dt8_color_value_u16(controller, address, readback_id, policy)? == Some(expected) {
+        if landed {
             return Ok(());
         }
     }
     Err(SemanticDaliError::OperationFailed("dt8_tc_limit_unconfirmed"))
+}
+
+fn store_tc_limit_unit(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    mirek: u16,
+    selector: u8,
+) -> Result<bool, SemanticDaliError> {
+    controller.unit(|controller| {
+        if !stage_tc_limit_dtrs(controller, address, mirek, selector)? {
+            return Ok(false);
+        }
+        send_extended_command(
+            controller,
+            address,
+            ExtendedCommand::Dt8(Dt8Command::StoreColourTemperatureTcLimit),
+        )?;
+        Ok(true)
+    })
 }
 
 fn read_physical_tc_pair(
@@ -170,7 +181,7 @@ pub(super) fn dt8_value_sample(
     address: DaliAddress,
     value_id: u8,
 ) -> Result<(Option<u16>, bool), SemanticDaliError> {
-    for attempt in 0..=DT8_VALUE_ARM_RETRIES {
+    for _ in 0..=DT8_VALUE_ARM_RETRIES {
         let sample = controller.unit(|controller| {
             send_special(controller, SpecialCommand::Dtr0(value_id))?;
             let echo = send_standard_query(controller, address, StandardCommand::QueryContentDtr0)?;
@@ -200,11 +211,8 @@ pub(super) fn dt8_value_sample(
                 None => (None, contended),
             }))
         });
-        match sample {
-            Ok(Some(result)) => return Ok(result),
-            Ok(None) => continue,
-            Err(error) if attempt == DT8_VALUE_ARM_RETRIES => return Err(error),
-            Err(_) => continue,
+        if let Some(result) = sample? {
+            return Ok(result);
         }
     }
     Ok((None, false))

@@ -182,8 +182,10 @@ pub(super) fn send_dtr0_config_verified<C: DaliApplicationController>(
 ) -> Result<ReadBack, SemanticDaliError> {
     controller.step_boundary();
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        send_dtr0_backed_standard(controller, address, dtr0, command)?;
-        let verified = read_back(controller)?;
+        let verified = controller.transaction(|controller| {
+            send_dtr0_backed_standard(controller, address, dtr0, command)?;
+            read_back(controller)
+        })?;
         if let Some(unconfirmed) = ReadBack::without_value(verified) {
             return Ok(unconfirmed);
         }
@@ -204,8 +206,10 @@ fn send_dtr0_config_accepted<C: DaliApplicationController>(
     controller.step_boundary();
     let mut previous: Option<u8> = None;
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        send_dtr0_backed_standard(controller, address, dtr0, command)?;
-        let answer = read_back(controller)?;
+        let answer = controller.transaction(|controller| {
+            send_dtr0_backed_standard(controller, address, dtr0, command)?;
+            read_back(controller)
+        })?;
         match answer {
             DaliResponse::Answer(v) if v == dtr0 || previous == Some(v) => {
                 return Ok(ReadBack::Proved(v))

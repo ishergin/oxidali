@@ -1390,8 +1390,9 @@ fn the_presence_budget_is_not_spent_on_a_device_that_answers() {
 
 type SharedMock = std::sync::Arc<std::sync::Mutex<MockDaliTransport>>;
 
+const SHORT: u8 = 3;
+
 fn light_source_read(answer: Option<u8>, dtrs: &[Option<u8>]) -> ((Option<u8>, Option<u32>), SharedMock) {
-    const SHORT: u8 = 3;
     let mock = MockDaliTransport::new();
     mock.expect_forward_frame_with_backward(
         std_query_frame(SHORT, StandardCommand::QueryLightSourceType),
@@ -1415,6 +1416,39 @@ fn light_source_read(answer: Option<u8>, dtrs: &[Option<u8>]) -> ((Option<u8>, O
     )
     .expect("light source type read");
     (read, transport)
+}
+
+// IEC 62386-102 §11.5.19
+#[test]
+fn a_collision_inside_the_light_source_triple_asks_the_type_again() {
+    let mock = MockDaliTransport::new();
+    let light_source_type = std_query_frame(SHORT, StandardCommand::QueryLightSourceType);
+    mock.expect_forward_frame_with_backward(light_source_type, Some(0xFF));
+    mock.expect_forward_frame_collision(std_query_frame(SHORT, StandardCommand::QueryContentDtr0));
+    mock.expect_forward_frame_with_backward(light_source_type, Some(0xFF));
+    for (command, value) in [
+        (StandardCommand::QueryContentDtr0, 6),
+        (StandardCommand::QueryContentDtr1, 2),
+        (StandardCommand::QueryContentDtr2, 254),
+    ] {
+        mock.expect_forward_frame_with_backward(std_query_frame(SHORT, command), Some(value));
+    }
+
+    let (transport, mut controller) = setup_controller(mock);
+    let (answered, packed) = read_light_source_type(
+        &mut controller,
+        short_address(SHORT),
+        ContentConfirmPolicy::default(),
+    )
+    .expect("light source type read");
+
+    assert_eq!(answered, Some(0xFF));
+    assert_eq!(
+        packed,
+        Some(0x0006_02FE),
+        "the DTRs another master may have written in the gap are loaded again, not read stale"
+    );
+    assert_script_consumed(&transport);
 }
 
 #[test]

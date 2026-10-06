@@ -97,16 +97,20 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   Another master's frames may have landed in the gap, so a retry that resumed at the
   command would act on operands nothing proved
   ([ADR-027](decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md)). The unit
-  ends with the command that consumes what it staged: a check after that command (a
-  read-back, a verification) runs outside it, so a break there never repeats a command
-  that executed. An outermost unit's re-run is a new transaction at its class priority;
-  inside a started transaction it re-runs at priority 1, and a unit inside a unit is part
-  of it.
+  ends with the command that consumes what it staged. A check after that command (a
+  read-back, a verification) stays in the enclosing transaction, at priority 1 and behind
+  the yield shield, but outside the unit, so a break there retries the check alone and
+  never repeats a command that executed; a check or follow-up command that still fails
+  ends the operation instead of re-running the unit (a target-state write names it
+  `target_state_unfinished`). An outermost unit's re-run is a new transaction
+  at its class priority; inside a started transaction it re-runs at priority 1, and a
+  unit inside a unit is part of it.
 - The two halves of a send-twice pair are judged by the settling the interrupt measured
   before the second: past Table 17's 75 ms the pair is our breach and is counted; past
   Table 20's 94 ms the gear is no longer bound to read a pair (up to 105 ms it still may),
-  and the unit is re-run as `BusBusy`. A re-run of `SET SHORT ADDRESS` that finds the
-  source address silent therefore asks the target before it reports the move unproved.
+  and the unit is re-run as `BusBusy`. An address change that sent its pair but cannot
+  prove the move therefore asks the target before it fails; one that never sent the pair
+  never asks.
 - A 16-bit frame sent on its own (`send_raw`) is retried frame by frame on the same
   outcomes, at priority 1 inside a started transaction, except inside a unit; a frame that
   expected no answer reads anything in its window as no answer.
@@ -257,8 +261,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   permission, since 098bp's extended control (`0xC0`) is also legal. Boot state is never
   assumed; `0x80` is a fixed point of the unlink rule. The read-back after activation
   fails the write only when a driven channel is still linked: a control type with the
-  driven channels unlinked (`0xC0` too) passes, and a gear that does not answer 251 is
-  neither written nor failed.
+  driven channels unlinked (`0xC0` too) passes, and a gear that does not answer 251, or
+  whose answer the bus never let through, is neither written nor failed.
 - Every live RGB write and every RGB scene row also stages W, A and F (zero for a
   three-channel colour), whatever the control-byte permission: under normalised control
   each channel scales against the largest of R..F, so a stale channel both lights up and

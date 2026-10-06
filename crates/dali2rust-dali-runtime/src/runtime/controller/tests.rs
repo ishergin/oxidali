@@ -1603,6 +1603,11 @@ fn nothing_more_of_a_broken_attempt_reaches_the_wire() {
         vec![f.arm, f.arm, lead],
         "the query of the broken attempt never left: the operand it follows was not staged"
     );
+    assert_eq!(
+        controller.wire_counters.transaction_reopened.load(Ordering::Relaxed),
+        0,
+        "the first frame collided, so no transaction was opened to be reopened"
+    );
 }
 
 #[test]

@@ -68,16 +68,18 @@ fn program_scene_write(
     scene_id: u8,
     target: &DaliSceneTargetState,
 ) -> Result<Option<u8>, SemanticDaliError> {
-    controller.unit_exempt(|controller| {
-        apply_scene_color(controller, address, target)?;
-        send_special(controller, SpecialCommand::Dtr0(scene_level_byte(target)))?;
-        send_standard(
-            controller,
-            address,
-            StandardCommand::SetScene { scene: scene_id },
-        )
-    })?;
-    read_scene_level(controller, address, scene_id)
+    controller.transaction_exempt(|controller| {
+        controller.unit(|controller| {
+            apply_scene_color(controller, address, target)?;
+            send_special(controller, SpecialCommand::Dtr0(scene_level_byte(target)))?;
+            send_standard(
+                controller,
+                address,
+                StandardCommand::SetScene { scene: scene_id },
+            )
+        })?;
+        read_scene_level(controller, address, scene_id)
+    })
 }
 
 fn program_scene_clear(
@@ -207,6 +209,30 @@ mod tests {
         )
         .expect("scene write");
         assert_eq!(level, Some(100));
+        assert_script_consumed(&transport);
+    }
+
+    #[test]
+    fn a_collided_scene_level_read_back_does_not_program_the_scene_again() {
+        let mock = MockDaliTransport::new();
+        mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(100)));
+        let set_scene = standard_frame(StandardCommand::SetScene { scene: SCENE });
+        mock.expect_forward_frame(set_scene);
+        mock.expect_forward_frame(set_scene);
+        let read_back = standard_frame(StandardCommand::QuerySceneLevel { scene: SCENE });
+        mock.expect_forward_frame_collision(read_back);
+        mock.expect_forward_frame_with_backward(read_back, Some(100));
+
+        let (transport, mut controller) = setup_controller(mock);
+        let level = program_scene_row(
+            &mut controller,
+            SHORT,
+            SCENE,
+            SceneProgramAction::Write,
+            Some(&level_target(100)),
+        )
+        .expect("scene write");
+        assert_eq!(level, Some(100), "the read-back is asked again on its own");
         assert_script_consumed(&transport);
     }
 

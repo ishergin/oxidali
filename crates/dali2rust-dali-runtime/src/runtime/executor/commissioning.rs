@@ -279,21 +279,14 @@ pub fn change_short_address(
 
     let encoded = encode_program_short_address(new_short_address);
     match set_short_address_proved(controller, current, encoded)? {
-        AddressMove::Sent => {}
-        AddressMove::SourceSilent if answers_at(controller, new_short_address)? => {}
-        AddressMove::SourceSilent | AddressMove::Unproved => {
-            return Err(SemanticDaliError::OperationFailed(ADDRESS_ARM_UNCONFIRMED))
+        AddressMove::Sent if verify && !answers_at(controller, new_short_address)? => {
+            Err(SemanticDaliError::OperationFailed("verify_failed"))
         }
+        AddressMove::Sent => Ok(()),
+        AddressMove::MaybeSent(_) if answers_at(controller, new_short_address)? => Ok(()),
+        AddressMove::MaybeSent(error) => Err(error),
+        AddressMove::Unproved => Err(SemanticDaliError::OperationFailed(ADDRESS_ARM_UNCONFIRMED)),
     }
-
-    if verify {
-        let target = DaliAddress::short(new_short_address)
-            .map_err(|_| SemanticDaliError::OperationFailed("address_change: target out of range"))?;
-        if send_standard_query(controller, target, StandardCommand::QueryStatus)?.is_none() {
-            return Err(SemanticDaliError::OperationFailed("verify_failed"));
-        }
-    }
-    Ok(())
 }
 
 const ADDRESS_ARM_RETRIES: u8 = 2;
@@ -303,44 +296,51 @@ const ADDRESS_ARM_UNCONFIRMED: &str = "address_arm_unconfirmed";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AddressMove {
     Sent,
-    SourceSilent,
+    MaybeSent(SemanticDaliError),
     Unproved,
 }
 
+// IEC 62386-101 Table 20
 fn set_short_address_proved(
     controller: &mut impl DaliApplicationController,
     current: DaliAddress,
     encoded: u8,
 ) -> Result<AddressMove, SemanticDaliError> {
-    let mut proof = DaliResponse::NoAnswer;
+    let mut pair_tried = false;
     for _ in 0..=ADDRESS_ARM_RETRIES {
-        proof = controller.unit_exempt(|controller| {
-            send_special(controller, SpecialCommand::Dtr0(encoded))?;
-            let armed =
-                send_standard_response(controller, current, StandardCommand::QueryContentDtr0)?;
-            if armed == DaliResponse::Answer(encoded) {
-                send_standard(controller, current, StandardCommand::SetShortAddress)?;
-            }
-            Ok(armed)
-        })?;
-        if proof == DaliResponse::Answer(encoded) {
-            return Ok(AddressMove::Sent);
+        match controller.unit_exempt(|c| arm_and_move(c, current, encoded, &mut pair_tried)) {
+            Ok(true) => return Ok(AddressMove::Sent),
+            Ok(false) => {}
+            Err(error) if pair_tried => return Ok(AddressMove::MaybeSent(error)),
+            Err(error) => return Err(error),
         }
     }
-    Ok(match proof {
-        DaliResponse::NoAnswer => AddressMove::SourceSilent,
-        _ => AddressMove::Unproved,
-    })
+    let unconfirmed = SemanticDaliError::OperationFailed(ADDRESS_ARM_UNCONFIRMED);
+    Ok(if pair_tried { AddressMove::MaybeSent(unconfirmed) } else { AddressMove::Unproved })
 }
 
-// IEC 62386-101 Table 20
+fn arm_and_move(
+    controller: &mut impl DaliApplicationController,
+    current: DaliAddress,
+    encoded: u8,
+    pair_tried: &mut bool,
+) -> Result<bool, SemanticDaliError> {
+    send_special(controller, SpecialCommand::Dtr0(encoded))?;
+    if send_standard_query(controller, current, StandardCommand::QueryContentDtr0)? != Some(encoded) {
+        return Ok(false);
+    }
+    *pair_tried = true;
+    send_standard(controller, current, StandardCommand::SetShortAddress)?;
+    Ok(true)
+}
+
 fn answers_at(
     controller: &mut impl DaliApplicationController,
     short_address: u8,
 ) -> Result<bool, SemanticDaliError> {
     let target = DaliAddress::short(short_address)
         .map_err(|_| SemanticDaliError::OperationFailed("address_change: target out of range"))?;
-    Ok(send_standard_response(controller, target, StandardCommand::QueryStatus)?.is_yes())
+    Ok(send_standard_query(controller, target, StandardCommand::QueryStatus)?.is_some())
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

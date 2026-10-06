@@ -137,64 +137,76 @@ fn apply_target_state(
     setpoint: &LightSetpoint,
     assert_control: AssertRgbwafControl,
 ) -> Result<(), SemanticDaliError> {
-    let activated = controller.unit_exempt(|controller| {
-        stage_and_activate(controller, address, setpoint, assert_control)
-    })?;
-    if activated {
-        if let Some(driven) = rgbwaf_driven_channels(setpoint, assert_control) {
-            verify_rgbwaf_control(controller, address, driven)?;
-        }
-    }
-    Ok(())
+    controller.transaction_exempt(|controller| {
+        let activation = controller.unit(|controller| {
+            stage_and_activate(controller, address, setpoint, assert_control)
+        })?;
+        finish_activation(controller, address, setpoint, activation, assert_control)
+            .map_err(unfinished_after_activation)
+    })
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Activation {
+    Nothing,
+    Activated,
+    SwitchOnNext,
+}
+
+const TARGET_STATE_UNFINISHED: &str = "target_state_unfinished";
 
 fn stage_and_activate(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     setpoint: &LightSetpoint,
     assert_control: AssertRgbwafControl,
-) -> Result<bool, SemanticDaliError> {
+) -> Result<Activation, SemanticDaliError> {
     let color_staged = setpoint.states_color();
     if color_staged {
         if let Some(color) = setpoint.color.as_ref() {
             apply_color(controller, address, color, assert_control)?;
         }
     }
-    send_arc_command(controller, address, setpoint, color_staged)
+    if let Some(level) = setpoint.dapc_level() {
+        send_standard(controller, address, StandardCommand::DirectArcPower { level })?;
+        return Ok(Activation::Activated);
+    }
+    if color_staged {
+        send_colour_activate(controller, address)?;
+    }
+    Ok(match (setpoint.power, color_staged) {
+        (PowerState::On, _) => Activation::SwitchOnNext,
+        (_, true) => Activation::Activated,
+        (_, false) => Activation::Nothing,
+    })
 }
 
-fn send_arc_command(
+fn finish_activation(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     setpoint: &LightSetpoint,
-    color_staged: bool,
-) -> Result<bool, SemanticDaliError> {
-    if let Some(level) = setpoint.dapc_level() {
-        send_standard(controller, address, StandardCommand::DirectArcPower { level })?;
-        return Ok(true);
+    activation: Activation,
+    assert_control: AssertRgbwafControl,
+) -> Result<(), SemanticDaliError> {
+    match activation {
+        Activation::Nothing => return Ok(()),
+        Activation::SwitchOnNext => {
+            send_standard(controller, address, StandardCommand::GoToLastActiveLevel)?;
+        }
+        Activation::Activated => {}
     }
-
-    if setpoint.power == PowerState::On {
-        return activate_color_only(controller, address, color_staged);
+    if let Some(driven) = rgbwaf_driven_channels(setpoint, assert_control) {
+        verify_rgbwaf_control(controller, address, driven)?;
     }
-
-    if color_staged {
-        send_colour_activate(controller, address)?;
-        return Ok(true);
-    }
-    Ok(false)
+    Ok(())
 }
 
-fn activate_color_only(
-    controller: &mut impl DaliApplicationController,
-    address: DaliAddress,
-    color_staged: bool,
-) -> Result<bool, SemanticDaliError> {
-    if color_staged {
-        send_colour_activate(controller, address)?;
+fn unfinished_after_activation(error: SemanticDaliError) -> SemanticDaliError {
+    if error.is_bus_contended() {
+        SemanticDaliError::OperationFailed(TARGET_STATE_UNFINISHED)
+    } else {
+        error
     }
-    send_standard(controller, address, StandardCommand::GoToLastActiveLevel)?;
-    Ok(true)
 }
 
 #[inline]
@@ -280,11 +292,14 @@ fn verify_rgbwaf_control(
     if !matches!(address, DaliAddress::Short(_)) {
         return Ok(());
     }
-    let answer = send_extended_query(
+    let answer = match send_extended_query(
         controller,
         address,
         ExtendedCommand::Dt8(Dt8Command::QueryRgbwafControl),
-    )?;
+    ) {
+        Err(error) if error.is_bus_contended() => None,
+        answered => answered?,
+    };
     if answer.is_none_or(|byte| rgbwaf_control_drives(byte, driven)) {
         return Ok(());
     }

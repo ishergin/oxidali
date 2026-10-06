@@ -3,6 +3,7 @@ use super::*;
 #[derive(Debug, Default)]
 pub(super) struct UnitAttempt {
     broken_by: Option<FrameError>,
+    started: bool,
 }
 
 impl<T: DaliTransport + Send> DaliController<T> {
@@ -16,16 +17,25 @@ impl<T: DaliTransport + Send> DaliController<T> {
         loop {
             self.unit = Some(UnitAttempt::default());
             let result = self.run_transaction(exempt, |c| run(c));
-            let broken_by = self.unit.take().and_then(|unit| unit.broken_by);
-            let Some(error) = broken_by else {
-                return result;
-            };
-            if self.retry_or_fail(attempt, attempts, error).is_err() {
+            let finished = self.unit.take().unwrap_or_default();
+            if !self.reruns_after(finished, attempt, attempts) {
                 return result;
             }
-            self.wire_counters.transaction_reopened.fetch_add(1, Relaxed);
             attempt += 1;
         }
+    }
+
+    fn reruns_after(&mut self, finished: UnitAttempt, attempt: u8, attempts: u8) -> bool {
+        let Some(error) = finished.broken_by else {
+            return false;
+        };
+        if self.retry_or_fail(attempt, attempts, error).is_err() {
+            return false;
+        }
+        if finished.started {
+            self.wire_counters.transaction_reopened.fetch_add(1, Relaxed);
+        }
+        true
     }
 
     pub(super) fn attempts_here(&self, attempts: u8) -> u8 {
@@ -38,6 +48,12 @@ impl<T: DaliTransport + Send> DaliController<T> {
 
     pub(super) fn unit_broken_by(&self) -> Option<FrameError> {
         self.unit.as_ref().and_then(|unit| unit.broken_by)
+    }
+
+    pub(super) fn note_unit_started(&mut self) {
+        if let Some(unit) = self.unit.as_mut() {
+            unit.started = true;
+        }
     }
 
     pub(super) fn break_unit(&mut self, error: FrameError) {
