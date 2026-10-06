@@ -11,20 +11,12 @@ pub struct AdapterLimitsDto {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct AdapterCountersDto {
-    pub commands: u64,
-    pub timeouts: u64,
-    pub errors: u64,
-}
-
-#[derive(Clone, Debug, Serialize)]
 pub struct AdapterDto {
     pub adapter_id: u8,
     pub name: String,
     pub enabled: bool,
     pub limits: AdapterLimitsDto,
     pub bus_status: String,
-    pub counters: AdapterCountersDto,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -109,10 +101,5 @@ pub(crate) fn adapter_view_to_dto(view: AdapterView) -> AdapterDto {
             scenes: 16,
         },
         bus_status: if view.enabled { "idle" } else { "disabled" }.to_string(),
-        counters: AdapterCountersDto {
-            commands: view.commands,
-            timeouts: view.timeouts,
-            errors: view.errors,
-        },
     }
 }

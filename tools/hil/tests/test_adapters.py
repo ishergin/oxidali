@@ -26,8 +26,7 @@ def test_controller_and_adapters_consistent(api, test_artifacts):
     a0 = api.adapter_info()
     assert a0 == next(a for a in adapters if a["adapter_id"] == api.adapter)
     assert a0["bus_status"] in ("idle", "disabled")
-    for key in ("commands", "timeouts", "errors"):
-        assert isinstance(a0["counters"][key], int)
+    assert "counters" not in a0, "the adapter carries counters nothing writes; read stats.dali"
 
 
 @pytest.mark.hil_id("HIL-SYS-03")

@@ -226,7 +226,6 @@ export interface Adapter {
   enabled: boolean
   limits: { virtual_lamps: number; groups: number; scenes: number }
   bus_status: string
-  counters: { commands: number; timeouts: number; errors: number }
 }
 
 export interface MemoryBankRange {

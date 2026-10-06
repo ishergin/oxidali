@@ -135,7 +135,7 @@ impl crate::http::handlers::common::MutatingHandler for AdapterPatchHandler {
 fn validate_adapter_patch_keys(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), HttpResponse> {
-    const RO: &[&str] = &["limits", "bus_status", "counters", "adapter_id"];
+    const RO: &[&str] = &["limits", "bus_status", "adapter_id"];
     for k in obj.keys() {
         if k == "name" || k == "enabled" {
             continue;

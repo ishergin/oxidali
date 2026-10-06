@@ -13,3 +13,9 @@ Feature: Adapters read surface
     Then the response status should be 200
     And the JSON field "name" should be "Main DALI"
     And the JSON boolean field "enabled" should be true
+
+  @id:ADP-034
+  Scenario: The adapter resource carries no counters of its own
+    When I send a GET request to "/api/v1/adapters/0"
+    Then the response status should be 200
+    And the JSON field "counters" should be absent

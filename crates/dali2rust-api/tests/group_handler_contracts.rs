@@ -3,7 +3,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dali2rust_api::http::adapter_state::{AdapterCountersDto, AdapterDto, AdapterHttpState, AdapterLimitsDto};
+use dali2rust_api::http::adapter_state::{AdapterDto, AdapterHttpState, AdapterLimitsDto};
 use dali2rust_api::http::dispatcher::CorrelationIdAllocator;
 use dali2rust_api::http::group_state::{
     GroupDto, GroupHttpState, GroupMatrixGroupDto, GroupMembershipMatrixDto, GroupMembershipMatrixRowDto,
@@ -40,11 +40,6 @@ fn base_adapter() -> AdapterDto {
             scenes: 16,
         },
         bus_status: "ok".to_string(),
-        counters: AdapterCountersDto {
-            commands: 0,
-            timeouts: 0,
-            errors: 0,
-        },
     }
 }
 

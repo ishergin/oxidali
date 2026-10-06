@@ -437,9 +437,6 @@ pub struct AdapterView {
     pub adapter_id: u8,
     pub name: String,
     pub enabled: bool,
-    pub commands: u64,
-    pub timeouts: u64,
-    pub errors: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

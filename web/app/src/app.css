@@ -230,7 +230,7 @@ body {
 .src.written { color: var(--info); background: var(--info-soft); }
 .src.stale { color: var(--text-faint); background: var(--raised); }
 
-.counters { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--border); }
+.counters { display: grid; grid-template-columns: repeat(2, 1fr); border-bottom: 1px solid var(--border); }
 .counter { padding: 12px 14px; text-align: center; border-right: 1px solid var(--border); }
 .counter:last-child { border-right: none; }
 .counter .n { font-family: var(--mono); font-size: 22px; font-weight: 500; }

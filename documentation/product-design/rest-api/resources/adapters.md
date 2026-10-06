@@ -23,7 +23,7 @@ BDD — [`adapters`](../../../../tests/dali2rust-bdd/features/adapters/).
 - `limits` — постоянные пределы адаптера: 64 виртуальные лампы, 16 групп, 16 сцен.
 - `bus_status` — **не наблюдение провода**: `idle` при `enabled: true` и `disabled`
   при `false`. Загрузка и отказы провода — в `stats.dali`.
-- `counters` — не заполняются (всегда `0`); счётчики провода — `stats.dali`.
+- Своих счётчиков у адаптера нет; счётчики провода — `stats.dali`.
 - Нечисловой `adapter_id` — `400 invalid_resource_id`; адаптера с таким номером нет —
   `404 not_found` (так на всех адаптерных маршрутах).
 
@@ -33,7 +33,7 @@ Merge-patch; пишутся только `name` (1..64 байта) и `enabled`.
 read-after-write (`AdapterSettingsUpdateCommand` → реестр → `AdapterSettingsChangedEvent`),
 ответ — обновлённый адаптер.
 
-- `limits`, `bus_status`, `counters`, `adapter_id` в теле — `422 unsupported_field`;
+- `limits`, `bus_status`, `adapter_id` в теле — `422 unsupported_field`;
   неизвестное поле — `400 unknown_field`; пустое или слишком длинное имя — `422
   invalid_value`.
 
