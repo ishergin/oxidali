@@ -1650,22 +1650,22 @@ impl dali2rust_rules_model::NameResolver for VanishingGroup {
     fn adapter_exists(&self, adapter_id: u8) -> bool {
         self.inner.adapter_exists(adapter_id)
     }
-    fn resolve_lamp(&self, name: &str) -> Option<dali2rust_rules_model::LampRef> {
+    fn resolve_lamp(&self, name: &str) -> Vec<dali2rust_rules_model::LampRef> {
         self.inner.resolve_lamp(name)
     }
-    fn resolve_group(&self, name: &str) -> Option<dali2rust_rules_model::GroupRef> {
-        if self.gone.load(std::sync::atomic::Ordering::Relaxed) {
-            return None;
+    fn resolve_group(&self, name: &str) -> Vec<dali2rust_rules_model::GroupRef> {
+        if self.gone.load(std::sync::atomic::Ordering::Relaxed) || name != "коридор" {
+            return Vec::new();
         }
-        Some(dali2rust_rules_model::GroupRef { adapter_id: 0, id: LIT_GROUP_ID }).filter(|_| name == "коридор")
+        vec![dali2rust_rules_model::GroupRef { adapter_id: 0, id: LIT_GROUP_ID }]
     }
-    fn resolve_device(&self, name: &str) -> Option<dali2rust_rules_model::DeviceRef> {
+    fn resolve_device(&self, name: &str) -> Vec<dali2rust_rules_model::DeviceRef> {
         self.inner.resolve_device(name)
     }
-    fn resolve_input_device(&self, name: &str) -> Option<dali2rust_rules_model::InputDeviceRef> {
+    fn resolve_input_device(&self, name: &str) -> Vec<dali2rust_rules_model::InputDeviceRef> {
         self.inner.resolve_input_device(name)
     }
-    fn resolve_scene(&self, name: &str) -> Option<u8> {
+    fn resolve_scene(&self, name: &str) -> Vec<dali2rust_rules_model::SceneRef> {
         self.inner.resolve_scene(name)
     }
 }
@@ -1703,20 +1703,20 @@ impl dali2rust_rules_model::NameResolver for VanishingNames {
     fn adapter_exists(&self, adapter_id: u8) -> bool {
         self.inner.adapter_exists(adapter_id)
     }
-    fn resolve_lamp(&self, name: &str) -> Option<dali2rust_rules_model::LampRef> {
+    fn resolve_lamp(&self, name: &str) -> Vec<dali2rust_rules_model::LampRef> {
         self.inner.resolve_lamp(name)
     }
-    fn resolve_group(&self, name: &str) -> Option<dali2rust_rules_model::GroupRef> {
-        self.inner.resolve_group(name).filter(|_| self.present())
+    fn resolve_group(&self, name: &str) -> Vec<dali2rust_rules_model::GroupRef> {
+        self.inner.resolve_group(name).into_iter().filter(|_| self.present()).collect()
     }
-    fn resolve_device(&self, name: &str) -> Option<dali2rust_rules_model::DeviceRef> {
+    fn resolve_device(&self, name: &str) -> Vec<dali2rust_rules_model::DeviceRef> {
         self.inner.resolve_device(name)
     }
-    fn resolve_input_device(&self, name: &str) -> Option<dali2rust_rules_model::InputDeviceRef> {
-        self.inner.resolve_input_device(name).filter(|_| self.present())
+    fn resolve_input_device(&self, name: &str) -> Vec<dali2rust_rules_model::InputDeviceRef> {
+        self.inner.resolve_input_device(name).into_iter().filter(|_| self.present()).collect()
     }
-    fn resolve_scene(&self, name: &str) -> Option<u8> {
-        self.inner.resolve_scene(name).filter(|_| self.present())
+    fn resolve_scene(&self, name: &str) -> Vec<dali2rust_rules_model::SceneRef> {
+        self.inner.resolve_scene(name).into_iter().filter(|_| self.present()).collect()
     }
 }
 

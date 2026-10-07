@@ -1,5 +1,5 @@
 use crate::compiler::NameResolver;
-use crate::refs::{DeviceRef, GroupRef, InputDeviceRef, LampRef};
+use crate::refs::{DeviceRef, GroupRef, InputDeviceRef, LampRef, SceneRef};
 
 fn fnv1a(name: &str) -> u32 {
     const FNV_OFFSET: u32 = 0x811c_9dc5;
@@ -21,7 +21,7 @@ pub struct StubResolver {
     groups: Vec<(String, GroupRef)>,
     devices: Vec<(String, DeviceRef)>,
     input_devices: Vec<(String, InputDeviceRef)>,
-    scenes: Vec<(String, u8)>,
+    scenes: Vec<(String, SceneRef)>,
 }
 
 impl StubResolver {
@@ -73,13 +73,22 @@ impl StubResolver {
         self
     }
 
-    pub fn with_scene(mut self, name: &str, scene: u8) -> Self {
+    pub fn with_scene(self, name: &str, scene: u8) -> Self {
+        let adapter_id = self.primary;
+        self.with_scene_on(name, SceneRef { adapter_id, id: scene })
+    }
+
+    pub fn with_scene_on(mut self, name: &str, scene: SceneRef) -> Self {
         self.scenes.push((name.into(), scene));
         self
     }
 
-    fn lookup<T: Copy>(entries: &[(String, T)], name: &str) -> Option<T> {
-        entries.iter().find(|(n, _)| n == name).map(|(_, v)| *v)
+    fn lookup<T: Copy>(&self, entries: &[(String, T)], name: &str, invent: impl FnOnce() -> T) -> Vec<T> {
+        let found: Vec<T> = entries.iter().filter(|(n, _)| n == name).map(|(_, v)| *v).collect();
+        if found.is_empty() && self.permissive {
+            return vec![invent()];
+        }
+        found
     }
 }
 
@@ -92,44 +101,38 @@ impl NameResolver for StubResolver {
         self.adapters.contains(&adapter_id)
     }
 
-    fn resolve_lamp(&self, name: &str) -> Option<LampRef> {
-        Self::lookup(&self.lamps, name).or_else(|| {
-            self.permissive.then(|| LampRef {
-                adapter_id: self.primary,
-                id: (fnv1a(name) & 0x03FF) as u16,
-            })
+    fn resolve_lamp(&self, name: &str) -> Vec<LampRef> {
+        self.lookup(&self.lamps, name, || LampRef {
+            adapter_id: self.primary,
+            id: (fnv1a(name) & 0x03FF) as u16,
         })
     }
 
-    fn resolve_group(&self, name: &str) -> Option<GroupRef> {
-        Self::lookup(&self.groups, name).or_else(|| {
-            self.permissive.then(|| GroupRef {
-                adapter_id: self.primary,
-                id: (fnv1a(name) & 0x00FF) as u16,
-            })
+    fn resolve_group(&self, name: &str) -> Vec<GroupRef> {
+        self.lookup(&self.groups, name, || GroupRef {
+            adapter_id: self.primary,
+            id: (fnv1a(name) & 0x00FF) as u16,
         })
     }
 
-    fn resolve_device(&self, name: &str) -> Option<DeviceRef> {
-        Self::lookup(&self.devices, name).or_else(|| {
-            self.permissive.then(|| DeviceRef {
-                adapter_id: self.primary,
-                short_address: (fnv1a(name) & 0x3F) as u8,
-            })
+    fn resolve_device(&self, name: &str) -> Vec<DeviceRef> {
+        self.lookup(&self.devices, name, || DeviceRef {
+            adapter_id: self.primary,
+            short_address: (fnv1a(name) & 0x3F) as u8,
         })
     }
 
-    fn resolve_input_device(&self, name: &str) -> Option<InputDeviceRef> {
-        Self::lookup(&self.input_devices, name).or_else(|| {
-            self.permissive.then(|| InputDeviceRef {
-                adapter_id: self.primary,
-                device_short_address: (fnv1a(name) & 0x3F) as u8,
-            })
+    fn resolve_input_device(&self, name: &str) -> Vec<InputDeviceRef> {
+        self.lookup(&self.input_devices, name, || InputDeviceRef {
+            adapter_id: self.primary,
+            device_short_address: (fnv1a(name) & 0x3F) as u8,
         })
     }
 
-    fn resolve_scene(&self, name: &str) -> Option<u8> {
-        Self::lookup(&self.scenes, name)
-            .or_else(|| self.permissive.then(|| (fnv1a(name) & 0x0F) as u8))
+    fn resolve_scene(&self, name: &str) -> Vec<SceneRef> {
+        self.lookup(&self.scenes, name, || SceneRef {
+            adapter_id: self.primary,
+            id: (fnv1a(name) & 0x0F) as u8,
+        })
     }
 }

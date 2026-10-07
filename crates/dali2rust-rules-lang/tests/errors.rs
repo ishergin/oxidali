@@ -1,6 +1,8 @@
 mod support;
 
 use dali2rust_rules_model::limits::MAX_MQTT_TRIGGER_TOPICS;
+use dali2rust_rules_model::testing::StubResolver;
+use dali2rust_rules_model::{LampRef, SceneRef};
 use support::{compile, compile_err, compile_ok, wrap_action, wrap_condition, wrap_trigger};
 
 const TWO_RULES: &str = r#"# comment line
@@ -381,4 +383,46 @@ fn a_schedule_id_past_the_bus_field_is_refused_at_the_id() {
         assert_eq!((err.line, err.column), (5, id_column), "{verb}: {err}");
         assert!(err.message.contains("schedule id exceeds 32 bytes"), "{verb}: {err}");
     }
+}
+
+fn compile_with(resolver: &StubResolver, action: &str) -> Result<dali2rust_rules_model::RuleSet, dali2rust_rules_model::CompileError> {
+    let source = format!("rule \"t\" {{\n  when http trigger\n  do {action}\n}}\n");
+    dali2rust_rules_model::RuleCompiler::compile(&dali2rust_rules_lang::RulesLangV1, &source, resolver)
+}
+
+fn two_kitchens(second_adapter: u8) -> StubResolver {
+    StubResolver::strict()
+        .with_adapter(1)
+        .with_lamp("кухня", LampRef { adapter_id: 0, id: 3 })
+        .with_lamp("кухня", LampRef { adapter_id: second_adapter, id: 7 })
+}
+
+#[test]
+fn a_name_two_targets_share_is_refused_at_the_name() {
+    let err = compile_with(&two_kitchens(0), "lamp(\"кухня\").on()").unwrap_err();
+    assert_eq!((err.line, err.column), (3, 11), "{err}");
+    assert!(err.message.contains("ambiguous lamp \"кухня\""), "{err}");
+    assert!(err.message.contains("2 targets"), "{err}");
+}
+
+#[test]
+fn an_adapter_clause_picks_one_of_two_same_named_targets() {
+    let err = compile_with(&two_kitchens(1), "lamp(\"кухня\").on()").unwrap_err();
+    assert!(err.message.contains("adapter=N"), "the targets sit on two adapters: {err}");
+    let set = compile_with(&two_kitchens(1), "lamp(\"кухня\", adapter=1).on()").expect("one lamp on adapter 1");
+    let json = serde_json::to_string(&set).expect("rule set json");
+    assert!(json.contains("\"adapter_id\":1") && json.contains("\"id\":7"), "{json}");
+}
+
+#[test]
+fn a_scene_name_resolves_on_the_adapter_the_action_runs_on() {
+    let resolver = StubResolver::strict()
+        .with_adapter(1)
+        .with_lamp("кухня", LampRef { adapter_id: 0, id: 3 })
+        .with_scene_on("вечер", SceneRef { adapter_id: 1, id: 5 });
+    let err = compile_with(&resolver, "scene(\"вечер\").recall(lamp(\"кухня\"))").unwrap_err();
+    assert!(err.message.contains("scene \"вечер\" is on adapter 1, not 0"), "{err}");
+    let twice = resolver.with_scene_on("вечер", SceneRef { adapter_id: 0, id: 2 }).with_scene_on("вечер", SceneRef { adapter_id: 0, id: 9 });
+    let err = compile_with(&twice, "scene(\"вечер\").apply()").unwrap_err();
+    assert!(err.message.contains("ambiguous scene \"вечер\""), "{err}");
 }

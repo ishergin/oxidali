@@ -111,7 +111,7 @@ boundaries).
 | `unknown_field` | 400 | В теле `PATCH` есть поле, которого у правила нет |
 | `unsupported_field` | 422 | В теле `PATCH` есть `name`: имя меняет только документ |
 | `invalid_value` | 422 | `enabled` в `PATCH` не bool |
-| `parse_error` | 400 | Синтаксис или неизвестное имя цели, с `line` / `column` / `message` |
+| `parse_error` | 400 | Синтаксис, неизвестное имя цели или имя, которое носят две цели, с `line` / `column` / `message` |
 | `rule_not_found` | 404 | Правила `{name}` нет в документе (`PATCH`, `run`) — до публикации |
 | `rules_not_compiled` | 409 | `PATCH` по документу, который не скомпилировался |
 | `rule_set_conflict` | 409 | `base_revision` не совпал с текущей ревизией |

@@ -19,6 +19,12 @@ pub struct DeviceRef {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SceneRef {
+    pub adapter_id: u8,
+    pub id: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct InputRef {
     pub adapter_id: u8,
     pub device_short_address: u8,

@@ -126,7 +126,7 @@ fn lamp_on_edge(lamp: dali2rust_rules_model::LampRef, on: bool) -> EngineInput<'
 
 #[test]
 fn short_press_toggles_off_the_read_model_with_fade() {
-    let lamp = resolver().resolve_lamp("коридор").unwrap();
+    let lamp = resolver().resolve_lamp("коридор")[0];
     let mut eng = engine(SECTION7_ONE_BUTTON, 0);
 
     let dark = with_lamp(world(1_000), lamp, false, 0);
@@ -157,7 +157,7 @@ fn short_press_toggles_off_the_read_model_with_fade() {
 
 #[test]
 fn dim_hold_steps_by_elapsed_time_not_by_event_count() {
-    let lamp = resolver().resolve_lamp("коридор").unwrap();
+    let lamp = resolver().resolve_lamp("коридор")[0];
     let mut eng = engine(SECTION7_ONE_BUTTON, 0);
     let dim = |eng: &mut Engine, at: u64| {
         let out = eng.handle(button(3, 0, InputEventKind::LongPressRepeat), &world(at));
@@ -188,7 +188,7 @@ fn dim_hold_steps_by_elapsed_time_not_by_event_count() {
 
 #[test]
 fn double_press_asks_full_light() {
-    let lamp = resolver().resolve_lamp("коридор").unwrap();
+    let lamp = resolver().resolve_lamp("коридор")[0];
     let mut eng = engine(SECTION7_ONE_BUTTON, 0);
     let out = eng.handle(button(3, 0, InputEventKind::DoublePress), &world(1_000));
     assert_eq!(
@@ -203,7 +203,7 @@ fn double_press_asks_full_light() {
 
 #[test]
 fn night_document_runs_sensor_or_button_through_timer_to_lights_out() {
-    let group = resolver().resolve_group("ночь").unwrap();
+    let group = resolver().resolve_group("ночь")[0];
     let target = LightTarget::Group(group);
     let mut eng = engine(SECTION7_NIGHT, 0);
     let recall = vec![Effect::SceneRecall {
@@ -296,7 +296,7 @@ fn panel_button(option: u8) -> EngineInput<'static> {
 
 #[test]
 fn scene_panel_routes_event_option_to_recall_and_radio_buttons() {
-    let hall = resolver().resolve_group("зал").unwrap();
+    let hall = resolver().resolve_group("зал")[0];
     let mut eng = engine(SECTION7_PANEL, 0);
     let out = eng.handle(panel_button(3), &world(1_000));
     assert_eq!(out.len(), 1);
@@ -401,7 +401,7 @@ fn boot_fires_controller_starts_and_the_active_edge_dedupes_on_cooldown() {
 #[test]
 fn state_trigger_default_cooldown_suppresses_and_counts() {
     let src = r#"rule "с" { when lamp("х") turns on do log("s") }"#;
-    let lamp = resolver().resolve_lamp("х").unwrap();
+    let lamp = resolver().resolve_lamp("х")[0];
     let mut eng = engine(src, 0);
     assert_eq!(eng.handle(lamp_on_edge(lamp, true), &world(1_000)).len(), 1);
     assert!(eng.handle(lamp_on_edge(lamp, true), &world(1_100)).is_empty());
@@ -628,7 +628,7 @@ rule "слайдер яркости" {
   do   group("кухня").level(event.value)
 }
 "#;
-    let kitchen = resolver().resolve_group("кухня").unwrap();
+    let kitchen = resolver().resolve_group("кухня")[0];
     let mut eng = engine(src, 0);
     let slide = |value: u16| EngineInput::InputEvent {
         adapter_id: 0,
@@ -671,7 +671,7 @@ rule "сухо" {
        after 2s do { log("отложено") }
 }
 "#;
-    let lamp = resolver().resolve_lamp("х").unwrap();
+    let lamp = resolver().resolve_lamp("х")[0];
     let mut eng = engine(src, 0);
     let out = eng.handle(EngineInput::RunRule { name: "сухо", dry: true }, &world(0));
     assert_eq!(out.len(), 1);
@@ -708,7 +708,7 @@ fn a_wet_manual_run_requires_the_rule_enabled_and_a_dry_one_does_not() {
 }
 
 fn determinism_script(eng: &mut Engine) -> Vec<Vec<dali2rust_rules_runtime::ActivationOutcome>> {
-    let lamp = resolver().resolve_lamp("х").unwrap();
+    let lamp = resolver().resolve_lamp("х")[0];
     vec![
         eng.handle(button(1, 0, InputEventKind::Press), &world(1_000)),
         eng.handle(lamp_on_edge(lamp, true), &with_lamp(world(2_000), lamp, true, 200)),
@@ -737,7 +737,7 @@ rule "б" { when lamp("х") turns on do log("б") }
 rule "а" { when lamp("х") turns on do log("а") }
 rule "в" { when lamp("х") turns on do log("в") }
 "#;
-    let lamp = resolver().resolve_lamp("х").unwrap();
+    let lamp = resolver().resolve_lamp("х")[0];
     let mut eng = engine(src, 0);
     let out = eng.handle(lamp_on_edge(lamp, true), &world(1_000));
     let names: Vec<&str> = out.iter().map(|o| o.rule.as_str()).collect();
@@ -747,7 +747,7 @@ rule "в" { when lamp("х") turns on do log("в") }
 #[test]
 fn a_light_feedback_loop_is_cut_at_the_chain_depth() {
     let src = r#"rule "петля" { when lamp("х") turns on do lamp("х").level(200) }"#;
-    let lamp = resolver().resolve_lamp("х").unwrap();
+    let lamp = resolver().resolve_lamp("х")[0];
     let mut eng = engine(src, 0);
     for i in 0..5u64 {
         let at = 1_000 + i * 250;
@@ -766,7 +766,7 @@ fn a_light_feedback_loop_is_cut_at_the_chain_depth() {
 #[test]
 fn the_chain_window_expiry_resets_the_depth() {
     let src = r#"rule "петля" { when lamp("х") turns on do lamp("х").level(200) }"#;
-    let lamp = resolver().resolve_lamp("х").unwrap();
+    let lamp = resolver().resolve_lamp("х")[0];
     let mut eng = engine(src, 0);
     for i in 0..8u64 {
         let at = 1_000 + i * 2_500;
@@ -782,7 +782,7 @@ fn timer_mediated_cycles_are_not_chains() {
 rule "мигалка" { when timer("б") fires do lamp("х").toggle() timer("б").restart(1s) }
 rule "старт" { when http trigger do timer("б").start(1s) }
 "#;
-    let lamp = resolver().resolve_lamp("х").unwrap();
+    let lamp = resolver().resolve_lamp("х")[0];
     let mut eng = engine(src, 0);
     eng.handle(run("старт"), &world(0));
     for i in 1..=8u64 {
@@ -855,7 +855,7 @@ fn an_unevaluable_condition_is_a_partial_outcome_not_a_false() {
 
 #[test]
 fn an_unknown_level_fails_every_comparison_on_it_including_not_equal() {
-    let lamp = resolver().resolve_lamp("коридор").unwrap();
+    let lamp = resolver().resolve_lamp("коридор")[0];
     let src = r#"
 rule "ниже" { when http trigger if lamp("коридор").level < 50 do log("<") }
 rule "мимо" { when http trigger if lamp("коридор").level != 50 do log("!=") }
@@ -872,8 +872,8 @@ rule "мимо" { when http trigger if lamp("коридор").level != 50 do log
 
 #[test]
 fn an_unknown_level_read_as_a_value_is_unevaluable() {
-    let lamp = resolver().resolve_lamp("коридор").unwrap();
-    let kitchen = resolver().resolve_lamp("кухня").unwrap();
+    let lamp = resolver().resolve_lamp("коридор")[0];
+    let kitchen = resolver().resolve_lamp("кухня")[0];
     let src = r#"
 rule "эхо" { when http trigger do lamp("кухня").level(lamp("коридор").level) }
 rule "память" { when http trigger do lamp("кухня").level(lamp("коридор").last_level) }
@@ -893,7 +893,7 @@ rule "справа" { when http trigger if lamp("кухня").level > lamp("ко
 
 #[test]
 fn a_level_crossing_needs_two_known_levels() {
-    let lamp = resolver().resolve_lamp("коридор").unwrap();
+    let lamp = resolver().resolve_lamp("коридор")[0];
     let src = r#"rule "порог" { when lamp("коридор").level crosses above 100 do log("↑") }"#;
     let mut eng = engine(src, 0);
     assert!(eng.handle(lamp_level_edge(lamp, true, None, Some(150)), &world(1_000)).is_empty());
@@ -904,7 +904,7 @@ fn a_level_crossing_needs_two_known_levels() {
 
 #[test]
 fn event_value_of_a_lamp_with_an_unknown_level_is_unevaluable() {
-    let lamp = resolver().resolve_lamp("коридор").unwrap();
+    let lamp = resolver().resolve_lamp("коридор")[0];
     let src = r#"rule "эхо" { when lamp("коридор") turns on do lamp("кухня").level(event.value) }"#;
     let mut eng = engine(src, 0);
     let out = eng.handle(lamp_level_edge(lamp, false, None, None), &world(1_000));
@@ -917,7 +917,7 @@ fn event_value_of_a_lamp_with_an_unknown_level_is_unevaluable() {
 #[test]
 fn hcl_override_edges_match_their_scoped_target() {
     let src = r#"rule "щит" { when hcl override starts for group("кухня") do log("щ") }"#;
-    let kitchen = resolver().resolve_group("кухня").unwrap();
+    let kitchen = resolver().resolve_group("кухня")[0];
     let mut eng = engine(src, 0);
     let started = EngineInput::HclOverride {
         started: true,
@@ -953,7 +953,7 @@ fn light_crossings_are_judged_by_the_rule_threshold_over_the_edge_cache() {
 #[test]
 fn group_becomes_matches_transitions_only() {
     let src = r#"rule "г" { when group("кухня") becomes any_on do log("г") }"#;
-    let kitchen = resolver().resolve_group("кухня").unwrap();
+    let kitchen = resolver().resolve_group("кухня")[0];
     let mut eng = engine(src, 0);
     let edge = |was: bool, now: bool| EngineInput::GroupChanged {
         adapter_id: kitchen.adapter_id,
