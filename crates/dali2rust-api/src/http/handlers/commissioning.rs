@@ -490,7 +490,11 @@ declare_handler_shell!(CommissioningReplacementHandler {
 const REPLACEMENT_LAMP_BOUND: &str = "replacement_bound_to_another_lamp";
 
 impl CommissioningReplacementHandler {
-    fn check_devices(&self, adapter_id: u8, req: &CommissioningReplacementRequest) -> Result<(), HttpResponse> {
+    fn check_devices(
+        &self,
+        adapter_id: u8,
+        req: &CommissioningReplacementRequest,
+    ) -> Result<(), HttpResponse> {
         let (failed, replacement) = (req.failed_short_address, req.replacement_short_address);
         if failed > MAX_SHORT_ADDRESS || replacement > MAX_SHORT_ADDRESS || failed == replacement {
             return Err(json_err(422, "invalid_value"));

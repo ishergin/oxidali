@@ -164,6 +164,6 @@ target-state, а непривязанная даёт `vl_unbound`. Recall-фак
 | `DaliDiscoverDevicesCommand` | прогресс скана, итог сверки, сигнал операции | реестр: записи устройств |
 | `DaliReadAttributesCommand` | чанки атрибутов, чанки банков, исходы по группам | реестр (доказательства) и проектор (runtime) |
 | `DaliBusHealthProbeCommand` | `DaliBusHealthProbedEvent` | счётчики поллера, дисплей |
-| коммиссионинг | `DaliDeviceIdentifiedEvent`, `DaliAddressingCompletedEvent`, `DaliDeviceReplacedEvent`; шаг — подтверждение | трекер; реестр переносит запись и публикует `PhysicalDeviceChangedEvent` обоих адресов и `VirtualLampChangedEvent` каждой лампы, чья привязка или прибор сменились; если лампа отказавшего осталась на адресе — ещё `GroupMatrixChangedEvent` и `SceneMatrixChangedEvent` каждой сцены |
+| коммиссионинг | `DaliDeviceIdentifiedEvent`, `DaliAddressingCompletedEvent`, `DaliDeviceReplacedEvent`; шаг — подтверждение | трекер; реестр переносит запись и публикует `PhysicalDeviceChangedEvent` обоих адресов и `VirtualLampChangedEvent` каждой лампы, чья привязка или прибор сменились; если лампа отказавшего осталась на адресе — ещё `GroupMatrixChangedEvent` и `SceneMatrixChangedEvent` каждой сцены, а `GroupMatrixChangedEvent` — и когда отвязанная лампа заменителя теряет принятые группы |
 | Part 103 | прогресс скана, `Dali103InstanceConfiguredEvent`, сигнал операции | реестр устройств ввода |
 | арбитраж | `Dali103ArbitrationProbedEvent`, `Dali103HandoverSentEvent` | воркер арбитража |

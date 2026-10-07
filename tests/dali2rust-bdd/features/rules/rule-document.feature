@@ -141,6 +141,7 @@ Feature: The rules document: parse, store, read back byte-for-byte
     And the last operation eventually succeeds
     When I PATCH JSON {"name":"Кухня"} to "/api/v1/adapters/0/virtual-lamps/2"
     Then the response status should be 200
+    And the JSON pointer "/diagnostic" at "/api/v1/rules" should eventually contain "rules_names_unresolved: "
     And the JSON pointer "/diagnostic" at "/api/v1/rules" should eventually contain "ambiguous lamp"
     And the JSON pointer "/rule_count" at "/api/v1/rules" should eventually be "0"
     When I PATCH JSON {"name":"Зал"} to "/api/v1/adapters/0/virtual-lamps/2"

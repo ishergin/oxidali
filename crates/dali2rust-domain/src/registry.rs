@@ -4,7 +4,7 @@ use core::ptr::addr_of_mut;
 
 use serde::{Deserialize, Serialize};
 use dali2rust_contracts::msg::{
-    ColorMode, DeviceTypeSet, ExtendedVersionEntry, FixedText32, FixedText64, OperationType,
+    ColorMode, DeviceType, DeviceTypeSet, ExtendedVersionEntry, FixedText32, FixedText64, OperationType,
     MAX_EXTENDED_VERSIONS,
 };
 use dali2rust_platform::small_sort::insertion_sort_by;
@@ -404,6 +404,18 @@ pub fn capability_supports_color_mode(caps: CapabilityFlagsView, mode: ColorMode
         ColorMode::Rgbwaf => caps.rgbwaf,
         _ => false,
     }
+}
+
+pub fn device_type_fits_declared(declared: Option<DeviceTypeSet>, device_type: DeviceType) -> bool {
+    match (declared, device_type.dali_code()) {
+        (Some(declared), Some(code)) => declared.contains(code),
+        _ => true,
+    }
+}
+
+pub fn colour_mode_fits_declared(declared: Option<DeviceTypeSet>, mode: ColorMode) -> bool {
+    let states_a_colour = matches!(mode, ColorMode::Cct | ColorMode::Xy | ColorMode::Rgb | ColorMode::Rgbwaf);
+    !states_a_colour || device_type_fits_declared(declared, DeviceType::Dt8Color)
 }
 
 pub fn seed_capability_from_color_mode(caps: &mut CapabilityFlagsView, mode: ColorMode) {

@@ -401,7 +401,8 @@ fn a_commissioning_begin_never_marks_a_running_one_cancelled() {
         let corr = 9900 + 2 * op_type as u64;
         let (first, second) = (format!("comm-0-{corr}"), format!("comm-0-{}", corr + 1));
         publish(&publisher, BusChannel::Commands, begin_envelope(corr, &first, op_type, 600_000));
-        publish(&publisher, BusChannel::Commands, begin_envelope(corr + 1, &second, op_type, 600_000));
+        let begin_second = begin_envelope(corr + 1, &second, op_type, 600_000);
+        publish(&publisher, BusChannel::Commands, begin_second);
         wait_until(
             || tail_for(&tracker, &second).first().copied() == Some(OperationStatus::Accepted),
             Duration::from_millis(500),
@@ -1162,7 +1163,8 @@ fn raced_replace_device_outcome_is_attached_after_begin_m10() {
             .expect("raced replace-device outcome must be attached to the operation (M10)");
         let replace = result.as_replace_device().expect("replace device result variant");
         assert_eq!((replace.failed_short_address, replace.replacement_short_address), (5, 9));
-        assert_eq!(replace.restored.metadata_and_overrides, restored, "the result names what moved");
+        let moved = replace.restored.metadata_and_overrides;
+        assert_eq!(moved, restored, "the result names what moved");
     }
 }
 

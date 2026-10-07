@@ -448,6 +448,8 @@ pub const COMMISSIONING_OPERATION_TYPES: [OperationType; 3] = [
     OperationType::CommissioningReplaceDevice,
 ];
 
+const COMMISSIONING_ACTIVE: &str = "commissioning_active";
+
 pub fn reject_if_commissioning_active(
     operations: &dyn OperationReadPort,
     adapter_id: u8,
@@ -460,8 +462,6 @@ pub fn reject_if_commissioning_active(
     }
     Ok(())
 }
-
-pub const COMMISSIONING_ACTIVE: &str = "commissioning_active";
 
 pub fn reject_if_apply_active(
     operations: &dyn OperationReadPort,

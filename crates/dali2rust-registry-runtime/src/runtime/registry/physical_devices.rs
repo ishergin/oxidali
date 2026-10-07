@@ -25,6 +25,7 @@ use dali2rust_domain::registry::{
     PhysicalDeviceAttributesView, PhysicalDeviceCoreView, PhysicalDeviceReadPort,
     PhysicalDeviceSummaryView, PhysicalDeviceView,
 };
+use dali2rust_domain::registry::{colour_mode_fits_declared, device_type_fits_declared};
 
 pub const DISCOVERY_EVICT_MISS_THRESHOLD: u8 = 3;
 
@@ -1168,10 +1169,10 @@ impl RegistryStore {
         (failed, replacement): (u8, u8),
         restore_metadata_and_overrides: bool,
     ) -> Option<ReplacementOutcome> {
-        let mut g = self.write_inner();
         if failed == replacement {
             return None;
         }
+        let mut g = self.write_inner();
         let mut record = g.physical_devices.remove(&(adapter_id, replacement))?;
         let role = g.physical_devices.remove(&(adapter_id, failed));
         if let (Some(role), true) = (role, restore_metadata_and_overrides) {
@@ -1494,26 +1495,12 @@ fn take_metadata_and_overrides(role: &PhysicalDeviceRecord, record: &mut Physica
     record.name = role.name.clone();
     record.notes = role.notes.clone();
     let declared = record.supported_device_types;
-    let fits_types = |dt: &DeviceType| type_override_fits(declared, *dt);
+    let fits_types = |dt: &DeviceType| device_type_fits_declared(declared, *dt);
     record.device_type_override =
         role.device_type_override.filter(fits_types).or(record.device_type_override);
-    let hardware = record.capability_flags();
-    let fits_colours = |mode: &ColorMode| colour_override_fits(hardware, *mode);
+    let fits_colours = |mode: &ColorMode| colour_mode_fits_declared(declared, *mode);
     record.color_mode_override =
         role.color_mode_override.filter(fits_colours).or(record.color_mode_override);
-}
-
-fn type_override_fits(declared: Option<DeviceTypeSet>, device_type: DeviceType) -> bool {
-    match (declared, device_type.dali_code()) {
-        (Some(declared), Some(code)) => declared.contains(code),
-        _ => true,
-    }
-}
-
-fn colour_override_fits(hardware: CapabilityFlagsView, mode: ColorMode) -> bool {
-    let mut seeded = hardware;
-    dali2rust_domain::registry::seed_capability_from_color_mode(&mut seeded, mode);
-    seeded == hardware
 }
 
 fn rebind_lamps(inner: &mut super::store::Inner, adapter_id: u8, from: u8, to: u8) -> Vec<u8> {
@@ -1549,8 +1536,6 @@ fn hand_over_lamps(
 mod tests {
     use super::super::store::RegistryStore;
     use super::DISCOVERY_EVICT_MISS_THRESHOLD;
-    use dali2rust_contracts::msg::{ColorMode, DeviceType, DeviceTypeSet};
-    use dali2rust_domain::registry::CapabilityFlagsView;
 
     const VERIFIED_SHORT: u8 = 0;
     const PHANTOM_SHORT: u8 = 9;
@@ -1616,45 +1601,6 @@ mod tests {
             assert!(store.reconcile_discovery_scan(0, 0).evicted.is_empty());
         }
         assert_eq!(store.reconcile_discovery_scan(0, 0).evicted, vec![PHANTOM_SHORT]);
-    }
-
-    fn give_overrides(store: &RegistryStore, declared: u64, hardware: CapabilityFlagsView) {
-        let mut g = store.inner.write().expect("registry lock");
-        let role = g.physical_devices.get_mut(&(0, VERIFIED_SHORT)).expect("role record");
-        role.device_type_override = Some(DeviceType::Dt8Color);
-        role.color_mode_override = Some(ColorMode::Cct);
-        let gear = g.physical_devices.get_mut(&(0, PHANTOM_SHORT)).expect("replacement record");
-        gear.supported_device_types = Some(DeviceTypeSet::from_bits(declared));
-        gear.set_capability_flags(hardware);
-    }
-
-    fn overrides_after_replacement(
-        declared: u64,
-        hardware: CapabilityFlagsView,
-    ) -> (Option<DeviceType>, Option<ColorMode>) {
-        let store = RegistryStore::with_adapter_count(1);
-        assert!(apply_progress(&store, VERIFIED_SHORT, Some(GOLDEN_RANDOM)));
-        assert!(apply_progress(&store, PHANTOM_SHORT, None));
-        give_overrides(&store, declared, hardware);
-        store.apply_device_replacement(0, (VERIFIED_SHORT, PHANTOM_SHORT), true).expect("replaced");
-        let g = store.inner.read().expect("registry lock");
-        let record = &g.physical_devices[&(0, VERIFIED_SHORT)];
-        (record.device_type_override, record.color_mode_override)
-    }
-
-    #[test]
-    fn a_replacement_takes_only_the_overrides_the_new_gear_can_honour() {
-        const DT6_ONLY: u64 = 1 << 6;
-        const DT6_AND_DT8: u64 = (1 << 6) | (1 << 8);
-        let dimmer = CapabilityFlagsView { brightness: true, ..CapabilityFlagsView::default() };
-        let tunable = CapabilityFlagsView { cct: true, ..dimmer };
-        let narrow = overrides_after_replacement(DT6_ONLY, dimmer);
-        assert_eq!(narrow, (None, None), "a DT6 dimmer is no DT8 CCT");
-        assert_eq!(
-            overrides_after_replacement(DT6_AND_DT8, tunable),
-            (Some(DeviceType::Dt8Color), Some(ColorMode::Cct)),
-            "a tunable DT8 honours both"
-        );
     }
 
     #[test]

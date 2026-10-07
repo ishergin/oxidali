@@ -51,7 +51,7 @@ const DT8_FEATURES_TC_ONLY: u8 = 0x02;
 const SECOND_DEVICE_SHORT_ADDRESS: u8 = 1;
 const SECOND_DEVICE_RANDOM_ADDRESS: u32 = 0x2A_0F13;
 
-// COMM-100 COMM-101 COMM-110 COMM-111 COMM-113
+// COMM-100 COMM-101 COMM-110 COMM-111 COMM-113 COMM-115
 #[given("adapter 0 has discovered a colour-temperature device 0 and an RGB device 1")]
 async fn given_cct_and_rgb_devices_discovered(world: &mut DaliWorld) {
     {

@@ -15,7 +15,7 @@ use dali2rust_contracts::msg::{
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
     AdapterReadPort, AdapterView, AttributeSource, GroupApplySnapshot, GroupMembershipMatrixView,
-    GroupReadPort, GroupView, VirtualLampReadPort,
+    GroupReadPort, GroupView, SceneReadPort, VirtualLampReadPort,
 };
 use dali2rust_registry_runtime::{RegistryStore, RegistryWorkerCounters};
 use dali2rust_test_support::wait_until;
@@ -544,7 +544,6 @@ fn successful_group_membership_event_updates_applied_matrix() {
 
 #[test]
 fn successful_scene_programmed_event_projects_applied_row_and_echo() {
-    use dali2rust_domain::registry::SceneReadPort;
     let store = Arc::new(RegistryStore::with_adapter_count(1));
     let counters = Arc::new(RegistryWorkerCounters::default());
     let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
@@ -753,29 +752,42 @@ fn apply_row(store: &RegistryStore, virtual_lamp_id: u8) -> dali2rust_domain::re
 }
 
 const CHANGED_EVENTS_DEADLINE: Duration = Duration::from_secs(2);
+const CHANGED_EVENTS_QUIET: Duration = Duration::from_millis(300);
+
+type Changed = (Vec<u8>, Vec<u8>, usize);
+
+fn note_changed(changed: &mut Changed, payload: &BusEventPayload) {
+    match payload {
+        BusEventPayload::PhysicalDeviceChangedEvent(body) => changed.0.push(body.short_address),
+        BusEventPayload::VirtualLampChangedEvent(body) => changed.1.push(body.virtual_lamp_id),
+        BusEventPayload::GroupMatrixChangedEvent(_) => changed.2 += 1,
+        _ => {}
+    }
+}
 
 fn changed_events_for(
     rx: &std::sync::mpsc::Receiver<BusFrame>,
     correlation_id: u64,
-    expected: (Vec<u8>, Vec<u8>),
-) -> (Vec<u8>, Vec<u8>) {
-    let deadline = std::time::Instant::now() + CHANGED_EVENTS_DEADLINE;
-    let (mut devices, mut lamps) = (Vec::new(), Vec::new());
-    while (devices.len(), lamps.len()) != (expected.0.len(), expected.1.len()) {
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
+    expected: &Changed,
+) -> Changed {
+    let counts = |c: &Changed| (c.0.len(), c.1.len(), c.2);
+    let mut changed = Changed::default();
+    let mut until = std::time::Instant::now() + CHANGED_EVENTS_DEADLINE;
+    loop {
+        let left = until.saturating_duration_since(std::time::Instant::now());
         let Ok(BusFrame::Event(ev)) = rx.recv_timeout(left) else {
             break;
         };
-        match &ev.payload {
-            _ if ev.meta.correlation_id != correlation_id => {}
-            BusEventPayload::PhysicalDeviceChangedEvent(body) => devices.push(body.short_address),
-            BusEventPayload::VirtualLampChangedEvent(body) => lamps.push(body.virtual_lamp_id),
-            _ => {}
+        if ev.meta.correlation_id == correlation_id {
+            note_changed(&mut changed, &ev.payload);
+        }
+        if counts(&changed) == counts(expected) {
+            until = until.min(std::time::Instant::now() + CHANGED_EVENTS_QUIET);
         }
     }
-    devices.sort_unstable();
-    lamps.sort_unstable();
-    (devices, lamps)
+    changed.0.sort_unstable();
+    changed.1.sort_unstable();
+    changed
 }
 
 #[test]
@@ -807,8 +819,8 @@ fn a_replacement_keeps_its_own_evidence_so_the_lamps_rows_turn_dirty() {
     assert_eq!(row.binding_short, Some(0));
     assert_eq!(row.desired_groups_mask, 1 << 3, "the lamp keeps the failed device's role");
     assert_eq!(row.applied_groups_mask, 1 << 7, "applied is what the replacement holds");
-    let expected = (vec![0, 11], vec![2]);
-    assert_eq!(changed_events_for(&ev_obs, 952, expected.clone()), expected);
+    let expected: Changed = (vec![0, 11], vec![2], 1);
+    assert_eq!(changed_events_for(&ev_obs, 952, &expected), expected);
 }
 
 fn scene_programmed(
@@ -816,12 +828,28 @@ fn scene_programmed(
     short: u8,
     target_state: Option<dali2rust_contracts::msg::DaliSceneTargetState>,
 ) -> dali2rust_contracts::msg::EventEnvelope {
-    dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliSceneProgrammedEvent { registry_adapter_id: 0, target: DaliProgramTarget::VirtualLamp { virtual_lamp_id: 1 }, scene_id: 3, action: dali2rust_contracts::msg::SceneProgramAction::Write, physical_short_address: Some(short), target_state, scene_level: Some(179), error: None })
+    let programmed = dali2rust_contracts::msg::DaliSceneProgrammedEvent {
+        registry_adapter_id: 0,
+        target: DaliProgramTarget::VirtualLamp { virtual_lamp_id: 1 },
+        scene_id: 3,
+        action: dali2rust_contracts::msg::SceneProgramAction::Write,
+        physical_short_address: Some(short),
+        target_state,
+        scene_level: Some(179),
+        error: None,
+    };
+    let origin = Some(dali2rust_contracts::msg::Origin::Internal);
+    dali2rust_contracts::bus::event_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        correlation_id,
+        BUS_TID,
+        origin,
+        programmed,
+    )
 }
 
 #[test]
 fn what_was_programmed_into_the_old_gear_does_not_vouch_for_the_new_one() {
-    use dali2rust_domain::registry::SceneReadPort;
     let store = Arc::new(RegistryStore::with_adapter_count(1));
     let counters = Arc::new(RegistryWorkerCounters::default());
     let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
@@ -833,8 +861,12 @@ fn what_was_programmed_into_the_old_gear_does_not_vouch_for_the_new_one() {
         color: None,
     };
     let mut rows = dali2rust_contracts::msg::SceneMatrixDesiredRowList::new();
-    rows.push(dali2rust_contracts::msg::SceneMatrixDesiredRow { virtual_lamp_id: 1, included: true, target: Some(target) })
-        .expect("row capacity");
+    let row = dali2rust_contracts::msg::SceneMatrixDesiredRow {
+        virtual_lamp_id: 1,
+        included: true,
+        target: Some(target),
+    };
+    rows.push(row).expect("row capacity");
     publish_scene_matrix_write(&publisher, 992, 0, 3, rows);
     publish_event(&publisher, scene_programmed(993, 7, Some(target)));
     publish_event(&publisher, scene_programmed(994, 8, None));
@@ -851,6 +883,90 @@ fn what_was_programmed_into_the_old_gear_does_not_vouch_for_the_new_one() {
         Some(true),
         "the new gear holds the level, but nothing says it holds the power the row asks"
     );
+}
+
+fn discovered_gear(
+    publisher: &dali2rust_bus::BusPublisher,
+    store: &RegistryStore,
+    (correlation_id, short): (u64, u8),
+    declared: u64,
+) {
+    let colour = declared & (1 << 8) != 0;
+    let progress = dali2rust_contracts::msg::DaliDiscoveryProgressEvent {
+        registry_adapter_id: 0,
+        short_address: short,
+        random_address: None,
+        device_type: if colour { DeviceType::Dt8Color } else { DeviceType::Dt6Led },
+        color_mode: ColorMode::Unknown,
+        dt8_xy_capable: false,
+        dt8_tc_capable: colour,
+        dt8_rgb_capable: false,
+        dt8_rgbwaf_capable: false,
+        supported_device_types: Some(dali2rust_contracts::msg::DeviceTypeSet::from_bits(declared)),
+    };
+    let origin = Some(dali2rust_contracts::msg::Origin::Internal);
+    let event = dali2rust_contracts::bus::event_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        correlation_id,
+        BUS_TID,
+        origin,
+        progress,
+    );
+    publish_event(publisher, event);
+    wait_until(|| store.physical_device_view(0, short).is_some(), Duration::from_millis(500));
+}
+
+fn override_the_role(
+    publisher: &dali2rust_bus::BusPublisher,
+    store: &RegistryStore,
+    correlation_id: u64,
+) {
+    use dali2rust_contracts::msg::PhysicalDeviceOverrideCommand as Patch;
+    let patch = Patch {
+        adapter_id: 0,
+        short_address: 0,
+        patch_mask: Patch::PATCH_DEVICE_TYPE_OVERRIDE | Patch::PATCH_COLOR_MODE_OVERRIDE,
+        name: dali2rust_contracts::msg::FixedText64::new(),
+        clear_device_type_override: false,
+        device_type_override: DeviceType::Dt8Color,
+        clear_color_mode_override: false,
+        color_mode_override: ColorMode::Cct,
+        dt8_auto_activation_repair: true,
+        dt8_rgbwaf_control_assert: true,
+    };
+    let origin = Some(dali2rust_contracts::msg::Origin::Api);
+    let command =
+        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, BUS_TID, origin, patch);
+    let queued = publisher.try_publish(BusChannel::Commands, BusFrame::command(command));
+    assert_eq!(queued, PublishResult::Queued);
+    let overridden = || {
+        store.physical_device_view(0, 0).is_some_and(|pd| pd.color_mode_override.is_some())
+    };
+    wait_until(overridden, Duration::from_millis(500));
+}
+
+fn overrides_after_handing_over(declared_by_new_gear: u64) -> (Option<String>, Option<String>) {
+    const ONLY_DT8: u64 = 1 << 8;
+    let store = Arc::new(RegistryStore::with_adapter_count(1));
+    let counters = Arc::new(RegistryWorkerCounters::default());
+    let (publisher, _ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
+    discovered_gear(&publisher, &store, (1000, 0), ONLY_DT8);
+    discovered_gear(&publisher, &store, (1001, 11), declared_by_new_gear);
+    override_the_role(&publisher, &store, 1002);
+    publish_event(&publisher, replaced_event(1003, 0, 11));
+    wait_until(|| store.physical_device_view(0, 11).is_none(), Duration::from_millis(500));
+    let record = store.physical_device_view(0, 0).expect("the role address");
+    (record.device_type_override, record.color_mode_override)
+}
+
+#[test]
+fn a_replacement_takes_only_the_overrides_the_new_gear_declares() {
+    const DT6_ONLY: u64 = 1 << 6;
+    const DT6_AND_DT8: u64 = (1 << 6) | (1 << 8);
+    let dimmer = overrides_after_handing_over(DT6_ONLY);
+    assert_eq!(dimmer, (None, None), "a DT6 dimmer is no DT8 colour gear");
+    let tunable = overrides_after_handing_over(DT6_AND_DT8);
+    assert_eq!(tunable, (Some("dt8_color".into()), Some("cct".into())), "a DT8 gear takes both");
 }
 
 #[test]
@@ -877,8 +993,8 @@ fn a_replacement_never_leaves_two_lamps_on_one_device() {
         None,
         "the replacement's own lamp loses its device, as forget would leave it"
     );
-    let expected = (vec![0, 11], vec![2, 5]);
-    assert_eq!(changed_events_for(&ev_obs, 964, expected.clone()), expected);
+    let expected: Changed = (vec![0, 11], vec![2, 5], 1);
+    assert_eq!(changed_events_for(&ev_obs, 964, &expected), expected);
 }
 
 #[test]
@@ -901,8 +1017,8 @@ fn a_replacement_without_a_lamp_at_the_role_brings_its_own_lamp_along() {
     let row = apply_row(&store, 5);
     assert_eq!(row.binding_short, Some(0), "the lamp follows its gear to the role address");
     assert_eq!(row.applied_groups_mask, 1 << 7);
-    let expected = (vec![0, 11], vec![5]);
-    assert_eq!(changed_events_for(&ev_obs, 973, expected.clone()), expected);
+    let expected: Changed = (vec![0, 11], vec![5], 0);
+    assert_eq!(changed_events_for(&ev_obs, 973, &expected), expected);
 }
 
 #[test]
@@ -924,8 +1040,8 @@ fn an_address_change_announces_both_addresses_and_the_moved_lamp() {
         Duration::from_millis(500),
     );
 
-    let expected = (vec![4, 9], vec![6]);
-    assert_eq!(changed_events_for(&ev_obs, 982, expected.clone()), expected);
+    let expected: Changed = (vec![4, 9], vec![6], 0);
+    assert_eq!(changed_events_for(&ev_obs, 982, &expected), expected);
 }
 
 fn seed_device_reporting_groups(

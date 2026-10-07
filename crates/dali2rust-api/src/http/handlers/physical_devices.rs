@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use dali2rust_bus::{BusFrame, BusId, BusPublisher};
 use dali2rust_contracts::msg::{
-    ColorMode, DaliAttributeGroup, DeviceType, DiscoveryMode, LightSetpoint,
+    ColorMode, DaliAttributeGroup, DeviceType, DeviceTypeSet, DiscoveryMode, LightSetpoint,
     MemoryBankReadPreset, OperationType,
 };
 use crate::bus_codec::SOURCE_ID_UNSPECIFIED;
@@ -824,10 +824,13 @@ fn validate_pd_override_within_declared_types(
     if data.patch_mask & Patch::PATCH_DEVICE_TYPE_OVERRIDE == 0 || data.clear_dt {
         return Ok(());
     }
-    let (Some(declared), Some(wanted)) = (declared, data.dt_override.dali_code()) else {
-        return Ok(());
-    };
-    if declared.contains(&wanted) {
+    let declared = declared.map(|codes| {
+        codes.into_iter().fold(DeviceTypeSet::default(), |mut set, code| {
+            set.insert(code);
+            set
+        })
+    });
+    if dali2rust_domain::registry::device_type_fits_declared(declared, data.dt_override) {
         return Ok(());
     }
     Err(json_err(422, "invalid_value"))

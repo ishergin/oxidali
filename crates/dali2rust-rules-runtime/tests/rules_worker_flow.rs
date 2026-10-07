@@ -1765,6 +1765,73 @@ fn renaming_a_group_scene_or_input_device_recompiles_the_rules_that_name_it() {
     }
 }
 
+struct TwoNames {
+    inner: StubResolver,
+    lamp_gone: Arc<std::sync::atomic::AtomicBool>,
+    group_gone: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl dali2rust_rules_model::NameResolver for TwoNames {
+    fn primary_adapter(&self) -> u8 {
+        self.inner.primary_adapter()
+    }
+    fn adapter_exists(&self, adapter_id: u8) -> bool {
+        self.inner.adapter_exists(adapter_id)
+    }
+    fn resolve_lamp(&self, name: &str) -> Vec<dali2rust_rules_model::LampRef> {
+        let gone = self.lamp_gone.load(std::sync::atomic::Ordering::Relaxed);
+        self.inner.resolve_lamp(name).into_iter().filter(|_| !gone).collect()
+    }
+    fn resolve_group(&self, name: &str) -> Vec<dali2rust_rules_model::GroupRef> {
+        let gone = self.group_gone.load(std::sync::atomic::Ordering::Relaxed);
+        self.inner.resolve_group(name).into_iter().filter(|_| !gone).collect()
+    }
+    fn resolve_device(&self, name: &str) -> Vec<dali2rust_rules_model::DeviceRef> {
+        self.inner.resolve_device(name)
+    }
+    fn resolve_input_device(&self, name: &str) -> Vec<dali2rust_rules_model::InputDeviceRef> {
+        self.inner.resolve_input_device(name)
+    }
+    fn resolve_scene(&self, name: &str) -> Vec<dali2rust_rules_model::SceneRef> {
+        self.inner.resolve_scene(name)
+    }
+}
+
+const TWO_NAMES_DOC: &str = "rule \"л\" { when http trigger do lamp(\"кухня\").on() }\n\
+rule \"г\" { when http trigger do group(\"зал\").off() }\n";
+
+fn diagnostic_mentions(store: &RulesStore, part: &str) -> bool {
+    store.document().diagnostic.is_some_and(|text| text.contains(part))
+}
+
+#[test]
+fn the_diagnostic_names_the_latest_failure_without_moving_the_revision() {
+    let lamp_gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let group_gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let resolver = TwoNames {
+        inner: StubResolver::permissive(),
+        lamp_gone: Arc::clone(&lamp_gone),
+        group_gone: Arc::clone(&group_gone),
+    };
+    let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-two-names"));
+    let h = harness_spawn(slices, empty_world(), Arc::new(resolver));
+    publish_document(&h, 1, TWO_NAMES_DOC, 0);
+    assert!(recv_signal(&h, 1).error.is_none());
+    wait_revision(&h.store, 1);
+
+    lamp_gone.store(true, std::sync::atomic::Ordering::Relaxed);
+    names_moved(&h);
+    dali2rust_test_support::wait_until(|| diagnostic_mentions(&h.store, "unknown lamp"), COMMAND_WAIT);
+    let stopped_at = h.store.revision();
+
+    group_gone.store(true, std::sync::atomic::Ordering::Relaxed);
+    lamp_gone.store(false, std::sync::atomic::Ordering::Relaxed);
+    names_moved(&h);
+    dali2rust_test_support::wait_until(|| diagnostic_mentions(&h.store, "unknown group"), COMMAND_WAIT);
+    assert!(diagnostic_mentions(&h.store, "unknown group"), "{:?}", h.store.document().diagnostic);
+    assert_eq!(h.store.revision(), stopped_at, "the rule graph did not move, only its cause");
+}
+
 #[test]
 fn a_disabled_rule_stays_disabled_across_a_document_that_stopped_compiling_issue162() {
     let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));

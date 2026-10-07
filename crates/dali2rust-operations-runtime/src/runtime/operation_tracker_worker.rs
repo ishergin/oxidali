@@ -1578,7 +1578,9 @@ impl OperationReadPort for OperationTrackerHttpRead {
     }
 }
 
-const fn adapter_scoped_key_families(operation_type: OperationType) -> Option<&'static [&'static str]> {
+const fn adapter_scoped_key_families(
+    operation_type: OperationType,
+) -> Option<&'static [&'static str]> {
     match operation_type {
         OperationType::GroupApply => Some(&["grp-apply"]),
         OperationType::SceneApply => Some(&["scn-apply"]),

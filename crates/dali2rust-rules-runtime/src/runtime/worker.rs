@@ -428,25 +428,26 @@ impl RulesWorker {
         if doc.lang_id != self.compiler.lang_id() {
             return;
         }
-        let (next, diagnostic) = match self.compiler.compile(&doc.source, self.resolver.as_ref()) {
+        let (next, diagnostic) = self.recompiled(&doc);
+        let graph_moved = next != doc.compiled;
+        if !graph_moved && diagnostic == doc.diagnostic {
+            return;
+        }
+        if graph_moved && next.is_none() {
+            self.counters.hydrate_failed.fetch_add(1, Ordering::Relaxed);
+        }
+        let revision = if graph_moved { doc.revision.wrapping_add(1) } else { doc.revision };
+        self.store.replace(RulesDocument { revision, compiled: next, diagnostic, ..doc });
+    }
+
+    fn recompiled(&self, doc: &RulesDocument) -> (Option<dali2rust_rules_model::RuleSet>, Option<String>) {
+        match self.compiler.compile(&doc.source, self.resolver.as_ref()) {
             Ok(mut set) => {
                 apply_enable_table(&mut set, &doc.enable_table);
                 (Some(set), None)
             }
             Err(error) => (None, Some(format!("rules_names_unresolved: {error}"))),
-        };
-        if next == doc.compiled {
-            return;
         }
-        if next.is_none() {
-            self.counters.hydrate_failed.fetch_add(1, Ordering::Relaxed);
-        }
-        self.store.replace(RulesDocument {
-            revision: doc.revision.wrapping_add(1),
-            compiled: next,
-            diagnostic,
-            ..doc
-        });
     }
 
     fn rehydrate_from_slices(&mut self) {

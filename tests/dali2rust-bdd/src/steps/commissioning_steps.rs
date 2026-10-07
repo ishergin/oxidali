@@ -165,7 +165,7 @@ const VERIFIED_STATUS: u8 = 0x00;
 const DT8_QUERY_COLOUR_TYPE_FEATURES: u8 = Dt8Command::QueryColourTypeFeatures.opcode();
 const DT8_QUERY_COLOUR_STATUS: u8 = Dt8Command::QueryColourStatus.opcode();
 
-// COMM-100 COMM-110 COMM-113
+// COMM-100 COMM-110 COMM-113 COMM-115
 #[given(
     regex = r"^a replacement script in which short address (\d+) stays silent and short address (\d+) takes its address$"
 )]
@@ -281,7 +281,7 @@ async fn then_device_exists(world: &mut DaliWorld, short: u8, adapter: u8) {
     );
 }
 
-// COMM-010 COMM-099 COMM-100 COMM-110
+// COMM-010 COMM-099 COMM-100 COMM-110 COMM-115
 #[then(regex = r"^physical device (\d+) should eventually be absent on adapter (\d+)$")]
 async fn then_device_absent(world: &mut DaliWorld, short: u8, adapter: u8) {
     let port = world.server_port;
