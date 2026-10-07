@@ -3,6 +3,7 @@ mod support;
 use support::{publish_event, publish_group_matrix_write, publish_scene_matrix_write};
 
 use dali2rust_contracts::msg::DaliAttributeReadChunk;
+use dali2rust_contracts::msg::PhysicalDeviceOverrideCommand as PdPatch;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -82,18 +83,45 @@ fn group_rows(rows: &[GroupMatrixDesiredRow]) -> GroupMatrixDesiredRowList {
     out
 }
 
-fn seed_physical_via_discovery(
+fn publish_discovery(
     publisher: &dali2rust_bus::BusPublisher,
     store: &RegistryStore,
-    short: u8,
+    progress: dali2rust_contracts::msg::DaliDiscoveryProgressEvent,
 ) {
-    let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 1, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryProgressEvent { registry_adapter_id: 0, short_address: short, random_address: None, device_type: DeviceType::Dt8Color, color_mode: ColorMode::Rgb, dt8_xy_capable: true, dt8_tc_capable: true, dt8_rgb_capable: true, dt8_rgbwaf_capable: false, supported_device_types: None });
-    publish_event(publisher, ev);
+    let short = progress.short_address;
+    let origin = Some(dali2rust_contracts::msg::Origin::Internal);
+    let event = dali2rust_contracts::bus::event_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        1,
+        BUS_TID,
+        origin,
+        progress,
+    );
+    publish_event(publisher, event);
     wait_until(
         || store.physical_device_view(0, short).is_some(),
         Duration::from_millis(500),
     );
     assert!(store.physical_device_view(0, short).is_some());
+}
+
+fn seed_physical_via_discovery(
+    publisher: &dali2rust_bus::BusPublisher,
+    store: &RegistryStore,
+    short: u8,
+) {
+    publish_discovery(publisher, store, dali2rust_contracts::msg::DaliDiscoveryProgressEvent {
+        registry_adapter_id: 0,
+        short_address: short,
+        random_address: None,
+        device_type: DeviceType::Dt8Color,
+        color_mode: ColorMode::Rgb,
+        dt8_xy_capable: true,
+        dt8_tc_capable: true,
+        dt8_rgb_capable: true,
+        dt8_rgbwaf_capable: false,
+        supported_device_types: None,
+    });
 }
 
 fn written_event(
@@ -885,14 +913,19 @@ fn what_was_programmed_into_the_old_gear_does_not_vouch_for_the_new_one() {
     );
 }
 
+const DT6_ONLY: u64 = 1 << 6;
+const DT8_ONLY: u64 = 1 << 8;
+const DT6_AND_DT8: u64 = DT6_ONLY | DT8_ONLY;
+
 fn discovered_gear(
     publisher: &dali2rust_bus::BusPublisher,
     store: &RegistryStore,
-    (correlation_id, short): (u64, u8),
+    short: u8,
     declared: u64,
 ) {
-    let colour = declared & (1 << 8) != 0;
-    let progress = dali2rust_contracts::msg::DaliDiscoveryProgressEvent {
+    let declared = dali2rust_contracts::msg::DeviceTypeSet::from_bits(declared);
+    let colour = DeviceType::Dt8Color.dali_code().is_some_and(|dt8| declared.contains(dt8));
+    publish_discovery(publisher, store, dali2rust_contracts::msg::DaliDiscoveryProgressEvent {
         registry_adapter_id: 0,
         short_address: short,
         random_address: None,
@@ -902,58 +935,60 @@ fn discovered_gear(
         dt8_tc_capable: colour,
         dt8_rgb_capable: false,
         dt8_rgbwaf_capable: false,
-        supported_device_types: Some(dali2rust_contracts::msg::DeviceTypeSet::from_bits(declared)),
-    };
-    let origin = Some(dali2rust_contracts::msg::Origin::Internal);
-    let event = dali2rust_contracts::bus::event_envelope(
-        SOURCE_ID_UNSPECIFIED,
-        correlation_id,
-        BUS_TID,
-        origin,
-        progress,
-    );
-    publish_event(publisher, event);
-    wait_until(|| store.physical_device_view(0, short).is_some(), Duration::from_millis(500));
+        supported_device_types: Some(declared),
+    });
 }
 
-fn override_the_role(
+fn give_overrides(
     publisher: &dali2rust_bus::BusPublisher,
     store: &RegistryStore,
-    correlation_id: u64,
+    (correlation_id, short): (u64, u8),
+    (device_type, colour): (Option<DeviceType>, ColorMode),
 ) {
-    use dali2rust_contracts::msg::PhysicalDeviceOverrideCommand as Patch;
-    let patch = Patch {
+    let types = device_type.map_or(0, |_| PdPatch::PATCH_DEVICE_TYPE_OVERRIDE);
+    let patch = PdPatch {
         adapter_id: 0,
-        short_address: 0,
-        patch_mask: Patch::PATCH_DEVICE_TYPE_OVERRIDE | Patch::PATCH_COLOR_MODE_OVERRIDE,
+        short_address: short,
+        patch_mask: types | PdPatch::PATCH_COLOR_MODE_OVERRIDE,
         name: dali2rust_contracts::msg::FixedText64::new(),
         clear_device_type_override: false,
-        device_type_override: DeviceType::Dt8Color,
+        device_type_override: device_type.unwrap_or(DeviceType::Unknown),
         clear_color_mode_override: false,
-        color_mode_override: ColorMode::Cct,
+        color_mode_override: colour,
         dt8_auto_activation_repair: true,
         dt8_rgbwaf_control_assert: true,
     };
     let origin = Some(dali2rust_contracts::msg::Origin::Api);
-    let command =
-        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, BUS_TID, origin, patch);
+    let command = dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        correlation_id,
+        BUS_TID,
+        origin,
+        patch,
+    );
     let queued = publisher.try_publish(BusChannel::Commands, BusFrame::command(command));
     assert_eq!(queued, PublishResult::Queued);
-    let overridden = || {
-        store.physical_device_view(0, 0).is_some_and(|pd| pd.color_mode_override.is_some())
+    let given = || {
+        store.physical_device_view(0, short).is_some_and(|pd| pd.color_mode_override.is_some())
     };
-    wait_until(overridden, Duration::from_millis(500));
+    wait_until(given, Duration::from_millis(500));
 }
 
-fn overrides_after_handing_over(declared_by_new_gear: u64) -> (Option<String>, Option<String>) {
-    const ONLY_DT8: u64 = 1 << 8;
+type Overrides = (Option<String>, Option<String>);
+
+fn hand_over(declared_by_new_gear: u64, own_colour: Option<ColorMode>) -> Overrides {
     let store = Arc::new(RegistryStore::with_adapter_count(1));
     let counters = Arc::new(RegistryWorkerCounters::default());
-    let (publisher, _ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
-    discovered_gear(&publisher, &store, (1000, 0), ONLY_DT8);
-    discovered_gear(&publisher, &store, (1001, 11), declared_by_new_gear);
-    override_the_role(&publisher, &store, 1002);
-    publish_event(&publisher, replaced_event(1003, 0, 11));
+    let (publisher, _ev_obs, _host) =
+        spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
+    discovered_gear(&publisher, &store, 0, DT8_ONLY);
+    discovered_gear(&publisher, &store, 11, declared_by_new_gear);
+    let role_overrides = (Some(DeviceType::Dt8Color), ColorMode::Xy);
+    give_overrides(&publisher, &store, (1002, 0), role_overrides);
+    if let Some(colour) = own_colour {
+        give_overrides(&publisher, &store, (1003, 11), (None, colour));
+    }
+    publish_event(&publisher, replaced_event(1004, 0, 11));
     wait_until(|| store.physical_device_view(0, 11).is_none(), Duration::from_millis(500));
     let record = store.physical_device_view(0, 0).expect("the role address");
     (record.device_type_override, record.color_mode_override)
@@ -961,12 +996,13 @@ fn overrides_after_handing_over(declared_by_new_gear: u64) -> (Option<String>, O
 
 #[test]
 fn a_replacement_takes_only_the_overrides_the_new_gear_declares() {
-    const DT6_ONLY: u64 = 1 << 6;
-    const DT6_AND_DT8: u64 = (1 << 6) | (1 << 8);
-    let dimmer = overrides_after_handing_over(DT6_ONLY);
-    assert_eq!(dimmer, (None, None), "a DT6 dimmer is no DT8 colour gear");
-    let tunable = overrides_after_handing_over(DT6_AND_DT8);
-    assert_eq!(tunable, (Some("dt8_color".into()), Some("cct".into())), "a DT8 gear takes both");
+    let declared_both: Overrides = (Some("dt8_color".into()), Some("xy".into()));
+    let colour_gear = hand_over(DT6_AND_DT8, None);
+    assert_eq!(colour_gear, declared_both, "xy needs DT8, not an xy-capable flag");
+    assert_eq!(hand_over(DT6_ONLY, None), (None, None), "a DT6 dimmer is no DT8 colour gear");
+    let own: Overrides = (None, Some("brightness".into()));
+    let dimmer_with_its_own = hand_over(DT6_ONLY, Some(ColorMode::Brightness));
+    assert_eq!(dimmer_with_its_own, own, "the new gear keeps its own");
 }
 
 #[test]

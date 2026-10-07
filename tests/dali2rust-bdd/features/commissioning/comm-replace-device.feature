@@ -171,7 +171,7 @@ Feature: Commissioning replace device
   @id:COMM-115
   Scenario: An override the new gear can honour moves with the role
     Given adapter 0 has discovered a colour-temperature device 0 and an RGB device 1
-    When I PATCH JSON {"color_mode_override":"cct"} to "/api/v1/adapters/0/physical-devices/0"
+    When I PATCH JSON {"color_mode_override":"xy"} to "/api/v1/adapters/0/physical-devices/0"
     Then the response status should be 200
     Given a replacement script in which short address 0 stays silent and short address 1 takes its address
     When I POST JSON {"failed_short_address":0,"replacement_short_address":1} to "/api/v1/adapters/0/commissioning/replacements"
@@ -181,5 +181,5 @@ Feature: Commissioning replace device
     And physical device 1 should eventually be absent on adapter 0
     When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
     Then the response status should be 200
-    And the JSON pointer "/color_mode_override" should be "cct"
+    And the JSON pointer "/color_mode_override" should be "xy"
     And the JSON pointer "/random_address" should be 2756371

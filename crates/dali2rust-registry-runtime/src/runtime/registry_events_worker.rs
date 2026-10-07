@@ -438,13 +438,11 @@ fn publish_replacement_lamps(
     for lamp_id in lamps {
         publish_virtual_lamp_changed(publisher, corr, aid, *lamp_id);
     }
-    let a_lamp_sees_new_gear = !outcome.kept_lamps.is_empty();
-    if a_lamp_sees_new_gear || unbound.groups_changed {
-        publish_group_matrix_changed(publisher, corr, aid);
+    if outcome.kept_lamps.is_empty() {
+        return;
     }
-    if a_lamp_sees_new_gear {
-        for scene_id in 0..SCENE_COUNT {
-            publish_scene_matrix_changed(publisher, corr, aid, scene_id);
-        }
+    publish_group_matrix_changed(publisher, corr, aid);
+    for scene_id in 0..SCENE_COUNT {
+        publish_scene_matrix_changed(publisher, corr, aid, scene_id);
     }
 }

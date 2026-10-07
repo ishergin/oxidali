@@ -430,7 +430,7 @@ impl RulesWorker {
         }
         let (next, diagnostic) = self.recompiled(&doc);
         let graph_moved = next != doc.compiled;
-        if !graph_moved && diagnostic == doc.diagnostic {
+        if !graph_moved && same_failure(doc.diagnostic.as_deref(), diagnostic.as_deref()) {
             return;
         }
         if graph_moved && next.is_none() {
@@ -440,7 +440,10 @@ impl RulesWorker {
         self.store.replace(RulesDocument { revision, compiled: next, diagnostic, ..doc });
     }
 
-    fn recompiled(&self, doc: &RulesDocument) -> (Option<dali2rust_rules_model::RuleSet>, Option<String>) {
+    fn recompiled(
+        &self,
+        doc: &RulesDocument,
+    ) -> (Option<dali2rust_rules_model::RuleSet>, Option<String>) {
         match self.compiler.compile(&doc.source, self.resolver.as_ref()) {
             Ok(mut set) => {
                 apply_enable_table(&mut set, &doc.enable_table);
@@ -696,6 +699,13 @@ fn load_document(
         diagnostic: None,
         enable_table: manifest.entries,
     }))
+}
+
+fn same_failure(was: Option<&str>, now: Option<&str>) -> bool {
+    let error = |diagnostic: &str| {
+        diagnostic.split_once(": ").map_or(diagnostic, |(_, e)| e).to_owned()
+    };
+    was.map(error) == now.map(error)
 }
 
 fn uncompiled_document(

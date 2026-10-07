@@ -500,6 +500,11 @@ impl ColorMode {
     pub const fn states_a_colour(self) -> bool {
         !matches!(self, Self::None | Self::Unknown)
     }
+
+    #[must_use]
+    pub const fn needs_dt8(self) -> bool {
+        matches!(self, Self::Cct | Self::Xy | Self::Rgb | Self::Rgbwaf)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

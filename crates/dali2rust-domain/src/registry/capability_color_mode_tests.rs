@@ -1,8 +1,11 @@
 use super::{
-    capability_accepts_color_mode, capability_supports_color_mode,
-    seed_capability_from_color_mode, CapabilityFlagsView,
+    capability_accepts_color_mode, capability_supports_color_mode, colour_mode_fits_declared,
+    device_type_fits_declared, seed_capability_from_color_mode, CapabilityFlagsView,
 };
-use dali2rust_contracts::msg::ColorMode;
+use dali2rust_contracts::msg::{ColorMode, DeviceType, DeviceTypeSet};
+
+const DT6: u64 = 1 << 6;
+const DT8: u64 = 1 << 8;
 
 fn caps(cct: bool, xy: bool, rgb: bool) -> CapabilityFlagsView {
     CapabilityFlagsView {
@@ -68,5 +71,28 @@ fn seed_is_a_no_op_for_non_colour_modes() {
         let mut c = before;
         seed_capability_from_color_mode(&mut c, mode);
         assert_eq!(c, before, "{mode:?} must not seed a colour capability");
+    }
+}
+
+#[test]
+fn a_device_type_fits_only_a_declared_set_that_holds_it() {
+    let declared = |bits| Some(DeviceTypeSet::from_bits(bits));
+    assert!(device_type_fits_declared(None, DeviceType::Dt8Color), "nothing declared yet");
+    assert!(!device_type_fits_declared(declared(0), DeviceType::Dt8Color));
+    assert!(!device_type_fits_declared(declared(DT6), DeviceType::Dt8Color));
+    assert!(device_type_fits_declared(declared(DT6 | DT8), DeviceType::Dt8Color));
+    assert!(device_type_fits_declared(declared(DT6), DeviceType::Unknown), "no code, no claim");
+}
+
+#[test]
+fn a_colour_mode_needs_dt8_only_when_it_states_a_colour() {
+    let dimmer = Some(DeviceTypeSet::from_bits(DT6));
+    for mode in [ColorMode::Cct, ColorMode::Xy, ColorMode::Rgb, ColorMode::Rgbwaf] {
+        assert!(!colour_mode_fits_declared(dimmer, mode), "{mode:?} on a DT6-only gear");
+        assert!(colour_mode_fits_declared(Some(DeviceTypeSet::from_bits(DT8)), mode));
+        assert!(colour_mode_fits_declared(None, mode), "{mode:?} with nothing declared yet");
+    }
+    for mode in [ColorMode::None, ColorMode::Brightness, ColorMode::Unknown] {
+        assert!(colour_mode_fits_declared(dimmer, mode), "{mode:?} claims no colour");
     }
 }

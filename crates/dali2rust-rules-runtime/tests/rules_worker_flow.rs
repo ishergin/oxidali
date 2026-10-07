@@ -549,6 +549,8 @@ where
 
 const COMMAND_WAIT: Duration = Duration::from_secs(2);
 
+const RECOMPILE_WINDOW: Duration = Duration::from_millis(1_500);
+
 fn recv_setpoint(h: &Harness) -> Option<(dali2rust_contracts::msg::PowerState, Option<u8>)> {
     dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |payload| {
         matches!(
@@ -1688,9 +1690,18 @@ fn enabled_bit(h: &Harness, name: &str) -> Option<bool> {
 struct VanishingNames {
     inner: StubResolver,
     gone: Arc<std::sync::atomic::AtomicBool>,
+    lamps_gone: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl VanishingNames {
+    fn new(
+        gone: &Arc<std::sync::atomic::AtomicBool>,
+        lamps_gone: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        let inner = StubResolver::permissive();
+        VanishingNames { inner, gone: Arc::clone(gone), lamps_gone: Arc::clone(lamps_gone) }
+    }
+
     fn present(&self) -> bool {
         !self.gone.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -1704,7 +1715,8 @@ impl dali2rust_rules_model::NameResolver for VanishingNames {
         self.inner.adapter_exists(adapter_id)
     }
     fn resolve_lamp(&self, name: &str) -> Vec<dali2rust_rules_model::LampRef> {
-        self.inner.resolve_lamp(name)
+        let gone = self.lamps_gone.load(std::sync::atomic::Ordering::Relaxed);
+        self.inner.resolve_lamp(name).into_iter().filter(|_| !gone).collect()
     }
     fn resolve_group(&self, name: &str) -> Vec<dali2rust_rules_model::GroupRef> {
         self.inner.resolve_group(name).into_iter().filter(|_| self.present()).collect()
@@ -1738,7 +1750,8 @@ fn renaming_a_group_scene_or_input_device_recompiles_the_rules_that_name_it() {
     ];
     for (document, renamed) in renames {
         let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let resolver = VanishingNames { inner: StubResolver::permissive(), gone: Arc::clone(&gone) };
+        let never = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let resolver = VanishingNames::new(&gone, &never);
         let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-renamed"));
         let h = harness_spawn(slices, empty_world(), Arc::new(resolver));
         publish_document(&h, 1, document, 0);
@@ -1765,38 +1778,6 @@ fn renaming_a_group_scene_or_input_device_recompiles_the_rules_that_name_it() {
     }
 }
 
-struct TwoNames {
-    inner: StubResolver,
-    lamp_gone: Arc<std::sync::atomic::AtomicBool>,
-    group_gone: Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl dali2rust_rules_model::NameResolver for TwoNames {
-    fn primary_adapter(&self) -> u8 {
-        self.inner.primary_adapter()
-    }
-    fn adapter_exists(&self, adapter_id: u8) -> bool {
-        self.inner.adapter_exists(adapter_id)
-    }
-    fn resolve_lamp(&self, name: &str) -> Vec<dali2rust_rules_model::LampRef> {
-        let gone = self.lamp_gone.load(std::sync::atomic::Ordering::Relaxed);
-        self.inner.resolve_lamp(name).into_iter().filter(|_| !gone).collect()
-    }
-    fn resolve_group(&self, name: &str) -> Vec<dali2rust_rules_model::GroupRef> {
-        let gone = self.group_gone.load(std::sync::atomic::Ordering::Relaxed);
-        self.inner.resolve_group(name).into_iter().filter(|_| !gone).collect()
-    }
-    fn resolve_device(&self, name: &str) -> Vec<dali2rust_rules_model::DeviceRef> {
-        self.inner.resolve_device(name)
-    }
-    fn resolve_input_device(&self, name: &str) -> Vec<dali2rust_rules_model::InputDeviceRef> {
-        self.inner.resolve_input_device(name)
-    }
-    fn resolve_scene(&self, name: &str) -> Vec<dali2rust_rules_model::SceneRef> {
-        self.inner.resolve_scene(name)
-    }
-}
-
 const TWO_NAMES_DOC: &str = "rule \"л\" { when http trigger do lamp(\"кухня\").on() }\n\
 rule \"г\" { when http trigger do group(\"зал\").off() }\n";
 
@@ -1808,11 +1789,7 @@ fn diagnostic_mentions(store: &RulesStore, part: &str) -> bool {
 fn the_diagnostic_names_the_latest_failure_without_moving_the_revision() {
     let lamp_gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let group_gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let resolver = TwoNames {
-        inner: StubResolver::permissive(),
-        lamp_gone: Arc::clone(&lamp_gone),
-        group_gone: Arc::clone(&group_gone),
-    };
+    let resolver = VanishingNames::new(&group_gone, &lamp_gone);
     let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-two-names"));
     let h = harness_spawn(slices, empty_world(), Arc::new(resolver));
     publish_document(&h, 1, TWO_NAMES_DOC, 0);
@@ -1821,15 +1798,50 @@ fn the_diagnostic_names_the_latest_failure_without_moving_the_revision() {
 
     lamp_gone.store(true, std::sync::atomic::Ordering::Relaxed);
     names_moved(&h);
-    dali2rust_test_support::wait_until(|| diagnostic_mentions(&h.store, "unknown lamp"), COMMAND_WAIT);
+    let lamp_named = || diagnostic_mentions(&h.store, "unknown lamp");
+    dali2rust_test_support::wait_until(lamp_named, COMMAND_WAIT);
     let stopped_at = h.store.revision();
 
     group_gone.store(true, std::sync::atomic::Ordering::Relaxed);
     lamp_gone.store(false, std::sync::atomic::Ordering::Relaxed);
     names_moved(&h);
-    dali2rust_test_support::wait_until(|| diagnostic_mentions(&h.store, "unknown group"), COMMAND_WAIT);
-    assert!(diagnostic_mentions(&h.store, "unknown group"), "{:?}", h.store.document().diagnostic);
+    let group_named = || diagnostic_mentions(&h.store, "unknown group");
+    dali2rust_test_support::wait_until(group_named, COMMAND_WAIT);
     assert_eq!(h.store.revision(), stopped_at, "the rule graph did not move, only its cause");
+}
+
+#[test]
+fn a_failure_found_at_boot_keeps_its_diagnostic_until_the_cause_changes() {
+    let lamp_gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let group_gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-boot-failure"));
+    let resolver = || Arc::new(VanishingNames::new(&group_gone, &lamp_gone));
+    let first = harness_spawn(Arc::clone(&slices), empty_world(), resolver());
+    publish_document(&first, 1, TWO_NAMES_DOC, 0);
+    assert!(recv_signal(&first, 1).error.is_none());
+    wait_revision(&first.store, 1);
+    drop(first);
+
+    lamp_gone.store(true, std::sync::atomic::Ordering::Relaxed);
+    let h = harness_spawn(slices, empty_world(), resolver());
+    let boot_failure = || diagnostic_mentions(&h.store, "rules_compile_failed: ");
+    dali2rust_test_support::wait_until(boot_failure, COMMAND_WAIT);
+    let at_boot = h.store.generation();
+    names_moved(&h);
+    let rewritten = || h.store.generation() != at_boot;
+    assert!(
+        dali2rust_test_support::remains_false_for(rewritten, RECOMPILE_WINDOW),
+        "the same failure, found again, rewrites nothing: {:?}",
+        h.store.document().diagnostic
+    );
+    group_gone.store(true, std::sync::atomic::Ordering::Relaxed);
+    lamp_gone.store(false, std::sync::atomic::Ordering::Relaxed);
+    names_moved(&h);
+    let group_named = || {
+        diagnostic_mentions(&h.store, "rules_names_unresolved: ")
+            && diagnostic_mentions(&h.store, "unknown group")
+    };
+    dali2rust_test_support::wait_until(group_named, COMMAND_WAIT);
 }
 
 #[test]

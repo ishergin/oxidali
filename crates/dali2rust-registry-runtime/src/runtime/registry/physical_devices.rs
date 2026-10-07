@@ -24,8 +24,8 @@ use dali2rust_domain::registry::{
     CapabilityFlagsView, ColorTemperatureRangeView, MemoryBankRangeView, MemoryBankSummaryView, ObservedValue,
     PhysicalDeviceAttributesView, PhysicalDeviceCoreView, PhysicalDeviceReadPort,
     PhysicalDeviceSummaryView, PhysicalDeviceView,
+    colour_mode_fits_declared, device_type_fits_declared,
 };
-use dali2rust_domain::registry::{colour_mode_fits_declared, device_type_fits_declared};
 
 pub const DISCOVERY_EVICT_MISS_THRESHOLD: u8 = 3;
 
