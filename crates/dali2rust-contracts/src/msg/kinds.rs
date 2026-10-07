@@ -218,7 +218,13 @@ impl OperationType {
     pub const fn coalesces_per_resource(self) -> bool {
         !matches!(
             self,
-            Self::ConfigWrite | Self::GroupApply | Self::SceneApply | Self::PolicyApply
+            Self::ConfigWrite
+                | Self::GroupApply
+                | Self::SceneApply
+                | Self::PolicyApply
+                | Self::CommissioningIdentify
+                | Self::CommissioningAddressChange
+                | Self::CommissioningReplaceDevice
         )
     }
 }
@@ -493,6 +499,11 @@ impl ColorMode {
     #[must_use]
     pub const fn states_a_colour(self) -> bool {
         !matches!(self, Self::None | Self::Unknown)
+    }
+
+    #[must_use]
+    pub const fn needs_dt8(self) -> bool {
+        matches!(self, Self::Cct | Self::Xy | Self::Rgb | Self::Rgbwaf)
     }
 }
 

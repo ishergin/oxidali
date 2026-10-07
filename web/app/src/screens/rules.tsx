@@ -88,7 +88,7 @@ const BY_ID_WHY: Record<ByIdReason, string> = {
   quote: 'The name has a quote, which a rule string cannot hold',
   line_break: 'The name has a line break, which a rule string cannot hold',
   too_long: `The name is longer than the ${MAX_NAME_BYTES} bytes a rule string holds`,
-  ambiguous: 'Several entries share this name, and the device would resolve it to any one of them',
+  ambiguous: 'Several entries share this name, and the device refuses it as ambiguous',
 }
 
 const FEED_CHANNELS: WsChannel[] = ['input', 'rules']

@@ -13,6 +13,7 @@ mod persistence;
 pub(crate) mod persistence_slices;
 pub(crate) mod persistence_stream;
 pub(crate) mod physical_devices;
+mod physical_device_banks;
 pub(crate) mod dali_settings;
 pub(crate) mod policies;
 pub(crate) mod redundancy_settings;

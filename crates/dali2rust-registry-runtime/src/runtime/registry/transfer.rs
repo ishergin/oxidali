@@ -26,10 +26,10 @@ pub fn transferable_slices(adapter_count: u8) -> Vec<SliceKey> {
         keys.push(SliceKey::Rules { bank });
     }
     for adapter_id in 0..adapter_count {
-        keys.push(SliceKey::PhysicalDevices { adapter_id });
         for bank in 0..SliceKey::PHYSICAL_DEVICE_BANKS {
             keys.push(SliceKey::PhysicalDeviceBank { adapter_id, bank });
         }
+        keys.push(SliceKey::PhysicalDevices { adapter_id });
         keys.push(SliceKey::Groups { adapter_id });
         keys.push(SliceKey::VirtualLamps { adapter_id });
         for scene_id in 0..16u8 {
@@ -143,6 +143,10 @@ mod tests {
     #[test]
     fn physical_devices_come_before_the_bindings_that_depend_on_them() {
         let keys = transferable_slices(1);
+        let last_bank = keys
+            .iter()
+            .rposition(|k| matches!(k, SliceKey::PhysicalDeviceBank { .. }))
+            .expect("physical device banks");
         let pd = keys
             .iter()
             .position(|k| matches!(k, SliceKey::PhysicalDevices { .. }))
@@ -151,6 +155,10 @@ mod tests {
             .iter()
             .position(|k| matches!(k, SliceKey::VirtualLamps { .. }))
             .expect("virtual lamps");
+        assert!(
+            last_bank < pd,
+            "the banks arrive before the whole-adapter slot, so its reload finds them loaded"
+        );
         assert!(pd < vl, "physical devices must hydrate first");
     }
 

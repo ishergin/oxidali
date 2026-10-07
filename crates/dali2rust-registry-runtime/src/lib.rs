@@ -26,6 +26,7 @@ pub use runtime::registry::{
 };
 pub use runtime::registry::input_devices::{InputDeviceDetail, InputDeviceSummary, InstanceView, ReadValue};
 pub use runtime::registry::transfer::{slice_key_from_name, SliceManifestRow};
+pub use runtime::registry::physical_devices::DISCOVERY_EVICT_MISS_THRESHOLD;
 pub use runtime::registry_apply_watch::RegistryApplyWatch;
 pub use runtime::registry_events_worker::REGISTRY_EVENTS_HANDLED_EVENTS;
 pub use runtime::registry::publish::REGISTRY_REQUIRED_EVENTS;

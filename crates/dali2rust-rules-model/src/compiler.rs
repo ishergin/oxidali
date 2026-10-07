@@ -1,5 +1,5 @@
 use crate::error::CompileError;
-use crate::refs::{DeviceRef, GroupRef, InputDeviceRef, LampRef};
+use crate::refs::{DeviceRef, GroupRef, InputDeviceRef, LampRef, SceneRef};
 use crate::rule::RuleSet;
 
 pub trait NameResolver: Send + Sync {
@@ -7,15 +7,15 @@ pub trait NameResolver: Send + Sync {
 
     fn adapter_exists(&self, adapter_id: u8) -> bool;
 
-    fn resolve_lamp(&self, name: &str) -> Option<LampRef>;
+    fn resolve_lamp(&self, name: &str) -> Vec<LampRef>;
 
-    fn resolve_group(&self, name: &str) -> Option<GroupRef>;
+    fn resolve_group(&self, name: &str) -> Vec<GroupRef>;
 
-    fn resolve_device(&self, name: &str) -> Option<DeviceRef>;
+    fn resolve_device(&self, name: &str) -> Vec<DeviceRef>;
 
-    fn resolve_input_device(&self, name: &str) -> Option<InputDeviceRef>;
+    fn resolve_input_device(&self, name: &str) -> Vec<InputDeviceRef>;
 
-    fn resolve_scene(&self, name: &str) -> Option<u8>;
+    fn resolve_scene(&self, name: &str) -> Vec<SceneRef>;
 }
 
 pub trait RuleCompiler: Send + Sync {

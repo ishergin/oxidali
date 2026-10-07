@@ -447,9 +447,6 @@ export interface CommissioningAddressChangeRequest {
 
 export interface RestoredSlices {
   metadata_and_overrides: boolean
-  attributes: boolean
-  groups: boolean
-  scenes: boolean
 }
 
 export interface CommissioningReplacementRequest {

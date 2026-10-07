@@ -368,7 +368,7 @@ fn refused_operations() -> Vec<BusCommandPayload> {
         m::DaliReadMemoryBankCommand { registry_adapter_id: 0, short_address: 5, bank: 1, start: 0, length: 1 }.into(),
         m::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: Some(200), fade_rate: None, power_on_level: None, system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: true }.into(),
         m::DaliIdentifyDeviceCommand { registry_adapter_id: 0, short_address: 5, operation_key: Default::default() }.into(),
-        m::DaliReplaceDeviceCommand { registry_adapter_id: 0, failed_short_address: 5, replacement_short_address: 6, restore_metadata_and_overrides: false, restore_attributes: false, restore_groups: false, restore_scenes: false, operation_key: Default::default() }.into(),
+        m::DaliReplaceDeviceCommand { registry_adapter_id: 0, failed_short_address: 5, replacement_short_address: 6, restore_metadata_and_overrides: false, operation_key: Default::default() }.into(),
         m::DaliAddressingCommand { registry_adapter_id: 0, short_address: 5, new_short_address: 6, verify_after_program: true, operation_key: Default::default() }.into(),
         m::DaliProgramGroupMembershipCommand { registry_adapter_id: 0, target: short_target(), group_id: 1, action: GroupMembershipAction::Add }.into(),
         m::DaliProgramSceneCommand { registry_adapter_id: 0, target: short_target(), scene_id: 3, action: SceneProgramAction::Clear, target_state: None }.into(),

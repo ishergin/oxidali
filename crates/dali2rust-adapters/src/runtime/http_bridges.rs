@@ -1147,7 +1147,7 @@ fn instance_dto(view: &dali2rust_registry_runtime::InstanceView) -> InstanceDto 
 
 use dali2rust_domain::registry::{GROUP_COUNT, VIRTUAL_LAMP_COUNT};
 use dali2rust_rules_model::limits::{MAX_GROUP_ID, MAX_LAMP_ID};
-use dali2rust_rules_model::{DeviceRef, GroupRef, InputDeviceRef, LampRef, NameResolver};
+use dali2rust_rules_model::{DeviceRef, GroupRef, InputDeviceRef, LampRef, NameResolver, SceneRef};
 
 const _: () = assert!(MAX_LAMP_ID as u16 + 1 == VIRTUAL_LAMP_COUNT as u16);
 const _: () = assert!(MAX_GROUP_ID as u16 + 1 == GROUP_COUNT as u16);
@@ -1178,44 +1178,47 @@ impl NameResolver for RegistryNameResolver {
         adapter_id < self.adapter_count || self.store.adapter_id_exists(adapter_id)
     }
 
-    fn resolve_lamp(&self, name: &str) -> Option<LampRef> {
+    fn resolve_lamp(&self, name: &str) -> Vec<LampRef> {
         self.store
-            .virtual_lamp_by_name(name)
-            .map(|(adapter_id, id)| LampRef {
-                adapter_id,
-                id: u16::from(id),
-            })
+            .virtual_lamps_named(name)
+            .into_iter()
+            .map(|(adapter_id, id)| LampRef { adapter_id, id: u16::from(id) })
+            .collect()
     }
 
-    fn resolve_group(&self, name: &str) -> Option<GroupRef> {
+    fn resolve_group(&self, name: &str) -> Vec<GroupRef> {
         self.store
-            .group_by_name(name)
-            .map(|(adapter_id, id)| GroupRef {
-                adapter_id,
-                id: u16::from(id),
-            })
+            .groups_named(name)
+            .into_iter()
+            .map(|(adapter_id, id)| GroupRef { adapter_id, id: u16::from(id) })
+            .collect()
     }
 
-    fn resolve_device(&self, name: &str) -> Option<DeviceRef> {
+    fn resolve_device(&self, name: &str) -> Vec<DeviceRef> {
         self.store
-            .physical_device_by_name(name)
-            .map(|(adapter_id, short_address)| DeviceRef {
-                adapter_id,
-                short_address,
-            })
+            .physical_devices_named(name)
+            .into_iter()
+            .map(|(adapter_id, short_address)| DeviceRef { adapter_id, short_address })
+            .collect()
     }
 
-    fn resolve_input_device(&self, name: &str) -> Option<InputDeviceRef> {
+    fn resolve_input_device(&self, name: &str) -> Vec<InputDeviceRef> {
         self.store
-            .input_device_by_name(name)
+            .input_devices_named(name)
+            .into_iter()
             .map(|(adapter_id, device_short_address)| InputDeviceRef {
                 adapter_id,
                 device_short_address,
             })
+            .collect()
     }
 
-    fn resolve_scene(&self, name: &str) -> Option<u8> {
-        self.store.scene_by_name(name)
+    fn resolve_scene(&self, name: &str) -> Vec<SceneRef> {
+        self.store
+            .scenes_named(name)
+            .into_iter()
+            .map(|(adapter_id, id)| SceneRef { adapter_id, id })
+            .collect()
     }
 }
 

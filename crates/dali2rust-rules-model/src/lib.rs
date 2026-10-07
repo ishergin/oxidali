@@ -22,7 +22,7 @@ pub use error::{CompileError, ModelError};
 pub use limits::{expanded_action_count, stat_names, validate};
 pub use refs::{
     DeviceRef, GroupRef, InputDeviceRef, InputGroupSelector, InputRef, InputSelector, LampRef,
-    LightTarget,
+    LightTarget, SceneRef,
 };
 pub use rule::{DefBlock, Rule, RuleSet};
 pub use time::{DaySet, DurationMs, SolarEvent, TimeBound, TimeOfDay, Weekday};

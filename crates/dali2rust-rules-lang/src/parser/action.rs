@@ -1,5 +1,5 @@
 use crate::cursor::Cursor;
-use crate::lexer::TokenKind;
+use crate::lexer::{Pos, TokenKind};
 use crate::parser::action_light::{self, call_args, ArgBag, ArgValue};
 use crate::parser::condition;
 use crate::parser::expr;
@@ -125,40 +125,69 @@ fn scene_action(c: &mut Cursor<'_>) -> Result<Action, CompileError> {
     c.expect(&TokenKind::Dot, "`.recall` or `.apply`")?;
     let (verb, pos) = c.expect_ident("recall or apply")?;
     match verb.as_str() {
-        "recall" => {
-            c.expect(&TokenKind::LParen, "`(`")?;
-            let target = if c.accept(&TokenKind::RParen) {
-                None
-            } else {
-                let t = refs::light_target(c)?;
-                c.expect(&TokenKind::RParen, "`)`")?;
-                Some(t)
-            };
-            Ok(Action::Scene(SceneAction::Recall { scene, target }))
-        }
+        "recall" => scene_recall(c, scene),
         "apply" => {
             c.expect(&TokenKind::LParen, "`(`")?;
             c.expect(&TokenKind::RParen, "`)`")?;
+            let scene = scene.on_adapter(c, c.resolver.primary_adapter())?;
             Ok(Action::Scene(SceneAction::Apply { scene }))
         }
         _ => Err(pos.err(format!("unknown scene action \"{verb}\""))),
     }
 }
 
-fn scene_spec(c: &mut Cursor<'_>) -> Result<ValueExpr, CompileError> {
+fn scene_recall(c: &mut Cursor<'_>, scene: SceneSpec) -> Result<Action, CompileError> {
+    c.expect(&TokenKind::LParen, "`(`")?;
+    let target = if c.accept(&TokenKind::RParen) {
+        None
+    } else {
+        let t = refs::light_target(c)?;
+        c.expect(&TokenKind::RParen, "`)`")?;
+        Some(t)
+    };
+    let adapter = target.map_or(c.resolver.primary_adapter(), target_adapter);
+    let scene = scene.on_adapter(c, adapter)?;
+    Ok(Action::Scene(SceneAction::Recall { scene, target }))
+}
+
+enum SceneSpec {
+    Value(ValueExpr),
+    Named(String, Pos),
+}
+
+impl SceneSpec {
+    fn on_adapter(self, c: &Cursor<'_>, adapter: u8) -> Result<ValueExpr, CompileError> {
+        match self {
+            SceneSpec::Value(value) => Ok(value),
+            SceneSpec::Named(name, pos) => {
+                let scenes = c.resolver.resolve_scene(&name);
+                let named = ("scene", name.as_str());
+                let scene = refs::pick_named(&scenes, |s| s.adapter_id, Some(adapter), named, pos)?;
+                Ok(ValueExpr::Literal(i64::from(scene.id)))
+            }
+        }
+    }
+}
+
+fn target_adapter(target: LightTarget) -> u8 {
+    match target {
+        LightTarget::Lamp(lamp) => lamp.adapter_id,
+        LightTarget::Group(group) => group.adapter_id,
+        LightTarget::Broadcast { adapter_id } => adapter_id,
+    }
+}
+
+fn scene_spec(c: &mut Cursor<'_>) -> Result<SceneSpec, CompileError> {
     match c.peek().map(|t| &t.kind) {
         Some(TokenKind::Int(_)) => {
             let (n, _) = c.expect_int_in("scene", 0, i64::from(MAX_SCENE))?;
-            Ok(ValueExpr::Literal(n))
+            Ok(SceneSpec::Value(ValueExpr::Literal(n)))
         }
         Some(TokenKind::Str(_)) => {
             let (name, pos) = refs::checked_name(c, "scene name")?;
-            match c.resolver.resolve_scene(&name) {
-                Some(scene) => Ok(ValueExpr::Literal(i64::from(scene))),
-                None => Err(pos.err(format!("unknown scene \"{name}\""))),
-            }
+            Ok(SceneSpec::Named(name, pos))
         }
-        _ => expr::value_expr(c),
+        _ => expr::value_expr(c).map(SceneSpec::Value),
     }
 }
 
@@ -261,7 +290,7 @@ fn named_literal(
     key: &str,
     min: i64,
     max: i64,
-    at: crate::lexer::Pos,
+    at: Pos,
 ) -> Result<i64, CompileError> {
     let Some(arg) = bag.take_named(key) else {
         return Err(at.err(format!("expected {key}=…")));
@@ -280,7 +309,7 @@ fn named_bounded_expr(
     key: &str,
     min: i64,
     max: i64,
-    at: crate::lexer::Pos,
+    at: Pos,
 ) -> Result<ValueExpr, CompileError> {
     let Some(arg) = bag.take_named(key) else {
         return Err(at.err(format!("expected {key}=…")));

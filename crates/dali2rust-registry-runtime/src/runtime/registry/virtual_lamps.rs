@@ -25,6 +25,17 @@ impl Default for VlRecord {
     }
 }
 
+pub(super) fn unbind_lamp(
+    inner: &mut super::store::Inner,
+    adapter_id: u8,
+    virtual_lamp_id: u8,
+) -> bool {
+    if let Some(e) = inner.lamps.get_mut(&(adapter_id, virtual_lamp_id)) {
+        e.binding_short = None;
+    }
+    super::groups::forget_adopted_desired_on_binding_change(inner, adapter_id, virtual_lamp_id)
+}
+
 impl RegistryStore {
     pub(crate) fn apply_virtual_lamp_bind(
         &self,
@@ -75,11 +86,7 @@ impl RegistryStore {
 
     pub(crate) fn apply_virtual_lamp_unbind(&self, adapter_id: u8, virtual_lamp_id: u8) {
         let mut g = self.write_inner();
-        if let Some(e) = g.lamps.get_mut(&(adapter_id, virtual_lamp_id)) {
-            e.binding_short = None;
-        }
-        let groups_changed =
-            super::groups::forget_adopted_desired_on_binding_change(&mut g, adapter_id, virtual_lamp_id);
+        let groups_changed = unbind_lamp(&mut g, adapter_id, virtual_lamp_id);
         drop(g);
         self.dirty.mark_virtual_lamps_dirty(adapter_id);
         if groups_changed {
@@ -262,6 +269,10 @@ impl VirtualLampReadPort for RegistryStore {
 
     fn physical_short_on_other_adapter(&self, adapter_id: u8, short_address: u8) -> bool {
         RegistryStore::physical_short_address_on_other_adapter(self, adapter_id, short_address)
+    }
+
+    fn virtual_lamp_bound_to_short(&self, adapter_id: u8, short_address: u8) -> Option<u8> {
+        self.internal_virtual_lamp_bound_to_short(adapter_id, short_address)
     }
 }
 

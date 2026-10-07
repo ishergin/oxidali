@@ -391,6 +391,31 @@ fn an_apply_opened_while_another_runs_waits_its_turn_instead_of_cancelling_it() 
 }
 
 #[test]
+fn a_commissioning_begin_never_marks_a_running_one_cancelled() {
+    let (publisher, tracker, _host) = spawn_harness();
+    for op_type in [
+        OperationType::CommissioningIdentify,
+        OperationType::CommissioningAddressChange,
+        OperationType::CommissioningReplaceDevice,
+    ] {
+        let corr = 9900 + 2 * op_type as u64;
+        let (first, second) = (format!("comm-0-{corr}"), format!("comm-0-{}", corr + 1));
+        publish(&publisher, BusChannel::Commands, begin_envelope(corr, &first, op_type, 600_000));
+        let begin_second = begin_envelope(corr + 1, &second, op_type, 600_000);
+        publish(&publisher, BusChannel::Commands, begin_second);
+        wait_until(
+            || tail_for(&tracker, &second).first().copied() == Some(OperationStatus::Accepted),
+            Duration::from_millis(500),
+        );
+        assert_eq!(
+            tail_for(&tracker, &first),
+            vec![OperationStatus::Accepted],
+            "the wire still runs the first; the per-adapter 409 keeps them apart, not supersession"
+        );
+    }
+}
+
+#[test]
 fn registry_reset_cancels_active_operations_op005() {
     let (publisher, tracker, _host) = spawn_harness();
     publish(
@@ -1028,7 +1053,12 @@ fn addressing_completed_event(correlation_id: u64, key: &str, old: u8, new: u8) 
     ))
 }
 
-fn device_replaced_event(correlation_id: u64, key: &str, failed: u8, replacement: u8) -> BusFrame {
+fn device_replaced_event(
+    correlation_id: u64,
+    key: &str,
+    (failed, replacement): (u8, u8),
+    restored: bool,
+) -> BusFrame {
     BusFrame::event(dali2rust_contracts::bus::event_envelope(
         SOURCE_ID_UNSPECIFIED,
         correlation_id,
@@ -1038,10 +1068,7 @@ fn device_replaced_event(correlation_id: u64, key: &str, failed: u8, replacement
             registry_adapter_id: 0,
             failed_short_address: failed,
             replacement_short_address: replacement,
-            restored_metadata_and_overrides: true,
-            restored_attributes: true,
-            restored_groups: false,
-            restored_scenes: true,
+            restored_metadata_and_overrides: restored,
             operation_key: dali2rust_contracts::msg::fixed_text_32(key),
             error: None,
         },
@@ -1120,24 +1147,25 @@ fn raced_address_change_outcome_is_attached_after_begin_m10() {
 #[test]
 fn raced_replace_device_outcome_is_attached_after_begin_m10() {
     let (publisher, tracker, _host) = spawn_harness();
-    let key = "comm-repl-0-5-9-30200";
-    let view = drive_raced_commissioning_op(
-        &publisher,
-        &tracker,
-        30_200,
-        key,
-        OperationType::CommissioningReplaceDevice,
-        device_replaced_event(30_200, key, 5, 9),
-    );
-    assert_eq!(view.status, "succeeded");
-    let result = view
-        .result
-        .expect("raced replace-device outcome must be attached to the operation (M10)");
-    let replace = result.as_replace_device().expect("replace device result variant");
-    assert_eq!(replace.failed_short_address, 5);
-    assert_eq!(replace.replacement_short_address, 9);
-    assert!(replace.restored.metadata_and_overrides);
-    assert!(!replace.restored.groups);
+    for (corr, restored) in [(30_200u64, true), (30_210, false)] {
+        let key = format!("comm-repl-0-5-9-{corr}");
+        let view = drive_raced_commissioning_op(
+            &publisher,
+            &tracker,
+            corr,
+            &key,
+            OperationType::CommissioningReplaceDevice,
+            device_replaced_event(corr, &key, (5, 9), restored),
+        );
+        assert_eq!(view.status, "succeeded");
+        let result = view
+            .result
+            .expect("raced replace-device outcome must be attached to the operation (M10)");
+        let replace = result.as_replace_device().expect("replace device result variant");
+        assert_eq!((replace.failed_short_address, replace.replacement_short_address), (5, 9));
+        let moved = replace.restored.metadata_and_overrides;
+        assert_eq!(moved, restored, "the result names what moved");
+    }
 }
 
 #[test]
@@ -1220,4 +1248,25 @@ fn commissioning_active_does_not_block_another_registry_adapter() {
         !read.has_active_operation(OperationType::CommissioningIdentify, 1),
         "an identify on registry adapter 0 must not 409 registry adapter 1"
     );
+}
+
+#[test]
+fn part_103_commissioning_is_visible_for_its_registry_adapter_only() {
+    let (publisher, tracker, _host) = spawn_harness();
+    let read = OperationTrackerHttpRead(Arc::clone(&tracker));
+    for (corr, key, op_type) in [
+        (9740, "inp-comm-10-9740", OperationType::CommissioningAddressChange),
+        (9750, "inp-id-10-3-9750", OperationType::CommissioningIdentify),
+    ] {
+        publish(&publisher, BusChannel::Commands, begin_envelope(corr, key, op_type, 600_000));
+        wait_until(
+            || tail_for(&tracker, key).last().copied() == Some(OperationStatus::Accepted),
+            Duration::from_millis(500),
+        );
+        assert!(read.has_active_operation(op_type, 10), "active {key} must report busy for adapter 10");
+        for other in [0, 1] {
+            let busy = read.has_active_operation(op_type, other);
+            assert!(!busy, "active {key} must not 409 registry adapter {other}");
+        }
+    }
 }

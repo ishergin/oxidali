@@ -117,6 +117,18 @@ pub const RULES_BANKS: u32 = 4;
 
 const _: () = assert!(INPUT_DEVICE_BANKS == dali2rust_platform::slice_store::SliceKey::INPUT_DEVICE_BANKS as u32);
 const _: () = assert!(RULES_BANKS == dali2rust_platform::slice_store::SliceKey::RULES_BANKS as u32);
+const _: () = assert!(
+    PD_BANKS_PER_ADAPTER == SliceKey::PHYSICAL_DEVICE_BANKS as u32,
+    "the registry and the layout must agree on the banks of an adapter"
+);
+const _: () = assert!(
+    PD_BANKS_PER_ADAPTER <= u16::BITS,
+    "the registry tracks an adapter's banks in one u16"
+);
+const _: () = assert!(
+    SliceKey::DEVICES_PER_BANK == 4,
+    "every stored device lives in the bank of its short address; regrouping orphans them"
+);
 
 fn global_slot_index(key: SliceKey) -> Option<Option<u32>> {
     let slot = match key {
@@ -228,6 +240,51 @@ mod tests {
             }
         }
         keys
+    }
+
+    const INSTALLED_SLOTS: [(SliceKey, u32, u32); 9] = [
+        (SliceKey::PhysicalDevices { adapter_id: 0 }, 0, 8),
+        (SliceKey::PhysicalDevices { adapter_id: 7 }, 112, 8),
+        (SliceKey::Adapters, 128, 1),
+        (SliceKey::Groups { adapter_id: 0 }, 134, 1),
+        (SliceKey::Scene { adapter_id: 7, scene_id: 15 }, 418, 1),
+        (SliceKey::HclSchedules, 420, 1),
+        (SliceKey::Policies, 446, 1),
+        (SliceKey::PhysicalDeviceBank { adapter_id: 0, bank: 0 }, 448, 1),
+        (SliceKey::PhysicalDeviceBank { adapter_id: 7, bank: 15 }, 702, 1),
+    ];
+
+    const INSTALLED_LAYOUT_SECTORS: u32 = 704;
+    const INSTALLED_LAYOUT_DIGEST: u64 = 0x6185_2e12_b198_011d;
+    const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    const MOVED: &str = "An installed slot keeps its offset for good, and a new slice gets a \
+                         region after the last one: a moved device bank would load whatever \
+                         envelope lies at its new offset, and an empty one is authoritative";
+
+    fn installed_layout_digest() -> u64 {
+        let installed_end = INSTALLED_LAYOUT_SECTORS * SECTOR_BYTES;
+        let mut slots: Vec<(u32, u32, String)> = SliceKey::every(MAX_ADAPTERS as u8)
+            .filter_map(|key| slot_geometry(key).map(|slot| (slot.offset, slot.bank_bytes, key.label())))
+            .filter(|(offset, _, _)| *offset < installed_end)
+            .collect();
+        slots.sort();
+        slots
+            .iter()
+            .flat_map(|(offset, bytes, label)| format!("{label}@{offset}+{bytes};").into_bytes())
+            .fold(FNV_OFFSET_BASIS, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME))
+    }
+
+    #[test]
+    fn installed_slots_never_move() {
+        for (key, sector, bank_sectors) in INSTALLED_SLOTS {
+            let pinned = SlotGeometry {
+                offset: sector * SECTOR_BYTES,
+                bank_bytes: bank_sectors * SECTOR_BYTES,
+            };
+            assert_eq!(slot_geometry(key), Some(pinned), "{key:?} moved. {MOVED}");
+        }
+        assert_eq!(installed_layout_digest(), INSTALLED_LAYOUT_DIGEST, "a slot moved. {MOVED}");
     }
 
     #[test]

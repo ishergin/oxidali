@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use dali2rust_bus::{BusId, BusPublisher};
+use dali2rust_domain::registry::OperationReadPort;
 use dali2rust_contracts::msg::{
     Dali103CommissionCommand, Dali103IdentifyCommand, Dali103InstanceConfigureCommand,
     Dali103FeedbackConfigureCommand, Dali103ScanCommand, FeedbackPatchField,
@@ -15,7 +16,7 @@ use crate::http::dispatcher::publish_batch_and_wait_for_success;
 use crate::http::handlers::common::{
     accepted_operation_response, json_err, json_err_with_message, json_stream_dto,
     check_body_keys, parse_adapter_id, parse_body_object, parse_resource_id_param,
-    MAX_SHORT_ADDRESS,
+    reject_if_commissioning_active, MAX_SHORT_ADDRESS,
     MAX_NAME_BYTES,
 };
 use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command;
@@ -131,6 +132,7 @@ pub struct InputDeviceActionHandler {
     timeout_ms: u64,
     wall: Arc<dyn dali2rust_platform::clock::UnixTimeMs>,
     state: Arc<dyn InputDeviceHttpState>,
+    operations: Arc<dyn OperationReadPort>,
     action: InputDeviceAction,
 }
 
@@ -149,6 +151,7 @@ impl InputDeviceActionHandler {
     pub fn new(
         bus: InputDeviceBus,
         state: Arc<dyn InputDeviceHttpState>,
+        operations: Arc<dyn OperationReadPort>,
         action: InputDeviceAction,
     ) -> Self {
         Self {
@@ -159,6 +162,7 @@ impl InputDeviceActionHandler {
             timeout_ms: bus.timeout_ms,
             wall: bus.wall,
             state,
+            operations,
             action,
         }
     }
@@ -272,6 +276,7 @@ impl InputDeviceActionHandler {
     }
 
     fn commission(&self, adapter_id: u8, body: &[u8]) -> Answer {
+        reject_if_commissioning_active(self.operations.as_ref(), adapter_id)?;
         let include_addressed = parse_commission_body(body)?;
         let (corr, semantic) = self.envelope(Dali103CommissionCommand {
             registry_adapter_id: adapter_id,
@@ -282,6 +287,7 @@ impl InputDeviceActionHandler {
     }
 
     fn identify(&self, adapter_id: u8, params: &PathParams, body: &[u8]) -> Answer {
+        reject_if_commissioning_active(self.operations.as_ref(), adapter_id)?;
         let (short_address, _) = self.device(adapter_id, params)?;
         parse_body_object(body, &[], &[])?;
         let (corr, semantic) = self.envelope(Dali103IdentifyCommand {

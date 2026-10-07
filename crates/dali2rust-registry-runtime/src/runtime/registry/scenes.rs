@@ -377,6 +377,12 @@ fn seed_scene_rows_for_short(inner: &mut Inner, adapter_id: u8, short: u8, scene
     changed
 }
 
+pub(super) fn forget_scene_echoes(inner: &mut Inner, adapter_id: u8, virtual_lamp_id: u8) {
+    for scene_id in 0..SCENE_COUNT {
+        inner.scene_applied_echo.remove(&(adapter_id, scene_id, virtual_lamp_id));
+    }
+}
+
 fn store_scene_echo_for_short(
     inner: &mut Inner,
     adapter_id: u8,

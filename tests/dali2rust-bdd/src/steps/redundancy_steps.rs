@@ -17,7 +17,7 @@ fn scalar_text(value: &serde_json::Value) -> String {
     }
 }
 
-// RED-026 RED-027 CFG-009 CFG-010 RULE-085
+// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be "([^"]*)"$"#)]
 async fn json_pointer_eventually(world: &mut DaliWorld, pointer: String, path: String, expected: String) {
     let port = world.server_port();
@@ -32,6 +32,21 @@ async fn json_pointer_eventually(world: &mut DaliWorld, pointer: String, path: S
         Some(expected.as_str()),
         "{path}{pointer}: {found:?}"
     );
+}
+
+// RULE-090
+#[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually contain "([^"]*)"$"#)]
+async fn json_pointer_eventually_contains(
+    world: &mut DaliWorld,
+    pointer: String,
+    path: String,
+    part: String,
+) {
+    let port = world.server_port();
+    let read = || fetch_json(port, &path).and_then(|json| json.pointer(&pointer).cloned());
+    let holds = || read().is_some_and(|v| scalar_text(&v).contains(part.as_str()));
+    wait_until(holds, TRANSITION_TIMEOUT);
+    assert!(holds(), "{path}{pointer} never contained {part:?}: {:?}", read());
 }
 
 // RED-029

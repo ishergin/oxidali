@@ -116,9 +116,9 @@ target-state, а непривязанная даёт `vl_unbound`. Recall-фак
   механизм фиксируется в результате операции.
 - **`DaliAddressingCommand`** — смена короткого адреса без `INITIALISE`
   ([09 §Addressing control gear](../../architecture/09-dali-protocol-rules.md#addressing-control-gear)).
-- **`DaliReplaceDeviceCommand`** — перенос адреса отказавшего прибора на заменитель с
-  восстановлением выбранных слайсов; флаги `restored_*` сообщают фактически
-  восстановленное.
+- **`DaliReplaceDeviceCommand`** — перенос адреса отказавшего прибора на заменитель;
+  на прибор пишется только адрес. Флаг `restore_metadata_and_overrides` проходит в
+  `DaliDeviceReplacedEvent` и говорит реестру, переносить ли имя, заметки и override'ы.
 - **`DaliCommissioningStepCommand`** — экспертный примитив IEC; ответ request-scoped,
   операции нет.
 
@@ -164,6 +164,6 @@ target-state, а непривязанная даёт `vl_unbound`. Recall-фак
 | `DaliDiscoverDevicesCommand` | прогресс скана, итог сверки, сигнал операции | реестр: записи устройств |
 | `DaliReadAttributesCommand` | чанки атрибутов, чанки банков, исходы по группам | реестр (доказательства) и проектор (runtime) |
 | `DaliBusHealthProbeCommand` | `DaliBusHealthProbedEvent` | счётчики поллера, дисплей |
-| коммиссионинг | `DaliDeviceIdentifiedEvent`, `DaliAddressingCompletedEvent`, `DaliDeviceReplacedEvent`; шаг — подтверждение | трекер; реестр переносит запись |
+| коммиссионинг | `DaliDeviceIdentifiedEvent`, `DaliAddressingCompletedEvent`, `DaliDeviceReplacedEvent`; шаг — подтверждение | трекер; реестр переносит запись и публикует `PhysicalDeviceChangedEvent` обоих адресов и `VirtualLampChangedEvent` каждой лампы, чья привязка или прибор сменились; если лампа отказавшего осталась на адресе — ещё один `GroupMatrixChangedEvent` и `SceneMatrixChangedEvent` каждой сцены |
 | Part 103 | прогресс скана, `Dali103InstanceConfiguredEvent`, сигнал операции | реестр устройств ввода |
 | арбитраж | `Dali103ArbitrationProbedEvent`, `Dali103HandoverSentEvent` | воркер арбитража |

@@ -70,6 +70,7 @@ Feature: Commissioning address change
     When I POST JSON {"short_address":0,"new_short_address":23} to "/api/v1/adapters/0/commissioning/address-changes"
     Then the response status should be 409
     And the JSON error should be "conflict"
+    And the JSON pointer "/message" should be "commissioning_active"
     When the DALI transport unblocks
 
   @id:COMM-098
@@ -96,3 +97,46 @@ Feature: Commissioning address change
     And all scripted DALI exchanges should be consumed without errors
     And physical device 0 should eventually exist on adapter 0
     And physical device 23 should eventually be absent on adapter 0
+
+  @id:COMM-112
+  Scenario: A WebSocket client hears the vacated address, the new one and the moved lamp
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I PUT JSON {"physical_short_address":0} to "/api/v1/adapters/0/virtual-lamps/1/binding"
+    Then the response status should be 200
+    Given an open WebSocket connection
+    And the WebSocket client is subscribed to "physical_devices,virtual_lamps"
+    And an address-change script from short address 0 to 23
+    When I POST JSON {"short_address":0,"new_short_address":23} to "/api/v1/adapters/0/commissioning/address-changes"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the WebSocket client should receive a "PhysicalDeviceChangedEvent" frame on channel "physical_devices" whose payload "short_address" is 0
+    And the WebSocket client should receive a "PhysicalDeviceChangedEvent" frame on channel "physical_devices" whose payload "short_address" is 23
+    And the WebSocket client should receive a "VirtualLampChangedEvent" frame on channel "virtual_lamps" whose payload "virtual_lamp_id" is 1
+
+  @id:COMM-104 @stage-R16
+  Scenario Outline: Lamp commissioning is refused while Part 103 commissioning runs on the adapter
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given the DALI mock transport trace is cleared
+    And the DALI transport blocks indefinitely
+    When I POST JSON {} to "/api/v1/adapters/0/input-devices/commission"
+    Then the response status should be 202
+    And the last operation eventually becomes active
+    When I POST JSON <body> to "<path>"
+    Then the response status should be 409
+    And the JSON error should be "conflict"
+    And the JSON pointer "/message" should be "commissioning_active"
+    And the operations list should contain exactly 2 operations
+    When the DALI transport unblocks
+    Then every operation eventually finishes
+    And the DALI mock transport should have received 0 forward frames
+
+    Examples:
+      | path                                             | body                                       |
+      | /api/v1/adapters/0/commissioning/identify        | {"short_address":0}                        |
+      | /api/v1/adapters/0/commissioning/address-changes | {"short_address":0,"new_short_address":23} |
+      | /api/v1/adapters/0/commissioning/steps/terminate | {}                                         |

@@ -4,8 +4,8 @@ use core::ptr::addr_of_mut;
 
 use serde::{Deserialize, Serialize};
 use dali2rust_contracts::msg::{
-    ColorMode, DeviceTypeSet, ExtendedVersionEntry, FixedText32, FixedText64, OperationType,
-    MAX_EXTENDED_VERSIONS,
+    ColorMode, DeviceType, DeviceTypeSet, ExtendedVersionEntry, FixedText32, FixedText64,
+    OperationType, MAX_EXTENDED_VERSIONS,
 };
 use dali2rust_platform::small_sort::insertion_sort_by;
 
@@ -404,6 +404,17 @@ pub fn capability_supports_color_mode(caps: CapabilityFlagsView, mode: ColorMode
         ColorMode::Rgbwaf => caps.rgbwaf,
         _ => false,
     }
+}
+
+pub fn device_type_fits_declared(declared: Option<DeviceTypeSet>, device_type: DeviceType) -> bool {
+    match (declared, device_type.dali_code()) {
+        (Some(declared), Some(code)) => declared.contains(code),
+        _ => true,
+    }
+}
+
+pub fn colour_mode_fits_declared(declared: Option<DeviceTypeSet>, mode: ColorMode) -> bool {
+    !mode.needs_dt8() || device_type_fits_declared(declared, DeviceType::Dt8Color)
 }
 
 pub fn seed_capability_from_color_mode(caps: &mut CapabilityFlagsView, mode: ColorMode) {
@@ -1187,9 +1198,6 @@ pub struct OperationAddressChangeResultView {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperationRestoredSlicesView {
     pub metadata_and_overrides: bool,
-    pub attributes: bool,
-    pub groups: bool,
-    pub scenes: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1292,6 +1300,7 @@ pub trait VirtualLampReadPort: PhysicalDeviceReadPort {
     fn list_virtual_lamp_ids(&self, adapter_id: u8) -> Vec<u8>;
     fn list_virtual_lamp_views(&self, adapter_id: u8) -> Vec<VirtualLampView>;
     fn physical_short_on_other_adapter(&self, adapter_id: u8, short_address: u8) -> bool;
+    fn virtual_lamp_bound_to_short(&self, adapter_id: u8, short_address: u8) -> Option<u8>;
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

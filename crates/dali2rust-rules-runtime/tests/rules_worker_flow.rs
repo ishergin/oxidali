@@ -1650,22 +1650,22 @@ impl dali2rust_rules_model::NameResolver for VanishingGroup {
     fn adapter_exists(&self, adapter_id: u8) -> bool {
         self.inner.adapter_exists(adapter_id)
     }
-    fn resolve_lamp(&self, name: &str) -> Option<dali2rust_rules_model::LampRef> {
+    fn resolve_lamp(&self, name: &str) -> Vec<dali2rust_rules_model::LampRef> {
         self.inner.resolve_lamp(name)
     }
-    fn resolve_group(&self, name: &str) -> Option<dali2rust_rules_model::GroupRef> {
-        if self.gone.load(std::sync::atomic::Ordering::Relaxed) {
-            return None;
+    fn resolve_group(&self, name: &str) -> Vec<dali2rust_rules_model::GroupRef> {
+        if self.gone.load(std::sync::atomic::Ordering::Relaxed) || name != "коридор" {
+            return Vec::new();
         }
-        Some(dali2rust_rules_model::GroupRef { adapter_id: 0, id: LIT_GROUP_ID }).filter(|_| name == "коридор")
+        vec![dali2rust_rules_model::GroupRef { adapter_id: 0, id: LIT_GROUP_ID }]
     }
-    fn resolve_device(&self, name: &str) -> Option<dali2rust_rules_model::DeviceRef> {
+    fn resolve_device(&self, name: &str) -> Vec<dali2rust_rules_model::DeviceRef> {
         self.inner.resolve_device(name)
     }
-    fn resolve_input_device(&self, name: &str) -> Option<dali2rust_rules_model::InputDeviceRef> {
+    fn resolve_input_device(&self, name: &str) -> Vec<dali2rust_rules_model::InputDeviceRef> {
         self.inner.resolve_input_device(name)
     }
-    fn resolve_scene(&self, name: &str) -> Option<u8> {
+    fn resolve_scene(&self, name: &str) -> Vec<dali2rust_rules_model::SceneRef> {
         self.inner.resolve_scene(name)
     }
 }
@@ -1685,14 +1685,25 @@ fn enabled_bit(h: &Harness, name: &str) -> Option<bool> {
     h.store.document().compiled.as_ref().and_then(|s| s.rule(name)).map(|r| r.enabled)
 }
 
+#[derive(Clone, Default)]
+struct NameSwitches {
+    others_gone: Arc<std::sync::atomic::AtomicBool>,
+    lamps_gone: Arc<std::sync::atomic::AtomicBool>,
+    lamp_lookups: Arc<std::sync::atomic::AtomicU32>,
+}
+
 struct VanishingNames {
     inner: StubResolver,
-    gone: Arc<std::sync::atomic::AtomicBool>,
+    switches: NameSwitches,
 }
 
 impl VanishingNames {
+    fn new(switches: &NameSwitches) -> Self {
+        VanishingNames { inner: StubResolver::permissive(), switches: switches.clone() }
+    }
+
     fn present(&self) -> bool {
-        !self.gone.load(std::sync::atomic::Ordering::Relaxed)
+        !self.switches.others_gone.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -1703,20 +1714,22 @@ impl dali2rust_rules_model::NameResolver for VanishingNames {
     fn adapter_exists(&self, adapter_id: u8) -> bool {
         self.inner.adapter_exists(adapter_id)
     }
-    fn resolve_lamp(&self, name: &str) -> Option<dali2rust_rules_model::LampRef> {
-        self.inner.resolve_lamp(name)
+    fn resolve_lamp(&self, name: &str) -> Vec<dali2rust_rules_model::LampRef> {
+        self.switches.lamp_lookups.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let gone = self.switches.lamps_gone.load(std::sync::atomic::Ordering::Relaxed);
+        self.inner.resolve_lamp(name).into_iter().filter(|_| !gone).collect()
     }
-    fn resolve_group(&self, name: &str) -> Option<dali2rust_rules_model::GroupRef> {
-        self.inner.resolve_group(name).filter(|_| self.present())
+    fn resolve_group(&self, name: &str) -> Vec<dali2rust_rules_model::GroupRef> {
+        self.inner.resolve_group(name).into_iter().filter(|_| self.present()).collect()
     }
-    fn resolve_device(&self, name: &str) -> Option<dali2rust_rules_model::DeviceRef> {
+    fn resolve_device(&self, name: &str) -> Vec<dali2rust_rules_model::DeviceRef> {
         self.inner.resolve_device(name)
     }
-    fn resolve_input_device(&self, name: &str) -> Option<dali2rust_rules_model::InputDeviceRef> {
-        self.inner.resolve_input_device(name).filter(|_| self.present())
+    fn resolve_input_device(&self, name: &str) -> Vec<dali2rust_rules_model::InputDeviceRef> {
+        self.inner.resolve_input_device(name).into_iter().filter(|_| self.present()).collect()
     }
-    fn resolve_scene(&self, name: &str) -> Option<u8> {
-        self.inner.resolve_scene(name).filter(|_| self.present())
+    fn resolve_scene(&self, name: &str) -> Vec<dali2rust_rules_model::SceneRef> {
+        self.inner.resolve_scene(name).into_iter().filter(|_| self.present()).collect()
     }
 }
 
@@ -1737,8 +1750,9 @@ fn renaming_a_group_scene_or_input_device_recompiles_the_rules_that_name_it() {
         ),
     ];
     for (document, renamed) in renames {
-        let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let resolver = VanishingNames { inner: StubResolver::permissive(), gone: Arc::clone(&gone) };
+        let switches = NameSwitches::default();
+        let gone = Arc::clone(&switches.others_gone);
+        let resolver = VanishingNames::new(&switches);
         let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-renamed"));
         let h = harness_spawn(slices, empty_world(), Arc::new(resolver));
         publish_document(&h, 1, document, 0);
@@ -1763,6 +1777,75 @@ fn renaming_a_group_scene_or_input_device_recompiles_the_rules_that_name_it() {
             "the name this document uses is gone, so it must have been recompiled: {document}"
         );
     }
+}
+
+const TWO_NAMES_DOC: &str = "rule \"л\" { when http trigger do lamp(\"кухня\").on() }\n\
+rule \"г\" { when http trigger do group(\"зал\").off() }\n";
+
+fn diagnostic_mentions(store: &RulesStore, part: &str) -> bool {
+    store.document().diagnostic.is_some_and(|text| text.contains(part))
+}
+
+#[test]
+fn the_diagnostic_names_the_latest_failure_without_moving_the_revision() {
+    let switches = NameSwitches::default();
+    let (lamp_gone, group_gone) = (&switches.lamps_gone, &switches.others_gone);
+    let resolver = VanishingNames::new(&switches);
+    let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-two-names"));
+    let h = harness_spawn(slices, empty_world(), Arc::new(resolver));
+    publish_document(&h, 1, TWO_NAMES_DOC, 0);
+    assert!(recv_signal(&h, 1).error.is_none());
+    wait_revision(&h.store, 1);
+
+    lamp_gone.store(true, std::sync::atomic::Ordering::Relaxed);
+    names_moved(&h);
+    let lamp_named = || diagnostic_mentions(&h.store, "unknown lamp");
+    dali2rust_test_support::wait_until(lamp_named, COMMAND_WAIT);
+    let stopped_at = h.store.revision();
+
+    group_gone.store(true, std::sync::atomic::Ordering::Relaxed);
+    lamp_gone.store(false, std::sync::atomic::Ordering::Relaxed);
+    names_moved(&h);
+    let group_named = || diagnostic_mentions(&h.store, "unknown group");
+    dali2rust_test_support::wait_until(group_named, COMMAND_WAIT);
+    assert_eq!(h.store.revision(), stopped_at, "the rule graph did not move, only its cause");
+}
+
+fn recompile_twice(h: &Harness, lookups: &std::sync::atomic::AtomicU32) {
+    for _ in 0..2 {
+        let before = lookups.load(std::sync::atomic::Ordering::Relaxed);
+        names_moved(h);
+        let looked_up = || lookups.load(std::sync::atomic::Ordering::Relaxed) > before;
+        dali2rust_test_support::wait_until(looked_up, COMMAND_WAIT);
+    }
+}
+
+#[test]
+fn a_failure_found_at_boot_keeps_its_diagnostic_until_the_cause_changes() {
+    let switches = NameSwitches::default();
+    let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-boot-failure"));
+    let resolver = || Arc::new(VanishingNames::new(&switches));
+    let first = harness_spawn(Arc::clone(&slices), empty_world(), resolver());
+    publish_document(&first, 1, TWO_NAMES_DOC, 0);
+    assert!(recv_signal(&first, 1).error.is_none());
+    wait_revision(&first.store, 1);
+    drop(first);
+
+    switches.lamps_gone.store(true, std::sync::atomic::Ordering::Relaxed);
+    let h = harness_spawn(slices, empty_world(), resolver());
+    let boot_failure = || diagnostic_mentions(&h.store, "rules_compile_failed: ");
+    dali2rust_test_support::wait_until(boot_failure, COMMAND_WAIT);
+    let at_boot = h.store.generation();
+    recompile_twice(&h, &switches.lamp_lookups);
+    assert_eq!(h.store.generation(), at_boot, "the same failure, found again, rewrites nothing");
+    switches.others_gone.store(true, std::sync::atomic::Ordering::Relaxed);
+    switches.lamps_gone.store(false, std::sync::atomic::Ordering::Relaxed);
+    names_moved(&h);
+    let group_named = || {
+        diagnostic_mentions(&h.store, "rules_names_unresolved: ")
+            && diagnostic_mentions(&h.store, "unknown group")
+    };
+    dali2rust_test_support::wait_until(group_named, COMMAND_WAIT);
 }
 
 #[test]

@@ -59,19 +59,39 @@ fn scope_or_primary(c: &Cursor<'_>, explicit: Option<u8>) -> u8 {
     explicit.unwrap_or_else(|| c.resolver.primary_adapter())
 }
 
-fn check_scope(
-    what: &str,
-    name: &str,
-    pos: Pos,
-    resolved: u8,
+pub fn pick_named<T: Copy>(
+    candidates: &[T],
+    adapter_of: fn(&T) -> u8,
     explicit: Option<u8>,
-) -> Result<(), CompileError> {
-    match explicit {
-        Some(adapter) if adapter != resolved => Err(pos.err(format!(
-            "{what} \"{name}\" is on adapter {resolved}, not {adapter}"
+    (what, name): (&str, &str),
+    pos: Pos,
+) -> Result<T, CompileError> {
+    let in_scope = |t: &&T| explicit.is_none_or(|adapter| adapter_of(t) == adapter);
+    let scoped: Vec<T> = candidates.iter().filter(in_scope).copied().collect();
+    match (scoped.as_slice(), candidates.first(), explicit) {
+        ([one], _, _) => Ok(*one),
+        ([], Some(other), Some(adapter)) => Err(pos.err(format!(
+            "{what} \"{name}\" is on adapter {}, not {adapter}",
+            adapter_of(other)
         ))),
-        _ => Ok(()),
+        ([], _, _) => Err(pos.err(format!("unknown {what} \"{name}\""))),
+        (many, _, _) => Err(pos.err(ambiguity(many, adapter_of, explicit, (what, name)))),
     }
+}
+
+fn ambiguity<T>(
+    many: &[T],
+    adapter_of: fn(&T) -> u8,
+    explicit: Option<u8>,
+    (what, name): (&str, &str),
+) -> String {
+    let spans_adapters = many.windows(2).any(|pair| adapter_of(&pair[0]) != adapter_of(&pair[1]));
+    let hint = if spans_adapters && explicit.is_none() {
+        "; rename them apart or add adapter=N"
+    } else {
+        "; rename them apart"
+    };
+    format!("ambiguous {what} \"{name}\": {} targets share the name{hint}", many.len())
 }
 
 fn id_in_range(id: i64, pos: Pos, what: &str, max: u8) -> Result<u16, CompileError> {
@@ -88,11 +108,8 @@ pub fn lamp_ref(c: &mut Cursor<'_>) -> Result<LampRef, CompileError> {
     c.expect(&TokenKind::RParen, "`)`")?;
     match target {
         NameOrId::Name(name, pos) => {
-            let Some(lamp) = c.resolver.resolve_lamp(&name) else {
-                return Err(pos.err(format!("unknown lamp \"{name}\"")));
-            };
-            check_scope("lamp", &name, pos, lamp.adapter_id, explicit)?;
-            Ok(lamp)
+            let lamps = c.resolver.resolve_lamp(&name);
+            pick_named(&lamps, |l| l.adapter_id, explicit, ("lamp", &name), pos)
         }
         NameOrId::Id(id, pos) => {
             let id = id_in_range(id, pos, "lamp id", MAX_LAMP_ID)?;
@@ -108,11 +125,8 @@ pub fn group_ref(c: &mut Cursor<'_>) -> Result<GroupRef, CompileError> {
     c.expect(&TokenKind::RParen, "`)`")?;
     match target {
         NameOrId::Name(name, pos) => {
-            let Some(group) = c.resolver.resolve_group(&name) else {
-                return Err(pos.err(format!("unknown group \"{name}\"")));
-            };
-            check_scope("group", &name, pos, group.adapter_id, explicit)?;
-            Ok(group)
+            let groups = c.resolver.resolve_group(&name);
+            pick_named(&groups, |g| g.adapter_id, explicit, ("group", &name), pos)
         }
         NameOrId::Id(id, pos) => {
             let id = id_in_range(id, pos, "group id", MAX_GROUP_ID)?;
@@ -128,11 +142,8 @@ pub fn device_ref(c: &mut Cursor<'_>) -> Result<DeviceRef, CompileError> {
     c.expect(&TokenKind::RParen, "`)`")?;
     match target {
         NameOrId::Name(name, pos) => {
-            let Some(device) = c.resolver.resolve_device(&name) else {
-                return Err(pos.err(format!("unknown device \"{name}\"")));
-            };
-            check_scope("device", &name, pos, device.adapter_id, explicit)?;
-            Ok(device)
+            let devices = c.resolver.resolve_device(&name);
+            pick_named(&devices, |d| d.adapter_id, explicit, ("device", &name), pos)
         }
         NameOrId::Id(id, pos) => {
             if !(0..=i64::from(MAX_SHORT_ADDRESS)).contains(&id) {
@@ -242,11 +253,8 @@ fn resolve_input_device(
     let adapter = explicit.map(|(a, _)| a);
     match dev {
         NameOrId::Name(name, pos) => {
-            let Some(device) = c.resolver.resolve_input_device(&name) else {
-                return Err(pos.err(format!("unknown input device \"{name}\"")));
-            };
-            check_scope("input device", &name, pos, device.adapter_id, adapter)?;
-            Ok(device)
+            let devices = c.resolver.resolve_input_device(&name);
+            pick_named(&devices, |d| d.adapter_id, adapter, ("input device", &name), pos)
         }
         NameOrId::Id(id, pos) => {
             if !(0..=i64::from(MAX_SHORT_ADDRESS)).contains(&id) {

@@ -428,30 +428,29 @@ impl RulesWorker {
         if doc.lang_id != self.compiler.lang_id() {
             return;
         }
-        let next = match self.compiler.compile(&doc.source, self.resolver.as_ref()) {
-            Ok(mut set) => {
-                apply_enable_table(&mut set, &doc.enable_table);
-                Some(set)
-            }
-            Err(_) => None,
-        };
-        if next == doc.compiled {
+        let (next, diagnostic) = self.recompiled(&doc);
+        let graph_moved = next != doc.compiled;
+        if !graph_moved && same_failure(doc.diagnostic.as_deref(), diagnostic.as_deref()) {
             return;
         }
-        if next.is_none() {
+        if graph_moved && next.is_none() {
             self.counters.hydrate_failed.fetch_add(1, Ordering::Relaxed);
         }
-        let diagnostic = if next.is_none() {
-            Some("rules_names_unresolved".to_owned())
-        } else {
-            None
-        };
-        self.store.replace(RulesDocument {
-            revision: doc.revision.wrapping_add(1),
-            compiled: next,
-            diagnostic,
-            ..doc
-        });
+        let revision = if graph_moved { doc.revision.wrapping_add(1) } else { doc.revision };
+        self.store.replace(RulesDocument { revision, compiled: next, diagnostic, ..doc });
+    }
+
+    fn recompiled(
+        &self,
+        doc: &RulesDocument,
+    ) -> (Option<dali2rust_rules_model::RuleSet>, Option<String>) {
+        match self.compiler.compile(&doc.source, self.resolver.as_ref()) {
+            Ok(mut set) => {
+                apply_enable_table(&mut set, &doc.enable_table);
+                (Some(set), None)
+            }
+            Err(error) => (None, Some(format!("rules_names_unresolved: {error}"))),
+        }
     }
 
     fn rehydrate_from_slices(&mut self) {
@@ -700,6 +699,13 @@ fn load_document(
         diagnostic: None,
         enable_table: manifest.entries,
     }))
+}
+
+fn same_failure(was: Option<&str>, now: Option<&str>) -> bool {
+    let error = |diagnostic: &str| {
+        diagnostic.split_once(": ").map_or(diagnostic, |(_, e)| e).to_owned()
+    };
+    was.map(error) == now.map(error)
 }
 
 fn uncompiled_document(

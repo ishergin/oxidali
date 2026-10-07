@@ -31,7 +31,8 @@ control gear ([09 §Part 103](../../../architecture/09-dali-protocol-rules.md#pa
 пустым телом адресует только устройства без адреса; `{"include_addressed": true}` —
 переадресация работающего сегмента, разрушительный вариант, который надо попросить
 явно; `include_addressed` не bool — `422 invalid_value`. Commissioning держит шину
-целиком, как и у control gear.
+целиком, как и у control gear, и `commission` с `identify` подчиняются тому же
+[исключению на адаптер](commissioning.md#исключение-на-адаптер).
 
 ## Список и деталь
 
@@ -124,6 +125,7 @@ ingress — `503`, запись исчезла до исполнения — `40
 | `unknown_field` | 400 | Поле тела, которого у маршрута нет (у `scan` и `identify` полей нет) |
 | `unsupported_field` | 422 | Поле ответа устройства, инстанса или индикации, которое `PATCH` не пишет |
 | `empty_patch` | 400 | Тело без полей |
+| `conflict` | 409 | `commission` или `identify`, пока на адаптере идёт commissioning (`commissioning_active`) |
 | `invalid_value`, `invalid_timer_range`, `invalid_feedback_colour`, `feedback_not_supported` | 422 | См. выше |
 
 На транспорте без 24-битного пути операции Part 103 завершаются с

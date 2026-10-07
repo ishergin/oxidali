@@ -72,7 +72,7 @@ pub(crate) fn script_group_membership_add(mock: &MockDaliTransport, short: u8, g
     mock.expect_forward_frame_with_backward(q1.to_forward_frame().raw(), Some((mask >> 8) as u8));
 }
 
-// GRP-030 GRP-063 REG-030 SYS-210 MQTT-017 SYS-241
+// GRP-030 GRP-063 REG-030 SYS-210 MQTT-017 SYS-241 COMM-110
 #[given(regex = r"^adapter 0 group add for short (\d+) group (\d+) is scripted$")]
 async fn given_group_add_scripted(world: &mut DaliWorld, short: u8, group_id: u8) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -270,7 +270,7 @@ pub(crate) fn bind_discovered_vl1(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear();
 }
 
-// GRP-030 GRP-063 GRP-070 GRP-072 OP-131 REG-030 SYS-210 MQTT-002 MQTT-016 MQTT-017 SYS-241 GRP-073 MQTT-020
+// GRP-030 GRP-063 GRP-070 GRP-072 OP-131 REG-030 SYS-210 MQTT-002 MQTT-016 MQTT-017 SYS-241 GRP-073 MQTT-020 COMM-110
 #[given(regex = r"^adapter 0 desired membership includes virtual lamp (\d+) in group (\d+)$")]
 #[when(regex = r"^adapter 0 desired membership includes virtual lamp (\d+) in group (\d+)$")]
 async fn given_desired_membership_includes(world: &mut DaliWorld, virtual_lamp_id: u8, group_id: u8) {

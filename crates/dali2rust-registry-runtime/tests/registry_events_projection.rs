@@ -3,6 +3,7 @@ mod support;
 use support::{publish_event, publish_group_matrix_write, publish_scene_matrix_write};
 
 use dali2rust_contracts::msg::DaliAttributeReadChunk;
+use dali2rust_contracts::msg::PhysicalDeviceOverrideCommand as PdPatch;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +16,7 @@ use dali2rust_contracts::msg::{
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
     AdapterReadPort, AdapterView, AttributeSource, GroupApplySnapshot, GroupMembershipMatrixView,
-    GroupReadPort, GroupView, VirtualLampReadPort,
+    GroupReadPort, GroupView, SceneReadPort, VirtualLampReadPort,
 };
 use dali2rust_registry_runtime::{RegistryStore, RegistryWorkerCounters};
 use dali2rust_test_support::wait_until;
@@ -82,18 +83,44 @@ fn group_rows(rows: &[GroupMatrixDesiredRow]) -> GroupMatrixDesiredRowList {
     out
 }
 
+fn publish_discovery(
+    publisher: &dali2rust_bus::BusPublisher,
+    store: &RegistryStore,
+    progress: dali2rust_contracts::msg::DaliDiscoveryProgressEvent,
+) {
+    let short = progress.short_address;
+    let origin = Some(dali2rust_contracts::msg::Origin::Internal);
+    let event = dali2rust_contracts::bus::event_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        1,
+        BUS_TID,
+        origin,
+        progress,
+    );
+    publish_event(publisher, event);
+    wait_until(
+        || store.physical_device_view(0, short).is_some(),
+        Duration::from_millis(500),
+    );
+}
+
 fn seed_physical_via_discovery(
     publisher: &dali2rust_bus::BusPublisher,
     store: &RegistryStore,
     short: u8,
 ) {
-    let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 1, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryProgressEvent { registry_adapter_id: 0, short_address: short, random_address: None, device_type: DeviceType::Dt8Color, color_mode: ColorMode::Rgb, dt8_xy_capable: true, dt8_tc_capable: true, dt8_rgb_capable: true, dt8_rgbwaf_capable: false, supported_device_types: None });
-    publish_event(publisher, ev);
-    wait_until(
-        || store.physical_device_view(0, short).is_some(),
-        Duration::from_millis(500),
-    );
-    assert!(store.physical_device_view(0, short).is_some());
+    publish_discovery(publisher, store, dali2rust_contracts::msg::DaliDiscoveryProgressEvent {
+        registry_adapter_id: 0,
+        short_address: short,
+        random_address: None,
+        device_type: DeviceType::Dt8Color,
+        color_mode: ColorMode::Rgb,
+        dt8_xy_capable: true,
+        dt8_tc_capable: true,
+        dt8_rgb_capable: true,
+        dt8_rgbwaf_capable: false,
+        supported_device_types: None,
+    });
 }
 
 fn written_event(
@@ -544,7 +571,6 @@ fn successful_group_membership_event_updates_applied_matrix() {
 
 #[test]
 fn successful_scene_programmed_event_projects_applied_row_and_echo() {
-    use dali2rust_domain::registry::SceneReadPort;
     let store = Arc::new(RegistryStore::with_adapter_count(1));
     let counters = Arc::new(RegistryWorkerCounters::default());
     let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
@@ -738,20 +764,71 @@ fn groups_read_before_the_lamp_is_bound_are_adopted_and_not_reported_dirty() {
     );
 }
 
+fn replaced_event(correlation_id: u64, failed: u8, replacement: u8) -> dali2rust_contracts::msg::EventEnvelope {
+    dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDeviceReplacedEvent { registry_adapter_id: 0, failed_short_address: failed, replacement_short_address: replacement, restored_metadata_and_overrides: true, operation_key: dali2rust_contracts::msg::FixedText32::new(), error: None })
+}
+
+fn apply_row(store: &RegistryStore, virtual_lamp_id: u8) -> dali2rust_domain::registry::GroupApplyRowView {
+    store
+        .group_apply_snapshot(0)
+        .expect("group apply snapshot")
+        .rows
+        .into_iter()
+        .find(|row| row.virtual_lamp_id == virtual_lamp_id)
+        .expect("apply row")
+}
+
+const CHANGED_EVENTS_DEADLINE: Duration = Duration::from_secs(2);
+const CHANGED_EVENTS_QUIET: Duration = Duration::from_millis(300);
+
+type Changed = (Vec<u8>, Vec<u8>, usize);
+
+fn note_changed(changed: &mut Changed, payload: &BusEventPayload) {
+    match payload {
+        BusEventPayload::PhysicalDeviceChangedEvent(body) => changed.0.push(body.short_address),
+        BusEventPayload::VirtualLampChangedEvent(body) => changed.1.push(body.virtual_lamp_id),
+        BusEventPayload::GroupMatrixChangedEvent(_) => changed.2 += 1,
+        _ => {}
+    }
+}
+
+fn changed_events_for(
+    rx: &std::sync::mpsc::Receiver<BusFrame>,
+    correlation_id: u64,
+    expected: &Changed,
+) -> Changed {
+    let counts = |c: &Changed| (c.0.len(), c.1.len(), c.2);
+    let mut changed = Changed::default();
+    let mut until = std::time::Instant::now() + CHANGED_EVENTS_DEADLINE;
+    loop {
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        let Ok(BusFrame::Event(ev)) = rx.recv_timeout(left) else {
+            break;
+        };
+        if ev.meta.correlation_id == correlation_id {
+            note_changed(&mut changed, &ev.payload);
+        }
+        if counts(&changed) == counts(expected) {
+            until = until.min(std::time::Instant::now() + CHANGED_EVENTS_QUIET);
+        }
+    }
+    changed.0.sort_unstable();
+    changed.1.sort_unstable();
+    changed
+}
+
 #[test]
-fn replacement_carries_the_failed_devices_attributes() {
+fn a_replacement_keeps_its_own_evidence_so_the_lamps_rows_turn_dirty() {
     let store = Arc::new(RegistryStore::with_adapter_count(1));
     let counters = Arc::new(RegistryWorkerCounters::default());
     let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
 
     seed_device_reporting_groups(&publisher, &store, 950, 0, 1 << 3);
     seed_device_reporting_groups(&publisher, &store, 951, 11, 1 << 7);
+    bind_lamp(&publisher, &store, 953, 2, 0);
     drain_events(&ev_obs);
 
-    publish_event(
-        &publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 952, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDeviceReplacedEvent { registry_adapter_id: 0, failed_short_address: 0, replacement_short_address: 11, restored_metadata_and_overrides: true, restored_attributes: true, restored_groups: true, restored_scenes: true, operation_key: dali2rust_contracts::msg::FixedText32::new(), error: None }),
-    );
+    publish_event(&publisher, replaced_event(952, 0, 11));
     wait_until(
         || store.physical_device_view(0, 11).is_none(),
         Duration::from_millis(500),
@@ -762,9 +839,243 @@ fn replacement_carries_the_failed_devices_attributes() {
         .expect("the failed device's role address must survive the handover");
     assert_eq!(
         survivor.attributes.groups.membership.map(|observed| observed.value),
-        Some(1 << 3),
-        "the replacement must carry the FAILED device's evidence, not its own"
+        Some(1 << 7),
+        "the record at the role address describes the gear that now answers there"
     );
+    let row = apply_row(&store, 2);
+    assert_eq!(row.binding_short, Some(0));
+    assert_eq!(row.desired_groups_mask, 1 << 3, "the lamp keeps the failed device's role");
+    assert_eq!(row.applied_groups_mask, 1 << 7, "applied is what the replacement holds");
+    let expected: Changed = (vec![0, 11], vec![2], 1);
+    assert_eq!(changed_events_for(&ev_obs, 952, &expected), expected);
+}
+
+fn scene_programmed(
+    correlation_id: u64,
+    short: u8,
+    target_state: Option<dali2rust_contracts::msg::DaliSceneTargetState>,
+) -> dali2rust_contracts::msg::EventEnvelope {
+    let programmed = dali2rust_contracts::msg::DaliSceneProgrammedEvent {
+        registry_adapter_id: 0,
+        target: DaliProgramTarget::VirtualLamp { virtual_lamp_id: 1 },
+        scene_id: 3,
+        action: dali2rust_contracts::msg::SceneProgramAction::Write,
+        physical_short_address: Some(short),
+        target_state,
+        scene_level: Some(179),
+        error: None,
+    };
+    let origin = Some(dali2rust_contracts::msg::Origin::Internal);
+    dali2rust_contracts::bus::event_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        correlation_id,
+        BUS_TID,
+        origin,
+        programmed,
+    )
+}
+
+#[test]
+fn what_was_programmed_into_the_old_gear_does_not_vouch_for_the_new_one() {
+    let store = Arc::new(RegistryStore::with_adapter_count(1));
+    let counters = Arc::new(RegistryWorkerCounters::default());
+    let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
+    setup_discovered_short_and_binding(&publisher, &store, 7, 1, 990);
+    seed_physical_via_discovery(&publisher, &store, 8);
+    let target = dali2rust_contracts::msg::DaliSceneTargetState {
+        power: Some(dali2rust_contracts::msg::PowerState::On),
+        level: Some(179),
+        color: None,
+    };
+    let mut rows = dali2rust_contracts::msg::SceneMatrixDesiredRowList::new();
+    let row = dali2rust_contracts::msg::SceneMatrixDesiredRow {
+        virtual_lamp_id: 1,
+        included: true,
+        target: Some(target),
+    };
+    rows.push(row).expect("row capacity");
+    publish_scene_matrix_write(&publisher, 992, 0, 3, rows);
+    publish_event(&publisher, scene_programmed(993, 7, Some(target)));
+    publish_event(&publisher, scene_programmed(994, 8, None));
+    let scene_dirty = || store.scene_view(0, 3).map(|scene| scene.dirty);
+    wait_until(|| scene_dirty() == Some(false), Duration::from_millis(500));
+    assert_eq!(scene_dirty(), Some(false), "the old gear holds what the lamp's row asks");
+    drain_events(&ev_obs);
+
+    publish_event(&publisher, replaced_event(995, 7, 8));
+    wait_until(|| store.physical_device_view(0, 8).is_none(), Duration::from_millis(500));
+
+    assert_eq!(
+        scene_dirty(),
+        Some(true),
+        "the new gear holds the level, but nothing says it holds the power the row asks"
+    );
+}
+
+const DT6_ONLY: u64 = 1 << 6;
+const DT8_ONLY: u64 = 1 << 8;
+const DT6_AND_DT8: u64 = DT6_ONLY | DT8_ONLY;
+
+fn discovered_gear(
+    publisher: &dali2rust_bus::BusPublisher,
+    store: &RegistryStore,
+    short: u8,
+    declared: u64,
+) {
+    let declared = dali2rust_contracts::msg::DeviceTypeSet::from_bits(declared);
+    let colour = DeviceType::Dt8Color.dali_code().is_some_and(|dt8| declared.contains(dt8));
+    publish_discovery(publisher, store, dali2rust_contracts::msg::DaliDiscoveryProgressEvent {
+        registry_adapter_id: 0,
+        short_address: short,
+        random_address: None,
+        device_type: if colour { DeviceType::Dt8Color } else { DeviceType::Dt6Led },
+        color_mode: ColorMode::Unknown,
+        dt8_xy_capable: false,
+        dt8_tc_capable: colour,
+        dt8_rgb_capable: false,
+        dt8_rgbwaf_capable: false,
+        supported_device_types: Some(declared),
+    });
+}
+
+fn give_overrides(
+    publisher: &dali2rust_bus::BusPublisher,
+    store: &RegistryStore,
+    (correlation_id, short): (u64, u8),
+    (device_type, colour): (Option<DeviceType>, ColorMode),
+) {
+    let types = device_type.map_or(0, |_| PdPatch::PATCH_DEVICE_TYPE_OVERRIDE);
+    let patch = PdPatch {
+        adapter_id: 0,
+        short_address: short,
+        patch_mask: types | PdPatch::PATCH_COLOR_MODE_OVERRIDE,
+        name: dali2rust_contracts::msg::FixedText64::new(),
+        clear_device_type_override: false,
+        device_type_override: device_type.unwrap_or(DeviceType::Unknown),
+        clear_color_mode_override: false,
+        color_mode_override: colour,
+        dt8_auto_activation_repair: true,
+        dt8_rgbwaf_control_assert: true,
+    };
+    let origin = Some(dali2rust_contracts::msg::Origin::Api);
+    let command = dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        correlation_id,
+        BUS_TID,
+        origin,
+        patch,
+    );
+    support::publish_cmd(publisher, command);
+    let given = || {
+        store.physical_device_view(0, short).is_some_and(|pd| pd.color_mode_override.is_some())
+    };
+    wait_until(given, Duration::from_millis(500));
+}
+
+type Overrides = (Option<String>, Option<String>);
+
+fn hand_over(declared_by_new_gear: u64, own_colour: Option<ColorMode>) -> Overrides {
+    let store = Arc::new(RegistryStore::with_adapter_count(1));
+    let counters = Arc::new(RegistryWorkerCounters::default());
+    let (publisher, _ev_obs, _host) =
+        spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
+    discovered_gear(&publisher, &store, 0, DT8_ONLY);
+    discovered_gear(&publisher, &store, 11, declared_by_new_gear);
+    let role_overrides = (Some(DeviceType::Dt8Color), ColorMode::Xy);
+    give_overrides(&publisher, &store, (1002, 0), role_overrides);
+    if let Some(colour) = own_colour {
+        give_overrides(&publisher, &store, (1003, 11), (None, colour));
+    }
+    publish_event(&publisher, replaced_event(1004, 0, 11));
+    wait_until(|| store.physical_device_view(0, 11).is_none(), Duration::from_millis(500));
+    let record = store.physical_device_view(0, 0).expect("the role address");
+    (record.device_type_override, record.color_mode_override)
+}
+
+#[test]
+fn a_replacement_takes_only_the_overrides_the_new_gear_declares() {
+    let declared_both: Overrides = (Some("dt8_color".into()), Some("xy".into()));
+    let colour_gear = hand_over(DT6_AND_DT8, None);
+    assert_eq!(colour_gear, declared_both, "xy needs DT8, not an xy-capable flag");
+    assert_eq!(hand_over(DT6_ONLY, None), (None, None), "a DT6 dimmer is no DT8 colour gear");
+    let own: Overrides = (None, Some("brightness".into()));
+    let dimmer_with_its_own = hand_over(DT6_ONLY, Some(ColorMode::Brightness));
+    assert_eq!(dimmer_with_its_own, own, "the new gear keeps its own");
+}
+
+#[test]
+fn a_replacement_never_leaves_two_lamps_on_one_device() {
+    let store = Arc::new(RegistryStore::with_adapter_count(1));
+    let counters = Arc::new(RegistryWorkerCounters::default());
+    let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
+
+    seed_device_reporting_groups(&publisher, &store, 960, 0, 1 << 3);
+    seed_device_reporting_groups(&publisher, &store, 961, 11, 1 << 7);
+    bind_lamp(&publisher, &store, 962, 2, 0);
+    bind_lamp(&publisher, &store, 963, 5, 11);
+    drain_events(&ev_obs);
+
+    publish_event(&publisher, replaced_event(964, 0, 11));
+    wait_until(
+        || store.virtual_lamp_view(0, 5).binding_short.is_none(),
+        Duration::from_millis(500),
+    );
+
+    assert_eq!(store.virtual_lamp_view(0, 2).binding_short, Some(0), "the role keeps its lamp");
+    assert_eq!(
+        store.virtual_lamp_view(0, 5).binding_short,
+        None,
+        "the replacement's own lamp loses its device, as forget would leave it"
+    );
+    let expected: Changed = (vec![0, 11], vec![2, 5], 1);
+    assert_eq!(changed_events_for(&ev_obs, 964, &expected), expected);
+}
+
+#[test]
+fn a_replacement_without_a_lamp_at_the_role_brings_its_own_lamp_along() {
+    let store = Arc::new(RegistryStore::with_adapter_count(1));
+    let counters = Arc::new(RegistryWorkerCounters::default());
+    let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
+
+    seed_device_reporting_groups(&publisher, &store, 970, 0, 1 << 3);
+    seed_device_reporting_groups(&publisher, &store, 971, 11, 1 << 7);
+    bind_lamp(&publisher, &store, 972, 5, 11);
+    drain_events(&ev_obs);
+
+    publish_event(&publisher, replaced_event(973, 0, 11));
+    wait_until(
+        || store.virtual_lamp_view(0, 5).binding_short == Some(0),
+        Duration::from_millis(500),
+    );
+
+    let row = apply_row(&store, 5);
+    assert_eq!(row.binding_short, Some(0), "the lamp follows its gear to the role address");
+    assert_eq!(row.applied_groups_mask, 1 << 7);
+    let expected: Changed = (vec![0, 11], vec![5], 0);
+    assert_eq!(changed_events_for(&ev_obs, 973, &expected), expected);
+}
+
+#[test]
+fn an_address_change_announces_both_addresses_and_the_moved_lamp() {
+    let store = Arc::new(RegistryStore::with_adapter_count(1));
+    let counters = Arc::new(RegistryWorkerCounters::default());
+    let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
+
+    seed_device_reporting_groups(&publisher, &store, 980, 4, 1 << 3);
+    bind_lamp(&publisher, &store, 981, 6, 4);
+    drain_events(&ev_obs);
+
+    publish_event(
+        &publisher,
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 982, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliAddressingCompletedEvent { registry_adapter_id: 0, old_short_address: 4, new_short_address: 9, operation_key: dali2rust_contracts::msg::FixedText32::new(), error: None }),
+    );
+    wait_until(
+        || store.virtual_lamp_view(0, 6).binding_short == Some(9),
+        Duration::from_millis(500),
+    );
+
+    let expected: Changed = (vec![4, 9], vec![6], 0);
+    assert_eq!(changed_events_for(&ev_obs, 982, &expected), expected);
 }
 
 fn seed_device_reporting_groups(
@@ -830,14 +1141,7 @@ fn unbind_lamp(
 }
 
 fn apply_row_desired_mask(store: &RegistryStore, virtual_lamp_id: u8) -> u16 {
-    store
-        .group_apply_snapshot(0)
-        .expect("group apply snapshot")
-        .rows
-        .into_iter()
-        .find(|row| row.virtual_lamp_id == virtual_lamp_id)
-        .expect("apply row")
-        .desired_groups_mask
+    apply_row(store, virtual_lamp_id).desired_groups_mask
 }
 
 #[test]

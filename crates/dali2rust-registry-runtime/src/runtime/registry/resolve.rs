@@ -1,44 +1,36 @@
+use std::collections::HashMap;
+
 use super::store::RegistryStore;
 
+fn keys_named<V>(rows: &HashMap<(u8, u8), V>, named: impl Fn(&V) -> bool) -> Vec<(u8, u8)> {
+    let mut keys: Vec<(u8, u8)> = rows
+        .iter()
+        .filter(|(_, row)| named(row))
+        .map(|(key, _)| *key)
+        .collect();
+    keys.sort_unstable();
+    keys
+}
+
 impl RegistryStore {
-    pub fn virtual_lamp_by_name(&self, name: &str) -> Option<(u8, u8)> {
-        let g = self.read_inner();
-        g.lamps
-            .iter()
-            .find(|(_, rec)| rec.name.as_str() == name)
-            .map(|((adapter, id), _)| (*adapter, *id))
+    pub fn virtual_lamps_named(&self, name: &str) -> Vec<(u8, u8)> {
+        keys_named(&self.read_inner().lamps, |rec| rec.name.as_str() == name)
     }
 
-    pub fn group_by_name(&self, name: &str) -> Option<(u8, u8)> {
-        let g = self.read_inner();
-        g.groups
-            .iter()
-            .find(|(_, rec)| rec.name.as_str() == name)
-            .map(|((adapter, id), _)| (*adapter, *id))
+    pub fn groups_named(&self, name: &str) -> Vec<(u8, u8)> {
+        keys_named(&self.read_inner().groups, |rec| rec.name.as_str() == name)
     }
 
-    pub fn physical_device_by_name(&self, name: &str) -> Option<(u8, u8)> {
-        let g = self.read_inner();
-        g.physical_devices
-            .iter()
-            .find(|(_, rec)| rec.name.as_str() == name)
-            .map(|((adapter, short), _)| (*adapter, *short))
+    pub fn physical_devices_named(&self, name: &str) -> Vec<(u8, u8)> {
+        keys_named(&self.read_inner().physical_devices, |rec| rec.name.as_str() == name)
     }
 
-    pub fn input_device_by_name(&self, name: &str) -> Option<(u8, u8)> {
-        let g = self.read_inner();
-        g.input_devices
-            .iter()
-            .find(|(_, rec)| rec.name.as_deref() == Some(name))
-            .map(|((adapter, short), _)| (*adapter, *short))
+    pub fn input_devices_named(&self, name: &str) -> Vec<(u8, u8)> {
+        keys_named(&self.read_inner().input_devices, |rec| rec.name.as_deref() == Some(name))
     }
 
-    pub fn scene_by_name(&self, name: &str) -> Option<u8> {
-        let g = self.read_inner();
-        g.scenes
-            .iter()
-            .find(|(_, rec)| rec.name.as_str() == name)
-            .map(|((_, scene_id), _)| *scene_id)
+    pub fn scenes_named(&self, name: &str) -> Vec<(u8, u8)> {
+        keys_named(&self.read_inner().scenes, |rec| rec.name.as_str() == name)
     }
 
     pub fn adapter_id_exists(&self, adapter_id: u8) -> bool {

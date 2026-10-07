@@ -26,6 +26,7 @@ use super::persistence_slices::{
     SCENES_SLICE_VERSION,
     VIRTUAL_LAMPS_SLICE_VERSION,
 };
+use super::physical_device_banks::{bank_bit, banks_of, short_bit, BankOutcomes, SlotOutcome};
 use super::persistence_stream::{
     write_persistence_streaming, AdaptersSliceStream, GroupsSliceStream,
     PhysicalDevicesSliceStream, SceneSliceStream, VirtualLampsSliceStream,
@@ -79,36 +80,62 @@ impl crate::runtime::registry::store::RegistryStore {
         counts
     }
 
-    fn physical_device_count_of(&self, adapter_id: u8) -> usize {
-        self.read_inner()
-            .physical_devices
-            .keys()
-            .filter(|(aid, _)| *aid == adapter_id)
-            .count()
-    }
-
     fn hydrate_physical_devices_of(
         &self,
         slices: &dyn SliceStore,
         adapter_id: u8,
         sink: &mut HydrateSink<'_>,
     ) {
+        let banks = self.hydrate_physical_device_banks(slices, adapter_id, sink);
+        let old_slot = (banks.open() != 0)
+            .then(|| self.fall_back_to_whole_adapter_slot(slices, adapter_id, banks.open(), sink));
+        let decision = banks.decide(old_slot);
+        self.dirty.mark_physical_device_banks_dirty(adapter_id, decision.rewrite);
+        self.dirty
+            .settle_physical_device_banks(adapter_id, decision.settled, decision.waiting);
+    }
+
+    fn hydrate_physical_device_banks(
+        &self,
+        slices: &dyn SliceStore,
+        adapter_id: u8,
+        sink: &mut HydrateSink<'_>,
+    ) -> BankOutcomes {
+        let mut banks = BankOutcomes::default();
         for bank in 0..PHYSICAL_DEVICE_BANKS_U8 {
-            let _ = hydrate_pd_bank_slice(self, slices, adapter_id, bank, sink);
+            banks.note(bank, hydrate_pd_bank_slice(self, slices, adapter_id, bank, sink));
         }
-        if self.physical_device_count_of(adapter_id) > 0 {
-            return;
-        }
-        if matches!(
-            hydrate_pd_slice(self, slices, adapter_id, sink),
-            HydrateOutcome::Loaded
-        ) {
+        banks
+    }
+
+    fn fall_back_to_whole_adapter_slot(
+        &self,
+        slices: &dyn SliceStore,
+        adapter_id: u8,
+        open: u16,
+        sink: &mut HydrateSink<'_>,
+    ) -> SlotOutcome {
+        let held = self.shorts_held_in_ram(adapter_id);
+        let live = banks_of(held) | self.dirty.pending_physical_device_banks(adapter_id);
+        let takeable = open & (self.dirty.withheld_physical_device_banks(adapter_id) | !live);
+        let stored = slices.load(SliceKey::PhysicalDevices { adapter_id });
+        let outcome = hydrate_pd_slice(self, stored, adapter_id, takeable, held, sink);
+        let taken = (self.shorts_held_in_ram(adapter_id) & !held).count_ones();
+        if taken > 0 {
             info!(
-                "persistence: PD a{adapter_id} migrated from the whole-adapter slice; \
-                 the next flush writes it as banks"
+                "persistence: PD a{adapter_id} took {taken} devices from the whole-adapter \
+                 slice for banks {takeable:#06x} that did not load; the next flush writes them"
             );
-            self.dirty.mark_all_physical_devices_dirty(adapter_id);
         }
+        outcome
+    }
+
+    fn shorts_held_in_ram(&self, adapter_id: u8) -> u64 {
+        self.read_inner()
+            .physical_devices
+            .keys()
+            .filter(|(aid, _)| *aid == adapter_id)
+            .fold(0, |shorts, (_, short_address)| shorts | short_bit(*short_address))
     }
 
     fn hydrate_all(&self, slices: &dyn SliceStore, adapter_count: u8, sink: &mut HydrateSink<'_>) {
@@ -180,6 +207,7 @@ impl crate::runtime::registry::store::RegistryStore {
         let adapter_count = g.adapters.len() as u8;
         drop(g);
         for adapter_id in 0..adapter_count {
+            self.note_held_back_banks(adapter_id);
             let mask = self.dirty.take_physical_device_banks_dirty(adapter_id);
             if mask == 0 {
                 continue;
@@ -200,6 +228,17 @@ impl crate::runtime::registry::store::RegistryStore {
                         .fetch_add(1, Ordering::Relaxed);
                 }
             }
+        }
+    }
+
+    fn note_held_back_banks(&self, adapter_id: u8) {
+        let held = self.dirty.pending_physical_device_banks(adapter_id)
+            & self.dirty.withheld_physical_device_banks(adapter_id);
+        if held != 0 {
+            log::warn!(
+                "persistence: PD a{adapter_id} banks {held:#06x} wait for their stored copy; \
+                 their changes are not saved until a boot or reload can read it"
+            );
         }
     }
 
@@ -597,26 +636,19 @@ impl crate::runtime::registry::store::RegistryStore {
             .map_err(|e| StoreError::Backend(e.to_string()))
     }
 
-    fn load_physical_devices(
-        slices: &dyn SliceStore,
-        adapter_id: u8,
+    fn decode_physical_devices(
+        bytes: &[u8],
     ) -> Result<PersistablePhysicalDevicesSlice, StoreError> {
-        let bytes = slices.load(SliceKey::PhysicalDevices { adapter_id })?;
-        decode_versioned_slice::<PersistablePhysicalDevicesSlice>(&bytes, PHYSICAL_DEVICES_SLICE_VERSION)
+        decode_versioned_slice::<PersistablePhysicalDevicesSlice>(bytes, PHYSICAL_DEVICES_SLICE_VERSION)
             .map_err(|e| StoreError::Backend(e.to_string()))
     }
 
-    fn load_physical_device_bank(
-        slices: &dyn SliceStore,
+    fn decode_physical_device_bank(
+        bytes: &[u8],
         adapter_id: u8,
         bank: u8,
     ) -> Result<PersistablePhysicalDevicesSlice, StoreError> {
-        let bytes = slices.load(SliceKey::PhysicalDeviceBank { adapter_id, bank })?;
-        let slice = decode_versioned_slice::<PersistablePhysicalDevicesSlice>(
-            &bytes,
-            PHYSICAL_DEVICES_SLICE_VERSION,
-        )
-        .map_err(|e| StoreError::Backend(e.to_string()))?;
+        let slice = Self::decode_physical_devices(bytes)?;
         if let Some(stray) = slice
             .devices
             .iter()
@@ -624,7 +656,7 @@ impl crate::runtime::registry::store::RegistryStore {
         {
             return Err(StoreError::Backend(format!(
                 "a{adapter_id}/b{bank} holds short {} - bank geometry moved under \
-                 the stored bytes; falling back to the whole-adapter slice",
+                 the stored bytes; the bank is not loaded",
                 stray.short_address
             )));
         }
@@ -685,29 +717,96 @@ fn hydrate_slice<S>(
     load: impl FnOnce() -> Result<S, StoreError>,
     apply: impl FnOnce(&mut Inner, &S),
 ) -> HydrateOutcome {
+    let outcome = hydrate_slice_unmarked(store, kind.clone(), label, sink, load, apply);
+    if let HydrateOutcome::Failed = outcome {
+        mark_slice_dirty(store, &kind);
+    }
+    outcome
+}
+
+fn hydrate_slice_unmarked<S>(
+    store: &RegistryStore,
+    kind: PersistenceSliceKind,
+    label: &str,
+    sink: &mut HydrateSink<'_>,
+    load: impl FnOnce() -> Result<S, StoreError>,
+    apply: impl FnOnce(&mut Inner, &S),
+) -> HydrateOutcome {
     match load() {
-        Ok(slice) => {
-            let mut g = store.write_inner();
-            apply(&mut g, &slice);
-            drop(g);
-            sink.note_loaded(kind);
-            bump(&store.persist_counters.hydrate_loaded_total);
-            HydrateOutcome::Loaded
-        }
+        Ok(slice) => apply_loaded_slice(store, kind, sink, |inner| apply(inner, &slice)),
         Err(StoreError::Missing) => {
-            sink.note_defaulted(kind);
-            bump(&store.persist_counters.hydrate_default_total);
+            note_missing_slice(store, kind, sink);
             HydrateOutcome::Defaulted
         }
         Err(e) => {
-            sink.note_failed(&kind, || e.to_string());
-            mark_slice_dirty(store, &kind);
-            sink.note_defaulted(kind);
-            bump(&store.persist_counters.hydrate_error_total);
-            warn!("persistence: failed to load {label}: {e}");
+            note_unread_slice(store, kind, label, sink, &e);
             HydrateOutcome::Failed
         }
     }
+}
+
+fn hydrate_read_slot<S>(
+    store: &RegistryStore,
+    kind: PersistenceSliceKind,
+    label: &str,
+    sink: &mut HydrateSink<'_>,
+    stored: Result<Vec<u8>, StoreError>,
+    decode: impl FnOnce(&[u8]) -> Result<S, StoreError>,
+    apply: impl FnOnce(&mut Inner, &S),
+) -> SlotOutcome {
+    let bytes = match stored {
+        Ok(bytes) => bytes,
+        Err(e) => return note_unloaded_slot(store, kind, label, sink, &e),
+    };
+    match hydrate_slice_unmarked(store, kind, label, sink, || decode(&bytes), apply) {
+        HydrateOutcome::Loaded => SlotOutcome::Loaded,
+        HydrateOutcome::Defaulted | HydrateOutcome::Failed => SlotOutcome::Rejected,
+    }
+}
+
+fn note_unloaded_slot(
+    store: &RegistryStore,
+    kind: PersistenceSliceKind,
+    label: &str,
+    sink: &mut HydrateSink<'_>,
+    e: &StoreError,
+) -> SlotOutcome {
+    if let StoreError::Missing = e {
+        note_missing_slice(store, kind, sink);
+        return SlotOutcome::Missing;
+    }
+    note_unread_slice(store, kind, label, sink, e);
+    SlotOutcome::Unread
+}
+
+fn apply_loaded_slice(
+    store: &RegistryStore,
+    kind: PersistenceSliceKind,
+    sink: &mut HydrateSink<'_>,
+    apply: impl FnOnce(&mut Inner),
+) -> HydrateOutcome {
+    apply(&mut store.write_inner());
+    sink.note_loaded(kind);
+    bump(&store.persist_counters.hydrate_loaded_total);
+    HydrateOutcome::Loaded
+}
+
+fn note_missing_slice(store: &RegistryStore, kind: PersistenceSliceKind, sink: &mut HydrateSink<'_>) {
+    sink.note_defaulted(kind);
+    bump(&store.persist_counters.hydrate_default_total);
+}
+
+fn note_unread_slice(
+    store: &RegistryStore,
+    kind: PersistenceSliceKind,
+    label: &str,
+    sink: &mut HydrateSink<'_>,
+    e: &StoreError,
+) {
+    sink.note_failed(&kind, || e.to_string());
+    sink.note_defaulted(kind);
+    bump(&store.persist_counters.hydrate_error_total);
+    warn!("persistence: failed to load {label}: {e}");
 }
 
 const PHYSICAL_DEVICE_BANKS_U8: u8 =
@@ -722,15 +821,8 @@ fn mark_slice_dirty(store: &RegistryStore, kind: &PersistenceSliceKind) {
         PersistenceSliceKind::VirtualLamps { adapter_id } => {
             store.dirty.mark_virtual_lamps_dirty(adapter_id)
         }
-        PersistenceSliceKind::PhysicalDevices { adapter_id } => {
-            store.dirty.mark_physical_devices_dirty(adapter_id)
-        }
-        PersistenceSliceKind::PhysicalDeviceBank { adapter_id, bank } => store
-            .dirty
-            .mark_physical_device_dirty(
-                adapter_id,
-                bank * dali2rust_platform::slice_store::SliceKey::DEVICES_PER_BANK,
-            ),
+        PersistenceSliceKind::PhysicalDevices { .. }
+        | PersistenceSliceKind::PhysicalDeviceBank { .. } => {}
         PersistenceSliceKind::Scenes {
             adapter_id,
             scene_id,
@@ -824,26 +916,11 @@ hydrate_wrappers! { global:
 }
 
 hydrate_wrappers! { per_adapter:
-    hydrate_vl_slice(adapter_id) =>
-        PersistenceSliceKind::VirtualLamps { adapter_id },
-        format!("VL a{adapter_id}"),
-        RegistryStore::load_virtual_lamps,
-        hydrate_virtual_lamps_inner;
     hydrate_groups_slice(adapter_id) =>
         PersistenceSliceKind::Groups { adapter_id },
         format!("groups a{adapter_id}"),
         RegistryStore::load_groups,
         hydrate_groups_inner;
-    hydrate_pd_slice(adapter_id) =>
-        PersistenceSliceKind::PhysicalDevices { adapter_id },
-        format!("PD a{adapter_id}"),
-        RegistryStore::load_physical_devices,
-        hydrate_physical_devices_inner;
-    hydrate_pd_bank_slice(adapter_id, bank) =>
-        PersistenceSliceKind::PhysicalDeviceBank { adapter_id, bank },
-        format!("PD a{adapter_id}/b{bank}"),
-        RegistryStore::load_physical_device_bank,
-        hydrate_physical_device_bank_inner;
     hydrate_scene_slice(adapter_id, scene_id) =>
         PersistenceSliceKind::Scenes { adapter_id, scene_id },
         format!("scene a{adapter_id}/s{scene_id}"),
@@ -854,6 +931,72 @@ hydrate_wrappers! { per_adapter:
         format!("input devices b{bank}"),
         RegistryStore::load_input_devices_bank,
         crate::runtime::registry::input_devices::hydrate_input_devices_bank_inner;
+}
+
+fn hydrate_pd_bank_slice(
+    store: &RegistryStore,
+    slices: &dyn SliceStore,
+    adapter_id: u8,
+    bank: u8,
+    sink: &mut HydrateSink<'_>,
+) -> SlotOutcome {
+    hydrate_read_slot(
+        store,
+        PersistenceSliceKind::PhysicalDeviceBank { adapter_id, bank },
+        &format!("PD a{adapter_id}/b{bank}"),
+        sink,
+        slices.load(SliceKey::PhysicalDeviceBank { adapter_id, bank }),
+        |bytes| RegistryStore::decode_physical_device_bank(bytes, adapter_id, bank),
+        |inner, slice| hydrate_physical_device_bank_inner(inner, adapter_id, bank, slice),
+    )
+}
+
+fn hydrate_pd_slice(
+    store: &RegistryStore,
+    stored: Result<Vec<u8>, StoreError>,
+    adapter_id: u8,
+    banks: u16,
+    held: u64,
+    sink: &mut HydrateSink<'_>,
+) -> SlotOutcome {
+    hydrate_read_slot(
+        store,
+        PersistenceSliceKind::PhysicalDevices { adapter_id },
+        &format!("PD a{adapter_id}"),
+        sink,
+        stored,
+        |bytes| devices_of_banks(bytes, banks, held),
+        |inner, slice| hydrate_physical_devices_inner(inner, adapter_id, slice),
+    )
+}
+
+fn devices_of_banks(
+    bytes: &[u8],
+    banks: u16,
+    held: u64,
+) -> Result<PersistablePhysicalDevicesSlice, StoreError> {
+    let mut slice = RegistryStore::decode_physical_devices(bytes)?;
+    slice.devices.retain(|dev| {
+        banks & bank_bit(dev.short_address) != 0 && held & short_bit(dev.short_address) == 0
+    });
+    Ok(slice)
+}
+
+fn hydrate_vl_slice(
+    store: &RegistryStore,
+    slices: &dyn SliceStore,
+    adapter_id: u8,
+    sink: &mut HydrateSink<'_>,
+) -> HydrateOutcome {
+    let waiting = store.dirty.withheld_physical_device_banks(adapter_id);
+    hydrate_slice(
+        store,
+        PersistenceSliceKind::VirtualLamps { adapter_id },
+        &format!("VL a{adapter_id}"),
+        sink,
+        || RegistryStore::load_virtual_lamps(slices, adapter_id),
+        |inner, slice| hydrate_virtual_lamps_inner(inner, adapter_id, waiting, slice),
+    )
 }
 
 fn hydrate_home_assistant_settings_slice(
@@ -902,25 +1045,26 @@ fn hydrate_adapters_inner(inner: &mut super::store::Inner, slice: &PersistableAd
     }
 }
 
-fn binding_short_if_physical_exists(
+fn binding_short_to_keep(
     inner: &super::store::Inner,
     adapter_id: u8,
+    waiting_banks: u16,
     binding_short: Option<u8>,
 ) -> Option<u8> {
     let sa = binding_short?;
-    inner
-        .physical_devices
-        .contains_key(&(adapter_id, sa))
-        .then_some(sa)
+    let waiting = waiting_banks & bank_bit(sa) != 0;
+    (waiting || inner.physical_devices.contains_key(&(adapter_id, sa))).then_some(sa)
 }
 
 fn hydrate_virtual_lamps_inner(
     inner: &mut super::store::Inner,
     adapter_id: u8,
+    waiting_banks: u16,
     slice: &PersistableVirtualLampsSlice,
 ) {
     for lamp in &slice.lamps {
-        let validated = binding_short_if_physical_exists(inner, adapter_id, lamp.binding_short);
+        let validated =
+            binding_short_to_keep(inner, adapter_id, waiting_banks, lamp.binding_short);
         if lamp.binding_short.is_some() && validated.is_none() {
             warn!(
                 "persistence: dropped orphan VL binding a{adapter_id} vl{} -> short {:?}",

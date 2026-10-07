@@ -113,6 +113,20 @@ pub(crate) fn publish_group_matrix_changed(
     );
 }
 
+pub(crate) fn publish_unbound_lamps(
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    adapter_id: u8,
+    outcome: &super::physical_devices::ForgetOutcome,
+) {
+    for lamp_id in &outcome.unbound_lamps {
+        publish_virtual_lamp_changed(publisher, correlation_id, adapter_id, *lamp_id);
+    }
+    if outcome.groups_changed {
+        publish_group_matrix_changed(publisher, correlation_id, adapter_id);
+    }
+}
+
 pub const REGISTRY_REQUIRED_EVENTS: &[&str] = &["OperationWorkerSignalEvent", "RegistrySliceReloadedEvent"];
 
 pub(crate) fn publish_config_write_signal(

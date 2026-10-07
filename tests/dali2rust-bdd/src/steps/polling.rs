@@ -66,3 +66,40 @@ pub(crate) fn wait_for_operation_status_within(
     }
     world.send_http_request("GET", &path, None, "");
 }
+
+const ACTIVE_STATUSES: [&str; 2] = ["accepted", "running"];
+
+fn status_at(port: u16, path: &str) -> Option<String> {
+    let json = fetch_json(port, path)?;
+    json.get("status").and_then(Value::as_str).map(String::from)
+}
+
+fn is_active(status: &str) -> bool {
+    ACTIVE_STATUSES.contains(&status)
+}
+
+pub(crate) fn wait_for_operation_active(world: &DaliWorld) {
+    let port = world.server_port();
+    let path = operation_path_from_last_response(world);
+    wait_until(
+        || status_at(port, &path).is_some_and(|status| is_active(&status)),
+        OPERATION_TIMEOUT,
+    );
+}
+
+fn no_operation_active(port: u16) -> bool {
+    let Some(list) = fetch_json(port, "/api/v1/operations") else {
+        return false;
+    };
+    let Some(keys) = list.get("operations").and_then(Value::as_array) else {
+        return false;
+    };
+    keys.iter().filter_map(Value::as_str).all(|key| {
+        status_at(port, &format!("/api/v1/operations/{key}")).is_some_and(|status| !is_active(&status))
+    })
+}
+
+pub(crate) fn wait_for_every_operation_to_finish(world: &DaliWorld) {
+    let port = world.server_port();
+    wait_until(|| no_operation_active(port), OPERATION_TIMEOUT);
+}
