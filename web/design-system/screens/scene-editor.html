@@ -392,8 +392,8 @@ tr.rowdirty td:first-child { box-shadow: inset 2px 0 0 var(--dirty); }
 
   <!-- With unsaved edits the apply bar counts those edits alone — one per
        edited row — and Discard clears exactly what it counts. With none, it
-       stays while a bound row differs from its gear, and offers only the apply
-       (shown below). -->
+       comes back only after an apply of the scene did not succeed, and offers
+       only the apply (shown below). -->
   <div class="applybar">
     <span class="txt"><b>3 pending edits</b> in scene 2</span>
     <button class="btn discard">Discard</button>
@@ -448,14 +448,16 @@ tr.rowdirty td:first-child { box-shadow: inset 2px 0 0 var(--dirty); }
 
   <div class="state-label"><span>After an apply that did not succeed, nothing edited</span><span class="ln"></span></div>
   <!--
-    After an apply of this scene that did not succeed in this session, the bar
-    stays with no edits: it counts the bound rows whose gear differs and offers
-    only Apply to bus, which is how the failed apply is retried. Here VL 01,
-    which the apply failed, and VL 02, whose gear holds its clamped colour — a
-    row Apply does not heal, since the gear keeps what it can. Only a failed
-    apply brings the bar back: a scene row's applied state is the echo of the
-    last apply, gone after a reboot, so the rows would otherwise always read as
-    different. An unbound row never counts: it has no gear.
+    After an apply of this scene that did not succeed, the bar stays with no
+    edits until an apply of it succeeds or the page reloads: it counts the bound
+    rows whose gear differs and offers only Apply to bus, which is how the
+    failed apply is retried. Here VL 01, which the apply failed, and VL 02, whose
+    gear holds its clamped colour — a row Apply does not heal, since the gear
+    keeps what it can. Only a failed apply brings the bar back: until the gear's
+    scene colour is read, a row's applied colour is the echo of the last apply,
+    gone after a reboot, and a clamped colour stays different, so rows would
+    otherwise keep reading as different. An unbound row never counts: it has no
+    gear.
   -->
   <div class="applybar" style="position: static; transform: none; display: inline-flex;">
     <span class="txt"><b>2 rows</b> of scene 2 differ from the gear</span>

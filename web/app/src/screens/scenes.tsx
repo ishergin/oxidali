@@ -1,10 +1,11 @@
+import { signal } from '@preact/signals'
 import { useState } from 'preact/hooks'
 import { api } from '../api/client'
 import type { SceneMatrixRow, SceneRowState, Waf } from '../api/types'
 import { Chip, EditableName, EditableText, RgbInputs } from '../components/ui'
 import { ADAPTER, kelvinCss, LEVEL_MAX, pad2 } from '../format'
 import { useLive } from '../hooks'
-import { errorMessage, mutate, notify, saveThenApply } from '../toast'
+import { type ApplyOutcome, errorMessage, mutate, notify, saveThenApply } from '../toast'
 import { applyBar, boundLamps } from './apply-bar'
 
 const DEFAULT_SCENE_LEVEL = 254
@@ -43,6 +44,16 @@ function rowMatchesServer(row: SceneMatrixRow, edit: RowEdit): boolean {
 }
 
 
+const retryScenes = signal<ReadonlySet<number>>(new Set())
+
+function noteApply(sceneId: number, outcome: ApplyOutcome) {
+  if (outcome === 'unsaved') return
+  const next = new Set(retryScenes.value)
+  if (outcome === 'failed') next.add(sceneId)
+  else next.delete(sceneId)
+  retryScenes.value = next
+}
+
 export function Scenes({ sceneId }: { sceneId: number }) {
   const { data: scenes, reload: reloadScenes } = useLive(
     async () => (await api.scenes(ADAPTER)).scenes,
@@ -61,7 +72,6 @@ export function Scenes({ sceneId }: { sceneId: number }) {
     { intervalMs: SCENES_POLL_MS, deps: [sceneId] },
   )
   const matrix = matrixData?.sceneMatrix
-  const [retryScene, setRetryScene] = useState<number | null>(null)
   const [edits, setEdits] = useState<Map<number, RowEdit>>(new Map())
   const [busy, setBusy] = useState(false)
   const [recallGroup, setRecallGroup] = useState<number | null>(null)
@@ -152,7 +162,7 @@ export function Scenes({ sceneId }: { sceneId: number }) {
         : { included: false }
       return { virtual_lamp_id: vl, desired }
     })
-    const applied = await saveThenApply({
+    const outcome = await saveThenApply({
       subject: `Scene ${sceneId}`,
       setBusy,
       save: edits.size > 0 ? () => api.patchSceneMatrix(ADAPTER, sceneId, rows) : null,
@@ -163,7 +173,7 @@ export function Scenes({ sceneId }: { sceneId: number }) {
         setEdits(new Map())
       },
     })
-    setRetryScene(applied ? null : sceneId)
+    noteApply(sceneId, outcome)
   }
 
   const localChanges = edits.size
@@ -172,7 +182,7 @@ export function Scenes({ sceneId }: { sceneId: number }) {
     virtual_lamp_id: r.virtual_lamp_id,
     differs: r.dirty,
   }))
-  const retryRows = retryScene === sceneId ? gearRows : []
+  const retryRows = retryScenes.value.has(sceneId) ? gearRows : []
   const bar = applyBar(localChanges, retryRows, matrixData?.bound ?? new Set())
 
   return (
