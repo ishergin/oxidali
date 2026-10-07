@@ -434,8 +434,8 @@ function CommissioningCard({
             ))}
           </div>
           <div class="comm-hint">
-            Groups and scenes are not copied: the lamp's rows turn dirty, and the next group
-            and scene apply programs the new gear.
+            Groups and scenes are not copied: the record shows what the new gear holds, and the
+            next group and scene apply programs any difference from the lamp's rows.
           </div>
           <div class="comm-warn">
             Remove or power down the old gear first — the handover refuses while it

@@ -61,9 +61,7 @@ invalid_value`.
   ([09 §Addressing control gear](../../../architecture/09-dali-protocol-rules.md#addressing-control-gear)).
 - При успехе реестр **сам** переносит запись на новый адрес: старый адрес сразу
   `404`, привязанная виртуальная лампа остаётся той же сущностью с тем же HA
-  `unique_id`. Результат: `{old_short_address, new_short_address}`. Реестр публикует
-  `PhysicalDeviceChangedEvent` обоих адресов и `VirtualLampChangedEvent` перенесённой
-  лампы.
+  `unique_id`. Результат: `{old_short_address, new_short_address}`.
 - Неподтверждённая проверка — операция `failed` с `verify_failed` /
   `verify_unanswered` / `verify_contended` ([`../contracts/error-dto.md`](../contracts/error-dto.md)).
 
@@ -81,7 +79,9 @@ invalid_value`.
 - Worker переадресует заменитель на адрес отказавшего прибора и больше ничего на прибор
   не пишет. Реестр ставит на этот адрес **запись заменителя**: банки, DT8, группы и сцены
   в ней — то, что держит новый прибор. Из записи отказавшего, если выбран
-  `metadata_and_overrides`, переходят имя, заметки и override'ы; остальное отбрасывается.
+  `metadata_and_overrides`, переходят имя, заметки и те override'ы, что не шире набора
+  типов и возможностей заменителя (иначе остаётся его собственный); остальное
+  отбрасывается.
 - Группы и сцены программирует обычный apply
   ([`groups.md`](groups.md) §`POST groups/apply`, [`scenes.md`](scenes.md)): строки
   лампы на этом адресе сравниваются уже с заменителем и становятся грязными, если он
@@ -94,9 +94,6 @@ invalid_value`.
   адресе, операция завершается `verify_failed`.
 - Результат — `{failed_short_address, replacement_short_address,
   restored{metadata_and_overrides}}`.
-- События: `PhysicalDeviceChangedEvent` обоих адресов и `VirtualLampChangedEvent` каждой
-  лампы, чья привязка или прибор изменились; при лампе на адресе ещё
-  `GroupMatrixChangedEvent` и `SceneMatrixChangedEvent` каждой сцены.
 
 ## `POST steps/{step}` — expert-шаги
 

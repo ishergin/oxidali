@@ -1028,7 +1028,12 @@ fn addressing_completed_event(correlation_id: u64, key: &str, old: u8, new: u8) 
     ))
 }
 
-fn device_replaced_event(correlation_id: u64, key: &str, failed: u8, replacement: u8) -> BusFrame {
+fn device_replaced_event(
+    correlation_id: u64,
+    key: &str,
+    (failed, replacement): (u8, u8),
+    restored: bool,
+) -> BusFrame {
     BusFrame::event(dali2rust_contracts::bus::event_envelope(
         SOURCE_ID_UNSPECIFIED,
         correlation_id,
@@ -1038,7 +1043,7 @@ fn device_replaced_event(correlation_id: u64, key: &str, failed: u8, replacement
             registry_adapter_id: 0,
             failed_short_address: failed,
             replacement_short_address: replacement,
-            restored_metadata_and_overrides: true,
+            restored_metadata_and_overrides: restored,
             operation_key: dali2rust_contracts::msg::fixed_text_32(key),
             error: None,
         },
@@ -1117,23 +1122,24 @@ fn raced_address_change_outcome_is_attached_after_begin_m10() {
 #[test]
 fn raced_replace_device_outcome_is_attached_after_begin_m10() {
     let (publisher, tracker, _host) = spawn_harness();
-    let key = "comm-repl-0-5-9-30200";
-    let view = drive_raced_commissioning_op(
-        &publisher,
-        &tracker,
-        30_200,
-        key,
-        OperationType::CommissioningReplaceDevice,
-        device_replaced_event(30_200, key, 5, 9),
-    );
-    assert_eq!(view.status, "succeeded");
-    let result = view
-        .result
-        .expect("raced replace-device outcome must be attached to the operation (M10)");
-    let replace = result.as_replace_device().expect("replace device result variant");
-    assert_eq!(replace.failed_short_address, 5);
-    assert_eq!(replace.replacement_short_address, 9);
-    assert!(replace.restored.metadata_and_overrides);
+    for (corr, restored) in [(30_200u64, true), (30_210, false)] {
+        let key = format!("comm-repl-0-5-9-{corr}");
+        let view = drive_raced_commissioning_op(
+            &publisher,
+            &tracker,
+            corr,
+            &key,
+            OperationType::CommissioningReplaceDevice,
+            device_replaced_event(corr, &key, (5, 9), restored),
+        );
+        assert_eq!(view.status, "succeeded");
+        let result = view
+            .result
+            .expect("raced replace-device outcome must be attached to the operation (M10)");
+        let replace = result.as_replace_device().expect("replace device result variant");
+        assert_eq!((replace.failed_short_address, replace.replacement_short_address), (5, 9));
+        assert_eq!(replace.restored.metadata_and_overrides, restored, "the result names what moved");
+    }
 }
 
 #[test]

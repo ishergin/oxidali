@@ -366,16 +366,13 @@ fn commit_address_change(
         return;
     }
     let aid = body.registry_adapter_id;
-    let Some(rebound) =
-        store.apply_address_change(aid, body.old_short_address, body.new_short_address)
-    else {
+    let (old, new) = (body.old_short_address, body.new_short_address);
+    let Some(rebound) = store.apply_address_change(aid, old, new) else {
         return;
     };
-    counters
-        .dali_address_changes_committed
-        .fetch_add(1, Ordering::Relaxed);
-    publish_physical_device_changed(publisher, corr, aid, body.old_short_address);
-    publish_physical_device_changed(publisher, corr, aid, body.new_short_address);
+    counters.dali_address_changes_committed.fetch_add(1, Ordering::Relaxed);
+    publish_physical_device_changed(publisher, corr, aid, old);
+    publish_physical_device_changed(publisher, corr, aid, new);
     for lamp_id in rebound {
         publish_virtual_lamp_changed(publisher, corr, aid, lamp_id);
     }
@@ -419,19 +416,14 @@ fn commit_device_replacement(
         return;
     }
     let aid = body.registry_adapter_id;
-    let Some(outcome) = store.apply_device_replacement(
-        aid,
-        body.failed_short_address,
-        body.replacement_short_address,
-        body.restored_metadata_and_overrides,
-    ) else {
+    let pair = (body.failed_short_address, body.replacement_short_address);
+    let restore = body.restored_metadata_and_overrides;
+    let Some(outcome) = store.apply_device_replacement(aid, pair, restore) else {
         return;
     };
-    counters
-        .dali_device_replacements_committed
-        .fetch_add(1, Ordering::Relaxed);
-    publish_physical_device_changed(publisher, corr, aid, body.failed_short_address);
-    publish_physical_device_changed(publisher, corr, aid, body.replacement_short_address);
+    counters.dali_device_replacements_committed.fetch_add(1, Ordering::Relaxed);
+    publish_physical_device_changed(publisher, corr, aid, pair.0);
+    publish_physical_device_changed(publisher, corr, aid, pair.1);
     publish_replacement_lamps(publisher, corr, aid, &outcome);
 }
 
@@ -441,15 +433,18 @@ fn publish_replacement_lamps(
     aid: u8,
     outcome: &ReplacementOutcome,
 ) {
-    for lamp_id in outcome.kept_lamps.iter().chain(&outcome.moved_lamps) {
+    let unbound = &outcome.unbound;
+    let lamps = outcome.kept_lamps.iter().chain(&outcome.moved_lamps).chain(&unbound.unbound_lamps);
+    for lamp_id in lamps {
         publish_virtual_lamp_changed(publisher, corr, aid, *lamp_id);
     }
-    publish_unbound_lamps(publisher, corr, aid, &outcome.unbound);
-    if outcome.kept_lamps.is_empty() {
-        return;
+    let a_lamp_sees_new_gear = !outcome.kept_lamps.is_empty();
+    if a_lamp_sees_new_gear || unbound.groups_changed {
+        publish_group_matrix_changed(publisher, corr, aid);
     }
-    publish_group_matrix_changed(publisher, corr, aid);
-    for scene_id in 0..SCENE_COUNT {
-        publish_scene_matrix_changed(publisher, corr, aid, scene_id);
+    if a_lamp_sees_new_gear {
+        for scene_id in 0..SCENE_COUNT {
+            publish_scene_matrix_changed(publisher, corr, aid, scene_id);
+        }
     }
 }

@@ -16,7 +16,9 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{VirtualLampReadPort};
-use dali2rust_registry_runtime::{RegistryStore, RegistryWorkerCounters};
+use dali2rust_registry_runtime::{
+    RegistryStore, RegistryWorkerCounters, DISCOVERY_EVICT_MISS_THRESHOLD,
+};
 use dali2rust_test_support::wait_until;
 
 mod support;
@@ -912,11 +914,16 @@ fn publish_clean_scan(publisher: &dali2rust_bus::BusPublisher, corr: u64) {
     );
 }
 
-fn lamp_changed_seen(rx: &std::sync::mpsc::Receiver<BusFrame>, virtual_lamp_id: u8) -> bool {
+fn lamp_changed_seen(
+    rx: &std::sync::mpsc::Receiver<BusFrame>,
+    correlations: std::ops::Range<u64>,
+    virtual_lamp_id: u8,
+) -> bool {
     while let Ok(frame) = rx.recv_timeout(Duration::from_millis(500)) {
         let BusFrame::Event(ev) = frame else { continue };
         if let BusEventPayload::VirtualLampChangedEvent(body) = &ev.payload {
-            if body.virtual_lamp_id == virtual_lamp_id {
+            let ours = correlations.contains(&ev.meta.correlation_id);
+            if body.virtual_lamp_id == virtual_lamp_id && ours {
                 return true;
             }
         }
@@ -926,7 +933,6 @@ fn lamp_changed_seen(rx: &std::sync::mpsc::Receiver<BusFrame>, virtual_lamp_id: 
 
 #[test]
 fn a_scan_eviction_unbinds_the_lamp_as_forget_does_and_announces_it() {
-    const SCAN_MISSES_TO_EVICT: u64 = 3;
     let (publisher, conf_rx, ev_rx, store, _counters, _host) = spawn_cmd_stack_with_events(1);
     seed_physical(&publisher, &store, 13);
     publish_cmd(
@@ -936,7 +942,8 @@ fn a_scan_eviction_unbinds_the_lamp_as_forget_does_and_announces_it() {
     assert_ok(&recv_confirm_for(&conf_rx, 720));
     while ev_rx.try_recv().is_ok() {}
 
-    for corr in 721..721 + SCAN_MISSES_TO_EVICT {
+    let scans = 721..721 + u64::from(DISCOVERY_EVICT_MISS_THRESHOLD);
+    for corr in scans.clone() {
         publish_clean_scan(&publisher, corr);
     }
     wait_until(
@@ -949,7 +956,7 @@ fn a_scan_eviction_unbinds_the_lamp_as_forget_does_and_announces_it() {
         None,
         "an evicted device must not leave its lamp bound to an address nothing answers"
     );
-    assert!(lamp_changed_seen(&ev_rx, 6), "the unbinding reaches WebSocket and Home Assistant");
+    assert!(lamp_changed_seen(&ev_rx, scans, 6), "the eviction announces the unbound lamp");
 }
 
 #[test]

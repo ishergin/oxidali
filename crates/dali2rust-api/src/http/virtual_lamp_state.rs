@@ -116,12 +116,7 @@ pub trait VirtualLampHttpState: PhysicalDeviceHttpState {
         false
     }
 
-    fn virtual_lamp_bound_to_short(&self, adapter_id: u8, short_address: u8) -> Option<u8> {
-        self.list_virtual_lamp_dtos(adapter_id)
-            .into_iter()
-            .find(|d| d.binding.as_ref().is_some_and(|b| b.physical_short_address == short_address))
-            .map(|d| d.virtual_lamp_id)
-    }
+    fn virtual_lamp_bound_to_short(&self, adapter_id: u8, short_address: u8) -> Option<u8>;
 
     fn list_virtual_lamp_ids(&self, adapter_id: u8) -> Vec<u8> {
         self.list_virtual_lamp_dtos(adapter_id)

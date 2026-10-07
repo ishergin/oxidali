@@ -26,7 +26,7 @@ use dali2rust_domain::registry::{
     PhysicalDeviceSummaryView, PhysicalDeviceView,
 };
 
-const DISCOVERY_EVICT_MISS_THRESHOLD: u8 = 3;
+pub const DISCOVERY_EVICT_MISS_THRESHOLD: u8 = 3;
 
 const SCENE_COLOUR_TYPE_MASK: u8 = 0xFF;
 
@@ -639,13 +639,46 @@ fn unbind_lamps_of(
     }
 }
 
+fn count_scan_misses(
+    inner: &mut super::store::Inner,
+    adapter_id: u8,
+    confirmed_mask: u64,
+) -> Vec<u8> {
+    let mut evicted = Vec::new();
+    for ((aid, sa), r) in inner.physical_devices.iter_mut() {
+        if *aid != adapter_id {
+            continue;
+        }
+        if confirmed_mask & (1u64 << (sa & 0x3F)) != 0 {
+            r.scan_miss_count = 0;
+            continue;
+        }
+        r.scan_miss_count = r.scan_miss_count.saturating_add(1);
+        if r.scan_miss_count >= DISCOVERY_EVICT_MISS_THRESHOLD && r.random_address.is_none() {
+            evicted.push(*sa);
+        }
+    }
+    evicted
+}
+
+fn evict_records(inner: &mut super::store::Inner, adapter_id: u8, evicted: &[u8]) -> ForgetOutcome {
+    let mut unbound = ForgetOutcome::default();
+    for sa in evicted {
+        inner.physical_devices.remove(&(adapter_id, *sa));
+        unbind_lamps_of(inner, adapter_id, *sa, &mut unbound);
+        log::warn!(
+            "registry: evicted never-verified physical device a{adapter_id} short {sa} \
+             after {DISCOVERY_EVICT_MISS_THRESHOLD} clean-scan misses"
+        );
+    }
+    unbound
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct ReplacementOutcome {
-    pub(crate) restored_metadata: bool,
     pub(crate) kept_lamps: Vec<u8>,
     pub(crate) moved_lamps: Vec<u8>,
     pub(crate) unbound: ForgetOutcome,
-    pub(crate) cleared_scene_echoes: u16,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -731,30 +764,9 @@ impl RegistryStore {
         adapter_id: u8,
         confirmed_mask: u64,
     ) -> ScanEviction {
-        let mut evicted: Vec<u8> = Vec::new();
-        let mut unbound = ForgetOutcome::default();
         let mut g = self.write_inner();
-        for ((aid, sa), r) in g.physical_devices.iter_mut() {
-            if *aid != adapter_id {
-                continue;
-            }
-            if confirmed_mask & (1u64 << (sa & 0x3F)) != 0 {
-                r.scan_miss_count = 0;
-                continue;
-            }
-            r.scan_miss_count = r.scan_miss_count.saturating_add(1);
-            if r.scan_miss_count >= DISCOVERY_EVICT_MISS_THRESHOLD && r.random_address.is_none() {
-                evicted.push(*sa);
-            }
-        }
-        for sa in &evicted {
-            g.physical_devices.remove(&(adapter_id, *sa));
-            unbind_lamps_of(&mut g, adapter_id, *sa, &mut unbound);
-            log::warn!(
-                "registry: evicted never-verified physical device a{adapter_id} short {sa} \
-                 after {DISCOVERY_EVICT_MISS_THRESHOLD} clean-scan misses"
-            );
-        }
+        let evicted = count_scan_misses(&mut g, adapter_id, confirmed_mask);
+        let unbound = evict_records(&mut g, adapter_id, &evicted);
         if !evicted.is_empty() {
             g.physical_devices_revision = g.physical_devices_revision.saturating_add(1);
             drop(g);
@@ -1133,28 +1145,17 @@ impl RegistryStore {
             .any(|(aid, sa)| *aid != exclude_adapter_id && *sa == short_address)
     }
 
-    pub(crate) fn apply_address_change(
-        &self,
-        adapter_id: u8,
-        old_short_address: u8,
-        new_short_address: u8,
-    ) -> Option<Vec<u8>> {
-        if old_short_address == new_short_address {
-            return None;
-        }
+    pub(crate) fn apply_address_change(&self, adapter_id: u8, old: u8, new: u8) -> Option<Vec<u8>> {
         let mut g = self.write_inner();
-        if g.physical_devices
-            .contains_key(&(adapter_id, new_short_address))
-        {
+        if old == new || g.physical_devices.contains_key(&(adapter_id, new)) {
             return None;
         }
-        let record = g.physical_devices.remove(&(adapter_id, old_short_address))?;
-        g.physical_devices
-            .insert((adapter_id, new_short_address), record);
-        let rebound = rebind_lamps(&mut g, adapter_id, old_short_address, new_short_address);
+        let record = g.physical_devices.remove(&(adapter_id, old))?;
+        g.physical_devices.insert((adapter_id, new), record);
+        let rebound = rebind_lamps(&mut g, adapter_id, old, new);
         drop(g);
-        self.dirty.mark_physical_device_dirty(adapter_id, old_short_address);
-        self.dirty.mark_physical_device_dirty(adapter_id, new_short_address);
+        self.dirty.mark_physical_device_dirty(adapter_id, old);
+        self.dirty.mark_physical_device_dirty(adapter_id, new);
         if !rebound.is_empty() {
             self.dirty.mark_virtual_lamps_dirty(adapter_id);
         }
@@ -1164,31 +1165,22 @@ impl RegistryStore {
     pub(crate) fn apply_device_replacement(
         &self,
         adapter_id: u8,
-        failed_short_address: u8,
-        replacement_short_address: u8,
+        (failed, replacement): (u8, u8),
         restore_metadata_and_overrides: bool,
     ) -> Option<ReplacementOutcome> {
-        if failed_short_address == replacement_short_address {
+        let mut g = self.write_inner();
+        if failed == replacement {
             return None;
         }
-        let mut g = self.write_inner();
-        let mut replacement = g
-            .physical_devices
-            .remove(&(adapter_id, replacement_short_address))?;
-        let failed = g.physical_devices.remove(&(adapter_id, failed_short_address));
-        let restored_metadata = match failed {
-            Some(failed) if restore_metadata_and_overrides => {
-                take_metadata_and_overrides(&failed, &mut replacement);
-                true
-            }
-            _ => false,
-        };
-        g.physical_devices
-            .insert((adapter_id, failed_short_address), replacement);
-        let mut outcome = hand_over_lamps(&mut g, adapter_id, failed_short_address, replacement_short_address);
-        outcome.restored_metadata = restored_metadata;
+        let mut record = g.physical_devices.remove(&(adapter_id, replacement))?;
+        let role = g.physical_devices.remove(&(adapter_id, failed));
+        if let (Some(role), true) = (role, restore_metadata_and_overrides) {
+            take_metadata_and_overrides(&role, &mut record);
+        }
+        g.physical_devices.insert((adapter_id, failed), record);
+        let outcome = hand_over_lamps(&mut g, adapter_id, failed, replacement);
         drop(g);
-        self.mark_replacement_dirty(adapter_id, failed_short_address, replacement_short_address, &outcome);
+        self.mark_replacement_dirty(adapter_id, failed, replacement, &outcome);
         Some(outcome)
     }
 
@@ -1205,11 +1197,6 @@ impl RegistryStore {
             self.dirty.mark_virtual_lamps_dirty(adapter_id);
         }
         self.mark_unbind_dirty(adapter_id, &outcome.unbound);
-        for scene_id in 0..super::scenes::SCENE_COUNT {
-            if outcome.cleared_scene_echoes & (1u16 << scene_id) != 0 {
-                self.dirty.mark_scene_dirty(adapter_id, scene_id);
-            }
-        }
     }
 
     #[allow(clippy::too_many_arguments, reason = "mirrors the write-attributes event")]
@@ -1503,11 +1490,30 @@ impl PhysicalDeviceReadPort for RegistryStore {
 }
 
 
-fn take_metadata_and_overrides(failed: &PhysicalDeviceRecord, replacement: &mut PhysicalDeviceRecord) {
-    replacement.name = failed.name.clone();
-    replacement.notes = failed.notes.clone();
-    replacement.device_type_override = failed.device_type_override;
-    replacement.color_mode_override = failed.color_mode_override;
+fn take_metadata_and_overrides(role: &PhysicalDeviceRecord, record: &mut PhysicalDeviceRecord) {
+    record.name = role.name.clone();
+    record.notes = role.notes.clone();
+    let declared = record.supported_device_types;
+    let fits_types = |dt: &DeviceType| type_override_fits(declared, *dt);
+    record.device_type_override =
+        role.device_type_override.filter(fits_types).or(record.device_type_override);
+    let hardware = record.capability_flags();
+    let fits_colours = |mode: &ColorMode| colour_override_fits(hardware, *mode);
+    record.color_mode_override =
+        role.color_mode_override.filter(fits_colours).or(record.color_mode_override);
+}
+
+fn type_override_fits(declared: Option<DeviceTypeSet>, device_type: DeviceType) -> bool {
+    match (declared, device_type.dali_code()) {
+        (Some(declared), Some(code)) => declared.contains(code),
+        _ => true,
+    }
+}
+
+fn colour_override_fits(hardware: CapabilityFlagsView, mode: ColorMode) -> bool {
+    let mut seeded = hardware;
+    dali2rust_domain::registry::seed_capability_from_color_mode(&mut seeded, mode);
+    seeded == hardware
 }
 
 fn rebind_lamps(inner: &mut super::store::Inner, adapter_id: u8, from: u8, to: u8) -> Vec<u8> {
@@ -1523,29 +1529,28 @@ fn rebind_lamps(inner: &mut super::store::Inner, adapter_id: u8, from: u8, to: u
 fn hand_over_lamps(
     inner: &mut super::store::Inner,
     adapter_id: u8,
-    failed_short_address: u8,
-    replacement_short_address: u8,
+    failed: u8,
+    replacement: u8,
 ) -> ReplacementOutcome {
-    let mut outcome = ReplacementOutcome {
-        kept_lamps: lamps_bound_to(inner, adapter_id, failed_short_address),
-        ..ReplacementOutcome::default()
-    };
-    if outcome.kept_lamps.is_empty() {
-        outcome.moved_lamps =
-            rebind_lamps(inner, adapter_id, replacement_short_address, failed_short_address);
-        return outcome;
+    let kept_lamps = lamps_bound_to(inner, adapter_id, failed);
+    if kept_lamps.is_empty() {
+        let moved_lamps = rebind_lamps(inner, adapter_id, replacement, failed);
+        return ReplacementOutcome { moved_lamps, ..ReplacementOutcome::default() };
     }
-    unbind_lamps_of(inner, adapter_id, replacement_short_address, &mut outcome.unbound);
-    for lamp_id in &outcome.kept_lamps {
-        outcome.cleared_scene_echoes |= super::scenes::forget_scene_echoes(inner, adapter_id, *lamp_id);
+    let mut unbound = ForgetOutcome::default();
+    unbind_lamps_of(inner, adapter_id, replacement, &mut unbound);
+    for lamp_id in &kept_lamps {
+        super::scenes::forget_scene_echoes(inner, adapter_id, *lamp_id);
     }
-    outcome
+    ReplacementOutcome { kept_lamps, unbound, ..ReplacementOutcome::default() }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::store::RegistryStore;
     use super::DISCOVERY_EVICT_MISS_THRESHOLD;
+    use dali2rust_contracts::msg::{ColorMode, DeviceType, DeviceTypeSet};
+    use dali2rust_domain::registry::CapabilityFlagsView;
 
     const VERIFIED_SHORT: u8 = 0;
     const PHANTOM_SHORT: u8 = 9;
@@ -1613,12 +1618,52 @@ mod tests {
         assert_eq!(store.reconcile_discovery_scan(0, 0).evicted, vec![PHANTOM_SHORT]);
     }
 
+    fn give_overrides(store: &RegistryStore, declared: u64, hardware: CapabilityFlagsView) {
+        let mut g = store.inner.write().expect("registry lock");
+        let role = g.physical_devices.get_mut(&(0, VERIFIED_SHORT)).expect("role record");
+        role.device_type_override = Some(DeviceType::Dt8Color);
+        role.color_mode_override = Some(ColorMode::Cct);
+        let gear = g.physical_devices.get_mut(&(0, PHANTOM_SHORT)).expect("replacement record");
+        gear.supported_device_types = Some(DeviceTypeSet::from_bits(declared));
+        gear.set_capability_flags(hardware);
+    }
+
+    fn overrides_after_replacement(
+        declared: u64,
+        hardware: CapabilityFlagsView,
+    ) -> (Option<DeviceType>, Option<ColorMode>) {
+        let store = RegistryStore::with_adapter_count(1);
+        assert!(apply_progress(&store, VERIFIED_SHORT, Some(GOLDEN_RANDOM)));
+        assert!(apply_progress(&store, PHANTOM_SHORT, None));
+        give_overrides(&store, declared, hardware);
+        store.apply_device_replacement(0, (VERIFIED_SHORT, PHANTOM_SHORT), true).expect("replaced");
+        let g = store.inner.read().expect("registry lock");
+        let record = &g.physical_devices[&(0, VERIFIED_SHORT)];
+        (record.device_type_override, record.color_mode_override)
+    }
+
+    #[test]
+    fn a_replacement_takes_only_the_overrides_the_new_gear_can_honour() {
+        const DT6_ONLY: u64 = 1 << 6;
+        const DT6_AND_DT8: u64 = (1 << 6) | (1 << 8);
+        let dimmer = CapabilityFlagsView { brightness: true, ..CapabilityFlagsView::default() };
+        let tunable = CapabilityFlagsView { cct: true, ..dimmer };
+        let narrow = overrides_after_replacement(DT6_ONLY, dimmer);
+        assert_eq!(narrow, (None, None), "a DT6 dimmer is no DT8 CCT");
+        assert_eq!(
+            overrides_after_replacement(DT6_AND_DT8, tunable),
+            (Some(DeviceType::Dt8Color), Some(ColorMode::Cct)),
+            "a tunable DT8 honours both"
+        );
+    }
+
     #[test]
     fn an_evicted_device_unbinds_its_lamp_as_forget_does() {
         const LAMP: u8 = 5;
         let store = RegistryStore::with_adapter_count(1);
         assert!(apply_progress(&store, PHANTOM_SHORT, None));
         assert!(store.apply_virtual_lamp_bind(0, LAMP, PHANTOM_SHORT));
+        let _ = store.dirty.take_virtual_lamps_dirty();
         for _ in 1..DISCOVERY_EVICT_MISS_THRESHOLD {
             assert!(store.reconcile_discovery_scan(0, 0).evicted.is_empty());
         }
@@ -1626,7 +1671,8 @@ mod tests {
         assert_eq!(eviction.evicted, vec![PHANTOM_SHORT]);
         assert_eq!(eviction.unbound.unbound_lamps, vec![LAMP]);
         assert_eq!(store.internal_virtual_lamp_binding_short(0, LAMP), None);
-        assert!(store.dirty.take_virtual_lamps_dirty() & 1 != 0, "the lamp slice persists the unbinding");
+        let lamps_dirty = store.dirty.take_virtual_lamps_dirty();
+        assert!(lamps_dirty & 1 != 0, "the lamp slice persists the unbinding");
     }
 }
 

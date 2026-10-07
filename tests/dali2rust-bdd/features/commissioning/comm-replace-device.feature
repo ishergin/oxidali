@@ -107,6 +107,7 @@ Feature: Commissioning replace device
     When I send a POST request to "/api/v1/adapters/0/groups/apply"
     Then the response status should be 202
     And the last operation eventually succeeds
+    And all scripted DALI exchanges should be consumed without errors
     Given a DALI mock transport with no response
     And adapter 0 scene 3 write for short 0 level 100 is scripted
     When I send a POST request to "/api/v1/adapters/0/scenes/3/apply"
@@ -124,6 +125,7 @@ Feature: Commissioning replace device
     When I send a POST request to "/api/v1/adapters/0/groups/apply"
     Then the response status should be 202
     And the last operation eventually succeeds
+    And all scripted DALI exchanges should be consumed without errors
     Given a DALI mock transport with no response
     And adapter 0 scene 3 write for short 0 level 100 is scripted
     When I send a POST request to "/api/v1/adapters/0/scenes/3/apply"

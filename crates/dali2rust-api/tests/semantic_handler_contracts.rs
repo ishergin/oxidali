@@ -343,6 +343,19 @@ impl VirtualLampHttpState for TestState {
             .expect("state lock")
             .physical_short_other_adapter
     }
+
+    fn virtual_lamp_bound_to_short(&self, adapter_id: u8, short_address: u8) -> Option<u8> {
+        self.inner
+            .lock()
+            .expect("state lock")
+            .vls
+            .values()
+            .find(|dto| {
+                dto.adapter_id == adapter_id
+                    && dto.binding.as_ref().is_some_and(|b| b.physical_short_address == short_address)
+            })
+            .map(|dto| dto.virtual_lamp_id)
+    }
 }
 
 struct BusHarness {
