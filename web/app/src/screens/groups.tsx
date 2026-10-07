@@ -105,9 +105,9 @@ export function Groups() {
       save: edits.size > 0 ? () => api.patchGroupMatrix(ADAPTER, rows) : null,
       apply: () => api.groupsApply(ADAPTER),
       nothingToApply: 'nothing to program',
-      onApplied: () => {
+      onApplied: async () => {
+        await reload()
         setEdits(new Map())
-        void reload()
       },
     })
   }

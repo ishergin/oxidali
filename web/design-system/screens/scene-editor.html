@@ -446,13 +446,16 @@ tr.rowdirty td:first-child { box-shadow: inset 2px 0 0 var(--dirty); }
     </div>
   </div>
 
-  <div class="state-label"><span>Rows differ from the gear, nothing edited</span><span class="ln"></span></div>
+  <div class="state-label"><span>After an apply that did not succeed, nothing edited</span><span class="ln"></span></div>
   <!--
-    With no edits, the bar counts the scene's bound rows whose gear differs
-    from them and offers only Apply to bus: there is nothing to discard, and
-    the apply programs those rows again. It is how a failed apply is retried —
-    here VL 01, which the apply above failed, and VL 02, whose gear holds its
-    clamped colour. An unbound row never counts: it has no gear.
+    After an apply of this scene that did not succeed in this session, the bar
+    stays with no edits: it counts the bound rows whose gear differs and offers
+    only Apply to bus, which is how the failed apply is retried. Here VL 01,
+    which the apply failed, and VL 02, whose gear holds its clamped colour — a
+    row Apply does not heal, since the gear keeps what it can. Only a failed
+    apply brings the bar back: a scene row's applied state is the echo of the
+    last apply, gone after a reboot, so the rows would otherwise always read as
+    different. An unbound row never counts: it has no gear.
   -->
   <div class="applybar" style="position: static; transform: none; display: inline-flex;">
     <span class="txt"><b>2 rows</b> of scene 2 differ from the gear</span>

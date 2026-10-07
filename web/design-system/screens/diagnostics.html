@@ -561,7 +561,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            A failed publish and a command the bus refused are faults:
            `Publish failures`, `Commands ingress rejected` and `Terminal event
            publish failed` are painted above zero, and the other rows stay
-           plain.
+           plain. A failed discovery publish is already counted under
+           `Publish failures`, so `Discovery failed` is not painted twice.
 
            `Connects total` climbing against a flat `Publishes total` is a
            reconnect loop, which no single gauge shows. -->

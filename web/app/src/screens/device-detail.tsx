@@ -562,8 +562,7 @@ export function DeviceDetail({ short, tab: rawTab }: { short: number; tab?: stri
 
   const level = dev.state.level ?? 0
   ensureProductsLoaded()
-  const sectionGtin = attrNum(attrs, 'memory_identity', 'gtin')
-  const gtin = productGtin(sectionGtin, siblings?.physical_devices, short)
+  const gtin = productGtin(siblings?.physical_devices, short)
   const productLabel = productName(gtin)
   const DT6_FAILURES: [field: string, label: string][] = [
     ['short_circuit', 'short circuit'],
@@ -848,7 +847,7 @@ export function DeviceDetail({ short, tab: rawTab }: { short: number; tab?: stri
           {productLabel && (
             <div class="attr wide">
               <span class="k">Product</span>
-              <span class="v">{productLabel}</span>
+              <span class="v name-faint">{productLabel}</span>
               <span />
             </div>
           )}

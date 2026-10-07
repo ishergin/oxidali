@@ -49,22 +49,25 @@ export function Scenes({ sceneId }: { sceneId: number }) {
     ['scenes'],
     { intervalMs: SCENES_POLL_MS },
   )
-  const { data: matrix, reload: reloadMatrix } = useLive(
-    () => api.sceneMatrix(ADAPTER, sceneId),
+  const { data: matrixData, reload: reloadMatrix } = useLive(
+    async () => {
+      const [sceneMatrix, lamps] = await Promise.all([
+        api.sceneMatrix(ADAPTER, sceneId),
+        api.virtualLamps(ADAPTER),
+      ])
+      return { sceneMatrix, bound: boundLamps(lamps.virtual_lamps) }
+    },
     ['scenes', 'virtual_lamps'],
     { intervalMs: SCENES_POLL_MS, deps: [sceneId] },
   )
+  const matrix = matrixData?.sceneMatrix
+  const [retryScene, setRetryScene] = useState<number | null>(null)
   const [edits, setEdits] = useState<Map<number, RowEdit>>(new Map())
   const [busy, setBusy] = useState(false)
   const [recallGroup, setRecallGroup] = useState<number | null>(null)
   const { data: groups } = useLive(
     async () => (await api.groups(ADAPTER)).groups,
     ['groups'],
-    { intervalMs: SCENES_POLL_MS },
-  )
-  const { data: bound } = useLive(
-    async () => boundLamps((await api.virtualLamps(ADAPTER)).virtual_lamps),
-    ['virtual_lamps'],
     { intervalMs: SCENES_POLL_MS },
   )
 
@@ -149,18 +152,18 @@ export function Scenes({ sceneId }: { sceneId: number }) {
         : { included: false }
       return { virtual_lamp_id: vl, desired }
     })
-    await saveThenApply({
+    const applied = await saveThenApply({
       subject: `Scene ${sceneId}`,
       setBusy,
       save: edits.size > 0 ? () => api.patchSceneMatrix(ADAPTER, sceneId, rows) : null,
       apply: () => api.sceneApply(ADAPTER, sceneId),
       nothingToApply: 'nothing to write',
-      onApplied: () => {
+      onApplied: async () => {
+        await Promise.all([reloadMatrix(), reloadScenes()])
         setEdits(new Map())
-        void reloadMatrix()
-        void reloadScenes()
       },
     })
+    setRetryScene(applied ? null : sceneId)
   }
 
   const localChanges = edits.size
@@ -169,7 +172,8 @@ export function Scenes({ sceneId }: { sceneId: number }) {
     virtual_lamp_id: r.virtual_lamp_id,
     differs: r.dirty,
   }))
-  const bar = applyBar(localChanges, gearRows, bound ?? new Set())
+  const retryRows = retryScene === sceneId ? gearRows : []
+  const bar = applyBar(localChanges, retryRows, matrixData?.bound ?? new Set())
 
   return (
     <>
