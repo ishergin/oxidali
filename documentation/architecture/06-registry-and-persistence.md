@@ -131,16 +131,22 @@ filtered: they address one device.
   Its test fake has NOR semantics — a program only clears bits, only an erase sets them
   — which the file store cannot express. It does not replace a real power cut on the
   bench.
-- A slice's slot is fixed arithmetic over its key, with no directory. New global slices
-  and new bank regions are appended after the existing slots, because an inserted slot
-  re-addresses every installed slice.
+- A slice's slot is fixed arithmetic over its key, with no directory, and an installed
+  slot never moves: a new slice gets a region after the last one, because an inserted
+  slot re-addresses every slice behind it. The device-bank authority below depends on
+  this — a moved bank would load whatever envelope lies at its new offset — so a test
+  pins the installed offsets.
 - Physical devices are stored in banks of four short addresses, and a bank that loads is
-  authoritative for its addresses even when it is empty. The legacy whole-adapter slot
-  keeps its place and is never written. Hydration reads it only when a bank of the
-  adapter did not load — missing, unreadable or rejected — takes from it only the
-  devices of those banks, and marks each of those banks dirty, so the next flush writes
-  them and later boots no longer read the slot. A legacy slot that reads but does not
-  decode only gets the banks rewritten; one whose read fails is left for the next boot.
+  authoritative for its addresses even when it is empty. The registry never writes the
+  legacy whole-adapter slot; a configuration import or a redundancy pull can, and the
+  transfer lists it after the banks. Hydration, at boot and on the reload after an
+  import, reads the legacy slot whenever a bank of the adapter did not load — missing,
+  unreadable or rejected — so an adapter whose banks were never all written reads it
+  every time, one cheap read while it is missing. It takes from the slot only the devices
+  of banks that did not load and hold no record in memory. It then marks for rewrite
+  every bank that did not load when the slot loaded or did not decode, so later boots
+  stop reading it; only the rejected banks when the slot is missing; and none when the
+  slot's read fails, so a rejected bank waits for the copy the slot may hold.
 - The registry worker flushes dirty slices after a short debounce, and at once after the
   configuration writes `command_flush_interval` names, through one reused 1 KiB chunk
   buffer.

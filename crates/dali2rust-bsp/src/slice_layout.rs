@@ -117,6 +117,18 @@ pub const RULES_BANKS: u32 = 4;
 
 const _: () = assert!(INPUT_DEVICE_BANKS == dali2rust_platform::slice_store::SliceKey::INPUT_DEVICE_BANKS as u32);
 const _: () = assert!(RULES_BANKS == dali2rust_platform::slice_store::SliceKey::RULES_BANKS as u32);
+const _: () = assert!(
+    PD_BANKS_PER_ADAPTER == SliceKey::PHYSICAL_DEVICE_BANKS as u32,
+    "the registry and the layout must agree on the banks of an adapter"
+);
+const _: () = assert!(
+    PD_BANKS_PER_ADAPTER <= u16::BITS,
+    "the registry tracks an adapter's banks in one u16"
+);
+const _: () = assert!(
+    SliceKey::DEVICES_PER_BANK == 4,
+    "every stored device lives in the bank of its short address; regrouping orphans them"
+);
 
 fn global_slot_index(key: SliceKey) -> Option<Option<u32>> {
     let slot = match key {
@@ -228,6 +240,34 @@ mod tests {
             }
         }
         keys
+    }
+
+    const INSTALLED_SLOTS: [(SliceKey, u32, u32); 9] = [
+        (SliceKey::PhysicalDevices { adapter_id: 0 }, 0, 8),
+        (SliceKey::PhysicalDevices { adapter_id: 7 }, 112, 8),
+        (SliceKey::Adapters, 128, 1),
+        (SliceKey::Groups { adapter_id: 0 }, 134, 1),
+        (SliceKey::Scene { adapter_id: 7, scene_id: 15 }, 418, 1),
+        (SliceKey::HclSchedules, 420, 1),
+        (SliceKey::Policies, 446, 1),
+        (SliceKey::PhysicalDeviceBank { adapter_id: 0, bank: 0 }, 448, 1),
+        (SliceKey::PhysicalDeviceBank { adapter_id: 7, bank: 15 }, 702, 1),
+    ];
+
+    #[test]
+    fn installed_slots_never_move() {
+        for (key, sector, bank_sectors) in INSTALLED_SLOTS {
+            assert_eq!(
+                slot_geometry(key),
+                Some(SlotGeometry {
+                    offset: sector * SECTOR_BYTES,
+                    bank_bytes: bank_sectors * SECTOR_BYTES,
+                }),
+                "{key:?} moved. An installed slot keeps its offset for good, and a new slice \
+                 gets a region after the last one: a moved device bank would load whatever \
+                 envelope lies at its new offset, and an empty one is authoritative"
+            );
+        }
     }
 
     #[test]

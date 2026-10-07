@@ -175,9 +175,7 @@ impl DirtyFlags {
     }
 
     pub fn mark_all_physical_devices_dirty(&self, adapter_id: u8) {
-        if let Some(mask) = self.physical_device_banks.get(adapter_id as usize) {
-            mask.fetch_or(u16::MAX, Ordering::Release);
-        }
+        self.mark_physical_device_banks_dirty(adapter_id, u16::MAX);
         self.physical_devices
             .fetch_or(1u32 << adapter_id, Ordering::Release);
     }

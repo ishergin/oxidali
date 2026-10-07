@@ -86,9 +86,15 @@ impl crate::runtime::registry::store::RegistryStore {
         sink: &mut HydrateSink<'_>,
     ) {
         let unloaded = self.hydrate_physical_device_banks(slices, adapter_id, sink);
-        if unloaded != 0 {
-            self.fall_back_to_whole_adapter_slot(slices, adapter_id, unloaded, sink);
+        if unloaded.any() == 0 {
+            return;
         }
+        let rewrite = match self.fall_back_to_whole_adapter_slot(slices, adapter_id, unloaded, sink) {
+            WholeAdapterSlot::Loaded | WholeAdapterSlot::Undecodable => unloaded.any(),
+            WholeAdapterSlot::Missing => unloaded.failed,
+            WholeAdapterSlot::Unread => 0,
+        };
+        self.dirty.mark_physical_device_banks_dirty(adapter_id, rewrite);
     }
 
     fn hydrate_physical_device_banks(
@@ -96,12 +102,14 @@ impl crate::runtime::registry::store::RegistryStore {
         slices: &dyn SliceStore,
         adapter_id: u8,
         sink: &mut HydrateSink<'_>,
-    ) -> u16 {
-        let mut unloaded = 0u16;
+    ) -> UnloadedBanks {
+        let mut unloaded = UnloadedBanks::default();
         for bank in 0..PHYSICAL_DEVICE_BANKS_U8 {
-            let outcome = hydrate_pd_bank_slice(self, slices, adapter_id, bank, sink);
-            if !matches!(outcome, HydrateOutcome::Loaded) {
-                unloaded |= 1u16 << bank;
+            let bit = 1u16 << bank;
+            match hydrate_pd_bank_slice(self, slices, adapter_id, bank, sink) {
+                HydrateOutcome::Loaded => {}
+                HydrateOutcome::Defaulted => unloaded.missing |= bit,
+                HydrateOutcome::Failed => unloaded.failed |= bit,
             }
         }
         unloaded
@@ -111,17 +119,28 @@ impl crate::runtime::registry::store::RegistryStore {
         &self,
         slices: &dyn SliceStore,
         adapter_id: u8,
-        unloaded: u16,
+        unloaded: UnloadedBanks,
         sink: &mut HydrateSink<'_>,
-    ) {
+    ) -> WholeAdapterSlot {
+        let takeable = unloaded.any() & !self.banks_held_in_ram(adapter_id);
         let stored = slices.load(SliceKey::PhysicalDevices { adapter_id });
-        if let HydrateOutcome::Loaded = hydrate_pd_slice(self, stored, adapter_id, unloaded, sink) {
+        let outcome = hydrate_pd_slice(self, stored, adapter_id, takeable, sink);
+        if let WholeAdapterSlot::Loaded = outcome {
             info!(
-                "persistence: PD a{adapter_id} banks {unloaded:#06x} did not load and come \
-                 from the whole-adapter slice; the next flush writes them"
+                "persistence: PD a{adapter_id} banks {:#06x} did not load; banks {takeable:#06x} \
+                 come from the whole-adapter slice and the next flush writes them",
+                unloaded.any()
             );
-            self.dirty.mark_physical_device_banks_dirty(adapter_id, unloaded);
         }
+        outcome
+    }
+
+    fn banks_held_in_ram(&self, adapter_id: u8) -> u16 {
+        self.read_inner()
+            .physical_devices
+            .keys()
+            .filter(|(aid, _)| *aid == adapter_id)
+            .fold(0, |banks, (_, short_address)| banks | bank_bit(*short_address))
     }
 
     fn hydrate_all(&self, slices: &dyn SliceStore, adapter_count: u8, sink: &mut HydrateSink<'_>) {
@@ -635,7 +654,7 @@ impl crate::runtime::registry::store::RegistryStore {
         {
             return Err(StoreError::Backend(format!(
                 "a{adapter_id}/b{bank} holds short {} - bank geometry moved under \
-                 the stored bytes; this bank comes from the whole-adapter slice",
+                 the stored bytes; the bank is not loaded",
                 stray.short_address
             )));
         }
@@ -696,6 +715,21 @@ fn hydrate_slice<S>(
     load: impl FnOnce() -> Result<S, StoreError>,
     apply: impl FnOnce(&mut Inner, &S),
 ) -> HydrateOutcome {
+    let outcome = hydrate_slice_unmarked(store, kind.clone(), label, sink, load, apply);
+    if let HydrateOutcome::Failed = outcome {
+        mark_slice_dirty(store, &kind);
+    }
+    outcome
+}
+
+fn hydrate_slice_unmarked<S>(
+    store: &RegistryStore,
+    kind: PersistenceSliceKind,
+    label: &str,
+    sink: &mut HydrateSink<'_>,
+    load: impl FnOnce() -> Result<S, StoreError>,
+    apply: impl FnOnce(&mut Inner, &S),
+) -> HydrateOutcome {
     match load() {
         Ok(slice) => {
             let mut g = store.write_inner();
@@ -711,7 +745,6 @@ fn hydrate_slice<S>(
             HydrateOutcome::Defaulted
         }
         Err(e) => {
-            mark_slice_dirty(store, &kind);
             note_unread_slice(store, kind, label, sink, &e);
             HydrateOutcome::Failed
         }
@@ -855,11 +888,6 @@ hydrate_wrappers! { per_adapter:
         format!("groups a{adapter_id}"),
         RegistryStore::load_groups,
         hydrate_groups_inner;
-    hydrate_pd_bank_slice(adapter_id, bank) =>
-        PersistenceSliceKind::PhysicalDeviceBank { adapter_id, bank },
-        format!("PD a{adapter_id}/b{bank}"),
-        RegistryStore::load_physical_device_bank,
-        hydrate_physical_device_bank_inner;
     hydrate_scene_slice(adapter_id, scene_id) =>
         PersistenceSliceKind::Scenes { adapter_id, scene_id },
         format!("scene a{adapter_id}/s{scene_id}"),
@@ -872,28 +900,71 @@ hydrate_wrappers! { per_adapter:
         crate::runtime::registry::input_devices::hydrate_input_devices_bank_inner;
 }
 
+#[derive(Clone, Copy, Default)]
+struct UnloadedBanks {
+    missing: u16,
+    failed: u16,
+}
+
+impl UnloadedBanks {
+    fn any(self) -> u16 {
+        self.missing | self.failed
+    }
+}
+
+enum WholeAdapterSlot {
+    Loaded,
+    Missing,
+    Undecodable,
+    Unread,
+}
+
+fn bank_bit(short_address: u8) -> u16 {
+    1u16.checked_shl(u32::from(short_address / SliceKey::DEVICES_PER_BANK))
+        .unwrap_or(0)
+}
+
+fn hydrate_pd_bank_slice(
+    store: &RegistryStore,
+    slices: &dyn SliceStore,
+    adapter_id: u8,
+    bank: u8,
+    sink: &mut HydrateSink<'_>,
+) -> HydrateOutcome {
+    hydrate_slice_unmarked(
+        store,
+        PersistenceSliceKind::PhysicalDeviceBank { adapter_id, bank },
+        &format!("PD a{adapter_id}/b{bank}"),
+        sink,
+        || RegistryStore::load_physical_device_bank(slices, adapter_id, bank),
+        |inner, slice| hydrate_physical_device_bank_inner(inner, adapter_id, bank, slice),
+    )
+}
+
 fn hydrate_pd_slice(
     store: &RegistryStore,
     stored: Result<Vec<u8>, StoreError>,
     adapter_id: u8,
     banks: u16,
     sink: &mut HydrateSink<'_>,
-) -> HydrateOutcome {
+) -> WholeAdapterSlot {
     let kind = PersistenceSliceKind::PhysicalDevices { adapter_id };
     let label = format!("PD a{adapter_id}");
-    match stored {
-        Err(e) if !matches!(e, StoreError::Missing) => {
-            note_unread_slice(store, kind, &label, sink, &e);
-            HydrateOutcome::Failed
+    match &stored {
+        Ok(_) | Err(StoreError::Missing) => {}
+        Err(e) => {
+            note_unread_slice(store, kind, &label, sink, e);
+            return WholeAdapterSlot::Unread;
         }
-        stored => hydrate_slice(
-            store,
-            kind,
-            &label,
-            sink,
-            || devices_of_banks(stored, banks),
-            |inner, slice| hydrate_physical_devices_inner(inner, adapter_id, slice),
-        ),
+    }
+    let decode = || devices_of_banks(stored, banks);
+    let apply = |inner: &mut Inner, slice: &PersistablePhysicalDevicesSlice| {
+        hydrate_physical_devices_inner(inner, adapter_id, slice)
+    };
+    match hydrate_slice_unmarked(store, kind, &label, sink, decode, apply) {
+        HydrateOutcome::Loaded => WholeAdapterSlot::Loaded,
+        HydrateOutcome::Defaulted => WholeAdapterSlot::Missing,
+        HydrateOutcome::Failed => WholeAdapterSlot::Undecodable,
     }
 }
 
@@ -902,10 +973,7 @@ fn devices_of_banks(
     banks: u16,
 ) -> Result<PersistablePhysicalDevicesSlice, StoreError> {
     let mut slice = RegistryStore::decode_physical_devices(&stored?)?;
-    slice.devices.retain(|dev| {
-        1u16.checked_shl(u32::from(dev.short_address / SliceKey::DEVICES_PER_BANK))
-            .is_some_and(|bit| banks & bit != 0)
-    });
+    slice.devices.retain(|dev| banks & bank_bit(dev.short_address) != 0);
     Ok(slice)
 }
 
