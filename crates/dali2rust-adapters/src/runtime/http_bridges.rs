@@ -1206,7 +1206,10 @@ impl NameResolver for RegistryNameResolver {
         self.store
             .input_devices_named(name)
             .into_iter()
-            .map(|(adapter_id, device_short_address)| InputDeviceRef { adapter_id, device_short_address })
+            .map(|(adapter_id, device_short_address)| InputDeviceRef {
+                adapter_id,
+                device_short_address,
+            })
             .collect()
     }
 

@@ -133,7 +133,7 @@ Feature: The rules document: parse, store, read back byte-for-byte
     Then the JSON pointer "/revision" should be 0
 
   @id:RULE-090
-  Scenario: A stored rule stops when a second lamp takes its name, rather than pick one of the two
+  Scenario: A stored rule stops while a second lamp shares its name, and runs again once they part
     When I PATCH JSON {"name":"Кухня"} to "/api/v1/adapters/0/virtual-lamps/1"
     Then the response status should be 200
     When I PUT JSON {"base_revision":0,"source":"rule \"кухня\" {\n  when http trigger\n  do lamp(\"Кухня\").on()\n}\n"} to "/api/v1/rules"
@@ -141,5 +141,9 @@ Feature: The rules document: parse, store, read back byte-for-byte
     And the last operation eventually succeeds
     When I PATCH JSON {"name":"Кухня"} to "/api/v1/adapters/0/virtual-lamps/2"
     Then the response status should be 200
-    And the JSON pointer "/diagnostic" at "/api/v1/rules" should eventually be "rules_names_unresolved"
+    And the JSON pointer "/diagnostic" at "/api/v1/rules" should eventually contain "ambiguous lamp"
     And the JSON pointer "/rule_count" at "/api/v1/rules" should eventually be "0"
+    When I PATCH JSON {"name":"Зал"} to "/api/v1/adapters/0/virtual-lamps/2"
+    Then the response status should be 200
+    And the JSON pointer "/rule_count" at "/api/v1/rules" should eventually be "1"
+    And the JSON pointer "/diagnostic" at "/api/v1/rules" should eventually be "null"

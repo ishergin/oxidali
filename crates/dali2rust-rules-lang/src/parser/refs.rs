@@ -66,11 +66,8 @@ pub fn pick_named<T: Copy>(
     (what, name): (&str, &str),
     pos: Pos,
 ) -> Result<T, CompileError> {
-    let scoped: Vec<T> = candidates
-        .iter()
-        .copied()
-        .filter(|t| explicit.is_none_or(|adapter| adapter_of(t) == adapter))
-        .collect();
+    let in_scope = |t: &&T| explicit.is_none_or(|adapter| adapter_of(t) == adapter);
+    let scoped: Vec<T> = candidates.iter().filter(in_scope).copied().collect();
     match (scoped.as_slice(), candidates.first(), explicit) {
         ([one], _, _) => Ok(*one),
         ([], Some(other), Some(adapter)) => Err(pos.err(format!(
@@ -78,12 +75,17 @@ pub fn pick_named<T: Copy>(
             adapter_of(other)
         ))),
         ([], _, _) => Err(pos.err(format!("unknown {what} \"{name}\""))),
-        (many, _, _) => Err(pos.err(ambiguity(many, adapter_of, explicit, what, name))),
+        (many, _, _) => Err(pos.err(ambiguity(many, adapter_of, explicit, (what, name)))),
     }
 }
 
-fn ambiguity<T>(many: &[T], adapter_of: fn(&T) -> u8, explicit: Option<u8>, what: &str, name: &str) -> String {
-    let spans_adapters = many.iter().any(|t| adapter_of(t) != adapter_of(&many[0]));
+fn ambiguity<T>(
+    many: &[T],
+    adapter_of: fn(&T) -> u8,
+    explicit: Option<u8>,
+    (what, name): (&str, &str),
+) -> String {
+    let spans_adapters = many.windows(2).any(|pair| adapter_of(&pair[0]) != adapter_of(&pair[1]));
     let hint = if spans_adapters && explicit.is_none() {
         "; rename them apart or add adapter=N"
     } else {

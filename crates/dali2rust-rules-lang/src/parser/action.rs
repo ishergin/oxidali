@@ -125,18 +125,7 @@ fn scene_action(c: &mut Cursor<'_>) -> Result<Action, CompileError> {
     c.expect(&TokenKind::Dot, "`.recall` or `.apply`")?;
     let (verb, pos) = c.expect_ident("recall or apply")?;
     match verb.as_str() {
-        "recall" => {
-            c.expect(&TokenKind::LParen, "`(`")?;
-            let target = if c.accept(&TokenKind::RParen) {
-                None
-            } else {
-                let t = refs::light_target(c)?;
-                c.expect(&TokenKind::RParen, "`)`")?;
-                Some(t)
-            };
-            let scene = scene.on_adapter(c, target.map_or(c.resolver.primary_adapter(), target_adapter))?;
-            Ok(Action::Scene(SceneAction::Recall { scene, target }))
-        }
+        "recall" => scene_recall(c, scene),
         "apply" => {
             c.expect(&TokenKind::LParen, "`(`")?;
             c.expect(&TokenKind::RParen, "`)`")?;
@@ -145,6 +134,20 @@ fn scene_action(c: &mut Cursor<'_>) -> Result<Action, CompileError> {
         }
         _ => Err(pos.err(format!("unknown scene action \"{verb}\""))),
     }
+}
+
+fn scene_recall(c: &mut Cursor<'_>, scene: SceneSpec) -> Result<Action, CompileError> {
+    c.expect(&TokenKind::LParen, "`(`")?;
+    let target = if c.accept(&TokenKind::RParen) {
+        None
+    } else {
+        let t = refs::light_target(c)?;
+        c.expect(&TokenKind::RParen, "`)`")?;
+        Some(t)
+    };
+    let adapter = target.map_or(c.resolver.primary_adapter(), target_adapter);
+    let scene = scene.on_adapter(c, adapter)?;
+    Ok(Action::Scene(SceneAction::Recall { scene, target }))
 }
 
 enum SceneSpec {
@@ -158,7 +161,8 @@ impl SceneSpec {
             SceneSpec::Value(value) => Ok(value),
             SceneSpec::Named(name, pos) => {
                 let scenes = c.resolver.resolve_scene(&name);
-                let scene = refs::pick_named(&scenes, |s| s.adapter_id, Some(adapter), ("scene", &name), pos)?;
+                let named = ("scene", name.as_str());
+                let scene = refs::pick_named(&scenes, |s| s.adapter_id, Some(adapter), named, pos)?;
                 Ok(ValueExpr::Literal(i64::from(scene.id)))
             }
         }
@@ -286,7 +290,7 @@ fn named_literal(
     key: &str,
     min: i64,
     max: i64,
-    at: crate::lexer::Pos,
+    at: Pos,
 ) -> Result<i64, CompileError> {
     let Some(arg) = bag.take_named(key) else {
         return Err(at.err(format!("expected {key}=…")));
@@ -305,7 +309,7 @@ fn named_bounded_expr(
     key: &str,
     min: i64,
     max: i64,
-    at: crate::lexer::Pos,
+    at: Pos,
 ) -> Result<ValueExpr, CompileError> {
     let Some(arg) = bag.take_named(key) else {
         return Err(at.err(format!("expected {key}=…")));

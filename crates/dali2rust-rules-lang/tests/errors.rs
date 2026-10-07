@@ -2,8 +2,14 @@ mod support;
 
 use dali2rust_rules_model::limits::MAX_MQTT_TRIGGER_TOPICS;
 use dali2rust_rules_model::testing::StubResolver;
-use dali2rust_rules_model::{LampRef, SceneRef};
-use support::{compile, compile_err, compile_ok, wrap_action, wrap_condition, wrap_trigger};
+use dali2rust_rules_model::{
+    Action, DeviceRef, GroupRef, InputDeviceRef, LampRef, LightTarget, RuleSet, SceneAction,
+    SceneRef, ValueExpr,
+};
+use support::{
+    compile, compile_err, compile_ok, compile_with, the_rule, wrap_action, wrap_condition,
+    wrap_trigger,
+};
 
 const TWO_RULES: &str = r#"# comment line
 rule "первое" {
@@ -385,11 +391,6 @@ fn a_schedule_id_past_the_bus_field_is_refused_at_the_id() {
     }
 }
 
-fn compile_with(resolver: &StubResolver, action: &str) -> Result<dali2rust_rules_model::RuleSet, dali2rust_rules_model::CompileError> {
-    let source = format!("rule \"t\" {{\n  when http trigger\n  do {action}\n}}\n");
-    dali2rust_rules_model::RuleCompiler::compile(&dali2rust_rules_lang::RulesLangV1, &source, resolver)
-}
-
 fn two_kitchens(second_adapter: u8) -> StubResolver {
     StubResolver::strict()
         .with_adapter(1)
@@ -397,32 +398,88 @@ fn two_kitchens(second_adapter: u8) -> StubResolver {
         .with_lamp("кухня", LampRef { adapter_id: second_adapter, id: 7 })
 }
 
+fn first_action(set: &RuleSet) -> &Action {
+    &the_rule(set).actions[0]
+}
+
 #[test]
 fn a_name_two_targets_share_is_refused_at_the_name() {
-    let err = compile_with(&two_kitchens(0), "lamp(\"кухня\").on()").unwrap_err();
-    assert_eq!((err.line, err.column), (3, 11), "{err}");
+    let err = compile_with(&wrap_action("lamp(\"кухня\").on()"), &two_kitchens(0)).unwrap_err();
+    assert_eq!((err.line, err.column), (5, 11), "{err}");
     assert!(err.message.contains("ambiguous lamp \"кухня\""), "{err}");
     assert!(err.message.contains("2 targets"), "{err}");
 }
 
 #[test]
+fn every_kind_of_named_target_refuses_a_shared_name() {
+    let shared = StubResolver::strict()
+        .with_lamp("общее", LampRef { adapter_id: 0, id: 1 })
+        .with_lamp("общее", LampRef { adapter_id: 0, id: 2 })
+        .with_group("общее", GroupRef { adapter_id: 0, id: 1 })
+        .with_group("общее", GroupRef { adapter_id: 0, id: 2 })
+        .with_device("общее", DeviceRef { adapter_id: 0, short_address: 1 })
+        .with_device("общее", DeviceRef { adapter_id: 0, short_address: 2 })
+        .with_input_device("общее", InputDeviceRef { adapter_id: 0, device_short_address: 1 })
+        .with_input_device("общее", InputDeviceRef { adapter_id: 0, device_short_address: 2 })
+        .with_scene("общее", SceneRef { adapter_id: 0, id: 1 })
+        .with_scene("общее", SceneRef { adapter_id: 0, id: 2 });
+    let cases = [
+        (wrap_action("lamp(\"общее\").on()"), "lamp"),
+        (wrap_action("group(\"общее\").on()"), "group"),
+        (wrap_trigger("device(\"общее\") goes offline"), "device"),
+        (wrap_trigger("input device(dev=\"общее\") power cycled"), "input device"),
+        (wrap_action("scene(\"общее\").recall()"), "scene"),
+    ];
+    for (source, what) in cases {
+        let err = compile_with(&source, &shared).unwrap_err();
+        assert!(err.message.contains(&format!("ambiguous {what} \"общее\"")), "{what}: {err}");
+    }
+}
+
+#[test]
 fn an_adapter_clause_picks_one_of_two_same_named_targets() {
-    let err = compile_with(&two_kitchens(1), "lamp(\"кухня\").on()").unwrap_err();
+    let err = compile_with(&wrap_action("lamp(\"кухня\").on()"), &two_kitchens(1)).unwrap_err();
     assert!(err.message.contains("adapter=N"), "the targets sit on two adapters: {err}");
-    let set = compile_with(&two_kitchens(1), "lamp(\"кухня\", adapter=1).on()").expect("one lamp on adapter 1");
-    let json = serde_json::to_string(&set).expect("rule set json");
-    assert!(json.contains("\"adapter_id\":1") && json.contains("\"id\":7"), "{json}");
+    let set = compile_with(&wrap_action("lamp(\"кухня\", adapter=1).on()"), &two_kitchens(1))
+        .expect("one lamp on adapter 1");
+    let Action::Light(light) = first_action(&set) else {
+        panic!("a light action: {set:?}");
+    };
+    assert_eq!(light.target, LightTarget::Lamp(LampRef { adapter_id: 1, id: 7 }));
+}
+
+fn evening_on_two_adapters() -> StubResolver {
+    StubResolver::strict()
+        .with_adapter(1)
+        .with_lamp("кухня", LampRef { adapter_id: 0, id: 3 })
+        .with_lamp("зал", LampRef { adapter_id: 1, id: 4 })
+        .with_scene("вечер", SceneRef { adapter_id: 0, id: 2 })
+        .with_scene("вечер", SceneRef { adapter_id: 1, id: 5 })
+}
+
+fn recalled_scene(set: &RuleSet) -> &ValueExpr {
+    let Action::Scene(SceneAction::Recall { scene, .. }) = first_action(set) else {
+        panic!("a scene recall: {set:?}");
+    };
+    scene
 }
 
 #[test]
 fn a_scene_name_resolves_on_the_adapter_the_action_runs_on() {
-    let resolver = StubResolver::strict()
+    let resolver = evening_on_two_adapters();
+    for (action, scene) in [
+        ("scene(\"вечер\").recall(lamp(\"зал\"))", 5),
+        ("scene(\"вечер\").recall(lamp(\"кухня\"))", 2),
+        ("scene(\"вечер\").recall()", 2),
+    ] {
+        let set = compile_with(&wrap_action(action), &resolver).expect(action);
+        assert_eq!(recalled_scene(&set), &ValueExpr::Literal(scene), "{action}");
+    }
+    let only_on_one = StubResolver::strict()
         .with_adapter(1)
         .with_lamp("кухня", LampRef { adapter_id: 0, id: 3 })
-        .with_scene_on("вечер", SceneRef { adapter_id: 1, id: 5 });
-    let err = compile_with(&resolver, "scene(\"вечер\").recall(lamp(\"кухня\"))").unwrap_err();
+        .with_scene("вечер", SceneRef { adapter_id: 1, id: 5 });
+    let err = compile_with(&wrap_action("scene(\"вечер\").recall(lamp(\"кухня\"))"), &only_on_one)
+        .unwrap_err();
     assert!(err.message.contains("scene \"вечер\" is on adapter 1, not 0"), "{err}");
-    let twice = resolver.with_scene_on("вечер", SceneRef { adapter_id: 0, id: 2 }).with_scene_on("вечер", SceneRef { adapter_id: 0, id: 9 });
-    let err = compile_with(&twice, "scene(\"вечер\").apply()").unwrap_err();
-    assert!(err.message.contains("ambiguous scene \"вечер\""), "{err}");
 }

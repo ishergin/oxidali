@@ -428,12 +428,12 @@ impl RulesWorker {
         if doc.lang_id != self.compiler.lang_id() {
             return;
         }
-        let next = match self.compiler.compile(&doc.source, self.resolver.as_ref()) {
+        let (next, diagnostic) = match self.compiler.compile(&doc.source, self.resolver.as_ref()) {
             Ok(mut set) => {
                 apply_enable_table(&mut set, &doc.enable_table);
-                Some(set)
+                (Some(set), None)
             }
-            Err(_) => None,
+            Err(error) => (None, Some(format!("rules_names_unresolved: {error}"))),
         };
         if next == doc.compiled {
             return;
@@ -441,11 +441,6 @@ impl RulesWorker {
         if next.is_none() {
             self.counters.hydrate_failed.fetch_add(1, Ordering::Relaxed);
         }
-        let diagnostic = if next.is_none() {
-            Some("rules_names_unresolved".to_owned())
-        } else {
-            None
-        };
         self.store.replace(RulesDocument {
             revision: doc.revision.wrapping_add(1),
             compiled: next,

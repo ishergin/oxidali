@@ -73,18 +73,22 @@ impl StubResolver {
         self
     }
 
-    pub fn with_scene(self, name: &str, scene: u8) -> Self {
-        let adapter_id = self.primary;
-        self.with_scene_on(name, SceneRef { adapter_id, id: scene })
-    }
-
-    pub fn with_scene_on(mut self, name: &str, scene: SceneRef) -> Self {
+    pub fn with_scene(mut self, name: &str, scene: SceneRef) -> Self {
         self.scenes.push((name.into(), scene));
         self
     }
 
-    fn lookup<T: Copy>(&self, entries: &[(String, T)], name: &str, invent: impl FnOnce() -> T) -> Vec<T> {
-        let found: Vec<T> = entries.iter().filter(|(n, _)| n == name).map(|(_, v)| *v).collect();
+    fn lookup<T: Copy>(
+        &self,
+        entries: &[(String, T)],
+        name: &str,
+        invent: impl FnOnce() -> T,
+    ) -> Vec<T> {
+        let found: Vec<T> = entries
+            .iter()
+            .filter(|(n, _)| n == name)
+            .map(|(_, v)| *v)
+            .collect();
         if found.is_empty() && self.permissive {
             return vec![invent()];
         }

@@ -9,7 +9,11 @@ pub fn resolver() -> StubResolver {
 }
 
 pub fn compile(source: &str) -> Result<RuleSet, CompileError> {
-    RulesLangV1.compile(source, &resolver())
+    compile_with(source, &resolver())
+}
+
+pub fn compile_with(source: &str, resolver: &StubResolver) -> Result<RuleSet, CompileError> {
+    RulesLangV1.compile(source, resolver)
 }
 
 pub fn compile_ok(source: &str) -> RuleSet {
