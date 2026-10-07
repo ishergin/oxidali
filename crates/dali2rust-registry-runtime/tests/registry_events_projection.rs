@@ -102,7 +102,6 @@ fn publish_discovery(
         || store.physical_device_view(0, short).is_some(),
         Duration::from_millis(500),
     );
-    assert!(store.physical_device_view(0, short).is_some());
 }
 
 fn seed_physical_via_discovery(
@@ -966,8 +965,7 @@ fn give_overrides(
         origin,
         patch,
     );
-    let queued = publisher.try_publish(BusChannel::Commands, BusFrame::command(command));
-    assert_eq!(queued, PublishResult::Queued);
+    support::publish_cmd(publisher, command);
     let given = || {
         store.physical_device_view(0, short).is_some_and(|pd| pd.color_mode_override.is_some())
     };

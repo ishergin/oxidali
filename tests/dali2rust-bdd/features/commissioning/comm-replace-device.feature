@@ -169,7 +169,7 @@ Feature: Commissioning replace device
     And the JSON pointer "/binding/physical_short_address" should be 0
 
   @id:COMM-115
-  Scenario: An override the new gear can honour moves with the role
+  Scenario: An override the new gear's declared types allow moves with the role
     Given adapter 0 has discovered a colour-temperature device 0 and an RGB device 1
     When I PATCH JSON {"color_mode_override":"xy"} to "/api/v1/adapters/0/physical-devices/0"
     Then the response status should be 200

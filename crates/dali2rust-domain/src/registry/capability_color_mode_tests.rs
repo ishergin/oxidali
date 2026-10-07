@@ -85,7 +85,7 @@ fn a_device_type_fits_only_a_declared_set_that_holds_it() {
 }
 
 #[test]
-fn a_colour_mode_needs_dt8_only_when_it_states_a_colour() {
+fn only_the_dt8_colour_modes_need_dt8_in_the_declared_set() {
     let dimmer = Some(DeviceTypeSet::from_bits(DT6));
     for mode in [ColorMode::Cct, ColorMode::Xy, ColorMode::Rgb, ColorMode::Rgbwaf] {
         assert!(!colour_mode_fits_declared(dimmer, mode), "{mode:?} on a DT6-only gear");
@@ -93,6 +93,6 @@ fn a_colour_mode_needs_dt8_only_when_it_states_a_colour() {
         assert!(colour_mode_fits_declared(None, mode), "{mode:?} with nothing declared yet");
     }
     for mode in [ColorMode::None, ColorMode::Brightness, ColorMode::Unknown] {
-        assert!(colour_mode_fits_declared(dimmer, mode), "{mode:?} claims no colour");
+        assert!(colour_mode_fits_declared(dimmer, mode), "{mode:?} needs no DT8");
     }
 }
