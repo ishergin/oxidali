@@ -810,6 +810,7 @@ export type PersistenceCounters = {
   hydrate_loaded_total: number
   hydrate_default_total: number
   hydrate_error_total: number
+  unread_slices: number
 }
 
 export type PhySnifferCounters = {

@@ -493,6 +493,22 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Activations published</span><span class="v">412</span><span class="delta live">+1</span></div>
       </div>
 
+      <!-- `Unread slices` is a gauge and the one fault: a slice or device bank
+           whose stored copy could not be read waits, and until a boot or reload
+           reads it no change to it is saved. A slice that read but did not
+           decode is rewritten with defaults and counts under `Hydrate error
+           total` only. -->
+      <div class="card span2">
+        <header><h3>Persistence</h3></header>
+        <div class="attr"><span class="k">Flush success total</span><span class="v">1 204</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Flush error total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">No space total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Hydrate loaded total</span><span class="v">52</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Hydrate default total</span><span class="v">3</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Hydrate error total</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Unread slices</span><span class="v fault">1</span><span class="delta"></span></div>
+      </div>
+
     </div>
 
     <div class="state-label"><span>Last poll failed — the previous sample stays</span><span class="ln"></span></div>
