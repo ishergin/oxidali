@@ -81,7 +81,7 @@ p.note { color:var(--text-muted); font-size:12px; max-width:66ch; }
 <body>
 <div class="wrap">
   <div class="feed">
-    <h2>Live events <span class="lag">dropped_since: 12</span></h2>
+    <h2>Live input events <span class="lag">dropped_since: 12</span></h2>
     <div class="ln"><span class="ts">12:04:31.208</span><span class="src">dev 3 / in 0</span>
       <span class="ev">short_press</span><span class="arrow">→</span>
       <span class="rule">«коридор: вкл/выкл»</span><span class="mk ok">ok</span><span class="mk mk-ms">42 ms</span></div>
@@ -93,20 +93,19 @@ p.note { color:var(--text-muted); font-size:12px; max-width:66ch; }
       <span class="rule"><span class="none">&hellip;</span></span></div>
     <div class="ln"><span class="ts">12:07:02.114</span><span class="src">dev 4 / in 0</span>
       <span class="ev">short_press</span><span class="arrow">→</span>
-      <span class="rule"><span class="none">no rule matches</span></span>
+      <span class="rule"><span class="none">no rule fired</span></span>
       <button class="mkbtn">create a rule for this</button></div>
     <div class="ln"><span class="ts">12:09:40.551</span><span class="src">scheme 0</span>
       <span class="ev">short_press</span><span class="arrow">→</span>
       <span class="rule"><span class="none">source unattributable</span></span><span class="mk amb">ambiguous</span></div>
     <div class="ln"><span class="ts">12:11:18.402</span><span class="src">dev 7 / in 2</span>
       <span class="ev">event 0x1A4</span><span class="arrow">→</span>
-      <span class="rule"><span class="none">no rule matches</span></span>
+      <span class="rule"><span class="none">no rule fired</span></span>
       <button class="mkbtn">create a rule for this</button></div>
   </div>
   <p class="note">A line is born UNRESOLVED (&hellip;) and settles: an activation reaches the browser
-  on its own channel a few tens of milliseconds after the event, so &laquo;no rule matches&raquo; is only
-  honest once that window has passed. Asserting it immediately is what the screen used to do, and
-  it read as fact while the device was firing rules the whole time. An instance type the product does not model still shows its raw ten bits rather
+  on its own channel a few tens of milliseconds after the event, so &laquo;no rule fired&raquo; is only
+  honest once that window has passed. An instance type the product does not model still shows its raw ten bits rather
   than the word &laquo;event&raquo;: an unmodelled type is precisely the case where the raw word is the
   only thing an operator can act on. The no-rule line is the commonest symptom of a mistyped rule, and it doubles as
   DiiA's own recommended way to identify a device — press the button you are about to name.

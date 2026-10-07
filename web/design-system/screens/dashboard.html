@@ -55,7 +55,10 @@
 }
 body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
 
-.shell { display: flex; max-width: 1240px; margin: 0 auto; min-height: 100vh; }
+/* The shell runs to 1680 px: the widest surfaces — the device list, the group matrix,
+   the scene editor — are tables, and a table uses the width it is given. Below 900 px
+   the sidebar folds into a strip along the top and .grid2 collapses to one column. */
+.shell { display: flex; max-width: 1680px; margin: 0 auto; min-height: 100vh; }
 
 /* Sidebar */
 .side { width: 200px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 18px 10px; }
@@ -92,7 +95,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
 
 /* Cards grid */
-.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .card header { display: flex; align-items: center; justify-content: space-between;
   padding: 9px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
@@ -124,7 +127,6 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .oprow:last-child { border-bottom: none; }
 .oprow .t { font-size: 13px; font-weight: 550; flex: 1; }
 .oprow .id { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
-.oprow .age { font-size: 11px; color: var(--text-faint); min-width: 52px; text-align: right; }
 /* The bus card — full spec in components/bus-status. */
 .bushealth { display: flex; align-items: flex-start; gap: 12px; padding: 14px; }
 .bushealth .ring { width: 34px; height: 34px; border-radius: 50%; flex: none;
@@ -167,11 +169,17 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .busload .own { fill: none; stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; }
 .busload .coll { stroke: var(--err); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .busload .empty { font-size: 11px; color: var(--text-faint); padding: 18px 0; text-align: center; }
-.chgnote { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
-.chgnote code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
-.chgdemo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px; }
-.chgh { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
-  letter-spacing: .08em; margin: 26px 0 10px; }
+@media (max-width: 900px) {
+  .shell { flex-direction: column; }
+  .side { width: auto; display: flex; align-items: center; gap: 10px; border-right: none;
+    border-bottom: 1px solid var(--border); padding: 8px 12px; overflow-x: auto; }
+  .side .brand { padding: 0 6px 0 0; flex: none; }
+  .nav { display: flex; gap: 4px; }
+  .nav .grp { display: none; }
+  .nav a { margin-bottom: 0; white-space: nowrap; }
+  .main { padding: 16px 14px 60px; }
+  .grid2 { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
@@ -181,24 +189,31 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     <div class="brand"><span class="glyph">◍</span><span class="name">dali2rust</span></div>
     <nav class="nav">
       <!-- Mirrors web/app NAV_GROUPS exactly: one entry per implemented
-           screen, three groups. A card sidebar that drifts from the app is
-           how the HA entry went missing for a week. -->
+           screen, three groups. -->
       <div class="grp">Control</div>
       <a class="active" href="#"><span class="ic">▦</span>Dashboard</a>
       <a href="#"><span class="ic">◧</span>Physical devices</a>
       <a href="#"><span class="ic">◍</span>Virtual lamps</a>
+      <a href="#"><span class="ic">⌘</span>Input devices</a>
       <a href="#"><span class="ic">⊞</span>Groups</a>
       <a href="#"><span class="ic">✦</span>Scenes</a>
       <a href="#"><span class="ic">◐</span>HCL schedules</a>
+      <a href="#"><span class="ic">∴</span>Rules</a>
       <div class="grp">System</div>
       <a href="#"><span class="ic">≡</span>Operations</a>
+      <a href="#"><span class="ic">▤</span>Stats</a>
       <a href="#"><span class="ic">›_</span>DALI console</a>
-      <a href="#"><span class="ic">σ</span>Stats</a>
       <a href="#"><span class="ic">∿</span>DALI sniffer</a>
+      <a href="#"><span class="ic">☰</span>Log</a>
       <a href="#"><span class="ic">◔</span>Diagnostics</a>
+      <a href="#"><span class="ic">⇧</span>Firmware</a>
       <div class="grp">Settings</div>
       <a href="#"><span class="ic">⟳</span>Poller</a>
+      <a href="#"><span class="ic">◈</span>DALI</a>
+      <a href="#"><span class="ic">◷</span>Time</a>
       <a href="#"><span class="ic">⌂</span>Home Assistant</a>
+      <a href="#"><span class="ic">⇄</span>Redundancy</a>
+      <a href="#"><span class="ic">⛨</span>Policies</a>
     </nav>
   </aside>
 
@@ -211,8 +226,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <span class="sub">uptime <span style="font-family:var(--mono); color:var(--text-muted)">3 d 14 h 02 m</span></span>
     </div>
 
-    <div class="grid">
+    <div class="grid2">
 
+      <!-- The wire's own condition leads the page: IEC 62386-101 §4.11 Table 4's
+           classification, straight from the PHY. States in components/bus-status;
+           the load figure and the five-minute history in components/bus-load. -->
       <div class="card">
         <header><h3>DALI bus</h3><button class="act">Counters →</button></header>
         <div class="bushealth ok">
@@ -260,8 +278,13 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         </div>
       </div>
 
+      <!-- Installation is the Home Assistant controller id, shared by both boards
+           of a redundancy pair. Hostname is this board's own name, built from its
+           MAC and carried by its DHCP request, so Hostname is the first row where
+           the two boards of a pair differ (ADR-032). The sample is a board that took
+           over from its peer: the peer seeded the installation, so the names differ. -->
       <div class="card">
-        <header><h3>Controller</h3><button class="act">Details</button></header>
+        <header><h3>Controller</h3></header>
         <div class="attr"><span class="k">Target MCU</span><span class="v">esp32p4</span></div>
         <div class="attr"><span class="k">Registry</span><span class="v"><span class="chip ok" style="font-size:11px; padding:2px 8px;"><span class="dot"></span>hydrated</span></span></div>
         <div class="attr"><span class="k">Installation</span><span class="v">dali-3fa2c1</span></div>
@@ -274,15 +297,20 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Home Assistant</span><span class="v">connected <span class="unit" style="font-family:var(--mono)">mqtt://192.168.11.110:1883</span></span></div>
       </div>
 
+      <!-- The chip is the adapter's own command gate, enabled / disabled — never a
+           bus state; the wire's condition is the DALI bus card. The counters are the
+           wire's totals from stats.dali: DALI commands executed, the diagnostic path
+           included, and DALI errors, red once non-zero. No timeout count: the
+           confirmation bridge is shared, and a timed-out registry write says nothing
+           about the wire. -->
       <div class="card">
-        <header><h3>Adapter 0 · Main DALI</h3><span class="chip idle"><span class="dot"></span>bus idle</span></header>
+        <header><h3>Adapter 0 · Main DALI</h3><span class="chip ok"><span class="dot"></span>enabled</span></header>
         <div class="counters">
           <div class="counter"><div class="n">4 812</div><div class="l">DALI commands</div></div>
           <div class="counter"><div class="n">0</div><div class="l">DALI errors</div></div>
         </div>
         <div class="attr"><span class="k">Physical devices</span><span class="v">14 <span class="unit">discovered</span></span></div>
         <div class="attr"><span class="k">Capacity</span><span class="v">64 VL · 16 groups · 16 scenes</span></div>
-        <div class="attr"><span class="k">Last bus activity</span><span class="v">6 s ago</span></div>
       </div>
 
       <div class="card">
@@ -300,99 +328,22 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
           <span class="t">Attribute read · SA 04</span>
           <span class="id">attr-read-0-19</span>
           <span class="chip run"><span class="dot"></span>running</span>
-          <span class="age">2 s</span>
         </div>
         <div class="oprow">
           <span class="t">Group apply</span>
           <span class="id">grp-apply-0-6</span>
           <span class="chip ok"><span class="dot"></span>succeeded</span>
-          <span class="age">48 s</span>
         </div>
         <div class="oprow">
           <span class="t">Discovery · full scan</span>
           <span class="id">pd-disc-0-13</span>
           <span class="chip ok"><span class="dot"></span>succeeded</span>
-          <span class="age">12 m</span>
         </div>
       </div>
 
     </div>
   </div>
 
-
-<div class="chgh">2026-10-06 — counters the wire actually keeps</div>
-<p class="chgnote">The adapter card's <b>commands / timeouts / errors</b> row read a
-  <code>counters</code> object on the adapter resource that nothing ever wrote, so it showed
-  zeros as if they were live. The resource no longer has the field. The row now shows the
-  wire's own totals from <code>stats.dali</code>: <b>DALI commands</b> executed (the diagnostic
-  path included) and <b>DALI errors</b>, red once non-zero. Timeouts are gone from the card: the
-  confirmation bridge is shared, and a timed-out registry write says nothing about the wire.</p>
-
-<div class="chgh">2026-09-28 — which installation, which board</div>
-<p class="chgnote">The Controller card showed a hostname and an address the firmware never
-  filled. It now names two things. <b>Installation</b> is the Home Assistant controller id,
-  shared by both boards of a redundancy pair. <b>Hostname</b> is this board's own name, built from
-  its MAC and carried by its DHCP request, so the two boards of a pair differ here and nowhere
-  above (<code>ADR-032</code>). The sample is a board that took over from its peer: the peer seeded
-  the installation, so the two names differ. The <b>MAC address</b> row joins them. The Wi-Fi SSID
-  row, whose removal the 2026-09-01 note records, has left the card too.</p>
-
-<div class="chgh">2026-09-05 — how busy, and with whom</div>
-<p class="chgnote">The bus card answered "is the wire alive?" and nothing about how much of it is in
-  use. The PHY interrupt now books every 104 µs tick as idle, active or transmitting, a
-  one-second window on the device turns that into ONE per-mille gauge, and every surface — this
-  card, Stats, the OLED strip, the WebSocket frame — reads that same number; the browser keeps
-  a five-minute ring of the pushed samples and the device keeps no history at all. Spec in
-  <code>components/bus-load</code>.</p>
-<p class="chgnote">Three things on the card changed. The verdict block gained the figure at its
-  right, with <b>our share</b> beneath it — the gap to the total is the other master and the gear
-  answering us, which on this bench is the question. The counts strip trades <b>sys failure</b>
-  (it lives in the verdict's own detail line) for <b>foreign</b>, the sniffer's forward-frame
-  count. And the history strip sits under the counts: total load as an <code>--info</code> area,
-  our share as the neutral dashed line the HCL curve uses for colour, collisions as red ticks at
-  the moment they happened. <b>Never amber</b> — amber is lamp state, and a filled amber area
-  under the verdict would read as light output.</p>
-
-<div class="chgh">2026-09-01 — the bus is the first card</div>
-<p class="chgnote">The dashboard used to answer "is the bus alive?" with a small
-  <code>bus idle</code> chip on the adapter card, and that chip was never about the bus:
-  <code>bus_status</code> on the adapter DTO is <code>enabled ? "idle" : "disabled"</code>, a
-  property of the adapter's own command gate. It reads "idle" over a segment whose supply has
-  failed and over one shorted end to end. The wire's own condition now leads the page —
-  IEC 62386-101 §4.11 Table 4's classification, straight from the PHY — and the adapter card's
-  chip says what it actually knows (<code>enabled</code> / <code>disabled</code>). Five states,
-  spec in <code>components/bus-status</code>.</p>
-<p class="chgnote">Also gone: the <b>Wi-Fi SSID</b> row. The board has no radio — <code>ADR-011</code>
-  deleted the WiFi <code>NetworkLink</code> with the S3 — so the row could only ever render a
-  dash, and a field that can only be empty teaches an operator to distrust the ones that are.</p>
-<div class="chgdemo">
-  <div class="card" style="max-width:420px">
-    <header><h3>DALI bus</h3></header>
-    <div class="bushealth err">
-      <span class="ring">⚠</span>
-      <span class="txt">
-        <div class="st">No bus power</div>
-        <div class="d">the line has been held active for over 45 ms — bus power down. Check the
-          DALI supply and the wiring before reading anything else on this page.</div>
-      </span>
-    </div>
-    <div class="buscounts">
-      <div class="c"><div class="n">96</div><div class="l">frames</div></div>
-      <div class="c"><div class="n err">1</div><div class="l">power down</div></div>
-      <div class="c"><div class="n">0</div><div class="l">sys failure</div></div>
-      <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
-    </div>
-  </div>
-</div>
-
-<div class="chgh">2026-09-01 — the shell grows, and folds</div>
-<p class="chgnote">The shell was capped at <code>1240 px</code> since the first screen, which is
-  why tables looked truncated on a wide monitor: the device list needs ~1150 px of columns
-  inside a 1020 px content area. It runs to <code>1680 px</code> now — the widest surfaces here
-  are the group matrix (17 columns) and the scene editor, and a table is the one thing that
-  should use the glass it is given. Below <code>900 px</code> the 200 px sidebar becomes a
-  horizontal strip along the top and <code>.grid2</code> collapses to one column, so the tables
-  get the width the furniture was holding.</p>
 </div>
 </body>
 </html>

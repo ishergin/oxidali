@@ -88,18 +88,17 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 /* Fixed geometry: cell content (a colour control appearing when a lamp is
    included) must never move the columns. Widths are declared once via <col>. */
 /* `min-width` with the wrapper's `overflow: auto`: below this the matrix
-   scrolls sideways rather than crushing a column to nothing. It crushed the
-   *last* one, which has no width of its own — and a 0px cell wraps its text
-   one character per line, so the row grew from 45px to 76px and rows stopped
-   scanning as a grid. Every column below is therefore sized. */
+   scrolls sideways rather than crushing a column to nothing. A 0px cell wraps
+   its text one character per line, the row grows, and rows stop scanning as a
+   grid. Every column below is therefore sized. */
 table { border-collapse: collapse; width: 100%; min-width: 900px; table-layout: fixed; }
 th { text-align: left; padding: 9px 12px; background: var(--raised); border-bottom: 1px solid var(--border);
   font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em; font-weight: 500; position: sticky; top: 0; }
 th.c { text-align: center; }
 /* `vertical-align: middle`, because the default is `baseline` and a table row
    grows to line up the first baseline of every cell. Controls of different
-   heights (a 24px level box, a 30px colour cell, a 28px checkbox) then made
-   an excluded row 3px taller than an included one for no visible reason.
+   heights (a 24px level box, a 30px colour cell, a 28px checkbox) would then
+   make an excluded row taller than an included one for no visible reason.
    Middle alignment makes a row exactly its tallest control plus padding. */
 td { padding: 7px 12px; vertical-align: middle; border-bottom: 1px solid rgba(42,51,64,.5); }
 tr:hover td { background: rgba(35,44,56,.5); }
@@ -108,21 +107,25 @@ td.lamp .vl { font-family: var(--mono); font-size: 10px; color: var(--text-faint
 td.c { text-align: center; }
 
 /* `vertical-align: middle` because an inline-flex box takes its baseline from
-   its content, and this one is empty when the row is excluded. Left at the
-   default `baseline` the empty box sat on the text baseline and added its own
-   descender space, so an excluded row was 48px against an included row's 45
-   — the checkbox, not the colour cell, was setting the row height. */
+   its content, and this one is empty when the row is excluded. At the default
+   `baseline` the empty box sits on the text baseline and adds its own
+   descender space, so the checkbox, not the colour cell, would set the height
+   of an excluded row. */
 .inc { width: 26px; height: 26px; vertical-align: middle; border-radius: var(--radius-sm); display: inline-flex; align-items: center;
   justify-content: center; border: 1px solid var(--border); background: var(--surface); font-size: 13px; cursor: pointer; }
 .inc.on { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
 .inc.add { background: var(--dirty-soft); border: 1.5px dashed var(--dirty); color: var(--dirty); }
 
-.lvl { display: inline-flex; align-items: center; gap: 8px; }
-.lvl input { width: 52px; padding: 4px 7px; background: var(--raised); color: var(--text);
-  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; text-align: right; }
-.lvl input.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
-.minitrack { width: 74px; height: 4px; border-radius: 2px; background: var(--raised); position: relative; }
-.minitrack .f { position: absolute; inset: 0 auto 0 0; border-radius: 2px; background: var(--accent); opacity: .8; }
+/* Level and kelvin are FIELDS in this table, never sliders: one control per
+   value. In a 64-row matrix the operator enters a number they already know;
+   the fixture's own kelvin range has its home on the device card, where there
+   is room to say which fixture clamped and to what. */
+.lvl { display: inline-flex; align-items: baseline; gap: 5px; }
+.lvl .unit { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.num { width: 52px; padding: 4px 7px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 12px; text-align: right; }
+.num.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
 
 .cval { font-family: var(--mono); font-size: 12px; color: var(--text-muted); }
 
@@ -130,11 +133,11 @@ td.c { text-align: center; }
    an explicit select listing only what the bound gear supports ("—" clears
    the colour), and the control area below it renders just that mode. Both
    halves have fixed widths so an empty row and an edited row occupy the same
-   box — and the row is the same *height* too, which took three separate fixes
-   (the table's `min-width`, `td { vertical-align }`, and the empty checkbox's
-   own alignment) because each of them silently grew one kind of row only. A
-   64-row matrix is scanned down a column; a row that changes size with its
-   contents is the one bug an operator sees on every screen. */
+   box — and the row is the same *height* too, which rests on three rules (the
+   table's `min-width`, `td { vertical-align }`, and the empty checkbox's own
+   alignment), each of which keeps one kind of row from growing. A 64-row
+   matrix is scanned down a column; a row that changes size with its contents
+   is the one bug an operator sees on every screen. */
 .ccell { display: flex; align-items: center; gap: 8px; min-height: 30px; }
 /* Sized for the longest option, `rgbwaf`, so the control area below it starts
    at the same x on every row. */
@@ -145,13 +148,10 @@ td.c { text-align: center; }
 /* Wide enough for the six-channel mode, which is why every mode gets this
    width: a scene row that changed height or width with its mode would break
    scanning down a 64-row matrix, and that column is what the operator scans. */
-.cctl { width: 210px; flex: none; display: flex; align-items: center; gap: 6px; }
+.cctl { width: 226px; flex: none; display: flex; align-items: center; gap: 6px; }
 .cctl .swatch { flex: none; }
-.cctl .kelvin { font-family: var(--mono); font-size: 11px; color: var(--text-muted); width: 46px; }
-.cctl .slider { flex: 1; height: 4px; border-radius: 2px;
-  background: linear-gradient(90deg, #ffb46b, #fff1de 45%, #cfe0ff); position: relative; }
-.cctl .slider .knob { position: absolute; top: -4px; left: 30%; width: 12px; height: 12px;
-  border-radius: 50%; background: var(--text); border: 2px solid var(--surface); }
+.cctl .num { width: 58px; }
+.cctl .unit { font-family: var(--mono); font-size: 10px; color: var(--text-faint); flex: none; }
 /* `box-sizing` is load-bearing, not tidiness: without it the declared width is
    the content box and six boxes overflow the cell into the next column. */
 .cctl input.mini { box-sizing: border-box; width: 44px; padding: 3px 5px; background: var(--raised); color: var(--text);
@@ -162,10 +162,10 @@ td.c { text-align: center; }
    channel count differs, so two controls would be two names for one thing. */
 .cctl.six { gap: 3px; }
 .cctl.six input.mini { width: 32px; }
-.cval .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 6px; border: 1px solid var(--border-strong); }
+.swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 6px; border: 1px solid var(--border-strong); }
 /* The same 30px box a control occupies, not a bare text run: an inline text
-   node carries the line-box strut of the cell's own font, which made an
-   excluded row 3px taller than an included one. A placeholder must hold the
+   node carries the line-box strut of the cell's own font, which would make an
+   excluded row taller than an included one. A placeholder must hold the
    height it stands in for. */
 .na { display: inline-flex; align-items: center; min-height: 30px; color: var(--text-faint); font-size: 12px; }
 
@@ -195,17 +195,6 @@ td.c { text-align: center; }
 .btn.apply { background: var(--accent); border-color: var(--accent); color: #14161a; font-weight: 600; padding: 7px 18px; }
 .crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
 .crumbs a { color: var(--text-muted); text-decoration: none; }
-.chgnote { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
-.chgnote code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
-.chgdemo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px; }
-.chgh { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
-  letter-spacing: .08em; margin: 26px 0 10px; }
-/* Level and kelvin are FIELDS in this table, never sliders. */
-.numdemo { display: inline-flex; align-items: baseline; gap: 5px; }
-.numdemo .num { width: 52px; padding: 4px 7px; background: var(--raised); color: var(--text);
-  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-  font-family: var(--mono); font-size: 12px; text-align: right; }
-.numdemo .unit { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
 </style>
 </head>
 <body>
@@ -222,16 +211,16 @@ td.c { text-align: center; }
     <!-- TWO numbers, never summed. This chip is the GEAR's condition: rows
          whose desired != applied, healed only by an apply the gear confirms.
          `--dirty` is reserved for exactly that. The operator's own unsaved
-         edits live in the apply bar below and nowhere else — summing them made
-         the bar permanent on any bench with a standing divergence and left
-         Discard, which can only clear the local half, greyed out forever. -->
+         edits live in the apply bar below and nowhere else — summing them
+         would make the bar permanent wherever a divergence stands, with
+         Discard, which can only clear the local half, greyed out. -->
     <span class="chip warn"><span class="dot"></span>7 rows dirty on gear</span>
     <span class="spacer"></span>
     <button class="btn">Rename scene</button>
-    <!-- Recall scope (§14.1): "Whole bus" keeps the pre-existing broadcast
-         contract (empty POST body); picking a group sends ONE group-addressed
-         GO TO SCENE — each member fades to its own sceneX, MASK members stay
-         put, non-members never hear it. Group names come from the groups
+    <!-- Recall scope (§14.1): "Whole bus" is the broadcast recall (empty
+         POST body); picking a group sends ONE group-addressed GO TO SCENE —
+         each member fades to its own sceneX, MASK members stay put,
+         non-members never hear it. Group names come from the groups
          resource; the picker never checks membership — an empty group is a
          legal recall that reaches nobody. -->
     <select class="sel">
@@ -261,8 +250,8 @@ td.c { text-align: center; }
         <!-- The lamp name is the only elastic column: it is the one that can
              absorb a wider viewport without changing what a control looks
              like. Everything else, including the last, is fixed. -->
-        <col><col style="width:76px"><col style="width:150px">
-        <col style="width:290px"><col style="width:64px"><col style="width:116px">
+        <col><col style="width:76px"><col style="width:128px">
+        <col style="width:330px"><col style="width:64px"><col style="width:116px">
       </colgroup>
       <thead>
         <tr>
@@ -278,7 +267,7 @@ td.c { text-align: center; }
         <tr>
           <td class="lamp"><span class="vl">VL 00</span>Kitchen main</td>
           <td class="c"><span class="inc on">✓</span></td>
-          <td><span class="lvl"><input value="75"><span class="minitrack"><span class="f" style="width:30%"></span></span></span></td>
+          <td><span class="lvl"><input class="num" value="75"><span class="unit">/254</span></span></td>
           <td><span class="ccell"><select class="modesel" disabled><option>—</option></select><span class="cctl"><span class="na">no colour</span></span></span></td>
           <td class="c cval">on</td>
           <td><span class="applied">75</span></td>
@@ -286,14 +275,14 @@ td.c { text-align: center; }
         <tr class="rowdirty">
           <td class="lamp"><span class="vl">VL 01</span>Kitchen island</td>
           <td class="c"><span class="inc on">✓</span></td>
-          <td><span class="lvl"><input value="40" class="dirty"><span class="minitrack"><span class="f" style="width:16%"></span></span></span></td>
+          <td><span class="lvl"><input class="num dirty" value="40"><span class="unit">/254</span></span></td>
           <td><span class="ccell"><select class="modesel"><option selected>—</option><option>cct</option></select><span class="cctl"></span></span></td>
           <td class="c cval">on</td>
           <td><span class="applied diff">90 → 40</span></td>
         </tr>
-        <!-- §12 wave: `Applied (on gear)` colour is a READBACK now, not the
-             echo of the last write — the controller reads the scene's stored
-             colour through the DT8 REPORT registers after every program and on
+        <!-- `Applied (on gear)` colour is a READBACK, not the echo of the
+             last write — the controller reads the scene's stored colour
+             through the DT8 REPORT registers after every program and on
              the on-demand `scene_colours` attribute read. So a row can be
              dirty on colour alone: below, the gear clamped a 2500 K ask into
              its own 2703 K warm limit and the slot honestly holds 370 mirek.
@@ -304,23 +293,23 @@ td.c { text-align: center; }
         <tr class="rowdirty">
           <td class="lamp"><span class="vl">VL 02</span>Hall spot</td>
           <td class="c"><span class="inc on">✓</span></td>
-          <td><span class="lvl"><input value="60"><span class="minitrack"><span class="f" style="width:24%"></span></span></span></td>
-          <td><span class="ccell"><select class="modesel"><option>—</option><option selected>cct</option></select><span class="cctl"><span class="swatch" style="background:#ffcf8a"></span><span class="kelvin">2500 K</span><span class="slider"><span class="knob"></span></span></span></span></td>
+          <td><span class="lvl"><input class="num" value="60"><span class="unit">/254</span></span></td>
+          <td><span class="ccell"><select class="modesel"><option>—</option><option selected>cct</option></select><span class="cctl"><span class="swatch" style="background:#ffcf8a"></span><input class="num" value="2500"><span class="unit">K</span></span></span></td>
           <td class="c cval">on</td>
           <td><span class="applied diff">60 · 2703 K (clamped)</span></td>
         </tr>
         <tr class="rowdirty">
           <td class="lamp"><span class="vl">VL 04</span>Living CCT</td>
           <td class="c"><span class="inc add">✓</span></td>
-          <td><span class="lvl"><input value="120" class="dirty"><span class="minitrack"><span class="f" style="width:47%"></span></span></span></td>
-          <td><span class="ccell"><select class="modesel"><option>—</option><option selected>cct</option></select><span class="cctl"><span class="swatch" style="background:#ffd9a0"></span><span class="kelvin">2700 K</span><span class="slider"><span class="knob"></span></span></span></span></td>
+          <td><span class="lvl"><input class="num dirty" value="120"><span class="unit">/254</span></span></td>
+          <td><span class="ccell"><select class="modesel"><option>—</option><option selected>cct</option></select><span class="cctl"><span class="swatch" style="background:#ffd9a0"></span><input class="num" value="2700"><span class="unit">K</span></span></span></td>
           <td class="c cval">on</td>
           <td><span class="applied diff">not in scene</span></td>
         </tr>
         <tr>
           <td class="lamp"><span class="vl">VL 05</span>TV strip</td>
           <td class="c"><span class="inc on">✓</span></td>
-          <td><span class="lvl"><input value="30"><span class="minitrack"><span class="f" style="width:12%"></span></span></span></td>
+          <td><span class="lvl"><input class="num" value="30"><span class="unit">/254</span></span></td>
           <td><span class="ccell"><select class="modesel"><option>—</option><option>cct</option><option selected>rgb</option><option>xy</option></select><span class="cctl"><span class="swatch" style="background:#28324e"></span><input class="mini" value="40"><input class="mini" value="50"><input class="mini" value="78"></span></span></td>
           <td class="c cval">on</td>
           <td><span class="applied">30</span></td>
@@ -336,7 +325,7 @@ td.c { text-align: center; }
         <tr>
           <td class="lamp"><span class="vl">VL 09</span>Studio panel</td>
           <td class="c"><span class="inc on">✓</span></td>
-          <td><span class="lvl"><input value="180"><span class="minitrack"><span class="f" style="width:71%"></span></span></span></td>
+          <td><span class="lvl"><input class="num" value="180"><span class="unit">/254</span></span></td>
           <td><span class="ccell"><select class="modesel"><option>—</option><option>cct</option><option>rgb</option><option selected>rgbwaf</option><option>xy</option></select><span class="cctl six"><span class="swatch" style="background:#0a141e"></span><input class="mini" value="10"><input class="mini" value="20"><input class="mini" value="30"><input class="mini" value="40"><input class="mini" value="50"><input class="mini" value="60"></span></span></td>
           <td class="c cval">on</td>
           <td><span class="applied diff">160</span></td>
@@ -379,8 +368,8 @@ td.c { text-align: center; }
   </div>
 
   <!--
-    Save spans TWO operations since ISSUE-25: the row write (`config_write`,
-    202 + operation id, committed atomically by the registry) and only then the
+    Save spans TWO operations: the row write (`config_write`, 202 +
+    operation id, committed atomically by the registry) and only then the
     apply that puts it on the wire. They fail differently and must read
     differently — "the rows were not saved" is not "the gear did not take them",
     and the second is recoverable by pressing Apply again while the first is not.
@@ -409,23 +398,6 @@ td.c { text-align: center; }
     <span class="phase err"><span class="dot"></span>Apply failed</span>
     <span class="txt">rows stay dirty — press Apply again</span>
   </div>
-
-<div class="chgh">2026-09-01 — one control per value</div>
-<p class="chgnote">Two controls in this table were drawing a second picture of a number the
-  operator was already typing, and both overflowed their columns doing it. The <b>level</b> cell
-  had a field plus a mini track sized in percent inside a fixed column, so at any zoom but 100 %
-  it ran out of its cell and under the colour select next door. The <b>colour</b> cell put the
-  whole <code>CctSlider</code> — track, kelvin readout, range caption and clamped-value warning,
-  four elements — into a 290 px cell that already held a mode select, and it overlapped the
-  Power column.</p>
-<p class="chgnote">Both are fields now. The fixture's own kelvin range still matters and still
-  has a home: the device card, where there is room to say which fixture clamped and to what. In
-  a 64-row matrix the operator is entering a number they already know.</p>
-<div class="chgdemo">
-  <span class="numdemo"><input class="num" value="254" readonly><span class="unit">/254</span></span>
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <span class="numdemo"><input class="num" value="3000" readonly><span class="unit">K</span></span>
-</div>
 </div>
 </body>
 </html>

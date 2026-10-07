@@ -58,12 +58,10 @@
  * sidebar. Design-system previews inline only the :root block above, so they
  * stay dark by default.
  *
- * This comment was briefly "corrected" on 2026-08-30 to say the palette was
- * reachable by nothing. It was not: the search was for the attribute spelling
- * `data-theme` while `app.tsx` writes the property spelling `dataset.theme`,
- * and an empty grep was read as a finding. Left recorded because the trap is
- * general — a DOM attribute and its property are two spellings of one thing,
- * and only one of them appears in the source. */
+ * `app.tsx` writes the property spelling `dataset.theme`; the selector below
+ * matches the attribute spelling `data-theme`. They are two spellings of one
+ * thing: the app's TypeScript has only the property, its selectors only the
+ * attribute, so a search for `data-theme` finds no writer. */
 :root[data-theme="light"] {
   /* Surfaces */
   --bg: #f4f6f9;

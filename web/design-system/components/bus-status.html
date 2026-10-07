@@ -63,12 +63,10 @@ h2:first-of-type { margin-top: 0; }
 .demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
   padding: 14px; margin-bottom: 6px; }
 /* ── Bus status ──────────────────────────────────────────────────────────
-   The owner's first report: "нет статуса шины на главной (нет питания,
-   ошибка, замыкание и тд)". The dashboard had a small `bus idle` chip on the
-   adapter card, and that chip was not about the bus at all — `bus_status` on
-   the adapter DTO is `enabled ? "idle" : "disabled"`, a property of the
-   adapter's own command gate. It reads "idle" for a segment whose power
-   supply has failed and for one shorted end to end.
+   NOT THE ADAPTER'S GATE. `bus_status` on the adapter DTO is
+   `enabled ? "idle" : "disabled"`, a property of the adapter's own command
+   gate: it reads "idle" for a segment whose power supply has failed and for
+   one shorted end to end. This card reads the wire itself.
 
    WHERE THE REAL FACTS COME FROM. The PHY publishes IEC 62386-101:2018 §4.11
    Table 4's own classification as two 0/1 gauges plus a rising-edge count
@@ -77,12 +75,13 @@ h2:first-of-type { margin-top: 0; }
    across the pair or a supply that has stopped — which is exactly the pair an
    operator with dark luminaires needs told apart from "no gear answered".
 
-   FIVE STATES, NOT TWO, and the fifth is the one that keeps the card honest:
+   SIX VERDICTS PLUS DISABLED, and "not observed" keeps the card honest:
    before any frame has gone out the PHY has classified nothing, so a green
    "healthy" would be a claim about a measurement nobody has taken. The
    entries counters turn a bus that is up NOW into a bus that had an episode,
    which is the difference between a wiring fault you have and a wiring fault
-   you had.
+   you had. "Contended" counts frames that could not take the bus or gave up
+   after retrying: another master, or a marginal signal.
 
    THE DETAIL LINE IS PART OF THE STATE, not decoration. "No bus power" tells
    an operator nothing they can act on; "check the DALI supply and the wiring
@@ -135,9 +134,17 @@ h2:first-of-type { margin-top: 0; }
 </head>
 <body>
 <div class="page">
-  <h2>The five states</h2>
-  <p class="note">Read top to bottom: the first that applies wins, so an active fault always
-    beats a historical one and both beat a count of collisions.</p>
+  <h2>The verdicts</h2>
+  <p class="note">Read top to bottom: the first that applies wins — after <b>Disabled</b>, which
+    is checked before everything — so an active fault always beats a historical one, and both
+    beat <b>Not observed</b>, contention and a healthy bus.</p>
+  <p class="note">The verdict says whether the wire is alive; the figure at its right says how
+    much of it is in use, and <b>own</b> beneath it how much of that is ours. It is the device's
+    own one-second gauge, the same number Stats and the OLED show; the PHY books every tick of a
+    held line as active, so a system failure reads full. The counts strip is frames,
+    <b>foreign</b> (the sniffer's forward-frame count), collisions and power-down entries;
+    system failure lives in the verdict's detail line. The history strip under the counts is in
+    <code>components/bus-load</code>.</p>
 
   <div class="demo grid2">
     <div class="card">
@@ -149,12 +156,17 @@ h2:first-of-type { margin-top: 0; }
           <div class="d">the line has been held active for over 550 ms (IEC 62386-101 §4.11) —
             a short across the pair, or the supply is gone. No gear can be reached.</div>
         </span>
+        <span class="load">
+          <div class="n">100<span class="u">%</span></div>
+          <div class="l">bus load</div>
+          <div class="s">own 0%</div>
+        </span>
       </div>
       <div class="buscounts">
         <div class="c"><div class="n">1 284</div><div class="l">frames</div></div>
-        <div class="c"><div class="n err">3</div><div class="l">power down</div></div>
-        <div class="c"><div class="n err">1</div><div class="l">sys failure</div></div>
+        <div class="c"><div class="n">0</div><div class="l">foreign</div></div>
         <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
+        <div class="c"><div class="n err">3</div><div class="l">power down</div></div>
       </div>
     </div>
 
@@ -167,12 +179,17 @@ h2:first-of-type { margin-top: 0; }
           <div class="d">the line has been held active for over 45 ms — bus power down. Check the
             DALI supply and the wiring before reading anything else on this page.</div>
         </span>
+        <span class="load">
+          <div class="n">41<span class="u">%</span></div>
+          <div class="l">bus load</div>
+          <div class="s">own 0%</div>
+        </span>
       </div>
       <div class="buscounts">
         <div class="c"><div class="n">96</div><div class="l">frames</div></div>
-        <div class="c"><div class="n err">1</div><div class="l">power down</div></div>
-        <div class="c"><div class="n">0</div><div class="l">sys failure</div></div>
+        <div class="c"><div class="n">0</div><div class="l">foreign</div></div>
         <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
+        <div class="c"><div class="n err">1</div><div class="l">power down</div></div>
       </div>
     </div>
 
@@ -185,60 +202,43 @@ h2:first-of-type { margin-top: 0; }
           <div class="d">the bus is up now, but it went down 2 times since boot — intermittent
             supply or wiring.</div>
         </span>
+        <span class="load">
+          <div class="n">6<span class="u">%</span></div>
+          <div class="l">bus load</div>
+          <div class="s">own 5%</div>
+        </span>
       </div>
       <div class="buscounts">
         <div class="c"><div class="n">7 401</div><div class="l">frames</div></div>
-        <div class="c"><div class="n warn">2</div><div class="l">power down</div></div>
-        <div class="c"><div class="n">0</div><div class="l">sys failure</div></div>
-        <div class="c"><div class="n">4</div><div class="l">collisions</div></div>
+        <div class="c"><div class="n">312</div><div class="l">foreign</div></div>
+        <div class="c"><div class="n warn">4</div><div class="l">collisions</div></div>
+        <div class="c"><div class="n err">2</div><div class="l">power down</div></div>
       </div>
     </div>
 
     <div class="card">
       <header><h3>DALI bus</h3></header>
-      <div class="bushealth ok">
-        <span class="ring">✓</span>
+      <div class="bushealth warn">
+        <span class="ring">◔</span>
         <span class="txt">
-          <div class="st">Healthy</div>
-          <div class="d">7 401 frames sent, no power-down or system-failure condition seen since boot.</div>
+          <div class="st">Contended</div>
+          <div class="d">3 frames could not take the bus and 1 gave up after retrying — another
+            master, or a marginal signal.</div>
+        </span>
+        <span class="load">
+          <div class="n">58<span class="u">%</span></div>
+          <div class="l">bus load</div>
+          <div class="s">own 12%</div>
         </span>
       </div>
       <div class="buscounts">
-        <div class="c"><div class="n">7 401</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">2 160</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">1 874</div><div class="l">foreign</div></div>
+        <div class="c"><div class="n warn">9</div><div class="l">collisions</div></div>
         <div class="c"><div class="n">0</div><div class="l">power down</div></div>
-        <div class="c"><div class="n">0</div><div class="l">sys failure</div></div>
-        <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
       </div>
     </div>
-  </div>
 
-  <h2>Nothing measured yet</h2>
-  <p class="note">A dashed ring, and the word is <b>not observed</b> rather than a colour.
-    Before the first frame the PHY has classified nothing, and green would be a claim about a
-    measurement that has not been taken — the same rule that keeps <code>unknown</code> distinct
-    from <code>off</code> in the lamp-state cell.</p>
-  <div class="demo">
-    <div class="card">
-      <header><h3>DALI bus</h3></header>
-      <div class="bushealth idle">
-        <span class="ring">·</span>
-        <span class="txt">
-          <div class="st">Not observed</div>
-          <div class="d">no frame has gone out since boot, so the PHY has classified nothing yet.
-            Run a scan or set a level.</div>
-        </span>
-      </div>
-    </div>
-  </div>
-
-  <h2>With the load figure (2026-09-05)</h2>
-  <p class="note">The verdict says whether the wire is alive; the figure at its right says how much
-    of it is in use, and <b>own</b> beneath it how much of that was us. It is the device's own
-    one-second gauge, the same number Stats and the OLED show. The counts strip trades
-    <b>sys failure</b> — already in the verdict's detail line — for <b>foreign</b>, the
-    sniffer's forward-frame count. A dash and <b>not measured</b> until the PHY has booked a tick;
-    the history strip is in <code>components/bus-load</code>.</p>
-  <div class="demo">
     <div class="card">
       <header><h3>DALI bus</h3></header>
       <div class="bushealth ok">
@@ -262,9 +262,41 @@ h2:first-of-type { margin-top: 0; }
     </div>
   </div>
 
+  <h2>Nothing measured yet</h2>
+  <p class="note">A dashed ring, and the word is <b>not observed</b> rather than a colour.
+    Before the first frame the PHY has classified nothing, and green would be a claim about a
+    measurement that has not been taken — the same rule that keeps <code>unknown</code> distinct
+    from <code>off</code> in the lamp-state cell. The load figure follows the same rule: a dash
+    and <b>not measured</b> until the PHY has booked a tick.</p>
+  <div class="demo">
+    <div class="card">
+      <header><h3>DALI bus</h3></header>
+      <div class="bushealth idle">
+        <span class="ring">·</span>
+        <span class="txt">
+          <div class="st">Not observed</div>
+          <div class="d">no frame has gone out since boot, so the PHY has classified nothing yet.
+            Run a scan or set a level.</div>
+        </span>
+        <span class="load">
+          <div class="n">—</div>
+          <div class="l">bus load</div>
+          <div class="s">not measured</div>
+        </span>
+      </div>
+      <div class="buscounts">
+        <div class="c"><div class="n">0</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">0</div><div class="l">foreign</div></div>
+        <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
+        <div class="c"><div class="n">0</div><div class="l">power down</div></div>
+      </div>
+    </div>
+  </div>
+
   <h2>Adapter switched off</h2>
   <p class="note">Not a bus fault and must not be painted as one: the commands are refused at the
-    adapter gate and nothing reaches the wire, so there is nothing to classify.</p>
+    adapter gate and nothing of ours reaches the wire, so there is no verdict to give; the load
+    figure still reads the wire, and <b>own</b> stays 0 %.</p>
   <div class="demo">
     <div class="card">
       <header><h3>DALI bus</h3></header>
@@ -275,6 +307,17 @@ h2:first-of-type { margin-top: 0; }
           <div class="d">the adapter is switched off — commands are refused at the gate, nothing
             reaches the wire</div>
         </span>
+        <span class="load">
+          <div class="n">2<span class="u">%</span></div>
+          <div class="l">bus load</div>
+          <div class="s">own 0%</div>
+        </span>
+      </div>
+      <div class="buscounts">
+        <div class="c"><div class="n">7 401</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">312</div><div class="l">foreign</div></div>
+        <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
+        <div class="c"><div class="n">0</div><div class="l">power down</div></div>
       </div>
     </div>
   </div>

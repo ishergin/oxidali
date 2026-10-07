@@ -68,10 +68,10 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
 /* Page-level tab bar — spec and colour rationale in the "Page tab bar" card. */
 .ptabs { display: flex; gap: 2px; align-items: stretch; }
-/* One line, hint inline after the label. Stacked (label over hint) the three
-   bank tabs were taller than the other three, so with any vertical alignment
-   the LABELS stopped lining up — the eye reads a tab bar by its labels, and a
-   caption is not worth breaking that for. */
+/* One line, hint inline after the label. Stacked (label over hint), the three
+   bank tabs would stand taller than the other three and, with any vertical
+   alignment, the LABELS would not line up — the eye reads a tab bar by its
+   labels, and a caption is not worth breaking that for. */
 .ptab { display: flex; align-items: baseline; gap: 7px; padding: 7px 14px 8px;
   border: 1px solid transparent; border-bottom: none;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
@@ -108,17 +108,16 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 /* Scoped to its OWN class, never to `select.sel`. An attribute row is not the
    only place a select lives — the Device type / Colour mode overrides on the
    Overview tab are `.ovr .sel` inside the same `.attr .v`, and a rule written
-   as `.attr .v select.sel` outranks `.ovr .sel { width: 100% }` on specificity
-   and stretches them. That collision shipped once already (`.ovr` vs
-   `.standdown`); a dedicated class is what stops it recurring. */
+   as `.attr .v select.sel` outranks `.ovr .sel { width: 112px }` on specificity
+   and resizes them; a dedicated class keeps the two apart. */
 .attr .v select.attr-enum { padding: 4px 7px; background: var(--raised); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
   font-size: 12px; min-width: 158px; flex: none; }
 .attr .v select.attr-enum option { background: var(--raised); color: var(--text); }
 .attr .note { grid-column: 2 / -1; font-size: 11px; color: var(--text-faint); text-align: right; }
 .attr .src { justify-self: end; }
-.attr.controls { grid-template-columns: 1fr; }
-.attr.controls .v { justify-content: flex-start; padding-right: 0; }
+.attr.controls { grid-template-columns: 1fr auto 0; }
+.attr.controls .v { justify-content: flex-end; padding-right: 0; }
 .mono { font-family: var(--mono); font-size: 12px; }
 
 .src { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
@@ -182,9 +181,9 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <div class="attr"><span class="k">System failure level</span><span class="v"><input value="254"><span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
       <!-- IEC 62386-102 Table 4 gives `fadeTime` sixteen values and nothing
            between them, so this is a select and not a text box. A free field
-           invited numbers the wire cannot carry: 500 ms became code 1 and the
-           gear faded for 700, while the card kept showing 500 until the next
-           read quietly replaced it. Code 0 carries no duration of its own —
+           would accept numbers the wire cannot carry: 500 ms is sent as code 1
+           and the gear fades for 700 while the field still says 500. Code 0
+           carries no duration of its own —
            the table prints "Extended fade" there and §9.5.2 says so — so it is
            labelled as the delegation it is, the mirror image of the note on
            the extended row below. -->
@@ -208,8 +207,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     </div>
 
     <!-- LED driver (IEC 62386-207). Shown only for a device whose declared
-         type set contains 6 — the section is already fetched with the tab, so
-         until now it was read off the wire and dropped on the floor.
+         type set contains 6; the section is fetched with the tab.
 
          `dimmingCurve` is a SELECT, not a text box: 207 defines 0 and 1 and
          reserves everything else, so a free field would invite a value the

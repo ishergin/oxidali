@@ -1,4 +1,4 @@
-<!-- @dsCard group="Components" name="Status chips" subtitle="DALI status flags, power, source, operation states, dirty" -->
+<!-- @dsCard group="Components" name="Status chips" subtitle="DALI status flags, presence, source, operation states, dirty" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -70,7 +70,6 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: v
 .chip.err  { color: var(--err);  background: var(--err-soft);  border-color: rgba(242,85,90,.28); }
 .chip.info { color: var(--info); background: var(--info-soft); border-color: rgba(77,163,255,.28); }
 .chip.idle { color: var(--text-muted); background: var(--raised); border-color: var(--border); }
-.chip.accent { color: var(--accent-strong); background: var(--accent-soft); border-color: rgba(240,180,41,.3); }
 
 .chip.spin .dot { animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
@@ -90,14 +89,18 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: v
 </head>
 <body>
 <div class="wrap">
-  <h2>Power / presence</h2>
+  <h2>Presence</h2>
   <div class="row">
-    <span class="chip accent"><span class="dot"></span>On · 254</span>
-    <span class="chip idle"><span class="dot"></span>Off</span>
-    <span class="chip idle"><span class="dot"></span>Unknown</span>
     <span class="chip ok"><span class="dot"></span>Present</span>
-    <span class="chip err"><span class="dot"></span>Unreachable</span>
+    <span class="chip idle"><span class="dot"></span>not probed</span>
+    <span class="chip warn"><span class="dot"></span>not answering</span>
   </div>
+  <p class="note">
+    A lamp's power and level are not a chip. A chip has a <i>fixed</i> hue for a
+    <i>named</i> condition; a lamp's state carries its own colour and level, so it
+    has its own cell (<code>components/lamp-state</code>), and a gear that stops
+    answering shows there as <b>no answer</b>.
+  </p>
 
   <h2>DALI status flags (QueryStatus)</h2>
   <!-- All eight bits of IEC 62386-102 table 12, named after the §9.16
@@ -117,13 +120,13 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: v
   <!-- "Lamp lit" is bit 2 `lampOn` (§9.16.4): FALSE when the lamp is off,
        during startup, and on total lamp failure. It is the only thing that
        separates "the gear reports light" from "level > 0" — so it must not be
-       captioned as an on/off duplicate of the power chip above.
+       captioned as an on/off duplicate of the lamp's power state.
 
-       "Power cycle seen" was captioned "Power failure" until 2026-08-16, which
-       named a fault the gear never reported: §9.16.9 calls the bit
-       `powerCycleSeen`, and §11.5.15 makes QUERY POWER FAILURE a legacy
-       spelling of the same bit. Amber because a gear that rebooted since we
-       last drove it has stale RAM state, not because anything failed. -->
+       "Power cycle seen", not "Power failure": the gear reports no fault.
+       §9.16.9 calls the bit `powerCycleSeen`, and §11.5.15 makes QUERY POWER
+       FAILURE a legacy spelling of the same bit. Amber because a gear that
+       rebooted since we last drove it has stale RAM state, not because
+       anything failed. -->
 
 
   <h2>Attribute source / freshness</h2>
@@ -147,9 +150,9 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: v
     <b>unknown</b> is neutral on purpose, and it is not the same as a failure.
     The controller keeps a finished operation for sixty seconds; a client that
     asks after that gets a <code>404</code> and genuinely cannot learn how it
-    ended. Painting that green claimed a write had landed — the screens act on
-    that answer, clearing an operator's edited rows — and painting it red would
-    accuse a write that most likely succeeded. Neutral says the one true thing:
+    ended. Green would claim a write had landed — the screens act on that
+    answer, clearing an operator's edited rows — and red would accuse a write
+    that most likely succeeded. Neutral says the one true thing:
     nobody knows any more.
   </p>
 

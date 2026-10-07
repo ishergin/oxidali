@@ -110,10 +110,12 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .attr .delta { font-family: var(--mono); font-size: 11px; text-align: right; color: var(--text-faint); }
 .attr .delta.live { color: var(--info); }
 .attr.sub .k, .attr.sub .v { color: var(--text-faint); font-size: 12px; }
-.chgnote { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
-.chgnote code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
-.chgh { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
-  letter-spacing: .08em; margin: 26px 0 10px; }
+/* On Stats the bridge's connection state is a chip in the card header, not a counter row: it has
+   no delta, and a "0" beside free-running totals reads as a count. */
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 500; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
 </style>
 </head>
 <body>
@@ -168,7 +170,9 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="foot">118 succeeded · 2 failed</div>
       </div>
       <!-- The device's own one-second gauge, the same number the dashboard
-           card and the OLED show. Mono and neutral: a load figure is not a
+           card and the OLED show: computed once on the device, never in a
+           browser. The foot's own share and foreign frame count together
+           answer "busy — with whom?". Mono and neutral: a load figure is not a
            lamp level, and the tile must not read as one. -->
       <div class="tile">
         <div class="l">DALI bus load</div>
@@ -189,10 +193,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
           <span class="v">15 744 <span class="unit">B</span></span>
           <span class="delta"></span>
         </div>
-        <!-- `@boot`, and it is the whole fix: the walk that produces this
-             number masks the PHY interrupt for 1,7-4,5 ms, so it runs at the
-             boot stages only and `snapshot()` returns the cache. A stale
-             number is a defect only while it is served as a current one. -->
+        <!-- `@boot`, on the row and in the tile foot: the walk that produces
+             this number holds the heap's lock longer than a tick, so it runs at
+             the boot stages only and `snapshot()` returns the cache (02 §No long
+             spinlock holds). A stale number is a defect only while it is served
+             as a current one. -->
         <div class="attr">
           <span class="k">Internal largest block <span class="unit">@boot</span></span>
           <span class="v">7 168 <span class="unit">B</span></span>
@@ -237,8 +242,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
              HEALTHY board: the decoder tolerates one lost sample per tick. -->
         <div class="attr"><span class="k">ISR ticks lost</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">ISR ticks extra</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr sub"><span class="k">ISR late ticks</span><span class="v">55</span><span class="delta"></span></div>
-        <div class="attr sub"><span class="k">ISR max gap</span><span class="v">326 <span class="unit">µs</span></span><span class="delta"></span></div>
+        <div class="attr"><span class="k">ISR late ticks</span><span class="v">55</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">ISR max gap</span><span class="v">326 <span class="unit">µs</span></span><span class="delta"></span></div>
         <!-- Our own backward window, by cause. The first three are faults of
              ONE gear's answer and are gated at zero on the bench; `multi
              answer` is the same physics behind a broadcast, group or COMPARE
@@ -249,8 +254,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Backward undecodable total</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Backward frame size total</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Backward incomplete total</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr sub"><span class="k">Backward multi answer total</span><span class="v">2</span><span class="delta live">+2</span></div>
-        <div class="attr sub"><span class="k">Backward late rejected total</span><span class="v">14</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Backward multi answer total</span><span class="v">2</span><span class="delta live">+2</span></div>
+        <div class="attr"><span class="k">Backward late rejected total</span><span class="v">14</span><span class="delta"></span></div>
       </div>
 
       <div class="card span2">
@@ -267,16 +272,10 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Cancelled</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
-      <!-- The three blocks this card's own changelog announced on 2026-09-01
-           and never drew. `stats.tsx` has rendered them since that day; the
-           card said "Added" and showed nothing, which is the same
-           self-concealing shape the changelog entry below describes one level
-           up — a page that looks complete because every OTHER block is there.
-           Drawn 2026-09-16. -->
       <div class="card">
         <header>
           <h3>Home Assistant bridge</h3>
-          <span class="note"><span style="color:var(--ok)">connected</span></span>
+          <span class="chip ok"><span class="dot"></span>connected</span>
         </header>
         <div class="attr"><span class="k">Publishes</span><span class="v">8 411</span><span class="delta live">+4</span></div>
         <div class="attr"><span class="k">Publish failures</span><span class="v">0</span><span class="delta"></span></div>
@@ -290,14 +289,30 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Events typed from registry</span><span class="v">1 198</span><span class="delta live">+1</span></div>
         <div class="attr"><span class="k">Events ambiguous scheme</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Events unattributed</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr sub"><span class="k">Scans completed</span><span class="v">3</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Scans completed</span><span class="v">3</span><span class="delta"></span></div>
       </div>
 
+      <!-- `Ticks cut total` counts the publishing ticks whose plan a schedule
+           change cut short: the changed schedule's commands wait for the next
+           tick while the rest of the plan goes out. A total, so it carries the
+           change column; a steady climb is a rule that keeps switching a
+           schedule. -->
       <div class="card">
         <header><h3>HCL</h3></header>
         <div class="attr"><span class="k">Ticks cut total</span><span class="v">2</span><span class="delta"></span></div>
       </div>
 
+      <!-- The live figures are gauges with no change column: `Continuations
+           pending` (the `wait` and `after` steps on the engine's wheel now,
+           falling when one fires or a replacing document cancels it), `Timers
+           active`, `Rules loaded`, `Vars in use` and the three latency
+           percentiles. A falling `Timers active` is a timer that fired, not a
+           wrapped u32. The card ends with one row per counter the rules
+           document names, spelled as the rule spells it —
+           `stat("hall_button").count()` reads as `stat("hall_button")`. The
+           rows follow the document: a name it brings appears at 0, a name it
+           keeps keeps its count, a name it drops is gone; they are totals and
+           carry the change column. -->
       <div class="card span2">
         <header><h3>Rules engine</h3></header>
         <div class="attr"><span class="k">Activations total</span><span class="v">412</span><span class="delta live">+1</span></div>
@@ -358,89 +373,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Tx dropped total</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Rx ring overruns total</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Rx fifo overflows total</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr sub"><span class="k">Link up events total</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Link up events total</span><span class="v">1</span><span class="delta"></span></div>
       </div>
 
     </div>
   </div>
-
-
-<div class="chgh">2026-09-30 — a tick a schedule change cut</div>
-<p class="chgnote">An <b>HCL</b> card joins the page with one total: <b>Ticks cut total</b>, the
-  publishing ticks whose plan a schedule change cut short — the changed schedule's commands wait
-  for the next tick while the rest of the plan goes out. It is a total and carries the change
-  column; a steady climb means a rule that keeps switching a schedule.</p>
-
-<div class="chgh">2026-09-30 — the counters a rule names</div>
-<p class="chgnote">The <b>Rules engine</b> card ends with one row per counter the rules document
-  names — <code>stat("presses").count()</code> reads as <b>stat("presses")</b>, spelled as the rule
-  spells it, so the row points back at its source. The rows follow the document: a name it brings
-  appears at 0, a name it keeps keeps its count, a name it drops is gone. They are totals and carry
-  the change column like every other total.</p>
-<p class="chgnote"><b>Continuations pending</b> joins the live figures: how many <code>wait</code>
-  and <code>after</code> steps sit on the engine's wheel now. It falls when one fires and when a
-  new document cancels them, so it is a gauge with no change column, beside
-  <code>timers_active</code>.</p>
-
-<div class="chgh">2026-09-24 — the receive ring, counted</div>
-<p class="chgnote">A <b>Network</b> card: the Ethernet MAC's packet and loss totals. Two are new —
-  <b>Rx ring overruns</b>, frames the MAC discarded because no receive descriptor was free, and
-  <b>Rx fifo overflows</b>, frames lost before the ring. The MAC keeps both in a read-to-clear
-  register nothing read, so until now a ring too small for its traffic lost frames with every
-  counter at zero. They are plain rows, not faults: the ring is sized against them, and TCP
-  resends what they lose.</p>
-
-
-<div class="chgh">2026-09-21 — several gear answered, and the row that says so</div>
-<p class="chgnote">The DALI card gains the five rows of <b>our own backward window</b>, by cause.
-  Four of them existed on <code>/api/v1/stats</code> since <code>ISSUE-104</code> and were drawn
-  nowhere; the fifth is new: <b>Backward multi answer</b> — a §8.2.5 violation behind a broadcast,
-  group or <code>COMPARE</code> frame, which is several real gear answering one window and failing
-  to align. It is the bus-health probe's ordinary reading (2 of 8 probes on the bench that day), so
-  it is a plain row and never <code>warn</code>; the three rows above it keep meaning "one gear was
-  asked and its answer was unreadable" and are gated at zero. <b>Late rejected</b> stays the control.</p>
-
-<div class="chgh">2026-09-16 — a cached number said so, and four that reached no gate</div>
-<p class="chgnote"><b>Internal largest block</b> carries <code>@boot</code>, on the row and in the
-  tile foot (<code>ISSUE-90</code>). The walk behind it — every block of every matching heap under
-  the allocator's critical section — masks the PHY interrupt for 1,7-4,5 ms, so it moved to the
-  boot stages and the live read returns the cache. That was the right move and it left a stale
-  number sitting between two live ones, on a five-second poll, in a card with delta chips. The
-  suffix is the whole fix: a stale number is a defect only while it is served as a current one.</p>
-<p class="chgnote">The DALI card gains four rows from the interrupt's own accounting
-  (<code>ISSUE-89</code>): ticks it found <b>missing</b>, ticks serviced <b>twice</b>, ticks the
-  interrupt itself timed as <b>late</b>, and the <b>worst gap</b>. Until now they existed only in
-  a serial line, which is to say the acceptance of that remainder rested on a human reading a
-  log. Two are gated at zero on the bench; <code>late</code> is not, because 55 of them against
-  zero corrupted captures is a healthy board — the decoder tolerates one lost sample per tick.</p>
-<p class="chgnote">And the three blocks this card announced on 2026-09-01 and never drew —
-  <b>Home Assistant bridge</b>, <b>Input devices</b>, <b>Rules engine</b> — are drawn. The screen
-  has had them since that day; the card's changelog said "Added" above markup that showed
-  nothing. Exactly the self-concealing shape the entry below describes, one level up.</p>
-
-<div class="chgh">2026-09-05 — the bus load tile</div>
-<p class="chgnote">A fourth tile: <b>DALI bus load</b>, the device's own one-second occupancy gauge
-  — the same number the dashboard card and the OLED strip show, because it is computed once on
-  the device and never in a browser. Its foot carries our own share and the sniffer's foreign
-  forward-frame count, which together answer "busy — with whom?". The DALI card gains the three
-  rows behind the tile; the two per-mille rows are gauges and show no change column.</p>
-
-<div class="chgh">2026-09-01 — three blocks that reached no screen</div>
-<p class="chgnote"><code>/api/v1/stats</code> publishes <b>eight</b> blocks and this page rendered
-  <b>five</b>. The Home Assistant bridge, every Part 103 input figure and the entire rules engine
-  — nineteen counters — were computed, serialized, sent, and displayed nowhere. Added as
-  <b>Home Assistant bridge</b>, <b>Input devices</b> and <b>Rules engine</b>.</p>
-<p class="chgnote">The defect is self-concealing, which is why it lasted: every other block IS on
-  the page, so it looks complete, and there is no count to check it against.
-  <code>scripts/verify_read_surface.py</code> is that count now — it compares the DTO's blocks
-  against the screen's and fails on the next one, with an allowlist whose entry count only ever
-  goes down.</p>
-<p class="chgnote"><code>mqtt.connected</code> is a <b>boolean</b> and renders as a chip in the
-  card header rather than being coerced into the counter grid: a connection state has no delta,
-  and a "0" beside two free-running totals invites reading it as a count. The rules block's live
-  figures — <code>timers_active</code>, <code>rules_loaded</code>, <code>vars_in_use</code> and
-  the three latency percentiles — are declared gauges for the same reason: a falling
-  <code>timers_active</code> is a timer that fired, not a wrapped <code>u32</code>.</p>
 </div>
 </body>
 </html>

@@ -90,9 +90,6 @@ h2:first-of-type { margin-top: 0; }
 .buscounts .l { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; margin-top: 1px; }
 
 /* ── Bus load ────────────────────────────────────────────────────────────
-   The owner's ask: "загрузка шины в % на главной, чужие кадры, коллизии, и
-   небольшой график истории, который работает только в браузере".
-
    WHERE THE NUMBER COMES FROM. The PHY interrupt books every 104 µs tick as
    idle, active (a frame on the wire — ours, another master's, a collision)
    or transmitting; a one-second window turns the ticks into ONE per-mille
@@ -233,7 +230,7 @@ h2:first-of-type { margin-top: 0; }
           <span class="t">Bus load · last 5 min</span>
           <span class="legend"><span><i></i>load</span><span><i class="own"></i>our share</span><span><i class="coll"></i>collision</span></span>
         </div>
-        <div class="empty">collecting — one sample so far, the next arrives in 2 s</div>
+        <div class="empty">collecting — 1 sample so far, the next arrives with the next snapshot</div>
       </div>
     </div>
   </div>
@@ -241,8 +238,8 @@ h2:first-of-type { margin-top: 0; }
   <h2>Not measured</h2>
   <p class="note">A transport with no PHY interrupt — the host simulator before its first exchange,
     the first milliseconds after a boot — has booked no tick at all. Zero there would be a claim
-    about a quiet bus; a dash and <b>not measured</b> is the honest reading, and the history stays
-    in the collecting state until a measured sample arrives.</p>
+    about a quiet bus; a dash and <b>not measured</b> is the honest reading. The history keeps no
+    unmeasured sample, and its strip says <b>not measured</b> too until a measured one arrives.</p>
   <div class="demo">
     <div class="card" style="max-width:560px">
       <header><h3>DALI bus</h3><button class="act">Counters →</button></header>
@@ -258,6 +255,19 @@ h2:first-of-type { margin-top: 0; }
           <div class="l">bus load</div>
           <div class="s">not measured</div>
         </span>
+      </div>
+      <div class="buscounts">
+        <div class="c"><div class="n">0</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">0</div><div class="l">foreign</div></div>
+        <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
+        <div class="c"><div class="n">0</div><div class="l">power down</div></div>
+      </div>
+      <div class="busload">
+        <div class="hd">
+          <span class="t">Bus load · last 5 min</span>
+          <span class="legend"><span><i></i>load</span><span><i class="own"></i>our share</span><span><i class="coll"></i>collision</span></span>
+        </div>
+        <div class="empty">not measured — the PHY has booked no tick yet</div>
       </div>
     </div>
   </div>

@@ -78,10 +78,10 @@ h2:first-of-type { margin-top: 0; }
    active tab) carries the selection instead of hue, so it survives being
    read without colour at all. */
 .ptabs { display: flex; gap: 2px; align-items: stretch; margin-top: 16px; }
-/* One line, hint inline after the label. Stacked (label over hint) the three
-   bank tabs were taller than the other three, so with any vertical alignment
-   the LABELS stopped lining up — the eye reads a tab bar by its labels, and a
-   caption is not worth breaking that for. */
+/* One line, hint inline after the label. Stacked (label over hint), the three
+   bank tabs would stand taller than the other three and, with any vertical
+   alignment, the LABELS would not line up — the eye reads a tab bar by its
+   labels, and a caption is not worth breaking that for. */
 .ptab { display: flex; align-items: baseline; gap: 7px; padding: 7px 14px 8px;
   border: 1px solid transparent; border-bottom: none;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
@@ -122,11 +122,9 @@ h2:first-of-type { margin-top: 0; }
   box-shadow: 0 0 0 1px var(--accent), 0 0 10px var(--accent-glow); }
 
 /* ── Narrow viewports: the bar scrolls, it never wraps and never clips ────
-   Measured 2026-09-01 at a 700 px viewport: the six device tabs are ~880 px
-   wide, `.ptabs` was a plain `display:flex` with no wrap and no overflow, so
-   Diagnostics — the tab an operator reaches for when something is wrong —
-   was simply not on the screen and nothing said so. That is the owner's
-   report, "верстка табов не влезает в узкие экраны".
+   The six device tabs are ~880 px wide. A strip that neither wraps nor
+   scrolls puts Diagnostics — the tab an operator reaches for when something
+   is wrong — off the screen on a narrow viewport, and nothing says so.
 
    WRAPPING IS THE WRONG FIX for this bar. A folder-tab strip draws a line
    the active tab breaks (`.ptabline`); on a second row the line is under the
@@ -153,10 +151,10 @@ h2:first-of-type { margin-top: 0; }
 
 /* The scene selector is the other tab bar, and it takes the opposite
    decision: sixteen scenes never fit one row at any width, so it wraps by
-   design. What changed is the size — each tab was a three-line block
-   (S-number over name over row count) and sixteen of them cost two rows and
-   ~90 px of vertical space before the operator reached the table they came
-   for. One line, name inline, count as a faint suffix. */
+   design. Each tab is one line — S-number, name inline, row count as a faint
+   suffix — because a three-line block (number over name over count) makes
+   sixteen of them cost vertical space before the operator reaches the table
+   they came for. */
 .scene-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
 .stab { display: inline-flex; align-items: baseline; gap: 6px; padding: 5px 10px;
   border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface);
@@ -175,12 +173,11 @@ h2:first-of-type { margin-top: 0; }
 <div class="page">
 
   <h2>Device detail — the six tabs</h2>
-  <p class="note">One tab is one fetch. <code>Overview</code> needs only the device core
-    (<code>GET …/physical-devices/{short}</code>); every other tab adds exactly the attribute
-    sections it renders (<code>?sections=…</code>), and <code>Identity</code> additionally asks for
-    bank coverage. The screen used to pull all twelve sections plus bank coverage every 5 s
-    for whichever card happened to be on screen — 7.7 KB per device per poll, of which the
-    operator was looking at one card.</p>
+  <p class="note">Each tab is one attribute fetch. The shell polls the device core
+    (<code>GET …/physical-devices/{short}</code>); each tab adds exactly the attribute
+    sections it renders (<code>?sections=…</code>, <code>common_102</code> on every tab), and
+    <code>Identity</code> additionally asks for bank coverage. A tab asks for no section it
+    does not draw.</p>
   <div class="demo">
     <div class="ptabs">
       <a class="ptab active" href="#">Overview</a>

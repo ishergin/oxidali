@@ -1,4 +1,4 @@
-<!-- @dsCard group="Screens" name="Devices list" subtitle="Physical devices table: SA, type, state, status flags, groups, bound VL" -->
+<!-- @dsCard group="Screens" name="Devices list" subtitle="Physical devices table: SA, type, state, status flags, bound VL" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -74,8 +74,6 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 500; }
 .chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.chip.accent { color: var(--accent-strong); background: var(--accent-soft); }
-.chip.idle { color: var(--text-muted); background: var(--raised); }
 .chip.err { color: var(--err); background: var(--err-soft); }
 .chip.warn { color: var(--warn); background: var(--warn-soft); }
 .chip.ok { color: var(--ok); background: var(--ok-soft); }
@@ -93,8 +91,6 @@ tbody tr.hovered td { background: var(--overlay); }
 td .nm { font-size: 13px; font-weight: 550; }
 td .nm.faint { color: var(--text-faint); font-style: italic; font-weight: 400; }
 td .mono { font-family: var(--mono); font-size: 12px; }
-td .groups { font-family: var(--mono); font-size: 12px; color: var(--text-muted); letter-spacing: .04em; }
-td .groups.none { color: var(--text-faint); }
 td .ok-txt { font-size: 12px; color: var(--text-faint); }
 td .seen { font-size: 12px; color: var(--text-muted); }
 td .seen.never { color: var(--text-faint); font-style: italic; }
@@ -117,10 +113,6 @@ td .vl.none { color: var(--text-faint); font-style: italic; font-family: var(--f
 .lampstate.off .lamplv { color: var(--text-muted); }
 .lampstate.unknown .lampdot { background: transparent; border-style: dashed; border-color: var(--text-faint); box-shadow: none; }
 .lampstate.unknown .lamplv { color: var(--text-faint); font-style: italic; font-family: var(--font); }
-.chgnote { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
-.chgdemo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px; }
-.chgh { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
-  letter-spacing: .08em; margin: 26px 0 10px; }
 </style>
 </head>
 <body>
@@ -136,11 +128,13 @@ td .vl.none { color: var(--text-faint); font-style: italic; font-family: var(--f
   </div>
 
   <div class="table-wrap">
+    <!-- No Groups column: a list of group numbers cannot show a membership's
+         desired-versus-applied split; the group matrix does. -->
     <table>
       <thead>
         <tr>
           <th>SA</th><th>Name</th><th>Type</th><th>State</th><th>Status</th>
-          <th>Groups</th><th>Bound VL</th><th>Last seen</th>
+          <th>Bound VL</th><th>Last seen</th>
         </tr>
       </thead>
       <tbody>
@@ -148,9 +142,8 @@ td .vl.none { color: var(--text-faint); font-style: italic; font-family: var(--f
           <td><span class="badge addr">SA 00</span></td>
           <td><span class="nm">Hall spot 1</span></td>
           <td><span class="badge">DT6 LED</span></td>
-          <td><span class="chip accent"><span class="dot"></span>On · 254</span></td>
+          <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,1.00);--lamp-glow:0 0 7px rgba(240,180,41,0.45)"></span><span class="lamplv">254</span></span></td>
           <td><span class="ok-txt">OK</span></td>
-          <td><span class="groups">G0 G3 G6</span></td>
           <td><span class="vl">VL 02 <span class="vname">· Hall spot 1</span></span></td>
           <td><span class="seen">2 s ago</span></td>
         </tr>
@@ -158,9 +151,8 @@ td .vl.none { color: var(--text-faint); font-style: italic; font-family: var(--f
           <td><span class="badge addr">SA 01</span></td>
           <td><span class="nm">Hall spot 2</span></td>
           <td><span class="badge">DT6 LED</span></td>
-          <td><span class="chip accent"><span class="dot"></span>On · 254</span></td>
+          <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,0.71);--lamp-glow:0 0 7px rgba(240,180,41,0.45)"></span><span class="lamplv">140</span></span></td>
           <td><span class="ok-txt">OK</span></td>
-          <td><span class="groups">G0 G3 G6</span></td>
           <td><span class="vl">VL 03 <span class="vname">· Hall spot 2</span></span></td>
           <td><span class="seen">2 s ago</span></td>
         </tr>
@@ -168,9 +160,8 @@ td .vl.none { color: var(--text-faint); font-style: italic; font-family: var(--f
           <td><span class="badge addr">SA 04</span></td>
           <td><span class="nm">Kitchen spot</span></td>
           <td><span class="badge dt8">DT8 CCT</span></td>
-          <td><span class="chip accent"><span class="dot"></span>On · 200</span></td>
+          <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,185,117,0.86);--lamp-glow:0 0 7px rgba(255,185,117,0.45)"></span><span class="lamplv">200</span><span class="lampcq">2900 K</span></span></td>
           <td><span class="ok-txt">OK</span></td>
-          <td><span class="groups">G0 G4</span></td>
           <td><span class="vl">VL 12 <span class="vname">· Kitchen</span></span></td>
           <td><span class="seen">2 s ago</span></td>
         </tr>
@@ -178,9 +169,8 @@ td .vl.none { color: var(--text-faint); font-style: italic; font-family: var(--f
           <td><span class="badge addr">SA 05</span></td>
           <td><span class="nm">Kitchen island</span></td>
           <td><span class="badge dt8">DT8 CCT</span></td>
-          <td><span class="chip idle"><span class="dot"></span>Off</span></td>
+          <td><span class="lampstate off"><span class="lampdot"></span><span class="lamplv">Off</span></span></td>
           <td><span class="ok-txt">OK</span></td>
-          <td><span class="groups">G0 G4</span></td>
           <td><span class="vl">VL 01 <span class="vname">· Kitchen island</span></span></td>
           <td><span class="seen">14 s ago</span></td>
         </tr>
@@ -188,9 +178,8 @@ td .vl.none { color: var(--text-faint); font-style: italic; font-family: var(--f
           <td><span class="badge addr">SA 08</span></td>
           <td><span class="nm">Living wall wash</span></td>
           <td><span class="badge dt8">DT8 RGB</span></td>
-          <td><span class="chip accent"><span class="dot"></span>On · 120</span></td>
+          <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,81,35,0.66)"></span><span class="lamplv">120</span><span class="lampcq">#DC461E</span></span></td>
           <td><span class="chip warn"><span class="dot"></span>Limit error</span></td>
-          <td><span class="groups">G6</span></td>
           <td><span class="vl">VL 04 <span class="vname">· Living CCT</span></span></td>
           <td><span class="seen">31 s ago</span></td>
         </tr>
@@ -198,9 +187,8 @@ td .vl.none { color: var(--text-faint); font-style: italic; font-family: var(--f
           <td><span class="badge addr">SA 12</span></td>
           <td><span class="nm">Stair riser</span></td>
           <td><span class="badge">DT6 LED</span></td>
-          <td><span class="chip idle"><span class="dot"></span>Off</span></td>
+          <td><span class="lampstate off"><span class="lampdot"></span><span class="lamplv">Off</span></span></td>
           <td><span class="chip err"><span class="dot"></span>Lamp failure</span></td>
-          <td><span class="groups">G3</span></td>
           <td><span class="vl">VL 07 <span class="vname">· Stairs</span></span></td>
           <td><span class="seen">4 m ago</span></td>
         </tr>
@@ -208,9 +196,8 @@ td .vl.none { color: var(--text-faint); font-style: italic; font-family: var(--f
           <td><span class="badge addr">SA 21</span></td>
           <td><span class="nm">Workbench strip</span></td>
           <td><span class="badge">DT6 LED</span></td>
-          <td><span class="chip idle"><span class="dot"></span>Off</span></td>
+          <td><span class="lampstate off"><span class="lampdot"></span><span class="lamplv">Off</span></span></td>
           <td><span class="ok-txt">OK</span></td>
-          <td><span class="groups none">—</span></td>
           <td><span class="vl none">unbound</span></td>
           <td><span class="seen">1 h ago</span></td>
         </tr>
@@ -218,33 +205,14 @@ td .vl.none { color: var(--text-faint); font-style: italic; font-family: var(--f
           <td><span class="badge addr">SA 30</span></td>
           <td><span class="nm faint">— unnamed</span></td>
           <td><span class="badge">DT6 LED</span></td>
-          <td><span class="chip idle"><span class="dot"></span>Unknown</span></td>
+          <td><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">unknown</span></span></td>
           <td><span class="ok-txt">—</span></td>
-          <td><span class="groups none">—</span></td>
           <td><span class="vl none">unbound</span></td>
           <td><span class="seen never">never</span></td>
         </tr>
       </tbody>
     </table>
   </div>
-
-<div class="chgh">2026-09-01 — the State cell, and one column fewer</div>
-<p class="chgnote">Two changes from the owner's review. <b>Groups is gone</b>: it was a comma
-  list of numbers that could not show the desired-versus-applied split the membership actually
-  has, and the device card has a whole tab that can — a column that cannot tell the truth about
-  its own data is worse than no column. <b>State carries the fixture's colour</b>: it was the
-  generic status chip with a fixed amber dot, so two lamps at the same level looked identical
-  whether one ran 2700 K and the other 6500 K, and a deep-red RGB fixture looked like a warm
-  white one. Full spec in <code>components/lamp-state</code>.</p>
-<div class="chgdemo">
-  <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.82);--lamp-glow:0 0 7px rgba(240,180,41,.45)"></span><span class="lamplv">180</span></span>
-  &nbsp;&nbsp;&nbsp;
-  <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,166,88,.92);--lamp-glow:0 0 7px rgba(255,166,88,.5)"></span><span class="lamplv">220</span><span class="lampcq">2900 K</span></span>
-  &nbsp;&nbsp;&nbsp;
-  <span class="lampstate off"><span class="lampdot"></span><span class="lamplv">Off</span></span>
-  &nbsp;&nbsp;&nbsp;
-  <span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">unknown</span></span>
-</div>
 </div>
 </body>
 </html>

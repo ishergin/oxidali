@@ -1,4 +1,4 @@
-<!-- @dsCard group="Screens" name="Device detail — DT6 driver" subtitle="Part 207 failure and operating bytes: the section that read nineteen fields and rendered one" -->
+<!-- @dsCard group="Screens" name="Device detail — DT6 driver" subtitle="Part 207 failure and operating bytes: failure chips beside the summary byte, reference measurement, current protector" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -63,12 +63,11 @@ h2:first-of-type { margin-top: 0; }
 .demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
   padding: 14px; margin-bottom: 6px; }
 /* ── LED driver · Part 207 ───────────────────────────────────────────────
-   Found by counting, 2026-09-01: the `dt6_led` attribute section carries
-   NINETEEN fields, the controller reads them, the registry stores them, the
-   REST payload ships them — and the device card rendered exactly one,
-   `dimming_curve`. The failure half is the half that matters: a driver
-   reporting a short or an open circuit is a fault an operator has to act on,
-   and it was visible on no screen at all.
+   The `dt6_led` attribute section carries NINETEEN fields; the controller
+   reads them, the registry stores them and the REST payload carries them, and
+   this card is where they reach an operator. The failure half is the half that
+   matters: a driver reporting a short or an open circuit is a fault an
+   operator has to act on.
 
    THE TRAP THIS CARD HAS TO AVOID, and it is a labelling trap. The
    Diagnostics tab already shows rows called "Short circuit", "Open circuit",

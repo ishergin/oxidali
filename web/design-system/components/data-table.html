@@ -63,17 +63,15 @@ h2:first-of-type { margin-top: 0; }
 .demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
   padding: 14px; margin-bottom: 6px; }
 /* ── Data table ──────────────────────────────────────────────────────────
-   Every list in this product is one of these. Two things about it are new,
-   and both come from the same owner report: "таблицы обрезаются по ширине на
-   узких экранах (у вирт ламп кнопка unbind например всегда обрезается)".
+   Every list in this product is one of these. Two rules keep a table wider
+   than its panel usable, with every column reachable:
 
-   1. THE SCROLLBAR IS ALWAYS VISIBLE. `.table-wrap` has always been
-      `overflow: auto`, so the table was never truly truncated — it scrolled.
-      But macOS draws overlay scrollbars, which are invisible until something
-      scrolls, so a table wider than its panel looks exactly like a table that
-      has been cut off. An affordance that only appears after you have already
-      found the thing it is advertising is not an affordance. 8 px, themed,
-      always drawn.
+   1. THE SCROLLBAR IS ALWAYS VISIBLE. `.table-wrap` is `overflow: auto`, so
+      a wide table scrolls rather than truncating. But macOS draws overlay
+      scrollbars, which are invisible until something scrolls, so a table
+      wider than its panel looks exactly like a table that has been cut off.
+      An affordance that only appears after you have already found the thing
+      it is advertising is not an affordance. 8 px, themed, always drawn.
 
    2. THE ACTION COLUMN IS STICKY. Scrolling is the wrong answer for the one
       column an operator reaches for by reflex — Unbind, Delete, Rebind. It
@@ -152,9 +150,9 @@ tbody tr:hover .acts-col { background: var(--raised); }
 
   <h2>Destructive actions arm before they fire</h2>
   <p class="note">One click arms and the label becomes <b>Sure?</b>; a second within three
-    seconds performs it, and silence disarms. The same two-step Unbind has used since it
-    shipped — a delete that removes a lamp's name, its group rows and its scene rows deserves
-    at least what unbinding gets.</p>
+    seconds performs it, and silence disarms. Unbind and Delete share the two-step — a delete
+    that removes a lamp's name, its group rows and its scene rows deserves at least what
+    unbinding gets.</p>
   <div class="demo">
     <button class="btn sm ghost danger">Delete</button>
     &nbsp;&nbsp;
