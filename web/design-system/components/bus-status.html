@@ -87,10 +87,15 @@ h2:first-of-type { margin-top: 0; }
    an operator nothing they can act on; "check the DALI supply and the wiring
    before reading anything else on this page" tells them where to start and,
    as importantly, that every other reading on the screen is now suspect. */
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
-.card header { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--border); }
-.card header h3 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--text-faint); flex: 1; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  margin-bottom: 14px; }
+.grid2 > .card { margin-bottom: 0; }
+.card > header { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
+.card > header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+/* The card's one link: the header's Counters →, to the Diagnostics page that
+   holds the evidence behind every number below. */
+.act { font-size: 11px; color: var(--info); background: none; border: none; cursor: pointer; font-family: var(--font); padding: 0; }
 
 .bushealth { display: flex; align-items: flex-start; gap: 12px; padding: 14px; }
 /* A ring, not a filled dot: the lamp-state dot is filled and carries a
@@ -111,8 +116,9 @@ h2:first-of-type { margin-top: 0; }
 .bushealth.idle .ring { border-style: dashed; }
 .bushealth.idle .st { color: var(--text-muted); }
 
-/* Four numbers under the verdict, each a link back to the evidence. Faint by
-   the caption rule; the verdict above is the thing being read. */
+/* Four plain numbers under the verdict; the evidence behind them is the
+   header's Counters → link. Captions faint by the caption rule; the verdict
+   above is the thing being read. */
 .buscounts { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border); }
 .buscounts .c { padding: 9px 14px; border-right: 1px solid var(--border-soft); }
 .buscounts .c:last-child { border-right: none; }
@@ -148,7 +154,7 @@ h2:first-of-type { margin-top: 0; }
 
   <div class="demo grid2">
     <div class="card">
-      <header><h3>DALI bus</h3></header>
+      <header><h3>DALI bus</h3><a class="act" href="#/diagnostics" style="text-decoration:none">Counters →</a></header>
       <div class="bushealth err">
         <span class="ring">⚠</span>
         <span class="txt">
@@ -163,7 +169,7 @@ h2:first-of-type { margin-top: 0; }
         </span>
       </div>
       <div class="buscounts">
-        <div class="c"><div class="n">1 284</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">1284</div><div class="l">frames</div></div>
         <div class="c"><div class="n">0</div><div class="l">foreign</div></div>
         <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
         <div class="c"><div class="n err">3</div><div class="l">power down</div></div>
@@ -171,7 +177,7 @@ h2:first-of-type { margin-top: 0; }
     </div>
 
     <div class="card">
-      <header><h3>DALI bus</h3></header>
+      <header><h3>DALI bus</h3><a class="act" href="#/diagnostics" style="text-decoration:none">Counters →</a></header>
       <div class="bushealth err">
         <span class="ring">⚠</span>
         <span class="txt">
@@ -194,7 +200,7 @@ h2:first-of-type { margin-top: 0; }
     </div>
 
     <div class="card">
-      <header><h3>DALI bus</h3></header>
+      <header><h3>DALI bus</h3><a class="act" href="#/diagnostics" style="text-decoration:none">Counters →</a></header>
       <div class="bushealth warn">
         <span class="ring">◔</span>
         <span class="txt">
@@ -209,7 +215,7 @@ h2:first-of-type { margin-top: 0; }
         </span>
       </div>
       <div class="buscounts">
-        <div class="c"><div class="n">7 401</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">7401</div><div class="l">frames</div></div>
         <div class="c"><div class="n">312</div><div class="l">foreign</div></div>
         <div class="c"><div class="n warn">4</div><div class="l">collisions</div></div>
         <div class="c"><div class="n err">2</div><div class="l">power down</div></div>
@@ -217,7 +223,7 @@ h2:first-of-type { margin-top: 0; }
     </div>
 
     <div class="card">
-      <header><h3>DALI bus</h3></header>
+      <header><h3>DALI bus</h3><a class="act" href="#/diagnostics" style="text-decoration:none">Counters →</a></header>
       <div class="bushealth warn">
         <span class="ring">◔</span>
         <span class="txt">
@@ -232,20 +238,20 @@ h2:first-of-type { margin-top: 0; }
         </span>
       </div>
       <div class="buscounts">
-        <div class="c"><div class="n">2 160</div><div class="l">frames</div></div>
-        <div class="c"><div class="n">1 874</div><div class="l">foreign</div></div>
+        <div class="c"><div class="n">2160</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">1874</div><div class="l">foreign</div></div>
         <div class="c"><div class="n warn">9</div><div class="l">collisions</div></div>
         <div class="c"><div class="n">0</div><div class="l">power down</div></div>
       </div>
     </div>
 
     <div class="card">
-      <header><h3>DALI bus</h3></header>
+      <header><h3>DALI bus</h3><a class="act" href="#/diagnostics" style="text-decoration:none">Counters →</a></header>
       <div class="bushealth ok">
         <span class="ring">✓</span>
         <span class="txt">
           <div class="st">Healthy</div>
-          <div class="d">7 401 frames sent, no power-down or system-failure condition seen since boot.</div>
+          <div class="d">7401 frames sent, no power-down or system-failure condition seen since boot.</div>
         </span>
         <span class="load">
           <div class="n">37<span class="u">%</span></div>
@@ -254,7 +260,7 @@ h2:first-of-type { margin-top: 0; }
         </span>
       </div>
       <div class="buscounts">
-        <div class="c"><div class="n">7 401</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">7401</div><div class="l">frames</div></div>
         <div class="c"><div class="n">312</div><div class="l">foreign</div></div>
         <div class="c"><div class="n warn">3</div><div class="l">collisions</div></div>
         <div class="c"><div class="n">0</div><div class="l">power down</div></div>
@@ -270,7 +276,7 @@ h2:first-of-type { margin-top: 0; }
     and <b>not measured</b> until the PHY has booked a tick.</p>
   <div class="demo">
     <div class="card">
-      <header><h3>DALI bus</h3></header>
+      <header><h3>DALI bus</h3><a class="act" href="#/diagnostics" style="text-decoration:none">Counters →</a></header>
       <div class="bushealth idle">
         <span class="ring">·</span>
         <span class="txt">
@@ -299,7 +305,7 @@ h2:first-of-type { margin-top: 0; }
     figure still reads the wire, and <b>own</b> stays 0 %.</p>
   <div class="demo">
     <div class="card">
-      <header><h3>DALI bus</h3></header>
+      <header><h3>DALI bus</h3><a class="act" href="#/diagnostics" style="text-decoration:none">Counters →</a></header>
       <div class="bushealth idle">
         <span class="ring">·</span>
         <span class="txt">
@@ -314,7 +320,7 @@ h2:first-of-type { margin-top: 0; }
         </span>
       </div>
       <div class="buscounts">
-        <div class="c"><div class="n">7 401</div><div class="l">frames</div></div>
+        <div class="c"><div class="n">7401</div><div class="l">frames</div></div>
         <div class="c"><div class="n">312</div><div class="l">foreign</div></div>
         <div class="c"><div class="n">0</div><div class="l">collisions</div></div>
         <div class="c"><div class="n">0</div><div class="l">power down</div></div>

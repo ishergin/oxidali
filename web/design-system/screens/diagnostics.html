@@ -67,37 +67,40 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .nav a:hover { background: var(--raised); color: var(--text); }
 .nav a.active { background: var(--accent-soft); color: var(--accent-strong); font-weight: 550; }
 .nav a .ic { width: 16px; text-align: center; font-size: 13px; opacity: .8; }
+.nav .navgroup { margin-bottom: 10px; }
 .nav .gh { font-size: 10px; text-transform: uppercase; letter-spacing: .09em; color: var(--text-faint);
-  padding: 12px 10px 4px; }
+  font-weight: 600; padding: 6px 10px 4px; }
 
 /* Main */
 .main { flex: 1; padding: 20px 24px 40px; min-width: 0; }
-.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
 .head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
 .head .sub { font-size: 12px; color: var(--text-faint); }
 .spacer { flex: 1; }
 .badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm);
   font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
-.hint { font-size: 12px; color: var(--text-faint); margin: 0 0 16px; max-width: 78ch; }
+.hint { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; }
+.mono { font-family: var(--mono); font-size: 12px; }
 
 /* Counter cards — the identical primitive Stats uses; Diagnostics differs only
    in what it puts in them and in which values it calls faults. */
-.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.grid2 .span2 { grid-column: span 2; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.card.span2 { grid-column: 1 / -1; }
-.card header { display: flex; align-items: center; justify-content: space-between;
+.card > header { display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 9px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
-.card header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
-.card header .note { font-size: 11px; color: var(--text-faint); }
+.card > header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
 
-.attr { display: grid; grid-template-columns: 1fr auto 54px; align-items: center; gap: 12px;
-  padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.attr { display: grid; grid-template-columns: 1fr 116px 104px; column-gap: 12px; row-gap: 3px;
+  align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--border); }
 .attr:last-child { border-bottom: none; }
 .attr .k { color: var(--text-muted); font-size: 13px; }
-.attr .k .ro { color: var(--text-faint); font-family: var(--mono); font-size: 11px; }
-.attr .v { font-family: var(--mono); font-size: 13px; text-align: right; }
+.attr .k .ro { color: var(--text-faint); }
+.attr .v { font-family: var(--mono); font-size: 13px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .attr .v.fault { color: var(--err); }
-.attr .delta { font-family: var(--mono); font-size: 11px; text-align: right; color: var(--text-faint); }
+.attr .delta { font-family: var(--mono); font-size: 11px; color: var(--text-faint);
+  min-width: 46px; text-align: right; }
 .attr .delta.live { color: var(--info); }
 /* A spread row compresses a small fixed array (Table 22 priorities, §9.13.1
    classes) into one row: faint label under each value, no delta column — the
@@ -109,8 +112,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 /* Stale: a failed poll keeps the last sample on screen and says so in the
    header; the page turns into "unavailable" only when no sample ever arrived. */
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
-  font-size: 11px; font-weight: 500; }
-.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  font-size: 11px; font-weight: 500; border: 1px solid transparent; white-space: nowrap; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .chip.warn { color: var(--warn); background: var(--warn-soft); }
 .empty { padding: 32px; text-align: center; color: var(--text-faint); font-size: 13px; }
 .state-label { display: flex; align-items: center; gap: 8px; margin: 30px 0 14px; }
@@ -124,18 +127,36 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   <aside class="side">
     <div class="brand"><span class="glyph">◍</span><span class="name">dali2rust</span></div>
     <nav class="nav">
-      <a href="#"><span class="ic">▦</span>Dashboard</a>
-      <a href="#"><span class="ic">◧</span>Physical devices</a>
-      <a href="#"><span class="ic">◍</span>Virtual lamps</a>
-      <a href="#"><span class="ic">⊞</span>Groups</a>
-      <a href="#"><span class="ic">✦</span>Scenes</a>
-      <a href="#"><span class="ic">◐</span>HCL schedules</a>
-      <div class="gh">System</div>
-      <a href="#"><span class="ic">≡</span>Operations</a>
-      <a href="#"><span class="ic">▤</span>Stats</a>
-      <a href="#"><span class="ic">›_</span>DALI console</a>
-      <a href="#"><span class="ic">∿</span>DALI sniffer</a>
-      <a class="active" href="#"><span class="ic">◔</span>Diagnostics</a>
+      <div class="navgroup">
+        <div class="gh">Control</div>
+        <a href="#"><span class="ic">▦</span>Dashboard</a>
+        <a href="#"><span class="ic">◧</span>Physical devices</a>
+        <a href="#"><span class="ic">◍</span>Virtual lamps</a>
+        <a href="#"><span class="ic">⌘</span>Input devices</a>
+        <a href="#"><span class="ic">⊞</span>Groups</a>
+        <a href="#"><span class="ic">✦</span>Scenes</a>
+        <a href="#"><span class="ic">◐</span>HCL schedules</a>
+        <a href="#"><span class="ic">∴</span>Rules</a>
+      </div>
+      <div class="navgroup">
+        <div class="gh">System</div>
+        <a href="#"><span class="ic">≡</span>Operations</a>
+        <a href="#"><span class="ic">▤</span>Stats</a>
+        <a href="#"><span class="ic">›_</span>DALI console</a>
+        <a href="#"><span class="ic">∿</span>DALI sniffer</a>
+        <a href="#"><span class="ic">☰</span>Log</a>
+        <a class="active" href="#"><span class="ic">◔</span>Diagnostics</a>
+        <a href="#"><span class="ic">⇧</span>Firmware</a>
+      </div>
+      <div class="navgroup">
+        <div class="gh">Settings</div>
+        <a href="#"><span class="ic">⟳</span>Poller</a>
+        <a href="#"><span class="ic">◈</span>DALI</a>
+        <a href="#"><span class="ic">◷</span>Time</a>
+        <a href="#"><span class="ic">⌂</span>Home Assistant</a>
+        <a href="#"><span class="ic">⇄</span>Redundancy</a>
+        <a href="#"><span class="ic">⛨</span>Policies</a>
+      </div>
     </nav>
   </aside>
 
@@ -144,90 +165,149 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <h1>Diagnostics</h1>
       <span class="badge">counters</span>
       <span class="spacer"></span>
-      <span class="sub">uptime <span style="font-family:var(--mono); color:var(--text-muted)">3 d 14 h 02 m</span></span>
+      <span class="sub">uptime <span class="mono" style="color:var(--text-muted)">3 d 14 h 02 m</span></span>
     </div>
 
-    <p class="hint">
+    <div class="hint">
       Counters are free-running and never reset — the right-hand column is the change since
       the previous sample (2 s), which is what tells you whether something is happening now.
       Worker counters are 32-bit and wrap.
-    </p>
+    </div>
 
-    <div class="grid">
+    <div class="grid2">
 
       <div class="card">
         <header><h3>Bus · Commands</h3></header>
-        <div class="attr"><span class="k">Publish attempted</span><span class="v">4 812</span><span class="delta live">+3</span></div>
-        <div class="attr"><span class="k">Publish queued</span><span class="v">4 812</span><span class="delta live">+3</span></div>
+        <div class="attr"><span class="k">Publish attempted</span><span class="v">32 445</span><span class="delta live">+18</span></div>
+        <div class="attr"><span class="k">Publish queued</span><span class="v">32 399</span><span class="delta live">+18</span></div>
+        <div class="attr"><span class="k">Ingress overflow</span><span class="v fault">46</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Oversize rejected</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Kind mismatch</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <div class="card">
+        <header><h3>Bus · Confirmations</h3></header>
+        <div class="attr"><span class="k">Publish attempted</span><span class="v">32 042</span><span class="delta live">+18</span></div>
+        <div class="attr"><span class="k">Publish queued</span><span class="v">32 042</span><span class="delta live">+18</span></div>
         <div class="attr"><span class="k">Ingress overflow</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Oversize rejected</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Kind mismatch</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
       <div class="card">
+        <header><h3>Bus · Events</h3></header>
+        <div class="attr"><span class="k">Publish attempted</span><span class="v">96 318</span><span class="delta live">+41</span></div>
+        <div class="attr"><span class="k">Publish queued</span><span class="v">96 302</span><span class="delta live">+41</span></div>
+        <div class="attr"><span class="k">Ingress overflow</span><span class="v fault">16</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Oversize rejected</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Kind mismatch</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <!-- `Unmatched` is the confirmation bridge's count of confirmations no
+           HTTP request was waiting for. Every confirmation reaches the bridge,
+           so the workers' own traffic — the projector's runtime updates, the
+           apply's cells — lands here and the row climbs with the confirmation
+           channel; it is not a fault. -->
+      <div class="card">
         <header><h3>Bus · routing</h3></header>
         <div class="attr"><span class="k">Commands unrouted</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Delivery rejected dropped</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Unmatched</span><span class="v">14</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Unmatched</span><span class="v">30 148</span><span class="delta live">+18</span></div>
       </div>
 
+      <!-- One row per inbox, in the order the bus registered them. Command
+           and confirmation inboxes carry no name and show their index; an
+           event inbox shows its subscriber's name. A row turns red only when
+           its inbox lost frames, and then says how many beside the delivered
+           count. -->
       <div class="card span2">
         <header><h3>Subscriber inboxes</h3></header>
-        <div class="attr"><span class="k">Event <span class="ro">#3</span></span><span class="v">19 044</span><span class="delta live">+12</span></div>
-        <div class="attr"><span class="k">Event <span class="ro">#4</span></span><span class="v fault">18 902 · 142 lost</span><span class="delta live">+12</span></div>
+        <div class="attr"><span class="k">Command <span class="ro">#0</span></span><span class="v">10 485</span><span class="delta live">+10</span></div>
+        <div class="attr"><span class="k">Command <span class="ro">#1</span></span><span class="v">21 426</span><span class="delta live">+8</span></div>
+        <div class="attr"><span class="k">Command <span class="ro">#2</span></span><span class="v">122</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Command <span class="ro">#3</span></span><span class="v">14</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Command <span class="ro">#4</span></span><span class="v">6</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Command <span class="ro">#5</span></span><span class="v">125</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Command <span class="ro">#6</span></span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Command <span class="ro">#7</span></span><span class="v">221</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Confirmation <span class="ro">#0</span></span><span class="v">32 042</span><span class="delta live">+18</span></div>
+        <div class="attr"><span class="k">Confirmation <span class="ro">#1</span></span><span class="v">32 042</span><span class="delta live">+18</span></div>
+        <div class="attr"><span class="k">Confirmation <span class="ro">#2</span></span><span class="v">32 042</span><span class="delta live">+18</span></div>
+        <div class="attr"><span class="k">Confirmation <span class="ro">#3</span></span><span class="v">32 042</span><span class="delta live">+18</span></div>
+        <div class="attr"><span class="k">Event <span class="ro">registry</span></span><span class="v">22 480</span><span class="delta live">+10</span></div>
+        <div class="attr"><span class="k">Event <span class="ro">display</span></span><span class="v fault">19 044 · 142 lost</span><span class="delta live">+12</span></div>
+        <div class="attr"><span class="k">Event <span class="ro">operation_tracker</span></span><span class="v">4 210</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Event <span class="ro">apply_orchestrator</span></span><span class="v">3 517</span><span class="delta live">+7</span></div>
+        <div class="attr"><span class="k">Event <span class="ro">fanout_projector</span></span><span class="v">29 873</span><span class="delta live">+11</span></div>
+        <div class="attr"><span class="k">Event <span class="ro">hcl_scheduler</span></span><span class="v">1 204</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Event <span class="ro">poller</span></span><span class="v">3 036</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Event <span class="ro">rules</span></span><span class="v">21 060</span><span class="delta live">+8</span></div>
+        <div class="attr"><span class="k">Event <span class="ro">arbitration</span></span><span class="v">3</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Event <span class="ro">replication</span></span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Event <span class="ro">arb-supervisor</span></span><span class="v">6</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Event <span class="ro">mqtt_bridge</span></span><span class="v">24 117</span><span class="delta live">+9</span></div>
+        <div class="attr"><span class="k">Event <span class="ro">ws_fanout</span></span><span class="v">31 470</span><span class="delta live">+18</span></div>
       </div>
 
-      <!-- `Poll fast` here and `DALI wire · Session spins` count the waits
-           whose back-off was shorter than a FreeRTOS tick
-           (`sleep_parks_the_task`): such a wait busy-waits instead of parking,
-           and the idle task on that core does not run meanwhile. Neither is a
-           fault and neither is painted as one; read them against the page
-           header's uptime and beside `Redundancy · Arbitration table`, the
-           mode that sets the sniffer's back-off. -->
+      <!-- The wire's only owner. The fault-painted rows are its own failures:
+           an invalid or failed command, a confirmation, event or evidence
+           publish that did not leave, a read-attributes sequence aborted or
+           left incomplete, a degraded device-type discovery and `Ignored
+           commands`. The two preempted rows are ADR-009's background yield and
+           `Read attributes device absent` is an empty short address answering
+           the only way it can: none of them is painted. -->
       <div class="card">
-        <header><h3>PHY sniffer</h3></header>
-        <div class="attr"><span class="k">Frames</span><span class="v">1 204 771</span><span class="delta live">+82</span></div>
-        <div class="attr"><span class="k">Decode failed</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Dropped</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Poll fast</span><span class="v">0</span><span class="delta"></span></div>
+        <header><h3>DALI worker</h3></header>
+        <div class="attr"><span class="k">Invalid command</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Execution failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Confirmation publish failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Event publish failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Evidence publish failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Event publish retried</span><span class="v">12</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Event publish backoff ms</span><span class="v">325</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Target state superseded</span><span class="v">27</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Read attributes contended aborts</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Read attributes transport aborts</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Read attributes preempted</span><span class="v">14</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Write attributes preempted</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Read attributes device absent</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Read attributes sequence incomplete</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Discovery device type degraded</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Bus health probe failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Memory bank short reads</span><span class="v">3</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Input scans completed</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Input devices addressed</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Input config rejected</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Tx suppressed passive</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ignored commands</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
       <!-- ADR-017's own account of the wire. Two rows are GATES, not
            observations — `Transaction budget exceeded` and `Transaction
            leaks` must both be zero, so they are the only ones fault-painted.
-           Everything else is the mechanism working: `Should exceedances` is
-           the indivisible units that legitimately outrun the 400 ms guidance,
-           `Bus releases` is §9.2's deliberate quiet, `Reopened` is a unit
-           restarting after a busy bus, and `P1 window late` is the D6
-           criterion — intended priority-1 frames that left past 14,7 ms; a
-           climb here is what would justify the batch path.
+           Every other transaction row is the mechanism working: `Should
+           exceedances` is the indivisible units that legitimately outrun the
+           400 ms guidance, `Bus releases` is §9.2's deliberate quiet,
+           `Reopened` is a unit restarting after a busy bus, and `P1 window
+           late` is the D6 criterion — intended priority-1 frames that left
+           past 14,7 ms; a climb here is what would justify the batch path.
 
-           The two spread rows compress arrays that would otherwise cost nine
-           `.attr` rows: five Table 22 priorities and the four §9.13.1
-           transaction classes, faint mono labels under the values. -->
+           `Bus power down active` and `System failure active` are gauges of the
+           bus's own state, as are the two load figures; none shows a change
+           column.
+
+           The two spread rows close the card; they compress arrays that would
+           otherwise cost nine `.attr` rows: five Table 22 priorities and the
+           four §9.13.1 transaction classes, faint mono labels under the values. -->
       <div class="card">
-        <header>
-          <h3>DALI wire</h3>
-          <span class="note">two gates, the rest is traffic</span>
-        </header>
-        <div class="attr"><span class="k">Transactions started</span><span class="v">18 402</span><span class="delta live">+7</span></div>
-        <div class="attr"><span class="k">Transactions completed</span><span class="v">18 402</span><span class="delta live">+7</span></div>
+        <header><h3>DALI wire</h3></header>
+        <div class="attr"><span class="k">Transactions started</span><span class="v">13 457</span><span class="delta live">+11</span></div>
+        <div class="attr"><span class="k">Transactions completed</span><span class="v">13 457</span><span class="delta live">+11</span></div>
         <div class="attr"><span class="k">Transaction reopened</span><span class="v">3</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Transaction should exceedances</span><span class="v">41</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Transaction budget exceeded</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Transaction leaks</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr spread">
-          <span class="k">Frames by priority</span>
-          <span class="v">
-            <span class="cell"><i>P1</i>2 114</span><span class="cell"><i>P2</i>9 887</span><span class="cell"><i>P3</i>5 120</span><span class="cell"><i>P4</i>206</span><span class="cell"><i>P5</i>1 075</span>
-          </span>
-        </div>
-        <div class="attr spread">
-          <span class="k">Transactions by class</span>
-          <span class="v">
-            <span class="cell"><i>user</i>9 887</span><span class="cell"><i>conf</i>5 120</span><span class="cell"><i>auto</i>206</span><span class="cell"><i>query</i>3 189</span>
-          </span>
-        </div>
+        <div class="attr"><span class="k">Session spins</span><span class="v">48 902</span><span class="delta live">+310</span></div>
         <div class="attr"><span class="k">P1 window late</span><span class="v">54</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Bus releases</span><span class="v">12</span><span class="delta live">+1</span></div>
         <div class="attr"><span class="k">Bus acquire timeout</span><span class="v">0</span><span class="delta"></span></div>
@@ -238,95 +318,80 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Retry exhausted</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Send twice over transmitter max</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Send twice split</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Session spins</span><span class="v">48 902</span><span class="delta live">+310</span></div>
+        <div class="attr"><span class="k">Bus power down active</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Bus power down entries</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">System failure active</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">System failure entries</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Wire ticks total</span><span class="v">2 978 371 154</span><span class="delta live">+19 231</span></div>
+        <div class="attr"><span class="k">Wire ticks active</span><span class="v">161 766 062</span><span class="delta live">+7 115</span></div>
+        <div class="attr"><span class="k">Wire ticks tx</span><span class="v">4 101 870</span><span class="delta live">+4 039</span></div>
+        <div class="attr"><span class="k">Load permille</span><span class="v">370</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Load own permille</span><span class="v">210</span><span class="delta"></span></div>
+        <div class="attr spread">
+          <span class="k">Frames by priority</span>
+          <span class="v">
+            <span class="cell"><i>P1</i>13 505</span><span class="cell"><i>P2</i>2 301</span><span class="cell"><i>P3</i>3 314</span><span class="cell"><i>P4</i>1 832</span><span class="cell"><i>P5</i>6 010</span>
+          </span>
+        </div>
+        <div class="attr spread">
+          <span class="k">Transactions by class</span>
+          <span class="v">
+            <span class="cell"><i>user</i>2 301</span><span class="cell"><i>conf</i>3 314</span><span class="cell"><i>auto</i>1 832</span><span class="cell"><i>query</i>6 010</span>
+          </span>
+        </div>
       </div>
 
-      <!-- The same card with both gates tripped — the state the fault paint
-           exists for: a leak means frames carried priority 1 outside any
-           transaction (§9.13.1 forbids it with a "shall"), an exceeded budget
-           means a non-exempt unit held the bus past the §9.2 guidance. -->
+      <!-- `Frames` is every capture and the next five rows split it: the three
+           lengths the decoder routes, `Unsupported len` for any other length
+           and `Decode failed`. Those last two and `Dropped` are fault-painted.
+
+           `Poll fast` here and `DALI wire · Session spins` count the waits
+           whose back-off was shorter than a FreeRTOS tick
+           (`sleep_parks_the_task`): such a wait busy-waits instead of parking,
+           and the idle task on that core does not run meanwhile. Neither is a
+           fault and neither is painted as one; read them against the page
+           header's uptime and beside `Redundancy · Arbitration table`, the
+           mode that sets the sniffer's back-off. -->
       <div class="card">
-        <header>
-          <h3>DALI wire</h3>
-          <span class="note">gates tripped</span>
-        </header>
-        <div class="attr"><span class="k">Transaction budget exceeded</span><span class="v fault">2</span><span class="delta live">+1</span></div>
-        <div class="attr"><span class="k">Transaction leaks</span><span class="v fault">1</span><span class="delta"></span></div>
+        <header><h3>PHY sniffer</h3></header>
+        <div class="attr"><span class="k">Frames</span><span class="v">1 201 728</span><span class="delta live">+19</span></div>
+        <div class="attr"><span class="k">Backward8</span><span class="v">402 310</span><span class="delta live">+7</span></div>
+        <div class="attr"><span class="k">Forward16</span><span class="v">798 214</span><span class="delta live">+11</span></div>
+        <div class="attr"><span class="k">Forward24</span><span class="v">1 204</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Decode failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Unsupported len</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Dropped</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Poll fast</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
-      <!-- I2. Almost nothing here is a fault, and that is the whole design of the
-           card. `Duty deferred`, `Interactive deferred` and `Reads preempted`
-           are the three background-priority mechanisms of `ADR-009` reporting
-           that they worked — painting them red would report the guarantee as
-           a failure. `Reads absent` is a by-design outcome too: an empty short
-           address answering the only way it can. The one
-           fault-painted rows are `Outstanding expired` and `Health probes
-           expired`: a result event that never came home is our own plumbing
-           dropping something. Both are shown at their real values here — the
-           screen only paints a fault when the count is above zero, so a
-           healthy controller shows this card entirely unpainted.
-
-           `Targets excluded` is a GAUGE — it shrinks when a lamp gets bound —
-           so it shows no change column, exactly like `Clients` below.
-
-           The probe block is `§16.2` and reads as a group: `invalid` sits
-           first because 102 §3.13's Note 1 makes silence ambiguous, so a
-           probe whose positive control went unanswered is void rather than
-           `clear`. `Several failures` is IEC 62386-101 §8.2.5 — a violating
-           backward frame is an answer, not a wire fault. -->
       <div class="card">
-        <header>
-          <h3>Poller</h3>
-          <span class="note">deferrals are the mechanism, not a fault</span>
-        </header>
-        <div class="attr"><span class="k">Cycles total</span><span class="v">4 118</span><span class="delta live">+2</span></div>
-        <div class="attr"><span class="k">Reads published</span><span class="v">1 902</span><span class="delta live">+1</span></div>
-        <div class="attr"><span class="k">Reads completed</span><span class="v">1 884</span><span class="delta live">+1</span></div>
-        <div class="attr"><span class="k">Reads failed</span><span class="v">3</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Reads preempted</span><span class="v">14</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Reads absent</span><span class="v">1</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Outstanding expired</span><span class="v fault">2</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Skipped inbox full</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Duty deferred</span><span class="v">1 871</span><span class="delta live">+1</span></div>
-        <div class="attr"><span class="k">Interactive deferred</span><span class="v">36</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Targets excluded</span><span class="v">2</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Window deferred</span><span class="v">204</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Device cooldowns</span><span class="v">4</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Health probes published</span><span class="v">1 097</span><span class="delta live">+1</span></div>
-        <div class="attr"><span class="k">Health probes invalid</span><span class="v">2</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Health probes clear</span><span class="v">1 094</span><span class="delta live">+1</span></div>
-        <div class="attr"><span class="k">Health probes one failure</span><span class="v">1</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Health probes several failures</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Health probes expired</span><span class="v">0</span><span class="delta"></span></div>
+        <header><h3>Sniffer translator</h3></header>
+        <div class="attr"><span class="k">Observed published</span><span class="v">18 230</span><span class="delta live">+6</span></div>
+        <div class="attr"><span class="k">Unknown seen</span><span class="v">412</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Special tracked</span><span class="v">96</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Dt8 staged</span><span class="v">220</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Backward ignored</span><span class="v">402 310</span><span class="delta live">+7</span></div>
+        <div class="attr"><span class="k">Publish failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Input events typed</span><span class="v">1 186</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Input events generic</span><span class="v">12</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Input events ambiguous scheme</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Input lifecycle</span><span class="v">6</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Fact publish retried</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">App control pairs</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
-      <!-- I5. Seven figures, and the point of the card is the three losses:
-           without them the push channel could shed a client's whole view with
-           nothing on the only UI meant to surface it.
-
-           `Events dropped` and `Inbox overflow` are separate on purpose and
-           must not be summed: the first is one slow client losing its own view
-           (its 32-deep queue overflowed), the second is the worker falling
-           behind and *every* client losing theirs. `Sniffer dropped` is what
-           turns a gap in the sniffer window from "the bus was quiet" into "we
-           were blind".
-
-           `Upgrades rejected` is NOT painted as a fault: a fifth tab being
-           turned away, or a page from a foreign origin, is the client cap and
-           the origin check doing their job. `Clients` is a gauge and shows no
-           change column. -->
       <div class="card">
-        <header>
-          <h3>WebSocket</h3>
-          <span class="note">clients is a gauge</span>
-        </header>
-        <div class="attr"><span class="k">Clients</span><span class="v">2</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Events sent total</span><span class="v">31 470</span><span class="delta live">+18</span></div>
-        <div class="attr"><span class="k">Events dropped total</span><span class="v fault">6</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Inbox overflow total</span><span class="v fault">1</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Upgrades rejected total</span><span class="v">3</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Sniffer records total</span><span class="v">88 219</span><span class="delta live">+140</span></div>
-        <div class="attr"><span class="k">Sniffer dropped total</span><span class="v fault">412</span><span class="delta live">+12</span></div>
+        <header><h3>State projector</h3></header>
+        <div class="attr"><span class="k">Runtime updates published</span><span class="v">21 044</span><span class="delta live">+8</span></div>
+        <div class="attr"><span class="k">Runtime updates retried</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Group expansions</span><span class="v">318</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Scene expansions</span><span class="v">41</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Broadcast expansions</span><span class="v">12</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Coalesced observed</span><span class="v">1 905</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Skipped unknown observed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Skipped unbound</span><span class="v">66</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Publish failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ignored events</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
       <!-- The registry writer. Neither figure is the operator's fault and
@@ -339,29 +404,26 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            success. Zero is its only healthy value. -->
       <div class="card">
         <header><h3>Registry</h3></header>
-        <div class="attr"><span class="k">Runtime updates superseded</span><span class="v">1 284</span><span class="delta live">+6</span></div>
+        <div class="attr"><span class="k">Runtime updates superseded</span><span class="v">1 284</span><span class="delta live">+1</span></div>
         <div class="attr"><span class="k">Config write signal publish failed</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Ignored events</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
       <!-- ADR-007's paced apply. The reading is the SHAPE, not any one
-           number: `Cell retries` and
-           `Ingress backoffs` climbing against a flat `Cells published` is an
-           apply fighting the bus for room — the mechanism working, and the
-           warning that the next one may not fit. `Terminal signal publish
+           number: `Cell retries` and `Ingress backoffs` growing as a share of
+           `Cells published` (a retried cell is published again and counted
+           there too) is an apply fighting the bus for room — the mechanism
+           working, and the warning that the next one may not fit. `Terminal signal publish
            failed` is the registry's fault class again: work done, client never
            told. -->
       <div class="card">
-        <header>
-          <h3>Apply orchestrator</h3>
-          <span class="note">group/scene diff pacing</span>
-        </header>
+        <header><h3>Apply orchestrator</h3></header>
         <div class="attr"><span class="k">Runs started</span><span class="v">14</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Cells published</span><span class="v">3 291</span><span class="delta live">+64</span></div>
+        <div class="attr"><span class="k">Cells published</span><span class="v">3 291</span><span class="delta live">+7</span></div>
         <div class="attr"><span class="k">Skips published</span><span class="v">208</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Cell retries</span><span class="v">17</span><span class="delta live">+2</span></div>
-        <div class="attr"><span class="k">Outcome timeouts</span><span class="v">1</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Ingress backoffs</span><span class="v">43</span><span class="delta live">+5</span></div>
+        <div class="attr"><span class="k">Cell retries</span><span class="v">17</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Outcome timeouts</span><span class="v">17</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ingress backoffs</span><span class="v">43</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Runs aborted</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Terminal signal publish failed</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Ignored commands</span><span class="v">0</span><span class="delta"></span></div>
@@ -382,16 +444,109 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            drop: that one happens at the bus, to a kind nobody declared, and
            never reaches a counter. -->
       <div class="card">
-        <header>
-          <h3>Operations</h3>
-          <span class="note">plumbing; outcomes are on Stats</span>
-        </header>
+        <header><h3>Operations</h3></header>
         <div class="attr"><span class="k">Pending outcomes expired</span><span class="v fault">2</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Ignored commands</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Ignored events</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
-      <!-- I4. `Connected` is a gauge and shows no change column; everything
+      <div class="card">
+        <header><h3>HCL scheduler</h3></header>
+        <div class="attr"><span class="k">Ticks</span><span class="v">5 162</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ticks time unsynced</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Commands published</span><span class="v">1 840</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Commands dropped cap</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Command timeouts</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Command failures</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ingress rejections</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Overrides started</span><span class="v">6</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Overrides cleared</span><span class="v">5</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Overrides reset</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ignored commands</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ignored events</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <!-- Almost nothing here is a fault, and that is the whole design of the
+           card. `Duty deferred`, `Interactive deferred` and `Reads preempted`
+           are the three background-priority mechanisms of `ADR-009` reporting
+           that they worked — painting them red would report the guarantee as
+           a failure. `Reads absent` is a by-design outcome too: an empty short
+           address answering the only way it can. Besides `Ignored events`, the
+           fault-painted rows are `Outstanding expired` and `Health probes
+           expired`: a result event that never came home is our own plumbing
+           dropping something. Both are shown at their real values here — the
+           screen only paints a fault when the count is above zero, so a
+           healthy controller shows this card entirely unpainted.
+
+           `Targets excluded` is a GAUGE — it shrinks when a lamp gets bound —
+           so it shows no change column, exactly like `Clients` below.
+
+           The probe block is `§16.2` and reads as a group: `invalid` sits
+           first because 102 §3.13's Note 1 makes silence ambiguous, so a
+           probe whose positive control went unanswered is void rather than
+           `clear`. `Several failures` is IEC 62386-101 §8.2.5 — a violating
+           backward frame is an answer, not a wire fault. -->
+      <div class="card">
+        <header><h3>Poller</h3></header>
+        <div class="attr"><span class="k">Cycles total</span><span class="v">4 118</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Reads published</span><span class="v">1 904</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Reads completed</span><span class="v">1 884</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Reads failed</span><span class="v">3</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Reads preempted</span><span class="v">14</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Reads absent</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Outstanding expired</span><span class="v fault">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Skipped inbox full</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Duty deferred</span><span class="v">1 871</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Interactive deferred</span><span class="v">36</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Targets excluded</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Window deferred</span><span class="v">204</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Device cooldowns</span><span class="v">4</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Health probes published</span><span class="v">1 097</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Health probes invalid</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Health probes clear</span><span class="v">1 094</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Health probes one failure</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Health probes several failures</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Health probes expired</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ignored events</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <!-- The point of the card is the three losses:
+           without them the push channel could shed a client's whole view with
+           nothing on the only UI meant to surface it.
+
+           `Events dropped` and `Inbox overflow` are separate on purpose and
+           must not be summed: the first is one slow client losing its own view
+           (its 32-deep queue overflowed), the second is the worker falling
+           behind and *every* client losing theirs. `Sniffer dropped` is what
+           turns a gap in the sniffer window from "the bus was quiet" into "we
+           were blind".
+
+           `Upgrades rejected` is NOT painted as a fault: a fifth tab being
+           turned away, or a page from a foreign origin, is the client cap and
+           the origin check doing their job. `Clients` is a gauge and shows no
+           change column.
+
+           `Logs dropped` stays plain too. It counts the log lines the stream
+           shed — refused by a full ring, overrun before the drain reached
+           them, or cut from a batch over its frame budget — and every batch
+           carries that count, so the Log screen draws the gap where it fell.
+           A lost line is narration: no lamp, group or bus figure on any screen
+           goes stale with it. -->
+      <div class="card">
+        <header><h3>WebSocket</h3></header>
+        <div class="attr"><span class="k">Clients</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Events sent total</span><span class="v">31 470</span><span class="delta live">+18</span></div>
+        <div class="attr"><span class="k">Events dropped total</span><span class="v fault">6</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Events coalesced total</span><span class="v">1 204</span><span class="delta live">+3</span></div>
+        <div class="attr"><span class="k">Inbox overflow total</span><span class="v fault">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Upgrades rejected total</span><span class="v">3</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Sniffer records total</span><span class="v">88 219</span><span class="delta live">+39</span></div>
+        <div class="attr"><span class="k">Sniffer dropped total</span><span class="v fault">412</span><span class="delta live">+12</span></div>
+        <div class="attr"><span class="k">Logs lines total</span><span class="v">9 310</span><span class="delta live">+4</span></div>
+        <div class="attr"><span class="k">Logs dropped total</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <!-- `Connected` is a gauge and shows no change column; everything
            else is a free-running total.
 
            Three neighbours that must not be read as one number, because each
@@ -405,6 +560,25 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
            `Connects total` climbing against a flat `Publishes total` is a
            reconnect loop, which no single gauge shows. -->
+      <div class="card span2">
+        <header><h3>MQTT bridge</h3></header>
+        <div class="attr"><span class="k">Connected</span><span class="v">yes</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Connects total</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Publishes total</span><span class="v">8 411</span><span class="delta live">+8</span></div>
+        <div class="attr"><span class="k">Publish failures total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Commands received total</span><span class="v">318</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Commands dropped total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Commands unroutable total</span><span class="v">9</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Commands ingress rejected total</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Discovery published total</span><span class="v">96</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Discovery failed total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Terminal event publish failed total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Terminal event publish retried total</span><span class="v">4</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Bus discarded total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Bus coalesced total</span><span class="v">57</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Rule publishes dropped total</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
       <!-- `Arbitration table` is a MODE and sits where MQTT puts `Connected`:
            no change column, because armed/idle is a state and a delta on it
            would read as traffic. Armed shortens the sniffer's back-off, so
@@ -419,16 +593,19 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            that is not a fault. Their own states are drawn at the foot of the
            page. -->
       <div class="card">
-        <header>
-          <h3>Redundancy</h3>
-          <span class="note">role and arbitration table are gauges</span>
-        </header>
+        <header><h3>Redundancy</h3></header>
         <div class="attr"><span class="k">Role</span><span class="v">primary</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Arbitration table</span><span class="v">armed</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Defended</span><span class="v">3 601</span><span class="delta live">+1</span></div>
         <div class="attr"><span class="k">Worker stale</span><span class="v">1</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Answered</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Suppressed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Cell busy</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Aborted</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Window closed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Late</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Probe failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Handover incomplete</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Takeovers</span><span class="v">1</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Stand downs</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Role publish failed</span><span class="v">0</span><span class="delta"></span></div>
@@ -450,26 +627,6 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Pulled</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Rejected</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Reload publish failed</span><span class="v">0</span><span class="delta"></span></div>
-      </div>
-
-      <div class="card span2">
-        <header>
-          <h3>MQTT bridge</h3>
-          <span class="note">connected is a gauge</span>
-        </header>
-        <div class="attr"><span class="k">Connected</span><span class="v">yes</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Connects total</span><span class="v">1</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Publishes total</span><span class="v">7 412</span><span class="delta live">+22</span></div>
-        <div class="attr"><span class="k">Publish failures total</span><span class="v fault">3</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Commands received total</span><span class="v">318</span><span class="delta live">+2</span></div>
-        <div class="attr"><span class="k">Commands dropped total</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Commands unroutable total</span><span class="v">9</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Commands ingress rejected total</span><span class="v fault">1</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Discovery published total</span><span class="v">96</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Discovery failed total</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Terminal event publish failed total</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Terminal event publish retried total</span><span class="v">4</span><span class="delta live">+1</span></div>
-        <div class="attr"><span class="k">Bus discarded total</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
       <!-- `Ignored commands` is fault-painted above zero, as on every card.
@@ -518,17 +675,26 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <span class="badge">counters</span>
       <span class="chip warn" title="Failed to fetch"><span class="dot"></span>stale — last poll failed</span>
       <span class="spacer"></span>
-      <span class="sub">uptime <span style="font-family:var(--mono); color:var(--text-muted)">3 d 14 h 02 m</span></span>
+      <span class="sub">uptime <span class="mono" style="color:var(--text-muted)">3 d 14 h 02 m</span></span>
     </div>
     <p class="hint">Every card below keeps the last sample it had. The chip goes away with the
       next good poll; hovering it names the error.</p>
 
-    <div class="state-label"><span>Redundancy — before the first answer, and after a failed poll</span><span class="ln"></span></div>
-    <div class="grid">
+    <div class="state-label"><span>Redundancy — before the first answer</span><span class="ln"></span></div>
+    <div class="grid2">
       <div class="card">
         <header><h3>Redundancy</h3></header>
         <div class="empty">Loading…</div>
       </div>
+
+      <div class="card">
+        <header><h3>Redundancy</h3></header>
+        <div class="empty">Unavailable — Failed to fetch</div>
+      </div>
+    </div>
+
+    <div class="state-label"><span>Redundancy — after a failed poll</span><span class="ln"></span></div>
+    <div class="grid2">
       <div class="card">
         <header>
           <h3>Redundancy</h3>
@@ -537,11 +703,63 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Role</span><span class="v">primary</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Arbitration table</span><span class="v">armed</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Defended</span><span class="v">3 601</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Worker stale</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Answered</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Suppressed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Cell busy</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Aborted</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Window closed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Late</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Probe failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Handover incomplete</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Takeovers</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Stand downs</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Role publish failed</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ignored events</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <div class="card">
+        <header>
+          <h3>Redundancy · probes</h3>
+          <span class="chip warn" title="Failed to fetch"><span class="dot"></span>stale — last poll failed</span>
+        </header>
+        <div class="attr"><span class="k">Published</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Ingress rejected</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Owned</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Unowned</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <div class="card">
+        <header>
+          <h3>Redundancy · replication</h3>
+          <span class="chip warn" title="Failed to fetch"><span class="dot"></span>stale — last poll failed</span>
+        </header>
+        <div class="attr"><span class="k">Passes</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Peer unreachable</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Pulled</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Rejected</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Reload publish failed</span><span class="v">0</span><span class="delta"></span></div>
       </div>
     </div>
     <p class="hint">The Redundancy cards poll their own resource, so they carry their own chip:
-      the page's chip speaks for /api/v1/diagnostics only. A first poll that fails says
-      <i>Unavailable</i> and names the error where <i>Loading…</i> stands.</p>
+      the page's chip speaks for /api/v1/diagnostics only. After a failed poll each of the three
+      keeps its last sample and leaves its change column empty.</p>
+
+    <div class="state-label"><span>DALI wire — both gates tripped (the two gate rows)</span><span class="ln"></span></div>
+    <!-- The DALI wire card with both gates tripped — the state the fault paint
+         exists for: a leak means frames carried priority 1 outside any
+         transaction (§9.13.1 forbids it with a "shall"), an exceeded budget
+         means a non-exempt unit held the bus past the §9.2 guidance. -->
+    <div class="grid2">
+      <div class="card">
+        <header><h3>DALI wire</h3></header>
+        <div class="attr"><span class="k">Transaction budget exceeded</span><span class="v fault">2</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Transaction leaks</span><span class="v fault">1</span><span class="delta"></span></div>
+      </div>
+    </div>
+
+    <div class="state-label"><span>No sample yet — the first poll failed</span><span class="ln"></span></div>
+    <div class="empty">Diagnostics unavailable — Failed to fetch</div>
   </div>
 </div>
 </body>

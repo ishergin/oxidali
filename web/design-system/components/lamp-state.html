@@ -79,8 +79,8 @@ h2:first-of-type { margin-top: 0; }
    WHAT THE COLOUR IS, AND WHAT IT IS NOT. It is a PRESENTATIONAL ramp, not
    colorimetry: warm→cool anchors interpolated across the kelvin range for
    `cct`, the gear's own sRGB channels at full chroma for `rgb`/`rgbwaf`,
-   plain amber for a brightness-only fixture. `xy` deliberately gets the
-   neutral dot and its coordinates as text — converting xy to a screen colour
+   plain amber for a brightness-only fixture. `xy` deliberately gets that
+   plain amber dot and its coordinates as text — converting xy to a screen colour
    needs a white point and a gamut this product has never asked a gear for,
    and inventing one would be the same class of mistake as a camera reading
    trusted outside its band.
@@ -97,10 +97,9 @@ h2:first-of-type { margin-top: 0; }
 /* The colour value in words, for the operator who needs the number and not
    the impression. Faint by the same rule as every other caption here. */
 .lampcq { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
-/* `on` carries no rule of its own — the dot's colour and alpha come from the
-   inline `--lamp` the projection computes. It is a state NAME, present so the
-   three states read the same way in markup and so a future rule has somewhere
-   to land. */
+/* `on` carries no rule of its own — the dot's colour, alpha and glow come from
+   the inline `--lamp` and `--lamp-glow` that `lampState` computes. It is a
+   state NAME, present so every state reads the same way in markup. */
 .lampstate.on { }
 
 /* Off: a hollow ring. An off lamp has no colour to report — the gear still
@@ -109,6 +108,8 @@ h2:first-of-type { margin-top: 0; }
 .lampstate.off .lamplv { color: var(--text-muted); }
 /* Never observed. Distinct from off: nothing has answered, so nothing is
    claimed. Dashed ring, italic word. */
+.lampstate.unknown .lampdot { background: transparent; border-style: dashed; border-color: var(--text-faint); box-shadow: none; }
+.lampstate.unknown .lamplv { color: var(--text-faint); font-style: italic; font-family: var(--font); }
 /* UNVERIFIED — the fourth state. `value_source` says who drove the last
    commit: `poller` means the wire REPORTED this, everything else — `api`,
    `hcl`, `mqtt`, `rules`, and `sniffer` too — is the echo of a command, ours
@@ -150,50 +151,82 @@ h2:first-of-type { margin-top: 0; }
   border-color: var(--lamp, var(--accent)); }
 .lampstate.unconfirmed .lamplv { color: var(--text-muted); }
 .lampstate.unconfirmed .lamplv::after { content: " ?"; color: var(--text-faint); }
-.lampstate.unknown .lampdot { background: transparent; border-style: dashed; border-color: var(--text-faint); box-shadow: none; }
+/* NO ANSWER — a read addressed to the gear got nothing back
+   (`device_absent`). It outranks every other state: the last known level no
+   longer says what the gear holds, so it shows only as `was N`, a caption. A red
+   ring struck through, never the off ring: a gear with no mains cannot
+   answer, which is a different fact from a lamp that is off, and from lamp
+   failure, which a live driver reports. */
+.lampstate.absent .lampdot { background: transparent; border-color: var(--err);
+  position: relative; }
+.lampstate.absent .lampdot::after { content: ""; position: absolute; inset: -1px;
+  border-top: 1px solid var(--err); transform: rotate(45deg); top: 4px; }
+.lampstate.absent .lamplv { color: var(--err); font-family: var(--font); font-size: 11.5px; }
 /* The list's level control: track takes the room the cell has, number after
    it. Without the readout a 254-step range on a track this short moves more
    than one level per pixel, so the number is the only way to land on an exact
    level. */
+.slider { -webkit-appearance: none; appearance: none; flex: 1; min-width: 160px; height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, #8a6a14, var(--accent)) 0 / var(--pct, 0%) 100% no-repeat, var(--raised);
+  outline: none; cursor: pointer; margin: 0; }
+.slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent-strong); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--accent), 0 0 10px var(--accent-glow); }
+.slider::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent-strong); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--accent), 0 0 10px var(--accent-glow); }
+.slider.mini { min-width: 90px; height: 4px; }
 .lvlcell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lvlcell .slider { min-width: 0; }
 .lvlnum { font-family: var(--mono); font-size: 12px; color: var(--text-muted);
   font-variant-numeric: tabular-nums; width: 28px; text-align: right; flex: none; }
-.track2 { position: relative; width: 120px; height: 4px; border-radius: 2px; background: var(--raised); }
-.track2 .f { position: absolute; inset: 0 auto 0 0; border-radius: 2px; background: var(--accent); opacity: .8; }
-.lampstate.unknown .lamplv { color: var(--text-faint); font-style: italic; font-family: var(--font); }
+.slider.mini::-webkit-slider-thumb { width: 12px; height: 12px; }
+.slider.mini::-moz-range-thumb { width: 12px; height: 12px; }
 
 .tbl { width: 100%; border-collapse: collapse; background: var(--surface);
   border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .tbl th { text-align: left; padding: 9px 12px; background: var(--raised); border-bottom: 1px solid var(--border);
-  font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-faint); font-weight: 600; }
-.tbl td { padding: 8px 12px; border-bottom: 1px solid var(--border-soft); font-size: 13px; white-space: nowrap; }
+  font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-muted); font-weight: 600; }
+.tbl td { padding: 8px 12px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
 .tbl tr:last-child td { border-bottom: none; }
-.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border); background: var(--raised); font-family: var(--mono);
-  font-size: 11px; color: var(--text-muted); }
-.badge.addr { color: var(--text); }
+.badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
+.badge.addr { color: var(--text); background: var(--overlay); }
+td .nm { font-size: 13px; font-weight: 550; }
+td .nm.faint { color: var(--text-faint); font-style: italic; font-weight: 400; }
 </style>
 </head>
 <body>
 <div class="page">
   <h2>In the list</h2>
   <p class="note">Physical devices and virtual lamps share this cell, so the two screens cannot
-    drift apart. The dot is the fixture's own colour; the number beside it is the arc level.</p>
+    drift apart. The dot is the fixture's own colour; the number beside it is the arc level, and
+    the caption after it the colour in words: kelvin, the gear's RGB, or xy over the plain amber
+    dot. A lamp known to be on with no level read says <b>on</b> at the dimmest alpha.</p>
   <table class="tbl">
     <thead><tr><th>SA</th><th>Name</th><th>State</th></tr></thead>
     <tbody>
-      <tr><td><span class="badge addr">SA 00</span></td><td>Kitchen spot</td>
-        <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.82);--lamp-glow:0 0 7px rgba(240,180,41,.45)"></span><span class="lamplv">180</span></span></td></tr>
-      <tr><td><span class="badge addr">SA 01</span></td><td>Hallway</td>
+      <tr><td><span class="badge addr">SA 00</span></td><td><span class="nm">Kitchen spot</span></td>
+        <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240, 180, 41, 0.81);--lamp-glow:0 0 7px rgba(240, 180, 41, 0.45)"></span><span class="lamplv">180</span></span></td></tr>
+      <tr><td><span class="badge addr">SA 01</span></td><td><span class="nm">Hallway</span></td>
         <td><span class="lampstate off"><span class="lampdot"></span><span class="lamplv">Off</span></span></td></tr>
-      <tr><td><span class="badge addr">SA 04</span></td><td>Living room strip</td>
-        <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,166,88,.92);--lamp-glow:0 0 7px rgba(255,166,88,.5)"></span><span class="lamplv">220</span><span class="lampcq">2900 K</span></span></td></tr>
-      <tr><td><span class="badge addr">SA 05</span></td><td>RGB strip</td>
-        <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,81,35,.72);--lamp-glow:0 0 7px rgba(255,81,35,.4)"></span><span class="lamplv">140</span><span class="lampcq">#DC461E</span></span></td></tr>
-      <tr><td><span class="badge addr">SA 07</span></td><td>— unnamed</td>
+      <tr><td><span class="badge addr">SA 02</span></td><td><span class="nm">Porch</span></td>
+        <td><span class="lampstate absent"><span class="lampdot"></span><span class="lamplv">no answer</span><span class="lampcq">was 120</span></span></td></tr>
+      <tr><td><span class="badge addr">SA 03</span></td><td><span class="nm">Stairwell</span></td>
+        <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240, 180, 41, 0.35)"></span><span class="lamplv">on</span></span></td></tr>
+      <tr><td><span class="badge addr">SA 04</span></td><td><span class="nm">Living room strip</span></td>
+        <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255, 185, 117, 0.91);--lamp-glow:0 0 7px rgba(255, 185, 117, 0.45)"></span><span class="lamplv">220</span><span class="lampcq">2900 K</span></span></td></tr>
+      <tr><td><span class="badge addr">SA 05</span></td><td><span class="nm">RGB strip</span></td>
+        <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255, 81, 35, 0.71);--lamp-glow:0 0 7px rgba(255, 81, 35, 0.45)"></span><span class="lamplv">140</span><span class="lampcq">#DC461E</span></span></td></tr>
+      <tr><td><span class="badge addr">SA 06</span></td><td><span class="nm">Desk lamp</span></td>
+        <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240, 180, 41, 0.86);--lamp-glow:0 0 7px rgba(240, 180, 41, 0.45)"></span><span class="lamplv">200</span><span class="lampcq">xy 0.313 0.329</span></span></td></tr>
+      <tr><td><span class="badge addr">SA 07</span></td><td><span class="nm faint">— unnamed</span></td>
         <td><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">unknown</span></span></td></tr>
+      <tr><td><span class="badge addr">SA 08</span></td><td><span class="nm">Garden</span></td>
+        <td><span class="lampstate absent"><span class="lampdot"></span><span class="lamplv">no answer</span></span></td></tr>
     </tbody>
   </table>
+  <p class="note" style="margin-top:10px"><b>No answer</b> outranks every other state: a read addressed to the gear got
+    nothing back, so the level it last had is only a caption, <b>was 120</b>, and a gear whose
+    level was never read shows the words alone.</p>
 
   <h2>Commanded is not observed</h2>
   <p class="note">The whole point of the cell. A filled dot means the wire reported this; a
@@ -209,13 +242,13 @@ h2:first-of-type { margin-top: 0; }
     says so. Polling is off by default, so a fresh controller shows rings: those numbers really
     are only what was asked for.</p>
   <div class="demo">
-    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.82);--lamp-glow:0 0 7px rgba(240,180,41,.45)"></span><span class="lamplv">180</span></span>
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240, 180, 41, 0.81);--lamp-glow:0 0 7px rgba(240, 180, 41, 0.45)"></span><span class="lamplv">180</span></span>
     &nbsp;&nbsp;&nbsp;<span class="lampcq">read back by the poller</span>
     <br><br>
-    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.82);--lamp-glow:0 0 7px rgba(240,180,41,.45)"></span><span class="lamplv">180</span></span>
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240, 180, 41, 0.81);--lamp-glow:0 0 7px rgba(240, 180, 41, 0.45)"></span><span class="lamplv">180</span></span>
     &nbsp;&nbsp;&nbsp;<span class="lampcq">commanded — polling on, a read is due</span>
     <br><br>
-    <span class="lampstate on unconfirmed"><span class="lampdot" style="--lamp:rgba(240,180,41,.82)"></span><span class="lamplv">180</span></span>
+    <span class="lampstate on unconfirmed"><span class="lampdot" style="--lamp:rgba(240, 180, 41, 0.81)"></span><span class="lamplv">180</span></span>
     &nbsp;&nbsp;&nbsp;<span class="lampcq">commanded — polling off, nothing will confirm it</span>
   </div>
 
@@ -223,39 +256,42 @@ h2:first-of-type { margin-top: 0; }
   <p class="note">The number belongs with the control that drives it. The State cell says what
     the lamp <i>is</i>; this one is what you are setting.</p>
   <div class="demo">
-    <span class="lvlcell">
-      <span class="track2"><span class="f" style="width:70%"></span></span>
+    <span class="lvlcell" style="width:186px">
+      <input type="range" class="slider mini" min="0" max="254" value="178" style="--pct:70.08%">
       <span class="lvlnum">178</span>
     </span>
   </div>
 
   <h2>The ramp</h2>
   <p class="note">Warm to cool, anchored and interpolated. Presentational — it is what an
-    operator recognises a colour temperature by, not a claim about the emitter's spectrum.</p>
+    operator recognises a colour temperature by, not a claim about the emitter's spectrum. Each
+    dot is a lamp at level 254 at one of the anchors; 2900 K in the list lies between two.</p>
   <div class="demo">
-    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,147,41,1)"></span><span class="lampcq">2000 K</span></span>
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255, 147, 41, 1.00);--lamp-glow:0 0 7px rgba(255, 147, 41, 0.45)"></span><span class="lamplv">254</span><span class="lampcq">2000 K</span></span>
     &nbsp;&nbsp;
-    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,180,107,1)"></span><span class="lampcq">2700 K</span></span>
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255, 180, 107, 1.00);--lamp-glow:0 0 7px rgba(255, 180, 107, 0.45)"></span><span class="lamplv">254</span><span class="lampcq">2700 K</span></span>
     &nbsp;&nbsp;
-    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,214,170,1)"></span><span class="lampcq">4000 K</span></span>
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255, 214, 170, 1.00);--lamp-glow:0 0 7px rgba(255, 214, 170, 0.45)"></span><span class="lamplv">254</span><span class="lampcq">4000 K</span></span>
     &nbsp;&nbsp;
-    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255,241,224,1)"></span><span class="lampcq">5000 K</span></span>
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255, 241, 224, 1.00);--lamp-glow:0 0 7px rgba(255, 241, 224, 0.45)"></span><span class="lamplv">254</span><span class="lampcq">5000 K</span></span>
     &nbsp;&nbsp;
-    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(202,218,255,1)"></span><span class="lampcq">6500 K</span></span>
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(202, 218, 255, 1.00);--lamp-glow:0 0 7px rgba(202, 218, 255, 0.45)"></span><span class="lamplv">254</span><span class="lampcq">6500 K</span></span>
   </div>
 
   <h2>Level is alpha</h2>
   <p class="note">0.35 at level 1 so the dimmest lamp is still visible, 1.0 at 254; the glow
-    starts above half. Size never changes — a growing dot would shift the text after it and
+    starts above half, at 128. Size never changes — a growing dot would shift the text after it and
     make a long table twitch as readbacks land.</p>
   <div class="demo">
-    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.36)"></span><span class="lamplv">10</span></span>
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240, 180, 41, 0.38)"></span><span class="lamplv">10</span></span>
     &nbsp;&nbsp;
-    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.52)"></span><span class="lamplv">64</span></span>
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240, 180, 41, 0.51)"></span><span class="lamplv">64</span></span>
     &nbsp;&nbsp;
-    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,.71);--lamp-glow:0 0 7px rgba(240,180,41,.35)"></span><span class="lamplv">128</span></span>
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240, 180, 41, 0.68)"></span><span class="lamplv">127</span></span>
     &nbsp;&nbsp;
-    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240,180,41,1);--lamp-glow:0 0 7px rgba(240,180,41,.55)"></span><span class="lamplv">254</span></span>
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240, 180, 41, 0.68);--lamp-glow:0 0 7px rgba(240, 180, 41, 0.45)"></span><span class="lamplv">128</span></span>
+    &nbsp;&nbsp;
+    <span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240, 180, 41, 1.00);--lamp-glow:0 0 7px rgba(240, 180, 41, 0.45)"></span><span class="lamplv">254</span></span>
   </div>
 </div>
 </body>
