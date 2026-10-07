@@ -142,15 +142,16 @@ filtered: they address one device.
   transfer lists it after the banks. Hydration — at boot, and on the reload after an
   import or a standby's pull — reads the legacy slot whenever a bank of the adapter is
   missing or rejected, so an adapter whose banks were never all written reads it every
-  time, one cheap read while it is missing. It takes from the slot only devices of those
-  banks that are not live in memory (no record, no pending write), and never a short
-  that memory already holds. It then marks every such bank for rewrite when the slot
+  time, one cheap read while it is missing. It takes from the slot only devices of a
+  waiting bank or of a bank not live in memory (no record, no pending write), and never
+  a short that memory already holds. It then marks every such bank for rewrite when the slot
   loaded or did not decode, so later boots stop reading it; only the rejected banks when
   the slot is missing; and none when the slot's read fails.
 - A bank that cannot be settled waits: one whose own read fails (a read failure is no
   evidence of garbage), or one the slot may hold while the slot's read fails. No flush
-  writes a waiting bank, a lamp bound to one of its addresses keeps the binding, and the
-  next boot or reload that reads it settles it.
+  writes a waiting bank, so a change to its addresses is lost at the next boot and the
+  flush logs that it holds it back; a lamp bound to one of its addresses keeps the
+  binding, and the next boot or reload that reads it settles it.
 - The registry worker flushes dirty slices after a short debounce, and at once after the
   configuration writes `command_flush_interval` names, through one reused 1 KiB chunk
   buffer.

@@ -56,7 +56,7 @@ pub(crate) struct DirtyFlags {
     pub adapters: AtomicBool,
     pub groups: AtomicU32,
     pub physical_devices: AtomicU32,
-    pub physical_device_banks: [std::sync::atomic::AtomicU16; MAX_DIRTY_ADAPTERS],
+    physical_device_banks: [std::sync::atomic::AtomicU16; MAX_DIRTY_ADAPTERS],
     withheld_physical_device_banks: [std::sync::atomic::AtomicU16; MAX_DIRTY_ADAPTERS],
     pub virtual_lamps: AtomicU32,
     pub scenes: [std::sync::atomic::AtomicU16; MAX_DIRTY_ADAPTERS],

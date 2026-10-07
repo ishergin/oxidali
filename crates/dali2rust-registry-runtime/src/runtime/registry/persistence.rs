@@ -207,6 +207,7 @@ impl crate::runtime::registry::store::RegistryStore {
         let adapter_count = g.adapters.len() as u8;
         drop(g);
         for adapter_id in 0..adapter_count {
+            self.note_held_back_banks(adapter_id);
             let mask = self.dirty.take_physical_device_banks_dirty(adapter_id);
             if mask == 0 {
                 continue;
@@ -227,6 +228,17 @@ impl crate::runtime::registry::store::RegistryStore {
                         .fetch_add(1, Ordering::Relaxed);
                 }
             }
+        }
+    }
+
+    fn note_held_back_banks(&self, adapter_id: u8) {
+        let held = self.dirty.pending_physical_device_banks(adapter_id)
+            & self.dirty.withheld_physical_device_banks(adapter_id);
+        if held != 0 {
+            log::warn!(
+                "persistence: PD a{adapter_id} banks {held:#06x} wait for their stored copy; \
+                 their changes are not saved until a boot or reload can read it"
+            );
         }
     }
 
@@ -1033,7 +1045,7 @@ fn hydrate_adapters_inner(inner: &mut super::store::Inner, slice: &PersistableAd
     }
 }
 
-fn binding_short_if_physical_exists(
+fn binding_short_to_keep(
     inner: &super::store::Inner,
     adapter_id: u8,
     waiting_banks: u16,
@@ -1052,7 +1064,7 @@ fn hydrate_virtual_lamps_inner(
 ) {
     for lamp in &slice.lamps {
         let validated =
-            binding_short_if_physical_exists(inner, adapter_id, waiting_banks, lamp.binding_short);
+            binding_short_to_keep(inner, adapter_id, waiting_banks, lamp.binding_short);
         if lamp.binding_short.is_some() && validated.is_none() {
             warn!(
                 "persistence: dropped orphan VL binding a{adapter_id} vl{} -> short {:?}",
