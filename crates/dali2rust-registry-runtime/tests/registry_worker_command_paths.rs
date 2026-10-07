@@ -904,6 +904,54 @@ fn forgetting_a_device_unbinds_the_lamp_and_leaves_the_lamp() {
     );
 }
 
+fn publish_clean_scan(publisher: &dali2rust_bus::BusPublisher, corr: u64) {
+    let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryScanReconciledEvent { registry_adapter_id: 0, confirmed_mask: 0 });
+    assert_eq!(
+        publisher.try_publish(BusChannel::Events, BusFrame::event(ev)),
+        PublishResult::Queued
+    );
+}
+
+fn lamp_changed_seen(rx: &std::sync::mpsc::Receiver<BusFrame>, virtual_lamp_id: u8) -> bool {
+    while let Ok(frame) = rx.recv_timeout(Duration::from_millis(500)) {
+        let BusFrame::Event(ev) = frame else { continue };
+        if let BusEventPayload::VirtualLampChangedEvent(body) = &ev.payload {
+            if body.virtual_lamp_id == virtual_lamp_id {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[test]
+fn a_scan_eviction_unbinds_the_lamp_as_forget_does_and_announces_it() {
+    const SCAN_MISSES_TO_EVICT: u64 = 3;
+    let (publisher, conf_rx, ev_rx, store, _counters, _host) = spawn_cmd_stack_with_events(1);
+    seed_physical(&publisher, &store, 13);
+    publish_cmd(
+        &publisher,
+        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 720, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::VirtualLampBindCommand { adapter_id: 0, virtual_lamp_id: 6, physical_short_address: 13 }),
+    );
+    assert_ok(&recv_confirm_for(&conf_rx, 720));
+    while ev_rx.try_recv().is_ok() {}
+
+    for corr in 721..721 + SCAN_MISSES_TO_EVICT {
+        publish_clean_scan(&publisher, corr);
+    }
+    wait_until(
+        || store.physical_device_view(0, 13).is_none(),
+        Duration::from_secs(1),
+    );
+    assert!(store.physical_device_view(0, 13).is_none(), "three clean misses evict the record");
+    assert_eq!(
+        store.virtual_lamp_view(0, 6).binding_short,
+        None,
+        "an evicted device must not leave its lamp bound to an address nothing answers"
+    );
+    assert!(lamp_changed_seen(&ev_rx, 6), "the unbinding reaches WebSocket and Home Assistant");
+}
+
 #[test]
 fn forgetting_a_device_twice_reports_not_found() {
     let (publisher, conf_rx, store, _counters, _host) = spawn_cmd_stack(1);

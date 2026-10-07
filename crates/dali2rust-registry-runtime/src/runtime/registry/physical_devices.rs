@@ -627,6 +627,24 @@ fn lamps_bound_to(inner: &super::store::Inner, adapter_id: u8, short_address: u8
     ids
 }
 
+fn unbind_lamps_of(
+    inner: &mut super::store::Inner,
+    adapter_id: u8,
+    short_address: u8,
+    outcome: &mut ForgetOutcome,
+) {
+    for lamp_id in lamps_bound_to(inner, adapter_id, short_address) {
+        outcome.groups_changed |= super::virtual_lamps::unbind_lamp(inner, adapter_id, lamp_id);
+        outcome.unbound_lamps.push(lamp_id);
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct ScanEviction {
+    pub(crate) evicted: Vec<u8>,
+    pub(crate) unbound: ForgetOutcome,
+}
+
 impl RegistryStore {
 
     fn merge_declared_device_types(
@@ -703,8 +721,9 @@ impl RegistryStore {
         &self,
         adapter_id: u8,
         confirmed_mask: u64,
-    ) -> Vec<u8> {
+    ) -> ScanEviction {
         let mut evicted: Vec<u8> = Vec::new();
+        let mut unbound = ForgetOutcome::default();
         let mut g = self.write_inner();
         for ((aid, sa), r) in g.physical_devices.iter_mut() {
             if *aid != adapter_id {
@@ -721,6 +740,7 @@ impl RegistryStore {
         }
         for sa in &evicted {
             g.physical_devices.remove(&(adapter_id, *sa));
+            unbind_lamps_of(&mut g, adapter_id, *sa, &mut unbound);
             log::warn!(
                 "registry: evicted never-verified physical device a{adapter_id} short {sa} \
                  after {DISCOVERY_EVICT_MISS_THRESHOLD} clean-scan misses"
@@ -732,8 +752,18 @@ impl RegistryStore {
             for sa in &evicted {
                 self.dirty.mark_physical_device_dirty(adapter_id, *sa);
             }
+            self.mark_unbind_dirty(adapter_id, &unbound);
         }
-        evicted
+        ScanEviction { evicted, unbound }
+    }
+
+    fn mark_unbind_dirty(&self, adapter_id: u8, outcome: &ForgetOutcome) {
+        if !outcome.unbound_lamps.is_empty() {
+            self.dirty.mark_virtual_lamps_dirty(adapter_id);
+        }
+        if outcome.groups_changed {
+            self.dirty.mark_groups_dirty(adapter_id);
+        }
     }
 
     pub(crate) fn apply_physical_device_forget(
@@ -744,27 +774,12 @@ impl RegistryStore {
         let mut g = self.write_inner();
         g.physical_devices.remove(&(adapter_id, short_address))?;
         g.physical_devices_revision = g.physical_devices_revision.saturating_add(1);
-        let unbound = lamps_bound_to(&g, adapter_id, short_address);
-        let mut groups_changed = false;
-        for lamp_id in &unbound {
-            if let Some(entry) = g.lamps.get_mut(&(adapter_id, *lamp_id)) {
-                entry.binding_short = None;
-            }
-            groups_changed |= super::groups::forget_adopted_desired_on_binding_change(
-                &mut g,
-                adapter_id,
-                *lamp_id,
-            );
-        }
+        let mut outcome = ForgetOutcome::default();
+        unbind_lamps_of(&mut g, adapter_id, short_address, &mut outcome);
         drop(g);
         self.dirty.mark_physical_device_dirty(adapter_id, short_address);
-        if !unbound.is_empty() {
-            self.dirty.mark_virtual_lamps_dirty(adapter_id);
-        }
-        if groups_changed {
-            self.dirty.mark_groups_dirty(adapter_id);
-        }
-        Some(ForgetOutcome { unbound_lamps: unbound, groups_changed })
+        self.mark_unbind_dirty(adapter_id, &outcome);
+        Some(outcome)
     }
 
     pub(crate) fn apply_physical_device_attribute_chunk(
@@ -1554,14 +1569,14 @@ mod tests {
         assert!(apply_progress(&store, PHANTOM_SHORT, None));
 
         for miss in 1..DISCOVERY_EVICT_MISS_THRESHOLD {
-            let evicted = store.reconcile_discovery_scan(0, 0);
+            let evicted = store.reconcile_discovery_scan(0, 0).evicted;
             assert!(evicted.is_empty(), "no eviction after {miss} misses");
             assert_eq!(known_shorts(&store), vec![VERIFIED_SHORT, PHANTOM_SHORT]);
         }
-        let evicted = store.reconcile_discovery_scan(0, 0);
+        let evicted = store.reconcile_discovery_scan(0, 0).evicted;
         assert_eq!(evicted, vec![PHANTOM_SHORT]);
         assert_eq!(known_shorts(&store), vec![VERIFIED_SHORT]);
-        assert!(store.reconcile_discovery_scan(0, 0).is_empty());
+        assert!(store.reconcile_discovery_scan(0, 0).evicted.is_empty());
         assert_eq!(known_shorts(&store), vec![VERIFIED_SHORT]);
     }
 
@@ -1571,15 +1586,32 @@ mod tests {
         assert!(apply_progress(&store, PHANTOM_SHORT, None));
 
         for _ in 1..DISCOVERY_EVICT_MISS_THRESHOLD {
-            assert!(store.reconcile_discovery_scan(0, 0).is_empty());
+            assert!(store.reconcile_discovery_scan(0, 0).evicted.is_empty());
         }
         assert!(store
             .reconcile_discovery_scan(0, 1u64 << PHANTOM_SHORT)
+            .evicted
             .is_empty());
         for _ in 1..DISCOVERY_EVICT_MISS_THRESHOLD {
-            assert!(store.reconcile_discovery_scan(0, 0).is_empty());
+            assert!(store.reconcile_discovery_scan(0, 0).evicted.is_empty());
         }
-        assert_eq!(store.reconcile_discovery_scan(0, 0), vec![PHANTOM_SHORT]);
+        assert_eq!(store.reconcile_discovery_scan(0, 0).evicted, vec![PHANTOM_SHORT]);
+    }
+
+    #[test]
+    fn an_evicted_device_unbinds_its_lamp_as_forget_does() {
+        const LAMP: u8 = 5;
+        let store = RegistryStore::with_adapter_count(1);
+        assert!(apply_progress(&store, PHANTOM_SHORT, None));
+        assert!(store.apply_virtual_lamp_bind(0, LAMP, PHANTOM_SHORT));
+        for _ in 1..DISCOVERY_EVICT_MISS_THRESHOLD {
+            assert!(store.reconcile_discovery_scan(0, 0).evicted.is_empty());
+        }
+        let eviction = store.reconcile_discovery_scan(0, 0);
+        assert_eq!(eviction.evicted, vec![PHANTOM_SHORT]);
+        assert_eq!(eviction.unbound.unbound_lamps, vec![LAMP]);
+        assert_eq!(store.internal_virtual_lamp_binding_short(0, LAMP), None);
+        assert!(store.dirty.take_virtual_lamps_dirty() & 1 != 0, "the lamp slice persists the unbinding");
     }
 }
 

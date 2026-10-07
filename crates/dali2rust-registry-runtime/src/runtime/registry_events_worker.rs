@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::runtime::registry::publish::{
     publish_group_matrix_changed, publish_physical_device_changed, publish_scene_matrix_changed,
+    publish_unbound_lamps,
 };
 use crate::runtime::registry::{ForeignSceneWrite, RegistryStore};
 use crate::runtime::registry_worker::RegistryEventsCounters;
@@ -215,16 +216,12 @@ dali2rust_contracts::dispatch_bus_events! {
         }
     },
     DaliDiscoveryScanReconciledEvent(body) => {
-        let evicted =
-            store.reconcile_discovery_scan(body.registry_adapter_id, body.confirmed_mask);
-        for short_address in evicted {
-            publish_physical_device_changed(
-                publisher,
-                corr,
-                body.registry_adapter_id,
-                short_address,
-            );
+        let aid = body.registry_adapter_id;
+        let eviction = store.reconcile_discovery_scan(aid, body.confirmed_mask);
+        for short_address in eviction.evicted {
+            publish_physical_device_changed(publisher, corr, aid, short_address);
         }
+        publish_unbound_lamps(publisher, corr, aid, &eviction.unbound);
         counters
             .discovery_scan_reconciled_applied
             .fetch_add(1, Ordering::Relaxed);

@@ -6,10 +6,7 @@ use dali2rust_contracts::msg::{
     PhysicalDeviceOverrideCommand,
 };
 
-use crate::runtime::registry::publish::{
-    publish_group_matrix_changed, publish_physical_device_changed,
-    publish_virtual_lamp_changed,
-};
+use crate::runtime::registry::publish::{publish_physical_device_changed, publish_unbound_lamps};
 use crate::runtime::registry::RegistryStore;
 
 use super::confirm::{
@@ -102,12 +99,7 @@ pub(super) fn handle_pd_forget(
         return;
     };
     publish_physical_device_changed(publisher, corr, body.adapter_id, body.short_address);
-    for lamp_id in &outcome.unbound_lamps {
-        publish_virtual_lamp_changed(publisher, corr, body.adapter_id, *lamp_id);
-    }
-    if outcome.groups_changed {
-        publish_group_matrix_changed(publisher, corr, body.adapter_id);
-    }
+    publish_unbound_lamps(publisher, corr, body.adapter_id, &outcome);
     counters
         .physical_device_overrides_applied
         .fetch_add(1, Ordering::Relaxed);
