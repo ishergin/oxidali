@@ -1375,6 +1375,7 @@ mod tests {
 
         slices.fail_reads_of(Some(bank_slot(BROKEN_BANK)));
         let unread = boot(&slices);
+        assert_eq!(unread.persist_counters.unread_slices.load(std::sync::atomic::Ordering::Acquire), 1);
         unread.dirty.mark_physical_devices_dirty(0);
         unread.flush_dirty_slices(&slices);
         assert!(device_name(&unread, forgotten).is_none(), "the old slot stood in for the bank");

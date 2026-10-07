@@ -12,7 +12,8 @@ pub(crate) const REDUNDANCY_SETTINGS: u32 = 1 << 4;
 pub(crate) const POLICIES: u32 = 1 << 5;
 pub(crate) const HOME_ASSISTANT_SETTINGS: u32 = 1 << 6;
 const FIRST_INPUT_DEVICE_BANK: u32 = 8;
-pub(crate) const ALL_INPUT_DEVICE_BANKS: u8 = (1 << SliceKey::INPUT_DEVICE_BANKS) - 1;
+const ALL_INPUT_DEVICE_BANKS: u8 = (1 << SliceKey::INPUT_DEVICE_BANKS) - 1;
+pub(crate) const INPUT_DEVICES: u32 = (ALL_INPUT_DEVICE_BANKS as u32) << FIRST_INPUT_DEVICE_BANK;
 
 const GLOBALS: [(u32, SliceKey); 7] = [
     (ADAPTERS, SliceKey::Adapters),
@@ -59,11 +60,17 @@ impl WithheldSlices {
             SliceKey::InputDevices { bank } => {
                 global(bit(bank).checked_shl(FIRST_INPUT_DEVICE_BANK).unwrap_or(0))
             }
+            SliceKey::Adapters => global(ADAPTERS),
+            SliceKey::HclSchedules => global(HCL_SCHEDULES),
+            SliceKey::PollerSettings => global(POLLER_SETTINGS),
+            SliceKey::DaliSettings => global(DALI_SETTINGS),
+            SliceKey::RedundancySettings => global(REDUNDANCY_SETTINGS),
+            SliceKey::Policies => global(POLICIES),
+            SliceKey::HomeAssistantSettings => global(HOME_ASSISTANT_SETTINGS),
             SliceKey::PhysicalDevices { .. }
             | SliceKey::PhysicalDeviceBank { .. }
             | SliceKey::ControllerSettings
             | SliceKey::Rules { .. } => None,
-            other => GLOBALS.iter().find(|(_, key)| *key == other).and_then(|(m, _)| global(*m)),
         }
     }
 

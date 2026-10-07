@@ -16,10 +16,10 @@ use dali2rust_adapters::{
 use dali2rust_bus::BusConfig;
 use dali2rust_platform::net::NetworkLink;
 use dali2rust_platform::slice_store::SliceStore;
-use dali2rust_bsp::slice_store_files::InMemorySliceStore;
 use dali2rust_test_support::{wait_for_tcp_ready, MockNetworkLink};
 use dali2rust_adapters::http::host::HostServer;
 
+pub mod harness_slices;
 pub mod steps;
 pub mod ws_client;
 
@@ -50,7 +50,7 @@ pub struct DaliWorld {
     mock_unblock_flag: Arc<AtomicBool>,
     mqtt_mock: Arc<dali2rust_mqtt_runtime::MockMqttClient>,
     _runtime: Option<Box<BusStackRuntime>>,
-    persistence_slices: Option<Arc<InMemorySliceStore>>,
+    persistence_slices: Option<Arc<harness_slices::HarnessSlices>>,
     network_link: Option<([u8; 6], Option<[u8; 4]>, String)>,
     runtime_config: DaliRuntimeConfig,
     pub stored_responses: Vec<TestResponse>,
@@ -133,6 +133,10 @@ impl DaliWorld {
         wait_for_tcp_ready(self.server_port, Duration::from_secs(2));
     }
 
+    pub fn persistence_slices(&self) -> &harness_slices::HarnessSlices {
+        self.persistence_slices.as_deref().expect("in-memory slice persistence is enabled")
+    }
+
     fn persistence_slices_api(&self) -> Option<Arc<dyn SliceStore>> {
         self.persistence_slices
             .as_ref()
@@ -191,7 +195,7 @@ impl DaliWorld {
 
     pub fn enable_in_memory_persistence(&mut self) {
         if self.persistence_slices.is_none() {
-            self.persistence_slices = Some(Arc::new(InMemorySliceStore::new()));
+            self.persistence_slices = Some(Arc::new(harness_slices::HarnessSlices::default()));
         }
     }
 

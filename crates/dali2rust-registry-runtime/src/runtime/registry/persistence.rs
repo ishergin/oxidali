@@ -325,8 +325,10 @@ impl crate::runtime::registry::store::RegistryStore {
     }
 
     fn flush_input_devices_if_dirty(&self, slices: &dyn SliceStore) {
-        let banks = self.dirty.take_input_device_banks_dirty();
-        for bank in (0..INPUT_DEVICE_BANKS_U8).filter(|bank| banks & (1 << bank) != 0) {
+        if !self.dirty.take_input_devices_dirty() {
+            return;
+        }
+        for bank in 0..INPUT_DEVICE_BANKS_U8 {
             let name = format!("input_devices_b{bank}");
             if let Err(e) = self.flush_global_slice(
                 slices,
@@ -338,7 +340,7 @@ impl crate::runtime::registry::store::RegistryStore {
                 },
             ) {
                 self.note_flush_failure(format_args!("{name}"), &e);
-                self.dirty.mark_input_device_banks_dirty(banks);
+                self.dirty.mark_input_devices_dirty();
                 return;
             }
             self.persist_counters
@@ -1181,29 +1183,39 @@ mod tests {
     use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 
     use crate::test_support::{CountingStore, ProbeStore};
+    use super::super::input_devices::{InputDeviceRecord, INPUT_DEVICES_PER_BANK};
     use super::super::scenes::SCENE_COUNT;
     use super::super::store::RegistryStore;
 
-    const STORED_SLICES: [SliceKey; 11] = [
-        SliceKey::Adapters,
-        SliceKey::Groups { adapter_id: 0 },
-        SliceKey::VirtualLamps { adapter_id: 0 },
-        SliceKey::Scene { adapter_id: 0, scene_id: 3 },
-        SliceKey::HclSchedules,
-        SliceKey::PollerSettings,
-        SliceKey::DaliSettings,
-        SliceKey::RedundancySettings,
-        SliceKey::Policies,
-        SliceKey::HomeAssistantSettings,
-        SliceKey::InputDevices { bank: 1 },
-    ];
+    const ADAPTER_COUNT: u8 = 2;
+
+    fn registry_slices() -> Vec<SliceKey> {
+        SliceKey::every(ADAPTER_COUNT)
+            .filter(|key| {
+                !matches!(
+                    key,
+                    SliceKey::PhysicalDevices { .. }
+                        | SliceKey::PhysicalDeviceBank { .. }
+                        | SliceKey::ControllerSettings
+                        | SliceKey::Rules { .. }
+                )
+            })
+            .collect()
+    }
+
+    fn held_together(key: SliceKey, unread: SliceKey) -> bool {
+        key == unread
+            || matches!((key, unread), (SliceKey::InputDevices { .. }, SliceKey::InputDevices { .. }))
+    }
 
     fn mark_every_slice_dirty(store: &RegistryStore) {
         let dirty = &store.dirty;
         dirty.adapters.store(true, Ordering::Release);
-        dirty.mark_groups_dirty(0);
-        dirty.mark_virtual_lamps_dirty(0);
-        (0..SCENE_COUNT).for_each(|scene_id| dirty.mark_scene_dirty(0, scene_id));
+        for adapter_id in 0..ADAPTER_COUNT {
+            dirty.mark_groups_dirty(adapter_id);
+            dirty.mark_virtual_lamps_dirty(adapter_id);
+            (0..SCENE_COUNT).for_each(|scene_id| dirty.mark_scene_dirty(adapter_id, scene_id));
+        }
         dirty.mark_hcl_schedules_dirty();
         dirty.mark_poller_settings_dirty();
         dirty.mark_dali_settings_dirty();
@@ -1215,10 +1227,10 @@ mod tests {
 
     fn installed() -> ProbeStore {
         let slices = ProbeStore::default();
-        let store = RegistryStore::with_adapter_count(1);
+        let store = RegistryStore::with_adapter_count(ADAPTER_COUNT);
         mark_every_slice_dirty(&store);
         store.flush_dirty_slices(&slices);
-        for key in STORED_SLICES {
+        for key in registry_slices() {
             assert!(slices.inner.load(key).is_ok(), "{} was not installed", key.label());
         }
         slices
@@ -1226,8 +1238,8 @@ mod tests {
 
     fn boot_with_unread(slices: &ProbeStore, unread: SliceKey) -> RegistryStore {
         slices.fail_reads_of(Some(unread));
-        let store = RegistryStore::with_adapter_count(1);
-        store.hydrate_from_store(slices, 1);
+        let store = RegistryStore::with_adapter_count(ADAPTER_COUNT);
+        store.hydrate_from_store(slices, ADAPTER_COUNT);
         store
     }
 
@@ -1244,18 +1256,51 @@ mod tests {
 
     #[test]
     fn a_slice_whose_read_fails_is_never_written_over() {
-        for unread in STORED_SLICES {
+        for unread in registry_slices() {
             let slices = installed();
             let store = boot_with_unread(&slices, unread);
-            assert_eq!(unread_slices(&store), 1, "{}", unread.label());
+            let label = unread.label();
+            assert!(store.dirty.held_back(ADAPTER_COUNT).is_empty(), "{label} marked for rewrite");
+            assert_eq!(unread_slices(&store), 1, "{label}");
 
             let written = flush_everything(&store, &slices);
-            assert!(!written.contains(&unread), "{} was written over", unread.label());
-            for other in STORED_SLICES.iter().filter(|key| **key != unread) {
-                let held = format!("{} held back with {}", other.label(), unread.label());
-                assert!(written.contains(other), "{held}");
+            assert!(!store.dirty.any_dirty(), "{label} still counts as work");
+            for key in registry_slices() {
+                let expected = !held_together(key, unread);
+                assert_eq!(written.contains(&key), expected, "{} with {label} unread", key.label());
             }
         }
+    }
+
+    #[test]
+    fn input_device_banks_wait_together_because_a_bank_is_a_position_in_the_whole_list() {
+        let installed_devices = u8::try_from(INPUT_DEVICES_PER_BANK + INPUT_DEVICES_PER_BANK / 2)
+            .expect("a short address");
+        let slices = ProbeStore::default();
+        let seeded = RegistryStore::with_adapter_count(1);
+        for short in 0..installed_devices {
+            seeded.write_inner().input_devices.insert((0, short), InputDeviceRecord::empty(0, short));
+        }
+        seeded.dirty.mark_input_devices_dirty();
+        seeded.flush_dirty_slices(&slices);
+
+        let store = boot_with_unread(&slices, SliceKey::InputDevices { bank: 0 });
+        flush_everything(&store, &slices);
+
+        slices.fail_reads_of(None);
+        let rebooted = RegistryStore::with_adapter_count(1);
+        rebooted.hydrate_from_store(&slices, 1);
+        assert_eq!(rebooted.read_inner().input_devices.len(), usize::from(installed_devices));
+    }
+
+    #[test]
+    fn a_withheld_settings_slice_keeps_the_flush_debounce() {
+        let slices = installed();
+        let store = boot_with_unread(&slices, SliceKey::PollerSettings);
+        store.dirty.mark_poller_settings_dirty();
+        assert!(!store.dirty.deliberate_config_write(), "nothing deliberate can be written");
+        store.dirty.mark_hcl_schedules_dirty();
+        assert!(store.dirty.deliberate_config_write());
     }
 
     #[test]
@@ -1265,7 +1310,7 @@ mod tests {
         let store = boot_with_unread(&slices, unread);
 
         slices.fail_reads_of(None);
-        store.hydrate_from_store(&slices, 1);
+        store.hydrate_from_store(&slices, ADAPTER_COUNT);
         assert_eq!(unread_slices(&store), 0);
         assert!(flush_everything(&store, &slices).contains(&unread));
     }

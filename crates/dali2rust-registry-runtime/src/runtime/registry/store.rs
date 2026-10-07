@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
@@ -69,7 +69,7 @@ pub(crate) struct DirtyFlags {
     pub redundancy_settings: AtomicBool,
     pub policies: AtomicBool,
     pub home_assistant_settings: AtomicBool,
-    input_device_banks: AtomicU8,
+    pub input_devices: AtomicBool,
     pub(crate) withheld: WithheldSlices,
 }
 
@@ -92,7 +92,7 @@ impl DirtyFlags {
             redundancy_settings: AtomicBool::new(false),
             policies: AtomicBool::new(false),
             home_assistant_settings: AtomicBool::new(false),
-            input_device_banks: AtomicU8::new(0),
+            input_devices: AtomicBool::new(false),
             withheld: WithheldSlices::default(),
         }
     }
@@ -103,9 +103,6 @@ impl DirtyFlags {
             || self.groups.load(Ordering::Acquire) & !self.withheld.groups() != 0
             || self.virtual_lamps.load(Ordering::Acquire) & !self.withheld.virtual_lamps() != 0
             || (0..MAX_DIRTY_ADAPTERS as u8).any(|adapter_id| self.writable_scenes(adapter_id) != 0)
-            || self.input_device_banks.load(Ordering::Acquire)
-                & !self.withheld.input_device_banks()
-                != 0
             || self.global_flags().any(|(flag, mask)| self.writable(flag, mask))
     }
 
@@ -118,6 +115,7 @@ impl DirtyFlags {
             (&self.redundancy_settings, withheld::REDUNDANCY_SETTINGS),
             (&self.policies, withheld::POLICIES),
             (&self.home_assistant_settings, withheld::HOME_ASSISTANT_SETTINGS),
+            (&self.input_devices, withheld::INPUT_DEVICES),
         ]
         .into_iter()
     }
@@ -128,6 +126,13 @@ impl DirtyFlags {
 
     pub fn adapters_writable(&self) -> bool {
         self.writable(&self.adapters, withheld::ADAPTERS)
+    }
+
+    pub fn deliberate_config_write(&self) -> bool {
+        self.adapters_writable()
+            || self.writable(&self.hcl_schedules, withheld::HCL_SCHEDULES)
+            || self.writable(&self.poller_settings, withheld::POLLER_SETTINGS)
+            || self.writable(&self.home_assistant_settings, withheld::HOME_ASSISTANT_SETTINGS)
     }
 
     fn writable_scenes(&self, adapter_id: u8) -> u16 {
@@ -141,8 +146,8 @@ impl DirtyFlags {
             .global_flags()
             .filter(|(flag, _)| flag.load(Ordering::Acquire))
             .fold(0, |pending, (_, mask)| pending | mask);
-        let input = self.input_device_banks.load(Ordering::Acquire)
-            & self.withheld.input_device_banks();
+        let pending_input = self.input_devices.load(Ordering::Acquire);
+        let input = if pending_input { self.withheld.input_device_banks() } else { 0 };
         let held_input = (0..SliceKey::INPUT_DEVICE_BANKS)
             .filter(move |bank| input & (1 << bank) != 0)
             .map(|bank| SliceKey::InputDevices { bank });
@@ -233,19 +238,12 @@ impl DirtyFlags {
         home_assistant_settings,
         withheld::HOME_ASSISTANT_SETTINGS
     );
-
-    pub fn mark_input_devices_dirty(&self) {
-        self.mark_input_device_banks_dirty(withheld::ALL_INPUT_DEVICE_BANKS);
-    }
-
-    pub fn mark_input_device_banks_dirty(&self, banks: u8) {
-        self.input_device_banks.fetch_or(banks, Ordering::Release);
-    }
-
-    pub fn take_input_device_banks_dirty(&self) -> u8 {
-        let withheld = self.withheld.input_device_banks();
-        self.input_device_banks.fetch_and(withheld, Ordering::AcqRel) & !withheld
-    }
+    global_dirty_flag!(
+        mark_input_devices_dirty,
+        take_input_devices_dirty,
+        input_devices,
+        withheld::INPUT_DEVICES
+    );
 
     pub fn mark_groups_dirty(&self, adapter_id: u8) {
         self.groups.fetch_or(1u32 << adapter_id, Ordering::Release);
