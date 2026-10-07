@@ -139,14 +139,18 @@ filtered: they address one device.
 - Physical devices are stored in banks of four short addresses, and a bank that loads is
   authoritative for its addresses even when it is empty. The registry never writes the
   legacy whole-adapter slot; a configuration import or a redundancy pull can, and the
-  transfer lists it after the banks. Hydration, at boot and on the reload after an
-  import, reads the legacy slot whenever a bank of the adapter did not load — missing,
-  unreadable or rejected — so an adapter whose banks were never all written reads it
-  every time, one cheap read while it is missing. It takes from the slot only the devices
-  of banks that did not load and hold no record in memory. It then marks for rewrite
-  every bank that did not load when the slot loaded or did not decode, so later boots
-  stop reading it; only the rejected banks when the slot is missing; and none when the
-  slot's read fails, so a rejected bank waits for the copy the slot may hold.
+  transfer lists it after the banks. Hydration — at boot, and on the reload after an
+  import or a standby's pull — reads the legacy slot whenever a bank of the adapter is
+  missing or rejected, so an adapter whose banks were never all written reads it every
+  time, one cheap read while it is missing. It takes from the slot only devices of those
+  banks that are not live in memory (no record, no pending write), and never a short
+  that memory already holds. It then marks every such bank for rewrite when the slot
+  loaded or did not decode, so later boots stop reading it; only the rejected banks when
+  the slot is missing; and none when the slot's read fails.
+- A bank that cannot be settled waits: one whose own read fails (a read failure is no
+  evidence of garbage), or one the slot may hold while the slot's read fails. No flush
+  writes a waiting bank, a lamp bound to one of its addresses keeps the binding, and the
+  next boot or reload that reads it settles it.
 - The registry worker flushes dirty slices after a short debounce, and at once after the
   configuration writes `command_flush_interval` names, through one reused 1 KiB chunk
   buffer.

@@ -57,6 +57,7 @@ pub(crate) struct DirtyFlags {
     pub groups: AtomicU32,
     pub physical_devices: AtomicU32,
     pub physical_device_banks: [std::sync::atomic::AtomicU16; MAX_DIRTY_ADAPTERS],
+    withheld_physical_device_banks: [std::sync::atomic::AtomicU16; MAX_DIRTY_ADAPTERS],
     pub virtual_lamps: AtomicU32,
     pub scenes: [std::sync::atomic::AtomicU16; MAX_DIRTY_ADAPTERS],
     pub hcl_schedules: AtomicBool,
@@ -76,6 +77,9 @@ impl DirtyFlags {
             groups: AtomicU32::new(0),
             physical_devices: AtomicU32::new(0),
             physical_device_banks: std::array::from_fn(|_| std::sync::atomic::AtomicU16::new(0)),
+            withheld_physical_device_banks: std::array::from_fn(|_| {
+                std::sync::atomic::AtomicU16::new(0)
+            }),
             virtual_lamps: AtomicU32::new(0),
             scenes: std::array::from_fn(|_| std::sync::atomic::AtomicU16::new(0)),
             hcl_schedules: AtomicBool::new(false),
@@ -93,10 +97,7 @@ impl DirtyFlags {
         self.adapters.load(Ordering::Acquire)
             || self.groups.load(Ordering::Acquire) != 0
             || self.physical_devices.load(Ordering::Acquire) != 0
-            || self
-                .physical_device_banks
-                .iter()
-                .any(|mask| mask.load(Ordering::Acquire) != 0)
+            || (0..MAX_DIRTY_ADAPTERS as u8).any(|adapter_id| self.writable_banks(adapter_id) != 0)
             || self.virtual_lamps.load(Ordering::Acquire) != 0
             || self.scenes.iter().any(|mask| mask.load(Ordering::Acquire) != 0)
             || self.hcl_schedules.load(Ordering::Acquire)
@@ -210,10 +211,35 @@ impl DirtyFlags {
     }
 
     pub fn take_physical_device_banks_dirty(&self, adapter_id: u8) -> u16 {
+        let withheld = self.withheld_physical_device_banks(adapter_id);
         self.physical_device_banks
             .get(adapter_id as usize)
-            .map(|mask| mask.swap(0, Ordering::AcqRel))
+            .map(|mask| mask.fetch_and(withheld, Ordering::AcqRel) & !withheld)
             .unwrap_or(0)
+    }
+
+    pub fn pending_physical_device_banks(&self, adapter_id: u8) -> u16 {
+        self.physical_device_banks
+            .get(adapter_id as usize)
+            .map_or(0, |mask| mask.load(Ordering::Acquire))
+    }
+
+    pub fn withheld_physical_device_banks(&self, adapter_id: u8) -> u16 {
+        self.withheld_physical_device_banks
+            .get(adapter_id as usize)
+            .map_or(0, |mask| mask.load(Ordering::Acquire))
+    }
+
+    pub fn settle_physical_device_banks(&self, adapter_id: u8, settled: u16, waiting: u16) {
+        if let Some(mask) = self.withheld_physical_device_banks.get(adapter_id as usize) {
+            let withheld = (mask.load(Ordering::Acquire) & !settled) | waiting;
+            mask.store(withheld, Ordering::Release);
+        }
+    }
+
+    fn writable_banks(&self, adapter_id: u8) -> u16 {
+        self.pending_physical_device_banks(adapter_id)
+            & !self.withheld_physical_device_banks(adapter_id)
     }
 
     pub fn take_groups_dirty(&self) -> u32 {

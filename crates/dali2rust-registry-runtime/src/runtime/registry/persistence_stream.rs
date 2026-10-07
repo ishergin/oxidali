@@ -1077,6 +1077,24 @@ mod tests {
     const UNWRITTEN_BANK: u8 = 1;
     const FORGOTTEN_SHORTS: [u8; 2] = [5, 7];
     const STALE_NAME: &str = "stale record";
+    const EMPTIED_BANK: u8 = 1;
+    const BOUND_LAMP: u8 = 5;
+    const SCANNED_SHORT: u8 = 9;
+    const SCANNED_RANDOM_ADDRESS: u32 = 0x0012_3456;
+
+    fn bank_shorts(bank: u8) -> std::ops::Range<u8> {
+        bank * SliceKey::DEVICES_PER_BANK..(bank + 1) * SliceKey::DEVICES_PER_BANK
+    }
+
+    fn random_address_of(store: &RegistryStore, short_address: u8) -> Option<u32> {
+        let g = store.inner.read().expect("registry lock");
+        g.physical_devices.get(&(0, short_address)).and_then(|r| r.random_address)
+    }
+
+    fn binding_of(store: &RegistryStore, virtual_lamp_id: u8) -> Option<u8> {
+        let g = store.inner.read().expect("registry lock");
+        g.lamps.get(&(0, virtual_lamp_id)).and_then(|lamp| lamp.binding_short)
+    }
 
     fn bank_slot(bank: u8) -> SliceKey {
         SliceKey::PhysicalDeviceBank { adapter_id: 0, bank }
@@ -1141,7 +1159,7 @@ mod tests {
     struct ProbeStore {
         inner: InMemorySliceStore,
         refused_write: std::sync::Mutex<Option<SliceKey>>,
-        fail_legacy_reads: std::sync::atomic::AtomicBool,
+        failing_read: std::sync::Mutex<Option<SliceKey>>,
         legacy_reads: std::sync::atomic::AtomicU32,
         written: std::sync::Mutex<Vec<SliceKey>>,
     }
@@ -1151,8 +1169,17 @@ mod tests {
             *self.refused_write.lock().expect("refusal lock") = key;
         }
 
+        fn fail_reads_of(&self, key: Option<SliceKey>) {
+            *self.failing_read.lock().expect("failing read lock") = key;
+        }
+
         fn written(&self) -> Vec<SliceKey> {
             self.written.lock().expect("written lock").clone()
+        }
+
+        fn banks_written(&self) -> Vec<SliceKey> {
+            let written = self.written().into_iter();
+            written.filter(|key| matches!(key, SliceKey::PhysicalDeviceBank { .. })).collect()
         }
 
         fn costs(&self) -> (usize, u32) {
@@ -1165,9 +1192,9 @@ mod tests {
         fn load(&self, key: SliceKey) -> Result<Vec<u8>, StoreError> {
             if key == LEGACY_SLOT {
                 self.legacy_reads.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                if self.fail_legacy_reads.load(std::sync::atomic::Ordering::Acquire) {
-                    return Err(StoreError::Backend("read failed".to_string()));
-                }
+            }
+            if *self.failing_read.lock().expect("failing read lock") == Some(key) {
+                return Err(StoreError::Backend("read failed".to_string()));
             }
             self.inner.load(key)
         }
@@ -1275,10 +1302,10 @@ mod tests {
     fn a_whole_adapter_slot_that_fails_to_read_is_kept_for_the_next_boot() {
         let slices = ProbeStore::default();
         write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
-        slices.fail_legacy_reads.store(true, std::sync::atomic::Ordering::Release);
+        slices.fail_reads_of(Some(LEGACY_SLOT));
         assert_eq!(device_count(&boot_and_flush(&slices)), 0);
 
-        slices.fail_legacy_reads.store(false, std::sync::atomic::Ordering::Release);
+        slices.fail_reads_of(None);
         assert_eq!(
             device_count(&boot(&slices)),
             usize::from(MIGRATED_DEVICES),
@@ -1292,28 +1319,130 @@ mod tests {
         write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
         boot_and_flush(&slices);
         write_slot(&slices.inner, bank_slot(BROKEN_BANK), b"not a persistence envelope");
-        slices.fail_legacy_reads.store(true, std::sync::atomic::Ordering::Release);
+        slices.fail_reads_of(Some(LEGACY_SLOT));
 
         let written = slices.written().len();
         let survivors = MIGRATED_DEVICES - SliceKey::DEVICES_PER_BANK;
         assert_eq!(device_count(&boot_and_flush(&slices)), usize::from(survivors));
         assert_eq!(slices.written().len(), written, "bank {BROKEN_BANK} lost its only copy");
 
-        slices.fail_legacy_reads.store(false, std::sync::atomic::Ordering::Release);
+        slices.fail_reads_of(None);
         assert_eq!(device_count(&boot_and_flush(&slices)), usize::from(MIGRATED_DEVICES));
         assert_eq!(device_count(&boot(&slices)), usize::from(MIGRATED_DEVICES));
     }
 
     #[test]
     fn a_broken_bank_without_a_whole_adapter_slot_is_rewritten_once() {
-        let slices = InMemorySliceStore::new();
-        write_slot(&slices, bank_slot(BROKEN_BANK), b"not a persistence envelope");
+        let slices = ProbeStore::default();
+        write_slot(&slices.inner, bank_slot(BROKEN_BANK), b"not a persistence envelope");
 
         let first = RegistryStore::with_adapter_count(1);
         assert_eq!(first.hydrate_from_store(&slices, 1).errors.iter().count(), 1);
         first.flush_dirty_slices(&slices);
+        assert_eq!(slices.banks_written(), vec![bank_slot(BROKEN_BANK)]);
         let second = RegistryStore::with_adapter_count(1);
         assert!(second.hydrate_from_store(&slices, 1).is_ok(), "bank {BROKEN_BANK} stays broken");
+    }
+
+    #[test]
+    fn a_waiting_bank_is_never_written_by_a_coarse_mark_or_a_scan() {
+        let slices = ProbeStore::default();
+        write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
+        slices.fail_reads_of(Some(LEGACY_SLOT));
+        let waiting = boot_and_flush(&slices);
+        waiting.dirty.mark_physical_devices_dirty(0);
+        assert!(waiting.seed_discovered_dt8(SCANNED_SHORT, Some(SCANNED_RANDOM_ADDRESS)));
+        waiting.flush_dirty_slices(&slices);
+        assert_eq!(slices.banks_written(), Vec::<SliceKey>::new(), "a waiting bank was written");
+
+        slices.fail_reads_of(None);
+        assert_eq!(device_count(&boot(&slices)), usize::from(MIGRATED_DEVICES));
+    }
+
+    #[test]
+    fn a_waiting_bank_settles_on_a_reload_that_can_read_the_old_slot() {
+        let slices = ProbeStore::default();
+        write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
+        slices.fail_reads_of(Some(LEGACY_SLOT));
+        let session = boot(&slices);
+        assert!(session.seed_discovered_dt8(SCANNED_SHORT, Some(SCANNED_RANDOM_ADDRESS)));
+
+        slices.fail_reads_of(None);
+        session.hydrate_counts_from_store(&slices, 1);
+        session.flush_dirty_slices(&slices);
+        let all_banks = usize::from(SliceKey::PHYSICAL_DEVICE_BANKS);
+        assert_eq!(slices.banks_written().len(), all_banks, "the settled banks are written");
+        let rebooted = boot(&slices);
+        assert_eq!(device_count(&rebooted), usize::from(MIGRATED_DEVICES));
+        assert_eq!(
+            random_address_of(&rebooted, SCANNED_SHORT),
+            Some(SCANNED_RANDOM_ADDRESS),
+            "the record this session found loses to the old slot's"
+        );
+    }
+
+    #[test]
+    fn a_lamp_keeps_its_binding_while_its_bank_waits() {
+        let slices = ProbeStore::default();
+        let vl_blob = expected_vl_blob(&populated_store(MIGRATED_DEVICES), 0);
+        write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
+        write_slot(&slices.inner, SliceKey::VirtualLamps { adapter_id: 0 }, &vl_blob);
+        slices.fail_reads_of(Some(LEGACY_SLOT));
+        let waiting = boot(&slices);
+        assert_eq!(binding_of(&waiting, BOUND_LAMP), Some(BOUND_LAMP), "dropped at hydration");
+        waiting.dirty.mark_virtual_lamps_dirty(0);
+        waiting.flush_dirty_slices(&slices);
+
+        slices.fail_reads_of(None);
+        assert_eq!(binding_of(&boot(&slices), BOUND_LAMP), Some(BOUND_LAMP));
+    }
+
+    #[test]
+    fn a_bank_emptied_before_its_first_write_stays_empty_across_a_reload() {
+        let slices = InMemorySliceStore::new();
+        write_slot(&slices, LEGACY_SLOT, &legacy_blob());
+        let migrated = boot(&slices);
+        for short in bank_shorts(EMPTIED_BANK) {
+            migrated.apply_physical_device_forget(0, short).expect("a migrated device");
+        }
+        migrated.hydrate_counts_from_store(&slices, 1);
+        migrated.flush_dirty_slices(&slices);
+
+        let rebooted = boot(&slices);
+        for state in [&migrated, &rebooted] {
+            let back = bank_shorts(EMPTIED_BANK).filter(|short| device_name(state, *short).is_some());
+            assert_eq!(back.collect::<Vec<u8>>(), Vec::<u8>::new(), "forgotten devices came back");
+        }
+    }
+
+    #[test]
+    fn a_bank_that_cannot_be_read_waits_and_keeps_its_newer_content() {
+        let slices = ProbeStore::default();
+        write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
+        let migrated = boot_and_flush(&slices);
+        let forgotten = BROKEN_BANK * SliceKey::DEVICES_PER_BANK;
+        migrated.apply_physical_device_forget(0, forgotten).expect("a migrated device");
+        migrated.flush_dirty_slices(&slices);
+        let newer = slices.inner.load(bank_slot(BROKEN_BANK)).expect("bank");
+
+        slices.fail_reads_of(Some(bank_slot(BROKEN_BANK)));
+        let unread = boot(&slices);
+        unread.dirty.mark_physical_devices_dirty(0);
+        unread.flush_dirty_slices(&slices);
+        assert!(device_name(&unread, forgotten).is_none(), "the old slot stood in for the bank");
+        assert_eq!(slices.inner.load(bank_slot(BROKEN_BANK)).expect("bank"), newer);
+
+        slices.fail_reads_of(None);
+        let recovered = boot(&slices);
+        assert_eq!(device_count(&recovered), usize::from(MIGRATED_DEVICES) - 1);
+        assert!(device_name(&recovered, forgotten).is_none());
+    }
+
+    #[test]
+    fn booting_an_empty_store_writes_no_bank() {
+        let slices = ProbeStore::default();
+        boot_and_flush(&slices);
+        assert_eq!(slices.banks_written(), Vec::<SliceKey>::new());
     }
 
     #[test]
@@ -1323,12 +1452,7 @@ mod tests {
         write_slot(&slices.inner, LEGACY_SLOT, b"not a persistence envelope");
 
         boot_and_flush(&slices);
-        let banks: Vec<SliceKey> = slices
-            .written()
-            .into_iter()
-            .filter(|key| matches!(key, SliceKey::PhysicalDeviceBank { .. }))
-            .collect();
-        assert_eq!(banks, vec![bank_slot(UNWRITTEN_BANK)]);
+        assert_eq!(slices.banks_written(), vec![bank_slot(UNWRITTEN_BANK)]);
     }
 
     #[test]

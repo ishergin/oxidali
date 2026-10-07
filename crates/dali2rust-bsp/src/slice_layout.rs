@@ -254,20 +254,37 @@ mod tests {
         (SliceKey::PhysicalDeviceBank { adapter_id: 7, bank: 15 }, 702, 1),
     ];
 
+    const INSTALLED_LAYOUT_SECTORS: u32 = 704;
+    const INSTALLED_LAYOUT_DIGEST: u64 = 0x6185_2e12_b198_011d;
+    const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    const MOVED: &str = "An installed slot keeps its offset for good, and a new slice gets a \
+                         region after the last one: a moved device bank would load whatever \
+                         envelope lies at its new offset, and an empty one is authoritative";
+
+    fn installed_layout_digest() -> u64 {
+        let installed_end = INSTALLED_LAYOUT_SECTORS * SECTOR_BYTES;
+        let mut slots: Vec<(u32, u32, String)> = SliceKey::every(MAX_ADAPTERS as u8)
+            .filter_map(|key| slot_geometry(key).map(|slot| (slot.offset, slot.bank_bytes, key.label())))
+            .filter(|(offset, _, _)| *offset < installed_end)
+            .collect();
+        slots.sort();
+        slots
+            .iter()
+            .flat_map(|(offset, bytes, label)| format!("{label}@{offset}+{bytes};").into_bytes())
+            .fold(FNV_OFFSET_BASIS, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME))
+    }
+
     #[test]
     fn installed_slots_never_move() {
         for (key, sector, bank_sectors) in INSTALLED_SLOTS {
-            assert_eq!(
-                slot_geometry(key),
-                Some(SlotGeometry {
-                    offset: sector * SECTOR_BYTES,
-                    bank_bytes: bank_sectors * SECTOR_BYTES,
-                }),
-                "{key:?} moved. An installed slot keeps its offset for good, and a new slice \
-                 gets a region after the last one: a moved device bank would load whatever \
-                 envelope lies at its new offset, and an empty one is authoritative"
-            );
+            let pinned = SlotGeometry {
+                offset: sector * SECTOR_BYTES,
+                bank_bytes: bank_sectors * SECTOR_BYTES,
+            };
+            assert_eq!(slot_geometry(key), Some(pinned), "{key:?} moved. {MOVED}");
         }
+        assert_eq!(installed_layout_digest(), INSTALLED_LAYOUT_DIGEST, "a slot moved. {MOVED}");
     }
 
     #[test]
