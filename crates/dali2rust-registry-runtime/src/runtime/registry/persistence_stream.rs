@@ -1056,7 +1056,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_banks_do_not_suppress_the_whole_adapter_fallback() {
+    fn written_empty_banks_keep_the_whole_adapter_slice_out() {
         let store = InMemorySliceStore::new();
         let old = populated_store(16);
 
@@ -1082,9 +1082,199 @@ mod tests {
         let g = fresh.inner.read().expect("registry lock");
         assert_eq!(
             g.physical_devices.keys().filter(|(aid, _)| *aid == 0).count(),
-            16,
-            "empty banks say nothing about whether the adapter has devices, and \
-             reading them as `loaded` is what emptied the bench's registry"
+            0,
+            "a bank that loads is authoritative even when empty: these are the banks a \
+             forget-all writes, and the whole-adapter slice must not bring the devices back"
+        );
+    }
+
+    const MIGRATED_DEVICES: u8 = 16;
+    const PULLED_DEVICES: u8 = 20;
+    const LEGACY_SLOT: SliceKey = SliceKey::PhysicalDevices { adapter_id: 0 };
+    const REFUSED_BANK: u8 = 3;
+    const REFUSED_BANK_SLOT: SliceKey =
+        SliceKey::PhysicalDeviceBank { adapter_id: 0, bank: REFUSED_BANK };
+
+    fn write_slot(slices: &dyn SliceStore, key: SliceKey, blob: &[u8]) {
+        let mut session = slices.begin_write(key).expect("begin");
+        session.append(blob).expect("append");
+        session.commit().expect("commit");
+    }
+
+    fn legacy_blob() -> Vec<u8> {
+        expected_pd_blob(&populated_store(MIGRATED_DEVICES), 0, None)
+    }
+
+    fn device_count(store: &RegistryStore) -> usize {
+        let g = store.inner.read().expect("registry lock");
+        g.physical_devices.keys().filter(|(aid, _)| *aid == 0).count()
+    }
+
+    fn boot(slices: &dyn SliceStore) -> RegistryStore {
+        let store = RegistryStore::with_adapter_count(1);
+        store.hydrate_from_store(slices, 1);
+        store
+    }
+
+    fn boot_and_flush(slices: &dyn SliceStore) -> RegistryStore {
+        let store = boot(slices);
+        store.flush_dirty_slices(slices);
+        store
+    }
+
+    fn forget_every_device(store: &RegistryStore, slices: &dyn SliceStore) {
+        for short in 0..MIGRATED_DEVICES {
+            store.apply_physical_device_forget(0, short).expect("a migrated device");
+        }
+        store.flush_dirty_slices(slices);
+    }
+
+    #[derive(Default)]
+    struct ProbeStore {
+        inner: InMemorySliceStore,
+        refused_write: std::sync::Mutex<Option<SliceKey>>,
+        fail_legacy_reads: std::sync::atomic::AtomicBool,
+        legacy_reads: std::sync::atomic::AtomicU32,
+        writes: std::sync::atomic::AtomicU32,
+    }
+
+    impl ProbeStore {
+        fn refuse_writes_to(&self, key: Option<SliceKey>) {
+            *self.refused_write.lock().expect("refusal lock") = key;
+        }
+
+        fn costs(&self) -> (u32, u32) {
+            let ordering = std::sync::atomic::Ordering::Acquire;
+            (self.writes.load(ordering), self.legacy_reads.load(ordering))
+        }
+    }
+
+    impl SliceStore for ProbeStore {
+        fn load(&self, key: SliceKey) -> Result<Vec<u8>, StoreError> {
+            if key == LEGACY_SLOT {
+                self.legacy_reads.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                if self.fail_legacy_reads.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err(StoreError::Backend("read failed".to_string()));
+                }
+            }
+            self.inner.load(key)
+        }
+
+        fn begin_write(&self, key: SliceKey) -> Result<Box<dyn SliceWriteSession + '_>, StoreError> {
+            if *self.refused_write.lock().expect("refusal lock") == Some(key) {
+                return Err(StoreError::Backend("no space".to_string()));
+            }
+            self.writes.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            self.inner.begin_write(key)
+        }
+    }
+
+    #[test]
+    fn forgetting_every_migrated_device_leaves_the_adapter_empty_after_a_reload() {
+        let slices = InMemorySliceStore::new();
+        write_slot(&slices, LEGACY_SLOT, &legacy_blob());
+        let migrated = boot_and_flush(&slices);
+        assert_eq!(device_count(&migrated), usize::from(MIGRATED_DEVICES));
+
+        forget_every_device(&migrated, &slices);
+        assert_eq!(slices.load(LEGACY_SLOT).expect("slot"), legacy_blob(), "never written");
+        assert_eq!(
+            device_count(&boot(&slices)),
+            0,
+            "the whole-adapter slot brought the forgotten devices back"
+        );
+    }
+
+    #[test]
+    fn a_bank_lost_before_a_reboot_comes_back_from_the_whole_adapter_slot() {
+        let slices = ProbeStore::default();
+        write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
+        slices.refuse_writes_to(Some(REFUSED_BANK_SLOT));
+        drop(boot_and_flush(&slices));
+        assert!(matches!(slices.inner.load(REFUSED_BANK_SLOT), Err(StoreError::Missing)));
+
+        slices.refuse_writes_to(None);
+        assert_eq!(device_count(&boot_and_flush(&slices)), usize::from(MIGRATED_DEVICES));
+        let settled = slices.costs();
+        assert_eq!(device_count(&boot_and_flush(&slices)), usize::from(MIGRATED_DEVICES));
+        assert_eq!(slices.costs(), settled, "once bank {REFUSED_BANK} is written, a boot costs nothing");
+    }
+
+    #[test]
+    fn a_written_bank_keeps_its_forgotten_device_out_while_a_lost_bank_falls_back() {
+        let slices = ProbeStore::default();
+        write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
+        slices.refuse_writes_to(Some(REFUSED_BANK_SLOT));
+        let first = boot_and_flush(&slices);
+        first.apply_physical_device_forget(0, 0).expect("device 0");
+        first.flush_dirty_slices(&slices);
+        drop(first);
+
+        slices.refuse_writes_to(None);
+        let rebooted = boot(&slices);
+        assert_eq!(device_count(&rebooted), usize::from(MIGRATED_DEVICES) - 1);
+        let g = rebooted.inner.read().expect("registry lock");
+        assert!(!g.physical_devices.contains_key(&(0, 0)), "bank 0 was written without it");
+    }
+
+    #[test]
+    fn a_migrated_adapter_costs_no_writes_and_no_whole_adapter_read_on_later_boots() {
+        let slices = ProbeStore::default();
+        write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
+        boot_and_flush(&slices);
+
+        let settled = slices.costs();
+        for _ in 0..2 {
+            assert_eq!(device_count(&boot_and_flush(&slices)), usize::from(MIGRATED_DEVICES));
+        }
+        assert_eq!(slices.costs(), settled, "(writes, whole-adapter reads) moved");
+    }
+
+    #[test]
+    fn an_undecodable_whole_adapter_slot_costs_one_round_of_bank_writes() {
+        let slices = ProbeStore::default();
+        write_slot(&slices.inner, LEGACY_SLOT, b"not a persistence envelope");
+        let first = RegistryStore::with_adapter_count(1);
+        assert_eq!(first.hydrate_from_store(&slices, 1).errors.iter().count(), 1);
+        first.flush_dirty_slices(&slices);
+        assert!(slices.inner.load(REFUSED_BANK_SLOT).is_ok(), "the banks are written once");
+
+        let settled = slices.costs();
+        let second = RegistryStore::with_adapter_count(1);
+        assert!(second.hydrate_from_store(&slices, 1).is_ok());
+        second.flush_dirty_slices(&slices);
+        assert_eq!(slices.costs(), settled, "the undecodable slot still costs every boot");
+    }
+
+    #[test]
+    fn a_whole_adapter_slot_beside_written_banks_is_ignored_and_never_written() {
+        let slices = ProbeStore::default();
+        let banked = populated_store(MIGRATED_DEVICES);
+        for bank in 0..SliceKey::PHYSICAL_DEVICE_BANKS {
+            let key = SliceKey::PhysicalDeviceBank { adapter_id: 0, bank };
+            write_slot(&slices.inner, key, &expected_pd_blob(&banked, 0, Some(bank)));
+        }
+        let pulled = expected_pd_blob(&populated_store(PULLED_DEVICES), 0, None);
+        write_slot(&slices.inner, LEGACY_SLOT, &pulled);
+
+        let booted = boot_and_flush(&slices);
+        assert_eq!(device_count(&booted), usize::from(MIGRATED_DEVICES));
+        assert_eq!(slices.inner.load(LEGACY_SLOT).expect("slot"), pulled, "its CRC must hold");
+        assert_eq!(slices.costs().1, 0, "the whole-adapter slot was read beside complete banks");
+    }
+
+    #[test]
+    fn a_whole_adapter_slot_that_fails_to_read_is_kept_for_the_next_boot() {
+        let slices = ProbeStore::default();
+        write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
+        slices.fail_legacy_reads.store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(device_count(&boot_and_flush(&slices)), 0);
+
+        slices.fail_legacy_reads.store(false, std::sync::atomic::Ordering::Release);
+        assert_eq!(
+            device_count(&boot(&slices)),
+            usize::from(MIGRATED_DEVICES),
+            "a read failure is no evidence the slot is garbage"
         );
     }
 

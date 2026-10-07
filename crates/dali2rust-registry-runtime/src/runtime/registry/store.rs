@@ -186,6 +186,12 @@ impl DirtyFlags {
         self.mark_all_physical_devices_dirty(adapter_id);
     }
 
+    pub fn mark_physical_device_banks_dirty(&self, adapter_id: u8, banks: u16) {
+        if let Some(mask) = self.physical_device_banks.get(adapter_id as usize) {
+            mask.fetch_or(banks, Ordering::Release);
+        }
+    }
+
     pub fn mark_virtual_lamps_dirty(&self, adapter_id: u8) {
         self.virtual_lamps
             .fetch_or(1u32 << adapter_id, Ordering::Release);

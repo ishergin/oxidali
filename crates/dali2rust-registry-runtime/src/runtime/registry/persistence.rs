@@ -79,35 +79,48 @@ impl crate::runtime::registry::store::RegistryStore {
         counts
     }
 
-    fn physical_device_count_of(&self, adapter_id: u8) -> usize {
-        self.read_inner()
-            .physical_devices
-            .keys()
-            .filter(|(aid, _)| *aid == adapter_id)
-            .count()
-    }
-
     fn hydrate_physical_devices_of(
         &self,
         slices: &dyn SliceStore,
         adapter_id: u8,
         sink: &mut HydrateSink<'_>,
     ) {
+        let unloaded = self.hydrate_physical_device_banks(slices, adapter_id, sink);
+        if unloaded != 0 {
+            self.fall_back_to_whole_adapter_slot(slices, adapter_id, unloaded, sink);
+        }
+    }
+
+    fn hydrate_physical_device_banks(
+        &self,
+        slices: &dyn SliceStore,
+        adapter_id: u8,
+        sink: &mut HydrateSink<'_>,
+    ) -> u16 {
+        let mut unloaded = 0u16;
         for bank in 0..PHYSICAL_DEVICE_BANKS_U8 {
-            let _ = hydrate_pd_bank_slice(self, slices, adapter_id, bank, sink);
+            let outcome = hydrate_pd_bank_slice(self, slices, adapter_id, bank, sink);
+            if !matches!(outcome, HydrateOutcome::Loaded) {
+                unloaded |= 1u16 << bank;
+            }
         }
-        if self.physical_device_count_of(adapter_id) > 0 {
-            return;
-        }
-        if matches!(
-            hydrate_pd_slice(self, slices, adapter_id, sink),
-            HydrateOutcome::Loaded
-        ) {
+        unloaded
+    }
+
+    fn fall_back_to_whole_adapter_slot(
+        &self,
+        slices: &dyn SliceStore,
+        adapter_id: u8,
+        unloaded: u16,
+        sink: &mut HydrateSink<'_>,
+    ) {
+        let stored = slices.load(SliceKey::PhysicalDevices { adapter_id });
+        if let HydrateOutcome::Loaded = hydrate_pd_slice(self, stored, adapter_id, unloaded, sink) {
             info!(
-                "persistence: PD a{adapter_id} migrated from the whole-adapter slice; \
-                 the next flush writes it as banks"
+                "persistence: PD a{adapter_id} banks {unloaded:#06x} did not load and come \
+                 from the whole-adapter slice; the next flush writes them"
             );
-            self.dirty.mark_all_physical_devices_dirty(adapter_id);
+            self.dirty.mark_physical_device_banks_dirty(adapter_id, unloaded);
         }
     }
 
@@ -597,12 +610,10 @@ impl crate::runtime::registry::store::RegistryStore {
             .map_err(|e| StoreError::Backend(e.to_string()))
     }
 
-    fn load_physical_devices(
-        slices: &dyn SliceStore,
-        adapter_id: u8,
+    fn decode_physical_devices(
+        bytes: &[u8],
     ) -> Result<PersistablePhysicalDevicesSlice, StoreError> {
-        let bytes = slices.load(SliceKey::PhysicalDevices { adapter_id })?;
-        decode_versioned_slice::<PersistablePhysicalDevicesSlice>(&bytes, PHYSICAL_DEVICES_SLICE_VERSION)
+        decode_versioned_slice::<PersistablePhysicalDevicesSlice>(bytes, PHYSICAL_DEVICES_SLICE_VERSION)
             .map_err(|e| StoreError::Backend(e.to_string()))
     }
 
@@ -624,7 +635,7 @@ impl crate::runtime::registry::store::RegistryStore {
         {
             return Err(StoreError::Backend(format!(
                 "a{adapter_id}/b{bank} holds short {} - bank geometry moved under \
-                 the stored bytes; falling back to the whole-adapter slice",
+                 the stored bytes; this bank comes from the whole-adapter slice",
                 stray.short_address
             )));
         }
@@ -700,14 +711,24 @@ fn hydrate_slice<S>(
             HydrateOutcome::Defaulted
         }
         Err(e) => {
-            sink.note_failed(&kind, || e.to_string());
             mark_slice_dirty(store, &kind);
-            sink.note_defaulted(kind);
-            bump(&store.persist_counters.hydrate_error_total);
-            warn!("persistence: failed to load {label}: {e}");
+            note_unread_slice(store, kind, label, sink, &e);
             HydrateOutcome::Failed
         }
     }
+}
+
+fn note_unread_slice(
+    store: &RegistryStore,
+    kind: PersistenceSliceKind,
+    label: &str,
+    sink: &mut HydrateSink<'_>,
+    e: &StoreError,
+) {
+    sink.note_failed(&kind, || e.to_string());
+    sink.note_defaulted(kind);
+    bump(&store.persist_counters.hydrate_error_total);
+    warn!("persistence: failed to load {label}: {e}");
 }
 
 const PHYSICAL_DEVICE_BANKS_U8: u8 =
@@ -834,11 +855,6 @@ hydrate_wrappers! { per_adapter:
         format!("groups a{adapter_id}"),
         RegistryStore::load_groups,
         hydrate_groups_inner;
-    hydrate_pd_slice(adapter_id) =>
-        PersistenceSliceKind::PhysicalDevices { adapter_id },
-        format!("PD a{adapter_id}"),
-        RegistryStore::load_physical_devices,
-        hydrate_physical_devices_inner;
     hydrate_pd_bank_slice(adapter_id, bank) =>
         PersistenceSliceKind::PhysicalDeviceBank { adapter_id, bank },
         format!("PD a{adapter_id}/b{bank}"),
@@ -854,6 +870,43 @@ hydrate_wrappers! { per_adapter:
         format!("input devices b{bank}"),
         RegistryStore::load_input_devices_bank,
         crate::runtime::registry::input_devices::hydrate_input_devices_bank_inner;
+}
+
+fn hydrate_pd_slice(
+    store: &RegistryStore,
+    stored: Result<Vec<u8>, StoreError>,
+    adapter_id: u8,
+    banks: u16,
+    sink: &mut HydrateSink<'_>,
+) -> HydrateOutcome {
+    let kind = PersistenceSliceKind::PhysicalDevices { adapter_id };
+    let label = format!("PD a{adapter_id}");
+    match stored {
+        Err(e) if !matches!(e, StoreError::Missing) => {
+            note_unread_slice(store, kind, &label, sink, &e);
+            HydrateOutcome::Failed
+        }
+        stored => hydrate_slice(
+            store,
+            kind,
+            &label,
+            sink,
+            || devices_of_banks(stored, banks),
+            |inner, slice| hydrate_physical_devices_inner(inner, adapter_id, slice),
+        ),
+    }
+}
+
+fn devices_of_banks(
+    stored: Result<Vec<u8>, StoreError>,
+    banks: u16,
+) -> Result<PersistablePhysicalDevicesSlice, StoreError> {
+    let mut slice = RegistryStore::decode_physical_devices(&stored?)?;
+    slice.devices.retain(|dev| {
+        1u16.checked_shl(u32::from(dev.short_address / SliceKey::DEVICES_PER_BANK))
+            .is_some_and(|bit| banks & bit != 0)
+    });
+    Ok(slice)
 }
 
 fn hydrate_home_assistant_settings_slice(

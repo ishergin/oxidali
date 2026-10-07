@@ -134,9 +134,13 @@ filtered: they address one device.
 - A slice's slot is fixed arithmetic over its key, with no directory. New global slices
   and new bank regions are appended after the existing slots, because an inserted slot
   re-addresses every installed slice.
-- Physical devices are stored in banks of four short addresses. The legacy
-  whole-adapter slot keeps its place: hydration falls back to it when the banks hold
-  nothing and the next flush rewrites the adapter as banks.
+- Physical devices are stored in banks of four short addresses, and a bank that loads is
+  authoritative for its addresses even when it is empty. The legacy whole-adapter slot
+  keeps its place and is never written. Hydration reads it only when a bank of the
+  adapter did not load — missing, unreadable or rejected — takes from it only the
+  devices of those banks, and marks each of those banks dirty, so the next flush writes
+  them and later boots no longer read the slot. A legacy slot that reads but does not
+  decode only gets the banks rewritten; one whose read fails is left for the next boot.
 - The registry worker flushes dirty slices after a short debounce, and at once after the
   configuration writes `command_flush_interval` names, through one reused 1 KiB chunk
   buffer.
