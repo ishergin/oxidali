@@ -252,7 +252,8 @@ implemented: [conformance gaps](documentation/reference/iec62386-conformance-gap
   the opcode, except on the raw diagnostic path (ADR-013).
 - Background work never delays an operator, and that is not a setting; a preempted read
   (`Preempted`) is routine, never shown as a failure (ADR-009).
-- A multi-frame unit is a transaction (`controller.transaction`); nothing yields inside a
+- A multi-frame unit is a transaction (`controller.transaction`; `controller.unit` when it
+  stages what its command consumes, ending at that command); nothing yields inside a
   started one; a retry repeats the whole unit, prelude included, and only after
   `Collision` or `BusBusy` (ADR-017).
 - A violating backward frame is an answer — terminal, `is_yes()`, no `value()` — never a

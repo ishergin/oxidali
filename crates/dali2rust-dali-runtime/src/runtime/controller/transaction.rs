@@ -67,6 +67,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
         }
     }
 
+    #[inline(always)]
     pub(super) fn run_transaction<R>(&mut self, exempt: bool, run: impl FnOnce(&mut Self) -> R) -> R {
         if self.tx.depth == 0 {
             self.tx = TransactionState {

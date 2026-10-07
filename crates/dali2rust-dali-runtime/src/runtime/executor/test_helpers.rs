@@ -1,11 +1,31 @@
 #[cfg(test)]
 pub mod shared {
     use crate::runtime::clock::StdClock;
-    use crate::runtime::controller::DaliController;
+    use crate::runtime::controller::{DaliController, PHY_TICK_US, TX_ARM_LEAD_TICKS};
+    use dali2rust_domain::dali::ses::DaliPriority;
     use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
     use dali2rust_domain::dali::types::DaliAddress;
     use dali2rust_platform::dali::{DaliTransport, DaliWireCounters};
     use std::sync::{Arc, Mutex};
+
+    pub fn priorities_of(settle_us: &[u32]) -> Vec<DaliPriority> {
+        settle_us
+            .iter()
+            .map(|requested| requested + u32::from(TX_ARM_LEAD_TICKS) * PHY_TICK_US)
+            .map(|us| {
+                [
+                    DaliPriority::Transaction,
+                    DaliPriority::UserAction,
+                    DaliPriority::Configuration,
+                    DaliPriority::Automatic,
+                    DaliPriority::PeriodicQuery,
+                ]
+                .into_iter()
+                .find(|p| p.contains_settle_us(us))
+                .unwrap_or_else(|| panic!("{us} µs on the wire falls in no Table 22 band"))
+            })
+            .collect()
+    }
 
     pub fn short_address(short: u8) -> DaliAddress {
         DaliAddress::short(short).expect("valid short address")

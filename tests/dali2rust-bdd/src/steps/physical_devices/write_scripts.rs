@@ -33,16 +33,23 @@ pub(super) fn script_fade_time_write(mock: &MockDaliTransport, dtr0: u8) {
     script_fade_time_write_answered(mock, dtr0, Some(dtr0 << 4));
 }
 
-pub(super) fn script_fade_time_write_answered(mock: &MockDaliTransport, dtr0: u8, answer: Option<u8>) {
+fn script_fade_time_pair(mock: &MockDaliTransport, dtr0: u8) -> u16 {
     mock.clear();
     mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(dtr0)));
     let set_fade = standard_frame(TEST_SHORT_ADDRESS, StandardCommand::SetFadeTime);
     mock.expect_forward_frame(set_fade);
     mock.expect_forward_frame(set_fade);
-    mock.expect_forward_frame_with_backward(
-        standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryFadeTimeFadeRate),
-        answer,
-    );
+    standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryFadeTimeFadeRate)
+}
+
+pub(super) fn script_fade_time_write_answered(mock: &MockDaliTransport, dtr0: u8, answer: Option<u8>) {
+    let read_back = script_fade_time_pair(mock, dtr0);
+    mock.expect_forward_frame_with_backward(read_back, answer);
+}
+
+pub(super) fn script_fade_time_write_violated(mock: &MockDaliTransport, dtr0: u8) {
+    let read_back = script_fade_time_pair(mock, dtr0);
+    mock.expect_forward_frame_corrupted_in_window(read_back);
 }
 
 fn script_level_bound_triple(

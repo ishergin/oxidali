@@ -34,7 +34,7 @@ fn read_one_scene_colour(
     content_confirm: ContentConfirmPolicy,
 ) -> Result<dali2rust_contracts::msg::DaliAttributeReadChunk, SemanticDaliError> {
     use dali2rust_contracts::msg::DaliAttributeReadChunk as Chunk;
-    controller.transaction_exempt(|controller| {
+    controller.unit_exempt(|controller| {
         let level = send_standard_query(
             controller,
             address,

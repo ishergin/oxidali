@@ -20,10 +20,12 @@ use std::sync::atomic::Ordering::Relaxed;
 mod transaction;
 mod retry;
 mod sniffer;
+mod unit;
 
 #[cfg(test)]
 use transaction::BUS_RELEASE_SETTLE_US;
 use retry::unit_retryable;
+use unit::UnitAttempt;
 
 pub const PHY_TICK_US: u32 = 104;
 
@@ -58,6 +60,7 @@ pub struct DaliController<T: DaliTransport + Send> {
     transport_honours_settle: bool,
     wire_class: TransactionPriority,
     tx: TransactionState,
+    unit: Option<UnitAttempt>,
     last_release_ms: u64,
     busy_since_release: bool,
     wire_counters: Arc<DaliWireCounters>,
@@ -109,6 +112,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
             transport_honours_settle,
             wire_class: TransactionPriority::Configuration,
             tx: TransactionState::default(),
+            unit: None,
             last_release_ms: clock_now,
             busy_since_release: false,
             wire_counters: Arc::new(DaliWireCounters::default()),
@@ -171,7 +175,7 @@ impl<T: DaliTransport + Send> DaliApplicationController for DaliController<T> {
         frame: [u8; 3],
         expects_backward: bool,
     ) -> Result<DaliResponse, Frame24Fault> {
-        let attempts = self.retry_policy.effective_max_attempts();
+        let attempts = self.attempts_here(self.retry_policy.effective_max_attempts());
         self.perform_exchange24(frame, expects_backward, attempts)
     }
 
@@ -237,6 +241,7 @@ impl<T: DaliTransport + Send> DaliApplicationController for DaliController<T> {
             self.wire_counters.transaction_leaks.fetch_add(1, Relaxed);
             debug_assert_eq!(self.tx.depth, 0, "transaction leaked past its command");
             self.tx = TransactionState::default();
+            self.unit = None;
         }
         result
     }
@@ -254,6 +259,14 @@ impl<T: DaliTransport + Send> DaliApplicationController for DaliController<T> {
 
     fn transaction_exempt<R>(&mut self, run: impl FnOnce(&mut Self) -> R) -> R {
         self.run_transaction(true, run)
+    }
+
+    fn unit<R>(&mut self, run: impl FnMut(&mut Self) -> R) -> R {
+        self.run_unit(false, run)
+    }
+
+    fn unit_exempt<R>(&mut self, run: impl FnMut(&mut Self) -> R) -> R {
+        self.run_unit(true, run)
     }
 
     fn note_workaround(&mut self, workaround: ReadbackWorkaround) {
@@ -295,7 +308,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
         expects_backward: bool,
         repeats: bool,
     ) -> Result<(DaliResponse, bool), FrameError> {
-        let attempts = self.retry_policy.effective_max_attempts();
+        let attempts = self.attempts_here(self.retry_policy.effective_max_attempts());
         for attempt in 0..attempts {
             match self.try_unit_once(enable, frame, expects_backward, repeats) {
                 Ok(result) => return Ok(result),
@@ -310,7 +323,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
     }
 
     fn send_unit24_twice(&mut self, frame: [u8; 3]) -> Result<(), FrameError> {
-        let attempts = self.retry_policy.effective_max_attempts();
+        let attempts = self.attempts_here(self.retry_policy.effective_max_attempts());
         for attempt in 0..attempts {
             match self.try_pair24_once(frame) {
                 Ok(()) => return Ok(()),
@@ -398,7 +411,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
         frame: ForwardFrame,
         expects_backward: bool,
     ) -> Result<(DaliResponse, bool), FrameError> {
-        let attempts = self.retry_policy.effective_max_attempts();
+        let attempts = self.attempts_here(self.retry_policy.effective_max_attempts());
         let outcome =
             self.exchange_with_attempts(WireFrame::Forward16(frame), expects_backward, attempts)?;
         Ok((response_from_outcome(outcome.outcome), outcome.contended))
@@ -460,6 +473,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
             return;
         }
         self.session.record_transmission(self.clock.as_ref());
+        self.note_unit_started();
         self.busy_since_release = true;
         self.wire_counters.note_frame_sent(priority as u8);
         self.note_settle_window(priority);

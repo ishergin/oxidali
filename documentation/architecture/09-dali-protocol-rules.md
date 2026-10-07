@@ -66,19 +66,22 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 
 - A unit the gear treats as one (DTR arming and its command, `ENABLE DEVICE TYPE` and its
   extended command, a send-twice pair, the device-type walk, a memory-bank chunk) runs in
-  `controller.transaction(|c| …)`; every frame after the first goes at priority 1
+  `controller.transaction(|c| …)`, or in `controller.unit` when it stages what its
+  command consumes (below); every frame after the first goes at priority 1
   (101 §9.2), so the owner wins each following slot
   ([ADR-017](decisions/ADR-017-dali-transactions-and-frame-priority.md)).
   `transaction_exempt` marks an indivisible unit that may exceed §9.2's 400 ms guidance.
-  The exempt kinds are closed: DT8 colour staging with the command that activates it
-  (including a target-state write and a scene programme), a scene-colour read, the
-  §11.5.13 device-type walk (from discovery and attribute reads), and 102/103
-  commissioning and discovery sessions. A new exempt call site is one of these kinds, or
-  this list grows.
+  The exempt kinds are closed: DT8 colour staging with the command that consumes it
+  (including a target-state write, a scene programme and a colour-limit store), a
+  scene-colour read, the
+  §11.5.13 device-type walk (from discovery and attribute reads), a memory-bank chunk that
+  is one latched value wider than a chunk (DiiA 252 §9.2.2), and 102/103 commissioning
+  and discovery sessions. A new exempt call site is one of these kinds, or this list
+  grows.
 - A collision or `BusBusy` on the first frame does not start a transaction: the destroyed
-  frame is still a first frame, and priority 1 is forbidden for it. A collision on a later
-  frame does not un-start one: the retransmission stays at priority 1 and the yield shield
-  holds until the bracket closes.
+  frame is still a first frame, and priority 1 is forbidden for it. Outside a unit, a
+  collision on a later frame does not un-start one: the retransmission stays at priority 1
+  and the yield shield holds until the bracket closes.
 - No yield lands inside a started transaction, not even for our own interactive work.
   Operator-first rests on small units: a read is a series of short transactions, and
   `step_boundary` closes the open one when something is waiting.
@@ -86,12 +89,31 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   retry it, and a 16-bit query whose window held a whole foreign forward frame (or, with
   the contention-retry knob, went unanswered while foreign traffic was seen) counts as a
   collision. `Preempted` and transport errors propagate.
+- A unit that stages what its command consumes — DTR arming and its proof, an
+  `ENABLE DEVICE TYPE` prelude, a temporary colour — runs in `controller.unit(|c| …)`, and
+  nothing inside it is retried on its own: a `Collision` or `BusBusy` anywhere in it ends
+  the attempt, no later exchange of that attempt reaches the wire, and the controller
+  re-runs the unit from its first frame under the retry policy, counted as a re-run.
+  Another master's frames may have landed in the gap, so a retry that resumed at the
+  command would act on operands nothing proved
+  ([ADR-027](decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md)). The unit
+  ends with the command that consumes what it staged. A check after that command (a
+  read-back, a verification) stays in the enclosing transaction, at priority 1 and behind
+  the yield shield, but outside the unit, so a break there retries the check alone and
+  never repeats a command that executed; a check or follow-up command that still fails
+  ends the operation instead of re-running the unit (a target-state write names it
+  `target_state_unfinished`). An outermost unit's re-run is a new transaction
+  at its class priority; inside a started transaction it re-runs at priority 1, and a
+  unit inside a unit is part of it.
 - The two halves of a send-twice pair are judged by the settling the interrupt measured
   before the second: past Table 17's 75 ms the pair is our breach and is counted; past
-  Table 20's 94 ms the gear cannot have read a pair, and the unit is re-run as `BusBusy`.
+  Table 20's 94 ms the gear is no longer bound to read a pair (up to 105 ms it still may),
+  and the unit is re-run as `BusBusy`. An address change that sent its pair but cannot
+  prove the move therefore asks the target before it fails; one that never sent the pair
+  never asks.
 - A 16-bit frame sent on its own (`send_raw`) is retried frame by frame on the same
-  outcomes, at priority 1 inside a started transaction; a frame that expected no answer
-  reads anything in its window as no answer.
+  outcomes, at priority 1 inside a started transaction, except inside a unit; a frame that
+  expected no answer reads anything in its window as no answer.
 - A query that advances gear state on every frame the gear hears — `READ MEMORY
   LOCATION` (the DTR0 post-increment), `QUERY NEXT DEVICE TYPE` (the §11.5.13 cursor) — is
   sent once with no frame-level retry (`send_raw_once`); the caller re-arms or restarts the
@@ -155,15 +177,44 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - Arm, prove, act once: an operand staged in a DTR is proved by read-back before the
   command that consumes it, and a read-back tells a wrong answer, silence and a contended
   window apart ([ADR-027](decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md)).
-  A 16-bit configuration write whose read-back went unanswered confirms nothing: the
-  fields that answered still land, and the operation fails `verify_unanswered`.
+  A 16-bit configuration write that reads back the variable it set (fade, levels, bounds,
+  extended fade, the dimming curve) confirms nothing when that read-back or its operand
+  proof went unanswered or held a violation: the fields that answered still land, and the
+  operation fails `verify_unanswered`, or `verify_contended` when any of them held a
+  violation. A Tc-limit store fails `dt8_tc_limit_unconfirmed` instead.
 - A multi-byte memory-bank value is read inside one latch (DiiA 252/253): chunks are
   field-aligned, a re-arm restarts the value, and a value no latch covers fails
   (`memory_bank_latch_lost`) rather than being stitched. MASK and TMASK are per width,
   signed widths included; value, MASK, TMASK and "not read" are four states.
-- A memory-bank read chunk spans at most five locations (a latched value wider than that
-  stays whole) and is one transaction: a longer one runs past 101 §9.2's 400 ms guidance
-  on real gear.
+- A memory-bank read chunk is one transaction that opens by proving the whole pointer,
+  `DTR1` and `DTR0`, and reads at most four locations: proof and reads together stay
+  under 101 §9.2's 400 ms guidance on real gear. A latched value wider than that stays
+  whole, and its chunk is exempt. A proof tells a moved pointer from silence and a
+  violation, as a read-back does, in that order: a register that answers a wrong value
+  outranks a violation, and a violation outranks silence. An arm whose proof never holds
+  fails `memory_bank_pointer_unconfirmed`, or `bus_contended` when its last proof was
+  violated and no register moved. A failed proof right after an arm re-arms the pointer;
+  before any other chunk it fails the read — `memory_bank_read_misaligned` when the
+  pointer moved, since the chunk before it may have read under a foreign pointer,
+  `memory_bank_pointer_unconfirmed` when it went unanswered, `bus_contended` when it was
+  violated. The read closes by checking both registers the same way (102 §9.10.4).
+- A silent READ at offset 0x01 reads as a placeholder and ends its chunk: the next
+  chunk's proof shows whether the READ reached the gear. Only a pointer one READ behind,
+  the bank held and `DTR0` still at 0x01, has 0x01 read again; any other failed proof
+  follows the rule above, and a read that ends at 0x01 is judged by its closing check.
+  These re-arms and the ones after an arm share two per read. Any other READ that
+  answers nothing, answers with a violation,
+  crosses a foreign frame or fails yields no value and ends its chunk: the pointer is
+  re-armed in a transaction of its own at that location, or at the start of the latched
+  value holding it, and a fresh chunk goes on from there, so no recovery stretches a
+  chunk past the budget. Two clean silences at an offset where nothing ever answered end
+  the bank there — never at 0x02, which every implemented bank answers (102 Table 8).
+  Attempts that showed something (a silence, a violation, a contended answer, a failure
+  inside a latched value) and attempts the bus never let through (busy, a contended
+  silence, a transport error) each have a budget of three. When one runs out, a latched
+  value whose first byte had answered fails `memory_bank_latch_lost`, a transport error
+  on the last attempt is returned unless the offset had answered, and anything else
+  fails `bus_contended`.
 
 ## Faults and identification
 
@@ -232,8 +283,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   permission, since 098bp's extended control (`0xC0`) is also legal. Boot state is never
   assumed; `0x80` is a fixed point of the unlink rule. The read-back after activation
   fails the write only when a driven channel is still linked: a control type with the
-  driven channels unlinked (`0xC0` too) passes, and a gear that does not answer 251 is
-  neither written nor failed.
+  driven channels unlinked (`0xC0` too) passes, and a gear that does not answer 251, or
+  whose answer the bus never let through, is neither written nor failed.
 - Every live RGB write and every RGB scene row also stages W, A and F (zero for a
   three-channel colour), whatever the control-byte permission: under normalised control
   each channel scales against the largest of R..F, so a stale channel both lights up and

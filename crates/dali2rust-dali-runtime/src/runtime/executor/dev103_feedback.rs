@@ -165,7 +165,7 @@ fn write_one(
 ) -> Result<(), SemanticDaliError> {
     let address = Device103Address::Short(cmd.short_address);
     let feature = InstanceAddress::FeatureNumber(cmd.instance_number);
-    controller.transaction(|c| {
+    controller.unit(|c| {
         stage_dtr0(c, address, value)?;
         send_twice(c, set.frame(address, feature, map))
     })?;

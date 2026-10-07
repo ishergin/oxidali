@@ -511,6 +511,7 @@ mod address_change {
     use dali2rust_domain::dali::commands::DaliCommand;
     use dali2rust_domain::dali::pres::special::SpecialCommand;
     use dali2rust_domain::dali::pres::standard::StandardCommand;
+    use dali2rust_domain::dali::ses::RetryPolicy;
 
     const FROM: u8 = 5;
     const TO: u8 = 9;
@@ -565,6 +566,36 @@ mod address_change {
     }
 
     #[test]
+    fn a_collided_write_is_rearmed_and_reproved_before_it_goes_again() {
+        let mock = MockDaliTransport::new();
+        expect_arm(&mock, Some(ENCODED));
+        mock.expect_forward_frame_collision(standard_frame(FROM, StandardCommand::SetShortAddress));
+        expect_arm(&mock, Some(ENCODED));
+        expect_write(&mock);
+        let (transport, mut controller) = setup_controller(mock);
+        change_short_address(&mut controller, FROM, TO, false).expect("the unit carries the move");
+        assert_script_consumed(&transport);
+    }
+
+    // IEC 62386-101 Table 20
+    #[test]
+    fn a_pair_split_into_the_grey_area_that_moved_the_gear_reports_the_move() {
+        const SPLIT_INTO_THE_GREY_AREA_TICKS: u16 = 950;
+        let mock = MockDaliTransport::new();
+        mock.set_last_tx_settle_ticks(Some(SPLIT_INTO_THE_GREY_AREA_TICKS));
+        expect_arm(&mock, Some(ENCODED));
+        expect_write(&mock);
+        for _ in 0..3 {
+            expect_arm(&mock, None);
+        }
+        mock.expect_forward_frame_with_backward(standard_frame(TO, StandardCommand::QueryStatus), Some(0));
+        let (transport, mut controller) = setup_controller(mock);
+        change_short_address(&mut controller, FROM, TO, false)
+            .expect("the gear answers at the target, so the split pair did move it");
+        assert_script_consumed(&transport);
+    }
+
+    #[test]
     fn an_unprovable_operand_never_reaches_set_short_address() {
         let mock = MockDaliTransport::new();
         for _ in 0..3 {
@@ -579,6 +610,26 @@ mod address_change {
             !sent.contains(&write),
             "the gear must stay where it is when the operand cannot be proved: {sent:?}"
         );
+        assert!(
+            !sent.contains(&standard_frame(TO, StandardCommand::QueryStatus)),
+            "no pair went out, so whatever answers at the target is not this gear: {sent:?}"
+        );
+        assert_script_consumed(&transport);
+    }
+
+    #[test]
+    fn a_pair_split_on_every_attempt_asks_the_target_before_failing() {
+        const SPLIT_INTO_THE_GREY_AREA_TICKS: u16 = 950;
+        let mock = MockDaliTransport::new();
+        mock.set_last_tx_settle_ticks(Some(SPLIT_INTO_THE_GREY_AREA_TICKS));
+        for _ in 0..RetryPolicy::default().effective_max_attempts() {
+            expect_arm(&mock, Some(ENCODED));
+            expect_write(&mock);
+        }
+        mock.expect_forward_frame_with_backward(standard_frame(TO, StandardCommand::QueryStatus), Some(0));
+        let (transport, mut controller) = setup_controller(mock);
+        change_short_address(&mut controller, FROM, TO, false)
+            .expect("the gear answers at the target, so one of the split pairs moved it");
         assert_script_consumed(&transport);
     }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use dali2rust_domain::dali::commands::DaliResponse;
 
 pub(super) fn write_dimming_curve(
     controller: &mut impl DaliApplicationController,
@@ -10,34 +11,64 @@ pub(super) fn write_dimming_curve(
         return Ok(());
     };
     controller.step_boundary();
+    let select = ExtendedCommand::Dt6(Dt6Command::SelectDimmingCurve);
+    let (mut sent, mut unproved) = (false, UnprovedOperand::default());
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        if !send_dtr0_backed_extended(
-            controller,
-            address,
-            curve,
-            ExtendedCommand::Dt6(Dt6Command::SelectDimmingCurve),
-        )? {
+        if let ArmedCommand::Unproved(echo) =
+            send_dtr0_backed_extended(controller, address, curve, select)?
+        {
+            unproved.note(echo);
             continue;
         }
-        let read = send_extended_query_stable(
+        sent = true;
+        let read = send_extended_command(
             controller,
-            ContentConfirmPolicy::default(),
             address,
             ExtendedCommand::Dt6(Dt6Command::QueryDimmingCurve),
         )?;
-        match read {
-            Some(v) if v == curve => {
-                tally.confirmed.dimming_curve = Some(v);
-                return reread_physical_minimum(controller, address, &mut tally.confirmed);
-            }
-            None => {
-                tally.unanswered = true;
-                return Ok(());
-            }
-            Some(_) => {}
+        if let Some(unconfirmed) = ReadBack::without_value(read) {
+            tally.proved(unconfirmed);
+            return Ok(());
+        }
+        if read == DaliResponse::Answer(curve) {
+            tally.confirmed.dimming_curve = Some(curve);
+            return reread_physical_minimum(controller, address, &mut tally.confirmed);
         }
     }
-    Ok(())
+    if sent {
+        return Ok(());
+    }
+    unproved.settle(tally)
+}
+
+const DIMMING_CURVE_ARM_UNCONFIRMED: &str = "dimming_curve_arm_unconfirmed";
+
+#[derive(Default)]
+struct UnprovedOperand {
+    violation: bool,
+    silence: bool,
+}
+
+impl UnprovedOperand {
+    fn note(&mut self, echo: DaliResponse) {
+        match echo {
+            DaliResponse::Violation => self.violation = true,
+            DaliResponse::NoAnswer => self.silence = true,
+            DaliResponse::Answer(_) => {}
+        }
+    }
+
+    // IEC 62386-101 §8.2.5
+    fn settle(self, tally: &mut WriteTally) -> Result<(), SemanticDaliError> {
+        if self.violation {
+            tally.proved(ReadBack::Contended);
+        } else if self.silence {
+            tally.proved(ReadBack::Unanswered);
+        } else {
+            return Err(SemanticDaliError::OperationFailed(DIMMING_CURVE_ARM_UNCONFIRMED));
+        }
+        Ok(())
+    }
 }
 
 const DT6_ANSWER_YES: u8 = 0xFF;

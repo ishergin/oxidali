@@ -157,6 +157,50 @@ Feature: IEC 62386-103 input devices as a REST resource
     And 24-bit forward frame 4 should be sent at priority 1
     And 24-bit forward frame 5 should be sent at priority 3
 
+  @id:INP-095
+  Scenario: An event filter reads back every byte it set
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "0"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock transport 24-bit trace is cleared
+    And the mock bus answers 24-bit query "01 FE 36" with "0F"
+    And the mock bus answers 24-bit query "01 00 80" with "00"
+    And the mock bus answers 24-bit query "01 00 90" with "0F"
+    And the mock bus answers 24-bit query "01 00 91" with "80"
+    And the mock bus answers 24-bit query "01 00 92" with "01"
+    And I PATCH JSON {"event_filter":[15,128,1]} to "/api/v1/adapters/0/input-devices/0/instances/0" and the operation succeeds
+    Then the mock transport 24-bit trace should be exactly "C1 32 01, C1 31 80, C1 30 0F, 01 FE 36, 01 00 68, 01 00 68, 01 00 80, 01 00 90, 01 00 91, 01 00 92"
+
+  @id:INP-096
+  Scenario: An event filter whose upper byte did not land is refused
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "0"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock transport 24-bit trace is cleared
+    And the mock bus answers 24-bit query "01 FE 36" with "0F"
+    And the mock bus answers 24-bit query "01 00 80" with "00"
+    And the mock bus answers 24-bit query "01 00 90" with "0F"
+    And the mock bus answers 24-bit query "01 00 91" with "7F"
+    And I PATCH JSON {"event_filter":[15,128,1]} to "/api/v1/adapters/0/input-devices/0/instances/0"
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error message should be "verify_failed"
+    And the mock transport 24-bit trace should be exactly "C1 32 01, C1 31 80, C1 30 0F, 01 FE 36, 01 00 68, 01 00 68, 01 00 80, 01 00 90, 01 00 91"
+
+  @id:INP-097
+  Scenario: A push-button event filter reads back and keeps only the byte the instance has
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock transport 24-bit trace is cleared
+    And the mock bus answers 24-bit query "01 FE 36" with "0F"
+    And the mock bus answers 24-bit query "01 00 80" with "01"
+    And the mock bus answers 24-bit query "01 00 90" with "0F"
+    And I PATCH JSON {"event_filter":[15,128,1]} to "/api/v1/adapters/0/input-devices/0/instances/0" and the operation succeeds
+    And I send a GET request to "/api/v1/adapters/0/input-devices/0"
+    Then the response status should be 200
+    And the JSON pointer "/instances/0/event_filter/value/0" should be 15
+    And the JSON pointer "/instances/0/event_filter/value/1" should be 0
+    And the JSON pointer "/instances/0/event_filter/value/2" should be 0
+    And the mock transport 24-bit trace should be exactly "C1 32 01, C1 31 80, C1 30 0F, 01 FE 36, 01 00 68, 01 00 68, 01 00 80, 01 00 90"
+
   @id:INP-087
   Scenario Outline: An input-device route on an adapter that does not exist is 404
     When I send a <method> request to "<path>"

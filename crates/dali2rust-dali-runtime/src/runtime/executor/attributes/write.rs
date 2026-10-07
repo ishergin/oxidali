@@ -1,4 +1,6 @@
 use super::*;
+use crate::runtime::executor::helpers::VERIFY_CONTENDED_MESSAGE;
+use dali2rust_domain::dali::commands::DaliResponse;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConfirmedWritableAttributes {
@@ -37,17 +39,30 @@ pub struct WriteAttributesExecution {
 }
 
 // IEC 62386-102 §3.13
+// IEC 62386-101 §8.2.5
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ReadBack {
     Proved(u8),
     Refused,
     Unanswered,
+    Contended,
+}
+
+impl ReadBack {
+    pub(super) const fn without_value(response: DaliResponse) -> Option<Self> {
+        match response {
+            DaliResponse::Answer(_) => None,
+            DaliResponse::NoAnswer => Some(Self::Unanswered),
+            DaliResponse::Violation => Some(Self::Contended),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 pub(super) struct WriteTally {
     pub(super) confirmed: ConfirmedWritableAttributes,
-    pub(super) unanswered: bool,
+    unanswered: bool,
+    contended: bool,
 }
 
 impl WriteTally {
@@ -59,15 +74,30 @@ impl WriteTally {
                 self.unanswered = true;
                 None
             }
+            ReadBack::Contended => {
+                self.contended = true;
+                None
+            }
         }
     }
 
     fn into_execution(self, error: Option<SemanticDaliError>) -> WriteAttributesExecution {
-        let unanswered = SemanticDaliError::OperationFailed(VERIFY_UNANSWERED_MESSAGE);
+        let unconfirmed = if self.contended {
+            Some(VERIFY_CONTENDED_MESSAGE)
+        } else {
+            self.unanswered.then_some(VERIFY_UNANSWERED_MESSAGE)
+        };
         WriteAttributesExecution {
             confirmed: self.confirmed,
-            error: error.or(self.unanswered.then_some(unanswered)),
+            error: error.or(unconfirmed.map(SemanticDaliError::OperationFailed)),
         }
+    }
+}
+
+fn answer_bits(response: DaliResponse, bits: impl FnOnce(u8) -> u8) -> DaliResponse {
+    match response {
+        DaliResponse::Answer(byte) => DaliResponse::Answer(bits(byte)),
+        silent_or_violating => silent_or_violating,
     }
 }
 
@@ -148,7 +178,7 @@ pub(super) fn send_dtr0_config_verified<C: DaliApplicationController>(
     address: DaliAddress,
     dtr0: u8,
     command: StandardCommand,
-    mut read_back: impl FnMut(&mut C) -> Result<Option<u8>, SemanticDaliError>,
+    mut read_back: impl FnMut(&mut C) -> Result<DaliResponse, SemanticDaliError>,
 ) -> Result<ReadBack, SemanticDaliError> {
     controller.step_boundary();
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
@@ -156,10 +186,11 @@ pub(super) fn send_dtr0_config_verified<C: DaliApplicationController>(
             send_dtr0_backed_standard(controller, address, dtr0, command)?;
             read_back(controller)
         })?;
-        match verified {
-            Some(v) if v == dtr0 => return Ok(ReadBack::Proved(v)),
-            None => return Ok(ReadBack::Unanswered),
-            Some(_) => {}
+        if let Some(unconfirmed) = ReadBack::without_value(verified) {
+            return Ok(unconfirmed);
+        }
+        if verified == DaliResponse::Answer(dtr0) {
+            return Ok(ReadBack::Proved(dtr0));
         }
     }
     Ok(ReadBack::Refused)
@@ -170,7 +201,7 @@ fn send_dtr0_config_accepted<C: DaliApplicationController>(
     address: DaliAddress,
     dtr0: u8,
     command: StandardCommand,
-    mut read_back: impl FnMut(&mut C) -> Result<Option<u8>, SemanticDaliError>,
+    mut read_back: impl FnMut(&mut C) -> Result<DaliResponse, SemanticDaliError>,
 ) -> Result<ReadBack, SemanticDaliError> {
     controller.step_boundary();
     let mut previous: Option<u8> = None;
@@ -180,10 +211,12 @@ fn send_dtr0_config_accepted<C: DaliApplicationController>(
             read_back(controller)
         })?;
         match answer {
-            Some(v) if v == dtr0 => return Ok(ReadBack::Proved(v)),
-            Some(v) if previous == Some(v) => return Ok(ReadBack::Proved(v)),
-            Some(v) => previous = Some(v),
-            None => return Ok(ReadBack::Unanswered),
+            DaliResponse::Answer(v) if v == dtr0 || previous == Some(v) => {
+                return Ok(ReadBack::Proved(v))
+            }
+            DaliResponse::Answer(v) => previous = Some(v),
+            DaliResponse::NoAnswer => return Ok(ReadBack::Unanswered),
+            DaliResponse::Violation => return Ok(ReadBack::Contended),
         }
     }
     Ok(ReadBack::Refused)
@@ -222,7 +255,7 @@ fn write_level_bound(
     } else {
         (StandardCommand::SetMaxLevel, StandardCommand::QueryMaxLevel)
     };
-    let verify = |c: &mut _| send_standard_query(c, address, query);
+    let verify = |c: &mut _| send_standard_response(c, address, query);
     send_dtr0_config_accepted(controller, address, dtr0, set, verify)
 }
 
@@ -236,8 +269,8 @@ fn write_fade_params(
     if let Some(ms) = fade_time_ms {
         let dtr0 = fade_time_dtr0_from_ms(ms);
         let verify = |c: &mut _| {
-            Ok(send_standard_query(c, address, StandardCommand::QueryFadeTimeFadeRate)?
-                .map(|b| b >> 4))
+            let both = send_standard_response(c, address, StandardCommand::QueryFadeTimeFadeRate)?;
+            Ok(answer_bits(both, |b| b >> 4))
         };
         match send_dtr0_config_verified(controller, address, dtr0, StandardCommand::SetFadeTime, verify) {
             Err(error) => return Some(error),
@@ -250,8 +283,8 @@ fn write_fade_params(
     }
     if let Some(rate) = fade_rate {
         let verify = |c: &mut _| {
-            Ok(send_standard_query(c, address, StandardCommand::QueryFadeTimeFadeRate)?
-                .map(|b| b & 0x0F))
+            let both = send_standard_response(c, address, StandardCommand::QueryFadeTimeFadeRate)?;
+            Ok(answer_bits(both, |b| b & 0x0F))
         };
         match send_dtr0_config_verified(controller, address, rate, StandardCommand::SetFadeRate, verify) {
             Err(error) => return Some(error),
@@ -270,7 +303,7 @@ fn write_levels(
 ) -> Option<SemanticDaliError> {
     if let Some(level) = power_on_level {
         let verify =
-            |c: &mut _| send_standard_query(c, address, StandardCommand::QueryPowerOnLevel);
+            |c: &mut _| send_standard_response(c, address, StandardCommand::QueryPowerOnLevel);
         match send_dtr0_config_verified(controller, address, level, StandardCommand::SetPowerOnLevel, verify)
         {
             Err(error) => return Some(error),
@@ -279,7 +312,7 @@ fn write_levels(
     }
     if let Some(level) = system_failure_level {
         let verify =
-            |c: &mut _| send_standard_query(c, address, StandardCommand::QuerySystemFailureLevel);
+            |c: &mut _| send_standard_response(c, address, StandardCommand::QuerySystemFailureLevel);
         match send_dtr0_config_verified(
             controller,
             address,

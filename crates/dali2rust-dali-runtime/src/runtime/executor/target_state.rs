@@ -7,7 +7,7 @@ use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_contracts::msg::ColorValue;
 
 use crate::runtime::executor::helpers::{
-    dali_short_address, kelvin_to_mirek, send_dt8_raw, send_dt8_raw_query,
+    ArmedCommand, dali_short_address, kelvin_to_mirek, send_dt8_raw, send_dt8_raw_query,
     send_dtr0_backed_extended, send_extended_query, send_special, send_standard,
     send_standard_query, SemanticDaliError, DT8_ACTIVATE, DT8_QUERY_COLOUR_STATUS,
     DT8_SET_TEMPERATURE_TC,
@@ -94,7 +94,7 @@ fn ensure_automatic_activation(
             gear_features_store_operand(true),
             ExtendedCommand::Dt8(Dt8Command::StoreGearFeaturesStatus),
         )?;
-        if armed {
+        if armed == ArmedCommand::Sent {
             let answer = send_extended_query(
                 controller,
                 address,
@@ -138,65 +138,75 @@ fn apply_target_state(
     assert_control: AssertRgbwafControl,
 ) -> Result<(), SemanticDaliError> {
     controller.transaction_exempt(|controller| {
-        apply_target_state_unit(controller, address, setpoint, assert_control)
+        let activation = controller.unit(|controller| {
+            stage_and_activate(controller, address, setpoint, assert_control)
+        })?;
+        finish_activation(controller, address, setpoint, activation, assert_control)
+            .map_err(unfinished_after_activation)
     })
 }
 
-fn apply_target_state_unit(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Activation {
+    Nothing,
+    Activated,
+    SwitchOnNext,
+}
+
+const TARGET_STATE_UNFINISHED: &str = "target_state_unfinished";
+
+fn stage_and_activate(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     setpoint: &LightSetpoint,
     assert_control: AssertRgbwafControl,
-) -> Result<(), SemanticDaliError> {
+) -> Result<Activation, SemanticDaliError> {
     let color_staged = setpoint.states_color();
     if color_staged {
         if let Some(color) = setpoint.color.as_ref() {
             apply_color(controller, address, color, assert_control)?;
         }
     }
+    if let Some(level) = setpoint.dapc_level() {
+        send_standard(controller, address, StandardCommand::DirectArcPower { level })?;
+        return Ok(Activation::Activated);
+    }
+    if color_staged {
+        send_colour_activate(controller, address)?;
+    }
+    Ok(match (setpoint.power, color_staged) {
+        (PowerState::On, _) => Activation::SwitchOnNext,
+        (_, true) => Activation::Activated,
+        (_, false) => Activation::Nothing,
+    })
+}
 
-    let activated = send_arc_command(controller, address, setpoint, color_staged)?;
-
-    if activated {
-        if let Some(driven) = rgbwaf_driven_channels(setpoint, assert_control) {
-            verify_rgbwaf_control(controller, address, driven)?;
+fn finish_activation(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    setpoint: &LightSetpoint,
+    activation: Activation,
+    assert_control: AssertRgbwafControl,
+) -> Result<(), SemanticDaliError> {
+    match activation {
+        Activation::Nothing => return Ok(()),
+        Activation::SwitchOnNext => {
+            send_standard(controller, address, StandardCommand::GoToLastActiveLevel)?;
         }
+        Activation::Activated => {}
+    }
+    if let Some(driven) = rgbwaf_driven_channels(setpoint, assert_control) {
+        verify_rgbwaf_control(controller, address, driven)?;
     }
     Ok(())
 }
 
-fn send_arc_command(
-    controller: &mut impl DaliApplicationController,
-    address: DaliAddress,
-    setpoint: &LightSetpoint,
-    color_staged: bool,
-) -> Result<bool, SemanticDaliError> {
-    if let Some(level) = setpoint.dapc_level() {
-        send_standard(controller, address, StandardCommand::DirectArcPower { level })?;
-        return Ok(true);
+fn unfinished_after_activation(error: SemanticDaliError) -> SemanticDaliError {
+    if error.is_bus_contended() {
+        SemanticDaliError::OperationFailed(TARGET_STATE_UNFINISHED)
+    } else {
+        error
     }
-
-    if setpoint.power == PowerState::On {
-        return activate_color_only(controller, address, color_staged);
-    }
-
-    if color_staged {
-        send_colour_activate(controller, address)?;
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-fn activate_color_only(
-    controller: &mut impl DaliApplicationController,
-    address: DaliAddress,
-    color_staged: bool,
-) -> Result<bool, SemanticDaliError> {
-    if color_staged {
-        send_colour_activate(controller, address)?;
-    }
-    send_standard(controller, address, StandardCommand::GoToLastActiveLevel)?;
-    Ok(true)
 }
 
 #[inline]
@@ -260,12 +270,13 @@ fn ensure_rgbwaf_control(
         return Ok(());
     }
     for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        if send_dtr0_backed_extended(
+        let armed = send_dtr0_backed_extended(
             controller,
             address,
             rgbwaf_control_operand(),
             ExtendedCommand::Dt8(Dt8Command::SetTemporaryRgbwafControl),
-        )? {
+        )?;
+        if armed == ArmedCommand::Sent {
             return Ok(());
         }
     }
@@ -281,11 +292,14 @@ fn verify_rgbwaf_control(
     if !matches!(address, DaliAddress::Short(_)) {
         return Ok(());
     }
-    let answer = send_extended_query(
+    let answer = match send_extended_query(
         controller,
         address,
         ExtendedCommand::Dt8(Dt8Command::QueryRgbwafControl),
-    )?;
+    ) {
+        Err(error) if error.is_bus_contended() => None,
+        answered => answered?,
+    };
     if answer.is_none_or(|byte| rgbwaf_control_drives(byte, driven)) {
         return Ok(());
     }
@@ -406,7 +420,7 @@ pub(crate) fn apply_dt8_xy(
     x: u16,
     y: u16,
 ) -> Result<(), SemanticDaliError> {
-    controller.transaction_exempt(|controller| {
+    controller.unit_exempt(|controller| {
         stage_dtrs_verified(controller, address, &[(x & 0x00FF) as u8, (x >> 8) as u8])?;
         send_dt8_raw(controller, address, DT8_SET_TEMPORARY_X_COORDINATE)?;
 

@@ -54,6 +54,10 @@ pub(super) const BANK1_OEM_ID: u64 = 0xF900_0000_E6FF_9B01;
 fn script_memory_pointer_arm(mock: &MockDaliTransport, bank: u8, offset: u8) {
     mock.expect_forward_frame(special_frame(SpecialCommand::Dtr1(bank)));
     mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(offset)));
+    script_memory_pointer_check(mock, bank, offset);
+}
+
+fn script_memory_pointer_check(mock: &MockDaliTransport, bank: u8, offset: u8) {
     mock.expect_forward_frame_with_backward(
         standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryContentDtr1),
         Some(bank),
@@ -64,14 +68,9 @@ fn script_memory_pointer_arm(mock: &MockDaliTransport, bank: u8, offset: u8) {
     );
 }
 
-fn script_memory_pointer_check(mock: &MockDaliTransport, offset: u8) {
-    mock.expect_forward_frame_with_backward(
-        standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryContentDtr0),
-        Some(offset),
-    );
-}
+const MEMORY_READ_CHUNK: usize = 4;
 
-const MEMORY_READ_CHUNK: usize = 5;
+const RESERVED_OFFSET: u16 = 1;
 
 fn chunk_starts(bank: u8, total: usize) -> Vec<usize> {
     let mut starts = Vec::new();
@@ -84,17 +83,19 @@ fn chunk_starts(bank: u8, total: usize) -> Vec<usize> {
             offset,
             total - offset,
             MEMORY_READ_CHUNK as u16,
-        );
-        offset += taken.max(1);
+        )
+        .max(1);
+        let holds_placeholder = (offset..offset + taken).contains(&RESERVED_OFFSET);
+        offset = if holds_placeholder { RESERVED_OFFSET + 1 } else { offset + taken };
     }
     starts
 }
 
-fn script_chunk_boundary(mock: &MockDaliTransport, starts: &[usize], offset: usize) {
-    if offset == 0 || !starts.contains(&offset) {
+fn script_chunk_start(mock: &MockDaliTransport, bank: u8, starts: &[usize], offset: usize) {
+    if !starts.contains(&offset) {
         return;
     }
-    script_memory_pointer_check(mock, offset.min(255) as u8);
+    script_memory_pointer_check(mock, bank, offset.min(255) as u8);
 }
 
 pub(super) fn script_memory_bank_read(mock: &MockDaliTransport, bank: u8, bytes: &[u8]) {
@@ -102,38 +103,37 @@ pub(super) fn script_memory_bank_read(mock: &MockDaliTransport, bank: u8, bytes:
     script_memory_pointer_arm(mock, bank, 0);
     let starts = chunk_starts(bank, bytes.len());
     for (offset, byte) in bytes.iter().enumerate() {
-        script_chunk_boundary(mock, &starts, offset);
-        if offset == 1 {
+        script_chunk_start(mock, bank, &starts, offset);
+        if offset == usize::from(RESERVED_OFFSET) {
             mock.expect_forward_frame_with_backward(read, None);
-            script_memory_pointer_arm(mock, bank, 2);
             continue;
         }
         mock.expect_forward_frame_with_backward(read, Some(*byte));
     }
-    script_memory_pointer_check(mock, bytes.len() as u8);
+    script_memory_pointer_check(mock, bank, bytes.len() as u8);
 }
 
 pub(super) fn script_memory_bank_short_read(mock: &MockDaliTransport, bank: u8, bytes: &[u8]) {
-    const LOCATION_RETRIES: usize = 2;
+    const BANK_END_SILENCES: usize = 2;
     let read = dt8_raw_query_frame(TEST_SHORT_ADDRESS, READ_MEMORY_LOCATION_OPCODE);
     script_memory_pointer_arm(mock, bank, 0);
     let starts = chunk_starts(bank, usize::from(BANK0_BYTES[0]) + 1);
     for (offset, byte) in bytes.iter().enumerate() {
-        script_chunk_boundary(mock, &starts, offset);
-        if offset == 1 {
+        script_chunk_start(mock, bank, &starts, offset);
+        if offset == usize::from(RESERVED_OFFSET) {
             mock.expect_forward_frame_with_backward(read, None);
-            script_memory_pointer_arm(mock, bank, 2);
             continue;
         }
         mock.expect_forward_frame_with_backward(read, Some(*byte));
     }
     let declined = bytes.len() as u8;
-    script_chunk_boundary(mock, &starts, usize::from(declined));
-    for attempt in 0..=LOCATION_RETRIES {
+    script_chunk_start(mock, bank, &starts, usize::from(declined));
+    for attempt in 1..=BANK_END_SILENCES {
         mock.expect_forward_frame_with_backward(read, None);
-        if attempt < LOCATION_RETRIES {
+        if attempt < BANK_END_SILENCES {
             script_memory_pointer_arm(mock, bank, declined);
+            script_memory_pointer_check(mock, bank, declined);
         }
     }
-    script_memory_pointer_check(mock, declined);
+    script_memory_pointer_check(mock, bank, declined);
 }

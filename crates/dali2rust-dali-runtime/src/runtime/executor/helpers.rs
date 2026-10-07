@@ -343,7 +343,7 @@ pub fn send_dtr0_backed_standard(
     dtr0: u8,
     command: StandardCommand,
 ) -> Result<(), SemanticDaliError> {
-    controller.transaction(|controller| {
+    controller.unit(|controller| {
         send_special(controller, SpecialCommand::Dtr0(dtr0))?;
         let _ = send_standard(controller, address, command)?;
         Ok(())
@@ -362,7 +362,7 @@ pub fn send_dt8_raw(
         send_extended_command(controller, address, ExtendedCommand::Dt8(command))?;
         return Ok(());
     }
-    controller.transaction(|controller| {
+    controller.unit(|controller| {
         send_special(
             controller,
             SpecialCommand::EnableDeviceType(DT8_DEVICE_TYPE),
@@ -377,21 +377,27 @@ pub fn send_dt8_raw(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArmedCommand {
+    Sent,
+    Unproved(DaliResponse),
+}
+
 // IEC 62386-102 §12.3.15
 pub fn send_dtr0_backed_extended(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     dtr0: u8,
     command: ExtendedCommand,
-) -> Result<bool, SemanticDaliError> {
-    controller.transaction(|controller| {
+) -> Result<ArmedCommand, SemanticDaliError> {
+    controller.unit(|controller| {
         send_special(controller, SpecialCommand::Dtr0(dtr0))?;
-        let echo = send_standard_query(controller, address, StandardCommand::QueryContentDtr0)?;
-        if echo != Some(dtr0) {
-            return Ok(false);
+        let echo = send_standard_response(controller, address, StandardCommand::QueryContentDtr0)?;
+        if echo != DaliResponse::Answer(dtr0) {
+            return Ok(ArmedCommand::Unproved(echo));
         }
         send_extended_command(controller, address, command)?;
-        Ok(true)
+        Ok(ArmedCommand::Sent)
     })
 }
 
@@ -457,26 +463,26 @@ pub fn send_raw_query(
         .value())
 }
 
-pub fn send_raw_query_once(
-    controller: &mut impl DaliApplicationController,
-    address: DaliAddress,
-    opcode: u8,
-) -> Result<Option<u8>, SemanticDaliError> {
-    send_raw_query_once_observed(controller, address, opcode).map(|(value, _)| value)
-}
-
 pub fn send_raw_query_once_observed(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     opcode: u8,
 ) -> Result<(Option<u8>, bool), SemanticDaliError> {
-    let (frame, contended) = controller
+    send_raw_query_once_response(controller, address, opcode)
+        .map(|(response, contended)| (response.value(), contended))
+}
+
+pub fn send_raw_query_once_response(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    opcode: u8,
+) -> Result<(DaliResponse, bool), SemanticDaliError> {
+    controller
         .send_raw_once(
             ForwardFrame::new(address.encode_address_byte() | 0x01, opcode),
             true,
         )
-        .map_err(|error| map_transport_error(&error))?;
-    Ok((frame.value(), contended))
+        .map_err(|error| map_transport_error(&error))
 }
 
 pub(crate) fn program_with_verify_repair<C: DaliApplicationController, V: Copy>(

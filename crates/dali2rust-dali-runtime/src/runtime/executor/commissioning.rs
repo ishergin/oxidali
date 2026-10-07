@@ -278,43 +278,69 @@ pub fn change_short_address(
     }
 
     let encoded = encode_program_short_address(new_short_address);
-    set_short_address_proved(controller, current, encoded)?;
-
-    if verify {
-        let target = DaliAddress::short(new_short_address)
-            .map_err(|_| SemanticDaliError::OperationFailed("address_change: target out of range"))?;
-        if send_standard_query(controller, target, StandardCommand::QueryStatus)?.is_none() {
-            return Err(SemanticDaliError::OperationFailed("verify_failed"));
+    match set_short_address_proved(controller, current, encoded)? {
+        AddressMove::Sent if verify && !answers_at(controller, new_short_address)? => {
+            Err(SemanticDaliError::OperationFailed("verify_failed"))
         }
+        AddressMove::Sent => Ok(()),
+        AddressMove::MaybeSent(_) if answers_at(controller, new_short_address)? => Ok(()),
+        AddressMove::MaybeSent(error) => Err(error),
+        AddressMove::Unproved => Err(SemanticDaliError::OperationFailed(ADDRESS_ARM_UNCONFIRMED)),
     }
-    Ok(())
 }
 
 const ADDRESS_ARM_RETRIES: u8 = 2;
 
 const ADDRESS_ARM_UNCONFIRMED: &str = "address_arm_unconfirmed";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AddressMove {
+    Sent,
+    MaybeSent(SemanticDaliError),
+    Unproved,
+}
+
+// IEC 62386-101 Table 20
 fn set_short_address_proved(
     controller: &mut impl DaliApplicationController,
     current: DaliAddress,
     encoded: u8,
-) -> Result<(), SemanticDaliError> {
+) -> Result<AddressMove, SemanticDaliError> {
+    let mut pair_tried = false;
     for _ in 0..=ADDRESS_ARM_RETRIES {
-        let written = controller.transaction_exempt(|controller| {
-            send_special(controller, SpecialCommand::Dtr0(encoded))?;
-            let armed =
-                send_standard_query(controller, current, StandardCommand::QueryContentDtr0)?;
-            if armed != Some(encoded) {
-                return Ok(false);
-            }
-            send_standard(controller, current, StandardCommand::SetShortAddress)?;
-            Ok(true)
-        })?;
-        if written {
-            return Ok(());
+        match controller.unit_exempt(|c| arm_and_move(c, current, encoded, &mut pair_tried)) {
+            Ok(true) => return Ok(AddressMove::Sent),
+            Ok(false) => {}
+            Err(error) if pair_tried => return Ok(AddressMove::MaybeSent(error)),
+            Err(error) => return Err(error),
         }
     }
-    Err(SemanticDaliError::OperationFailed(ADDRESS_ARM_UNCONFIRMED))
+    let unconfirmed = SemanticDaliError::OperationFailed(ADDRESS_ARM_UNCONFIRMED);
+    Ok(if pair_tried { AddressMove::MaybeSent(unconfirmed) } else { AddressMove::Unproved })
+}
+
+fn arm_and_move(
+    controller: &mut impl DaliApplicationController,
+    current: DaliAddress,
+    encoded: u8,
+    pair_tried: &mut bool,
+) -> Result<bool, SemanticDaliError> {
+    send_special(controller, SpecialCommand::Dtr0(encoded))?;
+    if send_standard_query(controller, current, StandardCommand::QueryContentDtr0)? != Some(encoded) {
+        return Ok(false);
+    }
+    *pair_tried = true;
+    send_standard(controller, current, StandardCommand::SetShortAddress)?;
+    Ok(true)
+}
+
+fn answers_at(
+    controller: &mut impl DaliApplicationController,
+    short_address: u8,
+) -> Result<bool, SemanticDaliError> {
+    let target = DaliAddress::short(short_address)
+        .map_err(|_| SemanticDaliError::OperationFailed("address_change: target out of range"))?;
+    Ok(send_standard_query(controller, target, StandardCommand::QueryStatus)?.is_some())
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

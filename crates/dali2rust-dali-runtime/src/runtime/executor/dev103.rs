@@ -1,9 +1,9 @@
 use dali2rust_domain::dali::controller::{DaliApplicationController, Frame24Fault};
 use dali2rust_contracts::msg::Dali103InstanceAction;
 use dali2rust_domain::dali::dev103::{
-    Button301Command, Device103Address, Device103Command, EventScheme, InitialiseScope103,
-    ForwardFrame24, Instance103Command, InstanceAddress, Occupancy303Command, ShortAddressOperand,
-    Special103Command, MAX_INSTANCE_INDEX, MAX_SHORT_ADDRESS,
+    instance_type, Button301Command, Device103Address, Device103Command, EventScheme,
+    InitialiseScope103, ForwardFrame24, Instance103Command, InstanceAddress, Occupancy303Command,
+    ShortAddressOperand, Special103Command, MAX_INSTANCE_INDEX, MAX_SHORT_ADDRESS,
 };
 use dali2rust_domain::dali::pres::DaliResponse;
 
@@ -336,7 +336,7 @@ pub fn set_button_timer_verified(
             return Err(SemanticDaliError::OperationFailed("below_device_minimum"));
         }
     }
-    controller.transaction(|c| {
+    controller.unit(|c| {
         stage_dtr0(c, address, value)?;
         send_twice(c, frame(set))
     })?;
@@ -353,7 +353,7 @@ pub fn set_event_scheme_verified(
 ) -> Result<(), SemanticDaliError> {
     let address = Device103Address::Short(short_address);
     let instance = InstanceAddress::Number(instance_number);
-    controller.transaction(|c| {
+    controller.unit(|c| {
         stage_dtr0(c, address, scheme.code())?;
         send_twice(c, Instance103Command::SetEventScheme.frame(address, instance))
     })?;
@@ -365,26 +365,78 @@ pub fn set_event_scheme_verified(
     verify_readback(seen, |actual| EventScheme::from_code(actual) == Some(scheme)).map(|_| ())
 }
 
+// IEC 62386-103 §9.6.4, §11.8.9
 pub fn set_event_filter_verified(
     controller: &mut impl DaliApplicationController,
     short_address: u8,
     instance_number: u8,
     filter: [u8; 3],
-) -> Result<(), SemanticDaliError> {
+) -> Result<[u8; 3], SemanticDaliError> {
     let address = Device103Address::Short(short_address);
     let instance = InstanceAddress::Number(instance_number);
-    controller.transaction(|c| {
+    controller.unit(|c| {
         send(c, Special103Command::Dtr2.frame(filter[2]), false)?;
         send(c, Special103Command::Dtr1.frame(filter[1]), false)?;
         stage_dtr0(c, address, filter[0])?;
         send_twice(c, Instance103Command::SetEventFilter.frame(address, instance))
     })?;
-    let seen = send(
-        controller,
-        Instance103Command::QueryEventFilter0To7.frame(address, instance),
-        true,
-    )?;
-    verify_readback(seen, |actual| actual == filter[0]).map(|_| ())
+    verify_event_filter(controller, address, instance, filter)
+}
+
+// IEC 62386-103 §9.6.4
+fn verify_event_filter(
+    controller: &mut impl DaliApplicationController,
+    address: Device103Address,
+    instance: InstanceAddress,
+    filter: [u8; 3],
+) -> Result<[u8; 3], SemanticDaliError> {
+    let width = event_filter_width(controller, address, instance)?;
+    let queries = [
+        Instance103Command::QueryEventFilter0To7,
+        Instance103Command::QueryEventFilter8To15,
+        Instance103Command::QueryEventFilter16To23,
+    ];
+    let mut held = [ABSENT_FILTER_BYTE; 3];
+    for (byte, query) in queries.into_iter().enumerate().take(width) {
+        let seen = send(controller, query.frame(address, instance), true)?;
+        held[byte] = verify_readback(seen, |actual| actual == filter[byte])?;
+    }
+    Ok(held)
+}
+
+const ABSENT_FILTER_BYTE: u8 = 0;
+
+const FULL_EVENT_FILTER_BYTES: usize = 3;
+
+const BUTTON_AND_SENSOR_FILTER_BYTES: usize = 1;
+
+const GENERAL_SENSOR_FILTER_BYTES: usize = 2;
+
+fn event_filter_width(
+    controller: &mut impl DaliApplicationController,
+    address: Device103Address,
+    instance: InstanceAddress,
+) -> Result<usize, SemanticDaliError> {
+    let seen = send(controller, Instance103Command::QueryInstanceType.frame(address, instance), true)?;
+    verify_readback(seen, |_| true).map(event_filter_bytes)
+}
+
+// IEC 62386-301 §9.4.6
+// IEC 62386-302 §9.4.4
+// IEC 62386-303 §9.4.4
+// IEC 62386-304 §9.4.4
+// IEC 62386-305 §9.4.4
+// IEC 62386-306 §11.8.2
+const fn event_filter_bytes(instance_type: u8) -> usize {
+    match instance_type {
+        instance_type::PUSH_BUTTON
+        | instance_type::ABSOLUTE_INPUT
+        | instance_type::OCCUPANCY
+        | instance_type::LIGHT_SENSOR
+        | instance_type::COLOUR_SENSOR => BUTTON_AND_SENSOR_FILTER_BYTES,
+        instance_type::GENERAL_PURPOSE_SENSOR => GENERAL_SENSOR_FILTER_BYTES,
+        _ => FULL_EVENT_FILTER_BYTES,
+    }
 }
 
 pub fn set_instance_enabled_verified(
@@ -419,7 +471,7 @@ pub fn set_event_priority_verified(
 ) -> Result<(), SemanticDaliError> {
     let address = Device103Address::Short(short_address);
     let instance = InstanceAddress::Number(instance_number);
-    controller.transaction(|c| {
+    controller.unit(|c| {
         stage_dtr0(c, address, priority)?;
         send_twice(c, Instance103Command::SetEventPriority.frame(address, instance))
     })?;
@@ -456,7 +508,7 @@ pub fn set_instance_group_verified(
         _ => return Err(SemanticDaliError::OperationFailed("invalid_request")),
     };
     let operand = group.unwrap_or(0xFF);
-    controller.transaction(|c| {
+    controller.unit(|c| {
         stage_dtr0(c, address, operand)?;
         send_twice(c, set.frame(address, instance))
     })?;

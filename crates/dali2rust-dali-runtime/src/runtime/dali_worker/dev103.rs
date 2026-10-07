@@ -118,6 +118,7 @@ pub(super) fn handle_103_instance_configure(
 struct ProvedWrites {
     mask: u16,
     instance_status: Option<u8>,
+    event_filter: Option<[u8; 3]>,
 }
 
 fn configure_instance(
@@ -144,7 +145,7 @@ fn write_instance_field(
 ) -> Result<(), SemanticDaliError> {
     match field {
         InstancePatchField::InstanceEnabled => write_instance_enabled(controller, cmd, proved),
-        InstancePatchField::EventFilter => write_event_filter(controller, cmd),
+        InstancePatchField::EventFilter => write_event_filter(controller, cmd, proved),
         InstancePatchField::EventPriority => write_event_priority(controller, cmd),
         InstancePatchField::InstanceGroup0
         | InstancePatchField::InstanceGroup1
@@ -171,8 +172,12 @@ fn write_instance_enabled(
 fn write_event_filter(
     controller: &mut impl DaliApplicationController,
     cmd: &Dali103InstanceConfigureCommand,
+    proved: &mut ProvedWrites,
 ) -> Result<(), SemanticDaliError> {
-    set_event_filter_verified(controller, cmd.short_address, cmd.instance_number, cmd.event_filter)
+    let (short, instance) = (cmd.short_address, cmd.instance_number);
+    let held = set_event_filter_verified(controller, short, instance, cmd.event_filter)?;
+    proved.event_filter = Some(held);
+    Ok(())
 }
 
 fn write_event_priority(
@@ -305,7 +310,7 @@ fn publish_instance_configured(
     body.instance_status_written = proved.instance_status.is_some();
     let proved_field = |field: InstancePatchField| mask & field.bit() != 0;
     body.event_scheme = proved_field(InstancePatchField::EventScheme).then_some(cmd.event_scheme);
-    body.event_filter = proved_field(InstancePatchField::EventFilter).then_some(cmd.event_filter);
+    body.event_filter = proved.event_filter;
     body.event_priority =
         proved_field(InstancePatchField::EventPriority).then_some(cmd.event_priority);
     body.instance_groups = instance_groups;
@@ -619,7 +624,7 @@ mod tests {
         let mut cmd = command_patching(InstancePatchField::EventScheme);
         cmd.patch_mask = Dali103InstanceConfigureCommand::ALL_PATCH_BITS;
         cmd.event_scheme = EVERY_ANSWER;
-        cmd.event_filter = [EVERY_ANSWER, 0, 0];
+        cmd.event_filter = [EVERY_ANSWER; 3];
         cmd.event_priority = EVERY_ANSWER;
         cmd.instance_groups = [Some(EVERY_ANSWER); 3];
         cmd.timer_multipliers = [Some(EVERY_ANSWER); 4];

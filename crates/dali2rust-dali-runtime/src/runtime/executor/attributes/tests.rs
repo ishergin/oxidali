@@ -1,5 +1,6 @@
 use super::*;
 use dali2rust_contracts::msg::PowerState;
+use crate::runtime::executor::helpers::VERIFY_CONTENDED_MESSAGE;
 use crate::runtime::executor::test_helpers::shared::{
     assert_script_consumed, setup_controller, short_address, wire_counters,
 };
@@ -511,6 +512,57 @@ fn write_attributes_fade_time_confirms_the_accepted_code_not_the_request() {
 }
 
 #[test]
+fn a_collided_configuration_write_is_rearmed_before_it_goes_again() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let set_fade = DaliCommand::Standard {
+        address: short_address(short),
+        command: StandardCommand::SetFadeTime,
+    }
+    .to_forward_frame()
+    .raw();
+    mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(1)).to_forward_frame().raw());
+    mock.expect_forward_frame_collision(set_fade);
+    expect_fade_time_write(&mock, short, 1, Some(0x10));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution =
+        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None);
+
+    assert_eq!(execution.error, None);
+    assert_eq!(execution.confirmed.fade_time_ms, Some(700));
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_collided_read_back_is_asked_again_without_writing_again() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let set_fade = DaliCommand::Standard {
+        address: short_address(short),
+        command: StandardCommand::SetFadeTime,
+    }
+    .to_forward_frame()
+    .raw();
+    mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(1)).to_forward_frame().raw());
+    mock.expect_forward_frame(set_fade);
+    mock.expect_forward_frame(set_fade);
+    mock.expect_forward_frame_collision(standard_query_frame(
+        short,
+        StandardCommand::QueryFadeTimeFadeRate,
+    ));
+    expect_fade_time_readback(&mock, short, 1);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution =
+        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None);
+
+    assert_eq!(execution.error, None);
+    assert_eq!(execution.confirmed.fade_time_ms, Some(700));
+    assert_script_consumed(&transport);
+}
+
+#[test]
 fn write_attributes_small_fade_time_never_selects_the_extended_fade_code() {
     let mock = MockDaliTransport::new();
     let short = 17;
@@ -706,6 +758,167 @@ fn an_unanswered_dimming_curve_read_back_is_named_and_confirms_nothing() {
     assert_eq!(
         execution.error,
         Some(SemanticDaliError::OperationFailed(VERIFY_UNANSWERED_MESSAGE))
+    );
+    assert_script_consumed(&transport);
+}
+
+fn expect_unconfirmed_armed_write(
+    mock: &MockDaliTransport,
+    short: u8,
+    (set, query): (StandardCommand, StandardCommand),
+    dtr0: u8,
+) {
+    mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(dtr0)).to_forward_frame().raw());
+    mock.expect_forward_frame(standard_query_frame(short, set));
+    mock.expect_forward_frame(standard_query_frame(short, set));
+    mock.expect_forward_frame_corrupted_in_window(standard_query_frame(short, query));
+}
+
+#[test]
+fn a_violating_read_back_is_named_contended_not_silent() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_unconfirmed_armed_write(
+        &mock,
+        short,
+        (StandardCommand::SetFadeTime, StandardCommand::QueryFadeTimeFadeRate),
+        1,
+    );
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None,
+    );
+
+    assert_eq!(execution.confirmed.fade_time_ms, None, "a violation proves nothing");
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_CONTENDED_MESSAGE)),
+        "several answers in one window are not silence (101 §8.2.5)"
+    );
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_violating_bound_read_back_is_named_contended() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_unconfirmed_armed_write(
+        &mock,
+        short,
+        (StandardCommand::SetMinLevel, StandardCommand::QueryMinLevel),
+        100,
+    );
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, None, None, None, None, None, (None, None), (Some(100), None), None,
+    );
+
+    assert_eq!(execution.confirmed.min_level, None);
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_CONTENDED_MESSAGE))
+    );
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_violating_dimming_curve_read_back_is_named_contended() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let curve = 1;
+    let enable_dt6 = DaliCommand::Special(SpecialCommand::EnableDeviceType(6)).to_forward_frame().raw();
+    mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(curve)).to_forward_frame().raw());
+    mock.expect_forward_frame_with_backward(
+        standard_query_frame(short, StandardCommand::QueryContentDtr0),
+        Some(curve),
+    );
+    mock.expect_forward_frame(enable_dt6);
+    mock.expect_forward_frame(dt6_frame(short, Dt6Command::SelectDimmingCurve));
+    mock.expect_forward_frame(dt6_frame(short, Dt6Command::SelectDimmingCurve));
+    mock.expect_forward_frame(enable_dt6);
+    mock.expect_forward_frame_corrupted_in_window(dt6_frame(short, Dt6Command::QueryDimmingCurve));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve),
+    );
+
+    assert_eq!(execution.confirmed.dimming_curve, None);
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_CONTENDED_MESSAGE))
+    );
+    assert_script_consumed(&transport);
+}
+
+#[derive(Clone, Copy)]
+enum CurveEcho {
+    Silent,
+    Violating,
+    Other,
+}
+
+#[test]
+fn a_curve_operand_that_never_proves_names_why_instead_of_succeeding() {
+    use CurveEcho::{Other, Silent, Violating};
+    for (echoes, named) in [
+        ([Silent; 3], VERIFY_UNANSWERED_MESSAGE),
+        ([Violating; 3], VERIFY_CONTENDED_MESSAGE),
+        ([Silent, Silent, Other], VERIFY_UNANSWERED_MESSAGE),
+        ([Violating, Silent, Silent], VERIFY_CONTENDED_MESSAGE),
+        ([Other; 3], "dimming_curve_arm_unconfirmed"),
+    ] {
+        let mock = MockDaliTransport::new();
+        let short = 17;
+        let curve = 1;
+        let echo = standard_query_frame(short, StandardCommand::QueryContentDtr0);
+        for answer in echoes {
+            mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(curve)).to_forward_frame().raw());
+            match answer {
+                Silent => mock.expect_forward_frame_with_backward(echo, None),
+                Violating => mock.expect_forward_frame_corrupted_in_window(echo),
+                Other => mock.expect_forward_frame_with_backward(echo, Some(curve + 1)),
+            }
+        }
+
+        let (transport, mut controller) = setup_controller(mock);
+        let execution = write_short_attributes(
+            &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve),
+        );
+
+        assert_eq!(execution.confirmed.dimming_curve, None);
+        assert_eq!(
+            execution.error,
+            Some(SemanticDaliError::OperationFailed(named)),
+            "an operand nothing proved was never written, and that is not a success"
+        );
+        assert_script_consumed(&transport);
+    }
+}
+
+#[test]
+fn a_contended_field_outranks_a_silent_one_in_the_named_outcome() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_fade_time_write(&mock, short, 1, None);
+    expect_unconfirmed_armed_write(
+        &mock,
+        short,
+        (StandardCommand::SetPowerOnLevel, StandardCommand::QueryPowerOnLevel),
+        200,
+    );
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None,
+    );
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_CONTENDED_MESSAGE)),
+        "a violation says something about the segment that silence does not"
     );
     assert_script_consumed(&transport);
 }
@@ -1189,8 +1402,9 @@ fn the_presence_budget_is_not_spent_on_a_device_that_answers() {
 
 type SharedMock = std::sync::Arc<std::sync::Mutex<MockDaliTransport>>;
 
+const SHORT: u8 = 3;
+
 fn light_source_read(answer: Option<u8>, dtrs: &[Option<u8>]) -> ((Option<u8>, Option<u32>), SharedMock) {
-    const SHORT: u8 = 3;
     let mock = MockDaliTransport::new();
     mock.expect_forward_frame_with_backward(
         std_query_frame(SHORT, StandardCommand::QueryLightSourceType),
@@ -1214,6 +1428,39 @@ fn light_source_read(answer: Option<u8>, dtrs: &[Option<u8>]) -> ((Option<u8>, O
     )
     .expect("light source type read");
     (read, transport)
+}
+
+// IEC 62386-102 §11.5.19
+#[test]
+fn a_collision_inside_the_light_source_triple_asks_the_type_again() {
+    let mock = MockDaliTransport::new();
+    let light_source_type = std_query_frame(SHORT, StandardCommand::QueryLightSourceType);
+    mock.expect_forward_frame_with_backward(light_source_type, Some(0xFF));
+    mock.expect_forward_frame_collision(std_query_frame(SHORT, StandardCommand::QueryContentDtr0));
+    mock.expect_forward_frame_with_backward(light_source_type, Some(0xFF));
+    for (command, value) in [
+        (StandardCommand::QueryContentDtr0, 6),
+        (StandardCommand::QueryContentDtr1, 2),
+        (StandardCommand::QueryContentDtr2, 254),
+    ] {
+        mock.expect_forward_frame_with_backward(std_query_frame(SHORT, command), Some(value));
+    }
+
+    let (transport, mut controller) = setup_controller(mock);
+    let (answered, packed) = read_light_source_type(
+        &mut controller,
+        short_address(SHORT),
+        ContentConfirmPolicy::default(),
+    )
+    .expect("light source type read");
+
+    assert_eq!(answered, Some(0xFF));
+    assert_eq!(
+        packed,
+        Some(0x0006_02FE),
+        "the DTRs another master may have written in the gap are loaded again, not read stale"
+    );
+    assert_script_consumed(&transport);
 }
 
 #[test]

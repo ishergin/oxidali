@@ -19,6 +19,9 @@ impl<T: DaliTransport + Send> DaliController<T> {
         expects_backward: bool,
         attempts: u8,
     ) -> Result<ExchangeObservation, FrameError> {
+        if let Some(error) = self.unit_broken_by() {
+            return Err(error);
+        }
         let mut contended = false;
         for attempt in 0..attempts {
             if self.must_yield() {
@@ -72,6 +75,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
         error: FrameError,
     ) -> Result<Option<TransferOutcome>, FrameError> {
         if !self.has_retry_remaining(attempt, attempts) {
+            self.break_unit(error);
             return Err(error);
         }
         self.wire_counters.exchange_retries.fetch_add(1, Relaxed);

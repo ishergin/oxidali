@@ -30,9 +30,9 @@ IEC 62386-101 §9.1.3–9.1.4 make a collision destroy the frame for every recei
   or a violation all mean "not proved": re-arm within a bounded budget, then fail with a
   named reason. Never vote over repeated reads — a majority buys probability at many
   times the wire cost, and a read-back buys proof.
-- **Proved operands (control gear):** the memory pointer before a memory-bank read (bank
-  in `DTR1`, offset in `DTR0`), with the final `DTR0` position compared after the read
-  as §9.10.4 recommends; the DT8 colour stagings (`DTR0`–`DTR2`), colour-limit stagings
+- **Proved operands (control gear):** the memory pointer at the start of every chunk of a
+  memory-bank read (bank in `DTR1`, offset in `DTR0`), with the final pointer compared
+  after the read as §9.10.4 recommends; the DT8 colour stagings (`DTR0`–`DTR2`), colour-limit stagings
   and DT8 configuration writes such as `STORE GEAR FEATURES/STATUS`; the
   `QUERY COLOUR VALUE` selector, re-armed and re-proved before every attempt because the
   gear replaces `DTR0` with the answer's low byte; `SET SHORT ADDRESS`; and the colour
@@ -45,6 +45,11 @@ IEC 62386-101 §9.1.3–9.1.4 make a collision destroy the frame for every recei
   family — fade time and rate, extended fade time, power-on and system-failure levels,
   minimum and maximum level — each of which queries the variable it set. For fade time
   that is stronger than proving `DTR0`; for a scene it is convergence rather than proof.
+  The upper bytes of a Part 103 `SET EVENT FILTER` (`DTR1`, `DTR2`) are read back the
+  same way, as many bytes as the instance type holds: Parts 301-305 narrow the filter to
+  one byte and Part 306 to two, ignoring the registers past that width (103 §9.6.4), so a
+  proof would fail where nothing is at stake. The type is queried after the write; a byte
+  the type holds goes through the classifier below, and a byte it lacks is held as 0.
   This is a deliberate divergence from the list above, not a hole.
 - **Group and broadcast operands cannot be proved:** the read-back is an addressed query
   by construction. Those writes keep effect-level verification only, and that gap is
@@ -70,7 +75,8 @@ two. The three are distinct, append-only error codes.
 
 - **`Collision` and `BusBusy` are retried** under the same retry policy as 16-bit frames:
   a collision destroys the frame for every receiver and a busy bus transmitted nothing, so
-  the resend is the first delivery.
+  the resend is the first delivery. Inside a DTR-armed unit the whole unit is re-run
+  instead ([09](../09-dali-protocol-rules.md) §Transactions).
 - **A foreign frame or a violation in a 24-bit frame's window is terminal**: a foreign
   frame is `Frame24Fault::Contended`, a violation the answer `DaliResponse::Violation`
   (`VerifyContended` in a read-back). The device may have executed what it heard, so the

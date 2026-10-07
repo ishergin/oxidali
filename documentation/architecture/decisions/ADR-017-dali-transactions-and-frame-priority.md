@@ -63,7 +63,8 @@ How a collision meets a transaction (the rule is in 09) follows from two clauses
 §9.1.3–9.1.4 has the break annihilate the frame for every receiver, so a destroyed first
 frame is still a first frame and may not go at priority 1; §9.2 entitles the owner of a
 started transaction to each following slot, so a collision on a remaining frame does not
-end it.
+end it. A unit (D8) gives the attempt up instead, because what it staged may no longer
+hold.
 
 ### D3 — A yield never lands inside a started transaction
 
@@ -112,8 +113,14 @@ pair, and a retry restarts it from the first frame, only after the failures in w
 nothing executed (the rule is in 09). Resending one frame of a unit produces sequences
 the standard forbids: a third copy of a send-twice command, or an extended command after
 its prelude was spent, which the gear decodes as a different standard command. For the
-same reason a send-twice pair whose halves the gear cannot have read as a pair is re-run
-as a unit (09).
+same reason a send-twice pair split past the receiver's 94 ms is re-run as a unit; up to
+105 ms the gear may still have read it (09).
+
+A unit whose command consumes operands staged by commands of its own, such as DTR arming
+and its proof, is restarted whole the same way and ends at that command (the rule is in
+09): resuming at the consuming command acts on whatever another master left in the
+registers ([ADR-027](ADR-027-dtr-operand-proof-and-readback-outcomes.md)), and a check
+left inside the unit would repeat a command that already executed.
 
 ### Rejected alternatives
 
