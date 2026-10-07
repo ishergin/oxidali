@@ -54,3 +54,56 @@ impl SliceWriteSession for CountingSession<'_> {
         self.inner.abort();
     }
 }
+
+#[derive(Default)]
+pub(crate) struct ProbeStore {
+    pub(crate) inner: InMemorySliceStore,
+    refused_write: std::sync::Mutex<Option<SliceKey>>,
+    failing_read: std::sync::Mutex<Option<SliceKey>>,
+    legacy_reads: std::sync::atomic::AtomicU32,
+    written: std::sync::Mutex<Vec<SliceKey>>,
+}
+
+impl ProbeStore {
+    pub(crate) fn refuse_writes_to(&self, key: Option<SliceKey>) {
+        *self.refused_write.lock().expect("refusal lock") = key;
+    }
+
+    pub(crate) fn fail_reads_of(&self, key: Option<SliceKey>) {
+        *self.failing_read.lock().expect("failing read lock") = key;
+    }
+
+    pub(crate) fn written(&self) -> Vec<SliceKey> {
+        self.written.lock().expect("written lock").clone()
+    }
+
+    pub(crate) fn banks_written(&self) -> Vec<SliceKey> {
+        let written = self.written().into_iter();
+        written.filter(|key| matches!(key, SliceKey::PhysicalDeviceBank { .. })).collect()
+    }
+
+    pub(crate) fn costs(&self) -> (usize, u32) {
+        let reads = self.legacy_reads.load(std::sync::atomic::Ordering::Acquire);
+        (self.written().len(), reads)
+    }
+}
+
+impl SliceStore for ProbeStore {
+    fn load(&self, key: SliceKey) -> Result<Vec<u8>, StoreError> {
+        if matches!(key, SliceKey::PhysicalDevices { .. }) {
+            self.legacy_reads.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        }
+        if *self.failing_read.lock().expect("failing read lock") == Some(key) {
+            return Err(StoreError::Backend("read failed".to_string()));
+        }
+        self.inner.load(key)
+    }
+
+    fn begin_write(&self, key: SliceKey) -> Result<Box<dyn SliceWriteSession + '_>, StoreError> {
+        if *self.refused_write.lock().expect("refusal lock") == Some(key) {
+            return Err(StoreError::Backend("no space".to_string()));
+        }
+        self.written.lock().expect("written lock").push(key);
+        self.inner.begin_write(key)
+    }
+}

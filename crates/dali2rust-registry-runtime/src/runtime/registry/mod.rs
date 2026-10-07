@@ -27,6 +27,7 @@ mod scenes;
 mod store;
 mod views;
 mod virtual_lamps;
+mod withheld_slices;
 
 pub use persistence_slices::{
     decode_persistence_blob, decode_versioned_slice, encode_persistence_blob, PersistableAdapterRow,

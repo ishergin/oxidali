@@ -147,11 +147,14 @@ filtered: they address one device.
   a short that memory already holds. It then marks every such bank for rewrite when the slot
   loaded or did not decode, so later boots stop reading it; only the rejected banks when
   the slot is missing; and none when the slot's read fails.
-- A bank that cannot be settled waits: one whose own read fails (a read failure is no
-  evidence of garbage), or one the slot may hold while the slot's read fails. No flush
-  writes a waiting bank, so a change to its addresses is lost at the next boot and the
-  flush logs that it holds it back; a lamp bound to one of its addresses keeps the
-  binding, and the next boot or reload that reads it settles it.
+- A slice whose read fails is unread, not garbage: hydration leaves it at its default in
+  memory and never marks it for rewrite, and no flush writes it until a later boot or
+  reload reads it. A change to it in the meantime is lost at the next boot; the flush logs
+  each slice it holds back, and `persistence.unread_slices` in `/api/v1/diagnostics`
+  counts the slices and device banks waiting. A slice that reads but does not decode is
+  rejected and rewritten with defaults (§Versions).
+- A device bank also waits while the legacy slot that may hold its devices cannot be read.
+  A lamp bound to an address of a waiting bank keeps the binding until the bank settles.
 - The registry worker flushes dirty slices after a short debounce, and at once after the
   configuration writes `command_flush_interval` names, through one reused 1 KiB chunk
   buffer.

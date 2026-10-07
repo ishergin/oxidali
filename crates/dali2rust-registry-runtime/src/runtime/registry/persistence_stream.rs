@@ -533,6 +533,7 @@ mod tests {
         MemoryBankRangeRecord, MemoryBankRecord, PhysicalDeviceRecord,
     };
     use super::super::store::RegistryStore;
+    use crate::test_support::ProbeStore;
     use super::super::virtual_lamps::VlRecord;
     use super::FLUSH_CHUNK_BYTES;
     use dali2rust_contracts::msg::{fixed_text_64, ColorMode, DeviceType, DeviceTypeSet};
@@ -1153,59 +1154,6 @@ mod tests {
             store.apply_physical_device_forget(0, short).expect("a migrated device");
         }
         store.flush_dirty_slices(slices);
-    }
-
-    #[derive(Default)]
-    struct ProbeStore {
-        inner: InMemorySliceStore,
-        refused_write: std::sync::Mutex<Option<SliceKey>>,
-        failing_read: std::sync::Mutex<Option<SliceKey>>,
-        legacy_reads: std::sync::atomic::AtomicU32,
-        written: std::sync::Mutex<Vec<SliceKey>>,
-    }
-
-    impl ProbeStore {
-        fn refuse_writes_to(&self, key: Option<SliceKey>) {
-            *self.refused_write.lock().expect("refusal lock") = key;
-        }
-
-        fn fail_reads_of(&self, key: Option<SliceKey>) {
-            *self.failing_read.lock().expect("failing read lock") = key;
-        }
-
-        fn written(&self) -> Vec<SliceKey> {
-            self.written.lock().expect("written lock").clone()
-        }
-
-        fn banks_written(&self) -> Vec<SliceKey> {
-            let written = self.written().into_iter();
-            written.filter(|key| matches!(key, SliceKey::PhysicalDeviceBank { .. })).collect()
-        }
-
-        fn costs(&self) -> (usize, u32) {
-            let reads = self.legacy_reads.load(std::sync::atomic::Ordering::Acquire);
-            (self.written().len(), reads)
-        }
-    }
-
-    impl SliceStore for ProbeStore {
-        fn load(&self, key: SliceKey) -> Result<Vec<u8>, StoreError> {
-            if key == LEGACY_SLOT {
-                self.legacy_reads.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-            }
-            if *self.failing_read.lock().expect("failing read lock") == Some(key) {
-                return Err(StoreError::Backend("read failed".to_string()));
-            }
-            self.inner.load(key)
-        }
-
-        fn begin_write(&self, key: SliceKey) -> Result<Box<dyn SliceWriteSession + '_>, StoreError> {
-            if *self.refused_write.lock().expect("refusal lock") == Some(key) {
-                return Err(StoreError::Backend("no space".to_string()));
-            }
-            self.written.lock().expect("written lock").push(key);
-            self.inner.begin_write(key)
-        }
     }
 
     #[test]

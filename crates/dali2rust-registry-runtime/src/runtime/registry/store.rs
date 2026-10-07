@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
@@ -15,6 +15,8 @@ use super::memory_banks::MemoryBankStaging;
 use super::physical_devices::PhysicalDeviceRecord;
 use super::scenes::{SceneDesiredRowRecord, SceneRecord};
 use super::virtual_lamps::VlRecord;
+use super::withheld_slices::{self as withheld, WithheldSlices};
+use dali2rust_platform::slice_store::SliceKey;
 use dali2rust_contracts::msg::DaliSceneTargetState;
 
 pub(crate) use dali2rust_domain::registry::MAX_SHORT_ADDRESSES;
@@ -41,13 +43,13 @@ pub(crate) fn evict_stale<K, V: Staged>(
 }
 
 macro_rules! global_dirty_flag {
-    ($mark:ident, $take:ident, $field:ident) => {
+    ($mark:ident, $take:ident, $field:ident, $withheld:path) => {
         pub fn $mark(&self) {
             self.$field.store(true, Ordering::Release);
         }
 
         pub fn $take(&self) -> bool {
-            self.$field.swap(false, Ordering::AcqRel)
+            !self.withheld.global($withheld) && self.$field.swap(false, Ordering::AcqRel)
         }
     };
 }
@@ -67,7 +69,8 @@ pub(crate) struct DirtyFlags {
     pub redundancy_settings: AtomicBool,
     pub policies: AtomicBool,
     pub home_assistant_settings: AtomicBool,
-    pub input_devices: AtomicBool,
+    input_device_banks: AtomicU8,
+    pub(crate) withheld: WithheldSlices,
 }
 
 impl DirtyFlags {
@@ -89,24 +92,82 @@ impl DirtyFlags {
             redundancy_settings: AtomicBool::new(false),
             policies: AtomicBool::new(false),
             home_assistant_settings: AtomicBool::new(false),
-            input_devices: AtomicBool::new(false),
+            input_device_banks: AtomicU8::new(0),
+            withheld: WithheldSlices::default(),
         }
     }
 
     pub fn any_dirty(&self) -> bool {
-        self.adapters.load(Ordering::Acquire)
-            || self.groups.load(Ordering::Acquire) != 0
-            || self.physical_devices.load(Ordering::Acquire) != 0
+        self.physical_devices.load(Ordering::Acquire) != 0
             || (0..MAX_DIRTY_ADAPTERS as u8).any(|adapter_id| self.writable_banks(adapter_id) != 0)
-            || self.virtual_lamps.load(Ordering::Acquire) != 0
-            || self.scenes.iter().any(|mask| mask.load(Ordering::Acquire) != 0)
-            || self.hcl_schedules.load(Ordering::Acquire)
-            || self.poller_settings.load(Ordering::Acquire)
-            || self.dali_settings.load(Ordering::Acquire)
-            || self.redundancy_settings.load(Ordering::Acquire)
-            || self.policies.load(Ordering::Acquire)
-            || self.home_assistant_settings.load(Ordering::Acquire)
-            || self.input_devices.load(Ordering::Acquire)
+            || self.groups.load(Ordering::Acquire) & !self.withheld.groups() != 0
+            || self.virtual_lamps.load(Ordering::Acquire) & !self.withheld.virtual_lamps() != 0
+            || (0..MAX_DIRTY_ADAPTERS as u8).any(|adapter_id| self.writable_scenes(adapter_id) != 0)
+            || self.input_device_banks.load(Ordering::Acquire)
+                & !self.withheld.input_device_banks()
+                != 0
+            || self.global_flags().any(|(flag, mask)| self.writable(flag, mask))
+    }
+
+    fn global_flags(&self) -> impl Iterator<Item = (&AtomicBool, u32)> {
+        [
+            (&self.adapters, withheld::ADAPTERS),
+            (&self.hcl_schedules, withheld::HCL_SCHEDULES),
+            (&self.poller_settings, withheld::POLLER_SETTINGS),
+            (&self.dali_settings, withheld::DALI_SETTINGS),
+            (&self.redundancy_settings, withheld::REDUNDANCY_SETTINGS),
+            (&self.policies, withheld::POLICIES),
+            (&self.home_assistant_settings, withheld::HOME_ASSISTANT_SETTINGS),
+        ]
+        .into_iter()
+    }
+
+    fn writable(&self, flag: &AtomicBool, mask: u32) -> bool {
+        flag.load(Ordering::Acquire) && !self.withheld.global(mask)
+    }
+
+    pub fn adapters_writable(&self) -> bool {
+        self.writable(&self.adapters, withheld::ADAPTERS)
+    }
+
+    fn writable_scenes(&self, adapter_id: u8) -> u16 {
+        self.scenes
+            .get(adapter_id as usize)
+            .map_or(0, |mask| mask.load(Ordering::Acquire) & !self.withheld.scenes(adapter_id))
+    }
+
+    pub fn held_back(&self, adapter_count: u8) -> Vec<SliceKey> {
+        let pending_globals = self
+            .global_flags()
+            .filter(|(flag, _)| flag.load(Ordering::Acquire))
+            .fold(0, |pending, (_, mask)| pending | mask);
+        let input = self.input_device_banks.load(Ordering::Acquire)
+            & self.withheld.input_device_banks();
+        let held_input = (0..SliceKey::INPUT_DEVICE_BANKS)
+            .filter(move |bank| input & (1 << bank) != 0)
+            .map(|bank| SliceKey::InputDevices { bank });
+        let per_adapter = (0..adapter_count).flat_map(|adapter_id| self.held_back_of(adapter_id));
+        self.withheld.global_keys(pending_globals).chain(held_input).chain(per_adapter).collect()
+    }
+
+    fn held_back_of(&self, adapter_id: u8) -> impl Iterator<Item = SliceKey> + '_ {
+        let bit = 1u32.checked_shl(u32::from(adapter_id)).unwrap_or(0);
+        let held = |dirty: &AtomicU32, withheld: u32| {
+            dirty.load(Ordering::Acquire) & withheld & bit != 0
+        };
+        let groups = held(&self.groups, self.withheld.groups())
+            .then_some(SliceKey::Groups { adapter_id });
+        let lamps = held(&self.virtual_lamps, self.withheld.virtual_lamps())
+            .then_some(SliceKey::VirtualLamps { adapter_id });
+        let scenes = self
+            .scenes
+            .get(usize::from(adapter_id))
+            .map_or(0, |mask| mask.load(Ordering::Acquire))
+            & self.withheld.scenes(adapter_id);
+        let held_scenes = (0..SliceKey::SCENES_PER_ADAPTER)
+            .filter(move |scene_id| scenes & (1 << scene_id) != 0)
+            .map(move |scene_id| SliceKey::Scene { adapter_id, scene_id });
+        groups.into_iter().chain(lamps).chain(held_scenes)
     }
 
     pub fn mark_scene_dirty(&self, adapter_id: u8, scene_id: u8) {
@@ -116,13 +177,18 @@ impl DirtyFlags {
     }
 
     pub fn take_scenes_dirty(&self, adapter_id: u8) -> u16 {
+        let withheld = self.withheld.scenes(adapter_id);
         self.scenes
             .get(adapter_id as usize)
-            .map(|mask| mask.swap(0, Ordering::AcqRel))
-            .unwrap_or(0)
+            .map_or(0, |mask| mask.fetch_and(withheld, Ordering::AcqRel) & !withheld)
     }
 
-    global_dirty_flag!(mark_hcl_schedules_dirty, take_hcl_schedules_dirty, hcl_schedules);
+    global_dirty_flag!(
+        mark_hcl_schedules_dirty,
+        take_hcl_schedules_dirty,
+        hcl_schedules,
+        withheld::HCL_SCHEDULES
+    );
 
     pub fn note_hcl_switch(&self) -> bool {
         let mut since = self.hcl_switches_since();
@@ -142,24 +208,44 @@ impl DirtyFlags {
     fn hcl_switches_since(&self) -> MutexGuard<'_, Option<Instant>> {
         self.hcl_switches_waiting_since.lock().unwrap_or_else(PoisonError::into_inner)
     }
-    global_dirty_flag!(mark_dali_settings_dirty, take_dali_settings_dirty, dali_settings);
+    global_dirty_flag!(
+        mark_dali_settings_dirty,
+        take_dali_settings_dirty,
+        dali_settings,
+        withheld::DALI_SETTINGS
+    );
     global_dirty_flag!(
         mark_redundancy_settings_dirty,
         take_redundancy_settings_dirty,
-        redundancy_settings
+        redundancy_settings,
+        withheld::REDUNDANCY_SETTINGS
     );
-    global_dirty_flag!(mark_policies_dirty, take_policies_dirty, policies);
+    global_dirty_flag!(mark_policies_dirty, take_policies_dirty, policies, withheld::POLICIES);
     global_dirty_flag!(
         mark_poller_settings_dirty,
         take_poller_settings_dirty,
-        poller_settings
+        poller_settings,
+        withheld::POLLER_SETTINGS
     );
     global_dirty_flag!(
         mark_home_assistant_settings_dirty,
         take_home_assistant_settings_dirty,
-        home_assistant_settings
+        home_assistant_settings,
+        withheld::HOME_ASSISTANT_SETTINGS
     );
-    global_dirty_flag!(mark_input_devices_dirty, take_input_devices_dirty, input_devices);
+
+    pub fn mark_input_devices_dirty(&self) {
+        self.mark_input_device_banks_dirty(withheld::ALL_INPUT_DEVICE_BANKS);
+    }
+
+    pub fn mark_input_device_banks_dirty(&self, banks: u8) {
+        self.input_device_banks.fetch_or(banks, Ordering::Release);
+    }
+
+    pub fn take_input_device_banks_dirty(&self) -> u8 {
+        let withheld = self.withheld.input_device_banks();
+        self.input_device_banks.fetch_and(withheld, Ordering::AcqRel) & !withheld
+    }
 
     pub fn mark_groups_dirty(&self, adapter_id: u8) {
         self.groups.fetch_or(1u32 << adapter_id, Ordering::Release);
@@ -243,11 +329,13 @@ impl DirtyFlags {
     }
 
     pub fn take_groups_dirty(&self) -> u32 {
-        self.groups.swap(0, Ordering::AcqRel)
+        let withheld = self.withheld.groups();
+        self.groups.fetch_and(withheld, Ordering::AcqRel) & !withheld
     }
 
     pub fn take_virtual_lamps_dirty(&self) -> u32 {
-        self.virtual_lamps.swap(0, Ordering::AcqRel)
+        let withheld = self.withheld.virtual_lamps();
+        self.virtual_lamps.fetch_and(withheld, Ordering::AcqRel) & !withheld
     }
 }
 
@@ -449,6 +537,7 @@ pub struct PersistenceCounters {
     pub hydrate_loaded_total: std::sync::atomic::AtomicU32,
     pub hydrate_default_total: std::sync::atomic::AtomicU32,
     pub hydrate_error_total: std::sync::atomic::AtomicU32,
+    pub unread_slices: std::sync::atomic::AtomicU32,
 }
 
 impl PersistenceCounters {
@@ -460,6 +549,7 @@ impl PersistenceCounters {
             hydrate_loaded_total: std::sync::atomic::AtomicU32::new(0),
             hydrate_default_total: std::sync::atomic::AtomicU32::new(0),
             hydrate_error_total: std::sync::atomic::AtomicU32::new(0),
+            unread_slices: std::sync::atomic::AtomicU32::new(0),
         }
     }
 }
