@@ -218,7 +218,13 @@ impl OperationType {
     pub const fn coalesces_per_resource(self) -> bool {
         !matches!(
             self,
-            Self::ConfigWrite | Self::GroupApply | Self::SceneApply | Self::PolicyApply
+            Self::ConfigWrite
+                | Self::GroupApply
+                | Self::SceneApply
+                | Self::PolicyApply
+                | Self::CommissioningIdentify
+                | Self::CommissioningAddressChange
+                | Self::CommissioningReplaceDevice
         )
     }
 }

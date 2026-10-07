@@ -162,7 +162,7 @@ async fn json_pointer_number(world: &mut DaliWorld, pointer: String, expected: u
     );
 }
 
-// INP-011 INP-013 INP-071 INP-073 RULE-001 RULE-002 RULE-004 VL-011 ADP-029 ADP-030 ADP-032 ADP-033 COMM-100 COMM-111 RULE-089
+// INP-011 INP-013 INP-071 INP-073 RULE-001 RULE-002 RULE-004 VL-011 ADP-029 ADP-030 ADP-032 ADP-033 COMM-100 COMM-111 RULE-089 COMM-097 COMM-104 INP-098 INP-099
 #[then(regex = r#"^the JSON pointer "([^"]*)" should be "([^"]*)"$"#)]
 async fn json_pointer_string(world: &mut DaliWorld, pointer: String, expected: String) {
     let val = last_json(world);

@@ -456,10 +456,12 @@ pub fn reject_if_commissioning_active(
         .iter()
         .any(|op_type| operations.has_active_operation(*op_type, adapter_id))
     {
-        return Err(json_err(409, "conflict"));
+        return Err(json_err_with_message(409, "conflict", COMMISSIONING_ACTIVE));
     }
     Ok(())
 }
+
+pub const COMMISSIONING_ACTIVE: &str = "commissioning_active";
 
 pub fn reject_if_apply_active(
     operations: &dyn OperationReadPort,

@@ -319,6 +319,7 @@ Feature: IEC 62386-103 input devices as a REST resource
     When I POST JSON {} to "<path>"
     Then the response status should be 409
     And the JSON error should be "conflict"
+    And the JSON pointer "/message" should be "commissioning_active"
     And the operations list should contain exactly 3 operations
     When the DALI transport unblocks
     Then every operation eventually finishes
@@ -340,6 +341,7 @@ Feature: IEC 62386-103 input devices as a REST resource
     When I POST JSON {} to "<refused>"
     Then the response status should be 409
     And the JSON error should be "conflict"
+    And the JSON pointer "/message" should be "commissioning_active"
     And the operations list should contain exactly 2 operations
     When the DALI transport unblocks
     Then every operation eventually finishes

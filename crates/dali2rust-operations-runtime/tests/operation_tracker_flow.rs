@@ -391,6 +391,30 @@ fn an_apply_opened_while_another_runs_waits_its_turn_instead_of_cancelling_it() 
 }
 
 #[test]
+fn a_commissioning_begin_never_marks_a_running_one_cancelled() {
+    let (publisher, tracker, _host) = spawn_harness();
+    for op_type in [
+        OperationType::CommissioningIdentify,
+        OperationType::CommissioningAddressChange,
+        OperationType::CommissioningReplaceDevice,
+    ] {
+        let corr = 9900 + 2 * op_type as u64;
+        let (first, second) = (format!("comm-0-{corr}"), format!("comm-0-{}", corr + 1));
+        publish(&publisher, BusChannel::Commands, begin_envelope(corr, &first, op_type, 600_000));
+        publish(&publisher, BusChannel::Commands, begin_envelope(corr + 1, &second, op_type, 600_000));
+        wait_until(
+            || tail_for(&tracker, &second).first().copied() == Some(OperationStatus::Accepted),
+            Duration::from_millis(500),
+        );
+        assert_eq!(
+            tail_for(&tracker, &first),
+            vec![OperationStatus::Accepted],
+            "the wire still runs the first; the per-adapter 409 keeps them apart, not supersession"
+        );
+    }
+}
+
+#[test]
 fn registry_reset_cancels_active_operations_op005() {
     let (publisher, tracker, _host) = spawn_harness();
     publish(

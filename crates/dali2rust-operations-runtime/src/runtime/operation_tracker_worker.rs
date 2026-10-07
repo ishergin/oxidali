@@ -1566,17 +1566,12 @@ impl OperationReadPort for OperationTrackerHttpRead {
         let Ok(guard) = self.0.lock() else {
             return false;
         };
-        let adapter_prefixes = adapter_scoped_key_prefixes(operation_type, adapter_id);
+        let families = adapter_scoped_key_families(operation_type);
         guard.active.values().any(|op| {
             op.op_type == operation_type
-                && matches!(
-                    op.status,
-                    OperationStatus::Accepted | OperationStatus::Running
-                )
-                && match &adapter_prefixes {
-                    Some(prefixes) => prefixes
-                        .iter()
-                        .any(|prefix| op.operation_key.starts_with(prefix.as_str())),
+                && matches!(op.status, OperationStatus::Accepted | OperationStatus::Running)
+                && match families {
+                    Some(families) => key_on_adapter(&op.operation_key, families, adapter_id),
                     None => op.adapter_id == u32::from(adapter_id),
                 }
         })
@@ -1595,9 +1590,13 @@ const fn adapter_scoped_key_families(operation_type: OperationType) -> Option<&'
     }
 }
 
-fn adapter_scoped_key_prefixes(operation_type: OperationType, adapter_id: u8) -> Option<Vec<String>> {
-    let families = adapter_scoped_key_families(operation_type)?;
-    Some(families.iter().map(|family| format!("{family}-{adapter_id}-")).collect())
+fn key_on_adapter(key: &str, families: &[&str], adapter_id: u8) -> bool {
+    families.iter().any(|family| {
+        key.strip_prefix(family)
+            .and_then(|rest| rest.strip_prefix('-'))
+            .and_then(|rest| rest.split_once('-'))
+            .is_some_and(|(adapter, _)| adapter.parse::<u8>() == Ok(adapter_id))
+    })
 }
 
 #[cfg(test)]

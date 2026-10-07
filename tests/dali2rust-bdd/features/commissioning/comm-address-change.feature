@@ -70,6 +70,7 @@ Feature: Commissioning address change
     When I POST JSON {"short_address":0,"new_short_address":23} to "/api/v1/adapters/0/commissioning/address-changes"
     Then the response status should be 409
     And the JSON error should be "conflict"
+    And the JSON pointer "/message" should be "commissioning_active"
     When the DALI transport unblocks
 
   @id:COMM-098
@@ -128,6 +129,7 @@ Feature: Commissioning address change
     When I POST JSON <body> to "<path>"
     Then the response status should be 409
     And the JSON error should be "conflict"
+    And the JSON pointer "/message" should be "commissioning_active"
     And the operations list should contain exactly 2 operations
     When the DALI transport unblocks
     Then every operation eventually finishes
