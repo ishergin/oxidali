@@ -1566,32 +1566,38 @@ impl OperationReadPort for OperationTrackerHttpRead {
         let Ok(guard) = self.0.lock() else {
             return false;
         };
-        let adapter_prefix = adapter_scoped_key_prefix(operation_type, adapter_id);
+        let adapter_prefixes = adapter_scoped_key_prefixes(operation_type, adapter_id);
         guard.active.values().any(|op| {
             op.op_type == operation_type
                 && matches!(
                     op.status,
                     OperationStatus::Accepted | OperationStatus::Running
                 )
-                && match &adapter_prefix {
-                    Some(prefix) => op.operation_key.starts_with(prefix.as_str()),
+                && match &adapter_prefixes {
+                    Some(prefixes) => prefixes
+                        .iter()
+                        .any(|prefix| op.operation_key.starts_with(prefix.as_str())),
                     None => op.adapter_id == u32::from(adapter_id),
                 }
         })
     }
 }
 
-fn adapter_scoped_key_prefix(operation_type: OperationType, adapter_id: u8) -> Option<String> {
-    let family = match operation_type {
-        OperationType::GroupApply => "grp-apply",
-        OperationType::SceneApply => "scn-apply",
-        OperationType::PolicyApply => "policy-apply",
-        OperationType::CommissioningIdentify => "comm-ident",
-        OperationType::CommissioningAddressChange => "comm-addr",
-        OperationType::CommissioningReplaceDevice => "comm-repl",
-        _ => return None,
-    };
-    Some(format!("{family}-{adapter_id}-"))
+const fn adapter_scoped_key_families(operation_type: OperationType) -> Option<&'static [&'static str]> {
+    match operation_type {
+        OperationType::GroupApply => Some(&["grp-apply"]),
+        OperationType::SceneApply => Some(&["scn-apply"]),
+        OperationType::PolicyApply => Some(&["policy-apply"]),
+        OperationType::CommissioningIdentify => Some(&["comm-ident", "inp-id"]),
+        OperationType::CommissioningAddressChange => Some(&["comm-addr", "inp-comm"]),
+        OperationType::CommissioningReplaceDevice => Some(&["comm-repl"]),
+        _ => None,
+    }
+}
+
+fn adapter_scoped_key_prefixes(operation_type: OperationType, adapter_id: u8) -> Option<Vec<String>> {
+    let families = adapter_scoped_key_families(operation_type)?;
+    Some(families.iter().map(|family| format!("{family}-{adapter_id}-")).collect())
 }
 
 #[cfg(test)]

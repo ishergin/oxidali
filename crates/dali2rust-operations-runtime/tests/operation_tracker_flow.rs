@@ -1217,3 +1217,24 @@ fn commissioning_active_does_not_block_another_registry_adapter() {
         "an identify on registry adapter 0 must not 409 registry adapter 1"
     );
 }
+
+#[test]
+fn part_103_commissioning_is_visible_for_its_registry_adapter_only() {
+    let (publisher, tracker, _host) = spawn_harness();
+    let read = OperationTrackerHttpRead(Arc::clone(&tracker));
+    for (corr, key, op_type) in [
+        (9740, "inp-comm-10-9740", OperationType::CommissioningAddressChange),
+        (9750, "inp-id-10-3-9750", OperationType::CommissioningIdentify),
+    ] {
+        publish(&publisher, BusChannel::Commands, begin_envelope(corr, key, op_type, 600_000));
+        wait_until(
+            || tail_for(&tracker, key).last().copied() == Some(OperationStatus::Accepted),
+            Duration::from_millis(500),
+        );
+        assert!(read.has_active_operation(op_type, 10), "active {key} must report busy for adapter 10");
+        for other in [0, 1] {
+            let busy = read.has_active_operation(op_type, other);
+            assert!(!busy, "active {key} must not 409 registry adapter {other}");
+        }
+    }
+}

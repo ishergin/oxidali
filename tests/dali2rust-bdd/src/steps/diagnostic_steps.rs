@@ -143,7 +143,7 @@ async fn dali_mock_frames_adjacent(world: &mut DaliWorld, first_hex: String, sec
     assert_nothing_between_frames(&trace, first, second);
 }
 
-// ADP-023 ADP-024 BUS-013 BUS-014 BUS-016 DIAG-112 DIAG-113 DIAG-114 DIAG-120 DIAG-123 DIAG-130 DIAG-133 DIAG-140 DIAG-141 DIAG-152 DIAG-153 DIAG-210 DIAG-211 DIAG-213 DIAG-400 DIAG-402 DIAG-403 DIAG-404 GRP-001 GRP-020 GRP-030 GRP-061 GRP-063 GRP-072 OP-100 PD-032 PD-033 PD-042 PD-043 PD-182 PD-187 PD-244 PD-255 SCN-001 SCN-010 SCN-020 SCN-030 SCN-040 SCN-041 SCN-046 SCN-050 SCN-061 SCN-063 SYS-003 SYS-005 SYS-006 SYS-007 SYS-212 SYS-213 SYS-214 SYS-215 VL-001 VL-010 WS-001 ADP-025 ADP-026 ADP-027 COMM-098 RULE-036 RULE-065 ADP-036 PD-275 PD-277 PD-280 RED-030 COMM-111 COMM-114
+// ADP-023 ADP-024 BUS-013 BUS-014 BUS-016 DIAG-112 DIAG-113 DIAG-114 DIAG-120 DIAG-123 DIAG-130 DIAG-133 DIAG-140 DIAG-141 DIAG-152 DIAG-153 DIAG-210 DIAG-211 DIAG-213 DIAG-400 DIAG-402 DIAG-403 DIAG-404 GRP-001 GRP-020 GRP-030 GRP-061 GRP-063 GRP-072 OP-100 PD-032 PD-033 PD-042 PD-043 PD-182 PD-187 PD-244 PD-255 SCN-001 SCN-010 SCN-020 SCN-030 SCN-040 SCN-041 SCN-046 SCN-050 SCN-061 SCN-063 SYS-003 SYS-005 SYS-006 SYS-007 SYS-212 SYS-213 SYS-214 SYS-215 VL-001 VL-010 WS-001 ADP-025 ADP-026 ADP-027 COMM-098 RULE-036 RULE-065 ADP-036 PD-275 PD-277 PD-280 RED-030 COMM-111 COMM-114 COMM-104
 #[then(regex = r"the DALI mock transport should have received (\d+) forward frame")]
 async fn dali_mock_forward_frames(world: &mut DaliWorld, expected: u64) {
     let frames = world.dali_mock().lock().unwrap().sent_frames();
@@ -223,7 +223,7 @@ async fn then_response_arrives_within(world: &mut DaliWorld, max_ms: u64) {
     );
 }
 
-// SYS-247 SYS-248 PD-038 SYS-050 COMM-090 SCN-065 SCN-082 COMM-097
+// SYS-247 SYS-248 PD-038 SYS-050 COMM-090 SCN-065 SCN-082 COMM-097 COMM-104 INP-098 INP-099
 #[given("the DALI transport blocks indefinitely")]
 async fn given_transport_blocks(world: &mut DaliWorld) {
     world.dali_mock().lock().unwrap().block_next_send();
@@ -235,7 +235,7 @@ async fn given_transport_parks_for(world: &mut DaliWorld, ms: u64) {
     world.dali_mock().lock().unwrap().block_next_send_for(ms);
 }
 
-// SYS-050 SCN-065 COMM-097
+// SYS-050 SCN-065 COMM-097 COMM-104 INP-098 INP-099
 #[when("the DALI transport unblocks")]
 async fn when_transport_unblocks(world: &mut DaliWorld) {
     world.release_held_send();
@@ -523,7 +523,7 @@ async fn diagnostics_uptime_monotonic(world: &mut DaliWorld) {
     );
 }
 
-// COMM-004 COMM-008 COMM-052 COMM-056 COMM-114 INP-001 INP-002 INP-003 INP-004 INP-005 OP-100 PD-042 PD-043 PD-255 RULE-020 RULE-021 RULE-023 SYS-230 SYS-231 SYS-232 SYS-233 SYS-235 SYS-236 SYS-238 SYS-239 SYS-240 COMM-098 RULE-027 RULE-031 RULE-032 RULE-036 RULE-060 RULE-061 RULE-062 RULE-065 RULE-066 RULE-080 RULE-081 RULE-083 RULE-084 PD-275 COMM-111
+// COMM-004 COMM-008 COMM-052 COMM-056 COMM-114 INP-001 INP-002 INP-003 INP-004 INP-005 OP-100 PD-042 PD-043 PD-255 RULE-020 RULE-021 RULE-023 SYS-230 SYS-231 SYS-232 SYS-233 SYS-235 SYS-236 SYS-238 SYS-239 SYS-240 COMM-098 RULE-027 RULE-031 RULE-032 RULE-036 RULE-060 RULE-061 RULE-062 RULE-065 RULE-066 RULE-080 RULE-081 RULE-083 RULE-084 PD-275 COMM-111 COMM-104
 #[given("the DALI mock transport trace is cleared")]
 async fn given_mock_trace_cleared(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear();

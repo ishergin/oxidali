@@ -284,7 +284,7 @@ pub(crate) fn build_app_router(
     let builder = wire_commissioning(builder, adapter_count, &bus, &registry, &op_read);
     let builder = wire_applies(builder, &bus, &registry, &op_read);
     let builder = wire_hcl(builder, &bus, &registry, &hcl_overrides, &op_read);
-    let builder = wire_input_devices(builder, &bus, &registry);
+    let builder = wire_input_devices(builder, &bus, &registry, &op_read);
     let builder = wire_rules(builder, &bus, &rules);
     let builder = wire_settings_and_lamps(builder, &bus, &registry, &redundancy_read);
     let builder = builder
@@ -682,6 +682,7 @@ fn wire_input_devices(
     builder: AppBuilder,
     bus: &HttpBusDispatch,
     registry: &RegistryHttpPorts,
+    op_read: &Arc<dyn OperationReadPort>,
 ) -> AppBuilder {
     use dali2rust_api::http::handlers::input_devices::{
         InputDeviceGetHandler, InputDeviceListHandler,
@@ -698,7 +699,7 @@ fn wire_input_devices(
             RouteKey::InputDeviceGet,
             Box::new(InputDeviceGetHandler::new(Arc::clone(state), Arc::clone(&wall))),
         );
-    wire_input_device_actions(builder, bus, registry)
+    wire_input_device_actions(builder, bus, registry, op_read)
 }
 
 #[inline(never)]
@@ -706,6 +707,7 @@ fn wire_input_device_actions(
     builder: AppBuilder,
     bus: &HttpBusDispatch,
     registry: &RegistryHttpPorts,
+    op_read: &Arc<dyn OperationReadPort>,
 ) -> AppBuilder {
     use dali2rust_api::http::handlers::input_devices::{
         InputDeviceAction, InputDeviceActionHandler, InputDeviceBus,
@@ -720,7 +722,7 @@ fn wire_input_device_actions(
             timeout_ms: bus.confirmation_timeout_ms,
             wall: Arc::new(dali2rust_bsp::unix_clock::StdUnixTimeMs),
         };
-        Box::new(InputDeviceActionHandler::new(bus, Arc::clone(state), kind))
+        Box::new(InputDeviceActionHandler::new(bus, Arc::clone(state), Arc::clone(op_read), kind))
     };
     builder
         .with_handler(RouteKey::InputDevicesScan, action(InputDeviceAction::Scan))

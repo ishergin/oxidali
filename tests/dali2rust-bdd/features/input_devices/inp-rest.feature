@@ -303,3 +303,48 @@ Feature: IEC 62386-103 input devices as a REST resource
       | /api/v1/adapters/0/input-devices/0                      | {"present":false}             |
       | /api/v1/adapters/0/input-devices/0/instances/0          | {"instance_type":3}           |
       | /api/v1/adapters/0/input-devices/0/instances/0/feedback | {"probed":false}              |
+
+  @id:INP-098
+  Scenario Outline: Part 103 commissioning is refused while lamp commissioning runs on the adapter
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    And the mock transport 24-bit trace is cleared
+    Given the DALI transport blocks indefinitely
+    When I POST JSON {"short_address":0} to "/api/v1/adapters/0/commissioning/identify"
+    Then the response status should be 202
+    And the last operation eventually runs
+    When I POST JSON {} to "<path>"
+    Then the response status should be 409
+    And the JSON error should be "conflict"
+    And the operations list should contain exactly 3 operations
+    When the DALI transport unblocks
+    Then every operation eventually finishes
+    And the mock transport should have sent no 24-bit frames
+
+    Examples:
+      | path                                        |
+      | /api/v1/adapters/0/input-devices/commission |
+      | /api/v1/adapters/0/input-devices/0/identify |
+
+  @id:INP-099
+  Scenario Outline: A second Part 103 commissioning on the adapter is refused while the first runs
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    Given the DALI transport blocks indefinitely
+    When I POST JSON {} to "<running>"
+    Then the response status should be 202
+    And the last operation eventually becomes active
+    When I POST JSON {} to "<refused>"
+    Then the response status should be 409
+    And the JSON error should be "conflict"
+    And the operations list should contain exactly 2 operations
+    When the DALI transport unblocks
+    Then every operation eventually finishes
+
+    Examples:
+      | running                                     | refused                                     |
+      | /api/v1/adapters/0/input-devices/commission | /api/v1/adapters/0/input-devices/0/identify |
+      | /api/v1/adapters/0/input-devices/0/identify | /api/v1/adapters/0/input-devices/commission |
