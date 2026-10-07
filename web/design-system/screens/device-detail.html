@@ -188,7 +188,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
 /* Commissioning (R15). Service tone, deliberately no accent: these actions
    re-address hardware, so the styling must not invite a casual click. */
-.comm-grid { display: grid; gap: 12px; }
+.comm-grid { display: grid; gap: 12px; padding: 12px 14px; }
 .comm-act { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
 .comm-title { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
 .comm-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -215,6 +215,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .attr .v.plain { padding-right: 8px; }
 .attr .v .unit { color: var(--text-faint); font-size: 11px; width: 20px; text-align: left; flex: none; }
+.attr.wide { grid-template-columns: 1fr minmax(0, auto) auto; }
+.attr.wide .v { flex-direction: column; align-items: flex-end; gap: 1px; min-width: 0; padding-right: 8px; }
 .attr .src { justify-self: end; }
 .attr.controls { grid-template-columns: 1fr auto 0; }
 .attr.controls .v { justify-content: flex-end; padding-right: 0; }
@@ -293,7 +295,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   <!-- OVERVIEW TAB. Everything here comes from the device core plus one
        attribute section (`common_102`) for the version / light-source rows —
        deliberately the smallest tab, because it is the one an operator lands on
-       and it must render before they decide where to go. -->
+       and it must render before they decide where to go. The product name comes
+       from the device list the screen already polls every 10 s. -->
   <div class="grid2">
     <div class="card">
       <header><h3>Information</h3></header>
@@ -312,6 +315,10 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <span class="badge declared">cct<span class="prov">&middot; manual</span></span>
       </span><span class="unit"></span></span><span></span></div>
       <div class="attr"><span class="k">Random address</span><span class="v plain">0x214365<span class="unit"></span></span><span></span></div>
+      <!-- The gear's GTIN looked up in the product table: from the identity
+           section when the tab has it, otherwise from the polled device list.
+           No row when the GTIN is unknown or the table has no entry for it. -->
+      <div class="attr wide"><span class="k">Product</span><span class="v">Example TW driver 25 W</span><span></span></div>
       <!-- The byte is not the version. IEC 62386-102 §4.2: major in bits 7..2,
            minor in bits 1..0 — version 2.0 is the byte 0x08. 0xFF is not
            version 63.3: §9.10.6 makes it "no control gear implemented". -->

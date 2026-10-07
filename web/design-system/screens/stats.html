@@ -242,7 +242,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
       <!-- Every counter card spells its rows as the field names, underscores
            to spaces and the first letter capitalised, in the order the report
-           sends them; a value is `fault` only for the five fields an operator
+           sends them; a value is `fault` only for the six fields an operator
            acts on, and only while it is above zero. Confirmation timeouts sit
            here, not under DALI: the confirmation bridge is shared, and a
            registry write that times out never touched the wire. -->
@@ -354,7 +354,9 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
           <span class="chip ok"><span class="dot"></span>connected</span>
         </header>
         <div class="attr"><span class="k">Publishes total</span><span class="v">8 411</span><span class="delta live">+20</span></div>
-        <div class="attr"><span class="k">Publish failures total</span><span class="v">0</span><span class="delta"></span></div>
+        <!-- `Publish failures total` is one of the six fault fields: a publish
+             the MQTT client refused never reaches Home Assistant. -->
+        <div class="attr"><span class="k">Publish failures total</span><span class="v fault">2</span><span class="delta"></span></div>
       </div>
 
       <div class="card">

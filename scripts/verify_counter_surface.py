@@ -12,7 +12,7 @@ STATS_DTO = API / "stats_state.rs"
 REDUNDANCY_DTO = API / "redundancy_state.rs"
 BRIDGE = ROOT / "crates/dali2rust-adapters/src/runtime/http_bridges.rs"
 TS_TYPES = ROOT / "web/app/src/api/types.ts"
-FAULT_KEYS_TSX = ROOT / "web/app/src/screens/diagnostics.tsx"
+FAULT_KEYS_TSX = ROOT / "web/app/src/screens/diagnostics-view.ts"
 DESIGN_DOC = ROOT / "documentation/product-design/rest-api/resources/diagnostics.md"
 RESOURCE_DOCS = (
     ("RedundancyStateDto", ROOT / "documentation/product-design/rest-api/resources/redundancy.md"),
@@ -326,7 +326,7 @@ def check_fault_keys(names):
         return ["%s: FAULT_KEYS not found" % FAULT_KEYS_TSX.relative_to(ROOT)]
     body = re.sub(r"//[^\n]*", "", match.group(1))
     return [
-        "diagnostics.tsx: FAULT_KEYS lists %r, which is not a field of any counter block" % key
+        "diagnostics-view.ts: FAULT_KEYS lists %r, which is not a field of any counter block" % key
         for key in re.findall(r"'([^']+)'", body)
         if key not in names
     ]

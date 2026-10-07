@@ -5,6 +5,7 @@ import { Chip, EditableName, MatrixCell, Switch } from '../components/ui'
 import { ADAPTER, GROUP_COUNT, pad2 } from '../format'
 import { useLive } from '../hooks'
 import { errorMessage, mutate, notify, saveThenApply, trackOp } from '../toast'
+import { applyBar, boundLamps } from './apply-bar'
 import { gearDiffers } from './groups-view'
 
 const MATRIX_POLL_MS = 10_000
@@ -18,11 +19,7 @@ export function Groups() {
       api.virtualLamps(ADAPTER),
       api.groups(ADAPTER),
     ])
-    const bound = new Set(
-      lamps.virtual_lamps
-        .filter((l) => l.binding != null)
-        .map((l) => l.virtual_lamp_id),
-    )
+    const bound = boundLamps(lamps.virtual_lamps)
     const names = new Map(lamps.virtual_lamps.map((l) => [l.virtual_lamp_id, l.name]))
     const shorts = new Map(
       lamps.virtual_lamps
@@ -67,6 +64,11 @@ export function Groups() {
   }
 
   const serverDirty = matrix.rows.filter(gearDiffers).length
+  const gearRows = matrix.rows.map((r) => ({
+    virtual_lamp_id: r.virtual_lamp_id,
+    differs: gearDiffers(r),
+  }))
+  const bar = applyBar(edits.size, gearRows, bound)
   const localAdd = [...edits.entries()].filter(([, v]) => v).length
   const localRm = edits.size - localAdd
 
@@ -225,17 +227,28 @@ export function Groups() {
         </table>
       </div>
 
-      {edits.size > 0 && (
+      {bar && (
         <div class="applybar">
-          <span class="txt">
-            <b>
-              {edits.size} pending edit{edits.size === 1 ? '' : 's'}
-            </b>{' '}
-            — {localAdd} add · {localRm} remove
-          </span>
-          <button class="btn discard" onClick={discard} disabled={busy}>
-            Discard
-          </button>
+          {bar.kind === 'edits' ? (
+            <span class="txt">
+              <b>
+                {bar.count} pending edit{bar.count === 1 ? '' : 's'}
+              </b>{' '}
+              — {localAdd} add · {localRm} remove
+            </span>
+          ) : (
+            <span class="txt">
+              <b>
+                {bar.count} row{bar.count === 1 ? '' : 's'}
+              </b>{' '}
+              {bar.count === 1 ? 'differs' : 'differ'} from the gear
+            </span>
+          )}
+          {bar.kind === 'edits' && (
+            <button class="btn discard" onClick={discard} disabled={busy}>
+              Discard
+            </button>
+          )}
           <button class="btn apply" onClick={applyToBus} disabled={busy}>
             Apply to bus
           </button>

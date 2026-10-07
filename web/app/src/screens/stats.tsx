@@ -5,19 +5,11 @@ import { Badge, Card, Chip } from '../components/ui'
 import { CounterRows, type Flat, useDeltas } from '../counters'
 import { uptime } from '../format'
 import { useLive, useSnapshotFrames } from '../hooks'
-import { deltaView } from './stats-view'
+import { deltaView, isFault } from './stats-view'
 
 const STATS_POLL_MS = 5000
 
 const INTERNAL_PRESSURE_ALERT_BYTES = 12 * 1024
-
-const FAULT_KEYS = new Set([
-  'commands_ingress_overflow_total',
-  'errors_total',
-  'confirmation_timeouts_total',
-  'timed_out_total',
-  'events_dropped_total',
-])
 
 const OPERATION_GAUGES = ['running'] as const
 
@@ -66,10 +58,6 @@ function RuleStatRows({ stats, deltas }: { stats: StatsRuleCount[]; deltas: Flat
       })}
     </>
   )
-}
-
-function isFault(key: string, value: number): boolean {
-  return FAULT_KEYS.has(key) && value > 0
 }
 
 function kib(bytes: number): string {

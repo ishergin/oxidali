@@ -187,6 +187,7 @@ tr.rowdirty td:first-child { box-shadow: inset 2px 0 0 var(--dirty); }
 .rgb-in { box-sizing: border-box; width: 52px; padding: 4px 6px; background: var(--raised); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; text-align: right; }
 .rgb-in.sm { width: 44px; margin-right: 0; }
+.rgb-in.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
 .na { color: var(--text-faint); font-size: 12px; }
 
 .applied-v { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
@@ -351,11 +352,13 @@ tr.rowdirty td:first-child { box-shadow: inset 2px 0 0 var(--dirty); }
           <td class="c"><span class="cval">on</span></td>
           <td><span class="applied-v diff">not in scene</span></td>
         </tr>
-        <tr>
+        <!-- The edit holds the colour whole, so one changed channel marks every
+             box of the mode dirty, R, G and B together. -->
+        <tr class="rowdirty">
           <td class="lamp"><span class="vl">VL 05</span>TV strip</td>
           <td class="c"><span class="inc on">✓</span></td>
           <td><span class="lvl"><input class="num" value="30"><span class="unit">/254</span></span></td>
-          <td><span class="ccell"><select class="modesel"><option>—</option><option>cct</option><option selected>rgb</option><option>xy</option></select><span class="cctl"><span class="swatch" style="background:rgb(40,50,78)"></span><input class="rgb-in sm" value="40" title="R"><input class="rgb-in sm" value="50" title="G"><input class="rgb-in sm" value="78" title="B"></span></span></td>
+          <td><span class="ccell"><select class="modesel"><option>—</option><option>cct</option><option selected>rgb</option><option>xy</option></select><span class="cctl"><span class="swatch" style="background:rgb(40,50,120)"></span><input class="rgb-in sm dirty" value="40" title="R"><input class="rgb-in sm dirty" value="50" title="G"><input class="rgb-in sm dirty" value="120" title="B"></span></span></td>
           <td class="c"><span class="cval">on</span></td>
           <td><span class="applied-v">30</span></td>
         </tr>
@@ -387,21 +390,21 @@ tr.rowdirty td:first-child { box-shadow: inset 2px 0 0 var(--dirty); }
     </table>
   </div>
 
-  <!-- The apply bar appears ONLY when the operator has unsaved edits, and its
-       count is those edits alone — one per edited row. Discard clears exactly
-       what the bar counts, so the button is live whenever the bar is on
-       screen. -->
+  <!-- With unsaved edits the apply bar counts those edits alone — one per
+       edited row — and Discard clears exactly what it counts. With none, it
+       stays while a bound row differs from its gear, and offers only the apply
+       (shown below). -->
   <div class="applybar">
-    <span class="txt"><b>2 pending edits</b> in scene 2</span>
+    <span class="txt"><b>3 pending edits</b> in scene 2</span>
     <button class="btn discard">Discard</button>
     <button class="btn apply">Apply to bus</button>
   </div>
   <!-- TWO numbers, never summed. This chip, under the matrix, is the GEAR's
        condition: rows whose desired != applied, healed only by an apply the
        gear confirms. It takes the warn tone that desired ≠ applied shares.
-       The operator's own unsaved edits live in the apply bar and nowhere
-       else — summing them would make the bar permanent wherever a divergence
-       stands, with Discard, which can only clear the local half, greyed out. -->
+       While the operator has unsaved edits, the apply bar counts those edits
+       alone — summing the two would put on the bar a number its Discard can
+       only partly clear. -->
   <span class="chip warn"><span class="dot"></span>1 row dirty on gear</span>
 
   <div class="state-label"><span>Save and apply — one toast per operation</span><span class="ln"></span></div>
@@ -432,15 +435,28 @@ tr.rowdirty td:first-child { box-shadow: inset 2px 0 0 var(--dirty); }
   <!--
     The detail is the first row's failure — the code, then the message when it
     adds to it — and the tally of every row the apply took on. Saved, the
-    matrix above puts three rows in the diff: VL 04 to write, VL 01 and VL 02
-    to update. Here VL 01 met a contended bus, and the row it failed stays
-    dirty on gear.
+    matrix above puts four rows in the diff: VL 04 to write, VL 01, VL 02 and
+    VL 05 to update. Here VL 01 met a contended bus, and the row it failed
+    stays dirty on gear.
   -->
   <div class="toasts" style="position: static;">
     <div class="op">
       <div class="row1"><span class="title">Scene 2 apply</span><span class="chip err"><span class="dot"></span>failed</span><button class="close" title="Dismiss">✕</button></div>
-      <div class="detail">operation_failed — bus_contended · 1 written · 1 updated · 1 failed</div>
+      <div class="detail">operation_failed — bus_contended · 1 written · 2 updated · 1 failed</div>
     </div>
+  </div>
+
+  <div class="state-label"><span>Rows differ from the gear, nothing edited</span><span class="ln"></span></div>
+  <!--
+    With no edits, the bar counts the scene's bound rows whose gear differs
+    from them and offers only Apply to bus: there is nothing to discard, and
+    the apply programs those rows again. It is how a failed apply is retried —
+    here VL 01, which the apply above failed, and VL 02, whose gear holds its
+    clamped colour. An unbound row never counts: it has no gear.
+  -->
+  <div class="applybar" style="position: static; transform: none; display: inline-flex;">
+    <span class="txt"><b>2 rows</b> of scene 2 differ from the gear</span>
+    <button class="btn apply">Apply to bus</button>
   </div>
 </div>
 </body>

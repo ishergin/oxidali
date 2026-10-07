@@ -5,6 +5,7 @@ import { Chip, EditableName, EditableText, RgbInputs } from '../components/ui'
 import { ADAPTER, kelvinCss, LEVEL_MAX, pad2 } from '../format'
 import { useLive } from '../hooks'
 import { errorMessage, mutate, notify, saveThenApply } from '../toast'
+import { applyBar, boundLamps } from './apply-bar'
 
 const DEFAULT_SCENE_LEVEL = 254
 const DEFAULT_SCENE_CCT_K = 3000
@@ -59,6 +60,11 @@ export function Scenes({ sceneId }: { sceneId: number }) {
   const { data: groups } = useLive(
     async () => (await api.groups(ADAPTER)).groups,
     ['groups'],
+    { intervalMs: SCENES_POLL_MS },
+  )
+  const { data: bound } = useLive(
+    async () => boundLamps((await api.virtualLamps(ADAPTER)).virtual_lamps),
+    ['virtual_lamps'],
     { intervalMs: SCENES_POLL_MS },
   )
 
@@ -159,6 +165,11 @@ export function Scenes({ sceneId }: { sceneId: number }) {
 
   const localChanges = edits.size
   const serverDirty = matrix?.rows.filter((r) => r.dirty).length ?? 0
+  const gearRows = (matrix?.rows ?? []).map((r) => ({
+    virtual_lamp_id: r.virtual_lamp_id,
+    differs: r.dirty,
+  }))
+  const bar = applyBar(localChanges, gearRows, bound ?? new Set())
 
   return (
     <>
@@ -452,17 +463,28 @@ export function Scenes({ sceneId }: { sceneId: number }) {
         </table>
       </div>
 
-      {localChanges > 0 && (
+      {bar && (
         <div class="applybar">
-          <span class="txt">
-            <b>
-              {localChanges} pending edit{localChanges === 1 ? '' : 's'}
-            </b>{' '}
-            in scene {sceneId}
-          </span>
-          <button class="btn discard" onClick={discard} disabled={busy}>
-            Discard
-          </button>
+          {bar.kind === 'edits' ? (
+            <span class="txt">
+              <b>
+                {bar.count} pending edit{bar.count === 1 ? '' : 's'}
+              </b>{' '}
+              in scene {sceneId}
+            </span>
+          ) : (
+            <span class="txt">
+              <b>
+                {bar.count} row{bar.count === 1 ? '' : 's'}
+              </b>{' '}
+              of scene {sceneId} {bar.count === 1 ? 'differs' : 'differ'} from the gear
+            </span>
+          )}
+          {bar.kind === 'edits' && (
+            <button class="btn discard" onClick={discard} disabled={busy}>
+              Discard
+            </button>
+          )}
           <button class="btn apply" onClick={applyToBus} disabled={busy}>
             Apply to bus
           </button>

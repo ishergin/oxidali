@@ -9,62 +9,11 @@ import { Badge, Card, Chip } from '../components/ui'
 import { CounterRows, type Flat, useDeltas } from '../counters'
 import { uptime } from '../format'
 import { useLive, usePoll, useSnapshotFrames } from '../hooks'
+import { isFault } from './diagnostics-view'
 
 const DIAG_POLL_MS = 2000
 
 const RULES_GAUGES = ['log_lines'] as const
-
-const FAULT_KEYS = new Set([
-  'ingress_overflow',
-  'oversize_rejected',
-  'kind_mismatch',
-  'commands_unrouted',
-  'delivery_rejected_dropped',
-  'invalid_command',
-  'execution_failed',
-  'confirmation_publish_failed',
-  'event_publish_failed',
-  'read_attributes_contended_aborts',
-  'read_attributes_transport_aborts',
-  'read_attributes_sequence_incomplete',
-  'discovery_device_type_degraded',
-  'hydrate_failed',
-  'persist_failed',
-  'effects_ingress_rejected',
-  'cell_busy',
-  'aborted',
-  'window_closed',
-  'late',
-  'probe_failed',
-  'handover_incomplete',
-  'role_publish_failed',
-  'ingress_rejected',
-  'rejected',
-  'reload_publish_failed',
-  'outstanding_expired',
-  'unread_slices',
-  'publish_failed',
-  'flush_error_total',
-  'no_space_total',
-  'hydrate_error_total',
-  'decode_failed',
-  'unsupported_len',
-  'dropped',
-  'skipped_unknown_observed',
-  'events_dropped_total',
-  'inbox_overflow_total',
-  'sniffer_dropped_total',
-  'transaction_budget_exceeded',
-  'transaction_leaks',
-  'config_write_signal_publish_failed',
-  'terminal_signal_publish_failed',
-  'terminal_event_publish_failed_total',
-  'evidence_publish_failed',
-  'pending_outcomes_expired',
-  'health_probes_expired',
-  'ignored_commands',
-  'ignored_events',
-])
 
 const WEBSOCKET_GAUGES = ['clients'] as const
 
@@ -78,10 +27,6 @@ const DALI_WIRE_GAUGES = [
   'bus_power_down_active',
   'system_failure_active',
 ] as const
-
-function isFault(key: string, value: number): boolean {
-  return FAULT_KEYS.has(key) && value > 0
-}
 
 function SubscriberRows({
   title,
