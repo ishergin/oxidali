@@ -3,6 +3,10 @@ import glob
 import re
 import sys
 
+ANY_DATE = re.compile(r"\b20\d\d[-/.]\d{1,2}[-/.]\d{1,2}\b|\b\d{1,2}\.\d{1,2}\.20\d\d\b")
+TIME_AFTER = re.compile(r"[ T]\d{1,2}:\d\d")
+COMMENT = re.compile(r"<!--.*?-->|/\*.*?\*/", re.S)
+
 
 def classes_in(css: str) -> set[str]:
     return set(re.findall(r"\.([A-Za-z][\w-]*)", css))
@@ -15,6 +19,16 @@ def markup_classes(text: str) -> set[str]:
     out: set[str] = set()
     for m in re.finditer(r'class="([^"{}]*)"', text):
         out.update(c for c in m.group(1).split() if c)
+    return out
+
+
+def history_dates(text: str) -> list[tuple[int, str]]:
+    comments = [m.span() for m in COMMENT.finditer(text)]
+    out = []
+    for m in ANY_DATE.finditer(text):
+        in_comment = any(a <= m.start() < b for a, b in comments)
+        if in_comment or not TIME_AFTER.match(text, m.end()):
+            out.append((text.count("\n", 0, m.start()) + 1, m.group(0)))
     return out
 
 
@@ -48,6 +62,17 @@ for p in cards:
         unstyled_cards.append(f"     {p}: {', '.join(sorted(missing))}")
 if unstyled_cards:
     fail.append("B. cards using a class no rule defines:\n" + "\n".join(unstyled_cards))
+
+dated = []
+for p in cards + ["web/design-system/tokens.css"]:
+    for number, date in history_dates(open(p, encoding="utf-8").read()):
+        dated.append(f"     {p}:{number}: {date}")
+if dated:
+    fail.append(
+        "D. dated text in a card (a card shows the design as it is; its history goes in the\n"
+        "     commit; only the mocked UI shows a date, always with its time, never a comment):\n"
+        + "\n".join(dated)
+    )
 
 allowed = set()
 for line in open("scripts/web_vocabulary_exceptions.txt", encoding="utf-8"):

@@ -63,34 +63,27 @@ h2:first-of-type { margin-top: 0; }
 .demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
   padding: 14px; margin-bottom: 6px; }
 /* ── Input device detail ─────────────────────────────────────────────────
-   REWRITTEN 2026-09-01. What was here before expanded the list row downward
-   into the whole device, and the numbers say why that had to go: **6 573 px**
-   of stacked panels for one eight-button panel, and **90** caption elements
-   horizontally clipped by their own container — sentences cut off mid-word,
-   on a screen whose entire content was sentences. The owner's report was
-   "сделано ужасно… нужен однообразный дизайн с physical devices", and this is
-   that: same crumbs, same `EditableName` heading, same `Card` + `.attr` rows,
-   same `.ptabs` bar. After: **900 px**, **0** clipped.
+   The device has its own screen, in the physical device's shape: same crumbs,
+   same `EditableName` heading, same `Card` + `.attr` rows, same `.ptabs` bar.
 
-   THREE DECISIONS, and the first two are the whole rewrite.
+   THREE DECISIONS.
 
    1. A ROW IS A LINK, NOT AN ACCORDION. Eight instances stacked is a scroll;
       eight tabs is a choice. The instance number lives in the URL
       (`#/input-devices/0/3`) for the same reason the device card's section tab
       does — linkable, survives a reload, comes back from Back.
 
-   2. THE CLAUSE MOVES INTO `title`. Every row used to carry two to four lines
-      of standard citation at the same visual weight as the control it
-      described. That is not documentation, it is a wall — and it is what made
-      the rows unalignable, because a label column sized by a paragraph has no
-      column. The clause is on the label's tooltip; a one-line `.rowhint`
-      survives ONLY where not saying it changes what the operator does
-      (`T_double` delaying every single click, priority 2 being refused).
+   2. THE CLAUSE LIVES IN `title`. Two to four lines of standard citation at the
+      same visual weight as the control it describes is not documentation, it
+      is a wall, and a label column sized by a paragraph has no column. The
+      clause is on the label's tooltip; a one-line `.rowhint` appears ONLY where
+      not saying it changes what the operator does (`T_double` delaying every
+      single click, priority 2 being refused).
 
    3. THE STATUS BYTES LOOK LIKE THE PHYSICAL DEVICE'S. `BitChips` in a
-      wrapping cluster with the raw hex beside it — the owner asked for "хотя
-      бы как Status в physical devices", and it is literally the same
-      component, which is the only way two screens stay identical. */
+      wrapping cluster with the raw hex beside it — the same component as the
+      Status card in Physical devices, which is the only way two screens stay
+      identical. */
 .crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
 .crumbs a { color: var(--text-muted); text-decoration: none; }
 .head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
@@ -136,8 +129,8 @@ h2:first-of-type { margin-top: 0; }
 .attr.controls { grid-template-columns: 1fr auto 0; }
 .attr.controls .v { justify-content: flex-end; padding-right: 0; }
 
-/* The one caption that survives on screen, and it is a caption: faint, small,
-   under the label, never competing with it. */
+/* The one caption kept on screen, and it is a caption: faint, small, under
+   the label, never competing with it. */
 .k .rowhint { display: block; font-size: 10.5px; color: var(--text-faint); font-weight: 400; }
 
 .src { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-faint);
@@ -179,10 +172,10 @@ h2:first-of-type { margin-top: 0; }
 .switch .knob { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
   background: var(--surface); }
 .switch.on .knob { left: auto; right: 2px; background: var(--accent-contrast); }
-/* An empty state that names an action must carry the control for it. Splitting
-   the list from the device card took Scan away from the one screen that tells
-   you to run it — everything 103 Table 14/15 reports is volatile and never
-   persisted, so this card is blank after EVERY reboot. */
+/* An empty state that names an action must carry the control for it.
+   Everything 103 Table 14/15 reports is volatile and never persisted, so this
+   card is blank after EVERY reboot, and the empty state that says "run a scan"
+   carries its own Scan button, as the header does. */
 .empty { padding: 14px; font-size: 12px; color: var(--text-faint); }
 .emptyact { margin-top: 10px; }
 </style>
@@ -196,6 +189,7 @@ h2:first-of-type { margin-top: 0; }
     <span class="badge">8 instances</span>
     <span class="chip ok"><span class="dot"></span>Present</span>
     <span class="spacer"></span>
+    <button class="btn" title="Re-read every control device on the segment. Table 14/15 bytes are volatile and never persisted, so they are blank after a reboot until this runs.">⌕ Scan</button>
     <button class="btn">⚲ Identify</button>
     <!-- Forget takes two taps: the first turns it into the armed `btn sure` "Sure?"
          drawn in components/data-table.html, and only a second tap forgets. -->

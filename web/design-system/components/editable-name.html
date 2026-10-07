@@ -63,25 +63,22 @@ h2:first-of-type { margin-top: 0; }
 .demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
   padding: 14px; margin-bottom: 6px; }
 /* ── Editable name ───────────────────────────────────────────────────────
-   ONE control for every rename in the product. Before this card there were
-   four: a bare `.name-edit` input in the virtual-lamp row, an `.h1-edit`
-   page title, an unclassed input in the input-device card and another in the
-   group-rename popover. All four committed on Enter or on blur and showed no
-   control at all, which is the owner's report — "редактирование имени сделано
-   неявно": the operator cannot see that the field is editable, cannot see
-   that it is dirty, and cannot see how to keep or drop the change.
+   ONE control for every rename in the product: the virtual-lamp row, the
+   physical-device and input-device titles, the scene header and the
+   group-rename popover. The operator can see that the field is editable, can
+   see that it is dirty, and can see how to keep or drop the change.
 
    THE RULE THAT MAKES IT EXPLICIT: a name field with buttons does NOT commit
    on blur. Blur keeps the draft and leaves the two buttons standing, so the
    only ways out are ✓ (or Enter) and ✕ (or Esc). That is the opposite of the
-   `EditableText` primitive underneath it, and deliberately so — that one
-   exists to stop a 5 s poll clobbering in-flight typing, and commit-on-blur
-   is safe for a numeric field the operator is stepping through. A NAME is
-   not stepped through: it is decided.
+   `EditableText` primitive the numeric fields use, and deliberately so —
+   that one exists to stop a 5 s poll clobbering in-flight typing, and
+   commit-on-blur is safe for a numeric field the operator is stepping
+   through. A NAME is not stepped through: it is decided.
 
    The buttons appear only while editing. An idle row must stay a row — a
    permanent pair of buttons on every one of 64 lamp rows is noise, and the
-   hover border plus the ✎ affordance already say "this is editable". */
+   hover border (plus the ✎ on a title) already says "this is editable". */
 .name-edit-wrap { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
 .name-edit { display: inline-flex; align-items: center; gap: 7px; padding: 4px 8px;
   border-radius: var(--radius-sm); border: 1px solid transparent; font-size: 13px; font-weight: 550;
@@ -150,7 +147,7 @@ h2:first-of-type { margin-top: 0; }
   </div>
 
   <h2>Page title</h2>
-  <p class="note">Same control, heading type — the physical-device card and the scene header.
+  <p class="note">Same control, heading type — the physical-device and input-device cards.
     The ✎ appears on hover so a title that has never been renamed still reads as one.</p>
   <div class="demo">
     <span class="h1-wrap">

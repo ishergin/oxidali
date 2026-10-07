@@ -72,15 +72,16 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .badge.declared { border-color: rgba(227,160,8,.35); }
 .badge.declared .prov { color: var(--warn); }
 
-/* Override select + effective-value badge (Information card). BOTH slots are a
-   fixed width, because otherwise the two override rows stagger against each
-   other: a select sizes to its widest option (dt8_color vs brightness) and a
-   badge to its text (rgb vs dt8_color), so neither the selects nor the badges
-   lined up. 168px holds the widest label the badge must show, "brightness ·
-   manual", so the row does not move when an override is set. */
-.ovr { display: grid; grid-template-columns: 112px minmax(0, 168px); align-items: center; gap: 8px; }
-.ovr .sel { width: 100%; }
-.ovr .badge { width: 100%; box-sizing: border-box; justify-content: flex-start;
+/* Override select + effective-value badge (Information card). The cluster sits
+   in the row's value slot, label left and value right like every other row, and
+   wraps inside that slot when the card is narrow. BOTH slots are a fixed width,
+   because otherwise the two override rows stagger against each other: a select
+   sizes to its widest option (dt8_color vs brightness) and a badge to its text
+   (rgb vs dt8_color). 168px holds the widest label the badge must show,
+   "brightness · manual", so the row does not move when an override is set. */
+.ovr { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+.ovr .sel { width: 112px; flex: none; }
+.ovr .badge { width: 168px; flex: none; box-sizing: border-box; justify-content: flex-start;
   min-width: 0; overflow: hidden; white-space: nowrap; }
 
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; }
@@ -118,10 +119,10 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
    "Page tab bar" component card. Repeated here verbatim because every preview
    is standalone. */
 .ptabs { display: flex; gap: 2px; align-items: stretch; margin-top: 16px; }
-/* One line, hint inline after the label. Stacked (label over hint) the three
-   bank tabs were taller than the other three, so with any vertical alignment
-   the LABELS stopped lining up — the eye reads a tab bar by its labels, and a
-   caption is not worth breaking that for. */
+/* One line, hint inline after the label. Stacked (label over hint), the three
+   bank tabs would stand taller than the other three and, with any vertical
+   alignment, the LABELS would not line up — the eye reads a tab bar by its
+   labels, and a caption is not worth breaking that for. */
 .ptab { display: flex; align-items: baseline; gap: 7px; padding: 7px 14px 8px;
   border: 1px solid transparent; border-bottom: none;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
@@ -173,8 +174,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .attr .v .unit { color: var(--text-faint); font-size: 11px; width: 20px; text-align: left; flex: none; }
 .attr .note { grid-column: 2 / -1; font-size: 11px; color: var(--text-faint); text-align: right; }
 .attr .src { justify-self: end; }
-.attr.controls { grid-template-columns: 1fr; }
-.attr.controls .v { justify-content: flex-start; padding-right: 0; }
+.attr.controls { grid-template-columns: 1fr auto 0; }
+.attr.controls .v { justify-content: flex-end; padding-right: 0; }
 .mono { font-family: var(--mono); font-size: 12px; }
 /* A decoded value's own raw byte, kept beside it rather than instead of it. */
 .raw { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-left: 6px; }
@@ -198,11 +199,6 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .flag.on { color: var(--ok); background: var(--ok-soft); }
 .flag.warn { color: var(--warn); background: var(--warn-soft); }
 .flag.info { color: var(--info); background: var(--info-soft); }
-.chgnote { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
-.chgnote code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
-.chgdemo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px; }
-.chgh { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
-  letter-spacing: .08em; margin: 26px 0 10px; }
 </style>
 </head>
 <body>
@@ -278,8 +274,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   <div class="grid">
     <div class="card">
       <header><h3>Information</h3><button class="act">Edit</button></header>
-      <div class="attr"><span class="k">Name</span><span class="v">Kitchen spot</span><span></span></div>
-      <div class="attr controls"><span class="k">Device type override</span><span class="v"><span class="ovr">
+      <div class="attr"><span class="k">Name</span><span class="v plain">Kitchen spot<span class="unit"></span></span><span></span></div>
+      <div class="attr controls"><span class="k">Device type override</span><span class="v plain"><span class="ovr">
         <select class="sel"><option>inherit</option><option>unknown</option><option>dt6_led</option><option>dt8_color</option></select>
         <span class="badge">dt8_color<span class="prov">&middot; discovered</span></span>
       </span></span></div>
@@ -290,11 +286,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <div class="attr"><span class="k">Declared types</span><span class="v"><span class="types">DT6 · DT8 · DT51</span></span><span></span></div>
       <div class="attr"><span class="k">Declared types</span><span class="v"><span class="types muted">none declared</span></span><span></span></div>
       <div class="attr"><span class="k">Declared types</span><span class="v"><span class="types muted">not read</span></span><span></span></div>
-      <div class="attr controls"><span class="k">Color mode override</span><span class="v"><span class="ovr">
+      <div class="attr controls"><span class="k">Color mode override</span><span class="v plain"><span class="ovr">
         <select class="sel"><option>inherit</option><option>brightness</option><option>cct</option><option>xy</option><option>rgb</option><option>unknown</option></select>
         <span class="badge declared">cct<span class="prov">&middot; manual</span></span>
       </span></span></div>
-      <div class="attr"><span class="k">Random address</span><span class="v">0x214365</span><span></span></div>
+      <div class="attr"><span class="k">Random address</span><span class="v plain">0x214365<span class="unit"></span></span><span></span></div>
       <!-- The byte is not the version. IEC 62386-102 §4.2: major in bits 7..2,
            minor in bits 1..0 — version 2.0 is the byte 0x08. 0xFF is not
            version 63.3: §9.10.6 makes it "no control gear implemented". -->
@@ -303,7 +299,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            the discriminator for how `lampFailure` must be read at all. -->
       <div class="attr"><span class="k">Light source type</span><span class="v">LED<span class="raw">6</span></span><span class="src readback"><span class="dot"></span>readback · 2 h</span></div>
       <div class="attr"><span class="k">Light source type</span><span class="v">LED · HID<span class="raw">multiple</span></span><span class="src readback"><span class="dot"></span>readback · 2 h</span></div>
-      <div class="attr"><span class="k">Bound virtual lamp</span><span class="v">VL 12 · "Kitchen"</span><span></span></div>
+      <div class="attr"><span class="k">Bound virtual lamp</span><span class="v plain">VL 12 · "Kitchen"<span class="unit"></span></span><span></span></div>
     </div>
 
     <div class="card">
@@ -319,8 +315,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <span class="flag off"><span class="dot"></span>No short address</span>
         <span class="flag off"><span class="dot"></span>Power cycle seen</span>
       </div>
-      <div class="attr"><span class="k">Last seen</span><span class="v">2 s ago</span><span></span></div>
-      <div class="attr"><span class="k">Last DAPC source</span><span class="v">api</span><span></span></div>
+      <div class="attr"><span class="k">Last seen</span><span class="v plain">2 s ago<span class="unit"></span></span><span></span></div>
+      <div class="attr"><span class="k">Last DAPC source</span><span class="v plain">api<span class="unit"></span></span><span></span></div>
       <div class="attr"><span class="k">Status raw</span><span class="v">0x04</span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
     </div>
 
@@ -380,38 +376,6 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       </div>
     </div>
   </div>
-
-<div class="chgh">2026-09-01 — the override rows join their siblings</div>
-<p class="chgnote">The two override rows put their control cluster on a line of ITS OWN — label
-  above, controls below, left-aligned — while every other row in the same card is label-left,
-  value-right. So the Information card read as three kinds of row: <code>Name</code> and
-  <code>Random address</code> right-aligned, the two override rows as left-aligned two-liners,
-  and <code>Declared types</code> wedged between them, right-aligned again. That is the owner's
-  "не правильно выровнены Device type override / Color type override".</p>
-<p class="chgnote">The reason it was stacked has since gone. It was written when the shell was
-  capped at 1240 px, leaving these cards ~330–480 px wide; the shell now runs to 1680 px and
-  <code>.grid2</code> collapses to one column below 900 px, so the narrow case is a full-width
-  card. The cluster keeps its two FIXED slots (112 px select, 168 px badge) and simply wraps
-  inside its own value slot when it has to — which is what keeps the two override rows aligned
-  with each other, since a select sizes to its widest option and a badge to its text.</p>
-<div class="chgdemo">
-  <div class="card" style="max-width:460px">
-    <header><h3>Information</h3></header>
-    <div class="attr"><span class="k">Name</span><span class="v plain">—</span><span></span></div>
-    <div class="attr controls"><span class="k">Device type override</span>
-      <span class="v"><span class="ovr">
-        <select class="sel"><option>inherit</option></select>
-        <span class="badge">dt8_color<span class="prov">· discovered</span></span>
-      </span></span><span></span></div>
-    <div class="attr"><span class="k">Declared types</span><span class="v plain">DT8</span><span></span></div>
-    <div class="attr controls"><span class="k">Color mode override</span>
-      <span class="v"><span class="ovr">
-        <select class="sel"><option>inherit</option></select>
-        <span class="badge">cct<span class="prov">· discovered</span></span>
-      </span></span><span></span></div>
-    <div class="attr"><span class="k">Random address</span><span class="v plain">0xA650F9</span><span></span></div>
-  </div>
-</div>
 </div>
 </body>
 </html>

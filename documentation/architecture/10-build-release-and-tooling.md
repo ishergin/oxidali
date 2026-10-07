@@ -167,6 +167,9 @@ Changing the table takes a wired flash.
   verbatim. A change to screens, components or `app.css` that leaves the look as it was
   carries the commit trailer `UI-Design: unchanged` instead. The design language the
   cards and the app share is in [`web-ui/README.md`](../product-design/web-ui/README.md).
+- A card is changed in place to show the design as it is: its body is the current look
+  and it keeps, in the present tense, why the design is so; why it changed, what it
+  replaced and when go in the commit, never in the card.
 - The maintainer pushes the cards, when syncing, to the Claude Design project "dali2rust Web UI"
   (`0f3fcd66-9619-445b-b9bc-51bc578eefd9`) with `DesignSync`: `list_files` / `get_file`
   first (the owner edits there; never replace the project), `finalize_plan` (`deletes:
@@ -204,7 +207,7 @@ unchecked image, and `hil flash` refuses one unless told `--allow-red-isr`.
 | `verify_comments.py` | no comment outside the one-line markers; budget `scripts/comment_budget.txt` |
 | `verify_web_assets.sh` | every embedded file present, `tsc -b`, UI tests |
 | `verify_web_classes_styled.py` | every `web/app` class has a CSS rule |
-| `verify_design_vocabulary.py` | every card's `:root` is the one in `tokens.css`; every class a card uses has a rule; `web/app` speaks card vocabulary |
+| `verify_design_vocabulary.py` | every card's `:root` is the one in `tokens.css`; every class a card uses has a rule; a card's only dates are ones its mocked UI shows, each with its time, and none in a comment; `web/app` speaks card vocabulary |
 | `verify_ui_follows_design.sh` | a visual `web/app` change since `origin/main` changes a card, or declares `UI-Design: unchanged` |
 | `verify_fn_length.sh`, `verify_fn_length_esp.py` | no function over 40 lines, host and ESP-only code |
 | `verify_counter_surface.py` | counter names agree across spellings ([04](04-contracts-and-api-bridge.md)) |

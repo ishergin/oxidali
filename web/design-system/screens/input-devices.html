@@ -65,19 +65,19 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .spacer { flex: 1; }
 .btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
   background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
-.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+/* Commission opens a 15-minute INITIALISE session and silences event traffic
+   while it runs, so it carries the warn edge rather than the accent. */
+.btn.warned { border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 
 .badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm);
   font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
 .badge.addr { color: var(--text); background: var(--overlay); }
-.badge.dt8 { color: var(--info); border-color: rgba(77,163,255,.3); }
 
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 500; }
 .chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .chip.accent { color: var(--accent-strong); background: var(--accent-soft); }
 .chip.idle { color: var(--text-muted); background: var(--raised); }
 .chip.err { color: var(--err); background: var(--err-soft); }
-.chip.warn { color: var(--warn); background: var(--warn-soft); }
 .chip.ok { color: var(--ok); background: var(--ok-soft); }
 
 /* Table */
@@ -105,10 +105,6 @@ td .vl.none { color: var(--text-faint); font-style: italic; font-family: var(--f
 .hint { font-size: 12px; color: var(--text-faint); margin: 0 0 16px; max-width: 78ch; }
 .hint b { color: var(--text-muted); font-weight: 550; }
 td .inst { font-family: var(--mono); font-size: 12px; }
-.chgnote { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; max-width: 68ch; }
-.chgnote code { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
-.chgh { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
-  letter-spacing: .08em; margin: 26px 0 10px; }
 </style>
 </head>
 <body>
@@ -119,12 +115,15 @@ td .inst { font-family: var(--mono); font-size: 12px; }
     <h1>Input devices</h1>
     <span class="sub">3 known · 1 not answering</span>
     <span class="spacer"></span>
-    <button class="btn">Commission</button>
-    <button class="btn primary">⌕ Scan bus</button>
+    <button class="btn">⌕ Scan</button>
+    <button class="btn warned" title="Opens a 15-minute INITIALISE session and silences event traffic while it runs">Commission</button>
   </div>
 
-  <p class="hint"><b>Separate address space.</b> A control device at short address 03 and a
-  luminaire at short address 03 are different units — this list never collides with
+  <!-- The one caption this screen must never lose: to anyone trained on the gear
+       list, a control device and a luminaire at the same short address read as a
+       conflict, and they are different units. -->
+  <p class="hint"><b>Separate address space.</b> A control device at short address 3 and a
+  luminaire at short address 3 are different units — this list never collides with
   Physical devices. Events drive local rules and, when exposed, Home Assistant.</p>
 
   <div class="table-wrap">
@@ -142,16 +141,16 @@ td .inst { font-family: var(--mono); font-size: 12px; }
           <td><span class="badge">301 button</span></td>
           <td><span class="chip ok"><span class="dot"></span>yes</span></td>
           <td><span class="inst">8</span></td>
-          <td><span class="chip idle">exposed</span></td>
+          <td><span class="chip ok"><span class="dot"></span>exposed</span></td>
           <td><span class="seen">12 s ago</span></td>
         </tr>
         <tr class="hovered">
           <td><span class="badge addr">SA 01</span></td>
           <td><span class="nm">датчик-коридор</span></td>
-          <td><span class="badge dt8">303 occupancy</span></td>
+          <td><span class="badge">303 occupancy</span></td>
           <td><span class="chip ok"><span class="dot"></span>yes</span></td>
           <td><span class="inst">2</span></td>
-          <td><span class="chip idle">exposed</span></td>
+          <td><span class="chip ok"><span class="dot"></span>exposed</span></td>
           <td><span class="seen">3 m ago</span></td>
         </tr>
         <tr>
@@ -160,7 +159,7 @@ td .inst { font-family: var(--mono); font-size: 12px; }
           <td><span class="badge">301 button</span></td>
           <td><span class="chip idle"><span class="dot"></span>no</span></td>
           <td><span class="inst">4</span></td>
-          <td><span class="chip warn">hidden</span></td>
+          <td><span class="chip idle"><span class="dot"></span>hidden</span></td>
           <td><span class="seen never">2 d ago</span></td>
         </tr>
       </tbody>
@@ -170,18 +169,6 @@ td .inst { font-family: var(--mono); font-size: 12px; }
   <p class="hint">A device that stops answering keeps its record — forgetting is an explicit
   action on the detail screen, because the rule that would auto-forget a phantom is the rule
   that would erase a powered-off panel.</p>
-
-<div class="chgh">2026-09-01 — a row is a link</div>
-<p class="chgnote">This screen used to be both the list and the device: clicking a row expanded
-  it downward into every instance the panel has. Measured on an eight-button panel before the
-  rewrite: <b>6 573 px</b> of stacked panels in one table row, and <b>90</b> caption elements
-  clipped horizontally by their own container — sentences cut mid-word, on a screen whose whole
-  content was sentences. After: the list is a list, and the device is
-  <code>screens/input-device-detail</code> at <code>#/input-devices/{sa}</code>, in the same
-  shape the physical-device card uses. 900 px, nothing clipped.</p>
-<p class="chgnote">The one caption this screen must never lose is the address-space note: a
-  control device at short address 3 and a luminaire at short address 3 are different units, and
-  to anyone trained on the gear list that reads as a conflict.</p>
 </div>
 </body>
 </html>

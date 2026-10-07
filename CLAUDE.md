@@ -383,6 +383,8 @@ UI rules).
   `web/design-system/` of every screen or component whose look changes; a change that
   leaves the look as it was carries the trailer `UI-Design: unchanged`
   (`verify_ui_follows_design.sh`).
+- A card is edited in place to show the current design and why it is so; its history
+  goes in the commit, never in the card.
 - The embedded bundle (`bash scripts/build_web_ui.sh`) and the push of the cards to the
   Claude Design project (`/design-sync`, then `verify_design_system_pushed.sh --stamp`)
   are the maintainer's sync, landed by pull request before a flash: `hil flash` refuses a

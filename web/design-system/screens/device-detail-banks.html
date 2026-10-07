@@ -66,10 +66,10 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
 /* Page-level tab bar — spec and colour rationale in the "Page tab bar" card. */
 .ptabs { display: flex; gap: 2px; align-items: stretch; }
-/* One line, hint inline after the label. Stacked (label over hint) the three
-   bank tabs were taller than the other three, so with any vertical alignment
-   the LABELS stopped lining up — the eye reads a tab bar by its labels, and a
-   caption is not worth breaking that for. */
+/* One line, hint inline after the label. Stacked (label over hint), the three
+   bank tabs would stand taller than the other three and, with any vertical
+   alignment, the LABELS would not line up — the eye reads a tab bar by its
+   labels, and a caption is not worth breaking that for. */
 .ptab { display: flex; align-items: baseline; gap: 7px; padding: 7px 14px 8px;
   border: 1px solid transparent; border-bottom: none;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
@@ -274,8 +274,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
        "implemented, no value right now" — and DiiA 252 §9.2.4 gives the gear 30 s
        to produce one, so a TMASK older than that is a fault indication and goes
        from info to warn — while a real zero is a gear that has consumed nothing.
-       Collapsing any two of them into an em-dash was the defect this card exists
-       to prevent.
+       The em-dash is the never-read reading; drawing any of these three as one
+       would merge it with that.
 
        Scale factor and value are rendered together and stored apart: the factor
        is a power of ten in [-6..+6], shown faint beside the number so an operator
