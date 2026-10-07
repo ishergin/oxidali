@@ -278,18 +278,18 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <div class="attr controls"><span class="k">Device type override</span><span class="v plain"><span class="ovr">
         <select class="sel"><option>inherit</option><option>unknown</option><option>dt6_led</option><option>dt8_color</option></select>
         <span class="badge">dt8_color<span class="prov">&middot; discovered</span></span>
-      </span></span></div>
+      </span><span class="unit"></span></span><span></span></div>
       <!-- Every type the gear declared (IEC 62386-102 §9.18), not the one the
            row above classifies it as. Three states, and they are different
            facts: a list, "none" when the gear answered 254, and "not read"
            when the enumeration never finished. -->
-      <div class="attr"><span class="k">Declared types</span><span class="v"><span class="types">DT6 · DT8 · DT51</span></span><span></span></div>
-      <div class="attr"><span class="k">Declared types</span><span class="v"><span class="types muted">none declared</span></span><span></span></div>
-      <div class="attr"><span class="k">Declared types</span><span class="v"><span class="types muted">not read</span></span><span></span></div>
+      <div class="attr"><span class="k">Declared types</span><span class="v plain"><span class="types">DT6 · DT8 · DT51</span><span class="unit"></span></span><span></span></div>
+      <div class="attr"><span class="k">Declared types</span><span class="v plain"><span class="types muted">none declared</span><span class="unit"></span></span><span></span></div>
+      <div class="attr"><span class="k">Declared types</span><span class="v plain"><span class="types muted">not read</span><span class="unit"></span></span><span></span></div>
       <div class="attr controls"><span class="k">Color mode override</span><span class="v plain"><span class="ovr">
         <select class="sel"><option>inherit</option><option>brightness</option><option>cct</option><option>xy</option><option>rgb</option><option>unknown</option></select>
         <span class="badge declared">cct<span class="prov">&middot; manual</span></span>
-      </span></span></div>
+      </span><span class="unit"></span></span><span></span></div>
       <div class="attr"><span class="k">Random address</span><span class="v plain">0x214365<span class="unit"></span></span><span></span></div>
       <!-- The byte is not the version. IEC 62386-102 §4.2: major in bits 7..2,
            minor in bits 1..0 — version 2.0 is the byte 0x08. 0xFF is not
@@ -317,7 +317,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       </div>
       <div class="attr"><span class="k">Last seen</span><span class="v plain">2 s ago<span class="unit"></span></span><span></span></div>
       <div class="attr"><span class="k">Last DAPC source</span><span class="v plain">api<span class="unit"></span></span><span></span></div>
-      <div class="attr"><span class="k">Status raw</span><span class="v">0x04</span><span class="src readback"><span class="dot"></span>readback · 12 s</span></div>
+      <div class="attr"><span class="k">Status raw</span><span class="v plain">0x04<span class="unit"></span></span><span></span></div>
     </div>
 
     <div class="card" style="grid-column: span 2;">
