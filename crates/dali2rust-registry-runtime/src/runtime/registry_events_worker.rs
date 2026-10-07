@@ -1,13 +1,15 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::runtime::registry::physical_devices::ReplacementOutcome;
 use crate::runtime::registry::publish::{
     publish_group_matrix_changed, publish_physical_device_changed, publish_scene_matrix_changed,
-    publish_unbound_lamps,
+    publish_unbound_lamps, publish_virtual_lamp_changed,
 };
 use crate::runtime::registry::{ForeignSceneWrite, RegistryStore};
 use crate::runtime::registry_worker::RegistryEventsCounters;
 use dali2rust_bus::{BusFrame, BusId, BusPublisher};
 use dali2rust_contracts::msg::BusEventPayload;
+use dali2rust_domain::registry::SCENE_COUNT;
 
 fn apply_and_publish_pd(
     publisher: &BusPublisher,
@@ -252,7 +254,7 @@ dali2rust_contracts::dispatch_bus_events! {
         }
         if let dali2rust_contracts::msg::DaliAttributeReadChunk::Scenes { .. } = body.chunk {
             let changed_mask = store.seed_scene_matrix_from_levels_read(aid, sa);
-            for scene_id in 0..16u8 {
+            for scene_id in 0..SCENE_COUNT {
                 if changed_mask & (1u16 << scene_id) != 0 {
                     publish_scene_matrix_changed(publisher, corr, aid, scene_id);
                 }
@@ -364,11 +366,18 @@ fn commit_address_change(
         return;
     }
     let aid = body.registry_adapter_id;
-    if store.apply_address_change(aid, body.old_short_address, body.new_short_address) {
-        counters
-            .dali_address_changes_committed
-            .fetch_add(1, Ordering::Relaxed);
-        publish_physical_device_changed(publisher, corr, aid, body.new_short_address);
+    let Some(rebound) =
+        store.apply_address_change(aid, body.old_short_address, body.new_short_address)
+    else {
+        return;
+    };
+    counters
+        .dali_address_changes_committed
+        .fetch_add(1, Ordering::Relaxed);
+    publish_physical_device_changed(publisher, corr, aid, body.old_short_address);
+    publish_physical_device_changed(publisher, corr, aid, body.new_short_address);
+    for lamp_id in rebound {
+        publish_virtual_lamp_changed(publisher, corr, aid, lamp_id);
     }
 }
 
@@ -410,19 +419,37 @@ fn commit_device_replacement(
         return;
     }
     let aid = body.registry_adapter_id;
-    let restored = store.apply_device_replacement(
+    let Some(outcome) = store.apply_device_replacement(
         aid,
         body.failed_short_address,
         body.replacement_short_address,
         body.restored_metadata_and_overrides,
-        body.restored_attributes,
-        body.restored_groups,
-        body.restored_scenes,
-    );
-    if restored.is_some() {
-        counters
-            .dali_device_replacements_committed
-            .fetch_add(1, Ordering::Relaxed);
-        publish_physical_device_changed(publisher, corr, aid, body.failed_short_address);
+    ) else {
+        return;
+    };
+    counters
+        .dali_device_replacements_committed
+        .fetch_add(1, Ordering::Relaxed);
+    publish_physical_device_changed(publisher, corr, aid, body.failed_short_address);
+    publish_physical_device_changed(publisher, corr, aid, body.replacement_short_address);
+    publish_replacement_lamps(publisher, corr, aid, &outcome);
+}
+
+fn publish_replacement_lamps(
+    publisher: &BusPublisher,
+    corr: u64,
+    aid: u8,
+    outcome: &ReplacementOutcome,
+) {
+    for lamp_id in outcome.kept_lamps.iter().chain(&outcome.moved_lamps) {
+        publish_virtual_lamp_changed(publisher, corr, aid, *lamp_id);
+    }
+    publish_unbound_lamps(publisher, corr, aid, &outcome.unbound);
+    if outcome.kept_lamps.is_empty() {
+        return;
+    }
+    publish_group_matrix_changed(publisher, corr, aid);
+    for scene_id in 0..SCENE_COUNT {
+        publish_scene_matrix_changed(publisher, corr, aid, scene_id);
     }
 }

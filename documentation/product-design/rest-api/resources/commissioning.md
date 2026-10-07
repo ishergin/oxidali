@@ -57,31 +57,42 @@ invalid_value`.
   ([09 §Addressing control gear](../../../architecture/09-dali-protocol-rules.md#addressing-control-gear)).
 - При успехе реестр **сам** переносит запись на новый адрес: старый адрес сразу
   `404`, привязанная виртуальная лампа остаётся той же сущностью с тем же HA
-  `unique_id`. Результат: `{old_short_address, new_short_address}`.
+  `unique_id`. Результат: `{old_short_address, new_short_address}`. Реестр публикует
+  `PhysicalDeviceChangedEvent` обоих адресов и `VirtualLampChangedEvent` перенесённой
+  лампы.
 - Неподтверждённая проверка — операция `failed` с `verify_failed` /
   `verify_unanswered` / `verify_contended` ([`../contracts/error-dto.md`](../contracts/error-dto.md)).
 
 ## `POST replacements`
 
 Тело: `failed_short_address`, `replacement_short_address` (уже известный прибор того же
-адаптера) и `restore` — флаги `metadata_and_overrides`, `attributes`, `groups`,
-`scenes` (все по умолчанию `true`, хотя бы один обязан остаться `true`).
+адаптера) и необязательный `restore` с единственным флагом `metadata_and_overrides`
+(по умолчанию `true`).
 
 - Ошибки: неизвестный ключ тела (и в `restore`) — `400 unknown_field`; любого из
-  приборов нет — `404`; адреса вне диапазона, равны или все флаги `false` — `422
-  invalid_value`.
-- Worker переадресует заменитель на адрес отказавшего прибора, реестр ставит на этот адрес
-  его запись и переносит в неё из записи отказавшего метаданные и override'ы, если выбран
-  `metadata_and_overrides`, и блок атрибутов, если выбран `attributes`. На сам прибор
-  ничего, кроме адреса, не пишется, а флаги
-  `restored` повторяют запрос ([ISSUE-167](../../known-issues.md)). Сырые банки памяти не
-  копируются.
+  приборов нет — `404`; адреса вне диапазона или равны — `422 invalid_value`; оба
+  адреса привязаны к лампам — `409 conflict` с `message =
+  replacement_bound_to_another_lamp`, до первого кадра: две лампы на одном приборе
+  запрещены и путём привязки.
+- Worker переадресует заменитель на адрес отказавшего прибора и больше ничего на прибор
+  не пишет. Реестр ставит на этот адрес **запись заменителя**: банки, DT8, группы и сцены
+  в ней — то, что держит новый прибор. Из записи отказавшего, если выбран
+  `metadata_and_overrides`, переходят имя, заметки и override'ы; остальное отбрасывается.
+- Группы и сцены программирует обычный apply
+  ([`groups.md`](groups.md) §`POST groups/apply`, [`scenes.md`](scenes.md)): строки
+  лампы на этом адресе сравниваются уже с заменителем и становятся грязными, если он
+  держит другое. Атрибуты 102 (fade, уровни) не переносятся.
+- Лампа отказавшего прибора остаётся на адресе с тем же HA `unique_id`. Если у
+  отказавшего лампы нет, лампа заменителя переходит вместе с ним. Если к моменту
+  коммита привязаны обе, адрес остаётся за лампой отказавшего, а лампа заменителя
+  отвязывается, как при `DELETE` прибора.
 - **Старый прибор должен быть снят с шины заранее**: пока он отвечает на сохраняемом
   адресе, операция завершается `verify_failed`.
-- Лампа отказавшего прибора остаётся привязанной к адресу с тем же HA `unique_id`; лампа
-  заменителя переходит на тот же адрес без проверки конфликта
-  ([ISSUE-168](../../known-issues.md)). Результат —
-  `{failed_short_address, replacement_short_address, restored{…}}`.
+- Результат — `{failed_short_address, replacement_short_address,
+  restored{metadata_and_overrides}}`.
+- События: `PhysicalDeviceChangedEvent` обоих адресов и `VirtualLampChangedEvent` каждой
+  лампы, чья привязка или прибор изменились; при лампе на адресе ещё
+  `GroupMatrixChangedEvent` и `SceneMatrixChangedEvent` каждой сцены.
 
 ## `POST steps/{step}` — expert-шаги
 

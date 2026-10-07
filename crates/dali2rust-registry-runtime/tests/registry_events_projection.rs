@@ -738,20 +738,50 @@ fn groups_read_before_the_lamp_is_bound_are_adopted_and_not_reported_dirty() {
     );
 }
 
+fn replaced_event(correlation_id: u64, failed: u8, replacement: u8) -> dali2rust_contracts::msg::EventEnvelope {
+    dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDeviceReplacedEvent { registry_adapter_id: 0, failed_short_address: failed, replacement_short_address: replacement, restored_metadata_and_overrides: true, operation_key: dali2rust_contracts::msg::FixedText32::new(), error: None })
+}
+
+fn apply_row(store: &RegistryStore, virtual_lamp_id: u8) -> dali2rust_domain::registry::GroupApplyRowView {
+    store
+        .group_apply_snapshot(0)
+        .expect("group apply snapshot")
+        .rows
+        .into_iter()
+        .find(|row| row.virtual_lamp_id == virtual_lamp_id)
+        .expect("apply row")
+}
+
+fn changed_events_for(rx: &std::sync::mpsc::Receiver<BusFrame>, correlation_id: u64) -> (Vec<u8>, Vec<u8>) {
+    let (mut devices, mut lamps) = (Vec::new(), Vec::new());
+    while let Ok(BusFrame::Event(ev)) = rx.recv_timeout(Duration::from_millis(200)) {
+        match &ev.payload {
+            BusEventPayload::PhysicalDeviceChangedEvent(body) if ev.meta.correlation_id == correlation_id => {
+                devices.push(body.short_address);
+            }
+            BusEventPayload::VirtualLampChangedEvent(body) if ev.meta.correlation_id == correlation_id => {
+                lamps.push(body.virtual_lamp_id);
+            }
+            _ => {}
+        }
+    }
+    devices.sort_unstable();
+    lamps.sort_unstable();
+    (devices, lamps)
+}
+
 #[test]
-fn replacement_carries_the_failed_devices_attributes() {
+fn a_replacement_keeps_its_own_evidence_so_the_lamps_rows_turn_dirty() {
     let store = Arc::new(RegistryStore::with_adapter_count(1));
     let counters = Arc::new(RegistryWorkerCounters::default());
     let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
 
     seed_device_reporting_groups(&publisher, &store, 950, 0, 1 << 3);
     seed_device_reporting_groups(&publisher, &store, 951, 11, 1 << 7);
+    bind_lamp(&publisher, &store, 953, 2, 0);
     drain_events(&ev_obs);
 
-    publish_event(
-        &publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 952, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDeviceReplacedEvent { registry_adapter_id: 0, failed_short_address: 0, replacement_short_address: 11, restored_metadata_and_overrides: true, restored_attributes: true, restored_groups: true, restored_scenes: true, operation_key: dali2rust_contracts::msg::FixedText32::new(), error: None }),
-    );
+    publish_event(&publisher, replaced_event(952, 0, 11));
     wait_until(
         || store.physical_device_view(0, 11).is_none(),
         Duration::from_millis(500),
@@ -762,9 +792,86 @@ fn replacement_carries_the_failed_devices_attributes() {
         .expect("the failed device's role address must survive the handover");
     assert_eq!(
         survivor.attributes.groups.membership.map(|observed| observed.value),
-        Some(1 << 3),
-        "the replacement must carry the FAILED device's evidence, not its own"
+        Some(1 << 7),
+        "the record at the role address describes the gear that now answers there"
     );
+    let row = apply_row(&store, 2);
+    assert_eq!(row.binding_short, Some(0));
+    assert_eq!(row.desired_groups_mask, 1 << 3, "the lamp keeps the failed device's role");
+    assert_eq!(row.applied_groups_mask, 1 << 7, "applied is what the replacement holds");
+    assert_eq!(changed_events_for(&ev_obs, 952), (vec![0, 11], vec![2]));
+}
+
+#[test]
+fn a_replacement_never_leaves_two_lamps_on_one_device() {
+    let store = Arc::new(RegistryStore::with_adapter_count(1));
+    let counters = Arc::new(RegistryWorkerCounters::default());
+    let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
+
+    seed_device_reporting_groups(&publisher, &store, 960, 0, 1 << 3);
+    seed_device_reporting_groups(&publisher, &store, 961, 11, 1 << 7);
+    bind_lamp(&publisher, &store, 962, 2, 0);
+    bind_lamp(&publisher, &store, 963, 5, 11);
+    drain_events(&ev_obs);
+
+    publish_event(&publisher, replaced_event(964, 0, 11));
+    wait_until(
+        || store.virtual_lamp_view(0, 5).binding_short.is_none(),
+        Duration::from_millis(500),
+    );
+
+    assert_eq!(store.virtual_lamp_view(0, 2).binding_short, Some(0), "the role keeps its lamp");
+    assert_eq!(
+        store.virtual_lamp_view(0, 5).binding_short,
+        None,
+        "the replacement's own lamp loses its device, as forget would leave it"
+    );
+    assert_eq!(changed_events_for(&ev_obs, 964), (vec![0, 11], vec![2, 5]));
+}
+
+#[test]
+fn a_replacement_without_a_lamp_at_the_role_brings_its_own_lamp_along() {
+    let store = Arc::new(RegistryStore::with_adapter_count(1));
+    let counters = Arc::new(RegistryWorkerCounters::default());
+    let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
+
+    seed_device_reporting_groups(&publisher, &store, 970, 0, 1 << 3);
+    seed_device_reporting_groups(&publisher, &store, 971, 11, 1 << 7);
+    bind_lamp(&publisher, &store, 972, 5, 11);
+    drain_events(&ev_obs);
+
+    publish_event(&publisher, replaced_event(973, 0, 11));
+    wait_until(
+        || store.virtual_lamp_view(0, 5).binding_short == Some(0),
+        Duration::from_millis(500),
+    );
+
+    let row = apply_row(&store, 5);
+    assert_eq!(row.binding_short, Some(0), "the lamp follows its gear to the role address");
+    assert_eq!(row.applied_groups_mask, 1 << 7);
+    assert_eq!(changed_events_for(&ev_obs, 973), (vec![0, 11], vec![5]));
+}
+
+#[test]
+fn an_address_change_announces_both_addresses_and_the_moved_lamp() {
+    let store = Arc::new(RegistryStore::with_adapter_count(1));
+    let counters = Arc::new(RegistryWorkerCounters::default());
+    let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
+
+    seed_device_reporting_groups(&publisher, &store, 980, 4, 1 << 3);
+    bind_lamp(&publisher, &store, 981, 6, 4);
+    drain_events(&ev_obs);
+
+    publish_event(
+        &publisher,
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 982, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliAddressingCompletedEvent { registry_adapter_id: 0, old_short_address: 4, new_short_address: 9, operation_key: dali2rust_contracts::msg::FixedText32::new(), error: None }),
+    );
+    wait_until(
+        || store.virtual_lamp_view(0, 6).binding_short == Some(9),
+        Duration::from_millis(500),
+    );
+
+    assert_eq!(changed_events_for(&ev_obs, 982), (vec![4, 9], vec![6]));
 }
 
 fn seed_device_reporting_groups(
@@ -830,14 +937,7 @@ fn unbind_lamp(
 }
 
 fn apply_row_desired_mask(store: &RegistryStore, virtual_lamp_id: u8) -> u16 {
-    store
-        .group_apply_snapshot(0)
-        .expect("group apply snapshot")
-        .rows
-        .into_iter()
-        .find(|row| row.virtual_lamp_id == virtual_lamp_id)
-        .expect("apply row")
-        .desired_groups_mask
+    apply_row(store, virtual_lamp_id).desired_groups_mask
 }
 
 #[test]

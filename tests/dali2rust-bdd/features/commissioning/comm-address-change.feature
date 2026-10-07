@@ -96,3 +96,21 @@ Feature: Commissioning address change
     And all scripted DALI exchanges should be consumed without errors
     And physical device 0 should eventually exist on adapter 0
     And physical device 23 should eventually be absent on adapter 0
+
+  @id:COMM-112
+  Scenario: A WebSocket client hears the vacated address, the new one and the moved lamp
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I PUT JSON {"physical_short_address":0} to "/api/v1/adapters/0/virtual-lamps/1/binding"
+    Then the response status should be 200
+    Given an open WebSocket connection
+    And the WebSocket client is subscribed to "physical_devices,virtual_lamps"
+    And an address-change script from short address 0 to 23
+    When I POST JSON {"short_address":0,"new_short_address":23} to "/api/v1/adapters/0/commissioning/address-changes"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the WebSocket client should receive a "PhysicalDeviceChangedEvent" frame on channel "physical_devices" whose payload "short_address" is 0
+    And the WebSocket client should receive a "PhysicalDeviceChangedEvent" frame on channel "physical_devices" whose payload "short_address" is 23
+    And the WebSocket client should receive a "VirtualLampChangedEvent" frame on channel "virtual_lamps" whose payload "virtual_lamp_id" is 1

@@ -12,13 +12,14 @@ use crate::confirmation_bridge::PendingConfirmationSlots;
 use crate::http::dispatcher::CorrelationIdAllocator;
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::common::{
-    accepted_operation_response, check_body_keys, json_err, parse_adapter_id, parse_json_body,
-    parse_strict_body, parse_typed_body, refusal_before_the_wire, reject_if_commissioning_active,
-    MutatingHandler, MAX_SHORT_ADDRESS,
+    accepted_operation_response, check_body_keys, json_err, json_err_with_message,
+    parse_adapter_id, parse_json_body, parse_strict_body, parse_typed_body,
+    refusal_before_the_wire, reject_if_commissioning_active, MutatingHandler, MAX_SHORT_ADDRESS,
 };
 use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command_pair;
 use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::physical_device_state::PhysicalDeviceHttpState;
+use crate::http::virtual_lamp_state::VirtualLampHttpState;
 use crate::http::types::HttpResponse;
 
 // IEC 62386-102 §9.14.3.2
@@ -457,12 +458,6 @@ impl MutatingHandler for CommissioningStepHandler {
 pub struct RestoreScopeRequest {
     #[serde(default = "default_true")]
     pub metadata_and_overrides: bool,
-    #[serde(default = "default_true")]
-    pub attributes: bool,
-    #[serde(default = "default_true")]
-    pub groups: bool,
-    #[serde(default = "default_true")]
-    pub scenes: bool,
 }
 
 fn default_true() -> bool {
@@ -481,9 +476,6 @@ pub struct CommissioningReplacementRequest {
 fn default_restore() -> RestoreScopeRequest {
     RestoreScopeRequest {
         metadata_and_overrides: true,
-        attributes: true,
-        groups: true,
-        scenes: true,
     }
 }
 
@@ -491,9 +483,30 @@ declare_handler_shell!(CommissioningReplacementHandler {
     publisher: BusPublisher,
     correlation: Arc<CorrelationIdAllocator>,
     bus_id: BusId,
-    state: Arc<dyn PhysicalDeviceHttpState>,
+    state: Arc<dyn VirtualLampHttpState>,
     operations: Arc<dyn OperationReadPort>,
 });
+
+const REPLACEMENT_LAMP_BOUND: &str = "replacement_bound_to_another_lamp";
+
+impl CommissioningReplacementHandler {
+    fn check_devices(&self, adapter_id: u8, req: &CommissioningReplacementRequest) -> Result<(), HttpResponse> {
+        let (failed, replacement) = (req.failed_short_address, req.replacement_short_address);
+        if failed > MAX_SHORT_ADDRESS || replacement > MAX_SHORT_ADDRESS || failed == replacement {
+            return Err(json_err(422, "invalid_value"));
+        }
+        for short in [failed, replacement] {
+            if !self.state.physical_device_exists(adapter_id, short) {
+                return Err(json_err(404, "not_found"));
+            }
+        }
+        let bound = |short| self.state.virtual_lamp_bound_to_short(adapter_id, short).is_some();
+        if bound(failed) && bound(replacement) {
+            return Err(json_err_with_message(409, "conflict", REPLACEMENT_LAMP_BOUND));
+        }
+        Ok(())
+    }
+}
 
 pub struct ValidatedReplacement {
     adapter_id: u8,
@@ -518,25 +531,7 @@ impl MutatingHandler for CommissioningReplacementHandler {
         let adapter_id = parse_adapter_id(self.state.adapter_count(), params)?;
         reject_if_commissioning_active(self.operations.as_ref(), adapter_id)?;
         let req: CommissioningReplacementRequest = parse_strict_body(body)?;
-
-        if req.failed_short_address > MAX_SHORT_ADDRESS
-            || req.replacement_short_address > MAX_SHORT_ADDRESS
-            || req.failed_short_address == req.replacement_short_address
-        {
-            return Err(json_err(422, "invalid_value"));
-        }
-        if !(req.restore.metadata_and_overrides
-            || req.restore.attributes
-            || req.restore.groups
-            || req.restore.scenes)
-        {
-            return Err(json_err(422, "invalid_value"));
-        }
-        for short in [req.failed_short_address, req.replacement_short_address] {
-            if !self.state.physical_device_exists(adapter_id, short) {
-                return Err(json_err(404, "not_found"));
-            }
-        }
+        self.check_devices(adapter_id, &req)?;
         Ok(ValidatedReplacement {
             adapter_id,
             failed: req.failed_short_address,
@@ -556,9 +551,6 @@ impl MutatingHandler for CommissioningReplacementHandler {
             failed_short_address: v.failed,
             replacement_short_address: v.replacement,
             restore_metadata_and_overrides: v.restore.metadata_and_overrides,
-            restore_attributes: v.restore.attributes,
-            restore_groups: v.restore.groups,
-            restore_scenes: v.restore.scenes,
             operation_key: dali2rust_contracts::msg::fixed_text_32(&op_key),
         };
         accept_commissioning_workflow(

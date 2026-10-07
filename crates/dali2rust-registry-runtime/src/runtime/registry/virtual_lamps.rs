@@ -270,6 +270,10 @@ impl VirtualLampReadPort for RegistryStore {
     fn physical_short_on_other_adapter(&self, adapter_id: u8, short_address: u8) -> bool {
         RegistryStore::physical_short_address_on_other_adapter(self, adapter_id, short_address)
     }
+
+    fn virtual_lamp_bound_to_short(&self, adapter_id: u8, short_address: u8) -> Option<u8> {
+        self.internal_virtual_lamp_bound_to_short(adapter_id, short_address)
+    }
 }
 
 impl VirtualLampCapabilityReadPort for RegistryStore {

@@ -120,7 +120,7 @@ fn encoded_short(short: u8) -> u8 {
     ((short & 0x3F) << 1) | 0x01
 }
 
-// COMM-001 COMM-010
+// COMM-001 COMM-010 COMM-112
 #[given(regex = r"^an address-change script from short address (\d+) to (\d+)$")]
 async fn given_address_change_script(world: &mut DaliWorld, from: u8, to: u8) {
     script_address_change(world, from, to, Some(0x00));
@@ -165,7 +165,7 @@ const VERIFIED_STATUS: u8 = 0x00;
 const DT8_QUERY_COLOUR_TYPE_FEATURES: u8 = Dt8Command::QueryColourTypeFeatures.opcode();
 const DT8_QUERY_COLOUR_STATUS: u8 = Dt8Command::QueryColourStatus.opcode();
 
-// COMM-100
+// COMM-100 COMM-110 COMM-113
 #[given(
     regex = r"^a replacement script in which short address (\d+) stays silent and short address (\d+) takes its address$"
 )]
@@ -187,7 +187,7 @@ async fn given_replacement_script_failed_still_answers(world: &mut DaliWorld, fa
     script_detect_dt8_cct(&mock, failed);
 }
 
-// COMM-100
+// COMM-100 COMM-110
 #[then(
     regex = r"^the transport should have carried exactly the replacement of short address (\d+) by short address (\d+)$"
 )]
@@ -281,7 +281,7 @@ async fn then_device_exists(world: &mut DaliWorld, short: u8, adapter: u8) {
     );
 }
 
-// COMM-010 COMM-099 COMM-100
+// COMM-010 COMM-099 COMM-100 COMM-110
 #[then(regex = r"^physical device (\d+) should eventually be absent on adapter (\d+)$")]
 async fn then_device_absent(world: &mut DaliWorld, short: u8, adapter: u8) {
     let port = world.server_port;

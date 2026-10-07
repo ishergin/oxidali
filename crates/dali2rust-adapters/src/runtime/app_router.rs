@@ -505,7 +505,7 @@ fn wire_commissioning_operations(
                 bus.publisher.clone(),
                 Arc::clone(&bus.correlation),
                 bus.bus_id,
-                Arc::clone(&registry.physical_state),
+                Arc::clone(&registry.vl_state),
                 Arc::clone(op_read),
             )),
         )

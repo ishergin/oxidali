@@ -52,9 +52,6 @@ fn replaced_event(
             failed_short_address: cmd.failed_short_address,
             replacement_short_address: cmd.replacement_short_address,
             restored_metadata_and_overrides: handover_ok && cmd.restore_metadata_and_overrides,
-            restored_attributes: handover_ok && cmd.restore_attributes,
-            restored_groups: handover_ok && cmd.restore_groups,
-            restored_scenes: handover_ok && cmd.restore_scenes,
             operation_key: cmd.operation_key.clone(),
             error: error_code.map(|code| {
                 dali2rust_contracts::msg::CompactErrorPayload::new(code, "replace failed")

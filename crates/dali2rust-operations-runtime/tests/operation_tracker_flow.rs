@@ -1039,9 +1039,6 @@ fn device_replaced_event(correlation_id: u64, key: &str, failed: u8, replacement
             failed_short_address: failed,
             replacement_short_address: replacement,
             restored_metadata_and_overrides: true,
-            restored_attributes: true,
-            restored_groups: false,
-            restored_scenes: true,
             operation_key: dali2rust_contracts::msg::fixed_text_32(key),
             error: None,
         },
@@ -1137,7 +1134,6 @@ fn raced_replace_device_outcome_is_attached_after_begin_m10() {
     assert_eq!(replace.failed_short_address, 5);
     assert_eq!(replace.replacement_short_address, 9);
     assert!(replace.restored.metadata_and_overrides);
-    assert!(!replace.restored.groups);
 }
 
 #[test]

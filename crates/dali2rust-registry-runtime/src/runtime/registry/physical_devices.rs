@@ -640,6 +640,15 @@ fn unbind_lamps_of(
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct ReplacementOutcome {
+    pub(crate) restored_metadata: bool,
+    pub(crate) kept_lamps: Vec<u8>,
+    pub(crate) moved_lamps: Vec<u8>,
+    pub(crate) unbound: ForgetOutcome,
+    pub(crate) cleared_scene_echoes: u16,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct ScanEviction {
     pub(crate) evicted: Vec<u8>,
     pub(crate) unbound: ForgetOutcome,
@@ -1129,35 +1138,27 @@ impl RegistryStore {
         adapter_id: u8,
         old_short_address: u8,
         new_short_address: u8,
-    ) -> bool {
+    ) -> Option<Vec<u8>> {
         if old_short_address == new_short_address {
-            return false;
+            return None;
         }
         let mut g = self.write_inner();
         if g.physical_devices
             .contains_key(&(adapter_id, new_short_address))
         {
-            return false;
+            return None;
         }
-        let Some(record) = g.physical_devices.remove(&(adapter_id, old_short_address)) else {
-            return false;
-        };
+        let record = g.physical_devices.remove(&(adapter_id, old_short_address))?;
         g.physical_devices
             .insert((adapter_id, new_short_address), record);
-        let mut rebound = false;
-        for ((aid, _vl), lamp) in g.lamps.iter_mut() {
-            if *aid == adapter_id && lamp.binding_short == Some(old_short_address) {
-                lamp.binding_short = Some(new_short_address);
-                rebound = true;
-            }
-        }
+        let rebound = rebind_lamps(&mut g, adapter_id, old_short_address, new_short_address);
         drop(g);
         self.dirty.mark_physical_device_dirty(adapter_id, old_short_address);
         self.dirty.mark_physical_device_dirty(adapter_id, new_short_address);
-        if rebound {
+        if !rebound.is_empty() {
             self.dirty.mark_virtual_lamps_dirty(adapter_id);
         }
-        true
+        Some(rebound)
     }
 
     pub(crate) fn apply_device_replacement(
@@ -1166,51 +1167,49 @@ impl RegistryStore {
         failed_short_address: u8,
         replacement_short_address: u8,
         restore_metadata_and_overrides: bool,
-        restore_attributes: bool,
-        restore_groups: bool,
-        restore_scenes: bool,
-    ) -> Option<(bool, bool, bool, bool)> {
+    ) -> Option<ReplacementOutcome> {
         if failed_short_address == replacement_short_address {
             return None;
         }
         let mut g = self.write_inner();
-        let mut failed = g
+        let mut replacement = g
             .physical_devices
-            .remove(&(adapter_id, failed_short_address))?;
-        let Some(mut replacement) = g
-            .physical_devices
-            .remove(&(adapter_id, replacement_short_address))
-        else {
-            g.physical_devices
-                .insert((adapter_id, failed_short_address), failed);
-            return None;
+            .remove(&(adapter_id, replacement_short_address))?;
+        let failed = g.physical_devices.remove(&(adapter_id, failed_short_address));
+        let restored_metadata = match failed {
+            Some(failed) if restore_metadata_and_overrides => {
+                take_metadata_and_overrides(&failed, &mut replacement);
+                true
+            }
+            _ => false,
         };
-
-        let restored = move_configuration(
-            &mut failed,
-            &mut replacement,
-            (
-                restore_metadata_and_overrides,
-                restore_attributes,
-                restore_groups,
-                restore_scenes,
-            ),
-        );
-
         g.physical_devices
             .insert((adapter_id, failed_short_address), replacement);
-        for ((aid, _vl), lamp) in g.lamps.iter_mut() {
-            if *aid == adapter_id && lamp.binding_short == Some(replacement_short_address) {
-                lamp.binding_short = Some(failed_short_address);
+        let mut outcome = hand_over_lamps(&mut g, adapter_id, failed_short_address, replacement_short_address);
+        outcome.restored_metadata = restored_metadata;
+        drop(g);
+        self.mark_replacement_dirty(adapter_id, failed_short_address, replacement_short_address, &outcome);
+        Some(outcome)
+    }
+
+    fn mark_replacement_dirty(
+        &self,
+        adapter_id: u8,
+        failed_short_address: u8,
+        replacement_short_address: u8,
+        outcome: &ReplacementOutcome,
+    ) {
+        self.dirty.mark_physical_device_dirty(adapter_id, failed_short_address);
+        self.dirty.mark_physical_device_dirty(adapter_id, replacement_short_address);
+        if !outcome.moved_lamps.is_empty() {
+            self.dirty.mark_virtual_lamps_dirty(adapter_id);
+        }
+        self.mark_unbind_dirty(adapter_id, &outcome.unbound);
+        for scene_id in 0..super::scenes::SCENE_COUNT {
+            if outcome.cleared_scene_echoes & (1u16 << scene_id) != 0 {
+                self.dirty.mark_scene_dirty(adapter_id, scene_id);
             }
         }
-        drop(g);
-        self.dirty
-            .mark_physical_device_dirty(adapter_id, failed_short_address);
-        self.dirty
-            .mark_physical_device_dirty(adapter_id, replacement_short_address);
-        self.dirty.mark_virtual_lamps_dirty(adapter_id);
-        Some(restored)
     }
 
     #[allow(clippy::too_many_arguments, reason = "mirrors the write-attributes event")]
@@ -1504,27 +1503,43 @@ impl PhysicalDeviceReadPort for RegistryStore {
 }
 
 
-fn move_configuration(
-    failed: &mut PhysicalDeviceRecord,
-    replacement: &mut PhysicalDeviceRecord,
-    what: (bool, bool, bool, bool),
-) -> (bool, bool, bool, bool) {
-    let (metadata, attributes, groups, scenes) = what;
-    let mut restored = (false, false, false, false);
-    if metadata {
-        replacement.name = failed.name.clone();
-        replacement.notes = failed.notes.clone();
-        replacement.device_type_override = failed.device_type_override;
-        replacement.color_mode_override = failed.color_mode_override;
-        restored.0 = true;
+fn take_metadata_and_overrides(failed: &PhysicalDeviceRecord, replacement: &mut PhysicalDeviceRecord) {
+    replacement.name = failed.name.clone();
+    replacement.notes = failed.notes.clone();
+    replacement.device_type_override = failed.device_type_override;
+    replacement.color_mode_override = failed.color_mode_override;
+}
+
+fn rebind_lamps(inner: &mut super::store::Inner, adapter_id: u8, from: u8, to: u8) -> Vec<u8> {
+    let moved = lamps_bound_to(inner, adapter_id, from);
+    for lamp_id in &moved {
+        if let Some(entry) = inner.lamps.get_mut(&(adapter_id, *lamp_id)) {
+            entry.binding_short = Some(to);
+        }
     }
-    if attributes {
-        core::mem::swap(&mut replacement.attributes, &mut failed.attributes);
-        restored.1 = true;
+    moved
+}
+
+fn hand_over_lamps(
+    inner: &mut super::store::Inner,
+    adapter_id: u8,
+    failed_short_address: u8,
+    replacement_short_address: u8,
+) -> ReplacementOutcome {
+    let mut outcome = ReplacementOutcome {
+        kept_lamps: lamps_bound_to(inner, adapter_id, failed_short_address),
+        ..ReplacementOutcome::default()
+    };
+    if outcome.kept_lamps.is_empty() {
+        outcome.moved_lamps =
+            rebind_lamps(inner, adapter_id, replacement_short_address, failed_short_address);
+        return outcome;
     }
-    restored.2 = groups && attributes;
-    restored.3 = scenes && attributes;
-    restored
+    unbind_lamps_of(inner, adapter_id, replacement_short_address, &mut outcome.unbound);
+    for lamp_id in &outcome.kept_lamps {
+        outcome.cleared_scene_echoes |= super::scenes::forget_scene_echoes(inner, adapter_id, *lamp_id);
+    }
+    outcome
 }
 
 #[cfg(test)]

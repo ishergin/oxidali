@@ -116,9 +116,9 @@ target-state, а непривязанная даёт `vl_unbound`. Recall-фак
   механизм фиксируется в результате операции.
 - **`DaliAddressingCommand`** — смена короткого адреса без `INITIALISE`
   ([09 §Addressing control gear](../../architecture/09-dali-protocol-rules.md#addressing-control-gear)).
-- **`DaliReplaceDeviceCommand`** — перенос адреса отказавшего прибора на заменитель с
-  восстановлением выбранных слайсов; флаги `restored_*` сообщают фактически
-  восстановленное.
+- **`DaliReplaceDeviceCommand`** — перенос адреса отказавшего прибора на заменитель;
+  на прибор пишется только адрес. Флаг `restore_metadata_and_overrides` проходит в
+  `DaliDeviceReplacedEvent` и говорит реестру, переносить ли имя, заметки и override'ы.
 - **`DaliCommissioningStepCommand`** — экспертный примитив IEC; ответ request-scoped,
   операции нет.
 

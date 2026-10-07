@@ -917,9 +917,6 @@ fn apply_replace_device_outcome(
             replacement_short_address: body.replacement_short_address,
             restored: OperationRestoredSlicesView {
                 metadata_and_overrides: body.restored_metadata_and_overrides,
-                attributes: body.restored_attributes,
-                groups: body.restored_groups,
-                scenes: body.restored_scenes,
             },
         },
         OperationDetailState::ReplaceDevice,

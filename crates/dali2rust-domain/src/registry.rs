@@ -1187,9 +1187,6 @@ pub struct OperationAddressChangeResultView {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperationRestoredSlicesView {
     pub metadata_and_overrides: bool,
-    pub attributes: bool,
-    pub groups: bool,
-    pub scenes: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1292,6 +1289,7 @@ pub trait VirtualLampReadPort: PhysicalDeviceReadPort {
     fn list_virtual_lamp_ids(&self, adapter_id: u8) -> Vec<u8>;
     fn list_virtual_lamp_views(&self, adapter_id: u8) -> Vec<VirtualLampView>;
     fn physical_short_on_other_adapter(&self, adapter_id: u8, short_address: u8) -> bool;
+    fn virtual_lamp_bound_to_short(&self, adapter_id: u8, short_address: u8) -> Option<u8>;
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -275,19 +275,13 @@ function CommissioningCard({
   const [verify, setVerify] = useState(true)
   const [replacement, setReplacement] = useState<number | null>(null)
   const [armed, confirmTap] = useConfirmTap<'forget'>()
-  const [restore, setRestore] = useState({
-    metadata_and_overrides: true,
-    attributes: true,
-    groups: true,
-    scenes: true,
-  })
+  const [restore, setRestore] = useState({ metadata_and_overrides: true })
 
   const freeShorts: number[] = []
   for (let sa = 0; sa < 64; sa += 1) {
     if (!knownShorts.includes(sa)) freeShorts.push(sa)
   }
   const others = knownShorts.filter((sa) => sa !== short)
-  const anyRestore = Object.values(restore).some(Boolean)
 
   const run = async (title: string, start: () => Promise<OperationAccepted>, after?: () => void) => {
     setBusy(true)
@@ -333,7 +327,7 @@ function CommissioningCard({
   }
 
   const replace = () => {
-    if (replacement == null || !anyRestore) return
+    if (replacement == null) return
     return run(
       `Replace · SA ${pad2(short)} ← ${pad2(replacement)}`,
       () =>
@@ -420,7 +414,7 @@ function CommissioningCard({
             </select>
             <button
               class="btn sm"
-              disabled={busy || replacement == null || !anyRestore}
+              disabled={busy || replacement == null}
               onClick={replace}
             >
               Hand over
@@ -438,6 +432,10 @@ function CommissioningCard({
                 {k.replace(/_/g, ' ')}
               </label>
             ))}
+          </div>
+          <div class="comm-hint">
+            Groups and scenes are not copied: the lamp's rows turn dirty, and the next group
+            and scene apply programs the new gear.
           </div>
           <div class="comm-warn">
             Remove or power down the old gear first — the handover refuses while it

@@ -502,9 +502,6 @@ declare_bus_payloads! {
         pub failed_short_address: u8,
         pub replacement_short_address: u8,
         pub restore_metadata_and_overrides: bool,
-        pub restore_attributes: bool,
-        pub restore_groups: bool,
-        pub restore_scenes: bool,
         pub operation_key: FixedText32,
     }
     budget = DaliReplaceDeviceCommand {
@@ -512,9 +509,6 @@ declare_bus_payloads! {
         failed_short_address: 63,
         replacement_short_address: 63,
         restore_metadata_and_overrides: true,
-        restore_attributes: true,
-        restore_groups: true,
-        restore_scenes: true,
         operation_key: crate::msg::payload_test_samples::worst_text32(),
     };
     pub struct HclScheduleUpsertCommand {

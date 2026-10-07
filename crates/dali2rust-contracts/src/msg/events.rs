@@ -522,9 +522,6 @@ declare_bus_payloads! {
         pub failed_short_address: u8,
         pub replacement_short_address: u8,
         pub restored_metadata_and_overrides: bool,
-        pub restored_attributes: bool,
-        pub restored_groups: bool,
-        pub restored_scenes: bool,
         pub operation_key: FixedText32,
         pub error: Option<CompactErrorPayload>,
     }
@@ -533,9 +530,6 @@ declare_bus_payloads! {
         failed_short_address: 63,
         replacement_short_address: 63,
         restored_metadata_and_overrides: true,
-        restored_attributes: true,
-        restored_groups: true,
-        restored_scenes: true,
         operation_key: crate::msg::payload_test_samples::worst_text32(),
         error: Some(crate::msg::payload_test_samples::worst_compact_error_payload()),
     };
