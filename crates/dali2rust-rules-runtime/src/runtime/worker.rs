@@ -671,6 +671,7 @@ fn begin_write_when_free(
 ) -> Result<Box<dyn SliceWriteSession + '_>, ()> {
     for _ in 1..BANK_WRITE_ATTEMPTS {
         match slices.begin_write(key) {
+            // sleep-ok: bounded back-off while another writer holds the bank's slot
             Err(StoreError::Deferred) => std::thread::sleep(BANK_WRITE_RETRY),
             other => return other.map_err(|_| ()),
         }
