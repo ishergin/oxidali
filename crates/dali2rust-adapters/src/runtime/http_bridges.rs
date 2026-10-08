@@ -831,6 +831,11 @@ impl dali2rust_redundancy_runtime::ReplicationSink for ReplicationSinkBridge {
             && dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count).is_some()
     }
 
+    fn family(&self, name: &str) -> String {
+        dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count)
+            .map_or_else(|| name.to_string(), |key| key.family().label())
+    }
+
     fn stage(&self, pulled: Vec<dali2rust_redundancy_runtime::PulledSlice>) -> bool {
         let staged = pulled
             .into_iter()

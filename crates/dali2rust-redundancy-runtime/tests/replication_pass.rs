@@ -82,6 +82,10 @@ impl ReplicationSink for FakeSink {
         !self.refuse.contains(&name)
     }
 
+    fn family(&self, name: &str) -> String {
+        name.split("_b").next().unwrap_or(name).to_string()
+    }
+
     fn stage(&self, pulled: Vec<PulledSlice>) -> bool {
         if self.busy.load(Ordering::Relaxed) {
             return false;
@@ -108,29 +112,33 @@ struct Rig {
 const WATCHED: &[&str] = &["RegistrySliceReloadCommand"];
 
 fn rig(local: Vec<SliceDigest>, refuse: Vec<&'static str>) -> Rig {
-    let (host, publisher, cmd_rx) =
-        BusHost::spawn(BusConfig::default(), |reg| reg.subscribe_commands(64, WATCHED));
-    let peer = Arc::new(FakePeer {
-        manifest: r#"[
+    let manifest = r#"[
             {"name":"physical_devices_a0","bytes":9,"crc32":1},
             {"name":"virtual_lamps_a0","bytes":5,"crc32":2},
             {"name":"poller_settings","bytes":4,"crc32":3}
-        ]"#
-        .to_string(),
-        bodies: vec![
-            (
-                "/api/v1/config/slices/physical_devices_a0".to_string(),
-                b"physdevs!".to_vec(),
-            ),
-            (
-                "/api/v1/config/slices/virtual_lamps_a0".to_string(),
-                b"vlamp".to_vec(),
-            ),
-            (
-                "/api/v1/config/slices/poller_settings".to_string(),
-                b"poll".to_vec(),
-            ),
-        ],
+        ]"#;
+    let bodies = [
+        ("physical_devices_a0", &b"physdevs!"[..]),
+        ("virtual_lamps_a0", &b"vlamp"[..]),
+        ("poller_settings", &b"poll"[..]),
+    ];
+    rig_serving(local, refuse, manifest, &bodies)
+}
+
+fn rig_serving(
+    local: Vec<SliceDigest>,
+    refuse: Vec<&'static str>,
+    manifest: &str,
+    bodies: &[(&str, &[u8])],
+) -> Rig {
+    let (host, publisher, cmd_rx) =
+        BusHost::spawn(BusConfig::default(), |reg| reg.subscribe_commands(64, WATCHED));
+    let peer = Arc::new(FakePeer {
+        manifest: manifest.to_string(),
+        bodies: bodies
+            .iter()
+            .map(|(name, body)| (format!("/api/v1/config/slices/{name}"), body.to_vec()))
+            .collect(),
         asked: Mutex::new(Vec::new()),
         unreachable: AtomicBool::new(false),
     });
@@ -249,6 +257,20 @@ fn a_pass_whose_slices_cannot_be_staged_asks_for_no_reload() {
     assert_eq!(drain_reloads(&rig, 0), 0);
     assert_eq!(rig.deps.counters.slices_rejected.load(Ordering::Relaxed), 3);
     assert_eq!(rig.deps.counters.slices_pulled.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn a_bank_whose_fetch_failed_holds_back_the_rest_of_its_family() {
+    let manifest = r#"[
+            {"name":"rules_b0","bytes":4,"crc32":1},
+            {"name":"rules_b3","bytes":4,"crc32":2},
+            {"name":"poller_settings","bytes":4,"crc32":3}
+        ]"#;
+    let bodies = [("rules_b0", &b"rule"[..]), ("poller_settings", &b"poll"[..])];
+    let rig = rig_serving(Vec::new(), Vec::new(), manifest, &bodies);
+    let outcome = run_pass(&rig.deps);
+    assert!(matches!(outcome, PassOutcome::Pulled(ref v) if v == &["poller_settings"]), "{outcome:?}");
+    assert_eq!(rig.deps.counters.slices_rejected.load(Ordering::Relaxed), 2);
 }
 
 #[test]

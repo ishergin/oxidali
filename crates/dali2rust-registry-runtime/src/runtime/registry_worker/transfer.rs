@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use dali2rust_bus::{BusId, BusPublisher};
 use dali2rust_contracts::msg::{ErrorCode, RegistrySliceReloadCommand};
 use dali2rust_contracts::CORRELATION_NONE;
-use dali2rust_platform::slice_store::{SliceKey, SliceStore};
+use dali2rust_platform::slice_store::{SliceKey, SliceStore, StoreError};
 
 use crate::runtime::registry::publish::publish_config_write_signal;
 use crate::runtime::registry::transfer::ImportWriteFailure;
@@ -114,10 +114,18 @@ fn validate_and_write(
     match store.write_staged(persistence.slices.as_ref(), &staged) {
         Ok(()) => Ok(Written { keys: keys(staged.len()), failure: invalid }),
         Err(ImportWriteFailure::FirmwareWriteOpen) => Err(FLASH_BUSY),
-        Err(ImportWriteFailure::Store { written: 0, .. }) => Err(STORE_FAILED),
-        Err(ImportWriteFailure::Store { written, .. }) => {
-            Ok(Written { keys: keys(written), failure: Some(STORE_FAILED) })
+        Err(ImportWriteFailure::Store { written: 0, error }) => Err(write_failure(&error)),
+        Err(ImportWriteFailure::Store { written, error }) => {
+            Ok(Written { keys: keys(written), failure: Some(write_failure(&error)) })
         }
+    }
+}
+
+fn write_failure(error: &StoreError) -> ImportFailure {
+    if matches!(error, StoreError::Deferred) {
+        FLASH_BUSY
+    } else {
+        STORE_FAILED
     }
 }
 

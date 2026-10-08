@@ -54,6 +54,15 @@ impl SliceKey {
             ])
     }
 
+    #[must_use]
+    pub fn family(self) -> SliceKey {
+        match self {
+            SliceKey::InputDevices { .. } => SliceKey::InputDevices { bank: 0 },
+            SliceKey::Rules { .. } => SliceKey::Rules { bank: 0 },
+            other => other,
+        }
+    }
+
     pub fn label(&self) -> String {
         match self {
             SliceKey::Adapters => "adapters".to_string(),

@@ -74,6 +74,10 @@ impl RegistryStore {
             .map(|pending| pending.slices)
     }
 
+    pub(crate) fn import_staged_for(&self, workflow: u64) -> bool {
+        self.import_stage.lock().as_ref().is_some_and(|pending| pending.workflow == workflow)
+    }
+
     pub(crate) fn evict_stale_import(&self) {
         let mut stage = self.import_stage.lock();
         if stage

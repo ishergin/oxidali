@@ -89,6 +89,10 @@ impl SlotMemory {
     fn clear(cell: &AtomicU8) {
         cell.store(0, Ordering::Relaxed);
     }
+
+    fn set_unless_moved(cell: &AtomicU8, seen: u8, bank: u8) {
+        let _ = cell.compare_exchange(seen, bank + 1, Ordering::AcqRel, Ordering::Relaxed);
+    }
 }
 
 pub struct SliceStoreCore<F: RawFlash> {
@@ -157,6 +161,8 @@ impl<F: RawFlash> SliceStoreCore<F> {
 impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
     fn load(&self, key: SliceKey) -> Result<Vec<u8>, StoreError> {
         let slot = slot_geometry(key).ok_or(StoreError::Missing)?;
+        let memory = self.memory(key);
+        let seen = memory.map(|m| m.served.load(Ordering::Acquire));
         let mut last_err = StoreError::Missing;
         for (bank, header) in self.candidate_banks(&slot)? {
             let mut payload = vec![0u8; header.len as usize];
@@ -180,8 +186,8 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
                 );
                 continue;
             }
-            if let Some(memory) = self.memory(key).filter(|m| !m.writing.load(Ordering::Acquire)) {
-                SlotMemory::set(&memory.served, bank);
+            if let (Some(memory), Some(seen)) = (memory, seen) {
+                SlotMemory::set_unless_moved(&memory.served, seen, bank);
             }
             return Ok(payload);
         }
