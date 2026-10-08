@@ -55,79 +55,81 @@
 }
 body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
 .page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 80px; }
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
 
-.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
 .head .sub { font-size: 12px; color: var(--text-faint); }
 .spacer { flex: 1; }
 .btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
-  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; font-family: var(--font); }
+.btn:hover { background: var(--overlay); }
 .search { padding: 6px 10px; background: var(--raised); border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); color: var(--text); font-size: 12px; width: 200px; font-family: var(--font); }
 .search::placeholder { color: var(--text-faint); }
 
-.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; }
-.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 500; border: 1px solid transparent; white-space: nowrap; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
 .chip.warn { color: var(--warn); background: var(--warn-soft); }
+.chip.err { color: var(--err); background: var(--err-soft); }
+.chip.run { color: var(--info); background: var(--info-soft); }
+.chip.spin .dot, .chip.run .dot { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
 
 /* Matrix table */
-.matrix-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: auto; }
-table { border-collapse: separate; border-spacing: 0; width: 100%; }
-thead th { position: sticky; top: 0; background: var(--raised); z-index: 2;
+.matrix-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: auto; max-height: calc(100vh - 180px); }
+.matrix-wrap table { border-collapse: separate; border-spacing: 0; width: 100%; }
+.matrix-wrap thead th { position: sticky; top: 0; background: var(--raised); z-index: 2;
   padding: 8px 4px 6px; border-bottom: 1px solid var(--border); }
-thead th.gname { font-family: var(--mono); font-size: 10px; color: var(--text-muted); font-weight: 500; min-width: 42px; }
-thead th.gname .cnt { display: block; font-size: 9px; color: var(--text-faint); }
-thead th.gname.dirty { color: var(--dirty); }
-thead th.gname.dirty::after { content: " •"; }
-thead th.lamp { text-align: left; padding-left: 14px; min-width: 220px; font-size: 11px; color: var(--text-faint);
+.matrix-wrap thead th.gname { font-family: var(--mono); font-size: 10px; color: var(--text-muted); font-weight: 500; min-width: 42px; cursor: pointer; }
+.matrix-wrap thead th.gname .cnt { display: block; font-size: 9px; color: var(--text-faint); font-weight: 400;
+  max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0 auto; }
+.matrix-wrap thead th.gname.dirty { color: var(--dirty); }
+.matrix-wrap thead th.gname.dirty::after { content: " •"; }
+.matrix-wrap thead th.lamp { text-align: left; padding-left: 14px; min-width: 220px; font-size: 11px; color: var(--text-faint);
   text-transform: uppercase; letter-spacing: .07em; font-weight: 500; }
-tbody td { padding: 2px 3px; text-align: center; border-bottom: 1px solid rgba(42,51,64,.5); }
-tbody tr:hover td { background: rgba(35,44,56,.5); }
-tbody td.lamp { text-align: left; padding: 6px 8px 6px 14px; white-space: nowrap; }
-tbody td.lamp .vl { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-right: 8px; }
-tbody td.lamp .nm { font-size: 13px; }
-tbody td.lamp .unbound { font-size: 10px; color: var(--text-faint); margin-left: 8px; font-style: italic; }
-tbody tr.rowdirty td.lamp { box-shadow: inset 2px 0 0 var(--dirty); }
+.matrix-wrap tbody td { padding: 2px 3px; text-align: center; border-bottom: 1px solid var(--border-soft); }
+.matrix-wrap tbody tr:hover td { background: var(--hover); }
+.matrix-wrap tbody td.lamp { text-align: left; padding: 6px 8px 6px 14px; white-space: nowrap; }
+.matrix-wrap tbody td.lamp .vl { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-right: 8px; }
+.matrix-wrap tbody td.lamp .nm { font-size: 13px; }
+.matrix-wrap tbody td.lamp .unbound { font-size: 10px; color: var(--text-faint); margin-left: 8px; font-style: italic; }
+.matrix-wrap tbody tr.rowdirty td.lamp { box-shadow: inset 2px 0 0 var(--dirty); }
+.name-faint { color: var(--text-faint); font-style: italic; font-weight: 400; }
+/* A dirty row bound to gear offers `re-read`: it reads the gear's group
+   membership back, which heals a corrupted readback without an apply. */
+.act { font-size: 11px; color: var(--info); background: none; border: none; cursor: pointer; font-family: var(--font); padding: 0; }
 
 .cell { width: 26px; height: 26px; border-radius: var(--radius-sm); display: inline-flex; align-items: center;
-  justify-content: center; border: 1px solid var(--border); background: var(--surface); font-size: 13px; cursor: pointer; position: relative; }
+  justify-content: center; border: 1px solid var(--border); background: var(--surface); font-size: 13px; cursor: pointer;
+  position: relative; box-sizing: border-box; }
 .cell:hover { border-color: var(--border-strong); background: var(--overlay); }
-.cell.on { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+.cell.on { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--accent-strong); }
 .cell.add, .cell.rm { background: var(--dirty-soft); border: 1.5px dashed var(--dirty); color: var(--dirty); }
 .cell.rm .x { text-decoration: line-through; opacity: .8; }
-.cell.dis { background: transparent; border-color: rgba(42,51,64,.4); cursor: default; }
+.cell.dis { background: transparent; border-color: color-mix(in srgb, var(--border) 40%, transparent); cursor: default; }
 
 /* Apply bar */
 .applybar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
   display: flex; align-items: center; gap: 14px; background: var(--overlay);
   border: 1px solid var(--border-strong); border-radius: 12px; padding: 10px 14px;
-  box-shadow: 0 8px 28px rgba(0,0,0,.45); }
+  box-shadow: var(--shadow); z-index: 40; }
 .applybar .txt { font-size: 13px; }
 .applybar .txt b { color: var(--text); }
-.applybar.busy .txt { color: var(--text-muted); }
-.applybar .phase { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
-  padding: 2px 9px; border-radius: 999px; }
-.applybar .phase .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.applybar .phase.run { color: var(--info, #4da3ff); background: rgba(77,163,255,.13); }
-.applybar .phase.run .dot { animation: apulse 1.2s ease-in-out infinite; }
-.applybar .phase.done { color: var(--ok); background: var(--ok-soft); }
-.applybar .phase.wait { color: var(--text-faint); background: var(--raised); }
-.applybar .phase.err { color: var(--err); background: var(--err-soft); }
-@keyframes apulse { 50% { opacity: .25; } }
-.btn.apply { background: var(--accent); border-color: var(--accent); color: #14161a; font-weight: 600; padding: 7px 18px; }
+.btn.apply { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); font-weight: 600; padding: 7px 18px; }
 .btn.discard { color: var(--text-muted); }
-.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
-.crumbs a { color: var(--text-muted); text-decoration: none; }
 
 /* ── Rename popover (shown open on G1) ───────────────────────────────────
    A click on a group header opens it. It says the three things a form has to
    say: WHAT it edits (the heading, plus the arrow that anchors the panel to its
-   column), WHAT the control does (a settings row with the same `Switch` every
-   settings screen uses), and HOW to leave (✓ / Enter, ✕ / Esc — blur does not
+   column), WHAT the control does (a settings row with the same `Switch` the
+   settings screens use), and HOW to leave (✓ / Enter, ✕ / Esc — blur does not
    commit). The ✓/✕ pair appears once the name differs from the stored one.
 
-   The arrow is load-bearing. Sixteen columns sit ~34 px apart and every header
-   looks the same, and the panel is wider than the column it belongs to, so it
+   The arrow is load-bearing. Sixteen columns, each at least 42 px wide, carry
+   headers that all look the same, and the panel is wider than its column, so it
    cannot simply align to one edge — without an anchor it is genuinely
    ambiguous which column is about to be renamed.
 
@@ -140,43 +142,72 @@ tbody tr.rowdirty td.lamp { box-shadow: inset 2px 0 0 var(--dirty); }
 .pop::before { content: ""; position: absolute; top: -5px; left: 50%; width: 8px; height: 8px;
   transform: translateX(-50%) rotate(45deg); background: var(--overlay);
   border-left: 1px solid var(--border-strong); border-top: 1px solid var(--border-strong); }
-.pop .ph { display: block; padding: 8px 10px 6px; font-size: 10px; letter-spacing: .07em;
-  text-transform: uppercase; color: var(--text-faint); font-weight: 600;
-  border-bottom: 1px solid var(--border); }
-.pop .pb { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+.pop .ph { padding: 8px 10px 6px; font-size: 10px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--text-faint); font-weight: 600; border-bottom: 1px solid var(--border); }
+.pop .pb { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
 .pop .prow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .pop .prow .pl { font-size: 12px; color: var(--text-muted); }
-.pop .name-edit-wrap { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
-.pop input { width: 100%; box-sizing: border-box; padding: 5px 8px; background: var(--raised);
-  color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-  font-family: var(--font); font-size: 12px; }
-.pop input.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
-.pop .name-acts { display: flex; gap: 4px; justify-content: flex-end; }
-.pop .namebtn { display: inline-flex; align-items: center; justify-content: center; width: 24px;
-  height: 24px; padding: 0; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
-  background: var(--raised); color: var(--text-muted); font-size: 12px; line-height: 1; cursor: pointer; }
-.pop .namebtn.ok { border-color: color-mix(in srgb, var(--ok) 55%, transparent); color: var(--ok); background: var(--ok-soft); }
-.switch { width: 30px; height: 17px; border-radius: 999px; background: var(--border-strong);
-  display: inline-block; position: relative; cursor: pointer; }
-.switch.on { background: var(--accent); }
-.switch .knob { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--surface); }
-.switch.on .knob { left: auto; right: 2px; background: var(--accent-contrast); }
+.name-edit-wrap { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.pop .name-edit-wrap { flex-direction: column; align-items: stretch; gap: 6px; }
+.name-edit { display: inline-flex; align-items: center; gap: 7px; padding: 4px 8px; border-radius: var(--radius-sm);
+  border: 1px solid transparent; font-size: 13px; font-weight: 550; cursor: text; background: transparent;
+  color: var(--text); font-family: var(--font); min-width: 120px; max-width: 100%; }
+.name-edit:hover, .name-edit:focus { border-color: var(--border-strong); background: var(--raised); outline: none; }
+.name-edit::placeholder { color: var(--text-faint); font-style: italic; font-weight: 400; }
+.name-edit.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
+.pop input { width: 100%; box-sizing: border-box; padding: 5px 8px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--font); font-size: 12px; }
+.pop input::placeholder { color: var(--text-faint); }
+.name-acts { display: inline-flex; gap: 4px; }
+.pop .name-acts { justify-content: flex-end; }
+.namebtn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
+  padding: 0; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--raised);
+  color: var(--text-muted); font-family: var(--font); font-size: 12px; line-height: 1; cursor: pointer; }
+.namebtn:hover { color: var(--text); background: var(--overlay); }
+.namebtn.ok { border-color: color-mix(in srgb, var(--ok) 55%, transparent); color: var(--ok); background: var(--ok-soft); }
+.namebtn.ok:hover { background: color-mix(in srgb, var(--ok) 22%, transparent); }
+.namebtn.no:hover { border-color: color-mix(in srgb, var(--err) 45%, transparent); color: var(--err); }
+.switch { position: relative; display: inline-block; width: 32px; height: 18px; border-radius: 999px;
+  background: var(--raised); border: 1px solid var(--border-strong); vertical-align: middle; cursor: pointer; flex-shrink: 0; }
+.switch .knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text-faint); transition: left .15s; }
+.switch.on { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.switch.on .knob { left: 16px; background: var(--accent-strong); }
+
+/* A demo of a state with no place in the screen above gets its own heading. */
+.state-label { display: flex; align-items: center; gap: 8px; margin: 36px 0 14px; }
+.state-label .ln { flex: 1; height: 1px; background: var(--border); }
+.state-label span { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
+
+/* Operation toasts: stacked bottom right on the screen, shown in place here. */
+.toasts { position: fixed; right: 18px; bottom: 18px; display: grid; gap: 10px; z-index: 60; width: 320px; }
+.op { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 11px 13px; cursor: pointer; }
+.op .row1 { display: flex; align-items: center; gap: 10px; }
+.op .title { font-weight: 600; font-size: 13px; flex: 1; }
+.toasts .op { cursor: default; box-shadow: var(--shadow); }
+.toasts .op .detail { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-top: 5px;
+  overflow: hidden; text-overflow: ellipsis; }
+.toasts .op .close { background: none; border: none; color: var(--text-faint); cursor: pointer; font-size: 13px; padding: 0 2px; }
+.bar { height: 4px; border-radius: 2px; background: var(--raised); margin-top: 10px; overflow: hidden; }
+.bar .fill { height: 100%; width: 54%; background: var(--info); border-radius: 2px; }
+.bar.indet .fill { width: 30%; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
 </style>
 </head>
 <body>
 <div class="page">
-  <div class="crumbs"><a href="#">Adapter 0</a> / Groups</div>
+  <div class="crumbs">Adapter 0 / Groups</div>
 
   <div class="head">
     <h1>Groups</h1>
     <span class="sub">Adapter 0 · 64 virtual lamps × 16 groups</span>
     <!-- TWO numbers, never summed. This chip is the GEAR's condition:
          desired != applied in the registry, healed only by an apply the gear
-         confirms (or the per-row re-read). It is `warn`/`--dirty` because that
-         tone is reserved for exactly this. The operator's own unsaved edits
-         live in the apply bar below and nowhere else — summing them would make
-         the bar permanent on any bench with a standing divergence and leave
-         Discard, which can only clear the local half, greyed out for good. -->
+         confirms (or the per-row re-read). It takes the warn tone that
+         desired ≠ applied shares. The operator's own unsaved edits live in the
+         apply bar below and nowhere else — summing them would make the bar
+         permanent wherever a divergence stands, with Discard, which can only
+         clear the local half, greyed out. -->
     <span class="chip warn"><span class="dot"></span>12 rows dirty on gear</span>
     <span class="spacer"></span>
     <input class="search" placeholder="Filter lamps…">
@@ -187,8 +218,8 @@ tbody tr.rowdirty td.lamp { box-shadow: inset 2px 0 0 var(--dirty); }
       <thead>
         <tr>
           <th class="lamp">Virtual lamp</th>
-          <th class="gname">G0<span class="cnt">Hall · 5</span></th>
-          <th class="gname dirty">G1<span class="cnt">Kitchen · 3</span>
+          <th class="gname" title="Click to rename">G0<span class="cnt">Hall · 5</span></th>
+          <th class="gname dirty" title="Click to rename">G1<span class="cnt">Kitchen · 3</span>
             <!-- Click a group header → rename popover. The HA opt-out lives
                  here (`ha_entity_enabled`, default on): the entity toggle is
                  group metadata, so it rides the metadata surface, not the
@@ -197,38 +228,38 @@ tbody tr.rowdirty td.lamp { box-shadow: inset 2px 0 0 var(--dirty); }
               <span class="ph">Group G1</span>
               <span class="pb">
                 <span class="name-edit-wrap">
-                  <input class="dirty" value="Kitchen lights" readonly>
+                  <input class="name-edit dirty" value="Kitchen lights" placeholder="unnamed">
                   <span class="name-acts">
-                    <button class="namebtn ok">✓</button>
-                    <button class="namebtn">✕</button>
+                    <button class="namebtn ok" title="Apply">✓</button>
+                    <button class="namebtn no" title="Cancel">✕</button>
                   </span>
                 </span>
                 <span class="prow">
                   <span class="pl">Home Assistant</span>
-                  <span class="switch on"><span class="knob"></span></span>
+                  <span class="switch on" role="switch" aria-checked="true"><span class="knob"></span></span>
                 </span>
               </span>
             </span>
           </th>
-          <th class="gname">G2<span class="cnt">— · 0</span></th>
-          <th class="gname">G3<span class="cnt">— · 2</span></th>
-          <th class="gname">G4<span class="cnt">— · 1</span></th>
-          <th class="gname">G5<span class="cnt">— · 0</span></th>
-          <th class="gname">G6<span class="cnt">— · 4</span></th>
-          <th class="gname">G7<span class="cnt">— · 0</span></th>
-          <th class="gname">G8<span class="cnt">— · 0</span></th>
-          <th class="gname">G9<span class="cnt">— · 0</span></th>
-          <th class="gname">G10<span class="cnt">— · 0</span></th>
-          <th class="gname">G11<span class="cnt">— · 0</span></th>
-          <th class="gname">G12<span class="cnt">— · 0</span></th>
-          <th class="gname">G13<span class="cnt">— · 0</span></th>
-          <th class="gname">G14<span class="cnt">— · 0</span></th>
-          <th class="gname">G15<span class="cnt">— · 0</span></th>
+          <th class="gname" title="Click to rename">G2<span class="cnt">— · 0</span></th>
+          <th class="gname" title="Click to rename">G3<span class="cnt">— · 2</span></th>
+          <th class="gname" title="Click to rename">G4<span class="cnt">— · 1</span></th>
+          <th class="gname" title="Click to rename">G5<span class="cnt">— · 0</span></th>
+          <th class="gname" title="Click to rename">G6<span class="cnt">— · 5</span></th>
+          <th class="gname" title="Click to rename">G7<span class="cnt">— · 0</span></th>
+          <th class="gname" title="Click to rename">G8<span class="cnt">— · 0</span></th>
+          <th class="gname" title="Click to rename">G9<span class="cnt">— · 0</span></th>
+          <th class="gname" title="Click to rename">G10<span class="cnt">— · 0</span></th>
+          <th class="gname" title="Click to rename">G11<span class="cnt">— · 0</span></th>
+          <th class="gname" title="Click to rename">G12<span class="cnt">— · 0</span></th>
+          <th class="gname" title="Click to rename">G13<span class="cnt">— · 0</span></th>
+          <th class="gname" title="Click to rename">G14<span class="cnt">— · 0</span></th>
+          <th class="gname" title="Click to rename">G15<span class="cnt">— · 0</span></th>
         </tr>
       </thead>
       <tbody>
         <tr class="rowdirty">
-          <td class="lamp"><span class="vl">VL 00</span><span class="nm">Kitchen main</span></td>
+          <td class="lamp"><span class="vl">VL 00</span><span class="nm">Kitchen main</span><button class="act" title="Re-read the gear's group membership — heals a corrupted readback">re-read</button></td>
           <td><span class="cell on">✓</span></td><td><span class="cell add">✓</span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
           <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
@@ -239,7 +270,7 @@ tbody tr.rowdirty td.lamp { box-shadow: inset 2px 0 0 var(--dirty); }
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
         </tr>
         <tr class="rowdirty">
-          <td class="lamp"><span class="vl">VL 01</span><span class="nm">Kitchen island</span></td>
+          <td class="lamp"><span class="vl">VL 01</span><span class="nm">Kitchen island</span><button class="act" title="Re-read the gear's group membership — heals a corrupted readback">re-read</button></td>
           <td><span class="cell on">✓</span></td><td><span class="cell rm"><span class="x">✓</span></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
@@ -261,7 +292,7 @@ tbody tr.rowdirty td.lamp { box-shadow: inset 2px 0 0 var(--dirty); }
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
         </tr>
         <tr class="rowdirty">
-          <td class="lamp"><span class="vl">VL 03</span><span class="nm">Hall spot 2</span></td>
+          <td class="lamp"><span class="vl">VL 03</span><span class="nm">Hall spot 2</span><button class="act" title="Re-read the gear's group membership — heals a corrupted readback">re-read</button></td>
           <td><span class="cell add">✓</span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell on">✓</span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
@@ -294,7 +325,7 @@ tbody tr.rowdirty td.lamp { box-shadow: inset 2px 0 0 var(--dirty); }
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
         </tr>
         <tr>
-          <td class="lamp"><span class="vl">VL 06</span><span class="nm">— unnamed</span><span class="unbound">unbound</span></td>
+          <td class="lamp"><span class="vl">VL 06</span><span class="nm name-faint">— unnamed</span><span class="unbound">unbound</span></td>
           <td><span class="cell dis"></span></td><td><span class="cell dis"></span></td>
           <td><span class="cell dis"></span></td><td><span class="cell dis"></span></td>
           <td><span class="cell dis"></span></td><td><span class="cell dis"></span></td>
@@ -317,36 +348,42 @@ tbody tr.rowdirty td.lamp { box-shadow: inset 2px 0 0 var(--dirty); }
     <button class="btn apply">Apply to bus</button>
   </div>
 
+  <div class="state-label"><span>Save and apply — one toast per operation</span><span class="ln"></span></div>
   <!--
-    Save spans TWO operations: the row write (`config_write`,
-    202 + operation id, committed atomically by the registry) and only then the
-    apply that puts it on the wire. They fail differently and must read
-    differently — "the rows were not saved" is not "the gear did not take them",
-    and the second is recoverable by pressing Apply again while the first is not.
-    Same two phases as the scene editor — one contract, one vocabulary.
+    Save spans TWO operations: the row write (`config_write`, 202 + operation
+    id, committed atomically by the registry) and only then the apply that
+    puts it on the wire. Each reports in its own toast, "Group save" and
+    "Group apply", because they fail differently — "the rows were not saved"
+    is not "the gear did not take them". A failed save keeps the edits and the
+    apply bar; after a failed apply the saved rows stay dirty on gear. Same two
+    phases as the scene editor — one contract, one vocabulary. Toasts stack in
+    the order they are pushed, and the screen is busy while one save and apply
+    runs, so the stack is the committed save above the apply it started.
   -->
-  <div class="applybar busy" style="position: static; transform: none; margin-top: 14px;">
-    <span class="phase run"><span class="dot"></span>Saving rows</span>
-    <span class="phase wait"><span class="dot"></span>Apply</span>
-    <span class="txt">writing to the registry…</span>
+  <div class="toasts" style="position: static;">
+    <div class="op">
+      <div class="row1"><span class="title">Group save</span><span class="chip ok"><span class="dot"></span>succeeded</span><button class="close" title="Dismiss">✕</button></div>
+      <div class="detail">cfg-grp-0-17</div>
+    </div>
+    <div class="op">
+      <div class="row1"><span class="title">Group apply</span><span class="chip run spin"><span class="dot"></span>running</span><button class="close" title="Dismiss">✕</button></div>
+      <div class="bar indet"><div class="fill"></div></div>
+      <div class="detail">grp-apply-0-18</div>
+    </div>
   </div>
 
-  <div class="applybar busy" style="position: static; transform: none; margin-top: 10px;">
-    <span class="phase done"><span class="dot"></span>Saved</span>
-    <span class="phase run"><span class="dot"></span>Applying</span>
-    <span class="txt">programming the gear…</span>
-  </div>
-
-  <div class="applybar busy" style="position: static; transform: none; margin-top: 10px;">
-    <span class="phase err"><span class="dot"></span>Save failed</span>
-    <span class="phase wait"><span class="dot"></span>Apply</span>
-    <span class="txt">nothing was written — rows unchanged</span>
-  </div>
-
-  <div class="applybar busy" style="position: static; transform: none; margin-top: 10px;">
-    <span class="phase done"><span class="dot"></span>Saved</span>
-    <span class="phase err"><span class="dot"></span>Apply failed</span>
-    <span class="txt">rows stay dirty — press Apply again</span>
+  <div class="state-label"><span>Apply failed</span><span class="ln"></span></div>
+  <!--
+    The detail is the first cell's failure — the code, then the message when it
+    adds to it — and the tally of every cell the apply took on: the three edits
+    above and one cell in each of the twelve rows already dirty on gear. Here
+    one cell met a contended bus, and its row stays dirty on gear.
+  -->
+  <div class="toasts" style="position: static;">
+    <div class="op">
+      <div class="row1"><span class="title">Group apply</span><span class="chip err"><span class="dot"></span>failed</span><button class="close" title="Dismiss">✕</button></div>
+      <div class="detail">operation_failed — bus_contended · 14 programmed · 1 failed</div>
+    </div>
   </div>
 </div>
 </body>

@@ -1,4 +1,4 @@
-<!-- @dsCard group="Screens" name="Stats" subtitle="R14 product summary: uptime, internal-SRAM headroom, bus/DALI/operation/WebSocket counters with per-sample deltas" -->
+<!-- @dsCard group="Screens" name="Stats" subtitle="Product summary: uptime, internal-SRAM headroom, bus load, then one counter card per subsystem with per-sample deltas, fault paint and gauges" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -67,18 +67,20 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .nav a:hover { background: var(--raised); color: var(--text); }
 .nav a.active { background: var(--accent-soft); color: var(--accent-strong); font-weight: 550; }
 .nav a .ic { width: 16px; text-align: center; font-size: 13px; opacity: .8; }
+.nav .navgroup { margin-bottom: 10px; }
 .nav .gh { font-size: 10px; text-transform: uppercase; letter-spacing: .09em; color: var(--text-faint);
-  padding: 12px 10px 4px; }
+  font-weight: 600; padding: 6px 10px 4px; }
 
 /* Main */
 .main { flex: 1; padding: 20px 24px 40px; min-width: 0; }
-.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
 .head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
 .head .sub { font-size: 12px; color: var(--text-faint); }
 .spacer { flex: 1; }
 .badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm);
   font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
-.hint { font-size: 12px; color: var(--text-faint); margin: 0 0 16px; max-width: 78ch; }
+.hint { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; }
+.mono { font-family: var(--mono); font-size: 12px; }
 
 /* Stat tiles — the four figures an operator scans first. */
 .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 14px; }
@@ -90,31 +92,34 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .tile .foot { font-size: 11px; color: var(--text-faint); margin-top: 3px; font-family: var(--mono); }
 
 /* Counter cards */
-.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.card.span2 { grid-column: 1 / -1; }
-.card header { display: flex; align-items: center; justify-content: space-between;
+.grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.grid2 .span2 { grid-column: span 2; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  margin-bottom: 14px; }
+.grid2 > .card { margin-bottom: 0; }
+.card > header { display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 9px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
-.card header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
-.card header .note { font-size: 11px; color: var(--text-faint); }
+.card > header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
 
 /* One counter row: name, absolute, change since the previous sample. */
-.attr { display: grid; grid-template-columns: 1fr auto 54px; align-items: center; gap: 12px;
-  padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.attr { display: grid; grid-template-columns: 1fr 116px 104px; column-gap: 12px; row-gap: 3px;
+  align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--border); }
 .attr:last-child { border-bottom: none; }
 .attr .k { color: var(--text-muted); font-size: 13px; }
-.attr .v { font-family: var(--mono); font-size: 13px; text-align: right; }
+.attr .v { font-family: var(--mono); font-size: 13px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .attr .v.fault { color: var(--err); }
 .attr .v.warn { color: var(--warn); }
-.attr .v .unit { color: var(--text-faint); font-size: 11px; margin-left: 3px; }
-.attr .delta { font-family: var(--mono); font-size: 11px; text-align: right; color: var(--text-faint); }
+.attr .v .unit { color: var(--text-faint); font-size: 11px; width: 20px; text-align: left; flex: none; }
+.attr .delta { font-family: var(--mono); font-size: 11px; color: var(--text-faint);
+  min-width: 46px; text-align: right; }
 .attr .delta.live { color: var(--info); }
 .attr.sub .k, .attr.sub .v { color: var(--text-faint); font-size: 12px; }
 /* On Stats the bridge's connection state is a chip in the card header, not a counter row: it has
    no delta, and a "0" beside free-running totals reads as a count. */
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
-  font-size: 11px; font-weight: 500; }
-.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  font-size: 11px; font-weight: 500; border: 1px solid transparent; white-space: nowrap; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .chip.ok { color: var(--ok); background: var(--ok-soft); }
 </style>
 </head>
@@ -124,17 +129,36 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   <aside class="side">
     <div class="brand"><span class="glyph">◍</span><span class="name">dali2rust</span></div>
     <nav class="nav">
-      <a href="#"><span class="ic">▦</span>Dashboard</a>
-      <a href="#"><span class="ic">◧</span>Physical devices</a>
-      <a href="#"><span class="ic">◍</span>Virtual lamps</a>
-      <a href="#"><span class="ic">⊞</span>Groups</a>
-      <a href="#"><span class="ic">✦</span>Scenes</a>
-      <a href="#"><span class="ic">☀</span>HCL</a>
-      <a href="#"><span class="ic">≡</span>Operations</a>
-      <div class="gh">System</div>
-      <a class="active" href="#"><span class="ic">▤</span>Stats</a>
-      <a href="#"><span class="ic">◔</span>Diagnostics</a>
-      <a href="#"><span class="ic">›_</span>DALI console</a>
+      <div class="navgroup">
+        <div class="gh">Control</div>
+        <a href="#"><span class="ic">▦</span>Dashboard</a>
+        <a href="#"><span class="ic">◧</span>Physical devices</a>
+        <a href="#"><span class="ic">◍</span>Virtual lamps</a>
+        <a href="#"><span class="ic">⌘</span>Input devices</a>
+        <a href="#"><span class="ic">⊞</span>Groups</a>
+        <a href="#"><span class="ic">✦</span>Scenes</a>
+        <a href="#"><span class="ic">◐</span>HCL schedules</a>
+        <a href="#"><span class="ic">∴</span>Rules</a>
+      </div>
+      <div class="navgroup">
+        <div class="gh">System</div>
+        <a href="#"><span class="ic">≡</span>Operations</a>
+        <a class="active" href="#"><span class="ic">▤</span>Stats</a>
+        <a href="#"><span class="ic">›_</span>DALI console</a>
+        <a href="#"><span class="ic">∿</span>DALI sniffer</a>
+        <a href="#"><span class="ic">☰</span>Log</a>
+        <a href="#"><span class="ic">◔</span>Diagnostics</a>
+        <a href="#"><span class="ic">⇧</span>Firmware</a>
+      </div>
+      <div class="navgroup">
+        <div class="gh">Settings</div>
+        <a href="#"><span class="ic">⟳</span>Poller</a>
+        <a href="#"><span class="ic">◈</span>DALI</a>
+        <a href="#"><span class="ic">◷</span>Time</a>
+        <a href="#"><span class="ic">⌂</span>Home Assistant</a>
+        <a href="#"><span class="ic">⇄</span>Redundancy</a>
+        <a href="#"><span class="ic">⛨</span>Policies</a>
+      </div>
     </nav>
   </aside>
 
@@ -143,15 +167,15 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <h1>Stats</h1>
       <span class="badge">read model</span>
       <span class="spacer"></span>
-      <span class="sub">sampled every <span style="font-family:var(--mono); color:var(--text-muted)">5 s</span></span>
+      <span class="sub">sampled every <span class="mono" style="color:var(--text-muted)">5 s</span></span>
     </div>
 
-    <p class="hint">
+    <div class="hint">
       Product totals, not raw per-path counters — those live on Diagnostics. Everything
       suffixed <em>total</em> is free-running and 32-bit: it wraps rather than resets, so the
       right-hand column (change since the previous sample) is what says whether something is
       happening now.
-    </p>
+    </div>
 
     <div class="tiles">
       <div class="tile">
@@ -177,17 +201,18 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <div class="tile">
         <div class="l">DALI bus load</div>
         <div class="n">37<span class="u">%</span></div>
-        <div class="foot">own 21% · 312 foreign frames</div>
+        <div class="foot">own 21% · 799 418 foreign frames</div>
       </div>
     </div>
 
-    <div class="grid">
+    <div class="grid2">
 
+      <!-- Internal SRAM is the pool that runs out, so it leads; the total heap is
+           PSRAM-dominated and sits faint in a sub row. `Internal min ever` turns
+           `warn` under 12 KiB, the same threshold the tile uses on the current
+           figure. -->
       <div class="card span2">
-        <header>
-          <h3>Memory</h3>
-          <span class="note">internal SRAM is the pool that runs out — total heap is PSRAM-dominated</span>
-        </header>
+        <header><h3>Memory</h3></header>
         <div class="attr">
           <span class="k">Internal free</span>
           <span class="v">15 744 <span class="unit">B</span></span>
@@ -215,24 +240,54 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         </div>
       </div>
 
+      <!-- Every counter card spells its rows as the field names, underscores
+           to spaces and the first letter capitalised, in the order the report
+           sends them; a value is `fault` only for the five fields an operator
+           acts on, and only while it is above zero. Confirmation timeouts sit
+           here, not under DALI: the confirmation bridge is shared, and a
+           registry write that times out never touched the wire. -->
       <div class="card">
         <header><h3>Bus</h3></header>
-        <div class="attr"><span class="k">Commands published</span><span class="v">4 812</span><span class="delta live">+3</span></div>
-        <div class="attr"><span class="k">Events published</span><span class="v">19 044</span><span class="delta live">+12</span></div>
-        <div class="attr"><span class="k">Commands ingress overflow</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Commands published total</span><span class="v">32 445</span><span class="delta live">+41</span></div>
+        <div class="attr"><span class="k">Events published total</span><span class="v">96 318</span><span class="delta live">+103</span></div>
+        <div class="attr"><span class="k">Commands ingress overflow total</span><span class="v fault">46</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Confirmation timeouts total</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
       <div class="card">
         <header><h3>DALI</h3></header>
-        <div class="attr"><span class="k">Commands executed</span><span class="v">2 190</span><span class="delta live">+2</span></div>
-        <div class="attr"><span class="k">Timeouts</span><span class="v warn">3</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Errors</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Target state superseded</span><span class="v">5</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Commands executed total</span><span class="v">10 458</span><span class="delta live">+21</span></div>
+        <div class="attr"><span class="k">Errors total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Target state superseded total</span><span class="v">27</span><span class="delta"></span></div>
         <!-- Gauges, so no change column: load falls whenever the wire goes
              quiet, and a wrap correction would paint that as +4 294 967 000. -->
         <div class="attr"><span class="k">Wire load permille</span><span class="v">370</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Wire load own permille</span><span class="v">210</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Foreign frames total</span><span class="v">312</span><span class="delta live">+2</span></div>
+        <div class="attr"><span class="k">Collision restarts total</span><span class="v">4</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Foreign frames total</span><span class="v">799 418</span><span class="delta live">+30</span></div>
+        <div class="attr"><span class="k">Foreign verbs projected total</span><span class="v">141</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Foreign dimming unprojected total</span><span class="v">3</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Foreign scene writes total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Foreign unaddressed ignored total</span><span class="v">12</span><span class="delta"></span></div>
+        <!-- Our own backward window, by cause. The first three are faults of
+             ONE gear's answer and are gated at zero on the bench; `early
+             rejected` and `late rejected` are the controls: a frame that began
+             outside the Table 20 window, too soon to be an answer or somebody
+             else's frame in its own slot. `multi answer` is the same physics
+             behind a broadcast, group or COMPARE frame — several gear
+             answering one window cannot align — and is the bus-health probe's
+             ordinary reading, so it is plain. -->
+        <div class="attr"><span class="k">Backward undecodable total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Backward frame size total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Backward incomplete total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Backward early rejected total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Backward late rejected total</span><span class="v">14</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Backward multi answer total</span><span class="v">2</span><span class="delta live">+2</span></div>
+        <div class="attr"><span class="k">Console log dropped total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Console log busy total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Console log truncated total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Console log unavailable total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Console uart errors total</span><span class="v">0</span><span class="delta"></span></div>
         <!-- What the PHY INTERRUPT itself measured. `lost` and `extra` are
              free-running and keep their change column — a board that starts
              losing ticks says so there first. `late` and `max gap` are the
@@ -240,36 +295,57 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
              accumulated, so a delta on either would be arithmetic about
              nothing. 55 late ticks against zero corrupted captures is a
              HEALTHY board: the decoder tolerates one lost sample per tick. -->
-        <div class="attr"><span class="k">ISR ticks lost</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">ISR ticks extra</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">ISR late ticks</span><span class="v">55</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">ISR max gap</span><span class="v">326 <span class="unit">µs</span></span><span class="delta"></span></div>
-        <!-- Our own backward window, by cause. The first three are faults of
-             ONE gear's answer and are gated at zero on the bench; `multi
-             answer` is the same physics behind a broadcast, group or COMPARE
-             frame — several gear answering one window cannot align — and is
-             the bus-health probe's ordinary reading, so it is plain, never
-             `warn`. `late rejected` is the control: somebody else's frame in
-             its own Table 22 slot. -->
-        <div class="attr"><span class="k">Backward undecodable total</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Backward frame size total</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Backward incomplete total</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Backward multi answer total</span><span class="v">2</span><span class="delta live">+2</span></div>
-        <div class="attr"><span class="k">Backward late rejected total</span><span class="v">14</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Isr ticks deficit raw total</span><span class="v">112</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Isr ticks surplus raw total</span><span class="v">108</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Isr ticks lost total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Isr ticks extra total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Isr late ticks total</span><span class="v">55</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Isr max gap us</span><span class="v">326</span><span class="delta"></span></div>
+        <!-- The task-side timing. The three maxima — answer stage, sniffer poll
+             gap, flush time — are since-boot peaks like the interrupt's, so
+             they carry no change column; the unit is the field's own suffix.
+             A flush over 250 ms counts as slow, so a peak above that comes
+             with at least one slow flush. -->
+        <div class="attr"><span class="k">Answer staged total</span><span class="v">214</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Answer stage late total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Answer stage max ticks</span><span class="v">21</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Sniff poll late total</span><span class="v">3</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Sniff poll gap max us</span><span class="v">12 480</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Persist flush total</span><span class="v">37</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Persist flush slow total</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Persist flush ms total</span><span class="v">3 914</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Persist flush max ms</span><span class="v">412</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Persist gate waits total</span><span class="v">5</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Persist gate timeouts total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Readback groups corrected total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Readback colour features corrected total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Readback extended fade corrected total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Program repairs total</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
       <div class="card span2">
-        <header>
-          <h3>Operations</h3>
-          <span class="note">running is a gauge; the rest are totals</span>
-        </header>
+        <header><h3>Operations</h3></header>
+        <!-- A gauge, so no change column: it falls when an operation ends. -->
         <div class="attr"><span class="k">Running</span><span class="v">1</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Succeeded</span><span class="v">118</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Succeeded total</span><span class="v">118</span><span class="delta live">+1</span></div>
         <!-- Failed is not a fault colour: an operation an operator command stood down ends
              failed/preempted and is counted here, and preemption is routine (ADR-009). -->
-        <div class="attr"><span class="k">Failed</span><span class="v">2</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Timed out</span><span class="v fault">1</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Cancelled</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Failed total</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Timed out total</span><span class="v fault">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Cancelled total</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
+      <!-- The product view of the push channel: three figures; the full set
+           lives on Diagnostics. `Clients` is a gauge (it goes down when a tab
+           closes), so it shows no change column — the wrap correction would
+           read a closing tab as +4 294 967 295. `Events dropped total` is the
+           only one an operator can act on: it means a screen somewhere went
+           stale without saying so, and the answer is fewer open tabs. -->
+      <div class="card span2">
+        <header><h3>WebSocket</h3></header>
+        <div class="attr"><span class="k">Clients</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Events sent total</span><span class="v">31 470</span><span class="delta live">+45</span></div>
+        <div class="attr"><span class="k">Events dropped total</span><span class="v fault">6</span><span class="delta"></span></div>
       </div>
 
       <div class="card">
@@ -277,19 +353,25 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
           <h3>Home Assistant bridge</h3>
           <span class="chip ok"><span class="dot"></span>connected</span>
         </header>
-        <div class="attr"><span class="k">Publishes</span><span class="v">8 411</span><span class="delta live">+4</span></div>
-        <div class="attr"><span class="k">Publish failures</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Publishes total</span><span class="v">8 411</span><span class="delta live">+20</span></div>
+        <div class="attr"><span class="k">Publish failures total</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
       <div class="card">
         <header><h3>Input devices</h3></header>
         <div class="attr"><span class="k">Frames24 rx</span><span class="v">1 204</span><span class="delta live">+1</span></div>
-        <div class="attr"><span class="k">Events typed</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Events generic</span><span class="v">1 198</span><span class="delta live">+1</span></div>
-        <div class="attr"><span class="k">Events typed from registry</span><span class="v">1 198</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Events typed</span><span class="v">1 186</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Events generic</span><span class="v">12</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Events typed from registry</span><span class="v">1 186</span><span class="delta live">+1</span></div>
         <div class="attr"><span class="k">Events ambiguous scheme</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Events unattributed</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Scans completed</span><span class="v">3</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Lifecycle events</span><span class="v">6</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Scans completed</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Devices addressed</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Config rejected</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Addresses contended</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Presence reprobed</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Readbacks applied</span><span class="v">8</span><span class="delta"></span></div>
       </div>
 
       <!-- `Ticks cut total` counts the publishing ticks whose plan a schedule
@@ -340,22 +422,6 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr sub"><span class="k">stat("hall_button")</span><span class="v">27</span><span class="delta live">+1</span></div>
       </div>
 
-      <!-- I5. The product view of the push channel: three figures, against the
-           seven Diagnostics carries. `Clients` is a gauge (it goes down when a
-           tab closes), so it shows no change column — the wrap correction would
-           read a closing tab as +4 294 967 295. `Events dropped` is the only
-           one an operator can act on: it means a screen somewhere went stale
-           without saying so, and the answer is fewer open tabs. -->
-      <div class="card span2">
-        <header>
-          <h3>WebSocket</h3>
-          <span class="note">clients is a gauge; the rest are totals</span>
-        </header>
-        <div class="attr"><span class="k">Clients</span><span class="v">2</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Events sent</span><span class="v">31 470</span><span class="delta live">+18</span></div>
-        <div class="attr"><span class="k">Events dropped</span><span class="v fault">6</span><span class="delta"></span></div>
-      </div>
-
       <!-- The Ethernet MAC's own count, absent on a build without a link.
            Ring overruns are frames the MAC discarded because every receive
            descriptor was still full, FIFO overflows the ones it could not
@@ -363,10 +429,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            deliver. None of them is something an operator can act on, so
            none is `fault`: they are how the receive ring is sized. -->
       <div class="card">
-        <header>
-          <h3>Network</h3>
-          <span class="note">Ethernet MAC totals since boot</span>
-        </header>
+        <header><h3>Network</h3></header>
         <div class="attr"><span class="k">Rx packets total</span><span class="v">184 220</span><span class="delta live">+41</span></div>
         <div class="attr"><span class="k">Tx packets total</span><span class="v">171 903</span><span class="delta live">+38</span></div>
         <div class="attr"><span class="k">Rx dropped total</span><span class="v">0</span><span class="delta"></span></div>

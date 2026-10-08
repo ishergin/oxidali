@@ -63,8 +63,9 @@ h2:first-of-type { margin-top: 0; }
 .demo { background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius);
   padding: 14px; margin-bottom: 6px; }
 /* ── Data table ──────────────────────────────────────────────────────────
-   Every list in this product is one of these. Two rules keep a table wider
-   than its panel usable, with every column reachable:
+   It holds the physical-device, virtual-lamp and input-device lists, the
+   failover history in Settings — Redundancy, and the scene matrix. Two rules
+   keep a table wider than its panel usable, with every column reachable:
 
    1. THE SCROLLBAR IS ALWAYS VISIBLE. `.table-wrap` is `overflow: auto`, so
       a wide table scrolls rather than truncating. But macOS draws overlay
@@ -80,9 +81,12 @@ h2:first-of-type { margin-top: 0; }
       Opaque, not `--hover`, because that token is translucent and a sticky
       cell must not let the scrolled content show through.
 
-   NARROW VIEWPORTS drop columns rather than shrinking them. A 90 px "Last
-   seen" squeezed to 40 px is not a smaller column, it is a broken one; and
-   the fields that go are the ones the detail card repeats anyway. */
+   NARROW VIEWPORTS KEEP EVERY COLUMN. No rule hides one: cells never wrap,
+   so a column keeps its width and the table scrolls sideways under the
+   pinned action column. A 90 px "Last seen" squeezed to 40 px is not a
+   smaller column, it is a broken one. Below 900 px the sidebar becomes a
+   top bar and the page padding shrinks, which hands the table nearly the
+   whole viewport; the table itself has no breakpoint. */
 .table-wrap { background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); overflow: auto;
   scrollbar-color: var(--border-strong) transparent; scrollbar-width: thin; }
@@ -92,9 +96,9 @@ h2:first-of-type { margin-top: 0; }
 .table-wrap table { border-collapse: collapse; width: 100%; }
 .table-wrap thead th { text-align: left; padding: 9px 12px; background: var(--raised);
   border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase;
-  letter-spacing: .07em; color: var(--text-faint); font-weight: 600; white-space: nowrap; }
+  letter-spacing: .07em; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
 .table-wrap tbody td { padding: 8px 12px; border-bottom: 1px solid var(--border-soft);
-  vertical-align: middle; white-space: nowrap; font-size: 13px; }
+  vertical-align: middle; white-space: nowrap; }
 .table-wrap tbody tr:last-child td { border-bottom: none; }
 .table-wrap tbody tr:hover td { background: var(--hover); }
 .table-wrap tbody tr.click { cursor: pointer; }
@@ -104,44 +108,104 @@ h2:first-of-type { margin-top: 0; }
 .acts-col { position: sticky; right: 0; background: var(--surface);
   border-left: 1px solid var(--border); }
 thead .acts-col { background: var(--raised); }
-tbody tr:hover .acts-col { background: var(--raised); }
-.acts { display: inline-flex; gap: 6px; }
+.table-wrap tbody tr:hover .acts-col { background: var(--raised); }
+td .acts { display: inline-flex; gap: 6px; }
 
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong); background: var(--raised); color: var(--text);
-  font-family: var(--font); font-size: 12.5px; cursor: pointer; }
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; font-family: var(--font); }
 .btn:hover { background: var(--overlay); }
-.btn.sm { padding: 3px 9px; font-size: 11.5px; }
-.btn.ghost { background: transparent; }
-.btn.ghost:hover { background: var(--raised); }
+.btn.sm { padding: 4px 9px; font-size: 11px; }
+.btn.ghost { border-color: var(--border); color: var(--text-muted); background: transparent; }
 /* Destructive: never coloured until it is armed. A row of permanently red
    Delete buttons trains the eye to ignore red. */
 .btn.danger:hover { border-color: color-mix(in srgb, var(--err) 55%, transparent); color: var(--err); background: var(--err-soft); }
-.btn.sure { border-color: var(--err); color: var(--err); background: var(--err-soft); }
-.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border); background: var(--raised); font-family: var(--mono);
-  font-size: 11px; color: var(--text-muted); }
-.badge.addr { color: var(--text); }
+.btn.sure { color: var(--err); border-color: color-mix(in srgb, var(--err) 45%, transparent); background: var(--err-soft); }
+
+/* The cells of the virtual-lamp list, as the app draws them. */
+td .vlid { font-family: var(--mono); font-size: 12px; color: var(--text-muted); }
+.name-edit-wrap { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.name-edit { display: inline-flex; align-items: center; gap: 7px; padding: 4px 8px; border-radius: var(--radius-sm);
+  border: 1px solid transparent; font-size: 13px; font-weight: 550; cursor: text; background: transparent;
+  color: var(--text); font-family: var(--font); min-width: 120px; max-width: 100%; }
+.name-edit:hover, .name-edit:focus { border-color: var(--border-strong); background: var(--raised); outline: none; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 500; border: 1px solid transparent; white-space: nowrap; }
+.chip.bind { font-family: var(--mono); color: var(--text); background: var(--overlay); border: 1px solid var(--border-strong); }
+.switch { position: relative; display: inline-block; width: 32px; height: 18px; border-radius: 999px;
+  background: var(--raised); border: 1px solid var(--border-strong); vertical-align: middle; cursor: pointer; flex-shrink: 0; }
+.switch .knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text-faint); transition: left .15s; }
+.switch.on { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.switch.on .knob { left: 16px; background: var(--accent-strong); }
+.lampstate { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); white-space: nowrap; }
+.lampdot { width: 11px; height: 11px; border-radius: 50%; flex: none;
+  background: var(--lamp, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--lamp, var(--accent)) 70%, transparent);
+  box-shadow: var(--lamp-glow, none); }
+.lamplv { font-family: var(--mono); font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+.lampcq { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
+.lampstate.off .lampdot { background: transparent; border-color: var(--text-faint); box-shadow: none; }
+.lampstate.off .lamplv { color: var(--text-muted); }
+.slider { -webkit-appearance: none; appearance: none; flex: 1; min-width: 160px; height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, #8a6a14, var(--accent)) 0 / var(--pct, 0%) 100% no-repeat, var(--raised);
+  outline: none; cursor: pointer; margin: 0; }
+.slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent-strong); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--accent), 0 0 10px var(--accent-glow); }
+.slider::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent-strong); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--accent), 0 0 10px var(--accent-glow); }
+.slider.mini { min-width: 90px; height: 4px; }
+.lvlcell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lvlcell .slider { min-width: 0; }
+.lvlnum { font-family: var(--mono); font-size: 12px; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; width: 28px; text-align: right; flex: none; }
+.slider.mini::-webkit-slider-thumb { width: 12px; height: 12px; }
+.slider.mini::-moz-range-thumb { width: 12px; height: 12px; }
 .frame { max-width: 560px; }
 </style>
 </head>
 <body>
 <div class="page">
-  <h2>Pinned actions</h2>
-  <p class="note">The frame below is deliberately too narrow for the table. Scroll it: the
-    action column stays, and the scrollbar says there is more before you go looking.</p>
+  <h2>Pinned actions at a narrow width</h2>
+  <p class="note">The frame below is deliberately too narrow for the table, as a phone or a
+    split window is. Every column is still there: scroll it, and the action column stays
+    pinned while the scrollbar says there is more before you go looking.</p>
   <div class="demo">
     <div class="frame">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>VL</th><th>Name</th><th>Binding</th><th>State</th><th>Level</th><th class="acts-col"></th></tr></thead>
+          <colgroup>
+            <col style="width:64px"><col><col style="width:88px"><col style="width:96px">
+            <col style="width:150px"><col style="width:210px"><col style="width:236px">
+          </colgroup>
+          <thead><tr><th>VL</th><th>Name</th><th>Binding</th><th>HA entity</th><th>State</th><th>Level</th><th class="acts-col"></th></tr></thead>
           <tbody>
-            <tr><td><span class="badge">VL 00</span></td><td>Kitchen spot</td><td><span class="badge addr">SA 00</span></td><td>180</td><td>——●———</td>
-              <td class="acts-col"><span class="acts"><button class="btn sm ghost">Rebind…</button><button class="btn sm ghost">Unbind</button><button class="btn sm ghost danger">Delete</button></span></td></tr>
-            <tr><td><span class="badge">VL 01</span></td><td>Hallway</td><td><span class="badge addr">SA 01</span></td><td>Off</td><td>●—————</td>
-              <td class="acts-col"><span class="acts"><button class="btn sm ghost">Rebind…</button><button class="btn sm ghost">Unbind</button><button class="btn sm ghost danger">Delete</button></span></td></tr>
-            <tr><td><span class="badge">VL 04</span></td><td>Living room strip</td><td><span class="badge addr">SA 04</span></td><td>220</td><td>————●—</td>
-              <td class="acts-col"><span class="acts"><button class="btn sm ghost">Rebind…</button><button class="btn sm ghost">Unbind</button><button class="btn sm sure">Sure?</button></span></td></tr>
+            <tr>
+              <td><span class="vlid">VL 00</span></td>
+              <td><span class="name-edit-wrap"><input class="name-edit" value="Kitchen spot" readonly></span></td>
+              <td><span class="chip bind">SA 00</span></td>
+              <td><span class="switch on"><span class="knob"></span></span></td>
+              <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(240, 180, 41, 0.81);--lamp-glow:0 0 7px rgba(240, 180, 41, 0.45)"></span><span class="lamplv">180</span></span></td>
+              <td><span class="lvlcell"><input type="range" class="slider mini" min="0" max="254" value="180" style="--pct:70.87%"><span class="lvlnum">180</span></span></td>
+              <td class="acts-col"><span class="acts"><button class="btn sm ghost">Rebind…</button><button class="btn sm ghost">Unbind</button><button class="btn sm ghost danger">Delete</button></span></td>
+            </tr>
+            <tr>
+              <td><span class="vlid">VL 01</span></td>
+              <td><span class="name-edit-wrap"><input class="name-edit" value="Hallway" readonly></span></td>
+              <td><span class="chip bind">SA 01</span></td>
+              <td><span class="switch on"><span class="knob"></span></span></td>
+              <td><span class="lampstate off"><span class="lampdot"></span><span class="lamplv">Off</span></span></td>
+              <td><span class="lvlcell"><input type="range" class="slider mini" min="0" max="254" value="0" style="--pct:0%"><span class="lvlnum">0</span></span></td>
+              <td class="acts-col"><span class="acts"><button class="btn sm ghost">Rebind…</button><button class="btn sm ghost">Unbind</button><button class="btn sm ghost danger">Delete</button></span></td>
+            </tr>
+            <tr>
+              <td><span class="vlid">VL 04</span></td>
+              <td><span class="name-edit-wrap"><input class="name-edit" value="Living room strip" readonly></span></td>
+              <td><span class="chip bind">SA 04</span></td>
+              <td><span class="switch"><span class="knob"></span></span></td>
+              <td><span class="lampstate on"><span class="lampdot" style="--lamp:rgba(255, 185, 117, 0.91);--lamp-glow:0 0 7px rgba(255, 185, 117, 0.45)"></span><span class="lamplv">220</span><span class="lampcq">2900 K</span></span></td>
+              <td><span class="lvlcell"><input type="range" class="slider mini" min="0" max="254" value="220" style="--pct:86.61%"><span class="lvlnum">220</span></span></td>
+              <td class="acts-col"><span class="acts"><button class="btn sm ghost">Rebind…</button><button class="btn sm ghost">Unbind</button><button class="btn sm ghost danger sure">Sure?</button></span></td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -154,9 +218,13 @@ tbody tr:hover .acts-col { background: var(--raised); }
     that removes a lamp's name, its group rows and its scene rows deserves at least what
     unbinding gets.</p>
   <div class="demo">
+    <button class="btn sm ghost">Unbind</button>
+    &nbsp;&nbsp;
+    <button class="btn sm ghost sure">Sure?</button>
+    &nbsp;&nbsp;&nbsp;&nbsp;
     <button class="btn sm ghost danger">Delete</button>
     &nbsp;&nbsp;
-    <button class="btn sm sure">Sure?</button>
+    <button class="btn sm ghost danger sure">Sure?</button>
   </div>
 </div>
 </body>

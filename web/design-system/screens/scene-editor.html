@@ -55,56 +55,78 @@
 }
 body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
 .page { max-width: 1240px; margin: 0 auto; padding: 20px 24px 80px; }
+.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
 
-.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.head .sub { font-size: 12px; color: var(--text-faint); }
 .spacer { flex: 1; }
+/* The scene is renamed in place, in the header: ✎ shows on hover, and ✓ / ✕
+   appear once the text differs from the stored name. */
+.h1-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.h1-wrap .pencil { color: var(--text-faint); font-size: 12px; opacity: 0; transition: opacity .12s; }
+.h1-wrap:hover .pencil { opacity: 1; }
+.name-edit-wrap { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.name-edit { display: inline-flex; align-items: center; gap: 7px; padding: 4px 8px; border-radius: var(--radius-sm);
+  border: 1px solid transparent; font-size: 13px; font-weight: 550; cursor: text; background: transparent;
+  color: var(--text); font-family: var(--font); min-width: 120px; max-width: 100%; }
+.name-edit:hover, .name-edit:focus { border-color: var(--border-strong); background: var(--raised); outline: none; }
+.name-edit::placeholder { color: var(--text-faint); font-style: italic; font-weight: 400; }
+.name-faint { color: var(--text-faint); font-style: italic; font-weight: 400; }
 /* HA opt-in: metadata, info tint — never the amber lamp accent. */
 .hatoggle { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px;
   font-size: 11.5px; color: var(--text-muted); white-space: nowrap; cursor: pointer; }
 .hatoggle input { accent-color: var(--info); margin: 0; }
 .btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
-  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
-.btn.recall { background: var(--info-soft); border-color: rgba(77,163,255,.4); color: var(--info); }
-/* Recall scope: one compact select (whole bus / one group), info-tinted like
-   the recall action it modifies. Single-select on purpose — a recall goes to
-   ONE group frame (102 Table 1), unlike HCL's multi-group chips. */
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; font-family: var(--font); }
+.btn:hover { background: var(--overlay); }
+.btn.recall { background: var(--info-soft); border-color: color-mix(in srgb, var(--info) 40%, transparent); color: var(--info); }
+/* Recall scope: one compact select (whole bus / one group) beside the recall
+   it modifies. Single-select on purpose — a recall goes to ONE group frame
+   (102 Table 1), unlike HCL's multi-group chips. */
 .sel { padding: 5px 8px; background: var(--raised); color: var(--text); border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; cursor: pointer; }
+.sel:hover { background: var(--overlay); }
+.sel option { background: var(--raised); color: var(--text); }
 
 /* Scene selector tabs */
 .scene-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
-.stab { padding: 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border);
-  background: var(--surface); cursor: pointer; text-align: center; min-width: 56px; }
-.stab .sn { font-family: var(--mono); font-size: 10px; color: var(--text-faint); display: block; }
+.stab { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap;
+  padding: 5px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--surface); cursor: pointer; text-align: center; min-width: 56px; text-decoration: none; color: inherit; }
+.stab .sn { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
 .stab .nm { font-size: 12px; color: var(--text-muted); }
-.stab .rows { font-size: 10px; color: var(--text-faint); }
-.stab.active { background: var(--accent-soft); border-color: rgba(240,180,41,.45); }
-.stab.active .nm { color: var(--accent-strong); font-weight: 600; }
-.stab.dirty::after { content: "•"; color: var(--dirty); margin-left: 3px; }
+.stab .rows { font-size: 10px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.stab.active { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.stab.active .sn, .stab.active .nm { color: var(--accent-strong); font-weight: 600; }
+.stab.dirty .nm::after { content: " •"; color: var(--dirty); }
 
 /* Scene table */
-.tbl-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: auto; }
+.table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: auto; scrollbar-color: var(--border-strong) transparent; scrollbar-width: thin; }
+.table-wrap::-webkit-scrollbar { height: 8px; width: 8px; }
+.table-wrap::-webkit-scrollbar-track { background: transparent; }
+.table-wrap::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+.table-wrap table { border-collapse: collapse; width: 100%; }
 /* Fixed geometry: cell content (a colour control appearing when a lamp is
    included) must never move the columns. Widths are declared once via <col>. */
 /* `min-width` with the wrapper's `overflow: auto`: below this the matrix
-   scrolls sideways rather than crushing a column to nothing. A 0px cell wraps
-   its text one character per line, the row grows, and rows stop scanning as a
-   grid. Every column below is therefore sized. */
-table { border-collapse: collapse; width: 100%; min-width: 900px; table-layout: fixed; }
-th { text-align: left; padding: 9px 12px; background: var(--raised); border-bottom: 1px solid var(--border);
-  font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em; font-weight: 500; position: sticky; top: 0; }
-th.c { text-align: center; }
+   scrolls sideways rather than crushing a column to nothing, so rows keep
+   scanning as a grid. Every column but the lamp name is sized. */
+.scenetbl { table-layout: fixed; min-width: 900px; }
+.table-wrap thead th { text-align: left; padding: 9px 12px; background: var(--raised); border-bottom: 1px solid var(--border);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
 /* `vertical-align: middle`, because the default is `baseline` and a table row
    grows to line up the first baseline of every cell. Controls of different
-   heights (a 24px level box, a 30px colour cell, a 28px checkbox) would then
+   heights (a 24px level box, a 30px colour cell, a 26px checkbox) would then
    make an excluded row taller than an included one for no visible reason.
    Middle alignment makes a row exactly its tallest control plus padding. */
-td { padding: 7px 12px; vertical-align: middle; border-bottom: 1px solid rgba(42,51,64,.5); }
-tr:hover td { background: rgba(35,44,56,.5); }
-tr.rowdirty td:first-child { box-shadow: inset 2px 0 0 var(--dirty); }
+.table-wrap tbody td { padding: 8px 12px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; white-space: nowrap; }
+.table-wrap tbody tr:last-child td { border-bottom: none; }
+.table-wrap tbody tr:hover td { background: var(--hover); }
+td.c, th.c { text-align: center; }
 td.lamp .vl { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-right: 8px; }
-td.c { text-align: center; }
+tr.rowdirty td:first-child { box-shadow: inset 2px 0 0 var(--dirty); }
 
 /* `vertical-align: middle` because an inline-flex box takes its baseline from
    its content, and this one is empty when the row is excluded. At the default
@@ -112,8 +134,9 @@ td.c { text-align: center; }
    descender space, so the checkbox, not the colour cell, would set the height
    of an excluded row. */
 .inc { width: 26px; height: 26px; vertical-align: middle; border-radius: var(--radius-sm); display: inline-flex; align-items: center;
-  justify-content: center; border: 1px solid var(--border); background: var(--surface); font-size: 13px; cursor: pointer; }
-.inc.on { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+  justify-content: center; border: 1px solid var(--border); background: var(--surface); font-size: 13px; cursor: pointer;
+  box-sizing: border-box; }
+.inc.on { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--accent-strong); }
 .inc.add { background: var(--dirty-soft); border: 1.5px dashed var(--dirty); color: var(--dirty); }
 
 /* Level and kelvin are FIELDS in this table, never sliders: one control per
@@ -131,7 +154,7 @@ td.c { text-align: center; }
 
 /* Colour cell — a scene slot stores exactly ONE colour mode, so the mode is
    an explicit select listing only what the bound gear supports ("—" clears
-   the colour), and the control area below it renders just that mode. Both
+   the colour), and the control area beside it renders just that mode. Both
    halves have fixed widths so an empty row and an edited row occupy the same
    box — and the row is the same *height* too, which rests on three rules (the
    table's `min-width`, `td { vertical-align }`, and the empty checkbox's own
@@ -139,9 +162,9 @@ td.c { text-align: center; }
    matrix is scanned down a column; a row that changes size with its contents
    is the one bug an operator sees on every screen. */
 .ccell { display: flex; align-items: center; gap: 8px; min-height: 30px; }
-/* Sized for the longest option, `rgbwaf`, so the control area below it starts
+/* Sized for the longest option, `rgbwaf`, so the control area beside it starts
    at the same x on every row. */
-.modesel { width: 72px; flex: none; padding: 3px 6px; background: var(--raised); color: var(--text);
+.modesel { box-sizing: border-box; width: 72px; flex: none; padding: 3px 6px; background: var(--raised); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
   font-family: var(--mono); font-size: 11px; cursor: pointer; }
 .modesel:disabled { opacity: .45; cursor: default; }
@@ -149,74 +172,81 @@ td.c { text-align: center; }
    width: a scene row that changed height or width with its mode would break
    scanning down a 64-row matrix, and that column is what the operator scans. */
 .cctl { width: 226px; flex: none; display: flex; align-items: center; gap: 6px; }
-.cctl .swatch { flex: none; }
-.cctl .num { width: 58px; }
-.cctl .unit { font-family: var(--mono); font-size: 10px; color: var(--text-faint); flex: none; }
-/* `box-sizing` is load-bearing, not tidiness: without it the declared width is
-   the content box and six boxes overflow the cell into the next column. */
-.cctl input.mini { box-sizing: border-box; width: 44px; padding: 3px 5px; background: var(--raised); color: var(--text);
-  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-  font-family: var(--mono); font-size: 11px; text-align: right; }
 /* Six channels in the same box: narrower boxes and a tighter gap, not a second
    widget. On the wire `rgb` and `rgbwaf` are one DALI colour type and only the
    channel count differs, so two controls would be two names for one thing. */
 .cctl.six { gap: 3px; }
-.cctl.six input.mini { width: 32px; }
-.swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 6px; border: 1px solid var(--border-strong); }
-/* The same 30px box a control occupies, not a bare text run: an inline text
-   node carries the line-box strut of the cell's own font, which would make an
-   excluded row taller than an included one. A placeholder must hold the
-   height it stands in for. */
-.na { display: inline-flex; align-items: center; min-height: 30px; color: var(--text-faint); font-size: 12px; }
+.cctl.six .rgb-in { width: 32px; }
+.cctl .swatch { flex: none; }
+.cctl .num { width: 58px; }
+.cctl .unit { font-family: var(--mono); font-size: 10px; color: var(--text-faint); flex: none; }
+.swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px;
+  margin-right: 6px; border: 1px solid var(--border-strong); }
+/* `box-sizing` is load-bearing, not tidiness: without it the declared width is
+   the content box and six boxes overflow the cell into the next column. */
+.rgb-in { box-sizing: border-box; width: 52px; padding: 4px 6px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; text-align: right; }
+.rgb-in.sm { width: 44px; margin-right: 0; }
+.na { color: var(--text-faint); font-size: 12px; }
 
-.applied { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
-.applied.diff { color: var(--dirty); }
-.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; }
-.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.chip.warn { color: var(--dirty); background: var(--dirty-soft); }
+.applied-v { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.applied-v.diff { color: var(--dirty); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 500; border: 1px solid transparent; white-space: nowrap; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+.chip.err { color: var(--err); background: var(--err-soft); }
+.chip.run { color: var(--info); background: var(--info-soft); }
+.chip.spin .dot, .chip.run .dot { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+
+.btn.apply { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); font-weight: 600; padding: 7px 18px; }
 .btn.discard { color: var(--text-muted); }
-
 .applybar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
   display: flex; align-items: center; gap: 14px; background: var(--overlay);
   border: 1px solid var(--border-strong); border-radius: 12px; padding: 10px 14px;
-  box-shadow: 0 8px 28px rgba(0,0,0,.45); }
+  box-shadow: var(--shadow); z-index: 40; }
 .applybar .txt { font-size: 13px; }
 .applybar .txt b { color: var(--text); }
-.applybar.busy .txt { color: var(--text-muted); }
-.applybar .phase { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
-  padding: 2px 9px; border-radius: 999px; }
-.applybar .phase .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.applybar .phase.run { color: var(--info, #4da3ff); background: rgba(77,163,255,.13); }
-.applybar .phase.run .dot { animation: apulse 1.2s ease-in-out infinite; }
-.applybar .phase.done { color: var(--ok); background: var(--ok-soft); }
-.applybar .phase.wait { color: var(--text-faint); background: var(--raised); }
-.applybar .phase.err { color: var(--err); background: var(--err-soft); }
-@keyframes apulse { 50% { opacity: .25; } }
-.btn.apply { background: var(--accent); border-color: var(--accent); color: #14161a; font-weight: 600; padding: 7px 18px; }
-.crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
-.crumbs a { color: var(--text-muted); text-decoration: none; }
+
+/* A demo of a state with no place in the screen above gets its own heading. */
+.state-label { display: flex; align-items: center; gap: 8px; margin: 36px 0 14px; }
+.state-label .ln { flex: 1; height: 1px; background: var(--border); }
+.state-label span { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
+
+/* Operation toasts: stacked bottom right on the screen, shown in place here. */
+.toasts { position: fixed; right: 18px; bottom: 18px; display: grid; gap: 10px; z-index: 60; width: 320px; }
+.op { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 11px 13px; cursor: pointer; }
+.op .row1 { display: flex; align-items: center; gap: 10px; }
+.op .title { font-weight: 600; font-size: 13px; flex: 1; }
+.toasts .op { cursor: default; box-shadow: var(--shadow); }
+.toasts .op .detail { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-top: 5px;
+  overflow: hidden; text-overflow: ellipsis; }
+.toasts .op .close { background: none; border: none; color: var(--text-faint); cursor: pointer; font-size: 13px; padding: 0 2px; }
+.bar { height: 4px; border-radius: 2px; background: var(--raised); margin-top: 10px; overflow: hidden; }
+.bar .fill { height: 100%; width: 54%; background: var(--info); border-radius: 2px; }
+.bar.indet .fill { width: 30%; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
 </style>
 </head>
 <body>
 <div class="page">
-  <div class="crumbs"><a href="#">Adapter 0</a> / Scenes</div>
+  <div class="crumbs">Adapter 0 / Scenes</div>
 
   <div class="head">
     <h1>Scenes</h1>
-    <!-- HA select opt-in (`ha_select_enabled`): a metadata affordance in the
-         info tint — it must not compete with lamp state, which is what amber
-         is reserved for. Checked = the scene is an option in the Home
-         Assistant scene select. -->
-    <label class="hatoggle"><input type="checkbox" checked> Home Assistant</label>
-    <!-- TWO numbers, never summed. This chip is the GEAR's condition: rows
-         whose desired != applied, healed only by an apply the gear confirms.
-         `--dirty` is reserved for exactly that. The operator's own unsaved
-         edits live in the apply bar below and nowhere else — summing them
-         would make the bar permanent wherever a divergence stands, with
-         Discard, which can only clear the local half, greyed out. -->
-    <span class="chip warn"><span class="dot"></span>7 rows dirty on gear</span>
+    <span class="sub">Adapter 0 · 16 scenes</span>
+    <span class="h1-wrap" title="Click to rename scene 2">
+      <span class="name-edit-wrap"><input class="name-edit" value="Movie" placeholder="— scene 2 unnamed"></span>
+      <!-- HA select opt-in (`ha_select_enabled`): a metadata affordance in the
+           info tint — it must not compete with lamp state, which is what amber
+           is reserved for. Checked = the scene is an option in the Home
+           Assistant scene select. -->
+      <label class="hatoggle"><input type="checkbox" checked> Home Assistant</label>
+      <span class="pencil">✎</span>
+    </span>
     <span class="spacer"></span>
-    <button class="btn">Rename scene</button>
     <!-- Recall scope (§14.1): "Whole bus" is the broadcast recall (empty
          POST body); picking a group sends ONE group-addressed GO TO SCENE —
          each member fades to its own sceneX, MASK members stay put,
@@ -233,19 +263,26 @@ td.c { text-align: center; }
   </div>
 
   <div class="scene-tabs">
-    <div class="stab"><span class="sn">S0</span><span class="nm">All on</span><span class="rows">12 lamps</span></div>
-    <div class="stab"><span class="sn">S1</span><span class="nm">Evening</span><span class="rows">8 lamps</span></div>
-    <div class="stab active dirty"><span class="sn">S2</span><span class="nm">Movie</span><span class="rows">6 lamps</span></div>
-    <div class="stab"><span class="sn">S3</span><span class="nm">—</span><span class="rows">0</span></div>
-    <div class="stab"><span class="sn">S4</span><span class="nm">—</span><span class="rows">0</span></div>
-    <div class="stab"><span class="sn">S5</span><span class="nm">—</span><span class="rows">0</span></div>
-    <div class="stab"><span class="sn">S6</span><span class="nm">—</span><span class="rows">0</span></div>
-    <div class="stab"><span class="sn">S7</span><span class="nm">—</span><span class="rows">0</span></div>
-    <div class="stab"><span class="sn">…</span><span class="nm">S8–S15</span><span class="rows"></span></div>
+    <a class="stab" href="#"><span class="sn">S0</span><span class="nm">All on</span><span class="rows">12 lamps</span></a>
+    <a class="stab" href="#"><span class="sn">S1</span><span class="nm">Evening</span><span class="rows">8 lamps</span></a>
+    <a class="stab active dirty" href="#"><span class="sn">S2</span><span class="nm">Movie</span><span class="rows">5 lamps</span></a>
+    <a class="stab" href="#"><span class="sn">S3</span><span class="nm">—</span><span class="rows">0</span></a>
+    <a class="stab" href="#"><span class="sn">S4</span><span class="nm">—</span><span class="rows">0</span></a>
+    <a class="stab" href="#"><span class="sn">S5</span><span class="nm">—</span><span class="rows">0</span></a>
+    <a class="stab" href="#"><span class="sn">S6</span><span class="nm">—</span><span class="rows">0</span></a>
+    <a class="stab" href="#"><span class="sn">S7</span><span class="nm">—</span><span class="rows">0</span></a>
+    <a class="stab" href="#"><span class="sn">S8</span><span class="nm">—</span><span class="rows">0</span></a>
+    <a class="stab" href="#"><span class="sn">S9</span><span class="nm">—</span><span class="rows">0</span></a>
+    <a class="stab" href="#"><span class="sn">S10</span><span class="nm">—</span><span class="rows">0</span></a>
+    <a class="stab" href="#"><span class="sn">S11</span><span class="nm">—</span><span class="rows">0</span></a>
+    <a class="stab" href="#"><span class="sn">S12</span><span class="nm">—</span><span class="rows">0</span></a>
+    <a class="stab" href="#"><span class="sn">S13</span><span class="nm">—</span><span class="rows">0</span></a>
+    <a class="stab" href="#"><span class="sn">S14</span><span class="nm">—</span><span class="rows">0</span></a>
+    <a class="stab" href="#"><span class="sn">S15</span><span class="nm">—</span><span class="rows">0</span></a>
   </div>
 
-  <div class="tbl-wrap">
-    <table>
+  <div class="table-wrap">
+    <table class="scenetbl">
       <colgroup>
         <!-- The lamp name is the only elastic column: it is the one that can
              absorb a wider viewport without changing what a control looks
@@ -260,7 +297,7 @@ td.c { text-align: center; }
           <th>Level</th>
           <th>Color</th>
           <th class="c">Power</th>
-          <th>Applied (on gear)</th>
+          <th title="What the gear last confirmed for this scene slot">Applied</th>
         </tr>
       </thead>
       <tbody>
@@ -268,51 +305,67 @@ td.c { text-align: center; }
           <td class="lamp"><span class="vl">VL 00</span>Kitchen main</td>
           <td class="c"><span class="inc on">✓</span></td>
           <td><span class="lvl"><input class="num" value="75"><span class="unit">/254</span></span></td>
-          <td><span class="ccell"><select class="modesel" disabled><option>—</option></select><span class="cctl"><span class="na">no colour</span></span></span></td>
-          <td class="c cval">on</td>
-          <td><span class="applied">75</span></td>
+          <td><span class="ccell"><select class="modesel" disabled><option>—</option></select><span class="cctl"></span></span></td>
+          <td class="c"><span class="cval">on</span></td>
+          <td><span class="applied-v">75</span></td>
         </tr>
         <tr class="rowdirty">
           <td class="lamp"><span class="vl">VL 01</span>Kitchen island</td>
           <td class="c"><span class="inc on">✓</span></td>
           <td><span class="lvl"><input class="num dirty" value="40"><span class="unit">/254</span></span></td>
           <td><span class="ccell"><select class="modesel"><option selected>—</option><option>cct</option></select><span class="cctl"></span></span></td>
-          <td class="c cval">on</td>
-          <td><span class="applied diff">90 → 40</span></td>
+          <td class="c"><span class="cval">on</span></td>
+          <td><span class="applied-v diff">90 → 40</span></td>
         </tr>
-        <!-- `Applied (on gear)` colour is a READBACK, not the echo of the
-             last write — the controller reads the scene's stored colour
-             through the DT8 REPORT registers after every program and on
-             the on-demand `scene_colours` attribute read. So a row can be
-             dirty on colour alone: below, the gear clamped a 2500 K ask into
-             its own 2703 K warm limit and the slot honestly holds 370 mirek.
-             Same `--dirty` treatment as a level divergence — desired ≠ applied
-             is one concept, whatever field diverges. The operation still
-             commits (a clamp is the gear working as specified); the row
-             staying visibly dirty is the surface for it. -->
+        <!-- A row can be dirty on colour alone. The controller reads a scene's
+             stored colour back through the DT8 REPORT registers after it
+             programs the slot and on the `scene_colours` attribute read, so
+             below, the gear clamped a 2500 K ask into its own warm limit and
+             the slot honestly holds another value. The operation still
+             commits, because a clamp is the gear working as specified; the row
+             staying dirty is the surface for it. It takes the same `--dirty`
+             mark as a level divergence — desired ≠ applied is one concept,
+             whatever field diverges — while the Applied column reports the
+             level only. -->
         <tr class="rowdirty">
-          <td class="lamp"><span class="vl">VL 02</span>Hall spot</td>
+          <td class="lamp"><span class="vl">VL 02</span>Hall spot 1</td>
           <td class="c"><span class="inc on">✓</span></td>
           <td><span class="lvl"><input class="num" value="60"><span class="unit">/254</span></span></td>
-          <td><span class="ccell"><select class="modesel"><option>—</option><option selected>cct</option></select><span class="cctl"><span class="swatch" style="background:#ffcf8a"></span><input class="num" value="2500"><span class="unit">K</span></span></span></td>
-          <td class="c cval">on</td>
-          <td><span class="applied diff">60 · 2703 K (clamped)</span></td>
+          <td><span class="ccell"><select class="modesel"><option>—</option><option selected>cct</option></select><span class="cctl"><span class="swatch" style="background:rgb(255, 171, 88)"></span><input class="num" value="2500"><span class="unit">K</span></span></span></td>
+          <td class="c"><span class="cval">on</span></td>
+          <td><span class="applied-v">60</span></td>
+        </tr>
+        <tr>
+          <td class="lamp"><span class="vl">VL 03</span>Hall spot 2</td>
+          <td class="c"><span class="inc"></span></td>
+          <td><span class="na">—</span></td>
+          <td><span class="ccell"><select class="modesel" disabled><option selected>—</option><option>cct</option></select><span class="cctl"></span></span></td>
+          <td class="c"><span class="na">—</span></td>
+          <td><span class="applied-v">—</span></td>
         </tr>
         <tr class="rowdirty">
           <td class="lamp"><span class="vl">VL 04</span>Living CCT</td>
           <td class="c"><span class="inc add">✓</span></td>
           <td><span class="lvl"><input class="num dirty" value="120"><span class="unit">/254</span></span></td>
-          <td><span class="ccell"><select class="modesel"><option>—</option><option selected>cct</option></select><span class="cctl"><span class="swatch" style="background:#ffd9a0"></span><input class="num" value="2700"><span class="unit">K</span></span></span></td>
-          <td class="c cval">on</td>
-          <td><span class="applied diff">not in scene</span></td>
+          <td><span class="ccell"><select class="modesel"><option>—</option><option selected>cct</option></select><span class="cctl"><span class="swatch" style="background:rgb(255, 180, 107)"></span><input class="num dirty" value="2700"><span class="unit">K</span></span></span></td>
+          <td class="c"><span class="cval">on</span></td>
+          <td><span class="applied-v diff">not in scene</span></td>
         </tr>
         <tr>
           <td class="lamp"><span class="vl">VL 05</span>TV strip</td>
           <td class="c"><span class="inc on">✓</span></td>
           <td><span class="lvl"><input class="num" value="30"><span class="unit">/254</span></span></td>
-          <td><span class="ccell"><select class="modesel"><option>—</option><option>cct</option><option selected>rgb</option><option>xy</option></select><span class="cctl"><span class="swatch" style="background:#28324e"></span><input class="mini" value="40"><input class="mini" value="50"><input class="mini" value="78"></span></span></td>
-          <td class="c cval">on</td>
-          <td><span class="applied">30</span></td>
+          <td><span class="ccell"><select class="modesel"><option>—</option><option>cct</option><option selected>rgb</option><option>xy</option></select><span class="cctl"><span class="swatch" style="background:rgb(40,50,78)"></span><input class="rgb-in sm" value="40" title="R"><input class="rgb-in sm" value="50" title="G"><input class="rgb-in sm" value="78" title="B"></span></span></td>
+          <td class="c"><span class="cval">on</span></td>
+          <td><span class="applied-v">30</span></td>
+        </tr>
+        <tr>
+          <td class="lamp"><span class="vl">VL 06</span><span class="name-faint">— unnamed</span></td>
+          <td class="c"><span class="inc"></span></td>
+          <td><span class="na">—</span></td>
+          <td><span class="ccell"><select class="modesel" disabled><option>—</option></select><span class="cctl"></span></span></td>
+          <td class="c"><span class="na">—</span></td>
+          <td><span class="applied-v">—</span></td>
         </tr>
         <!-- Six-channel fixture (`capabilities.rgbwaf`): the mode list gains
              `rgbwaf` and the same control grows from three boxes to six. The
@@ -326,77 +379,68 @@ td.c { text-align: center; }
           <td class="lamp"><span class="vl">VL 09</span>Studio panel</td>
           <td class="c"><span class="inc on">✓</span></td>
           <td><span class="lvl"><input class="num" value="180"><span class="unit">/254</span></span></td>
-          <td><span class="ccell"><select class="modesel"><option>—</option><option>cct</option><option>rgb</option><option selected>rgbwaf</option><option>xy</option></select><span class="cctl six"><span class="swatch" style="background:#0a141e"></span><input class="mini" value="10"><input class="mini" value="20"><input class="mini" value="30"><input class="mini" value="40"><input class="mini" value="50"><input class="mini" value="60"></span></span></td>
-          <td class="c cval">on</td>
-          <td><span class="applied diff">160</span></td>
-        </tr>
-        <tr>
-          <td class="lamp"><span class="vl">VL 02</span>Hall spot 1</td>
-          <td class="c"><span class="inc"></span></td>
-          <td><span class="na">—</span></td>
-          <td><span class="ccell"><select class="modesel" disabled><option>—</option></select><span class="cctl"></span></span></td>
-          <td class="c"><span class="na">—</span></td>
-          <td><span class="applied">—</span></td>
-        </tr>
-        <tr>
-          <td class="lamp"><span class="vl">VL 03</span>Hall spot 2</td>
-          <td class="c"><span class="inc"></span></td>
-          <td><span class="na">—</span></td>
-          <td><span class="ccell"><select class="modesel" disabled><option>—</option></select><span class="cctl"></span></span></td>
-          <td class="c"><span class="na">—</span></td>
-          <td><span class="applied">—</span></td>
-        </tr>
-        <tr>
-          <td class="lamp"><span class="vl">VL 06</span>— unnamed <span style="font-size:10px;color:var(--text-faint);font-style:italic">unbound</span></td>
-          <td class="c"><span class="inc" style="opacity:.4;cursor:default"></span></td>
-          <td><span class="na">—</span></td>
-          <td><span class="ccell"><select class="modesel" disabled><option>—</option></select><span class="cctl"></span></span></td>
-          <td class="c"><span class="na">—</span></td>
-          <td><span class="applied">—</span></td>
+          <td><span class="ccell"><select class="modesel"><option>—</option><option>cct</option><option>rgb</option><option selected>rgbwaf</option><option>xy</option></select><span class="cctl six"><span class="swatch" style="background:rgb(10,20,30)"></span><input class="rgb-in sm" value="10" title="R"><input class="rgb-in sm" value="20" title="G"><input class="rgb-in sm" value="30" title="B"><input class="rgb-in sm" value="40" title="W"><input class="rgb-in sm" value="50" title="A"><input class="rgb-in sm" value="60" title="F"></span></span></td>
+          <td class="c"><span class="cval">on</span></td>
+          <td><span class="applied-v">180</span></td>
         </tr>
       </tbody>
     </table>
   </div>
 
   <!-- The apply bar appears ONLY when the operator has unsaved edits, and its
-       count is those edits alone. Discard clears exactly what the bar counts,
-       so the button is live whenever the bar is on screen. -->
+       count is those edits alone — one per edited row. Discard clears exactly
+       what the bar counts, so the button is live whenever the bar is on
+       screen. -->
   <div class="applybar">
-    <span class="txt"><b>3 pending edits</b> in scene 2 — 1 add · 2 level updates</span>
+    <span class="txt"><b>2 pending edits</b> in scene 2</span>
     <button class="btn discard">Discard</button>
     <button class="btn apply">Apply to bus</button>
   </div>
+  <!-- TWO numbers, never summed. This chip, under the matrix, is the GEAR's
+       condition: rows whose desired != applied, healed only by an apply the
+       gear confirms. It takes the warn tone that desired ≠ applied shares.
+       The operator's own unsaved edits live in the apply bar and nowhere
+       else — summing them would make the bar permanent wherever a divergence
+       stands, with Discard, which can only clear the local half, greyed out. -->
+  <span class="chip warn"><span class="dot"></span>1 row dirty on gear</span>
 
+  <div class="state-label"><span>Save and apply — one toast per operation</span><span class="ln"></span></div>
   <!--
-    Save spans TWO operations: the row write (`config_write`, 202 +
-    operation id, committed atomically by the registry) and only then the
-    apply that puts it on the wire. They fail differently and must read
-    differently — "the rows were not saved" is not "the gear did not take them",
-    and the second is recoverable by pressing Apply again while the first is not.
-    A scene PUT is sixteen bus chunks; the operator sees one Save.
+    Save spans TWO operations: the row write (`config_write`, 202 + operation
+    id, committed atomically by the registry) and only then the apply that
+    puts it on the wire. Each reports in its own toast, "Scene 2 save" and
+    "Scene 2 apply", because they fail differently — "the rows were not saved"
+    is not "the gear did not take them". A failed save keeps the edits and the
+    apply bar; after a failed apply the saved rows stay dirty on gear. Toasts
+    stack in the order they are pushed, and the screen is busy while one save
+    and apply runs, so the stack is the committed save above the apply it
+    started.
   -->
-  <div class="applybar busy" style="position: static; transform: none; margin-top: 14px;">
-    <span class="phase run"><span class="dot"></span>Saving rows</span>
-    <span class="phase wait"><span class="dot"></span>Apply</span>
-    <span class="txt">writing to the registry…</span>
+  <div class="toasts" style="position: static;">
+    <div class="op">
+      <div class="row1"><span class="title">Scene 2 save</span><span class="chip ok"><span class="dot"></span>succeeded</span><button class="close" title="Dismiss">✕</button></div>
+      <div class="detail">cfg-scn-0-2-41</div>
+    </div>
+    <div class="op">
+      <div class="row1"><span class="title">Scene 2 apply</span><span class="chip run spin"><span class="dot"></span>running</span><button class="close" title="Dismiss">✕</button></div>
+      <div class="bar indet"><div class="fill"></div></div>
+      <div class="detail">scn-apply-0-2-42</div>
+    </div>
   </div>
 
-  <div class="applybar busy" style="position: static; transform: none; margin-top: 10px;">
-    <span class="phase done"><span class="dot"></span>Saved</span>
-    <span class="phase run"><span class="dot"></span>Applying</span>
-    <span class="txt">programming the gear…</span>
-  </div>
-
-  <div class="applybar busy" style="position: static; transform: none; margin-top: 10px;">
-    <span class="phase err"><span class="dot"></span>Save failed</span>
-    <span class="phase wait"><span class="dot"></span>Apply</span>
-    <span class="txt">nothing was written — rows unchanged</span>
-  </div>
-
-  <div class="applybar busy" style="position: static; transform: none; margin-top: 10px;">
-    <span class="phase done"><span class="dot"></span>Saved</span>
-    <span class="phase err"><span class="dot"></span>Apply failed</span>
-    <span class="txt">rows stay dirty — press Apply again</span>
+  <div class="state-label"><span>Apply failed</span><span class="ln"></span></div>
+  <!--
+    The detail is the first row's failure — the code, then the message when it
+    adds to it — and the tally of every row the apply took on. Saved, the
+    matrix above puts three rows in the diff: VL 04 to write, VL 01 and VL 02
+    to update. Here VL 01 met a contended bus, and the row it failed stays
+    dirty on gear.
+  -->
+  <div class="toasts" style="position: static;">
+    <div class="op">
+      <div class="row1"><span class="title">Scene 2 apply</span><span class="chip err"><span class="dot"></span>failed</span><button class="close" title="Dismiss">✕</button></div>
+      <div class="detail">operation_failed — bus_contended · 1 written · 1 updated · 1 failed</div>
+    </div>
   </div>
 </div>
 </body>

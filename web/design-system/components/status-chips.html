@@ -58,31 +58,39 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); margin: 22px 0 10px; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
-.chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 9px; border-radius: 999px;
-  font-size: 12px; font-weight: 500;
-  border: 1px solid transparent;
-}
-.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.chip.ok   { color: var(--ok);   background: var(--ok-soft);   border-color: rgba(70,194,106,.25); }
-.chip.warn { color: var(--warn); background: var(--warn-soft); border-color: rgba(227,160,8,.28); }
-.chip.err  { color: var(--err);  background: var(--err-soft);  border-color: rgba(242,85,90,.28); }
-.chip.info { color: var(--info); background: var(--info-soft); border-color: rgba(77,163,255,.28); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 500; border: 1px solid transparent; white-space: nowrap; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+.chip.err { color: var(--err); background: var(--err-soft); }
+.chip.info, .chip.run { color: var(--info); background: var(--info-soft); }
 .chip.idle { color: var(--text-muted); background: var(--raised); border-color: var(--border); }
+/* An operation that stood down for an operator command. Grey like idle, never
+   the failure red: standing down for an operator is routine, not a fault. */
+.chip.stood-down { color: var(--text-muted); background: var(--raised); border-color: var(--border); }
+.chip.spin .dot, .chip.run .dot { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
 
-.chip.spin .dot { animation: pulse 1.2s ease-in-out infinite; }
-@keyframes pulse { 50% { opacity: .3; } }
+/* Where an attribute's value came from and how old it is. Smaller than a chip:
+   it sits at the end of an attribute row and qualifies the value beside it. */
+.src { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+.src .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.src.readback { color: var(--ok); background: var(--ok-soft); }
+.src.written { color: var(--info); background: var(--info-soft); }
+.src.stale { color: var(--text-faint); background: var(--raised); }
+.src.stored .dot { background: var(--text-muted); }
+.src.stored { color: var(--text-muted); }
 
 /* Type badge: squared, mono */
-.badge {
-  display: inline-flex; align-items: center;
-  padding: 2px 7px; border-radius: var(--radius-sm);
-  font-family: var(--mono); font-size: 11px;
-  background: var(--raised); color: var(--text-muted); border: 1px solid var(--border);
-}
-.badge.dt8 { color: var(--info); border-color: rgba(77,163,255,.3); }
+.badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11px; background: var(--raised); color: var(--text-muted); border: 1px solid var(--border); }
 .badge.addr { color: var(--text); background: var(--overlay); }
+.badge.dt8 { color: var(--info); border-color: color-mix(in srgb, var(--info) 30%, transparent); }
+.badge .prov { font-family: var(--font); color: var(--text-faint); font-size: 10px; margin-left: 4px; }
+/* A type set by hand, not discovered: the provenance word turns amber. */
+.badge.declared { border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+.badge.declared .prov { color: var(--warn); }
 .note { color: var(--text-muted); font-size: 13px; line-height: 1.55; max-width: 62ch; margin: 8px 0 0; }
 .note code { font-family: var(--mono, ui-monospace, monospace); color: var(--text); font-size: 12px; }
 </style>
@@ -99,20 +107,37 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: v
     A lamp's power and level are not a chip. A chip has a <i>fixed</i> hue for a
     <i>named</i> condition; a lamp's state carries its own colour and level, so it
     has its own cell (<code>components/lamp-state</code>), and a gear that stops
-    answering shows there as <b>no answer</b>.
+    answering shows there as <b>no answer</b>. The input-device header uses all
+    three chips; the physical-device header shows only <b>Present</b>.
   </p>
 
   <h2>DALI status flags (QueryStatus)</h2>
   <!-- All eight bits of IEC 62386-102 table 12, named after the §9.16
        variables. Two of them are not faults and must not read as one:
-       "Fade running" and "Lamp lit" are `info`, so the summary chip in the
-       devices table stays "OK" while they are raised. -->
+       "Fade running" and "Lamp lit" are `info`, so the devices table's Status
+       column stays a plain OK while they are raised; it names the first raised
+       fault instead. -->
+  <div class="row">
+    <span class="chip idle"><span class="dot"></span>Lamp failure</span>
+    <span class="chip idle"><span class="dot"></span>Gear failure</span>
+    <span class="chip info"><span class="dot"></span>Lamp lit</span>
+    <span class="chip idle"><span class="dot"></span>Limit error</span>
+    <span class="chip info"><span class="dot"></span>Fade running</span>
+    <span class="chip idle"><span class="dot"></span>Reset state</span>
+    <span class="chip idle"><span class="dot"></span>No short address</span>
+    <span class="chip warn"><span class="dot"></span>Power cycle seen</span>
+  </div>
+  <p class="note">
+    The device page's Status card draws all eight on every read: a raised flag in
+    its own tone, a clear one <code>idle</code>. This read is a lamp fading up
+    after a power cycle. Each flag raised:
+  </p>
   <div class="row">
     <span class="chip err"><span class="dot"></span>Lamp failure</span>
     <span class="chip err"><span class="dot"></span>Gear failure</span>
     <span class="chip info"><span class="dot"></span>Lamp lit</span>
     <span class="chip warn"><span class="dot"></span>Limit error</span>
-    <span class="chip info spin"><span class="dot"></span>Fade running</span>
+    <span class="chip info"><span class="dot"></span>Fade running</span>
     <span class="chip warn"><span class="dot"></span>Reset state</span>
     <span class="chip warn"><span class="dot"></span>No short address</span>
     <span class="chip warn"><span class="dot"></span>Power cycle seen</span>
@@ -131,21 +156,39 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: v
 
   <h2>Attribute source / freshness</h2>
   <div class="row">
-    <span class="chip ok"><span class="dot"></span>readback · 12 s</span>
-    <span class="chip info"><span class="dot"></span>write-confirmed · 3 m</span>
-    <span class="chip idle"><span class="dot"></span>never read</span>
+    <span class="src readback"><span class="dot"></span>readback · 12 s ago</span>
+    <span class="src written"><span class="dot"></span>written · 3 m ago</span>
+    <span class="src stale"><span class="dot"></span>never read</span>
+  </div>
+  <p class="note">
+    Not a chip: the last column of an attribute row on the device page.
+    <b>readback</b> is a value the gear answered to a read, <b>written</b> one the
+    controller wrote and the gear confirmed. Input-device values say <b>read</b>,
+    or <b>stored</b> for a value the controller holds with no read time:
+  </p>
+  <div class="row">
+    <span class="src readback"><span class="dot"></span>read · 40 s ago</span>
+    <span class="src stored"><span class="dot"></span>stored</span>
+    <span class="src stale"><span class="dot"></span>never read</span>
   </div>
 
   <h2>Operation lifecycle</h2>
   <div class="row">
     <span class="chip idle"><span class="dot"></span>accepted</span>
-    <span class="chip info spin"><span class="dot"></span>running</span>
+    <span class="chip run spin"><span class="dot"></span>running</span>
     <span class="chip ok"><span class="dot"></span>succeeded</span>
     <span class="chip err"><span class="dot"></span>failed</span>
+    <span class="chip stood-down"><span class="dot"></span>interrupted</span>
     <span class="chip warn"><span class="dot"></span>timed out</span>
     <span class="chip idle"><span class="dot"></span>cancelled</span>
     <span class="chip idle"><span class="dot"></span>unknown</span>
   </div>
+  <p class="note">
+    <b>interrupted</b> is a failed operation whose error is <code>preempted</code>:
+    it stood down for an operator command. It carries no failure detail, and its
+    toast reads <i>Stood down for an operator command</i>, with <i>retrying</i>
+    when the action starts it again.
+  </p>
   <p class="note">
     <b>unknown</b> is neutral on purpose, and it is not the same as a failure.
     The controller keeps a finished operation for sixty seconds; a client that
@@ -158,19 +201,25 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: v
 
   <h2>Config sync ("dirty")</h2>
   <div class="row">
-    <span class="chip ok"><span class="dot"></span>In sync</span>
-    <span class="chip warn"><span class="dot"></span>3 pending changes</span>
+    <span class="chip warn"><span class="dot"></span>3 rows dirty on gear</span>
+    <span class="chip warn"><span class="dot"></span>scene dirty</span>
   </div>
+  <p class="note">
+    In the Groups header, and under the matrix on Scenes. A view in sync shows
+    no chip; <b>scene dirty</b> is on Scenes only, and only while no row is
+    dirty on gear.
+  </p>
 
   <h2>Type & address badges</h2>
   <div class="row">
-    <span class="badge addr">A0 · 04</span>
+    <span class="badge addr">SA 04</span>
     <span class="badge">DT6 LED</span>
     <span class="badge dt8">DT8 CCT</span>
     <span class="badge dt8">DT8 RGB</span>
-    <span class="badge">VL 12</span>
-    <span class="badge">G7</span>
-    <span class="badge">Scene 2</span>
+    <span class="badge">dt6_led<span class="prov">· discovered</span></span>
+    <span class="badge declared">dt8_color<span class="prov">· manual</span></span>
+    <span class="badge">301 button</span>
+    <span class="badge">2 instances</span>
   </div>
 </div>
 </body>
