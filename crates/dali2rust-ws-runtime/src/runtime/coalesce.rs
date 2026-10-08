@@ -16,8 +16,8 @@ mod tests {
     use super::*;
     use dali2rust_contracts::bus::event_envelope;
     use dali2rust_contracts::msg::{
-        LightSetpoint, Origin, RuntimeObservation, RuntimeStateChangedEvent,
-        VirtualLampChangedEvent,
+        fixed_text_64, LightSetpoint, Origin, RulesActivationEvent, RuntimeObservation,
+        RuntimeStateChangedEvent, VirtualLampChangedEvent,
     };
 
     fn addressed_env(
@@ -105,6 +105,35 @@ mod tests {
         push_envelope(&mut c, lamp_changed_env(1));
         assert_eq!(c.take_superseded(), 0);
         assert_eq!(c.drain().count(), 2);
+    }
+
+    fn activation_env(rule_name: &str, effects: u8) -> Arc<EventEnvelope> {
+        Arc::new(event_envelope(
+            0,
+            u64::from(effects),
+            0,
+            Some(Origin::Rules),
+            RulesActivationEvent {
+                rule_name: fixed_text_64(rule_name),
+                dry: false,
+                effects,
+                partial: 0,
+                trigger_to_publish_ms: 1,
+            },
+        ))
+    }
+
+    #[test]
+    fn every_rule_firing_reaches_the_client_as_its_own_frame() {
+        let shared_prefix = "hall motion turns the corridor lights on at night";
+        let mut c = BurstCoalescer::new();
+        push_envelope(&mut c, activation_env("night", 1));
+        push_envelope(&mut c, runtime_env(1, 10));
+        push_envelope(&mut c, activation_env("night", 2));
+        push_envelope(&mut c, activation_env(&shared_prefix[..40], 3));
+        push_envelope(&mut c, activation_env(&shared_prefix[..44], 4));
+        assert_eq!(c.take_superseded(), 0, "a firing supersedes nothing");
+        assert_eq!(levels(&mut c), vec![1, 10, 2, 3, 4]);
     }
 
     #[test]

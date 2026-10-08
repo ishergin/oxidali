@@ -96,10 +96,6 @@ enum KeyDetail {
     Operation {
         key: dali2rust_contracts::msg::FixedText32,
     },
-    Occurrence {
-        mono_ms: u32,
-        event_info: u16,
-    },
     Identity(IdentityIds),
 }
 
@@ -114,14 +110,8 @@ pub fn coalesce_key(envelope: &EventEnvelope) -> Option<CoalesceKey> {
         ProjectionBody::Operation(ev) => KeyDetail::Operation {
             key: ev.operation_key.clone(),
         },
-        ProjectionBody::RulesActivation(ev) => KeyDetail::Operation {
-            key: dali2rust_contracts::msg::fixed_text_32(ev.rule_name.as_str()),
-        },
+        ProjectionBody::RulesActivation(_) | ProjectionBody::InputEvent(_) => return None,
         ProjectionBody::RulesChanged(_) => KeyDetail::Identity(IdentityIds::adapter(0)),
-        ProjectionBody::InputEvent(ev) => KeyDetail::Occurrence {
-            mono_ms: ev.observed_at_mono_ms,
-            event_info: ev.event_info,
-        },
         ProjectionBody::Identity(ids) => KeyDetail::Identity(ids),
     };
     Some(CoalesceKey {
@@ -519,30 +509,17 @@ mod tests {
     }
 
     #[test]
-    fn two_presses_of_one_button_never_coalesce() {
-        let first = coalesce_key(&envelope(input_event(
-            2,
-            Some(3),
-            0x002,
-            InputEventKind::Button,
-            100,
-        )))
-        .expect("projected");
-        let second = coalesce_key(&envelope(input_event(
-            2,
-            Some(3),
-            0x002,
-            InputEventKind::Button,
-            140,
-        )))
-        .expect("projected");
-        assert_ne!(first, second);
-
-        let a = coalesce_key(&envelope(input_event(0, None, 0x002, InputEventKind::Button, 200)))
-            .expect("projected");
-        let b = coalesce_key(&envelope(input_event(0, None, 0x001, InputEventKind::Button, 200)))
-            .expect("projected");
-        assert_ne!(a, b);
+    fn an_occurrence_carries_no_key_so_two_presses_or_two_firings_stay_two() {
+        let press = envelope(input_event(2, Some(3), 0x002, InputEventKind::Button, 100));
+        assert!(coalesce_key(&press).is_none(), "a press supersedes nothing");
+        let firing = envelope(dali2rust_contracts::msg::RulesActivationEvent {
+            rule_name: dali2rust_contracts::msg::fixed_text_64("night"),
+            dry: false,
+            effects: 1,
+            partial: 0,
+            trigger_to_publish_ms: 5,
+        });
+        assert!(coalesce_key(&firing).is_none(), "a firing supersedes nothing");
     }
 
     fn cct_setpoint() -> LightSetpoint {
@@ -807,11 +784,17 @@ mod tests {
     }
 
     #[test]
-    fn every_projected_sample_has_a_coalesce_key_and_unprojected_have_none() {
+    fn every_projected_state_has_a_coalesce_key_and_occurrences_and_unprojected_have_none() {
         for ev in one_of_every_projected_event() {
-            assert!(
-                coalesce_key(&ev).is_some(),
-                "projected kind without a key: {:?}",
+            let occurrence = matches!(
+                ev.payload,
+                BusEventPayload::DaliInputEventObservedEvent(_)
+                    | BusEventPayload::RulesActivationEvent(_)
+            );
+            assert_eq!(
+                coalesce_key(&ev).is_none(),
+                occurrence,
+                "a state is keyed and an occurrence is not: {:?}",
                 ev.payload
             );
         }
