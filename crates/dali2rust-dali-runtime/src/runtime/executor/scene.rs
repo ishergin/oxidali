@@ -1,5 +1,5 @@
 use dali2rust_contracts::msg::{
-    ColorMode, ColorValue, DaliSceneTargetState, PowerState, SceneProgramAction,
+    ColorMode, ColorValue, DaliSceneTargetState, SceneProgramAction,
 };
 use dali2rust_domain::dali::controller::DaliApplicationController;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
@@ -38,7 +38,7 @@ fn expected_slot_byte(
 ) -> Result<u8, SemanticDaliError> {
     match action {
         SceneProgramAction::Write | SceneProgramAction::Update => target_state
-            .map(scene_level_byte)
+            .map(DaliSceneTargetState::stored_level)
             .ok_or(SemanticDaliError::Conflict("scene_target_state_missing")),
         SceneProgramAction::Clear => Ok(SCENE_SLOT_MASK),
     }
@@ -71,7 +71,7 @@ fn program_scene_write(
     controller.transaction_exempt(|controller| {
         controller.unit(|controller| {
             prepare_scene_colour(controller, address, scene_id, target)?;
-            send_special(controller, SpecialCommand::Dtr0(scene_level_byte(target)))?;
+            send_special(controller, SpecialCommand::Dtr0(target.stored_level()))?;
             send_standard(
                 controller,
                 address,
@@ -104,7 +104,7 @@ fn prepare_scene_colour(
     if apply_scene_color(controller, address, target)? {
         return Ok(());
     }
-    clear_scene_colour(controller, address, scene_id, scene_level_byte(target))
+    clear_scene_colour(controller, address, scene_id, target.stored_level())
 }
 
 // IEC 62386-209 §11.2.2, §11.2.3, Table 4, Table 6
@@ -167,17 +167,10 @@ fn read_scene_level(
     .unwrap_or(None))
 }
 
-pub(crate) fn scene_level_byte(target: &DaliSceneTargetState) -> u8 {
-    if target.power == Some(PowerState::Off) {
-        0
-    } else {
-        target.level.unwrap_or(0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dali2rust_contracts::msg::PowerState;
     use crate::runtime::executor::helpers::{
         DT8_SET_TEMPERATURE_TC, DT8_SET_TEMPORARY_RGB_DIMLEVEL, DT8_SET_TEMPORARY_WAF_DIMLEVEL,
     };
@@ -565,16 +558,5 @@ mod tests {
             "the first repair followed a wrong level, the second only silence"
         );
         assert_script_consumed(&transport);
-    }
-
-    #[test]
-    fn power_off_row_stores_level_zero() {
-        let target = DaliSceneTargetState {
-            power: Some(PowerState::Off),
-            level: Some(120),
-            color: None,
-        };
-        assert_eq!(scene_level_byte(&target), 0);
-        assert_eq!(scene_level_byte(&level_target(120)), 120);
     }
 }

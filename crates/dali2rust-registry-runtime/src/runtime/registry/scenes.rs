@@ -13,7 +13,7 @@ use dali2rust_domain::dali::devices::dt8_color::{
 };
 use dali2rust_domain::dali::device::SCENE_NOT_SET;
 use dali2rust_domain::registry::{
-    SceneApplyRowView, SceneApplySnapshot, SceneMatrixRowView, SceneMatrixView, SceneReadPort,
+    scene_targets_converged, SceneApplyRowView, SceneApplySnapshot, SceneMatrixRowView, SceneMatrixView, SceneReadPort,
     SceneRowStateView, SceneView,
 };
 
@@ -299,8 +299,10 @@ fn applied_state(inner: &Inner, adapter_id: u8, scene_id: u8, virtual_lamp_id: u
 }
 
 fn scene_row_dirty(inner: &Inner, adapter_id: u8, scene_id: u8, virtual_lamp_id: u8) -> bool {
-    desired_raw(inner, adapter_id, scene_id, virtual_lamp_id)
-        != applied_raw(inner, adapter_id, scene_id, virtual_lamp_id)
+    let (desired_included, desired) = desired_raw(inner, adapter_id, scene_id, virtual_lamp_id);
+    let (applied_included, applied) = applied_raw(inner, adapter_id, scene_id, virtual_lamp_id);
+    desired_included != applied_included
+        || !scene_targets_converged(desired.as_ref(), applied.as_ref())
 }
 
 fn scene_dirty(inner: &Inner, adapter_id: u8, scene_id: u8) -> bool {
@@ -333,7 +335,7 @@ fn build_scene_view(inner: &Inner, adapter_id: u8, scene_id: u8) -> SceneView {
 fn build_matrix_row(inner: &Inner, adapter_id: u8, scene_id: u8, virtual_lamp_id: u8) -> SceneMatrixRowView {
     let desired = desired_state(inner, adapter_id, scene_id, virtual_lamp_id);
     let applied = applied_state(inner, adapter_id, scene_id, virtual_lamp_id);
-    let dirty = desired != applied;
+    let dirty = scene_row_dirty(inner, adapter_id, scene_id, virtual_lamp_id);
     let name = inner
         .lamps
         .get(&(adapter_id, virtual_lamp_id))

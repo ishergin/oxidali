@@ -885,7 +885,11 @@ fn what_was_programmed_into_the_old_gear_does_not_vouch_for_the_new_one() {
     let target = dali2rust_contracts::msg::DaliSceneTargetState {
         power: Some(dali2rust_contracts::msg::PowerState::On),
         level: Some(179),
-        color: None,
+        color: Some(dali2rust_contracts::msg::ColorValue {
+            mode: dali2rust_contracts::msg::ColorMode::Cct,
+            color_temperature_kelvin: 2700,
+            ..Default::default()
+        }),
     };
     let mut rows = dali2rust_contracts::msg::SceneMatrixDesiredRowList::new();
     let row = dali2rust_contracts::msg::SceneMatrixDesiredRow {
@@ -908,7 +912,7 @@ fn what_was_programmed_into_the_old_gear_does_not_vouch_for_the_new_one() {
     assert_eq!(
         scene_dirty(),
         Some(true),
-        "the new gear holds the level, but nothing says it holds the power the row asks"
+        "the new gear holds the level, but nothing says it holds the colour the row asks"
     );
 }
 

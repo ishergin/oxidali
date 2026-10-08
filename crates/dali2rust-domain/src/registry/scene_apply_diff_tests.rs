@@ -77,3 +77,20 @@ fn write_update_clear_actions_are_classified_and_sorted() {
     assert_eq!(diff[0].scene_id, 3);
     assert_eq!(diff[2].binding_short, None, "unbound row keeps None");
 }
+
+#[test]
+fn a_row_whose_gear_holds_its_level_is_not_reprogrammed_for_an_unseen_power() {
+    let read_back = DaliSceneTargetState {
+        power: None,
+        ..target(100)
+    };
+    let rows = vec![SceneApplyRowView {
+        virtual_lamp_id: 1,
+        desired_included: true,
+        desired_target: Some(target(100)),
+        applied_included: true,
+        applied_target: Some(read_back),
+        binding_short: Some(5),
+    }];
+    assert!(collect_scene_apply_diff(&snapshot(rows)).is_empty());
+}
