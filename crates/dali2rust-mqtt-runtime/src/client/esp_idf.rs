@@ -9,7 +9,9 @@ use esp_idf_svc::sys::{
     esp_mqtt_client_unsubscribe, esp_mqtt_event_id_t_MQTT_EVENT_ANY,
     esp_mqtt_event_id_t_MQTT_EVENT_CONNECTED, esp_mqtt_event_id_t_MQTT_EVENT_DATA,
     esp_mqtt_event_id_t_MQTT_EVENT_DISCONNECTED, esp_mqtt_event_id_t_MQTT_EVENT_ERROR,
-    esp_mqtt_event_id_t_MQTT_EVENT_SUBSCRIBED, esp_mqtt_event_t, EspError, ESP_FAIL,
+    esp_mqtt_error_codes_t, esp_mqtt_error_type_t_MQTT_ERROR_TYPE_CONNECTION_REFUSED,
+    esp_mqtt_error_type_t_MQTT_ERROR_TYPE_TCP_TRANSPORT, esp_mqtt_event_id_t_MQTT_EVENT_SUBSCRIBED,
+    esp_mqtt_event_t, EspError, ESP_FAIL,
 };
 
 use dali2rust_platform::mqtt::{
@@ -54,7 +56,7 @@ unsafe impl Send for RawClient {}
 
 impl Drop for RawClient {
     fn drop(&mut self) {
-        // SAFETY: the handle came from `esp_mqtt_client_init` and is destroyed once; destroy stops the task and deletes the loop that holds the handler.
+        // SAFETY: the handle came from `esp_mqtt_client_init` and is destroyed once; the bridge drops it only once the task has posted, so destroy finds the task running and stops it.
         unsafe { esp_mqtt_client_destroy(self.0) };
     }
 }
@@ -165,13 +167,22 @@ fn log_error(event: &esp_mqtt_event_t) {
         log::warn!("mqtt: error event without a cause");
         return;
     };
-    log::warn!(
-        "mqtt: error type {} (connect return {}, tls {}, socket errno {})",
-        codes.error_type,
-        codes.connect_return_code,
-        codes.esp_tls_last_esp_err,
-        codes.esp_transport_sock_errno
-    );
+    log_error_codes(codes);
+}
+
+fn log_error_codes(codes: &esp_mqtt_error_codes_t) {
+    let kind = codes.error_type;
+    if kind == esp_mqtt_error_type_t_MQTT_ERROR_TYPE_TCP_TRANSPORT {
+        log::warn!(
+            "mqtt: transport error (tls {}, socket errno {})",
+            codes.esp_tls_last_esp_err,
+            codes.esp_transport_sock_errno
+        );
+    } else if kind == esp_mqtt_error_type_t_MQTT_ERROR_TYPE_CONNECTION_REFUSED {
+        log::warn!("mqtt: broker refused the connection (return code {})", codes.connect_return_code);
+    } else {
+        log::warn!("mqtt: error type {kind}");
+    }
 }
 
 fn deliver_first_chunk(link: &MqttLink, event: &esp_mqtt_event_t) {
