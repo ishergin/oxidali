@@ -7,7 +7,8 @@ use dali2rust_domain::registry::{
 };
 use dali2rust_platform::http_fetch::{FetchError, HttpFetch};
 use dali2rust_redundancy_runtime::{
-    run_pass, PassOutcome, ReplicationCounters, ReplicationDeps, ReplicationSink, SliceDigest,
+    run_pass, PassOutcome, PulledSlice, ReplicationCounters, ReplicationDeps, ReplicationSink,
+    SliceDigest,
 };
 
 struct FakeSettings {
@@ -68,6 +69,7 @@ impl HttpFetch for FakePeer {
 struct FakeSink {
     local: Vec<SliceDigest>,
     refuse: Vec<&'static str>,
+    busy: AtomicBool,
     written: Mutex<Vec<(String, usize)>>,
 }
 
@@ -76,14 +78,16 @@ impl ReplicationSink for FakeSink {
         self.local.clone()
     }
 
-    fn write_slice(&self, name: &str, bytes: &[u8]) -> bool {
-        if self.refuse.contains(&name) {
+    fn accepts(&self, name: &str) -> bool {
+        !self.refuse.contains(&name)
+    }
+
+    fn stage(&self, pulled: Vec<PulledSlice>) -> bool {
+        if self.busy.load(Ordering::Relaxed) {
             return false;
         }
-        self.written
-            .lock()
-            .unwrap()
-            .push((name.to_string(), bytes.len()));
+        let mut written = self.written.lock().unwrap();
+        written.extend(pulled.into_iter().map(|slice| (slice.name, slice.bytes.len())));
         true
     }
 }
@@ -129,6 +133,7 @@ fn rig(local: Vec<SliceDigest>, refuse: Vec<&'static str>) -> Rig {
     let sink = Arc::new(FakeSink {
         local,
         refuse,
+        busy: AtomicBool::new(false),
         written: Mutex::new(Vec::new()),
     });
     let settings = Arc::new(FakeSettings {
@@ -230,6 +235,16 @@ fn a_refused_slice_does_not_hold_back_the_others() {
     assert!(matches!(outcome, PassOutcome::Pulled(ref v) if v.len() == 2));
     assert_eq!(rig.deps.counters.slices_rejected.load(Ordering::Relaxed), 1);
     assert_eq!(rig.deps.counters.slices_pulled.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn a_pass_whose_slices_cannot_be_staged_asks_for_no_reload() {
+    let rig = rig(Vec::new(), Vec::new());
+    rig.sink.busy.store(true, Ordering::Relaxed);
+    assert!(matches!(run_pass(&rig.deps), PassOutcome::StageBusy));
+    assert_eq!(drain_reloads(&rig, 0), 0);
+    assert_eq!(rig.deps.counters.slices_rejected.load(Ordering::Relaxed), 3);
+    assert_eq!(rig.deps.counters.slices_pulled.load(Ordering::Relaxed), 0);
 }
 
 #[test]

@@ -37,7 +37,7 @@ pub(super) fn process_one(
     adapter_count: u8,
     store: &RegistryStore,
     counters: &RegistryCommandCounters,
-    persistence_slices: Option<&std::sync::Arc<dyn dali2rust_platform::slice_store::SliceStore>>,
+    persistence: Option<&super::SlicePersistence>,
 ) {
     let BusFrame::Command(ce_arc) = frame else {
         counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
@@ -55,7 +55,7 @@ pub(super) fn process_one(
         adapter_count,
         store,
         counters,
-        persistence_slices,
+        persistence,
     );
 }
 
@@ -70,7 +70,7 @@ dali2rust_contracts::dispatch_bus_commands! {
         adapter_count: u8,
         store: &RegistryStore,
         counters: &RegistryCommandCounters,
-        persistence_slices: Option<&std::sync::Arc<dyn dali2rust_platform::slice_store::SliceStore>>,
+        persistence: Option<&super::SlicePersistence>,
     );
     payload = payload;
     ignored = { counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
@@ -131,7 +131,7 @@ dali2rust_contracts::dispatch_bus_commands! {
     PoliciesUpdateCommand(body) =>
         handle_policies_update(publisher, tid, corr, primary_adapter_id, store, counters, body),
     RegistrySliceReloadCommand(body) =>
-        handle_slice_reload(publisher, tid, corr, primary_adapter_id, store, persistence_slices, adapter_count, counters, body),
+        handle_slice_reload(publisher, tid, corr, primary_adapter_id, store, persistence, adapter_count, counters, body),
     HomeAssistantSettingsUpdateCommand(body) =>
         handle_settings_update(publisher, tid, corr, primary_adapter_id, store, counters, body),
     HomeAssistantCredentialsUpdateCommand(body) =>

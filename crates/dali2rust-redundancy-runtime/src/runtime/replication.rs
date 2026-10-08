@@ -32,6 +32,7 @@ pub enum PassOutcome {
     PeerUnreachable(FetchError),
     UpToDate,
     Pulled(Vec<String>),
+    StageBusy,
 }
 
 pub const MANIFEST_PATH: &str = "/api/v1/config/slices";
@@ -188,9 +189,16 @@ pub struct ReplicationCounters {
     pub reload_publish_failed: AtomicU32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PulledSlice {
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
 pub trait ReplicationSink: Send + Sync {
     fn local_digests(&self) -> Vec<SliceDigest>;
-    fn write_slice(&self, name: &str, bytes: &[u8]) -> bool;
+    fn accepts(&self, name: &str) -> bool;
+    fn stage(&self, pulled: Vec<PulledSlice>) -> bool;
 }
 
 pub struct ReplicationDeps {
@@ -225,22 +233,28 @@ pub fn run_pass(deps: &ReplicationDeps) -> PassOutcome {
     if pulled.is_empty() {
         return PassOutcome::UpToDate;
     }
-    request_reload(deps, &pulled);
-    PassOutcome::Pulled(pulled)
+    let names: Vec<String> = pulled.iter().map(|slice| slice.name.clone()).collect();
+    let count = u32::try_from(names.len()).unwrap_or(u32::MAX);
+    if !deps.sink.stage(pulled) {
+        deps.counters.slices_rejected.fetch_add(count, Ordering::Relaxed);
+        return PassOutcome::StageBusy;
+    }
+    deps.counters.slices_pulled.fetch_add(count, Ordering::Relaxed);
+    request_reload(deps, &names);
+    PassOutcome::Pulled(names)
 }
 
-fn pull_each(deps: &ReplicationDeps, peer_url: &str, wanted: &[String]) -> Vec<String> {
+fn pull_each(deps: &ReplicationDeps, peer_url: &str, wanted: &[String]) -> Vec<PulledSlice> {
     let mut pulled = Vec::new();
     for name in wanted {
-        let Ok(bytes) = deps.fetch.get(peer_url, &slice_path(name)) else {
-            deps.counters.slices_rejected.fetch_add(1, Ordering::Relaxed);
-            continue;
-        };
-        if deps.sink.write_slice(name, &bytes) {
-            deps.counters.slices_pulled.fetch_add(1, Ordering::Relaxed);
-            pulled.push(name.clone());
-        } else {
-            deps.counters.slices_rejected.fetch_add(1, Ordering::Relaxed);
+        match deps.fetch.get(peer_url, &slice_path(name)) {
+            Ok(bytes) if deps.sink.accepts(name) => pulled.push(PulledSlice {
+                name: name.clone(),
+                bytes,
+            }),
+            _ => {
+                deps.counters.slices_rejected.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
     pulled
@@ -289,8 +303,12 @@ pub fn spawn_replication_worker(
 
 fn replication_loop(ev_rx: &dali2rust_bus::BusSubscriberRx, deps: &ReplicationDeps) {
     loop {
-        if let PassOutcome::Pulled(slices) = run_pass(deps) {
-            log::info!("replication: pulled {} slice(s) from the peer", slices.len());
+        match run_pass(deps) {
+            PassOutcome::Pulled(slices) => {
+                log::info!("replication: pulled {} slice(s) from the peer", slices.len());
+            }
+            PassOutcome::StageBusy => log::warn!("replication: an import is staged; pass skipped"),
+            _ => {}
         }
         let wait = std::time::Duration::from_millis(REPLICATION_INTERVAL_MS);
         if matches!(

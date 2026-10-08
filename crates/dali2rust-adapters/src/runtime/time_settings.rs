@@ -13,6 +13,15 @@ pub struct ControllerSettingsSlice {
 
 const SETTINGS_VERSION: u32 = 1;
 
+pub fn validate_settings_slice(bytes: &[u8]) -> Result<(), String> {
+    let slice = postcard::from_bytes::<ControllerSettingsSlice>(bytes).map_err(|e| e.to_string())?;
+    if slice.version == SETTINGS_VERSION {
+        Ok(())
+    } else {
+        Err(format!("settings slice v{}", slice.version))
+    }
+}
+
 pub fn hydrate_timezone(clock: &dyn WallClock, slices: Option<&Arc<dyn SliceStore>>) {
     let Some(store) = slices else {
         return;

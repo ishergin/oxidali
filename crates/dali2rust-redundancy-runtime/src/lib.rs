@@ -8,7 +8,7 @@ pub use runtime::arbitration_worker::{
     SharedTransitionLog, WorkerStateHandle, ARBITRATION_HANDLED_EVENTS, TRANSITION_LOG_DEPTH,
 };
 pub use runtime::replication::{
-    run_pass, should_pull, slices_to_pull, spawn_replication_worker, PassOutcome,
+    run_pass, should_pull, slices_to_pull, spawn_replication_worker, PassOutcome, PulledSlice,
     ReplicationCounters, ReplicationDeps, ReplicationSink, SliceDigest,
     REPLICATION_HANDLED_EVENTS,
     REPLICATION_INTERVAL_MS,

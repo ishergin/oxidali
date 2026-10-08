@@ -859,10 +859,8 @@ fn wire_config_transfer(
         Box::new(ConfigSliceHandler::new(
             Arc::clone(transfer),
             bus.publisher.clone(),
-            Arc::clone(&bus.slots),
             Arc::clone(&bus.correlation),
             bus.bus_id,
-            bus.confirmation_timeout_ms,
         ))
     };
     builder

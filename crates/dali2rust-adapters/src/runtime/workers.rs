@@ -14,7 +14,9 @@ use dali2rust_operations_runtime::{
 };
 use dali2rust_platform::dali::{DaliTransport, SnifferTap};
 use dali2rust_platform::slice_store::SliceStore;
-use dali2rust_registry_runtime::{spawn_registry_worker, RegistryStore, RegistryWorkerCounters};
+use dali2rust_registry_runtime::{
+    spawn_registry_worker, RegistryStore, RegistryWorkerCounters, SlicePersistence,
+};
 
 use super::http_bridges::TransferSeams;
 
@@ -147,7 +149,13 @@ pub(crate) struct RegistryDeps {
     pub store: Arc<RegistryStore>,
     pub counters: Arc<RegistryWorkerCounters>,
     pub adapter_count: u8,
-    pub persistence_slices: Option<Arc<dyn SliceStore>>,
+    pub persistence: Option<SlicePersistence>,
+}
+
+impl RegistryDeps {
+    pub(crate) fn persistence_slices(&self) -> Option<Arc<dyn SliceStore>> {
+        self.persistence.as_ref().map(|p| Arc::clone(&p.slices))
+    }
 }
 
 struct PipelineWorkers {
@@ -261,7 +269,7 @@ fn spawn_pipeline_workers<T: DaliTransport + Send + 'static>(
         registry.adapter_count,
         Arc::clone(&registry.store),
         Arc::clone(&registry.counters),
-        registry.persistence_slices,
+        registry.persistence,
         Arc::clone(&beats.registry),
     );
     PipelineWorkers {
@@ -536,7 +544,6 @@ fn replication_deps(store: &Arc<RegistryStore>, transfer: &TransferSeams) -> Rep
             Arc::clone(store),
             transfer.slices.clone(),
             transfer.adapter_count,
-            Arc::clone(&transfer.wall_clock),
         )),
         redundancy: Arc::clone(store)
             as Arc<dyn dali2rust_domain::registry::RedundancySettingsReadPort>,
@@ -875,9 +882,8 @@ impl WorkerSpawnInputs {
         let registry_store = Arc::clone(&self.registry.store);
         let adapter_count = self.registry.adapter_count;
         let transfer = TransferSeams {
-            slices: self.registry.persistence_slices.clone(),
+            slices: self.registry.persistence_slices(),
             adapter_count,
-            wall_clock: Arc::clone(&self.hcl.clock),
         };
         (
             PipelineInputs {

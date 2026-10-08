@@ -1,29 +1,31 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use dali2rust_bus::{BusFrame, BusId, BusPublisher};
-use dali2rust_contracts::msg::RegistrySliceReloadCommand;
+use dali2rust_bus::{BusId, BusPublisher};
+use dali2rust_contracts::msg::{OperationType, Origin, RegistrySliceReloadCommand};
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 
-use crate::confirmation_bridge::PendingConfirmationSlots;
 use crate::http::dispatcher::CorrelationIdAllocator;
 use crate::http::handler::ApiHandler;
-use crate::http::handlers::common::{json_err, json_stream_dto, require_get};
+use crate::http::handlers::common::{
+    accepted_operation_response, json_err, json_stream_dto, require_get,
+};
+use crate::http::handlers::operation_dispatch::publish_begin_then_semantic_command_pair;
 use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::types::{HttpBody, HttpResponse};
 
 pub trait ConfigTransferPort: Send + Sync {
     fn slice_manifest(&self) -> Vec<SliceManifestEntry>;
     fn export_slice(&self, name: &str) -> Option<Vec<u8>>;
-    fn import_slice(&self, name: &str, bytes: &[u8]) -> Result<(), ImportRefusal>;
+    fn stage_import(&self, workflow: u64, name: &str, bytes: &[u8]) -> Result<(), ImportRefusal>;
+    fn discard_import(&self, workflow: u64);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ImportRefusal {
     UnknownSlice,
     PersistenceDisabled,
-    FlashBusy,
-    StoreFailed(String),
+    ImportBusy,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -58,10 +60,8 @@ declare_handler_shell! {
     ConfigSliceHandler {
         transfer: Arc<dyn ConfigTransferPort>,
         publisher: BusPublisher,
-        slots: Arc<PendingConfirmationSlots>,
         correlation: Arc<CorrelationIdAllocator>,
         bus_id: BusId,
-        timeout_ms: u64,
     }
 }
 
@@ -82,38 +82,40 @@ impl ConfigSliceHandler {
         if body.is_empty() {
             return json_err(422, "empty_slice");
         }
-        if let Err(refusal) = self.transfer.import_slice(name, body) {
+        let op_key = format!("slice-import-{}", self.correlation.next_id());
+        let workflow = self.correlation.next_id();
+        if let Err(refusal) = self.transfer.stage_import(workflow, name, body) {
             return match refusal {
                 ImportRefusal::UnknownSlice => json_err(404, "not_found"),
                 ImportRefusal::PersistenceDisabled => json_err(409, "persistence_disabled"),
-                ImportRefusal::FlashBusy => json_err(503, "flash_busy"),
-                ImportRefusal::StoreFailed(_) => json_err(503, "store_failed"),
+                ImportRefusal::ImportBusy => json_err(503, "import_busy"),
             };
         }
-        self.reload(name)
+        if let Err(error) = self.publish_commit(workflow, &op_key, name) {
+            self.transfer.discard_import(workflow);
+            return error;
+        }
+        accepted_operation_response(op_key, OperationType::ConfigWrite)
     }
 
-    fn reload(&self, name: &str) -> HttpResponse {
-        let correlation_id = self.correlation.next_id();
-        let cmd = dali2rust_contracts::bus::command_envelope(
+    fn publish_commit(&self, workflow: u64, op_key: &str, name: &str) -> Result<(), HttpResponse> {
+        let commit = dali2rust_contracts::bus::command_envelope(
             SOURCE_ID_UNSPECIFIED,
-            correlation_id,
+            workflow,
             self.bus_id.0,
-            None,
+            Some(Origin::Api),
             RegistrySliceReloadCommand {
                 slice_name: dali2rust_contracts::msg::fixed_text_32(name),
             },
         );
-        match crate::http::dispatcher::dispatch_and_wait_for_success(
+        publish_begin_then_semantic_command_pair(
             &self.publisher,
-            &self.slots,
-            correlation_id,
-            self.timeout_ms,
-            BusFrame::command(cmd),
-        ) {
-            Ok(()) => json_stream_dto(self.transfer.slice_manifest()),
-            Err(error) => error,
-        }
+            self.bus_id,
+            workflow,
+            op_key,
+            OperationType::ConfigWrite,
+            commit,
+        )
     }
 }
 

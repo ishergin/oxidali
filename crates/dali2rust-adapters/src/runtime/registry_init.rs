@@ -6,9 +6,9 @@ use dali2rust_domain::registry::{
     GroupReadPort, RegistryReadPort, SceneReadPort, VirtualLampReadPort,
 };
 use dali2rust_platform::slice_store::SliceStore;
-use dali2rust_registry_runtime::{RegistryStore, RegistryWorkerCounters};
+use dali2rust_registry_runtime::{RegistryStore, RegistryWorkerCounters, SlicePersistence};
 
-use super::http_bridges::{wire_registry_http_ports, RegistryHttpPorts};
+use super::http_bridges::{wire_registry_http_ports, ForeignSliceBridge, RegistryHttpPorts};
 use super::workers::RegistryDeps;
 
 pub(crate) struct RegistrySlice {
@@ -42,15 +42,18 @@ pub(crate) fn init_registry_slice(
         crate::runtime::http_bridges::TransferSeams {
             slices: persistence_slices.clone(),
             adapter_count,
-            wall_clock,
         },
     );
+    let persistence = persistence_slices.map(|slices| SlicePersistence {
+        foreign: Arc::new(ForeignSliceBridge::new(Arc::clone(&slices), wall_clock)),
+        slices,
+    });
     let deps = RegistryDeps {
         read_port: http.read_port.clone(),
         store,
         counters,
         adapter_count,
-        persistence_slices,
+        persistence,
     };
     RegistrySlice { http, deps }
 }

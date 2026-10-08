@@ -203,7 +203,12 @@ filtered: they address one device.
   any worker starts and before HTTP is mounted. Mutating HTTP is therefore never served
   before hydration — by boot order, not by a gate. A change to the boot sequence keeps
   "hydrate joins before HTTP mounts" or adds an explicit gate.
-- A standby controller reloads the slices it pulled from its peer through the same
-  hydration path, on a PSRAM stack; it reads every slice first, because a task on an
-  external stack must not call flash
-  ([ADR-018](decisions/ADR-018-controller-redundancy.md), [07](07-memory-and-cores.md)).
+- An import and a standby's pull reach the store only through the registry worker: it
+  decodes the staged bytes, writes them and reloads through the same hydration path, on a
+  PSRAM stack; it reads every slice first, because a task on an external stack must not
+  call flash ([ADR-012](decisions/ADR-012-async-chunked-config-writes.md),
+  [ADR-018](decisions/ADR-018-controller-redundancy.md), [07](07-memory-and-cores.md)).
+- A reload replaces: a slice that loads is the whole truth for its share of memory, so a
+  record it lacks — a forgotten device, an old address, a deleted lamp, a scene row — is
+  dropped, while the runtime fields of a record it keeps stay. A slice that does not load
+  leaves its share alone, and the four input-device banks are one share.

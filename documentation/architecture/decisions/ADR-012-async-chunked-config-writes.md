@@ -53,6 +53,12 @@ Supporting rules:
 - **Bounded staging.** At most two config-write stages exist at once, a stage older than
   15 s is reaped on the registry worker's idle turn, and a `ConfigWrite` operation's TTL
   is 10 s rather than the general ten-minute TTL.
+- **A slice import stages off the bus.** A stored slice (up to 32 KiB) would be hundreds
+  of chunks, so the HTTP import and a standby's replication pass hand its bytes to the
+  registry's one import stage, keyed by the workflow id, and publish only
+  `RegistrySliceReloadCommand` — the bracket. The registry worker decodes the bytes with
+  the hydration decoders before anything is written, writes them, and reloads; a second
+  import while the stage is held is refused, and an unclaimed stage is reaped after 15 s.
 
 ### Rejected alternatives
 

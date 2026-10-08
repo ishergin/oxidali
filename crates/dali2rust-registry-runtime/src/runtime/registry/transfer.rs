@@ -1,5 +1,9 @@
+use std::sync::PoisonError;
+
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, StoreError};
 
+use super::import_stage::StagedSlice;
+use super::persistence::validate_registry_slice;
 use super::store::RegistryStore;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,59 +74,73 @@ impl RegistryStore {
     pub fn export_slice(&self, slices: &dyn SliceStore, key: SliceKey) -> Option<Vec<u8>> {
         slices.load(key).ok()
     }
+}
 
-    pub fn import_slice(
-        &self,
-        slices: &dyn SliceStore,
-        key: SliceKey,
-        bytes: &[u8],
-    ) -> Result<(), StoreError> {
-        if dali2rust_platform::flash_gate::firmware_write_open() {
-            return Err(StoreError::Backend("firmware update in progress".to_string()));
-        }
-        let _serialised = self.flush_buf.lock().map_err(|_| {
-            StoreError::Backend("flush buffer poisoned".to_string())
-        })?;
-        self.write_import(slices, key, bytes)
+pub trait ForeignSliceOwner: Send + Sync {
+    fn validate(&self, key: SliceKey, bytes: &[u8]) -> Result<(), String>;
+    fn imported(&self, key: SliceKey);
+}
+
+pub struct RegistryOwnedOnly;
+
+impl ForeignSliceOwner for RegistryOwnedOnly {
+    fn validate(&self, key: SliceKey, _bytes: &[u8]) -> Result<(), String> {
+        Err(format!("no owner reads {}", key.label()))
     }
 
-    pub fn import_slice_without_waiting(
-        &self,
-        slices: &dyn SliceStore,
-        key: SliceKey,
-        bytes: &[u8],
-    ) -> Result<(), StoreError> {
-        if dali2rust_platform::flash_gate::firmware_write_open() {
-            return Err(StoreError::Deferred);
-        }
-        let _serialised = match self.flush_buf.try_lock() {
-            Ok(guard) => guard,
-            Err(std::sync::TryLockError::WouldBlock) => return Err(StoreError::Deferred),
-            Err(std::sync::TryLockError::Poisoned(_)) => {
-                return Err(StoreError::Backend("flush buffer poisoned".to_string()))
+    fn imported(&self, _key: SliceKey) {}
+}
+
+#[derive(Debug)]
+pub enum ImportWriteFailure {
+    FirmwareWriteOpen,
+    Store { written: usize, error: StoreError },
+}
+
+impl RegistryStore {
+    pub fn validate_staged(
+        staged: &[StagedSlice],
+        foreign: &dyn ForeignSliceOwner,
+    ) -> Result<(), SliceKey> {
+        for slice in staged {
+            let checked = match validate_registry_slice(slice.key, &slice.bytes) {
+                Some(checked) => checked.map_err(|e| e.to_string()),
+                None => foreign.validate(slice.key, &slice.bytes),
+            };
+            if let Err(why) = checked {
+                log::warn!("registry: import of {} refused: {why}", slice.key.label());
+                return Err(slice.key);
             }
-        };
-        self.write_import(slices, key, bytes)
-    }
-
-    fn write_import(&self, slices: &dyn SliceStore, key: SliceKey, bytes: &[u8]) -> Result<(), StoreError> {
-        let mut session = slices.begin_write(key)?;
-        if let Err(e) = session.append(bytes) {
-            session.abort();
-            return Err(e);
         }
-        session.commit()?;
-        self.import_fence.raise(key);
         Ok(())
     }
 
-    pub fn import_fence_generation(&self) -> u64 {
-        self.import_fence.generation()
+    pub fn write_staged(
+        &self,
+        slices: &dyn SliceStore,
+        staged: &[StagedSlice],
+    ) -> Result<(), ImportWriteFailure> {
+        if dali2rust_platform::flash_gate::firmware_write_open() {
+            return Err(ImportWriteFailure::FirmwareWriteOpen);
+        }
+        let _serialised = self.flush_buf.lock().unwrap_or_else(PoisonError::into_inner);
+        for (written, slice) in staged.iter().enumerate() {
+            write_slice_bytes(slices, slice).map_err(|error| {
+                log::warn!("registry: writing imported {} failed: {error}", slice.key.label());
+                ImportWriteFailure::Store { written, error }
+            })?;
+        }
+        Ok(())
     }
+}
 
-    pub fn lower_import_fence(&self, up_to_generation: u64) {
-        self.import_fence.lower_up_to(up_to_generation);
+fn write_slice_bytes(slices: &dyn SliceStore, slice: &StagedSlice) -> Result<(), StoreError> {
+    let mut session = slices.begin_write(slice.key)?;
+    if let Err(e) = session.append(&slice.bytes) {
+        session.abort();
+        return Err(e);
     }
+    session.commit()
 }
 
 #[cfg(test)]

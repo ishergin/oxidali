@@ -71,7 +71,9 @@ and for the length of a scan.
   from observed traffic by the same translator the active controller uses for foreign
   frames; a second producer for those fields would prove nothing about the real one.
 - **Configuration is pulled over HTTP** by the passive unit from its peer's slice
-  export, straight into its slice store; only a reload command crosses the bus. A slice
+  export into the registry's import stage; only a reload command crosses the bus, and the
+  registry worker checks, writes and reloads the pass as one unit
+  ([ADR-012](ADR-012-async-chunked-config-writes.md)). A slice
   the peer lacks is never deleted locally, and an unreachable peer changes nothing: stale
   configuration beats a dark building.
 - **What transfers** is everything that describes the installation, the broker password

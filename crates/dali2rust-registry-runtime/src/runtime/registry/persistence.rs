@@ -143,9 +143,7 @@ impl crate::runtime::registry::store::RegistryStore {
         for adapter_id in 0..adapter_count {
             self.hydrate_adapter(slices, adapter_id, sink);
         }
-        for bank in 0..INPUT_DEVICE_BANKS_U8 {
-            hydrate_input_devices_slice(self, slices, bank, sink);
-        }
+        hydrate_input_device_banks(self, slices, sink);
         hydrate_hcl_schedules_slice(self, slices, sink);
         hydrate_poller_settings_slice(self, slices, sink);
         hydrate_dali_settings_slice(self, slices, sink);
@@ -177,8 +175,6 @@ impl crate::runtime::registry::store::RegistryStore {
         if !self.dirty.any_dirty() {
             return;
         }
-        let fenced = self.import_fence.guard(slices);
-        let slices: &dyn SliceStore = &fenced;
         self.note_held_back_slices();
         self.flush_adapters_if_dirty(slices);
         self.flush_masked_slice(
@@ -594,6 +590,53 @@ impl crate::runtime::registry::store::RegistryStore {
     }
 }
 
+pub(crate) fn validate_registry_slice(key: SliceKey, bytes: &[u8]) -> Option<Result<(), StoreError>> {
+    let checked = match key {
+        SliceKey::Adapters => decode_slice::<PersistableAdapterSlice>(bytes, ADAPTERS_SLICE_VERSION).map(drop),
+        SliceKey::Groups { .. } => decode_slice::<PersistableGroupsSlice>(bytes, GROUPS_SLICE_VERSION).map(drop),
+        SliceKey::VirtualLamps { .. } => {
+            decode_slice::<PersistableVirtualLampsSlice>(bytes, VIRTUAL_LAMPS_SLICE_VERSION).map(drop)
+        }
+        SliceKey::Scene { .. } => decode_slice::<PersistableSceneSlice>(bytes, SCENES_SLICE_VERSION).map(drop),
+        SliceKey::PhysicalDevices { .. } => RegistryStore::decode_physical_devices(bytes).map(drop),
+        SliceKey::PhysicalDeviceBank { adapter_id, bank } => {
+            RegistryStore::decode_physical_device_bank(bytes, adapter_id, bank).map(drop)
+        }
+        SliceKey::InputDevices { .. } => {
+            decode_slice::<PersistableInputDevicesSlice>(bytes, INPUT_DEVICES_SLICE_VERSION).map(drop)
+        }
+        _ => return validate_registry_setting(key, bytes),
+    };
+    Some(checked)
+}
+
+fn validate_registry_setting(key: SliceKey, bytes: &[u8]) -> Option<Result<(), StoreError>> {
+    let checked = match key {
+        SliceKey::HclSchedules => {
+            decode_slice::<PersistableHclSchedulesSlice>(bytes, HCL_SCHEDULES_SLICE_VERSION).map(drop)
+        }
+        SliceKey::PollerSettings => {
+            decode_slice::<PersistablePollerSettingsSlice>(bytes, POLLER_SETTINGS_SLICE_VERSION).map(drop)
+        }
+        SliceKey::DaliSettings => {
+            decode_slice::<PersistableDaliSettingsSlice>(bytes, DALI_SETTINGS_SLICE_VERSION).map(drop)
+        }
+        SliceKey::RedundancySettings => decode_slice::<PersistableRedundancySettingsSlice>(
+            bytes,
+            REDUNDANCY_SETTINGS_SLICE_VERSION,
+        )
+        .map(drop),
+        SliceKey::Policies => decode_slice::<PersistablePoliciesSlice>(bytes, POLICIES_SLICE_VERSION).map(drop),
+        SliceKey::HomeAssistantSettings => decode_slice::<PersistableHomeAssistantSettingsSlice>(
+            bytes,
+            HOME_ASSISTANT_SETTINGS_SLICE_VERSION,
+        )
+        .map(drop),
+        _ => return None,
+    };
+    Some(checked)
+}
+
 enum HydrateSink<'a> {
     Collecting {
         loaded: &'a mut PersistenceSliceList,
@@ -898,11 +941,29 @@ hydrate_wrappers! { per_adapter:
         PersistableSceneSlice,
         SCENES_SLICE_VERSION,
         hydrate_scene_inner;
-    hydrate_input_devices_slice(bank) =>
-        PersistenceSliceKind::InputDevices { bank },
-        PersistableInputDevicesSlice,
-        INPUT_DEVICES_SLICE_VERSION,
-        crate::runtime::registry::input_devices::hydrate_input_devices_bank_inner;
+}
+
+fn hydrate_input_device_banks(store: &RegistryStore, slices: &dyn SliceStore, sink: &mut HydrateSink<'_>) {
+    let mut stored = std::collections::HashSet::new();
+    let (mut whole, mut loaded) = (true, false);
+    for bank in 0..INPUT_DEVICE_BANKS_U8 {
+        let outcome = hydrate_stored_slice(
+            store,
+            slices,
+            PersistenceSliceKind::InputDevices { bank },
+            sink,
+            |bytes| decode_slice::<PersistableInputDevicesSlice>(bytes, INPUT_DEVICES_SLICE_VERSION),
+            |inner, slice| {
+                stored.extend(slice.devices.iter().map(|d| (d.adapter_id, d.short_address)));
+                crate::runtime::registry::input_devices::hydrate_input_devices_bank_inner(inner, bank, slice);
+            },
+        );
+        whole &= matches!(outcome, SlotOutcome::Loaded | SlotOutcome::Missing);
+        loaded |= outcome == SlotOutcome::Loaded;
+    }
+    if whole && loaded {
+        store.write_inner().input_devices.retain(|key, _| stored.contains(key));
+    }
 }
 
 fn hydrate_pd_bank_slice(
@@ -1039,6 +1100,9 @@ fn hydrate_virtual_lamps_inner(
     waiting_banks: u16,
     slice: &PersistableVirtualLampsSlice,
 ) {
+    inner.lamps.retain(|&(aid, id), _| {
+        aid != adapter_id || slice.lamps.iter().any(|lamp| lamp.virtual_lamp_id == id)
+    });
     for lamp in &slice.lamps {
         let validated =
             binding_short_to_keep(inner, adapter_id, waiting_banks, lamp.binding_short);
@@ -1090,6 +1154,7 @@ fn hydrate_scene_inner(
     scene_id: u8,
     slice: &PersistableSceneSlice,
 ) {
+    inner.scene_matrix.retain(|&(aid, sid, _), _| aid != adapter_id || sid != scene_id);
     inner.scenes.insert(
         (adapter_id, scene_id),
         SceneRecord {
@@ -1120,9 +1185,14 @@ fn hydrate_scene_inner(
 fn hydrate_physical_device_bank_inner(
     inner: &mut super::store::Inner,
     adapter_id: u8,
-    _bank: u8,
+    bank: u8,
     slice: &PersistablePhysicalDevicesSlice,
 ) {
+    inner.physical_devices.retain(|&(aid, short), _| {
+        aid != adapter_id
+            || short / SliceKey::DEVICES_PER_BANK != bank
+            || slice.devices.iter().any(|dev| dev.short_address == short)
+    });
     hydrate_physical_devices_inner(inner, adapter_id, slice);
 }
 
@@ -1185,8 +1255,9 @@ mod tests {
 
     use crate::test_support::{CountingStore, ProbeStore};
     use super::super::input_devices::{InputDeviceRecord, INPUT_DEVICES_PER_BANK};
-    use super::super::scenes::SCENE_COUNT;
+    use super::super::scenes::{SceneDesiredRowRecord, SCENE_COUNT};
     use super::super::store::RegistryStore;
+    use super::super::virtual_lamps::VlRecord;
 
     const ADAPTER_COUNT: u8 = 2;
 
@@ -1314,6 +1385,51 @@ mod tests {
         store.hydrate_from_store(&slices, ADAPTER_COUNT);
         assert_eq!(unread_slices(&store), 0);
         assert!(flush_everything(&store, &slices).contains(&unread));
+    }
+
+    fn hold_records_the_store_lacks(store: &RegistryStore) {
+        let mut inner = store.write_inner();
+        inner.lamps.insert((0, STRAY_ID), VlRecord::default());
+        inner.scene_matrix.insert((0, 0, STRAY_ID), SceneDesiredRowRecord::default());
+        inner.input_devices.insert((0, STRAY_ID), InputDeviceRecord::empty(0, STRAY_ID));
+    }
+
+    fn stray_records(store: &RegistryStore) -> [bool; 3] {
+        let inner = store.read_inner();
+        [
+            inner.lamps.contains_key(&(0, STRAY_ID)),
+            inner.scene_matrix.contains_key(&(0, 0, STRAY_ID)),
+            inner.input_devices.contains_key(&(0, STRAY_ID)),
+        ]
+    }
+
+    const STRAY_ID: u8 = 9;
+
+    #[test]
+    fn a_reload_leaves_only_the_records_each_loaded_slice_holds() {
+        let slices = installed();
+        let store = RegistryStore::with_adapter_count(ADAPTER_COUNT);
+        store.hydrate_from_store(&slices, ADAPTER_COUNT);
+        hold_records_the_store_lacks(&store);
+
+        store.hydrate_from_store(&slices, ADAPTER_COUNT);
+        assert_eq!(stray_records(&store), [false; 3], "lamp, scene row, input device");
+    }
+
+    #[test]
+    fn a_reload_keeps_the_records_of_a_slice_it_could_not_read() {
+        let slices = installed();
+        let store = RegistryStore::with_adapter_count(ADAPTER_COUNT);
+        store.hydrate_from_store(&slices, ADAPTER_COUNT);
+        hold_records_the_store_lacks(&store);
+
+        slices.fail_reads_of(Some(SliceKey::VirtualLamps { adapter_id: 0 }));
+        store.hydrate_from_store(&slices, ADAPTER_COUNT);
+        assert_eq!(stray_records(&store), [true, false, false]);
+        slices.fail_reads_of(Some(SliceKey::InputDevices { bank: 2 }));
+        hold_records_the_store_lacks(&store);
+        store.hydrate_from_store(&slices, ADAPTER_COUNT);
+        assert!(stray_records(&store)[2], "one unread bank holds the whole list");
     }
 
     #[test]
