@@ -42,7 +42,7 @@
 | Чанковые записи | матрица групп и матрица сцены (patch/replace) + `ConfigWriteCommitCommand`; `HclScheduleUpsertCommand` | registry worker | HTTP | `202` + операция `config_write` |
 | Удаление расписания HCL | `HclScheduleDeleteCommand` | registry worker | HTTP | подтверждение запроса (`204`) |
 | Runtime реестра | `RegistryRuntimeUpdateCommand`, `RegistryLevelTransitionCommand` | registry worker | только проектор state-fanout | подтверждение (short/VL) или внутренний факт |
-| Перечитать слайс | `RegistrySliceReloadCommand` | registry worker | импорт конфигурации (HTTP), воркер репликации | подтверждение (импорт); от репликации — внутренний факт |
+| Перечитать слайс | `RegistrySliceReloadCommand` | registry worker | импорт конфигурации (HTTP), воркер репликации | `202` + операция `config_write` (импорт); от репликации — без ответа |
 | Семантические DALI (102/207/209) | `Dali*Command` для control gear | `DaliWorker` | HTTP, MQTT, HCL, поллер, правила, оркестратор | по виду, см. [`semantic-dali-commands.md`](semantic-dali-commands.md) |
 | Part 103 | `Dali103*Command` | `DaliWorker` | HTTP, правила, арбитраж | по виду, там же |
 | Диагностический сырой кадр | `DaliCommandPayload` (`raw_mode`) | `DaliWorker` | только диагностический REST | подтверждение запроса |
@@ -189,7 +189,9 @@ Volatile runtime-состояние меняют только `RegistryRuntimeUp
 
 ## Вне шины
 
-Экспорт и импорт конфигурации (`/api/v1/config/slices`) переносят байты слайсов
-напрямую между HTTP и слайс-стором: слайс до 32 КиБ не проходит через 128-байтный
-кадр. По шине едет только `RegistrySliceReloadCommand` — «перечитай», и оно доходит до
-единственного писателя.
+Экспорт и импорт конфигурации (`/api/v1/config/slices`) переносят байты слайсов мимо
+шины: слайс до 32 КиБ не проходит через 128-байтный кадр. Экспорт читает слайс-стор;
+импорт и проход репликации кладут байты в стейдж импорта реестра, а по шине едет только
+`RegistrySliceReloadCommand` с id операции — к единственному писателю, который проверяет
+байты, пишет их и перечитывает реестр
+([ADR-012](../../architecture/decisions/ADR-012-async-chunked-config-writes.md)).

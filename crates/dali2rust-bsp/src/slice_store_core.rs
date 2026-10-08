@@ -1,5 +1,5 @@
 use core::cmp::Reverse;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
 
@@ -54,6 +54,24 @@ impl BankHeader {
 struct SlotMemory {
     served: AtomicU8,
     erased: AtomicU8,
+    writing: AtomicBool,
+}
+
+struct WriteClaim<'a>(&'a AtomicBool);
+
+impl<'a> WriteClaim<'a> {
+    fn take(writing: &'a AtomicBool) -> Result<Self, StoreError> {
+        writing
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .map(|_| Self(writing))
+            .map_err(|_| StoreError::Deferred)
+    }
+}
+
+impl Drop for WriteClaim<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl SlotMemory {
@@ -70,6 +88,10 @@ impl SlotMemory {
 
     fn clear(cell: &AtomicU8) {
         cell.store(0, Ordering::Relaxed);
+    }
+
+    fn set_unless_moved(cell: &AtomicU8, seen: u8, bank: u8) {
+        let _ = cell.compare_exchange(seen, bank + 1, Ordering::AcqRel, Ordering::Relaxed);
     }
 }
 
@@ -139,6 +161,8 @@ impl<F: RawFlash> SliceStoreCore<F> {
 impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
     fn load(&self, key: SliceKey) -> Result<Vec<u8>, StoreError> {
         let slot = slot_geometry(key).ok_or(StoreError::Missing)?;
+        let memory = self.memory(key);
+        let seen = memory.map(|m| m.served.load(Ordering::Acquire));
         let mut last_err = StoreError::Missing;
         for (bank, header) in self.candidate_banks(&slot)? {
             let mut payload = vec![0u8; header.len as usize];
@@ -162,8 +186,8 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
                 );
                 continue;
             }
-            if let Some(memory) = self.memory(key) {
-                SlotMemory::set(&memory.served, bank);
+            if let (Some(memory), Some(seen)) = (memory, seen) {
+                SlotMemory::set_unless_moved(&memory.served, seen, bank);
             }
             return Ok(payload);
         }
@@ -173,8 +197,9 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
     fn begin_write(&self, key: SliceKey) -> Result<Box<dyn SliceWriteSession + '_>, StoreError> {
         let slot = slot_geometry(key)
             .ok_or_else(|| StoreError::Backend(format!("no slot reserved for {}", key.label())))?;
-        let current = self.current_bank(&slot)?;
         let memory = self.memory(key);
+        let claim = memory.map(|m| WriteClaim::take(&m.writing)).transpose()?;
+        let current = self.current_bank(&slot)?;
         let seq = current.as_ref().map_or(1, |(_, header)| header.seq + 1);
         let BankChoice { keep, target } = choose_bank(
             memory.and_then(|m| SlotMemory::get(&m.served)),
@@ -192,6 +217,7 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
         }
         Ok(Box::new(CoreWriteSession {
             store: self,
+            _claim: claim,
             slot,
             key,
             target,
@@ -206,6 +232,7 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
 
 struct CoreWriteSession<'a, F: RawFlash> {
     store: &'a SliceStoreCore<F>,
+    _claim: Option<WriteClaim<'a>>,
     slot: SlotGeometry,
     key: SliceKey,
     target: u8,

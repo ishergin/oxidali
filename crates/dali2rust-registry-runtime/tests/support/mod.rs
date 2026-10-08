@@ -10,7 +10,9 @@ use dali2rust_contracts::msg::{
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_platform::slice_store::SliceStore;
 use dali2rust_test_support::{recv_confirmation_for, wait_until};
-use dali2rust_registry_runtime::{spawn_registry_worker, RegistryStore, RegistryWorkerCounters};
+use dali2rust_registry_runtime::{
+    spawn_registry_worker, RegistryStore, RegistryWorkerCounters, SlicePersistence,
+};
 use dali2rust_domain::registry::{GroupReadPort, VirtualLampReadPort};
 
 pub const CONFIRMATION_DEADLINE: Duration = Duration::from_secs(4);
@@ -79,7 +81,7 @@ pub fn spawn_registry_stack_with(options: RegistryStackOptions) -> RegistryTestS
         adapter_count,
         Arc::clone(&store),
         Arc::clone(&counters),
-        slices,
+        slices.map(SlicePersistence::registry_owned_only),
         std::sync::Arc::new(dali2rust_platform::liveness::LivenessBeat::new("test", 60_000)),
     );
     RegistryTestStack {

@@ -25,10 +25,10 @@ property that makes it correct: survivors drain at their last write's position.
    the periodic diagnostics frame sizes its worst case per channel.
 2. **One coalescer, one key.** The last-wins burst buffer lives in `dali2rust-api`
    (`coalesce::BurstCoalescer<T>`), and both the WebSocket fan-out and the MQTT bridge key
-   it with `ws::coalesce_key`. The key is total for the bridge's event kinds (all of them
-   are WebSocket-projected), a later retained state fully supersedes an earlier one, and
-   the case that must not merge — an input-device occurrence — is keyed by its own
-   timestamp, so two button presses stay two presses.
+   it with `ws::coalesce_key`. Every state the bridge carries is WebSocket-projected and
+   keyed, and a later retained state fully supersedes an earlier one. An occurrence — an
+   input-device event or a rule activation — supersedes nothing and carries no key, so two
+   button presses or two firings of one rule stay two frames.
 
 ## Consequences
 

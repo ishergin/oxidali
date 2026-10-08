@@ -77,6 +77,19 @@ pub fn text_banks(source: &[u8]) -> Vec<(SliceKey, Vec<u8>)> {
     banks
 }
 
+pub fn validate_bank(bank: u8, bytes: &[u8]) -> Result<(), &'static str> {
+    if bank < RULES_TEXT_BANKS {
+        return (bytes.len() <= RULES_BANK_BYTES)
+            .then_some(())
+            .ok_or("rules_bank_too_long");
+    }
+    let manifest: RulesManifest =
+        postcard::from_bytes(bytes).map_err(|_| "rules_manifest_undecodable")?;
+    (manifest.version == RULES_MANIFEST_VERSION)
+        .then_some(())
+        .ok_or("rules_manifest_version")
+}
+
 #[must_use]
 pub fn reassemble(manifest: &RulesManifest, banks: &[Option<Vec<u8>>]) -> Option<Vec<u8>> {
     let total = usize::from(manifest.total_len);
@@ -100,6 +113,17 @@ pub fn reassemble(manifest: &RulesManifest, banks: &[Option<Vec<u8>>]) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rules_bank_is_judged_by_what_its_reader_needs() {
+        let source = b"rule";
+        let manifest = postcard::to_allocvec(&manifest_for(source)).expect("manifest");
+        assert_eq!(validate_bank(3, &manifest), Ok(()));
+        assert_eq!(validate_bank(3, b"\xff\xff"), Err("rules_manifest_undecodable"));
+        assert_eq!(validate_bank(0, &[0xff; 3]), Ok(()), "a text bank may cut a character");
+        assert_eq!(validate_bank(1, &vec![b'a'; RULES_BANK_BYTES + 1]), Err("rules_bank_too_long"));
+    }
+
 
     fn manifest_for(source: &[u8]) -> RulesManifest {
         RulesManifest {

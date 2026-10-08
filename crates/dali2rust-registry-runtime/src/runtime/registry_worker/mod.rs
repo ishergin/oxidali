@@ -22,8 +22,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dali2rust_bus::{recv_then_drain, BusFrame, BusId, BusPublisher, BusSubscriberRx, WorkerTurn};
+use dali2rust_contracts::msg::BusCommandPayload;
 use dali2rust_platform::slice_store::SliceStore;
 
+use crate::runtime::registry::transfer::{ForeignSliceOwner, RegistryOwnedOnly};
 use crate::runtime::registry::RegistryStore;
 use dali2rust_bsp::esp_thread;
 use dali2rust_bsp::stack_probe::StackLowWater;
@@ -72,16 +74,17 @@ fn flush_paced(
         deps.store.dirty.mark_hcl_schedules_dirty();
     }
     let min_interval = min_interval(&deps.store);
-    flush_persistence(&deps.persistence_slices, &deps.store, &mut clock.last_flush, min_interval);
+    let slices = deps.persistence.as_ref().map(|p| &p.slices);
+    flush_persistence(slices, &deps.store, &mut clock.last_flush, min_interval);
 }
 
 fn flush_persistence(
-    persistence_slices: &Option<Arc<dyn SliceStore>>,
+    persistence_slices: Option<&Arc<dyn SliceStore>>,
     store: &RegistryStore,
     last_flush: &mut Instant,
     min_interval: Duration,
 ) {
-    let Some(fs) = persistence_slices.as_ref() else {
+    let Some(fs) = persistence_slices else {
         return;
     };
     if !store.dirty.any_dirty() || last_flush.elapsed() < min_interval {
@@ -161,13 +164,28 @@ pub struct RegistryWorkerCounters {
     pub events: RegistryEventsCounters,
 }
 
+#[derive(Clone)]
+pub struct SlicePersistence {
+    pub slices: Arc<dyn SliceStore>,
+    pub foreign: Arc<dyn ForeignSliceOwner>,
+}
+
+impl SlicePersistence {
+    pub fn registry_owned_only(slices: Arc<dyn SliceStore>) -> Self {
+        Self {
+            slices,
+            foreign: Arc::new(RegistryOwnedOnly),
+        }
+    }
+}
+
 struct RegistryWorkerDeps {
     publisher: BusPublisher,
     primary_adapter_id: BusId,
     adapter_count: u8,
     store: Arc<RegistryStore>,
     counters: Arc<RegistryWorkerCounters>,
-    persistence_slices: Option<Arc<dyn SliceStore>>,
+    persistence: Option<SlicePersistence>,
 }
 
 static WORKER_STACK: StackLowWater =
@@ -181,8 +199,25 @@ fn frame_tag(frame: &BusFrame) -> &'static str {
     }
 }
 
+fn flush_before_import(frame: &BusFrame, deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
+    let BusFrame::Command(command) = frame else {
+        return;
+    };
+    if !matches!(command.payload, BusCommandPayload::RegistrySliceReloadCommand(_))
+        || !deps.store.import_staged_for(command.meta.correlation_id)
+    {
+        return;
+    }
+    if deps.store.dirty.take_hcl_switches_waiting() {
+        deps.store.dirty.mark_hcl_schedules_dirty();
+    }
+    let slices = deps.persistence.as_ref().map(|p| &p.slices);
+    flush_persistence(slices, &deps.store, &mut clock.last_flush, Duration::ZERO);
+}
+
 fn apply_frame_and_flush(frame: BusFrame, deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
     let tag = frame_tag(&frame);
+    flush_before_import(&frame, deps, clock);
     match &frame {
         BusFrame::Command(_) => process_one(
             frame,
@@ -191,7 +226,7 @@ fn apply_frame_and_flush(frame: BusFrame, deps: &RegistryWorkerDeps, clock: &mut
             deps.adapter_count,
             &deps.store,
             &deps.counters.command,
-            deps.persistence_slices.as_ref(),
+            deps.persistence.as_ref(),
         ),
         BusFrame::Event(_) => crate::runtime::registry_events_worker::apply_event_frame(
             frame,
@@ -213,6 +248,7 @@ fn evict_and_flush_on_idle(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
         .evict_stale_config_write_stages(CONFIG_WRITE_STAGE_MAX_AGE_MS);
     deps.store
         .evict_stale_hcl_schedule_stages(HCL_SCHEDULE_STAGE_MAX_AGE_MS);
+    deps.store.evict_stale_import();
     flush_paced(deps, clock, |_| PERSISTENCE_DEBOUNCE);
     WORKER_STACK.note("idle");
 }
@@ -249,7 +285,7 @@ pub fn spawn_registry_worker(
     adapter_count: u8,
     store: Arc<RegistryStore>,
     counters: Arc<RegistryWorkerCounters>,
-    persistence_slices: Option<Arc<dyn SliceStore>>,
+    persistence: Option<SlicePersistence>,
     liveness: Arc<dali2rust_platform::liveness::LivenessBeat>,
 ) -> std::thread::JoinHandle<()> {
     let deps = RegistryWorkerDeps {
@@ -258,7 +294,7 @@ pub fn spawn_registry_worker(
         adapter_count,
         store,
         counters,
-        persistence_slices,
+        persistence,
     };
     esp_thread::spawn_named_stack_in(
         c"registry_worker",
@@ -272,7 +308,7 @@ pub fn spawn_registry_worker(
 mod tests {
     use super::{
         apply_frame_and_flush, command_flush_interval, evict_and_flush_on_idle, flush_persistence,
-        FlushClock, RegistryStore, RegistryWorkerCounters, RegistryWorkerDeps,
+        FlushClock, RegistryStore, RegistryWorkerCounters, RegistryWorkerDeps, SlicePersistence,
         HCL_SWITCH_WRITE_INTERVAL, PERSISTENCE_DEBOUNCE,
     };
     use crate::test_support::CountingStore;
@@ -281,8 +317,9 @@ mod tests {
     use dali2rust_contracts::msg::{
         fixed_text_32, BusCommandPayload, DaliAttributeReadChunk, HclAlgorithm, HclLevelMode,
         HclPointList, HclScheduleEnableCommand, HclSchedulePointRow, HclScheduleUpsertCommand,
-        HclTargetList, HclTargetRow, HclTargetScope, HclTimeRef,
+        HclTargetList, HclTargetRow, HclTargetScope, HclTimeRef, RegistrySliceReloadCommand,
     };
+    use crate::runtime::registry::import_stage::StagedSlice;
     use dali2rust_domain::registry::{AdapterReadPort, HclScheduleReadPort};
     use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
     use std::sync::atomic::Ordering;
@@ -368,7 +405,7 @@ mod tests {
 
         store.dirty.mark_physical_device_dirty(0, 0);
         flush_persistence(
-            &persistence_slices,
+            persistence_slices.as_ref(),
             &store,
             &mut last_flush,
             command_flush_interval(&store),
@@ -377,7 +414,7 @@ mod tests {
 
         last_flush = Instant::now() - PERSISTENCE_DEBOUNCE;
         flush_persistence(
-            &persistence_slices,
+            persistence_slices.as_ref(),
             &store,
             &mut last_flush,
             command_flush_interval(&store),
@@ -394,7 +431,7 @@ mod tests {
 
         store.dirty.adapters.store(true, Ordering::Release);
         flush_persistence(
-            &persistence_slices,
+            persistence_slices.as_ref(),
             &store,
             &mut last_flush,
             command_flush_interval(&store),
@@ -425,7 +462,7 @@ mod tests {
         let flush_now = |store: &RegistryStore| {
             let mut last_flush = Instant::now() - PERSISTENCE_DEBOUNCE;
             flush_persistence(
-                &persistence_slices,
+                persistence_slices.as_ref(),
                 store,
                 &mut last_flush,
                 command_flush_interval(store),
@@ -454,14 +491,14 @@ mod tests {
 
     fn worker_on(slices: &Arc<CountingStore>) -> (RegistryWorkerDeps, BusHost) {
         let (host, publisher, ()) = BusHost::spawn(BusConfig::default(), |_| ());
-        let persistence_slices: Arc<dyn SliceStore> = slices.clone();
+        let persistence = SlicePersistence::registry_owned_only(slices.clone());
         let deps = RegistryWorkerDeps {
             publisher,
             primary_adapter_id: BusId::default(),
             adapter_count: 1,
             store: Arc::new(RegistryStore::with_adapter_count(1)),
             counters: Arc::new(RegistryWorkerCounters::default()),
-            persistence_slices: Some(persistence_slices),
+            persistence: Some(persistence),
         };
         (deps, host)
     }
@@ -558,4 +595,39 @@ mod tests {
         idle_turn(&deps, &mut clock);
         assert_eq!(slices.write_count(), 2, "nothing is left waiting");
     }
+
+    #[test]
+    fn an_import_keeps_a_switch_still_waiting_for_its_interval() {
+        let slices = Arc::new(CountingStore::default());
+        let (deps, _host) = worker_on(&slices);
+        let mut clock = FlushClock::new(HCL_SWITCH_WRITE_INTERVAL);
+        apply_frame_and_flush(command(1, schedule("porch")), &deps, &mut clock);
+        apply_frame_and_flush(command(2, switch("porch", false)), &deps, &mut clock);
+
+        let poller = crate::runtime::registry::persistence_slices::PersistablePollerSettingsSlice {
+            enabled: true,
+            interval_ms: 9_000,
+            attribute_groups_mask: 1,
+            include_dt8_color: false,
+            skip_unbound_virtual_lamps: true,
+            include_energy: false,
+            include_diagnostics: false,
+        };
+        let bytes = crate::runtime::registry::persistence_slices::encode_persistence_blob(
+            &crate::runtime::registry::persistence_slices::PersistenceEnvelope::new(
+                crate::runtime::registry::persistence_slices::POLLER_SETTINGS_SLICE_VERSION,
+                poller,
+            ),
+        )
+        .expect("encode poller slice");
+        let staged = vec![StagedSlice { key: SliceKey::PollerSettings, bytes }];
+        deps.store.stage_import(IMPORT_WORKFLOW, staged).expect("stage");
+        let reload = RegistrySliceReloadCommand { slice_name: fixed_text_32("poller_settings") };
+        apply_frame_and_flush(command(IMPORT_WORKFLOW, reload), &deps, &mut clock);
+
+        assert_eq!(deps.store.hcl_schedule_view("porch").map(|view| view.enabled), Some(false));
+        assert_eq!(bit_after_restart(&slices, "porch"), Some(false));
+    }
+
+    const IMPORT_WORKFLOW: u64 = 9;
 }

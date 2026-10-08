@@ -44,6 +44,7 @@ use dali2rust_api::http::{
     VirtualLampBindingApplyWatchBridge, VirtualLampHttpState, VirtualLampHttpStateBridge,
     VirtualLampPatchWatch, VirtualLampPatchWatchBridge,
 };
+use dali2rust_api::http::handlers::config_transfer::ImportRefusal;
 use dali2rust_bus::BusPublisher;
 use dali2rust_domain::registry::{AdapterReadPort, RegistryReadPort};
 use dali2rust_operations_runtime::{ApplyOrchestratorCounters, OperationTrackerCounters};
@@ -51,7 +52,9 @@ use dali2rust_platform::clock::Clock;
 use dali2rust_platform::heap::{HeapStats, HeapStatsPort};
 use dali2rust_platform::net::{LinkStats, NetworkLink};
 use dali2rust_mqtt_runtime::MqttCounters;
+use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 use dali2rust_registry_runtime::{
+    ForeignSliceOwner, ImportStageRefusal, StagedSlice,
     PersistenceCounters, RegistryApplyWatch, RegistryStore, RegistryWorkerCounters,
 };
 use dali2rust_ws_runtime::WsCounters;
@@ -160,7 +163,6 @@ fn transfer_port(
         Arc::clone(store),
         transfer.slices,
         transfer.adapter_count,
-        transfer.wall_clock,
     ))
 }
 
@@ -168,16 +170,36 @@ fn transfer_port(
 pub(crate) struct TransferSeams {
     pub slices: Option<Arc<dyn dali2rust_platform::slice_store::SliceStore>>,
     pub adapter_count: u8,
-    pub wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
 }
 
-fn apply_imported_timezone(
-    key: dali2rust_platform::slice_store::SliceKey,
-    clock: &dyn dali2rust_platform::wall_clock::WallClock,
-    slices: Option<&Arc<dyn dali2rust_platform::slice_store::SliceStore>>,
-) {
-    if key == dali2rust_platform::slice_store::SliceKey::ControllerSettings {
-        crate::runtime::time_settings::hydrate_timezone(clock, slices);
+pub(crate) struct ForeignSliceBridge {
+    slices: Arc<dyn SliceStore>,
+    wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
+}
+
+impl ForeignSliceBridge {
+    pub(crate) fn new(
+        slices: Arc<dyn SliceStore>,
+        wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
+    ) -> Self {
+        Self { slices, wall_clock }
+    }
+}
+
+impl ForeignSliceOwner for ForeignSliceBridge {
+    fn validate(&self, key: SliceKey, bytes: &[u8]) -> Result<(), String> {
+        match key {
+            SliceKey::ControllerSettings => crate::runtime::time_settings::validate_settings_slice(bytes),
+            SliceKey::Rules { bank } => dali2rust_rules_runtime::runtime::persistence::validate_bank(bank, bytes)
+                .map_err(str::to_string),
+            other => Err(format!("no owner reads {}", other.label())),
+        }
+    }
+
+    fn imported(&self, key: SliceKey) {
+        if key == SliceKey::ControllerSettings {
+            crate::runtime::time_settings::hydrate_timezone(self.wall_clock.as_ref(), Some(&self.slices));
+        }
     }
 }
 
@@ -701,7 +723,6 @@ pub(crate) struct ConfigTransferBridge {
     store: Arc<RegistryStore>,
     slices: Option<Arc<dyn dali2rust_platform::slice_store::SliceStore>>,
     adapter_count: u8,
-    wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
 }
 
 impl ConfigTransferBridge {
@@ -709,13 +730,11 @@ impl ConfigTransferBridge {
         store: Arc<RegistryStore>,
         slices: Option<Arc<dyn dali2rust_platform::slice_store::SliceStore>>,
         adapter_count: u8,
-        wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
     ) -> Self {
         Self {
             store,
             slices,
             adapter_count,
-            wall_clock,
         }
     }
 
@@ -750,27 +769,24 @@ impl dali2rust_api::http::handlers::config_transfer::ConfigTransferPort for Conf
         self.store.export_slice(slices.as_ref(), key)
     }
 
-    fn import_slice(
+    fn stage_import(
         &self,
+        workflow: u64,
         name: &str,
         bytes: &[u8],
-    ) -> Result<(), dali2rust_api::http::handlers::config_transfer::ImportRefusal> {
-        let slices = self
-            .slices
-            .as_ref()
-            .ok_or(ImportRefusal::PersistenceDisabled)?;
-        let key = self.key(name).ok_or(ImportRefusal::UnknownSlice)?;
-        if !dali2rust_platform::flash_gate::writable_now() {
-            return Err(ImportRefusal::FlashBusy);
+    ) -> Result<(), ImportRefusal> {
+        if self.slices.is_none() {
+            return Err(ImportRefusal::PersistenceDisabled);
         }
+        let key = self.key(name).ok_or(ImportRefusal::UnknownSlice)?;
+        let staged = vec![StagedSlice { key, bytes: bytes.to_vec() }];
         self.store
-            .import_slice_without_waiting(slices.as_ref(), key, bytes)
-            .map_err(|e| match e {
-                dali2rust_platform::slice_store::StoreError::Deferred => ImportRefusal::FlashBusy,
-                other => ImportRefusal::StoreFailed(format!("{other:?}")),
-            })?;
-        apply_imported_timezone(key, self.wall_clock.as_ref(), Some(slices));
-        Ok(())
+            .stage_import(workflow, staged)
+            .map_err(|ImportStageRefusal::Busy| ImportRefusal::ImportBusy)
+    }
+
+    fn discard_import(&self, workflow: u64) {
+        self.store.discard_import(workflow);
     }
 }
 
@@ -778,7 +794,6 @@ pub(crate) struct ReplicationSinkBridge {
     store: Arc<RegistryStore>,
     slices: Option<Arc<dyn dali2rust_platform::slice_store::SliceStore>>,
     adapter_count: u8,
-    wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
 }
 
 impl ReplicationSinkBridge {
@@ -786,13 +801,11 @@ impl ReplicationSinkBridge {
         store: Arc<RegistryStore>,
         slices: Option<Arc<dyn dali2rust_platform::slice_store::SliceStore>>,
         adapter_count: u8,
-        wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
     ) -> Self {
         Self {
             store,
             slices,
             adapter_count,
-            wall_clock,
         }
     }
 }
@@ -813,19 +826,31 @@ impl dali2rust_redundancy_runtime::ReplicationSink for ReplicationSinkBridge {
             .collect()
     }
 
-    fn write_slice(&self, name: &str, bytes: &[u8]) -> bool {
-        let Some(slices) = self.slices.as_ref() else {
-            return false;
-        };
-        let Some(key) = dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count)
-        else {
-            return false;
-        };
-        let written = self.store.import_slice(slices.as_ref(), key, bytes).is_ok();
-        if written {
-            apply_imported_timezone(key, self.wall_clock.as_ref(), Some(slices));
-        }
-        written
+    fn accepts(&self, name: &str) -> bool {
+        self.slices.is_some()
+            && dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count).is_some()
+    }
+
+    fn family(&self, name: &str) -> String {
+        dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count)
+            .map_or_else(|| name.to_string(), |key| key.family().label())
+    }
+
+    fn stage(&self, pulled: Vec<dali2rust_redundancy_runtime::PulledSlice>) -> bool {
+        let staged = pulled
+            .into_iter()
+            .filter_map(|slice| {
+                let key = dali2rust_registry_runtime::slice_key_from_name(&slice.name, self.adapter_count)?;
+                Some(StagedSlice { key, bytes: slice.bytes })
+            })
+            .collect();
+        self.store
+            .stage_import(dali2rust_contracts::CORRELATION_NONE, staged)
+            .is_ok()
+    }
+
+    fn discard_staged(&self) {
+        self.store.discard_import(dali2rust_contracts::CORRELATION_NONE);
     }
 }
 
@@ -1145,7 +1170,6 @@ fn instance_dto(view: &dali2rust_registry_runtime::InstanceView) -> InstanceDto 
 use dali2rust_domain::registry::{GROUP_COUNT, VIRTUAL_LAMP_COUNT};
 use dali2rust_rules_model::limits::{MAX_GROUP_ID, MAX_LAMP_ID};
 use dali2rust_rules_model::{DeviceRef, GroupRef, InputDeviceRef, LampRef, NameResolver, SceneRef};
-use dali2rust_api::http::handlers::config_transfer::ImportRefusal;
 use dali2rust_api::http::firmware_state::{FirmwareStateDto, FirmwareUpdateDto};
 
 const _: () = assert!(MAX_LAMP_ID as u16 + 1 == VIRTUAL_LAMP_COUNT as u16);

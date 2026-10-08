@@ -13,20 +13,20 @@ use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 use dali2rust_registry_runtime::{
     encode_persistence_blob, spawn_registry_worker, PersistableHomeAssistantSettingsSlice,
     PersistenceEnvelope, RegistryApplyWatch, RegistryStore, RegistryWorkerCounters,
-    HOME_ASSISTANT_SETTINGS_SLICE_VERSION, REGISTRY_EVENTS_HANDLED_EVENTS,
-    REGISTRY_WORKER_HANDLED_COMMANDS,
+    SlicePersistence, StagedSlice, HOME_ASSISTANT_SETTINGS_SLICE_VERSION,
+    REGISTRY_EVENTS_HANDLED_EVENTS, REGISTRY_WORKER_HANDLED_COMMANDS,
 };
-use dali2rust_test_support::{publish_queued, temp_slice_store, wait_until, write_slice};
+use dali2rust_test_support::{publish_queued, temp_slice_store, wait_until};
 
 const ADAPTERS: u8 = 1;
 const WAIT: Duration = Duration::from_secs(4);
 const LIVENESS_BUDGET_MS: u32 = 60_000;
 const REPLICATED_BROKER: &str = "broker.replicated";
+const REPLICATION_PASS: u64 = dali2rust_contracts::CORRELATION_NONE;
 
 struct Stack {
     mock: Arc<MockMqttClient>,
     publisher: BusPublisher,
-    slices: Arc<dyn SliceStore>,
     store: Arc<RegistryStore>,
     _host: BusHost,
 }
@@ -56,7 +56,7 @@ fn spawn_stack() -> Stack {
         ADAPTERS,
         Arc::clone(&store),
         Arc::clone(&counters),
-        Some(Arc::clone(&slices)),
+        Some(SlicePersistence::registry_owned_only(Arc::clone(&slices))),
         Arc::new(LivenessBeat::new("test", LIVENESS_BUDGET_MS)),
     );
     let (mock, bundle) = MockMqttClient::bundle();
@@ -81,7 +81,7 @@ fn spawn_stack() -> Stack {
             rule_topics: Arc::new(MockRuleTopics::default()),
         },
     );
-    Stack { mock, publisher, slices, store, _host: host }
+    Stack { mock, publisher, store, _host: host }
 }
 
 fn replicated_settings() -> PersistableHomeAssistantSettingsSlice {
@@ -104,10 +104,11 @@ fn replicated_settings() -> PersistableHomeAssistantSettingsSlice {
 fn replicate(stack: &Stack) {
     let envelope = PersistenceEnvelope::new(HOME_ASSISTANT_SETTINGS_SLICE_VERSION, replicated_settings());
     let bytes = encode_persistence_blob(&envelope).expect("encode home assistant slice");
-    write_slice(stack.slices.as_ref(), SliceKey::HomeAssistantSettings, &bytes);
+    let staged = vec![StagedSlice { key: SliceKey::HomeAssistantSettings, bytes }];
+    stack.store.stage_import(REPLICATION_PASS, staged).expect("stage");
     let reload = dali2rust_contracts::bus::command_envelope(
         0,
-        1,
+        REPLICATION_PASS,
         BusId::default().0,
         None,
         RegistrySliceReloadCommand { slice_name: fixed_text_32("home_assistant_settings") },

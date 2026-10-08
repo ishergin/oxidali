@@ -35,6 +35,7 @@ pub enum PassOutcome {
     PeerUnreachable(FetchError),
     UpToDate,
     Pulled(Vec<String>),
+    NotLanded,
 }
 
 pub const MANIFEST_PATH: &str = "/api/v1/config/slices";
@@ -185,9 +186,18 @@ pub struct ReplicationCounters {
     pub reload_publish_failed: AtomicU32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PulledSlice {
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
 pub trait ReplicationSink: Send + Sync {
     fn local_digests(&self) -> Vec<SliceDigest>;
-    fn write_slice(&self, name: &str, bytes: &[u8]) -> bool;
+    fn accepts(&self, name: &str) -> bool;
+    fn family(&self, name: &str) -> String;
+    fn stage(&self, pulled: Vec<PulledSlice>) -> bool;
+    fn discard_staged(&self);
 }
 
 pub struct ReplicationDeps {
@@ -222,28 +232,48 @@ pub fn run_pass(deps: &ReplicationDeps) -> PassOutcome {
     if pulled.is_empty() {
         return PassOutcome::UpToDate;
     }
-    request_reload(deps, &pulled);
-    PassOutcome::Pulled(pulled)
+    land(deps, pulled)
 }
 
-fn pull_each(deps: &ReplicationDeps, peer_url: &str, wanted: &[String]) -> Vec<String> {
+fn land(deps: &ReplicationDeps, pulled: Vec<PulledSlice>) -> PassOutcome {
+    let names: Vec<String> = pulled.iter().map(|slice| slice.name.clone()).collect();
+    let count = u32::try_from(names.len()).unwrap_or(u32::MAX);
+    if !deps.sink.stage(pulled) {
+        deps.counters.slices_rejected.fetch_add(count, Ordering::Relaxed);
+        return PassOutcome::NotLanded;
+    }
+    if !request_reload(deps, &names) {
+        deps.sink.discard_staged();
+        deps.counters.slices_rejected.fetch_add(count, Ordering::Relaxed);
+        return PassOutcome::NotLanded;
+    }
+    deps.counters.slices_pulled.fetch_add(count, Ordering::Relaxed);
+    PassOutcome::Pulled(names)
+}
+
+fn pull_each(deps: &ReplicationDeps, peer_url: &str, wanted: &[String]) -> Vec<PulledSlice> {
     let mut pulled = Vec::new();
+    let mut missed = Vec::new();
     for name in wanted {
-        let Ok(bytes) = deps.fetch.get(peer_url, &slice_path(name)) else {
-            deps.counters.slices_rejected.fetch_add(1, Ordering::Relaxed);
-            continue;
-        };
-        if deps.sink.write_slice(name, &bytes) {
-            deps.counters.slices_pulled.fetch_add(1, Ordering::Relaxed);
-            pulled.push(name.clone());
-        } else {
-            deps.counters.slices_rejected.fetch_add(1, Ordering::Relaxed);
+        match deps.fetch.get(peer_url, &slice_path(name)) {
+            Ok(bytes) if deps.sink.accepts(name) => pulled.push(PulledSlice {
+                name: name.clone(),
+                bytes,
+            }),
+            _ => {
+                deps.counters.slices_rejected.fetch_add(1, Ordering::Relaxed);
+                missed.push(deps.sink.family(name));
+            }
         }
     }
-    pulled
+    let (torn, whole): (Vec<_>, Vec<_>) =
+        pulled.into_iter().partition(|slice| missed.contains(&deps.sink.family(&slice.name)));
+    let torn = u32::try_from(torn.len()).unwrap_or(u32::MAX);
+    deps.counters.slices_rejected.fetch_add(torn, Ordering::Relaxed);
+    whole
 }
 
-fn request_reload(deps: &ReplicationDeps, pulled: &[String]) {
+fn request_reload(deps: &ReplicationDeps, pulled: &[String]) -> bool {
     let first = pulled.first().map(String::as_str).unwrap_or("");
     let name = if pulled.len() > 1 {
         format!("{first}+{}", pulled.len() - 1)
@@ -259,15 +289,14 @@ fn request_reload(deps: &ReplicationDeps, pulled: &[String]) {
             slice_name: dali2rust_contracts::msg::fixed_text_32(&name),
         },
     );
-    if deps
-        .publisher
-        .try_publish(BusChannel::Commands, BusFrame::command(ce))
-        != PublishResult::Queued
-    {
+    let queued = deps.publisher.try_publish(BusChannel::Commands, BusFrame::command(ce))
+        == PublishResult::Queued;
+    if !queued {
         deps.counters
             .reload_publish_failed
             .fetch_add(1, Ordering::Relaxed);
     }
+    queued
 }
 
 pub const REPLICATION_HANDLED_EVENTS: &[&str] = &["RedundancySettingsChangedEvent"];
@@ -286,8 +315,12 @@ pub fn spawn_replication_worker(
 
 fn replication_loop(ev_rx: &dali2rust_bus::BusSubscriberRx, deps: &ReplicationDeps) {
     loop {
-        if let PassOutcome::Pulled(slices) = run_pass(deps) {
-            log::info!("replication: pulled {} slice(s) from the peer", slices.len());
+        match run_pass(deps) {
+            PassOutcome::Pulled(slices) => {
+                log::info!("replication: pulled {} slice(s) from the peer", slices.len());
+            }
+            PassOutcome::NotLanded => log::warn!("replication: the pass could not reach the registry"),
+            _ => {}
         }
         let wait = std::time::Duration::from_millis(REPLICATION_INTERVAL_MS);
         if matches!(

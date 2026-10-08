@@ -1,19 +1,46 @@
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
 
 const SLICE_EXTENSION: &str = "bin";
 
+#[derive(Debug, Default)]
+struct WriteClaims(Mutex<HashSet<SliceKey>>);
+
+impl WriteClaims {
+    fn take(&self, key: SliceKey) -> Result<WriteClaim<'_>, StoreError> {
+        if !self.0.lock().unwrap_or_else(PoisonError::into_inner).insert(key) {
+            return Err(StoreError::Deferred);
+        }
+        Ok(WriteClaim { claims: self, key })
+    }
+}
+
+struct WriteClaim<'a> {
+    claims: &'a WriteClaims,
+    key: SliceKey,
+}
+
+impl Drop for WriteClaim<'_> {
+    fn drop(&mut self) {
+        self.claims.0.lock().unwrap_or_else(PoisonError::into_inner).remove(&self.key);
+    }
+}
+
 #[derive(Debug)]
 pub struct FileSliceStore {
     base_dir: PathBuf,
+    claims: WriteClaims,
 }
 
 impl FileSliceStore {
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
         Self {
             base_dir: base_dir.into(),
+            claims: WriteClaims::default(),
         }
     }
 
@@ -37,23 +64,25 @@ impl SliceStore for FileSliceStore {
     }
 
     fn begin_write(&self, key: SliceKey) -> Result<Box<dyn SliceWriteSession + '_>, StoreError> {
+        let claim = self.claims.take(key)?;
         let target = self.path(key);
         if let Some(parent) = target.parent().filter(|parent| !parent.exists()) {
             std::fs::create_dir_all(parent).map_err(|e| backend("create_dir_all", e))?;
         }
         let tmp = target.with_extension("tmp");
         let file = std::fs::File::create(&tmp).map_err(|e| backend("create", e))?;
-        Ok(Box::new(FileWriteSession { target, tmp, file }))
+        Ok(Box::new(FileWriteSession { _claim: claim, target, tmp, file }))
     }
 }
 
-struct FileWriteSession {
+struct FileWriteSession<'a> {
+    _claim: WriteClaim<'a>,
     target: PathBuf,
     tmp: PathBuf,
     file: std::fs::File,
 }
 
-impl SliceWriteSession for FileWriteSession {
+impl SliceWriteSession for FileWriteSession<'_> {
     fn append(&mut self, chunk: &[u8]) -> Result<(), StoreError> {
         self.file
             .write_all(chunk)
@@ -78,6 +107,7 @@ impl SliceWriteSession for FileWriteSession {
 #[derive(Debug)]
 pub struct InMemorySliceStore {
     slices: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+    claims: WriteClaims,
 }
 
 impl Default for InMemorySliceStore {
@@ -90,6 +120,7 @@ impl InMemorySliceStore {
     pub fn new() -> Self {
         Self {
             slices: std::sync::Mutex::new(std::collections::HashMap::new()),
+            claims: WriteClaims::default(),
         }
     }
 
@@ -114,6 +145,7 @@ impl SliceStore for InMemorySliceStore {
 
     fn begin_write(&self, key: SliceKey) -> Result<Box<dyn SliceWriteSession + '_>, StoreError> {
         Ok(Box::new(MemoryWriteSession {
+            _claim: self.claims.take(key)?,
             store: self,
             label: key.label(),
             buf: Vec::new(),
@@ -122,6 +154,7 @@ impl SliceStore for InMemorySliceStore {
 }
 
 struct MemoryWriteSession<'a> {
+    _claim: WriteClaim<'a>,
     store: &'a InMemorySliceStore,
     label: String,
     buf: Vec<u8>,
@@ -193,5 +226,15 @@ mod tests {
         second.abort();
 
         assert_eq!(store.load(SliceKey::Adapters).expect("load"), b"first");
+    }
+
+    #[test]
+    fn a_host_store_defers_a_second_writer_of_one_slice_like_the_device() {
+        let store = InMemorySliceStore::new();
+        let key = SliceKey::PollerSettings;
+        let first = store.begin_write(key).expect("first writer");
+        assert!(matches!(store.begin_write(key).map(|_| ()), Err(StoreError::Deferred)));
+        first.abort();
+        store.begin_write(key).expect("the slot is free once the first let go").abort();
     }
 }

@@ -1,5 +1,9 @@
+use std::sync::atomic::Ordering;
+
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, StoreError};
 
+use super::import_stage::StagedSlice;
+use super::persistence::validate_registry_slice;
 use super::store::RegistryStore;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,64 +74,159 @@ impl RegistryStore {
     pub fn export_slice(&self, slices: &dyn SliceStore, key: SliceKey) -> Option<Vec<u8>> {
         slices.load(key).ok()
     }
+}
 
-    pub fn import_slice(
-        &self,
-        slices: &dyn SliceStore,
-        key: SliceKey,
-        bytes: &[u8],
-    ) -> Result<(), StoreError> {
-        if dali2rust_platform::flash_gate::firmware_write_open() {
-            return Err(StoreError::Backend("firmware update in progress".to_string()));
-        }
-        let _serialised = self.flush_buf.lock().map_err(|_| {
-            StoreError::Backend("flush buffer poisoned".to_string())
-        })?;
-        self.write_import(slices, key, bytes)
+pub trait ForeignSliceOwner: Send + Sync {
+    fn validate(&self, key: SliceKey, bytes: &[u8]) -> Result<(), String>;
+    fn imported(&self, key: SliceKey);
+}
+
+pub struct RegistryOwnedOnly;
+
+impl ForeignSliceOwner for RegistryOwnedOnly {
+    fn validate(&self, key: SliceKey, _bytes: &[u8]) -> Result<(), String> {
+        Err(format!("no owner reads {}", key.label()))
     }
 
-    pub fn import_slice_without_waiting(
+    fn imported(&self, _key: SliceKey) {}
+}
+
+#[derive(Debug)]
+pub enum ImportWriteFailure {
+    FirmwareWriteOpen,
+    Store { written: usize, error: StoreError },
+}
+
+impl RegistryStore {
+    pub fn keep_decodable(
         &self,
-        slices: &dyn SliceStore,
-        key: SliceKey,
-        bytes: &[u8],
-    ) -> Result<(), StoreError> {
-        if dali2rust_platform::flash_gate::firmware_write_open() {
-            return Err(StoreError::Deferred);
-        }
-        let _serialised = match self.flush_buf.try_lock() {
-            Ok(guard) => guard,
-            Err(std::sync::TryLockError::WouldBlock) => return Err(StoreError::Deferred),
-            Err(std::sync::TryLockError::Poisoned(_)) => {
-                return Err(StoreError::Backend("flush buffer poisoned".to_string()))
-            }
-        };
-        self.write_import(slices, key, bytes)
+        staged: Vec<StagedSlice>,
+        foreign: &dyn ForeignSliceOwner,
+    ) -> (Vec<StagedSlice>, u32) {
+        let broken: Vec<SliceKey> = staged
+            .iter()
+            .filter(|slice| !decodes(slice, foreign))
+            .map(|slice| slice.key)
+            .collect();
+        let (refused, decodable): (Vec<_>, Vec<_>) = staged
+            .into_iter()
+            .partition(|slice| broken.iter().any(|key| key.family() == slice.key.family()));
+        let undecodable = u32::try_from(broken.len()).unwrap_or(u32::MAX);
+        self.persist_counters.hydrate_error_total.fetch_add(undecodable, Ordering::Relaxed);
+        (decodable, u32::try_from(refused.len()).unwrap_or(u32::MAX))
     }
 
-    fn write_import(&self, slices: &dyn SliceStore, key: SliceKey, bytes: &[u8]) -> Result<(), StoreError> {
-        let mut session = slices.begin_write(key)?;
-        if let Err(e) = session.append(bytes) {
-            session.abort();
-            return Err(e);
+    pub fn write_staged(
+        &self,
+        slices: &dyn SliceStore,
+        staged: &[StagedSlice],
+    ) -> Result<(), ImportWriteFailure> {
+        if dali2rust_platform::flash_gate::firmware_write_open() {
+            return Err(ImportWriteFailure::FirmwareWriteOpen);
         }
-        session.commit()?;
-        self.import_fence.raise(key);
+        for (written, slice) in staged.iter().enumerate() {
+            write_slice_bytes(slices, slice).map_err(|error| {
+                log::warn!("registry: writing imported {} failed: {error}", slice.key.label());
+                ImportWriteFailure::Store { written, error }
+            })?;
+        }
         Ok(())
     }
 
-    pub fn import_fence_generation(&self) -> u64 {
-        self.import_fence.generation()
+    pub fn withhold_until_read(&self, keys: &[SliceKey], adapter_count: u8) {
+        for key in keys {
+            match *key {
+                SliceKey::PhysicalDeviceBank { adapter_id, bank } => {
+                    self.dirty.settle_physical_device_banks(adapter_id, 0, 1 << bank);
+                }
+                other => self.dirty.withheld.settle(other, true),
+            }
+        }
+        self.persist_counters.hydrate_error_total.fetch_add(1, Ordering::Relaxed);
+        self.persist_counters
+            .unread_slices
+            .store(self.unread_slices(adapter_count), Ordering::Relaxed);
     }
+}
 
-    pub fn lower_import_fence(&self, up_to_generation: u64) {
-        self.import_fence.lower_up_to(up_to_generation);
+fn decodes(slice: &StagedSlice, foreign: &dyn ForeignSliceOwner) -> bool {
+    let checked = match validate_registry_slice(slice.key, &slice.bytes) {
+        Some(checked) => checked.map_err(|e| e.to_string()),
+        None => foreign.validate(slice.key, &slice.bytes),
+    };
+    if let Err(why) = &checked {
+        log::warn!("registry: import of {} refused: {why}", slice.key.label());
     }
+    checked.is_ok()
+}
+
+fn write_slice_bytes(slices: &dyn SliceStore, slice: &StagedSlice) -> Result<(), StoreError> {
+    let mut session = slices.begin_write(slice.key)?;
+    if let Err(e) = session.append(&slice.bytes) {
+        session.abort();
+        return Err(e);
+    }
+    session.commit()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bank_family_is_refused_whole_when_one_of_its_banks_does_not_decode() {
+        let store = RegistryStore::with_adapter_count(1);
+        let empty_bank = super::super::persistence_slices::encode_persistence_blob(
+            &super::super::persistence_slices::PersistenceEnvelope::new(
+                super::super::persistence_slices::INPUT_DEVICES_SLICE_VERSION,
+                super::super::input_devices::PersistableInputDevicesSlice::default(),
+            ),
+        )
+        .expect("encode bank");
+        let staged = vec![
+            StagedSlice { key: SliceKey::InputDevices { bank: 0 }, bytes: empty_bank.clone() },
+            StagedSlice { key: SliceKey::InputDevices { bank: 1 }, bytes: b"torn".to_vec() },
+            StagedSlice { key: SliceKey::InputDevices { bank: 2 }, bytes: empty_bank },
+        ];
+        let (kept, refused) = store.keep_decodable(staged, &RegistryOwnedOnly);
+        assert!(kept.is_empty(), "a bank is a position in one list; half a list is no list");
+        assert_eq!(refused, 3);
+
+        let staged = vec![
+            StagedSlice { key: SliceKey::Rules { bank: 0 }, bytes: b"rule".to_vec() },
+            StagedSlice { key: SliceKey::Rules { bank: 3 }, bytes: b"torn".to_vec() },
+            StagedSlice { key: SliceKey::PollerSettings, bytes: b"x".to_vec() },
+        ];
+        let (kept, _) = store.keep_decodable(staged, &RulesTextOnly);
+        assert!(kept.is_empty(), "rules text without its manifest would read as torn");
+    }
+
+    struct RulesTextOnly;
+
+    impl ForeignSliceOwner for RulesTextOnly {
+        fn validate(&self, key: SliceKey, _bytes: &[u8]) -> Result<(), String> {
+            match key {
+                SliceKey::Rules { bank: 0 } => Ok(()),
+                other => Err(other.label()),
+            }
+        }
+
+        fn imported(&self, _key: SliceKey) {}
+    }
+
+    #[test]
+    fn a_slice_written_but_not_reloaded_is_held_from_the_flush_until_a_read() {
+        let slices = dali2rust_bsp::slice_store_files::InMemorySliceStore::new();
+        let store = RegistryStore::with_adapter_count(1);
+        let imported = [StagedSlice { key: SliceKey::Policies, bytes: b"imported".to_vec() }];
+        store.write_staged(&slices, &imported).expect("write");
+        store.withhold_until_read(&[SliceKey::Policies], 1);
+        assert_eq!(store.persist_counters.unread_slices.load(Ordering::Relaxed), 1);
+
+        store.dirty.mark_policies_dirty();
+        store.flush_dirty_slices(&slices);
+        assert_eq!(slices.load(SliceKey::Policies).expect("slice"), b"imported");
+    }
 
     #[test]
     fn the_three_per_unit_slices_are_never_transferred() {

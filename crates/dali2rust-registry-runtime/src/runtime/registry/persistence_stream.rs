@@ -1427,6 +1427,41 @@ mod tests {
     }
 
     #[test]
+    fn a_reload_leaves_only_the_devices_each_loaded_bank_holds() {
+        let installed = InMemorySliceStore::new();
+        write_banks_except(&installed, &populated_store(MIGRATED_DEVICES), None);
+        let live = boot(&installed);
+        live.inner.write().expect("registry lock").physical_devices
+            .get_mut(&(0, KEPT_SHORT)).expect("a kept device").runtime_level = Some(KEPT_LEVEL);
+
+        let source = populated_store(MIGRATED_DEVICES);
+        {
+            let mut g = source.inner.write().expect("registry lock");
+            for short in FORGOTTEN_SHORTS {
+                g.physical_devices.remove(&(0, short));
+            }
+            let moved = g.physical_devices.remove(&(0, MOVED_FROM)).expect("a device to move");
+            g.physical_devices.insert((0, MOVED_TO), moved);
+        }
+        let imported = InMemorySliceStore::new();
+        write_banks_except(&imported, &source, None);
+        live.hydrate_counts_from_store(&imported, 1);
+
+        assert!(FORGOTTEN_SHORTS.iter().all(|short| device_name(&live, *short).is_none()));
+        assert!(device_name(&live, MOVED_FROM).is_none(), "the old address stayed");
+        assert_eq!(device_name(&live, MOVED_TO), device_name(&source, MOVED_TO));
+        assert_eq!(device_count(&live), device_count(&source));
+        let kept = live.inner.read().expect("registry lock").physical_devices
+            .get(&(0, KEPT_SHORT)).and_then(|record| record.runtime_level);
+        assert_eq!(kept, Some(KEPT_LEVEL), "a kept device lost its runtime level");
+    }
+
+    const MOVED_FROM: u8 = 3;
+    const MOVED_TO: u8 = 40;
+    const KEPT_SHORT: u8 = 2;
+    const KEPT_LEVEL: u8 = 77;
+
+    #[test]
     fn flush_reports_size_measurements() {
         let record_size = std::mem::size_of::<PersistablePhysicalDeviceRecord>();
         let store = populated_store(16);
