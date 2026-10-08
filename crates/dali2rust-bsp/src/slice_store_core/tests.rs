@@ -3,10 +3,13 @@ use std::sync::Mutex;
 
 use dali2rust_platform::slice_store::SliceKey;
 
+type ReadHook = Box<dyn FnOnce() + Send>;
+
 struct FakeNor {
     bytes: Mutex<Vec<u8>>,
     write_budget: Mutex<Option<usize>>,
     erase_fails: Mutex<bool>,
+    read_hook: Mutex<Option<(usize, ReadHook)>>,
 }
 
 impl FakeNor {
@@ -15,6 +18,27 @@ impl FakeNor {
             bytes: Mutex::new(vec![ERASED_BYTE; size]),
             write_budget: Mutex::new(None),
             erase_fails: Mutex::new(false),
+            read_hook: Mutex::new(None),
+        }
+    }
+
+    fn after_reads(&self, reads: usize, hook: ReadHook) {
+        *self.read_hook.lock().unwrap() = Some((reads, hook));
+    }
+
+    fn count_read(&self) {
+        let mut armed = self.read_hook.lock().unwrap();
+        let fire = match armed.as_mut() {
+            Some((0, _)) => armed.take().map(|(_, hook)| hook),
+            Some((left, _)) => {
+                *left -= 1;
+                None
+            }
+            None => None,
+        };
+        drop(armed);
+        if let Some(hook) = fire {
+            hook();
         }
     }
 
@@ -45,6 +69,8 @@ impl RawFlash for FakeNor {
             return Err(StoreError::Backend("read past the device".to_string()));
         }
         buf.copy_from_slice(&guard[start..end]);
+        drop(guard);
+        self.count_read();
         Ok(())
     }
 
@@ -348,3 +374,30 @@ fn a_second_writer_of_one_slice_is_deferred_while_the_first_holds_it() {
     write_slice(&store, b"second").expect("the slot is free once the first committed");
     assert_eq!(store.load(KEY).expect("load"), b"second");
 }
+
+#[test]
+fn a_load_overtaken_by_a_commit_leaves_the_served_bank_where_the_commit_put_it() {
+    let store = std::sync::Arc::new(store());
+    write_slice(&store, b"first").expect("first write");
+    assert_eq!(store.load(KEY).expect("load"), b"first");
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let writer_store = std::sync::Arc::clone(&store);
+    let writer = std::thread::spawn(move || {
+        go_rx.recv().expect("go");
+        write_slice(&writer_store, b"second").expect("second write");
+        done_tx.send(()).expect("done");
+    });
+    store.flash.after_reads(HEADERS_BEFORE_THE_PAYLOAD, Box::new(move || {
+        go_tx.send(()).expect("go");
+        done_rx.recv().expect("done");
+    }));
+
+    assert_eq!(store.load(KEY).expect("an overtaken load"), b"first");
+    writer.join().expect("writer");
+    let served = store.memory(KEY).and_then(|m| SlotMemory::get(&m.served));
+    let current = store.current_bank(&geometry()).expect("banks").map(|(bank, _)| bank);
+    assert_eq!(served, current, "the load put the served bank back on the one the commit erased");
+}
+
+const HEADERS_BEFORE_THE_PAYLOAD: usize = 2;

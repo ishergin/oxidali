@@ -204,9 +204,10 @@ filtered: they address one device.
   before hydration — by boot order, not by a gate. A change to the boot sequence keeps
   "hydrate joins before HTTP mounts" or adds an explicit gate.
 - An import and a standby's pull reach the store only through the registry worker: it
-  decodes each staged slice (a bank family — the rules banks, the input-device banks — is
-  taken or refused whole), flushes the dirty slices and any HCL switch still waiting,
-  writes the slices that decode and reloads through the same hydration path, on a
+  flushes the dirty slices and any HCL switch still waiting, decodes each staged slice (a
+  bank family in one batch — the rules banks, the input-device banks — is taken or refused
+  whole, and a pass drops a family whose fetch failed), writes the slices that decode and
+  reloads through the same hydration path, on a
   PSRAM stack; it reads every slice first, because a task on an external stack must not
   call flash ([ADR-012](decisions/ADR-012-async-chunked-config-writes.md),
   [ADR-018](decisions/ADR-018-controller-redundancy.md), [07](07-memory-and-cores.md)). A

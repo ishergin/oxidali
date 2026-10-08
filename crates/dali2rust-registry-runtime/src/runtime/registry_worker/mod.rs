@@ -203,7 +203,9 @@ fn flush_before_import(frame: &BusFrame, deps: &RegistryWorkerDeps, clock: &mut 
     let BusFrame::Command(command) = frame else {
         return;
     };
-    if !matches!(command.payload, BusCommandPayload::RegistrySliceReloadCommand(_)) {
+    if !matches!(command.payload, BusCommandPayload::RegistrySliceReloadCommand(_))
+        || !deps.store.import_staged_for(command.meta.correlation_id)
+    {
         return;
     }
     if deps.store.dirty.take_hcl_switches_waiting() {

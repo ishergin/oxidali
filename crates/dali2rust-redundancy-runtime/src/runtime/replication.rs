@@ -198,6 +198,7 @@ pub struct PulledSlice {
 pub trait ReplicationSink: Send + Sync {
     fn local_digests(&self) -> Vec<SliceDigest>;
     fn accepts(&self, name: &str) -> bool;
+    fn family(&self, name: &str) -> String;
     fn stage(&self, pulled: Vec<PulledSlice>) -> bool;
     fn discard_staged(&self);
 }
@@ -255,6 +256,7 @@ fn land(deps: &ReplicationDeps, pulled: Vec<PulledSlice>) -> PassOutcome {
 
 fn pull_each(deps: &ReplicationDeps, peer_url: &str, wanted: &[String]) -> Vec<PulledSlice> {
     let mut pulled = Vec::new();
+    let mut missed = Vec::new();
     for name in wanted {
         match deps.fetch.get(peer_url, &slice_path(name)) {
             Ok(bytes) if deps.sink.accepts(name) => pulled.push(PulledSlice {
@@ -263,10 +265,15 @@ fn pull_each(deps: &ReplicationDeps, peer_url: &str, wanted: &[String]) -> Vec<P
             }),
             _ => {
                 deps.counters.slices_rejected.fetch_add(1, Ordering::Relaxed);
+                missed.push(deps.sink.family(name));
             }
         }
     }
-    pulled
+    let (torn, whole): (Vec<_>, Vec<_>) =
+        pulled.into_iter().partition(|slice| missed.contains(&deps.sink.family(&slice.name)));
+    let torn = u32::try_from(torn.len()).unwrap_or(u32::MAX);
+    deps.counters.slices_rejected.fetch_add(torn, Ordering::Relaxed);
+    whole
 }
 
 fn request_reload(deps: &ReplicationDeps, pulled: &[String]) -> bool {

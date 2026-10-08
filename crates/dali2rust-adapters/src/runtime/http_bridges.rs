@@ -44,6 +44,7 @@ use dali2rust_api::http::{
     VirtualLampBindingApplyWatchBridge, VirtualLampHttpState, VirtualLampHttpStateBridge,
     VirtualLampPatchWatch, VirtualLampPatchWatchBridge,
 };
+use dali2rust_api::http::handlers::config_transfer::ImportRefusal;
 use dali2rust_bus::BusPublisher;
 use dali2rust_domain::registry::{AdapterReadPort, RegistryReadPort};
 use dali2rust_operations_runtime::{ApplyOrchestratorCounters, OperationTrackerCounters};
@@ -773,8 +774,7 @@ impl dali2rust_api::http::handlers::config_transfer::ConfigTransferPort for Conf
         workflow: u64,
         name: &str,
         bytes: &[u8],
-    ) -> Result<(), dali2rust_api::http::handlers::config_transfer::ImportRefusal> {
-        use dali2rust_api::http::handlers::config_transfer::ImportRefusal;
+    ) -> Result<(), ImportRefusal> {
         if self.slices.is_none() {
             return Err(ImportRefusal::PersistenceDisabled);
         }
@@ -829,6 +829,11 @@ impl dali2rust_redundancy_runtime::ReplicationSink for ReplicationSinkBridge {
     fn accepts(&self, name: &str) -> bool {
         self.slices.is_some()
             && dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count).is_some()
+    }
+
+    fn family(&self, name: &str) -> String {
+        dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count)
+            .map_or_else(|| name.to_string(), |key| key.family().label())
     }
 
     fn stage(&self, pulled: Vec<dali2rust_redundancy_runtime::PulledSlice>) -> bool {

@@ -110,10 +110,10 @@ impl RegistryStore {
             .collect();
         let (refused, decodable): (Vec<_>, Vec<_>) = staged
             .into_iter()
-            .partition(|slice| broken.iter().any(|key| same_family(*key, slice.key)));
-        let refused = u32::try_from(refused.len()).unwrap_or(u32::MAX);
-        self.persist_counters.hydrate_error_total.fetch_add(refused, Ordering::Relaxed);
-        (decodable, refused)
+            .partition(|slice| broken.iter().any(|key| key.family() == slice.key.family()));
+        let undecodable = u32::try_from(broken.len()).unwrap_or(u32::MAX);
+        self.persist_counters.hydrate_error_total.fetch_add(undecodable, Ordering::Relaxed);
+        (decodable, u32::try_from(refused.len()).unwrap_or(u32::MAX))
     }
 
     pub fn write_staged(
@@ -147,15 +147,6 @@ impl RegistryStore {
             .unread_slices
             .store(self.unread_slices(adapter_count), Ordering::Relaxed);
     }
-}
-
-fn same_family(a: SliceKey, b: SliceKey) -> bool {
-    a == b
-        || matches!(
-            (a, b),
-            (SliceKey::Rules { .. }, SliceKey::Rules { .. })
-                | (SliceKey::InputDevices { .. }, SliceKey::InputDevices { .. })
-        )
 }
 
 fn decodes(slice: &StagedSlice, foreign: &dyn ForeignSliceOwner) -> bool {
@@ -200,6 +191,27 @@ mod tests {
         let (kept, refused) = store.keep_decodable(staged, &RegistryOwnedOnly);
         assert!(kept.is_empty(), "a bank is a position in one list; half a list is no list");
         assert_eq!(refused, 3);
+
+        let staged = vec![
+            StagedSlice { key: SliceKey::Rules { bank: 0 }, bytes: b"rule".to_vec() },
+            StagedSlice { key: SliceKey::Rules { bank: 3 }, bytes: b"torn".to_vec() },
+            StagedSlice { key: SliceKey::PollerSettings, bytes: b"x".to_vec() },
+        ];
+        let (kept, _) = store.keep_decodable(staged, &RulesTextOnly);
+        assert!(kept.is_empty(), "rules text without its manifest would read as torn");
+    }
+
+    struct RulesTextOnly;
+
+    impl ForeignSliceOwner for RulesTextOnly {
+        fn validate(&self, key: SliceKey, _bytes: &[u8]) -> Result<(), String> {
+            match key {
+                SliceKey::Rules { bank: 0 } => Ok(()),
+                other => Err(other.label()),
+            }
+        }
+
+        fn imported(&self, _key: SliceKey) {}
     }
 
     #[test]
