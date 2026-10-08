@@ -946,7 +946,7 @@ mod tests {
     }
 
     #[test]
-    fn one_dirty_device_writes_one_banks_worth_of_bytes_issue89() {
+    fn one_dirty_device_writes_one_banks_worth_of_bytes() {
         let store = populated_store(64);
 
         let all = CountingStore::default();
@@ -1439,7 +1439,7 @@ mod tests {
         );
         assert!(
             record_size >= 400,
-            "record no longer fat ({record_size}B) — revisit ISSUE-1 sizing notes"
+            "record no longer fat ({record_size}B) — the streamed flush was sized for fat records"
         );
     }
 

@@ -1619,7 +1619,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod issue37_dirty_gating_tests {
+mod dirty_gating_tests {
     use super::super::store::RegistryStore;
     use dali2rust_contracts::msg::{
         ColorMode, DaliAttributeReadChunk as Chunk, DeviceTypeSet, Dt6ReadSnapshot,
@@ -1858,7 +1858,7 @@ mod issue37_dirty_gating_tests {
         assert!(store.apply_attributes_written(0, SHORT, Some(700), None, None, None, None, (None, None), (None, None), None));
         assert!(
             !store.dirty.take_physical_devices_dirty_for(0),
-            "a byte-identical re-confirmation is the ISSUE-37 no-op class"
+            "a byte-identical re-confirmation changes nothing, so it dirties nothing"
         );
 
         assert!(store.apply_physical_device_attribute_chunk(0, SHORT, &c102_fade(700)));

@@ -1020,7 +1020,7 @@ fn a_dapc_frame_commits_the_staged_colour() {
     assert_eq!(
         exchange(&mut fleet, dt8(5, Dt8Command::QueryColourStatus), true),
         TransferOutcome::Answer(0),
-        "staged only — nothing active yet (ISSUE-12)"
+        "staged only — nothing is active until ACTIVATE"
     );
 
     let dapc = (u16::from(short(5).encode_address_byte()) << 8) | 120;
@@ -1038,7 +1038,7 @@ fn a_dapc_frame_commits_the_staged_colour() {
 }
 
 #[test]
-fn a_masked_dapc_activates_the_staged_colour_only_while_the_bit_is_set_issue128() {
+fn a_masked_dapc_activates_the_staged_colour_only_while_the_bit_is_set() {
     let mut fleet = GearFleet::demo_bus();
     write_gear_features(&mut fleet, 0x00);
     stage_cct(&mut fleet);

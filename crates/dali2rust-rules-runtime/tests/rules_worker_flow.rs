@@ -1525,12 +1525,12 @@ fn fade_is_refused_at_the_document_boundary() {
     assert!(
         sig.error.is_some(),
         "a document carrying `fade=` must be refused at the commit, not \
-         accepted and silently dropped (ISSUE-94)"
+         accepted and silently dropped"
     );
 }
 
 #[test]
-fn a_slice_reload_reaches_a_live_engine_issue101() {
+fn a_slice_reload_reaches_a_live_engine() {
     let files = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-reload"));
     let standby = harness_on(Arc::clone(&files));
     let active = harness_on(Arc::clone(&files));
@@ -1606,7 +1606,7 @@ rule \"цель\" { when http trigger do log(\"z\") }\n\
 rule \"выключатель\" { when http trigger do rule(\"цель\").disable() }\n";
 
 #[test]
-fn toggling_one_rule_leaves_the_other_rules_running_issue127() {
+fn toggling_one_rule_leaves_the_other_rules_running() {
     let h = harness("rules-toggle-neighbours");
     publish_document(&h, 1, NEIGHBOURS_DOC, 0);
     assert!(recv_signal(&h, 1).error.is_none());
@@ -1846,7 +1846,7 @@ fn a_failure_found_at_boot_keeps_its_diagnostic_until_the_cause_changes() {
 }
 
 #[test]
-fn a_disabled_rule_stays_disabled_across_a_document_that_stopped_compiling_issue162() {
+fn a_disabled_rule_stays_disabled_across_a_document_that_stopped_compiling() {
     let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let world = EmptyWorld {
         started: std::time::Instant::now(),
@@ -1886,7 +1886,7 @@ fn a_disabled_rule_stays_disabled_across_a_document_that_stopped_compiling_issue
 }
 
 #[test]
-fn a_wet_run_is_reported_per_rule_and_a_dry_run_is_not_issue100() {
+fn a_wet_run_is_reported_per_rule_and_a_dry_run_is_not() {
     let h = harness("rules-runtime-block");
     publish_document(&h, 1, NEIGHBOURS_DOC, 0);
     assert!(recv_signal(&h, 1).error.is_none());

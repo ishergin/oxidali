@@ -116,7 +116,7 @@ fn replicate(stack: &Stack) {
 }
 
 #[test]
-fn replicated_settings_reach_the_bridge_on_the_slice_reload_issue163() {
+fn replicated_settings_reach_the_bridge_on_the_slice_reload() {
     let stack = spawn_stack();
     replicate(&stack);
     wait_until(

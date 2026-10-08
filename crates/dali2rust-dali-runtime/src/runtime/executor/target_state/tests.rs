@@ -316,7 +316,7 @@ fn a_setpoint_that_states_nothing_sends_no_frames() {
 }
 
 #[test]
-fn a_level_only_setpoint_leaves_automatic_activation_alone_issue117() {
+fn a_level_only_setpoint_leaves_automatic_activation_alone() {
     let mock = MockDaliTransport::new();
     let short = 17;
     let (transport, mut controller) = setup_controller(mock);

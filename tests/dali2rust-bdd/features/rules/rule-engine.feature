@@ -3,8 +3,8 @@ Feature: The rules engine: a frame becomes light, honestly reported
 
   I10-B. The engine consumes the same typed events the rest of the product
   publishes — a rule is proved from an injected 24-bit frame through the
-  translator, never from a hand-built event (the ISSUE-24 rule at the
-  black-box layer). Every suppression is a counter, never silence.
+  translator, never from a hand-built event. Every suppression is a counter,
+  never silence.
 
   @id:RULE-020
   Scenario: An input frame drives a broadcast off through a rule

@@ -340,7 +340,7 @@ fn stage_channels(harness: &Harness, short: u8, opcode: u8, channels: [u8; 3]) {
 }
 
 #[test]
-fn a_foreign_six_channel_write_is_one_rgbwaf_observation_issue122() {
+fn a_foreign_six_channel_write_is_one_rgbwaf_observation() {
     let harness = spawn_harness();
     stage_channels(&harness, 17, 235, [254, 10, 20]);
     stage_channels(&harness, 17, 236, [30, 0, 254]);

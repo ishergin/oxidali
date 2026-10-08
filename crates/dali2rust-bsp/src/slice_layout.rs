@@ -364,7 +364,7 @@ mod tests {
         assert_eq!(choice.keep, Some(0), "the proved payload is what must survive");
         assert_eq!(
             choice.target, 1,
-            "targeting bank 0 erases the only readable copy (ISSUE-56 step 6)"
+            "targeting bank 0 erases the only readable copy"
         );
 
         let mirrored = choose_bank(Some(1), Some(0));

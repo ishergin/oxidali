@@ -1907,7 +1907,7 @@ fn a_narrow_colour_value_is_still_one_transaction_and_one_answer() {
     )
     .expect("exchange");
 
-    assert_eq!(value, Some(254), "a one-byte value answers whole (ISSUE-43)");
+    assert_eq!(value, Some(254), "a one-byte value answers whole");
     assert_eq!(
         counters
             .transactions_completed
