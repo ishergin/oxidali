@@ -92,11 +92,39 @@ fn a_slice_that_does_not_decode_is_refused_without_a_write() {
         ..RegistryStackOptions::default()
     });
 
-    let signal = import(&stack, IMPORT_WORKFLOW, b"not a persistence envelope");
-    assert_eq!(signal.signal, OperationWorkerSignal::WorkerFailed);
-    let error = signal.error.as_ref().expect("a refusal names its cause");
+    let truncated = &stored[..stored.len() - 1];
+    for (workflow, broken) in [(IMPORT_WORKFLOW, &b"not a persistence envelope"[..]), (IMPORT_WORKFLOW + 1, truncated)] {
+        let signal = import(&stack, workflow, broken);
+        assert_eq!(signal.signal, OperationWorkerSignal::WorkerFailed);
+        let error = signal.error.as_ref().expect("a refusal names its cause");
+        assert_eq!((error.code, error.message.as_str()), (ErrorCode::InvalidValue, "invalid_slice"));
+        assert_eq!(slices_load(target_slices.as_ref(), SliceKey::PollerSettings), stored);
+    }
+}
+
+#[test]
+fn a_pass_writes_the_slices_that_decode_and_names_the_one_that_does_not() {
+    let (source, source_slices) = store_with_poller_settings("transfer-partial-source");
+    let exported = source
+        .export_slice(&source_slices, SliceKey::PollerSettings)
+        .expect("exported");
+    let target_slices: Arc<dyn SliceStore> = Arc::new(temp_slice_store("transfer-partial"));
+    let stack = spawn_registry_stack_with(RegistryStackOptions {
+        slices: Some(Arc::clone(&target_slices)),
+        ..RegistryStackOptions::default()
+    });
+    let staged = vec![
+        StagedSlice { key: SliceKey::Policies, bytes: b"not a persistence envelope".to_vec() },
+        StagedSlice { key: SliceKey::PollerSettings, bytes: exported.clone() },
+    ];
+    stack.store.stage_import(IMPORT_WORKFLOW, staged).expect("stage");
+
+    let signal = commit(&stack, IMPORT_WORKFLOW);
+    let error = signal.error.as_ref().expect("the refused slice is named");
     assert_eq!((error.code, error.message.as_str()), (ErrorCode::InvalidValue, "invalid_slice"));
-    assert_eq!(slices_load(target_slices.as_ref(), SliceKey::PollerSettings), stored);
+    assert_eq!(slices_load(target_slices.as_ref(), SliceKey::PollerSettings), exported);
+    assert!(target_slices.load(SliceKey::Policies).is_err(), "the broken slice was not written");
+    assert_eq!(stack.store.poller_settings_view().interval_ms, SOURCE_INTERVAL_MS);
 }
 
 #[test]

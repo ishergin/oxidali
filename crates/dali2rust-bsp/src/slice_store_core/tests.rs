@@ -337,3 +337,24 @@ fn a_deferred_erase_is_performed_by_the_next_write() {
         "0xF0 & 0xCC == 0xC0 — anything but 0xCC means the bank was reused dirty"
     );
 }
+
+#[test]
+fn a_second_writer_of_one_slice_waits_for_the_first_to_finish() {
+    let store = std::sync::Arc::new(store());
+    let mut first = store.begin_write(KEY).expect("first writer");
+    first.append(b"first").expect("append");
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let second_store = std::sync::Arc::clone(&store);
+    let second = std::thread::spawn(move || {
+        let outcome = write_slice(&second_store, b"second");
+        done_tx.send(()).expect("report");
+        outcome
+    });
+    assert!(
+        done_rx.recv_timeout(std::time::Duration::from_millis(200)).is_err(),
+        "the second writer chose a bank while the first still held the slot"
+    );
+    first.commit().expect("first commit");
+    second.join().expect("second writer").expect("second write");
+    assert_eq!(store.load(KEY).expect("load"), b"second");
+}

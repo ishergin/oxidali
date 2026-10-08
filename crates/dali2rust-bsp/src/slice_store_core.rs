@@ -1,5 +1,6 @@
 use core::cmp::Reverse;
 use core::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
 
@@ -54,6 +55,7 @@ impl BankHeader {
 struct SlotMemory {
     served: AtomicU8,
     erased: AtomicU8,
+    writing: Mutex<()>,
 }
 
 impl SlotMemory {
@@ -173,8 +175,9 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
     fn begin_write(&self, key: SliceKey) -> Result<Box<dyn SliceWriteSession + '_>, StoreError> {
         let slot = slot_geometry(key)
             .ok_or_else(|| StoreError::Backend(format!("no slot reserved for {}", key.label())))?;
-        let current = self.current_bank(&slot)?;
         let memory = self.memory(key);
+        let writing = memory.map(|m| m.writing.lock().unwrap_or_else(PoisonError::into_inner));
+        let current = self.current_bank(&slot)?;
         let seq = current.as_ref().map_or(1, |(_, header)| header.seq + 1);
         let BankChoice { keep, target } = choose_bank(
             memory.and_then(|m| SlotMemory::get(&m.served)),
@@ -192,6 +195,7 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
         }
         Ok(Box::new(CoreWriteSession {
             store: self,
+            _writing: writing,
             slot,
             key,
             target,
@@ -206,6 +210,7 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
 
 struct CoreWriteSession<'a, F: RawFlash> {
     store: &'a SliceStoreCore<F>,
+    _writing: Option<MutexGuard<'a, ()>>,
     slot: SlotGeometry,
     key: SliceKey,
     target: u8,

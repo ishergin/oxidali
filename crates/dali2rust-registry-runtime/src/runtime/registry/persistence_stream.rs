@@ -1435,6 +1435,8 @@ mod tests {
         let installed = InMemorySliceStore::new();
         write_banks_except(&installed, &populated_store(MIGRATED_DEVICES), None);
         let live = boot(&installed);
+        live.inner.write().expect("registry lock").physical_devices
+            .get_mut(&(0, KEPT_SHORT)).expect("a kept device").runtime_level = Some(KEPT_LEVEL);
 
         let source = populated_store(MIGRATED_DEVICES);
         {
@@ -1453,10 +1455,15 @@ mod tests {
         assert!(device_name(&live, MOVED_FROM).is_none(), "the old address stayed");
         assert_eq!(device_name(&live, MOVED_TO), device_name(&source, MOVED_TO));
         assert_eq!(device_count(&live), device_count(&source));
+        let kept = live.inner.read().expect("registry lock").physical_devices
+            .get(&(0, KEPT_SHORT)).and_then(|record| record.runtime_level);
+        assert_eq!(kept, Some(KEPT_LEVEL), "a kept device lost its runtime level");
     }
 
     const MOVED_FROM: u8 = 3;
     const MOVED_TO: u8 = 40;
+    const KEPT_SHORT: u8 = 2;
+    const KEPT_LEVEL: u8 = 77;
 
     #[test]
     fn flush_reports_size_measurements() {

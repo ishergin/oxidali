@@ -199,6 +199,7 @@ pub trait ReplicationSink: Send + Sync {
     fn local_digests(&self) -> Vec<SliceDigest>;
     fn accepts(&self, name: &str) -> bool;
     fn stage(&self, pulled: Vec<PulledSlice>) -> bool;
+    fn discard_staged(&self);
 }
 
 pub struct ReplicationDeps {
@@ -233,6 +234,10 @@ pub fn run_pass(deps: &ReplicationDeps) -> PassOutcome {
     if pulled.is_empty() {
         return PassOutcome::UpToDate;
     }
+    land(deps, pulled)
+}
+
+fn land(deps: &ReplicationDeps, pulled: Vec<PulledSlice>) -> PassOutcome {
     let names: Vec<String> = pulled.iter().map(|slice| slice.name.clone()).collect();
     let count = u32::try_from(names.len()).unwrap_or(u32::MAX);
     if !deps.sink.stage(pulled) {
@@ -240,7 +245,9 @@ pub fn run_pass(deps: &ReplicationDeps) -> PassOutcome {
         return PassOutcome::StageBusy;
     }
     deps.counters.slices_pulled.fetch_add(count, Ordering::Relaxed);
-    request_reload(deps, &names);
+    if !request_reload(deps, &names) {
+        deps.sink.discard_staged();
+    }
     PassOutcome::Pulled(names)
 }
 
@@ -260,7 +267,7 @@ fn pull_each(deps: &ReplicationDeps, peer_url: &str, wanted: &[String]) -> Vec<P
     pulled
 }
 
-fn request_reload(deps: &ReplicationDeps, pulled: &[String]) {
+fn request_reload(deps: &ReplicationDeps, pulled: &[String]) -> bool {
     let first = pulled.first().map(String::as_str).unwrap_or("");
     let name = if pulled.len() > 1 {
         format!("{first}+{}", pulled.len() - 1)
@@ -276,15 +283,14 @@ fn request_reload(deps: &ReplicationDeps, pulled: &[String]) {
             slice_name: dali2rust_contracts::msg::fixed_text_32(&name),
         },
     );
-    if deps
-        .publisher
-        .try_publish(BusChannel::Commands, BusFrame::command(ce))
-        != PublishResult::Queued
-    {
+    let queued = deps.publisher.try_publish(BusChannel::Commands, BusFrame::command(ce))
+        == PublishResult::Queued;
+    if !queued {
         deps.counters
             .reload_publish_failed
             .fetch_add(1, Ordering::Relaxed);
     }
+    queued
 }
 
 pub const REPLICATION_HANDLED_EVENTS: &[&str] = &["RedundancySettingsChangedEvent"];

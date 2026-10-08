@@ -115,7 +115,7 @@ Feature: Configuration slices — export and import
   Scenario: A slice that does not decode is refused, and the stored one stays
     When I PATCH JSON {"interval_ms":60000} to "/api/v1/settings/poller"
     Then the response status should be 200
-    When I export "/api/v1/config/slices/poller_settings" and keep the body
+    When I export "/api/v1/config/slices/poller_settings" once it is stored and keep the body
     And I PUT JSON {"anything":1} to "/api/v1/config/slices/poller_settings"
     Then the response status should be 202
     And the last operation eventually fails

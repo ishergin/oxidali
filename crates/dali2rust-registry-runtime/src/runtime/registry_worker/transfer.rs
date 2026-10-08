@@ -53,6 +53,7 @@ const INVALID_SLICE: ImportFailure = (ErrorCode::InvalidValue, "invalid_slice");
 const FLASH_BUSY: ImportFailure = (ErrorCode::OperationFailed, "flash_busy");
 const STORE_FAILED: ImportFailure = (ErrorCode::OperationFailed, "store_failed");
 const NO_RELOAD_STACK: ImportFailure = (ErrorCode::Conflict, "reload_stack_unavailable");
+const NOT_RELOADED: ImportFailure = (ErrorCode::OperationFailed, "written_not_reloaded");
 
 struct Imported {
     counts: Option<HydrateCounts>,
@@ -88,7 +89,10 @@ fn import_then_reload(
             written.keys.iter().for_each(|key| persistence.foreign.imported(*key));
             Imported { counts: Some(counts), failure: written.failure }
         }
-        Err(failure) => Imported::refused(failure),
+        Err(_) => {
+            store.withhold_until_read(&written.keys, adapter_count);
+            Imported::refused(NOT_RELOADED)
+        }
     }
 }
 
@@ -99,11 +103,14 @@ fn validate_and_write(
 ) -> Result<Written, ImportFailure> {
     let staged = store.take_import(corr).ok_or(NO_STAGE)?;
     let foreign = persistence.foreign.as_ref();
-    on_hydration_stack("validate", || RegistryStore::validate_staged(&staged, foreign))?
-        .map_err(|_| INVALID_SLICE)?;
+    let (staged, refused) = on_hydration_stack("validate", || store.keep_decodable(staged, foreign))?;
+    if staged.is_empty() {
+        return Err(INVALID_SLICE);
+    }
+    let invalid = (refused > 0).then_some(INVALID_SLICE);
     let keys = |upto: usize| staged.iter().take(upto).map(|slice| slice.key).collect();
     match store.write_staged(persistence.slices.as_ref(), &staged) {
-        Ok(()) => Ok(Written { keys: keys(staged.len()), failure: None }),
+        Ok(()) => Ok(Written { keys: keys(staged.len()), failure: invalid }),
         Err(ImportWriteFailure::FirmwareWriteOpen) => Err(FLASH_BUSY),
         Err(ImportWriteFailure::Store { written: 0, .. }) => Err(STORE_FAILED),
         Err(ImportWriteFailure::Store { written, .. }) => {

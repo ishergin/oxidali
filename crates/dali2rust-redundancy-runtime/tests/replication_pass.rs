@@ -90,6 +90,10 @@ impl ReplicationSink for FakeSink {
         written.extend(pulled.into_iter().map(|slice| (slice.name, slice.bytes.len())));
         true
     }
+
+    fn discard_staged(&self) {
+        self.written.lock().unwrap().clear();
+    }
 }
 
 struct Rig {

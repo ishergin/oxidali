@@ -59,7 +59,7 @@ async fn json_pointer_eventually_greater(world: &mut DaliWorld, pointer: String,
     assert!(found.is_some_and(|n| n > floor), "{path}{pointer}: {found:?}, expected > {floor}");
 }
 
-// CFG-009 CFG-010 CFG-011 CFG-012
+// CFG-009 CFG-010 CFG-011
 #[when(regex = r#"^I export "([^"]+)" and keep the body$"#)]
 async fn export_and_keep(world: &mut DaliWorld, path: String) {
     world.send_http_request("GET", &path, None, "");
@@ -69,7 +69,7 @@ async fn export_and_keep(world: &mut DaliWorld, path: String) {
     assert!(!world.kept_body.is_empty(), "export of {path} was empty");
 }
 
-// CFG-013
+// CFG-012 CFG-013
 #[when(regex = r#"^I export "([^"]+)" once it is stored and keep the body$"#)]
 async fn export_once_stored_and_keep(world: &mut DaliWorld, path: String) {
     let stored = |world: &mut DaliWorld| {
