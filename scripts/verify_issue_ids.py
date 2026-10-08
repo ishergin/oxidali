@@ -14,8 +14,8 @@ KNOWN_STATUSES = ("открыт", "ждёт стенда", "обход")
 BENCH_STATUS = "стенд"
 CLOSED_STATUS = "закрыт"
 SKIP_DIRS = {".git", "target", "node_modules", ".venv", "runs", "vendor", "dist"}
-SCAN_SUFFIXES = {".rs", ".py", ".md", ".ts", ".tsx", ".txt", ".toml", ".sh", ".feature"}
 ROW = re.compile(r"^\| ISSUE-(\d+) \| ([^|]+?) \| ([^|]+?) \|$")
+CITATION = re.compile(r"(?<![A-Za-z])(?i:issue)-?([0-9]+)")
 
 errors: list[str] = []
 
@@ -81,22 +81,38 @@ def candidate_files() -> list[Path]:
     return [ROOT / line for line in res.stdout.splitlines() if line]
 
 
-def scan_citations() -> dict[int, str]:
-    cited: dict[int, str] = {}
+def citations_in(rel: Path, text: str) -> list[tuple[int, str]]:
+    found = [(int(n), str(rel)) for n in CITATION.findall(rel.name)]
+    for i, line in enumerate(text.splitlines(), 1):
+        found.extend((int(n), f"{rel}:{i}") for n in CITATION.findall(line))
+    return found
+
+
+def scan_citations() -> list[tuple[int, str]]:
+    cited: list[tuple[int, str]] = []
     for path in candidate_files():
-        if not path.is_file() or path.suffix not in SCAN_SUFFIXES:
+        if not path.is_file():
             continue
         rel = path.relative_to(ROOT)
-        if any(part in SKIP_DIRS for part in rel.parts):
+        if path == REGISTRY or any(part in SKIP_DIRS for part in rel.parts):
             continue
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        for i, line in enumerate(text.splitlines(), 1):
-            for m in re.finditer(r"\bISSUE-(\d+)\b", line):
-                cited.setdefault(int(m.group(1)), f"{rel}:{i}")
+        cited.extend(citations_in(rel, text))
     return cited
+
+
+def check_citations(homes: dict[int, str]) -> None:
+    unallocated: dict[int, str] = {}
+    for num, where in scan_citations():
+        if num not in homes:
+            unallocated.setdefault(num, where)
+        elif homes[num] == CLOSED:
+            fail(f"{where}: cites closed ISSUE-{num}; name the ADR or the invariant instead")
+    for num, where in sorted(unallocated.items()):
+        fail(f"ISSUE-{num}: cited but never allocated (e.g. {where})")
 
 
 def check_homes(homes: dict[int, str], known: set[int], bench: set[int]) -> None:
@@ -126,9 +142,7 @@ def main() -> int:
         return 1
     known, bench = parse_records()
     check_homes(homes, known, bench)
-    for num, where in sorted(scan_citations().items()):
-        if num not in homes:
-            fail(f"ISSUE-{num}: cited but never allocated (e.g. {where})")
+    check_citations(homes)
     gaps = [n for n in range(1, max(homes) + 1) if n not in homes]
     if gaps:
         fail(f"registry: unallocated gaps in the number line: {gaps}")
