@@ -31,18 +31,9 @@ done <"$_tmp_allow"
 
 _allow_count=$(( ${#ALLOW_ARGS[@]} / 2 ))
 
-PACKAGES=()
-while IFS= read -r line; do
-  line="${line%%#*}"
-  line="$(printf '%s' "$line" | tr -d '[:space:]')"
-  [[ -z "$line" ]] && continue
-  PACKAGES+=("$line")
-done <"$(dirname "${BASH_SOURCE[0]}")/host_crates.txt"
-
-if (( ${#PACKAGES[@]} == 0 )); then
-  echo "run_clippy_pedantic_advisory: host_crates.txt yielded no crates" >&2
-  exit 1
-fi
+source "$ROOT/scripts/host_crates.sh"
+read_host_crates || exit 1
+PACKAGES=("${HOST_CRATES[@]}")
 
 PKG_ARGS=()
 for p in "${PACKAGES[@]}"; do

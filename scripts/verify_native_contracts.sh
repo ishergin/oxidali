@@ -41,13 +41,13 @@ if [[ -n "$legacy_bytes" ]]; then
   die "use typed builders (no *_bytes) in crates/tests:\n$legacy_bytes"
 fi
 
-from_slice_prod=$(
-  rg -n 'BusFrame::from_slice' \
-    "$ROOT/crates/dali2rust-api" \
-    "$ROOT/crates/dali2rust-adapters/src/runtime" \
-    "$ROOT/tests/dali2rust-bdd/src" \
-    -g '*.rs' || true
-)
+source "$ROOT/scripts/host_crates.sh"
+read_host_crates || exit 1
+FROM_SLICE_TREES=("$ROOT/crates/dali2rust-firmware" "$ROOT/tests/dali2rust-bdd/src")
+for crate in "${HOST_CRATES[@]}"; do
+  [[ "$crate" == "dali2rust-bus" ]] || FROM_SLICE_TREES+=("$ROOT/crates/$crate")
+done
+from_slice_prod=$(rg -n 'BusFrame::from_slice' "${FROM_SLICE_TREES[@]}" -g '*.rs' || true)
 if [[ -n "$from_slice_prod" ]]; then
   die "BusFrame::from_slice forbidden outside bus codec tests — use typed BusFrame::command/event/confirmation:\n$from_slice_prod"
 fi

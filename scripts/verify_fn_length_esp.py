@@ -122,11 +122,14 @@ def collect() -> list[tuple[Path, str, int, int]]:
 
 def read_budget() -> int:
     if not BUDGET_FILE.exists():
-        return 0
-    try:
-        return int(BUDGET_FILE.read_text().split()[0])
-    except (ValueError, IndexError):
-        return 0
+        raise SystemExit(f"verify_fn_length_esp: missing {BUDGET_FILE.relative_to(ROOT)}")
+    first = (BUDGET_FILE.read_text(encoding="utf-8").splitlines() or [""])[0].strip()
+    if not first.isdigit():
+        raise SystemExit(
+            f"verify_fn_length_esp: {BUDGET_FILE.relative_to(ROOT)} must hold one "
+            f"non-negative integer, found '{first}'"
+        )
+    return int(first)
 
 
 def main() -> int:
@@ -146,9 +149,7 @@ def main() -> int:
     if total > budget:
         print(
             f"verify_fn_length_esp: FAIL — {total} function(s) over {THRESHOLD} "
-            f"code lines, budget is {budget}.\n"
-            "Decompose the new one, or justify it in the PR and raise the budget "
-            "deliberately (CLAUDE.md: budgets are meant to shrink).",
+            f"code lines, budget is {budget}. Decompose the new one.",
             file=sys.stderr,
         )
         return 1

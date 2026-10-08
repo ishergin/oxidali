@@ -12,7 +12,7 @@ fail() {
 command -v rg >/dev/null 2>&1 || fail "ripgrep (rg) is required"
 [[ -d "$BDD_CRATE/src" ]] || fail "missing $BDD_CRATE/src"
 
-FORBIDDEN='_bdd_runtime\b|\.bdd_runtime\(|\bRegistryStore\b|\bRegistryReadPort\b|\bPendingConfirmationSlots\b|\bBusPublisher\b|\bsubscribe_(commands|confirmations|events)\s*\(|registry_seed|registry_read|confirmation_slots|bus_counters\(|display_counters\(|bus_publisher\(|registry_store\(|operation_tracker\(|_runtime\s*\.|BusStackRuntime::'
+FORBIDDEN='_bdd_runtime\b|\.bdd_runtime\(|\bRegistryStore\b|\b[A-Za-z]+ReadPort\b|\b[A-Za-z]+WatchPort\b|\bRulesWorldPort\b|\bPendingConfirmationSlots\b|\bBusPublisher\b|\bsubscribe_(commands|confirmations|events)\s*\(|registry_seed|registry_read|confirmation_slots|bus_counters\(|display_counters\(|bus_publisher\(|registry_store\(|operation_tracker\(|_runtime\s*\.|BusStackRuntime::'
 if matches="$(rg -n --glob '*.rs' --glob '!**/benches/**' "$FORBIDDEN" "$BDD_CRATE")"; then
   echo "$matches" >&2
   fail "forbidden BDD bypass detected under tests/dali2rust-bdd"
