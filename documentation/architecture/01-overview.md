@@ -88,9 +88,10 @@ flowchart LR
   (`press` / `release` / `foreign` / `occupancy`) plays a foreign master, so the sniffer
   translator, fan-out from foreign frames, Part 103 events and rule triggers run on the
   host ([ADR-014](decisions/ADR-014-gear-model-and-second-dali-endpoint.md)).
-- **`ws-runtime` and `mqtt-runtime` depend on `api`.** Their JSON is built in
-  `dali2rust-api/src/ws/` and `src/ha/` only; the runtime crates carry pre-serialized
-  strings ([04](04-contracts-and-api-bridge.md)).
+- **`ws-runtime`, `mqtt-runtime` and `redundancy-runtime` depend on `api`.** Their JSON
+  is built or parsed in `dali2rust-api` only (`src/ws/`, `src/ha/`, the slice manifest);
+  the runtime crates carry pre-serialized strings and typed rows
+  ([04](04-contracts-and-api-bridge.md)).
 - **The rule language is three crates.** `rules-model` is the stable contract,
   `rules-lang` is one compiler behind `dyn RuleCompiler`, `rules-runtime` consumes the
   model and never parses text; it stores and persists the source and hands it to the

@@ -1020,7 +1020,7 @@ fn a_dapc_frame_commits_the_staged_colour() {
     assert_eq!(
         exchange(&mut fleet, dt8(5, Dt8Command::QueryColourStatus), true),
         TransferOutcome::Answer(0),
-        "staged only — nothing is active until ACTIVATE"
+        "staged only — nothing is active until ACTIVATE or an arc-power command"
     );
 
     let dapc = (u16::from(short(5).encode_address_byte()) << 8) | 120;

@@ -165,7 +165,7 @@ Decided in [`ADR-004`](decisions/ADR-004-bdd-black-box-boundary.md).
 | Tag | Rule |
 | --- | --- |
 | `@id:<PREFIX><NNN>` | On every scenario, unique across the tree. The prefix is registered in [`ids-registry.md`](../product-design/bdd/ids-registry.md); three digits and an optional lowercase variant letter follow it. |
-| `@stage-<S>` | Exactly one before `Feature:`, naming the [roadmap](../product-design/roadmap.md) stage (`F*`, `R*`, `I*`, `X*`) that delivered the behaviour. A scenario adds its own only as an override for an outlier. `verify_bdd_ids.sh` holds the accepted values. |
+| `@stage-<S>` | Exactly one before `Feature:`, naming the [roadmap](../product-design/roadmap.md) stage (`F*`, `R*`, `I*`, `X*`) that delivered the behaviour. A scenario adds its own only as an override for an outlier. The accepted values are the stages [`status.md`](../product-design/status.md) lists (`verify_bdd_stages.py`). |
 | `@wip` | Unfinished scenario, skipped by the runner and removed as soon as it is green. Forbidden in a stage whose every row in [`status.md`](../product-design/status.md) reads `готово`. |
 | `@flaky`, `@diagnostic` | Informational labels that neither the runner nor any gate reads. `@flaky` does not take a scenario out of the run and is not merged without a stated justification. |
 

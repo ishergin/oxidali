@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FEATURES = ROOT / "tests" / "dali2rust-bdd" / "features"
 STATUS = ROOT / "documentation" / "product-design" / "status.md"
 STAGE_TAG = re.compile(r"@stage-([A-Z][0-9]{1,2})")
+ANY_STAGE_TAG = re.compile(r"@stage-\S*")
 STATUS_ROW = re.compile(r"^\| ([FRIX])(\d{1,2})(?:-[A-Z])?(?:–[FRIX](\d{1,2}))? [^|]*\| ([^|]+?) \|")
 DONE = "готово"
 KNOWN_STATUSES = (DONE, "частично", "запланировано")
@@ -57,7 +58,19 @@ def all_scenarios():
             yield f"{rel}:{number}", stage, wip
 
 
+def malformed_stage_tags():
+    for path in sorted(FEATURES.rglob("*.feature")):
+        rel = path.relative_to(ROOT)
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for tag in ANY_STAGE_TAG.findall(line):
+                if not STAGE_TAG.fullmatch(tag):
+                    yield f"{rel}:{number}: {tag} is not a stage row's letter and number"
+
+
 def check_stage(stage):
+    if stage not in stage_statuses():
+        print(f"ERROR: {stage} names no stage row in {STATUS.relative_to(ROOT)}", file=sys.stderr)
+        return 1
     wip = [where for where, own, is_wip in all_scenarios() if own == stage and is_wip]
     for where in wip:
         print(f"  @wip: {where}", file=sys.stderr)
@@ -70,7 +83,7 @@ def check_stage(stage):
 
 def check_all():
     done = stage_statuses()
-    errors = []
+    errors = list(malformed_stage_tags())
     for where, stage, wip in all_scenarios():
         if stage not in done:
             errors.append(f"{where}: @stage-{stage} names no stage row in {STATUS.relative_to(ROOT)}")

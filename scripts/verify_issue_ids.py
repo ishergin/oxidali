@@ -15,7 +15,7 @@ BENCH_STATUS = "стенд"
 CLOSED_STATUS = "закрыт"
 SKIP_DIRS = {".git", "target", "node_modules", ".venv", "runs", "vendor", "dist"}
 ROW = re.compile(r"^\| ISSUE-(\d+) \| ([^|]+?) \| ([^|]+?) \|$")
-CITATION = re.compile(r"(?<![A-Za-z])(?i:issue)-?([0-9]+)")
+CITATION = re.compile(r"(?<![A-Za-z])(?i:issue)[-_\u2013]?([0-9]+)")
 
 errors: list[str] = []
 
@@ -82,7 +82,7 @@ def candidate_files() -> list[Path]:
 
 
 def citations_in(rel: Path, text: str) -> list[tuple[int, str]]:
-    found = [(int(n), str(rel)) for n in CITATION.findall(rel.name)]
+    found = []
     for i, line in enumerate(text.splitlines(), 1):
         found.extend((int(n), f"{rel}:{i}") for n in CITATION.findall(line))
     return found
@@ -96,6 +96,7 @@ def scan_citations() -> list[tuple[int, str]]:
         rel = path.relative_to(ROOT)
         if path == REGISTRY or any(part in SKIP_DIRS for part in rel.parts):
             continue
+        cited.extend((int(n), str(rel)) for n in CITATION.findall(rel.name))
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):

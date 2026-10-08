@@ -83,6 +83,10 @@ fi
 echo "[guardrail] checking that only dali2rust-api depends on serde_json..."
 python3 - "$ROOT" <<'PY'
 import sys
+
+if sys.version_info < (3, 11):
+    raise SystemExit("the merge gates need Python 3.11 or newer (tomllib)")
+
 import tomllib
 from pathlib import Path
 

@@ -11,8 +11,8 @@ from host_crates import host_crates
 EXTRA_TREES = ("crates/dali2rust-firmware/", "tests/dali2rust-bdd/", "tools/dali-gear-sim/")
 FN_HEAD = re.compile(r"\bfn\s+[A-Za-z_]\w*")
 MOD_HEAD = re.compile(r"\bmod\s+[A-Za-z_]\w*\s*$")
-USE_STATEMENT = re.compile(r"(?:^|(?<=[;{}\]]))(\s*)((?:pub(?:\([^)]*\))?\s+)?use\s)")
-STRING_PREFIX = re.compile(r'(?:b?r(#*)")|(?:b?")')
+USE_STATEMENT = re.compile(r"(?:^|(?<=[;{}\]]))(\s*)((?:pub(?:\([^)]*\))?\s+)?use(?:\s|\{))")
+STRING_PREFIX = re.compile(r'(?:[bc]?r(#*)")|(?:[bc]?")')
 CHAR_LITERAL = re.compile(r"b?'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]{1,6}\}|.)|[^\\'\n])'")
 
 
@@ -76,7 +76,7 @@ def literal_end(text, i):
 def masked(text):
     out, i, plain = [], 0, 0
     while i < len(text):
-        end = literal_end(text, i) if text[i] in "/\"'br" else None
+        end = literal_end(text, i) if text[i] in "/\"'brc" else None
         if end is None:
             i += 1
             continue
