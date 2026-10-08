@@ -36,6 +36,30 @@ pub(super) fn unbind_lamp(
     super::groups::forget_adopted_desired_on_binding_change(inner, adapter_id, virtual_lamp_id)
 }
 
+fn readopt_for_binding(
+    g: &mut super::store::Inner,
+    adapter_id: u8,
+    virtual_lamp_id: u8,
+    previous_short: Option<u8>,
+    short: u8,
+) -> (bool, u16) {
+    let mut groups_changed = false;
+    if previous_short.is_some_and(|prev| prev != short) {
+        groups_changed =
+            super::groups::forget_adopted_desired_on_binding_change(g, adapter_id, virtual_lamp_id);
+    }
+    groups_changed |=
+        super::groups::seed_desired_for_new_binding(g, adapter_id, virtual_lamp_id, short);
+    if previous_short == Some(short) {
+        return (groups_changed, 0);
+    }
+    let scenes_changed = super::scenes::readopt_scene_rows(g, adapter_id, virtual_lamp_id, short);
+    if scenes_changed != 0 {
+        g.scenes_matrix_desired_revision = g.scenes_matrix_desired_revision.wrapping_add(1);
+    }
+    (groups_changed, scenes_changed)
+}
+
 impl RegistryStore {
     pub(crate) fn apply_virtual_lamp_bind(
         &self,
@@ -62,25 +86,14 @@ impl RegistryStore {
             .entry((adapter_id, virtual_lamp_id))
             .or_default();
         let previous_short = e.binding_short.replace(physical_short_address);
-        let mut groups_changed = false;
-        if previous_short.is_some_and(|prev| prev != physical_short_address) {
-            groups_changed = super::groups::forget_adopted_desired_on_binding_change(
-                &mut g,
-                adapter_id,
-                virtual_lamp_id,
-            );
-        }
-        groups_changed |= super::groups::seed_desired_for_new_binding(
-            &mut g,
-            adapter_id,
-            virtual_lamp_id,
-            physical_short_address,
-        );
+        let (groups_changed, scenes_changed) =
+            readopt_for_binding(&mut g, adapter_id, virtual_lamp_id, previous_short, physical_short_address);
         drop(g);
         self.dirty.mark_virtual_lamps_dirty(adapter_id);
         if groups_changed {
             self.dirty.mark_groups_dirty(adapter_id);
         }
+        self.mark_scenes_dirty(adapter_id, scenes_changed);
         true
     }
 
@@ -116,11 +129,7 @@ impl RegistryStore {
         if groups_changed {
             self.dirty.mark_groups_dirty(adapter_id);
         }
-        for scene_id in 0..super::scenes::SCENE_COUNT {
-            if scenes_changed & (1u16 << scene_id) != 0 {
-                self.dirty.mark_scene_dirty(adapter_id, scene_id);
-            }
-        }
+        self.mark_scenes_dirty(adapter_id, scenes_changed);
         true
     }
 

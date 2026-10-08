@@ -180,6 +180,7 @@ def test_level_only_row_stores_no_staged_colour(api, scenes_supported,
     assert view["status"] == "succeeded", view
     if staged != DT8_COLOUR_TYPE_TC:
         pytest.skip("inconclusive: the gear held no staged Tc (%r)" % staged)
+    api.attr_read_checked(short, groups="scene_colours")
 
     row = {}
 

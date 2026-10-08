@@ -164,7 +164,7 @@ fn applied_raw(
         .scene_applied_echo
         .get(&(adapter_id, scene_id, virtual_lamp_id));
     let color = match scene_colour_evidence(inner, adapter_id, scene_id, virtual_lamp_id) {
-        SceneColourEvidence::Unread => echo.and_then(|e| e.color),
+        SceneColourEvidence::Unread => unread_scene_colour(inner, adapter_id, scene_id, virtual_lamp_id),
         SceneColourEvidence::NoColour => None,
         SceneColourEvidence::Colour(observed) => {
             let desired = desired_raw(inner, adapter_id, scene_id, virtual_lamp_id)
@@ -179,6 +179,22 @@ fn applied_raw(
         color,
     };
     (true, Some(target))
+}
+
+fn unread_scene_colour(
+    inner: &Inner,
+    adapter_id: u8,
+    scene_id: u8,
+    virtual_lamp_id: u8,
+) -> Option<ColorValue> {
+    let row = desired_row(inner, adapter_id, scene_id, virtual_lamp_id);
+    if !row.desired_from_operator {
+        return row.target.and_then(|t| t.color);
+    }
+    inner
+        .scene_applied_echo
+        .get(&(adapter_id, scene_id, virtual_lamp_id))
+        .and_then(|e| e.color)
 }
 
 fn scene_colour_evidence(
@@ -398,6 +414,28 @@ fn follow_gear_scene(
     changed
 }
 
+pub(super) fn readopt_scene_rows(
+    inner: &mut Inner,
+    adapter_id: u8,
+    virtual_lamp_id: u8,
+    short: u8,
+) -> u16 {
+    let mut changed = 0u16;
+    for scene_id in 0..SCENE_COUNT {
+        let key = (adapter_id, scene_id, virtual_lamp_id);
+        let mut touched = inner.scene_applied_echo.remove(&key).is_some();
+        if inner.scene_matrix.get(&key).is_some_and(|row| !row.desired_from_operator) {
+            inner.scene_matrix.remove(&key);
+            touched = true;
+        }
+        touched |= seed_scene_rows_for_short(inner, adapter_id, short, scene_id);
+        if touched {
+            changed |= 1u16 << scene_id;
+        }
+    }
+    changed
+}
+
 pub(super) fn forget_scene_echoes(inner: &mut Inner, adapter_id: u8, virtual_lamp_id: u8) {
     for scene_id in 0..SCENE_COUNT {
         inner.scene_applied_echo.remove(&(adapter_id, scene_id, virtual_lamp_id));
@@ -566,6 +604,9 @@ impl RegistryStore {
             } else {
                 forget_scene_level(&mut record.attributes, write.scene_id)
             };
+            if let Some(slot) = record.scene_colour_observed.get_mut(usize::from(write.scene_id)) {
+                *slot = SceneColourEvidence::Unread;
+            }
             let echo_changed = store_scene_echo_for_short(&mut inner, adapter_id, short, write.scene_id, None);
             if level_changed || echo_changed {
                 changed.push(short);
@@ -624,12 +665,16 @@ impl RegistryStore {
                 inner.scenes_matrix_desired_revision.wrapping_add(1);
         }
         drop(inner);
+        self.mark_scenes_dirty(adapter_id, changed_mask);
+        changed_mask
+    }
+
+    pub(crate) fn mark_scenes_dirty(&self, adapter_id: u8, scene_mask: u16) {
         for scene_id in 0..SCENE_COUNT {
-            if changed_mask & (1u16 << scene_id) != 0 {
+            if scene_mask & (1u16 << scene_id) != 0 {
                 self.dirty.mark_scene_dirty(adapter_id, scene_id);
             }
         }
-        changed_mask
     }
 
     fn scene_view_internal(&self, adapter_id: u8, scene_id: u8) -> Option<SceneView> {
@@ -948,6 +993,41 @@ mod tests {
         assert_eq!(followed.desired.level, Some(120));
         assert_eq!(followed.desired.color_mode, None);
         assert!(!followed.dirty);
+    }
+
+    const OTHER_SHORT: u8 = 6;
+
+    fn forget_scene_colour_read(store: &RegistryStore, short: u8) {
+        let mut g = store.inner.write().expect("registry lock");
+        let record = g.physical_devices.get_mut(&(ADAPTER, short)).expect("physical device");
+        record.scene_colour_observed[usize::from(SCENE)] = SceneColourEvidence::Unread;
+    }
+
+    #[test]
+    fn an_adopted_colour_row_stays_clean_while_the_colour_is_unread_again() {
+        let store = store_with_bound_lamp();
+        read_scene_colour(&store, 100, Some(GEAR_MIREK));
+        forget_scene_colour_read(&store, SHORT);
+        let row = row(&store);
+        assert_eq!(row.desired.color_temperature_kelvin, Some(GEAR_KELVIN));
+        assert!(!row.dirty, "the last colour read from the gear stands until the next read");
+    }
+
+    #[test]
+    fn a_rebind_drops_the_rows_adopted_from_the_old_gear_and_adopts_the_new_one() {
+        let store = store_with_bound_lamp();
+        read_scene_colour(&store, 100, Some(GEAR_MIREK));
+        {
+            let mut g = store.inner.write().expect("registry lock");
+            let mut other = PhysicalDeviceRecord::empty(OTHER_SHORT);
+            write_scene_level_read(&mut other.attributes, SCENE, 50, 1);
+            g.physical_devices.insert((ADAPTER, OTHER_SHORT), PsramBox::new(other));
+        }
+        assert!(store.apply_virtual_lamp_bind(ADAPTER, VL, OTHER_SHORT));
+        let rebound = row(&store);
+        assert_eq!(rebound.desired.level, Some(50));
+        assert_eq!(rebound.desired.color_mode, None, "the old gear's colour does not travel");
+        assert!(!rebound.dirty, "{rebound:?}");
     }
 
     #[test]
