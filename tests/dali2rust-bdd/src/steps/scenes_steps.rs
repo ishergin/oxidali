@@ -417,7 +417,7 @@ async fn given_scene_cct_write_clamped(
     script_scene_colour_verify(&mock, short, scene_id, level, Some(readback_mirek));
 }
 
-// SCN-085
+// SCN-085 SCN-096
 #[given(
     regex = r"^a scene-colours audit script for short (\d+) with scene (\d+) holding (\d+) mirek at level (\d+)$"
 )]
@@ -509,7 +509,7 @@ async fn then_matrix_exposes_rows(world: &mut DaliWorld) {
     }
 }
 
-// SCN-030 SCN-040 SCN-041 SCN-050 REG-031 SCN-046
+// SCN-030 SCN-040 SCN-041 SCN-050 REG-031 SCN-046 SCN-096
 #[then(regex = r#"^the scene matrix desired row for virtual lamp (\d+) should be included with level (\d+) and color_mode "([^"]+)"$"#)]
 async fn then_desired_row_with_color(
     world: &mut DaliWorld,
@@ -622,7 +622,7 @@ async fn then_applied_row_level(world: &mut DaliWorld, virtual_lamp_id: u8, leve
     assert_eq!(applied.get("level").and_then(Value::as_u64), Some(u64::from(level)), "{row:?}");
 }
 
-// SCN-083 SCN-084 SCN-085
+// SCN-083 SCN-084 SCN-085 SCN-096
 #[then(
     regex = r#"^the scene matrix row for virtual lamp (\d+) should read back applied CCT (\d+)K dirty (true|false)$"#
 )]

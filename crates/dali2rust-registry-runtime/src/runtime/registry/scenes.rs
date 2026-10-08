@@ -72,11 +72,12 @@ impl Default for SceneRecord {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SceneDesiredRowRecord {
     pub included: bool,
     pub target: Option<DaliSceneTargetState>,
     pub desired_seeded: bool,
+    pub desired_from_operator: bool,
 }
 
 fn power_str(power: PowerState) -> &'static str {
@@ -358,22 +359,40 @@ fn seed_scene_rows_for_short(inner: &mut Inner, adapter_id: u8, short: u8, scene
         else {
             continue;
         };
+        let colour = scene_colour_evidence(inner, adapter_id, scene_id, virtual_lamp_id);
         let entry = inner
             .scene_matrix
             .entry((adapter_id, scene_id, virtual_lamp_id))
             .or_default();
-        if entry.desired_seeded {
-            continue;
+        if !entry.desired_from_operator {
+            changed |= follow_gear_scene(entry, applied_level, colour);
         }
-        entry.included = applied_level.is_some();
-        entry.target = applied_level.map(|level| DaliSceneTargetState {
+    }
+    changed
+}
+
+fn follow_gear_scene(
+    entry: &mut SceneDesiredRowRecord,
+    level: Option<u8>,
+    colour: SceneColourEvidence,
+) -> bool {
+    let color = match colour {
+        SceneColourEvidence::Unread => entry.target.and_then(|t| t.color),
+        SceneColourEvidence::NoColour => None,
+        SceneColourEvidence::Colour(observed) => Some(observed_colour_value(&observed)),
+    };
+    let followed = SceneDesiredRowRecord {
+        included: level.is_some(),
+        target: level.map(|level| DaliSceneTargetState {
             power: None,
             level: Some(level),
-            color: None,
-        });
-        entry.desired_seeded = true;
-        changed = true;
-    }
+            color,
+        }),
+        desired_seeded: true,
+        desired_from_operator: false,
+    };
+    let changed = *entry != followed;
+    *entry = followed;
     changed
 }
 
@@ -469,8 +488,9 @@ impl RegistryStore {
                 entry.target = row.target;
                 changed = true;
             }
-            if !entry.desired_seeded {
+            if !entry.desired_seeded || !entry.desired_from_operator {
                 entry.desired_seeded = true;
+                entry.desired_from_operator = true;
                 changed = true;
             }
         }
@@ -556,6 +576,28 @@ impl RegistryStore {
         drop(inner);
         if !changed.is_empty() {
             self.dirty.mark_physical_devices_dirty(adapter_id);
+        }
+        changed
+    }
+
+    pub(crate) fn seed_scene_rows_from_evidence(
+        &self,
+        adapter_id: u8,
+        short_address: u8,
+        scene_id: u8,
+    ) -> bool {
+        let mut inner = self.write_inner();
+        if !inner.adapter_exists(adapter_id) || scene_id >= SCENE_COUNT {
+            return false;
+        }
+        let changed = seed_scene_rows_for_short(&mut inner, adapter_id, short_address, scene_id);
+        if changed {
+            inner.scenes_matrix_desired_revision =
+                inner.scenes_matrix_desired_revision.wrapping_add(1);
+        }
+        drop(inner);
+        if changed {
+            self.dirty.mark_scene_dirty(adapter_id, scene_id);
         }
         changed
     }
@@ -696,6 +738,7 @@ mod tests {
     use crate::runtime::registry::physical_devices::PhysicalDeviceRecord;
     use dali2rust_bsp::psram::PsramBox;
     use dali2rust_contracts::msg::SceneMetadataUpdateCommand;
+    use dali2rust_domain::dali::devices::dt8_color::COLOUR_TYPE_BYTE_MASK;
     use dali2rust_domain::registry::{AttributeSource, ObservedValue};
 
     const ADAPTER: u8 = 0;
@@ -867,6 +910,53 @@ mod tests {
         assert_eq!(seeded.desired.level, Some(100), "desired := applied");
         assert_eq!(seeded.desired.color_mode, None, "color stays null on seed");
         assert!(!seeded.dirty);
+    }
+
+    const GEAR_MIREK: u16 = 250;
+    const GEAR_KELVIN: u16 = 4000;
+
+    fn read_scene_colour(store: &RegistryStore, level: u8, mirek: Option<u16>) -> bool {
+        let chunk = dali2rust_contracts::msg::DaliAttributeReadChunk::SceneColour {
+            scene: SCENE,
+            level: Some(level),
+            colour_type: Some(mirek.map_or(COLOUR_TYPE_BYTE_MASK, |_| SCENE_COLOUR_TYPE_TC)),
+            values: [mirek, None, None, None, None, None],
+        };
+        assert!(store.apply_physical_device_attribute_chunk(ADAPTER, SHORT, &chunk));
+        store.seed_scene_rows_from_evidence(ADAPTER, SHORT, SCENE)
+    }
+
+    fn row(store: &RegistryStore) -> SceneMatrixRowView {
+        let matrix = store.scene_matrix_view_internal(ADAPTER, SCENE).expect("matrix");
+        matrix.rows[VL as usize].clone()
+    }
+
+    #[test]
+    fn a_row_the_operator_never_edited_follows_the_scene_colour_on_the_gear() {
+        let store = store_with_bound_lamp();
+        assert!(read_scene_colour(&store, 100, Some(GEAR_MIREK)));
+        let adopted = row(&store);
+        assert_eq!(adopted.desired.level, Some(100));
+        assert_eq!(adopted.desired.color_mode.as_deref(), Some("cct"));
+        assert_eq!(adopted.desired.color_temperature_kelvin, Some(GEAR_KELVIN));
+        assert!(!adopted.dirty, "an adopted row mirrors the gear: {adopted:?}");
+
+        assert!(read_scene_colour(&store, 120, None), "a re-read the gear changed is followed");
+        let followed = row(&store);
+        assert_eq!(followed.desired.level, Some(120));
+        assert_eq!(followed.desired.color_mode, None);
+        assert!(!followed.dirty);
+    }
+
+    #[test]
+    fn an_operator_row_without_colour_keeps_it_and_shows_the_gear_colour_as_dirty() {
+        let store = store_with_bound_lamp();
+        store.apply_scene_matrix_rows(ADAPTER, SCENE, &[desired_level_row(VL, 100)]);
+        assert!(!read_scene_colour(&store, 100, Some(GEAR_MIREK)));
+        let edited = row(&store);
+        assert_eq!(edited.desired.color_mode, None, "the operator said no colour");
+        assert_eq!(edited.applied.color_temperature_kelvin, Some(GEAR_KELVIN));
+        assert!(edited.dirty);
     }
 
     fn store_with_group_members(members: &[(u8, Option<u16>)]) -> RegistryStore {
