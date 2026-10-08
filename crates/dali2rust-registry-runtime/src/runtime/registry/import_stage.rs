@@ -75,7 +75,9 @@ impl RegistryStore {
     }
 
     pub(crate) fn import_staged_for(&self, workflow: u64) -> bool {
-        self.import_stage.lock().as_ref().is_some_and(|pending| pending.workflow == workflow)
+        self.import_stage.lock().as_ref().is_some_and(|pending| {
+            pending.workflow == workflow && pending.staged_at.elapsed() < IMPORT_STAGE_MAX_AGE
+        })
     }
 
     pub(crate) fn evict_stale_import(&self) {
