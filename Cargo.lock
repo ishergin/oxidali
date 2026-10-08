@@ -890,6 +890,7 @@ dependencies = [
 name = "dali2rust-redundancy-runtime"
 version = "0.1.0"
 dependencies = [
+ "dali2rust-api",
  "dali2rust-bsp",
  "dali2rust-bus",
  "dali2rust-contracts",
@@ -897,7 +898,6 @@ dependencies = [
  "dali2rust-platform",
  "dali2rust-test-support",
  "log",
- "serde_json",
 ]
 
 [[package]]
