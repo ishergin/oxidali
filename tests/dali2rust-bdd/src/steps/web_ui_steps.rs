@@ -14,7 +14,7 @@ fn web_fixture_bytes(fixture: &str) -> &'static [u8] {
     }
 }
 
-// WEB-001 WEB-002 WEB-003 WEB-004
+// WEB-001 WEB-002 WEB-003 WEB-004 CFG-002
 #[then(regex = r#"^the response content type should be "([^"]+)"$"#)]
 async fn response_content_type_should_be(world: &mut DaliWorld, expected: String) {
     let response = last_response(world);

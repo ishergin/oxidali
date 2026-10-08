@@ -339,7 +339,7 @@ async fn when_start_runtime_and_colour_attribute_read(world: &mut DaliWorld) {
     );
 }
 
-// PD-166 PD-168 PD-269
+// PD-166 PD-168 PD-269 PD-256 PD-257 PD-258
 #[when(r#"I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only"#)]
 async fn when_start_runtime_status_attribute_read(world: &mut DaliWorld) {
     let body = br#"{"attribute_groups":["runtime_status"],"memory_banks":"none"}"#;

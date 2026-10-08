@@ -17,7 +17,7 @@ fn scalar_text(value: &serde_json::Value) -> String {
     }
 }
 
-// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090 PERS-006
+// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090 PERS-006 CFG-011
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be "([^"]*)"$"#)]
 async fn json_pointer_eventually(world: &mut DaliWorld, pointer: String, path: String, expected: String) {
     let port = world.server_port();
@@ -59,7 +59,7 @@ async fn json_pointer_eventually_greater(world: &mut DaliWorld, pointer: String,
     assert!(found.is_some_and(|n| n > floor), "{path}{pointer}: {found:?}, expected > {floor}");
 }
 
-// CFG-009 CFG-010
+// CFG-009 CFG-010 CFG-011
 #[when(regex = r#"^I export "([^"]+)" and keep the body$"#)]
 async fn export_and_keep(world: &mut DaliWorld, path: String) {
     world.send_http_request("GET", &path, None, "");
@@ -69,7 +69,7 @@ async fn export_and_keep(world: &mut DaliWorld, path: String) {
     assert!(!world.kept_body.is_empty(), "export of {path} was empty");
 }
 
-// CFG-009 CFG-010
+// CFG-009 CFG-010 CFG-011
 #[when(regex = r#"^I PUT the kept body to "([^"]+)"$"#)]
 async fn put_kept_body(world: &mut DaliWorld, path: String) {
     let body = world.kept_body.clone();
