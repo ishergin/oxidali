@@ -157,7 +157,7 @@ fn hydrate_unsupported_adapters_version_records_error() {
 }
 
 #[test]
-fn unreadable_slice_is_marked_for_rewrite_so_the_next_boot_is_clean() {
+fn an_undecodable_slice_is_marked_for_rewrite_so_the_next_boot_is_clean() {
     let slices = temp_slice_store("stale-version-self-heals");
     let blob = persisted_blob(&PersistenceEnvelope {
         version: ADAPTERS_SLICE_VERSION.saturating_add(99),

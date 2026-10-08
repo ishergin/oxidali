@@ -322,7 +322,7 @@ declare_counter_mapping! {
 
     persistence_dto(c: PersistenceCounters) -> PersistenceDto {
         flush_success_total, flush_error_total, no_space_total, hydrate_loaded_total,
-        hydrate_default_total, hydrate_error_total,
+        hydrate_default_total, hydrate_error_total, unread_slices,
     }
 
     hcl_scheduler_dto(c: dali2rust_hcl_runtime::HclSchedulerCounters) -> HclSchedulerDto {

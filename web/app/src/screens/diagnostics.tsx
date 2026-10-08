@@ -42,6 +42,7 @@ const FAULT_KEYS = new Set([
   'rejected',
   'reload_publish_failed',
   'outstanding_expired',
+  'unread_slices',
   'publish_failed',
   'flush_error_total',
   'no_space_total',
@@ -68,6 +69,8 @@ const FAULT_KEYS = new Set([
 const WEBSOCKET_GAUGES = ['clients'] as const
 
 const POLLER_GAUGES = ['targets_excluded'] as const
+
+const PERSISTENCE_GAUGES = ['unread_slices'] as const
 
 const DALI_WIRE_GAUGES = [
   'load_permille',
@@ -402,7 +405,13 @@ export function DiagnosticsScreen() {
         </Card>
 
         <Card title="Persistence" span2>
-          <CounterRows block={data.persistence} path="persistence" deltas={deltas} isFault={isFault} />
+          <CounterRows
+            block={data.persistence}
+            path="persistence"
+            deltas={deltas}
+            isFault={isFault}
+            gauges={PERSISTENCE_GAUGES}
+          />
         </Card>
       </div>
     </>

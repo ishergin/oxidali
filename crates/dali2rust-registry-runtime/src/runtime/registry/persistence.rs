@@ -141,12 +141,7 @@ impl crate::runtime::registry::store::RegistryStore {
     fn hydrate_all(&self, slices: &dyn SliceStore, adapter_count: u8, sink: &mut HydrateSink<'_>) {
         hydrate_adapters_slice(self, slices, sink);
         for adapter_id in 0..adapter_count {
-            hydrate_groups_slice(self, slices, adapter_id, sink);
-            self.hydrate_physical_devices_of(slices, adapter_id, sink);
-            hydrate_vl_slice(self, slices, adapter_id, sink);
-            for scene_id in 0..SCENE_COUNT {
-                hydrate_scene_slice(self, slices, adapter_id, scene_id, sink);
-            }
+            self.hydrate_adapter(slices, adapter_id, sink);
         }
         for bank in 0..INPUT_DEVICE_BANKS_U8 {
             hydrate_input_devices_slice(self, slices, bank, sink);
@@ -157,6 +152,25 @@ impl crate::runtime::registry::store::RegistryStore {
         hydrate_redundancy_settings_slice(self, slices, sink);
         hydrate_policies_slice(self, slices, sink);
         hydrate_home_assistant_settings_slice(self, slices, sink);
+        self.persist_counters
+            .unread_slices
+            .store(self.unread_slices(adapter_count), Ordering::Relaxed);
+    }
+
+    fn hydrate_adapter(&self, slices: &dyn SliceStore, adapter_id: u8, sink: &mut HydrateSink<'_>) {
+        hydrate_groups_slice(self, slices, adapter_id, sink);
+        self.hydrate_physical_devices_of(slices, adapter_id, sink);
+        hydrate_vl_slice(self, slices, adapter_id, sink);
+        for scene_id in 0..SCENE_COUNT {
+            hydrate_scene_slice(self, slices, adapter_id, scene_id, sink);
+        }
+    }
+
+    fn unread_slices(&self, adapter_count: u8) -> u32 {
+        let banks: u32 = (0..adapter_count)
+            .map(|adapter_id| self.dirty.withheld_physical_device_banks(adapter_id).count_ones())
+            .sum();
+        banks + self.dirty.withheld.count()
     }
 
     pub fn flush_dirty_slices(&self, slices: &dyn SliceStore) {
@@ -165,6 +179,7 @@ impl crate::runtime::registry::store::RegistryStore {
         }
         let fenced = self.import_fence.guard(slices);
         let slices: &dyn SliceStore = &fenced;
+        self.note_held_back_slices();
         self.flush_adapters_if_dirty(slices);
         self.flush_masked_slice(
             slices,
@@ -228,6 +243,17 @@ impl crate::runtime::registry::store::RegistryStore {
                         .fetch_add(1, Ordering::Relaxed);
                 }
             }
+        }
+    }
+
+    fn note_held_back_slices(&self) {
+        let adapter_count = self.read_inner().adapters.len() as u8;
+        for key in self.dirty.held_back(adapter_count) {
+            warn!(
+                "persistence: {} waits for its stored copy; its changes are not saved until a \
+                 boot or reload can read it",
+                key.label()
+            );
         }
     }
 
@@ -383,66 +409,6 @@ impl crate::runtime::registry::store::RegistryStore {
         );
     }
 
-    fn load_global_slice<T: serde::de::DeserializeOwned>(
-        slices: &dyn SliceStore,
-        key: SliceKey,
-        version: u32,
-    ) -> Result<T, StoreError> {
-        let bytes = slices.load(key)?;
-        decode_versioned_slice::<T>(&bytes, version).map_err(|e| StoreError::Backend(e.to_string()))
-    }
-
-    fn load_hcl_schedules(
-        slices: &dyn SliceStore,
-    ) -> Result<PersistableHclSchedulesSlice, StoreError> {
-        Self::load_global_slice(slices, SliceKey::HclSchedules, HCL_SCHEDULES_SLICE_VERSION)
-    }
-
-    fn load_poller_settings(
-        slices: &dyn SliceStore,
-    ) -> Result<PersistablePollerSettingsSlice, StoreError> {
-        Self::load_global_slice(slices, SliceKey::PollerSettings, POLLER_SETTINGS_SLICE_VERSION)
-    }
-
-    fn load_input_devices_bank(
-        slices: &dyn SliceStore,
-        bank: u8,
-    ) -> Result<PersistableInputDevicesSlice, StoreError> {
-        Self::load_global_slice(
-            slices,
-            SliceKey::InputDevices { bank },
-            INPUT_DEVICES_SLICE_VERSION,
-        )
-    }
-
-    fn load_policies(slices: &dyn SliceStore) -> Result<PersistablePoliciesSlice, StoreError> {
-        Self::load_global_slice(slices, SliceKey::Policies, POLICIES_SLICE_VERSION)
-    }
-
-    fn load_redundancy_settings(
-        slices: &dyn SliceStore,
-    ) -> Result<PersistableRedundancySettingsSlice, StoreError> {
-        Self::load_global_slice(
-            slices,
-            SliceKey::RedundancySettings,
-            REDUNDANCY_SETTINGS_SLICE_VERSION,
-        )
-    }
-
-    fn load_dali_settings(slices: &dyn SliceStore) -> Result<PersistableDaliSettingsSlice, StoreError> {
-        Self::load_global_slice(slices, SliceKey::DaliSettings, DALI_SETTINGS_SLICE_VERSION)
-    }
-
-    fn load_home_assistant_settings(
-        slices: &dyn SliceStore,
-    ) -> Result<PersistableHomeAssistantSettingsSlice, StoreError> {
-        Self::load_global_slice(
-            slices,
-            SliceKey::HomeAssistantSettings,
-            HOME_ASSISTANT_SETTINGS_SLICE_VERSION,
-        )
-    }
-
     fn flush_scenes_if_dirty(&self, slices: &dyn SliceStore) {
         let g = self.read_inner();
         let adapter_count = g.adapters.len() as u8;
@@ -466,7 +432,7 @@ impl crate::runtime::registry::store::RegistryStore {
     }
 
     fn flush_adapters_if_dirty(&self, slices: &dyn SliceStore) {
-        if !self.dirty.adapters.load(Ordering::Acquire) {
+        if !self.dirty.adapters_writable() {
             return;
         }
         if let Err(e) = self.flush_adapters(slices) {
@@ -600,42 +566,6 @@ impl crate::runtime::registry::store::RegistryStore {
     }
 
 
-    fn load_adapters(
-        slices: &dyn SliceStore,
-    ) -> Result<PersistableAdapterSlice, StoreError> {
-        let bytes = slices.load(SliceKey::Adapters)?;
-        decode_versioned_slice::<PersistableAdapterSlice>(&bytes, ADAPTERS_SLICE_VERSION)
-            .map_err(|e| StoreError::Backend(e.to_string()))
-    }
-
-    fn load_virtual_lamps(
-        slices: &dyn SliceStore,
-        adapter_id: u8,
-    ) -> Result<PersistableVirtualLampsSlice, StoreError> {
-        let bytes = slices.load(SliceKey::VirtualLamps { adapter_id })?;
-        decode_versioned_slice::<PersistableVirtualLampsSlice>(&bytes, VIRTUAL_LAMPS_SLICE_VERSION)
-            .map_err(|e| StoreError::Backend(e.to_string()))
-    }
-
-    fn load_groups(
-        slices: &dyn SliceStore,
-        adapter_id: u8,
-    ) -> Result<PersistableGroupsSlice, StoreError> {
-        let bytes = slices.load(SliceKey::Groups { adapter_id })?;
-        decode_versioned_slice::<PersistableGroupsSlice>(&bytes, GROUPS_SLICE_VERSION)
-            .map_err(|e| StoreError::Backend(e.to_string()))
-    }
-
-    fn load_scene(
-        slices: &dyn SliceStore,
-        adapter_id: u8,
-        scene_id: u8,
-    ) -> Result<PersistableSceneSlice, StoreError> {
-        let bytes = slices.load(SliceKey::Scene { adapter_id, scene_id })?;
-        decode_versioned_slice::<PersistableSceneSlice>(&bytes, SCENES_SLICE_VERSION)
-            .map_err(|e| StoreError::Backend(e.to_string()))
-    }
-
     fn decode_physical_devices(
         bytes: &[u8],
     ) -> Result<PersistablePhysicalDevicesSlice, StoreError> {
@@ -709,19 +639,53 @@ enum HydrateOutcome {
     Failed,
 }
 
-fn hydrate_slice<S>(
+fn hydrate_stored_slice<S>(
     store: &RegistryStore,
+    slices: &dyn SliceStore,
     kind: PersistenceSliceKind,
-    label: &str,
     sink: &mut HydrateSink<'_>,
-    load: impl FnOnce() -> Result<S, StoreError>,
+    decode: impl FnOnce(&[u8]) -> Result<S, StoreError>,
     apply: impl FnOnce(&mut Inner, &S),
-) -> HydrateOutcome {
-    let outcome = hydrate_slice_unmarked(store, kind.clone(), label, sink, load, apply);
-    if let HydrateOutcome::Failed = outcome {
+) -> SlotOutcome {
+    let key = key_of(&kind);
+    let stored = slices.load(key);
+    let outcome = hydrate_read_slot(store, kind.clone(), &key.label(), sink, stored, decode, apply);
+    if outcome == SlotOutcome::Rejected {
         mark_slice_dirty(store, &kind);
     }
+    store.dirty.withheld.settle(key, outcome == SlotOutcome::Unread);
     outcome
+}
+
+fn decode_slice<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+    version: u32,
+) -> Result<T, StoreError> {
+    decode_versioned_slice::<T>(bytes, version).map_err(|e| StoreError::Backend(e.to_string()))
+}
+
+fn key_of(kind: &PersistenceSliceKind) -> SliceKey {
+    match *kind {
+        PersistenceSliceKind::Adapters => SliceKey::Adapters,
+        PersistenceSliceKind::Groups { adapter_id } => SliceKey::Groups { adapter_id },
+        PersistenceSliceKind::VirtualLamps { adapter_id } => SliceKey::VirtualLamps { adapter_id },
+        PersistenceSliceKind::PhysicalDevices { adapter_id } => {
+            SliceKey::PhysicalDevices { adapter_id }
+        }
+        PersistenceSliceKind::PhysicalDeviceBank { adapter_id, bank } => {
+            SliceKey::PhysicalDeviceBank { adapter_id, bank }
+        }
+        PersistenceSliceKind::Scenes { adapter_id, scene_id } => {
+            SliceKey::Scene { adapter_id, scene_id }
+        }
+        PersistenceSliceKind::HclSchedules => SliceKey::HclSchedules,
+        PersistenceSliceKind::PollerSettings => SliceKey::PollerSettings,
+        PersistenceSliceKind::HomeAssistantSettings => SliceKey::HomeAssistantSettings,
+        PersistenceSliceKind::DaliSettings => SliceKey::DaliSettings,
+        PersistenceSliceKind::RedundancySettings => SliceKey::RedundancySettings,
+        PersistenceSliceKind::Policies => SliceKey::Policies,
+        PersistenceSliceKind::InputDevices { bank } => SliceKey::InputDevices { bank },
+    }
 }
 
 fn hydrate_slice_unmarked<S>(
@@ -845,32 +809,34 @@ fn bump(counter: &std::sync::atomic::AtomicU32) {
 
 macro_rules! hydrate_wrappers {
     (per_adapter: $(
-        $name:ident($($id:ident),*) => $kind:expr, $label:expr, $load:path, $apply:path;
+        $name:ident($($id:ident),*) => $kind:expr, $slice:ty, $version:path, $apply:path;
     )*) => {$(
         fn $name(
             store: &RegistryStore,
             slices: &dyn SliceStore,
             $($id: u8,)*
             sink: &mut HydrateSink<'_>,
-        ) -> HydrateOutcome {
-            hydrate_slice(
+        ) -> SlotOutcome {
+            hydrate_stored_slice(
                 store,
+                slices,
                 $kind,
-                &$label,
                 sink,
-                || $load(slices, $($id),*),
+                |bytes| decode_slice::<$slice>(bytes, $version),
                 |inner, slice| $apply(inner, $($id,)* slice),
             )
         }
     )*};
     (global: $(
-        $name:ident => $kind:expr, $label:literal, $default_log:literal, $load:path, $apply:path;
+        $name:ident => $kind:expr, $label:literal, $default_log:literal, $slice:ty, $version:path,
+            $apply:path;
     )*) => {$(
         fn $name(store: &RegistryStore, slices: &dyn SliceStore, sink: &mut HydrateSink<'_>) {
-            match hydrate_slice(store, $kind, $label, sink, || $load(slices), $apply) {
-                HydrateOutcome::Loaded => info!("persistence: loaded {}", $label),
-                HydrateOutcome::Defaulted => info!("persistence: {}", $default_log),
-                HydrateOutcome::Failed => {}
+            let decode = |bytes: &[u8]| decode_slice::<$slice>(bytes, $version);
+            match hydrate_stored_slice(store, slices, $kind, sink, decode, $apply) {
+                SlotOutcome::Loaded => info!("persistence: loaded {}", $label),
+                SlotOutcome::Missing => info!("persistence: {}", $default_log),
+                SlotOutcome::Rejected | SlotOutcome::Unread => {}
             }
         }
     )*};
@@ -881,55 +847,61 @@ hydrate_wrappers! { global:
         PersistenceSliceKind::Adapters,
         "adapters",
         "adapters file not found, using defaults",
-        RegistryStore::load_adapters,
+        PersistableAdapterSlice,
+        ADAPTERS_SLICE_VERSION,
         hydrate_adapters_inner;
     hydrate_hcl_schedules_slice =>
         PersistenceSliceKind::HclSchedules,
         "hcl schedules",
         "no hcl schedules stored",
-        RegistryStore::load_hcl_schedules,
+        PersistableHclSchedulesSlice,
+        HCL_SCHEDULES_SLICE_VERSION,
         crate::runtime::registry::hcl_schedules::hydrate_hcl_schedules_inner;
     hydrate_poller_settings_slice =>
         PersistenceSliceKind::PollerSettings,
         "poller settings",
         "no poller settings stored",
-        RegistryStore::load_poller_settings,
+        PersistablePollerSettingsSlice,
+        POLLER_SETTINGS_SLICE_VERSION,
         crate::runtime::registry::poller_settings::hydrate_poller_settings_inner;
     hydrate_dali_settings_slice =>
         PersistenceSliceKind::DaliSettings,
         "dali settings",
         "no dali settings stored",
-        RegistryStore::load_dali_settings,
+        PersistableDaliSettingsSlice,
+        DALI_SETTINGS_SLICE_VERSION,
         crate::runtime::registry::dali_settings::hydrate_dali_settings_inner;
     hydrate_redundancy_settings_slice =>
         PersistenceSliceKind::RedundancySettings,
         "redundancy settings",
         "no redundancy settings stored",
-        RegistryStore::load_redundancy_settings,
+        PersistableRedundancySettingsSlice,
+        REDUNDANCY_SETTINGS_SLICE_VERSION,
         crate::runtime::registry::redundancy_settings::hydrate_redundancy_settings_inner;
     hydrate_policies_slice =>
         PersistenceSliceKind::Policies,
         "policies",
         "no policies stored",
-        RegistryStore::load_policies,
+        PersistablePoliciesSlice,
+        POLICIES_SLICE_VERSION,
         crate::runtime::registry::policies::hydrate_policies_inner;
 }
 
 hydrate_wrappers! { per_adapter:
     hydrate_groups_slice(adapter_id) =>
         PersistenceSliceKind::Groups { adapter_id },
-        format!("groups a{adapter_id}"),
-        RegistryStore::load_groups,
+        PersistableGroupsSlice,
+        GROUPS_SLICE_VERSION,
         hydrate_groups_inner;
     hydrate_scene_slice(adapter_id, scene_id) =>
         PersistenceSliceKind::Scenes { adapter_id, scene_id },
-        format!("scene a{adapter_id}/s{scene_id}"),
-        RegistryStore::load_scene,
+        PersistableSceneSlice,
+        SCENES_SLICE_VERSION,
         hydrate_scene_inner;
     hydrate_input_devices_slice(bank) =>
         PersistenceSliceKind::InputDevices { bank },
-        format!("input devices b{bank}"),
-        RegistryStore::load_input_devices_bank,
+        PersistableInputDevicesSlice,
+        INPUT_DEVICES_SLICE_VERSION,
         crate::runtime::registry::input_devices::hydrate_input_devices_bank_inner;
 }
 
@@ -987,14 +959,14 @@ fn hydrate_vl_slice(
     slices: &dyn SliceStore,
     adapter_id: u8,
     sink: &mut HydrateSink<'_>,
-) -> HydrateOutcome {
+) -> SlotOutcome {
     let waiting = store.dirty.withheld_physical_device_banks(adapter_id);
-    hydrate_slice(
+    hydrate_stored_slice(
         store,
+        slices,
         PersistenceSliceKind::VirtualLamps { adapter_id },
-        &format!("VL a{adapter_id}"),
         sink,
-        || RegistryStore::load_virtual_lamps(slices, adapter_id),
+        |bytes| decode_slice::<PersistableVirtualLampsSlice>(bytes, VIRTUAL_LAMPS_SLICE_VERSION),
         |inner, slice| hydrate_virtual_lamps_inner(inner, adapter_id, waiting, slice),
     )
 }
@@ -1004,21 +976,26 @@ fn hydrate_home_assistant_settings_slice(
     slices: &dyn SliceStore,
     sink: &mut HydrateSink<'_>,
 ) {
-    let outcome = hydrate_slice(
+    let outcome = hydrate_stored_slice(
         store,
+        slices,
         PersistenceSliceKind::HomeAssistantSettings,
-        "home assistant settings",
         sink,
-        || RegistryStore::load_home_assistant_settings(slices),
+        |bytes| {
+            decode_slice::<PersistableHomeAssistantSettingsSlice>(
+                bytes,
+                HOME_ASSISTANT_SETTINGS_SLICE_VERSION,
+            )
+        },
         crate::runtime::registry::home_assistant_settings::hydrate_home_assistant_settings_inner,
     );
     match outcome {
-        HydrateOutcome::Loaded => info!("persistence: loaded home assistant settings"),
-        HydrateOutcome::Defaulted => {
+        SlotOutcome::Loaded => info!("persistence: loaded home assistant settings"),
+        SlotOutcome::Missing => {
             info!("persistence: no home assistant settings stored, persisting derived defaults");
             store.dirty.mark_home_assistant_settings_dirty();
         }
-        HydrateOutcome::Failed => {}
+        SlotOutcome::Rejected | SlotOutcome::Unread => {}
     }
 }
 
@@ -1201,8 +1178,142 @@ fn hydrate_memory_bank_records(banks: &[MemoryBankSummaryView]) -> Vec<MemoryBan
 
 #[cfg(test)]
 mod tests {
-    use crate::test_support::CountingStore;
+    use std::sync::atomic::Ordering;
+
+    use dali2rust_platform::slice_store::{SliceKey, SliceStore};
+
+    use crate::test_support::{CountingStore, ProbeStore};
+    use super::super::input_devices::{InputDeviceRecord, INPUT_DEVICES_PER_BANK};
+    use super::super::scenes::SCENE_COUNT;
     use super::super::store::RegistryStore;
+
+    const ADAPTER_COUNT: u8 = 2;
+
+    fn registry_slices() -> Vec<SliceKey> {
+        SliceKey::every(ADAPTER_COUNT)
+            .filter(|key| {
+                !matches!(
+                    key,
+                    SliceKey::PhysicalDevices { .. }
+                        | SliceKey::PhysicalDeviceBank { .. }
+                        | SliceKey::ControllerSettings
+                        | SliceKey::Rules { .. }
+                )
+            })
+            .collect()
+    }
+
+    fn held_together(key: SliceKey, unread: SliceKey) -> bool {
+        key == unread
+            || matches!((key, unread), (SliceKey::InputDevices { .. }, SliceKey::InputDevices { .. }))
+    }
+
+    fn mark_every_slice_dirty(store: &RegistryStore) {
+        let dirty = &store.dirty;
+        dirty.adapters.store(true, Ordering::Release);
+        for adapter_id in 0..ADAPTER_COUNT {
+            dirty.mark_groups_dirty(adapter_id);
+            dirty.mark_virtual_lamps_dirty(adapter_id);
+            (0..SCENE_COUNT).for_each(|scene_id| dirty.mark_scene_dirty(adapter_id, scene_id));
+        }
+        dirty.mark_hcl_schedules_dirty();
+        dirty.mark_poller_settings_dirty();
+        dirty.mark_dali_settings_dirty();
+        dirty.mark_redundancy_settings_dirty();
+        dirty.mark_policies_dirty();
+        dirty.mark_home_assistant_settings_dirty();
+        dirty.mark_input_devices_dirty();
+    }
+
+    fn installed() -> ProbeStore {
+        let slices = ProbeStore::default();
+        let store = RegistryStore::with_adapter_count(ADAPTER_COUNT);
+        mark_every_slice_dirty(&store);
+        store.flush_dirty_slices(&slices);
+        for key in registry_slices() {
+            assert!(slices.inner.load(key).is_ok(), "{} was not installed", key.label());
+        }
+        slices
+    }
+
+    fn boot_with_unread(slices: &ProbeStore, unread: SliceKey) -> RegistryStore {
+        slices.fail_reads_of(Some(unread));
+        let store = RegistryStore::with_adapter_count(ADAPTER_COUNT);
+        store.hydrate_from_store(slices, ADAPTER_COUNT);
+        store
+    }
+
+    fn flush_everything(store: &RegistryStore, slices: &ProbeStore) -> Vec<SliceKey> {
+        let before = slices.written().len();
+        mark_every_slice_dirty(store);
+        store.flush_dirty_slices(slices);
+        slices.written().split_off(before)
+    }
+
+    fn unread_slices(store: &RegistryStore) -> u32 {
+        store.persist_counters.unread_slices.load(Ordering::Acquire)
+    }
+
+    #[test]
+    fn a_slice_whose_read_fails_is_never_written_over() {
+        for unread in registry_slices() {
+            let slices = installed();
+            let store = boot_with_unread(&slices, unread);
+            let label = unread.label();
+            assert!(store.dirty.held_back(ADAPTER_COUNT).is_empty(), "{label} marked for rewrite");
+            assert_eq!(unread_slices(&store), 1, "{label}");
+
+            let written = flush_everything(&store, &slices);
+            assert!(!store.dirty.any_dirty(), "{label} still counts as work");
+            for key in registry_slices() {
+                let expected = !held_together(key, unread);
+                assert_eq!(written.contains(&key), expected, "{} with {label} unread", key.label());
+            }
+        }
+    }
+
+    #[test]
+    fn input_device_banks_wait_together_because_a_bank_is_a_position_in_the_whole_list() {
+        let installed_devices = u8::try_from(INPUT_DEVICES_PER_BANK + INPUT_DEVICES_PER_BANK / 2)
+            .expect("a short address");
+        let slices = ProbeStore::default();
+        let seeded = RegistryStore::with_adapter_count(1);
+        for short in 0..installed_devices {
+            seeded.write_inner().input_devices.insert((0, short), InputDeviceRecord::empty(0, short));
+        }
+        seeded.dirty.mark_input_devices_dirty();
+        seeded.flush_dirty_slices(&slices);
+
+        let store = boot_with_unread(&slices, SliceKey::InputDevices { bank: 0 });
+        flush_everything(&store, &slices);
+
+        slices.fail_reads_of(None);
+        let rebooted = RegistryStore::with_adapter_count(1);
+        rebooted.hydrate_from_store(&slices, 1);
+        assert_eq!(rebooted.read_inner().input_devices.len(), usize::from(installed_devices));
+    }
+
+    #[test]
+    fn a_withheld_settings_slice_keeps_the_flush_debounce() {
+        let slices = installed();
+        let store = boot_with_unread(&slices, SliceKey::PollerSettings);
+        store.dirty.mark_poller_settings_dirty();
+        assert!(!store.dirty.deliberate_config_write(), "nothing deliberate can be written");
+        store.dirty.mark_hcl_schedules_dirty();
+        assert!(store.dirty.deliberate_config_write());
+    }
+
+    #[test]
+    fn a_reload_that_reads_the_slice_lets_the_next_flush_write_it() {
+        let unread = SliceKey::VirtualLamps { adapter_id: 0 };
+        let slices = installed();
+        let store = boot_with_unread(&slices, unread);
+
+        slices.fail_reads_of(None);
+        store.hydrate_from_store(&slices, ADAPTER_COUNT);
+        assert_eq!(unread_slices(&store), 0);
+        assert!(flush_everything(&store, &slices).contains(&unread));
+    }
 
     #[test]
     fn a_flush_writes_only_the_dirty_slices() {

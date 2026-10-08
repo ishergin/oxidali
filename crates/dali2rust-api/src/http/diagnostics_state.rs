@@ -235,6 +235,7 @@ pub struct PersistenceDto {
     pub hydrate_loaded_total: u32,
     pub hydrate_default_total: u32,
     pub hydrate_error_total: u32,
+    pub unread_slices: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
@@ -429,7 +430,7 @@ declare_widest_dtos! {
     }
     PersistenceDto {
         flush_success_total, flush_error_total, no_space_total, hydrate_loaded_total,
-        hydrate_default_total, hydrate_error_total,
+        hydrate_default_total, hydrate_error_total, unread_slices,
     }
     PhySnifferDto {
         frames, backward8, forward16, forward24, decode_failed, unsupported_len, dropped,

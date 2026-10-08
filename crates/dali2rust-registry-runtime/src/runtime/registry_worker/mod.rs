@@ -17,7 +17,7 @@ mod runtime_apply;
 mod scene;
 mod virtual_lamp;
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -42,11 +42,7 @@ const RECV_TIMEOUT: Duration = Duration::from_millis(250);
 
 
 fn command_flush_interval(store: &RegistryStore) -> Duration {
-    let deliberate_config_write = store.dirty.adapters.load(Ordering::Acquire)
-        || store.dirty.hcl_schedules.load(Ordering::Acquire)
-        || store.dirty.poller_settings.load(Ordering::Acquire)
-        || store.dirty.home_assistant_settings.load(Ordering::Acquire);
-    if deliberate_config_write {
+    if store.dirty.deliberate_config_write() {
         Duration::ZERO
     } else {
         PERSISTENCE_DEBOUNCE

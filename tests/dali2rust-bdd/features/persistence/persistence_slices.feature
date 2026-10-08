@@ -43,3 +43,19 @@ Feature: Persistence slices host contract
     When I PATCH JSON {"name":"flush-fence-b"} to "/api/v1/adapters/0"
     Then the response status should be 200
     Then the diagnostics persistence flush total should settle at exactly 2
+
+  @id:PERS-006
+  Scenario: A slice whose stored copy cannot be read is never written over
+    Given in-memory slice persistence is enabled for the host stack
+    When I PATCH JSON {"name":"Stored Name"} to "/api/v1/adapters/0"
+    Then the response status should be 200
+    Given reads of the stored "adapters" slice fail
+    When I restart the host stack
+    Then the JSON pointer "/persistence/unread_slices" at "/api/v1/diagnostics" should eventually be "1"
+    When I PATCH JSON {"name":"Unsaved Name"} to "/api/v1/adapters/0"
+    Then the response status should be 200
+    Given reads of the stored slices succeed again
+    When I restart the host stack
+    And I send a GET request to "/api/v1/adapters/0"
+    Then the JSON field "name" should be "Stored Name"
+    And the JSON pointer "/persistence/unread_slices" at "/api/v1/diagnostics" should eventually be "0"
