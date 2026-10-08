@@ -292,6 +292,13 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - Scene programming reuses the live staging helpers, which therefore never activate, and
   never stages `RGBWAF CONTROL` (237): `STORE DTR AS SCENE` consumes a temporary without
   promoting it (209 §9.12.5).
+- A scene row without a colour leaves the scene's stored colour MASK, on any gear, since
+  the row does not depend on the device type. `STORE DTR AS SCENE` copies whatever the
+  temporaries hold into the scene colour (209 §11.2.2) and, when they are MASK, keeps the
+  colour the scene had (§9.11.2, Table 4 NOTE 3); only `REMOVE FROM SCENE` writes MASK
+  there (§9.11.3, §11.2.3). Such a row therefore stores once to consume the temporaries,
+  removes the scene, then stores its level; none of the three changes the light.
+  `ACTIVATE` is never the flush: it applies the stray colour to the lamp.
 - A scene's stored colour is read inside one exempt transaction, from the
   `QUERY SCENE LEVEL` that loads the shared REPORT registers to the last REPORT value:
   any of five commands from any master — `QUERY ACTUAL LEVEL` among them — reloads those

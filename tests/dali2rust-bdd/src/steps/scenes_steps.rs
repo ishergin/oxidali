@@ -83,6 +83,13 @@ fn dt8_command_frame(short: u8, opcode: u8) -> u16 {
 }
 
 fn script_scene_write(mock: &MockDaliTransport, short: u8, scene_id: u8, level: u8) {
+    let set_scene = standard_frame(short, StandardCommand::SetScene { scene: scene_id });
+    let remove = standard_frame(short, StandardCommand::RemoveScene { scene: scene_id });
+    mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(level)));
+    for frame in [set_scene, remove] {
+        mock.expect_forward_frame(frame);
+        mock.expect_forward_frame(frame);
+    }
     script_scene_write_bare(mock, short, scene_id, level);
     script_scene_colour_verify(mock, short, scene_id, level, None);
 }
@@ -277,13 +284,13 @@ async fn given_scene_named(world: &mut DaliWorld, scene_id: u8, name: String) {
     patch_scene_name(world, scene_id, &name);
 }
 
-// SCN-010 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 SYS-211 SYS-213 SYS-241 SCN-040 SCN-050 ADP-026 SYS-251 SYS-252 SYS-253 RULE-031 RULE-033 RULE-036 RULE-038 COMM-110
+// SCN-010 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 SYS-211 SYS-213 SYS-241 SCN-040 SCN-050 ADP-026 SYS-251 SYS-252 SYS-253 RULE-031 RULE-033 RULE-036 RULE-038 COMM-110 SCN-097
 #[given(regex = r"^adapter 0 scene (\d+) desired row for virtual lamp (\d+) has level (\d+)$")]
 async fn given_desired_row_level(world: &mut DaliWorld, scene_id: u8, virtual_lamp_id: u8, level: u8) {
     patch_scene_matrix_row(world, scene_id, virtual_lamp_id, level_desired(level));
 }
 
-// SCN-030 SCN-040 SCN-041 SCN-060 SCN-083 SCN-084 SCN-085
+// SCN-030 SCN-040 SCN-041 SCN-060 SCN-083 SCN-084 SCN-085 SCN-095
 #[given(regex = r"^adapter 0 scene (\d+) desired row for virtual lamp (\d+) has CCT (\d+)K and level (\d+)$")]
 async fn given_desired_row_cct(
     world: &mut DaliWorld,
@@ -332,7 +339,7 @@ async fn given_scene_rgb_write_scripted(
     script_scene_rgb_write(&mock, short, scene_id, [sr, sg, sb], level, [rr, rg, rb]);
 }
 
-// SCN-062 REG-031
+// SCN-062 REG-031 SCN-095
 #[when(regex = r"^adapter 0 scene (\d+) desired row for virtual lamp (\d+) changes level to (\d+)$")]
 async fn when_desired_row_level_changes(
     world: &mut DaliWorld,
@@ -369,14 +376,14 @@ async fn given_discovered_rgbwaf_capable_vl1(world: &mut DaliWorld) {
     bind_discovered_vl1(world);
 }
 
-// SCN-060 SCN-062 SCN-063 REG-031 SYS-211 SYS-213 SYS-241 SYS-251 SYS-252 SYS-253 RULE-031 RULE-033 RULE-036 RULE-038 COMM-110
+// SCN-060 SCN-062 SCN-063 REG-031 SYS-211 SYS-213 SYS-241 SYS-251 SYS-252 SYS-253 RULE-031 RULE-033 RULE-036 RULE-038 COMM-110 SCN-095 SCN-097
 #[given(regex = r"^adapter 0 scene (\d+) write for short (\d+) level (\d+) is scripted$")]
 async fn given_scene_write_scripted(world: &mut DaliWorld, scene_id: u8, short: u8, level: u8) {
     let mock = world.dali_mock().lock().expect("mock lock");
     script_scene_write(&mock, short, scene_id, level);
 }
 
-// SCN-060 SCN-083
+// SCN-060 SCN-083 SCN-095
 #[given(regex = r"^adapter 0 scene (\d+) CCT (\d+)K write for short (\d+) level (\d+) is scripted$")]
 async fn given_scene_cct_write_scripted(
     world: &mut DaliWorld,
@@ -410,7 +417,7 @@ async fn given_scene_cct_write_clamped(
     script_scene_colour_verify(&mock, short, scene_id, level, Some(readback_mirek));
 }
 
-// SCN-085
+// SCN-085 SCN-096
 #[given(
     regex = r"^a scene-colours audit script for short (\d+) with scene (\d+) holding (\d+) mirek at level (\d+)$"
 )]
@@ -502,7 +509,7 @@ async fn then_matrix_exposes_rows(world: &mut DaliWorld) {
     }
 }
 
-// SCN-030 SCN-040 SCN-041 SCN-050 REG-031 SCN-046
+// SCN-030 SCN-040 SCN-041 SCN-050 REG-031 SCN-046 SCN-096
 #[then(regex = r#"^the scene matrix desired row for virtual lamp (\d+) should be included with level (\d+) and color_mode "([^"]+)"$"#)]
 async fn then_desired_row_with_color(
     world: &mut DaliWorld,
@@ -521,7 +528,7 @@ async fn then_desired_row_with_color(
     );
 }
 
-// SCN-040 SCN-050 REG-031
+// SCN-040 SCN-050 REG-031 SCN-095
 #[then(regex = r"^the scene matrix desired row for virtual lamp (\d+) should be included with level (\d+) and no color$")]
 async fn then_desired_row_no_color(world: &mut DaliWorld, virtual_lamp_id: u8, level: u8) {
     let row = scene_matrix_row(world, virtual_lamp_id);
@@ -615,7 +622,7 @@ async fn then_applied_row_level(world: &mut DaliWorld, virtual_lamp_id: u8, leve
     assert_eq!(applied.get("level").and_then(Value::as_u64), Some(u64::from(level)), "{row:?}");
 }
 
-// SCN-083 SCN-084 SCN-085
+// SCN-083 SCN-084 SCN-085 SCN-096
 #[then(
     regex = r#"^the scene matrix row for virtual lamp (\d+) should read back applied CCT (\d+)K dirty (true|false)$"#
 )]
@@ -644,6 +651,18 @@ async fn then_applied_row_readback_cct(
         Some(dirty == "true"),
         "{row:?}"
     );
+}
+
+// SCN-095
+#[then(
+    regex = r#"^the scene matrix row for virtual lamp (\d+) should read back applied level (\d+) without colour dirty false$"#
+)]
+async fn then_applied_row_readback_no_colour(world: &mut DaliWorld, virtual_lamp_id: u8, level: u8) {
+    let row = scene_matrix_row(world, virtual_lamp_id);
+    let applied = row.get("applied").expect("applied state");
+    assert_eq!(applied.get("level").and_then(Value::as_u64), Some(u64::from(level)), "{row:?}");
+    assert!(applied.get("color_mode").is_none_or(Value::is_null), "{row:?}");
+    assert_eq!(row.get("dirty").and_then(Value::as_bool), Some(false), "{row:?}");
 }
 
 // SCN-092 SCN-093

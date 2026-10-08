@@ -17,5 +17,6 @@ log = "0.4"
 
 [dev-dependencies]
 dali2rust-adapters = { path = "../dali2rust-adapters" }
+dali2rust-gear-model = { path = "../dali2rust-gear-model" }
 dali2rust-registry-runtime = { path = "../dali2rust-registry-runtime" }
 dali2rust-test-support = { path = "../dali2rust-test-support" }

@@ -1107,6 +1107,7 @@ fn hydrate_scene_inner(
             included: row.included,
             target,
             desired_seeded: row.desired_seeded,
+            desired_from_operator: row.desired_from_operator,
         };
         if row.included || row.desired_seeded {
             inner

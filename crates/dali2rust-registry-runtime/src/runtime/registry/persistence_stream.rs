@@ -305,10 +305,11 @@ struct SceneRowStream {
 impl Serialize for SceneRowStream {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let target = self.record.target;
-        let mut st = serializer.serialize_struct("PersistableSceneRow", 6)?;
+        let mut st = serializer.serialize_struct("PersistableSceneRow", 7)?;
         st.serialize_field("virtual_lamp_id", &self.virtual_lamp_id)?;
         st.serialize_field("included", &self.record.included)?;
         st.serialize_field("desired_seeded", &self.record.desired_seeded)?;
+        st.serialize_field("desired_from_operator", &self.record.desired_from_operator)?;
         st.serialize_field("power", &target.and_then(|t| t.power))?;
         st.serialize_field("level", &target.and_then(|t| t.level))?;
         st.serialize_field("color", &target.and_then(|t| t.color))?;
@@ -669,6 +670,7 @@ mod tests {
                         }),
                     }),
                     desired_seeded: true,
+                    desired_from_operator: vlid % 3 == 0,
                 },
             );
         }
@@ -843,6 +845,7 @@ mod tests {
                     virtual_lamp_id,
                     included: row.included,
                     desired_seeded: row.desired_seeded,
+                    desired_from_operator: row.desired_from_operator,
                     power: row.target.and_then(|t| t.power),
                     level: row.target.and_then(|t| t.level),
                     color: row.target.and_then(|t| t.color),

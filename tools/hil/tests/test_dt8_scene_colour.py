@@ -140,3 +140,60 @@ def test_scene_colour_audit_reads_stored_not_active(api, scene_matrix_guard,
         got, {"scene_mirek": scene_mirek, "active_mirek": active_mirek})
     assert abs(_mirek(got) - active_mirek) > 5, (
         "audit returned the ACTIVE colour — the §12 transaction failed", got)
+
+
+DTR0_FRAME = 0xA300
+DTR1_FRAME = 0xC300
+ENABLE_DT8_FRAME = 0xC108
+SET_TEMPORARY_COLOUR_TEMPERATURE = 0xE7
+DT8_COLOUR_TYPE_TC = 0x20
+
+
+def _stage_temporary_tc(api, short, mirek):
+    api.raw(DTR0_FRAME | (mirek & 0xFF))
+    api.raw(DTR1_FRAME | (mirek >> 8))
+    api.raw(ENABLE_DT8_FRAME)
+    api.raw(((short << 1) | 1) << 8 | SET_TEMPORARY_COLOUR_TEMPERATURE)
+
+
+@pytest.mark.hil_id("HIL-SCNC-02")
+def test_level_only_row_stores_no_staged_colour(api, scenes_supported,
+                                                scene_matrix_guard,
+                                                ops_quiesce, state_snapshot,
+                                                test_artifacts):
+    short, vl = _cct_lamp(api)
+    api.attr_read_checked(short, groups="dt8_color")
+    active_mirek = _active_tc_mirek(api.attributes(short, ["dt8_color"]))
+    if not active_mirek:
+        pytest.skip("the lamp reports no active Tc to stage without a visible change")
+
+    scene_matrix_guard(SCENE_ID)
+    api.scenes.matrix_patch(SCENE_ID, [{
+        "virtual_lamp_id": vl,
+        "desired": {"included": True, "power": "on", "level": AUDIT_LEVEL},
+    }])
+    _stage_temporary_tc(api, short, active_mirek)
+    staged = api.temporary_colour_type(short)
+
+    view = api.wait_op(api.scenes.apply(SCENE_ID), timeout_s=60)
+    test_artifacts.attach_json("scene_apply_op", view)
+    assert view["status"] == "succeeded", view
+    if staged != DT8_COLOUR_TYPE_TC:
+        pytest.skip("inconclusive: the gear held no staged Tc (%r)" % staged)
+    api.attr_read_checked(short, groups="scene_colours")
+
+    row = {}
+
+    def _converged():
+        nonlocal row
+        row = next(r for r in api.scenes.matrix(SCENE_ID)["rows"]
+                   if r["virtual_lamp_id"] == vl)
+        return row["applied"].get("level") == AUDIT_LEVEL and not row["dirty"]
+
+    wait_until(_converged, 3.0, interval_s=0.3)
+    test_artifacts.attach_json("applied_row", row)
+    assert row["applied"].get("color_mode") is None, (
+        "the scene stored the staged Tc — 209 Table 4", row)
+    assert row["dirty"] is False, row
+    assert api.temporary_colour_type(short) == api.DT8_MASK, \
+        "the store did not consume the staged temporary"

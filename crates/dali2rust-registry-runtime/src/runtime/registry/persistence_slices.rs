@@ -5,7 +5,7 @@ pub const ADAPTERS_SLICE_VERSION: u32 = 9;
 pub const GROUPS_SLICE_VERSION: u32 = 10;
 pub const VIRTUAL_LAMPS_SLICE_VERSION: u32 = 9;
 pub const PHYSICAL_DEVICES_SLICE_VERSION: u32 = 16;
-pub const SCENES_SLICE_VERSION: u32 = 10;
+pub const SCENES_SLICE_VERSION: u32 = 11;
 pub const HCL_SCHEDULES_SLICE_VERSION: u32 = 9;
 pub const POLLER_SETTINGS_SLICE_VERSION: u32 = 11;
 pub const INPUT_DEVICES_SLICE_VERSION: u32 = 1;
@@ -211,6 +211,7 @@ pub struct PersistableSceneRow {
     pub virtual_lamp_id: u8,
     pub included: bool,
     pub desired_seeded: bool,
+    pub desired_from_operator: bool,
     pub power: Option<dali2rust_contracts::msg::PowerState>,
     pub level: Option<u8>,
     pub color: Option<dali2rust_contracts::msg::ColorValue>,

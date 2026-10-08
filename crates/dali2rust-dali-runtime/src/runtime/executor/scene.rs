@@ -1,5 +1,5 @@
 use dali2rust_contracts::msg::{
-    ColorMode, ColorValue, DaliSceneTargetState, PowerState, SceneProgramAction,
+    ColorMode, ColorValue, DaliSceneTargetState, SceneProgramAction,
 };
 use dali2rust_domain::dali::controller::DaliApplicationController;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
@@ -38,7 +38,7 @@ fn expected_slot_byte(
 ) -> Result<u8, SemanticDaliError> {
     match action {
         SceneProgramAction::Write | SceneProgramAction::Update => target_state
-            .map(scene_level_byte)
+            .map(DaliSceneTargetState::stored_level)
             .ok_or(SemanticDaliError::Conflict("scene_target_state_missing")),
         SceneProgramAction::Clear => Ok(SCENE_SLOT_MASK),
     }
@@ -70,8 +70,8 @@ fn program_scene_write(
 ) -> Result<Option<u8>, SemanticDaliError> {
     controller.transaction_exempt(|controller| {
         controller.unit(|controller| {
-            apply_scene_color(controller, address, target)?;
-            send_special(controller, SpecialCommand::Dtr0(scene_level_byte(target)))?;
+            prepare_scene_colour(controller, address, scene_id, target)?;
+            send_special(controller, SpecialCommand::Dtr0(target.stored_level()))?;
             send_standard(
                 controller,
                 address,
@@ -95,13 +95,38 @@ fn program_scene_clear(
     read_scene_level(controller, address, scene_id)
 }
 
+fn prepare_scene_colour(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    scene_id: u8,
+    target: &DaliSceneTargetState,
+) -> Result<(), SemanticDaliError> {
+    if apply_scene_color(controller, address, target)? {
+        return Ok(());
+    }
+    clear_scene_colour(controller, address, scene_id, target.stored_level())
+}
+
+// IEC 62386-209 §11.2.2, §11.2.3, Table 4, Table 6
+fn clear_scene_colour(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    scene_id: u8,
+    level: u8,
+) -> Result<(), SemanticDaliError> {
+    send_special(controller, SpecialCommand::Dtr0(level))?;
+    send_standard(controller, address, StandardCommand::SetScene { scene: scene_id })?;
+    send_standard(controller, address, StandardCommand::RemoveScene { scene: scene_id })?;
+    Ok(())
+}
+
 fn apply_scene_color(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     target: &DaliSceneTargetState,
-) -> Result<(), SemanticDaliError> {
+) -> Result<bool, SemanticDaliError> {
     let Some(color) = target.color else {
-        return Ok(());
+        return Ok(false);
     };
     match color.mode {
         ColorMode::Cct if color.color_temperature_kelvin == 0 => {
@@ -113,8 +138,9 @@ fn apply_scene_color(
         }
         ColorMode::Xy => apply_dt8_xy(controller, address, color.x, color.y),
         ColorMode::Rgb | ColorMode::Rgbwaf => stage_scene_rgbwaf(controller, address, &color),
-        _ => Ok(()),
-    }
+        _ => return Ok(false),
+    }?;
+    Ok(true)
 }
 
 // IEC 62386-209 §9.12.5
@@ -141,17 +167,10 @@ fn read_scene_level(
     .unwrap_or(None))
 }
 
-pub(crate) fn scene_level_byte(target: &DaliSceneTargetState) -> u8 {
-    if target.power == Some(PowerState::Off) {
-        0
-    } else {
-        target.level.unwrap_or(0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dali2rust_contracts::msg::PowerState;
     use crate::runtime::executor::helpers::{
         DT8_SET_TEMPERATURE_TC, DT8_SET_TEMPORARY_RGB_DIMLEVEL, DT8_SET_TEMPORARY_WAF_DIMLEVEL,
     };
@@ -187,9 +206,21 @@ mod tests {
         }
     }
 
+    fn expect_colour_clear(mock: &MockDaliTransport, level: u8) {
+        mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(level)));
+        for command in [
+            StandardCommand::SetScene { scene: SCENE },
+            StandardCommand::RemoveScene { scene: SCENE },
+        ] {
+            mock.expect_forward_frame(standard_frame(command));
+            mock.expect_forward_frame(standard_frame(command));
+        }
+    }
+
     #[test]
-    fn scene_write_sends_dtr0_set_scene_and_reads_level_back() {
+    fn a_row_without_colour_consumes_and_removes_the_scene_colour_before_storing_its_level() {
         let mock = MockDaliTransport::new();
+        expect_colour_clear(&mock, 100);
         mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(100)));
         let set_scene = standard_frame(StandardCommand::SetScene { scene: SCENE });
         mock.expect_forward_frame(set_scene);
@@ -215,6 +246,7 @@ mod tests {
     #[test]
     fn a_collided_scene_level_read_back_does_not_program_the_scene_again() {
         let mock = MockDaliTransport::new();
+        expect_colour_clear(&mock, 100);
         mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(100)));
         let set_scene = standard_frame(StandardCommand::SetScene { scene: SCENE });
         mock.expect_forward_frame(set_scene);
@@ -401,6 +433,7 @@ mod tests {
     }
 
     fn expect_write_drive(mock: &MockDaliTransport, level: u8, readback: Option<u8>) {
+        expect_colour_clear(mock, level);
         mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(level)));
         let set_scene = standard_frame(StandardCommand::SetScene { scene: SCENE });
         mock.expect_forward_frame(set_scene);
@@ -409,6 +442,31 @@ mod tests {
             standard_frame(StandardCommand::QuerySceneLevel { scene: SCENE }),
             readback,
         );
+    }
+
+    #[test]
+    fn a_collision_on_the_remove_reruns_the_unit_from_its_first_dtr0() {
+        let mock = MockDaliTransport::new();
+        mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(70)));
+        let set_scene = standard_frame(StandardCommand::SetScene { scene: SCENE });
+        mock.expect_forward_frame(set_scene);
+        mock.expect_forward_frame(set_scene);
+        mock.expect_forward_frame_collision(standard_frame(StandardCommand::RemoveScene {
+            scene: SCENE,
+        }));
+        expect_write_drive(&mock, 70, Some(70));
+
+        let (transport, mut controller) = setup_controller(mock);
+        let level = program_scene_row(
+            &mut controller,
+            SHORT,
+            SCENE,
+            SceneProgramAction::Write,
+            Some(&level_target(70)),
+        )
+        .expect("scene write after a collision");
+        assert_eq!(level, Some(70));
+        assert_script_consumed(&transport);
     }
 
     #[test]
@@ -500,16 +558,5 @@ mod tests {
             "the first repair followed a wrong level, the second only silence"
         );
         assert_script_consumed(&transport);
-    }
-
-    #[test]
-    fn power_off_row_stores_level_zero() {
-        let target = DaliSceneTargetState {
-            power: Some(PowerState::Off),
-            level: Some(120),
-            color: None,
-        };
-        assert_eq!(scene_level_byte(&target), 0);
-        assert_eq!(scene_level_byte(&level_target(120)), 120);
     }
 }

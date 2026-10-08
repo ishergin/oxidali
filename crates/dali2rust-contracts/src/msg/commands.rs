@@ -32,6 +32,21 @@ pub struct DaliSceneTargetState {
     pub color: Option<ColorValue>,
 }
 
+impl DaliSceneTargetState {
+    #[must_use]
+    pub const fn stored_level(&self) -> u8 {
+        match (self.power, self.level) {
+            (Some(PowerState::Off), _) | (_, None) => 0,
+            (_, Some(level)) => level,
+        }
+    }
+
+    #[must_use]
+    pub fn stores_as(&self, other: &Self) -> bool {
+        self.stored_level() == other.stored_level() && self.color == other.color
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SceneMatrixDesiredRow {
     pub virtual_lamp_id: u8,
@@ -1615,5 +1630,31 @@ mod ha_width_tests {
             fixed_text_32(&long).len(),
             HomeAssistantControllerIdUpdateCommand::CONTROLLER_ID_MAX_BYTES
         );
+    }
+}
+
+#[cfg(test)]
+mod scene_target_tests {
+    use super::*;
+
+    const LEVEL: u8 = 120;
+
+    fn row(power: Option<PowerState>, level: Option<u8>) -> DaliSceneTargetState {
+        DaliSceneTargetState { power, level, color: None }
+    }
+
+    #[test]
+    fn an_off_row_stores_level_zero_whatever_its_level() {
+        assert_eq!(row(Some(PowerState::Off), Some(LEVEL)).stored_level(), 0);
+        assert_eq!(row(Some(PowerState::On), Some(LEVEL)).stored_level(), LEVEL);
+        assert_eq!(row(None, None).stored_level(), 0);
+    }
+
+    #[test]
+    fn power_compares_only_through_the_stored_level() {
+        let on = row(Some(PowerState::On), Some(LEVEL));
+        assert!(on.stores_as(&row(None, Some(LEVEL))), "the wire holds no power field");
+        assert!(row(Some(PowerState::Off), Some(LEVEL)).stores_as(&row(None, Some(0))));
+        assert!(!on.stores_as(&row(None, Some(LEVEL - 1))));
     }
 }

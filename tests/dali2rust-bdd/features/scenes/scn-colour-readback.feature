@@ -67,3 +67,35 @@ Feature: Scene colour readback
     And all scripted DALI exchanges should be consumed without errors
     When I send a GET request to "/api/v1/adapters/0/scenes/3/matrix"
     Then the scene matrix row for virtual lamp 1 should read back applied rgb 255,55,79 dirty true
+
+  @id:SCN-095
+  Scenario: A row without colour clears the stored scene colour before it stores the level
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And adapter 0 scene 3 desired row for virtual lamp 1 has CCT 2700K and level 179
+    And a DALI mock transport with no response
+    And adapter 0 scene 3 CCT 2700K write for short 0 level 179 is scripted
+    When I send a POST request to "/api/v1/adapters/0/scenes/3/apply"
+    Then the last operation eventually succeeds
+    And all scripted DALI exchanges should be consumed without errors
+    When adapter 0 scene 3 desired row for virtual lamp 1 changes level to 120
+    And I send a GET request to "/api/v1/adapters/0/scenes/3/matrix"
+    Then the scene matrix desired row for virtual lamp 1 should be included with level 120 and no color
+    Given adapter 0 scene 3 write for short 0 level 120 is scripted
+    When I send a POST request to "/api/v1/adapters/0/scenes/3/apply"
+    Then the last operation eventually succeeds
+    And all scripted DALI exchanges should be consumed without errors
+    When I send a GET request to "/api/v1/adapters/0/scenes/3/matrix"
+    Then the scene matrix row for virtual lamp 1 should read back applied level 120 without colour dirty false
+
+  @id:SCN-096
+  Scenario: A row adopted from the gear takes the stored scene colour and stays clean
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And a DALI mock transport with no response
+    And a scene-colours audit script for short 0 with scene 3 holding 370 mirek at level 90
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "scene_colours" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And all scripted DALI exchanges should be consumed without errors
+    When I send a GET request to "/api/v1/adapters/0/scenes/3/matrix"
+    Then the scene matrix desired row for virtual lamp 1 should be included with level 90 and color_mode "cct"
+    And the scene matrix row for virtual lamp 1 should read back applied CCT 2702K dirty false

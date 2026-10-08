@@ -303,7 +303,7 @@ async fn when_start_groups_attribute_read(world: &mut DaliWorld) {
     );
 }
 
-// SCN-085
+// SCN-085 SCN-096
 #[when(r#"I start an attribute read for adapter 0 physical device 0 with attribute group "scene_colours" only"#)]
 async fn when_start_scene_colours_attribute_read(world: &mut DaliWorld) {
     let body = br#"{"attribute_groups":["scene_colours"],"memory_banks":"none"}"#;

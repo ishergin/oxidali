@@ -975,13 +975,28 @@ pub struct SceneApplyDiffRow {
     pub binding_short: Option<u8>,
 }
 
+#[must_use]
+pub fn scene_targets_converged(
+    desired: Option<&dali2rust_contracts::msg::DaliSceneTargetState>,
+    applied: Option<&dali2rust_contracts::msg::DaliSceneTargetState>,
+) -> bool {
+    match (desired, applied) {
+        (Some(desired), Some(applied)) => desired.stores_as(applied),
+        (desired, applied) => desired == applied,
+    }
+}
+
 pub fn collect_scene_apply_diff(snapshot: &SceneApplySnapshot) -> Vec<SceneApplyDiffRow> {
     use dali2rust_contracts::msg::SceneProgramAction;
     let mut diff = Vec::new();
     for row in &snapshot.rows {
         let action = match (row.desired_included, row.applied_included) {
             (true, false) => SceneProgramAction::Write,
-            (true, true) if row.desired_target != row.applied_target => SceneProgramAction::Update,
+            (true, true)
+                if !scene_targets_converged(row.desired_target.as_ref(), row.applied_target.as_ref()) =>
+            {
+                SceneProgramAction::Update
+            }
             (false, true) => SceneProgramAction::Clear,
             _ => continue,
         };

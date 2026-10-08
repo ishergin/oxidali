@@ -26,6 +26,31 @@ fn apply_and_publish_pd(
     counter.fetch_add(1, Ordering::Relaxed);
 }
 
+fn follow_scene_evidence(
+    store: &RegistryStore,
+    publisher: &BusPublisher,
+    corr: u64,
+    aid: u8,
+    sa: u8,
+    chunk: &dali2rust_contracts::msg::DaliAttributeReadChunk,
+) {
+    let changed_mask = match *chunk {
+        dali2rust_contracts::msg::DaliAttributeReadChunk::Scenes { .. } => {
+            store.seed_scene_matrix_from_levels_read(aid, sa)
+        }
+        dali2rust_contracts::msg::DaliAttributeReadChunk::SceneColour { scene, .. } => {
+            let followed = u16::from(store.seed_scene_rows_from_evidence(aid, sa, scene));
+            followed.checked_shl(u32::from(scene)).unwrap_or(0)
+        }
+        _ => 0,
+    };
+    for scene_id in 0..SCENE_COUNT {
+        if changed_mask & (1u16 << scene_id) != 0 {
+            publish_scene_matrix_changed(publisher, corr, aid, scene_id);
+        }
+    }
+}
+
 pub(crate) fn apply_event_frame(
     frame: BusFrame,
     publisher: &BusPublisher,
@@ -252,14 +277,7 @@ dali2rust_contracts::dispatch_bus_events! {
                 publish_group_matrix_changed(publisher, corr, aid);
             }
         }
-        if let dali2rust_contracts::msg::DaliAttributeReadChunk::Scenes { .. } = body.chunk {
-            let changed_mask = store.seed_scene_matrix_from_levels_read(aid, sa);
-            for scene_id in 0..SCENE_COUNT {
-                if changed_mask & (1u16 << scene_id) != 0 {
-                    publish_scene_matrix_changed(publisher, corr, aid, scene_id);
-                }
-            }
-        }
+        follow_scene_evidence(store, publisher, corr, aid, sa, &body.chunk);
     },
     DaliMemoryBankReadEvent(body) => {
         let data = body.data.as_slice();

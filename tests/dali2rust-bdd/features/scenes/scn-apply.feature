@@ -71,7 +71,7 @@ Feature: Scene apply
     And the JSON field "operation_id" should be non-empty
     And the last operation eventually succeeds
     And the scene-apply operation result should list skipped virtual lamp 9 with reason "vl_unbound"
-    And the DALI mock transport should have received 9 forward frame
+    And the DALI mock transport should have received 14 forward frame
     When I send a GET request to "/api/v1/adapters/0/scenes/3"
     Then the JSON boolean field "dirty" should be true
 
@@ -89,3 +89,19 @@ Feature: Scene apply
     And the JSON error should be "conflict"
     When the DALI transport unblocks
     Then the last apply operation eventually finishes
+
+  @id:SCN-097
+  Scenario: An applied row stays clean after a restart
+    Given in-memory slice persistence is enabled for the host stack
+    And adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And adapter 0 scene 3 desired row for virtual lamp 1 has level 100
+    And a DALI mock transport with no response
+    And adapter 0 scene 3 write for short 0 level 100 is scripted
+    When I send a POST request to "/api/v1/adapters/0/scenes/3/apply"
+    Then the last operation eventually succeeds
+    And all scripted DALI exchanges should be consumed without errors
+    When I send a GET request to "/api/v1/adapters/0/scenes/3"
+    Then the JSON boolean field "dirty" should be false
+    When I restart the host stack
+    And I send a GET request to "/api/v1/adapters/0/scenes/3"
+    Then the JSON boolean field "dirty" should be false
