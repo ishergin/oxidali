@@ -103,7 +103,7 @@ fn a_slice_that_does_not_decode_is_refused_without_a_write() {
 }
 
 #[test]
-fn a_pass_writes_the_slices_that_decode_and_names_the_one_that_does_not() {
+fn a_pass_writes_the_slices_that_decode_and_refuses_the_one_that_does_not() {
     let (source, source_slices) = store_with_poller_settings("transfer-partial-source");
     let exported = source
         .export_slice(&source_slices, SliceKey::PollerSettings)

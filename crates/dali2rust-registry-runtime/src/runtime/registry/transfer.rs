@@ -103,8 +103,14 @@ impl RegistryStore {
         staged: Vec<StagedSlice>,
         foreign: &dyn ForeignSliceOwner,
     ) -> (Vec<StagedSlice>, u32) {
-        let (decodable, refused): (Vec<_>, Vec<_>) =
-            staged.into_iter().partition(|slice| decodes(slice, foreign));
+        let broken: Vec<SliceKey> = staged
+            .iter()
+            .filter(|slice| !decodes(slice, foreign))
+            .map(|slice| slice.key)
+            .collect();
+        let (refused, decodable): (Vec<_>, Vec<_>) = staged
+            .into_iter()
+            .partition(|slice| broken.iter().any(|key| same_family(*key, slice.key)));
         let refused = u32::try_from(refused.len()).unwrap_or(u32::MAX);
         self.persist_counters.hydrate_error_total.fetch_add(refused, Ordering::Relaxed);
         (decodable, refused)
@@ -118,7 +124,6 @@ impl RegistryStore {
         if dali2rust_platform::flash_gate::firmware_write_open() {
             return Err(ImportWriteFailure::FirmwareWriteOpen);
         }
-        self.flush_dirty_slices(slices);
         for (written, slice) in staged.iter().enumerate() {
             write_slice_bytes(slices, slice).map_err(|error| {
                 log::warn!("registry: writing imported {} failed: {error}", slice.key.label());
@@ -144,6 +149,15 @@ impl RegistryStore {
     }
 }
 
+fn same_family(a: SliceKey, b: SliceKey) -> bool {
+    a == b
+        || matches!(
+            (a, b),
+            (SliceKey::Rules { .. }, SliceKey::Rules { .. })
+                | (SliceKey::InputDevices { .. }, SliceKey::InputDevices { .. })
+        )
+}
+
 fn decodes(slice: &StagedSlice, foreign: &dyn ForeignSliceOwner) -> bool {
     let checked = match validate_registry_slice(slice.key, &slice.bytes) {
         Some(checked) => checked.map_err(|e| e.to_string()),
@@ -167,6 +181,26 @@ fn write_slice_bytes(slices: &dyn SliceStore, slice: &StagedSlice) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bank_family_is_refused_whole_when_one_of_its_banks_does_not_decode() {
+        let store = RegistryStore::with_adapter_count(1);
+        let empty_bank = super::super::persistence_slices::encode_persistence_blob(
+            &super::super::persistence_slices::PersistenceEnvelope::new(
+                super::super::persistence_slices::INPUT_DEVICES_SLICE_VERSION,
+                super::super::input_devices::PersistableInputDevicesSlice::default(),
+            ),
+        )
+        .expect("encode bank");
+        let staged = vec![
+            StagedSlice { key: SliceKey::InputDevices { bank: 0 }, bytes: empty_bank.clone() },
+            StagedSlice { key: SliceKey::InputDevices { bank: 1 }, bytes: b"torn".to_vec() },
+            StagedSlice { key: SliceKey::InputDevices { bank: 2 }, bytes: empty_bank },
+        ];
+        let (kept, refused) = store.keep_decodable(staged, &RegistryOwnedOnly);
+        assert!(kept.is_empty(), "a bank is a position in one list; half a list is no list");
+        assert_eq!(refused, 3);
+    }
 
     #[test]
     fn a_slice_written_but_not_reloaded_is_held_from_the_flush_until_a_read() {

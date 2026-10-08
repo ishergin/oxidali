@@ -96,7 +96,7 @@ impl core::fmt::Display for StoreError {
                 write!(f, "slice of {len} B exceeds slot capacity {capacity} B")
             }
             StoreError::Backend(msg) => write!(f, "{msg}"),
-            StoreError::Deferred => write!(f, "deferred until a pending import is reloaded"),
+            StoreError::Deferred => write!(f, "deferred: another writer holds the slot"),
         }
     }
 }

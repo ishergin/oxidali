@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dali2rust_platform::slice_store::{SliceKey, SliceStore};
+use dali2rust_platform::slice_store::{SliceKey, SliceStore, StoreError};
 use dali2rust_api::http::handlers::time::{TimezonePersist, TimezonePersistRefusal};
 use dali2rust_platform::wall_clock::WallClock;
 use serde::{Deserialize, Serialize};
@@ -59,9 +59,12 @@ pub fn timezone_writer(slices: Option<Arc<dyn SliceStore>>) -> TimezonePersist {
         let written = store
             .begin_write(SliceKey::ControllerSettings)
             .and_then(|mut session| session.append(&bytes).and_then(|()| session.commit()));
-        written.map_err(|e| {
-            log::warn!("time: timezone persist failed: {e}");
-            TimezonePersistRefusal::StoreFailed
+        written.map_err(|e| match e {
+            StoreError::Deferred => TimezonePersistRefusal::FlashBusy,
+            other => {
+                log::warn!("time: timezone persist failed: {other}");
+                TimezonePersistRefusal::StoreFailed
+            }
         })
     })
 }

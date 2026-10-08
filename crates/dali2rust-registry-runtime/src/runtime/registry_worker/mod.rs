@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dali2rust_bus::{recv_then_drain, BusFrame, BusId, BusPublisher, BusSubscriberRx, WorkerTurn};
+use dali2rust_contracts::msg::BusCommandPayload;
 use dali2rust_platform::slice_store::SliceStore;
 
 use crate::runtime::registry::transfer::{ForeignSliceOwner, RegistryOwnedOnly};
@@ -198,8 +199,23 @@ fn frame_tag(frame: &BusFrame) -> &'static str {
     }
 }
 
+fn flush_before_import(frame: &BusFrame, deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
+    let BusFrame::Command(command) = frame else {
+        return;
+    };
+    if !matches!(command.payload, BusCommandPayload::RegistrySliceReloadCommand(_)) {
+        return;
+    }
+    if deps.store.dirty.take_hcl_switches_waiting() {
+        deps.store.dirty.mark_hcl_schedules_dirty();
+    }
+    let slices = deps.persistence.as_ref().map(|p| &p.slices);
+    flush_persistence(slices, &deps.store, &mut clock.last_flush, Duration::ZERO);
+}
+
 fn apply_frame_and_flush(frame: BusFrame, deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
     let tag = frame_tag(&frame);
+    flush_before_import(&frame, deps, clock);
     match &frame {
         BusFrame::Command(_) => process_one(
             frame,
@@ -299,8 +315,9 @@ mod tests {
     use dali2rust_contracts::msg::{
         fixed_text_32, BusCommandPayload, HclAlgorithm, HclLevelMode, HclPointList,
         HclSchedulePointRow, HclScheduleEnableCommand, HclScheduleUpsertCommand, HclTargetList,
-        HclTargetRow, HclTargetScope, HclTimeRef,
+        HclTargetRow, HclTargetScope, HclTimeRef, RegistrySliceReloadCommand,
     };
+    use crate::runtime::registry::import_stage::StagedSlice;
     use dali2rust_domain::registry::HclScheduleReadPort;
     use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
     use std::sync::atomic::Ordering;
@@ -579,4 +596,39 @@ mod tests {
         idle_turn(&deps, &mut clock);
         assert_eq!(slices.write_count(), 2, "nothing is left waiting");
     }
+
+    #[test]
+    fn an_import_keeps_a_switch_still_waiting_for_its_interval() {
+        let slices = Arc::new(CountingStore::default());
+        let (deps, _host) = worker_on(&slices);
+        let mut clock = FlushClock::new(HCL_SWITCH_WRITE_INTERVAL);
+        apply_frame_and_flush(command(1, schedule("porch")), &deps, &mut clock);
+        apply_frame_and_flush(command(2, switch("porch", false)), &deps, &mut clock);
+
+        let poller = crate::runtime::registry::persistence_slices::PersistablePollerSettingsSlice {
+            enabled: true,
+            interval_ms: 9_000,
+            attribute_groups_mask: 1,
+            include_dt8_color: false,
+            skip_unbound_virtual_lamps: true,
+            include_energy: false,
+            include_diagnostics: false,
+        };
+        let bytes = crate::runtime::registry::persistence_slices::encode_persistence_blob(
+            &crate::runtime::registry::persistence_slices::PersistenceEnvelope::new(
+                crate::runtime::registry::persistence_slices::POLLER_SETTINGS_SLICE_VERSION,
+                poller,
+            ),
+        )
+        .expect("encode poller slice");
+        let staged = vec![StagedSlice { key: SliceKey::PollerSettings, bytes }];
+        deps.store.stage_import(IMPORT_WORKFLOW, staged).expect("stage");
+        let reload = RegistrySliceReloadCommand { slice_name: fixed_text_32("poller_settings") };
+        apply_frame_and_flush(command(IMPORT_WORKFLOW, reload), &deps, &mut clock);
+
+        assert_eq!(deps.store.hcl_schedule_view("porch").map(|view| view.enabled), Some(false));
+        assert_eq!(bit_after_restart(&slices, "porch"), Some(false));
+    }
+
+    const IMPORT_WORKFLOW: u64 = 9;
 }

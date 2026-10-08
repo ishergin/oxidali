@@ -35,6 +35,8 @@ pub(super) fn handle_slice_reload(
             counts.errors
         );
         count_reload(counters);
+    }
+    if imported.written {
         announce_reload(publisher, primary_adapter_id, body);
     }
     if let Some((_, why)) = imported.failure {
@@ -56,13 +58,14 @@ const NO_RELOAD_STACK: ImportFailure = (ErrorCode::Conflict, "reload_stack_unava
 const NOT_RELOADED: ImportFailure = (ErrorCode::OperationFailed, "written_not_reloaded");
 
 struct Imported {
+    written: bool,
     counts: Option<HydrateCounts>,
     failure: Option<ImportFailure>,
 }
 
 impl Imported {
     const fn refused(failure: ImportFailure) -> Self {
-        Self { counts: None, failure: Some(failure) }
+        Self { written: false, counts: None, failure: Some(failure) }
     }
 }
 
@@ -84,14 +87,13 @@ fn import_then_reload(
         Ok(written) => written,
         Err(failure) => return Imported::refused(failure),
     };
-    match reload_on_hydration_stack(store, persistence.slices.as_ref(), adapter_count) {
-        Ok(counts) => {
-            written.keys.iter().for_each(|key| persistence.foreign.imported(*key));
-            Imported { counts: Some(counts), failure: written.failure }
-        }
+    let reloaded = reload_on_hydration_stack(store, persistence.slices.as_ref(), adapter_count);
+    written.keys.iter().for_each(|key| persistence.foreign.imported(*key));
+    match reloaded {
+        Ok(counts) => Imported { written: true, counts: Some(counts), failure: written.failure },
         Err(_) => {
             store.withhold_until_read(&written.keys, adapter_count);
-            Imported::refused(NOT_RELOADED)
+            Imported { written: true, counts: None, failure: Some(NOT_RELOADED) }
         }
     }
 }

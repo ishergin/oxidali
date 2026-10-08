@@ -1,6 +1,5 @@
 use core::cmp::Reverse;
-use core::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
 
@@ -55,7 +54,24 @@ impl BankHeader {
 struct SlotMemory {
     served: AtomicU8,
     erased: AtomicU8,
-    writing: Mutex<()>,
+    writing: AtomicBool,
+}
+
+struct WriteClaim<'a>(&'a AtomicBool);
+
+impl<'a> WriteClaim<'a> {
+    fn take(writing: &'a AtomicBool) -> Result<Self, StoreError> {
+        writing
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .map(|_| Self(writing))
+            .map_err(|_| StoreError::Deferred)
+    }
+}
+
+impl Drop for WriteClaim<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl SlotMemory {
@@ -164,7 +180,7 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
                 );
                 continue;
             }
-            if let Some(memory) = self.memory(key) {
+            if let Some(memory) = self.memory(key).filter(|m| !m.writing.load(Ordering::Acquire)) {
                 SlotMemory::set(&memory.served, bank);
             }
             return Ok(payload);
@@ -176,7 +192,7 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
         let slot = slot_geometry(key)
             .ok_or_else(|| StoreError::Backend(format!("no slot reserved for {}", key.label())))?;
         let memory = self.memory(key);
-        let writing = memory.map(|m| m.writing.lock().unwrap_or_else(PoisonError::into_inner));
+        let claim = memory.map(|m| WriteClaim::take(&m.writing)).transpose()?;
         let current = self.current_bank(&slot)?;
         let seq = current.as_ref().map_or(1, |(_, header)| header.seq + 1);
         let BankChoice { keep, target } = choose_bank(
@@ -195,7 +211,7 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
         }
         Ok(Box::new(CoreWriteSession {
             store: self,
-            _writing: writing,
+            _claim: claim,
             slot,
             key,
             target,
@@ -210,7 +226,7 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
 
 struct CoreWriteSession<'a, F: RawFlash> {
     store: &'a SliceStoreCore<F>,
-    _writing: Option<MutexGuard<'a, ()>>,
+    _claim: Option<WriteClaim<'a>>,
     slot: SlotGeometry,
     key: SliceKey,
     target: u8,

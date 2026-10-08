@@ -32,7 +32,7 @@ pub enum PassOutcome {
     PeerUnreachable(FetchError),
     UpToDate,
     Pulled(Vec<String>),
-    StageBusy,
+    NotLanded,
 }
 
 pub const MANIFEST_PATH: &str = "/api/v1/config/slices";
@@ -242,12 +242,14 @@ fn land(deps: &ReplicationDeps, pulled: Vec<PulledSlice>) -> PassOutcome {
     let count = u32::try_from(names.len()).unwrap_or(u32::MAX);
     if !deps.sink.stage(pulled) {
         deps.counters.slices_rejected.fetch_add(count, Ordering::Relaxed);
-        return PassOutcome::StageBusy;
+        return PassOutcome::NotLanded;
     }
-    deps.counters.slices_pulled.fetch_add(count, Ordering::Relaxed);
     if !request_reload(deps, &names) {
         deps.sink.discard_staged();
+        deps.counters.slices_rejected.fetch_add(count, Ordering::Relaxed);
+        return PassOutcome::NotLanded;
     }
+    deps.counters.slices_pulled.fetch_add(count, Ordering::Relaxed);
     PassOutcome::Pulled(names)
 }
 
@@ -313,7 +315,7 @@ fn replication_loop(ev_rx: &dali2rust_bus::BusSubscriberRx, deps: &ReplicationDe
             PassOutcome::Pulled(slices) => {
                 log::info!("replication: pulled {} slice(s) from the peer", slices.len());
             }
-            PassOutcome::StageBusy => log::warn!("replication: an import is staged; pass skipped"),
+            PassOutcome::NotLanded => log::warn!("replication: the pass could not reach the registry"),
             _ => {}
         }
         let wait = std::time::Duration::from_millis(REPLICATION_INTERVAL_MS);
