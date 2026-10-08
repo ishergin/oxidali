@@ -194,4 +194,4 @@ All run in `just verify`; `just ci` also runs the suite itself.
 | `verify_bdd_layers.sh` | The black-box boundary, over the whole BDD crate except `benches/`. |
 | `verify_no_bdd_production_hooks.sh` | No `bdd` feature, `bdd_*` hooks or registry seed reach-in. |
 | `verify_test_layers.sh` | No sleeps, manual `postcard` or duplicate helpers and harnesses in tests; sleep markers in crate sources. Chains `verify_duplication.sh`. |
-| `verify_duplication.sh` | Clone budget and targeted anti-patterns. |
+| `verify_duplication.sh` | Clone budget and targeted anti-patterns: operation-begin flows only in `operation_dispatch.rs`, the web UI source fingerprint only in `web_ui_sources_fingerprint.sh`. |

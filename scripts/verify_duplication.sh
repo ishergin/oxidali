@@ -27,6 +27,13 @@ fail_matches \
   "operation begin flows must be centralized in crates/dali2rust-api/src/http/handlers/operation_dispatch.rs" \
   "$operation_begin_flows"
 
+web_fingerprints=$(rg -n 'find src[ ]public|package-lock[.]json vite[.]config[.]ts' \
+  "$ROOT/scripts" "$ROOT/tools" "$ROOT/.github" "$ROOT/justfile" \
+  --glob '!**/web_ui_sources_fingerprint.sh' || true)
+fail_matches \
+  "the web UI source fingerprint is computed only in scripts/web_ui_sources_fingerprint.sh" \
+  "$web_fingerprints"
+
 budget=""
 if [[ -f "$BUDGET_FILE" ]]; then
   IFS= read -r budget <"$BUDGET_FILE" || true
