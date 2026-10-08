@@ -132,8 +132,9 @@ MQTT — [`ADR-018`](../../../architecture/decisions/ADR-018-controller-redundan
 Пассивный контроллер с заданным `peer_url` раз в 30 с тянет у пира манифест слайсов
 (`GET /api/v1/config/slices`: имя, размер, CRC), забирает слайсы, чьи размер или CRC
 отличаются, кладёт их одной партией в стейдж импорта реестра и публикует **один**
-`RegistrySliceReloadCommand` на проход; воркер реестра проверяет партию, пишет её и
-перечитывает реестр
+`RegistrySliceReloadCommand` на проход; воркер реестра пишет слайсы, которые
+декодируются, и перечитывает реестр, а отвергнутые считает в
+`persistence.hydrate_error_total` `/api/v1/diagnostics`
 ([config-transfer](../../rest-api/resources/config-transfer.md) §Импорт).
 
 - Тянет только пассивный: активный — источник истины пары.

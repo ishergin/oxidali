@@ -3,9 +3,11 @@ use std::time::{Duration, Instant};
 
 use dali2rust_platform::slice_store::SliceKey;
 
-use super::store::{RegistryStore, STAGE_MAX_AGE_MS};
+use dali2rust_contracts::msg::CONFIG_WRITE_TTL_MS;
 
-pub const IMPORT_STAGE_MAX_AGE: Duration = Duration::from_millis(STAGE_MAX_AGE_MS);
+use super::store::RegistryStore;
+
+pub const IMPORT_STAGE_MAX_AGE: Duration = Duration::from_millis(CONFIG_WRITE_TTL_MS as u64);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagedSlice {
@@ -66,7 +68,10 @@ impl RegistryStore {
         if stage.as_ref().is_none_or(|pending| pending.workflow != workflow) {
             return None;
         }
-        stage.take().map(|pending| pending.slices)
+        stage
+            .take()
+            .filter(|pending| pending.staged_at.elapsed() < IMPORT_STAGE_MAX_AGE)
+            .map(|pending| pending.slices)
     }
 
     pub(crate) fn evict_stale_import(&self) {
@@ -113,8 +118,11 @@ mod tests {
         age(&store);
         store.stage_import(8, staged()).expect("a stale stage gives way to a new import");
         age(&store);
+        assert_eq!(store.take_import(8), None, "a commit after the operation's TTL finds no stage");
+        store.stage_import(9, staged()).expect("stage");
+        age(&store);
         store.evict_stale_import();
-        assert_eq!(store.take_import(8), None, "the idle turn drops a stale stage");
+        assert!(store.import_stage.lock().is_none(), "the idle turn drops a stale stage");
     }
 
     #[test]

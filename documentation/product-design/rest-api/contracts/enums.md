@@ -66,7 +66,7 @@ REST знает три значения: `dt6_led`, `dt8_color`, `unknown`; лю
 | `attribute_write` | `write-attributes` |
 | `memory_bank_read` | не создаётся REST; банки читаются через `attribute_read` |
 | `group_apply`, `scene_apply` | apply матриц |
-| `config_write` | запись конфигурации: матрицы, HCL, документ правил, конфигурация input devices; также ручной запуск правила |
+| `config_write` | запись конфигурации: матрицы, HCL, документ правил, конфигурация input devices, импорт слайса; также ручной запуск правила |
 | `ha_discovery_publish` | повторная публикация HA discovery |
 | `commissioning_identify`, `commissioning_address_change`, `commissioning_replace_device` | commissioning control gear; identify и commissioning Part 103 используют те же типы |
 | `firmware_update` | обновление прошивки; заканчивается перезагрузкой |

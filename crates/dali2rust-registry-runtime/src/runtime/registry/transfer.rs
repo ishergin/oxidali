@@ -1,4 +1,4 @@
-use std::sync::PoisonError;
+use std::sync::atomic::Ordering;
 
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, StoreError};
 
@@ -98,21 +98,22 @@ pub enum ImportWriteFailure {
 }
 
 impl RegistryStore {
-    pub fn validate_staged(
-        staged: &[StagedSlice],
+    pub fn keep_decodable(
+        &self,
+        staged: Vec<StagedSlice>,
         foreign: &dyn ForeignSliceOwner,
-    ) -> Result<(), SliceKey> {
-        for slice in staged {
-            let checked = match validate_registry_slice(slice.key, &slice.bytes) {
-                Some(checked) => checked.map_err(|e| e.to_string()),
-                None => foreign.validate(slice.key, &slice.bytes),
-            };
-            if let Err(why) = checked {
-                log::warn!("registry: import of {} refused: {why}", slice.key.label());
-                return Err(slice.key);
-            }
-        }
-        Ok(())
+    ) -> (Vec<StagedSlice>, u32) {
+        let broken: Vec<SliceKey> = staged
+            .iter()
+            .filter(|slice| !decodes(slice, foreign))
+            .map(|slice| slice.key)
+            .collect();
+        let (refused, decodable): (Vec<_>, Vec<_>) = staged
+            .into_iter()
+            .partition(|slice| broken.iter().any(|key| same_family(*key, slice.key)));
+        let refused = u32::try_from(refused.len()).unwrap_or(u32::MAX);
+        self.persist_counters.hydrate_error_total.fetch_add(refused, Ordering::Relaxed);
+        (decodable, refused)
     }
 
     pub fn write_staged(
@@ -123,7 +124,6 @@ impl RegistryStore {
         if dali2rust_platform::flash_gate::firmware_write_open() {
             return Err(ImportWriteFailure::FirmwareWriteOpen);
         }
-        let _serialised = self.flush_buf.lock().unwrap_or_else(PoisonError::into_inner);
         for (written, slice) in staged.iter().enumerate() {
             write_slice_bytes(slices, slice).map_err(|error| {
                 log::warn!("registry: writing imported {} failed: {error}", slice.key.label());
@@ -132,6 +132,41 @@ impl RegistryStore {
         }
         Ok(())
     }
+
+    pub fn withhold_until_read(&self, keys: &[SliceKey], adapter_count: u8) {
+        for key in keys {
+            match *key {
+                SliceKey::PhysicalDeviceBank { adapter_id, bank } => {
+                    self.dirty.settle_physical_device_banks(adapter_id, 0, 1 << bank);
+                }
+                other => self.dirty.withheld.settle(other, true),
+            }
+        }
+        self.persist_counters.hydrate_error_total.fetch_add(1, Ordering::Relaxed);
+        self.persist_counters
+            .unread_slices
+            .store(self.unread_slices(adapter_count), Ordering::Relaxed);
+    }
+}
+
+fn same_family(a: SliceKey, b: SliceKey) -> bool {
+    a == b
+        || matches!(
+            (a, b),
+            (SliceKey::Rules { .. }, SliceKey::Rules { .. })
+                | (SliceKey::InputDevices { .. }, SliceKey::InputDevices { .. })
+        )
+}
+
+fn decodes(slice: &StagedSlice, foreign: &dyn ForeignSliceOwner) -> bool {
+    let checked = match validate_registry_slice(slice.key, &slice.bytes) {
+        Some(checked) => checked.map_err(|e| e.to_string()),
+        None => foreign.validate(slice.key, &slice.bytes),
+    };
+    if let Err(why) = &checked {
+        log::warn!("registry: import of {} refused: {why}", slice.key.label());
+    }
+    checked.is_ok()
 }
 
 fn write_slice_bytes(slices: &dyn SliceStore, slice: &StagedSlice) -> Result<(), StoreError> {
@@ -146,6 +181,40 @@ fn write_slice_bytes(slices: &dyn SliceStore, slice: &StagedSlice) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bank_family_is_refused_whole_when_one_of_its_banks_does_not_decode() {
+        let store = RegistryStore::with_adapter_count(1);
+        let empty_bank = super::super::persistence_slices::encode_persistence_blob(
+            &super::super::persistence_slices::PersistenceEnvelope::new(
+                super::super::persistence_slices::INPUT_DEVICES_SLICE_VERSION,
+                super::super::input_devices::PersistableInputDevicesSlice::default(),
+            ),
+        )
+        .expect("encode bank");
+        let staged = vec![
+            StagedSlice { key: SliceKey::InputDevices { bank: 0 }, bytes: empty_bank.clone() },
+            StagedSlice { key: SliceKey::InputDevices { bank: 1 }, bytes: b"torn".to_vec() },
+            StagedSlice { key: SliceKey::InputDevices { bank: 2 }, bytes: empty_bank },
+        ];
+        let (kept, refused) = store.keep_decodable(staged, &RegistryOwnedOnly);
+        assert!(kept.is_empty(), "a bank is a position in one list; half a list is no list");
+        assert_eq!(refused, 3);
+    }
+
+    #[test]
+    fn a_slice_written_but_not_reloaded_is_held_from_the_flush_until_a_read() {
+        let slices = dali2rust_bsp::slice_store_files::InMemorySliceStore::new();
+        let store = RegistryStore::with_adapter_count(1);
+        let imported = [StagedSlice { key: SliceKey::Policies, bytes: b"imported".to_vec() }];
+        store.write_staged(&slices, &imported).expect("write");
+        store.withhold_until_read(&[SliceKey::Policies], 1);
+        assert_eq!(store.persist_counters.unread_slices.load(Ordering::Relaxed), 1);
+
+        store.dirty.mark_policies_dirty();
+        store.flush_dirty_slices(&slices);
+        assert_eq!(slices.load(SliceKey::Policies).expect("slice"), b"imported");
+    }
 
     #[test]
     fn the_three_per_unit_slices_are_never_transferred() {

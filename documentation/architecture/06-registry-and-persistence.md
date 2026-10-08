@@ -204,10 +204,15 @@ filtered: they address one device.
   before hydration — by boot order, not by a gate. A change to the boot sequence keeps
   "hydrate joins before HTTP mounts" or adds an explicit gate.
 - An import and a standby's pull reach the store only through the registry worker: it
-  decodes the staged bytes, writes them and reloads through the same hydration path, on a
+  decodes each staged slice (a bank family — the rules banks, the input-device banks — is
+  taken or refused whole), flushes the dirty slices and any HCL switch still waiting,
+  writes the slices that decode and reloads through the same hydration path, on a
   PSRAM stack; it reads every slice first, because a task on an external stack must not
   call flash ([ADR-012](decisions/ADR-012-async-chunked-config-writes.md),
-  [ADR-018](decisions/ADR-018-controller-redundancy.md), [07](07-memory-and-cores.md)).
+  [ADR-018](decisions/ADR-018-controller-redundancy.md), [07](07-memory-and-cores.md)). A
+  slice written without the reload that should follow is held from the flush, like an
+  unread one, until a later reload or boot reads it; the reloaded event still tells the
+  other holders that the store changed.
 - A reload replaces: a slice that loads is the whole truth for its share of memory, so a
   record it lacks — a forgotten device, an old address, a deleted lamp, a scene row — is
   dropped, while the runtime fields of a record it keeps stay. A slice that does not load

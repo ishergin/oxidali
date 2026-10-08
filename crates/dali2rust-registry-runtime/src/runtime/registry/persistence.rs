@@ -164,7 +164,7 @@ impl crate::runtime::registry::store::RegistryStore {
         }
     }
 
-    fn unread_slices(&self, adapter_count: u8) -> u32 {
+    pub(crate) fn unread_slices(&self, adapter_count: u8) -> u32 {
         let banks: u32 = (0..adapter_count)
             .map(|adapter_id| self.dirty.withheld_physical_device_banks(adapter_id).count_ones())
             .sum();

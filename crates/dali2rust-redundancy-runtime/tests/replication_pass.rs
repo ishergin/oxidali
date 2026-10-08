@@ -90,6 +90,10 @@ impl ReplicationSink for FakeSink {
         written.extend(pulled.into_iter().map(|slice| (slice.name, slice.bytes.len())));
         true
     }
+
+    fn discard_staged(&self) {
+        self.written.lock().unwrap().clear();
+    }
 }
 
 struct Rig {
@@ -241,7 +245,7 @@ fn a_refused_slice_does_not_hold_back_the_others() {
 fn a_pass_whose_slices_cannot_be_staged_asks_for_no_reload() {
     let rig = rig(Vec::new(), Vec::new());
     rig.sink.busy.store(true, Ordering::Relaxed);
-    assert!(matches!(run_pass(&rig.deps), PassOutcome::StageBusy));
+    assert!(matches!(run_pass(&rig.deps), PassOutcome::NotLanded));
     assert_eq!(drain_reloads(&rig, 0), 0);
     assert_eq!(rig.deps.counters.slices_rejected.load(Ordering::Relaxed), 3);
     assert_eq!(rig.deps.counters.slices_pulled.load(Ordering::Relaxed), 0);

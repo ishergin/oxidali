@@ -843,6 +843,10 @@ impl dali2rust_redundancy_runtime::ReplicationSink for ReplicationSinkBridge {
             .stage_import(dali2rust_contracts::CORRELATION_NONE, staged)
             .is_ok()
     }
+
+    fn discard_staged(&self) {
+        self.store.discard_import(dali2rust_contracts::CORRELATION_NONE);
+    }
 }
 
 pub(crate) struct RoleBridge {

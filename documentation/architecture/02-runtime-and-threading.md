@@ -19,7 +19,8 @@ registry locking → [06](06-registry-and-persistence.md).
 - Beside the workers: the bus routing task, the transport's `dali-sniff` drain, the one
   `httpd` task, the UART log writer, the census thread, the IP and SNTP watchers, the
   OTA boot verifier, and per-occasion threads: `ota-run` per update, `registry-reload`
-  per slice reload (import, replication) on the device, and one `ws-client` sender per
+  twice per slice import or replication pass (checking the bytes, then the reload) on the
+  device, and one `ws-client` sender per
   connected WebSocket client, on the device as on the host (its stack:
   [07](07-memory-and-cores.md)).
 - `registry-hydrate` is a one-shot boot thread, joined before any worker starts

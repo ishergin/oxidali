@@ -56,9 +56,9 @@ Supporting rules:
 - **A slice import stages off the bus.** A stored slice (up to 32 KiB) would be hundreds
   of chunks, so the HTTP import and a standby's replication pass hand its bytes to the
   registry's one import stage, keyed by the workflow id, and publish only
-  `RegistrySliceReloadCommand` — the bracket. The registry worker decodes the bytes with
-  the hydration decoders before anything is written, writes them, and reloads; a second
-  import while the stage is held is refused, and an unclaimed stage is reaped after 15 s.
+  `RegistrySliceReloadCommand` — the bracket. The registry worker decodes each slice with
+  the hydration decoders, writes only those that decode, and reloads; a second import
+  while the stage is held is refused, and a stage lives no longer than its operation's TTL.
 
 ### Rejected alternatives
 

@@ -72,7 +72,7 @@ and for the length of a scan.
   frames; a second producer for those fields would prove nothing about the real one.
 - **Configuration is pulled over HTTP** by the passive unit from its peer's slice
   export into the registry's import stage; only a reload command crosses the bus, and the
-  registry worker checks, writes and reloads the pass as one unit
+  registry worker writes the slices of the pass that decode and reloads once
   ([ADR-012](ADR-012-async-chunked-config-writes.md)). A slice
   the peer lacks is never deleted locally, and an unreachable peer changes nothing: stale
   configuration beats a dark building.

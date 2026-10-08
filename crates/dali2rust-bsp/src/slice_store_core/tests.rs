@@ -337,3 +337,14 @@ fn a_deferred_erase_is_performed_by_the_next_write() {
         "0xF0 & 0xCC == 0xC0 — anything but 0xCC means the bank was reused dirty"
     );
 }
+
+#[test]
+fn a_second_writer_of_one_slice_is_deferred_while_the_first_holds_it() {
+    let store = store();
+    let mut first = store.begin_write(KEY).expect("first writer");
+    first.append(b"first").expect("append");
+    assert!(matches!(store.begin_write(KEY).map(|_| ()), Err(StoreError::Deferred)));
+    first.commit().expect("first commit");
+    write_slice(&store, b"second").expect("the slot is free once the first committed");
+    assert_eq!(store.load(KEY).expect("load"), b"second");
+}
