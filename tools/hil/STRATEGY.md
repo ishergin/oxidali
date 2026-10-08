@@ -259,7 +259,7 @@ ID — маркер `hil_id` теста ([README](README.md#writing-a-scenario))
 | `test_group_colour` | GRP-08, 09, HCL-10, TS-08 | default | да | Групповой и broadcast цвет активируется на каждом члене. |
 | `test_capability_gate` | CAP-01..03 | default | да | Групповой цвет режется по возможностям члена. |
 | `test_scenes` | SCN-01..06 | default | часть | Staged-запись; apply → `SET SCENE`; recall, групповой — одним кадром. |
-| `test_dt8_scene_colour` | DT8L-01, SCNC-01 | default | да | Пределы Tc; аудит цвета сцены читает сохранённое. |
+| `test_dt8_scene_colour` | DT8L-01, SCNC-01, 02 | default | да | Пределы Tc; аудит цвета сцены; строка без цвета. |
 | `test_virtual_lamps` | VL-01..04 | default | часть | VL — проекция устройства; команда идёт на привязанный адрес. |
 | `test_operations` | OP-01..04 | default | часть | Статусы вперёд; евикция; apply без потерь в кольце. |
 | `test_fanout` | FAN-01..07 | default | да | Чужие команды проецируются в реестр с источником `sniffer`. |
