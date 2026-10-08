@@ -79,11 +79,7 @@ bdd-stage STAGE:
 
 [doc("Fail if a stage still has @wip scenarios.")]
 check-stage-clean STAGE:
-    @if grep -r "@stage-{{STAGE}}" tests/dali2rust-bdd/features/ | grep -q "@wip"; then \
-        echo "ERROR: @stage-{{STAGE}} has @wip scenarios — stage not clean"; \
-        exit 1; \
-    fi
-    @echo "Stage {{STAGE}} is clean (no @wip)"
+    @python3 scripts/verify_bdd_stages.py --stage {{STAGE}}
 
 [doc("Format the workspace by hand; rustfmt is not a merge gate.")]
 fmt:
