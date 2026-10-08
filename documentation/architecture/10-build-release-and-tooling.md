@@ -159,9 +159,9 @@ Changing the table takes a wired flash.
   bundle's only freshness mechanism.
 - Every bundle file is stored gzipped and always served as stored, with
   `Content-Encoding: gzip`, whatever the request's `Accept-Encoding`.
-- `build_web_ui.sh` and `verify_web_mirror_fresh.sh` fingerprint the same `web/app` source set
-  (sources, `public/`, the entry HTML, the lockfile, the TypeScript and Vite configs);
-  changing one list without the other breaks the mirror-freshness gate.
+- `scripts/web_ui_sources_fingerprint.sh` fingerprints the `web/app` source set (sources,
+  `public/`, the entry HTML, the lockfile, the TypeScript and Vite configs):
+  `build_web_ui.sh` records it beside the bundle and `verify_web_mirror_fresh.sh` compares.
 - Every screen and component has a card in `web/design-system/`, written in the same
   change as the UI, with the `:root` block of `web/design-system/tokens.css` inlined
   verbatim. A change to screens, components or `app.css` that leaves the look as it was
@@ -180,14 +180,16 @@ Changing the table takes a wired flash.
 
 A missing tool fails its gate (`DALI2RUST_SKIP_JSCPD=1`, `DALI2RUST_SKIP_TSC=1` are the
 explicit opt-outs), and no gate keeps its own crate list. The `scripts/*budget*.txt`
-files only go down; the bench's own budgets are in the
-[HIL runbook](../../tools/hil/README.md). The interrupt's flash check needs a linked
+files only go down; the function-length and clone gates fail on a budget file that is
+missing, empty or not an integer, and on a count below their budget. The bench's own
+budgets are in the [HIL runbook](../../tools/hil/README.md). The interrupt's flash check needs a linked
 image, so it is not here, nor in `just ci`: `p4-isr-iram-check` fails on a red or
 unchecked image, and `hil flash` refuses one unless told `--allow-red-isr`.
 
 - A new host-buildable crate is added to `scripts/host_crates.txt` only — the one list
-  that `just check` / `test` / `clippy`, `verify_fn_length.sh` and the pedantic advisory
-  read. The ESP-only firmware crate and the BDD crate stay out of it.
+  that `just check` / `test` / `clippy`, the pedantic advisory and every gate with a crate
+  scope read, the scripts through `host_crates.sh` and `host_crates.py`. The ESP-only
+  firmware crate and the BDD crate stay out of it.
 - The 40-line rule is measured on production code: `verify_fn_length.sh` runs clippy on
   `--lib` targets, so unit-test modules, integration tests and the BDD crate are outside
   it. `verify_fn_length_esp.py` finds ESP-only code by the literal
@@ -200,11 +202,12 @@ unchecked image, and `hil flash` refuses one unless told `--allow-red-isr`.
 | --- | --- |
 | `verify_contracts_codegen.sh` → `verify_native_contracts.sh` | `msg/` + `postcard` only; no FlatBuffers or byte round-trip builders |
 | `verify_docs.py` | every markdown link resolves; size caps (`scripts/doc_size_caps.txt`); no dated text; no passage of 40 words repeated between documents |
-| `verify_issue_ids.py` | every `ISSUE-NN` resolves to one issue-registry row |
-| `verify_bdd_ids.sh`, `verify_bdd_coverage.sh` (+ tree policy), `verify_bdd_layers.sh`, `verify_no_bdd_production_hooks.sh`, `verify_test_layers.sh` (+ `verify_duplication.sh`) | [05](05-testing-and-bdd.md) |
-| `verify_runtime_boundaries.sh` | no `#[path]` in runtime crates; fixed composition file set |
-| `verify_fixed_bus_guardrails.sh` | no `String`/`Vec`/`serde_json::Value` in bus messages, no JSON in registry state, no `serde_json` in the non-API crates it lists; test code is outside it |
+| `verify_issue_ids.py` | every issue number cited in a tracked or new text file or file name — `ISSUE-NN`, `issueNN` in an identifier — resolves to one issue-registry row, and only the registry cites a closed one |
+| `verify_bdd_ids.sh`, `verify_bdd_coverage.sh` (+ tree policy, `verify_bdd_stages.py`), `verify_bdd_layers.sh`, `verify_no_bdd_production_hooks.sh`, `verify_test_layers.sh` (+ `verify_duplication.sh`) | [05](05-testing-and-bdd.md) |
+| `verify_runtime_boundaries.sh` | no `#[path]` in a host crate, the firmware, the BDD crate or the gear emulator; fixed composition file set |
+| `verify_fixed_bus_guardrails.sh` | no `String`/`Vec`/`serde_json::Value` in bus messages, no JSON in registry state; no crate but `dali2rust-api` lists `serde_json` outside its dev-dependencies |
 | `verify_comments.py` | no comment outside the one-line markers; budget `scripts/comment_budget.txt` |
+| `verify_imports_at_module_level.py` | no `use` inside a function body, over the same trees as `#[path]` |
 | `verify_web_assets.sh` | every embedded file present, `tsc -b`, UI tests |
 | `verify_web_classes_styled.py` | every `web/app` class has a CSS rule |
 | `verify_design_vocabulary.py` | every card's `:root` is the one in `tokens.css`; every class a card uses has a rule; a card's only dates are ones its mocked UI shows, each with its time, and none in a comment; `web/app` speaks card vocabulary |
