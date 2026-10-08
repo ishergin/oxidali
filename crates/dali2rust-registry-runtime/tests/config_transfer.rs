@@ -128,6 +128,25 @@ fn a_pass_writes_the_slices_that_decode_and_refuses_the_one_that_does_not() {
 }
 
 #[test]
+fn an_import_that_meets_another_writer_of_its_slot_is_busy_not_failed() {
+    let (source, source_slices) = store_with_poller_settings("transfer-busy-source");
+    let exported = source
+        .export_slice(&source_slices, SliceKey::PollerSettings)
+        .expect("exported");
+    let target_slices: Arc<dyn SliceStore> = Arc::new(temp_slice_store("transfer-busy"));
+    let stack = spawn_registry_stack_with(RegistryStackOptions {
+        slices: Some(Arc::clone(&target_slices)),
+        ..RegistryStackOptions::default()
+    });
+
+    let other_writer = target_slices.begin_write(SliceKey::PollerSettings).expect("claim");
+    let signal = import(&stack, IMPORT_WORKFLOW, &exported);
+    drop(other_writer);
+    let error = signal.error.as_ref().expect("a busy slot names its cause");
+    assert_eq!((error.code, error.message.as_str()), (ErrorCode::OperationFailed, "flash_busy"));
+}
+
+#[test]
 fn a_commit_with_nothing_staged_under_its_workflow_writes_nothing() {
     let target_slices: Arc<dyn SliceStore> = Arc::new(temp_slice_store("transfer-unstaged"));
     let stack = spawn_registry_stack_with(RegistryStackOptions {

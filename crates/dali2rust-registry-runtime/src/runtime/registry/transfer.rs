@@ -191,6 +191,11 @@ mod tests {
         let (kept, refused) = store.keep_decodable(staged, &RegistryOwnedOnly);
         assert!(kept.is_empty(), "a bank is a position in one list; half a list is no list");
         assert_eq!(refused, 3);
+        assert_eq!(
+            store.persist_counters.hydrate_error_total.load(Ordering::Relaxed),
+            1,
+            "only the bank that did not decode is an error"
+        );
 
         let staged = vec![
             StagedSlice { key: SliceKey::Rules { bank: 0 }, bytes: b"rule".to_vec() },

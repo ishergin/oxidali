@@ -51,12 +51,12 @@ fn optional_ptr(text: Option<&CString>) -> *const c_char {
 
 struct RawClient(esp_mqtt_client_handle_t);
 
-// SAFETY: esp-mqtt serialises every call on a client behind the client's own API lock, so the handle may move to the bridge worker's thread.
+// SAFETY: esp-mqtt serialises calls on a client behind its own API lock, so the handle may cross threads.
 unsafe impl Send for RawClient {}
 
 impl Drop for RawClient {
     fn drop(&mut self) {
-        // SAFETY: the handle came from `esp_mqtt_client_init` and is destroyed once; the bridge drops it only once the task has posted, so destroy finds the task running and stops it.
+        // SAFETY: an initialised handle, destroyed once; the bridge drops it after the task has posted.
         unsafe { esp_mqtt_client_destroy(self.0) };
     }
 }
@@ -128,7 +128,7 @@ impl EspMqttBridgeClient {
         }
         let client = RawClient(handle);
         let receiver = Arc::as_ptr(&self.link).cast_mut().cast::<c_void>();
-        // SAFETY: the link outlives the client, whose destroy removes the handler; registering before start leaves no event unseen.
+        // SAFETY: the link outlives the client, whose destroy removes the handler, registered before start.
         esp!(unsafe {
             esp_mqtt_client_register_event(handle, esp_mqtt_event_id_t_MQTT_EVENT_ANY, Some(on_event), receiver)
         })
