@@ -558,6 +558,12 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            itself refused. Booked under one another, an ingress-saturation
            incident reads as a stale topic.
 
+           A failed publish and a command the bus refused are faults:
+           `Publish failures`, `Commands ingress rejected` and `Terminal event
+           publish failed` are painted above zero, and the other rows stay
+           plain. A failed discovery publish is already counted under
+           `Publish failures`, so `Discovery failed` is not painted twice.
+
            `Connects total` climbing against a flat `Publishes total` is a
            reconnect loop, which no single gauge shows. -->
       <div class="card span2">
@@ -565,11 +571,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Connected</span><span class="v">yes</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Connects total</span><span class="v">1</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Publishes total</span><span class="v">8 411</span><span class="delta live">+8</span></div>
-        <div class="attr"><span class="k">Publish failures total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Publish failures total</span><span class="v fault">2</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Commands received total</span><span class="v">318</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Commands dropped total</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Commands unroutable total</span><span class="v">9</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Commands ingress rejected total</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Commands ingress rejected total</span><span class="v fault">1</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Discovery published total</span><span class="v">96</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Discovery failed total</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Terminal event publish failed total</span><span class="v">0</span><span class="delta"></span></div>

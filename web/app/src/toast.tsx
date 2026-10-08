@@ -131,23 +131,28 @@ export interface SaveThenApply {
   save: (() => Promise<OperationAccepted>) | null
   apply: () => Promise<OperationAccepted | object>
   nothingToApply: string
-  onApplied: () => void
+  onApplied: () => Promise<unknown> | void
 }
 
-export async function saveThenApply(args: SaveThenApply): Promise<void> {
+export type ApplyOutcome = 'committed' | 'failed' | 'unsaved'
+
+export async function saveThenApply(args: SaveThenApply): Promise<ApplyOutcome> {
   const { subject, setBusy, save, apply, nothingToApply, onApplied } = args
   const applyTitle = `${subject} apply`
   let phase = `${subject} save`
   setBusy(true)
   try {
-    if (save && !opCommitted(await trackOp(phase, await save()))) return
+    if (save && !opCommitted(await trackOp(phase, await save()))) return 'unsaved'
     phase = applyTitle
     const resp = await apply()
-    if ('operation_id' in resp) await trackOp(applyTitle, resp as OperationAccepted)
-    else notify(applyTitle, 'succeeded', nothingToApply)
-    onApplied()
+    const tracked = 'operation_id' in resp
+    const op = tracked ? await trackOp(applyTitle, resp as OperationAccepted) : null
+    if (!tracked) notify(applyTitle, 'succeeded', nothingToApply)
+    await onApplied()
+    return tracked && !opCommitted(op) ? 'failed' : 'committed'
   } catch (e) {
     notify(phase, 'failed', errorMessage(e))
+    return phase === applyTitle ? 'failed' : 'unsaved'
   } finally {
     setBusy(false)
   }

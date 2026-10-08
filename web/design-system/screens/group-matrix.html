@@ -96,6 +96,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .matrix-wrap tbody td.lamp .vl { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-right: 8px; }
 .matrix-wrap tbody td.lamp .nm { font-size: 13px; }
 .matrix-wrap tbody td.lamp .unbound { font-size: 10px; color: var(--text-faint); margin-left: 8px; font-style: italic; }
+.matrix-wrap tbody td.lamp .act { margin-left: 8px; }
 .matrix-wrap tbody tr.rowdirty td.lamp { box-shadow: inset 2px 0 0 var(--dirty); }
 .name-faint { color: var(--text-faint); font-style: italic; font-weight: 400; }
 /* A dirty row bound to gear offers `re-read`: it reads the gear's group
@@ -142,7 +143,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .pop::before { content: ""; position: absolute; top: -5px; left: 50%; width: 8px; height: 8px;
   transform: translateX(-50%) rotate(45deg); background: var(--overlay);
   border-left: 1px solid var(--border-strong); border-top: 1px solid var(--border-strong); }
-.pop .ph { padding: 8px 10px 6px; font-size: 10px; letter-spacing: .07em; text-transform: uppercase;
+.pop .ph { display: block; padding: 8px 10px 6px; font-size: 10px; letter-spacing: .07em; text-transform: uppercase;
   color: var(--text-faint); font-weight: 600; border-bottom: 1px solid var(--border); }
 .pop .pb { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
 .pop .prow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -204,10 +205,9 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     <!-- TWO numbers, never summed. This chip is the GEAR's condition:
          desired != applied in the registry, healed only by an apply the gear
          confirms (or the per-row re-read). It takes the warn tone that
-         desired ≠ applied shares. The operator's own unsaved edits live in the
-         apply bar below and nowhere else — summing them would make the bar
-         permanent wherever a divergence stands, with Discard, which can only
-         clear the local half, greyed out. -->
+         desired ≠ applied shares. While the operator has unsaved edits, the
+         apply bar below counts those edits alone — summing the two would put
+         on the bar a number its Discard can only partly clear. -->
     <span class="chip warn"><span class="dot"></span>12 rows dirty on gear</span>
     <span class="spacer"></span>
     <input class="search" placeholder="Filter lamps…">
@@ -339,9 +339,9 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     </table>
   </div>
 
-  <!-- The apply bar appears ONLY when the operator has unsaved edits, and its
-       count is those edits alone. Discard clears exactly what the bar counts,
-       so the button is live whenever the bar is on screen. -->
+  <!-- With unsaved edits the apply bar counts those edits alone, and Discard
+       clears exactly what it counts. With none, it stays while a bound row
+       differs from its gear, and offers only the apply (shown below). -->
   <div class="applybar">
     <span class="txt"><b>3 pending edits</b> — 2 add · 1 remove</span>
     <button class="btn discard">Discard</button>
@@ -377,13 +377,25 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     The detail is the first cell's failure — the code, then the message when it
     adds to it — and the tally of every cell the apply took on: the three edits
     above and one cell in each of the twelve rows already dirty on gear. Here
-    one cell met a contended bus, and its row stays dirty on gear.
+    two cells met a contended bus, and their rows stay dirty on gear.
   -->
   <div class="toasts" style="position: static;">
     <div class="op">
       <div class="row1"><span class="title">Group apply</span><span class="chip err"><span class="dot"></span>failed</span><button class="close" title="Dismiss">✕</button></div>
-      <div class="detail">operation_failed — bus_contended · 14 programmed · 1 failed</div>
+      <div class="detail">operation_failed — bus_contended · 13 programmed · 2 failed</div>
     </div>
+  </div>
+
+  <div class="state-label"><span>Rows differ from the gear, nothing edited</span><span class="ln"></span></div>
+  <!--
+    With no edits, the bar counts the bound rows whose gear differs from them
+    and offers only Apply to bus: there is nothing to discard, and the apply
+    programs those rows again. It is how the two rows the failed apply above
+    leaves dirty are retried. An unbound row never counts: it has no gear.
+  -->
+  <div class="applybar" style="position: static; transform: none; display: inline-flex;">
+    <span class="txt"><b>2 rows</b> differ from the gear</span>
+    <button class="btn apply">Apply to bus</button>
   </div>
 </div>
 </body>

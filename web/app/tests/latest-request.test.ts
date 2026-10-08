@@ -43,3 +43,26 @@ test('invalidating a request suppresses its completion', async () => {
   assert.deepEqual(accepted, [])
   assert.deepEqual(failures, [])
 })
+
+test('a request a newer one superseded settles only once the newest has landed', async () => {
+  const gate = createLatestRequestGate()
+  const first = deferred<string>()
+  const second = deferred<string>()
+  const accepted: string[] = []
+  const ignore = () => {}
+
+  const firstRun = runLatestRequest(gate, () => first.promise, accepted.push.bind(accepted), ignore)
+  const secondRun = runLatestRequest(gate, () => second.promise, accepted.push.bind(accepted), ignore)
+  first.resolve('old')
+  let firstSettled = false
+  void firstRun.then(() => {
+    firstSettled = true
+  })
+  await new Promise((done) => setTimeout(done, 0))
+  assert.equal(firstSettled, false, 'the superseded reload resolved before fresh data')
+
+  second.resolve('new')
+  await firstRun
+  await secondRun
+  assert.deepEqual(accepted, ['new'])
+})

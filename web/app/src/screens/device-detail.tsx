@@ -67,6 +67,7 @@ import {
 import { useLive } from '../hooks'
 import { nav } from '../router'
 import { errorMessage, mutate, notify, opCommitted, runOp } from '../toast'
+import { productGtin } from './device-product'
 
 const ALL_ATTRIBUTE_GROUPS: AttributeGroup[] = [
   'runtime_status',
@@ -561,7 +562,8 @@ export function DeviceDetail({ short, tab: rawTab }: { short: number; tab?: stri
 
   const level = dev.state.level ?? 0
   ensureProductsLoaded()
-  const productLabel = productName(attrNum(attrs, 'memory_identity', 'gtin'))
+  const gtin = productGtin(siblings?.physical_devices, short)
+  const productLabel = productName(gtin)
   const DT6_FAILURES: [field: string, label: string][] = [
     ['short_circuit', 'short circuit'],
     ['open_circuit', 'open circuit'],
@@ -842,7 +844,13 @@ export function DeviceDetail({ short, tab: rawTab }: { short: number; tab?: stri
             k="Random address"
             v={dev.random_address != null ? hex6(dev.random_address) : '—'}
           />
-          {productLabel && <AttrRow k="Product" v={productLabel} />}
+          {productLabel && (
+            <div class="attr wide">
+              <span class="k">Product</span>
+              <span class="v name-faint">{productLabel}</span>
+              <span />
+            </div>
+          )}
           <ObservedRow
             k="Version"
             v={<RawBeside decoded={daliVersion(c102Version)} raw={c102Version} hex />}

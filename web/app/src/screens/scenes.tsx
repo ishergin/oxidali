@@ -1,10 +1,12 @@
+import { signal } from '@preact/signals'
 import { useState } from 'preact/hooks'
 import { api } from '../api/client'
 import type { SceneMatrixRow, SceneRowState, Waf } from '../api/types'
 import { Chip, EditableName, EditableText, RgbInputs } from '../components/ui'
 import { ADAPTER, kelvinCss, LEVEL_MAX, pad2 } from '../format'
 import { useLive } from '../hooks'
-import { errorMessage, mutate, notify, saveThenApply } from '../toast'
+import { type ApplyOutcome, errorMessage, mutate, notify, saveThenApply } from '../toast'
+import { applyBar, boundLamps } from './apply-bar'
 
 const DEFAULT_SCENE_LEVEL = 254
 const DEFAULT_SCENE_CCT_K = 3000
@@ -42,17 +44,34 @@ function rowMatchesServer(row: SceneMatrixRow, edit: RowEdit): boolean {
 }
 
 
+const retryScenes = signal<ReadonlySet<number>>(new Set())
+
+function noteApply(sceneId: number, outcome: ApplyOutcome) {
+  if (outcome === 'unsaved') return
+  const next = new Set(retryScenes.value)
+  if (outcome === 'failed') next.add(sceneId)
+  else next.delete(sceneId)
+  retryScenes.value = next
+}
+
 export function Scenes({ sceneId }: { sceneId: number }) {
   const { data: scenes, reload: reloadScenes } = useLive(
     async () => (await api.scenes(ADAPTER)).scenes,
     ['scenes'],
     { intervalMs: SCENES_POLL_MS },
   )
-  const { data: matrix, reload: reloadMatrix } = useLive(
-    () => api.sceneMatrix(ADAPTER, sceneId),
+  const { data: matrixData, reload: reloadMatrix } = useLive(
+    async () => {
+      const [sceneMatrix, lamps] = await Promise.all([
+        api.sceneMatrix(ADAPTER, sceneId),
+        api.virtualLamps(ADAPTER),
+      ])
+      return { sceneMatrix, bound: boundLamps(lamps.virtual_lamps) }
+    },
     ['scenes', 'virtual_lamps'],
     { intervalMs: SCENES_POLL_MS, deps: [sceneId] },
   )
+  const matrix = matrixData?.sceneMatrix
   const [edits, setEdits] = useState<Map<number, RowEdit>>(new Map())
   const [busy, setBusy] = useState(false)
   const [recallGroup, setRecallGroup] = useState<number | null>(null)
@@ -143,22 +162,28 @@ export function Scenes({ sceneId }: { sceneId: number }) {
         : { included: false }
       return { virtual_lamp_id: vl, desired }
     })
-    await saveThenApply({
+    const outcome = await saveThenApply({
       subject: `Scene ${sceneId}`,
       setBusy,
       save: edits.size > 0 ? () => api.patchSceneMatrix(ADAPTER, sceneId, rows) : null,
       apply: () => api.sceneApply(ADAPTER, sceneId),
       nothingToApply: 'nothing to write',
-      onApplied: () => {
+      onApplied: async () => {
+        await Promise.all([reloadMatrix(), reloadScenes()])
         setEdits(new Map())
-        void reloadMatrix()
-        void reloadScenes()
       },
     })
+    noteApply(sceneId, outcome)
   }
 
   const localChanges = edits.size
   const serverDirty = matrix?.rows.filter((r) => r.dirty).length ?? 0
+  const gearRows = (matrix?.rows ?? []).map((r) => ({
+    virtual_lamp_id: r.virtual_lamp_id,
+    differs: r.dirty,
+  }))
+  const retryRows = retryScenes.value.has(sceneId) ? gearRows : []
+  const bar = applyBar(localChanges, retryRows, matrixData?.bound ?? new Set())
 
   return (
     <>
@@ -452,17 +477,28 @@ export function Scenes({ sceneId }: { sceneId: number }) {
         </table>
       </div>
 
-      {localChanges > 0 && (
+      {bar && (
         <div class="applybar">
-          <span class="txt">
-            <b>
-              {localChanges} pending edit{localChanges === 1 ? '' : 's'}
-            </b>{' '}
-            in scene {sceneId}
-          </span>
-          <button class="btn discard" onClick={discard} disabled={busy}>
-            Discard
-          </button>
+          {bar.kind === 'edits' ? (
+            <span class="txt">
+              <b>
+                {bar.count} pending edit{bar.count === 1 ? '' : 's'}
+              </b>{' '}
+              in scene {sceneId}
+            </span>
+          ) : (
+            <span class="txt">
+              <b>
+                {bar.count} row{bar.count === 1 ? '' : 's'}
+              </b>{' '}
+              of scene {sceneId} {bar.count === 1 ? 'differs' : 'differ'} from the gear
+            </span>
+          )}
+          {bar.kind === 'edits' && (
+            <button class="btn discard" onClick={discard} disabled={busy}>
+              Discard
+            </button>
+          )}
           <button class="btn apply" onClick={applyToBus} disabled={busy}>
             Apply to bus
           </button>
