@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use esp_idf_svc::http::server::{Configuration, EspHttpConnection, EspHttpServer, Method, Request};
 use esp_idf_svc::io::{EspIOError, Write};
-use esp_idf_svc::sys::{EspError, ESP_FAIL};
+use esp_idf_svc::sys::{heap_caps_malloc, EspError, ESP_FAIL, MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL};
 
 use dali2rust_api::http::router::{BodyRefusal, Router, MAX_REQUEST_BODY_BYTES};
 use dali2rust_api::http::types::{HttpBody, HttpResponse};
+use dali2rust_platform::heap::HeapStatsPort;
 
 use super::wire_method::wire_method;
 
@@ -24,7 +25,6 @@ impl HttpdStackReserve {
     const RESERVE_BYTES: usize = HTTPD_TASK_STACK_BYTES + 12 * 1024;
 
     pub fn take() -> Self {
-        use esp_idf_svc::sys::{heap_caps_malloc, MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL};
         if httpd_stack_in_psram() {
             return Self(core::ptr::null_mut());
         }
@@ -131,8 +131,6 @@ const ACCESS_BODY_PREVIEW_BYTES: usize = 256;
 const RESPONSE_BUFFER_BYTES: usize = 2048;
 
 fn heap_free_and_largest_at_boot() -> (usize, usize) {
-    use dali2rust_platform::heap::HeapStatsPort;
-
     let h = dali2rust_bsp::heap_stats::EspHeapStats.snapshot();
     (
         h.internal_free_bytes as usize,
@@ -252,7 +250,6 @@ fn response_headers(res: &HttpResponse) -> Vec<(&'static str, &'static str)> {
 }
 
 fn note_httpd_stack_low_water() {
-    use core::sync::atomic::{AtomicU32, Ordering};
     static MIN_FREE: AtomicU32 = AtomicU32::new(u32::MAX);
     // SAFETY: pure FFI query about the current task; no aliasing, no state.
     let free = unsafe {

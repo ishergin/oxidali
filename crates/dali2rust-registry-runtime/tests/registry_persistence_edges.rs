@@ -3,13 +3,14 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_domain::registry::{
     AttributeSource, GroupReadPort, HomeAssistantSettingsReadPort, MemoryBankRangeView,
-    MemoryBankSummaryView, ObservedValue, PhysicalDeviceAttributesView, VirtualLampReadPort,
+    MemoryBankSummaryView, ObservedValue, PhysicalDeviceAttributesView, PollerSettingsReadPort,
+    VirtualLampReadPort,
 };
 use dali2rust_registry_runtime::{
-    encode_persistence_blob,
-    PersistableAdapterSlice, PersistablePhysicalDeviceRecord, PersistablePhysicalDevicesSlice,
-    PersistableVirtualLampsSlice, PersistableVlRecord, PersistenceEnvelope, RegistryStore,
-    ADAPTERS_SLICE_VERSION, PHYSICAL_DEVICES_SLICE_VERSION, VIRTUAL_LAMPS_SLICE_VERSION,
+    encode_persistence_blob, ADAPTERS_SLICE_VERSION, PHYSICAL_DEVICES_SLICE_VERSION,
+    POLLER_SETTINGS_SLICE_VERSION, PersistableAdapterSlice, PersistablePhysicalDeviceRecord,
+    PersistablePhysicalDevicesSlice, PersistablePollerSettingsSlice, PersistableVirtualLampsSlice,
+    PersistableVlRecord, PersistenceEnvelope, RegistryStore, VIRTUAL_LAMPS_SLICE_VERSION,
 };
 use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 use dali2rust_test_support::{temp_slice_store, write_slice};
@@ -287,11 +288,6 @@ fn hydrate_physical_devices_blob_preserves_attributes_and_random_address() {
 
 #[test]
 fn a_stale_physical_devices_slice_does_not_cost_the_poller_its_settings() {
-    use dali2rust_domain::registry::PollerSettingsReadPort;
-    use dali2rust_registry_runtime::{
-        PersistablePollerSettingsSlice, POLLER_SETTINGS_SLICE_VERSION,
-    };
-
     let slices = temp_slice_store("slice-versions-are-independent");
     write_slice(
         &slices,

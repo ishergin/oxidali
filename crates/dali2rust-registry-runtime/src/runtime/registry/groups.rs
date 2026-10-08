@@ -1,6 +1,8 @@
 use crate::runtime::registry::physical_devices::write_groups_membership_read;
 use crate::runtime::registry::store::{Inner, RegistryStore};
-use dali2rust_contracts::msg::{fixed_text_64, GroupMatrixDesiredRow, FixedText64};
+use dali2rust_contracts::msg::{
+    fixed_text_64, FixedText64, GroupMatrixDesiredRow, GroupMetadataUpdateCommand,
+};
 use dali2rust_domain::registry::{
     CapabilityFlagsView, GroupApplyRowView, GroupApplySnapshot, GroupMatrixGroupView,
     GroupMembershipMatrixRowView, GroupMembershipMatrixView, GroupReadPort, GroupView,
@@ -273,8 +275,6 @@ impl RegistryStore {
         name: Option<&str>,
         ha_entity_enabled: bool,
     ) -> bool {
-        use dali2rust_contracts::msg::GroupMetadataUpdateCommand;
-
         let mut inner = self.write_inner();
         if !adapter_exists(&inner, adapter_id) || group_id >= GROUP_COUNT {
             return false;

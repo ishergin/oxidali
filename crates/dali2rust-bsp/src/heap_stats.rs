@@ -1,6 +1,11 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use dali2rust_platform::heap::{HeapStats, HeapStatsPort};
+use esp_idf_svc::sys::{
+    esp_get_minimum_free_heap_size, heap_caps_get_free_size, heap_caps_get_info,
+    heap_caps_get_largest_free_block, heap_caps_get_minimum_free_size, multi_heap_info_t,
+    MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL,
+};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EspHeapStats;
@@ -12,11 +17,6 @@ static BLOCKS_INTERNAL: AtomicU32 = AtomicU32::new(0);
 
 impl EspHeapStats {
     pub fn boot_snapshot(&self) -> HeapStats {
-        use esp_idf_svc::sys::{
-            heap_caps_get_info, heap_caps_get_largest_free_block, multi_heap_info_t,
-            MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL,
-        };
-
         let mut info = multi_heap_info_t::default();
         // SAFETY: read-only heap statistics FFI callable from any task; `info` is a live, exclusively borrowed struct.
         let largest = unsafe {
@@ -36,11 +36,6 @@ impl EspHeapStats {
 
 impl HeapStatsPort for EspHeapStats {
     fn snapshot(&self) -> HeapStats {
-        use esp_idf_svc::sys::{
-            esp_get_minimum_free_heap_size, heap_caps_get_free_size,
-            heap_caps_get_minimum_free_size, MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL,
-        };
-
         let rust = crate::rust_heap::figures();
         // SAFETY: O(1) reads of each heap's own free and minimum-free counters, callable from any task.
         unsafe {

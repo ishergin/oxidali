@@ -25,6 +25,11 @@ use crate::gear::{
     MEMORY_BANK_IDENTITY, MEMORY_BANK_PROFILE, STATUS_GEAR_FAILURE, STATUS_LAMP_FAILURE,
     STATUS_LAMP_ON, STATUS_LIMIT_ERROR, STATUS_POWER_CYCLE_SEEN,
 };
+use dali2rust_domain::dali::banks::{
+    bank_last_offset, read_value, BankValue, ValueWidth, BANK_ACTIVE_ENERGY,
+    BANK_CONTROL_GEAR_DIAGNOSTICS, BANK_LOADSIDE_ENERGY, DEVICE_TYPE_DIAGNOSTICS,
+    DEVICE_TYPE_ENERGY,
+};
 
 fn frame(command: DaliCommand) -> u16 {
     let f = command.to_forward_frame();
@@ -510,11 +515,6 @@ fn memory_bank_identity_reads_sequentially_with_dtr0_autoincrement() {
 
 #[test]
 fn metering_banks_answer_only_on_gear_that_declared_the_types() {
-    use dali2rust_domain::dali::banks::{
-        bank_last_offset, read_value, BankValue, ValueWidth, BANK_ACTIVE_ENERGY,
-        BANK_CONTROL_GEAR_DIAGNOSTICS, BANK_LOADSIDE_ENERGY, DEVICE_TYPE_DIAGNOSTICS,
-        DEVICE_TYPE_ENERGY,
-    };
     let mut fleet = GearFleet::demo_bus();
     let metered = 8u8;
     let plain = 0u8;

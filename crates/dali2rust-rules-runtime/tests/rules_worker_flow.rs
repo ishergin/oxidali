@@ -4,14 +4,15 @@ use std::time::Duration;
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResult};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
-    BusEventPayload, Dali103InstanceAction, Origin, RuleCommitCommand, RuleEnableCommand,
-    RuleStageCommand, RULE_SOURCE_CHUNK_BYTES,
+    BusCommandPayload, BusEventPayload, ColorMode, Dali103InstanceAction, OperationType, Origin,
+    PowerState, RULE_SOURCE_CHUNK_BYTES, RuleCommitCommand, RuleEnableCommand, RuleStageCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::dali::dev103::instance_type;
 use dali2rust_rules_model::testing::StubResolver;
 use dali2rust_rules_runtime::runtime::persistence::fnv1a32;
 use dali2rust_rules_runtime::{spawn_rules_worker, RulesStore, RulesWorkerCounters};
+use dali2rust_rules_model::action::ActionKind;
 
 struct EmptyWorld {
     started: std::time::Instant,
@@ -1130,7 +1131,6 @@ const LANDINGS: &[(&str, &str, Landing)] = &[
 
 #[test]
 fn every_action_kind_declares_where_it_lands() {
-    use dali2rust_rules_model::action::ActionKind;
     let declared: std::collections::BTreeSet<&str> =
         LANDINGS.iter().map(|(kind, _, _)| *kind).collect();
     assert_eq!(
@@ -1251,7 +1251,6 @@ fn drain_commands(h: &Harness) -> Vec<dali2rust_contracts::msg::CommandEnvelope>
 }
 
 fn opened_scene_apply(published: &[dali2rust_contracts::msg::CommandEnvelope]) -> (u64, String) {
-    use dali2rust_contracts::msg::{BusCommandPayload, OperationType};
     let [begin, execute] = published else {
         panic!("a scene apply is one begin and one execute, got {published:?}");
     };
@@ -1347,8 +1346,6 @@ fn next_setpoint_command(h: &Harness) -> Option<dali2rust_contracts::msg::DaliSe
 
 #[test]
 fn every_light_argument_reaches_the_setpoint() {
-    use dali2rust_contracts::msg::{ColorMode, PowerState};
-
     let sp = landing_setpoint("level-absolute", "lamp(0).on(level=200)");
     assert_eq!((sp.power, sp.level), (PowerState::On, Some(200)));
 

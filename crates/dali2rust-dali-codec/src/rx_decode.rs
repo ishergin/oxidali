@@ -132,7 +132,10 @@ fn sniffed_from_decoded(dlen: u8, out: [u8; 8]) -> SniffedFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codec::HalfBitBuffer;
+    use crate::codec::{
+        encode_forward16_raw, encode_forward24_raw, encode_to_half_bits, merge_dominant,
+        HalfBitBuffer,
+    };
 
     fn halfbit_buffer_to_samples(hb: &HalfBitBuffer) -> Vec<u8> {
         let total_bits = hb.length as usize;
@@ -292,8 +295,6 @@ mod tests {
 
     #[test]
     fn a_dumped_capture_replays_to_the_same_frame() {
-        use crate::codec::encode_forward24_raw;
-
         let hb = encode_forward24_raw(0xFF, 0xFE, 0x3D);
         let samples = halfbit_buffer_to_samples(&hb);
         let dumped: Vec<String> = samples.iter().map(|b| format!("{b:02x}")).collect();
@@ -308,8 +309,6 @@ mod tests {
 
     #[test]
     fn decode_sniffed_detects_forward16_exact_length() {
-        use crate::codec::encode_forward16_raw;
-
         let hb = encode_forward16_raw(0x82A9);
         let sample_bytes = halfbit_buffer_to_samples(&hb);
 
@@ -325,8 +324,6 @@ mod tests {
 
     #[test]
     fn decode_sniffed_detects_forward24() {
-        use crate::codec::encode_forward24_raw;
-
         let hb = encode_forward24_raw(0xA1, 0x02, 0x03);
         let sample_bytes = halfbit_buffer_to_samples(&hb);
 
@@ -348,8 +345,6 @@ mod tests {
 
     #[test]
     fn decode_sniffed_rejects_non_dali_bit_lengths() {
-        use crate::codec::encode_to_half_bits;
-
         let hb = encode_to_half_bits(0xABCDE, 20);
         let sample_bytes = halfbit_buffer_to_samples(&hb);
 
@@ -363,8 +358,6 @@ mod tests {
 
     #[test]
     fn decode_sniffed_best_phase_recovers_shifted_forward16() {
-        use crate::codec::encode_forward16_raw;
-
         let hb = encode_forward16_raw(0x8244);
         let sample_bytes = halfbit_buffer_to_samples(&hb);
         let n = sample_bytes.len().min(RxCompletedEvent::MAX_SAMPLES);
@@ -390,8 +383,6 @@ mod tests {
 
     #[test]
     fn decode_backward_byte_best_phase_recovers_shifted_backward8() {
-        use crate::codec::encode_to_half_bits;
-
         let hb = encode_to_half_bits(0x5A, 8);
         let sample_bytes = halfbit_buffer_to_samples(&hb);
         let n = sample_bytes.len().min(RxCompletedEvent::MAX_SAMPLES);
@@ -407,8 +398,6 @@ mod tests {
 
     #[test]
     fn decode_backward_byte_does_not_accept_forward16() {
-        use crate::codec::encode_forward16_raw;
-
         let hb = encode_forward16_raw(0x8244);
         let sample_bytes = halfbit_buffer_to_samples(&hb);
 
@@ -468,8 +457,6 @@ mod tests {
 
     #[test]
     fn a_sample_count_past_the_buffer_is_clamped_not_believed() {
-        use crate::codec::encode_forward16_raw;
-
         let hb = encode_forward16_raw(0x82A9);
         let samples = halfbit_buffer_to_samples(&hb);
         let mut event = event_from(&samples);
@@ -479,8 +466,6 @@ mod tests {
 
     #[test]
     fn two_colliding_answers_do_not_decode_to_a_byte() {
-        use crate::codec::merge_dominant;
-
         let merged = merge_dominant(&[0x5A, 0xA5], 8).expect("two answers");
         let samples = halfbit_buffer_to_samples(&merged);
         assert_eq!(
@@ -493,8 +478,6 @@ mod tests {
 
     #[test]
     fn three_colliding_answers_do_not_decode_to_a_byte() {
-        use crate::codec::merge_dominant;
-
         let merged = merge_dominant(&[0x0F, 0x33, 0x55], 8).expect("three answers");
         let samples = halfbit_buffer_to_samples(&merged);
         assert_eq!(event_from(&samples).decode_backward_byte(), None);
@@ -502,8 +485,6 @@ mod tests {
 
     #[test]
     fn identical_colliding_answers_still_read_as_that_answer() {
-        use crate::codec::merge_dominant;
-
         let merged = merge_dominant(&[0x5A, 0x5A, 0x5A], 8).expect("three answers");
         let samples = halfbit_buffer_to_samples(&merged);
         assert_eq!(event_from(&samples).decode_backward_byte(), Some(0x5A));
@@ -534,8 +515,6 @@ mod tests {
     }
 
     fn nominal_samples(bits: u32, width: u8) -> Vec<u8> {
-        use crate::codec::encode_to_half_bits;
-
         let mut samples = halfbit_buffer_to_samples(&encode_to_half_bits(bits, width));
         samples.extend_from_slice(&[0xFF, 0xFF]);
         samples

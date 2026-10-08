@@ -77,14 +77,12 @@ pub fn decode_event(frame: ForwardFrame24) -> Option<InputEvent> {
 
 // IEC 62386-103 Table 3
 fn decode_source(b0: u8, b1: u8) -> Option<EventSource> {
-    use EventScheme::{Device, DeviceGroup, DeviceInstance, Instance, InstanceGroup};
-
     let scheme = match ((b0 >> 6) & 0x03, (b1 >> 7) & 0x01) {
-        (0 | 1, 0) => Device,
-        (0 | 1, _) => DeviceInstance,
-        (2, 1) => Instance,
-        (2, _) => DeviceGroup,
-        (_, 0) => InstanceGroup,
+        (0 | 1, 0) => EventScheme::Device,
+        (0 | 1, _) => EventScheme::DeviceInstance,
+        (2, 1) => EventScheme::Instance,
+        (2, _) => EventScheme::DeviceGroup,
+        (_, 0) => EventScheme::InstanceGroup,
         _ => return None,
     };
 
@@ -93,13 +91,15 @@ fn decode_source(b0: u8, b1: u8) -> Option<EventSource> {
 
     Some(EventSource {
         scheme,
-        short_address: matches!(scheme, Device | DeviceInstance).then(|| (b0 >> 1) & 0x3F),
-        device_group: matches!(scheme, DeviceGroup).then_some(upper),
-        instance_group: matches!(scheme, InstanceGroup).then_some(upper),
-        instance_number: matches!(scheme, Instance | DeviceInstance).then_some(lower),
+        short_address: matches!(scheme, EventScheme::Device | EventScheme::DeviceInstance)
+            .then(|| (b0 >> 1) & 0x3F),
+        device_group: matches!(scheme, EventScheme::DeviceGroup).then_some(upper),
+        instance_group: matches!(scheme, EventScheme::InstanceGroup).then_some(upper),
+        instance_number: matches!(scheme, EventScheme::Instance | EventScheme::DeviceInstance)
+            .then_some(lower),
         instance_type: match scheme {
-            Instance => Some(upper),
-            DeviceInstance => None,
+            EventScheme::Instance => Some(upper),
+            EventScheme::DeviceInstance => None,
             _ => Some(lower),
         },
     })

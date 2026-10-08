@@ -43,11 +43,12 @@ pub fn wire_method(m: EspMethod) -> &'static str {
 #[cfg(test)]
 mod tests {
     #[cfg(not(target_os = "espidf"))]
+    use super::*;
+    #[cfg(not(target_os = "espidf"))]
+    use tiny_http::Method as TinyMethod;
+    #[cfg(not(target_os = "espidf"))]
     #[test]
     fn wire_method_conversions() {
-        use super::*;
-        use tiny_http::Method as TinyMethod;
-
         assert_eq!(wire_method(&TinyMethod::Get), "GET");
         assert_eq!(wire_method(&TinyMethod::Post), "POST");
         assert_eq!(wire_method(&TinyMethod::Put), "PUT");

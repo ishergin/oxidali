@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use dali2rust_bus::BusId;
 use dali2rust_contracts::msg::{
-    BusEventPayload, DaliAttributeGroup, DeliveryStatus, PollerSettingsChangedEvent,
-    PollerSettingsUpdateCommand,
+    AdapterSettingsUpdateCommand, BusEventPayload, DaliAttributeGroup, DeliveryStatus, DeviceType,
+    PollerSettingsChangedEvent, PollerSettingsUpdateCommand,
 };
-use dali2rust_domain::registry::PollerSettingsReadPort;
+use dali2rust_domain::registry::{PollTargetReadPort, PollerSettingsReadPort};
 use dali2rust_test_support::bus::{recv_confirmation_for, recv_event_matching};
 
 use support::{publish_cmd, spawn_registry_stack};
@@ -109,9 +109,6 @@ fn wrong_target_adapter_is_rejected_and_settings_stay_default() {
 
 #[test]
 fn poll_targets_carry_the_effective_type_flags() {
-    use dali2rust_contracts::msg::DeviceType;
-    use dali2rust_domain::registry::PollTargetReadPort;
-
     let stack = spawn_registry_stack(1, 8);
     support::seed_physical_via_discovery(&stack.publisher, 60, 5, DeviceType::Dt8Color, &stack.store);
     support::seed_physical_via_discovery(&stack.publisher, 61, 6, DeviceType::Dt6Led, &stack.store);
@@ -153,9 +150,6 @@ fn poll_targets_carry_the_effective_type_flags() {
 
 #[test]
 fn unbound_devices_are_filtered_by_the_port_when_the_setting_asks() {
-    use dali2rust_contracts::msg::DeviceType;
-    use dali2rust_domain::registry::PollTargetReadPort;
-
     let stack = spawn_registry_stack(1, 8);
     support::seed_physical_via_discovery(&stack.publisher, 70, 9, DeviceType::Dt6Led, &stack.store);
     support::seed_physical_via_discovery(&stack.publisher, 71, 10, DeviceType::Dt6Led, &stack.store);
@@ -207,9 +201,6 @@ fn unbound_devices_are_filtered_by_the_port_when_the_setting_asks() {
 
 #[test]
 fn a_disabled_adapter_lists_no_poll_targets_and_says_so() {
-    use dali2rust_contracts::msg::{AdapterSettingsUpdateCommand, DeviceType};
-    use dali2rust_domain::registry::PollTargetReadPort;
-
     let stack = spawn_registry_stack(1, 8);
     support::seed_physical_via_discovery(&stack.publisher, 80, 9, DeviceType::Dt6Led, &stack.store);
     publish_cmd(

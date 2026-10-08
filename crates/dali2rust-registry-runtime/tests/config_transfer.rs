@@ -1,5 +1,5 @@
 use dali2rust_domain::registry::PollerSettingsReadPort;
-use dali2rust_platform::slice_store::SliceKey;
+use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 use dali2rust_registry_runtime::{
     encode_persistence_blob, slice_key_from_name, PersistablePollerSettingsSlice,
     PersistenceEnvelope, RegistryStore, POLLER_SETTINGS_SLICE_VERSION,
@@ -100,6 +100,5 @@ fn slices_load(
     slices: &dali2rust_bsp::slice_store_files::FileSliceStore,
     key: SliceKey,
 ) -> Vec<u8> {
-    use dali2rust_platform::slice_store::SliceStore;
     slices.load(key).expect("stored slice")
 }

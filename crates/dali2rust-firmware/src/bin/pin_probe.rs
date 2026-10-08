@@ -2,6 +2,8 @@
 
 #[cfg(target_os = "espidf")]
 use embassy_executor as _;
+#[cfg(target_os = "espidf")]
+use esp_idf_svc::hal::gpio::{PinDriver, Pull};
 
 #[cfg(target_os = "espidf")]
 type ProbePins = Vec<(u8, esp_idf_svc::hal::gpio::PinDriver<'static, esp_idf_svc::hal::gpio::Input>)>;
@@ -34,8 +36,6 @@ fn sample_window(pins: &ProbePins) -> String {
 
 #[cfg(target_os = "espidf")]
 fn main() {
-    use esp_idf_svc::hal::gpio::{PinDriver, Pull};
-
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
 

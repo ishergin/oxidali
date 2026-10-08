@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use dali2rust_contracts::msg::{
     BusEventPayload, ColorMode, DaliInputEventObservedEvent, DaliObservedFrameEvent,
     DaliTargetScope, DecodeStatus, DeviceCommandScope, InputDeviceLifecycleKind, InputEventKind,
-    ObservedKind, Origin,
+    LevelTransition, ObservedKind, Origin,
 };
 use dali2rust_fanout_runtime::{spawn_sniffer_translator_worker, SnifferTranslatorCounters};
 use dali2rust_platform::dali::{ObservedRawFrame, ObservedRawFrameKind};
@@ -745,7 +745,6 @@ fn any_frame_between_the_two_halves_splits_the_pair() {
 
 #[test]
 fn a_foreign_step_up_is_published_as_a_verb() {
-    use dali2rust_contracts::msg::LevelTransition;
     let h = spawn_harness();
     h.tx.send(forward16([0x07, 0x03])).expect("send");
     let (_origin, body) = recv_observed(&h);

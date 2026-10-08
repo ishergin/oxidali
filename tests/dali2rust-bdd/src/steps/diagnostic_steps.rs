@@ -12,6 +12,7 @@ use dali2rust_api::contracts::BufferBytes;
 
 use crate::steps::wire::{assert_frame_before, assert_nothing_between_frames};
 use crate::DaliWorld;
+use dali2rust_bus::BusConfig;
 
 // BUS-013 BUS-014 BUS-016 CONT-001 SYS-247 DIAG-102 DIAG-104 DIAG-108 DIAG-112 DIAG-113 DIAG-114 DIAG-115 DIAG-117 DIAG-150 DIAG-031 SYS-001 SYS-002 SYS-003 SYS-004 SYS-005 SYS-007 SYS-011 SYS-012 SYS-017 DIAG-120 DIAG-121 DIAG-122 DIAG-130 DIAG-131 DIAG-132 DIAG-140 DIAG-151 DIAG-400 DIAG-401 DIAG-404 STATS-003 STATS-010 WS-044
 #[given(regex = r"a DALI mock transport with response (\d+)")]
@@ -197,7 +198,6 @@ async fn then_frames_apart(world: &mut DaliWorld, a: usize, b: usize, min_ms: u1
 // SYS-248 PD-038 COMM-090
 #[given(regex = r"^a bus with confirmation timeout of (\d+) milliseconds$")]
 async fn given_confirmation_timeout(world: &mut DaliWorld, timeout_ms: u64) {
-    use dali2rust_bus::BusConfig;
     let config = BusConfig {
         confirmation_timeout_ms: timeout_ms,
         ..BusConfig::default()

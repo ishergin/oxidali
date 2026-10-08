@@ -1,4 +1,6 @@
-use dali2rust_contracts::msg::AdapterSettingsUpdateCommand;
+use dali2rust_contracts::msg::{
+    AdapterSettingsUpdateCommand, LevelTransition, RegistryLevelTransitionCommand,
+};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -1006,8 +1008,6 @@ fn a_forgotten_device_still_on_the_wire_returns_blank_on_the_next_scan() {
 
 #[test]
 fn a_foreign_recall_verb_is_resolved_against_the_shadowed_level() {
-    use dali2rust_contracts::msg::{LevelTransition, RegistryLevelTransitionCommand};
-
     let (publisher, conf_rx, _ev_rx, store, _counters, _host) = spawn_cmd_stack_with_events(1);
     seed_physical(&publisher, &store, 21);
 
@@ -1049,8 +1049,6 @@ fn a_foreign_recall_verb_is_resolved_against_the_shadowed_level() {
 
 #[test]
 fn an_unresolvable_verb_leaves_the_stored_level_untouched() {
-    use dali2rust_contracts::msg::{LevelTransition, RegistryLevelTransitionCommand};
-
     let (publisher, conf_rx, _ev_rx, store, _counters, _host) = spawn_cmd_stack_with_events(1);
     seed_physical(&publisher, &store, 22);
     let lit = LightSetpoint { power: PowerState::On, level: Some(90), color: None };

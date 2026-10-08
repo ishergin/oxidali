@@ -843,6 +843,8 @@ fn route_event<S: Sender<BusFrame>>(
 mod tests {
     use super::*;
     use std::time::Duration;
+    use crate::backends::std_mpsc::create_channel;
+    use dali2rust_contracts::msg::DeliveryStatus;
 
     fn sample_command_frame() -> BusFrame {
         BusFrame::command(dali2rust_contracts::bus::command_envelope(0, 1, 0, None, dali2rust_contracts::msg::DaliCommandPayload { wire_address: 1, command: 2, repeat_count: 1, raw_mode: false, raw_expects_backward: false }))
@@ -850,8 +852,6 @@ mod tests {
 
     #[test]
     fn one_command_turn_has_a_finite_drain_budget() {
-        use crate::backends::std_mpsc::create_channel;
-
         let queued_after_budget = 3;
         let queued_commands = COMMAND_DRAIN_BATCH - 1 + queued_after_budget;
         let (tx, rx) = create_channel(queued_commands);
@@ -885,8 +885,6 @@ mod tests {
 
     #[test]
     fn every_ingress_drain_stops_at_its_budget_and_reports_the_backlog() {
-        use crate::backends::std_mpsc::create_channel;
-
         let queued_after_budget = 5;
         let queued = COMMAND_DRAIN_BATCH + queued_after_budget;
         let (conf_tx, conf_rx) = create_channel(queued);
@@ -928,8 +926,6 @@ mod tests {
 
     #[test]
     fn a_quiet_turn_reports_no_backlog() {
-        use crate::backends::std_mpsc::create_channel;
-
         let (_conf_tx, conf_rx) = create_channel(4);
         let (ev_tx, ev_rx) = create_channel(4);
         ev_tx.try_send(sample_command_frame()).expect("queue event");
@@ -1036,8 +1032,6 @@ mod tests {
 
     #[test]
     fn owner_inbox_full_emits_synthetic_delivery_rejected() {
-        use dali2rust_contracts::msg::DeliveryStatus;
-
         let (_host, publisher, (_owner_rx, other_rx, conf_rx)) = BusHost::spawn(
             BusConfig::default(),
             |reg| {
@@ -1105,8 +1099,6 @@ mod tests {
 
     #[test]
     fn dropped_synthetic_delivery_rejected_is_counted() {
-        use crate::backends::std_mpsc::create_channel;
-
         let counters = AtomicBusCounters::with_subscriber_counts(0, 1, 0);
         let BusFrame::Command(ce) = sample_command_frame() else {
             panic!("expected command frame");

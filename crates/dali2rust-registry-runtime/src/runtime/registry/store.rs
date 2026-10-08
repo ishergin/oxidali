@@ -386,20 +386,19 @@ mod psram_capacity {
 
 impl Inner {
     pub(crate) fn preallocated() -> Self {
-        use psram_capacity as cap;
         Self {
-            groups: HashMap::with_capacity(cap::BY_ADAPTER_AND_ID),
-            group_matrix: HashMap::with_capacity(cap::SMALL_ROWS),
-            scenes: HashMap::with_capacity(cap::BY_ADAPTER_AND_ID),
-            scene_matrix: HashMap::with_capacity(cap::SCENE_ROWS),
-            scene_applied_echo: HashMap::with_capacity(cap::SCENE_ROWS),
-            physical_devices: HashMap::with_capacity(cap::SMALL_ROWS),
-            lamps: HashMap::with_capacity(cap::BY_ADAPTER_AND_ID),
-            memory_bank_stage: HashMap::with_capacity(cap::STAGING),
-            hcl_schedules: HashMap::with_capacity(cap::SCHEDULES),
-            hcl_schedule_stage: HashMap::with_capacity(cap::SCHEDULES),
-            hcl_schedule_refused: HashMap::with_capacity(cap::SCHEDULES),
-            input_devices: HashMap::with_capacity(cap::SMALL_ROWS),
+            groups: HashMap::with_capacity(psram_capacity::BY_ADAPTER_AND_ID),
+            group_matrix: HashMap::with_capacity(psram_capacity::SMALL_ROWS),
+            scenes: HashMap::with_capacity(psram_capacity::BY_ADAPTER_AND_ID),
+            scene_matrix: HashMap::with_capacity(psram_capacity::SCENE_ROWS),
+            scene_applied_echo: HashMap::with_capacity(psram_capacity::SCENE_ROWS),
+            physical_devices: HashMap::with_capacity(psram_capacity::SMALL_ROWS),
+            lamps: HashMap::with_capacity(psram_capacity::BY_ADAPTER_AND_ID),
+            memory_bank_stage: HashMap::with_capacity(psram_capacity::STAGING),
+            hcl_schedules: HashMap::with_capacity(psram_capacity::SCHEDULES),
+            hcl_schedule_stage: HashMap::with_capacity(psram_capacity::SCHEDULES),
+            hcl_schedule_refused: HashMap::with_capacity(psram_capacity::SCHEDULES),
+            input_devices: HashMap::with_capacity(psram_capacity::SMALL_ROWS),
             config_write_stage: HashMap::with_capacity(
                 super::config_write_stage::MAX_CONFIG_WRITE_STAGES,
             ),

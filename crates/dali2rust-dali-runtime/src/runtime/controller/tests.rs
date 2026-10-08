@@ -1,10 +1,12 @@
 use super::*;
 use core::sync::atomic::{AtomicU64, Ordering};
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
-use dali2rust_domain::dali::commands::{SpecialCommand, StandardCommand};
+use dali2rust_domain::dali::commands::{ExtendedCommand, SpecialCommand, StandardCommand};
 use dali2rust_domain::dali::types::DaliAddress;
 use crate::runtime::executor::test_helpers::shared::priorities_of;
 use dali2rust_test_support::AdvancingClock;
+use dali2rust_domain::dali::devices::dt6_led::Dt6Command;
+use dali2rust_domain::dali::devices::dt8_color::Dt8Command;
 
 fn test_clock() -> Box<dyn Clock> {
     Box::new(AdvancingClock::new(20))
@@ -283,9 +285,6 @@ fn controller_does_not_expect_backward_for_special_dtr_data_bytes() {
 
 #[test]
 fn controller_sends_enable_device_type_before_extended_command() {
-    use dali2rust_domain::dali::commands::ExtendedCommand;
-    use dali2rust_domain::dali::devices::dt6_led::Dt6Command;
-
     let mock = MockDaliTransport::new();
     mock.set_persistent_response(0x06);
     let transport = Arc::new(Mutex::new(mock));
@@ -310,9 +309,6 @@ fn controller_sends_enable_device_type_before_extended_command() {
 
 #[test]
 fn controller_sends_enable_device_type_color_before_dt8_query() {
-    use dali2rust_domain::dali::commands::ExtendedCommand;
-    use dali2rust_domain::dali::devices::dt8_color::Dt8Command;
-
     let mock = MockDaliTransport::new();
     mock.set_persistent_response(0x00);
     let transport = Arc::new(Mutex::new(mock));
@@ -546,9 +542,6 @@ fn controller_send_command_observed_marks_contended_query_answer() {
 
 #[test]
 fn controller_send_command_observed_aggregates_contended_extended_prelude() {
-    use dali2rust_domain::dali::commands::ExtendedCommand;
-    use dali2rust_domain::dali::devices::dt8_color::Dt8Command;
-
     let mock = MockDaliTransport::new();
     let enable = SpecialCommand::EnableDeviceType(8).to_forward_frame().raw();
     let query = DaliCommand::Extended {

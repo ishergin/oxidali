@@ -1,4 +1,8 @@
 use super::*;
+use dali2rust_contracts::msg::{
+    AttributeGroupReadOutcome, ColorMode, ColorValue, DaliAttributeReadChunk as Chunk,
+};
+use dali2rust_domain::dali::devices::dt8_color::dim_level_to_srgb_channel;
 
 #[derive(Clone, Copy)]
 pub(super) struct ReadProvenance {
@@ -141,7 +145,6 @@ pub(super) fn count_read_abort(
     error: crate::runtime::executor::SemanticDaliError,
     counters: &DaliWorkerCounters,
 ) {
-    use dali2rust_contracts::msg::AttributeGroupReadOutcome;
     let counter = match crate::runtime::executor::classify_read_abort(error) {
         AttributeGroupReadOutcome::ContendedAbort => &counters.read_attributes_contended_aborts,
         AttributeGroupReadOutcome::Preempted => &counters.read_attributes_preempted,
@@ -194,7 +197,6 @@ fn attribute_read_chunks(
     result: &crate::runtime::executor::AttributeReadExecution,
     provenance: ReadProvenance,
 ) -> Vec<dali2rust_contracts::msg::DaliAttributeReadChunk> {
-    use dali2rust_contracts::msg::DaliAttributeReadChunk as Chunk;
     let mut chunks = Vec::with_capacity(8);
     if let Some(sp) = result.runtime_setpoint.as_ref() {
         chunks.push(runtime_status_chunk(result, sp, provenance));
@@ -233,7 +235,6 @@ fn attribute_read_chunks(
 pub(super) fn measured_colour(
     result: &crate::runtime::executor::AttributeReadExecution,
 ) -> Option<dali2rust_contracts::msg::ColorValue> {
-    use dali2rust_contracts::msg::ColorMode;
     match result.dt8_supported {
         None => None,
         Some(false) => Some(colour_of(ColorMode::Brightness)),
@@ -252,7 +253,6 @@ fn colour_of(mode: dali2rust_contracts::msg::ColorMode) -> dali2rust_contracts::
 fn rgbwaf_colour(
     result: &crate::runtime::executor::AttributeReadExecution,
 ) -> Option<dali2rust_contracts::msg::ColorValue> {
-    use dali2rust_contracts::msg::{ColorMode, ColorValue};
     let (r, g, b) = result.dt8_color.rgb.map(decode_rgb_channels)?;
     match (result.dt8_rgbwaf_capable, result.dt8_color.waf) {
         (false, _) => Some(ColorValue {
@@ -278,7 +278,6 @@ fn rgbwaf_colour(
 }
 
 fn decode_rgb_channels(levels: (u8, u8, u8)) -> (u8, u8, u8) {
-    use dali2rust_domain::dali::devices::dt8_color::dim_level_to_srgb_channel;
     let (x, y, z) = levels;
     (
         dim_level_to_srgb_channel(x),
@@ -290,7 +289,6 @@ fn decode_rgb_channels(levels: (u8, u8, u8)) -> (u8, u8, u8) {
 fn colour_from_dt8_section(
     result: &crate::runtime::executor::AttributeReadExecution,
 ) -> Option<dali2rust_contracts::msg::ColorValue> {
-    use dali2rust_contracts::msg::{ColorMode, ColorValue};
     let mode = result.dt8_color.active_mode;
     match mode {
         ColorMode::Cct => Some(ColorValue {

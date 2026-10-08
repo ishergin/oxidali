@@ -12,7 +12,7 @@ use dali2rust_contracts::msg::{
 use dali2rust_contracts::msg::{
     Dali103InstanceAction, DaliSetTargetStateCommand, Origin, RuntimeSource,
 };
-use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
+use dali2rust_contracts::{msg as m, SOURCE_ID_UNSPECIFIED};
 use dali2rust_dali_runtime::{spawn_dali_worker, DaliWorkerCounters};
 use dali2rust_domain::dali::commands::{DaliCommand, DaliResponse};
 use dali2rust_domain::dali::controller::{DaliApplicationController, DaliProductController};
@@ -361,7 +361,6 @@ fn short_target() -> DaliProgramTarget {
 }
 
 fn refused_operations() -> Vec<BusCommandPayload> {
-    use dali2rust_contracts::msg as m;
     vec![
         m::DaliDiscoverDevicesCommand { mode: DiscoveryMode::RefreshKnown, registry_adapter_id: 0 }.into(),
         m::DaliReadAttributesCommand { registry_adapter_id: 0, short_address: 5, attribute_groups_mask: 1 << 1, memory_banks: MemoryBankReadPreset::None }.into(),
@@ -381,7 +380,6 @@ fn refused_operations() -> Vec<BusCommandPayload> {
 }
 
 fn refused_requests() -> Vec<BusCommandPayload> {
-    use dali2rust_contracts::msg as m;
     vec![
         m::DaliCommandPayload { wire_address: 0x01, command: 0xFE, repeat_count: 0, raw_mode: false, raw_expects_backward: false }.into(),
         m::DaliCommissioningStepCommand { registry_adapter_id: 0, step: CommissioningStep::Terminate, scope: None, short_address: None, search_address: None }.into(),

@@ -5,7 +5,7 @@ use crate::runtime::registry::physical_devices::{
 use crate::runtime::registry::store::{registry_unix_ms, Inner, RegistryStore};
 use dali2rust_contracts::msg::{
     fixed_text_64, ColorMode, ColorValue, DaliSceneTargetState, DaliTargetScope, FixedText64,
-    PowerState, SceneMatrixDesiredRow,
+    PowerState, SceneMatrixDesiredRow, SceneMetadataUpdateCommand,
 };
 use dali2rust_domain::dali::devices::dt8_color::{
     dim_level_to_srgb_channel, srgb_channel_to_dim_level, COLOUR_TYPE_BYTE_RGBWAF as SCENE_COLOUR_TYPE_RGBWAF,
@@ -476,8 +476,6 @@ impl RegistryStore {
         name: Option<&str>,
         ha_select_enabled: bool,
     ) -> bool {
-        use dali2rust_contracts::msg::SceneMetadataUpdateCommand;
-
         let mut inner = self.write_inner();
         if !inner.adapter_exists(adapter_id) || scene_id >= SCENE_COUNT {
             return false;

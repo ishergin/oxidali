@@ -181,6 +181,7 @@ pub(crate) fn hydrate_poller_settings_inner(inner: &mut Inner, slice: &Persistab
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dali2rust_platform::slice_store::{SliceKey, SliceStore, StoreError};
 
     fn interval_patch(interval_ms: u32) -> PollerSettingsUpdateCommand {
         PollerSettingsUpdateCommand {
@@ -197,7 +198,6 @@ mod tests {
 
     #[test]
     fn an_import_from_the_httpd_task_does_not_wait_behind_a_flush() {
-        use dali2rust_platform::slice_store::{SliceKey, StoreError};
         let slices = dali2rust_test_support::temp_slice_store("import-no-wait");
         let store = RegistryStore::with_adapter_count(1);
         let flushing = store.flush_buf.lock().expect("flush buffer");
@@ -226,7 +226,6 @@ mod tests {
 
     #[test]
     fn a_dirty_copy_in_memory_does_not_overwrite_an_import_before_its_reload() {
-        use dali2rust_platform::slice_store::{SliceKey, SliceStore};
         const IMPORTED_MS: u32 = 9_000;
         let slices = dali2rust_test_support::temp_slice_store("import-fence");
         let store = RegistryStore::with_adapter_count(1);

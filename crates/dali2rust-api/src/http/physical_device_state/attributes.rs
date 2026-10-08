@@ -9,6 +9,7 @@ use dali2rust_domain::registry::{
     MemoryProfileAttributesView, ObservedValue, ScenesAttributesView, SourceDiagnosticsView,
 };
 use serde::Serialize;
+use serde::ser::SerializeMap;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ObservedValueDto<T> {
@@ -239,7 +240,6 @@ impl<'a> MemoryEnergyAttributesDto<'a> {
 
 impl Serialize for MemoryEnergyAttributesDto<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(None)?;
         for (key, view) in [
             ("active", &self.0.active),
@@ -392,7 +392,6 @@ impl<'a> MemoryDiagnosticsAttributesDto<'a> {
 
 impl Serialize for MemoryDiagnosticsAttributesDto<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(None)?;
         if let Some(gear) = GearDiagnosticsDto::from_view(&self.0.control_gear) {
             map.serialize_entry("control_gear", &gear)?;
@@ -427,7 +426,6 @@ impl ScenesAttributesDto {
 
 impl Serialize for ScenesAttributesDto {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(None)?;
         for idx in SCENE_LEX_ORDER {
             if let Some(slot) = &self.levels[idx] {

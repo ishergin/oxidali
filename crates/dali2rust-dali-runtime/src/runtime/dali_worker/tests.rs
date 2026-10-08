@@ -56,14 +56,14 @@ fn mock_controller_baseline() {
 }
 
 use super::DaliWorkerCounters;
+use dali2rust_bus::{BusConfig, BusHost};
+use dali2rust_contracts::msg::{
+    DaliAttributeGroup, DaliReadAttributesCommand, LightSetpoint, MemoryBankReadPreset, PowerState,
+};
+use std::sync::atomic::Ordering;
 
 #[test]
 fn test_publish_read_attributes_evidence_publishes_runtime_update_and_event() {
-    use dali2rust_bus::{BusConfig, BusHost};
-    use dali2rust_contracts::msg::{
-        DaliReadAttributesCommand, LightSetpoint, MemoryBankReadPreset, PowerState,
-    };
-
     let config = BusConfig {
         commands_ingress: 1,
         events_ingress: 10,
@@ -284,7 +284,6 @@ mod measured_colour {
 
 #[test]
 fn every_contract_attribute_group_survives_the_mask_round_trip() {
-    use dali2rust_contracts::msg::DaliAttributeGroup;
     for group in DaliAttributeGroup::ALL {
         assert_eq!(
             super::attribute_read::decode_attribute_groups_mask(group.mask_bit()),
@@ -303,7 +302,6 @@ fn every_contract_attribute_group_survives_the_mask_round_trip() {
 
 #[test]
 fn sequence_incomplete_never_pollutes_the_transport_abort_counter() {
-    use std::sync::atomic::Ordering;
     let counters = super::DaliWorkerCounters::default();
     super::attribute_read::count_read_abort(
         crate::runtime::executor::SemanticDaliError::OperationFailed(

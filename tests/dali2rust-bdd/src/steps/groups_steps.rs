@@ -11,6 +11,7 @@ use crate::steps::physical_devices::discovery_scripts::{
 use crate::steps::polling::wait_for_operation_status;
 use crate::{DaliWorld};
 use crate::steps::{assert_result_skips_lamp, last_json};
+use dali2rust_domain::dali::pres::special::SpecialCommand;
 
 fn patch_group_name(world: &mut DaliWorld, group_id: u8, name: &str) {
     let path = format!("/api/v1/adapters/0/groups/{group_id}");
@@ -159,7 +160,6 @@ fn expect_group_cct_staging_and_activate(
     group_id: u8,
     mirek: u16,
 ) -> DaliAddress {
-    use dali2rust_domain::dali::pres::special::SpecialCommand;
     const DT8_SET_TEMPERATURE_TC_OPCODE: u8 = 231;
     const DT8_ACTIVATE_OPCODE: u8 = 226;
 
@@ -196,7 +196,6 @@ async fn given_group_cct_script(world: &mut DaliWorld, group_id: u8) {
 // MQTT-020
 #[given(regex = r"^a group cct 3000K power-on target-state script for group (\d+)$")]
 async fn given_group_cct_power_on_script(world: &mut DaliWorld, group_id: u8) {
-    use dali2rust_domain::dali::pres::standard::StandardCommand;
     let mock = world.dali_mock().lock().expect("mock lock");
     mock.clear();
     let group = expect_group_cct_staging_and_activate(&mock, group_id, CCT_3000K_MIREK);

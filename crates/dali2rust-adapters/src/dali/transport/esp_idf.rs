@@ -1,3 +1,4 @@
+use core::fmt::Write as _;
 use core::ptr;
 use core::time::Duration;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -9,8 +10,10 @@ use esp_idf_svc::sys::{
     esp_intr_free, esp_random, gptimer_alarm_cb_t, gptimer_config_t,
     gptimer_count_direction_t_GPTIMER_COUNT_UP, gptimer_del_timer, gptimer_disable, gptimer_enable,
     gptimer_event_callbacks_t, gptimer_handle_t, gptimer_new_timer,
-    gptimer_register_event_callbacks, gptimer_start, gptimer_stop, intr_handle_t,
-    soc_periph_gptimer_clk_src_t_GPTIMER_CLK_SRC_DEFAULT,
+    gptimer_register_event_callbacks, gptimer_start, gptimer_stop, heap_caps_aligned_alloc,
+    intr_handle_t, soc_periph_gptimer_clk_src_t_GPTIMER_CLK_SRC_DEFAULT, GPIO_IN1_REG, GPIO_IN_REG,
+    GPIO_OUT1_W1TC_REG, GPIO_OUT1_W1TS_REG, GPIO_OUT_W1TC_REG, GPIO_OUT_W1TS_REG, MALLOC_CAP_8BIT,
+    MALLOC_CAP_INTERNAL,
 };
 
 use super::phy_interrupt::{self, PhyIsrLevel};
@@ -137,9 +140,6 @@ enum TxAttemptOutcome {
 }
 
 fn out_regs(pin: u8) -> (*mut u32, *mut u32, u32) {
-    use esp_idf_svc::sys::{
-        GPIO_OUT1_W1TC_REG, GPIO_OUT1_W1TS_REG, GPIO_OUT_W1TC_REG, GPIO_OUT_W1TS_REG,
-    };
     if pin < 32 {
         (
             GPIO_OUT_W1TS_REG as *mut u32,
@@ -156,7 +156,6 @@ fn out_regs(pin: u8) -> (*mut u32, *mut u32, u32) {
 }
 
 fn in_reg(pin: u8) -> (*const u32, u32) {
-    use esp_idf_svc::sys::{GPIO_IN1_REG, GPIO_IN_REG};
     if pin < 32 {
         (GPIO_IN_REG as *const u32, 1u32 << pin)
     } else {
@@ -1122,8 +1121,6 @@ impl DaliTransport for EspIdfDaliTransport {
 /// # Safety
 /// The returned pointer owns `value` and must be released with [`free_internal`] exactly once.
 unsafe fn alloc_internal<T>(value: T) -> Result<*mut T, EspIdfDaliError> {
-    use esp_idf_svc::sys::{heap_caps_aligned_alloc, MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL};
-
     let align = core::mem::align_of::<T>().max(4);
     // SAFETY: plain capability-tagged allocation of a valid size/alignment pair.
     let p = unsafe {
@@ -1385,7 +1382,6 @@ impl SnifferDiagnostics {
         if self.late_by_task.is_empty() {
             return;
         }
-        use core::fmt::Write as _;
         let mut text = LateReportLine::over(scratch);
         for (index, (task, tally)) in self.late_by_task.drain().enumerate() {
             if index > 0 {
@@ -1547,30 +1543,29 @@ unsafe fn mirror_isr_timing(
     probe: (u32, u32),
     raw: (u32, u32),
 ) {
-    use core::sync::atomic::Ordering as AtomOrd;
     // SAFETY: the caller's contract.
     let Some(sink) = (unsafe { (*inner).sniffer_counters.get() }) else {
         return;
     };
     let (lost, extra) = window;
     if lost > 0 {
-        sink.isr_ticks_lost.fetch_add(lost, AtomOrd::Relaxed);
+        sink.isr_ticks_lost.fetch_add(lost, Ordering::Relaxed);
     }
     if extra > 0 {
-        sink.isr_ticks_extra.fetch_add(extra, AtomOrd::Relaxed);
+        sink.isr_ticks_extra.fetch_add(extra, Ordering::Relaxed);
     }
     let (deficit, surplus) = raw;
     if deficit > 0 {
         sink.isr_ticks_deficit_raw
-            .fetch_add(deficit, AtomOrd::Relaxed);
+            .fetch_add(deficit, Ordering::Relaxed);
     }
     if surplus > 0 {
         sink.isr_ticks_surplus_raw
-            .fetch_add(surplus, AtomOrd::Relaxed);
+            .fetch_add(surplus, Ordering::Relaxed);
     }
     let (late, max_gap) = probe;
-    sink.isr_late_ticks.store(late, AtomOrd::Relaxed);
-    sink.isr_max_gap_us.fetch_max(max_gap, AtomOrd::Relaxed);
+    sink.isr_late_ticks.store(late, Ordering::Relaxed);
+    sink.isr_max_gap_us.fetch_max(max_gap, Ordering::Relaxed);
 }
 
 /// # Safety
@@ -1625,13 +1620,12 @@ enum BackwardCause {
 }
 
 fn count_backward_cause(inner: *mut TransportInner, cause: BackwardCause) {
-    use core::sync::atomic::Ordering as AtomOrd;
     // SAFETY: every caller holds `inner` for the transport lifetime.
     let Some(sink) = (unsafe { (*inner).sniffer_counters.get() }) else {
         return;
     };
     // SAFETY: same pointer and lifetime; this task wrote the flag before sending the frame.
-    let single_gear = unsafe { (*inner).forward_single_gear.load(AtomOrd::Relaxed) };
+    let single_gear = unsafe { (*inner).forward_single_gear.load(Ordering::Relaxed) };
     let counter = match cause {
         BackwardCause::Undecodable | BackwardCause::FrameSize if !single_gear => {
             &sink.backward_multi_answer
@@ -1642,16 +1636,15 @@ fn count_backward_cause(inner: *mut TransportInner, cause: BackwardCause) {
         BackwardCause::EarlyRejected => &sink.backward_early_rejected,
         BackwardCause::LateRejected => &sink.backward_late_rejected,
     };
-    counter.fetch_add(1, AtomOrd::Relaxed);
+    counter.fetch_add(1, Ordering::Relaxed);
 }
 
 fn mirror_sniffer_counters(inner: *mut TransportInner, frame: SniffedFrame) {
-    use core::sync::atomic::Ordering as AtomOrd;
     // SAFETY: `inner` is valid for the transport lifetime (see `dali_sniffer_loop`).
     let Some(sink) = (unsafe { (*inner).sniffer_counters.get() }) else {
         return;
     };
-    sink.frames.fetch_add(1, AtomOrd::Relaxed);
+    sink.frames.fetch_add(1, Ordering::Relaxed);
     let counter = match frame {
         SniffedFrame::Backward8(_) => &sink.backward8,
         SniffedFrame::Forward16(_) => &sink.forward16,
@@ -1659,7 +1652,7 @@ fn mirror_sniffer_counters(inner: *mut TransportInner, frame: SniffedFrame) {
         SniffedFrame::UnsupportedLength(_) => &sink.unsupported_len,
         SniffedFrame::DecodeFailed => &sink.decode_failed,
     };
-    counter.fetch_add(1, AtomOrd::Relaxed);
+    counter.fetch_add(1, Ordering::Relaxed);
 }
 
 fn push_observed_raw_frame(

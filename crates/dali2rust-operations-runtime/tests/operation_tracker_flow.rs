@@ -5,10 +5,13 @@ use std::time::Duration;
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResult};
 use dali2rust_contracts::msg::{
     DaliProgramTarget, ErrorCode, GroupMembershipAction, OperationStatus, OperationType,
-    OperationWorkerSignal, SceneProgramAction,
+    OperationWorkerSignal, OperationWorkerSignalEvent as Sig, SceneProgramAction,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_domain::registry::OperationReadPort;
+use dali2rust_domain::registry::{
+    OperationApplyResultView, OperationGroupApplyOutcomeView, OperationGroupApplyResultView,
+    OperationReadPort, OperationView,
+};
 use dali2rust_operations_runtime::{
     spawn_operation_tracker_worker, OperationTrackerCounters, OperationTrackerHttpRead,
     OperationTrackerInner, OPERATION_TRACKER_HANDLED_EVENTS,
@@ -90,7 +93,6 @@ fn signal_event_with_origin(
     code: ErrorCode,
     origin: dali2rust_contracts::msg::Origin,
 ) -> BusFrame {
-    use dali2rust_contracts::msg::OperationWorkerSignalEvent as Sig;
     let body = match signal {
         OperationWorkerSignal::WorkerStarted => Sig::started(correlation_id),
         OperationWorkerSignal::WorkerSucceeded => Sig::succeeded(correlation_id),
@@ -106,7 +108,6 @@ fn signal_event_with_origin(
 }
 
 fn orchestrator_ends(publisher: &dali2rust_bus::BusPublisher, correlation_id: u64, error: Option<(ErrorCode, &str)>) {
-    use dali2rust_contracts::msg::OperationWorkerSignalEvent as Sig;
     let body = match error {
         None => Sig::succeeded(correlation_id),
         Some((code, message)) => Sig::failed(correlation_id, code, message),
@@ -922,10 +923,6 @@ fn scene_apply_buckets_written_updated_cleared_skipped_and_failed() {
 
 #[test]
 fn group_apply_result_json_is_byte_identical_through_the_untagged_wrapper() {
-    use dali2rust_domain::registry::{
-        OperationApplyResultView, OperationGroupApplyOutcomeView, OperationGroupApplyResultView,
-        OperationView,
-    };
     let plain = OperationGroupApplyResultView {
         programmed: vec![OperationGroupApplyOutcomeView {
             virtual_lamp_id: 1,

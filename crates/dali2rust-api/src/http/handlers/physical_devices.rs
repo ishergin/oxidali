@@ -7,7 +7,7 @@ use std::sync::Arc;
 use dali2rust_bus::{BusFrame, BusId, BusPublisher};
 use dali2rust_contracts::msg::{
     ColorMode, DaliAttributeGroup, DeviceType, DeviceTypeSet, DiscoveryMode, LightSetpoint,
-    MemoryBankReadPreset, OperationType,
+    MemoryBankReadPreset, OperationType, PhysicalDeviceOverrideCommand as Patch,
 };
 use crate::bus_codec::SOURCE_ID_UNSPECIFIED;
 use crate::confirmation_bridge::PendingConfirmationSlots;
@@ -820,7 +820,6 @@ fn validate_pd_override_within_declared_types(
     declared: Option<Vec<u8>>,
     data: &PdPatchData,
 ) -> Result<(), HttpResponse> {
-    use dali2rust_contracts::msg::PhysicalDeviceOverrideCommand as Patch;
     if data.patch_mask & Patch::PATCH_DEVICE_TYPE_OVERRIDE == 0 || data.clear_dt {
         return Ok(());
     }
@@ -860,7 +859,6 @@ fn pd_patch_text(value: &serde_json::Value) -> Result<String, HttpResponse> {
 fn parse_pd_patch_fields(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<PdPatchData, HttpResponse> {
-    use dali2rust_contracts::msg::PhysicalDeviceOverrideCommand as Patch;
     let mut data = PdPatchData {
         patch_mask: 0,
         name: String::new(),
@@ -901,7 +899,6 @@ fn parse_pd_dt8_permissions(
     obj: &serde_json::Map<String, serde_json::Value>,
     data: &mut PdPatchData,
 ) -> Result<(), HttpResponse> {
-    use dali2rust_contracts::msg::PhysicalDeviceOverrideCommand as Patch;
     if let Some(v) = obj.get("dt8_auto_activation_repair") {
         data.patch_mask |= Patch::PATCH_DT8_AUTO_ACTIVATION_REPAIR;
         data.dt8_auto_activation_repair = v.as_bool().ok_or_else(|| json_err(422, "invalid_value"))?;

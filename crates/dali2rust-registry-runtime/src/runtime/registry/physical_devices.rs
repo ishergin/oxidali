@@ -11,20 +11,19 @@ use crate::runtime::registry::views::{
 };
 use dali2rust_bsp::psram::PsramBox;
 use dali2rust_contracts::msg::{
-    observation_supersedes, ColorMode, ColorValue, DeviceType, DeviceTypeSet, ExtendedVersionEntry,
-    FailureStatus, MAX_EXTENDED_VERSIONS,
-    FixedText64, LastDapcSource, LevelTransition, LightSetpoint, PowerState, RuntimeObservation,
-    RuntimeSource, StatusFlags,
+    observation_supersedes, ColorMode, ColorValue, DaliAttributeReadChunk as Chunk, DeviceType,
+    DeviceTypeSet, ExtendedVersionEntry, FailureStatus, FixedText64, LastDapcSource,
+    LevelTransition, LightSetpoint, MAX_EXTENDED_VERSIONS, PhysicalDeviceOverrideCommand as Patch,
+    PowerState, RuntimeObservation, RuntimeSource, StatusFlags,
 };
 use dali2rust_domain::dali::level_transition::{LevelContext, TransitionOutcome};
 use dali2rust_domain::registry::{
-    MemoryBusUnitAttributesView, MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView,
-    MemoryLuminaireAttributesView,
-    AttributeSectionKind, AttributeSectionView,
-    CapabilityFlagsView, ColorTemperatureRangeView, MemoryBankRangeView, MemoryBankSummaryView, ObservedValue,
-    PhysicalDeviceAttributesView, PhysicalDeviceCoreView, PhysicalDeviceReadPort,
+    colour_mode_fits_declared, device_type_fits_declared, AttributeSectionKind,
+    AttributeSectionView, AttributeSource, CapabilityFlagsView, ColorTemperatureRangeView,
+    MemoryBankRangeView, MemoryBankSummaryView, MemoryBusUnitAttributesView,
+    MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView, MemoryLuminaireAttributesView,
+    ObservedValue, PhysicalDeviceAttributesView, PhysicalDeviceCoreView, PhysicalDeviceReadPort,
     PhysicalDeviceSummaryView, PhysicalDeviceView,
-    colour_mode_fits_declared, device_type_fits_declared,
 };
 
 pub const DISCOVERY_EVICT_MISS_THRESHOLD: u8 = 3;
@@ -307,7 +306,6 @@ fn merge_attr<T: PartialEq>(
     source: dali2rust_domain::registry::AttributeSource,
     now_ms: u64,
 ) -> bool {
-    use dali2rust_domain::registry::AttributeSource;
     let changed = slot
         .as_ref()
         .is_none_or(|prev| prev.value != value || prev.source != source);
@@ -829,7 +827,6 @@ impl RegistryStore {
         chunk: &dali2rust_contracts::msg::DaliAttributeReadChunk,
         now: u64,
     ) -> bool {
-        use dali2rust_contracts::msg::DaliAttributeReadChunk as Chunk;
         match chunk {
             Chunk::Identity { random_address } => {
                 replace_changed(&mut r.random_address, Some(*random_address))
@@ -1014,7 +1011,6 @@ impl RegistryStore {
         &self,
         patch: &dali2rust_contracts::msg::PhysicalDeviceOverrideCommand,
     ) -> bool {
-        use dali2rust_contracts::msg::PhysicalDeviceOverrideCommand as Patch;
         let mut g = self.write_inner();
         let key = (patch.adapter_id, patch.short_address);
         let Some(rec) = g.physical_devices.get_mut(&key) else {

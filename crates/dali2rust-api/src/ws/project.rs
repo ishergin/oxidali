@@ -12,6 +12,7 @@ use crate::http::physical_device_state::{
     XyDto,
 };
 use crate::ws::protocol::{event_frame_with_payload, Channel};
+use dali2rust_domain::dali::dev103::event::{ButtonEvent, OccupancyEvent};
 
 const RUNTIME_STATE_CHANNELS: &[Channel] = &[Channel::VirtualLamps, Channel::PhysicalDevices];
 
@@ -342,7 +343,6 @@ fn input_event_payload(ev: &DaliInputEventObservedEvent) -> Value {
 }
 
 fn input_event_name(ev: &DaliInputEventObservedEvent) -> Option<&'static str> {
-    use dali2rust_domain::dali::dev103::event::{ButtonEvent, OccupancyEvent};
     match ev.typed {
         InputEventKind::Button => ButtonEvent::from_info(ev.event_info).map(ButtonEvent::name),
         InputEventKind::Occupancy => OccupancyEvent::from_info(ev.event_info).map(|o| {
@@ -440,7 +440,11 @@ fn operation_payload(ev: &OperationStatusChangedEvent) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dali2rust_contracts::msg::ColorValue;
+    use dali2rust_contracts::msg::{
+        AdapterSettingsChangedEvent, ColorValue, GroupChangedEvent, GroupMatrixChangedEvent,
+        PhysicalDeviceChangedEvent, SceneChangedEvent, SceneMatrixChangedEvent,
+        VirtualLampChangedEvent,
+    };
 
     const EVENT_TS_MS: u64 = 1_790_000_000_123;
 
@@ -687,11 +691,6 @@ mod tests {
     }
 
     fn one_of_every_projected_event() -> Vec<EventEnvelope> {
-        use dali2rust_contracts::msg::{
-            AdapterSettingsChangedEvent, GroupChangedEvent, GroupMatrixChangedEvent,
-            PhysicalDeviceChangedEvent, SceneChangedEvent, SceneMatrixChangedEvent,
-            VirtualLampChangedEvent,
-        };
         vec![
             runtime_event(),
             envelope(dali2rust_contracts::msg::OperationStatusChangedEvent {
@@ -821,9 +820,6 @@ mod tests {
 
     #[test]
     fn coalesce_keys_merge_same_identity_and_separate_kinds() {
-        use dali2rust_contracts::msg::{
-            AdapterSettingsChangedEvent, GroupMatrixChangedEvent, VirtualLampChangedEvent,
-        };
         assert_eq!(
             coalesce_key(&runtime_event()),
             coalesce_key(&runtime_event()),

@@ -279,11 +279,11 @@ mod tests {
     use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusId};
     use dali2rust_contracts::bus::command_envelope;
     use dali2rust_contracts::msg::{
-        fixed_text_32, BusCommandPayload, HclAlgorithm, HclLevelMode, HclPointList,
-        HclSchedulePointRow, HclScheduleEnableCommand, HclScheduleUpsertCommand, HclTargetList,
-        HclTargetRow, HclTargetScope, HclTimeRef,
+        fixed_text_32, BusCommandPayload, DaliAttributeReadChunk, HclAlgorithm, HclLevelMode,
+        HclPointList, HclScheduleEnableCommand, HclSchedulePointRow, HclScheduleUpsertCommand,
+        HclTargetList, HclTargetRow, HclTargetScope, HclTimeRef,
     };
-    use dali2rust_domain::registry::HclScheduleReadPort;
+    use dali2rust_domain::registry::{AdapterReadPort, HclScheduleReadPort};
     use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
     use std::sync::atomic::Ordering;
     use std::sync::mpsc::{Receiver, Sender};
@@ -326,7 +326,6 @@ mod tests {
 
     #[test]
     fn readers_stay_available_while_flush_writes_flash() {
-        use dali2rust_domain::registry::AdapterReadPort;
         let store = Arc::new(RegistryStore::with_adapter_count(1));
         store.dirty.adapters.store(true, Ordering::Release);
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
@@ -405,8 +404,6 @@ mod tests {
 
     #[test]
     fn unchanged_attribute_read_flushes_nothing() {
-        use dali2rust_contracts::msg::DaliAttributeReadChunk;
-
         let slices = Arc::new(CountingStore::default());
         let persistence_slices: Option<Arc<dyn SliceStore>> = Some(slices.clone());
         let store = RegistryStore::with_adapter_count(1);

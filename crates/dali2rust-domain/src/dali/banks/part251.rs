@@ -235,6 +235,7 @@ pub const fn lamp_current_ma(raw: u16) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use LightDistributionType as L;
 
     #[test]
     fn only_three_content_format_ids_open_the_layout() {
@@ -285,7 +286,6 @@ mod tests {
 
     #[test]
     fn light_distribution_type_is_classified_per_format() {
-        use LightDistributionType as L;
         assert_eq!(light_distribution_type(0, LuminaireFormat::V3), L::NotSpecified);
         assert_eq!(light_distribution_type(3, LuminaireFormat::V3), L::Type(3));
         assert_eq!(light_distribution_type(6, LuminaireFormat::V3), L::Reserved(6));

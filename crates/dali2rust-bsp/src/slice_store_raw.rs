@@ -1,3 +1,7 @@
+#[cfg(not(esp_idf_spiram_xip_from_psram))]
+use dali2rust_platform::dali::{
+    await_wire_gap, note_persist_gate, wire_busy_for_persist, PERSIST_GATE_BUDGET_MS,
+};
 use dali2rust_platform::slice_store::StoreError;
 use esp_idf_svc::sys::{
     esp_partition_erase_range, esp_partition_find_first, esp_partition_read,
@@ -106,9 +110,6 @@ fn hold_for_wire_gap() {
 
 #[cfg(not(esp_idf_spiram_xip_from_psram))]
 fn hold_for_wire_gap() {
-    use dali2rust_platform::dali::{
-        await_wire_gap, note_persist_gate, wire_busy_for_persist, PERSIST_GATE_BUDGET_MS,
-    };
     const STEP_MS: u32 = 1;
     let outcome = await_wire_gap(
         wire_busy_for_persist,

@@ -7,6 +7,7 @@ use dali2rust_domain::registry::{
     MemoryBusUnitAttributesView, MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView,
     MemoryLuminaireAttributesView, ObservedValue, PhysicalDeviceAttributesView, RuntimeErrorView,
 };
+use std::mem::size_of;
 
 fn observed(value: u8) -> Option<ObservedValue<u8>> {
     Some(ObservedValue {
@@ -19,7 +20,6 @@ fn observed(value: u8) -> Option<ObservedValue<u8>> {
 
 #[test]
 fn http_built_dtos_stay_within_the_httpd_stack_budget() {
-    use std::mem::size_of;
     let rows: &[(&str, usize, usize)] = &[
         (
             "PhysicalDeviceSummaryDto",

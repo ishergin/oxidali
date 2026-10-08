@@ -65,15 +65,15 @@ impl<T> Default for BurstCoalescer<T> {
 #[cfg(test)]
 mod tests {
     use super::{BurstCoalescer, RETAINED_CAPACITY};
+    use dali2rust_contracts::msg::{
+        LightSetpoint, Origin, PowerState, RuntimeObservation, RuntimeStateChangedEvent,
+    };
 
     fn key(kind: u16) -> Option<crate::ws::CoalesceKey> {
         crate::ws::coalesce_key(&test_envelope(kind))
     }
 
     fn test_envelope(virtual_lamp_id: u16) -> dali2rust_contracts::msg::EventEnvelope {
-        use dali2rust_contracts::msg::{
-            LightSetpoint, Origin, PowerState, RuntimeObservation, RuntimeStateChangedEvent,
-        };
         dali2rust_contracts::bus::event_envelope(
             dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
             0,

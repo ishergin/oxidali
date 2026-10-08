@@ -383,7 +383,6 @@ pub static PERSIST_COMMITS_DURING_FRAME: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(0);
 
 pub fn note_persist_commit() {
-    use core::sync::atomic::Ordering::Relaxed;
     PERSIST_COMMITS_TOTAL.fetch_add(1, Relaxed);
     if PHY_FRAME_ACTIVE.load(Relaxed) {
         PERSIST_COMMITS_DURING_FRAME.fetch_add(1, Relaxed);
@@ -391,7 +390,6 @@ pub fn note_persist_commit() {
 }
 
 pub fn persist_commit_overlap() -> (u32, u32) {
-    use core::sync::atomic::Ordering::Relaxed;
     (
         PERSIST_COMMITS_TOTAL.load(Relaxed),
         PERSIST_COMMITS_DURING_FRAME.load(Relaxed),
@@ -412,7 +410,6 @@ pub static PERSIST_GATE_TIMEOUTS: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(0);
 
 pub fn wire_busy_for_persist() -> bool {
-    use core::sync::atomic::Ordering::Relaxed;
     PHY_FRAME_ACTIVE.load(Relaxed) || PHY_IDLE_TICKS.load(Relaxed) < PERSIST_QUIET_GAP_TICKS
 }
 
@@ -444,7 +441,6 @@ pub fn await_wire_gap(
 }
 
 pub fn note_persist_gate(outcome: PersistGate) {
-    use core::sync::atomic::Ordering::Relaxed;
     match outcome {
         PersistGate::Open => {}
         PersistGate::Waited { ms } => {
@@ -460,7 +456,6 @@ pub fn note_persist_gate(outcome: PersistGate) {
 }
 
 pub fn persist_gate_stats() -> (u32, u32, u32) {
-    use core::sync::atomic::Ordering::Relaxed;
     (
         PERSIST_GATE_WAITS.load(Relaxed),
         PERSIST_GATE_WAIT_MS.load(Relaxed),

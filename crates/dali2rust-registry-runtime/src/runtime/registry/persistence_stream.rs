@@ -534,16 +534,17 @@ mod tests {
         MemoryBankRangeRecord, MemoryBankRecord, PhysicalDeviceRecord,
     };
     use super::super::store::RegistryStore;
-    use crate::test_support::ProbeStore;
+    use crate::test_support::{CountingStore, ProbeStore};
     use super::super::virtual_lamps::VlRecord;
     use super::FLUSH_CHUNK_BYTES;
     use dali2rust_contracts::msg::{fixed_text_64, ColorMode, DeviceType, DeviceTypeSet};
     use dali2rust_domain::registry::{
         AttributeSource, MemoryBankRangeView, MemoryBankSummaryView, ObservedValue,
-        PhysicalDeviceAttributesView,
+        PhysicalDeviceAttributesView, SceneReadPort,
     };
     use dali2rust_bsp::slice_store_files::InMemorySliceStore;
     use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
+    use std::sync::atomic::Ordering;
 
     fn observed<T>(value: T, ms: u64) -> Option<ObservedValue<T>> {
         Some(ObservedValue {
@@ -864,7 +865,6 @@ mod tests {
 
     #[test]
     fn streamed_scene_flush_is_byte_identical_and_roundtrips() {
-        use dali2rust_domain::registry::SceneReadPort;
         let store = populated_store(4);
         let slices = InMemorySliceStore::new();
         store.dirty.mark_scene_dirty(0, 3);
@@ -947,8 +947,6 @@ mod tests {
 
     #[test]
     fn one_dirty_device_writes_one_banks_worth_of_bytes_issue89() {
-        use crate::test_support::CountingStore;
-
         let store = populated_store(64);
 
         let all = CountingStore::default();
@@ -990,8 +988,6 @@ mod tests {
 
     #[test]
     fn a_legacy_whole_adapter_slice_hydrates_once_and_is_rewritten_as_banks() {
-        use crate::test_support::CountingStore;
-
         let legacy = InMemorySliceStore::new();
         {
             let old = populated_store(16);
@@ -1484,7 +1480,6 @@ mod tests {
 
     #[test]
     fn mid_stream_store_failure_keeps_slice_dirty_for_retry() {
-        use std::sync::atomic::Ordering;
         let store = populated_store(16);
         store.dirty.mark_physical_device_dirty(0, 0);
 

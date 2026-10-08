@@ -35,9 +35,9 @@ use dali2rust_api::http::stats_state::{
     StatsWebSocketDto,
 };
 use dali2rust_api::http::{
-    physical_device_state::PhysicalDeviceHttpState, AdapterHttpState, AdapterHttpStateBridge,
-    AdapterSettingsApplyWatch, AdapterSettingsApplyWatchBridge, GroupHttpState,
-    GroupHttpStateBridge, GroupMetadataApplyWatch, GroupMetadataApplyWatchBridge,
+    physical_device_state::PhysicalDeviceHttpState, redundancy_state as rs, AdapterHttpState,
+    AdapterHttpStateBridge, AdapterSettingsApplyWatch, AdapterSettingsApplyWatchBridge,
+    GroupHttpState, GroupHttpStateBridge, GroupMetadataApplyWatch, GroupMetadataApplyWatchBridge,
     HclScheduleHttpState, HclScheduleHttpStateBridge, PhysicalDeviceHttpStateBridge,
     PhysicalDevicePatchWatch, PhysicalDevicePatchWatchBridge, SceneHttpState, SceneHttpStateBridge,
     SceneMetadataApplyWatch, SceneMetadataApplyWatchBridge, VirtualLampBindingApplyWatch,
@@ -50,6 +50,7 @@ use dali2rust_operations_runtime::{ApplyOrchestratorCounters, OperationTrackerCo
 use dali2rust_platform::clock::Clock;
 use dali2rust_platform::heap::{HeapStats, HeapStatsPort};
 use dali2rust_platform::net::{LinkStats, NetworkLink};
+use dali2rust_mqtt_runtime::MqttCounters;
 use dali2rust_registry_runtime::{
     PersistenceCounters, RegistryApplyWatch, RegistryStore, RegistryWorkerCounters,
 };
@@ -413,17 +414,16 @@ impl dali2rust_api::http::handlers::controller::ControllerSummarySource for Cont
     }
 }
 
-fn stats_mqtt_dto(c: &dali2rust_mqtt_runtime::MqttCounters) -> StatsMqttDto {
-    use dali2rust_mqtt_runtime::MqttCounters as M;
+fn stats_mqtt_dto(c: &MqttCounters) -> StatsMqttDto {
     StatsMqttDto {
         connected: c.is_connected(),
-        publishes_total: M::load(&c.publishes_total),
-        publish_failures_total: M::load(&c.publish_failures_total),
-        rule_messages_total: M::load(&c.rule_messages_total),
-        rule_messages_coalesced_total: M::load(&c.rule_messages_coalesced_total),
-        rule_messages_lost_total: M::load(&c.rule_messages_lost_total),
-        subscriptions_refused_total: M::load(&c.subscriptions_refused_total),
-        own_topics_refused_total: M::load(&c.own_topics_refused_total),
+        publishes_total: MqttCounters::load(&c.publishes_total),
+        publish_failures_total: MqttCounters::load(&c.publish_failures_total),
+        rule_messages_total: MqttCounters::load(&c.rule_messages_total),
+        rule_messages_coalesced_total: MqttCounters::load(&c.rule_messages_coalesced_total),
+        rule_messages_lost_total: MqttCounters::load(&c.rule_messages_lost_total),
+        subscriptions_refused_total: MqttCounters::load(&c.subscriptions_refused_total),
+        own_topics_refused_total: MqttCounters::load(&c.own_topics_refused_total),
     }
 }
 
@@ -755,7 +755,6 @@ impl dali2rust_api::http::handlers::config_transfer::ConfigTransferPort for Conf
         name: &str,
         bytes: &[u8],
     ) -> Result<(), dali2rust_api::http::handlers::config_transfer::ImportRefusal> {
-        use dali2rust_api::http::handlers::config_transfer::ImportRefusal;
         let slices = self
             .slices
             .as_ref()
@@ -927,7 +926,6 @@ impl RedundancyBridge {
 
 impl dali2rust_api::http::redundancy_state::RedundancyHttpState for RedundancyBridge {
     fn redundancy_state_dto(&self) -> dali2rust_api::http::redundancy_state::RedundancyStateDto {
-        use dali2rust_api::http::redundancy_state as rs;
         let view = self.settings.redundancy_settings_view();
         let now = dali2rust_platform::liveness::monotonic_ms();
         let reflex = &self.counters.arbitration_reflex;
@@ -955,7 +953,6 @@ impl RedundancyBridge {
     fn transition_rows(
         &self,
     ) -> Vec<dali2rust_api::http::redundancy_state::RedundancyTransitionDto> {
-        use dali2rust_api::http::redundancy_state as rs;
         let Ok(rows) = self.transitions.lock() else {
             return Vec::new();
         };
@@ -1148,6 +1145,8 @@ fn instance_dto(view: &dali2rust_registry_runtime::InstanceView) -> InstanceDto 
 use dali2rust_domain::registry::{GROUP_COUNT, VIRTUAL_LAMP_COUNT};
 use dali2rust_rules_model::limits::{MAX_GROUP_ID, MAX_LAMP_ID};
 use dali2rust_rules_model::{DeviceRef, GroupRef, InputDeviceRef, LampRef, NameResolver, SceneRef};
+use dali2rust_api::http::handlers::config_transfer::ImportRefusal;
+use dali2rust_api::http::firmware_state::{FirmwareStateDto, FirmwareUpdateDto};
 
 const _: () = assert!(MAX_LAMP_ID as u16 + 1 == VIRTUAL_LAMP_COUNT as u16);
 const _: () = assert!(MAX_GROUP_ID as u16 + 1 == GROUP_COUNT as u16);
@@ -1467,7 +1466,6 @@ impl FirmwareBridge {
 
 impl dali2rust_api::http::firmware_state::FirmwareHttpState for FirmwareBridge {
     fn firmware_dto(&self) -> dali2rust_api::http::firmware_state::FirmwareStateDto {
-        use dali2rust_api::http::firmware_state::{FirmwareStateDto, FirmwareUpdateDto};
         let slot = match &self.port {
             Some(port) => port.slot(),
             None => dali2rust_platform::firmware::FirmwareSlot::new("", false, false),

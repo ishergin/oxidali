@@ -1,4 +1,5 @@
 use super::*;
+use dali2rust_contracts::msg::DaliAttributeReadChunk as Chunk;
 
 pub(super) fn read_scene_colours(
     controller: &mut impl DaliApplicationController,
@@ -33,7 +34,6 @@ fn read_one_scene_colour(
     scene: u8,
     content_confirm: ContentConfirmPolicy,
 ) -> Result<dali2rust_contracts::msg::DaliAttributeReadChunk, SemanticDaliError> {
-    use dali2rust_contracts::msg::DaliAttributeReadChunk as Chunk;
     controller.unit_exempt(|controller| {
         let level = send_standard_query(
             controller,

@@ -245,6 +245,8 @@ const SNAPSHOT_RESERVE: usize = 64;
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
 
     const WRITER_START_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -261,9 +263,6 @@ mod tests {
 
     #[test]
     fn a_published_observation_is_never_read_half_written() {
-        use std::sync::atomic::AtomicBool;
-        use std::sync::Arc;
-
         static SLOT: ObservationSlot = ObservationSlot::new();
         let stop = Arc::new(AtomicBool::new(false));
         let writer_stop = Arc::clone(&stop);
