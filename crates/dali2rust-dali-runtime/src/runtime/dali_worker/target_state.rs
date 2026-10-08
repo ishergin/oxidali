@@ -136,21 +136,36 @@ fn run_set_target_state_physical(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "one param per addressing field the fact carries")]
+#[derive(Clone, Copy)]
+struct FailedTarget {
+    registry_adapter_id: u8,
+    scope: DaliTargetScope,
+    short_address: Option<u8>,
+    group_id: Option<u8>,
+    virtual_lamp_id: Option<u8>,
+}
+
+impl FailedTarget {
+    const fn new(registry_adapter_id: u8, scope: DaliTargetScope) -> Self {
+        Self {
+            registry_adapter_id,
+            scope,
+            short_address: None,
+            group_id: None,
+            virtual_lamp_id: None,
+        }
+    }
+}
+
 fn close_target_state_failure(
     publisher: &BusPublisher,
     adapter_id: BusId,
     correlation_id: u64,
     counters: &DaliWorkerCounters,
-    registry_adapter_id: u8,
-    scope: dali2rust_contracts::msg::DaliTargetScope,
-    short_address: Option<u8>,
+    target: FailedTarget,
     error: &SemanticDaliError,
 ) {
-    publish_target_state_failed(
-        publisher, adapter_id, correlation_id, registry_adapter_id, scope, short_address,
-        error,
-    );
+    publish_target_state_failed(publisher, adapter_id, correlation_id, target, error);
     counters.execution_failed.fetch_add(1, Ordering::Relaxed);
     emit_execution_failed_with_product_error(
         publisher,
@@ -170,18 +185,16 @@ fn publish_target_state_failed(
     publisher: &BusPublisher,
     adapter_id: BusId,
     correlation_id: u64,
-    registry_adapter_id: u8,
-    scope: dali2rust_contracts::msg::DaliTargetScope,
-    short_address: Option<u8>,
+    target: FailedTarget,
     error: &SemanticDaliError,
 ) {
     let event = dali2rust_contracts::msg::DaliTargetStateFailedEvent {
-        adapter_id: registry_adapter_id,
-        short_address: short_address.unwrap_or(0),
+        adapter_id: target.registry_adapter_id,
+        short_address: target.short_address.unwrap_or(0),
         error: dali2rust_contracts::msg::CompactErrorPayload::new(error.code(), error.message()),
-        scope,
-        group_id: None,
-        virtual_lamp_id: None,
+        scope: target.scope,
+        group_id: target.group_id,
+        virtual_lamp_id: target.virtual_lamp_id,
     };
     publish_event_typed(
         publisher,
@@ -212,12 +225,11 @@ fn handle_set_target_state_short(
     if let Err(error) = apply_with_sequence_retry(sequence_retries, || {
         apply_short_target_state(controller, short_address, sp, policy)
     }) {
-        publish_target_state_failed(
-            publisher, adapter_id, correlation_id, registry_adapter_id,
-            dali2rust_contracts::msg::DaliTargetScope::Short, Some(short_address), &error,
-        );
-        counters.execution_failed.fetch_add(1, Ordering::Relaxed);
-        emit_execution_failed(publisher, correlation_id, counters);
+        let target = FailedTarget {
+            short_address: Some(short_address),
+            ..FailedTarget::new(registry_adapter_id, DaliTargetScope::Short)
+        };
+        close_target_state_failure(publisher, adapter_id, correlation_id, counters, target, &error);
         return;
     }
     let applied = target_state_applied_event(
@@ -277,10 +289,8 @@ fn handle_set_target_state_broadcast(
     if let Err(error) = apply_with_sequence_retry(sequence_retries, || {
         apply_broadcast_target_state(controller, sp)
     }) {
-        close_target_state_failure(
-            publisher, adapter_id, correlation_id, counters, registry_adapter_id,
-            dali2rust_contracts::msg::DaliTargetScope::Broadcast, None, &error,
-        );
+        let target = FailedTarget::new(registry_adapter_id, DaliTargetScope::Broadcast);
+        close_target_state_failure(publisher, adapter_id, correlation_id, counters, target, &error);
         return;
     }
     let applied = target_state_applied_event(
@@ -327,16 +337,11 @@ fn handle_set_target_state_group(
     if let Err(error) = apply_with_sequence_retry(sequence_retries, || {
         apply_group_target_state(controller, group_id, sp)
     }) {
-        let event = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliTargetStateFailedEvent { adapter_id: registry_adapter_id, short_address: 0, error: dali2rust_contracts::msg::CompactErrorPayload::new(error.code(), error.message()), scope: dali2rust_contracts::msg::DaliTargetScope::Group, group_id: Some(group_id), virtual_lamp_id: None });
-        publish_event_typed(publisher, event);
-        counters.execution_failed.fetch_add(1, Ordering::Relaxed);
-        emit_execution_failed_with_product_error(
-            publisher,
-            correlation_id,
-            counters,
-            error.code(),
-            error.message(),
-        );
+        let target = FailedTarget {
+            group_id: Some(group_id),
+            ..FailedTarget::new(registry_adapter_id, DaliTargetScope::Group)
+        };
+        close_target_state_failure(publisher, adapter_id, correlation_id, counters, target, &error);
         return;
     }
 
@@ -384,13 +389,15 @@ fn handle_set_target_state_vl(
         return;
     };
     let policy = resolve_color_write_policy(read_port, registry_adapter_id, short_sa);
-    if apply_with_sequence_retry(sequence_retries, || {
+    if let Err(error) = apply_with_sequence_retry(sequence_retries, || {
         apply_short_target_state(controller, short_sa, sp, policy)
-    })
-    .is_err()
-    {
-        counters.execution_failed.fetch_add(1, Ordering::Relaxed);
-        emit_execution_failed(publisher, correlation_id, counters);
+    }) {
+        let target = FailedTarget {
+            short_address: Some(short_sa),
+            virtual_lamp_id: Some(vl_id),
+            ..FailedTarget::new(registry_adapter_id, DaliTargetScope::VirtualLamp)
+        };
+        close_target_state_failure(publisher, adapter_id, correlation_id, counters, target, &error);
         return;
     }
     let applied = target_state_applied_event(

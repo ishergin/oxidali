@@ -504,6 +504,38 @@ fn virtual_lamp_unbound_emits_failed_event_and_confirmation() {
 }
 
 #[test]
+fn a_lamp_or_an_address_the_wire_refuses_publishes_its_failure_with_the_cause() {
+    use dali2rust_contracts::msg::DaliSetTargetStateCommand as SetTarget;
+    let mut read_port = TestReadPort { enabled: true, ..Default::default() };
+    read_port.bindings.insert((0, 4), 12);
+    let read_port: Arc<dyn RegistryReadPort> = Arc::new(read_port);
+    let cases = [
+        (93u64, SetTarget::for_virtual_lamp(0, 4, &setpoint(42)), DaliTargetScope::VirtualLamp, Some(4)),
+        (94u64, SetTarget::for_short(0, 12, &setpoint(42)), DaliTargetScope::Short, None),
+    ];
+    for (corr, command, scope, virtual_lamp_id) in cases {
+        let harness = WorkerHarness::new(Arc::clone(&read_port), ControllerMode::Error);
+        harness.publish(envelope_on_adapter_0(corr, command.into()));
+
+        let failed_event = harness.recv_event_matching(corr, |payload| {
+            matches!(payload, BusEventPayload::DaliTargetStateFailedEvent(_))
+        });
+        let BusEventPayload::DaliTargetStateFailedEvent(body) = &failed_event.payload else {
+            panic!("expected the failed event");
+        };
+        assert_eq!(body.scope, scope);
+        assert_eq!(body.virtual_lamp_id, virtual_lamp_id, "{scope:?}");
+        assert_eq!(body.short_address, 12, "{scope:?}");
+        assert_ne!(body.error.code, ErrorCode::ExecutionFailed, "{scope:?}: the event names the cause");
+        let conf = harness.recv_confirmation_for(corr);
+        assert_eq!(conf.status, DeliveryStatus::ExecutionFailed, "{scope:?}");
+        let error = conf.confirmation.error.as_ref().expect("the answer names the cause");
+        assert_eq!(error.code, body.error.code, "{scope:?}: the answer and the event agree");
+        assert_eq!(harness.counters.execution_failed.load(Ordering::Relaxed), 1, "{scope:?}");
+    }
+}
+
+#[test]
 fn virtual_lamp_bound_target_state_publishes_expanded_applied_event_without_runtime_update() {
     let mut read_port = TestReadPort {
         enabled: true,
