@@ -174,9 +174,11 @@ mod manifest_tests {
             None
         }
 
-        fn import_slice(&self, _name: &str, _bytes: &[u8]) -> Result<(), ImportRefusal> {
+        fn stage_import(&self, _workflow: u64, _name: &str, _bytes: &[u8]) -> Result<(), ImportRefusal> {
             Err(ImportRefusal::UnknownSlice)
         }
+
+        fn discard_import(&self, _workflow: u64) {}
     }
 
     #[test]
