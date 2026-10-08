@@ -1,5 +1,5 @@
 use core::cmp::Reverse;
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
 
@@ -52,9 +52,40 @@ impl BankHeader {
 
 #[derive(Default)]
 struct SlotMemory {
-    served: AtomicU8,
+    served: ServedBank,
     erased: AtomicU8,
     writing: AtomicBool,
+}
+
+const SERVED_BANK_BITS: u32 = 8;
+const SERVED_BANK_MASK: u32 = (1 << SERVED_BANK_BITS) - 1;
+
+#[derive(Default)]
+struct ServedBank(AtomicU32);
+
+impl ServedBank {
+    fn snapshot(&self) -> u32 {
+        self.0.load(Ordering::Acquire)
+    }
+
+    fn bank(&self) -> Option<u8> {
+        match self.snapshot() & SERVED_BANK_MASK {
+            0 => None,
+            packed => u8::try_from(packed - 1).ok(),
+        }
+    }
+
+    fn committed(&self, bank: u8) {
+        let _ = self.0.fetch_update(Ordering::AcqRel, Ordering::Acquire, |word| {
+            let generation = (word >> SERVED_BANK_BITS).wrapping_add(1);
+            Some(generation << SERVED_BANK_BITS | (u32::from(bank) + 1))
+        });
+    }
+
+    fn read_unless_moved(&self, seen: u32, bank: u8) {
+        let read = (seen & !SERVED_BANK_MASK) | (u32::from(bank) + 1);
+        let _ = self.0.compare_exchange(seen, read, Ordering::AcqRel, Ordering::Relaxed);
+    }
 }
 
 struct WriteClaim<'a>(&'a AtomicBool);
@@ -90,9 +121,6 @@ impl SlotMemory {
         cell.store(0, Ordering::Relaxed);
     }
 
-    fn set_unless_moved(cell: &AtomicU8, seen: u8, bank: u8) {
-        let _ = cell.compare_exchange(seen, bank + 1, Ordering::AcqRel, Ordering::Relaxed);
-    }
 }
 
 pub struct SliceStoreCore<F: RawFlash> {
@@ -162,7 +190,7 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
     fn load(&self, key: SliceKey) -> Result<Vec<u8>, StoreError> {
         let slot = slot_geometry(key).ok_or(StoreError::Missing)?;
         let memory = self.memory(key);
-        let seen = memory.map(|m| m.served.load(Ordering::Acquire));
+        let seen = memory.map(|m| m.served.snapshot());
         let mut last_err = StoreError::Missing;
         for (bank, header) in self.candidate_banks(&slot)? {
             let mut payload = vec![0u8; header.len as usize];
@@ -187,7 +215,7 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
                 continue;
             }
             if let (Some(memory), Some(seen)) = (memory, seen) {
-                SlotMemory::set_unless_moved(&memory.served, seen, bank);
+                memory.served.read_unless_moved(seen, bank);
             }
             return Ok(payload);
         }
@@ -202,7 +230,7 @@ impl<F: RawFlash> SliceStore for SliceStoreCore<F> {
         let current = self.current_bank(&slot)?;
         let seq = current.as_ref().map_or(1, |(_, header)| header.seq + 1);
         let BankChoice { keep, target } = choose_bank(
-            memory.and_then(|m| SlotMemory::get(&m.served)),
+            memory.and_then(|m| m.served.bank()),
             current.as_ref().map(|(bank, _)| *bank),
         );
 
@@ -287,7 +315,7 @@ impl<F: RawFlash> SliceWriteSession for CoreWriteSession<'_, F> {
             .write(self.slot.bank_offset(self.target), &header.encode())?;
 
         if let Some(memory) = self.store.memory(self.key) {
-            SlotMemory::set(&memory.served, self.target);
+            memory.served.committed(self.target);
         }
         if let Some(stale) = self.stale {
             match self.store.erase_bank(&self.slot, stale) {

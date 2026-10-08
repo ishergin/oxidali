@@ -632,5 +632,20 @@ mod tests {
         assert_eq!(bit_after_restart(&slices, "porch"), Some(false));
     }
 
+    #[test]
+    fn a_reload_with_no_stage_leaves_a_waiting_switch_waiting() {
+        let slices = Arc::new(CountingStore::default());
+        let (deps, _host) = worker_on(&slices);
+        let mut clock = FlushClock::new(HCL_SWITCH_WRITE_INTERVAL);
+        apply_frame_and_flush(command(1, schedule("porch")), &deps, &mut clock);
+        apply_frame_and_flush(command(2, switch("porch", false)), &deps, &mut clock);
+        let writes = slices.write_count();
+
+        let reload = RegistrySliceReloadCommand { slice_name: fixed_text_32("poller_settings") };
+        apply_frame_and_flush(command(IMPORT_WORKFLOW, reload), &deps, &mut clock);
+        assert_eq!(slices.write_count(), writes, "nothing was staged, so nothing is flushed");
+        assert!(deps.store.dirty.hcl_switches_due(Duration::ZERO), "the switch keeps its interval");
+    }
+
     const IMPORT_WORKFLOW: u64 = 9;
 }

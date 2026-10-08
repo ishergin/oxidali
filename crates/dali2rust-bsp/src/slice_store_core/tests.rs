@@ -388,16 +388,27 @@ fn a_load_overtaken_by_a_commit_leaves_the_served_bank_where_the_commit_put_it()
         write_slice(&writer_store, b"second").expect("second write");
         done_tx.send(()).expect("done");
     });
-    store.flash.after_reads(HEADERS_BEFORE_THE_PAYLOAD, Box::new(move || {
+    store.flash.after_reads(HEADER_READS, Box::new(move || {
         go_tx.send(()).expect("go");
         done_rx.recv().expect("done");
     }));
 
     assert_eq!(store.load(KEY).expect("an overtaken load"), b"first");
     writer.join().expect("writer");
-    let served = store.memory(KEY).and_then(|m| SlotMemory::get(&m.served));
+    let served = store.memory(KEY).and_then(|m| m.served.bank());
     let current = store.current_bank(&geometry()).expect("banks").map(|(bank, _)| bank);
     assert_eq!(served, current, "the load put the served bank back on the one the commit erased");
 }
 
-const HEADERS_BEFORE_THE_PAYLOAD: usize = 2;
+const HEADER_READS: usize = 2;
+
+#[test]
+fn a_load_that_two_commits_overtook_leaves_the_served_bank_alone() {
+    let served = ServedBank::default();
+    served.committed(0);
+    let seen = served.snapshot();
+    served.committed(1);
+    served.committed(0);
+    served.read_unless_moved(seen, 1);
+    assert_eq!(served.bank(), Some(0), "the bank is back where the load saw it, but it moved twice");
+}
