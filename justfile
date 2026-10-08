@@ -105,6 +105,7 @@ verify:
     bash scripts/verify_test_layers.sh
     bash scripts/verify_fixed_bus_guardrails.sh
     python3 scripts/verify_comments.py
+    python3 scripts/verify_imports_at_module_level.py
     bash scripts/verify_web_assets.sh
     python3 scripts/verify_web_classes_styled.py
     python3 scripts/verify_design_vocabulary.py
