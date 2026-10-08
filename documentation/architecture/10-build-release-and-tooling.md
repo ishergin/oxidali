@@ -189,7 +189,9 @@ unchecked image, and `hil flash` refuses one unless told `--allow-red-isr`.
 - A new host-buildable crate is added to `scripts/host_crates.txt` only — the one list
   that `just check` / `test` / `clippy`, the pedantic advisory and every gate with a crate
   scope read, the scripts through `host_crates.sh` and `host_crates.py`. The ESP-only
-  firmware crate and the BDD crate stay out of it.
+  firmware crate and the BDD crate stay out of it, named in the workspace manifest's
+  `[workspace.metadata.dali2rust] not_host`; `host_crates.py` fails when the list and the
+  workspace members disagree.
 - The 40-line rule is measured on production code: `verify_fn_length.sh` runs clippy on
   `--lib` targets, so unit-test modules, integration tests and the BDD crate are outside
   it. `verify_fn_length_esp.py` finds ESP-only code by the literal

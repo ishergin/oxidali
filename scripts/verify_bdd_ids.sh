@@ -64,12 +64,6 @@ for path in feature_files:
         errors.append(f"MISSING Feature: header: {path}")
         continue
 
-    stages = []
-    for idx, line in enumerate(lines, start=1):
-        for match in stage_re.finditer(line):
-            stage = match.group(1)
-            stages.append(stage)
-
     feature_header_stages = []
     for idx in range(1, feature_line):
         for match in stage_re.finditer(lines[idx - 1]):

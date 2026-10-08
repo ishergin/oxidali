@@ -9,7 +9,6 @@ import tomllib
 SCRIPTS = Path(__file__).resolve().parent
 LIST = SCRIPTS / "host_crates.txt"
 WORKSPACE = SCRIPTS.parent / "Cargo.toml"
-NOT_HOST = {"crates/dali2rust-firmware", "tests/dali2rust-bdd"}
 
 
 def host_crates():
@@ -17,8 +16,9 @@ def host_crates():
     names = [name for name in names if name]
     if not names:
         raise SystemExit(f"{LIST} lists no crates")
-    members = tomllib.loads(WORKSPACE.read_text(encoding="utf-8"))["workspace"]["members"]
-    expected = sorted(member.removeprefix("crates/") for member in members if member not in NOT_HOST)
+    workspace = tomllib.loads(WORKSPACE.read_text(encoding="utf-8"))["workspace"]
+    not_host = set(workspace["metadata"]["dali2rust"]["not_host"])
+    expected = sorted(m.removeprefix("crates/") for m in workspace["members"] if m not in not_host)
     if sorted(names) != expected:
         missing = sorted(set(expected) - set(names))
         stray = sorted(set(names) - set(expected))
