@@ -241,6 +241,16 @@ fn handle_set_target_state_short(
         sp,
         provenance,
     );
+    close_target_state_applied(publisher, correlation_id, adapter_id, counters, applied);
+}
+
+fn close_target_state_applied(
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    adapter_id: BusId,
+    counters: &DaliWorkerCounters,
+    applied: dali2rust_contracts::msg::DaliTargetStateAppliedEvent,
+) {
     if !publish_target_state_applied_event(publisher, correlation_id, adapter_id, counters, applied)
     {
         emit_execution_failed(publisher, correlation_id, counters);
@@ -409,14 +419,7 @@ fn handle_set_target_state_vl(
         sp,
         provenance,
     );
-    if !publish_target_state_applied_event(publisher, correlation_id, adapter_id, counters, applied)
-    {
-        emit_execution_failed(publisher, correlation_id, counters);
-        return;
-    }
-    counters
-        .semantic_set_target_state_handled
-        .fetch_add(1, Ordering::Relaxed);
+    close_target_state_applied(publisher, correlation_id, adapter_id, counters, applied);
 }
 
 fn fail_target_state_vl_unbound(

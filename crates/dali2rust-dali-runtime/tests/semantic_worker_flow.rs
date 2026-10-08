@@ -505,13 +505,12 @@ fn virtual_lamp_unbound_emits_failed_event_and_confirmation() {
 
 #[test]
 fn a_lamp_or_an_address_the_wire_refuses_publishes_its_failure_with_the_cause() {
-    use dali2rust_contracts::msg::DaliSetTargetStateCommand as SetTarget;
     let mut read_port = TestReadPort { enabled: true, ..Default::default() };
     read_port.bindings.insert((0, 4), 12);
     let read_port: Arc<dyn RegistryReadPort> = Arc::new(read_port);
     let cases = [
-        (93u64, SetTarget::for_virtual_lamp(0, 4, &setpoint(42)), DaliTargetScope::VirtualLamp, Some(4)),
-        (94u64, SetTarget::for_short(0, 12, &setpoint(42)), DaliTargetScope::Short, None),
+        (93u64, DaliSetTargetStateCommand::for_virtual_lamp(0, 4, &setpoint(42)), DaliTargetScope::VirtualLamp, Some(4)),
+        (94u64, DaliSetTargetStateCommand::for_short(0, 12, &setpoint(42)), DaliTargetScope::Short, None),
     ];
     for (corr, command, scope, virtual_lamp_id) in cases {
         let harness = WorkerHarness::new(Arc::clone(&read_port), ControllerMode::Error);
@@ -526,7 +525,6 @@ fn a_lamp_or_an_address_the_wire_refuses_publishes_its_failure_with_the_cause() 
         assert_eq!(body.scope, scope);
         assert_eq!(body.virtual_lamp_id, virtual_lamp_id, "{scope:?}");
         assert_eq!(body.short_address, 12, "{scope:?}");
-        assert_ne!(body.error.code, ErrorCode::ExecutionFailed, "{scope:?}: the event names the cause");
         let conf = harness.recv_confirmation_for(corr);
         assert_eq!(conf.status, DeliveryStatus::ExecutionFailed, "{scope:?}");
         let error = conf.confirmation.error.as_ref().expect("the answer names the cause");

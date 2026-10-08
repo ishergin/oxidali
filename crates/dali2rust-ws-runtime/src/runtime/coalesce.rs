@@ -124,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn every_rule_firing_reaches_the_client_as_its_own_frame() {
+    fn every_rule_firing_stays_its_own_frame_in_the_burst_buffer() {
         let shared_prefix = "hall motion turns the corridor lights on at night";
         let mut c = BurstCoalescer::new();
         push_envelope(&mut c, activation_env("night", 1));
