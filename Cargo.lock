@@ -742,6 +742,7 @@ dependencies = [
  "dali2rust-bus",
  "dali2rust-contracts",
  "dali2rust-domain",
+ "dali2rust-gear-model",
  "dali2rust-platform",
  "dali2rust-registry-runtime",
  "dali2rust-test-support",

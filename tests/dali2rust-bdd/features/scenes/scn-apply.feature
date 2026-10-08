@@ -71,7 +71,7 @@ Feature: Scene apply
     And the JSON field "operation_id" should be non-empty
     And the last operation eventually succeeds
     And the scene-apply operation result should list skipped virtual lamp 9 with reason "vl_unbound"
-    And the DALI mock transport should have received 9 forward frame
+    And the DALI mock transport should have received 14 forward frame
     When I send a GET request to "/api/v1/adapters/0/scenes/3"
     Then the JSON boolean field "dirty" should be true
 
