@@ -60,6 +60,16 @@ mod tests {
     }
 
     #[test]
+    fn an_open_firmware_write_makes_a_free_gate_not_writable_now() {
+        let _serial = one_gate_test_at_a_time();
+        set_firmware_write_open(true);
+        let while_open = writable_now();
+        set_firmware_write_open(false);
+        assert!(!while_open, "an httpd write must not land beside a firmware write");
+        assert!(writable_now(), "a free gate with no firmware write open is writable");
+    }
+
+    #[test]
     fn the_firmware_write_flag_round_trips() {
         let _serial = one_gate_test_at_a_time();
         set_firmware_write_open(true);
