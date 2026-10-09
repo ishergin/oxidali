@@ -188,6 +188,9 @@ fn percent_decode_path(s: &str) -> String {
     decode(s, false)
 }
 
+const PERCENT_ESCAPE_LEN: usize = 3;
+const HEX_RADIX: u32 = 16;
+
 fn decode(s: &str, plus_is_space: bool) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -198,18 +201,16 @@ fn decode(s: &str, plus_is_space: bool) -> String {
                 out.push(b' ');
                 i += 1;
             }
-            b'%' if i + 2 < bytes.len() => {
-                match u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                    Ok(byte) => {
-                        out.push(byte);
-                        i += 3;
-                    }
-                    Err(_) => {
-                        out.push(b'%');
-                        i += 1;
-                    }
+            b'%' => match escaped_byte(bytes, i) {
+                Some(byte) => {
+                    out.push(byte);
+                    i += PERCENT_ESCAPE_LEN;
                 }
-            }
+                None => {
+                    out.push(b'%');
+                    i += 1;
+                }
+            },
             other => {
                 out.push(other);
                 i += 1;
@@ -217,6 +218,14 @@ fn decode(s: &str, plus_is_space: bool) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+fn escaped_byte(bytes: &[u8], at: usize) -> Option<u8> {
+    let digits = bytes.get(at + 1..at + PERCENT_ESCAPE_LEN)?;
+    if !digits.iter().all(u8::is_ascii_hexdigit) {
+        return None;
+    }
+    u8::from_str_radix(std::str::from_utf8(digits).ok()?, HEX_RADIX).ok()
 }
 
 impl Default for Router {
@@ -396,6 +405,20 @@ mod tests {
         assert_eq!(resp.status, 200);
         let body = body_text(resp.body);
         assert!(body.contains("кнопка 1"), "path param not decoded: {body}");
+    }
+
+    #[test]
+    fn a_percent_before_a_multibyte_character_stays_literal() {
+        let mut router = Router::new();
+        router
+            .register(RouteSpec::get("/api/v1/rules/{name}", Box::new(EchoParamsHandler)))
+            .expect("route");
+        let resp = router.dispatch("GET", "/api/v1/rules/%1Ж?q=%1Ж&r=%+1", &[]);
+        assert_eq!(resp.status, 200);
+        let body = body_text(resp.body);
+        assert!(body.contains(r#"("name", "%1Ж")"#), "path escape mangled: {body}");
+        assert!(body.contains(r#"("q", "%1Ж")"#), "query escape mangled: {body}");
+        assert!(body.contains(r#"("r", "% 1")"#), "a sign was taken for a hex digit: {body}");
     }
 
     #[test]
