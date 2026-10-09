@@ -77,7 +77,8 @@ Feature: Configuration slices — export and import
     And I PATCH JSON {"broker_host":"other.local"} to "/api/v1/settings/home-assistant"
     Then the response status should be 200
     When I PUT the kept body to "/api/v1/config/slices/home_assistant_settings"
-    Then the response status should be 200
+    Then the response status should be 202
+    And the last operation eventually succeeds
     And the JSON pointer "/broker_host" at "/api/v1/settings/home-assistant" should eventually be "broker.local"
     And the JSON pointer "/broker_password_set" at "/api/v1/settings/home-assistant" should eventually be "true"
 
@@ -90,7 +91,8 @@ Feature: Configuration slices — export and import
     Then the response status should be 200
     And the JSON pointer "/timezone" at "/api/v1/time" should eventually be "UTC0"
     When I PUT the kept body to "/api/v1/config/slices/settings"
-    Then the response status should be 200
+    Then the response status should be 202
+    And the last operation eventually succeeds
     And the JSON pointer "/timezone" at "/api/v1/time" should eventually be "EST5"
 
   @id:CFG-011
@@ -101,9 +103,36 @@ Feature: Configuration slices — export and import
     And the JSON pointer "/revision" at "/api/v1/rules" should eventually be "1"
     When I export "/api/v1/config/slices/rules_b0" and keep the body
     And I PUT the kept body to "/api/v1/config/slices/rules_b0"
-    Then the response status should be 200
+    Then the response status should be 202
+    And the last operation eventually succeeds
     And the JSON pointer "/rule_count" at "/api/v1/rules" should eventually be "1"
     And the JSON pointer "/revision" at "/api/v1/rules" should eventually be "1"
     When I send a GET request to "/api/v1/rules"
     Then the response body should contain "# импорт"
     And the JSON pointer "/diagnostic" should be null
+
+  @id:CFG-012
+  Scenario: A slice that does not decode is refused, and the stored one stays
+    When I PATCH JSON {"interval_ms":60000} to "/api/v1/settings/poller"
+    Then the response status should be 200
+    When I export "/api/v1/config/slices/poller_settings" once it is stored and keep the body
+    And I PUT JSON {"anything":1} to "/api/v1/config/slices/poller_settings"
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error code should be "invalid_value"
+    And the operation error message should be "invalid_slice"
+    And the export of "/api/v1/config/slices/poller_settings" should be the kept body
+
+  @id:CFG-013
+  Scenario: An imported slice replaces what memory holds, so a lamp it lacks is gone
+    Given adapter 0 has discovered physical devices 0 and 1
+    When I PUT JSON {"physical_short_address":1} to "/api/v1/adapters/0/virtual-lamps/2/binding"
+    Then the response status should be 200
+    When I export "/api/v1/config/slices/a0%2Fvirtual_lamps" once it is stored and keep the body
+    And I PUT JSON {"physical_short_address":0} to "/api/v1/adapters/0/virtual-lamps/1/binding"
+    Then the response status should be 200
+    When I PUT the kept body to "/api/v1/config/slices/a0%2Fvirtual_lamps"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I send a GET request to "/api/v1/adapters/0/virtual-lamps"
+    Then the virtual lamps list should not contain lamp 1

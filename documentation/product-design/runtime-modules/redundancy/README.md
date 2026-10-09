@@ -131,8 +131,11 @@ MQTT — [`ADR-018`](../../../architecture/decisions/ADR-018-controller-redundan
 что переносится — [`config-transfer`](../../rest-api/resources/config-transfer.md)).
 Пассивный контроллер с заданным `peer_url` раз в 30 с тянет у пира манифест слайсов
 (`GET /api/v1/config/slices`: имя, размер, CRC), забирает слайсы, чьи размер или CRC
-отличаются, пишет их в свой слайс-стор и публикует **один**
-`RegistrySliceReloadCommand` на проход.
+отличаются, кладёт их одной партией в стейдж импорта реестра и публикует **один**
+`RegistrySliceReloadCommand` на проход; воркер реестра пишет слайсы, которые
+декодируются, и перечитывает реестр, а отвергнутые считает в
+`persistence.hydrate_error_total` `/api/v1/diagnostics`
+([config-transfer](../../rest-api/resources/config-transfer.md) §Импорт).
 
 - Тянет только пассивный: активный — источник истины пары.
 - Порядок пира — порядок гидрации: физические устройства раньше ламп.

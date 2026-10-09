@@ -1,13 +1,13 @@
 use dali2rust_platform::flash_gate;
-use dali2rust_platform::slice_store::{SliceKey, StoreError};
+use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 use dali2rust_registry_runtime::{
-    encode_persistence_blob, PersistablePollerSettingsSlice, PersistenceEnvelope, RegistryStore,
-    POLLER_SETTINGS_SLICE_VERSION,
+    encode_persistence_blob, ImportWriteFailure, PersistablePollerSettingsSlice,
+    PersistenceEnvelope, RegistryStore, StagedSlice, POLLER_SETTINGS_SLICE_VERSION,
 };
 use dali2rust_test_support::temp_slice_store;
 
 #[test]
-fn an_import_waits_out_a_firmware_write_by_refusing_it() {
+fn an_import_refuses_to_write_while_a_firmware_write_is_open() {
     let bytes = encode_persistence_blob(&PersistenceEnvelope::new(
         POLLER_SETTINGS_SLICE_VERSION,
         PersistablePollerSettingsSlice {
@@ -21,18 +21,19 @@ fn an_import_waits_out_a_firmware_write_by_refusing_it() {
         },
     ))
     .expect("encode poller slice");
+    let staged = [StagedSlice { key: SliceKey::PollerSettings, bytes: bytes.clone() }];
     let slices = temp_slice_store("import-during-firmware-write");
     let store = RegistryStore::with_adapter_count(1);
 
     flash_gate::set_firmware_write_open(true);
-    let refused = store.import_slice(&slices, SliceKey::PollerSettings, &bytes);
+    let refused = store.write_staged(&slices, &staged);
     flash_gate::set_firmware_write_open(false);
 
     assert!(
-        matches!(refused, Err(StoreError::Backend(ref why)) if why.contains("firmware update")),
-        "an import must not queue behind a firmware write on the httpd task: {refused:?}"
+        matches!(refused, Err(ImportWriteFailure::FirmwareWriteOpen)),
+        "an import must not write beside a firmware write: {refused:?}"
     );
-    store
-        .import_slice(&slices, SliceKey::PollerSettings, &bytes)
-        .expect("the same import once the write has closed");
+    assert!(slices.load(SliceKey::PollerSettings).is_err(), "nothing was written");
+    store.write_staged(&slices, &staged).expect("the same import once the write has closed");
+    assert_eq!(slices.load(SliceKey::PollerSettings).expect("written"), bytes);
 }

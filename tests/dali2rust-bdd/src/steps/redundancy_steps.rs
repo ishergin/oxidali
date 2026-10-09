@@ -59,7 +59,7 @@ async fn json_pointer_eventually_greater(world: &mut DaliWorld, pointer: String,
     assert!(found.is_some_and(|n| n > floor), "{path}{pointer}: {found:?}, expected > {floor}");
 }
 
-// CFG-009 CFG-010
+// CFG-009 CFG-010 CFG-011
 #[when(regex = r#"^I export "([^"]+)" and keep the body$"#)]
 async fn export_and_keep(world: &mut DaliWorld, path: String) {
     world.send_http_request("GET", &path, None, "");
@@ -69,7 +69,27 @@ async fn export_and_keep(world: &mut DaliWorld, path: String) {
     assert!(!world.kept_body.is_empty(), "export of {path} was empty");
 }
 
-// CFG-009 CFG-010
+// CFG-012 CFG-013
+#[when(regex = r#"^I export "([^"]+)" once it is stored and keep the body$"#)]
+async fn export_once_stored_and_keep(world: &mut DaliWorld, path: String) {
+    let stored = |world: &mut DaliWorld| {
+        world.send_http_request("GET", &path, None, "");
+        world.last_response().is_some_and(|response| response.status == 200)
+    };
+    wait_until(|| stored(world), TRANSITION_TIMEOUT);
+    world.kept_body = world.last_response().expect("last response").body.clone();
+}
+
+// CFG-012
+#[then(regex = r#"^the export of "([^"]+)" should be the kept body$"#)]
+async fn export_is_kept_body(world: &mut DaliWorld, path: String) {
+    world.send_http_request("GET", &path, None, "");
+    let response = world.last_response().expect("last response");
+    assert_eq!(response.status, 200, "export of {path} failed: {}", response.status);
+    assert!(response.body == world.kept_body, "the stored slice moved under a refused import");
+}
+
+// CFG-009 CFG-010 CFG-011 CFG-013
 #[when(regex = r#"^I PUT the kept body to "([^"]+)"$"#)]
 async fn put_kept_body(world: &mut DaliWorld, path: String) {
     let body = world.kept_body.clone();

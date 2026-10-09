@@ -25,12 +25,16 @@ pub use runtime::registry::{
     VIRTUAL_LAMPS_SLICE_VERSION,
 };
 pub use runtime::registry::input_devices::{InputDeviceDetail, InputDeviceSummary, InstanceView, ReadValue};
-pub use runtime::registry::transfer::{slice_key_from_name, SliceManifestRow};
+pub use runtime::registry::import_stage::{ImportStageRefusal, StagedSlice};
+pub use runtime::registry::transfer::{
+    slice_key_from_name, ForeignSliceOwner, ImportWriteFailure, RegistryOwnedOnly,
+    SliceManifestRow,
+};
 pub use runtime::registry::physical_devices::DISCOVERY_EVICT_MISS_THRESHOLD;
 pub use runtime::registry_apply_watch::RegistryApplyWatch;
 pub use runtime::registry_events_worker::REGISTRY_EVENTS_HANDLED_EVENTS;
 pub use runtime::registry::publish::REGISTRY_REQUIRED_EVENTS;
 pub use runtime::registry_worker::{
     spawn_registry_worker, RegistryCommandCounters, RegistryEventsCounters,
-    RegistryWorkerCounters, REGISTRY_WORKER_HANDLED_COMMANDS,
+    RegistryWorkerCounters, SlicePersistence, REGISTRY_WORKER_HANDLED_COMMANDS,
 };

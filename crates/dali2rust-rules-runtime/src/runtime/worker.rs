@@ -11,7 +11,7 @@ use dali2rust_contracts::msg::{
     MAX_RULES_SOURCE_BYTES,
 };
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
-use dali2rust_platform::slice_store::{SliceKey, SliceStore};
+use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
 use dali2rust_rules_model::{NameResolver, RuleCompiler};
 
 use super::persistence::{
@@ -83,6 +83,8 @@ struct RulesWorker {
 }
 
 const TICK_CAP_MS: u64 = 1_000;
+const BANK_WRITE_ATTEMPTS: u32 = 10;
+const BANK_WRITE_RETRY: std::time::Duration = std::time::Duration::from_millis(50);
 
 dali2rust_contracts::dispatch_bus_commands! {
     pub const RULES_WORKER_HANDLED_COMMANDS;
@@ -658,9 +660,23 @@ fn write_banks(slices: &dyn SliceStore, doc: &RulesDocument) -> Result<(), ()> {
 }
 
 fn write_one(slices: &dyn SliceStore, key: SliceKey, bytes: &[u8]) -> Result<(), ()> {
-    let mut session = slices.begin_write(key).map_err(|_| ())?;
+    let mut session = begin_write_when_free(slices, key)?;
     session.append(bytes).map_err(|_| ())?;
     session.commit().map_err(|_| ())
+}
+
+fn begin_write_when_free(
+    slices: &dyn SliceStore,
+    key: SliceKey,
+) -> Result<Box<dyn SliceWriteSession + '_>, ()> {
+    for _ in 1..BANK_WRITE_ATTEMPTS {
+        match slices.begin_write(key) {
+            // sleep-ok: bounded back-off while another writer holds the bank's slot
+            Err(StoreError::Deferred) => std::thread::sleep(BANK_WRITE_RETRY),
+            other => return other.map_err(|_| ()),
+        }
+    }
+    slices.begin_write(key).map_err(|_| ())
 }
 
 fn load_document(
@@ -732,4 +748,44 @@ fn names_may_have_moved(payload: &dali2rust_contracts::msg::BusEventPayload) -> 
             | dali2rust_contracts::msg::BusEventPayload::SceneChangedEvent(_)
             | dali2rust_contracts::msg::BusEventPayload::InputDeviceChangedEvent(_)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use dali2rust_bsp::slice_store_files::InMemorySliceStore;
+    use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
+
+    use super::{write_one, BANK_WRITE_ATTEMPTS};
+
+    struct BusyFor {
+        inner: InMemorySliceStore,
+        refusals: AtomicU32,
+    }
+
+    impl SliceStore for BusyFor {
+        fn load(&self, key: SliceKey) -> Result<Vec<u8>, StoreError> {
+            self.inner.load(key)
+        }
+
+        fn begin_write(&self, key: SliceKey) -> Result<Box<dyn SliceWriteSession + '_>, StoreError> {
+            let left = self.refusals.load(Ordering::Relaxed);
+            if left > 0 {
+                self.refusals.store(left - 1, Ordering::Relaxed);
+                return Err(StoreError::Deferred);
+            }
+            self.inner.begin_write(key)
+        }
+    }
+
+    #[test]
+    fn a_bank_write_waits_out_another_writer_of_its_slot() {
+        let busy = BusyFor { inner: InMemorySliceStore::new(), refusals: AtomicU32::new(2) };
+        assert_eq!(write_one(&busy, SliceKey::Rules { bank: 0 }, b"rule"), Ok(()));
+        assert_eq!(busy.load(SliceKey::Rules { bank: 0 }).expect("written"), b"rule");
+
+        let stuck = BusyFor { inner: InMemorySliceStore::new(), refusals: AtomicU32::new(BANK_WRITE_ATTEMPTS) };
+        assert_eq!(write_one(&stuck, SliceKey::Rules { bank: 0 }, b"rule"), Err(()));
+    }
 }
