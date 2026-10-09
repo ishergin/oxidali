@@ -773,6 +773,8 @@ fn stand_down(
         }
         client.disconnect();
         *session = Session::default();
+    } else if link.state() == MqttConnectionState::Disconnected {
+        client.disconnect();
     }
     link.wait_for_change(PARK);
 }

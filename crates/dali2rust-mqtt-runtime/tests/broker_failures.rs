@@ -46,6 +46,23 @@ fn a_refused_dial_parks_the_worker_and_a_returning_broker_recovers_it() {
 }
 
 #[test]
+fn a_session_that_dropped_before_the_bridge_stood_down_is_released() {
+    let settings = StubSettings::new(enabled_settings());
+    let h = spawn_bridge(std::sync::Arc::clone(&settings), StubHaReadPort::with_lamp(1));
+    let counters = std::sync::Arc::clone(&h.counters);
+    wait_until(move || counters.is_connected(), RECOVERY_WAIT);
+
+    h.mock.fail_next_connects(u32::MAX);
+    h.mock.set_connected(false);
+    settings.set(dali2rust_domain::registry::HomeAssistantSettingsView {
+        enabled: false,
+        ..enabled_settings()
+    });
+    let mock = std::sync::Arc::clone(&h.mock);
+    wait_until(move || mock.disconnect_calls() >= 1, RECOVERY_WAIT);
+}
+
+#[test]
 fn a_dial_still_in_flight_is_not_dialled_again() {
     let settings = StubSettings::new(dali2rust_domain::registry::HomeAssistantSettingsView {
         enabled: false,

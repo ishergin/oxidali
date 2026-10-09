@@ -116,7 +116,7 @@ unless named.
 - The bus task and the confirmation bridge use 8 KiB constants local to their crates, and
   the UART log writer a 4 KiB one (`console.rs`); `main` has the sdkconfig's 12 KiB for
   the composition boot and returns afterwards, so that stack is freed. The census thread
-  carries the heartbeat. `mqtt_task` is sized by the bridge (`task_stack`); ESP-IDF
+  carries the heartbeat. `mqtt_task` is sized by the bridge (`TASK_STACK_BYTES`); ESP-IDF
   allocates it internal.
 
 ## The stack census is a gate
