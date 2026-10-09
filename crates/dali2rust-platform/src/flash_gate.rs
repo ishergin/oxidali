@@ -33,8 +33,15 @@ pub fn firmware_write_open() -> bool {
 mod tests {
     use super::*;
 
+    static PROCESS_GLOBAL_GATE_TESTS: Mutex<()> = Mutex::new(());
+
+    fn one_gate_test_at_a_time() -> MutexGuard<'static, ()> {
+        PROCESS_GLOBAL_GATE_TESTS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn try_hold_refuses_while_held_and_admits_after() {
+        let _serial = one_gate_test_at_a_time();
         let guard = hold();
         let refused = std::thread::spawn(|| try_hold().is_none()).join().unwrap();
         assert!(refused, "a held gate must refuse try_hold from another thread");
@@ -45,6 +52,7 @@ mod tests {
 
     #[test]
     fn a_held_gate_is_not_writable_now_from_another_thread() {
+        let _serial = one_gate_test_at_a_time();
         let guard = hold();
         let writable = std::thread::spawn(writable_now).join().unwrap();
         assert!(!writable, "an httpd write must answer busy, not wait behind the holder");
@@ -53,6 +61,7 @@ mod tests {
 
     #[test]
     fn the_firmware_write_flag_round_trips() {
+        let _serial = one_gate_test_at_a_time();
         set_firmware_write_open(true);
         assert!(firmware_write_open());
         set_firmware_write_open(false);
