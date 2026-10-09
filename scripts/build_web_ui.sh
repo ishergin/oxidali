@@ -47,16 +47,7 @@ if [[ -n "$UNMIRRORED" ]]; then
   echo "$UNMIRRORED" | sed 's/^/  /' >&2
 fi
 
-(
-  cd "$APP_DIR"
-  find src public -type f -print0 2>/dev/null
-  printf '%s\0' index.html package.json package-lock.json vite.config.ts
-  printf '%s\0' tsconfig.json tsconfig.app.json tsconfig.node.json
-) | LC_ALL=C sort -z | while IFS= read -r -d '' rel; do
-  [[ -f "$APP_DIR/$rel" ]] || continue
-  printf '%s ' "$rel"
-  shasum -a 256 "$APP_DIR/$rel" | cut -d' ' -f1
-done | shasum -a 256 | cut -d' ' -f1 > "$FW_ASSETS_DIR/.sources.sha256"
+bash "$ROOT/scripts/web_ui_sources_fingerprint.sh" > "$FW_ASSETS_DIR/.sources.sha256"
 
 echo "build_web_ui: firmware mirror refreshed in $FW_ASSETS_DIR"
 echo "build_web_ui: source stamp $(cat "$FW_ASSETS_DIR/.sources.sha256")"

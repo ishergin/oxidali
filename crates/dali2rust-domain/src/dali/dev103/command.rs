@@ -489,6 +489,7 @@ pub const FEEDBACK_COLOUR_MAX: u8 = 63;
 mod tests {
     use super::*;
     use crate::dali::dev103::address::MAX_SHORT_ADDRESS;
+    use FeedbackOpcodeMap::{DiiaCorrected, Ed1};
 
     #[test]
     fn a_device_command_always_carries_the_device_instance_byte() {
@@ -671,7 +672,6 @@ mod tests {
 
     #[test]
     fn feedback_queries_relocate_and_nothing_else_does() {
-        use FeedbackOpcodeMap::{DiiaCorrected, Ed1};
         let pairs = [
             (Feedback332Command::QueryCapability, 0x4F, 0x2F),
             (Feedback332Command::QueryActive, 0x4E, 0x2E),

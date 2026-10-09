@@ -333,8 +333,8 @@ fn a_full_segment_scan_reports_its_terminal_outcome() {
         events
             .iter()
             .any(|e| matches!(e, BusEventPayload::DaliDiscoveryScanReconciledEvent(_))),
-        "the reconcile summary was lost — the registry's only trigger for ISSUE-4 \
-         phantom eviction, and on a full segment it is always the frame right after \
+        "the reconcile summary was lost — the registry's only trigger for evicting \
+         phantom short addresses, and on a full segment it is always the frame right after \
          the last progress event"
     );
 
@@ -350,7 +350,7 @@ fn a_full_segment_scan_reports_its_terminal_outcome() {
         terminal,
         Some(OperationWorkerSignal::WorkerSucceeded),
         "no terminal outcome reached the bus, so the operation could only end by TTL \
-         (ISSUE-50); {} events arrived for this run",
+         (ADR-021); {} events arrived for this run",
         events.len()
     );
 
@@ -430,7 +430,7 @@ fn assert_the_retried_scan_succeeded(
                 if body.signal == OperationWorkerSignal::WorkerSucceeded
         )),
         "the terminal outcome was lost after a full ingress; the operation can now only \
-         end by TTL — ISSUE-50"
+         end by TTL (ADR-021)"
     );
 }
 
@@ -453,7 +453,7 @@ fn a_terminal_outcome_survives_a_full_events_ingress() {
 }
 
 #[test]
-fn a_finished_scan_starts_the_policy_apply_when_armed_issue79() {
+fn a_finished_scan_starts_the_policy_apply_when_armed() {
     let harness = ScanHarness::with_policy(true);
     harness.start_scan(5100, DiscoveryMode::RefreshKnown);
     let events = harness.drain_until_terminal(5100);
@@ -485,7 +485,7 @@ fn a_finished_scan_starts_the_policy_apply_when_armed_issue79() {
 }
 
 #[test]
-fn a_finished_scan_publishes_no_policy_apply_when_disarmed_issue79() {
+fn a_finished_scan_publishes_no_policy_apply_when_disarmed() {
     let harness = ScanHarness::new();
     harness.start_scan(5200, DiscoveryMode::RefreshKnown);
     let events = harness.drain_until_terminal(5200);

@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use crate::runtime::executor::attributes::dt8::read_dt8_tc_limits;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::commands::DaliCommand;
+use dali2rust_domain::dali::devices::dt6_led::Dt6Command;
 
 #[test]
 fn extended_fade_time_codec_round_trips_representable_values() {
@@ -862,13 +863,12 @@ enum CurveEcho {
 
 #[test]
 fn a_curve_operand_that_never_proves_names_why_instead_of_succeeding() {
-    use CurveEcho::{Other, Silent, Violating};
     for (echoes, named) in [
-        ([Silent; 3], VERIFY_UNANSWERED_MESSAGE),
-        ([Violating; 3], VERIFY_CONTENDED_MESSAGE),
-        ([Silent, Silent, Other], VERIFY_UNANSWERED_MESSAGE),
-        ([Violating, Silent, Silent], VERIFY_CONTENDED_MESSAGE),
-        ([Other; 3], "dimming_curve_arm_unconfirmed"),
+        ([CurveEcho::Silent; 3], VERIFY_UNANSWERED_MESSAGE),
+        ([CurveEcho::Violating; 3], VERIFY_CONTENDED_MESSAGE),
+        ([CurveEcho::Silent, CurveEcho::Silent, CurveEcho::Other], VERIFY_UNANSWERED_MESSAGE),
+        ([CurveEcho::Violating, CurveEcho::Silent, CurveEcho::Silent], VERIFY_CONTENDED_MESSAGE),
+        ([CurveEcho::Other; 3], "dimming_curve_arm_unconfirmed"),
     ] {
         let mock = MockDaliTransport::new();
         let short = 17;
@@ -877,9 +877,9 @@ fn a_curve_operand_that_never_proves_names_why_instead_of_succeeding() {
         for answer in echoes {
             mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(curve)).to_forward_frame().raw());
             match answer {
-                Silent => mock.expect_forward_frame_with_backward(echo, None),
-                Violating => mock.expect_forward_frame_corrupted_in_window(echo),
-                Other => mock.expect_forward_frame_with_backward(echo, Some(curve + 1)),
+                CurveEcho::Silent => mock.expect_forward_frame_with_backward(echo, None),
+                CurveEcho::Violating => mock.expect_forward_frame_corrupted_in_window(echo),
+                CurveEcho::Other => mock.expect_forward_frame_with_backward(echo, Some(curve + 1)),
             }
         }
 
@@ -1582,7 +1582,6 @@ fn scattered_silences_answered_in_between_do_not_add_up_to_absence() {
 
 #[test]
 fn legal_device_type_silence_never_feeds_the_breaker() {
-    use dali2rust_domain::dali::devices::dt6_led::Dt6Command;
     let mock = MockDaliTransport::new();
     let short = 17;
     let prelude = SpecialCommand::EnableDeviceType(6).to_forward_frame().raw();
@@ -1908,7 +1907,7 @@ fn a_narrow_colour_value_is_still_one_transaction_and_one_answer() {
     )
     .expect("exchange");
 
-    assert_eq!(value, Some(254), "a one-byte value answers whole (ISSUE-43)");
+    assert_eq!(value, Some(254), "a one-byte value answers whole");
     assert_eq!(
         counters
             .transactions_completed

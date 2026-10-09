@@ -106,7 +106,7 @@ fn scan_the_panel() -> Stack {
 }
 
 #[test]
-fn every_instance_type_lands_on_its_own_number_issue120() {
+fn every_instance_type_lands_on_its_own_number() {
     let stack = scan_the_panel();
     let answered = u32::from(INSTANCE_COUNT - 1);
     wait_until(

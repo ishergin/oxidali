@@ -37,16 +37,20 @@ check_only_allowed_files() {
   fi
 }
 
+source "$ROOT/scripts/host_crates.sh"
+read_host_crates || exit 1
+PATH_ATTRIBUTE_TREES=(crates/dali2rust-firmware tests/dali2rust-bdd tools/dali-gear-sim)
+for crate in "${HOST_CRATES[@]}"; do
+  PATH_ATTRIBUTE_TREES+=("crates/$crate")
+done
+for tree in "${PATH_ATTRIBUTE_TREES[@]}"; do
+  [[ -d "$tree" ]] || fail "missing $tree"
+done
+
 check_no_matches \
-  "runtime crates and adapters composition must not use #[path]" \
-  '#\[path\s*=' \
-  crates/dali2rust-dali-runtime/src \
-  crates/dali2rust-display-runtime/src \
-  crates/dali2rust-registry-runtime/src \
-  crates/dali2rust-operations-runtime/src \
-  crates/dali2rust-ws-runtime/src \
-  crates/dali2rust-adapters/src/runtime \
-  crates/dali2rust-adapters/src/display
+  "a module is found by its file name, never through #[path]" \
+  -g '*.rs' '#\[path\s*=' \
+  "${PATH_ATTRIBUTE_TREES[@]}"
 
 check_only_allowed_files \
   crates/dali2rust-adapters/src/runtime \

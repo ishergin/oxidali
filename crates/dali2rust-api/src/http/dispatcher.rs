@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, PublishResult};
 
-use crate::bus_codec::SOURCE_ID_UNSPECIFIED;
+use crate::bus_codec::{confirmation_to_json_body, SOURCE_ID_UNSPECIFIED};
 use crate::confirmation_bridge::{PendingConfirmationSlots, ReplyFormatter};
 use crate::http::handlers::common::refusal_before_the_wire;
 use crate::http::types::{HttpBody, HttpResponse, NO_EXTRA_HEADERS};
@@ -191,8 +191,6 @@ pub fn publish_command_and_wait_json_confirmation(
     timeout_ms: u64,
     frame: BusFrame,
 ) -> Result<Vec<u8>, HttpResponse> {
-    use crate::bus_codec::confirmation_to_json_body;
-
     let wait = match slots.try_register(correlation_id, confirmation_to_json_body) {
         Ok(rx) => rx,
         Err(()) => {
@@ -236,8 +234,6 @@ pub fn publish_batch_and_wait_for_success(
     timeout_ms: u64,
     batch: Vec<(u64, dali2rust_bus::BusFrame)>,
 ) -> Result<(), HttpResponse> {
-    use crate::bus_codec::confirmation_to_json_body;
-
     let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
     let mut waits = Vec::with_capacity(batch.len());
     for (correlation_id, _) in &batch {

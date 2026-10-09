@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use dali2rust_contracts::msg::{
     BusEventPayload, ColorMode, DaliInputEventObservedEvent, DaliObservedFrameEvent,
     DaliTargetScope, DecodeStatus, DeviceCommandScope, InputDeviceLifecycleKind, InputEventKind,
-    ObservedKind, Origin,
+    LevelTransition, ObservedKind, Origin,
 };
 use dali2rust_fanout_runtime::{spawn_sniffer_translator_worker, SnifferTranslatorCounters};
 use dali2rust_platform::dali::{ObservedRawFrame, ObservedRawFrameKind};
@@ -340,7 +340,7 @@ fn stage_channels(harness: &Harness, short: u8, opcode: u8, channels: [u8; 3]) {
 }
 
 #[test]
-fn a_foreign_six_channel_write_is_one_rgbwaf_observation_issue122() {
+fn a_foreign_six_channel_write_is_one_rgbwaf_observation() {
     let harness = spawn_harness();
     stage_channels(&harness, 17, 235, [254, 10, 20]);
     stage_channels(&harness, 17, 236, [30, 0, 254]);
@@ -745,7 +745,6 @@ fn any_frame_between_the_two_halves_splits_the_pair() {
 
 #[test]
 fn a_foreign_step_up_is_published_as_a_verb() {
-    use dali2rust_contracts::msg::LevelTransition;
     let h = spawn_harness();
     h.tx.send(forward16([0x07, 0x03])).expect("send");
     let (_origin, body) = recv_observed(&h);

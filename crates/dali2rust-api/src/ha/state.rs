@@ -1,4 +1,4 @@
-use dali2rust_contracts::msg::{ColorMode, LightSetpoint, PowerState};
+use dali2rust_contracts::msg::{ColorMode, InputEventKind, LightSetpoint, PowerState};
 use serde_json::{json, Map, Value};
 
 use super::brightness::level_to_ha;
@@ -80,7 +80,6 @@ pub fn input_event_state_payload(
     kind: dali2rust_contracts::msg::InputEventKind,
     typed_value: u16,
 ) -> Option<String> {
-    use dali2rust_contracts::msg::InputEventKind;
     match kind {
         InputEventKind::Button => {
             let event = dali2rust_domain::dali::dev103::ButtonEvent::from_info(typed_value)?;
@@ -100,7 +99,8 @@ const OCCUPANCY_OCCUPIED_BIT: u16 = 1 << 1;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dali2rust_contracts::msg::ColorValue;
+    use dali2rust_contracts::msg::{ColorMode, ColorValue};
+    use dali2rust_domain::registry::HaGroupStateView;
 
     fn setpoint(power: PowerState, level: Option<u8>, color: Option<ColorValue>) -> LightSetpoint {
         LightSetpoint {
@@ -133,7 +133,6 @@ mod tests {
 
     #[test]
     fn an_agreed_group_colour_is_reported_in_the_mode_it_was_agreed_in() {
-        use dali2rust_contracts::msg::ColorMode;
         let v = group(Some(ColorMode::Rgb), None, Some((254, 0, 120)));
         assert_eq!(v["color_mode"], "rgb");
         assert_eq!(v["color"], json!({"r": 254, "g": 0, "b": 120}));
@@ -206,7 +205,6 @@ mod tests {
 
     #[test]
     fn a_group_tile_needs_both_a_command_and_a_lit_member() {
-        use dali2rust_domain::registry::HaGroupStateView;
         let lit = HaGroupStateView {
             any_on: true,
             brightness: Some(180),
@@ -235,7 +233,6 @@ mod tests {
 
     #[test]
     fn an_xy_group_reports_its_agreed_chromaticity() {
-        use dali2rust_domain::registry::HaGroupStateView;
         let v = group_state_payload(&HaGroupStateView {
             commanded: true,
             any_on: true,

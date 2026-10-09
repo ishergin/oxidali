@@ -10,8 +10,8 @@ use dali2rust_contracts::msg::{
     DaliInputEventObservedEvent, DaliSceneRecalledEvent, DaliTargetScope,
     DaliTargetStateAppliedEvent, DaliTargetStateFailedEvent, ErrorCode, FixedText32,
     HclScheduleChangedEvent, InputEventKind, DaliObservedFrameEvent, IpAddressAssignedEvent,
-    ObservedKind, OperationStatus, OperationStatusChangedEvent, OperationType, RuntimeSource,
-    ARC_POWER_OFF,
+    LevelTransition, ObservedKind, OperationStatus, OperationStatusChangedEvent, OperationType,
+    RuntimeSource, ARC_POWER_OFF,
 };
 use dali2rust_domain::dali::dev103::ButtonEvent;
 
@@ -314,16 +314,15 @@ fn apply_failed(facts: &mut Facts, adapter: u8, body: &DaliTargetStateFailedEven
     facts.action_at = Some(Instant::now());
 }
 
-fn transition_label(verb: dali2rust_contracts::msg::LevelTransition) -> &'static str {
-    use dali2rust_contracts::msg::LevelTransition as T;
+fn transition_label(verb: LevelTransition) -> &'static str {
     match verb {
-        T::RecallMaxLevel => "MAX",
-        T::RecallMinLevel => "MIN",
-        T::StepUp => "ST+",
-        T::StepDown => "ST-",
-        T::StepDownAndOff => "ST0",
-        T::OnAndStepUp => "ON+",
-        T::GoToLastActiveLevel => "LAST",
+        LevelTransition::RecallMaxLevel => "MAX",
+        LevelTransition::RecallMinLevel => "MIN",
+        LevelTransition::StepUp => "ST+",
+        LevelTransition::StepDown => "ST-",
+        LevelTransition::StepDownAndOff => "ST0",
+        LevelTransition::OnAndStepUp => "ON+",
+        LevelTransition::GoToLastActiveLevel => "LAST",
     }
 }
 

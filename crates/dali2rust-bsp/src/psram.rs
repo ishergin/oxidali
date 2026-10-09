@@ -211,6 +211,7 @@ mod esp {
 #[cfg(test)]
 mod tests {
     use super::{MaybeUninit, PsramBox};
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[test]
     fn stores_the_value_behind_a_pointer_sized_handle() {
@@ -224,7 +225,6 @@ mod tests {
 
     #[test]
     fn drops_the_placed_value() {
-        use std::sync::atomic::{AtomicU32, Ordering};
         static DROPS: AtomicU32 = AtomicU32::new(0);
 
         struct Noisy;
@@ -256,7 +256,6 @@ mod tests {
 
     #[test]
     fn a_panicking_init_drops_nothing_it_did_not_build() {
-        use std::sync::atomic::{AtomicU32, Ordering};
         static DROPS: AtomicU32 = AtomicU32::new(0);
 
         struct NeverBuilt;
@@ -286,7 +285,6 @@ mod tests {
 
     #[test]
     fn new_with_drops_the_placed_value() {
-        use std::sync::atomic::{AtomicU32, Ordering};
         static DROPS: AtomicU32 = AtomicU32::new(0);
 
         struct Placed;

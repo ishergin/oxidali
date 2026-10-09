@@ -4,6 +4,7 @@ use std::sync::{Mutex, OnceLock};
 use dali2rust_platform::logs::{LogLevel, LogLine};
 
 use crate::psram::PsramBox;
+use core::fmt::Write;
 
 pub const LOG_RING_LINES: usize = 256;
 
@@ -184,8 +185,6 @@ pub fn facade_accepts(level: log::Level) -> bool {
 }
 
 pub fn record_facade(record: &log::Record) {
-    use core::fmt::Write;
-
     let Some(ring) = try_global() else {
         return;
     };

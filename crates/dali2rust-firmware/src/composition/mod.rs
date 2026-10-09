@@ -19,8 +19,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[cfg(target_os = "espidf")]
+use core::fmt::Write as _;
+#[cfg(target_os = "espidf")]
+use dali2rust_platform::heap::HeapStatsPort as _;
 use dali2rust_platform::knob::flag_knob;
 use dali2rust_platform::slice_store::SliceStore;
+#[cfg(target_os = "espidf")]
+use esp_idf_svc::sys::{heap_caps_get_minimum_free_size, MALLOC_CAP_INTERNAL};
 
 pub const VERSION: &str = env!("DALI2RUST_VERSION");
 
@@ -224,8 +230,6 @@ fn heap_stats_port() -> Option<Arc<dyn dali2rust_platform::heap::HeapStatsPort>>
 
 #[cfg(target_os = "espidf")]
 fn log_heap_stats() {
-    use dali2rust_platform::heap::HeapStatsPort;
-
     let h = dali2rust_bsp::heap_stats::EspHeapStats.snapshot();
     log::info!(
         "heap: free={} largest_free_block={}@boot min_free_ever={} | \
@@ -298,8 +302,6 @@ fn log_network_link() {}
 
 #[cfg(target_os = "espidf")]
 fn log_internal_pressure() {
-    use esp_idf_svc::sys::{heap_caps_get_minimum_free_size, MALLOC_CAP_INTERNAL};
-
     // SAFETY: thread-safe ESP-IDF heap-caps runtime accessor.
     let min_ever = unsafe { heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) } as u32;
     if min_ever >= INTERNAL_PRESSURE_ALERT_BYTES
@@ -403,7 +405,6 @@ fn check_heap_integrity() {}
 
 #[cfg(target_os = "espidf")]
 fn log_task_stack_census() {
-    use core::fmt::Write;
     const KERNEL_TASKS: &[&core::ffi::CStr] = &[
         c"IDLE0",
         c"IDLE1",
@@ -432,7 +433,6 @@ fn log_task_stack_census() {
 
 #[cfg(target_os = "espidf")]
 fn write_observed_task_census(line: &mut String) -> usize {
-    use core::fmt::Write;
     let mut count = 0;
     let _ = write!(line, "| observed: ");
     dali2rust_bsp::task_registry::for_each_observed(|sample, name| match sample {

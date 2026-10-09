@@ -134,6 +134,9 @@ impl Default for AtomicCommandCell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool as StopFlag;
+    use std::sync::Arc;
+    use std::thread;
 
     #[test]
     fn send_and_take_roundtrip() {
@@ -216,8 +219,6 @@ mod tests {
 
     #[test]
     fn concurrent_takes_never_yield_hybrid_or_stale_frames() {
-        use std::{sync::{atomic::AtomicBool as StopFlag, Arc}, thread};
-
         let frame_a = ([0x11u8; 9], 16u8, false, 7u8);
         let frame_b = ([0xEEu8; 9], 38u8, true, 193u8);
         let cell = Arc::new(AtomicCommandCell::new());
@@ -262,9 +263,6 @@ mod tests {
 
     #[test]
     fn concurrent_send_take() {
-        use std::sync::Arc;
-        use std::thread;
-
         let cell = Arc::new(AtomicCommandCell::new());
         let cell_clone = Arc::clone(&cell);
 

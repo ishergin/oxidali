@@ -5,7 +5,7 @@ use core::ptr::addr_of_mut;
 use serde::{Deserialize, Serialize};
 use dali2rust_contracts::msg::{
     ColorMode, DeviceType, DeviceTypeSet, ExtendedVersionEntry, FixedText32, FixedText64,
-    OperationType, MAX_EXTENDED_VERSIONS,
+    GroupMembershipAction, MAX_EXTENDED_VERSIONS, OperationType, SceneProgramAction,
 };
 use dali2rust_platform::small_sort::insertion_sort_by;
 
@@ -987,7 +987,6 @@ pub fn scene_targets_converged(
 }
 
 pub fn collect_scene_apply_diff(snapshot: &SceneApplySnapshot) -> Vec<SceneApplyDiffRow> {
-    use dali2rust_contracts::msg::SceneProgramAction;
     let mut diff = Vec::new();
     for row in &snapshot.rows {
         let action = match (row.desired_included, row.applied_included) {
@@ -1037,7 +1036,6 @@ pub struct GroupApplyDiffCell {
 }
 
 pub fn collect_group_apply_diff(snapshot: &GroupApplySnapshot) -> Vec<GroupApplyDiffCell> {
-    use dali2rust_contracts::msg::GroupMembershipAction;
     const GROUP_COUNT: u8 = 16;
     let mut diff = Vec::new();
     for row in &snapshot.rows {

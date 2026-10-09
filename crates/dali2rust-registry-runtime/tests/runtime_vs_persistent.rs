@@ -1,6 +1,8 @@
 mod support;
 
-use dali2rust_contracts::msg::{AdapterSettingsUpdateCommand};
+use dali2rust_contracts::msg::{
+    AdapterSettingsUpdateCommand, DaliAttributeReadChunk, DaliAttributesReadEvent,
+};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,6 +18,7 @@ use dali2rust_test_support::{temp_slice_store, try_recv_event_matching_envelope,
 const CONFIRMATION_DEADLINE: Duration = Duration::from_secs(10);
 use dali2rust_registry_runtime::{spawn_registry_worker, RegistryStore, RegistryWorkerCounters};
 use dali2rust_contracts::msg::PhysicalDeviceOverrideCommand as PdPatch;
+use std::sync::atomic::Ordering;
 
 const PD_PATCH_ALL: u8 = PdPatch::PATCH_NAME
     | PdPatch::PATCH_DEVICE_TYPE_OVERRIDE
@@ -342,9 +345,6 @@ fn wait_for_pd_changed(rx: &std::sync::mpsc::Receiver<BusFrame>, corr: u64) {
 
 #[test]
 fn unchanged_attribute_read_event_does_not_rewrite_flash() {
-    use dali2rust_contracts::msg::{DaliAttributeReadChunk, DaliAttributesReadEvent};
-    use std::sync::atomic::Ordering;
-
     const SHORT: u8 = 7;
     let slices = temp_slice_store("unchanged-attr-read");
     let stack = support::spawn_registry_stack(1, 64);

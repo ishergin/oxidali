@@ -39,7 +39,9 @@ every document follows.
   date of an open known issue, and the bench watchlist.
 - **Issue numbers** are allocated only in
   [`issue-ids-registry.md`](product-design/issue-ids-registry.md); a closed issue keeps
-  only its registry row.
+  only its registry row, and everything else — code, test names, scripts, cards — cites
+  the ADR that closed it or names the invariant.
 
-`scripts/verify_docs.py` holds the links, the size caps, the dates and repeated
-passages ([10](architecture/10-build-release-and-tooling.md) §Merge gates).
+`scripts/verify_docs.py` holds the links, the size caps, the dates and repeated passages
+in every markdown file of the tree, and `scripts/verify_issue_ids.py` the issue numbers
+([10](architecture/10-build-release-and-tooling.md) §Merge gates).

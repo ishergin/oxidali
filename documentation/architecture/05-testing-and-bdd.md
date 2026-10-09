@@ -165,12 +165,14 @@ Decided in [`ADR-004`](decisions/ADR-004-bdd-black-box-boundary.md).
 | Tag | Rule |
 | --- | --- |
 | `@id:<PREFIX><NNN>` | On every scenario, unique across the tree. The prefix is registered in [`ids-registry.md`](../product-design/bdd/ids-registry.md); three digits and an optional lowercase variant letter follow it. |
-| `@stage-<S>` | Exactly one before `Feature:`, naming the [roadmap](../product-design/roadmap.md) stage (`F*`, `R*`, `I*`, `X*`) that delivered the behaviour. A scenario adds its own only as an override for an outlier. `verify_bdd_ids.sh` holds the accepted values. |
-| `@wip` | Unfinished scenario, skipped by the runner and removed as soon as it is green. Forbidden in foundation-stage (`F*`) features. |
+| `@stage-<S>` | Exactly one before `Feature:`, naming the [roadmap](../product-design/roadmap.md) stage (`F*`, `R*`, `I*`, `X*`) that delivered the behaviour. A scenario adds its own only as an override for an outlier. The accepted values are the stages [`status.md`](../product-design/status.md) lists (`verify_bdd_stages.py`). |
+| `@wip` | Unfinished scenario, skipped by the runner and removed as soon as it is green. Forbidden in a stage whose every row in [`status.md`](../product-design/status.md) reads `готово`. |
 | `@flaky`, `@diagnostic` | Informational labels that neither the runner nor any gate reads. `@flaky` does not take a scenario out of the run and is not merged without a stated justification. |
 
-A stage is complete only when every scenario tagged with it is green with no `@wip`. A
-status claim that cites `@id`s holds only if each of them exists and passes.
+A stage is complete only when every scenario tagged with it is green with no `@wip`;
+`just check-stage-clean <S>` lists the `@wip` scenarios whose stage — their own tag, else
+the feature's — is `S`. A status claim that cites `@id`s holds only if each of them exists
+and passes.
 
 ## Step definitions
 
@@ -188,8 +190,8 @@ All run in `just verify`; `just ci` also runs the suite itself.
 | --- | --- |
 | `verify_bdd_tree_policy.sh` | Allowed and forbidden top-level feature directories. |
 | `verify_bdd_ids.sh` | Every scenario has an `@id`; IDs unique, prefixes registered; one file-level `@stage-*`; stage values. |
-| `verify_bdd_coverage.sh` | Chains the two above; `@wip` hygiene; no empty feature directory; every ID in a step comment is an executable `@id`; an advisory report of steps whose comment omits scenarios that use them. |
+| `verify_bdd_coverage.sh` | Chains the two above and `verify_bdd_stages.py` (no `@wip` in a finished stage; every stage tag names a `status.md` row); no empty feature directory; every ID in a step comment is an executable `@id`; every step's ID list names each scenario that reaches it, through a Background or an Outline's `Examples` rows included; every feature step matches a step pattern. |
 | `verify_bdd_layers.sh` | The black-box boundary, over the whole BDD crate except `benches/`. |
 | `verify_no_bdd_production_hooks.sh` | No `bdd` feature, `bdd_*` hooks or registry seed reach-in. |
 | `verify_test_layers.sh` | No sleeps, manual `postcard` or duplicate helpers and harnesses in tests; sleep markers in crate sources. Chains `verify_duplication.sh`. |
-| `verify_duplication.sh` | Clone budget and targeted anti-patterns. |
+| `verify_duplication.sh` | Clone budget and targeted anti-patterns: operation-begin flows only in `operation_dispatch.rs`, the web UI source fingerprint only in `web_ui_sources_fingerprint.sh`. |

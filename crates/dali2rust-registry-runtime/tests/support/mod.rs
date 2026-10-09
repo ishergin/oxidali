@@ -13,6 +13,7 @@ use dali2rust_test_support::{recv_confirmation_for, wait_until};
 use dali2rust_registry_runtime::{
     spawn_registry_worker, RegistryStore, RegistryWorkerCounters, SlicePersistence,
 };
+use dali2rust_domain::registry::{GroupReadPort, VirtualLampReadPort};
 
 pub const CONFIRMATION_DEADLINE: Duration = Duration::from_secs(4);
 
@@ -220,7 +221,6 @@ pub fn seed_bound_group_member(
     );
     wait_until(
         || {
-            use dali2rust_domain::registry::VirtualLampReadPort;
             stack.store.virtual_lamp_view(0, virtual_lamp_id).binding_short == Some(short_address)
         },
         CONFIRMATION_DEADLINE,
@@ -231,7 +231,6 @@ pub fn seed_bound_group_member(
     );
     wait_until(
         || {
-            use dali2rust_domain::registry::GroupReadPort;
             stack
                 .store
                 .applied_group_member_mask(0, group_id)

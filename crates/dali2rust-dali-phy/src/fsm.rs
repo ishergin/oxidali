@@ -493,6 +493,7 @@ impl<H: BitbangHal> DaliBitbangPhy<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame_length::{frame_length_class, FrameLengthClass};
 
     struct TestHal {
         bus_high: bool,
@@ -884,8 +885,6 @@ mod tests {
 
     #[test]
     fn captures_of_each_width_classify_by_length() {
-        use crate::frame_length::{frame_length_class, FrameLengthClass};
-
         let answer = |last| frame_levels(&bits(8, last));
         let cases = [
             ("backward, last bit 1", answer(true), 11, FrameLengthClass::Backward),

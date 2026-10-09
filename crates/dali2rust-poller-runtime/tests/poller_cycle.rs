@@ -899,7 +899,7 @@ fn publish_slice_reloaded(publisher: &BusPublisher, slice_name: &str) {
 }
 
 #[test]
-fn replicated_settings_apply_on_the_slice_reload_issue160() {
+fn replicated_settings_apply_on_the_slice_reload() {
     let (_port, h) = replicated_harness();
     publish_slice_reloaded(&h.publisher, "physical_devices_b0+5");
     wait_until(
@@ -941,7 +941,7 @@ fn adapter_gate_harness(enabled: bool) -> Harness {
 }
 
 #[test]
-fn a_disabled_adapter_is_neither_read_nor_probed_issue119() {
+fn a_disabled_adapter_is_neither_read_nor_probed() {
     let control = adapter_gate_harness(true);
     wait_until(
         || {

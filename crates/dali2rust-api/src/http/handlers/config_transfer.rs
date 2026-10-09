@@ -28,11 +28,21 @@ pub enum ImportRefusal {
     ImportBusy,
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SliceManifestEntry {
     pub name: String,
     pub bytes: Option<usize>,
     pub crc32: u32,
+}
+
+#[must_use]
+pub fn parse_slice_manifest(body: &[u8]) -> Option<Vec<SliceManifestEntry>> {
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(body).ok()?;
+    Some(
+        rows.into_iter()
+            .filter_map(|row| serde_json::from_value(row).ok())
+            .collect(),
+    )
 }
 
 declare_handler_shell! {
@@ -135,5 +145,61 @@ impl ApiHandler for ConfigSliceHandler {
             "PUT" => self.import(name, body),
             _ => json_err(405, "method_not_allowed"),
         }
+    }
+}
+
+#[cfg(test)]
+mod manifest_tests {
+    use super::*;
+
+    struct TwoSlices;
+
+    impl ConfigTransferPort for TwoSlices {
+        fn slice_manifest(&self) -> Vec<SliceManifestEntry> {
+            vec![
+                SliceManifestEntry {
+                    name: "a0/physical_devices".to_string(),
+                    bytes: Some(4096),
+                    crc32: u32::MAX,
+                },
+                SliceManifestEntry {
+                    name: "a0/groups".to_string(),
+                    bytes: None,
+                    crc32: 0,
+                },
+            ]
+        }
+
+        fn export_slice(&self, _name: &str) -> Option<Vec<u8>> {
+            None
+        }
+
+        fn stage_import(&self, _workflow: u64, _name: &str, _bytes: &[u8]) -> Result<(), ImportRefusal> {
+            Err(ImportRefusal::UnknownSlice)
+        }
+
+        fn discard_import(&self, _workflow: u64) {}
+    }
+
+    #[test]
+    fn the_manifest_the_handler_serves_parses_back_row_for_row() {
+        let handler = ConfigManifestHandler::new(Arc::new(TwoSlices));
+        let response =
+            handler.handle_request("GET", "/api/v1/config/slices", b"", &HashMap::new());
+        let mut body = Vec::new();
+        response.body.write_to(&mut body).expect("manifest body");
+        assert_eq!(parse_slice_manifest(&body), Some(TwoSlices.slice_manifest()));
+    }
+
+    #[test]
+    fn a_row_this_build_does_not_understand_is_skipped_and_a_non_array_is_refused() {
+        let body = br#"[{"name":"future_slice"},{"name":"groups_a0","bytes":null,"crc32":7}]"#;
+        let rows = parse_slice_manifest(body).expect("an array is a manifest");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (rows[0].name.as_str(), rows[0].bytes, rows[0].crc32),
+            ("groups_a0", None, 7)
+        );
+        assert_eq!(parse_slice_manifest(br#"{"name":"groups_a0"}"#), None);
     }
 }

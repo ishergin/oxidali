@@ -9,6 +9,7 @@ echo "=== BDD Coverage Verification ==="
 
 bash "$REPO_ROOT/scripts/verify_bdd_tree_policy.sh"
 bash "$REPO_ROOT/scripts/verify_bdd_ids.sh"
+python3 "$REPO_ROOT/scripts/verify_bdd_stages.py"
 
 python3 - "$REPO_ROOT" "$FEATURES_DIR" "$STEPS_DIR" <<'PY'
 import os
@@ -17,7 +18,6 @@ import sys
 
 ID_PATTERN = r"[A-Z]+(?:-[A-Z]+)*-[0-9]{3}[a-z]?"
 SCENARIO_ID_TAG = re.compile(r"@id:(" + ID_PATTERN + r")")
-STAGE_TAG = re.compile(r"@stage-([A-Z][0-9]{1,2})")
 BARE_ID = re.compile(r"\b(" + ID_PATTERN + r")\b")
 NON_SCENARIO_PREFIXES = ("ADR-", "ISSUE-")
 STEP_KEYWORDS = {"Given": "given", "When": "when", "Then": "then"}
@@ -37,8 +37,8 @@ EXPRESSION_PARAMETERS = (
     ("{}", r".*"),
 )
 RUST_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "0": "\0"}
-REPORT_LIMIT = 10
-REPORT_IDS_PER_STEP = 6
+OUTLINE_PLACEHOLDER = re.compile(r"<([^<>]+)>")
+DOC_STRING_FENCES = ('"""', "```")
 
 
 def is_scenario_id(ident):
@@ -78,16 +78,6 @@ def executable_scenario_ids(features):
             if match:
                 ids.add(match.group(1))
     return ids
-
-
-def wip_in_foundation_stage(features):
-    errors = []
-    for path in features:
-        tags = feature_tags(path)
-        stages = [match.group(1) for match in map(STAGE_TAG.fullmatch, tags) if match]
-        if "@wip" in tags and any(stage.startswith("F") for stage in stages):
-            errors.append(f"@wip is not allowed in a foundation-stage feature: {path}")
-    return errors
 
 
 def empty_feature_directories(features_dir):
@@ -199,49 +189,76 @@ def step_definitions(repo_root, step_files):
     return steps, unparsed
 
 
-def record_reach(features, steps):
-    unresolved = 0
+def table_cells(line):
+    return [cell.strip() for cell in line.strip("|").split("|")]
+
+
+def parse_feature(repo_root, path):
+    background, scenarios, steps, kind = [], [], None, None
+    in_doc, header = False, None
+    for number, raw in enumerate(read_lines(path), start=1):
+        line = raw.strip()
+        if line.startswith(DOC_STRING_FENCES):
+            in_doc = not in_doc
+            continue
+        ids = [m.group(1) for m in map(SCENARIO_ID_TAG.fullmatch, tags_on(line)) if m]
+        if in_doc or not line:
+            continue
+        if ids:
+            scenarios.append({"id": ids[0], "steps": [], "rows": []})
+            steps, header = scenarios[-1]["steps"], None
+            continue
+        if line.startswith("Background:"):
+            steps = background
+            continue
+        if line.startswith("Examples:"):
+            steps, header = None, []
+            continue
+        if header is not None and line.startswith("|") and scenarios:
+            if header:
+                scenarios[-1]["rows"].append(dict(zip(header, table_cells(line))))
+            else:
+                header = table_cells(line)
+            continue
+        keyword, _, value = line.partition(" ")
+        if keyword in STEP_KEYWORDS:
+            kind = STEP_KEYWORDS[keyword]
+        elif keyword not in CONTINUATION_KEYWORDS or kind is None:
+            continue
+        if steps is not None:
+            steps.append((f"{os.path.relpath(path, repo_root)}:{number}", kind, value.strip()))
+    return background, scenarios
+
+
+def expanded_steps(background, scenario):
+    for row in scenario["rows"] or [{}]:
+        for where, kind, text in background + scenario["steps"]:
+            yield where, kind, OUTLINE_PLACEHOLDER.sub(lambda m: row.get(m.group(1), m.group(0)), text)
+
+
+def record_reach(repo_root, features, steps):
+    unresolved = set()
     for path in features:
-        scenario, kind = None, None
-        for raw in read_lines(path):
-            line = raw.strip()
-            ids = [m.group(1) for m in map(SCENARIO_ID_TAG.fullmatch, tags_on(line)) if m]
-            if ids:
-                scenario = ids[0]
-                continue
-            keyword, _, value = line.partition(" ")
-            if keyword in STEP_KEYWORDS:
-                kind = STEP_KEYWORDS[keyword]
-            elif keyword not in CONTINUATION_KEYWORDS or kind is None:
-                continue
-            if scenario is None:
-                continue
-            hits = [step for step in steps if step["kind"] == kind and step["matches"](value.strip())]
-            for step in hits:
-                step["reached"].add(scenario)
-            unresolved += not hits
-    return unresolved
+        background, scenarios = parse_feature(repo_root, path)
+        for scenario in scenarios:
+            for where, kind, text in expanded_steps(background, scenario):
+                hits = [step for step in steps if step["kind"] == kind and step["matches"](text)]
+                for step in hits:
+                    step["reached"].add(scenario["id"])
+                if not hits:
+                    unresolved.add(f"feature step matches no step pattern: {where}: {text}")
+    return sorted(unresolved)
 
 
-def report_step_comment_completeness(repo_root, features, step_files):
+def step_comment_completeness(repo_root, features, step_files):
     steps, unparsed = step_definitions(repo_root, step_files)
-    unresolved = record_reach(features, steps)
-    summary = f"  coverage: {len(steps)} step patterns parsed"
-    if unparsed:
-        summary += f", {unparsed} unparsed"
-    print(summary + f"; {unresolved} feature step line(s) matched no pattern")
-    gaps = [(step["where"], sorted(step["reached"] - step["declared"])) for step in steps]
-    gaps = [(where, missing) for where, missing in gaps if missing]
-    if not gaps:
-        print("  OK: every step's ID list covers the scenarios that reach it")
-        return
-    print(f"  REPORT (advisory): {len(gaps)} step(s) reached by IDs their comment omits")
-    for where, missing in gaps[:REPORT_LIMIT]:
-        shown = " ".join(missing[:REPORT_IDS_PER_STEP])
-        more = " …" if len(missing) > REPORT_IDS_PER_STEP else ""
-        print(f"    {where}  +{len(missing)}: {shown}{more}")
-    if len(gaps) > REPORT_LIMIT:
-        print(f"    … and {len(gaps) - REPORT_LIMIT} more")
+    errors = [f"{unparsed} step attribute(s) this check cannot parse"] if unparsed else []
+    errors.extend(record_reach(repo_root, features, steps))
+    for step in steps:
+        missing = sorted(step["reached"] - step["declared"])
+        if missing:
+            errors.append(f"{step['where']}: the ID list omits {' '.join(missing)}")
+    return errors
 
 
 def run_check(title, errors, sink):
@@ -255,12 +272,10 @@ def main(repo_root, features_dir, steps_dir):
     step_files = step_definition_files(steps_dir)
     ids = executable_scenario_ids(features)
     errors = []
-    run_check("@wip hygiene", wip_in_foundation_stage(features), errors)
     run_check("Feature directories are not empty", empty_feature_directories(features_dir), errors)
     run_check("Scenario ids avoid the exempt prefixes", scenario_ids_using_exempt_prefixes(ids), errors)
     run_check("Step comment IDs name executable scenarios", step_comment_ids_without_scenario(step_files, ids), errors)
-    print("--- Step comment ID lists are complete (advisory) ---")
-    report_step_comment_completeness(repo_root, features, step_files)
+    run_check("Step comment ID lists are complete", step_comment_completeness(repo_root, features, step_files), errors)
     if errors:
         sys.stdout.flush()
         print("BDD Coverage Verification FAILED", file=sys.stderr)

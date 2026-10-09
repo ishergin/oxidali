@@ -15,6 +15,9 @@ use dali2rust_platform::dali::{
 use super::{held_capture_outcome, WIRE_LOAD_WINDOW_TICKS};
 
 pub use dali2rust_gear_model::{GearSpec, DEFAULT_RESERVED_SHORT_ADDRESSES};
+use dali2rust_gear_model::input_device::{
+    DeviceFleet, FeedbackDialect, FeedbackSpec, InputDeviceSpec, InstanceSpec,
+};
 
 const HOST_RNG_SEED: u32 = 0x00C0_FFEE;
 
@@ -241,9 +244,6 @@ fn elapsed_ticks(since: Instant) -> u32 {
 }
 
 fn demo_input_devices() -> dali2rust_gear_model::input_device::DeviceFleet {
-    use dali2rust_gear_model::input_device::{
-        DeviceFleet, FeedbackDialect, FeedbackSpec, InputDeviceSpec, InstanceSpec,
-    };
     let button = |dialect| InstanceSpec {
         instance_type: 1,
         feedback: Some(FeedbackSpec {

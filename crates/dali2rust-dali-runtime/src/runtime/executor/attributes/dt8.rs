@@ -1,4 +1,10 @@
 use super::*;
+use dali2rust_domain::dali::devices::dt8_color::{
+    COLOUR_STATUS_PRIMARY_N_ACTIVE as STATUS_PRIMARY_N_ACTIVE,
+    COLOUR_STATUS_RGBWAF_ACTIVE as STATUS_RGBWAF_ACTIVE,
+    COLOUR_STATUS_TC_ACTIVE as STATUS_TC_ACTIVE, COLOUR_STATUS_XY_ACTIVE as STATUS_XY_ACTIVE,
+    ColorType,
+};
 
 pub(super) fn write_tc_limits(
     controller: &mut impl DaliApplicationController,
@@ -155,12 +161,6 @@ fn read_dt8_gear_features(
 }
 
 fn active_color_type_from_status(status: u8) -> Option<u8> {
-    use dali2rust_domain::dali::devices::dt8_color::{
-        COLOUR_STATUS_PRIMARY_N_ACTIVE as STATUS_PRIMARY_N_ACTIVE,
-        COLOUR_STATUS_RGBWAF_ACTIVE as STATUS_RGBWAF_ACTIVE,
-        COLOUR_STATUS_TC_ACTIVE as STATUS_TC_ACTIVE, COLOUR_STATUS_XY_ACTIVE as STATUS_XY_ACTIVE,
-    };
-    use dali2rust_domain::dali::devices::dt8_color::ColorType;
     if status & STATUS_XY_ACTIVE != 0 {
         Some(ColorType::XyCoordinate as u8)
     } else if status & STATUS_TC_ACTIVE != 0 {

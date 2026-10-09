@@ -31,6 +31,9 @@ members = [
 ]
 exclude = ["target"]
 
+[workspace.metadata.dali2rust]
+not_host = ["crates/dali2rust-firmware", "tests/dali2rust-bdd"]
+
 [workspace.package]
 version = "0.1.0"
 authors = ["Igor Shergin <ishergin@gmail.com>"]

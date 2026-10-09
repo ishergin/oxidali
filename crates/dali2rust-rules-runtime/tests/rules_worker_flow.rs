@@ -4,14 +4,15 @@ use std::time::Duration;
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResult};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
-    BusEventPayload, Dali103InstanceAction, Origin, RuleCommitCommand, RuleEnableCommand,
-    RuleStageCommand, RULE_SOURCE_CHUNK_BYTES,
+    BusCommandPayload, BusEventPayload, ColorMode, Dali103InstanceAction, OperationType, Origin,
+    PowerState, RULE_SOURCE_CHUNK_BYTES, RuleCommitCommand, RuleEnableCommand, RuleStageCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::dali::dev103::instance_type;
 use dali2rust_rules_model::testing::StubResolver;
 use dali2rust_rules_runtime::runtime::persistence::fnv1a32;
 use dali2rust_rules_runtime::{spawn_rules_worker, RulesStore, RulesWorkerCounters};
+use dali2rust_rules_model::action::ActionKind;
 
 struct EmptyWorld {
     started: std::time::Instant,
@@ -1130,7 +1131,6 @@ const LANDINGS: &[(&str, &str, Landing)] = &[
 
 #[test]
 fn every_action_kind_declares_where_it_lands() {
-    use dali2rust_rules_model::action::ActionKind;
     let declared: std::collections::BTreeSet<&str> =
         LANDINGS.iter().map(|(kind, _, _)| *kind).collect();
     assert_eq!(
@@ -1251,7 +1251,6 @@ fn drain_commands(h: &Harness) -> Vec<dali2rust_contracts::msg::CommandEnvelope>
 }
 
 fn opened_scene_apply(published: &[dali2rust_contracts::msg::CommandEnvelope]) -> (u64, String) {
-    use dali2rust_contracts::msg::{BusCommandPayload, OperationType};
     let [begin, execute] = published else {
         panic!("a scene apply is one begin and one execute, got {published:?}");
     };
@@ -1347,8 +1346,6 @@ fn next_setpoint_command(h: &Harness) -> Option<dali2rust_contracts::msg::DaliSe
 
 #[test]
 fn every_light_argument_reaches_the_setpoint() {
-    use dali2rust_contracts::msg::{ColorMode, PowerState};
-
     let sp = landing_setpoint("level-absolute", "lamp(0).on(level=200)");
     assert_eq!((sp.power, sp.level), (PowerState::On, Some(200)));
 
@@ -1528,12 +1525,12 @@ fn fade_is_refused_at_the_document_boundary() {
     assert!(
         sig.error.is_some(),
         "a document carrying `fade=` must be refused at the commit, not \
-         accepted and silently dropped (ISSUE-94)"
+         accepted and silently dropped"
     );
 }
 
 #[test]
-fn a_slice_reload_reaches_a_live_engine_issue101() {
+fn a_slice_reload_reaches_a_live_engine() {
     let files = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-reload"));
     let standby = harness_on(Arc::clone(&files));
     let active = harness_on(Arc::clone(&files));
@@ -1609,7 +1606,7 @@ rule \"цель\" { when http trigger do log(\"z\") }\n\
 rule \"выключатель\" { when http trigger do rule(\"цель\").disable() }\n";
 
 #[test]
-fn toggling_one_rule_leaves_the_other_rules_running_issue127() {
+fn toggling_one_rule_leaves_the_other_rules_running() {
     let h = harness("rules-toggle-neighbours");
     publish_document(&h, 1, NEIGHBOURS_DOC, 0);
     assert!(recv_signal(&h, 1).error.is_none());
@@ -1849,7 +1846,7 @@ fn a_failure_found_at_boot_keeps_its_diagnostic_until_the_cause_changes() {
 }
 
 #[test]
-fn a_disabled_rule_stays_disabled_across_a_document_that_stopped_compiling_issue162() {
+fn a_disabled_rule_stays_disabled_across_a_document_that_stopped_compiling() {
     let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let world = EmptyWorld {
         started: std::time::Instant::now(),
@@ -1889,7 +1886,7 @@ fn a_disabled_rule_stays_disabled_across_a_document_that_stopped_compiling_issue
 }
 
 #[test]
-fn a_wet_run_is_reported_per_rule_and_a_dry_run_is_not_issue100() {
+fn a_wet_run_is_reported_per_rule_and_a_dry_run_is_not() {
     let h = harness("rules-runtime-block");
     publish_document(&h, 1, NEIGHBOURS_DOC, 0);
     assert!(recv_signal(&h, 1).error.is_none());

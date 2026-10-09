@@ -72,6 +72,14 @@ use dali2rust_operations_runtime::OperationTrackerHttpRead;
 use dali2rust_platform::clock::Clock;
 
 use super::http_bridges::RegistryHttpPorts;
+use dali2rust_api::http::handlers::input_devices::{
+    InputDeviceAction, InputDeviceActionHandler, InputDeviceBus, InputDeviceGetHandler,
+    InputDeviceListHandler,
+};
+use dali2rust_api::http::handlers::rules::{
+    RulesAction, RulesConfirmation, RulesHandler, RulesHandlerShared,
+};
+use dali2rust_api::http::handlers::firmware::{FirmwareGetHandler, FirmwareUpdateHandler};
 
 pub(crate) struct ReadModelPorts {
     pub diagnostics: Arc<dyn dali2rust_api::http::diagnostics_state::DiagnosticsHttpState>,
@@ -684,9 +692,6 @@ fn wire_input_devices(
     registry: &RegistryHttpPorts,
     op_read: &Arc<dyn OperationReadPort>,
 ) -> AppBuilder {
-    use dali2rust_api::http::handlers::input_devices::{
-        InputDeviceGetHandler, InputDeviceListHandler,
-    };
     let state = &registry.input_device_state;
     let wall: Arc<dyn dali2rust_platform::clock::UnixTimeMs> =
         Arc::new(dali2rust_bsp::unix_clock::StdUnixTimeMs);
@@ -709,9 +714,6 @@ fn wire_input_device_actions(
     registry: &RegistryHttpPorts,
     op_read: &Arc<dyn OperationReadPort>,
 ) -> AppBuilder {
-    use dali2rust_api::http::handlers::input_devices::{
-        InputDeviceAction, InputDeviceActionHandler, InputDeviceBus,
-    };
     let state = &registry.input_device_state;
     let action = |kind: InputDeviceAction| -> Box<InputDeviceActionHandler> {
         let bus = InputDeviceBus {
@@ -757,9 +759,6 @@ pub(crate) struct RulesHttpDeps {
 
 #[inline(never)]
 fn wire_rules(builder: AppBuilder, bus: &HttpBusDispatch, deps: &RulesHttpDeps) -> AppBuilder {
-    use dali2rust_api::http::handlers::rules::{
-        RulesAction, RulesConfirmation, RulesHandler, RulesHandlerShared,
-    };
     let shared = Arc::new(RulesHandlerShared::new(
         Arc::clone(&deps.state),
         Arc::clone(&deps.compiler),
@@ -789,7 +788,6 @@ fn wire_firmware(
     bus: &HttpBusDispatch,
     firmware: &Arc<dyn dali2rust_api::http::firmware_state::FirmwareHttpState>,
 ) -> AppBuilder {
-    use dali2rust_api::http::handlers::firmware::{FirmwareGetHandler, FirmwareUpdateHandler};
     builder
         .with_handler(RouteKey::Firmware, read(firmware, FirmwareGetHandler::new))
         .with_handler(

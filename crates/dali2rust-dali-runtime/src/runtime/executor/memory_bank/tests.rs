@@ -14,6 +14,7 @@ use ProofAnswer::{Garbled, Quiet, Says};
 use ReadAttempt::{
     BusBusy, ContendedAnswer, ContendedSilence, Silent, TransportFailed, Violated,
 };
+use dali2rust_domain::dali::banks::part251;
 
 fn special_frame(cmd: SpecialCommand) -> u16 {
     DaliCommand::Special(cmd).to_forward_frame().raw()
@@ -1315,8 +1316,6 @@ fn rom_banks_keep_the_flat_chunk_budget() {
 
 #[test]
 fn part251_numeric_values_are_never_split_across_chunks() {
-    use dali2rust_domain::dali::banks::part251;
-
     let last = 0xC9u16;
     let mut boundaries = vec![];
     let mut offset = 0u16;

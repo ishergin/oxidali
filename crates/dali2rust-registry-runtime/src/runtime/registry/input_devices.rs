@@ -306,6 +306,7 @@ mod tests {
 }
 
 use crate::runtime::registry::RegistryStore;
+use dali2rust_domain::dali::dev103::{feedback_capability, feedback_colour_capability};
 
 impl RegistryStore {
     pub(crate) fn apply_input_scan_progress(
@@ -545,7 +546,6 @@ fn apply_feedback_readback(instance: &mut InstanceRecord, readback: &InstanceRea
 }
 
 fn invalidate_common_feedback(record: &mut InputDeviceRecord, written_instance: u8) {
-    use dali2rust_domain::dali::dev103::{feedback_capability, feedback_colour_capability};
     let common_brightness = record.instances.iter().any(|i| {
         i.feedback_capability
             .value

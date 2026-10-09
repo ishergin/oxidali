@@ -1,3 +1,6 @@
+use dali2rust_api::http::handlers::config_transfer::{
+    parse_slice_manifest, SliceManifestEntry,
+};
 use dali2rust_platform::http_fetch::{FetchError, HttpFetch};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,22 +63,16 @@ pub fn fetch_manifest(
 }
 
 pub fn parse_manifest(body: &[u8]) -> Result<Vec<SliceDigest>, FetchError> {
-    let rows: Vec<serde_json::Value> =
-        serde_json::from_slice(body).map_err(|_| FetchError::Malformed)?;
-    Ok(rows.iter().filter_map(digest_of).collect())
+    let rows = parse_slice_manifest(body).ok_or(FetchError::Malformed)?;
+    Ok(rows.into_iter().map(digest_of).collect())
 }
 
-fn digest_of(row: &serde_json::Value) -> Option<SliceDigest> {
-    let name = row.get("name")?.as_str()?.to_string();
-    let bytes = match row.get("bytes") {
-        None | Some(serde_json::Value::Null) => None,
-        Some(v) => Some(usize::try_from(v.as_u64()?).ok()?),
-    };
-    Some(SliceDigest {
-        name,
-        bytes,
-        crc32: u32::try_from(row.get("crc32")?.as_u64()?).ok()?,
-    })
+fn digest_of(row: SliceManifestEntry) -> SliceDigest {
+    SliceDigest {
+        name: row.name,
+        bytes: row.bytes,
+        crc32: row.crc32,
+    }
 }
 
 #[cfg(test)]

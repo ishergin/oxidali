@@ -363,7 +363,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod issue58_missing_queries_tests {
+mod query_opcode_tests {
     use super::*;
     use crate::dali::pres::opcode::{is_query_opcode, QUERY_OPCODES};
 

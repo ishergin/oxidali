@@ -74,6 +74,7 @@ mod tests {
     use super::*;
     use dali2rust_bsp::slice_store_files::InMemorySliceStore;
     use dali2rust_bsp::wall_clock::SystemWallClock;
+    use dali2rust_api::http::handler::ApiHandler;
 
     #[test]
     fn the_zone_round_trips_through_the_store() {
@@ -88,7 +89,6 @@ mod tests {
 
     #[test]
     fn a_zone_the_flash_cannot_take_now_is_refused_and_not_applied() {
-        use dali2rust_api::http::handler::ApiHandler;
         let clock: Arc<dyn WallClock> = Arc::new(SystemWallClock::new());
         let busy: TimezonePersist = Arc::new(|_| Err(TimezonePersistRefusal::FlashBusy));
         let handler =
@@ -104,7 +104,6 @@ mod tests {
     }
 
     fn put_zone(clock: &Arc<dyn WallClock>, persist: TimezonePersist, zone: &str) -> u16 {
-        use dali2rust_api::http::handler::ApiHandler;
         let handler = dali2rust_api::http::handlers::time::TimeHandler::new(Arc::clone(clock), persist);
         let body = format!(r#"{{"timezone":"{zone}"}}"#);
         handler

@@ -425,6 +425,7 @@ mod tests {
     use dali2rust_test_support::wait_until;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Condvar, Mutex};
+    use dali2rust_platform::logs::LogLevel;
 
     #[test]
     fn every_timer_slot_is_reachable_through_the_primary_wait() {
@@ -460,8 +461,6 @@ mod tests {
 
     #[test]
     fn a_ring_that_wrapped_before_the_drain_reports_the_gap_and_counts_it() {
-        use dali2rust_platform::logs::LogLevel;
-
         let ring: &'static LogRing = crate::runtime::hub::leaked_test_ring();
         ring.set_min_level(LogLevel::Info);
         let (tap, _rx) = SnifferTap::new(4);
@@ -482,8 +481,6 @@ mod tests {
 
     #[test]
     fn a_quiet_subscriber_is_not_handed_the_loud_lines_the_ring_kept() {
-        use dali2rust_platform::logs::LogLevel;
-
         let ring: &'static LogRing = crate::runtime::hub::leaked_test_ring();
         ring.set_min_level(LogLevel::Info);
         ring.record(LogLevel::Warn, b"t", b"noisy", 1);

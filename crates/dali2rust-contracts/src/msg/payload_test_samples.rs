@@ -1,8 +1,8 @@
 use crate::msg::{
-    fixed_text_32, fixed_text_48, fixed_text_64, fixed_text_96, BusCommandPayload, BusEventPayload, ColorMode,
-    ColorValue, CommandEnvelope, CompactErrorPayload, Dt6ReadSnapshot, ErrorCode, EventEnvelope,
-    FailureStatus, FixedText32, FixedText48, FixedText64, FixedText96, LightSetpoint, RuntimeObservation,
-    RuntimeSource, StatusFlags,
+    fixed_text_32, fixed_text_48, fixed_text_64, fixed_text_96, BusCommandPayload, BusEventPayload,
+    ColorMode, ColorValue, CommandEnvelope, CompactErrorPayload, DaliAttributeReadChunk as Chunk,
+    Dt6ReadSnapshot, ErrorCode, EventEnvelope, FailureStatus, FixedText32, FixedText48,
+    FixedText64, FixedText96, LightSetpoint, RuntimeObservation, RuntimeSource, StatusFlags,
 };
 
 pub(crate) fn worst_rule_chunk(
@@ -178,7 +178,6 @@ pub(crate) fn worst_attributes_read_event() -> crate::msg::DaliAttributesReadEve
 }
 
 pub(crate) fn worst_attribute_read_chunks() -> [crate::msg::DaliAttributeReadChunk; 10] {
-    use crate::msg::DaliAttributeReadChunk as Chunk;
     [
         Chunk::Identity {
             random_address: u32::MAX,

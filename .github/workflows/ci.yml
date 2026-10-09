@@ -67,6 +67,10 @@ jobs:
           cache: npm
           cache-dependency-path: web/app/package-lock.json
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Install just and ripgrep
         run: brew install just ripgrep
 

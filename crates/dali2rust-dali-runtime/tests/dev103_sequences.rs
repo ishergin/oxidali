@@ -77,7 +77,7 @@ fn a_scan_enumerates_the_instances_a_device_declares() {
     assert!(
         seen.iter().all(|d| !d.presence_unproven),
         "a readable answer proves presence; flagging one of these would cost \
-         a real panel its Home Assistant entity (`ISSUE-104`)"
+         a real panel its Home Assistant entity"
     );
 
     let frames = frames24(&transport);
@@ -683,6 +683,6 @@ fn a_violation_that_repeats_is_still_a_device() {
         device.presence_unproven,
         "nothing readable ever came back, and the registry needs that fact to \
          withhold the Home Assistant entity — publishing the address while \
-         silently calling its presence proven is `ISSUE-104` one storey up"
+         silently calling its presence proven announces a phantom device"
     );
 }

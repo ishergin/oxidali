@@ -1,4 +1,8 @@
-use dali2rust_domain::dali::banks::{chunk_len, field_containing, is_field_boundary, BANK_META_LEN};
+use dali2rust_domain::dali::banks::{
+    chunk_len, field_containing, is_field_boundary, BANK_ACTIVE_ENERGY, BANK_APPARENT_ENERGY,
+    BANK_CONTROL_GEAR_DIAGNOSTICS, BANK_LIGHT_SOURCE_DIAGNOSTICS, BANK_LOADSIDE_ENERGY,
+    BANK_LUMINAIRE_MAINTENANCE, BANK_META_LEN,
+};
 use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::controller::DaliApplicationController;
 use dali2rust_domain::dali::net::address::DaliAddress;
@@ -535,10 +539,6 @@ fn read_bank_verified(
 }
 
 fn metered_plan(preset: MemoryBankReadPreset) -> &'static [PlannedMemoryBankRead] {
-    use dali2rust_domain::dali::banks::{
-        BANK_ACTIVE_ENERGY, BANK_APPARENT_ENERGY, BANK_CONTROL_GEAR_DIAGNOSTICS,
-        BANK_LIGHT_SOURCE_DIAGNOSTICS, BANK_LOADSIDE_ENERGY, BANK_LUMINAIRE_MAINTENANCE,
-    };
     const POWER: (u16, u16) = (0x0B, 5);
     const ENERGY: (u16, u16) = (0x03, 8);
     match preset {

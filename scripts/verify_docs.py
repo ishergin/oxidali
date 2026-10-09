@@ -12,11 +12,8 @@ SHINGLE_WORDS = 40
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 ISO_DATE = re.compile(r"\b20\d\d-\d\d-\d\d\b")
 FENCE = re.compile(r"^\s*(```|~~~)")
-DATE_SCOPE = ("documentation/", "CLAUDE.md", "README.md", "tools/hil/README.md", "tools/hil/STRATEGY.md")
-DATE_FREE_FILES = (
-    "documentation/product-design/known-issues.md",
-    "documentation/product-design/issue-ids-registry.md",
-)
+KNOWN_ISSUES = "documentation/product-design/known-issues.md"
+OPENING_DATE = re.compile(r"^- \*\*Статус:\*\* (открыт|ждёт стенда) с 20\d\d-\d\d-\d\d")
 EXCLUDED = ("web/design-system/", "crates/dali2rust-firmware/assets/")
 SHINGLE_EXCLUDED = ("AGENTS.md",)
 
@@ -74,7 +71,7 @@ def check_size(rel, text, caps, errors):
 
 
 def date_allowed(rel, line):
-    if rel in DATE_FREE_FILES:
+    if rel == KNOWN_ISSUES and OPENING_DATE.match(line) and len(ISO_DATE.findall(line)) == 1:
         return True
     if "/decisions/" in rel and line.startswith("Date:"):
         return True
@@ -82,8 +79,6 @@ def date_allowed(rel, line):
 
 
 def check_dates(rel, text, errors):
-    if not rel.startswith(DATE_SCOPE):
-        return
     for number, line in prose_lines(text):
         if ISO_DATE.search(line) and not date_allowed(rel, line):
             errors.append(f"{rel}:{number}: dated text ({ISO_DATE.search(line).group(0)}) — state what is, not when")

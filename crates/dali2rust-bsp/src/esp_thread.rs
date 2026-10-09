@@ -1,6 +1,11 @@
 use core::ffi::CStr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(target_os = "espidf")]
+use esp_idf_svc::hal::cpu::Core;
+#[cfg(target_os = "espidf")]
+use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StackHome {
     Internal,
@@ -219,8 +224,6 @@ fn with_named_builder_on<T>(
     }
     #[cfg(target_os = "espidf")]
     {
-        use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
-
         let previous = ThreadSpawnConfiguration::get();
         if let Err(e) = spawn_configuration(name, home, core).set() {
             log::warn!("thread-name config for {label} failed: {e}");
@@ -246,10 +249,7 @@ fn spawn_configuration(
     name: &'static CStr,
     home: StackHome,
     core: Option<u8>,
-) -> esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration {
-    use esp_idf_svc::hal::cpu::Core;
-    use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
-
+) -> ThreadSpawnConfiguration {
     let mut config = ThreadSpawnConfiguration {
         name: Some(name),
         ..Default::default()

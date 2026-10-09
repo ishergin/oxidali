@@ -2,8 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ALLOW_FILE="$ROOT/scripts/duplication_clone_budget.txt"
-DEFAULT_BUDGET=7
+BUDGET_FILE="$ROOT/scripts/duplication_clone_budget.txt"
 
 fail_matches() {
   local message="$1"
@@ -28,9 +27,21 @@ fail_matches \
   "operation begin flows must be centralized in crates/dali2rust-api/src/http/handlers/operation_dispatch.rs" \
   "$operation_begin_flows"
 
-budget="$DEFAULT_BUDGET"
-if [[ -f "$ALLOW_FILE" ]]; then
-  read -r budget <"$ALLOW_FILE" || budget="$DEFAULT_BUDGET"
+web_fingerprints=$(rg -n 'find src[ ]public|package-lock[.]json vite[.]config[.]ts' \
+  "$ROOT/scripts" "$ROOT/tools" "$ROOT/.github" "$ROOT/justfile" \
+  --glob '!**/web_ui_sources_fingerprint.sh' || true)
+fail_matches \
+  "the web UI source fingerprint is computed only in scripts/web_ui_sources_fingerprint.sh" \
+  "$web_fingerprints"
+
+budget=""
+if [[ -f "$BUDGET_FILE" ]]; then
+  IFS= read -r budget <"$BUDGET_FILE" || true
+fi
+budget="${budget//[[:space:]]/}"
+if [[ ! "$budget" =~ ^[0-9]+$ ]]; then
+  echo "verify_duplication: $BUDGET_FILE must hold one non-negative integer, found '${budget}'" >&2
+  exit 1
 fi
 
 if ! command -v npx >/dev/null 2>&1; then
@@ -44,6 +55,7 @@ if ! command -v npx >/dev/null 2>&1; then
 fi
 
 tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
 set +e
 npx --yes jscpd@4.0.5 "$ROOT/crates" "$ROOT/tests" \
   --ignore "**/generated/**,**/target/**" \
@@ -66,8 +78,14 @@ if [[ -z "${clones:-}" || ! "$clones" =~ ^[0-9]+$ ]]; then
 fi
 
 if (( clones > budget )); then
-  echo "verify_duplication: clone count $clones exceeds budget $budget (raise budget only with allowlist reason in scripts/duplication_clone_budget.txt)" >&2
+  echo "verify_duplication: clone count $clones exceeds budget $budget — deduplicate the new clone" >&2
   cat "$tmp" >&2
+  exit 1
+fi
+
+if (( clones < budget )); then
+  echo "verify_duplication: only $clones clones, budget is $budget — lower" >&2
+  echo "scripts/duplication_clone_budget.txt to $clones; the baseline only goes down." >&2
   exit 1
 fi
 

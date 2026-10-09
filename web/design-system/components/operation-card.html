@@ -71,8 +71,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .chip.err  { color: var(--err); background: var(--err-soft); }
 /* `preempted` is the priority mechanism working, not a fault (ADR-013). It
    must never take the same colour as a failure: an operator who moves a level
-   while a read is running preempts it BY DESIGN, and after ISSUE-33 that is a
-   routine event rather than a rare one. Muted, like `accepted`. */
+   while a read is running preempts it BY DESIGN, so that is a routine event
+   rather than a rare one. Muted, like `accepted`. */
 .chip.stood-down { color: var(--text-muted); background: var(--raised); }
 @keyframes pulse { 50% { opacity: .25; } }
 
@@ -190,8 +190,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   </div>
 
   <!--
-    ADR-013 / ISSUE-33. A long read stands down the moment the operator touches
-    a control, so `status: failed` + `error.code: preempted` is now an ordinary
+    ADR-013. A long read stands down the moment the operator touches
+    a control, so `status: failed` + `error.code: preempted` is an ordinary
     outcome. Three deliberate choices here:
       * muted chip reading "interrupted", never the red `failed` treatment;
       * no `err-box` — nothing went wrong and there is nothing to diagnose;
@@ -224,7 +224,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   </div>
 
   <!--
-    `config_write` (ISSUE-25): saving a matrix or an HCL schedule is now an
+    `config_write` (ADR-012): saving a matrix or an HCL schedule is an
     operation too. It has NO result buckets — it is a registry write, not a run
     over the wire, so there is nothing to count. All or nothing: the row set
     lands whole or the matrix is untouched.

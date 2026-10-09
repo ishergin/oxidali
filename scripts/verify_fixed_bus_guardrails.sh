@@ -74,29 +74,57 @@ PY
 echo "[guardrail] checking runtime registry for json value leakage..."
 if rg -n "serde_json|json!|\\bValue\\b|obs_value_source: Option<String>|obs_last_dapc_source: Option<String>" \
     "$ROOT/crates/dali2rust-registry-runtime/src/runtime/registry" \
-    --glob "!persistence.rs" >"$TMP_DIR/registry.txt"; then
+    >"$TMP_DIR/registry.txt"; then
   echo "found forbidden runtime registry patterns:"
   cat "$TMP_DIR/registry.txt"
   exit 1
 fi
 
-echo "[guardrail] checking non-api crates for serde_json leakage..."
-if rg -n "serde_json" \
-    "$ROOT/crates/dali2rust-adapters/src/runtime" \
-    "$ROOT/crates/dali2rust-bsp/src" \
-    "$ROOT/crates/dali2rust-bus/src" \
-    "$ROOT/crates/dali2rust-contracts/src" \
-    "$ROOT/crates/dali2rust-dali-runtime/src" \
-    "$ROOT/crates/dali2rust-display-runtime/src" \
-    "$ROOT/crates/dali2rust-operations-runtime/src" \
-    "$ROOT/crates/dali2rust-registry-runtime/src" \
-    "$ROOT/crates/dali2rust-ws-runtime/src" \
-    "$ROOT/crates/dali2rust-mqtt-runtime/src" \
-    --glob "!**/tests/**" --glob "!**/*test*.rs" --glob "!**/registry/persistence.rs" \
-    >"$TMP_DIR/serde.txt"; then
-  echo "found forbidden serde_json usage outside API boundary:"
-  cat "$TMP_DIR/serde.txt"
-  exit 1
-fi
+echo "[guardrail] checking that only dali2rust-api depends on serde_json..."
+python3 - "$ROOT" <<'PY'
+import sys
+
+if sys.version_info < (3, 11):
+    raise SystemExit("the merge gates need Python 3.11 or newer (tomllib)")
+
+import tomllib
+from pathlib import Path
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts"))
+from host_crates import host_crates
+
+JSON_CRATE = "dali2rust-api"
+FORBIDDEN = "serde_json"
+
+
+def runtime_tables(manifest):
+    yield "dependencies", manifest.get("dependencies", {})
+    for target, spec in manifest.get("target", {}).items():
+        yield f"target.{target}.dependencies", spec.get("dependencies", {})
+
+
+def names_serde_json(key, spec):
+    package = spec.get("package", key) if isinstance(spec, dict) else key
+    return FORBIDDEN in (key, package)
+
+
+findings = []
+for crate in host_crates() + ["dali2rust-firmware"]:
+    if crate == JSON_CRATE:
+        continue
+    path = root / "crates" / crate / "Cargo.toml"
+    manifest = tomllib.loads(path.read_text(encoding="utf-8"))
+    for table, deps in runtime_tables(manifest):
+        findings.extend(
+            f"{path.relative_to(root)}: [{table}] {key}"
+            for key, spec in deps.items()
+            if names_serde_json(key, spec)
+        )
+if findings:
+    print("JSON belongs to dali2rust-api; these crates depend on serde_json outside dev-dependencies:")
+    print("\n".join(findings))
+    sys.exit(1)
+PY
 
 echo "[guardrail] fixed-size constraints look good"

@@ -25,6 +25,11 @@ use crate::gear::{
     MEMORY_BANK_IDENTITY, MEMORY_BANK_PROFILE, STATUS_GEAR_FAILURE, STATUS_LAMP_FAILURE,
     STATUS_LAMP_ON, STATUS_LIMIT_ERROR, STATUS_POWER_CYCLE_SEEN,
 };
+use dali2rust_domain::dali::banks::{
+    bank_last_offset, read_value, BankValue, ValueWidth, BANK_ACTIVE_ENERGY,
+    BANK_CONTROL_GEAR_DIAGNOSTICS, BANK_LOADSIDE_ENERGY, DEVICE_TYPE_DIAGNOSTICS,
+    DEVICE_TYPE_ENERGY,
+};
 
 fn frame(command: DaliCommand) -> u16 {
     let f = command.to_forward_frame();
@@ -510,11 +515,6 @@ fn memory_bank_identity_reads_sequentially_with_dtr0_autoincrement() {
 
 #[test]
 fn metering_banks_answer_only_on_gear_that_declared_the_types() {
-    use dali2rust_domain::dali::banks::{
-        bank_last_offset, read_value, BankValue, ValueWidth, BANK_ACTIVE_ENERGY,
-        BANK_CONTROL_GEAR_DIAGNOSTICS, BANK_LOADSIDE_ENERGY, DEVICE_TYPE_DIAGNOSTICS,
-        DEVICE_TYPE_ENERGY,
-    };
     let mut fleet = GearFleet::demo_bus();
     let metered = 8u8;
     let plain = 0u8;
@@ -1020,7 +1020,7 @@ fn a_dapc_frame_commits_the_staged_colour() {
     assert_eq!(
         exchange(&mut fleet, dt8(5, Dt8Command::QueryColourStatus), true),
         TransferOutcome::Answer(0),
-        "staged only — nothing active yet (ISSUE-12)"
+        "staged only — nothing is active until ACTIVATE or an arc-power command"
     );
 
     let dapc = (u16::from(short(5).encode_address_byte()) << 8) | 120;
@@ -1038,7 +1038,7 @@ fn a_dapc_frame_commits_the_staged_colour() {
 }
 
 #[test]
-fn a_masked_dapc_activates_the_staged_colour_only_while_the_bit_is_set_issue128() {
+fn a_masked_dapc_activates_the_staged_colour_only_while_the_bit_is_set() {
     let mut fleet = GearFleet::demo_bus();
     write_gear_features(&mut fleet, 0x00);
     stage_cct(&mut fleet);

@@ -15,7 +15,8 @@ use dali2rust_bsp::stack_probe::StackLowWater;
 use dali2rust_bsp::std_thread_stack;
 use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, BusSubscriberRx, PublishResult};
 use dali2rust_contracts::msg::{
-    BusEventPayload, DaliRecallSceneCommand, DaliSetTargetStateCommand, Origin,
+    BusEventPayload, DaliRecallSceneCommand, DaliSetTargetStateCommand, ErrorCode,
+    OperationWorkerSignalEvent, Origin,
 };
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::registry::{
@@ -376,7 +377,6 @@ fn terminal_signal(
     job: &DiscoveryJob,
     workflow: u64,
 ) -> dali2rust_contracts::msg::OperationWorkerSignalEvent {
-    use dali2rust_contracts::msg::{ErrorCode, OperationWorkerSignalEvent};
     if job.failed > 0 {
         OperationWorkerSignalEvent::failed(
             workflow,

@@ -3,6 +3,7 @@ use log::warn;
 use crate::bus::{BusChannel, BusPublisher};
 use crate::frame::BusFrame;
 use crate::publish::PublishResult;
+use core::sync::atomic::Ordering;
 
 pub const REQUIRED_PUBLISH_BACKOFF_MS: [u64; 10] = [0, 25, 50, 100, 150, 200, 250, 250, 250, 250];
 
@@ -44,7 +45,6 @@ impl<'a> RequiredPublishCounters<'a> {
     }
 
     fn record(self, outcome: RequiredPublishOutcome) {
-        use core::sync::atomic::Ordering;
         if outcome.retries > 0 {
             if let Some(retried) = self.retried {
                 retried.fetch_add(outcome.retries, Ordering::Relaxed);

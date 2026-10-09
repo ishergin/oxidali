@@ -17,8 +17,7 @@ registry_doc = sys.argv[2]
 
 scenario_re = re.compile(r'^\s*Scenario(?: Outline)?:')
 id_re = re.compile(r'@id:([A-Z]+(?:-[A-Z]+)*-[0-9]{3}[a-z]?)\b')
-stage_re = re.compile(r'@stage-([A-Z][0-9]{1,2})\b')
-allowed_stage_re = re.compile(r'^(F[0-6]|R(?:[1-9]|1[0-7])|I(?:[1-9]|10)|X[1-4])$')
+stage_re = re.compile(r'@stage-(\S+)')
 prefix_re = re.compile(r'^([A-Z]+(?:-[A-Z]+)*-)[0-9]{3}[a-z]?$')
 
 registered_prefixes = set()
@@ -64,14 +63,6 @@ for path in feature_files:
     if feature_line is None:
         errors.append(f"MISSING Feature: header: {path}")
         continue
-
-    stages = []
-    for idx, line in enumerate(lines, start=1):
-        for match in stage_re.finditer(line):
-            stage = match.group(1)
-            stages.append(stage)
-            if not allowed_stage_re.match(stage):
-                errors.append(f"INVALID @stage tag: {path}:{idx}: {stage}")
 
     feature_header_stages = []
     for idx in range(1, feature_line):

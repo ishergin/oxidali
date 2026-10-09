@@ -11,7 +11,7 @@ const TWO_DEVICE_RANDOM_ADDRESSES: [(u8, u32); 2] = [(0, 0x5C1D_C2), (1, 0x2A_0F
 
 const DISCOVERY_DT8_FEATURES: u8 = 0x02;
 
-// VL-036 VL-102 RULE-037 RULE-038 RULE-032 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064 RULE-070 CFG-013
+// VL-036 VL-102 RULE-037 RULE-038 RULE-032 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064 RULE-070 POLICY-007 CFG-013
 #[given("adapter 0 has discovered physical devices 0 and 1")]
 async fn given_two_discovered_devices(world: &mut DaliWorld) {
     {

@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use dali2rust_bus::{BusFrame, BusId, BusPublisher};
 use dali2rust_contracts::msg::{
-    ColorMode, ColorValue, DaliSceneTargetState, OperationType, PowerState, SceneMatrixDesiredRow,
-    SceneMatrixDesiredRowList, SceneMetadataUpdateCommand, MAX_SCENE_MATRIX_ROWS_PER_COMMAND,
+    ColorMode, ColorValue, DaliRecallSceneCommand, DaliSceneTargetState,
+    MAX_SCENE_MATRIX_ROWS_PER_COMMAND, OperationType, PowerState, SceneMatrixDesiredRow,
+    SceneMatrixDesiredRowList, SceneMetadataUpdateCommand,
 };
 use serde::de::IgnoredAny;
 use serde::Deserialize;
@@ -303,7 +304,6 @@ fn parse_recall_scope(
     adapter_id: u8,
     scene_id: u8,
 ) -> Result<dali2rust_contracts::msg::DaliRecallSceneCommand, HttpResponse> {
-    use dali2rust_contracts::msg::DaliRecallSceneCommand;
     if body.is_empty() {
         return Ok(DaliRecallSceneCommand::broadcast(adapter_id, scene_id));
     }

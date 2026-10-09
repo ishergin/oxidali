@@ -284,7 +284,7 @@ async fn given_scene_named(world: &mut DaliWorld, scene_id: u8, name: String) {
     patch_scene_name(world, scene_id, &name);
 }
 
-// SCN-010 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 SYS-211 SYS-213 SYS-241 SCN-040 SCN-050 ADP-026 SYS-251 SYS-252 SYS-253 RULE-031 RULE-033 RULE-036 RULE-038 COMM-110 SCN-097
+// SCN-010 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 SYS-211 SYS-213 SYS-241 SCN-040 SCN-050 ADP-026 SYS-251 SYS-252 SYS-253 RULE-031 RULE-033 RULE-036 RULE-038 COMM-110 SCN-097 VL-104
 #[given(regex = r"^adapter 0 scene (\d+) desired row for virtual lamp (\d+) has level (\d+)$")]
 async fn given_desired_row_level(world: &mut DaliWorld, scene_id: u8, virtual_lamp_id: u8, level: u8) {
     patch_scene_matrix_row(world, scene_id, virtual_lamp_id, level_desired(level));
@@ -528,7 +528,7 @@ async fn then_desired_row_with_color(
     );
 }
 
-// SCN-040 SCN-050 REG-031 SCN-095
+// SCN-040 SCN-050 REG-031 SCN-095 VL-104
 #[then(regex = r"^the scene matrix desired row for virtual lamp (\d+) should be included with level (\d+) and no color$")]
 async fn then_desired_row_no_color(world: &mut DaliWorld, virtual_lamp_id: u8, level: u8) {
     let row = scene_matrix_row(world, virtual_lamp_id);

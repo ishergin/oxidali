@@ -74,13 +74,13 @@ fn wait_for_counter(world: &mut DaliWorld, name: &str, check: impl Fn(u64) -> bo
     websocket_counter(world, name)
 }
 
-// WS-001 WS-007 WS-011 WS-012 WS-031
+// WS-001 WS-007 WS-011 WS-012 WS-031 INP-006 WS-050
 #[when("I open a WebSocket connection")]
 async fn when_open_ws(world: &mut DaliWorld) {
     open_client(world);
 }
 
-// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059 RULE-067 COMM-112 COMM-113
+// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059 RULE-067 COMM-112 COMM-113 WS-051 WS-052 WS-053 WS-054 WS-057
 #[given("an open WebSocket connection")]
 async fn given_open_ws(world: &mut DaliWorld) {
     open_client(world);
@@ -135,7 +135,7 @@ async fn then_ws_established(world: &mut DaliWorld) {
     assert_eq!(frame["op"], "hello", "unexpected first frame: {frame}");
 }
 
-// WS-007 WS-031
+// WS-007 WS-031 WS-050
 #[then(regex = r#"^the first WebSocket frame should have op "([^"]+)"$"#)]
 async fn then_first_frame_op(world: &mut DaliWorld, op: String) {
     let frame = last_client(world).first_frame().expect("first frame");
@@ -150,20 +150,20 @@ async fn then_hello_protocol(world: &mut DaliWorld, protocol: u64) {
     assert_eq!(frame["protocol"].as_u64(), Some(protocol));
 }
 
-// WS-007
+// WS-007 WS-050
 #[then("the hello frame should list exactly the v1 channels")]
 async fn then_hello_channels(world: &mut DaliWorld) {
     let frame = world.remembered_json.clone().expect("no remembered frame");
     assert_eq!(channel_list(&frame), V1_CHANNELS);
 }
 
-// WS-002 WS-006 WS-008 WS-009 WS-041 WS-042 WS-043 WS-044
+// WS-002 WS-006 WS-008 WS-009 WS-041 WS-042 WS-043 WS-044 INP-006 WS-053
 #[when(regex = r#"^the WebSocket client subscribes to "([^"]+)"$"#)]
 async fn when_subscribe(world: &mut DaliWorld, channels: String) {
     last_client(world).subscribe(&channels);
 }
 
-// WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-010 WS-013 WS-059 COMM-112 COMM-113
+// WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-010 WS-013 WS-059 COMM-112 COMM-113 WS-051 WS-052
 #[given(regex = r#"^the WebSocket client is subscribed to "([^"]+)"$"#)]
 async fn given_subscribed(world: &mut DaliWorld, channels: String) {
     let c = last_client(world);
@@ -177,7 +177,7 @@ async fn when_unsubscribe(world: &mut DaliWorld, channels: String) {
     last_client(world).unsubscribe(&channels);
 }
 
-// WS-002 WS-005 WS-006 WS-008 WS-009 WS-011 WS-045
+// WS-002 WS-005 WS-006 WS-008 WS-009 WS-011 WS-045 INP-006 WS-057
 #[then(regex = r#"^the WebSocket client should receive op "([^"]+)"$"#)]
 async fn then_receive_op(world: &mut DaliWorld, op: String) {
     let frame = last_client(world)
@@ -216,14 +216,14 @@ async fn then_closed_with_code(world: &mut DaliWorld, code: u16) {
     assert_eq!(got, Some(code), "the refusal must name itself in the CLOSE frame");
 }
 
-// WS-008 WS-011
+// WS-008 WS-011 WS-057
 #[then(regex = r#"^the WebSocket error code should be "([^"]+)"$"#)]
 async fn then_error_code(world: &mut DaliWorld, code: String) {
     let frame = world.remembered_json.clone().expect("no remembered frame");
     assert_eq!(frame["error"]["code"], code.as_str(), "frame was {frame}");
 }
 
-// WS-003 WS-010 WS-030 WS-046 WS-013 WS-059
+// WS-003 WS-010 WS-030 WS-046 WS-013 WS-059 INP-006 WS-052 WS-053
 #[then(regex = r#"^the WebSocket client should receive a "([^"]+)" frame on channel "([^"]+)"$"#)]
 async fn then_receive_event(world: &mut DaliWorld, event_type: String, channel: String) {
     let frame = last_client(world)
@@ -483,7 +483,7 @@ async fn given_warning_before_subscribe(world: &mut DaliWorld) {
     provoke_warning(world);
 }
 
-// WS-052 WS-053 RULE-067
+// WS-052 WS-053 RULE-067 WS-054
 #[given(regex = r#"^the WebSocket client is subscribed to "logs" at level "([^"]+)"$"#)]
 async fn given_subscribed_logs_at(world: &mut DaliWorld, level: String) {
     let client = last_client(world);
@@ -556,7 +556,7 @@ async fn then_counter_at_least(world: &mut DaliWorld, name: String, minimum: u64
     assert!(value >= minimum, "websocket.{name} = {value} < {minimum}");
 }
 
-// WS-030 WS-040
+// WS-030 WS-040 WS-051
 #[then(regex = r#"^the diagnostics websocket counter "([^"]+)" should be (\d+)$"#)]
 async fn then_counter_equals(world: &mut DaliWorld, name: String, expected: u64) {
     let value = wait_for_counter(world, &name, |v| v == expected);

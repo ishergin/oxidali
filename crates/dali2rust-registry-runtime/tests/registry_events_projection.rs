@@ -20,6 +20,7 @@ use dali2rust_domain::registry::{
 };
 use dali2rust_registry_runtime::{RegistryStore, RegistryWorkerCounters};
 use dali2rust_test_support::wait_until;
+use dali2rust_domain::dali::banks::part251;
 
 const BUS_TID: u16 = 1;
 
@@ -1290,8 +1291,6 @@ fn an_operator_authored_mask_survives_unbinding_and_moving_the_lamp() {
 
 #[test]
 fn a_part251_read_that_starts_above_zero_commits_under_the_right_fields() {
-    use dali2rust_domain::dali::banks::part251;
-
     let store = Arc::new(RegistryStore::with_adapter_count(1));
     let counters = Arc::new(RegistryWorkerCounters::default());
     let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));

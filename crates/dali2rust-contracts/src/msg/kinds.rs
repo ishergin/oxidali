@@ -521,6 +521,46 @@ pub enum CommissioningStep {
     Terminate = 8,
 }
 
+#[cfg(test)]
+mod commissioning_step_wire_tests {
+    use super::CommissioningStep;
+
+    const PHYSICAL_SELECTION_RESERVED: u8 = 9;
+
+    fn pinned(step: CommissioningStep) -> u8 {
+        match step {
+            CommissioningStep::Initialise => 0,
+            CommissioningStep::Randomise => 1,
+            CommissioningStep::SearchAddress => 2,
+            CommissioningStep::Compare => 3,
+            CommissioningStep::ProgramShortAddress => 4,
+            CommissioningStep::VerifyShortAddress => 5,
+            CommissioningStep::QueryShortAddress => 6,
+            CommissioningStep::Withdraw => 7,
+            CommissioningStep::Terminate => 8,
+        }
+    }
+
+    #[test]
+    fn every_step_travels_as_its_pinned_value() {
+        for value in 0..PHYSICAL_SELECTION_RESERVED {
+            let step: CommissioningStep =
+                postcard::from_bytes(&[value]).expect("every value below the reserve is a step");
+            assert_eq!(pinned(step), value, "{step:?} moved");
+            assert_eq!(step as u8, value, "{step:?} discriminant");
+            assert_eq!(postcard::to_allocvec(&step).expect("encode"), vec![value]);
+        }
+    }
+
+    #[test]
+    fn the_physical_selection_value_stays_reserved() {
+        assert!(
+            postcard::from_bytes::<CommissioningStep>(&[PHYSICAL_SELECTION_RESERVED]).is_err(),
+            "a variant took the value reserved for PHYSICAL SELECTION"
+        );
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum InitialiseScope {

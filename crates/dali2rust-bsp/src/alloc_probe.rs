@@ -29,7 +29,7 @@ mod imp {
     pub fn log_armed() {
         let rc = ARM_RC.load(Ordering::Relaxed);
         if rc == esp_idf_svc::sys::ESP_OK as u32 {
-            log::warn!("alloc-failure probe armed (ISSUE-11)");
+            log::warn!("alloc-failure probe armed");
         } else {
             log::error!("alloc-failure probe NOT armed: rc={rc}");
         }
