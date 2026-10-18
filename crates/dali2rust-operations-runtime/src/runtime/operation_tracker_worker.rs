@@ -27,13 +27,6 @@ use dali2rust_domain::registry::{
 
 use dali2rust_bsp::esp_thread;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecordedOperationStatus {
-    pub operation_key: String,
-    pub status: OperationStatus,
-    pub error_code: Option<ErrorCode>,
-}
-
 #[derive(Debug, Default)]
 pub struct OperationTrackerCounters {
     pub accepted: AtomicU32,
@@ -216,7 +209,6 @@ pub struct HttpOpRow {
 }
 
 pub struct OperationTrackerInner {
-    pub events: Vec<RecordedOperationStatus>,
     pub http_by_key: HashMap<String, HttpOpRow>,
     active: HashMap<u64, TrackedOp>,
     coalesce: HashMap<CoalesceKey, u64>,
@@ -238,7 +230,6 @@ impl Default for OperationTrackerInner {
 impl OperationTrackerInner {
     pub fn new() -> Self {
         Self {
-            events: Vec::new(),
             http_by_key: HashMap::new(),
             active: HashMap::new(),
             coalesce: HashMap::new(),
@@ -258,7 +249,6 @@ impl OperationTrackerInner {
 
     fn for_each_pending_buffer(&mut self, mut f: impl FnMut(&mut dyn PendingBufferOps)) {
         let Self {
-            events: _,
             http_by_key: _,
             active: _,
             coalesce: _,
@@ -282,15 +272,6 @@ impl OperationTrackerInner {
     pub fn expire_pending_entries(&mut self) {
         let now = Instant::now();
         self.for_each_pending_buffer(|buf| buf.expire_now(now));
-    }
-
-    fn push_event(&mut self, rec: RecordedOperationStatus) {
-        const MAX: usize = 512;
-        if self.events.len() >= MAX {
-            let drop = self.events.len() - MAX + 1;
-            self.events.drain(0..drop);
-        }
-        self.events.push(rec);
     }
 
     fn status_name(s: OperationStatus) -> &'static str {
@@ -535,12 +516,6 @@ fn emit_transition(
         error_payload,
     );
 
-    let err_code = error_payload.map(|(c, _)| c);
-    inner.push_event(RecordedOperationStatus {
-        operation_key: op.operation_key.clone(),
-        status,
-        error_code: err_code,
-    });
     bump_counter(counters, status);
 
     let view = operation_view_for(op, status, error_payload);
@@ -609,11 +584,6 @@ fn emit_terminal_with_retention(
         op.operation_key.as_str(),
         Some((code, "")),
     );
-    guard.push_event(RecordedOperationStatus {
-        operation_key: op.operation_key.clone(),
-        status,
-        error_code: Some(code),
-    });
     bump_counter(counters, status);
     let ret =
         Instant::now() + Duration::from_millis(u64::from(op.finished_retention_ms.max(1)));
@@ -1011,11 +981,6 @@ fn promote_running(
         op.operation_key.as_str(),
         None,
     );
-    guard.push_event(RecordedOperationStatus {
-        operation_key: op.operation_key.clone(),
-        status: OperationStatus::Running,
-        error_code: None,
-    });
     bump_counter(counters, OperationStatus::Running);
     if let Some(slot) = guard.active.get_mut(&workflow_c) {
         slot.status = OperationStatus::Running;
