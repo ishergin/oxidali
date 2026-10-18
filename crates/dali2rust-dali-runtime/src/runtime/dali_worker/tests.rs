@@ -490,3 +490,45 @@ mod memory_bank_loss {
         );
     }
 }
+
+mod gate_refusal_riders {
+    use std::time::Duration;
+
+    use dali2rust_bus::{BusConfig, BusFrame, BusHost};
+    use dali2rust_contracts::msg::{DeliveryStatus, ErrorCode};
+
+    use super::super::blocked::refuse_by_confirmation;
+    use super::super::DaliWorkerCounters;
+
+    const CARRIER: u64 = 81;
+    const RIDERS: [u64; 2] = [82, 83];
+    const ANSWER_DEADLINE: Duration = Duration::from_secs(1);
+
+    type Answered = (u64, DeliveryStatus, Option<(ErrorCode, String)>);
+
+    #[test]
+    fn a_gate_refuses_the_requests_a_command_carries_with_the_same_cause() {
+        let (_host, publisher, confirmations) =
+            BusHost::spawn(BusConfig::default(), |reg| reg.subscribe_confirmations(8));
+        let counters = DaliWorkerCounters::default();
+        assert!(refuse_by_confirmation(&publisher, (CARRIER, &RIDERS), &counters, "controller_passive"));
+        let mut answered: Vec<Answered> = (0..=RIDERS.len())
+            .map(|_| {
+                let Ok(BusFrame::Confirmation(conf)) = confirmations.recv_timeout(ANSWER_DEADLINE) else {
+                    panic!("a refused request went unanswered");
+                };
+                let error = conf.confirmation.error.as_ref().map(|e| (e.code, e.message.as_str().to_owned()));
+                (conf.meta.correlation_id, conf.status, error)
+            })
+            .collect();
+        answered.sort_by_key(|answer| answer.0);
+        let refusal = Some((ErrorCode::Conflict, "controller_passive".to_owned()));
+        assert_eq!(
+            answered,
+            [CARRIER, RIDERS[0], RIDERS[1]]
+                .map(|correlation_id| (correlation_id, DeliveryStatus::ExecutionFailed, refusal.clone()))
+                .to_vec()
+        );
+        assert_eq!(counters.execution_failed.load(std::sync::atomic::Ordering::Relaxed), 3);
+    }
+}

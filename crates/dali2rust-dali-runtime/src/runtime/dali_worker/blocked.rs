@@ -5,7 +5,7 @@ pub(super) fn controller_passive_blocked(
     ce: &CommandEnvelope,
     read_port: &dyn RegistryReadPort,
     bus_id: BusId,
-    correlation_id: u64,
+    (correlation_id, riders): (u64, &[u64]),
     publisher: &BusPublisher,
     counters: &DaliWorkerCounters,
 ) -> bool {
@@ -23,15 +23,7 @@ pub(super) fn controller_passive_blocked(
             counters,
         ),
         BlockedRefusal::Confirmation | BlockedRefusal::NotGated => {
-            counters.execution_failed.fetch_add(1, Ordering::Relaxed);
-            emit_execution_failed_with_product_error(
-                publisher,
-                correlation_id,
-                counters,
-                ErrorCode::Conflict,
-                "controller_passive",
-            );
-            true
+            refuse_by_confirmation(publisher, (correlation_id, riders), counters, "controller_passive")
         }
     }
 }
@@ -68,7 +60,7 @@ pub(super) fn adapter_command_blocked(
     ce: &CommandEnvelope,
     read_port: &dyn RegistryReadPort,
     bus_id: BusId,
-    correlation_id: u64,
+    (correlation_id, riders): (u64, &[u64]),
     publisher: &BusPublisher,
     counters: &DaliWorkerCounters,
 ) -> bool {
@@ -89,18 +81,21 @@ pub(super) fn adapter_command_blocked(
             counters,
         ),
         BlockedRefusal::Confirmation => {
-            counters.execution_failed.fetch_add(1, Ordering::Relaxed);
-            emit_execution_failed_with_product_error(
-                publisher,
-                correlation_id,
-                counters,
-                ErrorCode::Conflict,
-                "adapter_disabled",
-            );
-            true
+            refuse_by_confirmation(publisher, (correlation_id, riders), counters, "adapter_disabled")
         }
         BlockedRefusal::NotGated => false,
     }
+}
+
+pub(super) fn refuse_by_confirmation(
+    publisher: &BusPublisher,
+    (correlation_id, riders): (u64, &[u64]),
+    counters: &DaliWorkerCounters,
+    cause: &'static str,
+) -> bool {
+    answer_each_failed(publisher, &[correlation_id], counters, (ErrorCode::Conflict, cause));
+    answer_each_failed(publisher, riders, counters, (ErrorCode::Conflict, cause));
+    true
 }
 
 enum BlockedRefusal<'c> {

@@ -6,6 +6,24 @@ pub(super) struct Provenance {
     pub(super) hold_hcl: bool,
 }
 
+#[derive(Clone, Copy)]
+struct Answer<'a> {
+    correlation_id: u64,
+    riders: &'a [u64],
+}
+
+impl Answer<'_> {
+    fn failed(self, publisher: &BusPublisher, counters: &DaliWorkerCounters, error: (ErrorCode, &str)) {
+        answer_each_failed(publisher, &[self.correlation_id], counters, error);
+        answer_each_failed(publisher, self.riders, counters, error);
+    }
+
+    fn refused(self, publisher: &BusPublisher, counters: &DaliWorkerCounters, error: (ErrorCode, &str)) {
+        answer_each_refused(publisher, &[self.correlation_id], counters, error);
+        answer_each_refused(publisher, self.riders, counters, error);
+    }
+}
+
 fn resolve_color_write_policy(
     read_port: &dyn RegistryReadPort,
     registry_adapter_id: u8,
@@ -37,11 +55,12 @@ pub(super) fn handle_set_target_state(
     read_port: &dyn RegistryReadPort,
     publisher: &BusPublisher,
     adapter_id: BusId,
-    correlation_id: u64,
+    (correlation_id, riders): (u64, &[u64]),
     origin: Origin,
     ts: &dali2rust_contracts::msg::DaliSetTargetStateCommand,
     counters: &DaliWorkerCounters,
 ) {
+    let answer = Answer { correlation_id, riders };
     let sequence_retries = runtime_config.target_state_sequence_retries;
     let provenance = Provenance {
         source: RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api),
@@ -55,7 +74,7 @@ pub(super) fn handle_set_target_state(
             read_port,
             publisher,
             adapter_id,
-            correlation_id,
+            answer,
             provenance,
             ts.registry_adapter_id,
             ts.virtual_lamp_id,
@@ -73,7 +92,7 @@ pub(super) fn handle_set_target_state(
                 sequence_retries,
                 publisher,
                 adapter_id,
-                correlation_id,
+                answer,
                 provenance,
                 ts,
                 policy,
@@ -89,7 +108,7 @@ fn run_set_target_state_physical(
     sequence_retries: u8,
     publisher: &BusPublisher,
     adapter_id: BusId,
-    correlation_id: u64,
+    answer: Answer<'_>,
     provenance: Provenance,
     ts: &dali2rust_contracts::msg::DaliSetTargetStateCommand,
     policy: ColorWritePolicy,
@@ -101,7 +120,7 @@ fn run_set_target_state_physical(
             sequence_retries,
             publisher,
             adapter_id,
-            correlation_id,
+            answer,
             provenance,
             ts.registry_adapter_id,
             ts.short_address,
@@ -114,7 +133,7 @@ fn run_set_target_state_physical(
             sequence_retries,
             publisher,
             adapter_id,
-            correlation_id,
+            answer,
             provenance,
             ts.registry_adapter_id,
             ts.group_id,
@@ -126,13 +145,13 @@ fn run_set_target_state_physical(
             sequence_retries,
             publisher,
             adapter_id,
-            correlation_id,
+            answer,
             provenance,
             ts.registry_adapter_id,
             &ts.setpoint,
             counters,
         ),
-        _ => fail_execution(publisher, correlation_id, counters),
+        _ => answer.failed(publisher, counters, EXECUTION_FAILED),
     }
 }
 
@@ -160,25 +179,13 @@ impl FailedTarget {
 fn close_target_state_failure(
     publisher: &BusPublisher,
     adapter_id: BusId,
-    correlation_id: u64,
+    answer: Answer<'_>,
     counters: &DaliWorkerCounters,
     target: FailedTarget,
     error: &SemanticDaliError,
 ) {
-    publish_target_state_failed(publisher, adapter_id, correlation_id, target, error);
-    counters.execution_failed.fetch_add(1, Ordering::Relaxed);
-    emit_execution_failed_with_product_error(
-        publisher,
-        correlation_id,
-        counters,
-        error.code(),
-        error.message(),
-    );
-}
-
-fn fail_execution(publisher: &BusPublisher, correlation_id: u64, counters: &DaliWorkerCounters) {
-    counters.execution_failed.fetch_add(1, Ordering::Relaxed);
-    emit_execution_failed(publisher, correlation_id, counters);
+    publish_target_state_failed(publisher, adapter_id, answer.correlation_id, target, error);
+    answer.failed(publisher, counters, (error.code(), error.message()));
 }
 
 fn publish_target_state_failed(
@@ -214,7 +221,7 @@ fn handle_set_target_state_short(
     sequence_retries: u8,
     publisher: &BusPublisher,
     adapter_id: BusId,
-    correlation_id: u64,
+    answer: Answer<'_>,
     provenance: Provenance,
     registry_adapter_id: u8,
     short_address: u8,
@@ -229,7 +236,7 @@ fn handle_set_target_state_short(
             short_address: Some(short_address),
             ..FailedTarget::new(registry_adapter_id, DaliTargetScope::Short)
         };
-        close_target_state_failure(publisher, adapter_id, correlation_id, counters, target, &error);
+        close_target_state_failure(publisher, adapter_id, answer, counters, target, &error);
         return;
     }
     let applied = target_state_applied_event(
@@ -241,20 +248,22 @@ fn handle_set_target_state_short(
         sp,
         provenance,
     );
-    close_target_state_applied(publisher, correlation_id, adapter_id, counters, applied);
+    close_target_state_applied(publisher, answer, adapter_id, counters, applied);
 }
 
 fn close_target_state_applied(
     publisher: &BusPublisher,
-    correlation_id: u64,
+    answer: Answer<'_>,
     adapter_id: BusId,
     counters: &DaliWorkerCounters,
     applied: dali2rust_contracts::msg::DaliTargetStateAppliedEvent,
 ) -> bool {
-    let env = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), applied);
+    let env = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, answer.correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), applied);
     if !publish_closing_fact_or_fail(publisher, env, counters, PublishKind::Singleton, "target-state-applied") {
+        answer_each_failed(publisher, answer.riders, counters, EXECUTION_FAILED);
         return false;
     }
+    answer_each_ok(publisher, answer.riders, counters);
     counters
         .semantic_set_target_state_handled
         .fetch_add(1, Ordering::Relaxed);
@@ -290,7 +299,7 @@ fn handle_set_target_state_broadcast(
     sequence_retries: u8,
     publisher: &BusPublisher,
     adapter_id: BusId,
-    correlation_id: u64,
+    answer: Answer<'_>,
     provenance: Provenance,
     registry_adapter_id: u8,
     sp: &dali2rust_contracts::msg::LightSetpoint,
@@ -300,7 +309,7 @@ fn handle_set_target_state_broadcast(
         apply_broadcast_target_state(controller, sp)
     }) {
         let target = FailedTarget::new(registry_adapter_id, DaliTargetScope::Broadcast);
-        close_target_state_failure(publisher, adapter_id, correlation_id, counters, target, &error);
+        close_target_state_failure(publisher, adapter_id, answer, counters, target, &error);
         return;
     }
     let applied = target_state_applied_event(
@@ -312,8 +321,8 @@ fn handle_set_target_state_broadcast(
         sp,
         provenance,
     );
-    if close_target_state_applied(publisher, correlation_id, adapter_id, counters, applied) {
-        publish_confirmation_ok(publisher, correlation_id, counters);
+    if close_target_state_applied(publisher, answer, adapter_id, counters, applied) {
+        publish_confirmation_ok(publisher, answer.correlation_id, counters);
     }
 }
 
@@ -323,7 +332,7 @@ fn handle_set_target_state_group(
     sequence_retries: u8,
     publisher: &BusPublisher,
     adapter_id: BusId,
-    correlation_id: u64,
+    answer: Answer<'_>,
     provenance: Provenance,
     registry_adapter_id: u8,
     group_id: u8,
@@ -337,7 +346,7 @@ fn handle_set_target_state_group(
             group_id: Some(group_id),
             ..FailedTarget::new(registry_adapter_id, DaliTargetScope::Group)
         };
-        close_target_state_failure(publisher, adapter_id, correlation_id, counters, target, &error);
+        close_target_state_failure(publisher, adapter_id, answer, counters, target, &error);
         return;
     }
 
@@ -350,8 +359,8 @@ fn handle_set_target_state_group(
         sp,
         provenance,
     );
-    if close_target_state_applied(publisher, correlation_id, adapter_id, counters, applied) {
-        publish_confirmation_ok(publisher, correlation_id, counters);
+    if close_target_state_applied(publisher, answer, adapter_id, counters, applied) {
+        publish_confirmation_ok(publisher, answer.correlation_id, counters);
     }
 }
 
@@ -362,7 +371,7 @@ fn handle_set_target_state_vl(
     read_port: &dyn RegistryReadPort,
     publisher: &BusPublisher,
     adapter_id: BusId,
-    correlation_id: u64,
+    answer: Answer<'_>,
     provenance: Provenance,
     registry_adapter_id: u8,
     vl_id: u8,
@@ -372,7 +381,7 @@ fn handle_set_target_state_vl(
     let Some(short_sa) = read_port.virtual_lamp_binding_short(registry_adapter_id, vl_id) else {
         fail_target_state_vl_unbound(
             publisher,
-            correlation_id,
+            answer,
             adapter_id,
             registry_adapter_id,
             vl_id,
@@ -389,7 +398,7 @@ fn handle_set_target_state_vl(
             virtual_lamp_id: Some(vl_id),
             ..FailedTarget::new(registry_adapter_id, DaliTargetScope::VirtualLamp)
         };
-        close_target_state_failure(publisher, adapter_id, correlation_id, counters, target, &error);
+        close_target_state_failure(publisher, adapter_id, answer, counters, target, &error);
         return;
     }
     let applied = target_state_applied_event(
@@ -401,26 +410,20 @@ fn handle_set_target_state_vl(
         sp,
         provenance,
     );
-    close_target_state_applied(publisher, correlation_id, adapter_id, counters, applied);
+    close_target_state_applied(publisher, answer, adapter_id, counters, applied);
 }
 
 fn fail_target_state_vl_unbound(
     publisher: &BusPublisher,
-    correlation_id: u64,
+    answer: Answer<'_>,
     adapter_id: BusId,
     registry_adapter_id: u8,
     vl_id: u8,
     counters: &DaliWorkerCounters,
 ) {
-    let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliTargetStateFailedEvent { adapter_id: registry_adapter_id, short_address: 0, error: dali2rust_contracts::msg::CompactErrorPayload::new(ErrorCode::VlUnbound, "vl_unbound"), scope: dali2rust_contracts::msg::DaliTargetScope::VirtualLamp, group_id: None, virtual_lamp_id: Some(vl_id) });
+    let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, answer.correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliTargetStateFailedEvent { adapter_id: registry_adapter_id, short_address: 0, error: dali2rust_contracts::msg::CompactErrorPayload::new(ErrorCode::VlUnbound, "vl_unbound"), scope: dali2rust_contracts::msg::DaliTargetScope::VirtualLamp, group_id: None, virtual_lamp_id: Some(vl_id) });
     publish_event_typed(publisher, ev);
-    emit_execution_failed_with_product_error(
-        publisher,
-        correlation_id,
-        counters,
-        ErrorCode::VlUnbound,
-        "vl_unbound",
-    );
+    answer.refused(publisher, counters, (ErrorCode::VlUnbound, "vl_unbound"));
 }
 
 fn setpoint_dapc_applied(sp: &LightSetpoint) -> bool {
