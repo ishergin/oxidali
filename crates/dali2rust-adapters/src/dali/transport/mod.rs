@@ -28,6 +28,8 @@ use dali2rust_platform::dali::TransferOutcome;
 
 pub const WIRE_LOAD_WINDOW_TICKS: u32 = 1_000_000 / PHY_TICK_US;
 
+pub(crate) const MICROS_PER_MILLI: u32 = 1_000;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct IsrTickLedger {
     origin_us: Option<i64>,

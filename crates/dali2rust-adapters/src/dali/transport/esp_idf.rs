@@ -31,7 +31,7 @@ use dali2rust_dali_phy::{
 };
 
 use super::sniffer_diagnostics::{gap_to_u32, SnifferDiagnostics};
-use super::LATE_REPORT_BYTES;
+use super::{LATE_REPORT_BYTES, MICROS_PER_MILLI};
 use crate::dali::transport::{
     arrived_too_early_for_a_backward_frame, arrived_too_late_for_a_backward_frame, backward_timing,
     classify_tx_event, classify_undecodable_in_window, collision_restart_gate,
@@ -1461,7 +1461,7 @@ unsafe fn coherent_isr_tick_sample(inner: *mut TransportInner) -> Option<(i64, u
 }
 
 fn held_ms(run_ticks: u16) -> u32 {
-    PHY_TICK_US.saturating_mul(u32::from(run_ticks)) / 1000
+    PHY_TICK_US.saturating_mul(u32::from(run_ticks)) / MICROS_PER_MILLI
 }
 
 fn count_foreign_frame(p: *mut TransportInner) {
