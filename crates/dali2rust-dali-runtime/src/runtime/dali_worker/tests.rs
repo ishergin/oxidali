@@ -491,13 +491,13 @@ mod memory_bank_loss {
     }
 }
 
-mod gate_refusal_riders {
+mod answer_riders {
     use std::time::Duration;
 
     use dali2rust_bus::{BusConfig, BusFrame, BusHost};
     use dali2rust_contracts::msg::{DeliveryStatus, ErrorCode};
 
-    use super::super::blocked::refuse_by_confirmation;
+    use super::super::publish::Answer;
     use super::super::DaliWorkerCounters;
 
     const CARRIER: u64 = 81;
@@ -507,11 +507,12 @@ mod gate_refusal_riders {
     type Answered = (u64, DeliveryStatus, Option<(ErrorCode, String)>);
 
     #[test]
-    fn a_gate_refuses_the_requests_a_command_carries_with_the_same_cause() {
+    fn a_failed_answer_reaches_the_carrier_and_every_request_it_carries_with_one_cause() {
         let (_host, publisher, confirmations) =
             BusHost::spawn(BusConfig::default(), |reg| reg.subscribe_confirmations(8));
         let counters = DaliWorkerCounters::default();
-        assert!(refuse_by_confirmation(&publisher, (CARRIER, &RIDERS), &counters, "controller_passive"));
+        let answer = Answer { correlation_id: CARRIER, riders: &RIDERS };
+        answer.failed(&publisher, &counters, (ErrorCode::Conflict, "controller_passive"));
         let mut answered: Vec<Answered> = (0..=RIDERS.len())
             .map(|_| {
                 let Ok(BusFrame::Confirmation(conf)) = confirmations.recv_timeout(ANSWER_DEADLINE) else {
@@ -530,5 +531,41 @@ mod gate_refusal_riders {
                 .to_vec()
         );
         assert_eq!(counters.execution_failed.load(std::sync::atomic::Ordering::Relaxed), 3);
+    }
+}
+
+mod lost_fact_riders {
+    use dali2rust_bus::{BusConfig, BusHost, BusId};
+    use dali2rust_contracts::msg::{DaliTargetScope, LightSetpoint, PowerState, RuntimeSource};
+    use dali2rust_test_support::hold_the_events_ingress_full;
+
+    use super::super::publish::Answer;
+    use super::super::target_state::{close_target_state_applied, target_state_applied_event, Provenance};
+    use super::super::DaliWorkerCounters;
+
+    const EVENTS_INGRESS: usize = 4;
+    const CARRIER: u64 = 91;
+    const RIDERS: [u64; 2] = [92, 93];
+    const SHORT: u8 = 9;
+
+    #[test]
+    fn a_lost_applied_fact_fails_the_carrier_and_every_request_it_carries() {
+        let config = BusConfig { events_ingress: EVENTS_INGRESS, ..BusConfig::default() };
+        let (_host, publisher, ()) = BusHost::spawn(config, |_| {});
+        let counters = DaliWorkerCounters::default();
+        let setpoint = LightSetpoint { power: PowerState::On, level: Some(1), color: None };
+        let provenance = Provenance { source: RuntimeSource::Api, hold_hcl: true };
+        let applied = target_state_applied_event(0, DaliTargetScope::Short, None, Some(SHORT), None, &setpoint, provenance);
+        let _ingress = hold_the_events_ingress_full(&publisher);
+        let answer = Answer { correlation_id: CARRIER, riders: &RIDERS };
+        assert!(
+            !close_target_state_applied(&publisher, answer, BusId::default(), &counters, applied),
+            "inconclusive: the held events ingress took the applied fact"
+        );
+        assert_eq!(
+            counters.execution_failed.load(std::sync::atomic::Ordering::Relaxed),
+            1 + 2,
+            "the carrier and both requests it carries are each answered as failed"
+        );
     }
 }

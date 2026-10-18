@@ -77,7 +77,7 @@ use memory_bank::{handle_read_memory_bank, publish_memory_bank_preset, MEMORY_BA
 use program_outcome::{ProgramOutcomeSink, resolve_membership_short};
 pub use publish::DALI_WORKER_REQUIRED_EVENTS;
 use publish::{
-    answer_each_failed, answer_each_ok, answer_each_refused, count_lost_fact, emit_execution_failed,
+    answer_each_failed, answer_each_ok, answer_each_refused, count_lost_fact, Answer, emit_execution_failed,
     emit_execution_failed_with_product_error, fail_operation_over_lost_fact, EXECUTION_FAILED,
     publish_closing_fact_or_fail, publish_confirmation_ok, publish_confirmation_typed,
     publish_event_required, publish_event_typed, publish_operation_worker_signal,
@@ -138,7 +138,7 @@ fn refused_by_gates(
     ce: &dali2rust_contracts::msg::CommandEnvelope,
     read_port: &dyn RegistryReadPort,
     adapter_id: BusId,
-    answer: (u64, &[u64]),
+    answer: Answer<'_>,
     publisher: &BusPublisher,
     counters: &DaliWorkerCounters,
 ) -> bool {
@@ -173,7 +173,8 @@ fn process_one(
     {
         interactive.note_activity();
     }
-    if refused_by_gates(ce, read_port, adapter_id, (correlation_id, riders), publisher, counters) {
+    let answer = Answer { correlation_id, riders };
+    if refused_by_gates(ce, read_port, adapter_id, answer, publisher, counters) {
         return;
     }
 
@@ -303,7 +304,7 @@ dali2rust_contracts::dispatch_bus_commands! {
         read_port,
         publisher,
         adapter_id,
-        (correlation_id, riders),
+        Answer { correlation_id, riders },
         origin,
         ts,
         counters,

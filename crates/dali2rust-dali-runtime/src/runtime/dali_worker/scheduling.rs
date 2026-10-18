@@ -4,14 +4,12 @@ pub(super) fn run_command_loop(inputs: &mut WorkerInputs<impl DaliApplicationCon
     let WorkerInputs { cmd_rx, controller: ctrl, runtime_config, read_port, publisher, adapter_id,
         counters, interactive, correlation } = inputs;
     let (runtime_config, adapter_id) = (*runtime_config, *adapter_id);
-    let mut riders = Riders::default();
     while let Ok(frame) = cmd_rx.recv() {
-        let mut batch = vec![frame];
-        while let Some(frame) =
-            take_next_command(&mut batch, cmd_rx, publisher, adapter_id, counters, &mut riders)
+        let mut batch = vec![Queued::new(frame)];
+        while let Some(Queued { frame, riders }) =
+            take_next_command(&mut batch, cmd_rx, publisher, adapter_id, counters)
         {
             let scope = frame_scope(&frame, interactive, adapter_id);
-            let carried = riders.take(&frame);
             let run = |c: &mut _| {
                 process_one(
                     frame,
@@ -23,7 +21,7 @@ pub(super) fn run_command_loop(inputs: &mut WorkerInputs<impl DaliApplicationCon
                     adapter_id,
                     counters,
                     correlation.as_ref(),
-                    &carried,
+                    &riders,
                 )
             };
             crate::runtime::required_publish::with_budget(scope.publish_priority, || {
@@ -89,18 +87,28 @@ fn frame_lease(
     ))
 }
 
+pub(super) struct Queued {
+    frame: BusFrame,
+    riders: Vec<u64>,
+}
+
+impl Queued {
+    fn new(frame: BusFrame) -> Self {
+        Self { frame, riders: Vec::new() }
+    }
+}
+
 fn take_next_command(
-    batch: &mut Vec<BusFrame>,
+    batch: &mut Vec<Queued>,
     cmd_rx: &BusSubscriberRx,
     publisher: &BusPublisher,
     adapter_id: BusId,
     counters: &DaliWorkerCounters,
-    riders: &mut Riders,
-) -> Option<BusFrame> {
+) -> Option<Queued> {
     while let Ok(extra) = cmd_rx.try_recv() {
-        batch.push(extra);
+        batch.push(Queued::new(extra));
     }
-    supersede_stale_target_state(batch, publisher, adapter_id, counters, riders);
+    supersede_stale_target_state(batch, publisher, adapter_id, counters);
     if batch.is_empty() {
         return None;
     }
@@ -108,18 +116,18 @@ fn take_next_command(
     Some(batch.remove(index))
 }
 
-fn highest_priority_index(batch: &[BusFrame], adapter_id: BusId) -> usize {
+fn highest_priority_index(batch: &[Queued], adapter_id: BusId) -> usize {
     let winner = batch
         .iter()
         .enumerate()
-        .min_by_key(|(_, frame)| frame_priority_key(frame, adapter_id))
+        .min_by_key(|(_, queued)| frame_priority_key(&queued.frame, adapter_id))
         .map_or(0, |(index, _)| index);
-    if !writes_lamp_state(&batch[winner], adapter_id) {
+    if !writes_lamp_state(&batch[winner].frame, adapter_id) {
         return winner;
     }
     batch
         .iter()
-        .position(|frame| writes_lamp_state(frame, adapter_id))
+        .position(|queued| writes_lamp_state(&queued.frame, adapter_id))
         .unwrap_or(winner)
 }
 
@@ -241,7 +249,7 @@ fn same_origin(a: &BusFrame, b: &BusFrame) -> bool {
 }
 
 fn fold_displaced_setpoints(
-    batch: &mut [BusFrame],
+    batch: &mut [Queued],
     last_by_key: &std::collections::HashMap<SupersedeKey, usize>,
     adapter_id: BusId,
 ) -> Vec<(usize, usize)> {
@@ -250,7 +258,7 @@ fn fold_displaced_setpoints(
         if key.kind != SupersedeKind::TargetState {
             continue;
         }
-        let Some(original) = target_state_setpoint(&batch[survivor]).cloned() else {
+        let Some(original) = target_state_setpoint(&batch[survivor].frame).cloned() else {
             continue;
         };
         let acc = fold_one_key(
@@ -263,8 +271,8 @@ fn fold_displaced_setpoints(
             &mut carried,
         );
         if acc != original {
-            if let Some(folded) = frame_with_setpoint(&batch[survivor], acc) {
-                batch[survivor] = folded;
+            if let Some(folded) = frame_with_setpoint(&batch[survivor].frame, acc) {
+                batch[survivor].frame = folded;
             }
         }
     }
@@ -272,7 +280,7 @@ fn fold_displaced_setpoints(
 }
 
 fn fold_one_key(
-    batch: &[BusFrame],
+    batch: &[Queued],
     last_by_key: &std::collections::HashMap<SupersedeKey, usize>,
     adapter_id: BusId,
     key: SupersedeKey,
@@ -282,7 +290,7 @@ fn fold_one_key(
 ) -> LightSetpoint {
     let mut acc = survivor_setpoint;
     for index in (0..survivor).rev() {
-        let frame = &batch[index];
+        let frame = &batch[index].frame;
         let frame_key = supersede_coalesce_key(frame, adapter_id);
         if frame_key != Some(key) {
             if writes_lamp_state(frame, adapter_id) && !is_displaced(frame_key, index, last_by_key)
@@ -291,7 +299,7 @@ fn fold_one_key(
             }
             continue;
         }
-        if !same_origin(frame, &batch[survivor]) {
+        if !same_origin(frame, &batch[survivor].frame) {
             continue;
         }
         let Some(earlier) = target_state_setpoint(frame) else {
@@ -308,47 +316,35 @@ fn fold_one_key(
 }
 
 fn supersede_stale_target_state(
-    batch: &mut Vec<BusFrame>,
+    batch: &mut Vec<Queued>,
     publisher: &BusPublisher,
     adapter_id: BusId,
     counters: &DaliWorkerCounters,
-    riders: &mut Riders,
 ) {
     if batch.len() < 2 {
         return;
     }
     let mut last_by_key: std::collections::HashMap<SupersedeKey, usize> =
         std::collections::HashMap::new();
-    for (index, frame) in batch.iter().enumerate() {
-        if let Some(key) = supersede_coalesce_key(frame, adapter_id) {
+    for (index, queued) in batch.iter().enumerate() {
+        if let Some(key) = supersede_coalesce_key(&queued.frame, adapter_id) {
             last_by_key.insert(key, index);
         }
     }
     let carried = fold_displaced_setpoints(batch, &last_by_key, adapter_id);
-    let correlations: Vec<Option<u64>> = batch.iter().map(command_correlation).collect();
-    let mut kept = Vec::with_capacity(batch.len());
-    for (index, frame) in batch.drain(..).enumerate() {
-        let displaced = is_displaced(
-            supersede_coalesce_key(&frame, adapter_id),
-            index,
-            &last_by_key,
-        );
-        if !displaced {
-            kept.push(frame);
-            continue;
-        }
-        let Some(correlation_id) = correlations[index] else {
-            continue;
-        };
-        counters
-            .target_state_superseded
-            .fetch_add(1, Ordering::Relaxed);
-        let carrier = carried
-            .iter()
-            .find(|(rider, _)| *rider == index)
-            .and_then(|(_, survivor)| correlations[*survivor]);
-        settle_displaced(publisher, counters, riders, correlation_id, carrier);
-    }
+    let displaced: Vec<bool> = batch
+        .iter()
+        .enumerate()
+        .map(|(index, queued)| {
+            is_displaced(supersede_coalesce_key(&queued.frame, adapter_id), index, &last_by_key)
+        })
+        .collect();
+    let superseded_frames = displaced.iter().filter(|displaced| **displaced).count();
+    counters
+        .target_state_superseded
+        .fetch_add(u32::try_from(superseded_frames).unwrap_or(u32::MAX), Ordering::Relaxed);
+    let (kept, superseded) = settle_batch(std::mem::take(batch), &displaced, &carried);
+    answer_each_refused(publisher, &superseded, counters, (ErrorCode::Superseded, "superseded"));
     *batch = kept;
 }
 
@@ -359,44 +355,36 @@ fn command_correlation(frame: &BusFrame) -> Option<u64> {
     }
 }
 
-fn settle_displaced(
-    publisher: &BusPublisher,
-    counters: &DaliWorkerCounters,
-    riders: &mut Riders,
-    displaced: u64,
-    carrier: Option<u64>,
-) {
-    match carrier {
-        Some(carrier) => riders.carry(carrier, displaced),
-        None => answer_each_refused(
-            publisher,
-            &riders.release(displaced),
-            counters,
-            (ErrorCode::Superseded, "superseded"),
-        ),
+fn settle_batch(
+    batch: Vec<Queued>,
+    displaced: &[bool],
+    carried: &[(usize, usize)],
+) -> (Vec<Queued>, Vec<u64>) {
+    let mut moved = vec![Vec::new(); batch.len()];
+    let mut superseded = Vec::new();
+    let mut survivors = Vec::with_capacity(batch.len());
+    for (index, mut queued) in batch.into_iter().enumerate() {
+        if !displaced[index] {
+            survivors.push((index, queued));
+            continue;
+        }
+        let Some(correlation_id) = command_correlation(&queued.frame) else {
+            continue;
+        };
+        queued.riders.push(correlation_id);
+        match carried.iter().find(|(rider, _)| *rider == index) {
+            Some(&(_, survivor)) => moved[survivor].append(&mut queued.riders),
+            None => superseded.append(&mut queued.riders),
+        }
     }
-}
-
-#[derive(Default)]
-pub(super) struct Riders(std::collections::HashMap<u64, Vec<u64>>);
-
-impl Riders {
-    fn take(&mut self, frame: &BusFrame) -> Vec<u64> {
-        command_correlation(frame)
-            .and_then(|correlation_id| self.0.remove(&correlation_id))
-            .unwrap_or_default()
-    }
-
-    fn carry(&mut self, carrier: u64, rider: u64) {
-        let moved = self.release(rider);
-        self.0.entry(carrier).or_default().extend(moved);
-    }
-
-    fn release(&mut self, displaced: u64) -> Vec<u64> {
-        let mut answered = self.0.remove(&displaced).unwrap_or_default();
-        answered.push(displaced);
-        answered
-    }
+    let kept = survivors
+        .into_iter()
+        .map(|(index, mut queued)| {
+            queued.riders.append(&mut moved[index]);
+            queued
+        })
+        .collect();
+    (kept, superseded)
 }
 
 #[cfg(test)]
@@ -405,43 +393,51 @@ mod tests {
 
     use super::*;
 
+    const RIDER: u64 = 70;
     const FIRST: u64 = 71;
     const SECOND: u64 = 72;
-    const THIRD: u64 = 73;
 
-    fn frame(correlation_id: u64) -> BusFrame {
+    fn queued(correlation_id: u64, riders: &[u64]) -> Queued {
         let setpoint = LightSetpoint { power: PowerState::On, level: Some(1), color: None };
-        BusFrame::command(dali2rust_contracts::bus::command_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            correlation_id,
-            BusId::default().0,
-            None,
-            dali2rust_contracts::msg::DaliSetTargetStateCommand::for_short(0, 1, &setpoint),
-        ))
+        Queued {
+            frame: BusFrame::command(dali2rust_contracts::bus::command_envelope(
+                SOURCE_ID_UNSPECIFIED,
+                correlation_id,
+                BusId::default().0,
+                None,
+                dali2rust_contracts::msg::DaliSetTargetStateCommand::for_short(0, 1, &setpoint),
+            )),
+            riders: riders.to_vec(),
+        }
+    }
+
+    fn shape(kept: &[Queued]) -> Vec<(Option<u64>, Vec<u64>)> {
+        kept.iter()
+            .map(|queued| (command_correlation(&queued.frame), queued.riders.clone()))
+            .collect()
     }
 
     #[test]
-    fn a_carried_request_rides_with_its_carrier_until_the_carrier_runs() {
-        let mut riders = Riders::default();
-        riders.carry(SECOND, FIRST);
-        assert_eq!(riders.take(&frame(SECOND)), vec![FIRST]);
-        assert!(riders.take(&frame(SECOND)).is_empty(), "a carrier's riders are answered once");
+    fn a_carried_request_rides_with_its_carrier_and_brings_its_own_riders() {
+        let batch = vec![queued(FIRST, &[RIDER]), queued(SECOND, &[])];
+        let (kept, superseded) = settle_batch(batch, &[true, false], &[(0, 1)]);
+        assert_eq!(shape(&kept), vec![(Some(SECOND), vec![RIDER, FIRST])]);
+        assert!(superseded.is_empty(), "nothing is answered before the carrier runs");
     }
 
     #[test]
-    fn a_carrier_carried_in_a_later_drain_hands_its_riders_on() {
-        let mut riders = Riders::default();
-        riders.carry(SECOND, FIRST);
-        riders.carry(THIRD, SECOND);
-        assert!(riders.take(&frame(SECOND)).is_empty());
-        assert_eq!(riders.take(&frame(THIRD)), vec![FIRST, SECOND]);
+    fn a_request_superseded_outright_is_answered_with_its_riders() {
+        let batch = vec![queued(FIRST, &[RIDER]), queued(SECOND, &[])];
+        let (kept, superseded) = settle_batch(batch, &[true, false], &[]);
+        assert_eq!(shape(&kept), vec![(Some(SECOND), vec![])]);
+        assert_eq!(superseded, vec![RIDER, FIRST]);
     }
 
     #[test]
-    fn a_carrier_superseded_outright_releases_its_riders_with_it() {
-        let mut riders = Riders::default();
-        riders.carry(SECOND, FIRST);
-        assert_eq!(riders.release(SECOND), vec![FIRST, SECOND]);
-        assert!(riders.take(&frame(SECOND)).is_empty());
+    fn a_frame_that_survives_keeps_the_riders_it_already_carries() {
+        let batch = vec![queued(FIRST, &[RIDER]), queued(SECOND, &[])];
+        let (kept, superseded) = settle_batch(batch, &[false, false], &[]);
+        assert_eq!(shape(&kept), vec![(Some(FIRST), vec![RIDER]), (Some(SECOND), vec![])]);
+        assert!(superseded.is_empty());
     }
 }

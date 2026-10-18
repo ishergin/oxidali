@@ -6,24 +6,6 @@ pub(super) struct Provenance {
     pub(super) hold_hcl: bool,
 }
 
-#[derive(Clone, Copy)]
-struct Answer<'a> {
-    correlation_id: u64,
-    riders: &'a [u64],
-}
-
-impl Answer<'_> {
-    fn failed(self, publisher: &BusPublisher, counters: &DaliWorkerCounters, error: (ErrorCode, &str)) {
-        answer_each_failed(publisher, &[self.correlation_id], counters, error);
-        answer_each_failed(publisher, self.riders, counters, error);
-    }
-
-    fn refused(self, publisher: &BusPublisher, counters: &DaliWorkerCounters, error: (ErrorCode, &str)) {
-        answer_each_refused(publisher, &[self.correlation_id], counters, error);
-        answer_each_refused(publisher, self.riders, counters, error);
-    }
-}
-
 fn resolve_color_write_policy(
     read_port: &dyn RegistryReadPort,
     registry_adapter_id: u8,
@@ -55,12 +37,11 @@ pub(super) fn handle_set_target_state(
     read_port: &dyn RegistryReadPort,
     publisher: &BusPublisher,
     adapter_id: BusId,
-    (correlation_id, riders): (u64, &[u64]),
+    answer: Answer<'_>,
     origin: Origin,
     ts: &dali2rust_contracts::msg::DaliSetTargetStateCommand,
     counters: &DaliWorkerCounters,
 ) {
-    let answer = Answer { correlation_id, riders };
     let sequence_retries = runtime_config.target_state_sequence_retries;
     let provenance = Provenance {
         source: RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api),
@@ -251,7 +232,7 @@ fn handle_set_target_state_short(
     close_target_state_applied(publisher, answer, adapter_id, counters, applied);
 }
 
-fn close_target_state_applied(
+pub(super) fn close_target_state_applied(
     publisher: &BusPublisher,
     answer: Answer<'_>,
     adapter_id: BusId,

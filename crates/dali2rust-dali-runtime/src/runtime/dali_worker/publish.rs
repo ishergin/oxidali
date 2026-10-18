@@ -83,6 +83,24 @@ pub(super) fn publish_closing_fact_or_fail(
     published
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Answer<'a> {
+    pub(super) correlation_id: u64,
+    pub(super) riders: &'a [u64],
+}
+
+impl Answer<'_> {
+    pub(super) fn failed(self, publisher: &BusPublisher, counters: &DaliWorkerCounters, error: (ErrorCode, &str)) {
+        answer_each_failed(publisher, &[self.correlation_id], counters, error);
+        answer_each_failed(publisher, self.riders, counters, error);
+    }
+
+    pub(super) fn refused(self, publisher: &BusPublisher, counters: &DaliWorkerCounters, error: (ErrorCode, &str)) {
+        answer_each_refused(publisher, &[self.correlation_id], counters, error);
+        answer_each_refused(publisher, self.riders, counters, error);
+    }
+}
+
 pub(super) fn answer_each_ok(publisher: &BusPublisher, correlations: &[u64], counters: &DaliWorkerCounters) {
     for &correlation_id in correlations {
         publish_confirmation_ok(publisher, correlation_id, counters);
