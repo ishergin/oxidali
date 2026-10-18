@@ -340,6 +340,7 @@ impl SnifferDiagnostics {
         );
     }
 
+    #[inline(never)]
     fn report_side_channels(&mut self, scratch: &mut [u8]) {
         self.report_line_held();
         self.report_persist_overlap();
@@ -353,13 +354,22 @@ impl SnifferDiagnostics {
         if now.duration_since(self.last_report) < Duration::from_millis(SNIFFER_DIAG_INTERVAL_MS) {
             return;
         }
-        self.report_side_channels(scratch);
+        self.report_interval(now, scratch);
+    }
 
+    #[inline(never)]
+    fn report_interval(&mut self, now: Instant, scratch: &mut [u8]) {
+        self.report_side_channels(scratch);
         if self.frames == 0 && self.dropped == 0 {
             self.last_report = now;
             return;
         }
+        self.log_interval();
+        self.start_interval(now);
+    }
 
+    #[inline(never)]
+    fn log_interval(&self) {
         let min_samples = if self.frames == 0 {
             0
         } else {
@@ -383,9 +393,9 @@ impl SnifferDiagnostics {
             min_samples,
             self.max_samples
         );
-        self.start_interval(now);
     }
 
+    #[inline(never)]
     fn start_interval(&mut self, now: Instant) {
         *self = Self {
             last_report: now,
