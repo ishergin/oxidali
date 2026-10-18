@@ -78,9 +78,9 @@ use program_outcome::{ProgramOutcomeSink, resolve_membership_short};
 pub use publish::DALI_WORKER_REQUIRED_EVENTS;
 use publish::{
     emit_execution_failed, emit_execution_failed_with_product_error,
-    publish_confirmation_ok, publish_confirmation_typed, publish_event_required,
-    publish_event_typed, publish_operation_worker_signal, publish_worker_failed,
-    publish_worker_started, publish_worker_succeeded,
+    publish_closing_fact_or_fail, publish_confirmation_ok, publish_confirmation_typed,
+    publish_event_required, publish_event_typed, publish_operation_worker_signal,
+    publish_worker_failed, publish_worker_started, publish_worker_succeeded,
 };
 use scene::{
     handle_program_scene, handle_recall_last_active_level, handle_recall_scene,

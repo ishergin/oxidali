@@ -71,10 +71,11 @@ fn publish_memory_bank_execution(
         let chunk = &execution.bytes[off..end];
         let last = end >= total;
         let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { registry_adapter_id, short_address, bank, start_offset, chunk_index: idx, last_chunk: last && execution.error.is_none(), data: dali2rust_contracts::msg::FixedBytes24::from_slice(chunk) });
-        publish_event_required(publisher, ev, counters, PublishKind::Series, "memory-bank-chunk");
-        counters
-            .memory_bank_chunk_events_published
-            .fetch_add(1, Ordering::Relaxed);
+        if publish_event_required(publisher, ev, counters, PublishKind::Series, "memory-bank-chunk") {
+            counters
+                .memory_bank_chunk_events_published
+                .fetch_add(1, Ordering::Relaxed);
+        }
         idx = idx.saturating_add(1);
         off = end;
     }

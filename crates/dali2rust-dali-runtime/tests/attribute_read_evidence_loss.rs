@@ -5,25 +5,30 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
+use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
 use dali2rust_bus::{
     BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublisher, BusSubscriberRx,
     PublishResult,
 };
 use dali2rust_contracts::msg::{
-    BusEventPayload, DaliAttributeGroup, DaliReadAttributesCommand, ErrorCode,
-    MemoryBankReadPreset, OperationWorkerSignal, OperationWorkerSignalEvent, Origin,
+    BusEventPayload, DaliAttributeGroup, DaliReadAttributesCommand, DaliReadMemoryBankCommand,
+    ErrorCode, MemoryBankReadPreset, OperationWorkerSignal, OperationWorkerSignalEvent, Origin,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_dali_runtime::{
     spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock,
     DALI_WORKER_HANDLED_COMMANDS,
 };
+use dali2rust_platform::dali::DaliTransport;
 use dali2rust_registry_runtime::RegistryStore;
 use dali2rust_test_support::{hold_the_events_ingress_full, try_wait_until};
 
 const SHORT: u8 = 5;
 const GEAR_ANSWER: u8 = 0x04;
 const READ_CORRELATION: u64 = 4_000;
+const MEMORY_READ_CORRELATION: u64 = 4_001;
+const DEMO_SHORT: u8 = 0;
+const BANK_ZERO_PREFIX: u16 = 3;
 const EVENTS_INGRESS: usize = 4;
 const WORKER_INBOX: usize = 16;
 const SIGNAL_INBOX: usize = 64;
@@ -44,10 +49,10 @@ fn read_frame() -> BusFrame {
     ))
 }
 
-fn spawn_worker(
+fn spawn_worker<T: DaliTransport + Send + 'static>(
     commands: BusSubscriberRx,
     publisher: &BusPublisher,
-    transport: &Arc<Mutex<MockDaliTransport>>,
+    transport: &Arc<Mutex<T>>,
     counters: &Arc<DaliWorkerCounters>,
 ) -> JoinHandle<()> {
     spawn_dali_worker(
@@ -153,4 +158,63 @@ fn a_lost_evidence_chunk_fails_the_read_instead_of_reporting_success() {
     wait_for_the_refused_evidence(&counters);
     ingress.release();
     assert_the_read_failed(&signals);
+}
+
+fn memory_read_frame() -> BusFrame {
+    BusFrame::command(dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        MEMORY_READ_CORRELATION,
+        BusId::default().0,
+        Some(Origin::Api),
+        DaliReadMemoryBankCommand {
+            registry_adapter_id: 0,
+            short_address: DEMO_SHORT,
+            bank: 0,
+            start: 0,
+            length: BANK_ZERO_PREFIX,
+        },
+    ))
+}
+
+fn memory_read_counters(hold_the_ingress: bool) -> Arc<DaliWorkerCounters> {
+    let (_host, publisher, worker_commands, _signals) = spawn_bus();
+    let transport = Arc::new(Mutex::new(SimDaliTransport::demo_bus()));
+    let counters = Arc::new(DaliWorkerCounters::default());
+    let _worker = spawn_worker(worker_commands, &publisher, &transport, &counters);
+    let wire_held = transport.lock().expect("sim");
+    assert_eq!(
+        publisher.try_publish(BusChannel::Commands, memory_read_frame()),
+        PublishResult::Queued
+    );
+    let ingress = hold_the_ingress.then(|| hold_the_events_ingress_full(&publisher));
+    drop(wire_held);
+    assert!(
+        try_wait_until(
+            || counters.semantic_read_memory_bank_handled.load(Ordering::Relaxed) > 0,
+            STEP_DEADLINE
+        ),
+        "the memory bank read never finished"
+    );
+    drop(ingress);
+    counters
+}
+
+#[test]
+fn a_memory_bank_chunk_the_full_ingress_refused_is_not_counted_as_published() {
+    let open = memory_read_counters(false);
+    assert_eq!(
+        open.memory_bank_chunk_events_published.load(Ordering::Relaxed),
+        1,
+        "control: a read of the gear's bank 0 prefix publishes one chunk"
+    );
+    let held = memory_read_counters(true);
+    assert!(
+        held.event_publish_failed.load(Ordering::Relaxed) > 0,
+        "inconclusive: the events ingress was held full, yet no required publish gave up"
+    );
+    assert_eq!(
+        held.memory_bank_chunk_events_published.load(Ordering::Relaxed),
+        0,
+        "the full ingress refused the chunk, yet it was counted as published"
+    );
 }
