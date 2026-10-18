@@ -57,7 +57,6 @@ macro_rules! global_dirty_flag {
 pub(crate) struct DirtyFlags {
     pub adapters: AtomicBool,
     pub groups: AtomicU32,
-    pub physical_devices: AtomicU32,
     physical_device_banks: [std::sync::atomic::AtomicU16; MAX_DIRTY_ADAPTERS],
     withheld_physical_device_banks: [std::sync::atomic::AtomicU16; MAX_DIRTY_ADAPTERS],
     pub virtual_lamps: AtomicU32,
@@ -78,7 +77,6 @@ impl DirtyFlags {
         Self {
             adapters: AtomicBool::new(false),
             groups: AtomicU32::new(0),
-            physical_devices: AtomicU32::new(0),
             physical_device_banks: std::array::from_fn(|_| std::sync::atomic::AtomicU16::new(0)),
             withheld_physical_device_banks: std::array::from_fn(|_| {
                 std::sync::atomic::AtomicU16::new(0)
@@ -98,8 +96,7 @@ impl DirtyFlags {
     }
 
     pub fn any_dirty(&self) -> bool {
-        self.physical_devices.load(Ordering::Acquire) != 0
-            || (0..MAX_DIRTY_ADAPTERS as u8).any(|adapter_id| self.writable_banks(adapter_id) != 0)
+        (0..MAX_DIRTY_ADAPTERS as u8).any(|adapter_id| self.writable_banks(adapter_id) != 0)
             || self.groups.load(Ordering::Acquire) & !self.withheld.groups() != 0
             || self.virtual_lamps.load(Ordering::Acquire) & !self.withheld.virtual_lamps() != 0
             || (0..MAX_DIRTY_ADAPTERS as u8).any(|adapter_id| self.writable_scenes(adapter_id) != 0)
@@ -262,8 +259,6 @@ impl DirtyFlags {
     #[cfg(test)]
     pub fn mark_all_physical_devices_dirty(&self, adapter_id: u8) {
         self.mark_physical_device_banks_dirty(adapter_id, u16::MAX);
-        self.physical_devices
-            .fetch_or(1u32 << adapter_id, Ordering::Release);
     }
 
     pub fn mark_physical_device_banks_dirty(&self, adapter_id: u8, banks: u16) {
@@ -277,18 +272,9 @@ impl DirtyFlags {
             .fetch_or(1u32 << adapter_id, Ordering::Release);
     }
 
-    pub fn take_physical_devices_dirty(&self) -> u32 {
-        self.physical_devices.swap(0, Ordering::AcqRel)
-    }
-
     #[cfg(test)]
     pub fn take_physical_devices_dirty_for(&self, adapter_id: u8) -> bool {
-        let banks = self.take_physical_device_banks_dirty(adapter_id);
-        let coarse = self
-            .physical_devices
-            .fetch_and(!(1u32 << adapter_id), Ordering::AcqRel)
-            & (1u32 << adapter_id);
-        banks != 0 || coarse != 0
+        self.take_physical_device_banks_dirty(adapter_id) != 0
     }
 
     pub fn take_physical_device_banks_dirty(&self, adapter_id: u8) -> u16 {

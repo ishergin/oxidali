@@ -231,7 +231,6 @@ impl crate::runtime::registry::store::RegistryStore {
     }
 
     fn flush_physical_device_banks(&self, slices: &dyn SliceStore) {
-        let _ = self.dirty.take_physical_devices_dirty();
         let g = self.read_inner();
         let adapter_count = g.adapters.len() as u8;
         drop(g);
