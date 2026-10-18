@@ -9,7 +9,7 @@ use dali2rust_dali_phy::{
     LINE_HELD_TICKS, PHY_TICK_US,
 };
 
-use super::{IsrTickLedger, LateReportLine};
+use super::{IsrTickLedger, LateReportLine, MICROS_PER_MILLI};
 
 const SNIFFER_DIAG_INTERVAL_MS: u64 = 5_000;
 const CALIBRATION_DUMP_EVERY: u32 = 256;
@@ -176,7 +176,7 @@ impl SnifferDiagnostics {
         if missing > 0 {
             self.isr_ticks_lost = self.isr_ticks_lost.saturating_add(missing);
             self.isr_tick_windows_short = self.isr_tick_windows_short.saturating_add(1);
-            self.isr_last_short_window = (missing, now_us / 1000);
+            self.isr_last_short_window = (missing, now_us / i64::from(MICROS_PER_MILLI));
         }
         if extra > 0 {
             self.isr_ticks_extra = self.isr_ticks_extra.saturating_add(extra);
@@ -313,7 +313,7 @@ impl SnifferDiagnostics {
         log::warn!(
             "DALI line held: {runs} run(s) longer than {} ticks, longest {max_ticks} ticks ({} ms)",
             LINE_HELD_TICKS,
-            PHY_TICK_US.saturating_mul(max_ticks) / 1000
+            PHY_TICK_US.saturating_mul(max_ticks) / MICROS_PER_MILLI
         );
     }
 
