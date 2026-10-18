@@ -1470,6 +1470,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{arbitration_dto, stats_readback_dto};
+    use dali2rust_contracts::msg::HclTargetScope;
+    use dali2rust_rules_model::{GroupRef, LightTarget};
     use crate::dali::transport::mock::MockDaliTransport;
     use dali2rust_contracts::msg::GroupMembershipAction;
     use dali2rust_dali_runtime::runtime::controller::DaliController;
@@ -1551,5 +1553,22 @@ mod tests {
             row.handover_incomplete,
         ];
         assert_eq!(got, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn a_held_broadcast_and_group_zero_reach_the_rules_world_as_different_targets() {
+        let key = |scope, group_id| dali2rust_hcl_runtime::TargetKey { adapter_id: 1, scope, group_id };
+        assert_eq!(
+            super::rules_hcl_target(key(HclTargetScope::Broadcast, 0)),
+            LightTarget::Broadcast { adapter_id: 1 }
+        );
+        assert_eq!(
+            super::rules_hcl_target(key(HclTargetScope::Group, 0)),
+            LightTarget::Group(GroupRef { adapter_id: 1, id: 0 })
+        );
+        assert_eq!(
+            super::rules_hcl_target(key(HclTargetScope::Group, 9)),
+            LightTarget::Group(GroupRef { adapter_id: 1, id: 9 })
+        );
     }
 }
