@@ -9,6 +9,12 @@ pub mod sim;
 #[cfg(target_os = "espidf")]
 pub mod esp_idf;
 
+#[cfg_attr(
+    not(target_os = "espidf"),
+    allow(dead_code, reason = "only the ESP sniffer thread runs it; host tests exercise it")
+)]
+mod sniffer_diagnostics;
+
 #[cfg(target_os = "espidf")]
 pub mod phy_interrupt;
 
@@ -23,7 +29,6 @@ use dali2rust_platform::dali::TransferOutcome;
 pub const WIRE_LOAD_WINDOW_TICKS: u32 = 1_000_000 / PHY_TICK_US;
 
 #[derive(Debug, Clone, Copy, Default)]
-#[cfg_attr(not(target_os = "espidf"), allow(dead_code, reason = "only the ESP build calls this"))]
 pub(crate) struct IsrTickLedger {
     origin_us: Option<i64>,
     last_ticks: u32,
@@ -34,7 +39,6 @@ pub(crate) struct IsrTickLedger {
 }
 
 impl IsrTickLedger {
-    #[cfg_attr(not(target_os = "espidf"), allow(dead_code, reason = "only the ESP build calls this"))]
     pub(crate) fn account(&mut self, now_us: i64, ticks: u32) -> (u32, u32, u32, u32) {
         let Some(origin_us) = self.origin_us else {
             self.origin_us = Some(now_us);
@@ -787,13 +791,11 @@ mod forward_address_class_tests {
     }
 }
 
-#[cfg_attr(not(target_os = "espidf"), allow(dead_code, reason = "only the ESP build calls this"))]
 pub(crate) struct LateReportLine<'a> {
     bytes: &'a mut [u8],
     len: usize,
 }
 
-#[cfg_attr(not(target_os = "espidf"), allow(dead_code, reason = "only the ESP build calls this"))]
 impl<'a> LateReportLine<'a> {
     pub(crate) fn over(bytes: &'a mut [u8]) -> Self {
         Self { bytes, len: 0 }

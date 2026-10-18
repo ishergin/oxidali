@@ -1,4 +1,3 @@
-use core::fmt::Write as _;
 use core::ptr;
 use core::time::Duration;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -27,11 +26,12 @@ use dali2rust_dali_phy::backward_window::ANSWER_ARM_TARGET_IDLE_TICKS;
 use dali2rust_dali_phy::fsm::RX_IDLE_LINE_HIGH_TICKS;
 use dali2rust_dali_phy::{
     dali_phy_alarm_isr, settle_ticks_on_wire, ExchangeId, HalfBitBuffer, PhyIsrCore, RegisterGpio,
-    RxCompletedEvent, SessionEvent, TxGates, BACKWARD8_SAMPLE_COUNT, BUS_POWER_DOWN_TICKS,
-    FORWARD16_SAMPLE_COUNT, FORWARD24_SAMPLE_COUNT, MIN_SAMPLES_FOR_DECODE, PHY_TICK_US,
-    RX_RING_CAP, TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS,
+    RxCompletedEvent, SessionEvent, TxGates, BUS_POWER_DOWN_TICKS, MIN_SAMPLES_FOR_DECODE,
+    PHY_TICK_US, RX_RING_CAP, TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS,
 };
 
+use super::sniffer_diagnostics::{gap_to_u32, SnifferDiagnostics};
+use super::LATE_REPORT_BYTES;
 use crate::dali::transport::{
     arrived_too_early_for_a_backward_frame, arrived_too_late_for_a_backward_frame, backward_timing,
     classify_tx_event, classify_undecodable_in_window, collision_restart_gate,
@@ -87,7 +87,6 @@ unsafe fn arm_late_tick_probe(isr: &PhyIsrCore) {
     }
     log::info!("DALI ISR late-tick probe armed (esp_timer clock, per-core task + nesting slots)");
 }
-const SNIFFER_DIAG_INTERVAL_MS: u64 = 5_000;
 
 const fn settle_us_to_idle_ticks(settle_us: u32) -> u32 {
     settle_us.div_ceil(PHY_TICK_US)
@@ -1142,366 +1141,6 @@ impl Drop for EspIdfDaliTransport {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct LateTally {
-    count: u32,
-    max_gap_us: u32,
-    pc_at_max: u32,
-    ra_at_max: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct LateTaskKey {
-    handle: usize,
-    name: Option<&'static core::ffi::CStr>,
-    nested: bool,
-}
-
-impl core::fmt::Display for LateTaskKey {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if self.handle == 0 {
-            f.write_str("(none)")?;
-        } else if let Some(name) = self.name {
-            f.write_str(name.to_str().unwrap_or("<invalid-task-name>"))?;
-        } else {
-            write!(f, "0x{:08x} (not registered)", self.handle)?;
-        }
-        if self.nested {
-            f.write_str("+isr")?;
-        }
-        Ok(())
-    }
-}
-
-use super::{LateReportLine, LATE_REPORT_BYTES};
-
-struct SnifferDiagnostics {
-    last_report: std::time::Instant,
-    line_held: (u32, u32),
-    since_calibration_dump: u32,
-    tick_ledger: super::IsrTickLedger,
-    isr_ticks_lost: u32,
-    isr_tick_windows_short: u32,
-    isr_last_short_window: (u32, i64),
-    isr_ticks_extra: u32,
-    isr_ticks_deficit_raw: u32,
-    isr_ticks_surplus_raw: u32,
-    isr_ticks_raw_reported: (u32, u32),
-    stage_max_ticks: u32,
-    stage_over_budget: u32,
-    stage_samples: u32,
-    poll_gap_max_us: i64,
-    poll_late: u32,
-    last_poll_us: Option<i64>,
-    probe_counts: (u32, u32),
-    late_by_task: std::collections::HashMap<LateTaskKey, LateTally>,
-    frames: u32,
-    forward16: u32,
-    forward24: u32,
-    backward8: u32,
-    decode_failed: u32,
-    decode_failed_forward16_len: u32,
-    phase_adjusted: u32,
-    unsupported_len: u32,
-    dropped: u32,
-    samples_backward8: u32,
-    samples_forward16: u32,
-    samples_forward24: u32,
-    samples_other: u32,
-    min_samples: u16,
-    max_samples: u16,
-    last_persist_sample: (u32, u32),
-    tx_holds: (u32, u32),
-    last_tx_holds: (u32, u32),
-}
-
-impl SnifferDiagnostics {
-    fn new() -> Self {
-        Self {
-            last_report: std::time::Instant::now(),
-            line_held: (0, 0),
-            since_calibration_dump: 0,
-            tick_ledger: super::IsrTickLedger::default(),
-            isr_ticks_lost: 0,
-            isr_tick_windows_short: 0,
-            isr_last_short_window: (0, 0),
-            isr_ticks_extra: 0,
-            isr_ticks_deficit_raw: 0,
-            isr_ticks_surplus_raw: 0,
-            isr_ticks_raw_reported: (0, 0),
-            stage_max_ticks: 0,
-            stage_over_budget: 0,
-            stage_samples: 0,
-            poll_gap_max_us: 0,
-            poll_late: 0,
-            last_poll_us: None,
-            probe_counts: (0, 0),
-            late_by_task: std::collections::HashMap::new(),
-            last_persist_sample: (0, 0),
-            tx_holds: (0, 0),
-            last_tx_holds: (0, 0),
-            frames: 0,
-            forward16: 0,
-            forward24: 0,
-            backward8: 0,
-            decode_failed: 0,
-            decode_failed_forward16_len: 0,
-            phase_adjusted: 0,
-            unsupported_len: 0,
-            dropped: 0,
-            samples_backward8: 0,
-            samples_forward16: 0,
-            samples_forward24: 0,
-            samples_other: 0,
-            min_samples: u16::MAX,
-            max_samples: 0,
-        }
-    }
-
-    fn record_dropped(&mut self, dropped: u32) {
-        self.dropped = self.dropped.saturating_add(dropped);
-    }
-
-    fn record_frame(&mut self, sample_count: u16, decoded: SniffedDecode) {
-        self.frames = self.frames.saturating_add(1);
-        self.min_samples = self.min_samples.min(sample_count);
-        self.max_samples = self.max_samples.max(sample_count);
-
-        if decoded.phase_ticks != 0 && decoded.frame != SniffedFrame::DecodeFailed {
-            self.phase_adjusted = self.phase_adjusted.saturating_add(1);
-        }
-
-        self.record_sample_length(sample_count);
-        self.record_decoded_frame(sample_count, decoded.frame);
-    }
-
-    fn record_sample_length(&mut self, sample_count: u16) {
-        let slot = match sample_count {
-            BACKWARD8_SAMPLE_COUNT => &mut self.samples_backward8,
-            FORWARD16_SAMPLE_COUNT => &mut self.samples_forward16,
-            FORWARD24_SAMPLE_COUNT => &mut self.samples_forward24,
-            _ => &mut self.samples_other,
-        };
-        *slot = slot.saturating_add(1);
-    }
-
-    fn record_decoded_frame(&mut self, sample_count: u16, frame: SniffedFrame) {
-        let slot = match frame {
-            SniffedFrame::Forward16(_) => &mut self.forward16,
-            SniffedFrame::Forward24(_) => &mut self.forward24,
-            SniffedFrame::Backward8(_) => &mut self.backward8,
-            SniffedFrame::UnsupportedLength(_) => &mut self.unsupported_len,
-            SniffedFrame::DecodeFailed => &mut self.decode_failed,
-        };
-        *slot = slot.saturating_add(1);
-        if frame == SniffedFrame::DecodeFailed && sample_count == FORWARD16_SAMPLE_COUNT {
-            self.decode_failed_forward16_len = self.decode_failed_forward16_len.saturating_add(1);
-        }
-    }
-
-    fn account_isr_ticks(&mut self, now_us: i64, ticks: u32) -> (u32, u32, u32, u32) {
-        let (missing, extra, raw_deficit, raw_surplus) = self.tick_ledger.account(now_us, ticks);
-        self.isr_ticks_deficit_raw = self.isr_ticks_deficit_raw.saturating_add(raw_deficit);
-        self.isr_ticks_surplus_raw = self.isr_ticks_surplus_raw.saturating_add(raw_surplus);
-        if missing > 0 {
-            self.isr_ticks_lost = self.isr_ticks_lost.saturating_add(missing);
-            self.isr_tick_windows_short = self.isr_tick_windows_short.saturating_add(1);
-            self.isr_last_short_window = (missing, now_us / 1000);
-        }
-        if extra > 0 {
-            self.isr_ticks_extra = self.isr_ticks_extra.saturating_add(extra);
-        }
-        (missing, extra, raw_deficit, raw_surplus)
-    }
-
-    fn note_stage_delay(&mut self, ticks: u32, budget: u32) {
-        self.stage_samples = self.stage_samples.saturating_add(1);
-        self.stage_max_ticks = self.stage_max_ticks.max(ticks);
-        if ticks > budget {
-            self.stage_over_budget = self.stage_over_budget.saturating_add(1);
-        }
-    }
-
-    fn note_poll(&mut self, now_us: i64, poll_ms: u32) -> Option<i64> {
-        let gap = self.last_poll_us.map(|last| now_us.saturating_sub(last));
-        if let Some(gap) = gap {
-            self.poll_gap_max_us = self.poll_gap_max_us.max(gap);
-            if dali2rust_platform::dali::sniffer_poll_is_late(gap_to_u32(gap), poll_ms) {
-                self.poll_late = self.poll_late.saturating_add(1);
-            }
-        }
-        self.last_poll_us = Some(now_us);
-        gap
-    }
-
-    fn note_late_tick(&mut self, late: dali2rust_dali_phy::LateTick) {
-        let task = late_task_key(late.interrupted_task, late.nesting_depth > 1);
-        let entry = self.late_by_task.entry(task).or_default();
-        entry.count = entry.count.saturating_add(1);
-        if late.gap_us > entry.max_gap_us {
-            entry.max_gap_us = late.gap_us;
-            entry.pc_at_max = late.interrupted_pc;
-            entry.ra_at_max = late.interrupted_ra;
-        }
-    }
-
-    fn report_late_ticks(&mut self, scratch: &mut [u8]) {
-        if self.late_by_task.is_empty() {
-            return;
-        }
-        let mut text = LateReportLine::over(scratch);
-        for (index, (task, tally)) in self.late_by_task.drain().enumerate() {
-            if index > 0 {
-                let _ = text.write_str(", ");
-            }
-            let _ = write!(
-                text,
-                "{task}×{} (max {} us @{:#010x}<{:#010x})",
-                tally.count, tally.max_gap_us, tally.pc_at_max, tally.ra_at_max
-            );
-        }
-        log::warn!(
-            "DALI ISR late entries (delayed; see raw deficit for losses): {}",
-            text.as_str()
-        );
-    }
-
-    fn report_timing(&mut self, late_ticks: u32, max_gap_us: u32) {
-        let notable = self.stage_over_budget > 0
-            || self.poll_late > 0
-            || self.isr_tick_windows_short > 0
-            || self.isr_ticks_extra > 0
-            || self.isr_ticks_raw_reported
-                != (self.isr_ticks_deficit_raw, self.isr_ticks_surplus_raw);
-        if notable {
-            self.isr_ticks_raw_reported =
-                (self.isr_ticks_deficit_raw, self.isr_ticks_surplus_raw);
-            let (missing, at_ms) = self.isr_last_short_window;
-            log::warn!(
-                "DALI sniff timing: isr ticks lost={} extra={} raw deficit={} surplus={} \
-                 (short windows={}, last {} at {} ms) \
-                 probe late={} max gap={} us stage max={} ticks over budget={} of {} poll gap max={} us",
-                self.isr_ticks_lost,
-                self.isr_ticks_extra,
-                self.isr_ticks_deficit_raw,
-                self.isr_ticks_surplus_raw,
-                self.isr_tick_windows_short,
-                missing,
-                at_ms,
-                late_ticks,
-                max_gap_us,
-                self.stage_max_ticks,
-                self.stage_over_budget,
-                self.stage_samples,
-                self.poll_gap_max_us
-            );
-        }
-        self.stage_max_ticks = 0;
-        self.stage_over_budget = 0;
-        self.stage_samples = 0;
-        self.poll_gap_max_us = 0;
-        self.poll_late = 0;
-    }
-
-    fn note_tx_holds(&mut self, yields: u32, voided: u32) {
-        self.tx_holds = (yields, voided);
-    }
-
-    fn report_line_held(&mut self) {
-        let (runs, max_ticks) = self.line_held;
-        self.line_held = (0, 0);
-        if runs == 0 {
-            return;
-        }
-        log::warn!(
-            "DALI line held: {runs} run(s) longer than {} ticks, longest {max_ticks} ticks ({} ms)",
-            dali2rust_dali_phy::LINE_HELD_TICKS,
-            u32::from(PHY_TICK_US).saturating_mul(max_ticks) / 1000
-        );
-    }
-
-    fn report_tx_holds(&mut self) {
-        if self.tx_holds == self.last_tx_holds {
-            return;
-        }
-        self.last_tx_holds = self.tx_holds;
-        let (yields, voided) = self.tx_holds;
-        log::info!("DALI PHY TX: lead yields={yields} held frames voided={voided}");
-    }
-
-    fn report_persist_overlap(&mut self) {
-        let sample = dali2rust_platform::dali::persist_commit_overlap();
-        if sample == self.last_persist_sample {
-            return;
-        }
-        self.last_persist_sample = sample;
-        let (total, during) = sample;
-        let (waits, wait_ms, timeouts) = dali2rust_platform::dali::persist_gate_stats();
-        log::info!(
-            "DALI persist overlap: {during} of {total} commit(s) landed while a frame was on the wire; \
-             gate waits={waits} ({wait_ms} ms) timeouts={timeouts}"
-        );
-    }
-
-    fn report_side_channels(&mut self, scratch: &mut [u8]) {
-        self.report_line_held();
-        self.report_persist_overlap();
-        self.report_tx_holds();
-        let (late_ticks, max_gap_us) = self.probe_counts;
-        self.report_timing(late_ticks, max_gap_us);
-        self.report_late_ticks(scratch);
-    }
-
-    fn maybe_report(&mut self, scratch: &mut [u8]) {
-        let now = std::time::Instant::now();
-        if now.duration_since(self.last_report) < Duration::from_millis(SNIFFER_DIAG_INTERVAL_MS) {
-            return;
-        }
-        self.report_side_channels(scratch);
-
-        if self.frames == 0 && self.dropped == 0 {
-            self.last_report = now;
-            return;
-        }
-
-        let min_samples = if self.frames == 0 {
-            0
-        } else {
-            self.min_samples
-        };
-        log::info!(
-            "DALI sniff diag: frames={} ok={{b8:{}, f16:{}, f24:{}}} failed={} (samples19={}) phase_adjusted={} unsupported={} dropped={} samples={{11:{}, 19:{}, 27:{}, other:{}, min:{}, max:{}}}",
-            self.frames,
-            self.backward8,
-            self.forward16,
-            self.forward24,
-            self.decode_failed,
-            self.decode_failed_forward16_len,
-            self.phase_adjusted,
-            self.unsupported_len,
-            self.dropped,
-            self.samples_backward8,
-            self.samples_forward16,
-            self.samples_forward24,
-            self.samples_other,
-            min_samples,
-            self.max_samples
-        );
-        self.start_interval(now);
-    }
-
-    fn start_interval(&mut self, now: std::time::Instant) {
-        *self = Self {
-            last_report: now,
-            last_persist_sample: self.last_persist_sample,
-            tick_ledger: self.tick_ledger,
-            since_calibration_dump: self.since_calibration_dump,
-            last_poll_us: self.last_poll_us,
-            ..Self::new()
-        };
-    }
-}
-
 /// # Safety
 /// `inner` must be valid for the transport's lifetime (see `dali_sniffer_loop`).
 unsafe fn mirror_isr_timing(
@@ -1550,10 +1189,6 @@ unsafe fn mirror_poll_gap(inner: *mut TransportInner, gap_us: Option<i64>, poll_
     if dali2rust_platform::dali::sniffer_poll_is_late(gap, poll_ms) {
         sink.sniff_poll_late.fetch_add(1, Ordering::Relaxed);
     }
-}
-
-fn gap_to_u32(gap_us: i64) -> u32 {
-    u32::try_from(gap_us.max(0)).unwrap_or(u32::MAX)
 }
 
 /// # Safety
@@ -1782,15 +1417,11 @@ fn dali_sniffer_loop(inner_addr: usize, stop: Arc<AtomicBool>) {
             .map(|(clock, ticks)| diagnostics.account_isr_ticks(clock, ticks))
             .unwrap_or((0, 0, 0, 0));
         // SAFETY: same.
-        diagnostics.probe_counts = unsafe { (*inner).isr.late_tick_counts() };
+        let probe_counts = unsafe { (*inner).isr.late_tick_counts() };
+        diagnostics.note_probe_counts(probe_counts);
         // SAFETY: same as above — `inner` is valid for the transport lifetime.
         unsafe {
-            mirror_isr_timing(
-                inner,
-                (window.0, window.1),
-                diagnostics.probe_counts,
-                (window.2, window.3),
-            )
+            mirror_isr_timing(inner, (window.0, window.1), probe_counts, (window.2, window.3))
         };
         // SAFETY: same.
         if let Some(late) = unsafe { (*inner).isr.take_late_tick() } {
@@ -1798,7 +1429,7 @@ fn dali_sniffer_loop(inner_addr: usize, stop: Arc<AtomicBool>) {
         }
         // SAFETY: same.
         unsafe { process_sniffed_captures(inner, &mut diagnostics) };
-        diagnostics.maybe_report(&mut late_scratch);
+        diagnostics.maybe_report(std::time::Instant::now(), &mut late_scratch);
     }
 }
 
@@ -1855,8 +1486,7 @@ unsafe fn mirror_isr_state(
     unsafe { mirror_arbitration_counters(inner) };
     // SAFETY: same pointer; read-and-reset, so counts accumulate across the polls of one report window.
     let (runs, max_ticks) = unsafe { (*inner).isr.take_line_held_counts() };
-    diagnostics.line_held.0 = diagnostics.line_held.0.saturating_add(runs);
-    diagnostics.line_held.1 = diagnostics.line_held.1.max(max_ticks);
+    diagnostics.note_line_held(runs, max_ticks);
     // SAFETY: same.
     unsafe { mirror_collision_restarts(inner) };
     // SAFETY: same.
@@ -2051,35 +1681,14 @@ fn log_random_address_rx_samples(forward_frame: u16, ev: &RxCompletedEvent, deco
     );
 }
 
-fn late_task_key(handle: usize, nested: bool) -> LateTaskKey {
-    LateTaskKey {
-        handle,
-        name: (handle != 0)
-            .then(|| dali2rust_bsp::task_registry::name_of(handle))
-            .flatten(),
-        nested,
-    }
-}
-
-const CALIBRATION_DUMP_EVERY: u32 = 256;
-
 fn maybe_dump_calibration_capture(
     ev: &RxCompletedEvent,
     decoded: SniffedDecode,
     diagnostics: &mut SnifferDiagnostics,
 ) {
-    if !matches!(
-        decoded.frame,
-        SniffedFrame::Forward16(_) | SniffedFrame::Forward24(_) | SniffedFrame::Backward8(_)
-    ) {
-        return;
+    if diagnostics.calibration_dump_due(decoded.frame) {
+        log_sniff_capture(ev, &decoded, "calibration (this one DECODED)");
     }
-    diagnostics.since_calibration_dump = diagnostics.since_calibration_dump.saturating_add(1);
-    if diagnostics.since_calibration_dump < CALIBRATION_DUMP_EVERY {
-        return;
-    }
-    diagnostics.since_calibration_dump = 0;
-    log_sniff_capture(ev, &decoded, "calibration (this one DECODED)");
 }
 
 fn log_sniff_capture(
