@@ -591,50 +591,67 @@ impl crate::runtime::registry::store::RegistryStore {
 }
 
 pub(crate) fn validate_registry_slice(key: SliceKey, bytes: &[u8]) -> Option<Result<(), StoreError>> {
-    let checked = match key {
-        SliceKey::Adapters => decode_slice::<PersistableAdapterSlice>(bytes, ADAPTERS_SLICE_VERSION).map(drop),
-        SliceKey::Groups { .. } => decode_slice::<PersistableGroupsSlice>(bytes, GROUPS_SLICE_VERSION).map(drop),
-        SliceKey::VirtualLamps { .. } => {
-            decode_slice::<PersistableVirtualLampsSlice>(bytes, VIRTUAL_LAMPS_SLICE_VERSION).map(drop)
-        }
-        SliceKey::Scene { .. } => decode_slice::<PersistableSceneSlice>(bytes, SCENES_SLICE_VERSION).map(drop),
-        SliceKey::PhysicalDevices { .. } => RegistryStore::decode_physical_devices(bytes).map(drop),
-        SliceKey::PhysicalDeviceBank { adapter_id, bank } => {
-            RegistryStore::decode_physical_device_bank(bytes, adapter_id, bank).map(drop)
-        }
-        SliceKey::InputDevices { .. } => {
-            decode_slice::<PersistableInputDevicesSlice>(bytes, INPUT_DEVICES_SLICE_VERSION).map(drop)
-        }
-        _ => return validate_registry_setting(key, bytes),
-    };
-    Some(checked)
+    registry_kind(key).map(|kind| validate_kind(&kind, bytes))
 }
 
-fn validate_registry_setting(key: SliceKey, bytes: &[u8]) -> Option<Result<(), StoreError>> {
-    let checked = match key {
-        SliceKey::HclSchedules => {
-            decode_slice::<PersistableHclSchedulesSlice>(bytes, HCL_SCHEDULES_SLICE_VERSION).map(drop)
+fn registry_kind(key: SliceKey) -> Option<PersistenceSliceKind> {
+    Some(match key {
+        SliceKey::Adapters => PersistenceSliceKind::Adapters,
+        SliceKey::Groups { adapter_id } => PersistenceSliceKind::Groups { adapter_id },
+        SliceKey::VirtualLamps { adapter_id } => PersistenceSliceKind::VirtualLamps { adapter_id },
+        SliceKey::PhysicalDevices { adapter_id } => PersistenceSliceKind::PhysicalDevices { adapter_id },
+        SliceKey::PhysicalDeviceBank { adapter_id, bank } => {
+            PersistenceSliceKind::PhysicalDeviceBank { adapter_id, bank }
         }
-        SliceKey::PollerSettings => {
-            decode_slice::<PersistablePollerSettingsSlice>(bytes, POLLER_SETTINGS_SLICE_VERSION).map(drop)
+        SliceKey::Scene { adapter_id, scene_id } => PersistenceSliceKind::Scenes { adapter_id, scene_id },
+        SliceKey::HclSchedules => PersistenceSliceKind::HclSchedules,
+        SliceKey::PollerSettings => PersistenceSliceKind::PollerSettings,
+        SliceKey::HomeAssistantSettings => PersistenceSliceKind::HomeAssistantSettings,
+        SliceKey::DaliSettings => PersistenceSliceKind::DaliSettings,
+        SliceKey::RedundancySettings => PersistenceSliceKind::RedundancySettings,
+        SliceKey::Policies => PersistenceSliceKind::Policies,
+        SliceKey::InputDevices { bank } => PersistenceSliceKind::InputDevices { bank },
+        SliceKey::ControllerSettings | SliceKey::Rules { .. } => return None,
+    })
+}
+
+fn validate_kind(kind: &PersistenceSliceKind, bytes: &[u8]) -> Result<(), StoreError> {
+    match *kind {
+        PersistenceSliceKind::Adapters => decodes::<PersistableAdapterSlice>(bytes, ADAPTERS_SLICE_VERSION),
+        PersistenceSliceKind::Groups { .. } => decodes::<PersistableGroupsSlice>(bytes, GROUPS_SLICE_VERSION),
+        PersistenceSliceKind::VirtualLamps { .. } => {
+            decodes::<PersistableVirtualLampsSlice>(bytes, VIRTUAL_LAMPS_SLICE_VERSION)
         }
-        SliceKey::DaliSettings => {
-            decode_slice::<PersistableDaliSettingsSlice>(bytes, DALI_SETTINGS_SLICE_VERSION).map(drop)
+        PersistenceSliceKind::PhysicalDevices { .. } => RegistryStore::decode_physical_devices(bytes).map(drop),
+        PersistenceSliceKind::PhysicalDeviceBank { adapter_id, bank } => {
+            RegistryStore::decode_physical_device_bank(bytes, adapter_id, bank).map(drop)
         }
-        SliceKey::RedundancySettings => decode_slice::<PersistableRedundancySettingsSlice>(
-            bytes,
-            REDUNDANCY_SETTINGS_SLICE_VERSION,
-        )
-        .map(drop),
-        SliceKey::Policies => decode_slice::<PersistablePoliciesSlice>(bytes, POLICIES_SLICE_VERSION).map(drop),
-        SliceKey::HomeAssistantSettings => decode_slice::<PersistableHomeAssistantSettingsSlice>(
+        PersistenceSliceKind::Scenes { .. } => decodes::<PersistableSceneSlice>(bytes, SCENES_SLICE_VERSION),
+        PersistenceSliceKind::HclSchedules => {
+            decodes::<PersistableHclSchedulesSlice>(bytes, HCL_SCHEDULES_SLICE_VERSION)
+        }
+        PersistenceSliceKind::PollerSettings => {
+            decodes::<PersistablePollerSettingsSlice>(bytes, POLLER_SETTINGS_SLICE_VERSION)
+        }
+        PersistenceSliceKind::HomeAssistantSettings => decodes::<PersistableHomeAssistantSettingsSlice>(
             bytes,
             HOME_ASSISTANT_SETTINGS_SLICE_VERSION,
-        )
-        .map(drop),
-        _ => return None,
-    };
-    Some(checked)
+        ),
+        PersistenceSliceKind::DaliSettings => {
+            decodes::<PersistableDaliSettingsSlice>(bytes, DALI_SETTINGS_SLICE_VERSION)
+        }
+        PersistenceSliceKind::RedundancySettings => {
+            decodes::<PersistableRedundancySettingsSlice>(bytes, REDUNDANCY_SETTINGS_SLICE_VERSION)
+        }
+        PersistenceSliceKind::Policies => decodes::<PersistablePoliciesSlice>(bytes, POLICIES_SLICE_VERSION),
+        PersistenceSliceKind::InputDevices { .. } => {
+            decodes::<PersistableInputDevicesSlice>(bytes, INPUT_DEVICES_SLICE_VERSION)
+        }
+    }
+}
+
+fn decodes<T: serde::de::DeserializeOwned>(bytes: &[u8], version: u32) -> Result<(), StoreError> {
+    decode_slice::<T>(bytes, version).map(drop)
 }
 
 enum HydrateSink<'a> {
@@ -1254,24 +1271,23 @@ mod tests {
     use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 
     use crate::test_support::{CountingStore, ProbeStore};
+    use super::{key_of, mark_slice_dirty, registry_kind, validate_registry_slice};
     use super::super::input_devices::{InputDeviceRecord, INPUT_DEVICES_PER_BANK};
-    use super::super::scenes::{SceneDesiredRowRecord, SCENE_COUNT};
+    use super::super::physical_devices::PhysicalDeviceRecord;
+    use super::super::scenes::SceneDesiredRowRecord;
     use super::super::store::RegistryStore;
     use super::super::virtual_lamps::VlRecord;
+    use dali2rust_bsp::psram::PsramBox;
 
     const ADAPTER_COUNT: u8 = 2;
 
+    fn is_device_slice(key: SliceKey) -> bool {
+        matches!(key, SliceKey::PhysicalDevices { .. } | SliceKey::PhysicalDeviceBank { .. })
+    }
+
     fn registry_slices() -> Vec<SliceKey> {
         SliceKey::every(ADAPTER_COUNT)
-            .filter(|key| {
-                !matches!(
-                    key,
-                    SliceKey::PhysicalDevices { .. }
-                        | SliceKey::PhysicalDeviceBank { .. }
-                        | SliceKey::ControllerSettings
-                        | SliceKey::Rules { .. }
-                )
-            })
+            .filter(|key| registry_kind(*key).is_some() && !is_device_slice(*key))
             .collect()
     }
 
@@ -1281,20 +1297,9 @@ mod tests {
     }
 
     fn mark_every_slice_dirty(store: &RegistryStore) {
-        let dirty = &store.dirty;
-        dirty.adapters.store(true, Ordering::Release);
-        for adapter_id in 0..ADAPTER_COUNT {
-            dirty.mark_groups_dirty(adapter_id);
-            dirty.mark_virtual_lamps_dirty(adapter_id);
-            (0..SCENE_COUNT).for_each(|scene_id| dirty.mark_scene_dirty(adapter_id, scene_id));
+        for kind in registry_slices().into_iter().filter_map(registry_kind) {
+            mark_slice_dirty(store, &kind);
         }
-        dirty.mark_hcl_schedules_dirty();
-        dirty.mark_poller_settings_dirty();
-        dirty.mark_dali_settings_dirty();
-        dirty.mark_redundancy_settings_dirty();
-        dirty.mark_policies_dirty();
-        dirty.mark_home_assistant_settings_dirty();
-        dirty.mark_input_devices_dirty();
     }
 
     fn installed() -> ProbeStore {
@@ -1342,6 +1347,54 @@ mod tests {
                 assert_eq!(written.contains(&key), expected, "{} with {label} unread", key.label());
             }
         }
+    }
+
+    #[test]
+    fn every_registry_slice_maps_to_its_own_kind_and_back() {
+        for key in SliceKey::every(ADAPTER_COUNT) {
+            if let Some(kind) = registry_kind(key) {
+                assert_eq!(key_of(&kind), key, "{kind:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_slice_that_does_not_decode_is_refused_unless_another_runtime_owns_it() {
+        for key in SliceKey::every(ADAPTER_COUNT) {
+            let foreign = matches!(key, SliceKey::ControllerSettings | SliceKey::Rules { .. });
+            match validate_registry_slice(key, b"torn") {
+                None => assert!(foreign, "{} has no validator", key.label()),
+                Some(checked) => assert!(!foreign && checked.is_err(), "{}", key.label()),
+            }
+        }
+    }
+
+    fn assert_import_accepts(slices: &ProbeStore, keys: impl Iterator<Item = SliceKey>) {
+        for key in keys {
+            let bytes = slices.inner.load(key).expect("a written slice");
+            let checked = validate_registry_slice(key, &bytes);
+            assert!(matches!(checked, Some(Ok(()))), "{}: {checked:?}", key.label());
+        }
+    }
+
+    #[test]
+    fn every_slice_a_flush_writes_passes_the_import_check() {
+        assert_import_accepts(&installed(), registry_slices().into_iter());
+    }
+
+    #[test]
+    fn every_device_bank_a_flush_writes_passes_the_import_check() {
+        let slices = ProbeStore::default();
+        let store = RegistryStore::with_adapter_count(ADAPTER_COUNT);
+        for adapter_id in 0..ADAPTER_COUNT {
+            let record = PsramBox::new(PhysicalDeviceRecord::empty(STRAY_ID));
+            store.write_inner().physical_devices.insert((adapter_id, STRAY_ID), record);
+            store.dirty.mark_all_physical_devices_dirty(adapter_id);
+        }
+        store.flush_dirty_slices(&slices);
+        let banks = SliceKey::every(ADAPTER_COUNT)
+            .filter(|key| matches!(key, SliceKey::PhysicalDeviceBank { .. }));
+        assert_import_accepts(&slices, banks);
     }
 
     #[test]
