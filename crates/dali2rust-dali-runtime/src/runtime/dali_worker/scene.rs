@@ -233,7 +233,7 @@ pub(super) fn handle_recall_last_active_level(
     match execute_recall_last_active_level(controller, command) {
         Ok(()) => {
             let applied = recall_last_active_applied_event(adapter_id, correlation_id, origin, command);
-            if publish_closing_fact_or_fail(publisher, applied, counters, PublishKind::Series, "recall-last-active-applied") {
+            if publish_closing_fact_or_fail(publisher, applied, counters, PublishKind::Singleton, "recall-last-active-applied") {
                 publish_confirmation_ok(publisher, correlation_id, counters);
             }
         }
