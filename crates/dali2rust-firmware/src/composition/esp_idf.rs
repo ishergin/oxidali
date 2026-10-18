@@ -31,6 +31,8 @@ const PROJECT_LOG_TARGETS: &[&str] = &[
     "dali2rust_firmware::composition::esp_idf",
     "dali2rust_firmware::composition::host",
     "dali2rust_firmware::persistence_store",
+    "dali2rust_redundancy_runtime::runtime::replication",
+    "dali2rust_registry_runtime::runtime::registry_worker::transfer",
     "rules",
 ];
 

@@ -317,7 +317,7 @@ fn replication_loop(ev_rx: &dali2rust_bus::BusSubscriberRx, deps: &ReplicationDe
     loop {
         match run_pass(deps) {
             PassOutcome::Pulled(slices) => {
-                log::info!("replication: pulled {} slice(s) from the peer", slices.len());
+                log::info!("replication: pulled {} slice(s) from the peer: {slices:?}", slices.len());
             }
             PassOutcome::NotLanded => log::warn!("replication: the pass could not reach the registry"),
             _ => {}
