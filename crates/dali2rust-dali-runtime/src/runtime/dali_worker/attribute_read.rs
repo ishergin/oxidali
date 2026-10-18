@@ -102,7 +102,7 @@ fn read_attributes_terminal(
     read_attributes_memory_bank_stage(controller, publisher, adapter_id, w, ar, outcomes, counters)
 }
 
-fn read_attributes_memory_bank_stage(
+pub(super) fn read_attributes_memory_bank_stage(
     controller: &mut impl DaliApplicationController,
     publisher: &BusPublisher,
     adapter_id: BusId,
@@ -121,14 +121,13 @@ fn read_attributes_memory_bank_stage(
         ar.memory_banks,
         counters,
     ) {
-        Ok(()) => {
-            if ar.memory_banks != dali2rust_contracts::msg::MemoryBankReadPreset::None {
-                outcomes.record(
-                    crate::runtime::executor::AttributeReadSection::MemoryBanks,
-                    dali2rust_contracts::msg::AttributeGroupReadOutcome::Success,
-                );
-            }
+        Ok(true) => {
+            record_memory_banks_read(ar, outcomes);
             Ok(())
+        }
+        Ok(false) => {
+            counters.evidence_publish_failed.fetch_add(1, Ordering::Relaxed);
+            Err((ErrorCode::CommandsIngressOverload, MEMORY_BANK_CHUNK_LOST))
         }
         Err(error) => {
             outcomes.record(
@@ -138,6 +137,18 @@ fn read_attributes_memory_bank_stage(
             count_read_abort(error, counters);
             Err((error.code(), error.message()))
         }
+    }
+}
+
+fn record_memory_banks_read(
+    ar: &dali2rust_contracts::msg::DaliReadAttributesCommand,
+    outcomes: &mut crate::runtime::executor::AttributeReadOutcomes,
+) {
+    if ar.memory_banks != dali2rust_contracts::msg::MemoryBankReadPreset::None {
+        outcomes.record(
+            crate::runtime::executor::AttributeReadSection::MemoryBanks,
+            dali2rust_contracts::msg::AttributeGroupReadOutcome::Success,
+        );
     }
 }
 

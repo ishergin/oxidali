@@ -161,6 +161,11 @@ fn assert_a_lost_closing_fact_fails_the_request(
         (REQUEST_CORRELATION, DeliveryStatus::ExecutionFailed, Some(ErrorCode::ExecutionFailed)),
         "the request's closing fact never reached the bus, yet it answered {confirmation:?}"
     );
+    assert_eq!(
+        stack.counters.execution_failed.load(Ordering::Relaxed),
+        1,
+        "the request answered ExecutionFailed once, so execution_failed counts it once"
+    );
 }
 
 fn on_level() -> LightSetpoint {

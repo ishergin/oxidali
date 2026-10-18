@@ -26,6 +26,7 @@ pub(crate) struct MemoryBankStaging {
     pub(crate) bytes: Vec<u8>,
     pub(crate) staged_at_ms: u64,
     last_chunk_index: Option<u16>,
+    headless: bool,
 }
 
 impl MemoryBankStaging {
@@ -38,14 +39,16 @@ impl MemoryBankStaging {
         now: u64,
         chunk_index: u16,
     ) -> Self {
+        let headless = chunk_index != 0;
         Self {
             adapter_id,
             short_address,
             bank,
             start_offset,
-            bytes: data.to_vec(),
+            bytes: if headless { Vec::new() } else { data.to_vec() },
             staged_at_ms: now,
             last_chunk_index: Some(chunk_index),
+            headless,
         }
     }
 
@@ -78,7 +81,9 @@ impl MemoryBankStaging {
             return false;
         }
         self.last_chunk_index = Some(chunk_index);
-        self.bytes.extend_from_slice(data);
+        if !self.headless {
+            self.bytes.extend_from_slice(data);
+        }
         self.staged_at_ms = now;
         true
     }
@@ -86,6 +91,9 @@ impl MemoryBankStaging {
 
 fn commit_staged_bank(g: &mut Inner, correlation_id: u64) -> Option<(u8, u8, bool)> {
     let st = g.memory_bank_stage.remove(&correlation_id)?;
+    if st.headless {
+        return None;
+    }
     let aid = st.adapter_id;
     let sa = st.short_address;
     let bank = st.bank;
@@ -447,6 +455,7 @@ impl Staged for MemoryBankStaging {
 
 #[cfg(test)]
 mod tests {
+    use dali2rust_domain::registry::PhysicalDeviceReadPort;
     use dali2rust_platform::slice_store::SliceKey;
 
     use crate::runtime::registry::store::RegistryStore;
@@ -488,5 +497,39 @@ mod tests {
         let longer: Vec<u8> = (0u8..30).collect();
         assert!(store.stage_memory_bank_chunk(13, 0, SHORT, 0, 0, 0, true, &longer));
         assert!(store.dirty.take_physical_devices_dirty_for(0));
+    }
+
+    #[test]
+    fn a_read_whose_first_chunk_never_arrived_commits_nothing() {
+        let store = seeded_store();
+        let second_chunk: Vec<u8> = (24u8..27).collect();
+        assert!(
+            !store.stage_memory_bank_chunk(14, 0, SHORT, 0, 0, 1, true, &second_chunk),
+            "the read's first chunk never arrived, yet its second chunk was committed at the \
+             read's start offset"
+        );
+        assert_eq!(
+            store.dirty.pending_physical_device_banks(0),
+            0,
+            "a read missing its first chunk marked the device's bank for a flash write"
+        );
+        let banks = store.physical_device_memory_banks(0, SHORT).expect("seeded device");
+        assert!(
+            banks.is_empty(),
+            "a read missing its first chunk left a memory bank record: {banks:?}"
+        );
+    }
+
+    #[test]
+    fn a_read_whose_first_chunk_never_arrived_does_not_hold_back_the_next_read() {
+        let store = seeded_store();
+        let chunk: Vec<u8> = (0u8..24).collect();
+        assert!(!store.stage_memory_bank_chunk(15, 0, SHORT, 0, 0, 1, false, &chunk));
+        assert!(!store.stage_memory_bank_chunk(15, 0, SHORT, 0, 0, 2, true, &chunk));
+        let next_bank: Vec<u8> = (0u8..3).collect();
+        assert!(
+            store.stage_memory_bank_chunk(15, 0, SHORT, 1, 0, 0, true, &next_bank),
+            "the next bank of the same sweep was refused after a headless read ended"
+        );
     }
 }
