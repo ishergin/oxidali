@@ -134,14 +134,16 @@ pub fn spawn_dali_worker<C: DaliApplicationController + Send + 'static>(
     )
 }
 
+#[inline(never)]
 fn refused_by_gates(
     ce: &dali2rust_contracts::msg::CommandEnvelope,
     read_port: &dyn RegistryReadPort,
     adapter_id: BusId,
-    answer: Answer<'_>,
+    riders: &[u64],
     publisher: &BusPublisher,
     counters: &DaliWorkerCounters,
 ) -> bool {
+    let answer = Answer { correlation_id: ce.meta.correlation_id, riders };
     controller_passive_blocked(ce, read_port, adapter_id, answer, publisher, counters)
         || adapter_command_blocked(ce, read_port, adapter_id, answer, publisher, counters)
 }
@@ -173,8 +175,7 @@ fn process_one(
     {
         interactive.note_activity();
     }
-    let answer = Answer { correlation_id, riders };
-    if refused_by_gates(ce, read_port, adapter_id, answer, publisher, counters) {
+    if refused_by_gates(ce, read_port, adapter_id, riders, publisher, counters) {
         return;
     }
 
