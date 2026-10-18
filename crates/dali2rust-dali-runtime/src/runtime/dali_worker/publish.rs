@@ -77,6 +77,7 @@ pub(super) fn publish_closing_fact_or_fail(
     let correlation_id = env.meta.correlation_id;
     let published = publish_event_required(publisher, env, counters, kind, label);
     if !published {
+        counters.execution_failed.fetch_add(1, Ordering::Relaxed);
         emit_execution_failed(publisher, correlation_id, counters);
     }
     published
