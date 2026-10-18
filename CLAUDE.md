@@ -134,8 +134,8 @@ Detail: [06](documentation/architecture/06-registry-and-persistence.md),
 
 - The registry worker is the single writer (commands and evidence events through one
   funnel); never add a second thread that writes.
-- Everyone else reads through the read-port traits; the full `PhysicalDeviceView` is on
-  none of them.
+- Everyone else reads through the read-port traits; none of them returns a whole device
+  record.
 - Runtime fields live on the physical-device record and change only through
   `RegistryRuntimeUpdateCommand` and `RegistryLevelTransitionCommand` (an observed arc
   command without a level, whose level the registry computes); in production the

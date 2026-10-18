@@ -1,11 +1,11 @@
 mod support;
 
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_domain::registry::{RegistryReadPort, VirtualLampReadPort};
+use dali2rust_domain::registry::{PhysicalDeviceReadPort, RegistryReadPort, VirtualLampReadPort};
 use dali2rust_test_support::wait_until;
 
 use support::{
-    assert_exec_failed_msg, publish_cmd, recv_confirm_for, recv_runtime_state_changed,
+    assert_exec_failed_msg, core_view_of, publish_cmd, recv_confirm_for, recv_runtime_state_changed,
     seed_physical_via_discovery, spawn_registry_stack,
 };
 use dali2rust_bus::BusId;
@@ -50,19 +50,14 @@ fn runtime_state_changed_event_reflects_post_commit_physical_when_vl_bound() {
         || {
             stack
                 .store
-                .physical_device_view(0, 7)
+                .physical_device_core_view(0, 7)
                 .is_some_and(|pd| pd.state.level == Some(55))
         },
         std::time::Duration::from_millis(500),
     );
 
     assert_eq!(
-        stack
-            .store
-            .physical_device_view(0, 7)
-            .expect("pd")
-            .state
-            .level,
+        core_view_of(&stack.store, 7).state.level,
         Some(55)
     );
     let body = recv_runtime_state_changed(&stack.ev_rx, corr);

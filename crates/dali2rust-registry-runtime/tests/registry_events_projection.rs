@@ -1,6 +1,9 @@
 mod support;
 
-use support::{publish_event, publish_group_matrix_write, publish_scene_matrix_write};
+use support::{
+    common102_section, core_view_of, groups_section, memory_banks_of, memory_luminaire_section,
+    memory_profile_section, publish_event, publish_group_matrix_write, publish_scene_matrix_write,
+};
 
 use dali2rust_contracts::msg::DaliAttributeReadChunk;
 use dali2rust_contracts::msg::PhysicalDeviceOverrideCommand as PdPatch;
@@ -16,7 +19,8 @@ use dali2rust_contracts::msg::{
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
     AdapterReadPort, AdapterView, AttributeSource, GroupApplySnapshot, GroupMembershipMatrixView,
-    GroupReadPort, GroupView, SceneReadPort, VirtualLampReadPort,
+    GroupReadPort, GroupView, MemoryLuminaireAttributesView, PhysicalDeviceReadPort,
+    SceneReadPort, VirtualLampReadPort,
 };
 use dali2rust_registry_runtime::{RegistryStore, RegistryWorkerCounters};
 use dali2rust_test_support::wait_until;
@@ -100,7 +104,7 @@ fn publish_discovery(
     );
     publish_event(publisher, event);
     wait_until(
-        || store.physical_device_view(0, short).is_some(),
+        || store.physical_device_exists(0, short),
         Duration::from_millis(500),
     );
 }
@@ -158,7 +162,7 @@ fn a_written_event_that_confirms_nothing_changes_nothing() {
     });
     assert!(!changed_by_empty, "an outcome with nothing confirmed is no change to the device");
     assert_eq!(counters.events.dali_attributes_committed.load(Ordering::Relaxed), before + 1);
-    let power_on = store.physical_device_view(0, 3).expect("pd").attributes.common102.power_on_level;
+    let power_on = common102_section(&store, 3).power_on_level;
     assert_eq!(power_on.map(|v| (v.value, v.source)), Some((200, AttributeSource::WriteConfirmed)));
 }
 
@@ -183,8 +187,7 @@ fn attributes_written_updates_common102_and_emits_physical_device_changed() {
         before + 1
     );
 
-    let v = store.physical_device_view(0, 3).expect("pd");
-    let c102 = &v.attributes.common102;
+    let c102 = common102_section(&store, 3);
     assert_eq!(c102.fade_time_ms.as_ref().unwrap().value, 700);
     assert_eq!(c102.fade_time_ms.as_ref().unwrap().source, AttributeSource::WriteConfirmed);
     assert_eq!(c102.fade_rate.as_ref().unwrap().value, 7);
@@ -231,7 +234,7 @@ fn discovery_progress_updates_capabilities() {
         counters.events.discovery_progress_applied.load(Ordering::Relaxed),
         before + 1
     );
-    let v = store.physical_device_view(0, 4).expect("pd");
+    let v = core_view_of(&store, 4);
     assert!(v.capabilities.xy);
     assert!(!v.capabilities.cct);
 }
@@ -263,13 +266,13 @@ fn attributes_read_with_evidence_commits_and_increments_counter() {
             .load(Ordering::Relaxed),
         before + 1
     );
-    let v = store.physical_device_view(0, 5).expect("pd");
+    let c102 = common102_section(&store, 5);
     assert_eq!(
-        v.attributes.common102.version.as_ref().unwrap().value,
+        c102.version.as_ref().unwrap().value,
         2
     );
     assert_eq!(
-        v.attributes.common102.version.as_ref().unwrap().source,
+        c102.version.as_ref().unwrap().source,
         AttributeSource::Readback
     );
 }
@@ -316,7 +319,7 @@ fn memory_bank_commits_only_after_last_chunk() {
         counters.events.memory_bank_read_committed.load(Ordering::Relaxed),
         mb_before
     );
-    assert!(store.physical_device_view(0, 8).unwrap().memory_banks.is_empty());
+    assert!(memory_banks_of(&store, 8).is_empty());
 
     publish_event(
         &publisher,
@@ -330,7 +333,7 @@ fn memory_bank_commits_only_after_last_chunk() {
         counters.events.memory_bank_read_committed.load(Ordering::Relaxed),
         mb_before + 1
     );
-    let banks = store.physical_device_view(0, 8).unwrap().memory_banks;
+    let banks = memory_banks_of(&store, 8);
     assert_eq!(banks.len(), 1);
     assert_eq!(banks[0].bank, 1);
     assert_eq!(banks[0].total_bytes_read, 3);
@@ -361,12 +364,12 @@ fn memory_bank_abort_clears_partial_stage() {
     );
     wait_until(
         || store
-            .physical_device_view(0, 9)
-            .map(|pd| pd.memory_banks.len())
+            .physical_device_memory_banks(0, 9)
+            .map(|banks| banks.len())
             == Some(1),
         Duration::from_millis(500),
     );
-    let banks = store.physical_device_view(0, 9).unwrap().memory_banks;
+    let banks = memory_banks_of(&store, 9);
     assert_eq!(banks.len(), 1);
     assert_eq!(banks[0].total_bytes_read, 1);
 }
@@ -386,7 +389,7 @@ fn events_for_other_bus_adapter_are_ignored() {
         counters.events.discovery_progress_applied.load(Ordering::Relaxed),
         before
     );
-    assert!(store.physical_device_view(0, 11).is_none());
+    assert!(!store.physical_device_exists(0, 11));
 }
 
 #[test]
@@ -413,11 +416,7 @@ fn memory_bank_out_of_order_chunk_aborts_without_commit() {
         counters.events.memory_bank_read_committed.load(Ordering::Relaxed),
         before
     );
-    assert!(store
-        .physical_device_view(0, 30)
-        .unwrap()
-        .memory_banks
-        .is_empty());
+    assert!(memory_banks_of(&store, 30).is_empty());
     assert_no_pd_changed_for(&ev_obs, corr);
 }
 
@@ -445,11 +444,7 @@ fn memory_bank_identity_mismatch_aborts_staging() {
         counters.events.memory_bank_read_committed.load(Ordering::Relaxed),
         before
     );
-    assert!(store
-        .physical_device_view(0, 31)
-        .unwrap()
-        .memory_banks
-        .is_empty());
+    assert!(memory_banks_of(&store, 31).is_empty());
     assert_no_pd_changed_for(&ev_obs, corr);
 }
 
@@ -470,7 +465,7 @@ fn memory_bank_final_chunk_without_physical_record_does_not_commit() {
         counters.events.memory_bank_read_committed.load(Ordering::Relaxed),
         before
     );
-    assert!(store.physical_device_view(0, 40).is_none());
+    assert!(!store.physical_device_exists(0, 40));
     assert_no_pd_changed_for(&ev_obs, corr);
 }
 
@@ -486,7 +481,7 @@ fn setup_discovered_short_and_binding(
         dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr_base, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryProgressEvent { registry_adapter_id: 0, short_address: short, random_address: None, device_type: DeviceType::Dt6Led, color_mode: ColorMode::Unknown, dt8_xy_capable: false, dt8_tc_capable: false, dt8_rgb_capable: false, dt8_rgbwaf_capable: false, supported_device_types: None }),
     );
     wait_until(
-        || store.physical_device_view(0, short).is_some(),
+        || store.physical_device_exists(0, short),
         Duration::from_millis(500),
     );
     assert_eq!(
@@ -717,7 +712,7 @@ fn groups_read_before_the_lamp_is_bound_are_adopted_and_not_reported_dirty() {
         dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 900, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryProgressEvent { registry_adapter_id: 0, short_address: 9, random_address: None, device_type: DeviceType::Dt6Led, color_mode: ColorMode::Unknown, dt8_xy_capable: false, dt8_tc_capable: false, dt8_rgb_capable: false, dt8_rgbwaf_capable: false, supported_device_types: None }),
     );
     wait_until(
-        || store.physical_device_view(0, 9).is_some(),
+        || store.physical_device_exists(0, 9),
         Duration::from_millis(500),
     );
 
@@ -727,10 +722,8 @@ fn groups_read_before_the_lamp_is_bound_are_adopted_and_not_reported_dirty() {
     );
     wait_until(
         || {
-            store
-                .physical_device_view(0, 9)
-                .map(|pd| pd.attributes.groups.membership.is_some())
-                .unwrap_or(false)
+            store.physical_device_exists(0, 9)
+                && groups_section(&store, 9).membership.is_some()
         },
         Duration::from_millis(500),
     );
@@ -831,15 +824,17 @@ fn a_replacement_keeps_its_own_evidence_so_the_lamps_rows_turn_dirty() {
 
     publish_event(&publisher, replaced_event(952, 0, 11));
     wait_until(
-        || store.physical_device_view(0, 11).is_none(),
+        || !store.physical_device_exists(0, 11),
         Duration::from_millis(500),
     );
 
-    let survivor = store
-        .physical_device_view(0, 0)
-        .expect("the failed device's role address must survive the handover");
+    assert!(
+        store.physical_device_exists(0, 0),
+        "the failed device's role address must survive the handover"
+    );
+    let survivor = groups_section(&store, 0);
     assert_eq!(
-        survivor.attributes.groups.membership.map(|observed| observed.value),
+        survivor.membership.map(|observed| observed.value),
         Some(1 << 7),
         "the record at the role address describes the gear that now answers there"
     );
@@ -908,7 +903,7 @@ fn what_was_programmed_into_the_old_gear_does_not_vouch_for_the_new_one() {
     drain_events(&ev_obs);
 
     publish_event(&publisher, replaced_event(995, 7, 8));
-    wait_until(|| store.physical_device_view(0, 8).is_none(), Duration::from_millis(500));
+    wait_until(|| !store.physical_device_exists(0, 8), Duration::from_millis(500));
 
     assert_eq!(
         scene_dirty(),
@@ -972,7 +967,7 @@ fn give_overrides(
     );
     support::publish_cmd(publisher, command);
     let given = || {
-        store.physical_device_view(0, short).is_some_and(|pd| pd.color_mode_override.is_some())
+        store.physical_device_core_view(0, short).is_some_and(|pd| pd.color_mode_override.is_some())
     };
     wait_until(given, Duration::from_millis(500));
 }
@@ -992,9 +987,12 @@ fn hand_over(declared_by_new_gear: u64, own_colour: Option<ColorMode>) -> Overri
         give_overrides(&publisher, &store, (1003, 11), (None, colour));
     }
     publish_event(&publisher, replaced_event(1004, 0, 11));
-    wait_until(|| store.physical_device_view(0, 11).is_none(), Duration::from_millis(500));
-    let record = store.physical_device_view(0, 0).expect("the role address");
-    (record.device_type_override, record.color_mode_override)
+    wait_until(|| !store.physical_device_exists(0, 11), Duration::from_millis(500));
+    let record = store.physical_device_core_view(0, 0).expect("the role address");
+    (
+        record.device_type_override.map(String::from),
+        record.color_mode_override.map(String::from),
+    )
 }
 
 #[test]
@@ -1097,10 +1095,8 @@ fn seed_device_reporting_groups(
     );
     wait_until(
         || {
-            store
-                .physical_device_view(0, short)
-                .map(|pd| pd.attributes.groups.membership.is_some())
-                .unwrap_or(false)
+            store.physical_device_exists(0, short)
+                && groups_section(store, short).membership.is_some()
         },
         Duration::from_millis(500),
     );
@@ -1334,14 +1330,12 @@ fn a_part251_read_that_starts_above_zero_commits_under_the_right_fields() {
 
     wait_until(
         || {
-            store
-                .physical_device_view(0, 8)
-                .is_some_and(|d| d.luminaire_info.is_some())
+            store.physical_device_exists(0, 8)
+                && memory_luminaire_section(&store, 8) != MemoryLuminaireAttributesView::default()
         },
         Duration::from_secs(2),
     );
-    let dev = store.physical_device_view(0, 8).expect("device");
-    let lum = dev.luminaire_info.as_deref().expect("luminaire view allocated");
+    let lum = memory_luminaire_section(&store, 8);
     assert_eq!(lum.content_format_id.as_ref().map(|v| v.value), Some(3));
     assert_eq!(lum.year.as_ref().map(|v| v.value.value), Some(Some(24)));
     assert_eq!(lum.week.as_ref().map(|v| v.value.value), Some(Some(35)));
@@ -1354,7 +1348,7 @@ fn a_part251_read_that_starts_above_zero_commits_under_the_right_fields() {
     let cct = lum.cct_kelvin.as_ref().expect("cct").value;
     assert!(cct.part209_implemented, "MASK - 1 is Part 209, not TMASK");
     assert_eq!(cct.value, None);
-    assert!(dev.attributes.memory_profile.oem_gtin.is_none());
+    assert!(memory_profile_section(&store, 8).oem_gtin.is_none());
 }
 
 

@@ -454,35 +454,6 @@ pub struct AdapterView {
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct PhysicalDeviceView {
-    pub adapter_id: u8,
-    pub short_address: u8,
-    pub random_address: Option<u32>,
-    pub name: String,
-    pub notes: Option<String>,
-    pub device_type_discovered: String,
-    pub device_type_override: Option<String>,
-    pub device_type_effective: String,
-    pub device_type_source: String,
-    pub supported_device_types: Option<Vec<u8>>,
-    pub color_mode_discovered: String,
-    pub color_mode_override: Option<String>,
-    pub color_mode_effective: String,
-    pub color_mode_source: String,
-    pub dt8_auto_activation_repair: bool,
-    pub dt8_rgbwaf_control_assert: bool,
-    pub attributes: PhysicalDeviceAttributesView,
-    pub energy: MemoryEnergyAttributesView,
-    pub diagnostics: MemoryDiagnosticsAttributesView,
-    pub bus_unit: MemoryBusUnitAttributesView,
-    pub luminaire_info: Option<Box<MemoryLuminaireAttributesView>>,
-    pub memory_banks: Vec<MemoryBankSummaryView>,
-    pub state: PhysicalDeviceStateView,
-    pub capabilities: CapabilityFlagsView,
-    pub color_temperature_range: Option<ColorTemperatureRangeView>,
-}
-
 #[derive(Clone, Debug)]
 pub struct PhysicalDeviceSummaryView {
     pub short_address: u8,

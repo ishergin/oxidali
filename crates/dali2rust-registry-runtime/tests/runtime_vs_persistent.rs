@@ -10,10 +10,11 @@ use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublishe
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_contracts::msg::{ColorMode, DaliAttributeGroup, DeviceType};
 use dali2rust_domain::registry::{
-    AdapterReadPort, PollerSettingsReadPort, RegistryReadPort,
+    AdapterReadPort, PhysicalDeviceReadPort, PollerSettingsReadPort, RegistryReadPort,
     VirtualLampReadPort,
 };
 use dali2rust_test_support::{temp_slice_store, try_recv_event_matching_envelope, wait_until};
+use support::{core_view_of, memory_banks_of, memory_identity_section, memory_profile_section};
 
 const CONFIRMATION_DEADLINE: Duration = Duration::from_secs(10);
 use dali2rust_registry_runtime::{spawn_registry_worker, RegistryStore, RegistryWorkerCounters};
@@ -117,7 +118,7 @@ fn virtual_lamp_binding_round_trip_across_fs_reload() {
         BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 20, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryProgressEvent { registry_adapter_id: 0, short_address: 7, random_address: None, device_type: DeviceType::Dt6Led, color_mode: ColorMode::Unknown, dt8_xy_capable: false, dt8_tc_capable: false, dt8_rgb_capable: false, dt8_rgbwaf_capable: false, supported_device_types: None })),
     );
     wait_until(
-        || store.physical_device_view(0, 7).is_some(),
+        || store.physical_device_exists(0, 7),
         Duration::from_millis(500),
     );
     publish(
@@ -145,7 +146,7 @@ fn physical_device_override_round_trip_across_fs_reload() {
         BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 30, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryProgressEvent { registry_adapter_id: 0, short_address: 8, random_address: None, device_type: DeviceType::Dt6Led, color_mode: ColorMode::Unknown, dt8_xy_capable: false, dt8_tc_capable: false, dt8_rgb_capable: false, dt8_rgbwaf_capable: false, supported_device_types: None })),
     );
     wait_until(
-        || store.physical_device_view(0, 8).is_some(),
+        || store.physical_device_exists(0, 8),
         Duration::from_millis(500),
     );
     publish(
@@ -158,11 +159,11 @@ fn physical_device_override_round_trip_across_fs_reload() {
     );
     wait_until(
         || {
-            store.physical_device_view(0, 8).is_some_and(|view| {
+            store.physical_device_core_view(0, 8).is_some_and(|view| {
                 view.name == "PD-8"
                     && view.notes.as_deref() == Some("notes")
-                    && view.device_type_override.as_deref() == Some("dt8_color")
-                    && view.color_mode_override.as_deref() == Some("rgb")
+                    && view.device_type_override == Some("dt8_color")
+                    && view.color_mode_override == Some("rgb")
             })
         },
         Duration::from_millis(500),
@@ -171,11 +172,11 @@ fn physical_device_override_round_trip_across_fs_reload() {
 
     let reloaded = RegistryStore::with_adapter_count(1);
     let _ = reloaded.hydrate_from_store(&slices, 1);
-    let view = reloaded.physical_device_view(0, 8).expect("pd");
+    let view = core_view_of(&reloaded, 8);
     assert_eq!(view.name, "PD-8");
     assert_eq!(view.notes.as_deref(), Some("notes"));
-    assert_eq!(view.device_type_override.as_deref(), Some("dt8_color"));
-    assert_eq!(view.color_mode_override.as_deref(), Some("rgb"));
+    assert_eq!(view.device_type_override, Some("dt8_color"));
+    assert_eq!(view.color_mode_override, Some("rgb"));
 }
 
 #[test]
@@ -189,7 +190,7 @@ fn physical_device_discovery_evidence_round_trip_across_fs_reload() {
     );
     wait_until(
         || {
-            store.physical_device_view(0, 1).is_some_and(|view| {
+            store.physical_device_core_view(0, 1).is_some_and(|view| {
                 view.device_type_discovered == "dt8_color" && view.capabilities.rgb
             })
         },
@@ -199,7 +200,7 @@ fn physical_device_discovery_evidence_round_trip_across_fs_reload() {
 
     let reloaded = RegistryStore::with_adapter_count(1);
     let _ = reloaded.hydrate_from_store(&slices, 1);
-    let view = reloaded.physical_device_view(0, 1).expect("pd");
+    let view = core_view_of(&reloaded, 1);
     assert_eq!(view.device_type_discovered, "dt8_color");
     assert_eq!(view.device_type_effective, "dt8_color");
     assert_eq!(view.color_mode_discovered, "cct");
@@ -232,7 +233,7 @@ fn physical_device_memory_identity_round_trip_across_fs_reload() {
         BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 40, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryProgressEvent { registry_adapter_id: 0, short_address: 9, random_address: Some(0x5C_1D_C2), device_type: DeviceType::Dt8Color, color_mode: ColorMode::Cct, dt8_xy_capable: false, dt8_tc_capable: true, dt8_rgb_capable: false, dt8_rgbwaf_capable: false, supported_device_types: None })),
     );
     wait_until(
-        || store.physical_device_view(0, 9).is_some(),
+        || store.physical_device_exists(0, 9),
         Duration::from_millis(500),
     );
     publish(
@@ -249,11 +250,10 @@ fn physical_device_memory_identity_round_trip_across_fs_reload() {
     );
     wait_until(
         || {
-            store.physical_device_view(0, 9).is_some_and(|view| {
-                view.memory_banks.len() == 2
-                    && view.attributes.memory_identity.gtin.is_some()
-                    && view.attributes.memory_profile.oem_gtin.is_some()
-            })
+            store.physical_device_exists(0, 9)
+                && memory_banks_of(&store, 9).len() == 2
+                && memory_identity_section(&store, 9).gtin.is_some()
+                && memory_profile_section(&store, 9).oem_gtin.is_some()
         },
         Duration::from_millis(500),
     );
@@ -261,22 +261,21 @@ fn physical_device_memory_identity_round_trip_across_fs_reload() {
 
     let reloaded = RegistryStore::with_adapter_count(1);
     let _ = reloaded.hydrate_from_store(&slices, 1);
-    let view = reloaded.physical_device_view(0, 9).expect("pd");
+    let view = core_view_of(&reloaded, 9);
+    let banks = memory_banks_of(&reloaded, 9);
     assert_eq!(view.random_address, Some(0x5C_1D_C2));
-    assert_eq!(view.memory_banks.len(), 2);
-    assert_eq!(view.memory_banks[0].total_bytes_read, BANK0_BYTES.len() as u16);
-    assert_eq!(view.memory_banks[1].total_bytes_read, BANK1_BYTES.len() as u16);
+    assert_eq!(banks.len(), 2);
+    assert_eq!(banks[0].total_bytes_read, BANK0_BYTES.len() as u16);
+    assert_eq!(banks[1].total_bytes_read, BANK1_BYTES.len() as u16);
     assert_eq!(
-        view.attributes
-            .memory_identity
+        memory_identity_section(&reloaded, 9)
             .gtin
             .as_ref()
             .map(|value| value.value),
         Some(0x009D_ADA2_1B43),
     );
     assert_eq!(
-        view.attributes
-            .memory_profile
+        memory_profile_section(&reloaded, 9)
             .oem_gtin
             .as_ref()
             .map(|value| value.value),

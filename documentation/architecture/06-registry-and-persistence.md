@@ -28,8 +28,8 @@ httpd stack in [07](07-memory-and-cores.md).
   reference or write method is reachable through a port. HTTP reads go through the
   bridge traits wired in composition; mutating routes poll lock-free apply and patch
   watches after their confirmation.
-- The full `PhysicalDeviceView` is an inherent method of `RegistryStore`, on no port
-  trait, so a handler holding a read port cannot build it.
+- No port trait returns a whole device record, so a handler holding a read port cannot
+  build one.
 
 ## Runtime state
 
