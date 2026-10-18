@@ -58,7 +58,7 @@ fn note_short_read(
 }
 
 #[allow(clippy::too_many_arguments, reason = "one param per field of the event it emits")]
-fn publish_memory_bank_execution(
+pub(super) fn publish_memory_bank_execution(
     publisher: &BusPublisher,
     adapter_id: BusId,
     correlation_id: u64,
