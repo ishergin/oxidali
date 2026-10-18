@@ -343,7 +343,9 @@ impl RegistryStore {
         drop(inner);
         if changed {
             self.dirty.mark_groups_dirty(adapter_id);
-            self.dirty.mark_physical_devices_dirty(adapter_id);
+        }
+        if membership_changed {
+            self.dirty.mark_physical_device_dirty(adapter_id, short_address);
         }
         changed
     }
@@ -483,5 +485,52 @@ impl GroupReadPort for RegistryStore {
 
     fn group_apply_snapshot(&self, adapter_id: u8) -> Option<GroupApplySnapshot> {
         self.group_apply_snapshot_internal(adapter_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dali2rust_bsp::psram::PsramBox;
+    use dali2rust_domain::registry::{AttributeSource, ObservedValue};
+    use dali2rust_platform::slice_store::SliceKey;
+
+    use crate::runtime::registry::physical_devices::PhysicalDeviceRecord;
+    use crate::runtime::registry::store::RegistryStore;
+
+    const ADAPTER: u8 = 0;
+    const SHORT: u8 = 5;
+    const VL: u8 = 1;
+    const MEMBERSHIP: u16 = 0b1010;
+    const SHORT_BANK: u16 = 1 << (SHORT / SliceKey::DEVICES_PER_BANK);
+
+    fn store_with_bound_lamp(known_membership: Option<u16>) -> RegistryStore {
+        let store = RegistryStore::with_adapter_count(1);
+        let mut record = PhysicalDeviceRecord::empty(SHORT);
+        record.attributes.groups.membership = known_membership.map(|value| ObservedValue {
+            value,
+            source: AttributeSource::Readback,
+            last_read_ms: Some(1),
+            last_write_confirmed_ms: None,
+        });
+        let mut g = store.write_inner();
+        g.physical_devices.insert((ADAPTER, SHORT), PsramBox::new(record));
+        g.lamps.entry((ADAPTER, VL)).or_default().binding_short = Some(SHORT);
+        drop(g);
+        store
+    }
+
+    #[test]
+    fn a_membership_readback_of_one_device_marks_only_its_bank() {
+        let store = store_with_bound_lamp(None);
+        assert!(store.apply_group_membership_readback(ADAPTER, SHORT, MEMBERSHIP));
+        assert_eq!(store.dirty.pending_physical_device_banks(ADAPTER), SHORT_BANK);
+    }
+
+    #[test]
+    fn a_readback_that_only_seeds_the_desired_row_marks_no_device_bank() {
+        let store = store_with_bound_lamp(Some(MEMBERSHIP));
+        assert!(store.apply_group_membership_readback(ADAPTER, SHORT, MEMBERSHIP));
+        assert_eq!(store.dirty.pending_physical_device_banks(ADAPTER), 0, "the record did not change");
+        assert_eq!(store.dirty.take_groups_dirty(), 1 << ADAPTER, "the seeded row is the groups slice's");
     }
 }

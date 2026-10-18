@@ -578,7 +578,7 @@ impl RegistryStore {
         }
         drop(inner);
         if level_changed {
-            self.dirty.mark_physical_devices_dirty(adapter_id);
+            self.dirty.mark_physical_device_dirty(adapter_id, short_address);
         }
         if seeded {
             self.dirty.mark_scene_dirty(adapter_id, scene_id);
@@ -615,8 +615,8 @@ impl RegistryStore {
             inner.scenes_matrix_desired_revision = inner.scenes_matrix_desired_revision.wrapping_add(1);
         }
         drop(inner);
-        if !changed.is_empty() {
-            self.dirty.mark_physical_devices_dirty(adapter_id);
+        for &short in &changed {
+            self.dirty.mark_physical_device_dirty(adapter_id, short);
         }
         changed
     }
@@ -785,11 +785,16 @@ mod tests {
     use dali2rust_contracts::msg::SceneMetadataUpdateCommand;
     use dali2rust_domain::dali::devices::dt8_color::COLOUR_TYPE_BYTE_MASK;
     use dali2rust_domain::registry::{AttributeSource, ObservedValue};
+    use dali2rust_platform::slice_store::SliceKey;
 
     const ADAPTER: u8 = 0;
     const SCENE: u8 = 3;
     const VL: u8 = 1;
     const SHORT: u8 = 5;
+
+    fn bank_of(short: u8) -> u16 {
+        1 << (short / SliceKey::DEVICES_PER_BANK)
+    }
 
     fn store_with_bound_lamp() -> RegistryStore {
         let store = RegistryStore::with_adapter_count(1);
@@ -814,6 +819,13 @@ mod tests {
             !store.dirty.take_physical_devices_dirty_for(0),
             "re-programming the level the record already holds must not rewrite flash"
         );
+    }
+
+    #[test]
+    fn a_scene_readback_of_one_device_marks_only_its_bank() {
+        let store = store_with_bound_lamp();
+        assert!(store.apply_scene_programmed_readback(ADAPTER, SHORT, SCENE, Some(120), None));
+        assert_eq!(store.dirty.pending_physical_device_banks(ADAPTER), bank_of(SHORT));
     }
 
     fn desired_level_row(virtual_lamp_id: u8, level: u8) -> SceneMatrixDesiredRow {
@@ -1106,5 +1118,29 @@ mod tests {
         assert_eq!(scene_level(&store, 1), None);
         assert_eq!(scene_level(&store, 2), None);
         assert!(store.dirty.take_physical_devices_dirty_for(ADAPTER));
+    }
+
+    #[test]
+    fn a_foreign_group_write_marks_only_the_banks_of_the_devices_it_changed() {
+        const GROUP: u8 = 4;
+        const MEMBER: u8 = 1;
+        const NON_MEMBER: u8 = 9;
+        const UNKNOWN: u8 = 13;
+        let store =
+            store_with_group_members(&[(MEMBER, Some(1 << GROUP)), (NON_MEMBER, Some(0)), (UNKNOWN, None)]);
+        let _ = store.dirty.take_physical_device_banks_dirty(ADAPTER);
+        let write = ForeignSceneWrite {
+            scope: DaliTargetScope::Group,
+            short_address: None,
+            group_id: Some(GROUP),
+            scene_id: SCENE,
+            removal: true,
+        };
+        assert_eq!(store.apply_foreign_scene_write(ADAPTER, write), vec![MEMBER, UNKNOWN]);
+        assert_eq!(
+            store.dirty.pending_physical_device_banks(ADAPTER),
+            bank_of(MEMBER) | bank_of(UNKNOWN),
+            "the non-member's bank holds nothing new"
+        );
     }
 }

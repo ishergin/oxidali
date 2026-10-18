@@ -84,7 +84,7 @@ impl MemoryBankStaging {
     }
 }
 
-fn commit_staged_bank(g: &mut Inner, correlation_id: u64) -> Option<(u8, bool)> {
+fn commit_staged_bank(g: &mut Inner, correlation_id: u64) -> Option<(u8, u8, bool)> {
     let st = g.memory_bank_stage.remove(&correlation_id)?;
     let aid = st.adapter_id;
     let sa = st.short_address;
@@ -93,7 +93,7 @@ fn commit_staged_bank(g: &mut Inner, correlation_id: u64) -> Option<(u8, bool)> 
     let rec = g.physical_devices.get_mut(&(aid, sa))?;
     let changed = commit_memory_bank(rec, bank, st.start_offset, st.bytes, now_commit);
     g.physical_devices_revision = g.physical_devices_revision.saturating_add(1);
-    Some((aid, changed))
+    Some((aid, sa, changed))
 }
 
 macro_rules! merge_parsed_fields {
@@ -422,8 +422,8 @@ impl RegistryStore {
 
         let committed = commit_staged_bank(&mut g, correlation_id);
         drop(g);
-        if let Some((aid, true)) = committed {
-            self.dirty.mark_physical_devices_dirty(aid);
+        if let Some((aid, sa, true)) = committed {
+            self.dirty.mark_physical_device_dirty(aid, sa);
         }
         committed.is_some()
     }
@@ -447,6 +447,8 @@ impl Staged for MemoryBankStaging {
 
 #[cfg(test)]
 mod tests {
+    use dali2rust_platform::slice_store::SliceKey;
+
     use crate::runtime::registry::store::RegistryStore;
 
     const SHORT: u8 = 5;
@@ -456,6 +458,17 @@ mod tests {
         assert!(store.seed_discovered_dt8(SHORT, Some(0x2222)));
         let _ = store.dirty.take_physical_devices_dirty_for(0);
         store
+    }
+
+    #[test]
+    fn a_memory_bank_read_of_one_device_marks_only_its_bank() {
+        let store = seeded_store();
+        let bytes: Vec<u8> = (0u8..27).collect();
+        assert!(store.stage_memory_bank_chunk(11, 0, SHORT, 0, 0, 0, true, &bytes));
+        assert_eq!(
+            store.dirty.pending_physical_device_banks(0),
+            1 << (SHORT / SliceKey::DEVICES_PER_BANK)
+        );
     }
 
     #[test]
