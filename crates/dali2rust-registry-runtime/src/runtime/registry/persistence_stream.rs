@@ -930,7 +930,7 @@ mod tests {
     fn streamed_flush_roundtrips_through_hydrate() {
         let store = populated_store(4);
         let slices = InMemorySliceStore::new();
-        store.dirty.mark_physical_devices_dirty(0);
+        store.dirty.mark_all_physical_devices_dirty(0);
         store.dirty.mark_virtual_lamps_dirty(0);
         store.flush_dirty_slices(&slices);
 
@@ -1297,7 +1297,7 @@ mod tests {
         write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
         slices.fail_reads_of(Some(LEGACY_SLOT));
         let waiting = boot_and_flush(&slices);
-        waiting.dirty.mark_physical_devices_dirty(0);
+        waiting.dirty.mark_all_physical_devices_dirty(0);
         assert!(waiting.seed_discovered_dt8(SCANNED_SHORT, Some(SCANNED_RANDOM_ADDRESS)));
         waiting.flush_dirty_slices(&slices);
         assert_eq!(slices.banks_written(), Vec::<SliceKey>::new(), "a waiting bank was written");
@@ -1375,7 +1375,7 @@ mod tests {
         slices.fail_reads_of(Some(bank_slot(BROKEN_BANK)));
         let unread = boot(&slices);
         assert_eq!(unread.persist_counters.unread_slices.load(std::sync::atomic::Ordering::Acquire), 1);
-        unread.dirty.mark_physical_devices_dirty(0);
+        unread.dirty.mark_all_physical_devices_dirty(0);
         unread.flush_dirty_slices(&slices);
         assert!(device_name(&unread, forgotten).is_none(), "the old slot stood in for the bank");
         assert_eq!(slices.inner.load(bank_slot(BROKEN_BANK)).expect("bank"), newer);
