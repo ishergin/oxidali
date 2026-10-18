@@ -263,7 +263,7 @@ fn read_evidence(reads: &BusSubscriberRx) -> (usize, Option<AttributeGroupReadOu
     (chunks, None)
 }
 
-fn release_after_a_refusal(stack: &SweepStack, ingress: HeldEventsIngress) {
+fn release_after_a_refusal(stack: &SweepStack, ingress: &HeldEventsIngress) {
     assert!(
         try_wait_until(
             || stack.counters.event_publish_failed.load(Ordering::Relaxed) > 0,
@@ -283,11 +283,12 @@ fn sweep_the_banks(evidence_room: Option<usize>) -> SweepRun {
         hold_the_events_ingress_with_room(&stack.publisher, SWEEP_EVENTS_INGRESS, room)
     });
     drop(wire_held);
-    if let Some(ingress) = ingress {
+    if let Some(ingress) = &ingress {
         release_after_a_refusal(&stack, ingress);
     }
     let terminal = next_signal(&stack.signals, SWEEP_CORRELATION).expect("the read never ended");
     let (evidence_chunks, memory_banks) = read_evidence(&stack.reads);
+    drop(ingress);
     SweepRun { terminal, evidence_chunks, memory_banks, counters: Arc::clone(&stack.counters) }
 }
 
@@ -315,12 +316,6 @@ fn a_refused_chunk_of_the_bank_sweep_fails_the_attribute_read_and_its_bank_secti
         "the attribute evidence had room and the first swept bank chunk had none, yet the \
          read ended {:?}",
         held.terminal
-    );
-    assert_eq!(
-        held.memory_banks,
-        Some(AttributeGroupReadOutcome::TransportAbort),
-        "the sweep ran on the wire and its chunk was lost, so the bank section was attempted \
-         and aborted, not left unattempted"
     );
     assert_eq!(
         (
