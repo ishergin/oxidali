@@ -4,6 +4,7 @@ const SUNRISE_ZENITH_DEG: f64 = 90.833;
 const MINUTES_PER_DEGREE: f64 = 4.0;
 const SOLAR_NOON_MINUTES: f64 = 720.0;
 const DAYS_PER_YEAR: f64 = 365.0;
+const MICRODEGREES_PER_DEGREE: f64 = 1_000_000.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Location {
@@ -14,8 +15,8 @@ pub struct Location {
 impl Location {
     pub fn from_microdeg(latitude: Option<i32>, longitude: Option<i32>) -> Option<Self> {
         Some(Self {
-            latitude_deg: f64::from(latitude?) / 1_000_000.0,
-            longitude_deg: f64::from(longitude?) / 1_000_000.0,
+            latitude_deg: f64::from(latitude?) / MICRODEGREES_PER_DEGREE,
+            longitude_deg: f64::from(longitude?) / MICRODEGREES_PER_DEGREE,
         })
     }
 }

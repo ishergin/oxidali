@@ -1248,56 +1248,36 @@ impl NameResolver for RegistryNameResolver {
 pub(crate) struct RulesWorldBridge {
     store: Arc<dali2rust_registry_runtime::RegistryStore>,
     wall: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
-    hcl_state: Arc<dyn dali2rust_api::http::hcl_state::HclScheduleHttpState>,
-    overrides: dali2rust_hcl_runtime::SharedOverrideLedger,
-    started: std::time::Instant,
+    hcl: dali2rust_hcl_runtime::HclRulesView,
 }
 
 impl RulesWorldBridge {
     pub(crate) fn new(
         store: Arc<dali2rust_registry_runtime::RegistryStore>,
         wall: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
-        hcl_state: Arc<dyn dali2rust_api::http::hcl_state::HclScheduleHttpState>,
-        overrides: dali2rust_hcl_runtime::SharedOverrideLedger,
+        hcl: dali2rust_hcl_runtime::HclRulesView,
     ) -> Self {
-        Self {
-            store,
-            wall,
-            hcl_state,
-            overrides,
-            started: std::time::Instant::now(),
-        }
+        Self { store, wall, hcl }
     }
+}
 
-    fn schedule_targets(
-        &self,
-        dto: &dali2rust_api::http::hcl_state::HclScheduleDto,
-    ) -> Vec<dali2rust_rules_model::LightTarget> {
-        let mut targets = Vec::new();
-        for t in &dto.targets {
-            match t.scope.as_str() {
-                "broadcast" => targets.push(dali2rust_rules_model::LightTarget::Broadcast {
-                    adapter_id: t.adapter_id,
-                }),
-                _ => {
-                    for group in t.group_ids.clone().unwrap_or_default() {
-                        targets.push(dali2rust_rules_model::LightTarget::Group(
-                            dali2rust_rules_model::GroupRef {
-                                adapter_id: t.adapter_id,
-                                id: u16::from(group),
-                            },
-                        ));
-                    }
-                }
-            }
+fn rules_hcl_target(key: dali2rust_hcl_runtime::TargetKey) -> dali2rust_rules_model::LightTarget {
+    match key.scope {
+        dali2rust_contracts::msg::HclTargetScope::Broadcast => {
+            dali2rust_rules_model::LightTarget::Broadcast { adapter_id: key.adapter_id }
         }
-        targets
+        dali2rust_contracts::msg::HclTargetScope::Group => {
+            dali2rust_rules_model::LightTarget::Group(dali2rust_rules_model::GroupRef {
+                adapter_id: key.adapter_id,
+                id: u16::from(key.group_id),
+            })
+        }
     }
 }
 
 impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
     fn now_ms(&self) -> u64 {
-        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+        dali2rust_bsp::monotonic_clock::monotonic_millis()
     }
 
     fn unix_ms(&self) -> u64 {
@@ -1313,25 +1293,10 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
     }
 
     fn sun(&self) -> Option<dali2rust_rules_runtime::runtime::engine::SunTimes> {
-        let local = self.wall.local()?;
-        let location = self
-            .hcl_state
-            .list_hcl_schedule_dtos()
-            .into_iter()
-            .find_map(|s| s.location)?;
-        let micro = |deg: f64| i32::try_from((deg * 1_000_000.0) as i64).ok();
-        let events = dali2rust_hcl_runtime::solar_events(
-            dali2rust_hcl_runtime::Location::from_microdeg(
-                micro(location.latitude_deg),
-                micro(location.longitude_deg),
-            )?,
-            local.year_day,
-            local.utc_offset_minutes,
-        );
-        let clamp = |m: i32| u16::try_from(m.clamp(0, 1439)).unwrap_or(0);
+        let sun = self.hcl.sun(self.wall.local()?)?;
         Some(dali2rust_rules_runtime::runtime::engine::SunTimes {
-            sunrise_min: clamp(events.sunrise_minutes?),
-            sunset_min: clamp(events.sunset_minutes?),
+            sunrise_min: sun.sunrise,
+            sunset_min: sun.sunset,
         })
     }
 
@@ -1406,25 +1371,15 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
     }
 
     fn hcl(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::HclTargetState> {
-        let mut rows = Vec::new();
-        for dto in self.hcl_state.list_hcl_schedule_dtos() {
-            let suspended: Vec<dali2rust_hcl_runtime::SuspendedTarget> = self
-                .overrides
-                .lock()
-                .map(|g| g.suspended_targets(&dto.schedule_id))
-                .unwrap_or_default();
-            for target in self.schedule_targets(&dto) {
-                let overridden = suspended
-                    .iter()
-                    .any(|s| suspended_matches(&s.target, &target));
-                rows.push(dali2rust_rules_runtime::runtime::engine::HclTargetState {
-                    target,
-                    enabled: dto.enabled,
-                    overridden,
-                });
-            }
-        }
-        rows
+        self.hcl
+            .target_statuses()
+            .into_iter()
+            .map(|row| dali2rust_rules_runtime::runtime::engine::HclTargetState {
+                target: rules_hcl_target(row.target),
+                enabled: row.enabled,
+                overridden: row.overridden,
+            })
+            .collect()
     }
 
     fn hcl_schedules(&self) -> Vec<String> {
@@ -1453,24 +1408,6 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
                     })
             })
             .unwrap_or([None; 3])
-    }
-}
-
-fn suspended_matches(
-    suspended: &dali2rust_hcl_runtime::TargetKey,
-    target: &dali2rust_rules_model::LightTarget,
-) -> bool {
-    match target {
-        dali2rust_rules_model::LightTarget::Group(group) => {
-            suspended.scope == dali2rust_contracts::msg::HclTargetScope::Group
-                && suspended.adapter_id == group.adapter_id
-                && u16::from(suspended.group_id) == group.id
-        }
-        dali2rust_rules_model::LightTarget::Broadcast { adapter_id } => {
-            suspended.scope == dali2rust_contracts::msg::HclTargetScope::Broadcast
-                && suspended.adapter_id == *adapter_id
-        }
-        dali2rust_rules_model::LightTarget::Lamp(_) => false,
     }
 }
 
@@ -1532,9 +1469,7 @@ mod tests {
     use core::sync::atomic::Ordering::Relaxed;
     use std::sync::{Arc, Mutex};
 
-    use super::{arbitration_dto, stats_readback_dto, suspended_matches};
-    use dali2rust_contracts::msg::HclTargetScope;
-    use dali2rust_rules_model::{GroupRef, LightTarget};
+    use super::{arbitration_dto, stats_readback_dto};
     use crate::dali::transport::mock::MockDaliTransport;
     use dali2rust_contracts::msg::GroupMembershipAction;
     use dali2rust_dali_runtime::runtime::controller::DaliController;
@@ -1616,20 +1551,5 @@ mod tests {
             row.handover_incomplete,
         ];
         assert_eq!(got, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    }
-
-    #[test]
-    fn a_suspended_broadcast_and_a_suspended_group_zero_are_told_apart_by_scope() {
-        let key = |scope, group_id| dali2rust_hcl_runtime::TargetKey { adapter_id: 0, scope, group_id };
-        let group_zero = LightTarget::Group(GroupRef { adapter_id: 0, id: 0 });
-        let broadcast = LightTarget::Broadcast { adapter_id: 0 };
-
-        assert!(suspended_matches(&key(HclTargetScope::Broadcast, 0), &broadcast));
-        assert!(
-            !suspended_matches(&key(HclTargetScope::Broadcast, 0), &group_zero),
-            "a held broadcast key carries group id 0 and is not group 0"
-        );
-        assert!(suspended_matches(&key(HclTargetScope::Group, 0), &group_zero));
-        assert!(!suspended_matches(&key(HclTargetScope::Group, 0), &broadcast));
     }
 }
