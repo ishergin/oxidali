@@ -1327,6 +1327,19 @@ mod tests {
     }
 
     #[test]
+    fn a_slice_dirty_on_its_own_is_written_by_the_next_flush() {
+        for key in registry_slices() {
+            let kind = registry_kind(key).expect("a registry slice");
+            let slices = ProbeStore::default();
+            let store = RegistryStore::with_adapter_count(ADAPTER_COUNT);
+            mark_slice_dirty(&store, &kind);
+            assert!(store.dirty.any_dirty(), "{} dirty alone is no work", key.label());
+            store.flush_dirty_slices(&slices);
+            assert!(slices.written().contains(&key), "{} was not written", key.label());
+        }
+    }
+
+    #[test]
     fn every_slice_a_flush_writes_passes_the_import_check() {
         assert_import_accepts(&installed(), registry_slices().into_iter());
     }
