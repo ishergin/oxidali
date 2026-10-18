@@ -27,6 +27,7 @@ const SHORT: u8 = 5;
 const GEAR_ANSWER: u8 = 0x04;
 const READ_CORRELATION: u64 = 4_000;
 const MEMORY_READ_CORRELATION: u64 = 4_001;
+const CHUNK_LOST: &str = "memory_bank_chunk_lost";
 const DEMO_SHORT: u8 = 0;
 const BANK_ZERO_PREFIX: u16 = 3;
 const EVENTS_INGRESS: usize = 4;
@@ -68,7 +69,10 @@ fn spawn_worker<T: DaliTransport + Send + 'static>(
     )
 }
 
-fn next_signal(signals: &BusSubscriberRx) -> Option<OperationWorkerSignalEvent> {
+fn next_signal(
+    signals: &BusSubscriberRx,
+    correlation_id: u64,
+) -> Option<OperationWorkerSignalEvent> {
     let deadline = Instant::now() + STEP_DEADLINE;
     loop {
         let remaining = deadline
@@ -77,7 +81,7 @@ fn next_signal(signals: &BusSubscriberRx) -> Option<OperationWorkerSignalEvent> 
         match signals.recv_timeout(remaining) {
             Ok(BusFrame::Event(envelope)) => match &envelope.payload {
                 BusEventPayload::OperationWorkerSignalEvent(body)
-                    if body.workflow_correlation_id == READ_CORRELATION =>
+                    if body.workflow_correlation_id == correlation_id =>
                 {
                     return Some(body.clone())
                 }
@@ -111,7 +115,7 @@ fn start_the_read(publisher: &BusPublisher, signals: &BusSubscriberRx) {
         PublishResult::Queued
     );
     assert_eq!(
-        next_signal(signals).map(|started| started.signal),
+        next_signal(signals, READ_CORRELATION).map(|started| started.signal),
         Some(OperationWorkerSignal::WorkerStarted),
         "the read never started"
     );
@@ -131,7 +135,7 @@ fn wait_for_the_refused_evidence(counters: &DaliWorkerCounters) {
 }
 
 fn assert_the_read_failed(signals: &BusSubscriberRx) {
-    let terminal = next_signal(signals)
+    let terminal = next_signal(signals, READ_CORRELATION)
         .expect("no terminal signal within the deadline after the router was released");
     assert_eq!(
         (terminal.signal, terminal.error.as_ref().map(|error| error.code)),
@@ -216,5 +220,56 @@ fn a_memory_bank_chunk_the_full_ingress_refused_is_not_counted_as_published() {
         held.memory_bank_chunk_events_published.load(Ordering::Relaxed),
         0,
         "the full ingress refused the chunk, yet it was counted as published"
+    );
+}
+
+fn terminal_signal_of_a_memory_read(hold_the_ingress: bool) -> OperationWorkerSignalEvent {
+    let (_host, publisher, worker_commands, signals) = spawn_bus();
+    let transport = Arc::new(Mutex::new(SimDaliTransport::demo_bus()));
+    let counters = Arc::new(DaliWorkerCounters::default());
+    let _worker = spawn_worker(worker_commands, &publisher, &transport, &counters);
+    let wire_held = transport.lock().expect("sim");
+    assert_eq!(
+        publisher.try_publish(BusChannel::Commands, memory_read_frame()),
+        PublishResult::Queued
+    );
+    assert_eq!(
+        next_signal(&signals, MEMORY_READ_CORRELATION).map(|started| started.signal),
+        Some(OperationWorkerSignal::WorkerStarted),
+        "the memory read never started"
+    );
+    let ingress = hold_the_ingress.then(|| hold_the_events_ingress_full(&publisher));
+    drop(wire_held);
+    if let Some(ingress) = ingress {
+        assert!(
+            try_wait_until(
+                || counters.event_publish_failed.load(Ordering::Relaxed) > 0,
+                STEP_DEADLINE
+            ),
+            "inconclusive: the events ingress was held full, yet no required publish gave up"
+        );
+        ingress.release();
+    }
+    next_signal(&signals, MEMORY_READ_CORRELATION).expect("the memory read never ended")
+}
+
+#[test]
+fn a_refused_memory_bank_chunk_fails_the_read() {
+    let open = terminal_signal_of_a_memory_read(false);
+    assert_eq!(
+        open.signal,
+        OperationWorkerSignal::WorkerSucceeded,
+        "control: with the events ingress open the memory read ends {open:?}"
+    );
+    let held = terminal_signal_of_a_memory_read(true);
+    let error = held.error.as_ref().map(|error| (error.code, error.message.as_str()));
+    assert_eq!(
+        (held.signal, error),
+        (
+            OperationWorkerSignal::WorkerFailed,
+            Some((ErrorCode::CommandsIngressOverload, CHUNK_LOST))
+        ),
+        "the full ingress refused a memory bank chunk, yet the read ended {held:?} — the \
+         registry holds a bank it never fully heard"
     );
 }

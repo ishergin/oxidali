@@ -73,11 +73,12 @@ use commissioning::{
 pub use counters::DaliWorkerCounters;
 use discovery::handle_discover_devices;
 use membership::handle_program_group_membership;
-use memory_bank::{handle_read_memory_bank, publish_memory_bank_preset};
+use memory_bank::{handle_read_memory_bank, publish_memory_bank_preset, MEMORY_BANK_CHUNK_LOST};
 use program_outcome::{ProgramOutcomeSink, resolve_membership_short};
 pub use publish::DALI_WORKER_REQUIRED_EVENTS;
 use publish::{
-    emit_execution_failed, emit_execution_failed_with_product_error,
+    count_lost_fact, emit_execution_failed, emit_execution_failed_with_product_error,
+    fail_operation_over_lost_fact,
     publish_closing_fact_or_fail, publish_confirmation_ok, publish_confirmation_typed,
     publish_event_required, publish_event_typed, publish_operation_worker_signal,
     publish_worker_failed, publish_worker_started, publish_worker_succeeded,

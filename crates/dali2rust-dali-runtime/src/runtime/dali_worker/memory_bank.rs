@@ -1,5 +1,9 @@
 use super::*;
 
+pub(super) const MEMORY_BANK_CHUNK_LOST: &str = "memory_bank_chunk_lost";
+
+const MEMORY_BANK_CHUNK_BYTES: usize = 24;
+
 pub(super) fn publish_memory_bank_preset(
     controller: &mut impl DaliApplicationController,
     publisher: &BusPublisher,
@@ -9,26 +13,29 @@ pub(super) fn publish_memory_bank_preset(
     short_address: u8,
     preset: dali2rust_contracts::msg::MemoryBankReadPreset,
     counters: &DaliWorkerCounters,
-) -> Result<(), crate::runtime::executor::SemanticDaliError> {
+) -> Result<bool, crate::runtime::executor::SemanticDaliError> {
+    let mut delivered = true;
     crate::runtime::executor::execute_memory_bank_preset(
         controller,
         short_address,
         preset,
         |plan, execution| {
             note_short_read(plan.length, execution, plan.bank, short_address, counters);
-            publish_memory_bank_execution(
-                publisher,
-                adapter_id,
-                correlation_id,
-                registry_adapter_id,
-                short_address,
-                plan.bank,
-                plan.start,
-                execution,
-                counters,
-            );
+            delivered = delivered
+                && publish_memory_bank_execution(
+                    publisher,
+                    adapter_id,
+                    correlation_id,
+                    registry_adapter_id,
+                    short_address,
+                    plan.bank,
+                    plan.start,
+                    execution,
+                    counters,
+                );
         },
-    )
+    )?;
+    Ok(delivered)
 }
 
 fn note_short_read(
@@ -61,29 +68,28 @@ fn publish_memory_bank_execution(
     start_offset: u16,
     execution: &crate::runtime::executor::MemoryReadExecution,
     counters: &DaliWorkerCounters,
-) {
-    const CHUNK: usize = 24;
-    let total = execution.bytes.len();
-    let mut off = 0usize;
-    let mut idx: u16 = 0;
-    while off < total {
-        let end = (off + CHUNK).min(total);
-        let chunk = &execution.bytes[off..end];
-        let last = end >= total;
-        let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { registry_adapter_id, short_address, bank, start_offset, chunk_index: idx, last_chunk: last && execution.error.is_none(), data: dali2rust_contracts::msg::FixedBytes24::from_slice(chunk) });
-        if publish_event_required(publisher, ev, counters, PublishKind::Series, "memory-bank-chunk") {
-            counters
-                .memory_bank_chunk_events_published
-                .fetch_add(1, Ordering::Relaxed);
+) -> bool {
+    let chunks = execution.bytes.chunks(MEMORY_BANK_CHUNK_BYTES);
+    let count = chunks.len();
+    let mut delivered = true;
+    for (index, chunk) in chunks.enumerate() {
+        let last_chunk = index + 1 == count && execution.error.is_none();
+        let chunk_index = u16::try_from(index).unwrap_or(u16::MAX);
+        let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { registry_adapter_id, short_address, bank, start_offset, chunk_index, last_chunk, data: dali2rust_contracts::msg::FixedBytes24::from_slice(chunk) });
+        delivered = publish_event_required(publisher, ev, counters, PublishKind::Series, "memory-bank-chunk");
+        if !delivered {
+            break;
         }
-        idx = idx.saturating_add(1);
-        off = end;
+        counters
+            .memory_bank_chunk_events_published
+            .fetch_add(1, Ordering::Relaxed);
     }
-    if execution.error.is_some() {
+    if !delivered || execution.error.is_some() {
         let aborted =
             dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadAbortedEvent {});
         publish_event_required(publisher, aborted, counters, PublishKind::Series, "memory-bank-aborted");
     }
+    delivered
 }
 
 pub(super) fn handle_read_memory_bank(
@@ -101,7 +107,7 @@ pub(super) fn handle_read_memory_bank(
     let bank = mb.bank;
     let execution = read_memory_bank(controller, sa, bank, mb.start, mb.length);
     note_short_read(mb.length, &execution, bank, sa, counters);
-    publish_memory_bank_execution(
+    let delivered = publish_memory_bank_execution(
         publisher,
         adapter_id,
         w,
@@ -112,7 +118,21 @@ pub(super) fn handle_read_memory_bank(
         &execution,
         counters,
     );
-    match execution.error {
+    close_memory_bank_read(publisher, adapter_id, w, delivered, execution.error, counters);
+    counters
+        .semantic_read_memory_bank_handled
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+fn close_memory_bank_read(
+    publisher: &BusPublisher,
+    adapter_id: BusId,
+    w: u64,
+    delivered: bool,
+    error: Option<crate::runtime::executor::SemanticDaliError>,
+    counters: &DaliWorkerCounters,
+) {
+    match error {
         Some(error) => publish_worker_failed(
             publisher,
             adapter_id,
@@ -122,9 +142,14 @@ pub(super) fn handle_read_memory_bank(
             error.message(),
             counters,
         ),
+        None if !delivered => fail_operation_over_lost_fact(
+            publisher,
+            adapter_id,
+            w,
+            Origin::Internal,
+            MEMORY_BANK_CHUNK_LOST,
+            counters,
+        ),
         None => publish_worker_succeeded(publisher, adapter_id, w, Origin::Internal, counters),
     }
-    counters
-        .semantic_read_memory_bank_handled
-        .fetch_add(1, Ordering::Relaxed);
 }

@@ -363,3 +363,66 @@ mod publish_accounting {
         );
     }
 }
+
+mod bank_sweep_loss {
+    use std::sync::{Arc, Mutex};
+
+    use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
+    use dali2rust_bus::{BusConfig, BusHost, BusId};
+    use dali2rust_contracts::msg::{DaliReadAttributesCommand, ErrorCode, MemoryBankReadPreset};
+    use dali2rust_test_support::hold_the_events_ingress_full;
+
+    use super::super::attribute_read::read_attributes_memory_bank_stage;
+    use super::super::DaliWorkerCounters;
+    use crate::runtime::clock::StdClock;
+    use crate::runtime::controller::DaliController;
+    use crate::runtime::executor::AttributeReadOutcomes;
+
+    const DEMO_SHORT: u8 = 0;
+    const SWEEP_CORRELATION: u64 = 4_100;
+    const EVENTS_INGRESS: usize = 4;
+    const CHUNK_LOST: &str = "memory_bank_chunk_lost";
+
+    fn sweep_bank_zero(hold_the_ingress: bool) -> Result<(), (ErrorCode, &'static str)> {
+        let config = BusConfig {
+            events_ingress: EVENTS_INGRESS,
+            ..BusConfig::default()
+        };
+        let (_host, publisher, ()) = BusHost::spawn(config, |_| {});
+        let transport = Arc::new(Mutex::new(SimDaliTransport::demo_bus()));
+        let mut controller = DaliController::new(transport, Box::new(StdClock::new()));
+        let counters = DaliWorkerCounters::default();
+        let ar = DaliReadAttributesCommand {
+            registry_adapter_id: 0,
+            short_address: DEMO_SHORT,
+            attribute_groups_mask: 0,
+            memory_banks: MemoryBankReadPreset::Identity,
+        };
+        let mut outcomes = AttributeReadOutcomes::for_request(&[], true);
+        let _ingress = hold_the_ingress.then(|| hold_the_events_ingress_full(&publisher));
+        read_attributes_memory_bank_stage(
+            &mut controller,
+            &publisher,
+            BusId::default(),
+            SWEEP_CORRELATION,
+            &ar,
+            &mut outcomes,
+            &counters,
+        )
+    }
+
+    #[test]
+    fn a_refused_chunk_of_a_bank_sweep_fails_the_attribute_read() {
+        assert_eq!(
+            sweep_bank_zero(false),
+            Ok(()),
+            "control: with the events ingress open the sweep of bank 0 succeeds"
+        );
+        assert_eq!(
+            sweep_bank_zero(true),
+            Err((ErrorCode::CommandsIngressOverload, CHUNK_LOST)),
+            "the full ingress refused the swept bank's chunk, yet the attribute read went on \
+             as if the registry had heard it"
+        );
+    }
+}
