@@ -9,7 +9,7 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_test_support::wait_until;
-use support::{publish_cmd, seed_bound_group_member, spawn_registry_stack};
+use support::{core_view_of, publish_cmd, seed_bound_group_member, spawn_registry_stack};
 
 const WAIT: Duration = Duration::from_secs(2);
 
@@ -129,12 +129,7 @@ fn a_member_switched_on_without_a_level_lights_its_group() {
         "a member told to switch on is lit, whatever level the gear recalled"
     );
 
-    let level = stack
-        .store
-        .physical_device_view(0, LIT.1)
-        .expect("seeded device")
-        .state
-        .level;
+    let level = core_view_of(&stack.store, LIT.1).state.level;
     assert_eq!(
         level,
         Some(200),

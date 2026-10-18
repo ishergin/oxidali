@@ -13,9 +13,67 @@ use dali2rust_test_support::{recv_confirmation_for, wait_until};
 use dali2rust_registry_runtime::{
     spawn_registry_worker, RegistryStore, RegistryWorkerCounters, SlicePersistence,
 };
-use dali2rust_domain::registry::{GroupReadPort, VirtualLampReadPort};
+use dali2rust_domain::registry::{
+    AttributeSectionKind, AttributeSectionView, Common102AttributesView, Dt6LedAttributesView,
+    Dt8ColorAttributesView, ExtendedAttributesView, GroupReadPort, GroupsAttributesView,
+    MemoryBankSummaryView, MemoryIdentityAttributesView, MemoryLuminaireAttributesView,
+    MemoryProfileAttributesView, PhysicalDeviceAttributesView, PhysicalDeviceCoreView,
+    PhysicalDeviceReadPort, ScenesAttributesView, VirtualLampReadPort,
+};
 
 pub const CONFIRMATION_DEADLINE: Duration = Duration::from_secs(4);
+
+const DEVICE_EXISTS: &str = "the physical device exists";
+
+pub fn core_view_of(store: &RegistryStore, short_address: u8) -> PhysicalDeviceCoreView {
+    store.physical_device_core_view(0, short_address).expect(DEVICE_EXISTS)
+}
+
+pub fn memory_banks_of(store: &RegistryStore, short_address: u8) -> Vec<MemoryBankSummaryView> {
+    store.physical_device_memory_banks(0, short_address).expect(DEVICE_EXISTS)
+}
+
+macro_rules! section_readers {
+    ( $( $read:ident, $variant:ident, $view:ident );+ $(;)? ) => {
+        $(
+            pub fn $read(store: &RegistryStore, short_address: u8) -> $view {
+                let kind = AttributeSectionKind::$variant;
+                match store
+                    .physical_device_attribute_section(0, short_address, kind)
+                    .expect(DEVICE_EXISTS)
+                {
+                    AttributeSectionView::$variant(view) => *view,
+                    other => panic!("asked for {kind:?}, got {:?}", other.kind()),
+                }
+            }
+        )+
+    };
+}
+
+section_readers! {
+    common102_section, Common102, Common102AttributesView;
+    dt6_led_section, Dt6Led, Dt6LedAttributesView;
+    dt8_color_section, Dt8Color, Dt8ColorAttributesView;
+    extended_section, Extended, ExtendedAttributesView;
+    groups_section, Groups, GroupsAttributesView;
+    memory_identity_section, MemoryIdentity, MemoryIdentityAttributesView;
+    memory_luminaire_section, MemoryLuminaire, MemoryLuminaireAttributesView;
+    memory_profile_section, MemoryProfile, MemoryProfileAttributesView;
+    scenes_section, Scenes, ScenesAttributesView;
+}
+
+pub fn attributes_of(store: &RegistryStore, short_address: u8) -> PhysicalDeviceAttributesView {
+    PhysicalDeviceAttributesView {
+        common102: common102_section(store, short_address),
+        groups: groups_section(store, short_address),
+        scenes: scenes_section(store, short_address),
+        dt6_led: dt6_led_section(store, short_address),
+        dt8_color: dt8_color_section(store, short_address),
+        extended: extended_section(store, short_address),
+        memory_identity: memory_identity_section(store, short_address),
+        memory_profile: memory_profile_section(store, short_address),
+    }
+}
 
 pub struct RegistryTestStack {
     pub publisher: BusPublisher,
@@ -202,7 +260,7 @@ pub fn seed_physical_via_discovery(
         dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryProgressEvent { registry_adapter_id: 0, short_address, random_address: None, device_type, color_mode: ColorMode::Unknown, dt8_xy_capable: false, dt8_tc_capable: false, dt8_rgb_capable: false, dt8_rgbwaf_capable: false, supported_device_types: None }),
     );
     wait_until(
-        || store.physical_device_view(0, short_address).is_some(),
+        || store.physical_device_exists(0, short_address),
         Duration::from_millis(500),
     );
 }

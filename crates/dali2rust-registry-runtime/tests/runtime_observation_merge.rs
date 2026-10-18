@@ -12,7 +12,9 @@ use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{PhysicalDeviceStateView};
 use dali2rust_test_support::wait_until;
 
-use support::{publish_cmd, recv_confirm_for, seed_physical_via_discovery, spawn_registry_stack};
+use support::{
+    core_view_of, publish_cmd, recv_confirm_for, seed_physical_via_discovery, spawn_registry_stack,
+};
 
 const SHORT: u8 = 7;
 
@@ -109,11 +111,7 @@ fn assert_ok(c: &dali2rust_contracts::msg::ConfirmationEnvelope) {
 }
 
 fn state(stack: &support::RegistryTestStack) -> PhysicalDeviceStateView {
-    stack
-        .store
-        .physical_device_view(0, SHORT)
-        .expect("seeded device")
-        .state
+    core_view_of(&stack.store, SHORT).state
 }
 
 fn stack_with_read_status() -> support::RegistryTestStack {

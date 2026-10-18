@@ -17,14 +17,14 @@ use dali2rust_contracts::msg::{
     LightSetpoint, PowerState, RuntimeRegistryUpdateEntry, RuntimeSource,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_domain::registry::{VirtualLampReadPort};
+use dali2rust_domain::registry::{PhysicalDeviceReadPort, VirtualLampReadPort};
 use dali2rust_registry_runtime::{
     RegistryStore, RegistryWorkerCounters, DISCOVERY_EVICT_MISS_THRESHOLD,
 };
 use dali2rust_test_support::wait_until;
 
 mod support;
-use support::{publish_cmd, recv_confirm_for};
+use support::{core_view_of, publish_cmd, recv_confirm_for};
 
 use dali2rust_contracts::msg::PhysicalDeviceOverrideCommand as PdPatch;
 
@@ -101,10 +101,10 @@ fn seed_physical(
         PublishResult::Queued
     );
     wait_until(
-        || store.physical_device_view(0, short).is_some(),
+        || store.physical_device_exists(0, short),
         Duration::from_millis(500),
     );
-    assert!(store.physical_device_view(0, short).is_some());
+    assert!(store.physical_device_exists(0, short));
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn physical_device_override_success_and_missing_record() {
     );
     assert_ok(&recv_confirm_for(&conf_rx, ok_corr));
     assert_eq!(
-        store.physical_device_view(0, 12).expect("pd").name,
+        core_view_of(&store, 12).name,
         "Bench"
     );
 
@@ -334,7 +334,7 @@ fn registry_runtime_update_applies_physical_short() {
         { let __corr = corr; dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, __corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, dali2rust_contracts::msg::RuntimeRegistryUpdateEntry::api_short_physical(14, &sp, 11_000))) },
     );
     assert_ok(&recv_confirm_for(&conf_rx, corr));
-    let v = store.physical_device_view(0, 14).expect("pd");
+    let v = core_view_of(&store, 14);
     assert_eq!(v.state.level, Some(88));
     assert_eq!(v.state.last_seen_ms, Some(11_000));
     let ev = recv_event_for(&ev_rx, corr);
@@ -459,7 +459,7 @@ fn registry_runtime_colour_only_update_keeps_stored_level() {
         dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, c2, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, RuntimeRegistryUpdateEntry::api_short_physical(14, &colour_only, 12_000))),
     );
     assert_ok(&recv_confirm_for(&conf_rx, c2));
-    let v = store.physical_device_view(0, 14).expect("pd");
+    let v = core_view_of(&store, 14);
     assert_eq!(v.state.level, Some(120), "colour-only must keep the level");
     assert_eq!(v.state.last_seen_ms, Some(12_000), "metadata still applies");
 
@@ -474,7 +474,7 @@ fn registry_runtime_colour_only_update_keeps_stored_level() {
         dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, c3, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, RuntimeRegistryUpdateEntry::api_short_physical(14, &off_sp, 13_000))),
     );
     assert_ok(&recv_confirm_for(&conf_rx, c3));
-    let v = store.physical_device_view(0, 14).expect("pd");
+    let v = core_view_of(&store, 14);
     assert_eq!(v.state.level, Some(0), "off writes the honest zero");
 }
 
@@ -494,7 +494,7 @@ fn a_switch_on_with_colour_on_a_dark_lamp_recalls_the_shadowed_level() {
         assert_ok(&recv_confirm_for(&conf_rx, corr));
     }
     assert_eq!(
-        store.physical_device_view(0, 15).expect("pd").state.level,
+        core_view_of(&store, 15).state.level,
         Some(0),
         "the off is stored as the honest zero"
     );
@@ -514,7 +514,7 @@ fn a_switch_on_with_colour_on_a_dark_lamp_recalls_the_shadowed_level() {
         dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, c, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, RuntimeRegistryUpdateEntry::api_short_physical(15, &switch_on, 23_000))),
     );
     assert_ok(&recv_confirm_for(&conf_rx, c));
-    let v = store.physical_device_view(0, 15).expect("pd");
+    let v = core_view_of(&store, 15);
     assert_eq!(
         v.state.level,
         Some(120),
@@ -540,7 +540,7 @@ fn a_recall_on_a_lamp_never_seen_lit_leaves_the_level_unknown() {
         dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, c, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, RuntimeRegistryUpdateEntry::api_short_physical(17, &switch_on, 40_000))),
     );
     assert_ok(&recv_confirm_for(&conf_rx, c));
-    let v = store.physical_device_view(0, 17).expect("pd");
+    let v = core_view_of(&store, 17);
     assert_eq!(v.state.level, None, "no shadow, so no prediction");
     assert_eq!(v.state.power, "on", "the lamp is still on");
 }
@@ -573,7 +573,7 @@ fn a_colour_only_setpoint_states_neither_power_nor_level() {
         dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, c2, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, RuntimeRegistryUpdateEntry::api_short_physical(16, &colour_only, 31_000))),
     );
     assert_ok(&recv_confirm_for(&conf_rx, c2));
-    let v = store.physical_device_view(0, 16).expect("pd");
+    let v = core_view_of(&store, 16);
     assert_eq!(v.state.level, Some(90), "a colour states no level");
     assert_eq!(v.state.power, "on", "and no power either");
     assert_eq!(v.state.color_temperature_kelvin, Some(4000));
@@ -702,7 +702,7 @@ fn registry_runtime_combined_vl_and_short_single_commit_and_event() {
     );
     assert_ok(&recv_confirm_for(&conf_rx, corr));
     assert_eq!(
-        store.physical_device_view(0, 10).expect("pd").state.level,
+        core_view_of(&store, 10).state.level,
         Some(66)
     );
     assert_eq!(
@@ -897,7 +897,7 @@ fn forgetting_a_device_unbinds_the_lamp_and_leaves_the_lamp() {
     assert_ok(&recv_confirm_for(&conf_rx, 701));
 
     assert!(
-        store.physical_device_view(0, 10).is_none(),
+        !store.physical_device_exists(0, 10),
         "the device record must be gone"
     );
     let lamp = store.virtual_lamp_view(0, 4);
@@ -949,10 +949,10 @@ fn a_scan_eviction_unbinds_the_lamp_as_forget_does_and_announces_it() {
         publish_clean_scan(&publisher, corr);
     }
     wait_until(
-        || store.physical_device_view(0, 13).is_none(),
+        || !store.physical_device_exists(0, 13),
         Duration::from_secs(1),
     );
-    assert!(store.physical_device_view(0, 13).is_none(), "three clean misses evict the record");
+    assert!(!store.physical_device_exists(0, 13), "three clean misses evict the record");
     assert_eq!(
         store.virtual_lamp_view(0, 6).binding_short,
         None,
@@ -998,7 +998,7 @@ fn a_forgotten_device_still_on_the_wire_returns_blank_on_the_next_scan() {
 
     seed_physical(&publisher, &store, 12);
     let view = store
-        .physical_device_view(0, 12)
+        .physical_device_core_view(0, 12)
         .expect("a scan re-creates the record");
     assert!(
         view.notes.as_deref().unwrap_or("").is_empty(),
@@ -1022,7 +1022,7 @@ fn a_foreign_recall_verb_is_resolved_against_the_shadowed_level() {
         assert_ok(&recv_confirm_for(&conf_rx, corr));
     }
     assert_eq!(
-        store.physical_device_view(0, 21).expect("pd").state.level,
+        core_view_of(&store, 21).state.level,
         Some(0)
     );
 
@@ -1041,7 +1041,7 @@ fn a_foreign_recall_verb_is_resolved_against_the_shadowed_level() {
     );
     assert_ok(&recv_confirm_for(&conf_rx, c));
     assert_eq!(
-        store.physical_device_view(0, 21).expect("pd").state.level,
+        core_view_of(&store, 21).state.level,
         Some(137),
         "the verb resolves against the shadow the OFF left standing"
     );
@@ -1073,7 +1073,7 @@ fn an_unresolvable_verb_leaves_the_stored_level_untouched() {
     );
     assert_ok(&recv_confirm_for(&conf_rx, c));
     assert_eq!(
-        store.physical_device_view(0, 22).expect("pd").state.level,
+        core_view_of(&store, 22).state.level,
         Some(90),
         "no bounds means no step this controller can name"
     );
