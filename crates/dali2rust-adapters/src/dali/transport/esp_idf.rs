@@ -34,8 +34,9 @@ use dali2rust_dali_phy::{
 
 use crate::dali::transport::{
     arrived_too_early_for_a_backward_frame, arrived_too_late_for_a_backward_frame, backward_timing,
-    collision_restart_gate, foreign_forward_outcome, held_capture_outcome,
-    incomplete_reception_verdict, BackwardTiming, BACKWARD_ACCEPTANCE_FLOOR_US,
+    classify_tx_event, classify_undecodable_in_window, collision_restart_gate,
+    foreign_forward_outcome, incomplete_reception_verdict, BackwardCause, BackwardTiming,
+    TxAttemptOutcome, TxEventCause, UndecodableCause, WindowTally, BACKWARD_ACCEPTANCE_FLOOR_US,
     BACKWARD_ACCEPTANCE_LIMIT_US,
 };
 use dali2rust_dali_codec::codec::{encode_forward16_raw, encode_forward24_raw};
@@ -129,14 +130,6 @@ impl core::fmt::Display for TxFrameLabel {
             }
         }
     }
-}
-
-enum TxAttemptOutcome {
-    Sent {
-        pre_idle_ticks: u16,
-    },
-    Collision,
-    BusBusy,
 }
 
 fn out_regs(pin: u8) -> (*mut u32, *mut u32, u32) {
@@ -504,28 +497,19 @@ impl EspIdfDaliTransport {
     }
 
     fn tx_outcome_of(event: SessionEvent, label: &str) -> Option<TxAttemptOutcome> {
-        match event {
-            SessionEvent::TxComplete { pre_idle_ticks } => {
-                log::info!("DALI PHY TX: {label} (ISR-owned bitbang)");
-                Some(TxAttemptOutcome::Sent { pre_idle_ticks })
-            }
-            SessionEvent::TxCollision => {
-                log::warn!("DALI PHY TX: collision on {label}");
-                Some(TxAttemptOutcome::Collision)
-            }
-            SessionEvent::TxRejected => {
-                log::warn!("DALI PHY TX: start_tx rejected for {label}");
-                Some(TxAttemptOutcome::BusBusy)
-            }
-            SessionEvent::TxVoided => {
+        let (outcome, cause) = classify_tx_event(&event);
+        match cause {
+            TxEventCause::Completed => log::info!("DALI PHY TX: {label} (ISR-owned bitbang)"),
+            TxEventCause::Collision => log::warn!("DALI PHY TX: collision on {label}"),
+            TxEventCause::Rejected => log::warn!("DALI PHY TX: start_tx rejected for {label}"),
+            TxEventCause::Voided => {
                 log::warn!("DALI PHY TX: {label} voided by a foreign forward frame");
-                Some(TxAttemptOutcome::BusBusy)
             }
-            SessionEvent::RxComplete(_) | SessionEvent::ForeignForward { .. } => {
+            TxEventCause::UnexpectedBackward => {
                 log::warn!("DALI PHY TX: unexpected backward RX while waiting for TX completion");
-                None
             }
         }
+        outcome
     }
 
     // IEC 62386-101 §9.1.4, §9.3
@@ -722,64 +706,47 @@ impl EspIdfDaliTransport {
 
     fn undecodable_in_window(p: *mut TransportInner, ev: &RxCompletedEvent) -> TransferOutcome {
         let decoded = ev.decode_sniffed_with_phase();
-        match decoded.frame {
-            SniffedFrame::Forward16(raw) => {
-                count_foreign_frame(p);
-                log_sniffed_forward16(raw, decoded.phase_ticks);
-                TransferOutcome::ForeignInWindow
-            }
-            SniffedFrame::Forward24(bytes) => {
-                count_foreign_frame(p);
-                log::info!(
-                    "DALI PHY RX: foreign forward24 in backward window 0x{:02x}{:02x}{:02x}",
-                    bytes[0],
-                    bytes[1],
-                    bytes[2]
-                );
-                TransferOutcome::ForeignInWindow
-            }
-            SniffedFrame::Backward8(_) => {
-                count_backward_cause(p, BackwardCause::Undecodable);
-                log::warn!("DALI PHY RX: undecodable backward frame in window");
-                TransferOutcome::CorruptedInWindow
-            }
-            SniffedFrame::UnsupportedLength(bits) => {
-                count_backward_cause(p, BackwardCause::FrameSize);
-                log::warn!(
-                    "DALI PHY RX: frame size violation in backward window ({bits} bits) \
-                     — §8.2.5 backward frame"
-                );
-                TransferOutcome::CorruptedInWindow
-            }
-            SniffedFrame::DecodeFailed => {
-                count_backward_cause(p, BackwardCause::Undecodable);
-                Self::log_undecodable_capture(ev)
-            }
+        let (outcome, cause) = classify_undecodable_in_window(ev, decoded.frame);
+        match cause.tally() {
+            WindowTally::ForeignFrame => count_foreign_frame(p),
+            WindowTally::Backward(backward) => count_backward_cause(p, backward),
         }
+        Self::log_undecodable_in_window(cause, decoded.phase_ticks);
+        outcome
     }
 
-    fn log_undecodable_capture(ev: &RxCompletedEvent) -> TransferOutcome {
-        let run = ev.longest_dominant_run_ticks();
-        let held_ms = PHY_TICK_US.saturating_mul(u32::from(run)) / 1000;
-        let outcome = held_capture_outcome(run);
-        if outcome == TransferOutcome::BusBusy {
-            log::warn!(
-                "DALI PHY RX: active {run} ticks ({held_ms} ms) through the backward window \
-                 — bus power down past 45 ms (101 Tables 18/19 footnote b), not an answer"
-            );
-        } else if ev.is_line_held() {
-            log::warn!(
+    fn log_undecodable_in_window(cause: UndecodableCause, phase_ticks: i8) {
+        match cause {
+            UndecodableCause::ForeignForward16 { raw } => log_sniffed_forward16(raw, phase_ticks),
+            UndecodableCause::ForeignForward24 { bytes } => log::info!(
+                "DALI PHY RX: foreign forward24 in backward window 0x{:02x}{:02x}{:02x}",
+                bytes[0],
+                bytes[1],
+                bytes[2]
+            ),
+            UndecodableCause::Backward8 => {
+                log::warn!("DALI PHY RX: undecodable backward frame in window");
+            }
+            UndecodableCause::FrameSize { bits } => log::warn!(
+                "DALI PHY RX: frame size violation in backward window ({bits} bits) \
+                 — §8.2.5 backward frame"
+            ),
+            UndecodableCause::BusPowerDown { run_ticks: run } => log::warn!(
+                "DALI PHY RX: active {run} ticks ({} ms) through the backward window \
+                 — bus power down past 45 ms (101 Tables 18/19 footnote b), not an answer",
+                held_ms(run)
+            ),
+            UndecodableCause::LineHeld { run_ticks: run } => log::warn!(
                 "DALI PHY RX: line HELD through the backward window, {run} ticks \
-                 ({held_ms} ms), no edges — a bit-timing violation (101 Tables 18/19), \
-                 so a §8.2.5 backward frame"
-            );
-        } else {
-            log::warn!(
+                 ({} ms), no edges — a bit-timing violation (101 Tables 18/19), \
+                 so a §8.2.5 backward frame",
+                held_ms(run)
+            ),
+            UndecodableCause::BitTiming { run_ticks: run } => log::warn!(
                 "DALI PHY RX: bit timing violation in backward window (longest \
                  dominant run {run} ticks) — §8.2.5 backward frame"
-            );
+            ),
         }
-        outcome
     }
 
     fn foreign_forward_in_window(
@@ -1610,15 +1577,6 @@ unsafe fn note_answer_staged(
     }
 }
 
-#[derive(Clone, Copy)]
-enum BackwardCause {
-    Undecodable,
-    FrameSize,
-    Incomplete,
-    EarlyRejected,
-    LateRejected,
-}
-
 fn count_backward_cause(inner: *mut TransportInner, cause: BackwardCause) {
     // SAFETY: every caller holds `inner` for the transport lifetime.
     let Some(sink) = (unsafe { (*inner).sniffer_counters.get() }) else {
@@ -1869,6 +1827,10 @@ unsafe fn coherent_isr_tick_sample(inner: *mut TransportInner) -> Option<(i64, u
     let now_us = unsafe { esp_idf_svc::sys::esp_timer_get_time() };
     let after = unsafe { (*inner).isr.wire_tick_counts().0 };
     (before == after).then_some((now_us, before))
+}
+
+fn held_ms(run_ticks: u16) -> u32 {
+    PHY_TICK_US.saturating_mul(u32::from(run_ticks)) / 1000
 }
 
 fn count_foreign_frame(p: *mut TransportInner) {
