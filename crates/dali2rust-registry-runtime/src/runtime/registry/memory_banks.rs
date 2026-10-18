@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::runtime::registry::store::{evict_stale, registry_unix_ms, Staged};
 use crate::runtime::registry::store::Inner;
 use crate::runtime::registry::store::RegistryStore;
@@ -16,6 +18,8 @@ use super::memory_bank_parser::{
 use super::physical_devices::{
     merge_read_attr_opt, MemoryBankRangeRecord, MemoryBankRecord, PhysicalDeviceRecord,
 };
+
+type ChunkIdentity = (u8, u8, u8, u16);
 
 #[derive(Debug)]
 pub(crate) struct MemoryBankStaging {
@@ -52,6 +56,13 @@ impl MemoryBankStaging {
         }
     }
 
+    fn is_read_of(&self, (adapter_id, short_address, bank, start_offset): ChunkIdentity) -> bool {
+        self.adapter_id == adapter_id
+            && self.short_address == short_address
+            && self.bank == bank
+            && self.start_offset == start_offset
+    }
+
     #[allow(clippy::too_many_arguments, reason = "one param per identity field of the chunk")]
     fn accept_chunk(
         &mut self,
@@ -63,11 +74,7 @@ impl MemoryBankStaging {
         data: &[u8],
         now: u64,
     ) -> bool {
-        if self.adapter_id != adapter_id
-            || self.short_address != short_address
-            || self.bank != bank
-            || self.start_offset != start_offset
-        {
+        if !self.is_read_of((adapter_id, short_address, bank, start_offset)) {
             return false;
         }
         let ok_order = match self.last_chunk_index {
@@ -86,6 +93,47 @@ impl MemoryBankStaging {
         }
         self.staged_at_ms = now;
         true
+    }
+}
+
+fn stage_chunk(
+    stages: &mut HashMap<u64, MemoryBankStaging>,
+    correlation_id: u64,
+    identity: ChunkIdentity,
+    chunk_index: u16,
+    data: &[u8],
+    now: u64,
+) -> bool {
+    let (adapter_id, short_address, bank, start_offset) = identity;
+    match stages.get_mut(&correlation_id) {
+        Some(st) if chunk_index != 0 || st.is_read_of(identity) => {
+            let accepted = st.accept_chunk(
+                adapter_id,
+                short_address,
+                bank,
+                start_offset,
+                chunk_index,
+                data,
+                now,
+            );
+            if !accepted {
+                stages.remove(&correlation_id);
+            }
+            accepted
+        }
+        _ => {
+            let fresh = MemoryBankStaging::new(
+                adapter_id,
+                short_address,
+                bank,
+                start_offset,
+                data,
+                now,
+                chunk_index,
+            );
+            stages.insert(correlation_id, fresh);
+            true
+        }
     }
 }
 
@@ -395,36 +443,15 @@ impl RegistryStore {
     ) -> bool {
         let now = registry_unix_ms();
         let mut g = self.write_inner();
-
-        if let Some(st) = g.memory_bank_stage.get_mut(&correlation_id) {
-            if !st.accept_chunk(
-                adapter_id,
-                short_address,
-                bank,
-                start_offset,
-                chunk_index,
-                data,
-                now,
-            ) {
-                g.memory_bank_stage.remove(&correlation_id);
-                return false;
-            }
-        } else {
-            g.memory_bank_stage.insert(
-                correlation_id,
-                MemoryBankStaging::new(
-                    adapter_id,
-                    short_address,
-                    bank,
-                    start_offset,
-                    data,
-                    now,
-                    chunk_index,
-                ),
-            );
-        }
-
-        if !last_chunk {
+        let staged = stage_chunk(
+            &mut g.memory_bank_stage,
+            correlation_id,
+            (adapter_id, short_address, bank, start_offset),
+            chunk_index,
+            data,
+            now,
+        );
+        if !staged || !last_chunk {
             return false;
         }
 
@@ -531,5 +558,44 @@ mod tests {
             store.stage_memory_bank_chunk(15, 0, SHORT, 1, 0, 0, true, &next_bank),
             "the next bank of the same sweep was refused after a headless read ended"
         );
+    }
+
+    #[test]
+    fn a_read_whose_last_chunk_was_dropped_does_not_lose_the_next_bank() {
+        let store = seeded_store();
+        let first_chunk: Vec<u8> = (0u8..24).collect();
+        assert!(!store.stage_memory_bank_chunk(16, 0, SHORT, 0, 0, 0, false, &first_chunk));
+        let next_bank: Vec<u8> = (0u8..3).collect();
+        assert!(
+            store.stage_memory_bank_chunk(16, 0, SHORT, 1, 0, 0, true, &next_bank),
+            "bank 0 of the sweep lost its last chunk, and bank 1, which arrived whole, was \
+             discarded with it"
+        );
+        let banks = store.physical_device_memory_banks(0, SHORT).expect("seeded device");
+        assert_eq!(
+            banks.iter().map(|bank| bank.bank).collect::<Vec<_>>(),
+            vec![1],
+            "only bank 1 arrived whole; bank 0 must not be committed from its first chunk: \
+             {banks:?}"
+        );
+    }
+
+    #[test]
+    fn a_mismatching_chunk_past_the_first_still_ends_the_open_read() {
+        let store = seeded_store();
+        let first_chunk: Vec<u8> = (0u8..24).collect();
+        assert!(!store.stage_memory_bank_chunk(17, 0, SHORT, 0, 0, 0, false, &first_chunk));
+        let foreign: Vec<u8> = (24u8..27).collect();
+        assert!(
+            !store.stage_memory_bank_chunk(17, 0, SHORT, 1, 0, 1, true, &foreign),
+            "a second chunk of another bank was committed over the open read"
+        );
+        assert!(
+            !store.stage_memory_bank_chunk(17, 0, SHORT, 0, 0, 1, true, &foreign),
+            "the open read was kept after a mismatching chunk, and its own second chunk \
+             committed it"
+        );
+        let banks = store.physical_device_memory_banks(0, SHORT).expect("seeded device");
+        assert!(banks.is_empty(), "no read arrived whole, yet a bank was committed: {banks:?}");
     }
 }
