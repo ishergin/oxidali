@@ -250,15 +250,15 @@ fn close_target_state_applied(
     adapter_id: BusId,
     counters: &DaliWorkerCounters,
     applied: dali2rust_contracts::msg::DaliTargetStateAppliedEvent,
-) {
-    if !publish_target_state_applied_event(publisher, correlation_id, adapter_id, counters, applied)
-    {
-        emit_execution_failed(publisher, correlation_id, counters);
-        return;
+) -> bool {
+    let env = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), applied);
+    if !publish_closing_fact_or_fail(publisher, env, counters, PublishKind::Singleton, "target-state-applied") {
+        return false;
     }
     counters
         .semantic_set_target_state_handled
         .fetch_add(1, Ordering::Relaxed);
+    true
 }
 
 pub(super) fn target_state_applied_event(
@@ -312,23 +312,9 @@ fn handle_set_target_state_broadcast(
         sp,
         provenance,
     );
-    publish_event_required(
-        publisher,
-        dali2rust_contracts::bus::event_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            correlation_id,
-            adapter_id.0,
-            Some(dali2rust_contracts::msg::Origin::Internal),
-            applied,
-        ),
-        counters,
-        PublishKind::Singleton,
-        "target-state-applied-broadcast",
-    );
-    counters
-        .semantic_set_target_state_handled
-        .fetch_add(1, Ordering::Relaxed);
-    publish_confirmation_ok(publisher, correlation_id, counters);
+    if close_target_state_applied(publisher, correlation_id, adapter_id, counters, applied) {
+        publish_confirmation_ok(publisher, correlation_id, counters);
+    }
 }
 
 #[allow(clippy::too_many_arguments, reason = "provenance threads through one extra param")]
@@ -364,13 +350,9 @@ fn handle_set_target_state_group(
         sp,
         provenance,
     );
-    let applied_event =
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), applied);
-    publish_event_required(publisher, applied_event, counters, PublishKind::Singleton, "target-state-applied-group");
-    publish_confirmation_ok(publisher, correlation_id, counters);
-    counters
-        .semantic_set_target_state_handled
-        .fetch_add(1, Ordering::Relaxed);
+    if close_target_state_applied(publisher, correlation_id, adapter_id, counters, applied) {
+        publish_confirmation_ok(publisher, correlation_id, counters);
+    }
 }
 
 #[allow(clippy::too_many_arguments, reason = "provenance threads through one extra param")]
@@ -444,15 +426,4 @@ fn fail_target_state_vl_unbound(
 fn setpoint_dapc_applied(sp: &LightSetpoint) -> bool {
     sp.dapc_level()
         .is_some_and(|level| level > dali2rust_contracts::msg::ARC_POWER_OFF)
-}
-
-fn publish_target_state_applied_event(
-    publisher: &BusPublisher,
-    correlation_id: u64,
-    adapter_id: BusId,
-    counters: &DaliWorkerCounters,
-    body: dali2rust_contracts::msg::DaliTargetStateAppliedEvent,
-) -> bool {
-    let env = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), body);
-    publish_event_required(publisher, env, counters, PublishKind::Singleton, "target-state-applied")
 }
