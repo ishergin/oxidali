@@ -3,4 +3,5 @@ pub mod curve;
 pub mod override_read;
 pub mod overrides;
 pub mod plan;
+pub mod rules_view;
 pub mod scheduler_worker;

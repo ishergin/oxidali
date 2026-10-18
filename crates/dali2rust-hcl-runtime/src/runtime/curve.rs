@@ -4,7 +4,7 @@ use dali2rust_platform::small_sort::insertion_sort_by;
 
 use super::astronomy::{solar_events, Location, SolarEvents};
 
-const MINUTES_PER_DAY: i32 = 1440;
+pub(crate) const MINUTES_PER_DAY: i32 = 1440;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EffectivePoint {
