@@ -1,27 +1,23 @@
+mod support;
+
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
-use dali2rust_bus::{
-    BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublisher, BusSubscriberRx,
-    PublishResult,
-};
+use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, BusSubscriberRx, PublishResult};
 use dali2rust_contracts::msg::{
-    BusEventPayload, DaliAttributeGroup, DaliReadAttributesCommand, DaliReadMemoryBankCommand,
-    ErrorCode, MemoryBankReadPreset, OperationWorkerSignal, OperationWorkerSignalEvent, Origin,
+    DaliAttributeGroup, DaliReadAttributesCommand, DaliReadMemoryBankCommand, ErrorCode,
+    MemoryBankReadPreset, OperationWorkerSignal, Origin,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_dali_runtime::{
-    spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock,
-    DALI_WORKER_HANDLED_COMMANDS,
-};
-use dali2rust_platform::dali::DaliTransport;
-use dali2rust_registry_runtime::RegistryStore;
+use dali2rust_dali_runtime::DaliWorkerCounters;
 use dali2rust_test_support::{hold_the_events_ingress_full, try_wait_until};
+use support::{
+    assert_a_lost_fact_fails_the_operation, next_signal, spawn_signal_bus, spawn_worker_on,
+    DemoBusOperation,
+};
 
 const SHORT: u8 = 5;
 const GEAR_ANSWER: u8 = 0x04;
@@ -30,9 +26,6 @@ const MEMORY_READ_CORRELATION: u64 = 4_001;
 const CHUNK_LOST: &str = "memory_bank_chunk_lost";
 const DEMO_SHORT: u8 = 0;
 const BANK_ZERO_PREFIX: u16 = 3;
-const EVENTS_INGRESS: usize = 4;
-const WORKER_INBOX: usize = 16;
-const SIGNAL_INBOX: usize = 64;
 const STEP_DEADLINE: Duration = Duration::from_secs(10);
 
 fn read_frame() -> BusFrame {
@@ -48,65 +41,6 @@ fn read_frame() -> BusFrame {
             memory_banks: MemoryBankReadPreset::None,
         },
     ))
-}
-
-fn spawn_worker<T: DaliTransport + Send + 'static>(
-    commands: BusSubscriberRx,
-    publisher: &BusPublisher,
-    transport: &Arc<Mutex<T>>,
-    counters: &Arc<DaliWorkerCounters>,
-) -> JoinHandle<()> {
-    spawn_dali_worker(
-        commands,
-        DaliController::new(Arc::clone(transport), Box::new(StdClock::new())),
-        DaliRuntimeConfig::default(),
-        Arc::new(RegistryStore::with_adapter_count(1)),
-        publisher.clone(),
-        BusId::default(),
-        Arc::clone(counters),
-        Arc::new(dali2rust_platform::dali::WireActivity::new()),
-        Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
-    )
-}
-
-fn next_signal(
-    signals: &BusSubscriberRx,
-    correlation_id: u64,
-) -> Option<OperationWorkerSignalEvent> {
-    let deadline = Instant::now() + STEP_DEADLINE;
-    loop {
-        let remaining = deadline
-            .checked_duration_since(Instant::now())
-            .filter(|left| !left.is_zero())?;
-        match signals.recv_timeout(remaining) {
-            Ok(BusFrame::Event(envelope)) => match &envelope.payload {
-                BusEventPayload::OperationWorkerSignalEvent(body)
-                    if body.workflow_correlation_id == correlation_id =>
-                {
-                    return Some(body.clone())
-                }
-                _ => {}
-            },
-            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => panic!("signal tap died"),
-        }
-    }
-}
-
-fn spawn_bus() -> (BusHost, BusPublisher, BusSubscriberRx, BusSubscriberRx) {
-    let (host, publisher, (worker_commands, signals)) = BusHost::spawn(
-        BusConfig {
-            events_ingress: EVENTS_INGRESS,
-            ..BusConfig::default()
-        },
-        |reg| {
-            (
-                reg.subscribe_commands(WORKER_INBOX, DALI_WORKER_HANDLED_COMMANDS),
-                reg.subscribe_events(SIGNAL_INBOX, &["OperationWorkerSignalEvent"]),
-            )
-        },
-    );
-    (host, publisher, worker_commands, signals)
 }
 
 fn start_the_read(publisher: &BusPublisher, signals: &BusSubscriberRx) {
@@ -148,11 +82,11 @@ fn assert_the_read_failed(signals: &BusSubscriberRx) {
 
 #[test]
 fn a_lost_evidence_chunk_fails_the_read_instead_of_reporting_success() {
-    let (_host, publisher, worker_commands, signals) = spawn_bus();
+    let (_host, publisher, worker_commands, signals) = spawn_signal_bus();
     let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
     transport.lock().expect("mock").set_persistent_response(GEAR_ANSWER);
     let counters = Arc::new(DaliWorkerCounters::default());
-    let _worker = spawn_worker(worker_commands, &publisher, &transport, &counters);
+    let _worker = spawn_worker_on(worker_commands, &publisher, &transport, &counters);
 
     let wire_held = transport.lock().expect("mock");
     start_the_read(&publisher, &signals);
@@ -181,10 +115,10 @@ fn memory_read_frame() -> BusFrame {
 }
 
 fn memory_read_counters(hold_the_ingress: bool) -> Arc<DaliWorkerCounters> {
-    let (_host, publisher, worker_commands, _signals) = spawn_bus();
+    let (_host, publisher, worker_commands, _signals) = spawn_signal_bus();
     let transport = Arc::new(Mutex::new(SimDaliTransport::demo_bus()));
     let counters = Arc::new(DaliWorkerCounters::default());
-    let _worker = spawn_worker(worker_commands, &publisher, &transport, &counters);
+    let _worker = spawn_worker_on(worker_commands, &publisher, &transport, &counters);
     let wire_held = transport.lock().expect("sim");
     assert_eq!(
         publisher.try_publish(BusChannel::Commands, memory_read_frame()),
@@ -223,53 +157,12 @@ fn a_memory_bank_chunk_the_full_ingress_refused_is_not_counted_as_published() {
     );
 }
 
-fn terminal_signal_of_a_memory_read(hold_the_ingress: bool) -> OperationWorkerSignalEvent {
-    let (_host, publisher, worker_commands, signals) = spawn_bus();
-    let transport = Arc::new(Mutex::new(SimDaliTransport::demo_bus()));
-    let counters = Arc::new(DaliWorkerCounters::default());
-    let _worker = spawn_worker(worker_commands, &publisher, &transport, &counters);
-    let wire_held = transport.lock().expect("sim");
-    assert_eq!(
-        publisher.try_publish(BusChannel::Commands, memory_read_frame()),
-        PublishResult::Queued
-    );
-    assert_eq!(
-        next_signal(&signals, MEMORY_READ_CORRELATION).map(|started| started.signal),
-        Some(OperationWorkerSignal::WorkerStarted),
-        "the memory read never started"
-    );
-    let ingress = hold_the_ingress.then(|| hold_the_events_ingress_full(&publisher));
-    drop(wire_held);
-    if let Some(ingress) = ingress {
-        assert!(
-            try_wait_until(
-                || counters.event_publish_failed.load(Ordering::Relaxed) > 0,
-                STEP_DEADLINE
-            ),
-            "inconclusive: the events ingress was held full, yet no required publish gave up"
-        );
-        ingress.release();
-    }
-    next_signal(&signals, MEMORY_READ_CORRELATION).expect("the memory read never ended")
-}
-
 #[test]
 fn a_refused_memory_bank_chunk_fails_the_read() {
-    let open = terminal_signal_of_a_memory_read(false);
-    assert_eq!(
-        open.signal,
-        OperationWorkerSignal::WorkerSucceeded,
-        "control: with the events ingress open the memory read ends {open:?}"
-    );
-    let held = terminal_signal_of_a_memory_read(true);
-    let error = held.error.as_ref().map(|error| (error.code, error.message.as_str()));
-    assert_eq!(
-        (held.signal, error),
-        (
-            OperationWorkerSignal::WorkerFailed,
-            Some((ErrorCode::CommandsIngressOverload, CHUNK_LOST))
-        ),
-        "the full ingress refused a memory bank chunk, yet the read ended {held:?} — the \
-         registry holds a bank it never fully heard"
-    );
+    assert_a_lost_fact_fails_the_operation(&DemoBusOperation {
+        frame: memory_read_frame,
+        correlation_id: MEMORY_READ_CORRELATION,
+        announces_start: true,
+        lost: CHUNK_LOST,
+    });
 }
