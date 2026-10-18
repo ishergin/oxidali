@@ -132,21 +132,26 @@ fn hold_the_request_before_its_closing_publish(
 
 fn assert_a_lost_closing_fact_fails_the_request(
     payload: BusCommandPayload,
-    finished: Finished,
+    finished: Option<Finished>,
 ) {
     let stack = spawn_stack();
     let ingress = hold_the_request_before_its_closing_publish(&stack, payload);
     assert!(
         try_wait_until(
-            || finished(&stack.counters).load(Ordering::Relaxed) > 0,
+            || stack.counters.event_publish_failed.load(Ordering::Relaxed) > 0,
             STEP_DEADLINE
         ),
-        "the request never finished while the events ingress was held full"
-    );
-    assert!(
-        stack.counters.event_publish_failed.load(Ordering::Relaxed) > 0,
         "inconclusive: the events ingress was held full, yet no required publish gave up"
     );
+    if let Some(finished) = finished {
+        assert!(
+            try_wait_until(
+                || finished(&stack.counters).load(Ordering::Relaxed) > 0,
+                STEP_DEADLINE
+            ),
+            "the request never finished while the events ingress was held full"
+        );
+    }
     ingress.release();
     let confirmation = next_confirmation(&stack.confirmations)
         .expect("no confirmation within the deadline after the router was released");
@@ -175,15 +180,11 @@ fn target_state(scope: DaliTargetScope) -> BusCommandPayload {
     .into()
 }
 
-fn publish_failures(counters: &DaliWorkerCounters) -> &AtomicU32 {
-    &counters.event_publish_failed
-}
-
 #[test]
 fn a_lost_applied_fact_fails_a_short_address_request() {
     assert_a_lost_closing_fact_fails_the_request(
         target_state(DaliTargetScope::Short),
-        publish_failures,
+        None,
     );
 }
 
@@ -191,7 +192,7 @@ fn a_lost_applied_fact_fails_a_short_address_request() {
 fn a_lost_applied_fact_fails_a_broadcast_request() {
     assert_a_lost_closing_fact_fails_the_request(
         target_state(DaliTargetScope::Broadcast),
-        publish_failures,
+        None,
     );
 }
 
@@ -199,7 +200,7 @@ fn a_lost_applied_fact_fails_a_broadcast_request() {
 fn a_lost_applied_fact_fails_a_group_request() {
     assert_a_lost_closing_fact_fails_the_request(
         target_state(DaliTargetScope::Group),
-        publish_failures,
+        None,
     );
 }
 
@@ -207,7 +208,7 @@ fn a_lost_applied_fact_fails_a_group_request() {
 fn a_lost_recalled_fact_fails_a_scene_recall() {
     assert_a_lost_closing_fact_fails_the_request(
         DaliRecallSceneCommand::for_group(0, GROUP, SCENE).into(),
-        |counters| &counters.semantic_recall_scene_handled,
+        Some(|counters| &counters.semantic_recall_scene_handled),
     );
 }
 
@@ -220,7 +221,7 @@ fn a_lost_applied_fact_fails_a_last_active_recall() {
             group_id: Some(GROUP),
         }
         .into(),
-        |counters| &counters.semantic_recall_last_active_level_handled,
+        Some(|counters| &counters.semantic_recall_last_active_level_handled),
     );
 }
 
@@ -235,7 +236,7 @@ fn a_lost_programmed_fact_fails_a_scene_programming() {
             target_state: None,
         }
         .into(),
-        |counters| &counters.semantic_program_scene_handled,
+        Some(|counters| &counters.semantic_program_scene_handled),
     );
 }
 
@@ -249,6 +250,6 @@ fn a_lost_programmed_fact_fails_a_group_membership_programming() {
             action: GroupMembershipAction::Add,
         }
         .into(),
-        |counters| &counters.semantic_program_group_membership_handled,
+        Some(|counters| &counters.semantic_program_group_membership_handled),
     );
 }
