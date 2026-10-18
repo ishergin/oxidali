@@ -1312,14 +1312,17 @@ mod tests {
     }
 
     #[test]
-    fn a_waiting_bank_is_never_written_by_a_coarse_mark_or_a_scan() {
+    fn a_waiting_bank_is_never_written_by_a_whole_adapter_mark_or_a_scan() {
         let slices = ProbeStore::default();
         write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
         slices.fail_reads_of(Some(LEGACY_SLOT));
         let waiting = boot_and_flush(&slices);
         waiting.dirty.mark_all_physical_devices_dirty(0);
+        waiting.dirty.mark_groups_dirty(0);
         assert!(waiting.seed_discovered_dt8(SCANNED_SHORT, Some(SCANNED_RANDOM_ADDRESS)));
+        let written_before = slices.written().len();
         waiting.flush_dirty_slices(&slices);
+        assert!(slices.written().len() > written_before, "inconclusive: the flush never ran");
         assert_eq!(slices.banks_written(), Vec::<SliceKey>::new(), "a waiting bank was written");
 
         slices.fail_reads_of(None);
