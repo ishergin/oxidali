@@ -9,17 +9,26 @@ pub mod sim;
 #[cfg(target_os = "espidf")]
 pub mod esp_idf;
 
+#[cfg_attr(
+    not(target_os = "espidf"),
+    allow(dead_code, reason = "only the ESP sniffer thread runs it; host tests exercise it")
+)]
+mod sniffer_diagnostics;
+
 #[cfg(target_os = "espidf")]
 pub mod phy_interrupt;
 
+use dali2rust_dali_codec::rx_decode::{RxDecode, SniffedFrame};
 use dali2rust_dali_phy::isr::BUS_FAILURE_POWER_DOWN;
-use dali2rust_dali_phy::{restart_gate_for, RxCompletedEvent, BUS_POWER_DOWN_TICKS, PHY_TICK_US};
+use dali2rust_dali_phy::{
+    restart_gate_for, RxCompletedEvent, SessionEvent, BUS_POWER_DOWN_TICKS, LINE_HELD_TICKS,
+    PHY_TICK_US,
+};
 use dali2rust_platform::dali::TransferOutcome;
 
 pub const WIRE_LOAD_WINDOW_TICKS: u32 = 1_000_000 / PHY_TICK_US;
 
 #[derive(Debug, Clone, Copy, Default)]
-#[cfg_attr(not(target_os = "espidf"), allow(dead_code, reason = "only the ESP build calls this"))]
 pub(crate) struct IsrTickLedger {
     origin_us: Option<i64>,
     last_ticks: u32,
@@ -30,7 +39,6 @@ pub(crate) struct IsrTickLedger {
 }
 
 impl IsrTickLedger {
-    #[cfg_attr(not(target_os = "espidf"), allow(dead_code, reason = "only the ESP build calls this"))]
     pub(crate) fn account(&mut self, now_us: i64, ticks: u32) -> (u32, u32, u32, u32) {
         let Some(origin_us) = self.origin_us else {
             self.origin_us = Some(now_us);
@@ -141,6 +149,117 @@ pub fn incomplete_reception_verdict(
     } else {
         Some(TransferOutcome::CorruptedInWindow)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TxAttemptOutcome {
+    Sent { pre_idle_ticks: u16 },
+    Collision,
+    BusBusy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TxEventCause {
+    Completed,
+    Collision,
+    Rejected,
+    Voided,
+    UnexpectedBackward,
+}
+
+pub fn classify_tx_event(event: &SessionEvent) -> (Option<TxAttemptOutcome>, TxEventCause) {
+    match event {
+        SessionEvent::TxComplete { pre_idle_ticks } => (
+            Some(TxAttemptOutcome::Sent {
+                pre_idle_ticks: *pre_idle_ticks,
+            }),
+            TxEventCause::Completed,
+        ),
+        SessionEvent::TxCollision => (Some(TxAttemptOutcome::Collision), TxEventCause::Collision),
+        SessionEvent::TxRejected => (Some(TxAttemptOutcome::BusBusy), TxEventCause::Rejected),
+        SessionEvent::TxVoided => (Some(TxAttemptOutcome::BusBusy), TxEventCause::Voided),
+        SessionEvent::RxComplete(_) | SessionEvent::ForeignForward { .. } => {
+            (None, TxEventCause::UnexpectedBackward)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackwardCause {
+    Undecodable,
+    FrameSize,
+    Incomplete,
+    EarlyRejected,
+    LateRejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowTally {
+    ForeignFrame,
+    Backward(BackwardCause),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndecodableCause {
+    ForeignForward16 { raw: u16 },
+    ForeignForward24 { bytes: [u8; 3] },
+    Backward8,
+    FrameSize { bits: u8 },
+    BusPowerDown { run_ticks: u16 },
+    LineHeld { run_ticks: u16 },
+    BitTiming { run_ticks: u16 },
+}
+
+impl UndecodableCause {
+    pub fn tally(self) -> WindowTally {
+        match self {
+            Self::ForeignForward16 { .. } | Self::ForeignForward24 { .. } => {
+                WindowTally::ForeignFrame
+            }
+            Self::Backward8
+            | Self::BusPowerDown { .. }
+            | Self::LineHeld { .. }
+            | Self::BitTiming { .. } => WindowTally::Backward(BackwardCause::Undecodable),
+            Self::FrameSize { .. } => WindowTally::Backward(BackwardCause::FrameSize),
+        }
+    }
+}
+
+pub fn classify_undecodable_in_window(
+    ev: &RxCompletedEvent,
+    frame: SniffedFrame,
+) -> (TransferOutcome, UndecodableCause) {
+    match frame {
+        SniffedFrame::Forward16(raw) => (
+            TransferOutcome::ForeignInWindow,
+            UndecodableCause::ForeignForward16 { raw },
+        ),
+        SniffedFrame::Forward24(bytes) => (
+            TransferOutcome::ForeignInWindow,
+            UndecodableCause::ForeignForward24 { bytes },
+        ),
+        SniffedFrame::Backward8(_) => (
+            TransferOutcome::CorruptedInWindow,
+            UndecodableCause::Backward8,
+        ),
+        SniffedFrame::UnsupportedLength(bits) => (
+            TransferOutcome::CorruptedInWindow,
+            UndecodableCause::FrameSize { bits },
+        ),
+        SniffedFrame::DecodeFailed => classify_held_capture(ev.longest_dominant_run_ticks()),
+    }
+}
+
+fn classify_held_capture(run_ticks: u16) -> (TransferOutcome, UndecodableCause) {
+    let outcome = held_capture_outcome(run_ticks);
+    let cause = if outcome == TransferOutcome::BusBusy {
+        UndecodableCause::BusPowerDown { run_ticks }
+    } else if run_ticks >= LINE_HELD_TICKS {
+        UndecodableCause::LineHeld { run_ticks }
+    } else {
+        UndecodableCause::BitTiming { run_ticks }
+    };
+    (outcome, cause)
 }
 
 // IEC 62386-101 §9.1.4, Table 25
@@ -398,6 +517,191 @@ mod backward_window_tests {
 }
 
 #[cfg(test)]
+mod outcome_classification_tests {
+    use super::*;
+    use dali2rust_dali_phy::DALI_RX_SAMPLE_BUF_LEN;
+
+    fn classified_tx(event: SessionEvent) -> (Option<TxAttemptOutcome>, TxEventCause) {
+        classify_tx_event(&event)
+    }
+
+    fn capture_with_dominant_run(run: u16) -> RxCompletedEvent {
+        let mut ev = RxCompletedEvent::new();
+        ev.samples = [0xFF; DALI_RX_SAMPLE_BUF_LEN];
+        let full = usize::from(run / 8);
+        ev.samples[..full].fill(0);
+        let rest = run % 8;
+        if rest > 0 {
+            ev.samples[full] = 0xFF >> rest;
+        }
+        ev.sample_count = run.div_ceil(8);
+        ev
+    }
+
+    fn classified_rx(
+        ev: &RxCompletedEvent,
+        frame: SniffedFrame,
+    ) -> (TransferOutcome, UndecodableCause) {
+        classify_undecodable_in_window(ev, frame)
+    }
+
+    #[test]
+    fn a_completed_transmission_is_sent_and_keeps_its_settle_ticks() {
+        for ticks in [0u16, 1, 40, u16::MAX] {
+            assert_eq!(
+                classified_tx(SessionEvent::TxComplete { pre_idle_ticks: ticks }),
+                (
+                    Some(TxAttemptOutcome::Sent { pre_idle_ticks: ticks }),
+                    TxEventCause::Completed
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn a_collision_is_a_collision() {
+        assert_eq!(
+            classified_tx(SessionEvent::TxCollision),
+            (Some(TxAttemptOutcome::Collision), TxEventCause::Collision)
+        );
+    }
+
+    #[test]
+    fn a_rejected_start_and_a_voided_frame_are_both_bus_busy_for_different_reasons() {
+        assert_eq!(
+            classified_tx(SessionEvent::TxRejected),
+            (Some(TxAttemptOutcome::BusBusy), TxEventCause::Rejected)
+        );
+        assert_eq!(
+            classified_tx(SessionEvent::TxVoided),
+            (Some(TxAttemptOutcome::BusBusy), TxEventCause::Voided)
+        );
+    }
+
+    #[test]
+    fn a_backward_event_while_waiting_for_transmit_completion_is_not_an_outcome() {
+        assert_eq!(
+            classified_tx(SessionEvent::RxComplete(RxCompletedEvent::new())),
+            (None, TxEventCause::UnexpectedBackward)
+        );
+        for (pre_idle_ticks, sample_count) in [(0u8, 0u16), (60, 19), (u8::MAX, u16::MAX)] {
+            assert_eq!(
+                classified_tx(SessionEvent::ForeignForward { pre_idle_ticks, sample_count }),
+                (None, TxEventCause::UnexpectedBackward)
+            );
+        }
+    }
+
+    #[test]
+    fn a_decoded_foreign_forward16_in_the_window_is_foreign_and_counted_as_a_frame() {
+        let (outcome, cause) = classified_rx(&RxCompletedEvent::new(), SniffedFrame::Forward16(0x82A9));
+        assert_eq!(outcome, TransferOutcome::ForeignInWindow);
+        assert_eq!(cause, UndecodableCause::ForeignForward16 { raw: 0x82A9 });
+        assert_eq!(cause.tally(), WindowTally::ForeignFrame);
+    }
+
+    #[test]
+    fn a_decoded_foreign_forward24_in_the_window_is_foreign_and_counted_as_a_frame() {
+        let frame = SniffedFrame::Forward24([0xFF, 0xFE, 0x3D]);
+        let (outcome, cause) = classified_rx(&RxCompletedEvent::new(), frame);
+        assert_eq!(outcome, TransferOutcome::ForeignInWindow);
+        assert_eq!(cause, UndecodableCause::ForeignForward24 { bytes: [0xFF, 0xFE, 0x3D] });
+        assert_eq!(cause.tally(), WindowTally::ForeignFrame);
+    }
+
+    #[test]
+    fn a_decoded_backward_byte_that_reached_this_path_is_corrupted_whatever_the_line_did() {
+        for run in [0u16, LINE_HELD_TICKS, BUS_POWER_DOWN_TICKS, 512] {
+            let ev = capture_with_dominant_run(run);
+            let (outcome, cause) = classified_rx(&ev, SniffedFrame::Backward8(0x55));
+            assert_eq!(outcome, TransferOutcome::CorruptedInWindow, "run {run}");
+            assert_eq!(cause, UndecodableCause::Backward8, "run {run}");
+            assert_eq!(
+                cause.tally(),
+                WindowTally::Backward(BackwardCause::Undecodable)
+            );
+        }
+    }
+
+    #[test]
+    fn an_unsupported_frame_length_is_a_size_violation_whatever_the_line_did() {
+        for run in [0u16, LINE_HELD_TICKS, BUS_POWER_DOWN_TICKS, 512] {
+            let ev = capture_with_dominant_run(run);
+            let (outcome, cause) = classified_rx(&ev, SniffedFrame::UnsupportedLength(12));
+            assert_eq!(outcome, TransferOutcome::CorruptedInWindow, "run {run}");
+            assert_eq!(cause, UndecodableCause::FrameSize { bits: 12 }, "run {run}");
+            assert_eq!(
+                cause.tally(),
+                WindowTally::Backward(BackwardCause::FrameSize)
+            );
+        }
+    }
+
+    fn assert_held_capture(run: u16, outcome: TransferOutcome, cause: UndecodableCause) {
+        let ev = capture_with_dominant_run(run);
+        assert_eq!(ev.longest_dominant_run_ticks(), run, "the fixture measures its own run");
+        assert_eq!(classified_rx(&ev, SniffedFrame::DecodeFailed), (outcome, cause), "run {run}");
+        assert_eq!(
+            cause.tally(),
+            WindowTally::Backward(BackwardCause::Undecodable),
+            "run {run}"
+        );
+    }
+
+    #[test]
+    fn a_dominant_run_short_of_a_hold_is_a_bit_timing_violation_and_so_an_answer() {
+        for run in [0, 1, LINE_HELD_TICKS - 1] {
+            let cause = UndecodableCause::BitTiming { run_ticks: run };
+            assert_held_capture(run, TransferOutcome::CorruptedInWindow, cause);
+        }
+    }
+
+    #[test]
+    fn a_hold_short_of_45_ms_is_a_held_line_and_still_an_answer() {
+        for run in [LINE_HELD_TICKS, 100, BUS_POWER_DOWN_TICKS - 1] {
+            let cause = UndecodableCause::LineHeld { run_ticks: run };
+            assert_held_capture(run, TransferOutcome::CorruptedInWindow, cause);
+        }
+    }
+
+    #[test]
+    fn a_dominant_run_of_45_ms_or_more_is_bus_power_down_and_no_answer() {
+        for run in [BUS_POWER_DOWN_TICKS, BUS_POWER_DOWN_TICKS + 1, 512] {
+            let cause = UndecodableCause::BusPowerDown { run_ticks: run };
+            assert_held_capture(run, TransferOutcome::BusBusy, cause);
+        }
+    }
+
+    #[test]
+    fn a_held_line_the_sniffer_cannot_decode_is_classified_from_its_own_decode() {
+        for (run, outcome) in [
+            (LINE_HELD_TICKS, TransferOutcome::CorruptedInWindow),
+            (100, TransferOutcome::CorruptedInWindow),
+            (BUS_POWER_DOWN_TICKS, TransferOutcome::BusBusy),
+        ] {
+            let ev = capture_with_dominant_run(run);
+            let decoded = ev.decode_sniffed_with_phase();
+            assert_eq!(decoded.frame, SniffedFrame::DecodeFailed, "run {run}");
+            assert_eq!(classified_rx(&ev, decoded.frame).0, outcome, "run {run}");
+        }
+    }
+
+    #[test]
+    fn the_hold_split_agrees_with_the_codec_and_the_outcome_with_the_held_capture_rule() {
+        for run in 0..=512u16 {
+            let ev = capture_with_dominant_run(run);
+            let (outcome, cause) = classified_rx(&ev, SniffedFrame::DecodeFailed);
+            assert_eq!(outcome, held_capture_outcome(run), "run {run}");
+            let held = matches!(
+                cause,
+                UndecodableCause::LineHeld { .. } | UndecodableCause::BusPowerDown { .. }
+            );
+            assert_eq!(held, ev.is_line_held(), "run {run}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod isr_tick_ledger_tests {
     use super::IsrTickLedger;
 
@@ -487,13 +791,11 @@ mod forward_address_class_tests {
     }
 }
 
-#[cfg_attr(not(target_os = "espidf"), allow(dead_code, reason = "only the ESP build calls this"))]
 pub(crate) struct LateReportLine<'a> {
     bytes: &'a mut [u8],
     len: usize,
 }
 
-#[cfg_attr(not(target_os = "espidf"), allow(dead_code, reason = "only the ESP build calls this"))]
 impl<'a> LateReportLine<'a> {
     pub(crate) fn over(bytes: &'a mut [u8]) -> Self {
         Self { bytes, len: 0 }
