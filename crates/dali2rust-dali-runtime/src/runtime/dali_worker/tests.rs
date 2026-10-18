@@ -369,7 +369,9 @@ mod memory_bank_loss {
 
     use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
     use dali2rust_bus::{BusConfig, BusHost, BusId};
-    use dali2rust_contracts::msg::{DaliReadAttributesCommand, ErrorCode, MemoryBankReadPreset};
+    use dali2rust_contracts::msg::{
+        AttributeGroupReadOutcome, DaliReadAttributesCommand, ErrorCode, MemoryBankReadPreset,
+    };
     use dali2rust_test_support::hold_the_events_ingress_full;
 
     use std::sync::atomic::Ordering;
@@ -387,8 +389,20 @@ mod memory_bank_loss {
     const CHUNK_LOST: &str = "memory_bank_chunk_lost";
     const THREE_CHUNKS_OF_BYTES: usize = 60;
     const READ_CORRELATION: u64 = 4_101;
+    const SWEEP: DaliReadAttributesCommand = DaliReadAttributesCommand {
+        registry_adapter_id: 0,
+        short_address: DEMO_SHORT,
+        attribute_groups_mask: 0,
+        memory_banks: MemoryBankReadPreset::Identity,
+    };
 
-    fn sweep_bank_zero(hold_the_ingress: bool) -> Result<(), (ErrorCode, &'static str)> {
+    struct Swept {
+        result: Result<(), (ErrorCode, &'static str)>,
+        memory_banks: AttributeGroupReadOutcome,
+        lost_facts: (u32, u32),
+    }
+
+    fn sweep_bank_zero(hold_the_ingress: bool) -> Swept {
         let config = BusConfig {
             events_ingress: EVENTS_INGRESS,
             ..BusConfig::default()
@@ -397,37 +411,44 @@ mod memory_bank_loss {
         let transport = Arc::new(Mutex::new(SimDaliTransport::demo_bus()));
         let mut controller = DaliController::new(transport, Box::new(StdClock::new()));
         let counters = DaliWorkerCounters::default();
-        let ar = DaliReadAttributesCommand {
-            registry_adapter_id: 0,
-            short_address: DEMO_SHORT,
-            attribute_groups_mask: 0,
-            memory_banks: MemoryBankReadPreset::Identity,
-        };
         let mut outcomes = AttributeReadOutcomes::for_request(&[], true);
         let _ingress = hold_the_ingress.then(|| hold_the_events_ingress_full(&publisher));
-        read_attributes_memory_bank_stage(
+        let result = read_attributes_memory_bank_stage(
             &mut controller,
             &publisher,
             BusId::default(),
             SWEEP_CORRELATION,
-            &ar,
+            &SWEEP,
             &mut outcomes,
             &counters,
-        )
+        );
+        let lost_facts = (
+            counters.evidence_publish_failed.load(Ordering::Relaxed),
+            counters.execution_failed.load(Ordering::Relaxed),
+        );
+        Swept { result, memory_banks: outcomes.memory_banks, lost_facts }
     }
 
     #[test]
     fn a_refused_chunk_of_a_bank_sweep_fails_the_attribute_read() {
+        let open = sweep_bank_zero(false);
         assert_eq!(
-            sweep_bank_zero(false),
-            Ok(()),
+            (open.result, open.memory_banks),
+            (Ok(()), AttributeGroupReadOutcome::Success),
             "control: with the events ingress open the sweep of bank 0 succeeds"
         );
+        let held = sweep_bank_zero(true);
         assert_eq!(
-            sweep_bank_zero(true),
+            held.result,
             Err((ErrorCode::CommandsIngressOverload, CHUNK_LOST)),
             "the full ingress refused the swept bank's chunk, yet the attribute read went on \
              as if the registry had heard it"
+        );
+        assert_eq!(
+            (held.memory_banks, held.lost_facts),
+            (AttributeGroupReadOutcome::TransportAbort, (1, 1)),
+            "the swept bank ran on the wire and lost its chunk: the section is aborted, not \
+             unattempted, and the loss counts as one lost fact (evidence, execution)"
         );
     }
 

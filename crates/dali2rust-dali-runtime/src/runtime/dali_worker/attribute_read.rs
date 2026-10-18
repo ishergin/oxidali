@@ -126,7 +126,11 @@ pub(super) fn read_attributes_memory_bank_stage(
             Ok(())
         }
         Ok(false) => {
-            counters.evidence_publish_failed.fetch_add(1, Ordering::Relaxed);
+            outcomes.record(
+                crate::runtime::executor::AttributeReadSection::MemoryBanks,
+                AttributeGroupReadOutcome::TransportAbort,
+            );
+            count_lost_fact(counters);
             Err((ErrorCode::CommandsIngressOverload, MEMORY_BANK_CHUNK_LOST))
         }
         Err(error) => {

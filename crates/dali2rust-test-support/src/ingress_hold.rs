@@ -158,6 +158,21 @@ fn fill_until_refused(publisher: &BusPublisher) {
     );
 }
 
+fn fill_leaving_room(publisher: &BusPublisher, capacity: usize, room: usize) {
+    assert!(
+        room < capacity,
+        "a room of {room} leaves nothing to hold in an ingress of {capacity}"
+    );
+    for filled in room..capacity {
+        assert_eq!(
+            publisher.try_publish(BusChannel::Events, unheard_filler_event()),
+            PublishResult::Queued,
+            "the parked events ingress refused filler {filled} of {capacity}: it held frames \
+             before the hold, or its capacity is not {capacity}"
+        );
+    }
+}
+
 pub struct HeldEventsIngress {
     _session: MutexGuard<'static, ()>,
 }
@@ -174,12 +189,27 @@ impl Drop for HeldEventsIngress {
     }
 }
 
-pub fn hold_the_events_ingress_full(publisher: &BusPublisher) -> HeldEventsIngress {
+fn park_for_a_hold(publisher: &BusPublisher) -> HeldEventsIngress {
     install_the_parking_logger();
     let held = HeldEventsIngress {
         _session: HOLD_SESSION.lock().unwrap_or_else(PoisonError::into_inner),
     };
     park_the_router(publisher);
+    held
+}
+
+pub fn hold_the_events_ingress_full(publisher: &BusPublisher) -> HeldEventsIngress {
+    let held = park_for_a_hold(publisher);
     fill_until_refused(publisher);
+    held
+}
+
+pub fn hold_the_events_ingress_with_room(
+    publisher: &BusPublisher,
+    capacity: usize,
+    room: usize,
+) -> HeldEventsIngress {
+    let held = park_for_a_hold(publisher);
+    fill_leaving_room(publisher, capacity, room);
     held
 }
