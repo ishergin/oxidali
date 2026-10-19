@@ -970,10 +970,10 @@ impl RegistryStore {
             (*tc_coolest_mirek, *tc_warmest_mirek),
         );
         let dt8 = &mut r.attributes.dt8_color;
-        changed |= merge_read_attr_opt(&mut dt8.color_type, *color_type, now);
-        changed |= merge_read_attr_opt(&mut dt8.color_value_0, *color_value_0, now);
-        changed |= merge_read_attr_opt(&mut dt8.color_value_1, *color_value_1, now);
-        changed |= merge_read_attr_opt(&mut dt8.color_value_2, *color_value_2, now);
+        merge_read_attr_opt(&mut dt8.color_type, *color_type, now);
+        merge_read_attr_opt(&mut dt8.color_value_0, *color_value_0, now);
+        merge_read_attr_opt(&mut dt8.color_value_1, *color_value_1, now);
+        merge_read_attr_opt(&mut dt8.color_value_2, *color_value_2, now);
         changed |= merge_read_attr_opt(&mut dt8.gear_features, *gear_features, now);
         changed |= merge_read_attr_opt(&mut dt8.rgbwaf_control, *rgbwaf_control, now);
         changed
@@ -1681,6 +1681,64 @@ mod dirty_gating_tests {
         assert_eq!(c102.version.as_ref().expect("kept").value, 2);
         assert_eq!(c102.min_level.as_ref().expect("kept").value, 10);
         assert!(c102.version.as_ref().expect("kept").last_read_ms >= first_read_ms);
+    }
+
+    const WARM_MIREK: u16 = 304;
+    const WARMER_MIREK: u16 = 305;
+    const AUTO_ACTIVATION: u8 = 0x01;
+    const NO_AUTO_ACTIVATION: u8 = 0x00;
+
+    fn dt8_reading(mirek: u16, gear_features: u8) -> Chunk {
+        Chunk::Dt8Color {
+            color_mode: ColorMode::Cct,
+            xy_capable: false,
+            tc_capable: true,
+            rgb_capable: false,
+            color_type: Some(32),
+            color_value_0: None,
+            color_value_1: None,
+            color_value_2: Some(mirek),
+            tc_coolest_mirek: Some(153),
+            tc_warmest_mirek: Some(370),
+            gear_features: Some(gear_features),
+            rgbwaf_capable: false,
+            rgbwaf_control: None,
+        }
+    }
+
+    fn read_colour_value(store: &RegistryStore) -> Option<u16> {
+        let g = store.inner.read().expect("registry lock");
+        g.physical_devices[&(0, SHORT)]
+            .attributes
+            .dt8_color
+            .color_value_2
+            .as_ref()
+            .map(|observed| observed.value)
+    }
+
+    #[test]
+    fn a_colour_the_schedule_moved_is_state_and_dirties_no_bank() {
+        let store = seeded_store();
+        assert!(store.apply_physical_device_attribute_chunk(0, SHORT, &dt8_reading(WARM_MIREK, AUTO_ACTIVATION)));
+        let _ = store.dirty.take_physical_devices_dirty_for(0);
+        assert!(store.apply_physical_device_attribute_chunk(0, SHORT, &dt8_reading(WARMER_MIREK, AUTO_ACTIVATION)));
+        assert!(
+            !store.dirty.take_physical_devices_dirty_for(0),
+            "the gear's current colour moved, which is state, yet its bank was marked for a flash write"
+        );
+        assert_eq!(read_colour_value(&store), Some(WARMER_MIREK), "the reading is still kept in the registry");
+    }
+
+    #[test]
+    fn a_changed_gear_feature_byte_still_dirties_its_bank() {
+        let store = seeded_store();
+        assert!(store.apply_physical_device_attribute_chunk(0, SHORT, &dt8_reading(WARM_MIREK, AUTO_ACTIVATION)));
+        let _ = store.dirty.take_physical_devices_dirty_for(0);
+        assert!(store.apply_physical_device_attribute_chunk(0, SHORT, &dt8_reading(WARM_MIREK, NO_AUTO_ACTIVATION)));
+        assert!(
+            store.dirty.take_physical_devices_dirty_for(0),
+            "a configuration byte changed and must reach flash"
+        );
     }
 
     #[test]
