@@ -167,8 +167,8 @@ filtered: they address one device.
   interval, not one per switch.
 - An attribute read that only finds the gear's current DT8 colour moved (the colour type
   and values, which a running schedule changes all day) refreshes the record in memory and
-  marks no bank: the stored copy keeps the colour of the last write that changed
-  configuration, and the next read after a boot replaces it.
+  marks no bank: the stored copy holds the colour the record had when its bank was last
+  written, and only a later read refreshes it.
 - A record that changes short address (an address change, a device replacement) dirties
   the bank it left as well as the bank it joined: flushing only the destination would
   leave a stale copy that hydration restores as a second record for the same gear.
