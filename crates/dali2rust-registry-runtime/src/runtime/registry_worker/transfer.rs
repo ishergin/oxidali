@@ -1,4 +1,5 @@
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use dali2rust_bus::{BusId, BusPublisher};
 use dali2rust_contracts::msg::{ErrorCode, RegistrySliceReloadCommand};
@@ -16,7 +17,7 @@ pub(super) fn handle_slice_reload(
     tid: u16,
     corr: u64,
     primary_adapter_id: BusId,
-    store: &RegistryStore,
+    store: &Arc<RegistryStore>,
     persistence: Option<&SlicePersistence>,
     adapter_count: u8,
     counters: &RegistryCommandCounters,
@@ -75,7 +76,7 @@ struct Written {
 }
 
 fn import_then_reload(
-    store: &RegistryStore,
+    store: &Arc<RegistryStore>,
     persistence: Option<&SlicePersistence>,
     adapter_count: u8,
     corr: u64,
@@ -99,13 +100,14 @@ fn import_then_reload(
 }
 
 fn validate_and_write(
-    store: &RegistryStore,
+    store: &Arc<RegistryStore>,
     persistence: &SlicePersistence,
     corr: u64,
 ) -> Result<Written, ImportFailure> {
     let staged = store.take_import(corr).ok_or(NO_STAGE)?;
-    let foreign = persistence.foreign.as_ref();
-    let (staged, refused) = on_hydration_stack("validate", || store.keep_decodable(staged, foreign))?;
+    let (validating, foreign) = (Arc::clone(store), Arc::clone(&persistence.foreign));
+    let (staged, refused) =
+        on_hydration_stack("validate", move || validating.keep_decodable(staged, foreign.as_ref()))?;
     if staged.is_empty() {
         return Err(INVALID_SLICE);
     }
@@ -166,30 +168,34 @@ static RELOAD_STACK: dali2rust_bsp::stack_probe::StackLowWater =
     );
 
 fn reload_on_hydration_stack(
-    store: &RegistryStore,
+    store: &Arc<RegistryStore>,
     slices: &dyn SliceStore,
     adapter_count: u8,
 ) -> Result<HydrateCounts, ImportFailure> {
     let snapshot = dali2rust_platform::slice_store::InMemorySlices::snapshot(slices, adapter_count);
     log::info!("registry: reload snapshot holds {} B", snapshot.bytes());
-    on_hydration_stack("hydrate", || store.hydrate_counts_from_store(&snapshot, adapter_count))
+    let hydrating = Arc::clone(store);
+    on_hydration_stack("hydrate", move || hydrating.hydrate_counts_from_store(&snapshot, adapter_count))
 }
 
-fn on_hydration_stack<T: Send>(
+static HYDRATION: dali2rust_bsp::stack_runner::StackRunner = dali2rust_bsp::stack_runner::StackRunner::new(
+    c"registry-reload",
+    dali2rust_bsp::std_thread_stack::HYDRATION_WORKER,
+    dali2rust_bsp::esp_thread::StackHome::External,
+);
+
+fn on_hydration_stack<T: Send + 'static>(
     note: &'static str,
-    run: impl FnOnce() -> T + Send,
+    run: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ImportFailure> {
-    dali2rust_bsp::esp_thread::run_on_external_stack(
-        c"registry-reload",
-        dali2rust_bsp::std_thread_stack::HYDRATION_WORKER,
-        || {
+    HYDRATION
+        .run(move || {
             let value = run();
             RELOAD_STACK.note(note);
             value
-        },
-    )
-    .map_err(|e| {
-        log::error!("registry: import refused, no stack for hydration: {e}");
-        NO_RELOAD_STACK
-    })
+        })
+        .map_err(|e| {
+            log::error!("registry: import refused, no stack for hydration: {e}");
+            NO_RELOAD_STACK
+        })
 }

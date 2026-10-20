@@ -18,11 +18,15 @@ registry locking → [06](06-registry-and-persistence.md).
   The WebSocket fan-out always runs, spawned last because it samples the read models.
 - Beside the workers: the bus routing task, the transport's `dali-sniff` drain, the one
   `httpd` task, the UART log writer, the census thread, the IP and SNTP watchers, the
-  OTA boot verifier, and per-occasion threads: `ota-run` per update, `registry-reload`
-  twice per slice import or replication pass (checking the bytes, then the reload) on the
-  device, and one `ws-client` sender per
-  connected WebSocket client, on the device as on the host (its stack:
+  OTA boot verifier, `registry-reload`, started by the first slice import and then
+  running the byte check and the reload of every import on its own stack, and
+  per-occasion threads: `ota-run` per update and one `ws-client` sender per connected
+  WebSocket client, on the device as on the host (its stack:
   [07](07-memory-and-cores.md)).
+- A Rust std thread that is spawned and joined leaves internal SRAM behind on ESP-IDF
+  (open: [ISSUE-205](../product-design/known-issues.md)), so work that recurs runs on a
+  long-lived thread fed through `dali2rust_bsp::stack_runner::StackRunner`, not on a thread
+  per occasion.
 - `registry-hydrate` is a one-shot boot thread, joined before any worker starts
   ([06](06-registry-and-persistence.md)).
 - The P4 is dual-core and FreeRTOS runs SMP: two tasks, or a task and the PHY interrupt,

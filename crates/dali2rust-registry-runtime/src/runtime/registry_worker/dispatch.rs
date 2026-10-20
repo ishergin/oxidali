@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use dali2rust_bus::{BusFrame, BusId, BusPublisher};
@@ -35,7 +36,7 @@ pub(super) fn process_one(
     publisher: &BusPublisher,
     primary_adapter_id: BusId,
     adapter_count: u8,
-    store: &RegistryStore,
+    store: &Arc<RegistryStore>,
     counters: &RegistryCommandCounters,
     persistence: Option<&super::SlicePersistence>,
 ) {
@@ -68,7 +69,7 @@ dali2rust_contracts::dispatch_bus_commands! {
         corr: u64,
         primary_adapter_id: BusId,
         adapter_count: u8,
-        store: &RegistryStore,
+        store: &Arc<RegistryStore>,
         counters: &RegistryCommandCounters,
         persistence: Option<&super::SlicePersistence>,
     );
