@@ -531,31 +531,41 @@ fn start_sender(
     closed: Arc<std::sync::atomic::AtomicBool>,
     queued_bytes: Arc<std::sync::atomic::AtomicUsize>,
 ) -> Result<(), RunError> {
+    let client = Box::new(SenderEnds { id, sink, rx, closed, queued_bytes });
     senders
-        .start(move || serve_client(id, &*sink, rx, &closed, &queued_bytes))
+        .start(move || client.serve())
         .inspect_err(|err| log::warn!("ws: no sender for client {id} ({err}); refusing it"))
 }
 
-fn serve_client(
+struct SenderEnds {
     id: ClientId,
-    sink: &dyn WsSink,
+    sink: Box<dyn WsSink>,
     rx: std::sync::mpsc::Receiver<Arc<str>>,
-    closed: &std::sync::atomic::AtomicBool,
-    queued_bytes: &std::sync::atomic::AtomicUsize,
-) {
-    while let Ok(text) = rx.recv() {
-        queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
-        if let Err(err) = sink.send_text(&text) {
-            log::info!("ws: client {id} send failed ({err:?}); closing");
-            break;
+    closed: Arc<std::sync::atomic::AtomicBool>,
+    queued_bytes: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl SenderEnds {
+    #[allow(
+        clippy::boxed_local,
+        reason = "boxed, the ends stay off the ws-client stack: its frame holds a pointer"
+    )]
+    fn serve(self: Box<Self>) {
+        while let Ok(text) = self.rx.recv() {
+            self.queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
+            if let Err(err) = self.sink.send_text(&text) {
+                log::info!("ws: client {} send failed ({err:?}); closing", self.id);
+                break;
+            }
         }
+        for text in self.rx.try_iter() {
+            self.queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
+        }
+        let Self { sink, rx, closed, .. } = *self;
+        drop(rx);
+        closed.store(true, Ordering::Relaxed);
+        sink.close();
     }
-    for text in rx.try_iter() {
-        queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
-    }
-    drop(rx);
-    closed.store(true, Ordering::Relaxed);
-    sink.close();
 }
 
 #[cfg(test)]
