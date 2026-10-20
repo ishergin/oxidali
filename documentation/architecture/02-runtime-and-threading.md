@@ -20,14 +20,13 @@ registry locking → [06](06-registry-and-persistence.md).
   `httpd` task, the UART log writer, the census thread, the IP and SNTP watchers, the
   OTA boot verifier, `registry-reload`, started by the first slice import and then
   running the byte check and the reload of every import on its own stack, and
-  per-occasion threads: `ota-run` per update and one `ws-client` sender per connected
-  WebSocket client, on the device as on the host (its stack:
-  [07](07-memory-and-cores.md)).
+  the `ws-client` senders of the WebSocket clients, and `ota-run`, a thread per update, on
+  the device as on the host (their stacks: [07](07-memory-and-cores.md)).
 - A Rust std thread that is spawned and joined leaves internal SRAM behind on ESP-IDF
-  ([ISSUE-205](../product-design/known-issues.md)), so work that recurs with traffic, like
-  the slice import, runs on a long-lived thread fed through
-  `dali2rust_bsp::stack_runner::StackRunner`; a thread per occasion is kept for occasions
-  that stay rare, like an update.
+  ([ISSUE-205](../product-design/known-issues.md)), so work that recurs with traffic runs on
+  long-lived threads from `dali2rust_bsp::stack_runner`: the slice import on one
+  `StackRunner`, a WebSocket client's sender on a `RunnerPool` runner it holds for its
+  session; a thread per occasion is kept for occasions that stay rare, like an update.
 - `registry-hydrate` is a one-shot boot thread, joined before any worker starts
   ([06](06-registry-and-persistence.md)).
 - The P4 is dual-core and FreeRTOS runs SMP: two tasks, or a task and the PHY interrupt,
@@ -107,10 +106,13 @@ registry locking → [06](06-registry-and-persistence.md).
   accumulate; a client reaped on its first send error; at most four clients, each
   holding a socket for its session.
 - The device never sends a WebSocket ping.
-- On the device a client's frames go out on its `ws-client` thread, which queues each
-  send to the httpd task and waits for it. Code already running on the httpd task (the
-  upgrade handler, a PONG, a CLOSE) sends through the connection itself, never through
-  that path: queued work waiting on its own task never runs.
+- On the device a client's frames go out on its `ws-client` sender, which queues each
+  send to the httpd task and waits for it. The pool holds two senders per client slot,
+  each started by the first client that finds no idle one and then kept: a sender still
+  flushes to a gone client while its replacement registers, and a client that finds every
+  sender taken is refused like one over the cap. Code already running on the httpd task
+  (the upgrade handler, a PONG, a CLOSE) sends through the connection itself, never
+  through that path: queued work waiting on its own task never runs.
 - `/api/v1/ws` is registered before the wildcard routes (`esp_http_server` matches URI
   handlers in registration order, and `/*` would take the upgrade) by
   `dali2rust-adapters/src/http/esp_ws.rs`, with ESP-IDF's `handle_ws_control_frames`

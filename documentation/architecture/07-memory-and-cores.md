@@ -104,7 +104,7 @@ unless named.
 | `OTA_UPDATE_STACK` | 16 KiB | One update, spawned fallibly when it starts |
 | `COMMAND_WORKER_STACK` | 12 KiB | Deep executors: DALI worker, rules worker |
 | `STATE_WORKER_STACK` | 10 KiB | Workers that own state and build views: registry, operation tracker |
-| `EVENT_WORKER_STACK` | 8 KiB | Workers that route small payloads: projector, sniffer translator, apply orchestrator, HCL, poller, WebSocket, MQTT, replication; the boot verifier; one `ws-client` sender per connected client, so the four-client cap holds 32 KiB |
+| `EVENT_WORKER_STACK` | 8 KiB | Workers that route small payloads: projector, sniffer translator, apply orchestrator, HCL, poller, WebSocket, MQTT, replication; the boot verifier; the `ws-client` senders, two per client slot and kept once started, so the four-client cap holds up to 64 KiB |
 | `RING_CONSUMER_STACK` | 8 KiB | Ring and driver pollers: `dali-sniff`, IP watcher |
 | `DISPLAY_WORKER` | 6 KiB | Display worker, SNTP watcher |
 | `ARBITRATION_WORKER_STACK` | 4 KiB | Arbitration probe worker |
