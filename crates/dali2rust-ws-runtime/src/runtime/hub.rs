@@ -5,11 +5,11 @@ use dali2rust_api::ws::{
     error_frame, hello_frame, parse_client_request, subscription_ack_frame, Channel, ClientRequest,
     DropNotice, SubscriptionAck, V1_CHANNELS,
 };
-use dali2rust_contracts::msg::ErrorCode;
 use dali2rust_bsp::esp_thread::StackHome;
 use dali2rust_bsp::log_ring::{LogRing, ARMED_LEVEL, LOG_REPLAY_LINES};
 use dali2rust_bsp::stack_runner::{RunError, RunnerPool};
 use dali2rust_bsp::std_thread_stack::EVENT_WORKER_STACK;
+use dali2rust_contracts::msg::ErrorCode;
 use dali2rust_platform::dali::SnifferTap;
 use dali2rust_platform::logs::LogLevel;
 
@@ -532,22 +532,30 @@ fn start_sender(
     queued_bytes: Arc<std::sync::atomic::AtomicUsize>,
 ) -> Result<(), RunError> {
     senders
-        .start(move || {
-            while let Ok(text) = rx.recv() {
-                queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
-                if let Err(err) = sink.send_text(&text) {
-                    log::info!("ws: client {id} send failed ({err:?}); closing");
-                    break;
-                }
-            }
-            for text in rx.try_iter() {
-                queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
-            }
-            drop(rx);
-            closed.store(true, Ordering::Relaxed);
-            sink.close();
-        })
+        .start(move || serve_client(id, &*sink, rx, &closed, &queued_bytes))
         .inspect_err(|err| log::warn!("ws: no sender for client {id} ({err}); refusing it"))
+}
+
+fn serve_client(
+    id: ClientId,
+    sink: &dyn WsSink,
+    rx: std::sync::mpsc::Receiver<Arc<str>>,
+    closed: &std::sync::atomic::AtomicBool,
+    queued_bytes: &std::sync::atomic::AtomicUsize,
+) {
+    while let Ok(text) = rx.recv() {
+        queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
+        if let Err(err) = sink.send_text(&text) {
+            log::info!("ws: client {id} send failed ({err:?}); closing");
+            break;
+        }
+    }
+    for text in rx.try_iter() {
+        queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
+    }
+    drop(rx);
+    closed.store(true, Ordering::Relaxed);
+    sink.close();
 }
 
 #[cfg(test)]
