@@ -99,7 +99,7 @@ unless named.
 
 | Class | Size | For |
 | --- | --- | --- |
-| `HYDRATION_WORKER` | 48 KiB | One-shot boot hydration, joined; a slice reload (import, replication) |
+| `HYDRATION_WORKER` | 48 KiB | One-shot boot hydration, joined; `registry-reload`, started by the first slice import (import, replication) and kept |
 | `HTTPD_TASK_STACK_BYTES` (adapters) | 20 KiB | The one httpd task |
 | `OTA_UPDATE_STACK` | 16 KiB | One update, spawned fallibly when it starts |
 | `COMMAND_WORKER_STACK` | 12 KiB | Deep executors: DALI worker, rules worker |

@@ -6,6 +6,21 @@ use crate::esp_thread::{try_spawn_named_stack_in, StackHome};
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
+#[derive(Debug)]
+pub enum RunError {
+    Unstarted(std::io::Error),
+    Unanswered,
+}
+
+impl core::fmt::Display for RunError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Unstarted(e) => write!(f, "the runner thread did not start: {e}"),
+            Self::Unanswered => f.write_str("the job ended without an answer"),
+        }
+    }
+}
+
 const QUEUED_JOBS: usize = 1;
 const ANSWER_SLOTS: usize = 1;
 
@@ -26,7 +41,7 @@ impl StackRunner {
         }
     }
 
-    pub fn run<R, F>(&self, job: F) -> std::io::Result<R>
+    pub fn run<R, F>(&self, job: F) -> Result<R, RunError>
     where
         R: Send + 'static,
         F: FnOnce() -> R + Send + 'static,
@@ -34,10 +49,11 @@ impl StackRunner {
         let (answer, answered) = mpsc::sync_channel(ANSWER_SLOTS);
         self.submit(Box::new(move || {
             let _ = answer.send(job());
-        }))?;
+        }))
+        .map_err(RunError::Unstarted)?;
         answered.recv().map_err(|_| {
             self.retire();
-            std::io::Error::other("the job ended without an answer")
+            RunError::Unanswered
         })
     }
 
@@ -79,7 +95,7 @@ fn serve(jobs: &Receiver<Job>) {
 mod tests {
     use std::thread::ThreadId;
 
-    use super::StackRunner;
+    use super::{RunError, StackRunner};
     use crate::esp_thread::StackHome;
 
     const TEST_STACK: usize = 64 * 1024;
@@ -102,7 +118,7 @@ mod tests {
     #[test]
     fn a_job_that_panics_fails_its_run_and_the_next_job_still_runs() {
         static RUNNER: StackRunner = StackRunner::new(c"runner-panic", TEST_STACK, StackHome::Internal);
-        assert!(RUNNER.run(|| -> u8 { panic!("the job failed") }).is_err());
+        assert!(matches!(RUNNER.run(|| -> u8 { panic!("the job failed") }), Err(RunError::Unanswered)));
         assert_eq!(RUNNER.run(|| 7u8).expect("a fresh runner thread took the job"), 7);
     }
 }

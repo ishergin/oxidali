@@ -1,6 +1,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use dali2rust_bsp::stack_runner::{RunError, StackRunner};
 use dali2rust_bus::{BusId, BusPublisher};
 use dali2rust_contracts::msg::{ErrorCode, RegistrySliceReloadCommand};
 use dali2rust_contracts::CORRELATION_NONE;
@@ -56,6 +57,7 @@ const INVALID_SLICE: ImportFailure = (ErrorCode::InvalidValue, "invalid_slice");
 const FLASH_BUSY: ImportFailure = (ErrorCode::OperationFailed, "flash_busy");
 const STORE_FAILED: ImportFailure = (ErrorCode::OperationFailed, "store_failed");
 const NO_RELOAD_STACK: ImportFailure = (ErrorCode::Conflict, "reload_stack_unavailable");
+const RELOAD_JOB_LOST: ImportFailure = (ErrorCode::OperationFailed, "reload_job_lost");
 const NOT_RELOADED: ImportFailure = (ErrorCode::OperationFailed, "written_not_reloaded");
 
 struct Imported {
@@ -178,7 +180,7 @@ fn reload_on_hydration_stack(
     on_hydration_stack("hydrate", move || hydrating.hydrate_counts_from_store(&snapshot, adapter_count))
 }
 
-static HYDRATION: dali2rust_bsp::stack_runner::StackRunner = dali2rust_bsp::stack_runner::StackRunner::new(
+static HYDRATION: StackRunner = StackRunner::new(
     c"registry-reload",
     dali2rust_bsp::std_thread_stack::HYDRATION_WORKER,
     dali2rust_bsp::esp_thread::StackHome::External,
@@ -195,7 +197,23 @@ fn on_hydration_stack<T: Send + 'static>(
             value
         })
         .map_err(|e| {
-            log::error!("registry: import refused, no stack for hydration: {e}");
-            NO_RELOAD_STACK
+            log::error!("registry: import {note} failed: {e}");
+            match e {
+                RunError::Unstarted(_) => NO_RELOAD_STACK,
+                RunError::Unanswered => RELOAD_JOB_LOST,
+            }
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::on_hydration_stack;
+
+    #[test]
+    fn the_import_jobs_run_on_one_long_lived_thread_beside_the_registry_worker() {
+        let first = on_hydration_stack("test", || std::thread::current().id()).expect("first job");
+        let second = on_hydration_stack("test", || std::thread::current().id()).expect("second job");
+        assert_eq!(first, second, "each import job spawned a thread of its own");
+        assert_ne!(first, std::thread::current().id(), "the import job ran on the registry worker's stack");
+    }
 }
