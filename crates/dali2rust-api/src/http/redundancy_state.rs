@@ -51,6 +51,9 @@ pub struct RedundancyReplicationDto {
     pub pulled: u32,
     pub rejected: u32,
     pub reload_publish_failed: u32,
+    pub wakes_sent: u32,
+    pub wakes_failed: u32,
+    pub wakes_received: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]

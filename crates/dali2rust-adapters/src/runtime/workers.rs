@@ -500,6 +500,7 @@ pub(crate) struct ReplicationDepsIn {
     pub sink: Arc<dyn dali2rust_redundancy_runtime::ReplicationSink>,
     pub redundancy: Arc<dyn dali2rust_domain::registry::RedundancySettingsReadPort>,
     pub dali: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
+    pub persisted: Arc<dali2rust_redundancy_runtime::PersistedConfigMark>,
 }
 
 fn spawn_replication(
@@ -519,6 +520,7 @@ fn spawn_replication(
             redundancy: deps.redundancy,
             dali: deps.dali,
             counters: Arc::clone(&counters),
+            persisted: deps.persisted,
         },
     );
     ReplicationWorker { handle, counters }
@@ -529,14 +531,22 @@ pub(crate) struct RedundancyDepsIn {
     pub replication: ReplicationDepsIn,
 }
 
-fn redundancy_deps(store: &Arc<RegistryStore>, transfer: &TransferSeams) -> RedundancyDepsIn {
+fn redundancy_deps(
+    store: &Arc<RegistryStore>,
+    transfer: &TransferSeams,
+    persisted: Arc<dali2rust_redundancy_runtime::PersistedConfigMark>,
+) -> RedundancyDepsIn {
     RedundancyDepsIn {
         arbitration: arbitration_deps(store),
-        replication: replication_deps(store, transfer),
+        replication: replication_deps(store, transfer, persisted),
     }
 }
 
-fn replication_deps(store: &Arc<RegistryStore>, transfer: &TransferSeams) -> ReplicationDepsIn {
+fn replication_deps(
+    store: &Arc<RegistryStore>,
+    transfer: &TransferSeams,
+    persisted: Arc<dali2rust_redundancy_runtime::PersistedConfigMark>,
+) -> ReplicationDepsIn {
     ReplicationDepsIn {
         fetch: Arc::new(dali2rust_platform::http_fetch::TcpHttpFetch),
         sink: Arc::new(crate::runtime::http_bridges::ReplicationSinkBridge::new(
@@ -547,6 +557,7 @@ fn replication_deps(store: &Arc<RegistryStore>, transfer: &TransferSeams) -> Rep
         redundancy: Arc::clone(store)
             as Arc<dyn dali2rust_domain::registry::RedundancySettingsReadPort>,
         dali: Arc::clone(store) as Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
+        persisted,
     }
 }
 
@@ -733,6 +744,7 @@ fn spawn_service_workers(
     sniffer_tap: Arc<SnifferTap>,
     display_seams: DisplaySeams,
     transfer: TransferSeams,
+    persisted: Arc<dali2rust_redundancy_runtime::PersistedConfigMark>,
 ) -> (OperationsWorkers, FanoutWorkers, PeriodicWorkers, BridgeAndDisplay) {
     let operations = spawn_operations_workers(
         channels.operation_cmd,
@@ -758,7 +770,7 @@ fn spawn_service_workers(
         bus_id,
         adapter_count,
         periodic_inputs,
-        redundancy_deps(&orchestrator_store, &transfer),
+        redundancy_deps(&orchestrator_store, &transfer, persisted),
     );
     let bridge = spawn_bridge_and_display(
         channels.confirmations,
@@ -805,6 +817,7 @@ pub(crate) struct WorkerSpawnInputs {
     pub rules: RulesWorkerDeps,
     pub correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
     pub ota: Option<OtaWorkerDeps>,
+    pub persisted: Arc<dali2rust_redundancy_runtime::PersistedConfigMark>,
 }
 
 pub(crate) struct OtaWorkerDeps {
@@ -875,6 +888,7 @@ struct ServiceInputs {
     rules: RulesWorkerDeps,
     ota: Option<OtaWorkerDeps>,
     transfer: TransferSeams,
+    persisted: Arc<dali2rust_redundancy_runtime::PersistedConfigMark>,
 }
 
 impl WorkerSpawnInputs {
@@ -910,6 +924,7 @@ impl WorkerSpawnInputs {
                 rules: self.rules,
                 ota: self.ota,
                 transfer,
+                persisted: self.persisted,
             },
         )
     }
@@ -1009,6 +1024,7 @@ fn finish_spawn(
         inputs.sniffer_tap,
         display_seams,
         inputs.transfer,
+        inputs.persisted,
     );
     collect_spawned(
         pipeline,

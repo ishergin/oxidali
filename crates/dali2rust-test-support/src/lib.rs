@@ -3,6 +3,7 @@ pub mod clock;
 pub mod fs;
 pub mod ingress_hold;
 pub mod net;
+pub mod peer;
 pub mod sync;
 
 pub use bus::{
@@ -18,6 +19,7 @@ pub use ingress_hold::{
     hold_the_events_ingress_full, hold_the_events_ingress_with_room, HeldEventsIngress,
 };
 pub use net::MockNetworkLink;
+pub use peer::FakePeerController;
 pub use sync::{
     await_counter_u32, await_counter_u64, recv_with_deadline, remains_false_for,
     try_wait_until, wait_for_tcp_ready, wait_until,

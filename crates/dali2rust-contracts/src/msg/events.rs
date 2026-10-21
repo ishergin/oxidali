@@ -854,6 +854,12 @@ declare_bus_payloads! {
         truncated: true,
     };
 
+    pub struct ConfigSlicePersistedEvent {}
+    budget = ConfigSlicePersistedEvent {};
+
+    pub struct PeerConfigChangedEvent {}
+    budget = PeerConfigChangedEvent {};
+
 }
 
 pub const APPLICATION_ACTIVE_UNMOVED: u8 = 0;

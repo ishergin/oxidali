@@ -43,7 +43,7 @@ use dali2rust_api::http::handlers::policies::{
     PoliciesApplyHandler, PoliciesGetHandler, PoliciesPatchHandler,
 };
 use dali2rust_api::http::handlers::redundancy::{
-    RedundancyGetHandler, RedundancySwitchoverHandler,
+    RedundancyConfigChangedHandler, RedundancyGetHandler, RedundancySwitchoverHandler,
 };
 use dali2rust_api::http::handlers::settings_dali::{
     DaliSettingsGetHandler, DaliSettingsPatchHandler,
@@ -950,17 +950,29 @@ fn wire_redundancy(
         )
         .with_handler(
             RouteKey::RedundancySwitchover,
-            Box::new(RedundancySwitchoverHandler::new(
-                bus.publisher.clone(),
-                Arc::clone(&bus.slots),
-                Arc::clone(&bus.correlation),
-                Arc::clone(redundancy_state),
-                Arc::clone(&registry.redundancy_settings_state),
-                bus.bus_id,
-                REDUNDANCY_REGISTRY_ADAPTER_ID,
-                bus.confirmation_timeout_ms,
-            )),
+            switchover_handler(bus, registry, redundancy_state),
         )
+        .with_handler(
+            RouteKey::RedundancyConfigChanged,
+            Box::new(RedundancyConfigChangedHandler::new(bus.publisher.clone(), bus.bus_id)),
+        )
+}
+
+fn switchover_handler(
+    bus: &HttpBusDispatch,
+    registry: &RegistryHttpPorts,
+    redundancy_state: &Arc<dyn dali2rust_api::http::redundancy_state::RedundancyHttpState>,
+) -> Box<RedundancySwitchoverHandler> {
+    Box::new(RedundancySwitchoverHandler::new(
+        bus.publisher.clone(),
+        Arc::clone(&bus.slots),
+        Arc::clone(&bus.correlation),
+        Arc::clone(redundancy_state),
+        Arc::clone(&registry.redundancy_settings_state),
+        bus.bus_id,
+        REDUNDANCY_REGISTRY_ADAPTER_ID,
+        bus.confirmation_timeout_ms,
+    ))
 }
 
 const REDUNDANCY_REGISTRY_ADAPTER_ID: u8 = 0;

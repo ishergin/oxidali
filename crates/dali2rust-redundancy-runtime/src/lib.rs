@@ -7,9 +7,12 @@ pub use runtime::arbitration_worker::{
     run_turn, spawn_arbitration_worker, ArbitrationWorkerCounters, ArbitrationWorkerDeps, RecordedTransition,
     SharedTransitionLog, WorkerStateHandle, ARBITRATION_HANDLED_EVENTS, TRANSITION_LOG_DEPTH,
 };
+pub use runtime::peer_wake::{
+    should_wake, PersistedConfigMark, WakeOnPersistSliceStore, PEER_WAKE_PATH, PEER_WAKE_QUIET_MS,
+};
 pub use runtime::replication::{
-    run_pass, should_pull, slices_to_pull, spawn_replication_worker, PassOutcome, PulledSlice,
-    ReplicationCounters, ReplicationDeps, ReplicationSink, SliceDigest,
+    run_pass, should_pull, slices_to_pull, spawn_replication_worker, wake_peer_when_quiet,
+    PassOutcome, PulledSlice, ReplicationCounters, ReplicationDeps, ReplicationSink, SliceDigest,
     REPLICATION_HANDLED_EVENTS,
     REPLICATION_INTERVAL_MS,
 };

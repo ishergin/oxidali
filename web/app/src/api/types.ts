@@ -345,6 +345,9 @@ export type RedundancyReplication = {
   pulled: number
   rejected: number
   reload_publish_failed: number
+  wakes_sent: number
+  wakes_failed: number
+  wakes_received: number
 }
 
 export interface RedundancyState {

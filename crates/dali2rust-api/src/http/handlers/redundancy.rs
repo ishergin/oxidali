@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use dali2rust_bus::{BusFrame, BusId, BusPublisher};
-use dali2rust_contracts::msg::Dali103HandoverCommand;
-use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
+use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, PublishResult};
+use dali2rust_contracts::msg::{Dali103HandoverCommand, Origin, PeerConfigChangedEvent};
+use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 
 use crate::confirmation_bridge::PendingConfirmationSlots;
 use crate::http::dispatcher::CorrelationIdAllocator;
@@ -100,5 +100,77 @@ impl crate::http::handlers::common::MutatingHandler for RedundancySwitchoverHand
 
     fn respond(&self, (): ()) -> HttpResponse {
         json_stream_dto(self.state.redundancy_state_dto())
+    }
+}
+
+declare_handler_shell! {
+    RedundancyConfigChangedHandler {
+        publisher: BusPublisher,
+        bus_id: BusId,
+    }
+}
+
+impl ApiHandler for RedundancyConfigChangedHandler {
+    fn handle_request(
+        &self,
+        method: &str,
+        _path: &str,
+        _body: &[u8],
+        _params: &HashMap<String, String>,
+    ) -> HttpResponse {
+        if method != "POST" {
+            return HttpResponse::method_not_allowed();
+        }
+        let ev = dali2rust_contracts::bus::event_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            CORRELATION_NONE,
+            self.bus_id.0,
+            Some(Origin::Api),
+            PeerConfigChangedEvent {},
+        );
+        if self.publisher.try_publish(BusChannel::Events, BusFrame::event(ev)) != PublishResult::Queued {
+            return json_err(503, "commands_ingress_overload");
+        }
+        HttpResponse::no_content()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use dali2rust_bus::{BusConfig, BusHost};
+    use dali2rust_contracts::msg::BusEventPayload;
+
+    use super::*;
+
+    const PATH: &str = "/api/v1/redundancy/config-changed";
+    const WATCHED: &[&str] = &["PeerConfigChangedEvent"];
+
+    fn wake(publisher: &BusPublisher, method: &str) -> HttpResponse {
+        RedundancyConfigChangedHandler::new(publisher.clone(), BusId(1))
+            .handle_request(method, PATH, b"", &HashMap::new())
+    }
+
+    #[test]
+    fn a_wake_publishes_the_peer_event_and_answers_without_a_body() {
+        let (host, publisher, rx) =
+            BusHost::spawn(BusConfig::default(), |reg| reg.subscribe_events(4, WATCHED));
+        assert_eq!(wake(&publisher, "POST").status, 204);
+        let frame = rx.recv_timeout(Duration::from_secs(2)).expect("the wake event");
+        assert!(matches!(
+            frame,
+            BusFrame::Event(ev) if matches!(ev.payload, BusEventPayload::PeerConfigChangedEvent(_))
+        ));
+        drop(host);
+    }
+
+    #[test]
+    fn a_read_of_the_wake_route_is_not_a_wake() {
+        let (host, publisher, rx) =
+            BusHost::spawn(BusConfig::default(), |reg| reg.subscribe_events(4, WATCHED));
+        assert_eq!(wake(&publisher, "GET").status, 405);
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+        drop(host);
     }
 }

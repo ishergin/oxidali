@@ -62,6 +62,7 @@ pub struct DaliWorld {
     pub background_handle: Option<thread::JoinHandle<Option<(TestResponse, Duration)>>>,
     pub ws_clients: Vec<ws_client::WsTestClient>,
     pub kept_body: Vec<u8>,
+    pub peer: Option<dali2rust_test_support::FakePeerController>,
     last_request_elapsed: Option<Duration>,
 }
 
@@ -100,6 +101,7 @@ impl DaliWorld {
             background_handle: None,
             ws_clients: Vec::new(),
             kept_body: Vec::new(),
+            peer: None,
         };
         world.start_test_server();
         world
@@ -131,6 +133,10 @@ impl DaliWorld {
         }));
 
         wait_for_tcp_ready(self.server_port, Duration::from_secs(2));
+    }
+
+    pub fn peer(&self) -> &dali2rust_test_support::FakePeerController {
+        self.peer.as_ref().expect("a peer controller is listening")
     }
 
     pub fn persistence_slices(&self) -> &harness_slices::HarnessSlices {

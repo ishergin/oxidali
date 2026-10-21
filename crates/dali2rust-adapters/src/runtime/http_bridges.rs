@@ -945,6 +945,9 @@ impl RedundancyBridge {
             pulled: c.slices_pulled.load(Relaxed),
             rejected: c.slices_rejected.load(Relaxed),
             reload_publish_failed: c.reload_publish_failed.load(Relaxed),
+            wakes_sent: c.wakes_sent.load(Relaxed),
+            wakes_failed: c.wakes_failed.load(Relaxed),
+            wakes_received: c.wakes_received.load(Relaxed),
         }
     }
 }

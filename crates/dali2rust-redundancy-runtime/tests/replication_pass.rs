@@ -7,8 +7,8 @@ use dali2rust_domain::registry::{
 };
 use dali2rust_platform::http_fetch::{FetchError, HttpFetch};
 use dali2rust_redundancy_runtime::{
-    run_pass, PassOutcome, PulledSlice, ReplicationCounters, ReplicationDeps, ReplicationSink,
-    SliceDigest,
+    run_pass, PassOutcome, PersistedConfigMark, PulledSlice, ReplicationCounters, ReplicationDeps,
+    ReplicationSink, SliceDigest,
 };
 
 struct FakeSettings {
@@ -63,6 +63,11 @@ impl HttpFetch for FakePeer {
             .find(|(p, _)| p == path)
             .map(|(_, b)| b.clone())
             .ok_or(FetchError::Status(404))
+    }
+
+    fn post(&self, _base: &str, path: &str) -> Result<(), FetchError> {
+        self.asked.lock().unwrap().push(format!("POST {path}"));
+        Ok(())
     }
 }
 
@@ -162,6 +167,7 @@ fn rig_serving(
             redundancy: Arc::clone(&settings) as Arc<dyn RedundancySettingsReadPort>,
             dali: Arc::clone(&settings) as Arc<dyn DaliSettingsReadPort>,
             counters: Arc::new(ReplicationCounters::default()),
+            persisted: Arc::new(PersistedConfigMark::default()),
         },
         peer,
         sink,
