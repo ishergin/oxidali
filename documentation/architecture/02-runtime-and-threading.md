@@ -22,11 +22,11 @@ registry locking → [06](06-registry-and-persistence.md).
   running the byte check and the reload of every import on its own stack, and
   the `ws-client` senders of the WebSocket clients, and `ota-run`, a thread per update, on
   the device as on the host (their stacks: [07](07-memory-and-cores.md)).
-- A Rust std thread that is spawned and joined leaves internal SRAM behind on ESP-IDF
-  ([ISSUE-205](../product-design/known-issues.md)), so work that recurs with traffic runs on
-  long-lived threads from `dali2rust_bsp::stack_runner`: the slice import on one
-  `StackRunner`, a WebSocket client's sender on a `RunnerPool` runner it holds for its
-  session; a thread per occasion is kept for occasions that stay rare, like an update.
+- A Rust std thread that is spawned and joined leaves internal SRAM behind on ESP-IDF, so
+  work that recurs with traffic runs on long-lived threads from
+  `dali2rust_bsp::stack_runner`: the slice import on one `StackRunner`, a WebSocket
+  client's sender on a `RunnerPool` runner it holds for its session; a thread per occasion
+  is kept for occasions that stay rare, like an update.
 - `registry-hydrate` is a one-shot boot thread, joined before any worker starts
   ([06](06-registry-and-persistence.md)).
 - The P4 is dual-core and FreeRTOS runs SMP: two tasks, or a task and the PHY interrupt,
