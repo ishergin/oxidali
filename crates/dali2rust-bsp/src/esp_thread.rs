@@ -135,25 +135,7 @@ where
     })
 }
 
-pub fn run_on_named_stack<R, F>(name: &'static CStr, stack_bytes: usize, f: F) -> std::io::Result<R>
-where
-    F: FnOnce() -> R + Send,
-    R: Send,
-{
-    run_scoped(name, stack_bytes, StackHome::Internal, f)
-}
 
-pub fn run_on_external_stack<R, F>(
-    name: &'static CStr,
-    stack_bytes: usize,
-    f: F,
-) -> std::io::Result<R>
-where
-    F: FnOnce() -> R + Send,
-    R: Send,
-{
-    run_scoped(name, stack_bytes, StackHome::External, f)
-}
 
 fn registered<R, F>(name: &'static CStr, f: F) -> impl FnOnce() -> R + Send
 where

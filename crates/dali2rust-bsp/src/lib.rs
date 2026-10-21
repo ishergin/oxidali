@@ -18,6 +18,7 @@ pub mod rust_heap;
 pub mod slice_layout;
 pub mod slice_store_files;
 pub mod stack_probe;
+pub mod stack_runner;
 pub mod task_registry;
 pub mod std_thread_stack;
 pub mod monotonic_clock;
