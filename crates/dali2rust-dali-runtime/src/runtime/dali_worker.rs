@@ -77,8 +77,8 @@ use memory_bank::{handle_read_memory_bank, publish_memory_bank_preset, MEMORY_BA
 use program_outcome::{ProgramOutcomeSink, resolve_membership_short};
 pub use publish::DALI_WORKER_REQUIRED_EVENTS;
 use publish::{
-    count_lost_fact, emit_execution_failed, emit_execution_failed_with_product_error,
-    fail_operation_over_lost_fact,
+    answer_each_failed, answer_each_ok, answer_each_refused, count_lost_fact, Answer, emit_execution_failed,
+    emit_execution_failed_with_product_error, fail_operation_over_lost_fact, EXECUTION_FAILED,
     publish_closing_fact_or_fail, publish_confirmation_ok, publish_confirmation_typed,
     publish_event_required, publish_event_typed, publish_operation_worker_signal,
     publish_worker_failed, publish_worker_started, publish_worker_succeeded,
@@ -134,16 +134,18 @@ pub fn spawn_dali_worker<C: DaliApplicationController + Send + 'static>(
     )
 }
 
+#[inline(never)]
 fn refused_by_gates(
     ce: &dali2rust_contracts::msg::CommandEnvelope,
     read_port: &dyn RegistryReadPort,
     adapter_id: BusId,
-    correlation_id: u64,
+    riders: &[u64],
     publisher: &BusPublisher,
     counters: &DaliWorkerCounters,
 ) -> bool {
-    controller_passive_blocked(ce, read_port, adapter_id, correlation_id, publisher, counters)
-        || adapter_command_blocked(ce, read_port, adapter_id, correlation_id, publisher, counters)
+    let answer = Answer { correlation_id: ce.meta.correlation_id, riders };
+    controller_passive_blocked(ce, read_port, adapter_id, answer, publisher, counters)
+        || adapter_command_blocked(ce, read_port, adapter_id, answer, publisher, counters)
 }
 
 fn process_one(
@@ -156,6 +158,7 @@ fn process_one(
     adapter_id: BusId,
     counters: &DaliWorkerCounters,
     correlation: &dali2rust_bus::CorrelationIdAllocator,
+    riders: &[u64],
 ) {
     let BusFrame::Command(ce_arc) = frame else {
         return;
@@ -172,7 +175,7 @@ fn process_one(
     {
         interactive.note_activity();
     }
-    if refused_by_gates(ce, read_port, adapter_id, correlation_id, publisher, counters) {
+    if refused_by_gates(ce, read_port, adapter_id, riders, publisher, counters) {
         return;
     }
 
@@ -188,6 +191,7 @@ fn process_one(
         origin,
         counters,
         correlation,
+        riders,
     );
 }
 
@@ -204,6 +208,7 @@ dali2rust_contracts::dispatch_bus_commands! {
         origin: Origin,
         counters: &DaliWorkerCounters,
         correlation: &dali2rust_bus::CorrelationIdAllocator,
+        riders: &[u64],
     );
     payload = payload;
     ignored = { counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
@@ -300,7 +305,7 @@ dali2rust_contracts::dispatch_bus_commands! {
         read_port,
         publisher,
         adapter_id,
-        correlation_id,
+        Answer { correlation_id, riders },
         origin,
         ts,
         counters,

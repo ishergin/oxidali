@@ -164,9 +164,11 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
 - `hold_hcl` is part of the target: two commands that differ in it never displace or
   fold into each other, because one commit could not carry both claims on the HCL
   schedule.
-- A displaced command whose fields were carried is confirmed as success; one that
-  contributed nothing is answered `superseded` (409). Coalescing may drop a frame, but a
-  field the survivor does not state is never dropped silently.
+- A displaced command whose fields were carried rides with the survivor and gets the
+  survivor's outcome: success once the survivor's applied fact is published, or the same
+  failure or gate refusal. One that contributed nothing, or rode with a survivor that is
+  itself displaced without being carried, is answered `superseded` (409). Coalescing may
+  drop a frame, but a field the survivor does not state is never dropped silently.
 - The worker never reorders two lamp-driving frames, so publish order is the order the
   lamps end in. A producer that means two verbs to land together merges them before
   publishing, as the rules engine does within one activation

@@ -5,7 +5,7 @@ pub(super) fn controller_passive_blocked(
     ce: &CommandEnvelope,
     read_port: &dyn RegistryReadPort,
     bus_id: BusId,
-    correlation_id: u64,
+    answer: Answer<'_>,
     publisher: &BusPublisher,
     counters: &DaliWorkerCounters,
 ) -> bool {
@@ -17,20 +17,13 @@ pub(super) fn controller_passive_blocked(
         BlockedRefusal::Operation(handled) => fail_passive_semantic_operation(
             publisher,
             bus_id,
-            correlation_id,
+            answer.correlation_id,
             ce.meta.origin,
             handled,
             counters,
         ),
         BlockedRefusal::Confirmation | BlockedRefusal::NotGated => {
-            counters.execution_failed.fetch_add(1, Ordering::Relaxed);
-            emit_execution_failed_with_product_error(
-                publisher,
-                correlation_id,
-                counters,
-                ErrorCode::Conflict,
-                "controller_passive",
-            );
+            answer.failed(publisher, counters, (ErrorCode::Conflict, "controller_passive"));
             true
         }
     }
@@ -68,7 +61,7 @@ pub(super) fn adapter_command_blocked(
     ce: &CommandEnvelope,
     read_port: &dyn RegistryReadPort,
     bus_id: BusId,
-    correlation_id: u64,
+    answer: Answer<'_>,
     publisher: &BusPublisher,
     counters: &DaliWorkerCounters,
 ) -> bool {
@@ -83,25 +76,19 @@ pub(super) fn adapter_command_blocked(
         BlockedRefusal::Operation(handled) => fail_blocked_semantic_operation(
             publisher,
             bus_id,
-            correlation_id,
+            answer.correlation_id,
             ce.meta.origin,
             handled,
             counters,
         ),
         BlockedRefusal::Confirmation => {
-            counters.execution_failed.fetch_add(1, Ordering::Relaxed);
-            emit_execution_failed_with_product_error(
-                publisher,
-                correlation_id,
-                counters,
-                ErrorCode::Conflict,
-                "adapter_disabled",
-            );
+            answer.failed(publisher, counters, (ErrorCode::Conflict, "adapter_disabled"));
             true
         }
         BlockedRefusal::NotGated => false,
     }
 }
+
 
 enum BlockedRefusal<'c> {
     Operation(Option<&'c AtomicU32>),

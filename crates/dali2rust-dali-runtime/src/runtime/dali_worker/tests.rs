@@ -490,3 +490,82 @@ mod memory_bank_loss {
         );
     }
 }
+
+mod answer_riders {
+    use std::time::Duration;
+
+    use dali2rust_bus::{BusConfig, BusFrame, BusHost};
+    use dali2rust_contracts::msg::{DeliveryStatus, ErrorCode};
+
+    use super::super::publish::Answer;
+    use super::super::DaliWorkerCounters;
+
+    const CARRIER: u64 = 81;
+    const RIDERS: [u64; 2] = [82, 83];
+    const ANSWER_DEADLINE: Duration = Duration::from_secs(1);
+
+    type Answered = (u64, DeliveryStatus, Option<(ErrorCode, String)>);
+
+    #[test]
+    fn a_failed_answer_reaches_the_carrier_and_every_request_it_carries_with_one_cause() {
+        let (_host, publisher, confirmations) =
+            BusHost::spawn(BusConfig::default(), |reg| reg.subscribe_confirmations(8));
+        let counters = DaliWorkerCounters::default();
+        let answer = Answer { correlation_id: CARRIER, riders: &RIDERS };
+        answer.failed(&publisher, &counters, (ErrorCode::Conflict, "controller_passive"));
+        let mut answered: Vec<Answered> = (0..=RIDERS.len())
+            .map(|_| {
+                let Ok(BusFrame::Confirmation(conf)) = confirmations.recv_timeout(ANSWER_DEADLINE) else {
+                    panic!("a refused request went unanswered");
+                };
+                let error = conf.confirmation.error.as_ref().map(|e| (e.code, e.message.as_str().to_owned()));
+                (conf.meta.correlation_id, conf.status, error)
+            })
+            .collect();
+        answered.sort_by_key(|answer| answer.0);
+        let refusal = Some((ErrorCode::Conflict, "controller_passive".to_owned()));
+        assert_eq!(
+            answered,
+            [CARRIER, RIDERS[0], RIDERS[1]]
+                .map(|correlation_id| (correlation_id, DeliveryStatus::ExecutionFailed, refusal.clone()))
+                .to_vec()
+        );
+        assert_eq!(counters.execution_failed.load(std::sync::atomic::Ordering::Relaxed), 3);
+    }
+}
+
+mod lost_fact_riders {
+    use dali2rust_bus::{BusConfig, BusHost, BusId};
+    use dali2rust_contracts::msg::{DaliTargetScope, LightSetpoint, PowerState, RuntimeSource};
+    use dali2rust_test_support::hold_the_events_ingress_full;
+
+    use super::super::publish::Answer;
+    use super::super::target_state::{close_target_state_applied, target_state_applied_event, Provenance};
+    use super::super::DaliWorkerCounters;
+
+    const EVENTS_INGRESS: usize = 4;
+    const CARRIER: u64 = 91;
+    const RIDERS: [u64; 2] = [92, 93];
+    const SHORT: u8 = 9;
+
+    #[test]
+    fn a_lost_applied_fact_fails_the_carrier_and_every_request_it_carries() {
+        let config = BusConfig { events_ingress: EVENTS_INGRESS, ..BusConfig::default() };
+        let (_host, publisher, ()) = BusHost::spawn(config, |_| {});
+        let counters = DaliWorkerCounters::default();
+        let setpoint = LightSetpoint { power: PowerState::On, level: Some(1), color: None };
+        let provenance = Provenance { source: RuntimeSource::Api, hold_hcl: true };
+        let applied = target_state_applied_event(0, DaliTargetScope::Short, None, Some(SHORT), None, &setpoint, provenance);
+        let _ingress = hold_the_events_ingress_full(&publisher);
+        let answer = Answer { correlation_id: CARRIER, riders: &RIDERS };
+        assert!(
+            !close_target_state_applied(&publisher, answer, BusId::default(), &counters, applied),
+            "inconclusive: the held events ingress took the applied fact"
+        );
+        assert_eq!(
+            counters.execution_failed.load(std::sync::atomic::Ordering::Relaxed),
+            1 + 2,
+            "the carrier and both requests it carries are each answered as failed"
+        );
+    }
+}

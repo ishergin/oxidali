@@ -83,6 +83,52 @@ pub(super) fn publish_closing_fact_or_fail(
     published
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Answer<'a> {
+    pub(super) correlation_id: u64,
+    pub(super) riders: &'a [u64],
+}
+
+impl Answer<'_> {
+    pub(super) fn failed(self, publisher: &BusPublisher, counters: &DaliWorkerCounters, error: (ErrorCode, &str)) {
+        answer_each_failed(publisher, &[self.correlation_id], counters, error);
+        answer_each_failed(publisher, self.riders, counters, error);
+    }
+
+    pub(super) fn refused(self, publisher: &BusPublisher, counters: &DaliWorkerCounters, error: (ErrorCode, &str)) {
+        answer_each_refused(publisher, &[self.correlation_id], counters, error);
+        answer_each_refused(publisher, self.riders, counters, error);
+    }
+}
+
+pub(super) fn answer_each_ok(publisher: &BusPublisher, correlations: &[u64], counters: &DaliWorkerCounters) {
+    for &correlation_id in correlations {
+        publish_confirmation_ok(publisher, correlation_id, counters);
+    }
+}
+
+pub(super) fn answer_each_failed(
+    publisher: &BusPublisher,
+    correlations: &[u64],
+    counters: &DaliWorkerCounters,
+    error: (ErrorCode, &str),
+) {
+    let failed = u32::try_from(correlations.len()).unwrap_or(u32::MAX);
+    counters.execution_failed.fetch_add(failed, Ordering::Relaxed);
+    answer_each_refused(publisher, correlations, counters, error);
+}
+
+pub(super) fn answer_each_refused(
+    publisher: &BusPublisher,
+    correlations: &[u64],
+    counters: &DaliWorkerCounters,
+    (code, message): (ErrorCode, &str),
+) {
+    for &correlation_id in correlations {
+        emit_execution_failed_with_product_error(publisher, correlation_id, counters, code, message);
+    }
+}
+
 pub(super) fn count_lost_fact(counters: &DaliWorkerCounters) {
     counters.evidence_publish_failed.fetch_add(1, Ordering::Relaxed);
     counters.execution_failed.fetch_add(1, Ordering::Relaxed);
@@ -234,6 +280,8 @@ pub(super) fn publish_confirmation_ok(
     publish_confirmation_typed(publisher, env, counters);
 }
 
+pub(super) const EXECUTION_FAILED: (ErrorCode, &str) = (ErrorCode::ExecutionFailed, "execution_failed");
+
 pub(super) fn emit_execution_failed(
     publisher: &BusPublisher,
     correlation_id: u64,
@@ -244,7 +292,7 @@ pub(super) fn emit_execution_failed(
         DeliveryStatus::ExecutionFailed,
         0,
         SOURCE_ID_UNSPECIFIED,
-        Some((ErrorCode::ExecutionFailed, "execution_failed")),
+        Some(EXECUTION_FAILED),
     );
     publish_confirmation_typed(publisher, ce, counters);
 }

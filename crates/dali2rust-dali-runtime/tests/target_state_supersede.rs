@@ -227,3 +227,108 @@ fn commands_that_differ_in_hold_hcl_never_fold_into_one() {
     assert_eq!(mock.scripted_exchanges_remaining(), 0, "{:04X?}", mock.sent_frames());
     assert_eq!(mock.script_error(), None);
 }
+
+const CARRIED: u64 = 31;
+const CARRIER: u64 = 32;
+const CARRIER_LEVEL: u8 = 150;
+const ANSWER_DEADLINE: Duration = Duration::from_secs(2);
+const NO_FURTHER_ANSWER: Duration = Duration::from_millis(200);
+
+fn short_frame(correlation_id: u64, setpoint: LightSetpoint) -> BusFrame {
+    BusFrame::command(dali2rust_contracts::bus::command_envelope(
+        0,
+        correlation_id,
+        BusId::default().0,
+        None,
+        dali2rust_contracts::msg::DaliSetTargetStateCommand::for_short(0, SHORT, &setpoint),
+    ))
+}
+
+fn answers_of_a_carried_pair(wire_fails: bool, expected: usize) -> Vec<(u64, DeliveryStatus, Option<ErrorCode>)> {
+    let (host, publisher, (worker_cmd, conf_rx)) = BusHost::spawn(BusConfig::default(), |reg| {
+        (
+            reg.subscribe_commands(16, DALI_WORKER_HANDLED_COMMANDS),
+            reg.subscribe_confirmations(16),
+        )
+    });
+    let switched_on = LightSetpoint { power: PowerState::On, level: Some(100), color: None };
+    let level_only = LightSetpoint { power: PowerState::Unknown, level: Some(CARRIER_LEVEL), color: None };
+    for frame in [short_frame(CARRIED, switched_on), short_frame(CARRIER, level_only)] {
+        assert_eq!(publisher.try_publish(BusChannel::Commands, frame), PublishResult::Queued);
+    }
+    wait_until(
+        || {
+            host.counters_snapshot()
+                .command_subscribers
+                .first()
+                .is_some_and(|sub| sub.delivered == 2)
+        },
+        Duration::from_secs(1),
+    );
+    let transport = Arc::new(std::sync::Mutex::new(MockDaliTransport::new()));
+    {
+        let mock = transport.lock().expect("mock lock");
+        if wire_fails {
+            mock.expect_forward_frame_send_error(dapc_frame(CARRIER_LEVEL));
+        } else {
+            mock.expect_forward_frame(dapc_frame(CARRIER_LEVEL));
+        }
+    }
+    let counters = Arc::new(DaliWorkerCounters::default());
+    let _worker = spawn_dali_worker(
+        worker_cmd,
+        DaliController::new(Arc::clone(&transport), Box::new(StdClock::new())),
+        DaliRuntimeConfig::default(),
+        Arc::new(RegistryStore::with_adapter_count(1)),
+        publisher.clone(),
+        BusId::default(),
+        Arc::clone(&counters),
+        Arc::new(dali2rust_platform::dali::WireActivity::new()),
+        Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
+    );
+    let deadline = std::time::Instant::now() + ANSWER_DEADLINE;
+    let mut answers = Vec::new();
+    while answers.len() < expected {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        let Ok(BusFrame::Confirmation(conf)) = conf_rx.recv_timeout(left) else {
+            break;
+        };
+        answers.push((
+            conf.meta.correlation_id,
+            conf.status,
+            conf.confirmation.error.as_ref().map(|e| e.code),
+        ));
+    }
+    assert!(
+        conf_rx.recv_timeout(NO_FURTHER_ANSWER).is_err(),
+        "a request was answered twice: {answers:?}"
+    );
+    answers.sort_by_key(|answer| answer.0);
+    let mock = transport.lock().expect("mock lock");
+    assert_eq!(mock.scripted_exchanges_remaining(), 0, "{:04X?}", mock.sent_frames());
+    answers
+}
+
+#[test]
+fn a_carried_request_answers_with_the_outcome_of_the_frame_that_carries_it() {
+    let applied = answers_of_a_carried_pair(false, 1);
+    assert_eq!(
+        applied,
+        vec![(CARRIED, DeliveryStatus::Ok, None)],
+        "control: the carrier reached the wire, so the request it carried succeeds; the \
+         carrier's own answer is the registry's"
+    );
+    let failed = answers_of_a_carried_pair(true, 2);
+    assert_eq!(failed.len(), 2, "both requests are answered: {failed:?}");
+    assert_eq!(
+        (failed[0].0, failed[1].0),
+        (CARRIED, CARRIER),
+        "{failed:?}"
+    );
+    assert_ne!(failed[1].1, DeliveryStatus::Ok, "the carrier failed on the wire: {failed:?}");
+    assert_eq!(
+        (failed[0].1, failed[0].2),
+        (failed[1].1, failed[1].2),
+        "the carried request reported success before its carrier ran, yet the carrier failed"
+    );
+}
