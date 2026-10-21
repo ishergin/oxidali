@@ -198,7 +198,6 @@ pub(crate) struct RulesWorkerDeps {
     pub slices: Option<Arc<dyn SliceStore>>,
     pub registry: Arc<RegistryStore>,
     pub wall: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
-    pub hcl_state: Arc<dyn dali2rust_api::http::hcl_state::HclScheduleHttpState>,
     pub correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
 }
 
@@ -618,11 +617,12 @@ fn spawn_rules(
 ) -> RulesWorker {
     let rules_counters = Arc::new(dali2rust_rules_runtime::RulesWorkerCounters::default());
     let rules_engine_cells = Arc::new(dali2rust_rules_runtime::RulesEngineCells::default());
+    let schedules: Arc<dyn dali2rust_domain::registry::HclScheduleReadPort> =
+        Arc::clone(&rules_deps.registry) as _;
     let world = Arc::new(crate::runtime::http_bridges::RulesWorldBridge::new(
         Arc::clone(&rules_deps.registry),
         Arc::clone(&rules_deps.wall),
-        Arc::clone(&rules_deps.hcl_state),
-        Arc::clone(&hcl.overrides),
+        dali2rust_hcl_runtime::HclRulesView::new(schedules, Arc::clone(&hcl.overrides)),
     ));
     let rules = dali2rust_rules_runtime::spawn_rules_worker(
         rules_cmd,

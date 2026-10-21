@@ -1,5 +1,7 @@
 use super::*;
 
+const SCENE_RECALLED: &str = "scene-recalled";
+
 pub(super) fn handle_program_scene(
     controller: &mut impl DaliApplicationController,
     read_port: &dyn RegistryReadPort,
@@ -10,8 +12,8 @@ pub(super) fn handle_program_scene(
     counters: &DaliWorkerCounters,
 ) {
     let registry_adapter_id = command.registry_adapter_id;
-    let publish_outcome = |short, scene_level, error| {
-        publish_scene_programmed_outcome(publisher, correlation_id, adapter_id, command, short, scene_level, error, counters);
+    let outcome_event = |short, scene_level, error| {
+        scene_programmed_event(correlation_id, adapter_id, command, short, scene_level, error)
     };
     let sink: ProgramOutcomeSink<'_, u8> = ProgramOutcomeSink {
         read_port,
@@ -20,7 +22,8 @@ pub(super) fn handle_program_scene(
         registry_adapter_id,
         target: command.target,
         counters,
-        publish_outcome: &publish_outcome,
+        outcome_label: "scene-programmed",
+        outcome_event: &outcome_event,
     };
     match resolve_membership_short(read_port, registry_adapter_id, command.target) {
         Some(short_address) => program_scene_and_publish(
@@ -144,8 +147,10 @@ pub(super) fn handle_recall_scene(
 ) {
     match execute_recall_scene(controller, read_port, command) {
         Ok(target) => {
-            publish_scene_recalled_outcome(outcome, command, target, None);
-            publish_confirmation_ok(outcome.publisher, outcome.correlation_id, outcome.counters);
+            let recalled = scene_recalled_event(outcome, command, target, None);
+            if publish_closing_fact_or_fail(outcome.publisher, recalled, outcome.counters, PublishKind::Singleton, SCENE_RECALLED) {
+                publish_confirmation_ok(outcome.publisher, outcome.correlation_id, outcome.counters);
+            }
         }
         Err(error) => fail_recall_scene(outcome, command, error),
     }
@@ -162,7 +167,8 @@ fn fail_recall_scene(
 ) {
     outcome.counters.execution_failed.fetch_add(1, Ordering::Relaxed);
     let target = RecallTarget::as_commanded(command);
-    publish_scene_recalled_outcome(outcome, command, target, Some((error.code(), error.message())));
+    let recalled = scene_recalled_event(outcome, command, target, Some((error.code(), error.message())));
+    publish_event_required(outcome.publisher, recalled, outcome.counters, PublishKind::Singleton, SCENE_RECALLED);
     emit_execution_failed_with_product_error(
         outcome.publisher,
         outcome.correlation_id,
@@ -226,15 +232,10 @@ pub(super) fn handle_recall_last_active_level(
 ) {
     match execute_recall_last_active_level(controller, command) {
         Ok(()) => {
-            publish_recall_last_active_applied(
-                publisher,
-                adapter_id,
-                correlation_id,
-                origin,
-                command,
-                counters,
-            );
-            publish_confirmation_ok(publisher, correlation_id, counters);
+            let applied = recall_last_active_applied_event(adapter_id, correlation_id, origin, command);
+            if publish_closing_fact_or_fail(publisher, applied, counters, PublishKind::Singleton, "recall-last-active-applied") {
+                publish_confirmation_ok(publisher, correlation_id, counters);
+            }
         }
         Err(error) => {
             counters.execution_failed.fetch_add(1, Ordering::Relaxed);
@@ -252,14 +253,12 @@ pub(super) fn handle_recall_last_active_level(
         .fetch_add(1, Ordering::Relaxed);
 }
 
-fn publish_recall_last_active_applied(
-    publisher: &BusPublisher,
+fn recall_last_active_applied_event(
     adapter_id: BusId,
     correlation_id: u64,
     origin: Origin,
     command: &DaliRecallLastActiveLevelCommand,
-    counters: &DaliWorkerCounters,
-) {
+) -> EventEnvelope {
     let (scope, group_id) = match command.scope {
         HclTargetScope::Broadcast => (DaliTargetScope::Broadcast, None),
         HclTargetScope::Group => (DaliTargetScope::Group, command.group_id),
@@ -280,20 +279,13 @@ fn publish_recall_last_active_applied(
             hold_hcl: true,
         },
     );
-    let env = dali2rust_contracts::bus::event_envelope(
+    dali2rust_contracts::bus::event_envelope(
         SOURCE_ID_UNSPECIFIED,
         correlation_id,
         adapter_id.0,
         Some(Origin::Internal),
         applied,
-    );
-    let _ = publish_event_required(
-        publisher,
-        env,
-        counters,
-        PublishKind::Series,
-        "recall-last-active-applied",
-    );
+    )
 }
 
 fn execute_recall_last_active_level(
@@ -320,13 +312,13 @@ fn recall_last_active_address(
     }
 }
 
-fn publish_scene_recalled_outcome(
+fn scene_recalled_event(
     outcome: &RecallOutcome<'_>,
     command: &dali2rust_contracts::msg::DaliRecallSceneCommand,
     target: RecallTarget,
     error: Option<(ErrorCode, &'static str)>,
-) {
-    let event = dali2rust_contracts::bus::event_envelope(
+) -> EventEnvelope {
+    dali2rust_contracts::bus::event_envelope(
         SOURCE_ID_UNSPECIFIED,
         outcome.correlation_id,
         outcome.adapter_id.0,
@@ -345,33 +337,23 @@ fn publish_scene_recalled_outcome(
             virtual_lamp_id: (command.scope == DaliTargetScope::VirtualLamp)
                 .then_some(command.virtual_lamp_id),
         },
-    );
-    publish_event_required(
-        outcome.publisher,
-        event,
-        outcome.counters,
-        PublishKind::Singleton,
-        "scene-recalled",
-    );
+    )
 }
 
-#[allow(clippy::too_many_arguments, reason = "mirrors the membership outcome publisher")]
-fn publish_scene_programmed_outcome(
-    publisher: &BusPublisher,
+fn scene_programmed_event(
     correlation_id: u64,
     adapter_id: BusId,
     command: &dali2rust_contracts::msg::DaliProgramSceneCommand,
     physical_short_address: Option<u8>,
     scene_level: Option<u8>,
     error: Option<(ErrorCode, &'static str)>,
-    counters: &DaliWorkerCounters,
-) {
+) -> EventEnvelope {
     let target_state = if error.is_none() {
         command.target_state
     } else {
         None
     };
-    let event = dali2rust_contracts::bus::event_envelope(
+    dali2rust_contracts::bus::event_envelope(
         SOURCE_ID_UNSPECIFIED,
         correlation_id,
         adapter_id.0,
@@ -387,8 +369,7 @@ fn publish_scene_programmed_outcome(
             error: error
                 .map(|(code, message)| dali2rust_contracts::msg::CompactErrorPayload::new(code, message)),
         },
-    );
-    publish_event_required(publisher, event, counters, PublishKind::Singleton, "scene-programmed");
+    )
 }
 
 pub(super) fn scene_levels_fixed(levels: Option<&[u8]>) -> Option<[u8; 16]> {

@@ -23,7 +23,7 @@ use dali2rust_domain::registry::{
     MemoryBankRangeView, MemoryBankSummaryView, MemoryBusUnitAttributesView,
     MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView, MemoryLuminaireAttributesView,
     ObservedValue, PhysicalDeviceAttributesView, PhysicalDeviceCoreView, PhysicalDeviceReadPort,
-    PhysicalDeviceSummaryView, PhysicalDeviceView,
+    PhysicalDeviceSummaryView,
 };
 
 pub const DISCOVERY_EVICT_MISS_THRESHOLD: u8 = 3;
@@ -1240,53 +1240,6 @@ impl RegistryStore {
         true
     }
 
-    pub(crate) fn physical_device_to_view(
-        &self,
-        adapter_id: u8,
-        short_address: u8,
-        rec: &PhysicalDeviceRecord,
-    ) -> PhysicalDeviceView {
-        let dt_eff = rec.effective_device_type();
-        let cm_eff = rec.effective_color_mode();
-        let dt_src = override_source_str(rec.device_type_override.is_some());
-        let cm_src = override_source_str(rec.color_mode_override.is_some());
-
-        PhysicalDeviceView {
-            adapter_id,
-            short_address,
-            random_address: rec.random_address,
-            name: rec.name.as_str().to_string(),
-            notes: rec.notes.as_ref().map(|n| n.as_str().to_string()),
-            device_type_discovered: device_type_str(rec.device_type_discovered).to_string(),
-            device_type_override: rec
-                .device_type_override
-                .map(|d| device_type_str(d).to_string()),
-            device_type_effective: device_type_str(dt_eff).to_string(),
-            device_type_source: dt_src.to_string(),
-            supported_device_types: rec.supported_device_types.map(|set| set.iter().collect()),
-            color_mode_discovered: color_mode_str(rec.color_mode_discovered).to_string(),
-            color_mode_override: rec
-                .color_mode_override
-                .map(|c| color_mode_str(c).to_string()),
-            color_mode_effective: color_mode_str(cm_eff).to_string(),
-            color_mode_source: cm_src.to_string(),
-            dt8_auto_activation_repair: rec.dt8_auto_activation_repair.unwrap_or(true),
-            dt8_rgbwaf_control_assert: rec.dt8_rgbwaf_control_assert.unwrap_or(true),
-            attributes: rec.attributes.clone(),
-            energy: rec.energy.clone(),
-            diagnostics: rec.diagnostics.clone(),
-            bus_unit: rec.bus_unit.clone(),
-            luminaire_info: luminaire_view(rec),
-            memory_banks: memory_banks_view(&rec.memory_banks),
-            state: physical_device_state_view(rec, cm_eff),
-            capabilities: effective_capabilities_view(rec, cm_eff),
-            color_temperature_range: ColorTemperatureRangeView::from_mirek(
-                rec.tc_coolest_mirek,
-                rec.tc_warmest_mirek,
-            ),
-        }
-    }
-
     pub(crate) fn physical_device_to_summary_view(
         &self,
         short_address: u8,
@@ -1397,18 +1350,6 @@ impl RegistryStore {
             .collect();
         shorts.sort_unstable();
         shorts
-    }
-}
-
-impl RegistryStore {
-    pub fn physical_device_view(
-        &self,
-        adapter_id: u8,
-        short_address: u8,
-    ) -> Option<PhysicalDeviceView> {
-        let g = self.read_inner();
-        let rec = g.physical_devices.get(&(adapter_id, short_address))?;
-        Some(self.physical_device_to_view(adapter_id, short_address, rec))
     }
 }
 

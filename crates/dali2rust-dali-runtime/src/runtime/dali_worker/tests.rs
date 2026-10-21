@@ -363,3 +363,130 @@ mod publish_accounting {
         );
     }
 }
+
+mod memory_bank_loss {
+    use std::sync::{Arc, Mutex};
+
+    use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
+    use dali2rust_bus::{BusConfig, BusHost, BusId};
+    use dali2rust_contracts::msg::{
+        AttributeGroupReadOutcome, DaliReadAttributesCommand, ErrorCode, MemoryBankReadPreset,
+    };
+    use dali2rust_test_support::hold_the_events_ingress_full;
+
+    use std::sync::atomic::Ordering;
+
+    use super::super::attribute_read::read_attributes_memory_bank_stage;
+    use super::super::memory_bank::publish_memory_bank_execution;
+    use super::super::DaliWorkerCounters;
+    use crate::runtime::clock::StdClock;
+    use crate::runtime::controller::DaliController;
+    use crate::runtime::executor::{AttributeReadOutcomes, MemoryReadExecution};
+
+    const DEMO_SHORT: u8 = 0;
+    const SWEEP_CORRELATION: u64 = 4_100;
+    const EVENTS_INGRESS: usize = 4;
+    const CHUNK_LOST: &str = "memory_bank_chunk_lost";
+    const THREE_CHUNKS_OF_BYTES: usize = 60;
+    const READ_CORRELATION: u64 = 4_101;
+    const SWEEP: DaliReadAttributesCommand = DaliReadAttributesCommand {
+        registry_adapter_id: 0,
+        short_address: DEMO_SHORT,
+        attribute_groups_mask: 0,
+        memory_banks: MemoryBankReadPreset::Identity,
+    };
+
+    struct Swept {
+        result: Result<(), (ErrorCode, &'static str)>,
+        memory_banks: AttributeGroupReadOutcome,
+        lost_facts: (u32, u32),
+    }
+
+    fn sweep_bank_zero(hold_the_ingress: bool) -> Swept {
+        let config = BusConfig {
+            events_ingress: EVENTS_INGRESS,
+            ..BusConfig::default()
+        };
+        let (_host, publisher, ()) = BusHost::spawn(config, |_| {});
+        let transport = Arc::new(Mutex::new(SimDaliTransport::demo_bus()));
+        let mut controller = DaliController::new(transport, Box::new(StdClock::new()));
+        let counters = DaliWorkerCounters::default();
+        let mut outcomes = AttributeReadOutcomes::for_request(&[], true);
+        let _ingress = hold_the_ingress.then(|| hold_the_events_ingress_full(&publisher));
+        let result = read_attributes_memory_bank_stage(
+            &mut controller,
+            &publisher,
+            BusId::default(),
+            SWEEP_CORRELATION,
+            &SWEEP,
+            &mut outcomes,
+            &counters,
+        );
+        let lost_facts = (
+            counters.evidence_publish_failed.load(Ordering::Relaxed),
+            counters.execution_failed.load(Ordering::Relaxed),
+        );
+        Swept { result, memory_banks: outcomes.memory_banks, lost_facts }
+    }
+
+    #[test]
+    fn a_refused_chunk_of_a_bank_sweep_fails_the_attribute_read() {
+        let open = sweep_bank_zero(false);
+        assert_eq!(
+            (open.result, open.memory_banks),
+            (Ok(()), AttributeGroupReadOutcome::Success),
+            "control: with the events ingress open the sweep of bank 0 succeeds"
+        );
+        let held = sweep_bank_zero(true);
+        assert_eq!(
+            held.result,
+            Err((ErrorCode::CommandsIngressOverload, CHUNK_LOST)),
+            "the full ingress refused the swept bank's chunk, yet the attribute read went on \
+             as if the registry had heard it"
+        );
+        assert_eq!(
+            (held.memory_banks, held.lost_facts),
+            (AttributeGroupReadOutcome::TransportAbort, (1, 1)),
+            "the swept bank ran on the wire and lost its chunk: the section is aborted, not \
+             unattempted, and the loss counts as one lost fact (evidence, execution)"
+        );
+    }
+
+    #[test]
+    fn a_refused_chunk_ends_the_read_and_aborts_it() {
+        let config = BusConfig {
+            events_ingress: EVENTS_INGRESS,
+            ..BusConfig::default()
+        };
+        let (_host, publisher, ()) = BusHost::spawn(config, |_| {});
+        let counters = DaliWorkerCounters::default();
+        let execution = MemoryReadExecution {
+            bytes: vec![0; THREE_CHUNKS_OF_BYTES],
+            error: None,
+        };
+        let _ingress = hold_the_events_ingress_full(&publisher);
+        let delivered = publish_memory_bank_execution(
+            &publisher,
+            BusId::default(),
+            READ_CORRELATION,
+            0,
+            DEMO_SHORT,
+            0,
+            0,
+            &execution,
+            &counters,
+        );
+        assert!(!delivered, "the full ingress refused the first chunk, yet the read was delivered");
+        assert_eq!(
+            counters.memory_bank_chunk_events_published.load(Ordering::Relaxed),
+            0,
+            "no chunk reached the bus"
+        );
+        assert_eq!(
+            counters.event_publish_failed.load(Ordering::Relaxed),
+            2,
+            "a refused first chunk is followed by exactly one more publish, the aborted event: \
+             no later chunk of the read is tried and the read is not left open"
+        );
+    }
+}

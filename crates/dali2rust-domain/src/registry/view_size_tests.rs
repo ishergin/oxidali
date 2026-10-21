@@ -33,16 +33,6 @@ fn http_reachable_views_stay_within_the_httpd_stack_budget() {
 }
 
 #[test]
-fn the_registry_whole_device_snapshot_stays_bounded() {
-    const CEILING: usize = 8_192;
-    let actual = std::mem::size_of::<PhysicalDeviceView>();
-    assert!(
-        actual <= CEILING,
-        "PhysicalDeviceView is {actual} B, ceiling {CEILING} B."
-    );
-}
-
-#[test]
 fn every_section_kind_round_trips_through_its_wire_name() {
     for kind in AttributeSectionKind::ALL.iter().copied() {
         assert_eq!(

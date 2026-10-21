@@ -15,6 +15,8 @@ use crate::runtime::executor::dev103::{
 };
 
 const NOT_AN_OCCUPANCY_SENSOR: &str = "input_instance_not_occupancy";
+const INSTANCE_CONFIGURED_LOST: &str = "instance_configured_event_lost";
+const FEEDBACK_CONFIGURED_LOST: &str = "feedback_configured_event_lost";
 use crate::runtime::executor::dev103_feedback::{
     configure_feedback, drive_feedback, ConfiguredFeedback,
 };
@@ -103,15 +105,35 @@ pub(super) fn handle_103_instance_configure(
 ) {
     let mut proved = ProvedWrites::default();
     let outcome = configure_instance(controller, cmd, &mut proved);
-    if outcome.is_ok() || proved.mask != 0 {
-        publish_instance_configured(publisher, adapter_id, correlation_id, cmd, &proved, counters);
+    let recorded = (outcome.is_ok() || proved.mask != 0)
+        && publish_instance_configured(publisher, adapter_id, correlation_id, cmd, &proved, counters);
+    close_configuration(publisher, adapter_id, correlation_id, outcome, recorded, INSTANCE_CONFIGURED_LOST, counters);
+}
+
+fn close_configuration(
+    publisher: &BusPublisher,
+    adapter_id: BusId,
+    correlation_id: u64,
+    outcome: Result<(), SemanticDaliError>,
+    recorded: bool,
+    lost: &str,
+    counters: &DaliWorkerCounters,
+) {
+    match outcome {
+        Err(error) => {
+            counters.input_config_rejected.fetch_add(1, Ordering::Relaxed);
+            fail_operation(publisher, adapter_id, correlation_id, error, counters);
+        }
+        Ok(()) if !recorded => super::publish::fail_operation_over_lost_fact(
+            publisher,
+            adapter_id,
+            correlation_id,
+            dali2rust_contracts::msg::Origin::Api,
+            lost,
+            counters,
+        ),
+        Ok(()) => publish_worker_succeeded(publisher, adapter_id, correlation_id, counters),
     }
-    if let Err(error) = outcome {
-        counters.input_config_rejected.fetch_add(1, Ordering::Relaxed);
-        fail_operation(publisher, adapter_id, correlation_id, error, counters);
-        return;
-    }
-    publish_worker_succeeded(publisher, adapter_id, correlation_id, counters);
 }
 
 #[derive(Default)]
@@ -296,7 +318,7 @@ fn publish_instance_configured(
     cmd: &Dali103InstanceConfigureCommand,
     proved: &ProvedWrites,
     counters: &DaliWorkerCounters,
-) {
+) -> bool {
     let mask = proved.mask;
     let mut instance_groups = [None; 3];
     for (slot, group) in cmd.instance_groups.iter().enumerate() {
@@ -328,7 +350,7 @@ fn publish_instance_configured(
         counters,
         PublishKind::Series,
         "input-instance-configured",
-    );
+    )
 }
 
 fn configured_timers(cmd: &Dali103InstanceConfigureCommand, mask: u16) -> [Option<u8>; 4] {
@@ -370,15 +392,9 @@ pub(super) fn handle_103_feedback_configure(
 ) {
     let mut proved = ConfiguredFeedback::default();
     let outcome = configure_feedback(controller, cmd, &mut proved);
-    if outcome.is_ok() || proved.proved_any() {
-        publish_feedback_configured(publisher, adapter_id, correlation_id, cmd, &proved, counters);
-    }
-    if let Err(error) = outcome {
-        counters.input_config_rejected.fetch_add(1, Ordering::Relaxed);
-        fail_operation(publisher, adapter_id, correlation_id, error, counters);
-        return;
-    }
-    publish_worker_succeeded(publisher, adapter_id, correlation_id, counters);
+    let recorded = (outcome.is_ok() || proved.proved_any())
+        && publish_feedback_configured(publisher, adapter_id, correlation_id, cmd, &proved, counters);
+    close_configuration(publisher, adapter_id, correlation_id, outcome, recorded, FEEDBACK_CONFIGURED_LOST, counters);
 }
 
 fn configured_event_base(
@@ -450,7 +466,7 @@ fn publish_feedback_configured(
     cmd: &dali2rust_contracts::msg::Dali103FeedbackConfigureCommand,
     confirmed: &ConfiguredFeedback,
     counters: &DaliWorkerCounters,
-) {
+) -> bool {
     let mut body =
         configured_event_base(cmd.registry_adapter_id, cmd.short_address, cmd.instance_number);
     body.feedback_opcode_map = Some(confirmed.map_code);
@@ -472,7 +488,7 @@ fn publish_feedback_configured(
         counters,
         PublishKind::Series,
         "input-feedback-configured",
-    );
+    )
 }
 
 pub(super) fn handle_103_feedback_drive(

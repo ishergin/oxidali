@@ -1,11 +1,15 @@
+use std::cell::{Ref, RefCell};
+use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResult};
+use dali2rust_bus::{
+    BusChannel, BusConfig, BusFrame, BusHost, BusId, BusSubscriberRx, PublishResult,
+};
 use dali2rust_contracts::msg::{
-    DaliProgramTarget, ErrorCode, GroupMembershipAction, OperationStatus, OperationType,
-    OperationWorkerSignal, OperationWorkerSignalEvent as Sig, SceneProgramAction,
+    BusEventPayload, DaliProgramTarget, ErrorCode, GroupMembershipAction, OperationStatus,
+    OperationType, OperationWorkerSignal, OperationWorkerSignalEvent as Sig, SceneProgramAction,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
@@ -18,9 +22,65 @@ use dali2rust_operations_runtime::{
 };
 use dali2rust_test_support::wait_until;
 
+const TRANSITION_EVENTS: &[&str] = &["OperationStatusChangedEvent"];
+
+const TRANSITION_INBOX: usize = 64;
+
+struct Transition {
+    operation_key: String,
+    status: OperationStatus,
+    error_code: Option<ErrorCode>,
+}
+
+struct Transitions {
+    tap: BusSubscriberRx,
+    seen: RefCell<Vec<Transition>>,
+}
+
+impl Transitions {
+    fn new(tap: BusSubscriberRx) -> Self {
+        Self {
+            tap,
+            seen: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn collected(&self) -> Ref<'_, Vec<Transition>> {
+        let mut seen = self.seen.borrow_mut();
+        while let Ok(frame) = self.tap.try_recv() {
+            let BusFrame::Event(event) = frame else {
+                continue;
+            };
+            let BusEventPayload::OperationStatusChangedEvent(body) = &event.payload else {
+                continue;
+            };
+            seen.push(Transition {
+                operation_key: body.operation_key.as_str().to_string(),
+                status: body.status,
+                error_code: body.error.as_ref().map(|error| error.code),
+            });
+        }
+        drop(seen);
+        self.seen.borrow()
+    }
+}
+
+struct TrackerHandle {
+    state: Arc<Mutex<OperationTrackerInner>>,
+    transitions: Transitions,
+}
+
+impl Deref for TrackerHandle {
+    type Target = Arc<Mutex<OperationTrackerInner>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
 fn spawn_harness() -> (
     dali2rust_bus::BusPublisher,
-    Arc<Mutex<OperationTrackerInner>>,
+    TrackerHandle,
     BusHost,
 ) {
     let (publisher, tracker, _counters, host) = spawn_harness_with_counters();
@@ -29,21 +89,22 @@ fn spawn_harness() -> (
 
 fn spawn_harness_with_counters() -> (
     dali2rust_bus::BusPublisher,
-    Arc<Mutex<OperationTrackerInner>>,
+    TrackerHandle,
     Arc<OperationTrackerCounters>,
     BusHost,
 ) {
-    let (host, publisher, (cmd_rx, ev_rx, conf_rx)) = BusHost::spawn(
+    let (host, publisher, (cmd_rx, ev_rx, conf_rx, transition_tap)) = BusHost::spawn(
         BusConfig::default(),
         |reg| {
             (
                 reg.subscribe_commands(16, dali2rust_contracts::msg::COMMAND_VARIANT_NAMES),
                 reg.subscribe_events(32, OPERATION_TRACKER_HANDLED_EVENTS),
                 reg.subscribe_confirmations(16),
+                reg.subscribe_events(TRANSITION_INBOX, TRANSITION_EVENTS),
             )
         },
     );
-    let tracker = Arc::new(Mutex::new(OperationTrackerInner::new()));
+    let state = Arc::new(Mutex::new(OperationTrackerInner::new()));
     let counters = Arc::new(OperationTrackerCounters::default());
     let _join = spawn_operation_tracker_worker(
         cmd_rx,
@@ -51,9 +112,13 @@ fn spawn_harness_with_counters() -> (
         conf_rx,
         publisher.clone(),
         BusId::default(),
-        Arc::clone(&tracker),
+        Arc::clone(&state),
         Arc::clone(&counters),
     );
+    let tracker = TrackerHandle {
+        state,
+        transitions: Transitions::new(transition_tap),
+    };
     (publisher, tracker, counters, host)
 }
 
@@ -134,22 +199,20 @@ fn poller_signal_event(correlation_id: u64, signal: OperationWorkerSignal, code:
     )
 }
 
-fn tail_for(tracker: &Arc<Mutex<OperationTrackerInner>>, key: &str) -> Vec<OperationStatus> {
+fn tail_for(tracker: &TrackerHandle, key: &str) -> Vec<OperationStatus> {
     tracker
-        .lock()
-        .expect("tracker")
-        .events
+        .transitions
+        .collected()
         .iter()
         .filter(|e| e.operation_key == key)
         .map(|e| e.status)
         .collect::<Vec<_>>()
 }
 
-fn last_error_for(tracker: &Arc<Mutex<OperationTrackerInner>>, key: &str) -> Option<ErrorCode> {
+fn last_error_for(tracker: &TrackerHandle, key: &str) -> Option<ErrorCode> {
     tracker
-        .lock()
-        .expect("tracker")
-        .events
+        .transitions
+        .collected()
         .iter()
         .rev()
         .find(|e| e.operation_key == key)
@@ -1074,7 +1137,7 @@ fn device_replaced_event(
 
 fn drive_raced_commissioning_op(
     publisher: &dali2rust_bus::BusPublisher,
-    tracker: &Arc<Mutex<OperationTrackerInner>>,
+    tracker: &TrackerHandle,
     corr: u64,
     key: &str,
     op_type: OperationType,

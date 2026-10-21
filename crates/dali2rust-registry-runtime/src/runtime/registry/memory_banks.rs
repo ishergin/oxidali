@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::runtime::registry::store::{evict_stale, registry_unix_ms, Staged};
 use crate::runtime::registry::store::Inner;
 use crate::runtime::registry::store::RegistryStore;
@@ -17,6 +19,8 @@ use super::physical_devices::{
     merge_read_attr_opt, MemoryBankRangeRecord, MemoryBankRecord, PhysicalDeviceRecord,
 };
 
+type ChunkIdentity = (u8, u8, u8, u16);
+
 #[derive(Debug)]
 pub(crate) struct MemoryBankStaging {
     pub(crate) adapter_id: u8,
@@ -26,6 +30,7 @@ pub(crate) struct MemoryBankStaging {
     pub(crate) bytes: Vec<u8>,
     pub(crate) staged_at_ms: u64,
     last_chunk_index: Option<u16>,
+    headless: bool,
 }
 
 impl MemoryBankStaging {
@@ -38,15 +43,24 @@ impl MemoryBankStaging {
         now: u64,
         chunk_index: u16,
     ) -> Self {
+        let headless = chunk_index != 0;
         Self {
             adapter_id,
             short_address,
             bank,
             start_offset,
-            bytes: data.to_vec(),
+            bytes: if headless { Vec::new() } else { data.to_vec() },
             staged_at_ms: now,
             last_chunk_index: Some(chunk_index),
+            headless,
         }
+    }
+
+    fn is_read_of(&self, (adapter_id, short_address, bank, start_offset): ChunkIdentity) -> bool {
+        self.adapter_id == adapter_id
+            && self.short_address == short_address
+            && self.bank == bank
+            && self.start_offset == start_offset
     }
 
     #[allow(clippy::too_many_arguments, reason = "one param per identity field of the chunk")]
@@ -60,11 +74,7 @@ impl MemoryBankStaging {
         data: &[u8],
         now: u64,
     ) -> bool {
-        if self.adapter_id != adapter_id
-            || self.short_address != short_address
-            || self.bank != bank
-            || self.start_offset != start_offset
-        {
+        if !self.is_read_of((adapter_id, short_address, bank, start_offset)) {
             return false;
         }
         let ok_order = match self.last_chunk_index {
@@ -78,14 +88,60 @@ impl MemoryBankStaging {
             return false;
         }
         self.last_chunk_index = Some(chunk_index);
-        self.bytes.extend_from_slice(data);
+        if !self.headless {
+            self.bytes.extend_from_slice(data);
+        }
         self.staged_at_ms = now;
         true
     }
 }
 
-fn commit_staged_bank(g: &mut Inner, correlation_id: u64) -> Option<(u8, bool)> {
+fn stage_chunk(
+    stages: &mut HashMap<u64, MemoryBankStaging>,
+    correlation_id: u64,
+    identity: ChunkIdentity,
+    chunk_index: u16,
+    data: &[u8],
+    now: u64,
+) -> bool {
+    let (adapter_id, short_address, bank, start_offset) = identity;
+    match stages.get_mut(&correlation_id) {
+        Some(st) if chunk_index != 0 || st.is_read_of(identity) => {
+            let accepted = st.accept_chunk(
+                adapter_id,
+                short_address,
+                bank,
+                start_offset,
+                chunk_index,
+                data,
+                now,
+            );
+            if !accepted {
+                stages.remove(&correlation_id);
+            }
+            accepted
+        }
+        _ => {
+            let fresh = MemoryBankStaging::new(
+                adapter_id,
+                short_address,
+                bank,
+                start_offset,
+                data,
+                now,
+                chunk_index,
+            );
+            stages.insert(correlation_id, fresh);
+            true
+        }
+    }
+}
+
+fn commit_staged_bank(g: &mut Inner, correlation_id: u64) -> Option<(u8, u8, bool)> {
     let st = g.memory_bank_stage.remove(&correlation_id)?;
+    if st.headless {
+        return None;
+    }
     let aid = st.adapter_id;
     let sa = st.short_address;
     let bank = st.bank;
@@ -93,7 +149,7 @@ fn commit_staged_bank(g: &mut Inner, correlation_id: u64) -> Option<(u8, bool)> 
     let rec = g.physical_devices.get_mut(&(aid, sa))?;
     let changed = commit_memory_bank(rec, bank, st.start_offset, st.bytes, now_commit);
     g.physical_devices_revision = g.physical_devices_revision.saturating_add(1);
-    Some((aid, changed))
+    Some((aid, sa, changed))
 }
 
 macro_rules! merge_parsed_fields {
@@ -387,43 +443,22 @@ impl RegistryStore {
     ) -> bool {
         let now = registry_unix_ms();
         let mut g = self.write_inner();
-
-        if let Some(st) = g.memory_bank_stage.get_mut(&correlation_id) {
-            if !st.accept_chunk(
-                adapter_id,
-                short_address,
-                bank,
-                start_offset,
-                chunk_index,
-                data,
-                now,
-            ) {
-                g.memory_bank_stage.remove(&correlation_id);
-                return false;
-            }
-        } else {
-            g.memory_bank_stage.insert(
-                correlation_id,
-                MemoryBankStaging::new(
-                    adapter_id,
-                    short_address,
-                    bank,
-                    start_offset,
-                    data,
-                    now,
-                    chunk_index,
-                ),
-            );
-        }
-
-        if !last_chunk {
+        let staged = stage_chunk(
+            &mut g.memory_bank_stage,
+            correlation_id,
+            (adapter_id, short_address, bank, start_offset),
+            chunk_index,
+            data,
+            now,
+        );
+        if !staged || !last_chunk {
             return false;
         }
 
         let committed = commit_staged_bank(&mut g, correlation_id);
         drop(g);
-        if let Some((aid, true)) = committed {
-            self.dirty.mark_physical_devices_dirty(aid);
+        if let Some((aid, sa, true)) = committed {
+            self.dirty.mark_physical_device_dirty(aid, sa);
         }
         committed.is_some()
     }
@@ -447,6 +482,9 @@ impl Staged for MemoryBankStaging {
 
 #[cfg(test)]
 mod tests {
+    use dali2rust_domain::registry::PhysicalDeviceReadPort;
+    use dali2rust_platform::slice_store::SliceKey;
+
     use crate::runtime::registry::store::RegistryStore;
 
     const SHORT: u8 = 5;
@@ -456,6 +494,17 @@ mod tests {
         assert!(store.seed_discovered_dt8(SHORT, Some(0x2222)));
         let _ = store.dirty.take_physical_devices_dirty_for(0);
         store
+    }
+
+    #[test]
+    fn a_memory_bank_read_of_one_device_marks_only_its_bank() {
+        let store = seeded_store();
+        let bytes: Vec<u8> = (0u8..27).collect();
+        assert!(store.stage_memory_bank_chunk(11, 0, SHORT, 0, 0, 0, true, &bytes));
+        assert_eq!(
+            store.dirty.pending_physical_device_banks(0),
+            1 << (SHORT / SliceKey::DEVICES_PER_BANK)
+        );
     }
 
     #[test]
@@ -475,5 +524,78 @@ mod tests {
         let longer: Vec<u8> = (0u8..30).collect();
         assert!(store.stage_memory_bank_chunk(13, 0, SHORT, 0, 0, 0, true, &longer));
         assert!(store.dirty.take_physical_devices_dirty_for(0));
+    }
+
+    #[test]
+    fn a_read_whose_first_chunk_never_arrived_commits_nothing() {
+        let store = seeded_store();
+        let second_chunk: Vec<u8> = (24u8..27).collect();
+        assert!(
+            !store.stage_memory_bank_chunk(14, 0, SHORT, 0, 0, 1, true, &second_chunk),
+            "the read's first chunk never arrived, yet its second chunk was committed at the \
+             read's start offset"
+        );
+        assert_eq!(
+            store.dirty.pending_physical_device_banks(0),
+            0,
+            "a read missing its first chunk marked the device's bank for a flash write"
+        );
+        let banks = store.physical_device_memory_banks(0, SHORT).expect("seeded device");
+        assert!(
+            banks.is_empty(),
+            "a read missing its first chunk left a memory bank record: {banks:?}"
+        );
+    }
+
+    #[test]
+    fn a_read_whose_first_chunk_never_arrived_does_not_hold_back_the_next_read() {
+        let store = seeded_store();
+        let chunk: Vec<u8> = (0u8..24).collect();
+        assert!(!store.stage_memory_bank_chunk(15, 0, SHORT, 0, 0, 1, false, &chunk));
+        assert!(!store.stage_memory_bank_chunk(15, 0, SHORT, 0, 0, 2, true, &chunk));
+        let next_bank: Vec<u8> = (0u8..3).collect();
+        assert!(
+            store.stage_memory_bank_chunk(15, 0, SHORT, 1, 0, 0, true, &next_bank),
+            "the next bank of the same sweep was refused after a headless read ended"
+        );
+    }
+
+    #[test]
+    fn a_read_whose_last_chunk_was_dropped_does_not_lose_the_next_bank() {
+        let store = seeded_store();
+        let first_chunk: Vec<u8> = (0u8..24).collect();
+        assert!(!store.stage_memory_bank_chunk(16, 0, SHORT, 0, 0, 0, false, &first_chunk));
+        let next_bank: Vec<u8> = (0u8..3).collect();
+        assert!(
+            store.stage_memory_bank_chunk(16, 0, SHORT, 1, 0, 0, true, &next_bank),
+            "bank 0 of the sweep lost its last chunk, and bank 1, which arrived whole, was \
+             discarded with it"
+        );
+        let banks = store.physical_device_memory_banks(0, SHORT).expect("seeded device");
+        assert_eq!(
+            banks.iter().map(|bank| bank.bank).collect::<Vec<_>>(),
+            vec![1],
+            "only bank 1 arrived whole; bank 0 must not be committed from its first chunk: \
+             {banks:?}"
+        );
+    }
+
+    #[test]
+    fn a_mismatching_chunk_past_the_first_still_ends_the_open_read() {
+        let store = seeded_store();
+        let first_chunk: Vec<u8> = (0u8..24).collect();
+        assert!(!store.stage_memory_bank_chunk(17, 0, SHORT, 0, 0, 0, false, &first_chunk));
+        let foreign: Vec<u8> = (24u8..27).collect();
+        assert!(
+            !store.stage_memory_bank_chunk(17, 0, SHORT, 1, 0, 1, true, &foreign),
+            "a second chunk of another bank was committed over the open read"
+        );
+        assert!(
+            !store.stage_memory_bank_chunk(17, 0, SHORT, 0, 0, 1, true, &foreign),
+            "the open read was kept after a mismatching chunk, and its own second chunk \
+             committed it"
+        );
+        let banks = store.physical_device_memory_banks(0, SHORT).expect("seeded device");
+        assert!(banks.is_empty(), "no read arrived whole, yet a bank was committed: {banks:?}");
     }
 }

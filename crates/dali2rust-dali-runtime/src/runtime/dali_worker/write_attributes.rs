@@ -38,6 +38,8 @@ pub(super) fn handle_write_attributes(
         .fetch_add(1, Ordering::Relaxed);
 }
 
+const ATTRIBUTES_WRITTEN_LOST: &str = "attributes_written_event_lost";
+
 fn report_lost_evidence(
     publisher: &BusPublisher,
     adapter_id: BusId,
@@ -45,18 +47,16 @@ fn report_lost_evidence(
     signals_operation: bool,
     counters: &DaliWorkerCounters,
 ) {
-    counters.evidence_publish_failed.fetch_add(1, Ordering::Relaxed);
-    counters.execution_failed.fetch_add(1, Ordering::Relaxed);
     if !signals_operation {
+        count_lost_fact(counters);
         return;
     }
-    publish_worker_failed(
+    fail_operation_over_lost_fact(
         publisher,
         adapter_id,
         workflow,
         Origin::Internal,
-        ErrorCode::CommandsIngressOverload,
-        "attributes_written_event_lost",
+        ATTRIBUTES_WRITTEN_LOST,
         counters,
     );
     emit_execution_failed(publisher, workflow, counters);

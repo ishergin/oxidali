@@ -1,26 +1,38 @@
 #![allow(dead_code, reason = "Each `tests/*.rs` is its own binary and compiles this whole module, so a helper one binary does not call is \"never used\" from that binary's point of view — the same reason `dali2rust-registry-runtime`'s support module carries this, and the same pressure that produced the local copies in the first place")]
 
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
-use dali2rust_bus::{BusFrame, BusId, BusPublisher, BusSubscriberRx};
+use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
+use dali2rust_bus::{
+    BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublisher, BusSubscriberRx, PublishResult,
+};
 use dali2rust_contracts::msg::{
-    DaliAttributeGroup, DaliReadAttributesCommand, DaliSetTargetStateCommand, DaliTargetScope,
-    LightSetpoint, MemoryBankReadPreset, Origin, PowerState,
+    BusEventPayload, DaliAttributeGroup, DaliReadAttributesCommand, DaliSetTargetStateCommand,
+    DaliTargetScope, ErrorCode, LightSetpoint, MemoryBankReadPreset, OperationWorkerSignal,
+    OperationWorkerSignalEvent, Origin, PowerState,
 };
 use dali2rust_dali_runtime::{
     spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock,
+    DALI_WORKER_HANDLED_COMMANDS,
 };
 use dali2rust_domain::dali::pres::command::DaliCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::types::DaliAddress;
-use dali2rust_platform::dali::WireActivity;
+use dali2rust_platform::dali::{DaliTransport, WireActivity};
 use dali2rust_registry_runtime::RegistryStore;
+use dali2rust_test_support::{hold_the_events_ingress_full, try_wait_until};
 
 pub const SHORT: u8 = 5;
 pub const LEVEL: u8 = 220;
 pub const EVENT_BUDGET: Duration = Duration::from_secs(5);
+pub const SIGNAL_DEADLINE: Duration = Duration::from_secs(10);
+const HELD_EVENTS_INGRESS: usize = 4;
+const WORKER_INBOX: usize = 16;
+const SIGNAL_INBOX: usize = 64;
 
 pub fn standard_frame(command: StandardCommand) -> u16 {
     DaliCommand::Standard {
@@ -122,4 +134,123 @@ pub fn spawn_mock_worker(
         interactive,
         Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
     )
+}
+
+pub fn spawn_worker_on<T: DaliTransport + Send + 'static>(
+    commands: BusSubscriberRx,
+    publisher: &BusPublisher,
+    transport: &Arc<Mutex<T>>,
+    counters: &Arc<DaliWorkerCounters>,
+) -> std::thread::JoinHandle<()> {
+    spawn_dali_worker(
+        commands,
+        DaliController::new(Arc::clone(transport), Box::new(StdClock::new())),
+        DaliRuntimeConfig::default(),
+        Arc::new(RegistryStore::with_adapter_count(1)),
+        publisher.clone(),
+        BusId::default(),
+        Arc::clone(counters),
+        Arc::new(WireActivity::new()),
+        Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
+    )
+}
+
+pub fn spawn_signal_bus() -> (BusHost, BusPublisher, BusSubscriberRx, BusSubscriberRx) {
+    let (host, publisher, (worker_commands, signals)) = BusHost::spawn(
+        BusConfig {
+            events_ingress: HELD_EVENTS_INGRESS,
+            ..BusConfig::default()
+        },
+        |reg| {
+            (
+                reg.subscribe_commands(WORKER_INBOX, DALI_WORKER_HANDLED_COMMANDS),
+                reg.subscribe_events(SIGNAL_INBOX, &["OperationWorkerSignalEvent"]),
+            )
+        },
+    );
+    (host, publisher, worker_commands, signals)
+}
+
+pub fn next_signal(
+    signals: &BusSubscriberRx,
+    correlation_id: u64,
+) -> Option<OperationWorkerSignalEvent> {
+    let deadline = Instant::now() + SIGNAL_DEADLINE;
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())?;
+        match signals.recv_timeout(remaining) {
+            Ok(BusFrame::Event(envelope)) => match &envelope.payload {
+                BusEventPayload::OperationWorkerSignalEvent(body)
+                    if body.workflow_correlation_id == correlation_id =>
+                {
+                    return Some(body.clone())
+                }
+                _ => {}
+            },
+            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => panic!("signal tap died"),
+        }
+    }
+}
+
+pub struct DemoBusOperation {
+    pub frame: fn() -> BusFrame,
+    pub correlation_id: u64,
+    pub announces_start: bool,
+    pub lost: &'static str,
+}
+
+fn terminal_signal_on_the_demo_bus(
+    operation: &DemoBusOperation,
+    hold_the_ingress: bool,
+) -> OperationWorkerSignalEvent {
+    let (_host, publisher, worker_commands, signals) = spawn_signal_bus();
+    let transport = Arc::new(Mutex::new(SimDaliTransport::demo_bus()));
+    let counters = Arc::new(DaliWorkerCounters::default());
+    let _worker = spawn_worker_on(worker_commands, &publisher, &transport, &counters);
+    let wire_held = transport.lock().expect("sim");
+    let published = publisher.try_publish(BusChannel::Commands, (operation.frame)());
+    assert_eq!(published, PublishResult::Queued);
+    if operation.announces_start {
+        assert_eq!(
+            next_signal(&signals, operation.correlation_id).map(|started| started.signal),
+            Some(OperationWorkerSignal::WorkerStarted),
+            "the operation never started"
+        );
+    }
+    let ingress = hold_the_ingress.then(|| hold_the_events_ingress_full(&publisher));
+    drop(wire_held);
+    if let Some(ingress) = ingress {
+        assert!(
+            try_wait_until(
+                || counters.event_publish_failed.load(Ordering::Relaxed) > 0,
+                SIGNAL_DEADLINE
+            ),
+            "inconclusive: the events ingress was held full, yet no required publish gave up"
+        );
+        ingress.release();
+    }
+    next_signal(&signals, operation.correlation_id).expect("the operation never ended")
+}
+
+pub fn assert_a_lost_fact_fails_the_operation(operation: &DemoBusOperation) {
+    let open = terminal_signal_on_the_demo_bus(operation, false);
+    assert_eq!(
+        open.signal,
+        OperationWorkerSignal::WorkerSucceeded,
+        "control: with the events ingress open the operation ends {open:?}"
+    );
+    let held = terminal_signal_on_the_demo_bus(operation, true);
+    let error = held.error.as_ref().map(|error| (error.code, error.message.as_str()));
+    assert_eq!(
+        (held.signal, error),
+        (
+            OperationWorkerSignal::WorkerFailed,
+            Some((ErrorCode::CommandsIngressOverload, operation.lost))
+        ),
+        "the full ingress refused a fact the operation owed the registry, yet it ended \
+         {held:?} — a green operation over a registry that never heard it"
+    );
 }

@@ -539,8 +539,9 @@ mod tests {
     use super::FLUSH_CHUNK_BYTES;
     use dali2rust_contracts::msg::{fixed_text_64, ColorMode, DeviceType, DeviceTypeSet};
     use dali2rust_domain::registry::{
-        AttributeSource, MemoryBankRangeView, MemoryBankSummaryView, ObservedValue,
-        PhysicalDeviceAttributesView, SceneReadPort,
+        AttributeSectionKind, AttributeSectionView, AttributeSource, MemoryBankRangeView,
+        MemoryBankSummaryView, ObservedValue, PhysicalDeviceAttributesView,
+        PhysicalDeviceReadPort, SceneReadPort,
     };
     use dali2rust_bsp::slice_store_files::InMemorySliceStore;
     use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
@@ -553,6 +554,25 @@ mod tests {
             last_read_ms: Some(ms),
             last_write_confirmed_ms: None,
         })
+    }
+
+    fn attributes_read_back(store: &RegistryStore, short: u8) -> PhysicalDeviceAttributesView {
+        let mut attributes = PhysicalDeviceAttributesView::default();
+        for kind in AttributeSectionKind::ALL {
+            let section = store.physical_device_attribute_section(0, short, *kind);
+            match section.expect("the device exists") {
+                AttributeSectionView::Common102(view) => attributes.common102 = *view,
+                AttributeSectionView::Dt6Led(view) => attributes.dt6_led = *view,
+                AttributeSectionView::Dt8Color(view) => attributes.dt8_color = *view,
+                AttributeSectionView::Extended(view) => attributes.extended = *view,
+                AttributeSectionView::Groups(view) => attributes.groups = *view,
+                AttributeSectionView::MemoryIdentity(view) => attributes.memory_identity = *view,
+                AttributeSectionView::MemoryProfile(view) => attributes.memory_profile = *view,
+                AttributeSectionView::Scenes(view) => attributes.scenes = *view,
+                _ => {}
+            }
+        }
+        attributes
     }
 
     fn fat_attributes(seed: u8) -> PhysicalDeviceAttributesView {
@@ -930,7 +950,7 @@ mod tests {
     fn streamed_flush_roundtrips_through_hydrate() {
         let store = populated_store(4);
         let slices = InMemorySliceStore::new();
-        store.dirty.mark_physical_devices_dirty(0);
+        store.dirty.mark_all_physical_devices_dirty(0);
         store.dirty.mark_virtual_lamps_dirty(0);
         store.flush_dirty_slices(&slices);
 
@@ -938,11 +958,11 @@ mod tests {
         let report = restored.hydrate_from_store(&slices, 2);
         assert!(report.is_ok(), "errors={:?}", report.errors);
         let view = restored
-            .physical_device_view(0, 3)
+            .physical_device_core_view(0, 3)
             .expect("device 3 hydrates");
         assert_eq!(view.random_address, Some(0x00AB_0003));
         assert_eq!(view.name, "Luminaire hall corridor 03");
-        assert_eq!(view.attributes, fat_attributes(3));
+        assert_eq!(attributes_read_back(&restored, 3), fat_attributes(3));
     }
 
     #[test]
@@ -1292,14 +1312,17 @@ mod tests {
     }
 
     #[test]
-    fn a_waiting_bank_is_never_written_by_a_coarse_mark_or_a_scan() {
+    fn a_waiting_bank_is_never_written_by_a_whole_adapter_mark_or_a_scan() {
         let slices = ProbeStore::default();
         write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
         slices.fail_reads_of(Some(LEGACY_SLOT));
         let waiting = boot_and_flush(&slices);
-        waiting.dirty.mark_physical_devices_dirty(0);
+        waiting.dirty.mark_all_physical_devices_dirty(0);
+        waiting.dirty.mark_groups_dirty(0);
         assert!(waiting.seed_discovered_dt8(SCANNED_SHORT, Some(SCANNED_RANDOM_ADDRESS)));
+        let written_before = slices.written().len();
         waiting.flush_dirty_slices(&slices);
+        assert!(slices.written().len() > written_before, "inconclusive: the flush never ran");
         assert_eq!(slices.banks_written(), Vec::<SliceKey>::new(), "a waiting bank was written");
 
         slices.fail_reads_of(None);
@@ -1375,7 +1398,7 @@ mod tests {
         slices.fail_reads_of(Some(bank_slot(BROKEN_BANK)));
         let unread = boot(&slices);
         assert_eq!(unread.persist_counters.unread_slices.load(std::sync::atomic::Ordering::Acquire), 1);
-        unread.dirty.mark_physical_devices_dirty(0);
+        unread.dirty.mark_all_physical_devices_dirty(0);
         unread.flush_dirty_slices(&slices);
         assert!(device_name(&unread, forgotten).is_none(), "the old slot stood in for the bank");
         assert_eq!(slices.inner.load(bank_slot(BROKEN_BANK)).expect("bank"), newer);

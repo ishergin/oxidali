@@ -1,5 +1,9 @@
 use super::*;
 
+const DEVICE_REPLACED_LOST: &str = "device_replaced_event_lost";
+const ADDRESSING_COMPLETED_LOST: &str = "addressing_completed_event_lost";
+const DEVICE_IDENTIFIED_LOST: &str = "device_identified_event_lost";
+
 pub(super) fn handle_replace_device(
     controller: &mut impl DaliApplicationController,
     publisher: &BusPublisher,
@@ -19,19 +23,39 @@ pub(super) fn handle_replace_device(
     let error_code = outcome.err().map(SemanticDaliError::code);
     let handover_ok = error_code.is_none();
 
-    publish_event_required(
+    let recorded = publish_event_required(
         publisher,
         replaced_event(adapter_id, correlation_id, cmd, handover_ok, error_code),
         counters,
         PublishKind::Series,
         "device-replaced",
     );
+    let failure = error_code.map(|code| (code, "replace failed"));
+    close_commissioning_operation(publisher, adapter_id, workflow, recorded, DEVICE_REPLACED_LOST, failure, counters);
+}
 
-    match error_code {
-        None => publish_worker_succeeded(publisher, adapter_id, workflow, Origin::Internal, counters),
-        Some(code) => {
-            publish_worker_failed(publisher, adapter_id, workflow, Origin::Internal, code, "replace failed", counters)
+fn close_commissioning_operation(
+    publisher: &BusPublisher,
+    adapter_id: BusId,
+    workflow: u64,
+    recorded: bool,
+    lost: &str,
+    failure: Option<(dali2rust_contracts::msg::ErrorCode, &str)>,
+    counters: &DaliWorkerCounters,
+) {
+    match failure {
+        Some((code, message)) => {
+            publish_worker_failed(publisher, adapter_id, workflow, Origin::Internal, code, message, counters)
         }
+        None if !recorded => fail_operation_over_lost_fact(
+            publisher,
+            adapter_id,
+            workflow,
+            Origin::Internal,
+            lost,
+            counters,
+        ),
+        None => publish_worker_succeeded(publisher, adapter_id, workflow, Origin::Internal, counters),
     }
 }
 
@@ -138,14 +162,10 @@ pub(super) fn handle_addressing(
             }),
         },
     );
-    publish_event_required(publisher, ev, counters, PublishKind::Series, "addressing-completed");
-
-    match error_code {
-        None => publish_worker_succeeded(publisher, adapter_id, workflow, Origin::Internal, counters),
-        Some(code) => {
-            publish_worker_failed(publisher, adapter_id, workflow, Origin::Internal, code, "address change failed", counters)
-        }
-    }
+    let recorded =
+        publish_event_required(publisher, ev, counters, PublishKind::Series, "addressing-completed");
+    let failure = error_code.map(|code| (code, "address change failed"));
+    close_commissioning_operation(publisher, adapter_id, workflow, recorded, ADDRESSING_COMPLETED_LOST, failure, counters);
 }
 
 pub(super) fn handle_identify_device(
@@ -176,12 +196,8 @@ pub(super) fn handle_identify_device(
             }),
         },
     );
-    publish_event_required(publisher, ev, counters, PublishKind::Series, "device-identified");
-
-    match error {
-        None => publish_worker_succeeded(publisher, adapter_id, workflow, Origin::Internal, counters),
-        Some(e) => {
-            publish_worker_failed(publisher, adapter_id, workflow, Origin::Internal, e.code(), e.message(), counters)
-        }
-    }
+    let recorded =
+        publish_event_required(publisher, ev, counters, PublishKind::Series, "device-identified");
+    let failure = error.map(|e| (e.code(), e.message()));
+    close_commissioning_operation(publisher, adapter_id, workflow, recorded, DEVICE_IDENTIFIED_LOST, failure, counters);
 }

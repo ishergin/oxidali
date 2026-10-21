@@ -67,6 +67,47 @@ pub(super) fn publish_event_required(
     outcome.queued
 }
 
+pub(super) fn publish_closing_fact_or_fail(
+    publisher: &BusPublisher,
+    env: EventEnvelope,
+    counters: &DaliWorkerCounters,
+    kind: PublishKind,
+    label: &str,
+) -> bool {
+    let correlation_id = env.meta.correlation_id;
+    let published = publish_event_required(publisher, env, counters, kind, label);
+    if !published {
+        counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+        emit_execution_failed(publisher, correlation_id, counters);
+    }
+    published
+}
+
+pub(super) fn count_lost_fact(counters: &DaliWorkerCounters) {
+    counters.evidence_publish_failed.fetch_add(1, Ordering::Relaxed);
+    counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(super) fn fail_operation_over_lost_fact(
+    publisher: &BusPublisher,
+    adapter_id: BusId,
+    workflow: u64,
+    origin: Origin,
+    lost: &str,
+    counters: &DaliWorkerCounters,
+) {
+    count_lost_fact(counters);
+    publish_worker_failed(
+        publisher,
+        adapter_id,
+        workflow,
+        origin,
+        ErrorCode::CommandsIngressOverload,
+        lost,
+        counters,
+    );
+}
+
 pub(super) fn publish_confirmation_typed(
     publisher: &BusPublisher,
     env: ConfirmationEnvelope,

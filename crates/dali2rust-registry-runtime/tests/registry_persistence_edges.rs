@@ -1,10 +1,12 @@
+mod support;
+
 use dali2rust_contracts::msg::{
     ColorMode, DeviceType, PersistenceSliceKind, PersistenceSliceList,
 };
 use dali2rust_domain::registry::{
     AttributeSource, GroupReadPort, HomeAssistantSettingsReadPort, MemoryBankRangeView,
-    MemoryBankSummaryView, ObservedValue, PhysicalDeviceAttributesView, PollerSettingsReadPort,
-    VirtualLampReadPort,
+    MemoryBankSummaryView, ObservedValue, PhysicalDeviceAttributesView, PhysicalDeviceReadPort,
+    PollerSettingsReadPort, VirtualLampReadPort,
 };
 use dali2rust_registry_runtime::{
     encode_persistence_blob, ADAPTERS_SLICE_VERSION, PHYSICAL_DEVICES_SLICE_VERSION,
@@ -269,13 +271,13 @@ fn hydrate_physical_devices_blob_preserves_attributes_and_random_address() {
     let store = RegistryStore::with_adapter_count(1);
     let _r = store.hydrate_from_store(&slices, 1);
     let view = store
-        .physical_device_view(0, 3)
+        .physical_device_core_view(0, 3)
         .expect("physical device should hydrate");
     assert_eq!(view.random_address, Some(0x123456));
     assert_eq!(view.name, "PD3");
     assert_eq!(view.notes.as_deref(), Some("CCT luminaire"));
-    assert_eq!(view.attributes, attributes);
-    assert_eq!(view.memory_banks, memory_banks);
+    assert_eq!(support::attributes_of(&store, 3), attributes);
+    assert_eq!(support::memory_banks_of(&store, 3), memory_banks);
     assert_eq!(view.device_type_discovered, "dt8_color");
     assert_eq!(view.color_mode_discovered, "cct");
     assert!(view.capabilities.cct, "the fixture's CCT evidence hydrates");
@@ -450,7 +452,7 @@ fn a_rejected_physical_devices_slice_orphans_every_binding_at_once() {
 
     for (vl, short) in LAMPS {
         assert!(
-            store.physical_device_view(0, short).is_none(),
+            !store.physical_device_exists(0, short),
             "the bump must reject the whole slice, not repair it"
         );
         assert_eq!(

@@ -262,7 +262,6 @@ fn rules_worker_deps(booted: &BootedStack) -> workers::RulesWorkerDeps {
         slices: booted.registry.deps.persistence_slices(),
         registry: Arc::clone(&booted.diagnostics_store),
         wall: Arc::clone(&booted.scheduling.wall_clock),
-        hcl_state: Arc::clone(&booted.registry.http.hcl_state),
         correlation: Arc::clone(&booted.dispatch.correlation),
     }
 }

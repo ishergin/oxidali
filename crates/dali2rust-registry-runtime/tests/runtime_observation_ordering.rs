@@ -8,6 +8,7 @@ use dali2rust_contracts::msg::{
     RuntimeRegistryUpdateEntry, RuntimeSource, OBSERVATION_ORDER_WINDOW_MS,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
+use dali2rust_domain::registry::PhysicalDeviceReadPort;
 use dali2rust_test_support::wait_until;
 
 use support::{publish_cmd, recv_confirm_for, seed_physical_via_discovery, spawn_registry_stack};
@@ -60,7 +61,7 @@ fn assert_ok(c: &dali2rust_contracts::msg::ConfirmationEnvelope) {
 }
 
 fn stored_level(stack: &support::RegistryTestStack) -> Option<u8> {
-    stack.store.physical_device_view(0, SHORT).and_then(|v| v.state.level)
+    stack.store.physical_device_core_view(0, SHORT).and_then(|v| v.state.level)
 }
 
 #[test]
