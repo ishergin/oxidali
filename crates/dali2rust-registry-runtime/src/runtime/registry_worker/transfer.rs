@@ -199,7 +199,7 @@ fn on_hydration_stack<T: Send + 'static>(
         .map_err(|e| {
             log::error!("registry: import {note} failed: {e}");
             match e {
-                RunError::Unstarted(_) => NO_RELOAD_STACK,
+                RunError::Busy | RunError::Unstarted(_) => NO_RELOAD_STACK,
                 RunError::Unanswered => RELOAD_JOB_LOST,
             }
         })

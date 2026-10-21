@@ -5,8 +5,11 @@ use dali2rust_api::ws::{
     error_frame, hello_frame, parse_client_request, subscription_ack_frame, Channel, ClientRequest,
     DropNotice, SubscriptionAck, V1_CHANNELS,
 };
-use dali2rust_contracts::msg::ErrorCode;
+use dali2rust_bsp::esp_thread::StackHome;
 use dali2rust_bsp::log_ring::{LogRing, ARMED_LEVEL, LOG_REPLAY_LINES};
+use dali2rust_bsp::stack_runner::{RunError, RunnerPool};
+use dali2rust_bsp::std_thread_stack::EVENT_WORKER_STACK;
+use dali2rust_contracts::msg::ErrorCode;
 use dali2rust_platform::dali::SnifferTap;
 use dali2rust_platform::logs::LogLevel;
 
@@ -14,6 +17,7 @@ use crate::counters::WsCounters;
 use crate::runtime::sink::WsSink;
 
 pub const MAX_WS_CLIENTS: usize = 4;
+const SENDERS_PER_CLIENT_SLOT: usize = 2;
 
 const CLIENT_QUEUE_DEPTH: usize = 32;
 
@@ -130,6 +134,7 @@ impl Client {
 
 pub struct WsHub {
     config: WsHubConfig,
+    senders: RunnerPool,
     clients: Mutex<Vec<Client>>,
     arrived: std::sync::Condvar,
     next_id: AtomicU32,
@@ -148,6 +153,7 @@ impl WsHub {
     ) -> Arc<Self> {
         Arc::new(Self {
             config,
+            senders: sender_pool(config.max_clients),
             clients: Mutex::new(Vec::new()),
             arrived: std::sync::Condvar::new(),
             next_id: AtomicU32::new(1),
@@ -189,7 +195,7 @@ impl WsHub {
         self.counters.client_connected();
         self.arrived.notify_all();
         drop(clients);
-        if spawn_sender_thread(id, sink, rx, closed, queued_bytes).is_err() {
+        if start_sender(&self.senders, id, sink, rx, closed, queued_bytes).is_err() {
             self.unregister(id);
             WsCounters::bump(&self.counters.upgrades_rejected_total, 1);
             return Err(RegisterRejected::CapacityExhausted);
@@ -508,34 +514,58 @@ fn notify_channel_loss(client: &mut Client, channel: Channel) -> bool {
     true
 }
 
-fn spawn_sender_thread(
+fn sender_pool(max_clients: usize) -> RunnerPool {
+    RunnerPool::new(
+        c"ws-client",
+        EVENT_WORKER_STACK,
+        StackHome::ExternalOnXip,
+        max_clients.saturating_mul(SENDERS_PER_CLIENT_SLOT),
+    )
+}
+
+fn start_sender(
+    senders: &RunnerPool,
     id: ClientId,
     sink: Box<dyn WsSink>,
     rx: std::sync::mpsc::Receiver<Arc<str>>,
     closed: Arc<std::sync::atomic::AtomicBool>,
     queued_bytes: Arc<std::sync::atomic::AtomicUsize>,
-) -> std::io::Result<std::thread::JoinHandle<()>> {
-    dali2rust_bsp::esp_thread::try_spawn_named_stack_in(
-        c"ws-client",
-        dali2rust_bsp::std_thread_stack::EVENT_WORKER_STACK,
-        dali2rust_bsp::esp_thread::StackHome::ExternalOnXip,
-        None,
-        move || {
-            while let Ok(text) = rx.recv() {
-                queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
-                if let Err(err) = sink.send_text(&text) {
-                    log::info!("ws: client {id} send failed ({err:?}); closing");
-                    break;
-                }
+) -> Result<(), RunError> {
+    let client = Box::new(SenderEnds { id, sink, rx, closed, queued_bytes });
+    senders
+        .start(move || client.serve())
+        .inspect_err(|err| log::warn!("ws: no sender for client {id} ({err}); refusing it"))
+}
+
+struct SenderEnds {
+    id: ClientId,
+    sink: Box<dyn WsSink>,
+    rx: std::sync::mpsc::Receiver<Arc<str>>,
+    closed: Arc<std::sync::atomic::AtomicBool>,
+    queued_bytes: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl SenderEnds {
+    #[allow(
+        clippy::boxed_local,
+        reason = "boxed, the ends stay off the ws-client stack: its frame holds a pointer"
+    )]
+    fn serve(self: Box<Self>) {
+        while let Ok(text) = self.rx.recv() {
+            self.queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
+            if let Err(err) = self.sink.send_text(&text) {
+                log::info!("ws: client {} send failed ({err:?}); closing", self.id);
+                break;
             }
-            for text in rx.try_iter() {
-                queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
-            }
-            drop(rx);
-            closed.store(true, Ordering::Relaxed);
-            sink.close();
-        },
-    )
+        }
+        for text in self.rx.try_iter() {
+            self.queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
+        }
+        let Self { sink, rx, closed, .. } = *self;
+        drop(rx);
+        closed.store(true, Ordering::Relaxed);
+        sink.close();
+    }
 }
 
 #[cfg(test)]
@@ -587,6 +617,81 @@ mod tests {
         };
         let id = hub.register(Box::new(sink)).expect("register");
         (id, rx)
+    }
+
+    struct ThreadSink {
+        senders: Arc<Mutex<std::collections::HashSet<std::thread::ThreadId>>>,
+        closes: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl WsSink for ThreadSink {
+        fn send_text(&self, _text: &str) -> Result<(), WsSinkError> {
+            self.senders.lock().unwrap().insert(std::thread::current().id());
+            Ok(())
+        }
+        fn close(&self) {
+            self.closes.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    const SENDER_POOL: usize = MAX_WS_CLIENTS * SENDERS_PER_CLIENT_SLOT;
+
+    #[test]
+    fn clients_that_come_and_go_reuse_the_sender_threads() {
+        const CLIENTS_IN_TURN: usize = 3 * SENDER_POOL;
+        let (hub, _tap) = hub();
+        let senders = Arc::new(Mutex::new(std::collections::HashSet::new()));
+        let closes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        for turn in 1..=CLIENTS_IN_TURN {
+            let sink = ThreadSink { senders: Arc::clone(&senders), closes: Arc::clone(&closes) };
+            let id = hub.register(Box::new(sink)).expect("register");
+            hub.unregister(id);
+            wait_until(|| closes.load(Ordering::Relaxed) == turn, Duration::from_secs(2));
+        }
+        let threads = senders.lock().unwrap().len();
+        assert!(
+            threads <= SENDER_POOL,
+            "{CLIENTS_IN_TURN} clients in turn were served by {threads} sender threads"
+        );
+    }
+
+    fn connect_held(hub: &WsHub, gate: &Arc<Mutex<bool>>) -> ClientId {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let sink = RecordingSink { tx: Mutex::new(tx), gate: Arc::clone(gate) };
+        hub.register(Box::new(sink)).expect("register")
+    }
+
+    #[test]
+    fn every_client_that_reconnects_while_its_old_sender_still_flushes_is_served() {
+        let (hub, _tap) = hub();
+        let gate = Arc::new(Mutex::new(false));
+        let held = gate.lock().unwrap();
+        let leaving: Vec<ClientId> = (0..MAX_WS_CLIENTS).map(|_| connect_held(&hub, &gate)).collect();
+        for id in leaving {
+            hub.unregister(id);
+        }
+        for _ in 0..MAX_WS_CLIENTS {
+            let (_id, rx) = connect(&hub);
+            assert!(next(&rx).contains("hello"), "a returning client got no hello");
+        }
+        drop(held);
+    }
+
+    #[test]
+    fn a_client_finds_no_sender_once_every_sender_is_stuck_on_a_dead_socket() {
+        let (hub, _tap) = hub();
+        let gate = Arc::new(Mutex::new(false));
+        let held = gate.lock().unwrap();
+        for _ in 0..SENDER_POOL {
+            let id = connect_held(&hub, &gate);
+            hub.unregister(id);
+        }
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let sink = RecordingSink { tx: Mutex::new(tx), gate: Arc::new(Mutex::new(false)) };
+        assert!(matches!(hub.register(Box::new(sink)), Err(RegisterRejected::CapacityExhausted)));
+        assert_eq!(hub.client_count(), 0, "a refused client left a slot behind");
+        assert_eq!(WsCounters::load(&hub.counters().upgrades_rejected_total), 1);
+        drop(held);
     }
 
     fn next(rx: &Receiver<String>) -> String {
