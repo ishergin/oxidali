@@ -76,6 +76,12 @@ and for the length of a scan.
   ([ADR-012](ADR-012-async-chunked-config-writes.md)). A slice
   the peer lacks is never deleted locally, and an unreachable peer changes nothing: stale
   configuration beats a dark building.
+- **A wake shortens the period and never replaces it.** Once the active unit has
+  persisted a slice that transfers, it sends its peer a request that carries no data,
+  and the passive unit starts the same pass it would run on its period. The pass
+  trusts the manifest, not the wake. A lost wake costs at most the period. The active
+  unit never waits for its peer: its replication worker sends the request, not the
+  registry worker. One burst of saves wakes the peer once.
 - **What transfers** is everything that describes the installation, the broker password
   included (the maintainer's decision for a trusted LAN); what never transfers, and why, is in
   [config transfer](../../product-design/rest-api/resources/config-transfer.md).
@@ -110,6 +116,10 @@ and for the length of a scan.
 - **Self-reported health** — the reporting runs in the process whose health is in
   question.
 - **VRRP and a shared virtual IP** — a second election that can disagree with the wire.
+- **Configuration deltas over MQTT** — a delta needs a baseline and a resync, which is a
+  second transfer mechanism beside the slice pull. A whole slice is validated at once.
+  Deltas would also tie replication to the broker and cost the internal SRAM of a
+  second client. The wake gives the latency without a second mechanism.
 
 ## Consequences
 

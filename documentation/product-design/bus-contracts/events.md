@@ -35,7 +35,7 @@
 | Наблюдения | `DaliObservedFrameEvent` | sniffer translator | проектор, реестр, дисплей | best-effort |
 | Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `Dali103ApplicationControlObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
 | Результаты Part 103 | `Dali103ScanStartedEvent`, `Dali103ScanProgressEvent`, `Dali103InstanceConfiguredEvent` | `DaliWorker` | реестр; правила (`manual config changed`) | **required** |
-| Отказоустойчивость | [ниже](#отказоустойчивость) | `DaliWorker`, арбитраж, реестр | по виду | по виду |
+| Отказоустойчивость | [ниже](#отказоустойчивость) | `DaliWorker`, арбитраж, реестр, хранилище слайсов, HTTP | по виду | по виду |
 | Правила | `RulesChangedEvent`, `RulesActivationEvent` | rules worker | WS | best-effort |
 | Home Assistant | `HomeAssistantDiscoveryPublishedEvent` | MQTT bridge | operation tracker | **required** |
 | Сообщения брокера | `MqttRuleMessageEvent` | MQTT bridge | правила (`when mqtt`) | **required** |
@@ -180,6 +180,13 @@ Part 333 не читается, флаг и триггер инертны: ед�
 - `RedundancyTransitionEvent` (best-effort, правила: `controller becomes active`) —
   смена роли с причиной и метками; журнал переходов хранит сам воркер арбитража и
   отдаёт REST.
+- `ConfigSlicePersistedEvent` (best-effort, обёртка хранилища слайсов → воркер
+  репликации) — во флеш лёг переносимый слайс. Публикуется на первую запись серии, а
+  сам факт держит отметка, которую воркер читает на каждом обороте: событие только
+  будит, и его потеря задерживает пробуждение пира до следующего оборота.
+- `PeerConfigChangedEvent` (best-effort, HTTP `POST /api/v1/redundancy/config-changed`
+  → воркер репликации) — пир записал переносимый слайс. Событие только будит проход;
+  потерянное стоит периода, после которого проход идёт сам.
 - `RegistrySliceReloadedEvent` (required, правила и поллер) — импорт или репликация
   изменили слайс-стор на узле; реестр перечитал себя или, если перечитать не удалось,
   удерживает записанное от сброса. Это событие, а не команда, потому что команда доходит

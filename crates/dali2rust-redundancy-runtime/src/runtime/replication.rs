@@ -170,10 +170,18 @@ mod tests {
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, PublishResult};
-use dali2rust_contracts::msg::RegistrySliceReloadCommand;
+use std::time::Duration;
+
+use dali2rust_bus::{
+    recv_then_drain, BusChannel, BusFrame, BusId, BusPublisher, BusSubscriberRx, PublishResult,
+    WorkerTurn,
+};
+use dali2rust_contracts::msg::{BusEventPayload, RegistrySliceReloadCommand};
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::registry::{DaliSettingsReadPort, RedundancySettingsReadPort};
+use dali2rust_platform::liveness::monotonic_ms;
+
+use super::peer_wake::{should_wake, PersistedConfigMark, PEER_WAKE_PATH, PEER_WAKE_QUIET_MS};
 
 pub const REPLICATION_INTERVAL_MS: u64 = 30_000;
 
@@ -184,6 +192,9 @@ pub struct ReplicationCounters {
     pub slices_pulled: AtomicU32,
     pub slices_rejected: AtomicU32,
     pub reload_publish_failed: AtomicU32,
+    pub wakes_sent: AtomicU32,
+    pub wakes_failed: AtomicU32,
+    pub wakes_received: AtomicU32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,6 +219,7 @@ pub struct ReplicationDeps {
     pub redundancy: Arc<dyn RedundancySettingsReadPort>,
     pub dali: Arc<dyn DaliSettingsReadPort>,
     pub counters: Arc<ReplicationCounters>,
+    pub persisted: Arc<PersistedConfigMark>,
 }
 
 pub fn run_pass(deps: &ReplicationDeps) -> PassOutcome {
@@ -299,10 +311,55 @@ fn request_reload(deps: &ReplicationDeps, pulled: &[String]) -> bool {
     queued
 }
 
-pub const REPLICATION_HANDLED_EVENTS: &[&str] = &["RedundancySettingsChangedEvent"];
+const PERIOD: Duration = Duration::from_millis(REPLICATION_INTERVAL_MS);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Turn {
+    pull: bool,
+}
+
+dali2rust_contracts::dispatch_bus_events! {
+    pub const REPLICATION_HANDLED_EVENTS;
+    fn note_event(payload: &BusEventPayload, turn: &mut Turn, counters: &ReplicationCounters);
+    payload = payload;
+    ignored = {};
+    RedundancySettingsChangedEvent(_body) => turn.pull = true,
+    PeerConfigChangedEvent(_body) => {
+        counters.wakes_received.fetch_add(1, Ordering::Relaxed);
+        turn.pull = true;
+    },
+    ConfigSlicePersistedEvent(_body) => {},
+}
+
+pub fn wake_peer_when_quiet(deps: &ReplicationDeps, now_ms: u32) -> Duration {
+    if !deps.persisted.is_raised() {
+        return PERIOD;
+    }
+    let Some(peer_url) = wake_target(deps) else {
+        deps.persisted.lower();
+        return PERIOD;
+    };
+    let quiet = deps.persisted.quiet_for(now_ms);
+    if quiet < PEER_WAKE_QUIET_MS {
+        return Duration::from_millis(u64::from(PEER_WAKE_QUIET_MS - quiet));
+    }
+    deps.persisted.lower();
+    let counter = match deps.fetch.post(&peer_url, PEER_WAKE_PATH) {
+        Ok(()) => &deps.counters.wakes_sent,
+        Err(_) => &deps.counters.wakes_failed,
+    };
+    counter.fetch_add(1, Ordering::Relaxed);
+    PERIOD
+}
+
+fn wake_target(deps: &ReplicationDeps) -> Option<String> {
+    let settings = deps.redundancy.redundancy_settings_view();
+    let active = deps.dali.dali_settings_view().application_active;
+    should_wake(settings.enabled, active, &settings.peer_url).then_some(settings.peer_url)
+}
 
 pub fn spawn_replication_worker(
-    ev_rx: dali2rust_bus::BusSubscriberRx,
+    ev_rx: BusSubscriberRx,
     deps: ReplicationDeps,
 ) -> std::thread::JoinHandle<()> {
     dali2rust_bsp::esp_thread::spawn_named_stack_in(
@@ -313,21 +370,40 @@ pub fn spawn_replication_worker(
     )
 }
 
-fn replication_loop(ev_rx: &dali2rust_bus::BusSubscriberRx, deps: &ReplicationDeps) {
+fn replication_loop(ev_rx: &BusSubscriberRx, deps: &ReplicationDeps) {
+    let mut turn = Turn { pull: true };
     loop {
-        match run_pass(deps) {
-            PassOutcome::Pulled(slices) => {
-                log::info!("replication: pulled {} slice(s) from the peer: {slices:?}", slices.len());
-            }
-            PassOutcome::NotLanded => log::warn!("replication: the pass could not reach the registry"),
-            _ => {}
+        if turn.pull {
+            log_outcome(run_pass(deps));
         }
-        let wait = std::time::Duration::from_millis(REPLICATION_INTERVAL_MS);
-        if matches!(
-            ev_rx.recv_timeout(wait),
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
-        ) {
+        let wait = wake_peer_when_quiet(deps, monotonic_ms());
+        let Some(next) = next_turn(ev_rx, deps, wait) else {
             return;
+        };
+        turn = next;
+    }
+}
+
+fn next_turn(ev_rx: &BusSubscriberRx, deps: &ReplicationDeps, wait: Duration) -> Option<Turn> {
+    let mut turn = Turn::default();
+    let polled = recv_then_drain(ev_rx, wait, |frame| {
+        if let BusFrame::Event(ev) = frame {
+            note_event(&ev.payload, &mut turn, &deps.counters);
         }
+    });
+    match polled {
+        WorkerTurn::Handled => Some(turn),
+        WorkerTurn::Idle => Some(Turn { pull: wait >= PERIOD }),
+        WorkerTurn::Disconnected => None,
+    }
+}
+
+fn log_outcome(outcome: PassOutcome) {
+    match outcome {
+        PassOutcome::Pulled(slices) => {
+            log::info!("replication: pulled {} slice(s) from the peer: {slices:?}", slices.len());
+        }
+        PassOutcome::NotLanded => log::warn!("replication: the pass could not reach the registry"),
+        _ => {}
     }
 }

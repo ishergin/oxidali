@@ -6,6 +6,8 @@ pub const MAX_FETCH_BYTES: usize = 64 * 1024;
 
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 
+const NO_CONTENT: u16 = 204;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchError {
     BadUrl,
@@ -17,6 +19,8 @@ pub enum FetchError {
 
 pub trait HttpFetch: Send + Sync {
     fn get(&self, base: &str, path: &str) -> Result<Vec<u8>, FetchError>;
+
+    fn post(&self, base: &str, path: &str) -> Result<(), FetchError>;
 }
 
 #[must_use]
@@ -34,9 +38,9 @@ pub fn authority_of(base: &str) -> Option<String> {
 }
 
 #[must_use]
-pub fn request_bytes(authority: &str, path: &str) -> Vec<u8> {
+pub fn request_bytes(method: &str, authority: &str, path: &str) -> Vec<u8> {
     format!(
-        "GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\nAccept: */*\r\n\r\n"
+        "{method} {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\nAccept: */*\r\nContent-Length: 0\r\n\r\n"
     )
     .into_bytes()
 }
@@ -119,9 +123,12 @@ fn dechunk(mut body: &[u8]) -> Result<Option<Vec<u8>>, FetchError> {
 }
 
 fn response_complete(raw: &[u8]) -> bool {
-    let Ok((_, head, body)) = split_response(raw) else {
+    let Ok((code, head, body)) = split_response(raw) else {
         return false;
     };
+    if code == NO_CONTENT {
+        return true;
+    }
     match framing_of(head) {
         Framing::Chunked => !matches!(dechunk(body), Ok(None)),
         Framing::Length(n) => body.len() >= n,
@@ -134,23 +141,30 @@ pub struct TcpHttpFetch;
 
 impl HttpFetch for TcpHttpFetch {
     fn get(&self, base: &str, path: &str) -> Result<Vec<u8>, FetchError> {
-        let authority = authority_of(base).ok_or(FetchError::BadUrl)?;
-        let raw = self.exchange(&authority, path)?;
-        let (code, body) = parse_response(&raw)?;
+        let (code, body) = self.exchange("GET", base, path)?;
         if code != 200 {
             return Err(FetchError::Status(code));
         }
         Ok(body)
     }
+
+    fn post(&self, base: &str, path: &str) -> Result<(), FetchError> {
+        let (code, _body) = self.exchange("POST", base, path)?;
+        if !(200..300).contains(&code) {
+            return Err(FetchError::Status(code));
+        }
+        Ok(())
+    }
 }
 
 impl TcpHttpFetch {
-    fn exchange(&self, authority: &str, path: &str) -> Result<Vec<u8>, FetchError> {
-        let mut stream = connect(authority)?;
+    fn exchange(&self, method: &str, base: &str, path: &str) -> Result<(u16, Vec<u8>), FetchError> {
+        let authority = authority_of(base).ok_or(FetchError::BadUrl)?;
+        let mut stream = connect(&authority)?;
         stream
-            .write_all(&request_bytes(authority, path))
+            .write_all(&request_bytes(method, &authority, path))
             .map_err(|e| FetchError::Transport(e.to_string()))?;
-        read_capped(&mut stream)
+        parse_response(&read_capped(&mut stream)?)
     }
 }
 
@@ -213,7 +227,7 @@ mod tests {
 
     #[test]
     fn the_request_names_the_host_because_http_1_1_requires_it() {
-        let req = String::from_utf8(request_bytes("h:80", "/api/v1/x")).expect("utf8");
+        let req = String::from_utf8(request_bytes("GET", "h:80", "/api/v1/x")).expect("utf8");
         assert!(req.starts_with("GET /api/v1/x HTTP/1.1\r\n"));
         assert!(req.contains("Host: h:80\r\n"));
         assert!(req.contains("Connection: close\r\n"));
@@ -334,6 +348,51 @@ mod tests {
         assert!(
             started.elapsed() < FETCH_TIMEOUT / 2,
             "the read waited for a close instead of ending on the terminator"
+        );
+        let _ = server.join();
+    }
+
+    #[test]
+    fn a_post_names_its_method_and_an_empty_body() {
+        let (base, server) = serve_once(b"HTTP/1.1 204 No Content\r\n\r\n");
+        TcpHttpFetch
+            .post(&base, "/api/v1/redundancy/config-changed")
+            .expect("post");
+        let request = String::from_utf8(server.join().expect("server")).expect("utf8");
+        assert!(
+            request.starts_with("POST /api/v1/redundancy/config-changed HTTP/1.1\r\n"),
+            "request was {request:?}"
+        );
+        assert!(request.contains("Content-Length: 0\r\n"), "request was {request:?}");
+    }
+
+    #[test]
+    fn a_no_content_answer_ends_the_read_on_a_socket_the_server_keeps_open() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let base = format!("http://{}", listener.local_addr().expect("addr"));
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("accept");
+            let mut request = [0u8; 512];
+            let _ = socket.read(&mut request).expect("read request");
+            socket.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").expect("write");
+            let mut sink = [0u8; 16];
+            while socket.read(&mut sink).map(|n| n > 0).unwrap_or(false) {}
+        });
+        let started = std::time::Instant::now();
+        TcpHttpFetch.post(&base, "/api/v1/redundancy/config-changed").expect("post");
+        assert!(
+            started.elapsed() < FETCH_TIMEOUT / 2,
+            "the read waited for a close instead of ending on the empty answer"
+        );
+        let _ = server.join();
+    }
+
+    #[test]
+    fn a_post_the_peer_refuses_is_a_status_error() {
+        let (base, server) = serve_once(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+        assert_eq!(
+            TcpHttpFetch.post(&base, "/api/v1/redundancy/config-changed"),
+            Err(FetchError::Status(404))
         );
         let _ = server.join();
     }

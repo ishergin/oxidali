@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use cucumber::{given, then, when};
-use dali2rust_test_support::{try_wait_until, wait_until};
+use dali2rust_test_support::{remains_false_for, try_wait_until, wait_until, FakePeerController};
 
 use crate::steps::polling::fetch_json;
 use crate::steps::wire::{frame_claim, FrameClaim};
@@ -9,6 +9,8 @@ use crate::DaliWorld;
 
 const TRANSITION_TIMEOUT: Duration = Duration::from_secs(4);
 const SUPERVISOR_TICKS_TIMEOUT: Duration = Duration::from_secs(10);
+const PEER_WAKE_TIMEOUT: Duration = Duration::from_secs(5);
+const SAVED_SLICES_POINTER: &str = "/persistence/flush_success_total";
 
 fn scalar_text(value: &serde_json::Value) -> String {
     match value.as_str() {
@@ -17,7 +19,7 @@ fn scalar_text(value: &serde_json::Value) -> String {
     }
 }
 
-// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090 PERS-006 CFG-011
+// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090 PERS-006 CFG-011 RED-031 RED-032
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be "([^"]*)"$"#)]
 async fn json_pointer_eventually(world: &mut DaliWorld, pointer: String, path: String, expected: String) {
     let port = world.server_port();
@@ -69,7 +71,7 @@ async fn export_and_keep(world: &mut DaliWorld, path: String) {
     assert!(!world.kept_body.is_empty(), "export of {path} was empty");
 }
 
-// CFG-012 CFG-013
+// CFG-012 CFG-013 RED-033 RED-032
 #[when(regex = r#"^I export "([^"]+)" once it is stored and keep the body$"#)]
 async fn export_once_stored_and_keep(world: &mut DaliWorld, path: String) {
     let stored = |world: &mut DaliWorld| {
@@ -116,7 +118,7 @@ async fn response_header_is(world: &mut DaliWorld, name: String, expected: Strin
     );
 }
 
-// RED-023 RED-024 RED-025 RED-030
+// RED-023 RED-024 RED-025 RED-030 RED-031 RED-033
 #[given("this controller has stood down")]
 async fn controller_stands_down(world: &mut DaliWorld) {
     world.send_http_request(
@@ -150,4 +152,56 @@ async fn probe_eventually_at_priority_five(world: &mut DaliWorld) {
         matches!(claim, FrameClaim::Priority(5) | FrameClaim::BusRelease),
         "the probe announced {claim:?}, not priority 5 (DiiA 351 §7)"
     );
+}
+
+// RED-031 RED-032 RED-033
+#[given("a peer controller is listening")]
+async fn a_peer_is_listening(world: &mut DaliWorld) {
+    world.peer = Some(FakePeerController::start());
+}
+
+// RED-031 RED-032 RED-033
+#[when(regex = r#"^I PATCH JSON (.+) to "/api/v1/settings/redundancy" naming the peer$"#)]
+async fn patch_redundancy_naming_the_peer(world: &mut DaliWorld, json: String) {
+    let mut body: serde_json::Value = serde_json::from_str(&json).expect("redundancy settings JSON");
+    body["peer_url"] = serde_json::Value::String(world.peer().base_url());
+    let bytes = body.to_string().into_bytes();
+    world.send_http_request("PATCH", "/api/v1/settings/redundancy", Some(&bytes), "application/json");
+}
+
+// RED-031 RED-032
+#[then(regex = r#"^the peer should eventually have received (\d+) "([^"]+)"$"#)]
+async fn peer_eventually_received(world: &mut DaliWorld, count: usize, line: String) {
+    let peer = world.peer();
+    try_wait_until(|| peer.received(&line) >= count, PEER_WAKE_TIMEOUT);
+    assert_eq!(peer.received(&line), count, "how often the peer received {line:?}");
+}
+
+// RED-032 RED-033
+#[then(regex = r#"^the peer should have received (\d+) "([^"]+)" and no more for (\d+) ms$"#)]
+async fn peer_received_no_more(world: &mut DaliWorld, count: usize, line: String, window_ms: u64) {
+    let peer = world.peer();
+    let held = remains_false_for(|| peer.received(&line) > count, Duration::from_millis(window_ms));
+    let seen = peer.received(&line);
+    assert!(held && seen == count, "the peer received {line:?} {seen} times, expected {count}");
+}
+
+fn saved_slices(world: &DaliWorld) -> Option<u64> {
+    fetch_json(world.server_port(), "/api/v1/diagnostics")
+        .and_then(|json| json.pointer(SAVED_SLICES_POINTER).and_then(serde_json::Value::as_u64))
+}
+
+// RED-032
+#[when("I note how many slices this controller has saved")]
+async fn note_saved_slices(world: &mut DaliWorld) {
+    world.remembered_u64 = saved_slices(world);
+    assert!(world.remembered_u64.is_some(), "diagnostics{SAVED_SLICES_POINTER} missing");
+}
+
+// RED-032
+#[then("this controller should eventually have saved more slices than noted")]
+async fn saved_more_slices(world: &mut DaliWorld) {
+    let before = world.remembered_u64.expect("noted saved slices");
+    let grew = try_wait_until(|| saved_slices(world).is_some_and(|n| n > before), PEER_WAKE_TIMEOUT);
+    assert!(grew, "no slice was saved after {before}: {:?}", saved_slices(world));
 }

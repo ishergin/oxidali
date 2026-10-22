@@ -27,8 +27,8 @@ pub use runtime::registry::{
 pub use runtime::registry::input_devices::{InputDeviceDetail, InputDeviceSummary, InstanceView, ReadValue};
 pub use runtime::registry::import_stage::{ImportStageRefusal, StagedSlice};
 pub use runtime::registry::transfer::{
-    slice_key_from_name, ForeignSliceOwner, ImportWriteFailure, RegistryOwnedOnly,
-    SliceManifestRow,
+    slice_key_from_name, transferable_slices, ForeignSliceOwner, ImportWriteFailure,
+    RegistryOwnedOnly, SliceManifestRow,
 };
 pub use runtime::registry::physical_devices::DISCOVERY_EVICT_MISS_THRESHOLD;
 pub use runtime::registry_apply_watch::RegistryApplyWatch;

@@ -73,6 +73,7 @@ pub enum RouteKey {
     SettingsRedundancyPatch,
     Redundancy,
     RedundancySwitchover,
+    RedundancyConfigChanged,
     PoliciesGet,
     PoliciesPatch,
     PoliciesApply,
@@ -372,6 +373,11 @@ const ROUTE_TABLE: &[(RouteKey, HttpMethod, &str)] = &[
         HttpMethod::Post,
         "/api/v1/redundancy/switchover",
     ),
+    (
+        RouteKey::RedundancyConfigChanged,
+        HttpMethod::Post,
+        "/api/v1/redundancy/config-changed",
+    ),
     (RouteKey::PoliciesGet, HttpMethod::Get, "/api/v1/policies"),
     (
         RouteKey::PoliciesPatch,
@@ -560,7 +566,7 @@ mod route_table_tests {
 
     #[test]
     fn route_table_is_complete_and_unique() {
-        assert_eq!(ROUTE_TABLE.len(), 92, "route table row count");
+        assert_eq!(ROUTE_TABLE.len(), 93, "route table row count");
         let mut keys = HashSet::new();
         let mut routes = HashSet::new();
         for (key, method, path) in ROUTE_TABLE {

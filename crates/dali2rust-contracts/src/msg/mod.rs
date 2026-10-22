@@ -109,6 +109,7 @@ pub use events::{
     Dali103ArbitrationProbedEvent, PoliciesChangedEvent, Dali103HandoverSentEvent, RegistrySliceReloadedEvent, APPLICATION_ACTIVE_UNMOVED, APPLICATION_ACTIVE_MOVED_BY_COMMAND, APPLICATION_ACTIVE_MOVED_BY_WIRE, RedundancySettingsChangedEvent,
     RedundancyTransitionEvent,
 };
+pub use events::{ConfigSlicePersistedEvent, PeerConfigChangedEvent};
 pub use events::{
     BusHealthVerdict, Dali103ApplicationControlObservedEvent, Dali103InstanceConfiguredEvent,
     Dali103ScanProgressEvent,

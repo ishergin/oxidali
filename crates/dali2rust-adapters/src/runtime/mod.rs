@@ -17,6 +17,7 @@ use dali2rust_dali_runtime::DaliRuntimeConfig;
 pub use dali2rust_display_runtime::{DisplayView, HardwareDisplay};
 use dali2rust_platform::dali::DaliTransport;
 use dali2rust_platform::slice_store::SliceStore;
+use dali2rust_redundancy_runtime::{PersistedConfigMark, WakeOnPersistSliceStore};
 pub use dali2rust_registry_runtime::RegistryStore;
 pub use dali2rust_ws_runtime::{
     spawn_ws_worker, RegisterRejected, WsCounters, WsHub, WsHubConfig, WsSink, WsSinkError,
@@ -247,6 +248,7 @@ fn worker_inputs(
         rules: rules_worker_deps(booted),
         correlation: Arc::clone(&booted.scheduling.poller.correlation),
         ota: ota_worker_deps(rest, booted),
+        persisted: Arc::clone(&booted.persisted),
     }
 }
 
@@ -327,6 +329,7 @@ struct BootedStack {
     mqtt: Mutex<Option<workers::MqttWorkerDeps>>,
     mqtt_counters: Arc<dali2rust_mqtt_runtime::MqttCounters>,
     ota: OtaShared,
+    persisted: Arc<PersistedConfigMark>,
 }
 
 #[derive(Clone)]
@@ -439,7 +442,7 @@ fn boot_stack(args: BootArgs) -> Box<BootedStack> {
     let interactive = Arc::new(dali2rust_platform::dali::WireActivity::new());
     let bus = spawn_bus_subscribers(args.bus_config, args.bus_id, Arc::clone(&interactive));
     let dispatch = HttpBusDispatch::for_bus(args.bus_config, args.bus_id, bus.publisher.clone());
-    let (clock_wiring, registry) = boot_clock_and_registry(&args, &bus);
+    let (clock_wiring, registry, persisted) = boot_clock_and_registry(&args, &bus);
     let diagnostics_store = Arc::clone(&registry.deps.store);
     let diagnostics_slots = Arc::clone(&dispatch.slots);
     let rules_store = Arc::new(dali2rust_rules_runtime::RulesStore::new());
@@ -469,6 +472,7 @@ fn boot_stack(args: BootArgs) -> Box<BootedStack> {
         mqtt: Mutex::new(mqtt),
         mqtt_counters: Arc::new(dali2rust_mqtt_runtime::MqttCounters::default()),
         ota,
+        persisted,
     })
 }
 
@@ -507,16 +511,33 @@ fn wire_mqtt(
 fn boot_clock_and_registry(
     args: &BootArgs,
     bus: &crate::runtime::bus_host::BusSubscribers,
-) -> (ClockWiring, registry_init::RegistrySlice) {
-    let clock_wiring = wire_wall_clock(args.wall_clock.clone(), &args.persistence_slices);
+) -> (ClockWiring, registry_init::RegistrySlice, Arc<PersistedConfigMark>) {
+    let persisted = Arc::new(PersistedConfigMark::default());
+    let slices = watch_persisted_config(args, &bus.publisher, &persisted);
+    let clock_wiring = wire_wall_clock(args.wall_clock.clone(), &slices);
     let registry = init_registry_slice(
         args.adapter_count,
-        args.persistence_slices.clone(),
+        slices,
         &bus.publisher,
         args.controller_hardware_id,
         Arc::clone(&clock_wiring.0),
     );
-    (clock_wiring, registry)
+    (clock_wiring, registry, persisted)
+}
+
+fn watch_persisted_config(
+    args: &BootArgs,
+    publisher: &BusPublisher,
+    persisted: &Arc<PersistedConfigMark>,
+) -> Option<Arc<dyn SliceStore>> {
+    let inner = args.persistence_slices.clone()?;
+    Some(Arc::new(WakeOnPersistSliceStore::new(
+        inner,
+        dali2rust_registry_runtime::transferable_slices(args.adapter_count),
+        Arc::clone(persisted),
+        publisher.clone(),
+        args.bus_id,
+    )))
 }
 
 struct SchedulingDeps {
