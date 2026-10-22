@@ -8,6 +8,8 @@ pub const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 
 const NO_CONTENT: u16 = 204;
 
+const READ_CHUNK_BYTES: usize = 2048;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchError {
     BadUrl,
@@ -179,18 +181,19 @@ fn connect(authority: &str) -> Result<TcpStream, FetchError> {
 
 fn read_capped(stream: &mut TcpStream) -> Result<Vec<u8>, FetchError> {
     let mut out = Vec::new();
-    let mut chunk = [0u8; 2048];
     loop {
+        let held = out.len();
+        out.resize(held + READ_CHUNK_BYTES, 0);
         let read = stream
-            .read(&mut chunk)
+            .read(&mut out[held..])
             .map_err(|e| FetchError::Transport(e.to_string()))?;
+        out.truncate(held + read);
         if read == 0 {
             return Ok(out);
         }
-        if out.len() + read > MAX_FETCH_BYTES {
+        if out.len() > MAX_FETCH_BYTES {
             return Err(FetchError::TooLarge);
         }
-        out.extend_from_slice(&chunk[..read]);
         if response_complete(&out) {
             return Ok(out);
         }
@@ -300,18 +303,46 @@ mod tests {
         assert_eq!(parse_response(b"garbage\r\n\r\n"), Err(FetchError::Malformed));
     }
 
-    fn serve_once(response: &'static [u8]) -> (String, std::thread::JoinHandle<Vec<u8>>) {
+    fn serve_once(
+        response: impl AsRef<[u8]> + Send + 'static,
+    ) -> (String, std::thread::JoinHandle<Vec<u8>>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let base = format!("http://{}", listener.local_addr().expect("addr"));
         let handle = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().expect("accept");
             let mut request = [0u8; 512];
             let read = socket.read(&mut request).expect("read request");
-            socket.write_all(response).expect("write response");
+            let _ = socket.write_all(response.as_ref());
             drop(socket);
             request[..read].to_vec()
         });
         (base, handle)
+    }
+
+    fn answer_with_body(head: &str, body_len: usize) -> Vec<u8> {
+        let mut response = head.as_bytes().to_vec();
+        response.extend((0..body_len).map(|i| b'a' + u8::try_from(i % 26).expect("letter")));
+        response
+    }
+
+    #[test]
+    fn a_body_longer_than_one_read_arrives_whole_and_in_order() {
+        let len = 3 * READ_CHUNK_BYTES + 17;
+        let response = answer_with_body(&format!("HTTP/1.1 200 OK\r\nContent-Length: {len}\r\n\r\n"), len);
+        let expected = response[response.len() - len..].to_vec();
+        let (base, server) = serve_once(response);
+        assert_eq!(TcpHttpFetch.get(&base, "/api/v1/config/slices/a0%2Fgroups"), Ok(expected));
+        let _ = server.join();
+    }
+
+    #[test]
+    fn a_body_past_the_cap_is_too_large_rather_than_truncated() {
+        let (base, server) = serve_once(answer_with_body("HTTP/1.1 200 OK\r\n\r\n", MAX_FETCH_BYTES + 1));
+        assert_eq!(
+            TcpHttpFetch.get(&base, "/api/v1/config/slices/a0%2Fgroups"),
+            Err(FetchError::TooLarge)
+        );
+        let _ = server.join();
     }
 
     #[test]
