@@ -333,3 +333,43 @@ fn every_level_colour_outcome_fits_the_compact_error_payload() {
         assert_eq!(payload.message.as_str(), outcome, "an operator reads the whole name");
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+enum Echo {
+    Silent,
+    Violated,
+    Wrong,
+}
+
+fn expect_unarmed_selector(mock: &MockDaliTransport, selector: u8, echo: Echo) {
+    const FOREIGN_SELECTOR: u8 = 7;
+    mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(selector)));
+    let echo_query = standard_frame(StandardCommand::QueryContentDtr0);
+    match echo {
+        Echo::Silent => mock.expect_forward_frame_with_backward(echo_query, None),
+        Echo::Violated => mock.expect_forward_frame_corrupted_in_window(echo_query),
+        Echo::Wrong => mock.expect_forward_frame_with_backward(echo_query, Some(FOREIGN_SELECTOR)),
+    }
+}
+
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §3.13
+#[test]
+fn a_selector_that_never_proves_names_silence_a_violation_and_a_wrong_echo_apart() {
+    let cases = [
+        (Echo::Silent, LEVEL_COLOUR_UNANSWERED),
+        (Echo::Violated, LEVEL_COLOUR_CONTENDED),
+        (Echo::Wrong, LEVEL_COLOUR_UNCONFIRMED),
+    ];
+    for (echo, outcome) in cases {
+        let mock = MockDaliTransport::new();
+        for _ in 0..COLOUR_VALUE_ASKS {
+            expect_unarmed_selector(&mock, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, echo);
+        }
+
+        let (execution, transport) = write_level(mock, POWER_ON);
+
+        assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(outcome)), "{echo:?}");
+        assert_script_consumed(&transport);
+    }
+}

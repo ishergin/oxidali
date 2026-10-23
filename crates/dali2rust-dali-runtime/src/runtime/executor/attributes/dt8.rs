@@ -161,34 +161,27 @@ fn read_dt8_gear_features(
 
 const DT8_VALUE_ARM_RETRIES: u8 = 2;
 
-// IEC 62386-209 §9.9, Table 11
-#[inline(always)]
-fn armed_colour_value_query(
-    controller: &mut impl DaliApplicationController,
-    address: DaliAddress,
-    value_id: u8,
-) -> Result<Option<(DaliResponse, bool)>, SemanticDaliError> {
-    send_special(controller, SpecialCommand::Dtr0(value_id))?;
-    let echo = send_standard_query(controller, address, StandardCommand::QueryContentDtr0)?;
-    if echo != Some(value_id) {
-        return Ok(None);
-    }
-    send_special(controller, SpecialCommand::EnableDeviceType(DT8_DEVICE_TYPE))?;
-    send_raw_query_once_response(controller, address, DT8_QUERY_COLOUR_VALUE).map(Some)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ArmedValue {
+    Answered(DaliResponse, bool),
+    Unarmed(DaliResponse),
 }
 
-pub(super) fn dt8_value_response(
+// IEC 62386-209 §9.9, Table 11
+#[inline(always)]
+pub(super) fn armed_colour_value_query(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     value_id: u8,
-) -> Result<Option<(DaliResponse, bool)>, SemanticDaliError> {
-    for _ in 0..=DT8_VALUE_ARM_RETRIES {
-        let answer = controller.unit(|controller| armed_colour_value_query(controller, address, value_id))?;
-        if answer.is_some() {
-            return Ok(answer);
-        }
+) -> Result<ArmedValue, SemanticDaliError> {
+    send_special(controller, SpecialCommand::Dtr0(value_id))?;
+    let echo = send_standard_response(controller, address, StandardCommand::QueryContentDtr0)?;
+    if echo != DaliResponse::Answer(value_id) {
+        return Ok(ArmedValue::Unarmed(echo));
     }
-    Ok(None)
+    send_special(controller, SpecialCommand::EnableDeviceType(DT8_DEVICE_TYPE))?;
+    let (response, contended) = send_raw_query_once_response(controller, address, DT8_QUERY_COLOUR_VALUE)?;
+    Ok(ArmedValue::Answered(response, contended))
 }
 
 pub(super) fn dt8_value_sample(
@@ -198,7 +191,8 @@ pub(super) fn dt8_value_sample(
 ) -> Result<(Option<u16>, bool), SemanticDaliError> {
     for _ in 0..=DT8_VALUE_ARM_RETRIES {
         let sample = controller.unit(|controller| {
-            let Some((high, contended)) = armed_colour_value_query(controller, address, value_id)?
+            let ArmedValue::Answered(high, contended) =
+                armed_colour_value_query(controller, address, value_id)?
             else {
                 return Ok(None);
             };

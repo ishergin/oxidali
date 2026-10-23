@@ -1,5 +1,5 @@
 use super::*;
-use super::dt8::dt8_value_response;
+use super::dt8::{armed_colour_value_query, ArmedValue};
 use super::write::verified_store;
 use crate::runtime::executor::helpers::DT8_DEVICE_TYPE;
 use crate::runtime::executor::target_state::stage_dtrs_verified;
@@ -187,16 +187,50 @@ fn colour_byte(
     address: DaliAddress,
     value_id: u8,
 ) -> Result<u8, SemanticDaliError> {
-    let mut contended = false;
+    let mut worst = Unheard::Silent;
     for _ in 0..COLOUR_VALUE_ASKS {
-        match dt8_value_response(controller, address, value_id)? {
-            None => return Err(unconfirmed()),
-            Some((DaliResponse::Answer(value), false)) => return Ok(value),
-            Some((response, seen)) => contended |= seen || response == DaliResponse::Violation,
+        let unheard = match controller.unit(|c| armed_colour_value_query(c, address, value_id))? {
+            ArmedValue::Answered(DaliResponse::Answer(value), false) => return Ok(value),
+            ArmedValue::Answered(response, contended) => Unheard::of_answer(response, contended),
+            ArmedValue::Unarmed(echo) => Unheard::of_echo(echo),
+        };
+        worst = worst.max(unheard);
+    }
+    Err(SemanticDaliError::OperationFailed(worst.outcome()))
+}
+
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §3.13
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Unheard {
+    Silent,
+    Contended,
+    WrongEcho,
+}
+
+impl Unheard {
+    const fn of_answer(response: DaliResponse, contended: bool) -> Self {
+        match (response, contended) {
+            (DaliResponse::NoAnswer, false) => Self::Silent,
+            _ => Self::Contended,
         }
     }
-    let outcome = if contended { LEVEL_COLOUR_CONTENDED } else { LEVEL_COLOUR_UNANSWERED };
-    Err(SemanticDaliError::OperationFailed(outcome))
+
+    const fn of_echo(echo: DaliResponse) -> Self {
+        match echo {
+            DaliResponse::Answer(_) => Self::WrongEcho,
+            DaliResponse::Violation => Self::Contended,
+            DaliResponse::NoAnswer => Self::Silent,
+        }
+    }
+
+    const fn outcome(self) -> &'static str {
+        match self {
+            Self::Silent => LEVEL_COLOUR_UNANSWERED,
+            Self::Contended => LEVEL_COLOUR_CONTENDED,
+            Self::WrongEcho => LEVEL_COLOUR_UNCONFIRMED,
+        }
+    }
 }
 
 // IEC 62386-209 §9.12.4, §11.3.4.1, Table 8

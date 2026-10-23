@@ -316,7 +316,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   first, since silence proves no colour absent (102 §3.13): MASK gets `DTR0` and the
   store; silence or a violation, asked three times, fails the write
   (`dt8_level_colour_unanswered`, `dt8_level_colour_contended`) before anything is
-  stored. With no set known yet, silence fails it `types_unknown_read_or_override`: an
+  stored, and so does a selector whose `DTR0` echo never proves, named the same way or
+  `dt8_level_colour_unconfirmed` for a wrong echo. With no set known yet, silence fails it `types_unknown_read_or_override`: an
   attribute read that learns the set, or an override, lets the level through. Otherwise
   one exempt transaction, the store's unit, has the level query load the stored colour into
   the REPORT registers (§11.3.2), reads `REPORT COLOUR TYPE`, and charges the stored
