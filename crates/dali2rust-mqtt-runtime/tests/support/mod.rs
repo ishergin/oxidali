@@ -62,6 +62,8 @@ pub struct StubHaReadPort {
     inputs: Mutex<Vec<HaInputView>>,
     retracted_inputs: Mutex<Vec<HaInputView>>,
     id_spans: Mutex<(u8, u8)>,
+    active_scene: Mutex<Option<u8>>,
+    served_adapters: Mutex<Vec<u8>>,
 }
 
 const LAMP_ID_SPAN: u8 = 64;
@@ -87,7 +89,23 @@ impl StubHaReadPort {
             inputs: Mutex::new(Vec::new()),
             retracted_inputs: Mutex::new(Vec::new()),
             id_spans: Mutex::new((LAMP_ID_SPAN, GROUP_ID_SPAN)),
+            active_scene: Mutex::new(None),
+            served_adapters: Mutex::new(vec![0]),
         })
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file recalls scenes")]
+    pub fn set_active_scene(&self, scene_id: Option<u8>) {
+        *self.active_scene.lock().unwrap() = scene_id;
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file runs two adapters")]
+    pub fn serve_adapters(&self, adapter_ids: &[u8]) {
+        *self.served_adapters.lock().unwrap() = adapter_ids.to_vec();
+    }
+
+    fn serves(&self, adapter_id: u8) -> bool {
+        self.served_adapters.lock().unwrap().contains(&adapter_id)
     }
 
     #[allow(dead_code, reason = "one binary per test file; not every file narrows the id space")]
@@ -171,7 +189,7 @@ impl StubHaReadPort {
 
 impl HaPublishReadPort for StubHaReadPort {
     fn ha_input_views(&self, adapter_id: u8) -> Vec<HaInputView> {
-        if adapter_id == 0 {
+        if self.serves(adapter_id) {
             self.inputs.lock().unwrap().clone()
         } else {
             Vec::new()
@@ -185,7 +203,7 @@ impl HaPublishReadPort for StubHaReadPort {
     }
 
     fn ha_lamp_views(&self, adapter_id: u8) -> Vec<HaLampView> {
-        if adapter_id == 0 {
+        if self.serves(adapter_id) {
             self.lamps.lock().unwrap().clone()
         } else {
             Vec::new()
@@ -193,7 +211,7 @@ impl HaPublishReadPort for StubHaReadPort {
     }
 
     fn ha_group_views(&self, adapter_id: u8) -> Vec<HaGroupView> {
-        if adapter_id == 0 {
+        if self.serves(adapter_id) {
             self.groups.lock().unwrap().clone()
         } else {
             Vec::new()
@@ -207,7 +225,7 @@ impl HaPublishReadPort for StubHaReadPort {
     }
 
     fn ha_scene_views(&self, adapter_id: u8) -> Vec<HaSceneView> {
-        if adapter_id == 0 {
+        if self.serves(adapter_id) {
             self.scenes.lock().unwrap().clone()
         } else {
             Vec::new()
@@ -251,15 +269,15 @@ impl HaPublishReadPort for StubHaReadPort {
     }
 
     fn ha_retracted_input_views(&self, adapter_id: u8) -> Vec<HaInputView> {
-        if adapter_id == 0 {
+        if self.serves(adapter_id) {
             self.retracted_inputs.lock().unwrap().clone()
         } else {
             Vec::new()
         }
     }
 
-    fn ha_active_scene(&self, _adapter_id: u8) -> Option<u8> {
-        None
+    fn ha_active_scene(&self, adapter_id: u8) -> Option<u8> {
+        (*self.active_scene.lock().unwrap()).filter(|_| self.serves(adapter_id))
     }
 }
 
@@ -320,6 +338,24 @@ pub fn spawn_bridge_with_config(
     read_port: Arc<StubHaReadPort>,
     config: BusConfig,
 ) -> Harness {
+    spawn_bridge_on(settings, read_port, config, 1)
+}
+
+#[allow(dead_code, reason = "one binary per test file; not every file runs two adapters")]
+pub fn spawn_bridge_for_adapters(
+    settings: Arc<StubSettings>,
+    read_port: Arc<StubHaReadPort>,
+    adapter_count: u8,
+) -> Harness {
+    spawn_bridge_on(settings, read_port, BusConfig::default(), adapter_count)
+}
+
+fn spawn_bridge_on(
+    settings: Arc<StubSettings>,
+    read_port: Arc<StubHaReadPort>,
+    config: BusConfig,
+    adapter_count: u8,
+) -> Harness {
     let (host, publisher, (ev_rx, cmd_rx, ev_obs_rx)) = BusHost::spawn(config, |reg| {
         (
             reg.subscribe_commands_and_events(
@@ -350,7 +386,7 @@ pub fn spawn_bridge_with_config(
             secret: Arc::new(StubSecret),
             counters: Arc::clone(&counters),
             version: "test",
-            adapter_count: 1,
+            adapter_count,
             role: Arc::new(ActiveRole),
             rule_topics: Arc::clone(&rule_topics) as _,
         },
@@ -401,19 +437,24 @@ pub fn button_press_frame(short_address: u8, instance_number: u8) -> BusFrame {
 
 #[allow(dead_code, reason = "one binary per test file; not every file feeds commits")]
 pub fn runtime_frame(virtual_lamp_id: u8, level: u8) -> BusFrame {
+    commit_frame(0, virtual_lamp_id, LightSetpoint::from_level(level, None))
+}
+
+#[allow(dead_code, reason = "one binary per test file; not every file feeds commits")]
+pub fn commit_frame(adapter_id: u8, virtual_lamp_id: u8, setpoint: LightSetpoint) -> BusFrame {
     BusFrame::event(dali2rust_contracts::bus::event_envelope(
         0,
-        u64::from(level),
+        u64::from(setpoint.level.unwrap_or_default()),
         BusId::default().0,
         Some(Origin::Internal),
         dali2rust_contracts::msg::RuntimeStateChangedEvent {
-            adapter_id: 0,
+            adapter_id,
             virtual_lamp_id: Some(virtual_lamp_id),
             short_address: Some(virtual_lamp_id),
-            state_setpoint: LightSetpoint::from_level(level, None),
+            commit_dimensions: setpoint.dimensions(),
+            state_setpoint: setpoint,
             state_observation: RuntimeObservation::default(),
             commit_source: dali2rust_contracts::msg::RuntimeSource::Api,
-            commit_dimensions: LightSetpoint::from_level(level, None).dimensions(),
             commit_holds_hcl: true,
         },
     ))

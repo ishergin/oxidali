@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use dali2rust_bus::{BusChannel, BusFrame, PublishResult};
 use dali2rust_contracts::msg::{
-    BusEventPayload, GroupChangedEvent, GroupMatrixChangedEvent, InputDeviceChangedEvent,
-    OperationWorkerSignal, PhysicalDeviceChangedEvent, SceneChangedEvent, VirtualLampChangedEvent,
+    BusEventPayload, ColorMode, ColorValue, GroupChangedEvent, GroupMatrixChangedEvent,
+    InputDeviceChangedEvent, LightSetpoint, OperationWorkerSignal, PhysicalDeviceChangedEvent,
+    SceneChangedEvent, VirtualLampChangedEvent,
 };
 use dali2rust_domain::registry::{
     CapabilityFlagsView, ColorTemperatureRangeView, HaGroupView, HaInputInstanceView, HaInputView,
@@ -17,8 +18,8 @@ use dali2rust_mqtt_runtime::{MqttCounters, PublishedMessage};
 use dali2rust_platform::mqtt::MqttQos;
 use dali2rust_test_support::{recv_event_matching, remains_false_for};
 use support::{
-    absence_frame, button_press_frame, enabled_settings, registry_event, runtime_frame,
-    spawn_bridge, Harness, StubHaReadPort, StubSettings,
+    absence_frame, button_press_frame, commit_frame, enabled_settings, registry_event,
+    runtime_frame, spawn_bridge, spawn_bridge_for_adapters, Harness, StubHaReadPort, StubSettings,
 };
 
 const WAIT: Duration = Duration::from_secs(8);
@@ -28,8 +29,15 @@ const BOUND_SHORT: u8 = 7;
 const PANEL: u8 = 0;
 const HIDDEN_PANEL: u8 = 1;
 const DOORBELL: u8 = 2;
+const STRIP: u8 = 0;
 const PORCH: u8 = 2;
+const SHELF: u8 = 3;
 const DESK: u8 = 4;
+const NIGHT: u8 = 4;
+const SECOND_ADAPTER: u8 = 1;
+const ADAPTER_COUNT: u8 = 2;
+const SMALL_ID_SPAN: u8 = 2;
+const SMALL_GROUP: u8 = 1;
 const MANUAL_RUN: u64 = 77;
 const LAST_PLANNED: &str = "homeassistant/light/ctl1/a0_group_9/config";
 const DOORBELL_STATE: &str = "dali/ctl1/a0/in/2/0/state";
@@ -38,10 +46,15 @@ const SELECT_STATE: &str = "dali/ctl1/a0/scene_select/state";
 const HALL_STATE: &str = "dali/ctl1/a0/group/5/state";
 const DESK_STATE: &str = "dali/ctl1/a0/vl/4/state";
 const PORCH_CONFIG: &str = "homeassistant/light/ctl1/a0_vl_2/config";
+const SHELF_AVAILABILITY: &str = "dali/ctl1/a0/vl/3/availability";
+const SECOND_ADAPTER_LAST_PLANNED: &str = "homeassistant/light/ctl1/a1_group_0/config";
+const SECOND_ADAPTER_GROUP_STATE: &str = "dali/ctl1/a1/group/1/state";
 const CONTROLLER_AVAILABILITY: &str = "dali/ctl1/availability";
 const EMPTY_PAYLOAD: &str = "<empty>";
 const RETAINED_GOLDEN: &str = include_str!("golden/ha_wire_retained.txt");
 const UNRETAINED_GOLDEN: &str = include_str!("golden/ha_wire_unretained.txt");
+const HIDDEN_INPUTS_GOLDEN: &str = include_str!("golden/ha_wire_hidden_inputs.txt");
+const TWO_ADAPTERS_GOLDEN: &str = include_str!("golden/ha_wire_two_adapters.txt");
 
 #[test]
 fn every_publish_keeps_its_topic_payload_qos_retain_and_order_when_everything_is_retained() {
@@ -64,15 +77,50 @@ fn every_publish_keeps_its_topic_payload_qos_retain_and_order_when_nothing_is_re
     assert_matches_golden("ha_wire_unretained", &record_session(settings), UNRETAINED_GOLDEN);
 }
 
+#[test]
+fn hidden_input_devices_are_retracted_and_their_events_publish_nothing() {
+    let settings = HomeAssistantSettingsView {
+        expose_input_devices: false,
+        ..enabled_settings()
+    };
+    let port = seeded_registry();
+    let mut log = WireLog::new(spawn_bridge(StubSettings::new(settings), Arc::clone(&port)), port);
+    log.step("a fresh session retracts every input instance", |_| {}, LAST_PLANNED);
+    log.step("a press publishes nothing ahead of the next commit", |l| {
+        l.event(button_press_frame(PANEL, 0));
+        l.event(runtime_frame(1, 42));
+    }, SELECT_STATE);
+    log.step("a changed input device is retracted again", |l| {
+        l.event(registry_event(InputDeviceChangedEvent { adapter_id: 0, short_address: PANEL }));
+        l.event(runtime_frame(1, 43));
+    }, SELECT_STATE);
+    assert_matches_golden("ha_wire_hidden_inputs", &log.finish(), HIDDEN_INPUTS_GOLDEN);
+}
+
+#[test]
+fn a_second_adapter_announces_and_commits_under_its_own_topics() {
+    let port = StubHaReadPort::with_lamp(1);
+    port.limit_ids(SMALL_ID_SPAN, SMALL_ID_SPAN);
+    port.set_group(group(SMALL_GROUP, "Hall", brightness()));
+    port.serve_adapters(&[0, SECOND_ADAPTER]);
+    let settings = StubSettings::new(enabled_settings());
+    let mut log = WireLog::new(spawn_bridge_for_adapters(settings, Arc::clone(&port), ADAPTER_COUNT), port);
+    log.step("a fresh session announces both adapters", |_| {}, SECOND_ADAPTER_LAST_PLANNED);
+    log.step("a commit on the second adapter publishes only its own topics", |l| {
+        l.event(commit_frame(SECOND_ADAPTER, 1, LightSetpoint::from_level(42, None)));
+    }, SECOND_ADAPTER_GROUP_STATE);
+    assert_matches_golden("ha_wire_two_adapters", &log.finish(), TWO_ADAPTERS_GOLDEN);
+}
+
 fn record_session(settings: HomeAssistantSettingsView) -> String {
     let port = seeded_registry();
-    let bridge = spawn_bridge(StubSettings::new(settings), Arc::clone(&port));
-    let mut log = WireLog { bridge, port, cursor: 0, text: String::new() };
+    let mut log = WireLog::new(spawn_bridge(StubSettings::new(settings), Arc::clone(&port)), port);
     log.step("a fresh session announces everything", |_| {}, LAST_PLANNED);
     group_changes(&mut log);
     scene_changes(&mut log);
     lamp_changes(&mut log);
     refused_publishes(&mut log);
+    new_lamps(&mut log);
     input_changes(&mut log);
     log.step("a manual republish sends everything again and clears a lamp whose retraction is refused", |l| {
         l.bridge.mock.fail_next_publish_on(PORCH_CONFIG);
@@ -106,9 +154,13 @@ fn group_changes(log: &mut WireLog) {
 
 fn scene_changes(log: &mut WireLog) {
     log.fenced("an added scene announces the select again", |l| {
-        l.port.set_scenes(vec![scene(3, "Evening"), scene(4, "Night")]);
-        l.event(registry_event(SceneChangedEvent { adapter_id: 0, scene_id: 4 }));
+        l.port.set_scenes(vec![scene(3, "Evening"), scene(NIGHT, "Night")]);
+        l.event(registry_event(SceneChangedEvent { adapter_id: 0, scene_id: NIGHT }));
     });
+    log.step("a commit while a scene is active names it in the select state", |l| {
+        l.port.set_active_scene(Some(NIGHT));
+        l.event(runtime_frame(1, 44));
+    }, SELECT_STATE);
     log.fenced("the last scene removed retracts the select", |l| {
         l.port.set_scenes(Vec::new());
         l.event(registry_event(SceneChangedEvent { adapter_id: 0, scene_id: 3 }));
@@ -157,6 +209,28 @@ fn refused_publishes(log: &mut WireLog) {
     log.step("a reconnect retracts the lamp again in the fresh session", |l| {
         l.bridge.mock.set_connected(false);
     }, LAST_PLANNED);
+}
+
+fn new_lamps(log: &mut WireLog) {
+    log.fenced("a lamp whose config is accepted and availability refused is not recorded", |l| {
+        l.port.set_lamp(lamp(SHELF, "Shelf", brightness(), false));
+        l.bridge.mock.fail_next_publish_on(SHELF_AVAILABILITY);
+        l.event(registry_event(VirtualLampChangedEvent { adapter_id: 0, virtual_lamp_id: SHELF }));
+    });
+    log.step("the next commit announces it again with its availability", |l| {
+        l.event(runtime_frame(SHELF, 20));
+    }, HALL_STATE);
+    log.fenced("a colour lamp is announced with its colour mode", |l| {
+        l.port.set_lamp(lamp(STRIP, "Strip", colour(), false));
+        l.event(registry_event(VirtualLampChangedEvent { adapter_id: 0, virtual_lamp_id: STRIP }));
+    });
+    log.step("a colour commit publishes its colour", |l| {
+        l.event(commit_frame(0, STRIP, LightSetpoint::from_level(120, Some(amber()))));
+    }, HALL_STATE);
+}
+
+fn amber() -> ColorValue {
+    ColorValue { mode: ColorMode::Rgb, r: 255, g: 160, b: 0, ..Default::default() }
 }
 
 fn refuse_retraction(log: &mut WireLog, virtual_lamp_id: u8) {
@@ -217,6 +291,10 @@ fn tunable() -> CapabilityFlagsView {
     CapabilityFlagsView { brightness: true, cct: true, ..Default::default() }
 }
 
+fn colour() -> CapabilityFlagsView {
+    CapabilityFlagsView { brightness: true, rgb: true, ..Default::default() }
+}
+
 fn lamp(virtual_lamp_id: u8, name: &str, capabilities: CapabilityFlagsView, unreachable: bool) -> HaLampView {
     HaLampView {
         virtual_lamp_id,
@@ -252,6 +330,10 @@ struct WireLog {
 }
 
 impl WireLog {
+    fn new(bridge: Harness, port: Arc<StubHaReadPort>) -> Self {
+        Self { bridge, port, cursor: 0, text: String::new() }
+    }
+
     fn event(&self, frame: BusFrame) {
         assert_eq!(self.bridge.publisher.try_publish(BusChannel::Events, frame), PublishResult::Queued);
     }
