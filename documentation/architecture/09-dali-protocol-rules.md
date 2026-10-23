@@ -181,7 +181,10 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   extended fade, the dimming curve) confirms nothing when that read-back or its operand
   proof went unanswered or held a violation: the fields that answered still land, and the
   operation fails `verify_unanswered`, or `verify_contended` when any of them held a
-  violation. A Tc-limit store fails `dt8_tc_limit_unconfirmed` instead.
+  violation. A Tc-limit store fails `dt8_tc_limit_unconfirmed` instead. A DT8 colour
+  staging whose `DTR` echo never proves fails `dt8_staging_unconfirmed` when a register
+  answered another value, else `dt8_staging_contended` when an echo held a violation,
+  else `dt8_staging_unanswered`.
 - A multi-byte memory-bank value is read inside one latch (DiiA 252/253): chunks are
   field-aligned, a re-arm restarts the value, and a value no latch covers fails
   (`memory_bank_latch_lost`) rather than being stitched. MASK and TMASK are per width,
@@ -333,7 +336,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   before the store: the temporary's type and, by Table 11, x and y, Tc, primaries 0 and
   5, or red, freecolour and `RGBWAF CONTROL` must equal what was charged, or the COPY or
   the MASK stagings run once more, and the write then fails
-  `dt8_level_colour_unconfirmed`. The unit is bounded: after the probe every read is
+  `dt8_level_colour_unconfirmed`, or with a staging's outcome when a MASK staging's echo
+  never proves. The unit is bounded: after the probe every read is
   asked once and every staging armed once, so it takes 28 frames for a Tc charge and 42
   for RGBWAF, at most 47 and 68 with the probe asked three times and the charge
   repeated, and at most 144 for the rarest, a MASK charge of six primaries; a collision

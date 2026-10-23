@@ -1,4 +1,5 @@
 use dali2rust_contracts::msg::{ColorMode, LightSetpoint, PowerState};
+use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::controller::DaliApplicationController;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
@@ -9,7 +10,7 @@ use dali2rust_contracts::msg::ColorValue;
 use crate::runtime::executor::helpers::{
     ArmedCommand, dali_short_address, kelvin_to_mirek, send_dt8_raw, send_dt8_raw_query,
     send_dtr0_backed_extended, send_extended_query, send_special, send_standard,
-    send_standard_query, SemanticDaliError, DT8_ACTIVATE, DT8_QUERY_COLOUR_STATUS,
+    send_standard_response, SemanticDaliError, DT8_ACTIVATE, DT8_QUERY_COLOUR_STATUS,
     DT8_SET_TEMPERATURE_TC,
     DT8_SET_TEMPORARY_RGB_DIMLEVEL, DT8_SET_TEMPORARY_WAF_DIMLEVEL,
     DT8_SET_TEMPORARY_X_COORDINATE, DT8_SET_TEMPORARY_Y_COORDINATE, PROGRAM_VERIFY_REPAIRS,
@@ -387,28 +388,60 @@ pub(crate) fn stage_dtrs_within(
     arms: u8,
 ) -> Result<(), SemanticDaliError> {
     let provable = matches!(address, DaliAddress::Short(_));
+    let mut worst = StagingEcho::Silent;
     for _ in 0..arms {
         for (write, value) in DTR_WRITE.iter().zip(values) {
             send_special(controller, write(*value))?;
         }
-        if !provable || staged_dtrs_confirmed(controller, address, values)? {
+        if !provable {
             return Ok(());
         }
+        match unproved_staging(controller, address, values)? {
+            None => return Ok(()),
+            Some(echo) => worst = worst.max(echo),
+        }
     }
-    Err(SemanticDaliError::OperationFailed("dt8_staging_unconfirmed"))
+    Err(SemanticDaliError::OperationFailed(worst.outcome()))
 }
 
-fn staged_dtrs_confirmed(
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §3.13
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum StagingEcho {
+    Silent,
+    Contended,
+    Wrong,
+}
+
+impl StagingEcho {
+    const fn outcome(self) -> &'static str {
+        match self {
+            Self::Silent => DT8_STAGING_UNANSWERED,
+            Self::Contended => DT8_STAGING_CONTENDED,
+            Self::Wrong => DT8_STAGING_UNCONFIRMED,
+        }
+    }
+}
+
+const DT8_STAGING_UNANSWERED: &str = "dt8_staging_unanswered";
+const DT8_STAGING_CONTENDED: &str = "dt8_staging_contended";
+const DT8_STAGING_UNCONFIRMED: &str = "dt8_staging_unconfirmed";
+
+fn unproved_staging(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     values: &[u8],
-) -> Result<bool, SemanticDaliError> {
+) -> Result<Option<StagingEcho>, SemanticDaliError> {
     for (query, value) in DTR_QUERY.iter().zip(values) {
-        if send_standard_query(controller, address, *query)? != Some(*value) {
-            return Ok(false);
-        }
+        let echo = match send_standard_response(controller, address, *query)? {
+            DaliResponse::Answer(echo) if echo == *value => continue,
+            DaliResponse::Answer(_) => StagingEcho::Wrong,
+            DaliResponse::Violation => StagingEcho::Contended,
+            DaliResponse::NoAnswer => StagingEcho::Silent,
+        };
+        return Ok(Some(echo));
     }
-    Ok(true)
+    Ok(None)
 }
 
 pub(crate) fn apply_dt8_cct(

@@ -210,7 +210,10 @@ effective-значений распространяется на привяза�
   ([09 §DT8](../../../architecture/09-dali-protocol-rules.md#dt8-colour-part-209)).
   Если ответа нет или он неразборчив, уровень не пишется, и операция завершается
   `failed` с `dt8_level_colour_unanswered` или `dt8_level_colour_contended`; если
-  заряженный цвет не подтвердился — с `dt8_level_colour_unconfirmed`. Гир с
+  заряженный цвет не подтвердился — с `dt8_level_colour_unconfirmed`; если не
+  подтвердился DTR, заряжающий MASK-значение, — с `dt8_staging_unanswered`,
+  `dt8_staging_contended` или `dt8_staging_unconfirmed` (тишина, нарушающий кадр, чужое
+  значение). Гир с
   неизвестным набором типов, не ответивший на вопрос, получает
   `types_unknown_read_or_override`: уровень пройдёт после чтения атрибутов или после
   override'а типа. Гир, чей набор DT8 не содержит, получает уровень без вопроса о

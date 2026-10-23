@@ -47,7 +47,9 @@
 только после вопроса о временном цвете
 ([`physical-devices.md`](physical-devices.md) §`POST …/write-attributes`): молчание —
 `dt8_level_colour_unanswered`, нарушающий кадр — `dt8_level_colour_contended`,
-неподтверждённый цвет — `dt8_level_colour_unconfirmed`, молчание гира с неизвестным
+неподтверждённый цвет — `dt8_level_colour_unconfirmed`, неподтверждённый DTR
+MASK-заряда — `dt8_staging_unanswered`, `dt8_staging_contended` или
+`dt8_staging_unconfirmed`, молчание гира с неизвестным
 набором типов — `types_unknown_read_or_override` (уровень пройдёт после чтения атрибутов
 или override'а типа). Такой отказ, как и любой другой, — отказ ячейки этого прибора:
 остальные приборы пишутся, а операция завершается первой названной причиной.

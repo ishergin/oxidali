@@ -220,7 +220,7 @@ unchecked image, and `hil flash` refuses one unless told `--allow-red-isr`.
 | `verify_ts_dto_mirror.py` | every serialized or deserialized DTO under `dali2rust-api`'s `http/` and `ws/`, and every struct the table names elsewhere with the structs it reaches, has the field names of its `web/app/src/api/types.ts` interface, nested ones and the type arguments of a generic wrapper included; an `Option` field serialised as `null` is nullable in TypeScript; the pairs, the shapes it cannot read and the recorded drift are in `scripts/ts_dto_mirror.txt`, and the drift budget only goes down |
 | `verify_read_surface.py` | every read-payload block reaches a screen: rendered, or the clock its delta column keys on |
 | `verify_rest_docs.py` | every route the router serves and every error code the API answers is named in a REST resource document, and every documented route is served |
-| `verify_outcome_names.py` | every outcome name a crate puts in a 32-byte error message (`SemanticDaliError`, registry rejections and confirmations, compact error payloads, paced-cell outcomes) fits it whole; the limit is read from `FixedText32` |
+| `verify_outcome_names.py` | every outcome name a crate puts in a 32-byte error message (`SemanticDaliError`, registry rejections and confirmations, compact error payloads, paced-cell outcomes, `message()` and `outcome()` tables) fits it whole; the limit is read from `FixedText32` |
 
 ## Comments
 

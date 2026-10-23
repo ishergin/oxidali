@@ -17,7 +17,7 @@ CARRIERS = re.compile(
     r"\b(?:OperationFailed|Conflict|confirm_failed|reject_with|reject|fail_runtime_invalid"
     r"|CompactErrorPayload::new|failed|synthesize_failed_outcome|fail_operation_over_lost_fact)\("
 )
-MESSAGE_FN = re.compile(r"fn message\(self\) -> &'static str \{")
+MESSAGE_FN = re.compile(r"fn (?:message|outcome)\(self\) -> &'static str \{")
 
 
 def call_body(text, open_paren):
