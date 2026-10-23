@@ -1,6 +1,7 @@
 use dali2rust_contracts::msg::{
     Dali103ScanProgressEvent, DaliInputEventObservedEvent, InputEventKind,
 };
+use dali2rust_platform::slice_store::SliceKey;
 use dali2rust_platform::small_sort::insertion_sort_by;
 
 use super::store::Inner;
@@ -834,6 +835,11 @@ pub(crate) struct PersistableInputDevicesSlice {
 }
 
 pub(crate) const INPUT_DEVICES_PER_BANK: usize = 8;
+
+const _: () = assert!(
+    MAX_INPUT_DEVICES <= INPUT_DEVICES_PER_BANK * SliceKey::INPUT_DEVICE_BANKS as usize,
+    "every input device the registry admits has a place in a persisted bank"
+);
 
 pub(crate) fn persistable_snapshot_bank(inner: &Inner, bank: u8) -> PersistableInputDevicesSlice {
     let mut keys: Vec<(u8, u8)> = inner.input_devices.keys().copied().collect();

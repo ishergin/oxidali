@@ -784,7 +784,7 @@ fn note_unread_slice(
 const PHYSICAL_DEVICE_BANKS_U8: u8 =
     dali2rust_platform::slice_store::SliceKey::PHYSICAL_DEVICE_BANKS;
 
-const INPUT_DEVICE_BANKS_U8: u8 = 4;
+const INPUT_DEVICE_BANKS_U8: u8 = SliceKey::INPUT_DEVICE_BANKS;
 
 fn mark_slice_dirty(store: &RegistryStore, kind: &PersistenceSliceKind) {
     match *kind {
