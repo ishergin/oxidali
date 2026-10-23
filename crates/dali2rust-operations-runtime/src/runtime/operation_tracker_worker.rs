@@ -86,7 +86,7 @@ impl<V> PendingBufferOps for PendingMap<V> {
     }
 }
 
-const MAX_PENDING_CORRELATIONS: usize = 16;
+pub const MAX_PENDING_CORRELATIONS: usize = 16;
 
 const MAX_PENDING_OUTCOMES: usize = 256;
 

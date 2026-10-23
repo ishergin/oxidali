@@ -18,7 +18,7 @@ use dali2rust_domain::registry::{
 };
 use dali2rust_operations_runtime::{
     spawn_operation_tracker_worker, OperationTrackerCounters, OperationTrackerHttpRead,
-    OperationTrackerInner, OPERATION_TRACKER_HANDLED_EVENTS,
+    OperationTrackerInner, MAX_PENDING_CORRELATIONS, OPERATION_TRACKER_HANDLED_EVENTS,
 };
 use dali2rust_test_support::wait_until;
 
@@ -1331,15 +1331,14 @@ fn part_103_commissioning_is_visible_for_its_registry_adapter_only() {
     }
 }
 
-const PENDING_CORRELATION_CAP: u64 = 16;
-
 const TIMED_OUT_TTL_MS: u32 = 1;
 
 #[test]
 fn late_signals_of_closed_operations_leave_room_for_an_early_one() {
     let (publisher, tracker, _host) = spawn_harness();
     let first_closed = 41_000u64;
-    for corr in first_closed..first_closed + PENDING_CORRELATION_CAP {
+    let cap = u64::try_from(MAX_PENDING_CORRELATIONS).expect("a correlation count");
+    for corr in first_closed..first_closed + cap {
         let key = format!("op-late-{corr}-{corr}");
         publish(
             &publisher,
