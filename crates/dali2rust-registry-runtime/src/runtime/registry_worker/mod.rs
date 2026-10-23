@@ -42,7 +42,7 @@ const MEMORY_BANK_STAGING_MAX_AGE_MS: u64 = 30_000;
 use crate::runtime::registry::config_write_stage::CONFIG_WRITE_STAGE_MAX_AGE_MS;
 use crate::runtime::registry::hcl_schedules::HCL_SCHEDULE_STAGE_MAX_AGE_MS;
 const RECV_TIMEOUT: Duration = Duration::from_millis(250);
-const HELD_SLICE_REREAD_INTERVAL: Duration = Duration::from_secs(2);
+pub const HELD_SLICE_REREAD_INTERVAL: Duration = Duration::from_secs(2);
 
 
 fn command_flush_interval(store: &RegistryStore) -> Duration {

@@ -71,7 +71,7 @@ Feature: Persistence slices host contract
     When I PATCH JSON {"name":"Unsaved Name"} to "/api/v1/adapters/0"
     Then the response status should be 200
     Given reads of the stored slices succeed again
-    Then the JSON pointer "/persistence/unread_slices" at "/api/v1/diagnostics" should eventually be "0"
+    Then the held slices should be read again without a restart
     When I send a GET request to "/api/v1/adapters/0"
     Then the JSON field "name" should be "Stored Name"
     When I PATCH JSON {"name":"Saved Name"} to "/api/v1/adapters/0"
@@ -91,7 +91,7 @@ Feature: Persistence slices host contract
     Given an open WebSocket connection
     And the WebSocket client is subscribed to "adapters"
     Given reads of the stored slices succeed again
-    Then the JSON pointer "/persistence/unread_slices" at "/api/v1/diagnostics" should eventually be "0"
+    Then the held slices should be read again without a restart
     And the WebSocket client should receive a "AdapterSettingsChangedEvent" frame on channel "adapters"
 
   @id:PERS-009
@@ -110,5 +110,5 @@ Feature: Persistence slices host contract
     When I PATCH JSON {"application_active":false} to "/api/v1/settings/dali"
     Then the response status should be 200
     Given reads of the stored slices succeed again
-    Then the JSON pointer "/persistence/unread_slices" at "/api/v1/diagnostics" should eventually be "0"
+    Then the held slices should be read again without a restart
     And the WebSocket client should receive a "rules" log line reading "back: active again"

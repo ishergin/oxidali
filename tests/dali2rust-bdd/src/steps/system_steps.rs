@@ -1,10 +1,14 @@
 use std::net::Ipv4Addr;
+use std::time::Duration;
 
 use cucumber::{given, then, when};
 use dali2rust_platform::slice_store::SliceKey;
+use dali2rust_registry_runtime::HELD_SLICE_REREAD_INTERVAL;
+use dali2rust_test_support::wait_until;
 use serde_json::Value;
 
 use crate::steps::last_json;
+use crate::steps::polling::fetch_json;
 use crate::steps::wire::{frame_index, priorities_of, priority_of_settle_us, RELEASE};
 use crate::DaliWorld;
 
@@ -330,6 +334,22 @@ async fn stored_slice_reads_fail(world: &mut DaliWorld, label: String) {
 #[given("reads of the stored slices succeed again")]
 async fn stored_slices_read_again(world: &mut DaliWorld) {
     world.persistence_slices().read_everything();
+}
+
+const REREAD_ATTEMPTS: u32 = 3;
+const RELOAD_BUDGET: Duration = Duration::from_secs(2);
+const HELD_SLICES_READ_AGAIN_DEADLINE: Duration =
+    HELD_SLICE_REREAD_INTERVAL.saturating_mul(REREAD_ATTEMPTS).saturating_add(RELOAD_BUDGET);
+const UNREAD_SLICES_POINTER: &str = "/persistence/unread_slices";
+
+// PERS-007 PERS-008 PERS-009
+#[then("the held slices should be read again without a restart")]
+async fn held_slices_read_again(world: &mut DaliWorld) {
+    let port = world.server_port();
+    let diagnostics = || fetch_json(port, "/api/v1/diagnostics");
+    let unread = || diagnostics()?.pointer(UNREAD_SLICES_POINTER)?.as_u64();
+    wait_until(|| unread() == Some(0), HELD_SLICES_READ_AGAIN_DEADLINE);
+    assert_eq!(unread(), Some(0), "the held slices were not read again");
 }
 
 // ADP-029 ADP-030 ADP-032
