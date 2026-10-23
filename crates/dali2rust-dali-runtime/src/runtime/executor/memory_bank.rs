@@ -367,9 +367,13 @@ impl ChunkCursor {
         (chunk_start, proof): (u16, PointerProof),
         bytes: &mut Vec<u8>,
     ) -> Result<(), SemanticDaliError> {
-        let lost_placeholder_read = proof == PointerProof::Moved { one_behind: true };
-        let resume = match (self.placeholder_pending && lost_placeholder_read, self.freshly_armed) {
-            (true, _) => self.placeholder_resume(),
+        let lost_placeholder_read =
+            self.placeholder_pending && proof == PointerProof::Moved { one_behind: true };
+        if lost_placeholder_read && self.bank == RESERVED_LOCATION_BANK {
+            return self.arm_at(controller, MEMORY_RESERVED_OFFSET + 1, bytes);
+        }
+        let resume = match (lost_placeholder_read, self.freshly_armed) {
+            (true, _) => MEMORY_RESERVED_OFFSET,
             (false, true) => chunk_start,
             (false, false) => return Err(proof.failure(MEMORY_MISALIGNED)),
         };
@@ -377,20 +381,21 @@ impl ChunkCursor {
             return Err(proof.failure(MEMORY_POINTER_UNCONFIRMED));
         }
         self.rearms += 1;
+        self.arm_at(controller, resume, bytes)
+    }
+
+    // IEC 62386-102 §9.10.6, Table 9
+    fn arm_at(
+        &mut self,
+        controller: &mut impl DaliApplicationController,
+        resume: u16,
+        bytes: &mut Vec<u8>,
+    ) -> Result<(), SemanticDaliError> {
         bytes.truncate(usize::from(resume - self.start));
         self.done = resume - self.start;
         self.placeholder_pending = false;
         self.freshly_armed = true;
         arm_memory_pointer(controller, self.address, self.bank, resume)
-    }
-
-    // IEC 62386-102 §9.10.4, §9.10.6, Table 9
-    const fn placeholder_resume(&self) -> u16 {
-        if self.bank == RESERVED_LOCATION_BANK {
-            MEMORY_RESERVED_OFFSET + 1
-        } else {
-            MEMORY_RESERVED_OFFSET
-        }
     }
 
     fn resume_after(

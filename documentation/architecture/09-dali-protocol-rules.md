@@ -207,8 +207,9 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   (Tables 8 and 10), so it is read again, and a READ it never answers fails the read
   rather than reading as 0xFF. Any other failed proof follows the rule above, and a read
   that ends at 0x01 is judged by its closing check.
-  These re-arms and the ones after an arm share two per read. Any other READ that
-  answers nothing, answers with a violation,
+  The re-reads of 0x01 and the re-arms after an arm share two per read; bank 0's arm
+  past 0x01 spends none, and happens once. Any other READ that answers nothing, answers
+  with a violation,
   crosses a foreign frame or fails yields no value and ends its chunk: the pointer is
   re-armed in a transaction of its own at that location, or at the start of the latched
   value holding it, and a fresh chunk goes on from there, so no recovery stretches a

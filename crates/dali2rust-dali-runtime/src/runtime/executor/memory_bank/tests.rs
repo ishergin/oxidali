@@ -366,6 +366,36 @@ fn a_lag_after_bank_0s_reserved_location_arms_the_pointer_at_0x02_without_a_rere
 }
 
 #[test]
+fn bank_0s_reserved_location_spends_none_of_the_reads_rearms() {
+    let mock = MockDaliTransport::new();
+    let short = 5;
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(&mock, short, 0, 0);
+    for _ in 0..BANK_ARM_RETRIES {
+        expect_pointer_check(&mock, short, 0, Some(FOREIGN_OFFSET));
+        expect_prepare(&mock, short, 0, 0);
+    }
+    expect_pointer_check(&mock, short, 0, Some(0));
+    mock.expect_forward_frame_with_backward(read, Some(0x1C));
+    mock.expect_forward_frame_with_backward(read, None);
+    expect_pointer_check(&mock, short, 0, Some(1));
+    expect_rearmed_chunk(&mock, short, 0, 2);
+    mock.expect_forward_frame_with_backward(read, Some(0x01));
+    expect_pointer_check(&mock, short, 0, Some(3));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 0, 0, 3);
+
+    assert_eq!(
+        execution.bytes,
+        vec![0x1C, MEMORY_NO_ANSWER_PLACEHOLDER, 0x01],
+        "both re-arms went on foreign pointers, and the reserved location needs none of them"
+    );
+    assert_eq!(execution.error, None);
+    assert_script_consumed(&transport);
+}
+
+#[test]
 fn a_pointer_after_the_placeholder_that_is_not_one_read_behind_is_misaligned() {
     let proofs = [
         (Says(FOREIGN_BANK), Says(2)),
@@ -1046,6 +1076,7 @@ fn an_arm_whose_proof_stays_violated_is_contended() {
 }
 
 const FOREIGN_BANK: u8 = 7;
+const FOREIGN_OFFSET: u8 = 0x30;
 
 fn expect_foreign_bank(mock: &MockDaliTransport, short: u8, offset: u8) {
     mock.expect_forward_frame_with_backward(
