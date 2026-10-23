@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use dali2rust_api::coalesce::BurstCoalescer;
 use dali2rust_bus::worker_counters::bump;
 use dali2rust_bus::{BusFrame, BusSubscriberRx};
-use dali2rust_contracts::msg::BusEventPayload;
+use dali2rust_contracts::msg::{BusEventPayload, CommandEnvelope};
 
 use crate::runtime::bus_out::refuse_command;
 use crate::runtime::discovery::{announce, plan_discovery, DiscoveryJob, Entity, Gate};
@@ -117,26 +117,35 @@ pub(super) fn drain_bus(
         let Some(frame) = burst.pop_front() else {
             break;
         };
-        if let BusFrame::Command(command) = &frame {
-            let mut rule_publishes = Vec::new();
-            dispatch_mqtt_command(
-                &command.payload,
-                job,
-                &mut rule_publishes,
-                out.ports.adapter_count,
-                out.ports,
-                command.meta.correlation_id,
-            );
-            drain_rule_publishes(out, rule_budget, rule_publishes);
-            WORKER_STACK.note(frame_tag(&frame));
-            continue;
+        match &frame {
+            BusFrame::Command(command) => take_command(command, out, job, rule_budget),
+            BusFrame::Event(event) => consume_event(&event.payload, out, &mut touched),
+            BusFrame::Confirmation(_) => continue,
         }
-        let BusFrame::Event(event) = &frame else {
-            continue;
-        };
-        consume_event(&event.payload, out, &mut touched);
         WORKER_STACK.note(frame_tag(&frame));
     }
+    fan_out(out, touched);
+}
+
+fn take_command(
+    command: &CommandEnvelope,
+    out: &mut HaOut<'_>,
+    job: &mut Option<DiscoveryJob>,
+    rule_budget: &mut RulePublishBudget,
+) {
+    let mut rule_publishes = Vec::new();
+    dispatch_mqtt_command(
+        &command.payload,
+        job,
+        &mut rule_publishes,
+        out.ports.adapter_count,
+        out.ports,
+        command.meta.correlation_id,
+    );
+    drain_rule_publishes(out, rule_budget, rule_publishes);
+}
+
+fn fan_out(out: &mut HaOut<'_>, touched: HashSet<u8>) {
     for adapter_id in touched {
         publish_groups(out, adapter_id);
         publish_scene_select(out, adapter_id);

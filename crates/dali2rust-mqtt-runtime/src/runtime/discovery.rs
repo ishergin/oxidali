@@ -267,8 +267,7 @@ fn build_scene_select(out: &HaOut<'_>, adapter_id: u8) -> Announcement {
 #[inline(never)]
 fn build_input(out: &HaOut<'_>, adapter_id: u8, short_address: u8, instance_number: u8) -> Option<Announcement> {
     let view = out.ports.read_port.ha_input_view(adapter_id, short_address)?;
-    let instance = view.instances.iter().find(|i| i.instance_number == instance_number)?;
-    let instance_type = instance.instance_type?;
+    let instance_type = view.instances.iter().find(|i| i.instance_number == instance_number)?.instance_type?;
     let component = input_component(instance_type)?;
     let topic = out.topics.discovery_topic(
         component,
