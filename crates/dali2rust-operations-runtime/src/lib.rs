@@ -1,8 +1,3 @@
-#![allow(
-    clippy::too_many_arguments,
-    reason = "Worker dispatch arms mirror the routed bus command surface."
-)]
-
 pub mod runtime;
 
 pub use runtime::apply_orchestrator_worker::{

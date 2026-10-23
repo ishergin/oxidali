@@ -466,29 +466,26 @@ fn operation_view_for(
 fn publish_operation_status_changed(
     publisher: &BusPublisher,
     bus_id: BusId,
-    workflow_correlation_id: u64,
-    op_type: OperationType,
+    op: &TrackedOp,
     status: OperationStatus,
-    started_at_ms: u64,
     finished_at_ms: Option<u64>,
     ttl_remaining_ms: u32,
-    operation_key: &str,
     error_payload: Option<(ErrorCode, &str)>,
 ) {
     let error = error_payload.map(|(code, msg)| CompactErrorPayload::new(code, msg));
     let env = event_envelope(
         SOURCE_ID_UNSPECIFIED,
-        workflow_correlation_id,
+        op.workflow_correlation_id,
         bus_id.0,
         Some(Origin::Internal),
         OperationStatusChangedEvent {
-            operation_type: op_type,
+            operation_type: op.op_type,
             status,
             error,
-            started_at_ms,
+            started_at_ms: op.started_at_unix_ms,
             finished_at_ms,
             ttl_remaining_ms,
-            operation_key: fixed_text_32(operation_key),
+            operation_key: fixed_text_32(op.operation_key.as_str()),
         },
     );
     let frame = BusFrame::event(env);
@@ -532,11 +529,16 @@ fn transition_ttl_remaining_ms(op: &TrackedOp, status: OperationStatus) -> u32 {
     }
 }
 
-fn emit_transition(
-    publisher: &BusPublisher,
+#[derive(Clone, Copy)]
+struct Emitter<'a> {
+    publisher: &'a BusPublisher,
     bus_id: BusId,
+    counters: &'a OperationTrackerCounters,
+}
+
+fn emit_transition(
+    out: &Emitter<'_>,
     inner: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
     op: &TrackedOp,
     status: OperationStatus,
     finished_at: Option<u64>,
@@ -544,19 +546,16 @@ fn emit_transition(
 ) {
     let ttl_rem = transition_ttl_remaining_ms(op, status);
     publish_operation_status_changed(
-        publisher,
-        bus_id,
-        op.workflow_correlation_id,
-        op.op_type,
+        out.publisher,
+        out.bus_id,
+        op,
         status,
-        op.started_at_unix_ms,
         finished_at,
         ttl_rem,
-        op.operation_key.as_str(),
         error_payload,
     );
 
-    bump_counter(counters, status);
+    bump_counter(out.counters, status);
 
     let view = operation_view_for(op, status, error_payload);
     inner.upsert_http(&op.operation_key, view, None);
@@ -577,10 +576,8 @@ fn clear_active_entry(
 }
 
 fn apply_terminal(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     inner: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
     workflow_correlation_id: u64,
     op: &TrackedOp,
     status: OperationStatus,
@@ -589,16 +586,7 @@ fn apply_terminal(
     let finished_at = Some(unix_wall_clock_millis());
     let retention =
         Instant::now() + Duration::from_millis(u64::from(op.finished_retention_ms.max(1)));
-    emit_transition(
-        publisher,
-        bus_id,
-        inner,
-        counters,
-        op,
-        status,
-        finished_at,
-        error_payload,
-    );
+    emit_transition(out, inner, op, status, finished_at, error_payload);
     let view = operation_view_for(op, status, error_payload);
     inner.upsert_http(&op.operation_key, view, Some(retention));
     clear_active_entry(inner, workflow_correlation_id, op);
@@ -616,13 +604,10 @@ fn emit_terminal_with_retention(
     publish_operation_status_changed(
         publisher,
         bus_id,
-        op.workflow_correlation_id,
-        op.op_type,
+        op,
         status,
-        op.started_at_unix_ms,
         Some(unix_wall_clock_millis()),
         0,
-        op.operation_key.as_str(),
         Some((code, "")),
     );
     bump_counter(counters, status);
@@ -739,16 +724,8 @@ fn handle_operation_begin(
         started_at_unix_ms: unix_wall_clock_millis(),
         detail: OperationDetailState::from_begin(op_type),
     };
-    emit_transition(
-        publisher,
-        bus_id,
-        &mut guard,
-        counters.as_ref(),
-        &op,
-        OperationStatus::Accepted,
-        None,
-        None,
-    );
+    let out = Emitter { publisher, bus_id, counters: counters.as_ref() };
+    emit_transition(&out, &mut guard, &op, OperationStatus::Accepted, None, None);
     if coalesces {
         guard.coalesce.insert(key, corr);
     }
@@ -1022,13 +999,10 @@ fn promote_running(
     publish_operation_status_changed(
         publisher,
         bus_id,
-        op.workflow_correlation_id,
-        op.op_type,
+        op,
         OperationStatus::Running,
-        op.started_at_unix_ms,
         None,
         ttl_remaining_ms(op.deadline),
-        op.operation_key.as_str(),
         None,
     );
     bump_counter(counters, OperationStatus::Running);
@@ -1353,7 +1327,6 @@ dali2rust_contracts::dispatch_bus_events! {
     ),
 }
 
-#[allow(clippy::too_many_arguments, reason = "origin threads provenance through one extra param")]
 fn handle_worker_signal(
     publisher: &BusPublisher,
     bus_id: BusId,
@@ -1385,7 +1358,6 @@ fn flush_pending_worker_signals(
     });
 }
 
-#[allow(clippy::too_many_arguments, reason = "origin threads provenance through one extra param")]
 fn apply_worker_signal(
     publisher: &BusPublisher,
     bus_id: BusId,
@@ -1407,16 +1379,8 @@ fn apply_worker_signal(
             promote_running(publisher, bus_id, guard, counters.as_ref(), workflow_c, &op);
         }
         OperationWorkerSignal::WorkerSucceeded => {
-            apply_terminal(
-                publisher,
-                bus_id,
-                guard,
-                counters.as_ref(),
-                workflow_c,
-                &op,
-                OperationStatus::Succeeded,
-                None,
-            );
+            let out = Emitter { publisher, bus_id, counters: counters.as_ref() };
+            apply_terminal(&out, guard, workflow_c, &op, OperationStatus::Succeeded, None);
         }
         OperationWorkerSignal::WorkerFailed => {
             apply_worker_failure(publisher, bus_id, guard, counters.as_ref(), workflow_c, &op, sig);
@@ -1436,11 +1400,10 @@ fn apply_worker_failure(
     let error = sig.error.as_ref();
     let code = error.map_or(ErrorCode::OperationFailed, |e| e.code);
     let msg_owned = error.map(|e| e.message.clone()).unwrap_or_default();
+    let out = Emitter { publisher, bus_id, counters };
     apply_terminal(
-        publisher,
-        bus_id,
+        &out,
         guard,
-        counters,
         workflow_c,
         op,
         OperationStatus::Failed,
