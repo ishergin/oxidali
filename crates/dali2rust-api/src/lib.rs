@@ -1,9 +1,8 @@
 #![allow(
     clippy::manual_contains,
     clippy::needless_as_bytes,
-    clippy::too_many_arguments,
     clippy::type_complexity,
-    reason = "HTTP and bus_codec surfaces carry many parameters and stable wiring patterns."
+    reason = "HTTP and bus_codec surfaces keep stable wiring patterns."
 )]
 
 pub mod bus_codec;
