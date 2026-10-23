@@ -190,19 +190,31 @@ fn retract(out: &mut HaOut<'_>, key: EntityKey, retraction: &Announcement, gate:
     if !out.session.forget(key) && gate == Gate::IfAnnounced {
         return Announced::Skipped;
     }
-    Announced::from(deliver(out, key, retraction))
+    let retracted = publish_config(out, retraction);
+    let cleared = clear_paired_topics(out, key);
+    Announced::from(retracted && cleared)
 }
 
 fn deliver(out: &mut HaOut<'_>, (adapter_id, entity): EntityKey, announcement: &Announcement) -> bool {
-    let retain = retain_config(&announcement.payload, out.settings);
-    if !out.publish(&announcement.topic, &announcement.payload, retain) {
+    if !publish_config(out, announcement) {
         return false;
     }
     match entity {
-        Entity::Lamp(lamp_id) if announcement.retracts() => clear_lamp_retained(out, adapter_id, lamp_id),
         Entity::Lamp(lamp_id) => {
             publish_lamp_availability(out, adapter_id, lamp_id, announcement.lamp_unreachable)
         }
+        _ => true,
+    }
+}
+
+fn publish_config(out: &mut HaOut<'_>, announcement: &Announcement) -> bool {
+    let retain = retain_config(&announcement.payload, out.settings);
+    out.publish(&announcement.topic, &announcement.payload, retain)
+}
+
+fn clear_paired_topics(out: &mut HaOut<'_>, (adapter_id, entity): EntityKey) -> bool {
+    match entity {
+        Entity::Lamp(lamp_id) => clear_lamp_retained(out, adapter_id, lamp_id),
         _ => true,
     }
 }

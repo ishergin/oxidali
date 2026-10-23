@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use dali2rust_bus::{BusChannel, BusFrame, BusId, PublishResult};
 use dali2rust_contracts::msg::{
-    GroupChangedEvent, GroupMatrixChangedEvent, HomeAssistantDiscoveryPublishCommand,
-    InputDeviceChangedEvent, Origin, PhysicalDeviceChangedEvent, SceneChangedEvent,
-    VirtualLampChangedEvent,
+    BusEventPayload, GroupChangedEvent, GroupMatrixChangedEvent,
+    HomeAssistantDiscoveryPublishCommand, InputDeviceChangedEvent, OperationWorkerSignal, Origin,
+    PhysicalDeviceChangedEvent, SceneChangedEvent, VirtualLampChangedEvent,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
@@ -17,7 +17,7 @@ use dali2rust_domain::registry::{
 };
 use dali2rust_mqtt_runtime::{MqttCounters, PublishedMessage};
 use dali2rust_platform::mqtt::MqttQos;
-use dali2rust_test_support::remains_false_for;
+use dali2rust_test_support::{recv_event_matching, remains_false_for};
 use support::{
     absence_frame, button_press_frame, enabled_settings, registry_event, runtime_frame,
     spawn_bridge, Harness, StubHaReadPort, StubSettings,
@@ -30,12 +30,17 @@ const BOUND_SHORT: u8 = 7;
 const PANEL: u8 = 0;
 const HIDDEN_PANEL: u8 = 1;
 const DOORBELL: u8 = 2;
+const PORCH: u8 = 2;
+const DESK: u8 = 4;
 const MANUAL_RUN: u64 = 77;
 const LAST_PLANNED: &str = "homeassistant/light/ctl1/a0_group_9/config";
 const DOORBELL_STATE: &str = "dali/ctl1/a0/in/2/0/state";
 const PANEL_STATE: &str = "dali/ctl1/a0/in/0/0/state";
 const SELECT_STATE: &str = "dali/ctl1/a0/scene_select/state";
 const HALL_STATE: &str = "dali/ctl1/a0/group/5/state";
+const DESK_STATE: &str = "dali/ctl1/a0/vl/4/state";
+const PORCH_CONFIG: &str = "homeassistant/light/ctl1/a0_vl_2/config";
+const CONTROLLER_AVAILABILITY: &str = "dali/ctl1/availability";
 const EMPTY_PAYLOAD: &str = "<empty>";
 const RETAINED_GOLDEN: &str = include_str!("golden/ha_wire_retained.txt");
 const UNRETAINED_GOLDEN: &str = include_str!("golden/ha_wire_unretained.txt");
@@ -71,7 +76,11 @@ fn record_session(settings: HomeAssistantSettingsView) -> String {
     lamp_changes(&mut log);
     refused_publishes(&mut log);
     input_changes(&mut log);
-    log.step("a manual republish sends everything again", WireLog::manual_republish, LAST_PLANNED);
+    log.step("a manual republish sends everything again and clears a lamp whose retraction is refused", |l| {
+        l.bridge.mock.fail_next_publish_on(PORCH_CONFIG);
+        l.manual_republish();
+    }, LAST_PLANNED);
+    log.outcome(MANUAL_RUN);
     log.step("a last press closes the log", |l| l.event(button_press_frame(DOORBELL, 0)), DOORBELL_STATE);
     log.finish()
 }
@@ -128,23 +137,34 @@ fn lamp_changes(log: &mut WireLog) {
         l.event(runtime_frame(3, 10));
     }, HALL_STATE);
     log.fenced("a removed lamp is retracted with its retained topics", |l| {
-        l.port.remove_lamp(2);
-        l.event(registry_event(VirtualLampChangedEvent { adapter_id: 0, virtual_lamp_id: 2 }));
+        l.port.remove_lamp(PORCH);
+        l.event(registry_event(VirtualLampChangedEvent { adapter_id: 0, virtual_lamp_id: PORCH }));
     });
 }
 
 fn refused_publishes(log: &mut WireLog) {
     log.step("a refused lamp announce is not recorded and holds its state back", |l| {
-        l.port.set_lamp(lamp(4, "Desk", brightness(), false));
+        l.port.set_lamp(lamp(DESK, "Desk", brightness(), false));
         l.bridge.mock.fail_next_publishes(1);
-        l.event(runtime_frame(4, 10));
+        l.event(runtime_frame(DESK, 10));
     }, HALL_STATE);
-    log.step("the next commit announces the lamp", |l| l.event(runtime_frame(4, 11)), HALL_STATE);
-    log.fenced("a refused lamp retraction", |l| {
-        l.port.remove_lamp(4);
-        l.bridge.mock.fail_next_publishes(1);
-        l.event(registry_event(VirtualLampChangedEvent { adapter_id: 0, virtual_lamp_id: 4 }));
+    log.step("the next commit announces the lamp", |l| l.event(runtime_frame(DESK, 11)), HALL_STATE);
+    log.fenced("a refused lamp retraction still clears the lamp's retained topics", |l| refuse_retraction(l, DESK));
+    log.fenced("the lamp created again in the same session inherits no state", |l| {
+        l.port.set_lamp(lamp(DESK, "Desk", brightness(), false));
+        l.event(registry_event(VirtualLampChangedEvent { adapter_id: 0, virtual_lamp_id: DESK }));
     });
+    log.assert_nothing_retained_on(DESK_STATE);
+    log.fenced("a second refused retraction of the lamp", |l| refuse_retraction(l, DESK));
+    log.step("a reconnect retracts the lamp again in the fresh session", |l| {
+        l.bridge.mock.set_connected(false);
+    }, LAST_PLANNED);
+}
+
+fn refuse_retraction(log: &mut WireLog, virtual_lamp_id: u8) {
+    log.port.remove_lamp(virtual_lamp_id);
+    log.bridge.mock.fail_next_publishes(1);
+    log.event(registry_event(VirtualLampChangedEvent { adapter_id: 0, virtual_lamp_id }));
 }
 
 fn input_changes(log: &mut WireLog) {
@@ -163,7 +183,7 @@ fn seeded_registry() -> Arc<StubHaReadPort> {
     let port = StubHaReadPort::with_lamp(1);
     port.limit_ids(LAMP_IDS, GROUP_IDS);
     port.bind_to_short(BOUND_SHORT);
-    port.set_lamp(lamp(2, "Porch", tunable(), true));
+    port.set_lamp(lamp(PORCH, "Porch", tunable(), true));
     for (group_id, name) in [(5, "Hall"), (6, "Kitchen"), (8, "Stairs")] {
         port.set_group(group(group_id, name, brightness()));
     }
@@ -239,6 +259,7 @@ impl WireLog {
     }
 
     fn manual_republish(&mut self) {
+        while self.bridge.ev_obs_rx.try_recv().is_ok() {}
         let envelope = dali2rust_contracts::bus::command_envelope(
             SOURCE_ID_UNSPECIFIED,
             MANUAL_RUN,
@@ -248,6 +269,28 @@ impl WireLog {
         );
         let queued = self.bridge.publisher.try_publish(BusChannel::Commands, BusFrame::command(envelope));
         assert_eq!(queued, PublishResult::Queued);
+    }
+
+    fn outcome(&mut self, workflow: u64) {
+        let terminal = |payload: &BusEventPayload| {
+            matches!(payload, BusEventPayload::OperationWorkerSignalEvent(signal)
+                if signal.workflow_correlation_id == workflow
+                    && signal.signal != OperationWorkerSignal::WorkerStarted)
+        };
+        let event = recv_event_matching(&self.bridge.ev_obs_rx, WAIT, terminal);
+        let BusEventPayload::OperationWorkerSignalEvent(signal) = &event.payload else {
+            unreachable!("the predicate admits only a worker signal");
+        };
+        let cause = signal.error.as_ref().map_or("", |error| error.message.as_str());
+        let _ = writeln!(self.text, "## outcome: {:?} {cause}", signal.signal);
+    }
+
+    fn assert_nothing_retained_on(&self, topic: &str) {
+        let published = self.bridge.mock.published_on(topic);
+        let retained = published.iter().rev().find(|message| message.retain);
+        if let Some(message) = retained.filter(|message| !message.payload.is_empty()) {
+            panic!("{topic} still holds {}:\n{}", wire_line(message), self.text);
+        }
     }
 
     fn fenced(&mut self, name: &str, act: impl FnOnce(&mut Self)) {
@@ -278,7 +321,10 @@ impl WireLog {
         let counters = Arc::clone(&self.bridge.counters);
         let mock = Arc::clone(&self.bridge.mock);
         let settled = !remains_false_for(
-            move || MqttCounters::load(&counters.publishes_total) as usize + 1 == mock.published().len(),
+            move || {
+                let births = mock.published_on(CONTROLLER_AVAILABILITY).len();
+                MqttCounters::load(&counters.publishes_total) as usize + births == mock.published().len()
+            },
             WAIT,
         );
         assert!(settled, "the worker never counted its last publish:\n{}", self.text);

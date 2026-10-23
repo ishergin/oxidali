@@ -86,27 +86,24 @@ q1 retained homeassistant/light/ctl1/a0_vl_4/config {"availability":[{"topic":"d
 q1 retained dali/ctl1/a0/vl/4/availability online
 q1 retained dali/ctl1/a0/vl/4/state {"brightness":11,"state":"ON"}
 q1 retained dali/ctl1/a0/group/5/state {"state":"OFF"}
-## a refused lamp retraction
+## a refused lamp retraction still clears the lamp's retained topics
+q1 retained dali/ctl1/a0/vl/4/availability <empty>
+q1 retained dali/ctl1/a0/vl/4/state <empty>
 q1 volatile dali/ctl1/a0/in/2/0/state {"event_type":"short_press"}
-## a press publishes its event
-q1 volatile dali/ctl1/a0/in/0/0/state {"event_type":"short_press"}
-## a renamed input device is announced again
-q1 retained homeassistant/event/ctl1/a0_in0_0/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"device_class":"button","event_types":["release","press","short_press","double_press","long_press_start","long_press_repeat","long_press_stop","button_free","button_stuck"],"name":"Hall panel 0","object_id":"a0_in0_0","state_topic":"dali/ctl1/a0/in/0/0/state","unique_id":"ctl1_a0_in0_0"}
-q1 retained homeassistant/binary_sensor/ctl1/a0_in0_1/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"device_class":"occupancy","name":"Hall panel 1","object_id":"a0_in0_1","payload_off":"OFF","payload_on":"ON","state_topic":"dali/ctl1/a0/in/0/1/state","unique_id":"ctl1_a0_in0_1"}
-q1 retained homeassistant/sensor/ctl1/a0_in0_2/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"name":"Hall panel 2","object_id":"a0_in0_2","state_class":"measurement","state_topic":"dali/ctl1/a0/in/0/2/state","unique_id":"ctl1_a0_in0_2"}
-q1 retained homeassistant/sensor/ctl1/a0_in0_3/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"name":"Hall panel 3","object_id":"a0_in0_3","state_class":"measurement","state_topic":"dali/ctl1/a0/in/0/3/state","unique_id":"ctl1_a0_in0_3"}
+## the lamp created again in the same session inherits no state
+q1 retained homeassistant/light/ctl1/a0_vl_4/config {"availability":[{"topic":"dali/ctl1/availability"},{"topic":"dali/ctl1/a0/vl/4/availability"}],"availability_mode":"all","brightness":true,"brightness_scale":254,"color_temp_kelvin":true,"command_topic":"dali/ctl1/a0/vl/4/set","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"name":"Desk","object_id":"a0_vl_4","schema":"json","state_topic":"dali/ctl1/a0/vl/4/state","supported_color_modes":["brightness"],"unique_id":"ctl1_a0_vl_4"}
+q1 retained dali/ctl1/a0/vl/4/availability online
 q1 volatile dali/ctl1/a0/in/2/0/state {"event_type":"short_press"}
-## an input device no longer exposed is retracted
-q1 retained homeassistant/event/ctl1/a0_in0_0/config <empty>
-q1 retained homeassistant/binary_sensor/ctl1/a0_in0_1/config <empty>
-q1 retained homeassistant/sensor/ctl1/a0_in0_2/config <empty>
-q1 retained homeassistant/sensor/ctl1/a0_in0_3/config <empty>
+## a second refused retraction of the lamp
+q1 retained dali/ctl1/a0/vl/4/availability <empty>
+q1 retained dali/ctl1/a0/vl/4/state <empty>
 q1 volatile dali/ctl1/a0/in/2/0/state {"event_type":"short_press"}
-## a manual republish sends everything again
-q1 retained homeassistant/event/ctl1/a0_in0_0/config <empty>
-q1 retained homeassistant/binary_sensor/ctl1/a0_in0_1/config <empty>
-q1 retained homeassistant/sensor/ctl1/a0_in0_2/config <empty>
-q1 retained homeassistant/sensor/ctl1/a0_in0_3/config <empty>
+## a reconnect retracts the lamp again in the fresh session
+q1 retained dali/ctl1/availability online
+q1 retained homeassistant/event/ctl1/a0_in0_0/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"device_class":"button","event_types":["release","press","short_press","double_press","long_press_start","long_press_repeat","long_press_stop","button_free","button_stuck"],"name":"Panel 0 0","object_id":"a0_in0_0","state_topic":"dali/ctl1/a0/in/0/0/state","unique_id":"ctl1_a0_in0_0"}
+q1 retained homeassistant/binary_sensor/ctl1/a0_in0_1/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"device_class":"occupancy","name":"Panel 0 1","object_id":"a0_in0_1","payload_off":"OFF","payload_on":"ON","state_topic":"dali/ctl1/a0/in/0/1/state","unique_id":"ctl1_a0_in0_1"}
+q1 retained homeassistant/sensor/ctl1/a0_in0_2/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"name":"Panel 0 2","object_id":"a0_in0_2","state_class":"measurement","state_topic":"dali/ctl1/a0/in/0/2/state","unique_id":"ctl1_a0_in0_2"}
+q1 retained homeassistant/sensor/ctl1/a0_in0_3/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"name":"Panel 0 3","object_id":"a0_in0_3","state_class":"measurement","state_topic":"dali/ctl1/a0/in/0/3/state","unique_id":"ctl1_a0_in0_3"}
 q1 retained homeassistant/event/ctl1/a0_in1_0/config <empty>
 q1 retained homeassistant/event/ctl1/a0_in2_0/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"device_class":"button","event_types":["release","press","short_press","double_press","long_press_start","long_press_repeat","long_press_stop","button_free","button_stuck"],"name":"Doorbell 0","object_id":"a0_in2_0","state_topic":"dali/ctl1/a0/in/2/0/state","unique_id":"ctl1_a0_in2_0"}
 q1 retained homeassistant/light/ctl1/a0_vl_1/config {"availability":[{"topic":"dali/ctl1/availability"},{"topic":"dali/ctl1/a0/vl/1/availability"}],"availability_mode":"all","brightness":true,"brightness_scale":254,"color_temp_kelvin":true,"command_topic":"dali/ctl1/a0/vl/1/set","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"max_kelvin":6500,"min_kelvin":2700,"name":"Lamp 1","object_id":"a0_vl_1","schema":"json","state_topic":"dali/ctl1/a0/vl/1/state","supported_color_modes":["color_temp"],"unique_id":"ctl1_a0_vl_1"}
@@ -134,6 +131,52 @@ q1 retained homeassistant/light/ctl1/a0_group_6/config <empty>
 q1 retained homeassistant/light/ctl1/a0_group_7/config <empty>
 q1 retained homeassistant/light/ctl1/a0_group_8/config <empty>
 q1 retained homeassistant/light/ctl1/a0_group_9/config <empty>
+## a press publishes its event
+q1 volatile dali/ctl1/a0/in/0/0/state {"event_type":"short_press"}
+## a renamed input device is announced again
+q1 retained homeassistant/event/ctl1/a0_in0_0/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"device_class":"button","event_types":["release","press","short_press","double_press","long_press_start","long_press_repeat","long_press_stop","button_free","button_stuck"],"name":"Hall panel 0","object_id":"a0_in0_0","state_topic":"dali/ctl1/a0/in/0/0/state","unique_id":"ctl1_a0_in0_0"}
+q1 retained homeassistant/binary_sensor/ctl1/a0_in0_1/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"device_class":"occupancy","name":"Hall panel 1","object_id":"a0_in0_1","payload_off":"OFF","payload_on":"ON","state_topic":"dali/ctl1/a0/in/0/1/state","unique_id":"ctl1_a0_in0_1"}
+q1 retained homeassistant/sensor/ctl1/a0_in0_2/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"name":"Hall panel 2","object_id":"a0_in0_2","state_class":"measurement","state_topic":"dali/ctl1/a0/in/0/2/state","unique_id":"ctl1_a0_in0_2"}
+q1 retained homeassistant/sensor/ctl1/a0_in0_3/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"name":"Hall panel 3","object_id":"a0_in0_3","state_class":"measurement","state_topic":"dali/ctl1/a0/in/0/3/state","unique_id":"ctl1_a0_in0_3"}
+q1 volatile dali/ctl1/a0/in/2/0/state {"event_type":"short_press"}
+## an input device no longer exposed is retracted
+q1 retained homeassistant/event/ctl1/a0_in0_0/config <empty>
+q1 retained homeassistant/binary_sensor/ctl1/a0_in0_1/config <empty>
+q1 retained homeassistant/sensor/ctl1/a0_in0_2/config <empty>
+q1 retained homeassistant/sensor/ctl1/a0_in0_3/config <empty>
+q1 volatile dali/ctl1/a0/in/2/0/state {"event_type":"short_press"}
+## a manual republish sends everything again and clears a lamp whose retraction is refused
+q1 retained homeassistant/event/ctl1/a0_in0_0/config <empty>
+q1 retained homeassistant/binary_sensor/ctl1/a0_in0_1/config <empty>
+q1 retained homeassistant/sensor/ctl1/a0_in0_2/config <empty>
+q1 retained homeassistant/sensor/ctl1/a0_in0_3/config <empty>
+q1 retained homeassistant/event/ctl1/a0_in1_0/config <empty>
+q1 retained homeassistant/event/ctl1/a0_in2_0/config {"availability_topic":"dali/ctl1/availability","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"device_class":"button","event_types":["release","press","short_press","double_press","long_press_start","long_press_repeat","long_press_stop","button_free","button_stuck"],"name":"Doorbell 0","object_id":"a0_in2_0","state_topic":"dali/ctl1/a0/in/2/0/state","unique_id":"ctl1_a0_in2_0"}
+q1 retained homeassistant/light/ctl1/a0_vl_1/config {"availability":[{"topic":"dali/ctl1/availability"},{"topic":"dali/ctl1/a0/vl/1/availability"}],"availability_mode":"all","brightness":true,"brightness_scale":254,"color_temp_kelvin":true,"command_topic":"dali/ctl1/a0/vl/1/set","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"max_kelvin":6500,"min_kelvin":2700,"name":"Lamp 1","object_id":"a0_vl_1","schema":"json","state_topic":"dali/ctl1/a0/vl/1/state","supported_color_modes":["color_temp"],"unique_id":"ctl1_a0_vl_1"}
+q1 retained dali/ctl1/a0/vl/1/availability online
+q1 retained homeassistant/light/ctl1/a0_group_5/config {"availability_topic":"dali/ctl1/availability","brightness":true,"brightness_scale":254,"color_temp_kelvin":true,"command_topic":"dali/ctl1/a0/group/5/set","device":{"identifiers":["ctl1"],"manufacturer":"dali2rust","model":"DALI-2 controller","name":"DALI controller ctl1","sw_version":"test"},"name":"Hallway","object_id":"a0_group_5","schema":"json","state_topic":"dali/ctl1/a0/group/5/state","supported_color_modes":["color_temp"],"unique_id":"ctl1_a0_group_5"}
+q1 retained homeassistant/select/ctl1/a0_scene_select/config <empty>
+q1 retained homeassistant/light/ctl1/a0_vl_0/config <empty>
+q1 retained dali/ctl1/a0/vl/0/availability <empty>
+q1 retained dali/ctl1/a0/vl/0/state <empty>
+q1 retained dali/ctl1/a0/vl/2/availability <empty>
+q1 retained dali/ctl1/a0/vl/2/state <empty>
+q1 retained homeassistant/light/ctl1/a0_vl_3/config <empty>
+q1 retained dali/ctl1/a0/vl/3/availability <empty>
+q1 retained dali/ctl1/a0/vl/3/state <empty>
+q1 retained homeassistant/light/ctl1/a0_vl_4/config <empty>
+q1 retained dali/ctl1/a0/vl/4/availability <empty>
+q1 retained dali/ctl1/a0/vl/4/state <empty>
+q1 retained homeassistant/light/ctl1/a0_group_0/config <empty>
+q1 retained homeassistant/light/ctl1/a0_group_1/config <empty>
+q1 retained homeassistant/light/ctl1/a0_group_2/config <empty>
+q1 retained homeassistant/light/ctl1/a0_group_3/config <empty>
+q1 retained homeassistant/light/ctl1/a0_group_4/config <empty>
+q1 retained homeassistant/light/ctl1/a0_group_6/config <empty>
+q1 retained homeassistant/light/ctl1/a0_group_7/config <empty>
+q1 retained homeassistant/light/ctl1/a0_group_8/config <empty>
+q1 retained homeassistant/light/ctl1/a0_group_9/config <empty>
+## outcome: WorkerFailed discovery_publish_refused
 ## a last press closes the log
 q1 volatile dali/ctl1/a0/in/2/0/state {"event_type":"short_press"}
-## counters: publishes 114 refused 2 discovery published 44 discovery failed 0
+## counters: publishes 152 refused 4 discovery published 65 discovery failed 1

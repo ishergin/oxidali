@@ -29,6 +29,7 @@ struct MockInner {
     connect_calls: u32,
     disconnect_calls: u32,
     fail_publishes: u32,
+    fail_topics: Vec<String>,
     fail_subscribes: u32,
     last_message_id: u32,
     hold_subacks: bool,
@@ -37,6 +38,20 @@ struct MockInner {
     fail_connects: u32,
     stall_connects: u32,
     connected: bool,
+}
+
+impl MockInner {
+    fn refuses_publish_on(&mut self, topic: &str) -> bool {
+        if self.fail_publishes > 0 {
+            self.fail_publishes -= 1;
+            return true;
+        }
+        let Some(at) = self.fail_topics.iter().position(|failing| failing == topic) else {
+            return false;
+        };
+        self.fail_topics.remove(at);
+        true
+    }
 }
 
 #[derive(Debug)]
@@ -170,6 +185,10 @@ impl MockMqttClient {
         self.lock().fail_publishes = n;
     }
 
+    pub fn fail_next_publish_on(&self, topic: &str) {
+        self.lock().fail_topics.push(topic.to_string());
+    }
+
     pub fn fail_next_subscribes(&self, n: u32) {
         self.lock().fail_subscribes = n;
     }
@@ -255,8 +274,7 @@ impl MqttClient for MockMqttHandle {
         if !g.connected {
             return Err(MqttError::NotConnected);
         }
-        if g.fail_publishes > 0 {
-            g.fail_publishes -= 1;
+        if g.refuses_publish_on(topic) {
             return Err(MqttError::Rejected(-1));
         }
         g.published.push(PublishedMessage {
