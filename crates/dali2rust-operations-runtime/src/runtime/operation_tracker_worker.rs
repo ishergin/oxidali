@@ -27,6 +27,8 @@ use dali2rust_domain::registry::{
 
 use dali2rust_bsp::esp_thread;
 
+use super::operation_totals::OperationTotals;
+
 #[derive(Debug, Default)]
 pub struct OperationTrackerCounters {
     pub accepted: AtomicU32,
@@ -38,6 +40,18 @@ pub struct OperationTrackerCounters {
     pub ignored_commands: AtomicU32,
     pub ignored_events: AtomicU32,
     pub pending_outcomes_expired: AtomicU32,
+}
+
+impl OperationTrackerCounters {
+    #[must_use]
+    pub fn totals(&self) -> OperationTotals {
+        let succeeded = self.succeeded.load(Ordering::Acquire);
+        let failed = self.failed.load(Ordering::Acquire);
+        let timed_out = self.timed_out.load(Ordering::Acquire);
+        let cancelled = self.cancelled.load(Ordering::Acquire);
+        let accepted = self.accepted.load(Ordering::Relaxed);
+        OperationTotals { accepted, succeeded, failed, timed_out, cancelled }
+    }
 }
 
 const MAX_APPLY_DETAIL_ROWS: usize = 128;
@@ -501,16 +515,16 @@ fn bump_counter(counters: &OperationTrackerCounters, status: OperationStatus) {
             counters.running.fetch_add(1, Ordering::Relaxed);
         }
         OperationStatus::Succeeded => {
-            counters.succeeded.fetch_add(1, Ordering::Relaxed);
+            counters.succeeded.fetch_add(1, Ordering::Release);
         }
         OperationStatus::Failed => {
-            counters.failed.fetch_add(1, Ordering::Relaxed);
+            counters.failed.fetch_add(1, Ordering::Release);
         }
         OperationStatus::TimedOut => {
-            counters.timed_out.fetch_add(1, Ordering::Relaxed);
+            counters.timed_out.fetch_add(1, Ordering::Release);
         }
         OperationStatus::Cancelled => {
-            counters.cancelled.fetch_add(1, Ordering::Relaxed);
+            counters.cancelled.fetch_add(1, Ordering::Release);
         }
     }
 }
