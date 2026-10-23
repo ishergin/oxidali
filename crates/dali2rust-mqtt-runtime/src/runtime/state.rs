@@ -4,6 +4,7 @@ use dali2rust_api::ha::{
 
 use crate::runtime::discovery::{announce, input_entities, input_view, Entity, Gate};
 use crate::runtime::ha_out::HaOut;
+use crate::runtime::session::{PAYLOAD_OFFLINE, PAYLOAD_ONLINE};
 
 pub(super) fn publish_runtime_state(out: &mut HaOut<'_>, body: &dali2rust_contracts::msg::RuntimeStateChangedEvent) {
     if let Some(lamp_id) = body.virtual_lamp_id {
@@ -38,7 +39,8 @@ fn publish_lamp(out: &mut HaOut<'_>, body: &dali2rust_contracts::msg::RuntimeSta
 
 pub(super) fn publish_lamp_availability(out: &mut HaOut<'_>, adapter_id: u8, lamp_id: u8, unreachable: bool) -> bool {
     let topic = out.topics.lamp_availability_topic(adapter_id, lamp_id);
-    let published = out.publish(&topic, if unreachable { "offline" } else { "online" }, true);
+    let payload = if unreachable { PAYLOAD_OFFLINE } else { PAYLOAD_ONLINE };
+    let published = out.publish(&topic, payload, true);
     if published {
         out.session.lamp_availability.insert((adapter_id, lamp_id), unreachable);
     } else {

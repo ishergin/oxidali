@@ -13,8 +13,8 @@ use crate::runtime::rule_topics::{BridgeFilters, RuleFollow};
 use crate::runtime::subscriptions::Subscriptions;
 use crate::runtime::worker::MqttWorkerPorts;
 
-pub const PAYLOAD_ONLINE: &[u8] = b"online";
-pub const PAYLOAD_OFFLINE: &[u8] = b"offline";
+pub const PAYLOAD_ONLINE: &str = "online";
+pub const PAYLOAD_OFFLINE: &str = "offline";
 
 pub const KEEP_ALIVE: Duration = Duration::from_secs(30);
 
@@ -48,7 +48,7 @@ pub fn session_config(
         keep_alive: KEEP_ALIVE,
         last_will: Some(MqttLastWill {
             topic: topics.availability_topic(),
-            payload: PAYLOAD_OFFLINE.to_vec(),
+            payload: PAYLOAD_OFFLINE.as_bytes().to_vec(),
             qos: MqttQos::AtLeastOnce,
             retain: true,
         }),
@@ -61,7 +61,7 @@ pub fn announce_and_subscribe(
 ) -> Result<Vec<(String, u32)>, MqttError> {
     client.publish(
         &topics.availability_topic(),
-        PAYLOAD_ONLINE,
+        PAYLOAD_ONLINE.as_bytes(),
         MqttQos::AtLeastOnce,
         true,
     )?;
@@ -78,7 +78,7 @@ pub fn announce_and_subscribe(
 pub fn announce_offline(client: &mut dyn MqttClient, topics: &HaTopics) {
     let _ = client.publish(
         &topics.availability_topic(),
-        PAYLOAD_OFFLINE,
+        PAYLOAD_OFFLINE.as_bytes(),
         MqttQos::AtLeastOnce,
         true,
     );
@@ -193,7 +193,7 @@ mod tests {
         let cfg = session_config(&s, "secret".to_string(), &topics);
         let will = cfg.last_will.expect("a session without a will lies on reset");
         assert_eq!(will.topic, "dali/ctl1/availability");
-        assert_eq!(will.payload, PAYLOAD_OFFLINE);
+        assert_eq!(will.payload, PAYLOAD_OFFLINE.as_bytes());
         assert!(will.retain);
         assert_eq!(cfg.keep_alive, KEEP_ALIVE);
         assert_eq!(cfg.client_id, "ctl1");
@@ -211,7 +211,7 @@ mod tests {
 
         let birth = mock.published_on("dali/ctl1/availability");
         assert_eq!(birth.len(), 1);
-        assert_eq!(birth[0].payload, PAYLOAD_ONLINE);
+        assert_eq!(birth[0].payload, PAYLOAD_ONLINE.as_bytes());
         assert!(birth[0].retain, "a non-retained birth is invisible to a later client");
         assert_eq!(mock.subscriptions().len(), 3, "three wildcards, not one per entity");
     }
@@ -228,7 +228,7 @@ mod tests {
             .published_on("dali/ctl1/availability")
             .pop()
             .expect("an availability publish");
-        assert_eq!(last.payload, PAYLOAD_OFFLINE);
+        assert_eq!(last.payload, PAYLOAD_OFFLINE.as_bytes());
     }
 
     #[test]
