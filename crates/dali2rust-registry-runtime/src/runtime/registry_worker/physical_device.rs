@@ -1,148 +1,67 @@
 use std::sync::atomic::Ordering;
 
-use dali2rust_bus::{BusId, BusPublisher};
 use dali2rust_contracts::msg::{
     ErrorCode, PhysicalDeviceDeleteCommand, PhysicalDeviceNotesUpdateCommand,
     PhysicalDeviceOverrideCommand,
 };
 
 use crate::runtime::registry::publish::{publish_physical_device_changed, publish_unbound_lamps};
-use crate::runtime::registry::RegistryStore;
 
-use super::confirm::{
-    check_adapter_id, check_primary_adapter, publish_correlation_failed, publish_correlation_ok,
-};
-use super::RegistryCommandCounters;
+use super::command_ctx::CommandCtx;
 
-pub(super) fn handle_pd_override(
-    publisher: &BusPublisher,
-    tid: u16,
-    corr: u64,
-    primary_adapter_id: BusId,
-    adapter_count: u8,
-    store: &RegistryStore,
-    counters: &RegistryCommandCounters,
-    body: &PhysicalDeviceOverrideCommand,
-) {
-    handle_pd_mutation(
-        PdMutationCtx {
-            publisher,
-            tid,
-            corr,
-            primary_adapter_id,
-            adapter_count,
-            counters,
-            adapter_id: body.adapter_id,
-            short_address: body.short_address,
-        },
-        || {
-            store.apply_physical_device_override(body)
-        },
-    );
+pub(super) fn handle_pd_override(ctx: &CommandCtx<'_>, body: &PhysicalDeviceOverrideCommand) {
+    handle_pd_mutation(ctx, body.adapter_id, body.short_address, || {
+        ctx.store.apply_physical_device_override(body)
+    });
 }
 
-pub(super) fn handle_pd_notes(
-    publisher: &BusPublisher,
-    tid: u16,
-    corr: u64,
-    primary_adapter_id: BusId,
-    adapter_count: u8,
-    store: &RegistryStore,
-    counters: &RegistryCommandCounters,
-    body: &PhysicalDeviceNotesUpdateCommand,
-) {
-    handle_pd_mutation(
-        PdMutationCtx {
-            publisher,
-            tid,
-            corr,
-            primary_adapter_id,
-            adapter_count,
-            counters,
-            adapter_id: body.adapter_id,
-            short_address: body.short_address,
-        },
-        || {
-            store.apply_physical_device_notes(
-                body.adapter_id,
-                body.short_address,
-                body.notes.as_str(),
-            )
-        },
-    );
+pub(super) fn handle_pd_notes(ctx: &CommandCtx<'_>, body: &PhysicalDeviceNotesUpdateCommand) {
+    handle_pd_mutation(ctx, body.adapter_id, body.short_address, || {
+        ctx.store.apply_physical_device_notes(
+            body.adapter_id,
+            body.short_address,
+            body.notes.as_str(),
+        )
+    });
 }
 
-pub(super) fn handle_pd_forget(
-    publisher: &BusPublisher,
-    tid: u16,
-    corr: u64,
-    primary_adapter_id: BusId,
-    adapter_count: u8,
-    store: &RegistryStore,
-    counters: &RegistryCommandCounters,
-    body: &PhysicalDeviceDeleteCommand,
-) {
-    if check_primary_adapter(publisher, tid, primary_adapter_id, corr).is_err()
-        || check_adapter_id(publisher, counters, body.adapter_id, adapter_count, corr).is_err()
-    {
+pub(super) fn handle_pd_forget(ctx: &CommandCtx<'_>, body: &PhysicalDeviceDeleteCommand) {
+    if ctx.check_adapter_target(body.adapter_id).is_err() {
         return;
     }
-    let Some(outcome) = store.apply_physical_device_forget(body.adapter_id, body.short_address)
+    let Some(outcome) = ctx
+        .store
+        .apply_physical_device_forget(body.adapter_id, body.short_address)
     else {
-        counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        publish_correlation_failed(
-            publisher,
-            corr,
-            ErrorCode::NotFound,
-            "physical_device_not_found",
-        );
+        ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
+        ctx.confirm_failed(ErrorCode::NotFound, "physical_device_not_found");
         return;
     };
-    publish_physical_device_changed(publisher, corr, body.adapter_id, body.short_address);
-    publish_unbound_lamps(publisher, corr, body.adapter_id, &outcome);
-    counters
+    publish_physical_device_changed(ctx.publisher, ctx.corr, body.adapter_id, body.short_address);
+    publish_unbound_lamps(ctx.publisher, ctx.corr, body.adapter_id, &outcome);
+    ctx.counters
         .physical_device_overrides_applied
         .fetch_add(1, Ordering::Relaxed);
-    publish_correlation_ok(publisher, corr);
+    ctx.confirm_ok();
 }
 
-struct PdMutationCtx<'a> {
-    publisher: &'a BusPublisher,
-    tid: u16,
-    corr: u64,
-    primary_adapter_id: BusId,
-    adapter_count: u8,
-    counters: &'a RegistryCommandCounters,
+fn handle_pd_mutation(
+    ctx: &CommandCtx<'_>,
     adapter_id: u8,
     short_address: u8,
-}
-
-fn handle_pd_mutation(ctx: PdMutationCtx<'_>, apply: impl FnOnce() -> bool) {
-    if check_primary_adapter(ctx.publisher, ctx.tid, ctx.primary_adapter_id, ctx.corr).is_err()
-        || check_adapter_id(
-            ctx.publisher,
-            ctx.counters,
-            ctx.adapter_id,
-            ctx.adapter_count,
-            ctx.corr,
-        )
-        .is_err()
-    {
+    apply: impl FnOnce() -> bool,
+) {
+    if ctx.check_adapter_target(adapter_id).is_err() {
         return;
     }
     if !apply() {
         ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        publish_correlation_failed(
-            ctx.publisher,
-            ctx.corr,
-            ErrorCode::InvalidValue,
-            "physical_device_override_not_applied",
-        );
+        ctx.confirm_failed(ErrorCode::InvalidValue, "physical_device_override_not_applied");
         return;
     }
-    publish_physical_device_changed(ctx.publisher, ctx.corr, ctx.adapter_id, ctx.short_address);
+    publish_physical_device_changed(ctx.publisher, ctx.corr, adapter_id, short_address);
     ctx.counters
         .physical_device_overrides_applied
         .fetch_add(1, Ordering::Relaxed);
-    publish_correlation_ok(ctx.publisher, ctx.corr);
+    ctx.confirm_ok();
 }

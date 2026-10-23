@@ -11,23 +11,14 @@ use crate::runtime::registry::publish::publish_config_write_signal;
 use crate::runtime::registry::transfer::ImportWriteFailure;
 use crate::runtime::registry::{HydrateCounts, RegistryStore};
 
+use super::command_ctx::CommandCtx;
 use super::{RegistryCommandCounters, SlicePersistence};
 
-pub(super) fn handle_slice_reload(
-    publisher: &BusPublisher,
-    tid: u16,
-    corr: u64,
-    primary_adapter_id: BusId,
-    store: &Arc<RegistryStore>,
-    persistence: Option<&SlicePersistence>,
-    adapter_count: u8,
-    counters: &RegistryCommandCounters,
-    body: &RegistrySliceReloadCommand,
-) {
-    if super::confirm::check_primary_adapter(publisher, tid, primary_adapter_id, corr).is_err() {
+pub(super) fn handle_slice_reload(ctx: &CommandCtx<'_>, body: &RegistrySliceReloadCommand) {
+    if ctx.check_primary_adapter().is_err() {
         return;
     }
-    let imported = import_then_reload(store, persistence, adapter_count, corr);
+    let imported = import_then_reload(ctx.store, ctx.persistence, ctx.adapter_count, ctx.corr);
     if let Some(counts) = imported.counts {
         log::info!(
             "registry: reload after import of {} — {} loaded, {} defaulted, {} errors",
@@ -36,16 +27,22 @@ pub(super) fn handle_slice_reload(
             counts.defaulted,
             counts.errors
         );
-        count_reload(counters);
+        count_reload(ctx.counters);
     }
     if imported.written {
-        announce_reload(publisher, primary_adapter_id, body);
+        announce_reload(ctx.publisher, ctx.primary_adapter_id, body);
     }
     if let Some((_, why)) = imported.failure {
         log::warn!("registry: import of {} failed: {why}", body.slice_name.as_str());
     }
-    if corr != CORRELATION_NONE {
-        publish_config_write_signal(publisher, corr, primary_adapter_id, imported.failure, counters);
+    if ctx.corr != CORRELATION_NONE {
+        publish_config_write_signal(
+            ctx.publisher,
+            ctx.corr,
+            ctx.primary_adapter_id,
+            imported.failure,
+            ctx.counters,
+        );
     }
 }
 

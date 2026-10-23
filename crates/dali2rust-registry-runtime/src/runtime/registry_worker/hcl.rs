@@ -1,6 +1,5 @@
 use std::sync::atomic::Ordering;
 
-use dali2rust_bus::{BusId, BusPublisher};
 use dali2rust_contracts::msg::{
     ErrorCode, HclLevelMode, HclSchedulePointRow, HclScheduleDeleteCommand,
     HclScheduleEnableCommand, HclScheduleUpsertCommand, HclTargetRow, HclTargetScope, HclTimeRef,
@@ -9,9 +8,8 @@ use dali2rust_domain::registry::HCL_SCHEDULE_LIMIT_REACHED;
 
 use crate::runtime::registry::hcl_schedules::{HclChunkOutcome, HclChunkRejection, HclSwitchOutcome};
 use crate::runtime::registry::publish::{publish_config_write_signal, publish_hcl_schedule_changed};
-use crate::runtime::registry::RegistryStore;
 
-use super::confirm::{check_primary_adapter, publish_correlation_failed, publish_correlation_ok};
+use super::command_ctx::CommandCtx;
 use super::RegistryCommandCounters;
 
 const MAX_ABSOLUTE_OFFSET_MINUTES: i16 = 1439;
@@ -20,108 +18,97 @@ const MAX_LEVEL: u8 = 254;
 
 type Rejection = (ErrorCode, &'static str);
 
-pub(super) fn handle_hcl_schedule_upsert(
-    publisher: &BusPublisher,
-    tid: u16,
-    corr: u64,
-    primary_adapter_id: BusId,
-    store: &RegistryStore,
-    counters: &RegistryCommandCounters,
-    body: &HclScheduleUpsertCommand,
-) {
-    if check_primary_adapter(publisher, tid, primary_adapter_id, corr).is_err() {
+pub(super) fn handle_hcl_schedule_upsert(ctx: &CommandCtx<'_>, body: &HclScheduleUpsertCommand) {
+    if ctx.check_primary_adapter().is_err() {
         return;
     }
     if let Err((code, message)) = validate_upsert_chunk(body) {
         let invalid = HclChunkRejection::Invalid(code, message);
-        let rejection = store.refuse_hcl_schedule_chunk(&body.schedule_id, body, invalid);
-        refuse_chunk(publisher, corr, primary_adapter_id, counters, body.last_chunk, rejection);
+        let rejection = ctx.store.refuse_hcl_schedule_chunk(&body.schedule_id, body, invalid);
+        refuse_chunk(ctx, body.last_chunk, rejection);
         return;
     }
-    match store.apply_hcl_schedule_chunk(&body.schedule_id, body) {
-        Ok(HclChunkOutcome::Staged) => publish_correlation_ok(publisher, corr),
+    match ctx.store.apply_hcl_schedule_chunk(&body.schedule_id, body) {
+        Ok(HclChunkOutcome::Staged) => ctx.confirm_ok(),
         Ok(HclChunkOutcome::Committed) => {
             publish_hcl_schedule_changed(
-                publisher,
-                corr,
-                tid,
+                ctx.publisher,
+                ctx.corr,
+                ctx.tid,
                 body.schedule_id.clone(),
                 false,
                 body.enabled,
             );
-            counters
+            ctx.counters
                 .hcl_schedule_upserts_applied
                 .fetch_add(1, Ordering::Relaxed);
-            counters.config_updates_applied.fetch_add(1, Ordering::Relaxed);
-            publish_correlation_ok(publisher, corr);
-            publish_config_write_signal(publisher, corr, primary_adapter_id, None, counters);
+            ctx.counters.config_updates_applied.fetch_add(1, Ordering::Relaxed);
+            ctx.confirm_ok();
+            publish_config_write_signal(
+                ctx.publisher,
+                ctx.corr,
+                ctx.primary_adapter_id,
+                None,
+                ctx.counters,
+            );
         }
         Err(rejection) => {
-            refuse_chunk(publisher, corr, primary_adapter_id, counters, body.last_chunk, rejection);
+            refuse_chunk(ctx, body.last_chunk, rejection);
         }
     }
 }
 
-fn refuse_chunk(
-    publisher: &BusPublisher,
-    corr: u64,
-    primary_adapter_id: BusId,
-    counters: &RegistryCommandCounters,
-    terminal: bool,
-    rejection: HclChunkRejection,
-) {
-    counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
+fn refuse_chunk(ctx: &CommandCtx<'_>, terminal: bool, rejection: HclChunkRejection) {
+    ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
     let (code, message) = chunk_rejection_error(rejection);
-    publish_correlation_failed(publisher, corr, code, message);
+    ctx.confirm_failed(code, message);
     if terminal {
-        publish_config_write_signal(publisher, corr, primary_adapter_id, Some((code, message)), counters);
+        publish_config_write_signal(
+            ctx.publisher,
+            ctx.corr,
+            ctx.primary_adapter_id,
+            Some((code, message)),
+            ctx.counters,
+        );
     }
 }
 
-pub(super) fn handle_hcl_schedule_delete(
-    publisher: &BusPublisher,
-    tid: u16,
-    corr: u64,
-    primary_adapter_id: BusId,
-    store: &RegistryStore,
-    counters: &RegistryCommandCounters,
-    body: &HclScheduleDeleteCommand,
-) {
-    if check_primary_adapter(publisher, tid, primary_adapter_id, corr).is_err() {
+pub(super) fn handle_hcl_schedule_delete(ctx: &CommandCtx<'_>, body: &HclScheduleDeleteCommand) {
+    if ctx.check_primary_adapter().is_err() {
         return;
     }
-    if !store.remove_hcl_schedule(&body.schedule_id) {
-        counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        publish_correlation_failed(publisher, corr, ErrorCode::NotFound, "schedule_not_found");
+    if !ctx.store.remove_hcl_schedule(&body.schedule_id) {
+        ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
+        ctx.confirm_failed(ErrorCode::NotFound, "schedule_not_found");
         return;
     }
-    publish_hcl_schedule_changed(publisher, corr, tid, body.schedule_id.clone(), true, false);
-    counters
+    let schedule_id = body.schedule_id.clone();
+    publish_hcl_schedule_changed(ctx.publisher, ctx.corr, ctx.tid, schedule_id, true, false);
+    ctx.counters
         .hcl_schedule_deletes_applied
         .fetch_add(1, Ordering::Relaxed);
-    counters.config_updates_applied.fetch_add(1, Ordering::Relaxed);
-    publish_correlation_ok(publisher, corr);
+    ctx.counters.config_updates_applied.fetch_add(1, Ordering::Relaxed);
+    ctx.confirm_ok();
 }
 
-pub(super) fn handle_hcl_schedule_enable(
-    publisher: &BusPublisher,
-    tid: u16,
-    corr: u64,
-    primary_adapter_id: BusId,
-    store: &RegistryStore,
-    counters: &RegistryCommandCounters,
-    body: &HclScheduleEnableCommand,
-) {
-    if check_primary_adapter(publisher, tid, primary_adapter_id, corr).is_err() {
+pub(super) fn handle_hcl_schedule_enable(ctx: &CommandCtx<'_>, body: &HclScheduleEnableCommand) {
+    if ctx.check_primary_adapter().is_err() {
         return;
     }
-    let outcome = store.switch_hcl_schedule(&body.schedule_id, body.enabled);
+    let outcome = ctx.store.switch_hcl_schedule(&body.schedule_id, body.enabled);
     if let HclSwitchOutcome::Switched { joined_waiting_write } = outcome {
-        count_switch(counters, joined_waiting_write);
+        count_switch(ctx.counters, joined_waiting_write);
         let schedule_id = body.schedule_id.clone();
-        publish_hcl_schedule_changed(publisher, corr, tid, schedule_id, false, body.enabled);
+        publish_hcl_schedule_changed(
+            ctx.publisher,
+            ctx.corr,
+            ctx.tid,
+            schedule_id,
+            false,
+            body.enabled,
+        );
     }
-    confirm_switch(publisher, corr, counters, outcome);
+    confirm_switch(ctx, outcome);
 }
 
 fn count_switch(counters: &RegistryCommandCounters, joined_waiting_write: bool) {
@@ -131,17 +118,12 @@ fn count_switch(counters: &RegistryCommandCounters, joined_waiting_write: bool) 
     }
 }
 
-fn confirm_switch(
-    publisher: &BusPublisher,
-    corr: u64,
-    counters: &RegistryCommandCounters,
-    outcome: HclSwitchOutcome,
-) {
+fn confirm_switch(ctx: &CommandCtx<'_>, outcome: HclSwitchOutcome) {
     if outcome == HclSwitchOutcome::Unknown {
-        counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        publish_correlation_failed(publisher, corr, ErrorCode::NotFound, "schedule_not_found");
+        ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
+        ctx.confirm_failed(ErrorCode::NotFound, "schedule_not_found");
     } else {
-        publish_correlation_ok(publisher, corr);
+        ctx.confirm_ok();
     }
 }
 

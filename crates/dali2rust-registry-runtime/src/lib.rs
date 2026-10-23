@@ -1,8 +1,3 @@
-#![allow(
-    clippy::too_many_arguments,
-    reason = "Registry worker dispatch arms mirror the routed bus command surface."
-)]
-
 pub mod runtime;
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ use crate::runtime::registry::config_write_stage::ConfigWriteRejection;
 use crate::runtime::registry::publish::{publish_group_changed, publish_group_matrix_changed};
 use crate::runtime::registry::RegistryStore;
 
+use super::command_ctx::CommandCtx;
 use super::matrix::{
     commit_matrix, MatrixResource, MetadataCommand, GROUP_COUNT, VIRTUAL_LAMP_COUNT,
 };
@@ -73,23 +74,17 @@ impl MatrixResource for GroupMatrix {
 }
 
 pub(super) fn commit_group_matrix(
-    publisher: &BusPublisher,
-    corr: u64,
-    store: &RegistryStore,
-    counters: &RegistryCommandCounters,
+    ctx: &CommandCtx<'_>,
     adapter_id: u8,
     chunks: u8,
 ) -> Result<(), &'static str> {
     commit_matrix(
-        publisher,
-        corr,
-        store,
-        counters,
+        ctx,
         ConfigWriteResource::GroupMatrix,
         adapter_id,
         GroupMatrix::NO_SCENE,
         chunks,
-        &counters.group_matrix_patches_applied,
-        || publish_group_matrix_changed(publisher, corr, adapter_id),
+        &ctx.counters.group_matrix_patches_applied,
+        || publish_group_matrix_changed(ctx.publisher, ctx.corr, adapter_id),
     )
 }

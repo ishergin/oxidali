@@ -50,6 +50,12 @@ impl PersistenceHydrateReport {
     }
 }
 
+struct GlobalSlice<'a> {
+    key: SliceKey,
+    version: u32,
+    name: &'a str,
+}
+
 macro_rules! flush_global_wrappers {
     ($(
         $name:ident => $take:ident, $mark:ident, $key:expr, $version:path, $label:literal, $snapshot:path;
@@ -59,9 +65,7 @@ macro_rules! flush_global_wrappers {
                 slices,
                 self.dirty.$take(),
                 || self.dirty.$mark(),
-                $key,
-                $version,
-                $label,
+                GlobalSlice { key: $key, version: $version, name: $label },
                 $snapshot,
             );
         }
@@ -289,14 +293,13 @@ impl crate::runtime::registry::store::RegistryStore {
         slices: &dyn SliceStore,
         taken: bool,
         remark: impl FnOnce(),
-        key: SliceKey,
-        version: u32,
-        name: &str,
+        slice: GlobalSlice<'_>,
         snapshot: impl FnOnce(&Inner) -> T,
     ) {
         if !taken {
             return;
         }
+        let GlobalSlice { key, version, name } = slice;
         if let Err(e) = self.flush_global_slice(slices, key, version, name, snapshot) {
             self.note_flush_failure(format_args!("{name}"), &e);
             remark();
@@ -336,13 +339,16 @@ impl crate::runtime::registry::store::RegistryStore {
         if taken {
             self.dirty.take_hcl_switches_waiting();
         }
+        let slice = GlobalSlice {
+            key: SliceKey::HclSchedules,
+            version: HCL_SCHEDULES_SLICE_VERSION,
+            name: "hcl_schedules",
+        };
         self.flush_global_slice_if_dirty(
             slices,
             taken,
             || self.dirty.mark_hcl_schedules_dirty(),
-            SliceKey::HclSchedules,
-            HCL_SCHEDULES_SLICE_VERSION,
-            "hcl_schedules",
+            slice,
             crate::runtime::registry::hcl_schedules::persistable_snapshot,
         );
     }

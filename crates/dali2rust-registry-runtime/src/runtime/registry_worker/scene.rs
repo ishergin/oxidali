@@ -9,6 +9,7 @@ use crate::runtime::registry::config_write_stage::ConfigWriteRejection;
 use crate::runtime::registry::publish::{publish_scene_changed, publish_scene_matrix_changed};
 use crate::runtime::registry::RegistryStore;
 
+use super::command_ctx::CommandCtx;
 use super::matrix::{
     commit_matrix, MatrixResource, MetadataCommand, SCENE_COUNT, VIRTUAL_LAMP_COUNT,
 };
@@ -73,24 +74,18 @@ impl MatrixResource for SceneMatrix {
 }
 
 pub(super) fn commit_scene_matrix(
-    publisher: &BusPublisher,
-    corr: u64,
-    store: &RegistryStore,
-    counters: &RegistryCommandCounters,
+    ctx: &CommandCtx<'_>,
     adapter_id: u8,
     scene_id: u8,
     chunks: u8,
 ) -> Result<(), &'static str> {
     commit_matrix(
-        publisher,
-        corr,
-        store,
-        counters,
+        ctx,
         ConfigWriteResource::SceneMatrix,
         adapter_id,
         scene_id,
         chunks,
-        &counters.scene_matrix_patches_applied,
-        || publish_scene_matrix_changed(publisher, corr, adapter_id, scene_id),
+        &ctx.counters.scene_matrix_patches_applied,
+        || publish_scene_matrix_changed(ctx.publisher, ctx.corr, adapter_id, scene_id),
     )
 }
