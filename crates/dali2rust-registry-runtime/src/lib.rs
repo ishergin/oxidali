@@ -26,6 +26,9 @@ pub use runtime::registry::{
 };
 pub use runtime::registry::input_devices::{InputDeviceDetail, InputDeviceSummary, InstanceView, ReadValue};
 pub use runtime::registry::import_stage::{ImportStageRefusal, StagedSlice};
+pub use runtime::registry::rules_world::{
+    RulesDeviceRow, RulesGroupRow, RulesInputRow, RulesLampRow,
+};
 pub use runtime::registry::transfer::{
     slice_key_from_name, transferable_slices, ForeignSliceOwner, ImportWriteFailure,
     RegistryOwnedOnly, SliceManifestRow,

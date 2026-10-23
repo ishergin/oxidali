@@ -1,6 +1,17 @@
+use dali2rust_platform::wall_clock::LocalCivilTime;
+
 use crate::runtime::engine::{
     DeviceState, GroupState, HclTargetState, InputState, LampState, SunTimes, WallTime,
 };
+
+impl From<LocalCivilTime> for WallTime {
+    fn from(local: LocalCivilTime) -> Self {
+        Self {
+            minutes_of_day: local.minutes_since_midnight,
+            weekday: local.weekday,
+        }
+    }
+}
 
 pub trait RulesWorldPort: Send + Sync {
     fn now_ms(&self) -> u64;
@@ -20,4 +31,20 @@ pub trait RulesWorldPort: Send + Sync {
         short_address: u8,
         instance_number: u8,
     ) -> [Option<u8>; 3];
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_rules_wall_time_is_the_local_minute_and_weekday_of_the_civil_time() {
+        let local = LocalCivilTime {
+            minutes_since_midnight: 23 * 60 + 5,
+            weekday: 6,
+            year_day: 200,
+            utc_offset_minutes: -180,
+        };
+        assert_eq!(WallTime::from(local), WallTime { minutes_of_day: 1_385, weekday: 6 });
+    }
 }

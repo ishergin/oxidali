@@ -1288,11 +1288,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
     }
 
     fn wall(&self) -> Option<dali2rust_rules_runtime::runtime::engine::WallTime> {
-        let local = self.wall.local()?;
-        Some(dali2rust_rules_runtime::runtime::engine::WallTime {
-            minutes_of_day: local.minutes_since_midnight,
-            weekday: local.weekday,
-        })
+        self.wall.local().map(Into::into)
     }
 
     fn sun(&self) -> Option<dali2rust_rules_runtime::runtime::engine::SunTimes> {
@@ -1311,16 +1307,14 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
         self.store
             .rules_lamp_rows()
             .into_iter()
-            .map(|(adapter_id, id, is_on, level, cct_kelvin, last_level, bound)| {
-                dali2rust_rules_runtime::runtime::engine::LampState {
-                    adapter_id,
-                    id,
-                    is_on,
-                    level,
-                    cct_kelvin,
-                    last_level,
-                    bound,
-                }
+            .map(|row| dali2rust_rules_runtime::runtime::engine::LampState {
+                adapter_id: row.adapter_id,
+                id: row.id,
+                is_on: row.is_on,
+                level: row.level,
+                cct_kelvin: row.cct_kelvin,
+                last_level: row.last_level,
+                bound: row.bound,
             })
             .collect()
     }
@@ -1329,14 +1323,12 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
         self.store
             .rules_group_rows()
             .into_iter()
-            .map(|(adapter_id, id, any_on, member_count)| {
-                dali2rust_rules_runtime::runtime::engine::GroupState {
-                    adapter_id,
-                    id,
-                    any_on,
-                    all_off: !any_on,
-                    member_count,
-                }
+            .map(|row| dali2rust_rules_runtime::runtime::engine::GroupState {
+                adapter_id: row.adapter_id,
+                id: row.id,
+                any_on: row.any_on,
+                all_off: row.all_off(),
+                member_count: row.member_count,
             })
             .collect()
     }
@@ -1346,20 +1338,19 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
         self.store
             .rules_device_rows(now)
             .into_iter()
-            .map(|(adapter_id, short_address, online)| {
-                dali2rust_rules_runtime::runtime::engine::DeviceState {
-                    adapter_id,
-                    short_address,
-                    online,
-                }
+            .map(|row| dali2rust_rules_runtime::runtime::engine::DeviceState {
+                adapter_id: row.adapter_id,
+                short_address: row.short_address,
+                online: row.online,
             })
             .collect()
     }
 
     fn inputs(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::InputState> {
-        let rows = self.store.rules_input_rows();
         let now = dali2rust_bsp::monotonic_clock::observation_stamp_ms();
-        rows.into_iter()
+        self.store
+            .rules_input_rows(now)
+            .into_iter()
             .map(|row| dali2rust_rules_runtime::runtime::engine::InputState {
                 adapter_id: row.adapter_id,
                 short_address: row.short_address,
@@ -1368,7 +1359,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
                 occupied: row.occupied,
                 light: row.light,
                 position: row.position,
-                last_event_age_ms: row.last_event_mono_ms.map(|at| age_since(now, at)),
+                last_event_age_ms: row.last_event_age_ms,
             })
             .collect()
     }
@@ -1395,22 +1386,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
         short_address: u8,
         instance_number: u8,
     ) -> [Option<u8>; 3] {
-        self.store
-            .input_device_detail(adapter_id, short_address)
-            .and_then(|detail| {
-                detail
-                    .instances
-                    .iter()
-                    .find(|i| i.instance_number == instance_number)
-                    .map(|i| {
-                        [
-                            i.instance_groups[0].value.flatten(),
-                            i.instance_groups[1].value.flatten(),
-                            i.instance_groups[2].value.flatten(),
-                        ]
-                    })
-            })
-            .unwrap_or([None; 3])
+        self.store.input_instance_groups(adapter_id, short_address, instance_number)
     }
 }
 
@@ -1451,24 +1427,8 @@ impl dali2rust_api::http::firmware_state::FirmwareHttpState for FirmwareBridge {
     }
 }
 
-fn age_since(now_mono_ms: u32, at_mono_ms: u32) -> u32 {
-    let age = now_mono_ms.wrapping_sub(at_mono_ms);
-    if age > u32::MAX / 2 {
-        0
-    } else {
-        age
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn an_event_stamped_after_the_clock_was_read_is_new_not_49_days_old() {
-        assert_eq!(super::age_since(1_000, 1_500), 0);
-        assert_eq!(super::age_since(1_500, 1_000), 500);
-        assert_eq!(super::age_since(10, u32::MAX - 9), 20, "the stamp wraps with the clock");
-    }
-
     use core::sync::atomic::Ordering::Relaxed;
     use std::sync::{Arc, Mutex};
 
