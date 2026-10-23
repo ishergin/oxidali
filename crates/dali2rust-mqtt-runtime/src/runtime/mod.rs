@@ -1,5 +1,6 @@
 mod bus_out;
 mod dial;
+pub use dial::PARK as MQTT_LINK_PARK;
 mod discovery;
 mod ha_out;
 mod inbound;

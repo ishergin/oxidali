@@ -44,6 +44,16 @@ pub const NAMED_EVENT_SUBSCRIBERS: &[&str] = &[
 const WS_FANOUT_INBOX: usize = 128;
 const MQTT_BRIDGE_INBOX: usize = 64;
 const RULES_INBOX: usize = 128;
+const REGISTRY_INBOX: usize = 64;
+const DISPLAY_INBOX: usize = 32;
+const OPERATION_TRACKER_INBOX: usize = 64;
+const APPLY_ORCHESTRATOR_INBOX: usize = 64;
+const PROJECTOR_INBOX: usize = 64;
+const HCL_SCHEDULER_INBOX: usize = 64;
+const POLLER_INBOX: usize = 64;
+const ARBITRATION_INBOX: usize = 16;
+const SUPERVISOR_INBOX: usize = 4;
+const REPLICATION_INBOX: usize = 8;
 
 pub(crate) fn spawn_bus_subscribers(
     config: BusConfig,
@@ -78,7 +88,7 @@ fn pipeline_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
     PipelineChannels {
             dali_cmd: reg.subscribe_commands(128, DALI_WORKER_HANDLED_COMMANDS),
             registry: reg.subscribe_commands_and_events_named(
-                64,
+                REGISTRY_INBOX,
                 REGISTRY_WORKER_HANDLED_COMMANDS,
                 REGISTRY_EVENTS_HANDLED_EVENTS,
                 "registry",
@@ -94,17 +104,33 @@ fn service_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
             operation_conf: reg.subscribe_confirmations(OPERATION_TRACKER_CONFIRMATION_INBOX),
             apply_cmd: reg.subscribe_commands(4, APPLY_ORCHESTRATOR_HANDLED_COMMANDS),
             confirmations: reg.subscribe_confirmations(32),
-            display_ev: reg.subscribe_events_named(32, DISPLAY_WORKER_HANDLED_EVENTS, "display"),
-            operation_ev: reg.subscribe_events_named(64, OPERATION_TRACKER_HANDLED_EVENTS, "operation_tracker"),
-            apply_ev: reg.subscribe_events_named(64, APPLY_ORCHESTRATOR_HANDLED_EVENTS, "apply_orchestrator"),
-            projector_ev: reg.subscribe_events_named(64, PROJECTOR_HANDLED_EVENTS, "fanout_projector"),
+            display_ev: reg.subscribe_events_named(
+                DISPLAY_INBOX,
+                DISPLAY_WORKER_HANDLED_EVENTS,
+                "display",
+            ),
+            operation_ev: reg.subscribe_events_named(
+                OPERATION_TRACKER_INBOX,
+                OPERATION_TRACKER_HANDLED_EVENTS,
+                "operation_tracker",
+            ),
+            apply_ev: reg.subscribe_events_named(
+                APPLY_ORCHESTRATOR_INBOX,
+                APPLY_ORCHESTRATOR_HANDLED_EVENTS,
+                "apply_orchestrator",
+            ),
+            projector_ev: reg.subscribe_events_named(
+                PROJECTOR_INBOX,
+                PROJECTOR_HANDLED_EVENTS,
+                "fanout_projector",
+            ),
             periodic: periodic_channels(reg),
             ota_cmd: Some(reg.subscribe_commands(
                 2,
                 dali2rust_ota_runtime::OTA_WORKER_HANDLED_COMMANDS,
             )),
             supervisor_ev: Some(reg.subscribe_events_named(
-                4,
+                SUPERVISOR_INBOX,
                 dali2rust_redundancy_runtime::SUPERVISOR_HANDLED_EVENTS,
                 "arb-supervisor",
             )),
@@ -122,13 +148,13 @@ fn periodic_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
 ) -> PeriodicChannels {
     PeriodicChannels {
         hcl_rx: reg.subscribe_commands_and_events_named(
-            64,
+            HCL_SCHEDULER_INBOX,
             HCL_SCHEDULER_HANDLED_COMMANDS,
             HCL_SCHEDULER_HANDLED_EVENTS,
             "hcl_scheduler",
         ),
         hcl_conf: reg.subscribe_confirmations(32),
-        poller_ev: reg.subscribe_events_named(64, POLLER_HANDLED_EVENTS, "poller"),
+        poller_ev: reg.subscribe_events_named(POLLER_INBOX, POLLER_HANDLED_EVENTS, "poller"),
         poller_conf: reg.subscribe_confirmations(32),
         rules_cmd: reg.subscribe_commands_and_events_named(
             RULES_INBOX,
@@ -137,12 +163,12 @@ fn periodic_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
             "rules",
         ),
         arbitration_ev: reg.subscribe_events_named(
-            16,
+            ARBITRATION_INBOX,
             dali2rust_redundancy_runtime::ARBITRATION_HANDLED_EVENTS,
             "arbitration",
         ),
         replication_ev: reg.subscribe_events_named(
-            8,
+            REPLICATION_INBOX,
             dali2rust_redundancy_runtime::REPLICATION_HANDLED_EVENTS,
             "replication",
         ),
@@ -152,52 +178,91 @@ fn periodic_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
 #[cfg(test)]
 mod tests {
     use super::{
-        spawn_bus_subscribers, MQTT_BRIDGE_INBOX, NAMED_EVENT_SUBSCRIBERS, RULES_INBOX,
-        WS_FANOUT_INBOX,
+        spawn_bus_subscribers, APPLY_ORCHESTRATOR_HANDLED_EVENTS, APPLY_ORCHESTRATOR_INBOX,
+        ARBITRATION_INBOX, DISPLAY_INBOX, DISPLAY_WORKER_HANDLED_EVENTS,
+        HCL_SCHEDULER_HANDLED_EVENTS, HCL_SCHEDULER_INBOX, MQTT_BRIDGE_INBOX,
+        NAMED_EVENT_SUBSCRIBERS, OPERATION_TRACKER_HANDLED_EVENTS, OPERATION_TRACKER_INBOX,
+        POLLER_HANDLED_EVENTS, POLLER_INBOX, PROJECTOR_HANDLED_EVENTS, PROJECTOR_INBOX,
+        REGISTRY_EVENTS_HANDLED_EVENTS, REGISTRY_INBOX, REPLICATION_INBOX, RULES_INBOX,
+        SUPERVISOR_INBOX, WS_FANOUT_INBOX,
     };
-    use dali2rust_registry_runtime::{ANNOUNCEMENT_INBOX_FLOOR, ANNOUNCEMENT_PARK_WINDOW};
+    use dali2rust_api::ws::WS_PROJECTED_EVENTS;
+    use dali2rust_domain::registry::MAX_HCL_SCHEDULES;
+    use dali2rust_mqtt_runtime::MQTT_WORKER_HANDLED_EVENTS;
+    use dali2rust_redundancy_runtime::{
+        ARBITRATION_HANDLED_EVENTS, REPLICATION_HANDLED_EVENTS, SUPERVISOR_HANDLED_EVENTS,
+    };
+    use dali2rust_rules_runtime::RULES_WORKER_HANDLED_EVENTS;
+    use dali2rust_registry_runtime::{
+        ANNOUNCEMENTS_PER_PARK, ANNOUNCEMENT_PARK_WINDOW, ANNOUNCEMENT_SHARE_OF_INBOX,
+    };
 
-    const PER_RECORD_ANNOUNCEMENTS: &[&str] = &[
-        "AdapterSettingsChangedEvent",
-        "PhysicalDeviceChangedEvent",
-        "VirtualLampChangedEvent",
-        "GroupChangedEvent",
-        "GroupMatrixChangedEvent",
-        "SceneChangedEvent",
-        "SceneMatrixChangedEvent",
-        "InputDeviceChangedEvent",
+    const PER_RECORD: usize = usize::MAX;
+    const ONE_RECORD: usize = 1;
+    const SCHEDULES_BEFORE_AND_AFTER: usize = 2 * MAX_HCL_SCHEDULES;
+
+    const ANNOUNCED: &[(&str, usize)] = &[
+        ("AdapterSettingsChangedEvent", PER_RECORD),
+        ("PhysicalDeviceChangedEvent", PER_RECORD),
+        ("VirtualLampChangedEvent", PER_RECORD),
+        ("GroupChangedEvent", PER_RECORD),
+        ("GroupMatrixChangedEvent", PER_RECORD),
+        ("SceneChangedEvent", PER_RECORD),
+        ("SceneMatrixChangedEvent", PER_RECORD),
+        ("InputDeviceChangedEvent", PER_RECORD),
+        ("HclScheduleChangedEvent", SCHEDULES_BEFORE_AND_AFTER),
+        ("PollerSettingsChangedEvent", ONE_RECORD),
+        ("DaliSettingsChangedEvent", ONE_RECORD),
+        ("RedundancySettingsChangedEvent", ONE_RECORD),
+        ("PoliciesChangedEvent", ONE_RECORD),
+        ("HomeAssistantSettingsChangedEvent", ONE_RECORD),
     ];
 
-    fn takes_announcements(handled: &[&str]) -> bool {
-        handled.iter().any(|kind| PER_RECORD_ANNOUNCEMENTS.contains(kind))
+    type InboxRow = (&'static str, &'static [&'static str], usize);
+
+    const EVENT_INBOXES: &[InboxRow] = &[
+        ("registry", REGISTRY_EVENTS_HANDLED_EVENTS, REGISTRY_INBOX),
+        ("display", DISPLAY_WORKER_HANDLED_EVENTS, DISPLAY_INBOX),
+        ("operation_tracker", OPERATION_TRACKER_HANDLED_EVENTS, OPERATION_TRACKER_INBOX),
+        ("apply_orchestrator", APPLY_ORCHESTRATOR_HANDLED_EVENTS, APPLY_ORCHESTRATOR_INBOX),
+        ("fanout_projector", PROJECTOR_HANDLED_EVENTS, PROJECTOR_INBOX),
+        ("hcl_scheduler", HCL_SCHEDULER_HANDLED_EVENTS, HCL_SCHEDULER_INBOX),
+        ("poller", POLLER_HANDLED_EVENTS, POLLER_INBOX),
+        ("rules", RULES_WORKER_HANDLED_EVENTS, RULES_INBOX),
+        ("mqtt_bridge", MQTT_WORKER_HANDLED_EVENTS, MQTT_BRIDGE_INBOX),
+        ("ws_fanout", WS_PROJECTED_EVENTS, WS_FANOUT_INBOX),
+        ("arbitration", ARBITRATION_HANDLED_EVENTS, ARBITRATION_INBOX),
+        ("arb-supervisor", SUPERVISOR_HANDLED_EVENTS, SUPERVISOR_INBOX),
+        ("replication", REPLICATION_HANDLED_EVENTS, REPLICATION_INBOX),
+    ];
+
+    fn most_announced_in_a_park(handled: &[&str]) -> usize {
+        let records = ANNOUNCED
+            .iter()
+            .filter(|(kind, _)| handled.contains(kind))
+            .fold(0usize, |sum, (_, records)| sum.saturating_add(*records));
+        records.min(ANNOUNCEMENTS_PER_PARK)
     }
 
     #[test]
-    fn a_parked_second_of_reload_announcements_fits_every_inbox_that_takes_them() {
-        let takers = [
-            ("ws_fanout", dali2rust_api::ws::WS_PROJECTED_EVENTS, WS_FANOUT_INBOX),
-            ("mqtt_bridge", dali2rust_mqtt_runtime::MQTT_WORKER_HANDLED_EVENTS, MQTT_BRIDGE_INBOX),
-            ("rules", dali2rust_rules_runtime::RULES_WORKER_HANDLED_EVENTS, RULES_INBOX),
-        ];
-        for (name, handled, inbox) in takers {
-            assert!(takes_announcements(handled), "{name} no longer takes reload announcements");
-            let floor = ANNOUNCEMENT_INBOX_FLOOR;
-            assert!(inbox >= floor, "{name}'s inbox of {inbox} is under the floor of {floor}");
+    fn a_park_of_reload_announcements_fits_every_named_subscriber_with_room_to_spare() {
+        for name in NAMED_EVENT_SUBSCRIBERS {
+            let row = EVENT_INBOXES.iter().find(|(subscriber, _, _)| subscriber == name);
+            let missing = || panic!("{name} declares no inbox here");
+            let (_, handled, inbox) = row.unwrap_or_else(missing);
+            let most = most_announced_in_a_park(handled);
+            let room = inbox / ANNOUNCEMENT_SHARE_OF_INBOX;
+            assert!(most <= room, "{name}: {most} announcements a park against {inbox} slots");
         }
-        let others = [
-            super::DISPLAY_WORKER_HANDLED_EVENTS,
-            super::OPERATION_TRACKER_HANDLED_EVENTS,
-            super::APPLY_ORCHESTRATOR_HANDLED_EVENTS,
-            super::PROJECTOR_HANDLED_EVENTS,
-            super::HCL_SCHEDULER_HANDLED_EVENTS,
-            super::POLLER_HANDLED_EVENTS,
-            dali2rust_redundancy_runtime::SUPERVISOR_HANDLED_EVENTS,
-            dali2rust_redundancy_runtime::ARBITRATION_HANDLED_EVENTS,
-            dali2rust_redundancy_runtime::REPLICATION_HANDLED_EVENTS,
-        ];
-        assert!(!others.iter().any(|handled| takes_announcements(handled)), "a new taker");
-        assert!(dali2rust_ws_runtime::NO_CLIENT_PARK <= ANNOUNCEMENT_PARK_WINDOW);
+        assert_eq!(EVENT_INBOXES.len(), NAMED_EVENT_SUBSCRIBERS.len(), "a row names no subscriber");
     }
+
+    #[test]
+    fn the_workers_that_park_on_their_inbox_park_no_longer_than_the_announcement_park() {
+        assert!(dali2rust_ws_runtime::NO_CLIENT_PARK <= ANNOUNCEMENT_PARK_WINDOW);
+        assert!(dali2rust_mqtt_runtime::MQTT_LINK_PARK <= ANNOUNCEMENT_PARK_WINDOW);
+    }
+
     use dali2rust_api::http::diagnostics_state::{
         WORST_COMMAND_SUBSCRIBERS, WORST_CONFIRMATION_SUBSCRIBERS, WORST_EVENT_SUBSCRIBERS,
         WORST_EVENT_SUBSCRIBER_NAME,
