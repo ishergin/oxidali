@@ -94,22 +94,35 @@ const MAX_PENDING_SIGNALS: usize = 4;
 
 const CLOSED_CORRELATIONS_REMEMBERED: usize = 2 * MAX_PENDING_CORRELATIONS;
 
-struct ClosedCorrelations(VecDeque<u64>);
+pub const OPERATION_TRACKER_CONFIRMATION_INBOX: usize = 32;
 
-impl ClosedCorrelations {
-    fn new() -> Self {
-        Self(VecDeque::with_capacity(CLOSED_CORRELATIONS_REMEMBERED))
+const REJECTIONS_REMEMBERED: usize = OPERATION_TRACKER_CONFIRMATION_INBOX;
+
+struct RecentCorrelations {
+    held: VecDeque<u64>,
+    capacity: usize,
+}
+
+impl RecentCorrelations {
+    fn new(capacity: usize) -> Self {
+        Self { held: VecDeque::with_capacity(capacity), capacity }
     }
 
     fn note(&mut self, correlation: u64) {
-        if self.0.len() >= CLOSED_CORRELATIONS_REMEMBERED {
-            self.0.pop_front();
+        if self.held.len() >= self.capacity {
+            self.held.pop_front();
         }
-        self.0.push_back(correlation);
+        self.held.push_back(correlation);
     }
 
     fn holds(&self, correlation: u64) -> bool {
-        self.0.contains(&correlation)
+        self.held.contains(&correlation)
+    }
+
+    fn take(&mut self, correlation: u64) -> bool {
+        let before = self.held.len();
+        self.held.retain(|held| *held != correlation);
+        self.held.len() != before
     }
 }
 
@@ -240,7 +253,8 @@ pub struct OperationTrackerInner {
     pending_address_change: PendingMap<OperationAddressChangeResultView>,
     pending_replace_device: PendingMap<OperationReplaceDeviceResultView>,
     pending_worker_signals: PendingMap<Vec<dali2rust_contracts::msg::OperationWorkerSignalEvent>>,
-    closed: ClosedCorrelations,
+    closed: RecentCorrelations,
+    rejected: RecentCorrelations,
 }
 
 impl Default for OperationTrackerInner {
@@ -262,7 +276,8 @@ impl OperationTrackerInner {
             pending_address_change: HashMap::new(),
             pending_replace_device: HashMap::new(),
             pending_worker_signals: HashMap::new(),
-            closed: ClosedCorrelations::new(),
+            closed: RecentCorrelations::new(CLOSED_CORRELATIONS_REMEMBERED),
+            rejected: RecentCorrelations::new(REJECTIONS_REMEMBERED),
         }
     }
 
@@ -283,6 +298,7 @@ impl OperationTrackerInner {
             pending_replace_device,
             pending_worker_signals,
             closed: _,
+            rejected: _,
         } = self;
         f(pending_group_apply);
         f(pending_scene_apply);
@@ -801,6 +817,7 @@ fn flush_begin_backlog(
     }
     flush_pending_commissioning_outcome(guard, corr, op_type);
     flush_pending_worker_signals(publisher, bus_id, guard, counters, corr);
+    fail_on_parked_rejection(publisher, bus_id, guard, counters.as_ref(), corr);
 }
 
 fn flush_pending_commissioning_outcome(
@@ -854,7 +871,7 @@ fn attach_attribute_read_outcomes(
 fn attach_or_buffer_result<V>(
     guard_active: &mut HashMap<u64, TrackedOp>,
     pending: &mut PendingMap<V>,
-    closed: &ClosedCorrelations,
+    closed: &RecentCorrelations,
     workflow_c: u64,
     view: V,
     into_detail: impl FnOnce(V) -> OperationDetailState,
@@ -1462,34 +1479,46 @@ fn drain_rejected_deliveries(
         }
         let correlation = conf.meta.correlation_id;
         let mut guard = lock_tracker(state);
-        let Some(op) = guard.active.get(&correlation).cloned() else {
-            park_rejection(&mut guard, correlation);
-            continue;
-        };
-        emit_terminal_with_retention(
-            publisher,
-            bus_id,
-            &mut guard,
-            counters.as_ref(),
-            &op,
-            OperationStatus::Failed,
-            ErrorCode::CommandsIngressOverload,
-        );
-        clear_active_entry(&mut guard, correlation, &op);
+        if guard.active.contains_key(&correlation) {
+            fail_undelivered(publisher, bus_id, &mut guard, counters.as_ref(), correlation);
+        } else if !guard.closed.holds(correlation) {
+            guard.rejected.note(correlation);
+        }
     }
 }
 
-fn park_rejection(guard: &mut OperationTrackerInner, correlation: u64) {
-    if guard.closed.holds(correlation) {
-        return;
+fn fail_on_parked_rejection(
+    publisher: &BusPublisher,
+    bus_id: BusId,
+    guard: &mut OperationTrackerInner,
+    counters: &OperationTrackerCounters,
+    correlation: u64,
+) {
+    if guard.rejected.take(correlation) {
+        fail_undelivered(publisher, bus_id, guard, counters, correlation);
     }
-    let failed = dali2rust_contracts::msg::OperationWorkerSignalEvent::failed(
-        correlation,
+}
+
+fn fail_undelivered(
+    publisher: &BusPublisher,
+    bus_id: BusId,
+    guard: &mut OperationTrackerInner,
+    counters: &OperationTrackerCounters,
+    correlation: u64,
+) {
+    let Some(op) = guard.active.get(&correlation).cloned() else {
+        return;
+    };
+    emit_terminal_with_retention(
+        publisher,
+        bus_id,
+        guard,
+        counters,
+        &op,
+        OperationStatus::Failed,
         ErrorCode::CommandsIngressOverload,
-        "delivery_rejected",
     );
-    let signals = pending_worker_signals_mut(guard);
-    queue_pending_list(signals, correlation, failed, MAX_PENDING_SIGNALS);
+    clear_active_entry(guard, correlation, &op);
 }
 
 fn evict_expired_pending_outcomes(

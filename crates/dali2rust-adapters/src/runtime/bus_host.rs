@@ -7,7 +7,8 @@ use dali2rust_fanout_runtime::PROJECTOR_HANDLED_EVENTS;
 use dali2rust_hcl_runtime::{HCL_SCHEDULER_HANDLED_COMMANDS, HCL_SCHEDULER_HANDLED_EVENTS};
 use dali2rust_operations_runtime::{
     APPLY_ORCHESTRATOR_HANDLED_COMMANDS, APPLY_ORCHESTRATOR_HANDLED_EVENTS,
-    OPERATION_TRACKER_HANDLED_COMMANDS, OPERATION_TRACKER_HANDLED_EVENTS,
+    OPERATION_TRACKER_CONFIRMATION_INBOX, OPERATION_TRACKER_HANDLED_COMMANDS,
+    OPERATION_TRACKER_HANDLED_EVENTS,
 };
 use dali2rust_poller_runtime::POLLER_HANDLED_EVENTS;
 use dali2rust_registry_runtime::{
@@ -82,7 +83,7 @@ fn service_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
 ) -> ServiceChannels {
     ServiceChannels {
             operation_cmd: reg.subscribe_commands(16, OPERATION_TRACKER_HANDLED_COMMANDS),
-            operation_conf: reg.subscribe_confirmations(32),
+            operation_conf: reg.subscribe_confirmations(OPERATION_TRACKER_CONFIRMATION_INBOX),
             apply_cmd: reg.subscribe_commands(4, APPLY_ORCHESTRATOR_HANDLED_COMMANDS),
             confirmations: reg.subscribe_confirmations(32),
             display_ev: reg.subscribe_events_named(32, DISPLAY_WORKER_HANDLED_EVENTS, "display"),
