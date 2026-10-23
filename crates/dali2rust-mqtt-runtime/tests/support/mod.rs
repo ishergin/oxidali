@@ -57,7 +57,11 @@ pub struct StubHaReadPort {
     scenes: Mutex<Vec<HaSceneView>>,
     binding_short: Mutex<Option<u8>>,
     inputs: Mutex<Vec<HaInputView>>,
+    id_spans: Mutex<(u8, u8)>,
 }
+
+const LAMP_ID_SPAN: u8 = 64;
+const GROUP_ID_SPAN: u8 = 16;
 
 impl StubHaReadPort {
     pub fn with_lamp(virtual_lamp_id: u8) -> Arc<Self> {
@@ -77,7 +81,39 @@ impl StubHaReadPort {
             scenes: Mutex::new(Vec::new()),
             binding_short: Mutex::new(None),
             inputs: Mutex::new(Vec::new()),
+            id_spans: Mutex::new((LAMP_ID_SPAN, GROUP_ID_SPAN)),
         })
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file narrows the id space")]
+    pub fn limit_ids(&self, lamps: u8, groups: u8) {
+        *self.id_spans.lock().unwrap() = (lamps, groups);
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file reshapes lamps")]
+    pub fn set_lamp(&self, lamp: HaLampView) {
+        let mut lamps = self.lamps.lock().unwrap();
+        lamps.retain(|l| l.virtual_lamp_id != lamp.virtual_lamp_id);
+        lamps.push(lamp);
+        lamps.sort_by_key(|l| l.virtual_lamp_id);
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file removes lamps")]
+    pub fn remove_lamp(&self, virtual_lamp_id: u8) {
+        self.lamps.lock().unwrap().retain(|l| l.virtual_lamp_id != virtual_lamp_id);
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file removes groups")]
+    pub fn remove_group(&self, group_id: u8) {
+        self.groups.lock().unwrap().retain(|g| g.group_id != group_id);
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file uses inputs")]
+    pub fn set_input_device(&self, view: HaInputView) {
+        let mut inputs = self.inputs.lock().unwrap();
+        inputs.retain(|v| v.short_address != view.short_address);
+        inputs.push(view);
+        inputs.sort_by_key(|v| v.short_address);
     }
 
     #[allow(dead_code, reason = "one binary per test file")]
@@ -87,9 +123,7 @@ impl StubHaReadPort {
 
     #[allow(dead_code, reason = "one binary per test file; not every file uses inputs")]
     pub fn set_button_device(&self, short_address: u8, instances: u8) {
-        let mut inputs = self.inputs.lock().unwrap();
-        inputs.retain(|v| v.short_address != short_address);
-        inputs.push(HaInputView {
+        self.set_input_device(HaInputView {
             short_address,
             name: Some(format!("Panel {short_address}")),
             ha_expose: true,
@@ -107,6 +141,7 @@ impl StubHaReadPort {
         let mut groups = self.groups.lock().unwrap();
         groups.retain(|g| g.group_id != group.group_id);
         groups.push(group);
+        groups.sort_by_key(|g| g.group_id);
     }
 
     #[allow(dead_code, reason = "one binary per test file; not every file uses scenes")]
@@ -182,7 +217,8 @@ impl HaPublishReadPort for StubHaReadPort {
             .into_iter()
             .map(|l| l.virtual_lamp_id)
             .collect();
-        (0..64).filter(|id| !exposed.contains(id)).collect()
+        let span = self.id_spans.lock().unwrap().0;
+        (0..span).filter(|id| !exposed.contains(id)).collect()
     }
 
     fn ha_retracted_group_ids(&self, adapter_id: u8) -> Vec<u8> {
@@ -191,7 +227,8 @@ impl HaPublishReadPort for StubHaReadPort {
             .into_iter()
             .map(|g| g.group_id)
             .collect();
-        (0..16).filter(|id| !exposed.contains(id)).collect()
+        let span = self.id_spans.lock().unwrap().1;
+        (0..span).filter(|id| !exposed.contains(id)).collect()
     }
 
     fn ha_active_scene(&self, _adapter_id: u8) -> Option<u8> {
