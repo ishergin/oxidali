@@ -17,7 +17,7 @@ use dali2rust_domain::registry::{
     OperationReadPort, OperationView,
 };
 use dali2rust_operations_runtime::{
-    spawn_operation_tracker_worker, OperationTotals, OperationTrackerCounters, OperationTrackerHttpRead,
+    spawn_operation_tracker_worker, OperationTrackerCounters, OperationTrackerHttpRead,
     OperationTrackerInner, MAX_PENDING_CORRELATIONS, OPERATION_TRACKER_CONFIRMATION_INBOX,
     OPERATION_TRACKER_HANDLED_EVENTS,
 };
@@ -240,17 +240,6 @@ fn operation_accepted_then_running_op001() {
     assert_eq!(tail_for(&tracker, "op-lifecycle"), vec![OperationStatus::Accepted, OperationStatus::Running]);
 }
 
-fn totals_of(counters: &OperationTrackerCounters) -> OperationTotals {
-    let load = |cell: &std::sync::atomic::AtomicU32| cell.load(std::sync::atomic::Ordering::Relaxed);
-    OperationTotals {
-        accepted: load(&counters.accepted),
-        succeeded: load(&counters.succeeded),
-        failed: load(&counters.failed),
-        timed_out: load(&counters.timed_out),
-        cancelled: load(&counters.cancelled),
-    }
-}
-
 #[test]
 fn an_operation_counts_as_in_flight_from_its_acceptance_to_its_ending() {
     let (publisher, _tracker, counters, _host) = spawn_harness_with_counters();
@@ -259,16 +248,16 @@ fn an_operation_counts_as_in_flight_from_its_acceptance_to_its_ending() {
         BusChannel::Commands,
         begin_envelope(9020, "op-in-flight", OperationType::Discovery, 600_000),
     );
-    wait_until(|| totals_of(&counters).in_flight() == 1, Duration::from_millis(500));
-    assert_eq!(totals_of(&counters).in_flight(), 1, "accepted and not ended");
+    wait_until(|| counters.totals().in_flight() == 1, Duration::from_millis(500));
+    assert_eq!(counters.totals().in_flight(), 1, "accepted and not ended");
 
     publish(
         &publisher,
         BusChannel::Events,
         signal_event(9020, OperationWorkerSignal::WorkerFailed, ErrorCode::OperationFailed),
     );
-    wait_until(|| totals_of(&counters).failed == 1, Duration::from_millis(500));
-    let totals = totals_of(&counters);
+    wait_until(|| counters.totals().failed == 1, Duration::from_millis(500));
+    let totals = counters.totals();
     assert_eq!((totals.accepted, totals.failed, totals.in_flight()), (1, 1, 0));
 }
 

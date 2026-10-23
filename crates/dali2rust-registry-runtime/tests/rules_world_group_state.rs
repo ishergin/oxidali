@@ -17,6 +17,8 @@ const WAIT: Duration = Duration::from_secs(2);
 const LIT: (u8, u8, u8) = (11, 12, 1);
 const DARK: (u8, u8, u8) = (12, 11, 2);
 
+const SEEN_AT_BASE_MS: u64 = 5_000;
+
 fn any_on(stack: &support::RegistryTestStack, group_id: u8) -> bool {
     stack
         .store
@@ -64,7 +66,7 @@ fn commit_setpoint(
             Some(dali2rust_contracts::msg::Origin::Internal),
             dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(
                 0,
-                RuntimeRegistryUpdateEntry::api_virtual_lamp_and_short(lamp.0, lamp.1, setpoint, 5_000 + correlation_id),
+                RuntimeRegistryUpdateEntry::api_virtual_lamp_and_short(lamp.0, lamp.1, setpoint, SEEN_AT_BASE_MS + correlation_id),
             ),
         ),
     );
@@ -165,8 +167,10 @@ fn a_lamp_switched_on_without_a_level_reads_on() {
 
 const NAMED_ONLY: u8 = 13;
 
-const LIT_SEEN_AT_MS: u64 = 5_030;
-const DARK_SEEN_AT_MS: u64 = 5_031;
+const LIT_COMMIT: u64 = 30;
+const DARK_COMMIT: u64 = 31;
+const LIT_SEEN_AT_MS: u64 = SEEN_AT_BASE_MS + LIT_COMMIT;
+const DARK_SEEN_AT_MS: u64 = SEEN_AT_BASE_MS + DARK_COMMIT;
 const ONLINE_WINDOW_MS: u64 = 15 * 60 * 1_000;
 const DIM_LEVEL: u8 = 200;
 
@@ -276,8 +280,8 @@ fn device_rows_are_ordered_and_online_for_fifteen_minutes_after_the_last_sightin
     let stack = spawn_registry_stack(1, 32);
     seed_bound_group_member(&stack, LIT.0, LIT.1, LIT.2, 10);
     seed_bound_group_member(&stack, DARK.0, DARK.1, DARK.2, 20);
-    commit_power(&stack, 30, LIT, true);
-    commit_power(&stack, 31, DARK, false);
+    commit_power(&stack, LIT_COMMIT, LIT, true);
+    commit_power(&stack, DARK_COMMIT, DARK, false);
     let seen = |now: u64| -> Vec<(u8, bool)> {
         stack
             .store

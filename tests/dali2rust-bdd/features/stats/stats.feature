@@ -36,9 +36,15 @@ Feature: Stats read model
   @id:STATS-005
   Scenario: Stats operations block reflects operation tracker counters
     Given a golden control-gear discovery script for short address 0
+    And the DALI transport blocks indefinitely
     When I start a discovery run for adapter 0
     Then the response status should be 202
-    And the last operation eventually succeeds
+    And the last operation eventually runs
+    When I send a GET request to "/api/v1/stats"
+    Then the response status should be 200
+    And the stats operations running gauge should be 1
+    When the DALI transport unblocks
+    Then every operation eventually finishes
     When I send a GET request to "/api/v1/stats"
     Then the response status should be 200
     And the stats operations succeeded total should be at least 1

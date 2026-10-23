@@ -1430,6 +1430,7 @@ mod tests {
     const KNOWN_SLICE: &str = "poller_settings";
     const OTHER_KNOWN_SLICE: &str = "hcl_schedules";
     const SLICE_BYTES: [u8; 3] = [1, 2, 3];
+    const SLICE_BYTES_CRC32: u32 = 0x55BC_801D;
     const UNKNOWN_SLICE: &str = "no_such_slice";
     const OTHER_WORKFLOW: u64 = 77;
 
@@ -1585,17 +1586,16 @@ mod tests {
 
         let digests = sink.local_digests();
         let served = transfer.slice_manifest();
+        let digest_of = |name: &str| digests.iter().find(|d| d.name == name).map(|d| (d.bytes, d.crc32));
+        let served_of = |name: &str| served.iter().find(|row| row.name == name).map(|row| (row.bytes, row.crc32));
 
-        let as_triples = |name: &str| {
-            digests.iter().find(|d| d.name == name).map(|d| (d.bytes, d.crc32))
-        };
-        assert_eq!(digests.len(), served.len());
-        assert!(served.iter().all(|row| as_triples(&row.name) == Some((row.bytes, row.crc32))));
-        assert_eq!(
-            as_triples(KNOWN_SLICE),
-            Some((Some(SLICE_BYTES.len()), dali2rust_platform::http_fetch::crc32(&SLICE_BYTES)))
-        );
-        assert_eq!(as_triples(OTHER_KNOWN_SLICE), Some((None, 0)), "a slice never written has no bytes");
+        let written = Some((Some(SLICE_BYTES.len()), SLICE_BYTES_CRC32));
+        assert_eq!(served_of(KNOWN_SLICE), written, "the port serves the written length and its CRC-32");
+        assert_eq!(digest_of(KNOWN_SLICE), written, "the digest names the same written slice");
+        let never_written = Some((None, 0));
+        assert_eq!(served_of(OTHER_KNOWN_SLICE), never_written, "a slice never written has no bytes");
+        assert_eq!(digest_of(OTHER_KNOWN_SLICE), never_written, "and no digest of bytes");
+        assert_eq!((served_of(UNKNOWN_SLICE), digest_of(UNKNOWN_SLICE)), (None, None));
     }
 
     #[test]

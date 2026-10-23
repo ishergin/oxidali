@@ -184,14 +184,14 @@ async fn stats_operations_succeeded_at_least(world: &mut DaliWorld, expected: u6
 }
 
 // STATS-005
-#[then("the stats operations running gauge should be 0")]
-async fn stats_operations_running_zero(world: &mut DaliWorld) {
+#[then(regex = r"^the stats operations running gauge should be (\d+)$")]
+async fn stats_operations_running_is(world: &mut DaliWorld, expected: u64) {
     let json = last_json(world);
     let running = pointer_u64(&json, "/operations/running");
     assert_eq!(
-        running, 0,
-        "every accepted operation reached a terminal status, so nothing is in \
-         flight — a non-zero gauge means acceptances and outcomes disagree: {json}"
+        running, expected,
+        "the gauge counts the accepted operations that have not reached a terminal \
+         status: {json}"
     );
 }
 

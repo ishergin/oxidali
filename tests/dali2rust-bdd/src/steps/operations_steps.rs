@@ -66,7 +66,7 @@ async fn then_last_operation_eventually_succeeds(world: &mut DaliWorld) {
     wait_for_operation_status(world, "succeeded");
 }
 
-// COMM-097 INP-098
+// COMM-097 INP-098 STATS-005
 #[then("the last operation eventually runs")]
 async fn then_last_operation_eventually_runs(world: &mut DaliWorld) {
     wait_for_operation_status(world, "running");
@@ -78,7 +78,7 @@ async fn then_last_operation_becomes_active(world: &mut DaliWorld) {
     wait_for_operation_active(world);
 }
 
-// INP-098 INP-099 COMM-104
+// INP-098 INP-099 COMM-104 STATS-005
 #[then("every operation eventually finishes")]
 async fn then_every_operation_finishes(world: &mut DaliWorld) {
     wait_for_every_operation_to_finish(world);
