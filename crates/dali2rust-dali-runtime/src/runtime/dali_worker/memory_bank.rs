@@ -84,27 +84,15 @@ pub(super) fn publish_memory_bank_execution(
 
 pub(super) fn handle_read_memory_bank(
     controller: &mut impl DaliApplicationController,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
-    correlation_id: u64,
+    read: &BankRead<'_>,
     mb: &dali2rust_contracts::msg::DaliReadMemoryBankCommand,
-    counters: &DaliWorkerCounters,
 ) {
-    let w = correlation_id;
+    let BankRead { publisher, adapter_id, correlation_id: w, short_address: sa, counters, .. } = *read;
     publish_worker_started(publisher, adapter_id, w, Origin::Internal, counters);
-    let sa = mb.short_address;
     let bank = mb.bank;
     let execution = read_memory_bank(controller, sa, bank, mb.start, mb.length);
     note_short_read(mb.length, &execution, bank, sa, counters);
-    let read = BankRead {
-        publisher,
-        adapter_id,
-        correlation_id: w,
-        registry_adapter_id: mb.registry_adapter_id,
-        short_address: sa,
-        counters,
-    };
-    let delivered = publish_memory_bank_execution(&read, bank, mb.start, &execution);
+    let delivered = publish_memory_bank_execution(read, bank, mb.start, &execution);
     close_memory_bank_read(publisher, adapter_id, w, delivered, execution.error, counters);
     counters
         .semantic_read_memory_bank_handled

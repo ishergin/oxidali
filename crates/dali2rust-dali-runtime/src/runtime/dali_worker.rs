@@ -216,11 +216,15 @@ dali2rust_contracts::dispatch_bus_commands! {
     DaliReadAttributesCommand(ar) => handle_read_attributes(controller, env, correlation_id, origin, ar),
     DaliReadMemoryBankCommand(mb) => handle_read_memory_bank(
         controller,
-        publisher,
-        adapter_id,
-        correlation_id,
+        &BankRead {
+            publisher,
+            adapter_id,
+            correlation_id,
+            registry_adapter_id: mb.registry_adapter_id,
+            short_address: mb.short_address,
+            counters,
+        },
         mb,
-        counters,
     ),
     DaliProgramGroupMembershipCommand(command) => handle_program_group_membership(
         controller,
