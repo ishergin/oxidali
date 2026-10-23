@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
 use dali2rust_api::ha::HaTopics;
@@ -5,6 +7,11 @@ use dali2rust_domain::registry::HomeAssistantSettingsView;
 use dali2rust_platform::mqtt::{
     MqttClient, MqttError, MqttLastWill, MqttQos, MqttSessionConfig,
 };
+
+use crate::runtime::discovery::{Entity, EntityKey};
+use crate::runtime::rule_topics::{BridgeFilters, RuleFollow};
+use crate::runtime::subscriptions::Subscriptions;
+use crate::runtime::worker::MqttWorkerPorts;
 
 pub const PAYLOAD_ONLINE: &[u8] = b"online";
 pub const PAYLOAD_OFFLINE: &[u8] = b"offline";
@@ -75,6 +82,95 @@ pub fn announce_offline(client: &mut dyn MqttClient, topics: &HaTopics) {
         MqttQos::AtLeastOnce,
         true,
     );
+}
+
+#[derive(Default)]
+pub(super) struct Session {
+    pub(super) generation: u32,
+    pub(super) subscriptions: Subscriptions,
+    pub(super) filters: BridgeFilters,
+    pub(super) rule_topics: RuleFollow,
+    pub(super) announced: HashMap<EntityKey, u64>,
+    pub(super) lamp_availability: HashMap<(u8, u8), bool>,
+    pub(super) groups_dirty: HashSet<u8>,
+    pub(super) dialled_with: u64,
+}
+
+impl Session {
+    pub(super) fn begin(&mut self, generation: u32, dialled_with: u64, topics: &HaTopics) {
+        let Self {
+            generation: gen_slot,
+            subscriptions,
+            filters,
+            rule_topics,
+            dialled_with: dialled_slot,
+            announced,
+            lamp_availability,
+            groups_dirty,
+        } = self;
+        *gen_slot = generation;
+        *subscriptions = Subscriptions::default();
+        *filters = BridgeFilters::of(topics);
+        *rule_topics = RuleFollow::default();
+        *dialled_slot = dialled_with;
+        announced.clear();
+        lamp_availability.clear();
+        groups_dirty.clear();
+    }
+
+    pub(super) fn is_announced(&self, key: EntityKey) -> bool {
+        self.announced.contains_key(&key)
+    }
+
+    pub(super) fn forget(&mut self, key: EntityKey) -> bool {
+        self.announced.remove(&key).is_some()
+    }
+
+    pub(super) fn forget_inputs(&mut self, adapter_id: u8, short_address: u8) {
+        self.announced.retain(|&(adapter, entity), _| {
+            adapter != adapter_id || !matches!(entity, Entity::Input(short, _) if short == short_address)
+        });
+    }
+}
+
+pub(super) struct SettingsCache {
+    revision: u32,
+    pub(super) settings: HomeAssistantSettingsView,
+    pub(super) password: String,
+}
+
+impl Default for SettingsCache {
+    fn default() -> Self {
+        Self {
+            revision: u32::MAX,
+            settings: HomeAssistantSettingsView::default(),
+            password: String::new(),
+        }
+    }
+}
+
+impl SettingsCache {
+    pub(super) fn refresh(&mut self, ports: &MqttWorkerPorts) {
+        let revision = ports.settings_watch.home_assistant_settings_applied_load();
+        if revision == self.revision {
+            return;
+        }
+        self.settings = ports.settings.home_assistant_settings_view();
+        self.password = ports.secret.home_assistant_broker_password();
+        self.revision = revision;
+    }
+}
+
+pub(super) fn session_settings_fingerprint(settings: &HomeAssistantSettingsView, password: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    settings.broker_host.hash(&mut hasher);
+    settings.broker_port.hash(&mut hasher);
+    settings.broker_username.hash(&mut hasher);
+    settings.controller_id.hash(&mut hasher);
+    settings.discovery_prefix.hash(&mut hasher);
+    settings.state_topic_prefix.hash(&mut hasher);
+    password.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[cfg(test)]
