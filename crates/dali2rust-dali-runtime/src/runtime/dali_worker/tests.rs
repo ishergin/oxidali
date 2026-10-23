@@ -377,7 +377,7 @@ mod memory_bank_loss {
     use std::sync::atomic::Ordering;
 
     use super::super::attribute_read::read_attributes_memory_bank_stage;
-    use super::super::memory_bank::publish_memory_bank_execution;
+    use super::super::memory_bank::{publish_memory_bank_execution, BankRead};
     use super::super::DaliWorkerCounters;
     use crate::runtime::clock::StdClock;
     use crate::runtime::controller::DaliController;
@@ -465,17 +465,15 @@ mod memory_bank_loss {
             error: None,
         };
         let _ingress = hold_the_events_ingress_full(&publisher);
-        let delivered = publish_memory_bank_execution(
-            &publisher,
-            BusId::default(),
-            READ_CORRELATION,
-            0,
-            DEMO_SHORT,
-            0,
-            0,
-            &execution,
-            &counters,
-        );
+        let read = BankRead {
+            publisher: &publisher,
+            adapter_id: BusId::default(),
+            correlation_id: READ_CORRELATION,
+            registry_adapter_id: 0,
+            short_address: DEMO_SHORT,
+            counters: &counters,
+        };
+        let delivered = publish_memory_bank_execution(&read, 0, 0, &execution);
         assert!(!delivered, "the full ingress refused the first chunk, yet the read was delivered");
         assert_eq!(
             counters.memory_bank_chunk_events_published.load(Ordering::Relaxed),

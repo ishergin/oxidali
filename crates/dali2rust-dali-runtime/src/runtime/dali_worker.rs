@@ -73,7 +73,9 @@ use commissioning::{
 pub use counters::DaliWorkerCounters;
 use discovery::handle_discover_devices;
 use membership::handle_program_group_membership;
-use memory_bank::{handle_read_memory_bank, publish_memory_bank_preset, MEMORY_BANK_CHUNK_LOST};
+use memory_bank::{
+    handle_read_memory_bank, publish_memory_bank_preset, BankRead, MEMORY_BANK_CHUNK_LOST,
+};
 use program_outcome::{ProgramOutcomeSink, resolve_membership_short};
 pub use publish::DALI_WORKER_REQUIRED_EVENTS;
 use publish::{
@@ -105,6 +107,10 @@ struct WorkerInputs<C> {
     correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the public entry point of the composition root and the integration tests; each argument is a distinct wired handle"
+)]
 pub fn spawn_dali_worker<C: DaliApplicationController + Send + 'static>(
     cmd_rx: BusSubscriberRx,
     controller: C,
@@ -134,6 +140,17 @@ pub fn spawn_dali_worker<C: DaliApplicationController + Send + 'static>(
     )
 }
 
+#[derive(Clone, Copy)]
+struct WorkerEnv<'a> {
+    runtime_config: DaliRuntimeConfig,
+    read_port: &'a dyn RegistryReadPort,
+    publisher: &'a BusPublisher,
+    interactive: &'a dali2rust_platform::dali::WireActivity,
+    adapter_id: BusId,
+    counters: &'a DaliWorkerCounters,
+    correlation: &'a dali2rust_bus::CorrelationIdAllocator,
+}
+
 #[inline(never)]
 fn refused_by_gates(
     ce: &dali2rust_contracts::msg::CommandEnvelope,
@@ -151,13 +168,7 @@ fn refused_by_gates(
 fn process_one(
     frame: BusFrame,
     controller: &mut impl DaliApplicationController,
-    runtime_config: DaliRuntimeConfig,
-    read_port: &dyn RegistryReadPort,
-    publisher: &BusPublisher,
-    interactive: &dali2rust_platform::dali::WireActivity,
-    adapter_id: BusId,
-    counters: &DaliWorkerCounters,
-    correlation: &dali2rust_bus::CorrelationIdAllocator,
+    env: &WorkerEnv<'_>,
     riders: &[u64],
 ) {
     let BusFrame::Command(ce_arc) = frame else {
@@ -165,7 +176,7 @@ fn process_one(
     };
     let ce = ce_arc.as_ref();
     let meta = &ce.meta;
-    if BusId(meta.target_adapter_id) != adapter_id {
+    if BusId(meta.target_adapter_id) != env.adapter_id {
         return;
     }
     let correlation_id = meta.correlation_id;
@@ -173,25 +184,19 @@ fn process_one(
     if crate::runtime::priority::wire_priority(ce.payload.variant_name(), origin)
         .is_some_and(|priority| priority != WirePriority::Unattended)
     {
-        interactive.note_activity();
+        env.interactive.note_activity();
     }
-    if refused_by_gates(ce, read_port, adapter_id, riders, publisher, counters) {
+    if refused_by_gates(ce, env.read_port, env.adapter_id, riders, env.publisher, env.counters) {
         return;
     }
 
-    counters.commands_handled.fetch_add(1, Ordering::Relaxed);
+    env.counters.commands_handled.fetch_add(1, Ordering::Relaxed);
     dispatch_dali_command(
         &ce.payload,
         controller,
-        runtime_config,
-        read_port,
-        publisher,
-        adapter_id,
-        correlation_id,
+        env,
+        Answer { correlation_id, riders },
         origin,
-        counters,
-        correlation,
-        riders,
     );
 }
 
@@ -200,40 +205,14 @@ dali2rust_contracts::dispatch_bus_commands! {
     fn dispatch_dali_command(
         payload: &BusCommandPayload,
         controller: &mut impl DaliApplicationController,
-        runtime_config: DaliRuntimeConfig,
-        read_port: &dyn RegistryReadPort,
-        publisher: &BusPublisher,
-        adapter_id: BusId,
-        correlation_id: u64,
+        env @ &WorkerEnv { runtime_config, read_port, publisher, adapter_id, counters, .. }: &WorkerEnv<'_>,
+        Answer { correlation_id, riders }: Answer<'_>,
         origin: Origin,
-        counters: &DaliWorkerCounters,
-        correlation: &dali2rust_bus::CorrelationIdAllocator,
-        riders: &[u64],
     );
     payload = payload;
     ignored = { counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
-    DaliCommandPayload(pl) => process_wire_payload(
-        controller,
-        publisher,
-        correlation_id,
-        pl.wire_address,
-        pl.command,
-        pl.repeat_count,
-        pl.raw_mode,
-        pl.raw_expects_backward,
-        counters,
-    ),
-    DaliDiscoverDevicesCommand(dc) => handle_discover_devices(
-        controller,
-        runtime_config,
-        read_port,
-        publisher,
-        adapter_id,
-        correlation_id,
-        dc,
-        counters,
-        correlation,
-    ),
+    DaliCommandPayload(pl) => process_wire_payload(controller, publisher, correlation_id, pl, counters),
+    DaliDiscoverDevicesCommand(dc) => handle_discover_devices(controller, env, correlation_id, dc),
     DaliReadAttributesCommand(ar) => handle_read_attributes(
         controller,
         runtime_config,

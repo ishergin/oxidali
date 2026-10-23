@@ -111,16 +111,15 @@ pub(super) fn read_attributes_memory_bank_stage(
     outcomes: &mut crate::runtime::executor::AttributeReadOutcomes,
     counters: &DaliWorkerCounters,
 ) -> Result<(), (ErrorCode, &'static str)> {
-    match publish_memory_bank_preset(
-        controller,
+    let read = BankRead {
         publisher,
         adapter_id,
-        w,
-        ar.registry_adapter_id,
-        ar.short_address,
-        ar.memory_banks,
+        correlation_id: w,
+        registry_adapter_id: ar.registry_adapter_id,
+        short_address: ar.short_address,
         counters,
-    ) {
+    };
+    match publish_memory_bank_preset(controller, &read, ar.memory_banks) {
         Ok(true) => {
             record_memory_banks_read(ar, outcomes);
             Ok(())
@@ -172,7 +171,6 @@ pub(super) fn count_read_abort(
     counter.fetch_add(1, Ordering::Relaxed);
 }
 
-#[allow(clippy::too_many_arguments, reason = "origin threads provenance through one extra param")]
 fn publish_attribute_read_outcomes(
     publisher: &BusPublisher,
     adapter_id: BusId,
@@ -186,7 +184,6 @@ fn publish_attribute_read_outcomes(
     publish_event_required(publisher, ev, counters, PublishKind::Series, "attribute-read-outcomes");
 }
 
-#[allow(clippy::too_many_arguments, reason = "provenance threads source + stamp through one extra param")]
 pub(super) fn publish_read_attributes_evidence(
     publisher: &BusPublisher,
     adapter_id: BusId,

@@ -248,7 +248,6 @@ pub(super) fn publish_worker_succeeded(
     );
 }
 
-#[allow(clippy::too_many_arguments, reason = "origin threads provenance through one extra param")]
 pub(super) fn publish_worker_failed(
     publisher: &BusPublisher,
     adapter_id: BusId,

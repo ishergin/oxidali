@@ -1,58 +1,48 @@
 use super::*;
 
+use dali2rust_contracts::msg::DaliCommandPayload;
+
 pub(super) fn process_wire_payload(
     controller: &mut impl DaliApplicationController,
     publisher: &BusPublisher,
     correlation_id: u64,
-    wire_address: u8,
-    command: u8,
-    repeat_count: u8,
-    raw_mode: bool,
-    raw_expects_backward: bool,
+    pl: &DaliCommandPayload,
     counters: &DaliWorkerCounters,
 ) {
-    let Some((backward_u8, status)) = run_wire_payload(
-        controller,
-        publisher,
-        correlation_id,
-        wire_address,
-        command,
-        repeat_count,
-        raw_mode,
-        raw_expects_backward,
-        counters,
-    ) else {
+    let Some((backward_u8, status)) = run_wire_payload(controller, publisher, correlation_id, pl, counters)
+    else {
         return;
     };
 
     publish_wire_payload_results(
         publisher,
         correlation_id,
-        wire_address,
-        command,
+        pl.wire_address,
+        pl.command,
         backward_u8,
         status,
         counters,
     );
 }
 
-#[allow(clippy::too_many_arguments, reason = "mirrors the dispatch-arm signature")]
 fn run_wire_payload(
     controller: &mut impl DaliApplicationController,
     publisher: &BusPublisher,
     correlation_id: u64,
-    wire_address: u8,
-    command: u8,
-    repeat_count: u8,
-    raw_mode: bool,
-    raw_expects_backward: bool,
+    pl: &DaliCommandPayload,
     counters: &DaliWorkerCounters,
 ) -> Option<(u8, DeliveryStatus)> {
-    let result = if raw_mode {
-        process_raw_payload(controller, wire_address, command, repeat_count, raw_expects_backward)
-            .map_err(|_| "execution_failed")
+    let result = if pl.raw_mode {
+        process_raw_payload(
+            controller,
+            pl.wire_address,
+            pl.command,
+            pl.repeat_count,
+            pl.raw_expects_backward,
+        )
+        .map_err(|_| "execution_failed")
     } else {
-        process_typed_payload(controller, wire_address, command, repeat_count)
+        process_typed_payload(controller, pl.wire_address, pl.command, pl.repeat_count)
     };
     match result {
         Ok(res) => Some(res),

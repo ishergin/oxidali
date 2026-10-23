@@ -78,7 +78,6 @@ fn program_scene_and_publish(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "mirrors the outcome-publisher signature")]
 fn publish_scene_colour_verify(
     controller: &mut impl DaliApplicationController,
     publisher: &BusPublisher,
