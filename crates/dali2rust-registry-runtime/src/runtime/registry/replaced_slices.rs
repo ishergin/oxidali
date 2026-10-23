@@ -1,14 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use dali2rust_bus::BusPublisher;
 use dali2rust_contracts::msg::{FixedText32, APPLICATION_ACTIVE_UNMOVED};
 use dali2rust_contracts::CORRELATION_NONE;
 use dali2rust_platform::slice_store::SliceKey;
 
-use super::dali_settings::DaliSettingsRecord;
 use super::physical_device_banks::{bank_bit, short_bit};
-use super::policies::PoliciesRecord;
-use super::poller_settings::PollerSettingsRecord;
 use super::publish::{
     publish_adapter_settings_changed, publish_dali_settings_changed, publish_group_changed,
     publish_group_matrix_changed, publish_hcl_schedule_changed,
@@ -17,7 +15,6 @@ use super::publish::{
     publish_redundancy_settings_changed, publish_scene_changed, publish_scene_matrix_changed,
     publish_virtual_lamp_changed,
 };
-use super::redundancy_settings::RedundancySettingsRecord;
 use super::store::{Inner, RegistryStore};
 use super::withheld_slices::HeldSlices;
 
@@ -67,6 +64,21 @@ fn device_banks(key: SliceKey) -> Option<(u8, u16)> {
         _ => None,
     }
 }
+
+fn each<'a>(
+    map: &'a BTreeMap<u8, u64>,
+    make: impl Fn(u8, u8) -> Announcement + Copy + 'a,
+) -> impl Iterator<Item = Announcement> + 'a {
+    map.iter().flat_map(move |(adapter_id, mask)| ids(*mask).map(move |id| make(*adapter_id, id)))
+}
+
+const SETTINGS: [(u8, Setting); 5] = [
+    (POLLER_SETTINGS, Setting::Poller),
+    (DALI_SETTINGS, Setting::Dali),
+    (REDUNDANCY_SETTINGS, Setting::Redundancy),
+    (POLICIES, Setting::Policies),
+    (HOME_ASSISTANT_SETTINGS, Setting::HomeAssistant),
+];
 
 fn record_bit(key: SliceKey) -> Option<u8> {
     match key {
@@ -156,41 +168,37 @@ impl ReplacedEntities {
         self.records |= other.records;
     }
 
-    pub(crate) fn publish(mut self, publisher: &BusPublisher, store: &RegistryStore, target: u16) {
-        self.input_devices.sort_unstable();
-        self.input_devices.dedup();
-        self.schedules.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
-        self.schedules.dedup();
-        publish_adapters(publisher, store, self.adapters);
-        self.publish_collections(publisher);
-        self.publish_devices(publisher);
-        publish_schedules(publisher, store, target, &self.schedules);
-        publish_records(publisher, store, target, self.records);
+    fn queue_into(self, queue: &mut BTreeSet<Announcement>) {
+        queue.extend(ids(self.adapters).map(Announcement::Adapter));
+        queue.extend(ids(self.group_matrices).map(Announcement::GroupMatrix));
+        queue.extend(each(&self.groups, |adapter_id, group_id| Announcement::Group {
+            adapter_id,
+            group_id,
+        }));
+        queue.extend(each(&self.scenes, |adapter_id, scene_id| Announcement::Scene {
+            adapter_id,
+            scene_id,
+        }));
+        queue.extend(each(&self.scenes, |adapter_id, scene_id| Announcement::SceneMatrix {
+            adapter_id,
+            scene_id,
+        }));
+        self.queue_records_into(queue);
     }
 
-    fn publish_collections(&self, publisher: &BusPublisher) {
-        each_id(&self.groups, |adapter_id, id| {
-            publish_group_changed(publisher, CORRELATION_NONE, adapter_id, id);
-        });
-        for adapter_id in ids(self.group_matrices) {
-            publish_group_matrix_changed(publisher, CORRELATION_NONE, adapter_id);
-        }
-        each_id(&self.scenes, |adapter_id, scene_id| {
-            publish_scene_changed(publisher, CORRELATION_NONE, adapter_id, scene_id);
-            publish_scene_matrix_changed(publisher, CORRELATION_NONE, adapter_id, scene_id);
-        });
-    }
-
-    fn publish_devices(&self, publisher: &BusPublisher) {
-        each_id(&self.devices, |adapter_id, short| {
-            publish_physical_device_changed(publisher, CORRELATION_NONE, adapter_id, short);
-        });
-        each_id(&self.lamps, |adapter_id, id| {
-            publish_virtual_lamp_changed(publisher, CORRELATION_NONE, adapter_id, id);
-        });
-        for (adapter_id, short) in &self.input_devices {
-            publish_input_device_changed(publisher, CORRELATION_NONE, *adapter_id, *short);
-        }
+    fn queue_records_into(self, queue: &mut BTreeSet<Announcement>) {
+        let device = |adapter_id, short_address| Announcement::Device { adapter_id, short_address };
+        let lamp = |adapter_id, virtual_lamp_id| Announcement::Lamp { adapter_id, virtual_lamp_id };
+        queue.extend(each(&self.devices, device));
+        queue.extend(each(&self.lamps, lamp));
+        let inputs = self.input_devices.into_iter();
+        queue.extend(inputs.map(|(adapter_id, short_address)| Announcement::InputDevice {
+            adapter_id,
+            short_address,
+        }));
+        queue.extend(self.schedules.into_iter().map(Announcement::Schedule));
+        let records = SETTINGS.into_iter().filter(|(bit, _)| self.records & bit != 0);
+        queue.extend(records.map(|(_, setting)| Announcement::Setting(setting)));
     }
 }
 
@@ -205,78 +213,140 @@ impl ReplacedEntities {
     }
 }
 
-fn each_id(map: &BTreeMap<u8, u64>, mut publish: impl FnMut(u8, u8)) {
-    for (adapter_id, mask) in map {
-        ids(*mask).for_each(|id| publish(*adapter_id, id));
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Setting {
+    Poller,
+    Dali,
+    Redundancy,
+    Policies,
+    HomeAssistant,
 }
 
-fn publish_adapters(publisher: &BusPublisher, store: &RegistryStore, adapters: u64) {
-    for adapter_id in ids(adapters) {
-        if let Some((name, enabled)) = store.adapter_row_name_enabled(adapter_id) {
-            let name = name.as_str();
-            publish_adapter_settings_changed(publisher, adapter_id, CORRELATION_NONE, name, enabled);
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Announcement {
+    Adapter(u8),
+    Group { adapter_id: u8, group_id: u8 },
+    GroupMatrix(u8),
+    Scene { adapter_id: u8, scene_id: u8 },
+    SceneMatrix { adapter_id: u8, scene_id: u8 },
+    Device { adapter_id: u8, short_address: u8 },
+    Lamp { adapter_id: u8, virtual_lamp_id: u8 },
+    InputDevice { adapter_id: u8, short_address: u8 },
+    Schedule(FixedText32),
+    Setting(Setting),
+}
+
+impl Announcement {
+    fn publish(&self, publisher: &BusPublisher, store: &RegistryStore, target: u16) {
+        match self {
+            Self::Adapter(adapter_id) => publish_adapter(publisher, store, *adapter_id),
+            Self::Schedule(schedule_id) => publish_schedule(publisher, store, target, schedule_id),
+            Self::Setting(setting) => publish_setting(publisher, store, target, *setting),
+            Self::InputDevice { adapter_id: a, short_address: s } => {
+                publish_input_device_changed(publisher, CORRELATION_NONE, *a, *s);
+            }
+            identity => identity.publish_identity(publisher),
+        }
+    }
+
+    fn publish_identity(&self, p: &BusPublisher) {
+        let c = CORRELATION_NONE;
+        match self {
+            Self::Group { adapter_id: a, group_id: g } => publish_group_changed(p, c, *a, *g),
+            Self::GroupMatrix(a) => publish_group_matrix_changed(p, c, *a),
+            Self::Scene { adapter_id: a, scene_id: s } => publish_scene_changed(p, c, *a, *s),
+            Self::SceneMatrix { adapter_id: a, scene_id: s } => {
+                publish_scene_matrix_changed(p, c, *a, *s);
+            }
+            Self::Device { adapter_id: a, short_address: s } => {
+                publish_physical_device_changed(p, c, *a, *s);
+            }
+            Self::Lamp { adapter_id: a, virtual_lamp_id: l } => {
+                publish_virtual_lamp_changed(p, c, *a, *l);
+            }
+            _ => {}
         }
     }
 }
 
-fn publish_schedules(
+fn publish_adapter(publisher: &BusPublisher, store: &RegistryStore, adapter_id: u8) {
+    if let Some((name, enabled)) = store.adapter_row_name_enabled(adapter_id) {
+        let name = name.as_str();
+        publish_adapter_settings_changed(publisher, adapter_id, CORRELATION_NONE, name, enabled);
+    }
+}
+
+fn publish_schedule(
     publisher: &BusPublisher,
     store: &RegistryStore,
     target: u16,
-    schedules: &[FixedText32],
+    schedule_id: &FixedText32,
 ) {
-    for schedule_id in schedules {
-        let enabled = store.read_inner().hcl_schedules.get(schedule_id).map(|row| row.enabled);
-        let (removed, enabled) = (enabled.is_none(), enabled.unwrap_or(false));
-        let id = schedule_id.clone();
-        publish_hcl_schedule_changed(publisher, CORRELATION_NONE, target, id, removed, enabled);
-    }
+    let enabled = store.read_inner().hcl_schedules.get(schedule_id).map(|row| row.enabled);
+    let (removed, enabled) = (enabled.is_none(), enabled.unwrap_or(false));
+    let id = schedule_id.clone();
+    publish_hcl_schedule_changed(publisher, CORRELATION_NONE, target, id, removed, enabled);
 }
 
-fn publish_records(publisher: &BusPublisher, store: &RegistryStore, target: u16, records: u8) {
-    if records != 0 {
-        let settings = Settings::of(&store.read_inner());
-        settings.publish(publisher, target, records);
-    }
-}
-
-struct Settings {
-    poller: PollerSettingsRecord,
-    dali: DaliSettingsRecord,
-    redundancy: RedundancySettingsRecord,
-    policies: PoliciesRecord,
-    home_assistant: bool,
-}
-
-impl Settings {
-    fn of(inner: &Inner) -> Self {
-        Self {
-            poller: inner.poller_settings,
-            dali: inner.dali_settings,
-            redundancy: inner.redundancy_settings.clone(),
-            policies: inner.policies,
-            home_assistant: inner.home_assistant_settings.enabled,
+fn publish_setting(publisher: &BusPublisher, store: &RegistryStore, target: u16, setting: Setting) {
+    let corr = CORRELATION_NONE;
+    match setting {
+        Setting::Poller => {
+            let poller = store.read_inner().poller_settings;
+            publish_poller_settings_changed(publisher, corr, target, &poller);
         }
-    }
-
-    fn publish(&self, publisher: &BusPublisher, target: u16, records: u8) {
-        let (corr, announced) = (CORRELATION_NONE, |record: u8| records & record != 0);
-        if announced(POLLER_SETTINGS) {
-            publish_poller_settings_changed(publisher, corr, target, &self.poller);
-        }
-        if announced(DALI_SETTINGS) {
+        Setting::Dali => {
+            let dali = store.read_inner().dali_settings;
             let unmoved = APPLICATION_ACTIVE_UNMOVED;
-            publish_dali_settings_changed(publisher, corr, target, &self.dali, unmoved);
+            publish_dali_settings_changed(publisher, corr, target, &dali, unmoved);
         }
-        if announced(REDUNDANCY_SETTINGS) {
-            publish_redundancy_settings_changed(publisher, corr, target, &self.redundancy);
+        Setting::Redundancy => {
+            let redundancy = store.read_inner().redundancy_settings.clone();
+            publish_redundancy_settings_changed(publisher, corr, target, &redundancy);
         }
-        if announced(POLICIES) {
-            publish_policies_changed(publisher, corr, target, &self.policies);
-        }
-        if announced(HOME_ASSISTANT_SETTINGS) {
-            publish_home_assistant_settings_changed(publisher, corr, target, self.home_assistant);
+        policy => publish_policy_setting(publisher, store, target, policy),
+    }
+}
+
+fn publish_policy_setting(
+    publisher: &BusPublisher,
+    store: &RegistryStore,
+    target: u16,
+    setting: Setting,
+) {
+    let corr = CORRELATION_NONE;
+    if setting == Setting::Policies {
+        let policies = store.read_inner().policies;
+        publish_policies_changed(publisher, corr, target, &policies);
+    } else {
+        let enabled = store.read_inner().home_assistant_settings.enabled;
+        publish_home_assistant_settings_changed(publisher, corr, target, enabled);
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct PendingAnnouncements(Mutex<BTreeSet<Announcement>>);
+
+impl PendingAnnouncements {
+    fn queue(&self) -> MutexGuard<'_, BTreeSet<Announcement>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl RegistryStore {
+    #[inline(never)]
+    pub(crate) fn queue_announcements(&self, replaced: ReplacedEntities) {
+        replaced.queue_into(&mut self.announcements.queue());
+    }
+
+    #[inline(never)]
+    pub(crate) fn announce_queued(&self, publisher: &BusPublisher, target: u16, budget: usize) {
+        let batch: Vec<Announcement> = {
+            let mut queue = self.announcements.queue();
+            (0..budget).map_while(|_| queue.pop_first()).collect()
+        };
+        for announcement in &batch {
+            announcement.publish(publisher, self, target);
         }
     }
 }
@@ -317,4 +387,75 @@ fn entities_of(inner: &Inner, key: SliceKey) -> ReplacedEntities {
     let mut entities = ReplacedEntities::default();
     entities.note(inner, key);
     entities
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::mpsc::Receiver;
+    use std::time::Duration;
+
+    use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusPublisher};
+    use dali2rust_contracts::msg::{BusEventPayload, EVENT_VARIANT_NAMES};
+
+    use super::{ReplacedEntities, POLLER_SETTINGS};
+    use crate::runtime::registry::RegistryStore;
+
+    const INBOX: usize = 128;
+    const BUDGET: usize = 16;
+    const QUEUED_LAMPS: u8 = 40;
+    const LATER_INTERVAL_MS: u32 = 4_321;
+    const WAIT: Duration = Duration::from_secs(2);
+    const QUIET: Duration = Duration::from_millis(200);
+    const TARGET: u16 = 1;
+
+    fn observed() -> (BusHost, BusPublisher, Receiver<BusFrame>) {
+        BusHost::spawn(BusConfig::default(), |reg| reg.subscribe_events(INBOX, EVENT_VARIANT_NAMES))
+    }
+
+    fn heard_until_quiet(events: &Receiver<BusFrame>) -> Vec<BusEventPayload> {
+        let mut heard = Vec::new();
+        let mut wait = WAIT;
+        while let Ok(BusFrame::Event(event)) = events.recv_timeout(wait) {
+            heard.push(event.payload.clone());
+            wait = QUIET;
+        }
+        heard
+    }
+
+    #[test]
+    fn a_record_queued_twice_goes_out_once_with_the_state_it_has_then() {
+        let (_host, publisher, events) = observed();
+        let store = RegistryStore::with_adapter_count(1);
+        let poller = || ReplacedEntities { records: POLLER_SETTINGS, ..Default::default() };
+        store.queue_announcements(poller());
+        store.queue_announcements(poller());
+        store.write_inner().poller_settings.interval_ms = LATER_INTERVAL_MS;
+        store.announce_queued(&publisher, TARGET, BUDGET);
+        let heard = heard_until_quiet(&events);
+        let intervals: Vec<u32> = heard
+            .iter()
+            .filter_map(|payload| match payload {
+                BusEventPayload::PollerSettingsChangedEvent(ev) => Some(ev.interval_ms),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(intervals, vec![LATER_INTERVAL_MS], "one announcement, read when it went out");
+    }
+
+    #[test]
+    fn a_turn_announces_no_more_than_its_budget_and_the_rest_wait_for_the_next() {
+        let (_host, publisher, events) = observed();
+        let store = RegistryStore::with_adapter_count(1);
+        let lamps = (0..QUEUED_LAMPS).fold(0u64, |mask, id| mask | (1 << id));
+        let lamps = BTreeMap::from([(0, lamps)]);
+        let queued = ReplacedEntities { lamps, ..ReplacedEntities::default() };
+        store.queue_announcements(queued);
+        let mut turns = Vec::new();
+        while turns.iter().sum::<usize>() < usize::from(QUEUED_LAMPS) && turns.len() < 4 {
+            store.announce_queued(&publisher, TARGET, BUDGET);
+            turns.push(heard_until_quiet(&events).len());
+        }
+        assert_eq!(turns, vec![BUDGET, BUDGET, usize::from(QUEUED_LAMPS) - 2 * BUDGET]);
+    }
 }

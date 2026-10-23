@@ -28,7 +28,7 @@ pub(super) fn handle_slice_reload(
         note_reloaded(ctx, body, counts);
     }
     if imported.written {
-        imported.replaced.publish(ctx.publisher, ctx.store, ctx.primary_adapter_id.0);
+        ctx.store.queue_announcements(imported.replaced);
         announce_reload(ctx.publisher, ctx.primary_adapter_id, body.slice_name.as_str());
     }
     if let Some((_, why)) = imported.failure {
@@ -208,7 +208,7 @@ fn announce_settled(
     if still >= waiting {
         return;
     }
-    replaced.publish(&deps.publisher, &deps.store, deps.primary_adapter_id.0);
+    deps.store.queue_announcements(replaced);
     log::info!(
         "registry: held slices read again — {} loaded, {} defaulted, {still} of {waiting} \
          still unread",

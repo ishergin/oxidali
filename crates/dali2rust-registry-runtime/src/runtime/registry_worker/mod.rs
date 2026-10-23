@@ -43,6 +43,9 @@ use crate::runtime::registry::config_write_stage::CONFIG_WRITE_STAGE_MAX_AGE_MS;
 use crate::runtime::registry::hcl_schedules::HCL_SCHEDULE_STAGE_MAX_AGE_MS;
 const RECV_TIMEOUT: Duration = Duration::from_millis(250);
 pub const HELD_SLICE_REREAD_INTERVAL: Duration = Duration::from_secs(2);
+const ANNOUNCEMENT_SHARE_OF_EVENTS_INGRESS: usize = 4;
+const ANNOUNCEMENTS_PER_TURN: usize =
+    dali2rust_bus::DEFAULT_EVENTS_INGRESS / ANNOUNCEMENT_SHARE_OF_EVENTS_INGRESS;
 
 
 fn command_flush_interval(store: &RegistryStore) -> Duration {
@@ -272,7 +275,14 @@ fn evict_and_flush_on_idle(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
         .evict_stale_hcl_schedule_stages(HCL_SCHEDULE_STAGE_MAX_AGE_MS);
     deps.store.evict_stale_import();
     flush_paced(deps, clock, |_| PERSISTENCE_DEBOUNCE);
+    announce_queued(deps);
     WORKER_STACK.note("idle");
+}
+
+#[inline(never)]
+fn announce_queued(deps: &RegistryWorkerDeps) {
+    let target = deps.primary_adapter_id.0;
+    deps.store.announce_queued(&deps.publisher, target, ANNOUNCEMENTS_PER_TURN);
 }
 
 fn run_registry_worker_loop(
@@ -289,7 +299,7 @@ fn run_registry_worker_loop(
             })
         });
         match turn {
-            WorkerTurn::Handled => {}
+            WorkerTurn::Handled => announce_queued(deps),
             WorkerTurn::Idle => evict_and_flush_on_idle(deps, &mut clock),
             WorkerTurn::Disconnected => {
                 clock.switch_interval = Duration::ZERO;
@@ -703,6 +713,7 @@ mod tests {
         let (deps, _host, events) = worker_observed(&slices);
         let mut clock = FlushClock::new(HCL_SWITCH_WRITE_INTERVAL);
         import_poller_settings(&deps, &mut clock);
+        idle_turn(&deps, &mut clock);
         let changed = recv_event_matching(&events, EVENT_WAIT, |payload| {
             matches!(payload, BusEventPayload::PollerSettingsChangedEvent(_))
         });
@@ -734,16 +745,34 @@ mod tests {
         let mut clock = FlushClock::new(HCL_SWITCH_WRITE_INTERVAL);
         clock.reread_interval = Duration::ZERO;
         idle_turn(&deps, &mut clock);
-        let changed = recv_event_matching(&events, EVENT_WAIT, |payload| {
-            matches!(payload, BusEventPayload::DaliSettingsChangedEvent(_))
-        });
-        let BusEventPayload::DaliSettingsChangedEvent(dali) = &changed.payload else {
-            panic!("not a DALI settings event: {changed:?}");
+        let reloaded =
+            |p: &BusEventPayload| matches!(p, BusEventPayload::RegistrySliceReloadedEvent(_));
+        let dali_of = |p: &BusEventPayload| match p {
+            BusEventPayload::DaliSettingsChangedEvent(ev) => Some(ev.application_active),
+            _ => None,
         };
-        assert!(!dali.application_active, "the event carried the default, not the stored role");
-        recv_event_matching(&events, EVENT_WAIT, |payload| {
-            matches!(payload, BusEventPayload::RegistrySliceReloadedEvent(_))
+        let heard = events_heard(&events, |heard| {
+            heard.iter().any(reloaded) && heard.iter().any(|p| dali_of(p).is_some())
         });
+        assert!(heard.iter().any(reloaded), "no RegistrySliceReloadedEvent after the settle");
+        let active = heard.iter().find_map(dali_of).expect("no DaliSettingsChangedEvent");
+        assert!(!active, "the event carried the default, not the stored role");
+    }
+
+    const EVENT_POLL: Duration = Duration::from_millis(20);
+
+    fn events_heard(
+        events: &Receiver<BusFrame>,
+        enough: impl Fn(&[BusEventPayload]) -> bool,
+    ) -> Vec<BusEventPayload> {
+        let deadline = Instant::now() + EVENT_WAIT;
+        let mut heard = Vec::new();
+        while !enough(&heard) && Instant::now() < deadline {
+            if let Ok(BusFrame::Event(event)) = events.recv_timeout(EVENT_POLL) {
+                heard.push(event.payload.clone());
+            }
+        }
+        heard
     }
 
     const FIRST_ADAPTER: u16 = 0;

@@ -136,7 +136,8 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
   ([ADR-007](decisions/ADR-007-apply-orchestrator.md)): bulk expansion belongs to the
   owning worker behind flow control. The apply orchestrator paces cell commands; the
   discovery scan hands each device to a sink as the wire describes it and returns a
-  count, so publishes are an identity probe apart.
+  count, so publishes are an identity probe apart; the registry worker drains a reload's
+  announcements a bounded share of the events ingress per turn.
 - During anyone's burst every other producer's events are collateral: a dropped applied
   fact fails an operator's request.
 
@@ -146,9 +147,11 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
   number floods the inbox.
 - Read a setting from the registry; never learn it only from its changed-event, because
   boot hydration publishes none and every changed-event is best-effort. A slice reload
-  (import, replication) and the re-read of a held slice publish the changed-events of
-  every record they replaced, as a write does, then `RegistrySliceReloadedEvent`; a worker
-  that caches a setting refreshes it after a slice reload as it does after a write.
+  (import, replication) and the re-read of a held slice publish `RegistrySliceReloadedEvent`
+  and, paced over the registry worker's turns
+  ([06](06-registry-and-persistence.md) §Hydration), the changed-events of every record
+  they replaced; a worker that caches a setting refreshes it after a slice reload as it
+  does after a write.
 - A subscriber with nothing to do must not wake. The WebSocket worker parks on its hub
   while no client is connected: no bus event wakes it, but the bus still fills its
   inbox, which it drains on each `NO_CLIENT_PARK` wake.

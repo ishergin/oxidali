@@ -61,6 +61,8 @@ pub enum BusChannel {
 
 pub const DEFAULT_CONFIRMATION_SLOTS: usize = 24;
 
+pub const DEFAULT_EVENTS_INGRESS: usize = 64;
+
 #[derive(Clone, Copy, Debug)]
 pub struct BusConfig {
     pub commands_ingress: usize,
@@ -75,7 +77,7 @@ impl Default for BusConfig {
         Self {
             commands_ingress: 128,
             confirmations_ingress: 32,
-            events_ingress: 64,
+            events_ingress: DEFAULT_EVENTS_INGRESS,
             confirmation_slots: DEFAULT_CONFIRMATION_SLOTS,
             confirmation_timeout_ms: 2000,
         }

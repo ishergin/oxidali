@@ -437,6 +437,7 @@ pub struct RegistryStore {
     pub(crate) persist_counters: PersistenceCounters,
     pub(crate) flush_buf: std::sync::Mutex<Vec<u8>>,
     pub(crate) import_stage: super::import_stage::ImportStage,
+    pub(crate) announcements: super::replaced_slices::PendingAnnouncements,
 }
 
 impl RegistryStore {
@@ -578,6 +579,7 @@ impl RegistryStore {
                 super::persistence_stream::FLUSH_CHUNK_BYTES,
             )),
             import_stage: super::import_stage::ImportStage::default(),
+            announcements: super::replaced_slices::PendingAnnouncements::default(),
         }
     }
 
