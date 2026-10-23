@@ -286,6 +286,12 @@ fn evict_and_flush_on_idle(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
 }
 
 #[inline(never)]
+fn announce_after_frames(deps: &RegistryWorkerDeps) {
+    announce_queued(deps);
+    WORKER_STACK.note("announce");
+}
+
+#[inline(never)]
 fn announce_queued(deps: &RegistryWorkerDeps) {
     let target = deps.primary_adapter_id.0;
     deps.store.announce_queued(&deps.publisher, target, ANNOUNCEMENT_PACING);
@@ -305,7 +311,7 @@ fn run_registry_worker_loop(
             })
         });
         match turn {
-            WorkerTurn::Handled => announce_queued(deps),
+            WorkerTurn::Handled => announce_after_frames(deps),
             WorkerTurn::Idle => evict_and_flush_on_idle(deps, &mut clock),
             WorkerTurn::Disconnected => {
                 clock.switch_interval = Duration::ZERO;
