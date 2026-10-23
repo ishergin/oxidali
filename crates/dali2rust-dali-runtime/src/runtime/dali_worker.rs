@@ -205,7 +205,7 @@ dali2rust_contracts::dispatch_bus_commands! {
     fn dispatch_dali_command(
         payload: &BusCommandPayload,
         controller: &mut impl DaliApplicationController,
-        env @ &WorkerEnv { runtime_config, read_port, publisher, adapter_id, counters, .. }: &WorkerEnv<'_>,
+        env @ &WorkerEnv { read_port, publisher, adapter_id, counters, .. }: &WorkerEnv<'_>,
         Answer { correlation_id, riders }: Answer<'_>,
         origin: Origin,
     );
@@ -213,16 +213,7 @@ dali2rust_contracts::dispatch_bus_commands! {
     ignored = { counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
     DaliCommandPayload(pl) => process_wire_payload(controller, publisher, correlation_id, pl, counters),
     DaliDiscoverDevicesCommand(dc) => handle_discover_devices(controller, env, correlation_id, dc),
-    DaliReadAttributesCommand(ar) => handle_read_attributes(
-        controller,
-        runtime_config,
-        publisher,
-        adapter_id,
-        correlation_id,
-        origin,
-        ar,
-        counters,
-    ),
+    DaliReadAttributesCommand(ar) => handle_read_attributes(controller, env, correlation_id, origin, ar),
     DaliReadMemoryBankCommand(mb) => handle_read_memory_bank(
         controller,
         publisher,
@@ -240,15 +231,7 @@ dali2rust_contracts::dispatch_bus_commands! {
         command,
         counters,
     ),
-    DaliProgramSceneCommand(command) => handle_program_scene(
-        controller,
-        read_port,
-        publisher,
-        adapter_id,
-        correlation_id,
-        command,
-        counters,
-    ),
+    DaliProgramSceneCommand(command) => handle_program_scene(controller, env, correlation_id, command),
     DaliRecallSceneCommand(command) => handle_recall_scene(
         controller,
         read_port,
@@ -280,14 +263,10 @@ dali2rust_contracts::dispatch_bus_commands! {
     ),
     DaliSetTargetStateCommand(ts) => handle_set_target_state(
         controller,
-        runtime_config,
-        read_port,
-        publisher,
-        adapter_id,
+        env,
         Answer { correlation_id, riders },
         origin,
         ts,
-        counters,
     ),
     DaliWriteAttributesCommand(w) => handle_write_attributes(
         controller,

@@ -168,14 +168,12 @@ pub(super) fn publish_confirmation_typed(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "origin threads provenance through one extra param")]
 pub(super) fn publish_operation_worker_signal(
     publisher: &BusPublisher,
     adapter_id: BusId,
     workflow_correlation_id: u64,
     signal: OperationWorkerSignal,
-    error_code: Option<ErrorCode>,
-    error_message: &str,
+    error: Option<(ErrorCode, &str)>,
     origin: Origin,
     counters: &DaliWorkerCounters,
 ) {
@@ -187,10 +185,11 @@ pub(super) fn publish_operation_worker_signal(
             dali2rust_contracts::msg::OperationWorkerSignalEvent::succeeded(workflow_correlation_id)
         }
         OperationWorkerSignal::WorkerFailed => {
+            let (code, message) = error.unwrap_or(EXECUTION_FAILED);
             dali2rust_contracts::msg::OperationWorkerSignalEvent::failed(
                 workflow_correlation_id,
-                error_code.unwrap_or(ErrorCode::ExecutionFailed),
-                error_message,
+                code,
+                message,
             )
         }
     };
@@ -223,7 +222,6 @@ pub(super) fn publish_worker_started(
         w,
         OperationWorkerSignal::WorkerStarted,
         None,
-        "",
         origin,
         counters,
     );
@@ -242,7 +240,6 @@ pub(super) fn publish_worker_succeeded(
         w,
         OperationWorkerSignal::WorkerSucceeded,
         None,
-        "",
         origin,
         counters,
     );
@@ -262,8 +259,7 @@ pub(super) fn publish_worker_failed(
         adapter_id,
         w,
         OperationWorkerSignal::WorkerFailed,
-        Some(code),
-        message,
+        Some((code, message)),
         origin,
         counters,
     );

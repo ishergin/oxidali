@@ -4,13 +4,11 @@ const SCENE_RECALLED: &str = "scene-recalled";
 
 pub(super) fn handle_program_scene(
     controller: &mut impl DaliApplicationController,
-    read_port: &dyn RegistryReadPort,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
+    env: &WorkerEnv<'_>,
     correlation_id: u64,
     command: &dali2rust_contracts::msg::DaliProgramSceneCommand,
-    counters: &DaliWorkerCounters,
 ) {
+    let WorkerEnv { read_port, publisher, adapter_id, counters, .. } = *env;
     let registry_adapter_id = command.registry_adapter_id;
     let outcome_event = |short, scene_level, error| {
         scene_programmed_event(correlation_id, adapter_id, command, short, scene_level, error)
@@ -26,16 +24,7 @@ pub(super) fn handle_program_scene(
         outcome_event: &outcome_event,
     };
     match resolve_membership_short(read_port, registry_adapter_id, command.target) {
-        Some(short_address) => program_scene_and_publish(
-            controller,
-            publisher,
-            adapter_id,
-            correlation_id,
-            command,
-            short_address,
-            counters,
-            &sink,
-        ),
+        Some(short_address) => program_scene_and_publish(controller, env, command, short_address, &sink),
         None => sink.unbound(),
     }
     counters
@@ -43,15 +32,11 @@ pub(super) fn handle_program_scene(
         .fetch_add(1, Ordering::Relaxed);
 }
 
-#[allow(clippy::too_many_arguments, reason = "mirrors the outcome-publisher signature")]
 fn program_scene_and_publish(
     controller: &mut impl DaliApplicationController,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
-    correlation_id: u64,
+    env: &WorkerEnv<'_>,
     command: &dali2rust_contracts::msg::DaliProgramSceneCommand,
     short_address: u8,
-    counters: &DaliWorkerCounters,
     sink: &ProgramOutcomeSink<'_, u8>,
 ) {
     let result = crate::runtime::executor::scene::program_scene_row(
@@ -63,15 +48,7 @@ fn program_scene_and_publish(
     );
     match result {
         Ok(scene_level) => {
-            publish_scene_colour_verify(
-                controller,
-                publisher,
-                adapter_id,
-                correlation_id,
-                command,
-                short_address,
-                counters,
-            );
+            publish_scene_colour_verify(controller, env, sink.correlation_id, command, short_address);
             sink.succeeded(short_address, scene_level);
         }
         Err(error) => sink.failed(&error),
@@ -80,13 +57,12 @@ fn program_scene_and_publish(
 
 fn publish_scene_colour_verify(
     controller: &mut impl DaliApplicationController,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
+    env: &WorkerEnv<'_>,
     correlation_id: u64,
     command: &dali2rust_contracts::msg::DaliProgramSceneCommand,
     short_address: u8,
-    counters: &DaliWorkerCounters,
 ) {
+    let WorkerEnv { publisher, adapter_id, counters, .. } = *env;
     let Ok(chunk) = crate::runtime::executor::read_scene_colour_readback(
         controller,
         short_address,

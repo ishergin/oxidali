@@ -6,6 +6,28 @@ pub(super) struct Provenance {
     pub(super) hold_hcl: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Reply<'a> {
+    pub(super) publisher: &'a BusPublisher,
+    pub(super) adapter_id: BusId,
+    pub(super) answer: Answer<'a>,
+    pub(super) provenance: Provenance,
+    pub(super) counters: &'a DaliWorkerCounters,
+}
+
+impl<'a> Reply<'a> {
+    fn of(env: &WorkerEnv<'a>, answer: Answer<'a>, origin: Origin, hold_hcl: bool) -> Self {
+        let source = RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api);
+        Self {
+            publisher: env.publisher,
+            adapter_id: env.adapter_id,
+            answer,
+            provenance: Provenance { source, hold_hcl },
+            counters: env.counters,
+        }
+    }
+}
+
 fn resolve_color_write_policy(
     read_port: &dyn RegistryReadPort,
     registry_adapter_id: u8,
@@ -30,109 +52,67 @@ fn resolve_color_write_policy(
     ColorWritePolicy { auto_activation, rgbwaf_control }
 }
 
-#[allow(clippy::too_many_arguments, reason = "origin threads provenance through one extra param")]
 pub(super) fn handle_set_target_state(
     controller: &mut impl DaliApplicationController,
-    runtime_config: DaliRuntimeConfig,
-    read_port: &dyn RegistryReadPort,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
+    env: &WorkerEnv<'_>,
     answer: Answer<'_>,
     origin: Origin,
     ts: &dali2rust_contracts::msg::DaliSetTargetStateCommand,
-    counters: &DaliWorkerCounters,
 ) {
-    let sequence_retries = runtime_config.target_state_sequence_retries;
-    let provenance = Provenance {
-        source: RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api),
-        hold_hcl: ts.hold_hcl,
-    };
-
+    let sequence_retries = env.runtime_config.target_state_sequence_retries;
+    let reply = Reply::of(env, answer, origin, ts.hold_hcl);
+    let (registry_adapter_id, sp) = (ts.registry_adapter_id, &ts.setpoint);
     match ts.scope {
         DaliTargetScope::VirtualLamp => handle_set_target_state_vl(
             controller,
             sequence_retries,
-            read_port,
-            publisher,
-            adapter_id,
-            answer,
-            provenance,
-            ts.registry_adapter_id,
+            env.read_port,
+            &reply,
+            registry_adapter_id,
             ts.virtual_lamp_id,
-            &ts.setpoint,
-            counters,
+            sp,
         ),
         _ => {
             let policy = if ts.scope == DaliTargetScope::Short {
-                resolve_color_write_policy(read_port, ts.registry_adapter_id, ts.short_address)
+                resolve_color_write_policy(env.read_port, registry_adapter_id, ts.short_address)
             } else {
                 ColorWritePolicy::NONE
             };
-            run_set_target_state_physical(
-                controller,
-                sequence_retries,
-                publisher,
-                adapter_id,
-                answer,
-                provenance,
-                ts,
-                policy,
-                counters,
-            )
+            run_set_target_state_physical(controller, sequence_retries, &reply, ts, policy)
         }
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "provenance threads through one extra param")]
 fn run_set_target_state_physical(
     controller: &mut impl DaliApplicationController,
     sequence_retries: u8,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
-    answer: Answer<'_>,
-    provenance: Provenance,
+    reply: &Reply<'_>,
     ts: &dali2rust_contracts::msg::DaliSetTargetStateCommand,
     policy: ColorWritePolicy,
-    counters: &DaliWorkerCounters,
 ) {
+    let (registry_adapter_id, sp) = (ts.registry_adapter_id, &ts.setpoint);
     match ts.scope {
         DaliTargetScope::Short => handle_set_target_state_short(
             controller,
             sequence_retries,
-            publisher,
-            adapter_id,
-            answer,
-            provenance,
-            ts.registry_adapter_id,
+            reply,
+            registry_adapter_id,
             ts.short_address,
-            &ts.setpoint,
+            sp,
             policy,
-            counters,
         ),
         DaliTargetScope::Group => handle_set_target_state_group(
             controller,
             sequence_retries,
-            publisher,
-            adapter_id,
-            answer,
-            provenance,
-            ts.registry_adapter_id,
+            reply,
+            registry_adapter_id,
             ts.group_id,
-            &ts.setpoint,
-            counters,
+            sp,
         ),
-        DaliTargetScope::Broadcast => handle_set_target_state_broadcast(
-            controller,
-            sequence_retries,
-            publisher,
-            adapter_id,
-            answer,
-            provenance,
-            ts.registry_adapter_id,
-            &ts.setpoint,
-            counters,
-        ),
-        _ => answer.failed(publisher, counters, EXECUTION_FAILED),
+        DaliTargetScope::Broadcast => {
+            handle_set_target_state_broadcast(controller, sequence_retries, reply, registry_adapter_id, sp)
+        }
+        _ => reply.answer.failed(reply.publisher, reply.counters, EXECUTION_FAILED),
     }
 }
 
@@ -157,14 +137,8 @@ impl FailedTarget {
     }
 }
 
-fn close_target_state_failure(
-    publisher: &BusPublisher,
-    adapter_id: BusId,
-    answer: Answer<'_>,
-    counters: &DaliWorkerCounters,
-    target: FailedTarget,
-    error: &SemanticDaliError,
-) {
+fn close_target_state_failure(reply: &Reply<'_>, target: FailedTarget, error: &SemanticDaliError) {
+    let Reply { publisher, adapter_id, answer, counters, .. } = *reply;
     publish_target_state_failed(publisher, adapter_id, answer.correlation_id, target, error);
     answer.failed(publisher, counters, (error.code(), error.message()));
 }
@@ -196,19 +170,14 @@ fn publish_target_state_failed(
     );
 }
 
-#[allow(clippy::too_many_arguments, reason = "provenance threads through one extra param")]
 fn handle_set_target_state_short(
     controller: &mut impl DaliApplicationController,
     sequence_retries: u8,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
-    answer: Answer<'_>,
-    provenance: Provenance,
+    reply: &Reply<'_>,
     registry_adapter_id: u8,
     short_address: u8,
     sp: &dali2rust_contracts::msg::LightSetpoint,
     policy: ColorWritePolicy,
-    counters: &DaliWorkerCounters,
 ) {
     if let Err(error) = apply_with_sequence_retry(sequence_retries, || {
         apply_short_target_state(controller, short_address, sp, policy)
@@ -217,7 +186,7 @@ fn handle_set_target_state_short(
             short_address: Some(short_address),
             ..FailedTarget::new(registry_adapter_id, DaliTargetScope::Short)
         };
-        close_target_state_failure(publisher, adapter_id, answer, counters, target, &error);
+        close_target_state_failure(reply, target, &error);
         return;
     }
     let applied = target_state_applied_event(
@@ -227,18 +196,16 @@ fn handle_set_target_state_short(
         Some(short_address),
         None,
         sp,
-        provenance,
+        reply.provenance,
     );
-    close_target_state_applied(publisher, answer, adapter_id, counters, applied);
+    close_target_state_applied(reply, applied);
 }
 
 pub(super) fn close_target_state_applied(
-    publisher: &BusPublisher,
-    answer: Answer<'_>,
-    adapter_id: BusId,
-    counters: &DaliWorkerCounters,
+    reply: &Reply<'_>,
     applied: dali2rust_contracts::msg::DaliTargetStateAppliedEvent,
 ) -> bool {
+    let Reply { publisher, adapter_id, answer, counters, .. } = *reply;
     let env = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, answer.correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), applied);
     if !publish_closing_fact_or_fail(publisher, env, counters, PublishKind::Singleton, "target-state-applied") {
         answer_each_failed(publisher, answer.riders, counters, EXECUTION_FAILED);
@@ -274,23 +241,18 @@ pub(super) fn target_state_applied_event(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "provenance threads through one extra param")]
 fn handle_set_target_state_broadcast(
     controller: &mut impl DaliApplicationController,
     sequence_retries: u8,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
-    answer: Answer<'_>,
-    provenance: Provenance,
+    reply: &Reply<'_>,
     registry_adapter_id: u8,
     sp: &dali2rust_contracts::msg::LightSetpoint,
-    counters: &DaliWorkerCounters,
 ) {
     if let Err(error) = apply_with_sequence_retry(sequence_retries, || {
         apply_broadcast_target_state(controller, sp)
     }) {
         let target = FailedTarget::new(registry_adapter_id, DaliTargetScope::Broadcast);
-        close_target_state_failure(publisher, adapter_id, answer, counters, target, &error);
+        close_target_state_failure(reply, target, &error);
         return;
     }
     let applied = target_state_applied_event(
@@ -300,25 +262,20 @@ fn handle_set_target_state_broadcast(
         None,
         None,
         sp,
-        provenance,
+        reply.provenance,
     );
-    if close_target_state_applied(publisher, answer, adapter_id, counters, applied) {
-        publish_confirmation_ok(publisher, answer.correlation_id, counters);
+    if close_target_state_applied(reply, applied) {
+        publish_confirmation_ok(reply.publisher, reply.answer.correlation_id, reply.counters);
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "provenance threads through one extra param")]
 fn handle_set_target_state_group(
     controller: &mut impl DaliApplicationController,
     sequence_retries: u8,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
-    answer: Answer<'_>,
-    provenance: Provenance,
+    reply: &Reply<'_>,
     registry_adapter_id: u8,
     group_id: u8,
     sp: &dali2rust_contracts::msg::LightSetpoint,
-    counters: &DaliWorkerCounters,
 ) {
     if let Err(error) = apply_with_sequence_retry(sequence_retries, || {
         apply_group_target_state(controller, group_id, sp)
@@ -327,7 +284,7 @@ fn handle_set_target_state_group(
             group_id: Some(group_id),
             ..FailedTarget::new(registry_adapter_id, DaliTargetScope::Group)
         };
-        close_target_state_failure(publisher, adapter_id, answer, counters, target, &error);
+        close_target_state_failure(reply, target, &error);
         return;
     }
 
@@ -338,36 +295,24 @@ fn handle_set_target_state_group(
         None,
         Some(group_id),
         sp,
-        provenance,
+        reply.provenance,
     );
-    if close_target_state_applied(publisher, answer, adapter_id, counters, applied) {
-        publish_confirmation_ok(publisher, answer.correlation_id, counters);
+    if close_target_state_applied(reply, applied) {
+        publish_confirmation_ok(reply.publisher, reply.answer.correlation_id, reply.counters);
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "provenance threads through one extra param")]
 fn handle_set_target_state_vl(
     controller: &mut impl DaliApplicationController,
     sequence_retries: u8,
     read_port: &dyn RegistryReadPort,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
-    answer: Answer<'_>,
-    provenance: Provenance,
+    reply: &Reply<'_>,
     registry_adapter_id: u8,
     vl_id: u8,
     sp: &dali2rust_contracts::msg::LightSetpoint,
-    counters: &DaliWorkerCounters,
 ) {
     let Some(short_sa) = read_port.virtual_lamp_binding_short(registry_adapter_id, vl_id) else {
-        fail_target_state_vl_unbound(
-            publisher,
-            answer,
-            adapter_id,
-            registry_adapter_id,
-            vl_id,
-            counters,
-        );
+        fail_target_state_vl_unbound(reply, registry_adapter_id, vl_id);
         return;
     };
     let policy = resolve_color_write_policy(read_port, registry_adapter_id, short_sa);
@@ -379,7 +324,7 @@ fn handle_set_target_state_vl(
             virtual_lamp_id: Some(vl_id),
             ..FailedTarget::new(registry_adapter_id, DaliTargetScope::VirtualLamp)
         };
-        close_target_state_failure(publisher, adapter_id, answer, counters, target, &error);
+        close_target_state_failure(reply, target, &error);
         return;
     }
     let applied = target_state_applied_event(
@@ -389,19 +334,13 @@ fn handle_set_target_state_vl(
         Some(short_sa),
         None,
         sp,
-        provenance,
+        reply.provenance,
     );
-    close_target_state_applied(publisher, answer, adapter_id, counters, applied);
+    close_target_state_applied(reply, applied);
 }
 
-fn fail_target_state_vl_unbound(
-    publisher: &BusPublisher,
-    answer: Answer<'_>,
-    adapter_id: BusId,
-    registry_adapter_id: u8,
-    vl_id: u8,
-    counters: &DaliWorkerCounters,
-) {
+fn fail_target_state_vl_unbound(reply: &Reply<'_>, registry_adapter_id: u8, vl_id: u8) {
+    let Reply { publisher, adapter_id, answer, counters, .. } = *reply;
     let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, answer.correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliTargetStateFailedEvent { adapter_id: registry_adapter_id, short_address: 0, error: dali2rust_contracts::msg::CompactErrorPayload::new(ErrorCode::VlUnbound, "vl_unbound"), scope: dali2rust_contracts::msg::DaliTargetScope::VirtualLamp, group_id: None, virtual_lamp_id: Some(vl_id) });
     publish_event_typed(publisher, ev);
     answer.refused(publisher, counters, (ErrorCode::VlUnbound, "vl_unbound"));

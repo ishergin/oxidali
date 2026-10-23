@@ -10,18 +10,14 @@ pub(super) struct ReadProvenance {
     pub(super) started_mono_ms: u32,
 }
 
-#[allow(clippy::too_many_arguments, reason = "origin threads provenance through one extra param")]
 pub(super) fn handle_read_attributes(
     controller: &mut impl DaliApplicationController,
-    runtime_config: DaliRuntimeConfig,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
-    correlation_id: u64,
+    env: &WorkerEnv<'_>,
+    w: u64,
     origin: Origin,
     ar: &dali2rust_contracts::msg::DaliReadAttributesCommand,
-    counters: &DaliWorkerCounters,
 ) {
-    let w = correlation_id;
+    let WorkerEnv { publisher, adapter_id, counters, .. } = *env;
     let provenance = ReadProvenance {
         value_source: RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api),
         started_mono_ms: dali2rust_bsp::monotonic_clock::observation_stamp_ms(),
@@ -32,18 +28,8 @@ pub(super) fn handle_read_attributes(
         groups.as_slice(),
         ar.memory_banks != dali2rust_contracts::msg::MemoryBankReadPreset::None,
     );
-    let terminal = read_attributes_terminal(
-        controller,
-        runtime_config,
-        publisher,
-        adapter_id,
-        w,
-        provenance,
-        ar,
-        groups.as_slice(),
-        &mut outcomes,
-        counters,
-    );
+    let terminal =
+        read_attributes_terminal(controller, env, w, provenance, ar, groups.as_slice(), &mut outcomes);
     publish_attribute_read_outcomes(publisher, adapter_id, w, ar, origin, &outcomes, counters);
     publish_read_attributes_terminal_signal(publisher, adapter_id, w, terminal, origin, counters);
     counters
@@ -67,19 +53,16 @@ fn publish_read_attributes_terminal_signal(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "mirrors the surrounding handler signatures")]
 fn read_attributes_terminal(
     controller: &mut impl DaliApplicationController,
-    runtime_config: DaliRuntimeConfig,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
+    env: &WorkerEnv<'_>,
     w: u64,
     provenance: ReadProvenance,
     ar: &dali2rust_contracts::msg::DaliReadAttributesCommand,
     groups: &[dali2rust_contracts::msg::DaliAttributeGroup],
     outcomes: &mut crate::runtime::executor::AttributeReadOutcomes,
-    counters: &DaliWorkerCounters,
 ) -> Result<(), (ErrorCode, &'static str)> {
+    let WorkerEnv { runtime_config, publisher, adapter_id, counters, .. } = *env;
     let result = match read_attributes(
         controller,
         ar.short_address,

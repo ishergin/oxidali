@@ -20,7 +20,6 @@ pub(super) fn handle_discover_devices(
         scan.w,
         OperationWorkerSignal::WorkerStarted,
         None,
-        "",
         Origin::Internal,
         scan.env.counters,
     );
@@ -64,8 +63,7 @@ fn publish_discovery_failed(scan: &Scan<'_>, error: &SemanticDaliError) {
         scan.env.adapter_id,
         scan.w,
         OperationWorkerSignal::WorkerFailed,
-        Some(error.code()),
-        error.message(),
+        Some((error.code(), error.message())),
         Origin::Internal,
         scan.env.counters,
     );
@@ -82,7 +80,6 @@ fn publish_discovery_succeeded(scan: &Scan<'_>) {
         scan.w,
         OperationWorkerSignal::WorkerSucceeded,
         None,
-        "",
         Origin::Internal,
         scan.env.counters,
     );
@@ -118,8 +115,7 @@ fn publish_policy_apply_if_armed(scan: &Scan<'_>) {
             adapter_id,
             workflow,
             OperationWorkerSignal::WorkerFailed,
-            Some(ErrorCode::CommandsIngressOverload),
-            "policy_apply_ingress_overload",
+            Some((ErrorCode::CommandsIngressOverload, "policy_apply_ingress_overload")),
             Origin::Internal,
             counters,
         );

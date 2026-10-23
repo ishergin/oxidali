@@ -538,7 +538,7 @@ mod lost_fact_riders {
     use dali2rust_test_support::hold_the_events_ingress_full;
 
     use super::super::publish::Answer;
-    use super::super::target_state::{close_target_state_applied, target_state_applied_event, Provenance};
+    use super::super::target_state::{close_target_state_applied, target_state_applied_event, Provenance, Reply};
     use super::super::DaliWorkerCounters;
 
     const EVENTS_INGRESS: usize = 4;
@@ -556,8 +556,9 @@ mod lost_fact_riders {
         let applied = target_state_applied_event(0, DaliTargetScope::Short, None, Some(SHORT), None, &setpoint, provenance);
         let _ingress = hold_the_events_ingress_full(&publisher);
         let answer = Answer { correlation_id: CARRIER, riders: &RIDERS };
+        let reply = Reply { publisher: &publisher, adapter_id: BusId::default(), answer, provenance, counters: &counters };
         assert!(
-            !close_target_state_applied(&publisher, answer, BusId::default(), &counters, applied),
+            !close_target_state_applied(&reply, applied),
             "inconclusive: the held events ingress took the applied fact"
         );
         assert_eq!(
