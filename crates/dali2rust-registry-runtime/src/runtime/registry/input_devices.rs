@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use dali2rust_contracts::msg::{
     Dali103ScanProgressEvent, DaliInputEventObservedEvent, InputEventKind,
 };
@@ -104,6 +106,7 @@ pub(crate) struct InputDeviceRecord {
     pub(crate) nvm_settling_until_ms: Option<u64>,
     pub(crate) present: bool,
     pub(crate) last_seen_ms: Option<u64>,
+    pub(crate) bank: u8,
 }
 
 impl InputDeviceRecord {
@@ -122,6 +125,7 @@ impl InputDeviceRecord {
             nvm_settling_until_ms: None,
             present: false,
             last_seen_ms: None,
+            bank: 0,
         }
     }
 
@@ -309,6 +313,29 @@ mod tests {
 use crate::runtime::registry::RegistryStore;
 use dali2rust_domain::dali::dev103::{feedback_capability, feedback_colour_capability};
 
+fn admitting_bank(devices: &HashMap<(u8, u8), InputDeviceRecord>) -> Option<u8> {
+    if devices.len() >= MAX_INPUT_DEVICES {
+        return None;
+    }
+    (0..SliceKey::INPUT_DEVICE_BANKS).find(|bank| {
+        devices.values().filter(|device| device.bank == *bank).count() < INPUT_DEVICES_PER_BANK
+    })
+}
+
+fn admit_input_device(
+    devices: &mut HashMap<(u8, u8), InputDeviceRecord>,
+    key: (u8, u8),
+    presence_unproven: bool,
+) -> Option<&mut InputDeviceRecord> {
+    if !devices.contains_key(&key) {
+        let mut record = InputDeviceRecord::empty(key.0, key.1);
+        record.bank = admitting_bank(devices)?;
+        record.ha_expose = !presence_unproven;
+        devices.insert(key, record);
+    }
+    devices.get_mut(&key)
+}
+
 impl RegistryStore {
     pub(crate) fn apply_input_scan_progress(
         &self,
@@ -317,17 +344,10 @@ impl RegistryStore {
     ) -> bool {
         let key = (progress.registry_adapter_id, progress.short_address);
         let mut g = self.write_inner();
-        let created = !g.input_devices.contains_key(&key);
-        if created && g.input_devices.len() >= MAX_INPUT_DEVICES {
+        let Some(record) = admit_input_device(&mut g.input_devices, key, progress.presence_unproven)
+        else {
             return false;
-        }
-        let record = g
-            .input_devices
-            .entry(key)
-            .or_insert_with(|| InputDeviceRecord::empty(key.0, key.1));
-        if created && progress.presence_unproven {
-            record.ha_expose = false;
-        }
+        };
         if !record.apply_scan_progress(progress, now_ms) {
             return false;
         }
@@ -842,16 +862,12 @@ const _: () = assert!(
 );
 
 pub(crate) fn persistable_snapshot_bank(inner: &Inner, bank: u8) -> PersistableInputDevicesSlice {
-    let mut keys: Vec<(u8, u8)> = inner.input_devices.keys().copied().collect();
-    keys.sort_unstable();
-    let devices = keys
-        .iter()
-        .skip(usize::from(bank) * INPUT_DEVICES_PER_BANK)
-        .take(INPUT_DEVICES_PER_BANK)
-        .filter_map(|key| inner.input_devices.get(key))
-        .map(persist_device)
-        .collect();
-    PersistableInputDevicesSlice { devices }
+    let mut members: Vec<&InputDeviceRecord> =
+        inner.input_devices.values().filter(|record| record.bank == bank).collect();
+    insertion_sort_by(&mut members, |a, b| {
+        (a.adapter_id, a.short_address) > (b.adapter_id, b.short_address)
+    });
+    PersistableInputDevicesSlice { devices: members.into_iter().map(persist_device).collect() }
 }
 
 fn persist_device(record: &InputDeviceRecord) -> PersistedInputDevice {
@@ -868,20 +884,14 @@ fn persist_device(record: &InputDeviceRecord) -> PersistedInputDevice {
 
 pub(crate) fn hydrate_input_devices_bank_inner(
     inner: &mut Inner,
-    _bank: u8,
+    bank: u8,
     slice: &PersistableInputDevicesSlice,
 ) {
-    hydrate_input_devices_inner(inner, slice);
-}
-
-pub(crate) fn hydrate_input_devices_inner(inner: &mut Inner, slice: &PersistableInputDevicesSlice) {
     for device in &slice.devices {
-        let record = inner
-            .input_devices
-            .entry((device.adapter_id, device.short_address))
-            .or_insert_with(|| {
-                InputDeviceRecord::empty(device.adapter_id, device.short_address)
-            });
+        let key = (device.adapter_id, device.short_address);
+        let record =
+            inner.input_devices.entry(key).or_insert_with(|| InputDeviceRecord::empty(key.0, key.1));
+        record.bank = bank;
         record.name = device.name.clone();
         record.notes = device.notes.clone();
         record.ha_expose = device.ha_expose;
@@ -907,6 +917,7 @@ fn hydrate_instance(record: &mut InputDeviceRecord, persisted: &PersistedInputIn
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
+    use crate::test_support::scan_input_device;
     use crate::runtime::registry::persistence_slices::{
         decode_versioned_slice, encode_persistence_blob, PersistenceEnvelope,
         INPUT_DEVICES_SLICE_VERSION,
@@ -916,6 +927,7 @@ mod persistence_tests {
         let mut inner = Inner::default();
         for short in 0u8..32 {
             let mut record = InputDeviceRecord::empty(0, short);
+            record.bank = u8::try_from(usize::from(short) / INPUT_DEVICES_PER_BANK).expect("a bank");
             record.instance_count = 32;
             record.name = Some("и".repeat(32));
             record.notes = Some("ж".repeat(24));
@@ -935,6 +947,31 @@ mod persistence_tests {
             inner.input_devices.insert((0, short), record);
         }
         inner
+    }
+
+    fn bank_sizes(store: &RegistryStore) -> Vec<usize> {
+        let inner = store.read_inner();
+        (0..SliceKey::INPUT_DEVICE_BANKS)
+            .map(|bank| persistable_snapshot_bank(&inner, bank).devices.len())
+            .collect()
+    }
+
+    #[test]
+    fn admission_fills_a_bank_before_the_next_and_refills_a_freed_place() {
+        let store = RegistryStore::with_adapter_count(1);
+        let cap = u8::try_from(MAX_INPUT_DEVICES).expect("a short address");
+        for short in 0..cap {
+            assert!(scan_input_device(&store, short), "short {short} admitted");
+        }
+        assert!(!scan_input_device(&store, cap), "the cap holds");
+        let full = vec![INPUT_DEVICES_PER_BANK; usize::from(SliceKey::INPUT_DEVICE_BANKS)];
+        assert_eq!(bank_sizes(&store), full);
+
+        let freed = 3;
+        assert!(store.forget_input_device(0, freed));
+        assert!(scan_input_device(&store, cap), "a freed place admits a new device");
+        assert_eq!(bank_sizes(&store), full);
+        assert_eq!(store.read_inner().input_devices[&(0, cap)].bank, 0, "the freed place was in bank 0");
     }
 
     #[test]
@@ -964,12 +1001,13 @@ mod persistence_tests {
             let decoded: PersistableInputDevicesSlice =
                 decode_versioned_slice(&bytes, INPUT_DEVICES_SLICE_VERSION).expect("decode");
             assert_eq!(decoded, snapshot, "postcard round-trip must be identity");
-            hydrate_input_devices_inner(&mut hydrated, &decoded);
+            hydrate_input_devices_bank_inner(&mut hydrated, bank, &decoded);
         }
         assert_eq!(hydrated.input_devices.len(), inner.input_devices.len());
         let original = inner.input_devices.get(&(0, 7)).expect("device 7");
         let back = hydrated.input_devices.get(&(0, 7)).expect("hydrated 7");
         assert_eq!(back.name, original.name);
+        assert_eq!(back.bank, original.bank, "a device hydrates into the bank it was saved in");
         assert_eq!(back.instance_count, original.instance_count);
         assert_eq!(back.instances.len(), original.instances.len());
         let instance = back.instances.first().expect("instance 0");

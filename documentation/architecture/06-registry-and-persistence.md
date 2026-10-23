@@ -147,12 +147,17 @@ filtered: they address one device.
   a short that memory already holds. It then marks every such bank for rewrite when the slot
   loaded or did not decode, so later boots stop reading it; only the rejected banks when
   the slot is missing; and none when the slot's read fails.
+- Input devices are stored in four banks of eight. A device is admitted to the first bank
+  with room and stays in it until it is forgotten, and hydration puts it back in the bank
+  that held it, so a new or forgotten device changes only its own bank and a flush that
+  fails part-way leaves every device in the old or the new copy of its bank.
 - A slice whose read fails is unread, not garbage: hydration keeps what memory holds (the
   default at boot) and never marks it for rewrite, and no flush writes it until a later
   boot or reload reads it. A change to it in the meantime is lost when that read happens;
   a flush that runs logs each slice it holds back, and `persistence.unread_slices` in
   `/api/v1/diagnostics` counts the slices and device banks waiting. The hold is per slice
-  (the input-device banks, positions in one list, wait together), so a change made to
+  (the input-device banks wait together, because a bank not yet read would look like room
+  for a new device), so a change made to
   another slice against the waiting one's defaults is saved. A slice that reads but does
   not decode is rejected and rewritten with defaults (§Versions).
 - A device bank also waits while the legacy slot that may hold its devices cannot be read.

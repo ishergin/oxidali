@@ -1,7 +1,23 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use dali2rust_bsp::slice_store_files::InMemorySliceStore;
+use dali2rust_contracts::msg::Dali103ScanProgressEvent;
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
+
+use crate::runtime::registry::RegistryStore;
+
+pub(crate) fn scan_input_device(store: &RegistryStore, short_address: u8) -> bool {
+    let progress = Dali103ScanProgressEvent {
+        registry_adapter_id: 0,
+        short_address,
+        presence_unproven: false,
+        instance_count: 1,
+        device_capabilities: None,
+        device_status: None,
+        version_number: None,
+    };
+    store.apply_input_scan_progress(&progress, 0)
+}
 
 #[derive(Default)]
 pub(crate) struct CountingStore {

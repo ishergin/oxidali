@@ -1218,7 +1218,7 @@ mod tests {
 
     use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 
-    use crate::test_support::{CountingStore, ProbeStore};
+    use crate::test_support::{scan_input_device, CountingStore, ProbeStore};
     use super::{key_of, mark_slice_dirty, registry_kind, validate_registry_slice};
     use super::super::input_devices::{InputDeviceRecord, INPUT_DEVICES_PER_BANK};
     use super::super::physical_devices::PhysicalDeviceRecord;
@@ -1365,9 +1365,8 @@ mod tests {
         let slices = ProbeStore::default();
         let seeded = RegistryStore::with_adapter_count(1);
         for short in 0..installed_devices {
-            seeded.write_inner().input_devices.insert((0, short), InputDeviceRecord::empty(0, short));
+            assert!(scan_input_device(&seeded, short), "short {short} admitted");
         }
-        seeded.dirty.mark_input_devices_dirty();
         seeded.flush_dirty_slices(&slices);
 
         let store = boot_with_unread(&slices, SliceKey::InputDevices { bank: 0 });
@@ -1377,6 +1376,28 @@ mod tests {
         let rebooted = RegistryStore::with_adapter_count(1);
         rebooted.hydrate_from_store(&slices, 1);
         assert_eq!(rebooted.read_inner().input_devices.len(), usize::from(installed_devices));
+    }
+
+    #[test]
+    fn a_new_input_device_leaves_the_persisted_ones_whole_when_a_bank_write_fails() {
+        let slices = ProbeStore::default();
+        let store = RegistryStore::with_adapter_count(1);
+        let persisted = 1..=u8::try_from(INPUT_DEVICES_PER_BANK + 1).expect("a short address");
+        for short in persisted.clone() {
+            assert!(scan_input_device(&store, short), "short {short} admitted");
+        }
+        store.flush_dirty_slices(&slices);
+
+        assert!(scan_input_device(&store, 0), "short 0 admitted");
+        slices.refuse_writes_to(Some(SliceKey::InputDevices { bank: 1 }));
+        store.flush_dirty_slices(&slices);
+
+        let rebooted = RegistryStore::with_adapter_count(1);
+        rebooted.hydrate_from_store(&slices, 1);
+        let inner = rebooted.read_inner();
+        let lost: Vec<u8> =
+            persisted.filter(|short| !inner.input_devices.contains_key(&(0, *short))).collect();
+        assert!(lost.is_empty(), "persisted devices lost after the failed flush: {lost:?}");
     }
 
     #[test]
