@@ -178,31 +178,10 @@ mod tests {
         HCL_SCHEDULER, MQTT_BRIDGE, NAMED_EVENT_SUBSCRIBERS, OPERATION_TRACKER, POLLER,
         PROJECTOR, REGISTRY, REPLICATION, RULES, SUPERVISOR, WS_FANOUT,
     };
-    use dali2rust_domain::registry::MAX_HCL_SCHEDULES;
     use dali2rust_registry_runtime::{
-        ANNOUNCEMENTS_PER_PARK, ANNOUNCEMENT_PARK_WINDOW, ANNOUNCEMENT_SHARE_OF_INBOX,
+        ANNOUNCED_EVENTS, ANNOUNCEMENTS_PER_PARK, ANNOUNCEMENT_PARK_WINDOW,
+        ANNOUNCEMENT_SHARE_OF_INBOX,
     };
-
-    const PER_RECORD: usize = usize::MAX;
-    const ONE_RECORD: usize = 1;
-    const SCHEDULES_BEFORE_AND_AFTER: usize = 2 * MAX_HCL_SCHEDULES;
-
-    const ANNOUNCED: &[(&str, usize)] = &[
-        ("AdapterSettingsChangedEvent", PER_RECORD),
-        ("PhysicalDeviceChangedEvent", PER_RECORD),
-        ("VirtualLampChangedEvent", PER_RECORD),
-        ("GroupChangedEvent", PER_RECORD),
-        ("GroupMatrixChangedEvent", PER_RECORD),
-        ("SceneChangedEvent", PER_RECORD),
-        ("SceneMatrixChangedEvent", PER_RECORD),
-        ("InputDeviceChangedEvent", PER_RECORD),
-        ("HclScheduleChangedEvent", SCHEDULES_BEFORE_AND_AFTER),
-        ("PollerSettingsChangedEvent", ONE_RECORD),
-        ("DaliSettingsChangedEvent", ONE_RECORD),
-        ("RedundancySettingsChangedEvent", ONE_RECORD),
-        ("PoliciesChangedEvent", ONE_RECORD),
-        ("HomeAssistantSettingsChangedEvent", ONE_RECORD),
-    ];
 
     const EVENT_INBOXES: [EventInbox; 13] = [
         REGISTRY,
@@ -221,10 +200,10 @@ mod tests {
     ];
 
     fn most_announced_in_a_park(handled: &[&str]) -> usize {
-        let records = ANNOUNCED
+        let records = ANNOUNCED_EVENTS
             .iter()
-            .filter(|(kind, _)| handled.contains(kind))
-            .fold(0usize, |sum, (_, records)| sum.saturating_add(*records));
+            .filter(|event| handled.contains(&event.kind))
+            .fold(0usize, |sum, event| sum.saturating_add(event.records));
         records.min(ANNOUNCEMENTS_PER_PARK)
     }
 
@@ -325,6 +304,7 @@ mod reload_pacing_tests {
     };
     use dali2rust_test_support::{remains_false_for, wait_until};
 
+    use super::WS_FANOUT;
     use crate::runtime::{build_http_test_stack, BusStackRuntime, HttpTestPorts};
     use crate::dali::transport::mock::MockDaliTransport;
 
@@ -337,7 +317,6 @@ mod reload_pacing_tests {
     const ANNOUNCED_TO_THE_HUB: u32 = ADAPTERS as u32 * RECORDS_PER_ADAPTER as u32;
     const IMPORT_ACCEPTED_WITHIN: Duration = Duration::from_secs(10);
     const DRAINED_WITHIN: Duration = Duration::from_secs(12);
-    const WS_FANOUT: &str = "ws_fanout";
     const ACCEPTED: u16 = 202;
 
     fn lamps_blob(adapter_id: u8) -> Vec<u8> {
@@ -377,7 +356,7 @@ mod reload_pacing_tests {
 
     fn hub_inbox(runtime: &BusStackRuntime) -> (u32, u32) {
         let counters = runtime.event_publisher.counters_snapshot();
-        let hub = counters.event_subscribers.iter().find(|s| s.name == WS_FANOUT);
+        let hub = counters.event_subscribers.iter().find(|s| s.name == WS_FANOUT.name);
         hub.map_or((0, 0), |s| (s.delivered, s.receiver_overflow))
     }
 

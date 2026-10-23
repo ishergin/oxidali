@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use dali2rust_bus::{BusChannel, BusFrame, BusPublisher, PublishResult};
 use dali2rust_contracts::msg::{BusEventPayload, FixedText32, APPLICATION_ACTIVE_UNMOVED};
 use dali2rust_contracts::CORRELATION_NONE;
+use dali2rust_domain::registry::MAX_HCL_SCHEDULES;
 use dali2rust_platform::slice_store::SliceKey;
 use log::warn;
 
@@ -25,6 +26,36 @@ const POLICIES: u8 = 1 << 3;
 const HOME_ASSISTANT_SETTINGS: u8 = 1 << 4;
 const ID_SPACE: u8 = 64;
 const EVERY_DEVICE_BANK: u16 = u16::MAX;
+const PER_RECORD: usize = usize::MAX;
+const ONE_RECORD: usize = 1;
+const SCHEDULES_BEFORE_AND_AFTER: usize = 2 * MAX_HCL_SCHEDULES;
+
+#[derive(Clone, Copy, Debug)]
+pub struct AnnouncedEvent {
+    pub kind: &'static str,
+    pub records: usize,
+}
+
+const fn announced(kind: &'static str, records: usize) -> AnnouncedEvent {
+    AnnouncedEvent { kind, records }
+}
+
+pub const ANNOUNCED_EVENTS: &[AnnouncedEvent] = &[
+    announced("AdapterSettingsChangedEvent", PER_RECORD),
+    announced("PhysicalDeviceChangedEvent", PER_RECORD),
+    announced("VirtualLampChangedEvent", PER_RECORD),
+    announced("GroupChangedEvent", PER_RECORD),
+    announced("GroupMatrixChangedEvent", PER_RECORD),
+    announced("SceneChangedEvent", PER_RECORD),
+    announced("SceneMatrixChangedEvent", PER_RECORD),
+    announced("InputDeviceChangedEvent", PER_RECORD),
+    announced("HclScheduleChangedEvent", SCHEDULES_BEFORE_AND_AFTER),
+    announced("PollerSettingsChangedEvent", ONE_RECORD),
+    announced("DaliSettingsChangedEvent", ONE_RECORD),
+    announced("RedundancySettingsChangedEvent", ONE_RECORD),
+    announced("PoliciesChangedEvent", ONE_RECORD),
+    announced("HomeAssistantSettingsChangedEvent", ONE_RECORD),
+];
 
 fn bit(id: u8) -> u64 {
     1u64.checked_shl(u32::from(id)).unwrap_or(0)
@@ -501,15 +532,17 @@ fn entities_of(inner: &Inner, key: SliceKey) -> ReplacedEntities {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::mpsc::Receiver;
     use std::time::{Duration, Instant};
 
     use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusPublisher, PublishResult};
-    use dali2rust_contracts::msg::{BusEventPayload, EVENT_VARIANT_NAMES};
+    use dali2rust_contracts::msg::{fixed_text_32, BusEventPayload, EVENT_VARIANT_NAMES};
     use dali2rust_test_support::{hold_the_events_ingress_full, wait_until};
 
-    use super::{AnnouncementPacing, ReplacedEntities, POLLER_SETTINGS};
+    use super::{
+        AnnouncementPacing, ReplacedEntities, ANNOUNCED_EVENTS, POLLER_SETTINGS, SETTINGS,
+    };
     use crate::runtime::registry::RegistryStore;
     use crate::runtime::registry_worker::ANNOUNCEMENT_PACING;
 
@@ -624,6 +657,47 @@ mod tests {
         assert!(loss_episode_open(&store), "a turn that lost one closed the episode");
         store.announce_through(TARGET, EVERY_CALL, |_frame| PublishResult::Queued);
         assert!(!loss_episode_open(&store), "a clean send left the episode open");
+    }
+
+    fn every_kind_replaced() -> ReplacedEntities {
+        let one = BTreeMap::from([(0, 1)]);
+        ReplacedEntities {
+            adapters: 1,
+            groups: one.clone(),
+            group_matrices: 1,
+            lamps: one.clone(),
+            devices: one.clone(),
+            scenes: one,
+            input_devices: vec![(0, 0)],
+            schedules: vec![fixed_text_32("evening")],
+            records: SETTINGS.iter().fold(0, |mask, (bit, _)| mask | bit),
+        }
+    }
+
+    fn names_heard(events: &Receiver<BusFrame>, count: usize) -> BTreeSet<&'static str> {
+        let deadline = Instant::now() + WAIT;
+        let mut names = BTreeSet::new();
+        for _ in 0..count {
+            let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            if let Ok(BusFrame::Event(event)) = events.recv_timeout(left) {
+                names.insert(event.payload.variant_name());
+            }
+        }
+        names
+    }
+
+    #[test]
+    fn the_announced_events_list_names_every_event_a_reload_announces() {
+        let (_host, publisher, events) = observed();
+        let store = RegistryStore::with_adapter_count(1);
+        store.queue_announcements(every_kind_replaced());
+        let every_turn = AnnouncementPacing { per_window: usize::MAX, window: Duration::ZERO };
+        let announced = store.announce_queued(&publisher, TARGET, every_turn);
+        assert_eq!(announced, ANNOUNCED_EVENTS.len(), "a kind went out twice or not at all");
+        let declared: BTreeSet<&str> = ANNOUNCED_EVENTS.iter().map(|event| event.kind).collect();
+        assert_eq!(names_heard(&events, announced), declared, "ANNOUNCED_EVENTS is out of date");
     }
 
     const TURNS_IN_THE_WINDOW: usize = 5;

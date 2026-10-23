@@ -33,6 +33,7 @@ pub use runtime::registry::physical_devices::DISCOVERY_EVICT_MISS_THRESHOLD;
 pub use runtime::registry_apply_watch::RegistryApplyWatch;
 pub use runtime::registry_events_worker::REGISTRY_EVENTS_HANDLED_EVENTS;
 pub use runtime::registry::publish::REGISTRY_REQUIRED_EVENTS;
+pub use runtime::registry::replaced_slices::{AnnouncedEvent, ANNOUNCED_EVENTS};
 pub use runtime::registry_worker::{
     spawn_registry_worker, RegistryCommandCounters, RegistryEventsCounters,
     RegistryWorkerCounters, SlicePersistence, ANNOUNCEMENTS_PER_PARK, ANNOUNCEMENT_INBOX_FLOOR,
