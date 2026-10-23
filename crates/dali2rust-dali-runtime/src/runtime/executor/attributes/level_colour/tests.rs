@@ -4,6 +4,7 @@ use crate::runtime::executor::test_helpers::shared::{
     priorities_of, setup_controller, short_address,
 };
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
+use dali2rust_contracts::msg::{CompactErrorPayload, ErrorCode};
 use dali2rust_domain::dali::commands::DaliCommand;
 use dali2rust_domain::dali::devices::dt8_color::COLOUR_TYPE_BYTE_TC;
 use dali2rust_domain::dali::ses::DaliPriority;
@@ -135,18 +136,18 @@ fn mask_temporaries_store_the_level_alone_after_the_probe() {
 // IEC 62386-102 §3.13
 #[test]
 fn a_probe_that_stays_silent_fails_the_write_before_anything_is_stored() {
-    for supported in [Some(colour_gear()), None] {
+    for (types, outcome) in [(Some(colour_gear()), LEVEL_COLOUR_UNANSWERED), (None, DEVICE_TYPES_UNKNOWN)] {
         let mock = MockDaliTransport::new();
         for _ in 0..COLOUR_VALUE_ASKS {
             expect_temporary_type(&mock, None);
         }
 
-        let (execution, transport) = write_level_on(mock, POWER_ON, supported);
+        let (execution, transport) = write_level_on(mock, POWER_ON, types);
 
         assert_eq!(
             execution.error,
-            Some(SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNANSWERED)),
-            "{supported:?}: silence proves no colour absent"
+            Some(SemanticDaliError::OperationFailed(outcome)),
+            "{types:?}: silence proves no colour absent, and with no types known it names the remedy"
         );
         assert_eq!(execution.confirmed.power_on_level, None);
         assert_script_consumed(&transport);
@@ -322,4 +323,13 @@ fn a_temporary_that_never_holds_the_stored_colour_stores_nothing() {
     assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNCONFIRMED)));
     assert_eq!(execution.confirmed.power_on_level, None);
     assert_script_consumed(&transport);
+}
+
+#[test]
+fn every_level_colour_outcome_fits_the_compact_error_payload() {
+    let outcomes = [LEVEL_COLOUR_UNCONFIRMED, LEVEL_COLOUR_UNANSWERED, LEVEL_COLOUR_CONTENDED, DEVICE_TYPES_UNKNOWN];
+    for outcome in outcomes {
+        let payload = CompactErrorPayload::new(ErrorCode::OperationFailed, outcome);
+        assert_eq!(payload.message.as_str(), outcome, "an operator reads the whole name");
+    }
 }

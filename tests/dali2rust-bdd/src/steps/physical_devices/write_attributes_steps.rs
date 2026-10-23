@@ -139,15 +139,15 @@ async fn given_level_write_over_a_charged_temporary(world: &mut DaliWorld, level
     script_level_store(&mock, TEST_SHORT_ADDRESS, SYSTEM_FAILURE_STORE, level, consumed);
 }
 
-// PD-287
-#[given(regex = r"^a write of power-on level (\d+) to short address 0, whose gear declares no DT8$")]
+// PD-287 PD-289 PD-290
+#[given(regex = r"^a write of power-on level (\d+) to short address 0 that asks no colour question$")]
 async fn given_level_write_without_dt8(world: &mut DaliWorld, level: u8) {
     let mock = world.dali_mock().lock().expect("mock lock");
     mock.clear();
     script_addressed_config_triple(&mock, TEST_SHORT_ADDRESS, POWER_ON_STORE.0, POWER_ON_STORE.1, level, level);
 }
 
-// PD-288
+// PD-288 PD-289
 #[given(regex = r"^a write of power-on level (\d+) to short address 0, whose temporary colour type never answers$")]
 async fn given_level_write_with_a_silent_probe(world: &mut DaliWorld, _level: u8) {
     const PROBE_ASKS: usize = 3;

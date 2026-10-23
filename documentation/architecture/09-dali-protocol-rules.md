@@ -309,13 +309,15 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   `ACTIVATE` is never the flush: it applies the stray colour to the lamp.
 - `STORE THE DTR AS POWER ON LEVEL` and `… SYSTEM FAILURE LEVEL` copy the temporary
   colour into the power-on or system-failure colour, and keep that colour when the
-  temporaries are MASK (209 §11.2.2, Tables 1, 2 and 6). A gear whose known device-type
-  set lacks DT8 gets `DTR0` and the store as any level does, and is asked nothing about
-  colour (102 §9.18). Any other gear, the set unknown included, is asked
-  `TEMPORARY COLOUR TYPE` first, since silence proves no colour absent (102 §3.13): MASK
-  gets `DTR0` and the store; silence or a violation, asked three times, fails the write
+  temporaries are MASK (209 §11.2.2, Tables 1, 2 and 6). The set that decides is the
+  effective one: the declared set, narrowed by a device-type override that fits it. A
+  gear whose effective set lacks DT8 gets `DTR0` and the store as any level does, and is
+  asked nothing about colour (102 §9.18). Any other gear is asked `TEMPORARY COLOUR TYPE`
+  first, since silence proves no colour absent (102 §3.13): MASK gets `DTR0` and the
+  store; silence or a violation, asked three times, fails the write
   (`dt8_level_colour_unanswered`, `dt8_level_colour_contended`) before anything is
-  stored, so a gear whose set no read has learnt takes no level until one does. Otherwise
+  stored. With no set known yet, silence fails it `types_unknown_read_or_override`: an
+  attribute read that learns the set, or an override, lets the level through. Otherwise
   one exempt transaction, the store's unit, has the level query load the stored colour into
   the REPORT registers (§11.3.2), reads `REPORT COLOUR TYPE`, and charges the stored
   colour back with `COPY REPORT TO TEMPORARY`, so the gear stores the colour it had. A

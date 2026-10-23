@@ -315,7 +315,7 @@ fn a_rejected_delivery_fails_the_operation_instead_of_waiting_out_the_ttl() {
             max_level: None,
             dimming_curve: None,
             signals_operation: true,
-            supported_device_types: None,
+            effective_device_types: None,
         },
     );
     let rejection = dali2rust_contracts::bus::synthetic_delivery_rejected_envelope(&semantic)

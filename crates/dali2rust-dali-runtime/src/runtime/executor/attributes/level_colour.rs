@@ -13,6 +13,7 @@ use dali2rust_domain::dali::devices::dt8_color::{
 const LEVEL_COLOUR_UNCONFIRMED: &str = "dt8_level_colour_unconfirmed";
 const LEVEL_COLOUR_UNANSWERED: &str = "dt8_level_colour_unanswered";
 const LEVEL_COLOUR_CONTENDED: &str = "dt8_level_colour_contended";
+const DEVICE_TYPES_UNKNOWN: &str = "types_unknown_read_or_override";
 const COLOUR_VALUE_ASKS: u8 = 3;
 const RECHARGE_RETRIES: u8 = 2;
 const PRIMARY_N_COUNT: u8 = 6;
@@ -42,18 +43,28 @@ const fn unconfirmed() -> SemanticDaliError {
     SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNCONFIRMED)
 }
 
+// IEC 62386-102 §3.13
+fn types_unknown_when_silent(error: SemanticDaliError) -> SemanticDaliError {
+    match error {
+        SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNANSWERED) => {
+            SemanticDaliError::OperationFailed(DEVICE_TYPES_UNKNOWN)
+        }
+        other => other,
+    }
+}
+
 // IEC 62386-102 §9.18
 pub(super) fn store_level<C: DaliApplicationController>(
     controller: &mut C,
     address: DaliAddress,
     level: u8,
-    (stored, supported): (StoredLevel, Option<DeviceTypeSet>),
+    (stored, types): (StoredLevel, Option<DeviceTypeSet>),
 ) -> Result<ReadBack, SemanticDaliError> {
-    if supported.is_some_and(|set| !set.contains(DT8_DEVICE_TYPE)) {
+    if types.is_some_and(|set| !set.contains(DT8_DEVICE_TYPE)) {
         let verify = |c: &mut C| send_standard_response(c, address, stored.query);
         return send_dtr0_config_verified(controller, address, level, stored.store, verify);
     }
-    store_level_keeping_colour(controller, address, level, stored)
+    store_level_keeping_colour(controller, address, level, (stored, types.is_some()))
 }
 
 // IEC 62386-209 §11.2.2, Table 6
@@ -61,12 +72,12 @@ fn store_level_keeping_colour<C: DaliApplicationController>(
     controller: &mut C,
     address: DaliAddress,
     level: u8,
-    stored: StoredLevel,
+    (stored, types_known): (StoredLevel, bool),
 ) -> Result<ReadBack, SemanticDaliError> {
     verified_store(controller, level, |controller: &mut C| {
         controller.transaction_exempt(|controller| {
             controller.unit(|controller| {
-                keep_stored_colour(controller, address, stored)?;
+                keep_stored_colour(controller, address, (stored, types_known))?;
                 send_dtr0_backed_standard(controller, address, level, stored.store)
             })?;
             send_standard_response(controller, address, stored.query)
@@ -78,9 +89,10 @@ fn store_level_keeping_colour<C: DaliApplicationController>(
 fn keep_stored_colour(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
-    stored: StoredLevel,
+    (stored, types_known): (StoredLevel, bool),
 ) -> Result<(), SemanticDaliError> {
-    let temporary = colour_byte(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE)?;
+    let temporary = colour_byte(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE)
+        .map_err(|error| if types_known { error } else { types_unknown_when_silent(error) })?;
     if temporary == COLOUR_TYPE_BYTE_MASK {
         return Ok(());
     }

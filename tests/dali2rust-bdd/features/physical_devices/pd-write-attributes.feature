@@ -392,7 +392,7 @@ Feature: Physical device write-attributes
     When I start a discovery run for adapter 0
     Then the response status should be 202
     And the last operation eventually succeeds
-    Given a write of power-on level 120 to short address 0, whose gear declares no DT8
+    Given a write of power-on level 120 to short address 0 that asks no colour question
     When I POST JSON {"power_on_level":120} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
     Then the response status should be 202
     And the last operation eventually succeeds
@@ -409,4 +409,38 @@ Feature: Physical device write-attributes
     Then the response status should be 202
     And the last operation eventually fails
     And the operation error message should be "dt8_level_colour_unanswered"
+    And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-289
+  Scenario: A level write to a gear whose types no read has learnt names the remedy, and an override lets it through
+    Given a discovery script where the QueryNextDeviceType walk never reaches the 254 terminator
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given a write of power-on level 120 to short address 0, whose temporary colour type never answers
+    When I POST JSON {"power_on_level":120} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error message should be "types_unknown_read_or_override"
+    And all scripted DALI exchanges should be consumed without errors
+    When I PATCH JSON {"device_type_override":"dt6_led"} to "/api/v1/adapters/0/physical-devices/0"
+    Then the response status should be 200
+    Given a write of power-on level 120 to short address 0 that asks no colour question
+    When I POST JSON {"power_on_level":120} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-290
+  Scenario: A level write to a gear whose override narrows its types past DT8 asks no colour question
+    Given a discovery script where QueryDeviceType returns MASK before QueryNextDeviceType enumerates DT6 and DT8
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I PATCH JSON {"device_type_override":"dt6_led"} to "/api/v1/adapters/0/physical-devices/0"
+    Then the response status should be 200
+    Given a write of power-on level 120 to short address 0 that asks no colour question
+    When I POST JSON {"power_on_level":120} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually succeeds
     And all scripted DALI exchanges should be consumed without errors

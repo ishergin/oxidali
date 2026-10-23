@@ -283,7 +283,7 @@ declare_bus_payloads! {
         pub max_level: Option<u8>,
         pub dimming_curve: Option<u8>,
         pub signals_operation: bool,
-        pub supported_device_types: Option<DeviceTypeSet>,
+        pub effective_device_types: Option<DeviceTypeSet>,
     }
     budget = DaliWriteAttributesCommand {
         short_address: 63,
@@ -299,7 +299,7 @@ declare_bus_payloads! {
         max_level: Some(u8::MAX),
         dimming_curve: Some(u8::MAX),
         signals_operation: true,
-        supported_device_types: Some(DeviceTypeSet::from_bits(u64::MAX)),
+        effective_device_types: Some(DeviceTypeSet::from_bits(u64::MAX)),
     };
 
     pub struct DaliDiscoverDevicesCommand {

@@ -366,7 +366,7 @@ fn refused_operations() -> Vec<BusCommandPayload> {
         m::DaliDiscoverDevicesCommand { mode: DiscoveryMode::RefreshKnown, registry_adapter_id: 0 }.into(),
         m::DaliReadAttributesCommand { registry_adapter_id: 0, short_address: 5, attribute_groups_mask: 1 << 1, memory_banks: MemoryBankReadPreset::None }.into(),
         m::DaliReadMemoryBankCommand { registry_adapter_id: 0, short_address: 5, bank: 1, start: 0, length: 1 }.into(),
-        m::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: Some(200), fade_rate: None, power_on_level: None, system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: true, supported_device_types: None }.into(),
+        m::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: Some(200), fade_rate: None, power_on_level: None, system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: true, effective_device_types: None }.into(),
         m::DaliIdentifyDeviceCommand { registry_adapter_id: 0, short_address: 5, operation_key: Default::default() }.into(),
         m::DaliReplaceDeviceCommand { registry_adapter_id: 0, failed_short_address: 5, replacement_short_address: 6, restore_metadata_and_overrides: false, operation_key: Default::default() }.into(),
         m::DaliAddressingCommand { registry_adapter_id: 0, short_address: 5, new_short_address: 6, verify_after_program: true, operation_key: Default::default() }.into(),
@@ -468,7 +468,7 @@ fn a_write_that_confirms_nothing_still_publishes_its_outcome() {
         ControllerMode::NoAnswer,
     );
     let corr = 141u64;
-    let write = dali2rust_contracts::msg::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: None, fade_rate: None, power_on_level: Some(200), system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: false, supported_device_types: Some([DeviceType::Led.code()].into_iter().collect()) };
+    let write = dali2rust_contracts::msg::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: None, fade_rate: None, power_on_level: Some(200), system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: false, effective_device_types: Some([DeviceType::Led.code()].into_iter().collect()) };
     harness.publish(envelope_on_adapter_0(corr, write.into()));
 
     let ev = harness.recv_event_matching(corr, |payload| {
