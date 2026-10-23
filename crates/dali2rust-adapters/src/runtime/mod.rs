@@ -639,8 +639,10 @@ struct ReadModelArgs {
 }
 
 fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
+    let uptime = dali2rust_platform::clock::Uptime::start(args.clock);
     ReadModelPorts {
         diagnostics: Arc::new(http_bridges::DiagnosticsBridge::new(
+            uptime.clone(),
             args.publisher.clone(),
             Arc::clone(&args.slots),
             args.counters.clone(),
@@ -653,7 +655,7 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
             args.transitions,
         )),
         stats: Arc::new(http_bridges::StatsBridge::new(
-            args.clock,
+            uptime,
             args.publisher,
             args.slots,
             args.counters,
@@ -701,4 +703,53 @@ pub fn build_http_test_stack(
             ..StackOptions::default()
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use core::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+    use dali2rust_api::confirmation_bridge::PendingConfirmationSlots;
+    use dali2rust_bus::BusHost;
+    use dali2rust_platform::clock::Clock;
+
+    use super::*;
+
+    const BOOTED_AT_MS: u64 = 1_000;
+    const NOW_MS: u64 = 3_250;
+
+    struct SteppedClock(AtomicU64);
+
+    impl Clock for SteppedClock {
+        fn monotonic_ms(&self) -> u64 {
+            self.0.load(Relaxed)
+        }
+    }
+
+    #[test]
+    fn diagnostics_and_stats_report_one_uptime_read_off_the_one_clock() {
+        let clock = Arc::new(SteppedClock(AtomicU64::new(BOOTED_AT_MS)));
+        let (_host, publisher, ()) = BusHost::spawn(BusConfig::default(), |_registry| ());
+        let store = Arc::new(RegistryStore::with_adapter_count(1));
+        let ports = read_model_ports(ReadModelArgs {
+            clock: Arc::clone(&clock) as Arc<dyn Clock>,
+            publisher,
+            slots: Arc::new(PendingConfirmationSlots::new()),
+            counters: RuntimeCounterHandles::default(),
+            store: Arc::clone(&store),
+            gauges: http_bridges::PlatformGauges::default(),
+            redundancy_settings: Arc::clone(&store)
+                as Arc<dyn dali2rust_domain::registry::RedundancySettingsReadPort>,
+            dali_settings: store as Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
+            transitions: Arc::default(),
+            ota: OtaShared::default(),
+            firmware_port: None,
+        });
+
+        clock.0.store(NOW_MS, Relaxed);
+
+        let expected = NOW_MS - BOOTED_AT_MS;
+        assert_eq!(ports.diagnostics.diagnostics_dto().uptime_ms, expected);
+        assert_eq!(ports.stats.stats_dto().controller.uptime_ms, expected);
+    }
 }

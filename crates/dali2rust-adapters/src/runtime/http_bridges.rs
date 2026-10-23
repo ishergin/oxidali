@@ -50,7 +50,7 @@ use dali2rust_domain::registry::{AdapterReadPort, RegistryReadPort};
 use dali2rust_operations_runtime::{
     ApplyOrchestratorCounters, OperationTotals, OperationTrackerCounters,
 };
-use dali2rust_platform::clock::Clock;
+use dali2rust_platform::clock::Uptime;
 use dali2rust_platform::heap::{HeapStats, HeapStatsPort};
 use dali2rust_platform::net::{LinkStats, NetworkLink};
 use dali2rust_mqtt_runtime::MqttCounters;
@@ -259,7 +259,7 @@ pub(crate) fn wire_registry_http_ports(
 }
 
 pub(crate) struct DiagnosticsBridge {
-    started: std::time::Instant,
+    uptime: Uptime,
     publisher: BusPublisher,
     slots: Arc<PendingConfirmationSlots>,
     counters: RuntimeCounterHandles,
@@ -268,13 +268,14 @@ pub(crate) struct DiagnosticsBridge {
 
 impl DiagnosticsBridge {
     pub(crate) fn new(
+        uptime: Uptime,
         publisher: BusPublisher,
         slots: Arc<PendingConfirmationSlots>,
         counters: RuntimeCounterHandles,
         store: Arc<RegistryStore>,
     ) -> Self {
         Self {
-            started: std::time::Instant::now(),
+            uptime,
             publisher,
             slots,
             counters,
@@ -520,8 +521,7 @@ fn stats_websocket_dto(c: &WsCounters) -> StatsWebSocketDto {
 }
 
 pub(crate) struct StatsBridge {
-    clock: Arc<dyn Clock>,
-    started_ms: u64,
+    uptime: Uptime,
     publisher: BusPublisher,
     slots: Arc<PendingConfirmationSlots>,
     counters: RuntimeCounterHandles,
@@ -531,16 +531,14 @@ pub(crate) struct StatsBridge {
 
 impl StatsBridge {
     pub(crate) fn new(
-        clock: Arc<dyn Clock>,
+        uptime: Uptime,
         publisher: BusPublisher,
         slots: Arc<PendingConfirmationSlots>,
         counters: RuntimeCounterHandles,
         platform: PlatformGauges,
     ) -> Self {
-        let started_ms = clock.monotonic_ms();
         Self {
-            clock,
-            started_ms,
+            uptime,
             publisher,
             slots,
             counters,
@@ -701,7 +699,7 @@ impl StatsHttpState for StatsBridge {
     }
 
     fn stats_dto_into(&self, out: &mut StatsReportDto) {
-        let uptime_ms = self.clock.monotonic_ms().saturating_sub(self.started_ms);
+        let uptime_ms = self.uptime.elapsed_ms();
         out.sample_ms = uptime_ms;
         out.controller = stats_controller_dto(uptime_ms, self.heap.as_ref().map(|h| h.snapshot()));
         out.bus = stats_bus_dto(
@@ -1001,7 +999,7 @@ impl RedundancyBridge {
 
 impl DiagnosticsHttpState for DiagnosticsBridge {
     fn diagnostics_dto_into(&self, out: &mut DiagnosticsDto) {
-        out.uptime_ms = self.started.elapsed().as_millis() as u64;
+        out.uptime_ms = self.uptime.elapsed_ms();
         out.bus = BusCountersDto::from(&self.publisher.counters_snapshot());
         out.confirmation_bridge = ConfirmationBridgeDto {
             unmatched: self.slots.unmatched_confirmations_load(),

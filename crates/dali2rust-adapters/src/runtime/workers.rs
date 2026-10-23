@@ -54,6 +54,7 @@ pub(crate) struct SpawnedWorkers {
 }
 
 #[derive(Clone)]
+#[cfg_attr(test, derive(Default))]
 pub(crate) struct RuntimeCounterHandles {
     pub dali_worker: Arc<DaliWorkerCounters>,
     pub operation_tracker: Arc<OperationTrackerCounters>,
