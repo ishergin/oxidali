@@ -86,6 +86,15 @@ impl HeldSlices {
         }
     }
 
+    pub(crate) fn holds(&self, key: SliceKey) -> bool {
+        match key {
+            SliceKey::InputDevices { .. } => {
+                place(key).is_some_and(|(word, mask)| self.word(word) & mask != 0)
+            }
+            other => self.reads(other),
+        }
+    }
+
     pub(crate) fn device_banks(&self, adapter_id: u8) -> u16 {
         self.device_banks.get(usize::from(adapter_id)).copied().unwrap_or(0)
     }

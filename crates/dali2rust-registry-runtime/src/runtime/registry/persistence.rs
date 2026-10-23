@@ -245,6 +245,17 @@ impl crate::runtime::registry::store::RegistryStore {
         for adapter_id in 0..adapter_count {
             self.hydrate_adapter(slices, adapter_id, reading, sink);
         }
+        self.hydrate_globals(slices, reading, sink);
+        let unread = self.unread_slices(adapter_count);
+        self.persist_counters.unread_slices.store(unread, Ordering::Relaxed);
+    }
+
+    fn hydrate_globals(
+        &self,
+        slices: &dyn SliceStore,
+        reading: Reading,
+        sink: &mut HydrateSink<'_>,
+    ) {
         if reading.reads(SliceKey::InputDevices { bank: 0 }) {
             hydrate_input_device_banks(self, slices, sink);
         }
@@ -253,9 +264,6 @@ impl crate::runtime::registry::store::RegistryStore {
                 hydrate(self, slices, sink);
             }
         }
-        self.persist_counters
-            .unread_slices
-            .store(self.unread_slices(adapter_count), Ordering::Relaxed);
     }
 
     fn hydrate_adapter(
@@ -275,6 +283,16 @@ impl crate::runtime::registry::store::RegistryStore {
         if reading.reads(SliceKey::VirtualLamps { adapter_id }) {
             hydrate_vl_slice(self, slices, adapter_id, sink);
         }
+        self.hydrate_scenes(slices, adapter_id, reading, sink);
+    }
+
+    fn hydrate_scenes(
+        &self,
+        slices: &dyn SliceStore,
+        adapter_id: u8,
+        reading: Reading,
+        sink: &mut HydrateSink<'_>,
+    ) {
         let scenes = (0..SCENE_COUNT)
             .filter(|scene_id| reading.reads(SliceKey::Scene { adapter_id, scene_id: *scene_id }));
         for scene_id in scenes {
@@ -852,7 +870,7 @@ fn note_unloaded_slot(
         note_missing_slice(store, kind, sink);
         return SlotOutcome::Missing;
     }
-    if !store.dirty.held().reads(key_of(&kind)) {
+    if !store.dirty.held().holds(key_of(&kind)) {
         warn!("persistence: failed to load {label}: {e}");
         bump(&store.persist_counters.hydrate_error_total);
     }
@@ -1697,6 +1715,18 @@ mod tests {
         read_held_again(&store, &slices);
         assert_eq!(unread_slices(&store), 1, "the bank settled while its read still fails");
         assert_eq!(hydrate_errors(&store), errors, "a retry of the bank counted a new error");
+    }
+
+    #[test]
+    fn each_input_device_bank_that_fails_at_boot_counts_its_own_error() {
+        let slices = installed();
+        let failing = [SliceKey::InputDevices { bank: 0 }, SliceKey::InputDevices { bank: 2 }];
+        slices.fail_reads_of_each(&failing);
+        let store = RegistryStore::with_adapter_count(ADAPTER_COUNT);
+        store.hydrate_from_store(&slices, ADAPTER_COUNT);
+        assert_eq!(hydrate_errors(&store), 2, "a second bank failing at boot was not counted");
+        read_held_again(&store, &slices);
+        assert_eq!(hydrate_errors(&store), 2, "a retry of the banks counted a new error");
     }
 
     #[test]

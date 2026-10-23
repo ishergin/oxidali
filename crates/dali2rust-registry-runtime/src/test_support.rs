@@ -75,7 +75,7 @@ impl SliceWriteSession for CountingSession<'_> {
 pub(crate) struct ProbeStore {
     pub(crate) inner: InMemorySliceStore,
     refused_write: std::sync::Mutex<Option<SliceKey>>,
-    failing_read: std::sync::Mutex<Option<SliceKey>>,
+    failing_read: std::sync::Mutex<Vec<SliceKey>>,
     legacy_reads: std::sync::atomic::AtomicU32,
     written: std::sync::Mutex<Vec<SliceKey>>,
     loaded: std::sync::Mutex<Vec<SliceKey>>,
@@ -87,7 +87,11 @@ impl ProbeStore {
     }
 
     pub(crate) fn fail_reads_of(&self, key: Option<SliceKey>) {
-        *self.failing_read.lock().expect("failing read lock") = key;
+        self.fail_reads_of_each(key.as_slice());
+    }
+
+    pub(crate) fn fail_reads_of_each(&self, keys: &[SliceKey]) {
+        *self.failing_read.lock().expect("failing read lock") = keys.to_vec();
     }
 
     pub(crate) fn written(&self) -> Vec<SliceKey> {
@@ -115,7 +119,7 @@ impl SliceStore for ProbeStore {
             self.legacy_reads.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         }
         self.loaded.lock().expect("loaded lock").push(key);
-        if *self.failing_read.lock().expect("failing read lock") == Some(key) {
+        if self.failing_read.lock().expect("failing read lock").contains(&key) {
             return Err(StoreError::Backend("read failed".to_string()));
         }
         self.inner.load(key)
