@@ -877,7 +877,7 @@ fn registry_runtime_missing_virtual_lamp_and_short_fails() {
         { let __corr = corr; dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, __corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, entry)) },
     );
     let c = recv_confirm_for(&conf_rx, corr);
-    assert_exec_failed_msg(&c, "registry_runtime_missing_target");
+    assert_exec_failed_msg(&c, "runtime_missing_target");
 }
 
 #[test]

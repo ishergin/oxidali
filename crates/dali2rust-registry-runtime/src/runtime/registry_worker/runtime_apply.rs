@@ -31,7 +31,7 @@ pub(super) fn handle_runtime_update(ctx: &CommandCtx<'_>, reg: &RegistryRuntimeU
         return fail_runtime_invalid(ctx, "runtime_missing_observation");
     };
     if entry.virtual_lamp_id.is_none() && entry.short_address.is_none() {
-        return fail_runtime_invalid(ctx, "registry_runtime_missing_target");
+        return fail_runtime_invalid(ctx, "runtime_missing_target");
     }
 
     let applied = match apply_registry_runtime_targets(ctx, reg.adapter_id, entry, setpoint, obs) {
