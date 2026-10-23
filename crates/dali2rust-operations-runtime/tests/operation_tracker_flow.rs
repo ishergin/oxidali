@@ -1330,3 +1330,55 @@ fn part_103_commissioning_is_visible_for_its_registry_adapter_only() {
         }
     }
 }
+
+const PENDING_CORRELATION_CAP: u64 = 16;
+
+const TIMED_OUT_TTL_MS: u32 = 1;
+
+#[test]
+fn late_signals_of_closed_operations_leave_room_for_an_early_one() {
+    let (publisher, tracker, _host) = spawn_harness();
+    let first_closed = 41_000u64;
+    for corr in first_closed..first_closed + PENDING_CORRELATION_CAP {
+        let key = format!("op-late-{corr}-{corr}");
+        publish(
+            &publisher,
+            BusChannel::Commands,
+            begin_envelope(corr, &key, OperationType::Discovery, TIMED_OUT_TTL_MS),
+        );
+        wait_until(
+            || tail_for(&tracker, &key).last().copied() == Some(OperationStatus::TimedOut),
+            Duration::from_millis(500),
+        );
+        publish(
+            &publisher,
+            BusChannel::Events,
+            signal_event(corr, OperationWorkerSignal::WorkerSucceeded, ErrorCode::InvalidJson),
+        );
+    }
+    let early = 41_999u64;
+    publish(
+        &publisher,
+        BusChannel::Events,
+        signal_event(early, OperationWorkerSignal::WorkerSucceeded, ErrorCode::InvalidJson),
+    );
+    wait_until(
+        || tracker.lock().expect("tracker").pending_worker_signal_correlations() == 1,
+        Duration::from_millis(500),
+    );
+
+    publish(
+        &publisher,
+        BusChannel::Commands,
+        begin_envelope(early, "op-early-after-late", OperationType::AttributeRead, 600_000),
+    );
+    wait_until(
+        || tail_for(&tracker, "op-early-after-late").last().copied() == Some(OperationStatus::Succeeded),
+        Duration::from_millis(500),
+    );
+    assert_eq!(
+        tracker.lock().expect("tracker").pending_worker_signal_correlations(),
+        0,
+        "a signal for an operation the tracker closed is not held for its TTL"
+    );
+}

@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -91,6 +91,27 @@ const MAX_PENDING_CORRELATIONS: usize = 16;
 const MAX_PENDING_OUTCOMES: usize = 256;
 
 const MAX_PENDING_SIGNALS: usize = 4;
+
+const CLOSED_CORRELATIONS_REMEMBERED: usize = 2 * MAX_PENDING_CORRELATIONS;
+
+struct ClosedCorrelations(VecDeque<u64>);
+
+impl ClosedCorrelations {
+    fn new() -> Self {
+        Self(VecDeque::with_capacity(CLOSED_CORRELATIONS_REMEMBERED))
+    }
+
+    fn note(&mut self, correlation: u64) {
+        if self.0.len() >= CLOSED_CORRELATIONS_REMEMBERED {
+            self.0.pop_front();
+        }
+        self.0.push_back(correlation);
+    }
+
+    fn holds(&self, correlation: u64) -> bool {
+        self.0.contains(&correlation)
+    }
+}
 
 fn pending_cap_reached<V>(map: &PendingMap<V>, workflow_c: u64) -> bool {
     map.len() >= MAX_PENDING_CORRELATIONS && !map.contains_key(&workflow_c)
@@ -219,6 +240,7 @@ pub struct OperationTrackerInner {
     pending_address_change: PendingMap<OperationAddressChangeResultView>,
     pending_replace_device: PendingMap<OperationReplaceDeviceResultView>,
     pending_worker_signals: PendingMap<Vec<dali2rust_contracts::msg::OperationWorkerSignalEvent>>,
+    closed: ClosedCorrelations,
 }
 
 impl Default for OperationTrackerInner {
@@ -240,6 +262,7 @@ impl OperationTrackerInner {
             pending_address_change: HashMap::new(),
             pending_replace_device: HashMap::new(),
             pending_worker_signals: HashMap::new(),
+            closed: ClosedCorrelations::new(),
         }
     }
 
@@ -259,6 +282,7 @@ impl OperationTrackerInner {
             pending_address_change,
             pending_replace_device,
             pending_worker_signals,
+            closed: _,
         } = self;
         f(pending_group_apply);
         f(pending_scene_apply);
@@ -528,6 +552,7 @@ fn clear_active_entry(
     op: &TrackedOp,
 ) {
     inner.active.remove(&workflow_correlation_id);
+    inner.closed.note(workflow_correlation_id);
     inner.for_each_pending_buffer(|buf| buf.remove_correlation(workflow_correlation_id));
     let k = coalesce_key(op.op_type, op.adapter_id, &op.operation_key);
     if inner.coalesce.get(&k).copied() == Some(workflow_correlation_id) {
@@ -735,6 +760,7 @@ fn supersede_stale_operation(
     if let Some(old_c) = guard.coalesce.get(coalesce_key).copied() {
         if old_c != corr {
             if let Some(old_op) = guard.active.remove(&old_c) {
+                guard.closed.note(old_c);
                 emit_terminal_with_retention(
                     publisher,
                     bus_id,
@@ -828,6 +854,7 @@ fn attach_attribute_read_outcomes(
 fn attach_or_buffer_result<V>(
     guard_active: &mut HashMap<u64, TrackedOp>,
     pending: &mut PendingMap<V>,
+    closed: &ClosedCorrelations,
     workflow_c: u64,
     view: V,
     into_detail: impl FnOnce(V) -> OperationDetailState,
@@ -836,7 +863,9 @@ fn attach_or_buffer_result<V>(
         op.detail = into_detail(view);
         return;
     }
-    insert_pending_single(pending, workflow_c, view);
+    if !closed.holds(workflow_c) {
+        insert_pending_single(pending, workflow_c, view);
+    }
 }
 
 fn apply_identify_outcome(
@@ -847,6 +876,7 @@ fn apply_identify_outcome(
     attach_or_buffer_result(
         &mut guard.active,
         &mut guard.pending_identify,
+        &guard.closed,
         workflow_c,
         OperationIdentifyResultView {
             short_address: body.short_address,
@@ -864,6 +894,7 @@ fn apply_address_change_outcome(
     attach_or_buffer_result(
         &mut guard.active,
         &mut guard.pending_address_change,
+        &guard.closed,
         workflow_c,
         OperationAddressChangeResultView {
             old_short_address: body.old_short_address,
@@ -881,6 +912,7 @@ fn apply_replace_device_outcome(
     attach_or_buffer_result(
         &mut guard.active,
         &mut guard.pending_replace_device,
+        &guard.closed,
         workflow_c,
         OperationReplaceDeviceResultView {
             failed_short_address: body.failed_short_address,
@@ -911,7 +943,7 @@ fn apply_attribute_read_outcomes(
         attach_attribute_read_outcomes(guard, workflow_c, view);
         return;
     }
-    if origin.is_background() {
+    if origin.is_background() || guard.closed.holds(workflow_c) {
         return;
     }
     insert_pending_single(&mut guard.pending_attribute_read, workflow_c, view);
@@ -938,6 +970,7 @@ fn handle_operation_registry_reset(
             OperationStatus::Cancelled,
             ErrorCode::RegistryReset,
         );
+        guard.closed.note(c);
     }
     guard.active.clear();
     guard.coalesce.clear();
@@ -1184,7 +1217,9 @@ fn apply_apply_outcome<F: ApplyFamily>(
     body: &F::Body,
 ) {
     let Some(op) = guard.active.get(&workflow_c).cloned() else {
-        queue_pending_list(F::pending(guard), workflow_c, body.clone(), MAX_PENDING_OUTCOMES);
+        if !guard.closed.holds(workflow_c) {
+            queue_pending_list(F::pending(guard), workflow_c, body.clone(), MAX_PENDING_OUTCOMES);
+        }
         return;
     };
     promote_running(publisher, bus_id, guard, counters, workflow_c, &op);
@@ -1344,7 +1379,7 @@ fn apply_worker_signal(
     origin: Origin,
 ) {
     let Some(op) = guard.active.get(&workflow_c).cloned() else {
-        if !origin.is_background() {
+        if !origin.is_background() && !guard.closed.holds(workflow_c) {
             let signals = pending_worker_signals_mut(guard);
             queue_pending_list(signals, workflow_c, sig.clone(), MAX_PENDING_SIGNALS);
         }
@@ -1445,6 +1480,9 @@ fn drain_rejected_deliveries(
 }
 
 fn park_rejection(guard: &mut OperationTrackerInner, correlation: u64) {
+    if guard.closed.holds(correlation) {
+        return;
+    }
     let failed = dali2rust_contracts::msg::OperationWorkerSignalEvent::failed(
         correlation,
         ErrorCode::CommandsIngressOverload,
