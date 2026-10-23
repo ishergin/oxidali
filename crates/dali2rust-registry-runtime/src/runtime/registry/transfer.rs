@@ -26,7 +26,7 @@ pub fn transferable_slices(adapter_count: u8) -> Vec<SliceKey> {
     for bank in 0..SliceKey::INPUT_DEVICE_BANKS {
         keys.push(SliceKey::InputDevices { bank });
     }
-    for bank in 0..4u8 {
+    for bank in 0..SliceKey::RULES_BANKS {
         keys.push(SliceKey::Rules { bank });
     }
     for adapter_id in 0..adapter_count {
