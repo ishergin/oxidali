@@ -7,20 +7,29 @@ from collections import namedtuple
 from pathlib import Path
 
 from verify_comments import lex_c_like
-from verify_counter_surface import diff_fields, rust_element, ts_element
 
 SCRIPTS = Path(__file__).resolve().parent
 RUST_TREES = ("crates/dali2rust-api/src/http", "crates/dali2rust-api/src/ws")
+RUST_SOURCES = "crates/*/src/**/*.rs"
 TS_TYPES = "web/app/src/api/types.ts"
 TABLE = "scripts/ts_dto_mirror.txt"
 DRIFT_BUDGET = "scripts/ts_dto_mirror_drift_budget.txt"
 STRUCT_MACROS = ("attribute_section_dto",)
+TYPE_PLACEHOLDER = "$ty"
 TS_PRIMITIVES = {"string", "number", "boolean", "bigint"}
-RUST_WRAPPERS = {"Option", "Vec", "Box", "Arc", "Rc", "Cow"}
+RUST_SCALARS = {
+    **{name: "number" for name in (
+        "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize", "f32", "f64")},
+    "bool": "boolean", "String": "string", "str": "string", "char": "string",
+}
+RUST_WRAPPERS = {"Option", "Vec", "Box", "Arc", "Rc", "Cow", "MaybeObj", "MaybeSeq"}
+RUST_CATCH_ALLS = {"BTreeMap", "HashMap", "IndexMap", "Map"}
+TS_WRAPPERS = {"Partial", "Required", "Readonly", "NonNullable"}
+TS_NULLABLE = {"null", "unknown", "any"}
 DROPPED_WORDS = ("Dto", "Body", "Json", "Response", "Payload")
 MIN_SHARED_WORDS = 2
 MIN_PLURAL_LENGTH = 4
-KNOWN_DRIFT_KINDS = ("missing_in_ts", "extra_in_ts", "required_in_ts")
+KNOWN_DRIFT_KINDS = ("missing_in_ts", "extra_in_ts", "required_in_ts", "non_nullable_in_ts")
 TS_QUOTES = "'\""
 OPENERS = "([{<"
 CLOSERS = ")]}>"
@@ -37,16 +46,21 @@ FIELD = re.compile(
 )
 IMPL_SERIALIZE = re.compile(r"\bimpl(?:<[^>]*>)?\s+(?:serde::)?Serialize\s+for\s+(\w+)")
 MACRO_RULES = re.compile(r"\bmacro_rules!\s*(\w+)\s*\{")
+MACRO_FIELD = re.compile(
+    r"\$\(\s*(?P<attrs>(?:#\[(?:[^\[\]]|\[[^\[\]]*\])*\]\s*)*)pub\s+\$\w+\s*:\s*(?P<kind>[^,]+?)\s*,?\s*\)\+"
+)
+STRUCT_NAME = re.compile(r"\bstruct\s+(\w+)")
 MEMBER = re.compile(
     r"^\s*(?:readonly\s+)?(?P<name>\w+|'[^']+')(?P<optional>\?)?\s*:\s*(?P<kind>.+?)\s*[;,]?\s*$", re.S
 )
 TS_HEAD = re.compile(r"^export\s+(?P<keyword>interface|type)\s+(?P<name>\w+)", re.M)
+TS_RECORD = re.compile(r"Record\s*<\s*string\s*,(.*)>", re.S)
 SERDE_STRING = r'\b%s\s*=\s*"([^"]*)"'
 
 RField = namedtuple("RField", "wire kind loc optional skip flatten")
-RStruct = namedtuple("RStruct", "name loc fields opaque")
+RStruct = namedtuple("RStruct", "name loc fields opaque direction generated")
 TsField = namedtuple("TsField", "kind loc optional")
-TsBlock = namedtuple("TsBlock", "name loc members bases opaque synthetic")
+TsBlock = namedtuple("TsBlock", "name loc members bases opaque synthetic record defaults")
 Table = namedtuple("Table", "pairs unchecked drift lines")
 Ref = namedtuple("Ref", "base args")
 
@@ -102,6 +116,37 @@ def peel(strip, kind):
         kind = inner
 
 
+def rust_element(kind):
+    match = re.match(r"(?:Vec|Option)<(.+)>$", kind)
+    return match.group(1).strip() if match else kind
+
+
+def ts_element(kind):
+    kind = kind.rstrip(",").strip()
+    kind = re.sub(r"\s*\|\s*null$", "", kind)
+    return kind[:-2].strip() if kind.endswith("[]") else kind
+
+
+def diff_fields(rust, ts, rust_fields, ts_fields, path, where=None):
+    def at(side, name, field):
+        return " (%s)" % where(side, name, field) if where else ""
+
+    out = []
+    for field in sorted(set(rust_fields) - set(ts_fields)):
+        out.append((
+            "missing_in_ts", field,
+            "%s.%s: in %s%s, missing from the TS mirror %s%s"
+            % (path, field, rust, at("rust", rust, field), ts, at("ts", ts, None)),
+        ))
+    for field in sorted(set(ts_fields) - set(rust_fields)):
+        out.append((
+            "extra_in_ts", field,
+            "%s.%s: in the TS mirror %s%s, no such field on %s%s"
+            % (path, field, ts, at("ts", ts, field), rust, at("rust", rust, None)),
+        ))
+    return out
+
+
 def type_ref(kind, quotes='"'):
     base, _, rest = kind.partition("<")
     if not rest.endswith(">"):
@@ -127,10 +172,29 @@ def rust_type_ref(kind):
 
 def ts_type_ref(kind):
     kind = re.sub(r"\s*\|\s*undefined$", "", kind.strip())
-    return type_ref(peel(ts_element, kind), TS_QUOTES)
+    ref = type_ref(peel(ts_element, kind), TS_QUOTES)
+    if ref.base in TS_WRAPPERS and ref.args:
+        return ts_type_ref(ref.args[0])
+    return ref
 
 
-def serde_items(attrs):
+def ts_accepts_null(kind):
+    return any(part.strip() in TS_NULLABLE for _, part in split_top(kind, "|", TS_QUOTES))
+
+
+def naming_of(direction):
+    return "deserialize" if direction == "de" else "serialize"
+
+
+def serde_value(part, naming):
+    if "(" in part:
+        named = re.search(SERDE_STRING % naming, part)
+    else:
+        named = re.search(r'=\s*"([^"]*)"', part)
+    return named.group(1) if named else True
+
+
+def serde_items(attrs, naming="serialize"):
     items = {}
     for body in ATTR.findall(attrs):
         match = re.match(r"\s*serde\s*\((.*)\)\s*$", body, re.S)
@@ -138,8 +202,7 @@ def serde_items(attrs):
             continue
         for _, part in split_top(match.group(1)):
             key = re.split(r"[=(]", part.strip(), maxsplit=1)[0].strip()
-            named = re.search(SERDE_STRING % "serialize", part) or re.search(r'"([^"]*)"', part)
-            items[key] = named.group(1) if named else True
+            items[key] = serde_value(part, naming)
     return items
 
 
@@ -158,60 +221,95 @@ def apply_case(name, style):
     return cases.get(style, name)
 
 
-def parse_fields(text, rel, body_start, body_end, container):
+def wire_name(raw, serde, container):
+    if isinstance(serde.get("rename"), str):
+        return serde["rename"]
+    style = container.get("rename_all")
+    return apply_case(raw, style) if isinstance(style, str) else raw
+
+
+def parse_fields(text, rel, body_start, body_end, container, direction):
     fields = []
-    body = text[body_start:body_end]
-    for offset, part in split_top(body):
+    skips = ("skip", "skip_deserializing") if direction == "de" else ("skip", "skip_serializing")
+    for offset, part in split_top(text[body_start:body_end]):
         if not part.strip():
             continue
         match = FIELD.match(part)
         if not match:
             raise ValueError("%s:%d: a field was not understood: %r" % (
                 rel, line_of(text, body_start + offset), part.strip()))
-        serde = serde_items(match.group("attrs"))
-        raw = match.group("name")
-        wire = serde["rename"] if isinstance(serde.get("rename"), str) else (
-            apply_case(raw, container["rename_all"]) if isinstance(container.get("rename_all"), str) else raw)
+        serde = serde_items(match.group("attrs"), naming_of(direction))
+        absent = "default" if direction == "de" else "skip_serializing_if"
         loc = "%s:%d" % (rel, line_of(text, body_start + offset + match.start("name")))
         fields.append(RField(
-            wire, re.sub(r"\s+", " ", match.group("kind")), loc,
-            "skip_serializing_if" in serde,
-            "skip" in serde or "skip_serializing" in serde, "flatten" in serde,
+            wire_name(match.group("name"), serde, container),
+            re.sub(r"\s+", " ", match.group("kind")), loc,
+            absent in serde or (direction == "de" and "default" in container),
+            any(key in serde for key in skips), "flatten" in serde,
         ))
     return fields
 
 
-def struct_from_item(text, rel, match, manual):
+def derive_direction(attrs, name, manual):
+    derives = " ".join(re.findall(r"derive\s*\(([^)]*)\)", attrs))
+    serialized = name in manual or re.search(r"\bSerialize\b", derives) is not None
+    deserialized = re.search(r"\bDeserialize\b", derives) is not None
+    if serialized and deserialized:
+        return "both"
+    return "ser" if serialized else "de" if deserialized else None
+
+
+def struct_from_item(text, rel, match, manual, names):
     attrs = match.group("attrs")
     name = match.group("name")
-    derived = re.search(r"derive\s*\([^)]*\bSerialize\b", attrs)
-    if not derived and name not in manual:
+    direction = derive_direction(attrs, name, manual)
+    if direction is None or (names is not None and name not in names):
         return None
     loc = "%s:%d" % (rel, line_of(text, match.start("name")))
-    container = serde_items(attrs)
+    container = serde_items(attrs, naming_of(direction))
     if name in manual:
-        return RStruct(name, loc, [], "a manual Serialize impl")
+        return RStruct(name, loc, [], "a manual Serialize impl", direction, False)
     if match.group("open") != "{":
-        return RStruct(name, loc, [], "a tuple or unit struct")
+        return RStruct(name, loc, [], "a tuple or unit struct", direction, False)
     opaque = next((key for key in ("transparent", "into", "remote") if key in container), None)
     end = matching(text, match.end() - 1)
-    fields = parse_fields(text, rel, match.end(), end, container)
-    return RStruct(name, loc, fields, "serde(%s)" % opaque if opaque else None)
+    fields = parse_fields(text, rel, match.end(), end, container, direction)
+    return RStruct(name, loc, fields, "serde(%s)" % opaque if opaque else None, direction, False)
 
 
-def macro_structs(text, rel):
+def macro_templates(paths, problems):
+    templates = {}
+    for path in paths:
+        text = blank_comments(path.read_text(encoding="utf-8"), True)
+        for match in MACRO_RULES.finditer(text):
+            if match.group(1) in STRUCT_MACROS:
+                field = MACRO_FIELD.search(text, match.end(), matching(text, match.end() - 1))
+                if field:
+                    optional = "skip_serializing_if" in serde_items(field.group("attrs"))
+                    templates[match.group(1)] = (field.group("kind"), optional)
+    for name in STRUCT_MACROS:
+        if name not in templates:
+            problems.append("macro %s has no `pub $field: <type>` template under %s that verify_ts_dto_mirror.py "
+                            "can read" % (name, " or ".join(RUST_TREES)))
+    return templates
+
+
+def macro_structs(text, rel, templates, names):
     out = []
-    names = "|".join(STRUCT_MACROS)
-    for call in re.finditer(r"\b(?:%s)!\(\s*(\w+)\s+from\s+\w+\s*\{(.*?)\}\s*\)" % names, text, re.S):
-        body_start = call.start(2)
-        fields = []
-        for offset, part in split_top(call.group(2)):
-            if not part.strip():
+    for name, (template, optional) in templates.items():
+        for call in re.finditer(r"\b%s!\(\s*(\w+)\s+from\s+\w+\s*\{(.*?)\}\s*\)" % name, text, re.S):
+            if names is not None and call.group(1) not in names:
                 continue
-            name, _, kind = part.partition(":")
-            loc = "%s:%d" % (rel, line_of(text, body_start + offset + part.index(name.strip())))
-            fields.append(RField(name.strip(), kind.strip(), loc, True, False, False))
-        out.append(RStruct(call.group(1), "%s:%d" % (rel, line_of(text, call.start(1))), fields, None))
+            fields = []
+            for offset, part in split_top(call.group(2)):
+                if not part.strip():
+                    continue
+                field, _, kind = part.partition(":")
+                loc = "%s:%d" % (rel, line_of(text, call.start(2) + offset + part.index(field.strip())))
+                fields.append(RField(
+                    field.strip(), template.replace(TYPE_PLACEHOLDER, kind.strip()), loc, optional, False, False))
+            loc = "%s:%d" % (rel, line_of(text, call.start(1)))
+            out.append(RStruct(call.group(1), loc, fields, None, "ser", True))
     return out
 
 
@@ -227,28 +325,67 @@ def unknown_macros(text, rel):
     return problems
 
 
-def rust_file(root, path, problems):
+def rust_file(root, path, problems, names=None, templates=None, strict=False):
     rel = path.relative_to(root).as_posix()
     text = blank_comments(path.read_text(encoding="utf-8"), True)
     manual = set(IMPL_SERIALIZE.findall(text))
-    problems.extend(unknown_macros(text, rel))
+    if strict:
+        problems.extend(unknown_macros(text, rel))
     found = []
     for match in ITEM.finditer(text):
-        struct = struct_from_item(text, rel, match, manual)
+        struct = struct_from_item(text, rel, match, manual, names)
         if struct:
             found.append(struct)
-    return found + macro_structs(text, rel)
+    return found + macro_structs(text, rel, templates or {}, names)
 
 
-def load_rust(root, problems):
+def add_struct(structs, struct, problems):
+    if struct.name in structs:
+        problems.append("Rust struct %s is defined at %s and at %s" % (
+            struct.name, structs[struct.name].loc, struct.loc))
+    structs[struct.name] = struct
+
+
+def struct_index(root, taken):
+    index = {}
+    for path in sorted(root.glob(RUST_SOURCES)):
+        if path in taken:
+            continue
+        for name in set(STRUCT_NAME.findall(path.read_text(encoding="utf-8"))):
+            index.setdefault(name, []).append(path)
+    return index
+
+
+def referenced_names(structs):
+    return {word for struct in structs for field in struct.fields for word in re.findall(r"\b[A-Z]\w*", field.kind)}
+
+
+def load_named(root, structs, wanted, taken, templates, problems):
+    index = struct_index(root, taken)
+    tried = set(structs)
+    pending = (wanted & set(index)) - tried
+    while pending:
+        tried |= pending
+        by_file = {}
+        for name in sorted(pending):
+            for path in index[name]:
+                by_file.setdefault(path, set()).add(name)
+        loaded = []
+        for path, names in sorted(by_file.items()):
+            loaded += rust_file(root, path, problems, names, templates)
+        for struct in loaded:
+            add_struct(structs, struct, problems)
+        pending = (referenced_names(loaded) & set(index)) - tried
+
+
+def load_rust(root, problems, wanted=()):
     structs = {}
-    for tree in RUST_TREES:
-        for path in sorted((root / tree).rglob("*.rs")):
-            for struct in rust_file(root, path, problems):
-                if struct.name in structs:
-                    problems.append("Rust struct %s is defined at %s and at %s" % (
-                        struct.name, structs[struct.name].loc, struct.loc))
-                structs[struct.name] = struct
+    paths = [path for tree in RUST_TREES for path in sorted((root / tree).rglob("*.rs"))]
+    templates = macro_templates(paths, problems)
+    for path in paths:
+        for struct in rust_file(root, path, problems, None, templates, True):
+            add_struct(structs, struct, problems)
+    load_named(root, structs, set(wanted), set(paths), templates, problems)
     return structs
 
 
@@ -264,6 +401,8 @@ def wire_fields(structs, name, stack=()):
             out[field.wire] = field
             continue
         base = rust_type_ref(field.kind).base
+        if struct.direction == "de" and base in RUST_CATCH_ALLS:
+            continue
         inner = wire_fields(structs, base, stack + (name,)) if base in structs and base not in stack else None
         if inner is None:
             return None
@@ -288,27 +427,33 @@ class TsParser:
             declare(head.group("name"), head.start("name"), head.end(), end)
         return self.blocks
 
-    def skip_generics(self, pos):
+    def generics(self, pos):
         pos = len(self.text) - len(self.text[pos:].lstrip())
-        if self.text[pos] == "<":
-            return matching(self.text, pos, "<", ">") + 1
-        return pos
+        if self.text[pos] != "<":
+            return pos, ()
+        close = matching(self.text, pos, "<", ">")
+        params = split_top(self.text[pos + 1:close], quotes=TS_QUOTES)
+        return close + 1, tuple(part.partition("=")[2].strip() or None for _, part in params)
 
     def interface(self, name, name_pos, pos, end):
-        pos = self.skip_generics(pos)
+        pos, defaults = self.generics(pos)
         open_at = self.text.index("{", pos)
         heritage = re.sub(r"^\s*extends\s*", "", self.text[pos:open_at])
         bases = tuple(part.strip() for _, part in split_top(heritage, quotes=TS_QUOTES) if part.strip())
         members = self.members(name, open_at)
-        self.blocks[name] = TsBlock(name, self.loc(name_pos), members, bases, None, False)
+        self.blocks[name] = TsBlock(name, self.loc(name_pos), members, bases, None, False, None, defaults)
 
     def alias(self, name, name_pos, pos, end):
-        pos = self.skip_generics(pos)
+        pos, defaults = self.generics(pos)
         start = self.text.index("=", pos) + 1
         expression = self.text[start:end]
+        record = TS_RECORD.fullmatch(expression.strip(" \n;"))
+        if record:
+            self.blocks[name] = TsBlock(name, self.loc(name_pos), {}, (), None, False, record.group(1).strip(), defaults)
+            return
         parts = split_top(expression, "&", TS_QUOTES)
         if len(split_top(expression, "|", TS_QUOTES)) > 1 and len(parts) == 1:
-            self.blocks[name] = TsBlock(name, self.loc(name_pos), {}, (), "a union", False)
+            self.blocks[name] = TsBlock(name, self.loc(name_pos), {}, (), "a union", False, None, defaults)
             return
         members, bases, opaque = {}, [], None
         for offset, part in parts:
@@ -319,7 +464,7 @@ class TsParser:
                 bases.append(literal)
             else:
                 opaque = "not an object type"
-        self.blocks[name] = TsBlock(name, self.loc(name_pos), members, tuple(bases), opaque, False)
+        self.blocks[name] = TsBlock(name, self.loc(name_pos), members, tuple(bases), opaque, False, None, defaults)
 
     def spans(self, body):
         spans, depth, start = [], 0, 0
@@ -359,13 +504,13 @@ class TsParser:
             return re.sub(r"\s+", " ", kind)
         close = matching(self.text, kind_at)
         members = self.members(synthetic, kind_at)
-        self.blocks[synthetic] = TsBlock(synthetic, self.loc(kind_at), members, (), None, True)
+        self.blocks[synthetic] = TsBlock(synthetic, self.loc(kind_at), members, (), None, True, None, ())
         return synthetic + re.sub(r"\s+", " ", self.text[close + 1:kind_at + len(kind)].rstrip(";, \n"))
 
 
 def ts_fields(blocks, name, stack=()):
     block = blocks.get(name)
-    if block is None or block.opaque or name in stack:
+    if block is None or block.opaque or block.record or name in stack:
         return None
     fields = {}
     for base in block.bases:
@@ -386,6 +531,7 @@ def read_table(root):
     path = root / TABLE
     table = Table({}, {}, {}, {})
     problems = []
+    order = []
     for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         words = raw.split()
         if not words:
@@ -400,11 +546,17 @@ def read_table(root):
             if words[0] in table.pairs:
                 problems.append("%s: %s is mapped twice" % (where, words[0]))
             table.pairs.setdefault(words[0], words[1])
+            order.append((number, words[0]))
         else:
             problems.append(
-                "%s: bad line %r (want `RustName TsName`, `unchecked Name reason` or "
-                "`known_drift RustName.field missing_in_ts|extra_in_ts|required_in_ts reason`)" % (where, raw.strip())
+                "%s: bad line %r (want `RustName TsName`, `RustScalar string|number|boolean`, `unchecked Name "
+                "reason` or `known_drift RustName.field %s reason`)" % (
+                    where, raw.strip(), "|".join(KNOWN_DRIFT_KINDS))
             )
+    problems += [
+        "%s:%d: %s is out of alphabetical order (it follows %s); keep the pairs sorted" % (TABLE, after[0], after[1], before[1])
+        for before, after in zip(order, order[1:]) if after[1] < before[1]
+    ]
     return table, problems
 
 
@@ -417,8 +569,13 @@ def validate_table(table, structs, blocks):
     named = {name for name, block in blocks.items() if not block.synthetic}
     for rust, ts in sorted(table.pairs.items()):
         where = table_line(table, rust, ts)
+        if ts in TS_PRIMITIVES:
+            if rust in structs:
+                problems.append("%s: %s is a serialized struct (%s), it cannot be mapped to the scalar %s" % (
+                    where, rust, structs[rust].loc, ts))
+            continue
         if rust not in structs:
-            problems.append("%s: dead line, no serialized Rust struct %s under %s" % (
+            problems.append("%s: dead line, no serialized Rust struct %s under %s or in the structs they reach" % (
                 where, rust, " or ".join(RUST_TREES)))
         elif rust in table.unchecked:
             problems.append("%s: %s is both mapped and unchecked" % (where, rust))
@@ -428,7 +585,8 @@ def validate_table(table, structs, blocks):
         if name not in structs and name not in named:
             problems.append("%s:%d: dead line, unchecked %s names no Rust struct and no TypeScript type" % (
                 TABLE, number, name))
-        elif name in structs and not structs[name].opaque and counterparts(name, blocks):
+        elif name in structs and not structs[name].opaque and structs[name].direction != "de" \
+                and counterparts(name, blocks):
             problems.append("%s:%d: %s (%s) can be compared field by field and has a TypeScript "
                             "counterpart (%s); map it instead of leaving it unchecked" % (
                                 TABLE, number, name, structs[name].loc, counterparts(name, blocks)[0]))
@@ -440,6 +598,8 @@ class Mirror:
         self.structs = structs
         self.blocks = blocks
         self.table = table
+        self.scalars = {**RUST_SCALARS, **{rust: ts for rust, ts in table.pairs.items() if ts in TS_PRIMITIVES}}
+        self.used_scalars = set()
         self.seen = set()
         self.fields = 0
         self.problems = []
@@ -455,6 +615,9 @@ class Mirror:
             return
         self.seen.add((rust, ts))
         rust_fields = wire_fields(self.structs, rust)
+        if rust_fields is not None and self.blocks[ts].record:
+            self.walk_record(rust_fields, self.blocks[ts].record, path)
+            return
         mirror_fields = ts_fields(self.blocks, ts)
         if rust_fields is None or mirror_fields is None:
             side, why = (rust, self.structs[rust].opaque) if rust_fields is None else (ts, self.blocks[ts].opaque)
@@ -468,13 +631,30 @@ class Mirror:
             self.report(rust, kind, field, message)
         for field in sorted(set(rust_fields) & set(mirror_fields)):
             self.required(rust, ts, field, rust_fields[field], mirror_fields[field], path)
+            self.nullable(rust, ts, field, rust_fields[field], mirror_fields[field], path)
             self.nested(rust_fields[field].kind, mirror_fields[field].kind, "%s.%s" % (path, field))
 
+    def walk_record(self, rust_fields, value, path):
+        self.fields += len(rust_fields)
+        for name, field in sorted(rust_fields.items()):
+            self.nested(field.kind, value, "%s.%s" % (path, name))
+
     def required(self, rust, ts, field, rust_field, ts_field, path):
+        if self.structs[rust].direction == "de":
+            return
         if rust_field.optional and not ts_field.optional and "undefined" not in ts_field.kind:
             self.report(rust, "required_in_ts", field, (
                 "%s.%s: Rust %s (%s) omits the field when empty (skip_serializing_if), but the TS mirror %s "
                 "(%s) declares it required" % (path, field, rust, rust_field.loc, ts, ts_field.loc)))
+
+    def nullable(self, rust, ts, field, rust_field, ts_field, path):
+        if self.structs[rust].direction == "de" or rust_field.optional or type_ref(rust_field.kind).base != "Option":
+            return
+        if not ts_field.optional and not ts_accepts_null(ts_field.kind):
+            self.report(rust, "non_nullable_in_ts", field, (
+                "%s.%s: Rust %s (%s) serialises the field as null when it is empty (an Option without "
+                "skip_serializing_if), but the TS mirror %s (%s) declares it neither optional nor `| null`" % (
+                    path, field, rust, rust_field.loc, ts, ts_field.loc)))
 
     def report(self, rust, kind, field, message):
         key = ("%s.%s" % (rust, field), kind)
@@ -484,13 +664,38 @@ class Mirror:
             self.problems.append(message)
             self.mismatches[key] = None
 
-    def nested(self, rust_kind, ts_kind, path):
+    def arguments(self, rust_ref, ts_ref, path):
+        block = self.blocks.get(ts_ref.base)
+        if block is None or rust_ref.base not in self.structs:
+            return zip(rust_ref.args, ts_ref.args)
+        supplied = list(ts_ref.args)
+        supplied += [default for default in block.defaults[len(supplied):] if default]
+        if len(rust_ref.args) != len(supplied):
+            self.problems.append("%s: Rust %s (%s) takes %d type argument(s), the TypeScript %s (%s) is given %d" % (
+                path, rust_ref.base, self.structs[rust_ref.base].loc, len(rust_ref.args), ts_ref.base,
+                block.loc, len(supplied)))
+        return zip(rust_ref.args, supplied)
+
+    def nested(self, rust_kind, ts_kind, path, argument=False):
         rust_ref = rust_type_ref(rust_kind)
         ts_ref = ts_type_ref(ts_kind)
         if rust_ref.base in self.structs:
             self.nested_pair(rust_ref.base, ts_ref.base, path)
-        for rust_arg, ts_arg in zip(rust_ref.args, ts_ref.args):
-            self.nested(rust_arg, ts_arg, path)
+        elif rust_ref.base in self.scalars:
+            self.scalar_pair(rust_ref.base, ts_ref.base, path)
+        for rust_arg, ts_arg in self.arguments(rust_ref, ts_ref, path):
+            self.nested(rust_arg, ts_arg, path, True)
+
+    def scalar_pair(self, rust, ts, path):
+        expected = self.scalars[rust]
+        self.used_scalars.add(rust)
+        block = self.blocks.get(ts)
+        if ts in TS_PRIMITIVES and ts != expected:
+            self.problems.append("%s: Rust %s serialises as a %s, TypeScript types it %s" % (
+                path, rust, expected, ts))
+        elif block is not None and not block.opaque and not block.record:
+            self.problems.append("%s: Rust %s serialises as a %s, TypeScript types it %s (%s)" % (
+                path, rust, expected, ts, block.loc))
 
     def nested_pair(self, rust, ts, path):
         if rust in self.table.unchecked:
@@ -569,6 +774,30 @@ def unmapped(mirror):
     return problems
 
 
+def unresolved_generated(mirror):
+    unresolved = {}
+    for name, struct in sorted(mirror.structs.items()):
+        for field in struct.fields if struct.generated else ():
+            for argument in rust_type_ref(field.kind).args:
+                base = rust_type_ref(argument).base
+                if base not in mirror.structs and base not in mirror.scalars:
+                    unresolved.setdefault(base, "%s.%s (%s)" % (name, field.wire, field.loc))
+    return [
+        "%s is generated into %s with a type that is neither a serialized struct nor a scalar; add `%s "
+        "string|number|boolean` or `%s <TsName>` to %s" % (base, first, base, base, TABLE)
+        for base, first in sorted(unresolved.items())
+    ]
+
+
+def stale_scalars(mirror):
+    return [
+        "%s: dead line, the scalar %s is never the type of a field or type argument the mirror reaches" % (
+            table_line(mirror.table, rust, ts), rust)
+        for rust, ts in sorted(mirror.table.pairs.items())
+        if ts in TS_PRIMITIVES and rust not in mirror.used_scalars
+    ]
+
+
 def stale_drift(mirror):
     return [
         "%s:%d: known_drift %s %s matches no current mismatch; remove the line" % (TABLE, number, name, kind)
@@ -592,16 +821,16 @@ def drift_budget(root, entries):
 
 
 def check(root):
-    problems = []
-    structs = load_rust(root, problems)
+    table, problems = read_table(root)
+    structs = load_rust(root, problems, table.pairs)
     blocks = load_ts(root)
-    table, table_problems = read_table(root)
-    problems += table_problems + validate_table(table, structs, blocks)
+    problems += validate_table(table, structs, blocks)
     mirror = Mirror(structs, blocks, table)
     for rust, ts in sorted(table.pairs.items()):
         if rust in structs and ts in blocks:
             mirror.walk(rust, ts, ts)
-    problems += mirror.problems + unmapped(mirror) + stale_drift(mirror)
+    problems += mirror.problems + unmapped(mirror) + unresolved_generated(mirror)
+    problems += stale_scalars(mirror) + stale_drift(mirror)
     problems += drift_budget(root, len(table.drift))
     return problems, mirror
 
@@ -618,7 +847,8 @@ def inventory(mirror):
             print("  %s (%s)" % (name, struct.loc))
     print("TypeScript object types no Rust struct mirrors:")
     for name, block in sorted(mirror.blocks.items()):
-        if name not in mirrored and name not in mirror.table.unchecked and not block.synthetic and not block.opaque:
+        if name not in mirrored and name not in mirror.table.unchecked and not block.synthetic \
+                and not block.opaque and not block.record:
             print("  %s (%s)" % (name, block.loc))
 
 

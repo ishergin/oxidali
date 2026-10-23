@@ -1,13 +1,16 @@
 AdapterDto Adapter
 ApplyOrchestratorDto ApplyOrchestratorCounters
+BankReading BankReading
 BusCountersDto BusCounters
 BusUnitConfigurationDto BusUnitConfiguration
 CapabilityFlagsDto CapabilityFlags
 ChannelCountersDto ChannelCounters
 ColorTemperatureRangeDto ColorTemperatureRange
-ExtendedVersionDto ExtendedVersion
 CommissioningAddressChangeRequest CommissioningAddressChangeRequest
 CommissioningIdentifyRequest CommissioningIdentifyRequest
+CommissioningReplacementRequest CommissioningReplacementRequest
+CommissioningStepRequest CommissioningStepRequest
+Common102AttributesDto AttributeSection
 ConditionDto Condition
 ConfirmationBridgeDto ConfirmationBridgeCounters
 ControllerSummaryBody ControllerSummary
@@ -16,15 +19,22 @@ DaliSettingsDto DaliSettings
 DaliWireDto DaliWireCounters
 DaliWorkerDto DaliWorkerCounters
 DiagnosticsDto Diagnostics
+Dt6LedAttributesDto AttributeSection
+Dt8ColorAttributesDto AttributeSection
 EnergyBankDto EnergyBank
 EventSubscriberCountersDto EventSubscriberCounters
+ExtendedAttributesDto AttributeSection
+ExtendedVersionDto ExtendedVersion
 FailureStatusDto FailureStatus
 FirmwareStateDto FirmwareState
 FirmwareUpdateDto FirmwareUpdate
+FixedText32 string
+FixedText64 string
 GearDiagnosticsDto GearDiagnostics
 GroupDto Group
 GroupMembershipMatrixDto GroupMembershipMatrix
 GroupMembershipMatrixRowDto GroupMatrixRow
+GroupsAttributesDto AttributeSection
 GroupsListBody GroupList
 HclLocationDto HclLocation
 HclOverrideDto HclOverride
@@ -34,6 +44,7 @@ HclSchedulePointDto HclSchedulePoint
 HclSchedulerDto HclSchedulerCounters
 HclSchedulesListBody HclScheduleList
 HclTargetDto HclTarget
+HealthResponseJson Health
 HomeAssistantSettingsDto HomeAssistantSettings
 ImplementedPartsDto ImplementedParts
 InputDeviceDto InputDeviceDetail
@@ -41,13 +52,20 @@ InputDeviceSummaryDto InputDeviceSummary
 InstanceDto InputInstance
 LevelRequest DaliLevelRequest
 LuminaireMaintenanceDto LuminaireMaintenance
+LuminaireValue LuminaireValue
 MemoryBankRangeDto MemoryBankRange
 MemoryBankSummaryDto MemoryBankSummary
 MemoryBusUnitAttributesDto MemoryBusUnit
+MemoryIdentityAttributesDto AttributeSection
 MemoryLuminaireAttributesDto MemoryLuminaire
+MemoryProfileAttributesDto AttributeSection
 MqttBridgeDto MqttBridgeCounters
 ObservedValueDto ObservedValue
+OperationGroupApplyOutcomeView GroupApplyOutcome
+OperationRestoredSlicesView RestoredSlices
+OperationSceneApplyOutcomeView SceneApplyOutcome
 OperationTrackerDto OperationTrackerCounters
+OperationView Operation
 PersistenceDto PersistenceCounters
 PhySnifferDto PhySnifferCounters
 PhysicalDeviceCoreDto PhysicalDeviceCore
@@ -66,6 +84,8 @@ RedundancySettingsDto RedundancySettings
 RedundancyStateDto RedundancyState
 RedundancyTransitionDto RedundancyTransition
 RegistryDto RegistryCounters
+RestoreScopeRequest RestoredSlices
+RgbBody Rgb
 RgbDto Rgb
 RulesWorkerDto RulesWorkerCounters
 SceneDto Scene
@@ -90,11 +110,13 @@ StatsRulesDto StatsRules
 StatsWebSocketDto StatsWebSocket
 StatusFlagsDto StatusFlags
 SubscriberCountersDto SubscriberCounters
+TargetStateBody TargetStateRequest
 TimeBody ControllerTime
 VirtualLampDto VirtualLamp
 VirtualLampsListBody VirtualLampList
 WafDto Waf
 WebSocketDto WebSocketCounters
+XyBody Xy
 XyDto Xy
 
 unchecked MemoryDiagnosticsAttributesDto manual Serialize impl: map with control_gear, light_source, luminaire keys (TS MemoryDiagnostics)
@@ -121,11 +143,13 @@ unchecked RulesParseOk built with json! in crates/dali2rust-api/src/http/handler
 unchecked RulesParseError built with json! in crates/dali2rust-api/src/http/handlers/rules.rs parse
 unchecked RulePatched built with json! in crates/dali2rust-api/src/http/handlers/rules.rs
 
-unchecked Operation serialised from OperationView in crates/dali2rust-domain/src/registry/operations.rs, outside the scanned trees
-unchecked GroupApplyOutcome serialised from OperationGroupApplyOutcomeView in crates/dali2rust-domain/src/registry/operations.rs, outside the scanned trees
-unchecked SceneApplyOutcome serialised from OperationSceneApplyOutcomeView in crates/dali2rust-domain/src/registry/operations.rs, outside the scanned trees
-unchecked RestoredSlices serialised from OperationRestoredSlicesView in crates/dali2rust-domain/src/registry/operations.rs, outside the scanned trees
-unchecked BankReading serialised from BankReading in crates/dali2rust-domain/src/registry/attributes.rs, outside the scanned trees
-unchecked LuminaireValue serialised from LuminaireValue in crates/dali2rust-domain/src/registry/attributes.rs, outside the scanned trees
-unchecked Health serialised from HealthResponseJson in crates/dali2rust-api/src/contracts/health.rs, outside the scanned trees
-
+unchecked SceneMatrixBody the scene-matrix PATCH and PUT body has no interface in types.ts; client.ts patchSceneMatrix types it inline as rows of Partial<SceneRowState>
+unchecked SceneRowBody a row of the scene-matrix PATCH and PUT body; typed inline in web/app/src/api/client.ts patchSceneMatrix
+unchecked SceneDesiredBody the desired part of a scene-matrix row; the body takes rgbwaf where the response SceneRowState carries waf
+unchecked AttributeReadsRequest read from a serde_json::Map by parse_attribute_groups_body in crates/dali2rust-api/src/http/handlers/physical_devices.rs, no struct
+unchecked ControllerTimePut read from a serde_json::Map by the time handler apply in crates/dali2rust-api/src/http/handlers/time.rs, no struct
+unchecked HomeAssistantSettingsPatch read from a serde_json::Map against WRITABLE_KEYS in crates/dali2rust-api/src/http/handlers/settings_home_assistant.rs, no struct
+unchecked PhysicalDevicePatch read from a serde_json::Map against PD_PATCH_KEYS in crates/dali2rust-api/src/http/handlers/physical_devices.rs, no struct
+unchecked SceneRecallRequest read from a serde_json::Map by parse_recall_scope in crates/dali2rust-api/src/http/handlers/scenes.rs, no struct
+unchecked VirtualLampPatch read from a serde_json::Map by check_body_keys in crates/dali2rust-api/src/http/handlers/virtual_lamps.rs, no struct
+unchecked WriteAttributesRequest read from a serde_json::Map against PD_WRITE_ATTRIBUTE_KEYS in crates/dali2rust-api/src/http/handlers/physical_devices.rs, no struct
