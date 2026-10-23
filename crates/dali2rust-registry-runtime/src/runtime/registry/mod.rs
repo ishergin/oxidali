@@ -20,6 +20,7 @@ pub(crate) mod redundancy_settings;
 pub mod transfer;
 pub(crate) mod poller_settings;
 pub mod publish;
+pub(crate) mod replaced_slices;
 mod resolve;
 pub(crate) mod rules_world;
 mod runtime_fields;

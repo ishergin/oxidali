@@ -145,8 +145,10 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
 - A subscriber is woken only for the kinds it declares. Declare facts, not numbers: a
   number floods the inbox.
 - Read a setting from the registry; never learn it only from its changed-event, because
-  hydration and a slice reload (import, replication) publish none. A worker that caches a
-  setting refreshes it after a slice reload as it does after a write.
+  boot hydration publishes none and every changed-event is best-effort. A slice reload
+  (import, replication) and the re-read of a held slice publish the changed-events of
+  every record they replaced, as a write does, then `RegistrySliceReloadedEvent`; a worker
+  that caches a setting refreshes it after a slice reload as it does after a write.
 - A subscriber with nothing to do must not wake. The WebSocket worker parks on its hub
   while no client is connected: no bus event wakes it, but the bus still fills its
   inbox, which it drains on each `NO_CLIENT_PARK` wake.

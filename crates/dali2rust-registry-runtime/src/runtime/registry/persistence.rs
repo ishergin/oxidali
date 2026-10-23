@@ -1654,6 +1654,49 @@ mod tests {
         assert_eq!(bindings(&store), [Some(BOUND_SHORT), None], "the bank settled");
     }
 
+    fn replaced_by_reading_again(
+        store: &RegistryStore,
+        slices: &ProbeStore,
+    ) -> super::super::replaced_slices::ReplacedEntities {
+        let watch = store.watch_reload(&[], ADAPTER_COUNT);
+        read_held_again(store, slices);
+        store.replaced_entities(watch)
+    }
+
+    const MADE_WHILE_HELD: u8 = 11;
+
+    fn ids(ids: &[u8]) -> u64 {
+        ids.iter().fold(0, |mask, id| mask | (1u64 << id))
+    }
+
+    #[test]
+    fn a_settled_bank_names_its_device_and_the_lamp_whose_binding_it_dropped() {
+        let slices = installed_with_bindings();
+        let store = boot_with_unread(&slices, WAITING_BANK);
+        slices.fail_reads_of(None);
+        let replaced = replaced_by_reading_again(&store, &slices);
+        assert_eq!(replaced.devices_of(0), ids(&[BOUND_SHORT]));
+        assert_eq!(replaced.lamps_of(0), ids(&[BOUND_SHORT, ORPHAN_SHORT]));
+    }
+
+    #[test]
+    fn a_settled_lamp_slice_names_the_lamp_it_dropped_as_well_as_the_ones_it_holds() {
+        let slices = installed_with_bindings();
+        let store = boot_with_unread(&slices, SliceKey::VirtualLamps { adapter_id: 0 });
+        store.write_inner().lamps.insert((0, MADE_WHILE_HELD), VlRecord::default());
+        slices.fail_reads_of(None);
+        let replaced = replaced_by_reading_again(&store, &slices);
+        assert_eq!(replaced.lamps_of(0), ids(&[BOUND_SHORT, ORPHAN_SHORT, MADE_WHILE_HELD]));
+    }
+
+    #[test]
+    fn a_slice_that_still_cannot_be_read_names_nothing() {
+        let slices = installed_with_bindings();
+        let store = boot_with_unread(&slices, SliceKey::VirtualLamps { adapter_id: 0 });
+        let replaced = replaced_by_reading_again(&store, &slices);
+        assert_eq!(replaced, Default::default(), "a slice still waiting replaced nothing");
+    }
+
     fn hold_records_the_store_lacks(store: &RegistryStore) {
         let mut inner = store.write_inner();
         inner.lamps.insert((0, STRAY_ID), VlRecord::default());

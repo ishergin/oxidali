@@ -79,3 +79,36 @@ Feature: Persistence slices host contract
     When I restart the host stack
     And I send a GET request to "/api/v1/adapters/0"
     Then the JSON field "name" should be "Saved Name"
+
+  @id:PERS-008
+  Scenario: A WebSocket client hears of an adapter whose stored copy is read again
+    Given in-memory slice persistence is enabled for the host stack
+    When I PATCH JSON {"name":"Stored Name"} to "/api/v1/adapters/0"
+    Then the response status should be 200
+    Given reads of the stored "adapters" slice fail
+    When I restart the host stack
+    Then the JSON pointer "/persistence/unread_slices" at "/api/v1/diagnostics" should eventually be "1"
+    Given an open WebSocket connection
+    And the WebSocket client is subscribed to "adapters"
+    Given reads of the stored slices succeed again
+    Then the JSON pointer "/persistence/unread_slices" at "/api/v1/diagnostics" should eventually be "0"
+    And the WebSocket client should receive a "AdapterSettingsChangedEvent" frame on channel "adapters"
+
+  @id:PERS-009
+  Scenario: A DALI settings slice read again makes the controller active, and a rule sees it
+    Given in-memory slice persistence is enabled for the host stack
+    When I PATCH JSON {"dt8_auto_activation_repair":false} to "/api/v1/settings/dali"
+    Then the response status should be 200
+    Given reads of the stored "dali_settings" slice fail
+    When I restart the host stack
+    Then the JSON pointer "/persistence/unread_slices" at "/api/v1/diagnostics" should eventually be "1"
+    Given an open WebSocket connection
+    And the WebSocket client is subscribed to "logs" at level "info"
+    When I PUT JSON {"base_revision":0,"source":"rule \"back\" {\n  when controller becomes active\n  do log(\"active again\")\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I PATCH JSON {"application_active":false} to "/api/v1/settings/dali"
+    Then the response status should be 200
+    Given reads of the stored slices succeed again
+    Then the JSON pointer "/persistence/unread_slices" at "/api/v1/diagnostics" should eventually be "0"
+    And the WebSocket client should receive a "rules" log line reading "back: active again"

@@ -173,9 +173,9 @@ filtered: they address one device.
   only them — the four input-device banks together, a waiting device bank with the legacy
   slot — on the worker, and applies them on the reload stack through the per-slice
   hydration a boot runs. A read that succeeds settles the slice, the next flush writes
-  it, and the worker announces the reload as an import does. A read that fails again
-  leaves it waiting; `persistence.hydrate_error_total` and the log count a slice once,
-  when it starts waiting, not on every retry.
+  it, and the worker announces the reload as an import does (§Hydration). A read that
+  fails again leaves it waiting; `persistence.hydrate_error_total` and the log count a
+  slice once, when it starts waiting, not on every retry.
 - The stored copy wins. A change made to a waiting slice is made against what memory
   holds instead of the stored copy (the defaults, after a boot) and is replaced when the
   read succeeds: writing memory back would erase everything else the stored copy holds.
@@ -247,3 +247,7 @@ filtered: they address one device.
   record it lacks — a forgotten device, an old address, a deleted lamp, a scene row — is
   dropped, while the runtime fields of a record it keeps stay. A slice that does not load
   leaves its share alone, and the four input-device banks are one share.
+- Every record a reload replaced is announced with the changed-event its write publishes,
+  through the same helpers: the records the slice holds afterwards and the ones memory
+  held before, so a dropped one is announced too. The slices an import wrote count, and so
+  do the waiting slices the reload settled. A reload that fails announces nothing.

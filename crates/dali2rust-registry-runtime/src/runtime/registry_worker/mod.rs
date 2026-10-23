@@ -333,7 +333,7 @@ mod tests {
         HCL_SWITCH_WRITE_INTERVAL, HELD_SLICE_REREAD_INTERVAL, PERSISTENCE_DEBOUNCE,
     };
     use crate::test_support::{CountingStore, ProbeStore};
-    use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusId};
+    use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusId, BusPublisher};
     use dali2rust_contracts::bus::command_envelope;
     use dali2rust_contracts::msg::{
         fixed_text_32, fixed_text_64, AdapterSettingsUpdateCommand, BusCommandPayload,
@@ -342,6 +342,8 @@ mod tests {
         HclTargetList, HclTargetRow, HclTargetScope, HclTimeRef, RegistrySliceReloadCommand,
     };
     use crate::runtime::registry::import_stage::StagedSlice;
+    use dali2rust_contracts::msg::BusEventPayload;
+    use dali2rust_test_support::recv_event_matching;
     use dali2rust_domain::registry::{AdapterReadPort, HclScheduleReadPort};
     use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
     use std::sync::atomic::Ordering;
@@ -511,18 +513,35 @@ mod tests {
     const ALL_DAYS: u8 = 0b0111_1111;
     const SWITCH_BURST: [bool; 5] = [false, true, false, true, false];
 
-    fn worker_on<S: SliceStore + 'static>(slices: &Arc<S>) -> (RegistryWorkerDeps, BusHost) {
-        let (host, publisher, ()) = BusHost::spawn(BusConfig::default(), |_| ());
-        let persistence = SlicePersistence::registry_owned_only(slices.clone());
-        let deps = RegistryWorkerDeps {
+    fn deps_on<S: SliceStore + 'static>(
+        publisher: BusPublisher,
+        slices: &Arc<S>,
+    ) -> RegistryWorkerDeps {
+        RegistryWorkerDeps {
             publisher,
             primary_adapter_id: BusId::default(),
             adapter_count: 1,
             store: Arc::new(RegistryStore::with_adapter_count(1)),
             counters: Arc::new(RegistryWorkerCounters::default()),
-            persistence: Some(persistence),
-        };
-        (deps, host)
+            persistence: Some(SlicePersistence::registry_owned_only(slices.clone())),
+        }
+    }
+
+    fn worker_on<S: SliceStore + 'static>(slices: &Arc<S>) -> (RegistryWorkerDeps, BusHost) {
+        let (host, publisher, ()) = BusHost::spawn(BusConfig::default(), |_| ());
+        (deps_on(publisher, slices), host)
+    }
+
+    const OBSERVED_EVENTS: usize = 64;
+    const EVENT_WAIT: Duration = Duration::from_secs(2);
+
+    fn worker_observed<S: SliceStore + 'static>(
+        slices: &Arc<S>,
+    ) -> (RegistryWorkerDeps, BusHost, Receiver<BusFrame>) {
+        let (host, publisher, events) = BusHost::spawn(BusConfig::default(), |reg| {
+            reg.subscribe_events(OBSERVED_EVENTS, dali2rust_contracts::msg::EVENT_VARIANT_NAMES)
+        });
+        (deps_on(publisher, slices), host, events)
     }
 
     fn command(correlation_id: u64, payload: impl Into<BusCommandPayload>) -> BusFrame {
@@ -626,26 +645,7 @@ mod tests {
         apply_frame_and_flush(command(1, schedule("porch")), &deps, &mut clock);
         apply_frame_and_flush(command(2, switch("porch", false)), &deps, &mut clock);
 
-        let poller = crate::runtime::registry::persistence_slices::PersistablePollerSettingsSlice {
-            enabled: true,
-            interval_ms: 9_000,
-            attribute_groups_mask: 1,
-            include_dt8_color: false,
-            skip_unbound_virtual_lamps: true,
-            include_energy: false,
-            include_diagnostics: false,
-        };
-        let bytes = crate::runtime::registry::persistence_slices::encode_persistence_blob(
-            &crate::runtime::registry::persistence_slices::PersistenceEnvelope::new(
-                crate::runtime::registry::persistence_slices::POLLER_SETTINGS_SLICE_VERSION,
-                poller,
-            ),
-        )
-        .expect("encode poller slice");
-        let staged = vec![StagedSlice { key: SliceKey::PollerSettings, bytes }];
-        deps.store.stage_import(IMPORT_WORKFLOW, staged).expect("stage");
-        let reload = RegistrySliceReloadCommand { slice_name: fixed_text_32("poller_settings") };
-        apply_frame_and_flush(command(IMPORT_WORKFLOW, reload), &deps, &mut clock);
+        import_poller_settings(&deps, &mut clock);
 
         assert_eq!(deps.store.hcl_schedule_view("porch").map(|view| view.enabled), Some(false));
         assert_eq!(bit_after_restart(&slices, "porch"), Some(false));
@@ -667,6 +667,76 @@ mod tests {
     }
 
     const IMPORT_WORKFLOW: u64 = 9;
+    const IMPORTED_POLLER_INTERVAL_MS: u32 = 9_000;
+
+    fn import_poller_settings(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
+        let poller = crate::runtime::registry::persistence_slices::PersistablePollerSettingsSlice {
+            enabled: true,
+            interval_ms: IMPORTED_POLLER_INTERVAL_MS,
+            attribute_groups_mask: 1,
+            include_dt8_color: false,
+            skip_unbound_virtual_lamps: true,
+            include_energy: false,
+            include_diagnostics: false,
+        };
+        let bytes = crate::runtime::registry::persistence_slices::encode_persistence_blob(
+            &crate::runtime::registry::persistence_slices::PersistenceEnvelope::new(
+                crate::runtime::registry::persistence_slices::POLLER_SETTINGS_SLICE_VERSION,
+                poller,
+            ),
+        )
+        .expect("encode poller slice");
+        let staged = vec![StagedSlice { key: SliceKey::PollerSettings, bytes }];
+        deps.store.stage_import(IMPORT_WORKFLOW, staged).expect("stage");
+        let reload = RegistrySliceReloadCommand { slice_name: fixed_text_32("poller_settings") };
+        apply_frame_and_flush(command(IMPORT_WORKFLOW, reload), deps, clock);
+    }
+
+    #[test]
+    fn an_import_announces_the_settings_it_replaced() {
+        let slices = Arc::new(CountingStore::default());
+        let (deps, _host, events) = worker_observed(&slices);
+        let mut clock = FlushClock::new(HCL_SWITCH_WRITE_INTERVAL);
+        import_poller_settings(&deps, &mut clock);
+        let changed = recv_event_matching(&events, EVENT_WAIT, |payload| {
+            matches!(payload, BusEventPayload::PollerSettingsChangedEvent(_))
+        });
+        let BusEventPayload::PollerSettingsChangedEvent(poller) = &changed.payload else {
+            panic!("not a poller settings event: {changed:?}");
+        };
+        assert_eq!(poller.interval_ms, IMPORTED_POLLER_INTERVAL_MS);
+    }
+
+    fn held_dali_settings_of_a_stood_down_controller(
+    ) -> (RegistryWorkerDeps, BusHost, Receiver<BusFrame>) {
+        let slices = Arc::new(ProbeStore::default());
+        let installer = RegistryStore::with_adapter_count(1);
+        installer.write_inner().dali_settings.application_active = false;
+        installer.dirty.mark_dali_settings_dirty();
+        installer.flush_dirty_slices(slices.as_ref());
+        slices.fail_reads_of(Some(SliceKey::DaliSettings));
+        let (deps, host, events) = worker_observed(&slices);
+        deps.store.hydrate_from_store(slices.as_ref(), 1);
+        slices.fail_reads_of(None);
+        (deps, host, events)
+    }
+
+    #[test]
+    fn a_settled_dali_settings_slice_announces_the_stored_role() {
+        let (deps, _host, events) = held_dali_settings_of_a_stood_down_controller();
+        let held = deps.store.dali_settings_row();
+        assert!(held.application_active, "held: memory keeps the default");
+        let mut clock = FlushClock::new(HCL_SWITCH_WRITE_INTERVAL);
+        clock.reread_interval = Duration::ZERO;
+        idle_turn(&deps, &mut clock);
+        let changed = recv_event_matching(&events, EVENT_WAIT, |payload| {
+            matches!(payload, BusEventPayload::DaliSettingsChangedEvent(_))
+        });
+        let BusEventPayload::DaliSettingsChangedEvent(dali) = &changed.payload else {
+            panic!("not a DALI settings event: {changed:?}");
+        };
+        assert!(!dali.application_active, "the event carried the default, not the stored role");
+    }
 
     const FIRST_ADAPTER: u16 = 0;
 

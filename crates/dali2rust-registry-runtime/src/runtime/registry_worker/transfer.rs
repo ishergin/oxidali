@@ -8,6 +8,7 @@ use dali2rust_contracts::CORRELATION_NONE;
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, StoreError};
 
 use crate::runtime::registry::publish::publish_config_write_signal;
+use crate::runtime::registry::replaced_slices::ReplacedEntities;
 use crate::runtime::registry::transfer::ImportWriteFailure;
 use crate::runtime::registry::{HydrateCounts, RegistryStore};
 
@@ -24,16 +25,10 @@ pub(super) fn handle_slice_reload(
     }
     let imported = import_then_reload(reload.store, reload.persistence, ctx.adapter_count, ctx.corr);
     if let Some(counts) = imported.counts {
-        log::info!(
-            "registry: reload after import of {} — {} loaded, {} defaulted, {} errors",
-            body.slice_name.as_str(),
-            counts.loaded,
-            counts.defaulted,
-            counts.errors
-        );
-        count_reload(ctx.counters);
+        note_reloaded(ctx, body, counts);
     }
     if imported.written {
+        imported.replaced.publish(ctx.publisher, ctx.store, ctx.primary_adapter_id.0);
         announce_reload(ctx.publisher, ctx.primary_adapter_id, body.slice_name.as_str());
     }
     if let Some((_, why)) = imported.failure {
@@ -48,6 +43,17 @@ pub(super) fn handle_slice_reload(
             ctx.counters,
         );
     }
+}
+
+fn note_reloaded(ctx: &CommandCtx<'_>, body: &RegistrySliceReloadCommand, counts: HydrateCounts) {
+    log::info!(
+        "registry: reload after import of {} — {} loaded, {} defaulted, {} errors",
+        body.slice_name.as_str(),
+        counts.loaded,
+        counts.defaulted,
+        counts.errors
+    );
+    count_reload(ctx.counters);
 }
 
 type ImportFailure = (ErrorCode, &'static str);
@@ -65,11 +71,12 @@ struct Imported {
     written: bool,
     counts: Option<HydrateCounts>,
     failure: Option<ImportFailure>,
+    replaced: ReplacedEntities,
 }
 
 impl Imported {
-    const fn refused(failure: ImportFailure) -> Self {
-        Self { written: false, counts: None, failure: Some(failure) }
+    fn refused(failure: ImportFailure) -> Self {
+        Self { written: false, counts: None, failure: Some(failure), replaced: Default::default() }
     }
 }
 
@@ -91,15 +98,25 @@ fn import_then_reload(
         Ok(written) => written,
         Err(failure) => return Imported::refused(failure),
     };
+    reload_written(store, persistence, written, adapter_count)
+}
+
+fn reload_written(
+    store: &Arc<RegistryStore>,
+    persistence: &SlicePersistence,
+    written: Written,
+    adapter_count: u8,
+) -> Imported {
+    let watch = store.watch_reload(&written.keys, adapter_count);
     let reloaded = reload_on_hydration_stack(store, persistence.slices.as_ref(), adapter_count);
     written.keys.iter().for_each(|key| persistence.foreign.imported(*key));
-    match reloaded {
-        Ok(counts) => Imported { written: true, counts: Some(counts), failure: written.failure },
-        Err(_) => {
-            store.withhold_until_read(&written.keys, adapter_count);
-            Imported { written: true, counts: None, failure: Some(NOT_RELOADED) }
-        }
-    }
+    let Ok(counts) = reloaded else {
+        store.withhold_until_read(&written.keys, adapter_count);
+        let failure = Some(NOT_RELOADED);
+        return Imported { written: true, counts: None, failure, replaced: Default::default() };
+    };
+    let replaced = store.replaced_entities(watch);
+    Imported { written: true, counts: Some(counts), failure: written.failure, replaced }
 }
 
 fn validate_and_write(
@@ -171,18 +188,26 @@ pub(super) fn reread_held_slices(deps: &RegistryWorkerDeps) {
         return;
     };
     let waiting = deps.store.unread_slices(adapter_count);
+    let watch = deps.store.watch_reload(&[], adapter_count);
     let rereading = Arc::clone(&deps.store);
     let reread = move || rereading.reread_held_from_store(&snapshot, adapter_count, held);
     if let Ok(counts) = on_hydration_stack("reread", reread) {
-        announce_settled(deps, counts, waiting);
+        let replaced = deps.store.replaced_entities(watch);
+        announce_settled(deps, counts, waiting, replaced);
     }
 }
 
-fn announce_settled(deps: &RegistryWorkerDeps, counts: HydrateCounts, waiting: u32) {
+fn announce_settled(
+    deps: &RegistryWorkerDeps,
+    counts: HydrateCounts,
+    waiting: u32,
+    replaced: ReplacedEntities,
+) {
     let still = deps.store.unread_slices(deps.adapter_count);
     if still >= waiting {
         return;
     }
+    replaced.publish(&deps.publisher, &deps.store, deps.primary_adapter_id.0);
     log::info!(
         "registry: held slices read again — {} loaded, {} defaulted, {still} of {waiting} \
          still unread",
