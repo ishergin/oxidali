@@ -1,7 +1,7 @@
 use std::hash::{Hash, Hasher};
 
 use dali2rust_api::ha::{
-    group_discovery_json, input_instance_discovery_json, lamp_discovery_json,
+    group_discovery_json, input_component, input_instance_discovery_json, lamp_discovery_json,
     scene_select_discovery_json, HaTopics, DISCOVERY_RETRACTION,
 };
 use dali2rust_bus::worker_counters::bump;
@@ -284,7 +284,7 @@ fn build_input(out: &HaOut<'_>, adapter_id: u8, short_address: u8, instance_numb
     if !(out.settings.expose_input_devices && view.ha_expose) {
         return Some(Announcement::retraction(topic));
     }
-    let (_, payload) = input_instance_discovery_json(
+    let payload = input_instance_discovery_json(
         out.topics,
         &out.device(),
         adapter_id,
@@ -294,15 +294,6 @@ fn build_input(out: &HaOut<'_>, adapter_id: u8, short_address: u8, instance_numb
         instance_type,
     )?;
     Some(Announcement::config(topic, payload))
-}
-
-const fn input_component(instance_type: u8) -> Option<&'static str> {
-    match instance_type {
-        1 => Some("event"),
-        3 => Some("binary_sensor"),
-        2 | 4 => Some("sensor"),
-        _ => None,
-    }
 }
 
 fn retain_config(payload: &str, settings: &HomeAssistantSettingsView) -> bool {

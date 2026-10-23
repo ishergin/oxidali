@@ -15,7 +15,7 @@ pub fn input_instance_discovery_json(
     short_address: u8,
     instance_number: u8,
     instance_type: u8,
-) -> Option<(&'static str, String)> {
+) -> Option<String> {
     discovery::input_instance_discovery_payload(
         topics,
         device,
@@ -25,7 +25,7 @@ pub fn input_instance_discovery_json(
         instance_number,
         instance_type,
     )
-    .map(|(component, payload)| (component, payload.to_string()))
+    .map(|payload| payload.to_string())
 }
 
 pub fn lamp_discovery_json(
@@ -71,7 +71,7 @@ pub fn scene_select_state(active: Option<u8>, scenes: &[HaSceneView]) -> String 
 
 pub use brightness::{ha_to_level, level_to_ha, HA_BRIGHTNESS_SCALE};
 pub use discovery::{
-    group_discovery_payload, lamp_discovery_payload, scene_option_label,
+    group_discovery_payload, input_component, lamp_discovery_payload, scene_option_label,
     scene_select_discovery_payload, supported_color_modes, HaDevice, DISCOVERY_RETRACTION,
     SCENE_SELECT_NONE,
 };

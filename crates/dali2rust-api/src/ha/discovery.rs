@@ -1,6 +1,9 @@
 use dali2rust_domain::registry::{
     CapabilityFlagsView, HaGroupView, HaLampView, HaSceneView,
 };
+use dali2rust_domain::dali::dev103::event::instance_type::{
+    ABSOLUTE_INPUT, LIGHT_SENSOR, OCCUPANCY, PUSH_BUTTON,
+};
 use serde_json::{json, Map, Value};
 
 use super::brightness::HA_BRIGHTNESS_SCALE;
@@ -86,6 +89,21 @@ fn light_payload(
     m
 }
 
+const EVENT: &str = "event";
+
+const BINARY_SENSOR: &str = "binary_sensor";
+
+const SENSOR: &str = "sensor";
+
+pub const fn input_component(instance_type: u8) -> Option<&'static str> {
+    match instance_type {
+        PUSH_BUTTON => Some(EVENT),
+        OCCUPANCY => Some(BINARY_SENSOR),
+        ABSOLUTE_INPUT | LIGHT_SENSOR => Some(SENSOR),
+        _ => None,
+    }
+}
+
 pub fn input_instance_discovery_payload(
     topics: &HaTopics,
     device: &HaDevice<'_>,
@@ -94,7 +112,8 @@ pub fn input_instance_discovery_payload(
     short_address: u8,
     instance_number: u8,
     instance_type: u8,
-) -> Option<(&'static str, Value)> {
+) -> Option<Value> {
+    let component = input_component(instance_type)?;
     let object_id = HaTopics::input_object_id(adapter_id, short_address, instance_number);
     let label = match device_name {
         Some(name) => format!("{name} {instance_number}"),
@@ -105,8 +124,13 @@ pub fn input_instance_discovery_payload(
         "state_topic".into(),
         json!(topics.input_state_topic(adapter_id, short_address, instance_number)),
     );
-    let component = match instance_type {
-        1 => {
+    insert_component_fields(&mut m, component);
+    Some(Value::Object(m))
+}
+
+fn insert_component_fields(m: &mut Map<String, Value>, component: &str) {
+    match component {
+        EVENT => {
             m.insert(
                 "event_types".into(),
                 json!(dali2rust_domain::dali::dev103::ButtonEvent::ALL
@@ -115,21 +139,16 @@ pub fn input_instance_discovery_payload(
                     .collect::<Vec<_>>()),
             );
             m.insert("device_class".into(), json!("button"));
-            "event"
         }
-        3 => {
+        BINARY_SENSOR => {
             m.insert("device_class".into(), json!("occupancy"));
             m.insert("payload_on".into(), json!("ON"));
             m.insert("payload_off".into(), json!("OFF"));
-            "binary_sensor"
         }
-        2 | 4 => {
+        _ => {
             m.insert("state_class".into(), json!("measurement"));
-            "sensor"
         }
-        _ => return None,
-    };
-    Some((component, Value::Object(m)))
+    }
 }
 
 pub fn lamp_discovery_payload(
