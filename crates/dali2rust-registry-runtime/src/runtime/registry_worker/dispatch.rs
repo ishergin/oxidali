@@ -8,7 +8,7 @@ use dali2rust_contracts::msg::BusCommandPayload;
 use crate::runtime::registry::RegistryStore;
 
 use super::adapter::handle_adapter_settings;
-use super::command_ctx::CommandCtx;
+use super::command_ctx::{CommandCtx, ReloadPorts};
 use super::config_write::handle_config_write_commit;
 use super::group::GroupMatrix;
 use super::hcl::{
@@ -55,14 +55,13 @@ pub(super) fn process_one(
         adapter_count,
         store,
         counters,
-        persistence,
     };
-    dispatch_registry_command(&ce.payload, &ctx);
+    dispatch_registry_command(&ce.payload, &ctx, ReloadPorts { store, persistence });
 }
 
 dali2rust_contracts::dispatch_bus_commands! {
     pub const REGISTRY_WORKER_HANDLED_COMMANDS;
-    fn dispatch_registry_command(payload: &BusCommandPayload, ctx: &CommandCtx<'_>);
+    fn dispatch_registry_command(payload: &BusCommandPayload, ctx: &CommandCtx<'_>, reload: ReloadPorts<'_>);
     payload = payload;
     ignored = { ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
     AdapterSettingsUpdateCommand(body) =>
@@ -120,7 +119,7 @@ dali2rust_contracts::dispatch_bus_commands! {
     PoliciesUpdateCommand(body) =>
         handle_policies_update(ctx, body),
     RegistrySliceReloadCommand(body) =>
-        handle_slice_reload(ctx, body),
+        handle_slice_reload(ctx, reload, body),
     HomeAssistantSettingsUpdateCommand(body) =>
         handle_settings_update(ctx, body),
     HomeAssistantCredentialsUpdateCommand(body) =>

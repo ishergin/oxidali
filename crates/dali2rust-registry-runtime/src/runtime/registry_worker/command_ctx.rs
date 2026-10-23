@@ -16,8 +16,13 @@ pub(super) struct CommandCtx<'a> {
     pub(super) corr: u64,
     pub(super) primary_adapter_id: BusId,
     pub(super) adapter_count: u8,
-    pub(super) store: &'a Arc<RegistryStore>,
+    pub(super) store: &'a RegistryStore,
     pub(super) counters: &'a RegistryCommandCounters,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ReloadPorts<'a> {
+    pub(super) store: &'a Arc<RegistryStore>,
     pub(super) persistence: Option<&'a SlicePersistence>,
 }
 

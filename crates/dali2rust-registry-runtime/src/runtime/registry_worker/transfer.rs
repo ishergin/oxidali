@@ -11,14 +11,18 @@ use crate::runtime::registry::publish::publish_config_write_signal;
 use crate::runtime::registry::transfer::ImportWriteFailure;
 use crate::runtime::registry::{HydrateCounts, RegistryStore};
 
-use super::command_ctx::CommandCtx;
+use super::command_ctx::{CommandCtx, ReloadPorts};
 use super::{RegistryCommandCounters, SlicePersistence};
 
-pub(super) fn handle_slice_reload(ctx: &CommandCtx<'_>, body: &RegistrySliceReloadCommand) {
+pub(super) fn handle_slice_reload(
+    ctx: &CommandCtx<'_>,
+    reload: ReloadPorts<'_>,
+    body: &RegistrySliceReloadCommand,
+) {
     if ctx.check_primary_adapter().is_err() {
         return;
     }
-    let imported = import_then_reload(ctx.store, ctx.persistence, ctx.adapter_count, ctx.corr);
+    let imported = import_then_reload(reload.store, reload.persistence, ctx.adapter_count, ctx.corr);
     if let Some(counts) = imported.counts {
         log::info!(
             "registry: reload after import of {} — {} loaded, {} defaulted, {} errors",
