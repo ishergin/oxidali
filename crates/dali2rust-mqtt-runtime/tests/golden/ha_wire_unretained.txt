@@ -87,8 +87,6 @@ q0 retained dali/ctl1/a0/vl/4/availability online
 q0 volatile dali/ctl1/a0/vl/4/state {"brightness":11,"state":"ON"}
 q0 volatile dali/ctl1/a0/group/5/state {"state":"OFF"}
 ## a refused lamp retraction
-q0 retained dali/ctl1/a0/vl/4/availability <empty>
-q0 retained dali/ctl1/a0/vl/4/state <empty>
 q0 volatile dali/ctl1/a0/in/2/0/state {"event_type":"short_press"}
 ## a press publishes its event
 q0 volatile dali/ctl1/a0/in/0/0/state {"event_type":"short_press"}
@@ -138,4 +136,4 @@ q0 retained homeassistant/light/ctl1/a0_group_8/config <empty>
 q0 retained homeassistant/light/ctl1/a0_group_9/config <empty>
 ## a last press closes the log
 q0 volatile dali/ctl1/a0/in/2/0/state {"event_type":"short_press"}
-## counters: publishes 116 refused 2 discovery published 44 discovery failed 0
+## counters: publishes 114 refused 2 discovery published 44 discovery failed 0

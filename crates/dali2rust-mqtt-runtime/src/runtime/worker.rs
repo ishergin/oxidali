@@ -1729,15 +1729,16 @@ fn republish_lamp_config(
         }
         None => {
             let announced_here = session.lamp_config_hashes.remove(&(adapter_id, lamp_id)).is_some();
-            if announced_here || retract == RetractGate::Always {
-                publish(
+            if (announced_here || retract == RetractGate::Always)
+                && publish(
                     client,
                     ports,
                     &topic,
                     DISCOVERY_RETRACTION,
                     qos_of(settings),
                     retain_config(DISCOVERY_RETRACTION, settings),
-                );
+                )
+            {
                 clear_lamp_retained(client, session, ports, topics, settings, adapter_id, lamp_id);
             }
         }
