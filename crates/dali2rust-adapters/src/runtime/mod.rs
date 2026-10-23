@@ -29,6 +29,7 @@ use crate::dali::transport::mock::MockDaliTransport;
 pub use bus_stack::BusStackRuntime;
 use app_router::{
     build_app_router, hcl_override_read_port, operation_read_port, HttpBusDispatch, ReadModelPorts,
+    RouterParts,
 };
 use bus_host::spawn_bus_subscribers;
 use registry_init::init_registry_slice;
@@ -268,35 +269,11 @@ fn rules_worker_deps(booted: &BootedStack) -> workers::RulesWorkerDeps {
     }
 }
 
-struct RouterParts {
-    version: &'static str,
-    adapter_count: u8,
-    web_assets: &'static [StaticAsset],
-    dispatch: HttpBusDispatch,
-    registry_http: http_bridges::RegistryHttpPorts,
-    wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
-    persist_timezone: dali2rust_api::http::handlers::time::TimezonePersist,
-    read_models: ReadModelPorts,
-    clock: Arc<dyn dali2rust_platform::clock::Clock>,
-    controller_summary: Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
-    rules: app_router::RulesHttpDeps,
-}
-
 fn assemble_router(parts: RouterParts, workers: &workers::SpawnedWorkers) -> Router {
     build_app_router(
-        parts.version,
-        parts.adapter_count,
-        parts.dispatch,
-        parts.registry_http,
+        parts,
         operation_read_port(Arc::clone(&workers.operation_tracker)),
         hcl_override_read_port(Arc::clone(&workers.hcl_overrides)),
-        parts.read_models,
-        parts.clock,
-        parts.wall_clock,
-        parts.persist_timezone,
-        parts.web_assets,
-        parts.controller_summary,
-        parts.rules,
     )
 }
 

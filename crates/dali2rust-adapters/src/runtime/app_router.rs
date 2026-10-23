@@ -258,21 +258,39 @@ fn read<S: ?Sized, H: ApiHandler + 'static>(
     Box::new(make(Arc::clone(state)))
 }
 
+pub(crate) struct RouterParts {
+    pub(crate) version: &'static str,
+    pub(crate) adapter_count: u8,
+    pub(crate) web_assets: &'static [StaticAsset],
+    pub(crate) dispatch: HttpBusDispatch,
+    pub(crate) registry_http: RegistryHttpPorts,
+    pub(crate) wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
+    pub(crate) persist_timezone: dali2rust_api::http::handlers::time::TimezonePersist,
+    pub(crate) read_models: ReadModelPorts,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) controller_summary:
+        Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
+    pub(crate) rules: RulesHttpDeps,
+}
+
 pub(crate) fn build_app_router(
-    version: &'static str,
-    adapter_count: u8,
-    bus: HttpBusDispatch,
-    registry: RegistryHttpPorts,
+    parts: RouterParts,
     op_read: Arc<dyn OperationReadPort>,
     hcl_overrides: Arc<dyn HclOverrideReadPort>,
-    read_models: ReadModelPorts,
-    clock: Arc<dyn Clock>,
-    wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
-    persist_timezone: dali2rust_api::http::handlers::time::TimezonePersist,
-    web_assets: &'static [StaticAsset],
-    controller_summary: Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
-    rules: RulesHttpDeps,
 ) -> Router {
+    let RouterParts {
+        version,
+        adapter_count,
+        web_assets,
+        dispatch: bus,
+        registry_http: registry,
+        wall_clock,
+        persist_timezone,
+        read_models,
+        clock,
+        controller_summary,
+        rules,
+    } = parts;
     let redundancy_read = Arc::clone(&read_models.redundancy);
     let base = AppBuilder::new(version, Arc::clone(&clock))
         .with_role_port(Arc::clone(&registry.role_port));
@@ -295,7 +313,18 @@ pub(crate) fn build_app_router(
     let builder = wire_input_devices(builder, &bus, &registry, &op_read);
     let builder = wire_rules(builder, &bus, &rules);
     let builder = wire_settings_and_lamps(builder, &bus, &registry, &redundancy_read);
-    let builder = builder
+    let builder = wire_time(builder, wall_clock, persist_timezone);
+    let builder = wire_web_ui(builder, web_assets);
+    builder.build()
+}
+
+#[inline(never)]
+fn wire_time(
+    builder: AppBuilder,
+    wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
+    persist_timezone: dali2rust_api::http::handlers::time::TimezonePersist,
+) -> AppBuilder {
+    builder
         .with_handler(
             RouteKey::Time,
             Box::new(dali2rust_api::http::handlers::TimeHandler::new(
@@ -309,9 +338,7 @@ pub(crate) fn build_app_router(
                 wall_clock,
                 persist_timezone,
             )),
-        );
-    let builder = wire_web_ui(builder, web_assets);
-    builder.build()
+        )
 }
 
 #[inline(never)]
