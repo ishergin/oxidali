@@ -151,6 +151,15 @@ filtered: they address one device.
   with room and stays in it until it is forgotten, and hydration puts it back in the bank
   that held it, so a new or forgotten device changes only its own bank and a flush that
   fails part-way leaves every device in the old or the new copy of its bank.
+- Hydration, at boot and on every reload after an import or a standby pull, ends with no
+  bank over eight: a bank's stored members keep their places in key order, ahead of
+  devices only memory holds, and the rest are admitted again by the admission rule or,
+  past the device cap, refused and logged. A device two banks hold takes the lower bank's
+  copy, the newer one, since a flush writes the banks in order and stops at the first
+  failure. Either repair marks the banks for rewrite; a load that needs none marks
+  nothing. Import validation only checks that a bank decodes: the bank is how the device
+  set is laid out in flash, not a fact about the devices, and a reload that keeps memory's
+  devices beside an unread bank needs the same repair.
 - A slice whose read fails is unread, not garbage: hydration keeps what memory holds (the
   default at boot) and never marks it for rewrite, and no flush writes it until a later
   boot or reload reads it. A change to it in the meantime is lost when that read happens;

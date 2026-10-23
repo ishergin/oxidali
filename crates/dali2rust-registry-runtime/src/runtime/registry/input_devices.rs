@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use dali2rust_contracts::msg::{
     Dali103ScanProgressEvent, DaliInputEventObservedEvent, InputEventKind,
@@ -886,21 +886,93 @@ pub(crate) fn hydrate_input_devices_bank_inner(
     inner: &mut Inner,
     bank: u8,
     slice: &PersistableInputDevicesSlice,
-) {
+    stored: &mut HashSet<(u8, u8)>,
+) -> bool {
+    let mut held_lower = false;
     for device in &slice.devices {
         let key = (device.adapter_id, device.short_address);
-        let record =
-            inner.input_devices.entry(key).or_insert_with(|| InputDeviceRecord::empty(key.0, key.1));
-        record.bank = bank;
-        record.name = device.name.clone();
-        record.notes = device.notes.clone();
-        record.ha_expose = device.ha_expose;
-        record.instance_count = device.instance_count;
-        for persisted in &device.instances {
-            hydrate_instance(record, persisted);
+        if stored.insert(key) {
+            hydrate_device(inner, bank, key, device);
+        } else {
+            held_lower = true;
         }
     }
     inner.input_devices_revision = inner.input_devices_revision.saturating_add(1);
+    held_lower
+}
+
+fn hydrate_device(inner: &mut Inner, bank: u8, key: (u8, u8), device: &PersistedInputDevice) {
+    let record =
+        inner.input_devices.entry(key).or_insert_with(|| InputDeviceRecord::empty(key.0, key.1));
+    record.bank = bank;
+    record.name = device.name.clone();
+    record.notes = device.notes.clone();
+    record.ha_expose = device.ha_expose;
+    record.instance_count = device.instance_count;
+    for persisted in &device.instances {
+        hydrate_instance(record, persisted);
+    }
+}
+
+pub(crate) fn rebank_input_devices(inner: &mut Inner, stored: &HashSet<(u8, u8)>) -> bool {
+    let excess: Vec<InputDeviceRecord> = excess_input_devices(&inner.input_devices, stored)
+        .iter()
+        .filter_map(|key| inner.input_devices.remove(key))
+        .collect();
+    let rebanked = !excess.is_empty();
+    for record in excess {
+        readmit_input_device(&mut inner.input_devices, record);
+    }
+    if rebanked {
+        inner.input_devices_revision = inner.input_devices_revision.saturating_add(1);
+    }
+    rebanked
+}
+
+fn excess_input_devices(
+    devices: &HashMap<(u8, u8), InputDeviceRecord>,
+    stored: &HashSet<(u8, u8)>,
+) -> Vec<(u8, u8)> {
+    let mut seats: Vec<(u8, bool, (u8, u8))> =
+        devices.iter().map(|(key, record)| (record.bank, !stored.contains(key), *key)).collect();
+    insertion_sort_by(&mut seats, |a, b| a > b);
+    let mut taken = [0usize; SliceKey::INPUT_DEVICE_BANKS as usize];
+    let mut kept = 0usize;
+    let mut excess = Vec::new();
+    for (bank, _, key) in seats {
+        match taken.get_mut(usize::from(bank)) {
+            Some(seat) if *seat < INPUT_DEVICES_PER_BANK && kept < MAX_INPUT_DEVICES => {
+                *seat += 1;
+                kept += 1;
+            }
+            _ => excess.push(key),
+        }
+    }
+    excess
+}
+
+fn readmit_input_device(
+    devices: &mut HashMap<(u8, u8), InputDeviceRecord>,
+    mut record: InputDeviceRecord,
+) {
+    let key = (record.adapter_id, record.short_address);
+    let Some(bank) = admitting_bank(devices) else {
+        log::warn!(
+            "persistence: input device a{}/s{} refused on load: \
+             the {MAX_INPUT_DEVICES}-device cap is full",
+            key.0,
+            key.1
+        );
+        return;
+    };
+    log::info!(
+        "persistence: input device a{}/s{} moves from bank {} to bank {bank}",
+        key.0,
+        key.1,
+        record.bank
+    );
+    record.bank = bank;
+    devices.insert(key, record);
 }
 
 fn hydrate_instance(record: &mut InputDeviceRecord, persisted: &PersistedInputInstance) {
@@ -917,7 +989,8 @@ fn hydrate_instance(record: &mut InputDeviceRecord, persisted: &PersistedInputIn
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
-    use crate::test_support::scan_input_device;
+    use dali2rust_platform::slice_store::SliceStore;
+    use crate::test_support::{scan_input_device, ProbeStore};
     use crate::runtime::registry::persistence_slices::{
         decode_versioned_slice, encode_persistence_blob, PersistenceEnvelope,
         INPUT_DEVICES_SLICE_VERSION,
@@ -977,7 +1050,7 @@ mod persistence_tests {
     #[test]
     fn the_worst_case_bank_fits_its_slot() {
         let inner = worst_case_inner();
-        for bank in 0..4u8 {
+        for bank in 0..SliceKey::INPUT_DEVICE_BANKS {
             let snapshot = persistable_snapshot_bank(&inner, bank);
             assert_eq!(snapshot.devices.len(), INPUT_DEVICES_PER_BANK);
             let envelope = PersistenceEnvelope::new(INPUT_DEVICES_SLICE_VERSION, &snapshot);
@@ -994,14 +1067,15 @@ mod persistence_tests {
     fn a_flushed_bank_hydrates_back_to_the_same_summary() {
         let inner = worst_case_inner();
         let mut hydrated = Inner::default();
-        for bank in 0..4u8 {
+        let mut stored = HashSet::new();
+        for bank in 0..SliceKey::INPUT_DEVICE_BANKS {
             let snapshot = persistable_snapshot_bank(&inner, bank);
             let envelope = PersistenceEnvelope::new(INPUT_DEVICES_SLICE_VERSION, &snapshot);
             let bytes = encode_persistence_blob(&envelope).expect("encode");
             let decoded: PersistableInputDevicesSlice =
                 decode_versioned_slice(&bytes, INPUT_DEVICES_SLICE_VERSION).expect("decode");
             assert_eq!(decoded, snapshot, "postcard round-trip must be identity");
-            hydrate_input_devices_bank_inner(&mut hydrated, bank, &decoded);
+            hydrate_input_devices_bank_inner(&mut hydrated, bank, &decoded, &mut stored);
         }
         assert_eq!(hydrated.input_devices.len(), inner.input_devices.len());
         let original = inner.input_devices.get(&(0, 7)).expect("device 7");
@@ -1014,5 +1088,115 @@ mod persistence_tests {
         assert_eq!(instance.event_scheme.value, Some(4));
         assert_eq!(instance.event_scheme.read_at_ms, None);
         assert!(!back.present);
+    }
+
+    fn stored_device(short_address: u8, name: &str) -> PersistedInputDevice {
+        PersistedInputDevice {
+            adapter_id: 0,
+            short_address,
+            name: Some(name.to_string()),
+            notes: None,
+            ha_expose: true,
+            instance_count: 1,
+            instances: vec![PersistedInputInstance::pack(&InstanceRecord::empty(0))],
+        }
+    }
+
+    fn store_bank(slices: &ProbeStore, bank: u8, devices: Vec<PersistedInputDevice>) {
+        let slice = PersistableInputDevicesSlice { devices };
+        let envelope = PersistenceEnvelope::new(INPUT_DEVICES_SLICE_VERSION, &slice);
+        let bytes = encode_persistence_blob(&envelope).expect("encode");
+        let mut session = slices.begin_write(SliceKey::InputDevices { bank }).expect("open bank");
+        session.append(&bytes).expect("append bank");
+        session.commit().expect("commit bank");
+    }
+
+    fn stored_bank(slices: &ProbeStore, bank: u8) -> PersistableInputDevicesSlice {
+        let bytes = slices.load(SliceKey::InputDevices { bank }).expect("bank stored");
+        decode_versioned_slice(&bytes, INPUT_DEVICES_SLICE_VERSION).expect("decode")
+    }
+
+    fn store_named_bank(slices: &ProbeStore, bank: u8, shorts: std::ops::Range<u8>) {
+        store_bank(slices, bank, shorts.map(|short| stored_device(short, "stored")).collect());
+    }
+
+    fn per_bank() -> u8 {
+        u8::try_from(INPUT_DEVICES_PER_BANK).expect("a short address count")
+    }
+
+    fn booted(slices: &ProbeStore) -> RegistryStore {
+        let store = RegistryStore::with_adapter_count(1);
+        store.hydrate_from_store(slices, 1);
+        store
+    }
+
+    #[test]
+    fn an_over_full_stored_bank_moves_its_excess_to_the_first_bank_with_room() {
+        let slices = ProbeStore::default();
+        store_named_bank(&slices, 0, 0..per_bank() + 1);
+
+        let store = booted(&slices);
+        assert_eq!(bank_sizes(&store), vec![INPUT_DEVICES_PER_BANK, 1, 0, 0]);
+        assert_eq!(store.read_inner().input_devices[&(0, per_bank())].bank, 1, "the highest key moves");
+
+        store.flush_dirty_slices(&slices);
+        assert_eq!(stored_bank(&slices, 0).devices.len(), INPUT_DEVICES_PER_BANK);
+        let rebooted = booted(&slices);
+        assert_eq!(bank_sizes(&rebooted), vec![INPUT_DEVICES_PER_BANK, 1, 0, 0]);
+        assert!(!rebooted.dirty.any_dirty(), "banks within the cap are not rewritten");
+    }
+
+    #[test]
+    fn stored_devices_beyond_the_device_cap_are_refused_on_load() {
+        let slices = ProbeStore::default();
+        store_named_bank(&slices, 0, 0..per_bank() + 1);
+        for bank in 1..SliceKey::INPUT_DEVICE_BANKS {
+            let first = 1 + bank * per_bank();
+            store_named_bank(&slices, bank, first..first + per_bank());
+        }
+
+        let store = booted(&slices);
+        let full = vec![INPUT_DEVICES_PER_BANK; usize::from(SliceKey::INPUT_DEVICE_BANKS)];
+        assert_eq!(bank_sizes(&store), full);
+        assert_eq!(store.read_inner().input_devices.len(), MAX_INPUT_DEVICES);
+        assert!(
+            !store.read_inner().input_devices.contains_key(&(0, per_bank())),
+            "the excess of the over-full bank is what the cap refuses"
+        );
+    }
+
+    #[test]
+    fn a_reload_beside_an_unread_bank_keeps_each_bank_within_the_cap() {
+        let slices = ProbeStore::default();
+        let first_stored = 10;
+        store_named_bank(&slices, 0, first_stored..first_stored + per_bank());
+        let store = RegistryStore::with_adapter_count(1);
+        assert!(scan_input_device(&store, 0), "short 0 admitted");
+
+        slices.fail_reads_of(Some(SliceKey::InputDevices { bank: 3 }));
+        store.hydrate_from_store(&slices, 1);
+        assert_eq!(bank_sizes(&store), vec![INPUT_DEVICES_PER_BANK, 1, 0, 0]);
+        assert_eq!(store.read_inner().input_devices[&(0, 0)].bank, 1, "stored members keep their bank");
+    }
+
+    #[test]
+    fn a_device_stored_in_two_banks_takes_the_lower_banks_copy() {
+        let slices = ProbeStore::default();
+        let short = 5;
+        let mut stale = stored_device(short, "old");
+        stale.instance_count = 2;
+        stale.instances.push(PersistedInputInstance::pack(&InstanceRecord::empty(1)));
+        store_bank(&slices, 0, vec![stored_device(short, "new")]);
+        store_bank(&slices, 2, vec![stale]);
+
+        let store = booted(&slices);
+        let inner = store.read_inner();
+        let device = &inner.input_devices[&(0, short)];
+        assert_eq!((device.bank, device.name.as_deref()), (0, Some("new")));
+        assert_eq!((device.instance_count, device.instances.len()), (1, 1), "nothing of the old copy");
+        drop(inner);
+
+        store.flush_dirty_slices(&slices);
+        assert!(stored_bank(&slices, 2).devices.is_empty(), "the stale copy is rewritten away");
     }
 }

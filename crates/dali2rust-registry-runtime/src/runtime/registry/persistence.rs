@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
 use dali2rust_contracts::msg::{
@@ -8,7 +9,9 @@ use dali2rust_domain::registry::MemoryBankSummaryView;
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, StoreError};
 use log::{info, warn};
 
-use crate::runtime::registry::input_devices::PersistableInputDevicesSlice;
+use crate::runtime::registry::input_devices::{
+    hydrate_input_devices_bank_inner, rebank_input_devices, PersistableInputDevicesSlice,
+};
 
 use super::groups::{GroupMembershipRowRecord, GroupRecord};
 use super::persistence_slices::{
@@ -909,8 +912,8 @@ hydrate_wrappers! { per_adapter:
 }
 
 fn hydrate_input_device_banks(store: &RegistryStore, slices: &dyn SliceStore, sink: &mut HydrateSink<'_>) {
-    let mut stored = std::collections::HashSet::new();
-    let (mut whole, mut loaded) = (true, false);
+    let mut stored = HashSet::new();
+    let (mut whole, mut loaded, mut held_twice) = (true, false, false);
     for bank in 0..INPUT_DEVICE_BANKS_U8 {
         let outcome = hydrate_stored_slice(
             store,
@@ -918,16 +921,28 @@ fn hydrate_input_device_banks(store: &RegistryStore, slices: &dyn SliceStore, si
             PersistenceSliceKind::InputDevices { bank },
             sink,
             |bytes| decode_slice::<PersistableInputDevicesSlice>(bytes, INPUT_DEVICES_SLICE_VERSION),
-            |inner, slice| {
-                stored.extend(slice.devices.iter().map(|d| (d.adapter_id, d.short_address)));
-                crate::runtime::registry::input_devices::hydrate_input_devices_bank_inner(inner, bank, slice);
-            },
+            |inner, slice| held_twice |= hydrate_input_devices_bank_inner(inner, bank, slice, &mut stored),
         );
         whole &= matches!(outcome, SlotOutcome::Loaded | SlotOutcome::Missing);
         loaded |= outcome == SlotOutcome::Loaded;
     }
-    if whole && loaded {
-        store.write_inner().input_devices.retain(|key, _| stored.contains(key));
+    settle_input_device_banks(store, &stored, whole && loaded, held_twice);
+}
+
+fn settle_input_device_banks(
+    store: &RegistryStore,
+    stored: &HashSet<(u8, u8)>,
+    replaced: bool,
+    held_twice: bool,
+) {
+    let mut inner = store.write_inner();
+    if replaced {
+        inner.input_devices.retain(|key, _| stored.contains(key));
+    }
+    let rebanked = rebank_input_devices(&mut inner, stored);
+    drop(inner);
+    if rebanked || held_twice {
+        store.dirty.mark_input_devices_dirty();
     }
 }
 
