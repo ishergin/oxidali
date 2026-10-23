@@ -54,7 +54,7 @@ fn finish_runtime_update_outcome(ctx: &CommandCtx<'_>, outcome: RuntimeApplyOutc
             ctx.confirm_ok();
         }
         RuntimeApplyOutcome::NotApplied => {
-            ctx.confirm_failed(ErrorCode::OperationFailed, "registry_runtime_not_applied");
+            ctx.confirm_failed(ErrorCode::OperationFailed, "runtime_not_applied");
         }
         RuntimeApplyOutcome::VlUnbound => {
             ctx.confirm_failed(ErrorCode::VlUnbound, "vl_unbound");
@@ -205,7 +205,7 @@ fn resolve_transition_target(
         (Some(vl_id), _) => match ctx.store.internal_virtual_lamp_binding_short(cmd.adapter_id, vl_id) {
             Some(bound) => Ok((Some(vl_id), bound)),
             None => {
-                ctx.confirm_failed(ErrorCode::VlUnbound, "registry_transition_vl_unbound");
+                ctx.confirm_failed(ErrorCode::VlUnbound, "transition_vl_unbound");
                 Err(())
             }
         },

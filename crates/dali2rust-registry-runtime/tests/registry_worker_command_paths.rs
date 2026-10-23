@@ -316,7 +316,7 @@ fn registry_runtime_update_not_applied_for_unknown_physical_short() {
         { let __corr = corr; dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, __corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, dali2rust_contracts::msg::RuntimeRegistryUpdateEntry::api_short_physical(99, &sp, 9_000))) },
     );
     let c = recv_confirm_for(&conf_rx, corr);
-    assert_exec_failed_msg(&c, "registry_runtime_not_applied");
+    assert_exec_failed_msg(&c, "runtime_not_applied");
 }
 
 #[test]
