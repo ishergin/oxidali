@@ -304,10 +304,12 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   any of five commands from any master — `QUERY ACTUAL LEVEL` among them — reloads those
   registers (209 §9.12.6).
 - `QUERY COLOUR STATUS` names the active colour type in bits 4–7 (209 §11.3.4.3, command
-  248), and activation sets one of them and resets the others (§9.12.5): exactly one set
-  bit is the type, and none or several of them (MASK too) leave the type and the colour
-  mode unknown. `active_colour_type()` is the one decoder, for discovery and the colour
-  attributes alike.
+  248). Only one colour type is active at any moment (§4.4.1), and activation sets one of
+  the bits and resets the others (§9.12.5): exactly one set bit is the type, and none or
+  several of them (MASK too) leave the type and the colour mode unknown.
+  `active_colour_type()` is the one decoder, for discovery, the colour attributes and the
+  target-state check after a colour is staged, where an unknown type proves nothing and
+  the colour is staged again, as after a wrong type.
 - `QUERY COLOUR VALUE` splits MSB and DTR0 only for 16-bit values (209 §9.9); one-byte
   values come whole. `colour_value_is_wide()` is the one definition, shared with the gear
   model. When a gear does not answer, DTR0 still holds the selector, so reading it back
