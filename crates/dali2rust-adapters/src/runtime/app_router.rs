@@ -69,7 +69,7 @@ use dali2rust_api::http::stats_state::StatsHttpState;
 use dali2rust_bus::{BusConfig, BusId, BusPublisher};
 use dali2rust_domain::registry::{HclOverrideReadPort, OperationReadPort};
 use dali2rust_operations_runtime::OperationTrackerHttpRead;
-use dali2rust_platform::clock::Clock;
+use dali2rust_platform::clock::Uptime;
 
 use super::http_bridges::RegistryHttpPorts;
 use dali2rust_api::http::handlers::input_devices::{
@@ -86,6 +86,7 @@ pub(crate) struct ReadModelPorts {
     pub stats: Arc<dyn StatsHttpState>,
     pub redundancy: Arc<dyn dali2rust_api::http::redundancy_state::RedundancyHttpState>,
     pub firmware: Arc<dyn dali2rust_api::http::firmware_state::FirmwareHttpState>,
+    pub uptime: Uptime,
 }
 
 pub(crate) struct HttpBusDispatch {
@@ -267,7 +268,6 @@ pub(crate) struct RouterParts {
     pub(crate) wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
     pub(crate) persist_timezone: dali2rust_api::http::handlers::time::TimezonePersist,
     pub(crate) read_models: ReadModelPorts,
-    pub(crate) clock: Arc<dyn Clock>,
     pub(crate) controller_summary:
         Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
     pub(crate) rules: RulesHttpDeps,
@@ -287,12 +287,12 @@ pub(crate) fn build_app_router(
         wall_clock,
         persist_timezone,
         read_models,
-        clock,
         controller_summary,
         rules,
     } = parts;
     let redundancy_read = Arc::clone(&read_models.redundancy);
-    let base = AppBuilder::new(version, Arc::clone(&clock))
+    let uptime = read_models.uptime.clone();
+    let base = AppBuilder::new(version, uptime.clone())
         .with_role_port(Arc::clone(&registry.role_port));
     let builder = wire_read_models(base, read_models, &bus);
     let builder = wire_controller_and_adapters(
@@ -301,7 +301,7 @@ pub(crate) fn build_app_router(
         adapter_count,
         &bus,
         &registry,
-        clock,
+        uptime,
         controller_summary,
     );
     let builder = wire_dali_command_handlers(builder, &bus);
@@ -372,7 +372,7 @@ fn wire_controller_and_adapters(
     adapter_count: u8,
     bus: &HttpBusDispatch,
     registry: &RegistryHttpPorts,
-    clock: Arc<dyn Clock>,
+    uptime: Uptime,
     controller_summary: Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
 ) -> AppBuilder {
     builder
@@ -381,7 +381,7 @@ fn wire_controller_and_adapters(
             Box::new(ControllerSummaryHandler::new(
                 version,
                 adapter_count,
-                clock,
+                uptime,
                 controller_summary,
             )),
         )

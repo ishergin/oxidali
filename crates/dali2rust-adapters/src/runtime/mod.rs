@@ -146,7 +146,6 @@ pub fn build_router_with_bus_and_transport<T: DaliTransport + Send + 'static>(
             wall_clock: booted.scheduling.wall_clock,
             persist_timezone: booted.scheduling.persist_timezone,
             read_models,
-            clock,
             controller_summary,
             rules,
         },
@@ -630,7 +629,7 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
             args.transitions,
         )),
         stats: Arc::new(http_bridges::StatsBridge::new(
-            uptime,
+            uptime.clone(),
             args.publisher,
             args.slots,
             args.counters,
@@ -640,6 +639,7 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
             args.ota.state,
             args.firmware_port,
         )),
+        uptime,
     }
 }
 
@@ -717,5 +717,6 @@ mod tests {
         let expected = NOW_MS - BOOTED_AT_MS;
         assert_eq!(ports.diagnostics.diagnostics_dto().uptime_ms, expected);
         assert_eq!(ports.stats.stats_dto().controller.uptime_ms, expected);
+        assert_eq!(ports.uptime.elapsed_ms(), expected, "the uptime health and the controller summary are built from");
     }
 }

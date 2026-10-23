@@ -2,7 +2,7 @@ use super::handler::ApiHandler;
 use super::handlers::health::HealthHandler;
 use super::router::{RouteSpec, Router};
 use super::types::HttpMethod;
-use dali2rust_platform::clock::Clock;
+use dali2rust_platform::clock::Uptime;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -485,16 +485,16 @@ const ROUTE_TABLE: &[(RouteKey, HttpMethod, &str)] = &[
 
 pub struct AppBuilder {
     version: &'static str,
-    clock: Arc<dyn Clock>,
+    uptime: Uptime,
     handlers: HashMap<RouteKey, Box<dyn ApiHandler>>,
     role: Option<Arc<dyn crate::http::role::ControllerRolePort>>,
 }
 
 impl AppBuilder {
-    pub fn new(version: &'static str, clock: Arc<dyn Clock>) -> Self {
+    pub fn new(version: &'static str, uptime: Uptime) -> Self {
         Self {
             version,
-            clock,
+            uptime,
             handlers: HashMap::new(),
             role: None,
         }
@@ -516,9 +516,9 @@ impl AppBuilder {
     pub fn build(mut self) -> Router {
         let role = self.role.take();
         let health = match role.as_ref() {
-            Some(port) => HealthHandler::new(Arc::clone(&self.clock), self.version)
+            Some(port) => HealthHandler::new(self.uptime.clone(), self.version)
                 .with_role(Arc::clone(port)),
-            None => HealthHandler::new(Arc::clone(&self.clock), self.version),
+            None => HealthHandler::new(self.uptime.clone(), self.version),
         };
         let mut router = match role {
             Some(role) => Router::new().with_role_port(role),
@@ -562,6 +562,7 @@ fn route_spec(
 #[cfg(test)]
 mod route_table_tests {
     use super::*;
+    use dali2rust_platform::clock::Clock;
     use std::collections::HashSet;
 
     #[test]
@@ -602,7 +603,7 @@ mod route_table_tests {
 
     #[test]
     fn full_route_table_registers_without_conflicts() {
-        let mut builder = AppBuilder::new("0.0.0-test", Arc::new(FixedClock));
+        let mut builder = AppBuilder::new("0.0.0-test", Uptime::start(Arc::new(FixedClock)));
         for (key, _, _) in ROUTE_TABLE {
             builder = builder.with_handler(*key, Box::new(NoopHandler));
         }
@@ -611,7 +612,7 @@ mod route_table_tests {
     }
 
     fn noop_router() -> Router {
-        let mut builder = AppBuilder::new("0.0.0-test", Arc::new(FixedClock));
+        let mut builder = AppBuilder::new("0.0.0-test", Uptime::start(Arc::new(FixedClock)));
         for (key, _, _) in ROUTE_TABLE {
             builder = builder.with_handler(*key, Box::new(NoopHandler));
         }
