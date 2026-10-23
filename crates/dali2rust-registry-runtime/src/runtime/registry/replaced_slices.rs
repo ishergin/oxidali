@@ -331,6 +331,15 @@ struct AnnouncementQueue {
     announced_in_window: usize,
     refused_in_window: bool,
     refusing: bool,
+    losing: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Delivery {
+    Sent,
+    Lost,
+    Refused,
+    Drained,
 }
 
 impl AnnouncementQueue {
@@ -356,10 +365,33 @@ impl AnnouncementQueue {
         }
     }
 
-    fn sent(&mut self, announced: usize) {
+    fn lost(&mut self, announcement: &Announcement, result: PublishResult) {
+        if !std::mem::replace(&mut self.losing, true) {
+            warn!("registry: {announcement:?} lost to the bus ({result:?}); it is not announced");
+        }
+    }
+
+    fn settle(&mut self, announcement: Announcement, result: PublishResult) -> Delivery {
+        match result {
+            PublishResult::Queued => Delivery::Sent,
+            PublishResult::DroppedIngressFull => {
+                self.refused(announcement);
+                Delivery::Refused
+            }
+            PublishResult::RejectedFrameTooLarge | PublishResult::RejectedKindMismatch => {
+                self.lost(&announcement, result);
+                Delivery::Lost
+            }
+        }
+    }
+
+    fn sent(&mut self, announced: usize, lost: usize) {
         self.announced_in_window += announced;
         if announced > 0 && !self.refused_in_window {
             self.refusing = false;
+        }
+        if announced > 0 && lost == 0 {
+            self.losing = false;
         }
     }
 }
@@ -386,28 +418,42 @@ impl RegistryStore {
         target: u16,
         pacing: AnnouncementPacing,
     ) -> usize {
+        let publish = |frame| publisher.try_publish(BusChannel::Events, frame);
+        self.announce_through(target, pacing, publish)
+    }
+
+    fn announce_through(
+        &self,
+        target: u16,
+        pacing: AnnouncementPacing,
+        mut publish: impl FnMut(BusFrame) -> PublishResult,
+    ) -> usize {
         let budget = self.announcements.queue().budget(pacing);
-        let mut announced = 0;
-        while announced < budget && self.announce_next(publisher, target) {
-            announced += 1;
+        let (mut announced, mut lost) = (0, 0);
+        while announced < budget {
+            match self.announce_next(target, &mut publish) {
+                Delivery::Sent => announced += 1,
+                Delivery::Lost => lost += 1,
+                Delivery::Refused | Delivery::Drained => break,
+            }
         }
-        self.announcements.queue().sent(announced);
+        self.announcements.queue().sent(announced, lost);
         announced
     }
 
-    fn announce_next(&self, publisher: &BusPublisher, target: u16) -> bool {
+    fn announce_next(
+        &self,
+        target: u16,
+        publish: &mut impl FnMut(BusFrame) -> PublishResult,
+    ) -> Delivery {
         let Some(next) = self.announcements.queue().pending.pop_first() else {
-            return false;
+            return Delivery::Drained;
         };
         let Some(frame) = next.frame(self, target) else {
-            return true;
+            return Delivery::Sent;
         };
-        let result = publisher.try_publish(BusChannel::Events, frame);
-        let refused = result == PublishResult::DroppedIngressFull;
-        if refused {
-            self.announcements.queue().refused(next);
-        }
-        !refused
+        let result = publish(frame);
+        self.announcements.queue().settle(next, result)
     }
 }
 
@@ -459,7 +505,7 @@ mod tests {
     use std::sync::mpsc::Receiver;
     use std::time::{Duration, Instant};
 
-    use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusPublisher};
+    use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusPublisher, PublishResult};
     use dali2rust_contracts::msg::{BusEventPayload, EVENT_VARIANT_NAMES};
     use dali2rust_test_support::{hold_the_events_ingress_full, wait_until};
 
@@ -528,6 +574,56 @@ mod tests {
         assert_eq!(sent, usize::from(REFUSED_LAMPS), "each refused lamp went out once");
         let first = first_heard(&events, lamp_id);
         assert_eq!(first, vec![0], "the lamps never reached a subscriber");
+    }
+
+    const LOSSES: [PublishResult; 2] =
+        [PublishResult::RejectedFrameTooLarge, PublishResult::RejectedKindMismatch];
+
+    fn losing_first() -> impl FnMut(BusFrame) -> PublishResult {
+        let mut turned_away = 0;
+        move |_frame| {
+            let verdict = LOSSES.get(turned_away).copied().unwrap_or(PublishResult::Queued);
+            turned_away += 1;
+            verdict
+        }
+    }
+
+    fn loss_episode_open(store: &RegistryStore) -> bool {
+        store.announcements.queue().losing
+    }
+
+    #[test]
+    fn an_announcement_the_bus_rejects_is_dropped_and_leaves_its_place_in_the_window_to_the_rest() {
+        let store = RegistryStore::with_adapter_count(1);
+        lamps_queued(&store, QUEUED_LAMPS);
+        let budget = ANNOUNCEMENT_PACING.per_window;
+        let announced = store.announce_through(TARGET, EVERY_CALL, losing_first());
+        assert_eq!(announced, budget, "a rejection took a place in the window");
+        let left = usize::from(QUEUED_LAMPS) - budget - LOSSES.len();
+        assert_eq!(store.announcements_queued(), left, "a rejected announcement stayed queued");
+    }
+
+    #[test]
+    fn a_turn_that_loses_every_announcement_announces_none_and_keeps_none() {
+        let store = RegistryStore::with_adapter_count(1);
+        lamps_queued(&store, REFUSED_LAMPS);
+        let rejected = |_frame| PublishResult::RejectedFrameTooLarge;
+        assert_eq!(store.announce_through(TARGET, EVERY_CALL, rejected), 0, "a loss counted as sent");
+        assert_eq!(store.announcements_queued(), 0, "a loss was queued for another try");
+        assert!(loss_episode_open(&store), "the loss opened no episode");
+        store.announce_through(TARGET, EVERY_CALL, |_frame| PublishResult::Queued);
+        assert!(loss_episode_open(&store), "an idle turn closed the episode");
+    }
+
+    #[test]
+    fn a_loss_episode_stays_open_through_a_turn_that_loses_again_and_closes_on_a_clean_send() {
+        let store = RegistryStore::with_adapter_count(1);
+        lamps_queued(&store, QUEUED_LAMPS);
+        assert!(!loss_episode_open(&store));
+        store.announce_through(TARGET, EVERY_CALL, losing_first());
+        assert!(loss_episode_open(&store), "a turn that lost one closed the episode");
+        store.announce_through(TARGET, EVERY_CALL, |_frame| PublishResult::Queued);
+        assert!(!loss_episode_open(&store), "a clean send left the episode open");
     }
 
     const TURNS_IN_THE_WINDOW: usize = 5;
