@@ -1044,8 +1044,8 @@ impl DiagnosticsHttpState for DiagnosticsBridge {
 }
 
 use dali2rust_api::http::input_device_state::{
-    instance_type_name, FeedbackDto, InputDeviceDto, InputDeviceHttpState, InputDeviceSummaryDto,
-    InstanceDto, InstanceRuntimeDto, ReadValueDto,
+    instance_type_name, opcode_map_name, FeedbackDto, InputDeviceDto, InputDeviceHttpState,
+    InputDeviceSummaryDto, InstanceDto, InstanceRuntimeDto, ReadValueDto,
 };
 
 pub(crate) struct InputDeviceHttpStateBridge {
@@ -1057,8 +1057,6 @@ impl InputDeviceHttpStateBridge {
         Self { store }
     }
 }
-
-const FORCED_EVENT_SCHEME: u8 = 2;
 
 impl InputDeviceHttpState for InputDeviceHttpStateBridge {
     fn adapter_count(&self) -> u8 {
@@ -1114,14 +1112,11 @@ impl InputDeviceHttpState for InputDeviceHttpStateBridge {
 }
 
 fn feedback_dto(view: &dali2rust_registry_runtime::InstanceView) -> FeedbackDto {
+    let map = view.feedback_map();
     FeedbackDto {
         probed: view.feedback_probe.is_some(),
-        present: matches!(view.feedback_probe, Some(1 | 2)),
-        opcode_map: match view.feedback_probe {
-            Some(1) => Some("diia_corrected"),
-            Some(2) => Some("ed1"),
-            _ => None,
-        },
+        present: map.is_some(),
+        opcode_map: map.map(opcode_map_name),
         capability: view.feedback_capability.value,
         colour_capability: view.feedback_colour_capability.value,
         timing: view.feedback_timing.value,
@@ -1140,7 +1135,7 @@ fn instance_dto(view: &dali2rust_registry_runtime::InstanceView) -> InstanceDto 
         instance_status: view.instance_status,
         resolution: view.resolution,
         event_scheme: ReadValueDto::new(view.event_scheme.value, view.event_scheme.read_at_ms),
-        event_scheme_confirmed: view.event_scheme.value == Some(FORCED_EVENT_SCHEME),
+        event_scheme_confirmed: view.event_scheme_confirmed(),
         event_filter: ReadValueDto::new(
             view.event_filter.value.map(|bytes| bytes.to_vec()),
             view.event_filter.read_at_ms,

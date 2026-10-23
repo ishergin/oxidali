@@ -1,3 +1,4 @@
+use dali2rust_domain::dali::dev103::FeedbackOpcodeMap;
 use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize)]
@@ -87,6 +88,14 @@ pub fn instance_type_name(instance_type: u8) -> Option<&'static str> {
         3 => Some("occupancy"),
         4 => Some("light_sensor"),
         _ => None,
+    }
+}
+
+#[must_use]
+pub fn opcode_map_name(map: FeedbackOpcodeMap) -> &'static str {
+    match map {
+        FeedbackOpcodeMap::DiiaCorrected => "diia_corrected",
+        FeedbackOpcodeMap::Ed1 => "ed1",
     }
 }
 

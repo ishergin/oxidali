@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use dali2rust_contracts::msg::{
     Dali103ScanProgressEvent, DaliInputEventObservedEvent, InputEventKind,
 };
+use dali2rust_domain::dali::dev103::{EventScheme, FeedbackOpcodeMap};
 use dali2rust_domain::registry::HaInputInstanceView;
 use dali2rust_platform::slice_store::SliceKey;
 use dali2rust_platform::small_sort::insertion_sort_by;
@@ -339,6 +340,40 @@ mod tests {
             assert_eq!(timer.read_at_ms, None);
         }
         assert_eq!(instance.event_scheme.value, None);
+    }
+
+    fn view_after(readback: &InstanceReadback) -> InstanceView {
+        let mut record = InputDeviceRecord::empty(0, 3);
+        record.apply_scan_progress(&progress(1), 500);
+        let instance = record.instance_mut_or_declare(0).expect("an instance within the cap");
+        apply_config_readback(instance, readback, 500);
+        apply_feedback_readback(instance, readback, 500);
+        InstanceView::of(instance)
+    }
+
+    #[test]
+    fn only_the_scheme_the_product_configures_reads_as_confirmed() {
+        assert!(!view_after(&InstanceReadback::default()).event_scheme_confirmed(), "unread is not confirmed");
+        for code in 0..=4 {
+            let readback = InstanceReadback { event_scheme: Some(code), ..InstanceReadback::default() };
+            assert_eq!(
+                view_after(&readback).event_scheme_confirmed(),
+                EventScheme::from_code(code) == Some(EventScheme::DeviceInstance),
+                "scheme {code}"
+            );
+        }
+        let readback = InstanceReadback { event_scheme: Some(2), ..InstanceReadback::default() };
+        assert!(view_after(&readback).event_scheme_confirmed());
+    }
+
+    #[test]
+    fn a_feedback_probe_answer_names_the_opcode_map_it_found() {
+        let probed = |map| view_after(&InstanceReadback { feedback_opcode_map: Some(map), ..InstanceReadback::default() });
+        assert_eq!(view_after(&InstanceReadback::default()).feedback_map(), None, "not probed");
+        assert_eq!(probed(0).feedback_map(), None, "probed and absent");
+        assert_eq!(probed(1).feedback_map(), Some(FeedbackOpcodeMap::DiiaCorrected));
+        assert_eq!(probed(2).feedback_map(), Some(FeedbackOpcodeMap::Ed1));
+        assert_eq!(probed(3).feedback_map(), None, "a code no map has");
     }
 
     #[test]
@@ -792,6 +827,16 @@ pub struct InstanceView {
 }
 
 impl InstanceView {
+    #[must_use]
+    pub fn event_scheme_confirmed(&self) -> bool {
+        self.event_scheme.value == Some(EventScheme::DeviceInstance.code())
+    }
+
+    #[must_use]
+    pub fn feedback_map(&self) -> Option<FeedbackOpcodeMap> {
+        self.feedback_probe.and_then(FeedbackOpcodeMap::from_code)
+    }
+
     fn of(record: &InstanceRecord) -> Self {
         Self {
             instance_number: record.instance_number,

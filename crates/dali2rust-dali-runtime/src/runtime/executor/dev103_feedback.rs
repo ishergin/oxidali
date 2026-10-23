@@ -8,22 +8,14 @@ use super::dev103::{send, send_twice, stage_dtr0, verify_readback};
 use crate::runtime::executor::SemanticDaliError;
 
 pub const FEEDBACK_MAP_ABSENT: u8 = 0;
-pub const FEEDBACK_MAP_CORRECTED: u8 = 1;
-pub const FEEDBACK_MAP_ED1: u8 = 2;
+pub const FEEDBACK_MAP_CORRECTED: u8 = FeedbackOpcodeMap::DiiaCorrected.code();
+pub const FEEDBACK_MAP_ED1: u8 = FeedbackOpcodeMap::Ed1.code();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FeedbackProbe {
     pub map_code: u8,
     pub capability: Option<u8>,
     pub colour_capability: Option<u8>,
-}
-
-const fn map_of(code: u8) -> Option<FeedbackOpcodeMap> {
-    match code {
-        FEEDBACK_MAP_CORRECTED => Some(FeedbackOpcodeMap::DiiaCorrected),
-        FEEDBACK_MAP_ED1 => Some(FeedbackOpcodeMap::Ed1),
-        _ => None,
-    }
 }
 
 // DiiA SW098bp §11.6.1
@@ -132,14 +124,14 @@ pub fn configure_feedback(
     cmd: &Dali103FeedbackConfigureCommand,
     proved: &mut ConfiguredFeedback,
 ) -> Result<(), SemanticDaliError> {
-    let map_code = match map_of(cmd.opcode_map) {
+    let map_code = match FeedbackOpcodeMap::from_code(cmd.opcode_map) {
         Some(_) => cmd.opcode_map,
         None => {
             let probe = probe_feedback(controller, cmd.short_address, cmd.instance_number)?;
             probe.map_code
         }
     };
-    let Some(map) = map_of(map_code) else {
+    let Some(map) = FeedbackOpcodeMap::from_code(map_code) else {
         return Err(SemanticDaliError::OperationFailed("feedback_not_supported"));
     };
     proved.map_code = map_code;
