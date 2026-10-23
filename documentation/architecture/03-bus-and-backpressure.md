@@ -137,7 +137,7 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
   owning worker behind flow control. The apply orchestrator paces cell commands; the
   discovery scan hands each device to a sink as the wire describes it and returns a
   count, so publishes are an identity probe apart; the registry worker drains a reload's
-  announcements a bounded share of the events ingress per turn.
+  announcements a bounded number per receive window.
 - During anyone's burst every other producer's events are collateral: a dropped applied
   fact fails an operator's request.
 
