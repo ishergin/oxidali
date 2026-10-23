@@ -815,7 +815,8 @@ fn hydrate_slice_unmarked<S>(
         }
         Err(e) => {
             warn!("persistence: failed to load {label}: {e}");
-            note_unread_slice(store, kind, sink, &e);
+            bump(&store.persist_counters.hydrate_error_total);
+            note_unread_slice(kind, sink, &e);
             HydrateOutcome::Failed
         }
     }
@@ -853,8 +854,9 @@ fn note_unloaded_slot(
     }
     if !store.dirty.held().reads(key_of(&kind)) {
         warn!("persistence: failed to load {label}: {e}");
+        bump(&store.persist_counters.hydrate_error_total);
     }
-    note_unread_slice(store, kind, sink, e);
+    note_unread_slice(kind, sink, e);
     SlotOutcome::Unread
 }
 
@@ -875,15 +877,9 @@ fn note_missing_slice(store: &RegistryStore, kind: PersistenceSliceKind, sink: &
     bump(&store.persist_counters.hydrate_default_total);
 }
 
-fn note_unread_slice(
-    store: &RegistryStore,
-    kind: PersistenceSliceKind,
-    sink: &mut HydrateSink<'_>,
-    e: &StoreError,
-) {
+fn note_unread_slice(kind: PersistenceSliceKind, sink: &mut HydrateSink<'_>, e: &StoreError) {
     sink.note_failed(&kind, || e.to_string());
     sink.note_defaulted(kind);
-    bump(&store.persist_counters.hydrate_error_total);
 }
 
 fn present_shorts(inner: &Inner, adapter_id: u8) -> u64 {
@@ -1571,8 +1567,10 @@ mod tests {
             let slices = installed();
             let store = boot_with_unread(&slices, unread);
             let label = unread.label();
+            let errors = hydrate_errors(&store);
             read_held_again(&store, &slices);
             assert_eq!(unread_slices(&store), 1, "{label} settled while its read still fails");
+            assert_eq!(hydrate_errors(&store), errors, "a retry of {label} counted a new error");
 
             slices.fail_reads_of(None);
             let family: Vec<SliceKey> =
@@ -1582,6 +1580,10 @@ mod tests {
             assert!(!store.dirty.any_dirty(), "reading {label} again marked another slice");
             assert!(flush_everything(&store, &slices).contains(&unread), "{label} was not written");
         }
+    }
+
+    fn hydrate_errors(store: &RegistryStore) -> u32 {
+        store.persist_counters.hydrate_error_total.load(Ordering::Acquire)
     }
 
     fn adapter_name(store: &RegistryStore) -> String {

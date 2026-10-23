@@ -174,7 +174,8 @@ filtered: they address one device.
   slot — on the worker, and applies them on the reload stack through the per-slice
   hydration a boot runs. A read that succeeds settles the slice, the next flush writes
   it, and the worker announces the reload as an import does. A read that fails again
-  leaves it waiting and is counted but not logged again.
+  leaves it waiting; `persistence.hydrate_error_total` and the log count a slice once,
+  when it starts waiting, not on every retry.
 - The stored copy wins. A change made to a waiting slice is made against what memory
   holds instead of the stored copy (the defaults, after a boot) and is replaced when the
   read succeeds: writing memory back would erase everything else the stored copy holds.
