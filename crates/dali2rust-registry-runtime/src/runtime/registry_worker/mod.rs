@@ -48,7 +48,7 @@ pub const ANNOUNCEMENT_INBOX_FLOOR: usize = 64;
 pub const ANNOUNCEMENT_PARK_WINDOW: Duration = Duration::from_secs(1);
 const ANNOUNCEMENT_SHARE_OF_INBOX: usize = 2;
 const WINDOWS_PER_PARK: u128 = ANNOUNCEMENT_PARK_WINDOW.as_millis() / RECV_TIMEOUT.as_millis();
-const ANNOUNCEMENT_PACING: AnnouncementPacing = AnnouncementPacing {
+pub(crate) const ANNOUNCEMENT_PACING: AnnouncementPacing = AnnouncementPacing {
     per_window: ANNOUNCEMENT_INBOX_FLOOR / ANNOUNCEMENT_SHARE_OF_INBOX / WINDOWS_PER_PARK as usize,
     window: RECV_TIMEOUT,
 };

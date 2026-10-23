@@ -459,7 +459,7 @@ fn entities_of(inner: &Inner, key: SliceKey) -> ReplacedEntities {
 mod tests {
     use std::collections::BTreeMap;
     use std::sync::mpsc::Receiver;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusPublisher};
     use dali2rust_contracts::msg::{BusEventPayload, EVENT_VARIANT_NAMES};
@@ -467,32 +467,38 @@ mod tests {
 
     use super::{AnnouncementPacing, ReplacedEntities, POLLER_SETTINGS};
     use crate::runtime::registry::RegistryStore;
+    use crate::runtime::registry_worker::ANNOUNCEMENT_PACING;
 
     const INBOX: usize = 128;
-    const BUDGET: usize = 16;
     const QUEUED_LAMPS: u8 = 40;
+    const REFUSED_LAMPS: u8 = 3;
     const LATER_INTERVAL_MS: u32 = 4_321;
     const WAIT: Duration = Duration::from_secs(2);
-    const QUIET: Duration = Duration::from_millis(200);
     const TARGET: u16 = 1;
-    const UNPACED: AnnouncementPacing =
-        AnnouncementPacing { per_window: BUDGET, window: Duration::ZERO };
+    const EVERY_CALL: AnnouncementPacing =
+        AnnouncementPacing { window: Duration::ZERO, ..ANNOUNCEMENT_PACING };
 
     fn observed() -> (BusHost, BusPublisher, Receiver<BusFrame>) {
         BusHost::spawn(BusConfig::default(), |reg| reg.subscribe_events(INBOX, EVENT_VARIANT_NAMES))
     }
 
-    fn heard_until_quiet(events: &Receiver<BusFrame>) -> Vec<BusEventPayload> {
-        let mut heard = Vec::new();
-        let mut wait = WAIT;
-        while let Ok(BusFrame::Event(event)) = events.recv_timeout(wait) {
-            heard.push(event.payload.clone());
-            wait = QUIET;
+    fn first_heard<T>(
+        events: &Receiver<BusFrame>,
+        pick: impl Fn(&BusEventPayload) -> Option<T>,
+    ) -> Vec<T> {
+        let deadline = Instant::now() + WAIT;
+        let mut picked = Vec::new();
+        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            let Ok(BusFrame::Event(event)) = events.recv_timeout(left) else {
+                break;
+            };
+            picked.extend(pick(&event.payload));
+            if !picked.is_empty() {
+                break;
+            }
         }
-        heard
+        picked
     }
-
-    const REFUSED_LAMPS: u8 = 3;
 
     fn lamps_queued(store: &RegistryStore, count: u8) {
         let lamps = (0..count).fold(0u64, |mask, id| mask | (1 << id));
@@ -500,12 +506,11 @@ mod tests {
         store.queue_announcements(ReplacedEntities { lamps, ..ReplacedEntities::default() });
     }
 
-    fn lamp_ids(heard: &[BusEventPayload]) -> Vec<u8> {
-        let lamp = |payload: &BusEventPayload| match payload {
+    fn lamp_id(payload: &BusEventPayload) -> Option<u8> {
+        match payload {
             BusEventPayload::VirtualLampChangedEvent(ev) => Some(ev.virtual_lamp_id),
             _ => None,
-        };
-        heard.iter().filter_map(lamp).collect()
+        }
     }
 
     #[test]
@@ -514,29 +519,30 @@ mod tests {
         let store = RegistryStore::with_adapter_count(1);
         lamps_queued(&store, REFUSED_LAMPS);
         let held = hold_the_events_ingress_full(&publisher);
-        let announced = store.announce_queued(&publisher, TARGET, UNPACED);
+        let announced = store.announce_queued(&publisher, TARGET, EVERY_CALL);
         assert_eq!(announced, 0, "a refusal counted as sent");
         let queued = store.announcements_queued();
         assert_eq!(queued, usize::from(REFUSED_LAMPS), "a refusal left the queue");
         held.release();
-        let announce = || store.announce_queued(&publisher, TARGET, UNPACED);
-        wait_until(|| announce() == 0 && store.announcements_queued() == 0, WAIT);
-        assert_eq!(store.announcements_queued(), 0, "the refused announcements never went out");
-        assert_eq!(lamp_ids(&heard_until_quiet(&events)), (0..REFUSED_LAMPS).collect::<Vec<_>>());
+        let mut sent = 0;
+        let mut announce = || sent += store.announce_queued(&publisher, TARGET, EVERY_CALL);
+        wait_until(|| { announce(); store.announcements_queued() == 0 }, WAIT);
+        assert_eq!(sent, usize::from(REFUSED_LAMPS), "each refused lamp went out once");
+        let first = first_heard(&events, lamp_id);
+        assert_eq!(first, vec![0], "the lamps never reached a subscriber");
     }
 
     #[test]
-    fn a_settings_record_goes_out_in_the_first_batch_ahead_of_the_lamps_queued_with_it() {
+    fn a_settings_record_goes_out_first_ahead_of_the_lamps_queued_with_it() {
         let (_host, publisher, events) = observed();
         let store = RegistryStore::with_adapter_count(1);
         lamps_queued(&store, QUEUED_LAMPS);
         let poller_settings = ReplacedEntities { records: POLLER_SETTINGS, ..Default::default() };
         store.queue_announcements(poller_settings);
-        store.announce_queued(&publisher, TARGET, UNPACED);
-        let first = heard_until_quiet(&events);
-        let poller =
-            |p: &BusEventPayload| matches!(p, BusEventPayload::PollerSettingsChangedEvent(_));
-        assert!(first.iter().any(poller), "the settings record waited behind the lamps");
+        store.announce_queued(&publisher, TARGET, EVERY_CALL);
+        let first = first_heard(&events, |payload| Some(payload.variant_name()));
+        let settings = vec!["PollerSettingsChangedEvent"];
+        assert_eq!(first, settings, "the settings waited behind the lamps");
     }
 
     #[test]
@@ -546,32 +552,31 @@ mod tests {
         let poller = || ReplacedEntities { records: POLLER_SETTINGS, ..Default::default() };
         store.queue_announcements(poller());
         store.queue_announcements(poller());
+        assert_eq!(store.announcements_queued(), 1, "the record was queued twice");
         store.write_inner().poller_settings.interval_ms = LATER_INTERVAL_MS;
-        store.announce_queued(&publisher, TARGET, UNPACED);
-        let heard = heard_until_quiet(&events);
-        let intervals: Vec<u32> = heard
-            .iter()
-            .filter_map(|payload| match payload {
-                BusEventPayload::PollerSettingsChangedEvent(ev) => Some(ev.interval_ms),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(intervals, vec![LATER_INTERVAL_MS], "one announcement, read when it went out");
+        assert_eq!(store.announce_queued(&publisher, TARGET, EVERY_CALL), 1);
+        let interval = |payload: &BusEventPayload| match payload {
+            BusEventPayload::PollerSettingsChangedEvent(ev) => Some(ev.interval_ms),
+            _ => None,
+        };
+        assert_eq!(first_heard(&events, interval), vec![LATER_INTERVAL_MS], "read when queued");
     }
 
     #[test]
-    fn a_turn_announces_no_more_than_its_budget_and_the_rest_wait_for_the_next() {
-        let (_host, publisher, events) = observed();
+    fn a_window_announces_no_more_than_its_budget_and_the_rest_stay_queued() {
+        let (_host, publisher, _events) = observed();
         let store = RegistryStore::with_adapter_count(1);
-        let lamps = (0..QUEUED_LAMPS).fold(0u64, |mask, id| mask | (1 << id));
-        let lamps = BTreeMap::from([(0, lamps)]);
-        let queued = ReplacedEntities { lamps, ..ReplacedEntities::default() };
-        store.queue_announcements(queued);
-        let mut turns = Vec::new();
-        while turns.iter().sum::<usize>() < usize::from(QUEUED_LAMPS) && turns.len() < 4 {
-            store.announce_queued(&publisher, TARGET, UNPACED);
-            turns.push(heard_until_quiet(&events).len());
+        lamps_queued(&store, QUEUED_LAMPS);
+        let budget = ANNOUNCEMENT_PACING.per_window;
+        let mut queued = vec![store.announcements_queued()];
+        while let Some(left) = queued.last().copied().filter(|left| *left > 0) {
+            let announced = store.announce_queued(&publisher, TARGET, EVERY_CALL);
+            assert_eq!(announced, budget.min(left), "a window spent more or less than its budget");
+            queued.push(store.announcements_queued());
         }
-        assert_eq!(turns, vec![BUDGET, BUDGET, usize::from(QUEUED_LAMPS) - 2 * BUDGET]);
+        let expected: Vec<usize> = (0..=usize::from(QUEUED_LAMPS).div_ceil(budget))
+            .map(|window| usize::from(QUEUED_LAMPS).saturating_sub(window * budget))
+            .collect();
+        assert_eq!(queued, expected, "a window spent more or less than its budget");
     }
 }
