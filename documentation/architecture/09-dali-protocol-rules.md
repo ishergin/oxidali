@@ -323,7 +323,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   write then fails `dt8_level_colour_unconfirmed`. The level query's answer is the only
   proof that REPORT was loaded: every command that loads REPORT loads a colour the stored
   one may equal, so no cheap sentinel tells a skipped load apart. A level query that goes
-  unanswered fails the write (`dt8_level_colour_unconfirmed`) before anything is stored.
+  unanswered or answers with a violation fails the write the same two ways as the probe,
+  before anything is stored.
 - A scene's stored colour is read inside one exempt transaction, from the
   `QUERY SCENE LEVEL` that loads the shared REPORT registers to the last REPORT value:
   any of five commands from any master — `QUERY ACTUAL LEVEL` among them — reloads those

@@ -100,10 +100,7 @@ fn recharge(
     stored: StoredLevel,
     temporary: u8,
 ) -> Result<(u8, u16), SemanticDaliError> {
-    let loaded = send_standard_response(controller, address, stored.query)?;
-    if !matches!(loaded, DaliResponse::Answer(_)) {
-        return Err(unconfirmed());
-    }
+    answer_of(send_standard_response(controller, address, stored.query)?)?;
     let reported = colour_byte(controller, address, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE)?;
     if reported == COLOUR_TYPE_BYTE_MASK {
         charge_mask_colour(controller, address, temporary)?;
@@ -157,8 +154,15 @@ fn colour_value(
     if !colour_value_is_wide(value_id) {
         return Ok(u16::from(high));
     }
-    match send_standard_response(controller, address, StandardCommand::QueryContentDtr0)? {
-        DaliResponse::Answer(low) => Ok((u16::from(high) << 8) | u16::from(low)),
+    let low = answer_of(send_standard_response(controller, address, StandardCommand::QueryContentDtr0)?)?;
+    Ok((u16::from(high) << 8) | u16::from(low))
+}
+
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §3.13
+const fn answer_of(response: DaliResponse) -> Result<u8, SemanticDaliError> {
+    match response {
+        DaliResponse::Answer(value) => Ok(value),
         DaliResponse::NoAnswer => Err(SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNANSWERED)),
         DaliResponse::Violation => Err(SemanticDaliError::OperationFailed(LEVEL_COLOUR_CONTENDED)),
     }

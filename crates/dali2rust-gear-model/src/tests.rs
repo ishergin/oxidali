@@ -763,7 +763,7 @@ fn a_power_cycle_is_reported_until_a_level_command_clears_it() {
         "IEC 62386-102 §11.5.15 answers YES while powerCycleSeen is set"
     );
     let gear = &fleet.gears()[0];
-    assert_eq!(gear.level, gear.power_on_level, "the lamp comes up at its power-on level");
+    assert_eq!(gear.level, gear.power_on.level, "the lamp comes up at its power-on level");
     assert_eq!(gear.last_active_level, gear.max_level, "Table 14 powers it up at maxLevel");
     exchange(&mut fleet, dapc, false);
     assert_eq!(

@@ -225,6 +225,19 @@ fn factory_colour(spec: &GearSpec) -> ColourSetting {
     ColourSetting { colour_type, ..ColourSetting::mask() }
 }
 
+// IEC 62386-209 §9.2.2, §9.3.2
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LevelSetting {
+    pub level: u8,
+    pub colour: ColourSetting,
+}
+
+impl LevelSetting {
+    fn factory(level: u8, spec: &GearSpec) -> Self {
+        Self { level, colour: factory_colour(spec) }
+    }
+}
+
 pub(crate) fn colour_type_byte(mode: ColorMode) -> u8 {
     match mode {
         ColorMode::None => COLOUR_TYPE_BYTE_MASK,
@@ -262,8 +275,8 @@ pub struct Gear {
     pub last_active_level: u8,
     pub min_level: u8,
     pub max_level: u8,
-    pub power_on_level: u8,
-    pub system_failure_level: u8,
+    pub power_on: LevelSetting,
+    pub system_failure: LevelSetting,
     pub fade_time: u8,
     pub fade_rate: u8,
     pub extended_fade_time: u8,
@@ -296,14 +309,27 @@ pub struct Gear {
     pub tc_coolest_limit: u16,
     pub tc_warmest_limit: u16,
     pub scene_colours: [ColourSetting; SCENE_COUNT],
-    pub power_on_colour: ColourSetting,
-    pub system_failure_colour: ColourSetting,
     pub report: ColourSetting,
     pub gear_features: u8,
+    banks: ProfileBanks,
+    pub metering: Option<Box<crate::metering::MeteringBanks>>,
+}
+
+#[derive(Debug)]
+struct ProfileBanks {
     bank0: [u8; BANK0_LEN],
     bank1: [u8; BANK1_LEN],
     luminaire: Option<Box<LuminaireBank>>,
-    pub metering: Option<Box<crate::metering::MeteringBanks>>,
+}
+
+impl ProfileBanks {
+    fn build(spec: &GearSpec) -> Self {
+        Self {
+            bank0: build_bank0(spec),
+            bank1: build_bank1(spec),
+            luminaire: build_luminaire(spec),
+        }
+    }
 }
 
 fn build_bank0(spec: &GearSpec) -> [u8; BANK0_LEN] {
@@ -337,14 +363,14 @@ fn build_bank0(spec: &GearSpec) -> [u8; BANK0_LEN] {
 
 impl Gear {
     fn identity_location(&self, offset: u8) -> Option<u8> {
-        if offset > self.bank0[0] {
+        if offset > self.banks.bank0[0] {
             return None;
         }
         // IEC 62386-102 §9.10.4, Table 9
         if offset == BANK0_RESERVED_OFFSET {
             return None;
         }
-        let raw = self.bank0.get(usize::from(offset)).copied()?;
+        let raw = self.banks.bank0.get(usize::from(offset)).copied()?;
         if usize::from(offset) != BANK0_LAST_BANK_OFFSET {
             return Some(raw);
         }
@@ -358,14 +384,14 @@ impl Gear {
 impl Gear {
     fn profile_location(&self, offset: u8) -> Option<u8> {
         if usize::from(offset) == BANK1_LAST_OFFSET_OFFSET {
-            return Some(match self.luminaire.as_ref() {
+            return Some(match self.banks.luminaire.as_ref() {
                 Some(l) => l.last_accessible(),
                 None => (BANK1_LEN - 1) as u8,
             });
         }
-        match self.luminaire.as_ref() {
+        match self.banks.luminaire.as_ref() {
             Some(l) if offset >= crate::luminaire::LUMINAIRE_FIRST_OFFSET => l.location(offset),
-            _ => self.bank1.get(usize::from(offset)).copied(),
+            _ => self.banks.bank1.get(usize::from(offset)).copied(),
         }
     }
 }
@@ -418,19 +444,17 @@ impl Gear {
     pub fn new(spec: GearSpec) -> Self {
         Self {
             min_level: spec.phm,
-            tc_coolest_limit: spec.tc_coolest_mirek, tc_warmest_limit: spec.tc_warmest_mirek,
-            bank0: build_bank0(&spec),
-            bank1: build_bank1(&spec),
-            luminaire: build_luminaire(&spec),
+            tc_coolest_limit: spec.tc_coolest_mirek,
+            tc_warmest_limit: spec.tc_warmest_mirek,
+            banks: ProfileBanks::build(&spec),
             metering: build_metering(&spec),
-            power_on_colour: factory_colour(&spec), system_failure_colour: factory_colour(&spec),
+            power_on: LevelSetting::factory(DEFAULT_POWER_ON_LEVEL, &spec),
+            system_failure: LevelSetting::factory(DEFAULT_SYSTEM_FAILURE_LEVEL, &spec),
             spec,
             enabled: true,
             level: 0,
             last_active_level: DEFAULT_MAX_LEVEL,
             max_level: DEFAULT_MAX_LEVEL,
-            power_on_level: DEFAULT_POWER_ON_LEVEL,
-            system_failure_level: DEFAULT_SYSTEM_FAILURE_LEVEL,
             fade_time: DEFAULT_FADE_TIME,
             fade_rate: DEFAULT_FADE_RATE,
             extended_fade_time: 0,
@@ -461,8 +485,8 @@ impl Gear {
     // IEC 62386-102 §9.13, Table 14
     // IEC 62386-209 Table 8
     pub fn power_cycle(&mut self) {
-        if self.power_on_level != DAPC_MASK_LEVEL {
-            self.level = self.power_on_level;
+        if self.power_on.level != DAPC_MASK_LEVEL {
+            self.level = self.power_on.level;
         }
         self.last_active_level = self.max_level;
         self.power_cycle_seen = true;
@@ -501,13 +525,12 @@ impl Gear {
         if format.is_some() {
             self.spec.device_types.push(DEVICE_TYPE_LUMINAIRE_INFO);
         }
-        self.luminaire = build_luminaire(&self.spec);
-        self.bank0 = build_bank0(&self.spec);
+        self.banks = ProfileBanks::build(&self.spec);
     }
 
     pub fn set_bus_unit_extension(&mut self, enabled: bool) {
         self.spec.bus_unit_extension = enabled;
-        self.bank0 = build_bank0(&self.spec);
+        self.banks.bank0 = build_bank0(&self.spec);
     }
 
     pub fn memory_location(&self, bank: u8, offset: u8) -> Option<u8> {
@@ -773,11 +796,11 @@ impl Gear {
             .unwrap_or_else(ColourSetting::mask);
     }
 
-    // IEC 62386-209 §9.2.3, §9.3.3
+    // IEC 62386-209 §11.3.2
     pub(crate) fn load_report_from_level_colour(&mut self, command: StandardCommand) {
         match command {
-            StandardCommand::QueryPowerOnLevel => self.report = self.power_on_colour,
-            StandardCommand::QuerySystemFailureLevel => self.report = self.system_failure_colour,
+            StandardCommand::QueryPowerOnLevel => self.report = self.power_on.colour,
+            StandardCommand::QuerySystemFailureLevel => self.report = self.system_failure.colour,
             _ => {}
         }
     }
@@ -821,19 +844,17 @@ impl Gear {
         }
     }
 
-    // IEC 62386-209 §9.2.2, §11.2.2, Table 1
-    pub(crate) fn store_power_on(&mut self, level: u8) {
-        self.power_on_level = level;
-        if let Some(staged) = self.take_staged_colour() {
-            self.power_on_colour = staged;
-        }
-    }
-
-    // IEC 62386-209 §9.3.2, §11.2.2, Table 2
-    pub(crate) fn store_system_failure(&mut self, level: u8) {
-        self.system_failure_level = level;
-        if let Some(staged) = self.take_staged_colour() {
-            self.system_failure_colour = staged;
+    // IEC 62386-209 §9.2.2, §9.3.2, §11.2.2, Table 1, Table 2
+    pub(crate) fn store_level_setting(&mut self, command: StandardCommand, level: u8) {
+        let staged = self.take_staged_colour();
+        let setting = match command {
+            StandardCommand::SetPowerOnLevel => &mut self.power_on,
+            StandardCommand::SetSystemFailureLevel => &mut self.system_failure,
+            _ => return,
+        };
+        setting.level = level;
+        if let Some(staged) = staged {
+            setting.colour = staged;
         }
     }
 
@@ -1302,8 +1323,9 @@ fn apply_config_write(gear: &mut Gear, command: StandardCommand, dtr0: u8) {
     match command {
         StandardCommand::SetMaxLevel => gear.set_max_level(dtr0),
         StandardCommand::SetMinLevel => gear.set_min_level(dtr0),
-        StandardCommand::SetPowerOnLevel => gear.store_power_on(dtr0),
-        StandardCommand::SetSystemFailureLevel => gear.store_system_failure(dtr0),
+        StandardCommand::SetPowerOnLevel | StandardCommand::SetSystemFailureLevel => {
+            gear.store_level_setting(command, dtr0)
+        }
         StandardCommand::SetFadeTime => gear.fade_time = dtr0,
         StandardCommand::SetFadeRate => gear.fade_rate = dtr0,
         StandardCommand::SetExtendedFadeTime => gear.extended_fade_time = dtr0,
@@ -1410,8 +1432,8 @@ fn level_query_reply(gear: &Gear, command: StandardCommand) -> Option<TransferOu
         StandardCommand::QueryActualLevel => answer(gear.actual_level_answer()),
         StandardCommand::QueryMaxLevel => answer(gear.max_level),
         StandardCommand::QueryMinLevel => answer(gear.min_level),
-        StandardCommand::QueryPowerOnLevel => answer(gear.power_on_level),
-        StandardCommand::QuerySystemFailureLevel => answer(gear.system_failure_level),
+        StandardCommand::QueryPowerOnLevel => answer(gear.power_on.level),
+        StandardCommand::QuerySystemFailureLevel => answer(gear.system_failure.level),
         StandardCommand::QueryPhysicalMinimum => answer(gear.spec.phm),
         StandardCommand::QueryFadeTimeFadeRate => {
             answer((gear.fade_time << 4) | (gear.fade_rate & 0x0F))

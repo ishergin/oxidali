@@ -47,15 +47,15 @@ fn with_gear<T>(bus: &Bus, f: impl FnOnce(&mut Gear) -> T) -> T {
 
 fn stored_colour(gear: &mut Gear, level: Level) -> &mut ColourSetting {
     match level {
-        Level::PowerOn => &mut gear.power_on_colour,
-        Level::SystemFailure => &mut gear.system_failure_colour,
+        Level::PowerOn => &mut gear.power_on.colour,
+        Level::SystemFailure => &mut gear.system_failure.colour,
     }
 }
 
 fn stored_level(gear: &Gear, level: Level) -> u8 {
     match level {
-        Level::PowerOn => gear.power_on_level,
-        Level::SystemFailure => gear.system_failure_level,
+        Level::PowerOn => gear.power_on.level,
+        Level::SystemFailure => gear.system_failure.level,
     }
 }
 
@@ -137,7 +137,7 @@ fn a_stored_mask_colour_comes_back_as_mask_values_of_the_temporary_type() {
     for (mode, caps, colour_type) in strays {
         let (mut controller, bus) = lit_gear_bus(caps);
         with_gear(&bus, |gear| {
-            gear.power_on_colour = ColourSetting::mask();
+            gear.power_on.colour = ColourSetting::mask();
             gear.pending_mode = mode;
             (gear.pending_x, gear.pending_y, gear.pending_ct) = (1000, 2000, STRAY_MIREK);
             gear.rgbwaf.pending_levels = [7; 6];
@@ -146,7 +146,7 @@ fn a_stored_mask_colour_comes_back_as_mask_values_of_the_temporary_type() {
 
         write(&mut controller, Level::PowerOn);
 
-        let kept = with_gear(&bus, |gear| gear.power_on_colour);
+        let kept = with_gear(&bus, |gear| gear.power_on.colour);
         assert_eq!(kept, mask_of(colour_type), "{mode:?}: the gear still changes no colour at power on");
         assert_written_and_light_untouched(&bus, Level::PowerOn);
     }

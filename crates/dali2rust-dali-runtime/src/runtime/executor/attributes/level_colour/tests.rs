@@ -210,16 +210,69 @@ fn a_stored_mask_colour_is_kept_by_charging_mask_of_the_temporary_type() {
     assert_script_consumed(&transport);
 }
 
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §3.13
 #[test]
-fn a_level_query_that_loads_no_report_stores_nothing() {
+fn a_level_query_that_loads_no_report_names_silence_and_a_violation_apart() {
+    for (violated, outcome) in [(false, LEVEL_COLOUR_UNANSWERED), (true, LEVEL_COLOUR_CONTENDED)] {
+        let mock = MockDaliTransport::new();
+        expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
+        let query = standard_frame(POWER_ON.query);
+        if violated {
+            mock.expect_forward_frame_corrupted_in_window(query);
+        } else {
+            mock.expect_forward_frame_with_backward(query, None);
+        }
+
+        let (execution, transport) = write_level(mock, POWER_ON);
+
+        assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(outcome)));
+        assert_eq!(execution.confirmed.power_on_level, None);
+        assert_script_consumed(&transport);
+    }
+}
+
+#[test]
+fn a_report_type_that_stays_silent_stores_nothing() {
     let mock = MockDaliTransport::new();
     expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
-    mock.expect_forward_frame_with_backward(standard_frame(POWER_ON.query), None);
+    mock.expect_forward_frame_with_backward(standard_frame(POWER_ON.query), Some(OLD_LEVEL));
+    for _ in 0..COLOUR_VALUE_ASKS {
+        expect_narrow_colour_value_sample(&mock, SHORT, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE, None);
+    }
 
     let (execution, transport) = write_level(mock, POWER_ON);
 
-    assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNCONFIRMED)));
+    assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNANSWERED)));
     assert_eq!(execution.confirmed.power_on_level, None);
+    assert_script_consumed(&transport);
+}
+
+// IEC 62386-209 §11.3.4.1, Table 8, Table 11
+#[test]
+fn a_stored_mask_colour_under_a_primary_n_temporary_masks_all_six_primaries() {
+    let mock = MockDaliTransport::new();
+    expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_PRIMARY_N));
+    expect_stored_type(&mock, POWER_ON, COLOUR_TYPE_BYTE_MASK);
+    for primary in 0..PRIMARY_N_COUNT {
+        let operands = [DT8_COLOUR_VALUE_LEVEL_MASK, DT8_COLOUR_VALUE_LEVEL_MASK, primary];
+        let dtrs = [SpecialCommand::Dtr0(operands[0]), SpecialCommand::Dtr1(operands[1]), SpecialCommand::Dtr2(primary)];
+        for dtr in dtrs {
+            mock.expect_forward_frame(special_frame(dtr));
+        }
+        let queries = [StandardCommand::QueryContentDtr0, StandardCommand::QueryContentDtr1, StandardCommand::QueryContentDtr2];
+        for (query, operand) in queries.into_iter().zip(operands) {
+            mock.expect_forward_frame_with_backward(standard_frame(query), Some(operand));
+        }
+        expect_dt8_command(&mock, Dt8Command::SetTemporaryPrimaryNDimLevel);
+    }
+    expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_PRIMARY_N));
+    expect_wide_colour_value_sample(&mock, SHORT, COLOUR_VALUE_TEMPORARY_PRIMARY_N_0, MASK_WORD_ANSWER);
+    expect_store(&mock, POWER_ON);
+
+    let (execution, transport) = write_level(mock, POWER_ON);
+
+    assert_level_confirmed(&execution, POWER_ON);
     assert_script_consumed(&transport);
 }
 
