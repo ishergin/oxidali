@@ -6,7 +6,7 @@ use dali2rust_api::ha::{
 };
 use dali2rust_bus::worker_counters::bump;
 use dali2rust_contracts::msg::{ErrorCode, OperationWorkerSignalEvent};
-use dali2rust_domain::registry::{HaPublishReadPort, HomeAssistantSettingsView};
+use dali2rust_domain::registry::{HaInputView, HaPublishReadPort, HomeAssistantSettingsView};
 
 use crate::runtime::bus_out::publish_event;
 use crate::runtime::ha_out::HaOut;
@@ -77,18 +77,26 @@ pub(super) fn plan_discovery(ports: &MqttWorkerPorts, adapter_count: u8, workflo
 
 fn plan_adapter(pending: &mut Vec<(u8, Entity)>, port: &dyn HaPublishReadPort, adapter_id: u8) {
     let mut plan = |entity| pending.push((adapter_id, entity));
-    for view in port.ha_input_views(adapter_id) {
-        for instance in &view.instances {
-            if instance.instance_type.and_then(input_component).is_some() {
-                plan(Entity::Input(view.short_address, instance.instance_number));
-            }
-        }
-    }
+    port.ha_input_views(adapter_id).iter().flat_map(input_entities).for_each(&mut plan);
     port.ha_lamp_views(adapter_id).iter().for_each(|lamp| plan(Entity::Lamp(lamp.virtual_lamp_id)));
     port.ha_group_views(adapter_id).iter().for_each(|group| plan(Entity::Group(group.group_id)));
     plan(Entity::SceneSelect);
     port.ha_retracted_lamp_ids(adapter_id).into_iter().for_each(|id| plan(Entity::Lamp(id)));
     port.ha_retracted_group_ids(adapter_id).into_iter().for_each(|id| plan(Entity::Group(id)));
+    port.ha_retracted_input_views(adapter_id).iter().flat_map(input_entities).for_each(plan);
+}
+
+pub(super) fn input_entities(view: &HaInputView) -> impl Iterator<Item = Entity> + '_ {
+    view.instances
+        .iter()
+        .filter(|instance| instance.instance_type.and_then(input_component).is_some())
+        .map(|instance| Entity::Input(view.short_address, instance.instance_number))
+}
+
+pub(super) fn input_view(port: &dyn HaPublishReadPort, adapter_id: u8, short_address: u8) -> Option<HaInputView> {
+    port.ha_input_view(adapter_id, short_address).or_else(|| {
+        port.ha_retracted_input_views(adapter_id).into_iter().find(|view| view.short_address == short_address)
+    })
 }
 
 pub(super) fn advance_job(out: &mut HaOut<'_>, job: &mut Option<DiscoveryJob>) {
@@ -266,7 +274,7 @@ fn build_scene_select(out: &HaOut<'_>, adapter_id: u8) -> Announcement {
 
 #[inline(never)]
 fn build_input(out: &HaOut<'_>, adapter_id: u8, short_address: u8, instance_number: u8) -> Option<Announcement> {
-    let view = out.ports.read_port.ha_input_view(adapter_id, short_address)?;
+    let view = input_view(out.ports.read_port.as_ref(), adapter_id, short_address)?;
     let instance_type = view.instances.iter().find(|i| i.instance_number == instance_number)?.instance_type?;
     let component = input_component(instance_type)?;
     let topic = out.topics.discovery_topic(

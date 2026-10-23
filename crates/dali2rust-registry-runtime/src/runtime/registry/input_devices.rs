@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use dali2rust_contracts::msg::{
     Dali103ScanProgressEvent, DaliInputEventObservedEvent, InputEventKind,
 };
+use dali2rust_domain::registry::HaInputInstanceView;
 use dali2rust_platform::slice_store::SliceKey;
 use dali2rust_platform::small_sort::insertion_sort_by;
 
@@ -150,6 +151,16 @@ impl InputDeviceRecord {
             .find(|i| i.instance_number == instance_number)
     }
 
+    pub(crate) fn instance_views(&self) -> Vec<HaInputInstanceView> {
+        self.instances
+            .iter()
+            .map(|i| HaInputInstanceView {
+                instance_number: i.instance_number,
+                instance_type: i.instance_type,
+            })
+            .collect()
+    }
+
     pub(crate) fn apply_scan_progress(
         &mut self,
         progress: &Dali103ScanProgressEvent,
@@ -202,6 +213,7 @@ impl InputDeviceRecord {
 mod tests {
     use super::*;
     use dali2rust_contracts::msg::InputEventKind;
+    use dali2rust_domain::registry::HaPublishReadPort;
 
     fn progress(instance_count: u8) -> Dali103ScanProgressEvent {
         Dali103ScanProgressEvent {
@@ -261,6 +273,31 @@ mod tests {
         assert!(
             !store.apply_instance_readback(0, 3, 12, &typed_readback(1), 500),
             "an instance past the declared count is not invented"
+        );
+    }
+
+    #[test]
+    fn a_forgotten_device_leaves_its_instances_to_retract_until_it_is_back() {
+        let store = RegistryStore::with_adapter_count(1);
+        assert!(store.apply_input_scan_progress(&progress(2), 500));
+        assert!(store.apply_instance_readback(0, 3, 0, &typed_readback(1), 500));
+        assert!(store.apply_instance_readback(0, 3, 1, &typed_readback(3), 500));
+        assert!(store.ha_retracted_input_views(0).is_empty(), "a live device retracts nothing");
+
+        assert!(store.forget_input_device(0, 3));
+        let retracted = store.ha_retracted_input_views(0);
+        assert_eq!(retracted.len(), 1);
+        assert_eq!(retracted[0].short_address, 3);
+        assert!(!retracted[0].ha_expose, "a forgotten device is never announced");
+        let instances: Vec<_> =
+            retracted[0].instances.iter().map(|i| (i.instance_number, i.instance_type)).collect();
+        assert_eq!(instances, [(0, Some(1)), (1, Some(3))]);
+        assert!(store.ha_retracted_input_views(1).is_empty(), "the other adapter forgot nothing");
+
+        assert!(store.apply_input_scan_progress(&progress(2), 600));
+        assert!(
+            store.ha_retracted_input_views(0).is_empty(),
+            "a device back at its address is announced, not retracted"
         );
     }
 
@@ -404,14 +441,16 @@ impl RegistryStore {
     }
 
     pub(crate) fn forget_input_device(&self, adapter_id: u8, short_address: u8) -> bool {
+        let key = (adapter_id, short_address);
         let mut g = self.write_inner();
-        let removed = g.input_devices.remove(&(adapter_id, short_address)).is_some();
-        if removed {
-            g.input_devices_revision = g.input_devices_revision.saturating_add(1);
+        let Some(record) = g.input_devices.remove(&key) else {
+            return false;
+        };
+        g.retracted_inputs.insert(key, record.instance_views());
+        g.input_devices_revision = g.input_devices_revision.saturating_add(1);
         drop(g);
         self.dirty.mark_input_devices_dirty();
-        }
-        removed
+        true
     }
 }
 

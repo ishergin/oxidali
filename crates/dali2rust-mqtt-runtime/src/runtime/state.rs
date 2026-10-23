@@ -2,7 +2,7 @@ use dali2rust_api::ha::{
     group_state_json, input_event_state_payload, light_state_json, scene_select_state,
 };
 
-use crate::runtime::discovery::{announce, Entity, Gate};
+use crate::runtime::discovery::{announce, input_entities, input_view, Entity, Gate};
 use crate::runtime::ha_out::HaOut;
 
 pub(super) fn publish_runtime_state(out: &mut HaOut<'_>, body: &dali2rust_contracts::msg::RuntimeStateChangedEvent) {
@@ -138,12 +138,10 @@ fn exposed_input_event(
 
 #[inline(never)]
 pub(super) fn republish_input_configs(out: &mut HaOut<'_>, adapter_id: u8, short_address: u8) {
-    let Some(view) = out.ports.read_port.ha_input_view(adapter_id, short_address) else {
-        out.session.forget_inputs(adapter_id, short_address);
+    let Some(view) = input_view(out.ports.read_port.as_ref(), adapter_id, short_address) else {
         return;
     };
-    for instance in &view.instances {
-        let entity = Entity::Input(short_address, instance.instance_number);
+    for entity in input_entities(&view) {
         announce(out, adapter_id, entity, Gate::IfChanged);
     }
 }

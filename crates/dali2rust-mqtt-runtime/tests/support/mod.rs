@@ -57,6 +57,7 @@ pub struct StubHaReadPort {
     scenes: Mutex<Vec<HaSceneView>>,
     binding_short: Mutex<Option<u8>>,
     inputs: Mutex<Vec<HaInputView>>,
+    retracted_inputs: Mutex<Vec<HaInputView>>,
     id_spans: Mutex<(u8, u8)>,
 }
 
@@ -81,6 +82,7 @@ impl StubHaReadPort {
             scenes: Mutex::new(Vec::new()),
             binding_short: Mutex::new(None),
             inputs: Mutex::new(Vec::new()),
+            retracted_inputs: Mutex::new(Vec::new()),
             id_spans: Mutex::new((LAMP_ID_SPAN, GROUP_ID_SPAN)),
         })
     }
@@ -114,6 +116,20 @@ impl StubHaReadPort {
         inputs.retain(|v| v.short_address != view.short_address);
         inputs.push(view);
         inputs.sort_by_key(|v| v.short_address);
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file removes inputs")]
+    pub fn remove_input_device(&self, short_address: u8) {
+        let mut inputs = self.inputs.lock().unwrap();
+        let Some(at) = inputs.iter().position(|v| v.short_address == short_address) else {
+            return;
+        };
+        let removed = inputs.remove(at);
+        self.retracted_inputs.lock().unwrap().push(HaInputView {
+            name: None,
+            ha_expose: false,
+            ..removed
+        });
     }
 
     #[allow(dead_code, reason = "one binary per test file")]
@@ -229,6 +245,14 @@ impl HaPublishReadPort for StubHaReadPort {
             .collect();
         let span = self.id_spans.lock().unwrap().1;
         (0..span).filter(|id| !exposed.contains(id)).collect()
+    }
+
+    fn ha_retracted_input_views(&self, adapter_id: u8) -> Vec<HaInputView> {
+        if adapter_id == 0 {
+            self.retracted_inputs.lock().unwrap().clone()
+        } else {
+            Vec::new()
+        }
     }
 
     fn ha_active_scene(&self, _adapter_id: u8) -> Option<u8> {

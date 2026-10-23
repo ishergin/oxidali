@@ -8,7 +8,7 @@ use dali2rust_platform::mqtt::{
     MqttClient, MqttError, MqttLastWill, MqttQos, MqttSessionConfig,
 };
 
-use crate::runtime::discovery::{Entity, EntityKey};
+use crate::runtime::discovery::EntityKey;
 use crate::runtime::rule_topics::{BridgeFilters, RuleFollow};
 use crate::runtime::subscriptions::Subscriptions;
 use crate::runtime::worker::MqttWorkerPorts;
@@ -124,12 +124,6 @@ impl Session {
 
     pub(super) fn forget(&mut self, key: EntityKey) -> bool {
         self.announced.remove(&key).is_some()
-    }
-
-    pub(super) fn forget_inputs(&mut self, adapter_id: u8, short_address: u8) {
-        self.announced.retain(|&(adapter, entity), _| {
-            adapter != adapter_id || !matches!(entity, Entity::Input(short, _) if short == short_address)
-        });
     }
 }
 

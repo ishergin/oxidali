@@ -339,6 +339,12 @@ mod tests {
         fn ha_retracted_group_ids(&self, _adapter_id: u8) -> Vec<u8> {
             Vec::new()
         }
+        fn ha_retracted_input_views(
+            &self,
+            _adapter_id: u8,
+        ) -> Vec<dali2rust_domain::registry::HaInputView> {
+            Vec::new()
+        }
         fn ha_active_scene(&self, _adapter_id: u8) -> Option<u8> {
             None
         }
