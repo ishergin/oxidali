@@ -47,7 +47,9 @@ use dali2rust_api::http::{
 use dali2rust_api::http::handlers::config_transfer::ImportRefusal;
 use dali2rust_bus::BusPublisher;
 use dali2rust_domain::registry::{AdapterReadPort, RegistryReadPort};
-use dali2rust_operations_runtime::{ApplyOrchestratorCounters, OperationTrackerCounters};
+use dali2rust_operations_runtime::{
+    ApplyOrchestratorCounters, OperationTotals, OperationTrackerCounters,
+};
 use dali2rust_platform::clock::Clock;
 use dali2rust_platform::heap::{HeapStats, HeapStatsPort};
 use dali2rust_platform::net::{LinkStats, NetworkLink};
@@ -680,12 +682,10 @@ fn stats_operations_dto(c: &OperationTrackerCounters) -> StatsOperationsDto {
     let failed = c.failed.load(Relaxed);
     let timed_out = c.timed_out.load(Relaxed);
     let cancelled = c.cancelled.load(Relaxed);
-    let terminal = succeeded
-        .wrapping_add(failed)
-        .wrapping_add(timed_out)
-        .wrapping_add(cancelled);
+    let accepted = c.accepted.load(Relaxed);
+    let totals = OperationTotals { accepted, succeeded, failed, timed_out, cancelled };
     StatsOperationsDto {
-        running: c.accepted.load(Relaxed).wrapping_sub(terminal),
+        running: totals.in_flight(),
         succeeded_total: succeeded,
         failed_total: failed,
         timed_out_total: timed_out,
