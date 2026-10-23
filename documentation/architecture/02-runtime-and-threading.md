@@ -27,10 +27,9 @@ registry locking → [06](06-registry-and-persistence.md).
   `dali2rust_bsp::stack_runner`: the slice import on one `StackRunner`, a WebSocket
   client's sender on a `RunnerPool` runner it holds for its session; a thread per occasion
   is kept for occasions that stay rare, like an update.
-- Every spawn site, through `esp_thread` or a direct `std::thread`, needs a line in
-  `scripts/spawn_sites.txt` naming its task and its class: boot-time worker, runner,
-  host-only thread, or occasion. A thread per occasion is only for occasions that stay
-  rare; `verify_spawn_sites.py` fails on a call without a line and on a line without a call.
+- A new spawn site, through `esp_thread` or a direct `std::thread`, needs its line in
+  `scripts/spawn_sites.txt`, and an `occasion` line only for an occasion that stays rare
+  ([10](10-build-release-and-tooling.md) §Merge gates).
 - `registry-hydrate` is a one-shot boot thread, joined before any worker starts
   ([06](06-registry-and-persistence.md)).
 - The P4 is dual-core and FreeRTOS runs SMP: two tasks, or a task and the PHY interrupt,

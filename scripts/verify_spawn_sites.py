@@ -29,6 +29,10 @@ SPAWNER = re.compile(
 CFG_TEST = re.compile(r"#\s*\[\s*cfg\s*\(\s*(?:all\s*\(\s*)?test\s*[,)]")
 INNER_CFG_TEST = re.compile(r"#\s*!\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]")
 ATTRIBUTE = re.compile(r"\s*#\s*\[")
+ITEM_HEAD = re.compile(r"(?:pub\b(?:\s*\([^)]*\))?\s*)?(\w+)")
+ITEM_WORDS = frozenset(
+    "fn mod impl use const static struct enum trait type union unsafe extern async default macro_rules".split()
+)
 MOD_DECLARATION = re.compile(r"\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;")
 NAME_LITERAL = re.compile(r'c"([^"\\]*)"')
 DIRECT_THREAD = re.compile(r"\bthread::(spawn|scope|Builder)\b")
@@ -77,7 +81,7 @@ def after_attributes(code, i):
     while found:
         i = close_of(code, found.end() - 1) + 1
         found = ATTRIBUTE.match(code, i)
-    return i
+    return len(code) - len(code[i:].lstrip())
 
 
 def item_end(code, start):
@@ -95,6 +99,11 @@ def item_end(code, start):
     return len(code)
 
 
+def starts_item(code, start):
+    head = ITEM_HEAD.match(code, start)
+    return code.startswith("{", start) or bool(head and head.group(1) in ITEM_WORDS)
+
+
 def drop_test_items(code):
     if INNER_CFG_TEST.search(code):
         return None, []
@@ -102,6 +111,8 @@ def drop_test_items(code):
     for found in CFG_TEST.finditer(code):
         attribute_end = close_of(code, code.index("[", found.start())) + 1
         start = after_attributes(code, attribute_end)
+        if not starts_item(code, start):
+            continue
         end = item_end(code, start)
         declared = MOD_DECLARATION.match(code[start:end])
         modules.extend([declared.group(1)] if declared else [])
