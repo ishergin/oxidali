@@ -282,7 +282,10 @@ mod reload_pacing_tests {
     const ADAPTERS: u8 = 2;
     const LAMPS_PER_ADAPTER: u8 = 64;
     const GROUPS_PER_ADAPTER: u8 = 16;
-    const ANNOUNCED_TO_THE_HUB: u32 = 2 * (64 + 16 + 1);
+    const GROUP_MATRICES_PER_ADAPTER: u8 = 1;
+    const RECORDS_PER_ADAPTER: u8 =
+        LAMPS_PER_ADAPTER + GROUPS_PER_ADAPTER + GROUP_MATRICES_PER_ADAPTER;
+    const ANNOUNCED_TO_THE_HUB: u32 = ADAPTERS as u32 * RECORDS_PER_ADAPTER as u32;
     const IMPORT_ACCEPTED_WITHIN: Duration = Duration::from_secs(10);
     const DRAINED_WITHIN: Duration = Duration::from_secs(12);
     const WS_FANOUT: &str = "ws_fanout";

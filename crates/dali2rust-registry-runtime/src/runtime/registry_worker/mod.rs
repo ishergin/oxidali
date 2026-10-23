@@ -46,12 +46,15 @@ const RECV_TIMEOUT: Duration = Duration::from_millis(250);
 pub const HELD_SLICE_REREAD_INTERVAL: Duration = Duration::from_secs(2);
 pub const ANNOUNCEMENT_INBOX_FLOOR: usize = 64;
 pub const ANNOUNCEMENT_PARK_WINDOW: Duration = Duration::from_secs(1);
-const ANNOUNCEMENT_SHARE_OF_INBOX: usize = 2;
-const WINDOWS_PER_PARK: u128 = ANNOUNCEMENT_PARK_WINDOW.as_millis() / RECV_TIMEOUT.as_millis();
+pub const ANNOUNCEMENT_SHARE_OF_INBOX: usize = 2;
+const WINDOWS_STARTING_IN_A_PARK: usize =
+    (ANNOUNCEMENT_PARK_WINDOW.as_millis() / RECV_TIMEOUT.as_millis()) as usize + 1;
 pub(crate) const ANNOUNCEMENT_PACING: AnnouncementPacing = AnnouncementPacing {
-    per_window: ANNOUNCEMENT_INBOX_FLOOR / ANNOUNCEMENT_SHARE_OF_INBOX / WINDOWS_PER_PARK as usize,
+    per_window: ANNOUNCEMENT_INBOX_FLOOR / ANNOUNCEMENT_SHARE_OF_INBOX / WINDOWS_STARTING_IN_A_PARK,
     window: RECV_TIMEOUT,
 };
+pub const ANNOUNCEMENTS_PER_PARK: usize =
+    ANNOUNCEMENT_PACING.per_window * WINDOWS_STARTING_IN_A_PARK;
 
 
 fn command_flush_interval(store: &RegistryStore) -> Duration {
@@ -800,6 +803,18 @@ mod tests {
         drop(lamps);
         let watch = store.watch_reload(&[SliceKey::VirtualLamps { adapter_id: 0 }], 1);
         store.queue_announcements(store.replaced_entities(watch));
+    }
+
+    #[test]
+    fn a_park_overlapping_five_lazy_windows_still_fits_half_the_inbox_floor() {
+        let window_ms = super::RECV_TIMEOUT.as_millis();
+        let park_ms = super::ANNOUNCEMENT_PARK_WINDOW.as_millis();
+        let overlapped = usize::try_from(park_ms / window_ms + 1).expect("a window count");
+        let worst = ANNOUNCEMENT_PACING.per_window * overlapped;
+        let floor = super::ANNOUNCEMENT_INBOX_FLOOR;
+        let share = super::ANNOUNCEMENT_SHARE_OF_INBOX;
+        assert!(worst * share <= floor, "{worst} per park over half of {floor}");
+        assert_eq!(worst, super::ANNOUNCEMENTS_PER_PARK);
     }
 
     #[test]

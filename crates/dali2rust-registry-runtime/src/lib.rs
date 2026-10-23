@@ -35,7 +35,8 @@ pub use runtime::registry_events_worker::REGISTRY_EVENTS_HANDLED_EVENTS;
 pub use runtime::registry::publish::REGISTRY_REQUIRED_EVENTS;
 pub use runtime::registry_worker::{
     spawn_registry_worker, RegistryCommandCounters, RegistryEventsCounters,
-    RegistryWorkerCounters, SlicePersistence, ANNOUNCEMENT_INBOX_FLOOR, ANNOUNCEMENT_PARK_WINDOW,
+    RegistryWorkerCounters, SlicePersistence, ANNOUNCEMENTS_PER_PARK, ANNOUNCEMENT_INBOX_FLOOR,
+    ANNOUNCEMENT_PARK_WINDOW, ANNOUNCEMENT_SHARE_OF_INBOX,
     HELD_SLICE_REREAD_INTERVAL,
     REGISTRY_WORKER_HANDLED_COMMANDS,
 };
