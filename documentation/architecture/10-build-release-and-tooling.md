@@ -210,6 +210,7 @@ unchecked image, and `hil flash` refuses one unless told `--allow-red-isr`.
 | `verify_fixed_bus_guardrails.sh` | no `String`/`Vec`/`serde_json::Value` in bus messages, no JSON in registry state; no crate but `dali2rust-api` lists `serde_json` outside its dev-dependencies |
 | `verify_comments.py` | no comment outside the one-line markers; budget `scripts/comment_budget.txt` |
 | `verify_imports_at_module_level.py` | no `use` inside a function body, over the same trees as `#[path]` |
+| `verify_spawn_sites.py` | every thread start in non-test source — an `esp_thread` spawn or a direct `std::thread` — has its line in `scripts/spawn_sites.txt`, every line has its call, and thread-per-occasion lines stay within a small cap ([02](02-runtime-and-threading.md)) |
 | `verify_web_assets.sh` | every embedded file present, `tsc -b`, UI tests |
 | `verify_web_classes_styled.py` | every `web/app` class has a CSS rule |
 | `verify_design_vocabulary.py` | every card's `:root` is the one in `tokens.css`; every class a card uses has a rule; a card's only dates are ones its mocked UI shows, each with its time, and none in a comment; `web/app` speaks card vocabulary |

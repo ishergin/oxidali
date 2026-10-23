@@ -175,6 +175,9 @@ Detail: [02](documentation/architecture/02-runtime-and-threading.md),
   `try_spawn_named_stack_in` for anything a client can trigger, each with the stack home
   07 §Placement gives the thread. The task name comes from there, never from
   `std::thread::Builder::name`.
+- A std thread spawned and joined leaks internal SRAM on ESP-IDF: work that recurs with
+  traffic runs on `dali2rust_bsp::stack_runner` (`StackRunner`, `RunnerPool`), and a new
+  spawn site needs a line in `scripts/spawn_sites.txt`.
 - Wait with blocking `recv()` / `recv_timeout()` on the primary channel and drain other
   inboxes with `try_recv()` afterwards. Never a `try_recv()` + `sleep` loop, never
   `thread::park()` on main; idle back-off ≥ 10 ms, heartbeat ≥ 1 s.
