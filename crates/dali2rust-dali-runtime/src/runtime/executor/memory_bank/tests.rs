@@ -337,9 +337,9 @@ fn a_mangled_answer_mid_bank_realigns_instead_of_shifting() {
     assert_script_consumed(&transport);
 }
 
-// IEC 62386-102 §9.10.4, Table 9
+// IEC 62386-102 §9.10.4, §9.10.6, Table 9
 #[test]
-fn a_read_lost_at_the_reserved_location_is_caught_by_the_next_proof() {
+fn a_lag_after_bank_0s_reserved_location_arms_the_pointer_at_0x02_without_a_reread() {
     let mock = MockDaliTransport::new();
     let short = 5;
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
@@ -348,9 +348,7 @@ fn a_read_lost_at_the_reserved_location_is_caught_by_the_next_proof() {
     mock.expect_forward_frame_with_backward(read, Some(0x1C));
     mock.expect_forward_frame_with_backward(read, None);
     expect_pointer_check(&mock, short, 0, Some(1));
-    expect_rearmed_chunk(&mock, short, 0, 1);
-    mock.expect_forward_frame_with_backward(read, None);
-    expect_pointer_check(&mock, short, 0, Some(2));
+    expect_rearmed_chunk(&mock, short, 0, 2);
     mock.expect_forward_frame_with_backward(read, Some(0x01));
     mock.expect_forward_frame_with_backward(read, Some(0x00));
     expect_pointer_check(&mock, short, 0, Some(4));
@@ -360,8 +358,8 @@ fn a_read_lost_at_the_reserved_location_is_caught_by_the_next_proof() {
 
     assert_eq!(
         execution.bytes,
-        vec![0x1C, 0xFF, 0x01, 0x00],
-        "the pointer still at 0x01 shows the silence was a lost READ, so 0x01 is read again"
+        vec![0x1C, MEMORY_NO_ANSWER_PLACEHOLDER, 0x01, 0x00],
+        "bank 0's 0x01 is reserved: a lost READ and a gear that holds DTR0 there both leave 0xFF"
     );
     assert_eq!(execution.error, None);
     assert_script_consumed(&transport);
@@ -474,58 +472,32 @@ fn an_indicator_byte_whose_read_was_lost_is_read_again_not_shifted() {
     assert_script_consumed(&transport);
 }
 
-// IEC 62386-102 §9.10.4, Table 9
+// IEC 62386-102 §9.10.2, Table 8, Table 10
 #[test]
-fn a_gear_that_holds_dtr0_on_the_reserved_location_keeps_the_placeholder_and_reads_on_from_0x02() {
-    let mock = MockDaliTransport::new();
-    let short = 5;
-    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
-    expect_prepare(&mock, short, 0, 0);
-    expect_pointer_check(&mock, short, 0, Some(0));
-    mock.expect_forward_frame_with_backward(read, Some(0x1C));
-    mock.expect_forward_frame_with_backward(read, None);
-    expect_pointer_check(&mock, short, 0, Some(1));
-    expect_rearmed_chunk(&mock, short, 0, 1);
-    mock.expect_forward_frame_with_backward(read, None);
-    expect_pointer_check(&mock, short, 0, Some(1));
-    expect_rearmed_chunk(&mock, short, 0, 2);
-    mock.expect_forward_frame_with_backward(read, Some(0x01));
-    mock.expect_forward_frame_with_backward(read, Some(0x00));
-    expect_pointer_check(&mock, short, 0, Some(4));
-
-    let (transport, mut controller) = setup_controller(mock);
-    let execution = read_memory_bank(&mut controller, short, 0, 0, 4);
-
-    assert_eq!(
-        execution.bytes,
-        vec![0x1C, MEMORY_NO_ANSWER_PLACEHOLDER, 0x01, 0x00],
-        "a pointer that lags again after 0x01 was read twice is the gear's own, so 0x01 stays a placeholder"
-    );
-    assert_eq!(execution.error, None);
-    assert_script_consumed(&transport);
-}
-
-#[test]
-fn an_indicator_byte_whose_read_was_lost_twice_costs_its_value_not_the_bank() {
+fn an_indicator_byte_whose_read_keeps_getting_lost_fails_rather_than_reading_as_a_placeholder() {
     let mock = MockDaliTransport::new();
     let short = 5;
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
     expect_prepare(&mock, short, 1, 0);
     expect_pointer_check(&mock, short, 1, Some(0));
     mock.expect_forward_frame_with_backward(read, Some(0x10));
-    for rearm_at in [1, 2] {
-        mock.expect_forward_frame_with_backward(read, None);
+    mock.expect_forward_frame_with_backward(read, None);
+    for _ in 0..BANK_ARM_RETRIES {
         expect_pointer_check(&mock, short, 1, Some(1));
-        expect_rearmed_chunk(&mock, short, 1, rearm_at);
+        expect_rearmed_chunk(&mock, short, 1, 1);
+        mock.expect_forward_frame_with_backward(read, None);
     }
-    mock.expect_forward_frame_with_backward(read, Some(0x55));
-    expect_pointer_check(&mock, short, 1, Some(3));
+    expect_pointer_check(&mock, short, 1, Some(1));
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = read_memory_bank(&mut controller, short, 1, 0, 3);
 
-    assert_eq!(execution.bytes, vec![0x10, MEMORY_NO_ANSWER_PLACEHOLDER, 0x55]);
-    assert_eq!(execution.error, None);
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(MEMORY_POINTER_UNCONFIRMED)),
+        "outside bank 0 the byte at 0x01 may be implemented, so a READ it never answered is no value"
+    );
+    assert!(execution.bytes.is_empty());
     assert_script_consumed(&transport);
 }
 

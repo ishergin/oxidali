@@ -199,13 +199,14 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   `memory_bank_pointer_unconfirmed` when it went unanswered, `bus_contended` when it was
   violated. The read closes by checking both registers the same way (102 §9.10.4).
 - A silent READ at offset 0x01 reads as a placeholder and ends its chunk: the next
-  chunk's proof shows whether the READ reached the gear. Only a pointer one READ behind,
-  the bank held and `DTR0` still at 0x01, has 0x01 read again. When that READ is silent
-  too and the pointer lags again, the gear is one that does not advance `DTR0` on a
-  location it lacks, as 102 §9.10.4 requires: the placeholder stays and the pointer is
-  armed at 0x02, so an indicator byte whose READ was lost twice reads as 0xFF. Any other
-  failed proof follows the rule above, and a read that ends at 0x01 is judged by its
-  closing check.
+  chunk's proof shows whether the READ reached the gear. A pointer one READ behind, the
+  bank held and `DTR0` still at 0x01, means the READ was lost or the gear does not advance
+  `DTR0` on a location it lacks, against 102 §9.10.4. In bank 0, whose 0x01 is reserved
+  (Table 9), neither leaves anything to read: the placeholder stays and the pointer is
+  armed at 0x02. In any other bank 0x01 is the indicator byte and may be implemented
+  (Tables 8 and 10), so it is read again, and a READ it never answers fails the read
+  rather than reading as 0xFF. Any other failed proof follows the rule above, and a read
+  that ends at 0x01 is judged by its closing check.
   These re-arms and the ones after an arm share two per read. Any other READ that
   answers nothing, answers with a violation,
   crosses a foreign frame or fails yields no value and ends its chunk: the pointer is

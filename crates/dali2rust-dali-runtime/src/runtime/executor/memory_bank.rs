@@ -21,6 +21,7 @@ const BANK0_IDENTITY_LAST_OFFSET: u16 =
 const BANK1_PROFILE_LAST_OFFSET: u16 =
     dali2rust_domain::dali::banks::BANK1_FORMAT_GATE_LAST_OFFSET as u16;
 const MEMORY_RESERVED_OFFSET: u16 = 0x01;
+const RESERVED_LOCATION_BANK: u8 = 0;
 const MEMORY_NO_ANSWER_PLACEHOLDER: u8 = 0xFF;
 const MEMORY_READ_LOCATION_RETRIES: u8 = 2;
 const BANK_ARM_RETRIES: u8 = 2;
@@ -309,7 +310,6 @@ struct ChunkCursor {
     done: u16,
     freshly_armed: bool,
     placeholder_pending: bool,
-    placeholder_reread: bool,
     rearms: u8,
     resume: Option<u16>,
     evidence: ResumeEvidence,
@@ -324,7 +324,6 @@ impl ChunkCursor {
             done: 0,
             freshly_armed: true,
             placeholder_pending: false,
-            placeholder_reread: false,
             rearms: 0,
             resume: None,
             evidence: ResumeEvidence::NONE,
@@ -385,9 +384,9 @@ impl ChunkCursor {
         arm_memory_pointer(controller, self.address, self.bank, resume)
     }
 
-    // IEC 62386-102 §9.10.4
-    fn placeholder_resume(&mut self) -> u16 {
-        if std::mem::replace(&mut self.placeholder_reread, true) {
+    // IEC 62386-102 §9.10.4, §9.10.6, Table 9
+    const fn placeholder_resume(&self) -> u16 {
+        if self.bank == RESERVED_LOCATION_BANK {
             MEMORY_RESERVED_OFFSET + 1
         } else {
             MEMORY_RESERVED_OFFSET
