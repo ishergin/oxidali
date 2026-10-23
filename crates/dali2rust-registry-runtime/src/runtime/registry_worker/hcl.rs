@@ -59,9 +59,8 @@ pub(super) fn handle_hcl_schedule_upsert(ctx: &CommandCtx<'_>, body: &HclSchedul
 }
 
 fn refuse_chunk(ctx: &CommandCtx<'_>, terminal: bool, rejection: HclChunkRejection) {
-    ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
     let (code, message) = chunk_rejection_error(rejection);
-    ctx.confirm_failed(code, message);
+    ctx.reject_with(code, message);
     if terminal {
         publish_config_write_signal(
             ctx.publisher,
@@ -78,8 +77,7 @@ pub(super) fn handle_hcl_schedule_delete(ctx: &CommandCtx<'_>, body: &HclSchedul
         return;
     }
     if !ctx.store.remove_hcl_schedule(&body.schedule_id) {
-        ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        ctx.confirm_failed(ErrorCode::NotFound, "schedule_not_found");
+        ctx.reject_with(ErrorCode::NotFound, "schedule_not_found");
         return;
     }
     let schedule_id = body.schedule_id.clone();
@@ -120,8 +118,7 @@ fn count_switch(counters: &RegistryCommandCounters, joined_waiting_write: bool) 
 
 fn confirm_switch(ctx: &CommandCtx<'_>, outcome: HclSwitchOutcome) {
     if outcome == HclSwitchOutcome::Unknown {
-        ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        ctx.confirm_failed(ErrorCode::NotFound, "schedule_not_found");
+        ctx.reject_with(ErrorCode::NotFound, "schedule_not_found");
     } else {
         ctx.confirm_ok();
     }

@@ -61,8 +61,7 @@ fn handle_vl_bind_or_rebind(
         return;
     }
     if !ctx.store.apply_virtual_lamp_bind(adapter_id, virtual_lamp_id, physical_short_address) {
-        ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        ctx.confirm_failed(ErrorCode::Conflict, reject_message);
+        ctx.reject_with(ErrorCode::Conflict, reject_message);
         return;
     }
     publish_virtual_lamp_changed(ctx.publisher, ctx.corr, adapter_id, virtual_lamp_id);
@@ -95,8 +94,7 @@ pub(super) fn handle_vl_delete(ctx: &CommandCtx<'_>, body: &VirtualLampDeleteCom
         return;
     }
     if !ctx.store.apply_virtual_lamp_delete(body.adapter_id, body.virtual_lamp_id) {
-        ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        ctx.confirm_failed(ErrorCode::NotFound, "virtual_lamp_not_found");
+        ctx.reject_with(ErrorCode::NotFound, "virtual_lamp_not_found");
         return;
     }
     publish_virtual_lamp_changed(ctx.publisher, ctx.corr, body.adapter_id, body.virtual_lamp_id);

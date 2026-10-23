@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 
-use dali2rust_contracts::msg::{AdapterSettingsUpdateCommand, ErrorCode};
+use dali2rust_contracts::msg::AdapterSettingsUpdateCommand;
 
 use crate::runtime::registry::publish::publish_adapter_settings_changed;
 
@@ -17,8 +17,7 @@ pub(super) fn handle_adapter_settings(ctx: &CommandCtx<'_>, body: &AdapterSettin
         Some(body.name.as_str()),
         body.enabled,
     ) {
-        ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        ctx.confirm_failed(ErrorCode::InvalidValue, "adapter_settings_not_applied");
+        ctx.reject("adapter_settings_not_applied");
         return;
     }
     let (n, en) = ctx.store

@@ -33,8 +33,7 @@ pub(super) fn handle_pd_forget(ctx: &CommandCtx<'_>, body: &PhysicalDeviceDelete
         .store
         .apply_physical_device_forget(body.adapter_id, body.short_address)
     else {
-        ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        ctx.confirm_failed(ErrorCode::NotFound, "physical_device_not_found");
+        ctx.reject_with(ErrorCode::NotFound, "physical_device_not_found");
         return;
     };
     publish_physical_device_changed(ctx.publisher, ctx.corr, body.adapter_id, body.short_address);
@@ -55,8 +54,7 @@ fn handle_pd_mutation(
         return;
     }
     if !apply() {
-        ctx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        ctx.confirm_failed(ErrorCode::InvalidValue, "physical_device_override_not_applied");
+        ctx.reject("physical_device_override_not_applied");
         return;
     }
     publish_physical_device_changed(ctx.publisher, ctx.corr, adapter_id, short_address);

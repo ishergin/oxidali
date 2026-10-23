@@ -36,8 +36,12 @@ impl CommandCtx<'_> {
     }
 
     pub(super) fn reject(&self, message: &str) {
+        self.reject_with(ErrorCode::InvalidValue, message);
+    }
+
+    pub(super) fn reject_with(&self, code: ErrorCode, message: &str) {
         self.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-        self.confirm_failed(ErrorCode::InvalidValue, message);
+        self.confirm_failed(code, message);
     }
 
     pub(super) fn check_primary_adapter(&self) -> Result<(), ()> {
@@ -51,8 +55,7 @@ impl CommandCtx<'_> {
 
     pub(super) fn check_adapter_id(&self, adapter_id: u8) -> Result<(), ()> {
         if adapter_id >= self.adapter_count {
-            self.counters.ignored_commands.fetch_add(1, Ordering::Relaxed);
-            self.confirm_failed(ErrorCode::InvalidResourceId, "adapter_id_out_of_range");
+            self.reject_with(ErrorCode::InvalidResourceId, "adapter_id_out_of_range");
             Err(())
         } else {
             Ok(())
