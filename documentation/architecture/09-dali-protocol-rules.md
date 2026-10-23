@@ -325,11 +325,17 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   conformant gear never stores the MASK type (Table 8); a gear that reports it gets MASK
   values of the temporary's own type, which change no colour at power-on or failure
   either (§9.2.1, §9.3.1) and differ only in the reported type. The charge is proved
-  before the store: the temporary's type and first value (Table 11: x, Tc, primary 0 or
-  red) must equal what was charged, or the charge runs again, twice at most, and the
-  write then fails `dt8_level_colour_unconfirmed`. The level query's answer is the only
-  proof that REPORT was loaded: every command that loads REPORT loads a colour the stored
-  one may equal, so no cheap sentinel tells a skipped load apart. A level query that goes
+  before the store: the temporary's type and, by Table 11, x and y, Tc, primaries 0 and
+  5, or red, freecolour and `RGBWAF CONTROL` must equal what was charged, or the charge
+  runs again, twice at most, and the write then fails `dt8_level_colour_unconfirmed`.
+  Each `SET TEMPORARY` command writes all its values from operands proved before it, so
+  one value read back proves that command ran, and a MASK charge is proved command by
+  command except the stagings of primaries 1 to 4. What the proof cannot see is a missed
+  COPY whose stray temporary agrees with the stored colour on every value proved and
+  differs only on green, blue, white, amber or primaries 1 to 4. The level query's answer
+  is the only proof that REPORT was loaded: every command that loads REPORT loads a
+  colour the stored one may equal, so no cheap sentinel tells a skipped load apart. A
+  level query that goes
   unanswered or answers with a violation fails the write the same two ways as the probe,
   before anything is stored.
 - A scene's stored colour is read inside one exempt transaction, from the

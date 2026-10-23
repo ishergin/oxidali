@@ -268,7 +268,9 @@ fn a_stored_mask_colour_under_a_primary_n_temporary_masks_all_six_primaries() {
         expect_dt8_command(&mock, Dt8Command::SetTemporaryPrimaryNDimLevel);
     }
     expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_PRIMARY_N));
-    expect_wide_colour_value_sample(&mock, SHORT, COLOUR_VALUE_TEMPORARY_PRIMARY_N_0, MASK_WORD_ANSWER);
+    for primary in [COLOUR_VALUE_TEMPORARY_PRIMARY_N_0, COLOUR_VALUE_TEMPORARY_PRIMARY_N_5] {
+        expect_wide_colour_value_sample(&mock, SHORT, primary, MASK_WORD_ANSWER);
+    }
     expect_store(&mock, POWER_ON);
 
     let (execution, transport) = write_level(mock, POWER_ON);
@@ -372,4 +374,66 @@ fn a_selector_that_never_proves_names_silence_a_violation_and_a_wrong_echo_apart
         assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(outcome)), "{echo:?}");
         assert_script_consumed(&transport);
     }
+}
+
+const STORED_RGBWAF: [u8; 3] = [0x40, 0x00, 0x80];
+const STRAY_CONTROL: u8 = 0x3F;
+
+fn expect_rgbwaf_values(mock: &MockDaliTransport, selectors: [u8; 3], values: [u8; 3]) {
+    for (selector, value) in selectors.into_iter().zip(values) {
+        expect_narrow_colour_value_sample(mock, SHORT, selector, Some(value));
+    }
+}
+
+fn expect_rgbwaf_copied(mock: &MockDaliTransport, temporary: [u8; 3]) {
+    expect_stored_type(mock, POWER_ON, DT8_COLOUR_TYPE_RGBWAF);
+    let report = [DT8_COLOUR_VALUE_REPORT_RED, COLOUR_VALUE_REPORT_FREECOLOUR, COLOUR_VALUE_REPORT_RGBWAF_CONTROL];
+    expect_rgbwaf_values(mock, report, STORED_RGBWAF);
+    expect_dt8_command(mock, Dt8Command::CopyReportToTemporary);
+    expect_temporary_type(mock, Some(DT8_COLOUR_TYPE_RGBWAF));
+    let staged = [COLOUR_VALUE_TEMPORARY_RED, COLOUR_VALUE_TEMPORARY_FREECOLOUR, COLOUR_VALUE_TEMPORARY_RGBWAF_CONTROL];
+    expect_rgbwaf_values(mock, staged, temporary);
+}
+
+// IEC 62386-209 §9.12.7, Table 11
+#[test]
+fn a_copy_that_left_a_stray_rgbwaf_control_is_caught_past_the_first_value() {
+    let mock = MockDaliTransport::new();
+    expect_temporary_type(&mock, Some(DT8_COLOUR_TYPE_RGBWAF));
+    expect_rgbwaf_copied(&mock, [STORED_RGBWAF[0], STORED_RGBWAF[1], STRAY_CONTROL]);
+    expect_rgbwaf_copied(&mock, STORED_RGBWAF);
+    expect_store(&mock, POWER_ON);
+
+    let (execution, transport) = write_level(mock, POWER_ON);
+
+    assert_level_confirmed(&execution, POWER_ON);
+    assert_script_consumed(&transport);
+}
+
+const STORED_XY: [(u8, u8); 2] = [(0x51, 0x00), (0x52, 0x00)];
+const STRAY_Y: (u8, u8) = (0x10, 0x00);
+
+fn expect_xy_copied(mock: &MockDaliTransport, temporary_y: (u8, u8)) {
+    expect_stored_type(mock, POWER_ON, DT8_COLOUR_TYPE_XY);
+    for (selector, value) in [DT8_COLOUR_VALUE_REPORT_X, DT8_COLOUR_VALUE_REPORT_Y].into_iter().zip(STORED_XY) {
+        expect_wide_colour_value_sample(mock, SHORT, selector, value);
+    }
+    expect_dt8_command(mock, Dt8Command::CopyReportToTemporary);
+    expect_temporary_type(mock, Some(DT8_COLOUR_TYPE_XY));
+    expect_wide_colour_value_sample(mock, SHORT, COLOUR_VALUE_TEMPORARY_X, STORED_XY[0]);
+    expect_wide_colour_value_sample(mock, SHORT, COLOUR_VALUE_TEMPORARY_Y, temporary_y);
+}
+
+#[test]
+fn a_copy_that_left_a_stray_y_coordinate_is_caught_past_the_first_value() {
+    let mock = MockDaliTransport::new();
+    expect_temporary_type(&mock, Some(DT8_COLOUR_TYPE_XY));
+    expect_xy_copied(&mock, STRAY_Y);
+    expect_xy_copied(&mock, STORED_XY[1]);
+    expect_store(&mock, POWER_ON);
+
+    let (execution, transport) = write_level(mock, POWER_ON);
+
+    assert_level_confirmed(&execution, POWER_ON);
+    assert_script_consumed(&transport);
 }

@@ -5,9 +5,13 @@ use crate::runtime::executor::helpers::DT8_DEVICE_TYPE;
 use crate::runtime::executor::target_state::stage_dtrs_verified;
 use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::devices::dt8_color::{
-    COLOUR_TYPE_BYTE_MASK, COLOUR_TYPE_BYTE_PRIMARY_N, COLOUR_VALUE_REPORT_PRIMARY_N_0,
-    COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, COLOUR_VALUE_TEMPORARY_PRIMARY_N_0,
-    COLOUR_VALUE_TEMPORARY_RED, COLOUR_VALUE_TEMPORARY_TC, COLOUR_VALUE_TEMPORARY_X,
+    COLOUR_TYPE_BYTE_MASK, COLOUR_TYPE_BYTE_PRIMARY_N, COLOUR_VALUE_REPORT_FREECOLOUR,
+    COLOUR_VALUE_REPORT_PRIMARY_N_0, COLOUR_VALUE_REPORT_PRIMARY_N_5,
+    COLOUR_VALUE_REPORT_RGBWAF_CONTROL, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE,
+    COLOUR_VALUE_TEMPORARY_FREECOLOUR, COLOUR_VALUE_TEMPORARY_PRIMARY_N_0,
+    COLOUR_VALUE_TEMPORARY_PRIMARY_N_5, COLOUR_VALUE_TEMPORARY_RED,
+    COLOUR_VALUE_TEMPORARY_RGBWAF_CONTROL, COLOUR_VALUE_TEMPORARY_TC, COLOUR_VALUE_TEMPORARY_X,
+    COLOUR_VALUE_TEMPORARY_Y,
 };
 
 const LEVEL_COLOUR_UNCONFIRMED: &str = "dt8_level_colour_unconfirmed";
@@ -111,48 +115,80 @@ fn recharge(
     address: DaliAddress,
     stored: StoredLevel,
     temporary: u8,
-) -> Result<(u8, u16), SemanticDaliError> {
+) -> Result<Charge, SemanticDaliError> {
     answer_of(send_standard_response(controller, address, stored.query)?)?;
     let reported = colour_byte(controller, address, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE)?;
     if reported == COLOUR_TYPE_BYTE_MASK {
         charge_mask_colour(controller, address, temporary)?;
-        let (selector, _) = first_value_selectors(temporary).ok_or_else(unconfirmed)?;
-        return Ok((temporary, mask_of(selector)));
+        let selectors = proof_selectors(temporary).ok_or_else(unconfirmed)?;
+        return Ok((temporary, selectors.map(|(temporary_value, _)| mask_of(temporary_value))));
     }
-    let (_, report_selector) = first_value_selectors(reported).ok_or_else(unconfirmed)?;
-    let value = colour_value(controller, address, report_selector)?;
+    let selectors = proof_selectors(reported).ok_or_else(unconfirmed)?;
+    let mut values = [None; PROOF_VALUES];
+    for (slot, (_, report_value)) in values.iter_mut().zip(selectors) {
+        *slot = report_value.map(|value| colour_value(controller, address, value)).transpose()?;
+    }
     send_dt8(controller, address, Dt8Command::CopyReportToTemporary)?;
-    Ok((reported, value))
+    Ok((reported, values))
 }
 
 fn temporary_holds(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
-    (colour_type, value): (u8, u16),
+    (colour_type, values): Charge,
 ) -> Result<bool, SemanticDaliError> {
-    let (selector, _) = first_value_selectors(colour_type).ok_or_else(unconfirmed)?;
-    Ok(colour_byte(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE)? == colour_type
-        && colour_value(controller, address, selector)? == value)
-}
-
-// IEC 62386-209 Table 11
-const fn first_value_selectors(colour_type: u8) -> Option<(u8, u8)> {
-    match colour_type {
-        DT8_COLOUR_TYPE_XY => Some((COLOUR_VALUE_TEMPORARY_X, DT8_COLOUR_VALUE_REPORT_X)),
-        DT8_COLOUR_TYPE_TC => Some((COLOUR_VALUE_TEMPORARY_TC, DT8_COLOUR_VALUE_REPORT_TC)),
-        COLOUR_TYPE_BYTE_PRIMARY_N => {
-            Some((COLOUR_VALUE_TEMPORARY_PRIMARY_N_0, COLOUR_VALUE_REPORT_PRIMARY_N_0))
-        }
-        DT8_COLOUR_TYPE_RGBWAF => Some((COLOUR_VALUE_TEMPORARY_RED, DT8_COLOUR_VALUE_REPORT_RED)),
-        _ => None,
+    let selectors = proof_selectors(colour_type).ok_or_else(unconfirmed)?;
+    if colour_byte(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE)? != colour_type {
+        return Ok(false);
     }
+    for ((temporary_value, _), expected) in selectors.into_iter().zip(values) {
+        let Some(selector) = temporary_value else { continue };
+        if Some(colour_value(controller, address, selector)?) != expected {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
-const fn mask_of(selector: u8) -> u16 {
-    if colour_value_is_wide(selector) {
-        DT8_COLOUR_VALUE_MASK
-    } else {
-        DT8_COLOUR_VALUE_LEVEL_MASK as u16
+const PROOF_VALUES: usize = 3;
+
+const fn pair(temporary: u8, report: u8) -> ProofSelector {
+    (Some(temporary), Some(report))
+}
+
+type ProofSelector = (Option<u8>, Option<u8>);
+
+type Charge = (u8, [Option<u16>; PROOF_VALUES]);
+
+// IEC 62386-209 §9.12.4, Table 11
+const fn proof_selectors(colour_type: u8) -> Option<[ProofSelector; PROOF_VALUES]> {
+    const NONE: ProofSelector = (None, None);
+    Some(match colour_type {
+        DT8_COLOUR_TYPE_XY => [
+            pair(COLOUR_VALUE_TEMPORARY_X, DT8_COLOUR_VALUE_REPORT_X),
+            pair(COLOUR_VALUE_TEMPORARY_Y, DT8_COLOUR_VALUE_REPORT_Y),
+            NONE,
+        ],
+        DT8_COLOUR_TYPE_TC => [pair(COLOUR_VALUE_TEMPORARY_TC, DT8_COLOUR_VALUE_REPORT_TC), NONE, NONE],
+        COLOUR_TYPE_BYTE_PRIMARY_N => [
+            pair(COLOUR_VALUE_TEMPORARY_PRIMARY_N_0, COLOUR_VALUE_REPORT_PRIMARY_N_0),
+            pair(COLOUR_VALUE_TEMPORARY_PRIMARY_N_5, COLOUR_VALUE_REPORT_PRIMARY_N_5),
+            NONE,
+        ],
+        DT8_COLOUR_TYPE_RGBWAF => [
+            pair(COLOUR_VALUE_TEMPORARY_RED, DT8_COLOUR_VALUE_REPORT_RED),
+            pair(COLOUR_VALUE_TEMPORARY_FREECOLOUR, COLOUR_VALUE_REPORT_FREECOLOUR),
+            pair(COLOUR_VALUE_TEMPORARY_RGBWAF_CONTROL, COLOUR_VALUE_REPORT_RGBWAF_CONTROL),
+        ],
+        _ => return None,
+    })
+}
+
+const fn mask_of(selector: Option<u8>) -> Option<u16> {
+    match selector {
+        Some(selector) if colour_value_is_wide(selector) => Some(DT8_COLOUR_VALUE_MASK),
+        Some(_) => Some(DT8_COLOUR_VALUE_LEVEL_MASK as u16),
+        None => None,
     }
 }
 
