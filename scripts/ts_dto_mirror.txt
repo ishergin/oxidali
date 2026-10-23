@@ -5,6 +5,7 @@ BusUnitConfigurationDto BusUnitConfiguration
 CapabilityFlagsDto CapabilityFlags
 ChannelCountersDto ChannelCounters
 ColorTemperatureRangeDto ColorTemperatureRange
+ExtendedVersionDto ExtendedVersion
 CommissioningAddressChangeRequest CommissioningAddressChangeRequest
 CommissioningIdentifyRequest CommissioningIdentifyRequest
 ConditionDto Condition
@@ -128,5 +129,3 @@ unchecked BankReading serialised from BankReading in crates/dali2rust-domain/src
 unchecked LuminaireValue serialised from LuminaireValue in crates/dali2rust-domain/src/registry/attributes.rs, outside the scanned trees
 unchecked Health serialised from HealthResponseJson in crates/dali2rust-api/src/contracts/health.rs, outside the scanned trees
 
-known_drift PhysicalDeviceCoreDto.extended_versions missing_in_ts GET physical-devices/{sa} sends extended_versions when a device declares one; PhysicalDeviceCore does not declare it
-known_drift SliceManifestEntry.crc32 missing_in_ts GET /config/slices sends crc32 per slice; ConfigSliceRow (client.configSlices) does not declare it
