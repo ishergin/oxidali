@@ -64,14 +64,16 @@ pub fn fetch_manifest(
 
 pub fn parse_manifest(body: &[u8]) -> Result<Vec<SliceDigest>, FetchError> {
     let rows = parse_slice_manifest(body).ok_or(FetchError::Malformed)?;
-    Ok(rows.into_iter().map(digest_of).collect())
+    Ok(rows.into_iter().map(SliceDigest::from).collect())
 }
 
-fn digest_of(row: SliceManifestEntry) -> SliceDigest {
-    SliceDigest {
-        name: row.name,
-        bytes: row.bytes,
-        crc32: row.crc32,
+impl From<SliceManifestEntry> for SliceDigest {
+    fn from(row: SliceManifestEntry) -> Self {
+        Self {
+            name: row.name,
+            bytes: row.bytes,
+            crc32: row.crc32,
+        }
     }
 }
 

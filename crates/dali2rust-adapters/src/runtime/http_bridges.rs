@@ -44,7 +44,7 @@ use dali2rust_api::http::{
     VirtualLampBindingApplyWatchBridge, VirtualLampHttpState, VirtualLampHttpStateBridge,
     VirtualLampPatchWatch, VirtualLampPatchWatchBridge,
 };
-use dali2rust_api::http::handlers::config_transfer::ImportRefusal;
+use dali2rust_api::http::handlers::config_transfer::{ImportRefusal, SliceManifestEntry};
 use dali2rust_bus::BusPublisher;
 use dali2rust_domain::registry::{AdapterReadPort, RegistryReadPort};
 use dali2rust_operations_runtime::{
@@ -56,7 +56,7 @@ use dali2rust_platform::net::{LinkStats, NetworkLink};
 use dali2rust_mqtt_runtime::MqttCounters;
 use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 use dali2rust_registry_runtime::{
-    ForeignSliceOwner, ImportStageRefusal, StagedSlice,
+    ForeignSliceOwner, ImportStageRefusal, InputDeviceSummary, StagedSlice,
     PersistenceCounters, RegistryApplyWatch, RegistryStore, RegistryWorkerCounters,
 };
 use dali2rust_ws_runtime::WsCounters;
@@ -717,6 +717,21 @@ impl StatsHttpState for StatsBridge {
     }
 }
 
+fn manifest_entries(
+    store: &RegistryStore,
+    slices: Option<&Arc<dyn SliceStore>>,
+    adapter_count: u8,
+) -> Vec<SliceManifestEntry> {
+    let Some(slices) = slices else {
+        return Vec::new();
+    };
+    store
+        .slice_manifest(slices.as_ref(), adapter_count)
+        .into_iter()
+        .map(|row| SliceManifestEntry { name: row.name, bytes: row.bytes, crc32: row.crc32 })
+        .collect()
+}
+
 pub(crate) struct ConfigTransferBridge {
     store: Arc<RegistryStore>,
     slices: Option<Arc<dyn dali2rust_platform::slice_store::SliceStore>>,
@@ -742,23 +757,8 @@ impl ConfigTransferBridge {
 }
 
 impl dali2rust_api::http::handlers::config_transfer::ConfigTransferPort for ConfigTransferBridge {
-    fn slice_manifest(
-        &self,
-    ) -> Vec<dali2rust_api::http::handlers::config_transfer::SliceManifestEntry> {
-        let Some(slices) = self.slices.as_ref() else {
-            return Vec::new();
-        };
-        self.store
-            .slice_manifest(slices.as_ref(), self.adapter_count)
-            .into_iter()
-            .map(
-                |row| dali2rust_api::http::handlers::config_transfer::SliceManifestEntry {
-                    name: row.name,
-                    bytes: row.bytes,
-                    crc32: row.crc32,
-                },
-            )
-            .collect()
+    fn slice_manifest(&self) -> Vec<SliceManifestEntry> {
+        manifest_entries(&self.store, self.slices.as_ref(), self.adapter_count)
     }
 
     fn export_slice(&self, name: &str) -> Option<Vec<u8>> {
@@ -810,17 +810,9 @@ impl ReplicationSinkBridge {
 
 impl dali2rust_redundancy_runtime::ReplicationSink for ReplicationSinkBridge {
     fn local_digests(&self) -> Vec<dali2rust_redundancy_runtime::SliceDigest> {
-        let Some(slices) = self.slices.as_ref() else {
-            return Vec::new();
-        };
-        self.store
-            .slice_manifest(slices.as_ref(), self.adapter_count)
+        manifest_entries(&self.store, self.slices.as_ref(), self.adapter_count)
             .into_iter()
-            .map(|row| dali2rust_redundancy_runtime::SliceDigest {
-                name: row.name,
-                bytes: row.bytes,
-                crc32: row.crc32,
-            })
+            .map(dali2rust_redundancy_runtime::SliceDigest::from)
             .collect()
     }
 
@@ -1065,39 +1057,21 @@ impl InputDeviceHttpState for InputDeviceHttpStateBridge {
         self.store
             .input_device_summaries(adapter_id)
             .into_iter()
-            .map(|s| InputDeviceSummaryDto {
-                adapter_id: s.adapter_id,
-                short_address: s.short_address,
-                name: s.name,
-                present: s.present,
-                instance_count: s.instance_count,
-                first_instance_type: s.first_instance_type,
-                ha_expose: s.ha_expose,
-                last_seen_ms: s.last_seen_ms,
-                last_event_at_ms: s.last_event_at_ms,
-            })
+            .map(summary_dto)
             .collect()
     }
 
     fn detail(&self, adapter_id: u8, short_address: u8) -> Option<InputDeviceDto> {
         let detail = self.store.input_device_detail(adapter_id, short_address)?;
         let s = detail.summary;
+        let (device_capabilities, device_status, version_number) =
+            (s.device_capabilities, s.device_status, s.version_number);
         Some(InputDeviceDto {
-            summary: InputDeviceSummaryDto {
-                adapter_id: s.adapter_id,
-                short_address: s.short_address,
-                name: s.name,
-                present: s.present,
-                instance_count: s.instance_count,
-                first_instance_type: s.first_instance_type,
-                ha_expose: s.ha_expose,
-                last_seen_ms: s.last_seen_ms,
-                last_event_at_ms: s.last_event_at_ms,
-            },
+            summary: summary_dto(s),
             notes: detail.notes,
-            device_capabilities: s.device_capabilities,
-            device_status: s.device_status,
-            version_number: s.version_number,
+            device_capabilities,
+            device_status,
+            version_number,
             now_ms: 0,
             nvm_settling_until_ms: detail.nvm_settling_until_ms,
             instances: detail.instances.iter().map(instance_dto).collect(),
@@ -1106,6 +1080,20 @@ impl InputDeviceHttpState for InputDeviceHttpStateBridge {
 
     fn revision(&self) -> u32 {
         self.store.input_devices_revision()
+    }
+}
+
+fn summary_dto(s: InputDeviceSummary) -> InputDeviceSummaryDto {
+    InputDeviceSummaryDto {
+        adapter_id: s.adapter_id,
+        short_address: s.short_address,
+        name: s.name,
+        present: s.present,
+        instance_count: s.instance_count,
+        first_instance_type: s.first_instance_type,
+        ha_expose: s.ha_expose,
+        last_seen_ms: s.last_seen_ms,
+        last_event_at_ms: s.last_event_at_ms,
     }
 }
 
@@ -1425,7 +1413,14 @@ mod tests {
     use core::sync::atomic::Ordering::Relaxed;
     use std::sync::{Arc, Mutex};
 
-    use super::{arbitration_dto, stats_readback_dto};
+    use super::{
+        arbitration_dto, stats_readback_dto, ConfigTransferBridge, ReplicationSinkBridge,
+    };
+    use dali2rust_api::http::handlers::config_transfer::ConfigTransferPort;
+    use dali2rust_bsp::slice_store_files::InMemorySliceStore;
+    use dali2rust_platform::slice_store::{SliceKey, SliceStore};
+    use dali2rust_redundancy_runtime::ReplicationSink;
+    use dali2rust_registry_runtime::{InputDeviceSummary, RegistryStore};
     use dali2rust_contracts::msg::HclTargetScope;
     use dali2rust_rules_model::{GroupRef, LightTarget};
     use crate::dali::transport::mock::MockDaliTransport;
@@ -1440,6 +1435,10 @@ mod tests {
 
     const SHORT: u8 = 4;
     const GROUP: u8 = 3;
+    const ADAPTERS: u8 = 1;
+    const KNOWN_SLICE: &str = "poller_settings";
+    const OTHER_KNOWN_SLICE: &str = "hcl_schedules";
+    const SLICE_BYTES: [u8; 3] = [1, 2, 3];
 
     fn frame(command: StandardCommand) -> u16 {
         let address = DaliAddress::short(SHORT).expect("short address");
@@ -1509,6 +1508,62 @@ mod tests {
             row.handover_incomplete,
         ];
         assert_eq!(got, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }
+
+    fn write_slice(store: &InMemorySliceStore, key: SliceKey, bytes: &[u8]) {
+        let mut session = store.begin_write(key).expect("begin write");
+        session.append(bytes).expect("append");
+        session.commit().expect("commit");
+    }
+
+    fn sink_over(slices: Option<Arc<dyn SliceStore>>) -> (ReplicationSinkBridge, Arc<RegistryStore>) {
+        let store = Arc::new(RegistryStore::with_adapter_count(ADAPTERS));
+        (ReplicationSinkBridge::new(Arc::clone(&store), slices, ADAPTERS), store)
+    }
+
+    #[test]
+    fn an_input_device_summary_keeps_each_field_in_its_own_place() {
+        let dto = super::summary_dto(InputDeviceSummary {
+            adapter_id: 1,
+            device_capabilities: Some(2),
+            device_status: Some(3),
+            version_number: Some(4),
+            short_address: 5,
+            name: Some("hall".to_string()),
+            present: true,
+            instance_count: 6,
+            first_instance_type: Some(7),
+            ha_expose: false,
+            last_seen_ms: Some(8),
+            last_event_at_ms: Some(9),
+        });
+        assert_eq!((dto.adapter_id, dto.short_address, dto.instance_count), (1, 5, 6));
+        assert_eq!((dto.present, dto.ha_expose, dto.first_instance_type), (true, false, Some(7)));
+        assert_eq!((dto.last_seen_ms, dto.last_event_at_ms), (Some(8), Some(9)));
+        assert_eq!(dto.name.as_deref(), Some("hall"));
+    }
+
+    #[test]
+    fn the_replication_digests_are_the_manifest_the_transfer_port_serves() {
+        let backing = Arc::new(InMemorySliceStore::new());
+        write_slice(&backing, SliceKey::PollerSettings, &SLICE_BYTES);
+        let slices: Arc<dyn SliceStore> = backing;
+        let (sink, store) = sink_over(Some(Arc::clone(&slices)));
+        let transfer = ConfigTransferBridge::new(store, Some(slices), ADAPTERS);
+
+        let digests = sink.local_digests();
+        let served = transfer.slice_manifest();
+
+        let as_triples = |name: &str| {
+            digests.iter().find(|d| d.name == name).map(|d| (d.bytes, d.crc32))
+        };
+        assert_eq!(digests.len(), served.len());
+        assert!(served.iter().all(|row| as_triples(&row.name) == Some((row.bytes, row.crc32))));
+        assert_eq!(
+            as_triples(KNOWN_SLICE),
+            Some((Some(SLICE_BYTES.len()), dali2rust_platform::http_fetch::crc32(&SLICE_BYTES)))
+        );
+        assert_eq!(as_triples(OTHER_KNOWN_SLICE), Some((None, 0)), "a slice never written has no bytes");
     }
 
     #[test]
