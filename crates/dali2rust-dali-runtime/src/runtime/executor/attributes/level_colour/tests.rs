@@ -396,6 +396,24 @@ fn a_selector_that_never_proves_names_silence_a_violation_and_a_wrong_echo_apart
     }
 }
 
+// IEC 62386-102 §3.13
+#[test]
+fn with_no_types_known_only_a_silent_colour_query_names_the_types_remedy() {
+    let mock = MockDaliTransport::new();
+    for _ in 0..PROBE_ASKS {
+        expect_unarmed_selector(&mock, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, Echo::Silent);
+    }
+
+    let (execution, transport) = write_level_on(mock, POWER_ON, None);
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNANSWERED)),
+        "a gear that echoes no DTR0 is not answering at all; an attribute read would not help"
+    );
+    assert_script_consumed(&transport);
+}
+
 const STORED_RGBWAF: [u8; 3] = [0x40, 0x00, 0x80];
 const STRAY_CONTROL: u8 = 0x3F;
 

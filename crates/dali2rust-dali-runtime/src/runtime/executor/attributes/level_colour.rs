@@ -49,16 +49,6 @@ const fn unconfirmed() -> SemanticDaliError {
     SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNCONFIRMED)
 }
 
-// IEC 62386-102 §3.13
-fn types_unknown_when_silent(error: SemanticDaliError) -> SemanticDaliError {
-    match error {
-        SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNANSWERED) => {
-            SemanticDaliError::OperationFailed(DEVICE_TYPES_UNKNOWN)
-        }
-        other => other,
-    }
-}
-
 // IEC 62386-102 §9.18
 pub(super) fn store_level<C: DaliApplicationController>(
     controller: &mut C,
@@ -97,8 +87,7 @@ fn keep_stored_colour(
     address: DaliAddress,
     (stored, types_known): (StoredLevel, bool),
 ) -> Result<(), SemanticDaliError> {
-    let temporary = colour_byte(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, PROBE_ASKS)
-        .map_err(|error| if types_known { error } else { types_unknown_when_silent(error) })?;
+    let temporary = probe_temporary_type(controller, address, types_known)?;
     if temporary == COLOUR_TYPE_BYTE_MASK {
         return Ok(());
     }
@@ -110,6 +99,20 @@ fn keep_stored_colour(
         }
     }
     Err(unconfirmed())
+}
+
+// IEC 62386-102 §3.13
+fn probe_temporary_type(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    types_known: bool,
+) -> Result<u8, SemanticDaliError> {
+    let outcome = match ask_colour_byte(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, PROBE_ASKS)? {
+        Ok(temporary) => return Ok(temporary),
+        Err(Unheard::SilentAnswer) if !types_known => DEVICE_TYPES_UNKNOWN,
+        Err(unheard) => unheard.outcome(),
+    };
+    Err(SemanticDaliError::OperationFailed(outcome))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -243,23 +246,34 @@ fn colour_byte(
     value_id: u8,
     asks: u8,
 ) -> Result<u8, SemanticDaliError> {
-    let mut worst = Unheard::Silent;
+    ask_colour_byte(controller, address, value_id, asks)?
+        .map_err(|unheard| SemanticDaliError::OperationFailed(unheard.outcome()))
+}
+
+fn ask_colour_byte(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    value_id: u8,
+    asks: u8,
+) -> Result<Result<u8, Unheard>, SemanticDaliError> {
+    let mut worst = Unheard::SilentEcho;
     for _ in 0..asks {
         let unheard = match controller.unit(|c| armed_colour_value_query(c, address, value_id))? {
-            ArmedValue::Answered(DaliResponse::Answer(value), false) => return Ok(value),
+            ArmedValue::Answered(DaliResponse::Answer(value), false) => return Ok(Ok(value)),
             ArmedValue::Answered(response, contended) => Unheard::of_answer(response, contended),
             ArmedValue::Unarmed(echo) => Unheard::of_echo(echo),
         };
         worst = worst.max(unheard);
     }
-    Err(SemanticDaliError::OperationFailed(worst.outcome()))
+    Ok(Err(worst))
 }
 
 // IEC 62386-101 §8.2.5
 // IEC 62386-102 §3.13
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Unheard {
-    Silent,
+    SilentEcho,
+    SilentAnswer,
     Contended,
     WrongEcho,
 }
@@ -267,7 +281,7 @@ enum Unheard {
 impl Unheard {
     const fn of_answer(response: DaliResponse, contended: bool) -> Self {
         match (response, contended) {
-            (DaliResponse::NoAnswer, false) => Self::Silent,
+            (DaliResponse::NoAnswer, false) => Self::SilentAnswer,
             _ => Self::Contended,
         }
     }
@@ -276,13 +290,13 @@ impl Unheard {
         match echo {
             DaliResponse::Answer(_) => Self::WrongEcho,
             DaliResponse::Violation => Self::Contended,
-            DaliResponse::NoAnswer => Self::Silent,
+            DaliResponse::NoAnswer => Self::SilentEcho,
         }
     }
 
     const fn outcome(self) -> &'static str {
         match self {
-            Self::Silent => LEVEL_COLOUR_UNANSWERED,
+            Self::SilentEcho | Self::SilentAnswer => LEVEL_COLOUR_UNANSWERED,
             Self::Contended => LEVEL_COLOUR_CONTENDED,
             Self::WrongEcho => LEVEL_COLOUR_UNCONFIRMED,
         }
