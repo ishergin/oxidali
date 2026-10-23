@@ -528,7 +528,8 @@ def counterparts(rust, blocks):
             continue
         other = words(name)
         short, long = sorted((target, other), key=len)
-        if target == other or (len(short) >= MIN_SHARED_WORDS and long[-len(short):] == short):
+        shares = len(short) >= MIN_SHARED_WORDS and short in (long[:len(short)], long[-len(short):])
+        if target == other or shares:
             found.append(name)
     return found
 
