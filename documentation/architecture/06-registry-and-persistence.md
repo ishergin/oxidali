@@ -250,12 +250,12 @@ filtered: they address one device.
 - Every record a reload replaced is announced with the changed-event its write publishes,
   through the same helpers: the records the slice holds afterwards and the ones memory
   held before, so a dropped one is announced too. The slices an import wrote count, and so
-  do the waiting slices the reload settled. A reload that fails announces nothing.
+  do the waiting slices the reload settled. A reload that fails announces no record.
 - The announcements are paced, because a whole-configuration import names more records
   than the events ingress or a parked subscriber's inbox holds. The registry worker queues
   them, one entry per record however often it is queued, settings and schedules first, and
   drains them after its turns, the idle one included, at most `ANNOUNCEMENT_PACING` per
-  receive window however many turns fall in it: one `ANNOUNCEMENT_PARK_WINDOW` of
-  announcements fits `ANNOUNCEMENT_INBOX_FLOOR`, the smallest inbox a subscriber of them
-  declares. One the ingress refuses stays queued for the next window. Each announcement
-  reads its record when it goes out; `RegistrySliceReloadedEvent` is not queued.
+  receive window however many turns fall in it, sized so that a subscriber parked for a
+  heartbeat still has room for them. One the ingress refuses stays queued for the next
+  window. Each announcement reads its record when it goes out;
+  `RegistrySliceReloadedEvent` is not queued.
