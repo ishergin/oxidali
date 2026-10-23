@@ -114,6 +114,7 @@ verify:
     bash scripts/verify_fn_length.sh
     python3 scripts/verify_fn_length_esp.py
     python3 scripts/verify_counter_surface.py
+    python3 scripts/verify_ts_dto_mirror.py
     python3 scripts/verify_read_surface.py
     python3 scripts/verify_rest_docs.py
 

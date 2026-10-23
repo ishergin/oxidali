@@ -179,6 +179,26 @@ def ts_element(kind):
     return kind[:-2].strip() if kind.endswith("[]") else kind
 
 
+def diff_fields(rust, ts, rust_fields, ts_fields, path, where=None):
+    def at(side, name, field):
+        return " (%s)" % where(side, name, field) if where else ""
+
+    out = []
+    for field in sorted(set(rust_fields) - set(ts_fields)):
+        out.append((
+            "missing_in_ts", field,
+            "%s.%s: in %s%s, missing from the TS mirror %s%s"
+            % (path, field, rust, at("rust", rust, field), ts, at("ts", ts, None)),
+        ))
+    for field in sorted(set(ts_fields) - set(rust_fields)):
+        out.append((
+            "extra_in_ts", field,
+            "%s.%s: in the TS mirror %s%s, no such field on %s%s"
+            % (path, field, ts, at("ts", ts, field), rust, at("rust", rust, None)),
+        ))
+    return out
+
+
 def compare_block(rust, ts, rust_types, ts_defs, path, problems, seen):
     if (rust, ts) in seen:
         return
@@ -190,10 +210,7 @@ def compare_block(rust, ts, rust_types, ts_defs, path, problems, seen):
     if not ts_fields:
         problems.append("%s: Rust DTO %s has no TypeScript mirror (%s)" % (path, rust, ts))
         return
-    for field in sorted(set(rust_fields) - set(ts_fields)):
-        problems.append("%s.%s: in %s, missing from the TS mirror %s" % (path, field, rust, ts))
-    for field in sorted(set(ts_fields) - set(rust_fields)):
-        problems.append("%s.%s: in the TS mirror %s, no such field on %s" % (path, field, ts, rust))
+    problems.extend(message for _, _, message in diff_fields(rust, ts, rust_fields, ts_fields, path))
     for field in sorted(set(rust_fields) & set(ts_fields)):
         nested = rust_element(rust_fields[field])
         if nested in rust_types:

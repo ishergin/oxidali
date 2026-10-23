@@ -1,0 +1,132 @@
+AdapterDto Adapter
+ApplyOrchestratorDto ApplyOrchestratorCounters
+BusCountersDto BusCounters
+BusUnitConfigurationDto BusUnitConfiguration
+CapabilityFlagsDto CapabilityFlags
+ChannelCountersDto ChannelCounters
+ColorTemperatureRangeDto ColorTemperatureRange
+CommissioningAddressChangeRequest CommissioningAddressChangeRequest
+CommissioningIdentifyRequest CommissioningIdentifyRequest
+ConditionDto Condition
+ConfirmationBridgeDto ConfirmationBridgeCounters
+ControllerSummaryBody ControllerSummary
+DaliCommandRequest DaliCommandRequest
+DaliSettingsDto DaliSettings
+DaliWireDto DaliWireCounters
+DaliWorkerDto DaliWorkerCounters
+DiagnosticsDto Diagnostics
+EnergyBankDto EnergyBank
+EventSubscriberCountersDto EventSubscriberCounters
+FailureStatusDto FailureStatus
+FirmwareStateDto FirmwareState
+FirmwareUpdateDto FirmwareUpdate
+GearDiagnosticsDto GearDiagnostics
+GroupDto Group
+GroupMembershipMatrixDto GroupMembershipMatrix
+GroupMembershipMatrixRowDto GroupMatrixRow
+GroupsListBody GroupList
+HclLocationDto HclLocation
+HclOverrideDto HclOverride
+HclOverrideTargetDto HclOverrideTarget
+HclScheduleDto HclSchedule
+HclSchedulePointDto HclSchedulePoint
+HclSchedulerDto HclSchedulerCounters
+HclSchedulesListBody HclScheduleList
+HclTargetDto HclTarget
+HomeAssistantSettingsDto HomeAssistantSettings
+ImplementedPartsDto ImplementedParts
+InputDeviceDto InputDeviceDetail
+InputDeviceSummaryDto InputDeviceSummary
+InstanceDto InputInstance
+LevelRequest DaliLevelRequest
+LuminaireMaintenanceDto LuminaireMaintenance
+MemoryBankRangeDto MemoryBankRange
+MemoryBankSummaryDto MemoryBankSummary
+MemoryBusUnitAttributesDto MemoryBusUnit
+MemoryLuminaireAttributesDto MemoryLuminaire
+MqttBridgeDto MqttBridgeCounters
+ObservedValueDto ObservedValue
+OperationTrackerDto OperationTrackerCounters
+PersistenceDto PersistenceCounters
+PhySnifferDto PhySnifferCounters
+PhysicalDeviceCoreDto PhysicalDeviceCore
+PhysicalDeviceStateDto RuntimeState
+PhysicalDeviceSummaryDto PhysicalDeviceSummary
+PoliciesDto Policies
+PollerDto PollerCounters
+PollerSettingsDto PollerSettings
+ProjectorDto ProjectorCounters
+RawFrameRequest DaliRawRequest
+ReadValueDto ReadValue
+RedundancyArbitrationDto RedundancyArbitration
+RedundancyProbeDto RedundancyProbes
+RedundancyReplicationDto RedundancyReplication
+RedundancySettingsDto RedundancySettings
+RedundancyStateDto RedundancyState
+RedundancyTransitionDto RedundancyTransition
+RegistryDto RegistryCounters
+RgbDto Rgb
+RulesWorkerDto RulesWorkerCounters
+SceneDto Scene
+SceneMatrixDto SceneMatrix
+SceneMatrixRowDto SceneMatrixRow
+SceneRowStateDto SceneRowState
+ScenesListBody SceneList
+SliceManifestEntry ConfigSliceRow
+SnifferTranslatorDto SnifferTranslatorCounters
+SourceDiagnosticsDto SourceDiagnostics
+StatsBusDto StatsBus
+StatsControllerDto StatsController
+StatsDaliDto StatsDali
+StatsHclDto StatsHcl
+StatsInputDto StatsInput
+StatsMqttDto StatsMqtt
+StatsNetworkDto StatsNetwork
+StatsOperationsDto StatsOperations
+StatsReportDto StatsReportPayload
+StatsRuleCountDto StatsRuleCount
+StatsRulesDto StatsRules
+StatsWebSocketDto StatsWebSocket
+StatusFlagsDto StatusFlags
+SubscriberCountersDto SubscriberCounters
+TimeBody ControllerTime
+VirtualLampDto VirtualLamp
+VirtualLampsListBody VirtualLampList
+WafDto Waf
+WebSocketDto WebSocketCounters
+XyDto Xy
+
+unchecked MemoryDiagnosticsAttributesDto manual Serialize impl: map with control_gear, light_source, luminaire keys (TS MemoryDiagnostics)
+unchecked MemoryEnergyAttributesDto manual Serialize impl: map with active, apparent, loadside keys (TS MemoryEnergy)
+unchecked ScenesAttributesDto manual Serialize impl: scene_0..scene_15 keys
+unchecked AttributeSectionDto manual Serialize impl: dispatches to the section structs
+
+unchecked PhysicalDeviceList built with write! in crates/dali2rust-api/src/http/handlers/physical_devices.rs (list streamed row by row)
+unchecked PhysicalDeviceAttributes built with write! in crates/dali2rust-api/src/http/handlers/physical_devices.rs (sections streamed one at a time)
+unchecked PhysicalDeviceMemoryBanks built with write! in crates/dali2rust-api/src/http/handlers/physical_devices.rs (banks streamed one at a time)
+unchecked InputDeviceList built with json! in crates/dali2rust-api/src/http/handlers/input_devices.rs
+unchecked OperationList built with json! in crates/dali2rust-api/src/http/handlers/operations.rs
+unchecked OperationAccepted built with json! in crates/dali2rust-api/src/http/handlers/common.rs accepted_operation_response
+unchecked ErrorBody built with json! in crates/dali2rust-api/src/http/handlers/common.rs json_err_with_message
+unchecked DaliCommandResponse built with serde_json::Map in crates/dali2rust-api/src/bus_codec.rs
+unchecked CommissioningStepResult built with serde_json::Map in crates/dali2rust-api/src/http/handlers/commissioning.rs typed_result
+unchecked RulesDocument built with json! in crates/dali2rust-api/src/http/handlers/rules.rs get
+unchecked RulesDocumentJson built with json! in crates/dali2rust-api/src/http/handlers/rules.rs get
+unchecked RulesJsonProjection serde of the compiled rule set in dali2rust-rules-model, runtime attached by crates/dali2rust-api/src/http/handlers/rules.rs
+unchecked RuleJson serde of the compiled rule in dali2rust-rules-model, runtime attached by crates/dali2rust-api/src/http/handlers/rules.rs
+unchecked RuleRuntime built with json! in crates/dali2rust-api/src/http/handlers/rules.rs runtime_json
+unchecked RuleParseSummary built with json! in crates/dali2rust-api/src/http/handlers/rules.rs parse
+unchecked RulesParseOk built with json! in crates/dali2rust-api/src/http/handlers/rules.rs parse
+unchecked RulesParseError built with json! in crates/dali2rust-api/src/http/handlers/rules.rs parse
+unchecked RulePatched built with json! in crates/dali2rust-api/src/http/handlers/rules.rs
+
+unchecked Operation serialised from OperationView in crates/dali2rust-domain/src/registry/operations.rs, outside the scanned trees
+unchecked GroupApplyOutcome serialised from OperationGroupApplyOutcomeView in crates/dali2rust-domain/src/registry/operations.rs, outside the scanned trees
+unchecked SceneApplyOutcome serialised from OperationSceneApplyOutcomeView in crates/dali2rust-domain/src/registry/operations.rs, outside the scanned trees
+unchecked RestoredSlices serialised from OperationRestoredSlicesView in crates/dali2rust-domain/src/registry/operations.rs, outside the scanned trees
+unchecked BankReading serialised from BankReading in crates/dali2rust-domain/src/registry/attributes.rs, outside the scanned trees
+unchecked LuminaireValue serialised from LuminaireValue in crates/dali2rust-domain/src/registry/attributes.rs, outside the scanned trees
+unchecked Health serialised from HealthResponseJson in crates/dali2rust-api/src/contracts/health.rs, outside the scanned trees
+
+known_drift PhysicalDeviceCoreDto.extended_versions missing_in_ts GET physical-devices/{sa} sends extended_versions when a device declares one; PhysicalDeviceCore does not declare it
+known_drift SliceManifestEntry.crc32 missing_in_ts GET /config/slices sends crc32 per slice; ConfigSliceRow (client.configSlices) does not declare it

@@ -217,6 +217,7 @@ unchecked image, and `hil flash` refuses one unless told `--allow-red-isr`.
 | `verify_ui_follows_design.sh` | a visual `web/app` change since `origin/main` changes a card, or declares `UI-Design: unchanged` |
 | `verify_fn_length.sh`, `verify_fn_length_esp.py` | no function over 40 lines, host and ESP-only code |
 | `verify_counter_surface.py` | counter names agree across spellings ([04](04-contracts-and-api-bridge.md)) |
+| `verify_ts_dto_mirror.py` | every serialized DTO under `dali2rust-api`'s `http/` and `ws/` has the field names of its `web/app/src/api/types.ts` interface, nested ones included; the pairs, the shapes it cannot read and the recorded drift are in `scripts/ts_dto_mirror.txt`, and the drift budget only goes down |
 | `verify_read_surface.py` | every read-payload block reaches a screen: rendered, or the clock its delta column keys on |
 | `verify_rest_docs.py` | every route the router serves and every error code the API answers is named in a REST resource document, and every documented route is served |
 
