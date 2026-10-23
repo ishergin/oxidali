@@ -37,12 +37,14 @@ pub fn spawn_apply_orchestrator_worker(
             match cmd_rx.recv_timeout(IDLE_RECV_TIMEOUT) {
                 Ok(frame) => handle_command_frame(
                     &frame,
-                    &ev_rx,
-                    &publisher,
-                    bus_id,
-                    read_port.as_ref(),
-                    operations.as_ref(),
-                    &counters,
+                    &ApplyWorker {
+                        ev_rx: &ev_rx,
+                        publisher: &publisher,
+                        bus_id,
+                        read_port: read_port.as_ref(),
+                        operations: operations.as_ref(),
+                        counters: &counters,
+                    },
                 ),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -52,82 +54,64 @@ pub fn spawn_apply_orchestrator_worker(
     )
 }
 
-fn handle_command_frame(
-    frame: &BusFrame,
-    ev_rx: &BusSubscriberRx,
-    publisher: &BusPublisher,
+struct ApplyWorker<'a> {
+    ev_rx: &'a BusSubscriberRx,
+    publisher: &'a BusPublisher,
     bus_id: BusId,
-    read_port: &dyn ApplyReadPort,
-    operations: &dyn OperationReadPort,
-    counters: &ApplyOrchestratorCounters,
-) {
-    let Some(ce) = frame.command_for(bus_id) else {
+    read_port: &'a dyn ApplyReadPort,
+    operations: &'a dyn OperationReadPort,
+    counters: &'a ApplyOrchestratorCounters,
+}
+
+fn handle_command_frame(frame: &BusFrame, cx: &ApplyWorker<'_>) {
+    let Some(ce) = frame.command_for(cx.bus_id) else {
         return;
     };
-    dispatch_apply_command(
-        &ce.payload,
-        ev_rx,
-        publisher,
-        bus_id,
-        read_port,
-        operations,
-        counters,
-        ce.meta.correlation_id,
-    );
+    dispatch_apply_command(&ce.payload, cx, ce.meta.correlation_id);
 }
 
 dali2rust_contracts::dispatch_bus_commands! {
     pub const APPLY_ORCHESTRATOR_HANDLED_COMMANDS;
     fn dispatch_apply_command(
         payload: &BusCommandPayload,
-        ev_rx: &BusSubscriberRx,
-        publisher: &BusPublisher,
-        bus_id: BusId,
-        read_port: &dyn ApplyReadPort,
-        operations: &dyn OperationReadPort,
-        counters: &ApplyOrchestratorCounters,
+        cx: &ApplyWorker<'_>,
         workflow: u64,
     );
     payload = payload;
-    ignored = { counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
+    ignored = { cx.counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
     GroupApplyExecuteCommand(body) => {
-        run_group_apply(
-            ev_rx,
-            publisher,
-            bus_id,
-            read_port,
-            operations,
-            counters,
+        run_apply(
+            cx,
             workflow,
             body.registry_adapter_id,
             body.operation_key.as_str(),
+            |read_port| {
+                read_port
+                    .group_apply_snapshot(body.registry_adapter_id)
+                    .map(|snapshot| collect_group_apply_diff(&snapshot))
+            },
         );
     },
     PolicyApplyExecuteCommand(body) => {
-        run_policy_apply(
-            ev_rx,
-            publisher,
-            bus_id,
-            read_port,
-            operations,
-            counters,
+        run_apply(
+            cx,
             workflow,
             body.registry_adapter_id,
             body.operation_key.as_str(),
+            |read_port| read_port.policy_apply_targets(body.registry_adapter_id),
         );
     },
     SceneApplyExecuteCommand(body) => {
-        run_scene_apply(
-            ev_rx,
-            publisher,
-            bus_id,
-            read_port,
-            operations,
-            counters,
+        run_apply(
+            cx,
             workflow,
             body.registry_adapter_id,
-            body.scene_id,
             body.operation_key.as_str(),
+            |read_port| {
+                read_port
+                    .scene_apply_snapshot(body.registry_adapter_id, body.scene_id)
+                    .map(|snapshot| collect_scene_apply_diff(&snapshot))
+            },
         );
     },
 }
@@ -138,94 +122,26 @@ pub const APPLY_ORCHESTRATOR_HANDLED_EVENTS: &[&str] = &[
     "DaliAttributesWrittenEvent",
 ];
 
-#[allow(clippy::too_many_arguments, reason = "mirrors the dispatch-arm signature")]
-fn run_group_apply(
-    ev_rx: &BusSubscriberRx,
-    publisher: &BusPublisher,
-    bus_id: BusId,
-    read_port: &dyn ApplyReadPort,
-    operations: &dyn OperationReadPort,
-    counters: &ApplyOrchestratorCounters,
+fn run_apply<C: PacedCell>(
+    cx: &ApplyWorker<'_>,
     workflow: u64,
     registry_adapter_id: u8,
     operation_key: &str,
+    read_diff: impl FnOnce(&dyn ApplyReadPort) -> Option<Vec<C>>,
 ) {
-    counters.runs_started.fetch_add(1, Ordering::Relaxed);
-    let diff = read_port
-        .group_apply_snapshot(registry_adapter_id)
-        .map(|snapshot| collect_group_apply_diff(&snapshot));
-    while ev_rx.try_recv().is_ok() {}
+    cx.counters.runs_started.fetch_add(1, Ordering::Relaxed);
+    let diff = read_diff(cx.read_port);
+    while cx.ev_rx.try_recv().is_ok() {}
 
     let run = RunState::begin(
-        ev_rx,
-        publisher,
-        bus_id,
-        counters,
+        cx.ev_rx,
+        cx.publisher,
+        cx.bus_id,
+        cx.counters,
         workflow,
         registry_adapter_id,
         operation_key,
-        operations,
-    );
-    execute_apply(&run, diff);
-}
-
-#[allow(clippy::too_many_arguments, reason = "mirrors the dispatch-arm signature")]
-fn run_policy_apply(
-    ev_rx: &BusSubscriberRx,
-    publisher: &BusPublisher,
-    bus_id: BusId,
-    read_port: &dyn ApplyReadPort,
-    operations: &dyn OperationReadPort,
-    counters: &ApplyOrchestratorCounters,
-    workflow: u64,
-    registry_adapter_id: u8,
-    operation_key: &str,
-) {
-    counters.runs_started.fetch_add(1, Ordering::Relaxed);
-    let diff = read_port.policy_apply_targets(registry_adapter_id);
-    while ev_rx.try_recv().is_ok() {}
-
-    let run = RunState::begin(
-        ev_rx,
-        publisher,
-        bus_id,
-        counters,
-        workflow,
-        registry_adapter_id,
-        operation_key,
-        operations,
-    );
-    execute_apply(&run, diff);
-}
-
-#[allow(clippy::too_many_arguments, reason = "mirrors the dispatch-arm signature")]
-fn run_scene_apply(
-    ev_rx: &BusSubscriberRx,
-    publisher: &BusPublisher,
-    bus_id: BusId,
-    read_port: &dyn ApplyReadPort,
-    operations: &dyn OperationReadPort,
-    counters: &ApplyOrchestratorCounters,
-    workflow: u64,
-    registry_adapter_id: u8,
-    scene_id: u8,
-    operation_key: &str,
-) {
-    counters.runs_started.fetch_add(1, Ordering::Relaxed);
-    let diff = read_port
-        .scene_apply_snapshot(registry_adapter_id, scene_id)
-        .map(|snapshot| collect_scene_apply_diff(&snapshot));
-    while ev_rx.try_recv().is_ok() {}
-
-    let run = RunState::begin(
-        ev_rx,
-        publisher,
-        bus_id,
-        counters,
-        workflow,
-        registry_adapter_id,
-        operation_key,
-        operations,
+        cx.operations,
     );
     execute_apply(&run, diff);
 }

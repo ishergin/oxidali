@@ -6,13 +6,14 @@ use dali2rust_bus::{
     BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublisher, BusSubscriberRx, PublishResult,
 };
 use dali2rust_contracts::msg::{
-    BusCommandPayload, DaliProgramTarget, GroupApplyExecuteCommand, Origin,
+    BusCommandPayload, DaliProgramTarget, DaliSceneTargetState, GroupApplyExecuteCommand, Origin,
+    PowerState, SceneApplyExecuteCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
     AdapterReadPort, AdapterView, GroupApplyRowView, GroupApplySnapshot,
-    GroupMembershipMatrixView, GroupReadPort, GroupView, OperationReadPort, SceneApplySnapshot,
-    SceneMatrixView, SceneReadPort, SceneView,
+    GroupMembershipMatrixView, GroupReadPort, GroupView, OperationReadPort, SceneApplyRowView,
+    SceneApplySnapshot, SceneMatrixView, SceneReadPort, SceneView,
 };
 use dali2rust_operations_runtime::{
     spawn_apply_orchestrator_worker, spawn_operation_tracker_worker, ApplyOrchestratorCounters,
@@ -22,9 +23,12 @@ use dali2rust_operations_runtime::{
 };
 use dali2rust_test_support::wait_until;
 
+const APPLIED_SCENE_ID: u8 = 3;
+
 struct StubGroupReadPort {
     rows: Vec<GroupApplyRowView>,
     policy_cells: Vec<dali2rust_domain::registry::PolicyApplyCell>,
+    scene_rows: Vec<SceneApplyRowView>,
 }
 
 impl AdapterReadPort for StubGroupReadPort {
@@ -77,8 +81,12 @@ impl SceneReadPort for StubGroupReadPort {
     fn scene_matrix_view(&self, _adapter_id: u8, _scene_id: u8) -> Option<SceneMatrixView> {
         None
     }
-    fn scene_apply_snapshot(&self, _adapter_id: u8, _scene_id: u8) -> Option<SceneApplySnapshot> {
-        None
+    fn scene_apply_snapshot(&self, adapter_id: u8, scene_id: u8) -> Option<SceneApplySnapshot> {
+        (adapter_id == 0 && scene_id == APPLIED_SCENE_ID).then(|| SceneApplySnapshot {
+            adapter_id,
+            scene_id,
+            rows: self.scene_rows.clone(),
+        })
     }
 }
 
@@ -97,22 +105,38 @@ fn spawn_harness(rows: Vec<GroupApplyRowView>) -> Harness {
 }
 
 fn spawn_harness_with_mute(rows: Vec<GroupApplyRowView>, mute: Arc<AtomicBool>) -> Harness {
-    spawn_harness_full(rows, Vec::new(), mute)
+    spawn_harness_full(rows, Vec::new(), Vec::new(), mute)
 }
 
 fn spawn_harness_with_policy(
     policy_cells: Vec<dali2rust_domain::registry::PolicyApplyCell>,
 ) -> Harness {
-    spawn_harness_full(Vec::new(), policy_cells, Arc::new(AtomicBool::new(false)))
+    spawn_harness_full(
+        Vec::new(),
+        policy_cells,
+        Vec::new(),
+        Arc::new(AtomicBool::new(false)),
+    )
+}
+
+fn spawn_harness_with_scene(scene_rows: Vec<SceneApplyRowView>) -> Harness {
+    spawn_harness_full(
+        Vec::new(),
+        Vec::new(),
+        scene_rows,
+        Arc::new(AtomicBool::new(false)),
+    )
 }
 
 fn spawn_harness_full(
     rows: Vec<GroupApplyRowView>,
     policy_cells: Vec<dali2rust_domain::registry::PolicyApplyCell>,
+    scene_rows: Vec<SceneApplyRowView>,
     mute: Arc<AtomicBool>,
 ) -> Harness {
     const FAKE_DALI_HANDLED: &[&str] = &[
         "DaliProgramGroupMembershipCommand",
+        "DaliProgramSceneCommand",
         "DaliWriteAttributesCommand",
     ];
     let config = BusConfig {
@@ -147,7 +171,11 @@ fn spawn_harness_full(
         apply_ev_rx,
         publisher.clone(),
         BusId::default(),
-        Arc::new(StubGroupReadPort { rows, policy_cells }),
+        Arc::new(StubGroupReadPort {
+            rows,
+            policy_cells,
+            scene_rows,
+        }),
         Arc::new(OperationTrackerHttpRead(Arc::clone(&tracker))),
         Arc::clone(&orchestrator_counters),
     );
@@ -198,6 +226,9 @@ fn answer_program_command(
     match &ce.payload {
         BusCommandPayload::DaliProgramGroupMembershipCommand(cmd) => {
             answer_group_membership(publisher, ce.meta.correlation_id, ce.meta.target_adapter_id, cmd);
+        }
+        BusCommandPayload::DaliProgramSceneCommand(cmd) => {
+            answer_program_scene(publisher, ce.meta.correlation_id, ce.meta.target_adapter_id, cmd);
         }
         BusCommandPayload::DaliWriteAttributesCommand(cmd) => {
             attribute_writes.lock().expect("writes").push(cmd.short_address);
@@ -274,6 +305,34 @@ fn answer_group_membership(
             action: cmd.action,
             physical_short_address: Some(virtual_lamp_id),
             membership: Some(1u16 << cmd.group_id),
+            error: None,
+        },
+    );
+    publish_until_queued(publisher, outcome);
+}
+
+fn answer_program_scene(
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    target_adapter_id: u16,
+    cmd: &dali2rust_contracts::msg::DaliProgramSceneCommand,
+) {
+    let DaliProgramTarget::VirtualLamp { virtual_lamp_id } = cmd.target else {
+        return;
+    };
+    let outcome = dali2rust_contracts::bus::event_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        correlation_id,
+        target_adapter_id,
+        Some(Origin::Internal),
+        dali2rust_contracts::msg::DaliSceneProgrammedEvent {
+            registry_adapter_id: cmd.registry_adapter_id,
+            target: cmd.target,
+            scene_id: cmd.scene_id,
+            action: cmd.action,
+            physical_short_address: Some(virtual_lamp_id),
+            target_state: cmd.target_state,
+            scene_level: cmd.target_state.and_then(|state| state.level),
             error: None,
         },
     );
@@ -603,4 +662,119 @@ fn publish_policy_execute(publisher: &BusPublisher, workflow: u64, operation_key
         publisher.try_publish(BusChannel::Commands, BusFrame::command(execute)),
         PublishResult::Queued
     );
+}
+
+fn scene_target(level: u8) -> DaliSceneTargetState {
+    DaliSceneTargetState {
+        power: Some(PowerState::On),
+        level: Some(level),
+        color: None,
+    }
+}
+
+fn scene_row(
+    vl: u8,
+    desired: Option<DaliSceneTargetState>,
+    applied: Option<DaliSceneTargetState>,
+    binding_short: Option<u8>,
+) -> SceneApplyRowView {
+    SceneApplyRowView {
+        virtual_lamp_id: vl,
+        desired_included: desired.is_some(),
+        desired_target: desired,
+        applied_included: applied.is_some(),
+        applied_target: applied,
+        binding_short,
+    }
+}
+
+fn publish_scene_execute(
+    publisher: &BusPublisher,
+    workflow: u64,
+    operation_key: &str,
+    scene_id: u8,
+) {
+    open_operation(publisher, workflow, operation_key, dali2rust_contracts::msg::OperationType::SceneApply);
+    let execute = dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        workflow,
+        BusId::default().0,
+        Some(Origin::Api),
+        SceneApplyExecuteCommand {
+            registry_adapter_id: 0,
+            scene_id,
+            operation_key: dali2rust_contracts::msg::fixed_text_32(operation_key),
+        },
+    );
+    assert_eq!(
+        publisher.try_publish(BusChannel::Commands, BusFrame::command(execute)),
+        PublishResult::Queued
+    );
+}
+
+#[test]
+fn a_scene_apply_programs_its_own_scene_and_skips_what_is_unbound() {
+    let rows = vec![
+        scene_row(1, Some(scene_target(100)), None, Some(1)),
+        scene_row(2, Some(scene_target(180)), Some(scene_target(100)), Some(2)),
+        scene_row(3, None, Some(scene_target(60)), Some(3)),
+        scene_row(9, Some(scene_target(100)), None, None),
+    ];
+    let harness = spawn_harness_with_scene(rows);
+    publish_scene_execute(&harness.publisher, 7030, "scene-apply-0-7030", APPLIED_SCENE_ID);
+
+    wait_until(
+        || {
+            harness
+                .read
+                .operation_view("scene-apply-0-7030")
+                .map(|view| view.status == "succeeded")
+                .unwrap_or(false)
+        },
+        Duration::from_secs(10),
+    );
+    let view = harness
+        .read
+        .operation_view("scene-apply-0-7030")
+        .expect("operation view");
+    assert_eq!(view.status, "succeeded", "view: {view:?}");
+    let result = view.result.expect("scene apply result");
+    let result = result.as_scene_apply().expect("scene apply variant").clone();
+    assert_eq!(
+        (
+            result.written_total,
+            result.updated_total,
+            result.cleared_total,
+            result.skipped_total,
+            result.failed_total,
+        ),
+        (1, 1, 1, 1, 0),
+    );
+    let counters = &harness.orchestrator_counters;
+    assert_eq!(counters.runs_started.load(Ordering::Relaxed), 1);
+    assert_eq!(counters.cells_published.load(Ordering::Relaxed), 3);
+    assert_eq!(counters.skips_published.load(Ordering::Relaxed), 1);
+    assert_eq!(counters.runs_aborted.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn a_scene_apply_for_a_scene_with_no_snapshot_fails_the_operation() {
+    let harness = spawn_harness_with_scene(Vec::new());
+    publish_scene_execute(&harness.publisher, 7031, "scene-apply-0-7031", APPLIED_SCENE_ID + 1);
+
+    wait_until(
+        || {
+            harness
+                .read
+                .operation_view("scene-apply-0-7031")
+                .map(|view| view.status == "failed")
+                .unwrap_or(false)
+        },
+        Duration::from_secs(5),
+    );
+    let view = harness
+        .read
+        .operation_view("scene-apply-0-7031")
+        .expect("operation view");
+    assert_eq!(view.error.expect("error").code, "not_found");
 }
