@@ -41,19 +41,57 @@ pub const NAMED_EVENT_SUBSCRIBERS: &[&str] = &[
     "replication",
 ];
 
-const WS_FANOUT_INBOX: usize = 128;
-const MQTT_BRIDGE_INBOX: usize = 64;
-const RULES_INBOX: usize = 128;
-const REGISTRY_INBOX: usize = 64;
-const DISPLAY_INBOX: usize = 32;
-const OPERATION_TRACKER_INBOX: usize = 64;
-const APPLY_ORCHESTRATOR_INBOX: usize = 64;
-const PROJECTOR_INBOX: usize = 64;
-const HCL_SCHEDULER_INBOX: usize = 64;
-const POLLER_INBOX: usize = 64;
-const ARBITRATION_INBOX: usize = 16;
-const SUPERVISOR_INBOX: usize = 4;
-const REPLICATION_INBOX: usize = 8;
+#[derive(Clone, Copy)]
+struct EventInbox {
+    name: &'static str,
+    handled: &'static [&'static str],
+    inbox: usize,
+}
+
+const fn event_inbox(
+    name: &'static str,
+    handled: &'static [&'static str],
+    inbox: usize,
+) -> EventInbox {
+    EventInbox { name, handled, inbox }
+}
+
+const REGISTRY: EventInbox = event_inbox("registry", REGISTRY_EVENTS_HANDLED_EVENTS, 64);
+const DISPLAY: EventInbox = event_inbox("display", DISPLAY_WORKER_HANDLED_EVENTS, 32);
+const OPERATION_TRACKER: EventInbox =
+    event_inbox("operation_tracker", OPERATION_TRACKER_HANDLED_EVENTS, 64);
+const APPLY_ORCHESTRATOR: EventInbox =
+    event_inbox("apply_orchestrator", APPLY_ORCHESTRATOR_HANDLED_EVENTS, 64);
+const PROJECTOR: EventInbox = event_inbox("fanout_projector", PROJECTOR_HANDLED_EVENTS, 64);
+const HCL_SCHEDULER: EventInbox = event_inbox("hcl_scheduler", HCL_SCHEDULER_HANDLED_EVENTS, 64);
+const POLLER: EventInbox = event_inbox("poller", POLLER_HANDLED_EVENTS, 64);
+const RULES: EventInbox =
+    event_inbox("rules", dali2rust_rules_runtime::RULES_WORKER_HANDLED_EVENTS, 128);
+const MQTT_BRIDGE: EventInbox =
+    event_inbox("mqtt_bridge", dali2rust_mqtt_runtime::MQTT_WORKER_HANDLED_EVENTS, 64);
+const WS_FANOUT: EventInbox = event_inbox("ws_fanout", dali2rust_api::ws::WS_PROJECTED_EVENTS, 128);
+const ARBITRATION: EventInbox =
+    event_inbox("arbitration", dali2rust_redundancy_runtime::ARBITRATION_HANDLED_EVENTS, 16);
+const SUPERVISOR: EventInbox =
+    event_inbox("arb-supervisor", dali2rust_redundancy_runtime::SUPERVISOR_HANDLED_EVENTS, 4);
+const REPLICATION: EventInbox =
+    event_inbox("replication", dali2rust_redundancy_runtime::REPLICATION_HANDLED_EVENTS, 8);
+
+fn named_events<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
+    reg: &mut dali2rust_bus::BusRegistrar<S, dali2rust_bus::BusSubscriberRx>,
+    subscriber: EventInbox,
+) -> dali2rust_bus::BusSubscriberRx {
+    reg.subscribe_events_named(subscriber.inbox, subscriber.handled, subscriber.name)
+}
+
+fn named_commands_and_events<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
+    reg: &mut dali2rust_bus::BusRegistrar<S, dali2rust_bus::BusSubscriberRx>,
+    commands: &'static [&'static str],
+    subscriber: EventInbox,
+) -> dali2rust_bus::BusSubscriberRx {
+    let EventInbox { name, handled, inbox } = subscriber;
+    reg.subscribe_commands_and_events_named(inbox, commands, handled, name)
+}
 
 pub(crate) fn spawn_bus_subscribers(
     config: BusConfig,
@@ -66,13 +104,11 @@ pub(crate) fn spawn_bus_subscribers(
         BusHost::spawn_with_command_observer(config, Some(arrival), |reg| WorkerChannels {
             pipeline: pipeline_channels(reg),
             services: service_channels(reg),
-            ws_ev: WsInboxPending::from(
-                reg.subscribe_events_named_indexed(
-                    WS_FANOUT_INBOX,
-                    dali2rust_api::ws::WS_PROJECTED_EVENTS,
-                    "ws_fanout",
-                ),
-            ),
+            ws_ev: WsInboxPending::from(reg.subscribe_events_named_indexed(
+                WS_FANOUT.inbox,
+                WS_FANOUT.handled,
+                WS_FANOUT.name,
+            )),
         });
 
     BusSubscribers {
@@ -87,12 +123,7 @@ fn pipeline_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
 ) -> PipelineChannels {
     PipelineChannels {
             dali_cmd: reg.subscribe_commands(128, DALI_WORKER_HANDLED_COMMANDS),
-            registry: reg.subscribe_commands_and_events_named(
-                REGISTRY_INBOX,
-                REGISTRY_WORKER_HANDLED_COMMANDS,
-                REGISTRY_EVENTS_HANDLED_EVENTS,
-                "registry",
-            ),
+            registry: named_commands_and_events(reg, REGISTRY_WORKER_HANDLED_COMMANDS, REGISTRY),
     }
 }
 
@@ -104,41 +135,20 @@ fn service_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
             operation_conf: reg.subscribe_confirmations(OPERATION_TRACKER_CONFIRMATION_INBOX),
             apply_cmd: reg.subscribe_commands(4, APPLY_ORCHESTRATOR_HANDLED_COMMANDS),
             confirmations: reg.subscribe_confirmations(32),
-            display_ev: reg.subscribe_events_named(
-                DISPLAY_INBOX,
-                DISPLAY_WORKER_HANDLED_EVENTS,
-                "display",
-            ),
-            operation_ev: reg.subscribe_events_named(
-                OPERATION_TRACKER_INBOX,
-                OPERATION_TRACKER_HANDLED_EVENTS,
-                "operation_tracker",
-            ),
-            apply_ev: reg.subscribe_events_named(
-                APPLY_ORCHESTRATOR_INBOX,
-                APPLY_ORCHESTRATOR_HANDLED_EVENTS,
-                "apply_orchestrator",
-            ),
-            projector_ev: reg.subscribe_events_named(
-                PROJECTOR_INBOX,
-                PROJECTOR_HANDLED_EVENTS,
-                "fanout_projector",
-            ),
+            display_ev: named_events(reg, DISPLAY),
+            operation_ev: named_events(reg, OPERATION_TRACKER),
+            apply_ev: named_events(reg, APPLY_ORCHESTRATOR),
+            projector_ev: named_events(reg, PROJECTOR),
             periodic: periodic_channels(reg),
             ota_cmd: Some(reg.subscribe_commands(
                 2,
                 dali2rust_ota_runtime::OTA_WORKER_HANDLED_COMMANDS,
             )),
-            supervisor_ev: Some(reg.subscribe_events_named(
-                SUPERVISOR_INBOX,
-                dali2rust_redundancy_runtime::SUPERVISOR_HANDLED_EVENTS,
-                "arb-supervisor",
-            )),
-            mqtt_ev: Some(reg.subscribe_commands_and_events_named(
-                MQTT_BRIDGE_INBOX,
+            supervisor_ev: Some(named_events(reg, SUPERVISOR)),
+            mqtt_ev: Some(named_commands_and_events(
+                reg,
                 dali2rust_mqtt_runtime::MQTT_WORKER_HANDLED_COMMANDS,
-                dali2rust_mqtt_runtime::MQTT_WORKER_HANDLED_EVENTS,
-                "mqtt_bridge",
+                MQTT_BRIDGE,
             )),
     }
 }
@@ -147,52 +157,28 @@ fn periodic_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
     reg: &mut dali2rust_bus::BusRegistrar<S, dali2rust_bus::BusSubscriberRx>,
 ) -> PeriodicChannels {
     PeriodicChannels {
-        hcl_rx: reg.subscribe_commands_and_events_named(
-            HCL_SCHEDULER_INBOX,
-            HCL_SCHEDULER_HANDLED_COMMANDS,
-            HCL_SCHEDULER_HANDLED_EVENTS,
-            "hcl_scheduler",
-        ),
+        hcl_rx: named_commands_and_events(reg, HCL_SCHEDULER_HANDLED_COMMANDS, HCL_SCHEDULER),
         hcl_conf: reg.subscribe_confirmations(32),
-        poller_ev: reg.subscribe_events_named(POLLER_INBOX, POLLER_HANDLED_EVENTS, "poller"),
+        poller_ev: named_events(reg, POLLER),
         poller_conf: reg.subscribe_confirmations(32),
-        rules_cmd: reg.subscribe_commands_and_events_named(
-            RULES_INBOX,
+        rules_cmd: named_commands_and_events(
+            reg,
             dali2rust_rules_runtime::RULES_WORKER_HANDLED_COMMANDS,
-            dali2rust_rules_runtime::RULES_WORKER_HANDLED_EVENTS,
-            "rules",
+            RULES,
         ),
-        arbitration_ev: reg.subscribe_events_named(
-            ARBITRATION_INBOX,
-            dali2rust_redundancy_runtime::ARBITRATION_HANDLED_EVENTS,
-            "arbitration",
-        ),
-        replication_ev: reg.subscribe_events_named(
-            REPLICATION_INBOX,
-            dali2rust_redundancy_runtime::REPLICATION_HANDLED_EVENTS,
-            "replication",
-        ),
+        arbitration_ev: named_events(reg, ARBITRATION),
+        replication_ev: named_events(reg, REPLICATION),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        spawn_bus_subscribers, APPLY_ORCHESTRATOR_HANDLED_EVENTS, APPLY_ORCHESTRATOR_INBOX,
-        ARBITRATION_INBOX, DISPLAY_INBOX, DISPLAY_WORKER_HANDLED_EVENTS,
-        HCL_SCHEDULER_HANDLED_EVENTS, HCL_SCHEDULER_INBOX, MQTT_BRIDGE_INBOX,
-        NAMED_EVENT_SUBSCRIBERS, OPERATION_TRACKER_HANDLED_EVENTS, OPERATION_TRACKER_INBOX,
-        POLLER_HANDLED_EVENTS, POLLER_INBOX, PROJECTOR_HANDLED_EVENTS, PROJECTOR_INBOX,
-        REGISTRY_EVENTS_HANDLED_EVENTS, REGISTRY_INBOX, REPLICATION_INBOX, RULES_INBOX,
-        SUPERVISOR_INBOX, WS_FANOUT_INBOX,
+        spawn_bus_subscribers, EventInbox, APPLY_ORCHESTRATOR, ARBITRATION, DISPLAY,
+        HCL_SCHEDULER, MQTT_BRIDGE, NAMED_EVENT_SUBSCRIBERS, OPERATION_TRACKER, POLLER,
+        PROJECTOR, REGISTRY, REPLICATION, RULES, SUPERVISOR, WS_FANOUT,
     };
-    use dali2rust_api::ws::WS_PROJECTED_EVENTS;
     use dali2rust_domain::registry::MAX_HCL_SCHEDULES;
-    use dali2rust_mqtt_runtime::MQTT_WORKER_HANDLED_EVENTS;
-    use dali2rust_redundancy_runtime::{
-        ARBITRATION_HANDLED_EVENTS, REPLICATION_HANDLED_EVENTS, SUPERVISOR_HANDLED_EVENTS,
-    };
-    use dali2rust_rules_runtime::RULES_WORKER_HANDLED_EVENTS;
     use dali2rust_registry_runtime::{
         ANNOUNCEMENTS_PER_PARK, ANNOUNCEMENT_PARK_WINDOW, ANNOUNCEMENT_SHARE_OF_INBOX,
     };
@@ -218,22 +204,20 @@ mod tests {
         ("HomeAssistantSettingsChangedEvent", ONE_RECORD),
     ];
 
-    type InboxRow = (&'static str, &'static [&'static str], usize);
-
-    const EVENT_INBOXES: &[InboxRow] = &[
-        ("registry", REGISTRY_EVENTS_HANDLED_EVENTS, REGISTRY_INBOX),
-        ("display", DISPLAY_WORKER_HANDLED_EVENTS, DISPLAY_INBOX),
-        ("operation_tracker", OPERATION_TRACKER_HANDLED_EVENTS, OPERATION_TRACKER_INBOX),
-        ("apply_orchestrator", APPLY_ORCHESTRATOR_HANDLED_EVENTS, APPLY_ORCHESTRATOR_INBOX),
-        ("fanout_projector", PROJECTOR_HANDLED_EVENTS, PROJECTOR_INBOX),
-        ("hcl_scheduler", HCL_SCHEDULER_HANDLED_EVENTS, HCL_SCHEDULER_INBOX),
-        ("poller", POLLER_HANDLED_EVENTS, POLLER_INBOX),
-        ("rules", RULES_WORKER_HANDLED_EVENTS, RULES_INBOX),
-        ("mqtt_bridge", MQTT_WORKER_HANDLED_EVENTS, MQTT_BRIDGE_INBOX),
-        ("ws_fanout", WS_PROJECTED_EVENTS, WS_FANOUT_INBOX),
-        ("arbitration", ARBITRATION_HANDLED_EVENTS, ARBITRATION_INBOX),
-        ("arb-supervisor", SUPERVISOR_HANDLED_EVENTS, SUPERVISOR_INBOX),
-        ("replication", REPLICATION_HANDLED_EVENTS, REPLICATION_INBOX),
+    const EVENT_INBOXES: [EventInbox; 13] = [
+        REGISTRY,
+        DISPLAY,
+        OPERATION_TRACKER,
+        APPLY_ORCHESTRATOR,
+        PROJECTOR,
+        HCL_SCHEDULER,
+        POLLER,
+        RULES,
+        MQTT_BRIDGE,
+        WS_FANOUT,
+        ARBITRATION,
+        SUPERVISOR,
+        REPLICATION,
     ];
 
     fn most_announced_in_a_park(handled: &[&str]) -> usize {
@@ -247,9 +231,9 @@ mod tests {
     #[test]
     fn a_park_of_reload_announcements_fits_every_named_subscriber_with_room_to_spare() {
         for name in NAMED_EVENT_SUBSCRIBERS {
-            let row = EVENT_INBOXES.iter().find(|(subscriber, _, _)| subscriber == name);
+            let row = EVENT_INBOXES.iter().find(|subscriber| subscriber.name == *name);
             let missing = || panic!("{name} declares no inbox here");
-            let (_, handled, inbox) = row.unwrap_or_else(missing);
+            let EventInbox { handled, inbox, .. } = *row.unwrap_or_else(missing);
             let most = most_announced_in_a_park(handled);
             let room = inbox / ANNOUNCEMENT_SHARE_OF_INBOX;
             assert!(most <= room, "{name}: {most} announcements a park against {inbox} slots");
