@@ -735,34 +735,21 @@ fn spawn_bridge_and_display(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "one call site; each group is already a struct")]
 fn spawn_service_workers(
-    channels: ServiceChannels,
-    publisher: BusPublisher,
-    bus_id: BusId,
-    adapter_count: u8,
-    orchestrator_store: Arc<RegistryStore>,
-    slots: Arc<PendingConfirmationSlots>,
-    hardware_display: HardwareDisplay,
+    inputs: ServiceInputs,
     observed_rx: std::sync::mpsc::Receiver<dali2rust_platform::dali::ObservedRawFrame>,
-    periodic_inputs: PeriodicInputs<'_>,
-    sniffer_tap: Arc<SnifferTap>,
     display_seams: DisplaySeams,
-    transfer: TransferSeams,
-    persisted: Arc<dali2rust_redundancy_runtime::PersistedConfigMark>,
+    beats: &RedundancyBeats,
 ) -> (OperationsWorkers, FanoutWorkers, PeriodicWorkers, BridgeAndDisplay) {
-    let operations = spawn_operations_workers(
-        OperationsChannels {
-            cmd: channels.operation_cmd,
-            ev: channels.operation_ev,
-            conf: channels.operation_conf,
-            apply_cmd: channels.apply_cmd,
-            apply_ev: channels.apply_ev,
-        },
-        &publisher,
-        bus_id,
-        Arc::clone(&orchestrator_store),
-    );
+    let ServiceInputs {
+        channels, publisher, bus_id, adapter_count, registry_store: orchestrator_store, slots,
+        hardware_display, hcl, poller, interactive, sniffer_tap, rules, transfer, persisted, ..
+    } = inputs;
+    let periodic_inputs = PeriodicInputs { hcl, poller, rules, interactive, beats };
+    let (cmd, ev, conf) = (channels.operation_cmd, channels.operation_ev, channels.operation_conf);
+    let (apply_cmd, apply_ev) = (channels.apply_cmd, channels.apply_ev);
+    let ops = OperationsChannels { cmd, ev, conf, apply_cmd, apply_ev };
+    let operations = spawn_operations_workers(ops, &publisher, bus_id, Arc::clone(&orchestrator_store));
     let fanout = spawn_fanout_workers(
         channels.projector_ev,
         &publisher,
@@ -1012,35 +999,16 @@ fn finish_spawn(
 ) -> (SpawnedWorkers, RuntimeCounterHandles) {
     let display_seams = display_seams_from(&inputs, &wire);
     let arbitration = start_supervisor(&mut inputs, &wire, &beats);
-    let services = spawn_service_workers(
-        inputs.channels,
-        inputs.publisher,
-        inputs.bus_id,
-        inputs.adapter_count,
-        inputs.registry_store,
-        inputs.slots,
-        inputs.hardware_display,
-        wire.observed_rx,
-        PeriodicInputs {
-            hcl: inputs.hcl,
-            poller: inputs.poller,
-            rules: inputs.rules,
-            interactive: inputs.interactive,
-            beats: &beats,
-        },
-        inputs.sniffer_tap,
-        display_seams,
-        inputs.transfer,
-        inputs.persisted,
-    );
+    let (ws_counters, mqtt_counters) = (Arc::clone(&inputs.ws_counters), Arc::clone(&inputs.mqtt_counters));
+    let services = spawn_service_workers(inputs, wire.observed_rx, display_seams, &beats);
     collect_spawned(
         pipeline,
         services,
         (wire.phy_sniffer, wire.dali),
         arbitration,
-        inputs.ws_counters,
+        ws_counters,
         mqtt,
-        inputs.mqtt_counters,
+        mqtt_counters,
     )
 }
 
