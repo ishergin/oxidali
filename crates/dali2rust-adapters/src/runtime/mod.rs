@@ -260,7 +260,6 @@ fn rules_worker_deps(booted: &BootedStack) -> workers::RulesWorkerDeps {
         resolver: Arc::new(http_bridges::RegistryNameResolver::new(
             Arc::clone(&booted.diagnostics_store),
             0,
-            booted.adapter_count,
         )),
         slices: booted.registry.deps.persistence_slices(),
         registry: Arc::clone(&booted.diagnostics_store),
@@ -286,7 +285,6 @@ fn rules_http_deps(booted: &BootedStack) -> app_router::RulesHttpDeps {
         resolver: Arc::new(http_bridges::RegistryNameResolver::new(
             Arc::clone(&booted.diagnostics_store),
             0,
-            booted.adapter_count,
         )),
     }
 }

@@ -595,19 +595,12 @@ fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
     let c = &h.dali_worker;
     StatsDaliDto {
         commands_executed_total: c.commands_handled.load(Relaxed),
-        errors_total: c
-            .execution_failed
-            .load(Relaxed)
-            .wrapping_add(c.invalid_command.load(Relaxed)),
+        errors_total: c.errors_total(),
         target_state_superseded_total: c.target_state_superseded.load(Relaxed),
         wire_load_permille: h.dali_wire.load_permille.load(Relaxed),
         wire_load_own_permille: h.dali_wire.load_own_permille.load(Relaxed),
         collision_restarts_total: h.dali_wire.collision_restarts.load(Relaxed),
-        foreign_frames_total: h
-            .phy_sniffer
-            .forward16
-            .load(Relaxed)
-            .wrapping_add(h.phy_sniffer.forward24.load(Relaxed)),
+        foreign_frames_total: h.phy_sniffer.foreign_frames_total(),
         foreign_verbs_projected_total: h.projector.transitions_expanded.load(Relaxed),
         foreign_dimming_unprojected_total: h.sniffer_translator.dimming_unprojectable.load(Relaxed),
         foreign_scene_writes_total: h.sniffer_translator.scene_writes_observed.load(Relaxed),
@@ -666,12 +659,12 @@ fn stats_task_timing_dto(h: &RuntimeCounterHandles) -> StatsDaliTaskTimingDto {
         answer_stage_max_ticks: s.answer_stage_max_ticks.load(Relaxed),
         sniff_poll_late_total: s.sniff_poll_late.load(Relaxed),
         sniff_poll_gap_max_us: s.sniff_poll_gap_max_us.load(Relaxed),
-        persist_flush_total: flush.0,
-        persist_flush_slow_total: flush.1,
-        persist_flush_ms_total: flush.2,
-        persist_flush_max_ms: flush.3,
-        persist_gate_waits_total: gate.0,
-        persist_gate_timeouts_total: gate.2,
+        persist_flush_total: flush.flushes,
+        persist_flush_slow_total: flush.slow,
+        persist_flush_ms_total: flush.ms_total,
+        persist_flush_max_ms: flush.max_ms,
+        persist_gate_waits_total: gate.waits,
+        persist_gate_timeouts_total: gate.timeouts,
     }
 }
 
@@ -990,7 +983,7 @@ impl RedundancyBridge {
                 reason: rs::transition_reason_name(r.reason),
                 detected_at_ms: r.detected_at_ms,
                 completed_at_ms: r.completed_at_ms,
-                took_ms: r.completed_at_ms.wrapping_sub(r.detected_at_ms),
+                took_ms: r.took_ms(),
                 last_peer_answer_ms: r.last_peer_answer_ms,
                 missed_probes: r.missed_probes,
             })
@@ -1171,17 +1164,12 @@ const _: () = assert!(MAX_GROUP_ID as u16 + 1 == GROUP_COUNT as u16);
 pub struct RegistryNameResolver {
     store: Arc<RegistryStore>,
     primary_adapter: u8,
-    adapter_count: u8,
 }
 
 impl RegistryNameResolver {
     #[must_use]
-    pub fn new(store: Arc<RegistryStore>, primary_adapter: u8, adapter_count: u8) -> Self {
-        Self {
-            store,
-            primary_adapter,
-            adapter_count,
-        }
+    pub fn new(store: Arc<RegistryStore>, primary_adapter: u8) -> Self {
+        Self { store, primary_adapter }
     }
 }
 
@@ -1191,7 +1179,7 @@ impl NameResolver for RegistryNameResolver {
     }
 
     fn adapter_exists(&self, adapter_id: u8) -> bool {
-        adapter_id < self.adapter_count || self.store.adapter_id_exists(adapter_id)
+        self.store.adapter_id_exists(adapter_id)
     }
 
     fn resolve_lamp(&self, name: &str) -> Vec<LampRef> {
