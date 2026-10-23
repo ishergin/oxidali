@@ -230,7 +230,8 @@ impl crate::http::handlers::common::MutatingHandler for PhysicalDevicePatchHandl
         let watch = Arc::clone(&self.apply_watch);
         wait_apply_counter(
             move || watch.physical_override_applied_load(),
-            before.saturating_add(published.saturating_sub(1)),
+            before,
+            published,
             APPLY_WATCH_BUDGET_MS.min(self.timeout_ms),
         )?;
         Ok((aid, short))
