@@ -1,10 +1,3 @@
-#![allow(
-    clippy::manual_contains,
-    clippy::needless_as_bytes,
-    clippy::type_complexity,
-    reason = "HTTP and bus_codec surfaces keep stable wiring patterns."
-)]
-
 pub mod bus_codec;
 pub mod coalesce;
 pub mod confirmation_bridge;
