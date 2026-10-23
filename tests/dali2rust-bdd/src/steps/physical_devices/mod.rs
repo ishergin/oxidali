@@ -11,4 +11,4 @@ pub mod write_scripts;
 
 const TEST_ADAPTER_ID: u8 = 0;
 const TEST_SHORT_ADDRESS: u8 = 0;
-const TEST_RANDOM_ADDRESS: u32 = 0x5C1D_C2;
+const TEST_RANDOM_ADDRESS: u32 = 0x5C_1D_C2;

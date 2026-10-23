@@ -69,7 +69,7 @@ async fn then_broadcast_off_sent(world: &mut DaliWorld) {
     let guard = mock.lock().expect("mock lock");
     let frames = guard.sent_frames();
     assert!(
-        frames.iter().any(|f| *f == 0xFE00),
+        frames.contains(&0xFE00),
         "expected broadcast off (DAPC 0, 0xFE00) among {frames:04X?}"
     );
 }

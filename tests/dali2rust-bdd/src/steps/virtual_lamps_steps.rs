@@ -7,7 +7,7 @@ use crate::steps::polling::wait_for_operation_status;
 use crate::{DaliWorld};
 use crate::steps::last_json;
 
-const TWO_DEVICE_RANDOM_ADDRESSES: [(u8, u32); 2] = [(0, 0x5C1D_C2), (1, 0x2A_0F13)];
+const TWO_DEVICE_RANDOM_ADDRESSES: [(u8, u32); 2] = [(0, 0x5C_1D_C2), (1, 0x2A_0F_13)];
 
 const DISCOVERY_DT8_FEATURES: u8 = 0x02;
 

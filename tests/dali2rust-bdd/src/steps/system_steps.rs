@@ -106,7 +106,7 @@ async fn json_field_one_of(world: &mut DaliWorld, field: String, expected_csv: S
     let got = val.get(&field).and_then(|v| v.as_str()).unwrap_or_default();
     let expected: Vec<_> = expected_csv.split(',').map(str::trim).collect();
     assert!(
-        expected.iter().any(|candidate| *candidate == got),
+        expected.contains(&got),
         "field {field}: got {got}, expected one of {expected:?}"
     );
 }
