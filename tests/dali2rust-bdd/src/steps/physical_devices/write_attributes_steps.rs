@@ -1,5 +1,7 @@
 use cucumber::{given, then};
-use dali2rust_domain::dali::devices::dt8_color::{COLOUR_TYPE_BYTE_MASK, COLOUR_TYPE_BYTE_TC};
+use dali2rust_domain::dali::devices::dt8_color::{
+    COLOUR_TYPE_BYTE_MASK, COLOUR_TYPE_BYTE_TC, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE,
+};
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_test_support::{remains_false_for, wait_until, WORKER_SETTLE};
@@ -12,7 +14,8 @@ use super::attribute_read_scripts::script_dt8_colour_value;
 use super::read_model::{fetch_physical_device_full, wait_for_physical_device, READ_MODEL_TIMEOUT};
 use super::write_scripts::{
     script_dimming_curve_write, script_dimming_curve_write_no_clear, script_fade_time_write,
-    script_fade_time_write_answered, script_fade_time_write_violated, script_level_store,
+    script_addressed_config_triple, script_fade_time_write_answered,
+    script_fade_time_write_violated, script_level_store, script_narrow_colour_value,
     script_level_store_keeping_colour, script_max_triple, script_min_triple,
     script_tc_limit_physical_pair, script_tc_limit_store_frames, POWER_ON_STORE,
     SYSTEM_FAILURE_STORE,
@@ -134,6 +137,25 @@ async fn given_level_write_over_a_charged_temporary(world: &mut DaliWorld, level
     script_level_store_keeping_colour(&mock, POWER_ON_STORE, (OLD_POWER_ON_LEVEL, level), colour_types);
     let consumed = (Some(COLOUR_TYPE_BYTE_MASK), Some(level));
     script_level_store(&mock, TEST_SHORT_ADDRESS, SYSTEM_FAILURE_STORE, level, consumed);
+}
+
+// PD-287
+#[given(regex = r"^a write of power-on level (\d+) to short address 0, whose gear declares no DT8$")]
+async fn given_level_write_without_dt8(world: &mut DaliWorld, level: u8) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    mock.clear();
+    script_addressed_config_triple(&mock, TEST_SHORT_ADDRESS, POWER_ON_STORE.0, POWER_ON_STORE.1, level, level);
+}
+
+// PD-288
+#[given(regex = r"^a write of power-on level (\d+) to short address 0, whose temporary colour type never answers$")]
+async fn given_level_write_with_a_silent_probe(world: &mut DaliWorld, _level: u8) {
+    const PROBE_ASKS: usize = 3;
+    let mock = world.dali_mock().lock().expect("mock lock");
+    mock.clear();
+    for _ in 0..PROBE_ASKS {
+        script_narrow_colour_value(&mock, TEST_SHORT_ADDRESS, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, None);
+    }
 }
 
 // PD-030 PD-241

@@ -97,6 +97,8 @@ impl dali2rust_domain::registry::PolicyApplyReadPort for RegistryStore {
                     short_address,
                     system_failure_level: policy.system_failure_level,
                     power_on_level: policy.power_on_level,
+                    supported_device_types: <Self as dali2rust_domain::registry::PhysicalDeviceReadPort>::
+                        physical_device_supported_types(self, adapter_id, short_address),
                 })
                 .collect(),
         )

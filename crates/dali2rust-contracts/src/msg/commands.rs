@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use super::bounded::{FixedItems, FixedText32, FixedText48, FixedText64, FixedText96};
 use super::kinds::{
-    CommissioningStep, ConfigWriteResource, DaliTargetScope, DiscoveryMode, HclAlgorithm,
+    CommissioningStep, ConfigWriteResource, DaliTargetScope, DeviceTypeSet, DiscoveryMode,
+    HclAlgorithm,
     HclLevelMode,
     HclTargetScope, HclTimeRef, InitialiseScope, MemoryBankReadPreset, OperationType, PowerState,
     RuntimeSource,
@@ -282,6 +283,7 @@ declare_bus_payloads! {
         pub max_level: Option<u8>,
         pub dimming_curve: Option<u8>,
         pub signals_operation: bool,
+        pub supported_device_types: Option<DeviceTypeSet>,
     }
     budget = DaliWriteAttributesCommand {
         short_address: 63,
@@ -297,6 +299,7 @@ declare_bus_payloads! {
         max_level: Some(u8::MAX),
         dimming_curve: Some(u8::MAX),
         signals_operation: true,
+        supported_device_types: Some(DeviceTypeSet::from_bits(u64::MAX)),
     };
 
     pub struct DaliDiscoverDevicesCommand {

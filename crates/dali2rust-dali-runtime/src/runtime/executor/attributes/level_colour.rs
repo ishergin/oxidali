@@ -1,6 +1,7 @@
 use super::*;
 use super::dt8::dt8_narrow_value_response;
 use super::write::verified_store;
+use crate::runtime::executor::helpers::DT8_DEVICE_TYPE;
 use crate::runtime::executor::target_state::stage_dtrs_verified;
 use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::devices::dt8_color::{
@@ -8,8 +9,9 @@ use dali2rust_domain::dali::devices::dt8_color::{
 };
 
 const LEVEL_COLOUR_UNCONFIRMED: &str = "dt8_level_colour_unconfirmed";
-const BUS_CONTENDED: &str = "bus_contended";
-const COLOUR_TYPE_ASKS: u8 = 3;
+const LEVEL_COLOUR_UNANSWERED: &str = "dt8_level_colour_unanswered";
+const LEVEL_COLOUR_CONTENDED: &str = "dt8_level_colour_contended";
+const COLOUR_VALUE_ASKS: u8 = 3;
 const PRIMARY_N_COUNT: u8 = 6;
 const MASK_WORD: [u8; 2] = [DT8_COLOUR_VALUE_LEVEL_MASK; 2];
 const MASK_TRIO: [u8; 3] = [DT8_COLOUR_VALUE_LEVEL_MASK; 3];
@@ -37,8 +39,22 @@ const fn unconfirmed() -> SemanticDaliError {
     SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNCONFIRMED)
 }
 
+// IEC 62386-102 §9.18
+pub(super) fn store_level<C: DaliApplicationController>(
+    controller: &mut C,
+    address: DaliAddress,
+    level: u8,
+    (stored, supported): (StoredLevel, Option<DeviceTypeSet>),
+) -> Result<ReadBack, SemanticDaliError> {
+    if supported.is_some_and(|set| !set.contains(DT8_DEVICE_TYPE)) {
+        let verify = |c: &mut C| send_standard_response(c, address, stored.query);
+        return send_dtr0_config_verified(controller, address, level, stored.store, verify);
+    }
+    store_level_keeping_colour(controller, address, level, stored)
+}
+
 // IEC 62386-209 §11.2.2, Table 6
-pub(super) fn store_level_keeping_colour<C: DaliApplicationController>(
+fn store_level_keeping_colour<C: DaliApplicationController>(
     controller: &mut C,
     address: DaliAddress,
     level: u8,
@@ -61,35 +77,37 @@ fn keep_stored_colour(
     address: DaliAddress,
     stored: StoredLevel,
 ) -> Result<(), SemanticDaliError> {
-    let temporary = match colour_type(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE)? {
-        None | Some(COLOUR_TYPE_BYTE_MASK) => return Ok(()),
-        Some(temporary) => temporary,
-    };
+    let temporary = colour_type(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE)?;
+    if temporary == COLOUR_TYPE_BYTE_MASK {
+        return Ok(());
+    }
     let loaded = send_standard_response(controller, address, stored.query)?;
     if !matches!(loaded, DaliResponse::Answer(_)) {
         return Err(unconfirmed());
     }
     match colour_type(controller, address, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE)? {
-        Some(COLOUR_TYPE_BYTE_MASK) => charge_mask_colour(controller, address, temporary),
-        Some(_) => send_dt8(controller, address, Dt8Command::CopyReportToTemporary),
-        None => Err(unconfirmed()),
+        COLOUR_TYPE_BYTE_MASK => charge_mask_colour(controller, address, temporary),
+        _ => send_dt8(controller, address, Dt8Command::CopyReportToTemporary),
     }
 }
 
 // IEC 62386-101 §8.2.5
+// IEC 62386-102 §3.13
 fn colour_type(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     value_id: u8,
-) -> Result<Option<u8>, SemanticDaliError> {
-    for _ in 0..COLOUR_TYPE_ASKS {
+) -> Result<u8, SemanticDaliError> {
+    let mut contended = false;
+    for _ in 0..COLOUR_VALUE_ASKS {
         match dt8_narrow_value_response(controller, address, value_id)? {
-            None | Some((DaliResponse::NoAnswer, false)) => return Ok(None),
-            Some((DaliResponse::Answer(value), false)) => return Ok(Some(value)),
-            Some(_) => {}
+            None => return Err(unconfirmed()),
+            Some((DaliResponse::Answer(value), false)) => return Ok(value),
+            Some((response, seen)) => contended |= seen || response == DaliResponse::Violation,
         }
     }
-    Err(SemanticDaliError::OperationFailed(BUS_CONTENDED))
+    let outcome = if contended { LEVEL_COLOUR_CONTENDED } else { LEVEL_COLOUR_UNANSWERED };
+    Err(SemanticDaliError::OperationFailed(outcome))
 }
 
 // IEC 62386-209 §9.12.4, §11.3.4.1, Table 8

@@ -72,7 +72,7 @@ fn write(controller: &mut DaliController<SimDaliTransport>, level: Level) {
         Level::SystemFailure => (None, Some(LEVEL)),
     };
     let execution = write_short_attributes(
-        controller, SHORT, None, None, power_on, failure, None, (None, None), (None, None), None,
+        controller, SHORT, None, None, power_on, failure, None, (None, None), (None, None), None, None,
     );
     assert_eq!(execution.error, None, "{level:?}");
 }

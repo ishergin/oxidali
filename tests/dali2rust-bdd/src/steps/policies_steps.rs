@@ -1,4 +1,5 @@
 use cucumber::given;
+use dali2rust_domain::dali::devices::dt8_color::COLOUR_TYPE_BYTE_MASK;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 
 use crate::steps::physical_devices::write_scripts::{
@@ -21,7 +22,7 @@ async fn given_policy_write_script(world: &mut DaliWorld, level: u8) {
 
 fn script_policy_pair(mock: &MockDaliTransport, short: u8, level: u8) {
     for store in [POWER_ON_STORE, SYSTEM_FAILURE_STORE] {
-        script_level_store(mock, short, store, level, (None, Some(level)));
+        script_level_store(mock, short, store, level, (Some(COLOUR_TYPE_BYTE_MASK), Some(level)));
     }
 }
 
@@ -44,5 +45,5 @@ async fn given_policy_write_unanswered(world: &mut DaliWorld, level: u8) {
 }
 
 fn script_power_on_write(mock: &MockDaliTransport, level: u8, answer: Option<u8>) {
-    script_level_store(mock, POLICY_SHORT_ADDRESS, POWER_ON_STORE, level, (None, answer));
+    script_level_store(mock, POLICY_SHORT_ADDRESS, POWER_ON_STORE, level, (Some(COLOUR_TYPE_BYTE_MASK), answer));
 }

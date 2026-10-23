@@ -385,3 +385,28 @@ Feature: Physical device write-attributes
     And physical device 0 eventually exposes write-confirmed common_102 power_on_level 120
     And physical device 0 eventually exposes write-confirmed common_102 system_failure_level 120
     And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-287
+  Scenario: A level write to a gear known without DT8 asks no colour question
+    Given a discovery script where short address 0 declares only DT6
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given a write of power-on level 120 to short address 0, whose gear declares no DT8
+    When I POST JSON {"power_on_level":120} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-288
+  Scenario: A level write to a DT8 gear whose temporary colour type never answers stores nothing
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given a write of power-on level 120 to short address 0, whose temporary colour type never answers
+    When I POST JSON {"power_on_level":120} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error message should be "dt8_level_colour_unanswered"
+    And all scripted DALI exchanges should be consumed without errors

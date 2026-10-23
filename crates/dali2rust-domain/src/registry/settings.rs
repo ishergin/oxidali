@@ -99,4 +99,5 @@ pub struct PolicyApplyCell {
     pub short_address: u8,
     pub system_failure_level: Option<u8>,
     pub power_on_level: Option<u8>,
+    pub supported_device_types: Option<dali2rust_contracts::msg::DeviceTypeSet>,
 }
