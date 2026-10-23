@@ -58,6 +58,7 @@ struct FlushClock {
     switch_interval: Duration,
     last_reread: Instant,
     reread_interval: Duration,
+    reread_failures: transfer::RereadFailures,
 }
 
 impl FlushClock {
@@ -67,6 +68,7 @@ impl FlushClock {
             switch_interval,
             last_reread: Instant::now(),
             reread_interval: HELD_SLICE_REREAD_INTERVAL,
+            reread_failures: transfer::RereadFailures::default(),
         }
     }
 }
@@ -78,7 +80,10 @@ fn reread_held_when_due(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
         return;
     }
     clock.last_reread = Instant::now();
-    transfer::reread_held_slices(deps);
+    let outcome = transfer::reread_held_slices(deps);
+    if let Some(e) = clock.reread_failures.first(&outcome) {
+        log::error!("registry: held slices are not read again while the reload stack fails: {e}");
+    }
 }
 
 fn flush_paced(

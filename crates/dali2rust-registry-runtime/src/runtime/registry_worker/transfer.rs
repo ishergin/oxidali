@@ -126,8 +126,8 @@ fn validate_and_write(
 ) -> Result<Written, ImportFailure> {
     let staged = store.take_import(corr).ok_or(NO_STAGE)?;
     let (validating, foreign) = (Arc::clone(store), Arc::clone(&persistence.foreign));
-    let (staged, refused) =
-        on_hydration_stack("validate", move || validating.keep_decodable(staged, foreign.as_ref()))?;
+    let validate = move || validating.keep_decodable(staged, foreign.as_ref());
+    let (staged, refused) = import_on_hydration_stack("validate", validate)?;
     if staged.is_empty() {
         return Err(INVALID_SLICE);
     }
@@ -179,22 +179,23 @@ fn announce_reload(publisher: &BusPublisher, primary_adapter_id: BusId, slice_na
 
 const HELD_SLICES_READ_AGAIN: &str = "held_slices";
 
-pub(super) fn reread_held_slices(deps: &RegistryWorkerDeps) {
+pub(super) fn reread_held_slices(deps: &RegistryWorkerDeps) -> Reread {
     let Some(persistence) = deps.persistence.as_ref() else {
-        return;
+        return Reread::NothingHeld;
     };
     let (slices, adapter_count) = (persistence.slices.as_ref(), deps.adapter_count);
     let Some((held, snapshot)) = deps.store.held_snapshot(slices, adapter_count) else {
-        return;
+        return Reread::NothingHeld;
     };
     let waiting = deps.store.unread_slices(adapter_count);
     let watch = deps.store.watch_reload(&[], adapter_count);
     let rereading = Arc::clone(&deps.store);
     let reread = move || rereading.reread_held_from_store(&snapshot, adapter_count, held);
-    if let Ok(counts) = on_hydration_stack("reread", reread) {
-        let replaced = deps.store.replaced_entities(watch);
-        announce_settled(deps, counts, waiting, replaced);
+    match on_hydration_stack("re-read", reread) {
+        Ok(counts) => announce_settled(deps, counts, waiting, deps.store.replaced_entities(watch)),
+        Err(e) => return Reread::Unrun(e),
     }
+    Reread::Ran
 }
 
 fn announce_settled(
@@ -232,7 +233,8 @@ fn reload_on_hydration_stack(
     let snapshot = dali2rust_platform::slice_store::InMemorySlices::snapshot(slices, adapter_count);
     log::info!("registry: reload snapshot holds {} B", snapshot.bytes());
     let hydrating = Arc::clone(store);
-    on_hydration_stack("hydrate", move || hydrating.hydrate_counts_from_store(&snapshot, adapter_count))
+    let hydrate = move || hydrating.hydrate_counts_from_store(&snapshot, adapter_count);
+    import_on_hydration_stack("hydrate", hydrate)
 }
 
 static HYDRATION: StackRunner = StackRunner::new(
@@ -244,25 +246,65 @@ static HYDRATION: StackRunner = StackRunner::new(
 fn on_hydration_stack<T: Send + 'static>(
     note: &'static str,
     run: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, RunError> {
+    HYDRATION.run(move || {
+        let value = run();
+        RELOAD_STACK.note(note);
+        value
+    })
+}
+
+fn import_on_hydration_stack<T: Send + 'static>(
+    note: &'static str,
+    run: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ImportFailure> {
-    HYDRATION
-        .run(move || {
-            let value = run();
-            RELOAD_STACK.note(note);
-            value
-        })
-        .map_err(|e| {
-            log::error!("registry: import {note} failed: {e}");
-            match e {
-                RunError::Busy | RunError::Unstarted(_) => NO_RELOAD_STACK,
-                RunError::Unanswered => RELOAD_JOB_LOST,
-            }
-        })
+    on_hydration_stack(note, run).map_err(|e| {
+        log::error!("registry: import {note} failed: {e}");
+        match e {
+            RunError::Busy | RunError::Unstarted(_) => NO_RELOAD_STACK,
+            RunError::Unanswered => RELOAD_JOB_LOST,
+        }
+    })
+}
+
+pub(super) enum Reread {
+    NothingHeld,
+    Ran,
+    Unrun(RunError),
+}
+
+#[derive(Default)]
+pub(super) struct RereadFailures {
+    reported: bool,
+}
+
+impl RereadFailures {
+    pub(super) fn first<'a>(&mut self, outcome: &'a Reread) -> Option<&'a RunError> {
+        let Reread::Unrun(e) = outcome else {
+            self.reported = false;
+            return None;
+        };
+        (!std::mem::replace(&mut self.reported, true)).then_some(e)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::on_hydration_stack;
+    use dali2rust_bsp::stack_runner::RunError;
+
+    use super::{on_hydration_stack, Reread, RereadFailures};
+
+    #[test]
+    fn a_reload_stack_that_cannot_run_is_reported_once_until_a_re_read_runs() {
+        let mut failures = RereadFailures::default();
+        let unrun = || Reread::Unrun(RunError::Busy);
+        assert!(failures.first(&unrun()).is_some(), "the first failure was not reported");
+        assert!(failures.first(&unrun()).is_none(), "a repeated failure was reported again");
+        assert!(failures.first(&Reread::Ran).is_none());
+        assert!(failures.first(&unrun()).is_some(), "a failure after a run was not reported");
+        assert!(failures.first(&Reread::NothingHeld).is_none());
+        assert!(failures.first(&unrun()).is_some(), "a new held episode was not reported");
+    }
 
     #[test]
     fn the_import_jobs_run_on_one_long_lived_thread_beside_the_registry_worker() {
