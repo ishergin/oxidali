@@ -344,17 +344,23 @@ fn serve_turn(
         &cx.ports.counters.commands_dropped_total,
         cx.link.dropped_incoming(),
     );
-    drain_bus(cx.ev_rx, burst, client, session, topics, cx.settings, cx.ports, job, rule_budget);
-    if let Some(active) = job.as_mut() {
-        let finished = advance_discovery(client, session, active, topics, cx.settings, cx.ports);
-        WORKER_STACK.note("discovery-advance");
-        if finished {
-            let done = job.take().expect("job present");
-            publish_discovery_outcome(cx.ports, &done);
-            WORKER_STACK.note("discovery-outcome");
-        }
-    }
+    let mut out = HaOut { client: client.as_mut(), session, topics, settings: cx.settings, ports: cx.ports };
+    drain_bus(cx.ev_rx, burst, &mut out, job, rule_budget);
+    advance_job(&mut out, job);
     true
+}
+
+fn advance_job(out: &mut HaOut<'_>, job: &mut Option<DiscoveryJob>) {
+    let Some(active) = job.as_mut() else {
+        return;
+    };
+    let finished = advance_discovery(out, active);
+    WORKER_STACK.note("discovery-advance");
+    if finished {
+        let done = job.take().expect("job present");
+        publish_discovery_outcome(out.ports, &done);
+        WORKER_STACK.note("discovery-outcome");
+    }
 }
 
 #[inline(never)]
@@ -534,21 +540,13 @@ fn plan_discovery(
     }
 }
 
-fn build_scene_select_discovery(
-    ports: &MqttWorkerPorts,
-    topics: &HaTopics,
-    device: &HaDevice<'_>,
-    adapter_id: u8,
-) -> Option<(String, String)> {
-    let scenes = ports.read_port.ha_scene_views(adapter_id);
-    let topic = topics.discovery_topic("select", &HaTopics::scene_select_object_id(adapter_id));
+fn build_scene_select_discovery(out: &HaOut<'_>, adapter_id: u8) -> Option<(String, String)> {
+    let scenes = out.ports.read_port.ha_scene_views(adapter_id);
+    let topic = out.topics.discovery_topic("select", &HaTopics::scene_select_object_id(adapter_id));
     if scenes.is_empty() {
         return Some((topic, DISCOVERY_RETRACTION.to_string()));
     }
-    Some((
-        topic,
-        scene_select_discovery_json(topics, device, adapter_id, &scenes),
-    ))
+    Some((topic, scene_select_discovery_json(out.topics, &out.device(), adapter_id, &scenes)))
 }
 
 struct Announcement {
@@ -564,44 +562,24 @@ impl Announcement {
 }
 
 #[inline(never)]
-fn build_discovery(
-    ports: &MqttWorkerPorts,
-    topics: &HaTopics,
-    device: &HaDevice<'_>,
-    settings: &HomeAssistantSettingsView,
-    adapter_id: u8,
-    entity: &JobEntity,
-) -> Option<Announcement> {
+fn build_discovery(out: &HaOut<'_>, adapter_id: u8, entity: &JobEntity) -> Option<Announcement> {
+    let topics = out.topics;
     match entity {
-        JobEntity::InputInstance(short_address, instance_number) => build_input_discovery(
-            ports,
-            topics,
-            device,
-            settings,
-            adapter_id,
-            *short_address,
-            *instance_number,
-        )
-        .map(Announcement::plain),
-        JobEntity::Lamp(id) => ports.read_port.ha_lamp_view(adapter_id, *id).map(|lamp| {
-            Announcement {
-                topic: topics.discovery_topic("light", &HaTopics::lamp_object_id(adapter_id, *id)),
-                payload: lamp_discovery_json(topics, device, adapter_id, &lamp),
-                lamp_unreachable: Some(lamp.unreachable),
-            }
-        }),
-        JobEntity::Group(id) => ports
-            .read_port
-            .ha_group_view(adapter_id, *id)
-            .map(|group| {
-                Announcement::plain((
-                    topics.discovery_topic("light", &HaTopics::group_object_id(adapter_id, *id)),
-                    group_discovery_json(topics, device, adapter_id, &group),
-                ))
-            }),
-        JobEntity::SceneSelect => {
-            build_scene_select_discovery(ports, topics, device, adapter_id).map(Announcement::plain)
+        JobEntity::InputInstance(short_address, instance_number) => {
+            build_input_discovery(out, adapter_id, *short_address, *instance_number).map(Announcement::plain)
         }
+        JobEntity::Lamp(id) => out.ports.read_port.ha_lamp_view(adapter_id, *id).map(|lamp| Announcement {
+            topic: topics.discovery_topic("light", &HaTopics::lamp_object_id(adapter_id, *id)),
+            payload: lamp_discovery_json(topics, &out.device(), adapter_id, &lamp),
+            lamp_unreachable: Some(lamp.unreachable),
+        }),
+        JobEntity::Group(id) => out.ports.read_port.ha_group_view(adapter_id, *id).map(|group| {
+            Announcement::plain((
+                topics.discovery_topic("light", &HaTopics::group_object_id(adapter_id, *id)),
+                group_discovery_json(topics, &out.device(), adapter_id, &group),
+            ))
+        }),
+        JobEntity::SceneSelect => build_scene_select_discovery(out, adapter_id).map(Announcement::plain),
         JobEntity::Retract(component, object_id) => Some(Announcement::plain((
             topics.discovery_topic(component, object_id),
             DISCOVERY_RETRACTION.to_string(),
@@ -613,41 +591,21 @@ fn build_discovery(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "the session's caches are threaded, not rebuilt")]
 #[inline(never)]
-fn announce_one(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-    adapter_id: u8,
-    entity: &JobEntity,
-    announcement: Announcement,
-) -> bool {
+fn announce_one(out: &mut HaOut<'_>, adapter_id: u8, entity: &JobEntity, announcement: Announcement) -> bool {
     let Announcement { topic, payload, lamp_unreachable } = announcement;
-    if !publish(client, ports, &topic, &payload, qos_of(settings), retain_config(&payload, settings))
-    {
+    if !out.publish(&topic, &payload, retain_config(&payload, out.settings)) {
         return false;
     }
     let paired = match entity {
-        JobEntity::Lamp(lamp_id) => publish_lamp_availability(
-            client,
-            session,
-            ports,
-            topics,
-            settings,
-            adapter_id,
-            *lamp_id,
-            lamp_unreachable.unwrap_or(false),
-        ),
-        JobEntity::RetractLamp(lamp_id) => {
-            clear_lamp_retained(client, session, ports, topics, settings, adapter_id, *lamp_id)
+        JobEntity::Lamp(lamp_id) => {
+            publish_lamp_availability(out, adapter_id, *lamp_id, lamp_unreachable.unwrap_or(false))
         }
+        JobEntity::RetractLamp(lamp_id) => clear_lamp_retained(out, adapter_id, *lamp_id),
         _ => true,
     };
     if paired {
-        record_announcement(session, adapter_id, entity, &payload);
+        record_announcement(out.session, adapter_id, entity, &payload);
     }
     paired
 }
@@ -703,37 +661,25 @@ fn record_announcement(
 }
 
 #[inline(never)]
-fn advance_discovery(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    job: &mut DiscoveryJob,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-) -> bool {
-    let device = ha_device(settings, ports);
+fn advance_discovery(out: &mut HaOut<'_>, job: &mut DiscoveryJob) -> bool {
     for _ in 0..DISCOVERY_BATCH {
         let Some((adapter_id, entity)) = job.pending.pop() else {
             return true;
         };
-        let Some(announcement) = build_discovery(ports, topics, &device, settings, adapter_id, &entity)
-        else {
+        let Some(announcement) = build_discovery(out, adapter_id, &entity) else {
             continue;
         };
         if job.workflow.is_none()
-            && announced_this_session(session, adapter_id, &entity, &announcement.payload)
+            && announced_this_session(out.session, adapter_id, &entity, &announcement.payload)
         {
             continue;
         }
-        let published = announce_one(
-            client, session, topics, settings, ports, adapter_id, &entity, announcement,
-        );
-        if published {
+        if announce_one(out, adapter_id, &entity, announcement) {
             job.published = job.published.saturating_add(1);
-            bump(&ports.counters.discovery_published_total);
+            bump(&out.ports.counters.discovery_published_total);
         } else {
             job.failed = job.failed.saturating_add(1);
-            bump(&ports.counters.discovery_failed_total);
+            bump(&out.ports.counters.discovery_failed_total);
         }
     }
     job.pending.is_empty()
@@ -1167,22 +1113,17 @@ fn intake(ev_rx: &BusSubscriberRx, burst: &mut BurstCoalescer<BusFrame>, ports: 
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "one call site; the cache is threaded, not rebuilt")]
 #[inline(never)]
 fn drain_bus(
     ev_rx: &BusSubscriberRx,
     burst: &mut BurstCoalescer<BusFrame>,
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
+    out: &mut HaOut<'_>,
     job: &mut Option<DiscoveryJob>,
     rule_budget: &mut RulePublishBudget,
 ) {
     let mut touched: HashSet<u8> = HashSet::new();
     loop {
-        intake(ev_rx, burst, ports);
+        intake(ev_rx, burst, out.ports);
         let Some(frame) = burst.pop_front() else {
             break;
         };
@@ -1192,300 +1133,162 @@ fn drain_bus(
                 &command.payload,
                 job,
                 &mut rule_publishes,
-                ports.adapter_count,
-                ports,
+                out.ports.adapter_count,
+                out.ports,
                 command.meta.correlation_id,
             );
-            drain_rule_publishes(client, ports, rule_budget, rule_publishes);
+            drain_rule_publishes(out, rule_budget, rule_publishes);
             WORKER_STACK.note(frame_tag(&frame));
             continue;
         }
         let BusFrame::Event(event) = &frame else {
             continue;
         };
-        consume_event(&event.payload, client, session, topics, settings, ports, &mut touched);
+        consume_event(&event.payload, out, &mut touched);
         WORKER_STACK.note(frame_tag(&frame));
     }
     for adapter_id in touched {
-        publish_groups(client, session, topics, settings, ports, adapter_id);
-        publish_scene_select(client, session, topics, settings, ports, adapter_id);
+        publish_groups(out, adapter_id);
+        publish_scene_select(out, adapter_id);
         WORKER_STACK.note("group-fanout");
     }
 }
 
 dali2rust_contracts::dispatch_bus_events! {
     pub const MQTT_WORKER_HANDLED_EVENTS;
-    fn consume_event(
-        payload: &BusEventPayload,
-        client: &mut Box<dyn MqttClient>,
-        session: &mut Session,
-        topics: &HaTopics,
-        settings: &HomeAssistantSettingsView,
-        ports: &MqttWorkerPorts,
-        touched: &mut HashSet<u8>,
-    );
+    fn consume_event(payload: &BusEventPayload, out: &mut HaOut<'_>, touched: &mut HashSet<u8>);
     payload = payload;
     ignored = {};
     RuntimeStateChangedEvent(body) => {
-        publish_runtime_state(client, session, topics, settings, ports, body);
+        publish_runtime_state(out, body);
         touched.insert(body.adapter_id);
     },
     DaliInputEventObservedEvent(body) => {
-        publish_input_event(client, session, topics, settings, ports, body);
+        publish_input_event(out, body);
     },
     InputDeviceChangedEvent(body) => {
-        republish_input_configs(
-            client, session, topics, settings, ports, body.adapter_id, body.short_address,
-        );
+        republish_input_configs(out, body.adapter_id, body.short_address);
     },
     PhysicalDeviceChangedEvent(body) => {
-        for lamp_id in ports
-            .read_port
-            .ha_lamp_ids_for_short(body.adapter_id, body.short_address)
-        {
-            republish_lamp_config(
-                client, session, topics, settings, ports, body.adapter_id, lamp_id,
-                RetractGate::Always,
-            );
+        for lamp_id in out.ports.read_port.ha_lamp_ids_for_short(body.adapter_id, body.short_address) {
+            republish_lamp_config(out, body.adapter_id, lamp_id, RetractGate::Always);
         }
-        session.groups_dirty.insert(body.adapter_id);
+        out.session.groups_dirty.insert(body.adapter_id);
     },
     VirtualLampChangedEvent(body) => {
-        republish_lamp_config(
-            client,
-            session,
-            topics,
-            settings,
-            ports,
-            body.adapter_id,
-            body.virtual_lamp_id,
-            RetractGate::Always,
-        );
-        session.groups_dirty.insert(body.adapter_id);
+        republish_lamp_config(out, body.adapter_id, body.virtual_lamp_id, RetractGate::Always);
+        out.session.groups_dirty.insert(body.adapter_id);
     },
     GroupChangedEvent(body) => {
-        republish_group_config(
-            client, session, topics, settings, ports, body.adapter_id, body.group_id,
-            RetractGate::Always,
-        );
+        republish_group_config(out, body.adapter_id, body.group_id, RetractGate::Always);
     },
     GroupMatrixChangedEvent(body) => {
         for group_id in 0..GROUP_ID_COUNT {
-            republish_group_config(
-                client, session, topics, settings, ports, body.adapter_id, group_id,
-                RetractGate::IfAnnounced,
-            );
+            republish_group_config(out, body.adapter_id, group_id, RetractGate::IfAnnounced);
         }
     },
     SceneChangedEvent(body) => {
-        republish_scene_select(client, session, topics, settings, ports, body.adapter_id);
+        republish_scene_select(out, body.adapter_id);
     },
 }
 
 const GROUP_ID_COUNT: u8 = 16;
 
 #[inline(never)]
-fn republish_scene_select(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-    adapter_id: u8,
-) {
-    session.announced_selects.remove(&adapter_id);
-    if ports.read_port.ha_scene_views(adapter_id).is_empty() {
-        let object_id = HaTopics::scene_select_object_id(adapter_id);
-        publish(
-            client,
-            ports,
-            &topics.discovery_topic("select", &object_id),
-            DISCOVERY_RETRACTION,
-            qos_of(settings),
-            retain_config(DISCOVERY_RETRACTION, settings),
-        );
+fn republish_scene_select(out: &mut HaOut<'_>, adapter_id: u8) {
+    out.session.announced_selects.remove(&adapter_id);
+    if out.ports.read_port.ha_scene_views(adapter_id).is_empty() {
+        let topic = out.topics.discovery_topic("select", &HaTopics::scene_select_object_id(adapter_id));
+        out.publish(&topic, DISCOVERY_RETRACTION, retain_config(DISCOVERY_RETRACTION, out.settings));
         return;
     }
-    publish_scene_select(client, session, topics, settings, ports, adapter_id);
+    publish_scene_select(out, adapter_id);
 }
 
-fn publish_groups(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-    adapter_id: u8,
-) {
-    let recheck = session.groups_dirty.remove(&adapter_id);
-    for group in ports.read_port.ha_group_views(adapter_id) {
-        if recheck || !session.group_config_hashes.contains_key(&(adapter_id, group.group_id)) {
-            announce_group(client, session, topics, settings, ports, adapter_id, &group);
+fn publish_groups(out: &mut HaOut<'_>, adapter_id: u8) {
+    let recheck = out.session.groups_dirty.remove(&adapter_id);
+    for group in out.ports.read_port.ha_group_views(adapter_id) {
+        if recheck || !out.session.group_config_hashes.contains_key(&(adapter_id, group.group_id)) {
+            announce_group(out, adapter_id, &group);
         }
-        publish(
-            client,
-            ports,
-            &topics.group_state_topic(adapter_id, group.group_id),
-            &group_state_json(&group.state),
-            qos_of(settings),
-            settings.retain_state,
-        );
+        let topic = out.topics.group_state_topic(adapter_id, group.group_id);
+        out.publish(&topic, &group_state_json(&group.state), out.settings.retain_state);
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "the cache is threaded, not rebuilt per call")]
-fn announce_group(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-    adapter_id: u8,
-    group: &dali2rust_domain::registry::HaGroupView,
-) {
-    let payload = group_discovery_json(topics, &ha_device(settings, ports), adapter_id, group);
+fn announce_group(out: &mut HaOut<'_>, adapter_id: u8, group: &dali2rust_domain::registry::HaGroupView) {
+    let payload = group_discovery_json(out.topics, &out.device(), adapter_id, group);
     let hash = config_hash(&payload);
     let key = (adapter_id, group.group_id);
-    if session.group_config_hashes.get(&key) == Some(&hash) {
+    if out.session.group_config_hashes.get(&key) == Some(&hash) {
         return;
     }
-    let object_id = HaTopics::group_object_id(adapter_id, group.group_id);
-    let topic = topics.discovery_topic("light", &object_id);
-    if publish(client, ports, &topic, &payload, qos_of(settings), retain_config(&payload, settings))
-    {
-        session.group_config_hashes.insert(key, hash);
+    let topic = out.topics.discovery_topic("light", &HaTopics::group_object_id(adapter_id, group.group_id));
+    if out.publish(&topic, &payload, retain_config(&payload, out.settings)) {
+        out.session.group_config_hashes.insert(key, hash);
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "the cache is threaded, not rebuilt per call")]
 #[inline(never)]
-fn republish_group_config(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-    adapter_id: u8,
-    group_id: u8,
-    retract: RetractGate,
-) {
-    let Some(group) = ports.read_port.ha_group_view(adapter_id, group_id) else {
-        let announced_here = session.group_config_hashes.remove(&(adapter_id, group_id)).is_some();
+fn republish_group_config(out: &mut HaOut<'_>, adapter_id: u8, group_id: u8, retract: RetractGate) {
+    let Some(group) = out.ports.read_port.ha_group_view(adapter_id, group_id) else {
+        let announced_here = out.session.group_config_hashes.remove(&(adapter_id, group_id)).is_some();
         if !announced_here && retract == RetractGate::IfAnnounced {
             return;
         }
-        let object_id = HaTopics::group_object_id(adapter_id, group_id);
-        publish(
-            client,
-            ports,
-            &topics.discovery_topic("light", &object_id),
-            DISCOVERY_RETRACTION,
-            qos_of(settings),
-            retain_config(DISCOVERY_RETRACTION, settings),
-        );
+        let topic = out.topics.discovery_topic("light", &HaTopics::group_object_id(adapter_id, group_id));
+        out.publish(&topic, DISCOVERY_RETRACTION, retain_config(DISCOVERY_RETRACTION, out.settings));
         return;
     };
-    announce_group(client, session, topics, settings, ports, adapter_id, &group);
+    announce_group(out, adapter_id, &group);
 }
 
-fn publish_scene_select(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-    adapter_id: u8,
-) {
-    let scenes = ports.read_port.ha_scene_views(adapter_id);
+fn publish_scene_select(out: &mut HaOut<'_>, adapter_id: u8) {
+    let scenes = out.ports.read_port.ha_scene_views(adapter_id);
     if scenes.is_empty() {
         return;
     }
-    if !session.announced_selects.contains(&adapter_id) {
-        let object_id = HaTopics::scene_select_object_id(adapter_id);
-        if publish(
-            client,
-            ports,
-            &topics.discovery_topic("select", &object_id),
-            &scene_select_discovery_json(topics, &ha_device(settings, ports), adapter_id, &scenes),
-            qos_of(settings),
-            settings.retain_discovery,
-        ) {
-            session.announced_selects.insert(adapter_id);
+    if !out.session.announced_selects.contains(&adapter_id) {
+        let topic = out.topics.discovery_topic("select", &HaTopics::scene_select_object_id(adapter_id));
+        let payload = scene_select_discovery_json(out.topics, &out.device(), adapter_id, &scenes);
+        if out.publish(&topic, &payload, out.settings.retain_discovery) {
+            out.session.announced_selects.insert(adapter_id);
         }
     }
-    let active = ports.read_port.ha_active_scene(adapter_id);
-    publish(
-        client,
-        ports,
-        &topics.scene_select_state_topic(adapter_id),
-        &scene_select_state(active, &scenes),
-        qos_of(settings),
-        settings.retain_state,
-    );
+    let active = out.ports.read_port.ha_active_scene(adapter_id);
+    let topic = out.topics.scene_select_state_topic(adapter_id);
+    out.publish(&topic, &scene_select_state(active, &scenes), out.settings.retain_state);
 }
 
-fn ha_device<'a>(
-    settings: &'a HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-) -> HaDevice<'a> {
-    HaDevice {
-        controller_id: &settings.controller_id,
-        version: ports.version,
-    }
-}
 
-#[allow(clippy::too_many_arguments, reason = "the cache is threaded, not rebuilt per call")]
-fn publish_runtime_state(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-    body: &dali2rust_contracts::msg::RuntimeStateChangedEvent,
-) {
+fn publish_runtime_state(out: &mut HaOut<'_>, body: &dali2rust_contracts::msg::RuntimeStateChangedEvent) {
     if let Some(lamp_id) = body.virtual_lamp_id {
-        publish_lamp(client, session, topics, settings, ports, body, lamp_id);
+        publish_lamp(out, body, lamp_id);
         return;
     }
     let Some(short_address) = body.short_address else {
         return;
     };
-    for lamp_id in ports
-        .read_port
-        .ha_lamp_ids_for_short(body.adapter_id, short_address)
-    {
-        publish_lamp(client, session, topics, settings, ports, body, lamp_id);
+    for lamp_id in out.ports.read_port.ha_lamp_ids_for_short(body.adapter_id, short_address) {
+        publish_lamp(out, body, lamp_id);
     }
 }
 
-fn publish_lamp(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-    body: &dali2rust_contracts::msg::RuntimeStateChangedEvent,
-    lamp_id: u8,
-) {
+fn publish_lamp(out: &mut HaOut<'_>, body: &dali2rust_contracts::msg::RuntimeStateChangedEvent, lamp_id: u8) {
     let adapter_id = body.adapter_id;
-    if !session.lamp_config_hashes.contains_key(&(adapter_id, lamp_id)) {
-        republish_lamp_config(
-            client, session, topics, settings, ports, adapter_id, lamp_id,
-            RetractGate::IfAnnounced,
-        );
+    if !out.session.lamp_config_hashes.contains_key(&(adapter_id, lamp_id)) {
+        republish_lamp_config(out, adapter_id, lamp_id, RetractGate::IfAnnounced);
     }
-    if !session.lamp_config_hashes.contains_key(&(adapter_id, lamp_id)) {
+    if !out.session.lamp_config_hashes.contains_key(&(adapter_id, lamp_id)) {
         return;
     }
     let absent = body.state_observation.reports_absence();
-    publish_lamp_availability_if_changed(
-        client, session, ports, topics, settings, adapter_id, lamp_id, absent,
-    );
+    publish_lamp_availability_if_changed(out, adapter_id, lamp_id, absent);
     if !body.state_setpoint.states_a_value() {
         return;
     }
-    let payload = light_state_json(&body.state_setpoint);
-    publish(client, ports, &topics.lamp_state_topic(adapter_id, lamp_id), &payload, qos_of(settings), settings.retain_state);
+    let topic = out.topics.lamp_state_topic(adapter_id, lamp_id);
+    out.publish(&topic, &light_state_json(&body.state_setpoint), out.settings.retain_state);
 }
 
 fn config_hash(payload: &str) -> u64 {
@@ -1511,31 +1314,25 @@ const fn input_component(instance_type: u8) -> Option<&'static str> {
 
 #[inline(never)]
 fn build_input_discovery(
-    ports: &MqttWorkerPorts,
-    topics: &HaTopics,
-    device: &HaDevice<'_>,
-    settings: &HomeAssistantSettingsView,
+    out: &HaOut<'_>,
     adapter_id: u8,
     short_address: u8,
     instance_number: u8,
 ) -> Option<(String, String)> {
-    let view = ports.read_port.ha_input_view(adapter_id, short_address)?;
-    let instance = view
-        .instances
-        .iter()
-        .find(|i| i.instance_number == instance_number)?;
+    let view = out.ports.read_port.ha_input_view(adapter_id, short_address)?;
+    let instance = view.instances.iter().find(|i| i.instance_number == instance_number)?;
     let instance_type = instance.instance_type?;
     let component = input_component(instance_type)?;
-    let topic = topics.discovery_topic(
+    let topic = out.topics.discovery_topic(
         component,
         &HaTopics::input_object_id(adapter_id, short_address, instance_number),
     );
-    if !(settings.expose_input_devices && view.ha_expose) {
+    if !(out.settings.expose_input_devices && view.ha_expose) {
         return Some((topic, DISCOVERY_RETRACTION.to_string()));
     }
     let (_, payload) = input_instance_discovery_json(
-        topics,
-        device,
+        out.topics,
+        &out.device(),
         adapter_id,
         view.name.as_deref(),
         short_address,
@@ -1546,16 +1343,8 @@ fn build_input_discovery(
 }
 
 #[inline(never)]
-#[allow(clippy::too_many_arguments, reason = "the cache is threaded, not rebuilt per call")]
-fn publish_input_event(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-    body: &dali2rust_contracts::msg::DaliInputEventObservedEvent,
-) {
-    if !settings.expose_input_devices {
+fn publish_input_event(out: &mut HaOut<'_>, body: &dali2rust_contracts::msg::DaliInputEventObservedEvent) {
+    if !out.settings.expose_input_devices {
         return;
     }
     let (Some(short_address), Some(instance_number)) = (body.short_address, body.instance_number)
@@ -1563,7 +1352,7 @@ fn publish_input_event(
         return;
     };
     let adapter_id = body.registry_adapter_id;
-    let Some(view) = ports.read_port.ha_input_view(adapter_id, short_address) else {
+    let Some(view) = out.ports.read_port.ha_input_view(adapter_id, short_address) else {
         return;
     };
     if !view.ha_expose {
@@ -1573,32 +1362,24 @@ fn publish_input_event(
         return;
     };
     let key = (adapter_id, short_address, instance_number);
-    if !session.input_config_hashes.contains_key(&key) {
-        republish_input_configs(client, session, topics, settings, ports, adapter_id, short_address);
+    if !out.session.input_config_hashes.contains_key(&key) {
+        republish_input_configs(out, adapter_id, short_address);
     }
-    if !session.input_config_hashes.contains_key(&key) {
+    if !out.session.input_config_hashes.contains_key(&key) {
         return;
     }
-    let retain = settings.retain_state
+    let retain = out.settings.retain_state
         && body.typed != dali2rust_contracts::msg::InputEventKind::Button;
-    let topic = topics.input_state_topic(adapter_id, short_address, instance_number);
-    let _ = publish(client, ports, &topic, &payload, qos_of(settings), retain);
+    let topic = out.topics.input_state_topic(adapter_id, short_address, instance_number);
+    out.publish(&topic, &payload, retain);
 }
 
 #[inline(never)]
-fn republish_input_configs(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-    adapter_id: u8,
-    short_address: u8,
-) {
-    let device = ha_device(settings, ports);
-    let instances: Vec<u8> = match ports.read_port.ha_input_view(adapter_id, short_address) {
+fn republish_input_configs(out: &mut HaOut<'_>, adapter_id: u8, short_address: u8) {
+    let instances: Vec<u8> = match out.ports.read_port.ha_input_view(adapter_id, short_address) {
         Some(view) => view.instances.iter().map(|i| i.instance_number).collect(),
-        None => session
+        None => out
+            .session
             .input_config_hashes
             .keys()
             .filter(|(a, s, _)| *a == adapter_id && *s == short_address)
@@ -1607,139 +1388,76 @@ fn republish_input_configs(
     };
     for instance_number in instances {
         let key = (adapter_id, short_address, instance_number);
-        match build_input_discovery(
-            ports, topics, &device, settings, adapter_id, short_address, instance_number,
-        ) {
+        match build_input_discovery(out, adapter_id, short_address, instance_number) {
             Some((topic, payload)) => {
                 let hash = config_hash(&payload);
-                if session.input_config_hashes.get(&key) == Some(&hash) {
+                if out.session.input_config_hashes.get(&key) == Some(&hash) {
                     continue;
                 }
-                if publish(client, ports, &topic, &payload, qos_of(settings), retain_config(&payload, settings)) {
+                if out.publish(&topic, &payload, retain_config(&payload, out.settings)) {
                     if payload == DISCOVERY_RETRACTION {
-                        session.input_config_hashes.remove(&key);
+                        out.session.input_config_hashes.remove(&key);
                     } else {
-                        session.input_config_hashes.insert(key, hash);
+                        out.session.input_config_hashes.insert(key, hash);
                     }
                 }
             }
             None => {
-                session.input_config_hashes.remove(&key);
+                out.session.input_config_hashes.remove(&key);
             }
         }
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "the cache is threaded, not rebuilt per call")]
-fn publish_lamp_availability(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    ports: &MqttWorkerPorts,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    adapter_id: u8,
-    lamp_id: u8,
-    unreachable: bool,
-) -> bool {
-    let published = publish(
-        client,
-        ports,
-        &topics.lamp_availability_topic(adapter_id, lamp_id),
-        if unreachable { "offline" } else { "online" },
-        qos_of(settings),
-        true,
-    );
+fn publish_lamp_availability(out: &mut HaOut<'_>, adapter_id: u8, lamp_id: u8, unreachable: bool) -> bool {
+    let topic = out.topics.lamp_availability_topic(adapter_id, lamp_id);
+    let published = out.publish(&topic, if unreachable { "offline" } else { "online" }, true);
     if published {
-        session
-            .lamp_availability
-            .insert((adapter_id, lamp_id), unreachable);
+        out.session.lamp_availability.insert((adapter_id, lamp_id), unreachable);
     } else {
-        session.lamp_availability.remove(&(adapter_id, lamp_id));
+        out.session.lamp_availability.remove(&(adapter_id, lamp_id));
     }
     published
 }
 
-#[allow(clippy::too_many_arguments, reason = "mirrors the function it gates")]
-fn publish_lamp_availability_if_changed(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    ports: &MqttWorkerPorts,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    adapter_id: u8,
-    lamp_id: u8,
-    unreachable: bool,
-) {
-    if session.lamp_availability.get(&(adapter_id, lamp_id)) == Some(&unreachable) {
+fn publish_lamp_availability_if_changed(out: &mut HaOut<'_>, adapter_id: u8, lamp_id: u8, unreachable: bool) {
+    if out.session.lamp_availability.get(&(adapter_id, lamp_id)) == Some(&unreachable) {
         return;
     }
-    publish_lamp_availability(
-        client, session, ports, topics, settings, adapter_id, lamp_id, unreachable,
-    );
+    publish_lamp_availability(out, adapter_id, lamp_id, unreachable);
 }
 
-fn clear_lamp_retained(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    ports: &MqttWorkerPorts,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    adapter_id: u8,
-    lamp_id: u8,
-) -> bool {
-    session.lamp_availability.remove(&(adapter_id, lamp_id));
-    let qos = qos_of(settings);
-    let availability =
-        publish(client, ports, &topics.lamp_availability_topic(adapter_id, lamp_id), "", qos, true);
-    let state = publish(client, ports, &topics.lamp_state_topic(adapter_id, lamp_id), "", qos, true);
+fn clear_lamp_retained(out: &mut HaOut<'_>, adapter_id: u8, lamp_id: u8) -> bool {
+    out.session.lamp_availability.remove(&(adapter_id, lamp_id));
+    let availability_topic = out.topics.lamp_availability_topic(adapter_id, lamp_id);
+    let state_topic = out.topics.lamp_state_topic(adapter_id, lamp_id);
+    let availability = out.publish(&availability_topic, "", true);
+    let state = out.publish(&state_topic, "", true);
     availability && state
 }
 
-#[allow(clippy::too_many_arguments, reason = "the cache is threaded, not rebuilt per call")]
 #[inline(never)]
-fn republish_lamp_config(
-    client: &mut Box<dyn MqttClient>,
-    session: &mut Session,
-    topics: &HaTopics,
-    settings: &HomeAssistantSettingsView,
-    ports: &MqttWorkerPorts,
-    adapter_id: u8,
-    lamp_id: u8,
-    retract: RetractGate,
-) {
-    let object_id = HaTopics::lamp_object_id(adapter_id, lamp_id);
-    let topic = topics.discovery_topic("light", &object_id);
-    match ports.read_port.ha_lamp_view(adapter_id, lamp_id) {
+fn republish_lamp_config(out: &mut HaOut<'_>, adapter_id: u8, lamp_id: u8, retract: RetractGate) {
+    let topic = out.topics.discovery_topic("light", &HaTopics::lamp_object_id(adapter_id, lamp_id));
+    match out.ports.read_port.ha_lamp_view(adapter_id, lamp_id) {
         Some(lamp) => {
-            let device = ha_device(settings, ports);
-            let payload = lamp_discovery_json(topics, &device, adapter_id, &lamp);
+            let payload = lamp_discovery_json(out.topics, &out.device(), adapter_id, &lamp);
             let hash = config_hash(&payload);
-            if session.lamp_config_hashes.get(&(adapter_id, lamp_id)) == Some(&hash) {
+            if out.session.lamp_config_hashes.get(&(adapter_id, lamp_id)) == Some(&hash) {
                 return;
             }
-            let config_published =
-                publish(client, ports, &topic, &payload, qos_of(settings), retain_config(&payload, settings));
-            let paired = config_published
-                && publish_lamp_availability(
-                    client, session, ports, topics, settings, adapter_id, lamp_id, lamp.unreachable,
-                );
+            let paired = out.publish(&topic, &payload, retain_config(&payload, out.settings))
+                && publish_lamp_availability(out, adapter_id, lamp_id, lamp.unreachable);
             if paired {
-                session.lamp_config_hashes.insert((adapter_id, lamp_id), hash);
+                out.session.lamp_config_hashes.insert((adapter_id, lamp_id), hash);
             }
         }
         None => {
-            let announced_here = session.lamp_config_hashes.remove(&(adapter_id, lamp_id)).is_some();
+            let announced_here = out.session.lamp_config_hashes.remove(&(adapter_id, lamp_id)).is_some();
             if (announced_here || retract == RetractGate::Always)
-                && publish(
-                    client,
-                    ports,
-                    &topic,
-                    DISCOVERY_RETRACTION,
-                    qos_of(settings),
-                    retain_config(DISCOVERY_RETRACTION, settings),
-                )
+                && out.publish(&topic, DISCOVERY_RETRACTION, retain_config(DISCOVERY_RETRACTION, out.settings))
             {
-                clear_lamp_retained(client, session, ports, topics, settings, adapter_id, lamp_id);
+                clear_lamp_retained(out, adapter_id, lamp_id);
             }
         }
     }
@@ -1782,44 +1500,50 @@ impl RulePublishBudget {
 }
 
 fn drain_rule_publishes(
-    client: &mut Box<dyn MqttClient>,
-    ports: &MqttWorkerPorts,
+    out: &mut HaOut<'_>,
     budget: &mut RulePublishBudget,
     publishes: Vec<dali2rust_contracts::msg::MqttPublishCommand>,
 ) {
     for cmd in publishes {
         if !budget.take(monotonic_ms()) {
-            bump(&ports.counters.rule_publishes_dropped_total);
+            bump(&out.ports.counters.rule_publishes_dropped_total);
             continue;
         }
-        publish(
-            client,
-            ports,
-            cmd.topic.as_str(),
-            cmd.payload.as_str(),
-            MqttQos::AtMostOnce,
-            cmd.retain,
-        );
+        out.send(cmd.topic.as_str(), cmd.payload.as_str(), MqttQos::AtMostOnce, cmd.retain);
     }
 }
 
-fn publish(
-    client: &mut Box<dyn MqttClient>,
-    ports: &MqttWorkerPorts,
-    topic: &str,
-    payload: &str,
-    qos: MqttQos,
-    retain: bool,
-) -> bool {
-    match client.publish(topic, payload.as_bytes(), qos, retain) {
-        Ok(()) => {
-            bump(&ports.counters.publishes_total);
-            true
+struct HaOut<'a> {
+    client: &'a mut dyn MqttClient,
+    session: &'a mut Session,
+    topics: &'a HaTopics,
+    settings: &'a HomeAssistantSettingsView,
+    ports: &'a MqttWorkerPorts,
+}
+
+impl<'a> HaOut<'a> {
+    fn publish(&mut self, topic: &str, payload: &str, retain: bool) -> bool {
+        self.send(topic, payload, qos_of(self.settings), retain)
+    }
+
+    fn send(&mut self, topic: &str, payload: &str, qos: MqttQos, retain: bool) -> bool {
+        match self.client.publish(topic, payload.as_bytes(), qos, retain) {
+            Ok(()) => {
+                bump(&self.ports.counters.publishes_total);
+                true
+            }
+            Err(e) => {
+                log::warn!("mqtt: publish to {topic} refused: {e:?}");
+                bump(&self.ports.counters.publish_failures_total);
+                false
+            }
         }
-        Err(e) => {
-            log::warn!("mqtt: publish to {topic} refused: {e:?}");
-            bump(&ports.counters.publish_failures_total);
-            false
+    }
+
+    fn device(&self) -> HaDevice<'a> {
+        HaDevice {
+            controller_id: &self.settings.controller_id,
+            version: self.ports.version,
         }
     }
 }
