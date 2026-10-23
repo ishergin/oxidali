@@ -1,7 +1,7 @@
 use super::*;
 use crate::runtime::executor::test_helpers::shared::{
-    assert_script_consumed, expect_narrow_colour_value_sample, priorities_of, setup_controller,
-    short_address,
+    assert_script_consumed, expect_narrow_colour_value_sample, expect_wide_colour_value_sample,
+    priorities_of, setup_controller, short_address,
 };
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::commands::DaliCommand;
@@ -12,6 +12,9 @@ use std::sync::{Arc, Mutex};
 const SHORT: u8 = 9;
 const LEVEL: u8 = 120;
 const OLD_LEVEL: u8 = 254;
+const STORED_MIREK: (u8, u8) = (0x01, 0x2C);
+const STRAY_MIREK: (u8, u8) = (0x00, 0xDE);
+const MASK_WORD_ANSWER: (u8, u8) = (0xFF, 0xFF);
 const LEVEL_STORES: [StoredLevel; 2] = [POWER_ON, SYSTEM_FAILURE];
 
 fn standard_frame(command: StandardCommand) -> u16 {
@@ -47,6 +50,18 @@ fn expect_temporary_type(mock: &MockDaliTransport, answer: Option<u8>) {
 fn expect_stored_type(mock: &MockDaliTransport, stored: StoredLevel, answer: u8) {
     mock.expect_forward_frame_with_backward(standard_frame(stored.query), Some(OLD_LEVEL));
     expect_narrow_colour_value_sample(mock, SHORT, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE, Some(answer));
+}
+
+fn expect_tc_proof(mock: &MockDaliTransport, temporary_tc: (u8, u8)) {
+    expect_temporary_type(mock, Some(COLOUR_TYPE_BYTE_TC));
+    expect_wide_colour_value_sample(mock, SHORT, COLOUR_VALUE_TEMPORARY_TC, temporary_tc);
+}
+
+fn expect_stored_tc_copied(mock: &MockDaliTransport, stored: StoredLevel, temporary_tc: (u8, u8)) {
+    expect_stored_type(mock, stored, COLOUR_TYPE_BYTE_TC);
+    expect_wide_colour_value_sample(mock, SHORT, DT8_COLOUR_VALUE_REPORT_TC, STORED_MIREK);
+    expect_dt8_command(mock, Dt8Command::CopyReportToTemporary);
+    expect_tc_proof(mock, temporary_tc);
 }
 
 fn expect_store(mock: &MockDaliTransport, stored: StoredLevel) {
@@ -158,8 +173,7 @@ fn a_charged_temporary_is_replaced_by_the_stored_colour_inside_one_transaction()
     for stored in LEVEL_STORES {
         let mock = MockDaliTransport::new();
         expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
-        expect_stored_type(&mock, stored, COLOUR_TYPE_BYTE_TC);
-        expect_dt8_command(&mock, Dt8Command::CopyReportToTemporary);
+        expect_stored_tc_copied(&mock, stored, STORED_MIREK);
         expect_store(&mock, stored);
 
         let (execution, transport) = write_level(mock, stored);
@@ -187,6 +201,7 @@ fn a_stored_mask_colour_is_kept_by_charging_mask_of_the_temporary_type() {
         mock.expect_forward_frame_with_backward(standard_frame(query), Some(0xFF));
     }
     expect_dt8_command(&mock, Dt8Command::SetTemporaryColourTemperature);
+    expect_tc_proof(&mock, MASK_WORD_ANSWER);
     expect_store(&mock, POWER_ON);
 
     let (execution, transport) = write_level(mock, POWER_ON);
@@ -213,15 +228,45 @@ fn a_collision_on_the_recharge_reruns_the_unit_from_the_probe() {
     let mock = MockDaliTransport::new();
     expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
     expect_stored_type(&mock, POWER_ON, COLOUR_TYPE_BYTE_TC);
+    expect_wide_colour_value_sample(&mock, SHORT, DT8_COLOUR_VALUE_REPORT_TC, STORED_MIREK);
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
     mock.expect_forward_frame_collision(dt8_frame(Dt8Command::CopyReportToTemporary));
     expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
-    expect_stored_type(&mock, POWER_ON, COLOUR_TYPE_BYTE_TC);
-    expect_dt8_command(&mock, Dt8Command::CopyReportToTemporary);
+    expect_stored_tc_copied(&mock, POWER_ON, STORED_MIREK);
     expect_store(&mock, POWER_ON);
 
     let (execution, transport) = write_level(mock, POWER_ON);
 
     assert_level_confirmed(&execution, POWER_ON);
+    assert_script_consumed(&transport);
+}
+
+// IEC 62386-209 §9.12.7
+#[test]
+fn a_copy_the_gear_missed_is_caught_before_the_store_and_charged_again() {
+    let mock = MockDaliTransport::new();
+    expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
+    expect_stored_tc_copied(&mock, POWER_ON, STRAY_MIREK);
+    expect_stored_tc_copied(&mock, POWER_ON, STORED_MIREK);
+    expect_store(&mock, POWER_ON);
+
+    let (execution, transport) = write_level(mock, POWER_ON);
+
+    assert_level_confirmed(&execution, POWER_ON);
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_temporary_that_never_holds_the_stored_colour_stores_nothing() {
+    let mock = MockDaliTransport::new();
+    expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
+    for _ in 0..=RECHARGE_RETRIES {
+        expect_stored_tc_copied(&mock, POWER_ON, STRAY_MIREK);
+    }
+
+    let (execution, transport) = write_level(mock, POWER_ON);
+
+    assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNCONFIRMED)));
+    assert_eq!(execution.confirmed.power_on_level, None);
     assert_script_consumed(&transport);
 }

@@ -73,6 +73,18 @@ pub mod shared {
         mock.expect_forward_frame_with_backward(colour_value.to_forward_frame().raw(), answer);
     }
 
+    pub fn expect_wide_colour_value_sample(
+        mock: &MockDaliTransport,
+        short: u8,
+        selector: u8,
+        (msb, lsb): (u8, u8),
+    ) {
+        expect_narrow_colour_value_sample(mock, short, selector, Some(msb));
+        let dtr0_query =
+            DaliCommand::Standard { address: short_address(short), command: StandardCommand::QueryContentDtr0 };
+        mock.expect_forward_frame_with_backward(dtr0_query.to_forward_frame().raw(), Some(lsb));
+    }
+
     pub fn setup_controller<T: DaliTransport + Send>(
         mock: T,
     ) -> (Arc<Mutex<T>>, DaliController<T>) {

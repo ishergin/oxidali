@@ -2,8 +2,8 @@ use super::*;
 use dali2rust_contracts::msg::PowerState;
 use crate::runtime::executor::helpers::VERIFY_CONTENDED_MESSAGE;
 use crate::runtime::executor::test_helpers::shared::{
-    assert_script_consumed, expect_narrow_colour_value_sample, setup_controller, short_address,
-    wire_counters,
+    assert_script_consumed, expect_narrow_colour_value_sample, expect_wide_colour_value_sample,
+    setup_controller, short_address, wire_counters,
 };
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
@@ -221,33 +221,7 @@ fn expect_colour_value_sample(
     msb: u8,
     lsb: u8,
 ) {
-    mock.expect_forward_frame(
-        DaliCommand::Special(SpecialCommand::Dtr0(selector))
-            .to_forward_frame()
-            .raw(),
-    );
-    mock.expect_forward_frame_with_backward(
-        standard_query_frame(short, StandardCommand::QueryContentDtr0),
-        Some(selector),
-    );
-    mock.expect_forward_frame(
-        DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
-            .to_forward_frame()
-            .raw(),
-    );
-    mock.expect_forward_frame_with_backward(
-        DaliCommand::Extended {
-            address: short_address(short),
-            command: ExtendedCommand::Dt8(Dt8Command::QueryColourValue),
-        }
-        .to_forward_frame()
-        .raw(),
-        Some(msb),
-    );
-    mock.expect_forward_frame_with_backward(
-        standard_query_frame(short, StandardCommand::QueryContentDtr0),
-        Some(lsb),
-    );
+    expect_wide_colour_value_sample(mock, short, selector, (msb, lsb));
 }
 
 fn expect_rgbwaf_control_read(mock: &MockDaliTransport, short: u8, answer: Option<u8>) {

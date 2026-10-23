@@ -1,6 +1,6 @@
 use cucumber::{given, then};
 use dali2rust_domain::dali::devices::dt8_color::{
-    COLOUR_TYPE_BYTE_MASK, COLOUR_TYPE_BYTE_TC, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE,
+    COLOUR_TYPE_BYTE_MASK, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE,
 };
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
@@ -16,7 +16,7 @@ use super::write_scripts::{
     script_dimming_curve_write, script_dimming_curve_write_no_clear, script_fade_time_write,
     script_addressed_config_triple, script_fade_time_write_answered,
     script_fade_time_write_violated, script_level_store, script_narrow_colour_value,
-    script_level_store_keeping_colour, script_max_triple, script_min_triple,
+    script_level_store_keeping_tc, script_max_triple, script_min_triple,
     script_tc_limit_physical_pair, script_tc_limit_store_frames, POWER_ON_STORE,
     SYSTEM_FAILURE_STORE,
 };
@@ -131,10 +131,10 @@ async fn then_pd_write_confirmed_bound(
 )]
 async fn given_level_write_over_a_charged_temporary(world: &mut DaliWorld, level: u8) {
     const OLD_POWER_ON_LEVEL: u8 = 254;
+    const STORED_POWER_ON_MIREK: u16 = 300;
     let mock = world.dali_mock().lock().expect("mock lock");
     mock.clear();
-    let colour_types = (COLOUR_TYPE_BYTE_TC, COLOUR_TYPE_BYTE_TC);
-    script_level_store_keeping_colour(&mock, POWER_ON_STORE, (OLD_POWER_ON_LEVEL, level), colour_types);
+    script_level_store_keeping_tc(&mock, POWER_ON_STORE, (OLD_POWER_ON_LEVEL, level), STORED_POWER_ON_MIREK);
     let consumed = (Some(COLOUR_TYPE_BYTE_MASK), Some(level));
     script_level_store(&mock, TEST_SHORT_ADDRESS, SYSTEM_FAILURE_STORE, level, consumed);
 }

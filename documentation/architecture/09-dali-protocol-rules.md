@@ -314,12 +314,16 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   stored, so a gear whose set no read has learnt takes no level until one does. Otherwise
   one exempt transaction, the store's unit, has the level query load the stored colour into
   the REPORT registers (§11.3.2), reads `REPORT COLOUR TYPE`, and charges the stored
-  colour back with `COPY REPORT TO TEMPORARY` before the store, so the gear stores the
-  colour it had. A conformant gear never stores the MASK type (Table 8); a gear that
-  reports it gets MASK values of the temporary's own type, which change no colour at
-  power-on or failure either (§9.2.1, §9.3.1) and differ only in the reported type. A
-  level query that goes unanswered fails the write (`dt8_level_colour_unconfirmed`)
-  before anything is stored.
+  colour back with `COPY REPORT TO TEMPORARY`, so the gear stores the colour it had. A
+  conformant gear never stores the MASK type (Table 8); a gear that reports it gets MASK
+  values of the temporary's own type, which change no colour at power-on or failure
+  either (§9.2.1, §9.3.1) and differ only in the reported type. The charge is proved
+  before the store: the temporary's type and first value (Table 11: x, Tc, primary 0 or
+  red) must equal what was charged, or the charge runs again, twice at most, and the
+  write then fails `dt8_level_colour_unconfirmed`. The level query's answer is the only
+  proof that REPORT was loaded: every command that loads REPORT loads a colour the stored
+  one may equal, so no cheap sentinel tells a skipped load apart. A level query that goes
+  unanswered fails the write (`dt8_level_colour_unconfirmed`) before anything is stored.
 - A scene's stored colour is read inside one exempt transaction, from the
   `QUERY SCENE LEVEL` that loads the shared REPORT registers to the last REPORT value:
   any of five commands from any master — `QUERY ACTUAL LEVEL` among them — reloads those

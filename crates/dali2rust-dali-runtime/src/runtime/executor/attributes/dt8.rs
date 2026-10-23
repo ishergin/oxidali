@@ -177,15 +177,11 @@ fn armed_colour_value_query(
     send_raw_query_once_response(controller, address, DT8_QUERY_COLOUR_VALUE).map(Some)
 }
 
-pub(super) fn dt8_narrow_value_response(
+pub(super) fn dt8_value_response(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     value_id: u8,
 ) -> Result<Option<(DaliResponse, bool)>, SemanticDaliError> {
-    debug_assert!(
-        !colour_value_is_wide(value_id),
-        "identifier {value_id} is sixteen-bit; sample it with dt8_value_sample"
-    );
     for _ in 0..=DT8_VALUE_ARM_RETRIES {
         let answer = controller.unit(|controller| armed_colour_value_query(controller, address, value_id))?;
         if answer.is_some() {

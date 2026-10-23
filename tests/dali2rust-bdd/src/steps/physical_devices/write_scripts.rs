@@ -1,7 +1,8 @@
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::devices::dt6_led::Dt6Command;
 use dali2rust_domain::dali::devices::dt8_color::{
-    Dt8Command, COLOUR_VALUE_REPORT_COLOUR_TYPE, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE,
+    Dt8Command, COLOUR_TYPE_BYTE_TC, COLOUR_VALUE_REPORT_COLOUR_TYPE, COLOUR_VALUE_REPORT_TC,
+    COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, COLOUR_VALUE_TEMPORARY_TC,
 };
 use dali2rust_domain::dali::pres::extended::ExtendedCommand;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
@@ -126,18 +127,22 @@ pub(crate) fn script_level_store(
 }
 
 // IEC 62386-209 §9.12.7, §11.2.2, §11.3.2
-pub(crate) fn script_level_store_keeping_colour(
+pub(crate) fn script_level_store_keeping_tc(
     mock: &MockDaliTransport,
     (set, query): (StandardCommand, StandardCommand),
     (old_level, level): (u8, u8),
-    (temporary_colour_type, stored_colour_type): (u8, u8),
+    stored_mirek: u16,
 ) {
     let short = TEST_SHORT_ADDRESS;
-    script_narrow_colour_value(mock, short, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, Some(temporary_colour_type));
+    let (msb, lsb) = ((stored_mirek >> 8) as u8, stored_mirek as u8);
+    script_narrow_colour_value(mock, short, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, Some(COLOUR_TYPE_BYTE_TC));
     mock.expect_forward_frame_with_backward(standard_frame(short, query), Some(old_level));
-    script_narrow_colour_value(mock, short, COLOUR_VALUE_REPORT_COLOUR_TYPE, Some(stored_colour_type));
+    script_narrow_colour_value(mock, short, COLOUR_VALUE_REPORT_COLOUR_TYPE, Some(COLOUR_TYPE_BYTE_TC));
+    script_dt8_colour_value(mock, COLOUR_VALUE_REPORT_TC, msb, lsb);
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
     mock.expect_forward_frame(extended_frame(short, ExtendedCommand::Dt8(Dt8Command::CopyReportToTemporary)));
+    script_narrow_colour_value(mock, short, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, Some(COLOUR_TYPE_BYTE_TC));
+    script_dt8_colour_value(mock, COLOUR_VALUE_TEMPORARY_TC, msb, lsb);
     script_addressed_config_triple(mock, short, set, query, level, level);
 }
 

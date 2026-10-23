@@ -1,17 +1,20 @@
 use super::*;
-use super::dt8::dt8_narrow_value_response;
+use super::dt8::dt8_value_response;
 use super::write::verified_store;
 use crate::runtime::executor::helpers::DT8_DEVICE_TYPE;
 use crate::runtime::executor::target_state::stage_dtrs_verified;
 use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::devices::dt8_color::{
-    COLOUR_TYPE_BYTE_MASK, COLOUR_TYPE_BYTE_PRIMARY_N, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE,
+    COLOUR_TYPE_BYTE_MASK, COLOUR_TYPE_BYTE_PRIMARY_N, COLOUR_VALUE_REPORT_PRIMARY_N_0,
+    COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, COLOUR_VALUE_TEMPORARY_PRIMARY_N_0,
+    COLOUR_VALUE_TEMPORARY_RED, COLOUR_VALUE_TEMPORARY_TC, COLOUR_VALUE_TEMPORARY_X,
 };
 
 const LEVEL_COLOUR_UNCONFIRMED: &str = "dt8_level_colour_unconfirmed";
 const LEVEL_COLOUR_UNANSWERED: &str = "dt8_level_colour_unanswered";
 const LEVEL_COLOUR_CONTENDED: &str = "dt8_level_colour_contended";
 const COLOUR_VALUE_ASKS: u8 = 3;
+const RECHARGE_RETRIES: u8 = 2;
 const PRIMARY_N_COUNT: u8 = 6;
 const MASK_WORD: [u8; 2] = [DT8_COLOUR_VALUE_LEVEL_MASK; 2];
 const MASK_TRIO: [u8; 3] = [DT8_COLOUR_VALUE_LEVEL_MASK; 3];
@@ -71,36 +74,106 @@ fn store_level_keeping_colour<C: DaliApplicationController>(
     })
 }
 
-// IEC 62386-209 §9.2.2, Table 1, §9.3.2, Table 2, §9.12.7, §11.3.2
+// IEC 62386-209 §9.2.2, Table 1, §9.3.2, Table 2
 fn keep_stored_colour(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     stored: StoredLevel,
 ) -> Result<(), SemanticDaliError> {
-    let temporary = colour_type(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE)?;
+    let temporary = colour_byte(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE)?;
     if temporary == COLOUR_TYPE_BYTE_MASK {
         return Ok(());
     }
+    for _ in 0..=RECHARGE_RETRIES {
+        let charged = recharge(controller, address, stored, temporary)?;
+        if temporary_holds(controller, address, charged)? {
+            return Ok(());
+        }
+    }
+    Err(unconfirmed())
+}
+
+// IEC 62386-209 §9.12.7, §11.3.2
+fn recharge(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    stored: StoredLevel,
+    temporary: u8,
+) -> Result<(u8, u16), SemanticDaliError> {
     let loaded = send_standard_response(controller, address, stored.query)?;
     if !matches!(loaded, DaliResponse::Answer(_)) {
         return Err(unconfirmed());
     }
-    match colour_type(controller, address, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE)? {
-        COLOUR_TYPE_BYTE_MASK => charge_mask_colour(controller, address, temporary),
-        _ => send_dt8(controller, address, Dt8Command::CopyReportToTemporary),
+    let reported = colour_byte(controller, address, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE)?;
+    if reported == COLOUR_TYPE_BYTE_MASK {
+        charge_mask_colour(controller, address, temporary)?;
+        let (selector, _) = first_value_selectors(temporary).ok_or_else(unconfirmed)?;
+        return Ok((temporary, mask_of(selector)));
+    }
+    let (_, report_selector) = first_value_selectors(reported).ok_or_else(unconfirmed)?;
+    let value = colour_value(controller, address, report_selector)?;
+    send_dt8(controller, address, Dt8Command::CopyReportToTemporary)?;
+    Ok((reported, value))
+}
+
+fn temporary_holds(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    (colour_type, value): (u8, u16),
+) -> Result<bool, SemanticDaliError> {
+    let (selector, _) = first_value_selectors(colour_type).ok_or_else(unconfirmed)?;
+    Ok(colour_byte(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE)? == colour_type
+        && colour_value(controller, address, selector)? == value)
+}
+
+// IEC 62386-209 Table 11
+const fn first_value_selectors(colour_type: u8) -> Option<(u8, u8)> {
+    match colour_type {
+        DT8_COLOUR_TYPE_XY => Some((COLOUR_VALUE_TEMPORARY_X, DT8_COLOUR_VALUE_REPORT_X)),
+        DT8_COLOUR_TYPE_TC => Some((COLOUR_VALUE_TEMPORARY_TC, DT8_COLOUR_VALUE_REPORT_TC)),
+        COLOUR_TYPE_BYTE_PRIMARY_N => {
+            Some((COLOUR_VALUE_TEMPORARY_PRIMARY_N_0, COLOUR_VALUE_REPORT_PRIMARY_N_0))
+        }
+        DT8_COLOUR_TYPE_RGBWAF => Some((COLOUR_VALUE_TEMPORARY_RED, DT8_COLOUR_VALUE_REPORT_RED)),
+        _ => None,
+    }
+}
+
+const fn mask_of(selector: u8) -> u16 {
+    if colour_value_is_wide(selector) {
+        DT8_COLOUR_VALUE_MASK
+    } else {
+        DT8_COLOUR_VALUE_LEVEL_MASK as u16
+    }
+}
+
+// IEC 62386-209 §9.9
+fn colour_value(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    value_id: u8,
+) -> Result<u16, SemanticDaliError> {
+    let high = colour_byte(controller, address, value_id)?;
+    if !colour_value_is_wide(value_id) {
+        return Ok(u16::from(high));
+    }
+    match send_standard_response(controller, address, StandardCommand::QueryContentDtr0)? {
+        DaliResponse::Answer(low) => Ok((u16::from(high) << 8) | u16::from(low)),
+        DaliResponse::NoAnswer => Err(SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNANSWERED)),
+        DaliResponse::Violation => Err(SemanticDaliError::OperationFailed(LEVEL_COLOUR_CONTENDED)),
     }
 }
 
 // IEC 62386-101 §8.2.5
 // IEC 62386-102 §3.13
-fn colour_type(
+fn colour_byte(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     value_id: u8,
 ) -> Result<u8, SemanticDaliError> {
     let mut contended = false;
     for _ in 0..COLOUR_VALUE_ASKS {
-        match dt8_narrow_value_response(controller, address, value_id)? {
+        match dt8_value_response(controller, address, value_id)? {
             None => return Err(unconfirmed()),
             Some((DaliResponse::Answer(value), false)) => return Ok(value),
             Some((response, seen)) => contended |= seen || response == DaliResponse::Violation,
