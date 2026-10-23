@@ -741,6 +741,9 @@ mod tests {
             panic!("not a DALI settings event: {changed:?}");
         };
         assert!(!dali.application_active, "the event carried the default, not the stored role");
+        recv_event_matching(&events, EVENT_WAIT, |payload| {
+            matches!(payload, BusEventPayload::RegistrySliceReloadedEvent(_))
+        });
     }
 
     const FIRST_ADAPTER: u16 = 0;

@@ -1302,6 +1302,20 @@ mod tests {
     }
 
     #[test]
+    fn a_whole_adapter_slot_that_still_fails_counts_its_error_once() {
+        let slices = ProbeStore::default();
+        write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());
+        slices.fail_reads_of(Some(LEGACY_SLOT));
+        let waiting = boot_and_flush(&slices);
+        let errors = || waiting.persistence_counters().hydrate_error_total.load(Ordering::Acquire);
+        let counted = errors();
+        let (held, snapshot) = waiting.held_snapshot(&slices, 1).expect("waiting banks");
+        waiting.reread_held_from_store(&snapshot, 1, held);
+        assert_eq!(device_count(&waiting), 0, "the banks settled while the slot still fails");
+        assert_eq!(errors(), counted, "a retry of the slot counted a new error");
+    }
+
+    #[test]
     fn a_broken_bank_waits_while_the_whole_adapter_slot_cannot_be_read() {
         let slices = ProbeStore::default();
         write_slot(&slices.inner, LEGACY_SLOT, &legacy_blob());

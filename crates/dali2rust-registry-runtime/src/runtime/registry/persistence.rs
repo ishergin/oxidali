@@ -1690,6 +1690,16 @@ mod tests {
     }
 
     #[test]
+    fn a_waiting_device_bank_counts_one_error_however_often_it_is_retried() {
+        let slices = installed_with_bindings();
+        let store = boot_with_unread(&slices, WAITING_BANK);
+        let errors = hydrate_errors(&store);
+        read_held_again(&store, &slices);
+        assert_eq!(unread_slices(&store), 1, "the bank settled while its read still fails");
+        assert_eq!(hydrate_errors(&store), errors, "a retry of the bank counted a new error");
+    }
+
+    #[test]
     fn a_slice_that_still_cannot_be_read_names_nothing() {
         let slices = installed_with_bindings();
         let store = boot_with_unread(&slices, SliceKey::VirtualLamps { adapter_id: 0 });
