@@ -77,9 +77,7 @@ fn a_gear_that_holds_dtr0_on_a_missing_indicator_byte_yields_bank_1_with_0x01_un
     let profile = reads.iter().find(|read| read.bank == PROFILE_BANK).expect("bank 1 is read");
     assert!(profile.indicator_unread, "two lags at 0x01 leave it unread, never a value");
     let expected = preset(MemoryBankReadPreset::Identity, conformant(true, false)).expect("conformant");
-    let conformant_profile = expected.iter().find(|read| read.bank == PROFILE_BANK).expect("bank 1");
-    assert!(!conformant_profile.indicator_unread, "a NO the pointer passed is the gear's answer");
-    assert_eq!(profile.bytes, conformant_profile.bytes, "every other byte is the same");
+    assert_eq!(reads, expected, "a NO the pointer passed is no value either");
 }
 
 // DiiA 252 §9.2.1

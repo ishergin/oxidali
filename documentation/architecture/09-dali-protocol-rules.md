@@ -204,11 +204,12 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   `DTR0` on a location it lacks, against 102 §9.10.4. In bank 0, whose 0x01 is reserved
   (Table 9), neither leaves anything to read: the placeholder stays and the pointer is
   armed at 0x02. In any other bank 0x01 is the indicator byte and may be implemented
-  (Tables 8 and 10), so it is read again; when the pointer lags a second time, or the
-  read has no re-arm left, 0x01 is left unread and the pointer is armed at 0x02. An
-  unread 0x01 is a gap in the bank's read ranges and its `total_bytes_read`, never a
-  value. Any other failed proof follows the rule above, and a read that ends at 0x01 is
-  judged by its closing check.
+  (Tables 8 and 10), so a NO there is no value: it is left unread when the pointer has
+  passed it, read again after a lag, and left unread when the pointer lags a second
+  time or the read has no re-arm left, the pointer then armed at 0x02. An unread 0x01
+  is a gap in the bank's read ranges and its `total_bytes_read`, never a value. Any
+  other failed proof follows the rule above, and a read that ends at 0x01 is judged by
+  its closing check.
   The re-reads of 0x01 and the re-arms after an arm share two per read; the arm past
   0x01 spends none, and happens once. Any other READ that answers nothing, answers
   with a violation,

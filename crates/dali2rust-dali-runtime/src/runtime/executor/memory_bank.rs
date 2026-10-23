@@ -347,6 +347,7 @@ impl ChunkCursor {
             ChunkRead::Placeholder => {
                 self.done = MEMORY_RESERVED_OFFSET + 1 - self.start;
                 self.placeholder_pending = true;
+                self.indicator_unread = self.bank != RESERVED_LOCATION_BANK;
             }
             ChunkRead::Unproved(proof) => self.rearm_unproved(controller, (chunk_start, proof), bytes)?,
             ChunkRead::Interrupted { at, failure } => {
@@ -366,7 +367,6 @@ impl ChunkCursor {
         let lost_placeholder_read =
             self.placeholder_pending && proof == PointerProof::Moved { one_behind: true };
         if lost_placeholder_read && self.passes_location_0x01() {
-            self.indicator_unread = self.bank != RESERVED_LOCATION_BANK;
             return self.arm_at(controller, MEMORY_RESERVED_OFFSET + 1, bytes);
         }
         let resume = match (lost_placeholder_read, self.freshly_armed) {
@@ -394,11 +394,17 @@ impl ChunkCursor {
         resume: u16,
         bytes: &mut Vec<u8>,
     ) -> Result<(), SemanticDaliError> {
-        bytes.truncate(usize::from(resume - self.start));
+        self.cut_to(bytes, resume);
         self.done = resume - self.start;
         self.placeholder_pending = false;
         self.freshly_armed = true;
         arm_memory_pointer(controller, self.address, self.bank, resume)
+    }
+
+    // IEC 62386-102 §9.10.2, Table 8, Table 10
+    fn cut_to(&mut self, bytes: &mut Vec<u8>, resume: u16) {
+        bytes.truncate(usize::from(resume - self.start));
+        self.indicator_unread &= resume > MEMORY_RESERVED_OFFSET;
     }
 
     fn resume_after(
@@ -409,7 +415,7 @@ impl ChunkCursor {
         bytes: &mut Vec<u8>,
     ) -> Result<Option<ReadStop>, SemanticDaliError> {
         let resume = latched_field_start(self.bank, at).map_or(at, |field| field.max(chunk_start));
-        bytes.truncate(usize::from(resume - self.start));
+        self.cut_to(bytes, resume);
         if let Some(stop) = self.spend_retry((resume, at), failure)? {
             return Ok(Some(stop));
         }

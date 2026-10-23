@@ -222,6 +222,33 @@ fn the_reserved_location_reads_as_a_placeholder_without_a_rearm() {
     assert_script_consumed(&transport);
 }
 
+// IEC 62386-102 §9.10.2, §9.10.4, Table 8, Table 10
+#[test]
+fn a_no_at_the_indicator_byte_outside_bank_0_is_left_unread_and_bank_0s_is_a_placeholder() {
+    for (bank, unread) in [(1, true), (0, false)] {
+        let mock = MockDaliTransport::new();
+        let short = 5;
+        expect_prepare(&mock, short, bank, 0);
+        expect_pointer_check(&mock, short, bank, Some(0));
+        let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+        mock.expect_forward_frame_with_backward(read, Some(0x10));
+        mock.expect_forward_frame_with_backward(read, None);
+        expect_pointer_check(&mock, short, bank, Some(2));
+        mock.expect_forward_frame_with_backward(read, Some(0x55));
+        expect_pointer_check(&mock, short, bank, Some(3));
+
+        let (transport, mut controller) = setup_controller(mock);
+        let execution = read_memory_bank(&mut controller, short, bank, 0, 3);
+
+        assert_eq!(execution.error, None);
+        assert_eq!(
+            execution.indicator_unread, unread,
+            "bank {bank}: a NO the pointer passed is a value only where 0x01 is reserved"
+        );
+        assert_script_consumed(&transport);
+    }
+}
+
 #[test]
 fn read_memory_bank_retries_transient_no_answer_for_data_offset() {
     let mock = MockDaliTransport::new();
