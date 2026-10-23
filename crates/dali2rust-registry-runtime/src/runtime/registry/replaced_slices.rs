@@ -224,6 +224,8 @@ pub(crate) enum Setting {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Announcement {
+    Setting(Setting),
+    Schedule(FixedText32),
     Adapter(u8),
     Group { adapter_id: u8, group_id: u8 },
     GroupMatrix(u8),
@@ -232,8 +234,6 @@ pub(crate) enum Announcement {
     Device { adapter_id: u8, short_address: u8 },
     Lamp { adapter_id: u8, virtual_lamp_id: u8 },
     InputDevice { adapter_id: u8, short_address: u8 },
-    Schedule(FixedText32),
-    Setting(Setting),
 }
 
 impl Announcement {
@@ -490,6 +490,20 @@ mod tests {
         wait_until(|| announce() == 0 && store.announcements_queued() == 0, WAIT);
         assert_eq!(store.announcements_queued(), 0, "the refused announcements never went out");
         assert_eq!(lamp_ids(&heard_until_quiet(&events)), (0..REFUSED_LAMPS).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_settings_record_goes_out_in_the_first_batch_ahead_of_the_lamps_queued_with_it() {
+        let (_host, publisher, events) = observed();
+        let store = RegistryStore::with_adapter_count(1);
+        lamps_queued(&store, QUEUED_LAMPS);
+        let poller_settings = ReplacedEntities { records: POLLER_SETTINGS, ..Default::default() };
+        store.queue_announcements(poller_settings);
+        store.announce_queued(&publisher, TARGET, BUDGET);
+        let first = heard_until_quiet(&events);
+        let poller =
+            |p: &BusEventPayload| matches!(p, BusEventPayload::PollerSettingsChangedEvent(_));
+        assert!(first.iter().any(poller), "the settings record waited behind the lamps");
     }
 
     #[test]
