@@ -376,10 +376,23 @@ fn serve_turn(
         &cx.ports.counters.commands_dropped_total,
         cx.link.dropped_incoming(),
     );
+    serve_bus(&cx, burst, client, session, topics, job, rule_budget);
+    true
+}
+
+#[inline(never)]
+fn serve_bus(
+    cx: &ServeTurn<'_>,
+    burst: &mut BurstCoalescer<BusFrame>,
+    client: &mut Box<dyn MqttClient>,
+    session: &mut Session,
+    topics: &HaTopics,
+    job: &mut Option<DiscoveryJob>,
+    rule_budget: &mut RulePublishBudget,
+) {
     let mut out = HaOut { client: client.as_mut(), session, topics, settings: cx.settings, ports: cx.ports };
     drain_bus(cx.ev_rx, burst, &mut out, job, rule_budget);
     advance_job(&mut out, job);
-    true
 }
 
 fn advance_job(out: &mut HaOut<'_>, job: &mut Option<DiscoveryJob>) {
@@ -1273,23 +1286,10 @@ fn build_input(out: &HaOut<'_>, adapter_id: u8, short_address: u8, instance_numb
 
 #[inline(never)]
 fn publish_input_event(out: &mut HaOut<'_>, body: &dali2rust_contracts::msg::DaliInputEventObservedEvent) {
-    if !out.settings.expose_input_devices {
-        return;
-    }
-    let (Some(short_address), Some(instance_number)) = (body.short_address, body.instance_number)
-    else {
+    let Some((short_address, instance_number, payload)) = exposed_input_event(out, body) else {
         return;
     };
     let adapter_id = body.registry_adapter_id;
-    let Some(view) = out.ports.read_port.ha_input_view(adapter_id, short_address) else {
-        return;
-    };
-    if !view.ha_expose {
-        return;
-    }
-    let Some(payload) = input_event_state_payload(body.typed, body.typed_value) else {
-        return;
-    };
     let key = (adapter_id, Entity::Input(short_address, instance_number));
     if !out.session.is_announced(key) {
         republish_input_configs(out, adapter_id, short_address);
@@ -1301,6 +1301,26 @@ fn publish_input_event(out: &mut HaOut<'_>, body: &dali2rust_contracts::msg::Dal
         && body.typed != dali2rust_contracts::msg::InputEventKind::Button;
     let topic = out.topics.input_state_topic(adapter_id, short_address, instance_number);
     out.publish(&topic, &payload, retain);
+}
+
+#[inline(never)]
+fn exposed_input_event(
+    out: &HaOut<'_>,
+    body: &dali2rust_contracts::msg::DaliInputEventObservedEvent,
+) -> Option<(u8, u8, String)> {
+    if !out.settings.expose_input_devices {
+        return None;
+    }
+    let (Some(short_address), Some(instance_number)) = (body.short_address, body.instance_number)
+    else {
+        return None;
+    };
+    let view = out.ports.read_port.ha_input_view(body.registry_adapter_id, short_address)?;
+    if !view.ha_expose {
+        return None;
+    }
+    let payload = input_event_state_payload(body.typed, body.typed_value)?;
+    Some((short_address, instance_number, payload))
 }
 
 #[inline(never)]
