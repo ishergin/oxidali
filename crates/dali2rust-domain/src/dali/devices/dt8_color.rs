@@ -147,6 +147,20 @@ pub const COLOUR_STATUS_XY_ACTIVE: u8 = 0x10;
 pub const COLOUR_STATUS_TC_ACTIVE: u8 = 0x20;
 pub const COLOUR_STATUS_PRIMARY_N_ACTIVE: u8 = 0x40;
 pub const COLOUR_STATUS_RGBWAF_ACTIVE: u8 = 0x80;
+pub const COLOUR_STATUS_TYPE_ACTIVE_MASK: u8 = COLOUR_STATUS_XY_ACTIVE
+    | COLOUR_STATUS_TC_ACTIVE
+    | COLOUR_STATUS_PRIMARY_N_ACTIVE
+    | COLOUR_STATUS_RGBWAF_ACTIVE;
+
+pub const fn active_colour_type(status: u8) -> Option<ColorType> {
+    match status & COLOUR_STATUS_TYPE_ACTIVE_MASK {
+        COLOUR_STATUS_XY_ACTIVE => Some(ColorType::XyCoordinate),
+        COLOUR_STATUS_TC_ACTIVE => Some(ColorType::ColorTemperature),
+        COLOUR_STATUS_PRIMARY_N_ACTIVE => Some(ColorType::PrimaryN),
+        COLOUR_STATUS_RGBWAF_ACTIVE => Some(ColorType::Rgbwaf),
+        _ => None,
+    }
+}
 
 // IEC 62386-209 Table 8
 pub const GEAR_FEATURES_AUTOMATIC_ACTIVATION: u8 = 0x01;
@@ -279,6 +293,31 @@ impl DeviceCommandMetadata for Dt8Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_active_type_bit_names_the_colour_type_whatever_the_low_bits_say() {
+        const LOW_BITS: u8 = 0x0F;
+        let cases = [
+            (COLOUR_STATUS_XY_ACTIVE, ColorType::XyCoordinate),
+            (COLOUR_STATUS_TC_ACTIVE, ColorType::ColorTemperature),
+            (COLOUR_STATUS_PRIMARY_N_ACTIVE, ColorType::PrimaryN),
+            (COLOUR_STATUS_RGBWAF_ACTIVE, ColorType::Rgbwaf),
+        ];
+        for (bit, colour_type) in cases {
+            assert_eq!(active_colour_type(bit), Some(colour_type));
+            assert_eq!(active_colour_type(bit | LOW_BITS), Some(colour_type));
+        }
+    }
+
+    #[test]
+    fn no_active_type_bit_or_several_of_them_name_no_colour_type() {
+        for status in 0..=u8::MAX {
+            if (status & COLOUR_STATUS_TYPE_ACTIVE_MASK).count_ones() != 1 {
+                assert_eq!(active_colour_type(status), None, "status {status:#04x}");
+            }
+        }
+        assert_eq!(active_colour_type(0xFF), None, "MASK is never a value");
+    }
 
     #[test]
     fn dt8_from_opcode_decodes_all_public_variants() {
