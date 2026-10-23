@@ -92,6 +92,7 @@ pub struct GearSpec {
     pub diagnostics_reporting: bool,
     pub bus_unit_extension: bool,
     pub luminaire_format: Option<LuminaireFormat>,
+    pub holds_dtr0_on_unimplemented: bool,
 }
 
 impl GearSpec {
@@ -110,6 +111,7 @@ impl GearSpec {
             diagnostics_reporting: false,
             bus_unit_extension: false,
             luminaire_format: None,
+            holds_dtr0_on_unimplemented: false,
         }
     }
 
@@ -134,6 +136,7 @@ impl GearSpec {
             diagnostics_reporting: false,
             bus_unit_extension: false,
             luminaire_format: None,
+            holds_dtr0_on_unimplemented: false,
         }
     }
 }
@@ -500,6 +503,13 @@ impl Gear {
             }
             _ => None,
         }
+    }
+
+    // IEC 62386-102 §9.10.4
+    pub fn advances_dtr0_past(&self, bank: u8, offset: u8) -> bool {
+        self.implements_bank(bank)
+            && (!self.spec.holds_dtr0_on_unimplemented
+                || self.memory_location(bank, offset).is_some())
     }
 
     pub fn implements_bank(&self, bank: u8) -> bool {

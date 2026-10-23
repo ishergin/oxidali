@@ -309,6 +309,7 @@ struct ChunkCursor {
     done: u16,
     freshly_armed: bool,
     placeholder_pending: bool,
+    placeholder_reread: bool,
     rearms: u8,
     resume: Option<u16>,
     evidence: ResumeEvidence,
@@ -323,6 +324,7 @@ impl ChunkCursor {
             done: 0,
             freshly_armed: true,
             placeholder_pending: false,
+            placeholder_reread: false,
             rearms: 0,
             resume: None,
             evidence: ResumeEvidence::NONE,
@@ -368,7 +370,7 @@ impl ChunkCursor {
     ) -> Result<(), SemanticDaliError> {
         let lost_placeholder_read = proof == PointerProof::Moved { one_behind: true };
         let resume = match (self.placeholder_pending && lost_placeholder_read, self.freshly_armed) {
-            (true, _) => MEMORY_RESERVED_OFFSET,
+            (true, _) => self.placeholder_resume(),
             (false, true) => chunk_start,
             (false, false) => return Err(proof.failure(MEMORY_MISALIGNED)),
         };
@@ -381,6 +383,15 @@ impl ChunkCursor {
         self.placeholder_pending = false;
         self.freshly_armed = true;
         arm_memory_pointer(controller, self.address, self.bank, resume)
+    }
+
+    // IEC 62386-102 §9.10.4
+    fn placeholder_resume(&mut self) -> u16 {
+        if std::mem::replace(&mut self.placeholder_reread, true) {
+            MEMORY_RESERVED_OFFSET + 1
+        } else {
+            MEMORY_RESERVED_OFFSET
+        }
     }
 
     fn resume_after(

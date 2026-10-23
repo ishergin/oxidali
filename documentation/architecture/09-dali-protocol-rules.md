@@ -200,8 +200,12 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   violated. The read closes by checking both registers the same way (102 §9.10.4).
 - A silent READ at offset 0x01 reads as a placeholder and ends its chunk: the next
   chunk's proof shows whether the READ reached the gear. Only a pointer one READ behind,
-  the bank held and `DTR0` still at 0x01, has 0x01 read again; any other failed proof
-  follows the rule above, and a read that ends at 0x01 is judged by its closing check.
+  the bank held and `DTR0` still at 0x01, has 0x01 read again. When that READ is silent
+  too and the pointer lags again, the gear is one that does not advance `DTR0` on a
+  location it lacks, as 102 §9.10.4 requires: the placeholder stays and the pointer is
+  armed at 0x02, so an indicator byte whose READ was lost twice reads as 0xFF. Any other
+  failed proof follows the rule above, and a read that ends at 0x01 is judged by its
+  closing check.
   These re-arms and the ones after an arm share two per read. Any other READ that
   answers nothing, answers with a violation,
   crosses a foreign frame or fails yields no value and ends its chunk: the pointer is

@@ -2751,6 +2751,26 @@ fn bank_zero_offset_one_answers_no_and_dtr0_still_increments() {
 }
 
 #[test]
+fn a_gear_that_holds_dtr0_on_an_unimplemented_location_still_advances_past_implemented_ones() {
+    let mut spec = GearSpec::dt6(Some(0), 0x00_0001);
+    spec.holds_dtr0_on_unimplemented = true;
+    let mut fleet = GearFleet::new(vec![spec], 0, 1);
+    let read = read_memory_frame(0);
+    let dtr0 = standard(0, StandardCommand::QueryContentDtr0);
+    exchange(&mut fleet, special(SpecialCommand::Dtr1(MEMORY_BANK_IDENTITY)), false);
+    exchange(&mut fleet, special(SpecialCommand::Dtr0(0x01)), false);
+    assert_eq!(exchange(&mut fleet, read, true), TransferOutcome::NoAnswer);
+    assert_eq!(
+        exchange(&mut fleet, dtr0, true),
+        TransferOutcome::Answer(0x01),
+        "the quirk: DTR0 stays on the reserved location, against §9.10.4"
+    );
+    exchange(&mut fleet, special(SpecialCommand::Dtr0(0x02)), false);
+    assert_eq!(exchange(&mut fleet, read, true), TransferOutcome::Answer(BANK0_LAST_BANK));
+    assert_eq!(exchange(&mut fleet, dtr0, true), TransferOutcome::Answer(0x03));
+}
+
+#[test]
 fn dtr0_does_not_move_for_an_unimplemented_bank_or_at_the_top_location() {
     let mut fleet = GearFleet::demo_bus();
     let read = read_memory_frame(0);

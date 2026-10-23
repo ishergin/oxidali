@@ -474,6 +474,61 @@ fn an_indicator_byte_whose_read_was_lost_is_read_again_not_shifted() {
     assert_script_consumed(&transport);
 }
 
+// IEC 62386-102 §9.10.4, Table 9
+#[test]
+fn a_gear_that_holds_dtr0_on_the_reserved_location_keeps_the_placeholder_and_reads_on_from_0x02() {
+    let mock = MockDaliTransport::new();
+    let short = 5;
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(&mock, short, 0, 0);
+    expect_pointer_check(&mock, short, 0, Some(0));
+    mock.expect_forward_frame_with_backward(read, Some(0x1C));
+    mock.expect_forward_frame_with_backward(read, None);
+    expect_pointer_check(&mock, short, 0, Some(1));
+    expect_rearmed_chunk(&mock, short, 0, 1);
+    mock.expect_forward_frame_with_backward(read, None);
+    expect_pointer_check(&mock, short, 0, Some(1));
+    expect_rearmed_chunk(&mock, short, 0, 2);
+    mock.expect_forward_frame_with_backward(read, Some(0x01));
+    mock.expect_forward_frame_with_backward(read, Some(0x00));
+    expect_pointer_check(&mock, short, 0, Some(4));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 0, 0, 4);
+
+    assert_eq!(
+        execution.bytes,
+        vec![0x1C, MEMORY_NO_ANSWER_PLACEHOLDER, 0x01, 0x00],
+        "a pointer that lags again after 0x01 was read twice is the gear's own, so 0x01 stays a placeholder"
+    );
+    assert_eq!(execution.error, None);
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn an_indicator_byte_whose_read_was_lost_twice_costs_its_value_not_the_bank() {
+    let mock = MockDaliTransport::new();
+    let short = 5;
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(&mock, short, 1, 0);
+    expect_pointer_check(&mock, short, 1, Some(0));
+    mock.expect_forward_frame_with_backward(read, Some(0x10));
+    for rearm_at in [1, 2] {
+        mock.expect_forward_frame_with_backward(read, None);
+        expect_pointer_check(&mock, short, 1, Some(1));
+        expect_rearmed_chunk(&mock, short, 1, rearm_at);
+    }
+    mock.expect_forward_frame_with_backward(read, Some(0x55));
+    expect_pointer_check(&mock, short, 1, Some(3));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 1, 0, 3);
+
+    assert_eq!(execution.bytes, vec![0x10, MEMORY_NO_ANSWER_PLACEHOLDER, 0x55]);
+    assert_eq!(execution.error, None);
+    assert_script_consumed(&transport);
+}
+
 #[test]
 fn silences_at_different_offsets_each_get_their_own_retries() {
     let mock = MockDaliTransport::new();

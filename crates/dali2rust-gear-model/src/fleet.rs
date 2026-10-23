@@ -493,12 +493,12 @@ impl GearFleet {
                 .filter(|g| g.matches(address))
                 .filter_map(|g| g.memory_location(bank, offset)),
         );
-        let bank_implemented = self
+        let advances = self
             .gears
             .iter()
-            .any(|g| g.matches(address) && g.implements_bank(bank));
+            .any(|g| g.matches(address) && g.advances_dtr0_past(bank, offset));
         // IEC 62386-102 §9.10.4
-        if bank_implemented && offset < LAST_MEMORY_LOCATION {
+        if advances && offset < LAST_MEMORY_LOCATION {
             self.regs.dtr0 = offset + 1;
         }
         self.publish(buf)
