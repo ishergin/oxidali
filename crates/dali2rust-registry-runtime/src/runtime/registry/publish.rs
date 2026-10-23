@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use dali2rust_bus::{publish_or_drop, BusChannel, BusFrame, BusPublisher};
+use dali2rust_bus::{publish_or_drop, BusChannel, BusFrame, BusPublisher, PublishResult};
 use dali2rust_contracts::bus::event_envelope;
 use dali2rust_contracts::msg::{
     fixed_text_64, AdapterSettingsChangedEvent, GroupChangedEvent, GroupMatrixChangedEvent,
@@ -14,7 +14,8 @@ pub(crate) fn publish_registry_event<P>(
     correlation_id: u64,
     target_adapter_id: u16,
     payload: P,
-) where
+) -> PublishResult
+where
     dali2rust_contracts::msg::BusEventPayload: From<P>,
 {
     let ev = event_envelope(
@@ -29,7 +30,7 @@ pub(crate) fn publish_registry_event<P>(
         BusChannel::Events,
         BusFrame::event(ev),
         "registry-events",
-    );
+    )
 }
 
 pub(crate) fn publish_input_device_changed(
@@ -37,7 +38,7 @@ pub(crate) fn publish_input_device_changed(
     correlation_id: u64,
     adapter_id: u8,
     short_address: u8,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
@@ -46,7 +47,7 @@ pub(crate) fn publish_input_device_changed(
             adapter_id,
             short_address,
         },
-    );
+    )
 }
 
 pub(crate) fn publish_physical_device_changed(
@@ -54,7 +55,7 @@ pub(crate) fn publish_physical_device_changed(
     correlation_id: u64,
     adapter_id: u8,
     short_address: u8,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
@@ -63,7 +64,7 @@ pub(crate) fn publish_physical_device_changed(
             adapter_id,
             short_address,
         },
-    );
+    )
 }
 
 pub(crate) fn publish_virtual_lamp_changed(
@@ -71,7 +72,7 @@ pub(crate) fn publish_virtual_lamp_changed(
     correlation_id: u64,
     adapter_id: u8,
     virtual_lamp_id: u8,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
@@ -80,7 +81,7 @@ pub(crate) fn publish_virtual_lamp_changed(
             adapter_id,
             virtual_lamp_id,
         },
-    );
+    )
 }
 
 pub(crate) fn publish_group_changed(
@@ -88,7 +89,7 @@ pub(crate) fn publish_group_changed(
     correlation_id: u64,
     adapter_id: u8,
     group_id: u8,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
@@ -97,20 +98,20 @@ pub(crate) fn publish_group_changed(
             adapter_id,
             group_id,
         },
-    );
+    )
 }
 
 pub(crate) fn publish_group_matrix_changed(
     publisher: &BusPublisher,
     correlation_id: u64,
     adapter_id: u8,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
         u16::from(adapter_id),
         GroupMatrixChangedEvent { adapter_id },
-    );
+    )
 }
 
 pub(crate) fn publish_unbound_lamps(
@@ -172,7 +173,7 @@ pub(crate) fn publish_scene_changed(
     correlation_id: u64,
     adapter_id: u8,
     scene_id: u8,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
@@ -181,7 +182,7 @@ pub(crate) fn publish_scene_changed(
             adapter_id,
             scene_id,
         },
-    );
+    )
 }
 
 pub(crate) fn publish_scene_matrix_changed(
@@ -189,7 +190,7 @@ pub(crate) fn publish_scene_matrix_changed(
     correlation_id: u64,
     adapter_id: u8,
     scene_id: u8,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
@@ -198,7 +199,7 @@ pub(crate) fn publish_scene_matrix_changed(
             adapter_id,
             scene_id,
         },
-    );
+    )
 }
 
 pub(crate) fn publish_hcl_schedule_changed(
@@ -208,7 +209,7 @@ pub(crate) fn publish_hcl_schedule_changed(
     schedule_id: dali2rust_contracts::msg::FixedText32,
     removed: bool,
     enabled: bool,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
@@ -218,7 +219,7 @@ pub(crate) fn publish_hcl_schedule_changed(
             removed,
             enabled,
         },
-    );
+    )
 }
 
 pub(crate) fn publish_home_assistant_settings_changed(
@@ -226,13 +227,13 @@ pub(crate) fn publish_home_assistant_settings_changed(
     correlation_id: u64,
     target_adapter_id: u16,
     enabled: bool,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
         target_adapter_id,
         dali2rust_contracts::msg::HomeAssistantSettingsChangedEvent { enabled },
-    );
+    )
 }
 
 pub(crate) fn publish_dali_settings_changed(
@@ -241,7 +242,7 @@ pub(crate) fn publish_dali_settings_changed(
     target_adapter_id: u16,
     applied: &super::dali_settings::DaliSettingsRecord,
     application_active_moved_by: u8,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
@@ -252,7 +253,7 @@ pub(crate) fn publish_dali_settings_changed(
             application_active: applied.application_active,
             application_active_moved_by,
         },
-    );
+    )
 }
 
 pub(crate) fn publish_redundancy_settings_changed(
@@ -260,7 +261,7 @@ pub(crate) fn publish_redundancy_settings_changed(
     correlation_id: u64,
     target_adapter_id: u16,
     applied: &super::redundancy_settings::RedundancySettingsRecord,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
@@ -274,7 +275,7 @@ pub(crate) fn publish_redundancy_settings_changed(
             peer_device_short_address: applied.peer_device_short_address.unwrap_or(u8::MAX),
             peer_url: dali2rust_contracts::msg::fixed_text_64(&applied.peer_url),
         },
-    );
+    )
 }
 
 pub(crate) fn publish_policies_changed(
@@ -282,7 +283,7 @@ pub(crate) fn publish_policies_changed(
     correlation_id: u64,
     target_adapter_id: u16,
     applied: &super::policies::PoliciesRecord,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
@@ -296,7 +297,7 @@ pub(crate) fn publish_policies_changed(
                 .unwrap_or(dali2rust_contracts::msg::PoliciesUpdateCommand::UNMANAGED),
             apply_on_discovery: applied.apply_on_discovery,
         },
-    );
+    )
 }
 
 pub(crate) fn publish_poller_settings_changed(
@@ -304,7 +305,7 @@ pub(crate) fn publish_poller_settings_changed(
     correlation_id: u64,
     target_adapter_id: u16,
     applied: &super::poller_settings::PollerSettingsRecord,
-) {
+) -> PublishResult {
     publish_registry_event(
         publisher,
         correlation_id,
@@ -318,7 +319,7 @@ pub(crate) fn publish_poller_settings_changed(
             include_diagnostics: applied.include_diagnostics,
             skip_unbound_virtual_lamps: applied.skip_unbound_virtual_lamps,
         },
-    );
+    )
 }
 
 pub(crate) fn publish_adapter_settings_changed(
@@ -327,7 +328,7 @@ pub(crate) fn publish_adapter_settings_changed(
     correlation_id: u64,
     name: &str,
     enabled: bool,
-) {
+) -> PublishResult {
     let ev = event_envelope(
         SOURCE_ID_UNSPECIFIED,
         correlation_id,
@@ -344,7 +345,7 @@ pub(crate) fn publish_adapter_settings_changed(
         BusChannel::Events,
         BusFrame::event(ev),
         "registry-events",
-    );
+    )
 }
 
 #[derive(Clone, Copy)]

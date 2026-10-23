@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use dali2rust_bus::BusPublisher;
+use dali2rust_bus::{BusPublisher, PublishResult};
 use dali2rust_contracts::msg::{FixedText32, APPLICATION_ACTIVE_UNMOVED};
 use dali2rust_contracts::CORRELATION_NONE;
 use dali2rust_platform::slice_store::SliceKey;
@@ -237,43 +237,53 @@ pub(crate) enum Announcement {
 }
 
 impl Announcement {
-    fn publish(&self, publisher: &BusPublisher, store: &RegistryStore, target: u16) {
+    fn publish(
+        &self,
+        publisher: &BusPublisher,
+        store: &RegistryStore,
+        target: u16,
+    ) -> PublishResult {
         match self {
             Self::Adapter(adapter_id) => publish_adapter(publisher, store, *adapter_id),
             Self::Schedule(schedule_id) => publish_schedule(publisher, store, target, schedule_id),
             Self::Setting(setting) => publish_setting(publisher, store, target, *setting),
             Self::InputDevice { adapter_id: a, short_address: s } => {
-                publish_input_device_changed(publisher, CORRELATION_NONE, *a, *s);
+                publish_input_device_changed(publisher, CORRELATION_NONE, *a, *s)
             }
             identity => identity.publish_identity(publisher),
         }
     }
 
-    fn publish_identity(&self, p: &BusPublisher) {
+    fn publish_identity(&self, p: &BusPublisher) -> PublishResult {
         let c = CORRELATION_NONE;
         match self {
             Self::Group { adapter_id: a, group_id: g } => publish_group_changed(p, c, *a, *g),
             Self::GroupMatrix(a) => publish_group_matrix_changed(p, c, *a),
             Self::Scene { adapter_id: a, scene_id: s } => publish_scene_changed(p, c, *a, *s),
             Self::SceneMatrix { adapter_id: a, scene_id: s } => {
-                publish_scene_matrix_changed(p, c, *a, *s);
+                publish_scene_matrix_changed(p, c, *a, *s)
             }
             Self::Device { adapter_id: a, short_address: s } => {
-                publish_physical_device_changed(p, c, *a, *s);
+                publish_physical_device_changed(p, c, *a, *s)
             }
             Self::Lamp { adapter_id: a, virtual_lamp_id: l } => {
-                publish_virtual_lamp_changed(p, c, *a, *l);
+                publish_virtual_lamp_changed(p, c, *a, *l)
             }
-            _ => {}
+            _ => PublishResult::Queued,
         }
     }
 }
 
-fn publish_adapter(publisher: &BusPublisher, store: &RegistryStore, adapter_id: u8) {
-    if let Some((name, enabled)) = store.adapter_row_name_enabled(adapter_id) {
-        let name = name.as_str();
-        publish_adapter_settings_changed(publisher, adapter_id, CORRELATION_NONE, name, enabled);
-    }
+fn publish_adapter(
+    publisher: &BusPublisher,
+    store: &RegistryStore,
+    adapter_id: u8,
+) -> PublishResult {
+    let Some((name, enabled)) = store.adapter_row_name_enabled(adapter_id) else {
+        return PublishResult::Queued;
+    };
+    let name = name.as_str();
+    publish_adapter_settings_changed(publisher, adapter_id, CORRELATION_NONE, name, enabled)
 }
 
 fn publish_schedule(
@@ -281,28 +291,29 @@ fn publish_schedule(
     store: &RegistryStore,
     target: u16,
     schedule_id: &FixedText32,
-) {
+) -> PublishResult {
     let enabled = store.read_inner().hcl_schedules.get(schedule_id).map(|row| row.enabled);
     let (removed, enabled) = (enabled.is_none(), enabled.unwrap_or(false));
     let id = schedule_id.clone();
-    publish_hcl_schedule_changed(publisher, CORRELATION_NONE, target, id, removed, enabled);
+    publish_hcl_schedule_changed(publisher, CORRELATION_NONE, target, id, removed, enabled)
 }
 
-fn publish_setting(publisher: &BusPublisher, store: &RegistryStore, target: u16, setting: Setting) {
+fn publish_setting(
+    publisher: &BusPublisher,
+    store: &RegistryStore,
+    target: u16,
+    setting: Setting,
+) -> PublishResult {
     let corr = CORRELATION_NONE;
     match setting {
         Setting::Poller => {
             let poller = store.read_inner().poller_settings;
-            publish_poller_settings_changed(publisher, corr, target, &poller);
+            publish_poller_settings_changed(publisher, corr, target, &poller)
         }
         Setting::Dali => {
             let dali = store.read_inner().dali_settings;
             let unmoved = APPLICATION_ACTIVE_UNMOVED;
-            publish_dali_settings_changed(publisher, corr, target, &dali, unmoved);
-        }
-        Setting::Redundancy => {
-            let redundancy = store.read_inner().redundancy_settings.clone();
-            publish_redundancy_settings_changed(publisher, corr, target, &redundancy);
+            publish_dali_settings_changed(publisher, corr, target, &dali, unmoved)
         }
         policy => publish_policy_setting(publisher, store, target, policy),
     }
@@ -313,14 +324,28 @@ fn publish_policy_setting(
     store: &RegistryStore,
     target: u16,
     setting: Setting,
-) {
+) -> PublishResult {
     let corr = CORRELATION_NONE;
-    if setting == Setting::Policies {
-        let policies = store.read_inner().policies;
-        publish_policies_changed(publisher, corr, target, &policies);
-    } else {
-        let enabled = store.read_inner().home_assistant_settings.enabled;
-        publish_home_assistant_settings_changed(publisher, corr, target, enabled);
+    match setting {
+        Setting::Redundancy => {
+            let redundancy = store.read_inner().redundancy_settings.clone();
+            publish_redundancy_settings_changed(publisher, corr, target, &redundancy)
+        }
+        Setting::Policies => {
+            let policies = store.read_inner().policies;
+            publish_policies_changed(publisher, corr, target, &policies)
+        }
+        _ => {
+            let enabled = store.read_inner().home_assistant_settings.enabled;
+            publish_home_assistant_settings_changed(publisher, corr, target, enabled)
+        }
+    }
+}
+
+#[cfg(test)]
+impl RegistryStore {
+    pub(crate) fn announcements_queued(&self) -> usize {
+        self.announcements.queue().len()
     }
 }
 
@@ -340,14 +365,24 @@ impl RegistryStore {
     }
 
     #[inline(never)]
-    pub(crate) fn announce_queued(&self, publisher: &BusPublisher, target: u16, budget: usize) {
-        let batch: Vec<Announcement> = {
-            let mut queue = self.announcements.queue();
-            (0..budget).map_while(|_| queue.pop_first()).collect()
-        };
-        for announcement in &batch {
-            announcement.publish(publisher, self, target);
+    pub(crate) fn announce_queued(
+        &self,
+        publisher: &BusPublisher,
+        target: u16,
+        budget: usize,
+    ) -> usize {
+        let mut announced = 0;
+        while announced < budget {
+            let Some(next) = self.announcements.queue().pop_first() else {
+                break;
+            };
+            if next.publish(publisher, self, target) == PublishResult::DroppedIngressFull {
+                self.announcements.queue().insert(next);
+                break;
+            }
+            announced += 1;
         }
+        announced
     }
 }
 
@@ -397,6 +432,7 @@ mod tests {
 
     use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusPublisher};
     use dali2rust_contracts::msg::{BusEventPayload, EVENT_VARIANT_NAMES};
+    use dali2rust_test_support::{hold_the_events_ingress_full, wait_until};
 
     use super::{ReplacedEntities, POLLER_SETTINGS};
     use crate::runtime::registry::RegistryStore;
@@ -421,6 +457,39 @@ mod tests {
             wait = QUIET;
         }
         heard
+    }
+
+    const REFUSED_LAMPS: u8 = 3;
+
+    fn lamps_queued(store: &RegistryStore, count: u8) {
+        let lamps = (0..count).fold(0u64, |mask, id| mask | (1 << id));
+        let lamps = BTreeMap::from([(0, lamps)]);
+        store.queue_announcements(ReplacedEntities { lamps, ..ReplacedEntities::default() });
+    }
+
+    fn lamp_ids(heard: &[BusEventPayload]) -> Vec<u8> {
+        let lamp = |payload: &BusEventPayload| match payload {
+            BusEventPayload::VirtualLampChangedEvent(ev) => Some(ev.virtual_lamp_id),
+            _ => None,
+        };
+        heard.iter().filter_map(lamp).collect()
+    }
+
+    #[test]
+    fn an_announcement_a_full_ingress_refuses_waits_in_the_queue_and_goes_out_later() {
+        let (_host, publisher, events) = observed();
+        let store = RegistryStore::with_adapter_count(1);
+        lamps_queued(&store, REFUSED_LAMPS);
+        let held = hold_the_events_ingress_full(&publisher);
+        let announced = store.announce_queued(&publisher, TARGET, BUDGET);
+        assert_eq!(announced, 0, "a refusal counted as sent");
+        let queued = store.announcements_queued();
+        assert_eq!(queued, usize::from(REFUSED_LAMPS), "a refusal left the queue");
+        held.release();
+        let announce = || store.announce_queued(&publisher, TARGET, BUDGET);
+        wait_until(|| announce() == 0 && store.announcements_queued() == 0, WAIT);
+        assert_eq!(store.announcements_queued(), 0, "the refused announcements never went out");
+        assert_eq!(lamp_ids(&heard_until_quiet(&events)), (0..REFUSED_LAMPS).collect::<Vec<_>>());
     }
 
     #[test]
