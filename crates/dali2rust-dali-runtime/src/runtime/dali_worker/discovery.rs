@@ -2,14 +2,9 @@ use super::*;
 
 #[derive(Clone, Copy)]
 struct Scan<'a> {
-    publisher: &'a BusPublisher,
+    env: &'a WorkerEnv<'a>,
     w: u64,
-    adapter_id: BusId,
     reg_aid: u8,
-    counters: &'a DaliWorkerCounters,
-    runtime_config: DaliRuntimeConfig,
-    read_port: &'a dyn RegistryReadPort,
-    correlation: &'a dali2rust_bus::CorrelationIdAllocator,
 }
 
 pub(super) fn handle_discover_devices(
@@ -18,29 +13,20 @@ pub(super) fn handle_discover_devices(
     correlation_id: u64,
     dc: &dali2rust_contracts::msg::DaliDiscoverDevicesCommand,
 ) {
-    let scan = Scan {
-        publisher: env.publisher,
-        w: correlation_id,
-        adapter_id: env.adapter_id,
-        reg_aid: dc.registry_adapter_id,
-        counters: env.counters,
-        runtime_config: env.runtime_config,
-        read_port: env.read_port,
-        correlation: env.correlation,
-    };
+    let scan = Scan { env, w: correlation_id, reg_aid: dc.registry_adapter_id };
     publish_operation_worker_signal(
-        scan.publisher,
-        scan.adapter_id,
+        scan.env.publisher,
+        scan.env.adapter_id,
         scan.w,
         OperationWorkerSignal::WorkerStarted,
         None,
         "",
         Origin::Internal,
-        scan.counters,
+        scan.env.counters,
     );
     let result = run_discovery_mode(controller, &scan, dc.mode);
     publish_discovery_outcome(&scan, result);
-    scan.counters
+    scan.env.counters
         .semantic_discover_devices_handled
         .fetch_add(1, Ordering::Relaxed);
 }
@@ -50,7 +36,7 @@ fn run_discovery_mode(
     scan: &Scan<'_>,
     mode: DiscoveryMode,
 ) -> Result<(), SemanticDaliError> {
-    let mut used_shorts = scan.read_port.known_physical_short_addresses(scan.reg_aid);
+    let mut used_shorts = scan.env.read_port.known_physical_short_addresses(scan.reg_aid);
     match mode {
         DiscoveryMode::RefreshKnown => discover_refresh_known(controller, &used_shorts, scan),
         DiscoveryMode::ScanKnownShortAddresses => discover_scan_all(controller, scan),
@@ -68,42 +54,44 @@ fn publish_discovery_outcome(scan: &Scan<'_>, result: Result<(), SemanticDaliErr
 }
 
 fn publish_discovery_failed(scan: &Scan<'_>, error: &SemanticDaliError) {
-    let fail_ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, scan.w, scan.adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryFailedEvent {});
-    publish_event_typed(scan.publisher, fail_ev);
-    scan.counters
+    let fail_ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, scan.w, scan.env.adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryFailedEvent {});
+    publish_event_typed(scan.env.publisher, fail_ev);
+    scan.env.counters
         .discovery_failed_events_published
         .fetch_add(1, Ordering::Relaxed);
     publish_operation_worker_signal(
-        scan.publisher,
-        scan.adapter_id,
+        scan.env.publisher,
+        scan.env.adapter_id,
         scan.w,
         OperationWorkerSignal::WorkerFailed,
         Some(error.code()),
         error.message(),
         Origin::Internal,
-        scan.counters,
+        scan.env.counters,
     );
 }
 
 fn publish_discovery_succeeded(scan: &Scan<'_>) {
     let done =
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, scan.w, scan.adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryCompletedEvent { registry_adapter_id: scan.reg_aid });
-    publish_event_typed(scan.publisher, done);
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, scan.w, scan.env.adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryCompletedEvent { registry_adapter_id: scan.reg_aid });
+    publish_event_typed(scan.env.publisher, done);
     publish_policy_apply_if_armed(scan);
     publish_operation_worker_signal(
-        scan.publisher,
-        scan.adapter_id,
+        scan.env.publisher,
+        scan.env.adapter_id,
         scan.w,
         OperationWorkerSignal::WorkerSucceeded,
         None,
         "",
         Origin::Internal,
-        scan.counters,
+        scan.env.counters,
     );
 }
 
 fn publish_policy_apply_if_armed(scan: &Scan<'_>) {
-    let Scan { publisher, adapter_id, reg_aid, counters, read_port, correlation, .. } = *scan;
+    let Scan { env, reg_aid, .. } = *scan;
+    let (publisher, adapter_id, counters) = (env.publisher, env.adapter_id, env.counters);
+    let (read_port, correlation) = (env.read_port, env.correlation);
     if !read_port.apply_on_discovery_armed(reg_aid) {
         return;
     }
@@ -172,7 +160,7 @@ fn discover_scan_all(
     controller: &mut impl DaliApplicationController,
     scan: &Scan<'_>,
 ) -> Result<(), crate::runtime::executor::SemanticDaliError> {
-    let retries = scan.runtime_config.discovery_step_retries;
+    let retries = scan.env.runtime_config.discovery_step_retries;
     let attempts = retries.saturating_add(1);
     for attempt in 0..attempts {
         let mut confirmed_mask: u64 = 0;
@@ -182,7 +170,7 @@ fn discover_scan_all(
             &mut |found: &DiscoveredDevice| {
                 confirmed_mask |= 1u64 << (found.short_address & 0x3F);
                 if found.type_enum_degraded {
-                    scan.counters
+                    scan.env.counters
                         .discovery_device_type_degraded
                         .fetch_add(1, Ordering::Relaxed);
                 }
@@ -208,8 +196,8 @@ fn discover_scan_all(
 }
 
 fn publish_scan_reconciled(scan: &Scan<'_>, confirmed_mask: u64) {
-    let reconciled = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, scan.w, scan.adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryScanReconciledEvent { registry_adapter_id: scan.reg_aid, confirmed_mask });
-    publish_event_required(scan.publisher, reconciled, scan.counters, PublishKind::Series, "discovery-reconciled");
+    let reconciled = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, scan.w, scan.env.adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliDiscoveryScanReconciledEvent { registry_adapter_id: scan.reg_aid, confirmed_mask });
+    publish_event_required(scan.env.publisher, reconciled, scan.env.counters, PublishKind::Series, "discovery-reconciled");
 }
 
 fn commission_unaddressed_loop(
@@ -217,7 +205,7 @@ fn commission_unaddressed_loop(
     used_shorts: &mut Vec<u8>,
     scan: &Scan<'_>,
 ) -> Result<(), crate::runtime::executor::SemanticDaliError> {
-    let attempts = scan.runtime_config.discovery_step_retries.saturating_add(1);
+    let attempts = scan.env.runtime_config.discovery_step_retries.saturating_add(1);
     for attempt in 0..attempts {
         match commission_unaddressed_once(controller, used_shorts, scan) {
             Ok(()) => return Ok(()),
@@ -254,7 +242,7 @@ fn commission_unaddressed_drain(
         match commission_next_unaddressed_with_retry_budget(
             controller,
             used_shorts,
-            scan.runtime_config.discovery_step_retries,
+            scan.env.runtime_config.discovery_step_retries,
         ) {
             Ok(Some(found)) => {
                 used_shorts.push(found.short_address);
@@ -270,7 +258,7 @@ fn publish_discovery_progress(scan: &Scan<'_>, found: &DiscoveredDevice) {
     let prog = dali2rust_contracts::bus::event_envelope(
         SOURCE_ID_UNSPECIFIED,
         scan.w,
-        scan.adapter_id.0,
+        scan.env.adapter_id.0,
         Some(dali2rust_contracts::msg::Origin::Internal),
         dali2rust_contracts::msg::DaliDiscoveryProgressEvent {
             registry_adapter_id: scan.reg_aid,
@@ -285,8 +273,8 @@ fn publish_discovery_progress(scan: &Scan<'_>, found: &DiscoveredDevice) {
             supported_device_types: found.supported_device_types,
         },
     );
-    if publish_event_required(scan.publisher, prog, scan.counters, PublishKind::Series, "discovery-progress") {
-        scan.counters
+    if publish_event_required(scan.env.publisher, prog, scan.env.counters, PublishKind::Series, "discovery-progress") {
+        scan.env.counters
             .discovery_progress_events_published
             .fetch_add(1, Ordering::Relaxed);
     }
