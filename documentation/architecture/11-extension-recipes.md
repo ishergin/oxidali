@@ -69,10 +69,11 @@ BDD conventions → [05](05-testing-and-bdd.md); DALI rules → [09](09-dali-pro
 
 1. The worker and its spawn function live in the owning runtime crate
    (`crates/dali2rust-<area>-runtime/src/runtime/<name>_worker.rs`), spawned with
-   `dali2rust_bsp::esp_thread::spawn_named_stack_in` (`try_spawn_named_stack_in` for
-   anything a client can trigger), a `std_thread_stack` class and
+   `dali2rust_bsp::esp_thread::spawn_named_stack_in` (`try_spawn_named_stack_in` for a
+   rare client-triggered occasion), a `std_thread_stack` class and
    `StackHome::ExternalOnXip`; a thread that maps flash or carries wire timing keeps an
-   internal stack ([07](07-memory-and-cores.md) §Placement). The primary inbox is read
+   internal stack ([07](07-memory-and-cores.md) §Placement). The spawn needs its line in
+   `scripts/spawn_sites.txt`. The primary inbox is read
    with `recv` or `recv_timeout` ([02](02-runtime-and-threading.md)).
 2. Subscribe in `service_channels()` (`adapters/src/runtime/bus_host.rs`) with the
    declared kind set — `subscribe_commands(capacity, <WORKER>_HANDLED_COMMANDS)`,

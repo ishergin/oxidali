@@ -14,6 +14,8 @@ from verify_imports_at_module_level import blank, masked
 ALLOWLIST = "scripts/spawn_sites.txt"
 ESP_HELPER = "crates/dali2rust-bsp/src/esp_thread.rs"
 GEAR_HELPER = "tools/dali-gear-sim/src/spawn.rs"
+GEAR_MANIFEST = "tools/dali-gear-sim/Cargo.toml"
+MOCK_CLIENT = "crates/dali2rust-mqtt-runtime/src/client/mock.rs"
 SPAWN_HELPERS = (ESP_HELPER, GEAR_HELPER)
 STACK_RUNNER = "crates/dali2rust-bsp/src/stack_runner.rs"
 FIRMWARE_CRATE = "dali2rust-firmware"
@@ -25,7 +27,8 @@ CRATE_ROOTS = ("lib.rs", "main.rs")
 BOOT, RUNNER, OCCASION, HOST, HOST_LINKED = "boot", "runner", "occasion", "host", "host-linked"
 THROUGH_ESP_THREAD = (BOOT, RUNNER, OCCASION)
 CLASSES = THROUGH_ESP_THREAD + (HOST, HOST_LINKED)
-CAPPED = {OCCASION: 1, HOST_LINKED: 1}
+OCCASION_CAP = 1
+RELATIVE_ROOTS = ("super", "crate", "self")
 DYNAMIC = "<dynamic>"
 ESPIDF = '"espidf"'
 THREAD_ITEMS = ("spawn", "scope", "Builder")
@@ -254,15 +257,14 @@ def file_host_scope(text, code):
     return attribute_items(code, attributes)
 
 
-def read_manifest(root, crate):
-    path = root / "crates" / crate / "Cargo.toml"
+def read_manifest(root, rel):
+    path = root / rel
     if not path.exists():
-        raise SystemExit(f"verify_spawn_sites: missing {path.relative_to(root).as_posix()}")
+        raise SystemExit(f"verify_spawn_sites: missing {rel}")
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
-def workspace_paths(root):
-    manifest = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
+def workspace_paths(manifest):
     table = manifest.get("workspace", {}).get("dependencies", {})
     return {name: spec["path"] for name, spec in table.items() if isinstance(spec, dict) and "path" in spec}
 
@@ -280,18 +282,21 @@ def linked_dependencies(manifest, inherited):
     return found
 
 
-def firmware_closure(root):
-    inherited, seen, pending = workspace_paths(root), set(), [FIRMWARE_CRATE]
+def device_closure(root):
+    inherited = workspace_paths(read_manifest(root, "Cargo.toml"))
+    gear = read_manifest(root, GEAR_MANIFEST)
+    pending = [FIRMWARE_CRATE, *linked_dependencies(gear, workspace_paths(gear))]
+    seen = set()
     while pending:
         crate = pending.pop()
         if crate not in seen and (root / "crates" / crate).is_dir():
             seen.add(crate)
-            pending.extend(linked_dependencies(read_manifest(root, crate), inherited))
+            pending.extend(linked_dependencies(read_manifest(root, f"crates/{crate}/Cargo.toml"), inherited))
     return seen
 
 
 def off_device_crates(root):
-    linked = firmware_closure(root)
+    linked = device_closure(root)
     return frozenset(d for d in (root / "crates").iterdir() if d.is_dir() and d.name not in linked)
 
 
@@ -347,9 +352,17 @@ def use_leaves(tree):
     return [(path[:-1] if path[-1] == "self" else path, alias) for path, alias in leaves if path]
 
 
+def thread_item(path):
+    if len(path) < 2:
+        return False
+    if path[-2] == "thread":
+        return path[-1] in THREAD_ITEMS or path[-1] == "*"
+    return path[0] in RELATIVE_ROOTS and path[-1] in THREAD_ITEMS
+
+
 def judge_leaf(path, alias, public, names):
     tail = path[-1]
-    item = len(path) > 1 and path[-2] == "thread" and (tail in THREAD_ITEMS or tail == "*")
+    item = thread_item(path)
     if alias and (item or tail == "thread" or tail in names):
         return set(), f"renames `{'::'.join(path)}`"
     if public and item:
@@ -516,7 +529,7 @@ def reconcile_problems(unlisted, misclassed, dead):
     return problems
 
 
-def entry_problems(entries):
+def runner_problems(entries):
     problems = []
     for entry in entries:
         runner_place = (entry.path, entry.name) == (STACK_RUNNER, DYNAMIC)
@@ -525,14 +538,30 @@ def entry_problems(entries):
                 f"{ALLOWLIST}:{entry.number}: {DYNAMIC} and class `{RUNNER}` belong to the one line of "
                 f"{STACK_RUNNER}; every other line names a literal task"
             )
-    for cls, cap in CAPPED.items():
-        count = sum(1 for entry in entries if entry.cls == cls)
-        if count > cap:
-            problems.append(
-                f"{ALLOWLIST}: {count} `{cls}` lines against {cap}; a thread per occasion leaks internal SRAM on "
-                "ESP-IDF, so recurring work runs on a StackRunner or RunnerPool"
-            )
     return problems
+
+
+def host_linked_problems(entries):
+    return [
+        f"{ALLOWLIST}:{entry.number}: class `{HOST_LINKED}` is for {MOCK_CLIENT} alone, the one host-only mock the "
+        'firmware image compiles; gate other host threads with #[cfg(not(target_os = "espidf"))]'
+        for entry in entries
+        if entry.cls == HOST_LINKED and entry.path != MOCK_CLIENT
+    ]
+
+
+def occasion_problems(entries):
+    count = sum(1 for entry in entries if entry.cls == OCCASION)
+    if count <= OCCASION_CAP:
+        return []
+    return [
+        f"{ALLOWLIST}: {count} `{OCCASION}` lines against {OCCASION_CAP}; a thread per occasion leaks "
+        "internal SRAM on ESP-IDF, so recurring work runs on a StackRunner or RunnerPool"
+    ]
+
+
+def entry_problems(entries):
+    return runner_problems(entries) + host_linked_problems(entries) + occasion_problems(entries)
 
 
 def summary(sites, entries):
