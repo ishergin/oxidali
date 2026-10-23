@@ -2,19 +2,21 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use dali2rust_bus::{BusPublisher, PublishResult};
-use dali2rust_contracts::msg::{FixedText32, APPLICATION_ACTIVE_UNMOVED};
+use dali2rust_bus::{BusChannel, BusFrame, BusPublisher, PublishResult};
+use dali2rust_contracts::msg::{
+    BusEventPayload, FixedText32, GroupChangedEvent, GroupMatrixChangedEvent,
+    HclScheduleChangedEvent, HomeAssistantSettingsChangedEvent, InputDeviceChangedEvent,
+    PhysicalDeviceChangedEvent, SceneChangedEvent, SceneMatrixChangedEvent,
+    VirtualLampChangedEvent, APPLICATION_ACTIVE_UNMOVED,
+};
 use dali2rust_contracts::CORRELATION_NONE;
 use dali2rust_platform::slice_store::SliceKey;
+use log::warn;
 
 use super::physical_device_banks::{bank_bit, short_bit};
 use super::publish::{
-    publish_adapter_settings_changed, publish_dali_settings_changed, publish_group_changed,
-    publish_group_matrix_changed, publish_hcl_schedule_changed,
-    publish_home_assistant_settings_changed, publish_input_device_changed,
-    publish_physical_device_changed, publish_policies_changed, publish_poller_settings_changed,
-    publish_redundancy_settings_changed, publish_scene_changed, publish_scene_matrix_changed,
-    publish_virtual_lamp_changed,
+    adapter_settings_frame, dali_settings_changed, policies_changed, poller_settings_changed,
+    redundancy_settings_changed, registry_event_frame,
 };
 use super::store::{Inner, RegistryStore};
 use super::withheld_slices::HeldSlices;
@@ -238,109 +240,82 @@ pub(crate) enum Announcement {
 }
 
 impl Announcement {
-    fn publish(
-        &self,
-        publisher: &BusPublisher,
-        store: &RegistryStore,
-        target: u16,
-    ) -> PublishResult {
+    fn frame(&self, store: &RegistryStore, target: u16) -> Option<BusFrame> {
         match self {
-            Self::Adapter(adapter_id) => publish_adapter(publisher, store, *adapter_id),
-            Self::Schedule(schedule_id) => publish_schedule(publisher, store, target, schedule_id),
-            Self::Setting(setting) => publish_setting(publisher, store, target, *setting),
-            Self::InputDevice { adapter_id: a, short_address: s } => {
-                publish_input_device_changed(publisher, CORRELATION_NONE, *a, *s)
+            Self::Setting(setting) => Some(setting_frame(store, target, *setting)),
+            Self::Schedule(schedule_id) => Some(schedule_frame(store, target, schedule_id)),
+            Self::Adapter(adapter_id) => {
+                let (name, enabled) = store.adapter_row_name_enabled(*adapter_id)?;
+                Some(adapter_settings_frame(*adapter_id, CORRELATION_NONE, name.as_str(), enabled))
             }
-            identity => identity.publish_identity(publisher),
+            identity => {
+                let (adapter_id, payload) = identity.identity_payload()?;
+                Some(registry_event_frame(CORRELATION_NONE, u16::from(adapter_id), payload))
+            }
         }
     }
 
-    fn publish_identity(&self, p: &BusPublisher) -> PublishResult {
-        let c = CORRELATION_NONE;
-        match self {
-            Self::Group { adapter_id: a, group_id: g } => publish_group_changed(p, c, *a, *g),
-            Self::GroupMatrix(a) => publish_group_matrix_changed(p, c, *a),
-            Self::Scene { adapter_id: a, scene_id: s } => publish_scene_changed(p, c, *a, *s),
-            Self::SceneMatrix { adapter_id: a, scene_id: s } => {
-                publish_scene_matrix_changed(p, c, *a, *s)
+    fn identity_payload(&self) -> Option<(u8, BusEventPayload)> {
+        self.collection_payload().or_else(|| self.device_payload())
+    }
+
+    fn collection_payload(&self) -> Option<(u8, BusEventPayload)> {
+        Some(match *self {
+            Self::Group { adapter_id, group_id } => {
+                (adapter_id, GroupChangedEvent { adapter_id, group_id }.into())
             }
-            Self::Device { adapter_id: a, short_address: s } => {
-                publish_physical_device_changed(p, c, *a, *s)
+            Self::GroupMatrix(adapter_id) => {
+                (adapter_id, GroupMatrixChangedEvent { adapter_id }.into())
             }
-            Self::Lamp { adapter_id: a, virtual_lamp_id: l } => {
-                publish_virtual_lamp_changed(p, c, *a, *l)
+            Self::Scene { adapter_id, scene_id } => {
+                (adapter_id, SceneChangedEvent { adapter_id, scene_id }.into())
             }
-            _ => PublishResult::Queued,
-        }
+            Self::SceneMatrix { adapter_id, scene_id } => {
+                (adapter_id, SceneMatrixChangedEvent { adapter_id, scene_id }.into())
+            }
+            _ => return None,
+        })
+    }
+
+    fn device_payload(&self) -> Option<(u8, BusEventPayload)> {
+        Some(match *self {
+            Self::Device { adapter_id, short_address } => {
+                (adapter_id, PhysicalDeviceChangedEvent { adapter_id, short_address }.into())
+            }
+            Self::Lamp { adapter_id, virtual_lamp_id } => {
+                (adapter_id, VirtualLampChangedEvent { adapter_id, virtual_lamp_id }.into())
+            }
+            Self::InputDevice { adapter_id, short_address } => {
+                (adapter_id, InputDeviceChangedEvent { adapter_id, short_address }.into())
+            }
+            _ => return None,
+        })
     }
 }
 
-fn publish_adapter(
-    publisher: &BusPublisher,
-    store: &RegistryStore,
-    adapter_id: u8,
-) -> PublishResult {
-    let Some((name, enabled)) = store.adapter_row_name_enabled(adapter_id) else {
-        return PublishResult::Queued;
-    };
-    let name = name.as_str();
-    publish_adapter_settings_changed(publisher, adapter_id, CORRELATION_NONE, name, enabled)
-}
-
-fn publish_schedule(
-    publisher: &BusPublisher,
-    store: &RegistryStore,
-    target: u16,
-    schedule_id: &FixedText32,
-) -> PublishResult {
+fn schedule_frame(store: &RegistryStore, target: u16, schedule_id: &FixedText32) -> BusFrame {
     let enabled = store.read_inner().hcl_schedules.get(schedule_id).map(|row| row.enabled);
     let (removed, enabled) = (enabled.is_none(), enabled.unwrap_or(false));
-    let id = schedule_id.clone();
-    publish_hcl_schedule_changed(publisher, CORRELATION_NONE, target, id, removed, enabled)
+    let payload = HclScheduleChangedEvent { schedule_id: schedule_id.clone(), removed, enabled };
+    registry_event_frame(CORRELATION_NONE, target, payload)
 }
 
-fn publish_setting(
-    publisher: &BusPublisher,
-    store: &RegistryStore,
-    target: u16,
-    setting: Setting,
-) -> PublishResult {
-    let corr = CORRELATION_NONE;
-    match setting {
-        Setting::Poller => {
-            let poller = store.read_inner().poller_settings;
-            publish_poller_settings_changed(publisher, corr, target, &poller)
-        }
+fn setting_frame(store: &RegistryStore, target: u16, setting: Setting) -> BusFrame {
+    let inner = store.read_inner();
+    let payload: BusEventPayload = match setting {
+        Setting::Poller => poller_settings_changed(&inner.poller_settings).into(),
         Setting::Dali => {
-            let dali = store.read_inner().dali_settings;
-            let unmoved = APPLICATION_ACTIVE_UNMOVED;
-            publish_dali_settings_changed(publisher, corr, target, &dali, unmoved)
+            dali_settings_changed(&inner.dali_settings, APPLICATION_ACTIVE_UNMOVED).into()
         }
-        policy => publish_policy_setting(publisher, store, target, policy),
-    }
-}
-
-fn publish_policy_setting(
-    publisher: &BusPublisher,
-    store: &RegistryStore,
-    target: u16,
-    setting: Setting,
-) -> PublishResult {
-    let corr = CORRELATION_NONE;
-    match setting {
-        Setting::Redundancy => {
-            let redundancy = store.read_inner().redundancy_settings.clone();
-            publish_redundancy_settings_changed(publisher, corr, target, &redundancy)
+        Setting::Redundancy => redundancy_settings_changed(&inner.redundancy_settings).into(),
+        Setting::Policies => policies_changed(&inner.policies).into(),
+        Setting::HomeAssistant => {
+            let enabled = inner.home_assistant_settings.enabled;
+            HomeAssistantSettingsChangedEvent { enabled }.into()
         }
-        Setting::Policies => {
-            let policies = store.read_inner().policies;
-            publish_policies_changed(publisher, corr, target, &policies)
-        }
-        _ => {
-            let enabled = store.read_inner().home_assistant_settings.enabled;
-            publish_home_assistant_settings_changed(publisher, corr, target, enabled)
-        }
-    }
+    };
+    drop(inner);
+    registry_event_frame(CORRELATION_NONE, target, payload)
 }
 
 #[cfg(test)]
@@ -361,6 +336,8 @@ struct AnnouncementQueue {
     pending: BTreeSet<Announcement>,
     window_started: Option<Instant>,
     announced_in_window: usize,
+    refused_in_window: bool,
+    refusing: bool,
 }
 
 impl AnnouncementQueue {
@@ -369,8 +346,28 @@ impl AnnouncementQueue {
         if self.window_started.is_none_or(|started| now.duration_since(started) >= pacing.window) {
             self.window_started = Some(now);
             self.announced_in_window = 0;
+            self.refused_in_window = false;
+        }
+        if self.refused_in_window {
+            return 0;
         }
         pacing.per_window.saturating_sub(self.announced_in_window)
+    }
+
+    fn refused(&mut self, announcement: Announcement) {
+        self.pending.insert(announcement);
+        self.refused_in_window = true;
+        if !std::mem::replace(&mut self.refusing, true) {
+            let waiting = self.pending.len();
+            warn!("registry: events ingress full; {waiting} announcements wait for a later window");
+        }
+    }
+
+    fn sent(&mut self, announced: usize) {
+        self.announced_in_window += announced;
+        if announced > 0 && !self.refused_in_window {
+            self.refusing = false;
+        }
     }
 }
 
@@ -398,18 +395,26 @@ impl RegistryStore {
     ) -> usize {
         let budget = self.announcements.queue().budget(pacing);
         let mut announced = 0;
-        while announced < budget {
-            let Some(next) = self.announcements.queue().pending.pop_first() else {
-                break;
-            };
-            if next.publish(publisher, self, target) == PublishResult::DroppedIngressFull {
-                self.announcements.queue().pending.insert(next);
-                break;
-            }
+        while announced < budget && self.announce_next(publisher, target) {
             announced += 1;
         }
-        self.announcements.queue().announced_in_window += announced;
+        self.announcements.queue().sent(announced);
         announced
+    }
+
+    fn announce_next(&self, publisher: &BusPublisher, target: u16) -> bool {
+        let Some(next) = self.announcements.queue().pending.pop_first() else {
+            return false;
+        };
+        let Some(frame) = next.frame(self, target) else {
+            return true;
+        };
+        let result = publisher.try_publish(BusChannel::Events, frame);
+        let refused = result == PublishResult::DroppedIngressFull;
+        if refused {
+            self.announcements.queue().refused(next);
+        }
+        !refused
     }
 }
 
@@ -530,6 +535,27 @@ mod tests {
         assert_eq!(sent, usize::from(REFUSED_LAMPS), "each refused lamp went out once");
         let first = first_heard(&events, lamp_id);
         assert_eq!(first, vec![0], "the lamps never reached a subscriber");
+    }
+
+    const TURNS_IN_THE_WINDOW: usize = 5;
+    const LONG_WINDOW: Duration = Duration::from_secs(3600);
+
+    #[test]
+    fn a_refused_announcement_waits_for_the_next_window_however_many_turns_come_first() {
+        let (_host, publisher, _events) = observed();
+        let store = RegistryStore::with_adapter_count(1);
+        lamps_queued(&store, REFUSED_LAMPS);
+        let held = hold_the_events_ingress_full(&publisher);
+        let one_window = AnnouncementPacing { window: LONG_WINDOW, ..ANNOUNCEMENT_PACING };
+        assert_eq!(store.announce_queued(&publisher, TARGET, one_window), 0);
+        let attempts = || publisher.counters_snapshot().events.publish_attempted;
+        let refused_at = attempts();
+        for _ in 0..TURNS_IN_THE_WINDOW {
+            store.announce_queued(&publisher, TARGET, one_window);
+        }
+        assert_eq!(attempts(), refused_at, "a turn inside the window retried the refusal");
+        assert_eq!(store.announcements_queued(), usize::from(REFUSED_LAMPS));
+        drop(held);
     }
 
     #[test]
