@@ -161,16 +161,26 @@ filtered: they address one device.
   set is laid out in flash, not a fact about the devices, and a reload that keeps memory's
   devices beside an unread bank needs the same repair.
 - A slice whose read fails is unread, not garbage: hydration keeps what memory holds (the
-  default at boot) and never marks it for rewrite, and no flush writes it until a later
-  boot or reload reads it. A change to it in the meantime is lost when that read happens;
-  a flush that runs logs each slice it holds back, and `persistence.unread_slices` in
-  `/api/v1/diagnostics` counts the slices and device banks waiting. The hold is per slice
-  (the input-device banks wait together, because a bank not yet read would look like room
-  for a new device), so a change made to
-  another slice against the waiting one's defaults is saved. A slice that reads but does
-  not decode is rejected and rewritten with defaults (§Versions).
+  default at boot) and never marks it for rewrite, and no flush writes it until a read
+  succeeds. A flush that runs logs each slice it holds back, and
+  `persistence.unread_slices` in `/api/v1/diagnostics` counts the slices and device banks
+  waiting. The hold is per slice (the input-device banks wait together, because a bank not
+  yet read would look like room for a new device), so a change made to another slice
+  against the waiting one's defaults is saved. A slice that reads but does not decode is
+  rejected and rewritten with defaults (§Versions).
+- The registry worker reads the waiting slices again on its own turn, at most once per
+  `HELD_SLICE_REREAD_INTERVAL` and never while a firmware write holds the flash. It reads
+  only them — the four input-device banks together, a waiting device bank with the legacy
+  slot — on the worker, and applies them on the reload stack through the per-slice
+  hydration a boot runs. A read that succeeds settles the slice, the next flush writes
+  it, and the worker announces the reload as an import does. A read that fails again
+  leaves it waiting and is counted but not logged again.
+- The stored copy wins. A change made to a waiting slice is made against what memory
+  holds instead of the stored copy (the defaults, after a boot) and is replaced when the
+  read succeeds: writing memory back would erase everything else the stored copy holds.
 - A device bank also waits while the legacy slot that may hold its devices cannot be read.
-  A lamp bound to an address of a waiting bank keeps the binding until the bank settles.
+  A lamp bound to an address of a waiting bank keeps the binding until the bank settles,
+  and loses it then if the bank holds no device at that address.
 - The registry worker flushes dirty slices after a short debounce, and at once after the
   configuration writes `command_flush_interval` names, through one reused 1 KiB chunk
   buffer.
@@ -230,8 +240,8 @@ filtered: they address one device.
   call flash ([ADR-012](decisions/ADR-012-async-chunked-config-writes.md),
   [ADR-018](decisions/ADR-018-controller-redundancy.md), [07](07-memory-and-cores.md)). A
   slice written without the reload that should follow is held from the flush, like an
-  unread one, until a later reload or boot reads it; the reloaded event still tells the
-  other holders that the store changed.
+  unread one, until a read succeeds; the reloaded event still tells the other holders that
+  the store changed.
 - A reload replaces: a slice that loads is the whole truth for its share of memory, so a
   record it lacks — a forgotten device, an old address, a deleted lamp, a scene row — is
   dropped, while the runtime fields of a record it keeps stay. A slice that does not load

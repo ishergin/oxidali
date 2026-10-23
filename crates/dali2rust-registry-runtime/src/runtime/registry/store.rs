@@ -15,7 +15,7 @@ use super::memory_banks::MemoryBankStaging;
 use super::physical_devices::PhysicalDeviceRecord;
 use super::scenes::{SceneDesiredRowRecord, SceneRecord};
 use super::virtual_lamps::VlRecord;
-use super::withheld_slices::{self as withheld, WithheldSlices};
+use super::withheld_slices::{self as withheld, HeldSlices, WithheldSlices};
 use dali2rust_platform::slice_store::SliceKey;
 use dali2rust_contracts::msg::DaliSceneTargetState;
 
@@ -295,6 +295,11 @@ impl DirtyFlags {
         self.withheld_physical_device_banks
             .get(adapter_id as usize)
             .map_or(0, |mask| mask.load(Ordering::Acquire))
+    }
+
+    pub(crate) fn held(&self) -> HeldSlices {
+        let banks = self.withheld_physical_device_banks.each_ref();
+        self.withheld.held(banks.map(|mask| mask.load(Ordering::Acquire)))
     }
 
     pub fn settle_physical_device_banks(&self, adapter_id: u8, settled: u16, waiting: u16) {

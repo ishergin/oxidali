@@ -78,6 +78,7 @@ pub(crate) struct ProbeStore {
     failing_read: std::sync::Mutex<Option<SliceKey>>,
     legacy_reads: std::sync::atomic::AtomicU32,
     written: std::sync::Mutex<Vec<SliceKey>>,
+    loaded: std::sync::Mutex<Vec<SliceKey>>,
 }
 
 impl ProbeStore {
@@ -91,6 +92,10 @@ impl ProbeStore {
 
     pub(crate) fn written(&self) -> Vec<SliceKey> {
         self.written.lock().expect("written lock").clone()
+    }
+
+    pub(crate) fn take_loaded(&self) -> Vec<SliceKey> {
+        std::mem::take(&mut *self.loaded.lock().expect("loaded lock"))
     }
 
     pub(crate) fn banks_written(&self) -> Vec<SliceKey> {
@@ -109,6 +114,7 @@ impl SliceStore for ProbeStore {
         if matches!(key, SliceKey::PhysicalDevices { .. }) {
             self.legacy_reads.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         }
+        self.loaded.lock().expect("loaded lock").push(key);
         if *self.failing_read.lock().expect("failing read lock") == Some(key) {
             return Err(StoreError::Backend("read failed".to_string()));
         }

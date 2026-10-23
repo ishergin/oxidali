@@ -42,6 +42,7 @@ const MEMORY_BANK_STAGING_MAX_AGE_MS: u64 = 30_000;
 use crate::runtime::registry::config_write_stage::CONFIG_WRITE_STAGE_MAX_AGE_MS;
 use crate::runtime::registry::hcl_schedules::HCL_SCHEDULE_STAGE_MAX_AGE_MS;
 const RECV_TIMEOUT: Duration = Duration::from_millis(250);
+const HELD_SLICE_REREAD_INTERVAL: Duration = Duration::from_secs(2);
 
 
 fn command_flush_interval(store: &RegistryStore) -> Duration {
@@ -55,6 +56,8 @@ fn command_flush_interval(store: &RegistryStore) -> Duration {
 struct FlushClock {
     last_flush: Instant,
     switch_interval: Duration,
+    last_reread: Instant,
+    reread_interval: Duration,
 }
 
 impl FlushClock {
@@ -62,8 +65,20 @@ impl FlushClock {
         Self {
             last_flush: Instant::now(),
             switch_interval,
+            last_reread: Instant::now(),
+            reread_interval: HELD_SLICE_REREAD_INTERVAL,
         }
     }
+}
+
+fn reread_held_when_due(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
+    if clock.last_reread.elapsed() < clock.reread_interval
+        || dali2rust_platform::flash_gate::firmware_write_open()
+    {
+        return;
+    }
+    clock.last_reread = Instant::now();
+    transfer::reread_held_slices(deps);
 }
 
 fn flush_paced(
@@ -71,6 +86,7 @@ fn flush_paced(
     clock: &mut FlushClock,
     min_interval: fn(&RegistryStore) -> Duration,
 ) {
+    reread_held_when_due(deps, clock);
     if deps.store.dirty.hcl_switches_due(clock.switch_interval) {
         deps.store.dirty.mark_hcl_schedules_dirty();
     }
@@ -314,13 +330,14 @@ mod tests {
     use super::{
         apply_frame_and_flush, command_flush_interval, evict_and_flush_on_idle, flush_persistence,
         FlushClock, RegistryStore, RegistryWorkerCounters, RegistryWorkerDeps, SlicePersistence,
-        HCL_SWITCH_WRITE_INTERVAL, PERSISTENCE_DEBOUNCE,
+        HCL_SWITCH_WRITE_INTERVAL, HELD_SLICE_REREAD_INTERVAL, PERSISTENCE_DEBOUNCE,
     };
-    use crate::test_support::CountingStore;
+    use crate::test_support::{CountingStore, ProbeStore};
     use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusId};
     use dali2rust_contracts::bus::command_envelope;
     use dali2rust_contracts::msg::{
-        fixed_text_32, BusCommandPayload, DaliAttributeReadChunk, HclAlgorithm, HclLevelMode,
+        fixed_text_32, fixed_text_64, AdapterSettingsUpdateCommand, BusCommandPayload,
+        DaliAttributeReadChunk, HclAlgorithm, HclLevelMode,
         HclPointList, HclScheduleEnableCommand, HclSchedulePointRow, HclScheduleUpsertCommand,
         HclTargetList, HclTargetRow, HclTargetScope, HclTimeRef, RegistrySliceReloadCommand,
     };
@@ -494,7 +511,7 @@ mod tests {
     const ALL_DAYS: u8 = 0b0111_1111;
     const SWITCH_BURST: [bool; 5] = [false, true, false, true, false];
 
-    fn worker_on(slices: &Arc<CountingStore>) -> (RegistryWorkerDeps, BusHost) {
+    fn worker_on<S: SliceStore + 'static>(slices: &Arc<S>) -> (RegistryWorkerDeps, BusHost) {
         let (host, publisher, ()) = BusHost::spawn(BusConfig::default(), |_| ());
         let persistence = SlicePersistence::registry_owned_only(slices.clone());
         let deps = RegistryWorkerDeps {
@@ -650,4 +667,64 @@ mod tests {
     }
 
     const IMPORT_WORKFLOW: u64 = 9;
+
+    const FIRST_ADAPTER: u16 = 0;
+
+    fn rename_adapter(name: &str) -> BusFrame {
+        let patch_mask = AdapterSettingsUpdateCommand::PATCH_NAME;
+        let name = fixed_text_64(name);
+        let rename = AdapterSettingsUpdateCommand { patch_mask, name, enabled: true };
+        BusFrame::command(command_envelope(0, 1, FIRST_ADAPTER, None, rename))
+    }
+
+    fn adapter_name(store: &RegistryStore) -> Option<String> {
+        store.adapter_view(0).map(|view| view.name)
+    }
+
+    fn unread(deps: &RegistryWorkerDeps) -> u32 {
+        deps.store.persist_counters.unread_slices.load(Ordering::Acquire)
+    }
+
+    fn booted_with_adapters_unread() -> (Arc<ProbeStore>, RegistryWorkerDeps, BusHost) {
+        let slices = Arc::new(ProbeStore::default());
+        let installer = RegistryStore::with_adapter_count(1);
+        let patch_mask = AdapterSettingsUpdateCommand::PATCH_NAME;
+        let stored = Some("Stored Name");
+        assert!(installer.apply_adapter_settings_from_command(0, patch_mask, stored, true));
+        installer.flush_dirty_slices(slices.as_ref());
+        slices.fail_reads_of(Some(SliceKey::Adapters));
+        let (deps, host) = worker_on(&slices);
+        deps.store.hydrate_from_store(slices.as_ref(), 1);
+        slices.fail_reads_of(None);
+        (slices, deps, host)
+    }
+
+    #[test]
+    fn a_turn_reads_a_held_slice_again_once_its_interval_passes_and_the_next_flush_writes_it() {
+        let (slices, deps, _host) = booted_with_adapters_unread();
+        let mut clock = FlushClock::new(HCL_SWITCH_WRITE_INTERVAL);
+        slices.take_loaded();
+        idle_turn(&deps, &mut clock);
+        let early = (unread(&deps), slices.take_loaded());
+        assert_eq!(early, (1, vec![]), "the retry did not wait for its interval");
+
+        clock.last_reread = Instant::now() - HELD_SLICE_REREAD_INTERVAL;
+        idle_turn(&deps, &mut clock);
+        assert_eq!(slices.take_loaded(), vec![SliceKey::Adapters], "only the held slice is read");
+        assert_eq!(unread(&deps), 0);
+        assert_eq!(adapter_name(&deps.store).as_deref(), Some("Stored Name"));
+        assert_eq!(deps.counters.command.slice_reloads.load(Ordering::Relaxed), 1);
+
+        apply_frame_and_flush(rename_adapter("Saved Name"), &deps, &mut clock);
+        let written = slices.written();
+        assert!(written.contains(&SliceKey::Adapters), "the slice is still held from the flush");
+        let rebooted = RegistryStore::with_adapter_count(1);
+        rebooted.hydrate_from_store(slices.as_ref(), 1);
+        assert_eq!(adapter_name(&rebooted).as_deref(), Some("Saved Name"));
+
+        slices.take_loaded();
+        clock.last_reread = Instant::now() - HELD_SLICE_REREAD_INTERVAL;
+        idle_turn(&deps, &mut clock);
+        assert_eq!(slices.take_loaded(), vec![], "a turn with nothing held read the store");
+    }
 }

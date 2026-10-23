@@ -12,7 +12,7 @@ use crate::runtime::registry::transfer::ImportWriteFailure;
 use crate::runtime::registry::{HydrateCounts, RegistryStore};
 
 use super::command_ctx::{CommandCtx, ReloadPorts};
-use super::{RegistryCommandCounters, SlicePersistence};
+use super::{RegistryCommandCounters, RegistryWorkerDeps, SlicePersistence};
 
 pub(super) fn handle_slice_reload(
     ctx: &CommandCtx<'_>,
@@ -34,7 +34,7 @@ pub(super) fn handle_slice_reload(
         count_reload(ctx.counters);
     }
     if imported.written {
-        announce_reload(ctx.publisher, ctx.primary_adapter_id, body);
+        announce_reload(ctx.publisher, ctx.primary_adapter_id, body.slice_name.as_str());
     }
     if let Some((_, why)) = imported.failure {
         log::warn!("registry: import of {} failed: {why}", body.slice_name.as_str());
@@ -140,18 +140,14 @@ fn count_reload(counters: &RegistryCommandCounters) {
     counters.home_assistant_settings_applied.fetch_add(1, Ordering::Relaxed);
 }
 
-fn announce_reload(
-    publisher: &BusPublisher,
-    primary_adapter_id: BusId,
-    body: &RegistrySliceReloadCommand,
-) {
+fn announce_reload(publisher: &BusPublisher, primary_adapter_id: BusId, slice_name: &str) {
     let ev = dali2rust_contracts::bus::event_envelope(
         dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
         dali2rust_contracts::CORRELATION_NONE,
         primary_adapter_id.0,
         Some(dali2rust_contracts::msg::Origin::Registry),
         dali2rust_contracts::msg::RegistrySliceReloadedEvent {
-            slice_name: dali2rust_contracts::msg::fixed_text_32(body.slice_name.as_str()),
+            slice_name: dali2rust_contracts::msg::fixed_text_32(slice_name),
         },
     );
     dali2rust_bus::publish_required(
@@ -162,6 +158,39 @@ fn announce_reload(
         dali2rust_bus::REQUIRED_PUBLISH_UNCAPPED,
         "registry-slice-reloaded",
     );
+}
+
+const HELD_SLICES_READ_AGAIN: &str = "held_slices";
+
+pub(super) fn reread_held_slices(deps: &RegistryWorkerDeps) {
+    let Some(persistence) = deps.persistence.as_ref() else {
+        return;
+    };
+    let (slices, adapter_count) = (persistence.slices.as_ref(), deps.adapter_count);
+    let Some((held, snapshot)) = deps.store.held_snapshot(slices, adapter_count) else {
+        return;
+    };
+    let waiting = deps.store.unread_slices(adapter_count);
+    let rereading = Arc::clone(&deps.store);
+    let reread = move || rereading.reread_held_from_store(&snapshot, adapter_count, held);
+    if let Ok(counts) = on_hydration_stack("reread", reread) {
+        announce_settled(deps, counts, waiting);
+    }
+}
+
+fn announce_settled(deps: &RegistryWorkerDeps, counts: HydrateCounts, waiting: u32) {
+    let still = deps.store.unread_slices(deps.adapter_count);
+    if still >= waiting {
+        return;
+    }
+    log::info!(
+        "registry: held slices read again — {} loaded, {} defaulted, {still} of {waiting} \
+         still unread",
+        counts.loaded,
+        counts.defaulted
+    );
+    count_reload(&deps.counters.command);
+    announce_reload(&deps.publisher, deps.primary_adapter_id, HELD_SLICES_READ_AGAIN);
 }
 
 static RELOAD_STACK: dali2rust_bsp::stack_probe::StackLowWater =

@@ -130,10 +130,12 @@ pub struct InMemorySlices {
 
 impl InMemorySlices {
     pub fn snapshot(store: &dyn SliceStore, adapter_count: u8) -> Self {
+        Self::snapshot_of(store, SliceKey::every(adapter_count))
+    }
+
+    pub fn snapshot_of(store: &dyn SliceStore, keys: impl IntoIterator<Item = SliceKey>) -> Self {
         Self {
-            entries: SliceKey::every(adapter_count)
-                .map(|key| (key, store.load(key)))
-                .collect(),
+            entries: keys.into_iter().map(|key| (key, store.load(key))).collect(),
         }
     }
 

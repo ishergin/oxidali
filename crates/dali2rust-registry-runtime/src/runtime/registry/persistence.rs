@@ -6,7 +6,7 @@ use dali2rust_contracts::msg::{
     PersistenceSliceList,
 };
 use dali2rust_domain::registry::MemoryBankSummaryView;
-use dali2rust_platform::slice_store::{SliceKey, SliceStore, StoreError};
+use dali2rust_platform::slice_store::{InMemorySlices, SliceKey, SliceStore, StoreError};
 use log::{info, warn};
 
 use crate::runtime::registry::input_devices::{
@@ -37,6 +37,7 @@ use super::persistence_stream::{
 use super::scenes::{SceneDesiredRowRecord, SceneRecord, SCENE_COUNT};
 use super::physical_devices::{MemoryBankRangeRecord, MemoryBankRecord, PhysicalDeviceRecord};
 use super::store::{Inner, RegistryStore};
+use super::withheld_slices::HeldSlices;
 
 pub struct PersistenceHydrateReport {
     pub loaded_slices: PersistenceSliceList,
@@ -47,6 +48,30 @@ pub struct PersistenceHydrateReport {
 impl PersistenceHydrateReport {
     pub fn is_ok(&self) -> bool {
         self.errors.is_empty()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Reading {
+    Every,
+    Held(HeldSlices),
+}
+
+const EVERY_DEVICE_BANK: u16 = u16::MAX;
+
+impl Reading {
+    fn reads(&self, key: SliceKey) -> bool {
+        match self {
+            Self::Every => true,
+            Self::Held(held) => held.reads(key),
+        }
+    }
+
+    fn device_banks(&self, adapter_id: u8) -> u16 {
+        match self {
+            Self::Every => EVERY_DEVICE_BANK,
+            Self::Held(held) => held.device_banks(adapter_id),
+        }
     }
 }
 
@@ -86,7 +111,7 @@ impl crate::runtime::registry::store::RegistryStore {
             defaults: &mut default_slices,
             errors: &mut errors,
         };
-        self.hydrate_all(slices, adapter_count, &mut sink);
+        self.hydrate_all(slices, adapter_count, Reading::Every, &mut sink);
         PersistenceHydrateReport {
             loaded_slices,
             default_slices,
@@ -101,7 +126,29 @@ impl crate::runtime::registry::store::RegistryStore {
     ) -> HydrateCounts {
         let mut counts = HydrateCounts::default();
         let mut sink = HydrateSink::Counting(&mut counts);
-        self.hydrate_all(slices, adapter_count, &mut sink);
+        self.hydrate_all(slices, adapter_count, Reading::Every, &mut sink);
+        counts
+    }
+
+    pub(crate) fn held_snapshot(
+        &self,
+        slices: &dyn SliceStore,
+        adapter_count: u8,
+    ) -> Option<(HeldSlices, InMemorySlices)> {
+        let held = self.dirty.held();
+        let keys = held.keys(adapter_count);
+        (!held.is_empty()).then(|| (held, InMemorySlices::snapshot_of(slices, keys)))
+    }
+
+    pub(crate) fn reread_held_from_store(
+        &self,
+        slices: &dyn SliceStore,
+        adapter_count: u8,
+        held: HeldSlices,
+    ) -> HydrateCounts {
+        let mut counts = HydrateCounts::default();
+        let mut sink = HydrateSink::Counting(&mut counts);
+        self.hydrate_all(slices, adapter_count, Reading::Held(held), &mut sink);
         counts
     }
 
@@ -109,28 +156,54 @@ impl crate::runtime::registry::store::RegistryStore {
         &self,
         slices: &dyn SliceStore,
         adapter_id: u8,
+        which: u16,
         sink: &mut HydrateSink<'_>,
     ) {
-        let banks = self.hydrate_physical_device_banks(slices, adapter_id, sink);
+        let banks = self.hydrate_physical_device_banks(slices, adapter_id, which, sink);
         let old_slot = (banks.open() != 0)
             .then(|| self.fall_back_to_whole_adapter_slot(slices, adapter_id, banks.open(), sink));
         let decision = banks.decide(old_slot);
         self.dirty.mark_physical_device_banks_dirty(adapter_id, decision.rewrite);
+        let waited = self.dirty.withheld_physical_device_banks(adapter_id);
         self.dirty
             .settle_physical_device_banks(adapter_id, decision.settled, decision.waiting);
+        let released = waited & !self.dirty.withheld_physical_device_banks(adapter_id);
+        self.drop_bindings_their_banks_lack(adapter_id, released);
     }
 
     fn hydrate_physical_device_banks(
         &self,
         slices: &dyn SliceStore,
         adapter_id: u8,
+        which: u16,
         sink: &mut HydrateSink<'_>,
     ) -> BankOutcomes {
         let mut banks = BankOutcomes::default();
-        for bank in 0..PHYSICAL_DEVICE_BANKS_U8 {
+        for bank in (0..PHYSICAL_DEVICE_BANKS_U8).filter(|bank| which & (1 << bank) != 0) {
             banks.note(bank, hydrate_pd_bank_slice(self, slices, adapter_id, bank, sink));
         }
         banks
+    }
+
+    fn drop_bindings_their_banks_lack(&self, adapter_id: u8, settled: u16) {
+        if settled == 0 {
+            return;
+        }
+        let mut inner = self.write_inner();
+        let present = present_shorts(&inner, adapter_id);
+        let lamps = inner.lamps.iter_mut().filter(|((aid, _), _)| *aid == adapter_id);
+        for ((_, virtual_lamp_id), lamp) in lamps {
+            let Some(short) = lamp.binding_short else {
+                continue;
+            };
+            if settled & bank_bit(short) != 0 && present & short_bit(short) == 0 {
+                warn!(
+                    "persistence: dropped orphan VL binding a{adapter_id} vl{virtual_lamp_id} \
+                     -> short {short}"
+                );
+                lamp.binding_short = None;
+            }
+        }
     }
 
     fn fall_back_to_whole_adapter_slot(
@@ -156,35 +229,55 @@ impl crate::runtime::registry::store::RegistryStore {
     }
 
     fn shorts_held_in_ram(&self, adapter_id: u8) -> u64 {
-        self.read_inner()
-            .physical_devices
-            .keys()
-            .filter(|(aid, _)| *aid == adapter_id)
-            .fold(0, |shorts, (_, short_address)| shorts | short_bit(*short_address))
+        present_shorts(&self.read_inner(), adapter_id)
     }
 
-    fn hydrate_all(&self, slices: &dyn SliceStore, adapter_count: u8, sink: &mut HydrateSink<'_>) {
-        hydrate_adapters_slice(self, slices, sink);
-        for adapter_id in 0..adapter_count {
-            self.hydrate_adapter(slices, adapter_id, sink);
+    fn hydrate_all(
+        &self,
+        slices: &dyn SliceStore,
+        adapter_count: u8,
+        reading: Reading,
+        sink: &mut HydrateSink<'_>,
+    ) {
+        if reading.reads(SliceKey::Adapters) {
+            hydrate_adapters_slice(self, slices, sink);
         }
-        hydrate_input_device_banks(self, slices, sink);
-        hydrate_hcl_schedules_slice(self, slices, sink);
-        hydrate_poller_settings_slice(self, slices, sink);
-        hydrate_dali_settings_slice(self, slices, sink);
-        hydrate_redundancy_settings_slice(self, slices, sink);
-        hydrate_policies_slice(self, slices, sink);
-        hydrate_home_assistant_settings_slice(self, slices, sink);
+        for adapter_id in 0..adapter_count {
+            self.hydrate_adapter(slices, adapter_id, reading, sink);
+        }
+        if reading.reads(SliceKey::InputDevices { bank: 0 }) {
+            hydrate_input_device_banks(self, slices, sink);
+        }
+        for (key, hydrate) in LATE_GLOBAL_SLICES {
+            if reading.reads(key) {
+                hydrate(self, slices, sink);
+            }
+        }
         self.persist_counters
             .unread_slices
             .store(self.unread_slices(adapter_count), Ordering::Relaxed);
     }
 
-    fn hydrate_adapter(&self, slices: &dyn SliceStore, adapter_id: u8, sink: &mut HydrateSink<'_>) {
-        hydrate_groups_slice(self, slices, adapter_id, sink);
-        self.hydrate_physical_devices_of(slices, adapter_id, sink);
-        hydrate_vl_slice(self, slices, adapter_id, sink);
-        for scene_id in 0..SCENE_COUNT {
+    fn hydrate_adapter(
+        &self,
+        slices: &dyn SliceStore,
+        adapter_id: u8,
+        reading: Reading,
+        sink: &mut HydrateSink<'_>,
+    ) {
+        if reading.reads(SliceKey::Groups { adapter_id }) {
+            hydrate_groups_slice(self, slices, adapter_id, sink);
+        }
+        let banks = reading.device_banks(adapter_id);
+        if banks != 0 {
+            self.hydrate_physical_devices_of(slices, adapter_id, banks, sink);
+        }
+        if reading.reads(SliceKey::VirtualLamps { adapter_id }) {
+            hydrate_vl_slice(self, slices, adapter_id, sink);
+        }
+        let scenes = (0..SCENE_COUNT)
+            .filter(|scene_id| reading.reads(SliceKey::Scene { adapter_id, scene_id: *scene_id }));
+        for scene_id in scenes {
             hydrate_scene_slice(self, slices, adapter_id, scene_id, sink);
         }
     }
@@ -270,8 +363,8 @@ impl crate::runtime::registry::store::RegistryStore {
         let adapter_count = self.read_inner().adapters.len() as u8;
         for key in self.dirty.held_back(adapter_count) {
             warn!(
-                "persistence: {} waits for its stored copy; its changes are not saved until a \
-                 boot or reload can read it",
+                "persistence: {} waits for its stored copy; its changes are not saved, and the \
+                 stored copy replaces them once a read succeeds",
                 key.label()
             );
         }
@@ -283,7 +376,8 @@ impl crate::runtime::registry::store::RegistryStore {
         if held != 0 {
             log::warn!(
                 "persistence: PD a{adapter_id} banks {held:#06x} wait for their stored copy; \
-                 their changes are not saved until a boot or reload can read it"
+                 their changes are not saved, and the stored copy replaces them once a read \
+                 succeeds"
             );
         }
     }
@@ -720,7 +814,8 @@ fn hydrate_slice_unmarked<S>(
             HydrateOutcome::Defaulted
         }
         Err(e) => {
-            note_unread_slice(store, kind, label, sink, &e);
+            warn!("persistence: failed to load {label}: {e}");
+            note_unread_slice(store, kind, sink, &e);
             HydrateOutcome::Failed
         }
     }
@@ -756,7 +851,10 @@ fn note_unloaded_slot(
         note_missing_slice(store, kind, sink);
         return SlotOutcome::Missing;
     }
-    note_unread_slice(store, kind, label, sink, e);
+    if !store.dirty.held().reads(key_of(&kind)) {
+        warn!("persistence: failed to load {label}: {e}");
+    }
+    note_unread_slice(store, kind, sink, e);
     SlotOutcome::Unread
 }
 
@@ -780,14 +878,20 @@ fn note_missing_slice(store: &RegistryStore, kind: PersistenceSliceKind, sink: &
 fn note_unread_slice(
     store: &RegistryStore,
     kind: PersistenceSliceKind,
-    label: &str,
     sink: &mut HydrateSink<'_>,
     e: &StoreError,
 ) {
     sink.note_failed(&kind, || e.to_string());
     sink.note_defaulted(kind);
     bump(&store.persist_counters.hydrate_error_total);
-    warn!("persistence: failed to load {label}: {e}");
+}
+
+fn present_shorts(inner: &Inner, adapter_id: u8) -> u64 {
+    inner
+        .physical_devices
+        .keys()
+        .filter(|(aid, _)| *aid == adapter_id)
+        .fold(0, |shorts, (_, short_address)| shorts | short_bit(*short_address))
 }
 
 const PHYSICAL_DEVICE_BANKS_U8: u8 =
@@ -903,6 +1007,17 @@ hydrate_wrappers! { global:
         POLICIES_SLICE_VERSION,
         crate::runtime::registry::policies::hydrate_policies_inner;
 }
+
+type GlobalHydrate = fn(&RegistryStore, &dyn SliceStore, &mut HydrateSink<'_>);
+
+const LATE_GLOBAL_SLICES: [(SliceKey, GlobalHydrate); 6] = [
+    (SliceKey::HclSchedules, hydrate_hcl_schedules_slice),
+    (SliceKey::PollerSettings, hydrate_poller_settings_slice),
+    (SliceKey::DaliSettings, hydrate_dali_settings_slice),
+    (SliceKey::RedundancySettings, hydrate_redundancy_settings_slice),
+    (SliceKey::Policies, hydrate_policies_slice),
+    (SliceKey::HomeAssistantSettings, hydrate_home_assistant_settings_slice),
+];
 
 hydrate_wrappers! { per_adapter:
     hydrate_groups_slice(adapter_id) =>
@@ -1441,6 +1556,100 @@ mod tests {
         store.hydrate_from_store(&slices, ADAPTER_COUNT);
         assert_eq!(unread_slices(&store), 0);
         assert!(flush_everything(&store, &slices).contains(&unread));
+    }
+
+    fn read_held_again(store: &RegistryStore, slices: &ProbeStore) -> Vec<SliceKey> {
+        slices.take_loaded();
+        let (held, snapshot) = store.held_snapshot(slices, ADAPTER_COUNT).expect("a held slice");
+        store.reread_held_from_store(&snapshot, ADAPTER_COUNT, held);
+        slices.take_loaded()
+    }
+
+    #[test]
+    fn a_slice_whose_read_failed_is_read_again_alone_and_the_next_flush_writes_it() {
+        for unread in registry_slices() {
+            let slices = installed();
+            let store = boot_with_unread(&slices, unread);
+            let label = unread.label();
+            read_held_again(&store, &slices);
+            assert_eq!(unread_slices(&store), 1, "{label} settled while its read still fails");
+
+            slices.fail_reads_of(None);
+            let family: Vec<SliceKey> =
+                registry_slices().into_iter().filter(|key| held_together(*key, unread)).collect();
+            assert_eq!(read_held_again(&store, &slices), family, "{label} read beside others");
+            assert_eq!(unread_slices(&store), 0, "{label}");
+            assert!(!store.dirty.any_dirty(), "reading {label} again marked another slice");
+            assert!(flush_everything(&store, &slices).contains(&unread), "{label} was not written");
+        }
+    }
+
+    fn adapter_name(store: &RegistryStore) -> String {
+        let row = store.adapter_row_name_enabled(0);
+        row.map(|(name, _)| name.as_str().to_string()).unwrap_or_default()
+    }
+
+    fn rename_adapter(store: &RegistryStore, slices: &ProbeStore, name: &str) {
+        assert!(store.apply_adapter_settings_from_command(0, PATCH_NAME, Some(name), true));
+        store.flush_dirty_slices(slices);
+    }
+
+    const PATCH_NAME: u8 = dali2rust_contracts::msg::AdapterSettingsUpdateCommand::PATCH_NAME;
+
+    #[test]
+    fn the_stored_copy_replaces_a_change_made_while_its_slice_was_unread() {
+        let slices = installed();
+        rename_adapter(&RegistryStore::with_adapter_count(ADAPTER_COUNT), &slices, "Stored Name");
+        let store = boot_with_unread(&slices, SliceKey::Adapters);
+        rename_adapter(&store, &slices, "Unsaved Name");
+
+        slices.fail_reads_of(None);
+        read_held_again(&store, &slices);
+        assert_eq!(adapter_name(&store), "Stored Name", "the change made against defaults won");
+        rename_adapter(&store, &slices, "Saved Name");
+        let rebooted = RegistryStore::with_adapter_count(ADAPTER_COUNT);
+        rebooted.hydrate_from_store(&slices, ADAPTER_COUNT);
+        assert_eq!(adapter_name(&rebooted), "Saved Name");
+    }
+
+    const BOUND_SHORT: u8 = 4;
+    const ORPHAN_SHORT: u8 = 6;
+    const WAITING_BANK: SliceKey = SliceKey::PhysicalDeviceBank { adapter_id: 0, bank: 1 };
+
+    fn bindings(store: &RegistryStore) -> [Option<u8>; 2] {
+        let inner = store.read_inner();
+        let binding = |id| inner.lamps.get(&(0, id)).and_then(|lamp: &VlRecord| lamp.binding_short);
+        [binding(BOUND_SHORT), binding(ORPHAN_SHORT)]
+    }
+
+    fn installed_with_bindings() -> ProbeStore {
+        let slices = ProbeStore::default();
+        let source = RegistryStore::with_adapter_count(ADAPTER_COUNT);
+        let mut inner = source.write_inner();
+        let device = PsramBox::new(PhysicalDeviceRecord::empty(BOUND_SHORT));
+        inner.physical_devices.insert((0, BOUND_SHORT), device);
+        for short in [BOUND_SHORT, ORPHAN_SHORT] {
+            let lamp = VlRecord { binding_short: Some(short), ..VlRecord::default() };
+            inner.lamps.insert((0, short), lamp);
+        }
+        drop(inner);
+        source.dirty.mark_all_physical_devices_dirty(0);
+        source.dirty.mark_virtual_lamps_dirty(0);
+        source.flush_dirty_slices(&slices);
+        slices
+    }
+
+    #[test]
+    fn a_device_bank_read_again_drops_only_the_bindings_its_devices_do_not_back() {
+        let slices = installed_with_bindings();
+        let store = boot_with_unread(&slices, WAITING_BANK);
+        let bound = [Some(BOUND_SHORT), Some(ORPHAN_SHORT)];
+        assert_eq!(bindings(&store), bound, "a waiting bank keeps its bindings");
+
+        slices.fail_reads_of(None);
+        read_held_again(&store, &slices);
+        assert_eq!(unread_slices(&store), 0);
+        assert_eq!(bindings(&store), [Some(BOUND_SHORT), None], "the bank settled");
     }
 
     fn hold_records_the_store_lacks(store: &RegistryStore) {

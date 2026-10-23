@@ -59,3 +59,23 @@ Feature: Persistence slices host contract
     And I send a GET request to "/api/v1/adapters/0"
     Then the JSON field "name" should be "Stored Name"
     And the JSON pointer "/persistence/unread_slices" at "/api/v1/diagnostics" should eventually be "0"
+
+  @id:PERS-007
+  Scenario: A slice whose stored copy could not be read at boot is read again without a restart
+    Given in-memory slice persistence is enabled for the host stack
+    When I PATCH JSON {"name":"Stored Name"} to "/api/v1/adapters/0"
+    Then the response status should be 200
+    Given reads of the stored "adapters" slice fail
+    When I restart the host stack
+    Then the JSON pointer "/persistence/unread_slices" at "/api/v1/diagnostics" should eventually be "1"
+    When I PATCH JSON {"name":"Unsaved Name"} to "/api/v1/adapters/0"
+    Then the response status should be 200
+    Given reads of the stored slices succeed again
+    Then the JSON pointer "/persistence/unread_slices" at "/api/v1/diagnostics" should eventually be "0"
+    When I send a GET request to "/api/v1/adapters/0"
+    Then the JSON field "name" should be "Stored Name"
+    When I PATCH JSON {"name":"Saved Name"} to "/api/v1/adapters/0"
+    Then the response status should be 200
+    When I restart the host stack
+    And I send a GET request to "/api/v1/adapters/0"
+    Then the JSON field "name" should be "Saved Name"
