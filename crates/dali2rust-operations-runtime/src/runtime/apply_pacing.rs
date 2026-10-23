@@ -11,6 +11,8 @@ use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::OperationReadPort;
 use log::warn;
 
+use super::apply_orchestrator_worker::ApplyWorker;
+
 const CELL_OUTCOME_TIMEOUT_MS: u64 = 5_000;
 const SKIP_BATCH: usize = 8;
 const INGRESS_BACKOFF_MS: [u64; 10] = [0, 25, 50, 100, 150, 200, 250, 250, 250, 250];
@@ -67,26 +69,21 @@ pub(crate) struct RunState<'a> {
 }
 
 impl<'a> RunState<'a> {
-    #[allow(clippy::too_many_arguments, reason = "mirrors the dispatch-arm signature")]
     pub(crate) fn begin(
-        ev_rx: &'a BusSubscriberRx,
-        publisher: &'a BusPublisher,
-        bus_id: BusId,
-        counters: &'a ApplyOrchestratorCounters,
+        cx: &ApplyWorker<'a>,
         workflow: u64,
         registry_adapter_id: u8,
         operation_key: &'a str,
-        operations: &'a dyn OperationReadPort,
     ) -> Self {
         Self {
-            ev_rx,
-            publisher,
-            bus_id,
-            counters,
+            ev_rx: cx.ev_rx,
+            publisher: cx.publisher,
+            bus_id: cx.bus_id,
+            counters: cx.counters,
             workflow,
             registry_adapter_id,
             operation_key,
-            operations,
+            operations: cx.operations,
             deadline: Instant::now() + Duration::from_millis(u64::from(OPERATION_TTL_MS)),
         }
     }
