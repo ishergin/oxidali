@@ -4,13 +4,11 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dali2rust_bus::{BusChannel, BusFrame, BusId, PublishResult};
+use dali2rust_bus::{BusChannel, BusFrame, PublishResult};
 use dali2rust_contracts::msg::{
-    BusEventPayload, GroupChangedEvent, GroupMatrixChangedEvent,
-    HomeAssistantDiscoveryPublishCommand, InputDeviceChangedEvent, OperationWorkerSignal, Origin,
-    PhysicalDeviceChangedEvent, SceneChangedEvent, VirtualLampChangedEvent,
+    BusEventPayload, GroupChangedEvent, GroupMatrixChangedEvent, InputDeviceChangedEvent,
+    OperationWorkerSignal, PhysicalDeviceChangedEvent, SceneChangedEvent, VirtualLampChangedEvent,
 };
-use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
     CapabilityFlagsView, ColorTemperatureRangeView, HaGroupView, HaInputInstanceView, HaInputView,
     HaLampView, HaSceneView, HomeAssistantSettingsView,
@@ -260,15 +258,7 @@ impl WireLog {
 
     fn manual_republish(&mut self) {
         while self.bridge.ev_obs_rx.try_recv().is_ok() {}
-        let envelope = dali2rust_contracts::bus::command_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            MANUAL_RUN,
-            BusId::default().0,
-            Some(Origin::Api),
-            HomeAssistantDiscoveryPublishCommand {},
-        );
-        let queued = self.bridge.publisher.try_publish(BusChannel::Commands, BusFrame::command(envelope));
-        assert_eq!(queued, PublishResult::Queued);
+        self.bridge.request_republish(MANUAL_RUN);
     }
 
     fn outcome(&mut self, workflow: u64) {

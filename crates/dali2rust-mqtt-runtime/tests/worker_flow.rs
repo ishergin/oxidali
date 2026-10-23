@@ -4,8 +4,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dali2rust_bus::{BusChannel, BusConfig, BusId, PublishResult};
-use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
+use dali2rust_bus::{BusChannel, BusConfig, PublishResult};
 use dali2rust_domain::registry::{
     CapabilityFlagsView, HaGroupView, HaInputInstanceView, HaInputView, HaSceneView,
 };
@@ -86,20 +85,7 @@ fn a_discovery_run_keeps_answering_commands_between_batches() {
     let counters = Arc::clone(&h.counters);
     wait_until(move || counters.is_connected(), WAIT_S);
 
-    let envelope = dali2rust_contracts::bus::command_envelope(
-        SOURCE_ID_UNSPECIFIED,
-        77,
-        BusId::default().0,
-        Some(dali2rust_contracts::msg::Origin::Api),
-        dali2rust_contracts::msg::HomeAssistantDiscoveryPublishCommand {},
-    );
-    assert_eq!(
-        h.publisher.try_publish(
-            BusChannel::Commands,
-            dali2rust_bus::BusFrame::command(envelope)
-        ),
-        PublishResult::Queued
-    );
+    h.request_republish(77);
     let counters = Arc::clone(&h.counters);
     wait_until(
         move || counters.discovery_published_total.load(Ordering::Relaxed) >= 1,
@@ -507,15 +493,7 @@ fn a_deleted_input_device_retracts_the_config_of_every_instance_it_had() {
 fn a_republish_retracts_an_input_device_whose_deletion_never_reached_the_bridge() {
     let (h, read_port) = announced_panel();
     read_port.remove_input_device(0);
-    let envelope = dali2rust_contracts::bus::command_envelope(
-        SOURCE_ID_UNSPECIFIED,
-        REPUBLISH_RUN,
-        BusId::default().0,
-        Some(dali2rust_contracts::msg::Origin::Api),
-        dali2rust_contracts::msg::HomeAssistantDiscoveryPublishCommand {},
-    );
-    let queued = h.publisher.try_publish(BusChannel::Commands, dali2rust_bus::BusFrame::command(envelope));
-    assert_eq!(queued, PublishResult::Queued);
+    h.request_republish(REPUBLISH_RUN);
     for topic in PANEL_CONFIGS {
         wait_for_last_config(&h, topic, <[u8]>::is_empty);
     }

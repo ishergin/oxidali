@@ -1,11 +1,14 @@
 use std::sync::{Arc, Mutex};
 
 use dali2rust_bus::{
-    BusConfig, BusFrame, BusHost, BusId, BusPublisher, CorrelationIdAllocator,
+    BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublisher, CorrelationIdAllocator,
+    PublishResult,
 };
 use dali2rust_contracts::msg::{
-    BusEventPayload, LightSetpoint, Origin, RuntimeObservation,
+    BusEventPayload, HomeAssistantDiscoveryPublishCommand, LightSetpoint, Origin,
+    RuntimeObservation,
 };
+use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
     CapabilityFlagsView, HaGroupView, HaInputInstanceView, HaInputView, HaLampView,
     HaPublishReadPort, HaSceneView, HomeAssistantSecretReadPort,
@@ -290,6 +293,21 @@ pub struct Harness {
     pub ev_obs_rx: std::sync::mpsc::Receiver<BusFrame>,
     _host: BusHost,
     _worker: std::thread::JoinHandle<()>,
+}
+
+impl Harness {
+    #[allow(dead_code, reason = "one binary per test file; not every file asks for a republish")]
+    pub fn request_republish(&self, workflow: u64) {
+        let envelope = dali2rust_contracts::bus::command_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            workflow,
+            BusId::default().0,
+            Some(Origin::Api),
+            HomeAssistantDiscoveryPublishCommand {},
+        );
+        let queued = self.publisher.try_publish(BusChannel::Commands, BusFrame::command(envelope));
+        assert_eq!(queued, PublishResult::Queued);
+    }
 }
 
 pub fn spawn_bridge(settings: Arc<StubSettings>, read_port: Arc<StubHaReadPort>) -> Harness {

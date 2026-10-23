@@ -4,9 +4,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dali2rust_bus::{BusChannel, BusId, PublishResult};
 use dali2rust_contracts::msg::{BusEventPayload, OperationWorkerSignal};
-use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_test_support::{recv_event_matching, wait_until};
 use support::{enabled_settings, spawn_bridge, StubHaReadPort, StubSettings};
 
@@ -14,20 +12,7 @@ const WAIT_S: Duration = Duration::from_secs(8);
 const STREAK_WAIT: Duration = Duration::from_secs(12);
 
 fn begin_republish(h: &support::Harness, workflow: u64) {
-    let envelope = dali2rust_contracts::bus::command_envelope(
-        SOURCE_ID_UNSPECIFIED,
-        workflow,
-        BusId::default().0,
-        Some(dali2rust_contracts::msg::Origin::Api),
-        dali2rust_contracts::msg::HomeAssistantDiscoveryPublishCommand {},
-    );
-    assert_eq!(
-        h.publisher.try_publish(
-            BusChannel::Commands,
-            dali2rust_bus::BusFrame::command(envelope)
-        ),
-        PublishResult::Queued
-    );
+    h.request_republish(workflow);
     let counters = Arc::clone(&h.counters);
     wait_until(
         move || counters.discovery_published_total.load(Ordering::Relaxed) >= 1,
