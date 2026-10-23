@@ -232,7 +232,7 @@ fn a_search_that_finds_nothing_while_a_gear_is_unaddressed_fails_the_run() {
 
     assert_eq!(
         error,
-        SemanticDaliError::OperationFailed("commissioning_unaddressed_not_reached")
+        SemanticDaliError::OperationFailed("unaddressed_gear_not_reached")
     );
 }
 
@@ -365,7 +365,7 @@ fn find_lowest_random_address_binary_searches_to_expected_value() {
 }
 
 #[test]
-fn find_lowest_random_address_returns_commissioning_search_inconsistent_when_final_compare_fails() {
+fn find_lowest_random_address_returns_random_search_inconsistent_when_final_compare_fails() {
     let mut controller = FakeController::with_compare_script(
         (0..25)
             .map(|_| Some(1))
@@ -374,7 +374,7 @@ fn find_lowest_random_address_returns_commissioning_search_inconsistent_when_fin
     assert_eq!(
         find_lowest_random_address(&mut controller),
         Err(SemanticDaliError::OperationFailed(
-            "commissioning_search_inconsistent",
+            "random_search_inconsistent",
         ))
     );
 }

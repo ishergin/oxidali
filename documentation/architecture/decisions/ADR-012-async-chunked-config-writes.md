@@ -76,7 +76,7 @@ Supporting rules:
 - Clients poll the operation and must check that it committed before acting on the
   write (the web UI's `opCommitted`; `tools/hil` waits inside its config-write helper).
   A resolved `202` is not a landed write.
-- A refused series (`config_write_chunk_count_mismatch`, `config_write_no_stage`,
+- A refused series (`config_write_chunk_mismatch`, `config_write_no_stage`,
   `config_write_stage_limit`) fails the operation and leaves the stored configuration
   untouched.
 - The confirmations ingress (32) and the pending-slot pool (24) are sized for the

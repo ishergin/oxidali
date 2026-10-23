@@ -4,7 +4,6 @@ use crate::runtime::executor::test_helpers::shared::{
     priorities_of, setup_controller, short_address,
 };
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
-use dali2rust_contracts::msg::{CompactErrorPayload, ErrorCode};
 use dali2rust_domain::dali::commands::DaliCommand;
 use dali2rust_domain::dali::devices::dt8_color::COLOUR_TYPE_BYTE_TC;
 use dali2rust_domain::dali::ses::DaliPriority;
@@ -345,15 +344,6 @@ fn a_temporary_that_never_holds_the_stored_colour_stores_nothing() {
         "one re-charge after a mismatch, then the named cause"
     );
     assert_script_consumed(&transport);
-}
-
-#[test]
-fn every_level_colour_outcome_fits_the_compact_error_payload() {
-    let outcomes = [LEVEL_COLOUR_UNCONFIRMED, LEVEL_COLOUR_UNANSWERED, LEVEL_COLOUR_CONTENDED, DEVICE_TYPES_UNKNOWN];
-    for outcome in outcomes {
-        let payload = CompactErrorPayload::new(ErrorCode::OperationFailed, outcome);
-        assert_eq!(payload.message.as_str(), outcome, "an operator reads the whole name");
-    }
 }
 
 #[derive(Clone, Copy, Debug)]

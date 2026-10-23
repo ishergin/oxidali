@@ -142,7 +142,7 @@ fn find_lowest_random_address(
     if !probe_search_address(controller, MAX_RANDOM_ADDRESS)? {
         if any_unaddressed_gear(controller)? {
             return Err(SemanticDaliError::OperationFailed(
-                "commissioning_unaddressed_not_reached",
+                "unaddressed_gear_not_reached",
             ));
         }
         return Ok(None);
@@ -161,7 +161,7 @@ fn find_lowest_random_address(
 
     if !probe_search_address(controller, low)? {
         return Err(SemanticDaliError::OperationFailed(
-            "commissioning_search_inconsistent",
+            "random_search_inconsistent",
         ));
     }
     Ok(Some(low))
@@ -266,7 +266,7 @@ pub fn change_short_address(
 ) -> Result<(), SemanticDaliError> {
     if short_address == new_short_address {
         return Err(SemanticDaliError::OperationFailed(
-            "address_change_source_equals_target",
+            "address_change_same_address",
         ));
     }
     let current = DaliAddress::short(short_address)

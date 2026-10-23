@@ -54,7 +54,7 @@ fn handle_pd_mutation(
         return;
     }
     if !apply() {
-        ctx.reject("physical_device_override_not_applied");
+        ctx.reject("device_override_not_applied");
         return;
     }
     publish_physical_device_changed(ctx.publisher, ctx.corr, adapter_id, short_address);
