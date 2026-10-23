@@ -124,17 +124,15 @@ pub fn device_type_fits_declared(declared: Option<DeviceTypeSet>, device_type: D
     }
 }
 
-pub fn effective_device_types(
+pub fn known_device_types(
     declared: Option<DeviceTypeSet>,
     override_type: Option<DeviceType>,
 ) -> Option<DeviceTypeSet> {
-    let narrowed = override_type
-        .and_then(DeviceType::dali_code)
-        .filter(|code| declared.is_none_or(|set| set.contains(*code)));
-    match narrowed {
-        Some(code) => Some([code].into_iter().collect()),
-        None => declared,
-    }
+    declared.or_else(|| {
+        override_type
+            .and_then(DeviceType::dali_code)
+            .map(|code| [code].into_iter().collect())
+    })
 }
 
 pub fn colour_mode_fits_declared(declared: Option<DeviceTypeSet>, mode: ColorMode) -> bool {

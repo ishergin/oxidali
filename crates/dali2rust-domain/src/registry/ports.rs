@@ -167,7 +167,7 @@ pub trait PhysicalDeviceReadPort: AdapterReadPort {
         short_address: u8,
     ) -> Option<DeviceTypeSet>;
 
-    fn physical_device_effective_types(
+    fn physical_device_known_types(
         &self,
         adapter_id: u8,
         short_address: u8,

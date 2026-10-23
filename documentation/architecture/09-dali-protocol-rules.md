@@ -311,9 +311,10 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - `STORE THE DTR AS POWER ON LEVEL` and `… SYSTEM FAILURE LEVEL` copy the temporary
   colour into the power-on or system-failure colour, and keep that colour when the
   temporaries are MASK (209 §11.2.2, Tables 1, 2 and 6). The set that decides is the
-  effective one: the declared set, narrowed by a device-type override that fits it. A
-  gear whose effective set lacks DT8 gets `DTR0` and the store as any level does, and is
-  asked nothing about colour (102 §9.18). Any other gear is asked `TEMPORARY COLOUR TYPE`
+  declared one, whatever a device-type override says, since what the store copies
+  depends on what the gear implements; an override's type stands in only while no set
+  is declared. A gear whose set lacks DT8 gets `DTR0` and the store as any level does,
+  and is asked nothing about colour (102 §9.18). Any other gear is asked `TEMPORARY COLOUR TYPE`
   first, since silence proves no colour absent (102 §3.13): MASK gets `DTR0` and the
   store; silence or a violation, asked three times, fails the write
   (`dt8_level_colour_unanswered`, `dt8_level_colour_contended`) before anything is

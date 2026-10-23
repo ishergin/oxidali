@@ -292,7 +292,7 @@ impl PhysicalDeviceHttpState for TestState {
             .and_then(|dto| dto.supported_device_types)
     }
 
-    fn physical_device_effective_types(
+    fn physical_device_known_types(
         &self,
         adapter_id: u8,
         short_address: u8,

@@ -232,7 +232,7 @@ impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
                 max_level: None,
                 dimming_curve: None,
                 signals_operation: false,
-                effective_device_types: self.effective_device_types,
+                known_device_types: self.known_device_types,
             },
         )
     }
@@ -394,7 +394,7 @@ mod tests {
             short_address: 4,
             system_failure_level: None,
             power_on_level: Some(200),
-            effective_device_types: None,
+            known_device_types: None,
         };
 
     fn written(power_on_level: Option<u8>, error: Option<CompactErrorPayload>) -> EventEnvelope {

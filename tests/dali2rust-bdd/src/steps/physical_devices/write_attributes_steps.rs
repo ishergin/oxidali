@@ -139,7 +139,16 @@ async fn given_level_write_over_a_charged_temporary(world: &mut DaliWorld, level
     script_level_store(&mock, TEST_SHORT_ADDRESS, SYSTEM_FAILURE_STORE, level, consumed);
 }
 
-// PD-287 PD-289 PD-290
+// PD-290
+#[given(regex = r"^a write of power-on level (\d+) to short address 0 that finds no temporary colour$")]
+async fn given_level_write_over_mask_temporaries(world: &mut DaliWorld, level: u8) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    mock.clear();
+    let mask = (Some(COLOUR_TYPE_BYTE_MASK), Some(level));
+    script_level_store(&mock, TEST_SHORT_ADDRESS, POWER_ON_STORE, level, mask);
+}
+
+// PD-287 PD-289
 #[given(regex = r"^a write of power-on level (\d+) to short address 0 that asks no colour question$")]
 async fn given_level_write_without_dt8(world: &mut DaliWorld, level: u8) {
     let mock = world.dali_mock().lock().expect("mock lock");
