@@ -337,11 +337,11 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   5, or red, freecolour and `RGBWAF CONTROL` must equal what was charged, or the COPY or
   the MASK stagings run once more, and the write then fails
   `dt8_level_colour_unconfirmed`, or with a staging's outcome when a MASK staging's echo
-  never proves. The unit is bounded: after the probe every read is
-  asked once and every staging armed once, so it takes 28 frames for a Tc charge and 42
-  for RGBWAF, at most 47 and 68 with the probe asked three times and the charge
-  repeated, and at most 144 for the rarest, a MASK charge of six primaries; a collision
-  re-runs it whole, as it does any unit.
+  never proves. The unit is bounded: after the probe every read is asked once and every
+  staging armed once, and a charge that does not hold is repeated once, so the longest
+  path hears the probe on its last ask and charges twice; the executor's tests pin how
+  many frames a typical and the longest charge take. A collision re-runs the unit
+  whole, as it does any unit.
   Each `SET TEMPORARY` command writes all its values from operands proved before it, so
   one value read back proves that command ran, and a MASK charge is proved command by
   command except the stagings of primaries 1 to 4. What the proof cannot see is a missed

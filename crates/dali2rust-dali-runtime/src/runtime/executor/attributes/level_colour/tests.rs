@@ -17,11 +17,16 @@ const NARROW_SAMPLE_FRAMES: usize = 4;
 const WIDE_SAMPLE_FRAMES: usize = NARROW_SAMPLE_FRAMES + 1;
 const LEVEL_QUERY_FRAMES: usize = 1;
 const COPY_FRAMES: usize = 2;
+const CHARGES_BEFORE_FAILING: usize = 2;
 const TC_CHARGE_FAILED_FRAMES: usize = NARROW_SAMPLE_FRAMES
     + LEVEL_QUERY_FRAMES
     + NARROW_SAMPLE_FRAMES
     + WIDE_SAMPLE_FRAMES
-    + CHARGE_APPLICATIONS as usize * (COPY_FRAMES + NARROW_SAMPLE_FRAMES + WIDE_SAMPLE_FRAMES);
+    + CHARGES_BEFORE_FAILING * (COPY_FRAMES + NARROW_SAMPLE_FRAMES + WIDE_SAMPLE_FRAMES);
+const SILENT_REPORT_TYPE_FRAMES: usize = NARROW_SAMPLE_FRAMES + LEVEL_QUERY_FRAMES + NARROW_SAMPLE_FRAMES;
+const ECHO_QUERY_FRAMES: usize = 1;
+const SILENT_MASK_STAGING_FRAMES: usize =
+    NARROW_SAMPLE_FRAMES + LEVEL_QUERY_FRAMES + NARROW_SAMPLE_FRAMES + MASK_WORD.len() + ECHO_QUERY_FRAMES;
 const STRAY_MIREK: (u8, u8) = (0x00, 0xDE);
 const MASK_WORD_ANSWER: (u8, u8) = (0xFF, 0xFF);
 const LEVEL_STORES: [StoredLevel; 2] = [POWER_ON, SYSTEM_FAILURE];
@@ -251,23 +256,21 @@ fn a_report_type_that_stays_silent_stores_nothing() {
     let mock = MockDaliTransport::new();
     expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
     mock.expect_forward_frame_with_backward(standard_frame(POWER_ON.query), Some(OLD_LEVEL));
-    for _ in 0..READ_ASKS {
-        expect_narrow_colour_value_sample(&mock, SHORT, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE, None);
-    }
+    expect_narrow_colour_value_sample(&mock, SHORT, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE, None);
 
     let (execution, transport) = write_level(mock, POWER_ON);
 
     assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNANSWERED)));
     assert_eq!(execution.confirmed.power_on_level, None);
+    assert_eq!(
+        transport.lock().expect("mock lock").sent_frames().len(),
+        SILENT_REPORT_TYPE_FRAMES,
+        "after the probe a read is asked once"
+    );
     assert_script_consumed(&transport);
 }
 
-// IEC 62386-209 §11.3.4.1, Table 8, Table 11
-#[test]
-fn a_stored_mask_colour_under_a_primary_n_temporary_masks_all_six_primaries() {
-    let mock = MockDaliTransport::new();
-    expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_PRIMARY_N));
-    expect_stored_type(&mock, POWER_ON, COLOUR_TYPE_BYTE_MASK);
+fn expect_primary_n_masked(mock: &MockDaliTransport, temporary_primary_5: (u8, u8)) {
     for primary in 0..PRIMARY_N_COUNT {
         let operands = [DT8_COLOUR_VALUE_LEVEL_MASK, DT8_COLOUR_VALUE_LEVEL_MASK, primary];
         let dtrs = [SpecialCommand::Dtr0(operands[0]), SpecialCommand::Dtr1(operands[1]), SpecialCommand::Dtr2(primary)];
@@ -278,12 +281,20 @@ fn a_stored_mask_colour_under_a_primary_n_temporary_masks_all_six_primaries() {
         for (query, operand) in queries.into_iter().zip(operands) {
             mock.expect_forward_frame_with_backward(standard_frame(query), Some(operand));
         }
-        expect_dt8_command(&mock, Dt8Command::SetTemporaryPrimaryNDimLevel);
+        expect_dt8_command(mock, Dt8Command::SetTemporaryPrimaryNDimLevel);
     }
+    expect_temporary_type(mock, Some(COLOUR_TYPE_BYTE_PRIMARY_N));
+    expect_wide_colour_value_sample(mock, SHORT, COLOUR_VALUE_TEMPORARY_PRIMARY_N_0, MASK_WORD_ANSWER);
+    expect_wide_colour_value_sample(mock, SHORT, COLOUR_VALUE_TEMPORARY_PRIMARY_N_5, temporary_primary_5);
+}
+
+// IEC 62386-209 §11.3.4.1, Table 8, Table 11
+#[test]
+fn a_stored_mask_colour_under_a_primary_n_temporary_masks_all_six_primaries() {
+    let mock = MockDaliTransport::new();
     expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_PRIMARY_N));
-    for primary in [COLOUR_VALUE_TEMPORARY_PRIMARY_N_0, COLOUR_VALUE_TEMPORARY_PRIMARY_N_5] {
-        expect_wide_colour_value_sample(&mock, SHORT, primary, MASK_WORD_ANSWER);
-    }
+    expect_stored_type(&mock, POWER_ON, COLOUR_TYPE_BYTE_MASK);
+    expect_primary_n_masked(&mock, MASK_WORD_ANSWER);
     expect_store(&mock, POWER_ON);
 
     let (execution, transport) = write_level(mock, POWER_ON);
@@ -330,9 +341,7 @@ fn a_temporary_that_never_holds_the_stored_colour_stores_nothing() {
     let mock = MockDaliTransport::new();
     expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
     expect_stored_tc_copied(&mock, POWER_ON, STRAY_MIREK);
-    for _ in 1..CHARGE_APPLICATIONS {
-        expect_tc_copied_again(&mock, STRAY_MIREK);
-    }
+    expect_tc_copied_again(&mock, STRAY_MIREK);
 
     let (execution, transport) = write_level(mock, POWER_ON);
 
@@ -342,6 +351,29 @@ fn a_temporary_that_never_holds_the_stored_colour_stores_nothing() {
         transport.lock().expect("mock lock").sent_frames().len(),
         TC_CHARGE_FAILED_FRAMES,
         "one re-charge after a mismatch, then the named cause"
+    );
+    assert_script_consumed(&transport);
+}
+
+// IEC 62386-102 §3.13
+#[test]
+fn a_mask_staging_whose_echo_stays_silent_is_armed_once_and_ends_the_write() {
+    let mock = MockDaliTransport::new();
+    expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
+    expect_stored_type(&mock, POWER_ON, COLOUR_TYPE_BYTE_MASK);
+    for dtr in [SpecialCommand::Dtr0(DT8_COLOUR_VALUE_LEVEL_MASK), SpecialCommand::Dtr1(DT8_COLOUR_VALUE_LEVEL_MASK)] {
+        mock.expect_forward_frame(special_frame(dtr));
+    }
+    mock.expect_forward_frame_with_backward(standard_frame(StandardCommand::QueryContentDtr0), None);
+
+    let (execution, transport) = write_level(mock, POWER_ON);
+
+    assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed("dt8_staging_unanswered")));
+    assert_eq!(execution.confirmed.power_on_level, None);
+    assert_eq!(
+        transport.lock().expect("mock lock").sent_frames().len(),
+        SILENT_MASK_STAGING_FRAMES,
+        "a MASK staging is armed once"
     );
     assert_script_consumed(&transport);
 }
@@ -472,4 +504,74 @@ fn a_copy_that_left_a_stray_y_coordinate_is_caught_past_the_first_value() {
 
     assert_level_confirmed(&execution, POWER_ON);
     assert_script_consumed(&transport);
+}
+
+const STORE_READ_BACK_FRAMES: usize = 1;
+const TC_CHARGE_UNIT_FRAMES: usize = 28;
+const RGBWAF_CHARGE_UNIT_FRAMES: usize = 42;
+const TC_LONGEST_UNIT_FRAMES: usize = 47;
+const RGBWAF_LONGEST_UNIT_FRAMES: usize = 68;
+const PRIMARY_N_MASK_LONGEST_UNIT_FRAMES: usize = 144;
+const STRAY_PRIMARY_LEVEL: (u8, u8) = (0x12, 0x34);
+
+fn expect_probe_heard_last(mock: &MockDaliTransport, temporary: u8) {
+    for _ in 1..PROBE_ASKS {
+        expect_temporary_type(mock, None);
+    }
+    expect_temporary_type(mock, Some(temporary));
+}
+
+fn expect_tc_charge(mock: &MockDaliTransport) {
+    expect_temporary_type(mock, Some(COLOUR_TYPE_BYTE_TC));
+    expect_stored_tc_copied(mock, POWER_ON, STORED_MIREK);
+}
+
+fn expect_rgbwaf_charge(mock: &MockDaliTransport) {
+    expect_temporary_type(mock, Some(DT8_COLOUR_TYPE_RGBWAF));
+    expect_rgbwaf_copied(mock, STORED_RGBWAF);
+}
+
+fn expect_longest_tc_charge(mock: &MockDaliTransport) {
+    expect_probe_heard_last(mock, COLOUR_TYPE_BYTE_TC);
+    expect_stored_tc_copied(mock, POWER_ON, STRAY_MIREK);
+    expect_tc_copied_again(mock, STORED_MIREK);
+}
+
+fn expect_longest_rgbwaf_charge(mock: &MockDaliTransport) {
+    expect_probe_heard_last(mock, DT8_COLOUR_TYPE_RGBWAF);
+    expect_rgbwaf_copied(mock, [STORED_RGBWAF[0], STORED_RGBWAF[1], STRAY_CONTROL]);
+    expect_rgbwaf_copied_again(mock, STORED_RGBWAF);
+}
+
+fn expect_longest_primary_n_mask_charge(mock: &MockDaliTransport) {
+    expect_probe_heard_last(mock, COLOUR_TYPE_BYTE_PRIMARY_N);
+    expect_stored_type(mock, POWER_ON, COLOUR_TYPE_BYTE_MASK);
+    expect_primary_n_masked(mock, STRAY_PRIMARY_LEVEL);
+    expect_primary_n_masked(mock, MASK_WORD_ANSWER);
+}
+
+type ChargeScript = (&'static str, fn(&MockDaliTransport), usize);
+
+const UNIT_LENGTHS: [ChargeScript; 5] = [
+    ("Tc charge", expect_tc_charge, TC_CHARGE_UNIT_FRAMES),
+    ("RGBWAF charge", expect_rgbwaf_charge, RGBWAF_CHARGE_UNIT_FRAMES),
+    ("longest Tc charge", expect_longest_tc_charge, TC_LONGEST_UNIT_FRAMES),
+    ("longest RGBWAF charge", expect_longest_rgbwaf_charge, RGBWAF_LONGEST_UNIT_FRAMES),
+    ("longest primary-N MASK charge", expect_longest_primary_n_mask_charge, PRIMARY_N_MASK_LONGEST_UNIT_FRAMES),
+];
+
+#[test]
+fn a_typical_and_the_longest_charge_take_the_unit_lengths_pinned_here() {
+    for (charge, script, unit_frames) in UNIT_LENGTHS {
+        let mock = MockDaliTransport::new();
+        script(&mock);
+        expect_store(&mock, POWER_ON);
+
+        let (execution, transport) = write_level(mock, POWER_ON);
+
+        assert_level_confirmed(&execution, POWER_ON);
+        let sent = transport.lock().expect("mock lock").sent_frames().len();
+        assert_eq!(sent - STORE_READ_BACK_FRAMES, unit_frames, "{charge}: probe through store");
+        assert_script_consumed(&transport);
+    }
 }
