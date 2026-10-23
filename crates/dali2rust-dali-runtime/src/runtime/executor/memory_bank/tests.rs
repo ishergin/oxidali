@@ -498,13 +498,14 @@ fn an_indicator_byte_whose_read_was_lost_is_read_again_not_shifted() {
         vec![0x10, 0x00, 0x55],
         "the indicator byte answers once its READ reaches the gear; the lock byte stays at 0x02"
     );
+    assert!(!execution.indicator_unread);
     assert_eq!(execution.error, None);
     assert_script_consumed(&transport);
 }
 
 // IEC 62386-102 §9.10.2, Table 8, Table 10
 #[test]
-fn an_indicator_byte_whose_read_keeps_getting_lost_fails_rather_than_reading_as_a_placeholder() {
+fn an_indicator_byte_the_pointer_lags_on_twice_is_left_unread_and_the_bank_read_on() {
     let mock = MockDaliTransport::new();
     let short = 5;
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
@@ -512,22 +513,24 @@ fn an_indicator_byte_whose_read_keeps_getting_lost_fails_rather_than_reading_as_
     expect_pointer_check(&mock, short, 1, Some(0));
     mock.expect_forward_frame_with_backward(read, Some(0x10));
     mock.expect_forward_frame_with_backward(read, None);
-    for _ in 0..BANK_ARM_RETRIES {
-        expect_pointer_check(&mock, short, 1, Some(1));
-        expect_rearmed_chunk(&mock, short, 1, 1);
-        mock.expect_forward_frame_with_backward(read, None);
-    }
     expect_pointer_check(&mock, short, 1, Some(1));
+    expect_rearmed_chunk(&mock, short, 1, 1);
+    mock.expect_forward_frame_with_backward(read, None);
+    expect_pointer_check(&mock, short, 1, Some(1));
+    expect_rearmed_chunk(&mock, short, 1, 2);
+    mock.expect_forward_frame_with_backward(read, Some(0x55));
+    expect_pointer_check(&mock, short, 1, Some(3));
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = read_memory_bank(&mut controller, short, 1, 0, 3);
 
-    assert_eq!(
-        execution.error,
-        Some(SemanticDaliError::OperationFailed(MEMORY_POINTER_UNCONFIRMED)),
+    assert_eq!(execution.error, None, "a gear that holds DTR0 there still yields its bank");
+    assert!(
+        execution.indicator_unread,
         "outside bank 0 the byte at 0x01 may be implemented, so a READ it never answered is no value"
     );
-    assert!(execution.bytes.is_empty());
+    assert_eq!(execution.bytes.len(), 3, "the bytes stay aligned to their offsets");
+    assert_eq!((execution.bytes[0], execution.bytes[2]), (0x10, 0x55));
     assert_script_consumed(&transport);
 }
 

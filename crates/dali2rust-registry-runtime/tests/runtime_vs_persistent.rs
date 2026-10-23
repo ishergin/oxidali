@@ -238,15 +238,15 @@ fn physical_device_memory_identity_round_trip_across_fs_reload() {
     );
     publish(
         &publisher,
-        BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 41, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 9, bank: 0, chunk_index: 0, last_chunk: false, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&BANK0_BYTES[..24]) })),
+        BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 41, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 9, bank: 0, chunk_index: 0, last_chunk: false, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&BANK0_BYTES[..24]), indicator_unread: false })),
     );
     publish(
         &publisher,
-        BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 41, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 9, bank: 0, chunk_index: 1, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&BANK0_BYTES[24..]) })),
+        BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 41, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 9, bank: 0, chunk_index: 1, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&BANK0_BYTES[24..]), indicator_unread: false })),
     );
     publish(
         &publisher,
-        BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 42, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 9, bank: 1, chunk_index: 0, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&BANK1_BYTES) })),
+        BusFrame::event(dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 42, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 9, bank: 1, chunk_index: 0, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&BANK1_BYTES), indicator_unread: false })),
     );
     wait_until(
         || {

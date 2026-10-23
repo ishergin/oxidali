@@ -33,7 +33,14 @@ const BUS_CONTENDED: &str = "bus_contended";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryReadExecution {
     pub bytes: Vec<u8>,
+    pub indicator_unread: bool,
     pub error: Option<SemanticDaliError>,
+}
+
+impl MemoryReadExecution {
+    const fn failed(error: SemanticDaliError) -> Self {
+        Self { bytes: Vec::new(), indicator_unread: false, error: Some(error) }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,25 +64,16 @@ pub fn read_memory_bank(
     length: u16,
 ) -> MemoryReadExecution {
     if let Err(error) = validate_memory_read_range(start, length) {
-        return MemoryReadExecution {
-            bytes: Vec::new(),
-            error: Some(error),
-        };
+        return MemoryReadExecution::failed(error);
     }
     let address = match dali_short_address(short_address) {
         Ok(address) => address,
         Err(error) => {
-            return MemoryReadExecution {
-                bytes: Vec::new(),
-                error: Some(error),
-            };
+            return MemoryReadExecution::failed(error);
         }
     };
     if let Err(error) = arm_memory_pointer(controller, address, bank, start) {
-        return MemoryReadExecution {
-            bytes: Vec::new(),
-            error: Some(error),
-        };
+        return MemoryReadExecution::failed(error);
     }
     collect_memory_bank_bytes(controller, address, bank, start, length)
 }
@@ -190,22 +188,16 @@ fn collect_memory_bank_bytes(
     length: u16,
 ) -> MemoryReadExecution {
     let mut bytes = Vec::with_capacity(length as usize);
-    let stop = match read_in_chunks(controller, address, bank, start, length, &mut bytes) {
-        Ok(stop) => stop,
+    let (stop, indicator_unread) = match read_in_chunks(controller, address, bank, start, length, &mut bytes) {
+        Ok(read) => read,
         Err(error) => {
-            return MemoryReadExecution {
-                bytes: Vec::new(),
-                error: Some(error),
-            }
+            return MemoryReadExecution::failed(error)
         }
     };
     let read = bytes.len() as u16;
     match confirm_final_position(controller, address, bank, (start, read), stop) {
-        Ok(()) => MemoryReadExecution { bytes, error: None },
-        Err(error) => MemoryReadExecution {
-            bytes: Vec::new(),
-            error: Some(error),
-        },
+        Ok(()) => MemoryReadExecution { bytes, indicator_unread, error: None },
+        Err(error) => MemoryReadExecution::failed(error),
     }
 }
 
@@ -216,17 +208,17 @@ fn read_in_chunks(
     start: u16,
     length: u16,
     bytes: &mut Vec<u8>,
-) -> Result<ReadStop, SemanticDaliError> {
+) -> Result<(ReadStop, bool), SemanticDaliError> {
     let mut cursor = ChunkCursor::armed(address, bank, start);
     while cursor.done < length {
         let (chunk_start, take) = cursor.next_chunk(length);
         controller.step_boundary();
         let read = read_proved_chunk(controller, address, bank, (chunk_start, take), bytes)?;
         if let Some(stop) = cursor.settle(controller, (chunk_start, take), read, bytes)? {
-            return Ok(stop);
+            return Ok((stop, cursor.indicator_unread));
         }
     }
-    Ok(ReadStop::Planned)
+    Ok((ReadStop::Planned, cursor.indicator_unread))
 }
 
 fn chunk_take(bank: u8, chunk_start: u16, remaining: u16) -> u16 {
@@ -310,6 +302,8 @@ struct ChunkCursor {
     done: u16,
     freshly_armed: bool,
     placeholder_pending: bool,
+    indicator_reread: bool,
+    indicator_unread: bool,
     rearms: u8,
     resume: Option<u16>,
     evidence: ResumeEvidence,
@@ -324,6 +318,8 @@ impl ChunkCursor {
             done: 0,
             freshly_armed: true,
             placeholder_pending: false,
+            indicator_reread: false,
+            indicator_unread: false,
             rearms: 0,
             resume: None,
             evidence: ResumeEvidence::NONE,
@@ -369,7 +365,8 @@ impl ChunkCursor {
     ) -> Result<(), SemanticDaliError> {
         let lost_placeholder_read =
             self.placeholder_pending && proof == PointerProof::Moved { one_behind: true };
-        if lost_placeholder_read && self.bank == RESERVED_LOCATION_BANK {
+        if lost_placeholder_read && self.passes_location_0x01() {
+            self.indicator_unread = self.bank != RESERVED_LOCATION_BANK;
             return self.arm_at(controller, MEMORY_RESERVED_OFFSET + 1, bytes);
         }
         let resume = match (lost_placeholder_read, self.freshly_armed) {
@@ -381,7 +378,13 @@ impl ChunkCursor {
             return Err(proof.failure(MEMORY_POINTER_UNCONFIRMED));
         }
         self.rearms += 1;
+        self.indicator_reread |= lost_placeholder_read;
         self.arm_at(controller, resume, bytes)
+    }
+
+    // IEC 62386-102 §9.10.2, §9.10.6, Table 8, Table 9, Table 10
+    const fn passes_location_0x01(&self) -> bool {
+        self.bank == RESERVED_LOCATION_BANK || self.indicator_reread || self.rearms >= BANK_ARM_RETRIES
     }
 
     // IEC 62386-102 §9.10.6, Table 9

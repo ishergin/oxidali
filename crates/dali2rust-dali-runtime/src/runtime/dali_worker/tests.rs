@@ -462,6 +462,7 @@ mod memory_bank_loss {
         let counters = DaliWorkerCounters::default();
         let execution = MemoryReadExecution {
             bytes: vec![0; THREE_CHUNKS_OF_BYTES],
+            indicator_unread: false,
             error: None,
         };
         let _ingress = hold_the_events_ingress_full(&publisher);

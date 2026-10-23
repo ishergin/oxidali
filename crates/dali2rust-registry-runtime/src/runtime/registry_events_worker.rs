@@ -296,6 +296,7 @@ dali2rust_contracts::dispatch_bus_events! {
                     body.start_offset,
                     body.chunk_index,
                     body.last_chunk,
+                    body.indicator_unread,
                     data,
                 )
             },

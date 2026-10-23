@@ -93,6 +93,7 @@ pub struct GearSpec {
     pub bus_unit_extension: bool,
     pub luminaire_format: Option<LuminaireFormat>,
     pub holds_dtr0_on_unimplemented: bool,
+    pub indicator_byte_unimplemented: bool,
 }
 
 impl GearSpec {
@@ -112,6 +113,7 @@ impl GearSpec {
             bus_unit_extension: false,
             luminaire_format: None,
             holds_dtr0_on_unimplemented: false,
+            indicator_byte_unimplemented: false,
         }
     }
 
@@ -137,6 +139,7 @@ impl GearSpec {
             bus_unit_extension: false,
             luminaire_format: None,
             holds_dtr0_on_unimplemented: false,
+            indicator_byte_unimplemented: false,
         }
     }
 }
@@ -402,6 +405,8 @@ const BANK0_LAST_BANK_OFFSET: usize = 0x02;
 
 const BANK0_RESERVED_OFFSET: u8 = 0x01;
 
+const INDICATOR_BYTE_OFFSET: u8 = 0x01;
+
 const OPERATING_MODE_STANDARD: u8 = 0x00;
 const MANUFACTURER_SPECIFIC_MODE_MIN: u8 = 0x80;
 
@@ -534,6 +539,9 @@ impl Gear {
     }
 
     pub fn memory_location(&self, bank: u8, offset: u8) -> Option<u8> {
+        if self.lacks_indicator_byte(bank, offset) {
+            return None;
+        }
         match bank {
             MEMORY_BANK_IDENTITY => self.identity_location(offset),
             MEMORY_BANK_PROFILE => self.profile_location(offset),
@@ -542,6 +550,13 @@ impl Gear {
             }
             _ => None,
         }
+    }
+
+    // IEC 62386-102 §9.10.2, Table 8, Table 10
+    const fn lacks_indicator_byte(&self, bank: u8, offset: u8) -> bool {
+        self.spec.indicator_byte_unimplemented
+            && bank != MEMORY_BANK_IDENTITY
+            && offset == INDICATOR_BYTE_OFFSET
     }
 
     // IEC 62386-102 §9.10.4
