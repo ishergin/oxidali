@@ -70,12 +70,9 @@ struct Session {
     subscriptions: Subscriptions,
     filters: BridgeFilters,
     rule_topics: RuleFollow,
-    lamp_config_hashes: HashMap<(u8, u8), u64>,
-    input_config_hashes: HashMap<(u8, u8, u8), u64>,
+    announced: HashMap<EntityKey, u64>,
     lamp_availability: HashMap<(u8, u8), bool>,
-    group_config_hashes: HashMap<(u8, u8), u64>,
     groups_dirty: HashSet<u8>,
-    announced_selects: HashSet<u8>,
     dialled_with: u64,
 }
 
@@ -87,24 +84,32 @@ impl Session {
             filters,
             rule_topics,
             dialled_with: dialled_slot,
-            lamp_config_hashes,
-            input_config_hashes,
+            announced,
             lamp_availability,
-            group_config_hashes,
             groups_dirty,
-            announced_selects,
         } = self;
         *gen_slot = generation;
         *subscriptions = Subscriptions::default();
         *filters = BridgeFilters::of(topics);
         *rule_topics = RuleFollow::default();
         *dialled_slot = dialled_with;
-        lamp_config_hashes.clear();
-        input_config_hashes.clear();
+        announced.clear();
         lamp_availability.clear();
-        group_config_hashes.clear();
         groups_dirty.clear();
-        announced_selects.clear();
+    }
+
+    fn is_announced(&self, key: EntityKey) -> bool {
+        self.announced.contains_key(&key)
+    }
+
+    fn forget(&mut self, key: EntityKey) -> bool {
+        self.announced.remove(&key).is_some()
+    }
+
+    fn forget_inputs(&mut self, adapter_id: u8, short_address: u8) {
+        self.announced.retain(|&(adapter, entity), _| {
+            adapter != adapter_id || !matches!(entity, Entity::Input(short, _) if short == short_address)
+        });
     }
 }
 
@@ -186,20 +191,48 @@ impl DialPacer {
 }
 
 struct DiscoveryJob {
-    pending: Vec<(u8, JobEntity)>,
+    pending: Vec<(u8, Entity)>,
     published: u16,
     failed: u16,
     workflow: Option<u64>,
 }
 
-enum JobEntity {
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Entity {
     Lamp(u8),
     Group(u8),
-    InputInstance(u8, u8),
+    Input(u8, u8),
     SceneSelect,
-    Retract(&'static str, String),
-    RetractLamp(u8),
 }
+
+type EntityKey = (u8, Entity);
+
+#[derive(Clone, Copy, PartialEq)]
+enum Gate {
+    Force,
+    IfChanged,
+    IfAnnounced,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Announced {
+    Skipped,
+    Published,
+    Refused,
+}
+
+impl From<bool> for Announced {
+    fn from(delivered: bool) -> Self {
+        if delivered {
+            Self::Published
+        } else {
+            Self::Refused
+        }
+    }
+}
+
+const LIGHT: &str = "light";
+const SELECT: &str = "select";
 
 dali2rust_contracts::dispatch_bus_commands! {
     pub const MQTT_WORKER_HANDLED_COMMANDS;
@@ -214,8 +247,7 @@ dali2rust_contracts::dispatch_bus_commands! {
     payload = payload;
     ignored = {};
     HomeAssistantDiscoveryPublishCommand(_body) => {
-        let settings = ports.settings.home_assistant_settings_view();
-        *job = Some(plan_discovery(ports, &settings, adapter_count, Some(workflow)));
+        *job = Some(plan_discovery(ports, adapter_count, Some(workflow)));
     },
     MqttPublishCommand(body) => {
         rule_publishes.push(body.clone());
@@ -463,73 +495,12 @@ fn refuse_command(ports: &MqttWorkerPorts, workflow: u64) {
     );
 }
 
-fn plan_input_discovery(
-    pending: &mut Vec<(u8, JobEntity)>,
-    ports: &MqttWorkerPorts,
-    settings: &HomeAssistantSettingsView,
-    adapter_id: u8,
-) {
-    for view in ports.read_port.ha_input_views(adapter_id) {
-        let announce = settings.expose_input_devices && view.ha_expose;
-        for instance in &view.instances {
-            let Some(component) = instance.instance_type.and_then(input_component) else {
-                continue;
-            };
-            if announce {
-                pending.push((
-                    adapter_id,
-                    JobEntity::InputInstance(view.short_address, instance.instance_number),
-                ));
-            } else {
-                pending.push((
-                    adapter_id,
-                    JobEntity::Retract(
-                        component,
-                        HaTopics::input_object_id(
-                            adapter_id,
-                            view.short_address,
-                            instance.instance_number,
-                        ),
-                    ),
-                ));
-            }
-        }
-    }
-}
 
 #[inline(never)]
-fn plan_discovery(
-    ports: &MqttWorkerPorts,
-    settings: &HomeAssistantSettingsView,
-    adapter_count: u8,
-    workflow: Option<u64>,
-) -> DiscoveryJob {
+fn plan_discovery(ports: &MqttWorkerPorts, adapter_count: u8, workflow: Option<u64>) -> DiscoveryJob {
     let mut pending = Vec::new();
     for adapter_id in 0..adapter_count {
-        plan_input_discovery(&mut pending, ports, settings, adapter_id);
-        for lamp in ports.read_port.ha_lamp_views(adapter_id) {
-            pending.push((adapter_id, JobEntity::Lamp(lamp.virtual_lamp_id)));
-        }
-        for group in ports.read_port.ha_group_views(adapter_id) {
-            pending.push((adapter_id, JobEntity::Group(group.group_id)));
-        }
-        if ports.read_port.ha_scene_views(adapter_id).is_empty() {
-            pending.push((
-                adapter_id,
-                JobEntity::Retract("select", HaTopics::scene_select_object_id(adapter_id)),
-            ));
-        } else {
-            pending.push((adapter_id, JobEntity::SceneSelect));
-        }
-        for id in ports.read_port.ha_retracted_lamp_ids(adapter_id) {
-            pending.push((adapter_id, JobEntity::RetractLamp(id)));
-        }
-        for id in ports.read_port.ha_retracted_group_ids(adapter_id) {
-            pending.push((
-                adapter_id,
-                JobEntity::Retract("light", HaTopics::group_object_id(adapter_id, id)),
-            ));
-        }
+        plan_adapter(&mut pending, ports.read_port.as_ref(), adapter_id);
     }
     pending.reverse();
     DiscoveryJob {
@@ -540,146 +511,148 @@ fn plan_discovery(
     }
 }
 
-fn build_scene_select_discovery(out: &HaOut<'_>, adapter_id: u8) -> Option<(String, String)> {
-    let scenes = out.ports.read_port.ha_scene_views(adapter_id);
-    let topic = out.topics.discovery_topic("select", &HaTopics::scene_select_object_id(adapter_id));
-    if scenes.is_empty() {
-        return Some((topic, DISCOVERY_RETRACTION.to_string()));
+fn plan_adapter(pending: &mut Vec<(u8, Entity)>, port: &dyn HaPublishReadPort, adapter_id: u8) {
+    let mut plan = |entity| pending.push((adapter_id, entity));
+    for view in port.ha_input_views(adapter_id) {
+        for instance in &view.instances {
+            if instance.instance_type.and_then(input_component).is_some() {
+                plan(Entity::Input(view.short_address, instance.instance_number));
+            }
+        }
     }
-    Some((topic, scene_select_discovery_json(out.topics, &out.device(), adapter_id, &scenes)))
+    port.ha_lamp_views(adapter_id).iter().for_each(|lamp| plan(Entity::Lamp(lamp.virtual_lamp_id)));
+    port.ha_group_views(adapter_id).iter().for_each(|group| plan(Entity::Group(group.group_id)));
+    plan(Entity::SceneSelect);
+    port.ha_retracted_lamp_ids(adapter_id).into_iter().for_each(|id| plan(Entity::Lamp(id)));
+    port.ha_retracted_group_ids(adapter_id).into_iter().for_each(|id| plan(Entity::Group(id)));
+}
+
+#[inline(never)]
+fn build_scene_select(out: &HaOut<'_>, adapter_id: u8) -> Announcement {
+    let topic = out.topics.discovery_topic(SELECT, &HaTopics::scene_select_object_id(adapter_id));
+    let scenes = out.ports.read_port.ha_scene_views(adapter_id);
+    if scenes.is_empty() {
+        return Announcement::retraction(topic);
+    }
+    Announcement::config(topic, scene_select_discovery_json(out.topics, &out.device(), adapter_id, &scenes))
+}
+
+#[inline(never)]
+fn build_lamp(out: &HaOut<'_>, adapter_id: u8, lamp_id: u8) -> Announcement {
+    let topic = out.topics.discovery_topic(LIGHT, &HaTopics::lamp_object_id(adapter_id, lamp_id));
+    let Some(lamp) = out.ports.read_port.ha_lamp_view(adapter_id, lamp_id) else {
+        return Announcement::retraction(topic);
+    };
+    Announcement {
+        topic,
+        payload: lamp_discovery_json(out.topics, &out.device(), adapter_id, &lamp),
+        lamp_unreachable: lamp.unreachable,
+    }
+}
+
+#[inline(never)]
+fn build_group(out: &HaOut<'_>, adapter_id: u8, group_id: u8) -> Announcement {
+    let topic = out.topics.discovery_topic(LIGHT, &HaTopics::group_object_id(adapter_id, group_id));
+    match out.ports.read_port.ha_group_view(adapter_id, group_id) {
+        Some(group) => {
+            Announcement::config(topic, group_discovery_json(out.topics, &out.device(), adapter_id, &group))
+        }
+        None => Announcement::retraction(topic),
+    }
 }
 
 struct Announcement {
     topic: String,
     payload: String,
-    lamp_unreachable: Option<bool>,
+    lamp_unreachable: bool,
 }
 
 impl Announcement {
-    fn plain((topic, payload): (String, String)) -> Self {
-        Self { topic, payload, lamp_unreachable: None }
+    fn config(topic: String, payload: String) -> Self {
+        Self { topic, payload, lamp_unreachable: false }
+    }
+
+    fn retraction(topic: String) -> Self {
+        Self::config(topic, DISCOVERY_RETRACTION.to_string())
+    }
+
+    fn retracts(&self) -> bool {
+        self.payload == DISCOVERY_RETRACTION
     }
 }
 
-#[inline(never)]
-fn build_discovery(out: &HaOut<'_>, adapter_id: u8, entity: &JobEntity) -> Option<Announcement> {
-    let topics = out.topics;
+fn build_discovery(out: &HaOut<'_>, adapter_id: u8, entity: Entity) -> Option<Announcement> {
     match entity {
-        JobEntity::InputInstance(short_address, instance_number) => {
-            build_input_discovery(out, adapter_id, *short_address, *instance_number).map(Announcement::plain)
+        Entity::Lamp(lamp_id) => Some(build_lamp(out, adapter_id, lamp_id)),
+        Entity::Group(group_id) => Some(build_group(out, adapter_id, group_id)),
+        Entity::Input(short_address, instance_number) => {
+            build_input(out, adapter_id, short_address, instance_number)
         }
-        JobEntity::Lamp(id) => out.ports.read_port.ha_lamp_view(adapter_id, *id).map(|lamp| Announcement {
-            topic: topics.discovery_topic("light", &HaTopics::lamp_object_id(adapter_id, *id)),
-            payload: lamp_discovery_json(topics, &out.device(), adapter_id, &lamp),
-            lamp_unreachable: Some(lamp.unreachable),
-        }),
-        JobEntity::Group(id) => out.ports.read_port.ha_group_view(adapter_id, *id).map(|group| {
-            Announcement::plain((
-                topics.discovery_topic("light", &HaTopics::group_object_id(adapter_id, *id)),
-                group_discovery_json(topics, &out.device(), adapter_id, &group),
-            ))
-        }),
-        JobEntity::SceneSelect => build_scene_select_discovery(out, adapter_id).map(Announcement::plain),
-        JobEntity::Retract(component, object_id) => Some(Announcement::plain((
-            topics.discovery_topic(component, object_id),
-            DISCOVERY_RETRACTION.to_string(),
-        ))),
-        JobEntity::RetractLamp(id) => Some(Announcement::plain((
-            topics.discovery_topic("light", &HaTopics::lamp_object_id(adapter_id, *id)),
-            DISCOVERY_RETRACTION.to_string(),
-        ))),
+        Entity::SceneSelect => Some(build_scene_select(out, adapter_id)),
     }
 }
 
 #[inline(never)]
-fn announce_one(out: &mut HaOut<'_>, adapter_id: u8, entity: &JobEntity, announcement: Announcement) -> bool {
-    let Announcement { topic, payload, lamp_unreachable } = announcement;
-    if !out.publish(&topic, &payload, retain_config(&payload, out.settings)) {
+fn announce(out: &mut HaOut<'_>, adapter_id: u8, entity: Entity, gate: Gate) -> Announced {
+    let key = (adapter_id, entity);
+    let Some(announcement) = build_discovery(out, adapter_id, entity) else {
+        out.session.forget(key);
+        return Announced::Skipped;
+    };
+    if announcement.retracts() {
+        return retract(out, key, &announcement, gate);
+    }
+    let hash = config_hash(&announcement.payload);
+    if gate != Gate::Force && out.session.announced.get(&key) == Some(&hash) {
+        return Announced::Skipped;
+    }
+    let delivered = deliver(out, key, &announcement);
+    if delivered {
+        out.session.announced.insert(key, hash);
+    }
+    Announced::from(delivered)
+}
+
+fn retract(out: &mut HaOut<'_>, key: EntityKey, retraction: &Announcement, gate: Gate) -> Announced {
+    if !out.session.forget(key) && gate == Gate::IfAnnounced {
+        return Announced::Skipped;
+    }
+    Announced::from(deliver(out, key, retraction))
+}
+
+fn deliver(out: &mut HaOut<'_>, (adapter_id, entity): EntityKey, announcement: &Announcement) -> bool {
+    let retain = retain_config(&announcement.payload, out.settings);
+    if !out.publish(&announcement.topic, &announcement.payload, retain) {
         return false;
     }
-    let paired = match entity {
-        JobEntity::Lamp(lamp_id) => {
-            publish_lamp_availability(out, adapter_id, *lamp_id, lamp_unreachable.unwrap_or(false))
+    match entity {
+        Entity::Lamp(lamp_id) if announcement.retracts() => clear_lamp_retained(out, adapter_id, lamp_id),
+        Entity::Lamp(lamp_id) => {
+            publish_lamp_availability(out, adapter_id, lamp_id, announcement.lamp_unreachable)
         }
-        JobEntity::RetractLamp(lamp_id) => clear_lamp_retained(out, adapter_id, *lamp_id),
         _ => true,
-    };
-    if paired {
-        record_announcement(out.session, adapter_id, entity, &payload);
-    }
-    paired
-}
-
-fn announced_this_session(
-    session: &Session,
-    adapter_id: u8,
-    entity: &JobEntity,
-    payload: &str,
-) -> bool {
-    let hash = config_hash(payload);
-    match entity {
-        JobEntity::Lamp(id) => session.lamp_config_hashes.get(&(adapter_id, *id)) == Some(&hash),
-        JobEntity::Group(id) => session.group_config_hashes.get(&(adapter_id, *id)) == Some(&hash),
-        JobEntity::InputInstance(short_address, instance_number) => {
-            session
-                .input_config_hashes
-                .get(&(adapter_id, *short_address, *instance_number))
-                == Some(&hash)
-        }
-        JobEntity::SceneSelect => session.announced_selects.contains(&adapter_id),
-        JobEntity::Retract(..) | JobEntity::RetractLamp(_) => false,
     }
 }
 
-fn record_announcement(
-    session: &mut Session,
-    adapter_id: u8,
-    entity: &JobEntity,
-    payload: &str,
-) {
-    let hash = config_hash(payload);
-    match entity {
-        JobEntity::Lamp(id) => {
-            session.lamp_config_hashes.insert((adapter_id, *id), hash);
-        }
-        JobEntity::Group(id) => {
-            session.group_config_hashes.insert((adapter_id, *id), hash);
-        }
-        JobEntity::InputInstance(short_address, instance_number) => {
-            session
-                .input_config_hashes
-                .insert((adapter_id, *short_address, *instance_number), hash);
-        }
-        JobEntity::SceneSelect => {
-            session.announced_selects.insert(adapter_id);
-        }
-        JobEntity::RetractLamp(id) => {
-            session.lamp_config_hashes.remove(&(adapter_id, *id));
-        }
-        JobEntity::Retract(..) => {}
-    }
-}
+
 
 #[inline(never)]
 fn advance_discovery(out: &mut HaOut<'_>, job: &mut DiscoveryJob) -> bool {
+    let gate = if job.workflow.is_some() { Gate::Force } else { Gate::IfChanged };
     for _ in 0..DISCOVERY_BATCH {
         let Some((adapter_id, entity)) = job.pending.pop() else {
             return true;
         };
-        let Some(announcement) = build_discovery(out, adapter_id, &entity) else {
-            continue;
-        };
-        if job.workflow.is_none()
-            && announced_this_session(out.session, adapter_id, &entity, &announcement.payload)
-        {
-            continue;
-        }
-        if announce_one(out, adapter_id, &entity, announcement) {
-            job.published = job.published.saturating_add(1);
-            bump(&out.ports.counters.discovery_published_total);
-        } else {
-            job.failed = job.failed.saturating_add(1);
-            bump(&out.ports.counters.discovery_failed_total);
+        match announce(out, adapter_id, entity, gate) {
+            Announced::Skipped => {}
+            Announced::Published => {
+                job.published = job.published.saturating_add(1);
+                bump(&out.ports.counters.discovery_published_total);
+            }
+            Announced::Refused => {
+                job.failed = job.failed.saturating_add(1);
+                bump(&out.ports.counters.discovery_failed_total);
+            }
         }
     }
     job.pending.is_empty()
@@ -916,7 +889,7 @@ fn begin_session(
         session.subscriptions.sent(filter, *message_id);
     }
     *topics = announced;
-    plan_session_reannounce(job, ports, settings);
+    plan_session_reannounce(job, ports);
     true
 }
 
@@ -952,13 +925,9 @@ fn settle_subacks(link: &MqttLink, session: &mut Session, ports: &MqttWorkerPort
 }
 
 #[inline(never)]
-fn plan_session_reannounce(
-    job: &mut Option<DiscoveryJob>,
-    ports: &MqttWorkerPorts,
-    settings: &HomeAssistantSettingsView,
-) {
+fn plan_session_reannounce(job: &mut Option<DiscoveryJob>, ports: &MqttWorkerPorts) {
     let carried = job.take().and_then(|interrupted| interrupted.workflow);
-    *job = Some(plan_discovery(ports, settings, ports.adapter_count, carried));
+    *job = Some(plan_discovery(ports, ports.adapter_count, carried));
 }
 
 fn dial(
@@ -1171,20 +1140,20 @@ dali2rust_contracts::dispatch_bus_events! {
     },
     PhysicalDeviceChangedEvent(body) => {
         for lamp_id in out.ports.read_port.ha_lamp_ids_for_short(body.adapter_id, body.short_address) {
-            republish_lamp_config(out, body.adapter_id, lamp_id, RetractGate::Always);
+            announce(out, body.adapter_id, Entity::Lamp(lamp_id), Gate::IfChanged);
         }
         out.session.groups_dirty.insert(body.adapter_id);
     },
     VirtualLampChangedEvent(body) => {
-        republish_lamp_config(out, body.adapter_id, body.virtual_lamp_id, RetractGate::Always);
+        announce(out, body.adapter_id, Entity::Lamp(body.virtual_lamp_id), Gate::IfChanged);
         out.session.groups_dirty.insert(body.adapter_id);
     },
     GroupChangedEvent(body) => {
-        republish_group_config(out, body.adapter_id, body.group_id, RetractGate::Always);
+        announce(out, body.adapter_id, Entity::Group(body.group_id), Gate::IfChanged);
     },
     GroupMatrixChangedEvent(body) => {
         for group_id in 0..GROUP_ID_COUNT {
-            republish_group_config(out, body.adapter_id, group_id, RetractGate::IfAnnounced);
+            announce(out, body.adapter_id, Entity::Group(group_id), Gate::IfAnnounced);
         }
     },
     SceneChangedEvent(body) => {
@@ -1196,68 +1165,38 @@ const GROUP_ID_COUNT: u8 = 16;
 
 #[inline(never)]
 fn republish_scene_select(out: &mut HaOut<'_>, adapter_id: u8) {
-    out.session.announced_selects.remove(&adapter_id);
-    if out.ports.read_port.ha_scene_views(adapter_id).is_empty() {
-        let topic = out.topics.discovery_topic("select", &HaTopics::scene_select_object_id(adapter_id));
-        out.publish(&topic, DISCOVERY_RETRACTION, retain_config(DISCOVERY_RETRACTION, out.settings));
-        return;
+    out.session.forget((adapter_id, Entity::SceneSelect));
+    if !publish_scene_select(out, adapter_id) {
+        announce(out, adapter_id, Entity::SceneSelect, Gate::IfChanged);
     }
-    publish_scene_select(out, adapter_id);
 }
 
 fn publish_groups(out: &mut HaOut<'_>, adapter_id: u8) {
     let recheck = out.session.groups_dirty.remove(&adapter_id);
     for group in out.ports.read_port.ha_group_views(adapter_id) {
-        if recheck || !out.session.group_config_hashes.contains_key(&(adapter_id, group.group_id)) {
-            announce_group(out, adapter_id, &group);
+        let entity = Entity::Group(group.group_id);
+        if recheck || !out.session.is_announced((adapter_id, entity)) {
+            announce(out, adapter_id, entity, Gate::IfChanged);
         }
         let topic = out.topics.group_state_topic(adapter_id, group.group_id);
         out.publish(&topic, &group_state_json(&group.state), out.settings.retain_state);
     }
 }
 
-fn announce_group(out: &mut HaOut<'_>, adapter_id: u8, group: &dali2rust_domain::registry::HaGroupView) {
-    let payload = group_discovery_json(out.topics, &out.device(), adapter_id, group);
-    let hash = config_hash(&payload);
-    let key = (adapter_id, group.group_id);
-    if out.session.group_config_hashes.get(&key) == Some(&hash) {
-        return;
-    }
-    let topic = out.topics.discovery_topic("light", &HaTopics::group_object_id(adapter_id, group.group_id));
-    if out.publish(&topic, &payload, retain_config(&payload, out.settings)) {
-        out.session.group_config_hashes.insert(key, hash);
-    }
-}
 
-#[inline(never)]
-fn republish_group_config(out: &mut HaOut<'_>, adapter_id: u8, group_id: u8, retract: RetractGate) {
-    let Some(group) = out.ports.read_port.ha_group_view(adapter_id, group_id) else {
-        let announced_here = out.session.group_config_hashes.remove(&(adapter_id, group_id)).is_some();
-        if !announced_here && retract == RetractGate::IfAnnounced {
-            return;
-        }
-        let topic = out.topics.discovery_topic("light", &HaTopics::group_object_id(adapter_id, group_id));
-        out.publish(&topic, DISCOVERY_RETRACTION, retain_config(DISCOVERY_RETRACTION, out.settings));
-        return;
-    };
-    announce_group(out, adapter_id, &group);
-}
 
-fn publish_scene_select(out: &mut HaOut<'_>, adapter_id: u8) {
+fn publish_scene_select(out: &mut HaOut<'_>, adapter_id: u8) -> bool {
     let scenes = out.ports.read_port.ha_scene_views(adapter_id);
     if scenes.is_empty() {
-        return;
+        return false;
     }
-    if !out.session.announced_selects.contains(&adapter_id) {
-        let topic = out.topics.discovery_topic("select", &HaTopics::scene_select_object_id(adapter_id));
-        let payload = scene_select_discovery_json(out.topics, &out.device(), adapter_id, &scenes);
-        if out.publish(&topic, &payload, out.settings.retain_discovery) {
-            out.session.announced_selects.insert(adapter_id);
-        }
+    if !out.session.is_announced((adapter_id, Entity::SceneSelect)) {
+        announce(out, adapter_id, Entity::SceneSelect, Gate::IfChanged);
     }
     let active = out.ports.read_port.ha_active_scene(adapter_id);
     let topic = out.topics.scene_select_state_topic(adapter_id);
     out.publish(&topic, &scene_select_state(active, &scenes), out.settings.retain_state);
+    true
 }
 
 
@@ -1276,10 +1215,11 @@ fn publish_runtime_state(out: &mut HaOut<'_>, body: &dali2rust_contracts::msg::R
 
 fn publish_lamp(out: &mut HaOut<'_>, body: &dali2rust_contracts::msg::RuntimeStateChangedEvent, lamp_id: u8) {
     let adapter_id = body.adapter_id;
-    if !out.session.lamp_config_hashes.contains_key(&(adapter_id, lamp_id)) {
-        republish_lamp_config(out, adapter_id, lamp_id, RetractGate::IfAnnounced);
+    let key = (adapter_id, Entity::Lamp(lamp_id));
+    if !out.session.is_announced(key) {
+        announce(out, adapter_id, Entity::Lamp(lamp_id), Gate::IfAnnounced);
     }
-    if !out.session.lamp_config_hashes.contains_key(&(adapter_id, lamp_id)) {
+    if !out.session.is_announced(key) {
         return;
     }
     let absent = body.state_observation.reports_absence();
@@ -1297,12 +1237,6 @@ fn config_hash(payload: &str) -> u64 {
     hasher.finish()
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum RetractGate {
-    IfAnnounced,
-    Always,
-}
-
 const fn input_component(instance_type: u8) -> Option<&'static str> {
     match instance_type {
         1 => Some("event"),
@@ -1313,12 +1247,7 @@ const fn input_component(instance_type: u8) -> Option<&'static str> {
 }
 
 #[inline(never)]
-fn build_input_discovery(
-    out: &HaOut<'_>,
-    adapter_id: u8,
-    short_address: u8,
-    instance_number: u8,
-) -> Option<(String, String)> {
+fn build_input(out: &HaOut<'_>, adapter_id: u8, short_address: u8, instance_number: u8) -> Option<Announcement> {
     let view = out.ports.read_port.ha_input_view(adapter_id, short_address)?;
     let instance = view.instances.iter().find(|i| i.instance_number == instance_number)?;
     let instance_type = instance.instance_type?;
@@ -1328,7 +1257,7 @@ fn build_input_discovery(
         &HaTopics::input_object_id(adapter_id, short_address, instance_number),
     );
     if !(out.settings.expose_input_devices && view.ha_expose) {
-        return Some((topic, DISCOVERY_RETRACTION.to_string()));
+        return Some(Announcement::retraction(topic));
     }
     let (_, payload) = input_instance_discovery_json(
         out.topics,
@@ -1339,7 +1268,7 @@ fn build_input_discovery(
         instance_number,
         instance_type,
     )?;
-    Some((topic, payload))
+    Some(Announcement::config(topic, payload))
 }
 
 #[inline(never)]
@@ -1361,11 +1290,11 @@ fn publish_input_event(out: &mut HaOut<'_>, body: &dali2rust_contracts::msg::Dal
     let Some(payload) = input_event_state_payload(body.typed, body.typed_value) else {
         return;
     };
-    let key = (adapter_id, short_address, instance_number);
-    if !out.session.input_config_hashes.contains_key(&key) {
+    let key = (adapter_id, Entity::Input(short_address, instance_number));
+    if !out.session.is_announced(key) {
         republish_input_configs(out, adapter_id, short_address);
     }
-    if !out.session.input_config_hashes.contains_key(&key) {
+    if !out.session.is_announced(key) {
         return;
     }
     let retain = out.settings.retain_state
@@ -1376,36 +1305,13 @@ fn publish_input_event(out: &mut HaOut<'_>, body: &dali2rust_contracts::msg::Dal
 
 #[inline(never)]
 fn republish_input_configs(out: &mut HaOut<'_>, adapter_id: u8, short_address: u8) {
-    let instances: Vec<u8> = match out.ports.read_port.ha_input_view(adapter_id, short_address) {
-        Some(view) => view.instances.iter().map(|i| i.instance_number).collect(),
-        None => out
-            .session
-            .input_config_hashes
-            .keys()
-            .filter(|(a, s, _)| *a == adapter_id && *s == short_address)
-            .map(|(_, _, i)| *i)
-            .collect(),
+    let Some(view) = out.ports.read_port.ha_input_view(adapter_id, short_address) else {
+        out.session.forget_inputs(adapter_id, short_address);
+        return;
     };
-    for instance_number in instances {
-        let key = (adapter_id, short_address, instance_number);
-        match build_input_discovery(out, adapter_id, short_address, instance_number) {
-            Some((topic, payload)) => {
-                let hash = config_hash(&payload);
-                if out.session.input_config_hashes.get(&key) == Some(&hash) {
-                    continue;
-                }
-                if out.publish(&topic, &payload, retain_config(&payload, out.settings)) {
-                    if payload == DISCOVERY_RETRACTION {
-                        out.session.input_config_hashes.remove(&key);
-                    } else {
-                        out.session.input_config_hashes.insert(key, hash);
-                    }
-                }
-            }
-            None => {
-                out.session.input_config_hashes.remove(&key);
-            }
-        }
+    for instance in &view.instances {
+        let entity = Entity::Input(short_address, instance.instance_number);
+        announce(out, adapter_id, entity, Gate::IfChanged);
     }
 }
 
@@ -1436,32 +1342,6 @@ fn clear_lamp_retained(out: &mut HaOut<'_>, adapter_id: u8, lamp_id: u8) -> bool
     availability && state
 }
 
-#[inline(never)]
-fn republish_lamp_config(out: &mut HaOut<'_>, adapter_id: u8, lamp_id: u8, retract: RetractGate) {
-    let topic = out.topics.discovery_topic("light", &HaTopics::lamp_object_id(adapter_id, lamp_id));
-    match out.ports.read_port.ha_lamp_view(adapter_id, lamp_id) {
-        Some(lamp) => {
-            let payload = lamp_discovery_json(out.topics, &out.device(), adapter_id, &lamp);
-            let hash = config_hash(&payload);
-            if out.session.lamp_config_hashes.get(&(adapter_id, lamp_id)) == Some(&hash) {
-                return;
-            }
-            let paired = out.publish(&topic, &payload, retain_config(&payload, out.settings))
-                && publish_lamp_availability(out, adapter_id, lamp_id, lamp.unreachable);
-            if paired {
-                out.session.lamp_config_hashes.insert((adapter_id, lamp_id), hash);
-            }
-        }
-        None => {
-            let announced_here = out.session.lamp_config_hashes.remove(&(adapter_id, lamp_id)).is_some();
-            if (announced_here || retract == RetractGate::Always)
-                && out.publish(&topic, DISCOVERY_RETRACTION, retain_config(DISCOVERY_RETRACTION, out.settings))
-            {
-                clear_lamp_retained(out, adapter_id, lamp_id);
-            }
-        }
-    }
-}
 
 pub(crate) struct RulePublishBudget {
     tokens: u32,
