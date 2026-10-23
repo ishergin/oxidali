@@ -14,6 +14,15 @@ const SHORT: u8 = 9;
 const LEVEL: u8 = 120;
 const OLD_LEVEL: u8 = 254;
 const STORED_MIREK: (u8, u8) = (0x01, 0x2C);
+const NARROW_SAMPLE_FRAMES: usize = 4;
+const WIDE_SAMPLE_FRAMES: usize = NARROW_SAMPLE_FRAMES + 1;
+const LEVEL_QUERY_FRAMES: usize = 1;
+const COPY_FRAMES: usize = 2;
+const TC_CHARGE_FAILED_FRAMES: usize = NARROW_SAMPLE_FRAMES
+    + LEVEL_QUERY_FRAMES
+    + NARROW_SAMPLE_FRAMES
+    + WIDE_SAMPLE_FRAMES
+    + CHARGE_APPLICATIONS as usize * (COPY_FRAMES + NARROW_SAMPLE_FRAMES + WIDE_SAMPLE_FRAMES);
 const STRAY_MIREK: (u8, u8) = (0x00, 0xDE);
 const MASK_WORD_ANSWER: (u8, u8) = (0xFF, 0xFF);
 const LEVEL_STORES: [StoredLevel; 2] = [POWER_ON, SYSTEM_FAILURE];
@@ -56,6 +65,11 @@ fn expect_stored_type(mock: &MockDaliTransport, stored: StoredLevel, answer: u8)
 fn expect_tc_proof(mock: &MockDaliTransport, temporary_tc: (u8, u8)) {
     expect_temporary_type(mock, Some(COLOUR_TYPE_BYTE_TC));
     expect_wide_colour_value_sample(mock, SHORT, COLOUR_VALUE_TEMPORARY_TC, temporary_tc);
+}
+
+fn expect_tc_copied_again(mock: &MockDaliTransport, temporary_tc: (u8, u8)) {
+    expect_dt8_command(mock, Dt8Command::CopyReportToTemporary);
+    expect_tc_proof(mock, temporary_tc);
 }
 
 fn expect_stored_tc_copied(mock: &MockDaliTransport, stored: StoredLevel, temporary_tc: (u8, u8)) {
@@ -138,7 +152,7 @@ fn mask_temporaries_store_the_level_alone_after_the_probe() {
 fn a_probe_that_stays_silent_fails_the_write_before_anything_is_stored() {
     for (types, outcome) in [(Some(colour_gear()), LEVEL_COLOUR_UNANSWERED), (None, DEVICE_TYPES_UNKNOWN)] {
         let mock = MockDaliTransport::new();
-        for _ in 0..COLOUR_VALUE_ASKS {
+        for _ in 0..PROBE_ASKS {
             expect_temporary_type(&mock, None);
         }
 
@@ -158,7 +172,7 @@ fn a_probe_that_stays_silent_fails_the_write_before_anything_is_stored() {
 #[test]
 fn a_probe_answered_by_a_violation_is_contended_not_silent() {
     let mock = MockDaliTransport::new();
-    for _ in 0..COLOUR_VALUE_ASKS {
+    for _ in 0..PROBE_ASKS {
         expect_violated_sample(&mock, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE);
     }
 
@@ -238,7 +252,7 @@ fn a_report_type_that_stays_silent_stores_nothing() {
     let mock = MockDaliTransport::new();
     expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
     mock.expect_forward_frame_with_backward(standard_frame(POWER_ON.query), Some(OLD_LEVEL));
-    for _ in 0..COLOUR_VALUE_ASKS {
+    for _ in 0..READ_ASKS {
         expect_narrow_colour_value_sample(&mock, SHORT, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE, None);
     }
 
@@ -303,7 +317,7 @@ fn a_copy_the_gear_missed_is_caught_before_the_store_and_charged_again() {
     let mock = MockDaliTransport::new();
     expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
     expect_stored_tc_copied(&mock, POWER_ON, STRAY_MIREK);
-    expect_stored_tc_copied(&mock, POWER_ON, STORED_MIREK);
+    expect_tc_copied_again(&mock, STORED_MIREK);
     expect_store(&mock, POWER_ON);
 
     let (execution, transport) = write_level(mock, POWER_ON);
@@ -316,14 +330,20 @@ fn a_copy_the_gear_missed_is_caught_before_the_store_and_charged_again() {
 fn a_temporary_that_never_holds_the_stored_colour_stores_nothing() {
     let mock = MockDaliTransport::new();
     expect_temporary_type(&mock, Some(COLOUR_TYPE_BYTE_TC));
-    for _ in 0..=RECHARGE_RETRIES {
-        expect_stored_tc_copied(&mock, POWER_ON, STRAY_MIREK);
+    expect_stored_tc_copied(&mock, POWER_ON, STRAY_MIREK);
+    for _ in 1..CHARGE_APPLICATIONS {
+        expect_tc_copied_again(&mock, STRAY_MIREK);
     }
 
     let (execution, transport) = write_level(mock, POWER_ON);
 
     assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNCONFIRMED)));
     assert_eq!(execution.confirmed.power_on_level, None);
+    assert_eq!(
+        transport.lock().expect("mock lock").sent_frames().len(),
+        TC_CHARGE_FAILED_FRAMES,
+        "one re-charge after a mismatch, then the named cause"
+    );
     assert_script_consumed(&transport);
 }
 
@@ -365,7 +385,7 @@ fn a_selector_that_never_proves_names_silence_a_violation_and_a_wrong_echo_apart
     ];
     for (echo, outcome) in cases {
         let mock = MockDaliTransport::new();
-        for _ in 0..COLOUR_VALUE_ASKS {
+        for _ in 0..PROBE_ASKS {
             expect_unarmed_selector(&mock, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, echo);
         }
 
@@ -389,6 +409,10 @@ fn expect_rgbwaf_copied(mock: &MockDaliTransport, temporary: [u8; 3]) {
     expect_stored_type(mock, POWER_ON, DT8_COLOUR_TYPE_RGBWAF);
     let report = [DT8_COLOUR_VALUE_REPORT_RED, COLOUR_VALUE_REPORT_FREECOLOUR, COLOUR_VALUE_REPORT_RGBWAF_CONTROL];
     expect_rgbwaf_values(mock, report, STORED_RGBWAF);
+    expect_rgbwaf_copied_again(mock, temporary);
+}
+
+fn expect_rgbwaf_copied_again(mock: &MockDaliTransport, temporary: [u8; 3]) {
     expect_dt8_command(mock, Dt8Command::CopyReportToTemporary);
     expect_temporary_type(mock, Some(DT8_COLOUR_TYPE_RGBWAF));
     let staged = [COLOUR_VALUE_TEMPORARY_RED, COLOUR_VALUE_TEMPORARY_FREECOLOUR, COLOUR_VALUE_TEMPORARY_RGBWAF_CONTROL];
@@ -401,7 +425,7 @@ fn a_copy_that_left_a_stray_rgbwaf_control_is_caught_past_the_first_value() {
     let mock = MockDaliTransport::new();
     expect_temporary_type(&mock, Some(DT8_COLOUR_TYPE_RGBWAF));
     expect_rgbwaf_copied(&mock, [STORED_RGBWAF[0], STORED_RGBWAF[1], STRAY_CONTROL]);
-    expect_rgbwaf_copied(&mock, STORED_RGBWAF);
+    expect_rgbwaf_copied_again(&mock, STORED_RGBWAF);
     expect_store(&mock, POWER_ON);
 
     let (execution, transport) = write_level(mock, POWER_ON);
@@ -418,6 +442,10 @@ fn expect_xy_copied(mock: &MockDaliTransport, temporary_y: (u8, u8)) {
     for (selector, value) in [DT8_COLOUR_VALUE_REPORT_X, DT8_COLOUR_VALUE_REPORT_Y].into_iter().zip(STORED_XY) {
         expect_wide_colour_value_sample(mock, SHORT, selector, value);
     }
+    expect_xy_copied_again(mock, temporary_y);
+}
+
+fn expect_xy_copied_again(mock: &MockDaliTransport, temporary_y: (u8, u8)) {
     expect_dt8_command(mock, Dt8Command::CopyReportToTemporary);
     expect_temporary_type(mock, Some(DT8_COLOUR_TYPE_XY));
     expect_wide_colour_value_sample(mock, SHORT, COLOUR_VALUE_TEMPORARY_X, STORED_XY[0]);
@@ -429,7 +457,7 @@ fn a_copy_that_left_a_stray_y_coordinate_is_caught_past_the_first_value() {
     let mock = MockDaliTransport::new();
     expect_temporary_type(&mock, Some(DT8_COLOUR_TYPE_XY));
     expect_xy_copied(&mock, STRAY_Y);
-    expect_xy_copied(&mock, STORED_XY[1]);
+    expect_xy_copied_again(&mock, STORED_XY[1]);
     expect_store(&mock, POWER_ON);
 
     let (execution, transport) = write_level(mock, POWER_ON);

@@ -377,8 +377,17 @@ pub(crate) fn stage_dtrs_verified(
     address: DaliAddress,
     values: &[u8],
 ) -> Result<(), SemanticDaliError> {
+    stage_dtrs_within(controller, address, values, DT8_STAGE_ARM_RETRIES + 1)
+}
+
+pub(crate) fn stage_dtrs_within(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    values: &[u8],
+    arms: u8,
+) -> Result<(), SemanticDaliError> {
     let provable = matches!(address, DaliAddress::Short(_));
-    for _ in 0..=DT8_STAGE_ARM_RETRIES {
+    for _ in 0..arms {
         for (write, value) in DTR_WRITE.iter().zip(values) {
             send_special(controller, write(*value))?;
         }

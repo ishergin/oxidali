@@ -326,8 +326,13 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   values of the temporary's own type, which change no colour at power-on or failure
   either (§9.2.1, §9.3.1) and differ only in the reported type. The charge is proved
   before the store: the temporary's type and, by Table 11, x and y, Tc, primaries 0 and
-  5, or red, freecolour and `RGBWAF CONTROL` must equal what was charged, or the charge
-  runs again, twice at most, and the write then fails `dt8_level_colour_unconfirmed`.
+  5, or red, freecolour and `RGBWAF CONTROL` must equal what was charged, or the COPY or
+  the MASK stagings run once more, and the write then fails
+  `dt8_level_colour_unconfirmed`. The unit is bounded: after the probe every read is
+  asked once and every staging armed once, so it takes 28 frames for a Tc charge and 42
+  for RGBWAF, at most 47 and 68 with the probe asked three times and the charge
+  repeated, and at most 144 for the rarest, a MASK charge of six primaries; a collision
+  re-runs it whole, as it does any unit.
   Each `SET TEMPORARY` command writes all its values from operands proved before it, so
   one value read back proves that command ran, and a MASK charge is proved command by
   command except the stagings of primaries 1 to 4. What the proof cannot see is a missed

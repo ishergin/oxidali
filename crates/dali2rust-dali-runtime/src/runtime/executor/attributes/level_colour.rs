@@ -2,7 +2,7 @@ use super::*;
 use super::dt8::{armed_colour_value_query, ArmedValue};
 use super::write::verified_store;
 use crate::runtime::executor::helpers::DT8_DEVICE_TYPE;
-use crate::runtime::executor::target_state::stage_dtrs_verified;
+use crate::runtime::executor::target_state::stage_dtrs_within;
 use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::devices::dt8_color::{
     COLOUR_TYPE_BYTE_MASK, COLOUR_TYPE_BYTE_PRIMARY_N, COLOUR_VALUE_REPORT_FREECOLOUR,
@@ -18,8 +18,10 @@ const LEVEL_COLOUR_UNCONFIRMED: &str = "dt8_level_colour_unconfirmed";
 const LEVEL_COLOUR_UNANSWERED: &str = "dt8_level_colour_unanswered";
 const LEVEL_COLOUR_CONTENDED: &str = "dt8_level_colour_contended";
 const DEVICE_TYPES_UNKNOWN: &str = "types_unknown_read_or_override";
-const COLOUR_VALUE_ASKS: u8 = 3;
-const RECHARGE_RETRIES: u8 = 2;
+const PROBE_ASKS: u8 = 3;
+const READ_ASKS: u8 = 1;
+const STAGING_ARMS: u8 = 1;
+const CHARGE_APPLICATIONS: u8 = 2;
 const PRIMARY_N_COUNT: u8 = 6;
 const MASK_WORD: [u8; 2] = [DT8_COLOUR_VALUE_LEVEL_MASK; 2];
 const MASK_TRIO: [u8; 3] = [DT8_COLOUR_VALUE_LEVEL_MASK; 3];
@@ -95,41 +97,58 @@ fn keep_stored_colour(
     address: DaliAddress,
     (stored, types_known): (StoredLevel, bool),
 ) -> Result<(), SemanticDaliError> {
-    let temporary = colour_byte(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE)
+    let temporary = colour_byte(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, PROBE_ASKS)
         .map_err(|error| if types_known { error } else { types_unknown_when_silent(error) })?;
     if temporary == COLOUR_TYPE_BYTE_MASK {
         return Ok(());
     }
-    for _ in 0..=RECHARGE_RETRIES {
-        let charged = recharge(controller, address, stored, temporary)?;
-        if temporary_holds(controller, address, charged)? {
+    let (source, charge) = plan_charge(controller, address, stored, temporary)?;
+    for _ in 0..CHARGE_APPLICATIONS {
+        apply_charge(controller, address, source)?;
+        if temporary_holds(controller, address, charge)? {
             return Ok(());
         }
     }
     Err(unconfirmed())
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ChargeSource {
+    Report,
+    Mask(u8),
+}
+
 // IEC 62386-209 §9.12.7, §11.3.2
-fn recharge(
+fn plan_charge(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     stored: StoredLevel,
     temporary: u8,
-) -> Result<Charge, SemanticDaliError> {
+) -> Result<(ChargeSource, Charge), SemanticDaliError> {
     answer_of(send_standard_response(controller, address, stored.query)?)?;
-    let reported = colour_byte(controller, address, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE)?;
+    let reported = colour_byte(controller, address, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE, READ_ASKS)?;
     if reported == COLOUR_TYPE_BYTE_MASK {
-        charge_mask_colour(controller, address, temporary)?;
         let selectors = proof_selectors(temporary).ok_or_else(unconfirmed)?;
-        return Ok((temporary, selectors.map(|(temporary_value, _)| mask_of(temporary_value))));
+        let masks = selectors.map(|(temporary_value, _)| mask_of(temporary_value));
+        return Ok((ChargeSource::Mask(temporary), (temporary, masks)));
     }
     let selectors = proof_selectors(reported).ok_or_else(unconfirmed)?;
     let mut values = [None; PROOF_VALUES];
     for (slot, (_, report_value)) in values.iter_mut().zip(selectors) {
         *slot = report_value.map(|value| colour_value(controller, address, value)).transpose()?;
     }
-    send_dt8(controller, address, Dt8Command::CopyReportToTemporary)?;
-    Ok((reported, values))
+    Ok((ChargeSource::Report, (reported, values)))
+}
+
+fn apply_charge(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    source: ChargeSource,
+) -> Result<(), SemanticDaliError> {
+    match source {
+        ChargeSource::Report => send_dt8(controller, address, Dt8Command::CopyReportToTemporary),
+        ChargeSource::Mask(colour_type) => charge_mask_colour(controller, address, colour_type),
+    }
 }
 
 fn temporary_holds(
@@ -138,7 +157,7 @@ fn temporary_holds(
     (colour_type, values): Charge,
 ) -> Result<bool, SemanticDaliError> {
     let selectors = proof_selectors(colour_type).ok_or_else(unconfirmed)?;
-    if colour_byte(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE)? != colour_type {
+    if colour_byte(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, READ_ASKS)? != colour_type {
         return Ok(false);
     }
     for ((temporary_value, _), expected) in selectors.into_iter().zip(values) {
@@ -198,7 +217,7 @@ fn colour_value(
     address: DaliAddress,
     value_id: u8,
 ) -> Result<u16, SemanticDaliError> {
-    let high = colour_byte(controller, address, value_id)?;
+    let high = colour_byte(controller, address, value_id, READ_ASKS)?;
     if !colour_value_is_wide(value_id) {
         return Ok(u16::from(high));
     }
@@ -222,9 +241,10 @@ fn colour_byte(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     value_id: u8,
+    asks: u8,
 ) -> Result<u8, SemanticDaliError> {
     let mut worst = Unheard::Silent;
-    for _ in 0..COLOUR_VALUE_ASKS {
+    for _ in 0..asks {
         let unheard = match controller.unit(|c| armed_colour_value_query(c, address, value_id))? {
             ArmedValue::Answered(DaliResponse::Answer(value), false) => return Ok(value),
             ArmedValue::Answered(response, contended) => Unheard::of_answer(response, contended),
@@ -308,7 +328,7 @@ fn stage_and_set(
     address: DaliAddress,
     (command, operands): Staging<'_>,
 ) -> Result<(), SemanticDaliError> {
-    stage_dtrs_verified(controller, address, operands)?;
+    stage_dtrs_within(controller, address, operands, STAGING_ARMS)?;
     send_dt8(controller, address, command)
 }
 
