@@ -575,8 +575,8 @@ def validate_table(table, structs, blocks):
                     where, rust, structs[rust].loc, ts))
             continue
         if rust not in structs:
-            problems.append("%s: dead line, no serialized Rust struct %s under %s or in the structs they reach" % (
-                where, rust, " or ".join(RUST_TREES)))
+            problems.append("%s: dead line, no serialized or deserialized Rust struct %s under %s or %s" % (
+                where, rust, " or ".join(RUST_TREES), RUST_SOURCES))
         elif rust in table.unchecked:
             problems.append("%s: %s is both mapped and unchecked" % (where, rust))
         if ts not in named:
@@ -676,7 +676,7 @@ class Mirror:
                 block.loc, len(supplied)))
         return zip(rust_ref.args, supplied)
 
-    def nested(self, rust_kind, ts_kind, path, argument=False):
+    def nested(self, rust_kind, ts_kind, path):
         rust_ref = rust_type_ref(rust_kind)
         ts_ref = ts_type_ref(ts_kind)
         if rust_ref.base in self.structs:
@@ -684,7 +684,7 @@ class Mirror:
         elif rust_ref.base in self.scalars:
             self.scalar_pair(rust_ref.base, ts_ref.base, path)
         for rust_arg, ts_arg in self.arguments(rust_ref, ts_ref, path):
-            self.nested(rust_arg, ts_arg, path, True)
+            self.nested(rust_arg, ts_arg, path)
 
     def scalar_pair(self, rust, ts, path):
         expected = self.scalars[rust]
