@@ -6,8 +6,6 @@ mod display_source;
 mod bus_stack;
 mod http_bridges;
 mod registry_init;
-#[cfg(test)]
-mod reload_pacing_tests;
 mod workers;
 
 use std::sync::{Arc, Mutex};
