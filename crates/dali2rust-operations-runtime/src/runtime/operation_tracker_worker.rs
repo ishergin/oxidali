@@ -32,7 +32,6 @@ use super::operation_totals::OperationTotals;
 #[derive(Debug, Default)]
 pub struct OperationTrackerCounters {
     pub accepted: AtomicU32,
-    pub running: AtomicU32,
     pub succeeded: AtomicU32,
     pub failed: AtomicU32,
     pub timed_out: AtomicU32,
@@ -511,9 +510,7 @@ fn bump_counter(counters: &OperationTrackerCounters, status: OperationStatus) {
         OperationStatus::Accepted => {
             counters.accepted.fetch_add(1, Ordering::Relaxed);
         }
-        OperationStatus::Running => {
-            counters.running.fetch_add(1, Ordering::Relaxed);
-        }
+        OperationStatus::Running => {}
         OperationStatus::Succeeded => {
             counters.succeeded.fetch_add(1, Ordering::Release);
         }
@@ -997,7 +994,6 @@ fn promote_running(
         ttl_remaining_ms(op.deadline),
         None,
     );
-    bump_counter(out.counters, OperationStatus::Running);
     if let Some(slot) = guard.active.get_mut(&workflow_c) {
         slot.status = OperationStatus::Running;
     }

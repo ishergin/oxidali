@@ -17,4 +17,4 @@ DaliWorkerCounters::memory_bank_chunk_events_published    success total; the fai
 
 MqttCounters::connected  on the surface as `mqtt.connected`, read via is_connected()
 
-OperationTrackerCounters::running  /stats derives the gauge from the transitions instead
+OperationTrackerCounters::accepted  on the surface as /stats operations.running, read via totals()
