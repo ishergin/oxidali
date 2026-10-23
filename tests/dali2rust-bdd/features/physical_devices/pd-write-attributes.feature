@@ -371,3 +371,17 @@ Feature: Physical device write-attributes
     When I POST JSON {} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
     Then the response status should be 400
     And the JSON error should be "empty_patch"
+
+  @id:PD-286
+  Scenario: A level write restores a DT8 gear's stored power-on colour over a charged temporary before it stores
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given a write of level 120 to both levels of short address 0, whose gear holds a charged Tc temporary colour and a stored Tc power-on colour
+    When I POST JSON {"power_on_level":120,"system_failure_level":120} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And physical device 0 eventually exposes write-confirmed common_102 power_on_level 120
+    And physical device 0 eventually exposes write-confirmed common_102 system_failure_level 120
+    And all scripted DALI exchanges should be consumed without errors

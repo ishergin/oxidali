@@ -1,4 +1,5 @@
 use cucumber::{given, then};
+use dali2rust_domain::dali::devices::dt8_color::{COLOUR_TYPE_BYTE_MASK, COLOUR_TYPE_BYTE_TC};
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_test_support::{remains_false_for, wait_until, WORKER_SETTLE};
@@ -11,9 +12,10 @@ use super::attribute_read_scripts::script_dt8_colour_value;
 use super::read_model::{fetch_physical_device_full, wait_for_physical_device, READ_MODEL_TIMEOUT};
 use super::write_scripts::{
     script_dimming_curve_write, script_dimming_curve_write_no_clear, script_fade_time_write,
-    script_fade_time_write_answered, script_fade_time_write_violated, script_max_triple,
-    script_min_triple,
-    script_tc_limit_physical_pair, script_tc_limit_store_frames,
+    script_fade_time_write_answered, script_fade_time_write_violated, script_level_store,
+    script_level_store_keeping_colour, script_max_triple, script_min_triple,
+    script_tc_limit_physical_pair, script_tc_limit_store_frames, POWER_ON_STORE,
+    SYSTEM_FAILURE_STORE,
 };
 use super::{TEST_ADAPTER_ID, TEST_SHORT_ADDRESS};
 
@@ -86,7 +88,7 @@ async fn given_min_max_lowering_script(world: &mut DaliWorld, min: u8, max: u8) 
     script_max_triple(&mock, max, max);
 }
 
-// PD-184 PD-185 PD-186 PD-188 PD-252 POLICY-007 PD-253
+// PD-184 PD-185 PD-186 PD-188 PD-252 POLICY-007 PD-253 PD-286
 #[then(
     regex = r"^physical device (\d+) eventually exposes write-confirmed (common_102|dt6_led) (min_level|max_level|dimming_curve|power_on_level|system_failure_level) (\d+)$"
 )]
@@ -118,6 +120,20 @@ async fn then_pd_write_confirmed_bound(
         Some((expected, "write_confirmed".to_owned())),
         "{field} write-confirmed readback: {json:?}"
     );
+}
+
+// PD-286
+#[given(
+    regex = r"^a write of level (\d+) to both levels of short address 0, whose gear holds a charged Tc temporary colour and a stored Tc power-on colour$"
+)]
+async fn given_level_write_over_a_charged_temporary(world: &mut DaliWorld, level: u8) {
+    const OLD_POWER_ON_LEVEL: u8 = 254;
+    let mock = world.dali_mock().lock().expect("mock lock");
+    mock.clear();
+    let colour_types = (COLOUR_TYPE_BYTE_TC, COLOUR_TYPE_BYTE_TC);
+    script_level_store_keeping_colour(&mock, POWER_ON_STORE, (OLD_POWER_ON_LEVEL, level), colour_types);
+    let consumed = (Some(COLOUR_TYPE_BYTE_MASK), Some(level));
+    script_level_store(&mock, TEST_SHORT_ADDRESS, SYSTEM_FAILURE_STORE, level, consumed);
 }
 
 // PD-030 PD-241

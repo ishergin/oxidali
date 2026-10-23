@@ -1,4 +1,5 @@
 use super::*;
+use super::level_colour::{store_level_keeping_colour, POWER_ON, SYSTEM_FAILURE};
 use crate::runtime::executor::helpers::VERIFY_CONTENDED_MESSAGE;
 use dali2rust_domain::dali::commands::DaliResponse;
 
@@ -180,12 +181,22 @@ pub(super) fn send_dtr0_config_verified<C: DaliApplicationController>(
     command: StandardCommand,
     mut read_back: impl FnMut(&mut C) -> Result<DaliResponse, SemanticDaliError>,
 ) -> Result<ReadBack, SemanticDaliError> {
-    controller.step_boundary();
-    for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        let verified = controller.transaction(|controller| {
+    verified_store(controller, dtr0, |controller: &mut C| {
+        controller.transaction(|controller| {
             send_dtr0_backed_standard(controller, address, dtr0, command)?;
             read_back(controller)
-        })?;
+        })
+    })
+}
+
+pub(super) fn verified_store<C: DaliApplicationController>(
+    controller: &mut C,
+    dtr0: u8,
+    mut attempt: impl FnMut(&mut C) -> Result<DaliResponse, SemanticDaliError>,
+) -> Result<ReadBack, SemanticDaliError> {
+    controller.step_boundary();
+    for _ in 0..=PROGRAM_VERIFY_REPAIRS {
+        let verified = attempt(controller)?;
         if let Some(unconfirmed) = ReadBack::without_value(verified) {
             return Ok(unconfirmed);
         }
@@ -302,24 +313,13 @@ fn write_levels(
     system_failure_level: Option<u8>,
 ) -> Option<SemanticDaliError> {
     if let Some(level) = power_on_level {
-        let verify =
-            |c: &mut _| send_standard_response(c, address, StandardCommand::QueryPowerOnLevel);
-        match send_dtr0_config_verified(controller, address, level, StandardCommand::SetPowerOnLevel, verify)
-        {
+        match store_level_keeping_colour(controller, address, level, POWER_ON) {
             Err(error) => return Some(error),
             Ok(read_back) => tally.confirmed.power_on_level = tally.proved(read_back),
         }
     }
     if let Some(level) = system_failure_level {
-        let verify =
-            |c: &mut _| send_standard_response(c, address, StandardCommand::QuerySystemFailureLevel);
-        match send_dtr0_config_verified(
-            controller,
-            address,
-            level,
-            StandardCommand::SetSystemFailureLevel,
-            verify,
-        ) {
+        match store_level_keeping_colour(controller, address, level, SYSTEM_FAILURE) {
             Err(error) => return Some(error),
             Ok(read_back) => tally.confirmed.system_failure_level = tally.proved(read_back),
         }

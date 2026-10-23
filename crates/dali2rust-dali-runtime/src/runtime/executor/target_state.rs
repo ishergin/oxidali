@@ -372,7 +372,7 @@ const DTR_QUERY: [StandardCommand; 3] = [
     StandardCommand::QueryContentDtr2,
 ];
 
-fn stage_dtrs_verified(
+pub(crate) fn stage_dtrs_verified(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     values: &[u8],

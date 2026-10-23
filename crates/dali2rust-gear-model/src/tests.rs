@@ -1911,6 +1911,71 @@ fn store_dtr_as_scene_captures_the_staged_colour_and_a_scene_query_reports_it() 
     );
 }
 
+fn store_level(fleet: &mut GearFleet, addr: u8, store: StandardCommand, level: u8) {
+    exchange(fleet, special(SpecialCommand::Dtr0(level)), false);
+    config(fleet, standard(addr, store));
+}
+
+const LEVEL_STORES: [(StandardCommand, StandardCommand); 2] = [
+    (StandardCommand::SetPowerOnLevel, StandardCommand::QueryPowerOnLevel),
+    (StandardCommand::SetSystemFailureLevel, StandardCommand::QuerySystemFailureLevel),
+];
+
+// IEC 62386-209 §11.2.2, §11.3.2
+#[test]
+fn a_level_store_captures_the_staged_colour_and_the_level_query_reports_it() {
+    for (store, query) in LEVEL_STORES {
+        let mut fleet = GearFleet::demo_bus();
+        stage_cct_at(&mut fleet, TC_ONLY_GEAR, 210);
+        store_level(&mut fleet, TC_ONLY_GEAR, store, 80);
+        assert_eq!(
+            colour_value(&mut fleet, TC_ONLY_GEAR, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE),
+            TransferOutcome::Answer(0xFF),
+            "Table 6: {store:?} consumes the temporaries"
+        );
+
+        assert_eq!(exchange(&mut fleet, standard(TC_ONLY_GEAR, query), true), TransferOutcome::Answer(80));
+        assert_eq!(
+            colour_value(&mut fleet, TC_ONLY_GEAR, COLOUR_VALUE_REPORT_COLOUR_TYPE),
+            TransferOutcome::Answer(COLOUR_TYPE_BYTE_TC)
+        );
+        assert_eq!(colour_value16(&mut fleet, TC_ONLY_GEAR, COLOUR_VALUE_REPORT_TC), Some(210));
+    }
+}
+
+// IEC 62386-209 §9.2.2, Table 1, §9.3.2, Table 2
+#[test]
+fn a_level_store_over_mask_temporaries_keeps_the_stored_colour() {
+    for (store, query) in LEVEL_STORES {
+        let mut fleet = GearFleet::demo_bus();
+        stage_cct_at(&mut fleet, TC_ONLY_GEAR, 210);
+        store_level(&mut fleet, TC_ONLY_GEAR, store, 80);
+        store_level(&mut fleet, TC_ONLY_GEAR, store, 90);
+
+        assert_eq!(exchange(&mut fleet, standard(TC_ONLY_GEAR, query), true), TransferOutcome::Answer(90));
+        assert_eq!(
+            colour_value16(&mut fleet, TC_ONLY_GEAR, COLOUR_VALUE_REPORT_TC),
+            Some(210),
+            "{store:?} over MASK temporaries changes no stored colour"
+        );
+    }
+}
+
+// IEC 62386-209 Table 8
+#[test]
+fn a_fresh_gear_reports_a_factory_colour_type_with_mask_values_for_its_levels() {
+    for (_, query) in LEVEL_STORES {
+        let mut fleet = GearFleet::demo_bus();
+        exchange(&mut fleet, standard(TC_ONLY_GEAR, query), true);
+        assert_eq!(
+            colour_value(&mut fleet, TC_ONLY_GEAR, COLOUR_VALUE_REPORT_COLOUR_TYPE),
+            TransferOutcome::Answer(COLOUR_TYPE_BYTE_TC),
+            "the stored colour type is never MASK"
+        );
+        assert_eq!(colour_value16(&mut fleet, TC_ONLY_GEAR, COLOUR_VALUE_REPORT_TC), Some(0xFFFF));
+    }
+}
+
 #[test]
 fn a_query_actual_level_between_load_and_read_replaces_the_scene_report() {
     let mut fleet = GearFleet::demo_bus();

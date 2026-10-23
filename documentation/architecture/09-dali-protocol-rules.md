@@ -72,8 +72,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   ([ADR-017](decisions/ADR-017-dali-transactions-and-frame-priority.md)).
   `transaction_exempt` marks an indivisible unit that may exceed §9.2's 400 ms guidance.
   The exempt kinds are closed: DT8 colour staging with the command that consumes it
-  (including a target-state write, a scene programme and a colour-limit store), a
-  scene-colour read, the
+  (including a target-state write, a scene programme, a colour-limit store and a
+  power-on or system-failure level store), a scene-colour read, the
   §11.5.13 device-type walk (from discovery and attribute reads), a memory-bank chunk that
   is one latched value wider than a chunk (DiiA 252 §9.2.2), and 102/103 commissioning
   and discovery sessions. A new exempt call site is one of these kinds, or this list
@@ -303,6 +303,19 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   there (§9.11.3, §11.2.3). Such a row therefore stores once to consume the temporaries,
   removes the scene, then stores its level; none of the three changes the light.
   `ACTIVATE` is never the flush: it applies the stray colour to the lamp.
+- `STORE THE DTR AS POWER ON LEVEL` and `… SYSTEM FAILURE LEVEL` copy the temporary
+  colour into the power-on or system-failure colour, and keep that colour when the
+  temporaries are MASK (209 §11.2.2, Tables 1, 2 and 6). Writing either level therefore
+  reads `TEMPORARY COLOUR TYPE` first: a gear that answers nothing (a gear without DT8
+  ignores the query) or MASK gets `DTR0` and the store as any level does. Otherwise one
+  exempt transaction, the store's unit, has the level query load the stored colour into
+  the REPORT registers (§11.3.2), reads `REPORT COLOUR TYPE`, and charges the stored
+  colour back with `COPY REPORT TO TEMPORARY` before the store, so the gear stores the
+  colour it had. A conformant gear never stores the MASK type (Table 8); a gear that
+  reports it gets MASK values of the temporary's own type, which change no colour at
+  power-on or failure either (§9.2.1, §9.3.1) and differ only in the reported type. A
+  level query that goes unanswered fails the write (`dt8_level_colour_unconfirmed`)
+  before anything is stored.
 - A scene's stored colour is read inside one exempt transaction, from the
   `QUERY SCENE LEVEL` that loads the shared REPORT registers to the last REPORT value:
   any of five commands from any master — `QUERY ACTUAL LEVEL` among them — reloads those

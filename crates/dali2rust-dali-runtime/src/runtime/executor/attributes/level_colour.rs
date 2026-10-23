@@ -1,0 +1,147 @@
+use super::*;
+use super::dt8::dt8_narrow_value_response;
+use super::write::verified_store;
+use crate::runtime::executor::target_state::stage_dtrs_verified;
+use dali2rust_domain::dali::commands::DaliResponse;
+use dali2rust_domain::dali::devices::dt8_color::{
+    COLOUR_TYPE_BYTE_MASK, COLOUR_TYPE_BYTE_PRIMARY_N, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE,
+};
+
+const LEVEL_COLOUR_UNCONFIRMED: &str = "dt8_level_colour_unconfirmed";
+const BUS_CONTENDED: &str = "bus_contended";
+const COLOUR_TYPE_ASKS: u8 = 3;
+const PRIMARY_N_COUNT: u8 = 6;
+const MASK_WORD: [u8; 2] = [DT8_COLOUR_VALUE_LEVEL_MASK; 2];
+const MASK_TRIO: [u8; 3] = [DT8_COLOUR_VALUE_LEVEL_MASK; 3];
+const MASK_BYTE: [u8; 1] = [DT8_COLOUR_VALUE_LEVEL_MASK];
+
+type Staging<'a> = (Dt8Command, &'a [u8]);
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct StoredLevel {
+    store: StandardCommand,
+    query: StandardCommand,
+}
+
+pub(super) const POWER_ON: StoredLevel = StoredLevel {
+    store: StandardCommand::SetPowerOnLevel,
+    query: StandardCommand::QueryPowerOnLevel,
+};
+
+pub(super) const SYSTEM_FAILURE: StoredLevel = StoredLevel {
+    store: StandardCommand::SetSystemFailureLevel,
+    query: StandardCommand::QuerySystemFailureLevel,
+};
+
+const fn unconfirmed() -> SemanticDaliError {
+    SemanticDaliError::OperationFailed(LEVEL_COLOUR_UNCONFIRMED)
+}
+
+// IEC 62386-209 §11.2.2, Table 6
+pub(super) fn store_level_keeping_colour<C: DaliApplicationController>(
+    controller: &mut C,
+    address: DaliAddress,
+    level: u8,
+    stored: StoredLevel,
+) -> Result<ReadBack, SemanticDaliError> {
+    verified_store(controller, level, |controller: &mut C| {
+        controller.transaction_exempt(|controller| {
+            controller.unit(|controller| {
+                keep_stored_colour(controller, address, stored)?;
+                send_dtr0_backed_standard(controller, address, level, stored.store)
+            })?;
+            send_standard_response(controller, address, stored.query)
+        })
+    })
+}
+
+// IEC 62386-209 §9.2.2, Table 1, §9.3.2, Table 2, §9.12.7, §11.3.2
+fn keep_stored_colour(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    stored: StoredLevel,
+) -> Result<(), SemanticDaliError> {
+    let temporary = match colour_type(controller, address, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE)? {
+        None | Some(COLOUR_TYPE_BYTE_MASK) => return Ok(()),
+        Some(temporary) => temporary,
+    };
+    let loaded = send_standard_response(controller, address, stored.query)?;
+    if !matches!(loaded, DaliResponse::Answer(_)) {
+        return Err(unconfirmed());
+    }
+    match colour_type(controller, address, DT8_COLOUR_VALUE_REPORT_COLOUR_TYPE)? {
+        Some(COLOUR_TYPE_BYTE_MASK) => charge_mask_colour(controller, address, temporary),
+        Some(_) => send_dt8(controller, address, Dt8Command::CopyReportToTemporary),
+        None => Err(unconfirmed()),
+    }
+}
+
+// IEC 62386-101 §8.2.5
+fn colour_type(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    value_id: u8,
+) -> Result<Option<u8>, SemanticDaliError> {
+    for _ in 0..COLOUR_TYPE_ASKS {
+        match dt8_narrow_value_response(controller, address, value_id)? {
+            None | Some((DaliResponse::NoAnswer, false)) => return Ok(None),
+            Some((DaliResponse::Answer(value), false)) => return Ok(Some(value)),
+            Some(_) => {}
+        }
+    }
+    Err(SemanticDaliError::OperationFailed(BUS_CONTENDED))
+}
+
+// IEC 62386-209 §9.12.4, §11.3.4.1, Table 8
+fn charge_mask_colour(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    colour_type: u8,
+) -> Result<(), SemanticDaliError> {
+    if colour_type == COLOUR_TYPE_BYTE_PRIMARY_N {
+        return (0..PRIMARY_N_COUNT).try_for_each(|primary| {
+            let operands = [DT8_COLOUR_VALUE_LEVEL_MASK, DT8_COLOUR_VALUE_LEVEL_MASK, primary];
+            stage_and_set(controller, address, (Dt8Command::SetTemporaryPrimaryNDimLevel, &operands))
+        });
+    }
+    mask_stagings(colour_type)
+        .ok_or_else(unconfirmed)?
+        .iter()
+        .try_for_each(|staging| stage_and_set(controller, address, *staging))
+}
+
+fn mask_stagings(colour_type: u8) -> Option<&'static [Staging<'static>]> {
+    match colour_type {
+        DT8_COLOUR_TYPE_XY => Some(&[
+            (Dt8Command::SetTemporaryXCoordinate, &MASK_WORD),
+            (Dt8Command::SetTemporaryYCoordinate, &MASK_WORD),
+        ]),
+        DT8_COLOUR_TYPE_TC => Some(&[(Dt8Command::SetTemporaryColourTemperature, &MASK_WORD)]),
+        DT8_COLOUR_TYPE_RGBWAF => Some(&[
+            (Dt8Command::SetTemporaryRgbDimLevel, &MASK_TRIO),
+            (Dt8Command::SetTemporaryWafDimLevel, &MASK_TRIO),
+            (Dt8Command::SetTemporaryRgbwafControl, &MASK_BYTE),
+        ]),
+        _ => None,
+    }
+}
+
+fn stage_and_set(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    (command, operands): Staging<'_>,
+) -> Result<(), SemanticDaliError> {
+    stage_dtrs_verified(controller, address, operands)?;
+    send_dt8(controller, address, command)
+}
+
+fn send_dt8(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    command: Dt8Command,
+) -> Result<(), SemanticDaliError> {
+    send_extended_command(controller, address, ExtendedCommand::Dt8(command)).map(drop)
+}
+
+#[cfg(test)]
+mod tests;

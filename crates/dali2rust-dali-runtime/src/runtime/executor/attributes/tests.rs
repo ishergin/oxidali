@@ -2,7 +2,8 @@ use super::*;
 use dali2rust_contracts::msg::PowerState;
 use crate::runtime::executor::helpers::VERIFY_CONTENDED_MESSAGE;
 use crate::runtime::executor::test_helpers::shared::{
-    assert_script_consumed, setup_controller, short_address, wire_counters,
+    assert_script_consumed, expect_narrow_colour_value_sample, setup_controller, short_address,
+    wire_counters,
 };
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
@@ -11,6 +12,7 @@ use crate::runtime::executor::attributes::dt8::read_dt8_tc_limits;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::commands::DaliCommand;
 use dali2rust_domain::dali::devices::dt6_led::Dt6Command;
+use dali2rust_domain::dali::devices::dt8_color::COLOUR_VALUE_TEMPORARY_COLOUR_TYPE;
 
 #[test]
 fn extended_fade_time_codec_round_trips_representable_values() {
@@ -249,37 +251,6 @@ fn expect_colour_value_sample(
     );
 }
 
-fn expect_narrow_colour_value_sample(
-    mock: &MockDaliTransport,
-    short: u8,
-    selector: u8,
-    answer: u8,
-) {
-    mock.expect_forward_frame(
-        DaliCommand::Special(SpecialCommand::Dtr0(selector))
-            .to_forward_frame()
-            .raw(),
-    );
-    mock.expect_forward_frame_with_backward(
-        standard_query_frame(short, StandardCommand::QueryContentDtr0),
-        Some(selector),
-    );
-    mock.expect_forward_frame(
-        DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
-            .to_forward_frame()
-            .raw(),
-    );
-    mock.expect_forward_frame_with_backward(
-        DaliCommand::Extended {
-            address: short_address(short),
-            command: ExtendedCommand::Dt8(Dt8Command::QueryColourValue),
-        }
-        .to_forward_frame()
-        .raw(),
-        Some(answer),
-    );
-}
-
 fn expect_rgbwaf_control_read(mock: &MockDaliTransport, short: u8, answer: Option<u8>) {
     mock.expect_forward_frame(
         DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
@@ -373,7 +344,7 @@ fn an_inverted_tc_pair_is_not_a_range() {
 fn a_mask_rgb_dim_level_is_not_a_reading() {
     let mock = MockDaliTransport::new();
     let short = 4;
-    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_RED, 0xFF);
+    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_RED, Some(0xFF));
     let (transport, mut controller) = setup_controller(mock);
     let levels = read_dt8_dim_level_trio(
         &mut controller,
@@ -394,9 +365,9 @@ fn a_mask_rgb_dim_level_is_not_a_reading() {
 fn a_narrow_dim_level_is_read_from_the_answer() {
     let mock = MockDaliTransport::new();
     let short = 4;
-    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_RED, 0);
-    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_GREEN, 254);
-    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_BLUE, 0);
+    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_RED, Some(0));
+    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_GREEN, Some(254));
+    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_BLUE, Some(0));
     let (transport, mut controller) = setup_controller(mock);
     let levels = read_dt8_dim_level_trio(
         &mut controller,
@@ -712,6 +683,7 @@ fn a_silent_read_back_does_not_hold_back_the_fields_that_answered() {
     let mock = MockDaliTransport::new();
     let short = 17;
     expect_fade_time_write(&mock, short, 1, None);
+    expect_narrow_colour_value_sample(&mock, short, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, None);
     expect_bound_triple(&mock, short, StandardCommand::SetPowerOnLevel, StandardCommand::QueryPowerOnLevel, 200, 200);
 
     let (transport, mut controller) = setup_controller(mock);
@@ -903,6 +875,7 @@ fn a_contended_field_outranks_a_silent_one_in_the_named_outcome() {
     let mock = MockDaliTransport::new();
     let short = 17;
     expect_fade_time_write(&mock, short, 1, None);
+    expect_narrow_colour_value_sample(&mock, short, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, None);
     expect_unconfirmed_armed_write(
         &mock,
         short,
@@ -1894,7 +1867,7 @@ fn a_wide_colour_value_reads_both_halves_inside_one_transaction() {
 fn a_narrow_colour_value_is_still_one_transaction_and_one_answer() {
     let mock = MockDaliTransport::new();
     let short = 4;
-    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_RED, 254);
+    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_RED, Some(254));
     let (transport, mut controller) = setup_controller(mock);
     let counters = Arc::new(dali2rust_platform::dali::DaliWireCounters::default());
     controller.set_wire_counters(Arc::clone(&counters));

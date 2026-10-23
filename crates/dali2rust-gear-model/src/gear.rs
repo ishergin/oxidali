@@ -211,6 +211,20 @@ impl ColourSetting {
     }
 }
 
+// IEC 62386-209 Table 8
+fn factory_colour(spec: &GearSpec) -> ColourSetting {
+    let colour_type = if !spec.device_types.contains(&DeviceType::Color.code()) {
+        COLOUR_TYPE_BYTE_MASK
+    } else if spec.xy_capable {
+        COLOUR_TYPE_BYTE_XY
+    } else if spec.tc_capable {
+        COLOUR_TYPE_BYTE_TC
+    } else {
+        COLOUR_TYPE_BYTE_RGBWAF
+    };
+    ColourSetting { colour_type, ..ColourSetting::mask() }
+}
+
 pub(crate) fn colour_type_byte(mode: ColorMode) -> u8 {
     match mode {
         ColorMode::None => COLOUR_TYPE_BYTE_MASK,
@@ -282,6 +296,8 @@ pub struct Gear {
     pub tc_coolest_limit: u16,
     pub tc_warmest_limit: u16,
     pub scene_colours: [ColourSetting; SCENE_COUNT],
+    pub power_on_colour: ColourSetting,
+    pub system_failure_colour: ColourSetting,
     pub report: ColourSetting,
     pub gear_features: u8,
     bank0: [u8; BANK0_LEN],
@@ -402,12 +418,12 @@ impl Gear {
     pub fn new(spec: GearSpec) -> Self {
         Self {
             min_level: spec.phm,
-            tc_coolest_limit: spec.tc_coolest_mirek,
-            tc_warmest_limit: spec.tc_warmest_mirek,
+            tc_coolest_limit: spec.tc_coolest_mirek, tc_warmest_limit: spec.tc_warmest_mirek,
             bank0: build_bank0(&spec),
             bank1: build_bank1(&spec),
             luminaire: build_luminaire(&spec),
             metering: build_metering(&spec),
+            power_on_colour: factory_colour(&spec), system_failure_colour: factory_colour(&spec),
             spec,
             enabled: true,
             level: 0,
@@ -757,8 +773,13 @@ impl Gear {
             .unwrap_or_else(ColourSetting::mask);
     }
 
-    pub(crate) fn load_report_mask(&mut self) {
-        self.report = ColourSetting::mask();
+    // IEC 62386-209 §9.2.3, §9.3.3
+    pub(crate) fn load_report_from_level_colour(&mut self, command: StandardCommand) {
+        match command {
+            StandardCommand::QueryPowerOnLevel => self.report = self.power_on_colour,
+            StandardCommand::QuerySystemFailureLevel => self.report = self.system_failure_colour,
+            _ => {}
+        }
     }
 
     pub(crate) fn copy_report_to_temporary(&mut self) {
@@ -792,8 +813,34 @@ impl Gear {
     }
 
     pub(crate) fn store_scene_colour(&mut self, scene: u8) {
+        let Some(staged) = self.take_staged_colour() else {
+            return;
+        };
+        if let Some(slot) = self.scene_colours.get_mut(usize::from(scene)) {
+            *slot = staged;
+        }
+    }
+
+    // IEC 62386-209 §9.2.2, §11.2.2, Table 1
+    pub(crate) fn store_power_on(&mut self, level: u8) {
+        self.power_on_level = level;
+        if let Some(staged) = self.take_staged_colour() {
+            self.power_on_colour = staged;
+        }
+    }
+
+    // IEC 62386-209 §9.3.2, §11.2.2, Table 2
+    pub(crate) fn store_system_failure(&mut self, level: u8) {
+        self.system_failure_level = level;
+        if let Some(staged) = self.take_staged_colour() {
+            self.system_failure_colour = staged;
+        }
+    }
+
+    // IEC 62386-209 §9.12.4, Table 6
+    fn take_staged_colour(&mut self) -> Option<ColourSetting> {
         let staged = match self.pending_mode {
-            ColorMode::None => return,
+            ColorMode::None => return None,
             ColorMode::Xy => ColourSetting {
                 colour_type: COLOUR_TYPE_BYTE_XY,
                 x: self.pending_x,
@@ -812,11 +859,9 @@ impl Gear {
                 ..ColourSetting::mask()
             },
         };
-        if let Some(slot) = self.scene_colours.get_mut(usize::from(scene)) {
-            *slot = staged;
-            self.pending_mode = ColorMode::None;
-            self.rgbwaf.pending_control = RGBWAF_CONTROL_MASK;
-        }
+        self.pending_mode = ColorMode::None;
+        self.rgbwaf.pending_control = RGBWAF_CONTROL_MASK;
+        Some(staged)
     }
 
     pub fn set_level(&mut self, level: u8) {
@@ -1257,8 +1302,8 @@ fn apply_config_write(gear: &mut Gear, command: StandardCommand, dtr0: u8) {
     match command {
         StandardCommand::SetMaxLevel => gear.set_max_level(dtr0),
         StandardCommand::SetMinLevel => gear.set_min_level(dtr0),
-        StandardCommand::SetPowerOnLevel => gear.power_on_level = dtr0,
-        StandardCommand::SetSystemFailureLevel => gear.system_failure_level = dtr0,
+        StandardCommand::SetPowerOnLevel => gear.store_power_on(dtr0),
+        StandardCommand::SetSystemFailureLevel => gear.store_system_failure(dtr0),
         StandardCommand::SetFadeTime => gear.fade_time = dtr0,
         StandardCommand::SetFadeRate => gear.fade_rate = dtr0,
         StandardCommand::SetExtendedFadeTime => gear.extended_fade_time = dtr0,
@@ -1336,7 +1381,7 @@ pub fn gear_query_reply(gear: &mut Gear, command: StandardCommand) -> TransferOu
             StandardCommand::QueryActualLevel => gear.load_report_from_actual(),
             StandardCommand::QuerySceneLevel { scene } => gear.load_report_from_scene(scene),
             StandardCommand::QueryPowerOnLevel | StandardCommand::QuerySystemFailureLevel => {
-                gear.load_report_mask()
+                gear.load_report_from_level_colour(command)
             }
             _ => {}
         }
