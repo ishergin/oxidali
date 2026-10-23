@@ -707,28 +707,19 @@ pub fn build_http_test_stack(
 
 #[cfg(test)]
 mod tests {
-    use core::sync::atomic::{AtomicU64, Ordering::Relaxed};
-
     use dali2rust_api::confirmation_bridge::PendingConfirmationSlots;
     use dali2rust_bus::BusHost;
     use dali2rust_platform::clock::Clock;
+    use dali2rust_test_support::SettableClock;
 
     use super::*;
 
     const BOOTED_AT_MS: u64 = 1_000;
     const NOW_MS: u64 = 3_250;
 
-    struct SteppedClock(AtomicU64);
-
-    impl Clock for SteppedClock {
-        fn monotonic_ms(&self) -> u64 {
-            self.0.load(Relaxed)
-        }
-    }
-
     #[test]
     fn diagnostics_and_stats_report_one_uptime_read_off_the_one_clock() {
-        let clock = Arc::new(SteppedClock(AtomicU64::new(BOOTED_AT_MS)));
+        let clock = Arc::new(SettableClock::at(BOOTED_AT_MS));
         let (_host, publisher, ()) = BusHost::spawn(BusConfig::default(), |_registry| ());
         let store = Arc::new(RegistryStore::with_adapter_count(1));
         let ports = read_model_ports(ReadModelArgs {
@@ -746,7 +737,7 @@ mod tests {
             firmware_port: None,
         });
 
-        clock.0.store(NOW_MS, Relaxed);
+        clock.set(NOW_MS);
 
         let expected = NOW_MS - BOOTED_AT_MS;
         assert_eq!(ports.diagnostics.diagnostics_dto().uptime_ms, expected);

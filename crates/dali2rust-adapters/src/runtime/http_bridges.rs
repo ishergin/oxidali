@@ -1430,6 +1430,7 @@ mod tests {
     use dali2rust_platform::slice_store::{SliceKey, SliceStore};
     use dali2rust_redundancy_runtime::{PulledSlice, ReplicationSink};
     use dali2rust_registry_runtime::{InputDeviceSummary, RegistryStore, StagedSlice};
+    use dali2rust_test_support::write_slice;
     use dali2rust_contracts::msg::HclTargetScope;
     use dali2rust_rules_model::{GroupRef, LightTarget};
     use crate::dali::transport::mock::MockDaliTransport;
@@ -1521,12 +1522,6 @@ mod tests {
         assert_eq!(got, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }
 
-    fn write_slice(store: &InMemorySliceStore, key: SliceKey, bytes: &[u8]) {
-        let mut session = store.begin_write(key).expect("begin write");
-        session.append(bytes).expect("append");
-        session.commit().expect("commit");
-    }
-
     fn sink_over(slices: Option<Arc<dyn SliceStore>>) -> (ReplicationSinkBridge, Arc<RegistryStore>) {
         let store = Arc::new(RegistryStore::with_adapter_count(ADAPTERS));
         (ReplicationSinkBridge::new(Arc::clone(&store), slices, ADAPTERS), store)
@@ -1602,7 +1597,7 @@ mod tests {
     #[test]
     fn the_replication_digests_are_the_manifest_the_transfer_port_serves() {
         let backing = Arc::new(InMemorySliceStore::new());
-        write_slice(&backing, SliceKey::PollerSettings, &SLICE_BYTES);
+        write_slice(&*backing, SliceKey::PollerSettings, &SLICE_BYTES);
         let slices: Arc<dyn SliceStore> = backing;
         let (sink, store) = sink_over(Some(Arc::clone(&slices)));
         let transfer = ConfigTransferBridge::new(store, Some(slices), ADAPTERS);
