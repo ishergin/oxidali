@@ -806,6 +806,20 @@ impl ReplicationSinkBridge {
             adapter_count,
         }
     }
+
+    fn key(&self, name: &str) -> Option<SliceKey> {
+        dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count)
+    }
+
+    fn accepted_key(&self, name: &str) -> Option<SliceKey> {
+        self.slices.as_ref()?;
+        self.key(name)
+    }
+
+    fn staged(&self, slice: dali2rust_redundancy_runtime::PulledSlice) -> Option<StagedSlice> {
+        let key = self.accepted_key(&slice.name)?;
+        Some(StagedSlice { key, bytes: slice.bytes })
+    }
 }
 
 impl dali2rust_redundancy_runtime::ReplicationSink for ReplicationSinkBridge {
@@ -817,26 +831,21 @@ impl dali2rust_redundancy_runtime::ReplicationSink for ReplicationSinkBridge {
     }
 
     fn accepts(&self, name: &str) -> bool {
-        self.slices.is_some()
-            && dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count).is_some()
+        self.accepted_key(name).is_some()
     }
 
     fn family(&self, name: &str) -> String {
-        dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count)
-            .map_or_else(|| name.to_string(), |key| key.family().label())
+        self.key(name).map_or_else(|| name.to_string(), |key| key.family().label())
     }
 
     fn stage(&self, pulled: Vec<dali2rust_redundancy_runtime::PulledSlice>) -> bool {
-        let staged = pulled
-            .into_iter()
-            .filter_map(|slice| {
-                let key = dali2rust_registry_runtime::slice_key_from_name(&slice.name, self.adapter_count)?;
-                Some(StagedSlice { key, bytes: slice.bytes })
-            })
-            .collect();
-        self.store
-            .stage_import(dali2rust_contracts::CORRELATION_NONE, staged)
-            .is_ok()
+        let staged: Option<Vec<StagedSlice>> =
+            pulled.into_iter().map(|slice| self.staged(slice)).collect();
+        staged.is_some_and(|staged| {
+            self.store
+                .stage_import(dali2rust_contracts::CORRELATION_NONE, staged)
+                .is_ok()
+        })
     }
 
     fn discard_staged(&self) {
@@ -1419,8 +1428,8 @@ mod tests {
     use dali2rust_api::http::handlers::config_transfer::ConfigTransferPort;
     use dali2rust_bsp::slice_store_files::InMemorySliceStore;
     use dali2rust_platform::slice_store::{SliceKey, SliceStore};
-    use dali2rust_redundancy_runtime::ReplicationSink;
-    use dali2rust_registry_runtime::{InputDeviceSummary, RegistryStore};
+    use dali2rust_redundancy_runtime::{PulledSlice, ReplicationSink};
+    use dali2rust_registry_runtime::{InputDeviceSummary, RegistryStore, StagedSlice};
     use dali2rust_contracts::msg::HclTargetScope;
     use dali2rust_rules_model::{GroupRef, LightTarget};
     use crate::dali::transport::mock::MockDaliTransport;
@@ -1439,6 +1448,8 @@ mod tests {
     const KNOWN_SLICE: &str = "poller_settings";
     const OTHER_KNOWN_SLICE: &str = "hcl_schedules";
     const SLICE_BYTES: [u8; 3] = [1, 2, 3];
+    const UNKNOWN_SLICE: &str = "no_such_slice";
+    const OTHER_WORKFLOW: u64 = 77;
 
     fn frame(command: StandardCommand) -> u16 {
         let address = DaliAddress::short(SHORT).expect("short address");
@@ -1519,6 +1530,51 @@ mod tests {
     fn sink_over(slices: Option<Arc<dyn SliceStore>>) -> (ReplicationSinkBridge, Arc<RegistryStore>) {
         let store = Arc::new(RegistryStore::with_adapter_count(ADAPTERS));
         (ReplicationSinkBridge::new(Arc::clone(&store), slices, ADAPTERS), store)
+    }
+
+    fn pulled(name: &str) -> PulledSlice {
+        PulledSlice { name: name.to_string(), bytes: SLICE_BYTES.to_vec() }
+    }
+
+    fn store_is_free_for_a_stage(store: &RegistryStore) -> bool {
+        let probe = StagedSlice { key: SliceKey::PollerSettings, bytes: Vec::new() };
+        let free = store.stage_import(OTHER_WORKFLOW, vec![probe]).is_ok();
+        store.discard_import(OTHER_WORKFLOW);
+        free
+    }
+
+    #[test]
+    fn a_pulled_set_holding_a_name_accepts_would_refuse_stages_nothing() {
+        let slices: Arc<dyn SliceStore> = Arc::new(InMemorySliceStore::new());
+        let (sink, store) = sink_over(Some(slices));
+        assert!(sink.accepts(KNOWN_SLICE));
+        assert!(!sink.accepts(UNKNOWN_SLICE));
+
+        assert!(!sink.stage(vec![pulled(KNOWN_SLICE), pulled(UNKNOWN_SLICE)]));
+
+        assert!(store_is_free_for_a_stage(&store), "the known slice was not staged beside the unknown one");
+    }
+
+    #[test]
+    fn what_accepts_approves_is_staged_and_holds_the_stage_until_discarded() {
+        let slices: Arc<dyn SliceStore> = Arc::new(InMemorySliceStore::new());
+        let (sink, store) = sink_over(Some(slices));
+
+        assert!(sink.stage(vec![pulled(KNOWN_SLICE), pulled(OTHER_KNOWN_SLICE)]));
+        assert!(!store_is_free_for_a_stage(&store));
+        sink.discard_staged();
+        assert!(store_is_free_for_a_stage(&store));
+    }
+
+    #[test]
+    fn a_sink_without_slice_storage_accepts_and_stages_nothing() {
+        let (sink, store) = sink_over(None);
+        assert!(!sink.accepts(KNOWN_SLICE));
+        assert!(sink.local_digests().is_empty());
+
+        assert!(!sink.stage(vec![pulled(KNOWN_SLICE)]));
+
+        assert!(store_is_free_for_a_stage(&store));
     }
 
     #[test]
