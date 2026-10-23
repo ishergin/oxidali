@@ -7,10 +7,6 @@ use dali2rust_domain::dali::dev103::{
 use super::dev103::{send, send_twice, stage_dtr0, verify_readback};
 use crate::runtime::executor::SemanticDaliError;
 
-pub const FEEDBACK_MAP_ABSENT: u8 = 0;
-pub const FEEDBACK_MAP_CORRECTED: u8 = FeedbackOpcodeMap::DiiaCorrected.code();
-pub const FEEDBACK_MAP_ED1: u8 = FeedbackOpcodeMap::Ed1.code();
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FeedbackProbe {
     pub map_code: u8,
@@ -26,10 +22,7 @@ pub fn probe_feedback(
 ) -> Result<FeedbackProbe, SemanticDaliError> {
     let address = Device103Address::Short(short_address);
     let feature = InstanceAddress::FeatureNumber(instance_number);
-    for (map, code) in [
-        (FeedbackOpcodeMap::DiiaCorrected, FEEDBACK_MAP_CORRECTED),
-        (FeedbackOpcodeMap::Ed1, FEEDBACK_MAP_ED1),
-    ] {
+    for map in [FeedbackOpcodeMap::DiiaCorrected, FeedbackOpcodeMap::Ed1] {
         let answer = send(
             controller,
             Feedback332Command::QueryCapability.frame(address, feature, map),
@@ -53,13 +46,13 @@ pub fn probe_feedback(
             _ => None,
         };
         return Ok(FeedbackProbe {
-            map_code: code,
+            map_code: map.code(),
             capability,
             colour_capability,
         });
     }
     Ok(FeedbackProbe {
-        map_code: FEEDBACK_MAP_ABSENT,
+        map_code: FeedbackOpcodeMap::ABSENT_CODE,
         capability: None,
         colour_capability: None,
     })
@@ -221,7 +214,7 @@ mod tests {
             active_colour: 0,
             inactive_brightness: 0,
             inactive_colour: 0,
-            opcode_map: FEEDBACK_MAP_CORRECTED,
+            opcode_map: FeedbackOpcodeMap::DiiaCorrected.code(),
         };
         cmd.patch(field, VALUE);
         cmd

@@ -389,10 +389,13 @@ pub enum FeedbackOpcodeMap {
     Ed1,
 }
 
+const FEEDBACK_MAP_ABSENT_CODE: u8 = 0;
 const FEEDBACK_MAP_DIIA_CORRECTED_CODE: u8 = 1;
 const FEEDBACK_MAP_ED1_CODE: u8 = 2;
 
 impl FeedbackOpcodeMap {
+    pub const ABSENT_CODE: u8 = FEEDBACK_MAP_ABSENT_CODE;
+
     #[must_use]
     pub const fn code(self) -> u8 {
         match self {
@@ -518,7 +521,12 @@ mod tests {
         assert_eq!((DiiaCorrected.code(), Ed1.code()), (1, 2));
         assert_eq!(FeedbackOpcodeMap::from_code(1), Some(DiiaCorrected));
         assert_eq!(FeedbackOpcodeMap::from_code(2), Some(Ed1));
-        assert_eq!(FeedbackOpcodeMap::from_code(0), None, "0 is the probe's own answer: no feedback");
+        assert_eq!(FeedbackOpcodeMap::ABSENT_CODE, 0);
+        assert_eq!(
+            FeedbackOpcodeMap::from_code(FeedbackOpcodeMap::ABSENT_CODE),
+            None,
+            "the probe's own answer: no feedback"
+        );
         assert_eq!(FeedbackOpcodeMap::from_code(3), None);
     }
 
