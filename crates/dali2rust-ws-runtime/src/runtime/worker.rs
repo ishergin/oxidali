@@ -24,7 +24,7 @@ const IDLE_RECV_TIMEOUT: Duration = Duration::from_millis(250);
 
 const MIN_RECV_TIMEOUT: Duration = Duration::from_millis(10);
 
-const NO_CLIENT_PARK: Duration = Duration::from_secs(5);
+pub const NO_CLIENT_PARK: Duration = Duration::from_secs(1);
 
 const SNIFFER_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 

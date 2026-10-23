@@ -252,8 +252,10 @@ filtered: they address one device.
   held before, so a dropped one is announced too. The slices an import wrote count, and so
   do the waiting slices the reload settled. A reload that fails announces nothing.
 - The announcements are paced, because a whole-configuration import names more records
-  than the events ingress holds. The registry worker queues them, one entry per record
-  however often it is queued, and publishes at most `ANNOUNCEMENTS_PER_TURN` — a quarter of
-  the events ingress — after each turn, the idle one included, so a quiet board finishes
-  too. Each announcement reads its record when it goes out; `RegistrySliceReloadedEvent`
-  is not queued.
+  than the events ingress or a parked subscriber's inbox holds. The registry worker queues
+  them, one entry per record however often it is queued, settings and schedules first, and
+  drains them after its turns, the idle one included, at most `ANNOUNCEMENT_PACING` per
+  receive window however many turns fall in it: one `ANNOUNCEMENT_PARK_WINDOW` of
+  announcements fits `ANNOUNCEMENT_INBOX_FLOOR`, the smallest inbox a subscriber of them
+  declares. One the ingress refuses stays queued for the next window. Each announcement
+  reads its record when it goes out; `RegistrySliceReloadedEvent` is not queued.

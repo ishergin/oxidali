@@ -41,6 +41,10 @@ pub const NAMED_EVENT_SUBSCRIBERS: &[&str] = &[
     "replication",
 ];
 
+const WS_FANOUT_INBOX: usize = 128;
+const MQTT_BRIDGE_INBOX: usize = 64;
+const RULES_INBOX: usize = 128;
+
 pub(crate) fn spawn_bus_subscribers(
     config: BusConfig,
     bus_id: BusId,
@@ -53,7 +57,11 @@ pub(crate) fn spawn_bus_subscribers(
             pipeline: pipeline_channels(reg),
             services: service_channels(reg),
             ws_ev: WsInboxPending::from(
-                reg.subscribe_events_named_indexed(128, dali2rust_api::ws::WS_PROJECTED_EVENTS, "ws_fanout"),
+                reg.subscribe_events_named_indexed(
+                    WS_FANOUT_INBOX,
+                    dali2rust_api::ws::WS_PROJECTED_EVENTS,
+                    "ws_fanout",
+                ),
             ),
         });
 
@@ -101,7 +109,7 @@ fn service_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
                 "arb-supervisor",
             )),
             mqtt_ev: Some(reg.subscribe_commands_and_events_named(
-                64,
+                MQTT_BRIDGE_INBOX,
                 dali2rust_mqtt_runtime::MQTT_WORKER_HANDLED_COMMANDS,
                 dali2rust_mqtt_runtime::MQTT_WORKER_HANDLED_EVENTS,
                 "mqtt_bridge",
@@ -123,7 +131,7 @@ fn periodic_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
         poller_ev: reg.subscribe_events_named(64, POLLER_HANDLED_EVENTS, "poller"),
         poller_conf: reg.subscribe_confirmations(32),
         rules_cmd: reg.subscribe_commands_and_events_named(
-            128,
+            RULES_INBOX,
             dali2rust_rules_runtime::RULES_WORKER_HANDLED_COMMANDS,
             dali2rust_rules_runtime::RULES_WORKER_HANDLED_EVENTS,
             "rules",
@@ -143,7 +151,53 @@ fn periodic_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
 
 #[cfg(test)]
 mod tests {
-    use super::{spawn_bus_subscribers, NAMED_EVENT_SUBSCRIBERS};
+    use super::{
+        spawn_bus_subscribers, MQTT_BRIDGE_INBOX, NAMED_EVENT_SUBSCRIBERS, RULES_INBOX,
+        WS_FANOUT_INBOX,
+    };
+    use dali2rust_registry_runtime::{ANNOUNCEMENT_INBOX_FLOOR, ANNOUNCEMENT_PARK_WINDOW};
+
+    const PER_RECORD_ANNOUNCEMENTS: &[&str] = &[
+        "AdapterSettingsChangedEvent",
+        "PhysicalDeviceChangedEvent",
+        "VirtualLampChangedEvent",
+        "GroupChangedEvent",
+        "GroupMatrixChangedEvent",
+        "SceneChangedEvent",
+        "SceneMatrixChangedEvent",
+        "InputDeviceChangedEvent",
+    ];
+
+    fn takes_announcements(handled: &[&str]) -> bool {
+        handled.iter().any(|kind| PER_RECORD_ANNOUNCEMENTS.contains(kind))
+    }
+
+    #[test]
+    fn a_parked_second_of_reload_announcements_fits_every_inbox_that_takes_them() {
+        let takers = [
+            ("ws_fanout", dali2rust_api::ws::WS_PROJECTED_EVENTS, WS_FANOUT_INBOX),
+            ("mqtt_bridge", dali2rust_mqtt_runtime::MQTT_WORKER_HANDLED_EVENTS, MQTT_BRIDGE_INBOX),
+            ("rules", dali2rust_rules_runtime::RULES_WORKER_HANDLED_EVENTS, RULES_INBOX),
+        ];
+        for (name, handled, inbox) in takers {
+            assert!(takes_announcements(handled), "{name} no longer takes reload announcements");
+            let floor = ANNOUNCEMENT_INBOX_FLOOR;
+            assert!(inbox >= floor, "{name}'s inbox of {inbox} is under the floor of {floor}");
+        }
+        let others = [
+            super::DISPLAY_WORKER_HANDLED_EVENTS,
+            super::OPERATION_TRACKER_HANDLED_EVENTS,
+            super::APPLY_ORCHESTRATOR_HANDLED_EVENTS,
+            super::PROJECTOR_HANDLED_EVENTS,
+            super::HCL_SCHEDULER_HANDLED_EVENTS,
+            super::POLLER_HANDLED_EVENTS,
+            dali2rust_redundancy_runtime::SUPERVISOR_HANDLED_EVENTS,
+            dali2rust_redundancy_runtime::ARBITRATION_HANDLED_EVENTS,
+            dali2rust_redundancy_runtime::REPLICATION_HANDLED_EVENTS,
+        ];
+        assert!(!others.iter().any(|handled| takes_announcements(handled)), "a new taker");
+        assert!(dali2rust_ws_runtime::NO_CLIENT_PARK <= ANNOUNCEMENT_PARK_WINDOW);
+    }
     use dali2rust_api::http::diagnostics_state::{
         WORST_COMMAND_SUBSCRIBERS, WORST_CONFIRMATION_SUBSCRIBERS, WORST_EVENT_SUBSCRIBERS,
         WORST_EVENT_SUBSCRIBER_NAME,

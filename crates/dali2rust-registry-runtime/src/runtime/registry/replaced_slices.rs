@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use dali2rust_bus::{BusPublisher, PublishResult};
 use dali2rust_contracts::msg::{FixedText32, APPLICATION_ACTIVE_UNMOVED};
@@ -345,15 +346,39 @@ fn publish_policy_setting(
 #[cfg(test)]
 impl RegistryStore {
     pub(crate) fn announcements_queued(&self) -> usize {
-        self.announcements.queue().len()
+        self.announcements.queue().pending.len()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AnnouncementPacing {
+    pub(crate) per_window: usize,
+    pub(crate) window: Duration,
+}
+
+#[derive(Default)]
+struct AnnouncementQueue {
+    pending: BTreeSet<Announcement>,
+    window_started: Option<Instant>,
+    announced_in_window: usize,
+}
+
+impl AnnouncementQueue {
+    fn budget(&mut self, pacing: AnnouncementPacing) -> usize {
+        let now = Instant::now();
+        if self.window_started.is_none_or(|started| now.duration_since(started) >= pacing.window) {
+            self.window_started = Some(now);
+            self.announced_in_window = 0;
+        }
+        pacing.per_window.saturating_sub(self.announced_in_window)
     }
 }
 
 #[derive(Default)]
-pub(crate) struct PendingAnnouncements(Mutex<BTreeSet<Announcement>>);
+pub(crate) struct PendingAnnouncements(Mutex<AnnouncementQueue>);
 
 impl PendingAnnouncements {
-    fn queue(&self) -> MutexGuard<'_, BTreeSet<Announcement>> {
+    fn queue(&self) -> MutexGuard<'_, AnnouncementQueue> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -361,7 +386,7 @@ impl PendingAnnouncements {
 impl RegistryStore {
     #[inline(never)]
     pub(crate) fn queue_announcements(&self, replaced: ReplacedEntities) {
-        replaced.queue_into(&mut self.announcements.queue());
+        replaced.queue_into(&mut self.announcements.queue().pending);
     }
 
     #[inline(never)]
@@ -369,19 +394,21 @@ impl RegistryStore {
         &self,
         publisher: &BusPublisher,
         target: u16,
-        budget: usize,
+        pacing: AnnouncementPacing,
     ) -> usize {
+        let budget = self.announcements.queue().budget(pacing);
         let mut announced = 0;
         while announced < budget {
-            let Some(next) = self.announcements.queue().pop_first() else {
+            let Some(next) = self.announcements.queue().pending.pop_first() else {
                 break;
             };
             if next.publish(publisher, self, target) == PublishResult::DroppedIngressFull {
-                self.announcements.queue().insert(next);
+                self.announcements.queue().pending.insert(next);
                 break;
             }
             announced += 1;
         }
+        self.announcements.queue().announced_in_window += announced;
         announced
     }
 }
@@ -395,12 +422,10 @@ pub(crate) struct ReloadWatch {
 impl RegistryStore {
     pub(crate) fn watch_reload(&self, written: &[SliceKey], adapter_count: u8) -> ReloadWatch {
         let held = self.dirty.held();
-        let waiting = held
-            .keys(adapter_count)
-            .filter(|key| !matches!(key, SliceKey::PhysicalDevices { .. }));
+        let waiting = waiting_keys(held, adapter_count);
         let inner = self.read_inner();
-        let keys = written.iter().copied().chain(waiting);
-        let before = keys.map(|key| (key, entities_of(&inner, key))).collect();
+        let keys = written.iter().chain(&waiting);
+        let before = keys.map(|key| (*key, entities_of(&inner, *key))).collect();
         ReloadWatch { held, written: written.to_vec(), before }
     }
 
@@ -416,6 +441,12 @@ impl RegistryStore {
         }
         replaced
     }
+}
+
+#[inline(never)]
+fn waiting_keys(held: HeldSlices, adapter_count: u8) -> Vec<SliceKey> {
+    let waiting = held.keys(adapter_count);
+    waiting.filter(|key| !matches!(key, SliceKey::PhysicalDevices { .. })).collect()
 }
 
 fn entities_of(inner: &Inner, key: SliceKey) -> ReplacedEntities {
@@ -434,7 +465,7 @@ mod tests {
     use dali2rust_contracts::msg::{BusEventPayload, EVENT_VARIANT_NAMES};
     use dali2rust_test_support::{hold_the_events_ingress_full, wait_until};
 
-    use super::{ReplacedEntities, POLLER_SETTINGS};
+    use super::{AnnouncementPacing, ReplacedEntities, POLLER_SETTINGS};
     use crate::runtime::registry::RegistryStore;
 
     const INBOX: usize = 128;
@@ -444,6 +475,8 @@ mod tests {
     const WAIT: Duration = Duration::from_secs(2);
     const QUIET: Duration = Duration::from_millis(200);
     const TARGET: u16 = 1;
+    const UNPACED: AnnouncementPacing =
+        AnnouncementPacing { per_window: BUDGET, window: Duration::ZERO };
 
     fn observed() -> (BusHost, BusPublisher, Receiver<BusFrame>) {
         BusHost::spawn(BusConfig::default(), |reg| reg.subscribe_events(INBOX, EVENT_VARIANT_NAMES))
@@ -481,12 +514,12 @@ mod tests {
         let store = RegistryStore::with_adapter_count(1);
         lamps_queued(&store, REFUSED_LAMPS);
         let held = hold_the_events_ingress_full(&publisher);
-        let announced = store.announce_queued(&publisher, TARGET, BUDGET);
+        let announced = store.announce_queued(&publisher, TARGET, UNPACED);
         assert_eq!(announced, 0, "a refusal counted as sent");
         let queued = store.announcements_queued();
         assert_eq!(queued, usize::from(REFUSED_LAMPS), "a refusal left the queue");
         held.release();
-        let announce = || store.announce_queued(&publisher, TARGET, BUDGET);
+        let announce = || store.announce_queued(&publisher, TARGET, UNPACED);
         wait_until(|| announce() == 0 && store.announcements_queued() == 0, WAIT);
         assert_eq!(store.announcements_queued(), 0, "the refused announcements never went out");
         assert_eq!(lamp_ids(&heard_until_quiet(&events)), (0..REFUSED_LAMPS).collect::<Vec<_>>());
@@ -499,7 +532,7 @@ mod tests {
         lamps_queued(&store, QUEUED_LAMPS);
         let poller_settings = ReplacedEntities { records: POLLER_SETTINGS, ..Default::default() };
         store.queue_announcements(poller_settings);
-        store.announce_queued(&publisher, TARGET, BUDGET);
+        store.announce_queued(&publisher, TARGET, UNPACED);
         let first = heard_until_quiet(&events);
         let poller =
             |p: &BusEventPayload| matches!(p, BusEventPayload::PollerSettingsChangedEvent(_));
@@ -514,7 +547,7 @@ mod tests {
         store.queue_announcements(poller());
         store.queue_announcements(poller());
         store.write_inner().poller_settings.interval_ms = LATER_INTERVAL_MS;
-        store.announce_queued(&publisher, TARGET, BUDGET);
+        store.announce_queued(&publisher, TARGET, UNPACED);
         let heard = heard_until_quiet(&events);
         let intervals: Vec<u32> = heard
             .iter()
@@ -536,7 +569,7 @@ mod tests {
         store.queue_announcements(queued);
         let mut turns = Vec::new();
         while turns.iter().sum::<usize>() < usize::from(QUEUED_LAMPS) && turns.len() < 4 {
-            store.announce_queued(&publisher, TARGET, BUDGET);
+            store.announce_queued(&publisher, TARGET, UNPACED);
             turns.push(heard_until_quiet(&events).len());
         }
         assert_eq!(turns, vec![BUDGET, BUDGET, usize::from(QUEUED_LAMPS) - 2 * BUDGET]);

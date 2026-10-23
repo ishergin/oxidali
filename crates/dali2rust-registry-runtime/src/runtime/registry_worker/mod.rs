@@ -26,6 +26,7 @@ use dali2rust_bus::{recv_then_drain, BusFrame, BusId, BusPublisher, BusSubscribe
 use dali2rust_contracts::msg::BusCommandPayload;
 use dali2rust_platform::slice_store::SliceStore;
 
+use crate::runtime::registry::replaced_slices::AnnouncementPacing;
 use crate::runtime::registry::transfer::{ForeignSliceOwner, RegistryOwnedOnly};
 use crate::runtime::registry::RegistryStore;
 use dali2rust_bsp::esp_thread;
@@ -43,9 +44,14 @@ use crate::runtime::registry::config_write_stage::CONFIG_WRITE_STAGE_MAX_AGE_MS;
 use crate::runtime::registry::hcl_schedules::HCL_SCHEDULE_STAGE_MAX_AGE_MS;
 const RECV_TIMEOUT: Duration = Duration::from_millis(250);
 pub const HELD_SLICE_REREAD_INTERVAL: Duration = Duration::from_secs(2);
-const ANNOUNCEMENT_SHARE_OF_EVENTS_INGRESS: usize = 4;
-const ANNOUNCEMENTS_PER_TURN: usize =
-    dali2rust_bus::DEFAULT_EVENTS_INGRESS / ANNOUNCEMENT_SHARE_OF_EVENTS_INGRESS;
+pub const ANNOUNCEMENT_INBOX_FLOOR: usize = 64;
+pub const ANNOUNCEMENT_PARK_WINDOW: Duration = Duration::from_secs(1);
+const ANNOUNCEMENT_SHARE_OF_INBOX: usize = 2;
+const WINDOWS_PER_PARK: u128 = ANNOUNCEMENT_PARK_WINDOW.as_millis() / RECV_TIMEOUT.as_millis();
+const ANNOUNCEMENT_PACING: AnnouncementPacing = AnnouncementPacing {
+    per_window: ANNOUNCEMENT_INBOX_FLOOR / ANNOUNCEMENT_SHARE_OF_INBOX / WINDOWS_PER_PARK as usize,
+    window: RECV_TIMEOUT,
+};
 
 
 fn command_flush_interval(store: &RegistryStore) -> Duration {
@@ -282,7 +288,7 @@ fn evict_and_flush_on_idle(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
 #[inline(never)]
 fn announce_queued(deps: &RegistryWorkerDeps) {
     let target = deps.primary_adapter_id.0;
-    deps.store.announce_queued(&deps.publisher, target, ANNOUNCEMENTS_PER_TURN);
+    deps.store.announce_queued(&deps.publisher, target, ANNOUNCEMENT_PACING);
 }
 
 fn run_registry_worker_loop(
@@ -343,7 +349,8 @@ pub fn spawn_registry_worker(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_frame_and_flush, command_flush_interval, evict_and_flush_on_idle, flush_persistence,
+        announce_queued, apply_frame_and_flush, command_flush_interval, evict_and_flush_on_idle,
+        flush_persistence, ANNOUNCEMENT_PACING,
         FlushClock, RegistryStore, RegistryWorkerCounters, RegistryWorkerDeps, SlicePersistence,
         HCL_SWITCH_WRITE_INTERVAL, HELD_SLICE_REREAD_INTERVAL, PERSISTENCE_DEBOUNCE,
     };
@@ -358,7 +365,7 @@ mod tests {
     };
     use crate::runtime::registry::import_stage::StagedSlice;
     use dali2rust_contracts::msg::BusEventPayload;
-    use dali2rust_test_support::recv_event_matching;
+    use dali2rust_test_support::{recv_event_matching, wait_until};
     use dali2rust_domain::registry::{AdapterReadPort, HclScheduleReadPort};
     use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
     use std::sync::atomic::Ordering;
@@ -776,6 +783,33 @@ mod tests {
     }
 
     const FIRST_ADAPTER: u16 = 0;
+    const QUEUED_LAMPS: u8 = 40;
+    const TURNS_IN_ONE_WINDOW: usize = 5;
+
+    fn lamps_queued(store: &RegistryStore, count: u8) {
+        let mut lamps = store.write_inner();
+        for virtual_lamp_id in 0..count {
+            lamps.lamps.insert((0, virtual_lamp_id), Default::default());
+        }
+        drop(lamps);
+        let watch = store.watch_reload(&[SliceKey::VirtualLamps { adapter_id: 0 }], 1);
+        store.queue_announcements(store.replaced_entities(watch));
+    }
+
+    #[test]
+    fn turns_inside_one_receive_window_share_its_announcement_budget() {
+        let slices = Arc::new(CountingStore::default());
+        let (deps, _host) = worker_on(&slices);
+        lamps_queued(&deps.store, QUEUED_LAMPS);
+        let queued = || deps.store.announcements_queued();
+        assert_eq!(queued(), usize::from(QUEUED_LAMPS));
+        (0..TURNS_IN_ONE_WINDOW).for_each(|_| announce_queued(&deps));
+        let window = ANNOUNCEMENT_PACING.per_window;
+        assert_eq!(queued(), usize::from(QUEUED_LAMPS) - window, "every turn spent a budget");
+        let first_window = usize::from(QUEUED_LAMPS) - window;
+        wait_until(|| { announce_queued(&deps); queued() < first_window }, EVENT_WAIT);
+        assert_eq!(queued(), usize::from(QUEUED_LAMPS) - 2 * window, "the next window spent none");
+    }
 
     fn rename_adapter(name: &str) -> BusFrame {
         let patch_mask = AdapterSettingsUpdateCommand::PATCH_NAME;
