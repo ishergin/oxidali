@@ -16,7 +16,7 @@ crates/dali2rust-fanout-runtime/src/runtime/sniffer_translator_worker.rs     sni
 crates/dali2rust-firmware/src/composition/mod.rs                             census                    boot     heartbeat and census thread, started once from main
 crates/dali2rust-firmware/src/composition/mod.rs                             ip-watch                  boot     IP address watcher, started once from main
 crates/dali2rust-hcl-runtime/src/runtime/scheduler_worker.rs                 hcl-scheduler             boot     HCL scheduler, started with the bus workers
-crates/dali2rust-mqtt-runtime/src/client/mock.rs                             thread::spawn             host     mock client's delayed refusal report; the firmware never builds the mock
+crates/dali2rust-mqtt-runtime/src/client/mock.rs                             thread::spawn             host-linked mock client's delayed refusal report; `pub mod mock` is compiled into the firmware image, but only host tests and the host dev server build the mock
 crates/dali2rust-mqtt-runtime/src/runtime/worker.rs                          mqtt_worker               boot     Home Assistant bridge, started with the bus workers when a client is wired
 crates/dali2rust-operations-runtime/src/runtime/apply_orchestrator_worker.rs apply_orchestrator        boot     apply orchestrator, started with the bus workers
 crates/dali2rust-operations-runtime/src/runtime/operation_tracker_worker.rs  operation_tracker_worker  boot     operation tracker, started with the bus workers
@@ -31,3 +31,6 @@ crates/dali2rust-registry-runtime/src/runtime/registry_worker/mod.rs         reg
 crates/dali2rust-rules-runtime/src/runtime/worker.rs                         rules-worker              boot     rules worker, started with the bus workers
 crates/dali2rust-test-support/src/peer.rs                                    thread::spawn             host     fake peer controller of host tests; the crate is never linked into the firmware
 crates/dali2rust-ws-runtime/src/runtime/worker.rs                            ws_worker                 boot     WebSocket fan-out, spawned last from the bus workers
+tools/dali-gear-sim/src/logsink.rs                                           gear-log                  boot     the emulator's UART log writer; start() runs once from main
+tools/dali-gear-sim/src/main.rs                                              dali-gear                 boot     the emulator's answer loop, started once from main
+tools/dali-gear-sim/src/main.rs                                              gear-console              boot     the emulator's console reader, started once from main
