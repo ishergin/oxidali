@@ -35,9 +35,8 @@ pub(super) fn handle_hcl_schedule_upsert(ctx: &CommandCtx<'_>, body: &HclSchedul
                 ctx.publisher,
                 ctx.corr,
                 ctx.tid,
-                body.schedule_id.clone(),
-                false,
-                body.enabled,
+                &body.schedule_id,
+                Some(body.enabled),
             );
             ctx.counters
                 .hcl_schedule_upserts_applied
@@ -80,8 +79,7 @@ pub(super) fn handle_hcl_schedule_delete(ctx: &CommandCtx<'_>, body: &HclSchedul
         ctx.reject_with(ErrorCode::NotFound, "schedule_not_found");
         return;
     }
-    let schedule_id = body.schedule_id.clone();
-    publish_hcl_schedule_changed(ctx.publisher, ctx.corr, ctx.tid, schedule_id, true, false);
+    publish_hcl_schedule_changed(ctx.publisher, ctx.corr, ctx.tid, &body.schedule_id, None);
     ctx.counters
         .hcl_schedule_deletes_applied
         .fetch_add(1, Ordering::Relaxed);
@@ -96,14 +94,12 @@ pub(super) fn handle_hcl_schedule_enable(ctx: &CommandCtx<'_>, body: &HclSchedul
     let outcome = ctx.store.switch_hcl_schedule(&body.schedule_id, body.enabled);
     if let HclSwitchOutcome::Switched { joined_waiting_write } = outcome {
         count_switch(ctx.counters, joined_waiting_write);
-        let schedule_id = body.schedule_id.clone();
         publish_hcl_schedule_changed(
             ctx.publisher,
             ctx.corr,
             ctx.tid,
-            schedule_id,
-            false,
-            body.enabled,
+            &body.schedule_id,
+            Some(body.enabled),
         );
     }
     confirm_switch(ctx, outcome);

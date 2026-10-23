@@ -3,11 +3,15 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use dali2rust_bus::{publish_or_drop, BusChannel, BusFrame, BusPublisher, PublishResult};
 use dali2rust_contracts::bus::event_envelope;
 use dali2rust_contracts::msg::{
-    fixed_text_64, AdapterSettingsChangedEvent, GroupChangedEvent, GroupMatrixChangedEvent,
-    LightSetpoint, Origin, PhysicalDeviceChangedEvent, RuntimeStateChangedEvent,
+    fixed_text_64, AdapterSettingsChangedEvent, FixedText32, GroupChangedEvent,
+    GroupMatrixChangedEvent, HclScheduleChangedEvent, HomeAssistantSettingsChangedEvent,
+    InputDeviceChangedEvent, LightSetpoint, Origin, PhysicalDeviceChangedEvent,
+    RuntimeStateChangedEvent, SceneChangedEvent, SceneMatrixChangedEvent,
     VirtualLampChangedEvent,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
+
+use super::home_assistant_settings::HomeAssistantSettingsRecord;
 
 pub(crate) fn registry_event_frame<P>(
     correlation_id: u64,
@@ -34,21 +38,25 @@ where
     publish_or_drop(publisher, BusChannel::Events, frame, "registry-events")
 }
 
+pub(crate) fn input_device_changed(adapter_id: u8, short_address: u8) -> InputDeviceChangedEvent {
+    InputDeviceChangedEvent { adapter_id, short_address }
+}
+
 pub(crate) fn publish_input_device_changed(
     publisher: &dali2rust_bus::BusPublisher,
     correlation_id: u64,
     adapter_id: u8,
     short_address: u8,
 ) -> PublishResult {
-    publish_registry_event(
-        publisher,
-        correlation_id,
-        u16::from(adapter_id),
-        dali2rust_contracts::msg::InputDeviceChangedEvent {
-            adapter_id,
-            short_address,
-        },
-    )
+    let payload = input_device_changed(adapter_id, short_address);
+    publish_registry_event(publisher, correlation_id, u16::from(adapter_id), payload)
+}
+
+pub(crate) fn physical_device_changed(
+    adapter_id: u8,
+    short_address: u8,
+) -> PhysicalDeviceChangedEvent {
+    PhysicalDeviceChangedEvent { adapter_id, short_address }
 }
 
 pub(crate) fn publish_physical_device_changed(
@@ -57,15 +65,12 @@ pub(crate) fn publish_physical_device_changed(
     adapter_id: u8,
     short_address: u8,
 ) -> PublishResult {
-    publish_registry_event(
-        publisher,
-        correlation_id,
-        u16::from(adapter_id),
-        PhysicalDeviceChangedEvent {
-            adapter_id,
-            short_address,
-        },
-    )
+    let payload = physical_device_changed(adapter_id, short_address);
+    publish_registry_event(publisher, correlation_id, u16::from(adapter_id), payload)
+}
+
+pub(crate) fn virtual_lamp_changed(adapter_id: u8, virtual_lamp_id: u8) -> VirtualLampChangedEvent {
+    VirtualLampChangedEvent { adapter_id, virtual_lamp_id }
 }
 
 pub(crate) fn publish_virtual_lamp_changed(
@@ -74,15 +79,12 @@ pub(crate) fn publish_virtual_lamp_changed(
     adapter_id: u8,
     virtual_lamp_id: u8,
 ) -> PublishResult {
-    publish_registry_event(
-        publisher,
-        correlation_id,
-        u16::from(adapter_id),
-        VirtualLampChangedEvent {
-            adapter_id,
-            virtual_lamp_id,
-        },
-    )
+    let payload = virtual_lamp_changed(adapter_id, virtual_lamp_id);
+    publish_registry_event(publisher, correlation_id, u16::from(adapter_id), payload)
+}
+
+pub(crate) fn group_changed(adapter_id: u8, group_id: u8) -> GroupChangedEvent {
+    GroupChangedEvent { adapter_id, group_id }
 }
 
 pub(crate) fn publish_group_changed(
@@ -91,15 +93,12 @@ pub(crate) fn publish_group_changed(
     adapter_id: u8,
     group_id: u8,
 ) -> PublishResult {
-    publish_registry_event(
-        publisher,
-        correlation_id,
-        u16::from(adapter_id),
-        GroupChangedEvent {
-            adapter_id,
-            group_id,
-        },
-    )
+    let payload = group_changed(adapter_id, group_id);
+    publish_registry_event(publisher, correlation_id, u16::from(adapter_id), payload)
+}
+
+pub(crate) fn group_matrix_changed(adapter_id: u8) -> GroupMatrixChangedEvent {
+    GroupMatrixChangedEvent { adapter_id }
 }
 
 pub(crate) fn publish_group_matrix_changed(
@@ -107,12 +106,8 @@ pub(crate) fn publish_group_matrix_changed(
     correlation_id: u64,
     adapter_id: u8,
 ) -> PublishResult {
-    publish_registry_event(
-        publisher,
-        correlation_id,
-        u16::from(adapter_id),
-        GroupMatrixChangedEvent { adapter_id },
-    )
+    let payload = group_matrix_changed(adapter_id);
+    publish_registry_event(publisher, correlation_id, u16::from(adapter_id), payload)
 }
 
 pub(crate) fn publish_unbound_lamps(
@@ -169,21 +164,22 @@ pub(crate) fn publish_config_write_signal(
     );
 }
 
+pub(crate) fn scene_changed(adapter_id: u8, scene_id: u8) -> SceneChangedEvent {
+    SceneChangedEvent { adapter_id, scene_id }
+}
+
 pub(crate) fn publish_scene_changed(
     publisher: &BusPublisher,
     correlation_id: u64,
     adapter_id: u8,
     scene_id: u8,
 ) -> PublishResult {
-    publish_registry_event(
-        publisher,
-        correlation_id,
-        u16::from(adapter_id),
-        dali2rust_contracts::msg::SceneChangedEvent {
-            adapter_id,
-            scene_id,
-        },
-    )
+    let payload = scene_changed(adapter_id, scene_id);
+    publish_registry_event(publisher, correlation_id, u16::from(adapter_id), payload)
+}
+
+pub(crate) fn scene_matrix_changed(adapter_id: u8, scene_id: u8) -> SceneMatrixChangedEvent {
+    SceneMatrixChangedEvent { adapter_id, scene_id }
 }
 
 pub(crate) fn publish_scene_matrix_changed(
@@ -192,49 +188,46 @@ pub(crate) fn publish_scene_matrix_changed(
     adapter_id: u8,
     scene_id: u8,
 ) -> PublishResult {
-    publish_registry_event(
-        publisher,
-        correlation_id,
-        u16::from(adapter_id),
-        dali2rust_contracts::msg::SceneMatrixChangedEvent {
-            adapter_id,
-            scene_id,
-        },
-    )
+    let payload = scene_matrix_changed(adapter_id, scene_id);
+    publish_registry_event(publisher, correlation_id, u16::from(adapter_id), payload)
+}
+
+pub(crate) fn hcl_schedule_changed(
+    schedule_id: &FixedText32,
+    enabled: Option<bool>,
+) -> HclScheduleChangedEvent {
+    HclScheduleChangedEvent {
+        schedule_id: schedule_id.clone(),
+        removed: enabled.is_none(),
+        enabled: enabled.unwrap_or(false),
+    }
 }
 
 pub(crate) fn publish_hcl_schedule_changed(
     publisher: &BusPublisher,
     correlation_id: u64,
     target_adapter_id: u16,
-    schedule_id: dali2rust_contracts::msg::FixedText32,
-    removed: bool,
-    enabled: bool,
+    schedule_id: &FixedText32,
+    enabled: Option<bool>,
 ) -> PublishResult {
-    publish_registry_event(
-        publisher,
-        correlation_id,
-        target_adapter_id,
-        dali2rust_contracts::msg::HclScheduleChangedEvent {
-            schedule_id,
-            removed,
-            enabled,
-        },
-    )
+    let payload = hcl_schedule_changed(schedule_id, enabled);
+    publish_registry_event(publisher, correlation_id, target_adapter_id, payload)
+}
+
+pub(crate) fn home_assistant_settings_changed(
+    applied: &HomeAssistantSettingsRecord,
+) -> HomeAssistantSettingsChangedEvent {
+    HomeAssistantSettingsChangedEvent { enabled: applied.enabled }
 }
 
 pub(crate) fn publish_home_assistant_settings_changed(
     publisher: &BusPublisher,
     correlation_id: u64,
     target_adapter_id: u16,
-    enabled: bool,
+    applied: &HomeAssistantSettingsRecord,
 ) -> PublishResult {
-    publish_registry_event(
-        publisher,
-        correlation_id,
-        target_adapter_id,
-        dali2rust_contracts::msg::HomeAssistantSettingsChangedEvent { enabled },
-    )
+    let payload = home_assistant_settings_changed(applied);
+    publish_registry_event(publisher, correlation_id, target_adapter_id, payload)
 }
 
 pub(crate) fn publish_dali_settings_changed(

@@ -3,20 +3,17 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use dali2rust_bus::{BusChannel, BusFrame, BusPublisher, PublishResult};
-use dali2rust_contracts::msg::{
-    BusEventPayload, FixedText32, GroupChangedEvent, GroupMatrixChangedEvent,
-    HclScheduleChangedEvent, HomeAssistantSettingsChangedEvent, InputDeviceChangedEvent,
-    PhysicalDeviceChangedEvent, SceneChangedEvent, SceneMatrixChangedEvent,
-    VirtualLampChangedEvent, APPLICATION_ACTIVE_UNMOVED,
-};
+use dali2rust_contracts::msg::{BusEventPayload, FixedText32, APPLICATION_ACTIVE_UNMOVED};
 use dali2rust_contracts::CORRELATION_NONE;
 use dali2rust_platform::slice_store::SliceKey;
 use log::warn;
 
 use super::physical_device_banks::{bank_bit, short_bit};
 use super::publish::{
-    adapter_settings_frame, dali_settings_changed, policies_changed, poller_settings_changed,
-    redundancy_settings_changed, registry_event_frame,
+    adapter_settings_frame, dali_settings_changed, group_changed, group_matrix_changed,
+    hcl_schedule_changed, home_assistant_settings_changed, input_device_changed, policies_changed,
+    physical_device_changed, poller_settings_changed, redundancy_settings_changed,
+    registry_event_frame, scene_changed, scene_matrix_changed, virtual_lamp_changed,
 };
 use super::store::{Inner, RegistryStore};
 use super::withheld_slices::HeldSlices;
@@ -262,16 +259,14 @@ impl Announcement {
     fn collection_payload(&self) -> Option<(u8, BusEventPayload)> {
         Some(match *self {
             Self::Group { adapter_id, group_id } => {
-                (adapter_id, GroupChangedEvent { adapter_id, group_id }.into())
+                (adapter_id, group_changed(adapter_id, group_id).into())
             }
-            Self::GroupMatrix(adapter_id) => {
-                (adapter_id, GroupMatrixChangedEvent { adapter_id }.into())
-            }
+            Self::GroupMatrix(adapter_id) => (adapter_id, group_matrix_changed(adapter_id).into()),
             Self::Scene { adapter_id, scene_id } => {
-                (adapter_id, SceneChangedEvent { adapter_id, scene_id }.into())
+                (adapter_id, scene_changed(adapter_id, scene_id).into())
             }
             Self::SceneMatrix { adapter_id, scene_id } => {
-                (adapter_id, SceneMatrixChangedEvent { adapter_id, scene_id }.into())
+                (adapter_id, scene_matrix_changed(adapter_id, scene_id).into())
             }
             _ => return None,
         })
@@ -280,13 +275,13 @@ impl Announcement {
     fn device_payload(&self) -> Option<(u8, BusEventPayload)> {
         Some(match *self {
             Self::Device { adapter_id, short_address } => {
-                (adapter_id, PhysicalDeviceChangedEvent { adapter_id, short_address }.into())
+                (adapter_id, physical_device_changed(adapter_id, short_address).into())
             }
             Self::Lamp { adapter_id, virtual_lamp_id } => {
-                (adapter_id, VirtualLampChangedEvent { adapter_id, virtual_lamp_id }.into())
+                (adapter_id, virtual_lamp_changed(adapter_id, virtual_lamp_id).into())
             }
             Self::InputDevice { adapter_id, short_address } => {
-                (adapter_id, InputDeviceChangedEvent { adapter_id, short_address }.into())
+                (adapter_id, input_device_changed(adapter_id, short_address).into())
             }
             _ => return None,
         })
@@ -295,8 +290,7 @@ impl Announcement {
 
 fn schedule_frame(store: &RegistryStore, target: u16, schedule_id: &FixedText32) -> BusFrame {
     let enabled = store.read_inner().hcl_schedules.get(schedule_id).map(|row| row.enabled);
-    let (removed, enabled) = (enabled.is_none(), enabled.unwrap_or(false));
-    let payload = HclScheduleChangedEvent { schedule_id: schedule_id.clone(), removed, enabled };
+    let payload = hcl_schedule_changed(schedule_id, enabled);
     registry_event_frame(CORRELATION_NONE, target, payload)
 }
 
@@ -310,8 +304,7 @@ fn setting_frame(store: &RegistryStore, target: u16, setting: Setting) -> BusFra
         Setting::Redundancy => redundancy_settings_changed(&inner.redundancy_settings).into(),
         Setting::Policies => policies_changed(&inner.policies).into(),
         Setting::HomeAssistant => {
-            let enabled = inner.home_assistant_settings.enabled;
-            HomeAssistantSettingsChangedEvent { enabled }.into()
+            home_assistant_settings_changed(&inner.home_assistant_settings).into()
         }
     };
     drop(inner);
