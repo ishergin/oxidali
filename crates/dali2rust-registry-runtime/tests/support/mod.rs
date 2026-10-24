@@ -90,6 +90,7 @@ pub struct RegistryStackOptions {
     pub slices: Option<Arc<dyn SliceStore>>,
     pub store: Option<Arc<RegistryStore>>,
     pub counters: Option<Arc<RegistryWorkerCounters>>,
+    pub production_subscription: bool,
 }
 
 impl Default for RegistryStackOptions {
@@ -100,7 +101,26 @@ impl Default for RegistryStackOptions {
             slices: None,
             store: None,
             counters: None,
+            production_subscription: false,
         }
+    }
+}
+
+const REGISTRY_INBOX: usize = 64;
+
+fn registry_events(production_subscription: bool) -> &'static [&'static str] {
+    if production_subscription {
+        dali2rust_registry_runtime::REGISTRY_EVENTS_HANDLED_EVENTS
+    } else {
+        dali2rust_contracts::msg::EVENT_VARIANT_NAMES
+    }
+}
+
+fn registry_commands(production_subscription: bool) -> &'static [&'static str] {
+    if production_subscription {
+        dali2rust_registry_runtime::REGISTRY_WORKER_HANDLED_COMMANDS
+    } else {
+        dali2rust_contracts::msg::COMMAND_VARIANT_NAMES
     }
 }
 
@@ -119,12 +139,15 @@ pub fn spawn_registry_stack_with(options: RegistryStackOptions) -> RegistryTestS
         slices,
         store,
         counters,
+        production_subscription,
     } = options;
+    let (commands, events) =
+        (registry_commands(production_subscription), registry_events(production_subscription));
     let (host, publisher, (registry_rx, conf_rx, ev_rx)) = BusHost::spawn(
         BusConfig::default(),
         |reg| {
             (
-                reg.subscribe_commands_and_events(64, dali2rust_contracts::msg::COMMAND_VARIANT_NAMES, dali2rust_contracts::msg::EVENT_VARIANT_NAMES),
+                reg.subscribe_commands_and_events(REGISTRY_INBOX, commands, events),
                 reg.subscribe_confirmations(32),
                 reg.subscribe_events(event_observer_capacity, dali2rust_contracts::msg::EVENT_VARIANT_NAMES),
             )

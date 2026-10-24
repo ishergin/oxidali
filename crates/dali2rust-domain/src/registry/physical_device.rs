@@ -124,6 +124,17 @@ pub fn device_type_fits_declared(declared: Option<DeviceTypeSet>, device_type: D
     }
 }
 
+pub fn known_device_types(
+    declared: Option<DeviceTypeSet>,
+    override_type: Option<DeviceType>,
+) -> Option<DeviceTypeSet> {
+    declared.or_else(|| {
+        override_type
+            .and_then(DeviceType::dali_code)
+            .map(|code| [code].into_iter().collect())
+    })
+}
+
 pub fn colour_mode_fits_declared(declared: Option<DeviceTypeSet>, mode: ColorMode) -> bool {
     !mode.needs_dt8() || device_type_fits_declared(declared, DeviceType::Dt8Color)
 }

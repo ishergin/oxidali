@@ -23,6 +23,7 @@ pub(super) fn handle_write_attributes(
         (w.tc_coolest_mirek, w.tc_warmest_mirek),
         (w.min_level, w.max_level),
         w.dimming_curve,
+        w.known_device_types,
     );
     let recorded = publish_attributes_written(publisher, adapter_id, correlation_id, w, &execution, counters);
     publish_phm_readback(publisher, adapter_id, correlation_id, w, &execution.confirmed, counters);

@@ -284,6 +284,7 @@ declare_bus_payloads! {
         pub chunk_index: u16,
         pub last_chunk: bool,
         pub data: FixedBytes24,
+        pub indicator_unread: bool,
     }
     budget = DaliMemoryBankReadEvent {
         registry_adapter_id: u8::MAX,
@@ -296,6 +297,7 @@ declare_bus_payloads! {
             len: 24,
             data: [u8::MAX; 24],
         },
+        indicator_unread: true,
     };
 
     #[derive(Default)]

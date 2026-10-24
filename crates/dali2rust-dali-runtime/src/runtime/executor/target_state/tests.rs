@@ -88,6 +88,50 @@ fn staging_that_never_confirms_never_sends_the_dt8_command() {
     assert_script_consumed(&transport);
 }
 
+#[derive(Clone, Copy, Debug)]
+enum StagingReadback {
+    Silent,
+    Violated,
+    Wrong,
+}
+
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §3.13
+#[test]
+fn staging_that_never_proves_names_silence_a_violation_and_a_wrong_echo_apart() {
+    const FOREIGN_DTR0: u8 = 99;
+    let cases = [
+        (StagingReadback::Silent, "dt8_staging_unanswered"),
+        (StagingReadback::Violated, "dt8_staging_contended"),
+        (StagingReadback::Wrong, "dt8_staging_unconfirmed"),
+    ];
+    for (readback, outcome) in cases {
+        let mock = MockDaliTransport::new();
+        let short = 17;
+        let dtr0_query = DaliCommand::Standard {
+            address: short_address(short),
+            command: StandardCommand::QueryContentDtr0,
+        }
+        .to_forward_frame()
+        .raw();
+        for _ in 0..=DT8_STAGE_ARM_RETRIES {
+            expect_staged_dtrs_unproved(&mock, &[250, 0]);
+            match readback {
+                StagingReadback::Silent => mock.expect_forward_frame_with_backward(dtr0_query, None),
+                StagingReadback::Violated => mock.expect_forward_frame_corrupted_in_window(dtr0_query),
+                StagingReadback::Wrong => mock.expect_forward_frame_with_backward(dtr0_query, Some(FOREIGN_DTR0)),
+            }
+        }
+
+        let (transport, mut controller) = setup_controller(mock);
+        let error = apply_dt8_cct(&mut controller, short_address(short), 4000)
+            .expect_err("unproved staging must not reach the gear");
+
+        assert_eq!(error, SemanticDaliError::OperationFailed(outcome), "{readback:?}");
+        assert_script_consumed(&transport);
+    }
+}
+
 #[test]
 fn target_state_level_sends_direct_arc_power() {
     let mock = MockDaliTransport::new();

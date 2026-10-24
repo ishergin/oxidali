@@ -280,7 +280,7 @@ fn physical_device_override_success_and_missing_record() {
         dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, bad_corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::PhysicalDeviceOverrideCommand { adapter_id: 0, short_address: 63, patch_mask: PdPatch::PATCH_NAME, name: dali2rust_contracts::msg::fixed_text_64("X"), clear_device_type_override: false, device_type_override: DeviceType::Unknown, clear_color_mode_override: false, color_mode_override: ColorMode::Unknown , dt8_auto_activation_repair: true, dt8_rgbwaf_control_assert: true}),
     );
     let c = recv_confirm_for(&conf_rx, bad_corr);
-    assert_exec_failed_msg(&c, "physical_device_override_not_applied");
+    assert_exec_failed_msg(&c, "device_override_not_applied");
     assert_eq!(c.confirmation.error.as_ref().unwrap().code, ErrorCode::InvalidValue);
 }
 
@@ -316,7 +316,7 @@ fn registry_runtime_update_not_applied_for_unknown_physical_short() {
         { let __corr = corr; dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, __corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, dali2rust_contracts::msg::RuntimeRegistryUpdateEntry::api_short_physical(99, &sp, 9_000))) },
     );
     let c = recv_confirm_for(&conf_rx, corr);
-    assert_exec_failed_msg(&c, "registry_runtime_not_applied");
+    assert_exec_failed_msg(&c, "runtime_not_applied");
 }
 
 #[test]
@@ -598,7 +598,7 @@ fn registry_runtime_vl_only_rejected_when_unbound() {
 }
 
 #[test]
-fn registry_runtime_missing_setpoint_and_missing_observation() {
+fn runtime_missing_setpoint_and_missing_observation() {
     let (publisher, conf_rx, _store, _counters, _host) = spawn_cmd_stack(1);
     let mut entry = RuntimeRegistryUpdateEntry {
         virtual_lamp_id: Some(1),
@@ -616,7 +616,7 @@ fn registry_runtime_missing_setpoint_and_missing_observation() {
         { let __corr = c1; dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, __corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, entry.clone())) },
     );
     let r1 = recv_confirm_for(&conf_rx, c1);
-    assert_exec_failed_msg(&r1, "registry_runtime_missing_setpoint");
+    assert_exec_failed_msg(&r1, "runtime_missing_setpoint");
 
     entry.setpoint = Some(LightSetpoint {
         power: PowerState::On,
@@ -630,7 +630,7 @@ fn registry_runtime_missing_setpoint_and_missing_observation() {
         { let __corr = c2; dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, __corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, entry)) },
     );
     let r2 = recv_confirm_for(&conf_rx, c2);
-    assert_exec_failed_msg(&r2, "registry_runtime_missing_observation");
+    assert_exec_failed_msg(&r2, "runtime_missing_observation");
 }
 
 #[test]
@@ -723,7 +723,7 @@ fn registry_runtime_combined_vl_and_short_single_commit_and_event() {
 }
 
 #[test]
-fn registry_runtime_binding_mismatch_fails() {
+fn runtime_binding_mismatch_fails() {
     let (publisher, conf_rx, store, _counters, _host) = spawn_cmd_stack(1);
     seed_physical(&publisher, &store, 10);
     seed_physical(&publisher, &store, 11);
@@ -757,7 +757,7 @@ fn registry_runtime_binding_mismatch_fails() {
         { let __corr = corr; dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, __corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, entry)) },
     );
     let c = recv_confirm_for(&conf_rx, corr);
-    assert_exec_failed_msg(&c, "registry_runtime_binding_mismatch");
+    assert_exec_failed_msg(&c, "runtime_binding_mismatch");
     assert_eq!(
         c.confirmation.error.as_ref().expect("err").code,
         ErrorCode::Conflict
@@ -877,7 +877,7 @@ fn registry_runtime_missing_virtual_lamp_and_short_fails() {
         { let __corr = corr; dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, __corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, entry)) },
     );
     let c = recv_confirm_for(&conf_rx, corr);
-    assert_exec_failed_msg(&c, "registry_runtime_missing_target");
+    assert_exec_failed_msg(&c, "runtime_missing_target");
 }
 
 #[test]

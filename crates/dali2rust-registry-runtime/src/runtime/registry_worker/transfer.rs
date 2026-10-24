@@ -8,11 +8,12 @@ use dali2rust_contracts::CORRELATION_NONE;
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, StoreError};
 
 use crate::runtime::registry::publish::publish_config_write_signal;
+use crate::runtime::registry::replaced_slices::ReplacedEntities;
 use crate::runtime::registry::transfer::ImportWriteFailure;
 use crate::runtime::registry::{HydrateCounts, RegistryStore};
 
 use super::command_ctx::{CommandCtx, ReloadPorts};
-use super::{RegistryCommandCounters, SlicePersistence};
+use super::{RegistryCommandCounters, RegistryWorkerDeps, SlicePersistence};
 
 pub(super) fn handle_slice_reload(
     ctx: &CommandCtx<'_>,
@@ -24,17 +25,11 @@ pub(super) fn handle_slice_reload(
     }
     let imported = import_then_reload(reload.store, reload.persistence, ctx.adapter_count, ctx.corr);
     if let Some(counts) = imported.counts {
-        log::info!(
-            "registry: reload after import of {} — {} loaded, {} defaulted, {} errors",
-            body.slice_name.as_str(),
-            counts.loaded,
-            counts.defaulted,
-            counts.errors
-        );
-        count_reload(ctx.counters);
+        note_reloaded(ctx, body, counts);
     }
     if imported.written {
-        announce_reload(ctx.publisher, ctx.primary_adapter_id, body);
+        ctx.store.queue_announcements(imported.replaced);
+        announce_reload(ctx.publisher, ctx.primary_adapter_id, body.slice_name.as_str());
     }
     if let Some((_, why)) = imported.failure {
         log::warn!("registry: import of {} failed: {why}", body.slice_name.as_str());
@@ -48,6 +43,17 @@ pub(super) fn handle_slice_reload(
             ctx.counters,
         );
     }
+}
+
+fn note_reloaded(ctx: &CommandCtx<'_>, body: &RegistrySliceReloadCommand, counts: HydrateCounts) {
+    log::info!(
+        "registry: reload after import of {} — {} loaded, {} defaulted, {} errors",
+        body.slice_name.as_str(),
+        counts.loaded,
+        counts.defaulted,
+        counts.errors
+    );
+    count_reload(ctx.counters);
 }
 
 type ImportFailure = (ErrorCode, &'static str);
@@ -65,11 +71,12 @@ struct Imported {
     written: bool,
     counts: Option<HydrateCounts>,
     failure: Option<ImportFailure>,
+    replaced: ReplacedEntities,
 }
 
 impl Imported {
-    const fn refused(failure: ImportFailure) -> Self {
-        Self { written: false, counts: None, failure: Some(failure) }
+    fn refused(failure: ImportFailure) -> Self {
+        Self { written: false, counts: None, failure: Some(failure), replaced: Default::default() }
     }
 }
 
@@ -91,15 +98,25 @@ fn import_then_reload(
         Ok(written) => written,
         Err(failure) => return Imported::refused(failure),
     };
+    reload_written(store, persistence, written, adapter_count)
+}
+
+fn reload_written(
+    store: &Arc<RegistryStore>,
+    persistence: &SlicePersistence,
+    written: Written,
+    adapter_count: u8,
+) -> Imported {
+    let watch = store.watch_reload(&written.keys, adapter_count);
     let reloaded = reload_on_hydration_stack(store, persistence.slices.as_ref(), adapter_count);
     written.keys.iter().for_each(|key| persistence.foreign.imported(*key));
-    match reloaded {
-        Ok(counts) => Imported { written: true, counts: Some(counts), failure: written.failure },
-        Err(_) => {
-            store.withhold_until_read(&written.keys, adapter_count);
-            Imported { written: true, counts: None, failure: Some(NOT_RELOADED) }
-        }
-    }
+    let Ok(counts) = reloaded else {
+        store.withhold_until_read(&written.keys, adapter_count);
+        let failure = Some(NOT_RELOADED);
+        return Imported { written: true, counts: None, failure, replaced: Default::default() };
+    };
+    let replaced = store.replaced_entities(watch);
+    Imported { written: true, counts: Some(counts), failure: written.failure, replaced }
 }
 
 fn validate_and_write(
@@ -109,8 +126,8 @@ fn validate_and_write(
 ) -> Result<Written, ImportFailure> {
     let staged = store.take_import(corr).ok_or(NO_STAGE)?;
     let (validating, foreign) = (Arc::clone(store), Arc::clone(&persistence.foreign));
-    let (staged, refused) =
-        on_hydration_stack("validate", move || validating.keep_decodable(staged, foreign.as_ref()))?;
+    let validate = move || validating.keep_decodable(staged, foreign.as_ref());
+    let (staged, refused) = import_on_hydration_stack("validate", validate)?;
     if staged.is_empty() {
         return Err(INVALID_SLICE);
     }
@@ -140,18 +157,14 @@ fn count_reload(counters: &RegistryCommandCounters) {
     counters.home_assistant_settings_applied.fetch_add(1, Ordering::Relaxed);
 }
 
-fn announce_reload(
-    publisher: &BusPublisher,
-    primary_adapter_id: BusId,
-    body: &RegistrySliceReloadCommand,
-) {
+fn announce_reload(publisher: &BusPublisher, primary_adapter_id: BusId, slice_name: &str) {
     let ev = dali2rust_contracts::bus::event_envelope(
         dali2rust_contracts::SOURCE_ID_UNSPECIFIED,
         dali2rust_contracts::CORRELATION_NONE,
         primary_adapter_id.0,
         Some(dali2rust_contracts::msg::Origin::Registry),
         dali2rust_contracts::msg::RegistrySliceReloadedEvent {
-            slice_name: dali2rust_contracts::msg::fixed_text_32(body.slice_name.as_str()),
+            slice_name: dali2rust_contracts::msg::fixed_text_32(slice_name),
         },
     );
     dali2rust_bus::publish_required(
@@ -162,6 +175,48 @@ fn announce_reload(
         dali2rust_bus::REQUIRED_PUBLISH_UNCAPPED,
         "registry-slice-reloaded",
     );
+}
+
+const HELD_SLICES_READ_AGAIN: &str = "held_slices";
+
+pub(super) fn reread_held_slices(deps: &RegistryWorkerDeps) -> Reread {
+    let Some(persistence) = deps.persistence.as_ref() else {
+        return Reread::NothingHeld;
+    };
+    let (slices, adapter_count) = (persistence.slices.as_ref(), deps.adapter_count);
+    let Some((held, snapshot)) = deps.store.held_snapshot(slices, adapter_count) else {
+        return Reread::NothingHeld;
+    };
+    let waiting = deps.store.unread_slices(adapter_count);
+    let watch = deps.store.watch_reload(&[], adapter_count);
+    let rereading = Arc::clone(&deps.store);
+    let reread = move || rereading.reread_held_from_store(&snapshot, adapter_count, held);
+    match on_hydration_stack("re-read", reread) {
+        Ok(counts) => announce_settled(deps, counts, waiting, deps.store.replaced_entities(watch)),
+        Err(e) => return Reread::Unrun(e),
+    }
+    Reread::Ran
+}
+
+fn announce_settled(
+    deps: &RegistryWorkerDeps,
+    counts: HydrateCounts,
+    waiting: u32,
+    replaced: ReplacedEntities,
+) {
+    let still = deps.store.unread_slices(deps.adapter_count);
+    if still >= waiting {
+        return;
+    }
+    deps.store.queue_announcements(replaced);
+    log::info!(
+        "registry: held slices read again — {} loaded, {} defaulted, {still} of {waiting} \
+         still unread",
+        counts.loaded,
+        counts.defaulted
+    );
+    count_reload(&deps.counters.command);
+    announce_reload(&deps.publisher, deps.primary_adapter_id, HELD_SLICES_READ_AGAIN);
 }
 
 static RELOAD_STACK: dali2rust_bsp::stack_probe::StackLowWater =
@@ -178,7 +233,8 @@ fn reload_on_hydration_stack(
     let snapshot = dali2rust_platform::slice_store::InMemorySlices::snapshot(slices, adapter_count);
     log::info!("registry: reload snapshot holds {} B", snapshot.bytes());
     let hydrating = Arc::clone(store);
-    on_hydration_stack("hydrate", move || hydrating.hydrate_counts_from_store(&snapshot, adapter_count))
+    let hydrate = move || hydrating.hydrate_counts_from_store(&snapshot, adapter_count);
+    import_on_hydration_stack("hydrate", hydrate)
 }
 
 static HYDRATION: StackRunner = StackRunner::new(
@@ -190,25 +246,65 @@ static HYDRATION: StackRunner = StackRunner::new(
 fn on_hydration_stack<T: Send + 'static>(
     note: &'static str,
     run: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, RunError> {
+    HYDRATION.run(move || {
+        let value = run();
+        RELOAD_STACK.note(note);
+        value
+    })
+}
+
+fn import_on_hydration_stack<T: Send + 'static>(
+    note: &'static str,
+    run: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ImportFailure> {
-    HYDRATION
-        .run(move || {
-            let value = run();
-            RELOAD_STACK.note(note);
-            value
-        })
-        .map_err(|e| {
-            log::error!("registry: import {note} failed: {e}");
-            match e {
-                RunError::Busy | RunError::Unstarted(_) => NO_RELOAD_STACK,
-                RunError::Unanswered => RELOAD_JOB_LOST,
-            }
-        })
+    on_hydration_stack(note, run).map_err(|e| {
+        log::error!("registry: import {note} failed: {e}");
+        match e {
+            RunError::Busy | RunError::Unstarted(_) => NO_RELOAD_STACK,
+            RunError::Unanswered => RELOAD_JOB_LOST,
+        }
+    })
+}
+
+pub(super) enum Reread {
+    NothingHeld,
+    Ran,
+    Unrun(RunError),
+}
+
+#[derive(Default)]
+pub(super) struct RereadFailures {
+    reported: bool,
+}
+
+impl RereadFailures {
+    pub(super) fn first<'a>(&mut self, outcome: &'a Reread) -> Option<&'a RunError> {
+        let Reread::Unrun(e) = outcome else {
+            self.reported = false;
+            return None;
+        };
+        (!std::mem::replace(&mut self.reported, true)).then_some(e)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::on_hydration_stack;
+    use dali2rust_bsp::stack_runner::RunError;
+
+    use super::{on_hydration_stack, Reread, RereadFailures};
+
+    #[test]
+    fn a_reload_stack_that_cannot_run_is_reported_once_until_a_re_read_runs() {
+        let mut failures = RereadFailures::default();
+        let unrun = || Reread::Unrun(RunError::Busy);
+        assert!(failures.first(&unrun()).is_some(), "the first failure was not reported");
+        assert!(failures.first(&unrun()).is_none(), "a repeated failure was reported again");
+        assert!(failures.first(&Reread::Ran).is_none());
+        assert!(failures.first(&unrun()).is_some(), "a failure after a run was not reported");
+        assert!(failures.first(&Reread::NothingHeld).is_none());
+        assert!(failures.first(&unrun()).is_some(), "a new held episode was not reported");
+    }
 
     #[test]
     fn the_import_jobs_run_on_one_long_lived_thread_beside_the_registry_worker() {

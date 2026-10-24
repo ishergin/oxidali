@@ -12,7 +12,8 @@ pub use runtime::registry::{
     HydrateCounts,
     PersistenceHydrateReport,
     PersistableDaliSettingsSlice, PersistableHomeAssistantSettingsSlice,
-    PersistablePollerSettingsSlice, PersistableRedundancySettingsSlice, RegistryStore,
+    PersistablePollerSettingsSlice, PersistableRedundancySettingsSlice, PersistableSceneSlice,
+    RegistryStore,
     ADAPTERS_SLICE_VERSION,
     DALI_SETTINGS_SLICE_VERSION, GROUPS_SLICE_VERSION, HCL_SCHEDULES_SLICE_VERSION,
     HOME_ASSISTANT_SETTINGS_SLICE_VERSION, PHYSICAL_DEVICES_SLICE_VERSION,
@@ -32,7 +33,11 @@ pub use runtime::registry::physical_devices::DISCOVERY_EVICT_MISS_THRESHOLD;
 pub use runtime::registry_apply_watch::RegistryApplyWatch;
 pub use runtime::registry_events_worker::REGISTRY_EVENTS_HANDLED_EVENTS;
 pub use runtime::registry::publish::REGISTRY_REQUIRED_EVENTS;
+pub use runtime::registry::replaced_slices::{AnnouncedEvent, ANNOUNCED_EVENTS};
 pub use runtime::registry_worker::{
     spawn_registry_worker, RegistryCommandCounters, RegistryEventsCounters,
-    RegistryWorkerCounters, SlicePersistence, REGISTRY_WORKER_HANDLED_COMMANDS,
+    RegistryWorkerCounters, SlicePersistence, ANNOUNCEMENTS_PER_PARK, ANNOUNCEMENT_INBOX_FLOOR,
+    ANNOUNCEMENT_PARK_WINDOW, ANNOUNCEMENT_SHARE_OF_INBOX,
+    HELD_SLICE_REREAD_INTERVAL,
+    REGISTRY_WORKER_HANDLED_COMMANDS,
 };

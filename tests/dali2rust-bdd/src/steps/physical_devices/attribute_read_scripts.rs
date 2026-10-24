@@ -14,6 +14,7 @@ use super::memory_bank_scripts::{
     script_memory_bank_read, script_memory_bank_short_read, BANK0_BYTES, BANK1_BYTES,
     SHORT_BANK0_BYTES,
 };
+use super::write_scripts::script_narrow_colour_value;
 use super::TEST_SHORT_ADDRESS;
 
 #[derive(Clone, Copy)]
@@ -186,16 +187,7 @@ fn script_dt8_narrow_colour_value(mock: &MockDaliTransport, value_id: u8, answer
 }
 
 fn script_dt8_colour_value_unanswered(mock: &MockDaliTransport, value_id: u8) {
-    mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(value_id)));
-    mock.expect_forward_frame_with_backward(
-        standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryContentDtr0),
-        Some(value_id),
-    );
-    mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
-    mock.expect_forward_frame_with_backward(
-        extended_frame(TEST_SHORT_ADDRESS, ExtendedCommand::Dt8(Dt8Command::QueryColourValue)),
-        None,
-    );
+    script_narrow_colour_value(mock, TEST_SHORT_ADDRESS, value_id, None);
 }
 
 pub(super) fn script_attribute_read_no_probe(mock: &MockDaliTransport) {

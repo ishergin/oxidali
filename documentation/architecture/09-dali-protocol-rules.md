@@ -72,8 +72,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   ([ADR-017](decisions/ADR-017-dali-transactions-and-frame-priority.md)).
   `transaction_exempt` marks an indivisible unit that may exceed §9.2's 400 ms guidance.
   The exempt kinds are closed: DT8 colour staging with the command that consumes it
-  (including a target-state write, a scene programme and a colour-limit store), a
-  scene-colour read, the
+  (including a target-state write, a scene programme, a colour-limit store and a
+  power-on or system-failure level store), a scene-colour read, the
   §11.5.13 device-type walk (from discovery and attribute reads), a memory-bank chunk that
   is one latched value wider than a chunk (DiiA 252 §9.2.2), and 102/103 commissioning
   and discovery sessions. A new exempt call site is one of these kinds, or this list
@@ -181,7 +181,10 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   extended fade, the dimming curve) confirms nothing when that read-back or its operand
   proof went unanswered or held a violation: the fields that answered still land, and the
   operation fails `verify_unanswered`, or `verify_contended` when any of them held a
-  violation. A Tc-limit store fails `dt8_tc_limit_unconfirmed` instead.
+  violation. A Tc-limit store fails `dt8_tc_limit_unconfirmed` instead. A DT8 colour
+  staging whose `DTR` echo never proves fails `dt8_staging_unconfirmed` when a register
+  answered another value, else `dt8_staging_contended` when an echo held a violation,
+  else `dt8_staging_unanswered`.
 - A multi-byte memory-bank value is read inside one latch (DiiA 252/253): chunks are
   field-aligned, a re-arm restarts the value, and a value no latch covers fails
   (`memory_bank_latch_lost`) rather than being stitched. MASK and TMASK are per width,
@@ -199,11 +202,20 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   `memory_bank_pointer_unconfirmed` when it went unanswered, `bus_contended` when it was
   violated. The read closes by checking both registers the same way (102 §9.10.4).
 - A silent READ at offset 0x01 reads as a placeholder and ends its chunk: the next
-  chunk's proof shows whether the READ reached the gear. Only a pointer one READ behind,
-  the bank held and `DTR0` still at 0x01, has 0x01 read again; any other failed proof
-  follows the rule above, and a read that ends at 0x01 is judged by its closing check.
-  These re-arms and the ones after an arm share two per read. Any other READ that
-  answers nothing, answers with a violation,
+  chunk's proof shows whether the READ reached the gear. A pointer one READ behind, the
+  bank held and `DTR0` still at 0x01, means the READ was lost or the gear does not advance
+  `DTR0` on a location it lacks, against 102 §9.10.4. In bank 0, whose 0x01 is reserved
+  (Table 9), neither leaves anything to read: the placeholder stays and the pointer is
+  armed at 0x02. In any other bank 0x01 is the indicator byte and may be implemented
+  (Tables 8 and 10), so a NO there is no value: it is left unread when the pointer has
+  passed it, read again after a lag, and left unread when the pointer lags a second
+  time or the read has no re-arm left, the pointer then armed at 0x02. An unread 0x01
+  is a gap in the bank's read ranges and its `total_bytes_read`, never a value. Any
+  other failed proof follows the rule above, and a read that ends at 0x01 is judged by
+  its closing check.
+  The re-reads of 0x01 and the re-arms after an arm share two per read; the arm past
+  0x01 spends none, and happens once. Any other READ that answers nothing, answers
+  with a violation,
   crosses a foreign frame or fails yields no value and ends its chunk: the pointer is
   re-armed in a transaction of its own at that location, or at the start of the latched
   value holding it, and a fresh chunk goes on from there, so no recovery stretches a
@@ -253,7 +265,7 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   and an extended configuration write (DT8 Tc limits, the DT6 dimming curve) needs no
   device-type gate: a gear without the type ignores it.
 - The device-type walk is one non-yieldable unit; a break restarts it once, then it fails
-  (`bus_contended`, `device_type_enumeration_incomplete`) rather than commit a subset.
+  (`bus_contended`, `device_type_walk_incomplete`) rather than commit a subset.
 - Bank 0 `0x1C` is one byte whose bit x is Part 15x (DiiA(SW)098bp Table 4); a byte with
   a bit outside that range claims no part.
 
@@ -299,6 +311,47 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   there (§9.11.3, §11.2.3). Such a row therefore stores once to consume the temporaries,
   removes the scene, then stores its level; none of the three changes the light.
   `ACTIVATE` is never the flush: it applies the stray colour to the lamp.
+- `STORE THE DTR AS POWER ON LEVEL` and `… SYSTEM FAILURE LEVEL` copy the temporary
+  colour into the power-on or system-failure colour, and keep that colour when the
+  temporaries are MASK (209 §11.2.2, Tables 1, 2 and 6). The set that decides is the
+  declared one, whatever a device-type override says, since what the store copies
+  depends on what the gear implements; an override's type stands in only while no set
+  is declared. A gear whose set lacks DT8 gets `DTR0` and the store as any level does,
+  and is asked nothing about colour (102 §9.18). Any other gear is asked `TEMPORARY COLOUR TYPE`
+  first, since silence proves no colour absent (102 §3.13): MASK gets `DTR0` and the
+  store; silence or a violation, asked three times, fails the write
+  (`dt8_level_colour_unanswered`, `dt8_level_colour_contended`) before anything is
+  stored, and so does a selector whose `DTR0` echo never proves, named the same way or
+  `dt8_level_colour_unconfirmed` for a wrong echo. With no set known yet, a colour query
+  that stays silent after its selector proved fails it `types_unknown_read_or_override`:
+  an attribute read that learns the set, or an override, lets the level through. A gear
+  that echoes no `DTR0` is not answering at all, and gets `dt8_level_colour_unanswered`.
+  Otherwise
+  one exempt transaction, the store's unit, has the level query load the stored colour into
+  the REPORT registers (§11.3.2), reads `REPORT COLOUR TYPE`, and charges the stored
+  colour back with `COPY REPORT TO TEMPORARY`, so the gear stores the colour it had. A
+  conformant gear never stores the MASK type (Table 8); a gear that reports it gets MASK
+  values of the temporary's own type, which change no colour at power-on or failure
+  either (§9.2.1, §9.3.1) and differ only in the reported type. The charge is proved
+  before the store: the temporary's type and, by Table 11, x and y, Tc, primaries 0 and
+  5, or red, freecolour and `RGBWAF CONTROL` must equal what was charged, or the COPY or
+  the MASK stagings run once more, and the write then fails
+  `dt8_level_colour_unconfirmed`, or with a staging's outcome when a MASK staging's echo
+  never proves. The unit is bounded: after the probe every read is asked once and every
+  staging armed once, and a charge that does not hold is repeated once, so the longest
+  path hears the probe on its last ask and charges twice; the executor's tests pin how
+  many frames a typical and the longest charge take. A collision re-runs the unit
+  whole, as it does any unit.
+  Each `SET TEMPORARY` command writes all its values from operands proved before it, so
+  one value read back proves that command ran, and a MASK charge is proved command by
+  command except the stagings of primaries 1 to 4. What the proof cannot see is a missed
+  COPY whose stray temporary agrees with the stored colour on every value proved and
+  differs only on green, blue, white, amber or primaries 1 to 4. The level query's answer
+  is the only proof that REPORT was loaded: every command that loads REPORT loads a
+  colour the stored one may equal, so no cheap sentinel tells a skipped load apart. A
+  level query that goes
+  unanswered or answers with a violation fails the write the same two ways as the probe,
+  before anything is stored.
 - A scene's stored colour is read inside one exempt transaction, from the
   `QUERY SCENE LEVEL` that loads the shared REPORT registers to the last REPORT value:
   any of five commands from any master — `QUERY ACTUAL LEVEL` among them — reloads those

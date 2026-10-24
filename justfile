@@ -117,6 +117,7 @@ verify:
     python3 scripts/verify_ts_dto_mirror.py
     python3 scripts/verify_read_surface.py
     python3 scripts/verify_rest_docs.py
+    python3 scripts/verify_outcome_names.py
 
 ci: clippy test bdd verify esp-check gear-sim-check
 

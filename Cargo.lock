@@ -679,6 +679,7 @@ dependencies = [
  "dali2rust-gear-model",
  "dali2rust-mqtt-runtime",
  "dali2rust-platform",
+ "dali2rust-registry-runtime",
  "dali2rust-test-support",
  "futures",
  "serde_json",

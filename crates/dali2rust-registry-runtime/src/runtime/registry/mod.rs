@@ -20,6 +20,7 @@ pub(crate) mod redundancy_settings;
 pub mod transfer;
 pub(crate) mod poller_settings;
 pub mod publish;
+pub(crate) mod replaced_slices;
 mod resolve;
 pub(crate) mod rules_world;
 mod runtime_fields;
@@ -35,7 +36,7 @@ pub use persistence_slices::{
     PersistableRedundancySettingsSlice,
     PersistableGroupRecord, PersistableGroupsSlice, PersistableHomeAssistantSettingsSlice,
     PersistablePhysicalDeviceRecord, PersistablePhysicalDevicesSlice, PersistablePollerSettingsSlice,
-    PersistableVirtualLampsSlice, PersistableVlRecord, PersistenceEnvelope,
+    PersistableSceneSlice, PersistableVirtualLampsSlice, PersistableVlRecord, PersistenceEnvelope,
     ADAPTERS_SLICE_VERSION, DALI_SETTINGS_SLICE_VERSION, GROUPS_SLICE_VERSION,
     HCL_SCHEDULES_SLICE_VERSION, HOME_ASSISTANT_SETTINGS_SLICE_VERSION,
     PHYSICAL_DEVICES_SLICE_VERSION, POLLER_SETTINGS_SLICE_VERSION,

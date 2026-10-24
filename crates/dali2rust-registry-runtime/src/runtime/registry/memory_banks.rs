@@ -29,6 +29,7 @@ pub(crate) struct MemoryBankStaging {
     pub(crate) start_offset: u16,
     pub(crate) bytes: Vec<u8>,
     pub(crate) staged_at_ms: u64,
+    indicator_unread: bool,
     last_chunk_index: Option<u16>,
     headless: bool,
 }
@@ -51,6 +52,7 @@ impl MemoryBankStaging {
             start_offset,
             bytes: if headless { Vec::new() } else { data.to_vec() },
             staged_at_ms: now,
+            indicator_unread: false,
             last_chunk_index: Some(chunk_index),
             headless,
         }
@@ -147,7 +149,8 @@ fn commit_staged_bank(g: &mut Inner, correlation_id: u64) -> Option<(u8, u8, boo
     let bank = st.bank;
     let now_commit = registry_unix_ms();
     let rec = g.physical_devices.get_mut(&(aid, sa))?;
-    let changed = commit_memory_bank(rec, bank, st.start_offset, st.bytes, now_commit);
+    let changed =
+        commit_memory_bank(rec, (bank, st.start_offset, st.indicator_unread), st.bytes, now_commit);
     g.physical_devices_revision = g.physical_devices_revision.saturating_add(1);
     Some((aid, sa, changed))
 }
@@ -265,18 +268,30 @@ fn update_existing_bank_entry(
     changed
 }
 
+// IEC 62386-102 §9.10.2, Table 8
+fn read_ranges(start: u16, length: u16, indicator_unread: bool) -> Vec<MemoryBankRangeRecord> {
+    let end = start.saturating_add(length);
+    if !indicator_unread || !(start..end).contains(&INDICATOR_OFFSET) {
+        return vec![MemoryBankRangeRecord { start, length }];
+    }
+    [(start, INDICATOR_OFFSET), (INDICATOR_OFFSET + 1, end)]
+        .into_iter()
+        .filter(|(from, to)| to > from)
+        .map(|(from, to)| MemoryBankRangeRecord { start: from, length: to - from })
+        .collect()
+}
+
+const INDICATOR_OFFSET: u16 = 0x01;
+
 fn commit_memory_bank(
     rec: &mut PhysicalDeviceRecord,
-    bank: u8,
-    start_offset: u16,
+    (bank, start_offset, indicator_unread): (u8, u16, bool),
     bytes: Vec<u8>,
     now_ms: u64,
 ) -> bool {
-    let total = bytes.len().min(usize::from(u16::MAX)) as u16;
-    let ranges = vec![MemoryBankRangeRecord {
-        start: start_offset,
-        length: total,
-    }];
+    let length = bytes.len().min(usize::from(u16::MAX)) as u16;
+    let ranges = read_ranges(start_offset, length, indicator_unread);
+    let total = ranges.iter().map(|range| range.length).sum();
     let mut changed = match rec.memory_banks.iter_mut().find(|entry| entry.bank == bank) {
         Some(existing) => update_existing_bank_entry(existing, total, ranges, bytes.clone(), now_ms),
         None => {
@@ -439,6 +454,7 @@ impl RegistryStore {
         start_offset: u16,
         chunk_index: u16,
         last_chunk: bool,
+        indicator_unread: bool,
         data: &[u8],
     ) -> bool {
         let now = registry_unix_ms();
@@ -451,6 +467,9 @@ impl RegistryStore {
             data,
             now,
         );
+        if let Some(st) = g.memory_bank_stage.get_mut(&correlation_id).filter(|_| staged) {
+            st.indicator_unread |= indicator_unread;
+        }
         if !staged || !last_chunk {
             return false;
         }
@@ -500,7 +519,7 @@ mod tests {
     fn a_memory_bank_read_of_one_device_marks_only_its_bank() {
         let store = seeded_store();
         let bytes: Vec<u8> = (0u8..27).collect();
-        assert!(store.stage_memory_bank_chunk(11, 0, SHORT, 0, 0, 0, true, &bytes));
+        assert!(store.stage_memory_bank_chunk(11, 0, SHORT, 0, 0, 0, true, false, &bytes));
         assert_eq!(
             store.dirty.pending_physical_device_banks(0),
             1 << (SHORT / SliceKey::DEVICES_PER_BANK)
@@ -512,17 +531,17 @@ mod tests {
         let store = seeded_store();
         let bytes: Vec<u8> = (0u8..27).collect();
 
-        assert!(store.stage_memory_bank_chunk(11, 0, SHORT, 0, 0, 0, true, &bytes));
+        assert!(store.stage_memory_bank_chunk(11, 0, SHORT, 0, 0, 0, true, false, &bytes));
         assert!(store.dirty.take_physical_devices_dirty_for(0));
 
-        assert!(store.stage_memory_bank_chunk(12, 0, SHORT, 0, 0, 0, true, &bytes));
+        assert!(store.stage_memory_bank_chunk(12, 0, SHORT, 0, 0, 0, true, false, &bytes));
         assert!(
             !store.dirty.take_physical_devices_dirty_for(0),
             "an identical repeat bank read must not rewrite flash"
         );
 
         let longer: Vec<u8> = (0u8..30).collect();
-        assert!(store.stage_memory_bank_chunk(13, 0, SHORT, 0, 0, 0, true, &longer));
+        assert!(store.stage_memory_bank_chunk(13, 0, SHORT, 0, 0, 0, true, false, &longer));
         assert!(store.dirty.take_physical_devices_dirty_for(0));
     }
 
@@ -531,7 +550,7 @@ mod tests {
         let store = seeded_store();
         let second_chunk: Vec<u8> = (24u8..27).collect();
         assert!(
-            !store.stage_memory_bank_chunk(14, 0, SHORT, 0, 0, 1, true, &second_chunk),
+            !store.stage_memory_bank_chunk(14, 0, SHORT, 0, 0, 1, true, false, &second_chunk),
             "the read's first chunk never arrived, yet its second chunk was committed at the \
              read's start offset"
         );
@@ -551,11 +570,11 @@ mod tests {
     fn a_read_whose_first_chunk_never_arrived_does_not_hold_back_the_next_read() {
         let store = seeded_store();
         let chunk: Vec<u8> = (0u8..24).collect();
-        assert!(!store.stage_memory_bank_chunk(15, 0, SHORT, 0, 0, 1, false, &chunk));
-        assert!(!store.stage_memory_bank_chunk(15, 0, SHORT, 0, 0, 2, true, &chunk));
+        assert!(!store.stage_memory_bank_chunk(15, 0, SHORT, 0, 0, 1, false, false, &chunk));
+        assert!(!store.stage_memory_bank_chunk(15, 0, SHORT, 0, 0, 2, true, false, &chunk));
         let next_bank: Vec<u8> = (0u8..3).collect();
         assert!(
-            store.stage_memory_bank_chunk(15, 0, SHORT, 1, 0, 0, true, &next_bank),
+            store.stage_memory_bank_chunk(15, 0, SHORT, 1, 0, 0, true, false, &next_bank),
             "the next bank of the same sweep was refused after a headless read ended"
         );
     }
@@ -564,10 +583,10 @@ mod tests {
     fn a_read_whose_last_chunk_was_dropped_does_not_lose_the_next_bank() {
         let store = seeded_store();
         let first_chunk: Vec<u8> = (0u8..24).collect();
-        assert!(!store.stage_memory_bank_chunk(16, 0, SHORT, 0, 0, 0, false, &first_chunk));
+        assert!(!store.stage_memory_bank_chunk(16, 0, SHORT, 0, 0, 0, false, false, &first_chunk));
         let next_bank: Vec<u8> = (0u8..3).collect();
         assert!(
-            store.stage_memory_bank_chunk(16, 0, SHORT, 1, 0, 0, true, &next_bank),
+            store.stage_memory_bank_chunk(16, 0, SHORT, 1, 0, 0, true, false, &next_bank),
             "bank 0 of the sweep lost its last chunk, and bank 1, which arrived whole, was \
              discarded with it"
         );
@@ -584,18 +603,34 @@ mod tests {
     fn a_mismatching_chunk_past_the_first_still_ends_the_open_read() {
         let store = seeded_store();
         let first_chunk: Vec<u8> = (0u8..24).collect();
-        assert!(!store.stage_memory_bank_chunk(17, 0, SHORT, 0, 0, 0, false, &first_chunk));
+        assert!(!store.stage_memory_bank_chunk(17, 0, SHORT, 0, 0, 0, false, false, &first_chunk));
         let foreign: Vec<u8> = (24u8..27).collect();
         assert!(
-            !store.stage_memory_bank_chunk(17, 0, SHORT, 1, 0, 1, true, &foreign),
+            !store.stage_memory_bank_chunk(17, 0, SHORT, 1, 0, 1, true, false, &foreign),
             "a second chunk of another bank was committed over the open read"
         );
         assert!(
-            !store.stage_memory_bank_chunk(17, 0, SHORT, 0, 0, 1, true, &foreign),
+            !store.stage_memory_bank_chunk(17, 0, SHORT, 0, 0, 1, true, false, &foreign),
             "the open read was kept after a mismatching chunk, and its own second chunk \
              committed it"
         );
         let banks = store.physical_device_memory_banks(0, SHORT).expect("seeded device");
         assert!(banks.is_empty(), "no read arrived whole, yet a bank was committed: {banks:?}");
+    }
+
+    // IEC 62386-102 §9.10.2, Table 10
+    #[test]
+    fn an_unread_indicator_byte_is_a_gap_in_the_ranges_not_a_byte_read() {
+        let store = seeded_store();
+        let bytes: Vec<u8> = (0u8..17).collect();
+        let first: Vec<u8> = bytes[..12].to_vec();
+        assert!(!store.stage_memory_bank_chunk(18, 0, SHORT, 1, 0, 0, false, true, &first));
+        assert!(store.stage_memory_bank_chunk(18, 0, SHORT, 1, 0, 1, true, true, &bytes[12..]));
+
+        let banks = store.physical_device_memory_banks(0, SHORT).expect("seeded device");
+        let bank = banks.iter().find(|bank| bank.bank == 1).expect("bank 1 committed");
+        let ranges: Vec<(u16, u16)> = bank.ranges.iter().map(|r| (r.start, r.length)).collect();
+        assert_eq!(ranges, vec![(0, 1), (2, 15)], "0x01 was never read");
+        assert_eq!(bank.total_bytes_read, 16);
     }
 }

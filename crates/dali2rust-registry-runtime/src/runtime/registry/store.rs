@@ -15,7 +15,7 @@ use super::memory_banks::MemoryBankStaging;
 use super::physical_devices::PhysicalDeviceRecord;
 use super::scenes::{SceneDesiredRowRecord, SceneRecord};
 use super::virtual_lamps::VlRecord;
-use super::withheld_slices::{self as withheld, WithheldSlices};
+use super::withheld_slices::{self as withheld, HeldSlices, WithheldSlices};
 use dali2rust_platform::slice_store::SliceKey;
 use dali2rust_contracts::msg::DaliSceneTargetState;
 
@@ -297,6 +297,11 @@ impl DirtyFlags {
             .map_or(0, |mask| mask.load(Ordering::Acquire))
     }
 
+    pub(crate) fn held(&self) -> HeldSlices {
+        let banks = self.withheld_physical_device_banks.each_ref();
+        self.withheld.held(banks.map(|mask| mask.load(Ordering::Acquire)))
+    }
+
     pub fn settle_physical_device_banks(&self, adapter_id: u8, settled: u16, waiting: u16) {
         if let Some(mask) = self.withheld_physical_device_banks.get(adapter_id as usize) {
             let withheld = (mask.load(Ordering::Acquire) & !settled) | waiting;
@@ -432,6 +437,7 @@ pub struct RegistryStore {
     pub(crate) persist_counters: PersistenceCounters,
     pub(crate) flush_buf: std::sync::Mutex<Vec<u8>>,
     pub(crate) import_stage: super::import_stage::ImportStage,
+    pub(crate) announcements: super::replaced_slices::PendingAnnouncements,
 }
 
 impl RegistryStore {
@@ -573,6 +579,7 @@ impl RegistryStore {
                 super::persistence_stream::FLUSH_CHUNK_BYTES,
             )),
             import_stage: super::import_stage::ImportStage::default(),
+            announcements: super::replaced_slices::PendingAnnouncements::default(),
         }
     }
 

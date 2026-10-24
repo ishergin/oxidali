@@ -312,7 +312,7 @@ fn memory_bank_commits_only_after_last_chunk() {
     let mb_before = counters.events.memory_bank_read_committed.load(Ordering::Relaxed);
     publish_event(
         &publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 8, bank: 1, chunk_index: 0, last_chunk: false, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0x01, 0x02]) }),
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 8, bank: 1, chunk_index: 0, last_chunk: false, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0x01, 0x02]), indicator_unread: false }),
     );
     assert_no_pd_changed_for(&ev_obs, corr);
     assert_eq!(
@@ -323,7 +323,7 @@ fn memory_bank_commits_only_after_last_chunk() {
 
     publish_event(
         &publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 8, bank: 1, chunk_index: 1, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0x03]) }),
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 8, bank: 1, chunk_index: 1, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0x03]), indicator_unread: false }),
     );
     wait_until(
         || counters.events.memory_bank_read_committed.load(Ordering::Relaxed) == mb_before + 1,
@@ -350,7 +350,7 @@ fn memory_bank_abort_clears_partial_stage() {
     let corr = 77u64;
     publish_event(
         &publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 9, bank: 0, chunk_index: 0, last_chunk: false, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0xAA, 0xBB]) }),
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 9, bank: 0, chunk_index: 0, last_chunk: false, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0xAA, 0xBB]), indicator_unread: false }),
     );
     assert_no_pd_changed_for(&ev_obs, corr);
     publish_event(
@@ -360,7 +360,7 @@ fn memory_bank_abort_clears_partial_stage() {
 
     publish_event(
         &publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 9, bank: 0, chunk_index: 0, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0xCC]) }),
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 9, bank: 0, chunk_index: 0, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0xCC]), indicator_unread: false }),
     );
     wait_until(
         || store
@@ -404,12 +404,12 @@ fn memory_bank_out_of_order_chunk_aborts_without_commit() {
     let before = counters.events.memory_bank_read_committed.load(Ordering::Relaxed);
     publish_event(
         &publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 30, bank: 2, chunk_index: 1, last_chunk: false, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0x01]) }),
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 30, bank: 2, chunk_index: 1, last_chunk: false, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0x01]), indicator_unread: false }),
     );
     assert_no_pd_changed_for(&ev_obs, corr);
     publish_event(
         &publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 30, bank: 2, chunk_index: 0, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0x02]) }),
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 30, bank: 2, chunk_index: 0, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0x02]), indicator_unread: false }),
     );
     assert_no_pd_changed_for(&ev_obs, corr);
     assert_eq!(
@@ -432,12 +432,12 @@ fn memory_bank_identity_mismatch_aborts_staging() {
     let before = counters.events.memory_bank_read_committed.load(Ordering::Relaxed);
     publish_event(
         &publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 31, bank: 0, chunk_index: 0, last_chunk: false, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0xAA]) }),
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 31, bank: 0, chunk_index: 0, last_chunk: false, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0xAA]), indicator_unread: false }),
     );
     assert_no_pd_changed_for(&ev_obs, corr);
     publish_event(
         &publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 31, bank: 1, chunk_index: 1, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0xBB]) }),
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 31, bank: 1, chunk_index: 1, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0xBB]), indicator_unread: false }),
     );
     assert_no_pd_changed_for(&ev_obs, corr);
     assert_eq!(
@@ -458,7 +458,7 @@ fn memory_bank_final_chunk_without_physical_record_does_not_commit() {
     let before = counters.events.memory_bank_read_committed.load(Ordering::Relaxed);
     publish_event(
         &publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 40, bank: 0, chunk_index: 0, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0xCC]) }),
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { start_offset: 0, registry_adapter_id: 0, short_address: 40, bank: 0, chunk_index: 0, last_chunk: true, data: dali2rust_contracts::msg::FixedBytes24::from_slice(&[0xCC]), indicator_unread: false }),
     );
     assert_no_pd_changed_for(&ev_obs, corr);
     assert_eq!(
@@ -1323,6 +1323,7 @@ fn a_part251_read_that_starts_above_zero_commits_under_the_right_fields() {
                     chunk_index: index as u16,
                     last_chunk: last,
                     data: dali2rust_contracts::msg::FixedBytes24::from_slice(chunk),
+                    indicator_unread: false,
                 },
             ),
         );

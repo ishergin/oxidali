@@ -82,14 +82,14 @@ pub(super) fn stage_matrix_chunk<R: MatrixResource>(
     finish_stage(ctx, R::stage(ctx.store, ctx.corr, adapter_id, scene_id, rows));
 }
 
-pub(super) fn commit_matrix(
+pub(super) fn commit_matrix<R>(
     ctx: &CommandCtx<'_>,
     resource: ConfigWriteResource,
     adapter_id: u8,
     scene_id: u8,
     chunks: u8,
     applied: &AtomicU32,
-    on_changed: impl FnOnce(),
+    on_changed: impl FnOnce() -> R,
 ) -> Result<(), &'static str> {
     match ctx.store.commit_config_write(ctx.corr, resource, adapter_id, scene_id, chunks) {
         Ok(_changed) => {

@@ -603,6 +603,7 @@ fn a_policy_apply_reaches_every_device_and_not_only_the_first() {
             short_address,
             system_failure_level: Some(0),
             power_on_level: Some(0),
+            known_device_types: None,
         })
         .collect();
     let harness = spawn_harness_with_policy(cells);

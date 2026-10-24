@@ -4,12 +4,12 @@ use dali2rust_bsp::slice_store_files::InMemorySliceStore;
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, SliceWriteSession, StoreError};
 
 #[derive(Debug, Default)]
-pub struct HarnessSlices {
+pub struct UnreadableSlices {
     stored: InMemorySliceStore,
     unreadable: Mutex<Vec<SliceKey>>,
 }
 
-impl HarnessSlices {
+impl UnreadableSlices {
     pub fn fail_reads_of(&self, key: SliceKey) {
         self.unreadable.lock().expect("unreadable lock").push(key);
     }
@@ -19,7 +19,7 @@ impl HarnessSlices {
     }
 }
 
-impl SliceStore for HarnessSlices {
+impl SliceStore for UnreadableSlices {
     fn load(&self, key: SliceKey) -> Result<Vec<u8>, StoreError> {
         if self.unreadable.lock().expect("unreadable lock").contains(&key) {
             return Err(StoreError::Backend(format!("{}: flash read failed", key.label())));

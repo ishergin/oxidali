@@ -1,4 +1,5 @@
 use super::*;
+use super::level_colour::{store_level, POWER_ON, SYSTEM_FAILURE};
 use crate::runtime::executor::helpers::VERIFY_CONTENDED_MESSAGE;
 use dali2rust_domain::dali::commands::DaliResponse;
 
@@ -31,6 +32,8 @@ impl ConfirmedWritableAttributes {
             && self.dimming_curve.is_none()
     }
 }
+
+type LevelWrites = (Option<u8>, Option<u8>, Option<DeviceTypeSet>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteAttributesExecution {
@@ -113,6 +116,7 @@ pub fn write_short_attributes(
     tc_limits_mirek: (Option<u16>, Option<u16>),
     min_max_levels: (Option<u8>, Option<u8>),
     dimming_curve: Option<u8>,
+    supported_device_types: Option<DeviceTypeSet>,
 ) -> WriteAttributesExecution {
     let mut tally = WriteTally::default();
     let error = apply_short_attribute_writes(
@@ -121,8 +125,7 @@ pub fn write_short_attributes(
         &mut tally,
         fade_time_ms,
         fade_rate,
-        power_on_level,
-        system_failure_level,
+        (power_on_level, system_failure_level, supported_device_types),
         extended_fade_time_ms,
         tc_limits_mirek,
         min_max_levels,
@@ -139,8 +142,7 @@ fn apply_short_attribute_writes(
     tally: &mut WriteTally,
     fade_time_ms: Option<u32>,
     fade_rate: Option<u8>,
-    power_on_level: Option<u8>,
-    system_failure_level: Option<u8>,
+    levels: LevelWrites,
     extended_fade_time_ms: Option<u16>,
     tc_limits_mirek: (Option<u16>, Option<u16>),
     min_max_levels: (Option<u8>, Option<u8>),
@@ -150,9 +152,7 @@ fn apply_short_attribute_writes(
     if let Some(error) = write_fade_params(controller, address, tally, fade_time_ms, fade_rate) {
         return Err(error);
     }
-    if let Some(error) =
-        write_levels(controller, address, tally, power_on_level, system_failure_level)
-    {
+    if let Some(error) = write_levels(controller, address, tally, levels) {
         return Err(error);
     }
     write_min_max_levels(controller, address, tally, min_max_levels)?;
@@ -180,12 +180,22 @@ pub(super) fn send_dtr0_config_verified<C: DaliApplicationController>(
     command: StandardCommand,
     mut read_back: impl FnMut(&mut C) -> Result<DaliResponse, SemanticDaliError>,
 ) -> Result<ReadBack, SemanticDaliError> {
-    controller.step_boundary();
-    for _ in 0..=PROGRAM_VERIFY_REPAIRS {
-        let verified = controller.transaction(|controller| {
+    verified_store(controller, dtr0, |controller: &mut C| {
+        controller.transaction(|controller| {
             send_dtr0_backed_standard(controller, address, dtr0, command)?;
             read_back(controller)
-        })?;
+        })
+    })
+}
+
+pub(super) fn verified_store<C: DaliApplicationController>(
+    controller: &mut C,
+    dtr0: u8,
+    mut attempt: impl FnMut(&mut C) -> Result<DaliResponse, SemanticDaliError>,
+) -> Result<ReadBack, SemanticDaliError> {
+    controller.step_boundary();
+    for _ in 0..=PROGRAM_VERIFY_REPAIRS {
+        let verified = attempt(controller)?;
         if let Some(unconfirmed) = ReadBack::without_value(verified) {
             return Ok(unconfirmed);
         }
@@ -298,28 +308,16 @@ fn write_levels(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     tally: &mut WriteTally,
-    power_on_level: Option<u8>,
-    system_failure_level: Option<u8>,
+    (power_on_level, system_failure_level, supported_device_types): LevelWrites,
 ) -> Option<SemanticDaliError> {
     if let Some(level) = power_on_level {
-        let verify =
-            |c: &mut _| send_standard_response(c, address, StandardCommand::QueryPowerOnLevel);
-        match send_dtr0_config_verified(controller, address, level, StandardCommand::SetPowerOnLevel, verify)
-        {
+        match store_level(controller, address, level, (POWER_ON, supported_device_types)) {
             Err(error) => return Some(error),
             Ok(read_back) => tally.confirmed.power_on_level = tally.proved(read_back),
         }
     }
     if let Some(level) = system_failure_level {
-        let verify =
-            |c: &mut _| send_standard_response(c, address, StandardCommand::QuerySystemFailureLevel);
-        match send_dtr0_config_verified(
-            controller,
-            address,
-            level,
-            StandardCommand::SetSystemFailureLevel,
-            verify,
-        ) {
+        match store_level(controller, address, level, (SYSTEM_FAILURE, supported_device_types)) {
             Err(error) => return Some(error),
             Ok(read_back) => tally.confirmed.system_failure_level = tally.proved(read_back),
         }

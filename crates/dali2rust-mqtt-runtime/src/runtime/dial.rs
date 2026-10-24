@@ -17,7 +17,7 @@ use crate::runtime::session::{
 };
 use crate::runtime::worker::{MqttWorkerPorts, WORKER_STACK};
 
-const PARK: Duration = Duration::from_millis(500);
+pub const PARK: Duration = Duration::from_millis(500);
 
 const REDIAL_BACKOFF: &[Duration] = &[Duration::from_secs(2), Duration::from_secs(8)];
 

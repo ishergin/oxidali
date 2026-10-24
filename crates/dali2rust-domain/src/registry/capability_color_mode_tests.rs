@@ -1,6 +1,7 @@
 use super::{
     capability_accepts_color_mode, capability_supports_color_mode, colour_mode_fits_declared,
-    device_type_fits_declared, seed_capability_from_color_mode, CapabilityFlagsView,
+    device_type_fits_declared, known_device_types, seed_capability_from_color_mode,
+    CapabilityFlagsView,
 };
 use dali2rust_contracts::msg::{ColorMode, DeviceType, DeviceTypeSet};
 
@@ -82,6 +83,21 @@ fn a_device_type_fits_only_a_declared_set_that_holds_it() {
     assert!(!device_type_fits_declared(declared(DT6), DeviceType::Dt8Color));
     assert!(device_type_fits_declared(declared(DT6 | DT8), DeviceType::Dt8Color));
     assert!(device_type_fits_declared(declared(DT6), DeviceType::Unknown), "no code, no claim");
+}
+
+// IEC 62386-209 §11.2.2
+#[test]
+fn the_declared_set_decides_and_an_override_only_stands_in_for_an_unknown_one() {
+    let set = |bits| Some(DeviceTypeSet::from_bits(bits));
+    assert_eq!(known_device_types(set(DT6 | DT8), None), set(DT6 | DT8));
+    assert_eq!(
+        known_device_types(set(DT6 | DT8), Some(DeviceType::Dt6Led)),
+        set(DT6 | DT8),
+        "what the gear implements, not the override, decides what STORE copies"
+    );
+    assert_eq!(known_device_types(None, Some(DeviceType::Dt6Led)), set(DT6), "types unknown");
+    assert_eq!(known_device_types(None, None), None);
+    assert_eq!(known_device_types(None, Some(DeviceType::Other)), None, "no code, no claim");
 }
 
 #[test]

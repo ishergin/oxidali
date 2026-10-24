@@ -1,6 +1,9 @@
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::devices::dt6_led::Dt6Command;
-use dali2rust_domain::dali::devices::dt8_color::Dt8Command;
+use dali2rust_domain::dali::devices::dt8_color::{
+    Dt8Command, COLOUR_TYPE_BYTE_TC, COLOUR_VALUE_REPORT_COLOUR_TYPE, COLOUR_VALUE_REPORT_TC,
+    COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, COLOUR_VALUE_TEMPORARY_TC,
+};
 use dali2rust_domain::dali::pres::extended::ExtendedCommand;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
@@ -86,6 +89,61 @@ pub(crate) fn script_addressed_config_triple_answered(
     mock.expect_forward_frame(set_frame);
     mock.expect_forward_frame(set_frame);
     mock.expect_forward_frame_with_backward(standard_frame(short, query), answer);
+}
+
+pub(crate) const POWER_ON_STORE: (StandardCommand, StandardCommand) =
+    (StandardCommand::SetPowerOnLevel, StandardCommand::QueryPowerOnLevel);
+pub(crate) const SYSTEM_FAILURE_STORE: (StandardCommand, StandardCommand) =
+    (StandardCommand::SetSystemFailureLevel, StandardCommand::QuerySystemFailureLevel);
+
+// IEC 62386-209 §9.9, Table 11
+pub(crate) fn script_narrow_colour_value(
+    mock: &MockDaliTransport,
+    short: u8,
+    value_id: u8,
+    answer: Option<u8>,
+) {
+    mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(value_id)));
+    mock.expect_forward_frame_with_backward(
+        standard_frame(short, StandardCommand::QueryContentDtr0),
+        Some(value_id),
+    );
+    mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
+    mock.expect_forward_frame_with_backward(
+        extended_frame(short, ExtendedCommand::Dt8(Dt8Command::QueryColourValue)),
+        answer,
+    );
+}
+
+pub(crate) fn script_level_store(
+    mock: &MockDaliTransport,
+    short: u8,
+    (set, query): (StandardCommand, StandardCommand),
+    level: u8,
+    (temporary_colour_type, answer): (Option<u8>, Option<u8>),
+) {
+    script_narrow_colour_value(mock, short, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, temporary_colour_type);
+    script_addressed_config_triple_answered(mock, short, set, query, level, answer);
+}
+
+// IEC 62386-209 §9.12.7, §11.2.2, §11.3.2
+pub(crate) fn script_level_store_keeping_tc(
+    mock: &MockDaliTransport,
+    (set, query): (StandardCommand, StandardCommand),
+    (old_level, level): (u8, u8),
+    stored_mirek: u16,
+) {
+    let short = TEST_SHORT_ADDRESS;
+    let (msb, lsb) = ((stored_mirek >> 8) as u8, stored_mirek as u8);
+    script_narrow_colour_value(mock, short, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, Some(COLOUR_TYPE_BYTE_TC));
+    mock.expect_forward_frame_with_backward(standard_frame(short, query), Some(old_level));
+    script_narrow_colour_value(mock, short, COLOUR_VALUE_REPORT_COLOUR_TYPE, Some(COLOUR_TYPE_BYTE_TC));
+    script_dt8_colour_value(mock, COLOUR_VALUE_REPORT_TC, msb, lsb);
+    mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
+    mock.expect_forward_frame(extended_frame(short, ExtendedCommand::Dt8(Dt8Command::CopyReportToTemporary)));
+    script_narrow_colour_value(mock, short, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE, Some(COLOUR_TYPE_BYTE_TC));
+    script_dt8_colour_value(mock, COLOUR_VALUE_TEMPORARY_TC, msb, lsb);
+    script_addressed_config_triple(mock, short, set, query, level, level);
 }
 
 pub(super) fn script_min_triple(mock: &MockDaliTransport, dtr0: u8, answer: u8) {

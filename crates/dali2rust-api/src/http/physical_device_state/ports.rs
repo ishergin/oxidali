@@ -70,6 +70,12 @@ pub trait PhysicalDeviceHttpState: Send + Sync {
         short_address: u8,
     ) -> Option<Vec<u8>>;
 
+    fn physical_device_known_types(
+        &self,
+        adapter_id: u8,
+        short_address: u8,
+    ) -> Option<dali2rust_contracts::msg::DeviceTypeSet>;
+
     fn physical_device_exists(&self, adapter_id: u8, short_address: u8) -> bool;
 
     fn list_physical_device_short_addresses(&self, adapter_id: u8) -> Vec<u8>;
@@ -157,6 +163,14 @@ macro_rules! impl_physical_device_http_state {
                 self.port
                     .physical_device_supported_types(adapter_id, short_address)
                     .map(|set| set.iter().collect())
+            }
+
+            fn physical_device_known_types(
+                &self,
+                adapter_id: u8,
+                short_address: u8,
+            ) -> Option<dali2rust_contracts::msg::DeviceTypeSet> {
+                self.port.physical_device_known_types(adapter_id, short_address)
             }
 
             fn physical_device_exists(&self, adapter_id: u8, short_address: u8) -> bool {

@@ -25,13 +25,13 @@ pub(super) fn handle_runtime_update(ctx: &CommandCtx<'_>, reg: &RegistryRuntimeU
     }
     let entry = &reg.update;
     let Some(setpoint) = entry.setpoint.as_ref() else {
-        return fail_runtime_invalid(ctx, "registry_runtime_missing_setpoint");
+        return fail_runtime_invalid(ctx, "runtime_missing_setpoint");
     };
     let Some(obs) = entry.observation.as_ref() else {
-        return fail_runtime_invalid(ctx, "registry_runtime_missing_observation");
+        return fail_runtime_invalid(ctx, "runtime_missing_observation");
     };
     if entry.virtual_lamp_id.is_none() && entry.short_address.is_none() {
-        return fail_runtime_invalid(ctx, "registry_runtime_missing_target");
+        return fail_runtime_invalid(ctx, "runtime_missing_target");
     }
 
     let applied = match apply_registry_runtime_targets(ctx, reg.adapter_id, entry, setpoint, obs) {
@@ -54,7 +54,7 @@ fn finish_runtime_update_outcome(ctx: &CommandCtx<'_>, outcome: RuntimeApplyOutc
             ctx.confirm_ok();
         }
         RuntimeApplyOutcome::NotApplied => {
-            ctx.confirm_failed(ErrorCode::OperationFailed, "registry_runtime_not_applied");
+            ctx.confirm_failed(ErrorCode::OperationFailed, "runtime_not_applied");
         }
         RuntimeApplyOutcome::VlUnbound => {
             ctx.confirm_failed(ErrorCode::VlUnbound, "vl_unbound");
@@ -119,7 +119,7 @@ fn check_runtime_binding_match(
     if ctx.store.internal_virtual_lamp_binding_short(aid, vl_id) == Some(sa_cmd) {
         return Ok(());
     }
-    ctx.confirm_failed(ErrorCode::Conflict, "registry_runtime_binding_mismatch");
+    ctx.confirm_failed(ErrorCode::Conflict, "runtime_binding_mismatch");
     Err(())
 }
 
@@ -205,13 +205,13 @@ fn resolve_transition_target(
         (Some(vl_id), _) => match ctx.store.internal_virtual_lamp_binding_short(cmd.adapter_id, vl_id) {
             Some(bound) => Ok((Some(vl_id), bound)),
             None => {
-                ctx.confirm_failed(ErrorCode::VlUnbound, "registry_transition_vl_unbound");
+                ctx.confirm_failed(ErrorCode::VlUnbound, "transition_vl_unbound");
                 Err(())
             }
         },
         (None, Some(short)) => Ok((None, short)),
         (None, None) => {
-            fail_runtime_invalid(ctx, "registry_transition_missing_target");
+            fail_runtime_invalid(ctx, "transition_missing_target");
             Err(())
         }
     }
@@ -225,7 +225,7 @@ pub(super) fn handle_level_transition(
         return;
     }
     let Some(obs) = cmd.observation.as_ref() else {
-        return fail_runtime_invalid(ctx, "registry_transition_missing_observation");
+        return fail_runtime_invalid(ctx, "transition_missing_observation");
     };
     let Ok((vl, short_address)) = resolve_transition_target(ctx, cmd) else {
         return;

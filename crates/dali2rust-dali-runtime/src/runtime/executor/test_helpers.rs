@@ -2,6 +2,12 @@
 pub mod shared {
     use crate::runtime::clock::StdClock;
     use crate::runtime::controller::{DaliController, PHY_TICK_US, TX_ARM_LEAD_TICKS};
+    use crate::runtime::executor::helpers::DT8_DEVICE_TYPE;
+    use dali2rust_domain::dali::commands::DaliCommand;
+    use dali2rust_domain::dali::devices::dt8_color::Dt8Command;
+    use dali2rust_domain::dali::pres::extended::ExtendedCommand;
+    use dali2rust_domain::dali::pres::special::SpecialCommand;
+    use dali2rust_domain::dali::pres::standard::StandardCommand;
     use dali2rust_domain::dali::ses::DaliPriority;
     use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
     use dali2rust_domain::dali::types::DaliAddress;
@@ -43,6 +49,40 @@ pub mod shared {
             opcode,
         );
         frame.raw()
+    }
+
+    fn special_frame(command: SpecialCommand) -> u16 {
+        DaliCommand::Special(command).to_forward_frame().raw()
+    }
+
+    pub fn expect_narrow_colour_value_sample(
+        mock: &MockDaliTransport,
+        short: u8,
+        selector: u8,
+        answer: Option<u8>,
+    ) {
+        let address = short_address(short);
+        let dtr0_query = DaliCommand::Standard { address, command: StandardCommand::QueryContentDtr0 };
+        let colour_value = DaliCommand::Extended {
+            address,
+            command: ExtendedCommand::Dt8(Dt8Command::QueryColourValue),
+        };
+        mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(selector)));
+        mock.expect_forward_frame_with_backward(dtr0_query.to_forward_frame().raw(), Some(selector));
+        mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(DT8_DEVICE_TYPE)));
+        mock.expect_forward_frame_with_backward(colour_value.to_forward_frame().raw(), answer);
+    }
+
+    pub fn expect_wide_colour_value_sample(
+        mock: &MockDaliTransport,
+        short: u8,
+        selector: u8,
+        (msb, lsb): (u8, u8),
+    ) {
+        expect_narrow_colour_value_sample(mock, short, selector, Some(msb));
+        let dtr0_query =
+            DaliCommand::Standard { address: short_address(short), command: StandardCommand::QueryContentDtr0 };
+        mock.expect_forward_frame_with_backward(dtr0_query.to_forward_frame().raw(), Some(lsb));
     }
 
     pub fn setup_controller<T: DaliTransport + Send>(

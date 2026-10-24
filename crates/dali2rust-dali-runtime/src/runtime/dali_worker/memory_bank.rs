@@ -65,7 +65,7 @@ pub(super) fn publish_memory_bank_execution(
     for (index, chunk) in chunks.enumerate() {
         let last_chunk = index + 1 == count && execution.error.is_none();
         let chunk_index = u16::try_from(index).unwrap_or(u16::MAX);
-        let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { registry_adapter_id, short_address, bank, start_offset, chunk_index, last_chunk, data: dali2rust_contracts::msg::FixedBytes24::from_slice(chunk) });
+        let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliMemoryBankReadEvent { registry_adapter_id, short_address, bank, start_offset, chunk_index, last_chunk, data: dali2rust_contracts::msg::FixedBytes24::from_slice(chunk), indicator_unread: execution.indicator_unread });
         delivered = publish_event_required(publisher, ev, counters, PublishKind::Series, "memory-bank-chunk");
         if !delivered {
             break;

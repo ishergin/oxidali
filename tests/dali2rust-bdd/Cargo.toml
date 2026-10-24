@@ -28,6 +28,7 @@ dali2rust-domain = { path = "../../crates/dali2rust-domain" }
 dali2rust-platform = { path = "../../crates/dali2rust-platform" }
 dali2rust-bus = { path = "../../crates/dali2rust-bus" }
 dali2rust-adapters = { path = "../../crates/dali2rust-adapters" }
+dali2rust-registry-runtime = { path = "../../crates/dali2rust-registry-runtime" }
 dali2rust-gear-model = { path = "../../crates/dali2rust-gear-model" }
 dali2rust-contracts = { path = "../../crates/dali2rust-contracts" }
 dali2rust-api = { path = "../../crates/dali2rust-api" }

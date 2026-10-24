@@ -27,7 +27,6 @@ use crate::runtime::executor::helpers::{
     dali_short_address, fade_time_dtr0_from_ms, fade_time_ms_from_dtr0, send_dtr0_backed_extended,
     send_dtr0_backed_standard,
     confirm_observed_query, send_extended_command, send_extended_query_stable,
-    send_raw_query_once_observed,
     send_special, send_standard_query, send_standard_query_stable, send_standard_response,
     SemanticDaliError, DEVICE_ABSENT_MESSAGE, DT8_COLOUR_VALUE_AMBER, DT8_COLOUR_VALUE_BLUE,
     DT8_COLOUR_VALUE_FREECOLOUR, DT8_COLOUR_VALUE_GREEN, DT8_COLOUR_VALUE_WHITE,
@@ -45,6 +44,7 @@ mod common_102;
 mod dt6;
 mod dt8;
 mod extended;
+mod level_colour;
 mod outcomes;
 mod scene_colours;
 mod write;

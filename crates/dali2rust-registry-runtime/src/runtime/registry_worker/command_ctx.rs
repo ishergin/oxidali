@@ -67,11 +67,11 @@ impl CommandCtx<'_> {
         self.check_adapter_id(adapter_id)
     }
 
-    pub(super) fn update_global_settings<A>(
+    pub(super) fn update_global_settings<A, R>(
         &self,
         applied_counter: &AtomicU32,
         apply: impl FnOnce() -> A,
-        publish_changed: impl FnOnce(&BusPublisher, u64, u16, &A),
+        publish_changed: impl FnOnce(&BusPublisher, u64, u16, &A) -> R,
     ) {
         if self.check_primary_adapter().is_err() {
             return;

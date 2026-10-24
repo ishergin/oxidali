@@ -292,6 +292,15 @@ impl PhysicalDeviceHttpState for TestState {
             .and_then(|dto| dto.supported_device_types)
     }
 
+    fn physical_device_known_types(
+        &self,
+        adapter_id: u8,
+        short_address: u8,
+    ) -> Option<dali2rust_contracts::msg::DeviceTypeSet> {
+        self.physical_device_supported_types(adapter_id, short_address)
+            .map(|types| types.into_iter().collect())
+    }
+
     fn physical_device_exists(&self, adapter_id: u8, short_address: u8) -> bool {
         self.inner
             .lock()

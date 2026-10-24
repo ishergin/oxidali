@@ -2,7 +2,8 @@ use super::*;
 use dali2rust_contracts::msg::PowerState;
 use crate::runtime::executor::helpers::VERIFY_CONTENDED_MESSAGE;
 use crate::runtime::executor::test_helpers::shared::{
-    assert_script_consumed, setup_controller, short_address, wire_counters,
+    assert_script_consumed, expect_narrow_colour_value_sample, expect_wide_colour_value_sample,
+    setup_controller, short_address, wire_counters,
 };
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
@@ -220,64 +221,7 @@ fn expect_colour_value_sample(
     msb: u8,
     lsb: u8,
 ) {
-    mock.expect_forward_frame(
-        DaliCommand::Special(SpecialCommand::Dtr0(selector))
-            .to_forward_frame()
-            .raw(),
-    );
-    mock.expect_forward_frame_with_backward(
-        standard_query_frame(short, StandardCommand::QueryContentDtr0),
-        Some(selector),
-    );
-    mock.expect_forward_frame(
-        DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
-            .to_forward_frame()
-            .raw(),
-    );
-    mock.expect_forward_frame_with_backward(
-        DaliCommand::Extended {
-            address: short_address(short),
-            command: ExtendedCommand::Dt8(Dt8Command::QueryColourValue),
-        }
-        .to_forward_frame()
-        .raw(),
-        Some(msb),
-    );
-    mock.expect_forward_frame_with_backward(
-        standard_query_frame(short, StandardCommand::QueryContentDtr0),
-        Some(lsb),
-    );
-}
-
-fn expect_narrow_colour_value_sample(
-    mock: &MockDaliTransport,
-    short: u8,
-    selector: u8,
-    answer: u8,
-) {
-    mock.expect_forward_frame(
-        DaliCommand::Special(SpecialCommand::Dtr0(selector))
-            .to_forward_frame()
-            .raw(),
-    );
-    mock.expect_forward_frame_with_backward(
-        standard_query_frame(short, StandardCommand::QueryContentDtr0),
-        Some(selector),
-    );
-    mock.expect_forward_frame(
-        DaliCommand::Special(SpecialCommand::EnableDeviceType(8))
-            .to_forward_frame()
-            .raw(),
-    );
-    mock.expect_forward_frame_with_backward(
-        DaliCommand::Extended {
-            address: short_address(short),
-            command: ExtendedCommand::Dt8(Dt8Command::QueryColourValue),
-        }
-        .to_forward_frame()
-        .raw(),
-        Some(answer),
-    );
+    expect_wide_colour_value_sample(mock, short, selector, (msb, lsb));
 }
 
 fn expect_rgbwaf_control_read(mock: &MockDaliTransport, short: u8, answer: Option<u8>) {
@@ -373,7 +317,7 @@ fn an_inverted_tc_pair_is_not_a_range() {
 fn a_mask_rgb_dim_level_is_not_a_reading() {
     let mock = MockDaliTransport::new();
     let short = 4;
-    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_RED, 0xFF);
+    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_RED, Some(0xFF));
     let (transport, mut controller) = setup_controller(mock);
     let levels = read_dt8_dim_level_trio(
         &mut controller,
@@ -394,9 +338,9 @@ fn a_mask_rgb_dim_level_is_not_a_reading() {
 fn a_narrow_dim_level_is_read_from_the_answer() {
     let mock = MockDaliTransport::new();
     let short = 4;
-    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_RED, 0);
-    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_GREEN, 254);
-    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_BLUE, 0);
+    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_RED, Some(0));
+    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_GREEN, Some(254));
+    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_BLUE, Some(0));
     let (transport, mut controller) = setup_controller(mock);
     let levels = read_dt8_dim_level_trio(
         &mut controller,
@@ -505,7 +449,7 @@ fn write_attributes_fade_time_confirms_the_accepted_code_not_the_request() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
-        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None);
+        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None);
 
     assert_eq!(execution.error, None);
     assert_eq!(execution.confirmed.fade_time_ms, Some(700));
@@ -528,7 +472,7 @@ fn a_collided_configuration_write_is_rearmed_before_it_goes_again() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
-        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None);
+        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None);
 
     assert_eq!(execution.error, None);
     assert_eq!(execution.confirmed.fade_time_ms, Some(700));
@@ -556,7 +500,7 @@ fn a_collided_read_back_is_asked_again_without_writing_again() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
-        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None);
+        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None);
 
     assert_eq!(execution.error, None);
     assert_eq!(execution.confirmed.fade_time_ms, Some(700));
@@ -584,7 +528,7 @@ fn write_attributes_small_fade_time_never_selects_the_extended_fade_code() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
-        write_short_attributes(&mut controller, short, Some(100), None, None, None, None, (None, None), (None, None), None);
+        write_short_attributes(&mut controller, short, Some(100), None, None, None, None, (None, None), (None, None), None, None);
 
     assert_eq!(execution.error, None);
     assert_eq!(execution.confirmed.fade_time_ms, Some(700));
@@ -612,7 +556,7 @@ fn write_attributes_zero_fade_time_selects_the_extended_fade_code() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
-        write_short_attributes(&mut controller, short, Some(0), None, None, None, None, (None, None), (None, None), None);
+        write_short_attributes(&mut controller, short, Some(0), None, None, None, None, (None, None), (None, None), None, None);
 
     assert_eq!(execution.error, None);
     assert_eq!(execution.confirmed.fade_time_ms, Some(0));
@@ -696,7 +640,7 @@ fn an_unanswered_fade_time_read_back_is_named_and_confirms_nothing() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None,
+        &mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None,
     );
 
     assert_eq!(execution.confirmed.fade_time_ms, None, "a silent query proves nothing");
@@ -716,7 +660,7 @@ fn a_silent_read_back_does_not_hold_back_the_fields_that_answered() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None,
+        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY),
     );
 
     assert_eq!(execution.confirmed.fade_time_ms, None);
@@ -752,7 +696,7 @@ fn an_unanswered_dimming_curve_read_back_is_named_and_confirms_nothing() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve),
+        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None,
     );
 
     assert_eq!(execution.confirmed.dimming_curve, None, "a gear without DT6 stays unconfirmed");
@@ -762,6 +706,8 @@ fn an_unanswered_dimming_curve_read_back_is_named_and_confirms_nothing() {
     );
     assert_script_consumed(&transport);
 }
+
+const LED_ONLY: DeviceTypeSet = DeviceTypeSet::from_bits(1 << DeviceType::Led.code());
 
 fn expect_unconfirmed_armed_write(
     mock: &MockDaliTransport,
@@ -788,7 +734,7 @@ fn a_violating_read_back_is_named_contended_not_silent() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None,
+        &mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None,
     );
 
     assert_eq!(execution.confirmed.fade_time_ms, None, "a violation proves nothing");
@@ -813,7 +759,7 @@ fn a_violating_bound_read_back_is_named_contended() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (Some(100), None), None,
+        &mut controller, short, None, None, None, None, None, (None, None), (Some(100), None), None, None,
     );
 
     assert_eq!(execution.confirmed.min_level, None);
@@ -843,7 +789,7 @@ fn a_violating_dimming_curve_read_back_is_named_contended() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve),
+        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None,
     );
 
     assert_eq!(execution.confirmed.dimming_curve, None);
@@ -885,7 +831,7 @@ fn a_curve_operand_that_never_proves_names_why_instead_of_succeeding() {
 
         let (transport, mut controller) = setup_controller(mock);
         let execution = write_short_attributes(
-            &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve),
+            &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None,
         );
 
         assert_eq!(execution.confirmed.dimming_curve, None);
@@ -912,7 +858,7 @@ fn a_contended_field_outranks_a_silent_one_in_the_named_outcome() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None,
+        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY),
     );
 
     assert_eq!(
@@ -932,7 +878,7 @@ fn write_attributes_min_level_clamp_converges_to_accepted_value() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (Some(220), None), None,
+        &mut controller, short, None, None, None, None, None, (None, None), (Some(220), None), None, None,
     );
 
     assert_eq!(execution.error, None);
@@ -954,7 +900,7 @@ fn a_confirmed_curve_write_rereads_the_physical_minimum() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(0),
+        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(0), None,
     );
 
     assert_eq!(execution.error, None);
@@ -999,7 +945,7 @@ fn write_attributes_unanswered_bound_verify_stays_unconfirmed_and_is_named() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (Some(100), None), None,
+        &mut controller, short, None, None, None, None, None, (None, None), (Some(100), None), None, None,
     );
 
     assert_eq!(
@@ -1019,7 +965,7 @@ fn write_attributes_max_level_alone_confirms_one_triple() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (None, Some(180)), None,
+        &mut controller, short, None, None, None, None, None, (None, None), (None, Some(180)), None, None,
     );
 
     assert_eq!(execution.error, None);
@@ -1041,7 +987,7 @@ fn write_attributes_raising_both_bounds_redrives_min_after_max() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (Some(150), Some(200)), None,
+        &mut controller, short, None, None, None, None, None, (None, None), (Some(150), Some(200)), None, None,
     );
 
     assert_eq!(execution.error, None);
@@ -1894,7 +1840,7 @@ fn a_wide_colour_value_reads_both_halves_inside_one_transaction() {
 fn a_narrow_colour_value_is_still_one_transaction_and_one_answer() {
     let mock = MockDaliTransport::new();
     let short = 4;
-    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_RED, 254);
+    expect_narrow_colour_value_sample(&mock, short, DT8_COLOUR_VALUE_RED, Some(254));
     let (transport, mut controller) = setup_controller(mock);
     let counters = Arc::new(dali2rust_platform::dali::DaliWireCounters::default());
     controller.set_wire_counters(Arc::clone(&counters));

@@ -447,6 +447,16 @@ impl DeviceTypeSet {
     }
 }
 
+impl FromIterator<u8> for DeviceTypeSet {
+    fn from_iter<I: IntoIterator<Item = u8>>(device_types: I) -> Self {
+        let mut set = Self::default();
+        for device_type in device_types {
+            set.insert(device_type);
+        }
+        set
+    }
+}
+
 #[cfg(test)]
 mod device_type_set_tests {
     use super::{DeviceType, DeviceTypeSet};
@@ -458,6 +468,7 @@ mod device_type_set_tests {
             assert!(set.insert(device_type));
         }
         assert!(set.iter().eq([0, 6, 8, 23, 52]));
+        assert_eq!(set.iter().collect::<DeviceTypeSet>(), set);
         assert!(set.contains(52));
         assert!(!set.contains(51));
         assert!(!set.is_empty());

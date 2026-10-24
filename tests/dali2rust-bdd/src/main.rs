@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use cucumber::gherkin::{Feature, Scenario};
 use cucumber::World;
+use dali2rust_test_support::UnreadableSlices;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_adapters::{
     build_http_test_stack, BusStackRuntime, DaliRuntimeConfig, HttpTestPorts, StaticAsset,
@@ -19,7 +20,6 @@ use dali2rust_platform::slice_store::SliceStore;
 use dali2rust_test_support::{wait_for_tcp_ready, MockNetworkLink};
 use dali2rust_adapters::http::host::HostServer;
 
-pub mod harness_slices;
 pub mod steps;
 pub mod ws_client;
 
@@ -50,7 +50,7 @@ pub struct DaliWorld {
     mock_unblock_flag: Arc<AtomicBool>,
     mqtt_mock: Arc<dali2rust_mqtt_runtime::MockMqttClient>,
     _runtime: Option<Box<BusStackRuntime>>,
-    persistence_slices: Option<Arc<harness_slices::HarnessSlices>>,
+    persistence_slices: Option<Arc<UnreadableSlices>>,
     network_link: Option<([u8; 6], Option<[u8; 4]>, String)>,
     runtime_config: DaliRuntimeConfig,
     pub stored_responses: Vec<TestResponse>,
@@ -139,7 +139,7 @@ impl DaliWorld {
         self.peer.as_ref().expect("a peer controller is listening")
     }
 
-    pub fn persistence_slices(&self) -> &harness_slices::HarnessSlices {
+    pub fn persistence_slices(&self) -> &UnreadableSlices {
         self.persistence_slices.as_deref().expect("in-memory slice persistence is enabled")
     }
 
@@ -201,7 +201,7 @@ impl DaliWorld {
 
     pub fn enable_in_memory_persistence(&mut self) {
         if self.persistence_slices.is_none() {
-            self.persistence_slices = Some(Arc::new(harness_slices::HarnessSlices::default()));
+            self.persistence_slices = Some(Arc::new(UnreadableSlices::default()));
         }
     }
 

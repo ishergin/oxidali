@@ -53,7 +53,7 @@ impl From<BusId> for u16 {
 pub use bus::{
     BusChannel, BusConfig, BusHost, BusPublisher, BusRegistrar, BusSubscriberRx, BusTaskHandle,
     BusTaskStats, CommandArrivalObserver, EventInboxProbe,
-    DEFAULT_CONFIRMATION_SLOTS,
+    DEFAULT_CONFIRMATION_SLOTS, DEFAULT_EVENTS_INGRESS,
 };
 
 #[cfg(feature = "std")]

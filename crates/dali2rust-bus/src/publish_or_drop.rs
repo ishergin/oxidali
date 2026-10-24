@@ -9,9 +9,10 @@ pub fn publish_or_drop(
     channel: BusChannel,
     frame: BusFrame,
     label: &str,
-) {
-    match publisher.try_publish(channel, frame) {
-        PublishResult::Queued => {}
-        other => warn!("publish_or_drop ({label}): {other:?}"),
+) -> PublishResult {
+    let result = publisher.try_publish(channel, frame);
+    if result != PublishResult::Queued {
+        warn!("publish_or_drop ({label}): {result:?}");
     }
+    result
 }

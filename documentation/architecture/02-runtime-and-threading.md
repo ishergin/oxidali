@@ -18,8 +18,9 @@ registry locking → [06](06-registry-and-persistence.md).
   The WebSocket fan-out always runs, spawned last because it samples the read models.
 - Beside the workers: the bus routing task, the transport's `dali-sniff` drain, the one
   `httpd` task, the UART log writer, the census thread, the IP and SNTP watchers, the
-  OTA boot verifier, `registry-reload`, started by the first slice import and then
-  running the byte check and the reload of every import on its own stack, and
+  OTA boot verifier, `registry-reload`, started by the first slice import or held-slice
+  re-read and then running the byte check and the reload of every import, and the
+  registry worker's re-reads of held slices, on its own stack, and
   the `ws-client` senders of the WebSocket clients, and `ota-run`, a thread per update, on
   the device as on the host (their stacks: [07](07-memory-and-cores.md)).
 - A Rust std thread that is spawned and joined leaves internal SRAM behind on ESP-IDF, so

@@ -24,6 +24,8 @@ use super::read_model::{
 };
 use super::{TEST_ADAPTER_ID, TEST_RANDOM_ADDRESS, TEST_SHORT_ADDRESS};
 
+const BANK1_UNREAD_LOCATIONS: usize = 1;
+
 // PD-170 PD-171
 #[then(regex = r"^adapter 0 physical device 0 eventually exposes gear features (\d+)$")]
 async fn then_pd_gear_features(world: &mut DaliWorld, expected: u64) {
@@ -542,7 +544,7 @@ async fn then_attribute_state_exposed(world: &mut DaliWorld) {
     assert_eq!(
         json.pointer("/memory_banks/1/total_bytes_read")
             .and_then(Value::as_u64),
-        Some(BANK1_BYTES.len() as u64),
+        Some((BANK1_BYTES.len() - BANK1_UNREAD_LOCATIONS) as u64),
     );
 }
 
@@ -569,7 +571,7 @@ async fn then_physical_device_exposes_short_bank0(world: &mut DaliWorld) {
     );
     assert_eq!(
         json.as_ref().and_then(|j| bank_bytes(j, 1)),
-        Some(BANK1_BYTES.len() as u64),
+        Some((BANK1_BYTES.len() - BANK1_UNREAD_LOCATIONS) as u64),
         "the sweep must reach bank 1, which an aborted bank 0 never did: {json:?}"
     );
 }

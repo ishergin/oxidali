@@ -1,4 +1,8 @@
 use super::*;
+use crate::runtime::executor::helpers::{
+    send_raw_query_once_response, DT8_DEVICE_TYPE, DT8_QUERY_COLOUR_VALUE,
+};
+use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::devices::dt8_color::active_colour_type;
 
 pub(super) fn write_tc_limits(
@@ -157,6 +161,29 @@ fn read_dt8_gear_features(
 
 const DT8_VALUE_ARM_RETRIES: u8 = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ArmedValue {
+    Answered(DaliResponse, bool),
+    Unarmed(DaliResponse),
+}
+
+// IEC 62386-209 §9.9, Table 11
+#[inline(always)]
+pub(super) fn armed_colour_value_query(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    value_id: u8,
+) -> Result<ArmedValue, SemanticDaliError> {
+    send_special(controller, SpecialCommand::Dtr0(value_id))?;
+    let echo = send_standard_response(controller, address, StandardCommand::QueryContentDtr0)?;
+    if echo != DaliResponse::Answer(value_id) {
+        return Ok(ArmedValue::Unarmed(echo));
+    }
+    send_special(controller, SpecialCommand::EnableDeviceType(DT8_DEVICE_TYPE))?;
+    let (response, contended) = send_raw_query_once_response(controller, address, DT8_QUERY_COLOUR_VALUE)?;
+    Ok(ArmedValue::Answered(response, contended))
+}
+
 pub(super) fn dt8_value_sample(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
@@ -164,23 +191,12 @@ pub(super) fn dt8_value_sample(
 ) -> Result<(Option<u16>, bool), SemanticDaliError> {
     for _ in 0..=DT8_VALUE_ARM_RETRIES {
         let sample = controller.unit(|controller| {
-            send_special(controller, SpecialCommand::Dtr0(value_id))?;
-            let echo = send_standard_query(controller, address, StandardCommand::QueryContentDtr0)?;
-            if echo != Some(value_id) {
+            let ArmedValue::Answered(high, contended) =
+                armed_colour_value_query(controller, address, value_id)?
+            else {
                 return Ok(None);
-            }
-            send_special(
-                controller,
-                SpecialCommand::EnableDeviceType(
-                    crate::runtime::executor::helpers::DT8_DEVICE_TYPE,
-                ),
-            )?;
-            let (high, contended) = send_raw_query_once_observed(
-                controller,
-                address,
-                crate::runtime::executor::helpers::DT8_QUERY_COLOUR_VALUE,
-            )?;
-            let Some(high) = high else {
+            };
+            let Some(high) = high.value() else {
                 return Ok(Some((None, contended)));
             };
             if !colour_value_is_wide(value_id) {

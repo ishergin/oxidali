@@ -29,6 +29,92 @@ fn bit(index: u8) -> u32 {
     1u32.checked_shl(u32::from(index)).unwrap_or(0)
 }
 
+#[derive(Clone, Copy)]
+enum Word {
+    Global,
+    Groups,
+    VirtualLamps,
+    Scenes(u8),
+}
+
+fn place(key: SliceKey) -> Option<(Word, u32)> {
+    let global = |mask| Some((Word::Global, mask));
+    match key {
+        SliceKey::Groups { adapter_id } => Some((Word::Groups, bit(adapter_id))),
+        SliceKey::VirtualLamps { adapter_id } => Some((Word::VirtualLamps, bit(adapter_id))),
+        SliceKey::Scene { adapter_id, scene_id } => Some((Word::Scenes(adapter_id), bit(scene_id))),
+        SliceKey::InputDevices { bank } => {
+            global(bit(bank).checked_shl(FIRST_INPUT_DEVICE_BANK).unwrap_or(0))
+        }
+        SliceKey::Adapters => global(ADAPTERS),
+        SliceKey::HclSchedules => global(HCL_SCHEDULES),
+        SliceKey::PollerSettings => global(POLLER_SETTINGS),
+        SliceKey::DaliSettings => global(DALI_SETTINGS),
+        SliceKey::RedundancySettings => global(REDUNDANCY_SETTINGS),
+        SliceKey::Policies => global(POLICIES),
+        SliceKey::HomeAssistantSettings => global(HOME_ASSISTANT_SETTINGS),
+        SliceKey::PhysicalDevices { .. }
+        | SliceKey::PhysicalDeviceBank { .. }
+        | SliceKey::ControllerSettings
+        | SliceKey::Rules { .. } => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct HeldSlices {
+    global: u32,
+    groups: u32,
+    virtual_lamps: u32,
+    scenes: [u32; MAX_DIRTY_ADAPTERS],
+    device_banks: [u16; MAX_DIRTY_ADAPTERS],
+}
+
+impl HeldSlices {
+    pub(crate) fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub(crate) fn reads(&self, key: SliceKey) -> bool {
+        match key {
+            SliceKey::InputDevices { .. } => self.global & INPUT_DEVICES != 0,
+            SliceKey::PhysicalDevices { adapter_id } => self.device_banks(adapter_id) != 0,
+            SliceKey::PhysicalDeviceBank { adapter_id, bank } => {
+                let bank = 1u16.checked_shl(u32::from(bank)).unwrap_or(0);
+                self.device_banks(adapter_id) & bank != 0
+            }
+            other => place(other).is_some_and(|(word, mask)| self.word(word) & mask != 0),
+        }
+    }
+
+    pub(crate) fn holds(&self, key: SliceKey) -> bool {
+        match key {
+            SliceKey::InputDevices { .. } => {
+                place(key).is_some_and(|(word, mask)| self.word(word) & mask != 0)
+            }
+            other => self.reads(other),
+        }
+    }
+
+    pub(crate) fn device_banks(&self, adapter_id: u8) -> u16 {
+        self.device_banks.get(usize::from(adapter_id)).copied().unwrap_or(0)
+    }
+
+    pub(crate) fn keys(self, adapter_count: u8) -> impl Iterator<Item = SliceKey> {
+        SliceKey::every(adapter_count).filter(move |key| self.reads(*key))
+    }
+
+    fn word(&self, word: Word) -> u32 {
+        match word {
+            Word::Global => self.global,
+            Word::Groups => self.groups,
+            Word::VirtualLamps => self.virtual_lamps,
+            Word::Scenes(adapter_id) => {
+                self.scenes.get(usize::from(adapter_id)).copied().unwrap_or(0)
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct WithheldSlices {
     global: AtomicU32,
@@ -50,27 +136,24 @@ impl WithheldSlices {
     }
 
     fn cell(&self, key: SliceKey) -> Option<(&AtomicU32, u32)> {
-        let global = |mask| Some((&self.global, mask));
-        match key {
-            SliceKey::Groups { adapter_id } => Some((&self.groups, bit(adapter_id))),
-            SliceKey::VirtualLamps { adapter_id } => Some((&self.virtual_lamps, bit(adapter_id))),
-            SliceKey::Scene { adapter_id, scene_id } => {
-                Some((self.scenes.get(usize::from(adapter_id))?, bit(scene_id)))
-            }
-            SliceKey::InputDevices { bank } => {
-                global(bit(bank).checked_shl(FIRST_INPUT_DEVICE_BANK).unwrap_or(0))
-            }
-            SliceKey::Adapters => global(ADAPTERS),
-            SliceKey::HclSchedules => global(HCL_SCHEDULES),
-            SliceKey::PollerSettings => global(POLLER_SETTINGS),
-            SliceKey::DaliSettings => global(DALI_SETTINGS),
-            SliceKey::RedundancySettings => global(REDUNDANCY_SETTINGS),
-            SliceKey::Policies => global(POLICIES),
-            SliceKey::HomeAssistantSettings => global(HOME_ASSISTANT_SETTINGS),
-            SliceKey::PhysicalDevices { .. }
-            | SliceKey::PhysicalDeviceBank { .. }
-            | SliceKey::ControllerSettings
-            | SliceKey::Rules { .. } => None,
+        let (word, mask) = place(key)?;
+        let cell = match word {
+            Word::Global => &self.global,
+            Word::Groups => &self.groups,
+            Word::VirtualLamps => &self.virtual_lamps,
+            Word::Scenes(adapter_id) => self.scenes.get(usize::from(adapter_id))?,
+        };
+        Some((cell, mask))
+    }
+
+    pub(crate) fn held(&self, device_banks: [u16; MAX_DIRTY_ADAPTERS]) -> HeldSlices {
+        let load = |cell: &AtomicU32| cell.load(Ordering::Acquire);
+        HeldSlices {
+            global: load(&self.global),
+            groups: load(&self.groups),
+            virtual_lamps: load(&self.virtual_lamps),
+            scenes: self.scenes.each_ref().map(load),
+            device_banks,
         }
     }
 

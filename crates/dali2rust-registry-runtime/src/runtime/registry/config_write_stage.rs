@@ -39,7 +39,7 @@ impl ConfigWriteRejection {
             Self::TooManyStages => "config_write_stage_limit",
             Self::TooManyRows => "config_write_too_many_rows",
             Self::NoStage => "config_write_no_stage",
-            Self::ChunkCountMismatch => "config_write_chunk_count_mismatch",
+            Self::ChunkCountMismatch => "config_write_chunk_mismatch",
         }
     }
 }

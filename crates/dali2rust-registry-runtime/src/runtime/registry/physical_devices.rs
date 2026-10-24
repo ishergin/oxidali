@@ -18,7 +18,8 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_domain::dali::level_transition::{LevelContext, TransitionOutcome};
 use dali2rust_domain::registry::{
-    colour_mode_fits_declared, device_type_fits_declared, AttributeSectionKind,
+    colour_mode_fits_declared, device_type_fits_declared, known_device_types,
+    AttributeSectionKind,
     AttributeSectionView, AttributeSource, CapabilityFlagsView, ColorTemperatureRangeView,
     MemoryBankRangeView, MemoryBankSummaryView, MemoryBusUnitAttributesView,
     MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView, MemoryLuminaireAttributesView,
@@ -1414,6 +1415,16 @@ impl PhysicalDeviceReadPort for RegistryStore {
         g.physical_devices
             .get(&(adapter_id, short_address))?
             .supported_device_types
+    }
+
+    fn physical_device_known_types(
+        &self,
+        adapter_id: u8,
+        short_address: u8,
+    ) -> Option<DeviceTypeSet> {
+        let g = self.read_inner();
+        let rec = g.physical_devices.get(&(adapter_id, short_address))?;
+        known_device_types(rec.supported_device_types, rec.device_type_override)
     }
 
     fn physical_device_exists(&self, adapter_id: u8, short_address: u8) -> bool {
