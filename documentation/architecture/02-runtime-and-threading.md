@@ -27,6 +27,10 @@ registry locking → [06](06-registry-and-persistence.md).
   `dali2rust_bsp::stack_runner`: the slice import on one `StackRunner`, a WebSocket
   client's sender on a `RunnerPool` runner it holds for its session; a thread per occasion
   is kept for occasions that stay rare, like an update.
+- A new std thread start, through a spawn helper or a direct `std::thread`, needs a literal
+  task name and its line in `scripts/spawn_sites.txt`, and an `occasion` line only for an
+  occasion that stays rare
+  ([10](10-build-release-and-tooling.md) §Merge gates).
 - `registry-hydrate` is a one-shot boot thread, joined before any worker starts
   ([06](06-registry-and-persistence.md)).
 - The P4 is dual-core and FreeRTOS runs SMP: two tasks, or a task and the PHY interrupt,
@@ -65,10 +69,13 @@ registry locking → [06](06-registry-and-persistence.md).
 
 - Every thread spawns through `dali2rust_bsp::esp_thread`. `spawn_named_stack_in` is for
   boot-time workers and panics if the spawn fails, because an incomplete stack must not
-  run. `try_spawn_named_stack_in` is for anything a client can drive: under
-  `panic = abort` a failed spawn there would be a remote reboot switch. Each takes the
-  thread's `StackHome` ([07](07-memory-and-cores.md) §Placement); `spawn_named_stack`
-  and `try_spawn_named_stack` are the same pair with the stack fixed internal.
+  run. `try_spawn_named_stack_in` is for a rare client-triggered occasion, like an update,
+  and for a runner's own start: under `panic = abort` a failed spawn there would be a
+  remote reboot switch. Each takes the thread's `StackHome`
+  ([07](07-memory-and-cores.md) §Placement); `spawn_named_stack` and
+  `try_spawn_named_stack` are the same pair with the stack fixed internal. Work a client
+  triggers again and again does not spawn per trigger: it runs on a
+  `dali2rust_bsp::stack_runner` runner.
 - The FreeRTOS task name comes from the `ThreadSpawnConfiguration` that helper sets
   (truncated to 15 characters). `std::thread::Builder::name` never reaches the task, so a
   thread spawned any other way reads `pthread` in every watchdog dump, coredump and

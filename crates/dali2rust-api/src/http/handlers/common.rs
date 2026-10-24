@@ -406,16 +406,21 @@ where
         timeout_ms,
         frame,
     )?;
-    wait_apply_counter(load, before, APPLY_WATCH_BUDGET_MS.min(timeout_ms))
+    wait_apply_counter(load, before, 1, APPLY_WATCH_BUDGET_MS.min(timeout_ms))
 }
 
-pub fn wait_apply_counter<F>(mut load: F, before: u32, budget_ms: u64) -> Result<(), HttpResponse>
+pub fn wait_apply_counter<F>(
+    mut load: F,
+    before: u32,
+    applies: u32,
+    budget_ms: u64,
+) -> Result<(), HttpResponse>
 where
     F: FnMut() -> u32,
 {
     let deadline = Instant::now() + Duration::from_millis(budget_ms);
     loop {
-        if load() > before {
+        if load().wrapping_sub(before) >= applies {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -591,6 +596,24 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_slice(&response.into_body_bytes()).expect("a JSON body");
         (status, json["error"].as_str().unwrap_or_default().to_string())
+    }
+
+    const NO_WAIT_MS: u64 = 0;
+
+    fn apply_watch_status(reading: u32, before: u32, applies: u32) -> Result<(), u16> {
+        wait_apply_counter(move || reading, before, applies, NO_WAIT_MS).map_err(|r| r.status)
+    }
+
+    #[test]
+    fn an_apply_counter_that_wraps_from_u32_max_to_zero_has_moved() {
+        assert_eq!(apply_watch_status(0, u32::MAX, 1), Ok(()));
+    }
+
+    #[test]
+    fn a_batch_waits_for_every_apply_of_the_batch_across_the_wrap() {
+        let before = u32::MAX - 1;
+        assert_eq!(apply_watch_status(0, before, 3), Err(504), "two of three applies landed");
+        assert_eq!(apply_watch_status(1, before, 3), Ok(()));
     }
 
     #[test]

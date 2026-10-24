@@ -1746,7 +1746,7 @@ fn republish_lamp_config(
 
 pub(crate) struct RulePublishBudget {
     tokens: u32,
-    last_refill_ms: u64,
+    last_refill_ms: u32,
 }
 
 impl Default for RulePublishBudget {
@@ -1756,22 +1756,21 @@ impl Default for RulePublishBudget {
 }
 
 const RULE_PUBLISH_BURST: u32 = 4;
-const RULE_PUBLISH_REFILL_MS: u64 = 1_000;
+const RULE_PUBLISH_REFILL_MS: u32 = 1_000;
 
 impl RulePublishBudget {
-    pub(crate) fn new(now_ms: u64) -> Self {
+    pub(crate) fn new(now_ms: u32) -> Self {
         Self {
             tokens: RULE_PUBLISH_BURST,
             last_refill_ms: now_ms,
         }
     }
 
-    fn take(&mut self, now_ms: u64) -> bool {
-        let refills = now_ms.saturating_sub(self.last_refill_ms) / RULE_PUBLISH_REFILL_MS;
+    fn take(&mut self, now_ms: u32) -> bool {
+        let refills = now_ms.wrapping_sub(self.last_refill_ms) / RULE_PUBLISH_REFILL_MS;
         if refills > 0 {
-            self.tokens = (self.tokens + u32::try_from(refills).unwrap_or(u32::MAX))
-                .min(RULE_PUBLISH_BURST);
-            self.last_refill_ms += refills * RULE_PUBLISH_REFILL_MS;
+            self.tokens = self.tokens.saturating_add(refills).min(RULE_PUBLISH_BURST);
+            self.last_refill_ms = self.last_refill_ms.wrapping_add(refills * RULE_PUBLISH_REFILL_MS);
         }
         if self.tokens == 0 {
             return false;
@@ -1788,8 +1787,7 @@ fn drain_rule_publishes(
     publishes: Vec<dali2rust_contracts::msg::MqttPublishCommand>,
 ) {
     for cmd in publishes {
-        let now_ms = dali2rust_bsp::unix_clock::unix_wall_clock_millis();
-        if !budget.take(now_ms) {
+        if !budget.take(monotonic_ms()) {
             bump(&ports.counters.rule_publishes_dropped_total);
             continue;
         }
@@ -1832,6 +1830,20 @@ mod tests {
     use dali2rust_domain::registry::{
         HaGroupView, HaLampView, HaSceneView, HomeAssistantSettingsApplyWatchPort,
     };
+
+    #[test]
+    fn the_rule_publish_budget_refills_when_the_monotonic_clock_wraps_to_zero() {
+        let before_wrap = u32::MAX - RULE_PUBLISH_REFILL_MS / 2;
+        let mut budget = RulePublishBudget::new(before_wrap);
+        for _ in 0..RULE_PUBLISH_BURST {
+            assert!(budget.take(before_wrap));
+        }
+        assert!(!budget.take(before_wrap), "the burst is spent");
+        let one_interval_on = before_wrap.wrapping_add(RULE_PUBLISH_REFILL_MS);
+        assert!(one_interval_on < before_wrap, "the clock stepped back through the wrap");
+        assert!(budget.take(one_interval_on), "one interval refills one token");
+        assert!(!budget.take(one_interval_on), "and only one");
+    }
 
     struct EmptyReadPort;
 

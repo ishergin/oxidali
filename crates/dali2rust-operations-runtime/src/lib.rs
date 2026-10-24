@@ -12,5 +12,6 @@ pub use runtime::apply_orchestrator_worker::{
 pub use runtime::apply_pacing::APPLY_ORCHESTRATOR_REQUIRED_EVENTS;
 pub use runtime::operation_tracker_worker::{
     spawn_operation_tracker_worker, OperationTrackerCounters, OperationTrackerHttpRead,
-    OperationTrackerInner, OPERATION_TRACKER_HANDLED_COMMANDS, OPERATION_TRACKER_HANDLED_EVENTS,
+    OperationTrackerInner, MAX_PENDING_CORRELATIONS, OPERATION_TRACKER_CONFIRMATION_INBOX,
+    OPERATION_TRACKER_HANDLED_COMMANDS, OPERATION_TRACKER_HANDLED_EVENTS,
 };

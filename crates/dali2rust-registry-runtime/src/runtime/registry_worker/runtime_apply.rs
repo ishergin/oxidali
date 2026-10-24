@@ -206,7 +206,7 @@ fn apply_runtime_physical_and_publish(
             .virtual_lamp_runtime_applied
             .fetch_add(1, Ordering::Relaxed);
     }
-    store_outcome_to_runtime_outcome(if publish_runtime_snapshot(
+    publish_runtime_snapshot(
         publisher,
         counters,
         corr,
@@ -219,11 +219,8 @@ fn apply_runtime_physical_and_publish(
             dimensions: commit.setpoint.dimensions(),
             holds_hcl: commit.entry_holds_hcl,
         },
-    ) {
-        RuntimeCommitOutcome::Committed
-    } else {
-        RuntimeCommitOutcome::NoRecord
-    })
+    );
+    RuntimeApplyOutcome::Applied
 }
 
 #[allow(clippy::too_many_arguments, reason = "mirrors the event it publishes")]
@@ -236,7 +233,7 @@ fn publish_runtime_snapshot(
     short_address: u8,
     store: &RegistryStore,
     commit: RuntimeCommitMeta,
-) -> bool {
+) {
     let Some((snap_sp, snap_obs)) =
         store.runtime_state_payload_from_physical(adapter_id, short_address)
     else {
@@ -244,7 +241,7 @@ fn publish_runtime_snapshot(
             "registry: physical record missing after runtime apply \
              (adapter={adapter_id} short={short_address}); RuntimeStateChangedEvent skipped"
         );
-        return true;
+        return;
     };
     let vl = vl.or_else(|| store.internal_virtual_lamp_bound_to_short(adapter_id, short_address));
     publish_runtime_state_changed(
@@ -258,7 +255,6 @@ fn publish_runtime_snapshot(
         &snap_obs,
         commit,
     );
-    true
 }
 
 fn resolve_transition_target(
@@ -340,7 +336,7 @@ fn announce_transition(
     counters
         .physical_device_runtime_applied
         .fetch_add(1, Ordering::Relaxed);
-    store_outcome_to_runtime_outcome(if publish_runtime_snapshot(
+    publish_runtime_snapshot(
         publisher,
         counters,
         corr,
@@ -353,9 +349,6 @@ fn announce_transition(
             dimensions: dali2rust_contracts::msg::SetpointDimensions { level: true, color: false },
             holds_hcl: true,
         },
-    ) {
-        RuntimeCommitOutcome::Committed
-    } else {
-        RuntimeCommitOutcome::NoRecord
-    })
+    );
+    RuntimeApplyOutcome::Applied
 }

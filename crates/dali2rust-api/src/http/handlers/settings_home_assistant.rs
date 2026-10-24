@@ -212,7 +212,8 @@ impl crate::http::handlers::common::MutatingHandler for HomeAssistantSettingsPat
         let watch = Arc::clone(&self.apply_watch);
         wait_apply_counter(
             move || watch.home_assistant_settings_applied_load(),
-            before.saturating_add(published.saturating_sub(1)),
+            before,
+            published,
             APPLY_WATCH_BUDGET_MS.min(self.timeout_ms),
         )
     }

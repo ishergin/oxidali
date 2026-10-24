@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
 use dali2rust_contracts::msg::{
@@ -8,7 +9,9 @@ use dali2rust_domain::registry::MemoryBankSummaryView;
 use dali2rust_platform::slice_store::{SliceKey, SliceStore, StoreError};
 use log::{info, warn};
 
-use crate::runtime::registry::input_devices::PersistableInputDevicesSlice;
+use crate::runtime::registry::input_devices::{
+    hydrate_input_devices_bank_inner, rebank_input_devices, PersistableInputDevicesSlice,
+};
 
 use super::groups::{GroupMembershipRowRecord, GroupRecord};
 use super::persistence_slices::{
@@ -784,7 +787,7 @@ fn note_unread_slice(
 const PHYSICAL_DEVICE_BANKS_U8: u8 =
     dali2rust_platform::slice_store::SliceKey::PHYSICAL_DEVICE_BANKS;
 
-const INPUT_DEVICE_BANKS_U8: u8 = 4;
+const INPUT_DEVICE_BANKS_U8: u8 = SliceKey::INPUT_DEVICE_BANKS;
 
 fn mark_slice_dirty(store: &RegistryStore, kind: &PersistenceSliceKind) {
     match *kind {
@@ -909,8 +912,8 @@ hydrate_wrappers! { per_adapter:
 }
 
 fn hydrate_input_device_banks(store: &RegistryStore, slices: &dyn SliceStore, sink: &mut HydrateSink<'_>) {
-    let mut stored = std::collections::HashSet::new();
-    let (mut whole, mut loaded) = (true, false);
+    let mut stored = HashSet::new();
+    let (mut whole, mut loaded, mut held_twice) = (true, false, false);
     for bank in 0..INPUT_DEVICE_BANKS_U8 {
         let outcome = hydrate_stored_slice(
             store,
@@ -918,16 +921,28 @@ fn hydrate_input_device_banks(store: &RegistryStore, slices: &dyn SliceStore, si
             PersistenceSliceKind::InputDevices { bank },
             sink,
             |bytes| decode_slice::<PersistableInputDevicesSlice>(bytes, INPUT_DEVICES_SLICE_VERSION),
-            |inner, slice| {
-                stored.extend(slice.devices.iter().map(|d| (d.adapter_id, d.short_address)));
-                crate::runtime::registry::input_devices::hydrate_input_devices_bank_inner(inner, bank, slice);
-            },
+            |inner, slice| held_twice |= hydrate_input_devices_bank_inner(inner, bank, slice, &mut stored),
         );
         whole &= matches!(outcome, SlotOutcome::Loaded | SlotOutcome::Missing);
         loaded |= outcome == SlotOutcome::Loaded;
     }
-    if whole && loaded {
-        store.write_inner().input_devices.retain(|key, _| stored.contains(key));
+    settle_input_device_banks(store, &stored, whole && loaded, held_twice);
+}
+
+fn settle_input_device_banks(
+    store: &RegistryStore,
+    stored: &HashSet<(u8, u8)>,
+    replaced: bool,
+    held_twice: bool,
+) {
+    let mut inner = store.write_inner();
+    if replaced {
+        inner.input_devices.retain(|key, _| stored.contains(key));
+    }
+    let rebanked = rebank_input_devices(&mut inner, stored);
+    drop(inner);
+    if rebanked || held_twice {
+        store.dirty.mark_input_devices_dirty();
     }
 }
 
@@ -1218,7 +1233,7 @@ mod tests {
 
     use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 
-    use crate::test_support::{CountingStore, ProbeStore};
+    use crate::test_support::{scan_input_device, CountingStore, ProbeStore};
     use super::{key_of, mark_slice_dirty, registry_kind, validate_registry_slice};
     use super::super::input_devices::{InputDeviceRecord, INPUT_DEVICES_PER_BANK};
     use super::super::physical_devices::PhysicalDeviceRecord;
@@ -1365,9 +1380,8 @@ mod tests {
         let slices = ProbeStore::default();
         let seeded = RegistryStore::with_adapter_count(1);
         for short in 0..installed_devices {
-            seeded.write_inner().input_devices.insert((0, short), InputDeviceRecord::empty(0, short));
+            assert!(scan_input_device(&seeded, short), "short {short} admitted");
         }
-        seeded.dirty.mark_input_devices_dirty();
         seeded.flush_dirty_slices(&slices);
 
         let store = boot_with_unread(&slices, SliceKey::InputDevices { bank: 0 });
@@ -1377,6 +1391,28 @@ mod tests {
         let rebooted = RegistryStore::with_adapter_count(1);
         rebooted.hydrate_from_store(&slices, 1);
         assert_eq!(rebooted.read_inner().input_devices.len(), usize::from(installed_devices));
+    }
+
+    #[test]
+    fn a_new_input_device_leaves_the_persisted_ones_whole_when_a_bank_write_fails() {
+        let slices = ProbeStore::default();
+        let store = RegistryStore::with_adapter_count(1);
+        let persisted = 1..=u8::try_from(INPUT_DEVICES_PER_BANK + 1).expect("a short address");
+        for short in persisted.clone() {
+            assert!(scan_input_device(&store, short), "short {short} admitted");
+        }
+        store.flush_dirty_slices(&slices);
+
+        assert!(scan_input_device(&store, 0), "short 0 admitted");
+        slices.refuse_writes_to(Some(SliceKey::InputDevices { bank: 1 }));
+        store.flush_dirty_slices(&slices);
+
+        let rebooted = RegistryStore::with_adapter_count(1);
+        rebooted.hydrate_from_store(&slices, 1);
+        let inner = rebooted.read_inner();
+        let lost: Vec<u8> =
+            persisted.filter(|short| !inner.input_devices.contains_key(&(0, *short))).collect();
+        assert!(lost.is_empty(), "persisted devices lost after the failed flush: {lost:?}");
     }
 
     #[test]

@@ -1,0 +1,36 @@
+crates/dali2rust-adapters/src/dali/transport/esp_idf.rs                      dali-sniff                boot     drains the PHY ring; started with the transport, which the firmware builds once
+crates/dali2rust-adapters/src/http/host.rs                                   thread::scope             host     host dev-server accept loop; the module is compiled off ESP-IDF only
+crates/dali2rust-adapters/src/http/host_ws.rs                                thread::spawn             host     host dev-server upstream pump per WebSocket; the module is compiled off ESP-IDF only
+crates/dali2rust-adapters/src/http/host_ws.rs                                thread::spawn             host     host dev-server connection handler; the module is compiled off ESP-IDF only
+crates/dali2rust-adapters/src/log/console.rs                                 log-uart                  boot     the one UART log writer; install() starts it once behind INSTALLED
+crates/dali2rust-adapters/src/runtime/registry_init.rs                       registry-hydrate          boot     scoped one-shot hydration on a PSRAM stack, joined before any worker starts
+crates/dali2rust-api/src/confirmation_bridge.rs                              confirm-bridge            boot     the one confirmation-bridge thread, started with the bus workers
+crates/dali2rust-bsp/src/psram_selftest.rs                                   psram-selftest            boot     helper of an opt-in boot self-test, joined before the self-test returns
+crates/dali2rust-bsp/src/sntp_sync.rs                                        sntp-watch                boot     one watcher started when the firmware starts SNTP
+crates/dali2rust-bsp/src/stack_runner.rs                                     <dynamic>                 runner   the runner's own thread, named by its StackRunner or RunnerPool and reused for every job
+crates/dali2rust-bus/src/bus.rs                                              bus_task                  boot     the bus routing task, started with the bus host
+crates/dali2rust-dali-runtime/src/runtime/dali_worker.rs                     dali_worker               boot     the wire's only owner, started with the bus workers
+crates/dali2rust-display-runtime/src/runtime/display_worker.rs               display_worker            boot     OLED worker, started with the bus workers
+crates/dali2rust-fanout-runtime/src/runtime/projector_worker.rs              fanout_projector_worker   boot     state-fanout projector, started with the bus workers
+crates/dali2rust-fanout-runtime/src/runtime/sniffer_translator_worker.rs     sniffer_translator_worker boot     sniffer translator, started with the bus workers
+crates/dali2rust-firmware/src/composition/mod.rs                             census                    boot     heartbeat and census thread, started once from main
+crates/dali2rust-firmware/src/composition/mod.rs                             ip-watch                  boot     IP address watcher, started once from main
+crates/dali2rust-hcl-runtime/src/runtime/scheduler_worker.rs                 hcl-scheduler             boot     HCL scheduler, started with the bus workers
+crates/dali2rust-mqtt-runtime/src/client/mock.rs                             thread::spawn             host-linked mock client's delayed refusal report; `pub mod mock` is compiled into the firmware image, but only host tests and the host dev server build the mock
+crates/dali2rust-mqtt-runtime/src/runtime/worker.rs                          mqtt_worker               boot     Home Assistant bridge, started with the bus workers when a client is wired
+crates/dali2rust-operations-runtime/src/runtime/apply_orchestrator_worker.rs apply_orchestrator        boot     apply orchestrator, started with the bus workers
+crates/dali2rust-operations-runtime/src/runtime/operation_tracker_worker.rs  operation_tracker_worker  boot     operation tracker, started with the bus workers
+crates/dali2rust-ota-runtime/src/runtime/boot_verify.rs                      ota-verify                boot     proves a pending image after boot; not started when none is pending
+crates/dali2rust-ota-runtime/src/runtime/ota_worker.rs                       ota-run                   occasion one thread per firmware update attempt; updates are rare and a good one ends in a reboot
+crates/dali2rust-ota-runtime/src/runtime/ota_worker.rs                       ota-worker                boot     OTA listener, started with the bus workers when the build can update itself
+crates/dali2rust-poller-runtime/src/runtime/poller_worker.rs                 poller                    boot     background re-reads, started with the bus workers
+crates/dali2rust-redundancy-runtime/src/runtime/arbitration_worker.rs        arbitration               boot     arbitration worker, started with the bus workers
+crates/dali2rust-redundancy-runtime/src/runtime/replication.rs               replication               boot     config pull worker, started with the bus workers
+crates/dali2rust-redundancy-runtime/src/runtime/supervisor.rs                arb-supervisor            boot     arbitration supervisor, started with the bus workers
+crates/dali2rust-registry-runtime/src/runtime/registry_worker/mod.rs         registry_worker           boot     the registry's single writer, started with the bus workers
+crates/dali2rust-rules-runtime/src/runtime/worker.rs                         rules-worker              boot     rules worker, started with the bus workers
+crates/dali2rust-test-support/src/peer.rs                                    thread::spawn             host     fake peer controller of host tests; the crate is never linked into the firmware
+crates/dali2rust-ws-runtime/src/runtime/worker.rs                            ws_worker                 boot     WebSocket fan-out, spawned last from the bus workers
+tools/dali-gear-sim/src/logsink.rs                                           gear-log                  boot     the emulator's UART log writer; start() runs once from main
+tools/dali-gear-sim/src/main.rs                                              dali-gear                 boot     the emulator's answer loop, started once from main
+tools/dali-gear-sim/src/main.rs                                              gear-console              boot     the emulator's console reader, started once from main

@@ -18,7 +18,8 @@ use dali2rust_domain::registry::{
 };
 use dali2rust_operations_runtime::{
     spawn_operation_tracker_worker, OperationTrackerCounters, OperationTrackerHttpRead,
-    OperationTrackerInner, OPERATION_TRACKER_HANDLED_EVENTS,
+    OperationTrackerInner, MAX_PENDING_CORRELATIONS, OPERATION_TRACKER_CONFIRMATION_INBOX,
+    OPERATION_TRACKER_HANDLED_EVENTS,
 };
 use dali2rust_test_support::wait_until;
 
@@ -99,7 +100,7 @@ fn spawn_harness_with_counters() -> (
             (
                 reg.subscribe_commands(16, dali2rust_contracts::msg::COMMAND_VARIANT_NAMES),
                 reg.subscribe_events(32, OPERATION_TRACKER_HANDLED_EVENTS),
-                reg.subscribe_confirmations(16),
+                reg.subscribe_confirmations(OPERATION_TRACKER_CONFIRMATION_INBOX),
                 reg.subscribe_events(TRANSITION_INBOX, TRANSITION_EVENTS),
             )
         },
@@ -333,17 +334,7 @@ fn a_rejection_that_arrives_before_the_begin_still_fails_the_operation() {
             operation_key: dali2rust_contracts::msg::fixed_text_32("scn-apply-0-3-9111"),
         },
     );
-    let rejection = dali2rust_contracts::bus::synthetic_delivery_rejected_envelope(&execute)
-        .expect("the bus builds one for every rejected command");
-    publish(
-        &publisher,
-        BusChannel::Confirmations,
-        BusFrame::Confirmation(std::sync::Arc::new(rejection)),
-    );
-    wait_until(
-        || tracker.lock().expect("tracker").pending_worker_signal_correlations() == 1,
-        Duration::from_millis(500),
-    );
+    deliver_rejections(&publisher, &tracker, [rejection_of(&execute)], 9112);
     publish(
         &publisher,
         BusChannel::Commands,
@@ -1329,4 +1320,149 @@ fn part_103_commissioning_is_visible_for_its_registry_adapter_only() {
             assert!(!busy, "active {key} must not 409 registry adapter {other}");
         }
     }
+}
+
+const TIMED_OUT_TTL_MS: u32 = 1;
+
+#[test]
+fn late_signals_of_closed_operations_leave_room_for_an_early_one() {
+    let (publisher, tracker, _host) = spawn_harness();
+    let first_closed = 41_000u64;
+    let cap = u64::try_from(MAX_PENDING_CORRELATIONS).expect("a correlation count");
+    for corr in first_closed..first_closed + cap {
+        let key = format!("op-late-{corr}-{corr}");
+        publish(
+            &publisher,
+            BusChannel::Commands,
+            begin_envelope(corr, &key, OperationType::Discovery, TIMED_OUT_TTL_MS),
+        );
+        wait_until(
+            || tail_for(&tracker, &key).last().copied() == Some(OperationStatus::TimedOut),
+            Duration::from_millis(500),
+        );
+        publish(
+            &publisher,
+            BusChannel::Events,
+            signal_event(corr, OperationWorkerSignal::WorkerSucceeded, ErrorCode::InvalidJson),
+        );
+    }
+    let early = 41_999u64;
+    publish(
+        &publisher,
+        BusChannel::Events,
+        signal_event(early, OperationWorkerSignal::WorkerSucceeded, ErrorCode::InvalidJson),
+    );
+    wait_until(
+        || tracker.lock().expect("tracker").pending_worker_signal_correlations() == 1,
+        Duration::from_millis(500),
+    );
+
+    publish(
+        &publisher,
+        BusChannel::Commands,
+        begin_envelope(early, "op-early-after-late", OperationType::AttributeRead, 600_000),
+    );
+    wait_until(
+        || tail_for(&tracker, "op-early-after-late").last().copied() == Some(OperationStatus::Succeeded),
+        Duration::from_millis(500),
+    );
+    assert_eq!(
+        tracker.lock().expect("tracker").pending_worker_signal_correlations(),
+        0,
+        "a signal for an operation the tracker closed is not held for its TTL"
+    );
+}
+
+fn rejection_of(command: &dali2rust_contracts::msg::CommandEnvelope) -> BusFrame {
+    let rejection = dali2rust_contracts::bus::synthetic_delivery_rejected_envelope(command)
+        .expect("the bus builds one for every rejected command");
+    BusFrame::Confirmation(std::sync::Arc::new(rejection))
+}
+
+fn rule_enable_rejection(correlation_id: u64) -> BusFrame {
+    rejection_of(&dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        correlation_id,
+        BusId::default().0,
+        Some(dali2rust_contracts::msg::Origin::Api),
+        dali2rust_contracts::msg::RuleEnableCommand {
+            name: dali2rust_contracts::msg::fixed_text_64("porch"),
+            enabled: true,
+        },
+    ))
+}
+
+fn deliver_rejections(
+    publisher: &dali2rust_bus::BusPublisher,
+    tracker: &TrackerHandle,
+    rejections: impl IntoIterator<Item = BusFrame>,
+    sentinel: u64,
+) {
+    let key = format!("op-sentinel-{sentinel}");
+    publish(publisher, BusChannel::Commands, begin_envelope(sentinel, &key, OperationType::AttributeWrite, 600_000));
+    wait_until(|| tail_for(tracker, &key) == vec![OperationStatus::Accepted], Duration::from_millis(500));
+    for rejection in rejections {
+        publish(publisher, BusChannel::Confirmations, rejection);
+    }
+    publish(publisher, BusChannel::Confirmations, rule_enable_rejection(sentinel));
+    wait_until(
+        || tail_for(tracker, &key).last().copied() == Some(OperationStatus::Failed),
+        Duration::from_millis(500),
+    );
+}
+
+fn reject_outside_any_operation(publisher: &dali2rust_bus::BusPublisher, tracker: &TrackerHandle, first: u64) {
+    let count = u64::try_from(MAX_PENDING_CORRELATIONS).expect("a correlation count");
+    let rejections = (first..first + count).map(rule_enable_rejection);
+    deliver_rejections(publisher, tracker, rejections, first + count);
+}
+
+#[test]
+fn rejections_outside_any_operation_leave_room_for_an_early_signal() {
+    let (publisher, tracker, _host) = spawn_harness();
+    reject_outside_any_operation(&publisher, &tracker, 42_000);
+
+    let early = 42_999u64;
+    publish(
+        &publisher,
+        BusChannel::Events,
+        signal_event(early, OperationWorkerSignal::WorkerSucceeded, ErrorCode::InvalidJson),
+    );
+    wait_until(
+        || tracker.lock().expect("tracker").pending_worker_signal_correlations() == 1,
+        Duration::from_millis(500),
+    );
+    publish(
+        &publisher,
+        BusChannel::Commands,
+        begin_envelope(early, "op-early-after-rejections", OperationType::AttributeRead, 600_000),
+    );
+    wait_until(
+        || tail_for(&tracker, "op-early-after-rejections").last().copied() == Some(OperationStatus::Succeeded),
+        Duration::from_millis(500),
+    );
+}
+
+#[test]
+fn an_early_rejection_still_fails_its_operation_after_a_flood_of_foreign_ones() {
+    let (publisher, tracker, _host) = spawn_harness();
+    reject_outside_any_operation(&publisher, &tracker, 43_000);
+    reject_outside_any_operation(&publisher, &tracker, 43_100);
+
+    let live = 43_999u64;
+    deliver_rejections(&publisher, &tracker, [rule_enable_rejection(live)], 43_998);
+    publish(
+        &publisher,
+        BusChannel::Commands,
+        begin_envelope(live, "op-rejected-after-flood", OperationType::AttributeWrite, 600_000),
+    );
+    wait_until(
+        || tail_for(&tracker, "op-rejected-after-flood").last().copied() == Some(OperationStatus::Failed),
+        Duration::from_millis(500),
+    );
+    assert_eq!(
+        last_error_for(&tracker, "op-rejected-after-flood"),
+        Some(ErrorCode::CommandsIngressOverload),
+        "rejections of commands outside any operation must not crowd out a live one's"
+    );
 }
