@@ -38,15 +38,9 @@ pub enum TargetStateKeyError {
 }
 
 pub fn classify_target_state_request_key(key: &str) -> Result<(), TargetStateKeyError> {
-    if TARGET_STATE_ALLOWED_KEYS
-        .iter()
-        .any(|allowed| *allowed == key)
-    {
+    if TARGET_STATE_ALLOWED_KEYS.contains(&key) {
         Ok(())
-    } else if TARGET_STATE_RUNTIME_READONLY_KEYS
-        .iter()
-        .any(|ro| *ro == key)
-    {
+    } else if TARGET_STATE_RUNTIME_READONLY_KEYS.contains(&key) {
         Err(TargetStateKeyError::UnsupportedField)
     } else {
         Err(TargetStateKeyError::UnknownField)

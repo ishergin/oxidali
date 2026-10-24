@@ -1,8 +1,3 @@
-#![allow(
-    clippy::too_many_arguments,
-    reason = "Worker dispatch arms mirror the routed bus command surface."
-)]
-
 pub mod runtime;
 
 pub use runtime::apply_orchestrator_worker::{
@@ -10,6 +5,7 @@ pub use runtime::apply_orchestrator_worker::{
     APPLY_ORCHESTRATOR_HANDLED_COMMANDS, APPLY_ORCHESTRATOR_HANDLED_EVENTS,
 };
 pub use runtime::apply_pacing::APPLY_ORCHESTRATOR_REQUIRED_EVENTS;
+pub use runtime::operation_totals::OperationTotals;
 pub use runtime::operation_tracker_worker::{
     spawn_operation_tracker_worker, OperationTrackerCounters, OperationTrackerHttpRead,
     OperationTrackerInner, MAX_PENDING_CORRELATIONS, OPERATION_TRACKER_CONFIRMATION_INBOX,

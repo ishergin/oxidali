@@ -42,3 +42,26 @@ pub struct DaliWorkerCounters {
     pub input_presence_reprobed: AtomicU32,
     pub ignored_commands: AtomicU32,
 }
+
+impl DaliWorkerCounters {
+    #[must_use]
+    pub fn errors_total(&self) -> u32 {
+        self.execution_failed
+            .load(Ordering::Relaxed)
+            .wrapping_add(self.invalid_command.load(Ordering::Relaxed))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_errors_are_the_failed_and_the_invalid_commands_and_the_sum_wraps() {
+        let counters = DaliWorkerCounters::default();
+        counters.execution_failed.store(u32::MAX, Ordering::Relaxed);
+        counters.invalid_command.store(4, Ordering::Relaxed);
+        counters.ignored_commands.store(9, Ordering::Relaxed);
+        assert_eq!(counters.errors_total(), 3, "2^32 - 1 + 4 wraps to 3; an ignored command is no error");
+    }
+}

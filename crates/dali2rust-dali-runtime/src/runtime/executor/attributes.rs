@@ -249,7 +249,6 @@ fn split_runtime(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "one sequential sweep; the breaker rides beside the controller it guards")]
 fn collect_scalar_sections(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
@@ -409,7 +408,6 @@ fn dt8_capability_flags(dt8_status: Option<&Dt8Status>) -> (bool, bool, bool, bo
     )
 }
 
-#[allow(clippy::too_many_arguments, reason = "one sequential sweep; the breaker rides beside the controller it guards")]
 fn build_attribute_read_execution(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,

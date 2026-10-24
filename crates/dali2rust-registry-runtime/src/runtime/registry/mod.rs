@@ -21,7 +21,7 @@ pub mod transfer;
 pub(crate) mod poller_settings;
 pub mod publish;
 mod resolve;
-mod rules_world;
+pub(crate) mod rules_world;
 mod runtime_fields;
 mod scenes;
 mod store;

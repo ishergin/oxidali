@@ -7,23 +7,11 @@ use dali2rust_domain::dali::dev103::{
 use super::dev103::{send, send_twice, stage_dtr0, verify_readback};
 use crate::runtime::executor::SemanticDaliError;
 
-pub const FEEDBACK_MAP_ABSENT: u8 = 0;
-pub const FEEDBACK_MAP_CORRECTED: u8 = 1;
-pub const FEEDBACK_MAP_ED1: u8 = 2;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FeedbackProbe {
     pub map_code: u8,
     pub capability: Option<u8>,
     pub colour_capability: Option<u8>,
-}
-
-const fn map_of(code: u8) -> Option<FeedbackOpcodeMap> {
-    match code {
-        FEEDBACK_MAP_CORRECTED => Some(FeedbackOpcodeMap::DiiaCorrected),
-        FEEDBACK_MAP_ED1 => Some(FeedbackOpcodeMap::Ed1),
-        _ => None,
-    }
 }
 
 // DiiA SW098bp §11.6.1
@@ -34,10 +22,7 @@ pub fn probe_feedback(
 ) -> Result<FeedbackProbe, SemanticDaliError> {
     let address = Device103Address::Short(short_address);
     let feature = InstanceAddress::FeatureNumber(instance_number);
-    for (map, code) in [
-        (FeedbackOpcodeMap::DiiaCorrected, FEEDBACK_MAP_CORRECTED),
-        (FeedbackOpcodeMap::Ed1, FEEDBACK_MAP_ED1),
-    ] {
+    for map in [FeedbackOpcodeMap::DiiaCorrected, FeedbackOpcodeMap::Ed1] {
         let answer = send(
             controller,
             Feedback332Command::QueryCapability.frame(address, feature, map),
@@ -61,13 +46,13 @@ pub fn probe_feedback(
             _ => None,
         };
         return Ok(FeedbackProbe {
-            map_code: code,
+            map_code: map.code(),
             capability,
             colour_capability,
         });
     }
     Ok(FeedbackProbe {
-        map_code: FEEDBACK_MAP_ABSENT,
+        map_code: FeedbackOpcodeMap::ABSENT_CODE,
         capability: None,
         colour_capability: None,
     })
@@ -132,14 +117,14 @@ pub fn configure_feedback(
     cmd: &Dali103FeedbackConfigureCommand,
     proved: &mut ConfiguredFeedback,
 ) -> Result<(), SemanticDaliError> {
-    let map_code = match map_of(cmd.opcode_map) {
+    let map_code = match FeedbackOpcodeMap::from_code(cmd.opcode_map) {
         Some(_) => cmd.opcode_map,
         None => {
             let probe = probe_feedback(controller, cmd.short_address, cmd.instance_number)?;
             probe.map_code
         }
     };
-    let Some(map) = map_of(map_code) else {
+    let Some(map) = FeedbackOpcodeMap::from_code(map_code) else {
         return Err(SemanticDaliError::OperationFailed("feedback_not_supported"));
     };
     proved.map_code = map_code;
@@ -229,7 +214,7 @@ mod tests {
             active_colour: 0,
             inactive_brightness: 0,
             inactive_colour: 0,
-            opcode_map: FEEDBACK_MAP_CORRECTED,
+            opcode_map: FeedbackOpcodeMap::DiiaCorrected.code(),
         };
         cmd.patch(field, VALUE);
         cmd

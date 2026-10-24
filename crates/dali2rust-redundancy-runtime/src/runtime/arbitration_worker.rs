@@ -28,6 +28,13 @@ pub struct RecordedTransition {
     pub missed_probes: u8,
 }
 
+impl RecordedTransition {
+    #[must_use]
+    pub const fn took_ms(&self) -> u32 {
+        self.completed_at_ms.wrapping_sub(self.detected_at_ms)
+    }
+}
+
 pub type SharedTransitionLog = Arc<Mutex<Vec<RecordedTransition>>>;
 
 #[derive(Debug, Default)]
@@ -383,5 +390,26 @@ fn run_loop(ev_rx: BusSubscriberRx, deps: ArbitrationWorkerDeps) {
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
         }
         run_turn(&mut state, &deps, dali2rust_platform::liveness::monotonic_ms());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RecordedTransition;
+
+    const DETECTED_BEFORE_THE_WRAP_MS: u32 = u32::MAX - 9;
+    const TOOK_MS: u32 = 25;
+
+    #[test]
+    fn a_transition_takes_its_time_across_the_monotonic_wrap() {
+        let transition = RecordedTransition {
+            now_active: true,
+            reason: 0,
+            detected_at_ms: DETECTED_BEFORE_THE_WRAP_MS,
+            completed_at_ms: DETECTED_BEFORE_THE_WRAP_MS.wrapping_add(TOOK_MS),
+            last_peer_answer_ms: 0,
+            missed_probes: 0,
+        };
+        assert_eq!(transition.took_ms(), TOOK_MS);
     }
 }

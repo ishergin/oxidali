@@ -607,7 +607,6 @@ fn validate_color_value_present(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments, reason = "mirrors the group chunk publisher")]
 fn publish_scene_matrix_rows(
     publisher: &BusPublisher,
     correlation: &Arc<CorrelationIdAllocator>,

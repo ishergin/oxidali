@@ -155,8 +155,7 @@ fn fail_blocked_semantic_operation(
         bus_id,
         correlation_id,
         OperationWorkerSignal::WorkerFailed,
-        Some(ErrorCode::Conflict),
-        "adapter_disabled",
+        Some((ErrorCode::Conflict, "adapter_disabled")),
         origin,
         counters,
     );

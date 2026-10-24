@@ -96,9 +96,11 @@ impl HttpMethod {
     }
 }
 
+pub type BodyWriter = Box<dyn FnOnce(&mut dyn Write) -> io::Result<()> + Send>;
+
 pub enum HttpBody {
     Buffered(Vec<u8>),
-    Stream(Box<dyn FnOnce(&mut dyn Write) -> io::Result<()> + Send>),
+    Stream(BodyWriter),
 }
 
 impl HttpBody {
@@ -139,7 +141,7 @@ impl HttpResponse {
 
     pub fn json_stream(
         status: u16,
-        write: Box<dyn FnOnce(&mut dyn Write) -> io::Result<()> + Send>,
+        write: BodyWriter,
     ) -> Self {
         Self {
             status,

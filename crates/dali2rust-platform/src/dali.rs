@@ -368,6 +368,13 @@ pub struct PhySnifferCounters {
     pub sniff_poll_gap_max_us: core::sync::atomic::AtomicU32,
 }
 
+impl PhySnifferCounters {
+    #[must_use]
+    pub fn foreign_frames_total(&self) -> u32 {
+        self.forward16.load(Relaxed).wrapping_add(self.forward24.load(Relaxed))
+    }
+}
+
 pub const SNIFFER_POLL_LATE_SLACK_US: u32 = 4_000;
 
 pub fn sniffer_poll_is_late(gap_us: u32, poll_ms: u32) -> bool {
@@ -455,12 +462,19 @@ pub fn note_persist_gate(outcome: PersistGate) {
     }
 }
 
-pub fn persist_gate_stats() -> (u32, u32, u32) {
-    (
-        PERSIST_GATE_WAITS.load(Relaxed),
-        PERSIST_GATE_WAIT_MS.load(Relaxed),
-        PERSIST_GATE_TIMEOUTS.load(Relaxed),
-    )
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersistGateStats {
+    pub waits: u32,
+    pub wait_ms: u32,
+    pub timeouts: u32,
+}
+
+pub fn persist_gate_stats() -> PersistGateStats {
+    PersistGateStats {
+        waits: PERSIST_GATE_WAITS.load(Relaxed),
+        wait_ms: PERSIST_GATE_WAIT_MS.load(Relaxed),
+        timeouts: PERSIST_GATE_TIMEOUTS.load(Relaxed),
+    }
 }
 
 pub const PERSIST_FLUSH_SLOW_MS: u32 = 250;
@@ -485,13 +499,21 @@ pub fn note_persist_flush(ms: u32) -> bool {
     slow
 }
 
-pub fn persist_flush_stats() -> (u32, u32, u32, u32) {
-    (
-        PERSIST_FLUSH_TOTAL.load(Relaxed),
-        PERSIST_FLUSH_SLOW_TOTAL.load(Relaxed),
-        PERSIST_FLUSH_MS_TOTAL.load(Relaxed),
-        PERSIST_FLUSH_MAX_MS.load(Relaxed),
-    )
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersistFlushStats {
+    pub flushes: u32,
+    pub slow: u32,
+    pub ms_total: u32,
+    pub max_ms: u32,
+}
+
+pub fn persist_flush_stats() -> PersistFlushStats {
+    PersistFlushStats {
+        flushes: PERSIST_FLUSH_TOTAL.load(Relaxed),
+        slow: PERSIST_FLUSH_SLOW_TOTAL.load(Relaxed),
+        ms_total: PERSIST_FLUSH_MS_TOTAL.load(Relaxed),
+        max_ms: PERSIST_FLUSH_MAX_MS.load(Relaxed),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -843,19 +865,35 @@ mod sniffer_poll_tests {
 }
 
 #[cfg(test)]
+mod sniffer_counter_tests {
+    use core::sync::atomic::Ordering::Relaxed;
+
+    use super::PhySnifferCounters;
+
+    #[test]
+    fn the_foreign_frames_are_both_forward_widths_and_the_sum_wraps() {
+        let counters = PhySnifferCounters::default();
+        counters.forward16.store(u32::MAX, Relaxed);
+        counters.forward24.store(3, Relaxed);
+        counters.backward8.store(7, Relaxed);
+        assert_eq!(counters.foreign_frames_total(), 2, "2^32 - 1 + 3 wraps to 2; backward frames are not foreign");
+    }
+}
+
+#[cfg(test)]
 mod persist_flush_tests {
     use super::{note_persist_flush, persist_flush_stats, PERSIST_FLUSH_SLOW_MS};
 
     #[test]
     fn a_flush_is_booked_and_only_a_slow_one_is_called_slow() {
-        let (n0, slow0, ms0, _) = persist_flush_stats();
+        let before = persist_flush_stats();
         assert!(!note_persist_flush(PERSIST_FLUSH_SLOW_MS));
         assert!(note_persist_flush(PERSIST_FLUSH_SLOW_MS + 1));
-        let (n1, slow1, ms1, max1) = persist_flush_stats();
-        assert!(n1.wrapping_sub(n0) >= 2);
-        assert!(slow1.wrapping_sub(slow0) >= 1);
-        assert!(ms1.wrapping_sub(ms0) > 2 * PERSIST_FLUSH_SLOW_MS);
-        assert!(max1 > PERSIST_FLUSH_SLOW_MS);
+        let after = persist_flush_stats();
+        assert!(after.flushes.wrapping_sub(before.flushes) >= 2);
+        assert!(after.slow.wrapping_sub(before.slow) >= 1);
+        assert!(after.ms_total.wrapping_sub(before.ms_total) > 2 * PERSIST_FLUSH_SLOW_MS);
+        assert!(after.max_ms > PERSIST_FLUSH_SLOW_MS);
     }
 }
 

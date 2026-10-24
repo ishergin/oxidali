@@ -389,6 +389,31 @@ pub enum FeedbackOpcodeMap {
     Ed1,
 }
 
+const FEEDBACK_MAP_ABSENT_CODE: u8 = 0;
+const FEEDBACK_MAP_DIIA_CORRECTED_CODE: u8 = 1;
+const FEEDBACK_MAP_ED1_CODE: u8 = 2;
+
+impl FeedbackOpcodeMap {
+    pub const ABSENT_CODE: u8 = FEEDBACK_MAP_ABSENT_CODE;
+
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::DiiaCorrected => FEEDBACK_MAP_DIIA_CORRECTED_CODE,
+            Self::Ed1 => FEEDBACK_MAP_ED1_CODE,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            FEEDBACK_MAP_DIIA_CORRECTED_CODE => Some(Self::DiiaCorrected),
+            FEEDBACK_MAP_ED1_CODE => Some(Self::Ed1),
+            _ => None,
+        }
+    }
+}
+
 const FEEDBACK_QUERY_RELOCATION: u8 = 0x20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -490,6 +515,20 @@ mod tests {
     use super::*;
     use crate::dali::dev103::address::MAX_SHORT_ADDRESS;
     use FeedbackOpcodeMap::{DiiaCorrected, Ed1};
+
+    #[test]
+    fn the_opcode_map_codes_are_the_values_the_registry_and_the_commands_carry() {
+        assert_eq!((DiiaCorrected.code(), Ed1.code()), (1, 2));
+        assert_eq!(FeedbackOpcodeMap::from_code(1), Some(DiiaCorrected));
+        assert_eq!(FeedbackOpcodeMap::from_code(2), Some(Ed1));
+        assert_eq!(FeedbackOpcodeMap::ABSENT_CODE, 0);
+        assert_eq!(
+            FeedbackOpcodeMap::from_code(FeedbackOpcodeMap::ABSENT_CODE),
+            None,
+            "the probe's own answer: no feedback"
+        );
+        assert_eq!(FeedbackOpcodeMap::from_code(3), None);
+    }
 
     #[test]
     fn a_device_command_always_carries_the_device_instance_byte() {

@@ -128,6 +128,35 @@ def macro_mapped_fields(bridge_source):
     return out
 
 
+IMPL_HEAD = r"\bimpl(?:<[^>{]*>)?\s+%s\b[^{;]*\{"
+SELF_METHOD = re.compile(r"\bfn\s+(\w+)\s*(?:<[^>]*>)?\s*\(\s*&self\b")
+
+
+def braced_body(source, open_index):
+    depth = 0
+    for index in range(open_index, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[open_index + 1:index]
+    return ""
+
+
+def fields_read_by_called_methods(name, path, fields, bridge_source):
+    source = (ROOT / path).read_text()
+    read = set()
+    for head in re.finditer(IMPL_HEAD % re.escape(name), source):
+        body = braced_body(source, head.end() - 1)
+        for method in SELF_METHOD.finditer(body):
+            if not re.search(r"\.%s\(" % re.escape(method.group(1)), bridge_source):
+                continue
+            method_body = braced_body(body, body.find("{", method.end()))
+            read.update(f for f in fields if re.search(r"\bself\.%s\b" % re.escape(f), method_body))
+    return read
+
+
 def check_counters_are_read(bridge_source, internal):
     problems = []
     mapped = macro_mapped_fields(bridge_source)
@@ -135,10 +164,19 @@ def check_counters_are_read(bridge_source, internal):
         allowed = internal.get(name, {})
         if "*" in allowed:
             continue
+        via_owner = fields_read_by_called_methods(name, path, fields, bridge_source)
         for field in fields:
-            if field in mapped.get(name, ()):
-                continue
-            if re.search(r"\.%s\b" % re.escape(field), bridge_source):
+            read = (
+                field in mapped.get(name, ())
+                or field in via_owner
+                or re.search(r"\.%s\b" % re.escape(field), bridge_source)
+            )
+            if read and field in allowed:
+                problems.append(
+                    "%s::%s is read by the stats/diagnostics bridge, so its line in "
+                    "scripts/counter_surface_internal.txt gates nothing — delete it" % (name, field)
+                )
+            if read:
                 continue
             if field in allowed:
                 continue

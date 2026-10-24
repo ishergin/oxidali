@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dali2rust_domain::health::{HealthService, HealthStatus};
-use dali2rust_platform::clock::Clock;
+use dali2rust_platform::clock::Uptime;
 
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::common::json_stream_dto;
@@ -18,15 +18,13 @@ fn status_str(status: HealthStatus) -> &'static str {
 
 pub struct HealthHandler {
     service: HealthService,
-    clock: Arc<dyn Clock>,
     role: Option<Arc<dyn crate::http::role::ControllerRolePort>>,
 }
 
 impl HealthHandler {
-    pub fn new(clock: Arc<dyn Clock>, version: &'static str) -> Self {
+    pub fn new(uptime: Uptime, version: &'static str) -> Self {
         Self {
-            service: HealthService::new(clock.as_ref(), version),
-            clock,
+            service: HealthService::new(uptime, version),
             role: None,
         }
     }
@@ -49,7 +47,7 @@ impl ApiHandler for HealthHandler {
         if _method != "GET" {
             return HttpResponse::method_not_allowed();
         }
-        let report = self.service.check(self.clock.as_ref());
+        let report = self.service.check();
         let mut body = serde_json::json!({
             "status": status_str(report.status),
             "uptime_seconds": report.uptime_secs,
@@ -68,6 +66,7 @@ impl ApiHandler for HealthHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dali2rust_platform::clock::Clock;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
 
@@ -92,7 +91,7 @@ mod tests {
     #[test]
     fn health_handler_returns_ok() {
         let clock: Arc<dyn Clock> = Arc::new(FakeClock::new(0));
-        let handler = HealthHandler::new(clock, "0.1.0-test");
+        let handler = HealthHandler::new(Uptime::start(clock), "0.1.0-test");
         let resp = handler.handle_request("GET", "/api/v1/health", &[], &HashMap::new());
         assert_eq!(resp.status, 200);
         assert_eq!(resp.content_type, "application/json");
@@ -106,7 +105,7 @@ mod tests {
     #[test]
     fn health_handler_uptime_increases() {
         let clock: Arc<dyn Clock> = Arc::new(FakeClock::new(0));
-        let handler = HealthHandler::new(clock, "test");
+        let handler = HealthHandler::new(Uptime::start(clock), "test");
         let resp1 = handler.handle_request("GET", "/", &[], &HashMap::new());
         let r1: serde_json::Value =
             serde_json::from_slice(&resp1.into_body_bytes()).expect("parse");

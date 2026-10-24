@@ -29,6 +29,7 @@ use crate::dali::transport::mock::MockDaliTransport;
 pub use bus_stack::BusStackRuntime;
 use app_router::{
     build_app_router, hcl_override_read_port, operation_read_port, HttpBusDispatch, ReadModelPorts,
+    RouterParts,
 };
 use bus_host::spawn_bus_subscribers;
 use registry_init::init_registry_slice;
@@ -145,7 +146,6 @@ pub fn build_router_with_bus_and_transport<T: DaliTransport + Send + 'static>(
             wall_clock: booted.scheduling.wall_clock,
             persist_timezone: booted.scheduling.persist_timezone,
             read_models,
-            clock,
             controller_summary,
             rules,
         },
@@ -259,7 +259,6 @@ fn rules_worker_deps(booted: &BootedStack) -> workers::RulesWorkerDeps {
         resolver: Arc::new(http_bridges::RegistryNameResolver::new(
             Arc::clone(&booted.diagnostics_store),
             0,
-            booted.adapter_count,
         )),
         slices: booted.registry.deps.persistence_slices(),
         registry: Arc::clone(&booted.diagnostics_store),
@@ -268,35 +267,11 @@ fn rules_worker_deps(booted: &BootedStack) -> workers::RulesWorkerDeps {
     }
 }
 
-struct RouterParts {
-    version: &'static str,
-    adapter_count: u8,
-    web_assets: &'static [StaticAsset],
-    dispatch: HttpBusDispatch,
-    registry_http: http_bridges::RegistryHttpPorts,
-    wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
-    persist_timezone: dali2rust_api::http::handlers::time::TimezonePersist,
-    read_models: ReadModelPorts,
-    clock: Arc<dyn dali2rust_platform::clock::Clock>,
-    controller_summary: Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
-    rules: app_router::RulesHttpDeps,
-}
-
 fn assemble_router(parts: RouterParts, workers: &workers::SpawnedWorkers) -> Router {
     build_app_router(
-        parts.version,
-        parts.adapter_count,
-        parts.dispatch,
-        parts.registry_http,
+        parts,
         operation_read_port(Arc::clone(&workers.operation_tracker)),
         hcl_override_read_port(Arc::clone(&workers.hcl_overrides)),
-        parts.read_models,
-        parts.clock,
-        parts.wall_clock,
-        parts.persist_timezone,
-        parts.web_assets,
-        parts.controller_summary,
-        parts.rules,
     )
 }
 
@@ -309,7 +284,6 @@ fn rules_http_deps(booted: &BootedStack) -> app_router::RulesHttpDeps {
         resolver: Arc::new(http_bridges::RegistryNameResolver::new(
             Arc::clone(&booted.diagnostics_store),
             0,
-            booted.adapter_count,
         )),
     }
 }
@@ -639,8 +613,10 @@ struct ReadModelArgs {
 }
 
 fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
+    let uptime = dali2rust_platform::clock::Uptime::start(args.clock);
     ReadModelPorts {
         diagnostics: Arc::new(http_bridges::DiagnosticsBridge::new(
+            uptime.clone(),
             args.publisher.clone(),
             Arc::clone(&args.slots),
             args.counters.clone(),
@@ -653,7 +629,7 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
             args.transitions,
         )),
         stats: Arc::new(http_bridges::StatsBridge::new(
-            args.clock,
+            uptime.clone(),
             args.publisher,
             args.slots,
             args.counters,
@@ -663,6 +639,7 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
             args.ota.state,
             args.firmware_port,
         )),
+        uptime,
     }
 }
 
@@ -701,4 +678,45 @@ pub fn build_http_test_stack(
             ..StackOptions::default()
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use dali2rust_api::confirmation_bridge::PendingConfirmationSlots;
+    use dali2rust_bus::BusHost;
+    use dali2rust_platform::clock::Clock;
+    use dali2rust_test_support::SettableClock;
+
+    use super::*;
+
+    const BOOTED_AT_MS: u64 = 1_000;
+    const NOW_MS: u64 = 3_250;
+
+    #[test]
+    fn diagnostics_and_stats_report_one_uptime_read_off_the_one_clock() {
+        let clock = Arc::new(SettableClock::at(BOOTED_AT_MS));
+        let (_host, publisher, ()) = BusHost::spawn(BusConfig::default(), |_registry| ());
+        let store = Arc::new(RegistryStore::with_adapter_count(1));
+        let ports = read_model_ports(ReadModelArgs {
+            clock: Arc::clone(&clock) as Arc<dyn Clock>,
+            publisher,
+            slots: Arc::new(PendingConfirmationSlots::new()),
+            counters: RuntimeCounterHandles::default(),
+            store: Arc::clone(&store),
+            gauges: http_bridges::PlatformGauges::default(),
+            redundancy_settings: Arc::clone(&store)
+                as Arc<dyn dali2rust_domain::registry::RedundancySettingsReadPort>,
+            dali_settings: store as Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
+            transitions: Arc::default(),
+            ota: OtaShared::default(),
+            firmware_port: None,
+        });
+
+        clock.set(NOW_MS);
+
+        let expected = NOW_MS - BOOTED_AT_MS;
+        assert_eq!(ports.diagnostics.diagnostics_dto().uptime_ms, expected);
+        assert_eq!(ports.stats.stats_dto().controller.uptime_ms, expected);
+        assert_eq!(ports.uptime.elapsed_ms(), expected, "the uptime health and the controller summary are built from");
+    }
 }

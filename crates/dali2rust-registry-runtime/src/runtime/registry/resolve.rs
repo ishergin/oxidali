@@ -37,3 +37,25 @@ impl RegistryStore {
         usize::from(adapter_id) < self.read_inner().adapters.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::RegistryStore;
+
+    const COMPOSED_ADAPTERS: u8 = 2;
+
+    #[test]
+    fn the_adapters_that_exist_are_the_ones_the_store_was_composed_with() {
+        let store = RegistryStore::with_adapter_count(COMPOSED_ADAPTERS);
+        assert!(store.adapter_id_exists(0));
+        assert!(store.adapter_id_exists(COMPOSED_ADAPTERS - 1));
+        assert!(!store.adapter_id_exists(COMPOSED_ADAPTERS), "one past the composed count");
+    }
+
+    #[test]
+    fn a_store_composed_with_no_adapter_still_has_the_primary_one() {
+        let store = RegistryStore::with_adapter_count(0);
+        assert!(store.adapter_id_exists(0));
+        assert!(!store.adapter_id_exists(1));
+    }
+}

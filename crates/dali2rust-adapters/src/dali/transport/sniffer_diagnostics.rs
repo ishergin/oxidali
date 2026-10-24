@@ -333,7 +333,8 @@ impl SnifferDiagnostics {
         }
         self.last_persist_sample = sample;
         let (total, during) = sample;
-        let (waits, wait_ms, timeouts) = dali2rust_platform::dali::persist_gate_stats();
+        let dali2rust_platform::dali::PersistGateStats { waits, wait_ms, timeouts } =
+            dali2rust_platform::dali::persist_gate_stats();
         log::info!(
             "DALI persist overlap: {during} of {total} commit(s) landed while a frame was on the wire; \
              gate waits={waits} ({wait_ms} ms) timeouts={timeouts}"

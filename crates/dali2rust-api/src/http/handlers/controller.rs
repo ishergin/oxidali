@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use dali2rust_platform::clock::Clock;
+use dali2rust_platform::clock::Uptime;
 use dali2rust_platform::net::{ipv4_text, mac_text, node_name};
 use serde::Serialize;
 
@@ -69,25 +69,22 @@ const TARGET_MCU: &str = if cfg!(target_arch = "riscv32") {
 pub struct ControllerSummaryHandler {
     firmware_version: &'static str,
     adapter_count: u8,
-    clock: Arc<dyn Clock>,
+    uptime: Uptime,
     source: Arc<dyn ControllerSummarySource>,
-    started_ms: u64,
 }
 
 impl ControllerSummaryHandler {
     pub fn new(
         firmware_version: &'static str,
         adapter_count: u8,
-        clock: Arc<dyn Clock>,
+        uptime: Uptime,
         source: Arc<dyn ControllerSummarySource>,
     ) -> Self {
-        let started_ms = clock.monotonic_ms();
         Self {
             firmware_version,
             adapter_count,
-            clock,
+            uptime,
             source,
-            started_ms,
         }
     }
 
@@ -105,7 +102,7 @@ impl ControllerSummaryHandler {
             controller_id: facts.installation_id,
             firmware_version: self.firmware_version,
             target_mcu: TARGET_MCU,
-            uptime_ms: self.clock.monotonic_ms().saturating_sub(self.started_ms),
+            uptime_ms: self.uptime.elapsed_ms(),
             cluster: ControllerClusterBody { enabled: false },
             adapter_count: self.adapter_count,
             hydrated: true,

@@ -6,10 +6,8 @@ use dali2rust_contracts::msg::{
 
 use crate::runtime::registry::home_assistant_settings::HomeAssistantSettingsRecord;
 use crate::runtime::registry::publish::publish_home_assistant_settings_changed;
-use crate::runtime::registry::RegistryStore;
 
-use super::confirm::handle_global_settings_update;
-use super::RegistryCommandCounters;
+use super::command_ctx::CommandCtx;
 
 fn publish_changed(
     publisher: &BusPublisher,
@@ -21,85 +19,42 @@ fn publish_changed(
 }
 
 pub(super) fn handle_settings_update(
-    publisher: &BusPublisher,
-    tid: u16,
-    corr: u64,
-    primary_adapter_id: dali2rust_bus::BusId,
-    store: &RegistryStore,
-    counters: &RegistryCommandCounters,
+    ctx: &CommandCtx<'_>,
     body: &HomeAssistantSettingsUpdateCommand,
 ) {
-    handle_global_settings_update(
-        publisher,
-        tid,
-        corr,
-        primary_adapter_id,
-        counters,
-        &counters.home_assistant_settings_applied,
-        || store.apply_home_assistant_settings_from_command(body),
+    ctx.update_global_settings(
+        &ctx.counters.home_assistant_settings_applied,
+        || ctx.store.apply_home_assistant_settings_from_command(body),
         publish_changed,
     );
 }
 
 pub(super) fn handle_credentials_update(
-    publisher: &BusPublisher,
-    tid: u16,
-    corr: u64,
-    primary_adapter_id: dali2rust_bus::BusId,
-    store: &RegistryStore,
-    counters: &RegistryCommandCounters,
+    ctx: &CommandCtx<'_>,
     body: &HomeAssistantCredentialsUpdateCommand,
 ) {
-    handle_global_settings_update(
-        publisher,
-        tid,
-        corr,
-        primary_adapter_id,
-        counters,
-        &counters.home_assistant_settings_applied,
-        || store.apply_home_assistant_credentials_from_command(body),
+    ctx.update_global_settings(
+        &ctx.counters.home_assistant_settings_applied,
+        || ctx.store.apply_home_assistant_credentials_from_command(body),
         publish_changed,
     );
 }
 
-pub(super) fn handle_topics_update(
-    publisher: &BusPublisher,
-    tid: u16,
-    corr: u64,
-    primary_adapter_id: dali2rust_bus::BusId,
-    store: &RegistryStore,
-    counters: &RegistryCommandCounters,
-    body: &HomeAssistantTopicsUpdateCommand,
-) {
-    handle_global_settings_update(
-        publisher,
-        tid,
-        corr,
-        primary_adapter_id,
-        counters,
-        &counters.home_assistant_settings_applied,
-        || store.apply_home_assistant_topics_from_command(body),
+pub(super) fn handle_topics_update(ctx: &CommandCtx<'_>, body: &HomeAssistantTopicsUpdateCommand) {
+    ctx.update_global_settings(
+        &ctx.counters.home_assistant_settings_applied,
+        || ctx.store.apply_home_assistant_topics_from_command(body),
         publish_changed,
     );
 }
 
 pub(super) fn handle_controller_id_update(
-    publisher: &BusPublisher,
-    tid: u16,
-    corr: u64,
-    primary_adapter_id: dali2rust_bus::BusId,
-    store: &RegistryStore,
-    counters: &RegistryCommandCounters,
+    ctx: &CommandCtx<'_>,
     body: &HomeAssistantControllerIdUpdateCommand,
 ) {
-    handle_global_settings_update(
-        publisher,
-        tid,
-        corr,
-        primary_adapter_id,
-        counters,
-        &counters.home_assistant_settings_applied,
-        || store.apply_home_assistant_controller_id_from_command(body),
+    ctx.update_global_settings(
+        &ctx.counters.home_assistant_settings_applied,
+        || ctx.store.apply_home_assistant_controller_id_from_command(body),
         publish_changed,
     );
 }

@@ -3,27 +3,23 @@ use super::*;
 pub(super) fn run_command_loop(inputs: &mut WorkerInputs<impl DaliApplicationController>) {
     let WorkerInputs { cmd_rx, controller: ctrl, runtime_config, read_port, publisher, adapter_id,
         counters, interactive, correlation } = inputs;
-    let (runtime_config, adapter_id) = (*runtime_config, *adapter_id);
+    let env = WorkerEnv {
+        runtime_config: *runtime_config,
+        read_port: read_port.as_ref(),
+        publisher,
+        interactive: interactive.as_ref(),
+        adapter_id: *adapter_id,
+        counters,
+        correlation: correlation.as_ref(),
+    };
+    let adapter_id = env.adapter_id;
     while let Ok(frame) = cmd_rx.recv() {
         let mut batch = vec![Queued::new(frame)];
         while let Some(Queued { frame, riders }) =
             take_next_command(&mut batch, cmd_rx, publisher, adapter_id, counters)
         {
             let scope = frame_scope(&frame, interactive, adapter_id);
-            let run = |c: &mut _| {
-                process_one(
-                    frame,
-                    c,
-                    runtime_config,
-                    read_port.as_ref(),
-                    publisher,
-                    interactive.as_ref(),
-                    adapter_id,
-                    counters,
-                    correlation.as_ref(),
-                    &riders,
-                )
-            };
+            let run = |c: &mut _| process_one(frame, c, &env, &riders);
             crate::runtime::required_publish::with_budget(scope.publish_priority, || {
                 ctrl.with_wire_class(scope.class, |c| match scope.lease {
                     Some(lease) => c.with_wire_lease(lease, run),

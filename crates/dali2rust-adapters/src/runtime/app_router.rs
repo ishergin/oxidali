@@ -69,7 +69,7 @@ use dali2rust_api::http::stats_state::StatsHttpState;
 use dali2rust_bus::{BusConfig, BusId, BusPublisher};
 use dali2rust_domain::registry::{HclOverrideReadPort, OperationReadPort};
 use dali2rust_operations_runtime::OperationTrackerHttpRead;
-use dali2rust_platform::clock::Clock;
+use dali2rust_platform::clock::Uptime;
 
 use super::http_bridges::RegistryHttpPorts;
 use dali2rust_api::http::handlers::input_devices::{
@@ -86,6 +86,7 @@ pub(crate) struct ReadModelPorts {
     pub stats: Arc<dyn StatsHttpState>,
     pub redundancy: Arc<dyn dali2rust_api::http::redundancy_state::RedundancyHttpState>,
     pub firmware: Arc<dyn dali2rust_api::http::firmware_state::FirmwareHttpState>,
+    pub uptime: Uptime,
 }
 
 pub(crate) struct HttpBusDispatch {
@@ -258,44 +259,52 @@ fn read<S: ?Sized, H: ApiHandler + 'static>(
     Box::new(make(Arc::clone(state)))
 }
 
-pub(crate) fn build_app_router(
-    version: &'static str,
-    adapter_count: u8,
-    bus: HttpBusDispatch,
-    registry: RegistryHttpPorts,
+pub(super) struct RouterParts {
+    pub(super) version: &'static str,
+    pub(super) adapter_count: u8,
+    pub(super) web_assets: &'static [StaticAsset],
+    pub(super) dispatch: HttpBusDispatch,
+    pub(super) registry_http: RegistryHttpPorts,
+    pub(super) wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
+    pub(super) persist_timezone: dali2rust_api::http::handlers::time::TimezonePersist,
+    pub(super) read_models: ReadModelPorts,
+    pub(super) controller_summary:
+        Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
+    pub(super) rules: RulesHttpDeps,
+}
+
+pub(super) fn build_app_router(
+    parts: RouterParts,
     op_read: Arc<dyn OperationReadPort>,
     hcl_overrides: Arc<dyn HclOverrideReadPort>,
-    read_models: ReadModelPorts,
-    clock: Arc<dyn Clock>,
+) -> Router {
+    let (bus, registry, adapter_count) = (&parts.dispatch, &parts.registry_http, parts.adapter_count);
+    let redundancy_read = Arc::clone(&parts.read_models.redundancy);
+    let uptime = parts.read_models.uptime.clone();
+    let base = AppBuilder::new(parts.version, uptime.clone()).with_role_port(Arc::clone(&registry.role_port));
+    let builder = wire_read_models(base, parts.read_models, bus);
+    let summary = parts.controller_summary;
+    let builder = wire_controller_and_adapters(builder, parts.version, adapter_count, bus, registry, uptime, summary);
+    let builder = wire_dali_command_handlers(builder, bus);
+    let builder = wire_operations(builder, &op_read);
+    let builder = wire_physical_devices(builder, adapter_count, bus, registry);
+    let builder = wire_commissioning(builder, adapter_count, bus, registry, &op_read);
+    let builder = wire_applies(builder, bus, registry, &op_read);
+    let builder = wire_hcl(builder, bus, registry, &hcl_overrides, &op_read);
+    let builder = wire_input_devices(builder, bus, registry, &op_read);
+    let builder = wire_rules(builder, bus, &parts.rules);
+    let builder = wire_settings_and_lamps(builder, bus, registry, &redundancy_read);
+    let builder = wire_time(builder, parts.wall_clock, parts.persist_timezone);
+    wire_web_ui(builder, parts.web_assets).build()
+}
+
+#[inline(never)]
+fn wire_time(
+    builder: AppBuilder,
     wall_clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
     persist_timezone: dali2rust_api::http::handlers::time::TimezonePersist,
-    web_assets: &'static [StaticAsset],
-    controller_summary: Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
-    rules: RulesHttpDeps,
-) -> Router {
-    let redundancy_read = Arc::clone(&read_models.redundancy);
-    let base = AppBuilder::new(version, Arc::clone(&clock))
-        .with_role_port(Arc::clone(&registry.role_port));
-    let builder = wire_read_models(base, read_models, &bus);
-    let builder = wire_controller_and_adapters(
-        builder,
-        version,
-        adapter_count,
-        &bus,
-        &registry,
-        clock,
-        controller_summary,
-    );
-    let builder = wire_dali_command_handlers(builder, &bus);
-    let builder = wire_operations(builder, &op_read);
-    let builder = wire_physical_devices(builder, adapter_count, &bus, &registry);
-    let builder = wire_commissioning(builder, adapter_count, &bus, &registry, &op_read);
-    let builder = wire_applies(builder, &bus, &registry, &op_read);
-    let builder = wire_hcl(builder, &bus, &registry, &hcl_overrides, &op_read);
-    let builder = wire_input_devices(builder, &bus, &registry, &op_read);
-    let builder = wire_rules(builder, &bus, &rules);
-    let builder = wire_settings_and_lamps(builder, &bus, &registry, &redundancy_read);
-    let builder = builder
+) -> AppBuilder {
+    builder
         .with_handler(
             RouteKey::Time,
             Box::new(dali2rust_api::http::handlers::TimeHandler::new(
@@ -309,9 +318,7 @@ pub(crate) fn build_app_router(
                 wall_clock,
                 persist_timezone,
             )),
-        );
-    let builder = wire_web_ui(builder, web_assets);
-    builder.build()
+        )
 }
 
 #[inline(never)]
@@ -345,7 +352,7 @@ fn wire_controller_and_adapters(
     adapter_count: u8,
     bus: &HttpBusDispatch,
     registry: &RegistryHttpPorts,
-    clock: Arc<dyn Clock>,
+    uptime: Uptime,
     controller_summary: Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource>,
 ) -> AppBuilder {
     builder
@@ -354,7 +361,7 @@ fn wire_controller_and_adapters(
             Box::new(ControllerSummaryHandler::new(
                 version,
                 adapter_count,
-                clock,
+                uptime,
                 controller_summary,
             )),
         )

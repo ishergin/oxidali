@@ -54,6 +54,7 @@ pub(crate) struct SpawnedWorkers {
 }
 
 #[derive(Clone)]
+#[cfg_attr(test, derive(Default))]
 pub(crate) struct RuntimeCounterHandles {
     pub dali_worker: Arc<DaliWorkerCounters>,
     pub operation_tracker: Arc<OperationTrackerCounters>,
@@ -201,7 +202,6 @@ pub(crate) struct RulesWorkerDeps {
     pub correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
 }
 
-#[allow(clippy::too_many_arguments, reason = "one call site; each argument is a distinct dependency")]
 pub(crate) struct RedundancyBeats {
     pub(crate) registry: Arc<dali2rust_platform::liveness::LivenessBeat>,
     pub(crate) hcl: Arc<dali2rust_platform::liveness::LivenessBeat>,
@@ -231,23 +231,25 @@ impl RedundancyBeats {
     }
 }
 
-fn spawn_pipeline_workers<T: DaliTransport + Send + 'static>(
-    transport: Arc<Mutex<T>>,
-    runtime_config: DaliRuntimeConfig,
-    registry: RegistryDeps,
-    channels: PipelineChannels,
-    publisher: &BusPublisher,
-    bus_id: BusId,
+struct PipelineWire {
     interactive: Arc<dali2rust_platform::dali::WireActivity>,
     sniffer_tap: Arc<SnifferTap>,
-    wire_counters: Arc<dali2rust_platform::dali::DaliWireCounters>,
+    counters: Arc<dali2rust_platform::dali::DaliWireCounters>,
+}
+
+fn spawn_pipeline_workers<T: DaliTransport + Send + 'static>(
+    transport: Arc<Mutex<T>>,
+    inputs: PipelineInputs,
+    wire: PipelineWire,
+    publisher: &BusPublisher,
+    bus_id: BusId,
     beats: &RedundancyBeats,
-    correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
 ) -> PipelineWorkers {
+    let PipelineInputs { runtime_config, registry, channels, correlation } = inputs;
     let clock = Box::new(StdClock::new());
     let mut controller = DaliController::with_retry_policy(transport, clock, runtime_config.retry);
-    controller.set_sniffer_tap(sniffer_tap, SNIFFER_REGISTRY_ADAPTER_ID);
-    controller.set_wire_counters(Arc::clone(&wire_counters));
+    controller.set_sniffer_tap(wire.sniffer_tap, SNIFFER_REGISTRY_ADAPTER_ID);
+    controller.set_wire_counters(wire.counters);
     let dali_counters = Arc::new(DaliWorkerCounters::default());
     let dali = spawn_dali_worker(
         channels.dali_cmd,
@@ -257,7 +259,7 @@ fn spawn_pipeline_workers<T: DaliTransport + Send + 'static>(
         publisher.clone(),
         bus_id,
         Arc::clone(&dali_counters),
-        interactive,
+        wire.interactive,
         correlation,
     );
     let registry_counters_handle = Arc::clone(&registry.counters);
@@ -328,12 +330,16 @@ struct OperationsWorkers {
     orchestrator_counters: Arc<ApplyOrchestratorCounters>,
 }
 
-fn spawn_operations_workers(
-    operation_cmd: BusSubscriberRx,
-    operation_ev: BusSubscriberRx,
-    operation_conf: BusSubscriberRx,
+struct OperationsChannels {
+    cmd: BusSubscriberRx,
+    ev: BusSubscriberRx,
+    conf: BusSubscriberRx,
     apply_cmd: BusSubscriberRx,
     apply_ev: BusSubscriberRx,
+}
+
+fn spawn_operations_workers(
+    channels: OperationsChannels,
     publisher: &BusPublisher,
     bus_id: BusId,
     orchestrator_store: Arc<RegistryStore>,
@@ -341,9 +347,9 @@ fn spawn_operations_workers(
     let tracker_inner = Arc::new(Mutex::new(OperationTrackerInner::new()));
     let tracker_counters = Arc::new(OperationTrackerCounters::default());
     let tracker = spawn_operation_tracker_worker(
-        operation_cmd,
-        operation_ev,
-        operation_conf,
+        channels.cmd,
+        channels.ev,
+        channels.conf,
         publisher.clone(),
         bus_id,
         Arc::clone(&tracker_inner),
@@ -351,8 +357,8 @@ fn spawn_operations_workers(
     );
     let orchestrator_counters = Arc::new(ApplyOrchestratorCounters::default());
     let apply_orchestrator = spawn_apply_orchestrator_worker(
-        apply_cmd,
-        apply_ev,
+        channels.apply_cmd,
+        channels.apply_ev,
         publisher.clone(),
         bus_id,
         orchestrator_store,
@@ -658,7 +664,6 @@ fn spawn_rules(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "one call site; every arg is a distinct inbox or dep bundle")]
 fn spawn_periodic_workers(
     channels: PeriodicChannels,
     publisher: &BusPublisher,
@@ -730,32 +735,21 @@ fn spawn_bridge_and_display(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "one call site; each group is already a struct")]
 fn spawn_service_workers(
-    channels: ServiceChannels,
-    publisher: BusPublisher,
-    bus_id: BusId,
-    adapter_count: u8,
-    orchestrator_store: Arc<RegistryStore>,
-    slots: Arc<PendingConfirmationSlots>,
-    hardware_display: HardwareDisplay,
+    inputs: ServiceInputs,
     observed_rx: std::sync::mpsc::Receiver<dali2rust_platform::dali::ObservedRawFrame>,
-    periodic_inputs: PeriodicInputs<'_>,
-    sniffer_tap: Arc<SnifferTap>,
     display_seams: DisplaySeams,
-    transfer: TransferSeams,
-    persisted: Arc<dali2rust_redundancy_runtime::PersistedConfigMark>,
+    beats: &RedundancyBeats,
 ) -> (OperationsWorkers, FanoutWorkers, PeriodicWorkers, BridgeAndDisplay) {
-    let operations = spawn_operations_workers(
-        channels.operation_cmd,
-        channels.operation_ev,
-        channels.operation_conf,
-        channels.apply_cmd,
-        channels.apply_ev,
-        &publisher,
-        bus_id,
-        Arc::clone(&orchestrator_store),
-    );
+    let ServiceInputs {
+        channels, publisher, bus_id, adapter_count, registry_store: orchestrator_store, slots,
+        hardware_display, hcl, poller, interactive, sniffer_tap, rules, transfer, persisted, ..
+    } = inputs;
+    let periodic_inputs = PeriodicInputs { hcl, poller, rules, interactive, beats };
+    let (cmd, ev, conf) = (channels.operation_cmd, channels.operation_ev, channels.operation_conf);
+    let (apply_cmd, apply_ev) = (channels.apply_cmd, channels.apply_ev);
+    let ops = OperationsChannels { cmd, ev, conf, apply_cmd, apply_ev };
+    let operations = spawn_operations_workers(ops, &publisher, bus_id, Arc::clone(&orchestrator_store));
     let fanout = spawn_fanout_workers(
         channels.projector_ev,
         &publisher,
@@ -833,18 +827,18 @@ pub(crate) fn spawn_bus_workers<T: DaliTransport + Send + 'static>(
     let wire = wire_seams(&transport);
     let beats = RedundancyBeats::new();
     let (pipeline_inputs, mut services) = inputs.split();
+    let pipeline_wire = PipelineWire {
+        interactive: Arc::clone(&services.interactive),
+        sniffer_tap: Arc::clone(&services.sniffer_tap),
+        counters: Arc::clone(&wire.dali),
+    };
     let pipeline = spawn_pipeline_workers(
         transport,
-        pipeline_inputs.runtime_config,
-        pipeline_inputs.registry,
-        pipeline_inputs.channels,
+        pipeline_inputs,
+        pipeline_wire,
         &services.publisher,
         services.bus_id,
-        Arc::clone(&services.interactive),
-        Arc::clone(&services.sniffer_tap),
-        Arc::clone(&wire.dali),
         &beats,
-        pipeline_inputs.correlation,
     );
     let mqtt = spawn_mqtt_if_configured(
         services.channels.mqtt_ev.take(),
@@ -1005,35 +999,16 @@ fn finish_spawn(
 ) -> (SpawnedWorkers, RuntimeCounterHandles) {
     let display_seams = display_seams_from(&inputs, &wire);
     let arbitration = start_supervisor(&mut inputs, &wire, &beats);
-    let services = spawn_service_workers(
-        inputs.channels,
-        inputs.publisher,
-        inputs.bus_id,
-        inputs.adapter_count,
-        inputs.registry_store,
-        inputs.slots,
-        inputs.hardware_display,
-        wire.observed_rx,
-        PeriodicInputs {
-            hcl: inputs.hcl,
-            poller: inputs.poller,
-            rules: inputs.rules,
-            interactive: inputs.interactive,
-            beats: &beats,
-        },
-        inputs.sniffer_tap,
-        display_seams,
-        inputs.transfer,
-        inputs.persisted,
-    );
+    let (ws_counters, mqtt_counters) = (Arc::clone(&inputs.ws_counters), Arc::clone(&inputs.mqtt_counters));
+    let services = spawn_service_workers(inputs, wire.observed_rx, display_seams, &beats);
     collect_spawned(
         pipeline,
         services,
         (wire.phy_sniffer, wire.dali),
         arbitration,
-        inputs.ws_counters,
+        ws_counters,
         mqtt,
-        inputs.mqtt_counters,
+        mqtt_counters,
     )
 }
 
@@ -1213,7 +1188,6 @@ fn gather_handles(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "one call site; each is a distinct block")]
 fn periodic_counters(
     hcl: Arc<dali2rust_hcl_runtime::HclSchedulerCounters>,
     poller: Arc<dali2rust_poller_runtime::PollerCounters>,

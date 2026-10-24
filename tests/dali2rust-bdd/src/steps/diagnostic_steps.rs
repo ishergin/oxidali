@@ -223,7 +223,7 @@ async fn then_response_arrives_within(world: &mut DaliWorld, max_ms: u64) {
     );
 }
 
-// SYS-247 SYS-248 PD-038 SYS-050 COMM-090 SCN-065 SCN-082 COMM-097 COMM-104 INP-098 INP-099
+// SYS-247 SYS-248 PD-038 SYS-050 COMM-090 SCN-065 SCN-082 COMM-097 COMM-104 INP-098 INP-099 STATS-005
 #[given("the DALI transport blocks indefinitely")]
 async fn given_transport_blocks(world: &mut DaliWorld) {
     world.dali_mock().lock().unwrap().block_next_send();
@@ -235,7 +235,7 @@ async fn given_transport_parks_for(world: &mut DaliWorld, ms: u64) {
     world.dali_mock().lock().unwrap().block_next_send_for(ms);
 }
 
-// SYS-050 SCN-065 COMM-097 COMM-104 INP-098 INP-099
+// SYS-050 SCN-065 COMM-097 COMM-104 INP-098 INP-099 STATS-005
 #[when("the DALI transport unblocks")]
 async fn when_transport_unblocks(world: &mut DaliWorld) {
     world.release_held_send();

@@ -14,7 +14,3 @@ DaliWorkerCounters::semantic_read_memory_bank_handled        breakdown of comman
 DaliWorkerCounters::discovery_progress_events_published   success total; the failures are on the surface
 DaliWorkerCounters::discovery_failed_events_published     success total; the failures are on the surface
 DaliWorkerCounters::memory_bank_chunk_events_published    success total; the failures are on the surface
-
-MqttCounters::connected  on the surface as `mqtt.connected`, read via is_connected()
-
-OperationTrackerCounters::running  /stats derives the gauge from the transitions instead

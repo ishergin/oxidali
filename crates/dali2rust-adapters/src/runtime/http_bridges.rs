@@ -44,17 +44,17 @@ use dali2rust_api::http::{
     VirtualLampBindingApplyWatchBridge, VirtualLampHttpState, VirtualLampHttpStateBridge,
     VirtualLampPatchWatch, VirtualLampPatchWatchBridge,
 };
-use dali2rust_api::http::handlers::config_transfer::ImportRefusal;
+use dali2rust_api::http::handlers::config_transfer::{ImportRefusal, SliceManifestEntry};
 use dali2rust_bus::BusPublisher;
 use dali2rust_domain::registry::{AdapterReadPort, RegistryReadPort};
 use dali2rust_operations_runtime::{ApplyOrchestratorCounters, OperationTrackerCounters};
-use dali2rust_platform::clock::Clock;
+use dali2rust_platform::clock::Uptime;
 use dali2rust_platform::heap::{HeapStats, HeapStatsPort};
 use dali2rust_platform::net::{LinkStats, NetworkLink};
 use dali2rust_mqtt_runtime::MqttCounters;
 use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 use dali2rust_registry_runtime::{
-    ForeignSliceOwner, ImportStageRefusal, StagedSlice,
+    ForeignSliceOwner, ImportStageRefusal, InputDeviceSummary, StagedSlice,
     PersistenceCounters, RegistryApplyWatch, RegistryStore, RegistryWorkerCounters,
 };
 use dali2rust_ws_runtime::WsCounters;
@@ -257,7 +257,7 @@ pub(crate) fn wire_registry_http_ports(
 }
 
 pub(crate) struct DiagnosticsBridge {
-    started: std::time::Instant,
+    uptime: Uptime,
     publisher: BusPublisher,
     slots: Arc<PendingConfirmationSlots>,
     counters: RuntimeCounterHandles,
@@ -266,13 +266,14 @@ pub(crate) struct DiagnosticsBridge {
 
 impl DiagnosticsBridge {
     pub(crate) fn new(
+        uptime: Uptime,
         publisher: BusPublisher,
         slots: Arc<PendingConfirmationSlots>,
         counters: RuntimeCounterHandles,
         store: Arc<RegistryStore>,
     ) -> Self {
         Self {
-            started: std::time::Instant::now(),
+            uptime,
             publisher,
             slots,
             counters,
@@ -518,8 +519,7 @@ fn stats_websocket_dto(c: &WsCounters) -> StatsWebSocketDto {
 }
 
 pub(crate) struct StatsBridge {
-    clock: Arc<dyn Clock>,
-    started_ms: u64,
+    uptime: Uptime,
     publisher: BusPublisher,
     slots: Arc<PendingConfirmationSlots>,
     counters: RuntimeCounterHandles,
@@ -529,16 +529,14 @@ pub(crate) struct StatsBridge {
 
 impl StatsBridge {
     pub(crate) fn new(
-        clock: Arc<dyn Clock>,
+        uptime: Uptime,
         publisher: BusPublisher,
         slots: Arc<PendingConfirmationSlots>,
         counters: RuntimeCounterHandles,
         platform: PlatformGauges,
     ) -> Self {
-        let started_ms = clock.monotonic_ms();
         Self {
-            clock,
-            started_ms,
+            uptime,
             publisher,
             slots,
             counters,
@@ -595,19 +593,12 @@ fn stats_dali_dto(h: &RuntimeCounterHandles) -> StatsDaliDto {
     let c = &h.dali_worker;
     StatsDaliDto {
         commands_executed_total: c.commands_handled.load(Relaxed),
-        errors_total: c
-            .execution_failed
-            .load(Relaxed)
-            .wrapping_add(c.invalid_command.load(Relaxed)),
+        errors_total: c.errors_total(),
         target_state_superseded_total: c.target_state_superseded.load(Relaxed),
         wire_load_permille: h.dali_wire.load_permille.load(Relaxed),
         wire_load_own_permille: h.dali_wire.load_own_permille.load(Relaxed),
         collision_restarts_total: h.dali_wire.collision_restarts.load(Relaxed),
-        foreign_frames_total: h
-            .phy_sniffer
-            .forward16
-            .load(Relaxed)
-            .wrapping_add(h.phy_sniffer.forward24.load(Relaxed)),
+        foreign_frames_total: h.phy_sniffer.foreign_frames_total(),
         foreign_verbs_projected_total: h.projector.transitions_expanded.load(Relaxed),
         foreign_dimming_unprojected_total: h.sniffer_translator.dimming_unprojectable.load(Relaxed),
         foreign_scene_writes_total: h.sniffer_translator.scene_writes_observed.load(Relaxed),
@@ -666,30 +657,23 @@ fn stats_task_timing_dto(h: &RuntimeCounterHandles) -> StatsDaliTaskTimingDto {
         answer_stage_max_ticks: s.answer_stage_max_ticks.load(Relaxed),
         sniff_poll_late_total: s.sniff_poll_late.load(Relaxed),
         sniff_poll_gap_max_us: s.sniff_poll_gap_max_us.load(Relaxed),
-        persist_flush_total: flush.0,
-        persist_flush_slow_total: flush.1,
-        persist_flush_ms_total: flush.2,
-        persist_flush_max_ms: flush.3,
-        persist_gate_waits_total: gate.0,
-        persist_gate_timeouts_total: gate.2,
+        persist_flush_total: flush.flushes,
+        persist_flush_slow_total: flush.slow,
+        persist_flush_ms_total: flush.ms_total,
+        persist_flush_max_ms: flush.max_ms,
+        persist_gate_waits_total: gate.waits,
+        persist_gate_timeouts_total: gate.timeouts,
     }
 }
 
 fn stats_operations_dto(c: &OperationTrackerCounters) -> StatsOperationsDto {
-    let succeeded = c.succeeded.load(Relaxed);
-    let failed = c.failed.load(Relaxed);
-    let timed_out = c.timed_out.load(Relaxed);
-    let cancelled = c.cancelled.load(Relaxed);
-    let terminal = succeeded
-        .wrapping_add(failed)
-        .wrapping_add(timed_out)
-        .wrapping_add(cancelled);
+    let totals = c.totals();
     StatsOperationsDto {
-        running: c.accepted.load(Relaxed).wrapping_sub(terminal),
-        succeeded_total: succeeded,
-        failed_total: failed,
-        timed_out_total: timed_out,
-        cancelled_total: cancelled,
+        running: totals.in_flight(),
+        succeeded_total: totals.succeeded,
+        failed_total: totals.failed,
+        timed_out_total: totals.timed_out,
+        cancelled_total: totals.cancelled,
     }
 }
 
@@ -701,7 +685,7 @@ impl StatsHttpState for StatsBridge {
     }
 
     fn stats_dto_into(&self, out: &mut StatsReportDto) {
-        let uptime_ms = self.clock.monotonic_ms().saturating_sub(self.started_ms);
+        let uptime_ms = self.uptime.elapsed_ms();
         out.sample_ms = uptime_ms;
         out.controller = stats_controller_dto(uptime_ms, self.heap.as_ref().map(|h| h.snapshot()));
         out.bus = stats_bus_dto(
@@ -717,6 +701,21 @@ impl StatsHttpState for StatsBridge {
         out.rules = stats_rules_dto(&self.counters);
         out.network = self.link.as_ref().map(|l| stats_network_dto(l.stats()));
     }
+}
+
+fn manifest_entries(
+    store: &RegistryStore,
+    slices: Option<&Arc<dyn SliceStore>>,
+    adapter_count: u8,
+) -> Vec<SliceManifestEntry> {
+    let Some(slices) = slices else {
+        return Vec::new();
+    };
+    store
+        .slice_manifest(slices.as_ref(), adapter_count)
+        .into_iter()
+        .map(|row| SliceManifestEntry { name: row.name, bytes: row.bytes, crc32: row.crc32 })
+        .collect()
 }
 
 pub(crate) struct ConfigTransferBridge {
@@ -744,23 +743,8 @@ impl ConfigTransferBridge {
 }
 
 impl dali2rust_api::http::handlers::config_transfer::ConfigTransferPort for ConfigTransferBridge {
-    fn slice_manifest(
-        &self,
-    ) -> Vec<dali2rust_api::http::handlers::config_transfer::SliceManifestEntry> {
-        let Some(slices) = self.slices.as_ref() else {
-            return Vec::new();
-        };
-        self.store
-            .slice_manifest(slices.as_ref(), self.adapter_count)
-            .into_iter()
-            .map(
-                |row| dali2rust_api::http::handlers::config_transfer::SliceManifestEntry {
-                    name: row.name,
-                    bytes: row.bytes,
-                    crc32: row.crc32,
-                },
-            )
-            .collect()
+    fn slice_manifest(&self) -> Vec<SliceManifestEntry> {
+        manifest_entries(&self.store, self.slices.as_ref(), self.adapter_count)
     }
 
     fn export_slice(&self, name: &str) -> Option<Vec<u8>> {
@@ -808,45 +792,46 @@ impl ReplicationSinkBridge {
             adapter_count,
         }
     }
+
+    fn key(&self, name: &str) -> Option<SliceKey> {
+        dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count)
+    }
+
+    fn accepted_key(&self, name: &str) -> Option<SliceKey> {
+        self.slices.as_ref()?;
+        self.key(name)
+    }
+
+    fn staged(&self, slice: dali2rust_redundancy_runtime::PulledSlice) -> Option<StagedSlice> {
+        let key = self.accepted_key(&slice.name)?;
+        Some(StagedSlice { key, bytes: slice.bytes })
+    }
 }
 
 impl dali2rust_redundancy_runtime::ReplicationSink for ReplicationSinkBridge {
     fn local_digests(&self) -> Vec<dali2rust_redundancy_runtime::SliceDigest> {
-        let Some(slices) = self.slices.as_ref() else {
-            return Vec::new();
-        };
-        self.store
-            .slice_manifest(slices.as_ref(), self.adapter_count)
+        manifest_entries(&self.store, self.slices.as_ref(), self.adapter_count)
             .into_iter()
-            .map(|row| dali2rust_redundancy_runtime::SliceDigest {
-                name: row.name,
-                bytes: row.bytes,
-                crc32: row.crc32,
-            })
+            .map(dali2rust_redundancy_runtime::SliceDigest::from)
             .collect()
     }
 
     fn accepts(&self, name: &str) -> bool {
-        self.slices.is_some()
-            && dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count).is_some()
+        self.accepted_key(name).is_some()
     }
 
     fn family(&self, name: &str) -> String {
-        dali2rust_registry_runtime::slice_key_from_name(name, self.adapter_count)
-            .map_or_else(|| name.to_string(), |key| key.family().label())
+        self.key(name).map_or_else(|| name.to_string(), |key| key.family().label())
     }
 
     fn stage(&self, pulled: Vec<dali2rust_redundancy_runtime::PulledSlice>) -> bool {
-        let staged = pulled
-            .into_iter()
-            .filter_map(|slice| {
-                let key = dali2rust_registry_runtime::slice_key_from_name(&slice.name, self.adapter_count)?;
-                Some(StagedSlice { key, bytes: slice.bytes })
-            })
-            .collect();
-        self.store
-            .stage_import(dali2rust_contracts::CORRELATION_NONE, staged)
-            .is_ok()
+        let staged: Option<Vec<StagedSlice>> =
+            pulled.into_iter().map(|slice| self.staged(slice)).collect();
+        staged.is_some_and(|staged| {
+            self.store
+                .stage_import(dali2rust_contracts::CORRELATION_NONE, staged)
+                .is_ok()
+        })
     }
 
     fn discard_staged(&self) {
@@ -991,7 +976,7 @@ impl RedundancyBridge {
                 reason: rs::transition_reason_name(r.reason),
                 detected_at_ms: r.detected_at_ms,
                 completed_at_ms: r.completed_at_ms,
-                took_ms: r.completed_at_ms.wrapping_sub(r.detected_at_ms),
+                took_ms: r.took_ms(),
                 last_peer_answer_ms: r.last_peer_answer_ms,
                 missed_probes: r.missed_probes,
             })
@@ -1001,7 +986,7 @@ impl RedundancyBridge {
 
 impl DiagnosticsHttpState for DiagnosticsBridge {
     fn diagnostics_dto_into(&self, out: &mut DiagnosticsDto) {
-        out.uptime_ms = self.started.elapsed().as_millis() as u64;
+        out.uptime_ms = self.uptime.elapsed_ms();
         out.bus = BusCountersDto::from(&self.publisher.counters_snapshot());
         out.confirmation_bridge = ConfirmationBridgeDto {
             unmatched: self.slots.unmatched_confirmations_load(),
@@ -1044,8 +1029,8 @@ impl DiagnosticsHttpState for DiagnosticsBridge {
 }
 
 use dali2rust_api::http::input_device_state::{
-    instance_type_name, FeedbackDto, InputDeviceDto, InputDeviceHttpState, InputDeviceSummaryDto,
-    InstanceDto, InstanceRuntimeDto, ReadValueDto,
+    instance_type_name, opcode_map_name, FeedbackDto, InputDeviceDto, InputDeviceHttpState,
+    InputDeviceSummaryDto, InstanceDto, InstanceRuntimeDto, ReadValueDto,
 };
 
 pub(crate) struct InputDeviceHttpStateBridge {
@@ -1058,8 +1043,6 @@ impl InputDeviceHttpStateBridge {
     }
 }
 
-const FORCED_EVENT_SCHEME: u8 = 2;
-
 impl InputDeviceHttpState for InputDeviceHttpStateBridge {
     fn adapter_count(&self) -> u8 {
         AdapterReadPort::adapter_count(self.store.as_ref())
@@ -1069,39 +1052,21 @@ impl InputDeviceHttpState for InputDeviceHttpStateBridge {
         self.store
             .input_device_summaries(adapter_id)
             .into_iter()
-            .map(|s| InputDeviceSummaryDto {
-                adapter_id: s.adapter_id,
-                short_address: s.short_address,
-                name: s.name,
-                present: s.present,
-                instance_count: s.instance_count,
-                first_instance_type: s.first_instance_type,
-                ha_expose: s.ha_expose,
-                last_seen_ms: s.last_seen_ms,
-                last_event_at_ms: s.last_event_at_ms,
-            })
+            .map(summary_dto)
             .collect()
     }
 
     fn detail(&self, adapter_id: u8, short_address: u8) -> Option<InputDeviceDto> {
         let detail = self.store.input_device_detail(adapter_id, short_address)?;
         let s = detail.summary;
+        let (device_capabilities, device_status, version_number) =
+            (s.device_capabilities, s.device_status, s.version_number);
         Some(InputDeviceDto {
-            summary: InputDeviceSummaryDto {
-                adapter_id: s.adapter_id,
-                short_address: s.short_address,
-                name: s.name,
-                present: s.present,
-                instance_count: s.instance_count,
-                first_instance_type: s.first_instance_type,
-                ha_expose: s.ha_expose,
-                last_seen_ms: s.last_seen_ms,
-                last_event_at_ms: s.last_event_at_ms,
-            },
+            summary: summary_dto(s),
             notes: detail.notes,
-            device_capabilities: s.device_capabilities,
-            device_status: s.device_status,
-            version_number: s.version_number,
+            device_capabilities,
+            device_status,
+            version_number,
             now_ms: 0,
             nvm_settling_until_ms: detail.nvm_settling_until_ms,
             instances: detail.instances.iter().map(instance_dto).collect(),
@@ -1113,15 +1078,26 @@ impl InputDeviceHttpState for InputDeviceHttpStateBridge {
     }
 }
 
+fn summary_dto(s: InputDeviceSummary) -> InputDeviceSummaryDto {
+    InputDeviceSummaryDto {
+        adapter_id: s.adapter_id,
+        short_address: s.short_address,
+        name: s.name,
+        present: s.present,
+        instance_count: s.instance_count,
+        first_instance_type: s.first_instance_type,
+        ha_expose: s.ha_expose,
+        last_seen_ms: s.last_seen_ms,
+        last_event_at_ms: s.last_event_at_ms,
+    }
+}
+
 fn feedback_dto(view: &dali2rust_registry_runtime::InstanceView) -> FeedbackDto {
+    let map = view.feedback_map();
     FeedbackDto {
         probed: view.feedback_probe.is_some(),
-        present: matches!(view.feedback_probe, Some(1 | 2)),
-        opcode_map: match view.feedback_probe {
-            Some(1) => Some("diia_corrected"),
-            Some(2) => Some("ed1"),
-            _ => None,
-        },
+        present: map.is_some(),
+        opcode_map: map.map(opcode_map_name),
         capability: view.feedback_capability.value,
         colour_capability: view.feedback_colour_capability.value,
         timing: view.feedback_timing.value,
@@ -1140,7 +1116,7 @@ fn instance_dto(view: &dali2rust_registry_runtime::InstanceView) -> InstanceDto 
         instance_status: view.instance_status,
         resolution: view.resolution,
         event_scheme: ReadValueDto::new(view.event_scheme.value, view.event_scheme.read_at_ms),
-        event_scheme_confirmed: view.event_scheme.value == Some(FORCED_EVENT_SCHEME),
+        event_scheme_confirmed: view.event_scheme_confirmed(),
         event_filter: ReadValueDto::new(
             view.event_filter.value.map(|bytes| bytes.to_vec()),
             view.event_filter.read_at_ms,
@@ -1181,17 +1157,12 @@ const _: () = assert!(MAX_GROUP_ID as u16 + 1 == GROUP_COUNT as u16);
 pub struct RegistryNameResolver {
     store: Arc<RegistryStore>,
     primary_adapter: u8,
-    adapter_count: u8,
 }
 
 impl RegistryNameResolver {
     #[must_use]
-    pub fn new(store: Arc<RegistryStore>, primary_adapter: u8, adapter_count: u8) -> Self {
-        Self {
-            store,
-            primary_adapter,
-            adapter_count,
-        }
+    pub fn new(store: Arc<RegistryStore>, primary_adapter: u8) -> Self {
+        Self { store, primary_adapter }
     }
 }
 
@@ -1201,7 +1172,7 @@ impl NameResolver for RegistryNameResolver {
     }
 
     fn adapter_exists(&self, adapter_id: u8) -> bool {
-        adapter_id < self.adapter_count || self.store.adapter_id_exists(adapter_id)
+        self.store.adapter_id_exists(adapter_id)
     }
 
     fn resolve_lamp(&self, name: &str) -> Vec<LampRef> {
@@ -1288,11 +1259,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
     }
 
     fn wall(&self) -> Option<dali2rust_rules_runtime::runtime::engine::WallTime> {
-        let local = self.wall.local()?;
-        Some(dali2rust_rules_runtime::runtime::engine::WallTime {
-            minutes_of_day: local.minutes_since_midnight,
-            weekday: local.weekday,
-        })
+        self.wall.local().map(Into::into)
     }
 
     fn sun(&self) -> Option<dali2rust_rules_runtime::runtime::engine::SunTimes> {
@@ -1311,16 +1278,14 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
         self.store
             .rules_lamp_rows()
             .into_iter()
-            .map(|(adapter_id, id, is_on, level, cct_kelvin, last_level, bound)| {
-                dali2rust_rules_runtime::runtime::engine::LampState {
-                    adapter_id,
-                    id,
-                    is_on,
-                    level,
-                    cct_kelvin,
-                    last_level,
-                    bound,
-                }
+            .map(|row| dali2rust_rules_runtime::runtime::engine::LampState {
+                adapter_id: row.adapter_id,
+                id: row.id,
+                is_on: row.is_on,
+                level: row.level,
+                cct_kelvin: row.cct_kelvin,
+                last_level: row.last_level,
+                bound: row.bound,
             })
             .collect()
     }
@@ -1329,14 +1294,12 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
         self.store
             .rules_group_rows()
             .into_iter()
-            .map(|(adapter_id, id, any_on, member_count)| {
-                dali2rust_rules_runtime::runtime::engine::GroupState {
-                    adapter_id,
-                    id,
-                    any_on,
-                    all_off: !any_on,
-                    member_count,
-                }
+            .map(|row| dali2rust_rules_runtime::runtime::engine::GroupState {
+                adapter_id: row.adapter_id,
+                id: row.id,
+                any_on: row.any_on,
+                all_off: row.all_off(),
+                member_count: row.member_count,
             })
             .collect()
     }
@@ -1346,20 +1309,19 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
         self.store
             .rules_device_rows(now)
             .into_iter()
-            .map(|(adapter_id, short_address, online)| {
-                dali2rust_rules_runtime::runtime::engine::DeviceState {
-                    adapter_id,
-                    short_address,
-                    online,
-                }
+            .map(|row| dali2rust_rules_runtime::runtime::engine::DeviceState {
+                adapter_id: row.adapter_id,
+                short_address: row.short_address,
+                online: row.online,
             })
             .collect()
     }
 
     fn inputs(&self) -> Vec<dali2rust_rules_runtime::runtime::engine::InputState> {
-        let rows = self.store.rules_input_rows();
         let now = dali2rust_bsp::monotonic_clock::observation_stamp_ms();
-        rows.into_iter()
+        self.store
+            .rules_input_rows(now)
+            .into_iter()
             .map(|row| dali2rust_rules_runtime::runtime::engine::InputState {
                 adapter_id: row.adapter_id,
                 short_address: row.short_address,
@@ -1368,7 +1330,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
                 occupied: row.occupied,
                 light: row.light,
                 position: row.position,
-                last_event_age_ms: row.last_event_mono_ms.map(|at| age_since(now, at)),
+                last_event_age_ms: row.last_event_age_ms,
             })
             .collect()
     }
@@ -1395,22 +1357,7 @@ impl dali2rust_rules_runtime::RulesWorldPort for RulesWorldBridge {
         short_address: u8,
         instance_number: u8,
     ) -> [Option<u8>; 3] {
-        self.store
-            .input_device_detail(adapter_id, short_address)
-            .and_then(|detail| {
-                detail
-                    .instances
-                    .iter()
-                    .find(|i| i.instance_number == instance_number)
-                    .map(|i| {
-                        [
-                            i.instance_groups[0].value.flatten(),
-                            i.instance_groups[1].value.flatten(),
-                            i.instance_groups[2].value.flatten(),
-                        ]
-                    })
-            })
-            .unwrap_or([None; 3])
+        self.store.input_instance_groups(adapter_id, short_address, instance_number)
     }
 }
 
@@ -1451,28 +1398,20 @@ impl dali2rust_api::http::firmware_state::FirmwareHttpState for FirmwareBridge {
     }
 }
 
-fn age_since(now_mono_ms: u32, at_mono_ms: u32) -> u32 {
-    let age = now_mono_ms.wrapping_sub(at_mono_ms);
-    if age > u32::MAX / 2 {
-        0
-    } else {
-        age
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn an_event_stamped_after_the_clock_was_read_is_new_not_49_days_old() {
-        assert_eq!(super::age_since(1_000, 1_500), 0);
-        assert_eq!(super::age_since(1_500, 1_000), 500);
-        assert_eq!(super::age_since(10, u32::MAX - 9), 20, "the stamp wraps with the clock");
-    }
-
     use core::sync::atomic::Ordering::Relaxed;
     use std::sync::{Arc, Mutex};
 
-    use super::{arbitration_dto, stats_readback_dto};
+    use super::{
+        arbitration_dto, stats_readback_dto, ConfigTransferBridge, ReplicationSinkBridge,
+    };
+    use dali2rust_api::http::handlers::config_transfer::ConfigTransferPort;
+    use dali2rust_bsp::slice_store_files::InMemorySliceStore;
+    use dali2rust_platform::slice_store::{SliceKey, SliceStore};
+    use dali2rust_redundancy_runtime::{PulledSlice, ReplicationSink};
+    use dali2rust_registry_runtime::{InputDeviceSummary, RegistryStore, StagedSlice};
+    use dali2rust_test_support::write_slice;
     use dali2rust_contracts::msg::HclTargetScope;
     use dali2rust_rules_model::{GroupRef, LightTarget};
     use crate::dali::transport::mock::MockDaliTransport;
@@ -1487,6 +1426,13 @@ mod tests {
 
     const SHORT: u8 = 4;
     const GROUP: u8 = 3;
+    const ADAPTERS: u8 = 1;
+    const KNOWN_SLICE: &str = "poller_settings";
+    const OTHER_KNOWN_SLICE: &str = "hcl_schedules";
+    const SLICE_BYTES: [u8; 3] = [1, 2, 3];
+    const SLICE_BYTES_CRC32: u32 = 0x55BC_801D;
+    const UNKNOWN_SLICE: &str = "no_such_slice";
+    const OTHER_WORKFLOW: u64 = 77;
 
     fn frame(command: StandardCommand) -> u16 {
         let address = DaliAddress::short(SHORT).expect("short address");
@@ -1556,6 +1502,100 @@ mod tests {
             row.handover_incomplete,
         ];
         assert_eq!(got, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }
+
+    fn sink_over(slices: Option<Arc<dyn SliceStore>>) -> (ReplicationSinkBridge, Arc<RegistryStore>) {
+        let store = Arc::new(RegistryStore::with_adapter_count(ADAPTERS));
+        (ReplicationSinkBridge::new(Arc::clone(&store), slices, ADAPTERS), store)
+    }
+
+    fn pulled(name: &str) -> PulledSlice {
+        PulledSlice { name: name.to_string(), bytes: SLICE_BYTES.to_vec() }
+    }
+
+    fn store_is_free_for_a_stage(store: &RegistryStore) -> bool {
+        let probe = StagedSlice { key: SliceKey::PollerSettings, bytes: Vec::new() };
+        let free = store.stage_import(OTHER_WORKFLOW, vec![probe]).is_ok();
+        store.discard_import(OTHER_WORKFLOW);
+        free
+    }
+
+    #[test]
+    fn a_pulled_set_holding_a_name_accepts_would_refuse_stages_nothing() {
+        let slices: Arc<dyn SliceStore> = Arc::new(InMemorySliceStore::new());
+        let (sink, store) = sink_over(Some(slices));
+        assert!(sink.accepts(KNOWN_SLICE));
+        assert!(!sink.accepts(UNKNOWN_SLICE));
+
+        assert!(!sink.stage(vec![pulled(KNOWN_SLICE), pulled(UNKNOWN_SLICE)]));
+
+        assert!(store_is_free_for_a_stage(&store), "the known slice was not staged beside the unknown one");
+    }
+
+    #[test]
+    fn what_accepts_approves_is_staged_and_holds_the_stage_until_discarded() {
+        let slices: Arc<dyn SliceStore> = Arc::new(InMemorySliceStore::new());
+        let (sink, store) = sink_over(Some(slices));
+
+        assert!(sink.stage(vec![pulled(KNOWN_SLICE), pulled(OTHER_KNOWN_SLICE)]));
+        assert!(!store_is_free_for_a_stage(&store));
+        sink.discard_staged();
+        assert!(store_is_free_for_a_stage(&store));
+    }
+
+    #[test]
+    fn a_sink_without_slice_storage_accepts_and_stages_nothing() {
+        let (sink, store) = sink_over(None);
+        assert!(!sink.accepts(KNOWN_SLICE));
+        assert!(sink.local_digests().is_empty());
+
+        assert!(!sink.stage(vec![pulled(KNOWN_SLICE)]));
+
+        assert!(store_is_free_for_a_stage(&store));
+    }
+
+    #[test]
+    fn an_input_device_summary_keeps_each_field_in_its_own_place() {
+        let dto = super::summary_dto(InputDeviceSummary {
+            adapter_id: 1,
+            device_capabilities: Some(2),
+            device_status: Some(3),
+            version_number: Some(4),
+            short_address: 5,
+            name: Some("hall".to_string()),
+            present: true,
+            instance_count: 6,
+            first_instance_type: Some(7),
+            ha_expose: false,
+            last_seen_ms: Some(8),
+            last_event_at_ms: Some(9),
+        });
+        assert_eq!((dto.adapter_id, dto.short_address, dto.instance_count), (1, 5, 6));
+        assert_eq!((dto.present, dto.ha_expose, dto.first_instance_type), (true, false, Some(7)));
+        assert_eq!((dto.last_seen_ms, dto.last_event_at_ms), (Some(8), Some(9)));
+        assert_eq!(dto.name.as_deref(), Some("hall"));
+    }
+
+    #[test]
+    fn the_replication_digests_are_the_manifest_the_transfer_port_serves() {
+        let backing = Arc::new(InMemorySliceStore::new());
+        write_slice(&*backing, SliceKey::PollerSettings, &SLICE_BYTES);
+        let slices: Arc<dyn SliceStore> = backing;
+        let (sink, store) = sink_over(Some(Arc::clone(&slices)));
+        let transfer = ConfigTransferBridge::new(store, Some(slices), ADAPTERS);
+
+        let digests = sink.local_digests();
+        let served = transfer.slice_manifest();
+        let digest_of = |name: &str| digests.iter().find(|d| d.name == name).map(|d| (d.bytes, d.crc32));
+        let served_of = |name: &str| served.iter().find(|row| row.name == name).map(|row| (row.bytes, row.crc32));
+
+        let written = Some((Some(SLICE_BYTES.len()), SLICE_BYTES_CRC32));
+        assert_eq!(served_of(KNOWN_SLICE), written, "the port serves the written length and its CRC-32");
+        assert_eq!(digest_of(KNOWN_SLICE), written, "the digest names the same written slice");
+        let never_written = Some((None, 0));
+        assert_eq!(served_of(OTHER_KNOWN_SLICE), never_written, "a slice never written has no bytes");
+        assert_eq!(digest_of(OTHER_KNOWN_SLICE), never_written, "and no digest of bytes");
+        assert_eq!((served_of(UNKNOWN_SLICE), digest_of(UNKNOWN_SLICE)), (None, None));
     }
 
     #[test]

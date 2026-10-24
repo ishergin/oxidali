@@ -241,6 +241,27 @@ fn operation_accepted_then_running_op001() {
 }
 
 #[test]
+fn an_operation_counts_as_in_flight_from_its_acceptance_to_its_ending() {
+    let (publisher, _tracker, counters, _host) = spawn_harness_with_counters();
+    publish(
+        &publisher,
+        BusChannel::Commands,
+        begin_envelope(9020, "op-in-flight", OperationType::Discovery, 600_000),
+    );
+    wait_until(|| counters.totals().in_flight() == 1, Duration::from_millis(500));
+    assert_eq!(counters.totals().in_flight(), 1, "accepted and not ended");
+
+    publish(
+        &publisher,
+        BusChannel::Events,
+        signal_event(9020, OperationWorkerSignal::WorkerFailed, ErrorCode::OperationFailed),
+    );
+    wait_until(|| counters.totals().failed == 1, Duration::from_millis(500));
+    let totals = counters.totals();
+    assert_eq!((totals.accepted, totals.failed, totals.in_flight()), (1, 1, 0));
+}
+
+#[test]
 fn operation_failed_with_worker_error_op002() {
     let (publisher, tracker, _host) = spawn_harness();
     publish(

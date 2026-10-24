@@ -54,13 +54,13 @@ pub fn spawn_apply_orchestrator_worker(
     )
 }
 
-struct ApplyWorker<'a> {
-    ev_rx: &'a BusSubscriberRx,
-    publisher: &'a BusPublisher,
-    bus_id: BusId,
+pub(crate) struct ApplyWorker<'a> {
+    pub(crate) ev_rx: &'a BusSubscriberRx,
+    pub(crate) publisher: &'a BusPublisher,
+    pub(crate) bus_id: BusId,
     read_port: &'a dyn ApplyReadPort,
-    operations: &'a dyn OperationReadPort,
-    counters: &'a ApplyOrchestratorCounters,
+    pub(crate) operations: &'a dyn OperationReadPort,
+    pub(crate) counters: &'a ApplyOrchestratorCounters,
 }
 
 fn handle_command_frame(frame: &BusFrame, cx: &ApplyWorker<'_>) {
@@ -133,16 +133,7 @@ fn run_apply<C: PacedCell>(
     let diff = read_diff(cx.read_port);
     while cx.ev_rx.try_recv().is_ok() {}
 
-    let run = RunState::begin(
-        cx.ev_rx,
-        cx.publisher,
-        cx.bus_id,
-        cx.counters,
-        workflow,
-        registry_adapter_id,
-        operation_key,
-        cx.operations,
-    );
+    let run = RunState::begin(cx, workflow, registry_adapter_id, operation_key);
     execute_apply(&run, diff);
 }
 

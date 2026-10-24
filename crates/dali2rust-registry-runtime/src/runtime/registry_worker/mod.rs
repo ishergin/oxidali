@@ -1,4 +1,5 @@
 mod adapter;
+mod command_ctx;
 mod config_write;
 mod confirm;
 mod dispatch;
@@ -278,6 +279,10 @@ fn run_registry_worker_loop(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the public entry point of the composition root and the integration tests; each argument is a distinct wired handle"
+)]
 pub fn spawn_registry_worker(
     rx: BusSubscriberRx,
     publisher: BusPublisher,

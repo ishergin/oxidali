@@ -13,7 +13,7 @@ pub use bus::{
     try_recv_event_matching_envelope, EventObserver,
     PublishTally,
 };
-pub use clock::{AdvancingClock, StoppedClock};
+pub use clock::{AdvancingClock, SettableClock, StoppedClock};
 pub use fs::{temp_fs, InMemoryFileSystemHal, temp_slice_store, write_slice};
 pub use ingress_hold::{
     hold_the_events_ingress_full, hold_the_events_ingress_with_room, HeldEventsIngress,

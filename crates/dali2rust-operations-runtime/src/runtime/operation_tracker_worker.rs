@@ -27,10 +27,11 @@ use dali2rust_domain::registry::{
 
 use dali2rust_bsp::esp_thread;
 
+use super::operation_totals::OperationTotals;
+
 #[derive(Debug, Default)]
 pub struct OperationTrackerCounters {
     pub accepted: AtomicU32,
-    pub running: AtomicU32,
     pub succeeded: AtomicU32,
     pub failed: AtomicU32,
     pub timed_out: AtomicU32,
@@ -38,6 +39,18 @@ pub struct OperationTrackerCounters {
     pub ignored_commands: AtomicU32,
     pub ignored_events: AtomicU32,
     pub pending_outcomes_expired: AtomicU32,
+}
+
+impl OperationTrackerCounters {
+    #[must_use]
+    pub fn totals(&self) -> OperationTotals {
+        let succeeded = self.succeeded.load(Ordering::Acquire);
+        let failed = self.failed.load(Ordering::Acquire);
+        let timed_out = self.timed_out.load(Ordering::Acquire);
+        let cancelled = self.cancelled.load(Ordering::Acquire);
+        let accepted = self.accepted.load(Ordering::Relaxed);
+        OperationTotals { accepted, succeeded, failed, timed_out, cancelled }
+    }
 }
 
 const MAX_APPLY_DETAIL_ROWS: usize = 128;
@@ -466,29 +479,26 @@ fn operation_view_for(
 fn publish_operation_status_changed(
     publisher: &BusPublisher,
     bus_id: BusId,
-    workflow_correlation_id: u64,
-    op_type: OperationType,
+    op: &TrackedOp,
     status: OperationStatus,
-    started_at_ms: u64,
     finished_at_ms: Option<u64>,
     ttl_remaining_ms: u32,
-    operation_key: &str,
     error_payload: Option<(ErrorCode, &str)>,
 ) {
     let error = error_payload.map(|(code, msg)| CompactErrorPayload::new(code, msg));
     let env = event_envelope(
         SOURCE_ID_UNSPECIFIED,
-        workflow_correlation_id,
+        op.workflow_correlation_id,
         bus_id.0,
         Some(Origin::Internal),
         OperationStatusChangedEvent {
-            operation_type: op_type,
+            operation_type: op.op_type,
             status,
             error,
-            started_at_ms,
+            started_at_ms: op.started_at_unix_ms,
             finished_at_ms,
             ttl_remaining_ms,
-            operation_key: fixed_text_32(operation_key),
+            operation_key: fixed_text_32(op.operation_key.as_str()),
         },
     );
     let frame = BusFrame::event(env);
@@ -500,20 +510,18 @@ fn bump_counter(counters: &OperationTrackerCounters, status: OperationStatus) {
         OperationStatus::Accepted => {
             counters.accepted.fetch_add(1, Ordering::Relaxed);
         }
-        OperationStatus::Running => {
-            counters.running.fetch_add(1, Ordering::Relaxed);
-        }
+        OperationStatus::Running => {}
         OperationStatus::Succeeded => {
-            counters.succeeded.fetch_add(1, Ordering::Relaxed);
+            counters.succeeded.fetch_add(1, Ordering::Release);
         }
         OperationStatus::Failed => {
-            counters.failed.fetch_add(1, Ordering::Relaxed);
+            counters.failed.fetch_add(1, Ordering::Release);
         }
         OperationStatus::TimedOut => {
-            counters.timed_out.fetch_add(1, Ordering::Relaxed);
+            counters.timed_out.fetch_add(1, Ordering::Release);
         }
         OperationStatus::Cancelled => {
-            counters.cancelled.fetch_add(1, Ordering::Relaxed);
+            counters.cancelled.fetch_add(1, Ordering::Release);
         }
     }
 }
@@ -532,11 +540,16 @@ fn transition_ttl_remaining_ms(op: &TrackedOp, status: OperationStatus) -> u32 {
     }
 }
 
-fn emit_transition(
-    publisher: &BusPublisher,
+#[derive(Clone, Copy)]
+struct Emitter<'a> {
+    publisher: &'a BusPublisher,
     bus_id: BusId,
+    counters: &'a OperationTrackerCounters,
+}
+
+fn emit_transition(
+    out: &Emitter<'_>,
     inner: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
     op: &TrackedOp,
     status: OperationStatus,
     finished_at: Option<u64>,
@@ -544,19 +557,16 @@ fn emit_transition(
 ) {
     let ttl_rem = transition_ttl_remaining_ms(op, status);
     publish_operation_status_changed(
-        publisher,
-        bus_id,
-        op.workflow_correlation_id,
-        op.op_type,
+        out.publisher,
+        out.bus_id,
+        op,
         status,
-        op.started_at_unix_ms,
         finished_at,
         ttl_rem,
-        op.operation_key.as_str(),
         error_payload,
     );
 
-    bump_counter(counters, status);
+    bump_counter(out.counters, status);
 
     let view = operation_view_for(op, status, error_payload);
     inner.upsert_http(&op.operation_key, view, None);
@@ -577,10 +587,8 @@ fn clear_active_entry(
 }
 
 fn apply_terminal(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     inner: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
     workflow_correlation_id: u64,
     op: &TrackedOp,
     status: OperationStatus,
@@ -589,43 +597,29 @@ fn apply_terminal(
     let finished_at = Some(unix_wall_clock_millis());
     let retention =
         Instant::now() + Duration::from_millis(u64::from(op.finished_retention_ms.max(1)));
-    emit_transition(
-        publisher,
-        bus_id,
-        inner,
-        counters,
-        op,
-        status,
-        finished_at,
-        error_payload,
-    );
+    emit_transition(out, inner, op, status, finished_at, error_payload);
     let view = operation_view_for(op, status, error_payload);
     inner.upsert_http(&op.operation_key, view, Some(retention));
     clear_active_entry(inner, workflow_correlation_id, op);
 }
 
 fn emit_terminal_with_retention(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     guard: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
     op: &TrackedOp,
     status: OperationStatus,
     code: ErrorCode,
 ) {
     publish_operation_status_changed(
-        publisher,
-        bus_id,
-        op.workflow_correlation_id,
-        op.op_type,
+        out.publisher,
+        out.bus_id,
+        op,
         status,
-        op.started_at_unix_ms,
         Some(unix_wall_clock_millis()),
         0,
-        op.operation_key.as_str(),
         Some((code, "")),
     );
-    bump_counter(counters, status);
+    bump_counter(out.counters, status);
     let ret =
         Instant::now() + Duration::from_millis(u64::from(op.finished_retention_ms.max(1)));
     guard.upsert_http(
@@ -649,22 +643,23 @@ pub fn spawn_operation_tracker_worker(
         std_thread_stack::STATE_WORKER_STACK,
         esp_thread::StackHome::ExternalOnXip,
         move || {
+            let out = Emitter { publisher: &publisher, bus_id, counters: &counters };
             loop {
                 match cmd_rx.recv_timeout(IDLE_RECV_TIMEOUT) {
                     Ok(frame) => {
-                        handle_command_frame(&frame, &publisher, bus_id, &state, &counters);
+                        handle_command_frame(&frame, &out, &state);
                         while let Ok(frame) = cmd_rx.try_recv() {
-                            handle_command_frame(&frame, &publisher, bus_id, &state, &counters);
+                            handle_command_frame(&frame, &out, &state);
                         }
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 }
                 while let Ok(frame) = ev_rx.try_recv() {
-                    handle_event_frame(&frame, &publisher, bus_id, &state, &counters);
+                    handle_event_frame(&frame, &out, &state);
                 }
-                drain_rejected_deliveries(&conf_rx, &publisher, bus_id, &state, &counters);
-                tick_deadlines(&publisher, bus_id, &state, &counters);
+                drain_rejected_deliveries(&conf_rx, &out, &state);
+                tick_deadlines(&out, &state);
             }
         },
     )
@@ -672,21 +667,17 @@ pub fn spawn_operation_tracker_worker(
 
 fn handle_command_frame(
     frame: &BusFrame,
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     state: &Arc<Mutex<OperationTrackerInner>>,
-    counters: &Arc<OperationTrackerCounters>,
 ) {
-    let Some(ce) = frame.command_for(bus_id) else {
+    let Some(ce) = frame.command_for(out.bus_id) else {
         return;
     };
     let meta = &ce.meta;
     dispatch_tracker_command(
         &ce.payload,
-        publisher,
-        bus_id,
+        out,
         state,
-        counters,
         meta.correlation_id,
         meta.target_adapter_id as u32,
     );
@@ -696,26 +687,22 @@ dali2rust_contracts::dispatch_bus_commands! {
     pub const OPERATION_TRACKER_HANDLED_COMMANDS;
     fn dispatch_tracker_command(
         payload: &BusCommandPayload,
-        publisher: &BusPublisher,
-        bus_id: BusId,
+        out: &Emitter<'_>,
         state: &Arc<Mutex<OperationTrackerInner>>,
-        counters: &Arc<OperationTrackerCounters>,
         corr: u64,
         adapter_id: u32,
     );
     payload = payload;
-    ignored = { counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
+    ignored = { out.counters.ignored_commands.fetch_add(1, Ordering::Relaxed); };
     OperationBeginCommand(body) =>
-        handle_operation_begin(publisher, bus_id, state, counters, corr, adapter_id, body),
+        handle_operation_begin(out, state, corr, adapter_id, body),
     OperationRegistryResetCommand(_) =>
-        handle_operation_registry_reset(publisher, bus_id, state, counters),
+        handle_operation_registry_reset(out, state),
 }
 
 fn handle_operation_begin(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     state: &Arc<Mutex<OperationTrackerInner>>,
-    counters: &Arc<OperationTrackerCounters>,
     corr: u64,
     adapter_id: u32,
     body: &dali2rust_contracts::msg::OperationBeginCommand,
@@ -726,7 +713,7 @@ fn handle_operation_begin(
     let key = coalesce_key(op_type, adapter_id, body.operation_key.as_str());
     let coalesces = op_type.coalesces_per_resource();
     if coalesces {
-        supersede_stale_operation(publisher, bus_id, &mut guard, counters, &key, corr);
+        supersede_stale_operation(out, &mut guard, &key, corr);
     }
     let op = TrackedOp {
         workflow_correlation_id: corr,
@@ -739,21 +726,12 @@ fn handle_operation_begin(
         started_at_unix_ms: unix_wall_clock_millis(),
         detail: OperationDetailState::from_begin(op_type),
     };
-    emit_transition(
-        publisher,
-        bus_id,
-        &mut guard,
-        counters.as_ref(),
-        &op,
-        OperationStatus::Accepted,
-        None,
-        None,
-    );
+    emit_transition(out, &mut guard, &op, OperationStatus::Accepted, None, None);
     if coalesces {
         guard.coalesce.insert(key, corr);
     }
     guard.active.insert(corr, op);
-    flush_begin_backlog(publisher, bus_id, &mut guard, counters, corr, op_type);
+    flush_begin_backlog(out, &mut guard, corr, op_type);
 }
 
 type CoalesceKey = (u8, u32, String);
@@ -766,10 +744,8 @@ fn coalesce_key(op_type: OperationType, adapter_id: u32, operation_key: &str) ->
 }
 
 fn supersede_stale_operation(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     guard: &mut OperationTrackerInner,
-    counters: &Arc<OperationTrackerCounters>,
     coalesce_key: &CoalesceKey,
     corr: u64,
 ) {
@@ -778,10 +754,8 @@ fn supersede_stale_operation(
             if let Some(old_op) = guard.active.remove(&old_c) {
                 guard.closed.note(old_c);
                 emit_terminal_with_retention(
-                    publisher,
-                    bus_id,
+                    out,
                     guard,
-                    counters.as_ref(),
                     &old_op,
                     OperationStatus::Cancelled,
                     ErrorCode::Superseded,
@@ -793,21 +767,19 @@ fn supersede_stale_operation(
 }
 
 fn flush_begin_backlog(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     guard: &mut OperationTrackerInner,
-    counters: &Arc<OperationTrackerCounters>,
     corr: u64,
     op_type: OperationType,
 ) {
     if matches!(op_type, OperationType::GroupApply) {
         flush_pending_apply_outcomes::<GroupApplyAccumulator>(
-            publisher, bus_id, guard, counters.as_ref(), corr,
+            out, guard, corr,
         );
     }
     if matches!(op_type, OperationType::SceneApply) {
         flush_pending_apply_outcomes::<SceneApplyAccumulator>(
-            publisher, bus_id, guard, counters.as_ref(), corr,
+            out, guard, corr,
         );
     }
     if matches!(op_type, OperationType::AttributeRead) {
@@ -816,8 +788,8 @@ fn flush_begin_backlog(
         }
     }
     flush_pending_commissioning_outcome(guard, corr, op_type);
-    flush_pending_worker_signals(publisher, bus_id, guard, counters, corr);
-    fail_on_parked_rejection(publisher, bus_id, guard, counters.as_ref(), corr);
+    flush_pending_worker_signals(out, guard, corr);
+    fail_on_parked_rejection(out, guard, corr);
 }
 
 fn flush_pending_commissioning_outcome(
@@ -967,10 +939,8 @@ fn apply_attribute_read_outcomes(
 }
 
 fn handle_operation_registry_reset(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     state: &Arc<Mutex<OperationTrackerInner>>,
-    counters: &Arc<OperationTrackerCounters>,
 ) {
     let mut guard = lock_tracker(state);
     let corrs: Vec<u64> = guard.active.keys().copied().collect();
@@ -979,10 +949,8 @@ fn handle_operation_registry_reset(
             continue;
         };
         emit_terminal_with_retention(
-            publisher,
-            bus_id,
+            out,
             &mut guard,
-            counters.as_ref(),
             &op,
             OperationStatus::Cancelled,
             ErrorCode::RegistryReset,
@@ -1009,10 +977,8 @@ fn target_virtual_lamp_id(target: &dali2rust_contracts::msg::DaliProgramTarget) 
 }
 
 fn promote_running(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     guard: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
     workflow_c: u64,
     op: &TrackedOp,
 ) {
@@ -1020,18 +986,14 @@ fn promote_running(
         return;
     }
     publish_operation_status_changed(
-        publisher,
-        bus_id,
-        op.workflow_correlation_id,
-        op.op_type,
+        out.publisher,
+        out.bus_id,
+        op,
         OperationStatus::Running,
-        op.started_at_unix_ms,
         None,
         ttl_remaining_ms(op.deadline),
-        op.operation_key.as_str(),
         None,
     );
-    bump_counter(counters, OperationStatus::Running);
     if let Some(slot) = guard.active.get_mut(&workflow_c) {
         slot.status = OperationStatus::Running;
     }
@@ -1226,10 +1188,8 @@ fn record_apply_outcome<F: ApplyFamily>(detail: &mut OperationDetailState, body:
 }
 
 fn apply_apply_outcome<F: ApplyFamily>(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     guard: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
     workflow_c: u64,
     body: &F::Body,
 ) {
@@ -1239,7 +1199,7 @@ fn apply_apply_outcome<F: ApplyFamily>(
         }
         return;
     };
-    promote_running(publisher, bus_id, guard, counters, workflow_c, &op);
+    promote_running(out, guard, workflow_c, &op);
     let Some(slot) = guard.active.get_mut(&workflow_c) else {
         return;
     };
@@ -1255,14 +1215,12 @@ fn apply_apply_outcome<F: ApplyFamily>(
 }
 
 fn flush_pending_apply_outcomes<F: ApplyFamily>(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     guard: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
     workflow_c: u64,
 ) {
     replay_pending(guard, workflow_c, F::pending, |guard, body| {
-        apply_apply_outcome::<F>(publisher, bus_id, guard, counters, workflow_c, body);
+        apply_apply_outcome::<F>(out, guard, workflow_c, body);
     });
 }
 
@@ -1277,42 +1235,38 @@ fn scene_action_name(action: SceneProgramAction) -> &'static str {
 
 fn handle_event_frame(
     frame: &BusFrame,
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     state: &Arc<Mutex<OperationTrackerInner>>,
-    counters: &Arc<OperationTrackerCounters>,
 ) {
-    let Some(ev) = frame.event_for(bus_id) else {
+    let Some(ev) = frame.event_for(out.bus_id) else {
         return;
     };
     let meta = &ev.meta;
     let workflow_c = meta.correlation_id;
-    dispatch_tracker_event(&ev.payload, publisher, bus_id, state, counters, workflow_c, meta.origin);
+    dispatch_tracker_event(&ev.payload, out, state, workflow_c, meta.origin);
 }
 
 dali2rust_contracts::dispatch_bus_events! {
     pub const OPERATION_TRACKER_HANDLED_EVENTS;
     fn dispatch_tracker_event(
         payload: &BusEventPayload,
-        publisher: &BusPublisher,
-        bus_id: BusId,
+        out: &Emitter<'_>,
         state: &Arc<Mutex<OperationTrackerInner>>,
-        counters: &Arc<OperationTrackerCounters>,
         workflow_c: u64,
         origin: Origin,
     );
     payload = payload;
-    ignored = { counters.ignored_events.fetch_add(1, Ordering::Relaxed); };
+    ignored = { out.counters.ignored_events.fetch_add(1, Ordering::Relaxed); };
     DaliGroupMembershipProgrammedEvent(body) => {
         let mut guard = lock_tracker(state);
         apply_apply_outcome::<GroupApplyAccumulator>(
-            publisher, bus_id, &mut guard, counters.as_ref(), workflow_c, body,
+            out, &mut guard, workflow_c, body,
         );
     },
     DaliSceneProgrammedEvent(body) => {
         let mut guard = lock_tracker(state);
         apply_apply_outcome::<SceneApplyAccumulator>(
-            publisher, bus_id, &mut guard, counters.as_ref(), workflow_c, body,
+            out, &mut guard, workflow_c, body,
         );
     },
     DaliAttributeReadOutcomesEvent(body) => {
@@ -1343,28 +1297,23 @@ dali2rust_contracts::dispatch_bus_events! {
         apply_replace_device_outcome(&mut guard, workflow_c, body);
     },
     OperationWorkerSignalEvent(sig) => handle_worker_signal(
-        publisher,
-        bus_id,
+        out,
         state,
-        counters,
         workflow_c,
         sig,
         origin,
     ),
 }
 
-#[allow(clippy::too_many_arguments, reason = "origin threads provenance through one extra param")]
 fn handle_worker_signal(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     state: &Arc<Mutex<OperationTrackerInner>>,
-    counters: &Arc<OperationTrackerCounters>,
     workflow_c: u64,
     sig: &dali2rust_contracts::msg::OperationWorkerSignalEvent,
     origin: Origin,
 ) {
     let mut guard = lock_tracker(state);
-    apply_worker_signal(publisher, bus_id, &mut guard, counters, workflow_c, sig, origin);
+    apply_worker_signal(out, &mut guard, workflow_c, sig, origin);
 }
 
 fn pending_worker_signals_mut(
@@ -1374,23 +1323,18 @@ fn pending_worker_signals_mut(
 }
 
 fn flush_pending_worker_signals(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     guard: &mut OperationTrackerInner,
-    counters: &Arc<OperationTrackerCounters>,
     workflow_c: u64,
 ) {
     replay_pending(guard, workflow_c, pending_worker_signals_mut, |guard, sig| {
-        apply_worker_signal(publisher, bus_id, guard, counters, workflow_c, sig, Origin::Internal);
+        apply_worker_signal(out, guard, workflow_c, sig, Origin::Internal);
     });
 }
 
-#[allow(clippy::too_many_arguments, reason = "origin threads provenance through one extra param")]
 fn apply_worker_signal(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     guard: &mut OperationTrackerInner,
-    counters: &Arc<OperationTrackerCounters>,
     workflow_c: u64,
     sig: &dali2rust_contracts::msg::OperationWorkerSignalEvent,
     origin: Origin,
@@ -1404,31 +1348,20 @@ fn apply_worker_signal(
     };
     match sig.signal {
         OperationWorkerSignal::WorkerStarted => {
-            promote_running(publisher, bus_id, guard, counters.as_ref(), workflow_c, &op);
+            promote_running(out, guard, workflow_c, &op);
         }
         OperationWorkerSignal::WorkerSucceeded => {
-            apply_terminal(
-                publisher,
-                bus_id,
-                guard,
-                counters.as_ref(),
-                workflow_c,
-                &op,
-                OperationStatus::Succeeded,
-                None,
-            );
+            apply_terminal(out, guard, workflow_c, &op, OperationStatus::Succeeded, None);
         }
         OperationWorkerSignal::WorkerFailed => {
-            apply_worker_failure(publisher, bus_id, guard, counters.as_ref(), workflow_c, &op, sig);
+            apply_worker_failure(out, guard, workflow_c, &op, sig);
         }
     }
 }
 
 fn apply_worker_failure(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     guard: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
     workflow_c: u64,
     op: &TrackedOp,
     sig: &dali2rust_contracts::msg::OperationWorkerSignalEvent,
@@ -1437,10 +1370,8 @@ fn apply_worker_failure(
     let code = error.map_or(ErrorCode::OperationFailed, |e| e.code);
     let msg_owned = error.map(|e| e.message.clone()).unwrap_or_default();
     apply_terminal(
-        publisher,
-        bus_id,
+        out,
         guard,
-        counters,
         workflow_c,
         op,
         OperationStatus::Failed,
@@ -1465,10 +1396,8 @@ fn due_operation_correlations(guard: &OperationTrackerInner, now: Instant) -> Ve
 
 fn drain_rejected_deliveries(
     conf_rx: &BusSubscriberRx,
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     state: &Arc<Mutex<OperationTrackerInner>>,
-    counters: &Arc<OperationTrackerCounters>,
 ) {
     while let Ok(frame) = conf_rx.try_recv() {
         let BusFrame::Confirmation(conf) = frame else {
@@ -1480,7 +1409,7 @@ fn drain_rejected_deliveries(
         let correlation = conf.meta.correlation_id;
         let mut guard = lock_tracker(state);
         if guard.active.contains_key(&correlation) {
-            fail_undelivered(publisher, bus_id, &mut guard, counters.as_ref(), correlation);
+            fail_undelivered(out, &mut guard, correlation);
         } else if !guard.closed.holds(correlation) {
             guard.rejected.note(correlation);
         }
@@ -1488,32 +1417,26 @@ fn drain_rejected_deliveries(
 }
 
 fn fail_on_parked_rejection(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     guard: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
     correlation: u64,
 ) {
     if guard.rejected.take(correlation) {
-        fail_undelivered(publisher, bus_id, guard, counters, correlation);
+        fail_undelivered(out, guard, correlation);
     }
 }
 
 fn fail_undelivered(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     guard: &mut OperationTrackerInner,
-    counters: &OperationTrackerCounters,
     correlation: u64,
 ) {
     let Some(op) = guard.active.get(&correlation).cloned() else {
         return;
     };
     emit_terminal_with_retention(
-        publisher,
-        bus_id,
+        out,
         guard,
-        counters,
         &op,
         OperationStatus::Failed,
         ErrorCode::CommandsIngressOverload,
@@ -1538,25 +1461,21 @@ fn evict_expired_pending_outcomes(
 }
 
 fn tick_deadlines(
-    publisher: &BusPublisher,
-    bus_id: BusId,
+    out: &Emitter<'_>,
     state: &Arc<Mutex<OperationTrackerInner>>,
-    counters: &Arc<OperationTrackerCounters>,
 ) {
     let now = Instant::now();
     let mut guard = lock_tracker(state);
     guard.remove_http_if_expired(now);
-    evict_expired_pending_outcomes(&mut guard, counters.as_ref(), now);
+    evict_expired_pending_outcomes(&mut guard, out.counters, now);
     let due = due_operation_correlations(&guard, now);
     for c in due {
         let Some(op) = guard.active.get(&c).cloned() else {
             continue;
         };
         emit_terminal_with_retention(
-            publisher,
-            bus_id,
+            out,
             &mut guard,
-            counters.as_ref(),
             &op,
             OperationStatus::TimedOut,
             ErrorCode::ConfirmationTimeout,

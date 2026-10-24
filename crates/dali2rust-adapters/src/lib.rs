@@ -3,7 +3,6 @@
     clippy::manual_contains,
     clippy::needless_borrow,
     clippy::new_without_default,
-    clippy::too_many_arguments,
     clippy::unnecessary_map_or,
     clippy::unwrap_or_default,
     reason = "Adapter composition, persistence codecs, and runtime workers intentionally keep explicit wiring."
