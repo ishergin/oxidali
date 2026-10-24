@@ -3,6 +3,11 @@ use crate::runtime::executor::helpers::DT8_ACTIVATE;
 use dali2rust_domain::dali::devices::dt8_color::{
     RGBWAF_CONTROL_NORMALISED, RGBWAF_CONTROL_POWER_UP_DEFAULT,
 };
+use dali2rust_domain::dali::devices::dt8_color::{
+    COLOUR_STATUS_RGBWAF_ACTIVE as DT8_STATUS_RGB_ACTIVE,
+    COLOUR_STATUS_TC_ACTIVE as DT8_STATUS_TC_ACTIVE,
+    COLOUR_STATUS_XY_ACTIVE as DT8_STATUS_XY_ACTIVE,
+};
 use crate::runtime::executor::test_helpers::shared::{
     assert_script_consumed, setup_controller, short_address, short_raw_query_frame,
 };
@@ -750,6 +755,41 @@ fn target_state_cct_redrives_when_value_reads_back_out_of_range() {
     setpoint.color = Some(color);
     apply_short_target_state(&mut controller, short, &setpoint, ColorWritePolicy::NONE).expect("target-state");
     assert_script_consumed(&transport);
+}
+
+const MASK_ANSWER: u8 = 0xFF;
+
+fn expect_red_staged(mock: &MockDaliTransport, short: u8) {
+    expect_staged_dtrs(mock, short, &[254, 0, 0]);
+    expect_dt8_raw(mock, short, DT8_SET_TEMPORARY_RGB_DIMLEVEL);
+    expect_staged_dtrs(mock, short, &[0, 0, 0]);
+    expect_dt8_raw(mock, short, DT8_SET_TEMPORARY_WAF_DIMLEVEL);
+}
+
+#[test]
+fn an_rgb_write_is_staged_again_when_the_colour_status_names_no_single_type() {
+    for status in [MASK_ANSWER, DT8_STATUS_RGB_ACTIVE | DT8_STATUS_TC_ACTIVE] {
+        let mock = MockDaliTransport::new();
+        let short = 17;
+        expect_red_staged(&mock, short);
+        mock.expect_forward_frame(
+            DaliCommand::Special(SpecialCommand::EnableDeviceType(8)).to_forward_frame().raw(),
+        );
+        mock.expect_forward_frame_with_backward(
+            short_raw_query_frame(short_address(short), DT8_QUERY_COLOUR_STATUS),
+            Some(status),
+        );
+        expect_red_staged(&mock, short);
+
+        let (transport, mut controller) = setup_controller(mock);
+        let setpoint = LightSetpoint {
+            color: Some(ColorValue { mode: ColorMode::Rgb, r: 255, ..Default::default() }),
+            ..LightSetpoint::default()
+        };
+        apply_short_target_state(&mut controller, short, &setpoint, ColorWritePolicy::NONE)
+            .expect("target-state");
+        assert_script_consumed(&transport);
+    }
 }
 
 #[test]

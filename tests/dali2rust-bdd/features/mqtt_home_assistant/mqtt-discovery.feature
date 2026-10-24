@@ -54,3 +54,20 @@ Feature: MQTT/HA — groups and the scene select
     When I PUT JSON {"power":"on","level":180} to "/api/v1/adapters/0/physical-devices/0/target-state"
     Then the response status should be 200
     And the MQTT payload on "homeassistant/light/ctl1/a0_vl_0/config" should have string field "device.sw_version" = "0.1.0-test"
+
+  @id:MQTT-026
+  Scenario: A deleted input device retracts the config of every instance it announced
+    Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1,3"
+    When input devices are scanned on adapter 0 and the scan succeeds
+    Given the Home Assistant bridge is enabled with controller id "ctl1"
+    When I PATCH JSON {"expose_input_devices":true} to "/api/v1/settings/home-assistant"
+    Then the response status should be 200
+    When I POST JSON {} to "/api/v1/settings/home-assistant/discovery-publish"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the MQTT payload on "homeassistant/event/ctl1/a0_in0_0/config" should have string field "unique_id" = "ctl1_a0_in0_0"
+    And the MQTT payload on "homeassistant/binary_sensor/ctl1/a0_in0_1/config" should have string field "unique_id" = "ctl1_a0_in0_1"
+    When I send a DELETE request to "/api/v1/adapters/0/input-devices/0"
+    Then the response status should be 200
+    And MQTT should have a retained "" on "homeassistant/event/ctl1/a0_in0_0/config"
+    And MQTT should have a retained "" on "homeassistant/binary_sensor/ctl1/a0_in0_1/config"

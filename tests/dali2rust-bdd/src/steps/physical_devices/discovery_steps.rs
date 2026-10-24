@@ -222,9 +222,7 @@ async fn then_discovery_trace_rearms_before_requery(world: &mut DaliWorld) {
         "expected exactly one re-ask after the violating answer; trace: {frames:?}"
     );
     let search_h = special_frame(SpecialCommand::SearchAddrH(0x5C));
-    let rearm = frames[query_positions[0]..query_positions[1]]
-        .iter()
-        .any(|frame| *frame == search_h);
+    let rearm = frames[query_positions[0]..query_positions[1]].contains(&search_h);
     assert!(
         rearm,
         "the second ask must be preceded by a fresh search address, not sent blind: {frames:?}"

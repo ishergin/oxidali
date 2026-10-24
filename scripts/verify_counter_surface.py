@@ -4,6 +4,8 @@ import re
 import sys
 from pathlib import Path
 
+from verify_ts_dto_mirror import load_rust, wire_fields
+
 ROOT = Path(__file__).resolve().parent.parent
 
 API = ROOT / "crates/dali2rust-api/src/http"
@@ -11,7 +13,6 @@ DIAGNOSTICS_DTO = API / "diagnostics_state.rs"
 STATS_DTO = API / "stats_state.rs"
 REDUNDANCY_DTO = API / "redundancy_state.rs"
 BRIDGE = ROOT / "crates/dali2rust-adapters/src/runtime/http_bridges.rs"
-TS_TYPES = ROOT / "web/app/src/api/types.ts"
 FAULT_KEYS_TSX = ROOT / "web/app/src/screens/diagnostics-view.ts"
 DESIGN_DOC = ROOT / "documentation/product-design/rest-api/resources/diagnostics.md"
 RESOURCE_DOCS = (
@@ -26,11 +27,7 @@ INTERNAL_BUDGET = ROOT / "scripts/counter_surface_internal_budget.txt"
 DEFAULT_INTERNAL_BUDGET = 0
 CONSUMERS = (ROOT / "tools/hil", ROOT / "tests/dali2rust-bdd/src")
 
-ROOTS = (
-    ("DiagnosticsDto", "Diagnostics"),
-    ("StatsReportDto", "StatsReportPayload"),
-    ("RedundancyStateDto", "RedundancyState"),
-)
+DTO_FILES = (DIAGNOSTICS_DTO, STATS_DTO, REDUNDANCY_DTO)
 
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -46,23 +43,23 @@ FETCH = re.compile(
 DEFINITION = re.compile(r"^\s*(?:def |async def |fn |async fn |pub fn |#\[)")
 
 
+def dto_fields():
+    structs = load_rust(ROOT, [])
+    homes = {path.relative_to(ROOT).as_posix() for path in DTO_FILES}
+    out = {}
+    for name, struct in structs.items():
+        fields = wire_fields(structs, name) if struct.loc.rsplit(":", 1)[0] in homes else None
+        if fields is not None:
+            out[name] = list(fields)
+    return out
+
+
 def rust_structs(path):
     source = path.read_text()
-    out, flattened = {}, {}
+    out = {}
     for match in re.finditer(r"pub struct (\w+)(?:<[^>]*>)?\s*\{(.*?)\n\}", source, re.S):
-        body = match.group(2)
-        fields = re.findall(r"\n\s*pub (\w+)\s*:\s*([^,\n]+),", body)
-        flat = set(re.findall(r"#\[serde\(flatten\)\]\s*pub (\w+)\s*:", body))
+        fields = re.findall(r"\n\s*pub (\w+)\s*:\s*([^,\n]+),", match.group(2))
         out[match.group(1)] = [(name, kind.strip()) for name, kind in fields]
-        flattened[match.group(1)] = flat
-    for name, fields in out.items():
-        expanded = []
-        for field, kind in fields:
-            if field in flattened[name] and kind in out:
-                expanded += out[kind]
-            else:
-                expanded.append((field, kind))
-        out[name] = expanded
     return out
 
 
@@ -153,61 +150,11 @@ def check_counters_are_read(bridge_source, internal):
     return problems
 
 
-def ts_types():
-    source = TS_TYPES.read_text()
-    out = {}
-    pattern = r"export (?:type (\w+) = |interface (\w+) )\{(.*?)\n\}"
-    for match in re.finditer(pattern, source, re.S):
-        name = match.group(1) or match.group(2)
-        body = re.sub(r"/\*.*?\*/", "", match.group(3), flags=re.S)
-        body = re.sub(r"//[^\n]*", "", body) + "\n"
-        out[name] = [
-            (field, kind.strip())
-            for field, kind in re.findall(r"\n[ \t]*(\w+)\??\s*:\s*([^\n]+)(?=\n)", body)
-        ]
-    return out
-
-
-def rust_element(kind):
-    match = re.match(r"(?:Vec|Option)<(.+)>$", kind)
-    return match.group(1).strip() if match else kind
-
-
-def ts_element(kind):
-    kind = kind.rstrip(",").strip()
-    kind = re.sub(r"\s*\|\s*null$", "", kind)
-    return kind[:-2].strip() if kind.endswith("[]") else kind
-
-
-def compare_block(rust, ts, rust_types, ts_defs, path, problems, seen):
-    if (rust, ts) in seen:
-        return
-    seen.add((rust, ts))
-    rust_fields = dict(rust_types.get(rust, []))
-    ts_fields = dict(ts_defs.get(ts, []))
-    if not rust_fields:
-        return
-    if not ts_fields:
-        problems.append("%s: Rust DTO %s has no TypeScript mirror (%s)" % (path, rust, ts))
-        return
-    for field in sorted(set(rust_fields) - set(ts_fields)):
-        problems.append("%s.%s: in %s, missing from the TS mirror %s" % (path, field, rust, ts))
-    for field in sorted(set(ts_fields) - set(rust_fields)):
-        problems.append("%s.%s: in the TS mirror %s, no such field on %s" % (path, field, ts, rust))
-    for field in sorted(set(rust_fields) & set(ts_fields)):
-        nested = rust_element(rust_fields[field])
-        if nested in rust_types:
-            compare_block(
-                nested, ts_element(ts_fields[field]), rust_types, ts_defs,
-                "%s.%s" % (path, field), problems, seen,
-            )
-
-
 def payload_names(rust_types):
     names = set()
     for name, fields in rust_types.items():
         if name.endswith("Dto"):
-            names.update(field for field, _ in fields)
+            names.update(fields)
     return names
 
 
@@ -254,7 +201,7 @@ def check_bdd_block_list(rust_types):
     if not match:
         return ["%s: the DIAG-030 block list was not found" % path.name]
     listed = set(re.findall(r'"([^"]+)"', match.group(1)))
-    expected = {field for field, _ in rust_types.get("DiagnosticsDto", [])}
+    expected = set(rust_types.get("DiagnosticsDto", []))
     problems = [
         "DIAG-030 does not assert the %r block, and its own name is "
         "\"every counter block\"" % block
@@ -289,7 +236,7 @@ def check_design_doc(rust_types):
     rel = DESIGN_DOC.relative_to(ROOT)
     if listed is None:
         return ["%s: the block table was not found (no `Блоки:` line)" % rel]
-    expected = [field for field, _ in rust_types.get("DiagnosticsDto", [])]
+    expected = rust_types.get("DiagnosticsDto", [])
     problems = [
         "%s: DiagnosticsDto has a %r block the design table does not name" % (rel, block)
         for block in expected
@@ -310,7 +257,7 @@ def check_resource_docs(rust_types):
         if not rust_types.get(struct):
             problems.append("%s: no such DTO to check against %s" % (struct, doc.relative_to(ROOT)))
             continue
-        for field, _ in rust_types[struct]:
+        for field in rust_types[struct]:
             if "`%s`" % field not in text:
                 problems.append(
                     "%s: %s has a %r field the document does not name"
@@ -333,17 +280,14 @@ def check_fault_keys(names):
 
 
 def main():
-    rust_types = dict(rust_structs(DIAGNOSTICS_DTO))
-    rust_types.update(rust_structs(STATS_DTO))
-    rust_types.update(rust_structs(REDUNDANCY_DTO))
-    ts_defs = ts_types()
+    try:
+        rust_types = dto_fields()
+    except ValueError as error:
+        sys.exit("counter surface: cannot read the DTO sources: %s" % error)
     internal = read_internal()
 
     entries, problems = check_internal_budget(internal)
     problems += check_counters_are_read(BRIDGE.read_text(), internal)
-    seen = set()
-    for rust_root, ts_root in ROOTS:
-        compare_block(rust_root, ts_root, rust_types, ts_defs, ts_root.lower(), problems, seen)
     names = payload_names(rust_types)
     problems += check_consumers(names)
     problems += check_fault_keys(names)

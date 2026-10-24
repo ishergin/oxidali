@@ -90,6 +90,7 @@ pub trait HaPublishReadPort: Send + Sync {
     fn ha_lamp_ids_for_short(&self, adapter_id: u8, short_address: u8) -> Vec<u8>;
     fn ha_retracted_lamp_ids(&self, adapter_id: u8) -> Vec<u8>;
     fn ha_retracted_group_ids(&self, adapter_id: u8) -> Vec<u8>;
+    fn ha_retracted_input_views(&self, adapter_id: u8) -> Vec<HaInputView>;
     fn ha_active_scene(&self, adapter_id: u8) -> Option<u8>;
 }
 

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use dali2rust_bsp::psram::PsramBox;
 use dali2rust_bsp::unix_clock::unix_wall_clock_millis;
 use dali2rust_contracts::msg::fixed_text_64;
-use dali2rust_domain::registry::RegistryReadPort;
+use dali2rust_domain::registry::{HaInputInstanceView, RegistryReadPort};
 
 use super::adapters::AdapterRow;
 use super::groups::{GroupMembershipRowRecord, GroupRecord};
@@ -340,6 +340,7 @@ pub(crate) struct Inner {
     >,
     pub(crate) input_devices:
         HashMap<(u8, u8), super::input_devices::InputDeviceRecord>,
+    pub(crate) retracted_inputs: HashMap<(u8, u8), Vec<HaInputInstanceView>>,
     pub(crate) poller_settings: super::poller_settings::PollerSettingsRecord,
     pub(crate) dali_settings: super::dali_settings::DaliSettingsRecord,
     pub(crate) redundancy_settings: super::redundancy_settings::RedundancySettingsRecord,

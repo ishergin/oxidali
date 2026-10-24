@@ -1,10 +1,5 @@
 use super::*;
-use dali2rust_domain::dali::devices::dt8_color::{
-    COLOUR_STATUS_PRIMARY_N_ACTIVE as STATUS_PRIMARY_N_ACTIVE,
-    COLOUR_STATUS_RGBWAF_ACTIVE as STATUS_RGBWAF_ACTIVE,
-    COLOUR_STATUS_TC_ACTIVE as STATUS_TC_ACTIVE, COLOUR_STATUS_XY_ACTIVE as STATUS_XY_ACTIVE,
-    ColorType,
-};
+use dali2rust_domain::dali::devices::dt8_color::active_colour_type;
 
 pub(super) fn write_tc_limits(
     controller: &mut impl DaliApplicationController,
@@ -160,20 +155,6 @@ fn read_dt8_gear_features(
     )
 }
 
-fn active_color_type_from_status(status: u8) -> Option<u8> {
-    if status & STATUS_XY_ACTIVE != 0 {
-        Some(ColorType::XyCoordinate as u8)
-    } else if status & STATUS_TC_ACTIVE != 0 {
-        Some(ColorType::ColorTemperature as u8)
-    } else if status & STATUS_PRIMARY_N_ACTIVE != 0 {
-        Some(ColorType::PrimaryN as u8)
-    } else if status & STATUS_RGBWAF_ACTIVE != 0 {
-        Some(ColorType::Rgbwaf as u8)
-    } else {
-        None
-    }
-}
-
 const DT8_VALUE_ARM_RETRIES: u8 = 2;
 
 pub(super) fn dt8_value_sample(
@@ -309,7 +290,7 @@ pub(super) fn read_dt8_color_values(
         address,
         ExtendedCommand::Dt8(Dt8Command::QueryColourStatus),
     )?;
-    let color_type = status.and_then(active_color_type_from_status);
+    let color_type = status.and_then(active_colour_type).map(|colour_type| colour_type as u8);
     let active_mode = status.map_or(ColorMode::Unknown, color_mode_from_status);
     let value_0 =
         read_dt8_color_value_u16(controller, address, DT8_COLOUR_VALUE_X, content_confirm)?;

@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use dali2rust_contracts::msg::{ColorMode, DeviceType, DeviceTypeSet};
 use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::controller::{DaliApplicationController, ReadbackWorkaround};
+use dali2rust_domain::dali::devices::dt8_color::{active_colour_type, ColorType};
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::types::DaliAddress;
@@ -835,16 +836,11 @@ fn query_dt8_status(
 }
 
 pub(crate) fn color_mode_from_status(status: u8) -> ColorMode {
-    if status & 0x80 != 0 {
-        ColorMode::Rgb
-    } else if status & 0x40 != 0 {
-        ColorMode::Unknown
-    } else if status & 0x20 != 0 {
-        ColorMode::Cct
-    } else if status & 0x10 != 0 {
-        ColorMode::Xy
-    } else {
-        ColorMode::Unknown
+    match active_colour_type(status) {
+        Some(ColorType::XyCoordinate) => ColorMode::Xy,
+        Some(ColorType::ColorTemperature) => ColorMode::Cct,
+        Some(ColorType::Rgbwaf) => ColorMode::Rgb,
+        Some(ColorType::PrimaryN) | None => ColorMode::Unknown,
     }
 }
 

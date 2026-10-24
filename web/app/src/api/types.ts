@@ -240,6 +240,11 @@ export interface MemoryBankSummary {
   ranges: MemoryBankRange[]
 }
 
+export interface ExtendedVersion {
+  device_type: number
+  version_number: number | null
+}
+
 export interface PhysicalDeviceCore {
   adapter_id: number
   short_address: number
@@ -252,6 +257,7 @@ export interface PhysicalDeviceCore {
   device_type_effective: string
   device_type_source: OverrideSource
   supported_device_types?: number[]
+  extended_versions?: ExtendedVersion[]
   color_mode_discovered: string
   color_mode_override?: string | null
   color_mode_effective: string
@@ -377,6 +383,7 @@ export interface Policies {
 export interface ConfigSliceRow {
   name: string
   bytes: number | null
+  crc32: number
 }
 
 export interface DaliSettings {

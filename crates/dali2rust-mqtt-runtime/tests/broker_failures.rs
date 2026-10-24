@@ -5,17 +5,27 @@ use std::time::Duration;
 
 use dali2rust_bus::{BusChannel, PublishResult};
 use dali2rust_test_support::{remains_false_for, wait_until};
-use support::{enabled_settings, runtime_frame, spawn_bridge, StubHaReadPort, StubSettings};
+use support::{
+    enabled_settings, runtime_frame, spawn_bridge, Harness, StubHaReadPort, StubSettings,
+};
 
 const RECOVERY_WAIT: Duration = Duration::from_secs(20);
 const PUBLISH_WAIT: Duration = Duration::from_secs(6);
 
+fn bridge_refusing_its_first_dials(refusals: u32) -> Harness {
+    let settings = StubSettings::new(dali2rust_domain::registry::HomeAssistantSettingsView {
+        enabled: false,
+        ..enabled_settings()
+    });
+    let h = spawn_bridge(settings, StubHaReadPort::with_lamp(1));
+    h.mock.fail_next_connects(refusals);
+    h.settings.set(enabled_settings());
+    h
+}
+
 #[test]
 fn a_refused_dial_parks_the_worker_and_a_returning_broker_recovers_it() {
-    let settings = StubSettings::new(enabled_settings());
-    let read_port = StubHaReadPort::with_lamp(1);
-    let h = spawn_bridge(settings, read_port);
-    h.mock.fail_next_connects(2);
+    let h = bridge_refusing_its_first_dials(2);
 
     let mock = std::sync::Arc::clone(&h.mock);
     wait_until(move || mock.connect_calls() >= 1, RECOVERY_WAIT);
@@ -93,15 +103,13 @@ fn a_dial_still_in_flight_is_not_dialled_again() {
 
 #[test]
 fn a_settings_change_mid_hold_redials_without_waiting_out_the_backoff() {
-    let settings = StubSettings::new(enabled_settings());
-    let h = spawn_bridge(std::sync::Arc::clone(&settings), StubHaReadPort::with_lamp(1));
-    h.mock.fail_next_connects(2);
+    let h = bridge_refusing_its_first_dials(2);
 
     let mock = std::sync::Arc::clone(&h.mock);
     wait_until(move || mock.connect_calls() >= 2, RECOVERY_WAIT);
 
     let patched_at = std::time::Instant::now();
-    settings.set(dali2rust_domain::registry::HomeAssistantSettingsView {
+    h.settings.set(dali2rust_domain::registry::HomeAssistantSettingsView {
         broker_port: 1884,
         ..enabled_settings()
     });

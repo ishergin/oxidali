@@ -15,17 +15,15 @@ use crate::runtime::executor::helpers::{
     DT8_SET_TEMPORARY_X_COORDINATE, DT8_SET_TEMPORARY_Y_COORDINATE, PROGRAM_VERIFY_REPAIRS,
 };
 use dali2rust_domain::dali::devices::dt8_color::{
-    gear_features_automatic_activation, gear_features_store_operand, rgbwaf_control_drives,
-    rgbwaf_control_is_target, rgbwaf_control_operand, srgb_channel_to_dim_level, Dt8Command,
-    RGBWAF_CONTROL_ALL_CHANNELS, RGBWAF_CONTROL_RGB_CHANNELS,
+    active_colour_type, gear_features_automatic_activation, gear_features_store_operand,
+    rgbwaf_control_drives, rgbwaf_control_is_target, rgbwaf_control_operand,
+    srgb_channel_to_dim_level, ColorType, Dt8Command, RGBWAF_CONTROL_ALL_CHANNELS,
+    RGBWAF_CONTROL_RGB_CHANNELS,
 };
 use dali2rust_domain::dali::pres::extended::ExtendedCommand;
 
 use dali2rust_domain::dali::devices::dt8_color::{
-    COLOUR_STATUS_RGBWAF_ACTIVE as DT8_STATUS_RGB_ACTIVE,
-    COLOUR_STATUS_TC_ACTIVE as DT8_STATUS_TC_ACTIVE,
     COLOUR_STATUS_TC_OUT_OF_RANGE as DT8_STATUS_TC_OUT_OF_RANGE,
-    COLOUR_STATUS_XY_ACTIVE as DT8_STATUS_XY_ACTIVE,
     COLOUR_STATUS_XY_OUT_OF_RANGE as DT8_STATUS_XY_OUT_OF_RANGE,
 };
 
@@ -308,8 +306,15 @@ fn verify_rgbwaf_control(
 
 #[derive(Clone, Copy)]
 struct ColorVerifyBits {
-    type_bit: u8,
+    colour_type: ColorType,
     out_of_range_bit: u8,
+}
+
+impl ColorVerifyBits {
+    // IEC 62386-209 §4.4.1, §11.3.4.3
+    fn proven_by(self, status: u8) -> bool {
+        active_colour_type(status) == Some(self.colour_type) && status & self.out_of_range_bit == 0
+    }
 }
 
 fn stage_color(
@@ -322,21 +327,21 @@ fn stage_color(
         ColorMode::Cct => {
             apply_dt8_cct(controller, address, color.color_temperature_kelvin)?;
             ColorVerifyBits {
-                type_bit: DT8_STATUS_TC_ACTIVE,
+                colour_type: ColorType::ColorTemperature,
                 out_of_range_bit: DT8_STATUS_TC_OUT_OF_RANGE,
             }
         }
         ColorMode::Xy => {
             apply_dt8_xy(controller, address, color.x, color.y)?;
             ColorVerifyBits {
-                type_bit: DT8_STATUS_XY_ACTIVE,
+                colour_type: ColorType::XyCoordinate,
                 out_of_range_bit: DT8_STATUS_XY_OUT_OF_RANGE,
             }
         }
         ColorMode::Rgb | ColorMode::Rgbwaf => {
             stage_rgbwaf(controller, address, color, assert_control)?;
             ColorVerifyBits {
-                type_bit: DT8_STATUS_RGB_ACTIVE,
+                colour_type: ColorType::Rgbwaf,
                 out_of_range_bit: 0,
             }
         }
@@ -351,10 +356,7 @@ fn color_status_mismatch(
     expected: ColorVerifyBits,
 ) -> Result<bool, SemanticDaliError> {
     Ok(send_dt8_raw_query(controller, address, DT8_QUERY_COLOUR_STATUS)?
-        .map(|status| {
-            status & expected.type_bit == 0 || status & expected.out_of_range_bit != 0
-        })
-        .unwrap_or(false))
+        .is_some_and(|status| !expected.proven_by(status)))
 }
 
 const DT8_STAGE_ARM_RETRIES: u8 = 2;

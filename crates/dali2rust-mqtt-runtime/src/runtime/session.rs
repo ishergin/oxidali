@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
 use dali2rust_api::ha::HaTopics;
@@ -6,8 +8,13 @@ use dali2rust_platform::mqtt::{
     MqttClient, MqttError, MqttLastWill, MqttQos, MqttSessionConfig,
 };
 
-pub const PAYLOAD_ONLINE: &[u8] = b"online";
-pub const PAYLOAD_OFFLINE: &[u8] = b"offline";
+use crate::runtime::discovery::EntityKey;
+use crate::runtime::rule_topics::{BridgeFilters, RuleFollow};
+use crate::runtime::subscriptions::Subscriptions;
+use crate::runtime::worker::MqttWorkerPorts;
+
+pub const PAYLOAD_ONLINE: &str = "online";
+pub const PAYLOAD_OFFLINE: &str = "offline";
 
 pub const KEEP_ALIVE: Duration = Duration::from_secs(30);
 
@@ -41,7 +48,7 @@ pub fn session_config(
         keep_alive: KEEP_ALIVE,
         last_will: Some(MqttLastWill {
             topic: topics.availability_topic(),
-            payload: PAYLOAD_OFFLINE.to_vec(),
+            payload: PAYLOAD_OFFLINE.as_bytes().to_vec(),
             qos: MqttQos::AtLeastOnce,
             retain: true,
         }),
@@ -54,7 +61,7 @@ pub fn announce_and_subscribe(
 ) -> Result<Vec<(String, u32)>, MqttError> {
     client.publish(
         &topics.availability_topic(),
-        PAYLOAD_ONLINE,
+        PAYLOAD_ONLINE.as_bytes(),
         MqttQos::AtLeastOnce,
         true,
     )?;
@@ -71,10 +78,93 @@ pub fn announce_and_subscribe(
 pub fn announce_offline(client: &mut dyn MqttClient, topics: &HaTopics) {
     let _ = client.publish(
         &topics.availability_topic(),
-        PAYLOAD_OFFLINE,
+        PAYLOAD_OFFLINE.as_bytes(),
         MqttQos::AtLeastOnce,
         true,
     );
+}
+
+#[derive(Default)]
+pub(super) struct Session {
+    pub(super) generation: u32,
+    pub(super) subscriptions: Subscriptions,
+    pub(super) filters: BridgeFilters,
+    pub(super) rule_topics: RuleFollow,
+    pub(super) announced: HashMap<EntityKey, u64>,
+    pub(super) lamp_availability: HashMap<(u8, u8), bool>,
+    pub(super) groups_dirty: HashSet<u8>,
+    pub(super) dialled_with: u64,
+}
+
+impl Session {
+    pub(super) fn begin(&mut self, generation: u32, dialled_with: u64, topics: &HaTopics) {
+        let Self {
+            generation: gen_slot,
+            subscriptions,
+            filters,
+            rule_topics,
+            dialled_with: dialled_slot,
+            announced,
+            lamp_availability,
+            groups_dirty,
+        } = self;
+        *gen_slot = generation;
+        *subscriptions = Subscriptions::default();
+        *filters = BridgeFilters::of(topics);
+        *rule_topics = RuleFollow::default();
+        *dialled_slot = dialled_with;
+        announced.clear();
+        lamp_availability.clear();
+        groups_dirty.clear();
+    }
+
+    pub(super) fn is_announced(&self, key: EntityKey) -> bool {
+        self.announced.contains_key(&key)
+    }
+
+    pub(super) fn forget(&mut self, key: EntityKey) -> bool {
+        self.announced.remove(&key).is_some()
+    }
+}
+
+pub(super) struct SettingsCache {
+    revision: u32,
+    pub(super) settings: HomeAssistantSettingsView,
+    pub(super) password: String,
+}
+
+impl Default for SettingsCache {
+    fn default() -> Self {
+        Self {
+            revision: u32::MAX,
+            settings: HomeAssistantSettingsView::default(),
+            password: String::new(),
+        }
+    }
+}
+
+impl SettingsCache {
+    pub(super) fn refresh(&mut self, ports: &MqttWorkerPorts) {
+        let revision = ports.settings_watch.home_assistant_settings_applied_load();
+        if revision == self.revision {
+            return;
+        }
+        self.settings = ports.settings.home_assistant_settings_view();
+        self.password = ports.secret.home_assistant_broker_password();
+        self.revision = revision;
+    }
+}
+
+pub(super) fn session_settings_fingerprint(settings: &HomeAssistantSettingsView, password: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    settings.broker_host.hash(&mut hasher);
+    settings.broker_port.hash(&mut hasher);
+    settings.broker_username.hash(&mut hasher);
+    settings.controller_id.hash(&mut hasher);
+    settings.discovery_prefix.hash(&mut hasher);
+    settings.state_topic_prefix.hash(&mut hasher);
+    password.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[cfg(test)]
@@ -103,7 +193,7 @@ mod tests {
         let cfg = session_config(&s, "secret".to_string(), &topics);
         let will = cfg.last_will.expect("a session without a will lies on reset");
         assert_eq!(will.topic, "dali/ctl1/availability");
-        assert_eq!(will.payload, PAYLOAD_OFFLINE);
+        assert_eq!(will.payload, PAYLOAD_OFFLINE.as_bytes());
         assert!(will.retain);
         assert_eq!(cfg.keep_alive, KEEP_ALIVE);
         assert_eq!(cfg.client_id, "ctl1");
@@ -121,7 +211,7 @@ mod tests {
 
         let birth = mock.published_on("dali/ctl1/availability");
         assert_eq!(birth.len(), 1);
-        assert_eq!(birth[0].payload, PAYLOAD_ONLINE);
+        assert_eq!(birth[0].payload, PAYLOAD_ONLINE.as_bytes());
         assert!(birth[0].retain, "a non-retained birth is invisible to a later client");
         assert_eq!(mock.subscriptions().len(), 3, "three wildcards, not one per entity");
     }
@@ -138,7 +228,7 @@ mod tests {
             .published_on("dali/ctl1/availability")
             .pop()
             .expect("an availability publish");
-        assert_eq!(last.payload, PAYLOAD_OFFLINE);
+        assert_eq!(last.payload, PAYLOAD_OFFLINE.as_bytes());
     }
 
     #[test]

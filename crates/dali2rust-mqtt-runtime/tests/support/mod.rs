@@ -1,11 +1,14 @@
 use std::sync::{Arc, Mutex};
 
 use dali2rust_bus::{
-    BusConfig, BusFrame, BusHost, BusId, BusPublisher, CorrelationIdAllocator,
+    BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublisher, CorrelationIdAllocator,
+    PublishResult,
 };
 use dali2rust_contracts::msg::{
-    BusEventPayload, LightSetpoint, Origin, RuntimeObservation,
+    BusEventPayload, HomeAssistantDiscoveryPublishCommand, LightSetpoint, Origin,
+    RuntimeObservation,
 };
+use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
     CapabilityFlagsView, HaGroupView, HaInputInstanceView, HaInputView, HaLampView,
     HaPublishReadPort, HaSceneView, HomeAssistantSecretReadPort,
@@ -57,7 +60,14 @@ pub struct StubHaReadPort {
     scenes: Mutex<Vec<HaSceneView>>,
     binding_short: Mutex<Option<u8>>,
     inputs: Mutex<Vec<HaInputView>>,
+    retracted_inputs: Mutex<Vec<HaInputView>>,
+    id_spans: Mutex<(u8, u8)>,
+    active_scene: Mutex<Option<u8>>,
+    served_adapters: Mutex<Vec<u8>>,
 }
+
+const LAMP_ID_SPAN: u8 = 64;
+const GROUP_ID_SPAN: u8 = 16;
 
 impl StubHaReadPort {
     pub fn with_lamp(virtual_lamp_id: u8) -> Arc<Self> {
@@ -77,7 +87,70 @@ impl StubHaReadPort {
             scenes: Mutex::new(Vec::new()),
             binding_short: Mutex::new(None),
             inputs: Mutex::new(Vec::new()),
+            retracted_inputs: Mutex::new(Vec::new()),
+            id_spans: Mutex::new((LAMP_ID_SPAN, GROUP_ID_SPAN)),
+            active_scene: Mutex::new(None),
+            served_adapters: Mutex::new(vec![0]),
         })
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file recalls scenes")]
+    pub fn set_active_scene(&self, scene_id: Option<u8>) {
+        *self.active_scene.lock().unwrap() = scene_id;
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file runs two adapters")]
+    pub fn serve_adapters(&self, adapter_ids: &[u8]) {
+        *self.served_adapters.lock().unwrap() = adapter_ids.to_vec();
+    }
+
+    fn serves(&self, adapter_id: u8) -> bool {
+        self.served_adapters.lock().unwrap().contains(&adapter_id)
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file narrows the id space")]
+    pub fn limit_ids(&self, lamps: u8, groups: u8) {
+        *self.id_spans.lock().unwrap() = (lamps, groups);
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file reshapes lamps")]
+    pub fn set_lamp(&self, lamp: HaLampView) {
+        let mut lamps = self.lamps.lock().unwrap();
+        lamps.retain(|l| l.virtual_lamp_id != lamp.virtual_lamp_id);
+        lamps.push(lamp);
+        lamps.sort_by_key(|l| l.virtual_lamp_id);
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file removes lamps")]
+    pub fn remove_lamp(&self, virtual_lamp_id: u8) {
+        self.lamps.lock().unwrap().retain(|l| l.virtual_lamp_id != virtual_lamp_id);
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file removes groups")]
+    pub fn remove_group(&self, group_id: u8) {
+        self.groups.lock().unwrap().retain(|g| g.group_id != group_id);
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file uses inputs")]
+    pub fn set_input_device(&self, view: HaInputView) {
+        let mut inputs = self.inputs.lock().unwrap();
+        inputs.retain(|v| v.short_address != view.short_address);
+        inputs.push(view);
+        inputs.sort_by_key(|v| v.short_address);
+    }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file removes inputs")]
+    pub fn remove_input_device(&self, short_address: u8) {
+        let mut inputs = self.inputs.lock().unwrap();
+        let Some(at) = inputs.iter().position(|v| v.short_address == short_address) else {
+            return;
+        };
+        let removed = inputs.remove(at);
+        self.retracted_inputs.lock().unwrap().push(HaInputView {
+            name: None,
+            ha_expose: false,
+            ..removed
+        });
     }
 
     #[allow(dead_code, reason = "one binary per test file")]
@@ -87,9 +160,7 @@ impl StubHaReadPort {
 
     #[allow(dead_code, reason = "one binary per test file; not every file uses inputs")]
     pub fn set_button_device(&self, short_address: u8, instances: u8) {
-        let mut inputs = self.inputs.lock().unwrap();
-        inputs.retain(|v| v.short_address != short_address);
-        inputs.push(HaInputView {
+        self.set_input_device(HaInputView {
             short_address,
             name: Some(format!("Panel {short_address}")),
             ha_expose: true,
@@ -107,6 +178,7 @@ impl StubHaReadPort {
         let mut groups = self.groups.lock().unwrap();
         groups.retain(|g| g.group_id != group.group_id);
         groups.push(group);
+        groups.sort_by_key(|g| g.group_id);
     }
 
     #[allow(dead_code, reason = "one binary per test file; not every file uses scenes")]
@@ -117,7 +189,7 @@ impl StubHaReadPort {
 
 impl HaPublishReadPort for StubHaReadPort {
     fn ha_input_views(&self, adapter_id: u8) -> Vec<HaInputView> {
-        if adapter_id == 0 {
+        if self.serves(adapter_id) {
             self.inputs.lock().unwrap().clone()
         } else {
             Vec::new()
@@ -131,7 +203,7 @@ impl HaPublishReadPort for StubHaReadPort {
     }
 
     fn ha_lamp_views(&self, adapter_id: u8) -> Vec<HaLampView> {
-        if adapter_id == 0 {
+        if self.serves(adapter_id) {
             self.lamps.lock().unwrap().clone()
         } else {
             Vec::new()
@@ -139,7 +211,7 @@ impl HaPublishReadPort for StubHaReadPort {
     }
 
     fn ha_group_views(&self, adapter_id: u8) -> Vec<HaGroupView> {
-        if adapter_id == 0 {
+        if self.serves(adapter_id) {
             self.groups.lock().unwrap().clone()
         } else {
             Vec::new()
@@ -153,7 +225,7 @@ impl HaPublishReadPort for StubHaReadPort {
     }
 
     fn ha_scene_views(&self, adapter_id: u8) -> Vec<HaSceneView> {
-        if adapter_id == 0 {
+        if self.serves(adapter_id) {
             self.scenes.lock().unwrap().clone()
         } else {
             Vec::new()
@@ -182,7 +254,8 @@ impl HaPublishReadPort for StubHaReadPort {
             .into_iter()
             .map(|l| l.virtual_lamp_id)
             .collect();
-        (0..64).filter(|id| !exposed.contains(id)).collect()
+        let span = self.id_spans.lock().unwrap().0;
+        (0..span).filter(|id| !exposed.contains(id)).collect()
     }
 
     fn ha_retracted_group_ids(&self, adapter_id: u8) -> Vec<u8> {
@@ -191,11 +264,20 @@ impl HaPublishReadPort for StubHaReadPort {
             .into_iter()
             .map(|g| g.group_id)
             .collect();
-        (0..16).filter(|id| !exposed.contains(id)).collect()
+        let span = self.id_spans.lock().unwrap().1;
+        (0..span).filter(|id| !exposed.contains(id)).collect()
     }
 
-    fn ha_active_scene(&self, _adapter_id: u8) -> Option<u8> {
-        None
+    fn ha_retracted_input_views(&self, adapter_id: u8) -> Vec<HaInputView> {
+        if self.serves(adapter_id) {
+            self.retracted_inputs.lock().unwrap().clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn ha_active_scene(&self, adapter_id: u8) -> Option<u8> {
+        (*self.active_scene.lock().unwrap()).filter(|_| self.serves(adapter_id))
     }
 }
 
@@ -231,6 +313,21 @@ pub struct Harness {
     _worker: std::thread::JoinHandle<()>,
 }
 
+impl Harness {
+    #[allow(dead_code, reason = "one binary per test file; not every file asks for a republish")]
+    pub fn request_republish(&self, workflow: u64) {
+        let envelope = dali2rust_contracts::bus::command_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            workflow,
+            BusId::default().0,
+            Some(Origin::Api),
+            HomeAssistantDiscoveryPublishCommand {},
+        );
+        let queued = self.publisher.try_publish(BusChannel::Commands, BusFrame::command(envelope));
+        assert_eq!(queued, PublishResult::Queued);
+    }
+}
+
 pub fn spawn_bridge(settings: Arc<StubSettings>, read_port: Arc<StubHaReadPort>) -> Harness {
     spawn_bridge_with_config(settings, read_port, BusConfig::default())
 }
@@ -240,6 +337,24 @@ pub fn spawn_bridge_with_config(
     settings: Arc<StubSettings>,
     read_port: Arc<StubHaReadPort>,
     config: BusConfig,
+) -> Harness {
+    spawn_bridge_on(settings, read_port, config, 1)
+}
+
+#[allow(dead_code, reason = "one binary per test file; not every file runs two adapters")]
+pub fn spawn_bridge_for_adapters(
+    settings: Arc<StubSettings>,
+    read_port: Arc<StubHaReadPort>,
+    adapter_count: u8,
+) -> Harness {
+    spawn_bridge_on(settings, read_port, BusConfig::default(), adapter_count)
+}
+
+fn spawn_bridge_on(
+    settings: Arc<StubSettings>,
+    read_port: Arc<StubHaReadPort>,
+    config: BusConfig,
+    adapter_count: u8,
 ) -> Harness {
     let (host, publisher, (ev_rx, cmd_rx, ev_obs_rx)) = BusHost::spawn(config, |reg| {
         (
@@ -271,7 +386,7 @@ pub fn spawn_bridge_with_config(
             secret: Arc::new(StubSecret),
             counters: Arc::clone(&counters),
             version: "test",
-            adapter_count: 1,
+            adapter_count,
             role: Arc::new(ActiveRole),
             rule_topics: Arc::clone(&rule_topics) as _,
         },
@@ -322,19 +437,24 @@ pub fn button_press_frame(short_address: u8, instance_number: u8) -> BusFrame {
 
 #[allow(dead_code, reason = "one binary per test file; not every file feeds commits")]
 pub fn runtime_frame(virtual_lamp_id: u8, level: u8) -> BusFrame {
+    commit_frame(0, virtual_lamp_id, LightSetpoint::from_level(level, None))
+}
+
+#[allow(dead_code, reason = "one binary per test file; not every file feeds commits")]
+pub fn commit_frame(adapter_id: u8, virtual_lamp_id: u8, setpoint: LightSetpoint) -> BusFrame {
     BusFrame::event(dali2rust_contracts::bus::event_envelope(
         0,
-        u64::from(level),
+        u64::from(setpoint.level.unwrap_or_default()),
         BusId::default().0,
         Some(Origin::Internal),
         dali2rust_contracts::msg::RuntimeStateChangedEvent {
-            adapter_id: 0,
+            adapter_id,
             virtual_lamp_id: Some(virtual_lamp_id),
             short_address: Some(virtual_lamp_id),
-            state_setpoint: LightSetpoint::from_level(level, None),
+            commit_dimensions: setpoint.dimensions(),
+            state_setpoint: setpoint,
             state_observation: RuntimeObservation::default(),
             commit_source: dali2rust_contracts::msg::RuntimeSource::Api,
-            commit_dimensions: LightSetpoint::from_level(level, None).dimensions(),
             commit_holds_hcl: true,
         },
     ))

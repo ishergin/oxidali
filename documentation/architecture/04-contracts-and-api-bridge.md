@@ -97,8 +97,10 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   `declare_widest_dtos!` block (measured by `api/src/ws/snapshot.rs`),
   the TypeScript mirror in `web/app/src/api/types.ts`, string keys in the HIL suite and
   BDD steps, and the product-design documents of the resource that carries it. The
-  compiler holds only DTO → mapping → sample; `scripts/verify_counter_surface.py`
-  compares the names of the rest, and a counter that counts the wrong thing is still a
+  compiler holds only DTO → mapping → sample; `scripts/verify_ts_dto_mirror.py` holds the
+  TypeScript mirror ([10](10-build-release-and-tooling.md) §Merge gates),
+  `scripts/verify_counter_surface.py` compares the names of the rest, reading the DTO
+  fields through that gate's parser, and a counter that counts the wrong thing is still a
   test's job.
 - The gate finds a counter by its shape — a one-line `pub name: Atomic…,` field of a
   top-level `pub struct …Counters` — and silently misses any other spelling.

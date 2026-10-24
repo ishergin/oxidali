@@ -118,7 +118,7 @@ impl WsTestClient {
         self.require_observing("ping_answered");
         let before = self.pongs;
         self.socket
-            .send(Message::Ping(payload.to_vec().into()))
+            .send(Message::Ping(payload.to_vec()))
             .expect("ws ping");
         let _ = self.socket.flush();
         let deadline = Instant::now() + FRAME_TIMEOUT;

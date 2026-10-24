@@ -1213,3 +1213,19 @@ fn detect_device_rereads_dt8_features_when_first_read_is_empty() {
     assert!(!d.dt8_xy_capable);
     assert_script_consumed(&transport);
 }
+
+#[test]
+fn the_colour_mode_follows_the_one_active_type_bit_and_is_unknown_for_several() {
+    for (status, mode) in [
+        (0x10, ColorMode::Xy),
+        (0x21, ColorMode::Cct),
+        (0x80, ColorMode::Rgb),
+        (0x40, ColorMode::Unknown),
+        (0x00, ColorMode::Unknown),
+        (0x30, ColorMode::Unknown),
+        (0x90, ColorMode::Unknown),
+        (0xFF, ColorMode::Unknown),
+    ] {
+        assert_eq!(color_mode_from_status(status), mode, "status {status:#04x}");
+    }
+}

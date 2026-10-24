@@ -4,9 +4,10 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dali2rust_bus::{BusChannel, BusConfig, BusId, PublishResult};
-use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_domain::registry::{CapabilityFlagsView, HaGroupView, HaSceneView};
+use dali2rust_bus::{BusChannel, BusConfig, PublishResult};
+use dali2rust_domain::registry::{
+    CapabilityFlagsView, HaGroupView, HaInputInstanceView, HaInputView, HaSceneView,
+};
 use dali2rust_test_support::{
     command_frame, recv_command_matching, remains_false_for, wait_until,
 };
@@ -16,6 +17,10 @@ use support::{
 };
 
 const WAIT_S: Duration = Duration::from_secs(8);
+const PANEL_BUTTON_CONFIG: &str = "homeassistant/event/ctl1/a0_in0_0/config";
+const PANEL_OCCUPANCY_CONFIG: &str = "homeassistant/binary_sensor/ctl1/a0_in0_1/config";
+const PANEL_CONFIGS: [&str; 2] = [PANEL_BUTTON_CONFIG, PANEL_OCCUPANCY_CONFIG];
+const REPUBLISH_RUN: u64 = 78;
 
 #[test]
 fn a_backlog_from_a_disabled_period_is_discarded_not_replayed() {
@@ -80,20 +85,7 @@ fn a_discovery_run_keeps_answering_commands_between_batches() {
     let counters = Arc::clone(&h.counters);
     wait_until(move || counters.is_connected(), WAIT_S);
 
-    let envelope = dali2rust_contracts::bus::command_envelope(
-        SOURCE_ID_UNSPECIFIED,
-        77,
-        BusId::default().0,
-        Some(dali2rust_contracts::msg::Origin::Api),
-        dali2rust_contracts::msg::HomeAssistantDiscoveryPublishCommand {},
-    );
-    assert_eq!(
-        h.publisher.try_publish(
-            BusChannel::Commands,
-            dali2rust_bus::BusFrame::command(envelope)
-        ),
-        PublishResult::Queued
-    );
+    h.request_republish(77);
     let counters = Arc::clone(&h.counters);
     wait_until(
         move || counters.discovery_published_total.load(Ordering::Relaxed) >= 1,
@@ -454,4 +446,55 @@ fn a_press_announces_the_config_before_publishing_the_event_mqtt032() {
     let state = h.mock.published_on("dali/ctl1/a0/in/0/2/state");
     assert_eq!(state[0].payload, br#"{"event_type":"short_press"}"#.to_vec());
     assert!(!state[0].retain, "a button event must not be retained");
+}
+
+fn announced_panel() -> (support::Harness, Arc<StubHaReadPort>) {
+    let mut view = enabled_settings();
+    view.expose_input_devices = true;
+    let read_port = StubHaReadPort::with_lamp(1);
+    read_port.set_input_device(HaInputView {
+        short_address: 0,
+        name: Some("Panel".to_string()),
+        ha_expose: true,
+        instances: [(0, 1), (1, 3)]
+            .map(|(instance_number, instance_type)| HaInputInstanceView {
+                instance_number,
+                instance_type: Some(instance_type),
+            })
+            .to_vec(),
+    });
+    let h = spawn_bridge(StubSettings::new(view), Arc::clone(&read_port));
+    for topic in PANEL_CONFIGS {
+        wait_for_last_config(&h, topic, |payload| !payload.is_empty());
+    }
+    (h, read_port)
+}
+
+fn wait_for_last_config(h: &support::Harness, topic: &'static str, wanted: fn(&[u8]) -> bool) {
+    let mock = Arc::clone(&h.mock);
+    wait_until(
+        move || mock.published_on(topic).last().is_some_and(|m| m.retain && wanted(&m.payload)),
+        WAIT_S,
+    );
+}
+
+#[test]
+fn a_deleted_input_device_retracts_the_config_of_every_instance_it_had() {
+    let (h, read_port) = announced_panel();
+    read_port.remove_input_device(0);
+    let deleted = dali2rust_contracts::msg::InputDeviceChangedEvent { adapter_id: 0, short_address: 0 };
+    assert_eq!(h.publisher.try_publish(BusChannel::Events, registry_event(deleted)), PublishResult::Queued);
+    for topic in PANEL_CONFIGS {
+        wait_for_last_config(&h, topic, <[u8]>::is_empty);
+    }
+}
+
+#[test]
+fn a_republish_retracts_an_input_device_whose_deletion_never_reached_the_bridge() {
+    let (h, read_port) = announced_panel();
+    read_port.remove_input_device(0);
+    h.request_republish(REPUBLISH_RUN);
+    for topic in PANEL_CONFIGS {
+        wait_for_last_config(&h, topic, <[u8]>::is_empty);
+    }
 }

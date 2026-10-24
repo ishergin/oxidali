@@ -49,7 +49,7 @@ fn wire_for_address_command(address: u8, command: u8) -> u8 {
 async fn send_dali_command(world: &mut DaliWorld, address: u64, command: u64) {
     let command = command as u8;
     let wire = wire_for_address_command(address as u8, command);
-    let body = json_command_body(wire, command as u8);
+    let body = json_command_body(wire, command);
     world.send_http_request(
         "POST",
         "/api/v1/dali/command",

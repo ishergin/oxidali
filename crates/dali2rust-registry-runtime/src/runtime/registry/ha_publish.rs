@@ -1,8 +1,8 @@
 use dali2rust_contracts::msg::{ColorMode, PowerState};
 use dali2rust_domain::dali::device::MAX_ARC_POWER_LEVEL;
 use dali2rust_domain::registry::{
-    ColorTemperatureRangeView, HaGroupStateView, HaGroupView, HaLampView, HaPublishReadPort,
-    HaSceneView,
+    ColorTemperatureRangeView, HaGroupStateView, HaGroupView, HaInputView, HaLampView,
+    HaPublishReadPort, HaSceneView,
 };
 use dali2rust_platform::small_sort::insertion_sort_by;
 
@@ -175,24 +175,17 @@ impl HaPublishReadPort for RegistryStore {
             .find(|view| view.short_address == short_address)
     }
 
-    fn ha_input_views(&self, adapter_id: u8) -> Vec<dali2rust_domain::registry::HaInputView> {
+    fn ha_input_views(&self, adapter_id: u8) -> Vec<HaInputView> {
         let g = self.read_inner();
         let mut out: Vec<_> = g
             .input_devices
             .values()
             .filter(|record| record.adapter_id == adapter_id)
-            .map(|record| dali2rust_domain::registry::HaInputView {
+            .map(|record| HaInputView {
                 short_address: record.short_address,
                 name: record.name.clone(),
                 ha_expose: record.ha_expose,
-                instances: record
-                    .instances
-                    .iter()
-                    .map(|i| dali2rust_domain::registry::HaInputInstanceView {
-                        instance_number: i.instance_number,
-                        instance_type: i.instance_type,
-                    })
-                    .collect(),
+                instances: record.instance_views(),
             })
             .collect();
         insertion_sort_by(&mut out, |a, b| a.short_address > b.short_address);
@@ -256,6 +249,23 @@ impl HaPublishReadPort for RegistryStore {
             .map(|v| v.group_id)
             .collect();
         (0..GROUP_COUNT).filter(|id| !exposed.contains(id)).collect()
+    }
+
+    fn ha_retracted_input_views(&self, adapter_id: u8) -> Vec<HaInputView> {
+        let g = self.read_inner();
+        let mut out: Vec<HaInputView> = g
+            .retracted_inputs
+            .iter()
+            .filter(|(key, _)| key.0 == adapter_id && !g.input_devices.contains_key(key))
+            .map(|(&(_, short_address), instances)| HaInputView {
+                short_address,
+                name: None,
+                ha_expose: false,
+                instances: instances.clone(),
+            })
+            .collect();
+        insertion_sort_by(&mut out, |a, b| a.short_address > b.short_address);
+        out
     }
 
     fn ha_active_scene(&self, adapter_id: u8) -> Option<u8> {
