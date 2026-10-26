@@ -523,7 +523,7 @@ export interface VirtualLampList {
 }
 
 export interface VirtualLampPatch {
-  name?: string
+  name?: string | null
   ha_entity_enabled?: boolean
 }
 

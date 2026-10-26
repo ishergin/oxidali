@@ -616,8 +616,8 @@ class Client:
         for scene in scenes:
             scene_id = scene["scene_id"]
             patch = {}
-            if scene.get("name"):
-                patch["name"] = scene["name"]
+            if "name" in scene:
+                patch["name"] = scene["name"] or None
             if "ha_select_enabled" in scene:
                 patch["ha_select_enabled"] = scene["ha_select_enabled"]
             if patch:

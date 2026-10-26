@@ -61,7 +61,8 @@ readback, частичный отказ) — [`../workflows.md`](../workflows.md
 
 ## `PATCH groups/{group_id}`
 
-Merge-patch: `name`, `ha_entity_enabled`. Derived-поля и идентификаторы — `422
+Merge-patch: `name` (1..64 байта; `null` очищает имя, пустая строка — `422
+invalid_value`) и `ha_entity_enabled`. Derived-поля и идентификаторы — `422
 unsupported_field`; пустое тело — `400 empty_patch`. Мост Home Assistant переобъявляет или отзывает сущность группы.
 
 ## `PUT groups/{group_id}/target-state`

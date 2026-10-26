@@ -40,8 +40,9 @@ def test_scene_list_and_patch_metadata(api, scenes_supported):
         assert listed["name"] == "hil-scene-tmp"
     finally:
         api.scenes.patch(SCENE_ID, {
-            "name": before["name"] or ("Scene %d" % SCENE_ID),
+            "name": before["name"] or None,
             "ha_select_enabled": before["ha_select_enabled"]})
+    assert api.scenes.get(SCENE_ID)["name"] == before["name"]
 
 
 @pytest.mark.hil_id("HIL-SCN-04")

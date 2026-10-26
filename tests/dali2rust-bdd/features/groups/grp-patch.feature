@@ -36,3 +36,15 @@ Feature: Group metadata PATCH
     When I PATCH JSON {"adapter_id":0} to "/api/v1/adapters/0/group-membership-matrix"
     Then the response status should be 422
     And the JSON error should be "unsupported_field"
+
+  @id:GRP-076
+  Scenario: A null name clears a group's name
+    Given group 7 exists with name "Old group"
+    When I PATCH JSON {"name":null} to "/api/v1/adapters/0/groups/7"
+    Then the response status should be 200
+    And the JSON field "name" should equal ""
+    When I send a GET request to "/api/v1/adapters/0/groups/7"
+    Then the JSON field "name" should equal ""
+    When I send a GET request to "/api/v1/adapters/0/groups"
+    Then the JSON pointer "/groups/7/group_id" should be 7
+    And the JSON pointer "/groups/7/name" should be ""

@@ -80,3 +80,16 @@ Feature: Virtual lamp PATCH metadata and inherited type/colour
     When I PATCH JSON {"color_temperature_range":{"coolest_kelvin":6500}} to "/api/v1/adapters/0/virtual-lamps/1"
     Then the response status should be 422
     And the JSON error should be "unsupported_field"
+
+  @id:VL-107
+  Scenario: A null name clears a lamp's name
+    When I PATCH JSON {"name":"Kitchen"} to "/api/v1/adapters/0/virtual-lamps/5"
+    Then the response status should be 200
+    When I PATCH JSON {"name":null} to "/api/v1/adapters/0/virtual-lamps/5"
+    Then the response status should be 200
+    And the JSON field "name" should equal ""
+    When I send a GET request to "/api/v1/adapters/0/virtual-lamps/5"
+    Then the JSON field "name" should equal ""
+    When I send a GET request to "/api/v1/adapters/0/virtual-lamps"
+    Then the JSON pointer "/virtual_lamps/0/virtual_lamp_id" should be 5
+    And the JSON pointer "/virtual_lamps/0/name" should be ""

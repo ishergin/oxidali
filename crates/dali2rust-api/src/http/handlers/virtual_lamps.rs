@@ -21,7 +21,7 @@ use super::common::{
     check_body_keys, json_err, json_stream_dto, parse_adapter_id, parse_resource_id_param,
     parse_typed_body, vl_cap_supports_color_mode, publish_and_await_apply, write_json_array_items,
     MAX_SHORT_ADDRESS,
-    MAX_NAME_BYTES,
+    parse_metadata_name,
 };
 use crate::http::target_state_request::TargetStateBody;
 
@@ -371,12 +371,8 @@ fn parse_vl_patch_data(
     };
 
     if let Some(val) = obj.get("name") {
+        data.name = Some(parse_metadata_name(val)?);
         data.patch_mask |= VirtualLampConfigUpdateCommand::PATCH_NAME;
-        let s = val.as_str().ok_or_else(|| json_err(422, "invalid_value"))?;
-        if s.is_empty() || s.len() > MAX_NAME_BYTES {
-            return Err(json_err(422, "invalid_value"));
-        }
-        data.name = Some(s.to_string());
     }
     if let Some(val) = obj.get("ha_entity_enabled") {
         data.patch_mask |= VirtualLampConfigUpdateCommand::PATCH_HA_ENTITY_ENABLED;

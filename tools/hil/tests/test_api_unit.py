@@ -89,6 +89,16 @@ def test_every_diagnostic_door_books_the_lamps_it_can_move():
     assert client.TOUCHED_ALL in client.raw_touched
 
 
+def test_a_config_restore_clears_with_null_a_scene_name_the_snapshot_holds_empty(monkeypatch):
+    client = hil.api.Client(load_config())
+    patches = []
+    monkeypatch.setattr(client.scenes, "patch", lambda sid, body: patches.append((sid, body)))
+    client._scene_restore([{"scene_id": 12, "name": "", "ha_select_enabled": False},
+                           {"scene_id": 3, "name": "Dinner", "ha_select_enabled": True}])
+    assert patches == [(12, {"name": None, "ha_select_enabled": False}),
+                       (3, {"name": "Dinner", "ha_select_enabled": True})]
+
+
 SOURCE = "rule dusk when time 18:00 then off(VL1)"
 BASE = 7
 OPERATION = "cfg-rules-1"

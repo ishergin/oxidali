@@ -739,6 +739,62 @@ def test_the_session_restore_leaves_a_device_field_the_owner_changed():
     assert any("SA5 notes" in line and "did not write" in line for line in lines)
 
 
+class _Named:
+    def __init__(self, kind, items, patches):
+        self.kind, self.items, self.patches = kind, items, patches
+
+    def list(self):
+        return {"groups": self.items}
+
+    def list_unfiltered(self):
+        return {"virtual_lamps": self.items}
+
+    def matrix(self):
+        return {"rows": []}
+
+    def patch(self, rid, body):
+        self.patches.append((self.kind, rid, body))
+
+
+class _NamedApi:
+    def __init__(self, name):
+        self.patches = []
+        self.groups = _Named("group", [{"group_id": 15, "name": name}], self.patches)
+        self.vlamps = _Named("vl", [{"virtual_lamp_id": 3, "name": name}], self.patches)
+        self.scenes = _Named("scene", [], self.patches)
+        self.scenes_now = [{"scene_id": 12, "name": name, "rows": []}]
+
+    def _scene_snapshot(self):
+        return self.scenes_now
+
+
+def _restored_names(now_name, snap_name):
+    api = _NamedApi(now_name)
+    snap = {"scenes": [{"scene_id": 12, "name": snap_name, "rows": []}],
+            "groups": [{"group_id": 15, "name": snap_name}], "group_matrix": {"rows": []},
+            "vl": {"virtual_lamps": [{"virtual_lamp_id": 3, "name": snap_name}]}}
+    writes = _writes({"scene/12": {"name"}, "group/15": {"name"}, "vl/3": {"name"}})
+    for step in (prod_state._restore_scenes, prod_state._restore_groups, prod_state._restore_vl):
+        step(api, snap, lambda line: None, writes)
+    return api.patches
+
+
+def test_a_name_the_snapshot_holds_empty_is_cleared_with_null():
+    assert _restored_names("hil-tmp", "") == [("scene", 12, {"name": None}),
+                                              ("group", 15, {"name": None}),
+                                              ("vl", 3, {"name": None})]
+
+
+def test_a_name_still_empty_as_in_the_snapshot_is_not_written():
+    assert _restored_names("", "") == []
+
+
+def test_a_name_the_snapshot_holds_is_written_back_as_it_was():
+    assert _restored_names("hil-tmp", "Ужин") == [("scene", 12, {"name": "Ужин"}),
+                                                  ("group", 15, {"name": "Ужин"}),
+                                                  ("vl", 3, {"name": "Ужин"})]
+
+
 class _HclApi:
     def __init__(self, schedules):
         self.schedules, self.calls = {s["schedule_id"]: s for s in schedules}, []

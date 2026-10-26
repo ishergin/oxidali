@@ -687,6 +687,10 @@ def _clear_session_overrides(api, snap, after, log, writes):
                 "targets: left as it is" % sid)
 
 
+def _null_clears_name(patch):
+    return lambda body: patch(dict(body, name=None) if body.get("name") == "" else body)
+
+
 def _patch_if_differs(label, current, wanted, fields, patch, log, owned):
     differs = [f for f in fields if f in wanted and current.get(f) != wanted[f]]
     body = {f: wanted[f] for f in differs if owned(f)}
@@ -845,17 +849,18 @@ def _restore_vl(api, snap, log, writes):
                      lambda lid=lid: api.vlamps.bind(lid, want[lid]))
         _attempt(log, "VL%d metadata" % lid, lambda lid=lid, have=have, v=v: _patch_if_differs(
             "VL%d" % lid, have, v, ("name", "ha_entity_enabled"),
-            lambda body: api.vlamps.patch(lid, body), log, _owner(writes, "vl/%d" % lid)))
+            _null_clears_name(lambda body: api.vlamps.patch(lid, body)), log,
+            _owner(writes, "vl/%d" % lid)))
 
 
 def _restore_groups(api, snap, log, writes):
     now = {g["group_id"]: g for g in api.groups.list()["groups"]}
     for g in snap["groups"]:
         gid = g["group_id"]
-        _patch_if_differs("group %d" % gid, now.get(gid, {}), g,
-                          ("name", "ha_entity_enabled"),
-                          lambda body, gid=gid: api.groups.patch(gid, body), log,
-                          _owner(writes, "group/%d" % gid))
+        _attempt(log, "group %d metadata" % gid, lambda gid=gid, g=g: _patch_if_differs(
+            "group %d" % gid, now.get(gid, {}), g, GROUP_FIELDS,
+            _null_clears_name(lambda body: api.groups.patch(gid, body)), log,
+            _owner(writes, "group/%d" % gid)))
     now_rows = {r["virtual_lamp_id"]: r for r in api.groups.matrix().get("rows", [])}
     rows = [r for r in snap["group_matrix"]["rows"]
             if _norm(now_rows.get(r["virtual_lamp_id"])) != _norm(r)]
@@ -877,12 +882,11 @@ def _restore_scenes(api, snap, log, writes):
     now = {s["scene_id"]: s for s in api._scene_snapshot()}
     for was in snap["scenes"]:
         sid, have = was["scene_id"], now.get(was["scene_id"], {})
-        wanted = {"ha_select_enabled": was.get("ha_select_enabled")}
-        if was.get("name"):
-            wanted["name"] = was["name"]
-        _patch_if_differs("scene %d" % sid, have, wanted, ("name", "ha_select_enabled"),
-                          lambda body, sid=sid: api.scenes.patch(sid, body), log,
-                          _owner(writes, "scene/%d" % sid))
+        wanted = {f: was[f] for f in SCENE_FIELDS if f in was}
+        _attempt(log, "scene %d metadata" % sid, lambda sid=sid, have=have, wanted=wanted:
+                 _patch_if_differs("scene %d" % sid, have, wanted, SCENE_FIELDS,
+                                   _null_clears_name(lambda body: api.scenes.patch(sid, body)),
+                                   log, _owner(writes, "scene/%d" % sid)))
         _restore_scene_rows(api, sid, was.get("rows") or [], have.get("rows") or [], log,
                             writes)
 

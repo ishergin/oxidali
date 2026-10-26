@@ -278,7 +278,7 @@ async fn given_scenes_configured(world: &mut DaliWorld) {
     patch_scene_name(world, 3, "Scene 3");
 }
 
-// SCN-010
+// SCN-010 SCN-098 SCN-099
 #[given(regex = r#"^scene (\d+) on adapter 0 is named "([^"]+)"$"#)]
 async fn given_scene_named(world: &mut DaliWorld, scene_id: u8, name: String) {
     patch_scene_name(world, scene_id, &name);

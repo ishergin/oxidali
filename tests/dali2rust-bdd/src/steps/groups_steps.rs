@@ -216,7 +216,7 @@ async fn given_groups_configured(world: &mut DaliWorld) {
     patch_group_name(world, 7, "Group 7");
 }
 
-// GRP-020
+// GRP-020 GRP-076
 #[given(regex = r#"^group (\d+) exists with name "([^"]+)"$"#)]
 async fn given_group_exists_with_name(world: &mut DaliWorld, group_id: u8, name: String) {
     patch_group_name(world, group_id, &name);

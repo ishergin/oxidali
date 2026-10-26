@@ -276,7 +276,7 @@ export const api = {
     put<VirtualLamp>(`/adapters/${a}/virtual-lamps/${id}/target-state`, body),
 
   groups: (a: number) => get<GroupList>(`/adapters/${a}/groups`),
-  patchGroup: (a: number, id: number, body: { name?: string; ha_entity_enabled?: boolean }) =>
+  patchGroup: (a: number, id: number, body: { name?: string | null; ha_entity_enabled?: boolean }) =>
     patch<Group>(`/adapters/${a}/groups/${id}`, body),
   groupMatrix: (a: number) =>
     get<GroupMembershipMatrix>(`/adapters/${a}/group-membership-matrix`),
@@ -288,7 +288,7 @@ export const api = {
     put<Group>(`/adapters/${a}/groups/${id}/target-state`, body),
 
   scenes: (a: number) => get<SceneList>(`/adapters/${a}/scenes`),
-  patchScene: (a: number, id: number, body: { name?: string; ha_select_enabled?: boolean }) =>
+  patchScene: (a: number, id: number, body: { name?: string | null; ha_select_enabled?: boolean }) =>
     patch<Scene>(`/adapters/${a}/scenes/${id}`, body),
   sceneMatrix: (a: number, id: number) =>
     get<SceneMatrix>(`/adapters/${a}/scenes/${id}/matrix`),

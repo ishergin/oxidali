@@ -67,7 +67,7 @@ def test_vl_patch_metadata_roundtrip(api, vl_bindings, lamps):
     label = lamps.labels()[0]
     lid = label - 1
     before = api.vlamps.get(lid)
-    restore_name = before["name"] or ("lamp%d" % label)
+    restore_name = before["name"] or None
     try:
         dto = api.vlamps.patch(lid, {"name": "hil-vl-tmp",
                                      "ha_entity_enabled": True})
@@ -79,3 +79,4 @@ def test_vl_patch_metadata_roundtrip(api, vl_bindings, lamps):
     finally:
         api.vlamps.patch(lid, {"name": restore_name,
                                "ha_entity_enabled": before["ha_entity_enabled"]})
+    assert api.vlamps.get(lid)["name"] == before["name"]

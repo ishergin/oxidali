@@ -302,6 +302,17 @@ pub fn parse_json_body(body: &[u8]) -> Result<serde_json::Value, HttpResponse> {
 
 pub const MAX_NAME_BYTES: usize = 64;
 
+pub fn parse_metadata_name(value: &serde_json::Value) -> Result<String, HttpResponse> {
+    if value.is_null() {
+        return Ok(String::new());
+    }
+    let name = value.as_str().ok_or_else(|| json_err(422, "invalid_value"))?;
+    if name.is_empty() || name.len() > MAX_NAME_BYTES {
+        return Err(json_err(422, "invalid_value"));
+    }
+    Ok(name.to_string())
+}
+
 pub fn refuse_unwritable_keys(
     obj: &serde_json::Map<String, serde_json::Value>,
     writable: &[&str],
@@ -588,20 +599,45 @@ impl<H: MutatingHandler> crate::http::handler::ApiHandler for H {
 mod tests {
     use super::*;
 
-    fn refusal(body: &str) -> (u16, String) {
-        let Err(response) = parse_body_object(body.as_bytes(), &["name"], &["present"]) else {
-            panic!("{body} must be refused");
-        };
+    fn status_and_error(response: HttpResponse) -> (u16, String) {
         let status = response.status;
         let json: serde_json::Value =
             serde_json::from_slice(&response.into_body_bytes()).expect("a JSON body");
         (status, json["error"].as_str().unwrap_or_default().to_string())
     }
 
+    fn refusal(body: &str) -> (u16, String) {
+        let Err(response) = parse_body_object(body.as_bytes(), &["name"], &["present"]) else {
+            panic!("{body} must be refused");
+        };
+        status_and_error(response)
+    }
+
     const NO_WAIT_MS: u64 = 0;
 
     fn apply_watch_status(reading: u32, before: u32, applies: u32) -> Result<(), u16> {
         wait_apply_counter(move || reading, before, applies, NO_WAIT_MS).map_err(|r| r.status)
+    }
+
+    fn name_refusal(value: serde_json::Value) -> Option<(u16, String)> {
+        parse_metadata_name(&value).err().map(status_and_error)
+    }
+
+    #[test]
+    fn a_null_metadata_name_clears_it_and_an_empty_string_stays_refused() {
+        assert_eq!(parse_metadata_name(&serde_json::Value::Null).ok(), Some(String::new()));
+        assert_eq!(parse_metadata_name(&serde_json::json!("Dinner")).ok(), Some("Dinner".into()));
+        let longest = "x".repeat(MAX_NAME_BYTES);
+        assert_eq!(parse_metadata_name(&serde_json::json!(longest)).ok(), Some(longest));
+        let invalid = Some((422, "invalid_value".to_string()));
+        for value in [
+            serde_json::json!(""),
+            serde_json::json!("x".repeat(MAX_NAME_BYTES + 1)),
+            serde_json::json!(7),
+            serde_json::json!({}),
+        ] {
+            assert_eq!(name_refusal(value.clone()), invalid, "{value}");
+        }
     }
 
     #[test]
