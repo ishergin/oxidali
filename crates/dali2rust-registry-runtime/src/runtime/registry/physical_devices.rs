@@ -503,21 +503,15 @@ fn merge_dt6_failure_reads(
 
 #[inline(never)]
 fn boxed_copy<T: Copy>(section: &T) -> Box<T> {
-    let mut place = Box::<T>::new_uninit();
-    place.write(*section);
-    // SAFETY: `write` just initialised the whole place.
-    unsafe { place.assume_init() }
+    Box::new(*section)
 }
 
 #[inline(never)]
 fn luminaire_section(rec: &PhysicalDeviceRecord) -> Box<MemoryLuminaireAttributesView> {
-    let mut place = Box::<MemoryLuminaireAttributesView>::new_uninit();
-    match rec.luminaire_info.as_deref() {
-        Some(info) => place.write(info.clone()),
-        None => place.write(MemoryLuminaireAttributesView::default()),
-    };
-    // SAFETY: both arms initialise the whole place.
-    unsafe { place.assume_init() }
+    Box::new(match rec.luminaire_info.as_deref() {
+        Some(info) => info.clone(),
+        None => MemoryLuminaireAttributesView::default(),
+    })
 }
 
 fn memory_banks_view(banks: &[MemoryBankRecord]) -> Vec<MemoryBankSummaryView> {
