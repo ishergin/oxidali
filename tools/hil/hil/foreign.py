@@ -8,7 +8,7 @@ from pathlib import Path
 from hil import serialmon, write_log
 from hil.config import PeerUnconfigured
 from hil.lamp_guard import LampGuard, LampNotAllowed
-from hil.sniffer import monitor_payload, ssh_argv
+from hil.sniffer import monitor_payload, monitor_stamped, ssh_argv
 
 WS_PORT = 8080
 LUNATONE_REQUEST = "(from lunatone)"
@@ -19,6 +19,7 @@ GATEWAY_REFUSALS = frozenset({
     "gateway overheated", "unknown response status", "gateway unavailable",
 })
 PEER_SNIFF = re.compile(r"DALI sniff: foreign forward(16|24)=0x([0-9a-f]+)")
+PEER_LOG_STALE_S = 30
 TEST_RULE_PREFIX = "hil-"
 COMMAND_BIT = 0x01
 POWER_NOTIFICATION = 0xFE
@@ -67,12 +68,13 @@ def _request_refusal(body):
     return text if text in GATEWAY_REFUSALS else None
 
 
-def frames_on_wire(lines, frames):
+def monitor_verdict(lines, frames):
     wanted = collections.Counter(frame_hex(f) for f in frames)
     requested = any(">>" in line and LUNATONE_REQUEST in line for line in lines)
     seen, errors, pending = 0, [], []
     for line in lines:
-        body = monitor_payload(line.split("bus_monitor", 1)[-1])
+        payload = line.split("bus_monitor", 1)[-1]
+        body = monitor_payload(payload)
         if body.startswith(">>") and LUNATONE_REQUEST in body:
             refusal = _request_refusal(body)
             if refusal:
@@ -80,7 +82,7 @@ def frames_on_wire(lines, frames):
             else:
                 pending.append(body[2:].split()[0] if body[2:].split() else "")
             continue
-        if not body.startswith("<<"):
+        if not body.startswith("<<") or monitor_stamped(payload):
             continue
         text = body[2:].strip()
         token = text.split()[0] if text.split() else ""
@@ -96,7 +98,11 @@ def frames_on_wire(lines, frames):
         elif not requested and wanted[token] > 0:
             wanted[token] -= 1
             seen += 1
-    return seen, errors
+    return seen, errors, len(pending)
+
+
+def frames_on_wire(lines, frames):
+    return monitor_verdict(lines, frames)[:2]
 
 
 def sniffed(text, frames):
@@ -109,9 +115,13 @@ def sniffed(text, frames):
 
 
 class PeerLog:
-    def __init__(self, path):
+    def __init__(self, path, now=None):
         self.path = path
-        self.offset = path.stat().st_size if path is not None and path.exists() else None
+        self.offset = None
+        if path is not None and path.exists():
+            stat = path.stat()
+            if (now or time.time()) - stat.st_mtime <= PEER_LOG_STALE_S:
+                self.offset = stat.st_size
 
     def since(self):
         if self.offset is None:
@@ -119,6 +129,15 @@ class PeerLog:
         with open(self.path, "rb") as fh:
             fh.seek(self.offset)
             return fh.read().decode(errors="replace")
+
+
+def peer_note(peer):
+    if peer.offset is None:
+        return "no live peer serial log could witness them"
+    if not PEER_SNIFF.search(peer.since()):
+        return ("the peer's log shows no sniffed frame at all, so it is no witness "
+                "(a peer in the gear-sim role has no sniffer)")
+    return "the peer's sniffer did not log them"
 
 
 def _peer_log_path(cfg):
@@ -229,7 +248,7 @@ class ForeignMaster:
         deadline = time.monotonic() + timeout_s
         last, since = self._forward_counts(), time.monotonic()
         while time.monotonic() < deadline:
-            time.sleep(0.15)
+            time.sleep(self.POLL_S)
             now = self._forward_counts()
             if now != last:
                 last, since = now, time.monotonic()
@@ -246,7 +265,7 @@ class ForeignMaster:
                 seen = now[width] - before[width]
                 if seen >= 1:
                     return seen
-            time.sleep(0.15)
+            time.sleep(self.POLL_S)
         return seen
 
     def _arm_monitor(self):
@@ -269,16 +288,18 @@ class ForeignMaster:
         if out is None:
             return None
         lines = out.splitlines()
-        return frames_on_wire(lines, frames) if lines else None
+        return monitor_verdict(lines, frames) if lines else None
 
     def _delivered(self, monitor, before, peer, frames, width):
         verdict = self._monitor_verdict(monitor, frames)
         if verdict is None:
             return before is None or self._witness(before, width) >= 1, []
-        seen, errors = verdict
+        seen, errors, unechoed = verdict
         if seen >= len(frames):
             return True, errors
-        return not errors and self._peer_witnessed(peer, frames), errors
+        if errors or unechoed < len(frames) - seen:
+            return False, errors
+        return self._peer_witnessed(peer, frames), errors
 
     def _peer_witnessed(self, peer, frames):
         if peer.offset is None:
@@ -350,8 +371,8 @@ class ForeignMaster:
         gateway_errors = []
         for attempt in range(self.MAX_SENDS):
             before = self._wait_quiet(self.QUIESCE_TIMEOUT_S)
-            peer = PeerLog(_peer_log_path(self.cfg))
             monitor = self._arm_monitor()
+            peer = PeerLog(_peer_log_path(self.cfg))
             try:
                 replies = self._send_once(frames)
             except BaseException:
@@ -370,8 +391,7 @@ class ForeignMaster:
                     % (expected, self.WITNESS_TIMEOUT_S, self.MAX_SENDS,
                        "; the WB's own monitor said: %s" % "; ".join(gateway_errors[:3])
                        if gateway_errors else "",
-                       "the peer's sniffer did not log them" if peer.offset is not None
-                       else "no peer serial log could witness them",
+                       peer_note(peer),
                        self.cfg.wb_ssh))
             self.retries["foreign_master_silent"] += 1
             print("foreign master silent: not all of a %d-frame batch reached the wire, "

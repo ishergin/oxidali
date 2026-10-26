@@ -114,6 +114,10 @@ def monitor_payload(payload):
     return MONITOR_STAMP.sub("", payload.strip())
 
 
+def monitor_stamped(payload):
+    return MONITOR_STAMP.match(payload.strip()) is not None
+
+
 def parse_monitor_line(ts, payload):
     payload = monitor_payload(payload)
     if payload.startswith(">>"):

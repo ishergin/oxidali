@@ -1,11 +1,13 @@
 import dataclasses
+import os
+import types
 
 import pytest
 
 from hil import foreign
 from hil.config import load as load_config
-from hil.foreign import (ForeignMaster, ForeignMasterSilent, PeerLog, frame_hex,
-                         frames_on_wire, sniffed)
+from hil.foreign import (PEER_LOG_STALE_S, ForeignMaster, ForeignMasterSilent, PeerLog,
+                         frame_hex, frames_on_wire, monitor_verdict, peer_note, sniffed)
 
 TOPIC = "/wb-dali/wb-dali_19_bus_1/bus_monitor"
 DTR0_114 = {"bits": 16, "bytes": [0xA3, 0x72]}
@@ -74,15 +76,17 @@ def test_a_stamped_request_the_gateway_refused_is_an_error():
     assert frames_on_wire(lines, [QUERY_STATUS_A5]) == (0, ["no response from gateway"])
 
 
-def test_a_stamped_echo_counts_as_on_the_wire():
+def test_a_stamped_echo_is_another_masters_frame():
     lines = [STAMPED_REQUEST + "00 0", TOPIC + " 08:08:25.901 << 0b90 QueryStatus(A5) (fc: 4447)"]
-    assert frames_on_wire(lines, [QUERY_STATUS_A5]) == (1, [])
+    assert monitor_verdict(lines, [QUERY_STATUS_A5]) == (0, [], 1)
 
 
-def test_a_stamped_request_without_an_echo_is_neither_seen_nor_refused():
+def test_a_stamped_request_without_an_echo_is_left_awaiting_its_witness():
     lines = [STAMPED_REQUEST + "00 0",
              TOPIC + " 08:08:26.003 << fffe3d FF24.QueryApplicationControlEnabled (fc: 4204)"]
-    assert frames_on_wire(lines, [QUERY_STATUS_A5]) == (0, [])
+    assert monitor_verdict(lines, [QUERY_STATUS_A5]) == (0, [], 1)
+    assert monitor_verdict([STAMPED_REQUEST + "transmission error"], [QUERY_STATUS_A5]) == (
+        0, ["transmission error"], 0)
 
 
 def test_the_peer_witness_counts_each_frame_once_and_by_width():
@@ -105,6 +109,29 @@ def test_the_peer_log_reads_only_what_was_written_after_the_mark(tmp_path):
     assert PeerLog(None).since() == ""
 
 
+def test_a_peer_log_nobody_writes_is_no_witness(tmp_path):
+    log = tmp_path / "serial.log"
+    log.write_text(PEER_LINE % "024d")
+    old = log.stat().st_mtime - PEER_LOG_STALE_S - 1
+    os.utime(log, (old, old))
+    peer = PeerLog(log)
+    assert peer.offset is None
+    assert peer_note(peer) == "no live peer serial log could witness them"
+    assert foreign._peer_log_path(types.SimpleNamespace(has_peer=False)) is None
+
+
+def test_a_peer_that_sniffs_nothing_is_named_no_witness(tmp_path):
+    log = tmp_path / "serial.log"
+    log.write_text("")
+    peer = PeerLog(log)
+    with open(log, "a") as fh:
+        fh.write("2026-10-26T08:12:35.418Z I (5193278) gear_sim: answered 0xff\n")
+    assert "no sniffed frame at all" in peer_note(peer)
+    with open(log, "a") as fh:
+        fh.write(PEER_LINE % "024e")
+    assert peer_note(peer) == "the peer's sniffer did not log them"
+
+
 class _Api:
     adapter = 0
 
@@ -121,28 +148,28 @@ def _master(monkeypatch, tmp_path, verdict, peer_sees):
 
     def send_once(frames):
         sends.append(frames)
-        if peer_sees:
-            with open(log, "a") as fh:
-                fh.write(PEER_LINE % "024d")
+        with open(log, "a") as fh:
+            fh.write(PEER_LINE % ("024d" if peer_sees else "024e"))
         return []
 
     monkeypatch.setattr(foreign, "_peer_log_path", lambda cfg: log)
     monkeypatch.setattr(master, "_wait_quiet", lambda timeout_s: {16: 0, 24: 0})
     monkeypatch.setattr(master, "_arm_monitor", lambda: None)
     monkeypatch.setattr(master, "_monitor_verdict", lambda monitor, frames: verdict)
+    monkeypatch.setattr(master, "_witness", lambda before, width: 1)
     monkeypatch.setattr(master, "_send_once", send_once)
     master.WITNESS_TIMEOUT_S, master.POLL_S = QUICK_S, POLL_S
     return master, sends
 
 
 def test_a_frame_only_the_peer_saw_is_delivered_once(monkeypatch, tmp_path):
-    master, sends = _master(monkeypatch, tmp_path, (0, []), peer_sees=True)
+    master, sends = _master(monkeypatch, tmp_path, (0, [], 1), peer_sees=True)
     master.dapc(1, 0x4D)
     assert len(sends) == 1 and not master.retries
 
 
 def test_a_frame_no_witness_saw_is_resent_then_reported_silent(monkeypatch, tmp_path):
-    master, sends = _master(monkeypatch, tmp_path, (0, []), peer_sees=False)
+    master, sends = _master(monkeypatch, tmp_path, (0, [], 1), peer_sees=False)
     with pytest.raises(ForeignMasterSilent, match="the peer's sniffer did not log them"):
         master.dapc(1, 0x4D)
     assert len(sends) == ForeignMaster.MAX_SENDS
@@ -150,8 +177,21 @@ def test_a_frame_no_witness_saw_is_resent_then_reported_silent(monkeypatch, tmp_
 
 
 def test_a_gateway_refusal_outranks_the_peer(monkeypatch, tmp_path):
-    master, sends = _master(monkeypatch, tmp_path, (0, ["no response from gateway"]),
+    master, sends = _master(monkeypatch, tmp_path, (0, ["no response from gateway"], 0),
                             peer_sees=True)
     with pytest.raises(ForeignMasterSilent, match="no response from gateway"):
         master.dapc(1, 0x4D)
     assert len(sends) == ForeignMaster.MAX_SENDS
+
+
+def test_a_frame_the_monitor_never_saw_requested_is_not_handed_to_the_peer(monkeypatch, tmp_path):
+    master, sends = _master(monkeypatch, tmp_path, (0, [], 0), peer_sees=True)
+    with pytest.raises(ForeignMasterSilent):
+        master.dapc(1, 0x4D)
+    assert len(sends) == ForeignMaster.MAX_SENDS
+
+
+def test_without_a_monitor_the_controller_counter_decides(monkeypatch, tmp_path):
+    master, sends = _master(monkeypatch, tmp_path, None, peer_sees=False)
+    master.dapc(1, 0x4D)
+    assert len(sends) == 1 and not master.retries
