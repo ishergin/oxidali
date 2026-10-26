@@ -12,15 +12,15 @@ use serde::Serialize;
 use serde::ser::SerializeMap;
 
 #[derive(Clone, Debug, Serialize)]
-pub struct ObservedValueDto<T> {
+pub struct ObservedValueDto<V> {
     pub last_read_ms: Option<u64>,
     pub last_write_confirmed_ms: Option<u64>,
     pub source: &'static str,
-    pub value: T,
+    pub value: V,
 }
 
-impl<T> ObservedValueDto<T> {
-    fn map<U>(self, f: impl FnOnce(T) -> U) -> ObservedValueDto<U> {
+impl<V> ObservedValueDto<V> {
+    fn map<U>(self, f: impl FnOnce(V) -> U) -> ObservedValueDto<U> {
         ObservedValueDto {
             last_read_ms: self.last_read_ms,
             last_write_confirmed_ms: self.last_write_confirmed_ms,
@@ -30,7 +30,7 @@ impl<T> ObservedValueDto<T> {
     }
 }
 
-fn observed_opt<T: Clone>(value: &Option<ObservedValue<T>>) -> Option<ObservedValueDto<T>> {
+fn observed_opt<T>(value: &Option<ObservedValue<T>>) -> Option<ObservedValueDto<&T>> {
     value.as_ref().map(|v| ObservedValueDto {
         last_read_ms: v.last_read_ms,
         last_write_confirmed_ms: v.last_write_confirmed_ms,
@@ -38,22 +38,22 @@ fn observed_opt<T: Clone>(value: &Option<ObservedValue<T>>) -> Option<ObservedVa
             AttributeSource::Readback => "readback",
             AttributeSource::WriteConfirmed => "write_confirmed",
         },
-        value: v.value.clone(),
+        value: &v.value,
     })
 }
 
 macro_rules! attribute_section_dto {
     ($dto:ident from $view:ty { $($field:ident: $ty:ty),+ $(,)? }) => {
         #[derive(Clone, Debug, Serialize)]
-        pub struct $dto {
+        pub struct $dto<'a> {
             $(
                 #[serde(skip_serializing_if = "Option::is_none")]
-                pub $field: Option<ObservedValueDto<$ty>>,
+                pub $field: Option<ObservedValueDto<&'a $ty>>,
             )+
         }
 
-        impl $dto {
-            fn from_view(v: &$view) -> Option<Self> {
+        impl<'a> $dto<'a> {
+            fn from_view(v: &'a $view) -> Option<Self> {
                 if !Self::is_present(v) {
                     return None;
                 }
@@ -194,9 +194,9 @@ impl MemoryBusUnitAttributesDto {
         }
         Some(Self {
             configuration: observed_opt(&v.configuration)
-                .map(|o| o.map(BusUnitConfigurationDto::from_raw)),
+                .map(|o| o.map(|raw| BusUnitConfigurationDto::from_raw(*raw))),
             implemented_parts: observed_opt(&v.implemented_parts)
-                .map(|o| o.map(ImplementedPartsDto::from_raw)),
+                .map(|o| o.map(|raw| ImplementedPartsDto::from_raw(*raw))),
         })
     }
 
@@ -268,39 +268,39 @@ attribute_section_dto!(ConditionDto from ConditionView {
 });
 
 #[derive(Clone, Debug, Serialize)]
-pub struct GearDiagnosticsDto {
+pub struct GearDiagnosticsDto<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bank_version: Option<ObservedValueDto<u8>>,
+    pub bank_version: Option<ObservedValueDto<&'a u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub operating_time_s: Option<ObservedValueDto<BankReading>>,
+    pub operating_time_s: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_current_percent: Option<ObservedValueDto<BankReading>>,
+    pub output_current_percent: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_power_limitation: Option<ConditionDto>,
+    pub output_power_limitation: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub overall_failure: Option<ConditionDto>,
+    pub overall_failure: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub overvoltage: Option<ConditionDto>,
+    pub overvoltage: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub power_factor_centi: Option<ObservedValueDto<BankReading>>,
+    pub power_factor_centi: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_counter: Option<ObservedValueDto<BankReading>>,
+    pub start_counter: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub supply_frequency_hz: Option<ObservedValueDto<BankReading>>,
+    pub supply_frequency_hz: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub supply_voltage_decivolt: Option<ObservedValueDto<BankReading>>,
+    pub supply_voltage_decivolt: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature_offset60: Option<ObservedValueDto<BankReading>>,
+    pub temperature_offset60: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thermal_derating: Option<ConditionDto>,
+    pub thermal_derating: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thermal_shutdown: Option<ConditionDto>,
+    pub thermal_shutdown: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub undervoltage: Option<ConditionDto>,
+    pub undervoltage: Option<ConditionDto<'a>>,
 }
 
-impl GearDiagnosticsDto {
-    fn from_view(v: &GearDiagnosticsView) -> Option<Self> {
+impl<'a> GearDiagnosticsDto<'a> {
+    fn from_view(v: &'a GearDiagnosticsView) -> Option<Self> {
         if !Self::is_present(v) {
             return None;
         }
@@ -328,37 +328,37 @@ impl GearDiagnosticsDto {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct SourceDiagnosticsDto {
+pub struct SourceDiagnosticsDto<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bank_version: Option<ObservedValueDto<u8>>,
+    pub bank_version: Option<ObservedValueDto<&'a u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub current_milliamp: Option<ObservedValueDto<BankReading>>,
+    pub current_milliamp: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub on_time_resettable_s: Option<ObservedValueDto<BankReading>>,
+    pub on_time_resettable_s: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub on_time_s: Option<ObservedValueDto<BankReading>>,
+    pub on_time_s: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub open_circuit: Option<ConditionDto>,
+    pub open_circuit: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub overall_failure: Option<ConditionDto>,
+    pub overall_failure: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub short_circuit: Option<ConditionDto>,
+    pub short_circuit: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_counter: Option<ObservedValueDto<BankReading>>,
+    pub start_counter: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_counter_resettable: Option<ObservedValueDto<BankReading>>,
+    pub start_counter_resettable: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature_offset60: Option<ObservedValueDto<BankReading>>,
+    pub temperature_offset60: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thermal_derating: Option<ConditionDto>,
+    pub thermal_derating: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thermal_shutdown: Option<ConditionDto>,
+    pub thermal_shutdown: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub voltage_decivolt: Option<ObservedValueDto<BankReading>>,
+    pub voltage_decivolt: Option<ObservedValueDto<&'a BankReading>>,
 }
 
-impl SourceDiagnosticsDto {
-    fn from_view(v: &SourceDiagnosticsView) -> Option<Self> {
+impl<'a> SourceDiagnosticsDto<'a> {
+    fn from_view(v: &'a SourceDiagnosticsView) -> Option<Self> {
         if !Self::is_present(v) {
             return None;
         }
@@ -428,19 +428,11 @@ const SCENE_KEYS: [&str; 16] = [
     "scene_8", "scene_9", "scene_10", "scene_11", "scene_12", "scene_13", "scene_14", "scene_15",
 ];
 
-#[derive(Clone, Debug)]
-pub struct ScenesAttributesDto {
-    pub levels: [Option<ObservedValueDto<u8>>; 16],
-}
+pub struct ScenesAttributesDto<'a>(&'a ScenesAttributesView);
 
-impl ScenesAttributesDto {
-    fn from_view(v: &ScenesAttributesView) -> Option<Self> {
-        if !Self::is_present(v) {
-            return None;
-        }
-        Some(Self {
-            levels: core::array::from_fn(|idx| observed_opt(&v.levels[idx])),
-        })
+impl<'a> ScenesAttributesDto<'a> {
+    fn from_view(v: &'a ScenesAttributesView) -> Option<Self> {
+        Self::is_present(v).then_some(Self(v))
     }
 
     fn is_present(v: &ScenesAttributesView) -> bool {
@@ -448,12 +440,12 @@ impl ScenesAttributesDto {
     }
 }
 
-impl Serialize for ScenesAttributesDto {
+impl Serialize for ScenesAttributesDto<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
         for idx in SCENE_LEX_ORDER {
-            if let Some(slot) = &self.levels[idx] {
-                map.serialize_entry(SCENE_KEYS[idx], slot)?;
+            if let Some(slot) = observed_opt(&self.0.levels[idx]) {
+                map.serialize_entry(SCENE_KEYS[idx], &slot)?;
             }
         }
         map.end()
