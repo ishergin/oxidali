@@ -33,6 +33,7 @@ Feature: Rules and the controller's own records: log lines and named counters
     Then the response status should be 202
     And the last operation eventually succeeds
     And the WebSocket client should receive a "rules" log line reading "night: lights out"
+    And the diagnostics websocket counter "logs_lines_total" should be at least 256
 
   @id:RULE-068
   Scenario: Named counters count per name, and a new document keeps the counts of the names it keeps

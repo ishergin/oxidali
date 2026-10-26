@@ -577,7 +577,7 @@ async fn then_no_batch_with_level(world: &mut DaliWorld, level: String) {
     );
 }
 
-// WS-011 WS-030 WS-040
+// WS-011 WS-030 WS-040 RULE-091
 #[then(regex = r#"^the diagnostics websocket counter "([^"]+)" should be at least (\d+)$"#)]
 async fn then_counter_at_least(world: &mut DaliWorld, name: String, minimum: u64) {
     let value = wait_for_counter(world, &name, |v| v >= minimum);
