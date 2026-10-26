@@ -5,9 +5,9 @@ use dali2rust_bsp::log_ring::LOG_RING_LINES;
 use dali2rust_platform::dali::wall_clock_millis;
 use dali2rust_platform::logs::LOG_TEXT_BYTES;
 use dali2rust_test_support::remains_false_for;
-use dali2rust_test_support::ws_client::{WsTestClient, FRAME_TIMEOUT};
 use serde_json::Value;
 
+use crate::ws_client::{WsTestClient, FRAME_TIMEOUT};
 use crate::DaliWorld;
 
 const V1_CHANNELS: &[&str] = &[

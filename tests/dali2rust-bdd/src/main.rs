@@ -17,11 +17,11 @@ use dali2rust_adapters::{
 use dali2rust_bus::BusConfig;
 use dali2rust_platform::net::NetworkLink;
 use dali2rust_platform::slice_store::SliceStore;
-use dali2rust_test_support::ws_client::WsTestClient;
 use dali2rust_test_support::{wait_for_tcp_ready, MockNetworkLink};
 use dali2rust_adapters::http::host::HostServer;
 
 pub mod steps;
+pub mod ws_client;
 
 pub const WEB_FIXTURE_INDEX_HTML: &[u8] = include_bytes!("../fixtures/web/index.html.gz");
 pub const WEB_FIXTURE_APP_JS: &[u8] = include_bytes!("../fixtures/web/app.js.gz");
@@ -60,7 +60,7 @@ pub struct DaliWorld {
     pub firmware_image_url: Option<String>,
     pub remembered_pair: Option<(u64, u64)>,
     pub background_handle: Option<thread::JoinHandle<Option<(TestResponse, Duration)>>>,
-    pub ws_clients: Vec<WsTestClient>,
+    pub ws_clients: Vec<ws_client::WsTestClient>,
     pub kept_body: Vec<u8>,
     pub peer: Option<dali2rust_test_support::FakePeerController>,
     last_request_elapsed: Option<Duration>,

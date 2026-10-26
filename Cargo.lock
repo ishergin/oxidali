@@ -685,6 +685,7 @@ dependencies = [
  "serde_json",
  "tiny_http",
  "tokio",
+ "tungstenite",
 ]
 
 [[package]]
@@ -958,7 +959,6 @@ dependencies = [
  "dali2rust-contracts",
  "dali2rust-platform",
  "log",
- "serde_json",
  "tungstenite",
 ]
 
