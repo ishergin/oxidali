@@ -27,6 +27,8 @@ WIRE_BYTE0_IS_LSB = False
 
 RETAINED_WINDOW_S = 0.7
 
+MONITOR_STAMP = re.compile(r"^\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+")
+
 SNIFFER_RESEND = "sniffer_resend"
 
 SPECIAL = {
@@ -108,8 +110,12 @@ def decode_forward16(b):
     return "%s (%s)" % (name, tgt)
 
 
+def monitor_payload(payload):
+    return MONITOR_STAMP.sub("", payload.strip())
+
+
 def parse_monitor_line(ts, payload):
-    payload = payload.strip()
+    payload = monitor_payload(payload)
     if payload.startswith(">>"):
         direction = "tx"
     elif payload.startswith("<<"):

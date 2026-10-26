@@ -1,14 +1,24 @@
 import collections
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
 
-from hil import write_log
+from hil import serialmon, write_log
+from hil.config import PeerUnconfigured
 from hil.lamp_guard import LampGuard, LampNotAllowed
-from hil.sniffer import ssh_argv
+from hil.sniffer import monitor_payload, ssh_argv
 
 WS_PORT = 8080
+LUNATONE_REQUEST = "(from lunatone)"
+OUTCOME_MARK = "- "
+GATEWAY_REFUSALS = frozenset({
+    "transmission error", "no response from gateway",
+    "no transmission, internal gateway error", "no power on bus", "transmission cancelled",
+    "gateway overheated", "unknown response status", "gateway unavailable",
+})
+PEER_SNIFF = re.compile(r"DALI sniff: foreign forward(16|24)=0x([0-9a-f]+)")
 TEST_RULE_PREFIX = "hil-"
 COMMAND_BIT = 0x01
 POWER_NOTIFICATION = 0xFE
@@ -51,14 +61,24 @@ def frame_hex(frame):
     return "".join("%02x" % b for b in frame["bytes"])
 
 
+def _request_refusal(body):
+    outcome = body.partition(LUNATONE_REQUEST)[2].strip()
+    text = outcome[len(OUTCOME_MARK):].strip() if outcome.startswith(OUTCOME_MARK) else ""
+    return text if text in GATEWAY_REFUSALS else None
+
+
 def frames_on_wire(lines, frames):
     wanted = collections.Counter(frame_hex(f) for f in frames)
-    requested = any(">>" in line and "(from lunatone)" in line for line in lines)
+    requested = any(">>" in line and LUNATONE_REQUEST in line for line in lines)
     seen, errors, pending = 0, [], []
     for line in lines:
-        body = line.split("bus_monitor", 1)[-1].strip()
-        if body.startswith(">>") and "(from lunatone)" in body:
-            pending.append(body[2:].split()[0] if body[2:].split() else "")
+        body = monitor_payload(line.split("bus_monitor", 1)[-1])
+        if body.startswith(">>") and LUNATONE_REQUEST in body:
+            refusal = _request_refusal(body)
+            if refusal:
+                errors.append(refusal)
+            else:
+                pending.append(body[2:].split()[0] if body[2:].split() else "")
             continue
         if not body.startswith("<<"):
             continue
@@ -77,6 +97,37 @@ def frames_on_wire(lines, frames):
             wanted[token] -= 1
             seen += 1
     return seen, errors
+
+
+def sniffed(text, frames):
+    wanted = collections.Counter((f["bits"], frame_hex(f)) for f in frames)
+    for bits, token in PEER_SNIFF.findall(text):
+        key = (int(bits), token)
+        if wanted[key] > 0:
+            wanted[key] -= 1
+    return not +wanted
+
+
+class PeerLog:
+    def __init__(self, path):
+        self.path = path
+        self.offset = path.stat().st_size if path is not None and path.exists() else None
+
+    def since(self):
+        if self.offset is None:
+            return ""
+        with open(self.path, "rb") as fh:
+            fh.seek(self.offset)
+            return fh.read().decode(errors="replace")
+
+
+def _peer_log_path(cfg):
+    if not cfg.has_peer:
+        return None
+    try:
+        return serialmon.log_path(cfg.peer())
+    except PeerUnconfigured:
+        return None
 
 
 def event_source24(raw):
@@ -139,6 +190,7 @@ class ForeignMaster:
     MONITOR_ARM_S = 1.5
     CLIENT_TIMEOUT_S = 30
     QUIESCE_TIMEOUT_S = 4.0
+    POLL_S = 0.15
 
     def __init__(self, cfg, api=None):
         self.cfg = cfg
@@ -219,6 +271,25 @@ class ForeignMaster:
         lines = out.splitlines()
         return frames_on_wire(lines, frames) if lines else None
 
+    def _delivered(self, monitor, before, peer, frames, width):
+        verdict = self._monitor_verdict(monitor, frames)
+        if verdict is None:
+            return before is None or self._witness(before, width) >= 1, []
+        seen, errors = verdict
+        if seen >= len(frames):
+            return True, errors
+        return not errors and self._peer_witnessed(peer, frames), errors
+
+    def _peer_witnessed(self, peer, frames):
+        if peer.offset is None:
+            return False
+        deadline = time.monotonic() + self.WITNESS_TIMEOUT_S
+        while not sniffed(peer.since(), frames):
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(self.POLL_S)
+        return True
+
     def _send_once(self, frames):
         replies = self._run_client(frames)
         for reply in replies:
@@ -279,6 +350,7 @@ class ForeignMaster:
         gateway_errors = []
         for attempt in range(self.MAX_SENDS):
             before = self._wait_quiet(self.QUIESCE_TIMEOUT_S)
+            peer = PeerLog(_peer_log_path(self.cfg))
             monitor = self._arm_monitor()
             try:
                 replies = self._send_once(frames)
@@ -286,24 +358,20 @@ class ForeignMaster:
                 if monitor is not None:
                     _stop_monitor(monitor)
                 raise
-            verdict = self._monitor_verdict(monitor, frames)
-            if verdict is not None:
-                seen, gateway_errors = verdict
-                if seen >= expected:
-                    return replies
-            elif before is None:
-                return replies
-            elif self._witness(before, width) >= 1:
+            delivered, gateway_errors = self._delivered(monitor, before, peer, frames, width)
+            if delivered:
                 return replies
             if attempt + 1 >= self.MAX_SENDS:
                 raise ForeignMasterSilent(
                     "wb-mqtt-dali accepted %d frame(s) over WS and they did not "
-                    "all reach the wire within %.1fs, over %d attempts%s. "
+                    "all reach the wire within %.1fs, over %d attempts%s; %s. "
                     "The bench foreign master is jammed, not the firmware — "
                     "`systemctl restart wb-mqtt-dali` on %s (STRATEGY.md §2)."
                     % (expected, self.WITNESS_TIMEOUT_S, self.MAX_SENDS,
                        "; the WB's own monitor said: %s" % "; ".join(gateway_errors[:3])
                        if gateway_errors else "",
+                       "the peer's sniffer did not log them" if peer.offset is not None
+                       else "no peer serial log could witness them",
                        self.cfg.wb_ssh))
             self.retries["foreign_master_silent"] += 1
             print("foreign master silent: not all of a %d-frame batch reached the wire, "
