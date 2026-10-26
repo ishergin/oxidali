@@ -284,35 +284,45 @@ mod tests {
         });
 
         wait_for_first_publish(&SLOT);
-        let (reads, accepted) = read_under_contention(&SLOT);
+        let (accepted, rejected) = read_under_contention(&SLOT);
         stop.store(true, Ordering::Relaxed);
         writer.join().unwrap();
-        assert!(accepted > 0, "the reader never observed a complete sample in {reads} reads");
+        assert!(
+            accepted >= ACCEPTED_SAMPLES,
+            "the reader observed only {accepted} complete samples"
+        );
+        assert!(rejected > 0, "no read ever met a write in flight, so nothing was contended");
     }
 
     fn read_under_contention(slot: &ObservationSlot) -> (u32, u32) {
         let started = Instant::now();
-        let (mut reads, mut accepted) = (0u32, 0u32);
-        while reads < CONTENDED_READS
-            || (accepted < ACCEPTED_SAMPLES && started.elapsed() < READ_DEADLINE)
+        let (mut accepted, mut rejected) = (0u32, 0u32);
+        while accepted + rejected < CONTENDED_READS
+            || ((accepted < ACCEPTED_SAMPLES || rejected == 0)
+                && started.elapsed() < READ_DEADLINE)
         {
-            reads += 1;
-            let Some(sample) = read_observation(slot, c"httpd", 0) else {
-                continue;
-            };
-            assert_eq!(
-                sample.instance,
-                sample.free.wrapping_mul(7),
-                "instance came from a different write than free"
-            );
-            assert_eq!(
-                0u32.wrapping_sub(sample.age_ms),
-                sample.free.wrapping_add(1),
-                "the timestamp came from a different write than free"
-            );
-            accepted += 1;
+            match read_observation(slot, c"httpd", 0) {
+                Some(sample) => {
+                    assert_untorn(&sample);
+                    accepted += 1;
+                }
+                None => rejected += 1,
+            }
         }
-        (reads, accepted)
+        (accepted, rejected)
+    }
+
+    fn assert_untorn(sample: &TaskObservation) {
+        assert_eq!(
+            sample.instance,
+            sample.free.wrapping_mul(7),
+            "instance came from a different write than free"
+        );
+        assert_eq!(
+            0u32.wrapping_sub(sample.age_ms),
+            sample.free.wrapping_add(1),
+            "the timestamp came from a different write than free"
+        );
     }
 
     #[test]
