@@ -21,7 +21,7 @@ def test_foreign_dapc_projects_with_sniffer_source(api, foreign,
     short = lamps.by_label[label]
     with sniffer.window() as win:
         foreign.dapc(short, LEVEL_A)
-        win.expect_monitor(_dapc_on_wire(short, LEVEL_A), direction="tx")
+        win.expect_monitor(_dapc_on_wire(short, LEVEL_A), direction="tx", ours=True)
     last = wait_state(short, lambda s: s.get("level") == LEVEL_A)
     test_artifacts.attach_json("state", last)
     assert last.get("level") == LEVEL_A, last
@@ -168,7 +168,7 @@ def test_foreign_dapc_keeps_runtime_status(api, foreign, fanout_supported,
 
     with sniffer.window() as win:
         foreign.dapc(short, LEVEL_A)
-        win.expect_monitor(_dapc_on_wire(short, LEVEL_A), direction="tx")
+        win.expect_monitor(_dapc_on_wire(short, LEVEL_A), direction="tx", ours=True)
     after = wait_state(short, lambda s: s.get("level") == LEVEL_A)
     test_artifacts.attach_json("after", after)
     assert after.get("level") == LEVEL_A, after

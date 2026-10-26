@@ -136,6 +136,14 @@ def parse_monitor_line(ts, payload):
             "lunatone": "(from lunatone)" in text}
 
 
+def monitor_line_matches(entry, contains, direction=None, ours=False):
+    if direction and entry["direction"] != direction:
+        return False
+    if ours:
+        return entry["lunatone"] and entry["text"].split()[:1] == [contains]
+    return contains in entry["text"]
+
+
 def parse_line(line):
     parts = line.strip().split(None, 2)
     if len(parts) == 3:
@@ -353,14 +361,12 @@ class Window:
         return [f for f in self._entries() if f.get("kind") == "monitor"]
 
     def expect_monitor(self, contains, direction=None, timeout_s=10.0,
-                       resend=None):
+                       resend=None, ours=False):
         deadline = time.monotonic() + timeout_s
         resend_at = time.monotonic() + timeout_s / 2.0 if resend else None
         while True:
             for f in self.monitor_lines():
-                if direction and f["direction"] != direction:
-                    continue
-                if contains in f["text"]:
+                if monitor_line_matches(f, contains, direction, ours):
                     return f
             now = time.monotonic()
             if resend_at and now >= resend_at:

@@ -1,5 +1,7 @@
 import dataclasses
+import json
 import os
+import sys
 import types
 
 import pytest
@@ -7,7 +9,8 @@ import pytest
 from hil import foreign
 from hil.config import load as load_config
 from hil.foreign import (PEER_LOG_STALE_S, ForeignMaster, ForeignMasterSilent, PeerLog,
-                         frame_hex, frames_on_wire, monitor_verdict, peer_note, sniffed)
+                         frame_hex, frames_on_wire, interleaving, monitor_verdict, peer_note,
+                         sniffed)
 
 TOPIC = "/wb-dali/wb-dali_19_bus_1/bus_monitor"
 DTR0_114 = {"bits": 16, "bytes": [0xA3, 0x72]}
@@ -195,3 +198,73 @@ def test_without_a_monitor_the_controller_counter_decides(monkeypatch, tmp_path)
     master, sends = _master(monkeypatch, tmp_path, None, peer_sees=False)
     master.dapc(1, 0x4D)
     assert len(sends) == 1 and not master.retries
+
+
+def _batches(monkeypatch):
+    master = ForeignMaster(dataclasses.replace(load_config(), lamp_shorts="1",
+                                               lamps_read_only=False))
+    batches = []
+    monkeypatch.setattr(master, "send_frames", lambda frames: batches.append(
+        [(f["addr"], f["data"]) for f in frames]) or [])
+    return master, batches
+
+
+def test_a_dt8_command_goes_out_in_one_batch_with_its_dtrs_and_its_enable(monkeypatch):
+    master, batches = _batches(monkeypatch)
+    master.set_cct(1, 2700)
+    assert batches == [[(0xA3, 0x72), (0xC3, 0x01), (0xC1, 8), (0x03, 0xE7)],
+                       [(0xC1, 8), (0x03, 0xE2)]]
+    batches.clear()
+    master.set_rgb(1, 10, 20, 30)
+    assert [batch[-2:] for batch in batches] == [[(0xC1, 8), (0x03, op)]
+                                                 for op in (0xED, 0xEB, 0xEC, 0xE2)]
+    assert batches[1][:3] == [(0xA3, 10), (0xC3, 20), (0xC5, 30)]
+
+
+STAMP = TOPIC + " 09:09:20.%03d "
+
+
+def test_another_forward_frame_inside_a_unit_breaks_it():
+    lines = [STAMP % 1 + ">> a372 DTR0(114) (from lunatone)",
+             STAMP % 2 + ">> 0390 QueryStatus(A1) - 00 0",
+             STAMP % 3 + "<< fffe3d FF24.QueryApplicationControlEnabled (fc: 1)",
+             STAMP % 4 + "<< 00ff BF8 (fc: 2)",
+             STAMP % 5 + ">> c108 EnableDeviceType(8) (from lunatone)",
+             STAMP % 6 + "<< 0b90 QueryStatus(A5) (fc: 3)"]
+    assert interleaving(lines) == ["interleaved by 0390"]
+    assert interleaving(lines[:1] + lines[2:]) == []
+    assert monitor_verdict(lines, [DTR0_114, {"bits": 16, "bytes": [0xC1, 8]}])[1] == [
+        "interleaved by 0390"]
+
+
+class _ScriptedSocket:
+    def __init__(self, incoming):
+        self.incoming, self.consumed, self.sent_after = list(incoming), 0, []
+
+    async def recv(self):
+        self.consumed += 1
+        return json.dumps(self.incoming.pop(0))
+
+    async def send(self, text):
+        self.sent_after.append(self.consumed)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def test_the_remote_client_sends_a_frame_only_after_the_previous_one_is_settled(monkeypatch):
+    monitor = {"type": "daliMonitor", "data": {"bits": 24, "data": [255, 254, 61]}}
+    socket = _ScriptedSocket([{"type": "info"}, monitor, {"type": "daliFrame"}, monitor,
+                              {"type": "daliFrame"}, {"type": "daliAnswer"}])
+    monkeypatch.setitem(sys.modules, "websockets",
+                        types.SimpleNamespace(connect=lambda url: socket))
+    frames = [{"bits": 16, "bytes": [0xC1, 8]},
+              {"bits": 16, "bytes": [0x03, 0x90], "wait_answer": True}]
+    monkeypatch.setattr(sys, "argv", ["remote", json.dumps(frames)])
+    exec(compile(foreign._REMOTE_CLIENT % (foreign.WS_PORT, 0), "remote", "exec"),
+         {"__name__": "__main__"})
+    assert socket.sent_after == [1, 3]
+    assert socket.incoming == []

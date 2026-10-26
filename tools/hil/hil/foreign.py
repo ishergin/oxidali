@@ -20,6 +20,15 @@ GATEWAY_REFUSALS = frozenset({
 })
 PEER_SNIFF = re.compile(r"DALI sniff: foreign forward(16|24)=0x([0-9a-f]+)")
 PEER_LOG_STALE_S = 30
+FORWARD16_TOKEN = re.compile(r"^[0-9a-f]{4}$")
+BACKWARD_MARK = "BF8"
+DT8 = 8
+DT8_SET_TEMPORARY_TC = 0xE7
+DT8_ACTIVATE = 0xE2
+DT8_SET_TEMPORARY_RGB = 0xEB
+DT8_SET_TEMPORARY_WAF = 0xEC
+DT8_SET_TEMPORARY_RGBWAF_CONTROL = 0xED
+RGBWAF_CONTROL_CHANNELS = 0x80
 TEST_RULE_PREFIX = "hil-"
 COMMAND_BIT = 0x01
 POWER_NOTIFICATION = 0xFE
@@ -32,10 +41,22 @@ GROUP_SCHEME_TOP = 3
 INSTANCE_TRIGGERS = frozenset({"input_event", "input_occupancy", "input_light_cross",
                                "input_position_change"})
 POWER_CYCLED = "input_device_power_cycled"
+ENABLE_DEVICE_TYPE = 0xC1
 
 _REMOTE_CLIENT = r"""
-import asyncio, json, sys
+import asyncio, json, sys, time
 import websockets
+
+async def settle(ws, f):
+    owed = {"daliFrame": 2 if f.get("send_twice") else 1,
+            "daliAnswer": 1 if f.get("wait_answer") else 0}
+    deadline = time.monotonic() + 8
+    while any(owed.values()):
+        left = max(deadline - time.monotonic(), 0.01)
+        msg = json.loads(await asyncio.wait_for(ws.recv(), left))
+        print(json.dumps(msg))
+        if owed.get(msg.get("type"), 0) > 0:
+            owed[msg["type"]] -= 1
 
 async def main():
     frames = json.loads(sys.argv[1])
@@ -52,7 +73,7 @@ async def main():
                          "priority": 0,
                          "waitForAnswer": bool(f.get("wait_answer"))}}}
             await ws.send(json.dumps(msg))
-            print(json.dumps(json.loads(await asyncio.wait_for(ws.recv(), 8))))
+            await settle(ws, f)
 
 asyncio.run(main())
 """
@@ -98,7 +119,26 @@ def monitor_verdict(lines, frames):
         elif not requested and wanted[token] > 0:
             wanted[token] -= 1
             seen += 1
-    return seen, errors, len(pending)
+    return seen, errors + interleaving(lines), len(pending)
+
+
+def _forward16_of_another(body):
+    text = body[2:].strip()
+    token = text.split()[0] if text.split() else ""
+    if not FORWARD16_TOKEN.match(token) or BACKWARD_MARK in text or LUNATONE_REQUEST in text:
+        return None
+    return token
+
+
+def interleaving(lines):
+    payloads = [line.split("bus_monitor", 1)[-1] for line in lines]
+    bodies = [monitor_payload(p) for p in payloads if monitor_stamped(p)]
+    ours = [i for i, body in enumerate(bodies)
+            if body.startswith(">>") and LUNATONE_REQUEST in body]
+    if len(ours) < 2:
+        return []
+    between = (_forward16_of_another(body) for body in bodies[ours[0] + 1:ours[-1]])
+    return ["interleaved by %s" % token for token in between if token]
 
 
 def frames_on_wire(lines, frames):
@@ -459,43 +499,40 @@ class ForeignMaster:
 
     def set_cct(self, short, kelvin):
         mirek = (1_000_000 + kelvin // 2) // kelvin
-        return self.send_frames([
-            {"addr": 0xA3, "data": mirek & 0xFF},
-            {"addr": 0xC3, "data": (mirek >> 8) & 0xFF},
-            {"addr": 0xC1, "data": 8},
-            {"addr": (short << 1) | 1, "data": 0xE7},
-            {"addr": 0xC1, "data": 8},
-            {"addr": (short << 1) | 1, "data": 0xE2},
+        target = (short << 1) | 1
+        return self.send_units([
+            [_dtr(0, mirek & 0xFF), _dtr(1, (mirek >> 8) & 0xFF), _ENABLE_DT8,
+             {"addr": target, "data": DT8_SET_TEMPORARY_TC}],
+            [_ENABLE_DT8, {"addr": target, "data": DT8_ACTIVATE}],
         ])
 
-    def send_frames_one_at_a_time(self, frames):
-        self._check(self._normalize(frames))
+    def send_units(self, units):
+        self._check(self._normalize([frame for unit in units for frame in unit]))
         out = []
-        for frame in frames:
-            echo = self.send_frames([frame])
+        for unit in units:
+            echo = self.send_frames(unit)
             if isinstance(echo, list):
                 out.extend(echo)
         return out
 
     def set_rgb(self, short, r, g, b):
-        ind = (short << 1) | 1
-        return self.send_frames_one_at_a_time([
-            {"addr": 0xA3, "data": 0x80},
-            {"addr": 0xC1, "data": 8},
-            {"addr": ind, "data": 0xED},
-            {"addr": 0xA3, "data": r & 0xFF},
-            {"addr": 0xC3, "data": g & 0xFF},
-            {"addr": 0xC5, "data": b & 0xFF},
-            {"addr": 0xC1, "data": 8},
-            {"addr": ind, "data": 0xEB},
-            {"addr": 0xA3, "data": 0},
-            {"addr": 0xC3, "data": 0},
-            {"addr": 0xC5, "data": 0},
-            {"addr": 0xC1, "data": 8},
-            {"addr": ind, "data": 0xEC},
-            {"addr": 0xC1, "data": 8},
-            {"addr": ind, "data": 0xE2},
+        target = (short << 1) | 1
+        return self.send_units([
+            [_dtr(0, RGBWAF_CONTROL_CHANNELS), _ENABLE_DT8,
+             {"addr": target, "data": DT8_SET_TEMPORARY_RGBWAF_CONTROL}],
+            [_dtr(0, r & 0xFF), _dtr(1, g & 0xFF), _dtr(2, b & 0xFF), _ENABLE_DT8,
+             {"addr": target, "data": DT8_SET_TEMPORARY_RGB}],
+            [_dtr(0, 0), _dtr(1, 0), _dtr(2, 0), _ENABLE_DT8,
+             {"addr": target, "data": DT8_SET_TEMPORARY_WAF}],
+            [_ENABLE_DT8, {"addr": target, "data": DT8_ACTIVATE}],
         ])
+
+DTR_ADDRESSES = (0xA3, 0xC3, 0xC5)
+_ENABLE_DT8 = {"addr": ENABLE_DEVICE_TYPE, "data": DT8}
+
+
+def _dtr(index, value):
+    return {"addr": DTR_ADDRESSES[index], "data": value}
 
 
 def _stop_monitor(monitor):
