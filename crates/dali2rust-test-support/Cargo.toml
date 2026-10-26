@@ -13,3 +13,5 @@ dali2rust-bus = { path = "../dali2rust-bus" }
 dali2rust-contracts = { path = "../dali2rust-contracts" }
 dali2rust-platform = { path = "../dali2rust-platform" }
 log = "0.4"
+serde_json = "1"
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }

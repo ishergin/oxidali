@@ -2,11 +2,14 @@ use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use tungstenite::handshake::client::Request;
 use tungstenite::{client::IntoClientRequest, Message, WebSocket};
 
 pub const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
+
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct WsTestClient {
     socket: WebSocket<TcpStream>,
@@ -37,22 +40,8 @@ impl WsTestClient {
     }
 
     fn connect_as(port: u16, origin: Option<&str>) -> Self {
-        let stream = TcpStream::connect(("127.0.0.1", port)).expect("ws tcp connect");
-        stream
-            .set_read_timeout(Some(READ_TIMEOUT))
-            .expect("ws read timeout");
-        let mut request = format!("ws://127.0.0.1:{port}/api/v1/ws")
-            .into_client_request()
-            .expect("ws request");
-        if let Some(origin) = origin {
-            request
-                .headers_mut()
-                .insert("Origin", origin.parse().expect("origin header"));
-        }
-        let (socket, _response) =
-            tungstenite::client::client(request, stream).expect("ws handshake");
         Self {
-            socket,
+            socket: handshake(port, origin),
             pending: Vec::new(),
             reading: true,
             closed: false,
@@ -239,6 +228,32 @@ impl WsTestClient {
     }
 }
 
+fn handshake(port: u16, origin: Option<&str>) -> WebSocket<TcpStream> {
+    let stream = TcpStream::connect(("127.0.0.1", port)).expect("ws tcp connect");
+    stream
+        .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+        .expect("ws handshake timeout");
+    let (socket, _response) = tungstenite::client::client(upgrade_request(port, origin), stream)
+        .expect("ws handshake");
+    socket
+        .get_ref()
+        .set_read_timeout(Some(READ_TIMEOUT))
+        .expect("ws read timeout");
+    socket
+}
+
+fn upgrade_request(port: u16, origin: Option<&str>) -> Request {
+    let mut request = format!("ws://127.0.0.1:{port}/api/v1/ws")
+        .into_client_request()
+        .expect("ws request");
+    if let Some(origin) = origin {
+        request
+            .headers_mut()
+            .insert("Origin", origin.parse().expect("origin header"));
+    }
+    request
+}
+
 fn is_idle_timeout(err: &tungstenite::Error) -> bool {
     matches!(
         err,
@@ -255,4 +270,57 @@ fn is_idle_timeout(err: &tungstenite::Error) -> bool {
 fn subscription_request(op: &str, channels: &str) -> String {
     let list: Vec<&str> = channels.split(',').map(str::trim).collect();
     serde_json::json!({ "op": op, "channels": list }).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::TcpListener;
+    use std::thread::{self, JoinHandle};
+
+    use tungstenite::handshake::server::{Callback, ErrorResponse, Request, Response};
+
+    use super::*;
+
+    const SLOW_UPGRADE: Duration = Duration::from_millis(150);
+
+    struct AnswerAfter(Duration);
+
+    impl Callback for AnswerAfter {
+        fn on_request(
+            self,
+            _request: &Request,
+            response: Response,
+        ) -> Result<Response, ErrorResponse> {
+            // sleep-ok: the fake server answers the upgrade slower than READ_TIMEOUT
+            thread::sleep(self.0);
+            Ok(response)
+        }
+    }
+
+    fn serve_one_upgrade(delay: Duration) -> (u16, JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            tungstenite::accept_hdr(stream, AnswerAfter(delay)).expect("server handshake");
+        });
+        (port, server)
+    }
+
+    #[test]
+    fn a_handshake_slower_than_the_frame_poll_still_connects() {
+        assert!(SLOW_UPGRADE > READ_TIMEOUT);
+        let (port, server) = serve_one_upgrade(SLOW_UPGRADE);
+        let _client = WsTestClient::connect(port);
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn frames_are_polled_under_the_frame_timeout_once_connected() {
+        let (port, server) = serve_one_upgrade(Duration::ZERO);
+        let client = WsTestClient::connect(port);
+        server.join().expect("server thread");
+        let polling = client.socket.get_ref().read_timeout().expect("read timeout");
+        assert_eq!(polling, Some(READ_TIMEOUT));
+    }
 }
