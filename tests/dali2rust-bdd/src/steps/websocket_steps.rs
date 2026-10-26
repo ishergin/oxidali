@@ -5,7 +5,7 @@ use dali2rust_bsp::log_ring::LOG_RING_LINES;
 use dali2rust_platform::dali::wall_clock_millis;
 use dali2rust_platform::logs::LOG_TEXT_BYTES;
 use dali2rust_test_support::remains_false_for;
-use dali2rust_test_support::ws_client::WsTestClient;
+use dali2rust_test_support::ws_client::{WsTestClient, FRAME_TIMEOUT};
 use serde_json::Value;
 
 use crate::DaliWorld;
@@ -27,7 +27,6 @@ const V1_CHANNELS: &[&str] = &[
 
 const COUNTER_SETTLE: Duration = Duration::from_secs(3);
 
-const LONG_WARNING_MARK: usize = 32;
 const SNIFFER_QUIET_WINDOW: Duration = Duration::from_millis(600);
 
 const LOG_QUIET_WINDOW: Duration = Duration::from_millis(900);
@@ -569,18 +568,12 @@ async fn then_log_line_reading(world: &mut DaliWorld, target: String, text: Stri
 }
 
 // RULE-091
-#[then("the WebSocket client should have been handed at least half a ring of the long warnings before it")]
-async fn then_history_preceded_the_line(world: &mut DaliWorld) {
-    let mark = "X".repeat(LONG_WARNING_MARK);
-    let handed = last_client(world)
-        .unconsumed()
-        .iter()
-        .flat_map(log_lines)
-        .filter(|line| line["text"].as_str().is_some_and(|text| text.contains(&mark)))
-        .count();
+#[then("waiting for it outlasted one frame timeout")]
+async fn then_wait_outlasted_frame_timeout(world: &mut DaliWorld) {
+    let waited = last_client(world).last_wait();
     assert!(
-        handed >= LOG_RING_LINES / 2,
-        "only {handed} long warnings preceded the rule's line"
+        waited > FRAME_TIMEOUT,
+        "the line came after {waited:?}, inside one frame timeout: the replay never held it back"
     );
 }
 

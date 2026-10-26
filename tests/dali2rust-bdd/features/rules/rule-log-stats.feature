@@ -22,18 +22,18 @@ Feature: Rules and the controller's own records: log lines and named counters
     And the WebSocket client should receive a "rules" log line reading "night: lights out"
 
   @id:RULE-091
-  Scenario: A rule's log line reaches a subscriber behind the whole history its subscription replays
+  Scenario: A rule's log line reaches a subscriber behind a history replay that outlasts one frame timeout
     Given the controller logged a full history of long warnings with nobody subscribed to "logs"
-    And an open WebSocket connection
-    And the WebSocket client is subscribed to "logs" at level "info"
     When I PUT JSON {"base_revision":0,"source":"rule \"dawn\" {\n  when http trigger\n  do log(\"curtains up\")\n}\n"} to "/api/v1/rules"
     Then the response status should be 202
     And the last operation eventually succeeds
+    Given an open WebSocket connection
+    And the WebSocket client is subscribed to "logs" at level "info"
     When I POST JSON {} to "/api/v1/rules/dawn/run"
     Then the response status should be 202
     And the last operation eventually succeeds
     And the WebSocket client should receive a "rules" log line reading "dawn: curtains up"
-    And the WebSocket client should have been handed at least half a ring of the long warnings before it
+    And waiting for it outlasted one frame timeout
 
   @id:RULE-068
   Scenario: Named counters count per name, and a new document keeps the counts of the names it keeps

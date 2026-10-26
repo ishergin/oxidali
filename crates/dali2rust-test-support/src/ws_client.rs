@@ -20,6 +20,7 @@ pub struct WsTestClient {
     closed: bool,
     close_code: Option<u16>,
     pongs: u32,
+    waited: Duration,
 }
 
 impl std::fmt::Debug for WsTestClient {
@@ -49,6 +50,7 @@ impl WsTestClient {
             closed: false,
             close_code: None,
             pongs: 0,
+            waited: Duration::ZERO,
         }
     }
 
@@ -159,12 +161,28 @@ impl WsTestClient {
         predicate: impl Fn(&Value) -> bool,
         progress: impl Fn(&Value) -> Option<u64>,
     ) -> Option<Value> {
-        self.require_observing("wait_for_while");
-        let cap = Instant::now() + PROGRESS_CAP;
-        let mut deadline = Instant::now() + FRAME_TIMEOUT;
+        self.require_observing("wait_for");
+        let started = Instant::now();
+        let found = self.wait_progressing(&predicate, &progress, started);
+        self.waited = started.elapsed();
+        found
+    }
+
+    pub fn last_wait(&self) -> Duration {
+        self.waited
+    }
+
+    fn wait_progressing(
+        &mut self,
+        predicate: &impl Fn(&Value) -> bool,
+        progress: &impl Fn(&Value) -> Option<u64>,
+        started: Instant,
+    ) -> Option<Value> {
+        let cap = started + PROGRESS_CAP;
+        let mut deadline = started + FRAME_TIMEOUT;
         let mut mark = None;
         loop {
-            if let Some(pos) = self.pending.iter().position(&predicate) {
+            if let Some(pos) = self.pending.iter().position(predicate) {
                 return Some(self.pending.remove(pos));
             }
             if self.closed || Instant::now() >= deadline.min(cap) {
@@ -172,16 +190,12 @@ impl WsTestClient {
             }
             let seen = self.pending.len();
             self.drain();
-            let newest = self.pending[seen..].iter().filter_map(&progress).max();
+            let newest = self.pending[seen..].iter().filter_map(progress).max();
             if newest > mark {
                 mark = newest;
                 deadline = Instant::now() + FRAME_TIMEOUT;
             }
         }
-    }
-
-    pub fn unconsumed(&self) -> &[Value] {
-        &self.pending
     }
 
     pub fn expect_silence(&mut self, window: Duration) -> bool {
@@ -326,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn frames_are_polled_under_the_frame_timeout_once_connected() {
+    fn frames_are_polled_under_the_read_timeout_once_connected() {
         let (port, server) = serve_one_upgrade(Duration::ZERO);
         let client = WsTestClient::connect(port);
         server.join().expect("server thread");
