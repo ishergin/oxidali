@@ -246,9 +246,18 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
     use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, MutexGuard};
 
     const WRITER_START_DEADLINE: Duration = Duration::from_secs(10);
+    const CONTENDED_READS: u32 = 200_000;
+    const ACCEPTED_SAMPLES: u32 = 100;
+    const READ_DEADLINE: Duration = Duration::from_secs(10);
+
+    static PROCESS_GLOBAL_TABLE_TESTS: Mutex<()> = Mutex::new(());
+
+    fn one_table_test_at_a_time() -> MutexGuard<'static, ()> {
+        PROCESS_GLOBAL_TABLE_TESTS.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     fn wait_for_first_publish(slot: &ObservationSlot) {
         let started = Instant::now();
@@ -275,25 +284,35 @@ mod tests {
         });
 
         wait_for_first_publish(&SLOT);
-        let mut accepted = 0u32;
-        for _ in 0..200_000 {
-            if let Some(sample) = read_observation(&SLOT, c"httpd", 0) {
-                assert_eq!(
-                    sample.instance,
-                    sample.free.wrapping_mul(7),
-                    "instance came from a different write than free"
-                );
-                assert_eq!(
-                    0u32.wrapping_sub(sample.age_ms),
-                    sample.free.wrapping_add(1),
-                    "the timestamp came from a different write than free"
-                );
-                accepted += 1;
-            }
-        }
+        let (reads, accepted) = read_under_contention(&SLOT);
         stop.store(true, Ordering::Relaxed);
         writer.join().unwrap();
-        assert!(accepted > 0, "the reader never observed a complete sample");
+        assert!(accepted > 0, "the reader never observed a complete sample in {reads} reads");
+    }
+
+    fn read_under_contention(slot: &ObservationSlot) -> (u32, u32) {
+        let started = Instant::now();
+        let (mut reads, mut accepted) = (0u32, 0u32);
+        while reads < CONTENDED_READS
+            || (accepted < ACCEPTED_SAMPLES && started.elapsed() < READ_DEADLINE)
+        {
+            reads += 1;
+            let Some(sample) = read_observation(slot, c"httpd", 0) else {
+                continue;
+            };
+            assert_eq!(
+                sample.instance,
+                sample.free.wrapping_mul(7),
+                "instance came from a different write than free"
+            );
+            assert_eq!(
+                0u32.wrapping_sub(sample.age_ms),
+                sample.free.wrapping_add(1),
+                "the timestamp came from a different write than free"
+            );
+            accepted += 1;
+        }
+        (reads, accepted)
     }
 
     #[test]
@@ -322,6 +341,7 @@ mod tests {
 
     #[test]
     fn a_refresh_replaces_kernel_handles_and_forgets_the_vanished() {
+        let _serial = one_table_test_at_a_time();
         let names: &[&'static CStr] = &[c"httpd", c"mqtt_task"];
         {
             let mut t = table();
@@ -344,6 +364,7 @@ mod tests {
 
     #[test]
     fn a_kernel_refresh_leaves_our_own_threads_alone() {
+        let _serial = one_table_test_at_a_time();
         {
             let mut t = table();
             t.clear();
