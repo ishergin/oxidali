@@ -28,3 +28,28 @@ Feature: Scene metadata PATCH
     When I PATCH JSON {} to "/api/v1/adapters/0/scenes/3"
     Then the response status should be 400
     And the JSON error should be "empty_patch"
+
+  @id:SCN-098
+  Scenario: A null name clears a scene's name
+    Given scene 3 on adapter 0 is named "Dinner"
+    When I PATCH JSON {"name":null} to "/api/v1/adapters/0/scenes/3"
+    Then the response status should be 200
+    And the JSON field "name" should equal ""
+    When I send a GET request to "/api/v1/adapters/0/scenes/3"
+    Then the JSON field "name" should equal ""
+    When I send a GET request to "/api/v1/adapters/0/scenes"
+    Then the JSON pointer "/scenes/3/scene_id" should be 3
+    And the JSON pointer "/scenes/3/name" should be ""
+
+  @id:SCN-099
+  Scenario: A cleared scene name survives a restart
+    Given in-memory slice persistence is enabled for the host stack
+    And scene 3 on adapter 0 is named "Dinner"
+    When I restart the host stack
+    And I send a GET request to "/api/v1/adapters/0/scenes/3"
+    Then the JSON field "name" should equal "Dinner"
+    When I PATCH JSON {"name":null} to "/api/v1/adapters/0/scenes/3"
+    Then the response status should be 200
+    When I restart the host stack
+    And I send a GET request to "/api/v1/adapters/0/scenes/3"
+    Then the JSON field "name" should equal ""
