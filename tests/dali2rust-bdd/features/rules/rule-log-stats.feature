@@ -3,14 +3,28 @@ Feature: Rules and the controller's own records: log lines and named counters
 
   `log("…")` writes to the controller log under the target `rules`, so the
   line reaches the log ring and the `logs` WebSocket channel as any firmware
-  line does, named after the rule that wrote it. `stat("name").count()`
-  counts per name in the rules block of `/api/v1/stats`; the counts live in
-  RAM, a name starts at 0 when a document brings it, and a new document keeps
-  the counts of the names it keeps.
+  line does, named after the rule that wrote it; a new subscriber is handed
+  the history the ring holds first, a batch at a time, and the rule's line
+  follows it. `stat("name").count()` counts per name in the rules block of
+  `/api/v1/stats`; the counts live in RAM, a name starts at 0 when a document
+  brings it, and a new document keeps the counts of the names it keeps.
 
   @id:RULE-067
   Scenario: A rule's log line reaches the logs channel under the rules target, named after its rule
     Given an open WebSocket connection
+    And the WebSocket client is subscribed to "logs" at level "info"
+    When I PUT JSON {"base_revision":0,"source":"rule \"night\" {\n  when http trigger\n  do log(\"lights out\")\n}\n"} to "/api/v1/rules"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I POST JSON {} to "/api/v1/rules/night/run"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the WebSocket client should receive a "rules" log line reading "night: lights out"
+
+  @id:RULE-091
+  Scenario: A rule's log line reaches a subscriber behind the whole history its subscription replays
+    Given the controller logged a full history of long warnings with nobody subscribed to "logs"
+    And an open WebSocket connection
     And the WebSocket client is subscribed to "logs" at level "info"
     When I PUT JSON {"base_revision":0,"source":"rule \"night\" {\n  when http trigger\n  do log(\"lights out\")\n}\n"} to "/api/v1/rules"
     Then the response status should be 202

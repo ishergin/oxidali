@@ -160,8 +160,16 @@ impl WsTestClient {
     }
 
     pub fn wait_for(&mut self, predicate: impl Fn(&Value) -> bool) -> Option<Value> {
+        self.wait_for_while(predicate, |_| false)
+    }
+
+    pub fn wait_for_while(
+        &mut self,
+        predicate: impl Fn(&Value) -> bool,
+        progress: impl Fn(&Value) -> bool,
+    ) -> Option<Value> {
         self.require_observing("wait_for");
-        let deadline = Instant::now() + FRAME_TIMEOUT;
+        let mut deadline = Instant::now() + FRAME_TIMEOUT;
         loop {
             if let Some(pos) = self.pending.iter().position(&predicate) {
                 return Some(self.pending.remove(pos));
@@ -169,7 +177,11 @@ impl WsTestClient {
             if self.closed || Instant::now() >= deadline {
                 return None;
             }
+            let seen = self.pending.len();
             self.drain();
+            if self.pending[seen..].iter().any(&progress) {
+                deadline = Instant::now() + FRAME_TIMEOUT;
+            }
         }
     }
 
