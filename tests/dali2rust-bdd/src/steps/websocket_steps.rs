@@ -7,7 +7,7 @@ use dali2rust_platform::logs::LOG_TEXT_BYTES;
 use dali2rust_test_support::remains_false_for;
 use serde_json::Value;
 
-use crate::ws_client::{WsTestClient, FRAME_TIMEOUT};
+use crate::ws_client::{WsTestClient, FRAME_TIMEOUT, READ_TIMEOUT};
 use crate::DaliWorld;
 
 const V1_CHANNELS: &[&str] = &[
@@ -572,7 +572,7 @@ async fn then_log_line_reading(world: &mut DaliWorld, target: String, text: Stri
 async fn then_wait_outlasted_frame_timeout(world: &mut DaliWorld) {
     let waited = last_client(world).last_wait();
     assert!(
-        waited > FRAME_TIMEOUT,
+        waited > FRAME_TIMEOUT + READ_TIMEOUT,
         "the line came after {waited:?}, inside one frame timeout: the replay never held it back"
     );
 }

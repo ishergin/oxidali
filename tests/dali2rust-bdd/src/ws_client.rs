@@ -1,13 +1,13 @@
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
 use dali2rust_test_support::ws_handshake;
+use serde_json::Value;
 use tungstenite::{Message, WebSocket};
 
 pub const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 
-const READ_TIMEOUT: Duration = Duration::from_millis(100);
+pub const READ_TIMEOUT: Duration = Duration::from_millis(100);
 
 const PROGRESS_CAP: Duration = Duration::from_secs(30);
 
@@ -186,14 +186,25 @@ impl WsTestClient {
             if self.closed || Instant::now() >= deadline.min(cap) {
                 return None;
             }
-            let seen = self.pending.len();
-            self.drain();
-            let newest = self.pending[seen..].iter().filter_map(progress).max();
-            if newest > mark {
-                mark = newest;
+            if self.drain_advanced(progress, &mut mark) {
                 deadline = Instant::now() + FRAME_TIMEOUT;
             }
         }
+    }
+
+    fn drain_advanced(
+        &mut self,
+        progress: &impl Fn(&Value) -> Option<u64>,
+        mark: &mut Option<u64>,
+    ) -> bool {
+        let seen = self.pending.len();
+        self.drain();
+        let newest = self.pending[seen..].iter().filter_map(progress).max();
+        let advanced = newest > *mark;
+        if advanced {
+            *mark = newest;
+        }
+        advanced
     }
 
     pub fn expect_silence(&mut self, window: Duration) -> bool {
