@@ -264,7 +264,33 @@ def test_the_remote_client_sends_a_frame_only_after_the_previous_one_is_settled(
     frames = [{"bits": 16, "bytes": [0xC1, 8]},
               {"bits": 16, "bytes": [0x03, 0x90], "wait_answer": True}]
     monkeypatch.setattr(sys, "argv", ["remote", json.dumps(frames)])
-    exec(compile(foreign._REMOTE_CLIENT % (foreign.WS_PORT, 0), "remote", "exec"),
-         {"__name__": "__main__"})
+    exec(compile(foreign.remote_client_script(0), "remote", "exec"), {"__name__": "__main__"})
     assert socket.sent_after == [1, 3]
     assert socket.incoming == []
+
+
+def test_the_remote_client_stops_waiting_once_the_emulator_refused_a_frame(monkeypatch):
+    refused = {"type": "daliFrame", "data": {"line": 0, "result": 6}}
+    socket = _ScriptedSocket([{"type": "info"}, refused, {"type": "daliFrame"}])
+    monkeypatch.setitem(sys.modules, "websockets",
+                        types.SimpleNamespace(connect=lambda url: socket))
+    frames = [{"bits": 16, "bytes": [0x03, 0x90], "wait_answer": True},
+              {"bits": 16, "bytes": [0x02, 0x4D]}]
+    monkeypatch.setattr(sys, "argv", ["remote", json.dumps(frames)])
+    exec(compile(foreign.remote_client_script(0), "remote", "exec"), {"__name__": "__main__"})
+    assert socket.sent_after == [1, 2]
+
+
+def test_a_split_batch_is_counted_apart_from_a_silent_one(monkeypatch, tmp_path):
+    master, sends = _master(monkeypatch, tmp_path, (0, ["interleaved by 0390"], 0),
+                            peer_sees=True)
+    with pytest.raises(ForeignMasterSilent, match="the bench bus is busy"):
+        master.dapc(1, 0x4D)
+    assert master.retries == {"foreign_unit_interleaved": ForeignMaster.MAX_SENDS - 1}
+
+
+def test_a_single_frame_is_never_reported_split():
+    lines = [STAMP % 1 + ">> a372 DTR0(114) (from lunatone)",
+             STAMP % 2 + ">> 0390 QueryStatus(A1) - 00 0",
+             STAMP % 3 + ">> a372 DTR0(114) (from lunatone)"]
+    assert monitor_verdict(lines, [DTR0_114])[1] == []

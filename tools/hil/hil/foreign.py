@@ -11,6 +11,9 @@ from hil.lamp_guard import LampGuard, LampNotAllowed
 from hil.sniffer import monitor_payload, monitor_stamped, ssh_argv
 
 WS_PORT = 8080
+FRAME_SETTLE_S = 8
+SSH_SLACK_S = 15
+INTERLEAVED = "interleaved by "
 LUNATONE_REQUEST = "(from lunatone)"
 OUTCOME_MARK = "- "
 GATEWAY_REFUSALS = frozenset({
@@ -28,7 +31,7 @@ DT8_ACTIVATE = 0xE2
 DT8_SET_TEMPORARY_RGB = 0xEB
 DT8_SET_TEMPORARY_WAF = 0xEC
 DT8_SET_TEMPORARY_RGBWAF_CONTROL = 0xED
-RGBWAF_CONTROL_CHANNELS = 0x80
+RGBWAF_CONTROL_NORMALISED = 0x80
 TEST_RULE_PREFIX = "hil-"
 COMMAND_BIT = 0x01
 POWER_NOTIFICATION = 0xFE
@@ -47,16 +50,24 @@ _REMOTE_CLIENT = r"""
 import asyncio, json, sys, time
 import websockets
 
+SETTLE_S = %d
+SENT = 0
+
 async def settle(ws, f):
     owed = {"daliFrame": 2 if f.get("send_twice") else 1,
             "daliAnswer": 1 if f.get("wait_answer") else 0}
-    deadline = time.monotonic() + 8
+    deadline = time.monotonic() + SETTLE_S
     while any(owed.values()):
-        left = max(deadline - time.monotonic(), 0.01)
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise asyncio.TimeoutError
         msg = json.loads(await asyncio.wait_for(ws.recv(), left))
         print(json.dumps(msg))
-        if owed.get(msg.get("type"), 0) > 0:
-            owed[msg["type"]] -= 1
+        kind = msg.get("type")
+        if kind == "daliFrame" and (msg.get("data") or {}).get("result", SENT) != SENT:
+            return
+        if owed.get(kind, 0) > 0:
+            owed[kind] -= 1
 
 async def main():
     frames = json.loads(sys.argv[1])
@@ -73,10 +84,17 @@ async def main():
                          "priority": 0,
                          "waitForAnswer": bool(f.get("wait_answer"))}}}
             await ws.send(json.dumps(msg))
-            await settle(ws, f)
+            try:
+                await settle(ws, f)
+            except asyncio.TimeoutError:
+                sys.exit("no result for frame %%s within %%d s" %% (f["bytes"], SETTLE_S))
 
 asyncio.run(main())
 """
+
+
+def remote_client_script(line):
+    return _REMOTE_CLIENT % (FRAME_SETTLE_S, WS_PORT, line)
 
 
 def frame_hex(frame):
@@ -119,7 +137,8 @@ def monitor_verdict(lines, frames):
         elif not requested and wanted[token] > 0:
             wanted[token] -= 1
             seen += 1
-    return seen, errors + interleaving(lines), len(pending)
+    split = interleaving(lines) if len(frames) > 1 else []
+    return seen, errors + split, len(pending)
 
 
 def _forward16_of_another(body):
@@ -138,7 +157,7 @@ def interleaving(lines):
     if len(ours) < 2:
         return []
     between = (_forward16_of_another(body) for body in bodies[ours[0] + 1:ours[-1]])
-    return ["interleaved by %s" % token for token in between if token]
+    return [INTERLEAVED + token for token in between if token]
 
 
 def frames_on_wire(lines, frames):
@@ -260,10 +279,10 @@ class ForeignMaster:
             cfg, segment=api.segment_shorts if api is not None else None)
 
     def _run_client(self, frames):
-        script = _REMOTE_CLIENT % (WS_PORT, self.line)
-        remote = "python3 -c %s %s" % (_shq(script), _shq(json.dumps(frames)))
-        proc = subprocess.run(ssh_argv(self.cfg, remote),
-                              capture_output=True, text=True, timeout=30)
+        remote = "python3 -c %s %s" % (_shq(remote_client_script(self.line)),
+                                       _shq(json.dumps(frames)))
+        proc = subprocess.run(ssh_argv(self.cfg, remote), capture_output=True, text=True,
+                              timeout=FRAME_SETTLE_S * max(len(frames), 1) + SSH_SLACK_S)
         if proc.returncode != 0:
             raise ForeignMasterError(
                 "lunatone ws client failed: %s" % proc.stderr.strip()[:300])
@@ -422,21 +441,35 @@ class ForeignMaster:
             delivered, gateway_errors = self._delivered(monitor, before, peer, frames, width)
             if delivered:
                 return replies
+            split = bool(gateway_errors) and all(e.startswith(INTERLEAVED)
+                                                 for e in gateway_errors)
             if attempt + 1 >= self.MAX_SENDS:
-                raise ForeignMasterSilent(
-                    "wb-mqtt-dali accepted %d frame(s) over WS and they did not "
-                    "all reach the wire within %.1fs, over %d attempts%s; %s. "
-                    "The bench foreign master is jammed, not the firmware — "
-                    "`systemctl restart wb-mqtt-dali` on %s (STRATEGY.md §2)."
-                    % (expected, self.WITNESS_TIMEOUT_S, self.MAX_SENDS,
-                       "; the WB's own monitor said: %s" % "; ".join(gateway_errors[:3])
-                       if gateway_errors else "",
-                       peer_note(peer),
-                       self.cfg.wb_ssh))
-            self.retries["foreign_master_silent"] += 1
-            print("foreign master silent: not all of a %d-frame batch reached the wire, "
-                  "re-sending (attempt %d/%d)"
-                  % (expected, attempt + 2, self.MAX_SENDS))
+                raise ForeignMasterSilent(self._undelivered(expected, gateway_errors, peer, split))
+            self._count_resend(expected, attempt, split)
+
+    def _undelivered(self, expected, gateway_errors, peer, split):
+        if split:
+            return ("another master's frames split the %d-frame batch on all %d attempts "
+                    "(%s): the bench bus is busy, not the firmware"
+                    % (expected, self.MAX_SENDS, "; ".join(gateway_errors[:3])))
+        return ("wb-mqtt-dali accepted %d frame(s) over WS and they did not "
+                "all reach the wire within %.1fs, over %d attempts%s; %s. "
+                "The bench foreign master is jammed, not the firmware — "
+                "`systemctl restart wb-mqtt-dali` on %s (STRATEGY.md §2)."
+                % (expected, self.WITNESS_TIMEOUT_S, self.MAX_SENDS,
+                   "; the WB's own monitor said: %s" % "; ".join(gateway_errors[:3])
+                   if gateway_errors else "",
+                   peer_note(peer), self.cfg.wb_ssh))
+
+    def _count_resend(self, expected, attempt, split):
+        if split:
+            self.retries["foreign_unit_interleaved"] += 1
+            print("foreign master: another master's frame split a %d-frame batch, "
+                  "re-sending (attempt %d/%d)" % (expected, attempt + 2, self.MAX_SENDS))
+            return
+        self.retries["foreign_master_silent"] += 1
+        print("foreign master silent: not all of a %d-frame batch reached the wire, "
+              "re-sending (attempt %d/%d)" % (expected, attempt + 2, self.MAX_SENDS))
 
     def dapc(self, short, level):
         return self.send_frames([{"addr": short << 1, "data": level}])
@@ -518,7 +551,7 @@ class ForeignMaster:
     def set_rgb(self, short, r, g, b):
         target = (short << 1) | 1
         return self.send_units([
-            [_dtr(0, RGBWAF_CONTROL_CHANNELS), _ENABLE_DT8,
+            [_dtr(0, RGBWAF_CONTROL_NORMALISED), _ENABLE_DT8,
              {"addr": target, "data": DT8_SET_TEMPORARY_RGBWAF_CONTROL}],
             [_dtr(0, r & 0xFF), _dtr(1, g & 0xFF), _dtr(2, b & 0xFF), _ENABLE_DT8,
              {"addr": target, "data": DT8_SET_TEMPORARY_RGB}],

@@ -18,6 +18,8 @@ witness_fallbacks        0
 mqtt_cct_first_command   1
 # Non-zero means wb-mqtt-dali jammed: check the delivered frames in the validity section, restart the service.
 foreign_master_silent    0
+# A multi-frame injection another master's frame split on the wire (the WB's own sweep), sent again.
+foreign_unit_interleaved -1
 # The first exchange after Part 103 commissioning, while the segment leaves INITIALISE and quiescent mode.
 input_post_commission_settle    1
 # A conditional PUT /rules whose answer was lost, settled by reading /rules back.
