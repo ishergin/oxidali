@@ -6,11 +6,24 @@ import sys
 
 HEAD = re.compile(r"^([0-9a-f]+) <(.+)>:$")
 INSN = re.compile(r"^\s*[0-9a-f]+:\s+(\S+)\s*(.*)$")
-ADDI_SP = re.compile(r"\baddi\s+sp,sp,(-?\d+)")
-CADDI_SP = re.compile(r"\bc\.addi16sp\s+sp,(-?\d+)")
-SUB_SP = re.compile(r"\bsub\s+sp,sp,(\w+)")
-LOAD_IMM = re.compile(r"\b(?:li|addi)\s+(\w+),(?:zero,)?(-?\d+)")
-LUI = re.compile(r"\blui\s+(\w+),(0x[0-9a-f]+|-?\d+)")
+IMMEDIATE = r"-?(?:0x[0-9a-f]+|\d+)"
+SP_IMMEDIATE = re.compile(rf"^sp,(?:sp,)?({IMMEDIATE})$")
+SP_REGISTER = re.compile(r"^sp,sp,(\w+)$")
+SP_IMMEDIATE_MNEMONICS = ("addi", "c.addi16sp", "c.addi")
+SP_REGISTER_MNEMONICS = ("add", "sub")
+LUI_MNEMONICS = ("lui", "c.lui")
+LI_MNEMONICS = ("li", "c.li")
+MOVE_MNEMONICS = ("mv", "c.mv")
+ADDI_MNEMONICS = ("addi", "addiw", "c.addi")
+CALL_MNEMONICS = ("jal", "jalr", "c.jal", "c.jalr")
+NO_DESTINATION = re.compile(
+    r"^(?:s[bhw]|fs[wd]|c\.f?sw(?:sp)?|(?:c\.)?b(?:eq|ne|lt|ge|le|gt)u?z?|(?:c\.)?jr?"
+    r"|ret|nop|fence\S*|ecall|ebreak|unimp|mret|wfi)$"
+)
+LUI_SHIFT = 12
+WORD_BITS = 32
+WORD_SIGN = 1 << (WORD_BITS - 1)
+WORD_MODULUS = 1 << WORD_BITS
 OUTLINED_PROLOGUE = re.compile(r"\bjalr\s+t0,.*#\s*([0-9a-f]+)\s+<OUTLINED_FUNCTION_\d+>")
 ANNOTATED_TARGET = re.compile(r"#\s*([0-9a-f]+)\s+<.+>")
 DIRECT_TARGET = re.compile(r"^(?:(\w+),)?([0-9a-f]+)\s+<.+>")
@@ -73,21 +86,67 @@ def note_edge(function, mnemonic, operands):
             function.tails.add(int(target.group(2), 16))
 
 
-def note_stack(function, line, regs):
-    lui = LUI.search(line)
-    if lui:
-        regs[lui.group(1)] = int(lui.group(2), 0) << 12
-    imm = LOAD_IMM.search(line)
-    if imm and "sp,sp" not in line:
-        base = regs.get(imm.group(1), 0) if "addi" in line else 0
-        regs[imm.group(1)] = base + int(imm.group(2))
-    for pattern in (ADDI_SP, CADDI_SP):
-        match = pattern.search(line)
-        if match and int(match.group(1)) < 0:
-            function.size -= int(match.group(1))
-    sub = SUB_SP.search(line)
-    if sub:
-        function.size += regs.get(sub.group(1), 0)
+def wrap_word(value):
+    return (value + WORD_SIGN) % WORD_MODULUS - WORD_SIGN
+
+
+def split_operands(operands):
+    return operands.split("#", 1)[0].strip().split(",")
+
+
+def known(regs, name):
+    return 0 if name == "zero" else regs.get(name)
+
+
+def added_value(regs, mnemonic, parts):
+    if mnemonic == "c.addi":
+        base, immediate = known(regs, parts[0]), parts[1]
+    else:
+        base, immediate = known(regs, parts[1]), parts[2]
+    return None if base is None else wrap_word(base + int(immediate, 0))
+
+
+def loaded_value(regs, mnemonic, parts):
+    if mnemonic in LUI_MNEMONICS:
+        return wrap_word(int(parts[1], 0) << LUI_SHIFT)
+    if mnemonic in LI_MNEMONICS:
+        return int(parts[1], 0)
+    if mnemonic in MOVE_MNEMONICS:
+        return known(regs, parts[1])
+    if mnemonic in ADDI_MNEMONICS:
+        return added_value(regs, mnemonic, parts)
+    return None
+
+
+def track_register(regs, mnemonic, operands):
+    parts = split_operands(operands)
+    value = loaded_value(regs, mnemonic, parts)
+    if value is not None:
+        regs[parts[0]] = value
+    elif mnemonic in CALL_MNEMONICS:
+        regs.clear()
+    elif not NO_DESTINATION.match(mnemonic):
+        regs.pop(parts[0], None)
+
+
+def register_growth(mnemonic, value):
+    return max(value if mnemonic == "sub" else -value, 0)
+
+
+def stack_growth(regs, mnemonic, operands):
+    operands = operands.split("#", 1)[0].strip()
+    immediate = SP_IMMEDIATE.match(operands)
+    if immediate and mnemonic in SP_IMMEDIATE_MNEMONICS:
+        return max(-int(immediate.group(1), 0), 0)
+    register = SP_REGISTER.match(operands)
+    if register and mnemonic in SP_REGISTER_MNEMONICS:
+        return register_growth(mnemonic, known(regs, register.group(1)) or 0)
+    return 0
+
+
+def note_stack(function, regs, mnemonic, operands):
+    function.size += stack_growth(regs, mnemonic, operands)
+    track_register(regs, mnemonic, operands)
 
 
 def parse(disassembly):
@@ -106,9 +165,9 @@ def parse(disassembly):
         outlined = OUTLINED_PROLOGUE.search(line)
         if outlined:
             current.prologues.add(int(outlined.group(1), 16))
-        note_stack(current, line, regs)
         insn = INSN.match(line)
         if insn:
+            note_stack(current, regs, insn.group(1), insn.group(2))
             note_edge(current, insn.group(1), insn.group(2))
     return functions
 
