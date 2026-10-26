@@ -175,7 +175,15 @@ pub fn next_signal(
     signals: &BusSubscriberRx,
     correlation_id: u64,
 ) -> Option<OperationWorkerSignalEvent> {
-    let deadline = Instant::now() + SIGNAL_DEADLINE;
+    next_signal_within(signals, correlation_id, SIGNAL_DEADLINE)
+}
+
+pub fn next_signal_within(
+    signals: &BusSubscriberRx,
+    correlation_id: u64,
+    window: Duration,
+) -> Option<OperationWorkerSignalEvent> {
+    let deadline = Instant::now() + window;
     loop {
         let remaining = deadline
             .checked_duration_since(Instant::now())

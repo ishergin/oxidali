@@ -10,7 +10,7 @@ use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
 use dali2rust_bus::{
     BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublisher, BusSubscriberRx,
-    PublishResult,
+    PublishResult, DEFAULT_EVENTS_INGRESS,
 };
 use dali2rust_contracts::msg::{
     AttributeGroupReadOutcome, BusEventPayload, DaliAttributeGroup, DaliReadAttributesCommand,
@@ -24,8 +24,8 @@ use dali2rust_test_support::{
     HeldEventsIngress,
 };
 use support::{
-    assert_a_lost_fact_fails_the_operation, next_signal, spawn_signal_bus, spawn_worker_on,
-    DemoBusOperation,
+    assert_a_lost_fact_fails_the_operation, next_signal, next_signal_within, spawn_signal_bus,
+    spawn_worker_on, DemoBusOperation,
 };
 
 const SHORT: u8 = 5;
@@ -40,6 +40,9 @@ const SWEEP_CORRELATION: u64 = 4_002;
 const SWEEP_EVENTS_INGRESS: usize = 4;
 const SWEEP_WORKER_INBOX: usize = 16;
 const SWEEP_TAP_INBOX: usize = 64;
+const SWEEP_STALL: Duration = Duration::from_secs(10);
+const SWEEP_CAP: Duration = Duration::from_secs(25);
+const PROGRESS_POLL: Duration = Duration::from_millis(100);
 
 fn read_frame() -> BusFrame {
     BusFrame::command(dali2rust_contracts::bus::command_envelope(
@@ -199,10 +202,10 @@ struct SweepRun {
     counters: Arc<DaliWorkerCounters>,
 }
 
-fn spawn_sweep_stack() -> SweepStack {
+fn spawn_sweep_stack(events_ingress: usize) -> SweepStack {
     let (host, publisher, (worker_commands, signals, reads)) = BusHost::spawn(
         BusConfig {
-            events_ingress: SWEEP_EVENTS_INGRESS,
+            events_ingress,
             ..BusConfig::default()
         },
         |reg| {
@@ -263,30 +266,91 @@ fn read_evidence(reads: &BusSubscriberRx) -> (usize, Option<AttributeGroupReadOu
     (chunks, None)
 }
 
+struct SweepWatch<'a> {
+    stack: &'a SweepStack,
+    frames: usize,
+    started: Instant,
+    stalls_at: Instant,
+}
+
+impl<'a> SweepWatch<'a> {
+    fn start(stack: &'a SweepStack) -> Self {
+        let started = Instant::now();
+        Self { stack, frames: frames_sent(stack), started, stalls_at: started + SWEEP_STALL }
+    }
+
+    fn still_moving(&mut self) -> bool {
+        let now = Instant::now();
+        let frames = frames_sent(self.stack);
+        if frames > self.frames {
+            self.frames = frames;
+            self.stalls_at = now + SWEEP_STALL;
+        }
+        now < self.stalls_at.min(self.started + SWEEP_CAP)
+    }
+
+    fn give_up(&self, what: &str) -> ! {
+        let counters = &self.stack.counters;
+        panic!(
+            "{what}: {} frames sent, {} publishes retried and {} refused after {:?} (a stall \
+             is {SWEEP_STALL:?} without a frame, the cap {SWEEP_CAP:?})",
+            self.frames,
+            counters.event_publish_retried.load(Ordering::Relaxed),
+            counters.event_publish_failed.load(Ordering::Relaxed),
+            self.started.elapsed()
+        )
+    }
+}
+
+fn frames_sent(stack: &SweepStack) -> usize {
+    stack.transport.lock().expect("sim").sent_frames().len()
+}
+
+fn while_the_sweep_moves<T>(
+    stack: &SweepStack,
+    what: &str,
+    mut poll: impl FnMut() -> Option<T>,
+) -> T {
+    let mut watch = SweepWatch::start(stack);
+    loop {
+        if let Some(found) = poll() {
+            return found;
+        }
+        if !watch.still_moving() {
+            watch.give_up(what);
+        }
+    }
+}
+
 fn release_after_a_refusal(stack: &SweepStack, ingress: &HeldEventsIngress) {
-    assert!(
-        try_wait_until(
-            || stack.counters.event_publish_failed.load(Ordering::Relaxed) > 0,
-            STEP_DEADLINE
-        ),
+    let refused = || stack.counters.event_publish_failed.load(Ordering::Relaxed) > 0;
+    while_the_sweep_moves(
+        stack,
         "inconclusive: the events ingress was held with no room past the evidence, yet no \
-         required publish gave up"
+         required publish gave up",
+        || try_wait_until(refused, PROGRESS_POLL).then_some(()),
     );
     ingress.release();
 }
 
+fn the_end_of_the_sweep(stack: &SweepStack) -> OperationWorkerSignalEvent {
+    while_the_sweep_moves(stack, "the read never ended", || {
+        next_signal_within(&stack.signals, SWEEP_CORRELATION, PROGRESS_POLL)
+    })
+}
+
 fn sweep_the_banks(evidence_room: Option<usize>) -> SweepRun {
-    let stack = spawn_sweep_stack();
+    let events_ingress = evidence_room.map_or(DEFAULT_EVENTS_INGRESS, |_| SWEEP_EVENTS_INGRESS);
+    let stack = spawn_sweep_stack(events_ingress);
     let wire_held = stack.transport.lock().expect("sim");
     start_the_read_on(&stack.publisher, &stack.signals, sweep_read_frame(), SWEEP_CORRELATION);
-    let ingress = evidence_room.map(|room| {
-        hold_the_events_ingress_with_room(&stack.publisher, SWEEP_EVENTS_INGRESS, room)
-    });
+    let ingress = evidence_room
+        .map(|room| hold_the_events_ingress_with_room(&stack.publisher, events_ingress, room));
     drop(wire_held);
     if let Some(ingress) = &ingress {
         release_after_a_refusal(&stack, ingress);
     }
-    let terminal = next_signal(&stack.signals, SWEEP_CORRELATION).expect("the read never ended");
+    let terminal = the_end_of_the_sweep(&stack);
     let (evidence_chunks, memory_banks) = read_evidence(&stack.reads);
     drop(ingress);
     SweepRun { terminal, evidence_chunks, memory_banks, counters: Arc::clone(&stack.counters) }
