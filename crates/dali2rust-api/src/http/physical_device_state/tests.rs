@@ -1,11 +1,13 @@
-use super::attributes::write_attribute_section;
+use super::attributes::{write_attribute_section, AttributeSectionDto};
 use super::runtime_state::runtime_error_dto;
 use super::*;
-use dali2rust_contracts::msg::ErrorCode;
+use dali2rust_contracts::msg::{ErrorCode, FixedText32, FixedText64};
 use dali2rust_domain::registry::{
     AttributeSectionKind, AttributeSectionView, AttributeSource, BankReading,
-    MemoryBusUnitAttributesView, MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView,
-    MemoryLuminaireAttributesView, ObservedValue, PhysicalDeviceAttributesView, RuntimeErrorView,
+    GearDiagnosticsView, LuminaireMaintenanceView, LuminaireValue, MemoryBusUnitAttributesView,
+    MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView, MemoryLuminaireAttributesView,
+    ObservedValue, PhysicalDeviceAttributesView, RuntimeErrorView, ScenesAttributesView,
+    SourceDiagnosticsView,
 };
 use std::mem::size_of;
 
@@ -75,6 +77,56 @@ fn a_runtime_error_serializes_as_its_product_code_not_its_discriminant() {
     assert_eq!(json, r#"{"code":"vl_unbound"}"#);
 }
 
+fn every_section(
+    attrs: &PhysicalDeviceAttributesView,
+    energy: &MemoryEnergyAttributesView,
+    diagnostics: &MemoryDiagnosticsAttributesView,
+    bus_unit: &MemoryBusUnitAttributesView,
+    luminaire: Option<&MemoryLuminaireAttributesView>,
+) -> Vec<AttributeSectionView> {
+    AttributeSectionKind::ALL
+        .iter()
+        .map(|kind| match kind {
+            AttributeSectionKind::Common102 => {
+                AttributeSectionView::Common102(Box::new(attrs.common102))
+            }
+            AttributeSectionKind::Dt6Led => {
+                AttributeSectionView::Dt6Led(Box::new(attrs.dt6_led))
+            }
+            AttributeSectionKind::Dt8Color => {
+                AttributeSectionView::Dt8Color(Box::new(attrs.dt8_color))
+            }
+            AttributeSectionKind::Extended => {
+                AttributeSectionView::Extended(Box::new(attrs.extended))
+            }
+            AttributeSectionKind::Groups => {
+                AttributeSectionView::Groups(Box::new(attrs.groups))
+            }
+            AttributeSectionKind::MemoryDiagnostics => {
+                AttributeSectionView::MemoryDiagnostics(Box::new(diagnostics.clone()))
+            }
+            AttributeSectionKind::MemoryEnergy => {
+                AttributeSectionView::MemoryEnergy(Box::new(*energy))
+            }
+            AttributeSectionKind::MemoryBusUnit => {
+                AttributeSectionView::MemoryBusUnit(Box::new(*bus_unit))
+            }
+            AttributeSectionKind::MemoryIdentity => {
+                AttributeSectionView::MemoryIdentity(Box::new(attrs.memory_identity))
+            }
+            AttributeSectionKind::MemoryLuminaire => AttributeSectionView::MemoryLuminaire(
+                Box::new(luminaire.cloned().unwrap_or_default()),
+            ),
+            AttributeSectionKind::MemoryProfile => {
+                AttributeSectionView::MemoryProfile(Box::new(attrs.memory_profile))
+            }
+            AttributeSectionKind::Scenes => {
+                AttributeSectionView::Scenes(Box::new(attrs.scenes))
+            }
+        })
+        .collect()
+}
+
 fn attributes_json(
     attrs: &PhysicalDeviceAttributesView,
     energy: &MemoryEnergyAttributesView,
@@ -82,47 +134,7 @@ fn attributes_json(
     bus_unit: &MemoryBusUnitAttributesView,
     luminaire: Option<&MemoryLuminaireAttributesView>,
 ) -> String {
-    let sections: Vec<AttributeSectionView> = AttributeSectionKind::ALL
-        .iter()
-        .map(|kind| match kind {
-            AttributeSectionKind::Common102 => {
-                AttributeSectionView::Common102(Box::new(attrs.common102.clone()))
-            }
-            AttributeSectionKind::Dt6Led => {
-                AttributeSectionView::Dt6Led(Box::new(attrs.dt6_led.clone()))
-            }
-            AttributeSectionKind::Dt8Color => {
-                AttributeSectionView::Dt8Color(Box::new(attrs.dt8_color.clone()))
-            }
-            AttributeSectionKind::Extended => {
-                AttributeSectionView::Extended(Box::new(attrs.extended.clone()))
-            }
-            AttributeSectionKind::Groups => {
-                AttributeSectionView::Groups(Box::new(attrs.groups.clone()))
-            }
-            AttributeSectionKind::MemoryDiagnostics => {
-                AttributeSectionView::MemoryDiagnostics(Box::new(diagnostics.clone()))
-            }
-            AttributeSectionKind::MemoryEnergy => {
-                AttributeSectionView::MemoryEnergy(Box::new(energy.clone()))
-            }
-            AttributeSectionKind::MemoryBusUnit => {
-                AttributeSectionView::MemoryBusUnit(Box::new(bus_unit.clone()))
-            }
-            AttributeSectionKind::MemoryIdentity => {
-                AttributeSectionView::MemoryIdentity(Box::new(attrs.memory_identity.clone()))
-            }
-            AttributeSectionKind::MemoryLuminaire => AttributeSectionView::MemoryLuminaire(
-                Box::new(luminaire.cloned().unwrap_or_default()),
-            ),
-            AttributeSectionKind::MemoryProfile => {
-                AttributeSectionView::MemoryProfile(Box::new(attrs.memory_profile.clone()))
-            }
-            AttributeSectionKind::Scenes => {
-                AttributeSectionView::Scenes(Box::new(attrs.scenes.clone()))
-            }
-        })
-        .collect();
+    let sections = every_section(attrs, energy, diagnostics, bus_unit, luminaire);
     let mut out: Vec<u8> = b"{".to_vec();
     let mut first = true;
     for view in &sections {
@@ -363,6 +375,168 @@ fn full_attributes_wire_shape_is_frozen() {
         None,
     );
     assert_eq!(json, GOLDEN_FULL_ATTRIBUTES);
+}
+
+fn populated_energy() -> MemoryEnergyAttributesView {
+    let mut e = MemoryEnergyAttributesView::default();
+    e.active.bank_version = ov(1, 101);
+    e.active.energy_scale = ov(-3_i8, 102);
+    e.active.energy = ov(reading(123_456), 103);
+    e.active.power_scale = ov(-1_i8, 104);
+    e.active.power = ov(
+        BankReading { temporarily_unavailable: true, tmask_since_ms: Some(900), ..Default::default() },
+        105,
+    );
+    e.apparent.bank_version = ov(1, 106);
+    e.apparent.energy = ov(BankReading { not_implemented: true, ..Default::default() }, 107);
+    e
+}
+
+fn populate_gear(g: &mut GearDiagnosticsView) {
+    g.bank_version = ov(2, 110);
+    g.operating_time_s = ov(reading(3_600), 111);
+    g.start_counter = ov(reading(42), 112);
+    g.supply_voltage_decivolt = ov(reading(2_301), 113);
+    g.supply_frequency_hz = ov(reading(50), 114);
+    g.power_factor_centi = ov(reading(97), 115);
+    g.overall_failure.flag = ov(reading(0), 116);
+    g.undervoltage.flag = ov(reading(1), 117);
+    g.undervoltage.counter =
+        ov(BankReading { value: Some(0xFE), saturated: true, ..Default::default() }, 118);
+    g.thermal_shutdown.counter = ov(reading(3), 119);
+    g.temperature_offset60 = ov(reading(85), 120);
+    g.output_current_percent = ov(reading(64), 121);
+}
+
+fn populate_source(s: &mut SourceDiagnosticsView) {
+    s.bank_version = ov(1, 122);
+    s.start_counter_resettable = ov(reading(7), 123);
+    s.on_time_s = ov(reading(86_400), 124);
+    s.voltage_decivolt = ov(reading(480), 125);
+    s.current_milliamp = ov(BankReading { tmask_since_ms: Some(1), ..Default::default() }, 126);
+    s.short_circuit.flag = ov(reading(0), 127);
+    s.open_circuit.counter = ov(reading(2), 128);
+    s.temperature_offset60 = ov(reading(70), 129);
+}
+
+fn populate_maintenance(m: &mut LuminaireMaintenanceView) {
+    m.bank_version = ov(1, 130);
+    m.rated_life_kilohours = ov(reading(50), 131);
+    m.rated_starts_hundreds = ov(reading(200), 132);
+}
+
+fn populated_diagnostics() -> MemoryDiagnosticsAttributesView {
+    let mut d = MemoryDiagnosticsAttributesView::default();
+    populate_gear(&mut d.control_gear);
+    populate_source(&mut d.light_source);
+    populate_maintenance(&mut d.luminaire);
+    d
+}
+
+fn lv(raw: u32, value: Option<u32>, part209_implemented: bool) -> LuminaireValue {
+    LuminaireValue { raw, value, part209_implemented }
+}
+
+fn populated_luminaire() -> MemoryLuminaireAttributesView {
+    let text32 = |s: &str| FixedText32::try_from(s).expect("fits 32 bytes");
+    MemoryLuminaireAttributesView {
+        content_format_id: ov(3_u16, 140),
+        year: ov(lv(24, Some(2_024), true), 141),
+        week: ov(lv(0xFF, None, true), 142),
+        nominal_input_power_w: ov(lv(36, Some(36), false), 143),
+        cri: ov(lv(92, Some(92), true), 144),
+        cct_kelvin: ov(lv(3_000, Some(3_000), true), 145),
+        luminaire_colour: ov(text32("warm \"white\" \\ 3000K"), 146),
+        luminaire_identification: ov(
+            FixedText64::try_from("L\u{fc}mi-\u{c4}\tline\nend").expect("fits 64 bytes"),
+            147,
+        ),
+        oem_name: ov(text32("ACME"), 148),
+        free_use: ov(text32(""), 149),
+        lamp_current_ma: ov(lv(700, Some(700), true), 150),
+        ..Default::default()
+    }
+}
+
+fn populated_bus_unit() -> MemoryBusUnitAttributesView {
+    MemoryBusUnitAttributesView { configuration: ov(10, 151), implemented_parts: ov(0x05, 152) }
+}
+
+const GOLDEN_MEMORY_SECTIONS: &str = r#"{"memory_diagnostics":{"control_gear":{"bank_version":{"last_read_ms":null,"last_write_confirmed_ms":2110,"source":"write_confirmed","value":2},"operating_time_s":{"last_read_ms":1111,"last_write_confirmed_ms":null,"source":"readback","value":{"value":3600,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}},"output_current_percent":{"last_read_ms":1121,"last_write_confirmed_ms":null,"source":"readback","value":{"value":64,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}},"overall_failure":{"flag":{"last_read_ms":null,"last_write_confirmed_ms":2116,"source":"write_confirmed","value":{"value":0,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}}},"power_factor_centi":{"last_read_ms":1115,"last_write_confirmed_ms":null,"source":"readback","value":{"value":97,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}},"start_counter":{"last_read_ms":null,"last_write_confirmed_ms":2112,"source":"write_confirmed","value":{"value":42,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}},"supply_frequency_hz":{"last_read_ms":null,"last_write_confirmed_ms":2114,"source":"write_confirmed","value":{"value":50,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}},"supply_voltage_decivolt":{"last_read_ms":1113,"last_write_confirmed_ms":null,"source":"readback","value":{"value":2301,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}},"temperature_offset60":{"last_read_ms":null,"last_write_confirmed_ms":2120,"source":"write_confirmed","value":{"value":85,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}},"thermal_shutdown":{"counter":{"last_read_ms":1119,"last_write_confirmed_ms":null,"source":"readback","value":{"value":3,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}}},"undervoltage":{"counter":{"last_read_ms":null,"last_write_confirmed_ms":2118,"source":"write_confirmed","value":{"value":254,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":true}},"flag":{"last_read_ms":1117,"last_write_confirmed_ms":null,"source":"readback","value":{"value":1,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}}}},"light_source":{"bank_version":{"last_read_ms":null,"last_write_confirmed_ms":2122,"source":"write_confirmed","value":1},"current_milliamp":{"last_read_ms":null,"last_write_confirmed_ms":2126,"source":"write_confirmed","value":{"value":null,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":1,"saturated":false}},"on_time_s":{"last_read_ms":null,"last_write_confirmed_ms":2124,"source":"write_confirmed","value":{"value":86400,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}},"open_circuit":{"counter":{"last_read_ms":null,"last_write_confirmed_ms":2128,"source":"write_confirmed","value":{"value":2,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}}},"short_circuit":{"flag":{"last_read_ms":1127,"last_write_confirmed_ms":null,"source":"readback","value":{"value":0,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}}},"start_counter_resettable":{"last_read_ms":1123,"last_write_confirmed_ms":null,"source":"readback","value":{"value":7,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}},"temperature_offset60":{"last_read_ms":1129,"last_write_confirmed_ms":null,"source":"readback","value":{"value":70,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}},"voltage_decivolt":{"last_read_ms":1125,"last_write_confirmed_ms":null,"source":"readback","value":{"value":480,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}}},"luminaire":{"bank_version":{"last_read_ms":null,"last_write_confirmed_ms":2130,"source":"write_confirmed","value":1},"rated_life_kilohours":{"last_read_ms":1131,"last_write_confirmed_ms":null,"source":"readback","value":{"value":50,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}},"rated_starts_hundreds":{"last_read_ms":null,"last_write_confirmed_ms":2132,"source":"write_confirmed","value":{"value":200,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}}}},"memory_energy":{"active":{"bank_version":{"last_read_ms":1101,"last_write_confirmed_ms":null,"source":"readback","value":1},"energy":{"last_read_ms":1103,"last_write_confirmed_ms":null,"source":"readback","value":{"value":123456,"not_implemented":false,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}},"energy_scale":{"last_read_ms":null,"last_write_confirmed_ms":2102,"source":"write_confirmed","value":-3},"power":{"last_read_ms":1105,"last_write_confirmed_ms":null,"source":"readback","value":{"value":null,"not_implemented":false,"temporarily_unavailable":true,"tmask_since_ms":900,"saturated":false}},"power_scale":{"last_read_ms":null,"last_write_confirmed_ms":2104,"source":"write_confirmed","value":-1}},"apparent":{"bank_version":{"last_read_ms":null,"last_write_confirmed_ms":2106,"source":"write_confirmed","value":1},"energy":{"last_read_ms":1107,"last_write_confirmed_ms":null,"source":"readback","value":{"value":null,"not_implemented":true,"temporarily_unavailable":false,"tmask_since_ms":null,"saturated":false}}}},"memory_bus_unit":{"configuration":{"last_read_ms":1151,"last_write_confirmed_ms":null,"source":"readback","value":{"raw":10,"class":"Part 202 emergency control gear","emergency_type":"B"}},"implemented_parts":{"last_read_ms":null,"last_write_confirmed_ms":2152,"source":"write_confirmed","value":{"raw":5,"parts":[150,152]}}},"memory_luminaire":{"cct_kelvin":{"last_read_ms":1145,"last_write_confirmed_ms":null,"source":"readback","value":{"raw":3000,"value":3000,"part209_implemented":true}},"content_format_id":{"last_read_ms":null,"last_write_confirmed_ms":2140,"source":"write_confirmed","value":3},"cri":{"last_read_ms":null,"last_write_confirmed_ms":2144,"source":"write_confirmed","value":{"raw":92,"value":92,"part209_implemented":true}},"free_use":{"last_read_ms":1149,"last_write_confirmed_ms":null,"source":"readback","value":""},"lamp_current_ma":{"last_read_ms":null,"last_write_confirmed_ms":2150,"source":"write_confirmed","value":{"raw":700,"value":700,"part209_implemented":true}},"luminaire_colour":{"last_read_ms":null,"last_write_confirmed_ms":2146,"source":"write_confirmed","value":"warm \"white\" \\ 3000K"},"luminaire_identification":{"last_read_ms":1147,"last_write_confirmed_ms":null,"source":"readback","value":"Lümi-Ä\tline\nend"},"nominal_input_power_w":{"last_read_ms":1143,"last_write_confirmed_ms":null,"source":"readback","value":{"raw":36,"value":36,"part209_implemented":false}},"oem_name":{"last_read_ms":null,"last_write_confirmed_ms":2148,"source":"write_confirmed","value":"ACME"},"week":{"last_read_ms":null,"last_write_confirmed_ms":2142,"source":"write_confirmed","value":{"raw":255,"value":null,"part209_implemented":true}},"year":{"last_read_ms":1141,"last_write_confirmed_ms":null,"source":"readback","value":{"raw":24,"value":2024,"part209_implemented":true}}}}"#;
+
+#[test]
+fn populated_memory_sections_wire_shape_is_frozen() {
+    let json = attributes_json(
+        &PhysicalDeviceAttributesView::default(),
+        &populated_energy(),
+        &populated_diagnostics(),
+        &populated_bus_unit(),
+        Some(&populated_luminaire()),
+    );
+    assert_eq!(json, GOLDEN_MEMORY_SECTIONS);
+}
+
+fn serializes_a_non_empty_object(view: &AttributeSectionView) -> bool {
+    AttributeSectionDto::from_view(view).is_some_and(|dto| {
+        let json = serde_json::to_value(&dto).expect("a present section serializes");
+        json.as_object().is_some_and(|fields| !fields.is_empty())
+    })
+}
+
+#[test]
+fn every_section_is_present_exactly_when_it_has_something_to_write() {
+    let empty = every_section(
+        &PhysicalDeviceAttributesView::default(),
+        &Default::default(),
+        &Default::default(),
+        &Default::default(),
+        None,
+    );
+    let populated = every_section(
+        &full_attributes_view(),
+        &populated_energy(),
+        &populated_diagnostics(),
+        &populated_bus_unit(),
+        Some(&populated_luminaire()),
+    );
+    for view in &empty {
+        let kind = view.kind().wire_name();
+        assert!(AttributeSectionDto::from_view(view).is_none(), "empty {kind} is absent");
+    }
+    for view in &populated {
+        let kind = view.kind().wire_name();
+        assert!(serializes_a_non_empty_object(view), "populated {kind} writes its fields");
+    }
+}
+
+#[test]
+fn one_field_makes_a_hand_written_section_present() {
+    let bus_unit = MemoryBusUnitAttributesView { implemented_parts: observed(1), ..Default::default() };
+    let mut energy = MemoryEnergyAttributesView::default();
+    energy.loadside.power = ov(reading(1), 1);
+    let mut source = MemoryDiagnosticsAttributesView::default();
+    source.light_source.bank_version = observed(1);
+    let mut maintenance = MemoryDiagnosticsAttributesView::default();
+    maintenance.luminaire.rated_starts_hundreds = ov(reading(1), 1);
+    let mut scenes = ScenesAttributesView::default();
+    scenes.levels[15] = observed(1);
+    for view in [
+        AttributeSectionView::MemoryBusUnit(Box::new(bus_unit)),
+        AttributeSectionView::MemoryEnergy(Box::new(energy)),
+        AttributeSectionView::MemoryDiagnostics(Box::new(source)),
+        AttributeSectionView::MemoryDiagnostics(Box::new(maintenance)),
+        AttributeSectionView::Scenes(Box::new(scenes)),
+    ] {
+        assert!(serializes_a_non_empty_object(&view), "{}", view.kind().wire_name());
+    }
+}
+
+#[test]
+fn a_diagnostics_bank_without_its_version_stays_off_the_wire() {
+    let mut diag = MemoryDiagnosticsAttributesView::default();
+    diag.control_gear.operating_time_s = ov(reading(3_600), 1);
+    let view = AttributeSectionView::MemoryDiagnostics(Box::new(diag));
+    assert!(AttributeSectionDto::from_view(&view).is_none());
 }
 
 #[test]

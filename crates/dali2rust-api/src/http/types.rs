@@ -4,7 +4,7 @@ const HTTP_BODY_WRITE_BUFFER_CAPACITY: usize = 2048;
 
 struct FixedBufWriter<'a, const N: usize> {
     inner: &'a mut dyn Write,
-    buf: [u8; N],
+    buf: Box<[u8]>,
     len: usize,
 }
 
@@ -12,7 +12,7 @@ impl<'a, const N: usize> FixedBufWriter<'a, N> {
     fn new(inner: &'a mut dyn Write) -> Self {
         Self {
             inner,
-            buf: [0; N],
+            buf: vec![0; N].into_boxed_slice(),
             len: 0,
         }
     }
@@ -105,18 +105,26 @@ pub enum HttpBody {
 
 impl HttpBody {
     pub fn write_to(self, out: &mut dyn Write) -> io::Result<()> {
-        let mut out = FixedBufWriter::<HTTP_BODY_WRITE_BUFFER_CAPACITY>::new(out);
         match self {
             HttpBody::Buffered(b) => out.write_all(&b)?,
-            HttpBody::Stream(f) => f(&mut out)?,
+            HttpBody::Stream(f) => {
+                let mut buffered = FixedBufWriter::<HTTP_BODY_WRITE_BUFFER_CAPACITY>::new(out);
+                f(&mut buffered)?;
+                buffered.flush_buffer()?;
+            }
         }
         out.flush()
     }
 
     pub fn into_bytes(self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        self.write_to(&mut buf).expect("http streaming body write");
-        buf
+        match self {
+            HttpBody::Buffered(b) => b,
+            HttpBody::Stream(f) => {
+                let mut buf = Vec::new();
+                f(&mut buf).expect("http streaming body write");
+                buf
+            }
+        }
     }
 }
 

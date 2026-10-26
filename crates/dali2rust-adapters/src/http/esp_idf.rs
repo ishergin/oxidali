@@ -128,8 +128,6 @@ pub fn mount(
 
 const ACCESS_BODY_PREVIEW_BYTES: usize = 256;
 
-const RESPONSE_BUFFER_BYTES: usize = 2048;
-
 fn heap_free_and_largest_at_boot() -> (usize, usize) {
     let h = dali2rust_bsp::heap_stats::EspHeapStats.snapshot();
     (
@@ -385,12 +383,7 @@ where
         inner: StdIoBridge(w),
         meter,
     };
-    if RESPONSE_BUFFER_BYTES == 0 {
-        body.write_to(&mut sink)
-    } else {
-        let mut buffered = io::BufWriter::with_capacity(RESPONSE_BUFFER_BYTES, sink);
-        body.write_to(&mut buffered).and_then(|()| buffered.flush())
-    }
+    body.write_to(&mut sink)
 }
 
 fn log_slow_exchange(

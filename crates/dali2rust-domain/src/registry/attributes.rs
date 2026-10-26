@@ -11,7 +11,7 @@ pub enum AttributeSource {
     WriteConfirmed,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservedValue<T> {
     pub value: T,
     pub source: AttributeSource,
@@ -19,7 +19,7 @@ pub struct ObservedValue<T> {
     pub last_write_confirmed_ms: Option<u64>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Common102AttributesView {
     pub version: Option<ObservedValue<u8>>,
     pub device_type: Option<ObservedValue<u8>>,
@@ -34,17 +34,17 @@ pub struct Common102AttributesView {
     pub light_source_types: Option<ObservedValue<u32>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GroupsAttributesView {
     pub membership: Option<ObservedValue<u16>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScenesAttributesView {
     pub levels: [Option<ObservedValue<u8>>; 16],
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Dt6LedAttributesView {
     pub gear_type: Option<ObservedValue<u8>>,
     pub dimming_curve: Option<ObservedValue<u8>>,
@@ -67,7 +67,7 @@ pub struct Dt6LedAttributesView {
     pub extended_version_number: Option<ObservedValue<u8>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Dt8ColorAttributesView {
     pub color_type: Option<ObservedValue<u8>>,
     pub color_value_0: Option<ObservedValue<u16>>,
@@ -77,13 +77,13 @@ pub struct Dt8ColorAttributesView {
     pub rgbwaf_control: Option<ObservedValue<u8>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtendedAttributesView {
     pub fade_time_ms: Option<ObservedValue<u16>>,
     pub version_number: Option<ObservedValue<u8>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryIdentityAttributesView {
     pub last_memory_bank: Option<ObservedValue<u8>>,
     pub gtin: Option<ObservedValue<u64>>,
@@ -100,7 +100,7 @@ pub struct MemoryIdentityAttributesView {
     pub logical_control_gear_index: Option<ObservedValue<u8>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryProfileAttributesView {
     pub bank1_lock_byte: Option<ObservedValue<u8>>,
     pub oem_gtin: Option<ObservedValue<u64>>,
@@ -116,7 +116,7 @@ pub struct BankReading {
     pub saturated: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryBusUnitAttributesView {
     pub configuration: Option<ObservedValue<u8>>,
     pub implemented_parts: Option<ObservedValue<u8>>,
@@ -151,7 +151,7 @@ pub struct MemoryLuminaireAttributesView {
     pub free_use: Option<ObservedValue<FixedText32>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnergyBankView {
     pub bank_version: Option<ObservedValue<u8>>,
     pub energy_scale: Option<ObservedValue<i8>>,
@@ -160,20 +160,20 @@ pub struct EnergyBankView {
     pub power: Option<ObservedValue<BankReading>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryEnergyAttributesView {
     pub active: EnergyBankView,
     pub apparent: EnergyBankView,
     pub loadside: EnergyBankView,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConditionView {
     pub flag: Option<ObservedValue<BankReading>>,
     pub counter: Option<ObservedValue<BankReading>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GearDiagnosticsView {
     pub bank_version: Option<ObservedValue<u8>>,
     pub operating_time_s: Option<ObservedValue<BankReading>>,
@@ -191,7 +191,7 @@ pub struct GearDiagnosticsView {
     pub output_current_percent: Option<ObservedValue<BankReading>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceDiagnosticsView {
     pub bank_version: Option<ObservedValue<u8>>,
     pub start_counter_resettable: Option<ObservedValue<BankReading>>,
@@ -208,7 +208,7 @@ pub struct SourceDiagnosticsView {
     pub temperature_offset60: Option<ObservedValue<BankReading>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LuminaireMaintenanceView {
     pub bank_version: Option<ObservedValue<u8>>,
     pub rated_life_kilohours: Option<ObservedValue<BankReading>>,
@@ -221,6 +221,20 @@ pub struct MemoryDiagnosticsAttributesView {
     pub control_gear: GearDiagnosticsView,
     pub light_source: SourceDiagnosticsView,
     pub luminaire: LuminaireMaintenanceView,
+}
+
+pub trait BoxedInPlace {
+    fn to_boxed(&self) -> Box<Self>;
+}
+
+impl BoxedInPlace for MemoryDiagnosticsAttributesView {
+    fn to_boxed(&self) -> Box<Self> {
+        Box::new(Self {
+            control_gear: self.control_gear,
+            light_source: self.light_source,
+            luminaire: self.luminaire,
+        })
+    }
 }
 
 impl MemoryDiagnosticsAttributesView {
@@ -264,6 +278,63 @@ impl PhysicalDeviceAttributesView {
     }
 }
 
+pub trait AttributeSectionVisitor<V> {
+    type Output;
+
+    fn visit(self, view: &V) -> Self::Output;
+}
+
+pub trait AttributeSectionSource<V> {
+    fn boxed_section(&self) -> Box<V>;
+}
+
+#[cfg(test)]
+pub(crate) struct ViewTraits {
+    pub name: &'static str,
+    pub size: usize,
+    pub is_copy: bool,
+    pub in_place: bool,
+}
+
+#[cfg(test)]
+impl ViewTraits {
+    pub const fn of<T>(name: &'static str, is_copy: bool, in_place: bool) -> Self {
+        Self { name, size: core::mem::size_of::<T>(), is_copy, in_place }
+    }
+}
+
+#[cfg(test)]
+macro_rules! view_traits {
+    ($view:ty) => {
+        ViewTraits::of::<$view>(stringify!($view), Probe::<$view>::IS_COPY, Probe::<$view>::IN_PLACE)
+    };
+}
+
+#[cfg(test)]
+pub(crate) use view_traits;
+
+#[cfg(test)]
+pub(crate) struct Probe<T>(core::marker::PhantomData<T>);
+
+#[cfg(test)]
+pub(crate) trait ProbeFallback {
+    const IS_COPY: bool = false;
+    const IN_PLACE: bool = false;
+}
+
+#[cfg(test)]
+impl<T> ProbeFallback for Probe<T> {}
+
+#[cfg(test)]
+impl<T: Copy> Probe<T> {
+    pub const IS_COPY: bool = true;
+}
+
+#[cfg(test)]
+impl<T: BoxedInPlace> Probe<T> {
+    pub const IN_PLACE: bool = true;
+}
+
 macro_rules! declare_attribute_sections {
     ( $( $variant:ident, $wire:literal, $view:ident );+ $(;)? ) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -296,11 +367,33 @@ macro_rules! declare_attribute_sections {
                     $( Self::$variant(_) => AttributeSectionKind::$variant, )+
                 }
             }
+
+            pub fn visit<F, R>(&self, visitor: F) -> R
+            where
+                F: $( AttributeSectionVisitor<$view, Output = R> + )+
+            {
+                match self {
+                    $( Self::$variant(view) => AttributeSectionVisitor::<$view>::visit(visitor, view), )+
+                }
+            }
+        }
+
+        impl AttributeSectionKind {
+            pub fn boxed_view<S>(self, source: &S) -> AttributeSectionView
+            where
+                S: $( AttributeSectionSource<$view> + )+
+            {
+                match self {
+                    $( Self::$variant => {
+                        AttributeSectionView::$variant(AttributeSectionSource::<$view>::boxed_section(source))
+                    } )+
+                }
+            }
         }
 
         #[cfg(test)]
-        pub(crate) const BOXED_SECTION_TEMPORARIES: &[(&str, usize)] = &[
-            $( (stringify!($view), core::mem::size_of::<$view>()), )+
+        pub(crate) const SECTION_VIEWS: &[ViewTraits] = &[
+            $( view_traits!($view), )+
         ];
     };
 }

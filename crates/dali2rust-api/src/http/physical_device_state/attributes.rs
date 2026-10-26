@@ -1,7 +1,7 @@
 use dali2rust_contracts::msg::{FixedText32, FixedText64};
 use dali2rust_domain::dali::banks::{BusUnitConfiguration, ImplementedParts};
 use dali2rust_domain::registry::{
-    AttributeSectionView, AttributeSource, BankReading, Common102AttributesView, ConditionView,
+    AttributeSectionView, AttributeSectionVisitor, AttributeSource, BankReading, Common102AttributesView, ConditionView,
     Dt6LedAttributesView, Dt8ColorAttributesView, EnergyBankView, ExtendedAttributesView,
     GearDiagnosticsView, GroupsAttributesView, LuminaireMaintenanceView,
     LuminaireValue, MemoryBusUnitAttributesView, MemoryDiagnosticsAttributesView,
@@ -12,15 +12,15 @@ use serde::Serialize;
 use serde::ser::SerializeMap;
 
 #[derive(Clone, Debug, Serialize)]
-pub struct ObservedValueDto<T> {
+pub struct ObservedValueDto<V> {
     pub last_read_ms: Option<u64>,
     pub last_write_confirmed_ms: Option<u64>,
     pub source: &'static str,
-    pub value: T,
+    pub value: V,
 }
 
-impl<T> ObservedValueDto<T> {
-    fn map<U>(self, f: impl FnOnce(T) -> U) -> ObservedValueDto<U> {
+impl<V> ObservedValueDto<V> {
+    fn map<U>(self, f: impl FnOnce(V) -> U) -> ObservedValueDto<U> {
         ObservedValueDto {
             last_read_ms: self.last_read_ms,
             last_write_confirmed_ms: self.last_write_confirmed_ms,
@@ -30,7 +30,7 @@ impl<T> ObservedValueDto<T> {
     }
 }
 
-fn observed_opt<T: Clone>(value: &Option<ObservedValue<T>>) -> Option<ObservedValueDto<T>> {
+fn observed_opt<T>(value: &Option<ObservedValue<T>>) -> Option<ObservedValueDto<&T>> {
     value.as_ref().map(|v| ObservedValueDto {
         last_read_ms: v.last_read_ms,
         last_write_confirmed_ms: v.last_write_confirmed_ms,
@@ -38,27 +38,28 @@ fn observed_opt<T: Clone>(value: &Option<ObservedValue<T>>) -> Option<ObservedVa
             AttributeSource::Readback => "readback",
             AttributeSource::WriteConfirmed => "write_confirmed",
         },
-        value: v.value.clone(),
+        value: &v.value,
     })
 }
 
 macro_rules! attribute_section_dto {
     ($dto:ident from $view:ty { $($field:ident: $ty:ty),+ $(,)? }) => {
         #[derive(Clone, Debug, Serialize)]
-        pub struct $dto {
+        pub struct $dto<'a> {
             $(
                 #[serde(skip_serializing_if = "Option::is_none")]
-                pub $field: Option<ObservedValueDto<$ty>>,
+                pub $field: Option<ObservedValueDto<&'a $ty>>,
             )+
         }
 
-        impl $dto {
-            fn from_view(v: &$view) -> Option<Self> {
-                let dto = Self { $($field: observed_opt(&v.$field),)+ };
-                ($(dto.$field.is_some())||+).then_some(dto)
+        impl<'a> $dto<'a> {
+            fn from_view(v: &'a $view) -> Option<Self> {
+                if !Self::is_present(v) {
+                    return None;
+                }
+                Some(Self { $($field: observed_opt(&v.$field),)+ })
             }
 
-            #[allow(dead_code, reason = "generated for every section; only container-gated sections call it")]
             fn is_present(v: &$view) -> bool {
                 $(v.$field.is_some())||+
             }
@@ -188,13 +189,19 @@ pub struct MemoryBusUnitAttributesDto {
 
 impl MemoryBusUnitAttributesDto {
     fn from_view(v: &MemoryBusUnitAttributesView) -> Option<Self> {
-        let dto = Self {
+        if !Self::is_present(v) {
+            return None;
+        }
+        Some(Self {
             configuration: observed_opt(&v.configuration)
-                .map(|o| o.map(BusUnitConfigurationDto::from_raw)),
+                .map(|o| o.map(|raw| BusUnitConfigurationDto::from_raw(*raw))),
             implemented_parts: observed_opt(&v.implemented_parts)
-                .map(|o| o.map(ImplementedPartsDto::from_raw)),
-        };
-        (dto.configuration.is_some() || dto.implemented_parts.is_some()).then_some(dto)
+                .map(|o| o.map(|raw| ImplementedPartsDto::from_raw(*raw))),
+        })
+    }
+
+    fn is_present(v: &MemoryBusUnitAttributesView) -> bool {
+        v.configuration.is_some() || v.implemented_parts.is_some()
     }
 }
 
@@ -231,10 +238,13 @@ pub struct MemoryEnergyAttributesDto<'a>(&'a MemoryEnergyAttributesView);
 
 impl<'a> MemoryEnergyAttributesDto<'a> {
     fn from_view(v: &'a MemoryEnergyAttributesView) -> Option<Self> {
-        let any = EnergyBankDto::from_view(&v.active).is_some()
-            || EnergyBankDto::from_view(&v.apparent).is_some()
-            || EnergyBankDto::from_view(&v.loadside).is_some();
-        any.then_some(Self(v))
+        Self::is_present(v).then_some(Self(v))
+    }
+
+    fn is_present(v: &MemoryEnergyAttributesView) -> bool {
+        EnergyBankDto::is_present(&v.active)
+            || EnergyBankDto::is_present(&v.apparent)
+            || EnergyBankDto::is_present(&v.loadside)
     }
 }
 
@@ -246,9 +256,7 @@ impl Serialize for MemoryEnergyAttributesDto<'_> {
             ("apparent", &self.0.apparent),
             ("loadside", &self.0.loadside),
         ] {
-            if let Some(bank) = EnergyBankDto::from_view(view) {
-                map.serialize_entry(key, &bank)?;
-            }
+            serialize_present_entry(&mut map, key, || EnergyBankDto::from_view(view))?;
         }
         map.end()
     }
@@ -260,40 +268,43 @@ attribute_section_dto!(ConditionDto from ConditionView {
 });
 
 #[derive(Clone, Debug, Serialize)]
-pub struct GearDiagnosticsDto {
+pub struct GearDiagnosticsDto<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bank_version: Option<ObservedValueDto<u8>>,
+    pub bank_version: Option<ObservedValueDto<&'a u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub operating_time_s: Option<ObservedValueDto<BankReading>>,
+    pub operating_time_s: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_current_percent: Option<ObservedValueDto<BankReading>>,
+    pub output_current_percent: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_power_limitation: Option<ConditionDto>,
+    pub output_power_limitation: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub overall_failure: Option<ConditionDto>,
+    pub overall_failure: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub overvoltage: Option<ConditionDto>,
+    pub overvoltage: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub power_factor_centi: Option<ObservedValueDto<BankReading>>,
+    pub power_factor_centi: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_counter: Option<ObservedValueDto<BankReading>>,
+    pub start_counter: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub supply_frequency_hz: Option<ObservedValueDto<BankReading>>,
+    pub supply_frequency_hz: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub supply_voltage_decivolt: Option<ObservedValueDto<BankReading>>,
+    pub supply_voltage_decivolt: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature_offset60: Option<ObservedValueDto<BankReading>>,
+    pub temperature_offset60: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thermal_derating: Option<ConditionDto>,
+    pub thermal_derating: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thermal_shutdown: Option<ConditionDto>,
+    pub thermal_shutdown: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub undervoltage: Option<ConditionDto>,
+    pub undervoltage: Option<ConditionDto<'a>>,
 }
 
-impl GearDiagnosticsDto {
-    fn from_view(v: &GearDiagnosticsView) -> Option<Self> {
-        let dto = Self {
+impl<'a> GearDiagnosticsDto<'a> {
+    fn from_view(v: &'a GearDiagnosticsView) -> Option<Self> {
+        if !Self::is_present(v) {
+            return None;
+        }
+        Some(Self {
             bank_version: observed_opt(&v.bank_version),
             operating_time_s: observed_opt(&v.operating_time_s),
             output_current_percent: observed_opt(&v.output_current_percent),
@@ -308,8 +319,7 @@ impl GearDiagnosticsDto {
             thermal_derating: ConditionDto::from_view(&v.thermal_derating),
             thermal_shutdown: ConditionDto::from_view(&v.thermal_shutdown),
             undervoltage: ConditionDto::from_view(&v.undervoltage),
-        };
-        dto.bank_version.is_some().then_some(dto)
+        })
     }
 
     fn is_present(v: &GearDiagnosticsView) -> bool {
@@ -318,38 +328,41 @@ impl GearDiagnosticsDto {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct SourceDiagnosticsDto {
+pub struct SourceDiagnosticsDto<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bank_version: Option<ObservedValueDto<u8>>,
+    pub bank_version: Option<ObservedValueDto<&'a u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub current_milliamp: Option<ObservedValueDto<BankReading>>,
+    pub current_milliamp: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub on_time_resettable_s: Option<ObservedValueDto<BankReading>>,
+    pub on_time_resettable_s: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub on_time_s: Option<ObservedValueDto<BankReading>>,
+    pub on_time_s: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub open_circuit: Option<ConditionDto>,
+    pub open_circuit: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub overall_failure: Option<ConditionDto>,
+    pub overall_failure: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub short_circuit: Option<ConditionDto>,
+    pub short_circuit: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_counter: Option<ObservedValueDto<BankReading>>,
+    pub start_counter: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_counter_resettable: Option<ObservedValueDto<BankReading>>,
+    pub start_counter_resettable: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature_offset60: Option<ObservedValueDto<BankReading>>,
+    pub temperature_offset60: Option<ObservedValueDto<&'a BankReading>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thermal_derating: Option<ConditionDto>,
+    pub thermal_derating: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thermal_shutdown: Option<ConditionDto>,
+    pub thermal_shutdown: Option<ConditionDto<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub voltage_decivolt: Option<ObservedValueDto<BankReading>>,
+    pub voltage_decivolt: Option<ObservedValueDto<&'a BankReading>>,
 }
 
-impl SourceDiagnosticsDto {
-    fn from_view(v: &SourceDiagnosticsView) -> Option<Self> {
-        let dto = Self {
+impl<'a> SourceDiagnosticsDto<'a> {
+    fn from_view(v: &'a SourceDiagnosticsView) -> Option<Self> {
+        if !Self::is_present(v) {
+            return None;
+        }
+        Some(Self {
             bank_version: observed_opt(&v.bank_version),
             current_milliamp: observed_opt(&v.current_milliamp),
             on_time_resettable_s: observed_opt(&v.on_time_resettable_s),
@@ -363,8 +376,7 @@ impl SourceDiagnosticsDto {
             thermal_derating: ConditionDto::from_view(&v.thermal_derating),
             thermal_shutdown: ConditionDto::from_view(&v.thermal_shutdown),
             voltage_decivolt: observed_opt(&v.voltage_decivolt),
-        };
-        dto.bank_version.is_some().then_some(dto)
+        })
     }
 
     fn is_present(v: &SourceDiagnosticsView) -> bool {
@@ -383,25 +395,29 @@ pub struct MemoryDiagnosticsAttributesDto<'a>(&'a MemoryDiagnosticsAttributesVie
 
 impl<'a> MemoryDiagnosticsAttributesDto<'a> {
     fn from_view(v: &'a MemoryDiagnosticsAttributesView) -> Option<Self> {
-        let any = GearDiagnosticsDto::is_present(&v.control_gear)
+        Self::is_present(v).then_some(Self(v))
+    }
+
+    fn is_present(v: &MemoryDiagnosticsAttributesView) -> bool {
+        GearDiagnosticsDto::is_present(&v.control_gear)
             || SourceDiagnosticsDto::is_present(&v.light_source)
-            || LuminaireMaintenanceDto::is_present(&v.luminaire);
-        any.then_some(Self(v))
+            || LuminaireMaintenanceDto::is_present(&v.luminaire)
     }
 }
 
 impl Serialize for MemoryDiagnosticsAttributesDto<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
-        if let Some(gear) = GearDiagnosticsDto::from_view(&self.0.control_gear) {
-            map.serialize_entry("control_gear", &gear)?;
-        }
-        if let Some(source) = SourceDiagnosticsDto::from_view(&self.0.light_source) {
-            map.serialize_entry("light_source", &source)?;
-        }
-        if let Some(luminaire) = LuminaireMaintenanceDto::from_view(&self.0.luminaire) {
-            map.serialize_entry("luminaire", &luminaire)?;
-        }
+        let v = self.0;
+        serialize_present_entry(&mut map, "control_gear", || {
+            GearDiagnosticsDto::from_view(&v.control_gear)
+        })?;
+        serialize_present_entry(&mut map, "light_source", || {
+            SourceDiagnosticsDto::from_view(&v.light_source)
+        })?;
+        serialize_present_entry(&mut map, "luminaire", || {
+            LuminaireMaintenanceDto::from_view(&v.luminaire)
+        })?;
         map.end()
     }
 }
@@ -412,27 +428,84 @@ const SCENE_KEYS: [&str; 16] = [
     "scene_8", "scene_9", "scene_10", "scene_11", "scene_12", "scene_13", "scene_14", "scene_15",
 ];
 
-#[derive(Clone, Debug)]
-pub struct ScenesAttributesDto {
-    pub levels: [Option<ObservedValueDto<u8>>; 16],
-}
+pub struct ScenesAttributesDto<'a>(&'a ScenesAttributesView);
 
-impl ScenesAttributesDto {
-    fn from_view(v: &ScenesAttributesView) -> Option<Self> {
-        let levels = core::array::from_fn(|idx| observed_opt(&v.levels[idx]));
-        levels.iter().any(Option::is_some).then_some(Self { levels })
+impl<'a> ScenesAttributesDto<'a> {
+    fn from_view(v: &'a ScenesAttributesView) -> Option<Self> {
+        Self::is_present(v).then_some(Self(v))
+    }
+
+    fn is_present(v: &ScenesAttributesView) -> bool {
+        v.levels.iter().any(Option::is_some)
     }
 }
 
-impl Serialize for ScenesAttributesDto {
+impl Serialize for ScenesAttributesDto<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
         for idx in SCENE_LEX_ORDER {
-            if let Some(slot) = &self.levels[idx] {
-                map.serialize_entry(SCENE_KEYS[idx], slot)?;
+            if let Some(slot) = observed_opt(&self.0.levels[idx]) {
+                map.serialize_entry(SCENE_KEYS[idx], &slot)?;
             }
         }
         map.end()
+    }
+}
+
+trait SectionWire {
+    fn is_present(&self) -> bool;
+
+    fn serialize_present<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error>;
+}
+
+macro_rules! section_wire {
+    ($($view:ty => $dto:ident;)+) => {
+        $(
+            impl SectionWire for $view {
+                fn is_present(&self) -> bool {
+                    $dto::is_present(self)
+                }
+
+                fn serialize_present<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                    serialize_section(s, || $dto::from_view(self))
+                }
+            }
+        )+
+    };
+}
+
+section_wire! {
+    Common102AttributesView => Common102AttributesDto;
+    Dt6LedAttributesView => Dt6LedAttributesDto;
+    Dt8ColorAttributesView => Dt8ColorAttributesDto;
+    ExtendedAttributesView => ExtendedAttributesDto;
+    GroupsAttributesView => GroupsAttributesDto;
+    MemoryDiagnosticsAttributesView => MemoryDiagnosticsAttributesDto;
+    MemoryEnergyAttributesView => MemoryEnergyAttributesDto;
+    MemoryBusUnitAttributesView => MemoryBusUnitAttributesDto;
+    MemoryIdentityAttributesView => MemoryIdentityAttributesDto;
+    MemoryLuminaireAttributesView => MemoryLuminaireAttributesDto;
+    MemoryProfileAttributesView => MemoryProfileAttributesDto;
+    ScenesAttributesView => ScenesAttributesDto;
+}
+
+struct Presence;
+
+impl<V: SectionWire> AttributeSectionVisitor<V> for Presence {
+    type Output = bool;
+
+    fn visit(self, view: &V) -> bool {
+        view.is_present()
+    }
+}
+
+struct Wire<S>(S);
+
+impl<S: serde::Serializer, V: SectionWire> AttributeSectionVisitor<V> for Wire<S> {
+    type Output = Result<S::Ok, S::Error>;
+
+    fn visit(self, view: &V) -> Self::Output {
+        view.serialize_present(self.0)
     }
 }
 
@@ -440,33 +513,7 @@ pub struct AttributeSectionDto<'a>(&'a AttributeSectionView);
 
 impl<'a> AttributeSectionDto<'a> {
     pub fn from_view(view: &'a AttributeSectionView) -> Option<Self> {
-        let present = match view {
-            AttributeSectionView::Common102(v) => Common102AttributesDto::from_view(v).is_some(),
-            AttributeSectionView::Dt6Led(v) => Dt6LedAttributesDto::from_view(v).is_some(),
-            AttributeSectionView::Dt8Color(v) => Dt8ColorAttributesDto::from_view(v).is_some(),
-            AttributeSectionView::Extended(v) => ExtendedAttributesDto::from_view(v).is_some(),
-            AttributeSectionView::Groups(v) => GroupsAttributesDto::from_view(v).is_some(),
-            AttributeSectionView::MemoryDiagnostics(v) => {
-                MemoryDiagnosticsAttributesDto::from_view(v).is_some()
-            }
-            AttributeSectionView::MemoryEnergy(v) => {
-                MemoryEnergyAttributesDto::from_view(v).is_some()
-            }
-            AttributeSectionView::MemoryBusUnit(v) => {
-                MemoryBusUnitAttributesDto::from_view(v).is_some()
-            }
-            AttributeSectionView::MemoryIdentity(v) => {
-                MemoryIdentityAttributesDto::from_view(v).is_some()
-            }
-            AttributeSectionView::MemoryLuminaire(v) => {
-                MemoryLuminaireAttributesDto::from_view(v).is_some()
-            }
-            AttributeSectionView::MemoryProfile(v) => {
-                MemoryProfileAttributesDto::from_view(v).is_some()
-            }
-            AttributeSectionView::Scenes(v) => ScenesAttributesDto::from_view(v).is_some(),
-        };
-        present.then_some(Self(view))
+        view.visit(Presence).then_some(Self(view))
     }
 
     pub fn key(&self) -> &'static str {
@@ -476,48 +523,31 @@ impl<'a> AttributeSectionDto<'a> {
 
 impl Serialize for AttributeSectionDto<'_> {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self.0 {
-            AttributeSectionView::Common102(v) => {
-                Common102AttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
-            }
-            AttributeSectionView::Dt6Led(v) => {
-                Dt6LedAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
-            }
-            AttributeSectionView::Dt8Color(v) => {
-                Dt8ColorAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
-            }
-            AttributeSectionView::Extended(v) => {
-                ExtendedAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
-            }
-            AttributeSectionView::Groups(v) => {
-                GroupsAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
-            }
-            AttributeSectionView::MemoryDiagnostics(v) => {
-                MemoryDiagnosticsAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
-            }
-            AttributeSectionView::MemoryEnergy(v) => {
-                MemoryEnergyAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
-            }
-            AttributeSectionView::MemoryBusUnit(v) => {
-                MemoryBusUnitAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
-            }
-            AttributeSectionView::MemoryIdentity(v) => {
-                MemoryIdentityAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
-            }
-            AttributeSectionView::MemoryLuminaire(v) => {
-                MemoryLuminaireAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
-            }
-            AttributeSectionView::MemoryProfile(v) => {
-                MemoryProfileAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
-            }
-            AttributeSectionView::Scenes(v) => {
-                ScenesAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
-            }
-        }
+        self.0.visit(Wire(s))
     }
 }
 
 const SECTION_PRESENT: &str = "AttributeSectionDto only exists for a non-empty section";
+
+#[inline(never)]
+fn serialize_section<S: serde::Serializer, D: Serialize>(
+    s: S,
+    build: impl FnOnce() -> Option<D>,
+) -> Result<S::Ok, S::Error> {
+    build().as_ref().expect(SECTION_PRESENT).serialize(s)
+}
+
+#[inline(never)]
+fn serialize_present_entry<M: SerializeMap, D: Serialize>(
+    map: &mut M,
+    key: &'static str,
+    build: impl FnOnce() -> Option<D>,
+) -> Result<(), M::Error> {
+    match &build() {
+        Some(dto) => map.serialize_entry(key, dto),
+        None => Ok(()),
+    }
+}
 
 pub fn write_attribute_section(
     w: &mut dyn std::io::Write,
@@ -533,75 +563,4 @@ pub fn write_attribute_section(
     *first = false;
     write!(w, "\"{}\":", dto.key())?;
     serde_json::to_writer(&mut *w, &dto).map_err(std::io::Error::other)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use dali2rust_domain::registry::{
-        BankReading, GearDiagnosticsView, LuminaireMaintenanceView, ObservedValue,
-        SourceDiagnosticsView,
-    };
-
-    fn read<T>(value: T) -> Option<ObservedValue<T>> {
-        Some(ObservedValue {
-            value,
-            last_read_ms: Some(1),
-            last_write_confirmed_ms: None,
-            source: AttributeSource::Readback,
-        })
-    }
-
-    #[test]
-    fn the_cheap_section_predicate_agrees_with_building_the_dto() {
-        let mut gear = GearDiagnosticsView::default();
-        let mut source = SourceDiagnosticsView::default();
-        let mut luminaire = LuminaireMaintenanceView::default();
-
-        for (label, got, want) in [
-            (
-                "empty control gear",
-                GearDiagnosticsDto::is_present(&gear),
-                GearDiagnosticsDto::from_view(&gear).is_some(),
-            ),
-            (
-                "empty light source",
-                SourceDiagnosticsDto::is_present(&source),
-                SourceDiagnosticsDto::from_view(&source).is_some(),
-            ),
-            (
-                "empty luminaire",
-                LuminaireMaintenanceDto::is_present(&luminaire),
-                LuminaireMaintenanceDto::from_view(&luminaire).is_some(),
-            ),
-        ] {
-            assert_eq!(got, want, "{label}");
-            assert!(!got, "{label}: nothing was read, so nothing is present");
-        }
-
-        gear.bank_version = read(1u8);
-        source.bank_version = read(1u8);
-        assert!(GearDiagnosticsDto::is_present(&gear));
-        assert_eq!(
-            GearDiagnosticsDto::is_present(&gear),
-            GearDiagnosticsDto::from_view(&gear).is_some(),
-            "control gear with only a bank version"
-        );
-        assert_eq!(
-            SourceDiagnosticsDto::is_present(&source),
-            SourceDiagnosticsDto::from_view(&source).is_some(),
-            "light source with only a bank version"
-        );
-
-        luminaire.rated_life_kilohours = read(BankReading {
-            value: Some(50),
-            ..Default::default()
-        });
-        assert!(LuminaireMaintenanceDto::is_present(&luminaire));
-        assert_eq!(
-            LuminaireMaintenanceDto::is_present(&luminaire),
-            LuminaireMaintenanceDto::from_view(&luminaire).is_some(),
-            "luminaire with one non-first field read"
-        );
-    }
 }

@@ -51,25 +51,47 @@ fn every_section_kind_round_trips_through_its_wire_name() {
     assert_eq!(names.len(), AttributeSectionKind::ALL.len());
 }
 
+const MAX_COPIED_VIEW_BYTES: usize = 2_048;
+
+const COPY_BUILDING_BLOCKS: &[ViewTraits] = &[
+    view_traits!(GearDiagnosticsView),
+    view_traits!(SourceDiagnosticsView),
+    view_traits!(LuminaireMaintenanceView),
+    view_traits!(EnergyBankView),
+    view_traits!(ConditionView),
+];
+
 #[test]
-fn no_boxed_section_temporary_exceeds_the_budget() {
-    const MAX_SECTION_TEMPORARY_BYTES: usize = 4_096;
-    for (name, size) in BOXED_SECTION_TEMPORARIES {
+fn a_copy_view_is_small_enough_to_land_on_any_stack() {
+    for view in SECTION_VIEWS.iter().chain(COPY_BUILDING_BLOCKS) {
         assert!(
-            *size <= MAX_SECTION_TEMPORARY_BYTES,
-            "{name} is {size} B: `Box::new(section.clone())` puts that on the \
-             httpd stack under the read lock. Clone into the allocation \
-             instead — the mirror of `default_in_place` — rather than raising \
-             this number"
+            !view.is_copy || view.size <= MAX_COPIED_VIEW_BYTES,
+            "{} is Copy at {} B: any reader can copy it onto its stack without a word. \
+             Drop Copy and box it in place through BoxedInPlace instead",
+            view.name,
+            view.size
         );
     }
 }
 
 #[test]
-fn the_section_temporary_list_covers_every_variant() {
+fn a_section_view_leaves_the_registry_without_a_large_stack_copy() {
+    for view in SECTION_VIEWS {
+        assert!(
+            view.in_place || view.size <= MAX_COPIED_VIEW_BYTES,
+            "{} is {} B and neither Copy nor BoxedInPlace: the registry clones it on the httpd \
+             stack, which costs up to twice that in one frame. Implement BoxedInPlace for it",
+            view.name,
+            view.size
+        );
+    }
+}
+
+#[test]
+fn the_section_view_list_covers_every_variant() {
     assert_eq!(
-        BOXED_SECTION_TEMPORARIES.len(),
+        SECTION_VIEWS.len(),
         AttributeSectionKind::ALL.len(),
-        "a section kind has no entry in the temporary budget"
+        "a section kind has no entry in the view list"
     );
 }
