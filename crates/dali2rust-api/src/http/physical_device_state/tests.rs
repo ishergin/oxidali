@@ -86,40 +86,40 @@ fn attributes_json(
         .iter()
         .map(|kind| match kind {
             AttributeSectionKind::Common102 => {
-                AttributeSectionView::Common102(Box::new(attrs.common102.clone()))
+                AttributeSectionView::Common102(Box::new(attrs.common102))
             }
             AttributeSectionKind::Dt6Led => {
-                AttributeSectionView::Dt6Led(Box::new(attrs.dt6_led.clone()))
+                AttributeSectionView::Dt6Led(Box::new(attrs.dt6_led))
             }
             AttributeSectionKind::Dt8Color => {
-                AttributeSectionView::Dt8Color(Box::new(attrs.dt8_color.clone()))
+                AttributeSectionView::Dt8Color(Box::new(attrs.dt8_color))
             }
             AttributeSectionKind::Extended => {
-                AttributeSectionView::Extended(Box::new(attrs.extended.clone()))
+                AttributeSectionView::Extended(Box::new(attrs.extended))
             }
             AttributeSectionKind::Groups => {
-                AttributeSectionView::Groups(Box::new(attrs.groups.clone()))
+                AttributeSectionView::Groups(Box::new(attrs.groups))
             }
             AttributeSectionKind::MemoryDiagnostics => {
-                AttributeSectionView::MemoryDiagnostics(Box::new(diagnostics.clone()))
+                AttributeSectionView::MemoryDiagnostics(Box::new(*diagnostics))
             }
             AttributeSectionKind::MemoryEnergy => {
-                AttributeSectionView::MemoryEnergy(Box::new(energy.clone()))
+                AttributeSectionView::MemoryEnergy(Box::new(*energy))
             }
             AttributeSectionKind::MemoryBusUnit => {
-                AttributeSectionView::MemoryBusUnit(Box::new(bus_unit.clone()))
+                AttributeSectionView::MemoryBusUnit(Box::new(*bus_unit))
             }
             AttributeSectionKind::MemoryIdentity => {
-                AttributeSectionView::MemoryIdentity(Box::new(attrs.memory_identity.clone()))
+                AttributeSectionView::MemoryIdentity(Box::new(attrs.memory_identity))
             }
             AttributeSectionKind::MemoryLuminaire => AttributeSectionView::MemoryLuminaire(
                 Box::new(luminaire.cloned().unwrap_or_default()),
             ),
             AttributeSectionKind::MemoryProfile => {
-                AttributeSectionView::MemoryProfile(Box::new(attrs.memory_profile.clone()))
+                AttributeSectionView::MemoryProfile(Box::new(attrs.memory_profile))
             }
             AttributeSectionKind::Scenes => {
-                AttributeSectionView::Scenes(Box::new(attrs.scenes.clone()))
+                AttributeSectionView::Scenes(Box::new(attrs.scenes))
             }
         })
         .collect();

@@ -501,8 +501,23 @@ fn merge_dt6_failure_reads(
     changed
 }
 
-fn luminaire_view(rec: &PhysicalDeviceRecord) -> Option<Box<MemoryLuminaireAttributesView>> {
-    rec.luminaire_info.as_deref().map(|v| Box::new(v.clone()))
+#[inline(never)]
+fn boxed_copy<T: Copy>(section: &T) -> Box<T> {
+    let mut place = Box::<T>::new_uninit();
+    place.write(*section);
+    // SAFETY: `write` just initialised the whole place.
+    unsafe { place.assume_init() }
+}
+
+#[inline(never)]
+fn luminaire_section(rec: &PhysicalDeviceRecord) -> Box<MemoryLuminaireAttributesView> {
+    let mut place = Box::<MemoryLuminaireAttributesView>::new_uninit();
+    match rec.luminaire_info.as_deref() {
+        Some(info) => place.write(info.clone()),
+        None => place.write(MemoryLuminaireAttributesView::default()),
+    };
+    // SAFETY: both arms initialise the whole place.
+    unsafe { place.assume_init() }
 }
 
 fn memory_banks_view(banks: &[MemoryBankRecord]) -> Vec<MemoryBankSummaryView> {
@@ -1304,40 +1319,40 @@ impl RegistryStore {
         let attrs = &rec.attributes;
         match kind {
             AttributeSectionKind::Common102 => {
-                AttributeSectionView::Common102(Box::new(attrs.common102.clone()))
+                AttributeSectionView::Common102(boxed_copy(&attrs.common102))
             }
             AttributeSectionKind::Dt6Led => {
-                AttributeSectionView::Dt6Led(Box::new(attrs.dt6_led.clone()))
+                AttributeSectionView::Dt6Led(boxed_copy(&attrs.dt6_led))
             }
             AttributeSectionKind::Dt8Color => {
-                AttributeSectionView::Dt8Color(Box::new(attrs.dt8_color.clone()))
+                AttributeSectionView::Dt8Color(boxed_copy(&attrs.dt8_color))
             }
             AttributeSectionKind::Extended => {
-                AttributeSectionView::Extended(Box::new(attrs.extended.clone()))
+                AttributeSectionView::Extended(boxed_copy(&attrs.extended))
             }
             AttributeSectionKind::Groups => {
-                AttributeSectionView::Groups(Box::new(attrs.groups.clone()))
+                AttributeSectionView::Groups(boxed_copy(&attrs.groups))
             }
             AttributeSectionKind::MemoryDiagnostics => {
-                AttributeSectionView::MemoryDiagnostics(Box::new(rec.diagnostics.clone()))
+                AttributeSectionView::MemoryDiagnostics(boxed_copy(&rec.diagnostics))
             }
             AttributeSectionKind::MemoryEnergy => {
-                AttributeSectionView::MemoryEnergy(Box::new(rec.energy.clone()))
+                AttributeSectionView::MemoryEnergy(boxed_copy(&rec.energy))
             }
             AttributeSectionKind::MemoryBusUnit => {
-                AttributeSectionView::MemoryBusUnit(Box::new(rec.bus_unit.clone()))
+                AttributeSectionView::MemoryBusUnit(boxed_copy(&rec.bus_unit))
             }
             AttributeSectionKind::MemoryIdentity => {
-                AttributeSectionView::MemoryIdentity(Box::new(attrs.memory_identity.clone()))
+                AttributeSectionView::MemoryIdentity(boxed_copy(&attrs.memory_identity))
             }
             AttributeSectionKind::MemoryLuminaire => {
-                AttributeSectionView::MemoryLuminaire(luminaire_view(rec).unwrap_or_default())
+                AttributeSectionView::MemoryLuminaire(luminaire_section(rec))
             }
             AttributeSectionKind::MemoryProfile => {
-                AttributeSectionView::MemoryProfile(Box::new(attrs.memory_profile.clone()))
+                AttributeSectionView::MemoryProfile(boxed_copy(&attrs.memory_profile))
             }
             AttributeSectionKind::Scenes => {
-                AttributeSectionView::Scenes(Box::new(attrs.scenes.clone()))
+                AttributeSectionView::Scenes(boxed_copy(&attrs.scenes))
             }
         }
     }
@@ -1882,7 +1897,6 @@ mod dirty_gating_tests {
                 .attributes
                 .common102
                 .fade_time_ms
-                .clone()
                 .expect("slot");
             assert!(slot.last_read_ms.is_some(), "write keeps the read stamp");
             assert!(slot.last_write_confirmed_ms.is_some());
@@ -1905,7 +1919,6 @@ mod dirty_gating_tests {
                 .attributes
                 .common102
                 .fade_time_ms
-                .clone()
                 .expect("slot");
             assert!(
                 slot.last_write_confirmed_ms.is_some(),

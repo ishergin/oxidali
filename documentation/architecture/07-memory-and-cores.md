@@ -77,6 +77,10 @@ flash, XIP and cache discipline → [08](08-dali-phy-and-transport.md); threadin
   in-place initialiser (`PhysicalDeviceRecord::init_empty`); the by-value constructor
   exists only in tests, and a section above `MAX_INLINE_INIT_TEMP_BYTES` (2 KiB) owes its
   own in-place default. Stack-footprint tests hold all three.
+- A derived `Clone` builds its copy on the stack, field temporaries included, even when
+  the result goes into a fresh allocation: up to twice the value's size in one frame.
+  Every attribute section without text is `Copy`, so the registry copies it straight into
+  the box it hands a handler.
 - On a worker stack a multi-KiB field is moved with `mem::swap`, never cloned into
   place.
 - A helper that builds a large value for a caller on a tight stack (route wiring on
@@ -146,7 +150,9 @@ unless named.
   devices are read as a summary list, a device core, attribute sections chosen with
   `?sections=`, and bank coverage.
 - A container serializes its children one at a time inside `serialize` rather than
-  holding them all.
+  holding them all, each child built in its own `#[inline(never)]` frame: the
+  size-optimised build does not reliably share one slot between two temporaries of a
+  function, even sequential ones.
 - The full physical-device view is off every read-port trait
   ([06](06-registry-and-persistence.md)), so a handler cannot reach it: a compile error,
   not a review convention.

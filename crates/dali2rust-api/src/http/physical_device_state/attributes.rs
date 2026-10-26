@@ -54,11 +54,12 @@ macro_rules! attribute_section_dto {
 
         impl $dto {
             fn from_view(v: &$view) -> Option<Self> {
-                let dto = Self { $($field: observed_opt(&v.$field),)+ };
-                ($(dto.$field.is_some())||+).then_some(dto)
+                if !Self::is_present(v) {
+                    return None;
+                }
+                Some(Self { $($field: observed_opt(&v.$field),)+ })
             }
 
-            #[allow(dead_code, reason = "generated for every section; only container-gated sections call it")]
             fn is_present(v: &$view) -> bool {
                 $(v.$field.is_some())||+
             }
@@ -188,13 +189,15 @@ pub struct MemoryBusUnitAttributesDto {
 
 impl MemoryBusUnitAttributesDto {
     fn from_view(v: &MemoryBusUnitAttributesView) -> Option<Self> {
-        let dto = Self {
+        if v.configuration.is_none() && v.implemented_parts.is_none() {
+            return None;
+        }
+        Some(Self {
             configuration: observed_opt(&v.configuration)
                 .map(|o| o.map(BusUnitConfigurationDto::from_raw)),
             implemented_parts: observed_opt(&v.implemented_parts)
                 .map(|o| o.map(ImplementedPartsDto::from_raw)),
-        };
-        (dto.configuration.is_some() || dto.implemented_parts.is_some()).then_some(dto)
+        })
     }
 }
 
@@ -246,9 +249,7 @@ impl Serialize for MemoryEnergyAttributesDto<'_> {
             ("apparent", &self.0.apparent),
             ("loadside", &self.0.loadside),
         ] {
-            if let Some(bank) = EnergyBankDto::from_view(view) {
-                map.serialize_entry(key, &bank)?;
-            }
+            serialize_present_entry(&mut map, key, || EnergyBankDto::from_view(view))?;
         }
         map.end()
     }
@@ -393,15 +394,16 @@ impl<'a> MemoryDiagnosticsAttributesDto<'a> {
 impl Serialize for MemoryDiagnosticsAttributesDto<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
-        if let Some(gear) = GearDiagnosticsDto::from_view(&self.0.control_gear) {
-            map.serialize_entry("control_gear", &gear)?;
-        }
-        if let Some(source) = SourceDiagnosticsDto::from_view(&self.0.light_source) {
-            map.serialize_entry("light_source", &source)?;
-        }
-        if let Some(luminaire) = LuminaireMaintenanceDto::from_view(&self.0.luminaire) {
-            map.serialize_entry("luminaire", &luminaire)?;
-        }
+        let v = self.0;
+        serialize_present_entry(&mut map, "control_gear", || {
+            GearDiagnosticsDto::from_view(&v.control_gear)
+        })?;
+        serialize_present_entry(&mut map, "light_source", || {
+            SourceDiagnosticsDto::from_view(&v.light_source)
+        })?;
+        serialize_present_entry(&mut map, "luminaire", || {
+            LuminaireMaintenanceDto::from_view(&v.luminaire)
+        })?;
         map.end()
     }
 }
@@ -419,8 +421,12 @@ pub struct ScenesAttributesDto {
 
 impl ScenesAttributesDto {
     fn from_view(v: &ScenesAttributesView) -> Option<Self> {
-        let levels = core::array::from_fn(|idx| observed_opt(&v.levels[idx]));
-        levels.iter().any(Option::is_some).then_some(Self { levels })
+        if v.levels.iter().all(Option::is_none) {
+            return None;
+        }
+        Some(Self {
+            levels: core::array::from_fn(|idx| observed_opt(&v.levels[idx])),
+        })
     }
 }
 
@@ -478,46 +484,66 @@ impl Serialize for AttributeSectionDto<'_> {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self.0 {
             AttributeSectionView::Common102(v) => {
-                Common102AttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
+                serialize_section(s, || Common102AttributesDto::from_view(v))
             }
             AttributeSectionView::Dt6Led(v) => {
-                Dt6LedAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
+                serialize_section(s, || Dt6LedAttributesDto::from_view(v))
             }
             AttributeSectionView::Dt8Color(v) => {
-                Dt8ColorAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
+                serialize_section(s, || Dt8ColorAttributesDto::from_view(v))
             }
             AttributeSectionView::Extended(v) => {
-                ExtendedAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
+                serialize_section(s, || ExtendedAttributesDto::from_view(v))
             }
             AttributeSectionView::Groups(v) => {
-                GroupsAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
+                serialize_section(s, || GroupsAttributesDto::from_view(v))
             }
             AttributeSectionView::MemoryDiagnostics(v) => {
-                MemoryDiagnosticsAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
+                serialize_section(s, || MemoryDiagnosticsAttributesDto::from_view(v))
             }
             AttributeSectionView::MemoryEnergy(v) => {
-                MemoryEnergyAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
+                serialize_section(s, || MemoryEnergyAttributesDto::from_view(v))
             }
             AttributeSectionView::MemoryBusUnit(v) => {
-                MemoryBusUnitAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
+                serialize_section(s, || MemoryBusUnitAttributesDto::from_view(v))
             }
             AttributeSectionView::MemoryIdentity(v) => {
-                MemoryIdentityAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
+                serialize_section(s, || MemoryIdentityAttributesDto::from_view(v))
             }
             AttributeSectionView::MemoryLuminaire(v) => {
-                MemoryLuminaireAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
+                serialize_section(s, || MemoryLuminaireAttributesDto::from_view(v))
             }
             AttributeSectionView::MemoryProfile(v) => {
-                MemoryProfileAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
+                serialize_section(s, || MemoryProfileAttributesDto::from_view(v))
             }
             AttributeSectionView::Scenes(v) => {
-                ScenesAttributesDto::from_view(v).expect(SECTION_PRESENT).serialize(s)
+                serialize_section(s, || ScenesAttributesDto::from_view(v))
             }
         }
     }
 }
 
 const SECTION_PRESENT: &str = "AttributeSectionDto only exists for a non-empty section";
+
+#[inline(never)]
+fn serialize_section<S: serde::Serializer, D: Serialize>(
+    s: S,
+    build: impl FnOnce() -> Option<D>,
+) -> Result<S::Ok, S::Error> {
+    build().as_ref().expect(SECTION_PRESENT).serialize(s)
+}
+
+#[inline(never)]
+fn serialize_present_entry<M: SerializeMap, D: Serialize>(
+    map: &mut M,
+    key: &'static str,
+    build: impl FnOnce() -> Option<D>,
+) -> Result<(), M::Error> {
+    match &build() {
+        Some(dto) => map.serialize_entry(key, dto),
+        None => Ok(()),
+    }
+}
 
 pub fn write_attribute_section(
     w: &mut dyn std::io::Write,

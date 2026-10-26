@@ -11,7 +11,7 @@ pub enum AttributeSource {
     WriteConfirmed,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservedValue<T> {
     pub value: T,
     pub source: AttributeSource,
@@ -19,7 +19,7 @@ pub struct ObservedValue<T> {
     pub last_write_confirmed_ms: Option<u64>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Common102AttributesView {
     pub version: Option<ObservedValue<u8>>,
     pub device_type: Option<ObservedValue<u8>>,
@@ -34,17 +34,17 @@ pub struct Common102AttributesView {
     pub light_source_types: Option<ObservedValue<u32>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GroupsAttributesView {
     pub membership: Option<ObservedValue<u16>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScenesAttributesView {
     pub levels: [Option<ObservedValue<u8>>; 16],
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Dt6LedAttributesView {
     pub gear_type: Option<ObservedValue<u8>>,
     pub dimming_curve: Option<ObservedValue<u8>>,
@@ -67,7 +67,7 @@ pub struct Dt6LedAttributesView {
     pub extended_version_number: Option<ObservedValue<u8>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Dt8ColorAttributesView {
     pub color_type: Option<ObservedValue<u8>>,
     pub color_value_0: Option<ObservedValue<u16>>,
@@ -77,13 +77,13 @@ pub struct Dt8ColorAttributesView {
     pub rgbwaf_control: Option<ObservedValue<u8>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtendedAttributesView {
     pub fade_time_ms: Option<ObservedValue<u16>>,
     pub version_number: Option<ObservedValue<u8>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryIdentityAttributesView {
     pub last_memory_bank: Option<ObservedValue<u8>>,
     pub gtin: Option<ObservedValue<u64>>,
@@ -100,7 +100,7 @@ pub struct MemoryIdentityAttributesView {
     pub logical_control_gear_index: Option<ObservedValue<u8>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryProfileAttributesView {
     pub bank1_lock_byte: Option<ObservedValue<u8>>,
     pub oem_gtin: Option<ObservedValue<u64>>,
@@ -116,7 +116,7 @@ pub struct BankReading {
     pub saturated: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryBusUnitAttributesView {
     pub configuration: Option<ObservedValue<u8>>,
     pub implemented_parts: Option<ObservedValue<u8>>,
@@ -151,7 +151,7 @@ pub struct MemoryLuminaireAttributesView {
     pub free_use: Option<ObservedValue<FixedText32>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnergyBankView {
     pub bank_version: Option<ObservedValue<u8>>,
     pub energy_scale: Option<ObservedValue<i8>>,
@@ -160,20 +160,20 @@ pub struct EnergyBankView {
     pub power: Option<ObservedValue<BankReading>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryEnergyAttributesView {
     pub active: EnergyBankView,
     pub apparent: EnergyBankView,
     pub loadside: EnergyBankView,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConditionView {
     pub flag: Option<ObservedValue<BankReading>>,
     pub counter: Option<ObservedValue<BankReading>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GearDiagnosticsView {
     pub bank_version: Option<ObservedValue<u8>>,
     pub operating_time_s: Option<ObservedValue<BankReading>>,
@@ -191,7 +191,7 @@ pub struct GearDiagnosticsView {
     pub output_current_percent: Option<ObservedValue<BankReading>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceDiagnosticsView {
     pub bank_version: Option<ObservedValue<u8>>,
     pub start_counter_resettable: Option<ObservedValue<BankReading>>,
@@ -208,7 +208,7 @@ pub struct SourceDiagnosticsView {
     pub temperature_offset60: Option<ObservedValue<BankReading>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LuminaireMaintenanceView {
     pub bank_version: Option<ObservedValue<u8>>,
     pub rated_life_kilohours: Option<ObservedValue<BankReading>>,
@@ -216,7 +216,7 @@ pub struct LuminaireMaintenanceView {
     pub rated_starts_hundreds: Option<ObservedValue<BankReading>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryDiagnosticsAttributesView {
     pub control_gear: GearDiagnosticsView,
     pub light_source: SourceDiagnosticsView,
