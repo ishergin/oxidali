@@ -507,11 +507,12 @@ fn boxed_copy<T: Copy>(section: &T) -> Box<T> {
 }
 
 #[inline(never)]
+fn boxed_clone<T: Clone>(section: &T) -> Box<T> {
+    Box::new(section.clone())
+}
+
 fn luminaire_section(rec: &PhysicalDeviceRecord) -> Box<MemoryLuminaireAttributesView> {
-    Box::new(match rec.luminaire_info.as_deref() {
-        Some(info) => info.clone(),
-        None => MemoryLuminaireAttributesView::default(),
-    })
+    rec.luminaire_info.as_deref().map_or_else(Box::default, boxed_clone)
 }
 
 fn memory_banks_view(banks: &[MemoryBankRecord]) -> Vec<MemoryBankSummaryView> {
