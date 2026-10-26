@@ -216,11 +216,25 @@ pub struct LuminaireMaintenanceView {
     pub rated_starts_hundreds: Option<ObservedValue<BankReading>>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryDiagnosticsAttributesView {
     pub control_gear: GearDiagnosticsView,
     pub light_source: SourceDiagnosticsView,
     pub luminaire: LuminaireMaintenanceView,
+}
+
+pub trait BoxedInPlace {
+    fn to_boxed(&self) -> Box<Self>;
+}
+
+impl BoxedInPlace for MemoryDiagnosticsAttributesView {
+    fn to_boxed(&self) -> Box<Self> {
+        Box::new(Self {
+            control_gear: self.control_gear,
+            light_source: self.light_source,
+            luminaire: self.luminaire,
+        })
+    }
 }
 
 impl MemoryDiagnosticsAttributesView {
@@ -264,6 +278,53 @@ impl PhysicalDeviceAttributesView {
     }
 }
 
+#[cfg(test)]
+pub(crate) struct ViewTraits {
+    pub name: &'static str,
+    pub size: usize,
+    pub is_copy: bool,
+    pub in_place: bool,
+}
+
+#[cfg(test)]
+impl ViewTraits {
+    pub const fn of<T>(name: &'static str, is_copy: bool, in_place: bool) -> Self {
+        Self { name, size: core::mem::size_of::<T>(), is_copy, in_place }
+    }
+}
+
+#[cfg(test)]
+macro_rules! view_traits {
+    ($view:ty) => {
+        ViewTraits::of::<$view>(stringify!($view), Probe::<$view>::IS_COPY, Probe::<$view>::IN_PLACE)
+    };
+}
+
+#[cfg(test)]
+pub(crate) use view_traits;
+
+#[cfg(test)]
+pub(crate) struct Probe<T>(core::marker::PhantomData<T>);
+
+#[cfg(test)]
+pub(crate) trait ProbeFallback {
+    const IS_COPY: bool = false;
+    const IN_PLACE: bool = false;
+}
+
+#[cfg(test)]
+impl<T> ProbeFallback for Probe<T> {}
+
+#[cfg(test)]
+impl<T: Copy> Probe<T> {
+    pub const IS_COPY: bool = true;
+}
+
+#[cfg(test)]
+impl<T: BoxedInPlace> Probe<T> {
+    pub const IN_PLACE: bool = true;
+}
+
 macro_rules! declare_attribute_sections {
     ( $( $variant:ident, $wire:literal, $view:ident );+ $(;)? ) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -299,8 +360,8 @@ macro_rules! declare_attribute_sections {
         }
 
         #[cfg(test)]
-        pub(crate) const BOXED_SECTION_TEMPORARIES: &[(&str, usize)] = &[
-            $( (stringify!($view), core::mem::size_of::<$view>()), )+
+        pub(crate) const SECTION_VIEWS: &[ViewTraits] = &[
+            $( view_traits!($view), )+
         ];
     };
 }

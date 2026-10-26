@@ -20,7 +20,7 @@ use dali2rust_domain::dali::level_transition::{LevelContext, TransitionOutcome};
 use dali2rust_domain::registry::{
     colour_mode_fits_declared, device_type_fits_declared, known_device_types,
     AttributeSectionKind,
-    AttributeSectionView, AttributeSource, CapabilityFlagsView, ColorTemperatureRangeView,
+    AttributeSectionView, BoxedInPlace, AttributeSource, CapabilityFlagsView, ColorTemperatureRangeView,
     MemoryBankRangeView, MemoryBankSummaryView, MemoryBusUnitAttributesView,
     MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView, MemoryLuminaireAttributesView,
     ObservedValue, PhysicalDeviceAttributesView, PhysicalDeviceCoreView, PhysicalDeviceReadPort,
@@ -1329,7 +1329,7 @@ impl RegistryStore {
                 AttributeSectionView::Groups(boxed_copy(&attrs.groups))
             }
             AttributeSectionKind::MemoryDiagnostics => {
-                AttributeSectionView::MemoryDiagnostics(boxed_copy(&rec.diagnostics))
+                AttributeSectionView::MemoryDiagnostics(rec.diagnostics.to_boxed())
             }
             AttributeSectionKind::MemoryEnergy => {
                 AttributeSectionView::MemoryEnergy(boxed_copy(&rec.energy))

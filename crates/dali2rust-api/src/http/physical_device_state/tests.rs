@@ -102,7 +102,7 @@ fn attributes_json(
                 AttributeSectionView::Groups(Box::new(attrs.groups))
             }
             AttributeSectionKind::MemoryDiagnostics => {
-                AttributeSectionView::MemoryDiagnostics(Box::new(*diagnostics))
+                AttributeSectionView::MemoryDiagnostics(Box::new(diagnostics.clone()))
             }
             AttributeSectionKind::MemoryEnergy => {
                 AttributeSectionView::MemoryEnergy(Box::new(*energy))
