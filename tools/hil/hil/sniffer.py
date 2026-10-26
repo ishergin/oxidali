@@ -27,6 +27,8 @@ WIRE_BYTE0_IS_LSB = False
 
 RETAINED_WINDOW_S = 0.7
 
+MONITOR_STAMP = re.compile(r"^\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+")
+
 SNIFFER_RESEND = "sniffer_resend"
 
 SPECIAL = {
@@ -108,8 +110,16 @@ def decode_forward16(b):
     return "%s (%s)" % (name, tgt)
 
 
+def monitor_payload(payload):
+    return MONITOR_STAMP.sub("", payload.strip())
+
+
+def monitor_stamped(payload):
+    return MONITOR_STAMP.match(payload.strip()) is not None
+
+
 def parse_monitor_line(ts, payload):
-    payload = payload.strip()
+    payload = monitor_payload(payload)
     if payload.startswith(">>"):
         direction = "tx"
     elif payload.startswith("<<"):
@@ -124,6 +134,14 @@ def parse_monitor_line(ts, payload):
     return {"kind": "monitor", "ts": ts, "direction": direction,
             "text": text, "fc": fc,
             "lunatone": "(from lunatone)" in text}
+
+
+def monitor_line_matches(entry, contains, direction=None, ours=False):
+    if direction and entry["direction"] != direction:
+        return False
+    if ours:
+        return entry["lunatone"] and entry["text"].split()[:1] == [contains]
+    return contains in entry["text"]
 
 
 def parse_line(line):
@@ -343,14 +361,12 @@ class Window:
         return [f for f in self._entries() if f.get("kind") == "monitor"]
 
     def expect_monitor(self, contains, direction=None, timeout_s=10.0,
-                       resend=None):
+                       resend=None, ours=False):
         deadline = time.monotonic() + timeout_s
         resend_at = time.monotonic() + timeout_s / 2.0 if resend else None
         while True:
             for f in self.monitor_lines():
-                if direction and f["direction"] != direction:
-                    continue
-                if contains in f["text"]:
+                if monitor_line_matches(f, contains, direction, ours):
                     return f
             now = time.monotonic()
             if resend_at and now >= resend_at:

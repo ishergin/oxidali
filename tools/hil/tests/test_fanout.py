@@ -1,8 +1,14 @@
 import pytest
 
+from hil.foreign import frame_hex
+
 pytestmark = [pytest.mark.foreign, pytest.mark.light]
 
 LEVEL_A, LEVEL_B = 180, 220
+
+
+def _dapc_on_wire(short, level):
+    return frame_hex({"bytes": [short << 1, level]})
 
 
 @pytest.mark.hil_id("HIL-FAN-01")
@@ -15,7 +21,7 @@ def test_foreign_dapc_projects_with_sniffer_source(api, foreign,
     short = lamps.by_label[label]
     with sniffer.window() as win:
         foreign.dapc(short, LEVEL_A)
-        win.expect_monitor("ArcPower", direction="tx")
+        win.expect_monitor(_dapc_on_wire(short, LEVEL_A), direction="tx", ours=True)
     last = wait_state(short, lambda s: s.get("level") == LEVEL_A)
     test_artifacts.attach_json("state", last)
     assert last.get("level") == LEVEL_A, last
@@ -162,7 +168,7 @@ def test_foreign_dapc_keeps_runtime_status(api, foreign, fanout_supported,
 
     with sniffer.window() as win:
         foreign.dapc(short, LEVEL_A)
-        win.expect_monitor("ArcPower", direction="tx")
+        win.expect_monitor(_dapc_on_wire(short, LEVEL_A), direction="tx", ours=True)
     after = wait_state(short, lambda s: s.get("level") == LEVEL_A)
     test_artifacts.attach_json("after", after)
     assert after.get("level") == LEVEL_A, after

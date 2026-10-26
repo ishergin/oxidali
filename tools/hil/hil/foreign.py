@@ -1,14 +1,37 @@
 import collections
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
 
-from hil import write_log
+from hil import serialmon, write_log
+from hil.config import PeerUnconfigured
 from hil.lamp_guard import LampGuard, LampNotAllowed
-from hil.sniffer import ssh_argv
+from hil.sniffer import monitor_payload, monitor_stamped, ssh_argv
 
 WS_PORT = 8080
+FRAME_SETTLE_S = 8
+SSH_SLACK_S = 15
+INTERLEAVED = "interleaved by "
+LUNATONE_REQUEST = "(from lunatone)"
+OUTCOME_MARK = "- "
+GATEWAY_REFUSALS = frozenset({
+    "transmission error", "no response from gateway",
+    "no transmission, internal gateway error", "no power on bus", "transmission cancelled",
+    "gateway overheated", "unknown response status", "gateway unavailable",
+})
+PEER_SNIFF = re.compile(r"DALI sniff: foreign forward(16|24)=0x([0-9a-f]+)")
+PEER_LOG_STALE_S = 30
+FORWARD16_TOKEN = re.compile(r"^[0-9a-f]{4}$")
+BACKWARD_MARK = "BF8"
+DT8 = 8
+DT8_SET_TEMPORARY_TC = 0xE7
+DT8_ACTIVATE = 0xE2
+DT8_SET_TEMPORARY_RGB = 0xEB
+DT8_SET_TEMPORARY_WAF = 0xEC
+DT8_SET_TEMPORARY_RGBWAF_CONTROL = 0xED
+RGBWAF_CONTROL_NORMALISED = 0x80
 TEST_RULE_PREFIX = "hil-"
 COMMAND_BIT = 0x01
 POWER_NOTIFICATION = 0xFE
@@ -21,10 +44,30 @@ GROUP_SCHEME_TOP = 3
 INSTANCE_TRIGGERS = frozenset({"input_event", "input_occupancy", "input_light_cross",
                                "input_position_change"})
 POWER_CYCLED = "input_device_power_cycled"
+ENABLE_DEVICE_TYPE = 0xC1
 
 _REMOTE_CLIENT = r"""
-import asyncio, json, sys
+import asyncio, json, sys, time
 import websockets
+
+SETTLE_S = %d
+SENT = 0
+
+async def settle(ws, f):
+    owed = {"daliFrame": 2 if f.get("send_twice") else 1,
+            "daliAnswer": 1 if f.get("wait_answer") else 0}
+    deadline = time.monotonic() + SETTLE_S
+    while any(owed.values()):
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise asyncio.TimeoutError
+        msg = json.loads(await asyncio.wait_for(ws.recv(), left))
+        print(json.dumps(msg))
+        kind = msg.get("type")
+        if kind == "daliFrame" and (msg.get("data") or {}).get("result", SENT) != SENT:
+            return
+        if owed.get(kind, 0) > 0:
+            owed[kind] -= 1
 
 async def main():
     frames = json.loads(sys.argv[1])
@@ -41,26 +84,44 @@ async def main():
                          "priority": 0,
                          "waitForAnswer": bool(f.get("wait_answer"))}}}
             await ws.send(json.dumps(msg))
-            print(json.dumps(json.loads(await asyncio.wait_for(ws.recv(), 8))))
+            try:
+                await settle(ws, f)
+            except asyncio.TimeoutError:
+                sys.exit("no result for frame %%s within %%d s" %% (f["bytes"], SETTLE_S))
 
 asyncio.run(main())
 """
+
+
+def remote_client_script(line):
+    return _REMOTE_CLIENT % (FRAME_SETTLE_S, WS_PORT, line)
 
 
 def frame_hex(frame):
     return "".join("%02x" % b for b in frame["bytes"])
 
 
-def frames_on_wire(lines, frames):
+def _request_refusal(body):
+    outcome = body.partition(LUNATONE_REQUEST)[2].strip()
+    text = outcome[len(OUTCOME_MARK):].strip() if outcome.startswith(OUTCOME_MARK) else ""
+    return text if text in GATEWAY_REFUSALS else None
+
+
+def monitor_verdict(lines, frames):
     wanted = collections.Counter(frame_hex(f) for f in frames)
-    requested = any(">>" in line and "(from lunatone)" in line for line in lines)
+    requested = any(">>" in line and LUNATONE_REQUEST in line for line in lines)
     seen, errors, pending = 0, [], []
     for line in lines:
-        body = line.split("bus_monitor", 1)[-1].strip()
-        if body.startswith(">>") and "(from lunatone)" in body:
-            pending.append(body[2:].split()[0] if body[2:].split() else "")
+        payload = line.split("bus_monitor", 1)[-1]
+        body = monitor_payload(payload)
+        if body.startswith(">>") and LUNATONE_REQUEST in body:
+            refusal = _request_refusal(body)
+            if refusal:
+                errors.append(refusal)
+            else:
+                pending.append(body[2:].split()[0] if body[2:].split() else "")
             continue
-        if not body.startswith("<<"):
+        if not body.startswith("<<") or monitor_stamped(payload):
             continue
         text = body[2:].strip()
         token = text.split()[0] if text.split() else ""
@@ -76,7 +137,75 @@ def frames_on_wire(lines, frames):
         elif not requested and wanted[token] > 0:
             wanted[token] -= 1
             seen += 1
-    return seen, errors
+    split = interleaving(lines) if len(frames) > 1 else []
+    return seen, errors + split, len(pending)
+
+
+def _forward16_of_another(body):
+    text = body[2:].strip()
+    token = text.split()[0] if text.split() else ""
+    if not FORWARD16_TOKEN.match(token) or BACKWARD_MARK in text or LUNATONE_REQUEST in text:
+        return None
+    return token
+
+
+def interleaving(lines):
+    payloads = [line.split("bus_monitor", 1)[-1] for line in lines]
+    bodies = [monitor_payload(p) for p in payloads if monitor_stamped(p)]
+    ours = [i for i, body in enumerate(bodies)
+            if body.startswith(">>") and LUNATONE_REQUEST in body]
+    if len(ours) < 2:
+        return []
+    between = (_forward16_of_another(body) for body in bodies[ours[0] + 1:ours[-1]])
+    return [INTERLEAVED + token for token in between if token]
+
+
+def frames_on_wire(lines, frames):
+    return monitor_verdict(lines, frames)[:2]
+
+
+def sniffed(text, frames):
+    wanted = collections.Counter((f["bits"], frame_hex(f)) for f in frames)
+    for bits, token in PEER_SNIFF.findall(text):
+        key = (int(bits), token)
+        if wanted[key] > 0:
+            wanted[key] -= 1
+    return not +wanted
+
+
+class PeerLog:
+    def __init__(self, path, now=None):
+        self.path = path
+        self.offset = None
+        if path is not None and path.exists():
+            stat = path.stat()
+            if (now or time.time()) - stat.st_mtime <= PEER_LOG_STALE_S:
+                self.offset = stat.st_size
+
+    def since(self):
+        if self.offset is None:
+            return ""
+        with open(self.path, "rb") as fh:
+            fh.seek(self.offset)
+            return fh.read().decode(errors="replace")
+
+
+def peer_note(peer):
+    if peer.offset is None:
+        return "no live peer serial log could witness them"
+    if not PEER_SNIFF.search(peer.since()):
+        return ("the peer's log shows no sniffed frame at all, so it is no witness "
+                "(a peer in the gear-sim role has no sniffer)")
+    return "the peer's sniffer did not log them"
+
+
+def _peer_log_path(cfg):
+    if not cfg.has_peer:
+        return None
+    try:
+        return serialmon.log_path(cfg.peer())
+    except PeerUnconfigured:
+        return None
 
 
 def event_source24(raw):
@@ -139,6 +268,7 @@ class ForeignMaster:
     MONITOR_ARM_S = 1.5
     CLIENT_TIMEOUT_S = 30
     QUIESCE_TIMEOUT_S = 4.0
+    POLL_S = 0.15
 
     def __init__(self, cfg, api=None):
         self.cfg = cfg
@@ -149,10 +279,10 @@ class ForeignMaster:
             cfg, segment=api.segment_shorts if api is not None else None)
 
     def _run_client(self, frames):
-        script = _REMOTE_CLIENT % (WS_PORT, self.line)
-        remote = "python3 -c %s %s" % (_shq(script), _shq(json.dumps(frames)))
-        proc = subprocess.run(ssh_argv(self.cfg, remote),
-                              capture_output=True, text=True, timeout=30)
+        remote = "python3 -c %s %s" % (_shq(remote_client_script(self.line)),
+                                       _shq(json.dumps(frames)))
+        proc = subprocess.run(ssh_argv(self.cfg, remote), capture_output=True, text=True,
+                              timeout=FRAME_SETTLE_S * max(len(frames), 1) + SSH_SLACK_S)
         if proc.returncode != 0:
             raise ForeignMasterError(
                 "lunatone ws client failed: %s" % proc.stderr.strip()[:300])
@@ -177,7 +307,7 @@ class ForeignMaster:
         deadline = time.monotonic() + timeout_s
         last, since = self._forward_counts(), time.monotonic()
         while time.monotonic() < deadline:
-            time.sleep(0.15)
+            time.sleep(self.POLL_S)
             now = self._forward_counts()
             if now != last:
                 last, since = now, time.monotonic()
@@ -194,7 +324,7 @@ class ForeignMaster:
                 seen = now[width] - before[width]
                 if seen >= 1:
                     return seen
-            time.sleep(0.15)
+            time.sleep(self.POLL_S)
         return seen
 
     def _arm_monitor(self):
@@ -217,7 +347,28 @@ class ForeignMaster:
         if out is None:
             return None
         lines = out.splitlines()
-        return frames_on_wire(lines, frames) if lines else None
+        return monitor_verdict(lines, frames) if lines else None
+
+    def _delivered(self, monitor, before, peer, frames, width):
+        verdict = self._monitor_verdict(monitor, frames)
+        if verdict is None:
+            return before is None or self._witness(before, width) >= 1, []
+        seen, errors, unechoed = verdict
+        if seen >= len(frames):
+            return True, errors
+        if errors or unechoed < len(frames) - seen:
+            return False, errors
+        return self._peer_witnessed(peer, frames), errors
+
+    def _peer_witnessed(self, peer, frames):
+        if peer.offset is None:
+            return False
+        deadline = time.monotonic() + self.WITNESS_TIMEOUT_S
+        while not sniffed(peer.since(), frames):
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(self.POLL_S)
+        return True
 
     def _send_once(self, frames):
         replies = self._run_client(frames)
@@ -280,35 +431,45 @@ class ForeignMaster:
         for attempt in range(self.MAX_SENDS):
             before = self._wait_quiet(self.QUIESCE_TIMEOUT_S)
             monitor = self._arm_monitor()
+            peer = PeerLog(_peer_log_path(self.cfg))
             try:
                 replies = self._send_once(frames)
             except BaseException:
                 if monitor is not None:
                     _stop_monitor(monitor)
                 raise
-            verdict = self._monitor_verdict(monitor, frames)
-            if verdict is not None:
-                seen, gateway_errors = verdict
-                if seen >= expected:
-                    return replies
-            elif before is None:
+            delivered, gateway_errors = self._delivered(monitor, before, peer, frames, width)
+            if delivered:
                 return replies
-            elif self._witness(before, width) >= 1:
-                return replies
+            split = bool(gateway_errors) and all(e.startswith(INTERLEAVED)
+                                                 for e in gateway_errors)
             if attempt + 1 >= self.MAX_SENDS:
-                raise ForeignMasterSilent(
-                    "wb-mqtt-dali accepted %d frame(s) over WS and they did not "
-                    "all reach the wire within %.1fs, over %d attempts%s. "
-                    "The bench foreign master is jammed, not the firmware — "
-                    "`systemctl restart wb-mqtt-dali` on %s (STRATEGY.md §2)."
-                    % (expected, self.WITNESS_TIMEOUT_S, self.MAX_SENDS,
-                       "; the WB's own monitor said: %s" % "; ".join(gateway_errors[:3])
-                       if gateway_errors else "",
-                       self.cfg.wb_ssh))
-            self.retries["foreign_master_silent"] += 1
-            print("foreign master silent: not all of a %d-frame batch reached the wire, "
-                  "re-sending (attempt %d/%d)"
-                  % (expected, attempt + 2, self.MAX_SENDS))
+                raise ForeignMasterSilent(self._undelivered(expected, gateway_errors, peer, split))
+            self._count_resend(expected, attempt, split)
+
+    def _undelivered(self, expected, gateway_errors, peer, split):
+        if split:
+            return ("another master's frames split the %d-frame batch on all %d attempts "
+                    "(%s): the bench bus is busy, not the firmware"
+                    % (expected, self.MAX_SENDS, "; ".join(gateway_errors[:3])))
+        return ("wb-mqtt-dali accepted %d frame(s) over WS and they did not "
+                "all reach the wire within %.1fs, over %d attempts%s; %s. "
+                "The bench foreign master is jammed, not the firmware — "
+                "`systemctl restart wb-mqtt-dali` on %s (STRATEGY.md §2)."
+                % (expected, self.WITNESS_TIMEOUT_S, self.MAX_SENDS,
+                   "; the WB's own monitor said: %s" % "; ".join(gateway_errors[:3])
+                   if gateway_errors else "",
+                   peer_note(peer), self.cfg.wb_ssh))
+
+    def _count_resend(self, expected, attempt, split):
+        if split:
+            self.retries["foreign_unit_interleaved"] += 1
+            print("foreign master: another master's frame split a %d-frame batch, "
+                  "re-sending (attempt %d/%d)" % (expected, attempt + 2, self.MAX_SENDS))
+            return
+        self.retries["foreign_master_silent"] += 1
+        print("foreign master silent: not all of a %d-frame batch reached the wire, "
+              "re-sending (attempt %d/%d)" % (expected, attempt + 2, self.MAX_SENDS))
 
     def dapc(self, short, level):
         return self.send_frames([{"addr": short << 1, "data": level}])
@@ -371,43 +532,40 @@ class ForeignMaster:
 
     def set_cct(self, short, kelvin):
         mirek = (1_000_000 + kelvin // 2) // kelvin
-        return self.send_frames([
-            {"addr": 0xA3, "data": mirek & 0xFF},
-            {"addr": 0xC3, "data": (mirek >> 8) & 0xFF},
-            {"addr": 0xC1, "data": 8},
-            {"addr": (short << 1) | 1, "data": 0xE7},
-            {"addr": 0xC1, "data": 8},
-            {"addr": (short << 1) | 1, "data": 0xE2},
+        target = (short << 1) | 1
+        return self.send_units([
+            [_dtr(0, mirek & 0xFF), _dtr(1, (mirek >> 8) & 0xFF), _ENABLE_DT8,
+             {"addr": target, "data": DT8_SET_TEMPORARY_TC}],
+            [_ENABLE_DT8, {"addr": target, "data": DT8_ACTIVATE}],
         ])
 
-    def send_frames_one_at_a_time(self, frames):
-        self._check(self._normalize(frames))
+    def send_units(self, units):
+        self._check(self._normalize([frame for unit in units for frame in unit]))
         out = []
-        for frame in frames:
-            echo = self.send_frames([frame])
+        for unit in units:
+            echo = self.send_frames(unit)
             if isinstance(echo, list):
                 out.extend(echo)
         return out
 
     def set_rgb(self, short, r, g, b):
-        ind = (short << 1) | 1
-        return self.send_frames_one_at_a_time([
-            {"addr": 0xA3, "data": 0x80},
-            {"addr": 0xC1, "data": 8},
-            {"addr": ind, "data": 0xED},
-            {"addr": 0xA3, "data": r & 0xFF},
-            {"addr": 0xC3, "data": g & 0xFF},
-            {"addr": 0xC5, "data": b & 0xFF},
-            {"addr": 0xC1, "data": 8},
-            {"addr": ind, "data": 0xEB},
-            {"addr": 0xA3, "data": 0},
-            {"addr": 0xC3, "data": 0},
-            {"addr": 0xC5, "data": 0},
-            {"addr": 0xC1, "data": 8},
-            {"addr": ind, "data": 0xEC},
-            {"addr": 0xC1, "data": 8},
-            {"addr": ind, "data": 0xE2},
+        target = (short << 1) | 1
+        return self.send_units([
+            [_dtr(0, RGBWAF_CONTROL_NORMALISED), _ENABLE_DT8,
+             {"addr": target, "data": DT8_SET_TEMPORARY_RGBWAF_CONTROL}],
+            [_dtr(0, r & 0xFF), _dtr(1, g & 0xFF), _dtr(2, b & 0xFF), _ENABLE_DT8,
+             {"addr": target, "data": DT8_SET_TEMPORARY_RGB}],
+            [_dtr(0, 0), _dtr(1, 0), _dtr(2, 0), _ENABLE_DT8,
+             {"addr": target, "data": DT8_SET_TEMPORARY_WAF}],
+            [_ENABLE_DT8, {"addr": target, "data": DT8_ACTIVATE}],
         ])
+
+DTR_ADDRESSES = (0xA3, 0xC3, 0xC5)
+_ENABLE_DT8 = {"addr": ENABLE_DEVICE_TYPE, "data": DT8}
+
+
+def _dtr(index, value):
+    return {"addr": DTR_ADDRESSES[index], "data": value}
 
 
 def _stop_monitor(monitor):
