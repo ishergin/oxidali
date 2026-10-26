@@ -26,8 +26,8 @@ def test_group_patch_metadata_roundtrip(api):
                       if g["group_id"] == gid)
         assert listed["name"] == "hil-grp-tmp"
     finally:
-        api.groups.patch(gid, {"name": before["name"] or None,
-                               "ha_entity_enabled": before["ha_entity_enabled"]})
+        api.groups.patch(gid, {"ha_entity_enabled": before["ha_entity_enabled"]})
+        api.groups.patch(gid, {"name": before["name"] or None})
     assert api.groups.get(gid)["name"] == before["name"]
 
 

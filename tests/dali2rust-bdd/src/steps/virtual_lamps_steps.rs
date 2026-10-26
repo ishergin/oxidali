@@ -33,7 +33,7 @@ async fn given_device_reports_group_membership(world: &mut DaliWorld, short: u8,
     read_groups_membership_from_gear(world, short, 1u16 << group_id);
 }
 
-// VL-001
+// VL-001 VL-107 VL-108
 #[given(regex = r#"^virtual lamp (\d+) has name "([^"]+)"$"#)]
 async fn given_virtual_lamp_named(world: &mut DaliWorld, lamp_id: u8, name: String) {
     let path = format!("/api/v1/adapters/0/virtual-lamps/{lamp_id}");

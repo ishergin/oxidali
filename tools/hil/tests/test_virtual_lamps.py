@@ -77,6 +77,6 @@ def test_vl_patch_metadata_roundtrip(api, vl_bindings, lamps):
                   for v in api.vlamps.list()["virtual_lamps"]}
         assert listed[lid]["name"] == "hil-vl-tmp"
     finally:
-        api.vlamps.patch(lid, {"name": restore_name,
-                               "ha_entity_enabled": before["ha_entity_enabled"]})
+        api.vlamps.patch(lid, {"ha_entity_enabled": before["ha_entity_enabled"]})
+        api.vlamps.patch(lid, {"name": restore_name})
     assert api.vlamps.get(lid)["name"] == before["name"]

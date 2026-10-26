@@ -23,12 +23,26 @@ TC_SLOT = "color_value_2"
 QUERY_ACTUAL_LEVEL = 0xA0
 RULES_RECONCILE_S = 10.0
 RULES_LANDED, RULES_OVERTAKEN, RULES_UNCHANGED = "landed", "overtaken", "unchanged"
+SCENE_METADATA_FIELDS = ("name", "ha_select_enabled")
 
 
 def rules_put_outcome(doc, source, base_revision):
     if doc.get("revision") == base_revision:
         return RULES_UNCHANGED
     return RULES_LANDED if doc.get("source") == source else RULES_OVERTAKEN
+
+
+def _scene_meta(scene):
+    return {"name": scene.get("name") or "",
+            "ha_select_enabled": scene.get("ha_select_enabled", True)}
+
+
+def _scene_metadata_patch(wanted, live):
+    have, want = _scene_meta(live), _scene_meta(wanted)
+    patch = {f: want[f] for f in SCENE_METADATA_FIELDS if f in wanted and have[f] != want[f]}
+    if patch.get("name") == "":
+        patch["name"] = None
+    return patch
 
 
 def kelvin_to_mirek(kelvin):
@@ -606,20 +620,14 @@ class Client:
             rows = [{"virtual_lamp_id": r["virtual_lamp_id"], "desired": r["desired"]}
                     for r in self.scenes.matrix(scene_id)["rows"]
                     if (r.get("desired") or {}).get("included")]
-            out.append({"scene_id": scene_id,
-                        "name": scene.get("name") or "",
-                        "ha_select_enabled": scene.get("ha_select_enabled", True),
-                        "rows": rows})
+            out.append({"scene_id": scene_id, **_scene_meta(scene), "rows": rows})
         return out
 
     def _scene_restore(self, scenes: list) -> None:
+        live = {s["scene_id"]: s for s in self.scenes.list()["scenes"]}
         for scene in scenes:
             scene_id = scene["scene_id"]
-            patch = {}
-            if "name" in scene:
-                patch["name"] = scene["name"] or None
-            if "ha_select_enabled" in scene:
-                patch["ha_select_enabled"] = scene["ha_select_enabled"]
+            patch = _scene_metadata_patch(scene, live.get(scene_id, {}))
             if patch:
                 self.scenes.patch(scene_id, patch)
             rows = [{"virtual_lamp_id": r["virtual_lamp_id"],

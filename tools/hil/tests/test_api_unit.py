@@ -89,14 +89,30 @@ def test_every_diagnostic_door_books_the_lamps_it_can_move():
     assert client.TOUCHED_ALL in client.raw_touched
 
 
-def test_a_config_restore_clears_with_null_a_scene_name_the_snapshot_holds_empty(monkeypatch):
+def _restored_scene_patches(monkeypatch, live, snapshot):
     client = hil.api.Client(load_config())
     patches = []
+    monkeypatch.setattr(client.scenes, "list", lambda: {"scenes": live})
     monkeypatch.setattr(client.scenes, "patch", lambda sid, body: patches.append((sid, body)))
-    client._scene_restore([{"scene_id": 12, "name": "", "ha_select_enabled": False},
-                           {"scene_id": 3, "name": "Dinner", "ha_select_enabled": True}])
-    assert patches == [(12, {"name": None, "ha_select_enabled": False}),
-                       (3, {"name": "Dinner", "ha_select_enabled": True})]
+    client._scene_restore(snapshot)
+    return patches
+
+
+def test_a_config_restore_writes_a_scene_name_only_where_it_moved(monkeypatch):
+    live = [{"scene_id": 1, "name": "", "ha_select_enabled": True},
+            {"scene_id": 2, "ha_select_enabled": True},
+            {"scene_id": 3, "name": "Dinner", "ha_select_enabled": False},
+            {"scene_id": 4, "name": "Old", "ha_select_enabled": True},
+            {"scene_id": 12, "name": "hil-tmp", "ha_select_enabled": True}]
+    snapshot = [{"scene_id": 1, "name": "", "ha_select_enabled": True},
+                {"scene_id": 2, "name": "", "ha_select_enabled": True},
+                {"scene_id": 3, "name": "Dinner", "ha_select_enabled": True},
+                {"scene_id": 4, "name": "Dinner", "ha_select_enabled": True},
+                {"scene_id": 12, "name": "", "ha_select_enabled": False}]
+    assert _restored_scene_patches(monkeypatch, live, snapshot) == [
+        (3, {"ha_select_enabled": True}),
+        (4, {"name": "Dinner"}),
+        (12, {"name": None, "ha_select_enabled": False})]
 
 
 SOURCE = "rule dusk when time 18:00 then off(VL1)"

@@ -912,12 +912,12 @@ def test_an_hcl_override_is_cleared_only_when_the_toolkit_drove_a_lamp_it_target
 
 
 def _restored_with(monkeypatch, snap, after, writes, drive_lamps=False, lamp_shorts=None,
-                   log=None):
-    monkeypatch.setattr(prod_state, "_restore_steps", lambda *args: None)
+                   log=None, api=None, steps=None):
+    monkeypatch.setattr(prod_state, "_restore_steps", steps or (lambda *args: None))
     monkeypatch.setattr(prod_state, "capture", lambda api, prime=True, log=print: after)
     monkeypatch.setattr(prod_state, "_clear_session_overrides", lambda *args: None)
     monkeypatch.setattr(prod_state, "_hcl_overrides", lambda api: after.get("hcl_overrides"))
-    return prod_state.restore(object(), snap, writes, log=log or (lambda line: None),
+    return prod_state.restore(api or object(), snap, writes, log=log or (lambda line: None),
                               drive_lamps=drive_lamps, lamp_shorts=lamp_shorts)
 
 
@@ -944,6 +944,53 @@ def test_a_write_of_the_toolkit_left_undone_keeps_the_snapshot_open(monkeypatch)
     assert not done.complete and done.residual == ["settings/poller.enabled False -> True"]
     unlogged = _restored_with(monkeypatch, _snap(), _snap(), None)
     assert not unlogged.complete and unlogged.residual == []
+
+
+class _RefusingGroups:
+    def __init__(self, live_name, live_row):
+        self.calls, self.live_name, self.live_row = [], live_name, live_row
+
+    def list(self):
+        return {"groups": [{"group_id": 15, "name": self.live_name, "ha_entity_enabled": True}]}
+
+    def patch(self, gid, body):
+        self.calls.append(("patch", gid, body))
+        raise api_mod.ApiError(422, {"error": "invalid_value"}, "groups/%d" % gid)
+
+    def matrix(self):
+        return {"rows": [self.live_row]}
+
+    def matrix_patch(self, rows):
+        self.calls.append(("matrix_patch", rows))
+
+    def apply(self):
+        self.calls.append(("apply",))
+        return {}
+
+
+def test_a_refused_group_name_restore_leaves_the_matrix_restored_and_the_name_a_residual(
+        monkeypatch):
+    for name in ("_restore_settings", "_restore_policies", "_restore_timezone",
+                 "_restore_adapter", "_restore_rules", "_restore_devices", "_restore_vl",
+                 "_restore_scenes", "_restore_hcl", "_restore_gear_config",
+                 "_restore_gear_tables"):
+        monkeypatch.setattr(prod_state, name, lambda *args: None)
+    row = {"virtual_lamp_id": 3, "desired": {"included": True, "power": "on", "level": 100}}
+    snap = _snap()
+    snap["groups"] = [{"group_id": 15, "name": "Group 15", "ha_entity_enabled": True}]
+    snap["group_matrix"] = {"rows": [row]}
+    after = copy.deepcopy(snap)
+    after["groups"][0]["name"] = "hil-tmp"
+    api = types.SimpleNamespace(groups=_RefusingGroups(
+        "hil-tmp", {"virtual_lamp_id": 3, "desired": {"included": False}}))
+    writes, lines = _writes({"group/15": {"name"}, "group_matrix/3": {"desired"}}), []
+    done = _restored_with(monkeypatch, snap, after, writes, log=lines.append, api=api,
+                          steps=prod_state._restore_steps)
+    assert api.groups.calls == [("patch", 15, {"name": "Group 15"}),
+                                ("matrix_patch", [row]), ("apply",)]
+    assert any("group 15 metadata FAILED" in line for line in lines)
+    assert done.residual == ["group 15 name 'Group 15' -> 'hil-tmp'"]
+    assert not done.complete
 
 
 def test_each_session_keeps_its_snapshot_and_log_under_its_own_name(tmp_path):
