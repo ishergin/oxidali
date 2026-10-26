@@ -278,6 +278,16 @@ impl PhysicalDeviceAttributesView {
     }
 }
 
+pub trait AttributeSectionVisitor<V> {
+    type Output;
+
+    fn visit(self, view: &V) -> Self::Output;
+}
+
+pub trait AttributeSectionSource<V> {
+    fn boxed_section(&self) -> Box<V>;
+}
+
 #[cfg(test)]
 pub(crate) struct ViewTraits {
     pub name: &'static str,
@@ -355,6 +365,28 @@ macro_rules! declare_attribute_sections {
             pub const fn kind(&self) -> AttributeSectionKind {
                 match self {
                     $( Self::$variant(_) => AttributeSectionKind::$variant, )+
+                }
+            }
+
+            pub fn visit<F, R>(&self, visitor: F) -> R
+            where
+                F: $( AttributeSectionVisitor<$view, Output = R> + )+
+            {
+                match self {
+                    $( Self::$variant(view) => AttributeSectionVisitor::<$view>::visit(visitor, view), )+
+                }
+            }
+        }
+
+        impl AttributeSectionKind {
+            pub fn boxed_view<S>(self, source: &S) -> AttributeSectionView
+            where
+                S: $( AttributeSectionSource<$view> + )+
+            {
+                match self {
+                    $( Self::$variant => {
+                        AttributeSectionView::$variant(AttributeSectionSource::<$view>::boxed_section(source))
+                    } )+
                 }
             }
         }

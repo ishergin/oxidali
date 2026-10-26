@@ -19,12 +19,14 @@ use dali2rust_contracts::msg::{
 use dali2rust_domain::dali::level_transition::{LevelContext, TransitionOutcome};
 use dali2rust_domain::registry::{
     colour_mode_fits_declared, device_type_fits_declared, known_device_types,
-    AttributeSectionKind,
-    AttributeSectionView, BoxedInPlace, AttributeSource, CapabilityFlagsView, ColorTemperatureRangeView,
+    AttributeSectionKind, AttributeSectionSource, AttributeSectionView, AttributeSource,
+    BoxedInPlace, CapabilityFlagsView, ColorTemperatureRangeView, Common102AttributesView,
+    Dt6LedAttributesView, Dt8ColorAttributesView, ExtendedAttributesView, GroupsAttributesView,
     MemoryBankRangeView, MemoryBankSummaryView, MemoryBusUnitAttributesView,
-    MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView, MemoryLuminaireAttributesView,
-    ObservedValue, PhysicalDeviceAttributesView, PhysicalDeviceCoreView, PhysicalDeviceReadPort,
-    PhysicalDeviceSummaryView,
+    MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView, MemoryIdentityAttributesView,
+    MemoryLuminaireAttributesView, MemoryProfileAttributesView, ObservedValue,
+    PhysicalDeviceAttributesView, PhysicalDeviceCoreView, PhysicalDeviceReadPort,
+    PhysicalDeviceSummaryView, ScenesAttributesView,
 };
 
 pub const DISCOVERY_EVICT_MISS_THRESHOLD: u8 = 3;
@@ -511,8 +513,41 @@ fn boxed_clone<T: Clone>(section: &T) -> Box<T> {
     Box::new(section.clone())
 }
 
-fn luminaire_section(rec: &PhysicalDeviceRecord) -> Box<MemoryLuminaireAttributesView> {
-    rec.luminaire_info.as_deref().map_or_else(Box::default, boxed_clone)
+macro_rules! copied_sections {
+    ($($view:ty => $($field:ident).+;)+) => {
+        $(
+            impl AttributeSectionSource<$view> for PhysicalDeviceRecord {
+                fn boxed_section(&self) -> Box<$view> {
+                    boxed_copy(&self.$($field).+)
+                }
+            }
+        )+
+    };
+}
+
+copied_sections! {
+    Common102AttributesView => attributes.common102;
+    Dt6LedAttributesView => attributes.dt6_led;
+    Dt8ColorAttributesView => attributes.dt8_color;
+    ExtendedAttributesView => attributes.extended;
+    GroupsAttributesView => attributes.groups;
+    MemoryEnergyAttributesView => energy;
+    MemoryBusUnitAttributesView => bus_unit;
+    MemoryIdentityAttributesView => attributes.memory_identity;
+    MemoryProfileAttributesView => attributes.memory_profile;
+    ScenesAttributesView => attributes.scenes;
+}
+
+impl AttributeSectionSource<MemoryDiagnosticsAttributesView> for PhysicalDeviceRecord {
+    fn boxed_section(&self) -> Box<MemoryDiagnosticsAttributesView> {
+        self.diagnostics.to_boxed()
+    }
+}
+
+impl AttributeSectionSource<MemoryLuminaireAttributesView> for PhysicalDeviceRecord {
+    fn boxed_section(&self) -> Box<MemoryLuminaireAttributesView> {
+        self.luminaire_info.as_deref().map_or_else(Box::default, boxed_clone)
+    }
 }
 
 fn memory_banks_view(banks: &[MemoryBankRecord]) -> Vec<MemoryBankSummaryView> {
@@ -1307,51 +1342,6 @@ impl RegistryStore {
         }
     }
 
-    fn attribute_section(
-        rec: &PhysicalDeviceRecord,
-        kind: AttributeSectionKind,
-    ) -> AttributeSectionView {
-        let attrs = &rec.attributes;
-        match kind {
-            AttributeSectionKind::Common102 => {
-                AttributeSectionView::Common102(boxed_copy(&attrs.common102))
-            }
-            AttributeSectionKind::Dt6Led => {
-                AttributeSectionView::Dt6Led(boxed_copy(&attrs.dt6_led))
-            }
-            AttributeSectionKind::Dt8Color => {
-                AttributeSectionView::Dt8Color(boxed_copy(&attrs.dt8_color))
-            }
-            AttributeSectionKind::Extended => {
-                AttributeSectionView::Extended(boxed_copy(&attrs.extended))
-            }
-            AttributeSectionKind::Groups => {
-                AttributeSectionView::Groups(boxed_copy(&attrs.groups))
-            }
-            AttributeSectionKind::MemoryDiagnostics => {
-                AttributeSectionView::MemoryDiagnostics(rec.diagnostics.to_boxed())
-            }
-            AttributeSectionKind::MemoryEnergy => {
-                AttributeSectionView::MemoryEnergy(boxed_copy(&rec.energy))
-            }
-            AttributeSectionKind::MemoryBusUnit => {
-                AttributeSectionView::MemoryBusUnit(boxed_copy(&rec.bus_unit))
-            }
-            AttributeSectionKind::MemoryIdentity => {
-                AttributeSectionView::MemoryIdentity(boxed_copy(&attrs.memory_identity))
-            }
-            AttributeSectionKind::MemoryLuminaire => {
-                AttributeSectionView::MemoryLuminaire(luminaire_section(rec))
-            }
-            AttributeSectionKind::MemoryProfile => {
-                AttributeSectionView::MemoryProfile(boxed_copy(&attrs.memory_profile))
-            }
-            AttributeSectionKind::Scenes => {
-                AttributeSectionView::Scenes(boxed_copy(&attrs.scenes))
-            }
-        }
-    }
-
     pub(crate) fn internal_known_physical_short_addresses(&self, adapter_id: u8) -> Vec<u8> {
         let g = self.read_inner();
         let mut shorts: Vec<u8> = g
@@ -1393,7 +1383,7 @@ impl PhysicalDeviceReadPort for RegistryStore {
     ) -> Option<AttributeSectionView> {
         let g = self.read_inner();
         let rec = g.physical_devices.get(&(adapter_id, short_address))?;
-        Some(Self::attribute_section(rec, kind))
+        Some(kind.boxed_view(&**rec))
     }
 
     fn physical_device_memory_banks(

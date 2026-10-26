@@ -1,7 +1,7 @@
 use dali2rust_contracts::msg::{FixedText32, FixedText64};
 use dali2rust_domain::dali::banks::{BusUnitConfiguration, ImplementedParts};
 use dali2rust_domain::registry::{
-    AttributeSectionView, AttributeSource, BankReading, Common102AttributesView, ConditionView,
+    AttributeSectionView, AttributeSectionVisitor, AttributeSource, BankReading, Common102AttributesView, ConditionView,
     Dt6LedAttributesView, Dt8ColorAttributesView, EnergyBankView, ExtendedAttributesView,
     GearDiagnosticsView, GroupsAttributesView, LuminaireMaintenanceView,
     LuminaireValue, MemoryBusUnitAttributesView, MemoryDiagnosticsAttributesView,
@@ -452,25 +452,68 @@ impl Serialize for ScenesAttributesDto<'_> {
     }
 }
 
+trait SectionWire {
+    fn is_present(&self) -> bool;
+
+    fn serialize_present<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error>;
+}
+
+macro_rules! section_wire {
+    ($($view:ty => $dto:ident;)+) => {
+        $(
+            impl SectionWire for $view {
+                fn is_present(&self) -> bool {
+                    $dto::is_present(self)
+                }
+
+                fn serialize_present<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                    serialize_section(s, || $dto::from_view(self))
+                }
+            }
+        )+
+    };
+}
+
+section_wire! {
+    Common102AttributesView => Common102AttributesDto;
+    Dt6LedAttributesView => Dt6LedAttributesDto;
+    Dt8ColorAttributesView => Dt8ColorAttributesDto;
+    ExtendedAttributesView => ExtendedAttributesDto;
+    GroupsAttributesView => GroupsAttributesDto;
+    MemoryDiagnosticsAttributesView => MemoryDiagnosticsAttributesDto;
+    MemoryEnergyAttributesView => MemoryEnergyAttributesDto;
+    MemoryBusUnitAttributesView => MemoryBusUnitAttributesDto;
+    MemoryIdentityAttributesView => MemoryIdentityAttributesDto;
+    MemoryLuminaireAttributesView => MemoryLuminaireAttributesDto;
+    MemoryProfileAttributesView => MemoryProfileAttributesDto;
+    ScenesAttributesView => ScenesAttributesDto;
+}
+
+struct Presence;
+
+impl<V: SectionWire> AttributeSectionVisitor<V> for Presence {
+    type Output = bool;
+
+    fn visit(self, view: &V) -> bool {
+        view.is_present()
+    }
+}
+
+struct Wire<S>(S);
+
+impl<S: serde::Serializer, V: SectionWire> AttributeSectionVisitor<V> for Wire<S> {
+    type Output = Result<S::Ok, S::Error>;
+
+    fn visit(self, view: &V) -> Self::Output {
+        view.serialize_present(self.0)
+    }
+}
+
 pub struct AttributeSectionDto<'a>(&'a AttributeSectionView);
 
 impl<'a> AttributeSectionDto<'a> {
     pub fn from_view(view: &'a AttributeSectionView) -> Option<Self> {
-        let present = match view {
-            AttributeSectionView::Common102(v) => Common102AttributesDto::is_present(v),
-            AttributeSectionView::Dt6Led(v) => Dt6LedAttributesDto::is_present(v),
-            AttributeSectionView::Dt8Color(v) => Dt8ColorAttributesDto::is_present(v),
-            AttributeSectionView::Extended(v) => ExtendedAttributesDto::is_present(v),
-            AttributeSectionView::Groups(v) => GroupsAttributesDto::is_present(v),
-            AttributeSectionView::MemoryDiagnostics(v) => MemoryDiagnosticsAttributesDto::is_present(v),
-            AttributeSectionView::MemoryEnergy(v) => MemoryEnergyAttributesDto::is_present(v),
-            AttributeSectionView::MemoryBusUnit(v) => MemoryBusUnitAttributesDto::is_present(v),
-            AttributeSectionView::MemoryIdentity(v) => MemoryIdentityAttributesDto::is_present(v),
-            AttributeSectionView::MemoryLuminaire(v) => MemoryLuminaireAttributesDto::is_present(v),
-            AttributeSectionView::MemoryProfile(v) => MemoryProfileAttributesDto::is_present(v),
-            AttributeSectionView::Scenes(v) => ScenesAttributesDto::is_present(v),
-        };
-        present.then_some(Self(view))
+        view.visit(Presence).then_some(Self(view))
     }
 
     pub fn key(&self) -> &'static str {
@@ -480,44 +523,7 @@ impl<'a> AttributeSectionDto<'a> {
 
 impl Serialize for AttributeSectionDto<'_> {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self.0 {
-            AttributeSectionView::Common102(v) => {
-                serialize_section(s, || Common102AttributesDto::from_view(v))
-            }
-            AttributeSectionView::Dt6Led(v) => {
-                serialize_section(s, || Dt6LedAttributesDto::from_view(v))
-            }
-            AttributeSectionView::Dt8Color(v) => {
-                serialize_section(s, || Dt8ColorAttributesDto::from_view(v))
-            }
-            AttributeSectionView::Extended(v) => {
-                serialize_section(s, || ExtendedAttributesDto::from_view(v))
-            }
-            AttributeSectionView::Groups(v) => {
-                serialize_section(s, || GroupsAttributesDto::from_view(v))
-            }
-            AttributeSectionView::MemoryDiagnostics(v) => {
-                serialize_section(s, || MemoryDiagnosticsAttributesDto::from_view(v))
-            }
-            AttributeSectionView::MemoryEnergy(v) => {
-                serialize_section(s, || MemoryEnergyAttributesDto::from_view(v))
-            }
-            AttributeSectionView::MemoryBusUnit(v) => {
-                serialize_section(s, || MemoryBusUnitAttributesDto::from_view(v))
-            }
-            AttributeSectionView::MemoryIdentity(v) => {
-                serialize_section(s, || MemoryIdentityAttributesDto::from_view(v))
-            }
-            AttributeSectionView::MemoryLuminaire(v) => {
-                serialize_section(s, || MemoryLuminaireAttributesDto::from_view(v))
-            }
-            AttributeSectionView::MemoryProfile(v) => {
-                serialize_section(s, || MemoryProfileAttributesDto::from_view(v))
-            }
-            AttributeSectionView::Scenes(v) => {
-                serialize_section(s, || ScenesAttributesDto::from_view(v))
-            }
-        }
+        self.0.visit(Wire(s))
     }
 }
 
