@@ -959,6 +959,7 @@ dependencies = [
  "dali2rust-contracts",
  "dali2rust-platform",
  "log",
+ "tungstenite",
 ]
 
 [[package]]

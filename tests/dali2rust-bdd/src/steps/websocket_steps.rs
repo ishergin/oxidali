@@ -1,10 +1,13 @@
 use std::time::Duration;
 
 use cucumber::{given, then, when};
+use dali2rust_bsp::log_ring::LOG_RING_LINES;
+use dali2rust_platform::dali::wall_clock_millis;
+use dali2rust_platform::logs::LOG_TEXT_BYTES;
 use dali2rust_test_support::remains_false_for;
 use serde_json::Value;
 
-use crate::ws_client::WsTestClient;
+use crate::ws_client::{WsTestClient, FRAME_TIMEOUT, READ_TIMEOUT};
 use crate::DaliWorld;
 
 const V1_CHANNELS: &[&str] = &[
@@ -80,7 +83,7 @@ async fn when_open_ws(world: &mut DaliWorld) {
     open_client(world);
 }
 
-// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059 RULE-067 COMM-112 COMM-113 WS-051 WS-052 WS-053 WS-054 WS-057 PERS-008 PERS-009
+// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059 RULE-067 RULE-091 COMM-112 COMM-113 WS-051 WS-052 WS-053 WS-054 WS-057 PERS-008 PERS-009
 #[given("an open WebSocket connection")]
 async fn given_open_ws(world: &mut DaliWorld) {
     open_client(world);
@@ -454,6 +457,11 @@ fn provoke_warning(world: &mut DaliWorld) {
     world.send_http_request("HEAD", "/api/v1/health", None, "");
 }
 
+fn provoke_long_warning(world: &mut DaliWorld) {
+    let method = "X".repeat(LOG_TEXT_BYTES);
+    world.send_http_request(&method, "/api/v1/health", None, "");
+}
+
 fn log_lines(frame: &Value) -> Vec<Value> {
     frame["payload"]["lines"]
         .as_array()
@@ -483,7 +491,19 @@ async fn given_warning_before_subscribe(world: &mut DaliWorld) {
     provoke_warning(world);
 }
 
-// WS-052 WS-053 RULE-067 WS-054 PERS-009
+// RULE-091
+#[given(regex = r#"^the controller logged a full history of long warnings with nobody subscribed to "logs"$"#)]
+async fn given_full_log_history(world: &mut DaliWorld) {
+    assert!(
+        world.ws_clients.is_empty(),
+        "the history must predate every subscriber"
+    );
+    for _ in 0..LOG_RING_LINES {
+        provoke_long_warning(world);
+    }
+}
+
+// WS-052 WS-053 RULE-067 RULE-091 WS-054 PERS-009
 #[given(regex = r#"^the WebSocket client is subscribed to "logs" at level "([^"]+)"$"#)]
 async fn given_subscribed_logs_at(world: &mut DaliWorld, level: String) {
     let client = last_client(world);
@@ -522,17 +542,39 @@ async fn then_lines_carry_identity(world: &mut DaliWorld) {
     }
 }
 
-// RULE-067 PERS-009
+fn history_seq(frame: &Value, before_ms: u64) -> Option<u64> {
+    if frame["type"] != "LogBatch" {
+        return None;
+    }
+    log_lines(frame)
+        .iter()
+        .filter(|line| line["ts_ms"].as_u64().is_some_and(|ts| ts < before_ms))
+        .filter_map(|line| line["seq"].as_u64())
+        .max()
+}
+
+// RULE-067 RULE-091 PERS-009
 #[then(regex = r#"^the WebSocket client should receive a "([^"]+)" log line reading "([^"]+)"$"#)]
 async fn then_log_line_reading(world: &mut DaliWorld, target: String, text: String) {
+    let asked_ms = wall_clock_millis();
     let carries = move |frame: &Value| {
         frame["type"] == "LogBatch"
             && log_lines(frame)
                 .iter()
                 .any(|line| line["target"] == target.as_str() && line["text"] == text.as_str())
     };
-    let batch = last_client(world).wait_for(carries);
+    let batch = last_client(world).wait_for_while(carries, |frame| history_seq(frame, asked_ms));
     assert!(batch.is_some(), "no log line from the rules target carrying the rule's text");
+}
+
+// RULE-091
+#[then("waiting for it outlasted one frame timeout")]
+async fn then_wait_outlasted_frame_timeout(world: &mut DaliWorld) {
+    let waited = last_client(world).last_wait();
+    assert!(
+        waited > FRAME_TIMEOUT + READ_TIMEOUT,
+        "the line came after {waited:?}, inside one frame timeout: the replay never held it back"
+    );
 }
 
 // WS-054

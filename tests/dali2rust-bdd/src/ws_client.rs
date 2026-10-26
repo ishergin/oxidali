@@ -1,12 +1,15 @@
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
+use dali2rust_test_support::ws_handshake;
 use serde_json::Value;
-use tungstenite::{client::IntoClientRequest, Message, WebSocket};
+use tungstenite::{Message, WebSocket};
 
 pub const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 
-const READ_TIMEOUT: Duration = Duration::from_millis(100);
+pub const READ_TIMEOUT: Duration = Duration::from_millis(100);
+
+const PROGRESS_CAP: Duration = Duration::from_secs(30);
 
 pub struct WsTestClient {
     socket: WebSocket<TcpStream>,
@@ -15,6 +18,7 @@ pub struct WsTestClient {
     closed: bool,
     close_code: Option<u16>,
     pongs: u32,
+    waited: Duration,
 }
 
 impl std::fmt::Debug for WsTestClient {
@@ -37,27 +41,14 @@ impl WsTestClient {
     }
 
     fn connect_as(port: u16, origin: Option<&str>) -> Self {
-        let stream = TcpStream::connect(("127.0.0.1", port)).expect("ws tcp connect");
-        stream
-            .set_read_timeout(Some(READ_TIMEOUT))
-            .expect("ws read timeout");
-        let mut request = format!("ws://127.0.0.1:{port}/api/v1/ws")
-            .into_client_request()
-            .expect("ws request");
-        if let Some(origin) = origin {
-            request
-                .headers_mut()
-                .insert("Origin", origin.parse().expect("origin header"));
-        }
-        let (socket, _response) =
-            tungstenite::client::client(request, stream).expect("ws handshake");
         Self {
-            socket,
+            socket: ws_handshake::connect(port, origin, READ_TIMEOUT),
             pending: Vec::new(),
             reading: true,
             closed: false,
             close_code: None,
             pongs: 0,
+            waited: Duration::ZERO,
         }
     }
 
@@ -160,17 +151,60 @@ impl WsTestClient {
     }
 
     pub fn wait_for(&mut self, predicate: impl Fn(&Value) -> bool) -> Option<Value> {
+        self.wait_for_while(predicate, |_| None)
+    }
+
+    pub fn wait_for_while(
+        &mut self,
+        predicate: impl Fn(&Value) -> bool,
+        progress: impl Fn(&Value) -> Option<u64>,
+    ) -> Option<Value> {
         self.require_observing("wait_for");
-        let deadline = Instant::now() + FRAME_TIMEOUT;
+        let started = Instant::now();
+        let found = self.wait_progressing(&predicate, &progress, started);
+        self.waited = started.elapsed();
+        found
+    }
+
+    pub fn last_wait(&self) -> Duration {
+        self.waited
+    }
+
+    fn wait_progressing(
+        &mut self,
+        predicate: &impl Fn(&Value) -> bool,
+        progress: &impl Fn(&Value) -> Option<u64>,
+        started: Instant,
+    ) -> Option<Value> {
+        let cap = started + PROGRESS_CAP;
+        let mut deadline = started + FRAME_TIMEOUT;
+        let mut mark = None;
         loop {
-            if let Some(pos) = self.pending.iter().position(&predicate) {
+            if let Some(pos) = self.pending.iter().position(predicate) {
                 return Some(self.pending.remove(pos));
             }
-            if self.closed || Instant::now() >= deadline {
+            if self.closed || Instant::now() >= deadline.min(cap) {
                 return None;
             }
-            self.drain();
+            if self.drain_advanced(progress, &mut mark) {
+                deadline = Instant::now() + FRAME_TIMEOUT;
+            }
         }
+    }
+
+    fn drain_advanced(
+        &mut self,
+        progress: &impl Fn(&Value) -> Option<u64>,
+        mark: &mut Option<u64>,
+    ) -> bool {
+        let seen = self.pending.len();
+        self.drain();
+        let newest = self.pending[seen..].iter().filter_map(progress).max();
+        let advanced = newest > *mark;
+        if advanced {
+            *mark = newest;
+        }
+        advanced
     }
 
     pub fn expect_silence(&mut self, window: Duration) -> bool {

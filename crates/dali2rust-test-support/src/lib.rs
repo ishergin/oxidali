@@ -6,6 +6,7 @@ pub mod net;
 pub mod peer;
 pub mod slices;
 pub mod sync;
+pub mod ws_handshake;
 
 pub use bus::{
     command_frame, confirmation_frame, event_frame, projected_event_frame, publish_queued,
