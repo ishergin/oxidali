@@ -189,7 +189,7 @@ pub struct MemoryBusUnitAttributesDto {
 
 impl MemoryBusUnitAttributesDto {
     fn from_view(v: &MemoryBusUnitAttributesView) -> Option<Self> {
-        if v.configuration.is_none() && v.implemented_parts.is_none() {
+        if !Self::is_present(v) {
             return None;
         }
         Some(Self {
@@ -198,6 +198,10 @@ impl MemoryBusUnitAttributesDto {
             implemented_parts: observed_opt(&v.implemented_parts)
                 .map(|o| o.map(ImplementedPartsDto::from_raw)),
         })
+    }
+
+    fn is_present(v: &MemoryBusUnitAttributesView) -> bool {
+        v.configuration.is_some() || v.implemented_parts.is_some()
     }
 }
 
@@ -234,10 +238,13 @@ pub struct MemoryEnergyAttributesDto<'a>(&'a MemoryEnergyAttributesView);
 
 impl<'a> MemoryEnergyAttributesDto<'a> {
     fn from_view(v: &'a MemoryEnergyAttributesView) -> Option<Self> {
-        let any = EnergyBankDto::from_view(&v.active).is_some()
-            || EnergyBankDto::from_view(&v.apparent).is_some()
-            || EnergyBankDto::from_view(&v.loadside).is_some();
-        any.then_some(Self(v))
+        Self::is_present(v).then_some(Self(v))
+    }
+
+    fn is_present(v: &MemoryEnergyAttributesView) -> bool {
+        EnergyBankDto::is_present(&v.active)
+            || EnergyBankDto::is_present(&v.apparent)
+            || EnergyBankDto::is_present(&v.loadside)
     }
 }
 
@@ -294,7 +301,10 @@ pub struct GearDiagnosticsDto {
 
 impl GearDiagnosticsDto {
     fn from_view(v: &GearDiagnosticsView) -> Option<Self> {
-        let dto = Self {
+        if !Self::is_present(v) {
+            return None;
+        }
+        Some(Self {
             bank_version: observed_opt(&v.bank_version),
             operating_time_s: observed_opt(&v.operating_time_s),
             output_current_percent: observed_opt(&v.output_current_percent),
@@ -309,8 +319,7 @@ impl GearDiagnosticsDto {
             thermal_derating: ConditionDto::from_view(&v.thermal_derating),
             thermal_shutdown: ConditionDto::from_view(&v.thermal_shutdown),
             undervoltage: ConditionDto::from_view(&v.undervoltage),
-        };
-        dto.bank_version.is_some().then_some(dto)
+        })
     }
 
     fn is_present(v: &GearDiagnosticsView) -> bool {
@@ -350,7 +359,10 @@ pub struct SourceDiagnosticsDto {
 
 impl SourceDiagnosticsDto {
     fn from_view(v: &SourceDiagnosticsView) -> Option<Self> {
-        let dto = Self {
+        if !Self::is_present(v) {
+            return None;
+        }
+        Some(Self {
             bank_version: observed_opt(&v.bank_version),
             current_milliamp: observed_opt(&v.current_milliamp),
             on_time_resettable_s: observed_opt(&v.on_time_resettable_s),
@@ -364,8 +376,7 @@ impl SourceDiagnosticsDto {
             thermal_derating: ConditionDto::from_view(&v.thermal_derating),
             thermal_shutdown: ConditionDto::from_view(&v.thermal_shutdown),
             voltage_decivolt: observed_opt(&v.voltage_decivolt),
-        };
-        dto.bank_version.is_some().then_some(dto)
+        })
     }
 
     fn is_present(v: &SourceDiagnosticsView) -> bool {
@@ -384,10 +395,13 @@ pub struct MemoryDiagnosticsAttributesDto<'a>(&'a MemoryDiagnosticsAttributesVie
 
 impl<'a> MemoryDiagnosticsAttributesDto<'a> {
     fn from_view(v: &'a MemoryDiagnosticsAttributesView) -> Option<Self> {
-        let any = GearDiagnosticsDto::is_present(&v.control_gear)
+        Self::is_present(v).then_some(Self(v))
+    }
+
+    fn is_present(v: &MemoryDiagnosticsAttributesView) -> bool {
+        GearDiagnosticsDto::is_present(&v.control_gear)
             || SourceDiagnosticsDto::is_present(&v.light_source)
-            || LuminaireMaintenanceDto::is_present(&v.luminaire);
-        any.then_some(Self(v))
+            || LuminaireMaintenanceDto::is_present(&v.luminaire)
     }
 }
 
@@ -421,12 +435,16 @@ pub struct ScenesAttributesDto {
 
 impl ScenesAttributesDto {
     fn from_view(v: &ScenesAttributesView) -> Option<Self> {
-        if v.levels.iter().all(Option::is_none) {
+        if !Self::is_present(v) {
             return None;
         }
         Some(Self {
             levels: core::array::from_fn(|idx| observed_opt(&v.levels[idx])),
         })
+    }
+
+    fn is_present(v: &ScenesAttributesView) -> bool {
+        v.levels.iter().any(Option::is_some)
     }
 }
 
@@ -447,30 +465,18 @@ pub struct AttributeSectionDto<'a>(&'a AttributeSectionView);
 impl<'a> AttributeSectionDto<'a> {
     pub fn from_view(view: &'a AttributeSectionView) -> Option<Self> {
         let present = match view {
-            AttributeSectionView::Common102(v) => Common102AttributesDto::from_view(v).is_some(),
-            AttributeSectionView::Dt6Led(v) => Dt6LedAttributesDto::from_view(v).is_some(),
-            AttributeSectionView::Dt8Color(v) => Dt8ColorAttributesDto::from_view(v).is_some(),
-            AttributeSectionView::Extended(v) => ExtendedAttributesDto::from_view(v).is_some(),
-            AttributeSectionView::Groups(v) => GroupsAttributesDto::from_view(v).is_some(),
-            AttributeSectionView::MemoryDiagnostics(v) => {
-                MemoryDiagnosticsAttributesDto::from_view(v).is_some()
-            }
-            AttributeSectionView::MemoryEnergy(v) => {
-                MemoryEnergyAttributesDto::from_view(v).is_some()
-            }
-            AttributeSectionView::MemoryBusUnit(v) => {
-                MemoryBusUnitAttributesDto::from_view(v).is_some()
-            }
-            AttributeSectionView::MemoryIdentity(v) => {
-                MemoryIdentityAttributesDto::from_view(v).is_some()
-            }
-            AttributeSectionView::MemoryLuminaire(v) => {
-                MemoryLuminaireAttributesDto::from_view(v).is_some()
-            }
-            AttributeSectionView::MemoryProfile(v) => {
-                MemoryProfileAttributesDto::from_view(v).is_some()
-            }
-            AttributeSectionView::Scenes(v) => ScenesAttributesDto::from_view(v).is_some(),
+            AttributeSectionView::Common102(v) => Common102AttributesDto::is_present(v),
+            AttributeSectionView::Dt6Led(v) => Dt6LedAttributesDto::is_present(v),
+            AttributeSectionView::Dt8Color(v) => Dt8ColorAttributesDto::is_present(v),
+            AttributeSectionView::Extended(v) => ExtendedAttributesDto::is_present(v),
+            AttributeSectionView::Groups(v) => GroupsAttributesDto::is_present(v),
+            AttributeSectionView::MemoryDiagnostics(v) => MemoryDiagnosticsAttributesDto::is_present(v),
+            AttributeSectionView::MemoryEnergy(v) => MemoryEnergyAttributesDto::is_present(v),
+            AttributeSectionView::MemoryBusUnit(v) => MemoryBusUnitAttributesDto::is_present(v),
+            AttributeSectionView::MemoryIdentity(v) => MemoryIdentityAttributesDto::is_present(v),
+            AttributeSectionView::MemoryLuminaire(v) => MemoryLuminaireAttributesDto::is_present(v),
+            AttributeSectionView::MemoryProfile(v) => MemoryProfileAttributesDto::is_present(v),
+            AttributeSectionView::Scenes(v) => ScenesAttributesDto::is_present(v),
         };
         present.then_some(Self(view))
     }
@@ -559,75 +565,4 @@ pub fn write_attribute_section(
     *first = false;
     write!(w, "\"{}\":", dto.key())?;
     serde_json::to_writer(&mut *w, &dto).map_err(std::io::Error::other)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use dali2rust_domain::registry::{
-        BankReading, GearDiagnosticsView, LuminaireMaintenanceView, ObservedValue,
-        SourceDiagnosticsView,
-    };
-
-    fn read<T>(value: T) -> Option<ObservedValue<T>> {
-        Some(ObservedValue {
-            value,
-            last_read_ms: Some(1),
-            last_write_confirmed_ms: None,
-            source: AttributeSource::Readback,
-        })
-    }
-
-    #[test]
-    fn the_cheap_section_predicate_agrees_with_building_the_dto() {
-        let mut gear = GearDiagnosticsView::default();
-        let mut source = SourceDiagnosticsView::default();
-        let mut luminaire = LuminaireMaintenanceView::default();
-
-        for (label, got, want) in [
-            (
-                "empty control gear",
-                GearDiagnosticsDto::is_present(&gear),
-                GearDiagnosticsDto::from_view(&gear).is_some(),
-            ),
-            (
-                "empty light source",
-                SourceDiagnosticsDto::is_present(&source),
-                SourceDiagnosticsDto::from_view(&source).is_some(),
-            ),
-            (
-                "empty luminaire",
-                LuminaireMaintenanceDto::is_present(&luminaire),
-                LuminaireMaintenanceDto::from_view(&luminaire).is_some(),
-            ),
-        ] {
-            assert_eq!(got, want, "{label}");
-            assert!(!got, "{label}: nothing was read, so nothing is present");
-        }
-
-        gear.bank_version = read(1u8);
-        source.bank_version = read(1u8);
-        assert!(GearDiagnosticsDto::is_present(&gear));
-        assert_eq!(
-            GearDiagnosticsDto::is_present(&gear),
-            GearDiagnosticsDto::from_view(&gear).is_some(),
-            "control gear with only a bank version"
-        );
-        assert_eq!(
-            SourceDiagnosticsDto::is_present(&source),
-            SourceDiagnosticsDto::from_view(&source).is_some(),
-            "light source with only a bank version"
-        );
-
-        luminaire.rated_life_kilohours = read(BankReading {
-            value: Some(50),
-            ..Default::default()
-        });
-        assert!(LuminaireMaintenanceDto::is_present(&luminaire));
-        assert_eq!(
-            LuminaireMaintenanceDto::is_present(&luminaire),
-            LuminaireMaintenanceDto::from_view(&luminaire).is_some(),
-            "luminaire with one non-first field read"
-        );
-    }
 }

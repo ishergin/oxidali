@@ -1,4 +1,4 @@
-use super::attributes::write_attribute_section;
+use super::attributes::{write_attribute_section, AttributeSectionDto};
 use super::runtime_state::runtime_error_dto;
 use super::*;
 use dali2rust_contracts::msg::{ErrorCode, FixedText32, FixedText64};
@@ -6,7 +6,8 @@ use dali2rust_domain::registry::{
     AttributeSectionKind, AttributeSectionView, AttributeSource, BankReading,
     GearDiagnosticsView, LuminaireMaintenanceView, LuminaireValue, MemoryBusUnitAttributesView,
     MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView, MemoryLuminaireAttributesView,
-    ObservedValue, PhysicalDeviceAttributesView, RuntimeErrorView, SourceDiagnosticsView,
+    ObservedValue, PhysicalDeviceAttributesView, RuntimeErrorView, ScenesAttributesView,
+    SourceDiagnosticsView,
 };
 use std::mem::size_of;
 
@@ -76,14 +77,14 @@ fn a_runtime_error_serializes_as_its_product_code_not_its_discriminant() {
     assert_eq!(json, r#"{"code":"vl_unbound"}"#);
 }
 
-fn attributes_json(
+fn every_section(
     attrs: &PhysicalDeviceAttributesView,
     energy: &MemoryEnergyAttributesView,
     diagnostics: &MemoryDiagnosticsAttributesView,
     bus_unit: &MemoryBusUnitAttributesView,
     luminaire: Option<&MemoryLuminaireAttributesView>,
-) -> String {
-    let sections: Vec<AttributeSectionView> = AttributeSectionKind::ALL
+) -> Vec<AttributeSectionView> {
+    AttributeSectionKind::ALL
         .iter()
         .map(|kind| match kind {
             AttributeSectionKind::Common102 => {
@@ -123,7 +124,17 @@ fn attributes_json(
                 AttributeSectionView::Scenes(Box::new(attrs.scenes))
             }
         })
-        .collect();
+        .collect()
+}
+
+fn attributes_json(
+    attrs: &PhysicalDeviceAttributesView,
+    energy: &MemoryEnergyAttributesView,
+    diagnostics: &MemoryDiagnosticsAttributesView,
+    bus_unit: &MemoryBusUnitAttributesView,
+    luminaire: Option<&MemoryLuminaireAttributesView>,
+) -> String {
+    let sections = every_section(attrs, energy, diagnostics, bus_unit, luminaire);
     let mut out: Vec<u8> = b"{".to_vec();
     let mut first = true;
     for view in &sections {
@@ -463,6 +474,69 @@ fn populated_memory_sections_wire_shape_is_frozen() {
         Some(&populated_luminaire()),
     );
     assert_eq!(json, GOLDEN_MEMORY_SECTIONS);
+}
+
+fn serializes_a_non_empty_object(view: &AttributeSectionView) -> bool {
+    AttributeSectionDto::from_view(view).is_some_and(|dto| {
+        let json = serde_json::to_value(&dto).expect("a present section serializes");
+        json.as_object().is_some_and(|fields| !fields.is_empty())
+    })
+}
+
+#[test]
+fn every_section_is_present_exactly_when_it_has_something_to_write() {
+    let empty = every_section(
+        &PhysicalDeviceAttributesView::default(),
+        &Default::default(),
+        &Default::default(),
+        &Default::default(),
+        None,
+    );
+    let populated = every_section(
+        &full_attributes_view(),
+        &populated_energy(),
+        &populated_diagnostics(),
+        &populated_bus_unit(),
+        Some(&populated_luminaire()),
+    );
+    for view in &empty {
+        let kind = view.kind().wire_name();
+        assert!(AttributeSectionDto::from_view(view).is_none(), "empty {kind} is absent");
+    }
+    for view in &populated {
+        let kind = view.kind().wire_name();
+        assert!(serializes_a_non_empty_object(view), "populated {kind} writes its fields");
+    }
+}
+
+#[test]
+fn one_field_makes_a_hand_written_section_present() {
+    let bus_unit = MemoryBusUnitAttributesView { implemented_parts: observed(1), ..Default::default() };
+    let mut energy = MemoryEnergyAttributesView::default();
+    energy.loadside.power = ov(reading(1), 1);
+    let mut source = MemoryDiagnosticsAttributesView::default();
+    source.light_source.bank_version = observed(1);
+    let mut maintenance = MemoryDiagnosticsAttributesView::default();
+    maintenance.luminaire.rated_starts_hundreds = ov(reading(1), 1);
+    let mut scenes = ScenesAttributesView::default();
+    scenes.levels[15] = observed(1);
+    for view in [
+        AttributeSectionView::MemoryBusUnit(Box::new(bus_unit)),
+        AttributeSectionView::MemoryEnergy(Box::new(energy)),
+        AttributeSectionView::MemoryDiagnostics(Box::new(source)),
+        AttributeSectionView::MemoryDiagnostics(Box::new(maintenance)),
+        AttributeSectionView::Scenes(Box::new(scenes)),
+    ] {
+        assert!(serializes_a_non_empty_object(&view), "{}", view.kind().wire_name());
+    }
+}
+
+#[test]
+fn a_diagnostics_bank_without_its_version_stays_off_the_wire() {
+    let mut diag = MemoryDiagnosticsAttributesView::default();
+    diag.control_gear.operating_time_s = ov(reading(3_600), 1);
+    let view = AttributeSectionView::MemoryDiagnostics(Box::new(diag));
+    assert!(AttributeSectionDto::from_view(&view).is_none());
 }
 
 #[test]
