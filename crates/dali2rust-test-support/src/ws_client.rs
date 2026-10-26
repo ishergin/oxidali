@@ -11,6 +11,8 @@ const READ_TIMEOUT: Duration = Duration::from_millis(100);
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
+const PROGRESS_CAP: Duration = Duration::from_secs(30);
+
 pub struct WsTestClient {
     socket: WebSocket<TcpStream>,
     pending: Vec<Value>,
@@ -149,29 +151,37 @@ impl WsTestClient {
     }
 
     pub fn wait_for(&mut self, predicate: impl Fn(&Value) -> bool) -> Option<Value> {
-        self.wait_for_while(predicate, |_| false)
+        self.wait_for_while(predicate, |_| None)
     }
 
     pub fn wait_for_while(
         &mut self,
         predicate: impl Fn(&Value) -> bool,
-        progress: impl Fn(&Value) -> bool,
+        progress: impl Fn(&Value) -> Option<u64>,
     ) -> Option<Value> {
-        self.require_observing("wait_for");
+        self.require_observing("wait_for_while");
+        let cap = Instant::now() + PROGRESS_CAP;
         let mut deadline = Instant::now() + FRAME_TIMEOUT;
+        let mut mark = None;
         loop {
             if let Some(pos) = self.pending.iter().position(&predicate) {
                 return Some(self.pending.remove(pos));
             }
-            if self.closed || Instant::now() >= deadline {
+            if self.closed || Instant::now() >= deadline.min(cap) {
                 return None;
             }
             let seen = self.pending.len();
             self.drain();
-            if self.pending[seen..].iter().any(&progress) {
+            let newest = self.pending[seen..].iter().filter_map(&progress).max();
+            if newest > mark {
+                mark = newest;
                 deadline = Instant::now() + FRAME_TIMEOUT;
             }
         }
+    }
+
+    pub fn unconsumed(&self) -> &[Value] {
+        &self.pending
     }
 
     pub fn expect_silence(&mut self, window: Duration) -> bool {

@@ -26,14 +26,14 @@ Feature: Rules and the controller's own records: log lines and named counters
     Given the controller logged a full history of long warnings with nobody subscribed to "logs"
     And an open WebSocket connection
     And the WebSocket client is subscribed to "logs" at level "info"
-    When I PUT JSON {"base_revision":0,"source":"rule \"night\" {\n  when http trigger\n  do log(\"lights out\")\n}\n"} to "/api/v1/rules"
+    When I PUT JSON {"base_revision":0,"source":"rule \"dawn\" {\n  when http trigger\n  do log(\"curtains up\")\n}\n"} to "/api/v1/rules"
     Then the response status should be 202
     And the last operation eventually succeeds
-    When I POST JSON {} to "/api/v1/rules/night/run"
+    When I POST JSON {} to "/api/v1/rules/dawn/run"
     Then the response status should be 202
     And the last operation eventually succeeds
-    And the WebSocket client should receive a "rules" log line reading "night: lights out"
-    And the diagnostics websocket counter "logs_lines_total" should be at least 256
+    And the WebSocket client should receive a "rules" log line reading "dawn: curtains up"
+    And the WebSocket client should have been handed at least half a ring of the long warnings before it
 
   @id:RULE-068
   Scenario: Named counters count per name, and a new document keeps the counts of the names it keeps

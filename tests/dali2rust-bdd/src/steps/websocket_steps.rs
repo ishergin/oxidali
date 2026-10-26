@@ -27,6 +27,7 @@ const V1_CHANNELS: &[&str] = &[
 
 const COUNTER_SETTLE: Duration = Duration::from_secs(3);
 
+const LONG_WARNING_MARK: usize = 32;
 const SNIFFER_QUIET_WINDOW: Duration = Duration::from_millis(600);
 
 const LOG_QUIET_WINDOW: Duration = Duration::from_millis(900);
@@ -542,11 +543,15 @@ async fn then_lines_carry_identity(world: &mut DaliWorld) {
     }
 }
 
-fn replays_history(frame: &Value, before_ms: u64) -> bool {
-    frame["type"] == "LogBatch"
-        && log_lines(frame)
-            .iter()
-            .any(|line| line["ts_ms"].as_u64().is_some_and(|ts| ts < before_ms))
+fn history_seq(frame: &Value, before_ms: u64) -> Option<u64> {
+    if frame["type"] != "LogBatch" {
+        return None;
+    }
+    log_lines(frame)
+        .iter()
+        .filter(|line| line["ts_ms"].as_u64().is_some_and(|ts| ts < before_ms))
+        .filter_map(|line| line["seq"].as_u64())
+        .max()
 }
 
 // RULE-067 RULE-091 PERS-009
@@ -559,8 +564,24 @@ async fn then_log_line_reading(world: &mut DaliWorld, target: String, text: Stri
                 .iter()
                 .any(|line| line["target"] == target.as_str() && line["text"] == text.as_str())
     };
-    let batch = last_client(world).wait_for_while(carries, |frame| replays_history(frame, asked_ms));
+    let batch = last_client(world).wait_for_while(carries, |frame| history_seq(frame, asked_ms));
     assert!(batch.is_some(), "no log line from the rules target carrying the rule's text");
+}
+
+// RULE-091
+#[then("the WebSocket client should have been handed at least half a ring of the long warnings before it")]
+async fn then_history_preceded_the_line(world: &mut DaliWorld) {
+    let mark = "X".repeat(LONG_WARNING_MARK);
+    let handed = last_client(world)
+        .unconsumed()
+        .iter()
+        .flat_map(log_lines)
+        .filter(|line| line["text"].as_str().is_some_and(|text| text.contains(&mark)))
+        .count();
+    assert!(
+        handed >= LOG_RING_LINES / 2,
+        "only {handed} long warnings preceded the rule's line"
+    );
 }
 
 // WS-054
@@ -577,7 +598,7 @@ async fn then_no_batch_with_level(world: &mut DaliWorld, level: String) {
     );
 }
 
-// WS-011 WS-030 WS-040 RULE-091
+// WS-011 WS-030 WS-040
 #[then(regex = r#"^the diagnostics websocket counter "([^"]+)" should be at least (\d+)$"#)]
 async fn then_counter_at_least(world: &mut DaliWorld, name: String, minimum: u64) {
     let value = wait_for_counter(world, &name, |v| v >= minimum);
