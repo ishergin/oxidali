@@ -4,6 +4,7 @@ import subprocess
 
 import pytest
 
+import hil_fake_clock
 import hil_test_guards
 
 from hil import tripwire, virtual_gear, wait
@@ -81,22 +82,9 @@ def test_an_unread_membership_frees_no_group():
     assert virtual_gear.free_groups(virtual_gear.used_groups(devices, [])) == []
 
 
-class _Clock:
-    def __init__(self):
-        self.now = 0.0
-
-    def monotonic(self):
-        return self.now
-
-    def sleep(self, seconds):
-        self.now += seconds
-
-
 @pytest.fixture(autouse=True)
 def clock(monkeypatch):
-    fake = _Clock()
-    monkeypatch.setattr(wait, "time", fake)
-    return fake
+    return hil_fake_clock.install(monkeypatch, wait)
 
 
 class _WireApi:

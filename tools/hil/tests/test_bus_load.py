@@ -2,6 +2,8 @@ import time
 
 import pytest
 
+from hil.wait import wait_until
+
 QUERY_STATUS = 0x90
 BURST = 30
 
@@ -15,7 +17,8 @@ BACKWARD8_TICKS = 88
 FLOOR = 0.6
 LOAD_FLOOR_PERMILLE = 100
 PEAK_WATCH_S = 2.0
-SETTLE_S = 6.0
+WATCH_POLL_S = 0.2
+RECEDE_WITHIN_S = 6.0
 U32 = 1 << 32
 
 
@@ -30,6 +33,13 @@ def _delta(now, before):
 def _assert_consistent(wire):
     assert 0 <= wire["load_own_permille"] <= wire["load_permille"] <= 1000, (
         "a gauge is per mille and our share cannot exceed the whole: %r" % wire)
+
+
+def _below(api, peak, seen):
+    wire = _wire(api)
+    _assert_consistent(wire)
+    seen.append(wire)
+    return wire if wire["load_permille"] < peak else None
 
 
 @pytest.mark.hil_id("HIL-WIRE-01")
@@ -77,14 +87,16 @@ def test_a_burst_of_queries_is_booked_as_our_load_and_recedes(api):
         wire = _wire(api)
         _assert_consistent(wire)
         peak = max(peak, wire["load_permille"])
-        time.sleep(0.2)
+        time.sleep(WATCH_POLL_S)
     assert peak >= LOAD_FLOOR_PERMILLE, (
         "a burst of %d queries should lift the gauge past %d‰, peak was %d‰"
         % (BURST, LOAD_FLOOR_PERMILLE, peak))
 
-    time.sleep(SETTLE_S)
-    quiet = _wire(api)
-    _assert_consistent(quiet)
-    assert quiet["load_permille"] < peak, (
-        "the gauge must recede once the burst is over: peak %d‰, now %d‰"
-        % (peak, quiet["load_permille"]))
+    seen = []
+    quiet = wait_until(lambda: _below(api, peak, seen), RECEDE_WITHIN_S,
+                       interval_s=WATCH_POLL_S)
+    lowest = min(seen, key=lambda wire: wire["load_permille"])
+    assert quiet, (
+        "the gauge must recede once the burst is over: peak %d‰, lowest within %.0f s %d‰ "
+        "(ours %d‰)" % (peak, RECEDE_WITHIN_S, lowest["load_permille"],
+                        lowest["load_own_permille"]))
