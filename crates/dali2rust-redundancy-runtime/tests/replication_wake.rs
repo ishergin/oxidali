@@ -116,7 +116,6 @@ impl ReplicationSink for NoSlices {
 struct Pair {
     store: Arc<WakeOnPersistSliceStore>,
     peer: Arc<Peer>,
-    role: Arc<Role>,
     persisted: Arc<PersistedConfigMark>,
     counters: Arc<ReplicationCounters>,
     publisher: BusPublisher,
@@ -132,6 +131,10 @@ fn manifest_line() -> String {
 }
 
 fn pair(active: bool) -> Pair {
+    pair_with(active, Arc::new(PersistedConfigMark::default()))
+}
+
+fn pair_with(active: bool, persisted: Arc<PersistedConfigMark>) -> Pair {
     let (host, publisher, ev_rx) = BusHost::spawn(BusConfig::default(), |reg| {
         reg.subscribe_events(8, REPLICATION_HANDLED_EVENTS)
     });
@@ -139,7 +142,6 @@ fn pair(active: bool) -> Pair {
     let role = Arc::new(Role {
         active: AtomicBool::new(active),
     });
-    let persisted = Arc::new(PersistedConfigMark::default());
     let counters = Arc::new(ReplicationCounters::default());
     let store = Arc::new(WakeOnPersistSliceStore::new(
         Arc::new(InMemorySliceStore::new()),
@@ -164,7 +166,6 @@ fn pair(active: bool) -> Pair {
     Pair {
         store,
         peer,
-        role,
         persisted,
         counters,
         publisher,
@@ -289,14 +290,18 @@ fn a_passive_controller_drops_the_mark_without_waking_its_peer() {
 
 #[test]
 fn a_mark_whose_event_was_lost_is_sent_on_the_next_turn() {
-    let pair = pair(false);
-    first_pass_done(&pair);
-    pair.role.active.store(true, Ordering::Relaxed);
-    assert!(pair.persisted.note(monotonic_ms()));
-    assert!(remains_false_for(|| pair.peer.count(&wake_line()) > 0, SETTLE));
-    publish(&pair, settings_changed());
+    let raised = Arc::new(PersistedConfigMark::default());
+    assert!(raised.note(monotonic_ms()));
+    let pair = pair_with(true, raised);
     assert!(
         try_wait_until(|| pair.peer.count(&wake_line()) == 1, BUDGET),
+        "a mark raised before the worker started never rode its first turn"
+    );
+    assert!(pair.persisted.note(monotonic_ms()));
+    assert!(remains_false_for(|| pair.peer.count(&wake_line()) > 1, SETTLE));
+    publish(&pair, settings_changed());
+    assert!(
+        try_wait_until(|| pair.peer.count(&wake_line()) == 2, BUDGET),
         "a raised mark waited for its own event instead of riding the next turn"
     );
 }
