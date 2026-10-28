@@ -304,6 +304,7 @@ fn poller_settings_round_trip_across_fs_reload() {
                 include_dt8_color: false,
                 include_energy: false,
                 include_diagnostics: false,
+                power_cycle_watch: false,
                 skip_unbound_virtual_lamps: false,
             },
         )),

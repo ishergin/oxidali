@@ -41,6 +41,7 @@ struct MockInner {
     sent_frames: Vec<u16>,
     sent_frames24: Vec<[u8; 3]>,
     frame24_answers: std::collections::HashMap<[u8; 3], u8>,
+    frame_answers: std::collections::HashMap<u16, Option<u8>>,
     frame24_outcomes: std::collections::VecDeque<TransferOutcome>,
     sent_frame_min_idle_us: Vec<u32>,
     sent_frame24_min_idle_us: Vec<u32>,
@@ -68,6 +69,7 @@ impl Default for MockInner {
             sent_frames: Vec::new(),
             sent_frames24: Vec::new(),
             frame24_answers: std::collections::HashMap::new(),
+            frame_answers: std::collections::HashMap::new(),
             frame24_outcomes: std::collections::VecDeque::new(),
             sent_frame_min_idle_us: Vec::new(),
             sent_frame24_min_idle_us: Vec::new(),
@@ -216,6 +218,14 @@ impl MockDaliTransport {
 
     pub fn clear_frame24_answers(&self) {
         self.inner.lock().unwrap().frame24_answers.clear();
+    }
+
+    pub fn answer_frame(&self, frame: u16, answer: Option<u8>) {
+        self.inner.lock().unwrap().frame_answers.insert(frame, answer);
+    }
+
+    pub fn clear_frame_answers(&self) {
+        self.inner.lock().unwrap().frame_answers.clear();
     }
 
     pub fn sent_frame_settle_us(&self) -> Vec<u32> {
@@ -600,6 +610,12 @@ impl DaliTransport for MockDaliTransport {
     ) -> Result<TransferOutcome, Self::Error> {
         let g = self.inner.lock().unwrap();
         let mut g = self.wait_if_blocked(g);
+        if let Some(answer) = g.frame_answers.get(&frame).copied() {
+            record_forward_send(&mut g, frame, min_idle_us);
+            return Ok(answer
+                .filter(|_| expects_backward)
+                .map_or(TransferOutcome::NoAnswer, TransferOutcome::Answer));
+        }
         if let Some(step) = g.scripted_exchanges.pop_front() {
             return scripted_exchange_outcome(&mut g, frame, expects_backward, min_idle_us, step);
         }
@@ -701,6 +717,23 @@ mod tests {
         assert_eq!(transport.receive_backward_frame().unwrap(), Some(2));
         assert_eq!(transport.receive_backward_frame().unwrap(), Some(3));
         assert_eq!(transport.receive_backward_frame().unwrap(), None);
+    }
+
+    #[test]
+    fn a_frame_answer_bypasses_the_script_and_outlives_a_clear() {
+        let mut transport = MockDaliTransport::new();
+        transport.expect_forward_frame_with_backward(0x0190, Some(0x01));
+        transport.answer_frame(0xFF9B, Some(0xFF));
+        transport.answer_frame(0xFF92, None);
+        assert_eq!(transport.exchange_frame(0xFF9B, true).unwrap(), TransferOutcome::Answer(0xFF));
+        assert_eq!(transport.exchange_frame(0xFF92, true).unwrap(), TransferOutcome::NoAnswer);
+        assert_eq!(transport.scripted_exchanges_remaining(), 1, "the script is still waiting");
+        assert_eq!(transport.exchange_frame(0x0190, true).unwrap(), TransferOutcome::Answer(0x01));
+        transport.clear();
+        assert_eq!(transport.exchange_frame(0xFF9B, true).unwrap(), TransferOutcome::Answer(0xFF));
+        transport.clear_frame_answers();
+        assert_eq!(transport.exchange_frame(0xFF9B, true).unwrap(), TransferOutcome::NoAnswer);
+        assert_eq!(transport.sent_frames(), vec![0xFF9B, 0xFF9B]);
     }
 
     #[test]

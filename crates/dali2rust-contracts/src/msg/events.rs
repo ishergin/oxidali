@@ -597,11 +597,13 @@ declare_bus_payloads! {
         pub registry_adapter_id: u8,
         pub control_answered: bool,
         pub lamp_failure: BusHealthVerdict,
+        pub power_cycle_seen: bool,
     }
     budget = DaliBusHealthProbedEvent {
         registry_adapter_id: u8::MAX,
         control_answered: true,
         lamp_failure: BusHealthVerdict::Several,
+        power_cycle_seen: true,
     };
 
     pub struct DaliInputEventObservedEvent {

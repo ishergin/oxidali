@@ -152,6 +152,15 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         </div>
         <div class="ctl"><span class="toggle"><i></i></span></div>
       </div>
+      <!-- The watch sits beside Enabled, not under Cycle: it runs whether the
+           poller is on or off, so the dimmed Cycle panel must not take it along. -->
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Power-cycle watch</div>
+          <div class="d">Asks the bus at least once a minute, poller on or off, whether any gear lost power; a yes reads every device's status once, so the controller forgets the levels a power cut reset.</div>
+        </div>
+        <div class="ctl"><span class="toggle"><i></i></span></div>
+      </div>
     </div>
   </div>
 
@@ -187,6 +196,13 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
           <div class="d warn">Starts background DALI bus polling — increases traffic on a busy bus.</div>
         </div>
         <div class="ctl"><span class="toggle on"><i></i></span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Power-cycle watch</div>
+          <div class="d">Asks the bus at least once a minute, poller on or off, whether any gear lost power; a yes reads every device's status once, so the controller forgets the levels a power cut reset.</div>
+        </div>
+        <div class="ctl"><span class="toggle"><i></i></span></div>
       </div>
     </div>
   </div>

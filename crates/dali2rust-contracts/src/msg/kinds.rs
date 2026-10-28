@@ -320,6 +320,10 @@ impl RuntimeSource {
         }
     }
 
+    pub const fn reads_the_gear(self) -> bool {
+        matches!(self, Self::Poller | Self::Readback)
+    }
+
     pub const fn rest_name(self) -> &'static str {
         match self {
             Self::Poller => "poller",

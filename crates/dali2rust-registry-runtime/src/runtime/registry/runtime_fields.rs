@@ -34,6 +34,7 @@ pub(crate) struct RuntimeObservationData {
     pub rgb: Option<(u8, u8, u8)>,
     pub waf: Option<(u8, u8, u8)>,
     pub status_flags: Option<StatusFlagsData>,
+    pub known_power_cycle_seen: Option<bool>,
     pub failure_status: Option<FailureStatusData>,
     pub value_source: Option<RuntimeSource>,
     pub last_seen_ms: Option<u64>,
@@ -54,6 +55,7 @@ impl Default for RuntimeObservationData {
             rgb: None,
             waf: None,
             status_flags: None,
+            known_power_cycle_seen: None,
             failure_status: None,
             value_source: None,
             last_seen_ms: None,
@@ -155,8 +157,16 @@ impl RuntimeObservationData {
     // IEC 62386-102 §9.16.9
     pub(crate) fn power_cycle_began(&self, observation: &RuntimeObservation) -> bool {
         let seen_now = observation.status_flags.as_ref().is_some_and(|sf| sf.power_cycle_seen);
-        let clear_before = self.status_flags.as_ref().is_some_and(|sf| !sf.power_cycle_seen);
-        seen_now && clear_before
+        seen_now && self.known_power_cycle_seen == Some(false)
+    }
+
+    // IEC 62386-102 §9.16.9
+    pub(crate) fn track_power_cycle_bit(&mut self, observation: &RuntimeObservation, level_command: bool) {
+        if let Some(sf) = observation.status_flags.as_ref() {
+            self.known_power_cycle_seen = Some(sf.power_cycle_seen);
+        } else if level_command {
+            self.known_power_cycle_seen = Some(false);
+        }
     }
 
     pub(crate) fn apply_observation(&mut self, observation: &RuntimeObservation) {

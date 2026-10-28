@@ -28,6 +28,7 @@ fn only_interval_patch(interval_ms: u32) -> PollerSettingsUpdateCommand {
         include_dt8_color: false,
         include_energy: false,
         include_diagnostics: false,
+        power_cycle_watch: false,
         skip_unbound_virtual_lamps: false,
     }
 }
@@ -125,6 +126,7 @@ fn poll_targets_carry_the_effective_type_flags() {
                 include_dt8_color: false,
                 include_energy: false,
                 include_diagnostics: false,
+                power_cycle_watch: false,
                 skip_unbound_virtual_lamps: false,
             },
         ),
@@ -189,6 +191,7 @@ fn unbound_devices_are_filtered_by_the_port_when_the_setting_asks() {
                 include_dt8_color: false,
                 include_energy: false,
                 include_diagnostics: false,
+                power_cycle_watch: false,
                 skip_unbound_virtual_lamps: false,
             },
         ),

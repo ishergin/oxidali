@@ -49,6 +49,7 @@ pub struct StackOptions {
     pub wall_clock: Option<Arc<dali2rust_bsp::wall_clock::SystemWallClock>>,
     pub web_assets: &'static [StaticAsset],
     pub hcl_config: dali2rust_hcl_runtime::HclConfig,
+    pub poller_config: dali2rust_poller_runtime::PollerConfig,
     pub mqtt_client: Option<dali2rust_platform::mqtt::MqttClientBundle>,
     pub firmware_update: Option<crate::ota::FirmwareUpdatePorts>,
 }
@@ -66,6 +67,7 @@ impl Default for StackOptions {
             wall_clock: None,
             web_assets: &[],
             hcl_config: dali2rust_hcl_runtime::HclConfig::default(),
+            poller_config: dali2rust_poller_runtime::PollerConfig::default(),
             mqtt_client: None,
             firmware_update: None,
         }
@@ -94,6 +96,7 @@ fn boot_from_options(
         wall_clock,
         web_assets,
         hcl_config,
+        poller_config,
         mqtt_client,
         firmware_update,
     } = options;
@@ -106,6 +109,7 @@ fn boot_from_options(
         persistence_slices,
         wall_clock,
         hcl_config,
+        poller_config,
         controller_hardware_id: network_link.as_ref().and_then(|l| l.hardware_address()),
         mqtt_client,
     });
@@ -387,6 +391,7 @@ struct BootArgs {
     persistence_slices: Option<Arc<dyn SliceStore>>,
     wall_clock: Option<Arc<dali2rust_bsp::wall_clock::SystemWallClock>>,
     hcl_config: dali2rust_hcl_runtime::HclConfig,
+    poller_config: dali2rust_poller_runtime::PollerConfig,
     controller_hardware_id: Option<[u8; 6]>,
     mqtt_client: Option<dali2rust_platform::mqtt::MqttClientBundle>,
 }
@@ -429,6 +434,7 @@ fn boot_stack(args: BootArgs) -> Box<BootedStack> {
         &dispatch.correlation,
         clock_wiring,
         args.hcl_config,
+        args.poller_config,
         &ota.hold,
     );
     Box::new(BootedStack {
@@ -526,11 +532,12 @@ fn resolve_scheduling_deps(
     correlation: &Arc<dali2rust_bus::CorrelationIdAllocator>,
     clock_wiring: ClockWiring,
     hcl_config: dali2rust_hcl_runtime::HclConfig,
+    poller_config: dali2rust_poller_runtime::PollerConfig,
     hold: &Arc<dali2rust_platform::firmware::MaintenanceHold>,
 ) -> SchedulingDeps {
     let (wall_clock, persist_timezone) = clock_wiring;
     let hcl = hcl_deps(store, &wall_clock, correlation, hcl_config, hold);
-    let poller = poller_deps(store, correlation, hold);
+    let poller = poller_deps(store, correlation, hold, poller_config);
     SchedulingDeps {
         hcl,
         poller,
@@ -577,12 +584,14 @@ fn poller_deps(
     store: &Arc<RegistryStore>,
     correlation: &Arc<dali2rust_bus::CorrelationIdAllocator>,
     hold: &Arc<dali2rust_platform::firmware::MaintenanceHold>,
+    config: dali2rust_poller_runtime::PollerConfig,
 ) -> PollerWorkerDeps {
     PollerWorkerDeps {
         read_port: Arc::clone(store) as Arc<dyn dali2rust_domain::registry::PollerReadPort>,
         correlation: Arc::clone(correlation),
         role: Arc::clone(store) as Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
         hold: Arc::clone(hold),
+        config,
     }
 }
 
@@ -647,6 +656,7 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
 pub struct HttpTestPorts {
     pub mqtt_client: Option<dali2rust_platform::mqtt::MqttClientBundle>,
     pub network_link: Option<Arc<dyn dali2rust_platform::net::NetworkLink>>,
+    pub poller_config: dali2rust_poller_runtime::PollerConfig,
 }
 
 pub fn build_http_test_stack(
@@ -672,6 +682,7 @@ pub fn build_http_test_stack(
             adapter_count: 2,
             persistence_slices,
             web_assets,
+            poller_config: ports.poller_config,
             mqtt_client: ports.mqtt_client,
             network_link: ports.network_link,
             firmware_update: Some(crate::ota::FirmwareUpdatePorts::host()),
