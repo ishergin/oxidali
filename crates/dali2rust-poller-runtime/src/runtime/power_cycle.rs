@@ -64,6 +64,13 @@ impl PowerCycleWatch {
         self.adapters.retain(|adapter_id, _| adapters.contains(adapter_id));
     }
 
+    pub(crate) fn owes(&self, adapter_id: u8, short_address: u8) -> bool {
+        matches!(
+            self.adapters.get(&adapter_id),
+            Some(AdapterWatch::Sweeping { owed }) if owed & short_bit(short_address) != 0
+        )
+    }
+
     pub(crate) fn settle(&mut self, adapter_id: u8, short_address: u8) {
         if let Some(AdapterWatch::Sweeping { owed }) = self.adapters.get(&adapter_id).copied() {
             self.owe(adapter_id, owed & !short_bit(short_address));

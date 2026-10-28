@@ -814,7 +814,7 @@ fn read_verdict(body: &DaliAttributeReadOutcomesEvent) -> ReadVerdict {
 fn requeue_target(state: &mut PollerState, target: PollTarget) {
     match target.purpose {
         ReadPurpose::Cycle => state.queue.push_back(target),
-        ReadPurpose::PowerCycleSweep if sweeps_power_cycles(&state.settings) => {
+        ReadPurpose::PowerCycleSweep if state.power_cycles.owes(target.adapter_id, target.short_address) => {
             state.sweep_queue.push_back(target);
         }
         ReadPurpose::PowerCycleSweep => {}
@@ -1197,6 +1197,53 @@ mod tests {
         start_cycle(&mut state, &t.deps);
         let listed: Vec<u8> = state.queue.iter().map(|target| target.adapter_id).collect();
         assert_eq!(listed, vec![0, 1], "the next cycle lists it again, in its turn after the cursor");
+    }
+
+    fn preempt_the_sweep_read_in_flight(state: &mut PollerState, deps: &PollerWiring) {
+        let target = state.sweep_queue.pop_front().expect("a sweep read to publish");
+        publish_read(state, deps, target);
+        let corr = state.outstanding.expect("in flight").correlation_id;
+        complete_read(state, deps, corr, &outcomes(AttributeGroupReadOutcome::Preempted));
+    }
+
+    #[test]
+    fn a_preempted_sweep_read_returns_only_while_the_watch_still_owes_its_target() {
+        let port = Arc::new(TwoAdapters { zero_enabled: AtomicBool::new(true) });
+        let t = test_deps_on(Arc::clone(&port) as Arc<dyn PollerReadPort>);
+        let mut state = watch_state();
+        power_cycle_yes(&mut state, &t.deps);
+        preempt_the_sweep_read_in_flight(&mut state, &t.deps);
+        assert_eq!(state.sweep_queue.len(), 1, "an owed target yields to the operator and goes back to the sweep");
+        let target = state.sweep_queue.pop_front().expect("owed");
+        publish_read(&mut state, &t.deps, target);
+        let corr = state.outstanding.expect("in flight").correlation_id;
+        port.zero_enabled.store(false, Ordering::Relaxed);
+        start_probe_round(&mut state, &t.deps);
+        complete_read(&mut state, &t.deps, corr, &outcomes(AttributeGroupReadOutcome::Preempted));
+        assert!(
+            state.sweep_queue.is_empty(),
+            "the round dropped the disabled adapter, so its preempted read is not put back to hold the slot for a guard"
+        );
+        assert_eq!(pump_after_rest(&mut state, &t.deps), None);
+    }
+
+    #[test]
+    fn a_preempted_sweep_read_after_a_no_is_not_requeued() {
+        let t = test_deps_on(Arc::new(ListsGearOne));
+        let mut state = watch_state();
+        power_cycle_yes(&mut state, &t.deps);
+        let target = state.sweep_queue.pop_front().expect("the YES queues gear 1");
+        publish_read(&mut state, &t.deps, target);
+        let corr = state.outstanding.expect("in flight").correlation_id;
+        let no = DaliBusHealthProbedEvent {
+            registry_adapter_id: 0,
+            control_answered: true,
+            lamp_failure: BusHealthVerdict::Clear,
+            power_cycle_seen: false,
+        };
+        record_health_probe(&mut state, &t.deps, 0, &no);
+        complete_read(&mut state, &t.deps, corr, &outcomes(AttributeGroupReadOutcome::Preempted));
+        assert!(state.sweep_queue.is_empty(), "a NO ended the sweep: no gear's bit is set to read");
     }
 
     #[test]
