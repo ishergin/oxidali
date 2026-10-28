@@ -314,8 +314,12 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   first character last. Wherever the write stops, the field reads old, empty or new,
   never a new head on an old tail.
 - A lock byte other than `0x55` (102 §9.10.2, Table 8) is opened for a session of at
-  most two units, the opening proved by reading `0x02` back. The value found is written
-  back when the session ends, whatever happened inside it. Each session runs in
+  most two units, the opening proved by reading `0x02` back. Once the opening unit has
+  reached its `ENABLE WRITE MEMORY`, the value found is written back when the session
+  ends, whatever happened inside it. An opening that never got that far (its pointer
+  unproved, the bus never free) touched nothing: nothing is restored, and it fails
+  `bank1_lock_byte` with the code of a read (`device_absent`, `read_contended`), never
+  `bank1_lock_not_restored`. Each session runs in
   `controller.step`, so it may yield before its first frame and never between opening
   and restoring the lock, whatever lease the command holds.
 - The read-back, not a `WRITE MEMORY LOCATION` answer, decides what is written. The bank

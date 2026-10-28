@@ -58,6 +58,7 @@ enum Interruption {
     ForeignCommand(u16),
     LostAnswer,
     LostFrame,
+    BusBusy,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +66,7 @@ enum Trigger {
     Frame(u16),
     Nth(usize),
     From(u16),
+    After(u16),
     ReadAt(u8, u8),
 }
 
@@ -118,12 +120,21 @@ impl Interrupting {
                 self.started |= frame == *at;
                 self.started
             }
+            Trigger::After(at) => {
+                let fires = self.started;
+                self.started |= frame == *at;
+                fires
+            }
             Trigger::ReadAt(bank, offset) => read == Some((*bank, *offset)),
         }
     }
 
-    fn loses_frame(&self) -> bool {
-        self.interruptions.iter().any(|interruption| matches!(interruption, Interruption::LostFrame))
+    fn withheld(&self) -> Option<TransferOutcome> {
+        self.interruptions.iter().find_map(|interruption| match interruption {
+            Interruption::LostFrame => Some(TransferOutcome::NoAnswer),
+            Interruption::BusBusy => Some(TransferOutcome::BusBusy),
+            Interruption::Arrival(..) | Interruption::ForeignCommand(_) | Interruption::LostAnswer => None,
+        })
     }
 
     fn interrupt(&mut self) -> bool {
@@ -135,7 +146,7 @@ impl Interrupting {
                     self.sim.fleet_mut().exchange(*command, false);
                 }
                 Interruption::LostAnswer => lost = true,
-                Interruption::LostFrame => {}
+                Interruption::LostFrame | Interruption::BusBusy => {}
             }
         }
         lost
@@ -149,7 +160,7 @@ impl Interrupting {
         if !self.fires(frame) {
             return exchange(&mut self.sim);
         }
-        let outcome = if self.loses_frame() { Ok(TransferOutcome::NoAnswer) } else { exchange(&mut self.sim) };
+        let outcome = self.withheld().map_or_else(|| exchange(&mut self.sim), Ok);
         let lost = self.interrupt();
         outcome.map(|heard| if lost { TransferOutcome::NoAnswer } else { heard })
     }
@@ -409,7 +420,10 @@ fn write_under(
         .iter()
         .find_map(|interruption| match interruption {
             Interruption::Arrival(gate, _) => Some(Arc::clone(gate)),
-            Interruption::ForeignCommand(_) | Interruption::LostAnswer | Interruption::LostFrame => None,
+            Interruption::ForeignCommand(_)
+            | Interruption::LostAnswer
+            | Interruption::LostFrame
+            | Interruption::BusBusy => None,
         })
         .unwrap_or_else(|| Arc::new(WireActivity::new()));
     let sim = luminaire_gear(FOUND_LOCK, false);
@@ -737,6 +751,62 @@ fn a_read_back_that_ends_early_proves_nothing() {
         failure(ErrorCode::VerifyUnanswered, READBACK_SUBJECT),
         "a read-back that stops before the field is not a field the gear refused"
     );
+}
+
+// IEC 62386-102 §9.10.2, Table 8
+#[test]
+fn a_lock_whose_pointer_was_never_proved_is_neither_restored_nor_reported_open() {
+    let silent = Trigger::From(special(SpecialCommand::Dtr0(LOCK_OFFSET)));
+    let (outcome, sim) = lost_answers(silent, &year(YEAR));
+
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::DeviceAbsent, LOCK_SUBJECT),
+        "no ENABLE WRITE MEMORY reached the gear, so its lock is as found"
+    );
+    assert!(wrote_nothing(&sim));
+    assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK));
+}
+
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §9.10.2, Table 8
+#[test]
+fn a_lock_open_the_bus_never_let_through_is_neither_restored_nor_reported_open() {
+    let busy = Trigger::From(special(SpecialCommand::Dtr0(LOCK_OFFSET)));
+    let (outcome, sim) = write_under(YieldGranularity::Step, busy, &[Interruption::BusBusy], &year(YEAR));
+
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::ReadContended, LOCK_SUBJECT),
+        "the open stopped before its write, so nothing is open and nothing was verified"
+    );
+    assert!(wrote_nothing(&sim));
+}
+
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §9.10.2, Table 8
+#[test]
+fn a_lock_open_that_reached_the_gear_and_then_lost_the_bus_says_the_bank_may_be_open() {
+    let busy = Trigger::After(special(SpecialCommand::WriteMemoryLocation(BANK_UNLOCKED)));
+    let (outcome, sim) = write_under(YieldGranularity::Step, busy, &[Interruption::BusBusy], &year(YEAR));
+
+    assert_eq!(location(&sim, LOCK_OFFSET), Some(BANK_UNLOCKED), "the gear did open");
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::VerifyContended, RELOCK_SUBJECT),
+        "nothing proves the lock went back"
+    );
+}
+
+// IEC 62386-102 §9.10.2, §9.10.5
+#[test]
+fn a_lock_opened_without_an_answer_is_still_restored() {
+    let unlock = special(SpecialCommand::WriteMemoryLocation(BANK_UNLOCKED));
+    let (outcome, sim) = lost_answers(Trigger::Frame(unlock), &year(YEAR));
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::VerifyUnanswered, LOCK_SUBJECT));
+    assert_eq!(written_values(&sim), [BANK_UNLOCKED, FOUND_LOCK], "the gear may have opened, so it is closed");
+    assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK));
 }
 
 fn worker_command(text: &str) -> BusFrame {

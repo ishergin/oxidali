@@ -117,30 +117,40 @@ fn unit_offset(stage_offset: u8, index: usize) -> u8 {
     u8::try_from(usize::from(stage_offset).saturating_add(skipped)).unwrap_or(u8::MAX)
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Stop {
+    error: SemanticDaliError,
+    reached: bool,
+}
+
 fn armed<C: DaliApplicationController, R>(
     controller: &mut C,
     address: DaliAddress,
-    (offset, subject): (u8, &'static str),
+    offset: u8,
     mut act: impl FnMut(&mut C) -> Result<R, SemanticDaliError>,
-) -> Result<R, LuminaireWriteFailure> {
+) -> Result<R, Stop> {
     let mut proof = PointerProof::Unanswered;
     for _ in 0..=BANK_ARM_RETRIES {
+        let mut reached = false;
         let outcome = controller
             .unit(|c| {
                 send_special(c, SpecialCommand::Dtr1(BANK1))?;
                 send_special(c, SpecialCommand::Dtr0(offset))?;
                 match pointer_proof(c, address, BANK1, (offset, false))? {
-                    PointerProof::Held => act(c).map(Ok),
+                    PointerProof::Held => {
+                        reached = true;
+                        act(c).map(Ok)
+                    }
                     other => Ok(Err(other)),
                 }
             })
-            .map_err(|error| LuminaireWriteFailure::unproved(error, subject))?;
+            .map_err(|error| Stop { error, reached })?;
         match outcome {
             Ok(done) => return Ok(done),
             Err(other) => proof = other,
         }
     }
-    Err(LuminaireWriteFailure::unproved(proof.failure(MEMORY_MISALIGNED), subject))
+    Err(Stop { error: proof.failure(MEMORY_MISALIGNED), reached: false })
 }
 
 struct UnitEcho {
@@ -190,7 +200,8 @@ fn write_unit(
     address: DaliAddress,
     unit: Unit<'_>,
 ) -> Result<(), LuminaireWriteFailure> {
-    let echo = armed(controller, address, (unit.offset, unit.subject), |c| write_bytes(c, address, unit.bytes))?;
+    let echo = armed(controller, address, unit.offset, |c| write_bytes(c, address, unit.bytes))
+        .map_err(|stop| LuminaireWriteFailure::unproved(stop.error, unit.subject))?;
     confirm_unit(&echo, unit)
 }
 
@@ -202,18 +213,38 @@ fn write_lock_byte(
     write_unit(controller, address, Unit { subject: LOCK_SUBJECT, offset: BANK_LOCK_BYTE, bytes: &[value] })
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Unopened {
+    failure: LuminaireWriteFailure,
+    reached: bool,
+}
+
+impl Unopened {
+    const fn reached(failure: LuminaireWriteFailure) -> Self {
+        Self { failure, reached: true }
+    }
+
+    // IEC 62386-102 §9.10.5
+    fn of(stop: Stop) -> Self {
+        let failure = if stop.reached { LuminaireWriteFailure::unproved } else { LuminaireWriteFailure::unread };
+        Self { failure: failure(stop.error, LOCK_SUBJECT), reached: stop.reached }
+    }
+}
+
 // IEC 62386-102 §9.10.2, Table 8
 fn open_lock(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
-) -> Result<(), LuminaireWriteFailure> {
-    write_lock_byte(controller, address, BANK_UNLOCKED)?;
-    let target = (BANK_LOCK_BYTE, LOCK_SUBJECT);
-    let (seen, contended) = armed(controller, address, target, |c| {
+) -> Result<(), Unopened> {
+    let unit = Unit { subject: LOCK_SUBJECT, offset: BANK_LOCK_BYTE, bytes: &[BANK_UNLOCKED] };
+    let echo = armed(controller, address, unit.offset, |c| write_bytes(c, address, unit.bytes)).map_err(Unopened::of)?;
+    confirm_unit(&echo, unit).map_err(Unopened::reached)?;
+    let (seen, contended) = armed(controller, address, unit.offset, |c| {
         send_raw_query_once_response(c, address, READ_MEMORY_LOCATION_OPCODE)
-    })?;
+    })
+    .map_err(|stop| Unopened::reached(LuminaireWriteFailure::unproved(stop.error, LOCK_SUBJECT)))?;
     let seen = if contended { DaliResponse::Violation } else { seen };
-    confirm(&[seen], &[BANK_UNLOCKED], LOCK_SUBJECT)
+    confirm(&[seen], &[BANK_UNLOCKED], LOCK_SUBJECT).map_err(Unopened::reached)
 }
 
 fn write_units(
@@ -257,7 +288,11 @@ fn write_session(
     if lock == BANK_UNLOCKED {
         return WireOutcome::stopped_at(write_units(controller, address, session));
     }
-    let written = open_lock(controller, address).and_then(|()| write_units(controller, address, session));
+    let written = match open_lock(controller, address) {
+        Err(unopened) if !unopened.reached => return WireOutcome::stopped_at(Err(unopened.failure)),
+        opened => opened.map_err(|unopened| unopened.failure),
+    };
+    let written = written.and_then(|()| write_units(controller, address, session));
     if written.is_err_and(LuminaireWriteFailure::is_preempted) {
         return WireOutcome::stopped_at(written);
     }

@@ -69,7 +69,7 @@
 | `verify_failed` | Read-back проверенной записи ответил другим значением: запись не принята. |
 | `verify_unanswered` | Read-back остался без ответа: взяла ли запись — неизвестно; подозрение на сам запрос (опкод или переменная, которых у устройства нет). |
 | `verify_contended` | Read-back получил нарушающий кадр: на один адрес ответили несколько устройств или окно ответа пересёк чужой кадр — подтвердить запись нечем; если повторяется, искать дубль адреса. |
-| `read_contended` | Нарушающий кадр при чтении — во время скана или до первой записи `memory-luminaire` ([`../resources/physical-devices.md`](../resources/physical-devices.md) §`PATCH …/memory-luminaire`): на сегменте дубль адреса, ничего не записывалось. |
+| `read_contended` | Нарушающий кадр при чтении во время скана или в шаге `memory-luminaire`, не дошедшем до своей записи (там и занятая шина — [`../resources/physical-devices.md`](../resources/physical-devices.md) §`PATCH …/memory-luminaire`): этот шаг ничего не записал; при повторе искать дубль адреса. |
 | `vl_unbound` | Строка apply/лампа без привязки. |
 | `policy_exception` | Причина пропуска прибора в `result.skipped` применения политики: прибор в исключениях ([`policies.md`](../resources/policies.md) §Исключения). Не отказ. |
 | `unknown_device` | Отказ подтверждения `PATCH /policies`: новый элемент исключений называет устройство, которого реестр не знает; HTTP отвечает `422` ([`policies.md`](../resources/policies.md) §Ошибки). |
