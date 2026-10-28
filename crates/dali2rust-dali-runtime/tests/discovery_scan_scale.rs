@@ -168,7 +168,7 @@ impl ScanHarness {
             worker_cmd,
             FleetController::new(Arc::clone(&wire)),
             dali2rust_dali_runtime::DaliRuntimeConfig::default(),
-            Arc::new(ReadPortDouble { policy_armed, known_shorts: (0..FLEET_SIZE).collect(), identity: None }),
+            Arc::new(ReadPortDouble { policy_armed, known_shorts: (0..FLEET_SIZE).collect(), ..ReadPortDouble::default() }),
             publisher.clone(),
             BusId::default(),
             Arc::clone(&counters),

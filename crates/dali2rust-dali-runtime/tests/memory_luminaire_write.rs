@@ -11,12 +11,12 @@ use dali2rust_contracts::msg::{ErrorCode, LuminaireNumbers as N};
 use dali2rust_dali_runtime::runtime::controller::DaliController;
 use dali2rust_dali_runtime::runtime::executor::{
     write_memory_luminaire, LuminaireWriteFailure, HEADER_SUBJECT, IDENTITY_CHANGED, IDENTITY_SUBJECT,
-    IDENTITY_UNKNOWN, LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT,
+    LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT,
 };
-use dali2rust_domain::dali::banks::identity::{
-    GTIN_LEN, GTIN_OFFSET, IDENTIFICATION_NUMBER_LEN, IDENTIFICATION_NUMBER_OFFSET,
+use dali2rust_domain::dali::banks::identity::{IDENTIFICATION_NUMBER_OFFSET, LOGICAL_GEAR_INDEX_OFFSET};
+use dali2rust_domain::dali::banks::{
+    DeviceIdentity, IdentityRead, GTIN_OFFSET, IDENTITY_UNKNOWN, IDENTITY_UNPROVABLE,
 };
-use dali2rust_domain::dali::banks::DeviceIdentity;
 use dali2rust_domain::dali::banks::luminaire_write::{
     number_patch, planned_writes, text_patch, FieldWrite, LuminaireField, BANK_UNLOCKED, TEXT_TERMINATOR,
 };
@@ -51,6 +51,8 @@ const SHORT_TEXT: &str = "ab";
 const LIGHT_OUTPUT: u32 = 0x0A_0B_0C;
 const WRITE_CORRELATION: u64 = 251;
 const QUERY_SELECTOR: u8 = 0x01;
+const LOGICAL_GEAR_UNITS: u8 = 2;
+const SECOND_GEAR_UNIT: u8 = 1;
 
 #[derive(Clone)]
 enum Interruption {
@@ -232,22 +234,21 @@ struct Outcome {
     readback: Option<Vec<u8>>,
 }
 
-fn number_at(sim: &SimDaliTransport, offset: u8, len: usize) -> u64 {
-    (offset..offset + len as u8)
-        .map(|at| sim.fleet().gears()[0].memory_location(IDENTITY_BANK, at).expect("bank 0 is implemented"))
-        .fold(0, |number, byte| number << 8 | u64::from(byte))
+fn identity_of(sim: &SimDaliTransport) -> IdentityRead {
+    let gear = &sim.fleet().gears()[0];
+    let window: Vec<u8> = (GTIN_OFFSET..=LOGICAL_GEAR_INDEX_OFFSET)
+        .map(|at| gear.memory_location(IDENTITY_BANK, at).expect("bank 0 holds the identity window"))
+        .collect();
+    IdentityRead::of_window(&window)
 }
 
-fn identity_of(sim: &SimDaliTransport) -> DeviceIdentity {
-    DeviceIdentity {
-        gtin: number_at(sim, GTIN_OFFSET, GTIN_LEN),
-        identification_number: number_at(sim, IDENTIFICATION_NUMBER_OFFSET, IDENTIFICATION_NUMBER_LEN),
-    }
+fn known(identity: IdentityRead) -> DeviceIdentity {
+    identity.known().expect("the gear model carries a programmed identity")
 }
 
 fn run_write<T: DaliTransport + Send + 'static>(
     controller: &mut DaliController<T>,
-    identity: Option<DeviceIdentity>,
+    identity: IdentityRead,
     writes: &[FieldWrite],
 ) -> Outcome {
     let mut readback = None;
@@ -263,10 +264,10 @@ fn write(lock: u8, unstored: bool, writes: &[FieldWrite]) -> (Outcome, SimDaliTr
 
 fn write_on(sim: SimDaliTransport, writes: &[FieldWrite]) -> (Outcome, SimDaliTransport) {
     let identity = identity_of(&sim);
-    write_as(sim, Some(identity), writes)
+    write_as(sim, identity, writes)
 }
 
-fn write_as(sim: SimDaliTransport, identity: Option<DeviceIdentity>, writes: &[FieldWrite]) -> (Outcome, SimDaliTransport) {
+fn write_as(sim: SimDaliTransport, identity: IdentityRead, writes: &[FieldWrite]) -> (Outcome, SimDaliTransport) {
     let bus = Arc::new(Mutex::new(sim));
     let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
     let outcome = run_write(&mut controller, identity, writes);
@@ -431,7 +432,7 @@ fn write_under(
     let bus = Arc::new(Mutex::new(Interrupting::new(sim, interruptions.to_vec(), trigger)));
     let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
     let lease = WireLease::new(gate, WirePriority::Attended, granularity);
-    let outcome = controller.with_wire_lease(lease, |c| run_write(c, Some(identity), writes));
+    let outcome = controller.with_wire_lease(lease, |c| run_write(c, identity, writes));
     drop(controller);
     let interrupting = Arc::into_inner(bus).expect("one owner").into_inner().expect("bus");
     (outcome, interrupting.sim)
@@ -641,10 +642,32 @@ fn standard(command: StandardCommand) -> u16 {
 // IEC 62386-102 §9.10.6
 #[test]
 fn a_gear_the_registry_cannot_identify_is_refused_before_any_frame() {
-    let (outcome, sim) = write_as(luminaire_gear(FOUND_LOCK, false), None, &year(YEAR));
+    let (outcome, sim) = write_as(luminaire_gear(FOUND_LOCK, false), IdentityRead::Unread, &year(YEAR));
 
     assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, IDENTITY_UNKNOWN));
     assert!(sim.sent_frames().is_empty(), "nothing is sent to a gear nobody can tell from its replacement");
+}
+
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn a_gear_whose_identity_reads_mask_is_refused_before_any_frame() {
+    let (outcome, sim) = write_as(luminaire_gear(FOUND_LOCK, false), IdentityRead::Unprovable, &year(YEAR));
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, IDENTITY_UNPROVABLE));
+    assert!(sim.sent_frames().is_empty(), "an unprogrammed identity tells no gear from another");
+}
+
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn a_gear_whose_identity_now_reads_mask_is_another_device() {
+    let read_then = identity_of(&luminaire_gear(FOUND_LOCK, false));
+    let mut sim = luminaire_gear(FOUND_LOCK, false);
+    sim.fleet_mut().gears_mut()[0].clear_identification_number();
+    assert_eq!(identity_of(&sim), IdentityRead::Unprovable);
+    let (outcome, sim) = write_as(sim, read_then, &year(YEAR));
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, IDENTITY_CHANGED));
+    assert!(wrote_nothing(&sim));
 }
 
 // IEC 62386-102 §9.10.6, Table 9
@@ -653,11 +676,29 @@ fn a_gear_replaced_since_the_registry_read_it_is_refused_before_any_write() {
     let read_then = identity_of(&luminaire_gear(FOUND_LOCK, false));
     let replacement = luminaire_gear_at(REPLACEMENT_RANDOM_ADDRESS, FOUND_LOCK, false);
     assert_ne!(identity_of(&replacement), read_then);
-    let (outcome, sim) = write_as(replacement, Some(read_then), &year(YEAR));
+    let (outcome, sim) = write_as(replacement, read_then, &year(YEAR));
 
     assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, IDENTITY_CHANGED));
     assert!(wrote_nothing(&sim), "no ENABLE WRITE MEMORY or WRITE MEMORY LOCATION reaches the other gear");
     assert_eq!(outcome.readback, None);
+}
+
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn another_logical_unit_of_the_same_bus_unit_is_another_device() {
+    let read_then = identity_of(&luminaire_gear(FOUND_LOCK, false));
+    let mut sim = luminaire_gear(FOUND_LOCK, false);
+    sim.fleet_mut().gears_mut()[0].set_logical_gear_unit(LOGICAL_GEAR_UNITS, SECOND_GEAR_UNIT);
+    let (then, now) = (known(read_then), known(identity_of(&sim)));
+    assert_eq!(
+        (now.gtin, now.identification_number),
+        (then.gtin, then.identification_number),
+        "every logical unit carries the bus unit's GTIN and number"
+    );
+    let (outcome, sim) = write_as(sim, read_then, &year(YEAR));
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, IDENTITY_CHANGED));
+    assert!(wrote_nothing(&sim));
 }
 
 // IEC 62386-102 §9.10.6, Table 9
@@ -835,7 +876,7 @@ fn through_the_worker(arrival: WirePriority) -> (Result<(), (ErrorCode, String)>
     let emptying = Trigger::Frame(special(SpecialCommand::WriteMemoryLocation(0)));
     let interruption = Interruption::Arrival(Arc::clone(&gate), arrival);
     let transport = Arc::new(Mutex::new(Interrupting::new(sim, vec![interruption], emptying)));
-    let read_port = ReadPortDouble { identity: Some(identity), ..ReadPortDouble::default() };
+    let read_port = ReadPortDouble { identity, ..ReadPortDouble::default() };
     let worker = spawn_dali_worker(
         worker_commands,
         DaliController::new(Arc::clone(&transport), Box::new(StoppedClock::at(0))),

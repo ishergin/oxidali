@@ -4,7 +4,7 @@ use dali2rust_domain::dali::banks::luminaire_write::{
     BANK_UNLOCKED,
 };
 use dali2rust_domain::dali::banks::{
-    DeviceIdentity, BANK_LOCK_BYTE, BANK_LUMINAIRE_INFO, GTIN_OFFSET, IDENTITY_WINDOW_LEN,
+    IdentityRead, BANK_LOCK_BYTE, BANK_LUMINAIRE_INFO, GTIN_OFFSET, IDENTITY_BANK, IDENTITY_WINDOW_LEN,
 };
 use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::controller::DaliApplicationController;
@@ -21,8 +21,6 @@ use crate::runtime::executor::helpers::{
     dali_short_address, send_raw_query_once_response, send_special, send_special_response, send_standard_response,
     send_standard, SemanticDaliError, READ_MEMORY_LOCATION_OPCODE,
 };
-
-const BANK0: u8 = 0;
 
 const BANK1: u8 = BANK_LUMINAIRE_INFO;
 
@@ -42,8 +40,6 @@ pub const IDENTITY_SUBJECT: &str = "device_identity";
 pub const HEADER_SUBJECT: &str = "bank1_header";
 
 const READ_ENDED_EARLY: &str = "memory_bank_read_ended_early";
-
-pub const IDENTITY_UNKNOWN: &str = "device_identity_unknown";
 
 pub const IDENTITY_CHANGED: &str = "device_identity_changed";
 
@@ -330,18 +326,20 @@ fn whole(read: &MemoryReadExecution, length: usize) -> Result<&[u8], SemanticDal
 fn prove_identity(
     controller: &mut impl DaliApplicationController,
     short_address: u8,
-    identity: Option<DeviceIdentity>,
+    registered: IdentityRead,
 ) -> Result<(), LuminaireWriteFailure> {
-    let identity = identity.ok_or(LuminaireWriteFailure::new(ErrorCode::Conflict, IDENTITY_UNKNOWN))?;
-    let window = read_memory_bank(controller, short_address, BANK0, u16::from(GTIN_OFFSET), IDENTITY_WINDOW_LEN);
+    let identity = registered.known().map_err(|cause| LuminaireWriteFailure::new(ErrorCode::Conflict, cause))?;
+    let window = read_memory_bank(controller, short_address, IDENTITY_BANK, u16::from(GTIN_OFFSET), IDENTITY_WINDOW_LEN);
     let unread = |error| LuminaireWriteFailure::unread(error, IDENTITY_SUBJECT);
     if let Some(error) = window.error {
         return Err(unread(error));
     }
-    match DeviceIdentity::in_window(&window.bytes) {
-        Some(seen) if seen == identity => Ok(()),
-        Some(_) => Err(LuminaireWriteFailure::new(ErrorCode::Conflict, IDENTITY_CHANGED)),
-        None => Err(unread(SemanticDaliError::OperationFailed(READ_ENDED_EARLY))),
+    match IdentityRead::of_window(&window.bytes) {
+        IdentityRead::Known(seen) if seen == identity => Ok(()),
+        IdentityRead::Known(_) | IdentityRead::Unprovable => {
+            Err(LuminaireWriteFailure::new(ErrorCode::Conflict, IDENTITY_CHANGED))
+        }
+        IdentityRead::Unread => Err(unread(SemanticDaliError::OperationFailed(READ_ENDED_EARLY))),
     }
 }
 
@@ -402,7 +400,7 @@ fn verdict(
 // DiiA 251 §9.2.3
 pub fn write_memory_luminaire(
     controller: &mut impl DaliApplicationController,
-    (short_address, identity): (u8, Option<DeviceIdentity>),
+    (short_address, identity): (u8, IdentityRead),
     writes: &[FieldWrite],
     on_readback: impl FnOnce(&MemoryReadExecution),
 ) -> Result<(), LuminaireWriteFailure> {

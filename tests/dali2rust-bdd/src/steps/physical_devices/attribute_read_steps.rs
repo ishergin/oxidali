@@ -352,7 +352,7 @@ async fn when_start_common102_attribute_read(world: &mut DaliWorld) {
     );
 }
 
-// PD-198 PD-199 PD-291 PD-292 PD-293 PD-294 PD-296 PD-297 PD-298 PD-299 PD-300
+// PD-198 PD-199 PD-291 PD-292 PD-293 PD-294 PD-296 PD-297 PD-298 PD-299 PD-300 PD-301 PD-302
 #[when(r#"I start an attribute read for adapter 0 physical device 0 with memory_banks "profile""#)]
 async fn when_start_attribute_read_profile(world: &mut DaliWorld) {
     let body = br#"{"attribute_groups":["runtime_status","common_102","dt8_color"],"memory_banks":"profile"}"#;

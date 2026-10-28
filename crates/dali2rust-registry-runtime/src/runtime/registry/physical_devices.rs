@@ -18,7 +18,7 @@ use dali2rust_contracts::msg::{
     PowerState, RuntimeObservation, RuntimeSource, StatusFlags,
 };
 use dali2rust_domain::dali::banks::luminaire_write::Bank1Layout;
-use dali2rust_domain::dali::banks::BANK_LUMINAIRE_INFO;
+use dali2rust_domain::dali::banks::{IdentityRead, BANK_LUMINAIRE_INFO, IDENTITY_BANK};
 use dali2rust_domain::dali::level_transition::{LevelContext, TransitionOutcome};
 use dali2rust_domain::registry::{
     colour_mode_fits_declared, device_type_fits_declared, known_device_types,
@@ -1449,6 +1449,11 @@ impl PhysicalDeviceReadPort for RegistryStore {
         g.physical_devices.get(&(adapter_id, short_address)).map(|rec| bank1_layout(rec))
     }
 
+    fn physical_device_identity(&self, adapter_id: u8, short_address: u8) -> IdentityRead {
+        let g = self.read_inner();
+        g.physical_devices.get(&(adapter_id, short_address)).map_or(IdentityRead::Unread, |rec| registered_identity(rec))
+    }
+
     fn physical_device_exists(&self, adapter_id: u8, short_address: u8) -> bool {
         self.read_inner()
             .physical_devices
@@ -1474,6 +1479,13 @@ fn bank1_layout(rec: &PhysicalDeviceRecord) -> Bank1Layout {
         content_format_id: format.map(|id| id.value),
         last_offset: header.and_then(|entry| entry.bytes.first().copied()),
     }
+}
+
+// IEC 62386-102 §9.10.6, Table 9
+pub(crate) fn registered_identity(rec: &PhysicalDeviceRecord) -> IdentityRead {
+    let from_start = |entry: &&MemoryBankRecord| entry.ranges.first().is_some_and(|range| range.start == 0);
+    let bank0 = rec.memory_banks.iter().filter(|entry| entry.bank == IDENTITY_BANK).find(from_start);
+    bank0.map_or(IdentityRead::Unread, |entry| IdentityRead::of_bank0(&entry.bytes))
 }
 
 fn take_metadata_and_overrides(role: &PhysicalDeviceRecord, record: &mut PhysicalDeviceRecord) {

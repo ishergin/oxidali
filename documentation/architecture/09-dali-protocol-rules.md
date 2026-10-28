@@ -279,12 +279,24 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   a bit outside that range claims no part.
 - The only memory-bank write is typed: the Part 251 fields of bank 1, never a raw cell.
 - Before any write frame the executor proves the gear is the one the registry read. It
-  reads bank 0 `0x03..0x12` and compares the GTIN and identification number — together
-  the bus unit's unique identity (102 §9.10.6) — with the registry's
-  (`RegistryReadPort::physical_device_identity`). Another identity is refused
-  (`device_identity_changed`). So is a gear whose bank 0 the registry never read
-  (`device_identity_unknown`): non-volatile memory is not written unproved. The identity
-  never travels in the bus frame.
+  reads bank 0 `0x03..0x1A` and compares the GTIN and identification number — together
+  the bus unit's unique identity (102 §9.10.6) — and the index of the logical control
+  gear unit at `0x1A`, which tells apart the logical units sharing that identity, with
+  the registry's (`RegistryReadPort::physical_device_identity`). Another identity is
+  refused (`device_identity_changed`). The identity never travels in the bus frame.
+- The registry's identity comes from the raw bytes of its last bank 0 read from offset
+  `0x00` (`IdentityRead::of_bank0`), as the bank 1 layout comes from the last bank 1
+  read from `0x00`; the merged `memory_identity` attributes play no part. Bank bytes are
+  not persisted, so after a restart the identity is unknown until bank 0 is read again.
+- Non-volatile memory is not written unproved. The HTTP handler refuses with `409`
+  before publishing, after the bank 1 layout gate and before the values are parsed; the
+  executor repeats the check for a registry that changed in between:
+  - `device_identity_unknown` — bank 0 was not read from `0x00` through `0x1A`;
+  - `device_identity_unprovable` — the read bank 0 ends before `0x1A`, or its GTIN or
+    identification number is all MASK. MASK is never a value, an unprogrammed identity
+    tells no gear from another, and reading the bank again does not change it; such a
+    gear is not written. A gear the registry knew whose identity now reads MASK is
+    `device_identity_changed`.
 - A read before or after the write proves something only when it is whole. A bank read
   ends early, with no error, at two silences on one location (§Reading answers); such
   an end counts only where the bank's own byte `0x00` puts it. So the identity window

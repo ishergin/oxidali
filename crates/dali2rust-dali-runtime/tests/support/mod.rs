@@ -19,7 +19,7 @@ use dali2rust_dali_runtime::{
     spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock,
     DALI_WORKER_HANDLED_COMMANDS,
 };
-use dali2rust_domain::dali::banks::DeviceIdentity;
+use dali2rust_domain::dali::banks::IdentityRead;
 use dali2rust_domain::dali::pres::command::DaliCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::types::DaliAddress;
@@ -271,7 +271,7 @@ pub fn assert_a_lost_fact_fails_the_operation(operation: &DemoBusOperation) {
 pub struct ReadPortDouble {
     pub policy_armed: bool,
     pub known_shorts: Vec<u8>,
-    pub identity: Option<DeviceIdentity>,
+    pub identity: IdentityRead,
 }
 
 impl InputInstanceTypeReadPort for ReadPortDouble {
@@ -321,7 +321,7 @@ impl RegistryReadPort for ReadPortDouble {
         None
     }
 
-    fn physical_device_identity(&self, _adapter_id: u8, _short: u8) -> Option<DeviceIdentity> {
+    fn physical_device_identity(&self, _adapter_id: u8, _short: u8) -> IdentityRead {
         self.identity
     }
 }

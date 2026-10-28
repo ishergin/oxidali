@@ -705,7 +705,7 @@ mod write;
 
 pub use write::{
     write_memory_luminaire, LuminaireWriteFailure, HEADER_SUBJECT, IDENTITY_CHANGED, IDENTITY_SUBJECT,
-    IDENTITY_UNKNOWN, LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT,
+    LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT,
 };
 
 #[cfg(test)]

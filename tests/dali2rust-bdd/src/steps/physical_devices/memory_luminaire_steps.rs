@@ -10,9 +10,10 @@ use serde_json::Value;
 use crate::steps::frames::{dt8_raw_query_frame, special_frame, standard_frame};
 use crate::DaliWorld;
 
+use super::attribute_read_scripts::{script_attribute_read_identity_queries, ScriptedReply};
 use super::memory_bank_scripts::{
-    bank1_part251_bytes, script_memory_bank_read, script_memory_bank_window, BANK0_BYTES,
-    READ_MEMORY_LOCATION_OPCODE,
+    bank1_part251_bytes, script_memory_bank_read, script_memory_bank_short_read,
+    script_memory_bank_window, BANK0_BYTES, READ_MEMORY_LOCATION_OPCODE,
 };
 use super::read_model::wait_for_physical_device;
 use super::TEST_SHORT_ADDRESS;
@@ -27,6 +28,11 @@ const UNITS_PER_SESSION: usize = 2;
 const WRITTEN_YEAR: u8 = 24;
 const VENDOR_FORMAT_ID: [u8; 2] = [0x00, 0x42];
 const FORMAT_ID_OFFSET: usize = 0x11;
+const BANK_META_LEN: usize = 3;
+const PHYSICAL_MINIMUM: u8 = 0x01;
+const LOGICAL_GEAR_INDEX_OFFSET: usize = 0x1A;
+const IDENTIFICATION_NUMBER: std::ops::RangeInclusive<usize> = 0x0B..=0x12;
+const MASK: u8 = 0xFF;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GearReply {
@@ -214,7 +220,34 @@ async fn then_colour_written(world: &mut DaliWorld, colour: String) {
 async fn given_replaced_gear(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
     let mut window = identity_window();
-    let last = window.len() - 1;
-    window[last] ^= 0x01;
+    let last_number_byte = *IDENTIFICATION_NUMBER.end() - usize::from(GTIN_OFFSET);
+    window[last_number_byte] ^= 0x01;
     script_identity(&mock, &window);
+}
+
+fn script_part251_attribute_read(world: &mut DaliWorld, bank0: impl FnOnce(&MockDaliTransport)) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    let reply = ScriptedReply { value: Some(PHYSICAL_MINIMUM), contended: false };
+    script_attribute_read_identity_queries(&mock, &[reply]);
+    script_memory_bank_read(&mock, IDENTITY_BANK, &BANK0_BYTES[..BANK_META_LEN]);
+    bank0(&mock);
+    let bank1 = bank1_part251_bytes();
+    script_memory_bank_read(&mock, LUMINAIRE_BANK, &bank1[..1]);
+    script_memory_bank_read(&mock, LUMINAIRE_BANK, &bank1);
+}
+
+// PD-301
+#[given("a golden attribute-read script with DiiA Part 251 luminaire data whose bank 0 stops before its logical unit index for short address 0")]
+async fn given_attribute_read_identity_cut(world: &mut DaliWorld) {
+    script_part251_attribute_read(world, |mock| {
+        script_memory_bank_short_read(mock, IDENTITY_BANK, &BANK0_BYTES[..LOGICAL_GEAR_INDEX_OFFSET]);
+    });
+}
+
+// PD-302
+#[given("a golden attribute-read script with DiiA Part 251 luminaire data whose bank 0 identification number is unprogrammed for short address 0")]
+async fn given_attribute_read_identity_unprogrammed(world: &mut DaliWorld) {
+    let mut bank0 = BANK0_BYTES;
+    bank0[IDENTIFICATION_NUMBER].fill(MASK);
+    script_part251_attribute_read(world, |mock| script_memory_bank_read(mock, IDENTITY_BANK, &bank0));
 }

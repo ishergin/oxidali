@@ -26,6 +26,7 @@ use dali2rust_api::http::physical_device_state::{
 };
 use dali2rust_api::http::types::HttpResponse;
 use dali2rust_domain::dali::banks::luminaire_write::Bank1Layout;
+use dali2rust_domain::dali::banks::{DeviceIdentity, IdentityRead};
 use dali2rust_domain::registry::{AttributeSectionKind, AttributeSectionView};
 use dali2rust_api::http::virtual_lamp_state::{
     VirtualLampBindingApplyWatch, VirtualLampBindingDto, VirtualLampDto, VirtualLampHttpState,
@@ -167,6 +168,7 @@ struct TestStateInner {
     adapter_count: u8,
     pds: HashMap<(u8, u8), PhysicalDeviceCoreDto>,
     bank1_layouts: HashMap<(u8, u8), Bank1Layout>,
+    identities: HashMap<(u8, u8), IdentityRead>,
     vls: HashMap<(u8, u8), VirtualLampDto>,
     physical_short_other_adapter: bool,
 }
@@ -182,6 +184,7 @@ impl TestState {
                 adapter_count: 1,
                 pds: HashMap::new(),
                 bank1_layouts: HashMap::new(),
+                identities: HashMap::new(),
                 vls: HashMap::new(),
                 physical_short_other_adapter: false,
             }),
@@ -200,6 +203,13 @@ impl TestState {
     fn with_bank1_layout(self, short_address: u8, layout: Bank1Layout) -> Self {
         let mut guard = self.inner.lock().expect("state lock");
         guard.bank1_layouts.insert((0, short_address), layout);
+        drop(guard);
+        self
+    }
+
+    fn with_identity(self, short_address: u8, identity: IdentityRead) -> Self {
+        let mut guard = self.inner.lock().expect("state lock");
+        guard.identities.insert((0, short_address), identity);
         drop(guard);
         self
     }
@@ -318,6 +328,11 @@ impl PhysicalDeviceHttpState for TestState {
     fn physical_device_bank1_layout(&self, adapter_id: u8, short_address: u8) -> Option<Bank1Layout> {
         let guard = self.inner.lock().expect("state lock");
         guard.bank1_layouts.get(&(adapter_id, short_address)).copied()
+    }
+
+    fn physical_device_identity(&self, adapter_id: u8, short_address: u8) -> IdentityRead {
+        let guard = self.inner.lock().expect("state lock");
+        guard.identities.get(&(adapter_id, short_address)).copied().unwrap_or_default()
     }
 
     fn physical_device_exists(&self, adapter_id: u8, short_address: u8) -> bool {
@@ -1198,8 +1213,19 @@ const V3_BANK1: Bank1Layout = Bank1Layout {
     last_offset: Some(0x77),
 };
 
+const READ_IDENTITY: IdentityRead =
+    IdentityRead::Known(DeviceIdentity { gtin: 0x40_0000_4321, identification_number: 0x5EED_4321, logical_gear_index: 0 });
+
 fn luminaire_handler(harness: &BusHarness, layout: Option<Bank1Layout>) -> PhysicalDeviceMemoryLuminaireHandler {
-    let state = TestState::new().with_pd(sample_pd(1, false, false, false));
+    luminaire_handler_as(harness, layout, READ_IDENTITY)
+}
+
+fn luminaire_handler_as(
+    harness: &BusHarness,
+    layout: Option<Bank1Layout>,
+    identity: IdentityRead,
+) -> PhysicalDeviceMemoryLuminaireHandler {
+    let state = TestState::new().with_pd(sample_pd(1, false, false, false)).with_identity(1, identity);
     let state = match layout {
         Some(layout) => state.with_bank1_layout(1, layout),
         None => state,
@@ -1257,6 +1283,22 @@ fn memory_luminaire_write_gates_on_what_the_registry_read_of_bank_1_shows() {
     assert_eq!(luminaire_answer(&short, identification), answer(409, "conflict", "bank1_too_short"));
     let vendor = luminaire_handler(&harness, Some(Bank1Layout { content_format_id: Some(0x42), ..V3_BANK1 }));
     assert_eq!(luminaire_answer(&vendor, r#"{"year":24}"#), answer(409, "conflict", "bank1_not_part251"));
+}
+
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn memory_luminaire_write_gates_on_the_identity_after_the_layout_and_before_the_value() {
+    let harness = BusHarness::new();
+    let unproved = [(IdentityRead::Unread, "device_identity_unknown"), (IdentityRead::Unprovable, "device_identity_unprovable")];
+    for (identity, cause) in unproved {
+        let handler = luminaire_handler_as(&harness, Some(V3_BANK1), identity);
+        assert_eq!(luminaire_answer(&handler, r#"{"year":24}"#), answer(409, "conflict", cause));
+        let outside_the_format = luminaire_answer(&handler, r#"{"week":54,"oem_name":"ACME"}"#);
+        assert_eq!(outside_the_format, answer(409, "conflict", "bank1_field_not_in_format"), "{cause}");
+        assert_eq!(luminaire_answer(&handler, r#"{"week":54}"#), answer(409, "conflict", cause), "{cause}");
+        let unread_bank1 = luminaire_handler_as(&harness, None, identity);
+        assert_eq!(luminaire_answer(&unread_bank1, r#"{"year":24}"#), answer(409, "conflict", "bank1_not_read"));
+    }
 }
 
 #[test]

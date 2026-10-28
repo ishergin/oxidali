@@ -6,14 +6,14 @@ use std::time::{Duration, Instant};
 use dali2rust_bsp::psram::PsramBox;
 use dali2rust_bsp::unix_clock::unix_wall_clock_millis;
 use dali2rust_contracts::msg::fixed_text_64;
-use dali2rust_domain::dali::banks::DeviceIdentity;
+use dali2rust_domain::dali::banks::IdentityRead;
 use dali2rust_domain::registry::{HaInputInstanceView, RegistryReadPort};
 
 use super::adapters::AdapterRow;
 use super::groups::{GroupMembershipRowRecord, GroupRecord};
 use super::hcl_schedules::HclScheduleMap;
 use super::memory_banks::MemoryBankStaging;
-use super::physical_devices::PhysicalDeviceRecord;
+use super::physical_devices::{registered_identity, PhysicalDeviceRecord};
 use super::scenes::{SceneDesiredRowRecord, SceneRecord};
 use super::virtual_lamps::VlRecord;
 use super::withheld_slices::{self as withheld, HeldSlices, WithheldSlices};
@@ -717,13 +717,9 @@ impl RegistryReadPort for RegistryStore {
         )
     }
 
-    fn physical_device_identity(&self, adapter_id: u8, short_address: u8) -> Option<DeviceIdentity> {
+    fn physical_device_identity(&self, adapter_id: u8, short_address: u8) -> IdentityRead {
         let g = self.read_inner();
-        let identity = &g.physical_devices.get(&(adapter_id, short_address))?.attributes.memory_identity;
-        Some(DeviceIdentity {
-            gtin: identity.gtin.as_ref()?.value,
-            identification_number: identity.identification_number.as_ref()?.value,
-        })
+        g.physical_devices.get(&(adapter_id, short_address)).map_or(IdentityRead::Unread, |rec| registered_identity(rec))
     }
 }
 

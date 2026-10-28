@@ -150,3 +150,31 @@ Feature: Physical-device luminaire data write
     And the operation error code should be "conflict"
     And the operation error message should be "device_identity_changed"
     And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-301
+  Scenario: A gear whose bank 0 was not read through its logical unit index is refused before the wire
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given a golden attribute-read script with DiiA Part 251 luminaire data whose bank 0 stops before its logical unit index for short address 0
+    When I start an attribute read for adapter 0 physical device 0 with memory_banks "profile"
+    Then the last operation eventually succeeds
+    When I PATCH JSON {"year":24} to "/api/v1/adapters/0/physical-devices/0/memory-luminaire"
+    Then the response status should be 409
+    And the JSON error should be "conflict"
+    And the JSON field "message" should be "device_identity_unknown"
+    And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-302
+  Scenario: A gear whose identification number is unprogrammed cannot be told from its replacement and is refused before the wire
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given a golden attribute-read script with DiiA Part 251 luminaire data whose bank 0 identification number is unprogrammed for short address 0
+    When I start an attribute read for adapter 0 physical device 0 with memory_banks "profile"
+    Then the last operation eventually succeeds
+    When I PATCH JSON {"year":24} to "/api/v1/adapters/0/physical-devices/0/memory-luminaire"
+    Then the response status should be 409
+    And the JSON error should be "conflict"
+    And the JSON field "message" should be "device_identity_unprovable"
+    And all scripted DALI exchanges should be consumed without errors

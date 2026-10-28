@@ -351,15 +351,15 @@ fn build_bank0(spec: &GearSpec) -> [u8; BANK0_LEN] {
     b[9] = 1;
     b[10] = 4;
     let serial: u64 = 0x5EED_0000u64 + u64::from(spec.random_address);
-    b[11..19].copy_from_slice(&serial.to_be_bytes());
+    b[IDENTIFICATION_NUMBER].copy_from_slice(&serial.to_be_bytes());
     b[19] = 2;
     b[20] = 0;
     b[21] = VERSION_NUMBER_101;
     b[22] = VERSION_NUMBER_102;
     b[23] = 0;
     b[24] = 0;
-    b[25] = 1;
-    b[26] = 0;
+    b[LOGICAL_GEAR_UNITS_OFFSET] = 1;
+    b[LOGICAL_GEAR_INDEX_OFFSET] = 0;
     if spec.bus_unit_extension {
         b[usize::from(BUS_UNIT_CONFIGURATION_OFFSET)] = 0;
         b[usize::from(IMPLEMENTED_PARTS_OFFSET)] = 0b0000_0001;
@@ -443,6 +443,12 @@ impl Gear {
 }
 
 const BANK0_LAST_BANK_OFFSET: usize = 0x02;
+
+// IEC 62386-102 §9.10.6, Table 9
+const LOGICAL_GEAR_UNITS_OFFSET: usize = 0x19;
+const LOGICAL_GEAR_INDEX_OFFSET: usize = 0x1A;
+const IDENTIFICATION_NUMBER: core::ops::Range<usize> = 0x0B..0x13;
+const UNPROGRAMMED: u8 = 0xFF;
 
 const BANK0_RESERVED_OFFSET: u8 = 0x01;
 
@@ -579,6 +585,17 @@ impl Gear {
     pub fn set_bus_unit_extension(&mut self, enabled: bool) {
         self.spec.bus_unit_extension = enabled;
         self.banks.bank0 = build_bank0(&self.spec);
+    }
+
+    // IEC 62386-102 §9.10.6, Table 9
+    pub fn set_logical_gear_unit(&mut self, units: u8, index: u8) {
+        self.banks.bank0[LOGICAL_GEAR_UNITS_OFFSET] = units;
+        self.banks.bank0[LOGICAL_GEAR_INDEX_OFFSET] = index;
+    }
+
+    // IEC 62386-102 §9.10.6, Table 9
+    pub fn clear_identification_number(&mut self) {
+        self.banks.bank0[IDENTIFICATION_NUMBER].fill(UNPROGRAMMED);
     }
 
     pub fn memory_location(&self, bank: u8, offset: u8) -> Option<u8> {

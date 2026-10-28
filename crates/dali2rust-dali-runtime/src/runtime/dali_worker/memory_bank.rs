@@ -1,7 +1,7 @@
 use super::*;
 use crate::runtime::executor::write_memory_luminaire;
 use dali2rust_domain::dali::banks::luminaire_write::planned_writes;
-use dali2rust_domain::dali::banks::{DeviceIdentity, BANK_LUMINAIRE_INFO};
+use dali2rust_domain::dali::banks::{IdentityRead, BANK_LUMINAIRE_INFO};
 
 pub(super) const MEMORY_BANK_CHUNK_LOST: &str = "memory_bank_chunk_lost";
 
@@ -132,7 +132,7 @@ fn close_memory_bank_read(
 pub(super) fn handle_write_memory_luminaire(
     controller: &mut impl DaliApplicationController,
     read: &BankRead<'_>,
-    identity: Option<DeviceIdentity>,
+    identity: IdentityRead,
     command: &dali2rust_contracts::msg::DaliWriteMemoryLuminaireCommand,
 ) {
     let BankRead { publisher, adapter_id, correlation_id: w, counters, .. } = *read;

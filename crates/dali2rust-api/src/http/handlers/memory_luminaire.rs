@@ -10,6 +10,7 @@ use dali2rust_domain::dali::banks::luminaire_write::{
     LuminaireField,
 };
 use dali2rust_domain::dali::banks::part251::LuminaireFormat;
+use dali2rust_domain::dali::banks::IdentityRead;
 use serde_json::{Map, Value};
 
 use super::common::{
@@ -63,6 +64,11 @@ fn gated_format(layout: &Bank1Layout, fields: &Fields) -> Result<LuminaireFormat
         format = Some(check_writable(layout, field).map_err(refused)?);
     }
     format.ok_or_else(|| json_err(400, "empty_patch"))
+}
+
+// IEC 62386-102 §9.10.6, Table 9
+fn gated_identity(identity: IdentityRead) -> Result<(), HttpResponse> {
+    identity.known().map(|_| ()).map_err(|cause| json_err_with_message(409, "conflict", cause))
 }
 
 fn invalid(field: &LuminaireField) -> HttpResponse {
@@ -123,6 +129,7 @@ impl MutatingHandler for PhysicalDeviceMemoryLuminaireHandler {
         let fields = requested_fields(obj)?;
         let layout = self.state.physical_device_bank1_layout(aid, short).unwrap_or_default();
         let format = gated_format(&layout, &fields)?;
+        gated_identity(self.state.physical_device_identity(aid, short))?;
         Ok((aid, short, parse_patch(obj, &fields, format)?))
     }
 
