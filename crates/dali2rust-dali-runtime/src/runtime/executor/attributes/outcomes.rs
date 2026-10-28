@@ -77,9 +77,9 @@ pub fn classify_read_abort(error: SemanticDaliError) -> AttributeGroupReadOutcom
         return AttributeGroupReadOutcome::Preempted;
     }
     match error {
-        SemanticDaliError::OperationFailed("bus_contended") => {
-            AttributeGroupReadOutcome::ContendedAbort
-        }
+        SemanticDaliError::OperationFailed(
+            "bus_contended" | crate::runtime::executor::memory_bank::MEMORY_MISALIGNED,
+        ) => AttributeGroupReadOutcome::ContendedAbort,
         SemanticDaliError::OperationFailed(
             crate::runtime::executor::discovery::DEVICE_TYPE_ENUM_INCOMPLETE,
         ) => AttributeGroupReadOutcome::SequenceIncomplete,

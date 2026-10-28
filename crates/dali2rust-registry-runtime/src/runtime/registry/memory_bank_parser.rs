@@ -1,4 +1,7 @@
 use dali2rust_contracts::msg::{FixedText, FixedText32, FixedText64};
+use dali2rust_domain::dali::banks::identity::{
+    GTIN_LEN, GTIN_OFFSET, IDENTIFICATION_NUMBER_LEN, IDENTIFICATION_NUMBER_OFFSET,
+};
 use dali2rust_domain::dali::banks::{
     part251, read_value, BankValue, LuminaireFormat, ValueWidth,
     BUS_UNIT_CONFIGURATION_OFFSET, CONTENT_FORMAT_ID_OFFSET, IMPLEMENTED_PARTS_OFFSET,
@@ -73,10 +76,15 @@ fn parse_scale(bytes: &[u8], start_offset: u16, offset: u8) -> Option<i8> {
 pub(crate) fn parse_bank0_identity(bytes: &[u8], start_offset: u16) -> ParsedMemoryIdentity {
     ParsedMemoryIdentity {
         last_memory_bank: byte(bytes, start_offset, 2),
-        gtin: parse_be_u64(bytes, start_offset, 3, 6),
+        gtin: parse_be_u64(bytes, start_offset, usize::from(GTIN_OFFSET), GTIN_LEN),
         firmware_version_major: byte(bytes, start_offset, 9),
         firmware_version_minor: byte(bytes, start_offset, 10),
-        identification_number: parse_be_u64(bytes, start_offset, 11, 8),
+        identification_number: parse_be_u64(
+            bytes,
+            start_offset,
+            usize::from(IDENTIFICATION_NUMBER_OFFSET),
+            IDENTIFICATION_NUMBER_LEN,
+        ),
         hardware_version_major: byte(bytes, start_offset, 19),
         hardware_version_minor: byte(bytes, start_offset, 20),
         dali_101_version: byte(bytes, start_offset, 21),
@@ -548,3 +556,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod luminaire_write_round_trip;

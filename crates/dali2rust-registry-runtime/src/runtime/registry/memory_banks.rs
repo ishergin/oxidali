@@ -501,7 +501,8 @@ impl Staged for MemoryBankStaging {
 
 #[cfg(test)]
 mod tests {
-    use dali2rust_domain::registry::PhysicalDeviceReadPort;
+    use dali2rust_domain::dali::banks::{IdentityRead, GTIN_OFFSET};
+    use dali2rust_domain::registry::{PhysicalDeviceReadPort, RegistryReadPort};
     use dali2rust_platform::slice_store::SliceKey;
 
     use crate::runtime::registry::store::RegistryStore;
@@ -513,6 +514,65 @@ mod tests {
         assert!(store.seed_discovered_dt8(SHORT, Some(0x2222)));
         let _ = store.dirty.take_physical_devices_dirty_for(0);
         store
+    }
+
+    const IDENTIFIED_BANK0_LAST: u8 = 0x1C;
+    const IDENTIFICATION_NUMBER: [u8; 8] = [0x26, 0x01, 0x06, 0xFA, 0x9E, 0x78, 0x7D, 0x9B];
+    const UNPROGRAMMED: [u8; 8] = [0xFF; 8];
+
+    fn bank0_holding(identification_number: [u8; 8]) -> Vec<u8> {
+        let mut bank: Vec<u8> = (0..=IDENTIFIED_BANK0_LAST).collect();
+        bank[0] = IDENTIFIED_BANK0_LAST;
+        bank[0x0B..=0x12].copy_from_slice(&identification_number);
+        bank
+    }
+
+    fn identity(store: &RegistryStore) -> IdentityRead {
+        let worker = RegistryReadPort::physical_device_identity(store, 0, SHORT);
+        let http = PhysicalDeviceReadPort::physical_device_identity(store, 0, SHORT);
+        assert_eq!(worker, http, "the worker and the HTTP gate read one identity");
+        worker
+    }
+
+    // IEC 62386-102 §9.10.6, Table 9
+    #[test]
+    fn a_re_read_whose_identification_number_reads_mask_keeps_no_identity_of_the_gear_before() {
+        let store = seeded_store();
+        assert_eq!(identity(&store), IdentityRead::Unread, "a discovered gear's bank 0 is not read yet");
+        assert!(store.stage_memory_bank_chunk(31, 0, SHORT, 0, 0, 0, true, false, &bank0_holding(IDENTIFICATION_NUMBER)));
+        assert!(matches!(identity(&store), IdentityRead::Known(_)), "a programmed bank 0 is an identity");
+        assert!(store.stage_memory_bank_chunk(32, 0, SHORT, 0, 0, 0, true, false, &bank0_holding(UNPROGRAMMED)));
+        assert_eq!(
+            identity(&store),
+            IdentityRead::Unprovable,
+            "the gear read last does not carry the identification number read before"
+        );
+    }
+
+    // IEC 62386-102 §9.10.6, Table 9
+    #[test]
+    fn a_bank_0_read_not_from_its_start_proves_no_identity() {
+        let store = seeded_store();
+        let bank = bank0_holding(IDENTIFICATION_NUMBER);
+        let window_start = usize::from(GTIN_OFFSET);
+        assert!(store.stage_memory_bank_chunk(33, 0, SHORT, 0, GTIN_OFFSET.into(), 0, true, false, &bank[window_start..]));
+        assert_eq!(identity(&store), IdentityRead::Unread, "the bank's own length was not read with it");
+    }
+
+    // IEC 62386-102 §9.10.6, Table 9
+    #[test]
+    fn a_newer_bank_0_read_not_from_its_start_leaves_the_identity_unknown() {
+        let store = seeded_store();
+        let bank = bank0_holding(IDENTIFICATION_NUMBER);
+        assert!(store.stage_memory_bank_chunk(34, 0, SHORT, 0, 0, 0, true, false, &bank));
+        assert!(matches!(identity(&store), IdentityRead::Known(_)));
+        let window_start = usize::from(GTIN_OFFSET);
+        assert!(store.stage_memory_bank_chunk(35, 0, SHORT, 0, GTIN_OFFSET.into(), 0, true, false, &bank[window_start..]));
+        assert_eq!(
+            identity(&store),
+            IdentityRead::Unread,
+            "the newer read replaced the bytes that started at 0x00, so no older read stands in"
+        );
     }
 
     #[test]

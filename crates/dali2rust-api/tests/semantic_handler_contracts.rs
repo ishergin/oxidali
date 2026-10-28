@@ -13,6 +13,7 @@ use dali2rust_api::http::handlers::physical_devices::{
     PhysicalDevicePatchHandler, PhysicalDeviceTargetStateHandler,
     PhysicalDeviceWriteAttributesHandler,
 };
+use dali2rust_api::http::handlers::memory_luminaire::PhysicalDeviceMemoryLuminaireHandler;
 use dali2rust_api::http::handlers::virtual_lamps::{
     VirtualLampBindingDeleteHandler, VirtualLampBindingPutHandler, VirtualLampPatchHandler,
     VirtualLampTargetStateHandler,
@@ -24,6 +25,8 @@ use dali2rust_api::http::physical_device_state::{
     PhysicalDeviceStateDto,
 };
 use dali2rust_api::http::types::HttpResponse;
+use dali2rust_domain::dali::banks::luminaire_write::Bank1Layout;
+use dali2rust_domain::dali::banks::{DeviceIdentity, IdentityRead};
 use dali2rust_domain::registry::{AttributeSectionKind, AttributeSectionView};
 use dali2rust_api::http::virtual_lamp_state::{
     VirtualLampBindingApplyWatch, VirtualLampBindingDto, VirtualLampDto, VirtualLampHttpState,
@@ -31,7 +34,9 @@ use dali2rust_api::http::virtual_lamp_state::{
 };
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResult};
 use dali2rust_contracts::bus::build_confirmation_envelope;
-use dali2rust_contracts::msg::{BusCommandPayload, CommandEnvelope, DeliveryStatus};
+use dali2rust_contracts::msg::{
+    BusCommandPayload, CommandEnvelope, DeliveryStatus, LuminaireNumbers, LuminaireTextField,
+};
 use serde_json::Value;
 
 struct IncrementingApplyWatch(AtomicU32);
@@ -162,6 +167,8 @@ fn sample_vl(lamp_id: u8, binding_short: Option<u8>, cct: bool, xy: bool, rgb: b
 struct TestStateInner {
     adapter_count: u8,
     pds: HashMap<(u8, u8), PhysicalDeviceCoreDto>,
+    bank1_layouts: HashMap<(u8, u8), Bank1Layout>,
+    identities: HashMap<(u8, u8), IdentityRead>,
     vls: HashMap<(u8, u8), VirtualLampDto>,
     physical_short_other_adapter: bool,
 }
@@ -176,6 +183,8 @@ impl TestState {
             inner: Mutex::new(TestStateInner {
                 adapter_count: 1,
                 pds: HashMap::new(),
+                bank1_layouts: HashMap::new(),
+                identities: HashMap::new(),
                 vls: HashMap::new(),
                 physical_short_other_adapter: false,
             }),
@@ -188,6 +197,20 @@ impl TestState {
             .expect("state lock")
             .pds
             .insert((dto.adapter_id, dto.short_address), dto);
+        self
+    }
+
+    fn with_bank1_layout(self, short_address: u8, layout: Bank1Layout) -> Self {
+        let mut guard = self.inner.lock().expect("state lock");
+        guard.bank1_layouts.insert((0, short_address), layout);
+        drop(guard);
+        self
+    }
+
+    fn with_identity(self, short_address: u8, identity: IdentityRead) -> Self {
+        let mut guard = self.inner.lock().expect("state lock");
+        guard.identities.insert((0, short_address), identity);
+        drop(guard);
         self
     }
 
@@ -300,6 +323,16 @@ impl PhysicalDeviceHttpState for TestState {
     ) -> Option<dali2rust_contracts::msg::DeviceTypeSet> {
         self.physical_device_supported_types(adapter_id, short_address)
             .map(|types| types.into_iter().collect())
+    }
+
+    fn physical_device_bank1_layout(&self, adapter_id: u8, short_address: u8) -> Option<Bank1Layout> {
+        let guard = self.inner.lock().expect("state lock");
+        guard.bank1_layouts.get(&(adapter_id, short_address)).copied()
+    }
+
+    fn physical_device_identity(&self, adapter_id: u8, short_address: u8) -> IdentityRead {
+        let guard = self.inner.lock().expect("state lock");
+        guard.identities.get(&(adapter_id, short_address)).copied().unwrap_or_default()
     }
 
     fn physical_device_exists(&self, adapter_id: u8, short_address: u8) -> bool {
@@ -421,10 +454,22 @@ impl BusHarness {
     }
 
     fn ack_next_command(&self) -> std::thread::JoinHandle<CommandEnvelope> {
+        self.ack_after(0)
+    }
+
+    fn ack_operation_pair(&self) -> std::thread::JoinHandle<CommandEnvelope> {
+        self.ack_after(1)
+    }
+
+    fn ack_after(&self, skipped: usize) -> std::thread::JoinHandle<CommandEnvelope> {
         let rx = Arc::clone(&self.cmd_rx);
         let publisher = self.publisher.clone();
         let deadline = self.confirmation_deadline();
         std::thread::spawn(move || {
+            for _ in 0..skipped {
+                let begin = rx.lock().expect("cmd lock").recv_timeout(deadline).expect("begin command");
+                assert!(matches!(begin, BusFrame::Command(_)));
+            }
             let frame = rx
                 .lock()
                 .expect("cmd lock")
@@ -633,39 +678,7 @@ fn physical_device_write_attributes_validation_and_happy_path() {
         "invalid_value"
     );
 
-    let rx = Arc::clone(&harness.cmd_rx);
-    let publisher = harness.publisher.clone();
-    let deadline = harness.confirmation_deadline();
-    let ack = std::thread::spawn(move || {
-        let begin = rx
-            .lock()
-            .expect("cmd lock")
-            .recv_timeout(deadline)
-            .expect("begin command");
-        assert!(matches!(begin, BusFrame::Command(_)));
-        let frame = rx
-            .lock()
-            .expect("cmd lock")
-            .recv_timeout(deadline)
-            .expect("semantic command");
-        let BusFrame::Command(command) = frame else {
-            panic!("expected command frame");
-        };
-        let command = command.as_ref().clone();
-        assert_eq!(
-            publisher.try_publish(
-                BusChannel::Confirmations,
-                BusFrame::confirmation(build_confirmation_envelope(
-                    command.meta.correlation_id,
-                    DeliveryStatus::Ok,
-                    0,
-                    SOURCE_ID_UNSPECIFIED,
-                )),
-            ),
-            PublishResult::Queued
-        );
-        command
-    });
+    let ack = harness.ack_operation_pair();
     let resp = response_json(handler.handle_request("POST", "", br#"{"fade_rate":7}"#, &request_params));
     assert_eq!(resp["type"], "attribute_write");
     assert!(resp["operation_id"].as_str().unwrap_or_default().starts_with("pd-wattr-0-1-"));
@@ -1192,4 +1205,120 @@ fn physical_device_get_stamps_device_relative_now_ms() {
     let json: serde_json::Value =
         serde_json::from_slice(&resp.into_body_bytes()).expect("device JSON");
     assert_eq!(json["now_ms"].as_u64(), Some(123_456));
+}
+
+const V3_BANK1: Bank1Layout = Bank1Layout {
+    implemented: Some(true),
+    content_format_id: Some(3),
+    last_offset: Some(0x77),
+};
+
+const READ_IDENTITY: IdentityRead =
+    IdentityRead::Known(DeviceIdentity { gtin: 0x40_0000_4321, identification_number: 0x5EED_4321, logical_gear_index: 0 });
+
+fn luminaire_handler(harness: &BusHarness, layout: Option<Bank1Layout>) -> PhysicalDeviceMemoryLuminaireHandler {
+    luminaire_handler_as(harness, layout, READ_IDENTITY)
+}
+
+fn luminaire_handler_as(
+    harness: &BusHarness,
+    layout: Option<Bank1Layout>,
+    identity: IdentityRead,
+) -> PhysicalDeviceMemoryLuminaireHandler {
+    let state = TestState::new().with_pd(sample_pd(1, false, false, false)).with_identity(1, identity);
+    let state = match layout {
+        Some(layout) => state.with_bank1_layout(1, layout),
+        None => state,
+    };
+    let correlation = Arc::clone(&harness.correlation);
+    PhysicalDeviceMemoryLuminaireHandler::new(harness.publisher.clone(), correlation, BusId::default(), Arc::new(state))
+}
+
+fn luminaire_answer(handler: &PhysicalDeviceMemoryLuminaireHandler, body: &str) -> (u16, String, String) {
+    let request_params = params(&[("adapter_id", "0"), ("short", "1")]);
+    let resp = handler.handle_request("PATCH", "", body.as_bytes(), &request_params);
+    let status = resp.status;
+    let json = response_json(resp);
+    let text = |key: &str| json[key].as_str().unwrap_or_default().to_owned();
+    (status, text("error"), text("message"))
+}
+
+fn answer(status: u16, error: &str, message: &str) -> (u16, String, String) {
+    (status, error.to_owned(), message.to_owned())
+}
+
+#[test]
+fn memory_luminaire_write_refuses_in_the_order_body_read_only_gate_value() {
+    let harness = BusHarness::new();
+    let v3 = luminaire_handler(&harness, Some(V3_BANK1));
+    let cases = [
+        ("{}", answer(400, "empty_patch", "")),
+        (r#"{"year":24,"colour":"x"}"#, answer(400, "unknown_field", "")),
+        (r#"{"content_format_id":3}"#, answer(409, "conflict", "bank1_field_read_only")),
+        (r#"{"week":54,"oem_name":"ACME"}"#, answer(409, "conflict", "bank1_field_not_in_format")),
+        (r#"{"week":54}"#, answer(422, "invalid_value", "week")),
+        (r#"{"year":"24"}"#, answer(422, "invalid_value", "year")),
+        (r#"{"luminaire_colour":"café"}"#, answer(422, "invalid_value", "luminaire_colour")),
+        (r#"{"luminaire_colour":"tab\there"}"#, answer(422, "invalid_value", "luminaire_colour")),
+    ];
+    for (body, expected) in cases {
+        assert_eq!(luminaire_answer(&v3, body), expected, "{body}");
+    }
+    let two_texts = luminaire_answer(&v3, r#"{"luminaire_colour":"a","luminaire_identification":"b"}"#);
+    assert_eq!((two_texts.0, two_texts.1.as_str()), (422, "invalid_value"), "one text field per request");
+}
+
+#[test]
+fn memory_luminaire_write_gates_on_what_the_registry_read_of_bank_1_shows() {
+    let harness = BusHarness::new();
+    let unread = luminaire_handler(&harness, None);
+    assert_eq!(luminaire_answer(&unread, r#"{"year":24}"#), answer(409, "conflict", "bank1_not_read"));
+    let read_only_first = luminaire_answer(&unread, r#"{"cct_kelvin":2700,"content_format_id":3}"#);
+    assert_eq!(read_only_first, answer(409, "conflict", "bank1_field_read_only"), "whatever the key order");
+    let absent = Bank1Layout { implemented: Some(false), ..Bank1Layout::default() };
+    let absent = luminaire_handler(&harness, Some(absent));
+    assert_eq!(luminaire_answer(&absent, r#"{"year":24}"#), answer(409, "conflict", "bank1_not_implemented"));
+    let short = luminaire_handler(&harness, Some(Bank1Layout { last_offset: Some(0x76), ..V3_BANK1 }));
+    let identification = r#"{"luminaire_identification":"x"}"#;
+    assert_eq!(luminaire_answer(&short, identification), answer(409, "conflict", "bank1_too_short"));
+    let vendor = luminaire_handler(&harness, Some(Bank1Layout { content_format_id: Some(0x42), ..V3_BANK1 }));
+    assert_eq!(luminaire_answer(&vendor, r#"{"year":24}"#), answer(409, "conflict", "bank1_not_part251"));
+}
+
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn memory_luminaire_write_gates_on_the_identity_after_the_layout_and_before_the_value() {
+    let harness = BusHarness::new();
+    let unproved = [(IdentityRead::Unread, "device_identity_unknown"), (IdentityRead::Unprovable, "device_identity_unprovable")];
+    for (identity, cause) in unproved {
+        let handler = luminaire_handler_as(&harness, Some(V3_BANK1), identity);
+        assert_eq!(luminaire_answer(&handler, r#"{"year":24}"#), answer(409, "conflict", cause));
+        let outside_the_format = luminaire_answer(&handler, r#"{"week":54,"oem_name":"ACME"}"#);
+        assert_eq!(outside_the_format, answer(409, "conflict", "bank1_field_not_in_format"), "{cause}");
+        assert_eq!(luminaire_answer(&handler, r#"{"week":54}"#), answer(409, "conflict", cause), "{cause}");
+        let unread_bank1 = luminaire_handler_as(&harness, None, identity);
+        assert_eq!(luminaire_answer(&unread_bank1, r#"{"year":24}"#), answer(409, "conflict", "bank1_not_read"));
+    }
+}
+
+#[test]
+fn memory_luminaire_write_publishes_one_patch_command_and_answers_202() {
+    let harness = BusHarness::new();
+    let handler = luminaire_handler(&harness, Some(V3_BANK1));
+    let ack = harness.ack_operation_pair();
+    let request_params = params(&[("adapter_id", "0"), ("short", "1")]);
+    let body = br#"{"year":24,"cct_kelvin":2700,"luminaire_colour":"cool"}"#;
+    let resp = handler.handle_request("PATCH", "", body, &request_params);
+    assert_eq!(resp.status, 202);
+    let json = response_json(resp);
+    assert_eq!(json["type"], "attribute_write");
+    assert!(json["operation_id"].as_str().unwrap_or_default().starts_with("pd-memlum-0-1-"));
+    let BusCommandPayload::DaliWriteMemoryLuminaireCommand(command) = ack.join().expect("ack").payload else {
+        panic!("expected DaliWriteMemoryLuminaireCommand");
+    };
+    let numbers = command.numbers;
+    assert_eq!(numbers.patch_mask, LuminaireNumbers::PATCH_YEAR | LuminaireNumbers::PATCH_CCT_KELVIN);
+    assert_eq!((command.short_address, numbers.year, numbers.cct_kelvin), (1, 24, 2700));
+    let text = command.text.expect("the one text field");
+    assert_eq!((text.field, text.text.as_str()), (LuminaireTextField::LuminaireColour, "cool"));
 }

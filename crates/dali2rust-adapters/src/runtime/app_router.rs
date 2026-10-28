@@ -26,6 +26,7 @@ use dali2rust_api::http::handlers::commissioning::{
     CommissioningAddressChangeHandler, CommissioningIdentifyHandler, CommissioningReplacementHandler,
     CommissioningStepHandler,
 };
+use dali2rust_api::http::handlers::memory_luminaire::PhysicalDeviceMemoryLuminaireHandler;
 use dali2rust_api::http::handlers::physical_devices::{
     AdapterDiscoveryRunsHandler, PhysicalDeviceAttributeReadsHandler,
     PhysicalDeviceAttributesHandler, PhysicalDeviceDeleteHandler, PhysicalDeviceGetHandler, PhysicalDeviceMemoryBanksHandler,
@@ -557,6 +558,14 @@ fn wire_physical_device_diagnostics(
     builder
         .with_handler(RouteKey::PhysicalDeviceWriteAttrs, Box::new(
             PhysicalDeviceWriteAttributesHandler::new(
+                bus.publisher.clone(),
+                Arc::clone(&bus.correlation),
+                bus.bus_id,
+                Arc::clone(&registry.physical_state),
+            ),
+        ))
+        .with_handler(RouteKey::PhysicalDeviceLuminaireWrite, Box::new(
+            PhysicalDeviceMemoryLuminaireHandler::new(
                 bus.publisher.clone(),
                 Arc::clone(&bus.correlation),
                 bus.bus_id,

@@ -19,9 +19,13 @@ use dali2rust_dali_runtime::{
     spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock,
     DALI_WORKER_HANDLED_COMMANDS,
 };
+use dali2rust_domain::dali::banks::IdentityRead;
 use dali2rust_domain::dali::pres::command::DaliCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::types::DaliAddress;
+use dali2rust_domain::registry::{
+    AdapterSnapshot, InputInstanceTypeReadPort, RegistryReadPort, VirtualLampSnapshot,
+};
 use dali2rust_platform::dali::{DaliTransport, WireActivity};
 use dali2rust_registry_runtime::RegistryStore;
 use dali2rust_test_support::{hold_the_events_ingress_full, try_wait_until};
@@ -261,4 +265,63 @@ pub fn assert_a_lost_fact_fails_the_operation(operation: &DemoBusOperation) {
         "the full ingress refused a fact the operation owed the registry, yet it ended \
          {held:?} — a green operation over a registry that never heard it"
     );
+}
+
+#[derive(Default)]
+pub struct ReadPortDouble {
+    pub policy_armed: bool,
+    pub known_shorts: Vec<u8>,
+    pub identity: IdentityRead,
+}
+
+impl InputInstanceTypeReadPort for ReadPortDouble {
+    fn input_instance_type(&self, _adapter_id: u8, _short: u8, _instance: u8) -> Option<u8> {
+        None
+    }
+}
+
+impl RegistryReadPort for ReadPortDouble {
+    fn application_controller_active(&self) -> bool {
+        true
+    }
+
+    fn virtual_lamp_snapshot(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> VirtualLampSnapshot {
+        VirtualLampSnapshot::default()
+    }
+
+    fn virtual_lamp_binding_short(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> Option<u8> {
+        None
+    }
+
+    fn physical_dt8_gear_features(&self, _adapter_id: u8, _short_address: u8) -> Option<u8> {
+        None
+    }
+
+    fn physical_dt8_rgbwaf_control_assert_allowed(&self, _adapter_id: u8, _short: u8) -> bool {
+        false
+    }
+
+    fn physical_dt8_auto_activation_repair_allowed(&self, _adapter_id: u8, _short: u8) -> bool {
+        false
+    }
+
+    fn apply_on_discovery_armed(&self, _adapter_id: u8) -> bool {
+        self.policy_armed
+    }
+
+    fn adapter_snapshot(&self, _adapter_id: u8) -> AdapterSnapshot {
+        AdapterSnapshot { enabled: true }
+    }
+
+    fn known_physical_short_addresses(&self, _adapter_id: u8) -> Vec<u8> {
+        self.known_shorts.clone()
+    }
+
+    fn first_free_short_address(&self, _adapter_id: u8) -> Option<u8> {
+        None
+    }
+
+    fn physical_device_identity(&self, _adapter_id: u8, _short: u8) -> IdentityRead {
+        self.identity
+    }
 }

@@ -61,7 +61,7 @@ cannot resolve.
 | 0xAA | `QUERY CONTROL GEAR FAILURE` | Modelled, never sent (ed2 §9.16.2, §11.5.4). Status bit 0 covers part of it; it is the second candidate for a broadcast health probe. |
 | 0xA6 | `QUERY MANUFACTURER SPECIFIC MODE` | Modelled, never sent (§9.9, §11.5.27). |
 | 0x23 / 0x9E | `SET` / `QUERY OPERATING MODE` | Never sent. A gear parked in a manufacturer-specific mode (0x80–0xFF) looks healthy, although there the standard guarantees only the 101 bus behaviour, the operating-mode commands and the special commands (§9.9) — not level commands or `QUERY STATUS`. |
-| 0x81, 0xC7, 0xC9, 0x24 | `ENABLE WRITE MEMORY`, `WRITE MEMORY LOCATION` (± `NO REPLY`), `RESET MEMORY BANK` | No memory-bank write path — §3. |
+| 0xC9, 0x24 | `WRITE MEMORY LOCATION – NO REPLY`, `RESET MEMORY BANK` | Never sent: the bank 1 `memory_luminaire` write uses the answering form, and no bank is reset — §3. |
 | 0x05, 0x06, 0x08 | `RECALL MAX LEVEL`, `RECALL MIN LEVEL`, `ON AND STEP UP` | Never sent by the product. With the writable `maxLevel` / `minLevel` they are two of the three presets reachable by one group frame (the third is a scene); `ON AND STEP UP` lights dark members at their own `minLevel` (§11.3.10). |
 | 0x01–0x04, 0x07 | `UP`, `DOWN`, `STEP UP`, `STEP DOWN`, `STEP DOWN AND OFF` | Never sent — §1.6. |
 
@@ -69,7 +69,8 @@ cannot resolve.
 
 | Finding | Detail |
 | --- | --- |
-| No write path | `ENABLE WRITE MEMORY`, `WRITE MEMORY LOCATION` and `RESET MEMORY BANK` are never sent. Bank 1's OEM GTIN and identification number, Part 251's NVM-RW luminaire data, bank 206's resettable counters, bank 207's luminaire constants, the failure counters banks 205 and 206 reset only through `RESET MEMORY BANK`, and the whole-bank latch of Parts 252 (§9.2.3) and 253 (§9.2.4) cannot be written. |
+| Write path limited to bank 1 luminaire data | `ENABLE WRITE MEMORY` and `WRITE MEMORY LOCATION` are sent only by the typed write of Part 251's luminaire data in bank 1 ([09 §Device types and memory banks](../architecture/09-dali-protocol-rules.md#device-types-and-memory-banks)); `RESET MEMORY BANK` is never sent. Bank 1's OEM GTIN and identification number, Part 251's content format ID, bank 206's resettable counters, bank 207's luminaire constants, the failure counters banks 205 and 206 reset only through `RESET MEMORY BANK`, and the whole-bank latch of Parts 252 (§9.2.3) and 253 (§9.2.4) cannot be written. |
+| Part 251 V4 and V5 fields | Written on the rule DiiA 251 gives the V3 fields (lockable, NVM). The 2023 IEC edition that defines the fields past `0x77` was not available in full, so their memory type is not checked against it. |
 | Bank 201 (DiiA 250, DT49) | Not read: the integrated bus power supply's guaranteed and maximum current (0x04, 0x05) and its on/off status (0x06, NVM-RW), nor `QUERY ACTIVE POWER SUPPLY`. |
 
 ## 4. Part 209 — DT8 colour
@@ -247,4 +248,4 @@ Ordered by consequence per unit of work:
    its default.
 2. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
 3. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
-4. §3 — a memory-bank write path, when a commissioning surface asks for one.
+4. §3 — the remaining memory-bank writes (bank 1's OEM identity, `RESET MEMORY BANK`), when a commissioning surface asks for them.

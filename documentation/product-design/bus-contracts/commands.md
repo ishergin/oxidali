@@ -72,6 +72,10 @@
   едут своими командами, потому что оба текста в одном payload'е не помещаются в
   бюджет кадра. PATCH, несущий и `notes`, и другие поля, публикует две команды под
   одним дедлайном и атомарным не является.
+- **Данные светильника.** `DaliWriteMemoryLuminaireCommand` несёт числовые поля Part 251
+  маской `LuminaireNumbers::PATCH_*` (порядок бит — порядок полей в банке) и не больше
+  одного текстового поля: худший кадр с числами и полным текстом укладывается в бюджет,
+  второй текст — нет.
 - **Пароль брокера** ходит только в `HomeAssistantCredentialsUpdateCommand` — это
   единственный payload шины, несущий секрет; событие настроек его не несёт.
 - `HomeAssistantControllerIdUpdateCommand` маски не имеет — публикация и есть patch;
@@ -154,7 +158,7 @@ Volatile runtime-состояние меняют только `RegistryRuntimeUp
 |---|---|
 | `discovery` | `DaliDiscoverDevicesCommand`, `Dali103ScanCommand` |
 | `attribute_read` | `DaliReadAttributesCommand` (банки памяти — через пресет в этой же команде) |
-| `attribute_write` | `DaliWriteAttributesCommand` с `signals_operation = true` |
+| `attribute_write` | `DaliWriteAttributesCommand` с `signals_operation = true`, `DaliWriteMemoryLuminaireCommand` |
 | `group_apply` / `scene_apply` | `GroupApplyExecuteCommand` / `SceneApplyExecuteCommand` → ячейки `DaliProgram*Command` |
 | `policy_apply` | `PolicyApplyExecuteCommand` → ячейки `DaliWriteAttributesCommand` с `signals_operation = false` |
 | `commissioning_identify` | `DaliIdentifyDeviceCommand`, `Dali103IdentifyCommand` |

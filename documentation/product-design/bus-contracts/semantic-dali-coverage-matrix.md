@@ -16,6 +16,7 @@
 | REST | apply матрицы групп / сцены | `GroupApplyExecuteCommand` / `SceneApplyExecuteCommand` (ячейки публикует оркестратор) |
 | REST | recall сцены | `DaliRecallSceneCommand`, `scope = Broadcast` (пустое тело) или `Group` |
 | REST | запись атрибутов | `DaliWriteAttributesCommand` (`signals_operation = true`) |
+| REST | запись данных светильника (банк 1) | `DaliWriteMemoryLuminaireCommand` |
 | REST | discovery-run | `DaliDiscoverDevicesCommand` |
 | REST | чтение атрибутов | `DaliReadAttributesCommand` (с пресетом банков) |
 | REST | identify / смена адреса / замена / экспертный шаг | `DaliIdentifyDeviceCommand` / `DaliAddressingCommand` / `DaliReplaceDeviceCommand` / `DaliCommissioningStepCommand` |

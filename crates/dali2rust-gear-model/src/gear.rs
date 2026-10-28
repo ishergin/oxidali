@@ -1,5 +1,6 @@
 use dali2rust_domain::dali::banks::part251::LuminaireFormat;
-use dali2rust_domain::dali::banks::{BUS_UNIT_CONFIGURATION_OFFSET, IMPLEMENTED_PARTS_OFFSET};
+use dali2rust_domain::dali::banks::identity::{IDENTIFICATION_NUMBER, LOGICAL_GEAR_INDEX_OFFSET, MASK};
+use dali2rust_domain::dali::banks::{BANK_LOCK_BYTE, BUS_UNIT_CONFIGURATION_OFFSET, IMPLEMENTED_PARTS_OFFSET};
 
 pub const DEVICE_TYPE_LUMINAIRE_INFO: u8 = 50;
 use dali2rust_domain::dali::devices::dt8_color::{
@@ -255,6 +256,8 @@ pub struct FaultInjection {
     pub drop_answer_permille: u16,
     pub forced_status: u8,
     pub failure_status: u8,
+    pub memory_write_unstored: bool,
+    pub memory_write_holds_dtr0: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -294,6 +297,7 @@ pub struct Gear {
     pub withdrawn: bool,
     pub identifying: bool,
     pub dimming_curve: u8,
+    pub write_enabled: bool,
     device_type_walk: Option<usize>,
     pub limit_error: bool,
     pending_repeat: Option<u16>,
@@ -348,15 +352,15 @@ fn build_bank0(spec: &GearSpec) -> [u8; BANK0_LEN] {
     b[9] = 1;
     b[10] = 4;
     let serial: u64 = 0x5EED_0000u64 + u64::from(spec.random_address);
-    b[11..19].copy_from_slice(&serial.to_be_bytes());
+    b[IDENTIFICATION_NUMBER].copy_from_slice(&serial.to_be_bytes());
     b[19] = 2;
     b[20] = 0;
     b[21] = VERSION_NUMBER_101;
     b[22] = VERSION_NUMBER_102;
     b[23] = 0;
     b[24] = 0;
-    b[25] = 1;
-    b[26] = 0;
+    b[LOGICAL_GEAR_UNITS_OFFSET] = 1;
+    b[usize::from(LOGICAL_GEAR_INDEX_OFFSET)] = 0;
     if spec.bus_unit_extension {
         b[usize::from(BUS_UNIT_CONFIGURATION_OFFSET)] = 0;
         b[usize::from(IMPLEMENTED_PARTS_OFFSET)] = 0b0000_0001;
@@ -401,7 +405,50 @@ impl Gear {
 
 const BANK1_LAST_OFFSET_OFFSET: usize = 0x00;
 
+impl Gear {
+    // IEC 62386-102 §9.10.5
+    // DiiA 251 §9.2.3
+    pub fn write_memory_location(&mut self, bank: u8, offset: u8, value: u8) -> Option<u8> {
+        if bank != MEMORY_BANK_PROFILE || !self.profile_writable(offset) {
+            return None;
+        }
+        if !self.faults.memory_write_unstored {
+            self.store_profile(offset, value);
+        }
+        Some(value)
+    }
+
+    // IEC 62386-102 §9.10.2, Table 8
+    fn profile_writable(&self, offset: u8) -> bool {
+        let last = self.profile_location(0).unwrap_or(0);
+        let unlocked = self.banks.bank1[usize::from(BANK_LOCK_BYTE)] == BANK1_UNLOCKED;
+        (BANK_LOCK_BYTE..=last).contains(&offset) && (offset == BANK_LOCK_BYTE || unlocked)
+    }
+
+    fn store_profile(&mut self, offset: u8, value: u8) {
+        match self.banks.luminaire.as_mut() {
+            Some(l) if offset >= crate::luminaire::LUMINAIRE_FIRST_OFFSET => l.store(offset, value),
+            _ => {
+                if let Some(slot) = self.banks.bank1.get_mut(usize::from(offset)) {
+                    *slot = value;
+                }
+            }
+        }
+    }
+
+    pub fn set_bank1_lock_byte(&mut self, value: u8) {
+        self.banks.bank1[usize::from(BANK_LOCK_BYTE)] = value;
+    }
+
+    pub fn set_bank1_location(&mut self, offset: u8, value: u8) {
+        self.store_profile(offset, value);
+    }
+}
+
 const BANK0_LAST_BANK_OFFSET: usize = 0x02;
+
+// IEC 62386-102 §9.10.6, Table 9
+const LOGICAL_GEAR_UNITS_OFFSET: usize = 0x19;
 
 const BANK0_RESERVED_OFFSET: u8 = 0x01;
 
@@ -471,6 +518,7 @@ impl Gear {
             reset_state: true,
             power_cycle_seen: true,
             initialise: false, withdrawn: false, identifying: false, dimming_curve: 0,
+            write_enabled: false,
             device_type_walk: None,
             limit_error: false,
             pending_repeat: None, pending_random: None,
@@ -499,6 +547,7 @@ impl Gear {
         self.initialise = false;
         self.withdrawn = false;
         self.identifying = false;
+        self.write_enabled = false;
         self.pending_repeat = None;
         self.pending_random = None;
         self.rgbwaf = Rgbwaf::at_power_up();
@@ -536,6 +585,22 @@ impl Gear {
     pub fn set_bus_unit_extension(&mut self, enabled: bool) {
         self.spec.bus_unit_extension = enabled;
         self.banks.bank0 = build_bank0(&self.spec);
+    }
+
+    // IEC 62386-102 §9.10.6, Table 9
+    pub fn set_logical_gear_unit(&mut self, units: u8, index: u8) {
+        self.banks.bank0[LOGICAL_GEAR_UNITS_OFFSET] = units;
+        self.banks.bank0[usize::from(LOGICAL_GEAR_INDEX_OFFSET)] = index;
+    }
+
+    // IEC 62386-102 §9.10.6, Table 9
+    pub fn set_bank0_last_offset(&mut self, last: u8) {
+        self.banks.bank0[0] = last;
+    }
+
+    // IEC 62386-102 §9.10.6, Table 9
+    pub fn clear_identification_number(&mut self) {
+        self.banks.bank0[IDENTIFICATION_NUMBER].fill(MASK);
     }
 
     pub fn memory_location(&self, bank: u8, offset: u8) -> Option<u8> {
@@ -1224,6 +1289,10 @@ impl Gear {
 
 pub fn apply_standard_write(gear: &mut Gear, command: StandardCommand, dtr0: u8) {
     gear.device_type_walk = None;
+    // IEC 62386-102 §9.10.5
+    if matches!(command, StandardCommand::EnableWriteMemory) {
+        gear.write_enabled = true;
+    }
     apply_identify_state(gear, command);
     apply_level_write(gear, command);
     apply_config_write(gear, command, dtr0);

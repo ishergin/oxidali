@@ -41,12 +41,20 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   `Attended` (answered `202` + operation id; someone watches), `Unattended` (nobody).
   A lease is revoked only by a strictly higher arrival. `Origin` refines only kinds whose
   producers answer differently: a poller read is `Unattended`, HCL and Home Assistant
-  light commands are `Attended`, a rule's are `Interactive`.
+  light commands are `Attended`, a rule's are `Interactive`. The bank 1
+  `memory_luminaire` write is `Attended` like `write-attributes`: a Home Assistant or HCL
+  light command waits for the whole write, because a write that yields between text
+  stages leaves the field empty.
 - `YieldGranularity` says where a sequence may stop: `Frame` for reads and the
   bus-health probe, `Step` for
   configuration writes (`write-attributes`, Part 103 instance and feedback configuration)
-  at a confirmed DTR → SET → read-back boundary, `Never` for discovery, commissioning and
-  other units whose interruption leaves gear half-programmed.
+  at a confirmed DTR → SET → read-back boundary and for the bank 1 `memory_luminaire` write
+  between lock sessions, `Never` for discovery, commissioning and other units whose
+  interruption leaves gear half-programmed. A sequence that must not stop inside a span
+  runs it in `controller.step`, which narrows any lease to `Step` for the span and makes
+  its start the span's only boundary. Nothing inside a step marks another: no nested
+  `controller.step` and no `step_boundary`, so no memory-bank read, whose every chunk
+  marks one.
 - Background work never delays an operator, and that is not a setting: a quiet window,
   interactive-first ordering with preemption at frame boundaries, and a wire-time budget
   (after a background read of cost *d* the poller rests 3×*d*, so background holds at
@@ -55,8 +63,11 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - Preemption is routine and never a device fault. A preempted read ends
   `ErrorCode::Preempted` and commits nothing from the interrupted stage; a preempted
   `write-attributes` keeps the attributes it confirmed before the yield and ends
-  `Preempted`; the poller re-queues the target with no cooldown. No surface renders it as
-  a failure.
+  `Preempted`; a preempted `memory_luminaire` write ends `Preempted` naming where it
+  stopped (`device_identity`, `bank1_header`, the field whose session had not started,
+  or `bank1_readback`), with its lock byte as found and the bytes already written unproved
+  until the next bank read; the poller re-queues the target with no cooldown. No surface
+  renders it as a failure.
 - A priority is a settling window (101 Table 22), not a floor. The controller draws a
   random point inside it (footnote c) in whole PHY ticks, with a small guard above the
   band's floor and the arming lead subtracted, so the draw lands inside the band on the
@@ -191,21 +202,29 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   answered another value, else `dt8_staging_contended` when an echo held a violation,
   else `dt8_staging_unanswered`.
 - A multi-byte memory-bank value is read inside one latch (DiiA 252/253): chunks are
-  field-aligned, a re-arm restarts the value, and a value no latch covers fails
-  (`memory_bank_latch_lost`) rather than being stitched. MASK and TMASK are per width,
-  signed widths included; value, MASK, TMASK and "not read" are four states.
+  field-aligned, a re-arm restarts the value, and a value no latch covers fails rather
+  than being stitched. MASK and TMASK are per width, signed widths included; value,
+  MASK, TMASK and "not read" are four states.
 - A memory-bank read chunk is one transaction that opens by proving the whole pointer,
   `DTR1` and `DTR0`, and reads at most four locations: proof and reads together stay
-  under 101 §9.2's 400 ms guidance on real gear. A latched value wider than that stays
-  whole, and its chunk is exempt. A proof tells a moved pointer from silence and a
+  under 101 §9.2's 400 ms guidance on real gear. A bank 1 write unit (§Device types and
+  memory banks) is never exempt: proof and writes together stay under the same 400 ms,
+  so it writes at most three bytes, and a fourth would cross it. The basis is the wire
+  at the slow edges: from the unit's first frame to its last, no settle before the first
+  frame, each settle counted from the previous frame's last edge with the stop condition
+  inside it (101 §3.42) and at the top of its Table 22 band, each backward frame starting
+  at Table 17's latest and sent at Table 16's slowest half-bit; the span the controller
+  counts, from the end of the first exchange, is shorter still. A latched value wider
+  than four locations stays whole, and its chunk is exempt. A proof tells a moved
+  pointer from silence and a
   violation, as a read-back does, in that order: a register that answers a wrong value
-  outranks a violation, and a violation outranks silence. An arm whose proof never holds
-  fails `memory_bank_pointer_unconfirmed`, or `bus_contended` when its last proof was
-  violated and no register moved. A failed proof right after an arm re-arms the pointer;
-  before any other chunk it fails the read — `memory_bank_read_misaligned` when the
-  pointer moved, since the chunk before it may have read under a foreign pointer,
-  `memory_bank_pointer_unconfirmed` when it went unanswered, `bus_contended` when it was
-  violated. The read closes by checking both registers the same way (102 §9.10.4).
+  outranks a violation, and a violation outranks silence. A proof that fails the read
+  names what it showed, wherever it stands: `memory_bank_read_misaligned` for a moved
+  pointer, `bus_contended` for a violation, `memory_bank_pointer_unconfirmed` for
+  silence. An arm whose proof never holds fails by its last proof. A failed proof right
+  after an arm re-arms the pointer; before any other chunk it fails the read, since the
+  chunk before it may have read under a foreign pointer. The read closes by checking
+  both registers the same way (102 §9.10.4).
 - A silent READ at offset 0x01 reads as a placeholder and ends its chunk: the next
   chunk's proof shows whether the READ reached the gear. A pointer one READ behind, the
   bank held and `DTR0` still at 0x01, means the READ was lost or the gear does not advance
@@ -228,10 +247,17 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   the bank there — never at 0x02, which every implemented bank answers (102 Table 8).
   Attempts that showed something (a silence, a violation, a contended answer, a failure
   inside a latched value) and attempts the bus never let through (busy, a contended
-  silence, a transport error) each have a budget of three. When one runs out, a latched
-  value whose first byte had answered fails `memory_bank_latch_lost`, a transport error
-  on the last attempt is returned unless the offset had answered, and anything else
-  fails `bus_contended`.
+  silence, a transport error) each have a budget of three. When one runs out, the read
+  fails by what the attempts there showed, in this order: `bus_contended` if any showed
+  another master (a violation, a busy bus, a foreign frame in the exchange); else the
+  transport error, if the transport failed; else, every attempt having been a clean
+  silence, `memory_bank_latch_lost` inside a latched value whose first byte had answered
+  and `memory_bank_location_unanswered` anywhere else, which only 0x02 reaches. So
+  silence is never reported as contention, and a transport failure is reported as
+  neither. An attribute read counts `bus_contended` and `memory_bank_read_misaligned` as
+  contended aborts, and the silences (`memory_bank_latch_lost`,
+  `memory_bank_location_unanswered`, `memory_bank_pointer_unconfirmed`) as transport
+  aborts, so a silence inside a bank read never declares a device absent.
 
 ## Faults and identification
 
@@ -282,6 +308,87 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   (`bus_contended`, `device_type_walk_incomplete`) rather than commit a subset.
 - Bank 0 `0x1C` is one byte whose bit x is Part 15x (DiiA(SW)098bp Table 4); a byte with
   a bit outside that range claims no part.
+- The only memory-bank write is typed: the Part 251 fields of bank 1, never a raw cell.
+- Before any write frame the executor proves the gear is the one the registry read. It
+  reads bank 0 from `0x00` through `0x1A` and judges it as the registry judges its own
+  read (`IdentityRead::of_bank0`), then compares the GTIN and identification number —
+  together the bus unit's unique identity (102 §9.10.6) — and the index of the logical
+  control gear unit at `0x1A`, which tells apart the logical units sharing that
+  identity, with the registry's (`RegistryReadPort::physical_device_identity`). Another
+  identity, or a bank 0 whose byte `0x00` now ends it before `0x1A`, is refused
+  (`device_identity_changed`). The identity never travels in the bus frame.
+- The registry's identity comes from the raw bytes of the last bank 0 read, if that read
+  started at offset `0x00` (`IdentityRead::of_bank0`): a newer read from another offset
+  replaces those bytes and leaves the identity unknown. The bank 1 layout takes its last
+  offset from the last bank 1 read the same way. The merged `memory_identity` attributes
+  play no part. Bank bytes are not persisted, so after a restart the identity is unknown
+  until bank 0 is read again.
+- Non-volatile memory is not written unproved. The HTTP handler refuses with `409`
+  before publishing, after the bank 1 layout gate and before the values are parsed; the
+  executor repeats the check for a registry that changed in between:
+  - `device_identity_unknown` — bank 0 was not read from `0x00` through `0x1A`, or
+    the read ended early; reading it again helps;
+  - `device_identity_unprovable` — bank 0 declares in its byte `0x00` a last offset
+    below `0x1A`, or its GTIN, identification number or logical unit index is all MASK.
+    MASK is never a value, an unprogrammed identity tells no gear from another, and
+    reading the bank again does not change it; such a gear is not written. A gear the
+    registry knew whose identity now reads MASK is `device_identity_changed`.
+- A read before or after the write proves something only when it is whole. A bank read
+  ends early, with no error, at two silences on one location (§Reading answers); such
+  an end counts only where the bank's own byte `0x00` puts it. So bank 0 is read to
+  `0x1A`, the header to `0x12`, each or to the end its byte `0x00` declares, and the
+  read-back to that `0x00`. A shorter read proves nothing: it is neither another
+  device, nor another format, nor a field the gear refused.
+- Reads before the first write report what the wire did, not a verification: the code
+  of a read (`device_absent`, `read_contended`, `preempted`), each defined in
+  [physical devices](../product-design/rest-api/resources/physical-devices.md)
+  §`PATCH …/memory-luminaire`; the message is `device_identity` or `bank1_header`.
+- The executor then re-reads the header and gates every field on it — content format
+  3–5, the field present in that format, the bank long enough — before any write.
+- Each unit writes at most three bytes, the 101 §9.2 limit given in §Reading answers.
+  It sends `ENABLE WRITE MEMORY`, one `WRITE MEMORY LOCATION` per byte, then
+  `QUERY CONTENT DTR0`, under a pointer armed with `DTR1`/`DTR0` and proved by
+  `QUERY CONTENT DTR1/DTR0` in the same `controller.unit`.
+  - `ENABLE WRITE MEMORY` is sent per unit because any command other than the writes and
+    the DTR0–2 commands and queries clears `writeEnableState` (102 §9.10.5).
+  - The answering form is used. An answer other than the byte written, silence
+    included, ends the unit before its next `WRITE MEMORY LOCATION`, so a byte the gear
+    never heard does not push the rest one location early; the field fails.
+  - The closing `QUERY CONTENT DTR0` proves the pointer advanced by the bytes written. A
+    gear that stores every byte at one location therefore fails the unit before the next
+    one writes.
+- A text field is written in commit-byte order (DiiA 251 §9.2.5): first a NUL alone in
+  its first location, a unit of its own proved by its answer and `QUERY CONTENT DTR0`
+  before any other byte; then the rest of the new text from the next location; the
+  first character last. Wherever the write stops, the field reads old, empty or new,
+  never a new head on an old tail.
+- A lock byte other than `0x55` (102 §9.10.2, Table 8) is opened for a session of at
+  most two units, the opening proved by reading `0x02` back. Once the opening unit has
+  reached its `ENABLE WRITE MEMORY`, the value found is written back when the session
+  ends, whatever happened inside it. An opening that never got that far (its pointer
+  unproved, the bus never free) touched nothing: nothing is restored, and it fails
+  `bank1_lock_byte` with the code of a read (`device_absent`, `read_contended`), never
+  `bank1_lock_not_restored`. Each session runs in
+  `controller.step`, so it may yield before its first frame and never between opening
+  and restoring the lock, whatever lease the command holds.
+- The read-back, not a `WRITE MEMORY LOCATION` answer, decides what is written. The bank
+  is read back whole and published as an ordinary bank read. A whole read is needed
+  because the registry replaces a bank's bytes and ranges with each read, and its bank
+  1 layout needs a read from offset 0.
+  - Success needs every written byte held and the lock byte as found, even if an answer
+    was lost on the way.
+  - A lock byte other than the one found is `bank1_lock_not_restored`, whatever the
+    fields say.
+  - A field the read-back does not hold fails with the wire failure that stopped the
+    write if there was one, else `verify_failed` and the field's name.
+  - When the read-back itself fails, a restore that failed on the wire is named first,
+    as `bank1_lock_not_restored`, because the bank may be open. Next comes where the wire
+    stopped, and only then `bank1_readback`.
+- A transport failure, a frame the transport could not send, is neither silence nor
+  another master: at any step it fails `operation_failed`, with the message that step
+  names for any other failure, unless the read attempts at that location also showed
+  another master, which outranks it (§Reading answers); a transport failure on a pointer
+  arm or proof ends the read at once.
 
 ## Addressing control gear
 
