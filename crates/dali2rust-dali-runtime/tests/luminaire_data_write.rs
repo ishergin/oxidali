@@ -249,7 +249,11 @@ fn an_operator_arriving_mid_session_waits_for_the_lock_to_close() {
     let (outcome, sim) = write_interrupted_at(trigger, &text("luminaire_colour", MULTI_SESSION_TEXT));
 
     let sim = &sim;
-    assert_eq!(outcome.result.map_err(|failure| failure.code), Err(ErrorCode::Preempted));
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::Preempted, "luminaire_colour"),
+        "the yield names the field left unwritten, not the lock it never opened"
+    );
     let session_len = UNIT_BYTES * UNITS_PER_SESSION + LOCK_FRAMES_PER_SESSION;
     let first_session = &sessions_on_the_wire(MULTI_SESSION_TEXT.as_bytes(), FOUND_LOCK)[..session_len];
     assert_eq!(written_values(sim), first_session, "the started session runs to its relock");

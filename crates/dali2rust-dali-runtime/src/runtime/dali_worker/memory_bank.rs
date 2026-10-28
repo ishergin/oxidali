@@ -1,4 +1,7 @@
 use super::*;
+use crate::runtime::executor::write_luminaire_data;
+use dali2rust_domain::dali::banks::luminaire_write::planned_writes;
+use dali2rust_domain::dali::banks::BANK_LUMINAIRE_INFO;
 
 pub(super) const MEMORY_BANK_CHUNK_LOST: &str = "memory_bank_chunk_lost";
 
@@ -93,7 +96,8 @@ pub(super) fn handle_read_memory_bank(
     let execution = read_memory_bank(controller, sa, bank, mb.start, mb.length);
     note_short_read(mb.length, &execution, bank, sa, counters);
     let delivered = publish_memory_bank_execution(read, bank, mb.start, &execution);
-    close_memory_bank_read(publisher, adapter_id, w, delivered, execution.error, counters);
+    let failure = execution.error.map(|error| (error.code(), error.message()));
+    close_memory_bank_read(publisher, adapter_id, w, delivered, failure, counters);
     counters
         .semantic_read_memory_bank_handled
         .fetch_add(1, Ordering::Relaxed);
@@ -104,19 +108,13 @@ fn close_memory_bank_read(
     adapter_id: BusId,
     w: u64,
     delivered: bool,
-    error: Option<crate::runtime::executor::SemanticDaliError>,
+    failure: Option<(ErrorCode, &'static str)>,
     counters: &DaliWorkerCounters,
 ) {
-    match error {
-        Some(error) => publish_worker_failed(
-            publisher,
-            adapter_id,
-            w,
-            Origin::Internal,
-            error.code(),
-            error.message(),
-            counters,
-        ),
+    match failure {
+        Some((code, message)) => {
+            publish_worker_failed(publisher, adapter_id, w, Origin::Internal, code, message, counters)
+        }
         None if !delivered => fail_operation_over_lost_fact(
             publisher,
             adapter_id,
@@ -127,4 +125,21 @@ fn close_memory_bank_read(
         ),
         None => publish_worker_succeeded(publisher, adapter_id, w, Origin::Internal, counters),
     }
+}
+
+// IEC 62386-102 §9.10.5; DiiA 251 §9.2.3
+pub(super) fn handle_write_luminaire_data(
+    controller: &mut impl DaliApplicationController,
+    read: &BankRead<'_>,
+    command: &dali2rust_contracts::msg::DaliWriteLuminaireDataCommand,
+) {
+    let BankRead { publisher, adapter_id, correlation_id: w, counters, .. } = *read;
+    publish_worker_started(publisher, adapter_id, w, Origin::Internal, counters);
+    let writes = planned_writes(&command.numbers, command.text.as_ref());
+    let mut delivered = true;
+    let outcome = write_luminaire_data(controller, command.short_address, &writes, |execution| {
+        delivered = publish_memory_bank_execution(read, BANK_LUMINAIRE_INFO, 0, execution);
+    });
+    let failure = outcome.err().map(|failure| (failure.code, failure.subject));
+    close_memory_bank_read(publisher, adapter_id, w, delivered, failure, counters);
 }

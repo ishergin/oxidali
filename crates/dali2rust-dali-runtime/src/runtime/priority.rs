@@ -108,6 +108,14 @@ const WIRE_CLASSES: &[WireClass] = &[
         false,
         TransactionPriority::Configuration,
     ),
+    // IEC 62386-102 §9.10.2; ADR-017
+    class(
+        "DaliWriteLuminaireDataCommand",
+        WirePriority::Attended,
+        YieldGranularity::Step,
+        false,
+        TransactionPriority::Configuration,
+    ),
     // IEC 62386-103 §9.13.1
     class(
         "DaliDiscoverDevicesCommand",

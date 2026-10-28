@@ -193,7 +193,10 @@ fn write_sessions(
 ) -> Result<(), LuminaireWriteFailure> {
     units(writes).chunks(UNITS_PER_SESSION).try_for_each(|session| {
         controller.step_boundary();
-        write_session(controller, address, lock, session)
+        write_session(controller, address, lock, session).map_err(|failure| match session.first() {
+            Some(unit) if failure.is_preempted() => LuminaireWriteFailure::new(failure.code, unit.subject),
+            _ => failure,
+        })
     })
 }
 
@@ -267,3 +270,6 @@ pub fn write_luminaire_data(
     on_readback(&readback);
     verdict(written, &readback, writes, header.lock)
 }
+
+#[cfg(test)]
+mod tests;

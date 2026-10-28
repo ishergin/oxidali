@@ -119,14 +119,7 @@ fn blocked_refusal<'c>(
         BusCommandPayload::DaliProgramSceneCommand(_) => {
             BlockedRefusal::Operation(Some(&counters.semantic_program_scene_handled))
         }
-        BusCommandPayload::DaliIdentifyDeviceCommand(_)
-        | BusCommandPayload::DaliReplaceDeviceCommand(_)
-        | BusCommandPayload::DaliAddressingCommand(_)
-        | BusCommandPayload::Dali103ScanCommand(_)
-        | BusCommandPayload::Dali103CommissionCommand(_)
-        | BusCommandPayload::Dali103InstanceConfigureCommand(_)
-        | BusCommandPayload::Dali103IdentifyCommand(_)
-        | BusCommandPayload::Dali103FeedbackConfigureCommand(_) => BlockedRefusal::Operation(None),
+        payload if is_untallied_operation(payload) => BlockedRefusal::Operation(None),
         BusCommandPayload::DaliCommissioningStepCommand(_)
         | BusCommandPayload::DaliCommandPayload(_)
         | BusCommandPayload::DaliSetTargetStateCommand(_)
@@ -140,6 +133,21 @@ fn blocked_refusal<'c>(
         | BusCommandPayload::DaliBusHealthProbeCommand(_) => BlockedRefusal::Confirmation,
         _ => BlockedRefusal::NotGated,
     }
+}
+
+fn is_untallied_operation(payload: &BusCommandPayload) -> bool {
+    matches!(
+        payload,
+        BusCommandPayload::DaliIdentifyDeviceCommand(_)
+            | BusCommandPayload::DaliWriteLuminaireDataCommand(_)
+            | BusCommandPayload::DaliReplaceDeviceCommand(_)
+            | BusCommandPayload::DaliAddressingCommand(_)
+            | BusCommandPayload::Dali103ScanCommand(_)
+            | BusCommandPayload::Dali103CommissionCommand(_)
+            | BusCommandPayload::Dali103InstanceConfigureCommand(_)
+            | BusCommandPayload::Dali103IdentifyCommand(_)
+            | BusCommandPayload::Dali103FeedbackConfigureCommand(_)
+    )
 }
 
 fn fail_blocked_semantic_operation(
@@ -182,6 +190,7 @@ fn control_gear_adapter_id(payload: &BusCommandPayload) -> Option<u8> {
         BusCommandPayload::DaliDiscoverDevicesCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliReadAttributesCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliReadMemoryBankCommand(cmd) => Some(cmd.registry_adapter_id),
+        BusCommandPayload::DaliWriteLuminaireDataCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliProgramGroupMembershipCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliProgramSceneCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliCommissioningStepCommand(cmd) => Some(cmd.registry_adapter_id),
