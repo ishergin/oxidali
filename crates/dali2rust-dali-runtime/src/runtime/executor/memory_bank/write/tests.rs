@@ -178,6 +178,8 @@ fn a_header_is_whole_at_its_own_length_or_where_its_bank_ends() {
     assert_eq!(header_len(&[]), 1, "a header without its first byte declares nothing");
 }
 
+const TRANSPORT_FAILED: &str = "dali_transport_error";
+
 #[test]
 fn a_read_before_any_write_reports_what_the_wire_did_not_a_verification() {
     let read_failure = |message| LuminaireWriteFailure::unread(SemanticDaliError::OperationFailed(message), HEADER_SUBJECT);
@@ -188,6 +190,7 @@ fn a_read_before_any_write_reports_what_the_wire_did_not_a_verification() {
     assert_eq!(read_failure(MEMORY_LOCATION_UNANSWERED), failure(ErrorCode::DeviceAbsent, HEADER_SUBJECT));
     assert_eq!(read_failure(MEMORY_MISALIGNED), failure(ErrorCode::ReadContended, HEADER_SUBJECT));
     assert_eq!(read_failure(PREEMPTED_MESSAGE), failure(ErrorCode::Preempted, HEADER_SUBJECT));
+    assert_eq!(read_failure(TRANSPORT_FAILED), failure(ErrorCode::OperationFailed, HEADER_SUBJECT));
 }
 
 #[test]
@@ -200,4 +203,5 @@ fn a_read_after_the_first_write_reports_a_verification_by_what_the_wire_did() {
     assert_eq!(proof_failure(BUS_CONTENDED), failure(ErrorCode::VerifyContended, READBACK_SUBJECT));
     assert_eq!(proof_failure(MEMORY_MISALIGNED), failure(ErrorCode::VerifyContended, READBACK_SUBJECT));
     assert_eq!(proof_failure(PREEMPTED_MESSAGE), failure(ErrorCode::Preempted, READBACK_SUBJECT));
+    assert_eq!(proof_failure(TRANSPORT_FAILED), failure(ErrorCode::OperationFailed, READBACK_SUBJECT));
 }

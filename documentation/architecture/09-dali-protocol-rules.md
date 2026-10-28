@@ -373,6 +373,9 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   - When the read-back itself fails, a restore that failed on the wire is named first,
     as `bank1_lock_not_restored`, because the bank may be open. Next comes where the wire
     stopped, and only then `bank1_readback`.
+- A transport failure, a frame the transport could not send, is neither silence nor
+  another master: at any step it fails `operation_failed`, with the message that step
+  names for any other failure.
 
 ## Addressing control gear
 

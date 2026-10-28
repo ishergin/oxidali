@@ -60,7 +60,7 @@
 
 | Код | Значение |
 |---|---|
-| `operation_failed` | Общий отказ операции; причина — в `message`. |
+| `operation_failed` | Общий отказ операции; причина — в `message`. В `memory-luminaire` — отказ транспорта, и `message` называет шаг ([`../resources/physical-devices.md`](../resources/physical-devices.md) §`PATCH …/memory-luminaire`). |
 | `execution_failed` | Отказ исполнения без более точного кода (для прошивки `message` называет шаг). |
 | `commands_ingress_overload` | Команда операции не была доставлена владельцу либо исполнилась, но шина не приняла событие с её итогом; во втором случае `message` называет потерянное событие, а повтору предшествует перечитывание ([`operations.md`](../resources/operations.md) §Жизненный цикл). |
 | `conflict` | Операцию отверг гейт: адаптер выключен (`message = adapter_disabled`), контроллер пассивен (`controller_passive`), обновление уже идёт, заголовок банка 1 не допускает записи (`bank1_*`), по адресу другой прибор или реестр не знает его идентичности либо не может её доказать (`device_identity_changed`, `device_identity_unknown`, `device_identity_unprovable` — [`../resources/physical-devices.md`](../resources/physical-devices.md) §`PATCH …/memory-luminaire`). |

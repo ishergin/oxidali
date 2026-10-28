@@ -65,7 +65,11 @@ enum Interruption {
     LostAnswer,
     LostFrame,
     BusBusy,
+    SendFailed,
 }
+
+#[derive(Debug)]
+struct SendFailed;
 
 #[derive(Clone)]
 enum Trigger {
@@ -142,10 +146,11 @@ impl Interrupting {
         }
     }
 
-    fn withheld(&self) -> Option<TransferOutcome> {
+    fn withheld(&self) -> Option<Result<TransferOutcome, SendFailed>> {
         self.interruptions.iter().find_map(|interruption| match interruption {
-            Interruption::LostFrame => Some(TransferOutcome::NoAnswer),
-            Interruption::BusBusy => Some(TransferOutcome::BusBusy),
+            Interruption::LostFrame => Some(Ok(TransferOutcome::NoAnswer)),
+            Interruption::BusBusy => Some(Ok(TransferOutcome::BusBusy)),
+            Interruption::SendFailed => Some(Err(SendFailed)),
             Interruption::Arrival(..) | Interruption::ForeignCommand(_) | Interruption::LostAnswer => None,
         })
     }
@@ -159,7 +164,7 @@ impl Interrupting {
                     self.sim.fleet_mut().exchange(*command, false);
                 }
                 Interruption::LostAnswer => lost = true,
-                Interruption::LostFrame | Interruption::BusBusy => {}
+                Interruption::LostFrame | Interruption::BusBusy | Interruption::SendFailed => {}
             }
         }
         lost
@@ -169,11 +174,11 @@ impl Interrupting {
         &mut self,
         frame: u16,
         exchange: impl FnOnce(&mut SimDaliTransport) -> Result<TransferOutcome, SimError>,
-    ) -> Result<TransferOutcome, SimError> {
+    ) -> Result<TransferOutcome, SendFailed> {
         if !self.fires(frame) {
-            return exchange(&mut self.sim);
+            return exchange(&mut self.sim).map_err(|never| match never {});
         }
-        let outcome = self.withheld().map_or_else(|| exchange(&mut self.sim), Ok);
+        let outcome = self.withheld().unwrap_or_else(|| exchange(&mut self.sim).map_err(|never| match never {}));
         let lost = self.interrupt();
         outcome.map(|heard| if lost { TransferOutcome::NoAnswer } else { heard })
     }
@@ -195,18 +200,18 @@ fn script_due(
 }
 
 impl DaliTransport for Interrupting {
-    type Error = SimError;
+    type Error = SendFailed;
 
     fn send_forward_frame(&mut self, frame: u16) -> Result<(), Self::Error> {
         self.pass(frame, |sim| sim.send_forward_frame(frame).map(|()| TransferOutcome::NoAnswer)).map(|_| ())
     }
 
     fn receive_backward_frame(&mut self) -> Result<Option<u8>, Self::Error> {
-        self.sim.receive_backward_frame()
+        self.sim.receive_backward_frame().map_err(|never| match never {})
     }
 
     fn is_bus_idle(&self) -> Result<bool, Self::Error> {
-        self.sim.is_bus_idle()
+        self.sim.is_bus_idle().map_err(|never| match never {})
     }
 
     fn exchange_frame(&mut self, frame: u16, expects_backward: bool) -> Result<TransferOutcome, Self::Error> {
@@ -468,7 +473,8 @@ fn write_under_on(
             Interruption::ForeignCommand(_)
             | Interruption::LostAnswer
             | Interruption::LostFrame
-            | Interruption::BusBusy => None,
+            | Interruption::BusBusy
+            | Interruption::SendFailed => None,
         })
         .unwrap_or_else(|| Arc::new(WireActivity::new()));
     let identity = identity_of(&sim);
@@ -933,6 +939,36 @@ fn a_read_back_silent_at_0x02_through_its_budget_is_unanswered_not_contended() {
 
     assert_eq!(location(&sim, YEAR_OFFSET), Some(YEAR), "the write landed; only its proof is missing");
     assert_eq!(shape(outcome.result), failure(ErrorCode::VerifyUnanswered, READBACK_SUBJECT));
+}
+
+const FORMAT_ID_SECOND_BYTE: u8 = part251::CONTENT_FORMAT_ID_OFFSET + 1;
+
+fn send_failures(trigger: Trigger) -> (Outcome, SimDaliTransport) {
+    write_under(YieldGranularity::Step, trigger, &[Interruption::SendFailed], &year(YEAR))
+}
+
+// DiiA 251 §9.2.3
+#[test]
+fn a_header_read_the_transport_fails_inside_its_format_id_is_an_operation_failure() {
+    let (outcome, sim) = send_failures(Trigger::ReadAt(PROFILE_BANK, FORMAT_ID_SECOND_BYTE));
+
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::OperationFailed, HEADER_SUBJECT),
+        "a transport failure is neither silence nor another master"
+    );
+    assert!(wrote_nothing(&sim));
+}
+
+// DiiA 251 §9.2.3
+// IEC 62386-102 §9.10.5
+#[test]
+fn a_read_back_the_transport_fails_inside_the_format_id_is_an_operation_failure() {
+    let field_byte = special(SpecialCommand::WriteMemoryLocation(YEAR));
+    let (outcome, sim) = send_failures(Trigger::ReadAfter(field_byte, (PROFILE_BANK, FORMAT_ID_SECOND_BYTE)));
+
+    assert_eq!(location(&sim, YEAR_OFFSET), Some(YEAR), "the write landed; only its proof is missing");
+    assert_eq!(shape(outcome.result), failure(ErrorCode::OperationFailed, READBACK_SUBJECT));
 }
 
 // IEC 62386-102 §9.10.4
