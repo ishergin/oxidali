@@ -57,6 +57,8 @@ Feature: Power-cycle watch
     And the controller has swept the bus for power cycles 1 time
     And the controller has probed the bus 3 more times
     Then the poller counter "power_cycle_sweeps" should be 1
+    And the poller counter "power_cycle_sweep_reads" should be 2
+    And every read the poller published should have been a power-cycle sweep read
     And each of physical devices 0 and 1 should have been asked for its status once
 
   @id:PWR-005

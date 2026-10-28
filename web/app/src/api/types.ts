@@ -871,6 +871,7 @@ export type PollerCounters = {
   health_probes_expired: number
   health_probes_power_failure: number
   power_cycle_sweeps: number
+  power_cycle_sweep_reads: number
   ignored_events: number
 }
 

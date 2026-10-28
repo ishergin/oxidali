@@ -245,6 +245,16 @@ async fn then_no_status_queries(world: &mut DaliWorld) {
 }
 
 // PWR-004
+#[then("every read the poller published should have been a power-cycle sweep read")]
+async fn then_only_sweep_reads(world: &mut DaliWorld) {
+    let block = poller_block(world.server_port());
+    assert_eq!(
+        block["reads_published"], block["power_cycle_sweep_reads"],
+        "a disabled poller publishes sweep reads only: {block:#}"
+    );
+}
+
+// PWR-004
 #[then("each of physical devices 0 and 1 should have been asked for its status once")]
 async fn then_each_device_asked_once(world: &mut DaliWorld) {
     for short in [0u8, 1] {

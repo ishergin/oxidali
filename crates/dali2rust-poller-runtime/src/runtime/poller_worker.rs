@@ -43,6 +43,7 @@ pub struct PollerCounters {
     pub health_probes_expired: AtomicU32,
     pub health_probes_power_failure: AtomicU32,
     pub power_cycle_sweeps: AtomicU32,
+    pub power_cycle_sweep_reads: AtomicU32,
     pub reads_completed: AtomicU32,
     pub reads_failed: AtomicU32,
     pub reads_preempted: AtomicU32,
@@ -488,21 +489,28 @@ fn publish_read(state: &mut PollerState, deps: &PollerWiring, target: PollTarget
     );
     let result = deps.publisher.try_publish(BusChannel::Commands, BusFrame::command(cmd));
     if result == PublishResult::Queued {
-        let now = Instant::now();
-        state.outstanding = Some(Outstanding {
-            correlation_id,
-            target,
-            published_at: now,
-            deadline: now + OUTSTANDING_ABANDON_TTL,
-        });
-        if target.purpose == ReadPurpose::Cycle {
-            state.cursor = Some((target.adapter_id, target.short_address));
-        }
-        deps.counters.reads_published.fetch_add(1, Ordering::Relaxed);
+        hold_published_read(state, deps, correlation_id, target);
     } else {
         deps.counters.skipped_inbox_full.fetch_add(1, Ordering::Relaxed);
         requeue_target(state, target);
     }
+}
+
+fn hold_published_read(state: &mut PollerState, deps: &PollerWiring, correlation_id: u64, target: PollTarget) {
+    let now = Instant::now();
+    state.outstanding = Some(Outstanding {
+        correlation_id,
+        target,
+        published_at: now,
+        deadline: now + OUTSTANDING_ABANDON_TTL,
+    });
+    match target.purpose {
+        ReadPurpose::Cycle => state.cursor = Some((target.adapter_id, target.short_address)),
+        ReadPurpose::PowerCycleSweep => {
+            deps.counters.power_cycle_sweep_reads.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    deps.counters.reads_published.fetch_add(1, Ordering::Relaxed);
 }
 
 fn drain_confirmations(state: &mut PollerState, deps: &PollerWiring, conf_rx: &BusSubscriberRx) {

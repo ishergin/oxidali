@@ -911,6 +911,10 @@ fn sweeps(h: &Harness) -> u32 {
     h.counters.power_cycle_sweeps.load(Ordering::Relaxed)
 }
 
+fn sweep_reads(h: &Harness) -> u32 {
+    h.counters.power_cycle_sweep_reads.load(Ordering::Relaxed)
+}
+
 #[test]
 fn a_yes_behind_its_control_reads_every_target_once_with_the_poller_off() {
     let h = spawn_disabled_harness(vec![device(1), device(2)], Some(AttributeGroupReadOutcome::Success), NO_PROBE_PERIOD);
@@ -918,6 +922,12 @@ fn a_yes_behind_its_control_reads_every_target_once_with_the_poller_off() {
     yes_until(&h, 1);
     wait_until(|| h.counters.reads_completed.load(Ordering::Relaxed) == 2, WAIT);
     assert_eq!(sweeps(&h), 1);
+    assert_eq!(sweep_reads(&h), 2);
+    assert_eq!(
+        h.counters.reads_published.load(Ordering::Relaxed),
+        sweep_reads(&h),
+        "every read a disabled poller publishes is a sweep read"
+    );
     let reads = h.seen_all();
     let shorts: Vec<u8> = reads.iter().map(|r| r.command.short_address).collect();
     assert_eq!(shorts, vec![1, 2], "one read per poll target");
@@ -929,6 +939,22 @@ fn a_yes_behind_its_control_reads_every_target_once_with_the_poller_off() {
         );
         assert_eq!(read.command.memory_banks, MemoryBankReadPreset::None);
     }
+}
+
+#[test]
+fn a_sweep_read_is_counted_apart_from_the_cycle_reads() {
+    let mut registry = disabled_registry(vec![device(1)]);
+    registry.settings.enabled = true;
+    registry.settings.interval_ms = 100_000;
+    let config = PollerConfig { probe_period: NO_PROBE_PERIOD };
+    let h = spawn_harness_configured(Arc::new(registry), true, Some(AttributeGroupReadOutcome::Success), 1, config);
+
+    wait_until(|| h.counters.reads_completed.load(Ordering::Relaxed) == 1, WAIT);
+    assert_eq!(sweep_reads(&h), 0, "a cycle read is no sweep read");
+    yes_until(&h, 1);
+    wait_until(|| h.counters.reads_completed.load(Ordering::Relaxed) == 2, WAIT);
+    assert_eq!(sweep_reads(&h), 1);
+    assert_eq!(h.counters.reads_published.load(Ordering::Relaxed), 2, "a sweep read is still a published read");
 }
 
 #[test]
