@@ -633,7 +633,7 @@ fn validate_pd_operation_request(
     parse_existing_physical_device(state, params)
 }
 
-fn parse_existing_physical_device(
+pub(super) fn parse_existing_physical_device(
     state: &dyn PhysicalDeviceHttpState,
     params: &HashMap<String, String>,
 ) -> Result<(u8, u8), HttpResponse> {

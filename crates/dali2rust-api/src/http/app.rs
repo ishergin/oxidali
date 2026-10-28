@@ -28,6 +28,7 @@ pub enum RouteKey {
     PhysicalDevicePatch,
     PhysicalDeviceDelete,
     PhysicalDeviceWriteAttrs,
+    PhysicalDeviceLuminaireWrite,
     PhysicalDeviceTargetState,
     AdapterDiscoveryRuns,
     CommissioningIdentify,
@@ -151,6 +152,11 @@ const ROUTE_TABLE: &[(RouteKey, HttpMethod, &str)] = &[
         RouteKey::PhysicalDeviceWriteAttrs,
         HttpMethod::Post,
         "/api/v1/adapters/{adapter_id}/physical-devices/{short}/write-attributes",
+    ),
+    (
+        RouteKey::PhysicalDeviceLuminaireWrite,
+        HttpMethod::Patch,
+        "/api/v1/adapters/{adapter_id}/physical-devices/{short}/luminaire-data",
     ),
     (
         RouteKey::PhysicalDeviceTargetState,
@@ -567,7 +573,7 @@ mod route_table_tests {
 
     #[test]
     fn route_table_is_complete_and_unique() {
-        assert_eq!(ROUTE_TABLE.len(), 93, "route table row count");
+        assert_eq!(ROUTE_TABLE.len(), 94, "route table row count");
         let mut keys = HashSet::new();
         let mut routes = HashSet::new();
         for (key, method, path) in ROUTE_TABLE {

@@ -16,6 +16,8 @@ use dali2rust_contracts::msg::{
     LevelTransition, LightSetpoint, MAX_EXTENDED_VERSIONS, PhysicalDeviceOverrideCommand as Patch,
     PowerState, RuntimeObservation, RuntimeSource, StatusFlags,
 };
+use dali2rust_domain::dali::banks::luminaire_write::Bank1Layout;
+use dali2rust_domain::dali::banks::BANK_LUMINAIRE_INFO;
 use dali2rust_domain::dali::level_transition::{LevelContext, TransitionOutcome};
 use dali2rust_domain::registry::{
     colour_mode_fits_declared, device_type_fits_declared, known_device_types,
@@ -1427,6 +1429,11 @@ impl PhysicalDeviceReadPort for RegistryStore {
         known_device_types(rec.supported_device_types, rec.device_type_override)
     }
 
+    fn physical_device_bank1_layout(&self, adapter_id: u8, short_address: u8) -> Option<Bank1Layout> {
+        let g = self.read_inner();
+        g.physical_devices.get(&(adapter_id, short_address)).map(|rec| bank1_layout(rec))
+    }
+
     fn physical_device_exists(&self, adapter_id: u8, short_address: u8) -> bool {
         self.read_inner()
             .physical_devices
@@ -1438,6 +1445,20 @@ impl PhysicalDeviceReadPort for RegistryStore {
     }
 }
 
+
+// IEC 62386-102 §9.10.4; DiiA 251 §9.2.3
+fn bank1_layout(rec: &PhysicalDeviceRecord) -> Bank1Layout {
+    let header = rec.memory_banks.iter().find(|entry| {
+        entry.bank == BANK_LUMINAIRE_INFO && entry.ranges.first().is_some_and(|range| range.start == 0)
+    });
+    let last_bank = rec.attributes.memory_identity.last_memory_bank;
+    let format = rec.luminaire_info.as_ref().and_then(|info| info.content_format_id);
+    Bank1Layout {
+        implemented: last_bank.map(|last| last.value >= BANK_LUMINAIRE_INFO),
+        content_format_id: format.map(|id| id.value),
+        last_offset: header.and_then(|entry| entry.bytes.first().copied()),
+    }
+}
 
 fn take_metadata_and_overrides(role: &PhysicalDeviceRecord, record: &mut PhysicalDeviceRecord) {
     record.name = role.name.clone();
