@@ -62,6 +62,7 @@ MemoryProfileAttributesDto AttributeSection
 MqttBridgeDto MqttBridgeCounters
 ObservedValueDto ObservedValue
 OperationGroupApplyOutcomeView GroupApplyOutcome
+OperationPolicyApplyOutcomeView PolicyApplyOutcome
 OperationRestoredSlicesView RestoredSlices
 OperationSceneApplyOutcomeView SceneApplyOutcome
 OperationTrackerDto OperationTrackerCounters
@@ -72,6 +73,7 @@ PhysicalDeviceCoreDto PhysicalDeviceCore
 PhysicalDeviceStateDto RuntimeState
 PhysicalDeviceSummaryDto PhysicalDeviceSummary
 PoliciesDto Policies
+PolicyException PolicyException
 PollerDto PollerCounters
 PollerSettingsDto PollerSettings
 ProjectorDto ProjectorCounters

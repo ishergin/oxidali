@@ -31,6 +31,44 @@ fn expect_scripted_reply(mock: &MockDaliTransport, frame: u16, reply: ScriptedRe
     }
 }
 
+pub(super) struct Common102Answers {
+    pub(super) power_on_level: u8,
+    pub(super) system_failure_level: u8,
+    pub(super) fade_byte: u8,
+}
+
+impl Default for Common102Answers {
+    fn default() -> Self {
+        const IEC_DEFAULT_LEVEL: u8 = 0xFE;
+        const NO_FADE: u8 = 0x07;
+        Self { power_on_level: IEC_DEFAULT_LEVEL, system_failure_level: IEC_DEFAULT_LEVEL, fade_byte: NO_FADE }
+    }
+}
+
+pub(super) fn script_common102_read(mock: &MockDaliTransport, answers: Common102Answers) {
+    mock.clear();
+    mock.expect_forward_frame_with_backward(
+        standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryControlGearPresent),
+        Some(0xFF),
+    );
+    for (command, reply) in [
+        (StandardCommand::QueryVersionNumber, 0x08),
+        (StandardCommand::QueryDeviceType, 0x08),
+        (StandardCommand::QueryPhysicalMinimum, 0x01),
+        (StandardCommand::QueryMinLevel, 0x01),
+        (StandardCommand::QueryMaxLevel, 0xFE),
+        (StandardCommand::QueryPowerOnLevel, answers.power_on_level),
+        (StandardCommand::QuerySystemFailureLevel, answers.system_failure_level),
+        (StandardCommand::QueryFadeTimeFadeRate, answers.fade_byte),
+        (StandardCommand::QueryLightSourceType, 0x06),
+        (StandardCommand::QueryRandomAddressH, 0x12),
+        (StandardCommand::QueryRandomAddressM, 0x34),
+        (StandardCommand::QueryRandomAddressL, 0x56),
+    ] {
+        mock.expect_forward_frame_with_backward(standard_frame(TEST_SHORT_ADDRESS, command), Some(reply));
+    }
+}
+
 pub(crate) fn script_attribute_read_prelude(mock: &MockDaliTransport, short: u8) {
     mock.expect_forward_frame_with_backward(
         standard_frame(short, StandardCommand::QueryControlGearPresent),

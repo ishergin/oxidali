@@ -1,14 +1,16 @@
+use dali2rust_contracts::msg::PolicyException;
 use dali2rust_domain::registry::PoliciesView;
 use serde::Serialize;
 
 use crate::http::settings_surface::declare_settings_http_surface;
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PoliciesDto {
     pub system_failure_level: Option<u8>,
     pub power_on_level: Option<u8>,
     pub apply_on_discovery: bool,
     pub manages_anything: bool,
+    pub exceptions: Vec<PolicyException>,
 }
 
 declare_settings_http_surface! {
@@ -31,5 +33,6 @@ pub fn policies_view_to_dto(view: PoliciesView) -> PoliciesDto {
         power_on_level: view.power_on_level,
         apply_on_discovery: view.apply_on_discovery,
         manages_anything: view.manages_anything(),
+        exceptions: view.exceptions.to_vec(),
     }
 }

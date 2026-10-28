@@ -416,6 +416,8 @@ export function opTitle(op: Pick<Operation, 'operation_id' | 'type'>): string {
       return 'Attribute read'
     case 'attribute_write':
       return 'Attribute write'
+    case 'policy_apply':
+      return 'Policy apply'
     default:
       return op.type || op.operation_id
   }

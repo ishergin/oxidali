@@ -1,4 +1,4 @@
-<!-- @dsCard group="Screens" name="Policies" subtitle="What a luminaire does with no controller: the two fallback levels, unmanaged by default, and the write that reaches every device" -->
+<!-- @dsCard group="Screens" name="Policies" subtitle="What a luminaire does with no controller: the two fallback levels, unmanaged by default, the devices the policy leaves alone, and the write that reaches every other device" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -101,6 +101,12 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
 .btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
 .btn:disabled { opacity: .4; cursor: default; }
+.btn.sm { padding: 4px 9px; font-size: 11px; }
+
+.sel { padding: 5px 8px; background: var(--raised); color: var(--text); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; cursor: pointer; }
+.sel.sm { padding: 2px 5px; font-size: 11px; }
+.sel option { background: var(--raised); color: var(--text); }
 
 .head .spacer { flex: 1; }
 .head .btnbar { display: flex; gap: 8px; align-self: center; }
@@ -162,12 +168,25 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   </div>
 
   <div class="panel">
+    <h2>Exceptions</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Except a device</div>
+          <div class="d">The policy writes nothing to it, and an apply names it as skipped. The entry follows the device to a new address and leaves with it when the device is forgotten. At most 32.</div>
+        </div>
+        <div class="ctl"><select class="sel sm"><option>device&hellip;</option></select></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
     <h2>Write it to the installation</h2>
     <div class="body">
       <div class="srow">
         <div class="lbl">
           <div class="n">Every known device</div>
-          <div class="d">One write per device, paced. A device that confirms nothing costs one timeout and is reported &mdash; silence from a gear the registry believes is present is a fault worth seeing.</div>
+          <div class="d">One write per device, paced, skipping the exceptions. A device that confirms nothing costs one timeout and is reported &mdash; silence from a gear the registry believes is present is a fault worth seeing.</div>
         </div>
         <div class="ctl"><button class="btn" disabled>Apply to all</button></div>
       </div>
@@ -215,6 +234,41 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     </div>
   </div>
 
+  <!-- An exception is keyed by adapter and short address, the key of the
+       registry record it names, so it moves with an address change and leaves
+       with a forgotten device. An entry whose address holds no device is kept
+       until the operator removes it, and says so rather than looking like a
+       named device. Apply re-reads the policy and sends only what the operator
+       changed against that read: a field left alone shows what the controller
+       holds, and an exception edit is replayed as additions and removals on the
+       list just read, sorted by address as the controller stores it. -->
+  <div class="panel">
+    <h2>Exceptions</h2>
+    <div class="body">
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">SA 05</div>
+          <div class="d">Hall emergency luminaire</div>
+        </div>
+        <div class="ctl"><button class="btn sm">Remove</button></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">SA 17</div>
+          <div class="d">No device at this address</div>
+        </div>
+        <div class="ctl"><button class="btn sm">Remove</button></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Except a device</div>
+          <div class="d">The policy writes nothing to it, and an apply names it as skipped. The entry follows the device to a new address and leaves with it when the device is forgotten. At most 32.</div>
+        </div>
+        <div class="ctl"><select class="sel sm"><option>device&hellip;</option></select></div>
+      </div>
+    </div>
+  </div>
+
   <!-- "Apply to all" is disabled while the form is dirty, and the band below
        says why in the operator's terms. The write sends the STORED policy, so
        a screen-versus-flash mismatch would program the gear from values the
@@ -225,7 +279,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <div class="srow">
         <div class="lbl">
           <div class="n">Every known device</div>
-          <div class="d">One write per device, paced. A device that confirms nothing costs one timeout and is reported &mdash; silence from a gear the registry believes is present is a fault worth seeing.</div>
+          <div class="d">One write per device, paced, skipping the exceptions. A device that confirms nothing costs one timeout and is reported &mdash; silence from a gear the registry believes is present is a fault worth seeing.</div>
         </div>
         <div class="ctl"><button class="btn" disabled>Apply to all</button></div>
       </div>
