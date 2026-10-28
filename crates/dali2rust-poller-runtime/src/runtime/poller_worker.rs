@@ -574,9 +574,6 @@ fn sweep_stale(state: &mut PollerState, deps: &PollerWiring) {
     state.outstanding = None;
     deps.counters.outstanding_expired.fetch_add(1, Ordering::Relaxed);
     push_tombstone(state, o.correlation_id, o.published_at);
-    if o.target.purpose == ReadPurpose::Cycle {
-        requeue_target(state, o.target);
-    }
 }
 
 fn sweep_stale_probe(state: &mut PollerState, deps: &PollerWiring) {
@@ -991,6 +988,8 @@ mod tests {
         );
     }
 
+    use std::sync::atomic::AtomicBool;
+
     use dali2rust_bus::{BusConfig, BusHost};
     use dali2rust_domain::registry::{PollTargetReadPort, PollTargetSelection, PollerSettingsReadPort};
 
@@ -1091,18 +1090,21 @@ mod tests {
         );
     }
 
+    fn gear_view(short_address: u8) -> PollTargetView {
+        PollTargetView {
+            short_address,
+            is_dt8: false,
+            is_dt6: false,
+            declares_energy: false,
+            declares_diagnostics: false,
+        }
+    }
+
     struct ListsGearOne;
 
     impl PollTargetReadPort for ListsGearOne {
         fn list_poll_targets(&self, _adapter_id: u8) -> PollTargetSelection {
-            let gear = PollTargetView {
-                short_address: 1,
-                is_dt8: false,
-                is_dt6: false,
-                declares_energy: false,
-                declares_diagnostics: false,
-            };
-            PollTargetSelection { targets: vec![gear], excluded_unbound: 0, adapter_enabled: true }
+            PollTargetSelection { targets: vec![gear_view(1)], excluded_unbound: 0, adapter_enabled: true }
         }
     }
 
@@ -1146,6 +1148,55 @@ mod tests {
         let owed: Vec<u8> = state.sweep_queue.iter().map(|target| target.short_address).collect();
         assert_eq!(owed, vec![1], "the gear is still owed, so the next YES reads it");
         assert_eq!(t.deps.counters.power_cycle_sweeps.load(Ordering::Relaxed), 1, "the same sweep");
+    }
+
+    struct TwoAdapters {
+        zero_enabled: AtomicBool,
+    }
+
+    impl PollTargetReadPort for TwoAdapters {
+        fn list_poll_targets(&self, adapter_id: u8) -> PollTargetSelection {
+            let enabled = adapter_id != 0 || self.zero_enabled.load(Ordering::Relaxed);
+            let targets = if enabled { vec![gear_view(1)] } else { Vec::new() };
+            PollTargetSelection { targets, excluded_unbound: 0, adapter_enabled: enabled }
+        }
+    }
+
+    impl PollerSettingsReadPort for TwoAdapters {
+        fn poller_settings_view(&self) -> PollerSettingsView {
+            test_state().settings
+        }
+    }
+
+    fn pump_after_rest(state: &mut PollerState, deps: &PollerWiring) -> Option<u8> {
+        state.rest_until = Instant::now();
+        pump_queue(state, deps);
+        state.outstanding.map(|o| o.target.adapter_id)
+    }
+
+    #[test]
+    fn a_cycle_read_the_guard_expired_waits_for_the_next_cycle_not_for_the_next_slot() {
+        let port = Arc::new(TwoAdapters { zero_enabled: AtomicBool::new(true) });
+        let mut t = test_deps_on(Arc::clone(&port) as Arc<dyn PollerReadPort>);
+        t.deps.adapter_count = 2;
+        let mut state = test_state();
+        start_cycle(&mut state, &t.deps);
+        assert_eq!(pump_after_rest(&mut state, &t.deps), Some(0));
+        port.zero_enabled.store(false, Ordering::Relaxed);
+        state.outstanding.as_mut().expect("in flight").deadline = Instant::now() - Duration::from_millis(1);
+        sweep_stale(&mut state, &t.deps);
+        assert_eq!(pump_after_rest(&mut state, &t.deps), Some(1));
+        let corr = state.outstanding.expect("adapter 1 in flight").correlation_id;
+        complete_read(&mut state, &t.deps, corr, &outcomes(AttributeGroupReadOutcome::Success));
+        assert_eq!(
+            pump_after_rest(&mut state, &t.deps),
+            None,
+            "a read nobody answered is not retried in this cycle, where a disabled adapter's read would take the slot back after every guard"
+        );
+        port.zero_enabled.store(true, Ordering::Relaxed);
+        start_cycle(&mut state, &t.deps);
+        let listed: Vec<u8> = state.queue.iter().map(|target| target.adapter_id).collect();
+        assert_eq!(listed, vec![0, 1], "the next cycle lists it again, in its turn after the cursor");
     }
 
     #[test]
