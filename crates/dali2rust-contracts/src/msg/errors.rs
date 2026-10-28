@@ -31,6 +31,7 @@ pub enum ErrorCode {
     VerifyContended = 23,
     ReadContended = 24,
     PolicyException = 25,
+    UnknownDevice = 26,
 }
 
 impl ErrorCode {
@@ -62,6 +63,7 @@ impl ErrorCode {
             Self::VerifyContended => "verify_contended",
             Self::ReadContended => "read_contended",
             Self::PolicyException => "policy_exception",
+            Self::UnknownDevice => "unknown_device",
         }
     }
 }

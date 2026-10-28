@@ -33,7 +33,7 @@ fn the_writer_refuses_an_exception_naming_no_record_and_stores_nothing() {
     let refused = recv_confirm_for(&stack.conf_rx, 2);
     assert_exec_failed_msg(&refused, "unknown_device");
     let code = refused.confirmation.error.as_ref().map(|error| error.code);
-    assert_eq!(code, Some(ErrorCode::InvalidValue));
+    assert_eq!(code, Some(ErrorCode::UnknownDevice), "the handler and the writer name one cause");
     assert!(stack.store.policies_view().exceptions.is_empty(), "a refused list stores no entry");
 
     publish_cmd(&stack.publisher, excepting(3, &[KNOWN_SHORT]));

@@ -18,7 +18,6 @@ use crate::http::handlers::common::{
     publish_and_await_apply, publish_apply_execute, reject_if_apply_active, require_get,
 };
 use crate::http::handlers::resource_surface::declare_handler_shell;
-use crate::http::physical_device_state::PhysicalDeviceHttpState;
 use crate::http::policies_state::{PoliciesApplyWatch, PoliciesHttpState};
 use crate::http::types::HttpResponse;
 
@@ -62,7 +61,6 @@ declare_handler_shell!(PoliciesPatchHandler {
     correlation: Arc<CorrelationIdAllocator>,
     state: Arc<dyn PoliciesHttpState>,
     apply_watch: Arc<dyn PoliciesApplyWatch>,
-    devices: Arc<dyn PhysicalDeviceHttpState>,
     bus_id: BusId,
     timeout_ms: u64,
 });
@@ -150,27 +148,6 @@ fn parse_levels(
     Ok(data)
 }
 
-impl PoliciesPatchHandler {
-    fn known_exceptions(
-        &self,
-        obj: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<Option<PolicyExceptionList>, HttpResponse> {
-        let Some(value) = obj.get("exceptions") else {
-            return Ok(None);
-        };
-        let list = parse_exception_list(value)?;
-        let stored = self.state.policies_dto().exceptions;
-        let known = |device: &PolicyException| {
-            stored.contains(device)
-                || self.devices.physical_device_exists(device.adapter_id, device.short_address)
-        };
-        if !list.iter().all(known) {
-            return Err(json_err(422, "unknown_device"));
-        }
-        Ok(Some(list))
-    }
-}
-
 impl crate::http::handlers::common::MutatingHandler for PoliciesPatchHandler {
     type Validated = PoliciesPatchData;
     type Executed = ();
@@ -188,9 +165,9 @@ impl crate::http::handlers::common::MutatingHandler for PoliciesPatchHandler {
         let obj = v.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
         check_body_keys(obj, ALLOWED_KEYS, READ_ONLY_KEYS)?;
         let mut data = parse_levels(obj)?;
-        if let Some(exceptions) = self.known_exceptions(obj)? {
+        if let Some(value) = obj.get("exceptions") {
             data.patch_mask |= PoliciesUpdateCommand::PATCH_EXCEPTIONS;
-            data.exceptions = exceptions;
+            data.exceptions = parse_exception_list(value)?;
         }
         Ok(data)
     }
