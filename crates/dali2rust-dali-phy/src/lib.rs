@@ -23,6 +23,7 @@ pub mod fsm;
 pub mod gpio;
 pub mod halfbits;
 pub mod isr;
+pub mod manchester;
 pub mod ring;
 pub mod timer_alarm;
 
@@ -48,6 +49,10 @@ pub use halfbits::HalfBitBuffer;
 pub use isr::{
     dali_phy_alarm_isr, AnswerCounts, LateTick, PhyIsrCore, SessionEvent, LATE_TICK_US,
     RX_RING_CAP, SESSION_RING_CAP,
+};
+pub use manchester::{
+    BestPhaseSearch, BitLengths, PhaseDecode, PhaseSearch, SampleWindow,
+    MANCHESTER_RX_MAX_DECODED_BITS, MANCHESTER_RX_MIN_DECODED_BITS,
 };
 pub use ring::SpscRing;
 pub use timer_alarm::{dali_phy_raw_isr, PhyAlarmIsr, TimerAlarmRegs};

@@ -1,16 +1,6 @@
-use dali2rust_dali_phy::{RxCompletedEvent, LINE_HELD_TICKS};
-
-use super::codec::{
-    decode_manchester_best_phase_to_bytes, ManchesterDecodeResult,
-    MANCHESTER_RX_MAX_DECODED_BITS, MANCHESTER_RX_MIN_DECODED_BITS,
+use dali2rust_dali_phy::{
+    BestPhaseSearch, BitLengths, PhaseDecode, RxCompletedEvent, SampleWindow, LINE_HELD_TICKS,
 };
-
-#[inline]
-fn pad_rx_tmp_for_manchester_peek(tmp: &mut [u8], n: usize) {
-    if n < tmp.len() {
-        tmp[n] = 0xFF;
-    }
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SniffedFrame {
@@ -28,8 +18,8 @@ pub struct SniffedDecode {
     pub score: u16,
 }
 
-const BACKWARD_FRAME_BIT_LENGTHS: [u8; 1] = [8];
-const SNIFFED_FRAME_BIT_LENGTHS: [u8; 3] = [8, 16, 24];
+const BACKWARD_FRAME_BIT_LENGTHS: BitLengths = BitLengths::of(&[8]);
+const SNIFFED_FRAME_BIT_LENGTHS: BitLengths = BitLengths::of(&[8, 16, 24]);
 
 pub trait RxDecode {
     fn decode_backward_byte(&self) -> Option<u8>;
@@ -39,39 +29,15 @@ pub trait RxDecode {
     fn is_line_held(&self) -> bool;
 }
 
-fn try_decode(
-    ev: &RxCompletedEvent,
-    preferred_bit_lengths: &[u8],
-) -> Option<(ManchesterDecodeResult, [u8; 8])> {
-    if ev.sample_count == 0 {
-        return None;
-    }
-    let n = core::cmp::min(ev.sample_count as usize, RxCompletedEvent::MAX_SAMPLES);
-    let mut tmp = [0u8; RxCompletedEvent::MAX_SAMPLES + 2];
-    tmp[..n].copy_from_slice(&ev.samples[..n]);
-    pad_rx_tmp_for_manchester_peek(&mut tmp, n);
-    let ebitlen = (n as u16).saturating_mul(8);
-    let edata_len = (n + 1).min(tmp.len());
-    let mut out = [0u8; 8];
-    let result = decode_manchester_best_phase_to_bytes(
-        &tmp[..edata_len],
-        ebitlen,
-        &mut out,
-        MANCHESTER_RX_MAX_DECODED_BITS,
-        preferred_bit_lengths,
-    );
-    let result = result?;
-    if result.bit_len < MANCHESTER_RX_MIN_DECODED_BITS {
-        return None;
-    }
-    Some((result, out))
+fn try_decode(ev: &RxCompletedEvent, preferred: BitLengths) -> Option<PhaseDecode> {
+    BestPhaseSearch::new(preferred).run(&SampleWindow::of_capture(&ev.samples, ev.sample_count))
 }
 
 impl RxDecode for RxCompletedEvent {
     fn decode_backward_byte(&self) -> Option<u8> {
-        let (result, out) = try_decode(self, &BACKWARD_FRAME_BIT_LENGTHS)?;
+        let result = try_decode(self, BACKWARD_FRAME_BIT_LENGTHS)?;
         if result.bit_len == 8 {
-            Some(out[0])
+            Some(result.data[0])
         } else {
             None
         }
@@ -82,7 +48,7 @@ impl RxDecode for RxCompletedEvent {
     }
 
     fn decode_sniffed_with_phase(&self) -> SniffedDecode {
-        let Some((result, out)) = try_decode(self, &SNIFFED_FRAME_BIT_LENGTHS) else {
+        let Some(result) = try_decode(self, SNIFFED_FRAME_BIT_LENGTHS) else {
             return SniffedDecode {
                 frame: SniffedFrame::DecodeFailed,
                 phase_ticks: 0,
@@ -90,7 +56,7 @@ impl RxDecode for RxCompletedEvent {
             };
         };
         SniffedDecode {
-            frame: sniffed_from_decoded(result.bit_len, out),
+            frame: sniffed_from_decoded(result.bit_len, result.data),
             phase_ticks: result.phase_ticks,
             score: result.score,
         }
