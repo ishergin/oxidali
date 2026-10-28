@@ -14,14 +14,16 @@ Rust DTO в `crates/dali2rust-api` (они канон); шинная сторо�
 - Префикс `/api/v1`, тела — JSON.
 - `GET` читает read-модель и ничего не публикует; мутирующий маршрут публикует
   typed-команду на шину ([API gateway](../runtime-modules/api-gateway/README.md)).
-  Исключение — `PUT /time`: часы и зону он ставит сам, без шины
-  ([`resources/controller.md`](resources/controller.md) §`/time`).
+  Исключения: `PUT /time` ставит часы и зону сам, без шины
+  ([`resources/controller.md`](resources/controller.md) §`/time`), а
+  `POST /redundancy/config-changed` публикует событие пробуждения и не ждёт прохода
+  ([`resources/redundancy.md`](resources/redundancy.md)).
 - `PATCH` — `application/merge-patch+json` (RFC 7396), `PUT` — полная замена ресурса
   или матрицы (у `…/target-state` и `/time` поля необязательны), `POST` — действие или
   запуск операции, `DELETE` — удаление записи или связи. Правила merge-patch и матриц —
   [`stability-and-versioning.md`](stability-and-versioning.md); форма и словарь ошибок —
   [`contracts/error-dto.md`](contracts/error-dto.md).
-- Каждый мутирующий маршрут, кроме `PUT /time`, отвечает по одной из трёх дисциплин —
+- Каждый мутирующий маршрут, кроме этих двух, отвечает по одной из трёх дисциплин —
   [`stability-and-versioning.md`](stability-and-versioning.md) §Дисциплины ответа.
 - Роль контроллера в каждом ответе и отказ записи на стэндбае —
   [`resources/redundancy.md`](resources/redundancy.md).
@@ -33,17 +35,17 @@ Rust DTO в `crates/dali2rust-api` (они канон); шинная сторо�
 
 ## Ресурсы
 
-Каждый документ ресурса ссылается на свой каталог исполняемых BDD-фич в
+Основной документ каждого ресурса ссылается на свой каталог исполняемых BDD-фич в
 `tests/dali2rust-bdd/features/`.
 
 | Ресурс | Маршруты (`/api/v1/…`) |
 |---|---|
 | [Controller](resources/controller.md) | `/controller`, `/health`, `/time` |
 | [Adapters](resources/adapters.md) | `/adapters[/{adapter_id}]` |
-| [Physical devices](resources/physical-devices.md) | `/adapters/{id}/physical-devices/…`, `/discovery-runs` |
+| [Physical devices](resources/physical-devices.md) | `/adapters/{id}/physical-devices/…`, `/adapters/{id}/discovery-runs` |
 | [Commissioning](resources/commissioning.md) | `/adapters/{id}/commissioning/…` |
 | [Virtual lamps](resources/virtual-lamps.md) | `/adapters/{id}/virtual-lamps/…` |
-| [Groups](resources/groups.md) | `/adapters/{id}/groups/…`, `/group-membership-matrix` |
+| [Groups](resources/groups.md) | `/adapters/{id}/groups/…`, `/adapters/{id}/group-membership-matrix` |
 | [Scenes](resources/scenes.md) | `/adapters/{id}/scenes/…` |
 | [HCL schedules](resources/hcl.md) | `/hcl-schedules/…` |
 | [Input devices](resources/input-devices.md) | `/adapters/{id}/input-devices/…` |
@@ -53,7 +55,7 @@ Rust DTO в `crates/dali2rust-api` (они канон); шинная сторо�
 | [Settings — DALI](resources/settings-dali.md) | `/settings/dali` |
 | [Settings — Home Assistant](resources/settings-home-assistant.md) | `/settings/home-assistant[/discovery-publish]` |
 | [Settings — Redundancy](resources/settings-redundancy.md) | `/settings/redundancy` |
-| [Redundancy](resources/redundancy.md) | `/redundancy[/switchover]` |
+| [Redundancy](resources/redundancy.md) | `/redundancy[/switchover\|/config-changed]` |
 | [Policies](resources/policies.md) | `/policies[/apply]` |
 | [Config transfer](resources/config-transfer.md) | `/config/slices[/{slice}]` |
 | [Firmware](resources/firmware.md) | `/firmware`, `/firmware/updates` |

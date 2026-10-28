@@ -14,8 +14,8 @@ USAGE = """hil [--peer] <command> [args]: the HIL toolkit's single operator entr
 its serial bridge, and its own state/peer/ and runs/peer/."""
 
 COMMAND_HELP = {
-    "remote": "remote start|stop|status|ping|bootloader|run [--restart]: the WB serial "
-              "bridge and its ssh tunnel.",
+    "remote": "remote start [--restart]|stop|status|ping|bootloader|run|release|reacquire: "
+              "the WB serial bridge and its ssh tunnel.",
     "api": "manual calls against the controller's API; exit 2 means the firmware "
            "lacks the capability.\n" + API_USAGE,
     "lamps": "one optical readout of every calibrated lamp; switches every lamp off "
@@ -23,15 +23,16 @@ COMMAND_HELP = {
     "corpus": "usage: hil corpus [all|slices|rest|gear|wire|bench ...] [--out DIR]\n"
               "                  [--primary-only|--peer-only] [--keep-secrets]\n"
               "                  [--wire-keep N] [--wire-scan-mb N]\n"
+              "       hil corpus panel [--panel-seconds N] [--out DIR]\n"
               "Captures both boards by default; `hil --peer corpus` is "
               "`hil corpus --peer-only`.",
-    "role": "hil --peer role gear-sim [--via ota|wb] | controller | status: lend the pair's "
+    "role": "hil --peer role gear-sim|controller [--via ota|wb] | status: lend the pair's "
             "other board to the gear emulator and take it back. `ota` installs the emulator "
             "in the inactive slot for one boot (any reset returns the controller); `wb` "
             "writes it by wire from the Wiren Board and keeps it across resets.",
-    "state": "state save|restore [--all|--retire FILE]|diff [FILE]: the owner's installation "
-             "as a file. A bare `hil state restore` puts back every open session, newest "
-             "first, through its own write log, and only reports a session without one; "
+    "state": "state save|diff [FILE], state restore [FILE] [--all]|--retire FILE: the owner's "
+             "installation as a file. A bare `hil state restore` puts back every open session, "
+             "newest first, through its own write log, and only reports a session without one; "
              "--all writes the whole snapshot back. --retire FILE closes a session that can "
              "never close once every older open one's logged fields hold their snapshot; "
              "an older session file is never deleted by hand while a newer one is open.",

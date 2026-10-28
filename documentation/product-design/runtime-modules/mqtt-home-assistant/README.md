@@ -44,7 +44,7 @@ Home Assistant строится только в `dali2rust-api/src/ha/`, runtime
 - **Публикует на шину** `DaliSetTargetStateCommand` (лампа, группа) и
   `DaliRecallSceneCommand` (broadcast) с `Origin::Mqtt`: на проводе это `Attended` —
   ползунок web UI обгоняет Home Assistant, а две команды Home Assistant друг друга не
-  вытесняют.
+  обгоняют.
 - **Триггеры правил** (`when mqtt`): топики мост читает из read-порта стора правил,
   когда сдвигается поколение документа. Сообщение на таком топике — `MqttRuleMessageEvent`
   через `publish_required`, а не команда Home Assistant; топик, который заодно командный,

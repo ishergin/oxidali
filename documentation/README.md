@@ -3,6 +3,9 @@
 The map of dali2rust's documentation: which tree owns which kind of fact, and the rules
 every document follows.
 
+Scope: the documentation trees and the rules for documents; the rules for code are in
+[`../CLAUDE.md`](../CLAUDE.md).
+
 ## Map
 
 - [`architecture/`](architecture/README.md) — **how** the system is built, as it is:
@@ -19,6 +22,9 @@ every document follows.
 - [`../tools/hil/`](../tools/hil/README.md) — the hardware bench: runbook (English),
   strategy and watchlist (Russian).
 - `tests/dali2rust-bdd/features/` — the executable BDD canon.
+- [`images/`](images/) — the diagrams and screenshots the root README shows.
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — how to prepare a pull request, a web UI
+  change included.
 - [`../CLAUDE.md`](../CLAUDE.md) — one-line rules for contributors and agents, pointing
   here.
 

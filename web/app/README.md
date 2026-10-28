@@ -1,9 +1,8 @@
 # dali2rust web UI
 
-Preact + TypeScript single-page app for the controller, embedded in the firmware and
-served from flash. It reads and writes the REST API (`/api/v1/*`) and listens to the
-WebSocket push channel (`/api/v1/ws`), both served identically by the device and by
-the host dev server.
+Preact + TypeScript single-page app for the controller, embedded in the firmware and served
+from flash: it uses the REST API (`/api/v1/*`) and the WebSocket push channel
+(`/api/v1/ws`), which the device and the host dev server serve alike.
 
 Scope: the app's code layout, dev workflow and code conventions. The screens and the
 rules every screen follows are in
@@ -15,10 +14,11 @@ how UI work is built, carded and shipped in
 
 ## Layout
 
-One file per screen in `src/screens/`; routes in `src/router.ts`, sidebar groups
-(`NAV_GROUPS`) and the route switch in `src/app.tsx`; the typed client and DTO mirror in
-`src/api/`; shared components in `src/components/ui.tsx`. A screen appears only once its
-endpoint exists on the device.
+Screens in `src/screens/`; routes in `src/router.ts`, sidebar groups (`NAV_GROUPS`) and
+the route switch in `src/app.tsx`; the typed client and DTO mirror in `src/api/`; shared
+components in `src/components/`. Pure logic sits in `*.ts` modules beside the code that
+uses it, under `src/` and each of these directories, with unit tests in `tests/`. A screen
+appears only once its endpoint exists on the device.
 
 ## Dev workflow
 
@@ -27,6 +27,8 @@ endpoint exists on the device.
 cargo run --target <host-triple> -p dali2rust-adapters --example host_dev_server
 # 2. Vite with hot reload on :5173, proxying /api (WebSocket included) to it
 cd web/app && npm ci && npm run dev
+# the unit tests; `just verify` fails when they do
+npm test
 # or against a real controller
 DALI2RUST_API_TARGET=http://<controller> npm run dev
 ```
@@ -62,6 +64,6 @@ plays a foreign master and a wall panel (`press`, `release`, `foreign`,
 2. API: mirror the DTOs in `src/api/types.ts`, add typed calls to `src/api/client.ts`.
 3. Screen: `src/screens/<name>.tsx`, data through `usePoll` / `useLive`, actions
    through `runOp` / `notify`, layout from the shared components in
-   `src/components/ui.tsx`.
+   `src/components/ui.tsx`; pure logic in a `*.ts` module with its test in `tests/`.
 4. Wire it: the case in `Screen()` and a line in `NAV_GROUPS` (`src/app.tsx`).
 5. Its design card, then `npm run build` and the flow against the dev server.

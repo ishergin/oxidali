@@ -48,7 +48,7 @@ suspends its HCL schedules. A session whose every test is
 | `HIL_OPTICAL_SHORTS` | lamps in the camera's view, calibrated and measured; always narrowed to `HIL_LAMP_SHORTS` | `HIL_LAMP_SHORTS` |
 | `HIL_LAMPS_READ_ONLY` | on: report the light, never drive it, and the client refuses every visible action; `0` with lamps in `HIL_LAMP_SHORTS` is a run with the owner's go-ahead | on |
 | `HIL_NO_CAMERA=1` (`--no-camera`) | optical tests skip instead of failing | off |
-| `HIL_CAMERA_NAME`, `HIL_CAMERA_ID` | which camera to open | `USB Camera` |
+| `HIL_CAMERA_NAME`, `HIL_CAMERA_ID` | which camera: by unique id (empty: as `state/` recorded), else by name | `USB Camera`, empty |
 | `HIL_SKIP_CALIBRATION=1` (`--skip-calibration`), `HIL_CALIBRATION_TTL_S` | reuse the saved calibration; how old it may be | recalibrate; `900` s |
 | `HIL_LAMP_ROSTER=registry` | take the lamp roster from the registry's bound virtual lamps | the calibration |
 | `HIL_WB_SSH`, `HIL_WB_DEVICE`, `HIL_WB_BUS` | the sniffer host over ssh, its DALI device and bus | a reference bench's Wiren Board |
@@ -68,7 +68,7 @@ suspends its HCL schedules. A session whose every test is
 
 ```bash
 tools/hil/setup.sh                                   # .venv, the hil package, uvc-util
-cp tools/hil/bench.env.example tools/hil/bench.env   # firmware knobs `hil flash` enforces
+cp tools/hil/bench.env.example tools/hil/bench.env
 cd tools/hil
 export HIL_BASE=http://<controller> HIL_SERIAL_REMOTE= HIL_SERIAL_PORT=<device>
 export HIL_LAMP_SHORTS=<lamps> HIL_GEAR_SHORTS=<gear> HIL_OPTICAL_SHORTS=<lamps in view>
@@ -90,7 +90,7 @@ HIL_BASE=http://127.0.0.1:9 HIL_SERIAL_REMOTE= HIL_NO_CAMERA=1 \
 
 The suite runs on production lighting ([STRATEGY.md](STRATEGY.md) §2) under the standing
 rules of STRATEGY §4. `HIL_LAMP_SHORTS` names the lamps a test may drive; set
-`HIL_GEAR_SHORTS` on every run — empty, the default, means every gear in the registry.
+`HIL_GEAR_SHORTS` on every run.
 
 The lamp guard (`hil/lamp_guard.py`) enforces `HIL_LAMP_SHORTS` and
 `HIL_LAMPS_READ_ONLY`, whatever a test or a script selects. Every request
@@ -188,7 +188,6 @@ session where a test uses `api` and the controller answers, unless `HIL_STATE_GU
   the log names, keeping the session open until a restore with `HIL_LAMPS_READ_ONLY=0` and
   it in `HIL_LAMP_SHORTS`.
 - Across several tiers `hil state diff` the first session's file at the end.
-  `HIL_STATE_GUARD=0` is the only opt-out.
 - It compares and restores only the fields it names (the poller's and Home Assistant's
   `RESTORABLE` tuples, `prod_state`'s settings, gear-configuration and device-record
   lists), and so do the settings guards: a writable field the firmware adds is named
@@ -218,6 +217,7 @@ changed; `bench_baseline` fails the session on a device still named `hil-…`.
 | `wb/serial_bridge.py` | the serial bridge, copied to the Wiren Board's `/mnt/data/dali2rust/`, where `hil flash --via wb\|ota` also stages images and `--via wb` its esptool |
 | `corpus/` | frozen captures of the installation (`hil corpus`); local, and only the files host tests pin are tracked (`.gitignore`) |
 | `*_budget.txt` | run-validity budgets (below) |
+| `*.py` here | one-off scripts outside the session guards; read one before running it |
 | `state/`, `runs/<ts>/` | gitignored bench state (calibration, monitor, serial log, pins, snapshots) and per-run artifacts; `runs/current` is the latest |
 
 `state/` belongs to the checkout: a monitor started from another worktree is unseen here,
@@ -231,7 +231,7 @@ The `optical` tests (`test_optical_*`, and the optical cases in `test_scenes`,
 off, a strict brightness ladder, RGB hue, colour-only lighting, CCT order, and a group
 recall, scene, HCL level and MQTT colour reaching them.
 
-The camera is a UVC camera on a fixed mount with the lamps or their patches in view. `setup.sh` builds `uvc-util`, which locks exposure and white balance. macOS
+`uvc-util` locks the camera's exposure and white balance. macOS
 denies an agent the camera, so frames come from a frame server (`hil camera-server
 --spawn-terminal`, approve it in the Terminal). Exactly one may run, and
 `--spawn-terminal` leaves a live one as it is. A server that is alive but serves no
@@ -247,7 +247,7 @@ older than `HIL_CALIBRATION_TTL_S`, unless `--skip-calibration` reuses the saved
 **Calibration drives every lamp in `HIL_OPTICAL_SHORTS`**, so it is a visible action.
 
 A dead optical channel **fails** optical tests; `--no-camera` / `HIL_NO_CAMERA=1` turns
-that into skips.
+that into skips, and an unreachable DUT skips them.
 
 ## Running tests
 
@@ -319,21 +319,21 @@ rate the installation imposes.
 
 | Command | Purpose |
 | --- | --- |
-| `preflight` | read-only readiness: DUT HTTP, serial bridge, monitor, WB ssh, broker, camera, calibration, host tools |
+| `preflight` | read-only readiness: cwd, DUT HTTP, serial bridge, gear emulator, monitor, WB ssh, broker, camera, calibration, host tools |
 | `monitor start\|stop\|status\|tail` | persistent serial monitor; `start` raises the bridge if needed |
 | `remote start [--restart]\|stop\|status\|ping\|bootloader\|run\|release\|reacquire` | the WB serial bridge and its tunnel |
 | `flash [--build-only] [--allow-nonbench-build] [--allow-red-isr] [--allow-stale-ui] [--via rfc2217\|wb\|ota]` | the only flash path (below) |
-| `--peer role gear-sim [--via ota\|wb]\|controller [--via ota\|wb]\|status` | lend the peer to the gear emulator and take it back (below) |
-| `state save\|restore [--all\|--retire FILE]\|diff [FILE]` | the installation snapshot; `--retire FILE` closes a session that never closes once every older open one's logged fields hold their snapshot; never delete an older session file by hand while a newer one is open |
+| `--peer role gear-sim\|controller [--via ota\|wb]\|status` | lend the peer to the gear emulator and take it back (below) |
+| `state save\|diff [FILE]`, `state restore [FILE] [--all]\|--retire FILE` | the installation snapshot (`--retire`: `hil state --help`); never delete an older session file by hand while a newer one is open |
 | `api <sub> …` | manual API calls; exit 2 means the firmware lacks the capability |
-| `corpus [parts…]` | freeze both boards' configuration, REST, wire replies and serial evidence into `corpus/`; slices in `SECRET_SLICES` (the Home Assistant slice carries the broker password) are withheld unless `--keep-secrets` writes into an `--out` outside every git work tree — a slice that comes to carry a secret joins that list, because a pinned file gets committed |
-| `calibrate`, `camera-server`, `camera-bench`, `lamps [--no-baseline]` | optics; `lamps` switches every calibrated lamp **off** for its baseline unless `--no-baseline` |
-| `decode <log>` | decode a sniffer capture |
+| `corpus [parts…\|panel]` | freeze both boards' configuration, REST, wire replies and serial evidence into `corpus/` (`panel`: the input panel's events for `--panel-seconds`); slices in `SECRET_SLICES` (the Home Assistant slice carries the broker password) are withheld unless `--keep-secrets` writes into an `--out` outside every git work tree — a slice that comes to carry a secret joins that list, because a pinned file gets committed |
+| `calibrate [--profile day\|night] [--fingerprints-only\|--skip-fingerprints]`, `camera-server [--restart\|--stop\|--status\|--spawn-terminal]`, `camera-bench [--spawn-terminal]`, `lamps [--no-baseline]` | optics; `lamps` switches every calibrated lamp **off** for its baseline unless `--no-baseline` |
+| `decode [<log>] [--json] [--stats] [--keep-retained]` | decode a sniffer capture, stdin without a log |
 
-`hil --peer <command>` runs any of them against the other controller; `--peer` goes
-before the command. Every command parses its arguments strictly: an unknown or
-misspelt flag (`--peer` after the command included), an unknown subcommand or a stray
-argument exits 64 before anything runs. `hil api`'s exit 2 keeps its meaning.
+`--peer` goes before the command. Every command parses its arguments strictly: an
+unknown or misspelt flag (`--peer` after the command included), an unknown subcommand or a
+stray argument exits 64 before anything runs; `hil api` reads only the arguments its call
+needs, and its exit 2 keeps its meaning.
 
 ## Serial ports
 
@@ -419,16 +419,16 @@ run-validity peer check, the hand-back below, the gear emulator, `hil corpus` an
 peer active and the rebooted board standby; `dut_reboot` and the OTA test hand the role
 back (`hil/pair.py`) before the next assertion.
 
-`hil --peer role gear-sim [--via ota|wb] | controller | status` lends the peer to the gear
+`hil --peer role gear-sim | controller [--via ota|wb] | status` lends the peer to the gear
 emulator and takes it back ([ADR-031](../../documentation/architecture/decisions/ADR-031-gear-emulator-on-the-standby.md)):
 
 - **`--via ota`** (the default) installs the emulator in the peer's inactive slot for one
   boot. The ready line must say `pending_verify`, and any reset hands the controller back.
 - **`--via wb`** writes it by wire, and the role survives resets.
 
-The peer must be the standby, its monitor must run before the switch (starting a bridge that
-is down resets the board), no other flasher may run here or on the WB, and no virtual-gear
-ledger may be open. The emulator's image is built with [`tools/dali-gear-sim`](../dali-gear-sim/README.md),
+The peer must be the standby, its monitor must run before the switch, no other flasher may
+run here or on the WB, and no virtual-gear ledger may be open.
+The emulator's image is built with [`tools/dali-gear-sim`](../dali-gear-sim/README.md),
 merged with the controller's bootloader, and checked by its ready line; the console prints it
 again on `ready`, so a monitor that missed the boot still reads it.
 
@@ -547,7 +547,7 @@ visible actions out of tests that do not need them — each costs a go-ahead.
   else that skips on an unreachable controller) as a parameter, because an autouse skip
   skips every collected test, the hardware-free ones included: they build their own
   client, degrade to a printed warning and record an instrument failure for the per-test
-  fixture to fail or skip on (`optical_session` skips optical tests on an unreachable DUT). Nor do they take any other bench fixture, `hil_config`
+  fixture to fail or skip on. Nor do they take any other bench fixture, `hil_config`
   included: the hardware-free verdict below reads every test's fixture closure.
 - **Hardware-free tests** request no bench fixture (`BENCH_FIXTURES` in `hil/tiers.py`);
   a `*_unit.py` test that requests one is a collection error, and a guard refusal or a
