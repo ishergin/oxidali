@@ -534,11 +534,14 @@ fn drain_confirmations(state: &mut PollerState, deps: &PollerWiring, conf_rx: &B
         let BusFrame::Confirmation(conf) = frame else {
             continue;
         };
-        if conf.status != DeliveryStatus::DeliveryRejected {
+        if conf.status == DeliveryStatus::Ok {
             continue;
         }
-        if take_pending_probe(state, conf.meta.correlation_id).is_some() {
-            deps.counters.skipped_inbox_full.fetch_add(1, Ordering::Relaxed);
+        if let Some(probe) = take_pending_probe(state, conf.meta.correlation_id) {
+            end_probe_without_verdict(state, deps, conf.status, probe);
+            continue;
+        }
+        if conf.status != DeliveryStatus::DeliveryRejected {
             continue;
         }
         let Some(outstanding) = take_outstanding(state, conf.meta.correlation_id) else {
@@ -546,6 +549,14 @@ fn drain_confirmations(state: &mut PollerState, deps: &PollerWiring, conf_rx: &B
         };
         deps.counters.skipped_inbox_full.fetch_add(1, Ordering::Relaxed);
         requeue_target(state, outstanding.target);
+    }
+}
+
+fn end_probe_without_verdict(state: &mut PollerState, deps: &PollerWiring, status: DeliveryStatus, probe: PendingProbe) {
+    if status == DeliveryStatus::DeliveryRejected {
+        deps.counters.skipped_inbox_full.fetch_add(1, Ordering::Relaxed);
+    } else {
+        charge_wire_time(state, probe.published_at.elapsed());
     }
 }
 

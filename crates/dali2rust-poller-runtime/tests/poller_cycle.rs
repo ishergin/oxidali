@@ -7,12 +7,12 @@ use dali2rust_bus::{
     BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublisher, BusSubscriberRx,
     CorrelationIdAllocator,
 };
-use dali2rust_contracts::bus::event_envelope;
+use dali2rust_contracts::bus::{build_confirmation_envelope_with_product_error, event_envelope};
 use dali2rust_contracts::msg::{
     AttributeGroupReadOutcome, BusCommandPayload, BusHealthVerdict, DaliAttributeGroup,
     DaliAttributeReadOutcomesEvent, DaliBusHealthProbeCommand, DaliBusHealthProbedEvent,
-    DaliReadAttributesCommand, MemoryBankReadPreset, Origin, PollerSettingsChangedEvent,
-    RegistrySliceReloadedEvent,
+    DaliReadAttributesCommand, DeliveryStatus, ErrorCode, MemoryBankReadPreset, Origin,
+    PollerSettingsChangedEvent, RegistrySliceReloadedEvent,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
@@ -1188,6 +1188,46 @@ fn yes_no_yes_while_a_sweep_is_queued_reads_each_target_once() {
         read_shorts(&h)
     );
     assert_eq!(read_shorts(&h), vec![1, 2]);
+}
+
+fn end_held_probe_without_a_verdict(h: &Harness, cause: (ErrorCode, &str)) {
+    let correlation_id = h.held_probes.lock().expect("held_probes").pop_front().expect("a held probe");
+    let ended = build_confirmation_envelope_with_product_error(
+        correlation_id,
+        DeliveryStatus::ExecutionFailed,
+        0,
+        SOURCE_ID_UNSPECIFIED,
+        Some(cause),
+    );
+    let _ = h.publisher.try_publish(BusChannel::Confirmations, BusFrame::confirmation(ended));
+}
+
+#[test]
+fn a_probe_that_ends_without_a_verdict_frees_the_probe_slot_and_leaves_the_watch_alone() {
+    let h = spawn_watch_harness(vec![device(1)], Some(AttributeGroupReadOutcome::Success), SHORT_PROBE_PERIOD);
+
+    for cause in [
+        (ErrorCode::Preempted, "preempted"),
+        (ErrorCode::OperationFailed, "dali_transport_error"),
+        (ErrorCode::Conflict, "controller_passive"),
+    ] {
+        wait_until(|| h.held_probe_count() >= 1, WAIT);
+        end_held_probe_without_a_verdict(&h, cause);
+    }
+    wait_until(|| h.held_probe_count() >= 1, WAIT);
+    let verdicts = [
+        &h.counters.health_probes_clear,
+        &h.counters.health_probes_invalid,
+        &h.counters.health_probes_one_failure,
+        &h.counters.health_probes_several_failures,
+        &h.counters.health_probes_power_failure,
+        &h.counters.power_cycle_sweeps,
+    ];
+    assert!(
+        verdicts.iter().all(|counter| counter.load(Ordering::Relaxed) == 0),
+        "a probe that ended without a verdict counts as none"
+    );
+    assert_eq!(h.counters.health_probes_expired.load(Ordering::Relaxed), 0);
 }
 
 struct ReplicatedSettings {

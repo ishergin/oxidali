@@ -145,7 +145,7 @@ const WIRE_CLASSES: &[WireClass] = &[
     class(
         "DaliBusHealthProbeCommand",
         WirePriority::Unattended,
-        YieldGranularity::Never,
+        YieldGranularity::Frame,
         false,
         TransactionPriority::PeriodicQuery,
     ),
@@ -500,6 +500,11 @@ mod tests {
         assert_eq!(
             yield_granularity("DaliDiscoverDevicesCommand"),
             Some(YieldGranularity::Never)
+        );
+        assert_eq!(
+            yield_granularity("DaliBusHealthProbeCommand"),
+            Some(YieldGranularity::Frame),
+            "the probe's broadcast queries are independent frames"
         );
     }
 }
