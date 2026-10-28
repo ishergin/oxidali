@@ -1104,7 +1104,7 @@ table.hcl-points tr:hover td { background: rgba(35,44,56,.5); }
 .fw-verify .t { font-size: 12px; color: var(--warn); }
 .fw-verify .t b { font-weight: 600; }
 
-.fw-body { padding: 12px 14px; }
+.card > .body { padding: 12px 14px; }
 .fw-urlrow { display: flex; gap: 8px; }
 .fw-url { flex: 1; background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
   color: var(--text); font-size: 12px; padding: 6px 9px; font-family: var(--mono); }
