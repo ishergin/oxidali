@@ -35,6 +35,10 @@ post_commission_requery  0
 # A command the sniffer did not see within half its window, sent again.
 sniffer_resend           0
 
+# Answers the PHY interrupt lost, from /api/v1/diagnostics at session end.
+answer_table_torn       0
+answer_decode_overrun   0
+
 # Frames the controller shed, from /api/v1/diagnostics at session end.
 bus_commands_ingress_overflow       0
 bus_confirmations_ingress_overflow  0

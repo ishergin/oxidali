@@ -444,6 +444,10 @@ def bus_drop_counters(diagnostics):
     subscribers = (diagnostics.get("bus") or {}).get("event_subscribers") or []
     dropped = sum(int(s.get("receiver_overflow") or 0) for s in subscribers)
     out["bus_event_subscriber_overflow"] = dropped
+    phy = diagnostics.get("phy_sniffer") or {}
+    for field in ("answer_table_torn", "answer_decode_overrun"):
+        if phy.get(field) is not None:
+            out[field] = int(phy[field])
     return out
 
 

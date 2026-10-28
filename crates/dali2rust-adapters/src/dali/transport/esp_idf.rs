@@ -28,7 +28,9 @@ use dali2rust_dali_phy::{
     PHY_TICK_US, RX_RING_CAP, TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS,
 };
 
-use super::answer_path::{AnswerPublisher, PUBLISH_BUDGET_TICKS};
+use super::answer_path::{
+    arbitration_answers, mirror_table_counts, AnswerPublisher, PUBLISH_BUDGET_TICKS,
+};
 use super::sniffer_diagnostics::{gap_to_u32, SnifferDiagnostics};
 use super::{LATE_REPORT_BYTES, MICROS_PER_MILLI};
 use crate::dali::transport::{
@@ -1309,23 +1311,12 @@ unsafe fn mirror_arbitration_counters(inner: *mut TransportInner) {
     let (c, t) = unsafe { ((*inner).isr.answer_counts(), (*inner).isr.answer_table_counts()) };
     // SAFETY: same.
     if let Some(sink) = unsafe { (*inner).sniffer_counters.get() } {
-        sink.answer_staged.store(t.answered, Ordering::Relaxed);
-        sink.answer_table_behind.store(t.behind, Ordering::Relaxed);
-        sink.answer_table_torn.store(t.torn, Ordering::Relaxed);
-        sink.answer_decode_overrun.store(t.decode_overrun, Ordering::Relaxed);
+        mirror_table_counts(sink, &t);
     }
     // SAFETY: same.
-    let Some(inputs) = (unsafe { (*inner).answer_inputs.get() }) else {
-        return;
-    };
-    inputs.mirror_answers(dali2rust_platform::arbitration::ArbitrationAnswerCounters {
-        answered: c.sent,
-        suppressed_lease: t.lease_lapsed,
-        cell_busy: t.cell_busy,
-        aborted: c.stale,
-        window_closed: c.expired,
-        out_of_window: c.late,
-    });
+    if let Some(inputs) = unsafe { (*inner).answer_inputs.get() } {
+        inputs.mirror_answers(arbitration_answers(&c, &t));
+    }
 }
 
 unsafe fn mirror_wire_occupancy(

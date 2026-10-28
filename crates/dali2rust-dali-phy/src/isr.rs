@@ -86,9 +86,6 @@ pub struct AnswerTableCounts {
 
 struct TableCounters {
     answered: AtomicU32,
-    lease_lapsed: AtomicU32,
-    behind: AtomicU32,
-    torn: AtomicU32,
     cell_busy: AtomicU32,
     decode_overrun: AtomicU32,
 }
@@ -97,9 +94,6 @@ impl TableCounters {
     const fn new() -> Self {
         Self {
             answered: AtomicU32::new(0),
-            lease_lapsed: AtomicU32::new(0),
-            behind: AtomicU32::new(0),
-            torn: AtomicU32::new(0),
             cell_busy: AtomicU32::new(0),
             decode_overrun: AtomicU32::new(0),
         }
@@ -934,19 +928,15 @@ impl PhyIsrCore {
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     fn answer_from_table(&self, frame: [u8; 3], ev: &RxCompletedEvent) {
         let now = self.wire_ticks_total.load(Ordering::Relaxed);
-        let counter = match self.table_path.table.lookup(frame, ev.sniff_seq.wrapping_sub(1), now) {
-            TableLookup::Answer(answer) => {
-                let hb = HalfBitBuffer::encode(u32::from(answer), BACKWARD_DATA_BITS);
-                if self.answer.stage(ev.rx_epoch, &hb) {
-                    &self.table_path.counts.answered
-                } else {
-                    &self.table_path.counts.cell_busy
-                }
-            }
-            TableLookup::LeaseLapsed => &self.table_path.counts.lease_lapsed,
-            TableLookup::Behind => &self.table_path.counts.behind,
-            TableLookup::Torn => &self.table_path.counts.torn,
-            TableLookup::NotPublished | TableLookup::NotAddressed | TableLookup::Silent => return,
+        let previous = ev.sniff_seq.wrapping_sub(1);
+        let Some(answer) = self.table_path.table.answer(frame, previous, now) else {
+            return;
+        };
+        let hb = HalfBitBuffer::encode(u32::from(answer), BACKWARD_DATA_BITS);
+        let counter = if self.answer.stage(ev.rx_epoch, &hb) {
+            &self.table_path.counts.answered
+        } else {
+            &self.table_path.counts.cell_busy
         };
         counter.fetch_add(1, Ordering::Relaxed);
     }
@@ -1019,11 +1009,12 @@ impl PhyIsrCore {
 
     pub fn answer_table_counts(&self) -> AnswerTableCounts {
         let c = &self.table_path.counts;
+        let refused = self.table_path.table.refusal_counts();
         AnswerTableCounts {
             answered: c.answered.load(Ordering::Relaxed),
-            lease_lapsed: c.lease_lapsed.load(Ordering::Relaxed),
-            behind: c.behind.load(Ordering::Relaxed),
-            torn: c.torn.load(Ordering::Relaxed),
+            lease_lapsed: refused.lease_lapsed,
+            behind: refused.behind,
+            torn: refused.torn,
             cell_busy: c.cell_busy.load(Ordering::Relaxed),
             decode_overrun: c.decode_overrun.load(Ordering::Relaxed),
         }

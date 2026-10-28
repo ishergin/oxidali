@@ -33,7 +33,8 @@ impl HalfBitBuffer {
     fn push_pair(&mut self, pair: u8) {
         let length = self.length;
         if let Some(byte) = self.data.get_mut(usize::from(length >> 3)) {
-            *byte |= pair << PAIR_TOP_SHIFT.wrapping_sub(length & 7);
+            let shift = PAIR_TOP_SHIFT.wrapping_sub(length & 7);
+            *byte |= pair.checked_shl(u32::from(shift)).unwrap_or(0);
         }
         self.length = length.saturating_add(2);
     }

@@ -765,6 +765,16 @@ def test_readback_workaround_counters_are_watched_and_never_gated():
         assert "watched, never gated" in row and "set a budget" not in row, row
 
 
+def test_the_interrupt_s_answer_losses_are_read_from_the_sniffer_block_and_gated():
+    diagnostics = {"phy_sniffer": {"answer_table_torn": 1, "answer_decode_overrun": 2}}
+    out = validity.bus_drop_counters(diagnostics)
+    assert (out["answer_table_torn"], out["answer_decode_overrun"]) == (1, 2)
+    budget = validity.load_budget()
+    assert (budget["answer_table_torn"], budget["answer_decode_overrun"]) == (0, 0)
+    assert validity.bus_drop_breaches({"bus_drops": out}, budget) == [
+        ("answer_decode_overrun", 2, 0), ("answer_table_torn", 1, 0)]
+
+
 def test_task_latency_counters_are_read_from_stats():
     stats = {"dali": {"answer_staged_total": 30, "answer_table_behind_total": 1,
                       "persist_flush_slow_total": 78, "persist_gate_waits_total": 5}}

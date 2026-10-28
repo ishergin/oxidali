@@ -1,6 +1,12 @@
-use dali2rust_dali_phy::{PhyIsrCore, RxCompletedEvent, FORWARD24_BITS, PHY_TICK_US, TX_HALF_BIT_TICKS};
+use core::sync::atomic::Ordering::Relaxed;
+
+use dali2rust_dali_phy::{
+    AnswerCounts, AnswerTableCounts, PhyIsrCore, RxCompletedEvent, FORWARD24_BITS, PHY_TICK_US,
+    TX_HALF_BIT_TICKS,
+};
 use dali2rust_domain::dali::dev103::unit::answer_table;
-use dali2rust_platform::arbitration::AnswerInputs;
+use dali2rust_platform::arbitration::{AnswerInputs, ArbitrationAnswerCounters};
+use dali2rust_platform::dali::PhySnifferCounters;
 
 const US_PER_MS: u32 = 1_000;
 // IEC 62386-101 Table 22
@@ -13,6 +19,28 @@ pub const PUBLISH_BUDGET_TICKS: u32 =
 #[must_use]
 pub fn lease_until_tick(now_tick: u32, remaining_ms: u32) -> u32 {
     now_tick.wrapping_add(remaining_ms.saturating_mul(US_PER_MS) / PHY_TICK_US)
+}
+
+#[must_use]
+pub const fn arbitration_answers(
+    sent: &AnswerCounts,
+    table: &AnswerTableCounts,
+) -> ArbitrationAnswerCounters {
+    ArbitrationAnswerCounters {
+        answered: sent.sent,
+        suppressed_lease: table.lease_lapsed,
+        cell_busy: table.cell_busy,
+        aborted: sent.stale,
+        window_closed: sent.expired,
+        out_of_window: sent.late,
+    }
+}
+
+pub fn mirror_table_counts(sink: &PhySnifferCounters, table: &AnswerTableCounts) {
+    sink.answer_staged.store(table.answered, Relaxed);
+    sink.answer_table_behind.store(table.behind, Relaxed);
+    sink.answer_table_torn.store(table.torn, Relaxed);
+    sink.answer_decode_overrun.store(table.decode_overrun, Relaxed);
 }
 
 #[derive(Debug, Default)]
@@ -112,6 +140,51 @@ mod tests {
         let mut handed = Vec::new();
         publisher.drain(|| queue.next(), |ev| handed.push(ev.sniff_seq));
         handed
+    }
+
+    const SENT: AnswerCounts = AnswerCounts {
+        sent: 1,
+        stale: 2,
+        expired: 3,
+        late: 4,
+        rejected: 5,
+        collided: 6,
+    };
+    const TABLE: AnswerTableCounts = AnswerTableCounts {
+        answered: 11,
+        lease_lapsed: 12,
+        behind: 13,
+        torn: 14,
+        cell_busy: 15,
+        decode_overrun: 16,
+    };
+
+    #[test]
+    fn every_arbitration_count_comes_from_its_own_interrupt_counter() {
+        assert_eq!(
+            arbitration_answers(&SENT, &TABLE),
+            ArbitrationAnswerCounters {
+                answered: 1,
+                suppressed_lease: 12,
+                cell_busy: 15,
+                aborted: 2,
+                window_closed: 3,
+                out_of_window: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn every_table_count_reaches_its_own_sniffer_counter() {
+        let sink = PhySnifferCounters::default();
+        mirror_table_counts(&sink, &TABLE);
+        let got = [
+            sink.answer_staged.load(Relaxed),
+            sink.answer_table_behind.load(Relaxed),
+            sink.answer_table_torn.load(Relaxed),
+            sink.answer_decode_overrun.load(Relaxed),
+        ];
+        assert_eq!(got, [11, 13, 14, 16]);
     }
 
     #[test]

@@ -92,6 +92,38 @@ pub enum TableLookup {
     Answer(u8),
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TableRefusalCounts {
+    pub lease_lapsed: u32,
+    pub behind: u32,
+    pub torn: u32,
+}
+
+struct TableRefusals {
+    lease_lapsed: AtomicU32,
+    behind: AtomicU32,
+    torn: AtomicU32,
+}
+
+impl TableRefusals {
+    const fn new() -> Self {
+        Self {
+            lease_lapsed: AtomicU32::new(0),
+            behind: AtomicU32::new(0),
+            torn: AtomicU32::new(0),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct LiveRead {
+    torn: bool,
+    accounts_for: u8,
+    short_address: u8,
+    index: Option<usize>,
+    word: u32,
+}
+
 struct TableCopy {
     generation: AtomicU32,
     accounts_for: AtomicU8,
@@ -129,6 +161,7 @@ pub struct AnswerTableCell {
     live: AtomicU8,
     copies: [TableCopy; 2],
     lease_until_tick: AtomicU32,
+    refusals: TableRefusals,
 }
 
 impl AnswerTableCell {
@@ -137,6 +170,7 @@ impl AnswerTableCell {
             live: AtomicU8::new(0),
             copies: [TableCopy::new(), TableCopy::new()],
             lease_until_tick: AtomicU32::new(0),
+            refusals: TableRefusals::new(),
         }
     }
 
@@ -157,14 +191,66 @@ impl AnswerTableCell {
         (self.lease_until_tick.load(Ordering::Acquire).wrapping_sub(now_tick) as i32) > 0
     }
 
-    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     pub fn lookup(&self, frame: [u8; 3], previous_capture: u8, now_tick: u32) -> TableLookup {
-        let Some(copy) = self.copies.get(usize::from(self.live.load(Ordering::Acquire) & 1)) else {
+        self.decide(frame, previous_capture, now_tick, &TableRefusals::new())
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    pub fn answer(&self, frame: [u8; 3], previous_capture: u8, now_tick: u32) -> Option<u8> {
+        match self.decide(frame, previous_capture, now_tick, &self.refusals) {
+            TableLookup::Answer(answer) => Some(answer),
+            _ => None,
+        }
+    }
+
+    pub fn refusal_counts(&self) -> TableRefusalCounts {
+        TableRefusalCounts {
+            lease_lapsed: self.refusals.lease_lapsed.load(Ordering::Relaxed),
+            behind: self.refusals.behind.load(Ordering::Relaxed),
+            torn: self.refusals.torn.load(Ordering::Relaxed),
+        }
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn decide(
+        &self,
+        frame: [u8; 3],
+        previous_capture: u8,
+        now_tick: u32,
+        refusals: &TableRefusals,
+    ) -> TableLookup {
+        let Some(read) = self.read_live(frame) else {
             return TableLookup::NotPublished;
         };
+        if read.torn {
+            refusals.torn.fetch_add(1, Ordering::Relaxed);
+            return TableLookup::Torn;
+        }
+        let Some(index) = read.index else {
+            return TableLookup::NotAddressed;
+        };
+        if read.accounts_for != previous_capture {
+            refusals.behind.fetch_add(1, Ordering::Relaxed);
+            return TableLookup::Behind;
+        }
+        let lease_alive = self.lease_alive(now_tick);
+        let (word, short_address) = (read.word, read.short_address);
+        match entry_answer(index, word, frame, short_address, lease_alive) {
+            Some(answer) => TableLookup::Answer(answer),
+            None if !lease_alive && entry_answer(index, word, frame, short_address, true).is_some() => {
+                refusals.lease_lapsed.fetch_add(1, Ordering::Relaxed);
+                TableLookup::LeaseLapsed
+            }
+            None => TableLookup::Silent,
+        }
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn read_live(&self, frame: [u8; 3]) -> Option<LiveRead> {
+        let copy = self.copies.get(usize::from(self.live.load(Ordering::Acquire) & 1))?;
         let before = copy.generation.load(Ordering::Acquire);
         if before == NEVER_PUBLISHED {
-            return TableLookup::NotPublished;
+            return None;
         }
         let accounts_for = copy.accounts_for.load(Ordering::Relaxed);
         let short_address = copy.short_address.load(Ordering::Relaxed);
@@ -178,23 +264,8 @@ impl AnswerTableCell {
             None => 0,
         };
         fence(Ordering::Acquire);
-        if before & 1 != 0 || copy.generation.load(Ordering::Relaxed) != before {
-            return TableLookup::Torn;
-        }
-        let Some(index) = index else {
-            return TableLookup::NotAddressed;
-        };
-        if accounts_for != previous_capture {
-            return TableLookup::Behind;
-        }
-        let lease_alive = self.lease_alive(now_tick);
-        match entry_answer(index, word, frame, short_address, lease_alive) {
-            Some(answer) => TableLookup::Answer(answer),
-            None if !lease_alive && entry_answer(index, word, frame, short_address, true).is_some() => {
-                TableLookup::LeaseLapsed
-            }
-            None => TableLookup::Silent,
-        }
+        let torn = before & 1 != 0 || copy.generation.load(Ordering::Relaxed) != before;
+        Some(LiveRead { torn, accounts_for, short_address, index, word })
     }
 }
 
@@ -317,5 +388,23 @@ mod tests {
         let live = usize::from(cell.live.load(Ordering::Relaxed));
         cell.copies[live].generation.fetch_add(1, Ordering::Relaxed);
         assert_eq!(cell.lookup([0xFF, 0xFE, QACE], 0, NOW), TableLookup::Torn);
+    }
+
+    #[test]
+    fn the_interrupt_s_answer_counts_each_refusal_and_a_task_lookup_counts_none() {
+        let cell = published(&image(7, 0), 0);
+        let qace = [0xFF, 0xFE, QACE];
+        assert_eq!(cell.answer(qace, 0, NOW), Some(0xFF));
+        assert_eq!(cell.lookup(qace, 1, NOW), TableLookup::Behind);
+        assert_eq!(cell.answer(qace, 1, NOW), None);
+        cell.set_lease_until_tick(NOW);
+        assert_eq!(cell.lookup(qace, 0, NOW), TableLookup::LeaseLapsed);
+        assert_eq!(cell.answer(qace, 0, NOW), None);
+        let live = usize::from(cell.live.load(Ordering::Relaxed));
+        cell.copies[live].generation.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(cell.lookup(qace, 0, NOW), TableLookup::Torn);
+        assert_eq!(cell.answer(qace, 0, NOW), None);
+        let once_each = TableRefusalCounts { lease_lapsed: 1, behind: 1, torn: 1 };
+        assert_eq!(cell.refusal_counts(), once_each);
     }
 }

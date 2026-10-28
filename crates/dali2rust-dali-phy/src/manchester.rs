@@ -190,7 +190,11 @@ impl SampleWindow {
 
 #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
 const fn bit_weight(sample: u8, bit: u8, weight: i16) -> i16 {
-    if (sample >> bit) & 1 != 0 {
+    let set = match sample.checked_shr(bit as u32) {
+        Some(shifted) => shifted & 1 != 0,
+        None => false,
+    };
+    if set {
         weight
     } else {
         weight.wrapping_neg()
