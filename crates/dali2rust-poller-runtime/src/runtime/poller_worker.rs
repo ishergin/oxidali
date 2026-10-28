@@ -574,6 +574,7 @@ fn sweep_stale(state: &mut PollerState, deps: &PollerWiring) {
     state.outstanding = None;
     deps.counters.outstanding_expired.fetch_add(1, Ordering::Relaxed);
     push_tombstone(state, o.correlation_id, o.published_at);
+    close_sweep_read(state, o.target, &ReadVerdict::Failed);
 }
 
 fn sweep_stale_probe(state: &mut PollerState, deps: &PollerWiring) {
@@ -762,8 +763,17 @@ fn complete_read(state: &mut PollerState, deps: &PollerWiring, corr: u64, body: 
         ReadVerdict::Absent => cool_absent_device(state, &deps.counters, target.adapter_id, target.short_address),
         ReadVerdict::Failed => fail_device(state, &deps.counters, target.adapter_id, target.short_address),
     }
-    if matches!(verdict, ReadVerdict::Completed | ReadVerdict::Absent) && target.purpose == ReadPurpose::PowerCycleSweep {
-        state.power_cycles.settle(target.adapter_id, target.short_address);
+    close_sweep_read(state, target, &verdict);
+}
+
+fn close_sweep_read(state: &mut PollerState, target: PollTarget, verdict: &ReadVerdict) {
+    if target.purpose != ReadPurpose::PowerCycleSweep {
+        return;
+    }
+    match verdict {
+        ReadVerdict::Completed | ReadVerdict::Absent => state.power_cycles.settle(target.adapter_id, target.short_address),
+        ReadVerdict::Failed => state.power_cycles.fail(target.adapter_id, target.short_address),
+        ReadVerdict::Preempted => {}
     }
 }
 
@@ -990,6 +1000,8 @@ mod tests {
 
     use std::sync::atomic::AtomicBool;
 
+    use crate::runtime::power_cycle::{RESWEEP_AFTER_YES, SWEEP_READ_ATTEMPTS};
+
     use dali2rust_bus::{BusConfig, BusHost};
     use dali2rust_domain::registry::{PollTargetReadPort, PollTargetSelection, PollerSettingsReadPort};
 
@@ -1100,15 +1112,16 @@ mod tests {
         }
     }
 
-    struct ListsGearOne;
+    struct ListsGears(&'static [u8]);
 
-    impl PollTargetReadPort for ListsGearOne {
+    impl PollTargetReadPort for ListsGears {
         fn list_poll_targets(&self, _adapter_id: u8) -> PollTargetSelection {
-            PollTargetSelection { targets: vec![gear_view(1)], excluded_unbound: 0, adapter_enabled: true }
+            let targets = self.0.iter().map(|short| gear_view(*short)).collect();
+            PollTargetSelection { targets, excluded_unbound: 0, adapter_enabled: true }
         }
     }
 
-    impl PollerSettingsReadPort for ListsGearOne {
+    impl PollerSettingsReadPort for ListsGears {
         fn poller_settings_view(&self) -> PollerSettingsView {
             watch_state().settings
         }
@@ -1132,7 +1145,7 @@ mod tests {
 
     #[test]
     fn a_sweep_read_the_guard_expired_waits_for_the_next_yes_not_for_the_next_slot() {
-        let t = test_deps_on(Arc::new(ListsGearOne));
+        let t = test_deps_on(Arc::new(ListsGears(&[1])));
         let mut state = watch_state();
         power_cycle_yes(&mut state, &t.deps);
         let target = state.sweep_queue.pop_front().expect("the YES queues gear 1");
@@ -1229,7 +1242,7 @@ mod tests {
 
     #[test]
     fn a_preempted_sweep_read_after_a_no_is_not_requeued() {
-        let t = test_deps_on(Arc::new(ListsGearOne));
+        let t = test_deps_on(Arc::new(ListsGears(&[1])));
         let mut state = watch_state();
         power_cycle_yes(&mut state, &t.deps);
         let target = state.sweep_queue.pop_front().expect("the YES queues gear 1");
@@ -1244,6 +1257,58 @@ mod tests {
         record_health_probe(&mut state, &t.deps, 0, &no);
         complete_read(&mut state, &t.deps, corr, &outcomes(AttributeGroupReadOutcome::Preempted));
         assert!(state.sweep_queue.is_empty(), "a NO ended the sweep: no gear's bit is set to read");
+    }
+
+    fn read_the_next_sweep_target(state: &mut PollerState, deps: &PollerWiring, outcome: AttributeGroupReadOutcome) -> u8 {
+        let target = state.sweep_queue.pop_front().expect("a sweep target");
+        let corr = deps.correlation.next_id();
+        hold_published_read(state, deps, corr, target);
+        complete_read(state, deps, corr, &outcomes(outcome));
+        target.short_address
+    }
+
+    fn sweeps(deps: &PollerWiring) -> u32 {
+        deps.counters.power_cycle_sweeps.load(Ordering::Relaxed)
+    }
+
+    #[test]
+    fn a_target_whose_sweep_reads_keep_failing_leaves_the_sweep_to_the_hold_off() {
+        let t = test_deps_on(Arc::new(ListsGears(&[1, 2])));
+        let mut state = watch_state();
+        power_cycle_yes(&mut state, &t.deps);
+        assert_eq!(read_the_next_sweep_target(&mut state, &t.deps, AttributeGroupReadOutcome::TransportAbort), 1);
+        assert_eq!(read_the_next_sweep_target(&mut state, &t.deps, AttributeGroupReadOutcome::Success), 2);
+        for _ in 0..RESWEEP_AFTER_YES * 2 {
+            power_cycle_yes(&mut state, &t.deps);
+            if sweeps(&t.deps) > 1 {
+                break;
+            }
+            if !state.sweep_queue.is_empty() {
+                assert_eq!(read_the_next_sweep_target(&mut state, &t.deps, AttributeGroupReadOutcome::TransportAbort), 1);
+            }
+        }
+        assert_eq!(
+            sweeps(&t.deps),
+            2,
+            "gear 1 left the sweep after its failed reads, so the hold-off ran out and a new cycle of gear 2 is swept"
+        );
+        let owed: Vec<u8> = state.sweep_queue.iter().map(|target| target.short_address).collect();
+        assert_eq!(owed, vec![1, 2], "the fresh sweep asks gear 1 again too");
+    }
+
+    #[test]
+    fn a_sweep_read_the_guard_expires_counts_as_a_failed_one() {
+        let t = test_deps_on(Arc::new(ListsGears(&[1])));
+        let mut state = watch_state();
+        for _ in 0..SWEEP_READ_ATTEMPTS {
+            power_cycle_yes(&mut state, &t.deps);
+            let target = state.sweep_queue.pop_front().expect("gear 1 is still owed");
+            hold_published_read(&mut state, &t.deps, t.deps.correlation.next_id(), target);
+            state.outstanding.as_mut().expect("in flight").deadline = Instant::now() - Duration::from_millis(1);
+            sweep_stale(&mut state, &t.deps);
+        }
+        power_cycle_yes(&mut state, &t.deps);
+        assert!(state.sweep_queue.is_empty(), "a read that never returns leaves the sweep like one that keeps failing");
     }
 
     #[test]

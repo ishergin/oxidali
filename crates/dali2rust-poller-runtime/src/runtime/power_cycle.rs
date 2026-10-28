@@ -5,6 +5,8 @@ pub const DEFAULT_PROBE_PERIOD: Duration = Duration::from_secs(60);
 
 pub const RESWEEP_AFTER_YES: u32 = 60;
 
+pub const SWEEP_READ_ATTEMPTS: u8 = 3;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PollerConfig {
     pub probe_period: Duration,
@@ -39,6 +41,7 @@ pub(crate) struct SweepOrder {
 #[derive(Debug, Default)]
 pub(crate) struct PowerCycleWatch {
     adapters: HashMap<u8, AdapterWatch>,
+    failed_reads: HashMap<(u8, u8), u8>,
 }
 
 impl PowerCycleWatch {
@@ -46,6 +49,7 @@ impl PowerCycleWatch {
     pub(crate) fn answer(&mut self, adapter_id: u8, power_cycle_seen: bool, listed: ShortSet) -> Option<SweepOrder> {
         if !power_cycle_seen {
             self.adapters.remove(&adapter_id);
+            self.failed_reads.retain(|&(adapter, _), _| adapter != adapter_id);
             return None;
         }
         let order = match self.adapters.get(&adapter_id).copied() {
@@ -62,6 +66,7 @@ impl PowerCycleWatch {
 
     pub(crate) fn keep_only(&mut self, adapters: &[u8]) {
         self.adapters.retain(|adapter_id, _| adapters.contains(adapter_id));
+        self.failed_reads.retain(|(adapter_id, _), _| adapters.contains(adapter_id));
     }
 
     pub(crate) fn owes(&self, adapter_id: u8, short_address: u8) -> bool {
@@ -71,6 +76,17 @@ impl PowerCycleWatch {
         )
     }
 
+    pub(crate) fn fail(&mut self, adapter_id: u8, short_address: u8) {
+        if !self.owes(adapter_id, short_address) {
+            return;
+        }
+        let failed = self.failed_reads.entry((adapter_id, short_address)).or_default();
+        *failed = failed.saturating_add(1);
+        if *failed >= SWEEP_READ_ATTEMPTS {
+            self.settle(adapter_id, short_address);
+        }
+    }
+
     pub(crate) fn settle(&mut self, adapter_id: u8, short_address: u8) {
         if let Some(AdapterWatch::Sweeping { owed }) = self.adapters.get(&adapter_id).copied() {
             self.owe(adapter_id, owed & !short_bit(short_address));
@@ -78,6 +94,8 @@ impl PowerCycleWatch {
     }
 
     fn owe(&mut self, adapter_id: u8, owed: ShortSet) {
+        self.failed_reads
+            .retain(|&(adapter, short), _| adapter != adapter_id || owed & short_bit(short) != 0);
         let watch = if owed == 0 {
             AdapterWatch::HeldOff { answers: 0 }
         } else {
@@ -118,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn the_hold_off_counts_only_from_a_sweep_every_target_settled() {
+    fn the_hold_off_counts_only_from_a_sweep_every_target_settled_or_gave_up() {
         let mut watch = PowerCycleWatch::default();
         assert_eq!(watch.answer(0, true, GEAR_1_AND_2), fresh(GEAR_1_AND_2));
         watch.settle(0, 1);
@@ -126,11 +144,53 @@ mod tests {
             assert_eq!(
                 watch.answer(0, true, GEAR_1_AND_2),
                 resumed(short_bit(2)),
-                "a target the sweep still owes is asked for on every YES, however many"
+                "a target the sweep still owes and whose read has not failed is asked for on every YES, however many"
             );
         }
-        watch.settle(0, 2);
-        assert_eq!(watch.answer(0, true, GEAR_1_AND_2), None, "the sweep is over and the hold-off has begun");
+        for attempt in 1..SWEEP_READ_ATTEMPTS {
+            watch.fail(0, 2);
+            assert_eq!(
+                watch.answer(0, true, GEAR_1_AND_2),
+                resumed(short_bit(2)),
+                "failed read {attempt} is retried on the next YES"
+            );
+        }
+        watch.fail(0, 2);
+        assert_eq!(
+            watch.answer(0, true, GEAR_1_AND_2),
+            None,
+            "gear 2 failed {SWEEP_READ_ATTEMPTS} reads in a row: the sweep is over and the hold-off has begun"
+        );
+    }
+
+    #[test]
+    fn a_new_sweep_starts_its_targets_with_no_failed_reads() {
+        let ends: [(&str, fn(&mut PowerCycleWatch)); 3] = [
+            ("the target settled and the hold-off ran out", |watch| {
+                watch.settle(0, 2);
+                for _ in 1..RESWEEP_AFTER_YES {
+                    assert_eq!(watch.answer(0, true, GEAR_1_AND_2), None);
+                }
+            }),
+            ("a NO", |watch| assert_eq!(watch.answer(0, false, GEAR_1_AND_2), None)),
+            ("the adapter left the probe round", |watch| watch.keep_only(&[])),
+        ];
+        for (end, close) in ends {
+            let mut watch = PowerCycleWatch::default();
+            assert_eq!(watch.answer(0, true, GEAR_1_AND_2), fresh(GEAR_1_AND_2));
+            watch.settle(0, 1);
+            for _ in 1..SWEEP_READ_ATTEMPTS {
+                watch.fail(0, 2);
+            }
+            close(&mut watch);
+            assert_eq!(watch.answer(0, true, GEAR_1_AND_2), fresh(GEAR_1_AND_2), "{end}");
+            watch.fail(0, 2);
+            assert_eq!(
+                watch.answer(0, true, GEAR_1_AND_2),
+                resumed(GEAR_1_AND_2),
+                "{end}: the failed reads of the last sweep do not count in this one"
+            );
+        }
     }
 
     #[test]
