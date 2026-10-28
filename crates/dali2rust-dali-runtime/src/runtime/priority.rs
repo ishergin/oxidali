@@ -110,7 +110,7 @@ const WIRE_CLASSES: &[WireClass] = &[
     ),
     // IEC 62386-102 §9.10.2
     class(
-        "DaliWriteLuminaireDataCommand",
+        "DaliWriteMemoryLuminaireCommand",
         WirePriority::Attended,
         YieldGranularity::Step,
         false,

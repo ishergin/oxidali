@@ -156,7 +156,7 @@ const ROUTE_TABLE: &[(RouteKey, HttpMethod, &str)] = &[
     (
         RouteKey::PhysicalDeviceLuminaireWrite,
         HttpMethod::Patch,
-        "/api/v1/adapters/{adapter_id}/physical-devices/{short}/luminaire-data",
+        "/api/v1/adapters/{adapter_id}/physical-devices/{short}/memory-luminaire",
     ),
     (
         RouteKey::PhysicalDeviceTargetState,

@@ -25,7 +25,7 @@ BDD — [`physical_devices`](../../../../tests/dali2rust-bdd/features/physical_d
 | `PATCH` | `physical-devices/{short}` | Метаданные, override'ы, разрешения | `200` |
 | `DELETE` | `physical-devices/{short}` | Забыть запись | `204` |
 | `POST` | `physical-devices/{short}/write-attributes` | Запись атрибутов в прибор | `202` `attribute_write` |
-| `PATCH` | `physical-devices/{short}/luminaire-data` | Запись данных светильника (банк 1, Part 251) | `202` `attribute_write` |
+| `PATCH` | `physical-devices/{short}/memory-luminaire` | Запись данных светильника (банк 1, Part 251) | `202` `attribute_write` |
 | `PUT` | `physical-devices/{short}/target-state` | Прямое управление по адресу | `200` |
 | `POST` | `discovery-runs` | Discovery | `202` `discovery` |
 | `POST` | `physical-devices/{short}/attribute-reads` | Чтение атрибутов и банков | `202` `attribute_read` |
@@ -231,7 +231,7 @@ effective-значений распространяется на привяза�
   power-on) — это конфигурационная запись, а не настройка контроллера.
 - Override'ы типа и режима, членство в группах и сцены сюда не входят.
 
-## `PATCH …/luminaire-data`
+## `PATCH …/memory-luminaire`
 
 Merge-patch полей DiiA Part 251 в банке 1 прибора. Ключи и единицы — те же, что у
 листьев секции `memory_luminaire`: числа `year`, `week`, `nominal_input_power_w`,

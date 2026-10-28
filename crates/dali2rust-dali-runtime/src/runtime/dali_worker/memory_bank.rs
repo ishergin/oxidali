@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::executor::write_luminaire_data;
+use crate::runtime::executor::write_memory_luminaire;
 use dali2rust_domain::dali::banks::luminaire_write::planned_writes;
 use dali2rust_domain::dali::banks::BANK_LUMINAIRE_INFO;
 
@@ -129,16 +129,16 @@ fn close_memory_bank_read(
 
 // IEC 62386-102 §9.10.5
 // DiiA 251 §9.2.3
-pub(super) fn handle_write_luminaire_data(
+pub(super) fn handle_write_memory_luminaire(
     controller: &mut impl DaliApplicationController,
     read: &BankRead<'_>,
-    command: &dali2rust_contracts::msg::DaliWriteLuminaireDataCommand,
+    command: &dali2rust_contracts::msg::DaliWriteMemoryLuminaireCommand,
 ) {
     let BankRead { publisher, adapter_id, correlation_id: w, counters, .. } = *read;
     publish_worker_started(publisher, adapter_id, w, Origin::Internal, counters);
     let writes = planned_writes(&command.numbers, command.text.as_ref());
     let mut delivered = true;
-    let outcome = write_luminaire_data(controller, command.short_address, &writes, |execution| {
+    let outcome = write_memory_luminaire(controller, command.short_address, &writes, |execution| {
         delivered = publish_memory_bank_execution(read, BANK_LUMINAIRE_INFO, 0, execution);
     });
     let failure = outcome.err().map(|failure| (failure.code, failure.subject));

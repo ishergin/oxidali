@@ -44,7 +44,7 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   light commands are `Attended`, a rule's are `Interactive`.
 - `YieldGranularity` says where a sequence may stop: `Frame` for reads, `Step` for
   configuration writes (`write-attributes`, Part 103 instance and feedback configuration)
-  at a confirmed DTR → SET → read-back boundary and for the bank 1 luminaire-data write
+  at a confirmed DTR → SET → read-back boundary and for the bank 1 `memory_luminaire` write
   between lock sessions, `Never` for discovery, commissioning and other units whose
   interruption leaves gear half-programmed.
 - Background work never delays an operator, and that is not a setting: a quiet window,
@@ -55,7 +55,7 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - Preemption is routine and never a device fault. A preempted read ends
   `ErrorCode::Preempted` and commits nothing from the interrupted stage; a preempted
   `write-attributes` keeps the attributes it confirmed before the yield and ends
-  `Preempted`; a preempted luminaire-data write ends `Preempted` naming the field it
+  `Preempted`; a preempted `memory_luminaire` write ends `Preempted` naming the field it
   stopped in, with its lock byte as found, no read-back and the bytes already written
   unproved until the next bank read; the poller re-queues the target with no cooldown. No surface renders it as
   a failure.

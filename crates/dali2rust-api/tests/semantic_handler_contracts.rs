@@ -13,7 +13,7 @@ use dali2rust_api::http::handlers::physical_devices::{
     PhysicalDevicePatchHandler, PhysicalDeviceTargetStateHandler,
     PhysicalDeviceWriteAttributesHandler,
 };
-use dali2rust_api::http::handlers::luminaire_data::PhysicalDeviceLuminaireWriteHandler;
+use dali2rust_api::http::handlers::memory_luminaire::PhysicalDeviceMemoryLuminaireHandler;
 use dali2rust_api::http::handlers::virtual_lamps::{
     VirtualLampBindingDeleteHandler, VirtualLampBindingPutHandler, VirtualLampPatchHandler,
     VirtualLampTargetStateHandler,
@@ -1198,17 +1198,17 @@ const V3_BANK1: Bank1Layout = Bank1Layout {
     last_offset: Some(0x77),
 };
 
-fn luminaire_handler(harness: &BusHarness, layout: Option<Bank1Layout>) -> PhysicalDeviceLuminaireWriteHandler {
+fn luminaire_handler(harness: &BusHarness, layout: Option<Bank1Layout>) -> PhysicalDeviceMemoryLuminaireHandler {
     let state = TestState::new().with_pd(sample_pd(1, false, false, false));
     let state = match layout {
         Some(layout) => state.with_bank1_layout(1, layout),
         None => state,
     };
     let correlation = Arc::clone(&harness.correlation);
-    PhysicalDeviceLuminaireWriteHandler::new(harness.publisher.clone(), correlation, BusId::default(), Arc::new(state))
+    PhysicalDeviceMemoryLuminaireHandler::new(harness.publisher.clone(), correlation, BusId::default(), Arc::new(state))
 }
 
-fn luminaire_answer(handler: &PhysicalDeviceLuminaireWriteHandler, body: &str) -> (u16, String, String) {
+fn luminaire_answer(handler: &PhysicalDeviceMemoryLuminaireHandler, body: &str) -> (u16, String, String) {
     let request_params = params(&[("adapter_id", "0"), ("short", "1")]);
     let resp = handler.handle_request("PATCH", "", body.as_bytes(), &request_params);
     let status = resp.status;
@@ -1222,7 +1222,7 @@ fn answer(status: u16, error: &str, message: &str) -> (u16, String, String) {
 }
 
 #[test]
-fn luminaire_data_write_refuses_in_the_order_body_read_only_gate_value() {
+fn memory_luminaire_write_refuses_in_the_order_body_read_only_gate_value() {
     let harness = BusHarness::new();
     let v3 = luminaire_handler(&harness, Some(V3_BANK1));
     let cases = [
@@ -1243,7 +1243,7 @@ fn luminaire_data_write_refuses_in_the_order_body_read_only_gate_value() {
 }
 
 #[test]
-fn luminaire_data_write_gates_on_what_the_registry_read_of_bank_1_shows() {
+fn memory_luminaire_write_gates_on_what_the_registry_read_of_bank_1_shows() {
     let harness = BusHarness::new();
     let unread = luminaire_handler(&harness, None);
     assert_eq!(luminaire_answer(&unread, r#"{"year":24}"#), answer(409, "conflict", "bank1_not_part251"));
@@ -1260,7 +1260,7 @@ fn luminaire_data_write_gates_on_what_the_registry_read_of_bank_1_shows() {
 }
 
 #[test]
-fn luminaire_data_write_publishes_one_patch_command_and_answers_202() {
+fn memory_luminaire_write_publishes_one_patch_command_and_answers_202() {
     let harness = BusHarness::new();
     let handler = luminaire_handler(&harness, Some(V3_BANK1));
     let ack = harness.ack_operation_pair();
@@ -1270,9 +1270,9 @@ fn luminaire_data_write_publishes_one_patch_command_and_answers_202() {
     assert_eq!(resp.status, 202);
     let json = response_json(resp);
     assert_eq!(json["type"], "attribute_write");
-    assert!(json["operation_id"].as_str().unwrap_or_default().starts_with("pd-lum-0-1-"));
-    let BusCommandPayload::DaliWriteLuminaireDataCommand(command) = ack.join().expect("ack").payload else {
-        panic!("expected DaliWriteLuminaireDataCommand");
+    assert!(json["operation_id"].as_str().unwrap_or_default().starts_with("pd-memlum-0-1-"));
+    let BusCommandPayload::DaliWriteMemoryLuminaireCommand(command) = ack.join().expect("ack").payload else {
+        panic!("expected DaliWriteMemoryLuminaireCommand");
     };
     let numbers = command.numbers;
     assert_eq!(numbers.patch_mask, LuminaireNumbers::PATCH_YEAR | LuminaireNumbers::PATCH_CCT_KELVIN);

@@ -139,7 +139,7 @@ fn is_untallied_operation(payload: &BusCommandPayload) -> bool {
     matches!(
         payload,
         BusCommandPayload::DaliIdentifyDeviceCommand(_)
-            | BusCommandPayload::DaliWriteLuminaireDataCommand(_)
+            | BusCommandPayload::DaliWriteMemoryLuminaireCommand(_)
             | BusCommandPayload::DaliReplaceDeviceCommand(_)
             | BusCommandPayload::DaliAddressingCommand(_)
             | BusCommandPayload::Dali103ScanCommand(_)
@@ -190,7 +190,7 @@ fn control_gear_adapter_id(payload: &BusCommandPayload) -> Option<u8> {
         BusCommandPayload::DaliDiscoverDevicesCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliReadAttributesCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliReadMemoryBankCommand(cmd) => Some(cmd.registry_adapter_id),
-        BusCommandPayload::DaliWriteLuminaireDataCommand(cmd) => Some(cmd.registry_adapter_id),
+        BusCommandPayload::DaliWriteMemoryLuminaireCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliProgramGroupMembershipCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliProgramSceneCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliCommissioningStepCommand(cmd) => Some(cmd.registry_adapter_id),

@@ -255,7 +255,7 @@ fn verdict(
 
 // IEC 62386-102 §9.10.5
 // DiiA 251 §9.2.3
-pub fn write_luminaire_data(
+pub fn write_memory_luminaire(
     controller: &mut impl DaliApplicationController,
     short_address: u8,
     writes: &[FieldWrite],

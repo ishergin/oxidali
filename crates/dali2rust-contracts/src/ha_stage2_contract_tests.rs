@@ -78,7 +78,7 @@ const FROZEN_COMMAND_ORDER: [&str; 73] = [
     "HclOverrideHoldCommand",
     "Dali103InstanceActionCommand",
     "HclOverrideResumeCommand",
-    "DaliWriteLuminaireDataCommand",
+    "DaliWriteMemoryLuminaireCommand",
 ];
 
 #[test]

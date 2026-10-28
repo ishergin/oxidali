@@ -98,9 +98,9 @@ min/max — только когда ответы так и не устоялис
 разрешает. Членство в группах и сцены сюда не входят — у них свои
 семейства.
 
-**`DaliWriteLuminaireDataCommand`** — поля DiiA Part 251 в банке 1 (перечень, отказы и
+**`DaliWriteMemoryLuminaireCommand`** — поля DiiA Part 251 в банке 1 (перечень, отказы и
 семантика записи — [`physical-devices.md`](../rest-api/resources/physical-devices.md)
-§`PATCH …/luminaire-data`). Своего события записи у неё нет: исход — read-back всего
+§`PATCH …/memory-luminaire`). Своего события записи у неё нет: исход — read-back всего
 банка серией `DaliMemoryBankReadEvent`, тем же путём, что у чтения банка, и сигнал
 операции.
 
@@ -173,7 +173,7 @@ min/max — только когда ответы так и не устоялис
 | `DaliProgramGroupMembershipCommand` | `DaliGroupMembershipProgrammedEvent` | реестр: applied-членство, `GroupMatrixChangedEvent` |
 | `DaliProgramSceneCommand` | `DaliSceneProgrammedEvent` (+ чанки цвета сцены) | реестр: applied-строка, `SceneMatrixChangedEvent` |
 | `DaliWriteAttributesCommand` | `DaliAttributesWrittenEvent` | прямой коммит реестра, `PhysicalDeviceChangedEvent` |
-| `DaliWriteLuminaireDataCommand` | чанки банка 1 (read-back), сигнал операции | реестр: доказательства `memory_luminaire` и `memory_profile` |
+| `DaliWriteMemoryLuminaireCommand` | чанки банка 1 (read-back), сигнал операции | реестр: доказательства `memory_luminaire` и `memory_profile` |
 | `DaliDiscoverDevicesCommand` | прогресс скана, итог сверки, сигнал операции | реестр: записи устройств |
 | `DaliReadAttributesCommand` | чанки атрибутов, чанки банков, исходы по группам | реестр (доказательства) и проектор (runtime) |
 | `DaliBusHealthProbeCommand` | `DaliBusHealthProbedEvent` | счётчики поллера, дисплей |

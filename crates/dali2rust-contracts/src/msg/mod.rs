@@ -105,7 +105,7 @@ pub use commands::DaliBusHealthProbeCommand;
 pub use commands::DaliStopFadeCommand;
 pub use commands::RegistryLevelTransitionCommand;
 pub use commands::{
-    DaliWriteLuminaireDataCommand, LuminaireNumbers, LuminaireText, LuminaireTextField,
+    DaliWriteMemoryLuminaireCommand, LuminaireNumbers, LuminaireText, LuminaireTextField,
     LuminaireTextWrite,
 };
 pub use commands::PollerSettingsUpdateCommand;

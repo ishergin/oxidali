@@ -4,7 +4,7 @@ use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
 use dali2rust_contracts::msg::{ErrorCode, LuminaireNumbers as N};
 use dali2rust_dali_runtime::runtime::controller::DaliController;
 use dali2rust_dali_runtime::runtime::executor::{
-    write_luminaire_data, LuminaireWriteFailure, LOCK_SUBJECT,
+    write_memory_luminaire, LuminaireWriteFailure, LOCK_SUBJECT,
 };
 use dali2rust_domain::dali::banks::luminaire_write::{
     number_patch, planned_writes, text_patch, FieldWrite, LuminaireField, BANK_UNLOCKED,
@@ -117,7 +117,7 @@ fn run_write<T: DaliTransport + Send + 'static>(
     writes: &[FieldWrite],
 ) -> Outcome {
     let mut readback = None;
-    let result = write_luminaire_data(controller, SHORT, writes, |read| {
+    let result = write_memory_luminaire(controller, SHORT, writes, |read| {
         readback = Some(read.bytes.clone());
     });
     Outcome { result, readback }

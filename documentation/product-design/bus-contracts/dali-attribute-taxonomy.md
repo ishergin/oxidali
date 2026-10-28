@@ -17,7 +17,7 @@
 |---|---|---|---|
 | Runtime | `state.*`: питание, уровень, цвет, флаги статуса, сводка отказов, `last_seen_ms`, источник значения, источник последнего DAPC, ошибка отсутствия | только `RegistryRuntimeUpdateCommand` и `RegistryLevelTransitionCommand` ([`commands.md`](commands.md) §Runtime-команды реестра); единственный издатель в проде — проектор state-fanout | нет |
 | Доказательства | `attributes.*`, набор типов устройства, биты capability, Tc-диапазон, random address | чтение атрибутов, discovery, readback записи — реестр напрямую | да, кроме секций вне `attributes` (ниже) |
-| Записываемая конфигурация | подмножество листьев доказательств | `DaliWriteAttributesCommand`; данные светильника банка 1 — `DaliWriteLuminaireDataCommand`; членство и сцены — своими семействами | да (как доказательство) |
+| Записываемая конфигурация | подмножество листьев доказательств | `DaliWriteAttributesCommand`; данные светильника банка 1 — `DaliWriteMemoryLuminaireCommand`; членство и сцены — своими семействами | да (как доказательство) |
 | Метаданные оператора | имя, заметки, `device_type_override` / `color_mode_override`, привязка лампы, гейты Home Assistant | REST PATCH → команды реестра | да |
 
 Правила между классами:

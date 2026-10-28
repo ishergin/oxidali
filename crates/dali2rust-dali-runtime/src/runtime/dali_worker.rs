@@ -74,7 +74,7 @@ pub use counters::DaliWorkerCounters;
 use discovery::handle_discover_devices;
 use membership::handle_program_group_membership;
 use memory_bank::{
-    handle_read_memory_bank, handle_write_luminaire_data, publish_memory_bank_preset, BankRead,
+    handle_read_memory_bank, handle_write_memory_luminaire, publish_memory_bank_preset, BankRead,
     MEMORY_BANK_CHUNK_LOST,
 };
 use program_outcome::{ProgramOutcomeSink, resolve_membership_short};
@@ -227,7 +227,7 @@ dali2rust_contracts::dispatch_bus_commands! {
         },
         mb,
     ),
-    DaliWriteLuminaireDataCommand(command) => handle_write_luminaire_data(
+    DaliWriteMemoryLuminaireCommand(command) => handle_write_memory_luminaire(
         controller,
         &BankRead {
             publisher,

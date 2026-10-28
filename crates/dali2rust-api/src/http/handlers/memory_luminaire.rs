@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use dali2rust_bus::{BusId, BusPublisher};
 use dali2rust_contracts::msg::{
-    DaliWriteLuminaireDataCommand, LuminaireNumbers, LuminaireTextWrite, OperationType, Origin,
+    DaliWriteMemoryLuminaireCommand, LuminaireNumbers, LuminaireTextWrite, OperationType, Origin,
 };
 use dali2rust_domain::dali::banks::luminaire_write::{
     check_writable, number_patch, text_patch, Bank1Layout, Bank1WriteRefusal, FieldKind,
@@ -24,7 +24,7 @@ use crate::http::physical_device_state::PhysicalDeviceHttpState;
 use crate::http::types::HttpResponse;
 
 declare_handler_shell!(
-    PhysicalDeviceLuminaireWriteHandler {
+    PhysicalDeviceMemoryLuminaireHandler {
         publisher: BusPublisher,
         correlation: Arc<CorrelationIdAllocator>,
         bus_id: BusId,
@@ -104,7 +104,7 @@ fn parse_patch(
     Ok(LuminairePatch { numbers: number_patch(&numbers), text })
 }
 
-impl MutatingHandler for PhysicalDeviceLuminaireWriteHandler {
+impl MutatingHandler for PhysicalDeviceMemoryLuminaireHandler {
     type Validated = (u8, u8, LuminairePatch);
     type Executed = String;
 
@@ -127,9 +127,9 @@ impl MutatingHandler for PhysicalDeviceLuminaireWriteHandler {
     }
 
     fn execute(&self, (aid, short, patch): (u8, u8, LuminairePatch)) -> Result<String, HttpResponse> {
-        let op_key = format!("pd-lum-{aid}-{short}-{}", self.correlation.next_id());
+        let op_key = format!("pd-memlum-{aid}-{short}-{}", self.correlation.next_id());
         let workflow = self.correlation.next_id();
-        let command = DaliWriteLuminaireDataCommand {
+        let command = DaliWriteMemoryLuminaireCommand {
             registry_adapter_id: aid,
             short_address: short,
             numbers: patch.numbers,

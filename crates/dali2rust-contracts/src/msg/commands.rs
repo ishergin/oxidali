@@ -1107,13 +1107,13 @@ declare_bus_payloads! {
         target: crate::msg::kinds::HclOverrideTarget::VirtualLamp { virtual_lamp_id: 63 },
     };
 
-    pub struct DaliWriteLuminaireDataCommand {
+    pub struct DaliWriteMemoryLuminaireCommand {
         pub registry_adapter_id: u8,
         pub short_address: u8,
         pub numbers: LuminaireNumbers,
         pub text: Option<LuminaireTextWrite>,
     }
-    budget = DaliWriteLuminaireDataCommand {
+    budget = DaliWriteMemoryLuminaireCommand {
         registry_adapter_id: u8::MAX,
         short_address: 63,
         numbers: crate::msg::payload_test_samples::worst_luminaire_numbers(),

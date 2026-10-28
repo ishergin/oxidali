@@ -12,7 +12,7 @@ pub mod hcl_override;
 pub mod hcl_validate;
 pub mod health;
 pub mod json_command;
-pub mod luminaire_data;
+pub mod memory_luminaire;
 pub mod operation_dispatch;
 pub mod operations;
 pub mod physical_devices;
@@ -38,7 +38,7 @@ pub use groups::{
     GroupsListHandler,
 };
 pub use json_command::{DaliCommandMapper, JsonCommandHandler, LevelMapper, RawMapper};
-pub use luminaire_data::PhysicalDeviceLuminaireWriteHandler;
+pub use memory_luminaire::PhysicalDeviceMemoryLuminaireHandler;
 pub use operations::{OperationGetHandler, OperationsListHandler};
 pub use scenes::{
     SceneApplyHandler, SceneGetHandler, SceneMatrixGetHandler, SceneMatrixWriteHandler,

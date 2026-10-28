@@ -106,26 +106,26 @@ fn script_luminaire_write(world: &mut DaliWorld, offset: u8, bytes: &[u8], kept:
 }
 
 // PD-291
-#[given("a luminaire-data write script for short address 0 storing year 24 that the gear keeps")]
+#[given("a memory-luminaire write script for short address 0 storing year 24 that the gear keeps")]
 async fn given_year_write_kept(world: &mut DaliWorld) {
     script_luminaire_write(world, YEAR_OFFSET, &[WRITTEN_YEAR], true, GearReply::Echo);
 }
 
 // PD-293
-#[given("a luminaire-data write script for short address 0 storing year 24 that the gear reads back unchanged")]
+#[given("a memory-luminaire write script for short address 0 storing year 24 that the gear reads back unchanged")]
 async fn given_year_write_lost(world: &mut DaliWorld) {
     assert_ne!(bank1_part251_bytes()[usize::from(YEAR_OFFSET)], WRITTEN_YEAR);
     script_luminaire_write(world, YEAR_OFFSET, &[WRITTEN_YEAR], false, GearReply::Echo);
 }
 
 // PD-294
-#[given("a luminaire-data write script for short address 0 storing year 24 that the gear does not confirm")]
+#[given("a memory-luminaire write script for short address 0 storing year 24 that the gear does not confirm")]
 async fn given_year_write_unconfirmed(world: &mut DaliWorld) {
     script_luminaire_write(world, YEAR_OFFSET, &[WRITTEN_YEAR], false, GearReply::Silent);
 }
 
 // PD-292
-#[given(regex = r#"^a luminaire-data write script for short address 0 storing the colour "([^"]+)" that the gear keeps$"#)]
+#[given(regex = r#"^a memory-luminaire write script for short address 0 storing the colour "([^"]+)" that the gear keeps$"#)]
 async fn given_colour_write_kept(world: &mut DaliWorld, colour: String) {
     let mut bytes = colour.into_bytes();
     bytes.push(0);
@@ -133,7 +133,7 @@ async fn given_colour_write_kept(world: &mut DaliWorld, colour: String) {
 }
 
 // PD-299
-#[given("a luminaire-data write script for short address 0 whose bank 1 header now declares a vendor format")]
+#[given("a memory-luminaire write script for short address 0 whose bank 1 header now declares a vendor format")]
 async fn given_vendor_header(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
     let mut header = bank1_part251_bytes()[..HEADER_LEN].to_vec();
