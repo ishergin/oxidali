@@ -1038,18 +1038,52 @@ fn a_yes_behind_its_control_reads_every_target_once_with_the_poller_off() {
 
 #[test]
 fn a_sweep_read_is_counted_apart_from_the_cycle_reads() {
-    let mut registry = poller_off_registry(vec![device(1)], true);
-    registry.settings.enabled = true;
-    registry.settings.interval_ms = 100_000;
-    let config = PollerConfig { probe_period: NO_PROBE_PERIOD };
-    let h = spawn_harness_configured(Arc::new(registry), true, Some(AttributeGroupReadOutcome::Success), 1, config);
-
-    wait_until(|| h.counters.reads_completed.load(Ordering::Relaxed) == 1, WAIT);
-    assert_eq!(sweep_reads(&h), 0, "a cycle read is no sweep read");
+    let h = slow_cycle_harness(DaliAttributeGroup::Groups.mask_bit());
     yes_until(&h, 1);
     wait_until(|| h.counters.reads_completed.load(Ordering::Relaxed) == 2, WAIT);
     assert_eq!(sweep_reads(&h), 1);
     assert_eq!(h.counters.reads_published.load(Ordering::Relaxed), 2, "a sweep read is still a published read");
+}
+
+fn slow_cycle_harness(attribute_groups_mask: u8) -> Harness {
+    let mut registry = poller_off_registry(vec![device(1)], true);
+    registry.settings.enabled = true;
+    registry.settings.interval_ms = 100_000;
+    registry.settings.attribute_groups_mask = attribute_groups_mask;
+    let config = PollerConfig { probe_period: NO_PROBE_PERIOD };
+    let h = spawn_harness_configured(Arc::new(registry), true, Some(AttributeGroupReadOutcome::Success), 1, config);
+    wait_until(|| h.counters.reads_completed.load(Ordering::Relaxed) == 1, WAIT);
+    assert_eq!(sweep_reads(&h), 0, "a cycle read is no sweep read");
+    h
+}
+
+#[test]
+fn a_cycle_that_reads_the_status_leaves_a_yes_nothing_to_sweep() {
+    let h = slow_cycle_harness(DaliAttributeGroup::RuntimeStatus.mask_bit());
+    yes_until(&h, 1);
+    assert_eq!(sweeps(&h), 0, "every cycle reads each target's status already; a sweep would read it twice");
+}
+
+#[test]
+fn a_cycle_switched_on_to_read_the_status_takes_over_a_sweep_in_progress() {
+    let port = Arc::new(ReplicatedSettings {
+        devices: vec![device(1), device(2)],
+        settings: Mutex::new(PollerSettingsView { power_cycle_watch: true, ..disabled_fast_settings() }),
+    });
+    let config = PollerConfig { probe_period: NO_PROBE_PERIOD };
+    let h = spawn_harness_configured(Arc::clone(&port) as Arc<dyn PollerReadPort>, true, None, 1, config);
+    yes_until(&h, 1);
+    wait_until(|| h.seen_len() == 1, WAIT);
+    port.settings.lock().expect("settings").enabled = true;
+    publish_settings_changed(&h.publisher);
+    wait_until(|| h.counters.health_probes_published.load(Ordering::Relaxed) >= 1, WAIT);
+    release_with(&h, AttributeGroupReadOutcome::Preempted);
+    wait_until(|| h.seen_len() == 2, HELD_READ_REST);
+    assert_eq!(
+        sweep_reads(&h),
+        1,
+        "the cycle now reads every status, so neither the queued sweep target nor the preempted one is read as a sweep"
+    );
 }
 
 #[test]

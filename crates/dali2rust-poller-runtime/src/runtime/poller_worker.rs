@@ -675,6 +675,24 @@ fn watch_power_cycles(state: &mut PollerState, deps: &PollerWiring, body: &DaliB
     if !state.settings.power_cycle_watch {
         return;
     }
+    if !cycle_reads_status(&state.settings) {
+        sweep_after_power_cycles(state, deps, body);
+    }
+    if body.power_cycle_seen {
+        deps.counters.health_probes_power_failure.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn cycle_reads_status(settings: &PollerSettingsView) -> bool {
+    let polled = DaliAttributeGroup::polled_mask(settings.attribute_groups_mask);
+    settings.enabled && polled & DaliAttributeGroup::RuntimeStatus.mask_bit() != 0
+}
+
+fn sweeps_power_cycles(settings: &PollerSettingsView) -> bool {
+    settings.power_cycle_watch && !cycle_reads_status(settings)
+}
+
+fn sweep_after_power_cycles(state: &mut PollerState, deps: &PollerWiring, body: &DaliBusHealthProbedEvent) {
     let adapter_id = body.registry_adapter_id;
     let listed = if body.power_cycle_seen { listed_shorts(deps, adapter_id) } else { Vec::new() };
     let listed_set = listed.iter().fold(0, |set, short| set | short_bit(*short));
@@ -683,9 +701,6 @@ fn watch_power_cycles(state: &mut PollerState, deps: &PollerWiring, body: &DaliB
         if queue_power_cycle_sweep(state, adapter_id, owed) && order.fresh {
             deps.counters.power_cycle_sweeps.fetch_add(1, Ordering::Relaxed);
         }
-    }
-    if body.power_cycle_seen {
-        deps.counters.health_probes_power_failure.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -720,7 +735,7 @@ fn sweep_holds(state: &PollerState, adapter_id: u8, short_address: u8) -> bool {
 }
 
 fn adopt_settings(state: &mut PollerState, settings: PollerSettingsView) {
-    if !settings.power_cycle_watch {
+    if !sweeps_power_cycles(&settings) {
         state.sweep_queue.clear();
         state.power_cycles = PowerCycleWatch::default();
     }
@@ -798,7 +813,7 @@ fn read_verdict(body: &DaliAttributeReadOutcomesEvent) -> ReadVerdict {
 fn requeue_target(state: &mut PollerState, target: PollTarget) {
     match target.purpose {
         ReadPurpose::Cycle => state.queue.push_back(target),
-        ReadPurpose::PowerCycleSweep if state.settings.power_cycle_watch => {
+        ReadPurpose::PowerCycleSweep if sweeps_power_cycles(&state.settings) => {
             state.sweep_queue.push_back(target);
         }
         ReadPurpose::PowerCycleSweep => {}
