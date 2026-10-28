@@ -1,11 +1,20 @@
-import { useState } from 'preact/hooks'
+import { useEffect, useState } from 'preact/hooks'
 import { api } from '../api/client'
 import type { PhysicalDeviceSummary, Policies, PolicyException } from '../api/types'
 import { Card, FieldRow, Switch, EditableText } from '../components/ui'
 import { ADAPTER, pad2 } from '../format'
 import { usePoll, useSettingsDraft } from '../hooks'
 import { opCommitted, runOp } from '../toast'
-import { exceptionKey, policyPatch, sortedExceptions } from './policies-patch'
+import {
+  exceptionKey,
+  policyOnScreen,
+  policyPatch,
+  sendOnFreshRead,
+  sortedExceptions,
+  withEdit,
+  type PolicyEdits,
+  type PolicyFields,
+} from './policies-patch'
 
 const MAX_POLICY_EXCEPTIONS = 32
 
@@ -79,20 +88,24 @@ function ExceptionsCard({
 }
 
 export function PoliciesScreen() {
-  const { data, current, busy, setDraft, discard, save } = useSettingsDraft(() => api.policies())
+  const { data, busy, save } = useSettingsDraft(() => api.policies())
   const { data: list } = usePoll(() => api.physicalDevices(ADAPTER))
-  const [base, setBase] = useState<Policies | null>(null)
+  const [edits, setEdits] = useState<PolicyEdits | null>(null)
+  useEffect(() => {
+    if (edits && data && withEdit(edits, {}, data) === null) setEdits(null)
+  }, [edits, data])
 
   if (!data) return <div class="empty">Loading policies…</div>
-  const s = current ?? data
-  const edit = (next: Policies) => {
-    if (current === data) setBase(data)
-    setDraft(next)
-  }
-  const patch = policyPatch(current === data ? data : (base ?? data), s, data)
-  const dirty = Object.keys(patch).length > 0
+  const s = policyOnScreen(edits ?? {}, data)
+  const edit = (change: Partial<PolicyFields>) => setEdits(withEdit(edits ?? {}, change, data))
+  const discard = () => setEdits(null)
+  const dirty = edits !== null && Object.keys(policyPatch(edits, data)).length > 0
 
-  const apply = () => void save('Policies', () => api.patchPolicies(patch))
+  const apply = () =>
+    void save('Policies', async () => {
+      await sendOnFreshRead(edits ?? {}, api.policies, api.patchPolicies)
+      discard()
+    })
 
   const writeToAll = () =>
     void (async () => {
@@ -136,13 +149,13 @@ export function PoliciesScreen() {
           label="System failure level"
           hint="Where the gear goes when the bus has been silent for more than 500 ms (102 §9.12). Empty = unmanaged: this controller writes it on no device. 0–254."
         >
-          {level(s.system_failure_level, (n) => edit({ ...s, system_failure_level: n }))}
+          {level(s.system_failure_level, (n) => edit({ system_failure_level: n }))}
         </FieldRow>
         <FieldRow
           label="Power-on level"
           hint="Where the gear goes when mains returns. Empty = unmanaged. 0–254."
         >
-          {level(s.power_on_level, (n) => edit({ ...s, power_on_level: n }))}
+          {level(s.power_on_level, (n) => edit({ power_on_level: n }))}
         </FieldRow>
         <FieldRow
           label="Write to a device as it is discovered"
@@ -150,7 +163,7 @@ export function PoliciesScreen() {
         >
           <Switch
             on={s.apply_on_discovery}
-            onToggle={() => edit({ ...s, apply_on_discovery: !s.apply_on_discovery })}
+            onToggle={() => edit({ apply_on_discovery: !s.apply_on_discovery })}
           />
         </FieldRow>
       </Card>
@@ -158,7 +171,7 @@ export function PoliciesScreen() {
       <ExceptionsCard
         policy={s}
         devices={list?.physical_devices ?? []}
-        onChange={(exceptions) => edit({ ...s, exceptions })}
+        onChange={(exceptions) => edit({ exceptions })}
       />
 
       <Card title="Write it to the installation">

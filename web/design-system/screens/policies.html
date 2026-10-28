@@ -238,8 +238,10 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
        registry record it names, so it moves with an address change and leaves
        with a forgotten device. An entry whose address holds no device is kept
        until the operator removes it, and says so rather than looking like a
-       named device. The list is part of the draft: Apply sends it with the
-       levels, sorted by address as the controller stores it. -->
+       named device. Apply re-reads the policy and sends only what the operator
+       changed against that read: a field left alone shows what the controller
+       holds, and an exception edit is replayed as additions and removals on the
+       list just read, sorted by address as the controller stores it. -->
   <div class="panel">
     <h2>Exceptions</h2>
     <div class="body">
