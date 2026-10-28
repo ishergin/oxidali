@@ -35,6 +35,8 @@ pub struct PhysicalDeviceCoreDto {
     pub capabilities: CapabilityFlagsDto,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color_temperature_range: Option<ColorTemperatureRangeDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_mismatch: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -83,5 +85,6 @@ pub(crate) fn core_view_to_dto(view: PhysicalDeviceCoreView) -> PhysicalDeviceCo
             min_kelvin: r.min_kelvin,
             max_kelvin: r.max_kelvin,
         }),
+        policy_mismatch: view.policy_mismatch,
     }
 }

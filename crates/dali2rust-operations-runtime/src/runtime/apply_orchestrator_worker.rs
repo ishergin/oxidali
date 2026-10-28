@@ -139,6 +139,7 @@ fn run_apply<C: PacedCell>(
 
 impl PacedCell for GroupApplyDiffCell {
     const OUTCOME_EVENT: &'static str = "DaliGroupMembershipProgrammedEvent";
+    const SKIP: ErrorCode = ErrorCode::VlUnbound;
 
     fn is_bound(&self) -> bool {
         self.binding_short.is_some()
@@ -197,7 +198,7 @@ impl PacedCell for GroupApplyDiffCell {
                 DaliProgramTarget::VirtualLamp { virtual_lamp_id }
                     if virtual_lamp_id == self.virtual_lamp_id
             );
-        matches.then(|| hard_error_of(body.error.as_ref()))
+        matches.then(|| hard_error_of(body.error.as_ref(), Self::SKIP))
     }
 
     fn describe(&self) -> String {
@@ -207,9 +208,10 @@ impl PacedCell for GroupApplyDiffCell {
 
 impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
     const OUTCOME_EVENT: &'static str = "DaliAttributesWrittenEvent";
+    const SKIP: ErrorCode = ErrorCode::PolicyException;
 
     fn is_bound(&self) -> bool {
-        true
+        !self.excepted
     }
 
     fn program_command(&self, run: &RunState<'_>) -> CommandEnvelope {
@@ -273,7 +275,10 @@ impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
         if body.short_address != self.short_address {
             return None;
         }
-        if let Some(error) = hard_error_of(body.error.as_ref()) {
+        if body.error.as_ref().is_some_and(|error| error.code == Self::SKIP) {
+            return Some(None);
+        }
+        if let Some(error) = hard_error_of(body.error.as_ref(), Self::SKIP) {
             return Some(Some(error));
         }
         let wanted_failure = self.system_failure_level.is_none()
@@ -295,6 +300,7 @@ impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
 
 impl PacedCell for SceneApplyDiffRow {
     const OUTCOME_EVENT: &'static str = "DaliSceneProgrammedEvent";
+    const SKIP: ErrorCode = ErrorCode::VlUnbound;
 
     fn is_bound(&self) -> bool {
         self.binding_short.is_some()
@@ -355,7 +361,7 @@ impl PacedCell for SceneApplyDiffRow {
                 DaliProgramTarget::VirtualLamp { virtual_lamp_id }
                     if virtual_lamp_id == self.virtual_lamp_id
             );
-        matches.then(|| hard_error_of(body.error.as_ref()))
+        matches.then(|| hard_error_of(body.error.as_ref(), Self::SKIP))
     }
 
     fn describe(&self) -> String {
@@ -363,10 +369,10 @@ impl PacedCell for SceneApplyDiffRow {
     }
 }
 
-fn hard_error_of(error: Option<&CompactErrorPayload>) -> Option<(ErrorCode, String)> {
+fn hard_error_of(error: Option<&CompactErrorPayload>, skip: ErrorCode) -> Option<(ErrorCode, String)> {
     match error {
         None => None,
-        Some(error) if error.code == ErrorCode::VlUnbound => None,
+        Some(error) if error.code == skip => None,
         Some(error) => Some((error.code, error.message.as_str().to_string())),
     }
 }
@@ -395,6 +401,7 @@ mod tests {
             system_failure_level: None,
             power_on_level: Some(200),
             known_device_types: None,
+            excepted: false,
         };
 
     fn written(power_on_level: Option<u8>, error: Option<CompactErrorPayload>) -> EventEnvelope {

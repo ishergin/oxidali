@@ -74,6 +74,23 @@ pub struct OperationSceneApplyResultView {
     pub failed_total: u16,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperationPolicyApplyOutcomeView {
+    pub short_address: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperationPolicyApplyResultView {
+    pub written: Vec<OperationPolicyApplyOutcomeView>,
+    pub skipped: Vec<OperationPolicyApplyOutcomeView>,
+    pub failed: Vec<OperationPolicyApplyOutcomeView>,
+    pub written_total: u16,
+    pub skipped_total: u16,
+    pub failed_total: u16,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OperationApplyResultView {
@@ -83,6 +100,7 @@ pub enum OperationApplyResultView {
     AddressChange(OperationAddressChangeResultView),
     ReplaceDevice(OperationReplaceDeviceResultView),
     HaDiscoveryPublish(OperationHaDiscoveryResultView),
+    PolicyApply(OperationPolicyApplyResultView),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,6 +148,13 @@ impl OperationApplyResultView {
     pub fn as_replace_device(&self) -> Option<&OperationReplaceDeviceResultView> {
         match self {
             Self::ReplaceDevice(result) => Some(result),
+            _ => None,
+        }
+    }
+
+    pub fn as_policy_apply(&self) -> Option<&OperationPolicyApplyResultView> {
+        match self {
+            Self::PolicyApply(result) => Some(result),
             _ => None,
         }
     }

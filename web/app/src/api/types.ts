@@ -267,6 +267,7 @@ export interface PhysicalDeviceCore {
   state: RuntimeState
   capabilities: CapabilityFlags
   color_temperature_range?: ColorTemperatureRange | null
+  policy_mismatch?: boolean
 }
 
 export interface PhysicalDeviceSummary {
@@ -373,11 +374,17 @@ export interface RedundancyState {
   transitions: RedundancyTransition[]
 }
 
+export interface PolicyException {
+  adapter_id: number
+  short_address: number
+}
+
 export interface Policies {
   system_failure_level: number | null
   power_on_level: number | null
   apply_on_discovery: boolean
   manages_anything: boolean
+  exceptions: PolicyException[]
 }
 
 export interface ConfigSliceRow {
@@ -620,6 +627,13 @@ export interface SceneApplyOutcome {
   reason?: string
 }
 
+export interface PolicyApplyOutcome {
+  short_address: number
+  reason?: string
+}
+
+export type ApplyOutcome = GroupApplyOutcome | SceneApplyOutcome | PolicyApplyOutcome
+
 export interface Operation {
   operation_id: string
   type: string
@@ -627,12 +641,12 @@ export interface Operation {
   error?: { code: string; message?: string }
   result?: {
     programmed?: GroupApplyOutcome[]
-    skipped?: GroupApplyOutcome[]
-    failed?: GroupApplyOutcome[]
+    skipped?: ApplyOutcome[]
+    failed?: ApplyOutcome[]
     programmed_total?: number
     skipped_total?: number
     failed_total?: number
-    written?: SceneApplyOutcome[]
+    written?: (SceneApplyOutcome | PolicyApplyOutcome)[]
     updated?: SceneApplyOutcome[]
     cleared?: SceneApplyOutcome[]
     written_total?: number

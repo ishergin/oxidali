@@ -30,6 +30,7 @@ pub enum ErrorCode {
     VerifyUnanswered = 22,
     VerifyContended = 23,
     ReadContended = 24,
+    PolicyException = 25,
 }
 
 impl ErrorCode {
@@ -60,6 +61,7 @@ impl ErrorCode {
             Self::VerifyUnanswered => "verify_unanswered",
             Self::VerifyContended => "verify_contended",
             Self::ReadContended => "read_contended",
+            Self::PolicyException => "policy_exception",
         }
     }
 }

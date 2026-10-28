@@ -780,6 +780,7 @@ const PD_READ_ONLY_KEYS: &[&str] = &[
     "color_mode_effective",
     "color_mode_source",
     "color_temperature_range",
+    "policy_mismatch",
 ];
 
 fn validate_pd_patch_keys(obj: &serde_json::Map<String, serde_json::Value>) -> Result<(), HttpResponse> {

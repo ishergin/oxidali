@@ -136,6 +136,18 @@ pub(crate) struct ReplacedEntities {
 }
 
 impl ReplacedEntities {
+    pub(crate) fn devices(keys: impl Iterator<Item = (u8, u8)>) -> Self {
+        let mut devices = BTreeMap::new();
+        for (adapter_id, short) in keys {
+            or_into(&mut devices, adapter_id, short_bit(short));
+        }
+        Self { devices, ..Self::default() }
+    }
+
+    pub(crate) fn policies() -> Self {
+        Self { records: POLICIES, ..Self::default() }
+    }
+
     fn note(&mut self, inner: &Inner, key: SliceKey) {
         if let Some(record) = record_bit(key) {
             self.records |= record;

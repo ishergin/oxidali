@@ -888,12 +888,16 @@ fn wire_policies(
         .with_handler(RouteKey::PoliciesGet, read(state, PoliciesGetHandler::new))
         .with_handler(
             RouteKey::PoliciesPatch,
-            mutation(
-                bus,
-                state,
-                &registry.policies_apply_watch,
-                PoliciesPatchHandler::new,
-            ),
+            Box::new(PoliciesPatchHandler::new(
+                bus.publisher.clone(),
+                Arc::clone(&bus.slots),
+                Arc::clone(&bus.correlation),
+                Arc::clone(state),
+                Arc::clone(&registry.policies_apply_watch),
+                Arc::clone(&registry.physical_state),
+                bus.bus_id,
+                bus.confirmation_timeout_ms,
+            )),
         )
 }
 

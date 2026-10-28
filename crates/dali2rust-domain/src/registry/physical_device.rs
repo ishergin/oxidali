@@ -202,6 +202,7 @@ pub struct PhysicalDeviceCoreView {
     pub state: PhysicalDeviceStateView,
     pub capabilities: CapabilityFlagsView,
     pub color_temperature_range: Option<ColorTemperatureRangeView>,
+    pub policy_mismatch: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

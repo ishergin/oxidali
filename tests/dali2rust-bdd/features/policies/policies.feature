@@ -17,6 +17,7 @@ Feature: Policies — what a luminaire does without a controller
     And the JSON pointer "/power_on_level" should be null
     And the JSON boolean field "apply_on_discovery" should be false
     And the JSON boolean field "manages_anything" should be false
+    And the JSON field "exceptions" should equal []
 
   @id:POLICY-002
   Scenario: Choosing a level makes the policy manage something
@@ -127,7 +128,7 @@ Feature: Policies — what a luminaire does without a controller
     Then the response status should be 422
     And the JSON error should be "unsupported_field"
 
-  @id:POLICY-013 @wip
+  @id:POLICY-013
   Scenario: Exceptions start empty and a PATCH stores the excepted devices in address order
     Given adapter 0 has discovered physical devices 0 and 1
     When I send a GET request to "/api/v1/policies"
@@ -138,7 +139,7 @@ Feature: Policies — what a luminaire does without a controller
     When I send a GET request to "/api/v1/policies"
     Then the JSON field "exceptions" should equal [{"adapter_id":0,"short_address":0},{"adapter_id":0,"short_address":1}]
 
-  @id:POLICY-014 @wip
+  @id:POLICY-014
   Scenario: An exception naming a device the registry does not hold is refused
     Given adapter 0 has discovered physical devices 0 and 1
     When I PATCH JSON {"exceptions":[{"adapter_id":0,"short_address":7}]} to "/api/v1/policies"
@@ -147,14 +148,14 @@ Feature: Policies — what a luminaire does without a controller
     When I send a GET request to "/api/v1/policies"
     Then the JSON field "exceptions" should equal []
 
-  @id:POLICY-015 @wip
+  @id:POLICY-015
   Scenario: A device named twice is refused rather than stored once
     Given adapter 0 has discovered physical devices 0 and 1
     When I PATCH JSON {"exceptions":[{"adapter_id":0,"short_address":1},{"adapter_id":0,"short_address":1}]} to "/api/v1/policies"
     Then the response status should be 422
     And the JSON error should be "duplicate_exception"
 
-  @id:POLICY-016 @wip
+  @id:POLICY-016
   Scenario: A list longer than the limit is refused before any device is looked up
     When I PATCH a policy exception list naming 33 devices
     Then the response status should be 422
@@ -163,7 +164,7 @@ Feature: Policies — what a luminaire does without a controller
     Then the response status should be 422
     And the JSON error should be "unknown_device"
 
-  @id:POLICY-017 @wip
+  @id:POLICY-017
   Scenario: An apply writes nothing to an excepted device and names it as skipped
     Given adapter 0 has discovered physical devices 0 and 1
     When I PATCH JSON {"system_failure_level":0,"power_on_level":0,"exceptions":[{"adapter_id":0,"short_address":1}]} to "/api/v1/policies"
@@ -178,7 +179,7 @@ Feature: Policies — what a luminaire does without a controller
     And the DALI mock transport should have sent no SET POWER ON LEVEL or SET SYSTEM FAILURE LEVEL to short address 1
     And all scripted DALI exchanges should be consumed without errors
 
-  @id:POLICY-018 @wip
+  @id:POLICY-018
   Scenario: A discovery-started apply skips an excepted device as well
     Given adapter 0 has discovered physical devices 0 and 1
     When I PATCH JSON {"system_failure_level":0,"power_on_level":0,"apply_on_discovery":true,"exceptions":[{"adapter_id":0,"short_address":1}]} to "/api/v1/policies"
@@ -192,7 +193,7 @@ Feature: Policies — what a luminaire does without a controller
     And the DALI mock transport should have sent no SET POWER ON LEVEL or SET SYSTEM FAILURE LEVEL to short address 1
     And all scripted DALI exchanges should be consumed without errors
 
-  @id:POLICY-019 @wip
+  @id:POLICY-019
   Scenario: A read that finds a managed level drifted flags the device, and a read that matches clears it
     Given adapter 0 has discovered physical devices 0 and 1
     When I PATCH JSON {"system_failure_level":254,"power_on_level":100} to "/api/v1/policies"
@@ -210,7 +211,7 @@ Feature: Policies — what a luminaire does without a controller
     When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
     Then the JSON pointer "/policy_mismatch" should be false
 
-  @id:POLICY-020 @wip
+  @id:POLICY-020
   Scenario: A confirmed write of the policy clears the drift flag a read raised
     Given adapter 0 has discovered physical devices 0 and 1
     When I PATCH JSON {"system_failure_level":0,"power_on_level":0} to "/api/v1/policies"
@@ -228,7 +229,7 @@ Feature: Policies — what a luminaire does without a controller
     When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
     Then the JSON pointer "/policy_mismatch" should be false
 
-  @id:POLICY-021 @wip
+  @id:POLICY-021
   Scenario: The drift flag is absent while the policy manages nothing and for an excepted device
     Given adapter 0 has discovered physical devices 0 and 1
     Given a common-102 attribute-read script where short address 0 holds power-on level 50 and system-failure level 254
@@ -246,7 +247,7 @@ Feature: Policies — what a luminaire does without a controller
     When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
     Then the JSON pointer "/policy_mismatch" should be absent
 
-  @id:POLICY-022 @wip
+  @id:POLICY-022
   Scenario: A policy change announces on the WebSocket each device whose drift flag it moved
     Given adapter 0 has discovered physical devices 0 and 1
     Given a common-102 attribute-read script where short address 0 holds power-on level 50 and system-failure level 254
