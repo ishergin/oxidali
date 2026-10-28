@@ -703,7 +703,7 @@ fn upper_bank_length(last_address: u8, preset: MemoryBankReadPreset) -> u16 {
 
 mod write;
 
-pub use write::{write_memory_luminaire, LuminaireWriteFailure, LOCK_SUBJECT, READBACK_SUBJECT};
+pub use write::{write_memory_luminaire, LuminaireWriteFailure, LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT};
 
 #[cfg(test)]
 mod tests;

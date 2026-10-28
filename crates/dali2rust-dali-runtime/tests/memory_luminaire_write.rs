@@ -4,7 +4,7 @@ use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
 use dali2rust_contracts::msg::{ErrorCode, LuminaireNumbers as N};
 use dali2rust_dali_runtime::runtime::controller::DaliController;
 use dali2rust_dali_runtime::runtime::executor::{
-    write_memory_luminaire, LuminaireWriteFailure, LOCK_SUBJECT, READBACK_SUBJECT,
+    write_memory_luminaire, LuminaireWriteFailure, LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT,
 };
 use dali2rust_domain::dali::banks::luminaire_write::{
     number_patch, planned_writes, text_patch, FieldWrite, LuminaireField, BANK_UNLOCKED,
@@ -33,9 +33,11 @@ const UNITS_PER_SESSION: usize = 2;
 const MULTI_SESSION_TEXT: &str = "fixture lamp";
 const LOCK_FRAMES_PER_SESSION: usize = 2;
 
+#[derive(Clone)]
 enum Interruption {
     Operator(Arc<WireActivity>),
     ForeignCommand(u16),
+    LostAnswer,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -46,31 +48,41 @@ enum Trigger {
 
 struct Interrupting {
     sim: SimDaliTransport,
-    interruption: Interruption,
+    interruptions: Vec<Interruption>,
     trigger: Trigger,
     sent: usize,
 }
 
 impl Interrupting {
-    fn new(sim: SimDaliTransport, interruption: Interruption, trigger: Trigger) -> Self {
-        Self { sim, interruption, trigger, sent: 0 }
+    fn new(sim: SimDaliTransport, interruptions: Vec<Interruption>, trigger: Trigger) -> Self {
+        Self { sim, interruptions, trigger, sent: 0 }
     }
 
-    fn after(&mut self, frame: u16) {
+    fn after(&mut self, frame: u16) -> bool {
         self.sent += 1;
         let fires = match self.trigger {
             Trigger::Frame(at) => frame == at,
             Trigger::Nth(at) => self.sent == at,
         };
         if !fires {
-            return;
+            return false;
         }
-        match &self.interruption {
-            Interruption::Operator(gate) => gate.note_arrival(WirePriority::Interactive),
-            Interruption::ForeignCommand(command) => {
-                self.sim.fleet_mut().exchange(*command, false);
+        let mut lost = false;
+        for interruption in &self.interruptions {
+            match interruption {
+                Interruption::Operator(gate) => gate.note_arrival(WirePriority::Interactive),
+                Interruption::ForeignCommand(command) => {
+                    self.sim.fleet_mut().exchange(*command, false);
+                }
+                Interruption::LostAnswer => lost = true,
             }
         }
+        lost
+    }
+
+    fn heard<E>(&mut self, frame: u16, outcome: Result<TransferOutcome, E>) -> Result<TransferOutcome, E> {
+        let lost = self.after(frame);
+        outcome.map(|heard| if lost { TransferOutcome::NoAnswer } else { heard })
     }
 }
 
@@ -79,7 +91,7 @@ impl DaliTransport for Interrupting {
 
     fn send_forward_frame(&mut self, frame: u16) -> Result<(), Self::Error> {
         let sent = self.sim.send_forward_frame(frame);
-        self.after(frame);
+        let _ = self.after(frame);
         sent
     }
 
@@ -93,8 +105,7 @@ impl DaliTransport for Interrupting {
 
     fn exchange_frame(&mut self, frame: u16, expects_backward: bool) -> Result<TransferOutcome, Self::Error> {
         let outcome = self.sim.exchange_frame(frame, expects_backward);
-        self.after(frame);
-        outcome
+        self.heard(frame, outcome)
     }
 
     fn exchange_frame_with_settle(
@@ -104,8 +115,7 @@ impl DaliTransport for Interrupting {
         min_idle_us: u32,
     ) -> Result<TransferOutcome, Self::Error> {
         let outcome = self.sim.exchange_frame_with_settle(frame, expects_backward, min_idle_us);
-        self.after(frame);
-        outcome
+        self.heard(frame, outcome)
     }
 }
 
@@ -295,15 +305,18 @@ fn a_text_spanning_several_sessions_opens_and_closes_the_lock_in_each() {
 fn write_under(
     granularity: YieldGranularity,
     trigger: Trigger,
-    interruption: Interruption,
+    interruptions: &[Interruption],
     writes: &[FieldWrite],
 ) -> (Outcome, SimDaliTransport) {
-    let gate = match &interruption {
-        Interruption::Operator(gate) => Arc::clone(gate),
-        Interruption::ForeignCommand(_) => Arc::new(WireActivity::new()),
-    };
+    let gate = interruptions
+        .iter()
+        .find_map(|interruption| match interruption {
+            Interruption::Operator(gate) => Some(Arc::clone(gate)),
+            Interruption::ForeignCommand(_) | Interruption::LostAnswer => None,
+        })
+        .unwrap_or_else(|| Arc::new(WireActivity::new()));
     let sim = luminaire_gear(FOUND_LOCK, false);
-    let bus = Arc::new(Mutex::new(Interrupting::new(sim, interruption, trigger)));
+    let bus = Arc::new(Mutex::new(Interrupting::new(sim, interruptions.to_vec(), trigger)));
     let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
     let lease = WireLease::new(gate, WirePriority::Attended, granularity);
     let outcome = controller.with_wire_lease(lease, |c| run_write(c, writes));
@@ -319,7 +332,7 @@ fn an_operator_arriving_mid_session_waits_for_the_lock_to_close() {
     let trigger = emptying;
     let operator = Interruption::Operator(Arc::new(WireActivity::new()));
     let writes = text("luminaire_colour", MULTI_SESSION_TEXT);
-    let (outcome, sim) = write_under(YieldGranularity::Step, Trigger::Frame(trigger), operator, &writes);
+    let (outcome, sim) = write_under(YieldGranularity::Step, Trigger::Frame(trigger), &[operator], &writes);
 
     let sim = &sim;
     assert_eq!(
@@ -346,7 +359,7 @@ fn a_foreign_command_between_units_costs_nothing_because_each_unit_enables_writi
     let foreign = DaliCommand::Standard { address: DaliAddress::Broadcast, command: StandardCommand::QueryStatus };
     let interruption = Interruption::ForeignCommand(foreign.to_forward_frame().raw());
     let writes = text("luminaire_colour", MULTI_SESSION_TEXT);
-    let (outcome, sim) = write_under(YieldGranularity::Step, Trigger::Frame(trigger), interruption, &writes);
+    let (outcome, sim) = write_under(YieldGranularity::Step, Trigger::Frame(trigger), &[interruption], &writes);
 
     assert_eq!(shape(outcome.result), Ok(()), "a foreign frame between units clears writeEnableState");
     assert_eq!(location(&sim, LUMINAIRE_COLOUR.offset + UNIT_BYTES as u8), Some(MULTI_SESSION_TEXT.as_bytes()[UNIT_BYTES]));
@@ -383,7 +396,7 @@ fn a_text_stopped_after_any_write_reads_old_empty_or_new() {
     let writes_at = frames.iter().enumerate().filter(|(_, frame)| is_write_location(**frame));
     for (index, _) in writes_at {
         let operator = Interruption::Operator(Arc::new(WireActivity::new()));
-        let (_, sim) = write_under(YieldGranularity::Step, Trigger::Nth(index + 1), operator, &writes);
+        let (_, sim) = write_under(YieldGranularity::Step, Trigger::Nth(index + 1), &[operator], &writes);
         let seen = colour_on_the_gear(&sim);
         assert!(
             seen == old || seen.is_empty() || seen == new,
@@ -397,7 +410,7 @@ fn a_text_stopped_after_any_write_reads_old_empty_or_new() {
 
 fn position_of(frames: &[u16], frame: u16, last: bool) -> usize {
     let mut positions = frames.iter().enumerate().filter(|(_, sent)| **sent == frame).map(|(index, _)| index + 1);
-    let found = if last { positions.last() } else { positions.next() };
+    let found = if last { positions.next_back() } else { positions.next() };
     found.expect("the frame is on the wire")
 }
 
@@ -412,7 +425,7 @@ fn a_frame_lease_never_leaves_the_bank_open_whichever_frame_the_operator_follows
     assert!(opened < closed);
     for nth in opened..=closed {
         let operator = Interruption::Operator(Arc::new(WireActivity::new()));
-        let (outcome, sim) = write_under(YieldGranularity::Frame, Trigger::Nth(nth), operator, &writes);
+        let (outcome, sim) = write_under(YieldGranularity::Frame, Trigger::Nth(nth), &[operator], &writes);
         assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK), "operator after frame {nth}");
         assert_eq!(location(&sim, YEAR_OFFSET), Some(YEAR), "the started session finishes, frame {nth}");
         assert_eq!(
@@ -421,4 +434,39 @@ fn a_frame_lease_never_leaves_the_bank_open_whichever_frame_the_operator_follows
             "the frame lease yields at the read-back, frame {nth}"
         );
     }
+}
+
+// IEC 62386-102 §9.10.5
+#[test]
+fn a_restore_whose_answer_is_lost_is_proved_by_the_read_back() {
+    let relock = special(SpecialCommand::WriteMemoryLocation(FOUND_LOCK));
+    let (outcome, sim) = write_under(YieldGranularity::Step, Trigger::Frame(relock), &[Interruption::LostAnswer], &year(YEAR));
+
+    assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK), "the gear kept the restore it did not answer");
+    assert_eq!(shape(outcome.result), Ok(()), "the read-back, not the lost answer, says what is written");
+}
+
+// IEC 62386-102 §9.10.5
+#[test]
+fn a_field_whose_answer_is_lost_is_proved_by_the_read_back() {
+    let field_byte = special(SpecialCommand::WriteMemoryLocation(YEAR));
+    let (outcome, sim) = write_under(YieldGranularity::Step, Trigger::Frame(field_byte), &[Interruption::LostAnswer], &year(YEAR));
+
+    assert_eq!(location(&sim, YEAR_OFFSET), Some(YEAR));
+    assert_eq!(shape(outcome.result), Ok(()));
+}
+
+// IEC 62386-102 §9.10.2
+#[test]
+fn a_lost_restore_the_read_back_cannot_check_says_the_bank_may_be_open() {
+    let relock = special(SpecialCommand::WriteMemoryLocation(FOUND_LOCK));
+    let operator = Interruption::Operator(Arc::new(WireActivity::new()));
+    let both = [Interruption::LostAnswer, operator];
+    let (outcome, _) = write_under(YieldGranularity::Frame, Trigger::Frame(relock), &both, &year(YEAR));
+
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::VerifyUnanswered, RELOCK_SUBJECT),
+        "the read-back yielded, so nothing shows the lock went back"
+    );
 }

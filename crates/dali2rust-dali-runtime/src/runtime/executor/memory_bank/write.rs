@@ -31,6 +31,8 @@ pub const LOCK_SUBJECT: &str = "bank1_lock_byte";
 
 pub const READBACK_SUBJECT: &str = "bank1_readback";
 
+pub const RELOCK_SUBJECT: &str = "bank1_lock_not_restored";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LuminaireWriteFailure {
     pub code: ErrorCode,
@@ -189,24 +191,46 @@ fn write_units(
     session.iter().try_for_each(|unit| write_unit(controller, address, *unit))
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct WireOutcome {
+    stopped: Option<LuminaireWriteFailure>,
+    unrestored: Option<LuminaireWriteFailure>,
+}
+
+impl WireOutcome {
+    fn stopped_at(written: Result<(), LuminaireWriteFailure>) -> Self {
+        Self { stopped: written.err(), unrestored: None }
+    }
+
+    fn preempted(self) -> Option<LuminaireWriteFailure> {
+        self.stopped.filter(|failure| failure.is_preempted())
+    }
+
+    fn named_after(self, unit: Option<&Unit<'_>>) -> Self {
+        let stopped = match (self.preempted(), unit) {
+            (Some(failure), Some(unit)) => Some(LuminaireWriteFailure::new(failure.code, unit.subject)),
+            _ => self.stopped,
+        };
+        Self { stopped, ..self }
+    }
+}
+
 fn write_session(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     lock: u8,
     session: &[Unit<'_>],
-) -> Result<(), LuminaireWriteFailure> {
+) -> WireOutcome {
     if lock == BANK_UNLOCKED {
-        return write_units(controller, address, session);
+        return WireOutcome::stopped_at(write_units(controller, address, session));
     }
     let written = open_lock(controller, address).and_then(|()| write_units(controller, address, session));
     if written.is_err_and(LuminaireWriteFailure::is_preempted) {
-        return written;
+        return WireOutcome::stopped_at(written);
     }
-    let closed = write_lock_byte(controller, address, lock);
-    match written {
-        Err(failure) if failure.subject == LOCK_SUBJECT => Err(failure),
-        written => closed.and(written),
-    }
+    let restored = write_lock_byte(controller, address, lock);
+    let unrestored = restored.err().map(|failure| LuminaireWriteFailure::new(failure.code, RELOCK_SUBJECT));
+    WireOutcome { stopped: written.err(), unrestored }
 }
 
 fn write_sessions(
@@ -214,15 +238,15 @@ fn write_sessions(
     address: DaliAddress,
     lock: u8,
     writes: &[FieldWrite],
-) -> Result<(), LuminaireWriteFailure> {
+) -> WireOutcome {
     let stages: Vec<WriteStage> = writes.iter().flat_map(FieldWrite::stages).collect();
-    units(&stages).chunks(UNITS_PER_SESSION).try_for_each(|session| {
-        let written = controller.step(|c| write_session(c, address, lock, session));
-        written.map_err(|failure| match session.first() {
-            Some(unit) if failure.is_preempted() => LuminaireWriteFailure::new(failure.code, unit.subject),
-            _ => failure,
-        })
-    })
+    for session in units(&stages).chunks(UNITS_PER_SESSION) {
+        let outcome = controller.step(|c| write_session(c, address, lock, session));
+        if outcome != WireOutcome::default() {
+            return outcome.named_after(session.first());
+        }
+    }
+    WireOutcome::default()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -252,26 +276,20 @@ fn read_header(
 }
 
 fn verdict(
-    written: Result<(), LuminaireWriteFailure>,
+    wire: WireOutcome,
     readback: &MemoryReadExecution,
     writes: &[FieldWrite],
     lock: u8,
 ) -> Result<(), LuminaireWriteFailure> {
-    if let Err(failure) = written {
-        if failure.subject == LOCK_SUBJECT {
-            return Err(failure);
-        }
-    }
-    let lock_seen = readback.bytes.get(usize::from(BANK_LOCK_BYTE)).copied();
-    if readback.error.is_none() && lock_seen != Some(lock) {
-        return Err(LuminaireWriteFailure::new(ErrorCode::VerifyFailed, LOCK_SUBJECT));
-    }
-    written?;
     if let Some(error) = readback.error {
-        return Err(LuminaireWriteFailure::unproved(error, READBACK_SUBJECT));
+        let unread = LuminaireWriteFailure::unproved(error, READBACK_SUBJECT);
+        return Err(wire.unrestored.or(wire.stopped).unwrap_or(unread));
+    }
+    if readback.bytes.get(usize::from(BANK_LOCK_BYTE)) != Some(&lock) {
+        return Err(LuminaireWriteFailure::new(ErrorCode::VerifyFailed, RELOCK_SUBJECT));
     }
     match writes.iter().find(|write| !write.held_by(&readback.bytes)) {
-        Some(write) => Err(LuminaireWriteFailure::new(ErrorCode::VerifyFailed, write.field.name)),
+        Some(write) => Err(wire.stopped.unwrap_or(LuminaireWriteFailure::new(ErrorCode::VerifyFailed, write.field.name))),
         None => Ok(()),
     }
 }
@@ -286,14 +304,14 @@ pub fn write_memory_luminaire(
 ) -> Result<(), LuminaireWriteFailure> {
     let address = dali_short_address(short_address).map_err(LuminaireWriteFailure::of)?;
     let header = read_header(controller, short_address, writes)?;
-    let written = write_sessions(controller, address, header.lock, writes);
-    if written.is_err_and(LuminaireWriteFailure::is_preempted) {
-        return written;
+    let wire = write_sessions(controller, address, header.lock, writes);
+    if let Some(preempted) = wire.preempted() {
+        return Err(preempted);
     }
     let length = u16::from(header.last_offset) + 1;
     let readback = read_memory_bank(controller, short_address, BANK1, 0, length);
     on_readback(&readback);
-    verdict(written, &readback, writes, header.lock)
+    verdict(wire, &readback, writes, header.lock)
 }
 
 #[cfg(test)]
