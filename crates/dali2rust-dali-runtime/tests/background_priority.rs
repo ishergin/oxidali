@@ -281,6 +281,32 @@ fn an_operator_command_preempts_a_bus_health_probe_between_its_frames() {
     );
 }
 
+#[test]
+fn a_bus_health_probe_the_wire_fails_ends_without_a_verdict_and_counts_as_failed() {
+    let interactive = Arc::new(WireActivity::new());
+    let (_host, publisher, (worker_cmd, _events, confirmations)) = spawn_bus(arrival_observer(&interactive));
+    let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
+    transport
+        .lock()
+        .expect("mock lock")
+        .expect_forward_frame_send_error(broadcast_query(StandardCommand::QueryControlGearPresent));
+    let counters = Arc::new(DaliWorkerCounters::default());
+    let _worker = spawn_mock_worker(worker_cmd, &transport, &publisher, &counters, interactive);
+
+    assert_eq!(
+        publisher.try_publish(BusChannel::Commands, bus_health_probe_frame(91)),
+        PublishResult::Queued
+    );
+    let ended = recv_confirmation_for(&confirmations, 91, EVENT_BUDGET);
+    assert_eq!(ended.status, DeliveryStatus::ExecutionFailed, "a failed probe ends at once");
+    let code = ended.confirmation.error.as_ref().map(|error| error.code);
+    assert!(
+        code.is_some_and(|code| code != ErrorCode::Preempted),
+        "and names a cause that is not a yield: {code:?}"
+    );
+    assert_eq!(counters.bus_health_probe_failed.load(Ordering::Relaxed), 1);
+}
+
 fn events_until_applied(events: &BusSubscriberRx, correlation_id: u64) -> Vec<BusEventPayload> {
     let deadline = Instant::now() + EVENT_BUDGET;
     let mut seen = Vec::new();
