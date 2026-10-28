@@ -43,6 +43,7 @@ function changedKeys(next: PollerSettings, base: PollerSettings): (keyof PollerS
     'skip_unbound_virtual_lamps',
     'include_energy',
     'include_diagnostics',
+    'power_cycle_watch',
   ]
   return keys.filter((k) =>
     k === 'attribute_groups_default'
@@ -114,8 +115,21 @@ export function SettingsPoller() {
       </p>
 
       <Card title="Cycle">
-        <FieldRow label="Enabled" hint="Off by default; nothing is polled while this is off.">
+        <FieldRow
+          label="Enabled"
+          hint="Off by default; while this is off nothing is polled but the power-cycle watch's sweeps."
+        >
           <Switch on={s.enabled} onToggle={() => edit({ enabled: !s.enabled })} />
+        </FieldRow>
+
+        <FieldRow
+          label="Power-cycle watch"
+          hint="Off by default. Asks the bus at least once a minute, poller on or off, whether any gear lost power; a yes reads every device's status once, so the controller forgets the levels a power cut reset."
+        >
+          <Switch
+            on={s.power_cycle_watch}
+            onToggle={() => edit({ power_cycle_watch: !s.power_cycle_watch })}
+          />
         </FieldRow>
 
         <FieldRow label="Interval" hint={`${MIN_INTERVAL_MS} ms … 1 h between cycles.`}>

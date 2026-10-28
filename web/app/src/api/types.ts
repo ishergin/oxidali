@@ -1191,6 +1191,7 @@ export interface PollerSettings {
   include_energy: boolean
   include_diagnostics: boolean
   skip_unbound_virtual_lamps: boolean
+  power_cycle_watch: boolean
 }
 
 export interface ControllerTime {
