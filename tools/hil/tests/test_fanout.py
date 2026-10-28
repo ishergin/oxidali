@@ -1,6 +1,8 @@
 import pytest
 
 from hil.foreign import frame_hex
+from hil.validity import counter_moved
+from hil.wait import wait_until
 
 pytestmark = [pytest.mark.foreign, pytest.mark.light]
 
@@ -176,4 +178,68 @@ def test_foreign_dapc_keeps_runtime_status(api, foreign, fanout_supported,
     assert after.get("status") is not None, \
         "a DAPC frame observes no status and must not clear one: %r" % (after,)
     assert after["status"].get("raw") == raw, after
+    api.off(short)
+
+
+STEP_UP, UP = 0x03, 0x01
+STEP_FROM = 150
+PROJECTED = "foreign_verbs_projected_total"
+UNPROJECTED = "foreign_dimming_unprojected_total"
+COUNTER_WAIT_S = 10.0
+FADE_SETTLE_S = 15.0
+
+
+def _dali_counters(api):
+    return api.stats()["dali"]
+
+
+@pytest.mark.hil_id("HIL-FAN-08")
+def test_a_foreign_step_up_moves_the_registry_and_up_does_not(api, foreign,
+                                                              fanout_supported,
+                                                              lamps, wait_state,
+                                                              state_snapshot,
+                                                              test_artifacts):
+    short = lamps.by_label[lamps.labels()[0]]
+    api.attr_read_checked(short, groups="common_102")
+    api.ts(short, {"power": "on", "level": STEP_FROM})
+    lit = wait_state(short, lambda s: s.get("level") == STEP_FROM)
+    assert lit.get("level") == STEP_FROM, lit
+    assert wait_until(lambda: api.actual_level(short) == STEP_FROM, FADE_SETTLE_S,
+                      interval_s=0.5), (
+        "SA%d's gear never reached level %d, so a STEP UP would step from elsewhere"
+        % (short, STEP_FROM))
+
+    before = _dali_counters(api)
+    foreign.cmd(short, STEP_UP)
+    stepped = wait_state(short, lambda s: s.get("level") == STEP_FROM + 1,
+                         timeout_s=COUNTER_WAIT_S)
+    gear = api.actual_level(short)
+    middle = _dali_counters(api)
+    foreign.cmd(short, UP)
+    wait_until(lambda: counter_moved(middle, _dali_counters(api), UNPROJECTED) >= 1,
+               COUNTER_WAIT_S, interval_s=0.5)
+    after = _dali_counters(api)
+    held = api.state(short).get("state") or {}
+    test_artifacts.attach_json("step", {
+        "lit": lit, "stepped": stepped, "gear": gear, "held": held,
+        "projected": counter_moved(before, middle, PROJECTED),
+        "unprojected_by_step": counter_moved(before, middle, UNPROJECTED),
+        "projected_by_up": counter_moved(middle, after, PROJECTED),
+        "unprojected_by_up": counter_moved(middle, after, UNPROJECTED)})
+
+    assert stepped.get("level") == STEP_FROM + 1, (
+        "a foreign STEP UP did not move the registry one step: %r" % (stepped,))
+    assert stepped.get("value_source") == "sniffer", stepped
+    assert gear == STEP_FROM + 1, (
+        "the gear answers %r after the STEP UP, so the registry's %d is not what it holds"
+        % (gear, STEP_FROM + 1))
+    assert counter_moved(before, middle, PROJECTED) == 1, (before, middle)
+    assert counter_moved(before, middle, UNPROJECTED) == 0, (before, middle)
+    assert counter_moved(middle, after, UNPROJECTED) == 1, (
+        "a foreign UP was not counted as dimming the registry cannot follow: %r"
+        % ((middle, after),))
+    assert counter_moved(middle, after, PROJECTED) == 0, (middle, after)
+    assert held.get("level") == STEP_FROM + 1, (
+        "UP fades at the gear's own rate for 200 ms, which the registry cannot "
+        "compute; it must keep the last level it knew: %r" % (held,))
     api.off(short)

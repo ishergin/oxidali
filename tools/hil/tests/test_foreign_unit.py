@@ -123,6 +123,17 @@ def test_a_peer_log_nobody_writes_is_no_witness(tmp_path):
     assert foreign._peer_log_path(types.SimpleNamespace(has_peer=False)) is None
 
 
+def test_the_dut_s_sniffer_witnesses_while_the_peer_runs_the_gear_emulator(monkeypatch):
+    dut = types.SimpleNamespace(has_peer=True, name="dut")
+    peer = types.SimpleNamespace(name="peer")
+    dut.peer = lambda: peer
+    monkeypatch.setattr(foreign.serialmon, "log_path", lambda cfg: "%s.log" % cfg.name)
+    monkeypatch.setattr(foreign.role, "is_gear_sim", lambda cfg: cfg is peer)
+    assert foreign._peer_log_path(dut) == "dut.log"
+    monkeypatch.setattr(foreign.role, "is_gear_sim", lambda cfg: False)
+    assert foreign._peer_log_path(dut) == "peer.log"
+
+
 def test_a_peer_that_sniffs_nothing_is_named_no_witness(tmp_path):
     log = tmp_path / "serial.log"
     log.write_text("")
@@ -239,7 +250,7 @@ def test_another_forward_frame_inside_a_unit_breaks_it():
 
 class _ScriptedSocket:
     def __init__(self, incoming):
-        self.incoming, self.consumed, self.sent_after = list(incoming), 0, []
+        self.incoming, self.consumed, self.sent_after, self.sent = list(incoming), 0, [], []
 
     async def recv(self):
         self.consumed += 1
@@ -247,6 +258,7 @@ class _ScriptedSocket:
 
     async def send(self, text):
         self.sent_after.append(self.consumed)
+        self.sent.append(json.loads(text))
 
     async def __aenter__(self):
         return self
@@ -266,6 +278,19 @@ def test_the_remote_client_sends_a_frame_only_after_the_previous_one_is_settled(
     monkeypatch.setattr(sys, "argv", ["remote", json.dumps(frames)])
     exec(compile(foreign.remote_client_script(0), "remote", "exec"), {"__name__": "__main__"})
     assert socket.sent_after == [1, 3]
+    assert socket.incoming == []
+
+
+def test_a_send_twice_frame_leaves_as_two_frames_before_either_is_settled(monkeypatch):
+    socket = _ScriptedSocket([{"type": "info"}, {"type": "daliFrame"}, {"type": "daliFrame"}])
+    monkeypatch.setitem(sys.modules, "websockets",
+                        types.SimpleNamespace(connect=lambda url: socket))
+    frames = [{"bits": 16, "bytes": [0x03, 0xF3], "send_twice": True}]
+    monkeypatch.setattr(sys, "argv", ["remote", json.dumps(frames)])
+    exec(compile(foreign.remote_client_script(0), "remote", "exec"), {"__name__": "__main__"})
+    assert socket.sent_after == [1, 1]
+    assert [m["data"]["daliData"] for m in socket.sent] == [[0x03, 0xF3], [0x03, 0xF3]]
+    assert not any(m["data"]["mode"]["sendTwice"] for m in socket.sent)
     assert socket.incoming == []
 
 

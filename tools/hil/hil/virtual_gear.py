@@ -43,6 +43,8 @@ QUIET_POLL_S = 0.5
 EXIT_SETUP, EXIT_SAFETY, EXIT_PEER_RETURNED, EXIT_BLIND = 3, 4, 5, 6
 
 SCAN_MODE = "scan_known_short_addresses"
+SCAN_ATTEMPTS = 2
+BUS_CONTENDED = "bus_contended"
 IDENTITY_GROUPS = "runtime_status"
 IDENTITY_BANKS = "identity"
 VIRTUAL_ENV = "HIL_VIRTUAL_GEAR"
@@ -121,6 +123,16 @@ def park_of_kind(park, shape, kind) -> list:
 
 def registry_shorts(api) -> set:
     return {d["short_address"] for d in api.devices_unfiltered()["physical_devices"]}
+
+
+def contended(view):
+    return (view.get("status") == "failed"
+            and (view.get("error") or {}).get("message") == BUS_CONTENDED)
+
+
+def registry_gtin(api, short):
+    return next((d.get("gtin") for d in api.devices_unfiltered()["physical_devices"]
+                 if d["short_address"] == short), None)
 
 
 def vl_ids(api) -> list:
@@ -494,11 +506,19 @@ class VirtualSession:
             self.ledger.update(group_flags=flags)
             self.api.groups.patch(group, {"ha_entity_enabled": False})
 
+    def _scan(self):
+        for _ in range(SCAN_ATTEMPTS):
+            view = self.api.wait_op(self.api.discovery(SCAN_MODE))
+            if not contended(view):
+                return view
+        return view
+
     def _enrol(self, park, groups):
-        self.api.wait_op(self.api.discovery(SCAN_MODE))
+        view = self._scan()
         missing = sorted(set(park) - registry_shorts(self.api))
         if missing:
-            raise VirtualGearError("the scan did not enrol %s" % spell(missing))
+            raise VirtualGearError("the scan did not enrol %s; its operation ended %s %s"
+                                   % (spell(missing), view.get("status"), view.get("error")))
         stray = [row["short"] for row in self.sim.show()
                  if row["short"] in park and row["groups"] & ~group_mask(groups)]
         if stray:
@@ -564,9 +584,20 @@ class VirtualSession:
     def _forget(self, short):
         if short not in registry_shorts(self.api):
             return
+        if not emulated_gtin(registry_gtin(self.api, short)):
+            self._identify(short)
         data = self.ledger.data
         with self.api.guard.forgetting_emulated(data.get("park", []), data.get("reserve", [])):
             self.api.device_forget(short)
+
+    def _identify(self, short):
+        if self.sim is None:
+            return
+        self.sim.enable(short)
+        try:
+            self.api.attr_read_checked(short, groups=IDENTITY_GROUPS, banks=IDENTITY_BANKS)
+        finally:
+            self.sim.disable(short)
 
     def _silence(self):
         if self.sim is None:

@@ -124,6 +124,62 @@ def test_the_show_table_is_parsed(tmp_path, monkeypatch):
                      "groups": 0x10, "enabled": True}]
 
 
+SHOW_HEAD = "# idx addr random   type lvl groups on  drop\n"
+LATE_ROW_S = 0.3
+
+
+def _row(index, short):
+    return "# %3d %4d a1b2c3  DT6 254 0x0010 yes 0\n" % (index, short)
+
+
+def _replying(tmp_path, monkeypatch, now, later=()):
+    cfg, log = _peer(tmp_path, monkeypatch)
+
+    def write(lines):
+        with open(log, "a") as fh:
+            fh.writelines(STAMP + line for line in lines)
+
+    def control(peer, command):
+        write(now)
+        if later:
+            threading.Timer(LATE_ROW_S, write, args=(later,)).start()
+        return "ok"
+    monkeypatch.setattr(gearsim.remote_serial, "control", control)
+    monkeypatch.setattr(gearsim, "REPLY_QUIET_S", 0.05)
+    monkeypatch.setattr(gearsim, "POLL_S", 0.01)
+    monkeypatch.setattr(gearsim, "REPLY_TIMEOUT_S", 1.0)
+    return gearsim.GearSim(cfg)
+
+
+def test_a_show_row_the_log_writes_after_a_pause_is_still_read(tmp_path, monkeypatch):
+    sim = _replying(tmp_path, monkeypatch, [SHOW_HEAD, _row(0, 16), _row(1, 17)],
+                   later=[_row(2, 18), "# 3 gear listed\n"])
+    assert [row["short"] for row in sim.show()] == [16, 17, 18]
+
+
+def test_a_show_reply_without_its_footer_is_refused(tmp_path, monkeypatch):
+    sim = _replying(tmp_path, monkeypatch, [SHOW_HEAD, _row(0, 16), _row(1, 17)])
+    with pytest.raises(gearsim.GearSimUnavailable, match="gear listed"):
+        sim.show()
+
+
+def test_a_show_that_lost_a_row_is_refused(tmp_path, monkeypatch):
+    sim = _replying(tmp_path, monkeypatch,
+                    [SHOW_HEAD, _row(0, 16), _row(2, 18), "# 3 gear listed\n"])
+    with pytest.raises(gearsim.GearSimUnavailable, match="listed 3 gear and 2 rows"):
+        sim.show()
+
+
+def test_a_stats_reply_cut_before_its_send_twice_line_is_refused(tmp_path, monkeypatch):
+    sim = _replying(tmp_path, monkeypatch, ["# fleet 12 gear, 0 enabled, reserved 0xffff\n",
+                                            "# heard=4 forward16=4 answered=1 collisions=0\n"],
+                    later=["# send_twice_pairs=0 send_twice_interloper=0\n"])
+    assert sim.stats()["send_twice_interloper"] == 0
+    sim = _replying(tmp_path, monkeypatch, ["# fleet 12 gear, 0 enabled, reserved 0xffff\n"])
+    with pytest.raises(gearsim.GearSimUnavailable, match="send_twice_interloper"):
+        sim.stats()
+
+
 def test_the_oracle_finds_the_change_it_waits_for(tmp_path, monkeypatch):
     cfg, log = _peer(tmp_path, monkeypatch)
     monkeypatch.setattr(gearsim, "UNTOUCHED_QUIET_S", 0.05)
@@ -286,12 +342,13 @@ def _console(tmp_path, monkeypatch, dropped=(0, 2)):
     def control(peer, command):
         sent.append(command)
         reply = {"write log": "usage: log off|change|frame|trace (now: change)",
-                 "write stats": "decode_failed=0 other_width=0 ring_dropped=0 log_dropped=%d"
+                 "write stats": "decode_failed=0 other_width=0 ring_dropped=0 log_dropped=%d\n"
+                 "send_twice_pairs=0 send_twice_interloper=0"
                  % (stats.pop(0) if command == "write stats" and stats else 0),
                  "write log frame": "log level frame",
                  "write log change": "log level change"}[command]
         with open(log, "a") as fh:
-            fh.write(STAMP + "# %s\n" % reply)
+            fh.writelines(STAMP + "# %s\n" % line for line in reply.split("\n"))
         return "ok"
     monkeypatch.setattr(gearsim.remote_serial, "control", control)
     monkeypatch.setattr(gearsim, "REPLY_QUIET_S", 0.0)
