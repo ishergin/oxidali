@@ -1,5 +1,6 @@
 pub mod bus_unit;
 pub mod layout;
+pub mod luminaire_write;
 pub mod part251;
 
 pub use bus_unit::{
