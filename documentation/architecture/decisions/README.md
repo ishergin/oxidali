@@ -24,7 +24,7 @@ Scope: why the system is built this way. How it works is in the
 | [015](ADR-015-routed-event-delivery.md) | Routed events | Amended by 021 | Route by declared kind; undeclared is silent |
 | [016](ADR-016-input-devices-and-rule-engine.md) | Input devices, rule engine | Accepted | Part 103 on one transport; bounded rules from source |
 | [017](ADR-017-dali-transactions-and-frame-priority.md) | Transactions, frame priority | Amended by 020 | Priority by purpose; §9.2 transactions |
-| [018](ADR-018-controller-redundancy.md) | Controller redundancy | Accepted | DiiA 351 arbitration; HTTP config pull |
+| [018](ADR-018-controller-redundancy.md) | Controller redundancy | Accepted; amendment proposed in 030 | DiiA 351 arbitration; HTTP config pull |
 | [019](ADR-019-standby-dali-endpoint.md) | Host standby endpoint | Deferred | Coprocessor design; nothing built |
 | [020](ADR-020-violating-backward-frame-is-an-answer.md) | Violation is an answer | Accepted | Terminal; YES but no value |
 | [021](ADR-021-required-event-delivery.md) | Delivery-required events | Accepted | Bounded backoff for sole carriers of a fact |
@@ -36,7 +36,7 @@ Scope: why the system is built this way. How it works is in the
 | [027](ADR-027-dtr-operand-proof-and-readback-outcomes.md) | DTR proof, read-back outcomes | Accepted | Arm, prove, act; three read-back outcomes |
 | [028](ADR-028-task-stacks-in-psram-on-the-xip-image.md) | Stacks and Rust heap in PSRAM | Accepted | On the XIP image only mapping flash or wire timing keeps a stack internal; Rust objects from 256 B in PSRAM |
 | [029](ADR-029-network-buffers-in-psram-and-a-measured-receive-ring.md) | Network buffers in PSRAM | Accepted | lwIP and received frames in PSRAM; mailbox holds the window; ring sized by its drop counter |
-| [030](ADR-030-controller-as-a-part-103-bus-unit.md) | The controller as a Part 103 bus unit | Deferred | One stateful model answers every device query; five decisions owed before code |
+| [030](ADR-030-controller-as-a-part-103-bus-unit.md) | The controller as a Part 103 bus unit | Proposed | One stateful model answers every device query; answers superimpose in their slot; liveness is an application-controller error |
 | [031](ADR-031-gear-emulator-on-the-standby.md) | Gear emulator on the standby | Accepted | Lent by OTA for one boot or by wire; a session envelope keeps it off the owner's lamps |
 | [032](ADR-032-installation-and-node-identity.md) | Installation and node identity | Accepted | `controller_id` is the pair's installation; `node_id` and the hostname come from the node's MAC |
 | [033](ADR-033-mqtt-rule-trigger.md) | MQTT rule trigger | Accepted | Exact topics the bridge subscribes from a read port; one required event per message; a subscription's retained replay fires nothing |
