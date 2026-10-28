@@ -594,6 +594,11 @@ impl Gear {
     }
 
     // IEC 62386-102 §9.10.6, Table 9
+    pub fn set_bank0_last_offset(&mut self, last: u8) {
+        self.banks.bank0[0] = last;
+    }
+
+    // IEC 62386-102 §9.10.6, Table 9
     pub fn clear_identification_number(&mut self) {
         self.banks.bank0[IDENTIFICATION_NUMBER].fill(UNPROGRAMMED);
     }

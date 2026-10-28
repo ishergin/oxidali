@@ -2,7 +2,6 @@ use cucumber::{given, then};
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::banks::luminaire_write::TEXT_TERMINATOR;
 use dali2rust_domain::dali::banks::part251::{LUMINAIRE_COLOUR, YEAR_OFFSET};
-use dali2rust_domain::dali::banks::{GTIN_OFFSET, IDENTITY_WINDOW_LEN};
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use serde_json::Value;
@@ -12,8 +11,8 @@ use crate::DaliWorld;
 
 use super::attribute_read_scripts::{script_attribute_read_identity_queries, ScriptedReply};
 use super::memory_bank_scripts::{
-    bank1_part251_bytes, script_memory_bank_read, script_memory_bank_short_read,
-    script_memory_bank_window, BANK0_BYTES, READ_MEMORY_LOCATION_OPCODE,
+    bank1_part251_bytes, script_memory_bank_read, script_memory_bank_short_read, BANK0_BYTES,
+    READ_MEMORY_LOCATION_OPCODE,
 };
 use super::read_model::wait_for_physical_device;
 use super::TEST_SHORT_ADDRESS;
@@ -40,13 +39,12 @@ enum GearReply {
     Silent,
 }
 
-fn identity_window() -> Vec<u8> {
-    let start = usize::from(GTIN_OFFSET);
-    BANK0_BYTES[start..start + usize::from(IDENTITY_WINDOW_LEN)].to_vec()
+fn identity_bank0() -> Vec<u8> {
+    BANK0_BYTES[..=LOGICAL_GEAR_INDEX_OFFSET].to_vec()
 }
 
-fn script_identity(mock: &MockDaliTransport, window: &[u8]) {
-    script_memory_bank_window(mock, IDENTITY_BANK, GTIN_OFFSET, window);
+fn script_identity(mock: &MockDaliTransport, bank0: &[u8]) {
+    script_memory_bank_read(mock, IDENTITY_BANK, bank0);
 }
 
 fn script_armed_pointer(mock: &MockDaliTransport, offset: u8) {
@@ -135,7 +133,7 @@ fn script_luminaire_write(
     let before = bank1_part251_bytes();
     let lock = before[usize::from(LOCK_BYTE_OFFSET)];
     assert_ne!(lock, UNLOCKED, "the golden bank must start locked");
-    script_identity(&mock, &identity_window());
+    script_identity(&mock, &identity_bank0());
     script_memory_bank_read(&mock, LUMINAIRE_BANK, &before[..HEADER_LEN]);
     script_field_write(&mock, lock, units, reply);
     let mut after = before;
@@ -181,7 +179,7 @@ async fn given_colour_write_kept(world: &mut DaliWorld, colour: String) {
 #[given("a memory-luminaire write script for short address 0 whose bank 1 header now declares a vendor format")]
 async fn given_vendor_header(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
-    script_identity(&mock, &identity_window());
+    script_identity(&mock, &identity_bank0());
     let mut header = bank1_part251_bytes()[..HEADER_LEN].to_vec();
     header[FORMAT_ID_OFFSET..FORMAT_ID_OFFSET + 2].copy_from_slice(&VENDOR_FORMAT_ID);
     script_memory_bank_read(&mock, LUMINAIRE_BANK, &header);
@@ -219,10 +217,9 @@ async fn then_colour_written(world: &mut DaliWorld, colour: String) {
 #[given("a memory-luminaire write script for short address 0 whose bank 0 now holds another identification number")]
 async fn given_replaced_gear(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
-    let mut window = identity_window();
-    let last_number_byte = *IDENTIFICATION_NUMBER.end() - usize::from(GTIN_OFFSET);
-    window[last_number_byte] ^= 0x01;
-    script_identity(&mock, &window);
+    let mut bank0 = identity_bank0();
+    bank0[*IDENTIFICATION_NUMBER.end()] ^= 0x01;
+    script_identity(&mock, &bank0);
 }
 
 fn script_part251_attribute_read(world: &mut DaliWorld, bank0: impl FnOnce(&MockDaliTransport)) {

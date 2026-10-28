@@ -113,18 +113,6 @@ pub(super) fn script_memory_bank_read(mock: &MockDaliTransport, bank: u8, bytes:
     script_memory_pointer_check(mock, bank, bytes.len() as u8);
 }
 
-pub(super) fn script_memory_bank_window(mock: &MockDaliTransport, bank: u8, start: u8, bytes: &[u8]) {
-    let read = dt8_raw_query_frame(TEST_SHORT_ADDRESS, READ_MEMORY_LOCATION_OPCODE);
-    script_memory_pointer_arm(mock, bank, start);
-    for (index, chunk) in bytes.chunks(MEMORY_READ_CHUNK).enumerate() {
-        script_memory_pointer_check(mock, bank, start + (index * MEMORY_READ_CHUNK) as u8);
-        for byte in chunk {
-            mock.expect_forward_frame_with_backward(read, Some(*byte));
-        }
-    }
-    script_memory_pointer_check(mock, bank, start + bytes.len() as u8);
-}
-
 pub(super) fn script_memory_bank_short_read(mock: &MockDaliTransport, bank: u8, bytes: &[u8]) {
     const BANK_END_SILENCES: usize = 2;
     let read = dt8_raw_query_frame(TEST_SHORT_ADDRESS, READ_MEMORY_LOCATION_OPCODE);

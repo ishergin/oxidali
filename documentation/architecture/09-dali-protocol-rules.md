@@ -294,11 +294,13 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   a bit outside that range claims no part.
 - The only memory-bank write is typed: the Part 251 fields of bank 1, never a raw cell.
 - Before any write frame the executor proves the gear is the one the registry read. It
-  reads bank 0 `0x03..0x1A` and compares the GTIN and identification number — together
-  the bus unit's unique identity (102 §9.10.6) — and the index of the logical control
-  gear unit at `0x1A`, which tells apart the logical units sharing that identity, with
-  the registry's (`RegistryReadPort::physical_device_identity`). Another identity is
-  refused (`device_identity_changed`). The identity never travels in the bus frame.
+  reads bank 0 from `0x00` through `0x1A` and judges it as the registry judges its own
+  read (`IdentityRead::of_bank0`), then compares the GTIN and identification number —
+  together the bus unit's unique identity (102 §9.10.6) — and the index of the logical
+  control gear unit at `0x1A`, which tells apart the logical units sharing that
+  identity, with the registry's (`RegistryReadPort::physical_device_identity`). Another
+  identity, or a bank 0 whose byte `0x00` now ends it before `0x1A`, is refused
+  (`device_identity_changed`). The identity never travels in the bus frame.
 - The registry's identity comes from the raw bytes of the last bank 0 read, if that read
   started at offset `0x00` (`IdentityRead::of_bank0`): a newer read from another offset
   replaces those bytes and leaves the identity unknown. The bank 1 layout takes its last
@@ -317,10 +319,10 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
     registry knew whose identity now reads MASK is `device_identity_changed`.
 - A read before or after the write proves something only when it is whole. A bank read
   ends early, with no error, at two silences on one location (§Reading answers); such
-  an end counts only where the bank's own byte `0x00` puts it. So the identity window
-  is read to its last byte, the header to `0x12` or to the end its byte `0x00`
-  declares, and the read-back to that `0x00`. A shorter read proves nothing: it is
-  neither another device, nor another format, nor a field the gear refused.
+  an end counts only where the bank's own byte `0x00` puts it. So bank 0 is read to
+  `0x1A`, the header to `0x12`, each or to the end its byte `0x00` declares, and the
+  read-back to that `0x00`. A shorter read proves nothing: it is neither another
+  device, nor another format, nor a field the gear refused.
 - Reads before the first write report what the wire did, not a verification: the code
   of a read (`device_absent`, `read_contended`, `preempted`), each defined in
   [physical devices](../product-design/rest-api/resources/physical-devices.md)

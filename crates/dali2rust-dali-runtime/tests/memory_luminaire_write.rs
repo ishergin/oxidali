@@ -55,6 +55,7 @@ const LOGICAL_GEAR_UNITS: u8 = 2;
 const SECOND_GEAR_UNIT: u8 = 1;
 const ARM_ATTEMPTS: usize = 3;
 const FOREIGN_OFFSET: u8 = 0x10;
+const SHORT_BANK0_LAST: u8 = LOGICAL_GEAR_INDEX_OFFSET - 1;
 
 #[derive(Clone)]
 enum Interruption {
@@ -702,6 +703,22 @@ fn a_gear_replaced_since_the_registry_read_it_is_refused_before_any_write() {
     assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, IDENTITY_CHANGED));
     assert!(wrote_nothing(&sim), "no ENABLE WRITE MEMORY or WRITE MEMORY LOCATION reaches the other gear");
     assert_eq!(outcome.readback, None);
+}
+
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn a_gear_replaced_by_one_whose_bank_0_ends_before_the_index_is_another_device() {
+    let read_then = identity_of(&luminaire_gear(FOUND_LOCK, false));
+    let mut replacement = luminaire_gear_at(REPLACEMENT_RANDOM_ADDRESS, FOUND_LOCK, false);
+    replacement.fleet_mut().gears_mut()[0].set_bank0_last_offset(SHORT_BANK0_LAST);
+    let (outcome, sim) = write_as(replacement, read_then, &year(YEAR));
+
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::Conflict, IDENTITY_CHANGED),
+        "its bank 0 declares an end no re-read gets past, so it is not the gear the registry read"
+    );
+    assert!(wrote_nothing(&sim));
 }
 
 // IEC 62386-102 §9.10.6, Table 9

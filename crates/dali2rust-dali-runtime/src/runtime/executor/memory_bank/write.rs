@@ -3,9 +3,8 @@ use dali2rust_domain::dali::banks::luminaire_write::{
     check_writable, Bank1Layout, Bank1WriteRefusal, FieldWrite, WriteStage, BANK1_HEADER_LEN,
     BANK_UNLOCKED,
 };
-use dali2rust_domain::dali::banks::{
-    IdentityRead, BANK_LOCK_BYTE, BANK_LUMINAIRE_INFO, GTIN_OFFSET, IDENTITY_BANK, IDENTITY_WINDOW_LEN,
-};
+use dali2rust_domain::dali::banks::identity::LOGICAL_GEAR_INDEX_OFFSET;
+use dali2rust_domain::dali::banks::{IdentityRead, BANK_LOCK_BYTE, BANK_LUMINAIRE_INFO, IDENTITY_BANK};
 use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::controller::DaliApplicationController;
 use dali2rust_domain::dali::net::address::DaliAddress;
@@ -42,6 +41,9 @@ pub const HEADER_SUBJECT: &str = "bank1_header";
 const READ_ENDED_EARLY: &str = "memory_bank_read_ended_early";
 
 pub const IDENTITY_CHANGED: &str = "device_identity_changed";
+
+// IEC 62386-102 §9.10.6, Table 9
+const IDENTITY_READ_LEN: u16 = LOGICAL_GEAR_INDEX_OFFSET as u16 + 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LuminaireWriteFailure {
@@ -335,12 +337,12 @@ fn prove_identity(
     registered: IdentityRead,
 ) -> Result<(), LuminaireWriteFailure> {
     let identity = registered.known().map_err(|cause| LuminaireWriteFailure::new(ErrorCode::Conflict, cause))?;
-    let window = read_memory_bank(controller, short_address, IDENTITY_BANK, u16::from(GTIN_OFFSET), IDENTITY_WINDOW_LEN);
+    let bank0 = read_memory_bank(controller, short_address, IDENTITY_BANK, 0, IDENTITY_READ_LEN);
     let unread = |error| LuminaireWriteFailure::unread(error, IDENTITY_SUBJECT);
-    if let Some(error) = window.error {
+    if let Some(error) = bank0.error {
         return Err(unread(error));
     }
-    match IdentityRead::of_window(&window.bytes) {
+    match IdentityRead::of_bank0(&bank0.bytes) {
         IdentityRead::Known(seen) if seen == identity => Ok(()),
         IdentityRead::Known(_) | IdentityRead::Unprovable => {
             Err(LuminaireWriteFailure::new(ErrorCode::Conflict, IDENTITY_CHANGED))
