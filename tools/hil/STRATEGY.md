@@ -265,7 +265,7 @@ ID — маркер `hil_id` теста ([README](README.md#writing-a-scenario))
 | `test_fanout` | FAN-01..07 | default | да | Чужие команды проецируются в реестр с источником `sniffer`. |
 | `test_hcl_runtime` | HCL-01..09 | default | да | Расписание доходит до гира в срок; override виден и снимается. |
 | `test_wire_priority` | — | default | да | Оператор не ждёт чтения атрибутов (ADR-013); прерванное чтение не коммитит. |
-| `test_poller` | POL-01..10 | smoke, default, slow; POL-07, 08 — destructive | часть | Настройки; источник `poller`; чужой трафик; PUT не ждёт фон (ADR-009). |
+| `test_poller` | POL-01..11 | smoke, default, slow; POL-07, 08 — destructive | часть | Настройки; источник `poller`; чужой трафик; PUT не ждёт фон (ADR-009). |
 | `test_bus_load` | WIRE-01..02 | default | нет | Тики занятости провода живы и вложены; пачка запросов — наша загрузка. |
 | `test_transactions` | — | slow | часть | Счётчики транзакций в гейтах; приёмная сторона §9.2 — эмулятор. |
 | `test_dt6_failure` | DT6-01..04 | `HIL_VIRTUAL_GEAR=1` | нет (эмулятор) | Отказ Part 207 по триггеру одной прелюдией и одним запросом; гир DT6 парка. |
