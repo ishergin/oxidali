@@ -1,6 +1,3 @@
-#[cfg(target_os = "espidf")]
-pub mod arbitration_answer;
-
 pub mod mock;
 
 #[cfg(not(target_os = "espidf"))]
@@ -14,6 +11,12 @@ pub mod esp_idf;
     allow(dead_code, reason = "only the ESP sniffer thread runs it; host tests exercise it")
 )]
 mod sniffer_diagnostics;
+
+#[cfg_attr(
+    not(target_os = "espidf"),
+    allow(dead_code, reason = "only the ESP sniffer thread runs it; host tests exercise it")
+)]
+mod answer_path;
 
 #[cfg(target_os = "espidf")]
 pub mod phy_interrupt;

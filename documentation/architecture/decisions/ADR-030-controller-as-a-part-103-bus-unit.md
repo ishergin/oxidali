@@ -95,9 +95,16 @@ answer to any next one, and the slot no longer waits for a task.
   copy the interrupt is not reading and then publishes it, so the interrupt never reads
   half of one.
 - **The interrupt answers a 24-bit forward frame alone.** It decodes the capture, checks
-  that the table accounts for every capture before this one, matches the address, looks
-  the answer up and stages it for the slot. A table that is behind answers nothing and is
-  counted; the drain never answers late in its place.
+  that the table was published after the drain took the capture just before this one,
+  matches the address, looks the answer up and stages it for the slot. A table that is
+  behind answers nothing and is counted; the drain never answers late in its place.
+- **The check names one capture, not all of them.** A capture lost to a full ring moves
+  `sniff_seq` without reaching the drain, so the drain sees the loss only as a jump in
+  `sniff_seq`, and a table that carries state decides on that jump before it publishes.
+  `sniff_seq` is eight bits: a drain stalled across a multiple of 256 captures passes the
+  check. A stalled drain also freezes the lease, so an answer the lease gates lapses within
+  one lease of the stall and one given regardless of the lease does not; a table that
+  carries state needs a freshness bound that does not rest on the eight bits alone.
 - **The lease is read at answer time.** `applicationControllerError` changes without any
   frame, so the table carries the lease's expiry in interrupt ticks and the interrupt
   applies it to the status byte and the arbitration answer.

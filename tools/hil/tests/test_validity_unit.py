@@ -724,9 +724,9 @@ def test_late_ticks_are_reported_and_not_gated():
 
 
 def test_session_rates_round_up_and_need_exposure():
-    deltas = {"isr_ticks_lost": 1, "answer_stage_late": 0, "frames": 9}
+    deltas = {"isr_ticks_lost": 1, "answer_table_behind": 0, "frames": 9}
     hour = validity.session_rates(deltas, 3_600_000)
-    assert hour == {"isr_ticks_lost_per_h": 1, "answer_stage_late_per_h": 0}
+    assert hour == {"isr_ticks_lost_per_h": 1, "answer_table_behind_per_h": 0}
     ten = validity.session_rates(deltas, validity.MIN_RATE_EXPOSURE_MS)
     assert ten["isr_ticks_lost_per_h"] == 6
     assert validity.session_rates(deltas, 120_000) == {}
@@ -734,12 +734,12 @@ def test_session_rates_round_up_and_need_exposure():
 
 
 def test_task_latency_gauges_are_values_not_deltas():
-    current = {"answer_stage_max_ticks": 91, "persist_flush_max_ms": 546,
+    current = {"answer_table_publish_max_ticks": 91, "persist_flush_max_ms": 546,
                "sniff_poll_gap_max_us": 168_000, "persist_flush_slow": 80}
-    baseline = {"answer_stage_max_ticks": 40, "persist_flush_max_ms": 300,
+    baseline = {"answer_table_publish_max_ticks": 40, "persist_flush_max_ms": 300,
                 "sniff_poll_gap_max_us": 9_000, "persist_flush_slow": 2}
     out = validity.counter_deltas(current, baseline)
-    assert out["answer_stage_max_ticks"] == 91
+    assert out["answer_table_publish_max_ticks"] == 91
     assert out["persist_flush_max_ms"] == 546
     assert out["sniff_poll_gap_max_us"] == 168_000
     assert out["persist_flush_slow"] == 78
@@ -765,12 +765,22 @@ def test_readback_workaround_counters_are_watched_and_never_gated():
         assert "watched, never gated" in row and "set a budget" not in row, row
 
 
+def test_the_interrupt_s_answer_losses_are_read_from_the_sniffer_block_and_gated():
+    diagnostics = {"phy_sniffer": {"answer_table_torn": 1, "answer_decode_overrun": 2}}
+    out = validity.bus_drop_counters(diagnostics)
+    assert (out["answer_table_torn"], out["answer_decode_overrun"]) == (1, 2)
+    budget = validity.load_budget()
+    assert (budget["answer_table_torn"], budget["answer_decode_overrun"]) == (0, 0)
+    assert validity.bus_drop_breaches({"bus_drops": out}, budget) == [
+        ("answer_decode_overrun", 2, 0), ("answer_table_torn", 1, 0)]
+
+
 def test_task_latency_counters_are_read_from_stats():
-    stats = {"dali": {"answer_staged_total": 30, "answer_stage_late_total": 1,
+    stats = {"dali": {"answer_staged_total": 30, "answer_table_behind_total": 1,
                       "persist_flush_slow_total": 78, "persist_gate_waits_total": 5}}
     out = validity.isr_timing_counters(stats)
     assert out["answer_staged"] == 30
-    assert out["answer_stage_late"] == 1
+    assert out["answer_table_behind"] == 1
     assert out["persist_flush_slow"] == 78
     assert out["persist_gate_waits"] == 5
 

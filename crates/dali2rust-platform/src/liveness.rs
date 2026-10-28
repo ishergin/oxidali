@@ -1,5 +1,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+pub const CLOCK_READ_SKEW_MS: u32 = 100;
+
 #[must_use]
 pub fn monotonic_ms() -> u32 {
     static BASE: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
@@ -49,8 +51,8 @@ impl LivenessBeat {
             return None;
         }
         let delta = now_ms.wrapping_sub(self.last_ms.load(Ordering::Acquire));
-        #[allow(clippy::cast_possible_wrap, reason = "the sign IS the question here")]
-        Some(if (delta as i32) < 0 { 0 } else { delta })
+        let ahead = delta.wrapping_neg();
+        Some(if ahead <= CLOCK_READ_SKEW_MS { 0 } else { delta })
     }
 
     #[must_use]
@@ -197,6 +199,16 @@ mod tests {
         }
         assert_eq!(b.age_ms(12_000), Some(2_000));
         assert!(!b.is_fresh(13_001));
+    }
+
+    #[test]
+    fn a_worker_wedged_past_half_the_clock_stays_stale() {
+        let b = LivenessBeat::new("registry", STALE_AFTER);
+        b.beat(10_000);
+        let long_after = 10_000u32.wrapping_add(1 << 31).wrapping_add(5);
+        assert!(!b.is_fresh(long_after));
+        assert!(!b.is_fresh(10_000 - CLOCK_READ_SKEW_MS - 1));
+        assert!(b.is_fresh(10_000 - CLOCK_READ_SKEW_MS));
     }
 
     #[test]

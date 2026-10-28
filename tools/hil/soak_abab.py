@@ -15,12 +15,12 @@ HERE = Path(__file__).resolve().parent
 STATS_TOTALS = (
     "isr_ticks_lost_total", "isr_ticks_extra_total", "isr_ticks_deficit_raw_total",
     "isr_ticks_surplus_raw_total", "isr_late_ticks_total",
-    "answer_staged_total", "answer_stage_late_total", "sniff_poll_late_total",
+    "answer_staged_total", "answer_table_behind_total", "sniff_poll_late_total",
     "persist_flush_total", "persist_flush_slow_total", "persist_flush_ms_total",
     "persist_gate_waits_total", "persist_gate_timeouts_total",
     "backward_undecodable_total", "backward_frame_size_total", "backward_incomplete_total",
 )
-STATS_GAUGES = ("isr_max_gap_us", "answer_stage_max_ticks", "sniff_poll_gap_max_us",
+STATS_GAUGES = ("isr_max_gap_us", "answer_table_publish_max_ticks", "sniff_poll_gap_max_us",
                 "persist_flush_max_ms")
 REDUNDANCY = ("answered", "window_closed", "late", "suppressed", "aborted")
 PROBES = ("owned", "unowned")
