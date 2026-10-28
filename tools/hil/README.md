@@ -31,10 +31,10 @@ which makes `hil flash`'s images.
 Variables are read from the environment when a command starts. `bench.env` (from
 `bench.env.example`) holds only the firmware knobs `hil flash` enforces. **The defaults name one particular bench.** Set at
 least `HIL_BASE`, the serial variables and the three short-address sets before the first
-run: every pytest session that collects a bench test reaches `HIL_BASE`, and
-`bench_baseline` suspends that controller's poller for the session; a run that drives
-lamps also suspends its HCL schedules (so does a virtual-gear run) and sets its time zone
-to `HIL_BENCH_TZ`, a run that drives none leaves both alone. A session whose every test is
+run: every pytest session that collects a bench test reaches `HIL_BASE`.
+In a guarded session `bench_baseline` suspends its poller and, if the run drives
+lamps, sets its time zone to `HIL_BENCH_TZ`; a run that drives lamps or virtual gear
+suspends its HCL schedules. A session whose every test is
 [hardware-free](#writing-a-scenario) touches no network and no serial port.
 
 | Variable | Meaning | Default |
@@ -56,7 +56,7 @@ to `HIL_BENCH_TZ`, a run that drives none leaves both alone. A session whose eve
 | `HIL_PEER_BASE`, `HIL_PEER_SERIAL_PORT`, `HIL_PEER_SERIAL_REMOTE`, `HIL_PEER_SERIAL_BRIDGE_PORT` | the pair's [second controller](#the-second-controller-hil---peer) | unset, unset, a reference bench's Wiren Board, `4446` |
 | `HIL_ALLOW_DESTRUCTIVE=1`, `HIL_POWER_CUT=1`, `HIL_BUS_SHORT=1` | allow the destructive and the person-at-the-rig tests | off |
 | `HIL_STATE_GUARD=0` | turn the [save and restore](#save-and-restore) guard off | on |
-| `HIL_BENCH_TZ` | the time zone `bench_baseline` holds the controller in during a run that drives lamps | a reference bench's zone |
+| `HIL_BENCH_TZ` | the time zone `bench_baseline` holds the controller in during a guarded run that drives lamps | a reference bench's zone |
 | `HIL_VIRTUAL_GEAR=1` | run the [virtual-gear](#virtual-gear) tier on the gear the peer emulates | off |
 | `HIL_VIRTUAL_PARK` | the emulated park's shape: DT6, DT8 Tc and DT8 RGB+Tc gear, built in that order on the first free addresses above the reserve | `4,4,4` |
 | `HIL_OWNER_SHORTS` | live lamps a scan cannot see (unpowered), added to the virtual-gear reserve | empty |
@@ -143,14 +143,14 @@ A run with no `HIL_*` flag writes only this, each put back by its test or guard:
 adapter's name; group 15's and a scene's name and Home Assistant exposure (HIL-GRP-03,
 HIL-SCN-03); the Home Assistant bridge's settings, moved to `hiltest` (the owner's
 entities are unavailable meanwhile), and a virtual lamp's exposure (`ha_guard`); the poller's settings (`test_poller`, `poller_guard`); and the owner's
-poller and armed apply-on-discovery, off for the session (`bench_baseline`). HIL-INP-02 and
+poller and armed apply-on-discovery, off if guarded (`bench_baseline`). HIL-INP-02 and
 03 rewrite the panel's instance group membership with the value it holds; scans refresh the
 registry.
 
 ## Save and restore
 
-The session-scoped autouse fixture `production_state` (`hil/prod_state.py`) runs
-for every session that reaches the controller:
+The autouse fixture `production_state` (`tests/hil_session_guards.py`) guards every
+session where a test uses `api` and the controller answers, unless `HIL_STATE_GUARD=0`:
 
 - **Before** anything else it primes the registry with an attribute read of every
   gear (runtime state is unknown after a reboot) and snapshots the controller's and

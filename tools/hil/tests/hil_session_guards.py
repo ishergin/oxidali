@@ -88,7 +88,6 @@ def _close_session(api, cfg, snap, own, writes, state):
 
 @pytest.fixture(scope="session", autouse=True)
 def bench_baseline(pytestconfig, production_state):
-    findings = []
     if pytestconfig.getoption("--collect-only") or _hardware_free(pytestconfig):
         yield
         return
@@ -100,47 +99,55 @@ def bench_baseline(pytestconfig, production_state):
         yield
         return
 
-    findings.extend(_neutralize_poller(api))
-    findings.extend(_neutralize_policy_apply(api))
+    guarded = production_state is not None
+    findings = _neutralize_poller(api, guarded) + _neutralize_policy_apply(api, guarded)
     schedule_findings, suspended = _neutralize_schedules(
         api, api.cfg.drives_lamps() or virtual_gear_run())
-    findings.extend(schedule_findings)
-    findings.extend(_neutralize_timezone(api, api.cfg.drives_lamps()))
-    leaked = _leaked_names(api)
-    validity_of(pytestconfig)["observed"] = _observed_baseline(api)
-
-    validity_of(pytestconfig)["baseline"] = list(findings)
-    for line in findings:
-        print("\nbench_baseline: %s" % line)
     try:
-        if leaked:
-            validity_of(pytestconfig)["baseline"].extend(leaked)
-            pytest.fail(
-                "the bench carries state leaked by a previous run:\n  %s\n"
-                "These are persisted in flash and survive both a reboot and a "
-                "reflash, so every measurement below them is of a bench nobody "
-                "reset. Clear them, then re-run (tools/hil/README.md §Run validity)."
-                % "\n  ".join(leaked), pytrace=False)
+        findings += schedule_findings + _neutralize_timezone(api, api.cfg.drives_lamps(), guarded)
+        _report_baseline(pytestconfig, api, findings)
         yield
     finally:
         _restore_schedules(api, suspended)
 
 
-def _neutralize_poller(api):
+def _report_baseline(config, api, findings):
+    leaked = _leaked_names(api)
+    validity_of(config)["observed"] = _observed_baseline(api)
+    validity_of(config)["baseline"] = findings + leaked
+    for line in findings:
+        print("\nbench_baseline: %s" % line)
+    if leaked:
+        pytest.fail(
+            "the bench carries state leaked by a previous run:\n  %s\n"
+            "These are persisted in flash and survive both a reboot and a "
+            "reflash, so every measurement below them is of a bench nobody "
+            "reset. Clear them, then re-run (tools/hil/README.md §Run validity)."
+            % "\n  ".join(leaked), pytrace=False)
+
+
+def _neutralize_poller(api, guarded):
     if not api.poller.get().get("enabled"):
         return []
+    if not guarded:
+        return ["left the poller ENABLED: no production_state snapshot in this session would "
+                "re-enable it, so its background reads may race what a test measures"]
     api.poller.patch({"enabled": False})
     if api.poller.get().get("enabled"):
         pytest.fail("bench_baseline could not disable the poller — every test "
                     "below would measure a bus under continuous read traffic",
                     pytrace=False)
-    return ["found the poller ENABLED — disabled it (leftover from an earlier "
-            "run; its background reads race what a test measures)"]
+    return ["found the poller ENABLED — disabled for the session, so its background reads "
+            "race nothing a test measures; the session's restore re-enables it"]
 
 
-def _neutralize_policy_apply(api):
+def _neutralize_policy_apply(api, guarded):
     if not api.policy_armed():
         return []
+    if not guarded:
+        return ["left apply-on-discovery ARMED: no production_state snapshot in this session "
+                "would re-arm it, so the lamp guard refuses a scan unless every present gear "
+                "is in HIL_LAMP_SHORTS"]
     api._req("PATCH", "policies", {"apply_on_discovery": False})
     if api.policy_armed():
         pytest.fail("bench_baseline could not disarm apply-on-discovery — every scan below "
@@ -157,6 +164,17 @@ def _neutralize_schedules(api, suspend):
         return (["left %d HCL schedule(s) of the owner enabled (%s): a run that drives no "
                  "lamp neither suspends nor re-enables them" % (len(enabled),
                                                                 ", ".join(enabled))], [])
+    try:
+        _suspend_schedules(api, enabled)
+    except BaseException:
+        _restore_schedules(api, enabled)
+        raise
+    return (["found %d HCL schedule(s) ENABLED (%s) — suspended for the "
+             "session, restored at the end"
+             % (len(enabled), ", ".join(enabled))], enabled)
+
+
+def _suspend_schedules(api, enabled):
     for schedule_id in enabled:
         api.hcl.patch(schedule_id, {"enabled": False})
     still_on = [s["schedule_id"] for s in api.hcl.list() if s.get("enabled")]
@@ -164,9 +182,6 @@ def _neutralize_schedules(api, suspend):
         pytest.fail("bench_baseline could not disable schedules %s — the rig's "
                     "own schedules would drive the fixtures under test"
                     % still_on, pytrace=False)
-    return (["found %d HCL schedule(s) ENABLED (%s) — suspended for the "
-             "session, restored at the end"
-             % (len(enabled), ", ".join(enabled))], enabled)
 
 
 def refuse_schedule_suspension(api):
@@ -184,13 +199,16 @@ def _restore_schedules(api, suspended):
                   "re-enable it by hand" % (schedule_id, exc))
 
 
-def _neutralize_timezone(api, drives_lamps):
+def _neutralize_timezone(api, drives_lamps, guarded):
     found = api.time_get().get("timezone")
     if found == BENCH_BASELINE_TZ:
         return []
     if not drives_lamps:
         return ["found timezone %r, expected %r — left as it is: a run that drives no lamp "
                 "never moves the controller's clock" % (found, BENCH_BASELINE_TZ)]
+    if not guarded:
+        return ["found timezone %r, expected %r — left as it is: no production_state "
+                "snapshot in this session would put it back" % (found, BENCH_BASELINE_TZ)]
     api.time_set(timezone=BENCH_BASELINE_TZ)
     now = api.time_get().get("timezone")
     if now != BENCH_BASELINE_TZ:
@@ -198,8 +216,8 @@ def _neutralize_timezone(api, drives_lamps):
                     % (BENCH_BASELINE_TZ, now), pytrace=False)
     leak = " — this is ANCHOR_TZ, i.e. a clock_guard that never reached its " \
            "finally" if found == ANCHOR_TZ else ""
-    return ["found timezone %r, expected %r%s — restored"
-            % (found, BENCH_BASELINE_TZ, leak)]
+    return ["found timezone %r, expected %r%s — set for the session; the session's restore "
+            "puts it back" % (found, BENCH_BASELINE_TZ, leak)]
 
 
 def _observed_baseline(api):
