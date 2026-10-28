@@ -772,7 +772,7 @@ fn complete_read(state: &mut PollerState, deps: &PollerWiring, corr: u64, body: 
             requeue_target(state, target);
         }
         ReadVerdict::Absent => cool_absent_device(state, &deps.counters, target.adapter_id, target.short_address),
-        ReadVerdict::Failed => fail_device(state, &deps.counters, target.adapter_id, target.short_address),
+        ReadVerdict::Contended | ReadVerdict::Failed => fail_device(state, &deps.counters, target.adapter_id, target.short_address),
     }
     close_sweep_read(state, target, &verdict);
 }
@@ -784,7 +784,7 @@ fn close_sweep_read(state: &mut PollerState, target: PollTarget, verdict: &ReadV
     match verdict {
         ReadVerdict::Completed | ReadVerdict::Absent => state.power_cycles.settle(target.adapter_id, target.short_address),
         ReadVerdict::Failed => state.power_cycles.fail(target.adapter_id, target.short_address),
-        ReadVerdict::Preempted => {}
+        ReadVerdict::Contended | ReadVerdict::Preempted => {}
     }
 }
 
@@ -804,32 +804,39 @@ enum ReadVerdict {
     Completed,
     Preempted,
     Absent,
+    Contended,
     Failed,
 }
 
 fn read_verdict(body: &DaliAttributeReadOutcomesEvent) -> ReadVerdict {
     let sections = body.section_outcomes();
-    if sections
+    if sections.contains(&AttributeGroupReadOutcome::Preempted) {
+        ReadVerdict::Preempted
+    } else if sections.contains(&AttributeGroupReadOutcome::DeviceAbsent) {
+        ReadVerdict::Absent
+    } else if sections
         .iter()
-        .any(|o| matches!(o, AttributeGroupReadOutcome::Preempted))
+        .all(|o| matches!(o, AttributeGroupReadOutcome::NotRequested | AttributeGroupReadOutcome::Success))
     {
-        return ReadVerdict::Preempted;
+        ReadVerdict::Completed
+    } else if lost_only_to_the_busy_wire(&sections) {
+        ReadVerdict::Contended
+    } else {
+        ReadVerdict::Failed
     }
-    if sections
-        .iter()
-        .any(|o| matches!(o, AttributeGroupReadOutcome::DeviceAbsent))
-    {
-        return ReadVerdict::Absent;
-    }
-    if sections.iter().all(|o| {
-        matches!(
-            o,
-            AttributeGroupReadOutcome::NotRequested | AttributeGroupReadOutcome::Success
-        )
-    }) {
-        return ReadVerdict::Completed;
-    }
-    ReadVerdict::Failed
+}
+
+fn lost_only_to_the_busy_wire(sections: &[AttributeGroupReadOutcome]) -> bool {
+    sections.contains(&AttributeGroupReadOutcome::ContendedAbort)
+        && sections.iter().all(|o| {
+            matches!(
+                o,
+                AttributeGroupReadOutcome::NotRequested
+                    | AttributeGroupReadOutcome::Success
+                    | AttributeGroupReadOutcome::ContendedAbort
+                    | AttributeGroupReadOutcome::NotAttempted
+            )
+        })
 }
 
 fn requeue_target(state: &mut PollerState, target: PollTarget) {
@@ -925,6 +932,22 @@ mod tests {
             read_verdict(&outcomes(AttributeGroupReadOutcome::TransportAbort)),
             ReadVerdict::Failed,
             "a transport abort keeps the flat failure cooldown"
+        );
+        assert_eq!(read_verdict(&outcomes(AttributeGroupReadOutcome::ContendedAbort)), ReadVerdict::Contended);
+    }
+
+    #[test]
+    fn a_read_is_lost_to_the_busy_wire_only_when_nothing_else_failed() {
+        let mut contended = outcomes(AttributeGroupReadOutcome::ContendedAbort);
+        contended.runtime_status = AttributeGroupReadOutcome::NotAttempted;
+        assert_eq!(read_verdict(&contended), ReadVerdict::Contended, "what the abort left unread is the wire's too");
+        let mut mixed = outcomes(AttributeGroupReadOutcome::ContendedAbort);
+        mixed.runtime_status = AttributeGroupReadOutcome::TransportAbort;
+        assert_eq!(read_verdict(&mixed), ReadVerdict::Failed);
+        assert_eq!(
+            read_verdict(&outcomes(AttributeGroupReadOutcome::NotAttempted)),
+            ReadVerdict::Failed,
+            "a read never started without a contended abort is no busy wire"
         );
     }
 
@@ -1305,6 +1328,24 @@ mod tests {
         );
         let owed: Vec<u8> = state.sweep_queue.iter().map(|target| target.short_address).collect();
         assert_eq!(owed, vec![1, 2], "the fresh sweep asks gear 1 again too");
+    }
+
+    #[test]
+    fn a_sweep_read_the_busy_wire_aborted_says_nothing_about_the_gear() {
+        let t = test_deps_on(Arc::new(ListsGears(&[1])));
+        let mut state = watch_state();
+        for _ in 0..SWEEP_READ_ATTEMPTS {
+            power_cycle_yes(&mut state, &t.deps);
+            assert_eq!(read_the_next_sweep_target(&mut state, &t.deps, AttributeGroupReadOutcome::ContendedAbort), 1);
+        }
+        power_cycle_yes(&mut state, &t.deps);
+        let owed: Vec<u8> = state.sweep_queue.iter().map(|target| target.short_address).collect();
+        assert_eq!(owed, vec![1], "a contended abort is the wire's, like a preemption, so the gear stays owed");
+        assert_eq!(
+            t.deps.counters.reads_failed.load(Ordering::Relaxed),
+            u32::from(SWEEP_READ_ATTEMPTS),
+            "it is still a failed read with its cooldown"
+        );
     }
 
     #[test]
