@@ -3,6 +3,7 @@ pub mod attribute_read_scripts;
 pub mod attribute_read_steps;
 pub mod discovery_scripts;
 pub mod discovery_steps;
+pub mod luminaire_write_steps;
 pub mod memory_bank_scripts;
 pub mod read_model;
 pub mod target_state_steps;
