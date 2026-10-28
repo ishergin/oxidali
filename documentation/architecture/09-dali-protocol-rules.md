@@ -299,10 +299,12 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   gear unit at `0x1A`, which tells apart the logical units sharing that identity, with
   the registry's (`RegistryReadPort::physical_device_identity`). Another identity is
   refused (`device_identity_changed`). The identity never travels in the bus frame.
-- The registry's identity comes from the raw bytes of its last bank 0 read from offset
-  `0x00` (`IdentityRead::of_bank0`), as the bank 1 layout comes from the last bank 1
-  read from `0x00`; the merged `memory_identity` attributes play no part. Bank bytes are
-  not persisted, so after a restart the identity is unknown until bank 0 is read again.
+- The registry's identity comes from the raw bytes of the last bank 0 read, if that read
+  started at offset `0x00` (`IdentityRead::of_bank0`): a newer read from another offset
+  replaces those bytes and leaves the identity unknown. The bank 1 layout takes its last
+  offset from the last bank 1 read the same way. The merged `memory_identity` attributes
+  play no part. Bank bytes are not persisted, so after a restart the identity is unknown
+  until bank 0 is read again.
 - Non-volatile memory is not written unproved. The HTTP handler refuses with `409`
   before publishing, after the bank 1 layout gate and before the values are parsed; the
   executor repeats the check for a registry that changed in between:

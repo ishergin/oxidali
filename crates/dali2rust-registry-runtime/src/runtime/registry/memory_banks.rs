@@ -559,6 +559,22 @@ mod tests {
         assert_eq!(identity(&store), IdentityRead::Unread, "the bank's own length was not read with it");
     }
 
+    // IEC 62386-102 §9.10.6, Table 9
+    #[test]
+    fn a_newer_bank_0_read_not_from_its_start_leaves_the_identity_unknown() {
+        let store = seeded_store();
+        let bank = bank0_holding(IDENTIFICATION_NUMBER);
+        assert!(store.stage_memory_bank_chunk(34, 0, SHORT, 0, 0, 0, true, false, &bank));
+        assert!(matches!(identity(&store), IdentityRead::Known(_)));
+        let window_start = usize::from(GTIN_OFFSET);
+        assert!(store.stage_memory_bank_chunk(35, 0, SHORT, 0, GTIN_OFFSET.into(), 0, true, false, &bank[window_start..]));
+        assert_eq!(
+            identity(&store),
+            IdentityRead::Unread,
+            "the newer read replaced the bytes that started at 0x00, so no older read stands in"
+        );
+    }
+
     #[test]
     fn a_memory_bank_read_of_one_device_marks_only_its_bank() {
         let store = seeded_store();
