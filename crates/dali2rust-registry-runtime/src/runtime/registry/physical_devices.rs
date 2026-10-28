@@ -56,6 +56,7 @@ pub(crate) struct PhysicalRuntimeCommit<'a> {
     pub entry_last_dapc_source: Option<LastDapcSource>,
     pub entry_source: RuntimeSource,
     pub entry_holds_hcl: bool,
+    pub clears_power_cycle_seen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +114,7 @@ fn commit_physical_runtime(
     record_commanded_level(rec, commit.setpoint, power_cycled);
     rec.runtime.apply_setpoint(commit.setpoint);
     rec.runtime.apply_observation(commit.observation);
+    rec.runtime.track_power_cycle_bit(commit.observation, commit.clears_power_cycle_seen);
     rec.runtime.merge_command_metadata(
         commit.observation.value_source,
         commit.entry_last_dapc_source,
@@ -1150,6 +1152,7 @@ impl RegistryStore {
             entry_last_dapc_source: None,
             entry_source: commit.source,
             entry_holds_hcl: true,
+            clears_power_cycle_seen: true,
         };
         let silent = !setpoint.states_a_value()
             && rec.runtime.observation_adds_nothing(commit.observation);
@@ -2015,8 +2018,76 @@ mod power_cycle_tests {
                 entry_last_dapc_source: None,
                 entry_source: RuntimeSource::Readback,
                 entry_holds_hcl: true,
+                clears_power_cycle_seen: false,
             },
         )
+    }
+
+    fn commit_command(rec: &mut super::PhysicalDeviceRecord, level: u8, clears_power_cycle_seen: bool) {
+        let setpoint = LightSetpoint::from_level(level, None);
+        let observation = RuntimeObservation::default();
+        super::commit_physical_runtime(
+            rec,
+            &super::PhysicalRuntimeCommit {
+                short_address: 0,
+                setpoint: &setpoint,
+                observation: &observation,
+                observed_at_mono_ms: None,
+                entry_last_dapc_source: None,
+                entry_source: RuntimeSource::Api,
+                entry_holds_hcl: true,
+                clears_power_cycle_seen,
+            },
+        );
+    }
+
+    const STATUS_OFF_AFTER_POWER_CYCLE: u8 = 0x80;
+    const DRIVEN_LEVEL: u8 = 100;
+
+    #[test]
+    fn a_level_command_proves_the_bit_clear_so_the_next_set_bit_is_a_power_cycle() {
+        let mut rec = super::PhysicalDeviceRecord::empty(0);
+        commit_command(&mut rec, DRIVEN_LEVEL, true);
+        commit_command(&mut rec, 0, true);
+        assert_eq!(rec.last_active_level, Some(DRIVEN_LEVEL));
+        assert!(
+            commit_status_read(&mut rec, 0, STATUS_OFF_AFTER_POWER_CYCLE),
+            "no read ever showed the bit clear, but the level command cleared it"
+        );
+        assert_eq!(rec.last_active_level, None, "maxLevel was never read, so nothing is known");
+    }
+
+    #[test]
+    fn a_set_bit_with_nothing_known_before_it_proves_nothing() {
+        let mut rec = super::PhysicalDeviceRecord::empty(0);
+        assert!(!commit_status_read(&mut rec, 0, STATUS_OFF_AFTER_POWER_CYCLE));
+    }
+
+    #[test]
+    fn a_gear_driven_after_its_power_cycle_is_caught_when_it_cycles_again() {
+        let mut rec = super::PhysicalDeviceRecord::empty(0);
+        commit_command(&mut rec, DRIVEN_LEVEL, true);
+        assert!(commit_status_read(&mut rec, 0, STATUS_OFF_AFTER_POWER_CYCLE));
+        commit_command(&mut rec, DRIVEN_LEVEL, true);
+        assert_eq!(rec.last_active_level, Some(DRIVEN_LEVEL));
+        assert!(
+            commit_status_read(&mut rec, 0, STATUS_OFF_AFTER_POWER_CYCLE),
+            "a set bit after a command that cleared it is a second power cycle"
+        );
+        assert_eq!(rec.last_active_level, None);
+    }
+
+    #[test]
+    fn a_command_outside_the_9_16_9_list_leaves_a_set_bit_set() {
+        let mut rec = super::PhysicalDeviceRecord::empty(0);
+        commit_command(&mut rec, DRIVEN_LEVEL, true);
+        assert!(commit_status_read(&mut rec, 0, STATUS_OFF_AFTER_POWER_CYCLE));
+        commit_command(&mut rec, DRIVEN_LEVEL, false);
+        assert!(
+            !commit_status_read(&mut rec, DRIVEN_LEVEL, STATUS_OFF_AFTER_POWER_CYCLE),
+            "the bit was never cleared, so it still reports the first power cycle"
+        );
+        assert_eq!(rec.last_active_level, Some(DRIVEN_LEVEL));
     }
 
     #[test]
