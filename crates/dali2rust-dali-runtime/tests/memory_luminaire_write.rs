@@ -1,6 +1,12 @@
+mod support;
+
 use std::sync::{Arc, Mutex};
 
 use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
+use dali2rust_bus::{BusChannel, BusFrame, BusId, CorrelationIdAllocator};
+use dali2rust_contracts::msg::{DaliWriteMemoryLuminaireCommand, OperationWorkerSignal, Origin};
+use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
+use dali2rust_dali_runtime::{spawn_dali_worker, DaliRuntimeConfig, DaliWorkerCounters};
 use dali2rust_contracts::msg::{ErrorCode, LuminaireNumbers as N};
 use dali2rust_dali_runtime::runtime::controller::DaliController;
 use dali2rust_dali_runtime::runtime::executor::{
@@ -24,7 +30,8 @@ use dali2rust_gear_model::GearSpec;
 use dali2rust_platform::dali::{
     DaliTransport, TransferOutcome, WireActivity, WireLease, WirePriority, YieldGranularity,
 };
-use dali2rust_test_support::StoppedClock;
+use dali2rust_test_support::{publish_queued, StoppedClock};
+use support::{next_signal, spawn_signal_bus, ReadPortDouble};
 
 const SHORT: u8 = 3;
 const RANDOM_ADDRESS: u32 = 0x00_4321;
@@ -39,10 +46,11 @@ const UNIT_BYTES: usize = 3;
 const UNITS_PER_SESSION: usize = 2;
 const MULTI_SESSION_TEXT: &str = "fixture lamp";
 const LOCK_FRAMES_PER_SESSION: usize = 2;
+const WRITE_CORRELATION: u64 = 251;
 
 #[derive(Clone)]
 enum Interruption {
-    Operator(Arc<WireActivity>),
+    Arrival(Arc<WireActivity>, WirePriority),
     ForeignCommand(u16),
     LostAnswer,
 }
@@ -77,7 +85,7 @@ impl Interrupting {
         let mut lost = false;
         for interruption in &self.interruptions {
             match interruption {
-                Interruption::Operator(gate) => gate.note_arrival(WirePriority::Interactive),
+                Interruption::Arrival(gate, priority) => gate.note_arrival(*priority),
                 Interruption::ForeignCommand(command) => {
                     self.sim.fleet_mut().exchange(*command, false);
                 }
@@ -124,6 +132,10 @@ impl DaliTransport for Interrupting {
         let outcome = self.sim.exchange_frame_with_settle(frame, expects_backward, min_idle_us);
         self.heard(frame, outcome)
     }
+}
+
+fn operator() -> Interruption {
+    Interruption::Arrival(Arc::new(WireActivity::new()), WirePriority::Interactive)
 }
 
 fn special(command: SpecialCommand) -> u16 {
@@ -341,7 +353,7 @@ fn write_under(
     let gate = interruptions
         .iter()
         .find_map(|interruption| match interruption {
-            Interruption::Operator(gate) => Some(Arc::clone(gate)),
+            Interruption::Arrival(gate, _) => Some(Arc::clone(gate)),
             Interruption::ForeignCommand(_) | Interruption::LostAnswer => None,
         })
         .unwrap_or_else(|| Arc::new(WireActivity::new()));
@@ -361,7 +373,7 @@ fn write_under(
 fn an_operator_arriving_mid_session_waits_for_the_lock_to_close() {
     let emptying = special(SpecialCommand::WriteMemoryLocation(0));
     let trigger = emptying;
-    let operator = Interruption::Operator(Arc::new(WireActivity::new()));
+    let operator = operator();
     let writes = text("luminaire_colour", MULTI_SESSION_TEXT);
     let (outcome, sim) = write_under(YieldGranularity::Step, Trigger::Frame(trigger), &[operator], &writes);
 
@@ -426,7 +438,7 @@ fn a_text_stopped_after_any_write_reads_old_empty_or_new() {
     let frames = calm.sent_frames();
     let writes_at = frames.iter().enumerate().filter(|(_, frame)| is_write_location(**frame));
     for (index, _) in writes_at {
-        let operator = Interruption::Operator(Arc::new(WireActivity::new()));
+        let operator = operator();
         let (_, sim) = write_under(YieldGranularity::Step, Trigger::Nth(index + 1), &[operator], &writes);
         let seen = colour_on_the_gear(&sim);
         assert!(
@@ -455,7 +467,7 @@ fn a_frame_lease_never_leaves_the_bank_open_whichever_frame_the_operator_follows
     let closed = position_of(&frames, special(SpecialCommand::WriteMemoryLocation(FOUND_LOCK)), true);
     assert!(opened < closed);
     for nth in opened..=closed {
-        let operator = Interruption::Operator(Arc::new(WireActivity::new()));
+        let operator = operator();
         let (outcome, sim) = write_under(YieldGranularity::Frame, Trigger::Nth(nth), &[operator], &writes);
         assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK), "operator after frame {nth}");
         assert_eq!(location(&sim, YEAR_OFFSET), Some(YEAR), "the started session finishes, frame {nth}");
@@ -491,7 +503,7 @@ fn a_field_whose_answer_is_lost_is_proved_by_the_read_back() {
 #[test]
 fn a_lost_restore_the_read_back_cannot_check_says_the_bank_may_be_open() {
     let relock = special(SpecialCommand::WriteMemoryLocation(FOUND_LOCK));
-    let operator = Interruption::Operator(Arc::new(WireActivity::new()));
+    let operator = operator();
     let both = [Interruption::LostAnswer, operator];
     let (outcome, _) = write_under(YieldGranularity::Frame, Trigger::Frame(relock), &both, &year(YEAR));
 
@@ -548,9 +560,95 @@ fn the_identity_is_read_before_the_bank_1_header() {
 // IEC 62386-102 §9.10.6
 #[test]
 fn an_identity_read_that_yields_stops_the_write_before_any_write() {
-    let operator = Interruption::Operator(Arc::new(WireActivity::new()));
+    let operator = operator();
     let (outcome, sim) = write_under(YieldGranularity::Frame, Trigger::Nth(1), &[operator], &year(YEAR));
 
     assert_eq!(shape(outcome.result), failure(ErrorCode::Preempted, IDENTITY_SUBJECT));
     assert!(wrote_nothing(&sim));
+}
+
+fn worker_command(text: &str) -> BusFrame {
+    let field = LuminaireField::named("luminaire_colour").expect("text field");
+    let command = DaliWriteMemoryLuminaireCommand {
+        registry_adapter_id: 0,
+        short_address: SHORT,
+        numbers: N::default(),
+        text: text_patch(field, text),
+    };
+    let envelope = dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        WRITE_CORRELATION,
+        BusId::default().0,
+        Some(Origin::Api),
+        command,
+    );
+    BusFrame::command(envelope)
+}
+
+fn through_the_worker(arrival: WirePriority) -> (Result<(), (ErrorCode, String)>, SimDaliTransport) {
+    let (host, publisher, worker_commands, signals) = spawn_signal_bus();
+    let gate = Arc::new(WireActivity::new());
+    let sim = luminaire_gear(FOUND_LOCK, false);
+    let identity = identity_of(&sim);
+    let emptying = Trigger::Frame(special(SpecialCommand::WriteMemoryLocation(0)));
+    let interruption = Interruption::Arrival(Arc::clone(&gate), arrival);
+    let transport = Arc::new(Mutex::new(Interrupting::new(sim, vec![interruption], emptying)));
+    let read_port = ReadPortDouble { identity: Some(identity), ..ReadPortDouble::default() };
+    let worker = spawn_dali_worker(
+        worker_commands,
+        DaliController::new(Arc::clone(&transport), Box::new(StoppedClock::at(0))),
+        DaliRuntimeConfig::default(),
+        Arc::new(read_port),
+        publisher.clone(),
+        BusId::default(),
+        Arc::new(DaliWorkerCounters::default()),
+        gate,
+        Arc::new(CorrelationIdAllocator::new()),
+    );
+    publish_queued(&publisher, BusChannel::Commands, worker_command(MULTI_SESSION_TEXT));
+    let started = next_signal(&signals, WRITE_CORRELATION).map(|signal| signal.signal);
+    assert_eq!(started, Some(OperationWorkerSignal::WorkerStarted));
+    let ended = next_signal(&signals, WRITE_CORRELATION).expect("the write ends");
+    drop((host, publisher));
+    worker.join().expect("the worker stops with its bus");
+    let result = match ended.error {
+        Some(error) => Err((error.code, error.message.as_str().to_owned())),
+        None => Ok(()),
+    };
+    let interrupting = Arc::into_inner(transport).expect("one owner").into_inner().expect("bus");
+    (result, interrupting.sim)
+}
+
+fn assert_yielded_after_the_first_session(result: Result<(), (ErrorCode, String)>, sim: &SimDaliTransport) {
+    assert_eq!(result, failure(ErrorCode::Preempted, "luminaire_colour"));
+    let session_len = UNIT_BYTES * UNITS_PER_SESSION + LOCK_FRAMES_PER_SESSION;
+    let first_session = &sessions_on_the_wire(&stored_text(MULTI_SESSION_TEXT), FOUND_LOCK)[..session_len];
+    assert_eq!(written_values(sim), first_session, "the started session runs to its relock, and no other starts");
+    assert_eq!(location(sim, LOCK_OFFSET), Some(FOUND_LOCK));
+    assert!(colour_on_the_gear(sim).is_empty());
+}
+
+// IEC 62386-102 §9.10.2
+#[test]
+fn the_priority_table_lets_an_operator_in_only_after_the_lock_is_restored() {
+    let (result, sim) = through_the_worker(WirePriority::Interactive);
+
+    assert_yielded_after_the_first_session(result, &sim);
+}
+
+// IEC 62386-103 §9.13.1
+#[test]
+fn home_assistant_and_hcl_work_takes_the_wire_at_the_next_session() {
+    let (result, sim) = through_the_worker(WirePriority::Attended);
+
+    assert_yielded_after_the_first_session(result, &sim);
+}
+
+// IEC 62386-103 §9.13.1
+#[test]
+fn background_work_waits_for_the_whole_write() {
+    let (result, sim) = through_the_worker(WirePriority::Unattended);
+
+    assert_eq!(result, Ok(()), "a poller read does not cut into a write it queues behind");
+    assert_eq!(colour_on_the_gear(&sim), MULTI_SESSION_TEXT.as_bytes());
 }
