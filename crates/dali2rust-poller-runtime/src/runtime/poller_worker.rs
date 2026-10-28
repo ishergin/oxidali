@@ -42,8 +42,8 @@ pub struct PollerCounters {
     pub health_probes_several_failures: AtomicU32,
     pub health_probes_expired: AtomicU32,
     pub health_probes_power_failure: AtomicU32,
-    pub power_cycle_sweeps: AtomicU32,
-    pub power_cycle_sweep_reads: AtomicU32,
+    pub sweeps: AtomicU32,
+    pub sweep_reads: AtomicU32,
     pub reads_completed: AtomicU32,
     pub reads_failed: AtomicU32,
     pub reads_preempted: AtomicU32,
@@ -525,7 +525,7 @@ fn hold_published_read(state: &mut PollerState, deps: &PollerWiring, correlation
     match target.purpose {
         ReadPurpose::Cycle => state.cursor = Some((target.adapter_id, target.short_address)),
         ReadPurpose::PowerCycleSweep => {
-            deps.counters.power_cycle_sweep_reads.fetch_add(1, Ordering::Relaxed);
+            deps.counters.sweep_reads.fetch_add(1, Ordering::Relaxed);
         }
     }
     deps.counters.reads_published.fetch_add(1, Ordering::Relaxed);
@@ -712,7 +712,7 @@ fn sweep_after_power_cycles(state: &mut PollerState, deps: &PollerWiring, body: 
     if let Some(order) = state.power_cycles.answer(adapter_id, body.power_cycle_seen, listed_set) {
         let owed = listed.into_iter().filter(|short| order.owed & short_bit(*short) != 0);
         if queue_power_cycle_sweep(state, adapter_id, owed) && order.fresh {
-            deps.counters.power_cycle_sweeps.fetch_add(1, Ordering::Relaxed);
+            deps.counters.sweeps.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -1194,7 +1194,7 @@ mod tests {
         power_cycle_yes(&mut state, &t.deps);
         let owed: Vec<u8> = state.sweep_queue.iter().map(|target| target.short_address).collect();
         assert_eq!(owed, vec![1], "the gear is still owed, so the next YES reads it");
-        assert_eq!(t.deps.counters.power_cycle_sweeps.load(Ordering::Relaxed), 1, "the same sweep");
+        assert_eq!(t.deps.counters.sweeps.load(Ordering::Relaxed), 1, "the same sweep");
     }
 
     struct TwoAdapters {
@@ -1302,7 +1302,7 @@ mod tests {
     }
 
     fn sweeps(deps: &PollerWiring) -> u32 {
-        deps.counters.power_cycle_sweeps.load(Ordering::Relaxed)
+        deps.counters.sweeps.load(Ordering::Relaxed)
     }
 
     #[test]

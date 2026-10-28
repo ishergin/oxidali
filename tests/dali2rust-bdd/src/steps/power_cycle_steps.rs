@@ -250,7 +250,7 @@ async fn when_power_failure_heard(world: &mut DaliWorld, answers: u64) {
 #[when(regex = r"^the controller has swept the bus for power cycles (\d+) times?$")]
 async fn when_swept(world: &mut DaliWorld, sweeps: u64) {
     let port = world.server_port();
-    wait_for_counter(port, "power_cycle_sweeps", sweeps);
+    wait_for_counter(port, "sweeps", sweeps);
     wait_for_counter(port, "reads_completed", sweeps * STATUS_READS_PER_SWEEP);
 }
 
@@ -328,7 +328,7 @@ async fn then_no_status_queries(world: &mut DaliWorld) {
 async fn then_only_sweep_reads(world: &mut DaliWorld) {
     let block = poller_block(world.server_port());
     assert_eq!(
-        block["reads_published"], block["power_cycle_sweep_reads"],
+        block["reads_published"], block["sweep_reads"],
         "a disabled poller publishes sweep reads only: {block:#}"
     );
 }

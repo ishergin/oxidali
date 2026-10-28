@@ -28,7 +28,7 @@ Feature: Power-cycle watch
     When the controller has probed the bus 2 more times
     Then each probe should have broadcast the control, the lamp-failure query and the power-failure query in that order
     And no addressed DALI frames should have reached the bus
-    And the poller counter "power_cycle_sweeps" should be 0
+    And the poller counter "sweeps" should be 0
 
   @id:PWR-002
   Scenario: A YES sweeps the gear and forgets only the one that cycled
@@ -55,7 +55,7 @@ Feature: Power-cycle watch
     And virtual lamps 1 and 2 are switched on without a level
     Then virtual lamp 1 should eventually be on at level 100
     And no gear should have been asked for its status
-    And the poller counter "power_cycle_sweeps" should be 0
+    And the poller counter "sweeps" should be 0
 
   @id:PWR-004
   Scenario: A standing YES sweeps once, not once per probe
@@ -66,8 +66,8 @@ Feature: Power-cycle watch
     When physical device 0 comes back from a power cycle
     And the controller has swept the bus for power cycles 1 time
     And the controller has probed the bus 3 more times
-    Then the poller counter "power_cycle_sweeps" should be 1
-    And the poller counter "power_cycle_sweep_reads" should be 2
+    Then the poller counter "sweeps" should be 1
+    And the poller counter "sweep_reads" should be 2
     And every read the poller published should have been a power-cycle sweep read
     And each of physical devices 0 and 1 should have been asked for its status once
 
@@ -109,7 +109,7 @@ Feature: Power-cycle watch
     When the poller is enabled with a 200 ms interval
     And the controller has probed the bus 2 more times
     Then each probe should have broadcast the control and the lamp-failure query and nothing more
-    And the poller counter "power_cycle_sweeps" should be 0
+    And the poller counter "sweeps" should be 0
 
   @id:PWR-008
   Scenario: A poller that reads the status in its cycle forgets the gear that cycled and leaves a YES nothing to sweep
@@ -123,8 +123,8 @@ Feature: Power-cycle watch
     And physical device 0 comes back from a power cycle
     And the controller has heard a YES to the power-failure query 2 times
     Then physical device 0 should eventually report its power-cycle bit set
-    And the poller counter "power_cycle_sweeps" should be 0
-    And the poller counter "power_cycle_sweep_reads" should be 0
+    And the poller counter "sweeps" should be 0
+    And the poller counter "sweep_reads" should be 0
     When the poller and the power-cycle watch are switched off
     And the bus has gone quiet
     And virtual lamps 1 and 2 are switched on without a level

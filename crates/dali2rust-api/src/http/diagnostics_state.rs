@@ -225,8 +225,8 @@ pub struct PollerDto {
     pub health_probes_several_failures: u32,
     pub health_probes_expired: u32,
     pub health_probes_power_failure: u32,
-    pub power_cycle_sweeps: u32,
-    pub power_cycle_sweep_reads: u32,
+    pub sweeps: u32,
+    pub sweep_reads: u32,
     pub ignored_events: u32,
 }
 
@@ -430,7 +430,7 @@ declare_widest_dtos! {
         interactive_deferred, targets_excluded, window_deferred, device_cooldowns,
         health_probes_published, health_probes_invalid, health_probes_clear,
         health_probes_one_failure, health_probes_several_failures, health_probes_expired,
-        health_probes_power_failure, power_cycle_sweeps, power_cycle_sweep_reads,
+        health_probes_power_failure, sweeps, sweep_reads,
         ignored_events,
     }
     PersistenceDto {

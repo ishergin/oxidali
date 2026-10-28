@@ -181,9 +181,9 @@ def test_the_power_cycle_watch_probes_with_the_poller_off_and_reads_only_to_swee
 
 
 def sweep_read_verdict(delta):
-    if delta["reads_published"] != delta["power_cycle_sweep_reads"]:
+    if delta["reads_published"] != delta["sweep_reads"]:
         return "a disabled poller with the watch on read something other than a sweep: %s" % delta
-    if not delta["power_cycle_sweep_reads"]:
+    if not delta["sweep_reads"]:
         return ("INCONCLUSIVE, not a product failure: no sweep read went out in the window, so "
                 "no read was there to judge; the probes with the poller off did go out: %s" % delta)
     return None

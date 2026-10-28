@@ -1003,11 +1003,11 @@ fn yes_until(h: &Harness, power_failures: u32) {
 }
 
 fn sweeps(h: &Harness) -> u32 {
-    h.counters.power_cycle_sweeps.load(Ordering::Relaxed)
+    h.counters.sweeps.load(Ordering::Relaxed)
 }
 
 fn sweep_reads(h: &Harness) -> u32 {
-    h.counters.power_cycle_sweep_reads.load(Ordering::Relaxed)
+    h.counters.sweep_reads.load(Ordering::Relaxed)
 }
 
 #[test]
@@ -1255,7 +1255,7 @@ fn a_probe_that_ends_without_a_verdict_frees_the_probe_slot_and_leaves_the_watch
         &h.counters.health_probes_one_failure,
         &h.counters.health_probes_several_failures,
         &h.counters.health_probes_power_failure,
-        &h.counters.power_cycle_sweeps,
+        &h.counters.sweeps,
     ];
     assert!(
         verdicts.iter().all(|counter| counter.load(Ordering::Relaxed) == 0),

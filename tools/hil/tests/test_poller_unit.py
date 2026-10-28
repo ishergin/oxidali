@@ -4,8 +4,8 @@ import test_poller as poller
 
 
 def _delta(reads, sweep_reads, sweeps):
-    return {"reads_published": reads, "power_cycle_sweep_reads": sweep_reads,
-            "power_cycle_sweeps": sweeps}
+    return {"reads_published": reads, "sweep_reads": sweep_reads,
+            "sweeps": sweeps}
 
 
 def test_a_watch_run_that_met_no_yes_is_inconclusive_not_green():
