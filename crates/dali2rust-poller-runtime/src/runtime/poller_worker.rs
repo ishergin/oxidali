@@ -8,8 +8,8 @@ use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, BusSubscriberRx, 
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
     AttributeGroupReadOutcome, BusEventPayload, DaliAttributeGroup,
-    BusHealthVerdict, DaliAttributeReadOutcomesEvent, DaliBusHealthProbeCommand,
-    DaliBusHealthProbedEvent, DaliReadAttributesCommand, DeliveryStatus,
+    BusHealthVerdict, ConfirmationEnvelope, DaliAttributeReadOutcomesEvent, DaliBusHealthProbeCommand,
+    DaliBusHealthProbedEvent, DaliReadAttributesCommand, DeliveryStatus, ErrorCode,
     MemoryBankReadPreset, Origin,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
@@ -540,7 +540,7 @@ fn drain_confirmations(state: &mut PollerState, deps: &PollerWiring, conf_rx: &B
             continue;
         }
         if let Some(probe) = take_pending_probe(state, conf.meta.correlation_id) {
-            end_probe_without_verdict(state, deps, conf.status, probe);
+            end_probe_without_verdict(state, deps, &conf, probe);
             continue;
         }
         if conf.status != DeliveryStatus::DeliveryRejected {
@@ -554,12 +554,16 @@ fn drain_confirmations(state: &mut PollerState, deps: &PollerWiring, conf_rx: &B
     }
 }
 
-fn end_probe_without_verdict(state: &mut PollerState, deps: &PollerWiring, status: DeliveryStatus, probe: PendingProbe) {
-    if status == DeliveryStatus::DeliveryRejected {
+fn end_probe_without_verdict(state: &mut PollerState, deps: &PollerWiring, ended: &ConfirmationEnvelope, probe: PendingProbe) {
+    if ended.status == DeliveryStatus::DeliveryRejected {
         deps.counters.skipped_inbox_full.fetch_add(1, Ordering::Relaxed);
-    } else {
+    } else if !refused_before_the_wire(ended) {
         charge_wire_time(state, probe.published_at.elapsed());
     }
+}
+
+fn refused_before_the_wire(ended: &ConfirmationEnvelope) -> bool {
+    ended.confirmation.error.as_ref().is_some_and(|error| error.code == ErrorCode::Conflict)
 }
 
 fn sweep_stale(state: &mut PollerState, deps: &PollerWiring) {
@@ -1142,6 +1146,37 @@ mod tests {
         let owed: Vec<u8> = state.sweep_queue.iter().map(|target| target.short_address).collect();
         assert_eq!(owed, vec![1], "the gear is still owed, so the next YES reads it");
         assert_eq!(t.deps.counters.power_cycle_sweeps.load(Ordering::Relaxed), 1, "the same sweep");
+    }
+
+    #[test]
+    fn a_probe_refused_before_the_wire_owes_no_rest_and_one_that_reached_it_does() {
+        let t = test_deps();
+        for (code, reached_the_wire) in [
+            (ErrorCode::Conflict, false),
+            (ErrorCode::OperationFailed, true),
+            (ErrorCode::Preempted, true),
+        ] {
+            let mut state = test_state();
+            let probe = PendingProbe {
+                correlation_id: 1,
+                published_at: Instant::now() - Duration::from_secs(10),
+                deadline: Instant::now() + OUTSTANDING_ABANDON_TTL,
+            };
+            let ended = dali2rust_contracts::bus::build_confirmation_envelope_with_product_error(
+                1,
+                DeliveryStatus::ExecutionFailed,
+                0,
+                SOURCE_ID_UNSPECIFIED,
+                Some((code, "cause")),
+            );
+            let before = Instant::now();
+            end_probe_without_verdict(&mut state, &t.deps, &ended, probe);
+            assert_eq!(
+                state.rest_until >= before + Duration::from_secs(20),
+                reached_the_wire,
+                "{code:?}: only a probe that reached the wire buys rest; a gate's refusal sent nothing"
+            );
+        }
     }
 
     #[test]
