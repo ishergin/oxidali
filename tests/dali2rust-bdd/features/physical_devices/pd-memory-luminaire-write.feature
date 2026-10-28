@@ -72,7 +72,7 @@ Feature: Physical-device luminaire data write
     When I PATCH JSON {"year":24} to "/api/v1/adapters/0/physical-devices/0/memory-luminaire"
     Then the response status should be 409
     And the JSON error should be "conflict"
-    And the JSON field "message" should be "bank1_not_part251"
+    And the JSON field "message" should be "bank1_not_read"
     And all scripted DALI exchanges should be consumed without errors
 
   @id:PD-296

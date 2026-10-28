@@ -1246,7 +1246,7 @@ fn memory_luminaire_write_refuses_in_the_order_body_read_only_gate_value() {
 fn memory_luminaire_write_gates_on_what_the_registry_read_of_bank_1_shows() {
     let harness = BusHarness::new();
     let unread = luminaire_handler(&harness, None);
-    assert_eq!(luminaire_answer(&unread, r#"{"year":24}"#), answer(409, "conflict", "bank1_not_part251"));
+    assert_eq!(luminaire_answer(&unread, r#"{"year":24}"#), answer(409, "conflict", "bank1_not_read"));
     let read_only_first = luminaire_answer(&unread, r#"{"cct_kelvin":2700,"content_format_id":3}"#);
     assert_eq!(read_only_first, answer(409, "conflict", "bank1_field_read_only"), "whatever the key order");
     let absent = Bank1Layout { implemented: Some(false), ..Bank1Layout::default() };

@@ -154,6 +154,7 @@ impl Bank1Layout {
 pub enum Bank1WriteRefusal {
     FieldReadOnly,
     NotImplemented,
+    NotRead,
     NotPart251,
     FieldNotInFormat,
     TooShort,
@@ -164,6 +165,7 @@ impl Bank1WriteRefusal {
         match self {
             Self::FieldReadOnly => "bank1_field_read_only",
             Self::NotImplemented => "bank1_not_implemented",
+            Self::NotRead => "bank1_not_read",
             Self::NotPart251 => "bank1_not_part251",
             Self::FieldNotInFormat => "bank1_field_not_in_format",
             Self::TooShort => "bank1_too_short",
@@ -181,6 +183,7 @@ pub fn check_writable(
     if layout.implemented == Some(false) {
         return Err(Bank1WriteRefusal::NotImplemented);
     }
+    let last = layout.last_offset.ok_or(Bank1WriteRefusal::NotRead)?;
     let format = layout
         .content_format_id
         .and_then(LuminaireFormat::from_content_format_id)
@@ -188,7 +191,6 @@ pub fn check_writable(
     if format < field.since {
         return Err(Bank1WriteRefusal::FieldNotInFormat);
     }
-    let last = layout.last_offset.ok_or(Bank1WriteRefusal::NotPart251)?;
     if last < field.last_offset() {
         return Err(Bank1WriteRefusal::TooShort);
     }

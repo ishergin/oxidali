@@ -64,15 +64,18 @@ fn a_bank_that_is_absent_is_not_implemented() {
 }
 
 #[test]
-fn an_unknown_or_foreign_format_is_not_part_251() {
-    assert_eq!(
-        check_writable(&Bank1Layout::default(), field("year")),
-        Err(Bank1WriteRefusal::NotPart251)
-    );
+fn a_bank_never_read_from_its_start_is_not_read() {
+    assert_eq!(check_writable(&Bank1Layout::default(), field("year")), Err(Bank1WriteRefusal::NotRead));
+    let unmeasured = Bank1Layout { last_offset: None, ..V3_LAYOUT };
+    assert_eq!(check_writable(&unmeasured, field("year")), Err(Bank1WriteRefusal::NotRead));
+}
+
+#[test]
+fn a_read_bank_of_an_unknown_or_foreign_format_is_not_part_251() {
     let vendor = Bank1Layout { content_format_id: Some(0x0042), ..V3_LAYOUT };
     assert_eq!(check_writable(&vendor, field("year")), Err(Bank1WriteRefusal::NotPart251));
-    let unmeasured = Bank1Layout { last_offset: None, ..V3_LAYOUT };
-    assert_eq!(check_writable(&unmeasured, field("year")), Err(Bank1WriteRefusal::NotPart251));
+    let unparsed = Bank1Layout { content_format_id: None, ..V3_LAYOUT };
+    assert_eq!(check_writable(&unparsed, field("year")), Err(Bank1WriteRefusal::NotPart251));
 }
 
 #[test]
