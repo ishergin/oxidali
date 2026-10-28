@@ -137,6 +137,7 @@ struct Harness {
     held_probes: Arc<Mutex<VecDeque<u64>>>,
     seen_probes: Arc<Mutex<Vec<DaliBusHealthProbeCommand>>>,
     interactive: Arc<dali2rust_platform::dali::WireActivity>,
+    role: Arc<SwitchableRole>,
     _worker: std::thread::JoinHandle<()>,
     _pump: Option<std::thread::JoinHandle<()>>,
     _host: BusHost,
@@ -238,6 +239,7 @@ fn spawn_harness_configured(
     });
     let counters = Arc::new(PollerCounters::default());
     let interactive = Arc::new(dali2rust_platform::dali::WireActivity::new());
+    let role = Arc::new(SwitchableRole { active: std::sync::atomic::AtomicBool::new(true) });
     let worker = spawn_poller_worker(
         ev_rx,
         conf_rx,
@@ -248,13 +250,13 @@ fn spawn_harness_configured(
             bus_id: BUS_ID,
             adapter_count,
             counters: Arc::clone(&counters),
-            role: std::sync::Arc::new(ActiveRole),
+            role: Arc::clone(&role) as Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
             interactive: Arc::clone(&interactive),
             hold: Arc::new(dali2rust_platform::firmware::MaintenanceHold::new()),
             config,
         },
     );
-    Harness { publisher, counters, seen, held, held_probes, seen_probes, interactive, _worker: worker, _pump: pump, _host: host }
+    Harness { publisher, counters, seen, held, held_probes, seen_probes, interactive, role, _worker: worker, _pump: pump, _host: host }
 }
 
 const OWNED_COMMANDS: &[&str] = &["DaliReadAttributesCommand", "DaliBusHealthProbeCommand"];
@@ -1060,6 +1062,7 @@ fn a_yes_without_its_control_reads_nothing_and_leaves_the_hold_off_alone() {
 
     yes_until(&h, 1);
     assert_eq!(sweeps(&h), 1);
+    wait_until(|| h.counters.reads_completed.load(Ordering::Relaxed) == 1, WAIT);
     publish_probe_verdict(&h.publisher, 0, false, BusHealthVerdict::Clear, false);
     wait_until(|| h.counters.health_probes_invalid.load(Ordering::Relaxed) == 2, WAIT);
     yes_until(&h, 2);
@@ -1076,6 +1079,7 @@ fn a_standing_yes_sweeps_again_only_after_its_hold_off() {
 
     yes_until(&h, 1);
     assert_eq!(sweeps(&h), 1);
+    wait_until(|| h.counters.reads_completed.load(Ordering::Relaxed) == 1, WAIT);
     yes_until(&h, RESWEEP_AFTER_YES);
     assert_eq!(
         sweeps(&h),
@@ -1106,6 +1110,84 @@ fn a_preempted_sweep_read_is_retried_with_the_poller_off() {
         4,
         "a preempted sweep read goes back to the sweep, not to the switched-off cycle queue"
     );
+}
+
+fn release_with(h: &Harness, outcome: AttributeGroupReadOutcome) -> u8 {
+    let read = h.held.lock().expect("held").pop_front().expect("a held read");
+    let short = read.command.short_address;
+    publish_outcomes(&h.publisher, read.correlation_id, read.target_adapter_id, short, outcome);
+    short
+}
+
+fn read_shorts(h: &Harness) -> Vec<u8> {
+    h.seen_all().iter().map(|read| read.command.short_address).collect()
+}
+
+fn no(h: &Harness) {
+    let before = h.counters.health_probes_clear.load(Ordering::Relaxed);
+    publish_probe_verdict(&h.publisher, 0, true, BusHealthVerdict::Clear, false);
+    wait_until(|| h.counters.health_probes_clear.load(Ordering::Relaxed) > before, WAIT);
+}
+
+const QUIET_SPELL: Duration = Duration::from_millis(300);
+
+#[test]
+fn a_failed_sweep_read_is_read_again_on_the_next_yes() {
+    let h = spawn_watch_harness(vec![device(1)], None, NO_PROBE_PERIOD);
+
+    yes_until(&h, 1);
+    wait_until(|| h.seen_len() == 1, WAIT);
+    release_with(&h, AttributeGroupReadOutcome::ContendedAbort);
+    wait_until(|| h.counters.reads_failed.load(Ordering::Relaxed) == 1, WAIT);
+    assert!(
+        remains_false_for(|| h.seen_len() > 1, QUIET_SPELL),
+        "a failed sweep read is retried by the next YES, not at once"
+    );
+    yes_until(&h, 2);
+    wait_until(|| h.seen_len() == 2, WAIT);
+    assert_eq!(read_shorts(&h), vec![1, 1], "the target the failed read still owes is read again");
+    assert_eq!(sweeps(&h), 1, "reading what a sweep still owes is the same sweep");
+}
+
+#[test]
+fn a_stand_down_mid_sweep_leaves_the_watch_able_to_sweep_on_the_next_yes() {
+    let h = spawn_watch_harness(vec![device(1), device(2)], None, NO_PROBE_PERIOD);
+
+    yes_until(&h, 1);
+    wait_until(|| h.seen_len() == 1, WAIT);
+    h.role.active.store(false, Ordering::Relaxed);
+    let cycles = h.counters.cycles_total.load(Ordering::Relaxed);
+    wait_until(|| h.counters.cycles_total.load(Ordering::Relaxed) >= cycles + 2, WAIT);
+    release_with(&h, AttributeGroupReadOutcome::Success);
+    h.role.active.store(true, Ordering::Relaxed);
+    yes_until(&h, 2);
+    wait_until(|| h.seen_len() == 2, WAIT);
+    release_with(&h, AttributeGroupReadOutcome::Success);
+    wait_until(|| h.seen_len() == 3, WAIT);
+    assert_eq!(
+        read_shorts(&h),
+        vec![1, 1, 2],
+        "the stand-down dropped the sweep, so the next YES sweeps every target afresh"
+    );
+}
+
+#[test]
+fn yes_no_yes_while_a_sweep_is_queued_reads_each_target_once() {
+    let h = spawn_watch_harness(vec![device(1), device(2)], None, NO_PROBE_PERIOD);
+
+    yes_until(&h, 1);
+    wait_until(|| h.seen_len() == 1, WAIT);
+    no(&h);
+    yes_until(&h, 2);
+    release_with(&h, AttributeGroupReadOutcome::Success);
+    wait_until(|| h.seen_len() == 2, WAIT);
+    release_with(&h, AttributeGroupReadOutcome::Success);
+    assert!(
+        remains_false_for(|| h.seen_len() > 2, QUIET_SPELL),
+        "a target already queued or in flight is not queued again: {:?}",
+        read_shorts(&h)
+    );
+    assert_eq!(read_shorts(&h), vec![1, 2]);
 }
 
 struct ReplicatedSettings {
@@ -1562,14 +1644,16 @@ fn m13_an_interval_of_zero_is_paced_at_the_floor_not_spun_hot() {
     wait_until(|| h.counters.cycles_total.load(Ordering::Relaxed) > seen, WAIT);
 }
 
-struct ActiveRole;
+struct SwitchableRole {
+    active: std::sync::atomic::AtomicBool,
+}
 
-impl dali2rust_domain::registry::DaliSettingsReadPort for ActiveRole {
+impl dali2rust_domain::registry::DaliSettingsReadPort for SwitchableRole {
     fn dali_settings_view(&self) -> dali2rust_domain::registry::DaliSettingsView {
         dali2rust_domain::registry::DaliSettingsView {
             dt8_auto_activation_repair: false,
             dt8_rgbwaf_control_assert: false,
-            application_active: true,
+            application_active: self.active.load(Ordering::Relaxed),
             device_short_address: None,
         }
     }

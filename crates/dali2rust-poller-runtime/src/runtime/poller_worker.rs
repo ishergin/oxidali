@@ -15,7 +15,7 @@ use dali2rust_contracts::msg::{
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{PollTargetView, PollerReadPort, PollerSettingsView};
 
-use super::power_cycle::{PollerConfig, PowerCycleWatch};
+use super::power_cycle::{short_bit, PollerConfig, PowerCycleWatch};
 
 const MAX_IDLE_WAIT: Duration = Duration::from_secs(1);
 const OUTSTANDING_ABANDON_TTL: Duration = Duration::from_secs(16 * 60);
@@ -265,6 +265,7 @@ fn arm_probe_round(state: &mut PollerState, enabled_adapters: &[u8]) {
 fn stand_down_power_cycle_watch(state: &mut PollerState) {
     state.probe_due.clear();
     state.sweep_queue.clear();
+    state.power_cycles = PowerCycleWatch::default();
 }
 
 fn publish_health_probe(state: &mut PollerState, deps: &PollerWiring) {
@@ -659,10 +660,12 @@ fn watch_power_cycles(state: &mut PollerState, deps: &PollerWiring, body: &DaliB
     if !state.settings.power_cycle_watch {
         return;
     }
-    if state.power_cycles.sweep_due(body.registry_adapter_id, body.power_cycle_seen) {
-        let queued = state.sweep_queue.len();
-        queue_power_cycle_sweep(state, deps, body.registry_adapter_id);
-        if state.sweep_queue.len() > queued {
+    let adapter_id = body.registry_adapter_id;
+    let listed = if body.power_cycle_seen { listed_shorts(deps, adapter_id) } else { Vec::new() };
+    let listed_set = listed.iter().fold(0, |set, short| set | short_bit(*short));
+    if let Some(order) = state.power_cycles.answer(adapter_id, body.power_cycle_seen, listed_set) {
+        let owed = listed.into_iter().filter(|short| order.owed & short_bit(*short) != 0);
+        if queue_power_cycle_sweep(state, adapter_id, owed) && order.fresh {
             deps.counters.power_cycle_sweeps.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -671,15 +674,34 @@ fn watch_power_cycles(state: &mut PollerState, deps: &PollerWiring, body: &DaliB
     }
 }
 
-fn queue_power_cycle_sweep(state: &mut PollerState, deps: &PollerWiring, adapter_id: u8) {
-    let sweep = deps.read_port.list_poll_targets(adapter_id).targets.into_iter().map(|target| PollTarget {
-        adapter_id,
-        short_address: target.short_address,
-        groups_mask: DaliAttributeGroup::RuntimeStatus.mask_bit(),
-        memory_banks: MemoryBankReadPreset::None,
-        purpose: ReadPurpose::PowerCycleSweep,
-    });
-    state.sweep_queue.extend(sweep);
+fn listed_shorts(deps: &PollerWiring, adapter_id: u8) -> Vec<u8> {
+    let targets = deps.read_port.list_poll_targets(adapter_id).targets;
+    targets.iter().map(|target| target.short_address).collect()
+}
+
+fn queue_power_cycle_sweep(state: &mut PollerState, adapter_id: u8, owed: impl Iterator<Item = u8>) -> bool {
+    let queued = state.sweep_queue.len();
+    for short_address in owed {
+        if sweep_holds(state, adapter_id, short_address) {
+            continue;
+        }
+        state.sweep_queue.push_back(PollTarget {
+            adapter_id,
+            short_address,
+            groups_mask: DaliAttributeGroup::RuntimeStatus.mask_bit(),
+            memory_banks: MemoryBankReadPreset::None,
+            purpose: ReadPurpose::PowerCycleSweep,
+        });
+    }
+    state.sweep_queue.len() > queued
+}
+
+fn sweep_holds(state: &PollerState, adapter_id: u8, short_address: u8) -> bool {
+    let is_it = |target: &PollTarget| target.adapter_id == adapter_id && target.short_address == short_address;
+    state.sweep_queue.iter().any(is_it)
+        || state
+            .outstanding
+            .is_some_and(|o| o.target.purpose == ReadPurpose::PowerCycleSweep && is_it(&o.target))
 }
 
 fn adopt_settings(state: &mut PollerState, settings: PollerSettingsView) {
@@ -698,31 +720,31 @@ fn complete_read(state: &mut PollerState, deps: &PollerWiring, corr: u64, body: 
         }
         return;
     };
-    match read_verdict(body) {
-        ReadVerdict::Completed => {
-            deps.counters.reads_completed.fetch_add(1, Ordering::Relaxed);
-            let target = outstanding.target;
-            if target.memory_banks != MemoryBankReadPreset::None {
-                state.bank_reads.insert(
-                    (target.adapter_id, target.short_address, target.memory_banks as u8),
-                    Instant::now(),
-                );
-            }
-            state.cooldown.remove(&(target.adapter_id, target.short_address));
-        }
+    let target = outstanding.target;
+    let verdict = read_verdict(body);
+    match verdict {
+        ReadVerdict::Completed => record_completed_read(state, &deps.counters, target),
         ReadVerdict::Preempted => {
             deps.counters.reads_preempted.fetch_add(1, Ordering::Relaxed);
-            requeue_target(state, outstanding.target);
+            requeue_target(state, target);
         }
-        ReadVerdict::Absent => {
-            let target = outstanding.target;
-            cool_absent_device(state, &deps.counters, target.adapter_id, target.short_address);
-        }
-        ReadVerdict::Failed => {
-            let target = outstanding.target;
-            fail_device(state, &deps.counters, target.adapter_id, target.short_address);
-        }
+        ReadVerdict::Absent => cool_absent_device(state, &deps.counters, target.adapter_id, target.short_address),
+        ReadVerdict::Failed => fail_device(state, &deps.counters, target.adapter_id, target.short_address),
     }
+    if matches!(verdict, ReadVerdict::Completed | ReadVerdict::Absent) && target.purpose == ReadPurpose::PowerCycleSweep {
+        state.power_cycles.settle(target.adapter_id, target.short_address);
+    }
+}
+
+fn record_completed_read(state: &mut PollerState, counters: &PollerCounters, target: PollTarget) {
+    counters.reads_completed.fetch_add(1, Ordering::Relaxed);
+    if target.memory_banks != MemoryBankReadPreset::None {
+        state.bank_reads.insert(
+            (target.adapter_id, target.short_address, target.memory_banks as u8),
+            Instant::now(),
+        );
+    }
+    state.cooldown.remove(&(target.adapter_id, target.short_address));
 }
 
 #[derive(Debug, PartialEq, Eq)]
