@@ -255,6 +255,7 @@ pub struct FaultInjection {
     pub drop_answer_permille: u16,
     pub forced_status: u8,
     pub failure_status: u8,
+    pub memory_write_unstored: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -294,6 +295,7 @@ pub struct Gear {
     pub withdrawn: bool,
     pub identifying: bool,
     pub dimming_curve: u8,
+    pub write_enabled: bool,
     device_type_walk: Option<usize>,
     pub limit_error: bool,
     pending_repeat: Option<u16>,
@@ -401,6 +403,43 @@ impl Gear {
 
 const BANK1_LAST_OFFSET_OFFSET: usize = 0x00;
 
+const BANK1_LOCK_OFFSET: u8 = 0x02;
+
+impl Gear {
+    // IEC 62386-102 §9.10.5; DiiA 251 §9.2.3
+    pub fn write_memory_location(&mut self, bank: u8, offset: u8, value: u8) -> Option<u8> {
+        if bank != MEMORY_BANK_PROFILE || !self.profile_writable(offset) {
+            return None;
+        }
+        if !self.faults.memory_write_unstored {
+            self.store_profile(offset, value);
+        }
+        Some(value)
+    }
+
+    // IEC 62386-102 §9.10.2, Table 8
+    fn profile_writable(&self, offset: u8) -> bool {
+        let last = self.profile_location(0).unwrap_or(0);
+        let unlocked = self.banks.bank1[usize::from(BANK1_LOCK_OFFSET)] == BANK1_UNLOCKED;
+        (BANK1_LOCK_OFFSET..=last).contains(&offset) && (offset == BANK1_LOCK_OFFSET || unlocked)
+    }
+
+    fn store_profile(&mut self, offset: u8, value: u8) {
+        match self.banks.luminaire.as_mut() {
+            Some(l) if offset >= crate::luminaire::LUMINAIRE_FIRST_OFFSET => l.store(offset, value),
+            _ => {
+                if let Some(slot) = self.banks.bank1.get_mut(usize::from(offset)) {
+                    *slot = value;
+                }
+            }
+        }
+    }
+
+    pub fn set_bank1_lock_byte(&mut self, value: u8) {
+        self.banks.bank1[usize::from(BANK1_LOCK_OFFSET)] = value;
+    }
+}
+
 const BANK0_LAST_BANK_OFFSET: usize = 0x02;
 
 const BANK0_RESERVED_OFFSET: u8 = 0x01;
@@ -471,6 +510,7 @@ impl Gear {
             reset_state: true,
             power_cycle_seen: true,
             initialise: false, withdrawn: false, identifying: false, dimming_curve: 0,
+            write_enabled: false,
             device_type_walk: None,
             limit_error: false,
             pending_repeat: None, pending_random: None,
@@ -499,6 +539,7 @@ impl Gear {
         self.initialise = false;
         self.withdrawn = false;
         self.identifying = false;
+        self.write_enabled = false;
         self.pending_repeat = None;
         self.pending_random = None;
         self.rgbwaf = Rgbwaf::at_power_up();
@@ -1224,6 +1265,10 @@ impl Gear {
 
 pub fn apply_standard_write(gear: &mut Gear, command: StandardCommand, dtr0: u8) {
     gear.device_type_walk = None;
+    // IEC 62386-102 §9.10.5
+    if matches!(command, StandardCommand::EnableWriteMemory) {
+        gear.write_enabled = true;
+    }
     apply_identify_state(gear, command);
     apply_level_write(gear, command);
     apply_config_write(gear, command, dtr0);
