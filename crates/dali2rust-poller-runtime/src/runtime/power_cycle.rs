@@ -47,21 +47,33 @@ pub(crate) struct PowerCycleWatch {
 impl PowerCycleWatch {
     // IEC 62386-102 §11.5.15
     pub(crate) fn answer(&mut self, adapter_id: u8, power_cycle_seen: bool, listed: ShortSet) -> Option<SweepOrder> {
+        let order = self.order(adapter_id, power_cycle_seen, listed)?;
+        self.owe(adapter_id, order.owed);
+        (order.owed != 0).then_some(order)
+    }
+
+    pub(crate) fn news(&mut self, adapter_id: u8, power_cycle_seen: bool) -> bool {
+        let Some(order) = self.order(adapter_id, power_cycle_seen, 0) else {
+            return false;
+        };
+        self.owe(adapter_id, 0);
+        order.fresh
+    }
+
+    fn order(&mut self, adapter_id: u8, power_cycle_seen: bool, listed: ShortSet) -> Option<SweepOrder> {
         if !power_cycle_seen {
             self.adapters.remove(&adapter_id);
             self.failed_reads.retain(|&(adapter, _), _| adapter != adapter_id);
             return None;
         }
-        let order = match self.adapters.get(&adapter_id).copied() {
-            Some(AdapterWatch::Sweeping { owed }) => SweepOrder { fresh: false, owed: owed & listed },
+        match self.adapters.get(&adapter_id).copied() {
+            Some(AdapterWatch::Sweeping { owed }) => Some(SweepOrder { fresh: false, owed: owed & listed }),
             Some(AdapterWatch::HeldOff { answers }) if answers.saturating_add(1) < RESWEEP_AFTER_YES => {
                 self.adapters.insert(adapter_id, AdapterWatch::HeldOff { answers: answers.saturating_add(1) });
-                return None;
+                None
             }
-            _ => SweepOrder { fresh: true, owed: listed },
-        };
-        self.owe(adapter_id, order.owed);
-        (order.owed != 0).then_some(order)
+            _ => Some(SweepOrder { fresh: true, owed: listed }),
+        }
     }
 
     pub(crate) fn keep_only(&mut self, adapters: &[u8]) {

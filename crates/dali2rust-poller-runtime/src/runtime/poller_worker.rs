@@ -677,7 +677,9 @@ fn watch_power_cycles(state: &mut PollerState, deps: &PollerWiring, body: &DaliB
     if !state.settings.power_cycle_watch {
         return;
     }
-    if !cycle_reads_status(&state.settings) {
+    if cycle_reads_status(&state.settings) {
+        forget_absences_on_news(state, body);
+    } else {
         sweep_after_power_cycles(state, deps, body);
     }
     if body.power_cycle_seen {
@@ -688,6 +690,15 @@ fn watch_power_cycles(state: &mut PollerState, deps: &PollerWiring, body: &DaliB
 fn cycle_reads_status(settings: &PollerSettingsView) -> bool {
     let polled = DaliAttributeGroup::polled_mask(settings.attribute_groups_mask);
     settings.enabled && polled & DaliAttributeGroup::RuntimeStatus.mask_bit() != 0
+}
+
+fn forget_absences_on_news(state: &mut PollerState, body: &DaliBusHealthProbedEvent) {
+    let adapter_id = body.registry_adapter_id;
+    if state.power_cycles.news(adapter_id, body.power_cycle_seen) {
+        state
+            .cooldown
+            .retain(|(adapter, _), cooldown| *adapter != adapter_id || cooldown.absent_strikes == 0);
+    }
 }
 
 fn sweeps_power_cycles(settings: &PollerSettingsView) -> bool {
@@ -737,7 +748,7 @@ fn sweep_holds(state: &PollerState, adapter_id: u8, short_address: u8) -> bool {
 }
 
 fn adopt_settings(state: &mut PollerState, settings: PollerSettingsView) {
-    if !sweeps_power_cycles(&settings) {
+    if !(sweeps_power_cycles(&state.settings) && sweeps_power_cycles(&settings)) {
         state.sweep_queue.clear();
         state.power_cycles = PowerCycleWatch::default();
     }
@@ -1309,6 +1320,62 @@ mod tests {
         }
         power_cycle_yes(&mut state, &t.deps);
         assert!(state.sweep_queue.is_empty(), "a read that never returns leaves the sweep like one that keeps failing");
+    }
+
+    fn cycle_state() -> PollerState {
+        let mut state = watch_state();
+        state.settings.attribute_groups_mask = DaliAttributeGroup::RuntimeStatus.mask_bit();
+        state.settings.interval_ms = 60_000;
+        state
+    }
+
+    fn cycle_lists(state: &mut PollerState, deps: &PollerWiring) -> Vec<u8> {
+        start_cycle(state, deps);
+        state.queue.iter().map(|target| target.short_address).collect()
+    }
+
+    #[test]
+    fn a_yes_that_is_news_lets_the_cycle_read_a_gear_it_saw_absent_through_the_outage() {
+        let t = test_deps_on(Arc::new(ListsGears(&[1, 2])));
+        let mut state = cycle_state();
+        for _ in 0..ABSENT_COOLDOWN_MULTIPLES.len() {
+            cool_absent_device(&mut state, &t.deps.counters, 0, 1);
+        }
+        fail_device(&mut state, &t.deps.counters, 0, 2);
+        assert!(cycle_lists(&mut state, &t.deps).is_empty(), "gear 1 cools for twelve intervals, gear 2 for three");
+        power_cycle_yes(&mut state, &t.deps);
+        assert_eq!(
+            cycle_lists(&mut state, &t.deps),
+            vec![1],
+            "the YES says the outage is over, so the absent cooldown is stale; a failed read's cooldown is not about absence"
+        );
+        assert!(state.sweep_queue.is_empty() && sweeps(&t.deps) == 0, "the cycle reads the status, so nothing is swept");
+        cool_absent_device(&mut state, &t.deps.counters, 0, 1);
+        for answer in 1..RESWEEP_AFTER_YES {
+            power_cycle_yes(&mut state, &t.deps);
+            assert!(
+                cycle_lists(&mut state, &t.deps).is_empty(),
+                "standing YES number {answer} is not news, so the absent cooldown holds"
+            );
+        }
+        power_cycle_yes(&mut state, &t.deps);
+        assert_eq!(cycle_lists(&mut state, &t.deps), vec![1], "news again where a sweep would sweep again");
+    }
+
+    #[test]
+    fn a_poller_that_stops_reading_the_status_sweeps_at_the_first_yes() {
+        let t = test_deps_on(Arc::new(ListsGears(&[1])));
+        let mut state = cycle_state();
+        power_cycle_yes(&mut state, &t.deps);
+        let mut stopped = state.settings;
+        stopped.enabled = false;
+        adopt_settings(&mut state, stopped);
+        power_cycle_yes(&mut state, &t.deps);
+        assert_eq!(
+            sweeps(&t.deps),
+            1,
+            "the hold-off the cycle began is not the sweep's: the cycle may not have read every gear yet"
+        );
     }
 
     #[test]
