@@ -643,6 +643,40 @@ fn a_silence_at_a_latched_values_first_byte_after_it_answered_is_no_end_of_bank(
     assert_script_consumed(&transport);
 }
 
+// DiiA 252 §9.2.2
+// IEC 62386-101 §8.2.5
+#[test]
+fn a_latched_value_whose_later_byte_met_contention_is_contended_not_a_lost_latch() {
+    for contention in [ReadAttempt::Violated, ReadAttempt::BusBusy] {
+        let mock = MockDaliTransport::new();
+        let short = 3;
+        let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+        expect_prepare(&mock, short, SOURCE_DIAGNOSTICS, 0x04);
+        expect_pointer_check(&mock, short, SOURCE_DIAGNOSTICS, Some(0x04));
+        for attempt in 0..=MEMORY_READ_LOCATION_RETRIES {
+            mock.expect_forward_frame_with_backward(read, Some(0xA1));
+            match contention {
+                ReadAttempt::Violated => mock.expect_forward_frame_corrupted_in_window(read),
+                _ => mock.expect_forward_frame_bus_busy(read),
+            }
+            if attempt < MEMORY_READ_LOCATION_RETRIES {
+                expect_rearmed_chunk(&mock, short, SOURCE_DIAGNOSTICS, 0x04);
+            }
+        }
+
+        let (transport, mut controller) = setup_controller(mock);
+        let execution = read_memory_bank(&mut controller, short, SOURCE_DIAGNOSTICS, 0x04, 3);
+
+        assert_eq!(
+            execution.error,
+            Some(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
+            "the latch broke on the bus, not on the gear's silence"
+        );
+        assert!(execution.bytes.is_empty());
+        assert_script_consumed(&transport);
+    }
+}
+
 #[test]
 fn a_latched_value_inside_a_chunk_restarts_from_its_own_first_byte() {
     let mock = MockDaliTransport::new();
@@ -1101,6 +1135,50 @@ fn an_arm_whose_proof_stays_violated_is_contended() {
     assert_eq!(
         execution.error,
         Some(SemanticDaliError::OperationFailed(BUS_CONTENDED))
+    );
+    assert_script_consumed(&transport);
+}
+
+// IEC 62386-101 §8.2.5
+#[test]
+fn an_arm_whose_proof_keeps_finding_a_moved_pointer_is_misaligned() {
+    let mock = MockDaliTransport::new();
+    let short = 5;
+    for _ in 0..=BANK_ARM_RETRIES {
+        mock.expect_forward_frame(special_frame(SpecialCommand::Dtr1(0)));
+        mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(3)));
+        expect_proof(&mock, short, (Says(0), Says(9)));
+    }
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 0, 3, 1);
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(MEMORY_MISALIGNED)),
+        "the gear answered every proof, with a pointer it was not given"
+    );
+    assert_script_consumed(&transport);
+}
+
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §9.10.4
+#[test]
+fn a_chunk_whose_proof_finds_a_moved_pointer_after_every_re_arm_is_misaligned() {
+    let mock = MockDaliTransport::new();
+    let short = 5;
+    for _ in 0..=BANK_ARM_RETRIES {
+        expect_prepare(&mock, short, 0, 3);
+        expect_pointer_check(&mock, short, 0, Some(9));
+    }
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 0, 3, 1);
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(MEMORY_MISALIGNED)),
+        "the last proof moved, so the read ends on a moved pointer, not on silence"
     );
     assert_script_consumed(&transport);
 }

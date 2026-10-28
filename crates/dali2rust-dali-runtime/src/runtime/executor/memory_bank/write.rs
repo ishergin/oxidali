@@ -65,8 +65,8 @@ impl LuminaireWriteFailure {
     // IEC 62386-102 §9.10.4
     fn unread(error: SemanticDaliError, subject: &'static str) -> Self {
         let code = match error.message() {
-            MEMORY_POINTER_UNCONFIRMED | READ_ENDED_EARLY => ErrorCode::DeviceAbsent,
-            BUS_CONTENDED | MEMORY_LATCH_LOST => ErrorCode::ReadContended,
+            MEMORY_POINTER_UNCONFIRMED | READ_ENDED_EARLY | MEMORY_LATCH_LOST => ErrorCode::DeviceAbsent,
+            BUS_CONTENDED | MEMORY_MISALIGNED => ErrorCode::ReadContended,
             _ => error.code(),
         };
         Self::new(code, subject)
@@ -75,9 +75,8 @@ impl LuminaireWriteFailure {
     // IEC 62386-102 §9.10.5
     fn unproved(error: SemanticDaliError, subject: &'static str) -> Self {
         let code = match error.message() {
-            MEMORY_POINTER_UNCONFIRMED | READ_ENDED_EARLY => ErrorCode::VerifyUnanswered,
-            BUS_CONTENDED | MEMORY_LATCH_LOST => ErrorCode::VerifyContended,
-            MEMORY_MISALIGNED => ErrorCode::VerifyFailed,
+            MEMORY_POINTER_UNCONFIRMED | READ_ENDED_EARLY | MEMORY_LATCH_LOST => ErrorCode::VerifyUnanswered,
+            BUS_CONTENDED | MEMORY_MISALIGNED => ErrorCode::VerifyContended,
             _ => error.code(),
         };
         Self::new(code, subject)
@@ -136,7 +135,7 @@ fn armed<C: DaliApplicationController, R>(
             Err(other) => proof = other,
         }
     }
-    Err(Stop { error: proof.failure(MEMORY_MISALIGNED), reached })
+    Err(Stop { error: proof.failure(), reached })
 }
 
 fn arm_then<C: DaliApplicationController, R>(

@@ -104,7 +104,7 @@ fn arm_memory_pointer(
             return Ok(());
         }
     }
-    Err(proof.failure(MEMORY_POINTER_UNCONFIRMED))
+    Err(proof.failure())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,9 +139,9 @@ impl PointerProof {
         }
     }
 
-    const fn failure(self, moved: &'static str) -> SemanticDaliError {
+    const fn failure(self) -> SemanticDaliError {
         SemanticDaliError::OperationFailed(match self {
-            Self::Moved { .. } => moved,
+            Self::Moved { .. } => MEMORY_MISALIGNED,
             Self::Contended => BUS_CONTENDED,
             Self::Held | Self::Unanswered => MEMORY_POINTER_UNCONFIRMED,
         })
@@ -176,7 +176,7 @@ fn confirm_final_position(
         .transaction(|controller| pointer_proof(controller, address, bank, (counted, ended)))?;
     match proof {
         PointerProof::Held => Ok(()),
-        other => Err(other.failure(MEMORY_MISALIGNED)),
+        other => Err(other.failure()),
     }
 }
 
@@ -240,6 +240,7 @@ enum ReadFailure {
 struct ResumeEvidence {
     first_byte_answered: bool,
     responded: bool,
+    contended: bool,
     silences: u8,
     telling: u8,
     idle: u8,
@@ -249,6 +250,7 @@ impl ResumeEvidence {
     const NONE: Self = Self {
         first_byte_answered: false,
         responded: false,
+        contended: false,
         silences: 0,
         telling: 0,
         idle: 0,
@@ -259,6 +261,7 @@ impl ResumeEvidence {
         let silent = failure == ReadFailure::Silent;
         self.first_byte_answered |= at > resume;
         self.responded |= answered;
+        self.contended |= matches!(failure, ReadFailure::Contended { .. });
         self.silences += u8::from(silent && silence_may_end_bank(at));
         if at > resume || answered || silent {
             self.telling += 1;
@@ -372,10 +375,10 @@ impl ChunkCursor {
         let resume = match (lost_placeholder_read, self.freshly_armed) {
             (true, _) => MEMORY_RESERVED_OFFSET,
             (false, true) => chunk_start,
-            (false, false) => return Err(proof.failure(MEMORY_MISALIGNED)),
+            (false, false) => return Err(proof.failure()),
         };
         if self.rearms >= BANK_ARM_RETRIES {
-            return Err(proof.failure(MEMORY_POINTER_UNCONFIRMED));
+            return Err(proof.failure());
         }
         self.rearms += 1;
         self.indicator_reread |= lost_placeholder_read;
@@ -449,7 +452,7 @@ impl ChunkCursor {
 // DiiA 252 §9.2.2
 fn give_up(failure: ReadFailure, evidence: ResumeEvidence) -> Result<ReadStop, SemanticDaliError> {
     match failure {
-        _ if evidence.first_byte_answered => {
+        _ if evidence.first_byte_answered && !evidence.contended => {
             Err(SemanticDaliError::OperationFailed(MEMORY_LATCH_LOST))
         }
         ReadFailure::Failed(error) if !evidence.responded => Err(error),

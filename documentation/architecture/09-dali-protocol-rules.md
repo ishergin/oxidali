@@ -200,21 +200,21 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   answered another value, else `dt8_staging_contended` when an echo held a violation,
   else `dt8_staging_unanswered`.
 - A multi-byte memory-bank value is read inside one latch (DiiA 252/253): chunks are
-  field-aligned, a re-arm restarts the value, and a value no latch covers fails
-  (`memory_bank_latch_lost`) rather than being stitched. MASK and TMASK are per width,
-  signed widths included; value, MASK, TMASK and "not read" are four states.
+  field-aligned, a re-arm restarts the value, and a value no latch covers fails rather
+  than being stitched. MASK and TMASK are per width, signed widths included; value,
+  MASK, TMASK and "not read" are four states.
 - A memory-bank read chunk is one transaction that opens by proving the whole pointer,
   `DTR1` and `DTR0`, and reads at most four locations: proof and reads together stay
   under 101 §9.2's 400 ms guidance on real gear. A latched value wider than that stays
   whole, and its chunk is exempt. A proof tells a moved pointer from silence and a
   violation, as a read-back does, in that order: a register that answers a wrong value
-  outranks a violation, and a violation outranks silence. An arm whose proof never holds
-  fails `memory_bank_pointer_unconfirmed`, or `bus_contended` when its last proof was
-  violated and no register moved. A failed proof right after an arm re-arms the pointer;
-  before any other chunk it fails the read — `memory_bank_read_misaligned` when the
-  pointer moved, since the chunk before it may have read under a foreign pointer,
-  `memory_bank_pointer_unconfirmed` when it went unanswered, `bus_contended` when it was
-  violated. The read closes by checking both registers the same way (102 §9.10.4).
+  outranks a violation, and a violation outranks silence. A proof that fails the read
+  names what it showed, wherever it stands: `memory_bank_read_misaligned` for a moved
+  pointer, `bus_contended` for a violation, `memory_bank_pointer_unconfirmed` for
+  silence. An arm whose proof never holds fails by its last proof. A failed proof right
+  after an arm re-arms the pointer; before any other chunk it fails the read, since the
+  chunk before it may have read under a foreign pointer. The read closes by checking
+  both registers the same way (102 §9.10.4).
 - A silent READ at offset 0x01 reads as a placeholder and ends its chunk: the next
   chunk's proof shows whether the READ reached the gear. A pointer one READ behind, the
   bank held and `DTR0` still at 0x01, means the READ was lost or the gear does not advance
@@ -238,9 +238,10 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   Attempts that showed something (a silence, a violation, a contended answer, a failure
   inside a latched value) and attempts the bus never let through (busy, a contended
   silence, a transport error) each have a budget of three. When one runs out, a latched
-  value whose first byte had answered fails `memory_bank_latch_lost`, a transport error
-  on the last attempt is returned unless the offset had answered, and anything else
-  fails `bus_contended`.
+  value whose first byte had answered fails `memory_bank_latch_lost` if no attempt there
+  was contended (a violation, a contended answer or silence, a busy bus), a transport
+  error on the last attempt is returned unless the offset had answered, and anything
+  else fails `bus_contended`.
 
 ## Faults and identification
 
@@ -318,10 +319,10 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   is read to its last byte, the header to `0x12` or to the end its byte `0x00`
   declares, and the read-back to that `0x00`. A shorter read proves nothing: it is
   neither another device, nor another format, nor a field the gear refused.
-- Reads before the first write report what the wire did, not a verification:
-  `device_absent` for silence or a read that ended early, `read_contended` for a
-  violating frame, `preempted` for a yield; the message is `device_identity` or
-  `bank1_header`.
+- Reads before the first write report what the wire did, not a verification: the code
+  of a read (`device_absent`, `read_contended`, `preempted`), each defined in
+  [physical devices](../product-design/rest-api/resources/physical-devices.md)
+  §`PATCH …/memory-luminaire`; the message is `device_identity` or `bank1_header`.
 - The executor then re-reads the header and gates every field on it — content format
   3–5, the field present in that format, the bank long enough — before any write.
 - Each unit writes at most three bytes (101 §9.2). It sends `ENABLE WRITE MEMORY`, one

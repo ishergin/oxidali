@@ -54,6 +54,7 @@ const QUERY_SELECTOR: u8 = 0x01;
 const LOGICAL_GEAR_UNITS: u8 = 2;
 const SECOND_GEAR_UNIT: u8 = 1;
 const ARM_ATTEMPTS: usize = 3;
+const FOREIGN_OFFSET: u8 = 0x10;
 
 #[derive(Clone)]
 enum Interruption {
@@ -229,6 +230,10 @@ fn query_dtr1() -> u16 {
 fn query_dtr0() -> u16 {
     let address = DaliAddress::Short(SHORT);
     DaliCommand::Standard { address, command: StandardCommand::QueryContentDtr0 }.to_forward_frame().raw()
+}
+
+fn foreign_pointer() -> Interruption {
+    Interruption::ForeignCommand(special(SpecialCommand::Dtr0(FOREIGN_OFFSET)))
 }
 
 fn luminaire_gear(lock: u8, unstored: bool) -> SimDaliTransport {
@@ -771,6 +776,47 @@ fn a_gear_silent_from_the_identity_read_is_absent_not_unverified() {
     assert!(wrote_nothing(&sim));
 }
 
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §9.10.4
+#[test]
+fn an_identity_read_whose_pointer_a_foreign_frame_moves_is_contended_not_absent() {
+    let proof = Trigger::Frame(query_dtr1());
+    let (outcome, sim) = write_under(YieldGranularity::Step, proof, &[foreign_pointer()], &year(YEAR));
+
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::ReadContended, IDENTITY_SUBJECT),
+        "the gear answered, with a pointer another master set"
+    );
+    assert!(wrote_nothing(&sim));
+}
+
+// DiiA 252 §9.2.2
+// IEC 62386-102 §9.10.4
+#[test]
+fn a_bank_1_header_silent_inside_its_format_id_is_absent_not_contended() {
+    let inside = Trigger::ReadAt(PROFILE_BANK, part251::CONTENT_FORMAT_ID_OFFSET + 1);
+    let (outcome, sim) = lost_answers(inside, &year(YEAR));
+
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::DeviceAbsent, HEADER_SUBJECT),
+        "a gear falling silent inside a latched value is silence, not another answer"
+    );
+    assert!(wrote_nothing(&sim));
+}
+
+// DiiA 252 §9.2.2
+// IEC 62386-101 §8.2.5
+#[test]
+fn a_bank_1_header_whose_format_id_lost_the_bus_inside_it_is_contended() {
+    let inside = Trigger::ReadAt(PROFILE_BANK, part251::CONTENT_FORMAT_ID_OFFSET + 1);
+    let (outcome, sim) = write_under(YieldGranularity::Step, inside, &[Interruption::BusBusy], &year(YEAR));
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::ReadContended, HEADER_SUBJECT));
+    assert!(wrote_nothing(&sim));
+}
+
 // IEC 62386-102 §9.10.4
 // DiiA 251 §9.2.3
 #[test]
@@ -838,6 +884,22 @@ fn a_lock_open_the_bus_never_let_through_is_neither_restored_nor_reported_open()
         "the open stopped before its write, so nothing is open and nothing was verified"
     );
     assert!(wrote_nothing(&sim));
+}
+
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §9.10.2, Table 8
+#[test]
+fn a_lock_open_whose_pointer_a_foreign_frame_moves_is_contended_and_touches_nothing() {
+    let moved = Trigger::From(special(SpecialCommand::Dtr0(LOCK_OFFSET)));
+    let (outcome, sim) = write_under(YieldGranularity::Step, moved, &[foreign_pointer()], &year(YEAR));
+
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::ReadContended, LOCK_SUBJECT),
+        "a pointer another master moved is the bus, not a failed operation"
+    );
+    assert!(wrote_nothing(&sim));
+    assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK));
 }
 
 // IEC 62386-101 §8.2.5
