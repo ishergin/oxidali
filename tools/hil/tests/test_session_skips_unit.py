@@ -1,3 +1,4 @@
+import inspect
 import types
 
 import pytest
@@ -225,9 +226,9 @@ class _PolicyNow:
 
 def test_a_session_disarms_an_armed_apply_on_discovery_and_its_restore_re_arms_it():
     idle = _PolicyApi(armed=False)
-    assert hil_session_guards._neutralize_policy_apply(idle) == [] and idle.sent == []
+    assert hil_session_guards._neutralize_policy_apply(idle, guarded=True) == [] and idle.sent == []
     api = _PolicyApi(armed=True)
-    findings = hil_session_guards._neutralize_policy_apply(api)
+    findings = hil_session_guards._neutralize_policy_apply(api, guarded=True)
     assert api.sent == [("PATCH", "policies", {"apply_on_discovery": False})]
     assert "disarmed for the session" in findings[0]
     log = write_log.WriteLog("t", "http://dut")
@@ -241,7 +242,130 @@ def test_a_session_disarms_an_armed_apply_on_discovery_and_its_restore_re_arms_i
 
 def test_a_policy_that_stays_armed_fails_the_session():
     with pytest.raises(pytest.fail.Exception, match=r"could not disarm apply-on-discovery"):
-        hil_session_guards._neutralize_policy_apply(_PolicyApi(armed=True, sticks=False))
+        hil_session_guards._neutralize_policy_apply(_PolicyApi(armed=True, sticks=False),
+                                                    guarded=True)
+
+
+OWNER_ZONE = "UTC0"
+
+
+def _unanswered():
+    raise ConnectionError("the DUT stopped answering")
+
+
+def _ignored():
+    return None
+
+
+class _StuckSchedules(_Schedules):
+    def __init__(self, refusal):
+        super().__init__()
+        self.enabled["owner-night"] = True
+        self.refusal = refusal
+
+    def patch(self, schedule_id, body):
+        self.patches.append((schedule_id, body))
+        if schedule_id == "owner-night" and not body["enabled"]:
+            self.refusal()
+            return
+        self.enabled[schedule_id] = body["enabled"]
+
+
+@pytest.mark.parametrize("refusal, failure, message", [
+    (_ignored, pytest.fail.Exception, r"could not disable schedules \['owner-night'\]"),
+    (_unanswered, ConnectionError, r"stopped answering"),
+])
+def test_a_schedule_that_will_not_suspend_fails_the_session_and_re_enables_the_rest(
+        refusal, failure, message):
+    api = _HclApi()
+    api.hcl = _StuckSchedules(refusal)
+    with pytest.raises(failure, match=message):
+        hil_session_guards._neutralize_schedules(api, suspend=True)
+    assert api.hcl.enabled == {"owner-evening": True, "owner-night": True}
+
+
+class _OwnerBench:
+    def __init__(self):
+        self.poller_on, self.armed, self.zone, self.sent = True, True, OWNER_ZONE, []
+        self.poller = types.SimpleNamespace(get=lambda: {"enabled": self.poller_on},
+                                            patch=self._patch_poller)
+        self.hcl = types.SimpleNamespace(list=lambda: [])
+        self.cfg = HilConfig(lamp_shorts="2", lamps_read_only=False, serial_remote="")
+
+    def _patch_poller(self, body):
+        self.sent.append(("PATCH", "settings/poller", body))
+        self.poller_on = body["enabled"]
+
+    def _req(self, method, path, body=None):
+        self.sent.append((method, path, body))
+        self.armed = body["apply_on_discovery"]
+
+    def health(self):
+        return {}
+
+    def policy_armed(self):
+        return self.armed
+
+    def time_get(self):
+        return {"timezone": self.zone}
+
+    def time_set(self, timezone):
+        self.sent.append(("PUT", "time", {"timezone": timezone}))
+        self.zone = timezone
+
+    def devices(self):
+        return {"physical_devices": []}
+
+
+def _start_bench_baseline(monkeypatch, bench, production_state):
+    monkeypatch.setattr(hil_session_guards, "standalone_client", lambda config: bench)
+    monkeypatch.setattr(hil_session_guards, "virtual_gear_run", lambda: False)
+    config = types.SimpleNamespace(getoption=lambda name: False, _hil_hardware_free=False,
+                                   _hil_validity={"baseline": []})
+    return config, inspect.unwrap(hil_session_guards.bench_baseline)(config, production_state)
+
+
+def _run_bench_baseline(monkeypatch, production_state):
+    bench = _OwnerBench()
+    config, session = _start_bench_baseline(monkeypatch, bench, production_state)
+    next(session)
+    with pytest.raises(StopIteration):
+        next(session)
+    return bench, config._hil_validity["baseline"]
+
+
+def test_a_session_with_no_snapshot_leaves_the_owner_poller_policy_and_zone_alone(monkeypatch):
+    bench, baseline = _run_bench_baseline(monkeypatch, production_state=None)
+    assert bench.sent == []
+    assert (bench.poller_on, bench.armed, bench.zone) == (True, True, OWNER_ZONE)
+    assert len(baseline) == 3
+    assert all("no production_state snapshot" in line for line in baseline)
+
+
+def test_a_session_the_snapshot_guards_writes_only_what_its_restore_owns(monkeypatch):
+    bench, baseline = _run_bench_baseline(monkeypatch, production_state={"devices": {}})
+    assert bench.sent == [("PATCH", "settings/poller", {"enabled": False}),
+                          ("PATCH", "policies", {"apply_on_discovery": False}),
+                          ("PUT", "time", {"timezone": hil_session_guards.BENCH_BASELINE_TZ})]
+    log = write_log.WriteLog("t", "http://dut")
+    for request in bench.sent:
+        log.note(write_log.request_keys(*request))
+    assert log.changed("settings/poller", "enabled")
+    assert log.changed("policies", "apply_on_discovery") and log.changed("time", "timezone")
+    assert len(baseline) == 3 and all("the session's restore" in line for line in baseline)
+
+
+@pytest.mark.parametrize("unanswered", ["time_get", "devices"])
+def test_a_baseline_that_fails_after_suspending_the_schedules_re_enables_them(
+        monkeypatch, unanswered):
+    bench = _OwnerBench()
+    bench.hcl = _Schedules()
+    setattr(bench, unanswered, _unanswered)
+    _config, session = _start_bench_baseline(monkeypatch, bench, production_state=None)
+    with pytest.raises(ConnectionError):
+        next(session)
+    assert bench.hcl.patches == [("owner-evening", {"enabled": False}),
+                                 ("owner-evening", {"enabled": True})]
 
 
 def test_only_a_named_lamp_without_read_only_makes_a_run_drive_lamps():
@@ -310,10 +434,11 @@ class _ZoneApi:
 
 def test_a_run_that_drives_no_lamp_reports_a_wrong_zone_and_never_moves_the_clock():
     api = _ZoneApi("UTC0")
-    findings = hil_session_guards._neutralize_timezone(api, drives_lamps=False)
+    findings = hil_session_guards._neutralize_timezone(api, drives_lamps=False, guarded=True)
     assert api.sets == [] and "left as it is" in findings[0]
-    findings = hil_session_guards._neutralize_timezone(api, drives_lamps=True)
-    assert api.sets == [hil_session_guards.BENCH_BASELINE_TZ] and "restored" in findings[0]
+    findings = hil_session_guards._neutralize_timezone(api, drives_lamps=True, guarded=True)
+    assert api.sets == [hil_session_guards.BENCH_BASELINE_TZ]
+    assert "set for the session" in findings[0]
 
 
 def test_every_test_that_forges_an_input_event_is_a_light_test():

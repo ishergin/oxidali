@@ -26,8 +26,6 @@ OPTIONAL = (
     "DALI2RUST_PHY_ISR_LEVEL",
 )
 
-SECRET_PREFIXES = ("WIFI_",)
-
 
 class BenchEnvError(RuntimeError):
     pass
@@ -66,8 +64,6 @@ def validate(env: dict[str, str]) -> list[str]:
 def effective_knobs(env: dict[str, str]) -> dict[str, str]:
     knobs = {}
     for key in list(REQUIRED) + list(OPTIONAL):
-        if key.startswith(SECRET_PREFIXES):
-            continue
         if key in env:
             knobs[key] = env[key]
     return knobs
