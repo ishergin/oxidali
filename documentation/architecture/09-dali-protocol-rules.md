@@ -291,9 +291,10 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - Non-volatile memory is not written unproved. The HTTP handler refuses with `409`
   before publishing, after the bank 1 layout gate and before the values are parsed; the
   executor repeats the check for a registry that changed in between:
-  - `device_identity_unknown` — bank 0 was not read from `0x00` through `0x1A`;
-  - `device_identity_unprovable` — the read bank 0 ends before `0x1A`, or its GTIN or
-    identification number is all MASK. MASK is never a value, an unprogrammed identity
+  - `device_identity_unknown` — bank 0 was not read from `0x00` through `0x1A`, or
+    the read ended early; reading it again helps;
+  - `device_identity_unprovable` — bank 0 declares in its byte `0x00` a last offset
+    below `0x1A`, or its GTIN or identification number is all MASK. MASK is never a value, an unprogrammed identity
     tells no gear from another, and reading the bank again does not change it; such a
     gear is not written. A gear the registry knew whose identity now reads MASK is
     `device_identity_changed`.
