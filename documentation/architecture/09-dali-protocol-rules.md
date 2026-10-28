@@ -55,8 +55,9 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - Preemption is routine and never a device fault. A preempted read ends
   `ErrorCode::Preempted` and commits nothing from the interrupted stage; a preempted
   `write-attributes` keeps the attributes it confirmed before the yield and ends
-  `Preempted`; a preempted luminaire-data write ends `Preempted` naming the first field
-  it did not write, with its lock byte as found and no read-back; the poller re-queues the target with no cooldown. No surface renders it as
+  `Preempted`; a preempted luminaire-data write ends `Preempted` naming the field it
+  stopped in, with its lock byte as found, no read-back and the bytes already written
+  unproved until the next bank read; the poller re-queues the target with no cooldown. No surface renders it as
   a failure.
 - A priority is a settling window (101 Table 22), not a floor. The controller draws a
   random point inside it (footnote c) in whole PHY ticks, with a small guard above the
