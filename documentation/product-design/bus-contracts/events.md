@@ -100,7 +100,7 @@
 | `DaliDiscoveryScanReconciledEvent` | реестр | required | Итог чистого скана известных адресов: маска подтверждённых |
 | `DaliDiscoveryCompletedEvent` / `...FailedEvent` | — | best-effort | Observed-only: исход операции несут сигналы |
 | `DaliDeviceIdentifiedEvent`, `DaliAddressingCompletedEvent`, `DaliDeviceReplacedEvent` | трекер; реестр (адресация, замена) | required | Терминальные результаты коммиссионинга, провал — тем же событием |
-| `DaliBusHealthProbedEvent` | поллер, дисплей | best-effort | Итог широковещательного health-probe: контроль ответил и вердикт `Clear` / `One` / `Several` |
+| `DaliBusHealthProbedEvent` | поллер, дисплей | best-effort | Итог широковещательного health-probe: контроль ответил, вердикт `Clear` / `One` / `Several` и ответ на `QUERY POWER FAILURE`, если о нём спрашивали |
 
 Правила, которые потребитель вправе предполагать:
 

@@ -18,6 +18,7 @@ Feature: Settings — Poller
     And the JSON boolean field "skip_unbound_virtual_lamps" should be true
     And the JSON boolean field "include_energy" should be false
     And the JSON boolean field "include_diagnostics" should be false
+    And the JSON boolean field "power_cycle_watch" should be false
 
   @id:SET-POL-010
   Scenario: PATCH applies the requested change and returns it
@@ -99,3 +100,15 @@ Feature: Settings — Poller
     And I send a GET request to "/api/v1/settings/poller"
     Then the response status should be 200
     And the JSON boolean field "include_diagnostics" should be true
+
+  @id:SET-POL-021
+  Scenario: The power-cycle watch survives a controller restart
+    Given in-memory slice persistence is enabled for the host stack
+    When I PATCH JSON {"power_cycle_watch":true} to "/api/v1/settings/poller"
+    Then the response status should be 200
+    And the JSON boolean field "power_cycle_watch" should be true
+    And the JSON boolean field "enabled" should be false
+    When I restart the host stack
+    And I send a GET request to "/api/v1/settings/poller"
+    Then the response status should be 200
+    And the JSON boolean field "power_cycle_watch" should be true

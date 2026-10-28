@@ -709,6 +709,7 @@ mod tests {
             skip_unbound_virtual_lamps: true,
             include_energy: false,
             include_diagnostics: false,
+            power_cycle_watch: false,
         };
         let bytes = crate::runtime::registry::persistence_slices::encode_persistence_blob(
             &crate::runtime::registry::persistence_slices::PersistenceEnvelope::new(

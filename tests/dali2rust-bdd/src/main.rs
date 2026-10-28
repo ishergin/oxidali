@@ -12,7 +12,8 @@ use cucumber::World;
 use dali2rust_test_support::UnreadableSlices;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_adapters::{
-    build_http_test_stack, BusStackRuntime, DaliRuntimeConfig, HttpTestPorts, StaticAsset,
+    build_http_test_stack, BusStackRuntime, DaliRuntimeConfig, HttpTestPorts, PollerConfig,
+    StaticAsset,
 };
 use dali2rust_bus::BusConfig;
 use dali2rust_platform::net::NetworkLink;
@@ -53,6 +54,7 @@ pub struct DaliWorld {
     persistence_slices: Option<Arc<UnreadableSlices>>,
     network_link: Option<([u8; 6], Option<[u8; 4]>, String)>,
     runtime_config: DaliRuntimeConfig,
+    poller_config: PollerConfig,
     pub stored_responses: Vec<TestResponse>,
     pub remembered_u64: Option<u64>,
     pub remembered_json: Option<serde_json::Value>,
@@ -92,6 +94,7 @@ impl DaliWorld {
             persistence_slices: None,
             network_link: None,
             runtime_config: DaliRuntimeConfig::default(),
+            poller_config: PollerConfig::default(),
             stored_responses: Vec::new(),
             remembered_u64: None,
             remembered_json: None,
@@ -185,6 +188,11 @@ impl DaliWorld {
         self.restart_server_with_config(BusConfig::default());
     }
 
+    pub fn restart_server_with_probe_period(&mut self, probe_period: Duration) {
+        self.poller_config = PollerConfig { probe_period };
+        self.restart_server();
+    }
+
     pub fn run_on_network_link(&mut self, mac: [u8; 6], ipv4: Option<[u8; 4]>, hostname: String) {
         self.network_link = Some((mac, ipv4, hostname));
         self.restart_server();
@@ -196,7 +204,7 @@ impl DaliWorld {
         let network_link = self.network_link.as_ref().map(|(mac, ipv4, hostname)| {
             Arc::new(MockNetworkLink::new(*mac, *ipv4, hostname)) as Arc<dyn NetworkLink>
         });
-        HttpTestPorts { mqtt_client: Some(mqtt_bundle), network_link }
+        HttpTestPorts { mqtt_client: Some(mqtt_bundle), network_link, poller_config: self.poller_config }
     }
 
     pub fn enable_in_memory_persistence(&mut self) {

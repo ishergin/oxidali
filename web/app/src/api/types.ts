@@ -884,6 +884,9 @@ export type PollerCounters = {
   health_probes_one_failure: number
   health_probes_several_failures: number
   health_probes_expired: number
+  health_probes_power_failure: number
+  sweeps: number
+  sweep_reads: number
   ignored_events: number
 }
 
@@ -1203,6 +1206,7 @@ export interface PollerSettings {
   include_energy: boolean
   include_diagnostics: boolean
   skip_unbound_virtual_lamps: boolean
+  power_cycle_watch: boolean
 }
 
 export interface ControllerTime {

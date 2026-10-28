@@ -18,6 +18,7 @@ pub mod physical_devices;
 pub mod polling;
 pub mod poller_steps;
 pub mod policies_steps;
+pub mod power_cycle_steps;
 pub mod redundancy_steps;
 pub mod scenes_steps;
 pub mod stats_steps;

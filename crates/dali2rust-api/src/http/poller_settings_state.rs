@@ -13,6 +13,7 @@ pub struct PollerSettingsDto {
     pub include_energy: bool,
     pub include_diagnostics: bool,
     pub skip_unbound_virtual_lamps: bool,
+    pub power_cycle_watch: bool,
 }
 
 declare_settings_http_surface! {
@@ -42,6 +43,7 @@ pub(crate) fn poller_settings_view_to_dto(view: PollerSettingsView) -> PollerSet
         include_energy: view.include_energy,
         include_diagnostics: view.include_diagnostics,
         skip_unbound_virtual_lamps: view.skip_unbound_virtual_lamps,
+        power_cycle_watch: view.power_cycle_watch,
     }
 }
 
@@ -60,6 +62,7 @@ mod tests {
             include_energy: false,
             include_diagnostics: false,
             skip_unbound_virtual_lamps: true,
+            power_cycle_watch: false,
         };
         assert_eq!(
             poller_settings_view_to_dto(view).attribute_groups_default,

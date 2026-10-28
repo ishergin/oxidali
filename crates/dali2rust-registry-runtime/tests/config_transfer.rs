@@ -41,6 +41,7 @@ fn store_with_poller_settings(
             skip_unbound_virtual_lamps: true,
             include_energy: false,
             include_diagnostics: false,
+            power_cycle_watch: false,
         },
     );
     let bytes = encode_persistence_blob(&envelope).expect("encode poller slice");

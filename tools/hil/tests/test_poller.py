@@ -24,7 +24,7 @@ def test_settings_contract_holds_on_real_firmware(api, poller_guard):
     assert set(dto) == {
         "enabled", "interval_ms", "attribute_groups_default",
         "include_dt8_color", "include_energy", "include_diagnostics",
-        "skip_unbound_virtual_lamps"}, dto
+        "skip_unbound_virtual_lamps", "power_cycle_watch"}, dto
     assert isinstance(dto["attribute_groups_default"], list), dto
     assert dto["attribute_groups_default"], "the group list may never be empty"
 
@@ -44,7 +44,7 @@ def test_settings_contract_holds_on_real_firmware(api, poller_guard):
 @pytest.mark.smoke
 def test_disabled_poller_still_ticks_but_reads_nothing(api, poller_guard,
                                                        poller_counters):
-    poller_guard(enabled=False)
+    poller_guard(enabled=False, power_cycle_watch=False)
     time.sleep(2.0)
 
     cycles = poller_counters.get("cycles_total")
@@ -145,7 +145,7 @@ def test_live_disable_stops_reads_without_restarting_the_worker(
         "poller never started reading: %s" % poller_counters.all()
 
     cycles_before = poller_counters.get("cycles_total")
-    poller_guard(enabled=False)
+    poller_guard(enabled=False, power_cycle_watch=False)
     time.sleep(FAST_INTERVAL_MS / 1000.0 * 3)
 
     assert poller_counters.quiet("reads_published", 6.0), \
@@ -155,6 +155,38 @@ def test_live_disable_stops_reads_without_restarting_the_worker(
     assert after > cycles_before, \
         "cycle counter did not advance — the worker restarted or died: %d -> %d" \
         % (cycles_before, after)
+
+
+WATCH_PROBES = 2
+WATCH_PROBES_TIMEOUT_S = 200
+
+
+@pytest.mark.hil_id("HIL-POL-11")
+@pytest.mark.slow
+def test_the_power_cycle_watch_probes_with_the_poller_off_and_reads_only_to_sweep(
+        api, poller_guard, poller_counters, test_artifacts):
+    poller_guard(enabled=False, power_cycle_watch=True)
+    before = poller_counters.all()
+    probes = int(before.get("health_probes_published", 0))
+    assert poller_counters.wait("health_probes_published", probes + WATCH_PROBES,
+                                timeout_s=WATCH_PROBES_TIMEOUT_S), \
+        "the watch did not probe with the poller off: %s" % poller_counters.all()
+
+    after = poller_counters.all()
+    delta = {k: poller_counters.delta(int(before.get(k, 0)), int(v))
+             for k, v in after.items()}
+    test_artifacts.attach_json("poller_delta", delta)
+    verdict = sweep_read_verdict(delta)
+    assert verdict is None, verdict
+
+
+def sweep_read_verdict(delta):
+    if delta["reads_published"] != delta["sweep_reads"]:
+        return "a disabled poller with the watch on read something other than a sweep: %s" % delta
+    if not delta["sweep_reads"]:
+        return ("INCONCLUSIVE, not a product failure: no sweep read went out in the window, so "
+                "no read was there to judge; the probes with the poller off did go out: %s" % delta)
+    return None
 
 
 @pytest.mark.hil_id("HIL-POL-07")

@@ -35,6 +35,7 @@ fn stored_poller_settings() -> Vec<u8> {
             skip_unbound_virtual_lamps: true,
             include_energy: false,
             include_diagnostics: false,
+            power_cycle_watch: false,
         },
     ))
     .expect("encode poller slice")

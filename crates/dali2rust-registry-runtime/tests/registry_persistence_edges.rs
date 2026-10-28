@@ -303,6 +303,7 @@ fn a_stale_physical_devices_slice_does_not_cost_the_poller_its_settings() {
                 include_dt8_color: true,
                 include_energy: false,
                 include_diagnostics: false,
+                power_cycle_watch: false,
                 skip_unbound_virtual_lamps: false,
             },
         )),
