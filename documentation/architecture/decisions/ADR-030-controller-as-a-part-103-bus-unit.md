@@ -1,6 +1,6 @@
 # ADR-030: The controller as a Part 103 bus unit
 
-Status: Proposed; amends ADR-018
+Status: Accepted; amends ADR-003, ADR-018 and ADR-025
 Date: 2026-10-28
 
 ## Context
@@ -40,15 +40,16 @@ this reaches it.
   and a copy of its NVM ones (`shortAddress`, `randomAddress`, `deviceGroups`,
   `operatingMode`, `powerCycleNotification`, `applicationActive`). It takes every frame
   the sniffer captured, in wire order — 16-bit, 24-bit and backward, so a frame between two halves
-  splits a send-twice pair — and returns an optional answer byte and a list of effects.
-  Our own frames never feed it.
+  splits a send-twice pair — and returns its effects and the answer table for the next
+  frame. Our own frames never feed it.
 - The model answers nothing and executes nothing until it is hydrated from the registry.
   The wire is now a mutating ingress, so the boot order keeps hydration before it as it
   does before HTTP; an early `QUERY SHORT ADDRESS` answered with MASK would invite another
   master to assign a new address.
-- **The task decides, the interrupt transmits, as now.** The `dali-sniff` drain feeds the
-  model and stages its answer in the answer cell before any logging; the arbitration table
-  becomes the degenerate case of the model. A capture is still routed by its length.
+- **The task decides before the frame, the interrupt answers it.** After every capture
+  the `dali-sniff` drain feeds the model and publishes the table the model returns; the
+  interrupt answers the next query from that table on its own. The arbitration table of
+  ADR-018 becomes part of it. A capture is still routed by its length.
 - **A lost capture invalidates the state it would have changed.** A dropped ring entry
   (`take_sniff_dropped`) clears the `DTR`s and the search state, and answers that depend
   on them stay silent until they are set again.
@@ -72,37 +73,57 @@ changes in four places, each a requirement:
   wins; the tail left after ours is an ordinary backward-length capture. An answer started
   over another one is counted.
 
-The change lives in `dali2rust-dali-phy` and keeps ADR-003, ADR-010 and ADR-025: the task
-still decides, nothing new is generic or indexed, and `just p4-isr-iram-check` and
-`just gear-sim-isr-iram-check` prove the linked images, which `just ci` does not build.
+These changes live in `dali2rust-dali-phy` under ADR-010's rules, and
+`just p4-isr-iram-check` and `just gear-sim-isr-iram-check` prove the linked images, which
+`just ci` does not build.
 The gear emulator stages its answers in the same cell
 ([ADR-031](ADR-031-gear-emulator-on-the-standby.md)), so an emulated gear and a real one
 that answer the same query now superimpose like two real gears. Several logical units
 behind one interface still merge their answers before staging (101 §9.5.2).
 
-### The sniffer polls every 1 ms
+### The interrupt answers from a table the task built in advance
 
-- An answerer that must answer any addressed query is always armed, so the 1 ms
-  `dali-sniff` poll runs whenever the model is hydrated, in both roles
-  ([ADR-003](ADR-003-isr-owned-phy.md) rules out an interrupt-to-task wake). Today it
-  runs while the arbitration table is armed, that is on every active controller; the
-  change reaches the passive one.
-- The binding cost is staging latency, not CPU: a capture completes a closing run after
-  its last edge, and the answer must reach the cell before the target slot opens, within
-  `ANSWER_ARM_TARGET_IDLE_TICKS` less `RX_IDLE_LINE_HIGH_TICKS`. `answer_stage_max_ticks`
-  and `answer_stage_late_total` in `/api/v1/stats` measure it, and the acceptance is a
-  read-only bench run on which `answer_stage_late_total` stays 0 with the full model in
-  the loop.
-- The stack cost is the `dali-sniff` census against `tools/hil/stack_budget.txt`, the
-  model's frames measured on the linked image (`scripts/measure_stack_frames.py`) before
-  a flash.
-- The shipping image has no FreeRTOS run-time statistics, so a per-task CPU share is not
-  read from it. The drain reports the share of wall time it spends in its passes as a
-  `/api/v1/stats` counter over the wire-load window, which the same read-only run reads.
+101 §9.8.5 gives a bus unit the settling time before the next possible frame to execute a
+command, and every answer of the model depends only on the state the earlier frames left
+and on the three bytes of the query. So after each frame the model can say what it would
+answer to any next one, and the slot no longer waits for a task.
+
+- **The answer table** is a pure function of the model's state: the address filter (short
+  address, device groups, broadcast, unaddressed), the answer to each device query, and the
+  answers of the special commands that have one (`COMPARE`, `VERIFY SHORT ADDRESS`,
+  `QUERY SHORT ADDRESS`). It names the last capture it accounts for. The drain writes the
+  copy the interrupt is not reading and then publishes it, so the interrupt never reads
+  half of one.
+- **The interrupt answers a 24-bit forward frame alone.** It decodes the capture, checks
+  that the table accounts for every capture before this one, matches the address, looks
+  the answer up and stages it for the slot. A table that is behind answers nothing and is
+  counted; the drain never answers late in its place.
+- **The lease is read at answer time.** `applicationControllerError` changes without any
+  frame, so the table carries the lease's expiry in interrupt ticks and the interrupt
+  applies it to the status byte and the arbitration answer.
+- **The 24-bit decoder moves into the interrupt** and is the only decoder of that length:
+  the drain takes the decoded frame with the capture, and captures of the other lengths
+  stay decoded in the task. The port follows ADR-010's source rules and spreads its phase
+  search over the idle ticks before the slot, so no tick carries it whole. It decodes
+  every 24-bit frame on the segment, the input devices' events included, so it replaces
+  the codec's 24-bit path only once a parity test over recorded bench captures shows the
+  two decoders agree.
+- **The drain's deadline is the next frame, not the slot.** A query is complete at the
+  earliest 2,4 ms of settling (101 Table 20) and 20,8 ms of frame after the frame before
+  it, so the drain has about 23 ms per frame where it had `ANSWER_ARM_TARGET_IDLE_TICKS`
+  less `RX_IDLE_LINE_HIGH_TICKS` per query. It runs at the 10 ms pace in both roles; the
+  1 ms pace is retired.
+- **`dali-sniff` runs above the worker pool.** It parks between polls, so it cannot own a
+  core, and at the workers' priority its worst measured staging delay was three quarters
+  of the slot budget.
+- The acceptance is a read-only bench run on which the stale-table counter and
+  `isr_ticks_lost_total` stay 0 and the `dali-sniff` census stays within
+  `tools/hil/stack_budget.txt`, with the model's frames measured on the linked image
+  (`scripts/measure_stack_frames.py`) before the flash.
 
 ### NVM changes go through the registry
 
-- The model answers from its own copy at once (101 §9.7 executes a command before the
+- The model answers from its own copy at once (101 §9.8.5 executes a command before the
   next frame) and publishes each NVM change as evidence for the registry, so the registry
   stays the single writer; the model hydrates from the DALI settings slice.
 - The bus-unit variables live in the DALI settings slice, which is not transferable: a
@@ -203,6 +224,15 @@ the rest.
   type B unit off the bus for good.
 - **Holding on a busy line, without touching the interrupt** — hides duplicate short
   addresses, see above.
+- **Staging each answer from the drain on a 1 ms poll**, as the arbitration answer was —
+  a deadline of a few milliseconds per query on an ordinary task, whose margin shrinks with
+  every worker and every frame of network traffic on its core.
+- **Waking the drain through a software-pended lower-level interrupt** — possible on the
+  P4, where an edge-triggered line's pending bit is writable, but it shortens only the
+  wake; the per-query deadline stays.
+- **The whole model in the interrupt** — the same answers with the whole of Part 103's
+  state machine above the kernel, timing no host test measures, and NVM values written
+  beside the registry.
 - **Refusing commissioning from the wire** — 103 §9.2.3 requires accepting it, and a
   certification run commissions the device.
 - **Ignoring quiescent mode** — it exists so that another controller's address search is
@@ -219,4 +249,7 @@ the rest.
   and at most 15 min after a `START QUIESCENT MODE` without a `STOP`.
 - The redundancy pair's arbitration probe keeps its frame and its broadcast, answered by
   the model; the lease's lapse becomes a reported application-controller error.
-- The passive unit pays the 1 ms poll that the active one already pays.
+- No task latency reaches the answer slot. The drain runs at the 10 ms pace in both roles,
+  and the interrupt carries one decode and one lookup per 24-bit frame.
+- The 24-bit decoder is interrupt code: a change to it is proven on the linked image and
+  by the parity test.

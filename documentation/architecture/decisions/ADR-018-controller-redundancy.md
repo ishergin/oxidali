@@ -1,6 +1,6 @@
 # ADR-018: Controller redundancy — a passive standby that arbitrates on the wire
 
-Status: Accepted; amendment proposed in ADR-030
+Status: Accepted, amended by ADR-030
 Date: 2026-08-10
 
 ## Context

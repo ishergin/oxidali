@@ -1,6 +1,6 @@
 # ADR-025: The PHY interrupt runs above the critical sections, and no flash operation stalls a task
 
-Status: Accepted
+Status: Accepted, amended by ADR-030
 Date: 2026-09-22
 
 ## Context
@@ -55,8 +55,10 @@ interrupt levels on the ESP32-P4:
 - **`CONFIG_SPI_FLASH_AUTO_SUSPEND`** — chip-dependent: a flash part outside ESP-IDF's
   table fails an assert at startup, a boot loop. The firmware prints the flash JEDEC id at
   boot so the option can be decided from a number.
-- **Raising the sniffer task's priority** — with XIP there is no task latency left for it
-  to recover, and a task above the worker pool that stops parking owns a core.
+- **Raising the sniffer task's priority to ride out the flash stall** — with XIP there is
+  no stall left for it to ride out, and a task above the worker pool that stops parking
+  owns a core. [ADR-030](ADR-030-controller-as-a-part-103-bus-unit.md) raises it above the
+  pool for its own deadline, as a task that parks between polls.
 - **RMT capture** — would remove only the receive half of the problem and none of the
   transmit half; it stays deferred ([roadmap](../../product-design/roadmap.md)).
 
