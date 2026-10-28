@@ -293,6 +293,7 @@ declare_bus_payloads! {
         pub dimming_curve: Option<u8>,
         pub signals_operation: bool,
         pub known_device_types: Option<DeviceTypeSet>,
+        pub refusal_fails: bool,
     }
     budget = DaliWriteAttributesCommand {
         short_address: 63,
@@ -309,6 +310,7 @@ declare_bus_payloads! {
         dimming_curve: Some(u8::MAX),
         signals_operation: true,
         known_device_types: Some(DeviceTypeSet::from_bits(u64::MAX)),
+        refusal_fails: true,
     };
 
     pub struct DaliDiscoverDevicesCommand {

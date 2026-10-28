@@ -1,6 +1,6 @@
 use super::*;
 use super::level_colour::{store_level, POWER_ON, SYSTEM_FAILURE};
-use crate::runtime::executor::helpers::VERIFY_CONTENDED_MESSAGE;
+use crate::runtime::executor::helpers::{VERIFY_CONTENDED_MESSAGE, VERIFY_FAILED_MESSAGE};
 use dali2rust_domain::dali::commands::DaliResponse;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -39,6 +39,16 @@ type LevelWrites = (Option<u8>, Option<u8>, Option<DeviceTypeSet>);
 pub struct WriteAttributesExecution {
     pub confirmed: ConfirmedWritableAttributes,
     pub error: Option<SemanticDaliError>,
+    pub refused: bool,
+}
+
+impl WriteAttributesExecution {
+    pub fn failing_a_refusal(mut self, refusal_fails: bool) -> Self {
+        if refusal_fails && self.refused && self.error.is_none() {
+            self.error = Some(SemanticDaliError::OperationFailed(VERIFY_FAILED_MESSAGE));
+        }
+        self
+    }
 }
 
 // IEC 62386-102 §3.13
@@ -66,13 +76,17 @@ pub(super) struct WriteTally {
     pub(super) confirmed: ConfirmedWritableAttributes,
     unanswered: bool,
     contended: bool,
+    refused: bool,
 }
 
 impl WriteTally {
     pub(super) fn proved(&mut self, read_back: ReadBack) -> Option<u8> {
         match read_back {
             ReadBack::Proved(value) => Some(value),
-            ReadBack::Refused => None,
+            ReadBack::Refused => {
+                self.refused = true;
+                None
+            }
             ReadBack::Unanswered => {
                 self.unanswered = true;
                 None
@@ -93,6 +107,7 @@ impl WriteTally {
         WriteAttributesExecution {
             confirmed: self.confirmed,
             error: error.or(unconfirmed.map(SemanticDaliError::OperationFailed)),
+            refused: self.refused,
         }
     }
 }

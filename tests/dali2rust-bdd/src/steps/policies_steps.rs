@@ -62,6 +62,17 @@ fn script_power_on_write(mock: &MockDaliTransport, level: u8, answer: Option<u8>
     script_level_store(mock, POLICY_SHORT_ADDRESS, POWER_ON_STORE, level, (Some(COLOUR_TYPE_BYTE_MASK), answer));
 }
 
+// POLICY-023
+#[given(regex = r"^a policy write that short address 0 confirms at power-on level (\d+) and answers system-failure level (\d+) with (\d+) on every attempt$")]
+async fn given_policy_write_half_refused(world: &mut DaliWorld, power_on: u8, failure: u8, answer: u8) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    mock.clear();
+    script_power_on_write(&mock, power_on, Some(power_on));
+    for _ in 0..WRITE_ATTEMPTS {
+        script_level_store(&mock, POLICY_SHORT_ADDRESS, SYSTEM_FAILURE_STORE, failure, (Some(COLOUR_TYPE_BYTE_MASK), Some(answer)));
+    }
+}
+
 // POLICY-017
 #[given(regex = r"^a policy write script setting both levels to (\d+) on short address 0 only$")]
 async fn given_policy_write_script_first_only(world: &mut DaliWorld, level: u8) {
@@ -135,6 +146,22 @@ async fn then_policy_apply_skip_reason(world: &mut DaliWorld, reason: String) {
     let skipped = json.pointer("/result/skipped").and_then(Value::as_array).expect("result.skipped array");
     assert!(!skipped.is_empty(), "nothing skipped: {json:?}");
     for entry in skipped {
+        assert_eq!(entry.get("reason").and_then(Value::as_str), Some(reason.as_str()), "{json:?}");
+    }
+}
+
+// POLICY-010 POLICY-023
+#[then(regex = r#"^the policy-apply operation result should list nothing written and failed short addresses \[([\d, ]*)\] with the reason "([^"]+)"$"#)]
+async fn then_policy_apply_failed(world: &mut DaliWorld, failed: String, reason: String) {
+    let json = last_json(world);
+    assert_eq!(result_shorts(&json, "written"), Vec::<u64>::new(), "written: {json:?}");
+    assert_eq!(json.pointer("/result/written_total").and_then(Value::as_u64), Some(0), "{json:?}");
+    let expected = parse_shorts(&failed);
+    assert_eq!(result_shorts(&json, "failed"), expected, "failed: {json:?}");
+    let total = json.pointer("/result/failed_total").and_then(Value::as_u64);
+    assert_eq!(total, u64::try_from(expected.len()).ok(), "failed_total: {json:?}");
+    let entries = json.pointer("/result/failed").and_then(Value::as_array).expect("result.failed array");
+    for entry in entries {
         assert_eq!(entry.get("reason").and_then(Value::as_str), Some(reason.as_str()), "{json:?}");
     }
 }

@@ -91,7 +91,7 @@ async fn given_min_max_lowering_script(world: &mut DaliWorld, min: u8, max: u8) 
     script_max_triple(&mock, max, max);
 }
 
-// PD-184 PD-185 PD-186 PD-188 PD-252 POLICY-007 PD-253 PD-286
+// PD-184 PD-185 PD-186 PD-188 PD-252 POLICY-007 PD-253 PD-286 POLICY-023
 #[then(
     regex = r"^physical device (\d+) eventually exposes write-confirmed (common_102|dt6_led) (min_level|max_level|dimming_curve|power_on_level|system_failure_level) (\d+)$"
 )]

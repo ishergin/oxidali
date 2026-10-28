@@ -103,7 +103,8 @@ Feature: Policies — what a luminaire does without a controller
     Then the response status should be 202
     And the last operation eventually fails
     And the operation error code should be "verify_failed"
-    And the operation error message should be "policy_not_confirmed"
+    And the operation error message should be "verify_failed"
+    And the policy-apply operation result should list nothing written and failed short addresses [0] with the reason "verify_failed"
     And all scripted DALI exchanges should be consumed without errors
 
   @id:POLICY-011
@@ -259,3 +260,21 @@ Feature: Policies — what a luminaire does without a controller
     When I PATCH JSON {"power_on_level":100} to "/api/v1/policies"
     Then the response status should be 200
     And the WebSocket client should receive a "PhysicalDeviceChangedEvent" frame on channel "physical_devices" whose payload "short_address" is 0
+
+  @id:POLICY-023
+  Scenario: A device that takes one managed level and refuses the other fails the apply and keeps the level it took
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I PATCH JSON {"power_on_level":200,"system_failure_level":100} to "/api/v1/policies"
+    Then the response status should be 200
+    Given a policy write that short address 0 confirms at power-on level 200 and answers system-failure level 100 with 50 on every attempt
+    When I send a POST request to "/api/v1/policies/apply" with empty body
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error code should be "verify_failed"
+    And the operation error message should be "verify_failed"
+    And the policy-apply operation result should list nothing written and failed short addresses [0] with the reason "verify_failed"
+    And physical device 0 eventually exposes write-confirmed common_102 power_on_level 200
+    And all scripted DALI exchanges should be consumed without errors
