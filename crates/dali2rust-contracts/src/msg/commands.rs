@@ -583,6 +583,7 @@ declare_bus_payloads! {
         pub skip_unbound_virtual_lamps: bool,
         pub include_energy: bool,
         pub include_diagnostics: bool,
+        pub power_cycle_watch: bool,
     }
     budget = PollerSettingsUpdateCommand {
         patch_mask: u8::MAX,
@@ -593,6 +594,7 @@ declare_bus_payloads! {
         skip_unbound_virtual_lamps: true,
         include_energy: true,
         include_diagnostics: true,
+        power_cycle_watch: true,
     };
 
     pub struct HclOverrideClearCommand {
@@ -696,9 +698,11 @@ declare_bus_payloads! {
 
     pub struct DaliBusHealthProbeCommand {
         pub registry_adapter_id: u8,
+        pub query_power_failure: bool,
     }
     budget = DaliBusHealthProbeCommand {
         registry_adapter_id: u8::MAX,
+        query_power_failure: true,
     };
 
     pub struct Dali103ScanCommand {
@@ -1150,6 +1154,7 @@ impl AdapterSettingsUpdateCommand {
 impl PollerSettingsUpdateCommand {
     pub const PATCH_ENABLED: u8 = 1;
     pub const PATCH_INTERVAL_MS: u8 = 2;
+    pub const PATCH_POWER_CYCLE_WATCH: u8 = 4;
     pub const PATCH_ATTRIBUTE_GROUPS_MASK: u8 = 8;
     pub const PATCH_INCLUDE_DT8_COLOR: u8 = 16;
     pub const PATCH_SKIP_UNBOUND_VIRTUAL_LAMPS: u8 = 32;

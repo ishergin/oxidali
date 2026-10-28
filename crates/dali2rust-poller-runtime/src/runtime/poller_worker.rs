@@ -10,7 +10,7 @@ use dali2rust_contracts::msg::{
     AttributeGroupReadOutcome, BusEventPayload, DaliAttributeGroup,
     BusHealthVerdict, DaliAttributeReadOutcomesEvent, DaliBusHealthProbeCommand,
     DaliBusHealthProbedEvent, DaliReadAttributesCommand, DeliveryStatus,
-    MemoryBankReadPreset, Origin, PollerSettingsChangedEvent,
+    MemoryBankReadPreset, Origin,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{PollTargetView, PollerReadPort, PollerSettingsView};
@@ -179,12 +179,12 @@ fn run_loop(ev_rx: BusSubscriberRx, conf_rx: BusSubscriberRx, deps: PollerWiring
         if Instant::now() >= state.next_cycle {
             start_cycle(&mut state, &deps);
         }
-        if Instant::now() >= state.last_probe + deps.config.probe_period {
+        let next_probe_round = watch_probe_round_at(&state, &deps);
+        if next_probe_round.is_some_and(|at| Instant::now() >= at) {
             start_probe_round(&mut state, &deps);
         }
-        let wait = state
-            .next_cycle
-            .min(state.last_probe + deps.config.probe_period)
+        let wait = next_probe_round
+            .map_or(state.next_cycle, |at| state.next_cycle.min(at))
             .saturating_duration_since(Instant::now())
             .min(MAX_IDLE_WAIT);
         match ev_rx.recv_timeout(wait) {
@@ -196,6 +196,13 @@ fn run_loop(ev_rx: BusSubscriberRx, conf_rx: BusSubscriberRx, deps: PollerWiring
         sweep_stale(&mut state, &deps);
         pump_queue(&mut state, &deps);
     }
+}
+
+fn watch_probe_round_at(state: &PollerState, deps: &PollerWiring) -> Option<Instant> {
+    state
+        .settings
+        .power_cycle_watch
+        .then(|| state.last_probe + deps.config.probe_period)
 }
 
 fn cycle_period(settings: &PollerSettingsView) -> Duration {
@@ -228,6 +235,9 @@ fn start_cycle(state: &mut PollerState, deps: &PollerWiring) {
         queue
     } else {
         deps.counters.targets_excluded.store(0, Ordering::Relaxed);
+        if !state.settings.power_cycle_watch {
+            state.probe_due.clear();
+        }
         VecDeque::new()
     };
     if !application_active {
@@ -269,6 +279,7 @@ fn publish_health_probe(state: &mut PollerState, deps: &PollerWiring) {
         Some(Origin::Poller),
         DaliBusHealthProbeCommand {
             registry_adapter_id: adapter_id,
+            query_power_failure: state.settings.power_cycle_watch,
         },
     );
     if deps.publisher.try_publish(BusChannel::Commands, BusFrame::command(cmd))
@@ -420,6 +431,10 @@ const BACKGROUND_WIRE_REST_MULTIPLE: u32 = 3;
 fn pump_queue(state: &mut PollerState, deps: &PollerWiring) {
     if !state.settings.enabled {
         state.queue.clear();
+        if !state.settings.power_cycle_watch {
+            state.probe_due.clear();
+            return;
+        }
     }
     if deps.hold.engaged() {
         return;
@@ -609,7 +624,7 @@ dali2rust_contracts::dispatch_bus_events! {
     );
     payload = payload;
     ignored = { deps.counters.ignored_events.fetch_add(1, Ordering::Relaxed); };
-    PollerSettingsChangedEvent(body) => apply_settings_changed(state, body),
+    PollerSettingsChangedEvent(_changed) => adopt_settings(state, deps.read_port.poller_settings_view()),
     RegistrySliceReloadedEvent(_reloaded) => adopt_settings(state, deps.read_port.poller_settings_view()),
     DaliAttributeReadOutcomesEvent(body) => complete_read(state, deps, corr, body),
     DaliBusHealthProbedEvent(body) => record_health_probe(state, deps, corr, body),
@@ -641,16 +656,18 @@ fn record_health_probe(
 }
 
 fn watch_power_cycles(state: &mut PollerState, deps: &PollerWiring, body: &DaliBusHealthProbedEvent) {
-    if body.power_cycle_seen {
-        deps.counters.health_probes_power_failure.fetch_add(1, Ordering::Relaxed);
-    }
-    if !state.power_cycles.sweep_due(body.registry_adapter_id, body.power_cycle_seen) {
+    if !state.settings.power_cycle_watch {
         return;
     }
-    let queued = state.sweep_queue.len();
-    queue_power_cycle_sweep(state, deps, body.registry_adapter_id);
-    if state.sweep_queue.len() > queued {
-        deps.counters.power_cycle_sweeps.fetch_add(1, Ordering::Relaxed);
+    if state.power_cycles.sweep_due(body.registry_adapter_id, body.power_cycle_seen) {
+        let queued = state.sweep_queue.len();
+        queue_power_cycle_sweep(state, deps, body.registry_adapter_id);
+        if state.sweep_queue.len() > queued {
+            deps.counters.power_cycle_sweeps.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    if body.power_cycle_seen {
+        deps.counters.health_probes_power_failure.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -665,22 +682,11 @@ fn queue_power_cycle_sweep(state: &mut PollerState, deps: &PollerWiring, adapter
     state.sweep_queue.extend(sweep);
 }
 
-fn apply_settings_changed(state: &mut PollerState, body: &PollerSettingsChangedEvent) {
-    adopt_settings(
-        state,
-        PollerSettingsView {
-            enabled: body.enabled,
-            interval_ms: body.interval_ms,
-            attribute_groups_mask: body.attribute_groups_mask,
-            include_dt8_color: body.include_dt8_color,
-            include_energy: body.include_energy,
-            include_diagnostics: body.include_diagnostics,
-            skip_unbound_virtual_lamps: body.skip_unbound_virtual_lamps,
-        },
-    );
-}
-
 fn adopt_settings(state: &mut PollerState, settings: PollerSettingsView) {
+    if !settings.power_cycle_watch {
+        state.sweep_queue.clear();
+        state.power_cycles = PowerCycleWatch::default();
+    }
     state.settings = settings;
     state.next_cycle = state.last_cycle + cycle_period(&state.settings);
 }
@@ -755,7 +761,10 @@ fn read_verdict(body: &DaliAttributeReadOutcomesEvent) -> ReadVerdict {
 fn requeue_target(state: &mut PollerState, target: PollTarget) {
     match target.purpose {
         ReadPurpose::Cycle => state.queue.push_back(target),
-        ReadPurpose::PowerCycleSweep => state.sweep_queue.push_back(target),
+        ReadPurpose::PowerCycleSweep if state.settings.power_cycle_watch => {
+            state.sweep_queue.push_back(target);
+        }
+        ReadPurpose::PowerCycleSweep => {}
     }
 }
 
@@ -856,6 +865,7 @@ mod tests {
             include_energy: false,
             include_diagnostics: false,
             skip_unbound_virtual_lamps: true,
+            power_cycle_watch: false,
         };
         let target = PollTargetView {
             short_address: 3,
@@ -888,6 +898,7 @@ mod tests {
             include_energy: false,
             include_diagnostics: false,
             skip_unbound_virtual_lamps: false,
+            power_cycle_watch: false,
         })
     }
 
@@ -1100,23 +1111,14 @@ mod tests {
     }
 
     #[test]
-    fn a_settings_event_cannot_shrink_the_period_below_the_floor() {
+    fn a_settings_change_cannot_shrink_the_period_below_the_floor() {
         let mut state = test_state();
-        apply_settings_changed(
-            &mut state,
-            &PollerSettingsChangedEvent {
-                enabled: true,
-                interval_ms: 0,
-                attribute_groups_mask: 0,
-                include_dt8_color: false,
-                include_energy: false,
-                include_diagnostics: false,
-                skip_unbound_virtual_lamps: false,
-            },
-        );
+        let mut settings = state.settings;
+        settings.interval_ms = 0;
+        adopt_settings(&mut state, settings);
         assert!(
             state.next_cycle.duration_since(state.last_cycle) >= Duration::from_millis(200),
-            "the REST floor (200 ms) holds even for a crafted event"
+            "the REST floor (200 ms) holds even for a crafted registry view"
         );
     }
 }

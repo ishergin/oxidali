@@ -8,7 +8,7 @@ use dali2rust_domain::dali::pres::standard::StandardCommand;
 use serde_json::{json, Value};
 
 use crate::steps::frames::standard_frame;
-use crate::steps::poller_steps::{poller_block, probe_within, wait_for_counter};
+use crate::steps::poller_steps::{poller_block, probe_within, wait_for_counter, SETTINGS_PATH};
 use crate::steps::polling::fetch_json;
 use crate::steps::virtual_lamps_steps::TWO_DEVICE_RANDOM_ADDRESSES;
 use crate::DaliWorld;
@@ -42,6 +42,16 @@ fn probe_frames() -> [u16; 3] {
         broadcast_frame(StandardCommand::QueryLampFailure),
         broadcast_frame(StandardCommand::QueryPowerFailure),
     ]
+}
+
+fn assert_each_probe_is(world: &DaliWorld, probe: &[u16]) {
+    let sent = world.dali_mock().lock().expect("mock lock").sent_frames();
+    let whole = sent.chunks(probe.len()).filter(|c| c.len() == probe.len()).count();
+    assert!(whole >= 2, "at least two whole probes: {sent:#06x?}");
+    assert!(
+        sent.chunks(probe.len()).all(|chunk| probe.starts_with(chunk)),
+        "every probe is {probe:#06x?}, in that order: {sent:#06x?}"
+    );
 }
 
 fn answer_probe(mock: &MockDaliTransport, control: Option<u8>, power_failure: Option<u8>) {
@@ -124,7 +134,7 @@ fn status_queries_to(world: &DaliWorld, short: u8) -> usize {
         .count()
 }
 
-// PWR-001 PWR-002 PWR-003 PWR-004 PWR-005
+// PWR-001 PWR-002 PWR-003 PWR-004 PWR-005 PWR-006 PWR-007
 #[given(regex = r"^the controller probes the bus every (\d+) ms$")]
 async fn given_probe_period(world: &mut DaliWorld, period_ms: u64) {
     world.restart_server_with_probe_period(Duration::from_millis(period_ms));
@@ -132,7 +142,19 @@ async fn given_probe_period(world: &mut DaliWorld, period_ms: u64) {
     answer_probe(&mock, Some(YES), None);
 }
 
-// PWR-002 PWR-003 PWR-004 PWR-005
+// PWR-001 PWR-002 PWR-003 PWR-004 PWR-005
+#[given("the power-cycle watch is switched on")]
+async fn given_watch_on(world: &mut DaliWorld) {
+    let body = serde_json::to_vec(&json!({ "power_cycle_watch": true })).expect("settings body");
+    world.send_http_request("PATCH", SETTINGS_PATH, Some(&body), "application/json");
+    assert_eq!(
+        world.last_response().expect("settings response").status,
+        200,
+        "switching the power-cycle watch on"
+    );
+}
+
+// PWR-002 PWR-003 PWR-004 PWR-005 PWR-006
 #[given("virtual lamps 1 and 2 are bound to physical devices 0 and 1")]
 async fn given_two_bound_lamps(world: &mut DaliWorld) {
     for (lamp_id, short) in [(1u8, 0u8), (2, 1)] {
@@ -161,7 +183,7 @@ async fn drive_and_switch_off(world: &mut DaliWorld) {
     }
 }
 
-// PWR-002 PWR-004 PWR-005
+// PWR-002 PWR-004 PWR-005 PWR-006
 #[when("physical device 0 comes back from a power cycle")]
 async fn when_device_0_power_cycles(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -187,7 +209,7 @@ async fn when_no_gear_reports_power_cycle(world: &mut DaliWorld) {
     answer_probe(&mock, Some(YES), None);
 }
 
-// PWR-001 PWR-003 PWR-004 PWR-005
+// PWR-001 PWR-003 PWR-004 PWR-005 PWR-007
 #[when(regex = r"^the controller has probed the bus (\d+) more times$")]
 async fn when_probed_more_times(world: &mut DaliWorld, count: u64) {
     let port = world.server_port();
@@ -196,7 +218,7 @@ async fn when_probed_more_times(world: &mut DaliWorld, count: u64) {
     assert!(reached, "the bus was not probed {count} more times");
 }
 
-// PWR-002 PWR-004 PWR-005
+// PWR-002 PWR-004 PWR-005 PWR-006
 #[when(regex = r"^the controller has swept the bus for power cycles (\d+) times?$")]
 async fn when_swept(world: &mut DaliWorld, sweeps: u64) {
     let port = world.server_port();
@@ -227,13 +249,24 @@ async fn then_lamp_on_without_level(world: &mut DaliWorld, lamp_id: u8) {
 // PWR-001
 #[then("each probe should have broadcast the control, the lamp-failure query and the power-failure query in that order")]
 async fn then_probe_frame_order(world: &mut DaliWorld) {
-    let sent = world.dali_mock().lock().expect("mock lock").sent_frames();
-    let probe = probe_frames();
-    let whole: Vec<&[u16]> = sent.chunks(probe.len()).filter(|c| c.len() == probe.len()).collect();
-    assert!(whole.len() >= 2, "at least two whole probes: {sent:#06x?}");
+    assert_each_probe_is(world, &probe_frames());
+}
+
+// PWR-007
+#[then("each probe should have broadcast the control and the lamp-failure query and nothing more")]
+async fn then_two_frame_probe(world: &mut DaliWorld) {
+    assert_each_probe_is(world, &probe_frames()[..2]);
+}
+
+// PWR-006
+#[then(regex = r"^no DALI frame should reach the bus within (\d+) ms$")]
+async fn then_bus_silent(world: &mut DaliWorld, window_ms: u64) {
+    let sent_any = || !world.dali_mock().lock().expect("mock lock").sent_frames().is_empty();
+    let spoke = probe_within(Duration::from_millis(window_ms), sent_any);
     assert!(
-        sent.chunks(probe.len()).all(|chunk| probe.starts_with(chunk)),
-        "every probe is control, lamp failure, power failure, in that order: {sent:#06x?}"
+        !spoke,
+        "the bus should stay silent: {:#06x?}",
+        world.dali_mock().lock().expect("mock lock").sent_frames()
     );
 }
 
@@ -254,7 +287,7 @@ async fn then_only_sweep_reads(world: &mut DaliWorld) {
     );
 }
 
-// PWR-004
+// PWR-004 PWR-006
 #[then("each of physical devices 0 and 1 should have been asked for its status once")]
 async fn then_each_device_asked_once(world: &mut DaliWorld) {
     for short in [0u8, 1] {

@@ -400,7 +400,7 @@ fn handle_bus_health_probe(
     cmd: &dali2rust_contracts::msg::DaliBusHealthProbeCommand,
     counters: &DaliWorkerCounters,
 ) {
-    let Ok(probe) = probe_bus_health(controller) else {
+    let Ok(probe) = probe_bus_health(controller, cmd.query_power_failure) else {
         counters.bus_health_probe_failed.fetch_add(1, Ordering::Relaxed);
         return;
     };

@@ -392,7 +392,7 @@ fn refused_requests() -> Vec<BusCommandPayload> {
         m::Dali103InstanceActionCommand { registry_adapter_id: 0, short_address: 5, instance_number: 2, action: m::Dali103InstanceAction::CancelHoldTimer }.into(),
         m::Dali103HandoverCommand { registry_adapter_id: 0, peer_short_address: 7 }.into(),
         m::Dali103ArbitrationProbeCommand { registry_adapter_id: 0 }.into(),
-        m::DaliBusHealthProbeCommand { registry_adapter_id: 0 }.into(),
+        m::DaliBusHealthProbeCommand { registry_adapter_id: 0, query_power_failure: false }.into(),
     ]
 }
 

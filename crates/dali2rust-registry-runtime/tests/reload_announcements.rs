@@ -110,6 +110,7 @@ fn poller_settings() -> StagedSlice {
         skip_unbound_virtual_lamps: true,
         include_energy: false,
         include_diagnostics: false,
+        power_cycle_watch: false,
     };
     StagedSlice { key: SliceKey::PollerSettings, bytes: blob(POLLER_SETTINGS_SLICE_VERSION, slice) }
 }

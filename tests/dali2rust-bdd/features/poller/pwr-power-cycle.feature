@@ -2,11 +2,14 @@
 Feature: Power-cycle watch
 
   A gear that loses power comes back with its RAM state reset and its
-  `powerCycleSeen` bit set (IEC 62386-102 §9.16.9). The bus-health probe ends
-  with a broadcast QUERY POWER FAILURE, poller on or off; a YES behind an
-  answered control sweeps the adapter's poll targets with runtime-status
-  reads, and the registry forgets the RAM state of exactly the gear whose bit
-  turned up set after a level command had cleared it.
+  `powerCycleSeen` bit set (IEC 62386-102 §9.16.9). The watch is the poller
+  setting `power_cycle_watch`, off by default. Switched on, it ends the
+  bus-health probe with a broadcast QUERY POWER FAILURE, poller on or off; a
+  YES behind an answered control sweeps the adapter's poll targets with
+  runtime-status reads, and the registry forgets the RAM state of exactly the
+  gear whose bit turned up set after a level command had cleared it. Switched
+  off, the enabled poller's probe is the two frames it always was and a
+  disabled poller sends nothing.
 
   Each scenario restarts the controller with a short probe period and answers
   the probe's broadcast frames, and later each gear's status reads, from the
@@ -16,8 +19,9 @@ Feature: Power-cycle watch
   still holds.
 
   @id:PWR-001
-  Scenario: The probe asks for power failures after its control, with the poller off
+  Scenario: The watch asks for power failures after the probe's control, with the poller off
     Given the controller probes the bus every 300 ms
+    And the power-cycle watch is switched on
     When the controller has probed the bus 2 more times
     Then each probe should have broadcast the control, the lamp-failure query and the power-failure query in that order
     And no addressed DALI frames should have reached the bus
@@ -26,6 +30,7 @@ Feature: Power-cycle watch
   @id:PWR-002
   Scenario: A YES sweeps the gear and forgets only the one that cycled
     Given the controller probes the bus every 300 ms
+    And the power-cycle watch is switched on
     And adapter 0 has discovered physical devices 0 and 1
     And virtual lamps 1 and 2 are bound to physical devices 0 and 1
     And virtual lamps 1 and 2 have been driven to level 100 and switched off
@@ -38,6 +43,7 @@ Feature: Power-cycle watch
   @id:PWR-003
   Scenario: A probe whose control goes unanswered is inconclusive and forgets nothing
     Given the controller probes the bus every 300 ms
+    And the power-cycle watch is switched on
     And adapter 0 has discovered physical devices 0 and 1
     And virtual lamps 1 and 2 are bound to physical devices 0 and 1
     And virtual lamps 1 and 2 have been driven to level 100 and switched off
@@ -51,6 +57,7 @@ Feature: Power-cycle watch
   @id:PWR-004
   Scenario: A standing YES sweeps once, not once per probe
     Given the controller probes the bus every 300 ms
+    And the power-cycle watch is switched on
     And adapter 0 has discovered physical devices 0 and 1
     And virtual lamps 1 and 2 are bound to physical devices 0 and 1
     When physical device 0 comes back from a power cycle
@@ -64,6 +71,7 @@ Feature: Power-cycle watch
   @id:PWR-005
   Scenario: A gear driven after its power cycle is caught again when it cycles again
     Given the controller probes the bus every 300 ms
+    And the power-cycle watch is switched on
     And adapter 0 has discovered physical devices 0 and 1
     And virtual lamps 1 and 2 are bound to physical devices 0 and 1
     And virtual lamps 1 and 2 have been driven to level 100 and switched off
@@ -77,3 +85,25 @@ Feature: Power-cycle watch
     And virtual lamps 1 and 2 are switched on without a level
     Then virtual lamp 2 should eventually be on at level 100
     And virtual lamp 1 should eventually be on at no known level
+
+  @id:PWR-006
+  Scenario: With the watch off a disabled poller sends nothing, and switching the watch on starts it
+    Given the controller probes the bus every 300 ms
+    And adapter 0 has discovered physical devices 0 and 1
+    And virtual lamps 1 and 2 are bound to physical devices 0 and 1
+    When physical device 0 comes back from a power cycle
+    Then no DALI frame should reach the bus within 1500 ms
+    And the poller counter "health_probes_published" should be 0
+    When I PATCH JSON {"power_cycle_watch":true} to "/api/v1/settings/poller"
+    Then the response status should be 200
+    And the JSON boolean field "power_cycle_watch" should be true
+    When the controller has swept the bus for power cycles 1 time
+    Then each of physical devices 0 and 1 should have been asked for its status once
+
+  @id:PWR-007
+  Scenario: With the watch off the enabled poller's probe is the control and the lamp-failure query
+    Given the controller probes the bus every 300 ms
+    When the poller is enabled with a 200 ms interval
+    And the controller has probed the bus 2 more times
+    Then each probe should have broadcast the control and the lamp-failure query and nothing more
+    And the poller counter "power_cycle_sweeps" should be 0

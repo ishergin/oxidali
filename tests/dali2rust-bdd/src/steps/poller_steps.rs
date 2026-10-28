@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::steps::polling::fetch_json;
 use crate::DaliWorld;
 
-const SETTINGS_PATH: &str = "/api/v1/settings/poller";
+pub(crate) const SETTINGS_PATH: &str = "/api/v1/settings/poller";
 const FAST_INTERVAL_MS: u32 = 200;
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -74,7 +74,7 @@ async fn given_mock_answers_every_query(world: &mut DaliWorld, value: u8) {
         .set_persistent_response(value);
 }
 
-// POL-002 POL-006 POL-008 POL-030 POL-031 SYS-238
+// POL-002 POL-006 POL-008 POL-030 POL-031 SYS-238 PWR-007
 #[when(regex = r"^the poller is enabled with a (\d+) ms interval$")]
 async fn when_poller_enabled(world: &mut DaliWorld, interval_ms: u32) {
     let body = format!(r#"{{"enabled":true,"interval_ms":{interval_ms}}}"#);
@@ -109,7 +109,7 @@ async fn then_counter_increased(world: &mut DaliWorld, name: String) {
     wait_for_counter(port, &name, 1);
 }
 
-// POL-002 PWR-001 PWR-003 PWR-004
+// POL-002 PWR-001 PWR-003 PWR-004 PWR-006 PWR-007
 #[then(regex = r#"^the poller counter "([a-z_]+)" should be (\d+)$"#)]
 async fn then_counter_is(world: &mut DaliWorld, name: String, expected: u64) {
     let port = world.server_port();

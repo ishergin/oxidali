@@ -35,6 +35,7 @@ pub struct PollerSettingsView {
     pub include_energy: bool,
     pub include_diagnostics: bool,
     pub skip_unbound_virtual_lamps: bool,
+    pub power_cycle_watch: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

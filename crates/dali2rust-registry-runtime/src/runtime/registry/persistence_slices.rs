@@ -7,7 +7,7 @@ pub const VIRTUAL_LAMPS_SLICE_VERSION: u32 = 9;
 pub const PHYSICAL_DEVICES_SLICE_VERSION: u32 = 16;
 pub const SCENES_SLICE_VERSION: u32 = 11;
 pub const HCL_SCHEDULES_SLICE_VERSION: u32 = 9;
-pub const POLLER_SETTINGS_SLICE_VERSION: u32 = 11;
+pub const POLLER_SETTINGS_SLICE_VERSION: u32 = 12;
 pub const INPUT_DEVICES_SLICE_VERSION: u32 = 1;
 pub const DALI_SETTINGS_SLICE_VERSION: u32 = 11;
 pub const REDUNDANCY_SETTINGS_SLICE_VERSION: u32 = 2;
@@ -125,6 +125,7 @@ pub struct PersistablePollerSettingsSlice {
     pub skip_unbound_virtual_lamps: bool,
     pub include_energy: bool,
     pub include_diagnostics: bool,
+    pub power_cycle_watch: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
