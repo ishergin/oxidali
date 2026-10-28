@@ -277,6 +277,10 @@ impl DaliTransport for Interrupting {
         self.exchanges.push(exchange);
         self.pass(frame, |sim| sim.exchange_frame_with_settle(frame, expects_backward, min_idle_us))
     }
+
+    fn honours_settle(&self) -> bool {
+        true
+    }
 }
 
 fn operator() -> Interruption {
