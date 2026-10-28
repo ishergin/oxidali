@@ -18,7 +18,7 @@ use dali2rust_domain::dali::banks::identity::{
 };
 use dali2rust_domain::dali::banks::DeviceIdentity;
 use dali2rust_domain::dali::banks::luminaire_write::{
-    number_patch, planned_writes, text_patch, FieldWrite, LuminaireField, BANK_UNLOCKED,
+    number_patch, planned_writes, text_patch, FieldWrite, LuminaireField, BANK_UNLOCKED, TEXT_TERMINATOR,
 };
 use dali2rust_domain::dali::banks::part251::{self, LuminaireFormat, LUMINAIRE_COLOUR, YEAR_OFFSET};
 use dali2rust_domain::dali::controller::DaliApplicationController;
@@ -45,7 +45,8 @@ const YEAR: u8 = 24;
 const UNIT_BYTES: usize = 3;
 const UNITS_PER_SESSION: usize = 2;
 const MULTI_SESSION_TEXT: &str = "fixture lamp";
-const LOCK_FRAMES_PER_SESSION: usize = 2;
+const SHORT_TEXT: &str = "ab";
+const LIGHT_OUTPUT: u32 = 0x0A_0B_0C;
 const WRITE_CORRELATION: u64 = 251;
 
 #[derive(Clone)]
@@ -53,12 +54,15 @@ enum Interruption {
     Arrival(Arc<WireActivity>, WirePriority),
     ForeignCommand(u16),
     LostAnswer,
+    LostFrame,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Trigger {
     Frame(u16),
     Nth(usize),
+    From(u16),
+    Occurrences(u16, Vec<usize>),
 }
 
 struct Interrupting {
@@ -66,22 +70,38 @@ struct Interrupting {
     interruptions: Vec<Interruption>,
     trigger: Trigger,
     sent: usize,
+    occurrences: usize,
+    started: bool,
 }
+
+type SimError = <SimDaliTransport as DaliTransport>::Error;
 
 impl Interrupting {
     fn new(sim: SimDaliTransport, interruptions: Vec<Interruption>, trigger: Trigger) -> Self {
-        Self { sim, interruptions, trigger, sent: 0 }
+        Self { sim, interruptions, trigger, sent: 0, occurrences: 0, started: false }
     }
 
-    fn after(&mut self, frame: u16) -> bool {
+    fn fires(&mut self, frame: u16) -> bool {
         self.sent += 1;
-        let fires = match self.trigger {
-            Trigger::Frame(at) => frame == at,
-            Trigger::Nth(at) => self.sent == at,
-        };
-        if !fires {
-            return false;
+        match &self.trigger {
+            Trigger::Frame(at) => frame == *at,
+            Trigger::Nth(at) => self.sent == *at,
+            Trigger::From(at) => {
+                self.started |= frame == *at;
+                self.started
+            }
+            Trigger::Occurrences(at, nths) => {
+                self.occurrences += usize::from(frame == *at);
+                frame == *at && nths.contains(&self.occurrences)
+            }
         }
+    }
+
+    fn loses_frame(&self) -> bool {
+        self.interruptions.iter().any(|interruption| matches!(interruption, Interruption::LostFrame))
+    }
+
+    fn interrupt(&mut self) -> bool {
         let mut lost = false;
         for interruption in &self.interruptions {
             match interruption {
@@ -90,24 +110,31 @@ impl Interrupting {
                     self.sim.fleet_mut().exchange(*command, false);
                 }
                 Interruption::LostAnswer => lost = true,
+                Interruption::LostFrame => {}
             }
         }
         lost
     }
 
-    fn heard<E>(&mut self, frame: u16, outcome: Result<TransferOutcome, E>) -> Result<TransferOutcome, E> {
-        let lost = self.after(frame);
+    fn pass(
+        &mut self,
+        frame: u16,
+        exchange: impl FnOnce(&mut SimDaliTransport) -> Result<TransferOutcome, SimError>,
+    ) -> Result<TransferOutcome, SimError> {
+        if !self.fires(frame) {
+            return exchange(&mut self.sim);
+        }
+        let outcome = if self.loses_frame() { Ok(TransferOutcome::NoAnswer) } else { exchange(&mut self.sim) };
+        let lost = self.interrupt();
         outcome.map(|heard| if lost { TransferOutcome::NoAnswer } else { heard })
     }
 }
 
 impl DaliTransport for Interrupting {
-    type Error = <SimDaliTransport as DaliTransport>::Error;
+    type Error = SimError;
 
     fn send_forward_frame(&mut self, frame: u16) -> Result<(), Self::Error> {
-        let sent = self.sim.send_forward_frame(frame);
-        let _ = self.after(frame);
-        sent
+        self.pass(frame, |sim| sim.send_forward_frame(frame).map(|()| TransferOutcome::NoAnswer)).map(|_| ())
     }
 
     fn receive_backward_frame(&mut self) -> Result<Option<u8>, Self::Error> {
@@ -119,8 +146,7 @@ impl DaliTransport for Interrupting {
     }
 
     fn exchange_frame(&mut self, frame: u16, expects_backward: bool) -> Result<TransferOutcome, Self::Error> {
-        let outcome = self.sim.exchange_frame(frame, expects_backward);
-        self.heard(frame, outcome)
+        self.pass(frame, |sim| sim.exchange_frame(frame, expects_backward))
     }
 
     fn exchange_frame_with_settle(
@@ -129,8 +155,7 @@ impl DaliTransport for Interrupting {
         expects_backward: bool,
         min_idle_us: u32,
     ) -> Result<TransferOutcome, Self::Error> {
-        let outcome = self.sim.exchange_frame_with_settle(frame, expects_backward, min_idle_us);
-        self.heard(frame, outcome)
+        self.pass(frame, |sim| sim.exchange_frame_with_settle(frame, expects_backward, min_idle_us))
     }
 }
 
@@ -241,18 +266,18 @@ fn shape(result: Result<(), LuminaireWriteFailure>) -> Result<(), (ErrorCode, St
 
 fn text_units_in_commit_order(stored: &[u8]) -> Vec<Vec<u8>> {
     let (head, tail) = stored.split_first().expect("a text writes at least its terminator");
-    let emptied: Vec<u8> = std::iter::once(0).chain(tail.iter().copied()).collect();
-    let mut units: Vec<Vec<u8>> = emptied.chunks(UNIT_BYTES).map(<[u8]>::to_vec).collect();
+    let mut units = vec![vec![TEXT_TERMINATOR]];
+    units.extend(tail.chunks(UNIT_BYTES).map(<[u8]>::to_vec));
     units.push(vec![*head]);
     units
 }
 
-fn sessions_on_the_wire(stored: &[u8], lock: u8) -> Vec<u8> {
+fn sessions_on_the_wire(stored: &[u8], lock: u8) -> Vec<Vec<u8>> {
     text_units_in_commit_order(stored)
         .chunks(UNITS_PER_SESSION)
-        .flat_map(|session| {
+        .map(|session| {
             let body = session.iter().flatten().copied();
-            std::iter::once(BANK_UNLOCKED).chain(body).chain(std::iter::once(lock))
+            std::iter::once(BANK_UNLOCKED).chain(body).chain(std::iter::once(lock)).collect()
         })
         .collect()
 }
@@ -336,7 +361,7 @@ fn a_text_spanning_several_sessions_opens_and_closes_the_lock_in_each() {
     let mut stored = MULTI_SESSION_TEXT.as_bytes().to_vec();
     stored.push(0);
     assert_eq!(shape(outcome.result), Ok(()));
-    assert_eq!(written_values(&sim), sessions_on_the_wire(&stored, FOUND_LOCK));
+    assert_eq!(written_values(&sim), sessions_on_the_wire(&stored, FOUND_LOCK).concat());
     let held: Vec<Option<u8>> = (0..stored.len())
         .map(|index| location(&sim, LUMINAIRE_COLOUR.offset + index as u8))
         .collect();
@@ -354,7 +379,7 @@ fn write_under(
         .iter()
         .find_map(|interruption| match interruption {
             Interruption::Arrival(gate, _) => Some(Arc::clone(gate)),
-            Interruption::ForeignCommand(_) | Interruption::LostAnswer => None,
+            Interruption::ForeignCommand(_) | Interruption::LostAnswer | Interruption::LostFrame => None,
         })
         .unwrap_or_else(|| Arc::new(WireActivity::new()));
     let sim = luminaire_gear(FOUND_LOCK, false);
@@ -383,9 +408,8 @@ fn an_operator_arriving_mid_session_waits_for_the_lock_to_close() {
         failure(ErrorCode::Preempted, "luminaire_colour"),
         "the yield names the field it stopped in, not the lock it never opened"
     );
-    let session_len = UNIT_BYTES * UNITS_PER_SESSION + LOCK_FRAMES_PER_SESSION;
-    let first_session = &sessions_on_the_wire(&stored_text(MULTI_SESSION_TEXT), FOUND_LOCK)[..session_len];
-    assert_eq!(written_values(sim), first_session, "the started session runs to its relock");
+    let first_session = &sessions_on_the_wire(&stored_text(MULTI_SESSION_TEXT), FOUND_LOCK)[0];
+    assert_eq!(&written_values(sim), first_session, "the started session runs to its relock");
     assert_eq!(location(sim, LOCK_OFFSET), Some(FOUND_LOCK));
     assert!(colour_on_the_gear(sim).is_empty(), "the stopped text reads empty, not new head on old tail");
     let frames = sim.sent_frames();
@@ -397,15 +421,16 @@ fn an_operator_arriving_mid_session_waits_for_the_lock_to_close() {
 // IEC 62386-102 §9.10.5
 #[test]
 fn a_foreign_command_between_units_costs_nothing_because_each_unit_enables_writing() {
-    let end_of_first_unit = MULTI_SESSION_TEXT.as_bytes()[UNIT_BYTES - 1];
-    let trigger = special(SpecialCommand::WriteMemoryLocation(end_of_first_unit));
+    let end_of_first_tail_unit = MULTI_SESSION_TEXT.as_bytes()[UNIT_BYTES];
+    let trigger = special(SpecialCommand::WriteMemoryLocation(end_of_first_tail_unit));
     let foreign = DaliCommand::Standard { address: DaliAddress::Broadcast, command: StandardCommand::QueryStatus };
     let interruption = Interruption::ForeignCommand(foreign.to_forward_frame().raw());
     let writes = text("luminaire_colour", MULTI_SESSION_TEXT);
     let (outcome, sim) = write_under(YieldGranularity::Step, Trigger::Frame(trigger), &[interruption], &writes);
 
     assert_eq!(shape(outcome.result), Ok(()), "a foreign frame between units clears writeEnableState");
-    assert_eq!(location(&sim, LUMINAIRE_COLOUR.offset + UNIT_BYTES as u8), Some(MULTI_SESSION_TEXT.as_bytes()[UNIT_BYTES]));
+    let next_unit = UNIT_BYTES + 1;
+    assert_eq!(location(&sim, LUMINAIRE_COLOUR.offset + next_unit as u8), Some(MULTI_SESSION_TEXT.as_bytes()[next_unit]));
 }
 
 // IEC 62386-102 §9.10.5
@@ -418,37 +443,83 @@ fn a_gear_that_does_not_advance_dtr0_fails_the_unit_before_the_next_one_writes()
 
     assert_eq!(shape(outcome.result), failure(ErrorCode::VerifyFailed, "luminaire_colour"));
     assert_eq!(
-        written_values(&sim).len(),
-        UNIT_BYTES,
-        "the first unit's DTR0 shows the bytes landed on one location; no second unit is sent"
+        written_values(&sim),
+        [TEXT_TERMINATOR],
+        "the terminator's unit shows DTR0 did not move; no tail byte is sent"
     );
+    assert_old_empty_or_new(&sim, MULTI_SESSION_TEXT, "a gear holding DTR0");
 }
 
 fn is_write_location(frame: u16) -> bool {
     frame >> 8 == special(SpecialCommand::WriteMemoryLocation(0)) >> 8
 }
 
+fn assert_old_empty_or_new(sim: &SimDaliTransport, new: &str, context: &str) {
+    let old = colour_on_the_gear(&luminaire_gear(FOUND_LOCK, false));
+    let seen = colour_on_the_gear(sim);
+    assert!(
+        seen == old || seen.is_empty() || seen == new.as_bytes(),
+        "{context}: {:?}",
+        String::from_utf8_lossy(&seen)
+    );
+}
+
+fn at_each_write_location(new: &str, interruption: impl Fn() -> Interruption) -> Vec<(usize, SimDaliTransport)> {
+    let writes = text("luminaire_colour", new);
+    let (_, calm) = write(FOUND_LOCK, false, &writes);
+    let frames = calm.sent_frames();
+    let writes_at = frames.iter().enumerate().filter(|(_, frame)| is_write_location(**frame));
+    writes_at
+        .map(|(index, _)| {
+            let trigger = Trigger::Nth(index + 1);
+            (index + 1, write_under(YieldGranularity::Step, trigger, &[interruption()], &writes).1)
+        })
+        .collect()
+}
+
 // DiiA 251 §9.2.5
 #[test]
 fn a_text_stopped_after_any_write_reads_old_empty_or_new() {
-    let writes = text("luminaire_colour", MULTI_SESSION_TEXT);
-    let (_, calm) = write(FOUND_LOCK, false, &writes);
-    let old = colour_on_the_gear(&luminaire_gear(FOUND_LOCK, false));
-    let new = MULTI_SESSION_TEXT.as_bytes();
-    let frames = calm.sent_frames();
-    let writes_at = frames.iter().enumerate().filter(|(_, frame)| is_write_location(**frame));
-    for (index, _) in writes_at {
-        let operator = operator();
-        let (_, sim) = write_under(YieldGranularity::Step, Trigger::Nth(index + 1), &[operator], &writes);
-        let seen = colour_on_the_gear(&sim);
-        assert!(
-            seen == old || seen.is_empty() || seen == new,
-            "stopped after frame {}: {:?}",
-            index + 1,
-            String::from_utf8_lossy(&seen)
-        );
-        assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK), "frame {}", index + 1);
+    for (nth, sim) in at_each_write_location(MULTI_SESSION_TEXT, operator) {
+        assert_old_empty_or_new(&sim, MULTI_SESSION_TEXT, &format!("stopped after frame {nth}"));
+        assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK), "frame {nth}");
     }
+}
+
+// IEC 62386-102 §9.10.5
+// DiiA 251 §9.2.5
+#[test]
+fn a_text_write_location_the_gear_never_heard_leaves_old_empty_or_new() {
+    for (nth, sim) in at_each_write_location(SHORT_TEXT, || Interruption::LostFrame) {
+        assert_old_empty_or_new(&sim, SHORT_TEXT, &format!("frame {nth} lost"));
+    }
+}
+
+// IEC 62386-102 §9.10.5
+// DiiA 251 §9.2.5
+#[test]
+fn a_text_write_location_whose_answer_is_lost_leaves_old_empty_or_new() {
+    for (nth, sim) in at_each_write_location(SHORT_TEXT, || Interruption::LostAnswer) {
+        assert_old_empty_or_new(&sim, SHORT_TEXT, &format!("answer to frame {nth} lost"));
+    }
+}
+
+fn light_output_on_the_gear(sim: &SimDaliTransport) -> Vec<Option<u8>> {
+    let field = LuminaireField::named("nominal_light_output_lm").expect("number field");
+    (field.offset..=field.last_offset()).map(|offset| location(sim, offset)).collect()
+}
+
+// IEC 62386-102 §9.10.5
+#[test]
+fn a_number_whose_first_byte_the_gear_never_heard_is_left_as_found() {
+    let writes = planned_writes(&number_patch(&[(N::PATCH_NOMINAL_LIGHT_OUTPUT_LM, LIGHT_OUTPUT)]), None);
+    let first_byte = special(SpecialCommand::WriteMemoryLocation(LIGHT_OUTPUT.to_be_bytes()[1]));
+    let (outcome, sim) = write_under(YieldGranularity::Step, Trigger::Frame(first_byte), &[Interruption::LostFrame], &writes);
+
+    let found = light_output_on_the_gear(&luminaire_gear(FOUND_LOCK, false));
+    assert_ne!(found[0], Some(LIGHT_OUTPUT.to_be_bytes()[2]), "the shifted byte would show");
+    assert_eq!(light_output_on_the_gear(&sim), found, "no byte of the unit lands one location early");
+    assert_eq!(shape(outcome.result), failure(ErrorCode::VerifyUnanswered, "nominal_light_output_lm"));
 }
 
 fn position_of(frames: &[u16], frame: u16, last: bool) -> usize {
@@ -621,9 +692,8 @@ fn through_the_worker(arrival: WirePriority) -> (Result<(), (ErrorCode, String)>
 
 fn assert_yielded_after_the_first_session(result: Result<(), (ErrorCode, String)>, sim: &SimDaliTransport) {
     assert_eq!(result, failure(ErrorCode::Preempted, "luminaire_colour"));
-    let session_len = UNIT_BYTES * UNITS_PER_SESSION + LOCK_FRAMES_PER_SESSION;
-    let first_session = &sessions_on_the_wire(&stored_text(MULTI_SESSION_TEXT), FOUND_LOCK)[..session_len];
-    assert_eq!(written_values(sim), first_session, "the started session runs to its relock, and no other starts");
+    let first_session = &sessions_on_the_wire(&stored_text(MULTI_SESSION_TEXT), FOUND_LOCK)[0];
+    assert_eq!(&written_values(sim), first_session, "the started session runs to its relock, and no other starts");
     assert_eq!(location(sim, LOCK_OFFSET), Some(FOUND_LOCK));
     assert!(colour_on_the_gear(sim).is_empty());
 }

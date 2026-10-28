@@ -11,6 +11,9 @@ pub const BANK_UNLOCKED: u8 = 0x55;
 
 pub const BANK1_HEADER_LEN: u16 = BANK1_FORMAT_GATE_LAST_OFFSET as u16 + 1;
 
+// DiiA 251 §9.2.5
+pub const TEXT_TERMINATOR: u8 = 0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NumberRule {
     Year,
@@ -214,13 +217,15 @@ impl FieldWrite {
 
     // DiiA 251 §9.2.5
     pub fn stages(&self) -> Vec<WriteStage> {
-        let stage = |bytes: Vec<u8>| WriteStage { field: self.field, bytes };
+        let at = |offset: u8, bytes: Vec<u8>| WriteStage { field: self.field, offset, bytes };
+        let start = self.field.offset;
         match (self.field.kind, self.bytes.split_first()) {
-            (FieldKind::Text(_), Some((&head, tail))) if !tail.is_empty() => {
-                let emptied = core::iter::once(0).chain(tail.iter().copied()).collect();
-                vec![stage(emptied), stage(vec![head])]
-            }
-            _ => vec![stage(self.bytes.clone())],
+            (FieldKind::Text(_), Some((&head, tail))) if !tail.is_empty() => vec![
+                at(start, vec![TEXT_TERMINATOR]),
+                at(start + 1, tail.to_vec()),
+                at(start, vec![head]),
+            ],
+            _ => vec![at(start, self.bytes.clone())],
         }
     }
 }
@@ -228,6 +233,7 @@ impl FieldWrite {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteStage {
     pub field: &'static LuminaireField,
+    pub offset: u8,
     pub bytes: Vec<u8>,
 }
 
@@ -293,7 +299,7 @@ fn text_write(write: &LuminaireTextWrite) -> Option<FieldWrite> {
     let field = LuminaireField::of_text(write.field)?;
     let mut bytes = write.text.as_bytes().to_vec();
     if bytes.len() < usize::from(field.len) {
-        bytes.push(0);
+        bytes.push(TEXT_TERMINATOR);
     }
     bytes.truncate(usize::from(field.len));
     Some(FieldWrite { field, bytes })

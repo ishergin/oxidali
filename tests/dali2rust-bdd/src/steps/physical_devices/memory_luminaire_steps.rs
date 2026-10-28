@@ -1,5 +1,6 @@
 use cucumber::{given, then};
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
+use dali2rust_domain::dali::banks::luminaire_write::TEXT_TERMINATOR;
 use dali2rust_domain::dali::banks::part251::{LUMINAIRE_COLOUR, YEAR_OFFSET};
 use dali2rust_domain::dali::banks::{GTIN_OFFSET, IDENTITY_WINDOW_LEN};
 use dali2rust_domain::dali::pres::special::SpecialCommand;
@@ -66,11 +67,13 @@ fn script_write_unit(mock: &MockDaliTransport, offset: u8, bytes: &[u8], reply: 
             special_frame(SpecialCommand::WriteMemoryLocation(*byte)),
             answer,
         );
+        if reply == GearReply::Silent {
+            return;
+        }
     }
-    let advanced = if reply == GearReply::Echo { offset + bytes.len() as u8 } else { offset };
     mock.expect_forward_frame_with_backward(
         standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryContentDtr0),
-        Some(advanced),
+        Some(offset + bytes.len() as u8),
     );
 }
 
@@ -93,8 +96,8 @@ fn units_of(offset: u8, bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
 
 fn text_units(offset: u8, stored: &[u8]) -> Vec<(u8, Vec<u8>)> {
     let (head, tail) = stored.split_first().expect("a text writes at least its terminator");
-    let emptied: Vec<u8> = std::iter::once(0).chain(tail.iter().copied()).collect();
-    let mut units = units_of(offset, &emptied);
+    let mut units = vec![(offset, vec![TEXT_TERMINATOR])];
+    units.extend(units_of(offset + 1, tail));
     units.push((offset, vec![*head]));
     units
 }

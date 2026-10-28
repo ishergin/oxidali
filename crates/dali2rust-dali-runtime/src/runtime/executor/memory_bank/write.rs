@@ -91,11 +91,16 @@ fn units(stages: &[WriteStage]) -> Vec<Unit<'_>> {
         .flat_map(|stage| {
             stage.bytes.chunks(UNIT_BYTES).enumerate().map(move |(index, bytes)| Unit {
                 subject: stage.field.name,
-                offset: stage.field.offset + (index * UNIT_BYTES) as u8,
+                offset: unit_offset(stage.offset, index),
                 bytes,
             })
         })
         .collect()
+}
+
+fn unit_offset(stage_offset: u8, index: usize) -> u8 {
+    let skipped = index.saturating_mul(UNIT_BYTES);
+    u8::try_from(usize::from(stage_offset).saturating_add(skipped)).unwrap_or(u8::MAX)
 }
 
 fn armed<C: DaliApplicationController, R>(
@@ -136,10 +141,14 @@ fn write_bytes(
     bytes: &[u8],
 ) -> Result<UnitEcho, SemanticDaliError> {
     send_standard(controller, address, StandardCommand::EnableWriteMemory)?;
-    let answers = bytes
-        .iter()
-        .map(|byte| send_special_response(controller, SpecialCommand::WriteMemoryLocation(*byte)))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut answers = Vec::with_capacity(bytes.len());
+    for byte in bytes {
+        let answer = send_special_response(controller, SpecialCommand::WriteMemoryLocation(*byte))?;
+        answers.push(answer);
+        if answer != DaliResponse::Answer(*byte) {
+            return Ok(UnitEcho { answers, pointer: DaliResponse::NoAnswer });
+        }
+    }
     let pointer = send_standard_response(controller, address, StandardCommand::QueryContentDtr0)?;
     Ok(UnitEcho { answers, pointer })
 }

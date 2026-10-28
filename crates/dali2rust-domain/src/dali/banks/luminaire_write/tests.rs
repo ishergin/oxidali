@@ -220,10 +220,14 @@ fn colour_write(text: &str) -> FieldWrite {
 }
 
 #[test]
-fn a_text_is_emptied_first_and_its_first_character_is_written_last() {
+fn a_text_is_emptied_by_its_terminator_alone_and_its_first_character_is_written_last() {
     let write = colour_write("warm");
-    let stages: Vec<Vec<u8>> = write.stages().into_iter().map(|stage| stage.bytes).collect();
-    assert_eq!(stages, vec![b"\0arm\0".to_vec(), b"w".to_vec()]);
+    let start = write.field.offset;
+    let stages: Vec<(u8, Vec<u8>)> = write.stages().into_iter().map(|stage| (stage.offset, stage.bytes)).collect();
+    assert_eq!(
+        stages,
+        vec![(start, vec![TEXT_TERMINATOR]), (start + 1, b"arm\0".to_vec()), (start, b"w".to_vec())]
+    );
     assert_eq!(colour_write("").stages().len(), 1, "an empty text is one terminator");
     let numbers = number_patch(&[(N::PATCH_NOMINAL_LIGHT_OUTPUT_LM, 7)]);
     assert_eq!(planned_writes(&numbers, None)[0].stages().len(), 1, "a number has no commit order");
@@ -241,7 +245,7 @@ fn a_text_written_byte_by_byte_reads_old_empty_or_new_after_every_byte() {
         let mut seen = vec![part251::text_bytes(&bank, region).expect("region").to_vec()];
         for stage in write.stages() {
             for (index, byte) in stage.bytes.iter().enumerate() {
-                bank[start + index] = *byte;
+                bank[usize::from(stage.offset) + index] = *byte;
                 seen.push(part251::text_bytes(&bank, region).expect("region").to_vec());
             }
         }
