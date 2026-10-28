@@ -235,7 +235,8 @@ the watch on, what it does not see:
   `runtime_status`, up to one probe period to the YES and then the gear's place in the
   sweep; with one, the gear's turn in the cycle, about one `interval_ms` when a cycle
   reads every target and longer when the wire budget stretches it, and for a gear the
-  cycle saw absent, the first cycle after a YES that is news
+  cycle saw absent, the first cycle after a YES that is news — the first, the first
+  after a NO, then one per `RESWEEP_AFTER_YES` answers
   ([poller](../product-design/runtime-modules/poller/README.md)).
 
 ## 17. Priority
