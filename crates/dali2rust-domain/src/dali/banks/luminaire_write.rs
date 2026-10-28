@@ -48,7 +48,8 @@ const fn text(name: &'static str, region: TextRegion, since: LuminaireFormat, fi
     LuminaireField { name, offset: region.offset, len: region.len, since, kind: FieldKind::Text(field) }
 }
 
-// DiiA 251 §9.2.5; IEC 62386-251 Table 1
+// DiiA 251 §9.2.5
+// IEC 62386-251 Table 1
 pub const LUMINAIRE_FIELDS: [LuminaireField; 18] = [
     LuminaireField {
         name: "content_format_id",
@@ -100,7 +101,7 @@ impl LuminaireField {
         fits && rule.shows_back(value as u32, format)
     }
 
-    // DiiA 251 §9.2.5 footnote d
+    // DiiA 251 §9.2.5
     pub fn accepts_text(&self, text: &str) -> bool {
         let printable = |byte: &u8| (b' '..=b'~').contains(byte);
         matches!(self.kind, FieldKind::Text(_))
@@ -267,7 +268,7 @@ fn number_write(field: &'static LuminaireField, numbers: &N) -> Option<FieldWrit
     Some(FieldWrite { field, bytes: wide[wide.len() - usize::from(field.len)..].to_vec() })
 }
 
-// DiiA 251 §9.2.5 footnote d
+// DiiA 251 §9.2.5
 fn text_write(write: &LuminaireTextWrite) -> Option<FieldWrite> {
     let field = LuminaireField::of_text(write.field)?;
     let mut bytes = write.text.as_bytes().to_vec();

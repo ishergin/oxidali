@@ -1446,7 +1446,8 @@ impl PhysicalDeviceReadPort for RegistryStore {
 }
 
 
-// IEC 62386-102 §9.10.4; DiiA 251 §9.2.3
+// IEC 62386-102 §9.10.4
+// DiiA 251 §9.2.3
 fn bank1_layout(rec: &PhysicalDeviceRecord) -> Bank1Layout {
     let header = rec.memory_banks.iter().find(|entry| {
         entry.bank == BANK_LUMINAIRE_INFO && entry.ranges.first().is_some_and(|range| range.start == 0)

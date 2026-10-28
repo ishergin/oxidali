@@ -127,7 +127,8 @@ fn close_memory_bank_read(
     }
 }
 
-// IEC 62386-102 §9.10.5; DiiA 251 §9.2.3
+// IEC 62386-102 §9.10.5
+// DiiA 251 §9.2.3
 pub(super) fn handle_write_luminaire_data(
     controller: &mut impl DaliApplicationController,
     read: &BankRead<'_>,

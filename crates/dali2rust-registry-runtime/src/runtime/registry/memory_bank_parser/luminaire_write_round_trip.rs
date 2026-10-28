@@ -74,7 +74,7 @@ fn every_number_the_patch_accepts_reads_back_as_the_same_value() {
     }
 }
 
-// DiiA 251 §9.2.5 footnote d
+// DiiA 251 §9.2.5
 #[test]
 fn every_text_the_patch_accepts_reads_back_as_written() {
     for field in &LUMINAIRE_FIELDS {

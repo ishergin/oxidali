@@ -52,7 +52,8 @@ fn refused(refusal: Bank1WriteRefusal) -> HttpResponse {
     json_err_with_message(409, "conflict", refusal.cause())
 }
 
-// IEC 62386-102 §9.10.4; DiiA 251 §9.2.3
+// IEC 62386-102 §9.10.4
+// DiiA 251 §9.2.3
 fn gated_format(layout: &Bank1Layout, fields: &Fields) -> Result<LuminaireFormat, HttpResponse> {
     if fields.iter().any(|field| field.kind == FieldKind::LayoutId) {
         return Err(refused(Bank1WriteRefusal::FieldReadOnly));

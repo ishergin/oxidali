@@ -406,7 +406,8 @@ const BANK1_LAST_OFFSET_OFFSET: usize = 0x00;
 const BANK1_LOCK_OFFSET: u8 = 0x02;
 
 impl Gear {
-    // IEC 62386-102 §9.10.5; DiiA 251 §9.2.3
+    // IEC 62386-102 §9.10.5
+    // DiiA 251 §9.2.3
     pub fn write_memory_location(&mut self, bank: u8, offset: u8, value: u8) -> Option<u8> {
         if bank != MEMORY_BANK_PROFILE || !self.profile_writable(offset) {
             return None;

@@ -265,7 +265,7 @@ fn write_interrupted(trigger: u16, interruption: Interruption, writes: &[FieldWr
     (outcome, interrupting.sim)
 }
 
-// IEC 62386-102 §9.10.2; ADR-009
+// IEC 62386-102 §9.10.2
 #[test]
 fn an_operator_arriving_mid_session_waits_for_the_lock_to_close() {
     let first = MULTI_SESSION_TEXT.as_bytes()[0];

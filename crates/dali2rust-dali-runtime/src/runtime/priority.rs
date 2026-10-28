@@ -108,7 +108,7 @@ const WIRE_CLASSES: &[WireClass] = &[
         false,
         TransactionPriority::Configuration,
     ),
-    // IEC 62386-102 §9.10.2; ADR-017
+    // IEC 62386-102 §9.10.2
     class(
         "DaliWriteLuminaireDataCommand",
         WirePriority::Attended,
