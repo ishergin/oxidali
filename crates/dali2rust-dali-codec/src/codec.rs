@@ -1,24 +1,7 @@
 pub use dali2rust_dali_phy::HalfBitBuffer;
 
-fn push_two_half_bits(out: &mut HalfBitBuffer, hb: u8) {
-    let hblen = out.length as u16;
-    let pos = (hblen >> 3) as usize;
-    let shift = 6 - (hblen & 7) as u8;
-    out.data[pos] |= hb << shift;
-    out.length = (hblen + 2) as u8;
-}
-
 pub fn encode_to_half_bits(data: u32, bit_count: u8) -> HalfBitBuffer {
-    let mut out = HalfBitBuffer::default();
-    push_two_half_bits(&mut out, 0x2);
-    for i in 0..bit_count {
-        let shift = bit_count - 1 - i;
-        let one = ((data >> shift) & 1) != 0;
-        push_two_half_bits(&mut out, if one { 0x2 } else { 0x1 });
-    }
-    push_two_half_bits(&mut out, 0x0);
-    push_two_half_bits(&mut out, 0x0);
-    out
+    HalfBitBuffer::encode(data, bit_count)
 }
 
 #[inline]
@@ -118,3 +101,4 @@ mod merge_tests {
         assert!(merge_dominant(&[], BACKWARD_BITS).is_none());
     }
 }
+
