@@ -1,4 +1,4 @@
-@stage-R3
+@stage-R2
 Feature: Physical-device luminaire data write
 
   @id:PD-291

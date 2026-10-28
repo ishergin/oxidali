@@ -92,6 +92,12 @@ target-state, а непривязанная даёт `vl_unbound`. Recall-фак
 даже когда ничего не подтвердилось. Членство в группах и сцены сюда не входят — у них свои
 семейства.
 
+**`DaliWriteLuminaireDataCommand`** — поля DiiA Part 251 в банке 1 (перечень, отказы и
+семантика записи — [`physical-devices.md`](../rest-api/resources/physical-devices.md)
+§`PATCH …/luminaire-data`). Своего события записи у неё нет: исход — read-back всего
+банка серией `DaliMemoryBankReadEvent`, тем же путём, что у чтения банка, и сигнал
+операции.
+
 ## Чтение и обнаружение
 
 - **`DaliDiscoverDevicesCommand`** — режимы `ScanKnownShortAddresses`,
@@ -161,6 +167,7 @@ target-state, а непривязанная даёт `vl_unbound`. Recall-фак
 | `DaliProgramGroupMembershipCommand` | `DaliGroupMembershipProgrammedEvent` | реестр: applied-членство, `GroupMatrixChangedEvent` |
 | `DaliProgramSceneCommand` | `DaliSceneProgrammedEvent` (+ чанки цвета сцены) | реестр: applied-строка, `SceneMatrixChangedEvent` |
 | `DaliWriteAttributesCommand` | `DaliAttributesWrittenEvent` | прямой коммит реестра, `PhysicalDeviceChangedEvent` |
+| `DaliWriteLuminaireDataCommand` | чанки банка 1 (read-back), сигнал операции | реестр: доказательства `memory_luminaire` и `memory_profile` |
 | `DaliDiscoverDevicesCommand` | прогресс скана, итог сверки, сигнал операции | реестр: записи устройств |
 | `DaliReadAttributesCommand` | чанки атрибутов, чанки банков, исходы по группам | реестр (доказательства) и проектор (runtime) |
 | `DaliBusHealthProbeCommand` | `DaliBusHealthProbedEvent` | счётчики поллера, дисплей |

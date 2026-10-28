@@ -25,6 +25,7 @@ BDD — [`physical_devices`](../../../../tests/dali2rust-bdd/features/physical_d
 | `PATCH` | `physical-devices/{short}` | Метаданные, override'ы, разрешения | `200` |
 | `DELETE` | `physical-devices/{short}` | Забыть запись | `204` |
 | `POST` | `physical-devices/{short}/write-attributes` | Запись атрибутов в прибор | `202` `attribute_write` |
+| `PATCH` | `physical-devices/{short}/luminaire-data` | Запись данных светильника (банк 1, Part 251) | `202` `attribute_write` |
 | `PUT` | `physical-devices/{short}/target-state` | Прямое управление по адресу | `200` |
 | `POST` | `discovery-runs` | Discovery | `202` `discovery` |
 | `POST` | `physical-devices/{short}/attribute-reads` | Чтение атрибутов и банков | `202` `attribute_read` |
@@ -221,6 +222,54 @@ effective-значений распространяется на привяза�
 - `dimming_curve` меняет смысл всех уже сохранённых в приборе уровней (сцены,
   power-on) — это конфигурационная запись, а не настройка контроллера.
 - Override'ы типа и режима, членство в группах и сцены сюда не входят.
+
+## `PATCH …/luminaire-data`
+
+Merge-patch полей DiiA Part 251 в банке 1 прибора. Ключи и единицы — те же, что у
+листьев секции `memory_luminaire`: числа `year`, `week`, `nominal_input_power_w`,
+`power_at_minimum_w`, `nominal_min_ac_voltage_v`, `nominal_max_ac_voltage_v`,
+`nominal_light_output_lm`, `cri`, `cct_kelvin`, `light_distribution_type`,
+`lamp_current_ma` и текст `luminaire_colour`, `luminaire_identification`,
+`light_distribution`, `oem_name`, `customer_stocking_number`, `free_use`. Другие банки,
+OEM-идентичность банка 1 и сырая запись ячейки здесь не пишутся.
+
+Отказы — до провода и в таком порядке:
+
+- пустое тело — `400 empty_patch`; ключ не из списка — `400 unknown_field`;
+- `content_format_id` — `409 conflict`, `bank1_field_read_only`: формат объявляет
+  прибор, а не контроллер;
+- по последнему чтению банка 1 (`attribute-reads` с пресетом, читающим банк 1) —
+  `409 conflict` с причиной в `message`: `bank1_not_implemented` (прибор объявляет
+  меньше двух банков), `bank1_not_part251` (банк не читался или его формат не 3–5),
+  `bank1_field_not_in_format` (поле новее формата прибора), `bank1_too_short` (банк
+  кончается раньше поля);
+- значение, которое секция чтения не показала бы обратно как значение (неделя вне
+  `1..53`, MASK, CCT вне шкалы Кельвина, зарезервированный тип распределения), число
+  шире поля, текст не из печатного ASCII или длиннее поля, второе текстовое поле в одном
+  теле — `422 invalid_value` с именем поля в `message`. Текст одного запроса — одно
+  поле, потому что команда шины несёт не больше одного.
+
+Принятый запрос — операция `attribute_write` (`202`). Исполнитель:
+
+- заново читает заголовок банка и проверяет каждое поле по нему: прибор, сменивший
+  формат после чтения, получает тот же отказ уже из операции (`failed`, `conflict`), и
+  ни одна запись не уходит;
+- пишет `ENABLE WRITE MEMORY` и `WRITE MEMORY LOCATION` порциями до трёх байт по
+  доказанному указателю; запертый банк открывается на сессию из двух порций, открытие
+  доказывается чтением байта блокировки, и в конце сессии ему возвращается найденное
+  значение — прибор остаётся, каким был;
+- уступает командам оператора только между сессиями, когда банк заперт как был;
+  уступившая запись завершается `failed` с `preempted` и именем первого незаписанного
+  поля, без read-back;
+- читает банк целиком и публикует это чтение как обычное чтение банка: секции
+  `memory_luminaire` и `memory_profile` показывают то, что прибор хранит, а не то, что
+  просили.
+
+Успех — только если read-back держит каждый записанный байт, а байт блокировки равен
+найденному. Иначе операция `failed`, `message` — имя поля или `bank1_lock_byte`, код —
+`verify_failed` (прибор держит другое), `verify_unanswered` (тишина) или
+`verify_contended` (нарушающий кадр). Блокировка, оставленная не такой, какой была
+найдена, называется раньше любого поля. Текст короче поля пишется с завершающим NUL.
 
 ## `PUT …/target-state`
 

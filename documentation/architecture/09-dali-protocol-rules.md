@@ -44,8 +44,9 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   light commands are `Attended`, a rule's are `Interactive`.
 - `YieldGranularity` says where a sequence may stop: `Frame` for reads, `Step` for
   configuration writes (`write-attributes`, Part 103 instance and feedback configuration)
-  at a confirmed DTR → SET → read-back boundary, `Never` for discovery, commissioning and
-  other units whose interruption leaves gear half-programmed.
+  at a confirmed DTR → SET → read-back boundary and for the bank 1 luminaire-data write
+  between lock sessions, `Never` for discovery, commissioning and other units whose
+  interruption leaves gear half-programmed.
 - Background work never delays an operator, and that is not a setting: a quiet window,
   interactive-first ordering with preemption at frame boundaries, and a wire-time budget
   (after a background read of cost *d* the poller rests 3×*d*, so background holds at
@@ -54,7 +55,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - Preemption is routine and never a device fault. A preempted read ends
   `ErrorCode::Preempted` and commits nothing from the interrupted stage; a preempted
   `write-attributes` keeps the attributes it confirmed before the yield and ends
-  `Preempted`; the poller re-queues the target with no cooldown. No surface renders it as
+  `Preempted`; a preempted luminaire-data write ends `Preempted` naming the first field
+  it did not write, with its lock byte as found and no read-back; the poller re-queues the target with no cooldown. No surface renders it as
   a failure.
 - A priority is a settling window (101 Table 22), not a floor. The controller draws a
   random point inside it (footnote c) in whole PHY ticks, with a small guard above the
@@ -268,6 +270,22 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   (`bus_contended`, `device_type_walk_incomplete`) rather than commit a subset.
 - Bank 0 `0x1C` is one byte whose bit x is Part 15x (DiiA(SW)098bp Table 4); a byte with
   a bit outside that range claims no part.
+- The only memory-bank write is typed: the Part 251 fields of bank 1, never a raw cell.
+  The executor re-reads the header (`0x00..0x12`) and gates every field on it — content
+  format 3–5, the field present in that format, the bank long enough — before any write.
+- Each unit writes at most three bytes (101 §9.2) as `ENABLE WRITE MEMORY` then
+  `WRITE MEMORY LOCATION` per byte, under a pointer armed with `DTR1`/`DTR0` and proved
+  by `QUERY CONTENT DTR1/DTR0` in the same `controller.unit`. `ENABLE WRITE MEMORY` is
+  sent per unit because any other command clears `writeEnableState` (102 §9.10.5), and
+  the answering form is used so that silence or a foreign answer stops the field.
+- A lock byte other than `0x55` (102 §9.10.2, Table 8) is opened for a session of at
+  most two units, the opening proved by reading `0x02` back, and the value found is
+  written back when the session ends, whatever happened inside it. The step boundary
+  sits between sessions, so a yield never leaves the bank unlocked.
+- A `WRITE MEMORY LOCATION` answer is not proof. The bank is read back whole and that
+  read is published as an ordinary bank read, so the registry learns what the gear
+  holds; a byte the read-back does not hold fails its field, and a lock byte other than
+  the one found outranks every field.
 
 ## Addressing control gear
 
