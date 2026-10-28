@@ -638,17 +638,11 @@ fn the_priority_table_lets_an_operator_in_only_after_the_lock_is_restored() {
 
 // IEC 62386-103 §9.13.1
 #[test]
-fn home_assistant_and_hcl_work_takes_the_wire_at_the_next_session() {
-    let (result, sim) = through_the_worker(WirePriority::Attended);
+fn home_assistant_hcl_and_background_work_wait_for_the_whole_write() {
+    for arrival in [WirePriority::Attended, WirePriority::Unattended] {
+        let (result, sim) = through_the_worker(arrival);
 
-    assert_yielded_after_the_first_session(result, &sim);
-}
-
-// IEC 62386-103 §9.13.1
-#[test]
-fn background_work_waits_for_the_whole_write() {
-    let (result, sim) = through_the_worker(WirePriority::Unattended);
-
-    assert_eq!(result, Ok(()), "a poller read does not cut into a write it queues behind");
-    assert_eq!(colour_on_the_gear(&sim), MULTI_SESSION_TEXT.as_bytes());
+        assert_eq!(result, Ok(()), "{arrival:?} work does not cut into a write it queues behind");
+        assert_eq!(colour_on_the_gear(&sim), MULTI_SESSION_TEXT.as_bytes(), "{arrival:?}");
+    }
 }

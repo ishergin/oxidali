@@ -111,7 +111,7 @@ const WIRE_CLASSES: &[WireClass] = &[
     // IEC 62386-102 §9.10.2
     class(
         "DaliWriteMemoryLuminaireCommand",
-        WirePriority::Unattended,
+        WirePriority::Attended,
         YieldGranularity::Step,
         false,
         TransactionPriority::Configuration,

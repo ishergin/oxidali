@@ -42,9 +42,9 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   A lease is revoked only by a strictly higher arrival. `Origin` refines only kinds whose
   producers answer differently: a poller read is `Unattended`, HCL and Home Assistant
   light commands are `Attended`, a rule's are `Interactive`. The bank 1
-  `memory_luminaire` write is `Unattended` although someone watches it: a light command
-  must not wait seconds behind non-volatile memory, and a write that yielded leaves the
-  gear safe to write again.
+  `memory_luminaire` write is `Attended` like `write-attributes`: a Home Assistant or HCL
+  light command waits for the whole write, because a write that yields between text
+  stages leaves the field empty.
 - `YieldGranularity` says where a sequence may stop: `Frame` for reads, `Step` for
   configuration writes (`write-attributes`, Part 103 instance and feedback configuration)
   at a confirmed DTR → SET → read-back boundary and for the bank 1 `memory_luminaire` write
