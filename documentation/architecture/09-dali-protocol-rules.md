@@ -386,8 +386,9 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
     stopped, and only then `bank1_readback`.
 - A transport failure, a frame the transport could not send, is neither silence nor
   another master: at any step it fails `operation_failed`, with the message that step
-  names for any other failure, unless the same read location also showed another
-  master, which outranks it (§Reading answers).
+  names for any other failure, unless the read attempts at that location also showed
+  another master, which outranks it (§Reading answers); a transport failure on a pointer
+  arm or proof ends the read at once.
 
 ## Addressing control gear
 

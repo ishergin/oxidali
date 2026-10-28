@@ -1241,6 +1241,7 @@ fn every_write_unit_stays_under_the_transaction_budget_at_the_upper_band_edges()
             assert!(first_frame_to_last_us(unit) < budget_us, "§9.2 span over budget: {frames:04X?}");
         }
         assert!(gate.transactions_completed.load(Ordering::SeqCst) > 0, "inconclusive: the gate closed nothing");
+        assert!(gate.bus_releases.load(Ordering::SeqCst) > 0, "inconclusive: the controller's clock never moved");
         assert_eq!(
             gate.transaction_budget_exceeded.load(Ordering::SeqCst),
             0,
