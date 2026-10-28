@@ -28,6 +28,8 @@ const UNITS_PER_SESSION: usize = 2;
 
 pub const LOCK_SUBJECT: &str = "bank1_lock_byte";
 
+pub const READBACK_SUBJECT: &str = "bank1_readback";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LuminaireWriteFailure {
     pub code: ErrorCode,
@@ -232,7 +234,6 @@ fn verdict(
     writes: &[FieldWrite],
     lock: u8,
 ) -> Result<(), LuminaireWriteFailure> {
-    let first = writes.first().map_or(LOCK_SUBJECT, |write| write.field.name);
     if let Err(failure) = written {
         if failure.subject == LOCK_SUBJECT {
             return Err(failure);
@@ -244,7 +245,7 @@ fn verdict(
     }
     written?;
     if let Some(error) = readback.error {
-        return Err(LuminaireWriteFailure::unproved(error, first));
+        return Err(LuminaireWriteFailure::unproved(error, READBACK_SUBJECT));
     }
     match writes.iter().find(|write| !write.held_by(&readback.bytes)) {
         Some(write) => Err(LuminaireWriteFailure::new(ErrorCode::VerifyFailed, write.field.name)),

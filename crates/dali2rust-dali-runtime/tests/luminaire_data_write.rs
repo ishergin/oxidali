@@ -13,6 +13,8 @@ use dali2rust_domain::dali::banks::part251::{LuminaireFormat, LUMINAIRE_COLOUR, 
 use dali2rust_domain::dali::controller::DaliApplicationController;
 use dali2rust_domain::dali::pres::command::DaliCommand;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
+use dali2rust_domain::dali::pres::standard::StandardCommand;
+use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_gear_model::GearSpec;
 use dali2rust_platform::dali::{
     DaliTransport, TransferOutcome, WireActivity, WireLease, WirePriority, YieldGranularity,
@@ -31,16 +33,27 @@ const UNITS_PER_SESSION: usize = 2;
 const MULTI_SESSION_TEXT: &str = "fixture lamp";
 const LOCK_FRAMES_PER_SESSION: usize = 2;
 
+enum Interruption {
+    Operator(Arc<WireActivity>),
+    ForeignCommand(u16),
+}
+
 struct Interrupting {
     sim: SimDaliTransport,
-    gate: Arc<WireActivity>,
+    interruption: Interruption,
     trigger: u16,
 }
 
 impl Interrupting {
-    fn observe(&self, frame: u16) {
-        if frame == self.trigger {
-            self.gate.note_arrival(WirePriority::Interactive);
+    fn after(&mut self, frame: u16) {
+        if frame != self.trigger {
+            return;
+        }
+        match &self.interruption {
+            Interruption::Operator(gate) => gate.note_arrival(WirePriority::Interactive),
+            Interruption::ForeignCommand(command) => {
+                self.sim.fleet_mut().exchange(*command, false);
+            }
         }
     }
 }
@@ -49,8 +62,9 @@ impl DaliTransport for Interrupting {
     type Error = <SimDaliTransport as DaliTransport>::Error;
 
     fn send_forward_frame(&mut self, frame: u16) -> Result<(), Self::Error> {
-        self.observe(frame);
-        self.sim.send_forward_frame(frame)
+        let sent = self.sim.send_forward_frame(frame);
+        self.after(frame);
+        sent
     }
 
     fn receive_backward_frame(&mut self) -> Result<Option<u8>, Self::Error> {
@@ -61,14 +75,21 @@ impl DaliTransport for Interrupting {
         self.sim.is_bus_idle()
     }
 
+    fn exchange_frame(&mut self, frame: u16, expects_backward: bool) -> Result<TransferOutcome, Self::Error> {
+        let outcome = self.sim.exchange_frame(frame, expects_backward);
+        self.after(frame);
+        outcome
+    }
+
     fn exchange_frame_with_settle(
         &mut self,
         frame: u16,
         expects_backward: bool,
         min_idle_us: u32,
     ) -> Result<TransferOutcome, Self::Error> {
-        self.observe(frame);
-        self.sim.exchange_frame_with_settle(frame, expects_backward, min_idle_us)
+        let outcome = self.sim.exchange_frame_with_settle(frame, expects_backward, min_idle_us);
+        self.after(frame);
+        outcome
     }
 }
 
@@ -229,10 +250,13 @@ fn a_text_spanning_several_sessions_opens_and_closes_the_lock_in_each() {
     assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK));
 }
 
-fn write_interrupted_at(trigger: u16, writes: &[FieldWrite]) -> (Outcome, SimDaliTransport) {
-    let gate = Arc::new(WireActivity::new());
+fn write_interrupted(trigger: u16, interruption: Interruption, writes: &[FieldWrite]) -> (Outcome, SimDaliTransport) {
+    let gate = match &interruption {
+        Interruption::Operator(gate) => Arc::clone(gate),
+        Interruption::ForeignCommand(_) => Arc::new(WireActivity::new()),
+    };
     let sim = luminaire_gear(FOUND_LOCK, false);
-    let bus = Arc::new(Mutex::new(Interrupting { sim, gate: Arc::clone(&gate), trigger }));
+    let bus = Arc::new(Mutex::new(Interrupting { sim, interruption, trigger }));
     let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
     let lease = WireLease::new(gate, WirePriority::Attended, YieldGranularity::Step);
     let outcome = controller.with_wire_lease(lease, |c| run_write(c, writes));
@@ -246,13 +270,15 @@ fn write_interrupted_at(trigger: u16, writes: &[FieldWrite]) -> (Outcome, SimDal
 fn an_operator_arriving_mid_session_waits_for_the_lock_to_close() {
     let first = MULTI_SESSION_TEXT.as_bytes()[0];
     let trigger = special(SpecialCommand::WriteMemoryLocation(first));
-    let (outcome, sim) = write_interrupted_at(trigger, &text("luminaire_colour", MULTI_SESSION_TEXT));
+    let operator = Interruption::Operator(Arc::new(WireActivity::new()));
+    let writes = text("luminaire_colour", MULTI_SESSION_TEXT);
+    let (outcome, sim) = write_interrupted(trigger, operator, &writes);
 
     let sim = &sim;
     assert_eq!(
         shape(outcome.result),
         failure(ErrorCode::Preempted, "luminaire_colour"),
-        "the yield names the field left unwritten, not the lock it never opened"
+        "the yield names the field it stopped in, not the lock it never opened"
     );
     let session_len = UNIT_BYTES * UNITS_PER_SESSION + LOCK_FRAMES_PER_SESSION;
     let first_session = &sessions_on_the_wire(MULTI_SESSION_TEXT.as_bytes(), FOUND_LOCK)[..session_len];
@@ -260,4 +286,17 @@ fn an_operator_arriving_mid_session_waits_for_the_lock_to_close() {
     assert_eq!(location(sim, LOCK_OFFSET), Some(FOUND_LOCK));
     assert_eq!(sim.sent_frames().last(), Some(&special(SpecialCommand::WriteMemoryLocation(FOUND_LOCK))));
     assert_eq!(outcome.readback, None, "a yielded write leaves the read-back to the next run");
+}
+
+// IEC 62386-102 §9.10.5
+#[test]
+fn a_foreign_command_between_units_costs_nothing_because_each_unit_enables_writing() {
+    let end_of_first_unit = MULTI_SESSION_TEXT.as_bytes()[UNIT_BYTES - 1];
+    let trigger = special(SpecialCommand::WriteMemoryLocation(end_of_first_unit));
+    let foreign = DaliCommand::Standard { address: DaliAddress::Broadcast, command: StandardCommand::QueryStatus };
+    let interruption = Interruption::ForeignCommand(foreign.to_forward_frame().raw());
+    let (outcome, sim) = write_interrupted(trigger, interruption, &text("luminaire_colour", MULTI_SESSION_TEXT));
+
+    assert_eq!(shape(outcome.result), Ok(()), "a foreign frame between units clears writeEnableState");
+    assert_eq!(location(&sim, LUMINAIRE_COLOUR.offset + UNIT_BYTES as u8), Some(MULTI_SESSION_TEXT.as_bytes()[UNIT_BYTES]));
 }

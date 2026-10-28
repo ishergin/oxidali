@@ -3,6 +3,7 @@ use dali2rust_domain::dali::banks::luminaire_write::{number_patch, planned_write
 use dali2rust_domain::dali::banks::part251::YEAR_OFFSET;
 
 use super::*;
+use crate::runtime::executor::helpers::PREEMPTED_MESSAGE;
 
 const FOUND_LOCK: u8 = 0x06;
 const YEAR: u8 = 24;
@@ -63,7 +64,15 @@ fn a_field_that_failed_on_the_wire_outranks_an_unread_bank() {
 }
 
 #[test]
-fn an_unread_bank_proves_nothing_and_says_why() {
-    let unproved = failed(ErrorCode::VerifyContended, "year");
+fn an_unread_bank_proves_nothing_and_names_the_read_back() {
+    let unproved = failed(ErrorCode::VerifyContended, READBACK_SUBJECT);
     assert_eq!(verdict(Ok(()), &contended(), &year(), FOUND_LOCK), unproved);
+}
+
+#[test]
+fn a_read_back_that_yields_names_the_read_back_not_a_field() {
+    let error = SemanticDaliError::OperationFailed(PREEMPTED_MESSAGE);
+    let yielded = MemoryReadExecution { bytes: Vec::new(), indicator_unread: false, error: Some(error) };
+    let unproved = failed(ErrorCode::Preempted, READBACK_SUBJECT);
+    assert_eq!(verdict(Ok(()), &yielded, &year(), FOUND_LOCK), unproved, "every field went out; none is proved");
 }
