@@ -88,6 +88,7 @@ pub enum TableLookup {
     Behind,
     Torn,
     Silent,
+    LeaseLapsed,
     Answer(u8),
 }
 
@@ -186,8 +187,12 @@ impl AnswerTableCell {
         if accounts_for != previous_capture {
             return TableLookup::Behind;
         }
-        match entry_answer(index, word, frame, short_address, self.lease_alive(now_tick)) {
+        let lease_alive = self.lease_alive(now_tick);
+        match entry_answer(index, word, frame, short_address, lease_alive) {
             Some(answer) => TableLookup::Answer(answer),
+            None if !lease_alive && entry_answer(index, word, frame, short_address, true).is_some() => {
+                TableLookup::LeaseLapsed
+            }
             None => TableLookup::Silent,
         }
     }
@@ -273,7 +278,7 @@ mod tests {
     #[test]
     fn a_lapsed_lease_selects_the_lapsed_answer() {
         let cell = published(&image(7, 0), 0);
-        assert_eq!(cell.lookup([0xFF, 0xFE, QACE], 0, NOW + 100), TableLookup::Silent);
+        assert_eq!(cell.lookup([0xFF, 0xFE, QACE], 0, NOW + 100), TableLookup::LeaseLapsed);
         assert_eq!(cell.lookup([0xFF, 0xFE, QACE], 0, NOW + 99), TableLookup::Answer(0xFF));
         assert!(!AnswerTableCell::new().lease_alive(NOW));
     }

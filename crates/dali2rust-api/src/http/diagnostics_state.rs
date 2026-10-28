@@ -247,7 +247,8 @@ pub struct PhySnifferDto {
     pub decode_failed: u32,
     pub unsupported_len: u32,
     pub dropped: u32,
-    pub poll_fast: u32,
+    pub answer_table_torn: u32,
+    pub answer_decode_overrun: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
@@ -434,7 +435,7 @@ declare_widest_dtos! {
     }
     PhySnifferDto {
         frames, backward8, forward16, forward24, decode_failed, unsupported_len, dropped,
-        poll_fast,
+        answer_table_torn, answer_decode_overrun,
     }
     DaliWireDto {
         transactions_started, transactions_completed, transactions_by_class = [u32::MAX; 4],

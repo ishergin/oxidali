@@ -367,7 +367,7 @@ declare_counter_mapping! {
 
     phy_sniffer_dto(c: dali2rust_platform::dali::PhySnifferCounters) -> PhySnifferDto {
         frames, backward8, forward16, forward24, decode_failed, unsupported_len, dropped,
-        poll_fast = c.poll_fast.load(Relaxed),
+        answer_table_torn, answer_decode_overrun,
     }
 
     dali_wire_dto(c: dali2rust_platform::dali::DaliWireCounters) -> DaliWireDto {
@@ -653,8 +653,8 @@ fn stats_task_timing_dto(h: &RuntimeCounterHandles) -> StatsDaliTaskTimingDto {
     let gate = dali2rust_platform::dali::persist_gate_stats();
     StatsDaliTaskTimingDto {
         answer_staged_total: s.answer_staged.load(Relaxed),
-        answer_stage_late_total: s.answer_stage_late.load(Relaxed),
-        answer_stage_max_ticks: s.answer_stage_max_ticks.load(Relaxed),
+        answer_table_behind_total: s.answer_table_behind.load(Relaxed),
+        answer_table_publish_max_ticks: s.answer_table_publish_max_ticks.load(Relaxed),
         sniff_poll_late_total: s.sniff_poll_late.load(Relaxed),
         sniff_poll_gap_max_us: s.sniff_poll_gap_max_us.load(Relaxed),
         persist_flush_total: flush.flushes,
@@ -864,18 +864,18 @@ pub(crate) struct RedundancyBridge {
 
 fn arbitration_dto(
     supervisor: &dali2rust_redundancy_runtime::ArbitrationSupervisorCounters,
-    reflex: dali2rust_platform::arbitration::ArbitrationReflexCounters,
+    answers: dali2rust_platform::arbitration::ArbitrationAnswerCounters,
     worker: &dali2rust_dali_runtime::DaliWorkerCounters,
 ) -> dali2rust_api::http::redundancy_state::RedundancyArbitrationDto {
     dali2rust_api::http::redundancy_state::RedundancyArbitrationDto {
         defended: supervisor.defended.load(Relaxed),
         worker_stale: supervisor.stood_down_worker_stale.load(Relaxed),
-        answered: reflex.answered,
-        suppressed: reflex.suppressed_lease,
-        cell_busy: reflex.cell_busy,
-        aborted: reflex.aborted,
-        window_closed: reflex.window_closed,
-        late: reflex.out_of_window,
+        answered: answers.answered,
+        suppressed: answers.suppressed_lease,
+        cell_busy: answers.cell_busy,
+        aborted: answers.aborted,
+        window_closed: answers.window_closed,
+        late: answers.out_of_window,
         probe_failed: worker.arbitration_probe_failed.load(Relaxed),
         handover_incomplete: worker.handover_stand_down_failed.load(Relaxed),
     }
@@ -907,7 +907,7 @@ impl RedundancyBridge {
     fn arbitration_row(&self) -> dali2rust_api::http::redundancy_state::RedundancyArbitrationDto {
         arbitration_dto(
             &self.counters.arbitration_supervisor,
-            self.counters.arbitration_reflex.counters(),
+            self.counters.answer_inputs.counters(),
             &self.counters.dali_worker,
         )
     }
@@ -941,15 +941,15 @@ impl dali2rust_api::http::redundancy_state::RedundancyHttpState for RedundancyBr
     fn redundancy_state_dto(&self) -> dali2rust_api::http::redundancy_state::RedundancyStateDto {
         let view = self.settings.redundancy_settings_view();
         let now = dali2rust_platform::liveness::monotonic_ms();
-        let reflex = &self.counters.arbitration_reflex;
+        let inputs = &self.counters.answer_inputs;
         let worker = &self.counters.arbitration_worker;
         rs::RedundancyStateDto {
             now_ms: now,
             enabled: view.enabled,
             role: role_name(view.standby_role),
             active: self.dali.dali_settings_view().application_active,
-            answering: reflex.is_armed(now),
-            lease_remaining_ms: reflex.lease_remaining_ms(now),
+            answering: inputs.is_answering(now),
+            lease_remaining_ms: inputs.lease_remaining_ms(now),
             arbitration: self.arbitration_row(),
             probes: self.probe_row(),
             takeovers: worker.takeovers.load(Relaxed),
@@ -1421,7 +1421,7 @@ mod tests {
     use dali2rust_dali_runtime::StdClock;
     use dali2rust_domain::dali::commands::{DaliCommand, StandardCommand};
     use dali2rust_domain::dali::types::DaliAddress;
-    use dali2rust_platform::arbitration::ArbitrationReflexCounters;
+    use dali2rust_platform::arbitration::ArbitrationAnswerCounters;
     use dali2rust_platform::dali::DaliWireCounters;
 
     const SHORT: u8 = 4;
@@ -1476,7 +1476,7 @@ mod tests {
         let supervisor = dali2rust_redundancy_runtime::ArbitrationSupervisorCounters::default();
         supervisor.defended.store(1, Relaxed);
         supervisor.stood_down_worker_stale.store(2, Relaxed);
-        let reflex = ArbitrationReflexCounters {
+        let answers = ArbitrationAnswerCounters {
             answered: 3,
             suppressed_lease: 4,
             cell_busy: 5,
@@ -1488,7 +1488,7 @@ mod tests {
         worker.arbitration_probe_failed.store(9, Relaxed);
         worker.handover_stand_down_failed.store(10, Relaxed);
 
-        let row = arbitration_dto(&supervisor, reflex, &worker);
+        let row = arbitration_dto(&supervisor, answers, &worker);
         let got = [
             row.defended,
             row.worker_stale,

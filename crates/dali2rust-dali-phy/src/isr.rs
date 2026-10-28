@@ -77,6 +77,7 @@ impl ControlState {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct AnswerTableCounts {
     pub answered: u32,
+    pub lease_lapsed: u32,
     pub behind: u32,
     pub torn: u32,
     pub cell_busy: u32,
@@ -85,6 +86,7 @@ pub struct AnswerTableCounts {
 
 struct TableCounters {
     answered: AtomicU32,
+    lease_lapsed: AtomicU32,
     behind: AtomicU32,
     torn: AtomicU32,
     cell_busy: AtomicU32,
@@ -95,6 +97,7 @@ impl TableCounters {
     const fn new() -> Self {
         Self {
             answered: AtomicU32::new(0),
+            lease_lapsed: AtomicU32::new(0),
             behind: AtomicU32::new(0),
             torn: AtomicU32::new(0),
             cell_busy: AtomicU32::new(0),
@@ -117,6 +120,24 @@ impl HeldCapture {
             ev: RxCompletedEvent::new(),
             window: SampleWindow::EMPTY,
             search: BestPhaseSearch::new(SNIFFED_BIT_LENGTHS),
+        }
+    }
+}
+
+struct TablePath {
+    sniff_seq: AtomicU8,
+    held: UnsafeCell<HeldCapture>,
+    table: AnswerTableCell,
+    counts: TableCounters,
+}
+
+impl TablePath {
+    const fn new() -> Self {
+        Self {
+            sniff_seq: AtomicU8::new(0),
+            held: UnsafeCell::new(HeldCapture::new()),
+            table: AnswerTableCell::new(),
+            counts: TableCounters::new(),
         }
     }
 }
@@ -168,10 +189,7 @@ pub struct PhyIsrCore {
     probe: TickProbe,
     tx: TxCounters,
     answers_collided: AtomicU32,
-    sniff_seq: AtomicU8,
-    held: UnsafeCell<HeldCapture>,
-    table: AnswerTableCell,
-    table_counts: TableCounters,
+    table_path: TablePath,
 }
 
 struct TxCounters {
@@ -325,10 +343,7 @@ impl PhyIsrCore {
             probe: TickProbe::new(),
             tx: TxCounters::new(),
             answers_collided: AtomicU32::new(0),
-            sniff_seq: AtomicU8::new(0),
-            held: UnsafeCell::new(HeldCapture::new()),
-            table: AnswerTableCell::new(),
-            table_counts: TableCounters::new(),
+            table_path: TablePath::new(),
         }
     }
 
@@ -876,15 +891,15 @@ impl PhyIsrCore {
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     unsafe fn push_sniffer_capture(&self, mut ev: RxCompletedEvent) {
         // SAFETY: the caller is `tick`, the sole owner of the held capture.
-        let held = unsafe { &mut *self.held.get() };
+        let held = unsafe { &mut *self.table_path.held.get() };
         if held.held {
             held.held = false;
-            self.table_counts
+            self.table_path.counts
                 .decode_overrun
                 .fetch_add(1, Ordering::Relaxed);
             self.push_to_sniffer_ring(held.ev.clone());
         }
-        ev.sniff_seq = self.sniff_seq.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        ev.sniff_seq = self.table_path.sniff_seq.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         if !is_forward24_length(ev.sample_count) {
             self.push_to_sniffer_ring(ev);
             return;
@@ -898,7 +913,7 @@ impl PhyIsrCore {
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     unsafe fn step_held_capture(&self) {
         // SAFETY: the caller is `tick`, the sole owner of the held capture.
-        let held = unsafe { &mut *self.held.get() };
+        let held = unsafe { &mut *self.table_path.held.get() };
         if !held.held {
             return;
         }
@@ -919,17 +934,18 @@ impl PhyIsrCore {
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     fn answer_from_table(&self, frame: [u8; 3], ev: &RxCompletedEvent) {
         let now = self.wire_ticks_total.load(Ordering::Relaxed);
-        let counter = match self.table.lookup(frame, ev.sniff_seq.wrapping_sub(1), now) {
+        let counter = match self.table_path.table.lookup(frame, ev.sniff_seq.wrapping_sub(1), now) {
             TableLookup::Answer(answer) => {
                 let hb = HalfBitBuffer::encode(u32::from(answer), BACKWARD_DATA_BITS);
                 if self.answer.stage(ev.rx_epoch, &hb) {
-                    &self.table_counts.answered
+                    &self.table_path.counts.answered
                 } else {
-                    &self.table_counts.cell_busy
+                    &self.table_path.counts.cell_busy
                 }
             }
-            TableLookup::Behind => &self.table_counts.behind,
-            TableLookup::Torn => &self.table_counts.torn,
+            TableLookup::LeaseLapsed => &self.table_path.counts.lease_lapsed,
+            TableLookup::Behind => &self.table_path.counts.behind,
+            TableLookup::Torn => &self.table_path.counts.torn,
             TableLookup::NotPublished | TableLookup::NotAddressed | TableLookup::Silent => return,
         };
         counter.fetch_add(1, Ordering::Relaxed);
@@ -989,17 +1005,23 @@ impl PhyIsrCore {
     }
 
     pub fn publish_answer_table(&self, image: &AnswerTableImage, accounts_for: u8) {
-        self.table.publish(image, accounts_for);
+        self.table_path.table.publish(image, accounts_for);
     }
 
     pub fn set_answer_lease_until_tick(&self, tick: u32) {
-        self.table.set_lease_until_tick(tick);
+        self.table_path.table.set_lease_until_tick(tick);
+    }
+
+    pub fn lookup_answer(&self, frame: [u8; 3], previous_capture: u8) -> TableLookup {
+        let now = self.wire_ticks_total.load(Ordering::Relaxed);
+        self.table_path.table.lookup(frame, previous_capture, now)
     }
 
     pub fn answer_table_counts(&self) -> AnswerTableCounts {
-        let c = &self.table_counts;
+        let c = &self.table_path.counts;
         AnswerTableCounts {
             answered: c.answered.load(Ordering::Relaxed),
+            lease_lapsed: c.lease_lapsed.load(Ordering::Relaxed),
             behind: c.behind.load(Ordering::Relaxed),
             torn: c.torn.load(Ordering::Relaxed),
             cell_busy: c.cell_busy.load(Ordering::Relaxed),
@@ -2905,7 +2927,8 @@ mod tests {
         // SAFETY: single-threaded test standing in for the ISR context.
         unsafe { tick_n(&core, 160) };
 
-        assert_eq!(core.answer_table_counts(), AnswerTableCounts::default());
+        let lapsed = AnswerTableCounts { lease_lapsed: 1, ..AnswerTableCounts::default() };
+        assert_eq!(core.answer_table_counts(), lapsed);
         assert_eq!(core.answer_counts().sent, 0);
     }
 }

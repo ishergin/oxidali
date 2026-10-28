@@ -301,14 +301,17 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Isr ticks extra total</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Isr late ticks total</span><span class="v">55</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Isr max gap us</span><span class="v">326</span><span class="delta"></span></div>
-        <!-- The task-side timing. The three maxima — answer stage, sniffer poll
-             gap, flush time — are since-boot peaks like the interrupt's, so
-             they carry no change column; the unit is the field's own suffix.
+        <!-- The task-side timing. The three maxima — answer table publish,
+             sniffer poll gap, flush time — are since-boot peaks like the
+             interrupt's, so they carry no change column; the unit is the
+             field's own suffix. The interrupt answers from a table the
+             sniffer republishes every 10 ms poll, so a publish peak near one
+             poll is healthy and "behind" counts the answers actually missed.
              A flush over 250 ms counts as slow, so a peak above that comes
              with at least one slow flush. -->
         <div class="attr"><span class="k">Answer staged total</span><span class="v">214</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Answer stage late total</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Answer stage max ticks</span><span class="v">21</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Answer table behind total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Answer table publish max ticks</span><span class="v">97</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Sniff poll late total</span><span class="v">3</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Sniff poll gap max us</span><span class="v">12 480</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Persist flush total</span><span class="v">37</span><span class="delta"></span></div>

@@ -139,19 +139,31 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
 - The backward window closes at Table 20's 13,4 ms, judged from the interrupt's own
   pre-idle reading; a later frame is foreign. The task's polling deadline is longer and
   separate.
-- The `dali-sniff` task drains captures, decodes, logs and publishes. It polls every
-  10 ms, and every 1 ms while the arbitration answer table is armed.
+- A capture of 24-bit length (`FORWARD24_LENGTH_MIN_SAMPLES`) is held in the interrupt
+  and decoded there one phase per tick (`manchester::BestPhaseSearch`); the drain takes it
+  decoded. The other lengths are decoded by the drain.
+- Every capture pushed to the sniffer ring, or dropped because it was full, moves
+  `sniff_seq`, and the capture carries it; our own frames do not move it.
+- The `dali-sniff` task drains captures, decodes, logs, publishes and republishes the
+  answer table. It polls every 10 ms and runs one priority step above the worker pool.
 
 ## Answering inside Table 20
 
-- The task decides, the interrupt transmits. The sniffer decodes a capture, looks it up in
-  the reflex table (`dali2rust-platform::arbitration`, filled by the redundancy
-  supervisor) and stages the answer in the answer cell under the capture's bus epoch.
-  The interrupt sends it on the tick the idle counter reaches the Table 20 target
-  (`answer_gate`), ahead of any forward frame of ours, only while no later bus event has
-  moved the epoch, and discards it once the window has passed.
-- The sniffer stages the answer before it logs, forwards or dumps the capture;
-  everything after staging is diagnostic.
+- The task decides before the frame, the interrupt answers it (ADR-030). After each poll
+  the drain builds the answer table from the supervisor's `AnswerInputs`
+  (`dali2rust-domain::dali::dev103::unit`) and publishes it (`dali-phy::answer_table`)
+  naming the last capture it consumed.
+- The interrupt answers a decoded 24-bit capture only from a table that accounts for the
+  capture before it; a table that is behind answers nothing and is counted
+  (`answer_table_behind_total`). The table is double-buffered under a sequence check, so
+  the interrupt never answers from half of one and counts a torn read instead.
+- The lease reaches the interrupt as an expiry in its own ticks, rewritten at every poll,
+  and is applied at answer time: a stalled supervisor or a stalled drain silences the
+  answer within one lease.
+- The interrupt stages the answer in the answer cell under the capture's bus epoch and
+  sends it on the tick the idle counter reaches the Table 20 target (`answer_gate`),
+  ahead of any forward frame of ours, only while no later bus event has moved the epoch,
+  and discards it once the window has passed.
 - The window constants live in `dali-phy::backward_window`, derived from
   `fsm::TX_ARM_LEAD_TICKS` and bounded at compile time; the gear emulator stages its
   answers in the same cell.

@@ -22,14 +22,13 @@ use dali2rust_domain::dali::frame::ForwardFrame;
 use dali2rust_domain::dali::net::address::{decode_wire_address, DaliAddress};
 use dali2rust_platform::dali::{BatchOutcome, DaliTransport, Frame24Error, TransferOutcome};
 
-use dali2rust_dali_phy::backward_window::ANSWER_ARM_TARGET_IDLE_TICKS;
-use dali2rust_dali_phy::fsm::RX_IDLE_LINE_HIGH_TICKS;
 use dali2rust_dali_phy::{
     dali_phy_alarm_isr, settle_ticks_on_wire, ExchangeId, HalfBitBuffer, PhyIsrCore, RegisterGpio,
     RxCompletedEvent, SessionEvent, TxGates, BUS_POWER_DOWN_TICKS, MIN_SAMPLES_FOR_DECODE,
     PHY_TICK_US, RX_RING_CAP, TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS,
 };
 
+use super::answer_path::{AnswerPublisher, PUBLISH_BUDGET_TICKS};
 use super::sniffer_diagnostics::{gap_to_u32, SnifferDiagnostics};
 use super::{LATE_REPORT_BYTES, MICROS_PER_MILLI};
 use crate::dali::transport::{
@@ -64,8 +63,6 @@ const SESSION_QUERY_BACKWARD_WINDOW_MS: u64 = 25;
 const SESSION_POLL_MS: u32 = 1;
 
 const SNIFFER_POLL_MS: u32 = 10;
-// DiiA 351 §7
-const ARBITRATION_POLL_MS: u32 = 1;
 
 unsafe extern "C" {
     static pxCurrentTCBs: [*mut core::ffi::c_void; 2];
@@ -170,8 +167,8 @@ struct TransportInner {
     observed_tx: std::sync::OnceLock<dali2rust_platform::dali::ObservedFrameSender>,
     sniffer_counters: std::sync::OnceLock<Arc<dali2rust_platform::dali::PhySnifferCounters>>,
     wire_counters: std::sync::OnceLock<Arc<dali2rust_platform::dali::DaliWireCounters>>,
-    arbitration_reflex:
-        std::sync::OnceLock<Arc<dali2rust_platform::arbitration::ArbitrationReflex>>,
+    answer_inputs:
+        std::sync::OnceLock<Arc<dali2rust_platform::arbitration::AnswerInputs>>,
 }
 
 fn new_phy_timer(level: PhyIsrLevel) -> Result<gptimer_handle_t, EspError> {
@@ -778,7 +775,7 @@ impl EspIdfDaliTransport {
         stop: Arc<AtomicBool>,
     ) -> Result<std::thread::JoinHandle<()>, EspIdfDaliError> {
         let sniff_ctx = raw as usize;
-        match dali2rust_bsp::esp_thread::try_spawn_named_stack(
+        match dali2rust_bsp::esp_thread::try_spawn_named_stack_above_workers(
             c"dali-sniff",
             dali2rust_bsp::std_thread_stack::RING_CONSUMER_STACK,
             move || dali_sniffer_loop(sniff_ctx, stop),
@@ -840,7 +837,7 @@ impl EspIdfDaliTransport {
                 forward_single_gear: AtomicBool::new(true),
                 observed_tx: std::sync::OnceLock::new(),
                 sniffer_counters: std::sync::OnceLock::new(),
-                arbitration_reflex: std::sync::OnceLock::new(),
+                answer_inputs: std::sync::OnceLock::new(),
                 wire_counters: std::sync::OnceLock::new(),
             })
         }
@@ -1002,12 +999,12 @@ impl DaliTransport for EspIdfDaliTransport {
         let _ = unsafe { (*self.inner).wire_counters.set(sink) };
     }
 
-    fn set_arbitration_reflex(
+    fn set_answer_inputs(
         &mut self,
-        reflex: Arc<dali2rust_platform::arbitration::ArbitrationReflex>,
+        inputs: Arc<dali2rust_platform::arbitration::AnswerInputs>,
     ) {
         // SAFETY: same contract as `set_observed_frame_sender` above.
-        let _ = unsafe { (*self.inner).arbitration_reflex.set(reflex) };
+        let _ = unsafe { (*self.inner).answer_inputs.set(inputs) };
     }
 
     fn exchange_frame(
@@ -1193,23 +1190,17 @@ unsafe fn mirror_poll_gap(inner: *mut TransportInner, gap_us: Option<i64>, poll_
 
 /// # Safety
 /// `inner` must be valid for the transport's lifetime (see `dali_sniffer_loop`).
-unsafe fn note_answer_staged(
+unsafe fn note_answer_published(
     inner: *mut TransportInner,
     diagnostics: &mut SnifferDiagnostics,
     ticks: u32,
 ) {
-    let budget = u32::from(ANSWER_ARM_TARGET_IDLE_TICKS)
-        .saturating_sub(u32::from(RX_IDLE_LINE_HIGH_TICKS));
-    diagnostics.note_stage_delay(ticks, budget);
+    diagnostics.note_publish_delay(ticks, PUBLISH_BUDGET_TICKS);
     // SAFETY: the caller's contract.
     let Some(sink) = (unsafe { (*inner).sniffer_counters.get() }) else {
         return;
     };
-    sink.answer_staged.fetch_add(1, Ordering::Relaxed);
-    sink.answer_stage_max_ticks.fetch_max(ticks, Ordering::Relaxed);
-    if ticks > budget {
-        sink.answer_stage_late.fetch_add(1, Ordering::Relaxed);
-    }
+    sink.answer_table_publish_max_ticks.fetch_max(ticks, Ordering::Relaxed);
 }
 
 fn count_backward_cause(inner: *mut TransportInner, cause: BackwardCause) {
@@ -1314,11 +1305,27 @@ unsafe fn mirror_collision_restarts(inner: *mut TransportInner) {
 /// # Safety
 /// `inner` must be valid for the transport's lifetime.
 unsafe fn mirror_arbitration_counters(inner: *mut TransportInner) {
-    let Some(reflex) = (unsafe { (*inner).arbitration_reflex.get() }) else {
+    // SAFETY: the caller's contract.
+    let (c, t) = unsafe { ((*inner).isr.answer_counts(), (*inner).isr.answer_table_counts()) };
+    // SAFETY: same.
+    if let Some(sink) = unsafe { (*inner).sniffer_counters.get() } {
+        sink.answer_staged.store(t.answered, Ordering::Relaxed);
+        sink.answer_table_behind.store(t.behind, Ordering::Relaxed);
+        sink.answer_table_torn.store(t.torn, Ordering::Relaxed);
+        sink.answer_decode_overrun.store(t.decode_overrun, Ordering::Relaxed);
+    }
+    // SAFETY: same.
+    let Some(inputs) = (unsafe { (*inner).answer_inputs.get() }) else {
         return;
     };
-    let c = unsafe { (*inner).isr.answer_counts() };
-    reflex.mirror_transmit(c.sent, c.stale, c.expired, c.late);
+    inputs.mirror_answers(dali2rust_platform::arbitration::ArbitrationAnswerCounters {
+        answered: c.sent,
+        suppressed_lease: t.lease_lapsed,
+        cell_busy: t.cell_busy,
+        aborted: c.stale,
+        window_closed: c.expired,
+        out_of_window: c.late,
+    });
 }
 
 unsafe fn mirror_wire_occupancy(
@@ -1340,50 +1347,25 @@ unsafe fn mirror_wire_occupancy(
     }
 }
 
-/// # Safety
-/// `inner` must be valid for the transport's lifetime.
-unsafe fn sniffer_poll_ms(inner: *mut TransportInner) -> u32 {
-    // SAFETY: see the doc comment.
-    let Some(reflex) = (unsafe { (*inner).arbitration_reflex.get() }) else {
-        return SNIFFER_POLL_MS;
-    };
-    if reflex.is_armed(dali2rust_platform::liveness::monotonic_ms()) {
-        ARBITRATION_POLL_MS
-    } else {
-        SNIFFER_POLL_MS
-    }
-}
-
 const TICK_MS: u32 = 1_000 / esp_idf_svc::sys::configTICK_RATE_HZ;
+const _: () = assert!(dali2rust_platform::dali::sleep_parks_the_task(SNIFFER_POLL_MS, TICK_MS));
 
 /// # Safety
 /// `inner` must be valid for the transport's lifetime.
-unsafe fn note_poll_pace(inner: *mut TransportInner, poll_ms: u32) {
-    // SAFETY: see the doc comment.
-    let Some(sink) = (unsafe { (*inner).sniffer_counters.get() }) else {
-        return;
-    };
-    if dali2rust_platform::dali::sleep_parks_the_task(poll_ms, TICK_MS) {
-        return;
-    }
-    sink.poll_fast.fetch_add(1, Ordering::Relaxed);
-}
-
-/// # Safety
-/// `inner` must be valid for the transport's lifetime.
-unsafe fn answer_arbitration_query(
+unsafe fn publish_answer_table(
     inner: *mut TransportInner,
-    frame: [u8; 3],
-    rx_epoch: u8,
-) -> bool {
+    publisher: &mut AnswerPublisher,
+    diagnostics: &mut SnifferDiagnostics,
+) {
     // SAFETY: see the doc comment.
-    let Some(reflex) = (unsafe { (*inner).arbitration_reflex.get() }) else {
-        return false;
-    };
+    let inputs = unsafe { (*inner).answer_inputs.get() };
     let now_ms = dali2rust_platform::liveness::monotonic_ms();
     // SAFETY: the ISR core outlives the sniffer thread, which `Drop` joins before freeing the allocation.
     let isr = unsafe { &(*inner).isr };
-    super::arbitration_answer::answer_published_frame(isr, reflex, rx_epoch, frame, now_ms)
+    if let Some(ticks) = publisher.publish(isr, inputs.map(Arc::as_ref), now_ms) {
+        // SAFETY: same.
+        unsafe { note_answer_published(inner, diagnostics, ticks) };
+    }
 }
 
 fn dali_sniffer_loop(inner_addr: usize, stop: Arc<AtomicBool>) {
@@ -1393,12 +1375,10 @@ fn dali_sniffer_loop(inner_addr: usize, stop: Arc<AtomicBool>) {
     let mut late_scratch = vec![0u8; LATE_REPORT_BYTES].into_boxed_slice();
     let mut load_window =
         dali2rust_platform::dali::WireLoadWindow::new(super::WIRE_LOAD_WINDOW_TICKS);
+    let mut publisher = AnswerPublisher::new();
+    let poll_ms = SNIFFER_POLL_MS;
     while !stop.load(Ordering::Acquire) {
-        // SAFETY: `inner` is valid for the transport lifetime (see above).
-        let poll_ms = unsafe { sniffer_poll_ms(inner) };
-        // SAFETY: same.
-        unsafe { note_poll_pace(inner, poll_ms) };
-        // sleep-ok: >= one tick at either pace
+        // sleep-ok: >= one tick
         std::thread::sleep(Duration::from_millis(u64::from(poll_ms)));
         if stop.load(Ordering::Acquire) {
             break;
@@ -1428,7 +1408,9 @@ fn dali_sniffer_loop(inner_addr: usize, stop: Arc<AtomicBool>) {
             diagnostics.note_late_tick(late);
         }
         // SAFETY: same.
-        unsafe { process_sniffed_captures(inner, &mut diagnostics) };
+        unsafe { process_sniffed_captures(inner, &mut publisher, &mut diagnostics) };
+        // SAFETY: same.
+        unsafe { publish_answer_table(inner, &mut publisher, &mut diagnostics) };
         diagnostics.maybe_report(std::time::Instant::now(), &mut late_scratch);
     }
 }
@@ -1437,18 +1419,23 @@ fn dali_sniffer_loop(inner_addr: usize, stop: Arc<AtomicBool>) {
 /// `inner` must remain valid for the transport lifetime.
 unsafe fn process_sniffed_captures(
     inner: *mut TransportInner,
+    publisher: &mut AnswerPublisher,
     diagnostics: &mut SnifferDiagnostics,
 ) {
-    while let Some(ev) = unsafe { (*inner).isr.pop_rx() } {
-        if ev.sample_count < MIN_SAMPLES_FOR_DECODE {
-            continue;
-        }
-        let decoded = ev.decode_sniffed_with_phase();
-        diagnostics.record_frame(ev.sample_count, decoded);
-        mirror_sniffer_counters(inner, decoded.frame);
-        // SAFETY: `inner` remains valid for this transport's lifetime.
-        unsafe { dispatch_sniffed_capture(inner, &ev, decoded, diagnostics) };
-    }
+    publisher.drain(
+        // SAFETY: the caller's contract.
+        || unsafe { (*inner).isr.pop_rx() },
+        |ev| {
+            if ev.sample_count < MIN_SAMPLES_FOR_DECODE {
+                return;
+            }
+            let decoded = ev.decode_sniffed_with_phase();
+            diagnostics.record_frame(ev.sample_count, decoded);
+            mirror_sniffer_counters(inner, decoded.frame);
+            // SAFETY: `inner` remains valid for this transport's lifetime.
+            unsafe { dispatch_sniffed_capture(inner, ev, decoded, diagnostics) };
+        },
+    );
 }
 
 /// # Safety
@@ -1507,25 +1494,9 @@ unsafe fn mirror_isr_state(
 
 /// # Safety
 /// `inner` must be valid for the transport lifetime.
-unsafe fn sniffed_forward24(
-    inner: *mut TransportInner,
-    b: [u8; 3],
-    ev: &RxCompletedEvent,
-    diagnostics: &mut SnifferDiagnostics,
-) {
+unsafe fn sniffed_forward24(inner: *mut TransportInner, b: [u8; 3]) {
     // SAFETY: the caller guarantees `inner`.
     count_foreign_frame(inner);
-    // SAFETY: same.
-    if unsafe { answer_arbitration_query(inner, b, ev.rx_epoch) } {
-        // SAFETY: same.
-        let now = unsafe { (*inner).isr.wire_tick_counts().0 };
-        // SAFETY: same.
-        unsafe { note_answer_staged(inner, diagnostics, now.wrapping_sub(ev.rx_tick)) };
-        log::debug!(
-            "DALI arbitration: answered 0x{:02x}{:02x}{:02x} (351 §7)",
-            b[0], b[1], b[2]
-        );
-    }
     log::info!(
         "DALI sniff: foreign forward24=0x{:02x}{:02x}{:02x} (addr=0x{:02x})",
         b[0],
@@ -1560,7 +1531,7 @@ unsafe fn dispatch_sniffed_capture(
             );
         }
         // SAFETY: same.
-        SniffedFrame::Forward24(b) => unsafe { sniffed_forward24(inner, b, ev, diagnostics) },
+        SniffedFrame::Forward24(b) => unsafe { sniffed_forward24(inner, b) },
         SniffedFrame::Backward8(b) => {
             log::info!("DALI sniff: foreign backward8=0x{b:02x}");
             push_observed_raw_frame(

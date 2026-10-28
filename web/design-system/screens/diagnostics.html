@@ -345,13 +345,12 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            lengths the decoder routes, `Unsupported len` for any other length
            and `Decode failed`. Those last two and `Dropped` are fault-painted.
 
-           `Poll fast` here and `DALI wire · Session spins` count the waits
-           whose back-off was shorter than a FreeRTOS tick
-           (`sleep_parks_the_task`): such a wait busy-waits instead of parking,
-           and the idle task on that core does not run meanwhile. Neither is a
-           fault and neither is painted as one; read them against the page
-           header's uptime and beside `Redundancy · Arbitration table`, the
-           mode that sets the sniffer's back-off. -->
+           The last two rows belong to the interrupt, which decodes every
+           24-bit frame and answers queries from a table the sniffer
+           republishes each poll. `Answer table torn` is a lookup that met a
+           table mid-publish, `Answer decode overrun` a capture that arrived
+           while a 24-bit one was still being decoded; either costs one answer,
+           neither happens on a conformant bus, and both are fault-painted. -->
       <div class="card">
         <header><h3>PHY sniffer</h3></header>
         <div class="attr"><span class="k">Frames</span><span class="v">1 201 728</span><span class="delta live">+19</span></div>
@@ -361,7 +360,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Decode failed</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Unsupported len</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Dropped</span><span class="v">0</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Poll fast</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Answer table torn</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Answer decode overrun</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 
       <div class="card">
@@ -587,8 +587,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
       <!-- `Arbitration table` is a MODE and sits where MQTT puts `Connected`:
            no change column, because armed/idle is a state and a delta on it
-           would read as traffic. Armed shortens the sniffer's back-off, so
-           `PHY sniffer · Poll fast` above is read beside this row. -->
+           would read as traffic. Armed means the interrupt answers the
+           arbitration probe: the lease is alive and the unit is active. -->
       <!-- The three Redundancy cards are the ones on this screen that do not
            come from /api/v1/diagnostics: they poll /api/v1/redundancy, the
            pair's own resource, on the same 2 s cadence, and their change

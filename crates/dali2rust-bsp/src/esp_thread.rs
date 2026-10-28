@@ -7,6 +7,24 @@ use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskPriority {
+    Pool,
+    AboveWorkers,
+}
+
+const ABOVE_WORKERS_STEP: u8 = 1;
+
+impl TaskPriority {
+    #[must_use]
+    pub const fn step_over_pool(self) -> u8 {
+        match self {
+            Self::Pool => 0,
+            Self::AboveWorkers => ABOVE_WORKERS_STEP,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StackHome {
     Internal,
     External,
@@ -66,7 +84,9 @@ pub fn try_spawn_named_stack_in<F>(
 where
     F: FnOnce() + Send + 'static,
 {
-    with_named_builder_on(name, stack_bytes, home, core, |b| b.spawn(registered(name, f)))
+    with_named_builder_on(name, stack_bytes, home, core, TaskPriority::Pool, |b| {
+        b.spawn(registered(name, f))
+    })
 }
 
 pub fn run_on_named_stack_in<R, F>(
@@ -107,6 +127,19 @@ where
     })
 }
 
+pub fn try_spawn_named_stack_above_workers<F>(
+    name: &'static CStr,
+    stack_bytes: usize,
+    f: F,
+) -> std::io::Result<std::thread::JoinHandle<()>>
+where
+    F: FnOnce() + Send + 'static,
+{
+    with_named_builder_on(name, stack_bytes, StackHome::Internal, None, TaskPriority::AboveWorkers, |b| {
+        b.spawn(registered(name, f))
+    })
+}
+
 pub fn try_spawn_named_stack_on_core<F>(
     name: &'static CStr,
     stack_bytes: usize,
@@ -116,7 +149,7 @@ pub fn try_spawn_named_stack_on_core<F>(
 where
     F: FnOnce() + Send + 'static,
 {
-    with_named_builder_on(name, stack_bytes, StackHome::Internal, Some(core), |b| {
+    with_named_builder_on(name, stack_bytes, StackHome::Internal, Some(core), TaskPriority::Pool, |b| {
         b.spawn(registered(name, f))
     })
 }
@@ -130,7 +163,7 @@ pub fn try_spawn_named_external_stack_on_core<F>(
 where
     F: FnOnce() + Send + 'static,
 {
-    with_named_builder_on(name, stack_bytes, StackHome::External, Some(core), |b| {
+    with_named_builder_on(name, stack_bytes, StackHome::External, Some(core), TaskPriority::Pool, |b| {
         b.spawn(registered(name, f))
     })
 }
@@ -189,7 +222,7 @@ fn with_named_builder<T>(
     home: StackHome,
     spawn: impl FnOnce(std::thread::Builder) -> std::io::Result<T>,
 ) -> std::io::Result<T> {
-    with_named_builder_on(name, stack_bytes, home, None, spawn)
+    with_named_builder_on(name, stack_bytes, home, None, TaskPriority::Pool, spawn)
 }
 
 fn with_named_builder_on<T>(
@@ -197,6 +230,7 @@ fn with_named_builder_on<T>(
     stack_bytes: usize,
     home: StackHome,
     core: Option<u8>,
+    priority: TaskPriority,
     spawn: impl FnOnce(std::thread::Builder) -> std::io::Result<T>,
 ) -> std::io::Result<T> {
     let label = name.to_string_lossy();
@@ -207,7 +241,7 @@ fn with_named_builder_on<T>(
     #[cfg(target_os = "espidf")]
     {
         let previous = ThreadSpawnConfiguration::get();
-        if let Err(e) = spawn_configuration(name, home, core).set() {
+        if let Err(e) = spawn_configuration(name, home, core, priority).set() {
             log::warn!("thread-name config for {label} failed: {e}");
         }
         let spawned = spawn(b);
@@ -221,7 +255,7 @@ fn with_named_builder_on<T>(
     }
     #[cfg(not(target_os = "espidf"))]
     {
-        let _ = (home.resolve(), core);
+        let _ = (home.resolve(), core, priority);
         spawn(b)
     }
 }
@@ -231,6 +265,7 @@ fn spawn_configuration(
     name: &'static CStr,
     home: StackHome,
     core: Option<u8>,
+    priority: TaskPriority,
 ) -> ThreadSpawnConfiguration {
     let mut config = ThreadSpawnConfiguration {
         name: Some(name),
@@ -240,6 +275,7 @@ fn spawn_configuration(
         config.stack_alloc_caps = MallocCap::Spiram | MallocCap::Cap8bit;
     }
     config.pin_to_core = core.map(|c| if c == 0 { Core::Core0 } else { Core::Core1 });
+    config.priority = config.priority.saturating_add(priority.step_over_pool());
     config
 }
 
@@ -253,5 +289,11 @@ mod tests {
         assert_eq!(StackHome::ExternalOnXip.resolve(), StackHome::Internal);
         assert_eq!(StackHome::External.resolve(), StackHome::External);
         assert_eq!(StackHome::Internal.resolve(), StackHome::Internal);
+    }
+
+    #[test]
+    fn only_a_task_above_the_workers_steps_over_the_pool_priority() {
+        assert_eq!(TaskPriority::Pool.step_over_pool(), 0);
+        assert!(TaskPriority::AboveWorkers.step_over_pool() > 0);
     }
 }
