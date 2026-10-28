@@ -209,8 +209,8 @@ unprompted: only an explicit attribute read or the enabled poller's own status r
 its interval, can report it, and a disabled poller reads none. The poller setting
 `power_cycle_watch`, off by default, closes the gap: the bus-health probe then ends with
 a broadcast `QUERY POWER FAILURE` (102 §11.5.15) behind its positive control and runs
-with the poller off; a YES sweeps the adapter's gear with status reads unless the poller
-already reads `runtime_status` every cycle, and the registry forgets the RAM state of a
+with the poller off; a YES sweeps the adapter's gear with status reads unless the enabled
+poller reads `runtime_status` in its cycle, and the registry forgets the RAM state of a
 gear whose bit it sees set after it knew it clear
 ([09](../architecture/09-dali-protocol-rules.md) §Faults and identification; schedule,
 sweep and hold-off: [poller](../product-design/runtime-modules/poller/README.md)). With
@@ -227,7 +227,10 @@ the watch on, what it does not see:
 - A cycle while the answer stands at YES because some other gear nobody drives keeps
   its bit set: it waits for the hold-off's next sweep, which counts answers from the end
   of the last sweep, about an hour with the poller off.
-- How soon: a cycle shows at the next probe, up to one probe period later.
+- How soon: a cycle shows at the next probe, up to one probe period later. With the
+  poller reading `runtime_status` there is no sweep: the gear's status is read when the
+  cycle reaches it, and a gear the cycle saw absent during the outage waits out its absent
+  cooldown first.
 
 ## 17. Priority
 

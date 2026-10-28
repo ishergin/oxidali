@@ -6,8 +6,8 @@ Feature: Power-cycle watch
   setting `power_cycle_watch`, off by default. Switched on, it ends the
   bus-health probe with a broadcast QUERY POWER FAILURE, poller on or off; a
   YES behind an answered control sweeps the adapter's poll targets with
-  runtime-status reads, unless the enabled poller already reads every target's
-  status each cycle, and the registry forgets the RAM state of exactly the
+  runtime-status reads, unless the enabled poller already reads the targets'
+  status in its cycle, and the registry forgets the RAM state of exactly the
   gear whose bit turned up set after a level command had cleared it. Switched
   off, the enabled poller's probe is the two frames it always was and a
   disabled poller sends nothing.
@@ -110,7 +110,7 @@ Feature: Power-cycle watch
     And the poller counter "power_cycle_sweeps" should be 0
 
   @id:PWR-008
-  Scenario: A poller that reads every status each cycle leaves a YES nothing to sweep
+  Scenario: A poller that reads the status in its cycle leaves a YES nothing to sweep
     Given the controller probes the bus every 300 ms
     And the power-cycle watch is switched on
     And adapter 0 has discovered physical devices 0 and 1

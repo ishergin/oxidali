@@ -1061,7 +1061,7 @@ fn slow_cycle_harness(attribute_groups_mask: u8) -> Harness {
 fn a_cycle_that_reads_the_status_leaves_a_yes_nothing_to_sweep() {
     let h = slow_cycle_harness(DaliAttributeGroup::RuntimeStatus.mask_bit());
     yes_until(&h, 1);
-    assert_eq!(sweeps(&h), 0, "every cycle reads each target's status already; a sweep would read it twice");
+    assert_eq!(sweeps(&h), 0, "the cycle reads each target's status already; a sweep would read it twice");
 }
 
 #[test]
