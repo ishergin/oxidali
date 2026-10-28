@@ -57,9 +57,9 @@ pub(crate) struct SnifferDiagnostics {
     isr_ticks_deficit_raw: u32,
     isr_ticks_surplus_raw: u32,
     isr_ticks_raw_reported: (u32, u32),
-    stage_max_ticks: u32,
-    stage_over_budget: u32,
-    stage_samples: u32,
+    publish_max_ticks: u32,
+    publish_over_budget: u32,
+    publish_samples: u32,
     poll_gap_max_us: i64,
     poll_late: u32,
     last_poll_us: Option<i64>,
@@ -99,9 +99,9 @@ impl SnifferDiagnostics {
             isr_ticks_deficit_raw: 0,
             isr_ticks_surplus_raw: 0,
             isr_ticks_raw_reported: (0, 0),
-            stage_max_ticks: 0,
-            stage_over_budget: 0,
-            stage_samples: 0,
+            publish_max_ticks: 0,
+            publish_over_budget: 0,
+            publish_samples: 0,
             poll_gap_max_us: 0,
             poll_late: 0,
             last_poll_us: None,
@@ -184,11 +184,11 @@ impl SnifferDiagnostics {
         (missing, extra, raw_deficit, raw_surplus)
     }
 
-    pub(crate) fn note_stage_delay(&mut self, ticks: u32, budget: u32) {
-        self.stage_samples = self.stage_samples.saturating_add(1);
-        self.stage_max_ticks = self.stage_max_ticks.max(ticks);
+    pub(crate) fn note_publish_delay(&mut self, ticks: u32, budget: u32) {
+        self.publish_samples = self.publish_samples.saturating_add(1);
+        self.publish_max_ticks = self.publish_max_ticks.max(ticks);
         if ticks > budget {
-            self.stage_over_budget = self.stage_over_budget.saturating_add(1);
+            self.publish_over_budget = self.publish_over_budget.saturating_add(1);
         }
     }
 
@@ -237,7 +237,7 @@ impl SnifferDiagnostics {
     }
 
     fn timing_is_notable(&self) -> bool {
-        self.stage_over_budget > 0
+        self.publish_over_budget > 0
             || self.poll_late > 0
             || self.isr_tick_windows_short > 0
             || self.isr_ticks_extra > 0
@@ -253,7 +253,7 @@ impl SnifferDiagnostics {
             log::warn!(
                 "DALI sniff timing: isr ticks lost={} extra={} raw deficit={} surplus={} \
                  (short windows={}, last {} at {} ms) \
-                 probe late={} max gap={} us stage max={} ticks over budget={} of {} poll gap max={} us",
+                 probe late={} max gap={} us table publish max={} ticks over budget={} of {} poll gap max={} us",
                 self.isr_ticks_lost,
                 self.isr_ticks_extra,
                 self.isr_ticks_deficit_raw,
@@ -263,15 +263,15 @@ impl SnifferDiagnostics {
                 at_ms,
                 late_ticks,
                 max_gap_us,
-                self.stage_max_ticks,
-                self.stage_over_budget,
-                self.stage_samples,
+                self.publish_max_ticks,
+                self.publish_over_budget,
+                self.publish_samples,
                 self.poll_gap_max_us
             );
         }
-        self.stage_max_ticks = 0;
-        self.stage_over_budget = 0;
-        self.stage_samples = 0;
+        self.publish_max_ticks = 0;
+        self.publish_over_budget = 0;
+        self.publish_samples = 0;
         self.poll_gap_max_us = 0;
         self.poll_late = 0;
     }
@@ -603,14 +603,14 @@ mod tests {
     }
 
     #[test]
-    fn stage_delay_is_over_budget_only_when_strictly_over() {
+    fn publish_delay_is_over_budget_only_when_strictly_over() {
         let mut d = SnifferDiagnostics::new();
-        d.note_stage_delay(5, 5);
-        assert_eq!((d.stage_samples, d.stage_max_ticks, d.stage_over_budget), (1, 5, 0));
-        d.note_stage_delay(6, 5);
-        assert_eq!((d.stage_samples, d.stage_max_ticks, d.stage_over_budget), (2, 6, 1));
-        d.note_stage_delay(3, 5);
-        assert_eq!((d.stage_samples, d.stage_max_ticks, d.stage_over_budget), (3, 6, 1));
+        d.note_publish_delay(5, 5);
+        assert_eq!((d.publish_samples, d.publish_max_ticks, d.publish_over_budget), (1, 5, 0));
+        d.note_publish_delay(6, 5);
+        assert_eq!((d.publish_samples, d.publish_max_ticks, d.publish_over_budget), (2, 6, 1));
+        d.note_publish_delay(3, 5);
+        assert_eq!((d.publish_samples, d.publish_max_ticks, d.publish_over_budget), (3, 6, 1));
     }
 
     #[test]
@@ -767,7 +767,7 @@ mod tests {
     #[test]
     fn each_condition_alone_makes_the_timing_worth_reporting() {
         let triggers: [(&str, Trigger); 6] = [
-            ("stage over budget", |d| d.stage_over_budget = 1),
+            ("publish over budget", |d| d.publish_over_budget = 1),
             ("late poll", |d| d.poll_late = 1),
             ("short window", |d| d.isr_tick_windows_short = 1),
             ("extra ticks", |d| d.isr_ticks_extra = 1),
@@ -801,14 +801,14 @@ mod tests {
         d.isr_ticks_deficit_raw = 4;
         d.isr_ticks_surplus_raw = 5;
         d.isr_ticks_lost = 8;
-        d.stage_max_ticks = 9;
-        d.stage_over_budget = 2;
-        d.stage_samples = 7;
+        d.publish_max_ticks = 9;
+        d.publish_over_budget = 2;
+        d.publish_samples = 7;
         d.poll_gap_max_us = 123;
         d.poll_late = 1;
         d.report_timing(3, 100);
         assert_eq!(d.isr_ticks_raw_reported, (4, 5));
-        assert_eq!((d.stage_max_ticks, d.stage_over_budget, d.stage_samples), (0, 0, 0));
+        assert_eq!((d.publish_max_ticks, d.publish_over_budget, d.publish_samples), (0, 0, 0));
         assert_eq!((d.poll_gap_max_us, d.poll_late), (0, 0));
         assert_eq!((d.isr_ticks_lost, d.isr_ticks_deficit_raw), (8, 4));
         assert!(!d.timing_is_notable());
@@ -820,12 +820,12 @@ mod tests {
         d.isr_ticks_raw_reported = (2, 2);
         d.isr_ticks_deficit_raw = 2;
         d.isr_ticks_surplus_raw = 2;
-        d.stage_max_ticks = 9;
-        d.stage_samples = 7;
+        d.publish_max_ticks = 9;
+        d.publish_samples = 7;
         d.poll_gap_max_us = 1_000;
         d.report_timing(0, 0);
         assert_eq!(d.isr_ticks_raw_reported, (2, 2));
-        assert_eq!((d.stage_max_ticks, d.stage_samples, d.poll_gap_max_us), (0, 0, 0));
+        assert_eq!((d.publish_max_ticks, d.publish_samples, d.poll_gap_max_us), (0, 0, 0));
     }
 
     #[test]
@@ -908,7 +908,7 @@ mod tests {
         d.isr_ticks_deficit_raw = 4;
         d.isr_ticks_surplus_raw = 5;
         d.isr_ticks_raw_reported = (4, 5);
-        d.stage_max_ticks = 9;
+        d.publish_max_ticks = 9;
         d.poll_gap_max_us = 5_000;
         d.probe_counts = (6, 800);
         d.note_late_tick(late(0, 1, 100, 1, 2));
@@ -944,7 +944,7 @@ mod tests {
         assert_eq!((d.isr_ticks_lost, d.isr_tick_windows_short, d.isr_ticks_extra), (0, 0, 0));
         assert_eq!((d.isr_ticks_deficit_raw, d.isr_ticks_surplus_raw), (0, 0));
         assert_eq!((d.isr_last_short_window, d.isr_ticks_raw_reported), ((0, 0), (0, 0)));
-        assert_eq!((d.stage_max_ticks, d.poll_gap_max_us), (0, 0));
+        assert_eq!((d.publish_max_ticks, d.poll_gap_max_us), (0, 0));
         assert_eq!((d.tx_holds, d.last_tx_holds), ((0, 0), (0, 0)));
         assert!(d.late_by_task.is_empty());
     }
@@ -957,7 +957,7 @@ mod tests {
         assert_eq!(d.last_report, before);
         assert_eq!((d.frames, d.dropped, d.line_held), (1, 2, (2, 30)));
         assert_eq!(d.late_by_task.len(), 1);
-        assert_eq!(d.stage_max_ticks, 9);
+        assert_eq!(d.publish_max_ticks, 9);
     }
 
     #[test]
@@ -992,7 +992,7 @@ mod tests {
         assert_eq!(d.last_report, now);
         assert_eq!(d.line_held, (0, 0));
         assert!(d.late_by_task.is_empty());
-        assert_eq!(d.stage_max_ticks, 0);
+        assert_eq!(d.publish_max_ticks, 0);
         assert_eq!((d.isr_ticks_lost, d.isr_tick_windows_short, d.isr_ticks_extra), (7, 1, 3));
         assert_eq!((d.min_samples, d.last_tx_holds), (19, (3, 1)));
     }

@@ -772,6 +772,7 @@ name = "dali2rust-domain"
 version = "0.1.0"
 dependencies = [
  "dali2rust-contracts",
+ "dali2rust-dali-phy",
  "dali2rust-platform",
  "serde",
 ]
@@ -895,6 +896,7 @@ dependencies = [
  "dali2rust-bsp",
  "dali2rust-bus",
  "dali2rust-contracts",
+ "dali2rust-dali-phy",
  "dali2rust-domain",
  "dali2rust-platform",
  "dali2rust-test-support",

@@ -87,8 +87,8 @@ pub struct StatsDaliConsoleDto {
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct StatsDaliTaskTimingDto {
     pub answer_staged_total: u32,
-    pub answer_stage_late_total: u32,
-    pub answer_stage_max_ticks: u32,
+    pub answer_table_behind_total: u32,
+    pub answer_table_publish_max_ticks: u32,
     pub sniff_poll_late_total: u32,
     pub sniff_poll_gap_max_us: u32,
     pub persist_flush_total: u32,
@@ -250,7 +250,7 @@ declare_widest_dtos! {
         console_log_unavailable_total, console_uart_errors_total,
     }
     StatsDaliTaskTimingDto {
-        answer_staged_total, answer_stage_late_total, answer_stage_max_ticks,
+        answer_staged_total, answer_table_behind_total, answer_table_publish_max_ticks,
         sniff_poll_late_total, sniff_poll_gap_max_us, persist_flush_total,
         persist_flush_slow_total, persist_flush_ms_total, persist_flush_max_ms,
         persist_gate_waits_total, persist_gate_timeouts_total,

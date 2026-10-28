@@ -444,6 +444,10 @@ def bus_drop_counters(diagnostics):
     subscribers = (diagnostics.get("bus") or {}).get("event_subscribers") or []
     dropped = sum(int(s.get("receiver_overflow") or 0) for s in subscribers)
     out["bus_event_subscriber_overflow"] = dropped
+    phy = diagnostics.get("phy_sniffer") or {}
+    for field in ("answer_table_torn", "answer_decode_overrun"):
+        if phy.get(field) is not None:
+            out[field] = int(phy[field])
     return out
 
 
@@ -479,8 +483,8 @@ STATS_DALI_COUNTERS = (
     ("console_log_truncated_total", "console_log_truncated"),
     ("console_uart_errors_total", "console_uart_errors"),
     ("answer_staged_total", "answer_staged"),
-    ("answer_stage_late_total", "answer_stage_late"),
-    ("answer_stage_max_ticks", "answer_stage_max_ticks"),
+    ("answer_table_behind_total", "answer_table_behind"),
+    ("answer_table_publish_max_ticks", "answer_table_publish_max_ticks"),
     ("sniff_poll_late_total", "sniff_poll_late"),
     ("sniff_poll_gap_max_us", "sniff_poll_gap_max_us"),
     ("persist_flush_total", "persist_flush"),
@@ -517,7 +521,7 @@ def absolute_counters(stats):
 
 GAUGES = (
     "isr_max_gap_us",
-    "answer_stage_max_ticks",
+    "answer_table_publish_max_ticks",
     "sniff_poll_gap_max_us",
     "persist_flush_max_ms",
 )
@@ -541,7 +545,7 @@ RATE_COUNTERS = (
     "isr_ticks_lost",
     "isr_ticks_extra",
     "isr_ticks_deficit_raw",
-    "answer_stage_late",
+    "answer_table_behind",
     "sniff_poll_late",
     "persist_flush_slow",
 )

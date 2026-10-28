@@ -72,7 +72,7 @@ pub(crate) struct RuntimeCounterHandles {
     pub rules_engine: Arc<dali2rust_rules_runtime::RulesEngineCells>,
     pub arbitration_supervisor:
         Arc<dali2rust_redundancy_runtime::ArbitrationSupervisorCounters>,
-    pub arbitration_reflex: Arc<dali2rust_platform::arbitration::ArbitrationReflex>,
+    pub answer_inputs: Arc<dali2rust_platform::arbitration::AnswerInputs>,
     pub arbitration_worker: Arc<dali2rust_redundancy_runtime::ArbitrationWorkerCounters>,
     pub replication: Arc<dali2rust_redundancy_runtime::ReplicationCounters>,
 }
@@ -939,12 +939,12 @@ struct PeriodicInputs<'a> {
 struct ArbitrationBringUp {
     supervisor: std::thread::JoinHandle<()>,
     counters: Arc<dali2rust_redundancy_runtime::ArbitrationSupervisorCounters>,
-    reflex: Arc<dali2rust_platform::arbitration::ArbitrationReflex>,
+    answer_inputs: Arc<dali2rust_platform::arbitration::AnswerInputs>,
 }
 
 fn bring_up_arbitration(
     ev_rx: BusSubscriberRx,
-    reflex: Arc<dali2rust_platform::arbitration::ArbitrationReflex>,
+    answer_inputs: Arc<dali2rust_platform::arbitration::AnswerInputs>,
     settings: Arc<RegistryStore>,
     beats: &RedundancyBeats,
 ) -> ArbitrationBringUp {
@@ -953,7 +953,7 @@ fn bring_up_arbitration(
     let supervisor = dali2rust_redundancy_runtime::spawn_arbitration_supervisor(
         ev_rx,
         dali2rust_redundancy_runtime::SupervisorInputs {
-            reflex: Arc::clone(&reflex),
+            answer_inputs: Arc::clone(&answer_inputs),
             watch: beats.watch(),
             settings: settings as Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
             counters: Arc::clone(&counters),
@@ -963,7 +963,7 @@ fn bring_up_arbitration(
     ArbitrationBringUp {
         supervisor,
         counters,
-        reflex,
+        answer_inputs,
     }
 }
 
@@ -1051,7 +1051,7 @@ fn spawn_mqtt_if_configured(
 }
 
 struct WireSeams {
-    arbitration: Arc<dali2rust_platform::arbitration::ArbitrationReflex>,
+    arbitration: Arc<dali2rust_platform::arbitration::AnswerInputs>,
     observed_rx: std::sync::mpsc::Receiver<dali2rust_platform::dali::ObservedRawFrame>,
     phy_sniffer: Arc<dali2rust_platform::dali::PhySnifferCounters>,
     dali: Arc<dali2rust_platform::dali::DaliWireCounters>,
@@ -1060,11 +1060,11 @@ struct WireSeams {
 fn wire_seams<T: DaliTransport + Send + 'static>(transport: &Arc<Mutex<T>>) -> WireSeams {
     let (observed_rx, phy_sniffer) = wire_sniffer_seam(transport);
     let dali = Arc::new(dali2rust_platform::dali::DaliWireCounters::default());
-    let arbitration = Arc::new(dali2rust_platform::arbitration::ArbitrationReflex::new());
+    let arbitration = Arc::new(dali2rust_platform::arbitration::AnswerInputs::new());
     {
         let mut t = transport.lock().expect("transport lock");
         t.set_wire_counters(Arc::clone(&dali));
-        t.set_arbitration_reflex(Arc::clone(&arbitration));
+        t.set_answer_inputs(Arc::clone(&arbitration));
     }
     WireSeams {
         observed_rx,
@@ -1126,7 +1126,7 @@ fn collect_spawned(
         (fanout.projector_counters, fanout.sniffer_translator_counters),
         periodic,
         wire,
-        (arbitration.counters, arbitration.reflex),
+        (arbitration.counters, arbitration.answer_inputs),
         (websocket, mqtt_counters),
     );
     let handles = (
@@ -1223,7 +1223,7 @@ fn gather_counters(
     ),
     arbitration: (
         Arc<dali2rust_redundancy_runtime::ArbitrationSupervisorCounters>,
-        Arc<dali2rust_platform::arbitration::ArbitrationReflex>,
+        Arc<dali2rust_platform::arbitration::AnswerInputs>,
     ),
     bridges: (
         Arc<dali2rust_ws_runtime::WsCounters>,
@@ -1253,7 +1253,7 @@ struct CounterSources {
     ),
     arbitration: (
         Arc<dali2rust_redundancy_runtime::ArbitrationSupervisorCounters>,
-        Arc<dali2rust_platform::arbitration::ArbitrationReflex>,
+        Arc<dali2rust_platform::arbitration::AnswerInputs>,
     ),
     websocket: Arc<dali2rust_ws_runtime::WsCounters>,
     mqtt: Arc<dali2rust_mqtt_runtime::MqttCounters>,
@@ -1271,7 +1271,7 @@ struct PeriodicCounters {
 fn counter_handles(src: CounterSources) -> RuntimeCounterHandles {
     RuntimeCounterHandles {
         arbitration_supervisor: src.arbitration.0,
-        arbitration_reflex: src.arbitration.1,
+        answer_inputs: src.arbitration.1,
         arbitration_worker: src.periodic.arbitration,
         replication: src.periodic.replication,
         dali_worker: src.pipeline.0,
