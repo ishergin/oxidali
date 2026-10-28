@@ -126,8 +126,8 @@ fn armed<C: DaliApplicationController, R>(
     mut act: impl FnMut(&mut C) -> Result<R, SemanticDaliError>,
 ) -> Result<R, Stop> {
     let mut proof = PointerProof::Unanswered;
+    let mut reached = false;
     for _ in 0..=BANK_ARM_RETRIES {
-        let mut reached = false;
         let outcome = controller
             .unit(|c| arm_then(c, (address, offset), &mut reached, &mut act))
             .map_err(|error| Stop { error, reached })?;
@@ -136,7 +136,7 @@ fn armed<C: DaliApplicationController, R>(
             Err(other) => proof = other,
         }
     }
-    Err(Stop { error: proof.failure(MEMORY_MISALIGNED), reached: false })
+    Err(Stop { error: proof.failure(MEMORY_MISALIGNED), reached })
 }
 
 fn arm_then<C: DaliApplicationController, R>(

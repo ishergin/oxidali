@@ -53,6 +53,7 @@ const WRITE_CORRELATION: u64 = 251;
 const QUERY_SELECTOR: u8 = 0x01;
 const LOGICAL_GEAR_UNITS: u8 = 2;
 const SECOND_GEAR_UNIT: u8 = 1;
+const ARM_ATTEMPTS: usize = 3;
 
 #[derive(Clone)]
 enum Interruption {
@@ -63,13 +64,14 @@ enum Interruption {
     BusBusy,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum Trigger {
     Frame(u16),
     Nth(usize),
     From(u16),
     After(u16),
     ReadAt(u8, u8),
+    Script(u16, Vec<(u16, Interruption)>),
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -115,7 +117,7 @@ impl Interrupting {
     fn fires(&mut self, frame: u16) -> bool {
         self.sent += 1;
         let read = self.pointer.follow(frame);
-        match &self.trigger {
+        match &mut self.trigger {
             Trigger::Frame(at) => frame == *at,
             Trigger::Nth(at) => self.sent == *at,
             Trigger::From(at) => {
@@ -128,6 +130,15 @@ impl Interrupting {
                 fires
             }
             Trigger::ReadAt(bank, offset) => read == Some((*bank, *offset)),
+            Trigger::Script(after, steps) => {
+                let armed = self.started;
+                self.started |= frame == *after;
+                let due = armed && steps.first().is_some_and(|(next, _)| *next == frame);
+                if due {
+                    self.interruptions = vec![steps.remove(0).1];
+                }
+                due
+            }
         }
     }
 
@@ -208,6 +219,11 @@ fn special(command: SpecialCommand) -> u16 {
 fn read_location() -> u16 {
     let address = DaliAddress::Short(SHORT).encode_address_byte() | QUERY_SELECTOR;
     ForwardFrame::new(address, READ_MEMORY_LOCATION_OPCODE).raw()
+}
+
+fn query_dtr1() -> u16 {
+    let address = DaliAddress::Short(SHORT);
+    DaliCommand::Standard { address, command: StandardCommand::QueryContentDtr1 }.to_forward_frame().raw()
 }
 
 fn query_dtr0() -> u16 {
@@ -837,6 +853,20 @@ fn a_lock_open_that_reached_the_gear_and_then_lost_the_bus_says_the_bank_may_be_
         failure(ErrorCode::VerifyContended, RELOCK_SUBJECT),
         "nothing proves the lock went back"
     );
+}
+
+// IEC 62386-101 §8.2.5
+// IEC 62386-102 §9.10.2, Table 8
+#[test]
+fn a_lock_open_that_reached_its_write_is_restored_even_when_its_retries_never_hold_again() {
+    let unlock = special(SpecialCommand::WriteMemoryLocation(BANK_UNLOCKED));
+    let mut steps = vec![(query_dtr0(), Interruption::BusBusy)];
+    steps.extend(std::iter::repeat_n((query_dtr1(), Interruption::LostAnswer), ARM_ATTEMPTS));
+    let (outcome, sim) = write_under(YieldGranularity::Step, Trigger::Script(unlock, steps), &[], &year(YEAR));
+
+    assert_eq!(written_values(&sim), [BANK_UNLOCKED, FOUND_LOCK], "the gear opened, so it is closed");
+    assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK));
+    assert_eq!(shape(outcome.result), failure(ErrorCode::VerifyUnanswered, LOCK_SUBJECT));
 }
 
 // IEC 62386-102 §9.10.2, §9.10.5
