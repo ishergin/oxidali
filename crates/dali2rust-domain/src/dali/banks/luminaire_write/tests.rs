@@ -181,3 +181,74 @@ fn a_write_is_held_only_by_a_bank_carrying_its_bytes() {
     assert!(write.held_by(&bank));
     assert!(!write.held_by(&bank[..0x13]), "a bank read that stops short proves nothing");
 }
+
+const BANK_LEN: usize = 0x78;
+
+fn held_after(write: &FieldWrite, change: impl FnOnce(&mut Vec<u8>)) -> bool {
+    let mut bank = vec![0u8; BANK_LEN];
+    let start = usize::from(write.field.offset);
+    bank[start..write.end()].copy_from_slice(&write.bytes);
+    assert!(write.held_by(&bank), "the unchanged bank holds the write");
+    change(&mut bank);
+    write.held_by(&bank)
+}
+
+#[test]
+fn a_three_byte_number_is_not_held_when_only_its_last_byte_differs() {
+    let numbers = number_patch(&[(N::PATCH_NOMINAL_LIGHT_OUTPUT_LM, 0x01_02_03)]);
+    let write = &planned_writes(&numbers, None)[0];
+    let last = usize::from(write.field.last_offset());
+    assert!(!held_after(write, |bank| bank[last] ^= 0x01));
+    assert!(!held_after(write, |bank| bank[last - 1] ^= 0x01));
+}
+
+#[test]
+fn a_text_is_not_held_when_it_diverges_after_its_first_byte() {
+    let colour = text_patch(field("luminaire_colour"), "warm").expect("text field");
+    let write = &planned_writes(&N::default(), Some(&colour))[0];
+    let offset = usize::from(write.field.offset);
+    assert!(!held_after(write, |bank| bank[offset + 3] = b'n'));
+    assert!(!held_after(write, |bank| bank[offset + 4] = b'x'), "the terminator belongs to the write");
+}
+
+fn colour_write(text: &str) -> FieldWrite {
+    let colour = text_patch(field("luminaire_colour"), text).expect("text field");
+    planned_writes(&N::default(), Some(&colour)).remove(0)
+}
+
+#[test]
+fn a_text_is_emptied_first_and_its_first_character_is_written_last() {
+    let write = colour_write("warm");
+    let stages: Vec<Vec<u8>> = write.stages().into_iter().map(|stage| stage.bytes).collect();
+    assert_eq!(stages, vec![b"\0arm\0".to_vec(), b"w".to_vec()]);
+    assert_eq!(colour_write("").stages().len(), 1, "an empty text is one terminator");
+    let numbers = number_patch(&[(N::PATCH_NOMINAL_LIGHT_OUTPUT_LM, 7)]);
+    assert_eq!(planned_writes(&numbers, None)[0].stages().len(), 1, "a number has no commit order");
+}
+
+#[test]
+fn a_text_written_byte_by_byte_reads_old_empty_or_new_after_every_byte() {
+    let region = part251::LUMINAIRE_COLOUR;
+    let old = b"an older colour name".as_slice();
+    for new in ["warm", "a much longer colour", "", "x"] {
+        let write = colour_write(new);
+        let mut bank = vec![0u8; BANK_LEN];
+        let start = usize::from(region.offset);
+        bank[start..start + old.len()].copy_from_slice(old);
+        let mut seen = vec![part251::text_bytes(&bank, region).expect("region").to_vec()];
+        for stage in write.stages() {
+            for (index, byte) in stage.bytes.iter().enumerate() {
+                bank[start + index] = *byte;
+                seen.push(part251::text_bytes(&bank, region).expect("region").to_vec());
+            }
+        }
+        for text in &seen {
+            assert!(
+                text.as_slice() == old || text.is_empty() || text.as_slice() == new.as_bytes(),
+                "writing {new:?} showed {:?}",
+                String::from_utf8_lossy(text)
+            );
+        }
+        assert_eq!(seen.last().map(Vec::as_slice), Some(new.as_bytes()));
+    }
+}

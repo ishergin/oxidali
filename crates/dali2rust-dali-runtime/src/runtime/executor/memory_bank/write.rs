@@ -1,6 +1,7 @@
 use dali2rust_contracts::msg::ErrorCode;
 use dali2rust_domain::dali::banks::luminaire_write::{
-    check_writable, Bank1Layout, Bank1WriteRefusal, FieldWrite, BANK1_HEADER_LEN, BANK_UNLOCKED,
+    check_writable, Bank1Layout, Bank1WriteRefusal, FieldWrite, WriteStage, BANK1_HEADER_LEN,
+    BANK_UNLOCKED,
 };
 use dali2rust_domain::dali::banks::{BANK_LOCK_BYTE, BANK_LUMINAIRE_INFO};
 use dali2rust_domain::dali::commands::DaliResponse;
@@ -72,13 +73,13 @@ struct Unit<'a> {
     bytes: &'a [u8],
 }
 
-fn units(writes: &[FieldWrite]) -> Vec<Unit<'_>> {
-    writes
+fn units(stages: &[WriteStage]) -> Vec<Unit<'_>> {
+    stages
         .iter()
-        .flat_map(|write| {
-            write.bytes.chunks(UNIT_BYTES).enumerate().map(move |(index, bytes)| Unit {
-                subject: write.field.name,
-                offset: write.field.offset + (index * UNIT_BYTES) as u8,
+        .flat_map(|stage| {
+            stage.bytes.chunks(UNIT_BYTES).enumerate().map(move |(index, bytes)| Unit {
+                subject: stage.field.name,
+                offset: stage.field.offset + (index * UNIT_BYTES) as u8,
                 bytes,
             })
         })
@@ -214,7 +215,8 @@ fn write_sessions(
     lock: u8,
     writes: &[FieldWrite],
 ) -> Result<(), LuminaireWriteFailure> {
-    units(writes).chunks(UNITS_PER_SESSION).try_for_each(|session| {
+    let stages: Vec<WriteStage> = writes.iter().flat_map(FieldWrite::stages).collect();
+    units(&stages).chunks(UNITS_PER_SESSION).try_for_each(|session| {
         let written = controller.step(|c| write_session(c, address, lock, session));
         written.map_err(|failure| match session.first() {
             Some(unit) if failure.is_preempted() => LuminaireWriteFailure::new(failure.code, unit.subject),

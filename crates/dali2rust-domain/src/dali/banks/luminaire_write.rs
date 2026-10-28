@@ -209,6 +209,24 @@ impl FieldWrite {
     pub fn held_by(&self, bank: &[u8]) -> bool {
         bank.get(usize::from(self.field.offset)..self.end()) == Some(self.bytes.as_slice())
     }
+
+    // DiiA 251 §9.2.5
+    pub fn stages(&self) -> Vec<WriteStage> {
+        let stage = |bytes: Vec<u8>| WriteStage { field: self.field, bytes };
+        match (self.field.kind, self.bytes.split_first()) {
+            (FieldKind::Text(_), Some((&head, tail))) if !tail.is_empty() => {
+                let emptied = core::iter::once(0).chain(tail.iter().copied()).collect();
+                vec![stage(emptied), stage(vec![head])]
+            }
+            _ => vec![stage(self.bytes.clone())],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteStage {
+    pub field: &'static LuminaireField,
+    pub bytes: Vec<u8>,
 }
 
 fn number_values(numbers: &N) -> [(u16, u32); 11] {

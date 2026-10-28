@@ -79,8 +79,16 @@ fn units_of(offset: u8, bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
         .collect()
 }
 
-fn script_field_write(mock: &MockDaliTransport, lock: u8, offset: u8, bytes: &[u8], reply: GearReply) {
-    for session in units_of(offset, bytes).chunks(UNITS_PER_SESSION) {
+fn text_units(offset: u8, stored: &[u8]) -> Vec<(u8, Vec<u8>)> {
+    let (head, tail) = stored.split_first().expect("a text writes at least its terminator");
+    let emptied: Vec<u8> = std::iter::once(0).chain(tail.iter().copied()).collect();
+    let mut units = units_of(offset, &emptied);
+    units.push((offset, vec![*head]));
+    units
+}
+
+fn script_field_write(mock: &MockDaliTransport, lock: u8, units: &[(u8, Vec<u8>)], reply: GearReply) {
+    for session in units.chunks(UNITS_PER_SESSION) {
         script_unlock_and_prove(mock);
         for (unit_offset, unit) in session {
             script_write_unit(mock, *unit_offset, unit, reply);
@@ -95,13 +103,19 @@ fn script_field_write(mock: &MockDaliTransport, lock: u8, offset: u8, bytes: &[u
     }
 }
 
-fn script_luminaire_write(world: &mut DaliWorld, offset: u8, bytes: &[u8], kept: bool, reply: GearReply) {
+fn script_luminaire_write(
+    world: &mut DaliWorld,
+    (offset, bytes): (u8, &[u8]),
+    units: &[(u8, Vec<u8>)],
+    kept: bool,
+    reply: GearReply,
+) {
     let mock = world.dali_mock().lock().expect("mock lock");
     let before = bank1_part251_bytes();
     let lock = before[usize::from(LOCK_BYTE_OFFSET)];
     assert_ne!(lock, UNLOCKED, "the golden bank must start locked");
     script_memory_bank_read(&mock, LUMINAIRE_BANK, &before[..HEADER_LEN]);
-    script_field_write(&mock, lock, offset, bytes, reply);
+    script_field_write(&mock, lock, units, reply);
     let mut after = before;
     if kept {
         let start = usize::from(offset);
@@ -113,20 +127,23 @@ fn script_luminaire_write(world: &mut DaliWorld, offset: u8, bytes: &[u8], kept:
 // PD-291
 #[given("a memory-luminaire write script for short address 0 storing year 24 that the gear keeps")]
 async fn given_year_write_kept(world: &mut DaliWorld) {
-    script_luminaire_write(world, YEAR_OFFSET, &[WRITTEN_YEAR], true, GearReply::Echo);
+    let year = (YEAR_OFFSET, [WRITTEN_YEAR].as_slice());
+    script_luminaire_write(world, year, &units_of(YEAR_OFFSET, year.1), true, GearReply::Echo);
 }
 
 // PD-293
 #[given("a memory-luminaire write script for short address 0 storing year 24 that the gear reads back unchanged")]
 async fn given_year_write_lost(world: &mut DaliWorld) {
     assert_ne!(bank1_part251_bytes()[usize::from(YEAR_OFFSET)], WRITTEN_YEAR);
-    script_luminaire_write(world, YEAR_OFFSET, &[WRITTEN_YEAR], false, GearReply::Echo);
+    let year = (YEAR_OFFSET, [WRITTEN_YEAR].as_slice());
+    script_luminaire_write(world, year, &units_of(YEAR_OFFSET, year.1), false, GearReply::Echo);
 }
 
 // PD-294
 #[given("a memory-luminaire write script for short address 0 storing year 24 that the gear does not confirm")]
 async fn given_year_write_unconfirmed(world: &mut DaliWorld) {
-    script_luminaire_write(world, YEAR_OFFSET, &[WRITTEN_YEAR], false, GearReply::Silent);
+    let year = (YEAR_OFFSET, [WRITTEN_YEAR].as_slice());
+    script_luminaire_write(world, year, &units_of(YEAR_OFFSET, year.1), false, GearReply::Silent);
 }
 
 // PD-292
@@ -134,7 +151,8 @@ async fn given_year_write_unconfirmed(world: &mut DaliWorld) {
 async fn given_colour_write_kept(world: &mut DaliWorld, colour: String) {
     let mut bytes = colour.into_bytes();
     bytes.push(0);
-    script_luminaire_write(world, LUMINAIRE_COLOUR.offset, &bytes, true, GearReply::Echo);
+    let units = text_units(LUMINAIRE_COLOUR.offset, &bytes);
+    script_luminaire_write(world, (LUMINAIRE_COLOUR.offset, &bytes), &units, true, GearReply::Echo);
 }
 
 // PD-299

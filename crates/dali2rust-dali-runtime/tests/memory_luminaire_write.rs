@@ -9,7 +9,7 @@ use dali2rust_dali_runtime::runtime::executor::{
 use dali2rust_domain::dali::banks::luminaire_write::{
     number_patch, planned_writes, text_patch, FieldWrite, LuminaireField, BANK_UNLOCKED,
 };
-use dali2rust_domain::dali::banks::part251::{LuminaireFormat, LUMINAIRE_COLOUR, YEAR_OFFSET};
+use dali2rust_domain::dali::banks::part251::{self, LuminaireFormat, LUMINAIRE_COLOUR, YEAR_OFFSET};
 use dali2rust_domain::dali::controller::DaliApplicationController;
 use dali2rust_domain::dali::pres::command::DaliCommand;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
@@ -187,15 +187,32 @@ fn shape(result: Result<(), LuminaireWriteFailure>) -> Result<(), (ErrorCode, St
     result.map_err(|failure| (failure.code, failure.subject.to_owned()))
 }
 
-fn sessions_on_the_wire(bytes: &[u8], lock: u8) -> Vec<u8> {
-    let units: Vec<&[u8]> = bytes.chunks(UNIT_BYTES).collect();
+fn text_units_in_commit_order(stored: &[u8]) -> Vec<Vec<u8>> {
+    let (head, tail) = stored.split_first().expect("a text writes at least its terminator");
+    let emptied: Vec<u8> = std::iter::once(0).chain(tail.iter().copied()).collect();
+    let mut units: Vec<Vec<u8>> = emptied.chunks(UNIT_BYTES).map(<[u8]>::to_vec).collect();
+    units.push(vec![*head]);
     units
+}
+
+fn sessions_on_the_wire(stored: &[u8], lock: u8) -> Vec<u8> {
+    text_units_in_commit_order(stored)
         .chunks(UNITS_PER_SESSION)
         .flat_map(|session| {
-            let body = session.iter().flat_map(|unit| unit.iter().copied());
+            let body = session.iter().flatten().copied();
             std::iter::once(BANK_UNLOCKED).chain(body).chain(std::iter::once(lock))
         })
         .collect()
+}
+
+fn stored_text(text: &str) -> Vec<u8> {
+    text.bytes().chain(std::iter::once(0)).collect()
+}
+
+fn colour_on_the_gear(sim: &SimDaliTransport) -> Vec<u8> {
+    let last = location(sim, LAST_OFFSET_OFFSET).expect("bank 1 is implemented");
+    let bank: Vec<u8> = (0..=last).map(|offset| location(sim, offset).unwrap_or(0)).collect();
+    part251::text_bytes(&bank, LUMINAIRE_COLOUR).expect("the region fits the bank").to_vec()
 }
 
 // IEC 62386-102 §9.10.2, §9.10.5
@@ -298,8 +315,8 @@ fn write_under(
 // IEC 62386-102 §9.10.2
 #[test]
 fn an_operator_arriving_mid_session_waits_for_the_lock_to_close() {
-    let first = MULTI_SESSION_TEXT.as_bytes()[0];
-    let trigger = special(SpecialCommand::WriteMemoryLocation(first));
+    let emptying = special(SpecialCommand::WriteMemoryLocation(0));
+    let trigger = emptying;
     let operator = Interruption::Operator(Arc::new(WireActivity::new()));
     let writes = text("luminaire_colour", MULTI_SESSION_TEXT);
     let (outcome, sim) = write_under(YieldGranularity::Step, Trigger::Frame(trigger), operator, &writes);
@@ -311,9 +328,10 @@ fn an_operator_arriving_mid_session_waits_for_the_lock_to_close() {
         "the yield names the field it stopped in, not the lock it never opened"
     );
     let session_len = UNIT_BYTES * UNITS_PER_SESSION + LOCK_FRAMES_PER_SESSION;
-    let first_session = &sessions_on_the_wire(MULTI_SESSION_TEXT.as_bytes(), FOUND_LOCK)[..session_len];
+    let first_session = &sessions_on_the_wire(&stored_text(MULTI_SESSION_TEXT), FOUND_LOCK)[..session_len];
     assert_eq!(written_values(sim), first_session, "the started session runs to its relock");
     assert_eq!(location(sim, LOCK_OFFSET), Some(FOUND_LOCK));
+    assert!(colour_on_the_gear(sim).is_empty(), "the stopped text reads empty, not new head on old tail");
     let frames = sim.sent_frames();
     let relock = special(SpecialCommand::WriteMemoryLocation(FOUND_LOCK));
     assert_eq!(&frames[frames.len() - 2..], [relock, query_dtr0()], "nothing follows the relock unit");
@@ -348,6 +366,33 @@ fn a_gear_that_does_not_advance_dtr0_fails_the_unit_before_the_next_one_writes()
         UNIT_BYTES,
         "the first unit's DTR0 shows the bytes landed on one location; no second unit is sent"
     );
+}
+
+fn is_write_location(frame: u16) -> bool {
+    frame >> 8 == special(SpecialCommand::WriteMemoryLocation(0)) >> 8
+}
+
+// DiiA 251 §9.2.5
+#[test]
+fn a_text_stopped_after_any_write_reads_old_empty_or_new() {
+    let writes = text("luminaire_colour", MULTI_SESSION_TEXT);
+    let (_, calm) = write(FOUND_LOCK, false, &writes);
+    let old = colour_on_the_gear(&luminaire_gear(FOUND_LOCK, false));
+    let new = MULTI_SESSION_TEXT.as_bytes();
+    let frames = calm.sent_frames();
+    let writes_at = frames.iter().enumerate().filter(|(_, frame)| is_write_location(**frame));
+    for (index, _) in writes_at {
+        let operator = Interruption::Operator(Arc::new(WireActivity::new()));
+        let (_, sim) = write_under(YieldGranularity::Step, Trigger::Nth(index + 1), operator, &writes);
+        let seen = colour_on_the_gear(&sim);
+        assert!(
+            seen == old || seen.is_empty() || seen == new,
+            "stopped after frame {}: {:?}",
+            index + 1,
+            String::from_utf8_lossy(&seen)
+        );
+        assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK), "frame {}", index + 1);
+    }
 }
 
 fn position_of(frames: &[u16], frame: u16, last: bool) -> usize {
