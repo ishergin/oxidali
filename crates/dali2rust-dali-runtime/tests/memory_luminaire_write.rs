@@ -1,5 +1,6 @@
 mod support;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
@@ -32,8 +33,9 @@ use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::ses::DaliPriority;
 use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_gear_model::GearSpec;
+use dali2rust_platform::clock::Clock;
 use dali2rust_platform::dali::{
-    DaliTransport, TransferOutcome, WireActivity, WireLease, WirePriority, YieldGranularity,
+    DaliTransport, DaliWireCounters, TransferOutcome, WireActivity, WireLease, WirePriority, YieldGranularity,
 };
 use dali2rust_test_support::{publish_queued, StoppedClock};
 use support::{next_signal, spawn_signal_bus, ReadPortDouble};
@@ -135,13 +137,24 @@ struct Interrupting {
     started: bool,
     pointer: Pointer,
     exchanges: Vec<Exchange>,
+    wire_us: Arc<AtomicU64>,
+}
+
+struct WireClock(Arc<AtomicU64>);
+
+impl Clock for WireClock {
+    fn monotonic_ms(&self) -> u64 {
+        self.0.load(Ordering::SeqCst) / US_PER_MS
+    }
 }
 
 type SimError = <SimDaliTransport as DaliTransport>::Error;
 
 impl Interrupting {
     fn new(sim: SimDaliTransport, interruptions: Vec<Interruption>, trigger: Trigger) -> Self {
-        Self { sim, interruptions, trigger, sent: 0, started: false, pointer: Pointer::default(), exchanges: Vec::new() }
+        let wire_us = Arc::new(AtomicU64::new(0));
+        let pointer = Pointer::default();
+        Self { sim, interruptions, trigger, sent: 0, started: false, pointer, exchanges: Vec::new(), wire_us }
     }
 
     fn fires(&mut self, frame: u16) -> bool {
@@ -259,7 +272,9 @@ impl DaliTransport for Interrupting {
         expects_backward: bool,
         min_idle_us: u32,
     ) -> Result<TransferOutcome, Self::Error> {
-        self.exchanges.push(Exchange { frame, expects_backward, settle_us: min_idle_us });
+        let exchange = Exchange { frame, expects_backward, settle_us: min_idle_us };
+        self.wire_us.fetch_add(modelled_us(&exchange), Ordering::SeqCst);
+        self.exchanges.push(exchange);
         self.pass(frame, |sim| sim.exchange_frame_with_settle(frame, expects_backward, min_idle_us))
     }
 }
@@ -1157,21 +1172,38 @@ fn a_lock_opened_without_an_answer_is_still_restored() {
     assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK));
 }
 
-fn exchanges_of(writes: &[FieldWrite]) -> Vec<Exchange> {
+fn recorded_write(writes: &[FieldWrite]) -> (Vec<Exchange>, Arc<DaliWireCounters>) {
     let sim = luminaire_gear(FOUND_LOCK, false);
     let identity = identity_of(&sim);
-    let bus = Arc::new(Mutex::new(Interrupting::new(sim, Vec::new(), UNDISTURBED)));
-    let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
+    let interrupting = Interrupting::new(sim, Vec::new(), UNDISTURBED);
+    let clock = WireClock(Arc::clone(&interrupting.wire_us));
+    let bus = Arc::new(Mutex::new(interrupting));
+    let mut controller = DaliController::new(Arc::clone(&bus), Box::new(clock));
+    let gate = Arc::new(DaliWireCounters::default());
+    controller.set_wire_counters(Arc::clone(&gate));
     let outcome = run_write(&mut controller, identity, writes);
     assert_eq!(shape(outcome.result), Ok(()));
     drop(controller);
-    Arc::into_inner(bus).expect("one owner").into_inner().expect("bus").exchanges
+    (Arc::into_inner(bus).expect("one owner").into_inner().expect("bus").exchanges, gate)
+}
+
+fn on_wire_settle_us(exchange: &Exchange) -> u32 {
+    exchange.settle_us + u32::from(TX_ARM_LEAD_TICKS) * PHY_TICK_US
 }
 
 // IEC 62386-101 Table 22
 fn continues_the_unit(exchange: &Exchange) -> bool {
-    let lead_us = u32::from(TX_ARM_LEAD_TICKS) * PHY_TICK_US;
-    DaliPriority::Transaction.contains_settle_us(exchange.settle_us + lead_us)
+    DaliPriority::Transaction.contains_settle_us(on_wire_settle_us(exchange))
+}
+
+// IEC 62386-101 §3.42, Table 22
+fn modelled_us(exchange: &Exchange) -> u64 {
+    let settle_us = if continues_the_unit(exchange) {
+        DaliPriority::Transaction.max_settle_us()
+    } else {
+        on_wire_settle_us(exchange)
+    };
+    u64::from(settle_us) + on_the_wire_us(exchange)
 }
 
 fn write_units(exchanges: &[Exchange]) -> Vec<&[Exchange]> {
@@ -1194,25 +1226,26 @@ fn first_frame_to_last_us(unit: &[Exchange]) -> u64 {
     unit.iter().map(on_the_wire_us).sum::<u64>() + settles
 }
 
-fn first_exchange_end_to_last_us(unit: &[Exchange]) -> u64 {
-    first_frame_to_last_us(unit) - unit.first().map_or(0, on_the_wire_us)
-}
-
 // IEC 62386-101 §9.2
 #[test]
 fn every_write_unit_stays_under_the_transaction_budget_at_the_upper_band_edges() {
     let budget_us = TRANSACTION_BUDGET_MS * US_PER_MS;
     let number = planned_writes(&number_patch(&[(N::PATCH_NOMINAL_LIGHT_OUTPUT_LM, LIGHT_OUTPUT)]), None);
     for writes in [number, text("luminaire_colour", MULTI_SESSION_TEXT)] {
-        let exchanges = exchanges_of(&writes);
+        let (exchanges, gate) = recorded_write(&writes);
         let units = write_units(&exchanges);
         assert!(!units.is_empty(), "inconclusive: no unit carried ENABLE WRITE MEMORY");
         for unit in units {
             let frames: Vec<u16> = unit.iter().map(|exchange| exchange.frame).collect();
             assert_eq!(frames[0], special(SpecialCommand::Dtr1(PROFILE_BANK)), "a unit opens by arming the pointer");
             assert!(first_frame_to_last_us(unit) < budget_us, "§9.2 span over budget: {frames:04X?}");
-            assert!(first_exchange_end_to_last_us(unit) < budget_us, "counted span over budget: {frames:04X?}");
         }
+        assert!(gate.transactions_completed.load(Ordering::SeqCst) > 0, "inconclusive: the gate closed nothing");
+        assert_eq!(
+            gate.transaction_budget_exceeded.load(Ordering::SeqCst),
+            0,
+            "the controller's own gate counted a transaction over budget on the modelled wire"
+        );
     }
 }
 
