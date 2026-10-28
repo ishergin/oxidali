@@ -81,8 +81,9 @@ pub struct SupervisorInputs {
 }
 
 pub fn run_supervisor_tick(inputs: &SupervisorInputs, now_ms: u32) -> SupervisorTurn {
+    let stale_worker = inputs.watch.stale(now_ms);
     let settings = inputs.settings.dali_settings_view();
-    let turn = supervisor_turn(settings.application_active, inputs.watch.stale(now_ms));
+    let turn = supervisor_turn(settings.application_active, stale_worker);
     match turn {
         SupervisorTurn::Defend => {
             inputs.answer_inputs.publish_unit(unit_inputs(&settings));
@@ -154,10 +155,14 @@ mod tests {
     struct FakeSettings {
         active: AtomicBool,
         short: Mutex<Option<u8>>,
+        beat_while_read: Mutex<Option<(Arc<LivenessBeat>, u32)>>,
     }
 
     impl DaliSettingsReadPort for FakeSettings {
         fn dali_settings_view(&self) -> DaliSettingsView {
+            if let Some((beat, at_ms)) = self.beat_while_read.lock().expect("beat").as_ref() {
+                beat.beat(*at_ms);
+            }
             DaliSettingsView {
                 dt8_auto_activation_repair: false,
                 dt8_rgbwaf_control_assert: false,
@@ -177,6 +182,7 @@ mod tests {
         let settings = Arc::new(FakeSettings {
             active: AtomicBool::new(active),
             short: Mutex::new(Some(7)),
+            beat_while_read: Mutex::new(None),
         });
         let registry = Arc::new(LivenessBeat::new("registry", WORKER_STALE_AFTER_MS));
         registry.beat(1_000);
@@ -299,6 +305,14 @@ mod tests {
             answer(&r.inputs.answer_inputs, [(9 << 1) | 1, 0xFE, 0x3D], 1_000),
             Some(0xFF)
         );
+    }
+
+    #[test]
+    fn a_worker_that_turns_while_the_settings_read_waits_is_not_stale() {
+        let r = rig(true);
+        let late_beat = (Arc::clone(&r.registry), NOW + 500);
+        *r.settings.beat_while_read.lock().expect("beat") = Some(late_beat);
+        assert_eq!(run_supervisor_tick(&r.inputs, NOW), SupervisorTurn::Defend);
     }
 
     #[test]

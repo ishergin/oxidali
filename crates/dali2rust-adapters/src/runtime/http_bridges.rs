@@ -945,11 +945,11 @@ impl dali2rust_api::http::redundancy_state::RedundancyHttpState for RedundancyBr
         let worker = &self.counters.arbitration_worker;
         rs::RedundancyStateDto {
             now_ms: now,
+            answering: inputs.is_answering(now),
+            lease_remaining_ms: inputs.lease_remaining_ms(now),
             enabled: view.enabled,
             role: role_name(view.standby_role),
             active: self.dali.dali_settings_view().application_active,
-            answering: inputs.is_answering(now),
-            lease_remaining_ms: inputs.lease_remaining_ms(now),
             arbitration: self.arbitration_row(),
             probes: self.probe_row(),
             takeovers: worker.takeovers.load(Relaxed),
