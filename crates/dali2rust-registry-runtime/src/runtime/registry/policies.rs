@@ -363,6 +363,18 @@ mod exception_tests {
     }
 
     #[test]
+    fn a_leftover_entry_excepts_whatever_record_comes_to_hold_its_address() {
+        let store = store_with(&[2, 5], Some(VERIFIED));
+        store.apply_policies_from_command(&managing_power_on(MANAGED_LEVEL));
+        store.write_inner().policies.exceptions.push(at(9)).expect("capacity");
+        store.apply_address_change(0, 5, 9).expect("moved");
+        assert_eq!(stored(&store), vec![9], "the entry reserves the address, not a device");
+        let targets = store.policy_apply_targets(0).expect("adapter");
+        let marked: Vec<(u8, bool)> = targets.iter().map(|c| (c.short_address, c.excepted)).collect();
+        assert_eq!(marked, vec![(2, false), (9, true)]);
+    }
+
+    #[test]
     fn forgetting_or_evicting_a_record_drops_its_exception() {
         let store = store_with(&[2, 5], Some(VERIFIED));
         assert!(store.seed_discovered_dt8(9, None));
