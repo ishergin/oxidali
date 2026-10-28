@@ -1,21 +1,13 @@
+import { useState } from 'preact/hooks'
 import { api } from '../api/client'
 import type { PhysicalDeviceSummary, Policies, PolicyException } from '../api/types'
 import { Card, FieldRow, Switch, EditableText } from '../components/ui'
 import { ADAPTER, pad2 } from '../format'
 import { usePoll, useSettingsDraft } from '../hooks'
 import { opCommitted, runOp } from '../toast'
+import { exceptionKey, policyPatch, sortedExceptions } from './policies-patch'
 
 const MAX_POLICY_EXCEPTIONS = 32
-
-const exceptionKey = (e: PolicyException) => `${e.adapter_id}:${pad2(e.short_address)}`
-
-const sameExceptions = (a: PolicyException[], b: PolicyException[]) =>
-  a.map(exceptionKey).join() === b.map(exceptionKey).join()
-
-function withException(list: PolicyException[], added: PolicyException): PolicyException[] {
-  const merged = [...list, added]
-  return merged.sort((x, y) => x.adapter_id - y.adapter_id || x.short_address - y.short_address)
-}
 
 function ExceptionsCard({
   policy,
@@ -70,7 +62,7 @@ function ExceptionsCard({
             const v = (ev.target as HTMLSelectElement).value
             if (v === '') return
             const added = { adapter_id: ADAPTER, short_address: Number(v) }
-            onChange(withException(policy.exceptions, added))
+            onChange(sortedExceptions([...policy.exceptions, added]))
           }}
         >
           <option value="">device…</option>
@@ -89,24 +81,18 @@ function ExceptionsCard({
 export function PoliciesScreen() {
   const { data, current, busy, setDraft, discard, save } = useSettingsDraft(() => api.policies())
   const { data: list } = usePoll(() => api.physicalDevices(ADAPTER))
+  const [base, setBase] = useState<Policies | null>(null)
 
   if (!data) return <div class="empty">Loading policies…</div>
   const s = current ?? data
-  const dirty =
-    s.system_failure_level !== data.system_failure_level ||
-    s.power_on_level !== data.power_on_level ||
-    s.apply_on_discovery !== data.apply_on_discovery ||
-    !sameExceptions(s.exceptions, data.exceptions)
+  const edit = (next: Policies) => {
+    if (current === data) setBase(data)
+    setDraft(next)
+  }
+  const patch = policyPatch(current === data ? data : (base ?? data), s, data)
+  const dirty = Object.keys(patch).length > 0
 
-  const apply = () =>
-    void save('Policies', () =>
-      api.patchPolicies({
-        system_failure_level: s.system_failure_level,
-        power_on_level: s.power_on_level,
-        apply_on_discovery: s.apply_on_discovery,
-        exceptions: s.exceptions,
-      }),
-    )
+  const apply = () => void save('Policies', () => api.patchPolicies(patch))
 
   const writeToAll = () =>
     void (async () => {
@@ -150,13 +136,13 @@ export function PoliciesScreen() {
           label="System failure level"
           hint="Where the gear goes when the bus has been silent for more than 500 ms (102 §9.12). Empty = unmanaged: this controller writes it on no device. 0–254."
         >
-          {level(s.system_failure_level, (n) => setDraft({ ...s, system_failure_level: n }))}
+          {level(s.system_failure_level, (n) => edit({ ...s, system_failure_level: n }))}
         </FieldRow>
         <FieldRow
           label="Power-on level"
           hint="Where the gear goes when mains returns. Empty = unmanaged. 0–254."
         >
-          {level(s.power_on_level, (n) => setDraft({ ...s, power_on_level: n }))}
+          {level(s.power_on_level, (n) => edit({ ...s, power_on_level: n }))}
         </FieldRow>
         <FieldRow
           label="Write to a device as it is discovered"
@@ -164,7 +150,7 @@ export function PoliciesScreen() {
         >
           <Switch
             on={s.apply_on_discovery}
-            onToggle={() => setDraft({ ...s, apply_on_discovery: !s.apply_on_discovery })}
+            onToggle={() => edit({ ...s, apply_on_discovery: !s.apply_on_discovery })}
           />
         </FieldRow>
       </Card>
@@ -172,7 +158,7 @@ export function PoliciesScreen() {
       <ExceptionsCard
         policy={s}
         devices={list?.physical_devices ?? []}
-        onChange={(exceptions) => setDraft({ ...s, exceptions })}
+        onChange={(exceptions) => edit({ ...s, exceptions })}
       />
 
       <Card title="Write it to the installation">
