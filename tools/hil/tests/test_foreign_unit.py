@@ -123,6 +123,17 @@ def test_a_peer_log_nobody_writes_is_no_witness(tmp_path):
     assert foreign._peer_log_path(types.SimpleNamespace(has_peer=False)) is None
 
 
+def test_the_dut_s_sniffer_witnesses_while_the_peer_runs_the_gear_emulator(monkeypatch):
+    dut = types.SimpleNamespace(has_peer=True, name="dut")
+    peer = types.SimpleNamespace(name="peer")
+    dut.peer = lambda: peer
+    monkeypatch.setattr(foreign.serialmon, "log_path", lambda cfg: "%s.log" % cfg.name)
+    monkeypatch.setattr(foreign.role, "is_gear_sim", lambda cfg: cfg is peer)
+    assert foreign._peer_log_path(dut) == "dut.log"
+    monkeypatch.setattr(foreign.role, "is_gear_sim", lambda cfg: False)
+    assert foreign._peer_log_path(dut) == "peer.log"
+
+
 def test_a_peer_that_sniffs_nothing_is_named_no_witness(tmp_path):
     log = tmp_path / "serial.log"
     log.write_text("")

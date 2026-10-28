@@ -5,7 +5,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from hil import serialmon, write_log
+from hil import role, serialmon, write_log
 from hil.config import PeerUnconfigured
 from hil.lamp_guard import LampGuard, LampNotAllowed
 from hil.sniffer import monitor_payload, monitor_stamped, ssh_argv
@@ -197,8 +197,7 @@ def peer_note(peer):
     if peer.offset is None:
         return "no live peer serial log could witness them"
     if not PEER_SNIFF.search(peer.since()):
-        return ("the peer's log shows no sniffed frame at all, so it is no witness "
-                "(a peer in the gear-sim role has no sniffer)")
+        return "the witness serial log shows no sniffed frame at all, so it is no witness"
     return "the peer's sniffer did not log them"
 
 
@@ -206,9 +205,10 @@ def _peer_log_path(cfg):
     if not cfg.has_peer:
         return None
     try:
-        return serialmon.log_path(cfg.peer())
+        peer = cfg.peer()
     except PeerUnconfigured:
         return None
+    return serialmon.log_path(cfg if role.is_gear_sim(peer) else peer)
 
 
 def event_source24(raw):

@@ -147,6 +147,6 @@ which has no board.
    (`log frame`).
 2. `reserve` every live address, `fleet`, `enable` one gear, query it from the
    controller, and check that `stats` shows it sent with no late ticks.
-3. Read the same gear from the Wiren Board's master.
+3. Read the same gear from the Wiren Board's master (`HIL-VG-07`).
 4. Scale up: four gear, then the tier's fleet; a poller sweep, a group apply.
 5. Commissioning follows [`tools/hil/STRATEGY.md`](../hil/STRATEGY.md) §4.
