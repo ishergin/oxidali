@@ -41,12 +41,17 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   `Attended` (answered `202` + operation id; someone watches), `Unattended` (nobody).
   A lease is revoked only by a strictly higher arrival. `Origin` refines only kinds whose
   producers answer differently: a poller read is `Unattended`, HCL and Home Assistant
-  light commands are `Attended`, a rule's are `Interactive`.
+  light commands are `Attended`, a rule's are `Interactive`. The bank 1
+  `memory_luminaire` write is `Unattended` although someone watches it: a light command
+  must not wait seconds behind non-volatile memory, and a write that yielded leaves the
+  gear safe to write again.
 - `YieldGranularity` says where a sequence may stop: `Frame` for reads, `Step` for
   configuration writes (`write-attributes`, Part 103 instance and feedback configuration)
   at a confirmed DTR → SET → read-back boundary and for the bank 1 `memory_luminaire` write
   between lock sessions, `Never` for discovery, commissioning and other units whose
-  interruption leaves gear half-programmed.
+  interruption leaves gear half-programmed. A sequence that must not stop inside a span
+  runs it in `controller.step`, which narrows any lease to `Step` for the span and makes
+  its start the span's only boundary.
 - Background work never delays an operator, and that is not a setting: a quiet window,
   interactive-first ordering with preemption at frame boundaries, and a wire-time budget
   (after a background read of cost *d* the poller rests 3×*d*, so background holds at
@@ -55,10 +60,11 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - Preemption is routine and never a device fault. A preempted read ends
   `ErrorCode::Preempted` and commits nothing from the interrupted stage; a preempted
   `write-attributes` keeps the attributes it confirmed before the yield and ends
-  `Preempted`; a preempted `memory_luminaire` write ends `Preempted` naming the field it
-  stopped in, with its lock byte as found, no read-back and the bytes already written
-  unproved until the next bank read; the poller re-queues the target with no cooldown. No surface renders it as
-  a failure.
+  `Preempted`; a preempted `memory_luminaire` write ends `Preempted` naming where it
+  stopped (`device_identity`, the field whose session had not started, or
+  `bank1_readback`), with its lock byte as found and the bytes already written unproved
+  until the next bank read; the poller re-queues the target with no cooldown. No surface
+  renders it as a failure.
 - A priority is a settling window (101 Table 22), not a floor. The controller draws a
   random point inside it (footnote c) in whole PHY ticks, with a small guard above the
   band's floor and the arming lead subtracted, so the draw lands inside the band on the
@@ -272,21 +278,47 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - Bank 0 `0x1C` is one byte whose bit x is Part 15x (DiiA(SW)098bp Table 4); a byte with
   a bit outside that range claims no part.
 - The only memory-bank write is typed: the Part 251 fields of bank 1, never a raw cell.
-  The executor re-reads the header (`0x00..0x12`) and gates every field on it — content
-  format 3–5, the field present in that format, the bank long enough — before any write.
-- Each unit writes at most three bytes (101 §9.2) as `ENABLE WRITE MEMORY` then
-  `WRITE MEMORY LOCATION` per byte, under a pointer armed with `DTR1`/`DTR0` and proved
-  by `QUERY CONTENT DTR1/DTR0` in the same `controller.unit`. `ENABLE WRITE MEMORY` is
-  sent per unit because any other command clears `writeEnableState` (102 §9.10.5), and
-  the answering form is used so that silence or a foreign answer stops the field.
+- Before any write frame the executor proves the gear is the one the registry read. It
+  reads bank 0 `0x03..0x12` and compares the GTIN and identification number — together
+  the bus unit's unique identity (102 §9.10.6) — with the registry's
+  (`RegistryReadPort::physical_device_identity`). Another identity is refused
+  (`device_identity_changed`). So is a gear whose bank 0 the registry never read
+  (`device_identity_unknown`): non-volatile memory is not written unproved. The identity
+  never travels in the bus frame.
+- The executor then re-reads the header (`0x00..0x12`) and gates every field on it —
+  content format 3–5, the field present in that format, the bank long enough — before
+  any write.
+- Each unit writes at most three bytes (101 §9.2). It sends `ENABLE WRITE MEMORY`, one
+  `WRITE MEMORY LOCATION` per byte, then `QUERY CONTENT DTR0`, under a pointer armed with
+  `DTR1`/`DTR0` and proved by `QUERY CONTENT DTR1/DTR0` in the same `controller.unit`.
+  - `ENABLE WRITE MEMORY` is sent per unit because any command other than the writes and
+    the DTR0–2 commands and queries clears `writeEnableState` (102 §9.10.5).
+  - The answering form is used, so silence or a foreign answer stops the field.
+  - The closing `QUERY CONTENT DTR0` proves the pointer advanced by the bytes written. A
+    gear that stores every byte at one location therefore fails the unit before the next
+    one writes.
+- A text field is written in commit-byte order (DiiA 251 §9.2.5): first the field with a
+  NUL in its first byte and the rest of the new text, then the first character.
+  Wherever the write stops, the field reads old, empty or new, never a new head on an
+  old tail.
 - A lock byte other than `0x55` (102 §9.10.2, Table 8) is opened for a session of at
-  most two units, the opening proved by reading `0x02` back, and the value found is
-  written back when the session ends, whatever happened inside it. The step boundary
-  sits between sessions, so a yield never leaves the bank unlocked.
-- A `WRITE MEMORY LOCATION` answer is not proof. The bank is read back whole and that
-  read is published as an ordinary bank read, so the registry learns what the gear
-  holds; a byte the read-back does not hold fails its field, and a lock byte other than
-  the one found outranks every field.
+  most two units, the opening proved by reading `0x02` back. The value found is written
+  back when the session ends, whatever happened inside it. Each session runs in
+  `controller.step`, so it may yield before its first frame and never between opening
+  and restoring the lock, whatever lease the command holds.
+- The read-back, not a `WRITE MEMORY LOCATION` answer, decides what is written. The bank
+  is read back whole and published as an ordinary bank read. A whole read is needed
+  because the registry replaces a bank's bytes and ranges with each read, and its bank
+  1 layout needs a read from offset 0.
+  - Success needs every written byte held and the lock byte as found, even if an answer
+    was lost on the way.
+  - A lock byte other than the one found is `bank1_lock_not_restored`, whatever the
+    fields say.
+  - A field the read-back does not hold fails with the wire failure that stopped the
+    write if there was one, else `verify_failed` and the field's name.
+  - When the read-back itself fails, a restore that failed on the wire is named first,
+    as `bank1_lock_not_restored`, because the bank may be open. Next comes where the wire
+    stopped, and only then `bank1_readback`.
 
 ## Addressing control gear
 
