@@ -4,6 +4,7 @@ import time
 
 import pytest
 
+from hil.validity import counter_moved
 from hil.wait import wait_until
 from hil_test_guards import allowed_bound_lamp, ask_guard
 
@@ -119,10 +120,6 @@ def _translator(api):
     return api.diagnostics()["sniffer_translator"]
 
 
-def _delta(before, after, key):
-    return (after[key] - before[key]) % (1 << 32)
-
-
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-INP-05")
 @pytest.mark.foreign
@@ -138,19 +135,19 @@ def test_an_injected_event_frame_is_received_and_decoded(
     after_phy = api.diagnostics()["phy_sniffer"]
     after = _translator(api)
     test_artifacts.attach_json("counters", {
-        "forward24": _delta(before_phy, after_phy, "forward24"),
-        "generic": _delta(before, after, "input_events_generic"),
-        "typed": _delta(before, after, "input_events_typed"),
-        "ambiguous": _delta(before, after, "input_events_ambiguous_scheme"),
+        "forward24": counter_moved(before_phy, after_phy, "forward24"),
+        "generic": counter_moved(before, after, "input_events_generic"),
+        "typed": counter_moved(before, after, "input_events_typed"),
+        "ambiguous": counter_moved(before, after, "input_events_ambiguous_scheme"),
     })
 
-    assert _delta(before_phy, after_phy, "forward24") >= 1, (
+    assert counter_moved(before_phy, after_phy, "forward24") >= 1, (
         "the DUT's PHY received no 24-bit frame: the WB accepted the "
         "injection and the wire stayed empty, or the receiver dropped it")
-    assert _delta(before, after, "input_events_generic") >= 1, (
+    assert counter_moved(before, after, "input_events_generic") >= 1, (
         "no event message was decoded — the frame arrived and the translator "
         "read it as something other than an INPUT NOTIFICATION")
-    assert _delta(before, after, "input_events_ambiguous_scheme") == 0, (
+    assert counter_moved(before, after, "input_events_ambiguous_scheme") == 0, (
         "the source scheme carried no device identity; this frame is scheme "
         "2, which does, so either the encoding is wrong or a device on this "
         "segment reverted to scheme 0 mid-test (103 §9.6.2)")
@@ -190,8 +187,8 @@ def test_an_injected_event_activates_a_rule_and_reaches_the_gear(
     after = api.diagnostics()["rules"]
     test_artifacts.attach_json("activation", {
         "state": last,
-        "effects_published": _delta(before, after, "effects_published"),
-        "activations": _delta(before, after, "activations_published"),
+        "effects_published": counter_moved(before, after, "effects_published"),
+        "activations": counter_moved(before, after, "activations_published"),
     })
 
     assert last.get("level") == RULE_LEVEL, (
@@ -199,7 +196,7 @@ def test_an_injected_event_activates_a_rule_and_reaches_the_gear(
         "event its trigger names. `rules.effects_published` moved by %d — a "
         "zero there puts the break above the executor (translator, funnel or "
         "engine), a non-zero one below it (the bus, the worker or the wire)"
-        % (short, last, _delta(before, after, "effects_published")))
+        % (short, last, counter_moved(before, after, "effects_published")))
 
 
 @pytest.mark.hil_id("HIL-INP-07")
@@ -313,8 +310,8 @@ def test_a_scheme_2_event_is_retyped_by_the_registry(
     after = _translator(api)
     test_artifacts.attach_json("retyped", {
         "runtime": inst,
-        "generic": _delta(before, after, "input_events_generic"),
-        "ambiguous": _delta(before, after, "input_events_ambiguous_scheme"),
+        "generic": counter_moved(before, after, "input_events_generic"),
+        "ambiguous": counter_moved(before, after, "input_events_ambiguous_scheme"),
     })
 
     assert inst.get("last_event_info") == SHORT_PRESS_INFO, (
@@ -324,10 +321,10 @@ def test_a_scheme_2_event_is_retyped_by_the_registry(
         "an event with no timestamp is not evidence it arrived: %r" % inst)
     assert inst.get("event_count"), (
         "an event recorded without being counted: %r" % inst)
-    assert _delta(before, after, "input_events_generic") >= 1, (
+    assert counter_moved(before, after, "input_events_generic") >= 1, (
         "scheme 2 arrives untyped and must be counted as such: the "
         "enrichment names the event without rewriting what the decoder saw")
-    assert _delta(before, after, "input_events_ambiguous_scheme") == 0, (
+    assert counter_moved(before, after, "input_events_ambiguous_scheme") == 0, (
         "scheme 2 names its device, so this frame must not be counted "
         "ambiguous: %r" % inst)
 
@@ -411,7 +408,7 @@ def test_the_button_vocabulary_reaches_a_rule_from_a_real_panel(
     after = api.diagnostics()["rules"]
     test_artifacts.attach_json("activation", {
         "state": last,
-        "effects_published": _delta(before, after, "effects_published"),
+        "effects_published": counter_moved(before, after, "effects_published"),
     })
 
     assert last.get("level") == RULE_LEVEL, (
@@ -430,18 +427,18 @@ def test_a_power_notification_is_decoded_as_a_lifecycle_fact(
     before = _translator(api)
     foreign.raw24(0xFE, 0xE0, 0x40 | free_input_short)
     wait_until(
-        lambda: _delta(before, _translator(api), "input_lifecycle") >= 1,
+        lambda: counter_moved(before, _translator(api), "input_lifecycle") >= 1,
         timeout_s=10.0, interval_s=0.5)
     after = _translator(api)
     test_artifacts.attach_json("counters", {
-        "lifecycle": _delta(before, after, "input_lifecycle"),
-        "generic": _delta(before, after, "input_events_generic"),
-        "typed": _delta(before, after, "input_events_typed"),
+        "lifecycle": counter_moved(before, after, "input_lifecycle"),
+        "generic": counter_moved(before, after, "input_events_generic"),
+        "typed": counter_moved(before, after, "input_events_typed"),
     })
 
-    assert _delta(before, after, "input_lifecycle") >= 1, (
+    assert counter_moved(before, after, "input_lifecycle") >= 1, (
         "the power notification was not recognised as one")
-    assert _delta(before, after, "input_events_generic") == 0, (
+    assert counter_moved(before, after, "input_events_generic") == 0, (
         "a power notification was counted as an instance event, which means "
         "the decoder read its address byte as a scheme-0 source — the exact "
         "collision Table 20's ordering exists to avoid")
@@ -455,21 +452,21 @@ def test_a_scheme_0_event_is_counted_as_unattributable(
     before = _translator(api)
     foreign.raw24(0x80 | (1 << 1), 0x80, SHORT_PRESS_INFO)
     wait_until(
-        lambda: _delta(before, _translator(api),
+        lambda: counter_moved(before, _translator(api),
                        "input_events_ambiguous_scheme") >= 1,
         timeout_s=10.0, interval_s=0.5)
     after = _translator(api)
     test_artifacts.attach_json("counters", {
-        "ambiguous": _delta(before, after, "input_events_ambiguous_scheme"),
-        "generic": _delta(before, after, "input_events_generic"),
-        "typed": _delta(before, after, "input_events_typed"),
+        "ambiguous": counter_moved(before, after, "input_events_ambiguous_scheme"),
+        "generic": counter_moved(before, after, "input_events_generic"),
+        "typed": counter_moved(before, after, "input_events_typed"),
     })
 
-    assert _delta(before, after, "input_events_ambiguous_scheme") >= 1, (
+    assert counter_moved(before, after, "input_events_ambiguous_scheme") >= 1, (
         "a scheme-0 event was not counted as carrying no device identity — "
         "so the one signal an operator gets for a reverted panel is dead")
-    assert (_delta(before, after, "input_events_typed")
-            + _delta(before, after, "input_events_generic")) >= 1, (
+    assert (counter_moved(before, after, "input_events_typed")
+            + counter_moved(before, after, "input_events_generic")) >= 1, (
         "the frame was counted ambiguous and not counted as an event at all; "
         "the two are different questions and a frame answers both")
 

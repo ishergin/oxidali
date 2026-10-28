@@ -239,7 +239,7 @@ def test_another_forward_frame_inside_a_unit_breaks_it():
 
 class _ScriptedSocket:
     def __init__(self, incoming):
-        self.incoming, self.consumed, self.sent_after = list(incoming), 0, []
+        self.incoming, self.consumed, self.sent_after, self.sent = list(incoming), 0, [], []
 
     async def recv(self):
         self.consumed += 1
@@ -247,6 +247,7 @@ class _ScriptedSocket:
 
     async def send(self, text):
         self.sent_after.append(self.consumed)
+        self.sent.append(json.loads(text))
 
     async def __aenter__(self):
         return self
@@ -266,6 +267,19 @@ def test_the_remote_client_sends_a_frame_only_after_the_previous_one_is_settled(
     monkeypatch.setattr(sys, "argv", ["remote", json.dumps(frames)])
     exec(compile(foreign.remote_client_script(0), "remote", "exec"), {"__name__": "__main__"})
     assert socket.sent_after == [1, 3]
+    assert socket.incoming == []
+
+
+def test_a_send_twice_frame_leaves_as_two_frames_before_either_is_settled(monkeypatch):
+    socket = _ScriptedSocket([{"type": "info"}, {"type": "daliFrame"}, {"type": "daliFrame"}])
+    monkeypatch.setitem(sys.modules, "websockets",
+                        types.SimpleNamespace(connect=lambda url: socket))
+    frames = [{"bits": 16, "bytes": [0x03, 0xF3], "send_twice": True}]
+    monkeypatch.setattr(sys, "argv", ["remote", json.dumps(frames)])
+    exec(compile(foreign.remote_client_script(0), "remote", "exec"), {"__name__": "__main__"})
+    assert socket.sent_after == [1, 1]
+    assert [m["data"]["daliData"] for m in socket.sent] == [[0x03, 0xF3], [0x03, 0xF3]]
+    assert not any(m["data"]["mode"]["sendTwice"] for m in socket.sent)
     assert socket.incoming == []
 
 
