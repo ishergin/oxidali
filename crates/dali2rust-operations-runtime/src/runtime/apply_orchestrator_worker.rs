@@ -139,6 +139,7 @@ fn run_apply<C: PacedCell>(
 
 impl PacedCell for GroupApplyDiffCell {
     const OUTCOME_EVENT: &'static str = "DaliGroupMembershipProgrammedEvent";
+    const SKIP: ErrorCode = ErrorCode::VlUnbound;
 
     fn is_bound(&self) -> bool {
         self.binding_short.is_some()
@@ -197,7 +198,7 @@ impl PacedCell for GroupApplyDiffCell {
                 DaliProgramTarget::VirtualLamp { virtual_lamp_id }
                     if virtual_lamp_id == self.virtual_lamp_id
             );
-        matches.then(|| hard_error_of(body.error.as_ref()))
+        matches.then(|| hard_error_of(body.error.as_ref(), Self::SKIP))
     }
 
     fn describe(&self) -> String {
@@ -207,9 +208,10 @@ impl PacedCell for GroupApplyDiffCell {
 
 impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
     const OUTCOME_EVENT: &'static str = "DaliAttributesWrittenEvent";
+    const SKIP: ErrorCode = ErrorCode::PolicyException;
 
     fn is_bound(&self) -> bool {
-        true
+        !self.excepted
     }
 
     fn program_command(&self, run: &RunState<'_>) -> CommandEnvelope {
@@ -233,6 +235,7 @@ impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
                 dimming_curve: None,
                 signals_operation: false,
                 known_device_types: self.known_device_types,
+                refusal_fails: true,
             },
         )
     }
@@ -270,22 +273,8 @@ impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
         let BusEventPayload::DaliAttributesWrittenEvent(body) = &ev.payload else {
             return None;
         };
-        if body.short_address != self.short_address {
-            return None;
-        }
-        if let Some(error) = hard_error_of(body.error.as_ref()) {
-            return Some(Some(error));
-        }
-        let wanted_failure = self.system_failure_level.is_none()
-            || body.system_failure_level == self.system_failure_level;
-        let wanted_power_on =
-            self.power_on_level.is_none() || body.power_on_level == self.power_on_level;
-        Some((!wanted_failure || !wanted_power_on).then(|| {
-            (
-                ErrorCode::VerifyFailed,
-                "policy_not_confirmed".to_string(),
-            )
-        }))
+        (body.short_address == self.short_address)
+            .then(|| hard_error_of(body.error.as_ref(), Self::SKIP))
     }
 
     fn describe(&self) -> String {
@@ -295,6 +284,7 @@ impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
 
 impl PacedCell for SceneApplyDiffRow {
     const OUTCOME_EVENT: &'static str = "DaliSceneProgrammedEvent";
+    const SKIP: ErrorCode = ErrorCode::VlUnbound;
 
     fn is_bound(&self) -> bool {
         self.binding_short.is_some()
@@ -355,7 +345,7 @@ impl PacedCell for SceneApplyDiffRow {
                 DaliProgramTarget::VirtualLamp { virtual_lamp_id }
                     if virtual_lamp_id == self.virtual_lamp_id
             );
-        matches.then(|| hard_error_of(body.error.as_ref()))
+        matches.then(|| hard_error_of(body.error.as_ref(), Self::SKIP))
     }
 
     fn describe(&self) -> String {
@@ -363,10 +353,10 @@ impl PacedCell for SceneApplyDiffRow {
     }
 }
 
-fn hard_error_of(error: Option<&CompactErrorPayload>) -> Option<(ErrorCode, String)> {
+fn hard_error_of(error: Option<&CompactErrorPayload>, skip: ErrorCode) -> Option<(ErrorCode, String)> {
     match error {
         None => None,
-        Some(error) if error.code == ErrorCode::VlUnbound => None,
+        Some(error) if error.code == skip => None,
         Some(error) => Some((error.code, error.message.as_str().to_string())),
     }
 }
@@ -395,6 +385,7 @@ mod tests {
             system_failure_level: None,
             power_on_level: Some(200),
             known_device_types: None,
+            excepted: false,
         };
 
     fn written(power_on_level: Option<u8>, error: Option<CompactErrorPayload>) -> EventEnvelope {
@@ -424,11 +415,14 @@ mod tests {
     #[test]
     fn a_policy_cell_ends_on_what_its_written_event_says() {
         assert_eq!(CELL.match_outcome(&written(Some(200), None)), Some(None));
+        let refused = CompactErrorPayload::new(ErrorCode::VerifyFailed, "verify_failed");
         assert_eq!(
-            CELL.match_outcome(&written(None, None)),
-            Some(Some((ErrorCode::VerifyFailed, "policy_not_confirmed".to_string()))),
-            "a refused level is answered, and the answer is not the policy"
+            CELL.match_outcome(&written(None, Some(refused))),
+            Some(Some((ErrorCode::VerifyFailed, "verify_failed".to_string()))),
+            "the worker that saw the read-back names the refusal"
         );
+        let skipped = CompactErrorPayload::new(ErrorCode::PolicyException, "policy_exception");
+        assert_eq!(CELL.match_outcome(&written(None, Some(skipped))), Some(None));
         let unanswered = CompactErrorPayload::new(ErrorCode::VerifyUnanswered, "verify_unanswered");
         assert_eq!(
             CELL.match_outcome(&written(None, Some(unanswered))),

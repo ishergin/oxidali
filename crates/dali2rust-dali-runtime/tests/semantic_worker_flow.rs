@@ -39,6 +39,7 @@ enum ControllerMode {
     NoAnswer,
     DiscoveryDt6 { short_address: u8 },
     Error,
+    PowerOnLevelHeld(u8),
 }
 
 struct TestController {
@@ -76,6 +77,12 @@ impl DaliProductController for TestController {
                     address: DaliAddress::Short(sa),
                     command: StandardCommand::QueryNextDeviceType,
                 } if sa == short_address => Ok(DaliResponse::NoAnswer),
+                _ => Ok(DaliResponse::NoAnswer),
+            },
+            ControllerMode::PowerOnLevelHeld(held) => match *cmd {
+                DaliCommand::Standard { command: StandardCommand::QueryPowerOnLevel, .. } => {
+                    Ok(DaliResponse::Answer(held))
+                }
                 _ => Ok(DaliResponse::NoAnswer),
             },
         }
@@ -366,7 +373,7 @@ fn refused_operations() -> Vec<BusCommandPayload> {
         m::DaliDiscoverDevicesCommand { mode: DiscoveryMode::RefreshKnown, registry_adapter_id: 0 }.into(),
         m::DaliReadAttributesCommand { registry_adapter_id: 0, short_address: 5, attribute_groups_mask: 1 << 1, memory_banks: MemoryBankReadPreset::None }.into(),
         m::DaliReadMemoryBankCommand { registry_adapter_id: 0, short_address: 5, bank: 1, start: 0, length: 1 }.into(),
-        m::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: Some(200), fade_rate: None, power_on_level: None, system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: true, known_device_types: None }.into(),
+        m::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: Some(200), fade_rate: None, power_on_level: None, system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: true, known_device_types: None, refusal_fails: false }.into(),
         m::DaliIdentifyDeviceCommand { registry_adapter_id: 0, short_address: 5, operation_key: Default::default() }.into(),
         m::DaliWriteLuminaireDataCommand { registry_adapter_id: 0, short_address: 5, numbers: m::LuminaireNumbers { patch_mask: m::LuminaireNumbers::PATCH_YEAR, year: 24, ..Default::default() }, text: None }.into(),
         m::DaliReplaceDeviceCommand { registry_adapter_id: 0, failed_short_address: 5, replacement_short_address: 6, restore_metadata_and_overrides: false, operation_key: Default::default() }.into(),
@@ -469,7 +476,7 @@ fn a_write_that_confirms_nothing_still_publishes_its_outcome() {
         ControllerMode::NoAnswer,
     );
     let corr = 141u64;
-    let write = dali2rust_contracts::msg::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: None, fade_rate: None, power_on_level: Some(200), system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: false, known_device_types: Some([DeviceType::Led.code()].into_iter().collect()) };
+    let write = dali2rust_contracts::msg::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: None, fade_rate: None, power_on_level: Some(200), system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: false, known_device_types: Some([DeviceType::Led.code()].into_iter().collect()), refusal_fails: false };
     harness.publish(envelope_on_adapter_0(corr, write.into()));
 
     let ev = harness.recv_event_matching(corr, |payload| {
@@ -481,6 +488,44 @@ fn a_write_that_confirms_nothing_still_publishes_its_outcome() {
     assert!(body.confirms_nothing(), "a silent read-back confirms no field");
     let error = body.error.as_ref().expect("the outcome names why nothing landed");
     assert_eq!(error.code, ErrorCode::VerifyUnanswered);
+}
+
+const REQUESTED_POWER_ON: u8 = 200;
+const HELD_POWER_ON: u8 = 150;
+
+fn power_on_write(refusal_fails: bool) -> BusCommandPayload {
+    let led = Some([DeviceType::Led.code()].into_iter().collect());
+    m::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: None, fade_rate: None, power_on_level: Some(REQUESTED_POWER_ON), system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: true, known_device_types: led, refusal_fails }.into()
+}
+
+fn power_on_queries(harness: &WorkerHarness) -> usize {
+    let sent = harness.sent_commands.lock().unwrap();
+    sent.iter().filter(|cmd| matches!(cmd, DaliCommand::Standard { command: StandardCommand::QueryPowerOnLevel, .. })).count()
+}
+
+#[test]
+fn a_level_the_gear_refuses_fails_the_write_only_when_the_command_asks() {
+    let attempts = 1 + usize::from(dali2rust_dali_runtime::runtime::executor::PROGRAM_VERIFY_REPAIRS);
+    for (corr, refusal_fails) in [(151u64, false), (152u64, true)] {
+        let read_port = Arc::new(TestReadPort { enabled: true, ..Default::default() });
+        let harness = WorkerHarness::new(read_port, ControllerMode::PowerOnLevelHeld(HELD_POWER_ON));
+        harness.publish(envelope_on_adapter_0(corr, power_on_write(refusal_fails)));
+
+        let ev = harness.recv_event_matching(corr, |payload| matches!(payload, BusEventPayload::DaliAttributesWrittenEvent(_)));
+        let BusEventPayload::DaliAttributesWrittenEvent(body) = &ev.payload else { panic!("expected the written event") };
+        assert_eq!(body.power_on_level, None, "a refused level is not confirmed");
+        assert_eq!(power_on_queries(&harness), attempts, "every attempt was answered with another value");
+        let ends = |payload: &BusEventPayload| matches!(payload, BusEventPayload::OperationWorkerSignalEvent(s) if s.signal != OperationWorkerSignal::WorkerStarted);
+        let BusEventPayload::OperationWorkerSignalEvent(end) = &harness.recv_event_matching(corr, ends).payload else { panic!("expected the terminal signal") };
+        let named = body.error.as_ref().map(|error| error.code);
+        if refusal_fails {
+            assert_eq!(named, Some(ErrorCode::VerifyFailed), "a policy write names the refusal");
+            assert_eq!(end.signal, OperationWorkerSignal::WorkerFailed);
+        } else {
+            assert_eq!(named, None, "write-attributes lets the gear refuse");
+            assert_eq!(end.signal, OperationWorkerSignal::WorkerSucceeded, "the operation still succeeds");
+        }
+    }
 }
 
 #[test]

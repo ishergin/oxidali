@@ -153,6 +153,16 @@ pub(crate) fn worst_group_matrix_rows() -> crate::msg::GroupMatrixDesiredRowList
     rows
 }
 
+pub(crate) fn worst_policy_exceptions() -> crate::msg::PolicyExceptionList {
+    let mut devices = crate::msg::PolicyExceptionList::new();
+    for _ in 0..crate::msg::MAX_POLICY_EXCEPTIONS {
+        devices
+            .push(crate::msg::PolicyException { adapter_id: u8::MAX, short_address: u8::MAX })
+            .expect("exception capacity");
+    }
+    devices
+}
+
 pub(crate) fn worst_scene_target_state() -> crate::msg::DaliSceneTargetState {
     crate::msg::DaliSceneTargetState {
         power: Some(crate::msg::PowerState::Unknown),

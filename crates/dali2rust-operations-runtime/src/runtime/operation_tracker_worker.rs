@@ -11,11 +11,14 @@ use dali2rust_contracts::bus::event_envelope;
 use dali2rust_contracts::msg::{fixed_text_32, OperationStatusChangedEvent, Origin};
 use dali2rust_contracts::msg::{
     BusCommandPayload, BusEventPayload, CompactErrorPayload, DaliAttributeReadOutcomesEvent,
-    DaliGroupMembershipProgrammedEvent, DaliSceneProgrammedEvent, ErrorCode, OperationStatus,
+    DaliAttributesWrittenEvent, DaliGroupMembershipProgrammedEvent, DaliSceneProgrammedEvent, ErrorCode, OperationStatus,
     OperationType, OperationWorkerSignal, SceneProgramAction,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_domain::registry::VIRTUAL_LAMP_COUNT;
+use dali2rust_domain::registry::{
+    OperationPolicyApplyOutcomeView, OperationPolicyApplyResultView, MAX_SHORT_ADDRESSES,
+    VIRTUAL_LAMP_COUNT,
+};
 use dali2rust_domain::registry::{
     OperationApplyResultView, OperationAttributeReadOutcomesView, OperationErrorView,
     OperationGroupApplyOutcomeView, OperationAddressChangeResultView, OperationGroupApplyResultView,
@@ -219,6 +222,17 @@ struct SceneApplyAccumulator {
     seen_rows: u64,
 }
 
+#[derive(Clone, Default)]
+struct PolicyApplyAccumulator {
+    written: Vec<OperationPolicyApplyOutcomeView>,
+    skipped: Vec<OperationPolicyApplyOutcomeView>,
+    failed: Vec<OperationPolicyApplyOutcomeView>,
+    written_total: u16,
+    skipped_total: u16,
+    failed_total: u16,
+    seen_shorts: u64,
+}
+
 fn push_capped<T>(list: &mut Vec<T>, outcome: T) {
     if list.len() < MAX_APPLY_DETAIL_ROWS {
         list.push(outcome);
@@ -230,6 +244,7 @@ enum OperationDetailState {
     None,
     GroupApply(GroupApplyAccumulator),
     SceneApply(SceneApplyAccumulator),
+    PolicyApply(PolicyApplyAccumulator),
     AttributeRead(OperationAttributeReadOutcomesView),
     Identify(OperationIdentifyResultView),
     AddressChange(OperationAddressChangeResultView),
@@ -261,6 +276,7 @@ pub struct OperationTrackerInner {
     coalesce: HashMap<CoalesceKey, u64>,
     pending_group_apply: PendingMap<Vec<DaliGroupMembershipProgrammedEvent>>,
     pending_scene_apply: PendingMap<Vec<DaliSceneProgrammedEvent>>,
+    pending_policy_apply: PendingMap<Vec<DaliAttributesWrittenEvent>>,
     pending_attribute_read: PendingMap<OperationAttributeReadOutcomesView>,
     pending_identify: PendingMap<OperationIdentifyResultView>,
     pending_address_change: PendingMap<OperationAddressChangeResultView>,
@@ -284,6 +300,7 @@ impl OperationTrackerInner {
             coalesce: HashMap::new(),
             pending_group_apply: HashMap::new(),
             pending_scene_apply: HashMap::new(),
+            pending_policy_apply: HashMap::new(),
             pending_attribute_read: HashMap::new(),
             pending_identify: HashMap::new(),
             pending_address_change: HashMap::new(),
@@ -305,6 +322,7 @@ impl OperationTrackerInner {
             coalesce: _,
             pending_group_apply,
             pending_scene_apply,
+            pending_policy_apply,
             pending_attribute_read,
             pending_identify,
             pending_address_change,
@@ -315,6 +333,7 @@ impl OperationTrackerInner {
         } = self;
         f(pending_group_apply);
         f(pending_scene_apply);
+        f(pending_policy_apply);
         f(pending_attribute_read);
         f(pending_identify);
         f(pending_address_change);
@@ -386,11 +405,25 @@ impl SceneApplyAccumulator {
     }
 }
 
+impl PolicyApplyAccumulator {
+    fn result_view(&self) -> OperationPolicyApplyResultView {
+        OperationPolicyApplyResultView {
+            written: self.written.clone(),
+            skipped: self.skipped.clone(),
+            failed: self.failed.clone(),
+            written_total: self.written_total,
+            skipped_total: self.skipped_total,
+            failed_total: self.failed_total,
+        }
+    }
+}
+
 impl OperationDetailState {
     fn from_begin(op_type: OperationType) -> Self {
         match op_type {
             OperationType::GroupApply => Self::GroupApply(GroupApplyAccumulator::default()),
             OperationType::SceneApply => Self::SceneApply(SceneApplyAccumulator::default()),
+            OperationType::PolicyApply => Self::PolicyApply(PolicyApplyAccumulator::default()),
             _ => Self::None,
         }
     }
@@ -402,6 +435,9 @@ impl OperationDetailState {
             }
             OperationDetailState::SceneApply(result) => {
                 Some(OperationApplyResultView::SceneApply(result.result_view()))
+            }
+            OperationDetailState::PolicyApply(result) => {
+                Some(OperationApplyResultView::PolicyApply(result.result_view()))
             }
             OperationDetailState::Identify(result) => {
                 Some(OperationApplyResultView::Identify(result.clone()))
@@ -782,6 +818,9 @@ fn flush_begin_backlog(
             out, guard, corr,
         );
     }
+    if matches!(op_type, OperationType::PolicyApply) {
+        flush_pending_apply_outcomes::<PolicyApplyAccumulator>(out, guard, corr);
+    }
     if matches!(op_type, OperationType::AttributeRead) {
         if let Some(entry) = guard.pending_attribute_read.remove(&corr) {
             attach_attribute_read_outcomes(guard, corr, entry.value);
@@ -1031,6 +1070,7 @@ fn row_bit_already_set(row: &mut u64, virtual_lamp_id: u8) -> bool {
 trait ApplyFamily: Sized {
     type Body: Clone;
     type Outcome;
+    const SKIP: ErrorCode;
 
     fn from_detail(detail: &mut OperationDetailState) -> Option<&mut Self>;
     fn pending(inner: &mut OperationTrackerInner) -> &mut PendingMap<Vec<Self::Body>>;
@@ -1047,6 +1087,7 @@ trait ApplyFamily: Sized {
 impl ApplyFamily for GroupApplyAccumulator {
     type Body = DaliGroupMembershipProgrammedEvent;
     type Outcome = OperationGroupApplyOutcomeView;
+    const SKIP: ErrorCode = ErrorCode::VlUnbound;
 
     fn from_detail(detail: &mut OperationDetailState) -> Option<&mut Self> {
         match detail {
@@ -1107,6 +1148,7 @@ impl ApplyFamily for GroupApplyAccumulator {
 impl ApplyFamily for SceneApplyAccumulator {
     type Body = DaliSceneProgrammedEvent;
     type Outcome = OperationSceneApplyOutcomeView;
+    const SKIP: ErrorCode = ErrorCode::VlUnbound;
 
     fn from_detail(detail: &mut OperationDetailState) -> Option<&mut Self> {
         match detail {
@@ -1166,11 +1208,63 @@ impl ApplyFamily for SceneApplyAccumulator {
 
 }
 
+impl ApplyFamily for PolicyApplyAccumulator {
+    type Body = DaliAttributesWrittenEvent;
+    type Outcome = OperationPolicyApplyOutcomeView;
+    const SKIP: ErrorCode = ErrorCode::PolicyException;
+
+    fn from_detail(detail: &mut OperationDetailState) -> Option<&mut Self> {
+        match detail {
+            OperationDetailState::PolicyApply(result) => Some(result),
+            _ => None,
+        }
+    }
+
+    fn pending(inner: &mut OperationTrackerInner) -> &mut PendingMap<Vec<Self::Body>> {
+        &mut inner.pending_policy_apply
+    }
+
+    fn already_counted(&mut self, body: &Self::Body) -> bool {
+        if usize::from(body.short_address) >= MAX_SHORT_ADDRESSES {
+            return false;
+        }
+        row_bit_already_set(&mut self.seen_shorts, body.short_address)
+    }
+
+    fn outcome_view(body: &Self::Body) -> Self::Outcome {
+        OperationPolicyApplyOutcomeView {
+            short_address: body.short_address,
+            reason: body.error.as_ref().map(|error| error.message.as_str().to_string()),
+        }
+    }
+
+    fn error(body: &Self::Body) -> Option<&CompactErrorPayload> {
+        body.error.as_ref()
+    }
+
+    fn bucket_mut(
+        &mut self,
+        _body: &Self::Body,
+        bucket: OutcomeBucket,
+    ) -> Bucket<'_, Self::Outcome> {
+        match bucket {
+            OutcomeBucket::Success => (&mut self.written, &mut self.written_total),
+            OutcomeBucket::Skipped => (&mut self.skipped, &mut self.skipped_total),
+            OutcomeBucket::Failed => (&mut self.failed, &mut self.failed_total),
+        }
+    }
+}
+
+fn awaits_policy_outcomes(guard: &OperationTrackerInner, workflow_c: u64) -> bool {
+    let policy_apply = |op: &TrackedOp| op.op_type == OperationType::PolicyApply;
+    guard.active.get(&workflow_c).is_none_or(policy_apply)
+}
+
 fn route_apply_outcome<F: ApplyFamily>(result: &mut F, body: &F::Body) {
     let outcome = F::outcome_view(body);
     let bucket = match F::error(body).map(|error| error.code) {
         None => OutcomeBucket::Success,
-        Some(ErrorCode::VlUnbound) => OutcomeBucket::Skipped,
+        Some(code) if code == F::SKIP => OutcomeBucket::Skipped,
         Some(_) => OutcomeBucket::Failed,
     };
     bump_bucket(result.bucket_mut(body, bucket), outcome);
@@ -1268,6 +1362,12 @@ dali2rust_contracts::dispatch_bus_events! {
         apply_apply_outcome::<SceneApplyAccumulator>(
             out, &mut guard, workflow_c, body,
         );
+    },
+    DaliAttributesWrittenEvent(body) => {
+        let mut guard = lock_tracker(state);
+        if awaits_policy_outcomes(&guard, workflow_c) {
+            apply_apply_outcome::<PolicyApplyAccumulator>(out, &mut guard, workflow_c, body);
+        }
     },
     DaliAttributeReadOutcomesEvent(body) => {
         let mut guard = lock_tracker(state);

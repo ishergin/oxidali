@@ -140,6 +140,7 @@ fn sample_pd(short_address: u8, cct: bool, xy: bool, rgb: bool) -> PhysicalDevic
         state: base_state(),
         capabilities: base_caps(cct, xy, rgb),
         color_temperature_range: None,
+        policy_mismatch: None,
     }
 }
 

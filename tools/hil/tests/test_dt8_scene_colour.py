@@ -197,3 +197,75 @@ def test_level_only_row_stores_no_staged_colour(api, scenes_supported,
     assert row["dirty"] is False, row
     assert api.temporary_colour_type(short) == api.DT8_MASK, \
         "the store did not consume the staged temporary"
+
+
+AUTO_ACTIVATION = 0x01
+REPAIR_LEVEL = 150
+REPAIR_KELVIN = (3000, 4200)
+REPAIR_WAIT_S = 8.0
+STORE_ATTEMPTS = 3
+
+
+def _gear_features(api, short):
+    api.attr_read_checked(short, groups="dt8_color")
+    dt8 = api.attributes(short, ["dt8_color"])["attributes"].get("dt8_color") or {}
+    return (dt8.get("gear_features") or {}).get("value")
+
+
+def _store_auto_activation(api, foreign, short, value):
+    for _ in range(STORE_ATTEMPTS):
+        foreign.store_gear_features(short, value)
+        now = _gear_features(api, short)
+        if now is not None and now & AUTO_ACTIVATION == value & AUTO_ACTIVATION:
+            return now
+    return now
+
+
+@pytest.mark.foreign
+@pytest.mark.hil_id("HIL-ATTR-06")
+def test_a_cleared_auto_activation_bit_is_repaired_by_the_next_colour_write(
+        api, foreign, wait_state, state_snapshot, test_artifacts):
+    short, _ = _cct_lamp(api)
+    if not api.dali_settings.get().get("dt8_auto_activation_repair"):
+        pytest.skip("the repair is switched off in /api/v1/settings/dali")
+    if not api.state(short).get("dt8_auto_activation_repair"):
+        pytest.skip("SA%d has the repair switched off" % short)
+    first, second = REPAIR_KELVIN
+    api.ts(short, {"power": "on", "level": REPAIR_LEVEL, "color_mode": "cct",
+                   "color_temperature_kelvin": first})
+    wait_state(short, lambda s: s.get("color_temperature_kelvin") == first,
+               timeout_s=REPAIR_WAIT_S)
+    initial = _gear_features(api, short)
+    assert initial is not None and initial & AUTO_ACTIVATION, (
+        "SA%d does not start with automatic activation set (%r)" % (short, initial))
+    try:
+        cleared = _store_auto_activation(api, foreign, short, 0x00)
+        assert cleared is not None and not cleared & AUTO_ACTIVATION, (
+            "INCONCLUSIVE, not a product failure: %d STORE GEAR FEATURES/STATUS 0x00 pairs "
+            "from the foreign master left the bit set (%r); the WB gateway spaces two frames "
+            "about the send-twice limit apart (IEC 62386-101 Table 20: 94 ms), so the gear "
+            "may refuse every pair — the DUT's sniffer lines show the spacing"
+            % (STORE_ATTEMPTS, cleared))
+
+        api.ts(short, {"power": "on", "level": REPAIR_LEVEL, "color_mode": "cct",
+                       "color_temperature_kelvin": second})
+        lit = wait_state(short, lambda s: s.get("color_temperature_kelvin") == second,
+                         timeout_s=REPAIR_WAIT_S)
+        repaired = _gear_features(api, short)
+        active = _active_tc_mirek(api.attributes(short, ["dt8_color"]))
+    finally:
+        restored = _store_auto_activation(api, foreign, short, AUTO_ACTIVATION)
+        assert restored is not None and restored & AUTO_ACTIVATION, (
+            "GEAR CONFIG NOT RESTORED: SA%d's automatic activation bit reads %r after %d "
+            "STORE GEAR FEATURES/STATUS pairs; the next colour write the controller sends "
+            "repairs it, or a power cycle does" % (short, restored, STORE_ATTEMPTS))
+    test_artifacts.attach_json("repair", {"initial": initial, "cleared": cleared,
+                                          "repaired": repaired, "active_mirek": active,
+                                          "state": lit})
+
+    assert repaired is not None and repaired & AUTO_ACTIVATION, (
+        "the colour write did not repair the cleared bit: 247 answers %r" % (repaired,))
+    assert active == _mirek(second), (
+        "the repaired write did not activate: the gear's active Tc is %r mirek, the "
+        "command was %d" % (active, _mirek(second)))
+    api.off(short)

@@ -1,26 +1,111 @@
+import { useEffect, useState } from 'preact/hooks'
 import { api } from '../api/client'
+import type { PhysicalDeviceSummary, Policies, PolicyException } from '../api/types'
 import { Card, FieldRow, Switch, EditableText } from '../components/ui'
-import { useSettingsDraft } from '../hooks'
+import { ADAPTER, pad2 } from '../format'
+import { usePoll, useSettingsDraft } from '../hooks'
 import { opCommitted, runOp } from '../toast'
+import {
+  exceptionKey,
+  policyOnScreen,
+  policyPatch,
+  sendOnFreshRead,
+  sortedExceptions,
+  withEdit,
+  type PolicyEdits,
+  type PolicyFields,
+} from './policies-patch'
+
+const MAX_POLICY_EXCEPTIONS = 32
+
+function ExceptionsCard({
+  policy,
+  devices,
+  onChange,
+}: {
+  policy: Policies
+  devices: PhysicalDeviceSummary[]
+  onChange: (exceptions: PolicyException[]) => void
+}) {
+  const excepted = new Set(policy.exceptions.map(exceptionKey))
+  const nameOf = (e: PolicyException) =>
+    e.adapter_id === ADAPTER ? devices.find((d) => d.short_address === e.short_address) : undefined
+  const candidates = devices.filter(
+    (d) => !excepted.has(exceptionKey({ adapter_id: ADAPTER, short_address: d.short_address })),
+  )
+  const full = policy.exceptions.length >= MAX_POLICY_EXCEPTIONS
+  return (
+    <Card title="Exceptions">
+      {policy.exceptions.map((e) => {
+        const device = nameOf(e)
+        return (
+          <FieldRow
+            key={exceptionKey(e)}
+            label={`SA ${pad2(e.short_address)}`}
+            hint={device ? device.name || '— unnamed' : 'No device at this address'}
+          >
+            <button
+              class="btn sm"
+              onClick={() =>
+                onChange(policy.exceptions.filter((x) => exceptionKey(x) !== exceptionKey(e)))
+              }
+            >
+              Remove
+            </button>
+          </FieldRow>
+        )
+      })}
+      <FieldRow
+        label="Except a device"
+        hint={
+          'The policy writes nothing to it, and an apply names it as skipped. The entry ' +
+          'follows the device to a new address and leaves with it when the device is ' +
+          `forgotten. At most ${MAX_POLICY_EXCEPTIONS}.`
+        }
+      >
+        <select
+          class="sel sm"
+          value=""
+          disabled={full || candidates.length === 0}
+          onChange={(ev) => {
+            const v = (ev.target as HTMLSelectElement).value
+            if (v === '') return
+            const added = { adapter_id: ADAPTER, short_address: Number(v) }
+            onChange(sortedExceptions([...policy.exceptions, added]))
+          }}
+        >
+          <option value="">device…</option>
+          {candidates.map((d) => (
+            <option key={d.short_address} value={String(d.short_address)}>
+              SA {pad2(d.short_address)}
+              {d.name ? ` · ${d.name}` : ''}
+            </option>
+          ))}
+        </select>
+      </FieldRow>
+    </Card>
+  )
+}
 
 export function PoliciesScreen() {
-  const { data, current, busy, setDraft, discard, save } = useSettingsDraft(() => api.policies())
+  const { data, busy, save } = useSettingsDraft(() => api.policies())
+  const { data: list } = usePoll(() => api.physicalDevices(ADAPTER))
+  const [edits, setEdits] = useState<PolicyEdits | null>(null)
+  useEffect(() => {
+    if (edits && data && withEdit(edits, {}, data) === null) setEdits(null)
+  }, [edits, data])
 
   if (!data) return <div class="empty">Loading policies…</div>
-  const s = current ?? data
-  const dirty =
-    s.system_failure_level !== data.system_failure_level ||
-    s.power_on_level !== data.power_on_level ||
-    s.apply_on_discovery !== data.apply_on_discovery
+  const s = policyOnScreen(edits ?? {}, data)
+  const edit = (change: Partial<PolicyFields>) => setEdits(withEdit(edits ?? {}, change, data))
+  const discard = () => setEdits(null)
+  const dirty = edits !== null && Object.keys(policyPatch(edits, data)).length > 0
 
   const apply = () =>
-    void save('Policies', () =>
-      api.patchPolicies({
-        system_failure_level: s.system_failure_level,
-        power_on_level: s.power_on_level,
-        apply_on_discovery: s.apply_on_discovery,
-      }),
-    )
+    void save('Policies', async () => {
+      await sendOnFreshRead(edits ?? {}, api.policies, api.patchPolicies)
+      discard()
+    })
 
   const writeToAll = () =>
     void (async () => {
@@ -64,13 +149,13 @@ export function PoliciesScreen() {
           label="System failure level"
           hint="Where the gear goes when the bus has been silent for more than 500 ms (102 §9.12). Empty = unmanaged: this controller writes it on no device. 0–254."
         >
-          {level(s.system_failure_level, (n) => setDraft({ ...s, system_failure_level: n }))}
+          {level(s.system_failure_level, (n) => edit({ system_failure_level: n }))}
         </FieldRow>
         <FieldRow
           label="Power-on level"
           hint="Where the gear goes when mains returns. Empty = unmanaged. 0–254."
         >
-          {level(s.power_on_level, (n) => setDraft({ ...s, power_on_level: n }))}
+          {level(s.power_on_level, (n) => edit({ power_on_level: n }))}
         </FieldRow>
         <FieldRow
           label="Write to a device as it is discovered"
@@ -78,15 +163,21 @@ export function PoliciesScreen() {
         >
           <Switch
             on={s.apply_on_discovery}
-            onToggle={() => setDraft({ ...s, apply_on_discovery: !s.apply_on_discovery })}
+            onToggle={() => edit({ apply_on_discovery: !s.apply_on_discovery })}
           />
         </FieldRow>
       </Card>
 
+      <ExceptionsCard
+        policy={s}
+        devices={list?.physical_devices ?? []}
+        onChange={(exceptions) => edit({ exceptions })}
+      />
+
       <Card title="Write it to the installation">
         <FieldRow
           label="Every known device"
-          hint="One write per device, paced. A device that confirms nothing costs one timeout and is reported — silence from a gear the registry believes is present is a fault worth seeing."
+          hint="One write per device, paced, skipping the exceptions. A device that confirms nothing costs one timeout and is reported — silence from a gear the registry believes is present is a fault worth seeing."
         >
           <button
             class="btn"

@@ -22,6 +22,15 @@ pub struct GroupMatrixDesiredRow {
     pub desired_groups_mask: u16,
 }
 
+pub const MAX_POLICY_EXCEPTIONS: usize = 32;
+pub type PolicyExceptionList = FixedItems<PolicyException, MAX_POLICY_EXCEPTIONS>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PolicyException {
+    pub adapter_id: u8,
+    pub short_address: u8,
+}
+
 pub const MAX_SCENE_MATRIX_ROWS_PER_COMMAND: usize = 4;
 pub type SceneMatrixDesiredRowList =
     FixedItems<SceneMatrixDesiredRow, MAX_SCENE_MATRIX_ROWS_PER_COMMAND>;
@@ -332,6 +341,7 @@ declare_bus_payloads! {
         pub dimming_curve: Option<u8>,
         pub signals_operation: bool,
         pub known_device_types: Option<DeviceTypeSet>,
+        pub refusal_fails: bool,
     }
     budget = DaliWriteAttributesCommand {
         short_address: 63,
@@ -348,6 +358,7 @@ declare_bus_payloads! {
         dimming_curve: Some(u8::MAX),
         signals_operation: true,
         known_device_types: Some(DeviceTypeSet::from_bits(u64::MAX)),
+        refusal_fails: true,
     };
 
     pub struct DaliDiscoverDevicesCommand {
@@ -994,12 +1005,14 @@ declare_bus_payloads! {
         pub system_failure_level: u8,
         pub power_on_level: u8,
         pub apply_on_discovery: bool,
+        pub exceptions: PolicyExceptionList,
     }
     budget = PoliciesUpdateCommand {
         patch_mask: u8::MAX,
         system_failure_level: u8::MAX,
         power_on_level: u8::MAX,
         apply_on_discovery: true,
+        exceptions: crate::msg::payload_test_samples::worst_policy_exceptions(),
     };
 
 
@@ -1181,6 +1194,7 @@ impl PoliciesUpdateCommand {
     pub const PATCH_SYSTEM_FAILURE_LEVEL: u8 = 1;
     pub const PATCH_POWER_ON_LEVEL: u8 = 2;
     pub const PATCH_APPLY_ON_DISCOVERY: u8 = 4;
+    pub const PATCH_EXCEPTIONS: u8 = 8;
     pub const UNMANAGED: u8 = u8::MAX;
 }
 

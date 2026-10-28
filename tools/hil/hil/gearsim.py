@@ -15,6 +15,8 @@ STAMP = re.compile(r"^\S+Z ")
 _KV = re.compile(r"(\w+)=(-?\d+)")
 RESERVED = re.compile(r"^(?:refused: )?reserved (?:already )?(0x[0-9a-f]+)")
 LOG_LEVEL_NOW = re.compile(r"\(now: (\w+)\)")
+LISTED = re.compile(r"^(\d+) gear listed$")
+STATS_LAST = "send_twice_interloper="
 SHOW_FIELDS = 8
 UNTOUCHED_QUIET_S = 1.0
 UNTOUCHED_MAX_S = 5.0
@@ -215,10 +217,18 @@ class GearSim:
     def window(self) -> LogWindow:
         return LogWindow(self.log)
 
-    def command(self, verb, timeout_s=REPLY_TIMEOUT_S):
+    def command(self, verb, timeout_s=REPLY_TIMEOUT_S, done=None):
         with self.window() as window:
             remote_serial.control(self.cfg, "write " + verb)
-            return _replies(window, timeout_s)
+            return _replies(window, timeout_s, done)
+
+    def _complete(self, verb, done, what):
+        replies = self.command(verb, done=done)
+        if not done(replies):
+            raise GearSimUnavailable("the emulator's `%s` reply reached the log without %s "
+                                     "within %.0f s: %s" % (verb, what, REPLY_TIMEOUT_S,
+                                                            " | ".join(replies) or "no reply"))
+        return replies
 
     def reserve(self, shorts):
         replies = self.command("reserve " + spell(shorts))
@@ -251,25 +261,32 @@ class GearSim:
         raise GearSimUnavailable("the emulator did not name its log level")
 
     def show(self):
-        rows = []
-        for line in self.command("show"):
-            fields = line.split()
-            if len(fields) == SHOW_FIELDS and fields[0].isdigit() and fields[1].isdigit():
-                rows.append({"short": int(fields[1]), "random": int(fields[2], 16),
-                             "dt8": fields[3] == "DT8", "level": int(fields[4]),
-                             "groups": int(fields[5], 16), "enabled": fields[6] == "yes"})
-        return rows
+        replies = self._complete("show", _listed, "its `gear listed` footer")
+        table = [line.split() for line in replies]
+        table = [fields for fields in table
+                 if len(fields) == SHOW_FIELDS and fields[0].isdigit()]
+        listed = next(int(m.group(1)) for m in map(LISTED.match, replies) if m)
+        if len(table) != listed:
+            raise GearSimUnavailable("the emulator listed %d gear and %d rows reached the log"
+                                     % (listed, len(table)))
+        return [{"short": int(fields[1]), "random": int(fields[2], 16),
+                 "dt8": fields[3] == "DT8", "level": int(fields[4]),
+                 "groups": int(fields[5], 16), "enabled": fields[6] == "yes"}
+                for fields in table if fields[1].isdigit()]
+
+    def _stats_lines(self):
+        return self._complete("stats", _stats_done, "its `%s` line" % STATS_LAST)
 
     def stats(self):
         values = {}
-        for line in self.command("stats"):
+        for line in self._stats_lines():
             for key, number in _KV.findall(line):
                 values[key] = int(number)
         return values
 
     def settle_bands(self):
         bands = {}
-        for line in self.command("stats"):
+        for line in self._stats_lines():
             match = re.match(r"priority (\d) (\d+)", line)
             if match:
                 bands[int(match.group(1))] = int(match.group(2))
@@ -283,15 +300,25 @@ class GearSim:
         }
 
 
-def _replies(window, timeout_s):
+def _listed(replies):
+    return any(LISTED.match(line) for line in replies)
+
+
+def _stats_done(replies):
+    return any(STATS_LAST in line for line in replies)
+
+
+def _replies(window, timeout_s, done=None):
     deadline = time.monotonic() + timeout_s
     replies, changed_at = [], time.monotonic()
     while time.monotonic() < deadline:
         now = [strip_stamp(line) for line in window.lines()]
         current = [line[1:].strip() for line in now if line.startswith("#")]
+        if done is not None and done(current):
+            return current
         if len(current) != len(replies):
             replies, changed_at = current, time.monotonic()
-        elif replies and time.monotonic() - changed_at > REPLY_QUIET_S:
+        elif done is None and replies and time.monotonic() - changed_at > REPLY_QUIET_S:
             break
         time.sleep(POLL_S)
     return replies

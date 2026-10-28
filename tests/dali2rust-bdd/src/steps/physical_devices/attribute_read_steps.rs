@@ -14,7 +14,8 @@ use super::attribute_read_scripts::{
     script_attribute_read_identity_with_content_confirm, script_attribute_read_no_probe,
     script_attribute_read_prelude, script_attribute_read_rgb_active,
     script_attribute_read_rgb_active_with_status, script_attribute_read_runtime_and_colour,
-    script_extended_section, script_groups_attribute_read, ScriptedReply, GOLDEN_GEAR_FEATURES,
+    script_common102_read, script_extended_section, script_groups_attribute_read, Common102Answers,
+    ScriptedReply, GOLDEN_GEAR_FEATURES,
     PD165_TC_MIREK, SCRIPTED_RUNTIME_STATUS,
 };
 use super::memory_bank_scripts::{bank1_part251_bytes, script_memory_bank_read, BANK0_BYTES};
@@ -171,31 +172,19 @@ async fn given_attribute_read_absent_device_script(world: &mut DaliWorld) {
 // PD-034
 #[given("a common-102 attribute-read script with fade byte 0x47 for short address 0")]
 async fn given_common102_fade_readback_script(world: &mut DaliWorld) {
+    const FADE_BYTE: u8 = 0x47;
     let mock = world.dali_mock().lock().expect("mock lock");
-    mock.clear();
-    mock.expect_forward_frame_with_backward(
-        standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryControlGearPresent),
-        Some(0xFF),
+    script_common102_read(&mock, Common102Answers { fade_byte: FADE_BYTE, ..Common102Answers::default() });
+}
+
+// POLICY-019 POLICY-020 POLICY-021 POLICY-022
+#[given(regex = r"^a common-102 attribute-read script where short address 0 holds power-on level (\d+) and system-failure level (\d+)$")]
+async fn given_common102_policy_levels_script(world: &mut DaliWorld, power_on_level: u8, system_failure_level: u8) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    script_common102_read(
+        &mock,
+        Common102Answers { power_on_level, system_failure_level, ..Common102Answers::default() },
     );
-    for (command, reply) in [
-        (StandardCommand::QueryVersionNumber, 0x08),
-        (StandardCommand::QueryDeviceType, 0x08),
-        (StandardCommand::QueryPhysicalMinimum, 0x01),
-        (StandardCommand::QueryMinLevel, 0x01),
-        (StandardCommand::QueryMaxLevel, 0xFE),
-        (StandardCommand::QueryPowerOnLevel, 0xFE),
-        (StandardCommand::QuerySystemFailureLevel, 0xFE),
-        (StandardCommand::QueryFadeTimeFadeRate, 0x47),
-        (StandardCommand::QueryLightSourceType, 0x06),
-        (StandardCommand::QueryRandomAddressH, 0x12),
-        (StandardCommand::QueryRandomAddressM, 0x34),
-        (StandardCommand::QueryRandomAddressL, 0x56),
-    ] {
-        mock.expect_forward_frame_with_backward(
-            standard_frame(TEST_SHORT_ADDRESS, command),
-            Some(reply),
-        );
-    }
 }
 
 // PD-156
@@ -351,7 +340,7 @@ async fn when_start_runtime_status_attribute_read(world: &mut DaliWorld) {
     );
 }
 
-// PD-034 PD-156
+// PD-034 PD-156 POLICY-019 POLICY-020 POLICY-021 POLICY-022
 #[when(r#"I start an attribute read for adapter 0 physical device 0 with attribute group "common_102" only"#)]
 async fn when_start_common102_attribute_read(world: &mut DaliWorld) {
     let body = br#"{"attribute_groups":["common_102"],"memory_banks":"none"}"#;

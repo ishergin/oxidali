@@ -1,5 +1,6 @@
 import collections
 import contextlib
+import json
 import time
 
 import requests
@@ -51,6 +52,8 @@ def kelvin_to_mirek(kelvin):
 
 TIMED_TRIGGERS = frozenset({"at_time", "at_solar"})
 RESTART_TRIGGERS = frozenset({"controller_starts", "controller_becomes_active"})
+MQTT_TRIGGERS = frozenset({"mqtt_message"})
+MQTT_ACTION = '"kind": "mqtt_publish"'
 
 
 def rules_on(projection, kinds):
@@ -142,6 +145,16 @@ class Client:
     def restart_rules(self):
         fired = rules_on(self._req("GET", "rules?format=json"), RESTART_TRIGGERS)
         return [name for name in fired if not name.startswith(lamp_guard.TEST_RULE_PREFIX)]
+
+    def mqtt_rules(self):
+        projection = self._req("GET", "rules?format=json")
+        compiled = (projection or {}).get("rules") or {}
+        publishing = {rule["name"] for rule in compiled.get("rules") or []
+                      if rule.get("enabled", True)
+                      and MQTT_ACTION in json.dumps(rule.get("actions"))}
+        named = set(rules_on(projection, MQTT_TRIGGERS)) | publishing
+        return sorted(name for name in named
+                      if not name.startswith(lamp_guard.TEST_RULE_PREFIX))
 
     def policy_armed(self):
         policy = self._req("GET", "policies")
