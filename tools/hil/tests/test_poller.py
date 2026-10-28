@@ -176,8 +176,18 @@ def test_the_power_cycle_watch_probes_with_the_poller_off_and_reads_only_to_swee
     delta = {k: poller_counters.delta(int(before.get(k, 0)), int(v))
              for k, v in after.items()}
     test_artifacts.attach_json("poller_delta", delta)
-    assert delta["reads_published"] == delta["power_cycle_sweep_reads"], \
-        "a disabled poller with the watch on read something other than a sweep: %s" % delta
+    verdict = sweep_read_verdict(delta)
+    assert verdict is None, verdict
+
+
+def sweep_read_verdict(delta):
+    if delta["reads_published"] != delta["power_cycle_sweep_reads"]:
+        return "a disabled poller with the watch on read something other than a sweep: %s" % delta
+    if not delta["power_cycle_sweeps"]:
+        return ("INCONCLUSIVE, not a product failure: no probe met a YES to QUERY POWER FAILURE "
+                "behind its control, so nothing was swept and no read was there to judge; the "
+                "probes with the poller off did go out: %s" % delta)
+    return None
 
 
 @pytest.mark.hil_id("HIL-POL-07")
