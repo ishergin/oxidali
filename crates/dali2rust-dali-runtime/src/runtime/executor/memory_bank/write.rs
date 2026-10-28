@@ -129,17 +129,7 @@ fn armed<C: DaliApplicationController, R>(
     for _ in 0..=BANK_ARM_RETRIES {
         let mut reached = false;
         let outcome = controller
-            .unit(|c| {
-                send_special(c, SpecialCommand::Dtr1(BANK1))?;
-                send_special(c, SpecialCommand::Dtr0(offset))?;
-                match pointer_proof(c, address, BANK1, (offset, false))? {
-                    PointerProof::Held => {
-                        reached = true;
-                        act(c).map(Ok)
-                    }
-                    other => Ok(Err(other)),
-                }
-            })
+            .unit(|c| arm_then(c, (address, offset), &mut reached, &mut act))
             .map_err(|error| Stop { error, reached })?;
         match outcome {
             Ok(done) => return Ok(done),
@@ -147,6 +137,23 @@ fn armed<C: DaliApplicationController, R>(
         }
     }
     Err(Stop { error: proof.failure(MEMORY_MISALIGNED), reached: false })
+}
+
+fn arm_then<C: DaliApplicationController, R>(
+    controller: &mut C,
+    (address, offset): (DaliAddress, u8),
+    reached: &mut bool,
+    act: &mut impl FnMut(&mut C) -> Result<R, SemanticDaliError>,
+) -> Result<Result<R, PointerProof>, SemanticDaliError> {
+    send_special(controller, SpecialCommand::Dtr1(BANK1))?;
+    send_special(controller, SpecialCommand::Dtr0(offset))?;
+    match pointer_proof(controller, address, BANK1, (offset, false))? {
+        PointerProof::Held => {
+            *reached = true;
+            act(controller).map(Ok)
+        }
+        other => Ok(Err(other)),
+    }
 }
 
 struct UnitEcho {
