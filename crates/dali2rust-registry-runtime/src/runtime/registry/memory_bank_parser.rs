@@ -548,3 +548,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod luminaire_write_round_trip;
