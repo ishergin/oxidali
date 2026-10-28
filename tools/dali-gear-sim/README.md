@@ -85,6 +85,7 @@ scene levels. Lines the queue drops show up as `log_dropped` in `stats`.
 
 | Command | |
 | --- | --- |
+| `help`, `?` | the command list |
 | `ready` | the ready line again, for a reader that missed the boot |
 | `reserve <a-b,c ...>` | the short addresses the fleet never holds; once per boot, before `fleet`; a second one is refused |
 | `fleet <base> <dt6> <cct> <rgb>` | build the fleet from `base` upward, skipping the reserve; all disabled |

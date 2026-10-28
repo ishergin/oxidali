@@ -17,8 +17,8 @@
 | Крейт | Что в нём |
 |---|---|
 | `dali2rust-rules-model` | типизированный граф правил, лимиты, трейты `RuleCompiler` и `NameResolver`, serde-проекция для REST; без I/O |
-| `dali2rust-rules-lang` | язык v1 (`LANG_RULES_V1 = 1`): лексер и парсер в модель; разбор — рекурсивный спуск с глубиной, которую ограничивает грамматика (`if`, `repeat` и `after` в себя не вкладываются), — он идёт на задаче httpd |
-| `dali2rust-rules-runtime` | воркер: приём документа, движок, таймерное колесо, исполнение эффектов; видит только модель, исходника не видит никогда |
+| `dali2rust-rules-lang` | язык v1 (`LANG_RULES_V1 = 1`): лексер и парсер в модель; разбор — рекурсивный спуск с глубиной, которую ограничивает грамматика (`if`, `repeat` и `after` в себя не вкладываются), — он идёт на задаче httpd, когда запрос проверяет исходник, и в воркере правил |
+| `dali2rust-rules-runtime` | воркер: приём документа, движок, таймерное колесо, исполнение эффектов; хранит и персистит исходник и отдаёт его `dyn RuleCompiler` при фиксации, перекомпиляции и гидрации, сам его не разбирает |
 
 Канон — текст оператора, язык заменяем, принтера нет
 ([`../../../architecture/01-overview.md`](../../../architecture/01-overview.md)
@@ -35,7 +35,7 @@
 
 ## Входы и выходы
 
-- **Воронка** команд и событий, 128 кадров
+- **Воронка** команд и событий
   ([`../../../architecture/03-bus-and-backpressure.md`](../../../architecture/03-bus-and-backpressure.md)
   §Capacities).
 - **Команды**: `RuleStageCommand` и `RuleCommitCommand` — чанковая запись документа
@@ -61,7 +61,7 @@
   по смене ревизии: у документа пира может быть та же ревизия при других байтах.
 - **Публикует** с `Origin::Rules`: `DaliSetTargetStateCommand` и
   `DaliStopFadeCommand` — свет; `DaliRecallSceneCommand` и `SceneApplyExecuteCommand` —
-  сцены; `HclOverrideHoldCommand` — `hcl.hold`; `HclOverrideResumeCommand` — `hcl.resume`;
+  сцены, перед вторым — `OperationBeginCommand` его операции; `HclOverrideHoldCommand` — `hcl.hold`; `HclOverrideResumeCommand` — `hcl.resume`;
   `HclScheduleEnableCommand` —
   `hcl.enable` / `hcl.disable` (исполняет реестр); `Dali103FeedbackDriveCommand` —
   индикация; `Dali103InstanceActionCommand` — `cancel_hold` / `catch_movement` датчика
@@ -148,10 +148,10 @@
 ## Наблюдаемость
 
 - WebSocket-канал `rules`: смены документа и каждая активация.
-- Блок `rules` в `/api/v1/stats`: активации по исходам, подавления, отказы условий,
-  глубина цепочек, эффекты, континуации (и сколько их ждёт сейчас), задержка от начала
-  обработки входа воркером до публикации всех эффектов активации (p50 / p95 / max;
-  цель — p50 ≤ 100 мс, p95 ≤ 200 мс), именованные счётчики `stat`.
+- Блок `rules` в `/api/v1/stats`
+  ([`../../rest-api/resources/stats.md`](../../rest-api/resources/stats.md)); цель для
+  задержки от начала обработки входа воркером до публикации всех эффектов активации —
+  p50 ≤ 100 мс, p95 ≤ 200 мс.
 - Строки `log()` — в журнале контроллера под target `rules`.
 - Блок `rules` в `/api/v1/diagnostics`: счётчики воркера.
 - Пер-правило: блок `runtime` в проекции REST — сколько раз, когда последний раз и с
@@ -160,7 +160,8 @@
 ## Стек и память
 
 Один поток на `COMMAND_WORKER_STACK` со строкой в бюджете стеков HIL
-(`tools/hil/stack_budget.txt`); его глубина растёт с содержимым реестра. Активация
+(`tools/hil/stack_budget.txt`); его глубина растёт с содержимым реестра, и разбор
+исходника компилятором идёт на нём же. Активация
 плоская: условия по снимку, действия итератором по развёрнутому графу. Рекурсия
 ограничена: разворот углубляется не дальше лимитов графа, а `rule fails` добавляет ровно
 один вложенный проход ([`operations.md`](operations.md) §1.7).

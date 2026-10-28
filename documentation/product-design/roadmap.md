@@ -37,7 +37,7 @@
 ### X2 — несколько адаптеров
 
 Реестр, REST и шина уже адресуют адаптер, собран один
-([`runtime-modules/README.md`](runtime-modules/README.md) §Один адаптер сегодня).
+([`runtime-modules/README.md`](runtime-modules/README.md) §Один адаптер в композиции).
 Целевая композиция:
 
 - N транспортов DALI, у каждого свой PHY; распиновка — данными, парой TX/RX на адаптер;

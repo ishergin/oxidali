@@ -190,7 +190,7 @@ sequenceDiagram
   L-->>W: answer, silence or collision (retried)
   W->>B: applied event + confirmation
   B-->>H: confirmation into the request's slot
-  H-->>C: 200 (503 if refused, 504 on timeout)
+  H-->>C: 200 (409 refused by a gate or superseded, 503 undelivered or failed, 504 on timeout)
   B->>F: applied event
   F->>B: runtime update command
   B->>R: commit (the only writer)
@@ -298,36 +298,43 @@ one. Every session snapshots the controller's configuration and the light and re
 them afterwards. The runbook, with what a bench needs, the configuration and
 the first run, is [`tools/hil/README.md`](tools/hil/README.md).
 
-Two more instruments sit beside the toolkit:
+Beside the toolkit sits [`tools/dali-gear-sim`](tools/dali-gear-sim/README.md), the
+**gear emulator**: the redundancy pair's second ESP32-P4, borrowed for a session, answers
+on the shared line as a fleet of virtual control gear (DT6, DT8 Tc, DT8 RGB+Tc) while
+drawing a single bus load. Tests drive gear that is nobody's light: target states, groups,
+scenes, HCL, the commissioning search, a poller sweep and a registry near its ceiling.
+Every boot starts with no fleet until the toolkit names the short addresses the real lamps
+hold, and nothing is stored. It runs the shared `dali2rust-gear-model` crate, the same
+model as the host simulator, and the HIL toolkit drives it over its serial console.
 
-- [`tools/dali-gear-sim`](tools/dali-gear-sim/README.md), the **gear emulator**: the
-  redundancy pair's second ESP32-P4, borrowed for a session, answers on the shared line
-  as a fleet of virtual control gear (DT6, DT8 Tc, DT8 RGB+Tc) while drawing a single
-  bus load. Tests drive gear that is nobody's light: target states, groups, scenes, HCL,
-  the commissioning search, a poller sweep and a registry near its ceiling. Every boot
-  starts with no fleet until the toolkit names the short addresses the real lamps hold,
-  and nothing is stored. It runs the shared `dali2rust-gear-model` crate, the same model
-  as the host simulator, and the HIL toolkit drives it over its serial console.
-- [`tools/dali-arbiter`](tools/dali-arbiter/README.md), the **wire witness**, targets an
-  ESP32-C6 with a Pico-DALI2 and is not ported: a receive-only board that records raw
-  pulse widths with the RMT peripheral. The firmware cannot judge its own transmit
-  timing, so this board compares our frames with a reference master's frames in the
-  same capture; `hil/arbiter.py` decodes and scores the captures.
+The firmware cannot judge its own transmit timing, and no independent receiver is
+installed. [`tools/dali-arbiter`](tools/dali-arbiter/README.md) specifies one, the **wire
+witness**: a receive-only board that records raw pulse widths with the RMT peripheral and
+compares our frames with a reference master's frames in the same capture. Its firmware
+targets an ESP32-C6 and is not ported, no such board exists, and `hil/arbiter.py` is its
+decoder.
 
 ## Roadmap
 
+Open work, stage by stage, is in
+[`roadmap.md`](documentation/product-design/roadmap.md) (in Russian).
+
+- **Display settings**: rotation, a screen saver and the pages shown, changed at runtime.
 - **Cluster.** Several controllers act as one system: permitted group commands and
   scene recalls are forwarded between controllers over MQTT, with loop suppression
   ([design](documentation/product-design/runtime-modules/cluster/README.md), in Russian).
-- **A Linux service with a Pico DALI endpoint.** The same stack as a Linux daemon (it
-  already runs on a host), attached over USB or Ethernet to a DALI coprocessor: an
-  RP2350 (Pico 2) with PIO on the Pico-DALI2. The coprocessor keeps bit timing,
-  settling windows, collision detection and frame capture; the host keeps the
+- **Several DALI adapters** on one controller, each with its own `DaliWorker`.
+- **Adapter proxy**: permitted commands forwarded between the adapters of one controller
+  ([design](documentation/product-design/runtime-modules/dali-proxy/README.md), in Russian).
+- **A Linux service with a Pico DALI endpoint, deferred.** The same stack as a Linux
+  daemon (it already runs on a host), attached over USB or Ethernet to a DALI
+  coprocessor: an RP2350 (Pico 2) with PIO on the Pico-DALI2. The coprocessor keeps bit
+  timing, settling windows, collision detection and frame capture; the host keeps the
   application. It also allows a host-based standby, such as a wall panel
   ([ADR-019](documentation/architecture/decisions/ADR-019-standby-dali-endpoint.md)).
 - **A DALI-2 push-button.** A bus-powered wall-box input device with two to four
   buttons, RGB feedback per button, NFC tap-to-bind and BLE updates, speaking Parts 103,
-  301 and 332; the schematic is being drawn.
+  301 and 332.
 
 ## Repository layout
 
@@ -339,7 +346,7 @@ Two more instruments sit beside the toolkit:
 | `web/design-system/` | A design card for every screen and component |
 | `hardware/enclosure/` | The DIN-rail enclosure: the FreeCAD model and its exports |
 | `tools/hil/` | The hardware-in-the-loop test toolkit |
-| `tools/dali-gear-sim/`, `tools/dali-arbiter/` | The gear emulator (the pair's second ESP32-P4) and the wire witness (ESP32-C6, not ported) |
+| `tools/dali-gear-sim/`, `tools/dali-arbiter/` | The gear emulator (the pair's second ESP32-P4) and the specification of a wire witness (ESP32-C6, not ported; no board exists) |
 | `scripts/` | The merge-gate scripts `just verify` runs and their budgets, plus build, release and measurement helpers |
 | `documentation/` | Architecture, decision records and the product design |
 

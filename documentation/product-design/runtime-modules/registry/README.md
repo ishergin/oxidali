@@ -19,9 +19,13 @@ runtime-состояние. Всё остальное читает его чер
   в порядке прихода.
 - **Публикует** события изменений после коммита, `RuntimeStateChangedEvent` после
   runtime-коммита, подтверждения записям, сигнал операции для чанковых записей
-  (через `publish_required`) и `RegistrySliceReloadedEvent` после перечитки слайсов.
-- **Предоставляет** `RegistryReadPort` и узкие read-порты, мосты `*HttpState` для
-  HTTP и счётчики применения (apply-watch) для хендлеров настроек и моста Home Assistant.
+  (через `publish_required`) и `RegistrySliceReloadedEvent` после перечитки слайсов;
+  каждую запись, которую перечитка заменила, объявляет её событием изменения, с
+  темпом ([`../../../architecture/06-registry-and-persistence.md`](../../../architecture/06-registry-and-persistence.md)
+  §Hydration).
+- **Предоставляет** `RegistryReadPort` и узкие read-порты, поверх которых `dali2rust-api`
+  и композиция строят мосты `*HttpState`, и счётчики применения (apply-watch) для
+  хендлеров настроек и моста Home Assistant.
 
 ## Чем владеет и откуда оно меняется
 

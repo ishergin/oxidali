@@ -1,16 +1,17 @@
 # dali-arbiter — independent DALI wire witness
 
-> **Targets an ESP32-C6 and is not ported to the ESP32-P4.** The firmware (an ESP-IDF
-> C project for the C6) and its host-side decoder are the instrument's specification.
+> **No such board exists, and no recipe or gate builds this directory.** It specifies a
+> receiver: an ESP-IDF C project for the ESP32-C6, not ported to the ESP32-P4; its
+> host-side decoder is in the HIL toolkit (below).
 
-An edge recorder wired **receive-only** to the DALI bus, answering the question the
-controller cannot answer about itself: is the frame it puts on the wire shaped the
-way it should be? Why the firmware cannot judge its own transmit timing is in
-[`08-dali-phy-and-transport.md`](../../documentation/architecture/08-dali-phy-and-transport.md);
-this board is the independent observer it calls for.
+An edge recorder wired **receive-only** to the DALI bus would answer the question the
+controller cannot answer about itself: is the frame it puts on the wire shaped the way it
+should be? Why the firmware cannot judge its own transmit timing, and that no independent
+receiver is installed, is in
+[`08-dali-phy-and-transport.md`](../../documentation/architecture/08-dali-phy-and-transport.md).
 
-Scope: the instrument's contract and build; its host-side decoder lives in the HIL
-toolkit (below).
+Scope: the instrument's contract and the reference build; its host-side decoder lives in
+the HIL toolkit (below).
 
 ## The contract
 
@@ -30,7 +31,7 @@ toolkit (below).
 - **Receive only.** The TX line is parked recessive and never driven; a floating TX
   input could assert the bus on noise.
 
-## Build (C6 wiring)
+## Reference build (C6 wiring)
 
 Pico-DALI2 receive output on GPIO 5, TX parked on GPIO 14. The boot banner prints a
 transition count for every candidate GPIO, so a wrong pin does not look like a dead
@@ -45,4 +46,4 @@ idf.py -p <port> flash
 ## Host side
 
 `hil/arbiter.py` parses, Manchester-decodes and scores captures (`capture`,
-`summary`, `dump`).
+`summary`, `dump`); it is not a `hil` command, and no test uses it.

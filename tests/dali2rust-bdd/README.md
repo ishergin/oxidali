@@ -32,7 +32,7 @@ just bdd-check    # ID and coverage gates, then the suite
   feature files over four processes, balanced by scenario count; `BDD_SHARD=<i>/<n>` is
   what each process reads. `just bdd` keeps one process unless told otherwise.
 - The runner skips `@wip` scenarios. A cucumber `--name` or `--tags` filter replaces the
-  harness filter (the `@wip` skip, `ONLY_FEATURES` and `ONLY_STAGE`), so a tag expression
+  harness filter (the `@wip` skip, `ONLY_FEATURES`, `ONLY_STAGE` and the shard), so a tag expression
   that should keep the skip says so:
   `cargo bdd -- --tags '(@id:PD-027 or @id:PD-028) and not @wip'`.
 - The gates the suite answers to are listed in `05-testing-and-bdd.md`; all of them run
