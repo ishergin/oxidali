@@ -39,6 +39,10 @@ pub const RELOCK_SUBJECT: &str = "bank1_lock_not_restored";
 
 pub const IDENTITY_SUBJECT: &str = "device_identity";
 
+pub const HEADER_SUBJECT: &str = "bank1_header";
+
+const READ_ENDED_EARLY: &str = "memory_bank_read_ended_early";
+
 pub const IDENTITY_UNKNOWN: &str = "device_identity_unknown";
 
 pub const IDENTITY_CHANGED: &str = "device_identity_changed";
@@ -62,10 +66,20 @@ impl LuminaireWriteFailure {
         Self::new(error.code(), error.message())
     }
 
+    // IEC 62386-102 §9.10.4
+    fn unread(error: SemanticDaliError, subject: &'static str) -> Self {
+        let code = match error.message() {
+            MEMORY_POINTER_UNCONFIRMED | READ_ENDED_EARLY => ErrorCode::DeviceAbsent,
+            BUS_CONTENDED | MEMORY_LATCH_LOST => ErrorCode::ReadContended,
+            _ => error.code(),
+        };
+        Self::new(code, subject)
+    }
+
     // IEC 62386-102 §9.10.5
     fn unproved(error: SemanticDaliError, subject: &'static str) -> Self {
         let code = match error.message() {
-            MEMORY_POINTER_UNCONFIRMED => ErrorCode::VerifyUnanswered,
+            MEMORY_POINTER_UNCONFIRMED | READ_ENDED_EARLY => ErrorCode::VerifyUnanswered,
             BUS_CONTENDED | MEMORY_LATCH_LOST => ErrorCode::VerifyContended,
             MEMORY_MISALIGNED => ErrorCode::VerifyFailed,
             _ => error.code(),
@@ -268,6 +282,15 @@ fn write_sessions(
     WireOutcome::default()
 }
 
+// IEC 62386-102 §9.10.4
+fn whole(read: &MemoryReadExecution, length: usize) -> Result<&[u8], SemanticDaliError> {
+    match read.error {
+        Some(error) => Err(error),
+        None if read.bytes.len() < length => Err(SemanticDaliError::OperationFailed(READ_ENDED_EARLY)),
+        None => Ok(&read.bytes),
+    }
+}
+
 // IEC 62386-102 §9.10.6, Table 9
 fn prove_identity(
     controller: &mut impl DaliApplicationController,
@@ -276,14 +299,21 @@ fn prove_identity(
 ) -> Result<(), LuminaireWriteFailure> {
     let identity = identity.ok_or(LuminaireWriteFailure::new(ErrorCode::Conflict, IDENTITY_UNKNOWN))?;
     let window = read_memory_bank(controller, short_address, BANK0, u16::from(GTIN_OFFSET), IDENTITY_WINDOW_LEN);
+    let unread = |error| LuminaireWriteFailure::unread(error, IDENTITY_SUBJECT);
     if let Some(error) = window.error {
-        return Err(LuminaireWriteFailure::unproved(error, IDENTITY_SUBJECT));
+        return Err(unread(error));
     }
-    if identity.read_in(&window.bytes) {
-        Ok(())
-    } else {
-        Err(LuminaireWriteFailure::new(ErrorCode::Conflict, IDENTITY_CHANGED))
+    match DeviceIdentity::in_window(&window.bytes) {
+        Some(seen) if seen == identity => Ok(()),
+        Some(_) => Err(LuminaireWriteFailure::new(ErrorCode::Conflict, IDENTITY_CHANGED)),
+        None => Err(unread(SemanticDaliError::OperationFailed(READ_ENDED_EARLY))),
     }
+}
+
+// IEC 62386-102 §9.10.4
+fn header_len(bytes: &[u8]) -> usize {
+    let declared = |last: &u8| usize::from(*last) + 1;
+    bytes.first().map_or(1, declared).min(usize::from(BANK1_HEADER_LEN))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -297,15 +327,14 @@ fn read_header(
     short_address: u8,
     writes: &[FieldWrite],
 ) -> Result<Header, LuminaireWriteFailure> {
-    let header = read_memory_bank(controller, short_address, BANK1, 0, BANK1_HEADER_LEN);
-    if let Some(error) = header.error {
-        return Err(LuminaireWriteFailure::of(error));
-    }
-    let layout = Bank1Layout::from_header(&header.bytes);
+    let read = read_memory_bank(controller, short_address, BANK1, 0, BANK1_HEADER_LEN);
+    let header = whole(&read, header_len(&read.bytes))
+        .map_err(|error| LuminaireWriteFailure::unread(error, HEADER_SUBJECT))?;
+    let layout = Bank1Layout::from_header(header);
     for write in writes {
         check_writable(&layout, write.field).map_err(LuminaireWriteFailure::refused)?;
     }
-    let lock = header.bytes.get(usize::from(BANK_LOCK_BYTE)).copied();
+    let lock = header.get(usize::from(BANK_LOCK_BYTE)).copied();
     match (lock, layout.last_offset) {
         (Some(lock), Some(last_offset)) => Ok(Header { lock, last_offset }),
         _ => Err(LuminaireWriteFailure::refused(Bank1WriteRefusal::NotPart251)),
@@ -316,16 +345,19 @@ fn verdict(
     wire: WireOutcome,
     readback: &MemoryReadExecution,
     writes: &[FieldWrite],
-    lock: u8,
+    header: Header,
 ) -> Result<(), LuminaireWriteFailure> {
-    if let Some(error) = readback.error {
-        let unread = LuminaireWriteFailure::unproved(error, READBACK_SUBJECT);
-        return Err(wire.unrestored.or(wire.stopped).unwrap_or(unread));
-    }
-    if readback.bytes.get(usize::from(BANK_LOCK_BYTE)) != Some(&lock) {
+    let bank = match whole(readback, usize::from(header.last_offset) + 1) {
+        Ok(bank) => bank,
+        Err(error) => {
+            let unread = LuminaireWriteFailure::unproved(error, READBACK_SUBJECT);
+            return Err(wire.unrestored.or(wire.stopped).unwrap_or(unread));
+        }
+    };
+    if bank.get(usize::from(BANK_LOCK_BYTE)) != Some(&header.lock) {
         return Err(LuminaireWriteFailure::new(ErrorCode::VerifyFailed, RELOCK_SUBJECT));
     }
-    match writes.iter().find(|write| !write.held_by(&readback.bytes)) {
+    match writes.iter().find(|write| !write.held_by(bank)) {
         Some(write) => Err(wire.stopped.unwrap_or(LuminaireWriteFailure::new(ErrorCode::VerifyFailed, write.field.name))),
         None => Ok(()),
     }
@@ -349,7 +381,7 @@ pub fn write_memory_luminaire(
     let length = u16::from(header.last_offset) + 1;
     let readback = read_memory_bank(controller, short_address, BANK1, 0, length);
     on_readback(&readback);
-    verdict(wire, &readback, writes, header.lock)
+    verdict(wire, &readback, writes, header)
 }
 
 #[cfg(test)]

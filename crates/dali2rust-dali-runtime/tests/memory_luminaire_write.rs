@@ -10,8 +10,8 @@ use dali2rust_dali_runtime::{spawn_dali_worker, DaliRuntimeConfig, DaliWorkerCou
 use dali2rust_contracts::msg::{ErrorCode, LuminaireNumbers as N};
 use dali2rust_dali_runtime::runtime::controller::DaliController;
 use dali2rust_dali_runtime::runtime::executor::{
-    write_memory_luminaire, LuminaireWriteFailure, IDENTITY_CHANGED, IDENTITY_SUBJECT, IDENTITY_UNKNOWN,
-    LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT,
+    write_memory_luminaire, LuminaireWriteFailure, HEADER_SUBJECT, IDENTITY_CHANGED, IDENTITY_SUBJECT,
+    IDENTITY_UNKNOWN, LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT,
 };
 use dali2rust_domain::dali::banks::identity::{
     GTIN_LEN, GTIN_OFFSET, IDENTIFICATION_NUMBER_LEN, IDENTIFICATION_NUMBER_OFFSET,
@@ -22,7 +22,9 @@ use dali2rust_domain::dali::banks::luminaire_write::{
 };
 use dali2rust_domain::dali::banks::part251::{self, LuminaireFormat, LUMINAIRE_COLOUR, YEAR_OFFSET};
 use dali2rust_domain::dali::controller::DaliApplicationController;
+use dali2rust_domain::dali::frame::ForwardFrame;
 use dali2rust_domain::dali::pres::command::DaliCommand;
+use dali2rust_domain::dali::pres::opcode::READ_MEMORY_LOCATION_OPCODE;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::types::DaliAddress;
@@ -48,6 +50,7 @@ const MULTI_SESSION_TEXT: &str = "fixture lamp";
 const SHORT_TEXT: &str = "ab";
 const LIGHT_OUTPUT: u32 = 0x0A_0B_0C;
 const WRITE_CORRELATION: u64 = 251;
+const QUERY_SELECTOR: u8 = 0x01;
 
 #[derive(Clone)]
 enum Interruption {
@@ -62,7 +65,31 @@ enum Trigger {
     Frame(u16),
     Nth(usize),
     From(u16),
-    Occurrences(u16, Vec<usize>),
+    ReadAt(u8, u8),
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Pointer {
+    bank: u8,
+    offset: u8,
+    reads: u8,
+}
+
+impl Pointer {
+    fn follow(&mut self, frame: u16) -> Option<(u8, u8)> {
+        let [opcode, value] = frame.to_be_bytes();
+        let opcode_of = |command: SpecialCommand| special(command).to_be_bytes()[0];
+        if opcode == opcode_of(SpecialCommand::Dtr1(0)) {
+            self.bank = value;
+        } else if opcode == opcode_of(SpecialCommand::Dtr0(0)) {
+            *self = Self { offset: value, reads: 0, ..*self };
+        } else if frame == read_location() {
+            let at = self.offset.wrapping_add(self.reads);
+            self.reads = self.reads.wrapping_add(1);
+            return Some((self.bank, at));
+        }
+        None
+    }
 }
 
 struct Interrupting {
@@ -70,19 +97,20 @@ struct Interrupting {
     interruptions: Vec<Interruption>,
     trigger: Trigger,
     sent: usize,
-    occurrences: usize,
     started: bool,
+    pointer: Pointer,
 }
 
 type SimError = <SimDaliTransport as DaliTransport>::Error;
 
 impl Interrupting {
     fn new(sim: SimDaliTransport, interruptions: Vec<Interruption>, trigger: Trigger) -> Self {
-        Self { sim, interruptions, trigger, sent: 0, occurrences: 0, started: false }
+        Self { sim, interruptions, trigger, sent: 0, started: false, pointer: Pointer::default() }
     }
 
     fn fires(&mut self, frame: u16) -> bool {
         self.sent += 1;
+        let read = self.pointer.follow(frame);
         match &self.trigger {
             Trigger::Frame(at) => frame == *at,
             Trigger::Nth(at) => self.sent == *at,
@@ -90,10 +118,7 @@ impl Interrupting {
                 self.started |= frame == *at;
                 self.started
             }
-            Trigger::Occurrences(at, nths) => {
-                self.occurrences += usize::from(frame == *at);
-                frame == *at && nths.contains(&self.occurrences)
-            }
+            Trigger::ReadAt(bank, offset) => read == Some((*bank, *offset)),
         }
     }
 
@@ -165,6 +190,11 @@ fn operator() -> Interruption {
 
 fn special(command: SpecialCommand) -> u16 {
     DaliCommand::Special(command).to_forward_frame().raw()
+}
+
+fn read_location() -> u16 {
+    let address = DaliAddress::Short(SHORT).encode_address_byte() | QUERY_SELECTOR;
+    ForwardFrame::new(address, READ_MEMORY_LOCATION_OPCODE).raw()
 }
 
 fn query_dtr0() -> u16 {
@@ -636,6 +666,77 @@ fn an_identity_read_that_yields_stops_the_write_before_any_write() {
 
     assert_eq!(shape(outcome.result), failure(ErrorCode::Preempted, IDENTITY_SUBJECT));
     assert!(wrote_nothing(&sim));
+}
+
+fn lost_answers(trigger: Trigger, writes: &[FieldWrite]) -> (Outcome, SimDaliTransport) {
+    write_under(YieldGranularity::Step, trigger, &[Interruption::LostAnswer], writes)
+}
+
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn an_identity_window_that_ends_early_proves_nothing() {
+    let cut = Trigger::ReadAt(IDENTITY_BANK, IDENTIFICATION_NUMBER_OFFSET);
+    let (outcome, sim) = lost_answers(cut, &year(YEAR));
+
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::DeviceAbsent, IDENTITY_SUBJECT),
+        "a GTIN without its identification number is not another device"
+    );
+    assert!(wrote_nothing(&sim));
+}
+
+// IEC 62386-102 §9.10.6
+#[test]
+fn a_gear_silent_from_the_identity_read_is_absent_not_unverified() {
+    let silent = Trigger::From(special(SpecialCommand::Dtr1(IDENTITY_BANK)));
+    let (outcome, sim) = lost_answers(silent, &year(YEAR));
+
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::DeviceAbsent, IDENTITY_SUBJECT),
+        "nothing was written, so there is nothing to verify"
+    );
+    assert!(wrote_nothing(&sim));
+}
+
+// IEC 62386-102 §9.10.4
+// DiiA 251 §9.2.3
+#[test]
+fn a_bank_1_header_that_ends_early_proves_nothing() {
+    let cut = Trigger::ReadAt(PROFILE_BANK, part251::CONTENT_FORMAT_ID_OFFSET);
+    let (outcome, sim) = lost_answers(cut, &year(YEAR));
+
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::DeviceAbsent, HEADER_SUBJECT),
+        "a header cut before its format is not a format refusal"
+    );
+    assert!(wrote_nothing(&sim));
+}
+
+// IEC 62386-102 §9.10.4
+#[test]
+fn a_gear_silent_from_the_bank_1_header_names_the_header() {
+    let silent = Trigger::From(special(SpecialCommand::Dtr1(PROFILE_BANK)));
+    let (outcome, sim) = lost_answers(silent, &year(YEAR));
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::DeviceAbsent, HEADER_SUBJECT));
+    assert!(wrote_nothing(&sim));
+}
+
+// IEC 62386-102 §9.10.4, §9.10.5
+#[test]
+fn a_read_back_that_ends_early_proves_nothing() {
+    let cut = Trigger::ReadAt(PROFILE_BANK, YEAR_OFFSET);
+    let (outcome, sim) = lost_answers(cut, &year(YEAR));
+
+    assert_eq!(location(&sim, YEAR_OFFSET), Some(YEAR), "the write landed; only its proof is missing");
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::VerifyUnanswered, READBACK_SUBJECT),
+        "a read-back that stops before the field is not a field the gear refused"
+    );
 }
 
 fn worker_command(text: &str) -> BusFrame {

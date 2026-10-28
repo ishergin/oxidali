@@ -18,31 +18,37 @@ fn flipped(index: u8) -> Vec<u8> {
     bytes
 }
 
+fn holds_another(window: &[u8]) -> bool {
+    DeviceIdentity::in_window(window).is_some_and(|seen| seen != IDENTITY)
+}
+
 #[test]
 fn the_window_of_bank_0_from_the_gtin_to_the_identification_number_holds_the_identity() {
     assert_eq!(window().len(), usize::from(IDENTITY_WINDOW_LEN));
-    assert!(IDENTITY.read_in(&window()));
+    assert_eq!(DeviceIdentity::in_window(&window()), Some(IDENTITY));
 }
 
 #[test]
 fn a_gtin_off_in_its_last_byte_is_another_device() {
     let last = GTIN_OFFSET + GTIN_LEN as u8 - 1;
-    assert!(!IDENTITY.read_in(&flipped(last)));
+    assert!(holds_another(&flipped(last)));
 }
 
 #[test]
 fn an_identification_number_off_in_its_last_byte_is_another_device() {
     let last = IDENTIFICATION_NUMBER_OFFSET + IDENTIFICATION_NUMBER_LEN as u8 - 1;
-    assert!(!IDENTITY.read_in(&flipped(last)));
+    assert!(holds_another(&flipped(last)));
 }
 
 #[test]
 fn the_firmware_version_between_them_is_not_identity() {
-    assert!(IDENTITY.read_in(&flipped(GTIN_OFFSET + GTIN_LEN as u8)));
+    assert_eq!(DeviceIdentity::in_window(&flipped(GTIN_OFFSET + GTIN_LEN as u8)), Some(IDENTITY));
 }
 
 #[test]
-fn a_window_that_stops_short_holds_no_identity() {
+fn a_window_that_stops_short_holds_no_identity_to_compare() {
     let window = window();
-    assert!(!IDENTITY.read_in(&window[..window.len() - 1]));
+    assert_eq!(DeviceIdentity::in_window(&window[..window.len() - 1]), None, "neither this device nor another");
+    let longer = [window.as_slice(), &[0x00]].concat();
+    assert_eq!(DeviceIdentity::in_window(&longer), None, "a window is read whole or not at all");
 }

@@ -14,18 +14,24 @@ pub struct DeviceIdentity {
 }
 
 impl DeviceIdentity {
-    pub fn read_in(&self, window: &[u8]) -> bool {
-        let gtin = self.gtin.to_be_bytes();
-        let number = self.identification_number.to_be_bytes();
-        let gtin = gtin.get(gtin.len() - GTIN_LEN..);
-        within(window, GTIN_OFFSET, GTIN_LEN) == gtin
-            && within(window, IDENTIFICATION_NUMBER_OFFSET, IDENTIFICATION_NUMBER_LEN) == Some(number.as_slice())
+    pub fn in_window(window: &[u8]) -> Option<Self> {
+        if window.len() != usize::from(IDENTITY_WINDOW_LEN) {
+            return None;
+        }
+        Some(Self {
+            gtin: number_within(window, GTIN_OFFSET, GTIN_LEN),
+            identification_number: number_within(window, IDENTIFICATION_NUMBER_OFFSET, IDENTIFICATION_NUMBER_LEN),
+        })
     }
 }
 
-fn within(window: &[u8], offset: u8, len: usize) -> Option<&[u8]> {
+fn number_within(window: &[u8], offset: u8, len: usize) -> u64 {
     let start = usize::from(offset - GTIN_OFFSET);
-    window.get(start..start + len)
+    window
+        .iter()
+        .skip(start)
+        .take(len)
+        .fold(0, |number, byte| number << 8 | u64::from(*byte))
 }
 
 #[cfg(test)]

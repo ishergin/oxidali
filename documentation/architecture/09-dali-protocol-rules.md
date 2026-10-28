@@ -61,8 +61,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   `ErrorCode::Preempted` and commits nothing from the interrupted stage; a preempted
   `write-attributes` keeps the attributes it confirmed before the yield and ends
   `Preempted`; a preempted `memory_luminaire` write ends `Preempted` naming where it
-  stopped (`device_identity`, the field whose session had not started, or
-  `bank1_readback`), with its lock byte as found and the bytes already written unproved
+  stopped (`device_identity`, `bank1_header`, the field whose session had not started,
+  or `bank1_readback`), with its lock byte as found and the bytes already written unproved
   until the next bank read; the poller re-queues the target with no cooldown. No surface
   renders it as a failure.
 - A priority is a settling window (101 Table 22), not a floor. The controller draws a
@@ -285,9 +285,18 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   (`device_identity_changed`). So is a gear whose bank 0 the registry never read
   (`device_identity_unknown`): non-volatile memory is not written unproved. The identity
   never travels in the bus frame.
-- The executor then re-reads the header (`0x00..0x12`) and gates every field on it —
-  content format 3–5, the field present in that format, the bank long enough — before
-  any write.
+- A read before or after the write proves something only when it is whole. A bank read
+  ends early, with no error, at two silences on one location (§Reading answers); such
+  an end counts only where the bank's own byte `0x00` puts it. So the identity window
+  is read to its last byte, the header to `0x12` or to the end its byte `0x00`
+  declares, and the read-back to that `0x00`. A shorter read proves nothing: it is
+  neither another device, nor another format, nor a field the gear refused.
+- Reads before the first write report what the wire did, not a verification:
+  `device_absent` for silence or a read that ended early, `read_contended` for a
+  violating frame, `preempted` for a yield; the message is `device_identity` or
+  `bank1_header`.
+- The executor then re-reads the header and gates every field on it — content format
+  3–5, the field present in that format, the bank long enough — before any write.
 - Each unit writes at most three bytes (101 §9.2). It sends `ENABLE WRITE MEMORY`, one
   `WRITE MEMORY LOCATION` per byte, then `QUERY CONTENT DTR0`, under a pointer armed with
   `DTR1`/`DTR0` and proved by `QUERY CONTENT DTR1/DTR0` in the same `controller.unit`.
