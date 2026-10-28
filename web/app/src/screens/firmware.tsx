@@ -43,7 +43,7 @@ function isActive(state: FirmwareState['update']['state']): boolean {
 function Progress({ update }: { update: FirmwareState['update'] }) {
   const pct = update.percent
   return (
-    <div>
+    <div class="body">
       <div class="fw-progline">
         <span class="st">{STATE_LABEL[update.state]}</span>
         {pct != null && <span class="pct">{pct}%</span>}
@@ -66,10 +66,12 @@ function Progress({ update }: { update: FirmwareState['update'] }) {
 
 function Failure({ code }: { code: string }) {
   return (
-    <div class="fw-fail">
-      <div>
-        <div class="code">{code}</div>
-        <div class="why">{WHY[code] ?? 'The update did not complete.'}</div>
+    <div class="body">
+      <div class="fw-fail">
+        <div>
+          <div class="code">{code}</div>
+          <div class="why">{WHY[code] ?? 'The update did not complete.'}</div>
+        </div>
       </div>
     </div>
   )
@@ -101,7 +103,7 @@ function UpdateForm({
   }
 
   return (
-    <div>
+    <div class="body">
       <div class="fw-urlrow">
         <input
           class={`fw-url${problem ? ' err' : ''}`}
