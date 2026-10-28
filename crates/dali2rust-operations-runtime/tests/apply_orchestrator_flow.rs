@@ -604,6 +604,7 @@ fn a_policy_apply_reaches_every_device_and_not_only_the_first() {
             system_failure_level: Some(0),
             power_on_level: Some(0),
             known_device_types: None,
+            excepted: false,
         })
         .collect();
     let harness = spawn_harness_with_policy(cells);
@@ -645,6 +646,41 @@ fn a_policy_apply_reaches_every_device_and_not_only_the_first() {
         0,
         "the written event is the cell's outcome and must be routed here",
     );
+}
+
+const EXCEPTED_SHORTS: [u8; 2] = [1, 3];
+
+fn policy_cell(short_address: u8) -> dali2rust_domain::registry::PolicyApplyCell {
+    dali2rust_domain::registry::PolicyApplyCell {
+        short_address,
+        system_failure_level: Some(0),
+        power_on_level: Some(0),
+        known_device_types: None,
+        excepted: EXCEPTED_SHORTS.contains(&short_address),
+    }
+}
+
+fn outcome_shorts(rows: &[dali2rust_domain::registry::OperationPolicyApplyOutcomeView]) -> Vec<u8> {
+    rows.iter().map(|row| row.short_address).collect()
+}
+
+#[test]
+fn a_policy_apply_skips_an_excepted_device_and_reports_it_skipped_not_written() {
+    let harness = spawn_harness_with_policy((0..4).map(policy_cell).collect());
+    publish_policy_execute(&harness.publisher, 7021, "policy-apply-0-7021");
+    let finished = || harness.read.operation_view("policy-apply-0-7021");
+    wait_until(|| finished().is_some_and(|view| view.status == "succeeded"), Duration::from_secs(10));
+    let view = finished().expect("operation view");
+    assert_eq!(view.status, "succeeded", "view: {view:?}");
+    assert_eq!(*harness.attribute_writes.lock().expect("writes"), vec![0u8, 2], "an excepted device is never written");
+    let result = view.result.expect("policy apply result");
+    let result = result.as_policy_apply().expect("policy apply variant").clone();
+    assert_eq!(outcome_shorts(&result.written), vec![0, 2]);
+    assert_eq!(outcome_shorts(&result.skipped), EXCEPTED_SHORTS.to_vec());
+    assert!(result.failed.is_empty(), "a skip is not a failure: {result:?}");
+    assert_eq!((result.written_total, result.skipped_total, result.failed_total), (2, 2, 0));
+    let reasons = result.skipped.iter().map(|row| row.reason.as_deref());
+    assert!(reasons.into_iter().all(|reason| reason == Some("policy_exception")), "{result:?}");
 }
 
 fn publish_policy_execute(publisher: &BusPublisher, workflow: u64, operation_key: &str) {

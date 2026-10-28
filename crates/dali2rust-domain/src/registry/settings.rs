@@ -1,3 +1,4 @@
+use dali2rust_contracts::msg::{PolicyException, PolicyExceptionList};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,17 +66,51 @@ pub struct RedundancySettingsView {
     pub peer_url: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct PoliciesView {
     pub system_failure_level: Option<u8>,
     pub power_on_level: Option<u8>,
     pub apply_on_discovery: bool,
+    pub exceptions: PolicyExceptionList,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct GearPolicyLevels {
+    pub system_failure_level: Option<u8>,
+    pub power_on_level: Option<u8>,
 }
 
 impl PoliciesView {
     #[must_use]
     pub fn manages_anything(&self) -> bool {
         self.system_failure_level.is_some() || self.power_on_level.is_some()
+    }
+
+    #[must_use]
+    pub fn excepts(&self, device: PolicyException) -> bool {
+        self.exceptions.contains(&device)
+    }
+
+    #[must_use]
+    pub fn mismatch(&self, device: PolicyException, held: GearPolicyLevels) -> Option<bool> {
+        if self.excepts(device) {
+            return None;
+        }
+        let comparisons = [
+            (self.system_failure_level, held.system_failure_level),
+            (self.power_on_level, held.power_on_level),
+        ];
+        let mut managed = comparisons.into_iter().filter(|(policy, _)| policy.is_some()).peekable();
+        managed.peek()?;
+        let mut every_level_seen = true;
+        for (policy, held) in managed {
+            match held {
+                Some(held) if Some(held) != policy => return Some(true),
+                Some(_) => {}
+                None => every_level_seen = false,
+            }
+        }
+        every_level_seen.then_some(false)
     }
 }
 
@@ -101,4 +136,62 @@ pub struct PolicyApplyCell {
     pub system_failure_level: Option<u8>,
     pub power_on_level: Option<u8>,
     pub known_device_types: Option<dali2rust_contracts::msg::DeviceTypeSet>,
+    pub excepted: bool,
+}
+
+#[cfg(test)]
+mod policy_mismatch_tests {
+    use super::*;
+
+    const DEVICE: PolicyException = PolicyException { adapter_id: 0, short_address: 4 };
+    const OTHER: PolicyException = PolicyException { adapter_id: 0, short_address: 5 };
+
+    fn policy(system_failure_level: Option<u8>, power_on_level: Option<u8>) -> PoliciesView {
+        PoliciesView { system_failure_level, power_on_level, ..PoliciesView::default() }
+    }
+
+    fn held(system_failure_level: Option<u8>, power_on_level: Option<u8>) -> GearPolicyLevels {
+        GearPolicyLevels { system_failure_level, power_on_level }
+    }
+
+    #[test]
+    fn an_unmanaged_policy_states_nothing_whatever_the_gear_holds() {
+        assert_eq!(policy(None, None).mismatch(DEVICE, held(Some(1), Some(2))), None);
+    }
+
+    #[test]
+    fn an_excepted_device_states_nothing_and_only_that_device_is_excepted() {
+        let mut excepting = policy(Some(254), None);
+        excepting.exceptions.push(DEVICE).expect("capacity");
+        assert_eq!(excepting.mismatch(DEVICE, held(Some(0), None)), None);
+        assert_eq!(excepting.mismatch(OTHER, held(Some(0), None)), Some(true));
+    }
+
+    #[test]
+    fn a_managed_level_never_observed_states_nothing() {
+        assert_eq!(policy(Some(254), Some(100)).mismatch(DEVICE, held(None, None)), None);
+    }
+
+    #[test]
+    fn either_managed_level_that_differs_is_a_mismatch() {
+        let managed = policy(Some(254), Some(100));
+        assert_eq!(managed.mismatch(DEVICE, held(Some(0), Some(100))), Some(true));
+        assert_eq!(managed.mismatch(DEVICE, held(Some(254), Some(50))), Some(true));
+        assert_eq!(managed.mismatch(DEVICE, held(None, Some(50))), Some(true), "one unread level does not hide a drifted one");
+    }
+
+    #[test]
+    fn a_match_is_stated_only_when_every_managed_level_was_observed() {
+        let managed = policy(Some(254), Some(100));
+        assert_eq!(managed.mismatch(DEVICE, held(Some(254), Some(100))), Some(false));
+        assert_eq!(managed.mismatch(DEVICE, held(Some(254), None)), None);
+        assert_eq!(managed.mismatch(DEVICE, held(None, Some(100))), None);
+    }
+
+    #[test]
+    fn an_unmanaged_level_is_never_compared() {
+        let power_on_only = policy(None, Some(100));
+        assert_eq!(power_on_only.mismatch(DEVICE, held(Some(7), Some(100))), Some(false));
+        assert_eq!(power_on_only.mismatch(DEVICE, held(Some(7), None)), None);
+    }
 }

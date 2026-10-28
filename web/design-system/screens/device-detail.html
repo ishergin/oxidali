@@ -99,6 +99,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .chip.ok { color: var(--ok); background: var(--ok-soft); }
 .chip.info { color: var(--info); background: var(--info-soft); }
 .chip.idle { color: var(--text-muted); background: var(--raised); border-color: var(--border); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
 
 /* Lamp state in the header: the dot takes the lamp's own colour and level. */
 .lampstate { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); white-space: nowrap; }
@@ -252,6 +253,12 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     <span class="badge addr">SA 04</span>
     <span class="badge dt8">DT8 CCT</span>
     <span class="chip ok"><span class="dot"></span>Present</span>
+    <!-- Policy drift: the gear was read or written holding a power-on or
+         system-failure level other than the managed policy. It is derived on
+         every read of the core, so it shows only while the policy manages a
+         level, the device is not an exception and an observed managed level
+         differs; a match shows nothing, because agreement is the normal case. -->
+    <span class="chip warn" title="The gear holds a power-on or system-failure level other than the policy. Apply the policy, or except this device on the Policies screen."><span class="dot"></span>Policy drift</span>
     <span class="lampstate on" title="on at level 200 · 3000 K · poller"><span class="lampdot" style="--lamp:rgba(255, 188, 122, 0.86);--lamp-glow:0 0 7px rgba(255, 188, 122, 0.45)"></span><span class="lamplv">200</span><span class="lampcq">3000 K</span></span>
     <span class="spacer"></span>
     <button class="btn">↻ Read memory banks</button>

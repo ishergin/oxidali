@@ -1,5 +1,5 @@
 import { api } from '../api/client'
-import type { GroupApplyOutcome, Operation, SceneApplyOutcome } from '../api/types'
+import type { ApplyOutcome, Operation } from '../api/types'
 import { Badge, Chip } from '../components/ui'
 import {
   isPreempted,
@@ -42,13 +42,18 @@ function buckets(op: Operation): Bucket[] {
   return []
 }
 
-type OutcomeRow = (GroupApplyOutcome | SceneApplyOutcome) & { bucket: string }
+type OutcomeRow = ApplyOutcome & { bucket: string }
+
+function shortAddressCell(o: OutcomeRow): string {
+  const sa = 'short_address' in o ? o.short_address : o.physical_short_address
+  return sa != null ? `SA ${pad2(sa)}` : '—'
+}
 
 function outcomeRows(op: Operation): OutcomeRow[] {
   const r = op.result
   if (!r) return []
   const rows: OutcomeRow[] = []
-  const push = (list: (GroupApplyOutcome | SceneApplyOutcome)[] | undefined, bucket: string) => {
+  const push = (list: ApplyOutcome[] | undefined, bucket: string) => {
     for (const o of list ?? []) rows.push({ ...o, bucket })
   }
   push(r.programmed, 'programmed')
@@ -135,12 +140,16 @@ function OpDetail({ op }: { op: Operation }) {
           <tbody>
             {rows.map((o, i) => (
               <tr key={i}>
-                <td class="mono">VL {pad2(o.virtual_lamp_id)}</td>
-                <td class="mono">{'group_id' in o ? `G${o.group_id}` : '—'}</td>
-                <td class={o.action === 'remove' ? 'act-rm' : 'act-add'}>{o.action}</td>
                 <td class="mono">
-                  {o.physical_short_address != null ? `SA ${pad2(o.physical_short_address)}` : '—'}
+                  {'virtual_lamp_id' in o ? `VL ${pad2(o.virtual_lamp_id)}` : '—'}
                 </td>
+                <td class="mono">{'group_id' in o ? `G${o.group_id}` : '—'}</td>
+                {'action' in o ? (
+                  <td class={o.action === 'remove' ? 'act-rm' : 'act-add'}>{o.action}</td>
+                ) : (
+                  <td class="mono">—</td>
+                )}
+                <td class="mono">{shortAddressCell(o)}</td>
                 <td class={`reason${o.bucket === 'skipped' ? ' skip' : ''}`}>
                   {o.reason ? `${o.bucket} · ${o.reason}` : o.bucket === 'failed' ? o.bucket : '—'}
                 </td>

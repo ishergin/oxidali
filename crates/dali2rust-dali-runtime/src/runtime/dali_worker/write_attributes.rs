@@ -24,7 +24,8 @@ pub(super) fn handle_write_attributes(
         (w.min_level, w.max_level),
         w.dimming_curve,
         w.known_device_types,
-    );
+    )
+    .failing_a_refusal(w.refusal_fails);
     let recorded = publish_attributes_written(publisher, adapter_id, correlation_id, w, &execution, counters);
     publish_phm_readback(publisher, adapter_id, correlation_id, w, &execution.confirmed, counters);
     if recorded || execution.error.is_some() {

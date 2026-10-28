@@ -32,6 +32,7 @@ pub struct ApplyOrchestratorCounters {
 
 pub(crate) trait PacedCell: Copy {
     const OUTCOME_EVENT: &'static str;
+    const SKIP: ErrorCode;
 
     fn is_bound(&self) -> bool;
     fn program_command(&self, run: &RunState<'_>) -> CommandEnvelope;
@@ -153,7 +154,7 @@ fn pace_cells<C: PacedCell>(run: &RunState<'_>, diff: &[C]) -> Option<Option<(Er
 fn pace_skip_batch<C: PacedCell>(run: &RunState<'_>, cells: &[C]) -> CellWait {
     for cell in cells {
         run.counters.skips_published.fetch_add(1, Ordering::Relaxed);
-        let skipped = cell.synthetic_outcome(run, ErrorCode::VlUnbound, "vl_unbound");
+        let skipped = cell.synthetic_outcome(run, C::SKIP, C::SKIP.rest_name());
         if !publish_with_backoff(run, BusChannel::Events, BusFrame::event(skipped)) {
             return CellWait::Done {
                 hard_error: Some((

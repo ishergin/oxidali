@@ -80,6 +80,9 @@ const ALL_ATTRIBUTE_GROUPS: AttributeGroup[] = [
 ]
 const LEVEL_STEP = 16
 const BANK1_UNLOCK_BYTE = 0x55
+const POLICY_DRIFT_HINT =
+  'The gear holds a power-on or system-failure level other than the policy. ' +
+  'Apply the policy, or except this device on the Policies screen.'
 
 const TYPE_OVERRIDE_OPTIONS = ['unknown', 'dt6_led', 'dt8_color']
 const TYPE_OVERRIDE_DALI_CODE: Record<string, number | undefined> = {
@@ -720,6 +723,11 @@ export function DeviceDetail({ short, tab: rawTab }: { short: number; tab?: stri
         <Badge cls="addr">SA {pad2(short)}</Badge>
         <Badge cls={t.dt8 ? 'dt8' : undefined}>{t.label}</Badge>
         {seen != null && !absent && <Chip cls="ok">Present</Chip>}
+        {dev.policy_mismatch === true && (
+          <Chip cls="warn" title={POLICY_DRIFT_HINT}>
+            Policy drift
+          </Chip>
+        )}
         <LampState state={dev.state} />
         <span class="spacer" />
         <button class="btn" onClick={readMemoryBanks}>

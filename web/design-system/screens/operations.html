@@ -1,4 +1,4 @@
-<!-- @dsCard group="Screens" name="Operations" subtitle="Two-pane: operation list + group_apply detail with result buckets and outcomes" -->
+<!-- @dsCard group="Screens" name="Operations" subtitle="Two-pane: operation list + apply detail with result buckets and outcomes; a policy apply names its devices by short address" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -124,6 +124,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .footnote b { color: var(--text-muted); font-weight: 550; }
 .meta-row { display: flex; gap: 20px; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
 .meta-row .mono { font-family: var(--mono); font-size: 11px; color: var(--text); }
+.details { display: grid; gap: 14px; }
 </style>
 </head>
 <body>
@@ -132,7 +133,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
   <div class="head">
     <h1>Operations</h1>
-    <span class="sub">4 tracked · finished operations evict after 60 s</span>
+    <span class="sub">5 tracked · finished operations evict after 60 s</span>
     <span class="spacer"></span>
     <button class="btn">↻ Refresh</button>
   </div>
@@ -167,6 +168,14 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
       <div class="op">
         <div class="row1">
+          <span class="title">Policy apply</span>
+          <span class="chip ok"><span class="dot"></span>succeeded</span>
+        </div>
+        <div class="row2"><span class="id">policy-apply-0-9</span><span class="age">44 s ago</span></div>
+      </div>
+
+      <div class="op">
+        <div class="row1">
           <span class="title">Scene 2 apply</span>
           <span class="chip err"><span class="dot"></span>failed</span>
         </div>
@@ -174,6 +183,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       </div>
     </div>
 
+    <div class="details">
     <div class="card">
       <header>
         <h3>Group apply</h3>
@@ -213,6 +223,37 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         Showing 7 of 16 outcome rows. <b>TTL:</b> finished operations are evicted from the tracker
         60 s after completion — export the outcome table before it expires.
       </div>
+    </div>
+
+    <div class="card">
+      <header>
+        <h3>Policy apply</h3>
+        <span class="chip ok"><span class="dot"></span>succeeded</span>
+        <span class="id">policy-apply-0-9</span>
+      </header>
+
+      <div class="buckets">
+        <div class="bucket ok"><span class="n">2</span><span class="l">written</span></div>
+        <div class="bucket skip"><span class="n">1</span><span class="l">skipped</span></div>
+        <div class="bucket fail"><span class="n">0</span><span class="l">failed</span></div>
+      </div>
+
+      <table class="otable">
+        <thead>
+          <tr><th>VL</th><th>Group</th><th>Action</th><th>SA</th><th>Reason</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">—</td><td class="mono">—</td><td class="mono">—</td><td class="mono">SA 00</td><td class="reason">—</td></tr>
+          <tr><td class="mono">—</td><td class="mono">—</td><td class="mono">—</td><td class="mono">SA 02</td><td class="reason">—</td></tr>
+          <tr><td class="mono">—</td><td class="mono">—</td><td class="mono">—</td><td class="mono">SA 01</td><td class="reason skip">skipped · policy_exception</td></tr>
+        </tbody>
+      </table>
+
+      <div class="footnote">
+        A policy writes the gear itself, so its rows name devices by short address and leave
+        the virtual-lamp columns empty. An excepted device is skipped, never written.
+      </div>
+    </div>
     </div>
 
   </div>
