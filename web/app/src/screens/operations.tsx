@@ -140,7 +140,9 @@ function OpDetail({ op }: { op: Operation }) {
           <tbody>
             {rows.map((o, i) => (
               <tr key={i}>
-                <td class="mono">{'virtual_lamp_id' in o ? `VL ${pad2(o.virtual_lamp_id)}` : '—'}</td>
+                <td class="mono">
+                  {'virtual_lamp_id' in o ? `VL ${pad2(o.virtual_lamp_id)}` : '—'}
+                </td>
                 <td class="mono">{'group_id' in o ? `G${o.group_id}` : '—'}</td>
                 {'action' in o ? (
                   <td class={o.action === 'remove' ? 'act-rm' : 'act-add'}>{o.action}</td>
