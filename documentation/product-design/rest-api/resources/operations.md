@@ -29,7 +29,8 @@ BDD — [`operations`](../../../../tests/dali2rust-bdd/features/operations/).
   `attribute_read_outcomes` для чтения атрибутов. Поля есть только когда применимы;
   вариант `result` различается набором ключей.
 - `result` apply групп и сцен — точные итоги по ячейкам (запрограммировано,
-  пропущено, отказало и т. п.); `result` каждой процедуры commissioning — в
+  пропущено, отказало и т. п.); `result` применения политики — в
+  [`policies.md`](policies.md); `result` каждой процедуры commissioning — в
   [`commissioning.md`](commissioning.md).
 
 ## Жизненный цикл
