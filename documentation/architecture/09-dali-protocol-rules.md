@@ -42,7 +42,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   A lease is revoked only by a strictly higher arrival. `Origin` refines only kinds whose
   producers answer differently: a poller read is `Unattended`, HCL and Home Assistant
   light commands are `Attended`, a rule's are `Interactive`.
-- `YieldGranularity` says where a sequence may stop: `Frame` for reads, `Step` for
+- `YieldGranularity` says where a sequence may stop: `Frame` for reads and the
+  bus-health probe, `Step` for
   configuration writes (`write-attributes`, Part 103 instance and feedback configuration)
   at a confirmed DTR → SET → read-back boundary, `Never` for discovery, commissioning and
   other units whose interruption leaves gear half-programmed.
@@ -169,15 +170,15 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - A boolean broadcast query needs a positive control: YES is a backward frame, NO is
   silence (102 §3.28, §3.13), and silence may be a lost query (§3.13 Note 1). The
   bus-health probe broadcasts `QUERY CONTROL GEAR PRESENT`, then `QUERY LAMP FAILURE`,
-  then `QUERY POWER FAILURE`; a probe whose control went unanswered is `invalid`, never
-  `clear`, and neither of its other answers is used. A violation on the lamp-failure
-  frame means several gear answered; any answer to the power-failure frame, a violation
-  included, means some gear has `powerCycleSeen` set (§11.5.15). The three frames are one
-  reading that never yields, so an operator command arriving mid-probe waits at most two
-  more query exchanges; the third frame is the price of seeing power cycles with the
-  poller off. The probe adds to the poller's reads rather than replacing them: boolean
-  frames cannot read levels, colour or attributes (schedule, power-cycle sweep and
-  budget: [poller](../product-design/runtime-modules/poller/README.md)).
+  and, while the poller's power-cycle watch is on, `QUERY POWER FAILURE`; a probe whose
+  control went unanswered is `invalid`, never `clear`, and neither of its other answers
+  is used. A violation on the lamp-failure frame means several gear answered; any answer
+  to the power-failure frame, a violation included, means some gear has `powerCycleSeen`
+  set (§11.5.15). The frames are one reading but independent exchanges, so the probe
+  yields at a frame boundary: a probe cut short has no verdict, ends `Preempted` and is
+  asked again by the next one. The probe adds to the poller's reads rather than
+  replacing them: boolean frames cannot read levels, colour or attributes (schedule,
+  power-cycle sweep and budget: [poller](../product-design/runtime-modules/poller/README.md)).
 - Arm, prove, act once: an operand staged in a DTR is proved by read-back before the
   command that consumes it, and a read-back tells a wrong answer, silence and a contended
   window apart ([ADR-027](decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md)).

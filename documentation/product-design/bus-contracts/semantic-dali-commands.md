@@ -104,7 +104,9 @@ target-state, а непривязанная даёт `vl_unbound`. Recall-фак
 - **`DaliBusHealthProbeCommand`** — широковещательный опрос сегмента об отказах ламп
   с положительным контролем (правило чтения —
   [09 §Reading answers](../../architecture/09-dali-protocol-rules.md#reading-answers)).
-  Публикует поллер.
+  Публикует поллер; `query_power_failure` добавляет `QUERY POWER FAILURE`, его ставит
+  сторож цикла питания. Уступает оператору на границе кадра; probe без вердикта
+  кончается подтверждением `ExecutionFailed` с кодом причины.
 
 ## Коммиссионинг control gear
 
@@ -163,7 +165,7 @@ target-state, а непривязанная даёт `vl_unbound`. Recall-фак
 | `DaliWriteAttributesCommand` | `DaliAttributesWrittenEvent` | прямой коммит реестра, `PhysicalDeviceChangedEvent` |
 | `DaliDiscoverDevicesCommand` | прогресс скана, итог сверки, сигнал операции | реестр: записи устройств |
 | `DaliReadAttributesCommand` | чанки атрибутов, чанки банков, исходы по группам | реестр (доказательства) и проектор (runtime) |
-| `DaliBusHealthProbeCommand` | `DaliBusHealthProbedEvent` | счётчики поллера, дисплей |
+| `DaliBusHealthProbeCommand` | `DaliBusHealthProbedEvent` или, без вердикта, подтверждение `ExecutionFailed` | счётчики поллера, дисплей; подтверждение освобождает слот probe |
 | коммиссионинг | `DaliDeviceIdentifiedEvent`, `DaliAddressingCompletedEvent`, `DaliDeviceReplacedEvent`; шаг — подтверждение | трекер; реестр переносит запись и публикует `PhysicalDeviceChangedEvent` обоих адресов и `VirtualLampChangedEvent` каждой лампы, чья привязка или прибор сменились; если лампа отказавшего осталась на адресе — ещё один `GroupMatrixChangedEvent` и `SceneMatrixChangedEvent` каждой сцены |
 | Part 103 | прогресс скана, `Dali103InstanceConfiguredEvent`, сигнал операции | реестр устройств ввода |
 | арбитраж | `Dali103ArbitrationProbedEvent`, `Dali103HandoverSentEvent` | воркер арбитража |
