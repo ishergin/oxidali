@@ -175,9 +175,11 @@ mod tests {
         );
     }
 
+    type SweepEnd = (&'static str, fn(&mut PowerCycleWatch));
+
     #[test]
     fn a_new_sweep_starts_its_targets_with_no_failed_reads() {
-        let ends: [(&str, fn(&mut PowerCycleWatch)); 3] = [
+        let ends: [SweepEnd; 3] = [
             ("the target settled and the hold-off ran out", |watch| {
                 watch.settle(0, 2);
                 for _ in 1..RESWEEP_AFTER_YES {
