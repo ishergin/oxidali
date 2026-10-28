@@ -5,7 +5,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from hil import serialmon, write_log
+from hil import role, serialmon, write_log
 from hil.config import PeerUnconfigured
 from hil.lamp_guard import LampGuard, LampNotAllowed
 from hil.sniffer import monitor_payload, monitor_stamped, ssh_argv
@@ -31,6 +31,7 @@ DT8_ACTIVATE = 0xE2
 DT8_SET_TEMPORARY_RGB = 0xEB
 DT8_SET_TEMPORARY_WAF = 0xEC
 DT8_SET_TEMPORARY_RGBWAF_CONTROL = 0xED
+DT8_STORE_GEAR_FEATURES = 0xF3
 RGBWAF_CONTROL_NORMALISED = 0x80
 TEST_RULE_PREFIX = "hil-"
 COMMAND_BIT = 0x01
@@ -80,10 +81,12 @@ async def main():
                 "numberOfBits": f["bits"],
                 "daliData": f["bytes"],
                 "line": %d,
-                "mode": {"sendTwice": bool(f.get("send_twice")),
+                "mode": {"sendTwice": False,
                          "priority": 0,
                          "waitForAnswer": bool(f.get("wait_answer"))}}}
             await ws.send(json.dumps(msg))
+            if f.get("send_twice"):
+                await ws.send(json.dumps(msg))
             try:
                 await settle(ws, f)
             except asyncio.TimeoutError:
@@ -194,8 +197,7 @@ def peer_note(peer):
     if peer.offset is None:
         return "no live peer serial log could witness them"
     if not PEER_SNIFF.search(peer.since()):
-        return ("the peer's log shows no sniffed frame at all, so it is no witness "
-                "(a peer in the gear-sim role has no sniffer)")
+        return "the witness serial log shows no sniffed frame at all, so it is no witness"
     return "the peer's sniffer did not log them"
 
 
@@ -203,9 +205,10 @@ def _peer_log_path(cfg):
     if not cfg.has_peer:
         return None
     try:
-        return serialmon.log_path(cfg.peer())
+        peer = cfg.peer()
     except PeerUnconfigured:
         return None
+    return serialmon.log_path(cfg if role.is_gear_sim(peer) else peer)
 
 
 def event_source24(raw):
@@ -537,6 +540,12 @@ class ForeignMaster:
             [_dtr(0, mirek & 0xFF), _dtr(1, (mirek >> 8) & 0xFF), _ENABLE_DT8,
              {"addr": target, "data": DT8_SET_TEMPORARY_TC}],
             [_ENABLE_DT8, {"addr": target, "data": DT8_ACTIVATE}],
+        ])
+
+    def store_gear_features(self, short, features):
+        return self.send_units([
+            [_dtr(0, features & 0xFF), _ENABLE_DT8,
+             {"addr": (short << 1) | 1, "data": DT8_STORE_GEAR_FEATURES, "send_twice": True}],
         ])
 
     def send_units(self, units):

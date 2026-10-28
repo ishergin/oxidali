@@ -832,6 +832,7 @@ class _TeardownApi:
         self.groups = self
         self.gtins = {16: EMULATED_16, 17: EMULATED_17} if gtins is None else gtins
         self.lamps = {60: _park_lamp(16), 61: _park_lamp(17)}
+        self.identities = {}
         self.guard = LampGuard((), read_only=True, gtin=self.gtins.get)
 
     def _call(self, entry):
@@ -854,6 +855,10 @@ class _TeardownApi:
         self.guard.check_request("DELETE", "adapters/0/physical-devices/%d" % short)
         self._call(("forget", short))
 
+    def attr_read_checked(self, short, groups=None, banks=None):
+        self._call(("identify", short, groups, banks))
+        self.gtins[short] = self.identities.get(short)
+
     def patch(self, group, body):
         self._call(("group", group, body))
 
@@ -864,7 +869,10 @@ class _TeardownApi:
 
 class _QuietSim:
     def __init__(self):
-        self.disabled = []
+        self.disabled, self.enabled = [], []
+
+    def enable(self, which):
+        self.enabled.append(which)
 
     def disable(self, which):
         self.disabled.append(which)
@@ -897,6 +905,31 @@ def test_the_teardown_unannounces_a_park_lamp_before_deleting_it(tmp_path, monke
     assert session.close() == []
     assert api.calls[:3] == [("group", 60, {"ha_entity_enabled": False}), ("vl-delete", 60),
                              ("vl-delete", 61)]
+
+
+def test_a_park_record_without_a_gtin_is_identified_live_before_it_is_forgotten(
+        tmp_path, monkeypatch):
+    api, sim = _TeardownApi(gtins={16: None, 17: EMULATED_17}), _QuietSim()
+    api.identities = {16: EMULATED_16}
+    session = _session(tmp_path, api, sim, park=[16, 17])
+    monkeypatch.setattr(session, "residual", lambda: [])
+    assert session.close() == []
+    assert sim.enabled == [16]
+    assert sim.disabled == ["all", 16]
+    assert api.calls == [("identify", 16, virtual_gear.IDENTITY_GROUPS,
+                          virtual_gear.IDENTITY_BANKS), ("forget", 16), ("forget", 17)]
+
+
+def test_a_park_address_that_identifies_as_real_gear_is_not_forgotten(tmp_path, monkeypatch):
+    api, sim = _TeardownApi(gtins={16: None}), _QuietSim()
+    api.identities = {16: REAL_GTIN}
+    session = _session(tmp_path, api, sim, park=[16])
+    monkeypatch.setattr(session, "residual", lambda: [])
+    residue = session.close()
+    assert sim.disabled == ["all", 16]
+    assert [c for c in api.calls if c[0] == "forget"] == []
+    assert any("GTIN %d" % REAL_GTIN in line for line in residue)
+    assert session.ledger.exists()
 
 
 def test_only_the_teardown_forgets_the_park_past_read_only_and_the_lamp_list():
@@ -982,18 +1015,29 @@ def test_no_ledger_means_nothing_to_tear_down(tmp_path):
     assert virtual_gear.teardown(cfg, _TeardownApi()) == []
 
 
+CONTENDED_SCAN = {"status": "failed",
+                  "error": {"code": "operation_failed", "message": "bus_contended"}}
+CLEAN_SCAN = {"status": "succeeded"}
+
+
 class _EnrolApi:
-    def __init__(self, gtin=EMULATED_16):
+    def __init__(self, gtin=EMULATED_16, scans=None, enrolled_by=None):
         self.vlamps, self.bound, self.identified, self.gtin = self, [], [], gtin
+        self.scans = [dict(CLEAN_SCAN)] if scans is None else [dict(v) for v in scans]
+        self.enrolled_by = enrolled_by or {16: 1}
+        self.scanned = 0
 
     def wait_op(self, op):
         return op
 
     def discovery(self, mode):
-        return {"operation_id": 1}
+        self.scanned += 1
+        return self.scans.pop(0)
 
     def devices_unfiltered(self):
-        return {"physical_devices": [{"short_address": 16, "gtin": self.gtin}]}
+        return {"physical_devices": [{"short_address": short, "gtin": self.gtin}
+                                     for short, scan in self.enrolled_by.items()
+                                     if self.scanned >= scan]}
 
     def attr_read_checked(self, short, groups=None, banks=None):
         self.identified.append((short, banks))
@@ -1025,6 +1069,32 @@ def test_the_session_refuses_a_park_address_whose_gear_is_not_the_emulator_s(tmp
             session._enrol([16], [4])
         assert "created_vls" not in session.ledger.data
         session.ledger.remove()
+
+
+def test_a_scan_the_bus_contended_is_run_once_more(tmp_path):
+    api = _EnrolApi(scans=[CONTENDED_SCAN, CLEAN_SCAN], enrolled_by={16: 2})
+    session = _session(tmp_path, api, _ShowSim(), vl_before=[0, 1])
+    with pytest.raises(RuntimeError, match="refused the VL"):
+        session._enrol([16], [4])
+    assert api.scanned == 2
+
+
+def test_a_scan_contended_twice_names_its_outcome(tmp_path):
+    api = _EnrolApi(scans=[CONTENDED_SCAN, CONTENDED_SCAN], enrolled_by={16: 3})
+    session = _session(tmp_path, api, _ShowSim(), vl_before=[0, 1])
+    with pytest.raises(virtual_gear.VirtualGearError,
+                       match=r"did not enrol 16; its operation ended failed .*bus_contended"):
+        session._enrol([16], [4])
+    assert api.scanned == virtual_gear.SCAN_ATTEMPTS
+
+
+def test_a_scan_that_failed_for_another_reason_is_not_rerun(tmp_path):
+    other = {"status": "failed", "error": {"code": "operation_failed", "message": "busy"}}
+    api = _EnrolApi(scans=[other], enrolled_by={16: 2})
+    session = _session(tmp_path, api, _ShowSim(), vl_before=[0, 1])
+    with pytest.raises(virtual_gear.VirtualGearError, match=r"ended failed .*busy"):
+        session._enrol([16], [4])
+    assert api.scanned == 1
 
 
 class _LadderSim:
