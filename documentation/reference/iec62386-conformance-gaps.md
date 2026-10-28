@@ -222,22 +222,28 @@ the watch on, what it does not see:
   broadcast or scene frame reaching gear no virtual lamp binds, a scene row with no
   applied target: the registry still holds the bit as set or unknown, so a set bit is
   no news.
+- A cycle whose bit a committed level command clears before a status read sees it —
+  an `OFF`, a `DAPC` or a scene, from the operator, Home Assistant or a rule: the gear
+  and the registry both hold the bit clear, and the later read agrees. The window runs
+  from the power's return to the gear's status read, in both modes.
 - A gear the sweep does not read: with `skip_unbound_virtual_lamps` the sweep skips
   gear no virtual lamp binds.
 - A cycle while the answer stands at YES because some other gear nobody drives keeps
   its bit set: it waits for the hold-off's next sweep, which counts answers from the end
   of the last sweep, about an hour with the poller off.
-- How soon: a cycle shows at the next probe, up to one probe period later. With the
-  poller reading `runtime_status` there is no sweep: the gear's status is read when the
-  cycle reaches it, and a gear the cycle saw absent during the outage waits out its absent
-  cooldown first.
+- How soon, which is how long that window stays open: without a cycle that reads
+  `runtime_status`, up to one probe period to the YES and then the gear's place in the
+  sweep; with one, the gear's turn in the cycle, about one `interval_ms` when a cycle
+  reads every target and longer when the wire budget stretches it, and for a gear the
+  cycle saw absent, the first cycle after a YES that is news
+  ([poller](../product-design/runtime-modules/poller/README.md)).
 
 ## 17. Priority
 
 Ordered by consequence per unit of work:
 
-1. §16.3 — unchanged by default: `power_cycle_watch` closes it when on, so the work
-   left is its default.
+1. §16.3 — `power_cycle_watch` closes it and is off by default, so the work left is
+   its default.
 2. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
 3. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
 4. §3 — a memory-bank write path, when a commissioning surface asks for one.
