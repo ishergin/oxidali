@@ -527,6 +527,10 @@ GAUGES = (
 )
 
 
+def counter_moved(before, after, name):
+    return (int(after[name]) - int(before[name])) & 0xFFFF_FFFF
+
+
 def counter_deltas(current, baseline, gauges=GAUGES, same_boot=True):
     if not current or not baseline or not same_boot:
         return {}

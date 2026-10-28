@@ -268,3 +268,34 @@ def test_a_stop_fade_rule_sends_one_dapc_mask_to_its_group_and_no_level(
     assert set(levels.values()) == {STOP_FADE_LEVEL}, (
         "the members left the level the stop caught them at: %r" % levels)
     oracle.untouched(window, members)
+
+
+QUERY_ACTUAL_LEVEL = 0xA0
+WB_READ_LEVEL = 170
+BACKWARD_BITS = 8
+
+
+def _wb_answers(replies):
+    answers = [r["data"].get("daliData") for r in replies if r.get("type") == "daliAnswer"]
+    heard = [r["data"]["data"][0] for r in replies
+             if r.get("type") == "daliMonitor" and r["data"].get("bits") == BACKWARD_BITS]
+    return answers, heard
+
+
+@pytest.mark.foreign
+@pytest.mark.hil_id("HIL-VG-07")
+def test_the_wiren_board_master_reads_the_level_an_emulated_gear_holds(
+        api, virtual_bench, foreign, test_artifacts):
+    short = virtual_bench.park[0]
+    oracle = virtual_bench.oracle
+    with oracle.window() as window:
+        api.vlamps.ts(virtual_bench.vl(short), {"power": "on", "level": WB_READ_LEVEL})
+        oracle.expect(window, short, "level", WB_READ_LEVEL)
+    replies = foreign.cmd(short, QUERY_ACTUAL_LEVEL, wait_answer=True)
+    answers, heard = _wb_answers(replies)
+    test_artifacts.attach_json("wb_read", {"short": short, "replies": replies,
+                                           "monitor_backward": heard})
+
+    assert answers == [WB_READ_LEVEL], (
+        "the WB master took %r as SA%d's answer to QUERY ACTUAL LEVEL; the emulated gear "
+        "holds %d" % (answers, short, WB_READ_LEVEL))

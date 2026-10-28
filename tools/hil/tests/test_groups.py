@@ -202,6 +202,43 @@ STOP_FADE_CATCH_S = 1.2
 STOP_FADE_SETTLE_S = 6.0
 STOP_FADE_LEVEL_WAIT_S = 12.0
 STOP_FADE_POLL_S = 0.5
+STOP_FADE_STEADY_S = STOP_FADE_FADE_MS / 1000 + 2.0
+
+
+def _steady_levels(api, members):
+    seen = [api.actual_levels(members)]
+
+    def steady():
+        seen.append(api.actual_levels(members))
+        return seen[-1] == seen[-2]
+
+    wait_until(steady, STOP_FADE_STEADY_S, interval_s=STOP_FADE_POLL_S)
+    return seen[-1]
+
+
+def _stop_mid_fade(api, members, rule, op_check, go_high):
+    go_high()
+    time.sleep(STOP_FADE_CATCH_S)
+    op_check(api.wait_op(api.rules_run(rule)))
+    first = api.actual_levels(members)
+    caught = _steady_levels(api, members)
+    went_on = wait_until(lambda: api.actual_levels(members) != caught, STOP_FADE_SETTLE_S,
+                         interval_s=STOP_FADE_POLL_S)
+    return {"first": first, "caught": caught, "later": api.actual_levels(members),
+            "went_on": went_on}
+
+
+def _assert_stopped(stop, what):
+    assert all(level is not None and STOP_FADE_LOW < level < STOP_FADE_HIGH
+               for level in stop["first"].values()), (
+        "INCONCLUSIVE, not a product failure: the stop did not land inside the %d ms fade "
+        "from %d to %d (first read %r)"
+        % (STOP_FADE_FADE_MS, STOP_FADE_LOW, STOP_FADE_HIGH, stop["first"]))
+    assert all(level is not None and level < STOP_FADE_HIGH
+               for level in stop["caught"].values()), (
+        "%s faded on to %d after .stop_fade(): %r" % (what, STOP_FADE_HIGH, stop))
+    assert not stop["went_on"] and stop["later"] == stop["caught"], (
+        "%s went on after .stop_fade(): %r" % (what, stop))
 
 
 @pytest.fixture()
@@ -227,19 +264,34 @@ def test_a_stop_fade_rule_leaves_real_members_where_it_caught_them(
                       STOP_FADE_LEVEL_WAIT_S, interval_s=STOP_FADE_POLL_S), \
         api.actual_levels(members)
 
-    api.group_ts(free_group, {"power": "on", "level": STOP_FADE_HIGH})
-    time.sleep(STOP_FADE_CATCH_S)
-    op_check(api.wait_op(api.rules_run(STOP_FADE_RULE)))
-    caught = api.actual_levels(members)
-    time.sleep(STOP_FADE_SETTLE_S)
-    later = api.actual_levels(members)
-    test_artifacts.attach_json("stop_fade", {"group": free_group, "caught": caught,
-                                             "later": later})
+    stop = _stop_mid_fade(api, members, STOP_FADE_RULE, op_check,
+                          lambda: api.group_ts(free_group,
+                                               {"power": "on", "level": STOP_FADE_HIGH}))
+    test_artifacts.attach_json("stop_fade", dict(stop, group=free_group))
+    _assert_stopped(stop, "the members")
 
-    assert all(level is not None and STOP_FADE_LOW < level < STOP_FADE_HIGH
-               for level in caught.values()), (
-        "INCONCLUSIVE, not a product failure: the stop did not land inside the %d ms fade "
-        "from %d to %d (caught %r)" % (STOP_FADE_FADE_MS, STOP_FADE_LOW, STOP_FADE_HIGH, caught))
-    assert later == caught, (
-        "the members went on after .stop_fade(): caught at %r, %.0f s later %r"
-        % (caught, STOP_FADE_SETTLE_S, later))
+
+LAMP_TARGET = "lamp"
+STOP_FADE_LAMP_RULE = "hil-grp-11-stop-fade"
+
+
+@pytest.mark.light
+@pytest.mark.hil_id("HIL-GRP-11")
+def test_a_stop_fade_rule_leaves_a_real_lamp_where_it_caught_it(
+        api, rules_guard, attr_guard, vl_bindings, lamps, state_snapshot, op_check,
+        test_artifacts):
+    label = lamps.labels()[0]
+    vl, short = label - 1, lamps.by_label[label]
+    attr_guard(short, "fade_time_ms", verify=True, required=True)
+    written = api.wait_op(api.write_attrs(short, {"fade_time_ms": STOP_FADE_FADE_MS}))
+    assert written.get("status") == "succeeded", written
+    rules_guard(http_rule(STOP_FADE_LAMP_RULE, LAMP_TARGET, vl, STOP_FADE))
+    api.ts(short, {"power": "on", "level": STOP_FADE_LOW})
+    assert wait_until(lambda: api.actual_level(short) == STOP_FADE_LOW,
+                      STOP_FADE_LEVEL_WAIT_S, interval_s=STOP_FADE_POLL_S), \
+        api.actual_level(short)
+
+    stop = _stop_mid_fade(api, [short], STOP_FADE_LAMP_RULE, op_check,
+                          lambda: api.ts(short, {"power": "on", "level": STOP_FADE_HIGH}))
+    test_artifacts.attach_json("stop_fade", dict(stop, lamp=short))
+    _assert_stopped(stop, "the lamp")

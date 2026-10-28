@@ -7,6 +7,7 @@ import requests
 from hil import mqtt_tap, validity, virtual_gear
 from hil.api import ApiError
 from hil.lamp_guard import HA_ENTITY_FLAG, TARGET_SEGMENT, LampNotAllowed
+from hil.raw_broker import RawBroker
 from hil.wait import wait_until
 from hil_test_guards import allowed_bound_lamp, drive_allowed
 from hil_virtual import PARK_ENV
@@ -495,3 +496,77 @@ def test_a_group_burst_over_the_announced_park_overflows_no_bridge_inbox(
         "to outrun its %d-slot inbox, and coalesced %d, so the burst never filled the buffer "
         "that merges them: %r" % (moved["delivered"], BRIDGE_INBOX_DEPTH + 1,
                                   BRIDGE_INBOX_DEPTH, moved["bus_coalesced_total"], moved))
+
+
+RAW_CONNECT_S = 30.0
+RAW_RECONNECT_S = 30.0
+RAW_COUNTER_S = 10.0
+NOT_UTF8 = b"\xc3\x28"
+UNKNOWN_ADAPTER = b"a250"
+UNROUTABLE = "commands_unroutable_total"
+
+
+@pytest.fixture()
+def raw_broker(api, hil_config):
+    owners = api.mqtt_rules()
+    if owners:
+        pytest.skip("the owner's rule(s) %s talk MQTT over the bridge's session, which the "
+                    "raw broker would take from them for the test" % owners)
+    broker = RawBroker(hil_config).start()
+    try:
+        yield broker
+    finally:
+        broker.stop()
+
+
+def _enter_raw(guard, broker):
+    guard.enter(broker_host=broker.host, broker_port=broker.port)
+    assert broker.wait_event(lambda e: e.get("ev") == "subscribe", RAW_CONNECT_S), (
+        "the bridge did not connect to the raw broker on %s:%d and subscribe: %r"
+        % (broker.host, broker.port, broker.events))
+    lamp_filter = "%s/+/vl/+/set" % guard.topic("").rstrip("/")
+    assert wait_until(lambda: lamp_filter in broker.status()["filters"], RAW_CONNECT_S), (
+        "the bridge never subscribed %r: %r" % (lamp_filter, broker.status()))
+    return lamp_filter
+
+
+def _on_filter(lamp_filter, adapter, lamp):
+    root = lamp_filter.split("/+/")[0].encode()
+    return b"/".join((root, adapter, b"vl", lamp, b"set"))
+
+
+@pytest.mark.hil_id("HIL-MQTT-13")
+def test_a_topic_that_is_not_utf8_neither_restarts_the_controller_nor_ends_the_session(
+        api, ha_guard, raw_broker, mqtt_counters, test_artifacts):
+    lamp_filter = _enter_raw(ha_guard, raw_broker)
+    _bridge_settled(api)
+    uptime = api.diagnostics()["uptime_ms"]
+    before = mqtt_counters.all()
+
+    raw_broker.publish(_on_filter(lamp_filter, NOT_UTF8, NOT_UTF8), b'{"state":"OFF"}')
+    assert mqtt_counters.wait(UNROUTABLE, int(before.get(UNROUTABLE, 0)) + 1, RAW_COUNTER_S), (
+        "the bridge never counted the message unroutable: it did not reach the bridge's "
+        "handler")
+    bad = mqtt_counters.all()
+    raw_broker.publish(_on_filter(lamp_filter, UNKNOWN_ADAPTER, b"1"), b'{"state":"OFF"}')
+    assert mqtt_counters.wait(UNROUTABLE, int(bad.get(UNROUTABLE, 0)) + 1, RAW_COUNTER_S), (
+        "the session took nothing after the topic that is not UTF-8")
+    alive = mqtt_counters.all()
+
+    raw_broker.drop()
+    assert raw_broker.wait_event(lambda e: e.get("ev") == "connect" and e["n"] >= 2,
+                                 RAW_RECONNECT_S), (
+        "the bridge did not dial the broker again by itself: %r" % raw_broker.events)
+    assert wait_until(lambda: mqtt_counters.all().get("connected"), RAW_RECONNECT_S), (
+        mqtt_counters.all())
+    after = api.diagnostics()
+    test_artifacts.attach_json("raw_broker", {
+        "events": raw_broker.events, "before": before, "bad": bad, "alive": alive,
+        "after": after.get("mqtt"), "uptime_ms": [uptime, after["uptime_ms"]]})
+
+    assert after["uptime_ms"] > uptime, (
+        "the controller restarted (uptime %d -> %d ms)" % (uptime, after["uptime_ms"]))
+    assert raw_broker.connects() == 2, raw_broker.events
+    for older, newer in ((before, bad), (bad, alive)):
+        assert mqtt_counters.delta(int(older.get(UNROUTABLE, 0)),
+                                   int(newer.get(UNROUTABLE, 0))) == 1, (older, newer)
