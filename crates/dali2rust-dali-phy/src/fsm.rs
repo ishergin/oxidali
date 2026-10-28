@@ -3,6 +3,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use dali2rust_platform::hal::BitbangHal;
 
 use crate::halfbits::HalfBitBuffer;
+use crate::manchester::IsrDecode;
 
 pub const DALI_RX_SAMPLE_BUF_LEN: usize = 64;
 const MAX_RX_IDX: usize = DALI_RX_SAMPLE_BUF_LEN - 1;
@@ -81,6 +82,8 @@ pub struct RxCompletedEvent {
     pub rx_tick: u32,
     pub max_sample_gap_us: u32,
     pub timing_degraded: bool,
+    pub sniff_seq: u8,
+    pub isr_decode: IsrDecode,
 }
 
 impl Clone for RxCompletedEvent {
@@ -94,6 +97,8 @@ impl Clone for RxCompletedEvent {
             rx_tick: self.rx_tick,
             max_sample_gap_us: self.max_sample_gap_us,
             timing_degraded: self.timing_degraded,
+            sniff_seq: self.sniff_seq,
+            isr_decode: self.isr_decode,
         }
     }
 }
@@ -109,6 +114,8 @@ impl RxCompletedEvent {
             rx_tick: 0,
             max_sample_gap_us: 0,
             timing_degraded: false,
+            sniff_seq: 0,
+            isr_decode: IsrDecode::NotDecoded,
         }
     }
 }

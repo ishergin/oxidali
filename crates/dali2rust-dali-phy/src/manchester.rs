@@ -258,6 +258,12 @@ pub fn is_better_decode(candidate: &PhaseDecode, current: &PhaseDecode, preferre
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsrDecode {
+    NotDecoded,
+    Decoded(Option<PhaseDecode>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhaseSearch {
     Searching,
     Done(Option<PhaseDecode>),
@@ -323,6 +329,9 @@ const fn accepted(found: Option<PhaseDecode>) -> Option<PhaseDecode> {
         _ => None,
     }
 }
+
+pub const SNIFFED_BIT_LENGTHS: BitLengths = BitLengths::of(&[8, 16, 24]);
+pub const FORWARD24_BITS: u8 = 24;
 
 #[cfg(test)]
 mod tests {

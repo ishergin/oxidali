@@ -15,6 +15,7 @@
 )]
 
 pub mod answer;
+pub mod answer_table;
 pub mod backward_window;
 pub mod command;
 pub mod cpu;
@@ -28,6 +29,7 @@ pub mod ring;
 pub mod timer_alarm;
 
 pub use answer::AtomicAnswerCell;
+pub use answer_table::{answer_entry_index, entry_answer, AnswerTableCell, TableLookup};
 pub use backward_window::{
     answer_gate, AnswerGate, ANSWER_ARM_LEAD_TICKS, ANSWER_ARM_MAX_IDLE_TICKS,
     ANSWER_ARM_TARGET_IDLE_TICKS, BACKWARD_DATA_BITS, BACKWARD_MAX_US, BACKWARD_MIN_US,
@@ -36,8 +38,9 @@ pub use backward_window::{
 pub use command::{AtomicCommandCell, ExchangeId, TxCommand, TxGates};
 pub use cpu::{isr_core_id, ISR_CORE_ID};
 pub use frame_length::{
-    frame_length_class, FrameLengthClass, BACKWARD8_SAMPLE_COUNT, FORWARD16_SAMPLE_COUNT,
-    FORWARD24_SAMPLE_COUNT, FORWARD_LENGTH_MIN_SAMPLES, MIN_SAMPLES_FOR_DECODE,
+    frame_length_class, is_forward24_length, FrameLengthClass, BACKWARD8_SAMPLE_COUNT,
+    FORWARD16_SAMPLE_COUNT, FORWARD24_LENGTH_MIN_SAMPLES, FORWARD24_SAMPLE_COUNT,
+    FORWARD_LENGTH_MIN_SAMPLES, MIN_SAMPLES_FOR_DECODE,
 };
 pub use fsm::{
     restart_gate_for, settle_ticks_on_wire, BusState, CollisionPolicy, DaliBitbangPhy,
@@ -47,12 +50,13 @@ pub use fsm::{
 pub use gpio::RegisterGpio;
 pub use halfbits::HalfBitBuffer;
 pub use isr::{
-    dali_phy_alarm_isr, AnswerCounts, LateTick, PhyIsrCore, SessionEvent, LATE_TICK_US,
+    dali_phy_alarm_isr, AnswerCounts, AnswerTableCounts, LateTick, PhyIsrCore, SessionEvent, LATE_TICK_US,
     RX_RING_CAP, SESSION_RING_CAP,
 };
 pub use manchester::{
-    BestPhaseSearch, BitLengths, PhaseDecode, PhaseSearch, SampleWindow,
-    MANCHESTER_RX_MAX_DECODED_BITS, MANCHESTER_RX_MIN_DECODED_BITS,
+    BestPhaseSearch, BitLengths, IsrDecode, PhaseDecode, PhaseSearch, SampleWindow,
+    FORWARD24_BITS, MANCHESTER_RX_MAX_DECODED_BITS, MANCHESTER_RX_MIN_DECODED_BITS,
+    SNIFFED_BIT_LENGTHS,
 };
 pub use ring::SpscRing;
 pub use timer_alarm::{dali_phy_raw_isr, PhyAlarmIsr, TimerAlarmRegs};

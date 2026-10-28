@@ -3,6 +3,7 @@ pub const BACKWARD8_SAMPLE_COUNT: u16 = 11;
 pub const FORWARD16_SAMPLE_COUNT: u16 = 19;
 pub const FORWARD24_SAMPLE_COUNT: u16 = 27;
 pub const FORWARD_LENGTH_MIN_SAMPLES: u16 = FORWARD16_SAMPLE_COUNT;
+pub const FORWARD24_LENGTH_MIN_SAMPLES: u16 = 23;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameLengthClass {
@@ -20,7 +21,14 @@ pub const fn frame_length_class(sample_count: u16) -> FrameLengthClass {
     }
 }
 
+#[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+pub const fn is_forward24_length(sample_count: u16) -> bool {
+    sample_count >= FORWARD24_LENGTH_MIN_SAMPLES
+}
+
 const _: () = assert!(MIN_SAMPLES_FOR_DECODE < BACKWARD8_SAMPLE_COUNT);
+const _: () = assert!(FORWARD16_SAMPLE_COUNT < FORWARD24_LENGTH_MIN_SAMPLES);
+const _: () = assert!(FORWARD24_LENGTH_MIN_SAMPLES < FORWARD24_SAMPLE_COUNT);
 const _: () = assert!(BACKWARD8_SAMPLE_COUNT < FORWARD_LENGTH_MIN_SAMPLES);
 const _: () = assert!(FORWARD16_SAMPLE_COUNT < FORWARD24_SAMPLE_COUNT);
 

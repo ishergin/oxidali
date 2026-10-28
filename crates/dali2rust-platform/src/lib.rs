@@ -1,3 +1,4 @@
+pub mod answer_table;
 pub mod arbitration;
 pub mod clock;
 pub mod dali;

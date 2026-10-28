@@ -1,5 +1,6 @@
 use dali2rust_dali_phy::{
-    BestPhaseSearch, BitLengths, PhaseDecode, RxCompletedEvent, SampleWindow, LINE_HELD_TICKS,
+    BestPhaseSearch, BitLengths, IsrDecode, PhaseDecode, RxCompletedEvent, SampleWindow,
+    LINE_HELD_TICKS, SNIFFED_BIT_LENGTHS,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -19,7 +20,6 @@ pub struct SniffedDecode {
 }
 
 const BACKWARD_FRAME_BIT_LENGTHS: BitLengths = BitLengths::of(&[8]);
-const SNIFFED_FRAME_BIT_LENGTHS: BitLengths = BitLengths::of(&[8, 16, 24]);
 
 pub trait RxDecode {
     fn decode_backward_byte(&self) -> Option<u8>;
@@ -48,7 +48,11 @@ impl RxDecode for RxCompletedEvent {
     }
 
     fn decode_sniffed_with_phase(&self) -> SniffedDecode {
-        let Some(result) = try_decode(self, SNIFFED_FRAME_BIT_LENGTHS) else {
+        let found = match self.isr_decode {
+            IsrDecode::Decoded(found) => found,
+            IsrDecode::NotDecoded => try_decode(self, SNIFFED_BIT_LENGTHS),
+        };
+        let Some(result) = found else {
             return SniffedDecode {
                 frame: SniffedFrame::DecodeFailed,
                 phase_ticks: 0,
@@ -228,7 +232,9 @@ mod tests {
                     unparseable += 1;
                     continue;
                 };
-                let decoded = capture_from_hex(&dump.hex).decode_sniffed_with_phase();
+                let capture = capture_from_hex(&dump.hex);
+                let decoded = capture.decode_sniffed_with_phase();
+                check_length_routing(&capture, decoded.frame, line);
                 assert_eq!(decoded.phase_ticks, dump.phase, "phase, on {line}");
                 assert_eq!(decoded.score, dump.score, "score, on {line}");
                 check_verdict(&dump, decoded.frame, line);
@@ -243,6 +249,31 @@ mod tests {
             "{unparseable} unparseable capture lines against {replayed} replayed \
              — the log is interleaving far more than the corpus recorded"
         );
+    }
+
+    fn check_length_routing(capture: &RxCompletedEvent, frame: SniffedFrame, line: &str) {
+        let routed_to_interrupt = dali2rust_dali_phy::is_forward24_length(capture.sample_count);
+        match frame {
+            SniffedFrame::Forward24(_) => assert!(routed_to_interrupt, "on {line}"),
+            SniffedFrame::Forward16(_) | SniffedFrame::Backward8(_) => {
+                assert!(!routed_to_interrupt, "on {line}")
+            }
+            SniffedFrame::UnsupportedLength(_) | SniffedFrame::DecodeFailed => {}
+        }
+    }
+
+    #[test]
+    fn the_interrupt_s_decode_is_the_one_the_drain_reports() {
+        let hb = encode_forward24_raw(0xFF, 0xFE, 0x3D);
+        let mut capture = event_from(&halfbit_buffer_to_samples(&hb));
+        let task_side = capture.decode_sniffed_with_phase();
+        capture.isr_decode = IsrDecode::Decoded(None);
+        assert_eq!(capture.decode_sniffed(), SniffedFrame::DecodeFailed);
+        capture.isr_decode = IsrDecode::Decoded(
+            BestPhaseSearch::new(SNIFFED_BIT_LENGTHS)
+                .run(&SampleWindow::of_capture(&capture.samples, capture.sample_count)),
+        );
+        assert_eq!(capture.decode_sniffed_with_phase(), task_side);
     }
 
     fn check_verdict(dump: &DumpedCapture, frame: SniffedFrame, line: &str) {
@@ -728,3 +759,4 @@ mod tests {
         }
     }
 }
+
