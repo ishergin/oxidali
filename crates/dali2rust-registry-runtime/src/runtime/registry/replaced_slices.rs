@@ -149,6 +149,9 @@ impl ReplacedEntities {
     }
 
     fn note(&mut self, inner: &Inner, key: SliceKey) {
+        if key == SliceKey::Policies {
+            self.note_policy_drift(inner);
+        }
         if let Some(record) = record_bit(key) {
             self.records |= record;
         } else if let Some((adapter_id, banks)) = device_banks(key) {
@@ -174,6 +177,12 @@ impl ReplacedEntities {
             }
             SliceKey::HclSchedules => self.schedules.extend(inner.hcl_schedules.keys().cloned()),
             _ => {}
+        }
+    }
+
+    fn note_policy_drift(&mut self, inner: &Inner) {
+        for (adapter_id, short) in inner.physical_devices.keys() {
+            or_into(&mut self.devices, *adapter_id, short_bit(*short));
         }
     }
 
@@ -550,6 +559,7 @@ mod tests {
 
     use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusPublisher, PublishResult};
     use dali2rust_contracts::msg::{fixed_text_32, BusEventPayload, EVENT_VARIANT_NAMES};
+    use dali2rust_platform::slice_store::SliceKey;
     use dali2rust_test_support::{hold_the_events_ingress_full, wait_until};
 
     use super::{
@@ -698,6 +708,17 @@ mod tests {
             }
         }
         names
+    }
+
+    #[test]
+    fn a_policies_reload_names_every_device_whose_drift_flag_it_may_move() {
+        let store = RegistryStore::with_adapter_count(1);
+        for short in [2, 5] {
+            assert!(store.seed_discovered_dt8(short, None));
+        }
+        let watch = store.watch_reload(&[SliceKey::Policies], 1);
+        let replaced = store.replaced_entities(watch);
+        assert_eq!(replaced.devices_of(0), (1 << 2) | (1 << 5));
     }
 
     #[test]
