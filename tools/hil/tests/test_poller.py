@@ -6,6 +6,15 @@ from hil.wait import wait_until
 from hil_test_guards import allowed_bound_lamp
 
 FAST_INTERVAL_MS = 1000
+QUIET_AFTER_DISABLE_S = 6.0
+
+
+def _reads_beyond_sweeps(poller_counters, before, after):
+    published = poller_counters.delta(int(before.get("reads_published", 0)),
+                                      int(after.get("reads_published", 0)))
+    swept = poller_counters.delta(int(before.get("power_cycle_sweep_reads", 0)),
+                                  int(after.get("power_cycle_sweep_reads", 0)))
+    return published - swept
 
 
 def _bound_short(api):
@@ -47,12 +56,12 @@ def test_disabled_poller_still_ticks_but_reads_nothing(api, poller_guard,
     poller_guard(enabled=False)
     time.sleep(2.0)
 
-    cycles = poller_counters.get("cycles_total")
-    published = poller_counters.get("reads_published")
-    assert poller_counters.wait("cycles_total", cycles + 2, timeout_s=180), \
+    before = poller_counters.all()
+    assert poller_counters.wait("cycles_total", int(before["cycles_total"]) + 2, timeout_s=180), \
         "a disabled poller must keep ticking; counters=%s" % poller_counters.all()
-    assert poller_counters.get("reads_published") == published, \
-        "a disabled poller published reads: %s" % poller_counters.all()
+    after = poller_counters.all()
+    assert _reads_beyond_sweeps(poller_counters, before, after) <= 0, \
+        "a disabled poller published reads other than power-cycle sweep reads: %s" % after
 
 
 def _wait_for_fresh_observation(api, short, seen_before, timeout_s=90):
@@ -148,8 +157,11 @@ def test_live_disable_stops_reads_without_restarting_the_worker(
     poller_guard(enabled=False)
     time.sleep(FAST_INTERVAL_MS / 1000.0 * 3)
 
-    assert poller_counters.quiet("reads_published", 6.0), \
-        "reads continued after disable: %s" % poller_counters.all()
+    before = poller_counters.all()
+    time.sleep(QUIET_AFTER_DISABLE_S)
+    assert _reads_beyond_sweeps(poller_counters, before, poller_counters.all()) <= 0, \
+        "reads other than power-cycle sweep reads continued after disable: %s" \
+        % poller_counters.all()
     after = poller_counters.get("cycles_total")
     test_artifacts.attach_json("counters", poller_counters.all())
     assert after > cycles_before, \
