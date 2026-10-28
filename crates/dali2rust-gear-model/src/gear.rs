@@ -440,6 +440,10 @@ impl Gear {
     pub fn set_bank1_lock_byte(&mut self, value: u8) {
         self.banks.bank1[usize::from(BANK1_LOCK_OFFSET)] = value;
     }
+
+    pub fn set_bank1_location(&mut self, offset: u8, value: u8) {
+        self.store_profile(offset, value);
+    }
 }
 
 const BANK0_LAST_BANK_OFFSET: usize = 0x02;

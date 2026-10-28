@@ -439,6 +439,15 @@ fn write_under(
     interruptions: &[Interruption],
     writes: &[FieldWrite],
 ) -> (Outcome, SimDaliTransport) {
+    write_under_on(luminaire_gear(FOUND_LOCK, false), (granularity, trigger), interruptions, writes)
+}
+
+fn write_under_on(
+    sim: SimDaliTransport,
+    (granularity, trigger): (YieldGranularity, Trigger),
+    interruptions: &[Interruption],
+    writes: &[FieldWrite],
+) -> (Outcome, SimDaliTransport) {
     let gate = interruptions
         .iter()
         .find_map(|interruption| match interruption {
@@ -449,7 +458,6 @@ fn write_under(
             | Interruption::BusBusy => None,
         })
         .unwrap_or_else(|| Arc::new(WireActivity::new()));
-    let sim = luminaire_gear(FOUND_LOCK, false);
     let identity = identity_of(&sim);
     let bus = Arc::new(Mutex::new(Interrupting::new(sim, interruptions.to_vec(), trigger)));
     let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
@@ -522,7 +530,10 @@ fn is_write_location(frame: u16) -> bool {
 }
 
 fn assert_old_empty_or_new(sim: &SimDaliTransport, new: &str, context: &str) {
-    let old = colour_on_the_gear(&luminaire_gear(FOUND_LOCK, false));
+    assert_reads_old_empty_or_new(sim, &colour_on_the_gear(&luminaire_gear(FOUND_LOCK, false)), new, context);
+}
+
+fn assert_reads_old_empty_or_new(sim: &SimDaliTransport, old: &[u8], new: &str, context: &str) {
     let seen = colour_on_the_gear(sim);
     assert!(
         seen == old || seen.is_empty() || seen == new.as_bytes(),
@@ -532,16 +543,34 @@ fn assert_old_empty_or_new(sim: &SimDaliTransport, new: &str, context: &str) {
 }
 
 fn at_each_write_location(new: &str, interruption: impl Fn() -> Interruption) -> Vec<(usize, SimDaliTransport)> {
+    at_each_write_location_on(|| luminaire_gear(FOUND_LOCK, false), new, interruption)
+}
+
+fn at_each_write_location_on(
+    gear: impl Fn() -> SimDaliTransport,
+    new: &str,
+    interruption: impl Fn() -> Interruption,
+) -> Vec<(usize, SimDaliTransport)> {
     let writes = text("luminaire_colour", new);
-    let (_, calm) = write(FOUND_LOCK, false, &writes);
+    let (_, calm) = write_on(gear(), &writes);
     let frames = calm.sent_frames();
     let writes_at = frames.iter().enumerate().filter(|(_, frame)| is_write_location(**frame));
     writes_at
         .map(|(index, _)| {
             let trigger = Trigger::Nth(index + 1);
-            (index + 1, write_under(YieldGranularity::Step, trigger, &[interruption()], &writes).1)
+            (index + 1, write_under_on(gear(), (YieldGranularity::Step, trigger), &[interruption()], &writes).1)
         })
         .collect()
+}
+
+fn another_text_of_its_length(old: &[u8]) -> String {
+    old.iter().map(|byte| if *byte == b'a' { 'b' } else { 'a' }).collect()
+}
+
+fn gear_with_an_emptied_colour() -> SimDaliTransport {
+    let mut sim = luminaire_gear(FOUND_LOCK, false);
+    sim.fleet_mut().gears_mut()[0].set_bank1_location(LUMINAIRE_COLOUR.offset, TEXT_TERMINATOR);
+    sim
 }
 
 // DiiA 251 §9.2.5
@@ -549,6 +578,29 @@ fn at_each_write_location(new: &str, interruption: impl Fn() -> Interruption) ->
 fn a_text_stopped_after_any_write_reads_old_empty_or_new() {
     for (nth, sim) in at_each_write_location(MULTI_SESSION_TEXT, operator) {
         assert_old_empty_or_new(&sim, MULTI_SESSION_TEXT, &format!("stopped after frame {nth}"));
+        assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK), "frame {nth}");
+    }
+}
+
+// DiiA 251 §9.2.5
+#[test]
+fn a_text_as_long_as_the_old_one_reads_old_empty_or_new_after_any_write() {
+    let old = colour_on_the_gear(&luminaire_gear(FOUND_LOCK, false));
+    let new = another_text_of_its_length(&old);
+    assert_eq!(new.len(), old.len());
+    for (nth, sim) in at_each_write_location(&new, operator) {
+        assert_old_empty_or_new(&sim, &new, &format!("stopped after frame {nth}"));
+        assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK), "frame {nth}");
+    }
+}
+
+// DiiA 251 §9.2.5
+#[test]
+fn a_text_over_a_field_whose_first_byte_is_already_zero_reads_empty_or_new_after_any_write() {
+    let old = colour_on_the_gear(&gear_with_an_emptied_colour());
+    assert!(old.is_empty(), "the old text ends at its first byte");
+    for (nth, sim) in at_each_write_location_on(gear_with_an_emptied_colour, MULTI_SESSION_TEXT, operator) {
+        assert_reads_old_empty_or_new(&sim, &old, MULTI_SESSION_TEXT, &format!("stopped after frame {nth}"));
         assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK), "frame {nth}");
     }
 }
