@@ -240,7 +240,7 @@ enum ReadFailure {
 struct ResumeEvidence {
     first_byte_answered: bool,
     responded: bool,
-    contended: bool,
+    not_silent: bool,
     silences: u8,
     telling: u8,
     idle: u8,
@@ -250,7 +250,7 @@ impl ResumeEvidence {
     const NONE: Self = Self {
         first_byte_answered: false,
         responded: false,
-        contended: false,
+        not_silent: false,
         silences: 0,
         telling: 0,
         idle: 0,
@@ -261,7 +261,7 @@ impl ResumeEvidence {
         let silent = failure == ReadFailure::Silent;
         self.first_byte_answered |= at > resume;
         self.responded |= answered;
-        self.contended |= matches!(failure, ReadFailure::Contended { .. });
+        self.not_silent |= !silent;
         self.silences += u8::from(silent && silence_may_end_bank(at));
         if at > resume || answered || silent {
             self.telling += 1;
@@ -452,7 +452,7 @@ impl ChunkCursor {
 // DiiA 252 §9.2.2
 fn give_up(failure: ReadFailure, evidence: ResumeEvidence) -> Result<ReadStop, SemanticDaliError> {
     match failure {
-        _ if evidence.first_byte_answered && !evidence.contended => {
+        _ if evidence.first_byte_answered && !evidence.not_silent => {
             Err(SemanticDaliError::OperationFailed(MEMORY_LATCH_LOST))
         }
         ReadFailure::Failed(error) if !evidence.responded => Err(error),

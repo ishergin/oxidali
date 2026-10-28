@@ -643,35 +643,37 @@ fn a_silence_at_a_latched_values_first_byte_after_it_answered_is_no_end_of_bank(
     assert_script_consumed(&transport);
 }
 
+const TRANSPORT_FAILED: &str = "dali_transport_error";
+
+fn expect_latch_broken_by(mock: &MockDaliTransport, short: u8, failure: ReadAttempt) {
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(mock, short, SOURCE_DIAGNOSTICS, 0x04);
+    expect_pointer_check(mock, short, SOURCE_DIAGNOSTICS, Some(0x04));
+    for attempt in 0..=MEMORY_READ_LOCATION_RETRIES {
+        mock.expect_forward_frame_with_backward(read, Some(0xA1));
+        match failure {
+            Violated => mock.expect_forward_frame_corrupted_in_window(read),
+            BusBusy => mock.expect_forward_frame_bus_busy(read),
+            _ => mock.expect_forward_frame_send_error(read),
+        }
+        if attempt < MEMORY_READ_LOCATION_RETRIES {
+            expect_rearmed_chunk(mock, short, SOURCE_DIAGNOSTICS, 0x04);
+        }
+    }
+}
+
 // DiiA 252 §9.2.2
 // IEC 62386-101 §8.2.5
 #[test]
-fn a_latched_value_whose_later_byte_met_contention_is_contended_not_a_lost_latch() {
-    for contention in [ReadAttempt::Violated, ReadAttempt::BusBusy] {
+fn a_latched_value_whose_later_byte_was_not_silent_is_not_a_lost_latch() {
+    for (failure, error) in [(Violated, BUS_CONTENDED), (BusBusy, BUS_CONTENDED), (TransportFailed, TRANSPORT_FAILED)] {
         let mock = MockDaliTransport::new();
-        let short = 3;
-        let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
-        expect_prepare(&mock, short, SOURCE_DIAGNOSTICS, 0x04);
-        expect_pointer_check(&mock, short, SOURCE_DIAGNOSTICS, Some(0x04));
-        for attempt in 0..=MEMORY_READ_LOCATION_RETRIES {
-            mock.expect_forward_frame_with_backward(read, Some(0xA1));
-            match contention {
-                ReadAttempt::Violated => mock.expect_forward_frame_corrupted_in_window(read),
-                _ => mock.expect_forward_frame_bus_busy(read),
-            }
-            if attempt < MEMORY_READ_LOCATION_RETRIES {
-                expect_rearmed_chunk(&mock, short, SOURCE_DIAGNOSTICS, 0x04);
-            }
-        }
+        expect_latch_broken_by(&mock, 3, failure);
 
         let (transport, mut controller) = setup_controller(mock);
-        let execution = read_memory_bank(&mut controller, short, SOURCE_DIAGNOSTICS, 0x04, 3);
+        let execution = read_memory_bank(&mut controller, 3, SOURCE_DIAGNOSTICS, 0x04, 3);
 
-        assert_eq!(
-            execution.error,
-            Some(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
-            "the latch broke on the bus, not on the gear's silence"
-        );
+        assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(error)), "the gear was not silent");
         assert!(execution.bytes.is_empty());
         assert_script_consumed(&transport);
     }
@@ -883,6 +885,32 @@ fn a_silence_at_offset_2_is_a_lost_read_not_the_end_of_a_bank() {
         "every implemented bank answers at 0x02, so its silences are lost READs, never the end"
     );
     assert_eq!(execution.error, None);
+    assert_script_consumed(&transport);
+}
+
+// IEC 62386-102 §9.10.2, Table 8
+#[test]
+fn a_silence_at_offset_2_through_the_whole_budget_is_no_lost_latch() {
+    let mock = MockDaliTransport::new();
+    let short = 5;
+    let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
+    expect_prepare(&mock, short, 0, 2);
+    expect_pointer_check(&mock, short, 0, Some(2));
+    for attempt in 0..=MEMORY_READ_LOCATION_RETRIES {
+        mock.expect_forward_frame_with_backward(read, None);
+        if attempt < MEMORY_READ_LOCATION_RETRIES {
+            expect_rearmed_chunk(&mock, short, 0, 2);
+        }
+    }
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, short, 0, 2, 1);
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
+        "no latched value began there, so nothing was lost inside one"
+    );
     assert_script_consumed(&transport);
 }
 
