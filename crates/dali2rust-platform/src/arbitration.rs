@@ -1,9 +1,13 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::liveness::CLOCK_READ_SKEW_MS;
+
 const UNIT_PUBLISHED: u32 = 1 << 31;
 const UNIT_ACTIVE: u32 = 1 << 8;
 const UNIT_ADDRESS_MASK: u32 = 0xFF;
 const UNIT_NO_ADDRESS: u32 = 0xFF;
+
+pub const LEASE_TTL_MS: u32 = 3_000;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ArbitrationAnswerCounters {
@@ -75,32 +79,30 @@ impl AnswerInputs {
     }
 
     pub fn extend_lease(&self, now_ms: u32, ttl_ms: u32) {
-        let until = now_ms.wrapping_add(ttl_ms);
-        let current = self.lease_until_ms.load(Ordering::Acquire);
-        if Self::is_after(until, current) {
-            self.lease_until_ms.store(until, Ordering::Release);
+        let ttl_ms = ttl_ms.min(LEASE_TTL_MS);
+        if ttl_ms > self.lease_remaining_ms(now_ms) {
+            self.lease_until_ms
+                .store(now_ms.wrapping_add(ttl_ms), Ordering::Release);
         }
     }
 
-    pub fn revoke_lease(&self) {
-        self.lease_until_ms.store(0, Ordering::Release);
+    pub fn revoke_lease(&self, now_ms: u32) {
+        self.lease_until_ms.store(now_ms, Ordering::Release);
     }
 
     pub fn lease_alive(&self, now_ms: u32) -> bool {
-        Self::is_after(self.lease_until_ms.load(Ordering::Acquire), now_ms)
+        self.lease_remaining_ms(now_ms) > 0
     }
 
     pub fn lease_remaining_ms(&self, now_ms: u32) -> u32 {
-        let until = self.lease_until_ms.load(Ordering::Acquire);
-        if Self::is_after(until, now_ms) {
-            until.wrapping_sub(now_ms)
+        let remaining = self.lease_until_ms.load(Ordering::Acquire).wrapping_sub(now_ms);
+        if remaining <= LEASE_TTL_MS {
+            remaining
+        } else if remaining <= LEASE_TTL_MS + CLOCK_READ_SKEW_MS {
+            LEASE_TTL_MS
         } else {
             0
         }
-    }
-
-    fn is_after(a: u32, b: u32) -> bool {
-        (a.wrapping_sub(b) as i32) > 0
     }
 
     pub fn is_answering(&self, now_ms: u32) -> bool {
@@ -191,8 +193,51 @@ mod tests {
     #[test]
     fn revoking_is_immediate() {
         let inputs = leased();
-        inputs.revoke_lease();
+        inputs.revoke_lease(1_000);
         assert!(!inputs.lease_alive(1_000));
+    }
+
+    #[test]
+    fn a_lease_revoked_late_in_the_clock_stays_revoked_and_extends_again() {
+        for revoked_at in [(1u32 << 31) + 10, u32::MAX - 1_000] {
+            let inputs = AnswerInputs::new();
+            inputs.revoke_lease(revoked_at);
+            let later = revoked_at.wrapping_add(500);
+            assert!(!inputs.lease_alive(revoked_at), "revoked at {revoked_at}");
+            assert_eq!(inputs.lease_remaining_ms(later), 0, "revoked at {revoked_at}");
+            inputs.extend_lease(later, LEASE_TTL_MS);
+            assert!(inputs.lease_alive(later));
+            assert!(!inputs.lease_alive(later.wrapping_add(LEASE_TTL_MS)));
+        }
+    }
+
+    #[test]
+    fn a_lease_left_alone_past_half_the_clock_stays_lapsed() {
+        let inputs = leased();
+        let long_after = 4_000u32.wrapping_add(1 << 31).wrapping_add(5);
+        assert!(!inputs.lease_alive(long_after));
+        assert_eq!(inputs.lease_remaining_ms(long_after), 0);
+        inputs.extend_lease(long_after, LEASE_TTL_MS);
+        assert!(inputs.lease_alive(long_after));
+    }
+
+    #[test]
+    fn a_lease_extended_on_a_clock_a_little_ahead_reads_whole() {
+        let inputs = AnswerInputs::new();
+        inputs.extend_lease(10_001, LEASE_TTL_MS);
+        assert_eq!(inputs.lease_remaining_ms(10_000), LEASE_TTL_MS);
+        let too_far_ahead = AnswerInputs::new();
+        too_far_ahead.extend_lease(10_000 + CLOCK_READ_SKEW_MS + 1, LEASE_TTL_MS);
+        assert_eq!(too_far_ahead.lease_remaining_ms(10_000), 0);
+    }
+
+    #[test]
+    fn a_lease_asked_for_beyond_the_ttl_is_held_to_it() {
+        let inputs = AnswerInputs::new();
+        inputs.extend_lease(1_000, 10 * LEASE_TTL_MS);
+        assert_eq!(inputs.lease_remaining_ms(1_000), LEASE_TTL_MS);
+        assert!(inputs.lease_alive(1_000 + LEASE_TTL_MS - 1));
+        assert!(!inputs.lease_alive(1_000 + LEASE_TTL_MS));
     }
 
     #[test]

@@ -154,7 +154,7 @@ registry locking → [06](06-registry-and-persistence.md).
 ## No long spinlock holds while the wire is live
 
 - A spinlock held longer than about one tick delays every task that wants it, the
-  sniffer staging an arbitration answer included.
+  `dali-sniff` drain publishing the answer table included.
 - So nothing at runtime walks the kernel or the heap: no `uxTaskGetSystemState`, no
   `heap_caps_get_info`, `heap_caps_get_largest_free_block` or `multi_heap_get_info`.
   Largest-block figures are taken at boot stages only

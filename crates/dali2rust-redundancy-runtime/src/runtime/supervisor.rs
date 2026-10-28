@@ -6,9 +6,9 @@ use dali2rust_domain::registry::DaliSettingsReadPort;
 use dali2rust_platform::arbitration::{AnswerInputs, UnitInputs};
 use dali2rust_platform::liveness::LivenessWatch;
 
-pub const SUPERVISOR_PERIOD_MS: u64 = 1_000;
+pub use dali2rust_platform::arbitration::LEASE_TTL_MS;
 
-pub const LEASE_TTL_MS: u32 = 3_000;
+pub const SUPERVISOR_PERIOD_MS: u64 = 1_000;
 
 pub const WORKER_STALE_AFTER_MS: u32 = 3_000;
 
@@ -90,7 +90,7 @@ pub fn run_supervisor_tick(inputs: &SupervisorInputs, now_ms: u32) -> Supervisor
         }
         SupervisorTurn::StandDown(StandDownReason::Passive) => {
             inputs.answer_inputs.publish_unit(unit_inputs(&settings));
-            inputs.answer_inputs.revoke_lease();
+            inputs.answer_inputs.revoke_lease(now_ms);
         }
         SupervisorTurn::StandDown(StandDownReason::WorkerStale(name)) => {
             match inputs.watch.stale_age(now_ms) {
@@ -100,7 +100,7 @@ pub fn run_supervisor_tick(inputs: &SupervisorInputs, now_ms: u32) -> Supervisor
                 Some((_, Some(age))) => log::warn!(
                     "arbitration: {name} last turned {age} ms ago (stale after {} ms) — the answer table is not renewed, the lease lapses in at most {} ms",
                     WORKER_STALE_AFTER_MS,
-                    inputs.config.lease_ttl_ms
+                    inputs.config.lease_ttl_ms.min(LEASE_TTL_MS)
                 ),
                 None => {}
             }
@@ -202,7 +202,7 @@ mod tests {
         let unit = inputs.unit()?;
         let cell = AnswerTableCell::new();
         cell.publish(&answer_table(unit.application_active, unit.device_short_address), 0);
-        cell.set_lease_until_tick(inputs.lease_remaining_ms(now_ms));
+        cell.set_lease_for_ms(0, inputs.lease_remaining_ms(now_ms));
         match cell.lookup(frame, 0, 0) {
             TableLookup::Answer(byte) => Some(byte),
             _ => None,

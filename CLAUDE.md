@@ -230,8 +230,8 @@ Detail: [08](documentation/architecture/08-dali-phy-and-transport.md).
   flash; source review cannot. `hil flash` refuses a red binary.
 - The task decides before the frame, the interrupt answers it: the drain publishes the
   answer table, and the interrupt decodes a 24-bit capture and answers it only from a
-  table that accounts for every capture before it; the other lengths are decoded in task
-  context (ADR-030).
+  table published after the drain took the capture just before it; the other lengths are
+  decoded in task context (ADR-030).
 - Arming a frame and writing its opening edge are different ticks; new work on the
   transmit-start path moves off that tick rather than getting faster.
 - A cancel drains the command cell; a batch abort on foreign reception must not; neither

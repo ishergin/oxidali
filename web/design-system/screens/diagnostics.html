@@ -349,8 +349,9 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            24-bit frame and answers queries from a table the sniffer
            republishes each poll. `Answer table torn` is a lookup that met a
            table mid-publish, `Answer decode overrun` a capture that arrived
-           while a 24-bit one was still being decoded; either costs one answer,
-           neither happens on a conformant bus, and both are fault-painted. -->
+           while a 24-bit one was still being decoded; either costs at most one
+           answer, neither is expected in normal operation, and both are
+           fault-painted. -->
       <div class="card">
         <header><h3>PHY sniffer</h3></header>
         <div class="attr"><span class="k">Frames</span><span class="v">1 201 728</span><span class="delta live">+19</span></div>

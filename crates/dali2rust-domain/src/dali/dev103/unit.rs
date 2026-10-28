@@ -26,8 +26,12 @@ pub fn answer_table(application_active: bool, device_short_address: Option<u8>) 
 mod tests {
     use super::*;
     use crate::dali::dev103::address::{Device103Address, InstanceAddress};
+    use crate::dali::dev103::command::Special103Command;
     use crate::dali::dev103::frame::ForwardFrame24;
     use dali2rust_dali_phy::{AnswerTableCell, TableLookup};
+    use dali2rust_platform::answer_table::{
+        COMPARE_ENTRY, QUERY_SHORT_ADDRESS_ENTRY, VERIFY_SHORT_ADDRESS_ENTRY,
+    };
 
     const NOW: u32 = 1_000;
 
@@ -92,6 +96,23 @@ mod tests {
         cell.publish(&answer_table(true, Some(7)), 0);
         cell.set_lease_until_tick(NOW);
         assert_eq!(cell.lookup(qace(Device103Address::Broadcast), 0, NOW), TableLookup::LeaseLapsed);
+    }
+
+    #[test]
+    fn each_special_query_reaches_its_own_entry() {
+        let mut image = answer_table(true, Some(7));
+        image.entries[COMPARE_ENTRY] = AnswerEntry::always(0x11);
+        image.entries[VERIFY_SHORT_ADDRESS_ENTRY] = AnswerEntry::always(0x22);
+        image.entries[QUERY_SHORT_ADDRESS_ENTRY] = AnswerEntry::always(0x33);
+        let cell = AnswerTableCell::new();
+        cell.publish(&image, 0);
+        let lookup = |command: Special103Command, data: u8| {
+            cell.lookup(command.frame(data).as_bytes(), 0, NOW)
+        };
+        assert_eq!(lookup(Special103Command::Compare, 0), TableLookup::Answer(0x11));
+        assert_eq!(lookup(Special103Command::VerifyShortAddress, 7), TableLookup::Answer(0x22));
+        assert_eq!(lookup(Special103Command::QueryShortAddress, 0), TableLookup::Answer(0x33));
+        assert_eq!(lookup(Special103Command::Withdraw, 0), TableLookup::NotAddressed);
     }
 
     #[test]

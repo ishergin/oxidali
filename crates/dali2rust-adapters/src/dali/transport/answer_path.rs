@@ -2,24 +2,20 @@ use core::sync::atomic::Ordering::Relaxed;
 
 use dali2rust_dali_phy::{
     AnswerCounts, AnswerTableCounts, PhyIsrCore, RxCompletedEvent, FORWARD24_BITS, PHY_TICK_US,
-    TX_HALF_BIT_TICKS,
 };
 use dali2rust_domain::dali::dev103::unit::answer_table;
 use dali2rust_platform::arbitration::{AnswerInputs, ArbitrationAnswerCounters};
 use dali2rust_platform::dali::PhySnifferCounters;
 
-const US_PER_MS: u32 = 1_000;
 // IEC 62386-101 Table 22
 const BACKWARD_TO_FORWARD_SETTLE_MIN_US: u32 = 2_400;
+// IEC 62386-101 Table 21
+const MULTI_MASTER_HALF_BIT_MIN_US: u32 = 400;
 const FORWARD24_HALF_BITS: u32 = (1 + FORWARD24_BITS as u32) * 2;
 
-pub const PUBLISH_BUDGET_TICKS: u32 =
-    BACKWARD_TO_FORWARD_SETTLE_MIN_US / PHY_TICK_US + FORWARD24_HALF_BITS * TX_HALF_BIT_TICKS;
-
-#[must_use]
-pub fn lease_until_tick(now_tick: u32, remaining_ms: u32) -> u32 {
-    now_tick.wrapping_add(remaining_ms.saturating_mul(US_PER_MS) / PHY_TICK_US)
-}
+pub const PUBLISH_BUDGET_TICKS: u32 = (BACKWARD_TO_FORWARD_SETTLE_MIN_US
+    + FORWARD24_HALF_BITS * MULTI_MASTER_HALF_BIT_MIN_US)
+    / PHY_TICK_US;
 
 #[must_use]
 pub const fn arbitration_answers(
@@ -78,7 +74,7 @@ impl AnswerPublisher {
     ) -> Option<u32> {
         let now_tick = isr.wire_tick_counts().0;
         let remaining_ms = inputs.map_or(0, |inputs| inputs.lease_remaining_ms(now_ms));
-        isr.set_answer_lease_until_tick(lease_until_tick(now_tick, remaining_ms));
+        isr.set_answer_lease_for_ms(now_tick, remaining_ms);
         let oldest = self.oldest_unpublished_tick.take();
         let unit = inputs.and_then(AnswerInputs::unit)?;
         isr.publish_answer_table(
@@ -188,15 +184,8 @@ mod tests {
     }
 
     #[test]
-    fn three_seconds_of_lease_is_three_seconds_of_ticks() {
-        assert_eq!(lease_until_tick(0, 3_000), 3_000_000 / PHY_TICK_US);
-        assert_eq!(lease_until_tick(u32::MAX, 0), u32::MAX);
-        assert_eq!(lease_until_tick(10, u32::MAX), 10u32.wrapping_add(u32::MAX / PHY_TICK_US));
-    }
-
-    #[test]
     fn the_budget_is_the_shortest_wire_time_from_one_capture_to_the_end_of_a_24_bit_query() {
-        assert_eq!(PUBLISH_BUDGET_TICKS, 2_400 / 104 + 50 * 4);
+        assert_eq!(PUBLISH_BUDGET_TICKS, 215);
     }
 
     #[test]
@@ -244,7 +233,7 @@ mod tests {
         let mut publisher = AnswerPublisher::new();
         let inputs = named(true);
         publisher.publish(&isr, Some(&inputs), NOW_MS);
-        inputs.revoke_lease();
+        inputs.revoke_lease(NOW_MS);
         publisher.publish(&isr, Some(&inputs), NOW_MS);
         assert_eq!(isr.lookup_answer(QACE_BROADCAST, 0), TableLookup::LeaseLapsed);
     }

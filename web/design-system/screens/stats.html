@@ -306,7 +306,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
              interrupt's, so they carry no change column; the unit is the
              field's own suffix. The interrupt answers from a table the
              sniffer republishes every 10 ms poll, so a publish peak near one
-             poll is healthy and "behind" counts the answers actually missed.
+             poll is healthy and "behind" counts the queries the table has an
+             entry for that met it before the drain caught up, answerable or not.
              A flush over 250 ms counts as slow, so a peak above that comes
              with at least one slow flush. -->
         <div class="attr"><span class="k">Answer staged total</span><span class="v">214</span><span class="delta"></span></div>

@@ -998,8 +998,8 @@ impl PhyIsrCore {
         self.table_path.table.publish(image, accounts_for);
     }
 
-    pub fn set_answer_lease_until_tick(&self, tick: u32) {
-        self.table_path.table.set_lease_until_tick(tick);
+    pub fn set_answer_lease_for_ms(&self, now_tick: u32, remaining_ms: u32) {
+        self.table_path.table.set_lease_for_ms(now_tick, remaining_ms);
     }
 
     pub fn lookup_answer(&self, frame: [u8; 3], previous_capture: u8) -> TableLookup {
@@ -1231,8 +1231,9 @@ pub unsafe extern "C" fn dali_phy_alarm_isr(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame_length::FORWARD_LENGTH_MIN_SAMPLES;
+    use crate::frame_length::{FORWARD24_LENGTH_MIN_SAMPLES, FORWARD_LENGTH_MIN_SAMPLES};
     use crate::fsm::{PHY_TICK_US, TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS};
+    use dali2rust_platform::arbitration::LEASE_TTL_MS;
 
     fn test_core(set: &mut u32, clr: &mut u32, input: &u32) -> PhyIsrCore {
         // SAFETY: the three "registers" outlive the core within each test.
@@ -2751,7 +2752,6 @@ mod tests {
     }
 
     const QACE_BROADCAST: [u8; 3] = [0xFF, 0xFE, 0x3D];
-    const LEASE_TICKS: u32 = 100_000;
 
     fn frame24_bits(frame: [u8; 3]) -> Vec<bool> {
         let word = u32::from_be_bytes([0, frame[0], frame[1], frame[2]]);
@@ -2770,7 +2770,7 @@ mod tests {
 
     fn arm_table(core: &PhyIsrCore, accounts_for: u8) {
         core.publish_answer_table(&qace_table(), accounts_for);
-        core.set_answer_lease_until_tick(core.wire_tick_counts().0.wrapping_add(LEASE_TICKS));
+        core.set_answer_lease_for_ms(core.wire_tick_counts().0, LEASE_TTL_MS);
     }
 
     fn drain_rx(core: &PhyIsrCore) -> Vec<RxCompletedEvent> {
@@ -2905,6 +2905,30 @@ mod tests {
     }
 
     #[test]
+    fn a_capture_completing_mid_decode_hands_the_held_one_on_undecoded_and_in_order() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let input = 0b0010u32;
+        let core = test_core(&mut set, &mut clr, &input);
+        let forward24 = RxCompletedEvent {
+            sample_count: FORWARD24_LENGTH_MIN_SAMPLES,
+            ..RxCompletedEvent::new()
+        };
+        let short = RxCompletedEvent { sample_count: 2, ..RxCompletedEvent::new() };
+        // SAFETY: single-threaded test standing in for `tick`, the held capture's owner.
+        unsafe {
+            core.push_sniffer_capture(forward24);
+            core.push_sniffer_capture(short);
+        }
+
+        assert_eq!(core.answer_table_counts().decode_overrun, 1);
+        let seen: Vec<_> = drain_rx(&core)
+            .iter()
+            .map(|ev| (ev.sniff_seq, ev.isr_decode))
+            .collect();
+        assert_eq!(seen, [(1, IsrDecode::NotDecoded), (2, IsrDecode::NotDecoded)]);
+    }
+
+    #[test]
     fn a_lapsed_lease_silences_an_answer_given_only_while_it_lives() {
         let (mut set, mut clr) = (0u32, 0u32);
         let mut input = 0b0010u32;
@@ -2912,7 +2936,7 @@ mod tests {
         // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
         let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
         core.publish_answer_table(&qace_table(), 0);
-        core.set_answer_lease_until_tick(core.wire_tick_counts().0);
+        core.set_answer_lease_for_ms(core.wire_tick_counts().0, 0);
 
         receive_foreign_frame(&core, input_ptr, &frame24_bits(QACE_BROADCAST));
         // SAFETY: single-threaded test standing in for the ISR context.

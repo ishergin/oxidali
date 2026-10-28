@@ -153,13 +153,18 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   the drain builds the answer table from the supervisor's `AnswerInputs`
   (`dali2rust-domain::dali::dev103::unit`) and publishes it (`dali-phy::answer_table`)
   naming the last capture it consumed.
-- The interrupt answers a decoded 24-bit capture only from a table that accounts for the
-  capture before it; a table that is behind answers nothing and is counted
-  (`answer_table_behind_total`). The table is double-buffered under a sequence check, so
-  the interrupt never answers from half of one and counts a torn read instead.
-- The lease reaches the interrupt as an expiry in its own ticks, rewritten at every poll,
-  and is applied at answer time: a stalled supervisor or a stalled drain silences the
-  answer within one lease.
+- The interrupt answers a decoded 24-bit capture only from a table published after the
+  drain took the capture just before it. A table that is behind answers nothing, and every
+  query it has an entry for (a device query addressed to the unit, or a special query)
+  that meets it is counted (`answer_table_behind_total`), whether or not the entry holds
+  an answer: the count measures the drain's lag. A capture lost to a full ring reaches
+  the drain only as a jump in `sniff_seq`. The table
+  is double-buffered under a sequence check, so the interrupt never answers from half of
+  one and counts a torn read instead.
+- The lease reaches the interrupt as an expiry in its own ticks, never more than
+  `LEASE_TTL_MS` ahead, rewritten at every poll and applied at answer time: a stalled
+  supervisor or a stalled drain silences the answer within one lease, and a lease nobody
+  rewrites reads alive again for at most one lease per wrap of the counter.
 - The interrupt stages the answer in the answer cell under the capture's bus epoch and
   sends it on the tick the idle counter reaches the Table 20 target (`answer_gate`),
   ahead of any forward frame of ours, only while no later bus event has moved the epoch,

@@ -5,6 +5,9 @@ use dali2rust_platform::answer_table::{
     DEVICE_QUERY_FIRST_OPCODE, ENTRY_ANSWER_MASK, ENTRY_LAPSED_SHIFT, ENTRY_PRESENT,
     NO_SHORT_ADDRESS, QUERY_SHORT_ADDRESS_ENTRY, VERIFY_SHORT_ADDRESS_ENTRY,
 };
+use dali2rust_platform::arbitration::LEASE_TTL_MS;
+
+use crate::fsm::PHY_TICK_US;
 
 const COMMAND_BIT: u8 = 0x01;
 const BROADCAST: u8 = 0xFF;
@@ -20,6 +23,15 @@ const SPECIAL_COMPARE: u8 = 0x03;
 const SPECIAL_VERIFY_SHORT_ADDRESS: u8 = 0x09;
 const SPECIAL_QUERY_SHORT_ADDRESS: u8 = 0x0A;
 const NEVER_PUBLISHED: u32 = 0;
+const US_PER_MS: u32 = 1_000;
+
+pub const ANSWER_LEASE_MAX_TICKS: u32 = lease_ticks(LEASE_TTL_MS);
+
+#[allow(clippy::arithmetic_side_effects, reason = "at most LEASE_TTL_MS microseconds divided by a non-zero constant; task context only")]
+const fn lease_ticks(remaining_ms: u32) -> u32 {
+    let held_ms = if remaining_ms < LEASE_TTL_MS { remaining_ms } else { LEASE_TTL_MS };
+    held_ms * US_PER_MS / PHY_TICK_US
+}
 
 // IEC 62386-103 §7.2
 #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
@@ -155,6 +167,12 @@ impl TableCopy {
         }
         self.generation.store(generation.wrapping_add(2), Ordering::Release);
     }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn settled_since(&self, before: u32) -> bool {
+        fence(Ordering::Acquire);
+        before & 1 == 0 && self.generation.load(Ordering::Relaxed) == before
+    }
 }
 
 pub struct AnswerTableCell {
@@ -186,9 +204,14 @@ impl AnswerTableCell {
         self.lease_until_tick.store(tick, Ordering::Release);
     }
 
+    pub fn set_lease_for_ms(&self, now_tick: u32, remaining_ms: u32) {
+        self.set_lease_until_tick(now_tick.wrapping_add(lease_ticks(remaining_ms)));
+    }
+
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     pub fn lease_alive(&self, now_tick: u32) -> bool {
-        (self.lease_until_tick.load(Ordering::Acquire).wrapping_sub(now_tick) as i32) > 0
+        let remaining = self.lease_until_tick.load(Ordering::Acquire).wrapping_sub(now_tick);
+        remaining != 0 && remaining <= ANSWER_LEASE_MAX_TICKS
     }
 
     pub fn lookup(&self, frame: [u8; 3], previous_capture: u8, now_tick: u32) -> TableLookup {
@@ -263,8 +286,7 @@ impl AnswerTableCell {
             },
             None => 0,
         };
-        fence(Ordering::Acquire);
-        let torn = before & 1 != 0 || copy.generation.load(Ordering::Relaxed) != before;
+        let torn = !copy.settled_since(before);
         Some(LiveRead { torn, accounts_for, short_address, index, word })
     }
 }
@@ -355,11 +377,48 @@ mod tests {
     }
 
     #[test]
+    fn a_lapsed_lease_answers_from_the_entry_s_lapsed_half() {
+        let mut image = image(7, 0);
+        assert!(image.set_device_query(QACE, AnswerEntry::by_lease(Some(0x5A), Some(0xA5))));
+        let cell = published(&image, 0);
+        assert_eq!(cell.lookup([0xFF, 0xFE, QACE], 0, NOW), TableLookup::Answer(0x5A));
+        assert_eq!(cell.lookup([0xFF, 0xFE, QACE], 0, NOW + 100), TableLookup::Answer(0xA5));
+    }
+
+    #[test]
     fn the_lease_survives_the_tick_counter_wrapping() {
         let cell = AnswerTableCell::new();
         cell.set_lease_until_tick(5);
         assert!(cell.lease_alive(u32::MAX - 5));
         assert!(!cell.lease_alive(6));
+    }
+
+    #[test]
+    fn a_lease_left_alone_past_half_the_tick_counter_stays_lapsed() {
+        let cell = AnswerTableCell::new();
+        cell.set_lease_until_tick(NOW + 100);
+        assert!(!cell.lease_alive((NOW + 100).wrapping_add(1 << 31).wrapping_add(1)));
+    }
+
+    #[test]
+    fn a_lease_is_never_further_away_than_the_ttl() {
+        let cell = AnswerTableCell::new();
+        cell.set_lease_for_ms(NOW, 10 * LEASE_TTL_MS);
+        assert!(cell.lease_alive(NOW + ANSWER_LEASE_MAX_TICKS - 1));
+        assert!(!cell.lease_alive(NOW + ANSWER_LEASE_MAX_TICKS));
+        cell.set_lease_until_tick(NOW + ANSWER_LEASE_MAX_TICKS + 1);
+        assert!(!cell.lease_alive(NOW));
+    }
+
+    #[test]
+    fn three_seconds_of_lease_is_three_seconds_of_ticks() {
+        let cell = AnswerTableCell::new();
+        cell.set_lease_for_ms(u32::MAX, 3_000);
+        let ticks = 28_846;
+        assert!(cell.lease_alive(u32::MAX.wrapping_add(ticks - 1)));
+        assert!(!cell.lease_alive(u32::MAX.wrapping_add(ticks)));
+        cell.set_lease_for_ms(NOW, 0);
+        assert!(!cell.lease_alive(NOW));
     }
 
     #[test]
@@ -380,6 +439,16 @@ mod tests {
         assert_eq!(cell.lookup([0x11, 0xFE, QACE], 1, NOW), TableLookup::Answer(0xFF));
         cell.publish(&image(7, 0), 2);
         assert_eq!(cell.lookup([0x0F, 0xFE, QACE], 2, NOW), TableLookup::Answer(0xFF));
+    }
+
+    #[test]
+    fn a_copy_rewritten_while_it_was_read_reads_as_torn() {
+        let cell = published(&image(7, 0), 0);
+        let copy = &cell.copies[usize::from(cell.live.load(Ordering::Relaxed))];
+        let before = copy.generation.load(Ordering::Acquire);
+        assert!(copy.settled_since(before));
+        copy.write(&image(7, 0), 1);
+        assert!(!copy.settled_since(before));
     }
 
     #[test]
