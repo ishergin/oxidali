@@ -202,20 +202,33 @@ reads `QUERY DEVICE CAPABILITIES` (bit 0 `applicationControllerPresent`) and
 
 ## 16. Control gear never speaks unbidden
 
-### 16.3 Nothing looks for `powerCycleSeen` unprompted — `GAP`
+### 16.3 Power cycles the watch cannot see — `MINOR`
 
-102 Table 12 bit 7 is set at power-on, so a gear that shows it has lost power since it
-was last driven. A read that sees the bit appear makes the registry forget the RAM state
-it held for that gear ([09](../architecture/09-dali-protocol-rules.md)), but only an
-explicit attribute read or the poller, which is off by default, reads it. The cheap
-detector is a broadcast `QUERY POWER FAILURE` (0x9B, 102 §11.5.15): any answer means some
-gear has cycled. As a boolean broadcast query it needs a positive control.
+The bus-health probe ends with a broadcast `QUERY POWER FAILURE` (102 §11.5.15) behind
+its positive control and runs with the poller off; a YES sweeps the adapter's gear with
+status reads, and the registry forgets the RAM state of a gear whose bit it sees set
+after it knew it clear ([09](../architecture/09-dali-protocol-rules.md) §Faults and
+identification; schedule, sweep and hold-off:
+[poller](../product-design/runtime-modules/poller/README.md)). What it does not see:
+
+- A second power cycle before anything clears the bit: the bit is already set.
+- A cycle after a clearing command that reached the gear but committed nothing to the
+  registry — a foreign master's `UP`, `DOWN`, `RESET` or a `DAPC` of MASK, a group,
+  broadcast or scene frame reaching gear no virtual lamp binds, a scene row with no
+  applied target: the registry still holds the bit as set or unknown, so a set bit is
+  no news.
+- A gear the sweep does not read: with `skip_unbound_virtual_lamps` the sweep skips
+  gear no virtual lamp binds.
+- A cycle while the answer stands at YES because some other gear nobody drives keeps
+  its bit set: it waits for the hold-off's next sweep, about an hour with the poller
+  off.
+- How soon: a cycle shows at the next probe, up to one probe period later.
 
 ## 17. Priority
 
 Ordered by consequence per unit of work:
 
-1. §16.3 — look for `powerCycleSeen` unprompted, with a broadcast `QUERY POWER FAILURE`.
-2. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
-3. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
-4. §3 — a memory-bank write path, when a commissioning surface asks for one.
+1. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
+2. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
+3. §3 — a memory-bank write path, when a commissioning surface asks for one.
+4. §16.3 — the power cycles the watch cannot see.
