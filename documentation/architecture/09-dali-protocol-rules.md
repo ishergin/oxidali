@@ -52,7 +52,9 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   between lock sessions, `Never` for discovery, commissioning and other units whose
   interruption leaves gear half-programmed. A sequence that must not stop inside a span
   runs it in `controller.step`, which narrows any lease to `Step` for the span and makes
-  its start the span's only boundary.
+  its start the span's only boundary. Nothing inside a step marks another: no nested
+  `controller.step` and no `step_boundary`, so no memory-bank read, whose every chunk
+  marks one.
 - Background work never delays an operator, and that is not a setting: a quiet window,
   interactive-first ordering with preemption at frame boundaries, and a wire-time budget
   (after a background read of cost *d* the poller rests 3×*d*, so background holds at
