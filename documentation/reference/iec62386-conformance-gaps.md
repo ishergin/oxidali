@@ -203,20 +203,49 @@ reads `QUERY DEVICE CAPABILITIES` (bit 0 `applicationControllerPresent`) and
 
 ## 16. Control gear never speaks unbidden
 
-### 16.3 Nothing looks for `powerCycleSeen` unprompted — `GAP`
+### 16.3 Power cycles nobody looks for — `GAP` by default, `MINOR` with the watch on
 
-102 Table 12 bit 7 is set at power-on, so a gear that shows it has lost power since it
-was last driven. A read that sees the bit appear makes the registry forget the RAM state
-it held for that gear ([09](../architecture/09-dali-protocol-rules.md)), but only an
-explicit attribute read or the poller, which is off by default, reads it. The cheap
-detector is a broadcast `QUERY POWER FAILURE` (0x9B, 102 §11.5.15): any answer means some
-gear has cycled. As a boolean broadcast query it needs a positive control.
+102 Table 12 bit 7, `powerCycleSeen`, is set at power-on. By default nothing looks for it
+unprompted: only an explicit attribute read or the enabled poller's own status reads, at
+its interval, can report it, and a disabled poller reads none. The poller setting
+`power_cycle_watch`, off by default, closes the gap: the bus-health probe then ends with
+a broadcast `QUERY POWER FAILURE` (102 §11.5.15) behind its positive control and runs
+with the poller off; a YES sweeps the adapter's gear with status reads unless the enabled
+poller reads `runtime_status` in its cycle, and the registry forgets the RAM state of a
+gear whose bit it sees set after it knew it clear
+([09](../architecture/09-dali-protocol-rules.md) §Faults and identification; schedule,
+sweep and hold-off: [poller](../product-design/runtime-modules/poller/README.md)). With
+the watch on, what it does not see:
+
+- A second power cycle before anything clears the bit: the bit is already set.
+- A cycle after a clearing command that reached the gear but committed nothing to the
+  registry — a foreign master's `UP`, `DOWN`, `RESET` or a `DAPC` of MASK, a group,
+  broadcast or scene frame reaching gear no virtual lamp binds, a scene row with no
+  applied target: the registry still holds the bit as set or unknown, so a set bit is
+  no news.
+- A cycle whose bit a committed level command clears before a status read sees it —
+  an `OFF`, a `DAPC` or a scene, from the operator, Home Assistant or a rule: the gear
+  and the registry both hold the bit clear, and the later read agrees. The window runs
+  from the power's return to the gear's status read, in both modes.
+- A gear the sweep does not read: with `skip_unbound_virtual_lamps` the sweep skips
+  gear no virtual lamp binds.
+- A cycle while the answer stands at YES because some other gear nobody drives keeps
+  its bit set: it waits for the hold-off's next sweep, which counts answers from the end
+  of the last sweep, about an hour with the poller off.
+- How soon, which is how long that window stays open: without a cycle that reads
+  `runtime_status`, up to one probe period to the YES and then the gear's place in the
+  sweep; with one, the gear's turn in the cycle, about one `interval_ms` when a cycle
+  reads every target and longer when the wire budget stretches it, and for a gear the
+  cycle saw absent, the first cycle after a YES that is news — the first, the first
+  after a NO, then one per `RESWEEP_AFTER_YES` answers
+  ([poller](../product-design/runtime-modules/poller/README.md)).
 
 ## 17. Priority
 
 Ordered by consequence per unit of work:
 
-1. §16.3 — look for `powerCycleSeen` unprompted, with a broadcast `QUERY POWER FAILURE`.
+1. §16.3 — `power_cycle_watch` closes it and is off by default, so the work left is
+   its default.
 2. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
 3. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
 4. §3 — the remaining memory-bank writes (bank 1's OEM identity, `RESET MEMORY BANK`), when a commissioning surface asks for them.

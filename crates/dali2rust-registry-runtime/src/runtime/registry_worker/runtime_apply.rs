@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 
 use dali2rust_contracts::msg::{
-    ErrorCode, LightSetpoint, RegistryRuntimeUpdateCommand, RuntimeObservation,
+    ErrorCode, LastDapcSource, LightSetpoint, RegistryRuntimeUpdateCommand, RuntimeObservation,
     RuntimeRegistryUpdateEntry,
 };
 
@@ -106,8 +106,16 @@ fn apply_registry_runtime_targets(
             entry_last_dapc_source: entry.last_dapc_source,
             entry_source: entry.source,
             entry_holds_hcl: entry.hold_hcl,
+            clears_power_cycle_seen: issues_a_level_command(entry, setpoint),
         },
     ))
+}
+
+// IEC 62386-102 §9.16.9
+fn issues_a_level_command(entry: &RuntimeRegistryUpdateEntry, setpoint: &LightSetpoint) -> bool {
+    !entry.source.reads_the_gear()
+        && (setpoint.commanded_power().is_some()
+            || entry.last_dapc_source == Some(LastDapcSource::Scene))
 }
 
 fn check_runtime_binding_match(
@@ -269,4 +277,53 @@ fn announce_transition(
         },
     );
     RuntimeApplyOutcome::Applied
+}
+
+#[cfg(test)]
+mod tests {
+    use dali2rust_contracts::msg::{ColorMode, ColorValue, PowerState, RuntimeSource};
+
+    use super::*;
+
+    const DRIVEN_LEVEL: u8 = 100;
+    const WARM_WHITE_KELVIN: u16 = 3000;
+
+    fn entry(source: RuntimeSource, last_dapc_source: Option<LastDapcSource>) -> RuntimeRegistryUpdateEntry {
+        RuntimeRegistryUpdateEntry {
+            source,
+            last_dapc_source,
+            ..RuntimeRegistryUpdateEntry::default()
+        }
+    }
+
+    fn colour_only() -> LightSetpoint {
+        LightSetpoint {
+            power: PowerState::Unknown,
+            level: None,
+            color: Some(ColorValue {
+                mode: ColorMode::Cct,
+                color_temperature_kelvin: WARM_WHITE_KELVIN,
+                ..ColorValue::default()
+            }),
+        }
+    }
+
+    #[test]
+    fn a_drive_that_commands_power_clears_the_bit_and_a_read_never_does() {
+        let level = LightSetpoint::from_level(DRIVEN_LEVEL, None);
+        assert!(issues_a_level_command(&entry(RuntimeSource::Api, None), &level));
+        assert!(issues_a_level_command(&entry(RuntimeSource::Sniffer, None), &level));
+        assert!(!issues_a_level_command(&entry(RuntimeSource::Readback, None), &level));
+        assert!(!issues_a_level_command(&entry(RuntimeSource::Poller, None), &level));
+    }
+
+    #[test]
+    fn a_scene_recall_clears_the_bit_even_when_its_entry_states_no_level() {
+        let scene = Some(LastDapcSource::Scene);
+        assert!(issues_a_level_command(&entry(RuntimeSource::Api, scene), &colour_only()));
+        assert!(
+            !issues_a_level_command(&entry(RuntimeSource::Hcl, None), &colour_only()),
+            "a colour change goes out as ACTIVATE, which leaves the bit alone"
+        );
+    }
 }

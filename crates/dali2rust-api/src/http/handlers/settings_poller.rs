@@ -26,6 +26,7 @@ const ALLOWED_KEYS: &[&str] = &[
     "include_energy",
     "include_diagnostics",
     "skip_unbound_virtual_lamps",
+    "power_cycle_watch",
 ];
 const MIN_INTERVAL_MS: u32 = 200;
 const MAX_INTERVAL_MS: u32 = 3_600_000;
@@ -71,6 +72,7 @@ pub struct PollerSettingsPatchData {
     include_energy: bool,
     include_diagnostics: bool,
     skip_unbound_virtual_lamps: bool,
+    power_cycle_watch: bool,
 }
 
 impl crate::http::handlers::common::MutatingHandler for PollerSettingsPatchHandler {
@@ -97,7 +99,7 @@ impl crate::http::handlers::common::MutatingHandler for PollerSettingsPatchHandl
             return Ok(());
         }
         let correlation_id = self.correlation.next_id();
-        let cmd = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, self.bus_id.0, None, PollerSettingsUpdateCommand { patch_mask: data.patch_mask, enabled: data.enabled, interval_ms: data.interval_ms, attribute_groups_mask: data.attribute_groups_mask, include_dt8_color: data.include_dt8_color, skip_unbound_virtual_lamps: data.skip_unbound_virtual_lamps, include_energy: data.include_energy, include_diagnostics: data.include_diagnostics });
+        let cmd = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, self.bus_id.0, None, PollerSettingsUpdateCommand { patch_mask: data.patch_mask, enabled: data.enabled, interval_ms: data.interval_ms, attribute_groups_mask: data.attribute_groups_mask, include_dt8_color: data.include_dt8_color, skip_unbound_virtual_lamps: data.skip_unbound_virtual_lamps, include_energy: data.include_energy, include_diagnostics: data.include_diagnostics, power_cycle_watch: data.power_cycle_watch });
         let watch = Arc::clone(&self.apply_watch);
         publish_and_await_apply(
             &self.publisher,
@@ -120,13 +122,26 @@ fn validate_poller_settings_patch_keys(
     check_body_keys(obj, ALLOWED_KEYS, &[])
 }
 
+type BoolSlot = fn(&mut PollerSettingsPatchData) -> &mut bool;
+
+const BOOL_FIELDS: [(&str, u8, BoolSlot); 6] = [
+    ("enabled", PollerSettingsUpdateCommand::PATCH_ENABLED, |d| &mut d.enabled),
+    ("include_dt8_color", PollerSettingsUpdateCommand::PATCH_INCLUDE_DT8_COLOR, |d| &mut d.include_dt8_color),
+    ("skip_unbound_virtual_lamps", PollerSettingsUpdateCommand::PATCH_SKIP_UNBOUND_VIRTUAL_LAMPS, |d| &mut d.skip_unbound_virtual_lamps),
+    ("include_energy", PollerSettingsUpdateCommand::PATCH_INCLUDE_ENERGY, |d| &mut d.include_energy),
+    ("include_diagnostics", PollerSettingsUpdateCommand::PATCH_INCLUDE_DIAGNOSTICS, |d| &mut d.include_diagnostics),
+    ("power_cycle_watch", PollerSettingsUpdateCommand::PATCH_POWER_CYCLE_WATCH, |d| &mut d.power_cycle_watch),
+];
+
 fn parse_poller_settings_patch_fields(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<PollerSettingsPatchData, HttpResponse> {
     let mut data = PollerSettingsPatchData::default();
-    if let Some(v) = parse_bool_field(obj, "enabled")? {
-        data.patch_mask |= PollerSettingsUpdateCommand::PATCH_ENABLED;
-        data.enabled = v;
+    for (key, bit, slot) in BOOL_FIELDS {
+        if let Some(v) = parse_bool_field(obj, key)? {
+            data.patch_mask |= bit;
+            *slot(&mut data) = v;
+        }
     }
     if let Some(v) = parse_u32_range_field(obj, "interval_ms", MIN_INTERVAL_MS, MAX_INTERVAL_MS)? {
         data.patch_mask |= PollerSettingsUpdateCommand::PATCH_INTERVAL_MS;
@@ -135,22 +150,6 @@ fn parse_poller_settings_patch_fields(
     if let Some(v) = parse_attribute_groups_field(obj)? {
         data.patch_mask |= PollerSettingsUpdateCommand::PATCH_ATTRIBUTE_GROUPS_MASK;
         data.attribute_groups_mask = v;
-    }
-    if let Some(v) = parse_bool_field(obj, "include_dt8_color")? {
-        data.patch_mask |= PollerSettingsUpdateCommand::PATCH_INCLUDE_DT8_COLOR;
-        data.include_dt8_color = v;
-    }
-    if let Some(v) = parse_bool_field(obj, "skip_unbound_virtual_lamps")? {
-        data.patch_mask |= PollerSettingsUpdateCommand::PATCH_SKIP_UNBOUND_VIRTUAL_LAMPS;
-        data.skip_unbound_virtual_lamps = v;
-    }
-    if let Some(v) = parse_bool_field(obj, "include_energy")? {
-        data.patch_mask |= PollerSettingsUpdateCommand::PATCH_INCLUDE_ENERGY;
-        data.include_energy = v;
-    }
-    if let Some(v) = parse_bool_field(obj, "include_diagnostics")? {
-        data.patch_mask |= PollerSettingsUpdateCommand::PATCH_INCLUDE_DIAGNOSTICS;
-        data.include_diagnostics = v;
     }
     Ok(data)
 }

@@ -8,14 +8,17 @@ use support::{
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_bus::{
     BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublisher, BusSubscriberRx,
     CommandArrivalObserver, PublishResult,
 };
-use dali2rust_contracts::msg::{AttributeGroupReadOutcome, BusEventPayload, DaliTargetScope, Origin};
+use dali2rust_contracts::msg::{
+    AttributeGroupReadOutcome, BusEventPayload, DaliBusHealthProbeCommand, DaliTargetScope,
+    DeliveryStatus, ErrorCode, Origin,
+};
 use dali2rust_dali_runtime::{
     DaliWorkerCounters, WireArrivalObserver, DALI_WORKER_HANDLED_COMMANDS,
 };
@@ -23,9 +26,11 @@ use dali2rust_domain::dali::pres::command::DaliCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_platform::dali::WireActivity;
-use dali2rust_test_support::{recv_event_matching, try_recv_event_matching_envelope, wait_until};
+use dali2rust_test_support::{
+    recv_confirmation_for, recv_event_matching, try_recv_event_matching_envelope, wait_until,
+};
 
-type WorkerInboxes = (BusSubscriberRx, BusSubscriberRx);
+type WorkerInboxes = (BusSubscriberRx, BusSubscriberRx, BusSubscriberRx);
 
 fn spawn_bus(
     observer: Option<Arc<dyn CommandArrivalObserver>>,
@@ -34,6 +39,7 @@ fn spawn_bus(
         (
             reg.subscribe_commands(16, DALI_WORKER_HANDLED_COMMANDS),
             reg.subscribe_events(64, dali2rust_contracts::msg::EVENT_VARIANT_NAMES),
+            reg.subscribe_confirmations(16),
         )
     })
 }
@@ -48,6 +54,7 @@ fn arrival_observer(interactive: &Arc<WireActivity>) -> Option<Arc<dyn CommandAr
 struct ReadInFlight {
     publisher: BusPublisher,
     events: BusSubscriberRx,
+    confirmations: BusSubscriberRx,
     transport: Arc<Mutex<MockDaliTransport>>,
     unblock: Arc<AtomicBool>,
     counters: Arc<DaliWorkerCounters>,
@@ -56,9 +63,9 @@ struct ReadInFlight {
     _host: BusHost,
 }
 
-fn start_read_blocked_on_first_frame(read: BusFrame) -> ReadInFlight {
+fn start_blocked_on_first_frame(background: BusFrame) -> ReadInFlight {
     let interactive = Arc::new(WireActivity::new());
-    let (host, publisher, (worker_cmd, events)) = spawn_bus(arrival_observer(&interactive));
+    let (host, publisher, (worker_cmd, events, confirmations)) = spawn_bus(arrival_observer(&interactive));
 
     let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
     let unblock = transport.lock().expect("mock lock").get_unblock_flag();
@@ -74,7 +81,7 @@ fn start_read_blocked_on_first_frame(read: BusFrame) -> ReadInFlight {
     );
 
     assert_eq!(
-        publisher.try_publish(BusChannel::Commands, read),
+        publisher.try_publish(BusChannel::Commands, background),
         PublishResult::Queued
     );
     wait_until(
@@ -84,6 +91,7 @@ fn start_read_blocked_on_first_frame(read: BusFrame) -> ReadInFlight {
     ReadInFlight {
         publisher,
         events,
+        confirmations,
         transport,
         unblock,
         counters,
@@ -147,7 +155,7 @@ fn a_queued_operator_command_runs_before_queued_background_reads() {
 
 #[test]
 fn an_operator_command_preempts_a_background_read_already_in_flight() {
-    let run = start_read_blocked_on_first_frame(poller_read_frame(41));
+    let run = start_blocked_on_first_frame(poller_read_frame(41));
 
     assert_eq!(
         run.publisher
@@ -193,7 +201,7 @@ fn an_operator_command_preempts_a_background_read_already_in_flight() {
 #[test]
 fn one_operator_command_does_not_preempt_another() {
     let interactive = Arc::new(WireActivity::new());
-    let (_host, publisher, (worker_cmd, events)) = spawn_bus(arrival_observer(&interactive));
+    let (_host, publisher, (worker_cmd, events, _confirmations)) = spawn_bus(arrival_observer(&interactive));
 
     for (corr, short) in [(61u64, SHORT), (62, SHORT + 1)] {
         assert_eq!(
@@ -223,6 +231,99 @@ fn one_operator_command_does_not_preempt_another() {
     }
 }
 
+fn bus_health_probe_frame(correlation_id: u64) -> BusFrame {
+    BusFrame::command(dali2rust_contracts::bus::command_envelope(
+        0,
+        correlation_id,
+        BusId::default().0,
+        Some(Origin::Poller),
+        DaliBusHealthProbeCommand { registry_adapter_id: 0, query_power_failure: true },
+    ))
+}
+
+fn broadcast_query(command: StandardCommand) -> u16 {
+    DaliCommand::Standard { address: DaliAddress::Broadcast, command }.to_forward_frame().raw()
+}
+
+#[test]
+fn an_operator_command_preempts_a_bus_health_probe_between_its_frames() {
+    let run = start_blocked_on_first_frame(bus_health_probe_frame(71));
+
+    assert_eq!(
+        run.publisher
+            .try_publish(BusChannel::Commands, interactive_target_state_frame(72)),
+        PublishResult::Queued
+    );
+    run.unblock.store(false, Ordering::Release);
+
+    let events = events_until_applied(&run.events, 72);
+    let frames = run.transport.lock().expect("mock lock").sent_frames();
+    assert_eq!(
+        frames,
+        vec![broadcast_query(StandardCommand::QueryControlGearPresent), dapc_frame()],
+        "the probe yields after the frame on the wire and asks nothing more"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(event, BusEventPayload::DaliBusHealthProbedEvent(_))),
+        "a probe cut short has no verdict"
+    );
+    let ended = recv_confirmation_for(&run.confirmations, 71, EVENT_BUDGET);
+    assert_eq!(ended.status, DeliveryStatus::ExecutionFailed, "a yielded probe ends at once");
+    assert_eq!(
+        ended.confirmation.error.as_ref().map(|error| error.code),
+        Some(ErrorCode::Preempted),
+        "and says it yielded"
+    );
+    assert_eq!(
+        run.counters.bus_health_probe_failed.load(Ordering::Relaxed),
+        0,
+        "a yield is not a failed probe"
+    );
+}
+
+#[test]
+fn a_bus_health_probe_the_wire_fails_ends_without_a_verdict_and_counts_as_failed() {
+    let interactive = Arc::new(WireActivity::new());
+    let (_host, publisher, (worker_cmd, _events, confirmations)) = spawn_bus(arrival_observer(&interactive));
+    let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
+    transport
+        .lock()
+        .expect("mock lock")
+        .expect_forward_frame_send_error(broadcast_query(StandardCommand::QueryControlGearPresent));
+    let counters = Arc::new(DaliWorkerCounters::default());
+    let _worker = spawn_mock_worker(worker_cmd, &transport, &publisher, &counters, interactive);
+
+    assert_eq!(
+        publisher.try_publish(BusChannel::Commands, bus_health_probe_frame(91)),
+        PublishResult::Queued
+    );
+    let ended = recv_confirmation_for(&confirmations, 91, EVENT_BUDGET);
+    assert_eq!(ended.status, DeliveryStatus::ExecutionFailed, "a failed probe ends at once");
+    let code = ended.confirmation.error.as_ref().map(|error| error.code);
+    assert!(
+        code.is_some_and(|code| code != ErrorCode::Preempted),
+        "and names a cause that is not a yield: {code:?}"
+    );
+    assert_eq!(counters.bus_health_probe_failed.load(Ordering::Relaxed), 1);
+}
+
+fn events_until_applied(events: &BusSubscriberRx, correlation_id: u64) -> Vec<BusEventPayload> {
+    let deadline = Instant::now() + EVENT_BUDGET;
+    let mut seen = Vec::new();
+    while let Ok(frame) = events.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        let BusFrame::Event(event) = frame else {
+            continue;
+        };
+        let applied = event.meta.correlation_id == correlation_id
+            && matches!(event.payload, BusEventPayload::DaliTargetStateAppliedEvent(_));
+        seen.push(event.payload.clone());
+        if applied {
+            return seen;
+        }
+    }
+    panic!("setpoint {correlation_id} was not applied within {EVENT_BUDGET:?}: {seen:?}");
+}
+
 fn interactive_target_state_for(correlation_id: u64, short: u8) -> BusFrame {
     target_state_frame(correlation_id, Origin::Api, DaliTargetScope::Short, short, LEVEL)
 }
@@ -247,7 +348,7 @@ fn wait_for_applied(events: &dali2rust_bus::BusSubscriberRx, correlation_id: u64
 
 #[test]
 fn an_operator_setpoint_preempts_an_operator_started_read() {
-    let run = start_read_blocked_on_first_frame(api_read_frame(81));
+    let run = start_blocked_on_first_frame(api_read_frame(81));
 
     assert_eq!(
         run.publisher
@@ -270,7 +371,7 @@ fn an_operator_setpoint_preempts_an_operator_started_read() {
 
 #[test]
 fn the_queue_serves_interactive_then_attended_then_unattended() {
-    let (host, publisher, (worker_cmd, events)) = spawn_bus(None);
+    let (host, publisher, (worker_cmd, events, _confirmations)) = spawn_bus(None);
 
     for frame in [
         poller_read_frame(101),
@@ -333,7 +434,7 @@ fn hcl_broadcast_target_state_frame(correlation_id: u64, level: u8) -> BusFrame 
 #[test]
 fn a_queued_scheduler_setpoint_does_not_overwrite_a_later_operator_setpoint() {
     const HCL_LEVEL: u8 = 40;
-    let (host, publisher, (worker_cmd, _events)) = spawn_bus(None);
+    let (host, publisher, (worker_cmd, _events, _confirmations)) = spawn_bus(None);
 
     for frame in [
         hcl_broadcast_target_state_frame(110, HCL_LEVEL),

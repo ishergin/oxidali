@@ -19,6 +19,7 @@ pub(crate) struct PollerSettingsRecord {
     pub include_energy: bool,
     pub include_diagnostics: bool,
     pub skip_unbound_virtual_lamps: bool,
+    pub power_cycle_watch: bool,
 }
 
 impl Default for PollerSettingsRecord {
@@ -31,6 +32,7 @@ impl Default for PollerSettingsRecord {
             include_energy: false,
             include_diagnostics: false,
             skip_unbound_virtual_lamps: true,
+            power_cycle_watch: false,
         }
     }
 }
@@ -45,6 +47,7 @@ impl PollerSettingsRecord {
             include_energy: self.include_energy,
             include_diagnostics: self.include_diagnostics,
             skip_unbound_virtual_lamps: self.skip_unbound_virtual_lamps,
+            power_cycle_watch: self.power_cycle_watch,
         }
     }
 
@@ -69,6 +72,9 @@ impl PollerSettingsRecord {
         }
         if body.patch_mask & PollerSettingsUpdateCommand::PATCH_INCLUDE_DIAGNOSTICS != 0 {
             self.include_diagnostics = body.include_diagnostics;
+        }
+        if body.patch_mask & PollerSettingsUpdateCommand::PATCH_POWER_CYCLE_WATCH != 0 {
+            self.power_cycle_watch = body.power_cycle_watch;
         }
     }
 }
@@ -163,6 +169,7 @@ pub(crate) fn persistable_snapshot(inner: &Inner) -> PersistablePollerSettingsSl
         include_energy: r.include_energy,
         include_diagnostics: r.include_diagnostics,
         skip_unbound_virtual_lamps: r.skip_unbound_virtual_lamps,
+        power_cycle_watch: r.power_cycle_watch,
     }
 }
 
@@ -175,6 +182,7 @@ pub(crate) fn hydrate_poller_settings_inner(inner: &mut Inner, slice: &Persistab
         include_energy: slice.include_energy,
         include_diagnostics: slice.include_diagnostics,
         skip_unbound_virtual_lamps: slice.skip_unbound_virtual_lamps,
+        power_cycle_watch: slice.power_cycle_watch,
     };
 }
 
@@ -192,6 +200,7 @@ mod tests {
             include_energy: false,
             include_diagnostics: false,
             skip_unbound_virtual_lamps: false,
+            power_cycle_watch: false,
         }
     }
 
@@ -217,6 +226,7 @@ mod tests {
                 skip_unbound_virtual_lamps: false,
                 include_energy: false,
                 include_diagnostics: false,
+                power_cycle_watch: false,
             },
         );
         let view = store.poller_settings_view();

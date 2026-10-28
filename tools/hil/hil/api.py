@@ -781,7 +781,7 @@ class _Firmware(_Namespace):
 class _PollerSettings(_Namespace):
     RESTORABLE = ("attribute_groups_default", "enabled", "include_diagnostics",
                   "include_dt8_color", "include_energy", "interval_ms",
-                  "skip_unbound_virtual_lamps")
+                  "power_cycle_watch", "skip_unbound_virtual_lamps")
 
     def get(self) -> dict:
         return self._c._req("GET", "settings/poller")

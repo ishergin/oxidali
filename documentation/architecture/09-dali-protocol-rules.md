@@ -45,7 +45,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   `memory_luminaire` write is `Attended` like `write-attributes`: a Home Assistant or HCL
   light command waits for the whole write, because a write that yields between text
   stages leaves the field empty.
-- `YieldGranularity` says where a sequence may stop: `Frame` for reads, `Step` for
+- `YieldGranularity` says where a sequence may stop: `Frame` for reads and the
+  bus-health probe, `Step` for
   configuration writes (`write-attributes`, Part 103 instance and feedback configuration)
   at a confirmed DTR → SET → read-back boundary and for the bank 1 `memory_luminaire` write
   between lock sessions, `Never` for discovery, commissioning and other units whose
@@ -177,12 +178,16 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   unknown, no level, no colour — while the status byte and last-seen are still published.
 - A boolean broadcast query needs a positive control: YES is a backward frame, NO is
   silence (102 §3.28, §3.13), and silence may be a lost query (§3.13 Note 1). The
-  bus-health probe broadcasts `QUERY CONTROL GEAR PRESENT`, then `QUERY LAMP FAILURE`; a
-  probe whose control went unanswered is `invalid`, never `clear`, and a violation on the
-  second frame means several gear answered. The two frames are one reading, and they add
-  to the poller's sweep rather than replace it: two boolean frames cannot read levels,
-  colour or attributes (schedule and budget:
-  [poller](../product-design/runtime-modules/poller/README.md)).
+  bus-health probe broadcasts `QUERY CONTROL GEAR PRESENT`, then `QUERY LAMP FAILURE`,
+  and, while the poller's power-cycle watch is on, `QUERY POWER FAILURE`; a probe whose
+  control went unanswered is `invalid`, never `clear`, and neither of its other answers
+  is used. A violation on the lamp-failure frame means several gear answered; any answer
+  to the power-failure frame, a violation included, means some gear has `powerCycleSeen`
+  set (§11.5.15). The frames are one reading but independent exchanges, so the probe
+  yields at a frame boundary: a probe cut short has no verdict, ends `Preempted` and is
+  asked again by the next one. The probe adds to the poller's reads rather than
+  replacing them: boolean frames cannot read levels, colour or attributes (schedule,
+  power-cycle sweep and budget: [poller](../product-design/runtime-modules/poller/README.md)).
 - Arm, prove, act once: an operand staged in a DTR is proved by read-back before the
   command that consumes it, and a read-back tells a wrong answer, silence and a contended
   window apart ([ADR-027](decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md)).
@@ -245,13 +250,22 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   thermal states show only as MASK. Only then does the read spend one
   `ENABLE DEVICE TYPE 6` + `QUERY FAILURE STATUS` pair (not when the declared type set
   excludes DT6), and the section's booleans are decoded from that byte.
-- `powerCycleSeen` (102 §9.16.9) is cleared by `RESET` and every level command, so it is
-  evidence only from a status read that precedes any driving command: the poller's reads
-  can report it, the target-state path cannot. A read that shows it set where the previous
-  read showed it clear is a power cycle the registry acts on: it forgets the gear's RAM
-  state — `lastActiveLevel` returns to `maxLevel` (Table 14) and the power-on level does
-  not move it (§9.4); the DT8 actual colour values, gear features/status and
-  `RGBWAF CONTROL` (209 Table 8) are unknown until read again.
+- `powerCycleSeen` (102 §9.16.9) is set at power-on and cleared by `RESET`, `DAPC`,
+  `OFF`, `UP`, `DOWN`, the step and recall commands, `GO TO LAST ACTIVE LEVEL` and
+  `GO TO SCENE`, and by nothing else (Table 98: configuration, memory reads and
+  `ACTIVATE` leave it). It is evidence only from a status read: the poller's reads and
+  the sweep a YES to the probe's `QUERY POWER FAILURE` starts can report it, the
+  target-state path cannot.
+- The registry keeps what it knows of the bit per gear: a status read sets it to what
+  the gear said, and a committed level command — a drive that states power, a level
+  transition, a scene recall, from any source but a read — sets it clear. A read that
+  shows the bit set where the registry knew it clear is a power cycle the registry acts
+  on: it forgets the gear's RAM state — `lastActiveLevel` returns to `maxLevel`
+  (Table 14) and the power-on level does not move it (§9.4); the DT8 actual colour
+  values, gear features/status and `RGBWAF CONTROL` (209 Table 8) are unknown until read
+  again. A set bit with nothing known before it proves nothing, and a second cycle before
+  anything clears the bit looks like the first (what stays unseen:
+  [conformance gaps](../reference/iec62386-conformance-gaps.md) §16.3).
 - Identification is the gear's own procedure: one `IDENTIFY DEVICE` send-twice pair
   (102 §9.14.3.2) starts a 10 s ± 1 s window the gear owns and restores from itself
   (§9.14.3.1). Nothing else is sent — no `RECALL MIN`/`MAX LEVEL`, no restoring level

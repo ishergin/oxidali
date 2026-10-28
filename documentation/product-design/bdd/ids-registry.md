@@ -38,6 +38,7 @@
 | `PERS-` | `persistence/` | Персистентность слайсов |
 | `POL-` | `poller/` | Поллер |
 | `POLICY-` | `policies/` | Политики `systemFailureLevel` / `powerOnLevel` |
+| `PWR-` | `poller/` | Обнаружение цикла питания gear: `QUERY POWER FAILURE` в пробе шины и обход |
 | `RED-` | `redundancy/` | Резервирование контроллера |
 | `REG-` | `groups/`, `scenes/` | Реестр: desired против applied у групп и сцен |
 | `RULE-` | `rules/` | Движок правил |

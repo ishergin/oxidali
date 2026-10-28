@@ -707,6 +707,15 @@ def test_every_home_assistant_field_the_firmware_takes_is_compared_and_restored(
     assert set(api_mod._HomeAssistantSettings.RESTORABLE) == writable - {HA_WRITE_ONLY_SECRET}
 
 
+POLLER_HANDLER = HA_HANDLER.with_name("settings_poller.rs")
+POLLER_ALLOWED = re.compile(r"const ALLOWED_KEYS: &\[&str\] = &\[(.*?)\];", re.S)
+
+
+def test_every_poller_field_the_firmware_takes_is_compared_and_restored():
+    allowed = set(re.findall(r'"([a-z0-9_]+)"', POLLER_ALLOWED.search(POLLER_HANDLER.read_text()).group(1)))
+    assert set(api_mod._PollerSettings.RESTORABLE) == allowed
+
+
 def test_a_session_that_exposed_input_devices_to_home_assistant_puts_the_owner_value_back():
     api, lines = _SettingsApi({}, {}), []
     api.ha = _Knob({"expose_input_devices": True})

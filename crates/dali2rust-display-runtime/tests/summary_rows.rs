@@ -88,6 +88,7 @@ fn the_bus_row_takes_the_health_verdict_and_inverts_on_failure() {
             registry_adapter_id: 0,
             control_answered: true,
             lamp_failure: BusHealthVerdict::One,
+            power_cycle_seen: false,
         },
     );
     wait_row(&view, 2, "LAMP FAIL");

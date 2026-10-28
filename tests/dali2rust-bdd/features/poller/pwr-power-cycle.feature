@@ -1,0 +1,132 @@
+@stage-I2
+Feature: Power-cycle watch
+
+  A gear that loses power comes back with its RAM state reset and its
+  `powerCycleSeen` bit set (IEC 62386-102 §9.16.9). The watch is the poller
+  setting `power_cycle_watch`, off by default. Switched on, it ends the
+  bus-health probe with a broadcast QUERY POWER FAILURE, poller on or off; a
+  YES behind an answered control sweeps the adapter's poll targets with
+  runtime-status reads, unless the enabled poller already reads the targets'
+  status in its cycle, and the registry forgets the RAM state of exactly the
+  gear whose bit turned up set after a level command had cleared it. Switched
+  off, the enabled poller's probe is the two frames it always was and a
+  disabled poller sends nothing.
+
+  Each scenario restarts the controller with a short probe period and answers
+  the probe's broadcast frames, and later each gear's status reads, from the
+  mock's frame table, so background frames never consume a script. What the
+  registry forgot is read back through the one fact a client can see: a lamp
+  switched on without a level goes to the last active level the registry
+  still holds. A poller that reads the status in its cycle keeps re-reading
+  the mock's fixed answers, which would overwrite that level, so its scenario
+  switches the poller and the watch off and waits for a quiet bus first.
+
+  @id:PWR-001
+  Scenario: The watch asks for power failures after the probe's control, with the poller off
+    Given the controller probes the bus every 300 ms
+    And the power-cycle watch is switched on
+    When the controller has probed the bus 2 more times
+    Then each probe should have broadcast the control, the lamp-failure query and the power-failure query in that order
+    And no addressed DALI frames should have reached the bus
+    And the poller counter "sweeps" should be 0
+
+  @id:PWR-002
+  Scenario: A YES sweeps the gear and forgets only the one that cycled
+    Given the controller probes the bus every 300 ms
+    And the power-cycle watch is switched on
+    And adapter 0 has discovered physical devices 0 and 1
+    And virtual lamps 1 and 2 are bound to physical devices 0 and 1
+    And virtual lamps 1 and 2 have been driven to level 100 and switched off
+    When physical device 0 comes back from a power cycle
+    And the controller has swept the bus for power cycles 1 time
+    And virtual lamps 1 and 2 are switched on without a level
+    Then virtual lamp 2 should eventually be on at level 100
+    And virtual lamp 1 should eventually be on at no known level
+
+  @id:PWR-003
+  Scenario: A probe whose control goes unanswered is inconclusive and forgets nothing
+    Given the controller probes the bus every 300 ms
+    And the power-cycle watch is switched on
+    And adapter 0 has discovered physical devices 0 and 1
+    And virtual lamps 1 and 2 are bound to physical devices 0 and 1
+    And virtual lamps 1 and 2 have been driven to level 100 and switched off
+    When physical device 0 comes back from a power cycle while the probe's control goes unanswered
+    And the controller has probed the bus 2 more times
+    And virtual lamps 1 and 2 are switched on without a level
+    Then virtual lamp 1 should eventually be on at level 100
+    And no gear should have been asked for its status
+    And the poller counter "sweeps" should be 0
+
+  @id:PWR-004
+  Scenario: A standing YES sweeps once, not once per probe
+    Given the controller probes the bus every 300 ms
+    And the power-cycle watch is switched on
+    And adapter 0 has discovered physical devices 0 and 1
+    And virtual lamps 1 and 2 are bound to physical devices 0 and 1
+    When physical device 0 comes back from a power cycle
+    And the controller has swept the bus for power cycles 1 time
+    And the controller has probed the bus 3 more times
+    Then the poller counter "sweeps" should be 1
+    And the poller counter "sweep_reads" should be 2
+    And every read the poller published should have been a power-cycle sweep read
+    And each of physical devices 0 and 1 should have been asked for its status once
+
+  @id:PWR-005
+  Scenario: A gear driven after its power cycle is caught again when it cycles again
+    Given the controller probes the bus every 300 ms
+    And the power-cycle watch is switched on
+    And adapter 0 has discovered physical devices 0 and 1
+    And virtual lamps 1 and 2 are bound to physical devices 0 and 1
+    And virtual lamps 1 and 2 have been driven to level 100 and switched off
+    When physical device 0 comes back from a power cycle
+    And the controller has swept the bus for power cycles 1 time
+    And virtual lamps 1 and 2 have been driven to level 100 and switched off
+    And no gear reports a power cycle any more
+    And the controller has probed the bus 2 more times
+    And physical device 0 comes back from a power cycle
+    And the controller has swept the bus for power cycles 2 times
+    And virtual lamps 1 and 2 are switched on without a level
+    Then virtual lamp 2 should eventually be on at level 100
+    And virtual lamp 1 should eventually be on at no known level
+
+  @id:PWR-006
+  Scenario: With the watch off a disabled poller sends nothing, and switching the watch on starts it
+    Given the controller probes the bus every 300 ms
+    And adapter 0 has discovered physical devices 0 and 1
+    And virtual lamps 1 and 2 are bound to physical devices 0 and 1
+    When physical device 0 comes back from a power cycle
+    Then no DALI frame should reach the bus within 1500 ms
+    And the poller counter "health_probes_published" should be 0
+    When I PATCH JSON {"power_cycle_watch":true} to "/api/v1/settings/poller"
+    Then the response status should be 200
+    And the JSON boolean field "power_cycle_watch" should be true
+    When the controller has swept the bus for power cycles 1 time
+    Then each of physical devices 0 and 1 should have been asked for its status once
+
+  @id:PWR-007
+  Scenario: With the watch off the enabled poller's probe is the control and the lamp-failure query
+    Given the controller probes the bus every 300 ms
+    When the poller is enabled with a 200 ms interval
+    And the controller has probed the bus 2 more times
+    Then each probe should have broadcast the control and the lamp-failure query and nothing more
+    And the poller counter "sweeps" should be 0
+
+  @id:PWR-008
+  Scenario: A poller that reads the status in its cycle forgets the gear that cycled and leaves a YES nothing to sweep
+    Given the controller probes the bus every 300 ms
+    And the power-cycle watch is switched on
+    And adapter 0 has discovered physical devices 0 and 1
+    And virtual lamps 1 and 2 are bound to physical devices 0 and 1
+    And virtual lamps 1 and 2 have been driven to level 100 and switched off
+    When no gear reports a power cycle any more
+    And the poller is enabled with a 200 ms interval
+    And physical device 0 comes back from a power cycle
+    And the controller has heard a YES to the power-failure query 2 times
+    Then physical device 0 should eventually report its power-cycle bit set
+    And the poller counter "sweeps" should be 0
+    And the poller counter "sweep_reads" should be 0
+    When the poller and the power-cycle watch are switched off
+    And the bus has gone quiet
+    And virtual lamps 1 and 2 are switched on without a level
+    Then virtual lamp 2 should eventually be on at level 100
+    And virtual lamp 1 should eventually be on at no known level

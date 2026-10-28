@@ -414,9 +414,9 @@ fn handle_bus_health_probe(
     cmd: &dali2rust_contracts::msg::DaliBusHealthProbeCommand,
     counters: &DaliWorkerCounters,
 ) {
-    let Ok(probe) = probe_bus_health(controller) else {
-        counters.bus_health_probe_failed.fetch_add(1, Ordering::Relaxed);
-        return;
+    let probe = match probe_bus_health(controller, cmd.query_power_failure) {
+        Ok(probe) => probe,
+        Err(error) => return end_bus_health_probe_without_verdict(publisher, correlation_id, error, counters),
     };
     let ev = dali2rust_contracts::bus::event_envelope(
         SOURCE_ID_UNSPECIFIED,
@@ -427,9 +427,22 @@ fn handle_bus_health_probe(
             registry_adapter_id: cmd.registry_adapter_id,
             control_answered: probe.control_answered,
             lamp_failure: probe.lamp_failure,
+            power_cycle_seen: probe.power_cycle_seen,
         },
     );
     publish_event_typed(publisher, ev);
+}
+
+fn end_bus_health_probe_without_verdict(
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    error: SemanticDaliError,
+    counters: &DaliWorkerCounters,
+) {
+    if !error.is_preempted() {
+        counters.bus_health_probe_failed.fetch_add(1, Ordering::Relaxed);
+    }
+    emit_execution_failed_with_product_error(publisher, correlation_id, counters, error.code(), error.message());
 }
 
 fn handle_handover(

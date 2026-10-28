@@ -118,9 +118,13 @@ Decided in [`ADR-004`](decisions/ADR-004-bdd-black-box-boundary.md).
 - A negative wire assertion reads the frames the mock recorded, never "the strict script
   was consumed": an exhausted script lets later frames through unanswered.
 - `MockDaliTransport::clear()` drops the recorded frames and the queued, scripted and
-  persistent answers but keeps the per-frame 24-bit answers (`clear_frame24_answers`
-  drops those), so a scenario clears before it scripts, and clears both before scripting
-  a new Part 103 walk.
+  persistent answers but keeps the per-frame answers, 24-bit and 16-bit
+  (`clear_frame24_answers` and `clear_frame_answers` drop those), so a scenario clears
+  before it scripts, and clears both before scripting a new Part 103 walk.
+- A 16-bit per-frame answer (`answer_frame`) is consulted before the strict script, so
+  background traffic the scenario cannot time — the bus-health probe — is answered
+  there and never consumes a scripted step. A scenario installs an answer for an
+  addressed frame only after the steps that script that frame.
 
 ## Writing scenarios
 

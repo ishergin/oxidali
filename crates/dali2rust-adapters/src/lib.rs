@@ -22,3 +22,4 @@ pub use runtime::{
 pub use dali2rust_api::http::handlers::static_assets::StaticAsset;
 pub use dali2rust_display_runtime::{DisplayView, HardwareDisplay};
 pub use dali2rust_dali_runtime::{ContentConfirmPolicy, DaliRuntimeConfig};
+pub use dali2rust_poller_runtime::PollerConfig;
