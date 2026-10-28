@@ -890,7 +890,7 @@ fn a_silence_at_offset_2_is_a_lost_read_not_the_end_of_a_bank() {
 
 // IEC 62386-102 §9.10.2, Table 8
 #[test]
-fn a_silence_at_offset_2_through_the_whole_budget_is_no_lost_latch() {
+fn a_silence_at_offset_2_through_the_whole_budget_is_an_unanswered_location_not_contention() {
     let mock = MockDaliTransport::new();
     let short = 5;
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
@@ -908,8 +908,8 @@ fn a_silence_at_offset_2_through_the_whole_budget_is_no_lost_latch() {
 
     assert_eq!(
         execution.error,
-        Some(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
-        "no latched value began there, so nothing was lost inside one"
+        Some(SemanticDaliError::OperationFailed(MEMORY_LOCATION_UNANSWERED)),
+        "every attempt was a clean silence, and no latched value began there"
     );
     assert_script_consumed(&transport);
 }

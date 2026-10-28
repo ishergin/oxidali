@@ -185,6 +185,7 @@ fn a_read_before_any_write_reports_what_the_wire_did_not_a_verification() {
     assert_eq!(read_failure(READ_ENDED_EARLY), failure(ErrorCode::DeviceAbsent, HEADER_SUBJECT));
     assert_eq!(read_failure(BUS_CONTENDED), failure(ErrorCode::ReadContended, HEADER_SUBJECT));
     assert_eq!(read_failure(MEMORY_LATCH_LOST), failure(ErrorCode::DeviceAbsent, HEADER_SUBJECT));
+    assert_eq!(read_failure(MEMORY_LOCATION_UNANSWERED), failure(ErrorCode::DeviceAbsent, HEADER_SUBJECT));
     assert_eq!(read_failure(MEMORY_MISALIGNED), failure(ErrorCode::ReadContended, HEADER_SUBJECT));
     assert_eq!(read_failure(PREEMPTED_MESSAGE), failure(ErrorCode::Preempted, HEADER_SUBJECT));
 }
@@ -195,6 +196,7 @@ fn a_read_after_the_first_write_reports_a_verification_by_what_the_wire_did() {
     assert_eq!(proof_failure(MEMORY_POINTER_UNCONFIRMED), failure(ErrorCode::VerifyUnanswered, READBACK_SUBJECT));
     assert_eq!(proof_failure(READ_ENDED_EARLY), failure(ErrorCode::VerifyUnanswered, READBACK_SUBJECT));
     assert_eq!(proof_failure(MEMORY_LATCH_LOST), failure(ErrorCode::VerifyUnanswered, READBACK_SUBJECT));
+    assert_eq!(proof_failure(MEMORY_LOCATION_UNANSWERED), failure(ErrorCode::VerifyUnanswered, READBACK_SUBJECT));
     assert_eq!(proof_failure(BUS_CONTENDED), failure(ErrorCode::VerifyContended, READBACK_SUBJECT));
     assert_eq!(proof_failure(MEMORY_MISALIGNED), failure(ErrorCode::VerifyContended, READBACK_SUBJECT));
     assert_eq!(proof_failure(PREEMPTED_MESSAGE), failure(ErrorCode::Preempted, READBACK_SUBJECT));

@@ -239,10 +239,15 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   the bank there — never at 0x02, which every implemented bank answers (102 Table 8).
   Attempts that showed something (a silence, a violation, a contended answer, a failure
   inside a latched value) and attempts the bus never let through (busy, a contended
-  silence, a transport error) each have a budget of three. When one runs out, a latched
-  value whose first byte had answered fails `memory_bank_latch_lost` if every attempt
-  there failed in a clean silence, a transport error on the last attempt is returned
-  unless the offset had answered, and anything else fails `bus_contended`.
+  silence, a transport error) each have a budget of three. When one runs out and every
+  attempt there failed in a clean silence, the read fails `memory_bank_latch_lost` inside
+  a latched value whose first byte had answered and `memory_bank_location_unanswered`
+  anywhere else, which only 0x02 reaches: silence is never reported as contention.
+  Otherwise a transport error on the last attempt is returned unless the offset had
+  answered, and anything else fails `bus_contended`. An attribute read counts
+  `bus_contended` and `memory_bank_read_misaligned` as contended aborts and both
+  silences as transport aborts, so a silence inside a bank read never declares a device
+  absent.
 
 ## Faults and identification
 

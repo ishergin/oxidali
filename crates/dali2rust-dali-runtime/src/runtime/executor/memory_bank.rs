@@ -27,7 +27,8 @@ const MEMORY_READ_LOCATION_RETRIES: u8 = 2;
 const BANK_ARM_RETRIES: u8 = 2;
 pub(crate) const MEMORY_MISALIGNED: &str = "memory_bank_read_misaligned";
 const MEMORY_POINTER_UNCONFIRMED: &str = "memory_bank_pointer_unconfirmed";
-const MEMORY_LATCH_LOST: &str = "memory_bank_latch_lost";
+pub(crate) const MEMORY_LATCH_LOST: &str = "memory_bank_latch_lost";
+pub(crate) const MEMORY_LOCATION_UNANSWERED: &str = "memory_bank_location_unanswered";
 const BUS_CONTENDED: &str = "bus_contended";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,7 +284,7 @@ const MEMORY_BANK_END_SILENCES: u8 = 2;
 
 const MEMORY_READ_IDLE_RETRIES: u8 = 2;
 
-const ALWAYS_ANSWERED_OFFSET: u16 = 0x02;
+pub(crate) const ALWAYS_ANSWERED_OFFSET: u16 = 0x02;
 
 // IEC 62386-102 §9.10.2, Table 8
 // IEC 62386-102 §9.10.6, Table 9
@@ -455,6 +456,7 @@ fn give_up(failure: ReadFailure, evidence: ResumeEvidence) -> Result<ReadStop, S
         _ if evidence.first_byte_answered && !evidence.not_silent => {
             Err(SemanticDaliError::OperationFailed(MEMORY_LATCH_LOST))
         }
+        _ if !evidence.not_silent => Err(SemanticDaliError::OperationFailed(MEMORY_LOCATION_UNANSWERED)),
         ReadFailure::Failed(error) if !evidence.responded => Err(error),
         _ => Err(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
     }

@@ -14,7 +14,7 @@ use dali2rust_domain::dali::pres::standard::StandardCommand;
 use super::super::dev103::verify_readback;
 use super::{
     pointer_proof, read_memory_bank, MemoryReadExecution, PointerProof, BANK_ARM_RETRIES,
-    BUS_CONTENDED, MEMORY_LATCH_LOST, MEMORY_MISALIGNED, MEMORY_POINTER_UNCONFIRMED,
+    BUS_CONTENDED, MEMORY_LATCH_LOST, MEMORY_LOCATION_UNANSWERED, MEMORY_MISALIGNED, MEMORY_POINTER_UNCONFIRMED,
 };
 use crate::runtime::executor::helpers::{
     dali_short_address, send_raw_query_once_response, send_special, send_special_response, send_standard_response,
@@ -67,7 +67,9 @@ impl LuminaireWriteFailure {
     // IEC 62386-102 §9.10.4
     fn unread(error: SemanticDaliError, subject: &'static str) -> Self {
         let code = match error.message() {
-            MEMORY_POINTER_UNCONFIRMED | READ_ENDED_EARLY | MEMORY_LATCH_LOST => ErrorCode::DeviceAbsent,
+            MEMORY_POINTER_UNCONFIRMED | READ_ENDED_EARLY | MEMORY_LATCH_LOST | MEMORY_LOCATION_UNANSWERED => {
+                ErrorCode::DeviceAbsent
+            }
             BUS_CONTENDED | MEMORY_MISALIGNED => ErrorCode::ReadContended,
             _ => error.code(),
         };
@@ -77,7 +79,9 @@ impl LuminaireWriteFailure {
     // IEC 62386-102 §9.10.5
     fn unproved(error: SemanticDaliError, subject: &'static str) -> Self {
         let code = match error.message() {
-            MEMORY_POINTER_UNCONFIRMED | READ_ENDED_EARLY | MEMORY_LATCH_LOST => ErrorCode::VerifyUnanswered,
+            MEMORY_POINTER_UNCONFIRMED | READ_ENDED_EARLY | MEMORY_LATCH_LOST | MEMORY_LOCATION_UNANSWERED => {
+                ErrorCode::VerifyUnanswered
+            }
             BUS_CONTENDED | MEMORY_MISALIGNED => ErrorCode::VerifyContended,
             _ => error.code(),
         };

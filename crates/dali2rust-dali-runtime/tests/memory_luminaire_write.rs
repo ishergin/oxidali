@@ -41,6 +41,7 @@ const REPLACEMENT_RANDOM_ADDRESS: u32 = 0x00_8765;
 const IDENTITY_BANK: u8 = 0;
 const PROFILE_BANK: u8 = 1;
 const LOCK_OFFSET: u8 = 0x02;
+const ALWAYS_ANSWERED_OFFSET: u8 = 0x02;
 const LAST_OFFSET_OFFSET: u8 = 0x00;
 const FOUND_LOCK: u8 = 0x06;
 const YEAR: u8 = 24;
@@ -73,6 +74,7 @@ enum Trigger {
     From(u16),
     After(u16),
     ReadAt(u8, u8),
+    ReadAfter(u16, (u8, u8)),
     Script(u16, Vec<(u16, Interruption)>),
 }
 
@@ -132,15 +134,11 @@ impl Interrupting {
                 fires
             }
             Trigger::ReadAt(bank, offset) => read == Some((*bank, *offset)),
-            Trigger::Script(after, steps) => {
-                let armed = self.started;
+            Trigger::ReadAfter(after, at) => {
                 self.started |= frame == *after;
-                let due = armed && steps.first().is_some_and(|(next, _)| *next == frame);
-                if due {
-                    self.interruptions = vec![steps.remove(0).1];
-                }
-                due
+                self.started && read == Some(*at)
             }
+            Trigger::Script(after, steps) => script_due(&mut self.started, &mut self.interruptions, (*after, steps), frame),
         }
     }
 
@@ -179,6 +177,21 @@ impl Interrupting {
         let lost = self.interrupt();
         outcome.map(|heard| if lost { TransferOutcome::NoAnswer } else { heard })
     }
+}
+
+fn script_due(
+    started: &mut bool,
+    interruptions: &mut Vec<Interruption>,
+    (after, steps): (u16, &mut Vec<(u16, Interruption)>),
+    frame: u16,
+) -> bool {
+    let armed = *started;
+    *started |= frame == after;
+    let due = armed && steps.first().is_some_and(|(next, _)| *next == frame);
+    if due {
+        *interruptions = vec![steps.remove(0).1];
+    }
+    due
 }
 
 impl DaliTransport for Interrupting {
@@ -884,6 +897,42 @@ fn a_bank_1_header_whose_format_id_lost_the_bus_inside_it_is_contended() {
 
     assert_eq!(shape(outcome.result), failure(ErrorCode::ReadContended, HEADER_SUBJECT));
     assert!(wrote_nothing(&sim));
+}
+
+// IEC 62386-102 §9.10.2, Table 8
+#[test]
+fn an_identity_read_silent_at_0x02_through_its_budget_is_absent_not_contended() {
+    let silent = Trigger::ReadAt(IDENTITY_BANK, ALWAYS_ANSWERED_OFFSET);
+    let (outcome, sim) = lost_answers(silent, &year(YEAR));
+
+    assert_eq!(
+        shape(outcome.result),
+        failure(ErrorCode::DeviceAbsent, IDENTITY_SUBJECT),
+        "a gear silent where every implemented bank answers is silence, not another master"
+    );
+    assert!(wrote_nothing(&sim));
+}
+
+// IEC 62386-102 §9.10.2, Table 8
+#[test]
+fn a_bank_1_header_silent_at_0x02_through_its_budget_is_absent_not_contended() {
+    let silent = Trigger::ReadAt(PROFILE_BANK, ALWAYS_ANSWERED_OFFSET);
+    let (outcome, sim) = lost_answers(silent, &year(YEAR));
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::DeviceAbsent, HEADER_SUBJECT));
+    assert!(wrote_nothing(&sim));
+}
+
+// IEC 62386-102 §9.10.2, Table 8
+// IEC 62386-102 §9.10.5
+#[test]
+fn a_read_back_silent_at_0x02_through_its_budget_is_unanswered_not_contended() {
+    let field_byte = special(SpecialCommand::WriteMemoryLocation(YEAR));
+    let in_the_read_back = Trigger::ReadAfter(field_byte, (PROFILE_BANK, ALWAYS_ANSWERED_OFFSET));
+    let (outcome, sim) = lost_answers(in_the_read_back, &year(YEAR));
+
+    assert_eq!(location(&sim, YEAR_OFFSET), Some(YEAR), "the write landed; only its proof is missing");
+    assert_eq!(shape(outcome.result), failure(ErrorCode::VerifyUnanswered, READBACK_SUBJECT));
 }
 
 // IEC 62386-102 §9.10.4
