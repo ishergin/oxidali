@@ -60,6 +60,10 @@ impl PowerCycleWatch {
         (order.owed != 0).then_some(order)
     }
 
+    pub(crate) fn keep_only(&mut self, adapters: &[u8]) {
+        self.adapters.retain(|adapter_id, _| adapters.contains(adapter_id));
+    }
+
     pub(crate) fn settle(&mut self, adapter_id: u8, short_address: u8) {
         if let Some(AdapterWatch::Sweeping { owed }) = self.adapters.get(&adapter_id).copied() {
             self.owe(adapter_id, owed & !short_bit(short_address));

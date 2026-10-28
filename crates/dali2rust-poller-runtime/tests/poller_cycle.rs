@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -1339,6 +1339,84 @@ fn a_disabled_adapter_is_neither_read_nor_probed() {
     let disabled = adapter_gate_harness(false);
     assert_eq!(disabled.counters.health_probes_published.load(Ordering::Relaxed), 0);
     assert_eq!(disabled.counters.reads_published.load(Ordering::Relaxed), 0);
+}
+
+struct AdapterZeroSwitch {
+    enabled: AtomicBool,
+}
+
+impl PollTargetReadPort for AdapterZeroSwitch {
+    fn list_poll_targets(&self, adapter_id: u8) -> PollTargetSelection {
+        let enabled = adapter_id != 0 || self.enabled.load(Ordering::Relaxed);
+        let targets = if enabled { vec![device(1), device(2)] } else { Vec::new() };
+        PollTargetSelection { targets, excluded_unbound: 0, adapter_enabled: enabled }
+    }
+}
+
+impl PollerSettingsReadPort for AdapterZeroSwitch {
+    fn poller_settings_view(&self) -> PollerSettingsView {
+        PollerSettingsView {
+            enabled: true,
+            attribute_groups_mask: DaliAttributeGroup::Groups.mask_bit(),
+            power_cycle_watch: true,
+            ..disabled_fast_settings()
+        }
+    }
+}
+
+fn adapter_zero_switch_harness(auto_respond: Option<AttributeGroupReadOutcome>) -> (Arc<AdapterZeroSwitch>, Harness) {
+    let gate = Arc::new(AdapterZeroSwitch { enabled: AtomicBool::new(true) });
+    let config = PollerConfig { probe_period: NO_PROBE_PERIOD };
+    let h = spawn_harness_configured(Arc::clone(&gate) as Arc<dyn PollerReadPort>, true, auto_respond, 2, config);
+    (gate, h)
+}
+
+fn disable_adapter_zero_for_a_cycle(gate: &AdapterZeroSwitch, h: &Harness) {
+    gate.enabled.store(false, Ordering::Relaxed);
+    let cycles = h.counters.cycles_total.load(Ordering::Relaxed);
+    wait_until(|| h.counters.cycles_total.load(Ordering::Relaxed) >= cycles + 2, WAIT);
+}
+
+const HELD_READ_REST: Duration = Duration::from_secs(10);
+
+#[test]
+fn a_sweep_owed_by_an_adapter_disabled_mid_sweep_gives_the_read_slot_up() {
+    let (gate, h) = adapter_zero_switch_harness(None);
+    wait_until(|| h.seen_len() == 1, WAIT);
+    yes_until(&h, 1);
+    assert_eq!(sweeps(&h), 1, "adapter 0 owes a sweep of gear 1 and 2 behind its cycle read");
+    disable_adapter_zero_for_a_cycle(&gate, &h);
+    release_with(&h, AttributeGroupReadOutcome::Success);
+    for expected in [2, 3] {
+        wait_until(|| h.seen_len() == expected, HELD_READ_REST);
+        let read = h.seen_all()[expected - 1].command.clone();
+        assert_eq!(
+            (read.registry_adapter_id, read.short_address, read.attribute_groups_mask),
+            (1, (expected - 1) as u8, DaliAttributeGroup::Groups.mask_bit()),
+            "the slot goes to adapter 1's cycle reads, not to a sweep a disabled adapter refuses unanswered"
+        );
+        release_with(&h, AttributeGroupReadOutcome::Success);
+    }
+    assert_eq!(sweep_reads(&h), 0);
+}
+
+#[test]
+fn an_adapter_disabled_and_enabled_again_sweeps_on_its_first_yes() {
+    let (gate, h) = adapter_zero_switch_harness(Some(AttributeGroupReadOutcome::Success));
+    yes_until(&h, 1);
+    wait_until(|| sweep_reads(&h) == 2, WAIT);
+    let published = h.counters.reads_published.load(Ordering::Relaxed);
+    wait_until(|| h.counters.reads_published.load(Ordering::Relaxed) > published, WAIT);
+    yes_until(&h, 2);
+    assert_eq!(sweeps(&h), 1, "control: a settled sweep holds a standing YES off");
+    disable_adapter_zero_for_a_cycle(&gate, &h);
+    gate.enabled.store(true, Ordering::Relaxed);
+    yes_until(&h, 3);
+    assert_eq!(
+        sweeps(&h),
+        2,
+        "nothing watched the adapter while it was disabled, so its first YES afterwards sweeps afresh"
+    );
 }
 
 #[test]

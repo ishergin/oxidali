@@ -260,6 +260,8 @@ fn start_probe_round(state: &mut PollerState, deps: &PollerWiring) {
 fn arm_probe_round(state: &mut PollerState, enabled_adapters: &[u8]) {
     state.last_probe = Instant::now();
     state.probe_due = probe_rota(state.probe_cursor, enabled_adapters);
+    state.sweep_queue.retain(|target| enabled_adapters.contains(&target.adapter_id));
+    state.power_cycles.keep_only(enabled_adapters);
 }
 
 fn stand_down_power_cycle_watch(state: &mut PollerState) {
@@ -568,7 +570,9 @@ fn sweep_stale(state: &mut PollerState, deps: &PollerWiring) {
     state.outstanding = None;
     deps.counters.outstanding_expired.fetch_add(1, Ordering::Relaxed);
     push_tombstone(state, o.correlation_id, o.published_at);
-    requeue_target(state, o.target);
+    if o.target.purpose == ReadPurpose::Cycle {
+        requeue_target(state, o.target);
+    }
 }
 
 fn sweep_stale_probe(state: &mut PollerState, deps: &PollerWiring) {
@@ -991,11 +995,15 @@ mod tests {
     }
 
     fn test_deps() -> TestDeps {
+        test_deps_on(Arc::new(NullPort))
+    }
+
+    fn test_deps_on(read_port: Arc<dyn PollerReadPort>) -> TestDeps {
         let (_host, publisher, ()) = BusHost::spawn(BusConfig::default(), |_| ());
         let deps = PollerWiring {
             role: Arc::new(ActiveRole),
             publisher,
-            read_port: Arc::new(NullPort),
+            read_port,
             correlation: Arc::new(CorrelationIdAllocator::new()),
             bus_id: BusId::default(),
             adapter_count: 1,
@@ -1062,6 +1070,63 @@ mod tests {
             0,
             "already accounted as expired: the late outcome settles the bill, not the ledger"
         );
+    }
+
+    struct ListsGearOne;
+
+    impl PollTargetReadPort for ListsGearOne {
+        fn list_poll_targets(&self, _adapter_id: u8) -> PollTargetSelection {
+            let gear = PollTargetView {
+                short_address: 1,
+                is_dt8: false,
+                is_dt6: false,
+                declares_energy: false,
+                declares_diagnostics: false,
+            };
+            PollTargetSelection { targets: vec![gear], excluded_unbound: 0, adapter_enabled: true }
+        }
+    }
+
+    impl PollerSettingsReadPort for ListsGearOne {
+        fn poller_settings_view(&self) -> PollerSettingsView {
+            watch_state().settings
+        }
+    }
+
+    fn watch_state() -> PollerState {
+        let mut state = test_state();
+        state.settings.power_cycle_watch = true;
+        state
+    }
+
+    fn power_cycle_yes(state: &mut PollerState, deps: &PollerWiring) {
+        let yes = DaliBusHealthProbedEvent {
+            registry_adapter_id: 0,
+            control_answered: true,
+            lamp_failure: BusHealthVerdict::Clear,
+            power_cycle_seen: true,
+        };
+        record_health_probe(state, deps, 0, &yes);
+    }
+
+    #[test]
+    fn a_sweep_read_the_guard_expired_waits_for_the_next_yes_not_for_the_next_slot() {
+        let t = test_deps_on(Arc::new(ListsGearOne));
+        let mut state = watch_state();
+        power_cycle_yes(&mut state, &t.deps);
+        let target = state.sweep_queue.pop_front().expect("the YES queues gear 1");
+        publish_read(&mut state, &t.deps, target);
+        state.outstanding.as_mut().expect("in flight").deadline = Instant::now() - Duration::from_millis(1);
+        sweep_stale(&mut state, &t.deps);
+        assert_eq!(t.deps.counters.outstanding_expired.load(Ordering::Relaxed), 1);
+        assert!(
+            state.sweep_queue.is_empty(),
+            "a read nobody answered is not retried at once, where it could hold the slot for another guard"
+        );
+        power_cycle_yes(&mut state, &t.deps);
+        let owed: Vec<u8> = state.sweep_queue.iter().map(|target| target.short_address).collect();
+        assert_eq!(owed, vec![1], "the gear is still owed, so the next YES reads it");
+        assert_eq!(t.deps.counters.power_cycle_sweeps.load(Ordering::Relaxed), 1, "the same sweep");
     }
 
     #[test]
