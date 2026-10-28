@@ -868,20 +868,17 @@ fn worker_command(text: &str) -> BusFrame {
     BusFrame::command(envelope)
 }
 
-fn through_the_worker(arrival: WirePriority) -> (Result<(), (ErrorCode, String)>, SimDaliTransport) {
+fn write_by_the_worker(
+    transport: Arc<Mutex<Interrupting>>,
+    gate: Arc<WireActivity>,
+    identity: IdentityRead,
+) -> Result<(), (ErrorCode, String)> {
     let (host, publisher, worker_commands, signals) = spawn_signal_bus();
-    let gate = Arc::new(WireActivity::new());
-    let sim = luminaire_gear(FOUND_LOCK, false);
-    let identity = identity_of(&sim);
-    let emptying = Trigger::Frame(special(SpecialCommand::WriteMemoryLocation(0)));
-    let interruption = Interruption::Arrival(Arc::clone(&gate), arrival);
-    let transport = Arc::new(Mutex::new(Interrupting::new(sim, vec![interruption], emptying)));
-    let read_port = ReadPortDouble { identity, ..ReadPortDouble::default() };
     let worker = spawn_dali_worker(
         worker_commands,
-        DaliController::new(Arc::clone(&transport), Box::new(StoppedClock::at(0))),
+        DaliController::new(transport, Box::new(StoppedClock::at(0))),
         DaliRuntimeConfig::default(),
-        Arc::new(read_port),
+        Arc::new(ReadPortDouble { identity, ..ReadPortDouble::default() }),
         publisher.clone(),
         BusId::default(),
         Arc::new(DaliWorkerCounters::default()),
@@ -894,10 +891,17 @@ fn through_the_worker(arrival: WirePriority) -> (Result<(), (ErrorCode, String)>
     let ended = next_signal(&signals, WRITE_CORRELATION).expect("the write ends");
     drop((host, publisher));
     worker.join().expect("the worker stops with its bus");
-    let result = match ended.error {
-        Some(error) => Err((error.code, error.message.as_str().to_owned())),
-        None => Ok(()),
-    };
+    ended.error.map_or(Ok(()), |error| Err((error.code, error.message.as_str().to_owned())))
+}
+
+fn through_the_worker(arrival: WirePriority) -> (Result<(), (ErrorCode, String)>, SimDaliTransport) {
+    let gate = Arc::new(WireActivity::new());
+    let sim = luminaire_gear(FOUND_LOCK, false);
+    let identity = identity_of(&sim);
+    let emptying = Trigger::Frame(special(SpecialCommand::WriteMemoryLocation(TEXT_TERMINATOR)));
+    let interruption = Interruption::Arrival(Arc::clone(&gate), arrival);
+    let transport = Arc::new(Mutex::new(Interrupting::new(sim, vec![interruption], emptying)));
+    let result = write_by_the_worker(Arc::clone(&transport), gate, identity);
     let interrupting = Arc::into_inner(transport).expect("one owner").into_inner().expect("bus");
     (result, interrupting.sim)
 }

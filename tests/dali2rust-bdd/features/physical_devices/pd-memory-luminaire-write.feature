@@ -1,5 +1,5 @@
 @stage-R2
-Feature: Physical-device luminaire data write
+Feature: Physical-device memory-luminaire write
 
   @id:PD-291
   Scenario: A numeric field is written under an opened lock byte, the lock is put back and the bank is read back

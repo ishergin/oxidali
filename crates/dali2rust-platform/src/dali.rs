@@ -727,7 +727,7 @@ impl WireLease {
         self.granularity
     }
 
-    pub fn at_most(&self, granularity: YieldGranularity) -> Self {
+    pub fn no_finer_than(&self, granularity: YieldGranularity) -> Self {
         Self {
             granularity: self.granularity.max(granularity),
             ..self.clone()
