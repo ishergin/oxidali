@@ -2,7 +2,7 @@ pub mod address;
 pub mod command;
 pub mod event;
 pub mod frame;
-pub mod slave;
+pub mod unit;
 
 pub use address::{
     Device103Address, InitialiseScope103, InstanceAddress, ShortAddressOperand,

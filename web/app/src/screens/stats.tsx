@@ -20,7 +20,7 @@ const DALI_GAUGES = [
   'wire_load_own_permille',
   'isr_late_ticks_total',
   'isr_max_gap_us',
-  'answer_stage_max_ticks',
+  'answer_table_publish_max_ticks',
   'sniff_poll_gap_max_us',
   'persist_flush_max_ms',
 ] as const

@@ -2,14 +2,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
 
-use dali2rust_domain::dali::dev103::slave::arbitration_slots;
 use dali2rust_domain::registry::DaliSettingsReadPort;
-use dali2rust_platform::arbitration::ArbitrationReflex;
+use dali2rust_platform::arbitration::{AnswerInputs, UnitInputs};
 use dali2rust_platform::liveness::LivenessWatch;
 
-pub const SUPERVISOR_PERIOD_MS: u64 = 1_000;
+pub use dali2rust_platform::arbitration::LEASE_TTL_MS;
 
-pub const LEASE_TTL_MS: u32 = 3_000;
+pub const SUPERVISOR_PERIOD_MS: u64 = 1_000;
 
 pub const WORKER_STALE_AFTER_MS: u32 = 3_000;
 
@@ -74,7 +73,7 @@ impl Default for ArbitrationSupervisorConfig {
 }
 
 pub struct SupervisorInputs {
-    pub reflex: Arc<ArbitrationReflex>,
+    pub answer_inputs: Arc<AnswerInputs>,
     pub watch: LivenessWatch,
     pub settings: Arc<dyn DaliSettingsReadPort>,
     pub counters: Arc<ArbitrationSupervisorCounters>,
@@ -82,20 +81,17 @@ pub struct SupervisorInputs {
 }
 
 pub fn run_supervisor_tick(inputs: &SupervisorInputs, now_ms: u32) -> SupervisorTurn {
+    let stale_worker = inputs.watch.stale(now_ms);
     let settings = inputs.settings.dali_settings_view();
-    let turn = supervisor_turn(settings.application_active, inputs.watch.stale(now_ms));
+    let turn = supervisor_turn(settings.application_active, stale_worker);
     match turn {
         SupervisorTurn::Defend => {
-            publish_slots(
-                &inputs.reflex,
-                settings.application_active,
-                settings.device_short_address,
-            );
-            inputs.reflex.extend_lease(now_ms, inputs.config.lease_ttl_ms);
+            inputs.answer_inputs.publish_unit(unit_inputs(&settings));
+            inputs.answer_inputs.extend_lease(now_ms, inputs.config.lease_ttl_ms);
         }
         SupervisorTurn::StandDown(StandDownReason::Passive) => {
-            inputs.reflex.clear_all();
-            inputs.reflex.revoke_lease();
+            inputs.answer_inputs.publish_unit(unit_inputs(&settings));
+            inputs.answer_inputs.revoke_lease(now_ms);
         }
         SupervisorTurn::StandDown(StandDownReason::WorkerStale(name)) => {
             match inputs.watch.stale_age(now_ms) {
@@ -105,7 +101,7 @@ pub fn run_supervisor_tick(inputs: &SupervisorInputs, now_ms: u32) -> Supervisor
                 Some((_, Some(age))) => log::warn!(
                     "arbitration: {name} last turned {age} ms ago (stale after {} ms) — the answer table is not renewed, the lease lapses in at most {} ms",
                     WORKER_STALE_AFTER_MS,
-                    inputs.config.lease_ttl_ms
+                    inputs.config.lease_ttl_ms.min(LEASE_TTL_MS)
                 ),
                 None => {}
             }
@@ -115,16 +111,10 @@ pub fn run_supervisor_tick(inputs: &SupervisorInputs, now_ms: u32) -> Supervisor
     turn
 }
 
-fn publish_slots(reflex: &ArbitrationReflex, active: bool, short_address: Option<u8>) {
-    let slots = arbitration_slots(active, short_address);
-    let mut index = 0usize;
-    for slot in slots.iter() {
-        reflex.set_slot(index, slot.frame, slot.answer);
-        index = index.saturating_add(1);
-    }
-    while index < dali2rust_platform::arbitration::ARBITRATION_REFLEX_SLOTS {
-        reflex.clear_slot(index);
-        index = index.saturating_add(1);
+fn unit_inputs(settings: &dali2rust_domain::registry::DaliSettingsView) -> UnitInputs {
+    UnitInputs {
+        application_active: settings.application_active,
+        device_short_address: settings.device_short_address,
     }
 }
 
@@ -155,6 +145,8 @@ fn supervisor_loop(ev_rx: &dali2rust_bus::BusSubscriberRx, inputs: &SupervisorIn
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dali2rust_dali_phy::{AnswerTableCell, TableLookup};
+    use dali2rust_domain::dali::dev103::unit::answer_table;
     use dali2rust_domain::registry::DaliSettingsView;
     use dali2rust_platform::liveness::LivenessBeat;
     use std::sync::atomic::AtomicBool;
@@ -163,10 +155,14 @@ mod tests {
     struct FakeSettings {
         active: AtomicBool,
         short: Mutex<Option<u8>>,
+        beat_while_read: Mutex<Option<(Arc<LivenessBeat>, u32)>>,
     }
 
     impl DaliSettingsReadPort for FakeSettings {
         fn dali_settings_view(&self) -> DaliSettingsView {
+            if let Some((beat, at_ms)) = self.beat_while_read.lock().expect("beat").as_ref() {
+                beat.beat(*at_ms);
+            }
             DaliSettingsView {
                 dt8_auto_activation_repair: false,
                 dt8_rgbwaf_control_assert: false,
@@ -186,6 +182,7 @@ mod tests {
         let settings = Arc::new(FakeSettings {
             active: AtomicBool::new(active),
             short: Mutex::new(Some(7)),
+            beat_while_read: Mutex::new(None),
         });
         let registry = Arc::new(LivenessBeat::new("registry", WORKER_STALE_AFTER_MS));
         registry.beat(1_000);
@@ -193,7 +190,7 @@ mod tests {
         watch.register(Arc::clone(&registry));
         Rig {
             inputs: SupervisorInputs {
-                reflex: Arc::new(ArbitrationReflex::new()),
+                answer_inputs: Arc::new(AnswerInputs::new()),
                 watch,
                 settings: Arc::clone(&settings) as Arc<dyn DaliSettingsReadPort>,
                 counters: Arc::new(ArbitrationSupervisorCounters::default()),
@@ -207,12 +204,23 @@ mod tests {
     const QUERY_BROADCAST: [u8; 3] = [0xFF, 0xFE, 0x3D];
     const NOW: u32 = 1_000;
 
+    fn answer(inputs: &AnswerInputs, frame: [u8; 3], now_ms: u32) -> Option<u8> {
+        let unit = inputs.unit()?;
+        let cell = AnswerTableCell::new();
+        cell.publish(&answer_table(unit.application_active, unit.device_short_address), 0);
+        cell.set_lease_for_ms(0, inputs.lease_remaining_ms(now_ms));
+        match cell.lookup(frame, 0, 0) {
+            TableLookup::Answer(byte) => Some(byte),
+            _ => None,
+        }
+    }
+
     #[test]
     fn an_active_controller_with_healthy_workers_publishes_and_renews() {
         let r = rig(true);
         assert_eq!(run_supervisor_tick(&r.inputs, NOW), SupervisorTurn::Defend);
         assert_eq!(
-            r.inputs.reflex.answer_for(QUERY_BROADCAST, 1_000),
+            answer(&r.inputs.answer_inputs, QUERY_BROADCAST, 1_000),
             Some(0xFF)
         );
         assert_eq!(r.inputs.counters.defended.load(Ordering::Relaxed), 1);
@@ -222,14 +230,14 @@ mod tests {
     fn a_wedged_worker_stops_the_renewal_and_the_lease_runs_out() {
         let r = rig(true);
         run_supervisor_tick(&r.inputs, NOW);
-        assert!(r.inputs.reflex.lease_alive(1_000));
+        assert!(r.inputs.answer_inputs.lease_alive(1_000));
 
         assert_eq!(
             run_supervisor_tick(&r.inputs, 5_000),
             SupervisorTurn::StandDown(StandDownReason::WorkerStale("registry"))
         );
-        assert!(!r.inputs.reflex.lease_alive(5_000));
-        assert_eq!(r.inputs.reflex.answer_for(QUERY_BROADCAST, 5_000), None);
+        assert!(!r.inputs.answer_inputs.lease_alive(5_000));
+        assert_eq!(answer(&r.inputs.answer_inputs, QUERY_BROADCAST, 5_000), None);
         assert_eq!(
             r.inputs
                 .counters
@@ -243,12 +251,12 @@ mod tests {
     fn a_worker_that_recovers_takes_the_bus_back_with_no_reset() {
         let r = rig(true);
         run_supervisor_tick(&r.inputs, 5_000);
-        assert!(!r.inputs.reflex.lease_alive(5_000));
+        assert!(!r.inputs.answer_inputs.lease_alive(5_000));
 
         r.registry.beat(5_100);
         assert_eq!(run_supervisor_tick(&r.inputs, 5_100), SupervisorTurn::Defend);
         assert_eq!(
-            r.inputs.reflex.answer_for(QUERY_BROADCAST, 5_100),
+            answer(&r.inputs.answer_inputs, QUERY_BROADCAST, 5_100),
             Some(0xFF)
         );
     }
@@ -260,7 +268,7 @@ mod tests {
             run_supervisor_tick(&r.inputs, NOW),
             SupervisorTurn::StandDown(StandDownReason::Passive)
         );
-        assert_eq!(r.inputs.reflex.answer_for(QUERY_BROADCAST, 1_000), None);
+        assert_eq!(answer(&r.inputs.answer_inputs, QUERY_BROADCAST, 1_000), None);
         assert_eq!(
             r.inputs
                 .counters
@@ -276,8 +284,8 @@ mod tests {
         run_supervisor_tick(&r.inputs, NOW);
         r.settings.active.store(false, Ordering::Relaxed);
         run_supervisor_tick(&r.inputs, NOW);
-        assert!(!r.inputs.reflex.lease_alive(1_000));
-        assert_eq!(r.inputs.reflex.answer_for(QUERY_BROADCAST, 1_000), None);
+        assert!(!r.inputs.answer_inputs.lease_alive(1_000));
+        assert_eq!(answer(&r.inputs.answer_inputs, QUERY_BROADCAST, 1_000), None);
     }
 
     #[test]
@@ -286,17 +294,25 @@ mod tests {
         run_supervisor_tick(&r.inputs, NOW);
         let old_addressed = [(7 << 1) | 1, 0xFE, 0x3D];
         assert_eq!(
-            r.inputs.reflex.answer_for(old_addressed, 1_000),
+            answer(&r.inputs.answer_inputs, old_addressed, 1_000),
             Some(0xFF)
         );
 
         *r.settings.short.lock().expect("short address") = Some(9);
         run_supervisor_tick(&r.inputs, NOW);
-        assert_eq!(r.inputs.reflex.answer_for(old_addressed, 1_000), None);
+        assert_eq!(answer(&r.inputs.answer_inputs, old_addressed, 1_000), None);
         assert_eq!(
-            r.inputs.reflex.answer_for([(9 << 1) | 1, 0xFE, 0x3D], 1_000),
+            answer(&r.inputs.answer_inputs, [(9 << 1) | 1, 0xFE, 0x3D], 1_000),
             Some(0xFF)
         );
+    }
+
+    #[test]
+    fn a_worker_that_turns_while_the_settings_read_waits_is_not_stale() {
+        let r = rig(true);
+        let late_beat = (Arc::clone(&r.registry), NOW + 500);
+        *r.settings.beat_while_read.lock().expect("beat") = Some(late_beat);
+        assert_eq!(run_supervisor_tick(&r.inputs, NOW), SupervisorTurn::Defend);
     }
 
     #[test]

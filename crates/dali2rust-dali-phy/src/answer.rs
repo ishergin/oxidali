@@ -22,6 +22,7 @@ impl AtomicAnswerCell {
         }
     }
 
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     pub fn stage(&self, epoch: u8, hb: &HalfBitBuffer) -> bool {
         if hb.length == 0 || hb.length > HalfBitBuffer::MAX_DATA_HALF_BITS {
             return false;
@@ -29,9 +30,17 @@ impl AtomicAnswerCell {
         if self.state.load(Ordering::Acquire) != ANSWER_IDLE {
             return false;
         }
-        for (cell, &b) in self.data.iter().zip(hb.data.iter()) {
-            cell.store(b, Ordering::Relaxed);
-        }
+        let [c0, c1, c2, c3, c4, c5, c6, c7, c8] = &self.data;
+        let [b0, b1, b2, b3, b4, b5, b6, b7, b8] = hb.data;
+        c0.store(b0, Ordering::Relaxed);
+        c1.store(b1, Ordering::Relaxed);
+        c2.store(b2, Ordering::Relaxed);
+        c3.store(b3, Ordering::Relaxed);
+        c4.store(b4, Ordering::Relaxed);
+        c5.store(b5, Ordering::Relaxed);
+        c6.store(b6, Ordering::Relaxed);
+        c7.store(b7, Ordering::Relaxed);
+        c8.store(b8, Ordering::Relaxed);
         self.len.store(hb.length, Ordering::Relaxed);
         self.epoch.store(epoch, Ordering::Relaxed);
         self.state

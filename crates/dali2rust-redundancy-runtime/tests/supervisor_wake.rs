@@ -6,7 +6,7 @@ use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, PublishResult};
 use dali2rust_contracts::bus::event_envelope;
 use dali2rust_contracts::msg::{DaliSettingsChangedEvent, APPLICATION_ACTIVE_MOVED_BY_COMMAND};
 use dali2rust_domain::registry::{DaliSettingsReadPort, DaliSettingsView};
-use dali2rust_platform::arbitration::ArbitrationReflex;
+use dali2rust_platform::arbitration::AnswerInputs;
 use dali2rust_platform::liveness::{monotonic_ms, LivenessBeat, LivenessWatch};
 use dali2rust_test_support::try_wait_until;
 use dali2rust_redundancy_runtime::{
@@ -44,12 +44,12 @@ fn a_stand_down_clears_the_answer_table_on_the_settings_event_not_the_period() {
     registry.beat(monotonic_ms());
     let mut watch = LivenessWatch::new();
     watch.register(Arc::clone(&registry));
-    let reflex = Arc::new(ArbitrationReflex::new());
+    let inputs = Arc::new(AnswerInputs::new());
     let counters = Arc::new(ArbitrationSupervisorCounters::default());
     let _supervisor = spawn_arbitration_supervisor(
         ev_rx,
         SupervisorInputs {
-            reflex: Arc::clone(&reflex),
+            answer_inputs: Arc::clone(&inputs),
             watch,
             settings: Arc::clone(&settings) as Arc<dyn DaliSettingsReadPort>,
             counters: Arc::clone(&counters),
@@ -59,7 +59,7 @@ fn a_stand_down_clears_the_answer_table_on_the_settings_event_not_the_period() {
             },
         },
     );
-    let armed = try_wait_until(|| reflex.lease_alive(monotonic_ms()), WAKE_BUDGET);
+    let armed = try_wait_until(|| inputs.lease_alive(monotonic_ms()), WAKE_BUDGET);
     assert!(armed, "the supervisor never defended an active, healthy controller");
 
     settings.active.store(false, Ordering::Relaxed);
@@ -80,7 +80,7 @@ fn a_stand_down_clears_the_answer_table_on_the_settings_event_not_the_period() {
         publisher.try_publish(BusChannel::Events, BusFrame::event(ev)),
         PublishResult::Queued
     );
-    let cleared = try_wait_until(|| !reflex.lease_alive(monotonic_ms()), WAKE_BUDGET);
+    let cleared = try_wait_until(|| !inputs.lease_alive(monotonic_ms()), WAKE_BUDGET);
     let took = sent.elapsed();
     assert!(
         cleared,

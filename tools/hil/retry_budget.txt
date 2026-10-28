@@ -35,6 +35,10 @@ post_commission_requery  0
 # A command the sniffer did not see within half its window, sent again.
 sniffer_resend           0
 
+# Answers the PHY interrupt lost, from /api/v1/diagnostics at session end.
+answer_table_torn       0
+answer_decode_overrun   0
+
 # Frames the controller shed, from /api/v1/diagnostics at session end.
 bus_commands_ingress_overflow       0
 bus_confirmations_ingress_overflow  0
@@ -49,11 +53,11 @@ isr_ticks_extra         0
 # Rates for a same-boot session of ten minutes or more; a _per_h row is gated only once it is listed here.
 isr_ticks_lost_per_h        0
 isr_ticks_extra_per_h       0
-answer_stage_late_per_h     0
+answer_table_behind_per_h   0
 sniff_poll_late_per_h       0
 persist_flush_slow_per_h    0
 # The same three as counts, for sessions shorter than ten minutes.
-answer_stage_late           0
+answer_table_behind         0
 sniff_poll_late             0
 persist_flush_slow          0
 

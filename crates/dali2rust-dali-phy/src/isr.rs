@@ -1,16 +1,23 @@
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 
+use dali2rust_platform::answer_table::AnswerTableImage;
+
 use crate::answer::AtomicAnswerCell;
+use crate::answer_table::{AnswerTableCell, TableLookup};
 use crate::backward_window::{
     answer_gate, AnswerGate, ANSWER_ARM_MAX_IDLE_TICKS, ANSWER_ARM_TARGET_IDLE_TICKS,
+    BACKWARD_DATA_BITS,
 };
 use crate::command::{AtomicCommandCell, ExchangeId, TxGates};
 use crate::cpu::{raw_core_id, ISR_CORE_ID};
-use crate::frame_length::{frame_length_class, FrameLengthClass};
+use crate::frame_length::{frame_length_class, is_forward24_length, FrameLengthClass};
 use crate::fsm::{BusState, DaliBitbangPhy, RxCompletedEvent, RxState, TxPollResult};
 use crate::gpio::RegisterGpio;
 use crate::halfbits::HalfBitBuffer;
+use crate::manchester::{
+    BestPhaseSearch, IsrDecode, PhaseSearch, SampleWindow, FORWARD24_BITS, SNIFFED_BIT_LENGTHS,
+};
 use crate::ring::SpscRing;
 
 pub const RX_RING_CAP: usize = 8;
@@ -68,6 +75,68 @@ impl ControlState {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct AnswerTableCounts {
+    pub answered: u32,
+    pub lease_lapsed: u32,
+    pub behind: u32,
+    pub torn: u32,
+    pub cell_busy: u32,
+    pub decode_overrun: u32,
+}
+
+struct TableCounters {
+    answered: AtomicU32,
+    cell_busy: AtomicU32,
+    decode_overrun: AtomicU32,
+}
+
+impl TableCounters {
+    const fn new() -> Self {
+        Self {
+            answered: AtomicU32::new(0),
+            cell_busy: AtomicU32::new(0),
+            decode_overrun: AtomicU32::new(0),
+        }
+    }
+}
+
+struct HeldCapture {
+    held: bool,
+    ev: RxCompletedEvent,
+    window: SampleWindow,
+    search: BestPhaseSearch,
+}
+
+impl HeldCapture {
+    const fn new() -> Self {
+        Self {
+            held: false,
+            ev: RxCompletedEvent::new(),
+            window: SampleWindow::EMPTY,
+            search: BestPhaseSearch::new(SNIFFED_BIT_LENGTHS),
+        }
+    }
+}
+
+struct TablePath {
+    sniff_seq: AtomicU8,
+    held: UnsafeCell<HeldCapture>,
+    table: AnswerTableCell,
+    counts: TableCounters,
+}
+
+impl TablePath {
+    const fn new() -> Self {
+        Self {
+            sniff_seq: AtomicU8::new(0),
+            held: UnsafeCell::new(HeldCapture::new()),
+            table: AnswerTableCell::new(),
+            counts: TableCounters::new(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct AnswerCounts {
     pub sent: u32,
     pub stale: u32,
@@ -114,6 +183,7 @@ pub struct PhyIsrCore {
     probe: TickProbe,
     tx: TxCounters,
     answers_collided: AtomicU32,
+    table_path: TablePath,
 }
 
 struct TxCounters {
@@ -267,6 +337,7 @@ impl PhyIsrCore {
             probe: TickProbe::new(),
             tx: TxCounters::new(),
             answers_collided: AtomicU32::new(0),
+            table_path: TablePath::new(),
         }
     }
 
@@ -293,6 +364,8 @@ impl PhyIsrCore {
             // SAFETY: this is the interrupt, the sole owner of `pending`.
             unsafe { self.report_tx_completion(phy) };
         }
+        // SAFETY: this is the interrupt, the sole owner of the held capture.
+        unsafe { self.step_held_capture() };
         // SAFETY: same.
         unsafe { self.drain_completed_rx(phy) };
     }
@@ -785,7 +858,8 @@ impl PhyIsrCore {
             self.push_session_event_for(ExchangeId(exchange), SessionEvent::RxComplete(ev));
             return;
         }
-        self.push_sniffer_capture(ev);
+        // SAFETY: called from `tick`, the sole owner of the held capture.
+        unsafe { self.push_sniffer_capture(ev) };
     }
 
     // IEC 62386-102 §11.7.14
@@ -804,11 +878,71 @@ impl PhyIsrCore {
                 },
             );
         }
-        self.push_sniffer_capture(ev);
+        // SAFETY: called from `tick`, the sole owner of the held capture.
+        unsafe { self.push_sniffer_capture(ev) };
     }
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
-    fn push_sniffer_capture(&self, ev: RxCompletedEvent) {
+    unsafe fn push_sniffer_capture(&self, mut ev: RxCompletedEvent) {
+        // SAFETY: the caller is `tick`, the sole owner of the held capture.
+        let held = unsafe { &mut *self.table_path.held.get() };
+        if held.held {
+            held.held = false;
+            self.table_path.counts
+                .decode_overrun
+                .fetch_add(1, Ordering::Relaxed);
+            self.push_to_sniffer_ring(held.ev.clone());
+        }
+        ev.sniff_seq = self.table_path.sniff_seq.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        if !is_forward24_length(ev.sample_count) {
+            self.push_to_sniffer_ring(ev);
+            return;
+        }
+        held.window = SampleWindow::of_capture(&ev.samples, ev.sample_count);
+        held.search = BestPhaseSearch::new(SNIFFED_BIT_LENGTHS);
+        held.ev = ev;
+        held.held = true;
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    unsafe fn step_held_capture(&self) {
+        // SAFETY: the caller is `tick`, the sole owner of the held capture.
+        let held = unsafe { &mut *self.table_path.held.get() };
+        if !held.held {
+            return;
+        }
+        let PhaseSearch::Done(found) = held.search.step(&held.window) else {
+            return;
+        };
+        held.held = false;
+        held.ev.isr_decode = IsrDecode::Decoded(found);
+        if let Some(decode) = found {
+            if decode.bit_len == FORWARD24_BITS {
+                let [address, instance, opcode, ..] = decode.data;
+                self.answer_from_table([address, instance, opcode], &held.ev);
+            }
+        }
+        self.push_to_sniffer_ring(held.ev.clone());
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn answer_from_table(&self, frame: [u8; 3], ev: &RxCompletedEvent) {
+        let now = self.wire_ticks_total.load(Ordering::Relaxed);
+        let previous = ev.sniff_seq.wrapping_sub(1);
+        let Some(answer) = self.table_path.table.answer(frame, previous, now) else {
+            return;
+        };
+        let hb = HalfBitBuffer::encode(u32::from(answer), BACKWARD_DATA_BITS);
+        let counter = if self.answer.stage(ev.rx_epoch, &hb) {
+            &self.table_path.counts.answered
+        } else {
+            &self.table_path.counts.cell_busy
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn push_to_sniffer_ring(&self, ev: RxCompletedEvent) {
         if self.rx_ring.try_push(ev).is_err() {
             self.sniff_dropped.fetch_add(1, Ordering::Relaxed);
         }
@@ -858,6 +992,32 @@ impl PhyIsrCore {
 
     pub fn submit_answer(&self, rx_epoch: u8, hb: &HalfBitBuffer) -> bool {
         self.answer.stage(rx_epoch, hb)
+    }
+
+    pub fn publish_answer_table(&self, image: &AnswerTableImage, accounts_for: u8) {
+        self.table_path.table.publish(image, accounts_for);
+    }
+
+    pub fn set_answer_lease_for_ms(&self, now_tick: u32, remaining_ms: u32) {
+        self.table_path.table.set_lease_for_ms(now_tick, remaining_ms);
+    }
+
+    pub fn lookup_answer(&self, frame: [u8; 3], previous_capture: u8) -> TableLookup {
+        let now = self.wire_ticks_total.load(Ordering::Relaxed);
+        self.table_path.table.lookup(frame, previous_capture, now)
+    }
+
+    pub fn answer_table_counts(&self) -> AnswerTableCounts {
+        let c = &self.table_path.counts;
+        let refused = self.table_path.table.refusal_counts();
+        AnswerTableCounts {
+            answered: c.answered.load(Ordering::Relaxed),
+            lease_lapsed: refused.lease_lapsed,
+            behind: refused.behind,
+            torn: refused.torn,
+            cell_busy: c.cell_busy.load(Ordering::Relaxed),
+            decode_overrun: c.decode_overrun.load(Ordering::Relaxed),
+        }
     }
 
     pub fn answer_counts(&self) -> AnswerCounts {
@@ -1071,8 +1231,9 @@ pub unsafe extern "C" fn dali_phy_alarm_isr(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame_length::FORWARD_LENGTH_MIN_SAMPLES;
+    use crate::frame_length::{FORWARD24_LENGTH_MIN_SAMPLES, FORWARD_LENGTH_MIN_SAMPLES};
     use crate::fsm::{PHY_TICK_US, TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS};
+    use dali2rust_platform::arbitration::LEASE_TTL_MS;
 
     fn test_core(set: &mut u32, clr: &mut u32, input: &u32) -> PhyIsrCore {
         // SAFETY: the three "registers" outlive the core within each test.
@@ -2588,5 +2749,201 @@ mod tests {
                 "another master restarted first: the frame is voided and the task repeats it"
             );
         }
+    }
+
+    const QACE_BROADCAST: [u8; 3] = [0xFF, 0xFE, 0x3D];
+
+    fn frame24_bits(frame: [u8; 3]) -> Vec<bool> {
+        let word = u32::from_be_bytes([0, frame[0], frame[1], frame[2]]);
+        (0..24).rev().map(|bit| (word >> bit) & 1 != 0).collect()
+    }
+
+    fn qace_table() -> AnswerTableImage {
+        let mut image = AnswerTableImage::SILENT;
+        image.short_address = 7;
+        assert!(image.set_device_query(
+            QACE_BROADCAST[2],
+            dali2rust_platform::answer_table::AnswerEntry::by_lease(Some(0xFF), None),
+        ));
+        image
+    }
+
+    fn arm_table(core: &PhyIsrCore, accounts_for: u8) {
+        core.publish_answer_table(&qace_table(), accounts_for);
+        core.set_answer_lease_for_ms(core.wire_tick_counts().0, LEASE_TTL_MS);
+    }
+
+    fn drain_rx(core: &PhyIsrCore) -> Vec<RxCompletedEvent> {
+        core::iter::from_fn(|| core.pop_rx()).collect()
+    }
+
+    #[test]
+    fn the_interrupt_answers_a_query_from_the_table_and_hands_the_drain_its_decode() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        arm_table(&core, 0);
+
+        receive_foreign_frame(&core, input_ptr, &frame24_bits(QACE_BROADCAST));
+        // SAFETY: single-threaded test standing in for the ISR context.
+        unsafe { tick_n(&core, 160) };
+
+        assert_eq!(core.answer_table_counts().answered, 1);
+        assert_eq!(core.answer_counts().sent, 1, "the staged answer goes out in its slot");
+        let captured = drain_rx(&core);
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].sniff_seq, 1);
+        let IsrDecode::Decoded(Some(decode)) = captured[0].isr_decode else {
+            panic!("a 24-bit capture carries the interrupt's decode");
+        };
+        assert_eq!((decode.bit_len, &decode.data[..3]), (24, &QACE_BROADCAST[..]));
+    }
+
+    #[test]
+    fn a_sixteen_bit_capture_is_left_to_the_task_decoder() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+
+        receive_foreign_frame(&core, input_ptr, &SIXTEEN_BITS);
+        let captured = drain_rx(&core);
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].isr_decode, IsrDecode::NotDecoded);
+        assert_eq!(captured[0].sniff_seq, 1);
+    }
+
+    #[test]
+    fn a_table_that_missed_the_previous_capture_answers_nothing() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        arm_table(&core, 0);
+
+        receive_foreign_frame(&core, input_ptr, &SIXTEEN_BITS);
+        receive_foreign_frame(&core, input_ptr, &frame24_bits(QACE_BROADCAST));
+        // SAFETY: single-threaded test standing in for the ISR context.
+        unsafe { tick_n(&core, 160) };
+
+        assert_eq!(core.answer_table_counts().behind, 1);
+        assert_eq!(core.answer_table_counts().answered, 0);
+        assert_eq!(core.answer_counts().sent, 0, "the drain never answers in its place");
+    }
+
+    #[test]
+    fn our_own_frame_between_two_foreign_ones_leaves_the_table_current() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+
+        receive_foreign_frame(&core, input_ptr, &SIXTEEN_BITS);
+        let consumed = drain_rx(&core);
+        arm_table(&core, consumed[0].sniff_seq);
+        assert!(core.submit_tx(&test_forward_frame(), 16, false, TxGates::settle(0)));
+        // SAFETY: single-threaded test standing in for the ISR context.
+        assert!(unsafe { transmitted_within(&core, 200) }, "our frame must go out");
+        assert!(drain_rx(&core).is_empty(), "our own frame never reaches the sniffer ring");
+
+        receive_foreign_frame(&core, input_ptr, &frame24_bits(QACE_BROADCAST));
+        // SAFETY: single-threaded test standing in for the ISR context.
+        unsafe { tick_n(&core, 160) };
+
+        assert_eq!(core.answer_table_counts().answered, 1);
+        assert_eq!(core.answer_counts().sent, 1);
+    }
+
+    #[test]
+    fn our_own_query_is_never_answered_from_our_own_table() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        arm_table(&core, 0);
+
+        let word = u32::from_be_bytes([0, QACE_BROADCAST[0], QACE_BROADCAST[1], QACE_BROADCAST[2]]);
+        let hb = HalfBitBuffer::encode(word, 24);
+        assert!(core.submit_tx(&hb.data, hb.length, false, TxGates::settle(0)));
+        // SAFETY: single-threaded test standing in for the ISR context.
+        assert!(unsafe { transmitted_within(&core, 400) }, "our query must go out");
+        // SAFETY: same.
+        unsafe { tick_n(&core, 160) };
+
+        assert_eq!(core.answer_table_counts(), AnswerTableCounts::default());
+        assert_eq!(core.answer_counts().sent, 0);
+        assert!(drain_rx(&core).is_empty());
+    }
+
+    #[test]
+    fn a_capture_lost_to_a_full_ring_leaves_the_table_behind() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+
+        for _ in 0..=RX_RING_CAP {
+            receive_foreign_frame(&core, input_ptr, &SIXTEEN_BITS);
+        }
+        let consumed = drain_rx(&core);
+        assert!(core.take_sniff_dropped() >= 1, "the ring must have overflowed");
+        arm_table(&core, consumed.last().expect("captures were consumed").sniff_seq);
+
+        receive_foreign_frame(&core, input_ptr, &frame24_bits(QACE_BROADCAST));
+        // SAFETY: single-threaded test standing in for the ISR context.
+        unsafe { tick_n(&core, 160) };
+
+        assert_eq!(core.answer_table_counts().behind, 1);
+        assert_eq!(core.answer_counts().sent, 0);
+    }
+
+    #[test]
+    fn a_capture_completing_mid_decode_hands_the_held_one_on_undecoded_and_in_order() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let input = 0b0010u32;
+        let core = test_core(&mut set, &mut clr, &input);
+        let forward24 = RxCompletedEvent {
+            sample_count: FORWARD24_LENGTH_MIN_SAMPLES,
+            ..RxCompletedEvent::new()
+        };
+        let short = RxCompletedEvent { sample_count: 2, ..RxCompletedEvent::new() };
+        // SAFETY: single-threaded test standing in for `tick`, the held capture's owner.
+        unsafe {
+            core.push_sniffer_capture(forward24);
+            core.push_sniffer_capture(short);
+        }
+
+        assert_eq!(core.answer_table_counts().decode_overrun, 1);
+        let seen: Vec<_> = drain_rx(&core)
+            .iter()
+            .map(|ev| (ev.sniff_seq, ev.isr_decode))
+            .collect();
+        assert_eq!(seen, [(1, IsrDecode::NotDecoded), (2, IsrDecode::NotDecoded)]);
+    }
+
+    #[test]
+    fn a_lapsed_lease_silences_an_answer_given_only_while_it_lives() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        core.publish_answer_table(&qace_table(), 0);
+        core.set_answer_lease_for_ms(core.wire_tick_counts().0, 0);
+
+        receive_foreign_frame(&core, input_ptr, &frame24_bits(QACE_BROADCAST));
+        // SAFETY: single-threaded test standing in for the ISR context.
+        unsafe { tick_n(&core, 160) };
+
+        let lapsed = AnswerTableCounts { lease_lapsed: 1, ..AnswerTableCounts::default() };
+        assert_eq!(core.answer_table_counts(), lapsed);
+        assert_eq!(core.answer_counts().sent, 0);
     }
 }

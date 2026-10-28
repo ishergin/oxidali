@@ -36,6 +36,8 @@ const FAULT_KEYS = new Set([
   'decode_failed',
   'unsupported_len',
   'dropped',
+  'answer_table_torn',
+  'answer_decode_overrun',
   'skipped_unknown_observed',
   'events_dropped_total',
   'inbox_overflow_total',
