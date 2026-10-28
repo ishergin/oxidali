@@ -293,14 +293,17 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   `DTR1`/`DTR0` and proved by `QUERY CONTENT DTR1/DTR0` in the same `controller.unit`.
   - `ENABLE WRITE MEMORY` is sent per unit because any command other than the writes and
     the DTR0–2 commands and queries clears `writeEnableState` (102 §9.10.5).
-  - The answering form is used, so silence or a foreign answer stops the field.
+  - The answering form is used. An answer other than the byte written, silence
+    included, ends the unit before its next `WRITE MEMORY LOCATION`, so a byte the gear
+    never heard does not push the rest one location early; the field fails.
   - The closing `QUERY CONTENT DTR0` proves the pointer advanced by the bytes written. A
     gear that stores every byte at one location therefore fails the unit before the next
     one writes.
-- A text field is written in commit-byte order (DiiA 251 §9.2.5): first the field with a
-  NUL in its first byte and the rest of the new text, then the first character.
-  Wherever the write stops, the field reads old, empty or new, never a new head on an
-  old tail.
+- A text field is written in commit-byte order (DiiA 251 §9.2.5): first a NUL alone in
+  its first location, a unit of its own proved by its answer and `QUERY CONTENT DTR0`
+  before any other byte; then the rest of the new text from the next location; the
+  first character last. Wherever the write stops, the field reads old, empty or new,
+  never a new head on an old tail.
 - A lock byte other than `0x55` (102 §9.10.2, Table 8) is opened for a session of at
   most two units, the opening proved by reading `0x02` back. The value found is written
   back when the session ends, whatever happened inside it. Each session runs in
