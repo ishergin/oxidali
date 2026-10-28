@@ -22,7 +22,7 @@ use super::memory_bank_scripts::{bank1_part251_bytes, script_memory_bank_read, B
 use super::read_model::{fetch_physical_device_full, physical_device_path, READ_MODEL_TIMEOUT};
 use super::{TEST_ADAPTER_ID, TEST_SHORT_ADDRESS};
 
-// PD-198
+// PD-198 PD-291 PD-292 PD-293 PD-294 PD-296 PD-297 PD-298 PD-299 PD-300
 #[given("a golden attribute-read script with DiiA Part 251 luminaire data for short address 0")]
 async fn given_attribute_read_part251_script(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -352,7 +352,7 @@ async fn when_start_common102_attribute_read(world: &mut DaliWorld) {
     );
 }
 
-// PD-198 PD-199
+// PD-198 PD-199 PD-291 PD-292 PD-293 PD-294 PD-296 PD-297 PD-298 PD-299 PD-300 PD-301 PD-302
 #[when(r#"I start an attribute read for adapter 0 physical device 0 with memory_banks "profile""#)]
 async fn when_start_attribute_read_profile(world: &mut DaliWorld) {
     let body = br#"{"attribute_groups":["runtime_status","common_102","dt8_color"],"memory_banks":"profile"}"#;

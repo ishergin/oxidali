@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use dali2rust_domain::dali::banks::luminaire_write::Bank1Layout;
+use dali2rust_domain::dali::banks::IdentityRead;
 use dali2rust_domain::registry::{
     AttributeSectionKind, AttributeSectionView, PhysicalDeviceApplyWatchPort,
     PhysicalDeviceReadPort,
@@ -75,6 +77,10 @@ pub trait PhysicalDeviceHttpState: Send + Sync {
         adapter_id: u8,
         short_address: u8,
     ) -> Option<dali2rust_contracts::msg::DeviceTypeSet>;
+
+    fn physical_device_bank1_layout(&self, adapter_id: u8, short_address: u8) -> Option<Bank1Layout>;
+
+    fn physical_device_identity(&self, adapter_id: u8, short_address: u8) -> IdentityRead;
 
     fn physical_device_exists(&self, adapter_id: u8, short_address: u8) -> bool;
 
@@ -171,6 +177,22 @@ macro_rules! impl_physical_device_http_state {
                 short_address: u8,
             ) -> Option<dali2rust_contracts::msg::DeviceTypeSet> {
                 self.port.physical_device_known_types(adapter_id, short_address)
+            }
+
+            fn physical_device_bank1_layout(
+                &self,
+                adapter_id: u8,
+                short_address: u8,
+            ) -> Option<dali2rust_domain::dali::banks::luminaire_write::Bank1Layout> {
+                self.port.physical_device_bank1_layout(adapter_id, short_address)
+            }
+
+            fn physical_device_identity(
+                &self,
+                adapter_id: u8,
+                short_address: u8,
+            ) -> dali2rust_domain::dali::banks::IdentityRead {
+                self.port.physical_device_identity(adapter_id, short_address)
             }
 
             fn physical_device_exists(&self, adapter_id: u8, short_address: u8) -> bool {

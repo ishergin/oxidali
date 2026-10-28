@@ -24,6 +24,7 @@ mod unit;
 
 #[cfg(test)]
 use transaction::BUS_RELEASE_SETTLE_US;
+pub use transaction::TRANSACTION_BUDGET_MS;
 use retry::unit_retryable;
 use unit::UnitAttempt;
 
@@ -251,6 +252,15 @@ impl<T: DaliTransport + Send> DaliApplicationController for DaliController<T> {
         if self.tx.depth > 0 && self.tx.first_frame_sent && self.yield_pending() {
             self.close_transaction_for_yield();
         }
+    }
+
+    fn step<R>(&mut self, run: impl FnOnce(&mut Self) -> R) -> R {
+        let narrowed = self.lease.as_ref().map(|lease| lease.no_finer_than(YieldGranularity::Step));
+        let outer = std::mem::replace(&mut self.lease, narrowed);
+        self.step_boundary();
+        let result = run(self);
+        self.lease = outer;
+        result
     }
 
     fn transaction<R>(&mut self, run: impl FnOnce(&mut Self) -> R) -> R {

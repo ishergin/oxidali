@@ -2,6 +2,9 @@ use std::borrow::Cow;
 
 use dali2rust_contracts::msg::{DeviceTypeSet, OperationType};
 
+use crate::dali::banks::luminaire_write::Bank1Layout;
+use crate::dali::banks::IdentityRead;
+
 use super::apply_diff::{GroupApplySnapshot, SceneApplySnapshot};
 use super::attributes::{AttributeSectionKind, AttributeSectionView};
 use super::home_assistant::{
@@ -117,6 +120,7 @@ pub trait RegistryReadPort: InputInstanceTypeReadPort {
         adapter_id: u8,
         short_address: u8,
     ) -> bool;
+    fn physical_device_identity(&self, adapter_id: u8, short_address: u8) -> IdentityRead;
 }
 
 pub trait AdapterEnabledReadPort: Send + Sync {
@@ -172,6 +176,10 @@ pub trait PhysicalDeviceReadPort: AdapterReadPort {
         adapter_id: u8,
         short_address: u8,
     ) -> Option<DeviceTypeSet>;
+
+    fn physical_device_bank1_layout(&self, adapter_id: u8, short_address: u8) -> Option<Bank1Layout>;
+
+    fn physical_device_identity(&self, adapter_id: u8, short_address: u8) -> IdentityRead;
 
     fn physical_device_exists(&self, adapter_id: u8, short_address: u8) -> bool;
 

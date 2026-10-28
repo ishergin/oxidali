@@ -1,3 +1,5 @@
+mod support;
+
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -14,10 +16,8 @@ use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::ses::DaliSession;
 use dali2rust_domain::dali::types::DaliAddress;
-use dali2rust_domain::registry::{
-    AdapterSnapshot, InputInstanceTypeReadPort, RegistryReadPort, VirtualLampSnapshot,
-};
 use dali2rust_test_support::{hold_the_events_ingress_full, recv_event_matching, try_wait_until};
+use support::ReadPortDouble;
 
 const TAPPED_EVENTS: &[&str] = &[
     "DaliDiscoveryProgressEvent",
@@ -138,59 +138,6 @@ impl DaliApplicationController for FleetController {
     }
 }
 
-#[derive(Default)]
-struct EnabledAdapter {
-    policy_armed: bool,
-}
-
-impl InputInstanceTypeReadPort for EnabledAdapter {
-    fn input_instance_type(&self, _adapter_id: u8, _short: u8, _instance: u8) -> Option<u8> {
-        None
-    }
-}
-
-impl RegistryReadPort for EnabledAdapter {
-    fn application_controller_active(&self) -> bool {
-        true
-    }
-
-    fn virtual_lamp_snapshot(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> VirtualLampSnapshot {
-        VirtualLampSnapshot::default()
-    }
-
-    fn virtual_lamp_binding_short(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> Option<u8> {
-        None
-    }
-
-    fn physical_dt8_gear_features(&self, _adapter_id: u8, _short_address: u8) -> Option<u8> {
-        None
-    }
-
-    fn physical_dt8_rgbwaf_control_assert_allowed(&self, _adapter_id: u8, _short: u8) -> bool {
-        false
-    }
-
-    fn physical_dt8_auto_activation_repair_allowed(&self, _adapter_id: u8, _short: u8) -> bool {
-        false
-    }
-
-    fn apply_on_discovery_armed(&self, _adapter_id: u8) -> bool {
-        self.policy_armed
-    }
-
-    fn adapter_snapshot(&self, _adapter_id: u8) -> AdapterSnapshot {
-        AdapterSnapshot { enabled: true }
-    }
-
-    fn known_physical_short_addresses(&self, _adapter_id: u8) -> Vec<u8> {
-        (0..FLEET_SIZE).collect()
-    }
-
-    fn first_free_short_address(&self, _adapter_id: u8) -> Option<u8> {
-        None
-    }
-}
-
 struct ScanHarness {
     publisher: dali2rust_bus::BusPublisher,
     ev_rx: std::sync::mpsc::Receiver<BusFrame>,
@@ -221,7 +168,7 @@ impl ScanHarness {
             worker_cmd,
             FleetController::new(Arc::clone(&wire)),
             dali2rust_dali_runtime::DaliRuntimeConfig::default(),
-            Arc::new(EnabledAdapter { policy_armed }),
+            Arc::new(ReadPortDouble { policy_armed, known_shorts: (0..FLEET_SIZE).collect(), ..ReadPortDouble::default() }),
             publisher.clone(),
             BusId::default(),
             Arc::clone(&counters),

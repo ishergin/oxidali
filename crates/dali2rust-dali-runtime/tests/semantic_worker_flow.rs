@@ -14,6 +14,7 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_contracts::{msg as m, SOURCE_ID_UNSPECIFIED};
 use dali2rust_dali_runtime::{spawn_dali_worker, DaliWorkerCounters};
+use dali2rust_domain::dali::banks::IdentityRead;
 use dali2rust_domain::dali::commands::{DaliCommand, DaliResponse};
 use dali2rust_domain::dali::controller::{DaliApplicationController, DaliProductController};
 use dali2rust_domain::dali::devices::DeviceType;
@@ -178,6 +179,10 @@ impl RegistryReadPort for TestReadPort {
 
     fn first_free_short_address(&self, _adapter_id: u8) -> Option<u8> {
         (0..=63).find(|short| !self.known_shorts.contains(short))
+    }
+
+    fn physical_device_identity(&self, _adapter_id: u8, _short: u8) -> IdentityRead {
+        IdentityRead::Unread
     }
 }
 
@@ -375,6 +380,7 @@ fn refused_operations() -> Vec<BusCommandPayload> {
         m::DaliReadMemoryBankCommand { registry_adapter_id: 0, short_address: 5, bank: 1, start: 0, length: 1 }.into(),
         m::DaliWriteAttributesCommand { registry_adapter_id: 0, short_address: 5, fade_time_ms: Some(200), fade_rate: None, power_on_level: None, system_failure_level: None, extended_fade_time_ms: None, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, signals_operation: true, known_device_types: None, refusal_fails: false }.into(),
         m::DaliIdentifyDeviceCommand { registry_adapter_id: 0, short_address: 5, operation_key: Default::default() }.into(),
+        m::DaliWriteMemoryLuminaireCommand { registry_adapter_id: 0, short_address: 5, numbers: m::LuminaireNumbers { patch_mask: m::LuminaireNumbers::PATCH_YEAR, year: 24, ..Default::default() }, text: None }.into(),
         m::DaliReplaceDeviceCommand { registry_adapter_id: 0, failed_short_address: 5, replacement_short_address: 6, restore_metadata_and_overrides: false, operation_key: Default::default() }.into(),
         m::DaliAddressingCommand { registry_adapter_id: 0, short_address: 5, new_short_address: 6, verify_after_program: true, operation_key: Default::default() }.into(),
         m::DaliProgramGroupMembershipCommand { registry_adapter_id: 0, target: short_target(), group_id: 1, action: GroupMembershipAction::Add }.into(),

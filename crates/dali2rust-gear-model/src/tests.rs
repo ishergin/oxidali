@@ -3189,3 +3189,114 @@ mod bench_conformance {
         }
     }
 }
+
+fn luminaire_fleet(lock: u8) -> GearFleet {
+    let mut spec = GearSpec::dt6(Some(0), demo_random_address(0));
+    spec.luminaire_format = Some(LuminaireFormat::V3);
+    let mut fleet = GearFleet::new(vec![spec], 0, 7);
+    fleet.gears_mut()[0].set_bank1_lock_byte(lock);
+    fleet
+}
+
+fn point_at(fleet: &mut GearFleet, bank: u8, offset: u8) {
+    exchange(fleet, special(SpecialCommand::Dtr1(bank)), false);
+    exchange(fleet, special(SpecialCommand::Dtr0(offset)), false);
+}
+
+fn write_location(fleet: &mut GearFleet, value: u8) -> TransferOutcome {
+    exchange(fleet, special(SpecialCommand::WriteMemoryLocation(value)), true)
+}
+
+const LOCKED: u8 = 0xFF;
+const WRITE_YEAR_OFFSET: u8 = 0x13;
+
+#[test]
+fn an_enabled_write_is_confirmed_stored_and_advances_dtr0() {
+    let mut fleet = luminaire_fleet(BANK1_UNLOCKED);
+    point_at(&mut fleet, MEMORY_BANK_PROFILE, WRITE_YEAR_OFFSET);
+    config(&mut fleet, standard(0, StandardCommand::EnableWriteMemory));
+    assert_eq!(write_location(&mut fleet, 24), TransferOutcome::Answer(24));
+    assert_eq!(
+        exchange(&mut fleet, standard(0, StandardCommand::QueryContentDtr0), true),
+        TransferOutcome::Answer(WRITE_YEAR_OFFSET + 1),
+        "a query of DTR0 keeps writeEnableState"
+    );
+    assert_eq!(write_location(&mut fleet, 7), TransferOutcome::Answer(7));
+    let gear = &fleet.gears()[0];
+    assert_eq!(gear.memory_location(1, WRITE_YEAR_OFFSET), Some(24));
+    assert_eq!(gear.memory_location(1, WRITE_YEAR_OFFSET + 1), Some(7));
+}
+
+#[test]
+fn a_gear_that_holds_dtr0_stores_every_write_at_one_location() {
+    let mut fleet = luminaire_fleet(BANK1_UNLOCKED);
+    fleet.gears_mut()[0].faults.memory_write_holds_dtr0 = true;
+    point_at(&mut fleet, MEMORY_BANK_PROFILE, WRITE_YEAR_OFFSET);
+    config(&mut fleet, standard(0, StandardCommand::EnableWriteMemory));
+    assert_eq!(write_location(&mut fleet, 24), TransferOutcome::Answer(24));
+    assert_eq!(write_location(&mut fleet, 7), TransferOutcome::Answer(7));
+    assert_eq!(
+        exchange(&mut fleet, standard(0, StandardCommand::QueryContentDtr0), true),
+        TransferOutcome::Answer(WRITE_YEAR_OFFSET)
+    );
+    assert_eq!(fleet.gears()[0].memory_location(1, WRITE_YEAR_OFFSET), Some(7));
+}
+
+#[test]
+fn a_write_without_enable_write_memory_is_ignored() {
+    let mut fleet = luminaire_fleet(BANK1_UNLOCKED);
+    let before = fleet.gears()[0].memory_location(1, WRITE_YEAR_OFFSET);
+    point_at(&mut fleet, MEMORY_BANK_PROFILE, WRITE_YEAR_OFFSET);
+    assert_eq!(write_location(&mut fleet, 24), TransferOutcome::NoAnswer);
+    assert_eq!(fleet.gears()[0].memory_location(1, WRITE_YEAR_OFFSET), before);
+    assert_eq!(
+        exchange(&mut fleet, standard(0, StandardCommand::QueryContentDtr0), true),
+        TransferOutcome::Answer(WRITE_YEAR_OFFSET),
+        "an ignored write does not move DTR0"
+    );
+}
+
+#[test]
+fn any_other_command_closes_the_write_window() {
+    let mut fleet = luminaire_fleet(BANK1_UNLOCKED);
+    point_at(&mut fleet, MEMORY_BANK_PROFILE, WRITE_YEAR_OFFSET);
+    config(&mut fleet, standard(0, StandardCommand::EnableWriteMemory));
+    exchange(&mut fleet, standard(0, StandardCommand::QueryStatus), true);
+    assert_eq!(write_location(&mut fleet, 24), TransferOutcome::NoAnswer);
+}
+
+#[test]
+fn a_locked_bank_refuses_lockable_bytes_but_not_its_lock_byte() {
+    let mut fleet = luminaire_fleet(LOCKED);
+    point_at(&mut fleet, MEMORY_BANK_PROFILE, WRITE_YEAR_OFFSET);
+    config(&mut fleet, standard(0, StandardCommand::EnableWriteMemory));
+    assert_eq!(write_location(&mut fleet, 24), TransferOutcome::NoAnswer);
+    point_at(&mut fleet, MEMORY_BANK_PROFILE, 0x02);
+    assert_eq!(write_location(&mut fleet, BANK1_UNLOCKED), TransferOutcome::Answer(BANK1_UNLOCKED));
+    point_at(&mut fleet, MEMORY_BANK_PROFILE, WRITE_YEAR_OFFSET);
+    assert_eq!(write_location(&mut fleet, 24), TransferOutcome::Answer(24));
+    assert_eq!(fleet.gears()[0].memory_location(1, WRITE_YEAR_OFFSET), Some(24));
+}
+
+#[test]
+fn the_last_address_and_bank_zero_are_not_writable() {
+    let mut fleet = luminaire_fleet(BANK1_UNLOCKED);
+    point_at(&mut fleet, MEMORY_BANK_PROFILE, 0x00);
+    config(&mut fleet, standard(0, StandardCommand::EnableWriteMemory));
+    assert_eq!(write_location(&mut fleet, 0x10), TransferOutcome::NoAnswer);
+    point_at(&mut fleet, MEMORY_BANK_PROFILE, 0x78);
+    assert_eq!(write_location(&mut fleet, 1), TransferOutcome::NoAnswer, "past the last address");
+    point_at(&mut fleet, 0, 0x03);
+    assert_eq!(write_location(&mut fleet, 1), TransferOutcome::NoAnswer, "bank 0 is ROM");
+}
+
+#[test]
+fn an_unstoring_gear_confirms_a_write_it_does_not_keep() {
+    let mut fleet = luminaire_fleet(BANK1_UNLOCKED);
+    fleet.gears_mut()[0].faults.memory_write_unstored = true;
+    let before = fleet.gears()[0].memory_location(1, WRITE_YEAR_OFFSET);
+    point_at(&mut fleet, MEMORY_BANK_PROFILE, WRITE_YEAR_OFFSET);
+    config(&mut fleet, standard(0, StandardCommand::EnableWriteMemory));
+    assert_eq!(write_location(&mut fleet, 24), TransferOutcome::Answer(24));
+    assert_eq!(fleet.gears()[0].memory_location(1, WRITE_YEAR_OFFSET), before, "Note 1 of 102 9.10.5");
+}

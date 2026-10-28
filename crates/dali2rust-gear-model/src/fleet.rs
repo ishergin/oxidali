@@ -162,6 +162,11 @@ impl GearFleet {
         self.stats
     }
 
+    // IEC 62386-102 §9.10.4
+    pub const fn memory_pointer(&self) -> (u8, u8) {
+        (self.regs.dtr1, self.regs.dtr0)
+    }
+
     pub fn any_gear_holds(&self, frame: u16) -> bool {
         self.gears.iter().any(|gear| gear.holds(frame))
     }
@@ -221,6 +226,9 @@ impl GearFleet {
         let decoded = dali_command_from_wire(wire_address, opcode, 0);
         let repeats = self.frame_requires_repeat(decoded.as_ref().ok(), wire_address, opcode);
         self.hear(frame, decoded.as_ref().ok(), repeats);
+        if !keeps_write_enabled(decoded.as_ref().ok()) {
+            self.gears.iter_mut().for_each(|gear| gear.write_enabled = false);
+        }
         if let Ok(DaliCommand::Special(special)) = decoded {
             return self.on_special(special);
         }
@@ -356,7 +364,33 @@ impl GearFleet {
         self.publish_one(None)
     }
 
+    // IEC 62386-102 §9.10.5
+    fn on_memory_write(&mut self, special: SpecialCommand) -> Option<TransferOutcome> {
+        let (value, replies) = match special {
+            SpecialCommand::WriteMemoryLocation(value) => (value, true),
+            SpecialCommand::WriteMemoryLocationNoReply(value) => (value, false),
+            _ => return None,
+        };
+        let (bank, offset) = (self.regs.dtr1, self.regs.dtr0);
+        let mut buf = self.take_scratch();
+        let mut advances = false;
+        for gear in self.gears.iter_mut().filter(|gear| gear.write_enabled) {
+            advances |= gear.implements_bank(bank) && !gear.faults.memory_write_holds_dtr0;
+            buf.extend(gear.write_memory_location(bank, offset, value));
+        }
+        if advances && offset < LAST_MEMORY_LOCATION {
+            self.regs.dtr0 = offset + 1;
+        }
+        if !replies {
+            buf.clear();
+        }
+        Some(self.publish(buf))
+    }
+
     fn on_special(&mut self, special: SpecialCommand) -> TransferOutcome {
+        if let Some(outcome) = self.on_memory_write(special) {
+            return outcome;
+        }
         if stops_identification(special) {
             for gear in self.gears.iter_mut().filter(|g| g.executes_now) {
                 gear.identifying = false;
@@ -861,6 +895,25 @@ fn stops_identification(special: SpecialCommand) -> bool {
             | SpecialCommand::VerifyShortAddress(_)
             | SpecialCommand::QueryShortAddress
             | SpecialCommand::PhysicalSelection
+    )
+}
+
+// IEC 62386-102 §9.10.5
+fn keeps_write_enabled(decoded: Option<&DaliCommand>) -> bool {
+    matches!(
+        decoded,
+        Some(DaliCommand::Special(
+            SpecialCommand::WriteMemoryLocation(_)
+                | SpecialCommand::WriteMemoryLocationNoReply(_)
+                | SpecialCommand::Dtr0(_)
+                | SpecialCommand::Dtr1(_)
+                | SpecialCommand::Dtr2(_)
+        )) | Some(DaliCommand::Standard {
+            command: StandardCommand::QueryContentDtr0
+                | StandardCommand::QueryContentDtr1
+                | StandardCommand::QueryContentDtr2,
+            ..
+        })
     )
 }
 

@@ -3,7 +3,7 @@ use super::*;
 const CLOCK_SKEW_GUARD_TICKS: u32 = 3;
 
 // IEC 62386-101 §9.2
-const TRANSACTION_BUDGET_MS: u64 = 400;
+pub const TRANSACTION_BUDGET_MS: u64 = 400;
 
 // IEC 62386-101 §9.2, Table 22
 pub(super) const BUS_RELEASE_SETTLE_US: u32 = 22_000;

@@ -36,6 +36,12 @@ impl LuminaireBank {
             .copied()
     }
 
+    pub(crate) fn store(&mut self, offset: u8, value: u8) {
+        if offset <= self.last_accessible {
+            self.put(offset, value);
+        }
+    }
+
     fn put(&mut self, offset: u8, value: u8) {
         if offset < LUMINAIRE_FIRST_OFFSET {
             return;

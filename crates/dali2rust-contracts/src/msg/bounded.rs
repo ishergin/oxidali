@@ -8,6 +8,7 @@ pub type FixedText<const N: usize> = HeaplessString<N>;
 
 pub type FixedText32 = HeaplessString<32>;
 pub type FixedText48 = HeaplessString<48>;
+pub type FixedText60 = HeaplessString<60>;
 pub type FixedText64 = HeaplessString<64>;
 pub type FixedText96 = HeaplessString<96>;
 pub type FixedItems<T, const N: usize> = HeaplessVec<T, N>;
@@ -89,6 +90,10 @@ pub fn fixed_text_32(input: &str) -> FixedText32 {
 
 pub fn fixed_text_48(input: &str) -> FixedText48 {
     fixed_text::<48>(input)
+}
+
+pub fn fixed_text_60(input: &str) -> FixedText60 {
+    fixed_text::<60>(input)
 }
 
 pub fn fixed_text_64(input: &str) -> FixedText64 {
