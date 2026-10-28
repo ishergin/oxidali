@@ -370,7 +370,7 @@ impl GearFleet {
         let mut buf = self.take_scratch();
         let mut advances = false;
         for gear in self.gears.iter_mut().filter(|gear| gear.write_enabled) {
-            advances |= gear.implements_bank(bank);
+            advances |= gear.implements_bank(bank) && !gear.faults.memory_write_holds_dtr0;
             buf.extend(gear.write_memory_location(bank, offset, value));
         }
         if advances && offset < LAST_MEMORY_LOCATION {

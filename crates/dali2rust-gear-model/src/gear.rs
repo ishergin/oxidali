@@ -256,6 +256,7 @@ pub struct FaultInjection {
     pub forced_status: u8,
     pub failure_status: u8,
     pub memory_write_unstored: bool,
+    pub memory_write_holds_dtr0: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

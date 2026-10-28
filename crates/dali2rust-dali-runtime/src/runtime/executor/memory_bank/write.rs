@@ -15,7 +15,7 @@ use super::{
     BUS_CONTENDED, MEMORY_LATCH_LOST, MEMORY_MISALIGNED, MEMORY_POINTER_UNCONFIRMED,
 };
 use crate::runtime::executor::helpers::{
-    dali_short_address, send_raw_query_once_response, send_special, send_special_response,
+    dali_short_address, send_raw_query_once_response, send_special, send_special_response, send_standard_response,
     send_standard, SemanticDaliError, READ_MEMORY_LOCATION_OPCODE,
 };
 
@@ -111,17 +111,24 @@ fn armed<C: DaliApplicationController, R>(
     Err(LuminaireWriteFailure::unproved(proof.failure(MEMORY_MISALIGNED), subject))
 }
 
+struct UnitEcho {
+    answers: Vec<DaliResponse>,
+    pointer: DaliResponse,
+}
+
 // IEC 62386-102 §9.10.5
 fn write_bytes(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     bytes: &[u8],
-) -> Result<Vec<DaliResponse>, SemanticDaliError> {
+) -> Result<UnitEcho, SemanticDaliError> {
     send_standard(controller, address, StandardCommand::EnableWriteMemory)?;
-    bytes
+    let answers = bytes
         .iter()
         .map(|byte| send_special_response(controller, SpecialCommand::WriteMemoryLocation(*byte)))
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    let pointer = send_standard_response(controller, address, StandardCommand::QueryContentDtr0)?;
+    Ok(UnitEcho { answers, pointer })
 }
 
 fn confirm(seen: &[DaliResponse], expected: &[u8], subject: &'static str) -> Result<(), LuminaireWriteFailure> {
@@ -133,14 +140,30 @@ fn confirm(seen: &[DaliResponse], expected: &[u8], subject: &'static str) -> Res
     })
 }
 
+// IEC 62386-102 §9.10.5
+fn confirm_unit(echo: &UnitEcho, unit: Unit<'_>) -> Result<(), LuminaireWriteFailure> {
+    confirm(&echo.answers, unit.bytes, unit.subject)?;
+    let advanced = u8::try_from(unit.bytes.len()).map_or(u8::MAX, |len| unit.offset.saturating_add(len));
+    verify_readback(echo.pointer, |value| value == advanced)
+        .map(|_| ())
+        .map_err(|error| LuminaireWriteFailure::unproved(error, unit.subject))
+}
+
+fn write_unit(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    unit: Unit<'_>,
+) -> Result<(), LuminaireWriteFailure> {
+    let echo = armed(controller, address, (unit.offset, unit.subject), |c| write_bytes(c, address, unit.bytes))?;
+    confirm_unit(&echo, unit)
+}
+
 fn write_lock_byte(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     value: u8,
 ) -> Result<(), LuminaireWriteFailure> {
-    let target = (BANK_LOCK_BYTE, LOCK_SUBJECT);
-    let seen = armed(controller, address, target, |c| write_bytes(c, address, &[value]))?;
-    confirm(&seen, &[value], LOCK_SUBJECT)
+    write_unit(controller, address, Unit { subject: LOCK_SUBJECT, offset: BANK_LOCK_BYTE, bytes: &[value] })
 }
 
 // IEC 62386-102 §9.10.2, Table 8
@@ -162,12 +185,7 @@ fn write_units(
     address: DaliAddress,
     session: &[Unit<'_>],
 ) -> Result<(), LuminaireWriteFailure> {
-    for unit in session {
-        let target = (unit.offset, unit.subject);
-        let seen = armed(controller, address, target, |c| write_bytes(c, address, unit.bytes))?;
-        confirm(&seen, unit.bytes, unit.subject)?;
-    }
-    Ok(())
+    session.iter().try_for_each(|unit| write_unit(controller, address, *unit))
 }
 
 fn write_session(

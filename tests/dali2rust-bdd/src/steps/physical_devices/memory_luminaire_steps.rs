@@ -55,6 +55,11 @@ fn script_write_unit(mock: &MockDaliTransport, offset: u8, bytes: &[u8], reply: 
             answer,
         );
     }
+    let advanced = if reply == GearReply::Echo { offset + bytes.len() as u8 } else { offset };
+    mock.expect_forward_frame_with_backward(
+        standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryContentDtr0),
+        Some(advanced),
+    );
 }
 
 fn script_unlock_and_prove(mock: &MockDaliTransport) {

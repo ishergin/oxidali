@@ -113,6 +113,11 @@ fn special(command: SpecialCommand) -> u16 {
     DaliCommand::Special(command).to_forward_frame().raw()
 }
 
+fn query_dtr0() -> u16 {
+    let address = DaliAddress::Short(SHORT);
+    DaliCommand::Standard { address, command: StandardCommand::QueryContentDtr0 }.to_forward_frame().raw()
+}
+
 fn luminaire_gear(lock: u8, unstored: bool) -> SimDaliTransport {
     let mut spec = GearSpec::dt6(Some(SHORT), RANDOM_ADDRESS);
     spec.luminaire_format = Some(LuminaireFormat::V3);
@@ -140,7 +145,11 @@ fn run_write<T: DaliTransport + Send + 'static>(
 }
 
 fn write(lock: u8, unstored: bool, writes: &[FieldWrite]) -> (Outcome, SimDaliTransport) {
-    let bus = Arc::new(Mutex::new(luminaire_gear(lock, unstored)));
+    write_on(luminaire_gear(lock, unstored), writes)
+}
+
+fn write_on(sim: SimDaliTransport, writes: &[FieldWrite]) -> (Outcome, SimDaliTransport) {
+    let bus = Arc::new(Mutex::new(sim));
     let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
     let outcome = run_write(&mut controller, writes);
     drop(controller);
@@ -305,7 +314,9 @@ fn an_operator_arriving_mid_session_waits_for_the_lock_to_close() {
     let first_session = &sessions_on_the_wire(MULTI_SESSION_TEXT.as_bytes(), FOUND_LOCK)[..session_len];
     assert_eq!(written_values(sim), first_session, "the started session runs to its relock");
     assert_eq!(location(sim, LOCK_OFFSET), Some(FOUND_LOCK));
-    assert_eq!(sim.sent_frames().last(), Some(&special(SpecialCommand::WriteMemoryLocation(FOUND_LOCK))));
+    let frames = sim.sent_frames();
+    let relock = special(SpecialCommand::WriteMemoryLocation(FOUND_LOCK));
+    assert_eq!(&frames[frames.len() - 2..], [relock, query_dtr0()], "nothing follows the relock unit");
     assert_eq!(outcome.readback, None, "a yielded write leaves the read-back to the next run");
 }
 
@@ -321,6 +332,22 @@ fn a_foreign_command_between_units_costs_nothing_because_each_unit_enables_writi
 
     assert_eq!(shape(outcome.result), Ok(()), "a foreign frame between units clears writeEnableState");
     assert_eq!(location(&sim, LUMINAIRE_COLOUR.offset + UNIT_BYTES as u8), Some(MULTI_SESSION_TEXT.as_bytes()[UNIT_BYTES]));
+}
+
+// IEC 62386-102 §9.10.5
+#[test]
+fn a_gear_that_does_not_advance_dtr0_fails_the_unit_before_the_next_one_writes() {
+    let mut sim = luminaire_gear(BANK_UNLOCKED, false);
+    sim.fleet_mut().gears_mut()[0].faults.memory_write_holds_dtr0 = true;
+    let writes = text("luminaire_colour", MULTI_SESSION_TEXT);
+    let (outcome, sim) = write_on(sim, &writes);
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::VerifyFailed, "luminaire_colour"));
+    assert_eq!(
+        written_values(&sim).len(),
+        UNIT_BYTES,
+        "the first unit's DTR0 shows the bytes landed on one location; no second unit is sent"
+    );
 }
 
 fn position_of(frames: &[u16], frame: u16, last: bool) -> usize {
