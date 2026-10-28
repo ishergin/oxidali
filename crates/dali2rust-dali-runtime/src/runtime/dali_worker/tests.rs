@@ -490,6 +490,134 @@ mod memory_bank_loss {
     }
 }
 
+mod memory_bank_contention {
+    use std::convert::Infallible;
+    use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Mutex};
+
+    use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
+    use dali2rust_bus::{BusConfig, BusHost, BusId};
+    use dali2rust_contracts::msg::{
+        AttributeGroupReadOutcome, DaliReadAttributesCommand, MemoryBankReadPreset,
+    };
+    use dali2rust_domain::dali::banks::part251::LuminaireFormat;
+    use dali2rust_domain::dali::banks::{BANK_LUMINAIRE_INFO, CONTENT_FORMAT_ID_OFFSET};
+    use dali2rust_domain::dali::frame::ForwardFrame;
+    use dali2rust_domain::dali::pres::command::DaliCommand;
+    use dali2rust_domain::dali::pres::opcode::READ_MEMORY_LOCATION_OPCODE;
+    use dali2rust_domain::dali::pres::special::SpecialCommand;
+    use dali2rust_domain::dali::types::DaliAddress;
+    use dali2rust_gear_model::GearSpec;
+    use dali2rust_platform::dali::{DaliTransport, TransferOutcome};
+    use dali2rust_test_support::StoppedClock;
+
+    use super::super::attribute_read::read_attributes_memory_bank_stage;
+    use super::super::DaliWorkerCounters;
+    use crate::runtime::controller::DaliController;
+    use crate::runtime::executor::AttributeReadOutcomes;
+
+    const SHORT: u8 = 3;
+    const RANDOM_ADDRESS: u32 = 0x00_4321;
+    const SWEEP_CORRELATION: u64 = 4_200;
+    const FOREIGN_OFFSET: u8 = 0x10;
+    const QUERY_SELECTOR: u8 = 0x01;
+    const INSIDE_THE_FORMAT_ID: (u8, u8) = (BANK_LUMINAIRE_INFO, CONTENT_FORMAT_ID_OFFSET + 1);
+    const SWEEP: DaliReadAttributesCommand = DaliReadAttributesCommand {
+        registry_adapter_id: 0,
+        short_address: SHORT,
+        attribute_groups_mask: 0,
+        memory_banks: MemoryBankReadPreset::Identity,
+    };
+
+    #[derive(Clone, Copy)]
+    enum Disturbance {
+        BusBusy,
+        ForeignPointer,
+    }
+
+    struct Disturbed {
+        sim: SimDaliTransport,
+        disturbance: Disturbance,
+    }
+
+    fn read_location() -> u16 {
+        let address = DaliAddress::Short(SHORT).encode_address_byte() | QUERY_SELECTOR;
+        ForwardFrame::new(address, READ_MEMORY_LOCATION_OPCODE).raw()
+    }
+
+    fn foreign_pointer() -> u16 {
+        DaliCommand::Special(SpecialCommand::Dtr0(FOREIGN_OFFSET)).to_forward_frame().raw()
+    }
+
+    impl DaliTransport for Disturbed {
+        type Error = Infallible;
+
+        fn send_forward_frame(&mut self, frame: u16) -> Result<(), Infallible> {
+            self.sim.send_forward_frame(frame)
+        }
+
+        fn receive_backward_frame(&mut self) -> Result<Option<u8>, Infallible> {
+            self.sim.receive_backward_frame()
+        }
+
+        fn is_bus_idle(&self) -> Result<bool, Infallible> {
+            self.sim.is_bus_idle()
+        }
+
+        fn exchange_frame(&mut self, frame: u16, expects_backward: bool) -> Result<TransferOutcome, Infallible> {
+            if frame != read_location() || self.sim.fleet().memory_pointer() != INSIDE_THE_FORMAT_ID {
+                return self.sim.exchange_frame(frame, expects_backward);
+            }
+            match self.disturbance {
+                Disturbance::BusBusy => Ok(TransferOutcome::BusBusy),
+                Disturbance::ForeignPointer => {
+                    let answered = self.sim.exchange_frame(frame, expects_backward);
+                    self.sim.fleet_mut().exchange(foreign_pointer(), false);
+                    answered
+                }
+            }
+        }
+    }
+
+    fn sweep(disturbance: Disturbance) -> (AttributeGroupReadOutcome, [u32; 2]) {
+        let (_host, publisher, ()) = BusHost::spawn(BusConfig::default(), |_| {});
+        let mut spec = GearSpec::dt6(Some(SHORT), RANDOM_ADDRESS);
+        spec.luminaire_format = Some(LuminaireFormat::V3);
+        let sim = SimDaliTransport::new(vec![spec]);
+        let transport = Arc::new(Mutex::new(Disturbed { sim, disturbance }));
+        let mut controller = DaliController::new(transport, Box::new(StoppedClock::at(0)));
+        let counters = DaliWorkerCounters::default();
+        let mut outcomes = AttributeReadOutcomes::for_request(&[], true);
+        let result = read_attributes_memory_bank_stage(
+            &mut controller,
+            &publisher,
+            BusId::default(),
+            SWEEP_CORRELATION,
+            &SWEEP,
+            &mut outcomes,
+            &counters,
+        );
+        assert!(result.is_err(), "inconclusive: the disturbance never reached the sweep");
+        let aborts = [&counters.read_attributes_contended_aborts, &counters.read_attributes_transport_aborts];
+        (outcomes.memory_banks, aborts.map(|counter| counter.load(Ordering::Relaxed)))
+    }
+
+    const CONTENDED: (AttributeGroupReadOutcome, [u32; 2]) = (AttributeGroupReadOutcome::ContendedAbort, [1, 0]);
+
+    // DiiA 252 §9.2.2
+    // IEC 62386-101 §8.2.5
+    #[test]
+    fn a_latched_value_the_busy_bus_breaks_after_its_first_byte_is_a_contended_sweep() {
+        assert_eq!(sweep(Disturbance::BusBusy), CONTENDED, "the gear answered; the wire never let the rest through");
+    }
+
+    // IEC 62386-102 §9.10.4
+    #[test]
+    fn a_sweep_whose_pointer_a_foreign_frame_moves_is_contended() {
+        assert_eq!(sweep(Disturbance::ForeignPointer), CONTENDED, "another master moved the pointer");
+    }
+}
+
 mod answer_riders {
     use std::time::Duration;
 

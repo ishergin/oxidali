@@ -162,6 +162,11 @@ impl GearFleet {
         self.stats
     }
 
+    // IEC 62386-102 §9.10.4
+    pub const fn memory_pointer(&self) -> (u8, u8) {
+        (self.regs.dtr1, self.regs.dtr0)
+    }
+
     pub fn any_gear_holds(&self, frame: u16) -> bool {
         self.gears.iter().any(|gear| gear.holds(frame))
     }
