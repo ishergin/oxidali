@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::bounded::{FixedItems, FixedText32, FixedText48, FixedText64, FixedText96};
+use super::bounded::{FixedItems, FixedText32, FixedText48, FixedText60, FixedText64, FixedText96};
 use super::kinds::{
     CommissioningStep, ConfigWriteResource, DaliTargetScope, DeviceTypeSet, DiscoveryMode,
     HclAlgorithm,
@@ -99,6 +99,54 @@ impl Default for RuntimeRegistryUpdateEntry {
             hold_hcl: true,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LuminaireNumbers {
+    pub patch_mask: u16,
+    pub year: u8,
+    pub week: u8,
+    pub nominal_input_power_w: u16,
+    pub power_at_minimum_w: u16,
+    pub nominal_min_ac_voltage_v: u16,
+    pub nominal_max_ac_voltage_v: u16,
+    pub nominal_light_output_lm: u32,
+    pub cri: u8,
+    pub cct_kelvin: u16,
+    pub light_distribution_type: u8,
+    pub lamp_current_ma: u16,
+}
+
+impl LuminaireNumbers {
+    pub const PATCH_YEAR: u16 = 1 << 0;
+    pub const PATCH_WEEK: u16 = 1 << 1;
+    pub const PATCH_NOMINAL_INPUT_POWER_W: u16 = 1 << 2;
+    pub const PATCH_POWER_AT_MINIMUM_W: u16 = 1 << 3;
+    pub const PATCH_NOMINAL_MIN_AC_VOLTAGE_V: u16 = 1 << 4;
+    pub const PATCH_NOMINAL_MAX_AC_VOLTAGE_V: u16 = 1 << 5;
+    pub const PATCH_NOMINAL_LIGHT_OUTPUT_LM: u16 = 1 << 6;
+    pub const PATCH_CRI: u16 = 1 << 7;
+    pub const PATCH_CCT_KELVIN: u16 = 1 << 8;
+    pub const PATCH_LIGHT_DISTRIBUTION_TYPE: u16 = 1 << 9;
+    pub const PATCH_LAMP_CURRENT_MA: u16 = 1 << 10;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LuminaireTextField {
+    LuminaireColour,
+    LuminaireIdentification,
+    LightDistribution,
+    OemName,
+    CustomerStockingNumber,
+    FreeUse,
+}
+
+pub type LuminaireText = FixedText60;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LuminaireTextWrite {
+    pub field: LuminaireTextField,
+    pub text: LuminaireText,
 }
 
 pub const MAX_HCL_TARGETS_PER_COMMAND: usize = 4;
@@ -1044,6 +1092,22 @@ declare_bus_payloads! {
     budget = HclOverrideResumeCommand {
         registry_adapter_id: u8::MAX,
         target: crate::msg::kinds::HclOverrideTarget::VirtualLamp { virtual_lamp_id: 63 },
+    };
+
+    pub struct DaliWriteLuminaireDataCommand {
+        pub registry_adapter_id: u8,
+        pub short_address: u8,
+        pub numbers: LuminaireNumbers,
+        pub text: Option<LuminaireTextWrite>,
+    }
+    budget = DaliWriteLuminaireDataCommand {
+        registry_adapter_id: u8::MAX,
+        short_address: 63,
+        numbers: crate::msg::payload_test_samples::worst_luminaire_numbers(),
+        text: Some(LuminaireTextWrite {
+            field: LuminaireTextField::FreeUse,
+            text: crate::msg::payload_test_samples::worst_text60(),
+        }),
     };
 }
 

@@ -12,8 +12,8 @@ pub mod state;
 pub mod wire;
 
 pub use bounded::{
-    fixed_text_32, fixed_text_48, fixed_text_64, fixed_text_96, FixedBytes24, FixedBytes32, FixedItems, FixedText,
-    FixedText32, FixedText48, FixedText64, FixedText96,
+    fixed_text_32, fixed_text_48, fixed_text_60, fixed_text_64, fixed_text_96, FixedBytes24, FixedBytes32, FixedItems, FixedText,
+    FixedText32, FixedText48, FixedText60, FixedText64, FixedText96,
 };
 pub use commands::{
     MAX_RULES_SOURCE_BYTES, RULE_SOURCE_CHUNK_BYTES,operation_ttl_ms, BusCommandPayload, COMMAND_VARIANT_NAMES};
@@ -103,6 +103,10 @@ pub use commands::{
 pub use commands::DaliBusHealthProbeCommand;
 pub use commands::DaliStopFadeCommand;
 pub use commands::RegistryLevelTransitionCommand;
+pub use commands::{
+    DaliWriteLuminaireDataCommand, LuminaireNumbers, LuminaireText, LuminaireTextField,
+    LuminaireTextWrite,
+};
 pub use commands::PollerSettingsUpdateCommand;
 pub use events::DaliSettingsChangedEvent;
 pub use events::{

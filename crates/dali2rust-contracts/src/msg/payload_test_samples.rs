@@ -1,5 +1,5 @@
 use crate::msg::{
-    fixed_text_32, fixed_text_48, fixed_text_64, fixed_text_96, BusCommandPayload, BusEventPayload,
+    fixed_text_32, fixed_text_48, fixed_text_60, fixed_text_64, fixed_text_96, BusCommandPayload, BusEventPayload,
     ColorMode, ColorValue, CommandEnvelope, CompactErrorPayload, DaliAttributeReadChunk as Chunk,
     Dt6ReadSnapshot, ErrorCode, EventEnvelope, FailureStatus, FixedText32, FixedText48,
     FixedText64, FixedText96, LightSetpoint, RuntimeObservation, RuntimeSource, StatusFlags,
@@ -12,6 +12,27 @@ pub(crate) fn worst_rule_chunk(
         let _ = bytes.push(u8::MAX);
     }
     bytes
+}
+
+pub(crate) fn worst_text60() -> crate::msg::FixedText60 {
+    fixed_text_60("012345678901234567890123456789012345678901234567890123456789")
+}
+
+pub(crate) fn worst_luminaire_numbers() -> crate::msg::commands::LuminaireNumbers {
+    crate::msg::commands::LuminaireNumbers {
+        patch_mask: u16::MAX,
+        year: u8::MAX,
+        week: u8::MAX,
+        nominal_input_power_w: u16::MAX,
+        power_at_minimum_w: u16::MAX,
+        nominal_min_ac_voltage_v: u16::MAX,
+        nominal_max_ac_voltage_v: u16::MAX,
+        nominal_light_output_lm: u32::MAX,
+        cri: u8::MAX,
+        cct_kelvin: u16::MAX,
+        light_distribution_type: u8::MAX,
+        lamp_current_ma: u16::MAX,
+    }
 }
 
 pub(crate) fn worst_text64() -> FixedText64 {
