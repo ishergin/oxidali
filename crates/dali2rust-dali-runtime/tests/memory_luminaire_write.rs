@@ -8,7 +8,9 @@ use dali2rust_contracts::msg::{DaliWriteMemoryLuminaireCommand, OperationWorkerS
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_dali_runtime::{spawn_dali_worker, DaliRuntimeConfig, DaliWorkerCounters};
 use dali2rust_contracts::msg::{ErrorCode, LuminaireNumbers as N};
-use dali2rust_dali_runtime::runtime::controller::DaliController;
+use dali2rust_dali_runtime::runtime::controller::{
+    DaliController, PHY_TICK_US, TRANSACTION_BUDGET_MS, TX_ARM_LEAD_TICKS,
+};
 use dali2rust_dali_runtime::runtime::executor::{
     write_memory_luminaire, LuminaireWriteFailure, HEADER_SUBJECT, IDENTITY_CHANGED, IDENTITY_SUBJECT,
     LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT,
@@ -27,6 +29,7 @@ use dali2rust_domain::dali::pres::command::DaliCommand;
 use dali2rust_domain::dali::pres::opcode::READ_MEMORY_LOCATION_OPCODE;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
+use dali2rust_domain::dali::ses::DaliPriority;
 use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_gear_model::GearSpec;
 use dali2rust_platform::dali::{
@@ -57,6 +60,16 @@ const SECOND_GEAR_UNIT: u8 = 1;
 const ARM_ATTEMPTS: usize = 3;
 const FOREIGN_OFFSET: u8 = 0x10;
 const SHORT_BANK0_LAST: u8 = LOGICAL_GEAR_INDEX_OFFSET - 1;
+const UNDISTURBED: Trigger = Trigger::Nth(0);
+const US_PER_MS: u64 = 1_000;
+const FORWARD_HALF_BITS: u64 = 34;
+const BACKWARD_HALF_BITS: u64 = 18;
+// IEC 62386-101 Table 16
+const NOMINAL_HALF_BIT_US: u64 = 417;
+// IEC 62386-101 Table 16
+const SLOWEST_HALF_BIT_US: u64 = 467;
+// IEC 62386-101 Table 17
+const LATEST_BACKWARD_START_US: u64 = 10_500;
 
 #[derive(Clone)]
 enum Interruption {
@@ -106,6 +119,13 @@ impl Pointer {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Exchange {
+    frame: u16,
+    expects_backward: bool,
+    settle_us: u32,
+}
+
 struct Interrupting {
     sim: SimDaliTransport,
     interruptions: Vec<Interruption>,
@@ -113,13 +133,14 @@ struct Interrupting {
     sent: usize,
     started: bool,
     pointer: Pointer,
+    exchanges: Vec<Exchange>,
 }
 
 type SimError = <SimDaliTransport as DaliTransport>::Error;
 
 impl Interrupting {
     fn new(sim: SimDaliTransport, interruptions: Vec<Interruption>, trigger: Trigger) -> Self {
-        Self { sim, interruptions, trigger, sent: 0, started: false, pointer: Pointer::default() }
+        Self { sim, interruptions, trigger, sent: 0, started: false, pointer: Pointer::default(), exchanges: Vec::new() }
     }
 
     fn fires(&mut self, frame: u16) -> bool {
@@ -224,6 +245,7 @@ impl DaliTransport for Interrupting {
         expects_backward: bool,
         min_idle_us: u32,
     ) -> Result<TransferOutcome, Self::Error> {
+        self.exchanges.push(Exchange { frame, expects_backward, settle_us: min_idle_us });
         self.pass(frame, |sim| sim.exchange_frame_with_settle(frame, expects_backward, min_idle_us))
     }
 }
@@ -1094,6 +1116,65 @@ fn a_lock_opened_without_an_answer_is_still_restored() {
     assert_eq!(shape(outcome.result), failure(ErrorCode::VerifyUnanswered, LOCK_SUBJECT));
     assert_eq!(written_values(&sim), [BANK_UNLOCKED, FOUND_LOCK], "the gear may have opened, so it is closed");
     assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK));
+}
+
+fn exchanges_of(writes: &[FieldWrite]) -> Vec<Exchange> {
+    let sim = luminaire_gear(FOUND_LOCK, false);
+    let identity = identity_of(&sim);
+    let bus = Arc::new(Mutex::new(Interrupting::new(sim, Vec::new(), UNDISTURBED)));
+    let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
+    let outcome = run_write(&mut controller, identity, writes);
+    assert_eq!(shape(outcome.result), Ok(()));
+    drop(controller);
+    Arc::into_inner(bus).expect("one owner").into_inner().expect("bus").exchanges
+}
+
+// IEC 62386-101 Table 22
+fn continues_the_unit(exchange: &Exchange) -> bool {
+    let lead_us = u32::from(TX_ARM_LEAD_TICKS) * PHY_TICK_US;
+    DaliPriority::Transaction.contains_settle_us(exchange.settle_us + lead_us)
+}
+
+fn write_units(exchanges: &[Exchange]) -> Vec<&[Exchange]> {
+    let enable = standard(StandardCommand::EnableWriteMemory);
+    exchanges
+        .chunk_by(|_, next| continues_the_unit(next))
+        .filter(|unit| unit.iter().any(|exchange| exchange.frame == enable))
+        .collect()
+}
+
+// IEC 62386-101 §3.42, Table 16, Table 17
+fn on_the_wire_us(exchange: &Exchange) -> u64 {
+    let answer = LATEST_BACKWARD_START_US + BACKWARD_HALF_BITS * SLOWEST_HALF_BIT_US;
+    FORWARD_HALF_BITS * NOMINAL_HALF_BIT_US + if exchange.expects_backward { answer } else { 0 }
+}
+
+// IEC 62386-101 §9.2
+fn first_frame_to_last_us(unit: &[Exchange]) -> u64 {
+    let settles = unit.len().saturating_sub(1) as u64 * u64::from(DaliPriority::Transaction.max_settle_us());
+    unit.iter().map(on_the_wire_us).sum::<u64>() + settles
+}
+
+fn first_exchange_end_to_last_us(unit: &[Exchange]) -> u64 {
+    first_frame_to_last_us(unit) - unit.first().map_or(0, on_the_wire_us)
+}
+
+// IEC 62386-101 §9.2
+#[test]
+fn every_write_unit_stays_under_the_transaction_budget_at_the_upper_band_edges() {
+    let budget_us = TRANSACTION_BUDGET_MS * US_PER_MS;
+    let number = planned_writes(&number_patch(&[(N::PATCH_NOMINAL_LIGHT_OUTPUT_LM, LIGHT_OUTPUT)]), None);
+    for writes in [number, text("luminaire_colour", MULTI_SESSION_TEXT)] {
+        let exchanges = exchanges_of(&writes);
+        let units = write_units(&exchanges);
+        assert!(!units.is_empty(), "inconclusive: no unit carried ENABLE WRITE MEMORY");
+        for unit in units {
+            let frames: Vec<u16> = unit.iter().map(|exchange| exchange.frame).collect();
+            assert_eq!(frames[0], special(SpecialCommand::Dtr1(PROFILE_BANK)), "a unit opens by arming the pointer");
+            assert!(first_frame_to_last_us(unit) < budget_us, "§9.2 span over budget: {frames:04X?}");
+            assert!(first_exchange_end_to_last_us(unit) < budget_us, "counted span over budget: {frames:04X?}");
+        }
+    }
 }
 
 fn worker_command(text: &str) -> BusFrame {

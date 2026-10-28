@@ -207,8 +207,16 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   MASK, TMASK and "not read" are four states.
 - A memory-bank read chunk is one transaction that opens by proving the whole pointer,
   `DTR1` and `DTR0`, and reads at most four locations: proof and reads together stay
-  under 101 §9.2's 400 ms guidance on real gear. A latched value wider than that stays
-  whole, and its chunk is exempt. A proof tells a moved pointer from silence and a
+  under 101 §9.2's 400 ms guidance on real gear. A bank 1 write unit (§Device types and
+  memory banks) is never exempt: proof and writes together stay under the same 400 ms,
+  so it writes at most three bytes, and a fourth would cross it. The basis is the wire
+  at the slow edges: from the unit's first frame to its last, no settle before the first
+  frame, each settle counted from the previous frame's last edge with the stop condition
+  inside it (101 §3.42) and at the top of its Table 22 band, each backward frame starting
+  at Table 17's latest and sent at Table 16's slowest half-bit; the span the controller
+  counts, from the end of the first exchange, is shorter still. A latched value wider
+  than four locations stays whole, and its chunk is exempt. A proof tells a moved
+  pointer from silence and a
   violation, as a read-back does, in that order: a register that answers a wrong value
   outranks a violation, and a violation outranks silence. A proof that fails the read
   names what it showed, wherever it stands: `memory_bank_read_misaligned` for a moved
@@ -335,9 +343,10 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   §`PATCH …/memory-luminaire`; the message is `device_identity` or `bank1_header`.
 - The executor then re-reads the header and gates every field on it — content format
   3–5, the field present in that format, the bank long enough — before any write.
-- Each unit writes at most three bytes (101 §9.2). It sends `ENABLE WRITE MEMORY`, one
-  `WRITE MEMORY LOCATION` per byte, then `QUERY CONTENT DTR0`, under a pointer armed with
-  `DTR1`/`DTR0` and proved by `QUERY CONTENT DTR1/DTR0` in the same `controller.unit`.
+- Each unit writes at most three bytes, the 101 §9.2 limit given in §Reading answers.
+  It sends `ENABLE WRITE MEMORY`, one `WRITE MEMORY LOCATION` per byte, then
+  `QUERY CONTENT DTR0`, under a pointer armed with `DTR1`/`DTR0` and proved by
+  `QUERY CONTENT DTR1/DTR0` in the same `controller.unit`.
   - `ENABLE WRITE MEMORY` is sent per unit because any command other than the writes and
     the DTR0–2 commands and queries clears `writeEnableState` (102 §9.10.5).
   - The answering form is used. An answer other than the byte written, silence

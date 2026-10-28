@@ -24,6 +24,7 @@ mod unit;
 
 #[cfg(test)]
 use transaction::BUS_RELEASE_SETTLE_US;
+pub use transaction::TRANSACTION_BUDGET_MS;
 use retry::unit_retryable;
 use unit::UnitAttempt;
 
