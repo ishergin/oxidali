@@ -1,5 +1,6 @@
 use dali2rust_domain::dali::banks::part251::LuminaireFormat;
-use dali2rust_domain::dali::banks::{BUS_UNIT_CONFIGURATION_OFFSET, IMPLEMENTED_PARTS_OFFSET};
+use dali2rust_domain::dali::banks::identity::{IDENTIFICATION_NUMBER, LOGICAL_GEAR_INDEX_OFFSET, MASK};
+use dali2rust_domain::dali::banks::{BANK_LOCK_BYTE, BUS_UNIT_CONFIGURATION_OFFSET, IMPLEMENTED_PARTS_OFFSET};
 
 pub const DEVICE_TYPE_LUMINAIRE_INFO: u8 = 50;
 use dali2rust_domain::dali::devices::dt8_color::{
@@ -359,7 +360,7 @@ fn build_bank0(spec: &GearSpec) -> [u8; BANK0_LEN] {
     b[23] = 0;
     b[24] = 0;
     b[LOGICAL_GEAR_UNITS_OFFSET] = 1;
-    b[LOGICAL_GEAR_INDEX_OFFSET] = 0;
+    b[usize::from(LOGICAL_GEAR_INDEX_OFFSET)] = 0;
     if spec.bus_unit_extension {
         b[usize::from(BUS_UNIT_CONFIGURATION_OFFSET)] = 0;
         b[usize::from(IMPLEMENTED_PARTS_OFFSET)] = 0b0000_0001;
@@ -404,8 +405,6 @@ impl Gear {
 
 const BANK1_LAST_OFFSET_OFFSET: usize = 0x00;
 
-const BANK1_LOCK_OFFSET: u8 = 0x02;
-
 impl Gear {
     // IEC 62386-102 §9.10.5
     // DiiA 251 §9.2.3
@@ -422,8 +421,8 @@ impl Gear {
     // IEC 62386-102 §9.10.2, Table 8
     fn profile_writable(&self, offset: u8) -> bool {
         let last = self.profile_location(0).unwrap_or(0);
-        let unlocked = self.banks.bank1[usize::from(BANK1_LOCK_OFFSET)] == BANK1_UNLOCKED;
-        (BANK1_LOCK_OFFSET..=last).contains(&offset) && (offset == BANK1_LOCK_OFFSET || unlocked)
+        let unlocked = self.banks.bank1[usize::from(BANK_LOCK_BYTE)] == BANK1_UNLOCKED;
+        (BANK_LOCK_BYTE..=last).contains(&offset) && (offset == BANK_LOCK_BYTE || unlocked)
     }
 
     fn store_profile(&mut self, offset: u8, value: u8) {
@@ -438,7 +437,7 @@ impl Gear {
     }
 
     pub fn set_bank1_lock_byte(&mut self, value: u8) {
-        self.banks.bank1[usize::from(BANK1_LOCK_OFFSET)] = value;
+        self.banks.bank1[usize::from(BANK_LOCK_BYTE)] = value;
     }
 
     pub fn set_bank1_location(&mut self, offset: u8, value: u8) {
@@ -450,9 +449,6 @@ const BANK0_LAST_BANK_OFFSET: usize = 0x02;
 
 // IEC 62386-102 §9.10.6, Table 9
 const LOGICAL_GEAR_UNITS_OFFSET: usize = 0x19;
-const LOGICAL_GEAR_INDEX_OFFSET: usize = 0x1A;
-const IDENTIFICATION_NUMBER: core::ops::Range<usize> = 0x0B..0x13;
-const UNPROGRAMMED: u8 = 0xFF;
 
 const BANK0_RESERVED_OFFSET: u8 = 0x01;
 
@@ -594,7 +590,7 @@ impl Gear {
     // IEC 62386-102 §9.10.6, Table 9
     pub fn set_logical_gear_unit(&mut self, units: u8, index: u8) {
         self.banks.bank0[LOGICAL_GEAR_UNITS_OFFSET] = units;
-        self.banks.bank0[LOGICAL_GEAR_INDEX_OFFSET] = index;
+        self.banks.bank0[usize::from(LOGICAL_GEAR_INDEX_OFFSET)] = index;
     }
 
     // IEC 62386-102 §9.10.6, Table 9
@@ -604,7 +600,7 @@ impl Gear {
 
     // IEC 62386-102 §9.10.6, Table 9
     pub fn clear_identification_number(&mut self) {
-        self.banks.bank0[IDENTIFICATION_NUMBER].fill(UNPROGRAMMED);
+        self.banks.bank0[IDENTIFICATION_NUMBER].fill(MASK);
     }
 
     pub fn memory_location(&self, bank: u8, offset: u8) -> Option<u8> {

@@ -4,13 +4,15 @@ pub const GTIN_OFFSET: u8 = 0x03;
 pub const GTIN_LEN: usize = 6;
 pub const IDENTIFICATION_NUMBER_OFFSET: u8 = 0x0B;
 pub const IDENTIFICATION_NUMBER_LEN: usize = 8;
+pub const IDENTIFICATION_NUMBER: core::ops::Range<usize> =
+    IDENTIFICATION_NUMBER_OFFSET as usize..IDENTIFICATION_NUMBER_OFFSET as usize + IDENTIFICATION_NUMBER_LEN;
 pub const LOGICAL_GEAR_INDEX_OFFSET: u8 = 0x1A;
 pub const IDENTITY_WINDOW_LEN: u16 = (LOGICAL_GEAR_INDEX_OFFSET - GTIN_OFFSET) as u16 + 1;
 
 pub const IDENTITY_UNKNOWN: &str = "device_identity_unknown";
 pub const IDENTITY_UNPROVABLE: &str = "device_identity_unprovable";
 
-const MASK: u8 = 0xFF;
+pub const MASK: u8 = 0xFF;
 
 // IEC 62386-102 §9.10.6
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
