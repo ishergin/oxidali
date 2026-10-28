@@ -375,17 +375,27 @@ mod exception_tests {
     }
 
     #[test]
-    fn forgetting_or_evicting_a_record_drops_its_exception() {
-        let store = store_with(&[2, 5], Some(VERIFIED));
-        assert!(store.seed_discovered_dt8(9, None));
-        store.apply_policies_from_command(&excepting(&[2, 5, 9]));
+    fn forgetting_a_device_drops_the_entry_at_its_address() {
+        let store = store_with(&[2, 5, 7], Some(VERIFIED));
+        store.apply_policies_from_command(&excepting(&[2, 5]));
         store.apply_physical_device_forget(0, 2).expect("forgotten");
-        assert_eq!(stored(&store), vec![5, 9]);
-        let confirmed = short_bit(5);
-        (0..DISCOVERY_EVICT_MISS_THRESHOLD).for_each(|_| {
-            store.reconcile_discovery_scan(0, confirmed);
-        });
         assert_eq!(stored(&store), vec![5]);
+        store.write_inner().policies.exceptions.push(at(9)).expect("capacity");
+        store.apply_address_change(0, 7, 9).expect("moved");
+        store.apply_physical_device_forget(0, 9).expect("forgotten");
+        assert_eq!(stored(&store), vec![5], "forget is the operator's act on that address");
+    }
+
+    #[test]
+    fn evicting_a_never_verified_device_keeps_the_entry_at_its_address() {
+        let store = store_with(&[2], Some(VERIFIED));
+        store.write_inner().policies.exceptions.push(at(9)).expect("capacity");
+        assert!(store.seed_discovered_dt8(9, None));
+        (0..DISCOVERY_EVICT_MISS_THRESHOLD).for_each(|_| {
+            store.reconcile_discovery_scan(0, short_bit(2));
+        });
+        assert!(!store.physical_device_exists(0, 9), "the never-verified gear was evicted");
+        assert_eq!(stored(&store), vec![9], "an automatic eviction never drops an operator's entry");
     }
 
     #[test]

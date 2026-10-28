@@ -713,7 +713,6 @@ fn evict_records(inner: &mut super::store::Inner, adapter_id: u8, evicted: &[u8]
     for sa in evicted {
         inner.physical_devices.remove(&(adapter_id, *sa));
         unbind_lamps_of(inner, adapter_id, *sa, &mut unbound);
-        unbound.exceptions_changed |= inner.policies.drop_exception(adapter_id, *sa);
         log::warn!(
             "registry: evicted never-verified physical device a{adapter_id} short {sa} \
              after {DISCOVERY_EVICT_MISS_THRESHOLD} clean-scan misses"
