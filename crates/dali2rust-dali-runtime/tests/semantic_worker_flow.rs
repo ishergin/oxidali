@@ -14,6 +14,7 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_contracts::{msg as m, SOURCE_ID_UNSPECIFIED};
 use dali2rust_dali_runtime::{spawn_dali_worker, DaliWorkerCounters};
+use dali2rust_domain::dali::banks::DeviceIdentity;
 use dali2rust_domain::dali::commands::{DaliCommand, DaliResponse};
 use dali2rust_domain::dali::controller::{DaliApplicationController, DaliProductController};
 use dali2rust_domain::dali::devices::DeviceType;
@@ -178,6 +179,10 @@ impl RegistryReadPort for TestReadPort {
 
     fn first_free_short_address(&self, _adapter_id: u8) -> Option<u8> {
         (0..=63).find(|short| !self.known_shorts.contains(short))
+    }
+
+    fn physical_device_identity(&self, _adapter_id: u8, _short: u8) -> Option<DeviceIdentity> {
+        None
     }
 }
 

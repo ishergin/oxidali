@@ -134,3 +134,19 @@ Feature: Physical-device luminaire data write
     And the operation error code should be "conflict"
     And the operation error message should be "bank1_not_part251"
     And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-300
+  Scenario: A gear replaced since bank 0 was read is refused on the wire, before any write
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given a golden attribute-read script with DiiA Part 251 luminaire data for short address 0
+    When I start an attribute read for adapter 0 physical device 0 with memory_banks "profile"
+    Then the last operation eventually succeeds
+    Given a memory-luminaire write script for short address 0 whose bank 0 now holds another identification number
+    When I PATCH JSON {"year":24} to "/api/v1/adapters/0/physical-devices/0/memory-luminaire"
+    Then the response status should be 202
+    And the last operation eventually fails
+    And the operation error code should be "conflict"
+    And the operation error message should be "device_identity_changed"
+    And all scripted DALI exchanges should be consumed without errors

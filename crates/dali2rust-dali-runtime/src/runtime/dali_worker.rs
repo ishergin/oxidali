@@ -237,6 +237,7 @@ dali2rust_contracts::dispatch_bus_commands! {
             short_address: command.short_address,
             counters,
         },
+        read_port.physical_device_identity(command.registry_adapter_id, command.short_address),
         command,
     ),
     DaliProgramGroupMembershipCommand(command) => handle_program_group_membership(

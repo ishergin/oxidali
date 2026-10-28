@@ -4,8 +4,13 @@ use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
 use dali2rust_contracts::msg::{ErrorCode, LuminaireNumbers as N};
 use dali2rust_dali_runtime::runtime::controller::DaliController;
 use dali2rust_dali_runtime::runtime::executor::{
-    write_memory_luminaire, LuminaireWriteFailure, LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT,
+    write_memory_luminaire, LuminaireWriteFailure, IDENTITY_CHANGED, IDENTITY_SUBJECT, IDENTITY_UNKNOWN,
+    LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT,
 };
+use dali2rust_domain::dali::banks::identity::{
+    GTIN_LEN, GTIN_OFFSET, IDENTIFICATION_NUMBER_LEN, IDENTIFICATION_NUMBER_OFFSET,
+};
+use dali2rust_domain::dali::banks::DeviceIdentity;
 use dali2rust_domain::dali::banks::luminaire_write::{
     number_patch, planned_writes, text_patch, FieldWrite, LuminaireField, BANK_UNLOCKED,
 };
@@ -23,6 +28,8 @@ use dali2rust_test_support::StoppedClock;
 
 const SHORT: u8 = 3;
 const RANDOM_ADDRESS: u32 = 0x00_4321;
+const REPLACEMENT_RANDOM_ADDRESS: u32 = 0x00_8765;
+const IDENTITY_BANK: u8 = 0;
 const PROFILE_BANK: u8 = 1;
 const LOCK_OFFSET: u8 = 0x02;
 const LAST_OFFSET_OFFSET: u8 = 0x00;
@@ -129,7 +136,11 @@ fn query_dtr0() -> u16 {
 }
 
 fn luminaire_gear(lock: u8, unstored: bool) -> SimDaliTransport {
-    let mut spec = GearSpec::dt6(Some(SHORT), RANDOM_ADDRESS);
+    luminaire_gear_at(RANDOM_ADDRESS, lock, unstored)
+}
+
+fn luminaire_gear_at(random_address: u32, lock: u8, unstored: bool) -> SimDaliTransport {
+    let mut spec = GearSpec::dt6(Some(SHORT), random_address);
     spec.luminaire_format = Some(LuminaireFormat::V3);
     let mut sim = SimDaliTransport::new(vec![spec]);
     let gear = &mut sim.fleet_mut().gears_mut()[0];
@@ -143,12 +154,26 @@ struct Outcome {
     readback: Option<Vec<u8>>,
 }
 
+fn number_at(sim: &SimDaliTransport, offset: u8, len: usize) -> u64 {
+    (offset..offset + len as u8)
+        .map(|at| sim.fleet().gears()[0].memory_location(IDENTITY_BANK, at).expect("bank 0 is implemented"))
+        .fold(0, |number, byte| number << 8 | u64::from(byte))
+}
+
+fn identity_of(sim: &SimDaliTransport) -> DeviceIdentity {
+    DeviceIdentity {
+        gtin: number_at(sim, GTIN_OFFSET, GTIN_LEN),
+        identification_number: number_at(sim, IDENTIFICATION_NUMBER_OFFSET, IDENTIFICATION_NUMBER_LEN),
+    }
+}
+
 fn run_write<T: DaliTransport + Send + 'static>(
     controller: &mut DaliController<T>,
+    identity: Option<DeviceIdentity>,
     writes: &[FieldWrite],
 ) -> Outcome {
     let mut readback = None;
-    let result = write_memory_luminaire(controller, SHORT, writes, |read| {
+    let result = write_memory_luminaire(controller, (SHORT, identity), writes, |read| {
         readback = Some(read.bytes.clone());
     });
     Outcome { result, readback }
@@ -159,9 +184,14 @@ fn write(lock: u8, unstored: bool, writes: &[FieldWrite]) -> (Outcome, SimDaliTr
 }
 
 fn write_on(sim: SimDaliTransport, writes: &[FieldWrite]) -> (Outcome, SimDaliTransport) {
+    let identity = identity_of(&sim);
+    write_as(sim, Some(identity), writes)
+}
+
+fn write_as(sim: SimDaliTransport, identity: Option<DeviceIdentity>, writes: &[FieldWrite]) -> (Outcome, SimDaliTransport) {
     let bus = Arc::new(Mutex::new(sim));
     let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
-    let outcome = run_write(&mut controller, writes);
+    let outcome = run_write(&mut controller, identity, writes);
     drop(controller);
     let sim = Arc::into_inner(bus).expect("one owner").into_inner().expect("bus");
     (outcome, sim)
@@ -316,10 +346,11 @@ fn write_under(
         })
         .unwrap_or_else(|| Arc::new(WireActivity::new()));
     let sim = luminaire_gear(FOUND_LOCK, false);
+    let identity = identity_of(&sim);
     let bus = Arc::new(Mutex::new(Interrupting::new(sim, interruptions.to_vec(), trigger)));
     let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
     let lease = WireLease::new(gate, WirePriority::Attended, granularity);
-    let outcome = controller.with_wire_lease(lease, |c| run_write(c, writes));
+    let outcome = controller.with_wire_lease(lease, |c| run_write(c, Some(identity), writes));
     drop(controller);
     let interrupting = Arc::into_inner(bus).expect("one owner").into_inner().expect("bus");
     (outcome, interrupting.sim)
@@ -469,4 +500,57 @@ fn a_lost_restore_the_read_back_cannot_check_says_the_bank_may_be_open() {
         failure(ErrorCode::VerifyUnanswered, RELOCK_SUBJECT),
         "the read-back yielded, so nothing shows the lock went back"
     );
+}
+
+fn wrote_nothing(sim: &SimDaliTransport) -> bool {
+    let enable = standard(StandardCommand::EnableWriteMemory);
+    written_values(sim).is_empty() && !sim.sent_frames().contains(&enable)
+}
+
+fn standard(command: StandardCommand) -> u16 {
+    DaliCommand::Standard { address: DaliAddress::Short(SHORT), command }.to_forward_frame().raw()
+}
+
+// IEC 62386-102 §9.10.6
+#[test]
+fn a_gear_the_registry_cannot_identify_is_refused_before_any_frame() {
+    let (outcome, sim) = write_as(luminaire_gear(FOUND_LOCK, false), None, &year(YEAR));
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, IDENTITY_UNKNOWN));
+    assert!(sim.sent_frames().is_empty(), "nothing is sent to a gear nobody can tell from its replacement");
+}
+
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn a_gear_replaced_since_the_registry_read_it_is_refused_before_any_write() {
+    let read_then = identity_of(&luminaire_gear(FOUND_LOCK, false));
+    let replacement = luminaire_gear_at(REPLACEMENT_RANDOM_ADDRESS, FOUND_LOCK, false);
+    assert_ne!(identity_of(&replacement), read_then);
+    let (outcome, sim) = write_as(replacement, Some(read_then), &year(YEAR));
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, IDENTITY_CHANGED));
+    assert!(wrote_nothing(&sim), "no ENABLE WRITE MEMORY or WRITE MEMORY LOCATION reaches the other gear");
+    assert_eq!(outcome.readback, None);
+}
+
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn the_identity_is_read_before_the_bank_1_header() {
+    let (outcome, sim) = write(FOUND_LOCK, false, &year(YEAR));
+
+    assert_eq!(shape(outcome.result), Ok(()));
+    let frames = sim.sent_frames();
+    let identity_bank = position_of(&frames, special(SpecialCommand::Dtr1(IDENTITY_BANK)), false);
+    let header_bank = position_of(&frames, special(SpecialCommand::Dtr1(PROFILE_BANK)), false);
+    assert!(identity_bank < header_bank, "bank 0 is armed before bank 1");
+}
+
+// IEC 62386-102 §9.10.6
+#[test]
+fn an_identity_read_that_yields_stops_the_write_before_any_write() {
+    let operator = Interruption::Operator(Arc::new(WireActivity::new()));
+    let (outcome, sim) = write_under(YieldGranularity::Frame, Trigger::Nth(1), &[operator], &year(YEAR));
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::Preempted, IDENTITY_SUBJECT));
+    assert!(wrote_nothing(&sim));
 }

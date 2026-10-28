@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use dali2rust_contracts::msg::{DeviceTypeSet, OperationType};
 
 use crate::dali::banks::luminaire_write::Bank1Layout;
+use crate::dali::banks::DeviceIdentity;
 
 use super::apply_diff::{GroupApplySnapshot, SceneApplySnapshot};
 use super::attributes::{AttributeSectionKind, AttributeSectionView};
@@ -119,6 +120,7 @@ pub trait RegistryReadPort: InputInstanceTypeReadPort {
         adapter_id: u8,
         short_address: u8,
     ) -> bool;
+    fn physical_device_identity(&self, adapter_id: u8, short_address: u8) -> Option<DeviceIdentity>;
 }
 
 pub trait AdapterEnabledReadPort: Send + Sync {

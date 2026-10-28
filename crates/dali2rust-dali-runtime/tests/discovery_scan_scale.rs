@@ -7,6 +7,7 @@ use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResu
 use dali2rust_contracts::msg::{BusEventPayload, DiscoveryMode, OperationWorkerSignal};
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_dali_runtime::{spawn_dali_worker, DaliWorkerCounters, DALI_WORKER_HANDLED_COMMANDS};
+use dali2rust_domain::dali::banks::DeviceIdentity;
 use dali2rust_domain::dali::commands::{DaliCommand, DaliResponse};
 use dali2rust_domain::dali::controller::{DaliApplicationController, DaliProductController};
 use dali2rust_domain::dali::frame::ForwardFrame;
@@ -187,6 +188,10 @@ impl RegistryReadPort for EnabledAdapter {
     }
 
     fn first_free_short_address(&self, _adapter_id: u8) -> Option<u8> {
+        None
+    }
+
+    fn physical_device_identity(&self, _adapter_id: u8, _short: u8) -> Option<DeviceIdentity> {
         None
     }
 }

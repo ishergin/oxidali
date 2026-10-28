@@ -3,7 +3,9 @@ use dali2rust_domain::dali::banks::luminaire_write::{
     check_writable, Bank1Layout, Bank1WriteRefusal, FieldWrite, WriteStage, BANK1_HEADER_LEN,
     BANK_UNLOCKED,
 };
-use dali2rust_domain::dali::banks::{BANK_LOCK_BYTE, BANK_LUMINAIRE_INFO};
+use dali2rust_domain::dali::banks::{
+    DeviceIdentity, BANK_LOCK_BYTE, BANK_LUMINAIRE_INFO, GTIN_OFFSET, IDENTITY_WINDOW_LEN,
+};
 use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::controller::DaliApplicationController;
 use dali2rust_domain::dali::net::address::DaliAddress;
@@ -20,6 +22,8 @@ use crate::runtime::executor::helpers::{
     send_standard, SemanticDaliError, READ_MEMORY_LOCATION_OPCODE,
 };
 
+const BANK0: u8 = 0;
+
 const BANK1: u8 = BANK_LUMINAIRE_INFO;
 
 // IEC 62386-101 §9.2
@@ -32,6 +36,12 @@ pub const LOCK_SUBJECT: &str = "bank1_lock_byte";
 pub const READBACK_SUBJECT: &str = "bank1_readback";
 
 pub const RELOCK_SUBJECT: &str = "bank1_lock_not_restored";
+
+pub const IDENTITY_SUBJECT: &str = "device_identity";
+
+pub const IDENTITY_UNKNOWN: &str = "device_identity_unknown";
+
+pub const IDENTITY_CHANGED: &str = "device_identity_changed";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LuminaireWriteFailure {
@@ -249,6 +259,24 @@ fn write_sessions(
     WireOutcome::default()
 }
 
+// IEC 62386-102 §9.10.6, Table 9
+fn prove_identity(
+    controller: &mut impl DaliApplicationController,
+    short_address: u8,
+    identity: Option<DeviceIdentity>,
+) -> Result<(), LuminaireWriteFailure> {
+    let identity = identity.ok_or(LuminaireWriteFailure::new(ErrorCode::Conflict, IDENTITY_UNKNOWN))?;
+    let window = read_memory_bank(controller, short_address, BANK0, u16::from(GTIN_OFFSET), IDENTITY_WINDOW_LEN);
+    if let Some(error) = window.error {
+        return Err(LuminaireWriteFailure::unproved(error, IDENTITY_SUBJECT));
+    }
+    if identity.read_in(&window.bytes) {
+        Ok(())
+    } else {
+        Err(LuminaireWriteFailure::new(ErrorCode::Conflict, IDENTITY_CHANGED))
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Header {
     lock: u8,
@@ -298,11 +326,12 @@ fn verdict(
 // DiiA 251 §9.2.3
 pub fn write_memory_luminaire(
     controller: &mut impl DaliApplicationController,
-    short_address: u8,
+    (short_address, identity): (u8, Option<DeviceIdentity>),
     writes: &[FieldWrite],
     on_readback: impl FnOnce(&MemoryReadExecution),
 ) -> Result<(), LuminaireWriteFailure> {
     let address = dali_short_address(short_address).map_err(LuminaireWriteFailure::of)?;
+    prove_identity(controller, short_address, identity)?;
     let header = read_header(controller, short_address, writes)?;
     let wire = write_sessions(controller, address, header.lock, writes);
     if let Some(preempted) = wire.preempted() {

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use dali2rust_bsp::psram::PsramBox;
 use dali2rust_bsp::unix_clock::unix_wall_clock_millis;
 use dali2rust_contracts::msg::fixed_text_64;
+use dali2rust_domain::dali::banks::DeviceIdentity;
 use dali2rust_domain::registry::{HaInputInstanceView, RegistryReadPort};
 
 use super::adapters::AdapterRow;
@@ -714,6 +715,15 @@ impl RegistryReadPort for RegistryStore {
             |s| s.dt8_rgbwaf_control_assert,
             |rec| rec.dt8_rgbwaf_control_assert,
         )
+    }
+
+    fn physical_device_identity(&self, adapter_id: u8, short_address: u8) -> Option<DeviceIdentity> {
+        let g = self.read_inner();
+        let identity = &g.physical_devices.get(&(adapter_id, short_address))?.attributes.memory_identity;
+        Some(DeviceIdentity {
+            gtin: identity.gtin.as_ref()?.value,
+            identification_number: identity.identification_number.as_ref()?.value,
+        })
     }
 }
 
