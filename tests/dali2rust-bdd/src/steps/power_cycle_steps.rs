@@ -26,6 +26,7 @@ const VERDICT_COUNTERS: [&str; 4] = [
     "health_probes_several_failures",
 ];
 const STATUS_READS_PER_SWEEP: u64 = 2;
+const QUIET_SPELL: Duration = Duration::from_millis(500);
 
 fn broadcast_frame(command: StandardCommand) -> u16 {
     DaliCommand::Standard {
@@ -94,6 +95,16 @@ fn lamp_path(lamp_id: u8) -> String {
     format!("/api/v1/adapters/0/virtual-lamps/{lamp_id}")
 }
 
+fn patch_poller_settings(world: &mut DaliWorld, body: &Value) {
+    let bytes = serde_json::to_vec(body).expect("settings body");
+    world.send_http_request("PATCH", SETTINGS_PATH, Some(&bytes), "application/json");
+    assert_eq!(
+        world.last_response().expect("settings response").status,
+        200,
+        "poller settings {body}"
+    );
+}
+
 fn put_target_state(world: &mut DaliWorld, lamp_id: u8, body: &Value) {
     let path = format!("{}/target-state", lamp_path(lamp_id));
     let bytes = serde_json::to_vec(body).expect("target-state body");
@@ -145,13 +156,24 @@ async fn given_probe_period(world: &mut DaliWorld, period_ms: u64) {
 // PWR-001 PWR-002 PWR-003 PWR-004 PWR-005 PWR-008
 #[given("the power-cycle watch is switched on")]
 async fn given_watch_on(world: &mut DaliWorld) {
-    let body = serde_json::to_vec(&json!({ "power_cycle_watch": true })).expect("settings body");
-    world.send_http_request("PATCH", SETTINGS_PATH, Some(&body), "application/json");
-    assert_eq!(
-        world.last_response().expect("settings response").status,
-        200,
-        "switching the power-cycle watch on"
-    );
+    patch_poller_settings(world, &json!({ "power_cycle_watch": true }));
+}
+
+// PWR-008
+#[when("the poller and the power-cycle watch are switched off")]
+async fn when_poller_and_watch_off(world: &mut DaliWorld) {
+    patch_poller_settings(world, &json!({ "enabled": false, "power_cycle_watch": false }));
+}
+
+// PWR-008
+#[when("the bus has gone quiet")]
+async fn when_bus_quiet(world: &mut DaliWorld) {
+    let sent = || world.dali_mock().lock().expect("mock lock").sent_frames().len();
+    let quiet = probe_within(WAIT, || {
+        let before = sent();
+        !probe_within(QUIET_SPELL, || sent() > before)
+    });
+    assert!(quiet, "the bus never stayed quiet for {QUIET_SPELL:?}; {} frames sent", sent());
 }
 
 // PWR-002 PWR-003 PWR-004 PWR-005 PWR-006 PWR-008
@@ -171,7 +193,7 @@ async fn given_two_bound_lamps(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear();
 }
 
-// PWR-002 PWR-003 PWR-005
+// PWR-002 PWR-003 PWR-005 PWR-008
 #[given("virtual lamps 1 and 2 have been driven to level 100 and switched off")]
 #[when("virtual lamps 1 and 2 have been driven to level 100 and switched off")]
 async fn drive_and_switch_off(world: &mut DaliWorld) {
@@ -232,7 +254,7 @@ async fn when_swept(world: &mut DaliWorld, sweeps: u64) {
     wait_for_counter(port, "reads_completed", sweeps * STATUS_READS_PER_SWEEP);
 }
 
-// PWR-002 PWR-003 PWR-005
+// PWR-002 PWR-003 PWR-005 PWR-008
 #[when("virtual lamps 1 and 2 are switched on without a level")]
 async fn when_switched_on_without_level(world: &mut DaliWorld) {
     for lamp_id in [1u8, 2] {
@@ -240,13 +262,13 @@ async fn when_switched_on_without_level(world: &mut DaliWorld) {
     }
 }
 
-// PWR-002 PWR-003 PWR-005
+// PWR-002 PWR-003 PWR-005 PWR-008
 #[then(regex = r"^virtual lamp (\d+) should eventually be on at level (\d+)$")]
 async fn then_lamp_on_at_level(world: &mut DaliWorld, lamp_id: u8, level: u8) {
     wait_for_lamp_state(world, lamp_id, "on", Some(level));
 }
 
-// PWR-002 PWR-005
+// PWR-002 PWR-005 PWR-008
 #[then(regex = r"^virtual lamp (\d+) should eventually be on at no known level$")]
 async fn then_lamp_on_without_level(world: &mut DaliWorld, lamp_id: u8) {
     wait_for_lamp_state(world, lamp_id, "on", None);
@@ -277,10 +299,21 @@ async fn then_bus_silent(world: &mut DaliWorld, window_ms: u64) {
 }
 
 // PWR-008
-#[then(regex = r"^the poller should eventually ask physical device (\d+) for its status$")]
-async fn then_device_asked_for_status(world: &mut DaliWorld, short: u8) {
-    let asked = probe_within(WAIT, || status_queries_to(world, short) > 0);
-    assert!(asked, "physical device {short} was never asked for its status");
+#[then(regex = r"^physical device (\d+) should eventually report its power-cycle bit set$")]
+async fn then_power_cycle_bit_reported(world: &mut DaliWorld, short: u8) {
+    let port = world.server_port();
+    let path = format!("/api/v1/adapters/0/physical-devices/{short}");
+    let reported = |json: &Value| {
+        json.pointer("/state/status/power_cycle_seen").and_then(Value::as_bool) == Some(true)
+    };
+    let seen = probe_within(WAIT, || fetch_json(port, &path).as_ref().is_some_and(reported));
+    assert!(
+        seen,
+        "physical device {short} never reported powerCycleSeen; state was {:#}",
+        fetch_json(port, &path)
+            .map(|json| json["state"].clone())
+            .unwrap_or(Value::Null)
+    );
 }
 
 // PWR-003

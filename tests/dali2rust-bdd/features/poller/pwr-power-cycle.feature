@@ -17,7 +17,9 @@ Feature: Power-cycle watch
   mock's frame table, so background frames never consume a script. What the
   registry forgot is read back through the one fact a client can see: a lamp
   switched on without a level goes to the last active level the registry
-  still holds.
+  still holds. A poller that reads the status in its cycle keeps re-reading
+  the mock's fixed answers, which would overwrite that level, so its scenario
+  switches the poller and the watch off and waits for a quiet bus first.
 
   @id:PWR-001
   Scenario: The watch asks for power failures after the probe's control, with the poller off
@@ -110,15 +112,21 @@ Feature: Power-cycle watch
     And the poller counter "power_cycle_sweeps" should be 0
 
   @id:PWR-008
-  Scenario: A poller that reads the status in its cycle leaves a YES nothing to sweep
+  Scenario: A poller that reads the status in its cycle forgets the gear that cycled and leaves a YES nothing to sweep
     Given the controller probes the bus every 300 ms
     And the power-cycle watch is switched on
     And adapter 0 has discovered physical devices 0 and 1
     And virtual lamps 1 and 2 are bound to physical devices 0 and 1
+    And virtual lamps 1 and 2 have been driven to level 100 and switched off
     When no gear reports a power cycle any more
     And the poller is enabled with a 200 ms interval
     And physical device 0 comes back from a power cycle
     And the controller has heard a YES to the power-failure query 2 times
-    Then the poller should eventually ask physical device 0 for its status
+    Then physical device 0 should eventually report its power-cycle bit set
     And the poller counter "power_cycle_sweeps" should be 0
     And the poller counter "power_cycle_sweep_reads" should be 0
+    When the poller and the power-cycle watch are switched off
+    And the bus has gone quiet
+    And virtual lamps 1 and 2 are switched on without a level
+    Then virtual lamp 2 should eventually be on at level 100
+    And virtual lamp 1 should eventually be on at no known level
