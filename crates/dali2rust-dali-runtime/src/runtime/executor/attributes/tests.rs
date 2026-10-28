@@ -1,6 +1,8 @@
 use super::*;
 use dali2rust_contracts::msg::PowerState;
-use crate::runtime::executor::helpers::VERIFY_CONTENDED_MESSAGE;
+use crate::runtime::executor::helpers::{
+    PROGRAM_VERIFY_REPAIRS, VERIFY_CONTENDED_MESSAGE, VERIFY_FAILED_MESSAGE,
+};
 use crate::runtime::executor::test_helpers::shared::{
     assert_script_consumed, expect_narrow_colour_value_sample, expect_wide_colour_value_sample,
     setup_controller, short_address, wire_counters,
@@ -708,6 +710,87 @@ fn an_unanswered_dimming_curve_read_back_is_named_and_confirms_nothing() {
 }
 
 const LED_ONLY: DeviceTypeSet = DeviceTypeSet::from_bits(1 << DeviceType::Led.code());
+
+const REFUSED: Option<SemanticDaliError> = Some(SemanticDaliError::OperationFailed(VERIFY_FAILED_MESSAGE));
+
+fn expect_refused_level(mock: &MockDaliTransport, short: u8, (set, query): (StandardCommand, StandardCommand), level: u8) {
+    for _ in 0..=PROGRAM_VERIFY_REPAIRS {
+        expect_bound_triple(mock, short, set, query, level, level / 2);
+    }
+}
+
+#[test]
+fn a_refused_power_on_level_fails_the_write_only_when_the_command_asks() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_refused_level(&mock, short, (StandardCommand::SetPowerOnLevel, StandardCommand::QueryPowerOnLevel), 200);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, None, None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY),
+    );
+
+    assert_eq!(execution.confirmed.power_on_level, None, "a refused level is not confirmed");
+    assert_eq!(execution.clone().failing_a_refusal(false).error, None, "write-attributes lets the gear refuse");
+    assert_eq!(execution.failing_a_refusal(true).error, REFUSED, "a policy write does not");
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_refused_system_failure_level_fails_the_write_and_keeps_the_level_that_was_taken() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_bound_triple(&mock, short, StandardCommand::SetPowerOnLevel, StandardCommand::QueryPowerOnLevel, 200, 200);
+    expect_refused_level(&mock, short, (StandardCommand::SetSystemFailureLevel, StandardCommand::QuerySystemFailureLevel), 100);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, None, None, Some(200), Some(100), None, (None, None), (None, None), None, Some(LED_ONLY),
+    )
+    .failing_a_refusal(true);
+
+    assert_eq!(execution.error, REFUSED);
+    assert_eq!(execution.confirmed.power_on_level, Some(200), "the level the gear took still lands");
+    assert_eq!(execution.confirmed.system_failure_level, None);
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_write_without_a_refusal_stays_clean_when_refusals_fail() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_bound_triple(&mock, short, StandardCommand::SetPowerOnLevel, StandardCommand::QueryPowerOnLevel, 200, 200);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, None, None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY),
+    )
+    .failing_a_refusal(true);
+
+    assert_eq!(execution.error, None);
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn silence_outranks_a_refusal_in_the_same_write() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    expect_fade_time_write(&mock, short, 1, None);
+    expect_refused_level(&mock, short, (StandardCommand::SetPowerOnLevel, StandardCommand::QueryPowerOnLevel), 200);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY),
+    )
+    .failing_a_refusal(true);
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(VERIFY_UNANSWERED_MESSAGE)),
+        "a write that may not have landed says so before it says what was refused"
+    );
+    assert_script_consumed(&transport);
+}
 
 fn expect_unconfirmed_armed_write(
     mock: &MockDaliTransport,

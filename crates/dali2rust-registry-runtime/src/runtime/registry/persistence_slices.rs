@@ -1,3 +1,4 @@
+use dali2rust_contracts::msg::PolicyException;
 use dali2rust_domain::registry::{MemoryBankSummaryView, PhysicalDeviceAttributesView};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -11,7 +12,7 @@ pub const POLLER_SETTINGS_SLICE_VERSION: u32 = 11;
 pub const INPUT_DEVICES_SLICE_VERSION: u32 = 1;
 pub const DALI_SETTINGS_SLICE_VERSION: u32 = 11;
 pub const REDUNDANCY_SETTINGS_SLICE_VERSION: u32 = 2;
-pub const POLICIES_SLICE_VERSION: u32 = 1;
+pub const POLICIES_SLICE_VERSION: u32 = 2;
 pub const HOME_ASSISTANT_SETTINGS_SLICE_VERSION: u32 = 2;
 
 
@@ -146,11 +147,12 @@ pub struct PersistableRedundancySettingsSlice {
     pub peer_url: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PersistablePoliciesSlice {
     pub system_failure_level: Option<u8>,
     pub power_on_level: Option<u8>,
     pub apply_on_discovery: bool,
+    pub exceptions: Vec<PolicyException>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

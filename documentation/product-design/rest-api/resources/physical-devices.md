@@ -45,7 +45,8 @@ BDD — [`physical_devices`](../../../../tests/dali2rust-bdd/features/physical_d
   листинг discovery. `now_ms` — один на конверт.
 - **Ядро** — идентичность, имя и заметки, тип и режим со всеми источниками и
   override'ами, `supported_device_types` и `extended_versions`, разрешения DT8,
-  capabilities, `state` и `color_temperature_range`. Его же эхом отдают `PATCH` и `PUT …/target-state`.
+  capabilities, `state`, `color_temperature_range` и `policy_mismatch`. Его же эхом
+  отдают `PATCH` и `PUT …/target-state`.
 - **Секции** — `?sections=a,b` выбирает из `common_102`, `dt6_led`, `dt8_color`,
   `extended`, `groups`, `scenes`, `memory_identity`, `memory_profile`,
   `memory_bus_unit`, `memory_luminaire`, `memory_energy`, `memory_diagnostics`; без
@@ -85,6 +86,13 @@ BDD — [`physical_devices`](../../../../tests/dali2rust-bdd/features/physical_d
   [`settings-dali.md`](settings-dali.md); всегда присутствуют, по умолчанию `true`.
 - `color_temperature_range` — собственный диапазон Tc прибора в кельвинах; нет поля,
   пока его не прочитало чтение DT8 — клиент тогда берёт свой дефолт.
+- `policy_mismatch` — расходится ли прибор с [политикой](policies.md): сравниваются
+  управляемые уровни с наблюдёнными чтением common-102 или подтверждённой записью.
+  `true` — хоть один наблюдённый управляемый уровень другой; `false` — все управляемые
+  уровни наблюдены и совпали; **нет поля** — политика ничего не управляет, прибор в её
+  исключениях или управляемый уровень ещё не наблюдён, а расхождения не видно.
+  Выводится при чтении, не персистится и без счётчика. Правка политики, сдвинувшая
+  флаг, объявляет прибор в канале WebSocket `physical_devices`.
 
 ## Особые листья секций
 
@@ -131,9 +139,9 @@ Merge-patch. Пишутся:
 - `dt8_auto_activation_repair`, `dt8_rgbwaf_control_assert` — bool, не nullable.
 
 Запрещены — `422 unsupported_field`: остальные поля DTO (`state`, `capabilities`,
-`random_address`, `color_temperature_range`, все `*_discovered` / `*_effective` /
-`*_source` и т. п.), а также `attributes` и `memory_banks`. Поля `write-attributes`
-(fade, power-on, уровни, Tc-лимиты, кривая) — тот же код с подсказкой
+`random_address`, `color_temperature_range`, `policy_mismatch`, все `*_discovered` /
+`*_effective` / `*_source` и т. п.), а также `attributes` и `memory_banks`. Поля
+`write-attributes` (fade, power-on, уровни, Tc-лимиты, кривая) — тот же код с подсказкой
 `write-attributes`. Неизвестный ключ — `400 unknown_field`. Адрес меняет только
 [`commissioning.md`](commissioning.md).
 

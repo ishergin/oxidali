@@ -182,6 +182,7 @@ pub fn ensure_confirmation_success(body: &[u8]) -> Result<(), HttpResponse> {
     Err(match code {
         "superseded" => json_err(409, "superseded"),
         "vl_unbound" => json_err(422, "vl_unbound"),
+        "unknown_device" => json_err(422, "unknown_device"),
         "confirmation_timeout" => json_err(504, "confirmation_timeout"),
         "conflict" => gate_refusal(message),
         "not_found" => json_err(404, "not_found"),

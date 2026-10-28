@@ -4,6 +4,7 @@ use core::ptr::addr_of_mut;
 use crate::runtime::registry::conversions::{
     capabilities_view, color_mode_str, device_type_str, override_source_str,
 };
+use crate::runtime::registry::policies::device_policy_mismatch;
 use crate::runtime::registry::runtime_fields::RuntimeObservationData;
 use crate::runtime::registry::store::RegistryStore;
 use crate::runtime::registry::views::{
@@ -657,6 +658,7 @@ fn runtime_observation_from_runtime_data(rt: &RuntimeObservationData) -> Runtime
 pub(crate) struct ForgetOutcome {
     pub(crate) unbound_lamps: Vec<u8>,
     pub(crate) groups_changed: bool,
+    pub(crate) exceptions_changed: bool,
 }
 
 fn lamps_bound_to(inner: &super::store::Inner, adapter_id: u8, short_address: u8) -> Vec<u8> {
@@ -830,6 +832,9 @@ impl RegistryStore {
         if outcome.groups_changed {
             self.dirty.mark_groups_dirty(adapter_id);
         }
+        if outcome.exceptions_changed {
+            self.note_exceptions_changed();
+        }
     }
 
     pub(crate) fn apply_physical_device_forget(
@@ -842,6 +847,7 @@ impl RegistryStore {
         g.physical_devices_revision = g.physical_devices_revision.saturating_add(1);
         let mut outcome = ForgetOutcome::default();
         unbind_lamps_of(&mut g, adapter_id, short_address, &mut outcome);
+        outcome.exceptions_changed = g.policies.drop_exception(adapter_id, short_address);
         drop(g);
         self.dirty.mark_physical_device_dirty(adapter_id, short_address);
         self.mark_unbind_dirty(adapter_id, &outcome);
@@ -1196,11 +1202,15 @@ impl RegistryStore {
         let record = g.physical_devices.remove(&(adapter_id, old))?;
         g.physical_devices.insert((adapter_id, new), record);
         let rebound = rebind_lamps(&mut g, adapter_id, old, new);
+        let exception_moved = g.policies.move_exception(adapter_id, old, new);
         drop(g);
         self.dirty.mark_physical_device_dirty(adapter_id, old);
         self.dirty.mark_physical_device_dirty(adapter_id, new);
         if !rebound.is_empty() {
             self.dirty.mark_virtual_lamps_dirty(adapter_id);
+        }
+        if exception_moved {
+            self.note_exceptions_changed();
         }
         Some(rebound)
     }
@@ -1221,7 +1231,9 @@ impl RegistryStore {
             take_metadata_and_overrides(&role, &mut record);
         }
         g.physical_devices.insert((adapter_id, failed), record);
-        let outcome = hand_over_lamps(&mut g, adapter_id, failed, replacement);
+        let mut outcome = hand_over_lamps(&mut g, adapter_id, failed, replacement);
+        outcome.unbound.exceptions_changed =
+            hand_over_exception(&mut g, adapter_id, failed, replacement);
         drop(g);
         self.mark_replacement_dirty(adapter_id, failed, replacement, &outcome);
         Some(outcome)
@@ -1339,6 +1351,7 @@ impl RegistryStore {
                 rec.tc_coolest_mirek,
                 rec.tc_warmest_mirek,
             ),
+            policy_mismatch: None,
         }
     }
 
@@ -1372,7 +1385,9 @@ impl PhysicalDeviceReadPort for RegistryStore {
     ) -> Option<PhysicalDeviceCoreView> {
         let g = self.read_inner();
         let rec = g.physical_devices.get(&(adapter_id, short_address))?;
-        Some(self.physical_device_to_core_view(adapter_id, short_address, rec))
+        let mut view = self.physical_device_to_core_view(adapter_id, short_address, rec);
+        view.policy_mismatch = device_policy_mismatch(&g, adapter_id, short_address, rec);
+        Some(view)
     }
 
     fn physical_device_attribute_section(
@@ -1459,6 +1474,19 @@ fn rebind_lamps(inner: &mut super::store::Inner, adapter_id: u8, from: u8, to: u
         }
     }
     moved
+}
+
+fn hand_over_exception(
+    inner: &mut super::store::Inner,
+    adapter_id: u8,
+    failed: u8,
+    replacement: u8,
+) -> bool {
+    let policies = &mut inner.policies;
+    if policies.excepts(adapter_id, failed) {
+        return policies.drop_exception(adapter_id, replacement);
+    }
+    policies.move_exception(adapter_id, replacement, failed)
 }
 
 fn hand_over_lamps(
