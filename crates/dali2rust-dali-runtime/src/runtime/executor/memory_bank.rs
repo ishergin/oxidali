@@ -241,7 +241,8 @@ enum ReadFailure {
 struct ResumeEvidence {
     first_byte_answered: bool,
     responded: bool,
-    not_silent: bool,
+    contended: bool,
+    transport: Option<SemanticDaliError>,
     silences: u8,
     telling: u8,
     idle: u8,
@@ -251,7 +252,8 @@ impl ResumeEvidence {
     const NONE: Self = Self {
         first_byte_answered: false,
         responded: false,
-        not_silent: false,
+        contended: false,
+        transport: None,
         silences: 0,
         telling: 0,
         idle: 0,
@@ -262,7 +264,10 @@ impl ResumeEvidence {
         let silent = failure == ReadFailure::Silent;
         self.first_byte_answered |= at > resume;
         self.responded |= answered;
-        self.not_silent |= !silent;
+        self.contended |= matches!(failure, ReadFailure::Contended { .. });
+        if let ReadFailure::Failed(error) = failure {
+            self.transport = Some(error);
+        }
         self.silences += u8::from(silent && silence_may_end_bank(at));
         if at > resume || answered || silent {
             self.telling += 1;
@@ -443,7 +448,7 @@ impl ChunkCursor {
             return Ok(Some(ReadStop::BankEnded));
         }
         if self.evidence.exhausted() {
-            return give_up(failure, self.evidence).map(Some);
+            return Err(give_up(self.evidence));
         }
         Ok(None)
     }
@@ -451,14 +456,12 @@ impl ChunkCursor {
 
 // IEC 62386-101 §8.2.5
 // DiiA 252 §9.2.2
-fn give_up(failure: ReadFailure, evidence: ResumeEvidence) -> Result<ReadStop, SemanticDaliError> {
-    match failure {
-        _ if evidence.first_byte_answered && !evidence.not_silent => {
-            Err(SemanticDaliError::OperationFailed(MEMORY_LATCH_LOST))
-        }
-        _ if !evidence.not_silent => Err(SemanticDaliError::OperationFailed(MEMORY_LOCATION_UNANSWERED)),
-        ReadFailure::Failed(error) if !evidence.responded => Err(error),
-        _ => Err(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
+fn give_up(evidence: ResumeEvidence) -> SemanticDaliError {
+    match evidence {
+        ResumeEvidence { contended: true, .. } => SemanticDaliError::OperationFailed(BUS_CONTENDED),
+        ResumeEvidence { transport: Some(error), .. } => error,
+        ResumeEvidence { first_byte_answered: true, .. } => SemanticDaliError::OperationFailed(MEMORY_LATCH_LOST),
+        _ => SemanticDaliError::OperationFailed(MEMORY_LOCATION_UNANSWERED),
     }
 }
 

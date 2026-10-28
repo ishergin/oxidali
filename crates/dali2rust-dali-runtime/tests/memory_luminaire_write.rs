@@ -92,6 +92,7 @@ enum Trigger {
     After(u16),
     ReadAt(u8, u8),
     ReadAfter(u16, (u8, u8)),
+    ReadScript(Option<u16>, (u8, u8), Vec<Interruption>),
     Script(u16, Vec<(u16, Interruption)>),
 }
 
@@ -149,19 +150,13 @@ impl Interrupting {
         match &mut self.trigger {
             Trigger::Frame(at) => frame == *at,
             Trigger::Nth(at) => self.sent == *at,
-            Trigger::From(at) => {
-                self.started |= frame == *at;
-                self.started
-            }
-            Trigger::After(at) => {
-                let fires = self.started;
-                self.started |= frame == *at;
-                fires
-            }
+            Trigger::From(at) => passed(&mut self.started, frame == *at),
+            Trigger::After(at) => passed_before(&mut self.started, frame == *at),
             Trigger::ReadAt(bank, offset) => read == Some((*bank, *offset)),
-            Trigger::ReadAfter(after, at) => {
-                self.started |= frame == *after;
-                self.started && read == Some(*at)
+            Trigger::ReadAfter(after, at) => passed(&mut self.started, frame == *after) && read == Some(*at),
+            Trigger::ReadScript(after, at, steps) => {
+                let due = passed(&mut self.started, after.is_none_or(|after| frame == after)) && read == Some(*at);
+                due && next_step(&mut self.interruptions, steps)
             }
             Trigger::Script(after, steps) => script_due(&mut self.started, &mut self.interruptions, (*after, steps), frame),
         }
@@ -203,6 +198,25 @@ impl Interrupting {
         let lost = self.interrupt();
         outcome.map(|heard| if lost { TransferOutcome::NoAnswer } else { heard })
     }
+}
+
+fn passed(started: &mut bool, now: bool) -> bool {
+    *started |= now;
+    *started
+}
+
+fn passed_before(started: &mut bool, now: bool) -> bool {
+    let before = *started;
+    *started |= now;
+    before
+}
+
+fn next_step(interruptions: &mut Vec<Interruption>, steps: &mut Vec<Interruption>) -> bool {
+    let due = !steps.is_empty();
+    if due {
+        *interruptions = vec![steps.remove(0)];
+    }
+    due
 }
 
 fn script_due(
@@ -964,6 +978,31 @@ fn a_read_back_silent_at_0x02_through_its_budget_is_unanswered_not_contended() {
 }
 
 const FORMAT_ID_SECOND_BYTE: u8 = part251::CONTENT_FORMAT_ID_OFFSET + 1;
+
+fn a_send_failure_then_silences() -> Vec<Interruption> {
+    vec![Interruption::SendFailed, Interruption::LostAnswer, Interruption::LostAnswer, Interruption::LostAnswer]
+}
+
+// IEC 62386-102 §9.10.2, Table 8
+#[test]
+fn a_send_failure_among_silences_at_0x02_fails_each_read_as_an_operation_failure_not_contention() {
+    let field_byte = special(SpecialCommand::WriteMemoryLocation(YEAR));
+    let reads = [
+        (None, IDENTITY_BANK, IDENTITY_SUBJECT),
+        (None, PROFILE_BANK, HEADER_SUBJECT),
+        (Some(field_byte), PROFILE_BANK, READBACK_SUBJECT),
+    ];
+    for (after, bank, subject) in reads {
+        let trigger = Trigger::ReadScript(after, (bank, ALWAYS_ANSWERED_OFFSET), a_send_failure_then_silences());
+        let (outcome, _) = write_under(YieldGranularity::Step, trigger, &[], &year(YEAR));
+
+        assert_eq!(
+            shape(outcome.result),
+            failure(ErrorCode::OperationFailed, subject),
+            "no other master showed itself, and the transport failed"
+        );
+    }
+}
 
 fn send_failures(trigger: Trigger) -> (Outcome, SimDaliTransport) {
     write_under(YieldGranularity::Step, trigger, &[Interruption::SendFailed], &year(YEAR))

@@ -645,21 +645,41 @@ fn a_silence_at_a_latched_values_first_byte_after_it_answered_is_no_end_of_bank(
 
 const TRANSPORT_FAILED: &str = "dali_transport_error";
 
+const LATCH_ATTEMPTS: usize = MEMORY_READ_LOCATION_RETRIES as usize + 1;
+
 fn expect_latch_broken_by(mock: &MockDaliTransport, short: u8, failure: ReadAttempt) {
+    expect_latch_broken_by_each(mock, short, &[failure; LATCH_ATTEMPTS]);
+}
+
+fn expect_latch_broken_by_each(mock: &MockDaliTransport, short: u8, failures: &[ReadAttempt]) {
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
     expect_prepare(mock, short, SOURCE_DIAGNOSTICS, 0x04);
     expect_pointer_check(mock, short, SOURCE_DIAGNOSTICS, Some(0x04));
-    for attempt in 0..=MEMORY_READ_LOCATION_RETRIES {
-        mock.expect_forward_frame_with_backward(read, Some(0xA1));
-        match failure {
-            Violated => mock.expect_forward_frame_corrupted_in_window(read),
-            BusBusy => mock.expect_forward_frame_bus_busy(read),
-            _ => mock.expect_forward_frame_send_error(read),
-        }
-        if attempt < MEMORY_READ_LOCATION_RETRIES {
+    for (index, failure) in failures.iter().copied().enumerate() {
+        if index > 0 {
             expect_rearmed_chunk(mock, short, SOURCE_DIAGNOSTICS, 0x04);
         }
+        mock.expect_forward_frame_with_backward(read, Some(0xA1));
+        expect_attempt(mock, read, failure);
     }
+}
+
+// DiiA 252 §9.2.2
+#[test]
+fn a_latched_value_broken_by_a_transport_error_then_silence_is_the_transport_error() {
+    let mock = MockDaliTransport::new();
+    expect_latch_broken_by_each(&mock, 3, &[TransportFailed, Silent, Silent]);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, 3, SOURCE_DIAGNOSTICS, 0x04, 3);
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(TRANSPORT_FAILED)),
+        "no frame of another master was seen, and the transport failed"
+    );
+    assert!(execution.bytes.is_empty());
+    assert_script_consumed(&transport);
 }
 
 // DiiA 252 §9.2.2
@@ -756,7 +776,7 @@ fn a_violation_at_the_reserved_location_is_read_again_not_taken_as_its_silence()
     assert_script_consumed(&transport);
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum ReadAttempt {
     Silent,
     ContendedAnswer,
@@ -766,27 +786,35 @@ enum ReadAttempt {
     TransportFailed,
 }
 
-fn expect_attempts_at_3(mock: &MockDaliTransport, short: u8, attempts: &[ReadAttempt]) {
+fn expect_attempt(mock: &MockDaliTransport, read: u16, attempt: ReadAttempt) {
+    match attempt {
+        ReadAttempt::Silent => mock.expect_forward_frame_with_backward(read, None),
+        ReadAttempt::ContendedAnswer => {
+            mock.expect_forward_frame_with_backward_contended(read, Some(0x55));
+        }
+        ReadAttempt::ContendedSilence => {
+            mock.expect_forward_frame_with_backward_contended(read, None);
+        }
+        ReadAttempt::Violated => mock.expect_forward_frame_corrupted_in_window(read),
+        ReadAttempt::BusBusy => mock.expect_forward_frame_bus_busy(read),
+        ReadAttempt::TransportFailed => mock.expect_forward_frame_send_error(read),
+    }
+}
+
+fn expect_attempts_at(mock: &MockDaliTransport, (short, offset): (u8, u8), attempts: &[ReadAttempt]) {
     let read = short_raw_query_frame(short_address(short), READ_MEMORY_LOCATION_OPCODE);
-    expect_prepare(mock, short, 0, 3);
-    expect_pointer_check(mock, short, 0, Some(3));
+    expect_prepare(mock, short, 0, offset);
+    expect_pointer_check(mock, short, 0, Some(offset));
     for (index, attempt) in attempts.iter().copied().enumerate() {
         if index > 0 {
-            expect_rearmed_chunk(mock, short, 0, 3);
+            expect_rearmed_chunk(mock, short, 0, offset);
         }
-        match attempt {
-            ReadAttempt::Silent => mock.expect_forward_frame_with_backward(read, None),
-            ReadAttempt::ContendedAnswer => {
-                mock.expect_forward_frame_with_backward_contended(read, Some(0x55));
-            }
-            ReadAttempt::ContendedSilence => {
-                mock.expect_forward_frame_with_backward_contended(read, None);
-            }
-            ReadAttempt::Violated => mock.expect_forward_frame_corrupted_in_window(read),
-            ReadAttempt::BusBusy => mock.expect_forward_frame_bus_busy(read),
-            ReadAttempt::TransportFailed => mock.expect_forward_frame_send_error(read),
-        }
+        expect_attempt(mock, read, attempt);
     }
+}
+
+fn expect_attempts_at_3(mock: &MockDaliTransport, short: u8, attempts: &[ReadAttempt]) {
+    expect_attempts_at(mock, (short, 3), attempts);
 }
 
 // IEC 62386-101 §8.2.5
@@ -841,6 +869,44 @@ fn one_clean_silence_among_contended_reads_is_no_end_of_bank() {
         );
         assert_script_consumed(&transport);
     }
+}
+
+// IEC 62386-101 §8.2.5
+#[test]
+fn contention_seen_at_a_location_outranks_a_transport_error_there() {
+    let attempts: [&[ReadAttempt]; 2] =
+        [&[Violated, TransportFailed, TransportFailed, TransportFailed], &[BusBusy, TransportFailed, TransportFailed]];
+    for attempts in attempts {
+        let mock = MockDaliTransport::new();
+        expect_attempts_at_3(&mock, 5, attempts);
+
+        let (transport, mut controller) = setup_controller(mock);
+        let execution = read_memory_bank(&mut controller, 5, 0, 3, 1);
+
+        assert_eq!(
+            execution.error,
+            Some(SemanticDaliError::OperationFailed(BUS_CONTENDED)),
+            "another master showed itself there: {attempts:?}"
+        );
+        assert_script_consumed(&transport);
+    }
+}
+
+// IEC 62386-102 §9.10.2, Table 8
+#[test]
+fn a_transport_error_among_silences_at_0x02_is_the_transport_error_not_contention() {
+    let mock = MockDaliTransport::new();
+    expect_attempts_at(&mock, (5, ALWAYS_ANSWERED_OFFSET as u8), &[TransportFailed, Silent, Silent, Silent]);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = read_memory_bank(&mut controller, 5, 0, ALWAYS_ANSWERED_OFFSET, 1);
+
+    assert_eq!(
+        execution.error,
+        Some(SemanticDaliError::OperationFailed(TRANSPORT_FAILED)),
+        "no frame of another master was seen, and the transport failed"
+    );
+    assert_script_consumed(&transport);
 }
 
 #[test]

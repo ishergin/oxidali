@@ -247,15 +247,17 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   the bank there — never at 0x02, which every implemented bank answers (102 Table 8).
   Attempts that showed something (a silence, a violation, a contended answer, a failure
   inside a latched value) and attempts the bus never let through (busy, a contended
-  silence, a transport error) each have a budget of three. When one runs out and every
-  attempt there failed in a clean silence, the read fails `memory_bank_latch_lost` inside
-  a latched value whose first byte had answered and `memory_bank_location_unanswered`
-  anywhere else, which only 0x02 reaches: silence is never reported as contention.
-  Otherwise a transport error on the last attempt is returned unless the offset had
-  answered, and anything else fails `bus_contended`. An attribute read counts
-  `bus_contended` and `memory_bank_read_misaligned` as contended aborts and both
-  silences as transport aborts, so a silence inside a bank read never declares a device
-  absent.
+  silence, a transport error) each have a budget of three. When one runs out, the read
+  fails by what the attempts there showed, in this order: `bus_contended` if any showed
+  another master (a violation, a busy bus, a foreign frame in the exchange); else the
+  transport error, if the transport failed; else, every attempt having been a clean
+  silence, `memory_bank_latch_lost` inside a latched value whose first byte had answered
+  and `memory_bank_location_unanswered` anywhere else, which only 0x02 reaches. So
+  silence is never reported as contention, and a transport failure is reported as
+  neither. An attribute read counts `bus_contended` and `memory_bank_read_misaligned` as
+  contended aborts, and the silences (`memory_bank_latch_lost`,
+  `memory_bank_location_unanswered`, `memory_bank_pointer_unconfirmed`) as transport
+  aborts, so a silence inside a bank read never declares a device absent.
 
 ## Faults and identification
 
@@ -384,7 +386,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
     stopped, and only then `bank1_readback`.
 - A transport failure, a frame the transport could not send, is neither silence nor
   another master: at any step it fails `operation_failed`, with the message that step
-  names for any other failure.
+  names for any other failure, unless the same read location also showed another
+  master, which outranks it (§Reading answers).
 
 ## Addressing control gear
 
