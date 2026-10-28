@@ -134,7 +134,7 @@ fn status_queries_to(world: &DaliWorld, short: u8) -> usize {
         .count()
 }
 
-// PWR-001 PWR-002 PWR-003 PWR-004 PWR-005 PWR-006 PWR-007
+// PWR-001 PWR-002 PWR-003 PWR-004 PWR-005 PWR-006 PWR-007 PWR-008
 #[given(regex = r"^the controller probes the bus every (\d+) ms$")]
 async fn given_probe_period(world: &mut DaliWorld, period_ms: u64) {
     world.restart_server_with_probe_period(Duration::from_millis(period_ms));
@@ -142,7 +142,7 @@ async fn given_probe_period(world: &mut DaliWorld, period_ms: u64) {
     answer_probe(&mock, Some(YES), None);
 }
 
-// PWR-001 PWR-002 PWR-003 PWR-004 PWR-005
+// PWR-001 PWR-002 PWR-003 PWR-004 PWR-005 PWR-008
 #[given("the power-cycle watch is switched on")]
 async fn given_watch_on(world: &mut DaliWorld) {
     let body = serde_json::to_vec(&json!({ "power_cycle_watch": true })).expect("settings body");
@@ -154,7 +154,7 @@ async fn given_watch_on(world: &mut DaliWorld) {
     );
 }
 
-// PWR-002 PWR-003 PWR-004 PWR-005 PWR-006
+// PWR-002 PWR-003 PWR-004 PWR-005 PWR-006 PWR-008
 #[given("virtual lamps 1 and 2 are bound to physical devices 0 and 1")]
 async fn given_two_bound_lamps(world: &mut DaliWorld) {
     for (lamp_id, short) in [(1u8, 0u8), (2, 1)] {
@@ -183,7 +183,7 @@ async fn drive_and_switch_off(world: &mut DaliWorld) {
     }
 }
 
-// PWR-002 PWR-004 PWR-005 PWR-006
+// PWR-002 PWR-004 PWR-005 PWR-006 PWR-008
 #[when("physical device 0 comes back from a power cycle")]
 async fn when_device_0_power_cycles(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -201,7 +201,7 @@ async fn when_device_0_power_cycles_without_control(world: &mut DaliWorld) {
     answer_probe(&mock, None, Some(YES));
 }
 
-// PWR-005
+// PWR-005 PWR-008
 #[when("no gear reports a power cycle any more")]
 async fn when_no_gear_reports_power_cycle(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -216,6 +216,12 @@ async fn when_probed_more_times(world: &mut DaliWorld, count: u64) {
     let target = completed_probes(port) + count;
     let reached = probe_within(WAIT, || completed_probes(port) >= target);
     assert!(reached, "the bus was not probed {count} more times");
+}
+
+// PWR-008
+#[when(regex = r"^the controller has heard a YES to the power-failure query (\d+) times$")]
+async fn when_power_failure_heard(world: &mut DaliWorld, answers: u64) {
+    wait_for_counter(world.server_port(), "health_probes_power_failure", answers);
 }
 
 // PWR-002 PWR-004 PWR-005 PWR-006
@@ -268,6 +274,13 @@ async fn then_bus_silent(world: &mut DaliWorld, window_ms: u64) {
         "the bus should stay silent: {:#06x?}",
         world.dali_mock().lock().expect("mock lock").sent_frames()
     );
+}
+
+// PWR-008
+#[then(regex = r"^the poller should eventually ask physical device (\d+) for its status$")]
+async fn then_device_asked_for_status(world: &mut DaliWorld, short: u8) {
+    let asked = probe_within(WAIT, || status_queries_to(world, short) > 0);
+    assert!(asked, "physical device {short} was never asked for its status");
 }
 
 // PWR-003
