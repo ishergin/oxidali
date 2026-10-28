@@ -881,6 +881,18 @@ enum Audience {
 }
 
 // IEC 62386-102 §11.4.7, Table 93
+fn stops_identification(special: SpecialCommand) -> bool {
+    !matches!(
+        special,
+        SpecialCommand::Initialise(_)
+            | SpecialCommand::Ping
+            | SpecialCommand::Compare
+            | SpecialCommand::VerifyShortAddress(_)
+            | SpecialCommand::QueryShortAddress
+            | SpecialCommand::PhysicalSelection
+    )
+}
+
 // IEC 62386-102 §9.10.5
 fn keeps_write_enabled(decoded: Option<&DaliCommand>) -> bool {
     matches!(
@@ -897,18 +909,6 @@ fn keeps_write_enabled(decoded: Option<&DaliCommand>) -> bool {
                 | StandardCommand::QueryContentDtr2,
             ..
         })
-    )
-}
-
-fn stops_identification(special: SpecialCommand) -> bool {
-    !matches!(
-        special,
-        SpecialCommand::Initialise(_)
-            | SpecialCommand::Ping
-            | SpecialCommand::Compare
-            | SpecialCommand::VerifyShortAddress(_)
-            | SpecialCommand::QueryShortAddress
-            | SpecialCommand::PhysicalSelection
     )
 }
 
