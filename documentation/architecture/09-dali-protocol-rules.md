@@ -311,10 +311,10 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   - `device_identity_unknown` — bank 0 was not read from `0x00` through `0x1A`, or
     the read ended early; reading it again helps;
   - `device_identity_unprovable` — bank 0 declares in its byte `0x00` a last offset
-    below `0x1A`, or its GTIN or identification number is all MASK. MASK is never a value, an unprogrammed identity
-    tells no gear from another, and reading the bank again does not change it; such a
-    gear is not written. A gear the registry knew whose identity now reads MASK is
-    `device_identity_changed`.
+    below `0x1A`, or its GTIN, identification number or logical unit index is all MASK.
+    MASK is never a value, an unprogrammed identity tells no gear from another, and
+    reading the bank again does not change it; such a gear is not written. A gear the
+    registry knew whose identity now reads MASK is `device_identity_changed`.
 - A read before or after the write proves something only when it is whole. A bank read
   ends early, with no error, at two silences on one location (§Reading answers); such
   an end counts only where the bank's own byte `0x00` puts it. So the identity window

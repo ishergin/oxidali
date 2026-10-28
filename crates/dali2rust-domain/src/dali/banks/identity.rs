@@ -46,13 +46,14 @@ impl IdentityRead {
         }
         let gtin = within(window, GTIN_OFFSET, GTIN_LEN);
         let number = within(window, IDENTIFICATION_NUMBER_OFFSET, IDENTIFICATION_NUMBER_LEN);
-        if is_mask(gtin) || is_mask(number) {
+        let index = within(window, LOGICAL_GEAR_INDEX_OFFSET, 1);
+        if is_mask(gtin) || is_mask(number) || is_mask(index) {
             return Self::Unprovable;
         }
         Self::Known(DeviceIdentity {
             gtin: number_of(gtin),
             identification_number: number_of(number),
-            logical_gear_index: within(window, LOGICAL_GEAR_INDEX_OFFSET, 1).first().copied().unwrap_or(MASK),
+            logical_gear_index: index.first().copied().unwrap_or(MASK),
         })
     }
 

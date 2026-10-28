@@ -92,6 +92,13 @@ fn an_unprogrammed_gtin_or_identification_number_cannot_tell_two_gear_apart() {
     assert_eq!(IdentityRead::of_window(&number), IdentityRead::Unprovable, "a real GTIN before a MASK number");
 }
 
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn a_logical_unit_index_that_reads_mask_cannot_tell_two_units_apart() {
+    let index = masked(LOGICAL_GEAR_INDEX_OFFSET, 1);
+    assert_eq!(IdentityRead::of_window(&index), IdentityRead::Unprovable, "MASK is never an index");
+}
+
 #[test]
 fn a_mask_byte_inside_a_programmed_number_is_part_of_it() {
     let one_byte = masked(IDENTIFICATION_NUMBER_OFFSET + IDENTIFICATION_NUMBER_LEN as u8 - 1, 1);
