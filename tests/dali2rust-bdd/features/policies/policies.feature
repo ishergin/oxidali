@@ -126,3 +126,135 @@ Feature: Policies — what a luminaire does without a controller
     When I PATCH JSON {"manages_anything":true} to "/api/v1/policies"
     Then the response status should be 422
     And the JSON error should be "unsupported_field"
+
+  @id:POLICY-013 @wip
+  Scenario: Exceptions start empty and a PATCH stores the excepted devices in address order
+    Given adapter 0 has discovered physical devices 0 and 1
+    When I send a GET request to "/api/v1/policies"
+    Then the JSON field "exceptions" should equal []
+    When I PATCH JSON {"exceptions":[{"adapter_id":0,"short_address":1},{"adapter_id":0,"short_address":0}]} to "/api/v1/policies"
+    Then the response status should be 200
+    And the JSON field "exceptions" should equal [{"adapter_id":0,"short_address":0},{"adapter_id":0,"short_address":1}]
+    When I send a GET request to "/api/v1/policies"
+    Then the JSON field "exceptions" should equal [{"adapter_id":0,"short_address":0},{"adapter_id":0,"short_address":1}]
+
+  @id:POLICY-014 @wip
+  Scenario: An exception naming a device the registry does not hold is refused
+    Given adapter 0 has discovered physical devices 0 and 1
+    When I PATCH JSON {"exceptions":[{"adapter_id":0,"short_address":7}]} to "/api/v1/policies"
+    Then the response status should be 422
+    And the JSON error should be "unknown_device"
+    When I send a GET request to "/api/v1/policies"
+    Then the JSON field "exceptions" should equal []
+
+  @id:POLICY-015 @wip
+  Scenario: A device named twice is refused rather than stored once
+    Given adapter 0 has discovered physical devices 0 and 1
+    When I PATCH JSON {"exceptions":[{"adapter_id":0,"short_address":1},{"adapter_id":0,"short_address":1}]} to "/api/v1/policies"
+    Then the response status should be 422
+    And the JSON error should be "duplicate_exception"
+
+  @id:POLICY-016 @wip
+  Scenario: A list longer than the limit is refused before any device is looked up
+    When I PATCH a policy exception list naming 33 devices
+    Then the response status should be 422
+    And the JSON error should be "too_many_exceptions"
+    When I PATCH a policy exception list naming 32 devices
+    Then the response status should be 422
+    And the JSON error should be "unknown_device"
+
+  @id:POLICY-017 @wip
+  Scenario: An apply writes nothing to an excepted device and names it as skipped
+    Given adapter 0 has discovered physical devices 0 and 1
+    When I PATCH JSON {"system_failure_level":0,"power_on_level":0,"exceptions":[{"adapter_id":0,"short_address":1}]} to "/api/v1/policies"
+    Then the response status should be 200
+    Given a policy write script setting both levels to 0 on short address 0 only
+    When I send a POST request to "/api/v1/policies/apply" with empty body
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the policy-apply operation result should list written short addresses [0] and skipped short addresses [1]
+    And every skipped short address in the policy-apply operation result should give the reason "policy_exception"
+    And the DALI mock transport should have stored the power-on level before the system-failure level on short address 0
+    And the DALI mock transport should have sent no SET POWER ON LEVEL or SET SYSTEM FAILURE LEVEL to short address 1
+    And all scripted DALI exchanges should be consumed without errors
+
+  @id:POLICY-018 @wip
+  Scenario: A discovery-started apply skips an excepted device as well
+    Given adapter 0 has discovered physical devices 0 and 1
+    When I PATCH JSON {"system_failure_level":0,"power_on_level":0,"apply_on_discovery":true,"exceptions":[{"adapter_id":0,"short_address":1}]} to "/api/v1/policies"
+    Then the response status should be 200
+    Given a discovery script for physical devices 0 and 1 followed by a policy write setting both levels to 0 on short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the policy apply started by the discovery eventually succeeds
+    And the policy-apply operation result should list written short addresses [0] and skipped short addresses [1]
+    And the DALI mock transport should have stored the power-on level before the system-failure level on short address 0
+    And the DALI mock transport should have sent no SET POWER ON LEVEL or SET SYSTEM FAILURE LEVEL to short address 1
+    And all scripted DALI exchanges should be consumed without errors
+
+  @id:POLICY-019 @wip
+  Scenario: A read that finds a managed level drifted flags the device, and a read that matches clears it
+    Given adapter 0 has discovered physical devices 0 and 1
+    When I PATCH JSON {"system_failure_level":254,"power_on_level":100} to "/api/v1/policies"
+    Then the response status should be 200
+    Given a common-102 attribute-read script where short address 0 holds power-on level 50 and system-failure level 254
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "common_102" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
+    Then the JSON pointer "/policy_mismatch" should be true
+    Given a common-102 attribute-read script where short address 0 holds power-on level 100 and system-failure level 254
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "common_102" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
+    Then the JSON pointer "/policy_mismatch" should be false
+
+  @id:POLICY-020 @wip
+  Scenario: A confirmed write of the policy clears the drift flag a read raised
+    Given adapter 0 has discovered physical devices 0 and 1
+    When I PATCH JSON {"system_failure_level":0,"power_on_level":0} to "/api/v1/policies"
+    Then the response status should be 200
+    Given a common-102 attribute-read script where short address 0 holds power-on level 50 and system-failure level 0
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "common_102" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
+    Then the JSON pointer "/policy_mismatch" should be true
+    Given a policy write script setting both levels to 0 on short addresses 0 and 1
+    When I send a POST request to "/api/v1/policies/apply" with empty body
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
+    Then the JSON pointer "/policy_mismatch" should be false
+
+  @id:POLICY-021 @wip
+  Scenario: The drift flag is absent while the policy manages nothing and for an excepted device
+    Given adapter 0 has discovered physical devices 0 and 1
+    Given a common-102 attribute-read script where short address 0 holds power-on level 50 and system-failure level 254
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "common_102" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
+    Then the JSON pointer "/policy_mismatch" should be absent
+    When I PATCH JSON {"power_on_level":100} to "/api/v1/policies"
+    Then the response status should be 200
+    When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
+    Then the JSON pointer "/policy_mismatch" should be true
+    When I PATCH JSON {"exceptions":[{"adapter_id":0,"short_address":0}]} to "/api/v1/policies"
+    Then the response status should be 200
+    When I send a GET request to "/api/v1/adapters/0/physical-devices/0"
+    Then the JSON pointer "/policy_mismatch" should be absent
+
+  @id:POLICY-022 @wip
+  Scenario: A policy change announces on the WebSocket each device whose drift flag it moved
+    Given adapter 0 has discovered physical devices 0 and 1
+    Given a common-102 attribute-read script where short address 0 holds power-on level 50 and system-failure level 254
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "common_102" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given an open WebSocket connection
+    And the WebSocket client is subscribed to "physical_devices"
+    When I PATCH JSON {"power_on_level":100} to "/api/v1/policies"
+    Then the response status should be 200
+    And the WebSocket client should receive a "PhysicalDeviceChangedEvent" frame on channel "physical_devices" whose payload "short_address" is 0
