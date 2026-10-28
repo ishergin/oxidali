@@ -10,6 +10,7 @@ use crate::runtime::executor::helpers::{send_standard_response, SemanticDaliErro
 pub struct BusHealthProbe {
     pub control_answered: bool,
     pub lamp_failure: BusHealthVerdict,
+    pub power_cycle_seen: bool,
 }
 
 pub fn probe_bus_health(
@@ -25,9 +26,15 @@ pub fn probe_bus_health(
         DaliAddress::Broadcast,
         StandardCommand::QueryLampFailure,
     )?;
+    let power_failure = send_standard_response(
+        controller,
+        DaliAddress::Broadcast,
+        StandardCommand::QueryPowerFailure,
+    )?;
     Ok(BusHealthProbe {
         control_answered: control.is_yes(),
         lamp_failure: verdict_of(lamp_failure),
+        power_cycle_seen: power_failure.is_yes(),
     })
 }
 
@@ -71,7 +78,7 @@ mod tests {
         .raw()
     }
 
-    fn probe_over(control: Option<u8>, failure: Option<u8>) -> BusHealthProbe {
+    fn probe_over(control: Option<u8>, failure: Option<u8>, power_failure: Option<u8>) -> BusHealthProbe {
         let mock = MockDaliTransport::new();
         mock.expect_forward_frame_with_backward(
             broadcast_frame(StandardCommand::QueryControlGearPresent),
@@ -80,6 +87,10 @@ mod tests {
         mock.expect_forward_frame_with_backward(
             broadcast_frame(StandardCommand::QueryLampFailure),
             failure,
+        );
+        mock.expect_forward_frame_with_backward(
+            broadcast_frame(StandardCommand::QueryPowerFailure),
+            power_failure,
         );
         let transport = Arc::new(Mutex::new(mock));
         let mut controller = DaliController::new(Arc::clone(&transport), Box::new(StdClock::new()));
@@ -90,20 +101,22 @@ mod tests {
             vec![
                 broadcast_frame(StandardCommand::QueryControlGearPresent),
                 broadcast_frame(StandardCommand::QueryLampFailure),
+                broadcast_frame(StandardCommand::QueryPowerFailure),
             ],
-            "two broadcast frames, control first"
+            "three broadcast frames, control first, power failure last"
         );
         assert_eq!(guard.scripted_exchanges_remaining(), 0);
         probe
     }
 
     #[test]
-    fn the_probe_is_two_broadcast_frames_with_the_control_first() {
+    fn the_probe_is_three_broadcast_frames_with_the_control_first() {
         assert_eq!(
-            probe_over(Some(0xFF), None),
+            probe_over(Some(0xFF), None, None),
             BusHealthProbe {
                 control_answered: true,
                 lamp_failure: BusHealthVerdict::Clear,
+                power_cycle_seen: false,
             }
         );
     }
@@ -111,11 +124,26 @@ mod tests {
     #[test]
     fn a_silent_control_voids_a_clear_reading_rather_than_suppressing_it() {
         assert_eq!(
-            probe_over(None, None),
+            probe_over(None, None, None),
             BusHealthProbe {
                 control_answered: false,
                 lamp_failure: BusHealthVerdict::Clear,
+                power_cycle_seen: false,
             }
+        );
+    }
+
+    // IEC 62386-102 §11.5.15
+    #[test]
+    fn any_answer_to_the_power_failure_query_is_a_power_cycle_seen() {
+        assert!(probe_over(Some(0xFF), None, Some(0xFF)).power_cycle_seen);
+        assert!(
+            probe_over(Some(0xFF), None, Some(0x5A)).power_cycle_seen,
+            "two gear answering YES at once overlap into a garbled byte, still a YES"
+        );
+        assert!(
+            !probe_over(Some(0xFF), Some(0xFF), None).power_cycle_seen,
+            "a lamp failure is not a power cycle"
         );
     }
 }

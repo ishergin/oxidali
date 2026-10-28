@@ -413,6 +413,7 @@ fn handle_bus_health_probe(
             registry_adapter_id: cmd.registry_adapter_id,
             control_answered: probe.control_answered,
             lamp_failure: probe.lamp_failure,
+            power_cycle_seen: probe.power_cycle_seen,
         },
     );
     publish_event_typed(publisher, ev);

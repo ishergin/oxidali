@@ -190,6 +190,7 @@ pub(crate) struct PollerWorkerDeps {
     pub correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
     pub hold: Arc<dali2rust_platform::firmware::MaintenanceHold>,
     pub role: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
+    pub config: dali2rust_poller_runtime::PollerConfig,
 }
 
 pub(crate) struct RulesWorkerDeps {
@@ -472,15 +473,18 @@ fn spawn_poller_worker_thread(
     let handle = dali2rust_poller_runtime::spawn_poller_worker(
         ev_rx,
         conf_rx,
-        publisher.clone(),
-        poller.read_port,
-        poller.correlation,
-        bus_id,
-        adapter_count,
-        Arc::clone(&counters),
-        interactive,
-        poller.role,
-        poller.hold,
+        dali2rust_poller_runtime::PollerWiring {
+            publisher: publisher.clone(),
+            read_port: poller.read_port,
+            correlation: poller.correlation,
+            bus_id,
+            adapter_count,
+            counters: Arc::clone(&counters),
+            role: poller.role,
+            interactive,
+            hold: poller.hold,
+            config: poller.config,
+        },
     );
     (handle, counters)
 }

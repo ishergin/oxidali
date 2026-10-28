@@ -16,7 +16,7 @@ fn poller_counter(port: u16, name: &str) -> u64 {
         .unwrap_or(0)
 }
 
-fn probe_within(budget: Duration, mut probe: impl FnMut() -> bool) -> bool {
+pub(crate) fn probe_within(budget: Duration, mut probe: impl FnMut() -> bool) -> bool {
     let start = std::time::Instant::now();
     let tripped = std::cell::Cell::new(false);
     dali2rust_test_support::wait_until(
@@ -32,13 +32,13 @@ fn probe_within(budget: Duration, mut probe: impl FnMut() -> bool) -> bool {
     tripped.get()
 }
 
-fn poller_block(port: u16) -> Value {
+pub(crate) fn poller_block(port: u16) -> Value {
     fetch_json(port, "/api/v1/diagnostics")
         .map(|json| json["poller"].clone())
         .unwrap_or(Value::Null)
 }
 
-fn wait_for_counter(port: u16, name: &str, target: u64) {
+pub(crate) fn wait_for_counter(port: u16, name: &str, target: u64) {
     let reached = probe_within(WAIT, || poller_counter(port, name) >= target);
     assert!(
         reached,
@@ -109,7 +109,7 @@ async fn then_counter_increased(world: &mut DaliWorld, name: String) {
     wait_for_counter(port, &name, 1);
 }
 
-// POL-002
+// POL-002 PWR-001 PWR-003 PWR-004
 #[then(regex = r#"^the poller counter "([a-z_]+)" should be (\d+)$"#)]
 async fn then_counter_is(world: &mut DaliWorld, name: String, expected: u64) {
     let port = world.server_port();
@@ -201,7 +201,7 @@ async fn then_cycles_without_reads(world: &mut DaliWorld) {
     );
 }
 
-// POL-002
+// POL-002 PWR-001
 #[then("no addressed DALI frames should have reached the bus")]
 async fn then_no_addressed_frames(world: &mut DaliWorld) {
     let addressed: Vec<u16> = world

@@ -15,6 +15,8 @@ use dali2rust_contracts::msg::{
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{PollTargetView, PollerReadPort, PollerSettingsView};
 
+use super::power_cycle::{PollerConfig, PowerCycleWatch};
+
 const MAX_IDLE_WAIT: Duration = Duration::from_secs(1);
 const OUTSTANDING_ABANDON_TTL: Duration = Duration::from_secs(16 * 60);
 const MAX_CHARGEABLE_WAIT: Duration = Duration::from_secs(30);
@@ -39,6 +41,8 @@ pub struct PollerCounters {
     pub health_probes_one_failure: AtomicU32,
     pub health_probes_several_failures: AtomicU32,
     pub health_probes_expired: AtomicU32,
+    pub health_probes_power_failure: AtomicU32,
+    pub power_cycle_sweeps: AtomicU32,
     pub reads_completed: AtomicU32,
     pub reads_failed: AtomicU32,
     pub reads_preempted: AtomicU32,
@@ -59,21 +63,25 @@ struct DeviceCooldown {
     absent_strikes: u8,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReadPurpose {
+    Cycle,
+    PowerCycleSweep,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct PollTarget {
     adapter_id: u8,
     short_address: u8,
     groups_mask: u8,
     memory_banks: MemoryBankReadPreset,
+    purpose: ReadPurpose,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct Outstanding {
     correlation_id: u64,
-    adapter_id: u8,
-    short_address: u8,
-    groups_mask: u8,
-    memory_banks: MemoryBankReadPreset,
+    target: PollTarget,
     published_at: Instant,
     deadline: Instant,
 }
@@ -94,10 +102,13 @@ struct CorrelationTombstone {
 struct PollerState {
     settings: PollerSettingsView,
     queue: VecDeque<PollTarget>,
+    sweep_queue: VecDeque<PollTarget>,
     outstanding: Option<Outstanding>,
     probe_due: VecDeque<u8>,
     pending_probe: Option<PendingProbe>,
     probe_cursor: u8,
+    last_probe: Instant,
+    power_cycles: PowerCycleWatch,
     tombstones: VecDeque<CorrelationTombstone>,
     cooldown: HashMap<(u8, u8), DeviceCooldown>,
     bank_reads: HashMap<(u8, u8, u8), Instant>,
@@ -115,10 +126,13 @@ impl PollerState {
         Self {
             settings,
             queue: VecDeque::new(),
+            sweep_queue: VecDeque::new(),
             outstanding: None,
             probe_due: VecDeque::new(),
             pending_probe: None,
             probe_cursor: 0,
+            last_probe: now,
+            power_cycles: PowerCycleWatch::default(),
             tombstones: VecDeque::new(),
             cooldown: HashMap::new(),
             bank_reads: HashMap::new(),
@@ -132,43 +146,24 @@ impl PollerState {
     }
 }
 
-struct PollerDeps {
-    publisher: BusPublisher,
-    read_port: Arc<dyn PollerReadPort>,
-    correlation: Arc<CorrelationIdAllocator>,
-    bus_id: BusId,
-    adapter_count: u8,
-    counters: Arc<PollerCounters>,
-    role: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
-    interactive: Arc<dali2rust_platform::dali::WireActivity>,
-    hold: Arc<dali2rust_platform::firmware::MaintenanceHold>,
+pub struct PollerWiring {
+    pub publisher: BusPublisher,
+    pub read_port: Arc<dyn PollerReadPort>,
+    pub correlation: Arc<CorrelationIdAllocator>,
+    pub bus_id: BusId,
+    pub adapter_count: u8,
+    pub counters: Arc<PollerCounters>,
+    pub role: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
+    pub interactive: Arc<dali2rust_platform::dali::WireActivity>,
+    pub hold: Arc<dali2rust_platform::firmware::MaintenanceHold>,
+    pub config: PollerConfig,
 }
 
-#[allow(clippy::too_many_arguments, reason = "one param per wired dependency; a struct here would only move the list")]
 pub fn spawn_poller_worker(
     ev_rx: BusSubscriberRx,
     conf_rx: BusSubscriberRx,
-    publisher: BusPublisher,
-    read_port: Arc<dyn PollerReadPort>,
-    correlation: Arc<CorrelationIdAllocator>,
-    bus_id: BusId,
-    adapter_count: u8,
-    counters: Arc<PollerCounters>,
-    interactive: Arc<dali2rust_platform::dali::WireActivity>,
-    role: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
-    hold: Arc<dali2rust_platform::firmware::MaintenanceHold>,
+    deps: PollerWiring,
 ) -> std::thread::JoinHandle<()> {
-    let deps = PollerDeps {
-        publisher,
-        read_port,
-        correlation,
-        bus_id,
-        adapter_count,
-        counters,
-        interactive,
-        role,
-        hold,
-    };
     esp_thread::spawn_named_stack_in(
         c"poller",
         std_thread_stack::EVENT_WORKER_STACK,
@@ -177,14 +172,18 @@ pub fn spawn_poller_worker(
     )
 }
 
-fn run_loop(ev_rx: BusSubscriberRx, conf_rx: BusSubscriberRx, deps: PollerDeps) {
+fn run_loop(ev_rx: BusSubscriberRx, conf_rx: BusSubscriberRx, deps: PollerWiring) {
     let mut state = PollerState::boot(deps.read_port.poller_settings_view());
     loop {
         if Instant::now() >= state.next_cycle {
             start_cycle(&mut state, &deps);
         }
+        if Instant::now() >= state.last_probe + deps.config.probe_period {
+            start_probe_round(&mut state, &deps);
+        }
         let wait = state
             .next_cycle
+            .min(state.last_probe + deps.config.probe_period)
             .saturating_duration_since(Instant::now())
             .min(MAX_IDLE_WAIT);
         match ev_rx.recv_timeout(wait) {
@@ -214,25 +213,50 @@ fn probe_rota(cursor: u8, enabled_adapters: &[u8]) -> VecDeque<u8> {
         .collect()
 }
 
-fn start_cycle(state: &mut PollerState, deps: &PollerDeps) {
+fn start_cycle(state: &mut PollerState, deps: &PollerWiring) {
     deps.counters.cycles_total.fetch_add(1, Ordering::Relaxed);
     state.last_cycle = Instant::now();
     state.next_cycle = state.last_cycle + cycle_period(&state.settings);
     if !state.queue.is_empty() {
         deps.counters.window_deferred.fetch_add(1, Ordering::Relaxed);
     }
-    state.queue = if state.settings.enabled && deps.role.dali_settings_view().application_active {
+    let application_active = deps.role.dali_settings_view().application_active;
+    state.queue = if state.settings.enabled && application_active {
         let (queue, enabled_adapters) = select_targets(state, deps);
-        state.probe_due = probe_rota(state.probe_cursor, &enabled_adapters);
+        arm_probe_round(state, &enabled_adapters);
         queue
     } else {
         deps.counters.targets_excluded.store(0, Ordering::Relaxed);
-        state.probe_due.clear();
         VecDeque::new()
     };
+    if !application_active {
+        stand_down_power_cycle_watch(state);
+    }
 }
 
-fn publish_health_probe(state: &mut PollerState, deps: &PollerDeps) {
+fn start_probe_round(state: &mut PollerState, deps: &PollerWiring) {
+    if !deps.role.dali_settings_view().application_active {
+        state.last_probe = Instant::now();
+        stand_down_power_cycle_watch(state);
+        return;
+    }
+    let enabled_adapters: Vec<u8> = (0..deps.adapter_count)
+        .filter(|adapter_id| deps.read_port.list_poll_targets(*adapter_id).adapter_enabled)
+        .collect();
+    arm_probe_round(state, &enabled_adapters);
+}
+
+fn arm_probe_round(state: &mut PollerState, enabled_adapters: &[u8]) {
+    state.last_probe = Instant::now();
+    state.probe_due = probe_rota(state.probe_cursor, enabled_adapters);
+}
+
+fn stand_down_power_cycle_watch(state: &mut PollerState) {
+    state.probe_due.clear();
+    state.sweep_queue.clear();
+}
+
+fn publish_health_probe(state: &mut PollerState, deps: &PollerWiring) {
     let Some(adapter_id) = state.probe_due.pop_front() else {
         return;
     };
@@ -262,7 +286,7 @@ fn publish_health_probe(state: &mut PollerState, deps: &PollerDeps) {
     }
 }
 
-fn select_targets(state: &mut PollerState, deps: &PollerDeps) -> (VecDeque<PollTarget>, Vec<u8>) {
+fn select_targets(state: &mut PollerState, deps: &PollerWiring) -> (VecDeque<PollTarget>, Vec<u8>) {
     let mut queue = VecDeque::new();
     let mut listed: std::collections::HashSet<(u8, u8)> = std::collections::HashSet::new();
     let mut excluded: u32 = 0;
@@ -288,6 +312,7 @@ fn select_targets(state: &mut PollerState, deps: &PollerDeps) -> (VecDeque<PollT
                 short_address: target.short_address,
                 groups_mask,
                 memory_banks,
+                purpose: ReadPurpose::Cycle,
             });
         }
     }
@@ -319,9 +344,9 @@ fn rotate_after_cursor(
 }
 
 fn already_outstanding(state: &PollerState, adapter_id: u8, short_address: u8) -> bool {
-    state
-        .outstanding
-        .is_some_and(|o| o.adapter_id == adapter_id && o.short_address == short_address)
+    state.outstanding.is_some_and(|o| {
+        o.target.adapter_id == adapter_id && o.target.short_address == short_address
+    })
 }
 
 fn groups_mask_for(settings: &PollerSettingsView, target: &PollTargetView) -> u8 {
@@ -391,17 +416,16 @@ const INTERACTIVE_QUIET: Duration = Duration::from_millis(400);
 
 const BACKGROUND_WIRE_REST_MULTIPLE: u32 = 3;
 
-fn pump_queue(state: &mut PollerState, deps: &PollerDeps) {
+fn pump_queue(state: &mut PollerState, deps: &PollerWiring) {
     if !state.settings.enabled {
         state.queue.clear();
-        state.probe_due.clear();
-        return;
     }
     if deps.hold.engaged() {
         return;
     }
     let probe_ready = state.pending_probe.is_none() && !state.probe_due.is_empty();
-    let read_ready = state.outstanding.is_none() && !state.queue.is_empty();
+    let read_ready = state.outstanding.is_none()
+        && !(state.sweep_queue.is_empty() && state.queue.is_empty());
     if !probe_ready && !read_ready {
         return;
     }
@@ -417,13 +441,15 @@ fn pump_queue(state: &mut PollerState, deps: &PollerDeps) {
     if probe_ready {
         publish_health_probe(state, deps);
     }
-    if read_ready {
-        let target = state.queue.pop_front().expect("read_ready");
+    if let Some(target) = read_ready
+        .then(|| state.sweep_queue.pop_front().or_else(|| state.queue.pop_front()))
+        .flatten()
+    {
         publish_read(state, deps, target);
     }
 }
 
-fn charge_duty_deferral(state: &mut PollerState, deps: &PollerDeps) {
+fn charge_duty_deferral(state: &mut PollerState, deps: &PollerWiring) {
     if state.duty_deferred_for == Some(state.rest_until) {
         return;
     }
@@ -431,7 +457,7 @@ fn charge_duty_deferral(state: &mut PollerState, deps: &PollerDeps) {
     deps.counters.duty_deferred.fetch_add(1, Ordering::Relaxed);
 }
 
-fn charge_interactive_deferral(state: &mut PollerState, deps: &PollerDeps) {
+fn charge_interactive_deferral(state: &mut PollerState, deps: &PollerWiring) {
     if state.interactive_deferred_open {
         return;
     }
@@ -446,7 +472,7 @@ fn charge_wire_time(state: &mut PollerState, cost: Duration) {
         .max(Instant::now() + charged * BACKGROUND_WIRE_REST_MULTIPLE);
 }
 
-fn publish_read(state: &mut PollerState, deps: &PollerDeps, target: PollTarget) {
+fn publish_read(state: &mut PollerState, deps: &PollerWiring, target: PollTarget) {
     let correlation_id = deps.correlation.next_id();
     let cmd = command_envelope(
         SOURCE_ID_UNSPECIFIED,
@@ -465,22 +491,21 @@ fn publish_read(state: &mut PollerState, deps: &PollerDeps, target: PollTarget) 
         let now = Instant::now();
         state.outstanding = Some(Outstanding {
             correlation_id,
-            adapter_id: target.adapter_id,
-            short_address: target.short_address,
-            groups_mask: target.groups_mask,
-            memory_banks: target.memory_banks,
+            target,
             published_at: now,
             deadline: now + OUTSTANDING_ABANDON_TTL,
         });
-        state.cursor = Some((target.adapter_id, target.short_address));
+        if target.purpose == ReadPurpose::Cycle {
+            state.cursor = Some((target.adapter_id, target.short_address));
+        }
         deps.counters.reads_published.fetch_add(1, Ordering::Relaxed);
     } else {
         deps.counters.skipped_inbox_full.fetch_add(1, Ordering::Relaxed);
-        state.queue.push_back(target);
+        requeue_target(state, target);
     }
 }
 
-fn drain_confirmations(state: &mut PollerState, deps: &PollerDeps, conf_rx: &BusSubscriberRx) {
+fn drain_confirmations(state: &mut PollerState, deps: &PollerWiring, conf_rx: &BusSubscriberRx) {
     while let Ok(frame) = conf_rx.try_recv() {
         let BusFrame::Confirmation(conf) = frame else {
             continue;
@@ -496,11 +521,11 @@ fn drain_confirmations(state: &mut PollerState, deps: &PollerDeps, conf_rx: &Bus
             continue;
         };
         deps.counters.skipped_inbox_full.fetch_add(1, Ordering::Relaxed);
-        requeue_target(state, &outstanding);
+        requeue_target(state, outstanding.target);
     }
 }
 
-fn sweep_stale(state: &mut PollerState, deps: &PollerDeps) {
+fn sweep_stale(state: &mut PollerState, deps: &PollerWiring) {
     sweep_stale_probe(state, deps);
     let Some(o) = state.outstanding.filter(|o| o.deadline <= Instant::now()) else {
         return;
@@ -508,10 +533,10 @@ fn sweep_stale(state: &mut PollerState, deps: &PollerDeps) {
     state.outstanding = None;
     deps.counters.outstanding_expired.fetch_add(1, Ordering::Relaxed);
     push_tombstone(state, o.correlation_id, o.published_at);
-    requeue_target(state, &o);
+    requeue_target(state, o.target);
 }
 
-fn sweep_stale_probe(state: &mut PollerState, deps: &PollerDeps) {
+fn sweep_stale_probe(state: &mut PollerState, deps: &PollerWiring) {
     if let Some(p) = state
         .pending_probe
         .filter(|p| p.deadline <= Instant::now())
@@ -557,7 +582,7 @@ fn take_pending_probe(state: &mut PollerState, correlation_id: u64) -> Option<Pe
     Some(p)
 }
 
-fn apply_event(state: &mut PollerState, deps: &PollerDeps, frame: &BusFrame) {
+fn apply_event(state: &mut PollerState, deps: &PollerWiring, frame: &BusFrame) {
     let BusFrame::Event(envelope) = frame else {
         deps.counters.ignored_events.fetch_add(1, Ordering::Relaxed);
         return;
@@ -571,7 +596,7 @@ dali2rust_contracts::dispatch_bus_events! {
     fn dispatch_poller_event(
         payload: &BusEventPayload,
         state: &mut PollerState,
-        deps: &PollerDeps,
+        deps: &PollerWiring,
         corr: u64,
     );
     payload = payload;
@@ -584,7 +609,7 @@ dali2rust_contracts::dispatch_bus_events! {
 
 fn record_health_probe(
     state: &mut PollerState,
-    deps: &PollerDeps,
+    deps: &PollerWiring,
     corr: u64,
     body: &DaliBusHealthProbedEvent,
 ) {
@@ -604,6 +629,32 @@ fn record_health_probe(
         BusHealthVerdict::Several => &deps.counters.health_probes_several_failures,
     };
     counter.fetch_add(1, Ordering::Relaxed);
+    watch_power_cycles(state, deps, body);
+}
+
+fn watch_power_cycles(state: &mut PollerState, deps: &PollerWiring, body: &DaliBusHealthProbedEvent) {
+    if body.power_cycle_seen {
+        deps.counters.health_probes_power_failure.fetch_add(1, Ordering::Relaxed);
+    }
+    if !state.power_cycles.sweep_due(body.registry_adapter_id, body.power_cycle_seen) {
+        return;
+    }
+    let queued = state.sweep_queue.len();
+    queue_power_cycle_sweep(state, deps, body.registry_adapter_id);
+    if state.sweep_queue.len() > queued {
+        deps.counters.power_cycle_sweeps.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn queue_power_cycle_sweep(state: &mut PollerState, deps: &PollerWiring, adapter_id: u8) {
+    let sweep = deps.read_port.list_poll_targets(adapter_id).targets.into_iter().map(|target| PollTarget {
+        adapter_id,
+        short_address: target.short_address,
+        groups_mask: DaliAttributeGroup::RuntimeStatus.mask_bit(),
+        memory_banks: MemoryBankReadPreset::None,
+        purpose: ReadPurpose::PowerCycleSweep,
+    });
+    state.sweep_queue.extend(sweep);
 }
 
 fn apply_settings_changed(state: &mut PollerState, body: &PollerSettingsChangedEvent) {
@@ -626,7 +677,7 @@ fn adopt_settings(state: &mut PollerState, settings: PollerSettingsView) {
     state.next_cycle = state.last_cycle + cycle_period(&state.settings);
 }
 
-fn complete_read(state: &mut PollerState, deps: &PollerDeps, corr: u64, body: &DaliAttributeReadOutcomesEvent) {
+fn complete_read(state: &mut PollerState, deps: &PollerWiring, corr: u64, body: &DaliAttributeReadOutcomesEvent) {
     let Some(outstanding) = take_outstanding(state, corr) else {
         if let Some(t) = take_tombstone(state, corr) {
             charge_wire_time(state, t.published_at.elapsed());
@@ -636,29 +687,26 @@ fn complete_read(state: &mut PollerState, deps: &PollerDeps, corr: u64, body: &D
     match read_verdict(body) {
         ReadVerdict::Completed => {
             deps.counters.reads_completed.fetch_add(1, Ordering::Relaxed);
-            if outstanding.memory_banks != MemoryBankReadPreset::None {
+            let target = outstanding.target;
+            if target.memory_banks != MemoryBankReadPreset::None {
                 state.bank_reads.insert(
-                    (
-                        outstanding.adapter_id,
-                        outstanding.short_address,
-                        outstanding.memory_banks as u8,
-                    ),
+                    (target.adapter_id, target.short_address, target.memory_banks as u8),
                     Instant::now(),
                 );
             }
-            state
-                .cooldown
-                .remove(&(outstanding.adapter_id, outstanding.short_address));
+            state.cooldown.remove(&(target.adapter_id, target.short_address));
         }
         ReadVerdict::Preempted => {
             deps.counters.reads_preempted.fetch_add(1, Ordering::Relaxed);
-            requeue_target(state, &outstanding);
+            requeue_target(state, outstanding.target);
         }
         ReadVerdict::Absent => {
-            cool_absent_device(state, &deps.counters, outstanding.adapter_id, outstanding.short_address);
+            let target = outstanding.target;
+            cool_absent_device(state, &deps.counters, target.adapter_id, target.short_address);
         }
         ReadVerdict::Failed => {
-            fail_device(state, &deps.counters, outstanding.adapter_id, outstanding.short_address);
+            let target = outstanding.target;
+            fail_device(state, &deps.counters, target.adapter_id, target.short_address);
         }
     }
 }
@@ -696,13 +744,11 @@ fn read_verdict(body: &DaliAttributeReadOutcomesEvent) -> ReadVerdict {
     ReadVerdict::Failed
 }
 
-fn requeue_target(state: &mut PollerState, outstanding: &Outstanding) {
-    state.queue.push_back(PollTarget {
-        adapter_id: outstanding.adapter_id,
-        short_address: outstanding.short_address,
-        groups_mask: outstanding.groups_mask,
-        memory_banks: outstanding.memory_banks,
-    });
+fn requeue_target(state: &mut PollerState, target: PollTarget) {
+    match target.purpose {
+        ReadPurpose::Cycle => state.queue.push_back(target),
+        ReadPurpose::PowerCycleSweep => state.sweep_queue.push_back(target),
+    }
 }
 
 fn fail_device(state: &mut PollerState, counters: &PollerCounters, adapter_id: u8, short_address: u8) {
@@ -888,13 +934,13 @@ mod tests {
     }
 
     struct TestDeps {
-        deps: PollerDeps,
+        deps: PollerWiring,
         _host: BusHost,
     }
 
     fn test_deps() -> TestDeps {
         let (_host, publisher, ()) = BusHost::spawn(BusConfig::default(), |_| ());
-        let deps = PollerDeps {
+        let deps = PollerWiring {
             role: Arc::new(ActiveRole),
             publisher,
             read_port: Arc::new(NullPort),
@@ -904,6 +950,7 @@ mod tests {
             counters: Arc::new(PollerCounters::default()),
             interactive: Arc::new(dali2rust_platform::dali::WireActivity::new()),
             hold: Arc::new(dali2rust_platform::firmware::MaintenanceHold::new()),
+            config: PollerConfig::default(),
         };
         TestDeps { deps, _host }
     }
@@ -914,6 +961,7 @@ mod tests {
             short_address,
             groups_mask: 0,
             memory_banks: MemoryBankReadPreset::None,
+            purpose: ReadPurpose::Cycle,
         }
     }
 
@@ -984,6 +1032,7 @@ mod tests {
             registry_adapter_id: 0,
             control_answered: true,
             lamp_failure: BusHealthVerdict::Clear,
+            power_cycle_seen: false,
         };
         record_health_probe(&mut state, &t.deps, corr, &body);
         assert!(

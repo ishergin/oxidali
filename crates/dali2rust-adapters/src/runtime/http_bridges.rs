@@ -362,7 +362,7 @@ declare_counter_mapping! {
         interactive_deferred, targets_excluded, window_deferred, device_cooldowns,
         health_probes_published, health_probes_invalid, health_probes_clear,
         health_probes_one_failure, health_probes_several_failures, health_probes_expired,
-        ignored_events,
+        health_probes_power_failure, power_cycle_sweeps, ignored_events,
     }
 
     phy_sniffer_dto(c: dali2rust_platform::dali::PhySnifferCounters) -> PhySnifferDto {

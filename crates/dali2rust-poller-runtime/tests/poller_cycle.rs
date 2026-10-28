@@ -18,7 +18,8 @@ use dali2rust_domain::registry::{
     PollTargetReadPort, PollTargetSelection, PollTargetView, PollerReadPort,
     PollerSettingsReadPort, PollerSettingsView,
 };
-use dali2rust_poller_runtime::{spawn_poller_worker, PollerCounters};
+use dali2rust_poller_runtime::runtime::power_cycle::RESWEEP_AFTER_YES;
+use dali2rust_poller_runtime::{spawn_poller_worker, PollerConfig, PollerCounters, PollerWiring};
 use dali2rust_test_support::{remains_false_for, wait_until};
 
 const WAIT: Duration = Duration::from_secs(3);
@@ -95,6 +96,16 @@ fn publish_health_probed_for(
     control_answered: bool,
     lamp_failure: BusHealthVerdict,
 ) {
+    publish_probe_verdict(publisher, correlation_id, control_answered, lamp_failure, false);
+}
+
+fn publish_probe_verdict(
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    control_answered: bool,
+    lamp_failure: BusHealthVerdict,
+    power_cycle_seen: bool,
+) {
     let ev = event_envelope(
         SOURCE_ID_UNSPECIFIED,
         correlation_id,
@@ -104,6 +115,7 @@ fn publish_health_probed_for(
             registry_adapter_id: 0,
             control_answered,
             lamp_failure,
+            power_cycle_seen,
         },
     );
     let _ = publisher.try_publish(BusChannel::Events, BusFrame::event(ev));
@@ -185,6 +197,16 @@ fn spawn_harness_on(
     auto_respond: Option<AttributeGroupReadOutcome>,
     adapter_count: u8,
 ) -> Harness {
+    spawn_harness_configured(read_port, owned, auto_respond, adapter_count, PollerConfig::default())
+}
+
+fn spawn_harness_configured(
+    read_port: Arc<dyn PollerReadPort>,
+    owned: bool,
+    auto_respond: Option<AttributeGroupReadOutcome>,
+    adapter_count: u8,
+    config: PollerConfig,
+) -> Harness {
     let (host, publisher, (ev_rx, conf_rx, cmd_rx)) = BusHost::spawn(BusConfig::default(), |reg| {
         (
             reg.subscribe_events(64, dali2rust_poller_runtime::POLLER_HANDLED_EVENTS),
@@ -212,15 +234,18 @@ fn spawn_harness_on(
     let worker = spawn_poller_worker(
         ev_rx,
         conf_rx,
-        publisher.clone(),
-        read_port,
-        Arc::new(CorrelationIdAllocator::new()),
-        BUS_ID,
-        adapter_count,
-        Arc::clone(&counters),
-        Arc::clone(&interactive),
-        std::sync::Arc::new(ActiveRole),
-        Arc::new(dali2rust_platform::firmware::MaintenanceHold::new()),
+        PollerWiring {
+            publisher: publisher.clone(),
+            read_port,
+            correlation: Arc::new(CorrelationIdAllocator::new()),
+            bus_id: BUS_ID,
+            adapter_count,
+            counters: Arc::clone(&counters),
+            role: std::sync::Arc::new(ActiveRole),
+            interactive: Arc::clone(&interactive),
+            hold: Arc::new(dali2rust_platform::firmware::MaintenanceHold::new()),
+            config,
+        },
     );
     Harness { publisher, counters, seen, held, held_probes, seen_probes, interactive, _worker: worker, _pump: pump, _host: host }
 }
@@ -824,11 +849,13 @@ fn pol_032_each_cycle_publishes_a_broadcast_health_probe() {
     assert!(h.counters.reads_published.load(Ordering::Relaxed) >= 1);
 }
 
-#[test]
-fn pol_033_a_disabled_poller_publishes_no_probe() {
-    let registry = StubRegistry {
+const SHORT_PROBE_PERIOD: Duration = Duration::from_millis(100);
+const NO_PROBE_PERIOD: Duration = Duration::from_secs(3_600);
+
+fn disabled_registry(devices: Vec<PollTargetView>) -> StubRegistry {
+    StubRegistry {
         excluded_unbound: 0,
-        devices: vec![device(1)],
+        devices,
         settings: PollerSettingsView {
             enabled: false,
             interval_ms: 50,
@@ -838,11 +865,128 @@ fn pol_033_a_disabled_poller_publishes_no_probe() {
             include_diagnostics: false,
             skip_unbound_virtual_lamps: false,
         },
-    };
-    let h = spawn_harness(registry, true, None);
+    }
+}
 
-    wait_until(|| h.counters.cycles_total.load(Ordering::Relaxed) >= 2, WAIT);
-    assert_eq!(h.counters.health_probes_published.load(Ordering::Relaxed), 0);
+fn spawn_disabled_harness(
+    devices: Vec<PollTargetView>,
+    auto_respond: Option<AttributeGroupReadOutcome>,
+    probe_period: Duration,
+) -> Harness {
+    let port = Arc::new(disabled_registry(devices));
+    spawn_harness_configured(port, true, auto_respond, 1, PollerConfig { probe_period })
+}
+
+#[test]
+fn pol_033_a_disabled_poller_probes_on_its_own_period_and_reads_nothing() {
+    let h = spawn_disabled_harness(vec![device(1)], None, SHORT_PROBE_PERIOD);
+
+    for expected in 1..=2 {
+        wait_until(|| h.held_probe_count() >= 1, WAIT);
+        h.release_probe();
+        wait_until(
+            || h.counters.health_probes_clear.load(Ordering::Relaxed) == expected,
+            WAIT,
+        );
+    }
+    assert_eq!(
+        h.counters.reads_published.load(Ordering::Relaxed),
+        0,
+        "the probe runs with the poller off; the reads stay off"
+    );
+}
+
+fn yes_until(h: &Harness, power_failures: u32) {
+    while h.counters.health_probes_power_failure.load(Ordering::Relaxed) < power_failures {
+        let before = h.counters.health_probes_power_failure.load(Ordering::Relaxed);
+        publish_probe_verdict(&h.publisher, 0, true, BusHealthVerdict::Clear, true);
+        wait_until(
+            || h.counters.health_probes_power_failure.load(Ordering::Relaxed) > before,
+            WAIT,
+        );
+    }
+}
+
+fn sweeps(h: &Harness) -> u32 {
+    h.counters.power_cycle_sweeps.load(Ordering::Relaxed)
+}
+
+#[test]
+fn a_yes_behind_its_control_reads_every_target_once_with_the_poller_off() {
+    let h = spawn_disabled_harness(vec![device(1), device(2)], Some(AttributeGroupReadOutcome::Success), NO_PROBE_PERIOD);
+
+    yes_until(&h, 1);
+    wait_until(|| h.counters.reads_completed.load(Ordering::Relaxed) == 2, WAIT);
+    assert_eq!(sweeps(&h), 1);
+    let reads = h.seen_all();
+    let shorts: Vec<u8> = reads.iter().map(|r| r.command.short_address).collect();
+    assert_eq!(shorts, vec![1, 2], "one read per poll target");
+    for read in &reads {
+        assert_eq!(
+            read.command.attribute_groups_mask,
+            DaliAttributeGroup::RuntimeStatus.mask_bit(),
+            "a sweep asks for the status byte and nothing else"
+        );
+        assert_eq!(read.command.memory_banks, MemoryBankReadPreset::None);
+    }
+}
+
+#[test]
+fn a_yes_without_its_control_reads_nothing_and_leaves_the_hold_off_alone() {
+    let h = spawn_disabled_harness(vec![device(1)], Some(AttributeGroupReadOutcome::Success), NO_PROBE_PERIOD);
+
+    publish_probe_verdict(&h.publisher, 0, false, BusHealthVerdict::Clear, true);
+    wait_until(|| h.counters.health_probes_invalid.load(Ordering::Relaxed) == 1, WAIT);
+    assert_eq!(sweeps(&h), 0, "a YES whose control went unanswered proves nothing");
+
+    yes_until(&h, 1);
+    assert_eq!(sweeps(&h), 1);
+    publish_probe_verdict(&h.publisher, 0, false, BusHealthVerdict::Clear, false);
+    wait_until(|| h.counters.health_probes_invalid.load(Ordering::Relaxed) == 2, WAIT);
+    yes_until(&h, 2);
+    assert_eq!(sweeps(&h), 1, "a silent probe without its control is no NO, so the hold-off stands");
+
+    publish_probe_verdict(&h.publisher, 0, true, BusHealthVerdict::Clear, false);
+    yes_until(&h, 3);
+    assert_eq!(sweeps(&h), 2, "a NO behind an answered control re-arms the watch");
+}
+
+#[test]
+fn a_standing_yes_sweeps_again_only_after_its_hold_off() {
+    let h = spawn_disabled_harness(vec![device(1)], Some(AttributeGroupReadOutcome::Success), NO_PROBE_PERIOD);
+
+    yes_until(&h, 1);
+    assert_eq!(sweeps(&h), 1);
+    yes_until(&h, RESWEEP_AFTER_YES);
+    assert_eq!(
+        sweeps(&h),
+        1,
+        "a gear that keeps its bit keeps the answer YES; that is not a new power cycle"
+    );
+    yes_until(&h, RESWEEP_AFTER_YES + 1);
+    assert_eq!(
+        sweeps(&h),
+        2,
+        "after {RESWEEP_AFTER_YES} further YES answers the sweep runs again, so a gear driven \
+         and cycled again behind a standing YES is still found"
+    );
+    wait_until(|| h.counters.reads_completed.load(Ordering::Relaxed) == 2, WAIT);
+}
+
+#[test]
+fn a_preempted_sweep_read_is_retried_with_the_poller_off() {
+    let h = spawn_disabled_harness(vec![device(4)], None, NO_PROBE_PERIOD);
+
+    yes_until(&h, 1);
+    wait_until(|| h.seen_len() == 1, WAIT);
+    let first = h.held.lock().expect("held").pop_front().expect("the sweep read");
+    publish_outcomes(&h.publisher, first.correlation_id, first.target_adapter_id, 4, AttributeGroupReadOutcome::Preempted);
+    wait_until(|| h.seen_len() == 2, WAIT);
+    assert_eq!(
+        h.seen_all()[1].command.short_address,
+        4,
+        "a preempted sweep read goes back to the sweep, not to the switched-off cycle queue"
+    );
 }
 
 struct ReplicatedSettings {
