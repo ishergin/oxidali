@@ -670,6 +670,44 @@ fn step_work_yields_at_the_boundary_the_executor_opens() {
 }
 
 #[test]
+fn a_step_under_a_frame_lease_holds_the_wire_after_its_first_frame() {
+    let mock = MockDaliTransport::new();
+    mock.set_persistent_response(0x11);
+    let transport = Arc::new(Mutex::new(mock));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+    let gate = Arc::new(dali2rust_platform::dali::WireActivity::new());
+    let cmd = query_status_command(1);
+
+    let (inside, after) = controller.with_wire_lease(frame_lease(&gate), |c| {
+        let inside = c.step(|c| {
+            c.send_command(&cmd).expect("a calm bus does not preempt");
+            gate.note_arrival(dali2rust_platform::dali::WirePriority::Interactive);
+            c.send_command(&cmd)
+        });
+        (inside, c.send_command(&cmd))
+    });
+    assert_eq!(inside, Ok(DaliResponse::Answer(0x11)), "a started step is finished");
+    assert_eq!(after, Err(FrameError::Preempted), "the frame lease is back after the step");
+}
+
+#[test]
+fn a_step_under_a_frame_lease_yields_at_its_opening() {
+    let mock = MockDaliTransport::new();
+    mock.set_persistent_response(0x11);
+    let transport = Arc::new(Mutex::new(mock));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+    let gate = Arc::new(dali2rust_platform::dali::WireActivity::new());
+    let cmd = query_status_command(1);
+
+    let outcome = controller.with_wire_lease(frame_lease(&gate), |c| {
+        gate.note_arrival(dali2rust_platform::dali::WirePriority::Interactive);
+        c.step(|c| c.send_command(&cmd))
+    });
+    assert_eq!(outcome, Err(FrameError::Preempted));
+    assert!(transport.lock().unwrap().sent_frames().is_empty());
+}
+
+#[test]
 fn a_step_boundary_is_consumed_by_the_exchange_that_follows_it() {
     let mock = MockDaliTransport::new();
     mock.set_persistent_response(0x11);

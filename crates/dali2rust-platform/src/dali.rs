@@ -692,7 +692,7 @@ pub enum WirePriority {
     Unattended = 2,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum YieldGranularity {
     Frame,
     Step,
@@ -724,6 +724,13 @@ impl WireLease {
 
     pub fn granularity(&self) -> YieldGranularity {
         self.granularity
+    }
+
+    pub fn at_most(&self, granularity: YieldGranularity) -> Self {
+        Self {
+            granularity: self.granularity.max(granularity),
+            ..self.clone()
+        }
     }
 
     pub fn should_yield(&self) -> bool {

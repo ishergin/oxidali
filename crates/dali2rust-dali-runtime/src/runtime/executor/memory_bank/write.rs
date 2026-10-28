@@ -180,6 +180,9 @@ fn write_session(
         return write_units(controller, address, session);
     }
     let written = open_lock(controller, address).and_then(|()| write_units(controller, address, session));
+    if written.is_err_and(LuminaireWriteFailure::is_preempted) {
+        return written;
+    }
     let closed = write_lock_byte(controller, address, lock);
     match written {
         Err(failure) if failure.subject == LOCK_SUBJECT => Err(failure),
@@ -194,8 +197,8 @@ fn write_sessions(
     writes: &[FieldWrite],
 ) -> Result<(), LuminaireWriteFailure> {
     units(writes).chunks(UNITS_PER_SESSION).try_for_each(|session| {
-        controller.step_boundary();
-        write_session(controller, address, lock, session).map_err(|failure| match session.first() {
+        let written = controller.step(|c| write_session(c, address, lock, session));
+        written.map_err(|failure| match session.first() {
             Some(unit) if failure.is_preempted() => LuminaireWriteFailure::new(failure.code, unit.subject),
             _ => failure,
         })

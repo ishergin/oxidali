@@ -90,6 +90,11 @@ pub trait DaliApplicationController: DaliProductController {
 
     fn step_boundary(&mut self) {}
 
+    fn step<R>(&mut self, run: impl FnOnce(&mut Self) -> R) -> R {
+        self.step_boundary();
+        run(self)
+    }
+
     fn with_wire_class<R>(
         &mut self,
         class: Option<TransactionPriority>,

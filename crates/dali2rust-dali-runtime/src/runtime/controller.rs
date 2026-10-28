@@ -253,6 +253,15 @@ impl<T: DaliTransport + Send> DaliApplicationController for DaliController<T> {
         }
     }
 
+    fn step<R>(&mut self, run: impl FnOnce(&mut Self) -> R) -> R {
+        let narrowed = self.lease.as_ref().map(|lease| lease.at_most(YieldGranularity::Step));
+        let outer = std::mem::replace(&mut self.lease, narrowed);
+        self.step_boundary();
+        let result = run(self);
+        self.lease = outer;
+        result
+    }
+
     fn transaction<R>(&mut self, run: impl FnOnce(&mut Self) -> R) -> R {
         self.run_transaction(false, run)
     }
