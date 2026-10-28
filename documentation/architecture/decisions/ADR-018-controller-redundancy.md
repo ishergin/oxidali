@@ -1,6 +1,6 @@
 # ADR-018: Controller redundancy — a passive standby that arbitrates on the wire
 
-Status: Accepted
+Status: Accepted, amended by ADR-030
 Date: 2026-08-10
 
 ## Context
@@ -35,9 +35,11 @@ this record keeps the decisions and their reasons.
   unit: it probes with `QUERY APPLICATION CONTROLLER ENABLED` at the lowest priority and
   reads any reply, a corrupted one included, as "the bus has an owner" and silence as "it
   has none". There is no election and no identity comparison.
-- **The primary answers from `applicationActive`** (103 §11.6.16: YES when true, and NO
-  is silence). A passive controller answers nothing, so two standbys cannot keep each
-  other passive.
+- **The arbitration answer is the bus unit's**
+  ([ADR-030](ADR-030-controller-as-a-part-103-bus-unit.md)): YES while
+  `applicationActive` is TRUE and `applicationControllerError` is FALSE, and NO is
+  silence. A passive controller answers every other device query (103 §9.9.1) but not this
+  one, so two standbys cannot keep each other passive.
 - **A task decides the answer and the PHY interrupt times it**
   ([08](../08-dali-phy-and-transport.md)), so a controller in the middle of a long scan
   still answers inside Table 20's window.
@@ -51,17 +53,20 @@ this record keeps the decisions and their reasons.
   (a static DNS entry or DHCP reservation).
 - **The return path is 351's**, and it survives a reboot because `applicationActive` is
   NVM.
-- **A passive controller transmits nothing but the probe**, refused at the DALI worker's
-  one gate, and the Home Assistant bridge, the HCL scheduler and the poller run only in
-  the active role.
+- **A passive controller transmits nothing but the probe**, its power notification and a
+  test frame another controller asks for (ADR-030), each admitted by command kind at the
+  DALI worker's one gate; quiescent mode stops the probe as well, and a probe that was not
+  sent is no verdict. The Home Assistant bridge, the HCL scheduler and the poller run only
+  in the active role.
 
 ### Functional liveness: a lease that a wedged worker cannot renew
 
 Arbitration proves that the answering unit is alive, not that the controller works. So
-the answers depend on a short lease the supervisor renews only while the registry, the
-HCL scheduler and the rules engine keep turning; a deadlocked worker stops being spoken
-for, the lease lapses, the answers stop, and the standby's next probes find an unowned
-bus. The failure path is a call that does not happen, which is the only kind a wedged
+the supervisor renews a short lease only while the registry, the HCL scheduler and the
+rules engine keep turning, in both roles. A lapsed lease is an application-controller
+error (103 §9.15): `QUERY DEVICE STATUS` reports it, the arbitration answer stops, and the
+standby's next probes find an unowned bus. The other device queries are still answered.
+The failure path is a call that does not happen, which is the only kind a wedged
 process cannot skip. The DALI worker is not watched: it legitimately blocks while idle
 and for the length of a scan.
 
@@ -98,7 +103,9 @@ and for the length of a scan.
   served in both roles.
 - **Planned switchover** hands the bus over by enabling the peer first and standing down
   second, in one direction only: 103 §9.9.1 leaves a passive controller no legal way to
-  send the `DISABLE`. The lights do not move.
+  send the `DISABLE`. The active unit stands down only after the peer, asked at its
+  configured short address, answers that its application controller is enabled; a peer
+  that does not answer leaves the bus where it was. The lights do not move.
 - **Every transition is recorded** with its reason and counted.
 - **Gear fallback policies** (`systemFailureLevel`, `powerOnLevel`) are a product
   resource written by the apply orchestrator. Unset means unmanaged, which is the

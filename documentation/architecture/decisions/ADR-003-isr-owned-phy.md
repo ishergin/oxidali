@@ -1,6 +1,6 @@
 # ADR-003: The timer interrupt owns the DALI PHY
 
-Status: Accepted, amended by ADR-010 and ADR-025
+Status: Accepted, amended by ADR-010, ADR-025 and ADR-030
 Date: 2026-06-04
 
 ## Context
@@ -25,9 +25,11 @@ mutual exclusion.
   or sample functions and never reads its state directly.
 - **The interrupt never allocates, blocks, logs, notifies a task, or touches the bus
   or HTTP.** Consumers poll the rings; a FreeRTOS notify would take a kernel lock.
-- **Decisions stay in task context; timing belongs to the interrupt.** Decoding a
-  capture, choosing a reply and building a frame happen in tasks. The interrupt
-  transmits what a task handed it, on the tick the timing requires.
+- **Decisions stay in task context; timing belongs to the interrupt.** Choosing a reply
+  and building a frame happen in tasks, and so does decoding a capture, except a 24-bit
+  forward frame: the interrupt decodes that one to answer it from the table a task built
+  before it arrived ([ADR-030](ADR-030-controller-as-a-part-103-bus-unit.md)). The
+  interrupt transmits what a task handed it, on the tick the timing requires.
 
 ## Consequences
 
