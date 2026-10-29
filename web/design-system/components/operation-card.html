@@ -180,13 +180,25 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
   <!-- Terminal, but unknowable: the controller keeps a finished operation for
        sixty seconds, and a client that asks later cannot be told how it ended.
-       Neutral, never green — the screens act on this answer. -->
+       The client also loses the status itself: a poll of the operation that
+       throws, or on the shared operation path a start with no answer or a 5xx,
+       or a start refused after an earlier attempt of the same action was
+       accepted. Neutral, never green — the screens act on this answer — and
+       never red, because the write may well have landed. -->
   <div class="op">
     <div class="head">
       <span class="title">Scene 4 save</span>
       <span class="chip idle"><span class="dot"></span>unknown</span>
     </div>
     <div class="meta">Outcome expired before this tab asked — reload to see the stored matrix.</div>
+  </div>
+
+  <div class="op">
+    <div class="head">
+      <span class="title">Bank 1 write · SA 09</span>
+      <span class="chip idle"><span class="dot"></span>unknown</span>
+    </div>
+    <div class="meta">status not known — Failed to fetch</div>
   </div>
 
   <!--

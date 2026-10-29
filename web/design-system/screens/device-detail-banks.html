@@ -348,10 +348,15 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
   <div class="taglabel">Identity · Luminaire data — the outcome line</div>
   <!-- One line, built from what the generic path returned. Succeeded closes
-       the editor on the fresh values, so it has no line. A refusal — a 4xx
-       answer to the PATCH, such as 409 or 422 — shows the controller's
-       message; a failed operation shows one sentence for its code, in the
-       wording of the operation toast. Both keep the draft.
+       the editor once the device read has landed, on the fresh values, so it
+       has no line. A refusal — a 4xx answer to the first PATCH, such as 409
+       or 422 — shows the controller's message. A failed operation shows the
+       operation toast's detail word for word: its code with the field or step
+       the controller named, never a generic hint that would claim more — a
+       field that is not held says nothing of the others — and a sentence
+       where the name alone would mislead: a lock not proved restored leaves
+       the bank possibly open, and a read-back that did not finish proves
+       none of the writes that went out. Both keep the draft.
 
        Anything whose end is not known — no answer, a 5xx such as 504, a follow
        that lost the operation or gave up, timed_out, cancelled, or a refusal
@@ -359,8 +364,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
        points at the read, in the warn hue because the gear may now differ from
        the screen. A write that stood down for an operator command says the
        gear may hold part of it. Write stays allowed: the read is the operator's call, not a
-       lock. The toast of such a run says the status is not known, never
-       failed, so the two surfaces agree. -->
+       lock. The toast of such a run never says failed, so the two surfaces
+       agree. -->
   <div class="grid">
     <div class="card" style="grid-column: span 2;">
       <header><h3>Luminaire data</h3><span class="btns"><button class="btn sm ghost">Discard</button><button class="btn sm">Write</button></span></header>
@@ -371,7 +376,13 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     <div class="card" style="grid-column: span 2;">
       <header><h3>Luminaire data</h3><span class="btns"><button class="btn sm ghost">Discard</button><button class="btn sm">Write</button></span></header>
       <div class="attr"><span class="k">Nominal input power</span><span class="v"><input class="dirty" value="35"><span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
-      <div class="err-box">The write failed: the gear read back another value, so the write did not take — check the device.</div>
+      <div class="err-box">verify_failed — nominal_input_power_w</div>
+    </div>
+
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Luminaire data</h3><span class="btns"><button class="btn sm ghost">Discard</button><button class="btn sm">Write</button></span></header>
+      <div class="attr"><span class="k">Nominal input power</span><span class="v"><input class="dirty" value="35"><span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="err-box">verify_failed — the fields may be held, but the bank 1 lock is not proved restored, so the bank may be left open — read bank 1</div>
     </div>
 
     <div class="card" style="grid-column: span 2;">
