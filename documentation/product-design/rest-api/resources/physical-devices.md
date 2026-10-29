@@ -119,7 +119,9 @@ BDD — [`physical_devices`](../../../../tests/dali2rust-bdd/features/physical_d
   молчит на эти локации, что конформно.
 - `memory_luminaire` — банк 1 выше `0x10` (DiiA Part 251), заполняется только при
   `content_format_id` 3, 4 или 5. Числовой лист — `{raw, value, part209_implemented}`:
-  `value: null` — стандартное «неизвестно», отсутствие листа — «не читалось».
+  `value: null` — стандартное «неизвестно». Отсутствие листа — «не читалось» или «нет на
+  приборе»: чтение, покрывшее `content_format_id`, убирает листы, которых его формат не
+  объявляет, а чтение с `0x00` — ещё и те, что кончаются за последней локацией банка.
 - Какие секции переживают перезагрузку —
   [`dali-attribute-taxonomy.md`](../../bus-contracts/dali-attribute-taxonomy.md).
 

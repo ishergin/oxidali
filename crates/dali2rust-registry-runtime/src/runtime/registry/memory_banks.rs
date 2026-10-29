@@ -4,8 +4,9 @@ use crate::runtime::registry::store::{evict_stale, registry_unix_ms, Staged};
 use crate::runtime::registry::store::Inner;
 use crate::runtime::registry::store::RegistryStore;
 
+use dali2rust_domain::dali::banks::luminaire_write::{FieldKind, LuminaireField};
 use dali2rust_domain::dali::banks::{
-    BANK_ACTIVE_ENERGY, BANK_APPARENT_ENERGY, BANK_CONTROL_GEAR_DIAGNOSTICS,
+    LuminaireFormat, BANK_ACTIVE_ENERGY, BANK_APPARENT_ENERGY, BANK_CONTROL_GEAR_DIAGNOSTICS,
     BANK_LIGHT_SOURCE_DIAGNOSTICS, BANK_LOADSIDE_ENERGY, BANK_LUMINAIRE_MAINTENANCE,
 };
 use dali2rust_domain::registry::{ConditionView, EnergyBankView};
@@ -202,6 +203,42 @@ fn apply_bank0_bus_unit(
     );
 }
 
+#[derive(Clone, Copy)]
+struct Bank1Extent {
+    format: Option<LuminaireFormat>,
+    last_offset: Option<u8>,
+}
+
+impl Bank1Extent {
+    fn of_read(content_format_id: Option<u16>, bytes: &[u8], start_offset: u16) -> Option<Self> {
+        let format = LuminaireFormat::from_content_format_id(content_format_id?);
+        let last_offset = if start_offset == 0 { bytes.first().copied() } else { None };
+        Some(Self { format, last_offset })
+    }
+
+    // DiiA 251 §9.2.5
+    // IEC 62386-102 §9.10.6, Table 9
+    fn holds(self, leaf: &str) -> bool {
+        let Some(field) = LuminaireField::named(leaf) else {
+            return true;
+        };
+        field.kind == FieldKind::LayoutId
+            || (self.format.is_some_and(|format| field.in_format(format))
+                && self.last_offset.is_none_or(|last| field.ends_by(last)))
+    }
+}
+
+macro_rules! merge_luminaire_leaves {
+    ($parsed:expr, $view:expr, $now_ms:expr, $extent:expr; $($field:ident),+ $(,)?) => {{
+        $(
+            merge_read_attr_opt(&mut $view.$field, $parsed.$field, $now_ms);
+            if $extent.is_some_and(|extent: Bank1Extent| !extent.holds(stringify!($field))) {
+                $view.$field = None;
+            }
+        )+
+    }};
+}
+
 fn apply_bank1_luminaire(
     rec: &mut PhysicalDeviceRecord,
     bytes: &[u8],
@@ -212,11 +249,12 @@ fn apply_bank1_luminaire(
     if parsed.content_format_id.is_none() && rec.luminaire_info.is_none() {
         return;
     }
+    let extent = Bank1Extent::of_read(parsed.content_format_id, bytes, start_offset);
     let view = rec
         .luminaire_info
         .get_or_insert_with(dali2rust_bsp::psram::PsramBox::default);
-    merge_parsed_fields!(
-        parsed, view, now_ms;
+    merge_luminaire_leaves!(
+        parsed, view, now_ms, extent;
         content_format_id,
         year,
         week,
