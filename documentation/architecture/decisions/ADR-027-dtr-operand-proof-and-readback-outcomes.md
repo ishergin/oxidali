@@ -61,7 +61,7 @@ IEC 62386-101 §9.1.3–9.1.4 make a collision destroy the frame for every recei
 | --- | --- | --- | --- |
 | a different value | an answer | `VerifyFailed` | the device refused the write; the only case a retry can help |
 | silence | no backward frame | `VerifyUnanswered` | the query or variable is what the device lacks, or the query was missed (102 §3.13 Note 1) — proof that we cannot tell, not that the write failed |
-| a violating frame | §8.2.5 answer | `VerifyContended` | several units answered one window, or a foreign frame crossed it — never silence |
+| a violating frame | §8.2.5 answer | `VerifyContended` | usually several units answered one window (ADR-020) — never silence and never a foreign frame; every cause of this code, path by path, is in [error-dto.md](../../product-design/rest-api/contracts/error-dto.md) |
 
 One classifier, through which every DTR-armed Part 103 write runs, maps the response to
 these outcomes; `value() == None` is never used to decide, because it merges the last
