@@ -96,6 +96,8 @@ scene levels. Lines the queue drops show up as `log_dropped` in `stats`.
 | `autoact <addr> on\|off` | the DT8 Automatic Activation bit |
 | `metering <addr> energy\|diagnostics\|both\|off` | DiiA Part 252/253 banks 202–207 and the device types that announce them |
 | `luminaire <addr> off\|3\|4\|5\|bus-unit-on\|bus-unit-off` | memory bank 1's DiiA Part 251 extension at content format 3–5, and bank 0's `0x1B`/`0x1C` |
+| `lock <addr> <byte>` | bank 1's lock byte; `0x55` opens the bank, anything else locks all but the lock byte. Set it after `luminaire`, which rebuilds bank 1 open |
+| `peek <addr> <bank> <offset> <count>` | up to 32 bytes of a memory bank as the gear holds them, `--` where it has none |
 | `fail <addr> lamp\|none\|short\|open\|thermal\|derate\|<byte>` | `lamp` sets 102 status bit 1 alone; the rest set the Part 207 failure byte and let the model derive what follows |
 | `drop <addr> <permille>` | withhold that fraction of answers |
 | `log off\|change\|frame\|trace` | verbosity; keep `change` during a load run, `frame` makes the console the bottleneck |

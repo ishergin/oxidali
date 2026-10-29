@@ -25,6 +25,10 @@ FRAME_TOKENS = 4
 HEX = 16
 FRAME_LEVEL = "frame"
 HEARING_COUNTERS = ("log_dropped", "decode_failed", "ring_dropped")
+PEEK_MAX = 32
+PEEK_LINE = re.compile(r"^A(\d+) bank (\d+) 0x([0-9A-F]{2}):((?: (?:[0-9A-F]{2}|--))+)$")
+UNSET_CELL = "--"
+UNKNOWN_COMMAND = "unknown command '%s'"
 
 SELECTOR = 0x01
 GROUP_BASE = 0x80
@@ -59,6 +63,14 @@ class Change:
     @property
     def short(self):
         return int(self.who[1:]) if self.who.startswith("A") else None
+
+
+def parse_peek(line: str):
+    match = PEEK_LINE.match(strip_stamp(line))
+    if match is None:
+        return None
+    cells = [None if cell == UNSET_CELL else int(cell, HEX) for cell in match.group(4).split()]
+    return int(match.group(1)), int(match.group(2)), int(match.group(3), HEX), cells
 
 
 def parse_change(line: str):
@@ -249,6 +261,38 @@ class GearSim:
 
     def disable(self, which="all"):
         return _expect(self.command("disable %s" % which), "disabled ")
+
+    def luminaire(self, short, mode):
+        return _expect(self.command("luminaire %d %s" % (short, mode)),
+                       "luminaire %s on 1 gear at short %d" % (mode, short))
+
+    def bank1_lock(self, short, byte):
+        return _expect(self._known("lock", "lock %d 0x%02X" % (short, byte)),
+                       "A%02d bank1_lock=0x%02X on 1 gear" % (short, byte))
+
+    def peek(self, short, bank, offset, count):
+        cells = []
+        for start in range(offset, offset + count, PEEK_MAX):
+            cells += self._peek_once(short, bank, start, min(PEEK_MAX, offset + count - start))
+        return cells
+
+    def _peek_once(self, short, bank, offset, count):
+        replies = self._known("peek", "peek %d %d 0x%02X %d" % (short, bank, offset, count))
+        for line in replies:
+            found = parse_peek(line)
+            if found is not None and found[:3] == (short, bank, offset) and \
+                    len(found[3]) == count:
+                return found[3]
+        raise GearSimUnavailable("the emulator did not show %d byte(s) of A%02d bank %d from "
+                                 "0x%02X: %s" % (count, short, bank, offset,
+                                                 " | ".join(replies) or "no reply"))
+
+    def _known(self, verb, command):
+        replies = self.command(command)
+        if any(line.startswith(UNKNOWN_COMMAND % verb) for line in replies):
+            raise GearSimUnavailable("the emulator image has no `%s` command: flash the peer "
+                                     "with a dali-gear-sim build that carries it" % verb)
+        return replies
 
     def log_level(self, level):
         return _expect(self.command("log %s" % level), "log level ")

@@ -37,13 +37,14 @@ def settled_frames(window, quiet_s, max_s, poll_s):
 
 
 def violations(lines, fence):
-    out, enabled = [], None
+    out, enabled, window = [], None, False
     for addr, data in sent_frames(lines):
         try:
-            fence.check_frame(addr, data, enabled)
+            fence.check_frame(addr, data, enabled, window)
         except LampNotAllowed as exc:
             out.append("%s went out: %s" % (describe_frame(addr, data), exc))
         enabled = enables(addr, data)
+        window = fence.write_window(addr, data, window)
     return out
 
 
