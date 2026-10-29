@@ -6,6 +6,7 @@ import type {
   Condition,
   EnergyBank,
   LuminaireValue,
+  MemoryLuminaire,
   OperationAccepted,
   Attributes,
   MemoryBankSummary,
@@ -38,7 +39,6 @@ import {
   attrOf,
   BANK_TEMPERATURE_OFFSET,
   daliVersion,
-  lightDistributionLabel,
   memoryBusUnitOf,
   memoryDiagnosticsOf,
   memoryEnergyOf,
@@ -68,6 +68,13 @@ import { useLive } from '../hooks'
 import { nav } from '../router'
 import { errorMessage, mutate, notify, opCommitted, runOp } from '../toast'
 import { productGtin } from './device-product'
+import {
+  hasEditableLeaf,
+  LUMINAIRE_NUMBER_ROWS,
+  LUMINAIRE_TEXT_ROWS,
+  LuminaireEditor,
+  type LuminaireNumberRowSpec,
+} from './luminaire-editor'
 
 const ALL_ATTRIBUTE_GROUPS: AttributeGroup[] = [
   'runtime_status',
@@ -1373,7 +1380,7 @@ export function DeviceDetail({ short, tab: rawTab }: { short: number; tab?: stri
           )}
         </Card>
 
-        <LuminaireDataCard attributes={attrs} />
+        <LuminaireDataCard key={short} attributes={attrs} short={short} reload={reload} />
 
           </>
         )}
@@ -1509,121 +1516,97 @@ function BusUnitRows({ attributes }: { attributes: Attributes }) {
 function LuminaireStringRows({ attributes }: { attributes: Attributes }) {
   const lum = memoryLuminaireOf(attributes)
   if (!lum) return null
-  const rows: Array<[string, ObservedValue<string> | undefined]> = [
-    ['Luminaire identification', lum.luminaire_identification],
-    ['Luminaire colour', lum.luminaire_colour],
-    ['Light distribution', lum.light_distribution],
-    ['OEM name', lum.oem_name],
-    ['Customer stocking number', lum.customer_stocking_number],
-    ['Free-use characters', lum.free_use],
-  ]
   return (
     <>
-      {rows.map(([label, ov]) =>
-        ov === undefined ? null : (
-          <div class="attr text" key={label}>
+      {LUMINAIRE_TEXT_ROWS.map(([key, label]) => {
+        const ov = lum[key]
+        return ov === undefined ? null : (
+          <div class="attr text" key={key}>
             <span class="k">{label}</span>
             <Src ov={ov} />
             <span class="v">{ov.value === '' ? '—' : ov.value}</span>
           </div>
-        ),
-      )}
+        )
+      })}
     </>
   )
 }
 
-function LuminaireDataCard({ attributes }: { attributes: Attributes }) {
-  const lum = memoryLuminaireOf(attributes)
+function LuminaireDataCard(props: { attributes: Attributes; short: number; reload: () => void }) {
+  const [editing, setEditing] = useState(false)
+  const lum = memoryLuminaireOf(props.attributes)
   const format = lum?.content_format_id
   if (!lum || !format) return null
   if (format.value !== 3 && format.value !== 4 && format.value !== 5) {
-    return (
-      <Card title="Luminaire data" span2 action={<span class="badge">bank 1</span>}>
-        <AttrRow
-          k="Content format"
-          v={
-            <>
-              {format.value} <Chip cls="muted">not DiiA Part 251</Chip>
-            </>
-          }
-        />
-        <div class="attr">
-          <span class="k hint">
-            Bytes above 0x10 are manufacturer-specific (IEC 62386-102 Table 10).
-          </span>
-          <span />
-          <span />
-        </div>
-      </Card>
-    )
+    return <NotPart251Card format={format.value} />
   }
+  if (editing) {
+    const close = () => setEditing(false)
+    return <LuminaireEditor lum={lum} short={props.short} reload={props.reload} onClose={close} />
+  }
+  return <LuminaireReadCard lum={lum} format={format.value} onEdit={() => setEditing(true)} />
+}
+
+function LuminaireReadCard({ lum, format, onEdit }: { lum: MemoryLuminaire; format: number; onEdit: () => void }) {
+  const action = (
+    <span class="btns">
+      <span class="badge">bank 1 · Part 251</span>
+      {hasEditableLeaf(lum) && <button class="act" onClick={onEdit}>✎ Edit</button>}
+    </span>
+  )
   return (
-    <Card title="Luminaire data" span2 action={<span class="badge">bank 1 · Part 251</span>}>
-      <AttrRow k="Content format" v={String(format.value)} />
-      <LuminaireNumberRow k="Manufactured (year)" ov={lum.year} render={(y) => `20${String(y).padStart(2, '0')}`} />
-      <LuminaireNumberRow k="Manufactured (week)" ov={lum.week} render={(w) => `W${String(w).padStart(2, '0')}`} />
-      <LuminaireNumberRow k="Nominal input power" ov={lum.nominal_input_power_w} unit="W" />
-      <LuminaireNumberRow k="Power at minimum" ov={lum.power_at_minimum_w} unit="W" />
-      <LuminaireNumberRow k="Nominal minimum mains voltage" ov={lum.nominal_min_ac_voltage_v} unit="V" />
-      <LuminaireNumberRow k="Nominal maximum mains voltage" ov={lum.nominal_max_ac_voltage_v} unit="V" />
-      <LuminaireNumberRow k="Nominal light output" ov={lum.nominal_light_output_lm} unit="lm" />
-      <LuminaireNumberRow k="CRI" ov={lum.cri} />
-      <CctRow ov={lum.cct_kelvin} />
-      <LuminaireNumberRow
-        k="Light distribution type"
-        ov={lum.light_distribution_type}
-        render={(v) => lightDistributionLabel(v) ?? String(v)}
-      />
-      <LuminaireNumberRow k="Lamp current" ov={lum.lamp_current_ma} unit="mA" />
+    <Card title="Luminaire data" span2 action={action}>
+      <AttrRow k="Content format" v={String(format)} />
+      {LUMINAIRE_NUMBER_ROWS.map((row) => (
+        <LuminaireNumberRow key={row.key} row={row} ov={lum[row.key]} />
+      ))}
     </Card>
   )
 }
 
-function LuminaireNumberRow({
-  k,
-  ov,
-  unit,
-  render,
-}: {
-  k: string
-  ov?: ObservedValue<LuminaireValue>
-  unit?: string
-  render?: (v: number) => string
-}) {
+function NotPart251Card({ format }: { format: number }) {
+  const value = (
+    <>
+      {format} <Chip cls="muted">not DiiA Part 251</Chip>
+    </>
+  )
+  return (
+    <Card title="Luminaire data" span2 action={<span class="badge">bank 1</span>}>
+      <AttrRow k="Content format" v={value} />
+      <div class="attr">
+        <span class="k hint">Bytes above 0x10 are manufacturer-specific (IEC 62386-102 Table 10).</span>
+        <span />
+        <span />
+      </div>
+    </Card>
+  )
+}
+
+function LuminaireNumberRow({ row, ov }: { row: LuminaireNumberRowSpec; ov?: ObservedValue<LuminaireValue> }) {
   if (!ov) return null
-  const v = ov.value.value
   return (
     <div class="attr">
-      <span class="k">{k}</span>
-      {v === null ? (
-        <span class="v rowv">
-          <Chip cls="unknown">unknown</Chip>
-        </span>
-      ) : (
-        <span class="v plain">
-          {render ? render(v) : plain(v)}
-          <span class="unit">{unit ?? ''}</span>
-        </span>
-      )}
+      <span class="k">{row.label}</span>
+      <LuminaireNumberValue row={row} leaf={ov.value} />
       <Src ov={ov} />
     </div>
   )
 }
 
-function CctRow({ ov }: { ov?: ObservedValue<LuminaireValue> }) {
-  if (!ov) return null
-  if (ov.value.part209_implemented) {
+function LuminaireNumberValue({ row, leaf }: { row: LuminaireNumberRowSpec; leaf: LuminaireValue }) {
+  if (leaf.part209_implemented || leaf.value === null) {
     return (
-      <div class="attr">
-        <span class="k">CCT</span>
-        <span class="v rowv">
-          <Chip cls="muted">tunable · Part 209</Chip>
-        </span>
-        <Src ov={ov} />
-      </div>
+      <span class="v rowv">
+        {leaf.part209_implemented ? <Chip cls="muted">tunable · Part 209</Chip> : <Chip cls="unknown">unknown</Chip>}
+      </span>
     )
   }
-  return <LuminaireNumberRow k="CCT" ov={ov} unit="K" />
+  return (
+    <span class="v plain">
+      {row.render ? row.render(leaf.value) : plain(leaf.value)}
+      <span class="unit">{row.unit ?? ''}</span>
+    </span>
+  )
 }
 
 function EnergyBankRows({

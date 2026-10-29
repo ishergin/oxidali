@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { opFailure, opFailureDetail } from '../src/format.js'
+import {
+  requestRefused,
+  notKnownToast,
+  opFailure,
+  opFailureDetail,
+  opStatusChip,
+  opStatusLabel,
+} from '../src/format.js'
 
 test('each read-back refusal names what the operator should check', () => {
   for (const code of ['verify_failed', 'verify_unanswered', 'verify_contended']) {
@@ -31,4 +38,17 @@ test('a preemption and an operation without an error have nothing to explain', (
   assert.equal(opFailure({ status: 'failed', error: { code: 'preempted' } }), null)
   assert.equal(opFailure({ status: 'succeeded' }), null)
   assert.equal(opFailureDetail({ status: 'failed', error: { code: 'preempted' } }), null)
+})
+
+test('a toast whose follow lost the operation says the status is not known, never failed', () => {
+  const toast = notKnownToast('Failed to fetch')
+  assert.notEqual(toast.status, 'failed')
+  assert.equal(opStatusLabel(toast), 'unknown')
+  assert.notEqual(opStatusChip(toast.status).cls, 'err')
+  assert.equal(toast.detail, 'status not known — Failed to fetch')
+})
+
+test('only a 4xx answer refuses a start; no answer or a 5xx leaves its outcome not known', () => {
+  for (const status of [400, 404, 409, 422, 499]) assert.equal(requestRefused(status), true, String(status))
+  for (const status of [500, 502, 503, 504, undefined]) assert.equal(requestRefused(status), false, String(status))
 })

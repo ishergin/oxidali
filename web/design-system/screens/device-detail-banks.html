@@ -179,10 +179,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .attr .v input[aria-invalid="true"] { border-color: var(--err); background: var(--err-soft); }
 .attr .v input:disabled { color: var(--text-faint); cursor: default; }
 .attr.text .v input { flex: 1; width: auto; min-width: 0; text-align: left; }
-.err-box { margin: 12px 14px; padding: 8px 10px; border-radius: var(--radius-sm);
+.err-box { margin: 12px 16px; padding: 8px 10px; border-radius: var(--radius-sm);
   background: var(--err-soft); border: 1px solid rgba(242,85,90,.3); font-size: 12px; }
-.hintbox { margin: 12px 14px; padding: 8px 10px; border-radius: var(--radius-sm);
+.hintbox { margin: 0 14px 14px; padding: 8px 10px; border-radius: var(--radius-sm);
   background: var(--warn-soft); border: 1px solid rgba(227,160,8,.28); font-size: 11px; color: var(--warn); }
+.attr ~ .hintbox { margin-top: 12px; }
 .crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
 .crumbs a { color: var(--text-muted); text-decoration: none; }
 </style>
@@ -347,16 +348,17 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
   <div class="taglabel">Identity · Luminaire data — the outcome line</div>
   <!-- One line, built from what the generic path returned. Succeeded closes
-       the editor on the fresh values, so it has no line. A refusal — the
-       controller answered the PATCH itself, as its 409 and 422 do — shows the
-       controller's message; a failed operation shows one sentence for its
-       code, in the wording of the operation toast. Both keep the draft.
+       the editor on the fresh values, so it has no line. A refusal — a 4xx
+       answer to the PATCH, such as 409 or 422 — shows the controller's
+       message; a failed operation shows one sentence for its code, in the
+       wording of the operation toast. Both keep the draft.
 
-       Anything whose end is not known — no answer, a 504, a follow that lost
-       the operation or gave up, timed_out, cancelled, or a refusal after an
-       earlier attempt of the same Write was accepted — says so and points at
-       the read, in the warn hue because the gear may now differ from the
-       screen. Write stays allowed: the read is the operator's call, not a
+       Anything whose end is not known — no answer, a 5xx such as 504, a follow
+       that lost the operation or gave up, timed_out, cancelled, or a refusal
+       after an earlier attempt of the same Write was accepted — says so and
+       points at the read, in the warn hue because the gear may now differ from
+       the screen. A write that stood down for an operator command says the
+       gear may hold part of it. Write stays allowed: the read is the operator's call, not a
        lock. The toast of such a run says the status is not known, never
        failed, so the two surfaces agree. -->
   <div class="grid">

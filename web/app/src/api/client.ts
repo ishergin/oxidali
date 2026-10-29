@@ -31,6 +31,7 @@ import type {
   Health,
   HomeAssistantSettings,
   HomeAssistantSettingsPatch,
+  MemoryLuminairePatch,
   Operation,
   OperationAccepted,
   OperationList,
@@ -243,6 +244,8 @@ export const api = {
     put<PhysicalDeviceCore>(`/adapters/${a}/physical-devices/${short}/target-state`, body),
   writeAttributes: (a: number, short: number, body: WriteAttributesRequest) =>
     post<OperationAccepted>(`/adapters/${a}/physical-devices/${short}/write-attributes`, body),
+  patchMemoryLuminaire: (a: number, short: number, body: MemoryLuminairePatch) =>
+    patch<OperationAccepted>(`/adapters/${a}/physical-devices/${short}/memory-luminaire`, body),
   attributeReads: (a: number, short: number, body: AttributeReadsRequest) =>
     post<OperationAccepted>(`/adapters/${a}/physical-devices/${short}/attribute-reads`, body),
   discoveryRun: (a: number, mode: DiscoveryMode) =>

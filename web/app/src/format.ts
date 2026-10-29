@@ -444,6 +444,19 @@ export function opFailure(op: Pick<Operation, 'status' | 'error'>): string | nul
   return detail ? `${error.code} — ${detail}` : error.code
 }
 
+export const PREEMPTED_DETAIL = 'Stood down for an operator command'
+
+const HTTP_CLIENT_ERROR = 400
+const HTTP_SERVER_ERROR = 500
+
+export function requestRefused(status: number | undefined): boolean {
+  return status !== undefined && status >= HTTP_CLIENT_ERROR && status < HTTP_SERVER_ERROR
+}
+
+export function notKnownToast(reason: string): { status: string; detail: string } {
+  return { status: 'unknown', detail: `status not known — ${reason}` }
+}
+
 export function opSummary(op: Operation): string | null {
   const r = op.result
   if (!r) return null

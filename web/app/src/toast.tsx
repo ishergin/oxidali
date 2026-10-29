@@ -2,7 +2,16 @@ import { signal } from '@preact/signals'
 import { ApiError, awaitOperation } from './api/client'
 import type { Operation, OperationAccepted } from './api/types'
 import { Chip } from './components/ui'
-import { isPreempted, opFailure, opStatusChip, opStatusLabel, opSummary } from './format'
+import {
+  requestRefused,
+  isPreempted,
+  notKnownToast,
+  opFailure,
+  opStatusChip,
+  opStatusLabel,
+  opSummary,
+  PREEMPTED_DETAIL,
+} from './format'
 
 export interface Toast {
   id: number
@@ -92,7 +101,7 @@ export async function trackOp(
       status: op.status,
       errorCode: op.error?.code,
       detail: isPreempted(op)
-        ? `Stood down for an operator command${willRetry ? ' — retrying' : ''}`
+        ? `${PREEMPTED_DETAIL}${willRetry ? ' — retrying' : ''}`
         : ([opFailure(op), opSummary(op)].filter(Boolean).join(' · ') || accepted.operation_id),
     })
     setTimeout(
@@ -101,10 +110,19 @@ export async function trackOp(
     )
     return op
   } catch (e) {
-    update(id, { status: 'failed', detail: errorMessage(e) })
+    update(id, notKnownToast(errorMessage(e)))
     setTimeout(() => dismissToast(id), FAILURE_DISMISS_MS)
     return null
   }
+}
+
+function notifyStartFailure(title: string, e: unknown) {
+  if (requestRefused(e instanceof ApiError ? e.status : undefined)) {
+    notify(title, 'failed', errorMessage(e))
+    return
+  }
+  const id = push({ title, ...notKnownToast(errorMessage(e)) })
+  setTimeout(() => dismissToast(id), FAILURE_DISMISS_MS)
 }
 
 export async function runOp(
@@ -116,7 +134,7 @@ export async function runOp(
     try {
       accepted = await start()
     } catch (e) {
-      notify(title, 'failed', errorMessage(e))
+      notifyStartFailure(title, e)
       return null
     }
     const op = await trackOp(title, accepted, attempt < PREEMPT_RETRIES)

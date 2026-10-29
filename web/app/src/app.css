@@ -184,6 +184,7 @@ body {
   padding: 9px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
 .card > header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
 .act { font-size: 11px; color: var(--info); background: none; border: none; cursor: pointer; font-family: var(--font); padding: 0; }
+.card > header .btns { align-items: center; }
 
 .attr { display: grid; grid-template-columns: 1fr 116px 104px; column-gap: 12px; row-gap: 3px;
   align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--border); }
@@ -216,6 +217,11 @@ body {
 .attr .v input { width: 64px; flex: none; padding: 4px 7px; background: var(--raised); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; text-align: right; }
 .attr .v input.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
+.attr .v input[aria-invalid="true"] { border-color: var(--err); background: var(--err-soft); }
+.attr .v input:disabled { color: var(--text-faint); cursor: default; }
+.attr.text .v input { flex: 1; width: auto; min-width: 0; text-align: left; }
+.attr ~ .hint { margin: 8px 14px 4px; }
+.attr ~ .hintbox { margin-top: 12px; }
 .attr .v select.attr-enum { width: auto; min-width: 158px; font-size: 12px; }
 .attr .v select.attr-enum.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
 .attr .v.fault { color: var(--err); }
