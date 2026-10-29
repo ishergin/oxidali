@@ -1333,7 +1333,10 @@ fn a_part251_read_that_starts_above_zero_commits_under_the_right_fields() {
 
 const BANK_CHUNK_BYTES: usize = 24;
 const LUMINAIRE_SHORT: u8 = 8;
-const NOT_PART251_FORMAT: u8 = 2;
+const V3: part251::LuminaireFormat = part251::LuminaireFormat::V3;
+const V4: part251::LuminaireFormat = part251::LuminaireFormat::V4;
+const V5: part251::LuminaireFormat = part251::LuminaireFormat::V5;
+const NOT_PART251_FORMAT: u16 = 2;
 const V3_LEAVES: [&str; 13] = [
     "content_format_id",
     "year",
@@ -1351,6 +1354,10 @@ const V3_LEAVES: [&str; 13] = [
 ];
 const V4_LEAVES: [&str; 1] = ["light_distribution"];
 const V5_LEAVES: [&str; 4] = ["oem_name", "customer_stocking_number", "lamp_current_ma", "free_use"];
+
+fn every_leaf() -> Vec<&'static str> {
+    [V3_LEAVES.as_slice(), &V4_LEAVES, &V5_LEAVES].concat()
+}
 
 fn publish_bank1_read(publisher: &dali2rust_bus::BusPublisher, correlation_id: u64, start: u16, data: &[u8]) {
     let chunks = data.chunks(BANK_CHUNK_BYTES).count();
@@ -1372,10 +1379,11 @@ fn publish_bank1_read(publisher: &dali2rust_bus::BusPublisher, correlation_id: u
     }
 }
 
-fn bank1_image(content_format_id: u8, last_offset: u8, year: u8) -> Vec<u8> {
+fn bank1_image(content_format_id: u16, last_offset: u8, year: u8) -> Vec<u8> {
     let mut bank = vec![0u8; usize::from(last_offset) + 1];
     bank[0] = last_offset;
-    bank[usize::from(part251::CONTENT_FORMAT_ID_OFFSET) + 1] = content_format_id;
+    let format_at = usize::from(part251::CONTENT_FORMAT_ID_OFFSET);
+    bank[format_at..format_at + 2].copy_from_slice(&content_format_id.to_be_bytes());
     bank[usize::from(part251::YEAR_OFFSET)] = year;
     bank
 }
@@ -1424,24 +1432,30 @@ impl LuminaireStack {
         let (publisher, events, host) = spawn_registry_stack(Arc::clone(&store), counters);
         seed_physical_via_discovery(&publisher, &store, LUMINAIRE_SHORT);
         drain_events(&events);
-        Self { store, publisher, _events: events, _host: host }
+        let stack = Self { store, publisher, _events: events, _host: host };
+        let whole = stack.read_bank(40, &bank1_image(V5.content_format_id(), V5.min_last_offset(), 1));
+        assert_eq!(present_leaves(&whole), every_leaf(), "a whole format 5 bank holds every leaf");
+        stack
     }
 
-    fn read(
-        &self,
-        correlation_id: u64,
-        start: u16,
-        data: &[u8],
-        landed: impl Fn(&MemoryLuminaireAttributesView) -> bool,
-    ) -> MemoryLuminaireAttributesView {
-        publish_bank1_read(&self.publisher, correlation_id, start, data);
-        wait_until(|| landed(&memory_luminaire_section(&self.store, LUMINAIRE_SHORT)), Duration::from_secs(2));
+    fn luminaire(&self) -> MemoryLuminaireAttributesView {
         memory_luminaire_section(&self.store, LUMINAIRE_SHORT)
+    }
+
+    fn bank1_read_from(&self, start: u16) -> bool {
+        let banks = memory_banks_of(&self.store, LUMINAIRE_SHORT);
+        banks.iter().any(|bank| bank.bank == 1 && bank.ranges.first().is_some_and(|range| range.start == start))
+    }
+
+    fn read(&self, correlation_id: u64, start: u16, data: &[u8], landed: impl Fn(&Self) -> bool) -> MemoryLuminaireAttributesView {
+        publish_bank1_read(&self.publisher, correlation_id, start, data);
+        wait_until(|| landed(self), Duration::from_secs(2));
+        self.luminaire()
     }
 
     fn read_bank(&self, correlation_id: u64, bank: &[u8]) -> MemoryLuminaireAttributesView {
         let year = u32::from(bank[usize::from(part251::YEAR_OFFSET)]);
-        self.read(correlation_id, 0, bank, |lum| year_of(lum) == Some(year))
+        self.read(correlation_id, 0, bank, |stack| year_of(&stack.luminaire()) == Some(year))
     }
 }
 
@@ -1449,11 +1463,7 @@ impl LuminaireStack {
 #[test]
 fn a_bank1_read_of_an_older_content_format_drops_the_leaves_that_format_lacks() {
     let stack = LuminaireStack::new();
-    let last = part251::LuminaireFormat::V5.min_last_offset();
-    let v5 = stack.read_bank(41, &bank1_image(5, last, 1));
-    let every_leaf = [V3_LEAVES.as_slice(), &V4_LEAVES, &V5_LEAVES].concat();
-    assert_eq!(present_leaves(&v5), every_leaf, "a whole format 5 bank holds every leaf");
-    let v3 = stack.read_bank(42, &bank1_image(3, last, 2));
+    let v3 = stack.read_bank(42, &bank1_image(V3.content_format_id(), V5.min_last_offset(), 2));
     assert_eq!(
         present_leaves(&v3),
         V3_LEAVES,
@@ -1465,8 +1475,7 @@ fn a_bank1_read_of_an_older_content_format_drops_the_leaves_that_format_lacks() 
 #[test]
 fn a_bank1_read_that_ends_the_bank_sooner_drops_the_leaves_past_its_end() {
     let stack = LuminaireStack::new();
-    stack.read_bank(43, &bank1_image(5, part251::LuminaireFormat::V5.min_last_offset(), 1));
-    let short = stack.read_bank(44, &bank1_image(5, part251::LuminaireFormat::V4.min_last_offset(), 2));
+    let short = stack.read_bank(44, &bank1_image(V5.content_format_id(), V4.min_last_offset(), 2));
     assert_eq!(
         present_leaves(&short),
         [V3_LEAVES.as_slice(), &V4_LEAVES].concat(),
@@ -1474,16 +1483,24 @@ fn a_bank1_read_that_ends_the_bank_sooner_drops_the_leaves_past_its_end() {
     );
 }
 
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn a_bank1_read_of_a_bank_that_ends_before_its_content_format_drops_every_leaf() {
+    let stack = LuminaireStack::new();
+    let last = part251::CONTENT_FORMAT_ID_OFFSET - 1;
+    let mut plain = vec![0u8; usize::from(last) + 1];
+    plain[0] = last;
+    let lum = stack.read(50, 0, &plain, |stack| stack.luminaire() == MemoryLuminaireAttributesView::default());
+    assert_eq!(present_leaves(&lum), Vec::<&str>::new(), "a bank that ends at 0x10 has no Part 251 location at all");
+}
+
 // DiiA 251 §9.2.5
 #[test]
 fn a_bank1_read_whose_content_format_is_not_part251_keeps_only_that_format() {
     let stack = LuminaireStack::new();
-    let last = part251::LuminaireFormat::V5.min_last_offset();
-    stack.read_bank(45, &bank1_image(5, last, 1));
-    let foreign = bank1_image(NOT_PART251_FORMAT, last, 2);
-    let is_foreign = |lum: &MemoryLuminaireAttributesView| {
-        lum.content_format_id.as_ref().is_some_and(|id| id.value == u16::from(NOT_PART251_FORMAT))
-    };
+    let foreign = bank1_image(NOT_PART251_FORMAT, V5.min_last_offset(), 2);
+    let is_foreign =
+        |stack: &LuminaireStack| stack.luminaire().content_format_id.is_some_and(|id| id.value == NOT_PART251_FORMAT);
     let lum = stack.read(46, 0, &foreign, is_foreign);
     assert_eq!(present_leaves(&lum), ["content_format_id"], "no Part 251 field means anything under another format");
 }
@@ -1492,16 +1509,33 @@ fn a_bank1_read_whose_content_format_is_not_part251_keeps_only_that_format() {
 #[test]
 fn a_bank1_read_from_above_its_start_drops_nothing_for_a_bank_end_it_did_not_read() {
     let stack = LuminaireStack::new();
-    let whole = bank1_image(5, part251::LuminaireFormat::V5.min_last_offset(), 1);
-    stack.read_bank(47, &whole);
+    let whole = bank1_image(V5.content_format_id(), V5.min_last_offset(), 2);
     let start = part251::CONTENT_FORMAT_ID_OFFSET;
-    let mut window = whole[usize::from(start)..=usize::from(part251::LIGHT_DISTRIBUTION_TYPE_OFFSET)].to_vec();
-    window[usize::from(part251::YEAR_OFFSET - start)] = 2;
-    let lum = stack.read(48, start.into(), &window, |lum| year_of(lum) == Some(2));
-    let every_leaf = [V3_LEAVES.as_slice(), &V4_LEAVES, &V5_LEAVES].concat();
-    assert_eq!(present_leaves(&lum), every_leaf, "a window above 0x00 never read where the bank ends");
+    let window = &whole[usize::from(start)..=usize::from(part251::LIGHT_DISTRIBUTION_TYPE_OFFSET)];
+    let lum = stack.read(48, start.into(), window, |stack| year_of(&stack.luminaire()) == Some(2));
+    assert_eq!(present_leaves(&lum), every_leaf(), "a window above 0x00 never read where the bank ends");
 }
 
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn a_bank1_read_from_its_start_that_stops_early_keeps_the_leaves_its_bank_still_holds() {
+    let stack = LuminaireStack::new();
+    let whole = bank1_image(V5.content_format_id(), V5.min_last_offset(), 2);
+    let header = &whole[..=usize::from(part251::YEAR_OFFSET)];
+    let lum = stack.read_bank(52, header);
+    assert_eq!(present_leaves(&lum), every_leaf(), "byte 0x00 says where the bank ends, not the length of the read");
+}
+
+// DiiA 251 §9.2.5
+#[test]
+fn a_bank1_read_that_covers_neither_its_start_nor_its_format_keeps_every_leaf() {
+    let stack = LuminaireStack::new();
+    let whole = bank1_image(V5.content_format_id(), V5.min_last_offset(), 2);
+    let colour = part251::LUMINAIRE_COLOUR;
+    let window = &whole[usize::from(colour.offset)..usize::from(colour.offset + colour.len)];
+    let lum = stack.read(54, colour.offset.into(), window, |stack| stack.bank1_read_from(colour.offset.into()));
+    assert_eq!(present_leaves(&lum), every_leaf(), "a window that read neither the bank's end nor its format drops nothing");
+}
 
 struct DefaultedGroupPort<'a>(&'a RegistryStore);
 

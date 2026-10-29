@@ -205,26 +205,25 @@ fn apply_bank0_bus_unit(
 
 #[derive(Clone, Copy)]
 struct Bank1Extent {
-    format: Option<LuminaireFormat>,
+    content_format_id: Option<u16>,
     last_offset: Option<u8>,
 }
 
 impl Bank1Extent {
-    fn of_read(content_format_id: Option<u16>, bytes: &[u8], start_offset: u16) -> Option<Self> {
-        let format = LuminaireFormat::from_content_format_id(content_format_id?);
+    fn of_read(content_format_id: Option<u16>, bytes: &[u8], start_offset: u16) -> Self {
         let last_offset = if start_offset == 0 { bytes.first().copied() } else { None };
-        Some(Self { format, last_offset })
+        Self { content_format_id, last_offset }
     }
 
     // DiiA 251 §9.2.5
     // IEC 62386-102 §9.10.6, Table 9
     fn holds(self, leaf: &str) -> bool {
         let Some(field) = LuminaireField::named(leaf) else {
-            return true;
+            return false;
         };
-        field.kind == FieldKind::LayoutId
-            || (self.format.is_some_and(|format| field.in_format(format))
-                && self.last_offset.is_none_or(|last| field.ends_by(last)))
+        let declares = |id| LuminaireFormat::from_content_format_id(id).is_some_and(|format| field.in_format(format));
+        let in_format = field.kind == FieldKind::LayoutId || self.content_format_id.is_none_or(declares);
+        in_format && self.last_offset.is_none_or(|last| field.ends_by(last))
     }
 }
 
@@ -232,7 +231,7 @@ macro_rules! merge_luminaire_leaves {
     ($parsed:expr, $view:expr, $now_ms:expr, $extent:expr; $($field:ident),+ $(,)?) => {{
         $(
             merge_read_attr_opt(&mut $view.$field, $parsed.$field, $now_ms);
-            if $extent.is_some_and(|extent: Bank1Extent| !extent.holds(stringify!($field))) {
+            if !$extent.holds(stringify!($field)) {
                 $view.$field = None;
             }
         )+
