@@ -20,10 +20,10 @@ use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
     AdapterReadPort, AdapterView, AttributeSource, GroupApplySnapshot, GroupMembershipMatrixView,
     GroupReadPort, GroupView, MemoryLuminaireAttributesView, PhysicalDeviceReadPort,
-    SceneReadPort, VirtualLampReadPort,
+    SceneReadPort, SceneView, VirtualLampReadPort,
 };
 use dali2rust_registry_runtime::{RegistryStore, RegistryWorkerCounters};
-use dali2rust_test_support::wait_until;
+use dali2rust_test_support::{try_recv_event_matching_envelope, wait_until};
 use dali2rust_domain::dali::banks::luminaire_write::{check_writable, Bank1WriteRefusal, LuminaireField};
 use dali2rust_domain::dali::banks::{part251, BANK_LOCK_BYTE};
 
@@ -63,6 +63,17 @@ fn assert_no_group_matrix_changed_for(rx: &std::sync::mpsc::Receiver<BusFrame>, 
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
+}
+
+fn saw_event_for(
+    rx: &std::sync::mpsc::Receiver<BusFrame>,
+    correlation_id: u64,
+    wanted: fn(&BusEventPayload) -> bool,
+) -> bool {
+    try_recv_event_matching_envelope(rx, CHANGED_EVENTS_DEADLINE, |event| {
+        event.meta.correlation_id == correlation_id && wanted(&event.payload)
+    })
+    .is_some()
 }
 
 fn spawn_registry_stack(
@@ -505,10 +516,8 @@ fn successful_group_membership_event_updates_applied_matrix() {
     let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
     setup_discovered_short_and_binding(&publisher, &store, 7, 1, 68);
     drain_events(&ev_obs);
-    let before = counters
-        .events
-        .group_membership_programmed_applied
-        .load(Ordering::Relaxed);
+    let programmed = || counters.events.group_membership_programmed_applied.load(Ordering::Relaxed);
+    let before = programmed();
     publish_group_matrix_write(&publisher, 70, 0, group_rows(&[GroupMatrixDesiredRow {
             virtual_lamp_id: 1,
             desired_groups_mask: 1 << 2,
@@ -527,15 +536,7 @@ fn successful_group_membership_event_updates_applied_matrix() {
         &publisher,
         dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 71, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliGroupMembershipProgrammedEvent { registry_adapter_id: 0, target: DaliProgramTarget::VirtualLamp { virtual_lamp_id: 1 }, group_id: 2, action: GroupMembershipAction::Add, physical_short_address: Some(7), membership: Some(1 << 2), error: None }),
     );
-    wait_until(
-        || {
-            store
-                .group_view(0, 2)
-                .map(|group| !group.dirty && group.member_count_applied == 1)
-                .unwrap_or(false)
-        },
-        Duration::from_millis(500),
-    );
+    wait_until(|| programmed() == before + 1, Duration::from_millis(500));
 
     let matrix = store.group_membership_matrix_view(0).expect("group matrix");
     assert!(matrix.rows[1].desired[2]);
@@ -544,26 +545,38 @@ fn successful_group_membership_event_updates_applied_matrix() {
     assert!(!group.dirty);
     assert_eq!(group.member_count_desired, 1);
     assert_eq!(group.member_count_applied, 1);
-    assert_eq!(
-        counters
-            .events
-            .group_membership_programmed_applied
-            .load(Ordering::Relaxed),
-        before + 1
-    );
-    let mut saw_matrix_changed = false;
-    for _ in 0..16 {
-        let Ok(BusFrame::Event(event)) = ev_obs.recv_timeout(Duration::from_millis(80)) else {
-            break;
-        };
-        if event.meta.correlation_id == 71
-            && matches!(event.payload, BusEventPayload::GroupMatrixChangedEvent(_))
-        {
-            saw_matrix_changed = true;
-            break;
-        }
+    let changed = |p: &BusEventPayload| matches!(p, BusEventPayload::GroupMatrixChangedEvent(_));
+    assert!(saw_event_for(&ev_obs, 71, changed), "expected GroupMatrixChangedEvent for success projection");
+}
+
+fn warm_scene_target() -> dali2rust_contracts::msg::DaliSceneTargetState {
+    dali2rust_contracts::msg::DaliSceneTargetState {
+        power: Some(dali2rust_contracts::msg::PowerState::On),
+        level: Some(179),
+        color: Some(dali2rust_contracts::msg::ColorValue {
+            mode: dali2rust_contracts::msg::ColorMode::Cct,
+            color_temperature_kelvin: 2700,
+            ..Default::default()
+        }),
     }
-    assert!(saw_matrix_changed, "expected GroupMatrixChangedEvent for success projection");
+}
+
+fn write_scene_row(
+    publisher: &dali2rust_bus::BusPublisher,
+    store: &RegistryStore,
+    correlation_id: u64,
+    target: dali2rust_contracts::msg::DaliSceneTargetState,
+) {
+    let mut rows = dali2rust_contracts::msg::SceneMatrixDesiredRowList::new();
+    let row = dali2rust_contracts::msg::SceneMatrixDesiredRow {
+        virtual_lamp_id: 1,
+        included: true,
+        target: Some(target),
+    };
+    rows.push(row).expect("row capacity");
+    publish_scene_matrix_write(publisher, correlation_id, 0, 3, rows);
+    let written = |scene: SceneView| scene.dirty && scene.row_count_included == 1;
+    wait_until(|| store.scene_view(0, 3).is_some_and(written), Duration::from_millis(500));
 }
 
 #[test]
@@ -573,63 +586,13 @@ fn successful_scene_programmed_event_projects_applied_row_and_echo() {
     let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
     setup_discovered_short_and_binding(&publisher, &store, 7, 1, 90);
     drain_events(&ev_obs);
+    let target = warm_scene_target();
+    write_scene_row(&publisher, &store, 92, target);
 
-    let target = dali2rust_contracts::msg::DaliSceneTargetState {
-        power: Some(dali2rust_contracts::msg::PowerState::On),
-        level: Some(179),
-        color: Some(dali2rust_contracts::msg::ColorValue {
-            mode: dali2rust_contracts::msg::ColorMode::Cct,
-            color_temperature_kelvin: 2700,
-            ..Default::default()
-        }),
-    };
-    let mut rows = dali2rust_contracts::msg::SceneMatrixDesiredRowList::new();
-    rows.push(dali2rust_contracts::msg::SceneMatrixDesiredRow {
-        virtual_lamp_id: 1,
-        included: true,
-        target: Some(target),
-    })
-    .expect("row capacity");
-    publish_scene_matrix_write(&publisher, 92, 0, 3, rows);
-    wait_until(
-        || {
-            store
-                .scene_view(0, 3)
-                .map(|scene| scene.dirty && scene.row_count_included == 1)
-                .unwrap_or(false)
-        },
-        Duration::from_millis(500),
-    );
-
-    let before = counters.events.scene_programmed_applied.load(Ordering::Relaxed);
-    publish_event(
-        &publisher,
-        dali2rust_contracts::bus::event_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            93,
-            BUS_TID,
-            Some(dali2rust_contracts::msg::Origin::Internal),
-            dali2rust_contracts::msg::DaliSceneProgrammedEvent {
-                registry_adapter_id: 0,
-                target: DaliProgramTarget::VirtualLamp { virtual_lamp_id: 1 },
-                scene_id: 3,
-                action: dali2rust_contracts::msg::SceneProgramAction::Write,
-                physical_short_address: Some(7),
-                target_state: Some(target),
-                scene_level: Some(179),
-                error: None,
-            },
-        ),
-    );
-    wait_until(
-        || {
-            store
-                .scene_view(0, 3)
-                .map(|scene| !scene.dirty)
-                .unwrap_or(false)
-        },
-        Duration::from_millis(500),
-    );
+    let programmed = || counters.events.scene_programmed_applied.load(Ordering::Relaxed);
+    let before = programmed();
+    publish_event(&publisher, scene_programmed(93, 7, Some(target)));
+    wait_until(|| programmed() == before + 1, Duration::from_millis(500));
 
     let matrix = store.scene_matrix_view(0, 3).expect("scene matrix");
     let row = &matrix.rows[1];
@@ -638,23 +601,9 @@ fn successful_scene_programmed_event_projects_applied_row_and_echo() {
     assert_eq!(row.applied.color_mode.as_deref(), Some("cct"));
     assert_eq!(row.applied.color_temperature_kelvin, Some(2700));
     assert!(!row.dirty);
-    assert_eq!(
-        counters.events.scene_programmed_applied.load(Ordering::Relaxed),
-        before + 1
-    );
-    let mut saw_matrix_changed = false;
-    for _ in 0..16 {
-        let Ok(BusFrame::Event(event)) = ev_obs.recv_timeout(Duration::from_millis(80)) else {
-            break;
-        };
-        if event.meta.correlation_id == 93
-            && matches!(event.payload, BusEventPayload::SceneMatrixChangedEvent(_))
-        {
-            saw_matrix_changed = true;
-            break;
-        }
-    }
-    assert!(saw_matrix_changed, "expected SceneMatrixChangedEvent for scene projection");
+    assert!(!store.scene_view(0, 3).expect("scene view").dirty);
+    let changed = |p: &BusEventPayload| matches!(p, BusEventPayload::SceneMatrixChangedEvent(_));
+    assert!(saw_event_for(&ev_obs, 93, changed), "expected SceneMatrixChangedEvent for scene projection");
 }
 
 #[test]
@@ -879,33 +828,23 @@ fn what_was_programmed_into_the_old_gear_does_not_vouch_for_the_new_one() {
     let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
     setup_discovered_short_and_binding(&publisher, &store, 7, 1, 990);
     seed_physical_via_discovery(&publisher, &store, 8);
-    let target = dali2rust_contracts::msg::DaliSceneTargetState {
-        power: Some(dali2rust_contracts::msg::PowerState::On),
-        level: Some(179),
-        color: Some(dali2rust_contracts::msg::ColorValue {
-            mode: dali2rust_contracts::msg::ColorMode::Cct,
-            color_temperature_kelvin: 2700,
-            ..Default::default()
-        }),
-    };
-    let mut rows = dali2rust_contracts::msg::SceneMatrixDesiredRowList::new();
-    let row = dali2rust_contracts::msg::SceneMatrixDesiredRow {
-        virtual_lamp_id: 1,
-        included: true,
-        target: Some(target),
-    };
-    rows.push(row).expect("row capacity");
-    publish_scene_matrix_write(&publisher, 992, 0, 3, rows);
+    let target = warm_scene_target();
+    write_scene_row(&publisher, &store, 992, target);
+    let programmed = || counters.events.scene_programmed_applied.load(Ordering::Relaxed);
+    let before = programmed();
     publish_event(&publisher, scene_programmed(993, 7, Some(target)));
     publish_event(&publisher, scene_programmed(994, 8, None));
+    wait_until(|| programmed() == before + 2, Duration::from_millis(500));
     let scene_dirty = || store.scene_view(0, 3).map(|scene| scene.dirty);
-    wait_until(|| scene_dirty() == Some(false), Duration::from_millis(500));
     assert_eq!(scene_dirty(), Some(false), "the old gear holds what the lamp's row asks");
     drain_events(&ev_obs);
 
     publish_event(&publisher, replaced_event(995, 7, 8));
     wait_until(|| !store.physical_device_exists(0, 8), Duration::from_millis(500));
 
+    let matrix = store.scene_matrix_view(0, 3).expect("scene matrix");
+    assert_eq!(matrix.rows[1].applied.level, Some(179), "the gear at the role holds the row's level");
+    assert_eq!(matrix.rows[1].applied.color_mode, None, "and no colour is vouched for");
     assert_eq!(
         scene_dirty(),
         Some(true),
