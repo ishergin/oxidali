@@ -24,7 +24,8 @@ use dali2rust_domain::registry::{
 };
 use dali2rust_registry_runtime::{RegistryStore, RegistryWorkerCounters};
 use dali2rust_test_support::wait_until;
-use dali2rust_domain::dali::banks::part251;
+use dali2rust_domain::dali::banks::luminaire_write::{check_writable, Bank1WriteRefusal, LuminaireField};
+use dali2rust_domain::dali::banks::{part251, BANK_LOCK_BYTE};
 
 const BUS_TID: u16 = 1;
 
@@ -1287,35 +1288,21 @@ fn an_operator_authored_mask_survives_unbinding_and_moving_the_lamp() {
 
 #[test]
 fn a_part251_read_that_starts_above_zero_commits_under_the_right_fields() {
-    let store = Arc::new(RegistryStore::with_adapter_count(1));
-    let counters = Arc::new(RegistryWorkerCounters::default());
-    let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
-    seed_physical_via_discovery(&publisher, &store, 8);
-    drain_events(&ev_obs);
-
-    let start = u16::from(part251::CONTENT_FORMAT_ID_OFFSET);
-    let mut data = vec![0u8; 0x24 - usize::from(start)];
-    let put = |d: &mut Vec<u8>, off: u8, bytes: &[u8]| {
-        let at = usize::from(off) - usize::from(start);
-        d[at..at + bytes.len()].copy_from_slice(bytes);
+    let stack = LuminaireStack::bare();
+    let start = part251::CONTENT_FORMAT_ID_OFFSET;
+    let mut data = vec![0u8; usize::from(part251::LUMINAIRE_COLOUR.offset - start)];
+    let mut put = |off: u8, bytes: &[u8]| {
+        let at = usize::from(off - start);
+        data[at..at + bytes.len()].copy_from_slice(bytes);
     };
-    put(&mut data, part251::CONTENT_FORMAT_ID_OFFSET, &[0x00, 0x03]);
-    put(&mut data, part251::YEAR_OFFSET, &[24]);
-    put(&mut data, part251::WEEK_OFFSET, &[35]);
-    put(&mut data, part251::NOMINAL_INPUT_POWER_OFFSET, &[0x00, 0x2C]);
-    put(&mut data, part251::CRI_OFFSET, &[94]);
-    put(&mut data, part251::CCT_OFFSET, &[0xFF, 0xFE]);
-
-    publish_bank1_read(&publisher, 7, start, &data);
-
-    wait_until(
-        || {
-            store.physical_device_exists(0, 8)
-                && memory_luminaire_section(&store, 8) != MemoryLuminaireAttributesView::default()
-        },
-        Duration::from_secs(2),
-    );
-    let lum = memory_luminaire_section(&store, 8);
+    put(part251::CONTENT_FORMAT_ID_OFFSET, &[0x00, 0x03]);
+    put(part251::YEAR_OFFSET, &[24]);
+    put(part251::WEEK_OFFSET, &[35]);
+    put(part251::NOMINAL_INPUT_POWER_OFFSET, &[0x00, 0x2C]);
+    put(part251::CRI_OFFSET, &[94]);
+    put(part251::CCT_OFFSET, &[0xFF, 0xFE]);
+    let read_any = |stack: &LuminaireStack| stack.luminaire() != MemoryLuminaireAttributesView::default();
+    let lum = stack.read(7, start.into(), &data, read_any);
     assert_eq!(lum.content_format_id.as_ref().map(|v| v.value), Some(3));
     assert_eq!(lum.year.as_ref().map(|v| v.value.value), Some(Some(24)));
     assert_eq!(lum.week.as_ref().map(|v| v.value.value), Some(Some(35)));
@@ -1328,7 +1315,7 @@ fn a_part251_read_that_starts_above_zero_commits_under_the_right_fields() {
     let cct = lum.cct_kelvin.as_ref().expect("cct").value;
     assert!(cct.part209_implemented, "MASK - 1 is Part 209, not TMASK");
     assert_eq!(cct.value, None);
-    assert!(memory_profile_section(&store, 8).oem_gtin.is_none());
+    assert!(memory_profile_section(&stack.store, LUMINAIRE_SHORT).oem_gtin.is_none());
 }
 
 const BANK_CHUNK_BYTES: usize = 24;
@@ -1426,13 +1413,17 @@ struct LuminaireStack {
 }
 
 impl LuminaireStack {
-    fn new() -> Self {
+    fn bare() -> Self {
         let store = Arc::new(RegistryStore::with_adapter_count(1));
         let counters = Arc::new(RegistryWorkerCounters::default());
         let (publisher, events, host) = spawn_registry_stack(Arc::clone(&store), counters);
         seed_physical_via_discovery(&publisher, &store, LUMINAIRE_SHORT);
         drain_events(&events);
-        let stack = Self { store, publisher, _events: events, _host: host };
+        Self { store, publisher, _events: events, _host: host }
+    }
+
+    fn new() -> Self {
+        let stack = Self::bare();
         let whole = stack.read_bank(40, &bank1_image(V5.content_format_id(), V5.min_last_offset(), 1));
         assert_eq!(present_leaves(&whole), every_leaf(), "a whole format 5 bank holds every leaf");
         stack
@@ -1492,6 +1483,13 @@ fn a_bank1_read_of_a_bank_that_ends_before_its_content_format_drops_every_leaf()
     plain[0] = last;
     let lum = stack.read(50, 0, &plain, |stack| stack.luminaire() == MemoryLuminaireAttributesView::default());
     assert_eq!(present_leaves(&lum), Vec::<&str>::new(), "a bank that ends at 0x10 has no Part 251 location at all");
+    let layout = PhysicalDeviceReadPort::physical_device_bank1_layout(&*stack.store, 0, LUMINAIRE_SHORT);
+    let year = LuminaireField::named("year").expect("a Part 251 field");
+    assert_eq!(
+        check_writable(&layout.expect("the device exists"), year),
+        Err(Bank1WriteRefusal::NotPart251),
+        "the write gate sees a bank with no Part 251 data, not a short Part 251 bank"
+    );
 }
 
 // DiiA 251 §9.2.5
@@ -1507,13 +1505,27 @@ fn a_bank1_read_whose_content_format_is_not_part251_keeps_only_that_format() {
 
 // IEC 62386-102 §9.10.6, Table 9
 #[test]
-fn a_bank1_read_from_above_its_start_drops_nothing_for_a_bank_end_it_did_not_read() {
+fn a_bank1_read_from_above_its_start_drops_by_its_format_never_by_a_bank_end_it_did_not_read() {
     let stack = LuminaireStack::new();
-    let whole = bank1_image(V5.content_format_id(), V5.min_last_offset(), 2);
-    let start = part251::CONTENT_FORMAT_ID_OFFSET;
-    let window = &whole[usize::from(start)..=usize::from(part251::LIGHT_DISTRIBUTION_TYPE_OFFSET)];
-    let lum = stack.read(48, start.into(), window, |stack| year_of(&stack.luminaire()) == Some(2));
-    assert_eq!(present_leaves(&lum), every_leaf(), "a window above 0x00 never read where the bank ends");
+    let whole = bank1_image(V3.content_format_id(), V5.min_last_offset(), 2);
+    let window = &whole[usize::from(BANK_LOCK_BYTE)..=usize::from(part251::LIGHT_DISTRIBUTION_TYPE_OFFSET)];
+    let lum = stack.read(48, BANK_LOCK_BYTE.into(), window, |stack| year_of(&stack.luminaire()) == Some(2));
+    assert_eq!(
+        present_leaves(&lum),
+        V3_LEAVES,
+        "a window from the lock byte read format 3, and its first byte is not where the bank ends"
+    );
+}
+
+// IEC 62386-102 §9.10.6, Table 9
+#[test]
+fn a_bank1_read_of_a_bank_that_ends_inside_a_field_drops_that_field() {
+    let stack = LuminaireStack::new();
+    let identification = part251::LUMINAIRE_IDENTIFICATION;
+    let inside = identification.offset + identification.len - 2;
+    let lum = stack.read_bank(56, &bank1_image(V5.content_format_id(), inside, 2));
+    let before: Vec<&str> = V3_LEAVES.into_iter().filter(|leaf| *leaf != "luminaire_identification").collect();
+    assert_eq!(present_leaves(&lum), before, "a field is on the gear only when its last byte is");
 }
 
 // IEC 62386-102 §9.10.6, Table 9
