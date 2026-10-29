@@ -178,15 +178,25 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     <div class="err-box"><span class="code">discovery_publish_refused</span> — the broker took none of them; nothing reached Home Assistant.</div>
   </div>
 
-  <!-- Terminal, but unknowable: the controller keeps a finished operation for
-       sixty seconds, and a client that asks later cannot be told how it ended.
-       Neutral, never green — the screens act on this answer. -->
+  <!-- Unknowable: the client cannot tell how the operation ended — the
+       controller no longer keeps it (a finished operation lives sixty
+       seconds), the client lost track of it, or it ended without a verdict.
+       Neutral, never green — the screens act on this answer — and never red,
+       because the write may well have landed. -->
   <div class="op">
     <div class="head">
       <span class="title">Scene 4 save</span>
       <span class="chip idle"><span class="dot"></span>unknown</span>
     </div>
     <div class="meta">Outcome expired before this tab asked — reload to see the stored matrix.</div>
+  </div>
+
+  <div class="op">
+    <div class="head">
+      <span class="title">Bank 1 write · SA 09</span>
+      <span class="chip idle"><span class="dot"></span>unknown</span>
+    </div>
+    <div class="meta">status not known — Failed to fetch</div>
   </div>
 
   <!--

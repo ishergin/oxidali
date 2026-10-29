@@ -9,6 +9,7 @@ import {
   opSummary,
   opTitle,
   pad2,
+  preemptedNote,
 } from '../format'
 import { useLive } from '../hooks'
 import { nav } from '../router'
@@ -104,7 +105,7 @@ function OpDetail({ op }: { op: Operation }) {
 
       {isPreempted(op) ? (
         <div class="meta-row">
-          <span>Stood down for an operator command — nothing was changed.</span>
+          <span>{preemptedNote(op)}</span>
         </div>
       ) : (
         op.error && (

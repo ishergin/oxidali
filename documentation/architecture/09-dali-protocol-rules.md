@@ -249,10 +249,10 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   inside a latched value) and attempts the bus never let through (busy, a contended
   silence, a transport error) each have a budget of three. When one runs out, the read
   fails by what the attempts there showed, in this order: `bus_contended` if any showed
-  another master (a violation, a busy bus, a foreign frame in the exchange); else the
-  transport error, if the transport failed; else, every attempt having been a clean
-  silence, `memory_bank_latch_lost` inside a latched value whose first byte had answered
-  and `memory_bank_location_unanswered` anywhere else, which only 0x02 reaches. So
+  contention (a violation, a busy bus, a collision, a foreign frame in the exchange);
+  else the transport error, if the transport failed; else, every attempt having been a
+  clean silence, `memory_bank_latch_lost` inside a latched value whose first byte had
+  answered and `memory_bank_location_unanswered` anywhere else, which only 0x02 reaches. So
   silence is never reported as contention, and a transport failure is reported as
   neither. An attribute read counts `bus_contended` and `memory_bank_read_misaligned` as
   contended aborts, and the silences (`memory_bank_latch_lost`,

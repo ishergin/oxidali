@@ -2,8 +2,9 @@ import { useState } from 'preact/hooks'
 import { api } from '../api/client'
 import type { HomeAssistantSettings, HomeAssistantSettingsPatch } from '../api/types'
 import { Card, EditableText, FieldRow, Switch } from '../components/ui'
+import { opEnd } from '../format'
 import { usePoll } from '../hooks'
-import { errorMessage, mutateBusy, notify, opCommitted, trackOp } from '../toast'
+import { mutateBusy, notify, notifyNotKnown, notifyStartFailure, trackOp } from '../toast'
 
 const POLL_MS = 5000
 const MAX_HOST = 64
@@ -66,12 +67,11 @@ export function SettingsHomeAssistant() {
     setBusy(true)
     try {
       const accepted = await api.publishHomeAssistantDiscovery()
-      const op = await trackOp('Discovery', accepted)
-      if (!opCommitted(op)) {
-        notify('Discovery', 'failed', 'The republish did not complete')
-      }
+      const end = opEnd(await trackOp('Discovery', accepted))
+      if (end === 'failed') notify('Discovery', 'failed', 'The republish did not complete')
+      if (end === 'not_known') notifyNotKnown('Discovery', 'the republish may not have completed')
     } catch (e) {
-      notify('Discovery', 'failed', errorMessage(e))
+      notifyStartFailure('Discovery', e, false)
     } finally {
       setBusy(false)
     }
