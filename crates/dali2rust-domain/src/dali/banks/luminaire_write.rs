@@ -96,6 +96,14 @@ impl LuminaireField {
         self.offset + (self.len - 1)
     }
 
+    pub fn in_format(&self, format: LuminaireFormat) -> bool {
+        format >= self.since
+    }
+
+    pub const fn ends_by(&self, last_offset: u8) -> bool {
+        self.last_offset() <= last_offset
+    }
+
     pub fn accepts_number(&self, value: u64, format: LuminaireFormat) -> bool {
         let FieldKind::Number { rule, .. } = self.kind else {
             return false;
@@ -191,10 +199,10 @@ pub fn check_writable(
         .content_format_id
         .and_then(LuminaireFormat::from_content_format_id)
         .ok_or(Bank1WriteRefusal::NotPart251)?;
-    if format < field.since {
+    if !field.in_format(format) {
         return Err(Bank1WriteRefusal::FieldNotInFormat);
     }
-    if last < field.last_offset() {
+    if !field.ends_by(last) {
         return Err(Bank1WriteRefusal::TooShort);
     }
     Ok(format)

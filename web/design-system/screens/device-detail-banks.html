@@ -1,4 +1,4 @@
-<!-- @dsCard group="Screens" name="Device detail — memory banks" subtitle="Three bank tabs: identity (banks 0/1, bus unit, Part 251), energy (202–204), diagnostics (205–207), with per-bank read coverage" -->
+<!-- @dsCard group="Screens" name="Device detail — memory banks" subtitle="Three bank tabs: identity (banks 0/1, bus unit, Part 251) with the bank 1 luminaire-data editor, energy (202–204), diagnostics (205–207), with per-bank read coverage" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -162,6 +162,28 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
    "this gear has none" when it means "nobody has asked". */
 .empty { padding: 22px 14px; text-align: center; color: var(--text-faint); font-size: 12px; }
 .empty .btn { margin-top: 10px; }
+
+/* Bank 1 editor. Write is a plain button, never amber: amber is lamp state and
+   levels, and a memory write is neither. Discard is the ghost beside it. */
+.btns { display: flex; gap: 6px; }
+.card header .btns { align-items: center; }
+.btn.sm { padding: 4px 9px; font-size: 11px; }
+.btn.ghost { border-color: var(--border); color: var(--text-muted); background: transparent; }
+.btn:disabled { opacity: .45; cursor: default; }
+.attr .v input { width: 64px; flex: none; padding: 4px 7px; background: var(--raised); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono);
+  font-size: 12px; text-align: right; }
+.attr .v input.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
+/* A number the client cannot send as typed. Red, not the dirty hue: dirty
+   means "will be written", this means "cannot be written as typed". */
+.attr .v input[aria-invalid="true"] { border-color: var(--err); background: var(--err-soft); }
+.attr .v input:disabled { color: var(--text-faint); cursor: default; }
+.attr.text .v input { flex: 1; width: auto; min-width: 0; text-align: left; }
+.err-box { margin: 12px 16px; padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--err-soft); border: 1px solid rgba(242,85,90,.3); font-size: 12px; }
+.hintbox { margin: 0 14px 14px; padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--warn-soft); border: 1px solid rgba(227,160,8,.28); font-size: 11px; color: var(--warn); }
+.attr ~ .hintbox { margin-top: 12px; }
 .crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
 .crumbs a { color: var(--text-muted); text-decoration: none; }
 </style>
@@ -225,9 +247,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <!-- DiiA Part 251 strings. The only symbolic names a gear itself carries —
            there is no "query name" command in 102 — and they belong beside GTIN
            and the serial because they answer the same question: what is this
-           thing. Display-only: dev.name keeps exactly one writer, the operator,
-           because a vendor string ("LED-Panel-600-4000K") and a name by place
-           ("kitchen, centre") are different facts. -->
+           thing. Read-only on this card; the Luminaire data editor below writes
+           them to the GEAR. Neither ever becomes dev.name, which keeps exactly
+           one writer, the operator, because a vendor string
+           ("LED-Panel-600-4000K") and a name by place ("kitchen, centre") are
+           different facts. -->
       <div class="attr text"><span class="k">Luminaire identification</span><span class="src readback"><span class="dot"></span>readback · 0 s</span><span class="v">DALI2RUST BENCH LUMINAIRE 0001 / ASSET TAG A-000000000000000</span></div>
       <div class="attr text"><span class="k">Luminaire colour</span><span class="src readback"><span class="dot"></span>readback · 0 s</span><span class="v">warm white</span></div>
     </div>
@@ -237,9 +261,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
          one card carrying both runs to ~30 rows. The whole card is gated on the
          content format ID at 0x11/0x12 — without a recognised 3/4/5 there, 102
          Table 10 makes everything above 0x10 manufacturer-specific and none of
-         these rows means anything. -->
+         these rows means anything. Edit appears when the section holds a
+         leaf the write takes: on any other format the controller sends only
+         the format, so there is nothing to offer. -->
     <div class="card" style="grid-column: span 2;">
-      <header><h3>Luminaire data</h3><span class="badge">bank 1 · Part 251</span></header>
+      <header><h3>Luminaire data</h3><span class="btns"><span class="badge">bank 1 · Part 251</span><button class="act">✎ Edit</button></span></header>
       <div class="attr"><span class="k">Content format</span><span class="v plain">3<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
       <div class="attr"><span class="k">Manufactured (year / week)</span><span class="v plain">2023 / W02<span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
       <div class="attr"><span class="k">Nominal input power</span><span class="v plain">31<span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
@@ -254,6 +280,118 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <div class="attr wide"><span class="k">Light distribution type</span><span class="v rowv">Type II</span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
       <!-- Week 0 is the standard's "unknown" encoding, not week zero. -->
       <div class="attr wide"><span class="k">Manufactured (week)</span><span class="v rowv">— <span class="chip unknown">unknown</span></span><span class="src readback"><span class="dot"></span>readback · 0 s</span></div>
+    </div>
+  </div>
+
+  <div class="taglabel">Identity · Luminaire data editing — <span class="mono">PATCH …/memory-luminaire</span> → 202 <span class="mono">attribute_write</span></div>
+  <!-- The editor is the same card in edit mode, so a value is changed in the
+       row it is read in: one input per leaf the memory_luminaire section
+       holds, keys and units as the leaves, prefilled with what the server
+       returned; an "unknown" leaf starts empty. The content format is the
+       gear's own declaration and gets no input.
+
+       The UI holds no Part 251 table, so the controller judges every value
+       and its 409 or 422 is the answer. The client stops only what it cannot
+       send as a typed value — a number that is not a whole, non-negative
+       decimal (81.0, 0x51, 8,1 and -1 are refused) — and a second text field,
+       because the bus command carries one.
+
+       A field joins the draft at its first keystroke and the draft wins over
+       the poll. Write sends every field touched in this draft, with the dirty
+       border, even one equal to the screen ("Power at minimum" below): after
+       an outcome that is not known the screen may be stale, and a diff
+       against it would silently drop a revert to the old value. An emptied
+       number blocks Write; an emptied text is sent empty. Discard drops the
+       draft and closes the editor. -->
+  <div class="grid">
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Luminaire data</h3><span class="btns"><button class="btn sm ghost">Discard</button><button class="btn sm">Write</button></span></header>
+      <div class="attr"><span class="k">Manufactured (year)</span><span class="v"><input value="23"><span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="attr"><span class="k">Manufactured (week)</span><span class="v"><input value=""><span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="attr"><span class="k">Nominal input power</span><span class="v"><input class="dirty" value="35"><span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="attr"><span class="k">Power at minimum</span><span class="v"><input class="dirty" value="3"><span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="attr"><span class="k">CRI</span><span class="v"><input value="81"><span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="attr"><span class="k">Light distribution type</span><span class="v"><input value="2"><span class="unit"></span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="attr text"><span class="k">Luminaire identification</span><span class="src readback"><span class="dot"></span>readback · 4 m</span><span class="v"><input class="dirty" value="DALI2RUST BENCH LUMINAIRE 0002"></span></div>
+      <div class="attr text"><span class="k">Luminaire colour</span><span class="src readback"><span class="dot"></span>readback · 4 m</span><span class="v"><input value="warm white"></span></div>
+    </div>
+
+    <!-- A draft the client will not send: Write is disabled and each reason
+         is one line under the rows. -->
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Luminaire data</h3><span class="btns"><button class="btn sm ghost">Discard</button><button class="btn sm" disabled>Write</button></span></header>
+      <div class="attr"><span class="k">Nominal minimum mains voltage</span><span class="v"><input class="dirty" aria-invalid="true" value="8,5"><span class="unit">V</span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="attr text"><span class="k">Luminaire identification</span><span class="src readback"><span class="dot"></span>readback · 4 m</span><span class="v"><input class="dirty" value="DALI2RUST BENCH LUMINAIRE 0002"></span></div>
+      <div class="attr text"><span class="k">Luminaire colour</span><span class="src readback"><span class="dot"></span>readback · 4 m</span><span class="v"><input class="dirty" value="neutral white"></span></div>
+      <p class="hint">A number here is whole, non-negative and decimal.</p>
+      <p class="hint">One text field per write: the controller takes one per request.</p>
+    </div>
+  </div>
+
+  <div class="taglabel">Identity · Luminaire data — the write running</div>
+  <!-- Write is one PATCH on the app's generic operation path, the one every
+       202 screen uses: the operation toast carries its progress, and a run
+       that stands down for an operator command is sent again up to three
+       times, as everywhere. While that path runs, the inputs, Discard and
+       Write lock. When it returns, a success closes the editor at once, so the
+       draft just written cannot be sent again; any other end unlocks the form.
+       Either way the device is read again. Nothing outlives the request: no
+       lock, no state per device, nothing outside the card; leaving the page
+       drops the draft. -->
+  <div class="grid">
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Luminaire data</h3><span class="btns"><button class="btn sm ghost" disabled>Discard</button><button class="btn sm" disabled>Writing…</button></span></header>
+      <div class="attr"><span class="k">Nominal input power</span><span class="v"><input class="dirty" value="35" disabled><span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="attr"><span class="k">Power at minimum</span><span class="v"><input class="dirty" value="3" disabled><span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="attr text"><span class="k">Luminaire identification</span><span class="src readback"><span class="dot"></span>readback · 4 m</span><span class="v"><input class="dirty" value="DALI2RUST BENCH LUMINAIRE 0002" disabled></span></div>
+    </div>
+  </div>
+
+  <div class="taglabel">Identity · Luminaire data — the outcome line</div>
+  <!-- One line, built from what the generic path returned. Succeeded closes
+       the editor and has no line; the read card may show the old values until
+       the read that follows, or a live update, lands. A refusal — a 4xx
+       answer to the first PATCH, such as 409 or 422 — shows the controller's
+       message. A failed operation shows the
+       operation toast's detail word for word: its code with the field or step
+       the controller named, never a generic hint that would claim more — a
+       field that is not held says nothing of the others — and a sentence
+       where the name alone would mislead: a lock byte that did not read back
+       as the write found it, with the fields possibly held, and a read-back
+       that did not finish, which proves none of the writes that went out.
+       Both keep the draft.
+
+       Anything whose end is not known — no answer, a 5xx such as 504, a follow
+       that lost the operation or gave up, timed_out, cancelled, or a refusal
+       after an earlier attempt of the same Write was accepted — says so and
+       points at the read, in the warn hue because the gear may now differ from
+       the screen. A write that stood down for an operator command says the
+       gear may hold part of it. Write stays allowed: the read is the operator's call, not a
+       lock. The toast of such a run never says failed, so the two surfaces
+       agree. -->
+  <div class="grid">
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Luminaire data</h3><span class="btns"><button class="btn sm ghost">Discard</button><button class="btn sm">Write</button></span></header>
+      <div class="attr"><span class="k">Nominal input power</span><span class="v"><input class="dirty" value="35"><span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="err-box">409 conflict — bank1_not_read</div>
+    </div>
+
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Luminaire data</h3><span class="btns"><button class="btn sm ghost">Discard</button><button class="btn sm">Write</button></span></header>
+      <div class="attr"><span class="k">Nominal input power</span><span class="v"><input class="dirty" value="35"><span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="err-box">verify_failed — nominal_input_power_w</div>
+    </div>
+
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Luminaire data</h3><span class="btns"><button class="btn sm ghost">Discard</button><button class="btn sm">Write</button></span></header>
+      <div class="attr"><span class="k">Nominal input power</span><span class="v"><input class="dirty" value="35"><span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="err-box">verify_failed — the bank 1 lock byte did not read back as the write found it, and the fields may be held — read bank 1</div>
+    </div>
+
+    <div class="card" style="grid-column: span 2;">
+      <header><h3>Luminaire data</h3><span class="btns"><button class="btn sm ghost">Discard</button><button class="btn sm">Write</button></span></header>
+      <div class="attr"><span class="k">Nominal input power</span><span class="v"><input class="dirty" value="35"><span class="unit">W</span></span><span class="src readback"><span class="dot"></span>readback · 4 m</span></div>
+      <div class="hintbox">Outcome not known. Read bank 1 to see what the gear holds.</div>
     </div>
   </div>
 

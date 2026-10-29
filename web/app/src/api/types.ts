@@ -131,6 +131,15 @@ export interface MemoryLuminaire {
   free_use?: ObservedValue<string>
 }
 
+type LuminaireLeafKey<T> = {
+  [K in keyof MemoryLuminaire]-?: MemoryLuminaire[K] extends ObservedValue<T> | undefined ? K : never
+}[keyof MemoryLuminaire]
+
+export type LuminaireNumberKey = LuminaireLeafKey<LuminaireValue>
+export type LuminaireTextKey = LuminaireLeafKey<string>
+
+export type MemoryLuminairePatch = Partial<Record<LuminaireNumberKey, number> & Record<LuminaireTextKey, string>>
+
 export interface EnergyBank {
   bank_version?: ObservedValue<number>
   energy?: ObservedValue<BankReading>
