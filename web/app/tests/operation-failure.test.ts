@@ -50,5 +50,5 @@ test('a toast whose follow lost the operation says the status is not known, neve
 
 test('only a 4xx answer refuses a start; no answer or a 5xx leaves its outcome not known', () => {
   for (const status of [400, 404, 409, 422, 499]) assert.equal(requestRefused(status), true, String(status))
-  for (const status of [500, 502, 503, 504, undefined]) assert.equal(requestRefused(status), false, String(status))
+  for (const status of [304, 500, 502, 503, 504, undefined]) assert.equal(requestRefused(status), false, String(status))
 })
