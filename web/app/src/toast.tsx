@@ -3,7 +3,6 @@ import { ApiError, awaitOperation } from './api/client'
 import type { Operation, OperationAccepted } from './api/types'
 import { Chip } from './components/ui'
 import {
-  requestRefused,
   isPreempted,
   notKnownToast,
   opFailure,
@@ -11,6 +10,7 @@ import {
   opStatusLabel,
   opSummary,
   PREEMPTED_DETAIL,
+  startRefused,
 } from './format'
 
 export interface Toast {
@@ -54,6 +54,10 @@ export function errorMessage(e: unknown): string {
     return `${e.status} ${e.code}${msg}`
   }
   return e instanceof Error ? e.message : String(e)
+}
+
+export function failureOf(e: unknown): { status?: number; text: string } {
+  return { status: e instanceof ApiError ? e.status : undefined, text: errorMessage(e) }
 }
 
 export function opCommitted(op: Operation | null): boolean {
@@ -116,13 +120,15 @@ export async function trackOp(
   }
 }
 
-function notifyStartFailure(title: string, e: unknown) {
-  if (requestRefused(e instanceof ApiError ? e.status : undefined)) {
-    notify(title, 'failed', errorMessage(e))
-    return
-  }
-  const id = push({ title, ...notKnownToast(errorMessage(e)) })
+export function notifyNotKnown(title: string, reason: string) {
+  const id = push({ title, ...notKnownToast(reason) })
   setTimeout(() => dismissToast(id), FAILURE_DISMISS_MS)
+}
+
+function notifyStartFailure(title: string, e: unknown, retried: boolean) {
+  const failure = failureOf(e)
+  if (startRefused(failure.status, retried)) notify(title, 'failed', failure.text)
+  else notifyNotKnown(title, failure.text)
 }
 
 export async function runOp(
@@ -134,7 +140,7 @@ export async function runOp(
     try {
       accepted = await start()
     } catch (e) {
-      notifyStartFailure(title, e)
+      notifyStartFailure(title, e, attempt > 0)
       return null
     }
     const op = await trackOp(title, accepted, attempt < PREEMPT_RETRIES)

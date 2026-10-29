@@ -1,25 +1,19 @@
 import { useState } from 'preact/hooks'
-import { ApiError, api } from '../api/client'
-import type {
-  LuminaireNumberKey,
-  LuminaireTextKey,
-  MemoryLuminaire,
-  OperationAccepted,
-} from '../api/types'
+import { api } from '../api/client'
+import type { LuminaireNumberKey, LuminaireTextKey, MemoryLuminaire } from '../api/types'
 import { Card, Src } from '../components/ui'
 import { ADAPTER, lightDistributionLabel, pad2 } from '../format'
-import { errorMessage, runOp } from '../toast'
+import { failureOf, runOp } from '../toast'
 import {
   canWrite,
   draftNotes,
   EMPTY_DRAFT,
-  patchBody,
   touched,
   wholeNumber,
-  writeOutcome,
+  writeBank1,
   type LuminaireDraft,
   type WriteOutcome,
-  type WriteStarts,
+  type WriteSteps,
 } from './luminaire-draft'
 
 export interface LuminaireNumberRowSpec {
@@ -66,7 +60,7 @@ type SetDraft = (update: (draft: LuminaireDraft) => LuminaireDraft) => void
 interface EditorProps {
   lum: MemoryLuminaire
   short: number
-  reload: () => void
+  reload: () => Promise<void>
   onClose: () => void
 }
 
@@ -74,7 +68,7 @@ export function LuminaireEditor({ lum, short, reload, onClose }: EditorProps) {
   const [draft, setDraft] = useState<LuminaireDraft>(EMPTY_DRAFT)
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<WriteOutcome | null>(null)
-  const write = () => void writeBank1({ short, draft, setBusy, setOutcome, reload, onClose })
+  const write = () => void writeBank1(draft, { ...wireSteps(short), setBusy, setOutcome, reload, onClose })
   const actions = <EditorActions busy={busy} writable={canWrite(draft)} onDiscard={onClose} onWrite={write} />
   return (
     <Card title="Luminaire data" span2 action={actions}>
@@ -177,37 +171,10 @@ function OutcomeLine({ outcome }: { outcome: WriteOutcome }) {
   return <div class="err-box">{outcome.text}</div>
 }
 
-interface WriteArgs {
-  short: number
-  draft: LuminaireDraft
-  setBusy: (busy: boolean) => void
-  setOutcome: (outcome: WriteOutcome | null) => void
-  reload: () => void
-  onClose: () => void
-}
-
-async function writeBank1({ short, draft, setBusy, setOutcome, reload, onClose }: WriteArgs) {
-  const starts: WriteStarts = { accepted: false, refusal: null }
-  setBusy(true)
-  setOutcome(null)
-  try {
-    const op = await runOp(`Bank 1 write · SA ${pad2(short)}`, () => startWrite(short, draft, starts))
-    const outcome = writeOutcome(op, starts)
-    if (outcome.kind === 'succeeded') onClose()
-    else setOutcome(outcome)
-  } finally {
-    setBusy(false)
-    reload()
-  }
-}
-
-async function startWrite(short: number, draft: LuminaireDraft, starts: WriteStarts): Promise<OperationAccepted> {
-  try {
-    const accepted = await api.patchMemoryLuminaire(ADAPTER, short, patchBody(draft))
-    starts.accepted = true
-    return accepted
-  } catch (e) {
-    starts.refusal = { status: e instanceof ApiError ? e.status : undefined, text: errorMessage(e) }
-    throw e
+function wireSteps(short: number): Pick<WriteSteps, 'run' | 'patch' | 'describe'> {
+  return {
+    run: (start) => runOp(`Bank 1 write · SA ${pad2(short)}`, start),
+    patch: (body) => api.patchMemoryLuminaire(ADAPTER, short, body),
+    describe: failureOf,
   }
 }

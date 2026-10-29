@@ -3,8 +3,9 @@ import type {
   LuminaireTextKey,
   MemoryLuminairePatch,
   Operation,
+  OperationAccepted,
 } from '../api/types.js'
-import { requestRefused, isPreempted, opFailure, PREEMPTED_DETAIL } from '../format.js'
+import { isPreempted, opEnd, opFailure, PREEMPTED_DETAIL, startRefused } from '../format.js'
 
 export interface LuminaireDraft {
   numbers: Partial<Record<LuminaireNumberKey, string>>
@@ -55,32 +56,78 @@ export function patchBody(draft: LuminaireDraft): MemoryLuminairePatch {
   return body
 }
 
+export interface StartFailure {
+  status?: number
+  text: string
+}
+
 export interface WriteStarts {
   accepted: boolean
-  refusal: { status?: number; text: string } | null
+  refusal: StartFailure | null
 }
 
 export type WriteOutcome =
   | { kind: 'succeeded' }
   | { kind: 'refused' | 'failed' | 'not_known'; text: string }
 
+type EndedOperation = Pick<Operation, 'status' | 'error'>
+
 const NOT_KNOWN: WriteOutcome = { kind: 'not_known', text: OUTCOME_NOT_KNOWN }
 
-export function writeOutcome(op: Pick<Operation, 'status' | 'error'> | null, starts: WriteStarts): WriteOutcome {
+export function writeOutcome(op: EndedOperation | null, starts: WriteStarts): WriteOutcome {
   if (op) return operationOutcome(op)
   const refusal = starts.refusal
-  if (refusal && !starts.accepted && requestRefused(refusal.status)) {
+  if (refusal && startRefused(refusal.status, starts.accepted)) {
     return { kind: 'refused', text: refusal.text }
   }
   return NOT_KNOWN
 }
 
-function operationOutcome(op: Pick<Operation, 'status' | 'error'>): WriteOutcome {
-  if (op.status === 'succeeded') return { kind: 'succeeded' }
-  if (op.status !== 'failed') return NOT_KNOWN
+function operationOutcome(op: EndedOperation): WriteOutcome {
+  const end = opEnd(op)
+  if (end !== 'failed') return end === 'succeeded' ? { kind: 'succeeded' } : NOT_KNOWN
   if (isPreempted(op)) {
     return { kind: 'failed', text: `${PREEMPTED_DETAIL}; the gear may hold part of the write — read bank 1.` }
   }
-  const why = opFailure(op)
-  return { kind: 'failed', text: why ? `The write failed: ${why}.` : 'The write failed.' }
+  return { kind: 'failed', text: opFailure(op) ?? 'The write failed.' }
+}
+
+export interface WriteSteps {
+  run: (start: () => Promise<OperationAccepted>) => Promise<EndedOperation | null>
+  patch: (body: MemoryLuminairePatch) => Promise<OperationAccepted>
+  describe: (e: unknown) => StartFailure
+  setBusy: (busy: boolean) => void
+  setOutcome: (outcome: WriteOutcome | null) => void
+  reload: () => Promise<void>
+  onClose: () => void
+}
+
+export async function writeBank1(draft: LuminaireDraft, steps: WriteSteps): Promise<void> {
+  steps.setBusy(true)
+  steps.setOutcome(null)
+  const outcome = await settle(draft, steps)
+  steps.setBusy(false)
+  if (outcome.kind !== 'succeeded') steps.setOutcome(outcome)
+  await steps.reload()
+  if (outcome.kind === 'succeeded') steps.onClose()
+}
+
+async function settle(draft: LuminaireDraft, steps: WriteSteps): Promise<WriteOutcome> {
+  const starts: WriteStarts = { accepted: false, refusal: null }
+  try {
+    return writeOutcome(await steps.run(() => startWrite(draft, steps, starts)), starts)
+  } catch {
+    return NOT_KNOWN
+  }
+}
+
+async function startWrite(draft: LuminaireDraft, steps: WriteSteps, starts: WriteStarts): Promise<OperationAccepted> {
+  try {
+    const accepted = await steps.patch(patchBody(draft))
+    starts.accepted = true
+    return accepted
+  } catch (e) {
+    starts.refusal = steps.describe(e)
+    throw e
+  }
 }

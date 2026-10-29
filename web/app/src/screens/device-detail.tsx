@@ -548,10 +548,8 @@ export function DeviceDetail({ short, tab: rawTab }: { short: number; tab?: stri
     ['physical_devices'],
     { intervalMs: 5000, deps: [short, tab] },
   )
-  const reload = () => {
-    void reloadCore()
-    void reloadAttrs()
-    void reloadBanks()
+  const reload = async () => {
+    await Promise.all([reloadCore(), reloadAttrs(), reloadBanks()])
   }
   const [edits, setEdits] = useState<Record<string, string>>({})
   const [rgbDraft, setRgbDraft] = useState<Record<RgbwafChannel, string> | null>(null)
@@ -1380,7 +1378,7 @@ export function DeviceDetail({ short, tab: rawTab }: { short: number; tab?: stri
           )}
         </Card>
 
-        <LuminaireDataCard key={short} attributes={attrs} short={short} reload={reload} />
+        <LuminaireDataCard attributes={attrs} short={short} reload={reload} />
 
           </>
         )}
@@ -1532,7 +1530,7 @@ function LuminaireStringRows({ attributes }: { attributes: Attributes }) {
   )
 }
 
-function LuminaireDataCard(props: { attributes: Attributes; short: number; reload: () => void }) {
+function LuminaireDataCard(props: { attributes: Attributes; short: number; reload: () => Promise<void> }) {
   const [editing, setEditing] = useState(false)
   const lum = memoryLuminaireOf(props.attributes)
   const format = lum?.content_format_id

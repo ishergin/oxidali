@@ -430,18 +430,37 @@ const VERIFY_HINTS: Record<string, string> = {
   read_contended: 'several gear answered the read — look for a duplicate address; nothing was written',
 }
 
+const SUBJECT_SENTENCES: Record<string, string> = {
+  bank1_lock_not_restored:
+    'the fields may be held, but the bank 1 lock is not proved restored, so the bank may be left open — read bank 1',
+  bank1_readback: 'the writes went out, but the read-back of bank 1 did not finish, so none is proved — read bank 1',
+}
+
+function serverMessage(error: { code: string; message?: string }): string | null {
+  return error.message && error.message !== error.code ? error.message : null
+}
+
 export function opFailureDetail(op: Pick<Operation, 'status' | 'error'>): string | null {
   const error = op.error
   if (!error || isPreempted(op)) return null
-  return VERIFY_HINTS[error.code] ?? (error.message && error.message !== error.code ? error.message : null)
+  const message = serverMessage(error)
+  if (message) return SUBJECT_SENTENCES[message] ?? message
+  return VERIFY_HINTS[error.code] ?? null
 }
 
 export function opFailure(op: Pick<Operation, 'status' | 'error'>): string | null {
   const error = op.error
   if (!error || isPreempted(op)) return null
   const detail = opFailureDetail(op)
-  if (error.code in VERIFY_HINTS) return detail
+  if (detail && !serverMessage(error)) return detail
   return detail ? `${error.code} — ${detail}` : error.code
+}
+
+export type OpEnd = 'succeeded' | 'failed' | 'not_known'
+
+export function opEnd(op: Pick<Operation, 'status'> | null): OpEnd {
+  if (op?.status === 'succeeded') return 'succeeded'
+  return op?.status === 'failed' ? 'failed' : 'not_known'
 }
 
 export const PREEMPTED_DETAIL = 'Stood down for an operator command'
@@ -449,8 +468,8 @@ export const PREEMPTED_DETAIL = 'Stood down for an operator command'
 const HTTP_CLIENT_ERROR = 400
 const HTTP_SERVER_ERROR = 500
 
-export function requestRefused(status: number | undefined): boolean {
-  return status !== undefined && status >= HTTP_CLIENT_ERROR && status < HTTP_SERVER_ERROR
+export function startRefused(status: number | undefined, retried: boolean): boolean {
+  return !retried && status !== undefined && status >= HTTP_CLIENT_ERROR && status < HTTP_SERVER_ERROR
 }
 
 export function notKnownToast(reason: string): { status: string; detail: string } {

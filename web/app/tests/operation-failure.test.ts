@@ -2,12 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  requestRefused,
   notKnownToast,
+  opEnd,
   opFailure,
   opFailureDetail,
   opStatusChip,
   opStatusLabel,
+  startRefused,
 } from '../src/format.js'
 
 test('each read-back refusal names what the operator should check', () => {
@@ -49,6 +50,60 @@ test('a toast whose follow lost the operation says the status is not known, neve
 })
 
 test('only a 4xx answer refuses a start; no answer or a 5xx leaves its outcome not known', () => {
-  for (const status of [400, 404, 409, 422, 499]) assert.equal(requestRefused(status), true, String(status))
-  for (const status of [304, 500, 502, 503, 504, undefined]) assert.equal(requestRefused(status), false, String(status))
+  for (const status of [400, 404, 409, 422, 499]) assert.equal(startRefused(status, false), true, String(status))
+  for (const status of [304, 500, 502, 503, 504, undefined]) {
+    assert.equal(startRefused(status, false), false, String(status))
+  }
+})
+
+test('a 4xx after an earlier attempt was accepted refuses nothing: that attempt may have written', () => {
+  for (const status of [409, 422]) assert.equal(startRefused(status, true), false, String(status))
+})
+
+const failed = (code: string, message?: string) => ({ status: 'failed', error: { code, message } })
+
+test('a bank 1 write names the field the controller named, with no claim about the whole write', () => {
+  for (const code of ['verify_failed', 'verify_unanswered', 'verify_contended']) {
+    assert.equal(opFailure(failed(code, 'cri')), `${code} — cri`)
+    assert.equal(opFailureDetail(failed(code, 'cri')), 'cri')
+  }
+})
+
+test('a contended bank 1 step carries its own cause, not a duplicate address', () => {
+  for (const [code, subject] of [['read_contended', 'device_identity'], ['verify_contended', 'bank1_lock_byte']]) {
+    assert.equal(opFailure(failed(code, subject)), `${code} — ${subject}`)
+    assert.doesNotMatch(opFailureDetail(failed(code, subject)) ?? '', /duplicate address/)
+  }
+})
+
+test('a lock left unrestored says the fields may be held and the bank may be open, whatever the code', () => {
+  for (const code of ['verify_failed', 'verify_unanswered', 'verify_contended', 'operation_failed']) {
+    const detail = opFailureDetail(failed(code, 'bank1_lock_not_restored')) ?? ''
+    assert.match(detail, /fields may be held/, code)
+    assert.match(detail, /lock is not proved restored, so the bank may be left open — read bank 1/, code)
+    assert.equal(opFailure(failed(code, 'bank1_lock_not_restored')), `${code} — ${detail}`)
+  }
+})
+
+test('an unfinished bank 1 read-back says the writes went out and none is proved', () => {
+  for (const code of ['verify_unanswered', 'verify_contended', 'operation_failed']) {
+    const text = opFailure(failed(code, 'bank1_readback')) ?? ''
+    assert.match(text, /the writes went out, but the read-back of bank 1 did not finish, so none is proved/, code)
+    assert.doesNotMatch(text, /did not take|unconfirmed/, code)
+  }
+})
+
+test('a failure detail never repeats its code, because the operation card prints it beside', () => {
+  for (const [code, message] of [['verify_failed', 'cri'], ['verify_failed', 'bank1_lock_not_restored'], ['verify_failed', undefined]]) {
+    assert.doesNotMatch(opFailureDetail(failed(code as string, message)) ?? '', /verify_failed/)
+  }
+})
+
+test('only succeeded and failed are known ends; anything else is not known', () => {
+  assert.equal(opEnd({ status: 'succeeded' }), 'succeeded')
+  assert.equal(opEnd({ status: 'failed' }), 'failed')
+  for (const status of ['timed_out', 'cancelled', 'unknown', 'running', 'accepted']) {
+    assert.equal(opEnd({ status }), 'not_known', status)
+  }
+  assert.equal(opEnd(null), 'not_known')
 })

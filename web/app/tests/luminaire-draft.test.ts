@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import type { Operation, OperationAccepted } from '../src/api/types.js'
+import { opFailure } from '../src/format.js'
 import {
   canWrite,
   draftNotes,
@@ -11,8 +13,11 @@ import {
   touched,
   WHOLE_NUMBER_NOTE,
   wholeNumber,
+  writeBank1,
   writeOutcome,
+  type WriteOutcome,
   type WriteStarts,
+  type WriteSteps,
 } from '../src/screens/luminaire-draft.js'
 
 const NO_START: WriteStarts = { accepted: false, refusal: null }
@@ -76,16 +81,24 @@ test('a refused PATCH shows the server message', () => {
   }
 })
 
-test('a failed operation names its code in the operation toast wording', () => {
-  const verify = writeOutcome({ status: 'failed', error: { code: 'verify_failed' } }, NO_START)
-  assert.equal(verify.kind, 'failed')
-  assert.match('text' in verify ? verify.text : '', /^The write failed: the gear read back another value/)
-  const conflict = writeOutcome(
+test('a failed operation shows the toast detail word for word', () => {
+  const ops: Pick<Operation, 'status' | 'error'>[] = [
     { status: 'failed', error: { code: 'conflict', message: 'device_identity_changed' } },
-    NO_START,
-  )
-  assert.deepEqual(conflict, { kind: 'failed', text: 'The write failed: conflict — device_identity_changed.' })
+    { status: 'failed', error: { code: 'verify_failed', message: 'cri' } },
+    { status: 'failed', error: { code: 'verify_unanswered', message: 'bank1_readback' } },
+    { status: 'failed', error: { code: 'verify_failed', message: 'bank1_lock_not_restored' } },
+  ]
+  for (const op of ops) {
+    assert.deepEqual(writeOutcome(op, NO_START), { kind: 'failed', text: opFailure(op) }, op.error?.message)
+  }
   assert.deepEqual(writeOutcome({ status: 'failed' }, NO_START), { kind: 'failed', text: 'The write failed.' })
+})
+
+test('a failed line never calls an unproved write a failed one', () => {
+  const op = { status: 'failed', error: { code: 'verify_unanswered', message: 'bank1_readback' } }
+  const out = writeOutcome(op, NO_START)
+  assert.equal(out.kind, 'failed')
+  assert.doesNotMatch('text' in out ? out.text : '', /write failed|did not take/)
 })
 
 test('a write that stood down says the gear may hold part of it', () => {
@@ -108,4 +121,117 @@ test('every end that is not known says so', () => {
 test('a refusal after an accepted attempt of the same Write is not known', () => {
   const starts: WriteStarts = { accepted: true, refusal: { status: 409, text: '409 conflict' } }
   assert.deepEqual(writeOutcome(null, starts), { kind: 'not_known', text: OUTCOME_NOT_KNOWN })
+})
+
+const ACCEPTED: OperationAccepted = { operation_id: 'pd-attr-0-9-1', type: 'attribute_write', status: 'accepted' }
+
+interface Recorded {
+  events: string[]
+  outcome: WriteOutcome | null
+}
+
+type Run = WriteSteps['run']
+
+function fakeSteps(run: Run, reload: () => Promise<void> = async () => {}): { steps: WriteSteps; seen: Recorded } {
+  const seen: Recorded = { events: [], outcome: null }
+  const steps: WriteSteps = {
+    run,
+    patch: async () => ACCEPTED,
+    describe: (e) => ({ status: (e as { status?: number }).status, text: String((e as Error).message) }),
+    setBusy: (busy) => seen.events.push(busy ? 'lock' : 'unlock'),
+    setOutcome: (outcome) => {
+      seen.outcome = outcome
+      if (outcome) seen.events.push(`line:${outcome.kind}`)
+    },
+    reload: async () => {
+      seen.events.push('reload')
+      await reload()
+      seen.events.push('reloaded')
+    },
+    onClose: () => seen.events.push('close'),
+  }
+  return { steps, seen }
+}
+
+const DRAFT = touched(EMPTY_DRAFT, 'numbers', 'cri', '90')
+
+const ending = (op: Pick<Operation, 'status' | 'error'> | null): Run => async (start) => {
+  await start()
+  return op
+}
+
+const ENDINGS: [string, Run][] = [
+  ['succeeded', ending({ status: 'succeeded' })],
+  ['failed', ending({ status: 'failed', error: { code: 'verify_failed', message: 'cri' } })],
+  ['lost', ending(null)],
+  ['timed out', ending({ status: 'timed_out' })],
+  ['thrown', async () => Promise.reject(new Error('boom'))],
+]
+
+test('every ending unlocks the form and reads the device again, once', async () => {
+  for (const [name, run] of ENDINGS) {
+    const { steps, seen } = fakeSteps(run)
+    await writeBank1(DRAFT, steps)
+    const events = seen.events.filter((e) => !e.startsWith('line:') && e !== 'close')
+    assert.deepEqual(events, ['lock', 'unlock', 'reload', 'reloaded'], name)
+  }
+})
+
+test('the editor closes only on success, and every other ending keeps a line', async () => {
+  for (const [name, run] of ENDINGS) {
+    const { steps, seen } = fakeSteps(run)
+    await writeBank1(DRAFT, steps)
+    const closed = seen.events.includes('close')
+    assert.equal(closed, name === 'succeeded', name)
+    assert.equal(seen.outcome === null, name === 'succeeded', name)
+  }
+})
+
+test('a run that throws ends as not known', async () => {
+  const { steps, seen } = fakeSteps(async () => Promise.reject(new Error('boom')))
+  await writeBank1(DRAFT, steps)
+  assert.deepEqual(seen.outcome, { kind: 'not_known', text: OUTCOME_NOT_KNOWN })
+})
+
+test('the editor closes on the fresh values, after the reload has landed', async () => {
+  let land = () => {}
+  const landed = new Promise<void>((resolve) => {
+    land = resolve
+  })
+  const { steps, seen } = fakeSteps(ending({ status: 'succeeded' }), () => landed)
+  const done = writeBank1(DRAFT, steps)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(seen.events, ['lock', 'unlock', 'reload'])
+  land()
+  await done
+  assert.deepEqual(seen.events, ['lock', 'unlock', 'reload', 'reloaded', 'close'])
+})
+
+const startingTimes = (attempts: number): Run => async (start) => {
+  for (let attempt = 1; attempt < attempts; attempt++) await start()
+  try {
+    await start()
+    return { status: 'succeeded' }
+  } catch {
+    return null
+  }
+}
+
+function refusedPatch(steps: WriteSteps, refusals: number[]): WriteSteps {
+  let call = 0
+  const patch = async () => {
+    const status = refusals[call++]
+    if (status) throw Object.assign(new Error(`${status} conflict — bank1_not_read`), { status })
+    return ACCEPTED
+  }
+  return { ...steps, patch }
+}
+
+test('a 4xx to the first PATCH is a refusal; after an accepted attempt it is not known', async () => {
+  const first = fakeSteps(startingTimes(1))
+  await writeBank1(DRAFT, refusedPatch(first.steps, [409]))
+  assert.deepEqual(first.seen.outcome, { kind: 'refused', text: '409 conflict — bank1_not_read' })
+  const retry = fakeSteps(startingTimes(2))
+  await writeBank1(DRAFT, refusedPatch(retry.steps, [0, 409]))
+  assert.deepEqual(retry.seen.outcome, { kind: 'not_known', text: OUTCOME_NOT_KNOWN })
 })
