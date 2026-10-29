@@ -72,6 +72,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .chip.run .dot { animation: pulse 1.2s ease-in-out infinite; }
 .chip.ok   { color: var(--ok); background: var(--ok-soft); }
 .chip.err  { color: var(--err); background: var(--err-soft); }
+.chip.stood-down { color: var(--text-muted); background: var(--raised); border-color: var(--border); }
 @keyframes pulse { 50% { opacity: .25; } }
 
 /* Two-pane layout */
@@ -252,6 +253,32 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <div class="footnote">
         A policy writes the gear itself, so its rows name devices by short address and leave
         the virtual-lamp columns empty. An excepted device is skipped, never written.
+      </div>
+    </div>
+
+    <!-- A run that stood down for an operator command is routine, so it gets
+         no err-box. Only a read may say it changed nothing; any other type may
+         have written gear before it yielded, a bank 1 write across several
+         sessions included, so it says what it wrote stays. -->
+    <div class="card">
+      <header>
+        <h3>Attribute write · SA 09</h3>
+        <span class="chip stood-down"><span class="dot"></span>interrupted</span>
+        <span class="id">pd-memlum-0-9-5</span>
+      </header>
+      <div class="meta-row">
+        <span>Stood down for an operator command; anything it wrote before standing down stays — read the device.</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <header>
+        <h3>Attribute read · SA 04</h3>
+        <span class="chip stood-down"><span class="dot"></span>interrupted</span>
+        <span class="id">pd-attr-0-4-12</span>
+      </header>
+      <div class="meta-row">
+        <span>Stood down for an operator command — nothing was changed.</span>
       </div>
     </div>
     </div>

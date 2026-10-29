@@ -190,17 +190,14 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: v
     when the action starts it again.
   </p>
   <p class="note">
-    <b>unknown</b> is neutral on purpose, and it is not the same as a failure.
-    The controller keeps a finished operation for sixty seconds; a client that
-    asks after that gets a <code>404</code> and genuinely cannot learn how it
-    ended. The client also loses the status itself when a poll of the operation
-    throws, and on the shared operation path when a start gets no answer or a
-    <code>5xx</code>, or when an action sent again after its run stood down is
-    refused although an earlier attempt was accepted: its toast reads
-    <i>status not known</i> with the reason. Green
-    would claim a write had landed — the screens act on that answer, clearing an
-    operator's edited rows — and red would accuse a write that may well have
-    succeeded. Neutral says the one true thing: nobody knows.
+    <b>unknown</b> is neutral on purpose, and it is not the same as a failure:
+    it says the client cannot tell how the operation ended — the controller no
+    longer keeps it (a finished operation lives sixty seconds), the client lost
+    track of it, or it ended without a verdict. When the client lost track,
+    its toast reads <i>status not known</i> with the reason. Green would claim a write had
+    landed — the screens act on that answer, clearing an operator's edited rows
+    — and red would accuse a write that may well have succeeded. Neutral says
+    the one true thing: nobody knows.
   </p>
 
   <h2>Config sync ("dirty")</h2>

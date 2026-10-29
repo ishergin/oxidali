@@ -178,13 +178,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     <div class="err-box"><span class="code">discovery_publish_refused</span> — the broker took none of them; nothing reached Home Assistant.</div>
   </div>
 
-  <!-- Terminal, but unknowable: the controller keeps a finished operation for
-       sixty seconds, and a client that asks later cannot be told how it ended.
-       The client also loses the status itself: a poll of the operation that
-       throws, or on the shared operation path a start with no answer or a 5xx,
-       or a start refused after an earlier attempt of the same action was
-       accepted. Neutral, never green — the screens act on this answer — and
-       never red, because the write may well have landed. -->
+  <!-- Unknowable: the client cannot tell how the operation ended — the
+       controller no longer keeps it (a finished operation lives sixty
+       seconds), the client lost track of it, or it ended without a verdict.
+       Neutral, never green — the screens act on this answer — and never red,
+       because the write may well have landed. -->
   <div class="op">
     <div class="head">
       <span class="title">Scene 4 save</span>
