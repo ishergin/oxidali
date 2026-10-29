@@ -20,6 +20,7 @@ use crate::phy::GearPhy;
 const SHORT_ADDRESSES: u32 = 64;
 const READ_RETRY: Duration = Duration::from_millis(100);
 const DROP_PERMILLE_MAX: u16 = 1000;
+const PEEK_MAX: u8 = 32;
 
 type Handler = fn(&Console, &[&str]);
 
@@ -36,6 +37,8 @@ const COMMANDS: &[(&str, Handler, &str)] = &[
     ("autoact", Console::auto_activation, "<addr> on|off  DT8 Automatic Activation bit"),
     ("metering", Console::metering, "<addr> energy|diagnostics|both|off  DiiA 252/253 banks"),
     ("luminaire", Console::luminaire, "<addr> off|3|4|5|bus-unit-on|bus-unit-off"),
+    ("lock", Console::lock, "<addr> <byte>  bank 1 lock byte; 0x55 opens the bank"),
+    ("peek", Console::peek, "<addr> <bank> <offset> <count 1..32>  bank bytes as the gear holds them"),
     ("fail", Console::fail, "<addr> lamp|none|short|open|thermal|derate|<hex byte>"),
     ("drop", Console::drop_answers, "<addr> <permille 0..1000>  withhold that fraction of answers"),
     ("log", Console::log_level, "off|change|frame|trace"),
@@ -327,6 +330,33 @@ impl Console {
         note!("luminaire {mode} on {touched} gear at short {addr}");
     }
 
+    fn lock(&self, args: &[&str]) {
+        let (Some(addr), Some(byte)) = (num(args, 0), args.get(1).and_then(|w| parse_byte(w))) else {
+            return note!("usage: lock <addr> <byte>");
+        };
+        let touched = self.with_gear_at(addr, |gear| gear.set_bank1_lock_byte(byte));
+        note!("A{addr:02} bank1_lock=0x{byte:02X} on {touched} gear");
+    }
+
+    fn peek(&self, args: &[&str]) {
+        const USAGE: &str = "usage: peek <addr> <bank> <offset> <count 1..32>";
+        let offset = args.get(2).and_then(|w| parse_byte(w));
+        let (Some(addr), Some(bank), Some(offset), Some(count)) =
+            (num(args, 0), num(args, 1), offset, num(args, 3))
+        else {
+            return note!("{USAGE}");
+        };
+        if !(1..=PEEK_MAX).contains(&count) {
+            return note!("{USAGE}");
+        }
+        let mut rows = Vec::new();
+        self.with_gear_at(addr, |gear| rows.push(peek_cells(gear, bank, offset, count)));
+        match rows.as_slice() {
+            [cells] => note!("A{addr:02} bank {bank} 0x{offset:02X}:{cells}"),
+            _ => note!("A{addr:02} peek found {} gear", rows.len()),
+        }
+    }
+
     fn fail(&self, args: &[&str]) {
         const USAGE: &str = "usage: fail <addr> lamp|none|short|open|thermal|derate|<hex byte>";
         let (Some(addr), Some(mode)) = (num(args, 0), args.get(1).copied()) else {
@@ -458,6 +488,15 @@ fn apply_luminaire(gear: &mut Gear, mode: &str) {
         "bus-unit-on" => gear.set_bus_unit_extension(true),
         _ => gear.set_bus_unit_extension(false),
     }
+}
+
+fn peek_cells(gear: &Gear, bank: u8, offset: u8, count: u8) -> String {
+    (0..count)
+        .map(|i| match offset.checked_add(i).and_then(|o| gear.memory_location(bank, o)) {
+            Some(byte) => format!(" {byte:02X}"),
+            None => " --".to_string(),
+        })
+        .collect()
 }
 
 fn metering_mode(mode: &str) -> Option<(bool, bool)> {

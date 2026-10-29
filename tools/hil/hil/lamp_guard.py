@@ -78,6 +78,11 @@ ENABLE_DEVICE_TYPE, DTR1, DTR2 = 0xC1, 0xC3, 0xC5
 SPECIAL_FIRST = 0xA0
 INITIALISE_UNADDRESSED = 0xFF
 SETUP_SPECIALS = frozenset({TERMINATE, DTR0, PING, ENABLE_DEVICE_TYPE, DTR1, DTR2})
+WRITE_MEMORY_LOCATION, WRITE_MEMORY_LOCATION_NO_REPLY = 0xC7, 0xC9
+MEMORY_WRITE_SPECIALS = frozenset({WRITE_MEMORY_LOCATION, WRITE_MEMORY_LOCATION_NO_REPLY})
+WRITE_WINDOW_SPECIALS = MEMORY_WRITE_SPECIALS | {DTR0, DTR1, DTR2}
+ENABLE_WRITE_MEMORY = 0x81
+QUERY_CONTENT_DTRS = frozenset({0x98, 0x9C, 0x9D})
 COMMISSIONING_SPECIALS = frozenset({INITIALISE, RANDOMISE, COMPARE, WITHDRAW,
                                     SEARCH_ADDRESS_H, SEARCH_ADDRESS_M, SEARCH_ADDRESS_L,
                                     PROGRAM_SHORT_ADDRESS, VERIFY_SHORT_ADDRESS,
@@ -115,6 +120,7 @@ VIRTUAL_ROUTES = (
     ("step", re.compile(r"adapters/\d+/commissioning/steps/([a-z-]+)")),
     ("attr_read", re.compile(r"adapters/\d+/physical-devices/(\d+)/attribute-reads")),
     ("attr_write", re.compile(r"adapters/\d+/physical-devices/(\d+)/write-attributes")),
+    ("luminaire_write", re.compile(r"adapters/\d+/physical-devices/(\d+)/memory-luminaire")),
     ("rules", re.compile(r"rules")),
     ("rule_toggle", re.compile(r"rules/([^/]+)")),
     ("rule_run", re.compile(r"rules/([^/]+)/run")),
@@ -143,6 +149,9 @@ REFUSED_ROUTES = (
      "which no restore writes back"),
     (PUT, re.compile(r"config/slices/.+"),
      "a slice import replaces a persisted part of the installation's configuration whole"),
+    (PATCH, re.compile(r"adapters/[0-9]+/physical-devices/[0-9]+/memory-luminaire"),
+     "a bank 1 write changes gear memory that no bench restore writes back; only the "
+     "virtual tier writes it, on emulated gear"),
 )
 LAMP_DELETE_REFUSAL = ("%s refused: only the virtual-gear teardown deletes a virtual lamp, "
                        "and only one its session created")
@@ -319,6 +328,10 @@ class VirtualFence:
     def _attr_write(self, method, key, body):
         self._park_post(method, key, "attribute write")
 
+    def _luminaire_write(self, method, key, body):
+        if method != PATCH or int(key) not in self.park:
+            self.refuse("%s bank 1 write of SA%s" % (method, key))
+
     def _park_post(self, method, key, what):
         if method != POST or int(key) not in self.park:
             self.refuse("%s %s of SA%s" % (method, what, key))
@@ -395,9 +408,19 @@ class VirtualFence:
             self.refuse("an apply whose diff reaches VL%s" % spell((pending or set())
                                                                   - self.session_vls))
 
-    def check_frame(self, addr, data, enabled=None):
+    def write_window(self, addr, data, was_open):
+        if addr in WRITE_WINDOW_SPECIALS:
+            return was_open
+        target = wire_target(addr)
+        if target is None or not addr & 1:
+            return False
+        if data in QUERY_CONTENT_DTRS:
+            return was_open
+        return data == ENABLE_WRITE_MEMORY and target in self.park
+
+    def check_frame(self, addr, data, enabled=None, write_window=False):
         if SPECIAL_FIRST <= addr < BROADCAST_FIRST:
-            self._special(addr, data)
+            self._special(addr, data, write_window)
             return True
         target = wire_target(addr)
         if target is None or not frame_writes(addr, data, enabled):
@@ -416,8 +439,11 @@ class VirtualFence:
                                  % (describe_frame(addr, data), spell(self.groups)))
         return True
 
-    def _special(self, addr, data):
+    def _special(self, addr, data, write_window):
         if addr in SETUP_SPECIALS:
+            return
+        if addr in MEMORY_WRITE_SPECIALS:
+            self._memory_write(addr, write_window)
             return
         if addr not in COMMISSIONING_SPECIALS:
             raise LampNotAllowed("special command 0x%02X refused: the virtual tier never "
@@ -432,6 +458,12 @@ class VirtualFence:
         if addr in PARK_OPERAND_SPECIALS and data not in {(s << 1) | 1 for s in self.park}:
             raise LampNotAllowed("special command 0x%02X with operand 0x%02X refused: it "
                                  "names no park address" % (addr, data))
+
+    def _memory_write(self, addr, write_window):
+        if not write_window:
+            raise LampNotAllowed("WRITE MEMORY LOCATION 0x%02X refused: no ENABLE WRITE MEMORY "
+                                 "to the park SA%s opened a window it still holds"
+                                 % (addr, spell(self.park)))
 
 
 def wire_target(addr):

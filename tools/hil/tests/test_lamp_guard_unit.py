@@ -821,6 +821,7 @@ def test_the_client_sends_no_respelled_write(monkeypatch):
     ("DELETE", "adapters/0/input-devices/5", None, "control device"),
     ("PUT", "config/slices/home_assistant_settings", None, "slice import"),
     ("DELETE", "adapters/0/virtual-lamps/7", None, "only the virtual-gear teardown"),
+    ("PATCH", "adapters/0/physical-devices/1/memory-luminaire", {"year": 24}, "bank 1 write"),
 ])
 def test_a_destructive_route_is_refused_whatever_the_go_ahead(method, path, body, why):
     for guard in (LampGuard(LAMPS | {OWNER}, segment=lambda: [0, 1, 2, 3]),

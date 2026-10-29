@@ -3279,6 +3279,19 @@ fn a_locked_bank_refuses_lockable_bytes_but_not_its_lock_byte() {
 }
 
 #[test]
+fn a_new_luminaire_format_opens_the_bank_and_a_lock_set_after_it_holds() {
+    let mut fleet = luminaire_fleet(LOCKED);
+    let gear = &mut fleet.gears_mut()[0];
+    gear.set_luminaire_format(Some(LuminaireFormat::V5));
+    assert_eq!(gear.memory_location(MEMORY_BANK_PROFILE, 0x02), Some(BANK1_UNLOCKED), "the rebuild opens the bank");
+    gear.set_bank1_lock_byte(LOCKED);
+    assert_eq!(gear.memory_location(MEMORY_BANK_PROFILE, 0x02), Some(LOCKED));
+    point_at(&mut fleet, MEMORY_BANK_PROFILE, WRITE_YEAR_OFFSET);
+    config(&mut fleet, standard(0, StandardCommand::EnableWriteMemory));
+    assert_eq!(write_location(&mut fleet, 24), TransferOutcome::NoAnswer, "the lock set after the format holds");
+}
+
+#[test]
 fn the_last_address_and_bank_zero_are_not_writable() {
     let mut fleet = luminaire_fleet(BANK1_UNLOCKED);
     point_at(&mut fleet, MEMORY_BANK_PROFILE, 0x00);

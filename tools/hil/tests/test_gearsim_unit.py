@@ -390,3 +390,79 @@ def test_a_frame_the_dut_sent_counts_as_heard_only_in_order():
     assert gearsim.unheard([(0xA3, 0x4D), (0xC1, 0x08), (0x29, 0xE2)], heard) == []
     assert gearsim.unheard([(0xC1, 0x08), (0xA3, 0x4D), (0x29, 0xE2)], heard) == [(0xA3, 0x4D)]
     assert gearsim.unheard([(0x88, 0xFF)], heard) == [(0x88, 0xFF)]
+
+
+def _answering(tmp_path, monkeypatch, answer):
+    cfg, log = _peer(tmp_path, monkeypatch)
+    sent = []
+
+    def control(peer, command):
+        sent.append(command)
+        with open(log, "a") as fh:
+            fh.writelines(STAMP + "# %s\n" % line for line in answer(command.split()[1:]))
+        return "ok"
+    monkeypatch.setattr(gearsim.remote_serial, "control", control)
+    monkeypatch.setattr(gearsim, "REPLY_QUIET_S", 0.0)
+    return gearsim.GearSim(cfg), sent
+
+
+def _counting_peek(words):
+    short, bank, offset, count = int(words[1]), words[2], int(words[3], 16), int(words[4])
+    cells = "".join(" %02X" % ((offset + i) & 0xFF) for i in range(count))
+    return ["A%02d bank %s 0x%02X:%s" % (short, bank, offset, cells)]
+
+
+@pytest.mark.parametrize("line,parsed", [
+    ("A16 bank 1 0x3C: 44 41 --", (16, 1, 0x3C, [0x44, 0x41, None])),
+    (STAMP + "A07 bank 0 0x00: 1A", (7, 0, 0x00, [0x1A])),
+    ("A16 bank 1 0x3c: 44", None),
+    ("A16 bank 1 0x3C:", None),
+    ("A16 bank1_lock=0x55 on 1 gear", None),
+    ("A16 peek found 0 gear", None),
+])
+def test_a_peek_line_parses_into_its_bytes_and_holes(line, parsed):
+    assert gearsim.parse_peek(line) == parsed
+
+
+def test_a_long_peek_is_read_in_pieces_the_console_takes(tmp_path, monkeypatch):
+    sim, sent = _answering(tmp_path, monkeypatch, _counting_peek)
+    assert sim.peek(16, 1, 0x3C, 60) == list(range(0x3C, 0x3C + 60))
+    assert sent == ["write peek 16 1 0x3C 32", "write peek 16 1 0x5C 28"]
+
+
+@pytest.mark.parametrize("reply", [
+    ["A16 bank 1 0x3D: 00"], ["A16 bank 1 0x3C: 00 01"], ["A17 bank 1 0x3C: 00"],
+    ["A16 peek found 0 gear"], [],
+])
+def test_a_peek_that_shows_another_span_is_refused(tmp_path, monkeypatch, reply):
+    sim, _ = _answering(tmp_path, monkeypatch, lambda words: reply)
+    with pytest.raises(gearsim.GearSimUnavailable, match="did not show"):
+        sim.peek(16, 1, 0x3C, 1)
+
+
+def test_a_lock_is_confirmed_by_its_echo_on_one_gear(tmp_path, monkeypatch):
+    sim, sent = _answering(tmp_path, monkeypatch,
+                           lambda words: ["A16 bank1_lock=0xAA on 1 gear"])
+    assert sim.bank1_lock(16, 0xAA) == "A16 bank1_lock=0xAA on 1 gear"
+    assert sent == ["write lock 16 0xAA"]
+    with pytest.raises(gearsim.GearSimUnavailable):
+        sim.bank1_lock(16, 0x55)
+
+
+def test_a_luminaire_on_no_gear_is_refused(tmp_path, monkeypatch):
+    sim, sent = _answering(tmp_path, monkeypatch,
+                           lambda words: ["luminaire %s on 0 gear at short %s" % (words[1],
+                                                                                 words[0])])
+    with pytest.raises(gearsim.GearSimUnavailable):
+        sim.luminaire(16, "3")
+    assert sent == ["write luminaire 16 3"]
+
+
+def test_an_image_without_the_command_names_the_flash_it_needs(tmp_path, monkeypatch):
+    sim, _ = _answering(tmp_path, monkeypatch,
+                        lambda words: ["unknown command 'lock' — try 'help'",
+                                       "unknown command 'peek' — try 'help'"])
+    with pytest.raises(gearsim.GearSimUnavailable, match="flash the peer"):
+        sim.bank1_lock(16, 0xAA)
+    with pytest.raises(gearsim.GearSimUnavailable, match="flash the peer"):
+        sim.peek(16, 1, 0x02, 1)

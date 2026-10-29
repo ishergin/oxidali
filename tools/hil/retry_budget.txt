@@ -34,6 +34,8 @@ group_apply_reconverge   0
 post_commission_requery  0
 # A command the sniffer did not see within half its window, sent again.
 sniffer_resend           0
+# A bank 1 luminaire write repeated once after it ended contended or preempted.
+luminaire_write_contended  0
 
 # Answers the PHY interrupt lost, from /api/v1/diagnostics at session end.
 answer_table_torn       0

@@ -381,6 +381,10 @@ class Client:
         return self._req("POST", "adapters/%d/physical-devices/%d/write-attributes"
                          % (self.adapter, short), attrs)
 
+    def luminaire_write(self, short: int, patch: dict) -> dict:
+        return self._req("PATCH", "adapters/%d/physical-devices/%d/memory-luminaire"
+                         % (self.adapter, short), patch)
+
     def ts(self, short: int, setpoint: dict) -> dict:
         return self._req("PUT", "adapters/%d/physical-devices/%d/target-state"
                          % (self.adapter, short), setpoint)

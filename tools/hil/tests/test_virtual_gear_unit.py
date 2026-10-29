@@ -427,6 +427,7 @@ def _guard(fence):
     ("POST", "adapters/0/physical-devices/16/attribute-reads",
      {"attribute_groups": ["dt8_color"], "memory_banks": "none"}),
     ("POST", "adapters/0/physical-devices/17/write-attributes", {"fade_time_ms": 1000}),
+    ("PATCH", "adapters/0/physical-devices/16/memory-luminaire", {"year": 24}),
 ])
 def test_the_fence_lets_the_session_reach_its_own_gear(method, path, body):
     _guard(_fence()).check_request(method, path, body)
@@ -458,6 +459,8 @@ def test_the_fence_lets_the_session_reach_its_own_gear(method, path, body):
     ("POST", "adapters/0/physical-devices/6/write-attributes", {"fade_time_ms": 0}),
     ("POST", "adapters/0/physical-devices/6/attribute-reads", {"attribute_groups": ["groups"]}),
     ("PUT", "adapters/0/physical-devices/16/write-attributes", {"fade_time_ms": 0}),
+    ("PATCH", "adapters/0/physical-devices/6/memory-luminaire", {"year": 24}),
+    ("PUT", "adapters/0/physical-devices/16/memory-luminaire", {"year": 24}),
     ("PATCH", "adapters/0/physical-devices/16", {"name": "x"}),
     ("PATCH", "policies", {"apply_on_discovery": True}),
     ("POST", "adapters/0/discovery-runs", {"mode": "scan_known_short_addresses"}),
@@ -475,6 +478,15 @@ def test_the_fence_lets_the_session_reach_its_own_gear(method, path, body):
 def test_the_fence_refuses_everything_else(method, path, body):
     with pytest.raises(LampNotAllowed):
         _guard(_fence()).check_request(method, path, body)
+
+
+def test_a_bank_1_write_reaches_the_park_though_the_park_is_off_the_lamp_list():
+    guard = LampGuard({1}, segment=lambda: [1, 16])
+    guard.fence = _fence(park=[16])
+    guard.check_request("PATCH", "adapters/0/physical-devices/16/memory-luminaire", {"year": 24})
+    with pytest.raises(LampNotAllowed):
+        guard.check_request("PATCH", "adapters/0/physical-devices/1/memory-luminaire",
+                            {"year": 24})
 
 
 OWNER_HA = {"enabled": True, "broker_host": "192.0.2.1", "broker_port": 1883,
@@ -799,6 +811,27 @@ def test_the_transmit_log_is_read_once_it_falls_quiet():
     ((0xC108, 0x21E2), 0),
 ])
 def test_the_tripwire_reads_an_extended_command_by_the_enable_before_it(frames, found):
+    lines = [_tx(frame) for frame in frames]
+    assert len(tripwire.violations(lines, _fence(park=[16], groups=[4]))) == found
+
+
+@pytest.mark.parametrize("frames,found", [
+    ((0x2181, 0x2181, 0xC500, 0xC301, 0xA313, 0xC718, 0x2198, 0xC719, 0xC91A, 0x219C,
+      0xC71B), 0),
+    ((0xC718,), 1),
+    ((0xC918,), 1),
+    ((0x2181, 0x2190, 0xC718), 1),
+    ((0x2181, 0x21C5, 0xC718), 1),
+    ((0x2181, 0xC106, 0xC718), 1),
+    ((0x2181, 0x2098, 0xC718), 1),
+    ((0x2081, 0xC718), 1),
+    ((0x2181, 0xA198, 0xC718), 1),
+    ((0x0D81, 0xC718), 2),
+    ((0x8981, 0xC718), 1),
+    ((0x2181, 0x8998, 0xC718), 0),
+    ((0x2181, 0xC718, 0x2190, 0x2181, 0xC719), 0),
+])
+def test_a_memory_write_goes_out_only_inside_a_window_the_park_opened(frames, found):
     lines = [_tx(frame) for frame in frames]
     assert len(tripwire.violations(lines, _fence(park=[16], groups=[4]))) == found
 
