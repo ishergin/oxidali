@@ -117,9 +117,12 @@ BDD — [`physical_devices`](../../../../tests/dali2rust-bdd/features/physical_d
   manufacturer-specific.
   Байт с битами вне диапазона части не заявляет: `parts: null`. Нет секции — прибор
   молчит на эти локации, что конформно.
-- `memory_luminaire` — банк 1 выше `0x10` (DiiA Part 251), заполняется только при
-  `content_format_id` 3, 4 или 5. Числовой лист — `{raw, value, part209_implemented}`:
-  `value: null` — стандартное «неизвестно», отсутствие листа — «не читалось».
+- `memory_luminaire` — банк 1 выше `0x10` (DiiA Part 251). Поля данных светильника
+  заполняются только при `content_format_id` 3, 4 или 5; при другом формате в секции один
+  `content_format_id`. Числовой лист — `{raw, value, part209_implemented}`: `value: null` —
+  стандартное «неизвестно». Отсутствие листа — «не читалось» или «нет на приборе»: чтение,
+  покрывшее `content_format_id`, убирает листы, которых его формат не объявляет, а чтение
+  с `0x00` — листы, что кончаются за последней локацией банка из его байта `0x00`.
 - Какие секции переживают перезагрузку —
   [`dali-attribute-taxonomy.md`](../../bus-contracts/dali-attribute-taxonomy.md).
 

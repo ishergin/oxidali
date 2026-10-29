@@ -47,15 +47,37 @@ fn leaf<T: Copy>(table: &[(&str, T)], name: &str) -> T {
     table.iter().find(|(leaf, _)| *leaf == name).map(|(_, read)| *read).expect(name)
 }
 
-fn bank_after(writes: &[FieldWrite]) -> ParsedLuminaire {
+fn whole_bank_declaring(format: LuminaireFormat) -> Vec<u8> {
     let mut bank = vec![0u8; usize::from(V5.min_last_offset()) + 1];
     bank[0] = V5.min_last_offset();
-    let format = usize::from(CONTENT_FORMAT_ID_OFFSET);
-    bank[format..format + 2].copy_from_slice(&V5.content_format_id().to_be_bytes());
+    let at = usize::from(CONTENT_FORMAT_ID_OFFSET);
+    bank[at..at + 2].copy_from_slice(&format.content_format_id().to_be_bytes());
+    bank
+}
+
+fn bank_after(writes: &[FieldWrite]) -> ParsedLuminaire {
+    let mut bank = whole_bank_declaring(V5);
     for write in writes {
         bank[usize::from(write.field.offset)..write.end()].copy_from_slice(&write.bytes);
     }
     parse_bank1_luminaire(&bank, 0)
+}
+
+// DiiA 251 §9.2.5
+#[test]
+fn the_parser_fills_exactly_the_fields_the_write_table_puts_in_each_format() {
+    for format in [LuminaireFormat::V3, LuminaireFormat::V4, V5] {
+        let parsed = parse_bank1_luminaire(&whole_bank_declaring(format), 0);
+        for field in &LUMINAIRE_FIELDS {
+            let filled = match field.kind {
+                FieldKind::LayoutId => continue,
+                FieldKind::Number { .. } => leaf(&NUMBER_LEAVES, field.name)(&parsed).is_some(),
+                FieldKind::Text(_) => leaf(&TEXT_LEAVES, field.name)(&parsed).is_some(),
+            };
+            let id = format.content_format_id();
+            assert_eq!(filled, field.in_format(format), "{} under content format {id}", field.name);
+        }
+    }
 }
 
 // DiiA 251 §9.2.3
