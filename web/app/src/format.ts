@@ -470,7 +470,7 @@ const READ_ONLY_TYPES = new Set(['attribute_read', 'memory_bank_read'])
 export function preemptedNote(op: Pick<Operation, 'type'>): string {
   return READ_ONLY_TYPES.has(op.type)
     ? `${PREEMPTED_DETAIL} — nothing was changed.`
-    : `${PREEMPTED_DETAIL}; anything it wrote before standing down stays — read the device.`
+    : `${PREEMPTED_DETAIL}; whatever it did before that is not undone.`
 }
 
 const HTTP_CLIENT_ERROR = 400

@@ -121,13 +121,14 @@ test('a refused start says failed; any other start failure says the status is no
   }
 })
 
-test('only a read that stood down claims it changed nothing; any other type keeps what it wrote', () => {
+test('only a read that stood down claims it changed nothing; any other type says what it did is not undone', () => {
   for (const type of ['attribute_read', 'memory_bank_read']) {
     assert.equal(preemptedNote({ type }), 'Stood down for an operator command — nothing was changed.', type)
   }
-  for (const type of ['attribute_write', 'group_apply', 'scene_apply', 'policy_apply', 'a_future_type']) {
+  for (const type of ['attribute_write', 'discovery', 'commissioning_identify', 'group_apply', 'a_future_type']) {
     const note = preemptedNote({ type })
     assert.doesNotMatch(note, /nothing was changed/, type)
-    assert.match(note, /anything it wrote before standing down stays/, type)
+    assert.doesNotMatch(note, /read the device/, type)
+    assert.equal(note, 'Stood down for an operator command; whatever it did before that is not undone.', type)
   }
 })

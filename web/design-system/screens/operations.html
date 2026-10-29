@@ -257,9 +257,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     </div>
 
     <!-- A run that stood down for an operator command is routine, so it gets
-         no err-box. Only a read may say it changed nothing; any other type may
-         have written gear before it yielded, a bank 1 write across several
-         sessions included, so it says what it wrote stays. -->
+         no err-box. Only a read may say it changed nothing. Any other type may
+         have acted before it yielded — a bank 1 write across several sessions
+         keeps the fields it wrote, an input scan leaves the presence it
+         cleared — so it says only that what it did is not undone, and gives no
+         advice that would be wrong for one of them. -->
     <div class="card">
       <header>
         <h3>Attribute write · SA 09</h3>
@@ -267,7 +269,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <span class="id">pd-memlum-0-9-5</span>
       </header>
       <div class="meta-row">
-        <span>Stood down for an operator command; anything it wrote before standing down stays — read the device.</span>
+        <span>Stood down for an operator command; whatever it did before that is not undone.</span>
       </div>
     </div>
 
