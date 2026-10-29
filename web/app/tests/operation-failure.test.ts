@@ -8,6 +8,8 @@ import {
   opFailureDetail,
   opStatusChip,
   opStatusLabel,
+  preemptedNote,
+  startFailureToast,
   startRefused,
 } from '../src/format.js'
 
@@ -76,11 +78,12 @@ test('a contended bank 1 step carries its own cause, not a duplicate address', (
   }
 })
 
-test('a lock left unrestored says the fields may be held and the bank may be open, whatever the code', () => {
+test('a lock byte not as found says so and that the fields may be held, whatever the code', () => {
   for (const code of ['verify_failed', 'verify_unanswered', 'verify_contended', 'operation_failed']) {
     const detail = opFailureDetail(failed(code, 'bank1_lock_not_restored')) ?? ''
-    assert.match(detail, /fields may be held/, code)
-    assert.match(detail, /lock is not proved restored, so the bank may be left open — read bank 1/, code)
+    assert.match(detail, /lock byte did not read back as the write found it/, code)
+    assert.match(detail, /the fields may be held — read bank 1/, code)
+    assert.doesNotMatch(detail, /left open/, code)
     assert.equal(opFailure(failed(code, 'bank1_lock_not_restored')), `${code} — ${detail}`)
   }
 })
@@ -106,4 +109,25 @@ test('only succeeded and failed are known ends; anything else is not known', () 
     assert.equal(opEnd({ status }), 'not_known', status)
   }
   assert.equal(opEnd(null), 'not_known')
+})
+
+test('a refused start says failed; any other start failure says the status is not known', () => {
+  assert.deepEqual(startFailureToast({ status: 409, text: '409 conflict' }, false), {
+    status: 'failed',
+    detail: '409 conflict',
+  })
+  for (const [status, retried] of [[409, true], [503, false], [undefined, false]] as const) {
+    assert.deepEqual(startFailureToast({ status, text: 'x' }, retried), notKnownToast('x'), `${status} ${retried}`)
+  }
+})
+
+test('only a read that stood down claims it changed nothing; any other type keeps what it wrote', () => {
+  for (const type of ['attribute_read', 'memory_bank_read']) {
+    assert.equal(preemptedNote({ type }), 'Stood down for an operator command — nothing was changed.', type)
+  }
+  for (const type of ['attribute_write', 'group_apply', 'scene_apply', 'policy_apply', 'a_future_type']) {
+    const note = preemptedNote({ type })
+    assert.doesNotMatch(note, /nothing was changed/, type)
+    assert.match(note, /anything it wrote before standing down stays/, type)
+  }
 })

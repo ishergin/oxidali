@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import type { Operation, OperationAccepted } from '../src/api/types.js'
 import { opFailure } from '../src/format.js'
+import { runWithRetries } from '../src/op-retry.js'
 import {
   canWrite,
   draftNotes,
@@ -168,12 +169,13 @@ const ENDINGS: [string, Run][] = [
   ['thrown', async () => Promise.reject(new Error('boom'))],
 ]
 
-test('every ending unlocks the form and reads the device again, once', async () => {
-  for (const [name, run] of ENDINGS) {
+test('every ending but success unlocks the form, shows its line, then reads the device again, once', async () => {
+  for (const [name, run] of ENDINGS.filter(([name]) => name !== 'succeeded')) {
     const { steps, seen } = fakeSteps(run)
     await writeBank1(DRAFT, steps)
-    const events = seen.events.filter((e) => !e.startsWith('line:') && e !== 'close')
-    assert.deepEqual(events, ['lock', 'unlock', 'reload', 'reloaded'], name)
+    assert.deepEqual(seen.events.slice(0, 2), ['lock', 'unlock'], name)
+    assert.ok(seen.events[2]?.startsWith('line:'), name)
+    assert.deepEqual(seen.events.slice(3), ['reload', 'reloaded'], name)
   }
 })
 
@@ -193,18 +195,40 @@ test('a run that throws ends as not known', async () => {
   assert.deepEqual(seen.outcome, { kind: 'not_known', text: OUTCOME_NOT_KNOWN })
 })
 
-test('the editor closes on the fresh values, after the reload has landed', async () => {
-  let land = () => {}
-  const landed = new Promise<void>((resolve) => {
-    land = resolve
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve = () => {}
+  const promise = new Promise<void>((done) => {
+    resolve = done
   })
-  const { steps, seen } = fakeSteps(ending({ status: 'succeeded' }), () => landed)
+  return { promise, resolve }
+}
+
+const settled = () => new Promise((resolve) => setImmediate(resolve))
+
+test('a success closes the editor at once, before the reload lands, and never unlocks it', async () => {
+  const reload = deferred()
+  const { steps, seen } = fakeSteps(ending({ status: 'succeeded' }), () => reload.promise)
   const done = writeBank1(DRAFT, steps)
-  await new Promise((resolve) => setImmediate(resolve))
-  assert.deepEqual(seen.events, ['lock', 'unlock', 'reload'])
-  land()
+  await settled()
+  assert.deepEqual(seen.events, ['lock', 'close', 'reload'])
+  reload.resolve()
   await done
-  assert.deepEqual(seen.events, ['lock', 'unlock', 'reload', 'reloaded', 'close'])
+  assert.deepEqual(seen.events, ['lock', 'close', 'reload', 'reloaded'])
+})
+
+test('a new Write clears the previous line while it runs', async () => {
+  const run = deferred()
+  const { steps, seen } = fakeSteps(async (start) => {
+    await start()
+    await run.promise
+    return { status: 'succeeded' }
+  })
+  seen.outcome = { kind: 'failed', text: 'verify_failed — cri' }
+  const done = writeBank1(DRAFT, steps)
+  await settled()
+  assert.equal(seen.outcome, null)
+  run.resolve()
+  await done
 })
 
 const startingTimes = (attempts: number): Run => async (start) => {
@@ -234,4 +258,18 @@ test('a 4xx to the first PATCH is a refusal; after an accepted attempt it is not
   const retry = fakeSteps(startingTimes(2))
   await writeBank1(DRAFT, refusedPatch(retry.steps, [0, 409]))
   assert.deepEqual(retry.seen.outcome, { kind: 'not_known', text: OUTCOME_NOT_KNOWN })
+})
+
+test('through the real retry loop, a 409 after an accepted attempt stood down is not known on both surfaces', async () => {
+  const retried: boolean[] = []
+  const preempted: Operation = { operation_id: 'op', type: 'attribute_write', status: 'failed', error: { code: 'preempted' } }
+  const run: Run = (start) =>
+    runWithRetries(
+      { start, track: async () => preempted, startFailed: (_e, again) => retried.push(again), pause: async () => {} },
+      3,
+    )
+  const { steps, seen } = fakeSteps(run)
+  await writeBank1(DRAFT, refusedPatch(steps, [0, 409]))
+  assert.deepEqual(retried, [true])
+  assert.deepEqual(seen.outcome, { kind: 'not_known', text: OUTCOME_NOT_KNOWN })
 })

@@ -432,7 +432,7 @@ const VERIFY_HINTS: Record<string, string> = {
 
 const SUBJECT_SENTENCES: Record<string, string> = {
   bank1_lock_not_restored:
-    'the fields may be held, but the bank 1 lock is not proved restored, so the bank may be left open — read bank 1',
+    'the bank 1 lock byte did not read back as the write found it, and the fields may be held — read bank 1',
   bank1_readback: 'the writes went out, but the read-back of bank 1 did not finish, so none is proved — read bank 1',
 }
 
@@ -465,6 +465,14 @@ export function opEnd(op: Pick<Operation, 'status'> | null): OpEnd {
 
 export const PREEMPTED_DETAIL = 'Stood down for an operator command'
 
+const READ_ONLY_TYPES = new Set(['attribute_read', 'memory_bank_read'])
+
+export function preemptedNote(op: Pick<Operation, 'type'>): string {
+  return READ_ONLY_TYPES.has(op.type)
+    ? `${PREEMPTED_DETAIL} — nothing was changed.`
+    : `${PREEMPTED_DETAIL}; anything it wrote before standing down stays — read the device.`
+}
+
 const HTTP_CLIENT_ERROR = 400
 const HTTP_SERVER_ERROR = 500
 
@@ -474,6 +482,13 @@ export function startRefused(status: number | undefined, retried: boolean): bool
 
 export function notKnownToast(reason: string): { status: string; detail: string } {
   return { status: 'unknown', detail: `status not known — ${reason}` }
+}
+
+export function startFailureToast(
+  failure: { status?: number; text: string },
+  retried: boolean,
+): { status: string; detail: string } {
+  return startRefused(failure.status, retried) ? { status: 'failed', detail: failure.text } : notKnownToast(failure.text)
 }
 
 export function opSummary(op: Operation): string | null {

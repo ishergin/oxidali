@@ -106,10 +106,13 @@ export async function writeBank1(draft: LuminaireDraft, steps: WriteSteps): Prom
   steps.setBusy(true)
   steps.setOutcome(null)
   const outcome = await settle(draft, steps)
-  steps.setBusy(false)
-  if (outcome.kind !== 'succeeded') steps.setOutcome(outcome)
+  if (outcome.kind === 'succeeded') {
+    steps.onClose()
+  } else {
+    steps.setBusy(false)
+    steps.setOutcome(outcome)
+  }
   await steps.reload()
-  if (outcome.kind === 'succeeded') steps.onClose()
 }
 
 async function settle(draft: LuminaireDraft, steps: WriteSteps): Promise<WriteOutcome> {

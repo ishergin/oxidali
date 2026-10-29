@@ -4,7 +4,7 @@ import type { HomeAssistantSettings, HomeAssistantSettingsPatch } from '../api/t
 import { Card, EditableText, FieldRow, Switch } from '../components/ui'
 import { opEnd } from '../format'
 import { usePoll } from '../hooks'
-import { errorMessage, mutateBusy, notify, notifyNotKnown, trackOp } from '../toast'
+import { mutateBusy, notify, notifyNotKnown, notifyStartFailure, trackOp } from '../toast'
 
 const POLL_MS = 5000
 const MAX_HOST = 64
@@ -71,7 +71,7 @@ export function SettingsHomeAssistant() {
       if (end === 'failed') notify('Discovery', 'failed', 'The republish did not complete')
       if (end === 'not_known') notifyNotKnown('Discovery', 'the republish may not have completed')
     } catch (e) {
-      notify('Discovery', 'failed', errorMessage(e))
+      notifyStartFailure('Discovery', e, false)
     } finally {
       setBusy(false)
     }

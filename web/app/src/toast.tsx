@@ -10,8 +10,9 @@ import {
   opStatusLabel,
   opSummary,
   PREEMPTED_DETAIL,
-  startRefused,
+  startFailureToast,
 } from './format'
+import { runWithRetries, type RetryPorts } from './op-retry'
 
 export interface Toast {
   id: number
@@ -125,28 +126,19 @@ export function notifyNotKnown(title: string, reason: string) {
   setTimeout(() => dismissToast(id), FAILURE_DISMISS_MS)
 }
 
-function notifyStartFailure(title: string, e: unknown, retried: boolean) {
-  const failure = failureOf(e)
-  if (startRefused(failure.status, retried)) notify(title, 'failed', failure.text)
-  else notifyNotKnown(title, failure.text)
+export function notifyStartFailure(title: string, e: unknown, retried: boolean) {
+  const id = push({ title, ...startFailureToast(failureOf(e), retried) })
+  setTimeout(() => dismissToast(id), FAILURE_DISMISS_MS)
 }
 
-export async function runOp(
-  title: string,
-  start: () => Promise<OperationAccepted>,
-): Promise<Operation | null> {
-  for (let attempt = 0; ; attempt++) {
-    let accepted: OperationAccepted
-    try {
-      accepted = await start()
-    } catch (e) {
-      notifyStartFailure(title, e, attempt > 0)
-      return null
-    }
-    const op = await trackOp(title, accepted, attempt < PREEMPT_RETRIES)
-    if (!isPreempted(op) || attempt >= PREEMPT_RETRIES) return op
-    await new Promise((r) => setTimeout(r, PREEMPT_RETRY_MS))
+export function runOp(title: string, start: () => Promise<OperationAccepted>): Promise<Operation | null> {
+  const ports: RetryPorts = {
+    start,
+    track: (accepted, willRetry) => trackOp(title, accepted, willRetry),
+    startFailed: (e, retried) => notifyStartFailure(title, e, retried),
+    pause: () => new Promise((r) => setTimeout(r, PREEMPT_RETRY_MS)),
   }
+  return runWithRetries(ports, PREEMPT_RETRIES)
 }
 
 export interface SaveThenApply {
