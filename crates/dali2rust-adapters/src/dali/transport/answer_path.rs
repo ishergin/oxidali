@@ -136,7 +136,7 @@ mod tests {
                 application_active,
                 ..FACTORY_NVM
             };
-            let snapshot = BusUnitSnapshot { nvm, revision, acknowledged_wire_sequence: 0 };
+            let snapshot = BusUnitSnapshot { nvm, revision, acknowledged_wire_sequence: 0, acknowledged_quiescence: 0 };
             self.inputs.publish_bus_unit(snapshot);
             let _ = self.wire.poll(Some(&self.inputs), NOW_MS);
         }
@@ -222,7 +222,7 @@ mod tests {
         let inputs = AnswerInputs::new();
         inputs.extend_lease(NOW_MS, LEASE_MS);
         let mut wire = BusUnitWire::new(&IDENTITY, || 0);
-        assert_eq!(wire.poll(Some(&inputs), NOW_MS), None);
+        assert_eq!(wire.poll(Some(&inputs), NOW_MS).nvm, None);
         drain(&mut publisher, &[capture(1, 0, 27)]);
         assert_eq!(publisher.publish(&isr, Some(&inputs), wire.answer_table().as_ref(), NOW_MS), None);
         assert_eq!(isr.lookup_answer(QACE_BROADCAST, 1), TableLookup::NotPublished);

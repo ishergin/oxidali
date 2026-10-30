@@ -36,6 +36,7 @@ pub struct ObservedRawFrame {
 pub enum ObservedItem {
     Frame(ObservedRawFrame),
     BusUnit(crate::bus_unit::BusUnitEvidence),
+    BusUnitQuiescence(crate::bus_unit::BusUnitQuiescence),
 }
 
 pub type ObservedFrameSender = std::sync::mpsc::SyncSender<ObservedItem>;

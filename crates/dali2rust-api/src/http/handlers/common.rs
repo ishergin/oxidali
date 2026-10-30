@@ -200,6 +200,7 @@ pub fn ensure_confirmation_success(body: &[u8]) -> Result<(), HttpResponse> {
 }
 
 const CONTROLLER_PASSIVE: &str = "controller_passive";
+const CONTROLLER_QUIESCENT: &str = "controller_quiescent";
 const DELIVERY_REJECTED: &str = "delivery_rejected";
 
 pub fn refusal_before_the_wire(confirmation: &serde_json::Value) -> Option<HttpResponse> {
@@ -211,11 +212,17 @@ pub fn refusal_before_the_wire(confirmation: &serde_json::Value) -> Option<HttpR
 }
 
 fn gate_refusal(message: &str) -> HttpResponse {
-    if message == CONTROLLER_PASSIVE {
-        standby_refusal()
-    } else {
-        conflict_naming_its_cause(message)
+    match message {
+        CONTROLLER_PASSIVE => standby_refusal(),
+        CONTROLLER_QUIESCENT => quiescent_refusal(),
+        _ => conflict_naming_its_cause(message),
     }
+}
+
+fn quiescent_refusal() -> HttpResponse {
+    let mut response = json_err(409, CONTROLLER_QUIESCENT);
+    response.extra_headers = crate::http::role::QUIESCENT_REFUSAL;
+    response
 }
 
 fn conflict_naming_its_cause(message: &str) -> HttpResponse {

@@ -108,7 +108,7 @@ impl Router {
     fn stamped(&self, mut response: HttpResponse) -> HttpResponse {
         if let Some(role) = self.role.as_ref() {
             response.extra_headers =
-                crate::http::role::role_headers(response.extra_headers, role.is_active());
+                crate::http::role::stamped_headers(response.extra_headers, role.as_ref());
         }
         response
     }
@@ -261,6 +261,46 @@ mod tests {
         fn is_active(&self) -> bool {
             false
         }
+    }
+
+    struct QuiescentForAMinute;
+    impl crate::http::role::ControllerRolePort for QuiescentForAMinute {
+        fn is_active(&self) -> bool {
+            true
+        }
+
+        fn quiescent_remaining_ms(&self) -> Option<u32> {
+            Some(61_000)
+        }
+    }
+
+    struct QuiescentRefusal;
+    impl ApiHandler for QuiescentRefusal {
+        fn handle_request(
+            &self,
+            _method: &str,
+            _path: &str,
+            _body: &[u8],
+            _params: &HashMap<String, String>,
+        ) -> HttpResponse {
+            let confirmation = serde_json::json!({"error_code": "conflict", "message": "controller_quiescent"});
+            crate::http::handlers::common::refusal_before_the_wire(&confirmation).expect("a refusal before the wire")
+        }
+    }
+
+    #[test]
+    fn a_quiescent_refusal_says_when_to_retry_from_the_time_left_at_answer_time() {
+        let mut router = Router::new().with_role_port(std::sync::Arc::new(QuiescentForAMinute));
+        router
+            .register(RouteSpec::post("/api/v1/dali/level", Box::new(QuiescentRefusal)))
+            .expect("registers");
+        let response = router.dispatch("POST", "/api/v1/dali/level", &[]);
+        assert_eq!(response.status, 409);
+        assert_eq!(
+            response.extra_headers,
+            &[("Retry-After", "120"), (crate::http::role::ROLE_HEADER, "active")]
+        );
+        assert_eq!(body_text(response.body), r#"{"error":"controller_quiescent"}"#);
     }
 
     #[test]

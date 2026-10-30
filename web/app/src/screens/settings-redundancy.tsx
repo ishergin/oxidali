@@ -1,5 +1,6 @@
 import { api } from '../api/client'
 import { Card, FieldRow, Switch, EditableText } from '../components/ui'
+import { uptime } from '../format'
 import { usePoll, useSettingsDraft } from '../hooks'
 import { mutate } from '../toast'
 
@@ -176,6 +177,16 @@ function RedundancyState({
         </FieldRow>
         <FieldRow label="Lease left" hint="Renewed once a second while the watched workers turn.">
           <span class="mono">{state.lease_remaining_ms} ms</span>
+        </FieldRow>
+        <FieldRow
+          label="Held quiet by another controller"
+          hint="103 §9.9.3 quiescent mode: while another controller holds it, no forward frame of ours leaves, the probe included. It ends with STOP, or on its own 15 min after the last START."
+        >
+          <span class="mono">
+            {state.quiescent_remaining_ms === null
+              ? 'no'
+              : `${uptime(state.quiescent_remaining_ms)} left`}
+          </span>
         </FieldRow>
         <FieldRow label="Probes" hint="Answered / unanswered since boot.">
           <span class="mono">

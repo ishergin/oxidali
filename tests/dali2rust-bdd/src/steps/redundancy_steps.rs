@@ -19,7 +19,7 @@ fn scalar_text(value: &serde_json::Value) -> String {
     }
 }
 
-// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090 PERS-006 CFG-011 RED-031 RED-032 PERS-007 PERS-008 PERS-009 SET-DALI-007 SET-DALI-008 SET-DALI-009
+// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090 PERS-006 CFG-011 RED-031 RED-032 PERS-007 PERS-008 PERS-009 SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-010 SET-DALI-011
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be "([^"]*)"$"#)]
 async fn json_pointer_eventually(world: &mut DaliWorld, pointer: String, path: String, expected: String) {
     let port = world.server_port();
@@ -51,7 +51,7 @@ async fn json_pointer_eventually_contains(
     assert!(holds(), "{path}{pointer} never contained {part:?}: {:?}", read());
 }
 
-// RED-029
+// RED-029 SET-DALI-010 SET-DALI-011
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be greater than (\d+)$"#)]
 async fn json_pointer_eventually_greater(world: &mut DaliWorld, pointer: String, path: String, floor: u64) {
     let port = world.server_port();
@@ -100,7 +100,7 @@ async fn put_kept_body(world: &mut DaliWorld, path: String) {
 }
 
 
-// RED-021 RED-023 RED-024 RED-030 SYS-255
+// RED-021 RED-023 RED-024 RED-030 SYS-255 SET-DALI-010
 #[then(regex = r#"^the response header "([^"]+)" should be "([^"]*)"$"#)]
 async fn response_header_is(world: &mut DaliWorld, name: String, expected: String) {
     let response = world.last_response().expect("last response");
@@ -118,7 +118,7 @@ async fn response_header_is(world: &mut DaliWorld, name: String, expected: Strin
     );
 }
 
-// RED-023 RED-024 RED-025 RED-030 RED-031 RED-033
+// RED-023 RED-024 RED-025 RED-030 RED-031 RED-033 SET-DALI-011
 #[given("this controller has stood down")]
 async fn controller_stands_down(world: &mut DaliWorld) {
     world.send_http_request(

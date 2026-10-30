@@ -9,7 +9,7 @@ use dali2rust_bus::{
 };
 use dali2rust_contracts::bus::event_envelope;
 use dali2rust_contracts::msg::{
-    BusUnitNvmObservedEvent, BusUnitNvmRow, ColorMode, ColorValue, DaliInputDeviceLifecycleEvent, DaliInputEventObservedEvent,
+    BusUnitNvmObservedEvent, BusUnitNvmRow, BusUnitQuiescenceObservedEvent, ColorMode, ColorValue, DaliInputDeviceLifecycleEvent, DaliInputEventObservedEvent,
     DaliObservedFrameEvent, DaliSceneRecalledEvent, DaliTargetScope, DecodeStatus,
     InputDeviceLifecycleKind,
     LevelTransition,
@@ -30,7 +30,7 @@ use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::pres::DaliCommand;
 use dali2rust_domain::registry::mirek_to_kelvin;
-use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitNvm};
+use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitNvm, BusUnitQuiescence};
 use dali2rust_platform::dali::{
     FrameDirection, ObservedItem, ObservedRawFrame, ObservedRawFrameKind, SnifferRecord,
     SnifferTap,
@@ -51,6 +51,7 @@ pub const SNIFFER_TRANSLATOR_REQUIRED_EVENTS: &[&str] = &[
     "DaliInputDeviceLifecycleEvent",
     "DaliSceneRecalledEvent",
     "BusUnitNvmObservedEvent",
+    "BusUnitQuiescenceObservedEvent",
 ];
 
 #[derive(Debug, Default)]
@@ -177,7 +178,17 @@ impl Translator {
                 );
             }
             ObservedItem::BusUnit(evidence) => self.report_bus_unit(evidence),
+            ObservedItem::BusUnitQuiescence(quiescence) => self.report_quiescence(quiescence),
         }
+    }
+
+    // IEC 62386-103 §9.9.3
+    fn report_quiescence(&self, quiescence: BusUnitQuiescence) {
+        self.counters.bus_unit_reports.fetch_add(1, Ordering::Relaxed);
+        publish_required_fact(&self.publisher, self.bus_id, &self.counters, BusUnitQuiescenceObservedEvent {
+            sequence: quiescence.sequence,
+            remaining_ms: quiescence.remaining_ms,
+        });
     }
 
     // IEC 62386-103 §9.2.3

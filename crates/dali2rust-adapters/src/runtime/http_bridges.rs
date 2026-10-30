@@ -854,6 +854,10 @@ impl dali2rust_api::http::role::ControllerRolePort for RoleBridge {
     fn is_active(&self) -> bool {
         self.dali.dali_settings_view().application_active
     }
+
+    fn quiescent_remaining_ms(&self) -> Option<u32> {
+        self.dali.quiescent_remaining_ms()
+    }
 }
 
 pub(crate) struct RedundancyBridge {
@@ -948,6 +952,7 @@ impl dali2rust_api::http::redundancy_state::RedundancyHttpState for RedundancyBr
             now_ms: now,
             answering: inputs.is_answering(now),
             lease_remaining_ms: inputs.lease_remaining_ms(now),
+            quiescent_remaining_ms: self.dali.quiescent_remaining_ms(),
             enabled: view.enabled,
             role: role_name(view.standby_role),
             active: self.dali.dali_settings_view().application_active,

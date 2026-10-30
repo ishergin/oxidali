@@ -33,7 +33,7 @@
 | Сигналы исполнителей | `OperationWorkerSignalEvent` | `DaliWorker`, реестр, оркестратор, MQTT, правила, OTA, HTTP | operation tracker | **required** |
 | Результаты DALI | [ниже](#результаты-dali) | `DaliWorker`; recall сцены — и sniffer translator; синтетический исход ячейки применения с ошибкой — оркестратор | по виду | по виду |
 | Наблюдения | `DaliObservedFrameEvent` | sniffer translator | проектор, реестр, дисплей | best-effort |
-| Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `BusUnitNvmObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
+| Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `BusUnitNvmObservedEvent`, `BusUnitQuiescenceObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
 | Результаты Part 103 | `Dali103ScanStartedEvent`, `Dali103ScanProgressEvent`, `Dali103InstanceConfiguredEvent` | `DaliWorker` | реестр; правила (`manual config changed`) | **required** |
 | Отказоустойчивость | [ниже](#отказоустойчивость) | `DaliWorker`, арбитраж, реестр, хранилище слайсов, HTTP | по виду | по виду |
 | Правила | `RulesChangedEvent`, `RulesActivationEvent` | rules worker | WS | best-effort |
@@ -162,6 +162,10 @@
   сделанное с шины: копия, с которой шла модель, её ревизия, наблюдённые значения и номер
   изменения. Реестр переносит только поля, отличающиеся от копии, и подтверждает номер
   ([ADR-030](../../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md)).
+- `BusUnitQuiescenceObservedEvent` — другой контроллер начал или продлил quiescent mode
+  (остаток срока в мс) или закончил его (`null`), под номером отчёта. Реестр держит срок
+  в RAM, не персистит и подтверждает номер; повтор того же номера переносит срок на
+  оставшееся, более старый номер отвергается.
 
 Результаты команд Part 103 (`Dali103Scan*`, `Dali103InstanceConfiguredEvent`)
 реестр проецирует в записи устройств ввода; флаг Part 333 из

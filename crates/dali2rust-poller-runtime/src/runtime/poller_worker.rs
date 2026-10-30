@@ -439,7 +439,7 @@ fn pump_queue(state: &mut PollerState, deps: &PollerWiring) {
             return;
         }
     }
-    if deps.hold.engaged() {
+    if deps.hold.engaged() || deps.role.quiescent_remaining_ms().is_some() {
         return;
     }
     let probe_ready = state.pending_probe.is_none() && !state.probe_due.is_empty();
@@ -1087,6 +1087,36 @@ mod tests {
             memory_banks: MemoryBankReadPreset::None,
             purpose: ReadPurpose::Cycle,
         }
+    }
+
+    struct QuiescentRole;
+
+    impl dali2rust_domain::registry::DaliSettingsReadPort for QuiescentRole {
+        fn dali_settings_view(&self) -> dali2rust_domain::registry::DaliSettingsView {
+            ActiveRole.dali_settings_view()
+        }
+
+        fn quiescent_remaining_ms(&self) -> Option<u32> {
+            Some(1)
+        }
+    }
+
+    #[test]
+    fn another_controller_s_quiescent_mode_parks_every_background_read_without_failing_it() {
+        let mut t = test_deps();
+        t.deps.role = Arc::new(QuiescentRole);
+        let mut state = test_state();
+        state.queue.push_back(poll_target(9));
+        state.probe_due.push_back(0);
+        pump_queue(&mut state, &t.deps);
+        assert!(state.outstanding.is_none() && state.pending_probe.is_none(), "nothing is published");
+        assert_eq!((state.queue.len(), state.probe_due.len()), (1, 1), "and nothing is dropped");
+        assert_eq!(t.deps.counters.reads_published.load(Ordering::Relaxed), 0);
+        assert_eq!(t.deps.counters.reads_failed.load(Ordering::Relaxed), 0);
+        t.deps.role = Arc::new(ActiveRole);
+        pump_queue(&mut state, &t.deps);
+        assert!(state.outstanding.is_some(), "the parked read goes out once quiescent mode ends");
+        assert!(state.pending_probe.is_some(), "and so does the parked probe");
     }
 
     #[test]

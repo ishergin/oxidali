@@ -521,7 +521,7 @@ fn roll_over_ledger(state: &mut SchedulerState, deps: &SchedulerDeps, year_day: 
 }
 
 fn tick_is_due(deps: &SchedulerDeps) -> Option<LocalCivilTime> {
-    if !deps.role.dali_settings_view().application_active {
+    if !deps.role.dali_settings_view().application_active || deps.role.quiescent_remaining_ms().is_some() {
         return None;
     }
     let local = deps.clock.local();

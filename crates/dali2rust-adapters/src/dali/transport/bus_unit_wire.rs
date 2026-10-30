@@ -6,7 +6,7 @@ use dali2rust_dali_phy::PHY_TICK_US;
 use dali2rust_domain::dali::dev103::bus_unit::{Device103Unit, UnitFrame};
 use dali2rust_platform::answer_table::AnswerTableImage;
 use dali2rust_platform::arbitration::AnswerInputs;
-use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitIdentity, BusUnitNvm};
+use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitIdentity, BusUnitNvm, BusUnitQuiescence};
 use dali2rust_platform::dali::{
     ObservedFrameSender, ObservedItem, ObservedRawFrame, ObservedRawFrameKind,
 };
@@ -17,12 +17,33 @@ pub const BUS_UNIT_RESEND_MS: u32 = 1_000;
 pub const HARDWARE_VERSION: [u8; 2] = [1, 0];
 const MAC_AT: usize = 2;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UnitReports {
+    pub nvm: Option<BusUnitEvidence>,
+    pub quiescence: Option<BusUnitQuiescence>,
+}
+
+impl UnitReports {
+    pub fn items(self) -> impl Iterator<Item = ObservedItem> {
+        let nvm = self.nvm.map(ObservedItem::BusUnit);
+        nvm.into_iter().chain(self.quiescence.map(ObservedItem::BusUnitQuiescence))
+    }
+}
+
+#[derive(Debug, Default)]
+struct QuiescenceReport {
+    sequence: u32,
+    unacknowledged: bool,
+    reported_at_ms: u32,
+}
+
 #[derive(Debug)]
 pub struct BusUnitWire {
     unit: Device103Unit,
     adopted: Option<BusUnitNvm>,
     unacknowledged: Option<BusUnitEvidence>,
     reported_at_ms: u32,
+    quiescence: QuiescenceReport,
     entropy: fn() -> u32,
 }
 
@@ -34,30 +55,62 @@ impl BusUnitWire {
             adopted: None,
             unacknowledged: None,
             reported_at_ms: 0,
+            quiescence: QuiescenceReport::default(),
             entropy,
         }
     }
 
     // IEC 62386-103 §9.2.3
-    pub fn observe(&mut self, frame: UnitFrame, at_ms: u32) -> Option<BusUnitEvidence> {
+    pub fn observe(&mut self, frame: UnitFrame, at_ms: u32) -> UnitReports {
         let entropy = self.entropy;
-        if !self.unit.feed(frame, at_ms, &mut || entropy()).nvm_changed {
-            return None;
+        let effects = self.unit.feed(frame, at_ms, &mut || entropy());
+        UnitReports {
+            nvm: if effects.nvm_changed { self.report_nvm(at_ms) } else { None },
+            quiescence: effects.quiescent.map(|_| self.report_quiescence(at_ms)),
         }
+    }
+
+    pub fn poll(&mut self, adopt: Option<&AnswerInputs>, now_ms: u32) -> UnitReports {
+        if let Some(inputs) = adopt {
+            self.hydrate(inputs);
+        }
+        let lapsed = self.unit.tick(now_ms).quiescent.is_some();
+        UnitReports {
+            nvm: self.resend_nvm(now_ms),
+            quiescence: if lapsed { Some(self.report_quiescence(now_ms)) } else { self.resend_quiescence(now_ms) },
+        }
+    }
+
+    fn report_nvm(&mut self, at_ms: u32) -> Option<BusUnitEvidence> {
         self.unacknowledged = self.evidence();
         self.reported_at_ms = at_ms;
         self.unacknowledged
     }
 
-    pub fn poll(&mut self, adopt: Option<&AnswerInputs>, now_ms: u32) -> Option<BusUnitEvidence> {
-        if let Some(inputs) = adopt {
-            self.hydrate(inputs);
-        }
-        self.unit.tick(now_ms);
-        let due = now_ms.wrapping_sub(self.reported_at_ms) >= BUS_UNIT_RESEND_MS;
-        let resend = self.unacknowledged.filter(|_| due)?;
+    fn resend_nvm(&mut self, now_ms: u32) -> Option<BusUnitEvidence> {
+        let resend = self.unacknowledged.filter(|_| due(self.reported_at_ms, now_ms))?;
         self.reported_at_ms = now_ms;
         Some(resend)
+    }
+
+    // IEC 62386-103 §9.9.3
+    fn report_quiescence(&mut self, at_ms: u32) -> BusUnitQuiescence {
+        self.quiescence.sequence = self.quiescence.sequence.wrapping_add(1);
+        self.quiescence.unacknowledged = true;
+        self.quiescence_at(at_ms)
+    }
+
+    fn resend_quiescence(&mut self, now_ms: u32) -> Option<BusUnitQuiescence> {
+        let resend = self.quiescence.unacknowledged && due(self.quiescence.reported_at_ms, now_ms);
+        resend.then(|| self.quiescence_at(now_ms))
+    }
+
+    fn quiescence_at(&mut self, at_ms: u32) -> BusUnitQuiescence {
+        self.quiescence.reported_at_ms = at_ms;
+        BusUnitQuiescence {
+            sequence: self.quiescence.sequence,
+            remaining_ms: self.unit.quiescent_remaining_ms(at_ms),
+        }
     }
 
     pub fn lost_capture(&mut self) {
@@ -76,6 +129,9 @@ impl BusUnitWire {
         if snapshot.acknowledged_wire_sequence == self.unit.wire_sequence() {
             self.unacknowledged = None;
         }
+        if snapshot.acknowledged_quiescence == self.quiescence.sequence {
+            self.quiescence.unacknowledged = false;
+        }
         if self.unit.hydrate(&snapshot) {
             self.adopted = Some(self.unit.nvm());
         }
@@ -89,6 +145,10 @@ impl BusUnitWire {
             wire_sequence: self.unit.wire_sequence(),
         })
     }
+}
+
+const fn due(reported_at_ms: u32, now_ms: u32) -> bool {
+    now_ms.wrapping_sub(reported_at_ms) >= BUS_UNIT_RESEND_MS
 }
 
 // IEC 62386-103 Table 18
@@ -176,16 +236,18 @@ impl UnitTap {
     }
 
     // IEC 62386-101 §9.3
-    pub fn on_capture(&mut self, capture: Capture) -> Option<BusUnitEvidence> {
+    pub fn on_capture(&mut self, capture: Capture) -> UnitReports {
         let ours_between = self.ours_between(&capture);
-        let wire = self.wire.as_mut()?;
+        let Some(wire) = self.wire.as_mut() else {
+            return UnitReports::default();
+        };
         if capture.after_gap {
             wire.lost_capture();
         }
         if ours_between {
             wire.observe(UnitFrame::Other, capture.at_ms);
         }
-        wire.observe(capture.frame?, capture.at_ms)
+        capture.frame.map_or_else(UnitReports::default, |frame| wire.observe(frame, capture.at_ms))
     }
 
     pub fn on_poll(
@@ -193,9 +255,9 @@ impl UnitTap {
         inputs: Option<&AnswerInputs>,
         now_ms: u32,
         caught_up: bool,
-    ) -> (Option<BusUnitEvidence>, Option<AnswerTableImage>) {
+    ) -> (UnitReports, Option<AnswerTableImage>) {
         let Some(wire) = self.wire.as_mut() else {
-            return (None, None);
+            return (UnitReports::default(), None);
         };
         let resend = wire.poll(inputs.filter(|_| caught_up), now_ms);
         (resend, wire.answer_table())
@@ -255,8 +317,9 @@ impl InjectedWire {
         let (resend, _) = self.tap.on_poll(self.inputs.as_deref(), at_ms, true);
         let frame = Some(unit_frame(kind, bytes));
         let capture = Capture { after_gap: false, epoch: self.epoch, forward_length, frame, at_ms };
-        for evidence in [resend, self.tap.on_capture(capture)].into_iter().flatten() {
-            let _ = tx.try_send(ObservedItem::BusUnit(evidence));
+        let observed = self.tap.on_capture(capture);
+        for item in resend.items().chain(observed.items()) {
+            let _ = tx.try_send(item);
         }
         sent
     }
@@ -266,7 +329,7 @@ impl InjectedWire {
 mod tests {
     use std::sync::mpsc::sync_channel;
 
-    use dali2rust_domain::dali::dev103::bus_unit::FACTORY_NVM;
+    use dali2rust_domain::dali::dev103::bus_unit::{FACTORY_NVM, QUIESCENT_MS};
     use dali2rust_domain::dali::dev103::{Device103Address, Device103Command, Special103Command};
     use dali2rust_platform::bus_unit::BusUnitSnapshot;
     use dali2rust_platform::dali::DaliTransport;
@@ -296,7 +359,7 @@ mod tests {
 
     fn inputs_at(nvm: BusUnitNvm, revision: u32, acknowledged_wire_sequence: u32) -> AnswerInputs {
         let inputs = AnswerInputs::new();
-        inputs.publish_bus_unit(BusUnitSnapshot { nvm, revision, acknowledged_wire_sequence });
+        inputs.publish_bus_unit(BusUnitSnapshot { nvm, revision, acknowledged_wire_sequence, acknowledged_quiescence: 0 });
         inputs
     }
 
@@ -314,14 +377,14 @@ mod tests {
 
     fn hydrated(inputs: &AnswerInputs) -> BusUnitWire {
         let mut wire = BusUnitWire::new(&IDENTITY, entropy);
-        assert_eq!(wire.poll(Some(inputs), START_MS - 1), None);
+        assert_eq!(wire.poll(Some(inputs), START_MS - 1).nvm, None);
         wire
     }
 
     fn readdress(wire: &mut BusUnitWire) -> Option<BusUnitEvidence> {
-        assert_eq!(wire.observe(dtr0(WIRE_SHORT), START_MS), None);
-        assert_eq!(wire.observe(set_short_address(), START_MS + PAIR_GAP_MS), None);
-        wire.observe(set_short_address(), START_MS + 2 * PAIR_GAP_MS)
+        assert_eq!(wire.observe(dtr0(WIRE_SHORT), START_MS).nvm, None);
+        assert_eq!(wire.observe(set_short_address(), START_MS + PAIR_GAP_MS).nvm, None);
+        wire.observe(set_short_address(), START_MS + 2 * PAIR_GAP_MS).nvm
     }
 
     fn reported_at() -> u32 {
@@ -342,7 +405,7 @@ mod tests {
         fn hydrated(inputs: &AnswerInputs) -> Self {
             let mut tap = UnitTap::default();
             tap.attach(Some(&IDENTITY), entropy);
-            assert_eq!(tap.on_poll(Some(inputs), START_MS - 1, true).0, None);
+            assert_eq!(tap.on_poll(Some(inputs), START_MS - 1, true).0.nvm, None);
             Self { tap, epoch: 0, at_ms: START_MS }
         }
 
@@ -352,7 +415,7 @@ mod tests {
             }
             self.at_ms += PAIR_GAP_MS;
             let capture = Capture { after_gap, epoch: self.epoch, forward_length, frame, at_ms: self.at_ms };
-            self.tap.on_capture(capture)
+            self.tap.on_capture(capture).nvm
         }
 
         fn forward(&mut self, frame: UnitFrame) -> Option<BusUnitEvidence> {
@@ -368,12 +431,83 @@ mod tests {
         }
     }
 
+    fn send(wire: &mut BusUnitWire, command: Device103Command, at_ms: u32) -> UnitReports {
+        let frame = broadcast(command);
+        assert!(command.metadata().send_twice);
+        assert_eq!(wire.observe(frame, at_ms), UnitReports::default());
+        wire.observe(frame, at_ms + PAIR_GAP_MS)
+    }
+
+    fn acknowledge_quiescence(inputs: &AnswerInputs, sequence: u32) {
+        inputs.publish_bus_unit(BusUnitSnapshot {
+            nvm: operator_nvm(),
+            revision: ADOPTED_REVISION,
+            acknowledged_wire_sequence: 0,
+            acknowledged_quiescence: sequence,
+        });
+    }
+
+    const fn quiescence(sequence: u32, remaining_ms: Option<u32>) -> Option<BusUnitQuiescence> {
+        Some(BusUnitQuiescence { sequence, remaining_ms })
+    }
+
+    #[test]
+    fn a_start_reports_the_whole_deadline_and_resends_what_is_left_until_acknowledged() {
+        let inputs = inputs_at(operator_nvm(), ADOPTED_REVISION, 0);
+        let mut wire = hydrated(&inputs);
+        let reported = send(&mut wire, Device103Command::StartQuiescentMode, START_MS);
+        assert_eq!(reported, UnitReports { nvm: None, quiescence: quiescence(1, Some(QUIESCENT_MS)) });
+        let started = START_MS + PAIR_GAP_MS;
+        assert_eq!(wire.poll(Some(&inputs), started + BUS_UNIT_RESEND_MS - 1).quiescence, None);
+        let left = QUIESCENT_MS - BUS_UNIT_RESEND_MS;
+        assert_eq!(wire.poll(Some(&inputs), started + BUS_UNIT_RESEND_MS).quiescence, quiescence(1, Some(left)));
+        assert_eq!(wire.poll(Some(&inputs), started + 2 * BUS_UNIT_RESEND_MS - 1).quiescence, None);
+        acknowledge_quiescence(&inputs, 1);
+        assert_eq!(wire.poll(Some(&inputs), started + 2 * BUS_UNIT_RESEND_MS).quiescence, None);
+        assert_eq!(wire.poll(Some(&inputs), started + 3 * BUS_UNIT_RESEND_MS).quiescence, None);
+    }
+
+    #[test]
+    fn an_acknowledgement_of_an_older_report_leaves_the_newer_one_resending() {
+        let inputs = inputs_at(operator_nvm(), ADOPTED_REVISION, 0);
+        let mut wire = hydrated(&inputs);
+        send(&mut wire, Device103Command::StartQuiescentMode, START_MS);
+        let stopped_at = START_MS + 2 * PAIR_GAP_MS;
+        assert_eq!(send(&mut wire, Device103Command::StopQuiescentMode, stopped_at).quiescence, quiescence(2, None));
+        acknowledge_quiescence(&inputs, 1);
+        let due = stopped_at + PAIR_GAP_MS + BUS_UNIT_RESEND_MS;
+        assert_eq!(wire.poll(Some(&inputs), due).quiescence, quiescence(2, None));
+    }
+
+    #[test]
+    fn a_lapse_and_a_restart_each_report_under_a_new_sequence() {
+        let inputs = inputs_at(operator_nvm(), ADOPTED_REVISION, 0);
+        let mut wire = hydrated(&inputs);
+        send(&mut wire, Device103Command::StartQuiescentMode, START_MS);
+        acknowledge_quiescence(&inputs, 1);
+        let started = START_MS + PAIR_GAP_MS;
+        assert_eq!(wire.poll(Some(&inputs), started + QUIESCENT_MS - 1).quiescence, None);
+        assert_eq!(wire.poll(Some(&inputs), started + QUIESCENT_MS).quiescence, quiescence(2, None));
+        let restarted = started + QUIESCENT_MS + PAIR_GAP_MS;
+        let reported = send(&mut wire, Device103Command::StartQuiescentMode, restarted).quiescence;
+        assert_eq!(reported, quiescence(3, Some(QUIESCENT_MS)));
+    }
+
+    #[test]
+    fn reports_reach_the_channel_evidence_first() {
+        let evidence = BusUnitEvidence { adopted: FACTORY_NVM, adopted_revision: 1, observed: FACTORY_NVM, wire_sequence: 1 };
+        let reports = UnitReports { nvm: Some(evidence), quiescence: quiescence(1, None) };
+        let items: Vec<_> = reports.items().collect();
+        assert_eq!(items, [ObservedItem::BusUnit(evidence), ObservedItem::BusUnitQuiescence(quiescence(1, None).unwrap())]);
+        assert_eq!(UnitReports::default().items().count(), 0);
+    }
+
     #[test]
     fn a_unit_the_registry_never_described_publishes_no_table_and_reports_nothing() {
         let inputs = AnswerInputs::new();
         let mut wire = hydrated(&inputs);
         assert_eq!(readdress(&mut wire), None);
-        assert_eq!(wire.poll(Some(&inputs), reported_at() + BUS_UNIT_RESEND_MS), None);
+        assert_eq!(wire.poll(Some(&inputs), reported_at() + BUS_UNIT_RESEND_MS).nvm, None);
         assert_eq!(wire.answer_table(), None);
     }
 
@@ -398,6 +532,7 @@ mod tests {
             nvm: later,
             revision: ADOPTED_REVISION + 1,
             acknowledged_wire_sequence: 0,
+            acknowledged_quiescence: 0,
         });
         let evidence = readdress(&mut wire).expect("the pair moved the address");
         assert_eq!((evidence.adopted, evidence.adopted_revision), (operator_nvm(), ADOPTED_REVISION));
@@ -408,10 +543,10 @@ mod tests {
         let inputs = inputs_at(operator_nvm(), ADOPTED_REVISION, 0);
         let mut wire = hydrated(&inputs);
         let evidence = readdress(&mut wire);
-        assert_eq!(wire.poll(Some(&inputs), reported_at() + BUS_UNIT_RESEND_MS - 1), None);
-        assert_eq!(wire.poll(Some(&inputs), reported_at() + BUS_UNIT_RESEND_MS), evidence);
-        assert_eq!(wire.poll(Some(&inputs), reported_at() + 2 * BUS_UNIT_RESEND_MS - 1), None);
-        assert_eq!(wire.poll(Some(&inputs), reported_at() + 2 * BUS_UNIT_RESEND_MS), evidence);
+        assert_eq!(wire.poll(Some(&inputs), reported_at() + BUS_UNIT_RESEND_MS - 1).nvm, None);
+        assert_eq!(wire.poll(Some(&inputs), reported_at() + BUS_UNIT_RESEND_MS).nvm, evidence);
+        assert_eq!(wire.poll(Some(&inputs), reported_at() + 2 * BUS_UNIT_RESEND_MS - 1).nvm, None);
+        assert_eq!(wire.poll(Some(&inputs), reported_at() + 2 * BUS_UNIT_RESEND_MS).nvm, evidence);
     }
 
     #[test]
@@ -424,12 +559,13 @@ mod tests {
             nvm: evidence.observed,
             revision: next,
             acknowledged_wire_sequence: evidence.wire_sequence,
+            acknowledged_quiescence: 0,
         });
-        assert_eq!(wire.poll(Some(&inputs), reported_at() + BUS_UNIT_RESEND_MS), None);
+        assert_eq!(wire.poll(Some(&inputs), reported_at() + BUS_UNIT_RESEND_MS).nvm, None);
         let at_ms = reported_at() + 2 * BUS_UNIT_RESEND_MS;
-        assert_eq!(wire.observe(dtr0(OPERATOR_SHORT), at_ms), None);
-        assert_eq!(wire.observe(set_short_address(), at_ms + PAIR_GAP_MS), None);
-        let again = wire.observe(set_short_address(), at_ms + 2 * PAIR_GAP_MS);
+        assert_eq!(wire.observe(dtr0(OPERATOR_SHORT), at_ms).nvm, None);
+        assert_eq!(wire.observe(set_short_address(), at_ms + PAIR_GAP_MS).nvm, None);
+        let again = wire.observe(set_short_address(), at_ms + 2 * PAIR_GAP_MS).nvm;
         let again = again.expect("the second pair moved the address back");
         assert_eq!((again.adopted, again.adopted_revision), (evidence.observed, next));
     }
@@ -439,19 +575,19 @@ mod tests {
         let inputs = inputs_at(operator_nvm(), ADOPTED_REVISION, 0);
         let mut wire = hydrated(&inputs);
         let disable = broadcast(Device103Command::DisableApplicationController);
-        assert_eq!(wire.observe(disable, START_MS), None);
+        assert_eq!(wire.observe(disable, START_MS).nvm, None);
         wire.lost_capture();
-        assert_eq!(wire.observe(disable, START_MS + PAIR_GAP_MS), None, "no DTR operand: only the pair split stops it");
+        assert_eq!(wire.observe(disable, START_MS + PAIR_GAP_MS).nvm, None, "no DTR operand: only the pair split stops it");
     }
 
     #[test]
     fn a_lost_capture_forgets_the_operand_an_intact_pair_would_use() {
         let inputs = inputs_at(operator_nvm(), ADOPTED_REVISION, 0);
         let mut wire = hydrated(&inputs);
-        assert_eq!(wire.observe(dtr0(WIRE_SHORT), START_MS), None);
+        assert_eq!(wire.observe(dtr0(WIRE_SHORT), START_MS).nvm, None);
         wire.lost_capture();
-        assert_eq!(wire.observe(set_short_address(), START_MS + PAIR_GAP_MS), None);
-        assert_eq!(wire.observe(set_short_address(), START_MS + 2 * PAIR_GAP_MS), None);
+        assert_eq!(wire.observe(set_short_address(), START_MS + PAIR_GAP_MS).nvm, None);
+        assert_eq!(wire.observe(set_short_address(), START_MS + 2 * PAIR_GAP_MS).nvm, None);
         assert_eq!(short_address_of(&wire), Some(OPERATOR_SHORT));
     }
 
@@ -505,6 +641,7 @@ mod tests {
             nvm: BusUnitNvm { short_address: Some(WIRE_SHORT), ..operator_nvm() },
             revision: ADOPTED_REVISION + 1,
             acknowledged_wire_sequence: 0,
+            acknowledged_quiescence: 0,
         });
         assert_eq!(tap.short_address(&inputs, false), Some(OPERATOR_SHORT));
         assert_eq!(tap.short_address(&inputs, true), Some(WIRE_SHORT));
@@ -519,7 +656,7 @@ mod tests {
         let evidence = tap.forward(set_short_address());
         assert!(evidence.is_some());
         let due = tap.at_ms + BUS_UNIT_RESEND_MS;
-        assert_eq!(tap.tap.on_poll(Some(&inputs), due, false).0, evidence);
+        assert_eq!(tap.tap.on_poll(Some(&inputs), due, false).0.nvm, evidence);
     }
 
     #[test]
@@ -538,10 +675,10 @@ mod tests {
         let inputs = inputs_at(operator_nvm(), ADOPTED_REVISION, 0);
         let mut tap = UnitTap::default();
         let capture = Capture { after_gap: false, epoch: 1, forward_length: true, frame: Some(dtr0(WIRE_SHORT)), at_ms: 0 };
-        assert_eq!(tap.on_capture(capture), None);
-        assert_eq!(tap.on_poll(Some(&inputs), 0, true), (None, None));
+        assert_eq!(tap.on_capture(capture).nvm, None);
+        assert_eq!(tap.on_poll(Some(&inputs), 0, true), (UnitReports::default(), None));
         tap.attach(Some(&IDENTITY), entropy);
-        assert_eq!(tap.on_poll(None, 0, true), (None, None));
+        assert_eq!(tap.on_poll(None, 0, true), (UnitReports::default(), None));
     }
 
     #[test]
@@ -618,6 +755,20 @@ mod tests {
         assert_eq!(items.len(), frames.len() + 1, "{items:?}");
         assert!(items[..frames.len()].iter().all(|item| matches!(item, ObservedItem::Frame(_))));
         assert!(matches!(items[frames.len()], ObservedItem::BusUnit(_)), "{items:?}");
+    }
+
+    #[test]
+    fn an_injected_start_reaches_the_channel_as_the_quiescence_it_began() {
+        let (mut wire, rx) = injected();
+        let start = broadcast(Device103Command::StartQuiescentMode);
+        inject(&mut wire, start);
+        inject(&mut wire, start);
+        let items: Vec<_> = rx.try_iter().collect();
+        assert_eq!(items.len(), 3, "{items:?}");
+        let ObservedItem::BusUnitQuiescence(quiescence) = items[2] else {
+            panic!("{items:?}");
+        };
+        assert_eq!(quiescence, BusUnitQuiescence { sequence: 1, remaining_ms: Some(QUIESCENT_MS) });
     }
 
     #[test]

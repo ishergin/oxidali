@@ -30,3 +30,37 @@ Feature: Settings — DALI: the controller as a Part 103 bus unit
     And a 24-bit frame 13 FE 14 is observed on the bus
     And a 24-bit frame 13 FE 14 is observed on the bus
     Then the JSON pointer "/device_short_address" at "/api/v1/settings/dali" should eventually be "11"
+
+  @id:SET-DALI-010
+  Scenario: Another controller's quiescent mode holds back every forward frame until it stops
+    When another controller sends START QUIESCENT MODE to every unit
+    Then the JSON pointer "/quiescent" at "/api/v1/health" should eventually be "true"
+    And the JSON pointer "/quiescent_remaining_ms" at "/api/v1/redundancy" should eventually be greater than 890000
+    When I POST JSON {"wire_address":2,"level":100} to "/api/v1/dali/level"
+    Then the response status should be 409
+    And the JSON error should be "controller_quiescent"
+    And the response header "Retry-After" should be "900"
+    And the response header "X-Dali2rust-Role" should be "active"
+    And the DALI mock transport should have received 0 forward frame
+    When another controller sends STOP QUIESCENT MODE to every unit
+    Then the JSON pointer "/quiescent" at "/api/v1/health" should eventually be "false"
+    And the JSON pointer "/quiescent_remaining_ms" at "/api/v1/redundancy" should eventually be "null"
+    When I POST JSON {"wire_address":2,"level":100} to "/api/v1/dali/level"
+    Then the response status should be 200
+    And the DALI mock transport should have received 1 forward frame
+
+  @id:SET-DALI-011
+  Scenario: A standby that hears no peer takes no bus while another controller is quiescent
+    Given this controller has stood down
+    When another controller sends START QUIESCENT MODE to every unit
+    Then the JSON pointer "/quiescent" at "/api/v1/health" should eventually be "true"
+    When I PATCH JSON {"enabled":true,"role":"standby","boot_listen_ms":0,"probe_interval_ms":250,"takeover_after_missed":1} to "/api/v1/settings/redundancy"
+    Then the response status should be 200
+    And the JSON pointer "/probes/published" at "/api/v1/redundancy" should eventually be greater than 2
+    When I send a GET request to "/api/v1/redundancy"
+    Then the JSON boolean field "active" should be false
+    And the JSON pointer "/probes/unowned" should be 0
+    And the DALI mock transport should have received 0 forward frame
+    When another controller sends STOP QUIESCENT MODE to every unit
+    Then the JSON pointer "/transitions/0/reason" at "/api/v1/redundancy" should eventually be "peer_silent"
+    And the JSON pointer "/active" at "/api/v1/redundancy" should eventually be "true"

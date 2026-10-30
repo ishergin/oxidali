@@ -285,6 +285,10 @@ impl RegistryReadPort for ReadPortDouble {
         true
     }
 
+    fn controller_quiescent(&self) -> bool {
+        false
+    }
+
     fn virtual_lamp_snapshot(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> VirtualLampSnapshot {
         VirtualLampSnapshot::default()
     }

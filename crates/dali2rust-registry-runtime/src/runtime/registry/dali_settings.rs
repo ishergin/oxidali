@@ -1,5 +1,9 @@
-use dali2rust_contracts::msg::{BusUnitNvmObservedEvent, BusUnitNvmRow, DaliSettingsUpdateCommand};
-use dali2rust_domain::dali::dev103::bus_unit::{is_newer, FACTORY_RANDOM_ADDRESS, STANDARD_OPERATING_MODE};
+use dali2rust_contracts::msg::{
+    BusUnitNvmObservedEvent, BusUnitNvmRow, BusUnitQuiescenceObservedEvent, DaliSettingsUpdateCommand,
+};
+use dali2rust_domain::dali::dev103::bus_unit::{
+    is_newer, remaining_until, FACTORY_RANDOM_ADDRESS, STANDARD_OPERATING_MODE,
+};
 use dali2rust_domain::registry::{ApplicationActiveMover, DaliSettingsReadPort, DaliSettingsView};
 use dali2rust_platform::arbitration::AnswerInputs;
 use dali2rust_platform::bus_unit::{BusUnitNvm, BusUnitSnapshot};
@@ -25,6 +29,8 @@ pub(crate) struct DaliSettingsRecord {
     pub wire_acknowledged: u32,
     wire_applied: Option<(u32, BusUnitNvmRow)>,
     operator_moved_at: [Option<u32>; UNIT_FIELDS],
+    quiescent_until_ms: Option<u32>,
+    quiescence_acknowledged: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -76,6 +82,8 @@ impl Default for DaliSettingsRecord {
             wire_acknowledged: 0,
             wire_applied: None,
             operator_moved_at: [None; UNIT_FIELDS],
+            quiescent_until_ms: None,
+            quiescence_acknowledged: 0,
         }
     }
 }
@@ -114,7 +122,12 @@ impl DaliSettingsRecord {
             },
             revision: self.bus_unit_revision,
             acknowledged_wire_sequence: self.wire_acknowledged,
+            acknowledged_quiescence: self.quiescence_acknowledged,
         }
+    }
+
+    fn quiescent_remaining_ms(&self, now_ms: u32) -> Option<u32> {
+        self.quiescent_until_ms.and_then(|until| remaining_until(until, now_ms))
     }
 
     fn apply_patch(&mut self, body: &DaliSettingsUpdateCommand) {
@@ -219,9 +232,35 @@ impl RegistryStore {
     }
 }
 
+impl RegistryStore {
+    // IEC 62386-103 §9.9.3
+    pub(crate) fn apply_bus_unit_quiescence(&self, body: &BusUnitQuiescenceObservedEvent, now_ms: u32) -> bool {
+        let mut g = self.write_inner();
+        let row = &mut g.dali_settings;
+        if is_newer(row.quiescence_acknowledged, body.sequence) {
+            return false;
+        }
+        let was = row.quiescent_remaining_ms(now_ms).is_some();
+        row.quiescent_until_ms = body.remaining_ms.map(|remaining| now_ms.wrapping_add(remaining));
+        row.quiescence_acknowledged = body.sequence;
+        let moved = row.quiescent_remaining_ms(now_ms).is_some() != was;
+        drop(g);
+        self.publish_bus_unit();
+        moved
+    }
+
+    pub(crate) fn quiescent_remaining_at(&self, now_ms: u32) -> Option<u32> {
+        self.dali_settings_row().quiescent_remaining_ms(now_ms)
+    }
+}
+
 impl DaliSettingsReadPort for RegistryStore {
     fn dali_settings_view(&self) -> DaliSettingsView {
         self.dali_settings_row().to_view()
+    }
+
+    fn quiescent_remaining_ms(&self) -> Option<u32> {
+        self.quiescent_remaining_at(dali2rust_platform::liveness::monotonic_ms())
     }
 
     fn application_active_moved_by(&self) -> (bool, ApplicationActiveMover) {
@@ -285,6 +324,8 @@ pub(crate) fn hydrate_dali_settings_inner(
         wire_acknowledged: current.wire_acknowledged,
         wire_applied: current.wire_applied,
         operator_moved_at: current.operator_moved_at,
+        quiescent_until_ms: current.quiescent_until_ms,
+        quiescence_acknowledged: current.quiescence_acknowledged,
         ..DaliSettingsRecord::default()
     };
 }
@@ -324,6 +365,8 @@ impl RegistryStore {
 mod bus_unit_evidence_tests {
     use dali2rust_bsp::slice_store_files::InMemorySliceStore;
     use dali2rust_platform::slice_store::{SliceKey, SliceStore};
+
+    use dali2rust_domain::dali::dev103::bus_unit::QUIESCENT_MS;
 
     use super::*;
     use crate::runtime::registry::persistence::validate_registry_slice;
@@ -530,6 +573,55 @@ mod bus_unit_evidence_tests {
         );
         let validated = validate_registry_slice(SliceKey::DaliSettings, &bytes);
         assert!(matches!(validated, Some(Ok(()))), "{validated:?}");
+    }
+
+    const NOW_MS: u32 = 5_000;
+
+    fn quiescence(sequence: u32, remaining_ms: Option<u32>) -> BusUnitQuiescenceObservedEvent {
+        BusUnitQuiescenceObservedEvent { sequence, remaining_ms }
+    }
+
+    #[test]
+    fn another_controller_s_quiescence_holds_until_its_deadline_and_is_acknowledged() {
+        let store = RegistryStore::with_adapter_count(1);
+        let sink = std::sync::Arc::new(AnswerInputs::new());
+        store.install_bus_unit_sink(std::sync::Arc::clone(&sink));
+        assert!(store.apply_bus_unit_quiescence(&quiescence(1, Some(QUIESCENT_MS)), NOW_MS));
+        assert_eq!(published(&sink).acknowledged_quiescence, 1);
+        assert_eq!(store.quiescent_remaining_at(NOW_MS + 1), Some(QUIESCENT_MS - 1));
+        assert_eq!(store.quiescent_remaining_at(NOW_MS + QUIESCENT_MS - 1), Some(1));
+        assert_eq!(store.quiescent_remaining_at(NOW_MS + QUIESCENT_MS), None, "it lapses without a stop");
+        assert!(!store.dirty.take_dali_settings_dirty(), "quiescence is never persisted");
+    }
+
+    #[test]
+    fn a_resend_moves_the_deadline_to_what_it_says_is_left_and_reports_no_change() {
+        let store = RegistryStore::with_adapter_count(1);
+        store.apply_bus_unit_quiescence(&quiescence(1, Some(QUIESCENT_MS)), NOW_MS);
+        let later = NOW_MS + 1_000;
+        assert!(!store.apply_bus_unit_quiescence(&quiescence(1, Some(QUIESCENT_MS - 2_000)), later));
+        assert_eq!(store.quiescent_remaining_at(later), Some(QUIESCENT_MS - 2_000));
+    }
+
+    #[test]
+    fn a_stop_ends_quiescence_and_an_older_report_arriving_after_it_does_not_restart_it() {
+        let store = RegistryStore::with_adapter_count(1);
+        store.apply_bus_unit_quiescence(&quiescence(1, Some(QUIESCENT_MS)), NOW_MS);
+        assert!(store.apply_bus_unit_quiescence(&quiescence(2, None), NOW_MS + 1));
+        assert_eq!(store.quiescent_remaining_at(NOW_MS + 2), None);
+        assert!(!store.apply_bus_unit_quiescence(&quiescence(1, Some(QUIESCENT_MS)), NOW_MS + 3));
+        assert_eq!(store.quiescent_remaining_at(NOW_MS + 4), None);
+        assert_eq!(row(&store).quiescence_acknowledged, 2);
+    }
+
+    #[test]
+    fn a_slice_read_again_keeps_another_controller_s_quiescence() {
+        let stored = RegistryStore::with_adapter_count(1);
+        let store = RegistryStore::with_adapter_count(1);
+        store.apply_bus_unit_quiescence(&quiescence(4, Some(QUIESCENT_MS)), NOW_MS);
+        store.hydrate_from_store(&stored_slice(&stored), 1);
+        assert_eq!(store.quiescent_remaining_at(NOW_MS), Some(QUIESCENT_MS));
+        assert_eq!(row(&store).bus_unit_snapshot().acknowledged_quiescence, 4);
     }
 
     fn stored_slice(store: &RegistryStore) -> InMemorySliceStore {

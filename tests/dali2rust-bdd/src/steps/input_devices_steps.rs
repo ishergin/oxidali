@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use cucumber::{then, when};
+use dali2rust_domain::dali::dev103::{Device103Address, Device103Command};
 use dali2rust_platform::dali::TransferOutcome;
 use dali2rust_platform::dali::ObservedRawFrameKind;
 use dali2rust_test_support::wait_until;
@@ -34,8 +35,24 @@ async fn when_bus_unit_frame_observed(world: &mut DaliWorld, b0: String, b1: Str
     inject_forward24(world, [&b0, &b1, &b2]);
 }
 
+// SET-DALI-010 SET-DALI-011
+#[when(regex = r"^another controller sends (START|STOP) QUIESCENT MODE to every unit$")]
+async fn when_another_controller_sends_quiescent_mode(world: &mut DaliWorld, verb: String) {
+    let command = match verb.as_str() {
+        "START" => Device103Command::StartQuiescentMode,
+        _ => Device103Command::StopQuiescentMode,
+    };
+    assert!(command.metadata().send_twice, "{command:?} is a send-twice command");
+    let bytes = command.frame(Device103Address::Broadcast).as_bytes();
+    inject_bytes(world, bytes);
+    inject_bytes(world, bytes);
+}
+
 fn inject_forward24(world: &DaliWorld, text: [&str; 3]) {
-    let bytes = text.map(parse_hex_byte);
+    inject_bytes(world, text.map(parse_hex_byte));
+}
+
+fn inject_bytes(world: &DaliWorld, bytes: [u8; 3]) {
     let injected = world
         .dali_mock()
         .lock()

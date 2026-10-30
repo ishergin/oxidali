@@ -53,6 +53,10 @@ pub trait DaliSettingsReadPort: Send + Sync {
             ApplicationActiveMover::Unmoved,
         )
     }
+
+    fn quiescent_remaining_ms(&self) -> Option<u32> {
+        None
+    }
 }
 
 pub trait RedundancySettingsReadPort: Send + Sync {
@@ -103,6 +107,7 @@ pub trait HomeAssistantSecretReadPort: Send + Sync {
 
 pub trait RegistryReadPort: InputInstanceTypeReadPort {
     fn application_controller_active(&self) -> bool;
+    fn controller_quiescent(&self) -> bool;
     fn virtual_lamp_snapshot(&self, adapter_id: u8, virtual_lamp_id: u8) -> VirtualLampSnapshot;
     fn virtual_lamp_binding_short(&self, adapter_id: u8, virtual_lamp_id: u8) -> Option<u8>;
     fn adapter_snapshot(&self, adapter_id: u8) -> AdapterSnapshot;

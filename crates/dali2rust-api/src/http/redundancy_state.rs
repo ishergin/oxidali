@@ -64,6 +64,7 @@ pub struct RedundancyStateDto {
     pub active: bool,
     pub answering: bool,
     pub lease_remaining_ms: u32,
+    pub quiescent_remaining_ms: Option<u32>,
     pub arbitration: RedundancyArbitrationDto,
     pub probes: RedundancyProbeDto,
     pub takeovers: u32,

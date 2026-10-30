@@ -62,7 +62,7 @@ mod wire;
 mod write_attributes;
 
 use attribute_read::handle_read_attributes;
-use blocked::{adapter_command_blocked, controller_passive_blocked};
+use blocked::{adapter_command_blocked, controller_passive_blocked, controller_quiescent_blocked};
 use dev103::{
     handle_103_commission, handle_103_identify, handle_103_instance_configure, handle_103_scan,
 };
@@ -163,6 +163,7 @@ fn refused_by_gates(
 ) -> bool {
     let answer = Answer { correlation_id: ce.meta.correlation_id, riders };
     controller_passive_blocked(ce, read_port, adapter_id, answer, publisher, counters)
+        || controller_quiescent_blocked(ce, read_port, adapter_id, answer, publisher, counters)
         || adapter_command_blocked(ce, read_port, adapter_id, answer, publisher, counters)
 }
 

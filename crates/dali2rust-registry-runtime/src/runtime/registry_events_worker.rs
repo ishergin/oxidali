@@ -140,6 +140,15 @@ dali2rust_contracts::dispatch_bus_events! {
     DaliDeviceReplacedEvent(body) => {
         commit_device_replacement(publisher, corr, store, counters, body);
     },
+    BusUnitQuiescenceObservedEvent(body) => {
+        if store.apply_bus_unit_quiescence(body, dali2rust_platform::liveness::monotonic_ms()) {
+            log::info!(
+                "registry: another controller {} quiescent mode (sequence {})",
+                if body.remaining_ms.is_some() { "started" } else { "stopped" },
+                body.sequence
+            );
+        }
+    },
     BusUnitNvmObservedEvent(body) => {
         if let Some(applied) = store.apply_bus_unit_evidence(body) {
             counters.bus_unit_evidence_applied.fetch_add(1, Ordering::Relaxed);

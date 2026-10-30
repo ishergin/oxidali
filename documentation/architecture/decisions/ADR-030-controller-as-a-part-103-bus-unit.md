@@ -173,6 +173,9 @@ answer to any next one, and the slot no longer waits for a task.
   poller, the arbitration probe and the power notification — while queries are still
   answered (103 §9.9.3). It ends with `STOP QUIESCENT MODE` or 15 min ± 1,5 min after the
   last `START`, and a power-on clears it.
+- The model reports each `START` with its deadline and each end, and the registry holds
+  the deadline in RAM; the gate, the poller and the HCL scheduler read it, and it lapses
+  at that deadline even if the report of a `STOP` is lost.
 - A write that needs the wire is refused with `409 controller_quiescent` and a
   `Retry-After` from the remaining time; quiescence is shown on `/api/v1/health`, the
   redundancy resource, the WebSocket and the OLED, because a master's commissioning run

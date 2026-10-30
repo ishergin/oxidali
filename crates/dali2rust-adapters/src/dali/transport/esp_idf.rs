@@ -31,7 +31,7 @@ use dali2rust_dali_phy::{
     TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS,
 };
 
-use super::bus_unit_wire::{sniffed_unit_frame, Capture, TickClock, UnitTap};
+use super::bus_unit_wire::{sniffed_unit_frame, Capture, TickClock, UnitReports, UnitTap};
 use super::answer_path::{
     arbitration_answers, mirror_answer_counts, AnswerPublisher, PUBLISH_BUDGET_TICKS,
 };
@@ -1278,16 +1278,15 @@ fn push_observed_raw_frame(
     }
 }
 
-fn push_bus_unit_evidence(
-    inner: *mut TransportInner,
-    evidence: Option<dali2rust_platform::bus_unit::BusUnitEvidence>,
-) {
+fn push_bus_unit_reports(inner: *mut TransportInner, reports: UnitReports) {
     // SAFETY: `inner` is valid for the transport lifetime (see `dali_sniffer_loop`).
-    let (Some(evidence), Some(tx)) = (evidence, unsafe { (*inner).observed_tx.get() }) else {
+    let Some(tx) = (unsafe { (*inner).observed_tx.get() }) else {
         return;
     };
-    if tx.try_send(ObservedItem::BusUnit(evidence)).is_err() {
-        log::warn!("DALI sniff: observed-frame channel full; bus-unit report waits for its resend");
+    for item in reports.items() {
+        if tx.try_send(item).is_err() {
+            log::warn!("DALI sniff: observed-frame channel full; bus-unit report waits for its resend");
+        }
     }
 }
 
@@ -1393,7 +1392,7 @@ unsafe fn publish_answer_table(
     let at_ms = answers.clock.at(isr.wire_tick_counts().0);
     let caught_up = answers.publisher.caught_up(isr);
     let (resend, table) = answers.unit.on_poll(inputs, at_ms, caught_up);
-    push_bus_unit_evidence(inner, resend);
+    push_bus_unit_reports(inner, resend);
     if let Some(ticks) = answers.publisher.publish(isr, inputs, table.as_ref(), now_ms) {
         // SAFETY: same.
         unsafe { note_answer_published(inner, diagnostics, ticks) };
@@ -1472,7 +1471,7 @@ unsafe fn process_sniffed_captures(
             let forward_length = frame_length_class(ev.sample_count) == FrameLengthClass::Forward;
             let at_ms = clock.at(ev.rx_tick);
             let capture = Capture { after_gap, epoch: ev.rx_epoch, forward_length, frame, at_ms };
-            push_bus_unit_evidence(inner, unit.on_capture(capture));
+            push_bus_unit_reports(inner, unit.on_capture(capture));
         },
     );
 }

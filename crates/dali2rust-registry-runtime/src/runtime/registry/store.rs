@@ -648,6 +648,10 @@ impl RegistryReadPort for RegistryStore {
         self.read_inner().dali_settings.application_active
     }
 
+    fn controller_quiescent(&self) -> bool {
+        self.quiescent_remaining_at(dali2rust_platform::liveness::monotonic_ms()).is_some()
+    }
+
     fn virtual_lamp_snapshot(
         &self,
         adapter_id: u8,

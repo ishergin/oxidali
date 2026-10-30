@@ -125,7 +125,8 @@ capabilities, version, DTR content, memory bank 0 without a GTIN) and the specia
 queries from the interrupt, executes another controller's commissioning (`INITIALISE`,
 `RANDOMISE`, address search, `COMPARE`, address programming) and its `ENABLE` /
 `DISABLE APPLICATION CONTROLLER`, and hands every NVM change to the registry, which
-persists it beside the short address set in `/api/v1/settings/dali`.
+persists it beside the short address set in `/api/v1/settings/dali`. While another
+controller holds quiescent mode, no forward frame of ours leaves.
 
 Two deviations are `ACCEPTED`, both decided in
 [ADR-018](../architecture/decisions/ADR-018-controller-redundancy.md): a passive standby
@@ -134,8 +135,7 @@ still sends the arbitration probe, which is how it finds an unowned bus, althoug
 answer lapses with the liveness lease, so a wedged controller stops holding the bus,
 although 103 §11.6.16 ties it to `applicationActive` alone.
 
-Not built for the controller as a bus unit: quiescent mode holding back our own forward
-frames (the model already answers `QUERY QUIESCENT MODE`); `POWER NOTIFICATION`;
+Not built for the controller as a bus unit: `POWER NOTIFICATION`;
 `SEND TESTFRAME`; the identification screen of `IDENTIFY DEVICE`; the settings surface
 naming who set each bus-unit variable; and the switchover's read-back of its peer.
 DiiA 351's bank 201 is omitted by decision, since 103:2014 §9.10.9 reserves banks

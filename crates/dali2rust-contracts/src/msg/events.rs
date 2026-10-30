@@ -877,6 +877,12 @@ declare_bus_payloads! {
         wire_sequence: u32::MAX,
     };
 
+    pub struct BusUnitQuiescenceObservedEvent {
+        pub sequence: u32,
+        pub remaining_ms: Option<u32>,
+    }
+    budget = BusUnitQuiescenceObservedEvent { sequence: u32::MAX, remaining_ms: Some(u32::MAX) };
+
 }
 
 pub const APPLICATION_ACTIVE_UNMOVED: u8 = 0;

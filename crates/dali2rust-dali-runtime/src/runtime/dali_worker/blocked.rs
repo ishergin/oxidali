@@ -13,17 +13,43 @@ pub(super) fn controller_passive_blocked(
         return false;
     }
     counters.tx_suppressed_passive.fetch_add(1, Ordering::Relaxed);
+    refuse_every_frame(ce, bus_id, answer, publisher, counters, "controller_passive")
+}
+
+// IEC 62386-103 §9.9.3
+pub(super) fn controller_quiescent_blocked(
+    ce: &CommandEnvelope,
+    read_port: &dyn RegistryReadPort,
+    bus_id: BusId,
+    answer: Answer<'_>,
+    publisher: &BusPublisher,
+    counters: &DaliWorkerCounters,
+) -> bool {
+    if !read_port.controller_quiescent() {
+        return false;
+    }
+    refuse_every_frame(ce, bus_id, answer, publisher, counters, "controller_quiescent")
+}
+
+fn refuse_every_frame(
+    ce: &CommandEnvelope,
+    bus_id: BusId,
+    answer: Answer<'_>,
+    publisher: &BusPublisher,
+    counters: &DaliWorkerCounters,
+    cause: &'static str,
+) -> bool {
     match blocked_refusal(&ce.payload, counters) {
-        BlockedRefusal::Operation(handled) => fail_passive_semantic_operation(
-            publisher,
-            bus_id,
-            answer.correlation_id,
-            ce.meta.origin,
-            handled,
-            counters,
-        ),
+        BlockedRefusal::Operation(handled) => {
+            if let Some(counter) = handled {
+                counter.fetch_add(1, Ordering::Relaxed);
+            }
+            let correlation_id = answer.correlation_id;
+            publish_worker_failed(publisher, bus_id, correlation_id, ce.meta.origin, ErrorCode::Conflict, cause, counters);
+            true
+        }
         BlockedRefusal::Confirmation | BlockedRefusal::NotGated => {
-            answer.failed(publisher, counters, (ErrorCode::Conflict, "controller_passive"));
+            answer.failed(publisher, counters, (ErrorCode::Conflict, cause));
             true
         }
     }
@@ -32,29 +58,6 @@ pub(super) fn controller_passive_blocked(
 // DiiA 351 §7
 fn passive_allowed(payload: &BusCommandPayload) -> bool {
     matches!(payload, BusCommandPayload::Dali103ArbitrationProbeCommand(_))
-}
-
-fn fail_passive_semantic_operation(
-    publisher: &BusPublisher,
-    bus_id: BusId,
-    correlation_id: u64,
-    origin: Origin,
-    handled: Option<&AtomicU32>,
-    counters: &DaliWorkerCounters,
-) -> bool {
-    if let Some(counter) = handled {
-        counter.fetch_add(1, Ordering::Relaxed);
-    }
-    publish_worker_failed(
-        publisher,
-        bus_id,
-        correlation_id,
-        origin,
-        ErrorCode::Conflict,
-        "controller_passive",
-        counters,
-    );
-    true
 }
 
 pub(super) fn adapter_command_blocked(

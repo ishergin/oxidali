@@ -53,10 +53,12 @@
 
 ## `GET /health`
 
-`status` (всегда `ok`), `uptime_seconds`, `version` и `role` (`active` / `standby` — по
-`application_active` из [`settings-dali.md`](settings-dali.md)). Роль продублирована в
-теле, хотя есть заголовок `X-Dali2rust-Role`: системы мониторинга сохраняют разобранный
-JSON и отбрасывают заголовки.
+`status` (всегда `ok`), `uptime_seconds`, `version`, `role` (`active` / `standby` — по
+`application_active` из [`settings-dali.md`](settings-dali.md)) и `quiescent` — держит ли
+другой контроллер шину в quiescent mode, пока ни один прямой кадр не уходит
+([`../contracts/error-dto.md`](../contracts/error-dto.md) §`controller_quiescent`). Роль
+продублирована в теле, хотя есть заголовок `X-Dali2rust-Role`: системы мониторинга
+сохраняют разобранный JSON и отбрасывают заголовки.
 
 ## `GET` / `PUT /time`
 

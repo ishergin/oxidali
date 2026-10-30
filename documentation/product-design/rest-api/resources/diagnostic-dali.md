@@ -42,6 +42,7 @@ commissioning, атрибуты); правило «продукт не соби�
 Отказы до провода — обычные `{"error": …}`, как у любого синхронного маршрута:
 `503 commands_ingress_overload` / `confirmation_slots_exhausted` / `delivery_rejected`,
 `504 confirmation_timeout`; выключенный адаптер — `409 conflict` с `message =
-adapter_disabled`, пассивный контроллер — `409 controller_standby` с `Retry-After: 1`;
+adapter_disabled`, пассивный контроллер — `409 controller_standby` с `Retry-After: 1`,
+quiescent mode другого контроллера — `409 controller_quiescent` с `Retry-After`;
 тело не JSON — `400 invalid_json`; пара «адрес + команда», которую домен не декодирует (для `command` и
 `level`), — `400 invalid_dali_command`.

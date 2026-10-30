@@ -125,6 +125,7 @@ struct TestReadPort {
     gear_features: HashMap<(u8, u8), u8>,
     repair_forbidden: std::collections::HashSet<(u8, u8)>,
     passive: bool,
+    quiescent: bool,
     instance_types: HashMap<(u8, u8, u8), u8>,
 }
 
@@ -137,6 +138,10 @@ impl InputInstanceTypeReadPort for TestReadPort {
 impl RegistryReadPort for TestReadPort {
     fn application_controller_active(&self) -> bool {
         !self.passive
+    }
+
+    fn controller_quiescent(&self) -> bool {
+        self.quiescent
     }
 
     fn virtual_lamp_snapshot(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> VirtualLampSnapshot {
@@ -414,21 +419,20 @@ fn assert_nothing_reached_the_wire(harness: &WorkerHarness, kind: &str) {
     assert!(harness.sent_frames24.lock().unwrap().is_empty(), "{kind} sent a 24-bit frame");
 }
 
-fn assert_adapter_disabled(code: ErrorCode, message: &str, kind: &str) {
+fn assert_refused(code: ErrorCode, message: &str, cause: &str, kind: &str) {
     assert_eq!(code, ErrorCode::Conflict, "{kind}");
-    assert_eq!(message, "adapter_disabled", "{kind}");
+    assert_eq!(message, cause, "{kind}");
 }
 
 fn envelope_on_adapter_0(corr: u64, payload: BusCommandPayload) -> dali2rust_contracts::msg::CommandEnvelope {
     dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), payload)
 }
 
-#[test]
-fn adapter_disabled_semantic_commands_publish_worker_failed_signal() {
-    let disabled: Arc<dyn RegistryReadPort> = Arc::new(TestReadPort::default());
-    for (corr, payload) in (81u64..).zip(refused_operations()) {
+fn every_operation_is_refused(read_port: TestReadPort, cause: &str, first_corr: u64) {
+    let read_port: Arc<dyn RegistryReadPort> = Arc::new(read_port);
+    for (corr, payload) in (first_corr..).zip(refused_operations()) {
         let kind = payload.variant_name();
-        let harness = WorkerHarness::new(Arc::clone(&disabled), ControllerMode::NoAnswer);
+        let harness = WorkerHarness::new(Arc::clone(&read_port), ControllerMode::NoAnswer);
         harness.publish(envelope_on_adapter_0(corr, payload));
         let ev = harness.recv_event_matching(corr, |payload| {
             matches!(payload, BusEventPayload::OperationWorkerSignalEvent(_))
@@ -438,24 +442,64 @@ fn adapter_disabled_semantic_commands_publish_worker_failed_signal() {
         };
         assert_eq!(body.signal, OperationWorkerSignal::WorkerFailed, "{kind}");
         let error = body.error.as_ref().expect("a refusal names its cause");
-        assert_adapter_disabled(error.code, error.message.as_str(), kind);
+        assert_refused(error.code, error.message.as_str(), cause, kind);
         assert_nothing_reached_the_wire(&harness, kind);
     }
 }
 
+fn request_refusal(read_port: Arc<dyn RegistryReadPort>, corr: u64, payload: BusCommandPayload) -> String {
+    let kind = payload.variant_name();
+    let harness = WorkerHarness::new(read_port, ControllerMode::NoAnswer);
+    harness.publish(envelope_on_adapter_0(corr, payload));
+    let conf = harness.recv_confirmation_for(corr);
+    assert_eq!(conf.status, DeliveryStatus::ExecutionFailed, "{kind}");
+    let error = conf.confirmation.error.as_ref().expect("a refusal names its cause");
+    assert_eq!(error.code, ErrorCode::Conflict, "{kind}");
+    assert_nothing_reached_the_wire(&harness, kind);
+    error.message.as_str().to_owned()
+}
+
+fn every_request_is_refused(read_port: TestReadPort, cause: &str, first_corr: u64) {
+    let read_port: Arc<dyn RegistryReadPort> = Arc::new(read_port);
+    for (corr, payload) in (first_corr..).zip(refused_requests()) {
+        let kind = payload.variant_name();
+        assert_eq!(request_refusal(Arc::clone(&read_port), corr, payload), cause, "{kind}");
+    }
+}
+
+#[test]
+fn adapter_disabled_semantic_commands_publish_worker_failed_signal() {
+    every_operation_is_refused(TestReadPort::default(), "adapter_disabled", 81);
+}
+
 #[test]
 fn adapter_disabled_requests_are_refused_by_confirmation_before_the_wire() {
-    let disabled: Arc<dyn RegistryReadPort> = Arc::new(TestReadPort::default());
-    for (corr, payload) in (121u64..).zip(refused_requests()) {
-        let kind = payload.variant_name();
-        let harness = WorkerHarness::new(Arc::clone(&disabled), ControllerMode::NoAnswer);
-        harness.publish(envelope_on_adapter_0(corr, payload));
-        let conf = harness.recv_confirmation_for(corr);
-        assert_eq!(conf.status, DeliveryStatus::ExecutionFailed, "{kind}");
-        let error = conf.confirmation.error.as_ref().expect("a refusal names its cause");
-        assert_adapter_disabled(error.code, error.message.as_str(), kind);
-        assert_nothing_reached_the_wire(&harness, kind);
-    }
+    every_request_is_refused(TestReadPort::default(), "adapter_disabled", 121);
+}
+
+fn quiescent() -> TestReadPort {
+    TestReadPort { enabled: true, quiescent: true, ..Default::default() }
+}
+
+#[test]
+fn another_controller_s_quiescent_mode_refuses_every_operation_before_the_wire() {
+    every_operation_is_refused(quiescent(), "controller_quiescent", 221);
+}
+
+#[test]
+fn another_controller_s_quiescent_mode_refuses_every_request_the_arbitration_probe_included() {
+    every_request_is_refused(quiescent(), "controller_quiescent", 261);
+}
+
+#[test]
+fn quiescent_mode_is_refused_after_the_passive_gate_and_before_the_adapter_gate() {
+    let raw = || m::DaliCommandPayload { wire_address: 0x01, command: 0xFE, repeat_count: 0, raw_mode: false, raw_expects_backward: false }.into();
+    let probe = || m::Dali103ArbitrationProbeCommand { registry_adapter_id: 0 }.into();
+    let both = Arc::new(TestReadPort { passive: true, ..quiescent() });
+    assert_eq!(request_refusal(both.clone(), 301, raw()), "controller_passive");
+    assert_eq!(request_refusal(both, 302, probe()), "controller_quiescent", "the probe a passive controller may send");
+    let disabled = TestReadPort { enabled: false, ..quiescent() };
+    assert_eq!(request_refusal(Arc::new(disabled), 303, raw()), "controller_quiescent");
 }
 
 #[test]

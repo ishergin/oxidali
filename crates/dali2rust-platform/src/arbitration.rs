@@ -126,6 +126,7 @@ mod tests {
         },
         revision: 1,
         acknowledged_wire_sequence: 0,
+        acknowledged_quiescence: 0,
     };
 
     fn leased() -> AnswerInputs {

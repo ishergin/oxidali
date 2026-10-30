@@ -373,6 +373,7 @@ export interface RedundancyState {
   active: boolean
   answering: boolean
   lease_remaining_ms: number
+  quiescent_remaining_ms: number | null
   arbitration: RedundancyArbitration
   probes: RedundancyProbes
   takeovers: number

@@ -73,7 +73,9 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
 - Correlation ids come from one `CorrelationIdAllocator` shared by the router.
 - No free slot, or command ingress full → `503`. A synthetic `DeliveryRejected` frees the
   slot like a real confirmation and answers `503`. A gate's refusal before the wire answers
-  `409`: `conflict` naming its cause, or `controller_standby` on a passive controller.
+  `409`: `conflict` naming its cause, `controller_standby` on a passive controller, or
+  `controller_quiescent` with a `Retry-After` from the time left while another controller
+  holds quiescent mode.
   Every route that waits for its confirmation keeps this mapping; the diagnostic
   `/api/v1/dali/*` routes and the expert commissioning steps answer `200` only with what
   the wire said, failure included

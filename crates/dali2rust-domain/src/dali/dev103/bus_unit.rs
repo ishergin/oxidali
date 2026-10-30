@@ -149,6 +149,11 @@ impl Device103Unit {
     }
 
     #[must_use]
+    pub fn quiescent_remaining_ms(&self, now_ms: u32) -> Option<u32> {
+        self.quiescent_until_ms.and_then(|until| remaining_until(until, now_ms))
+    }
+
+    #[must_use]
     pub const fn initialisation(&self) -> InitialisationState {
         self.initialisation
     }
@@ -548,7 +553,7 @@ impl Step<'_> {
     }
 
     fn quiescent(&mut self, start: bool) {
-        if start != self.unit.quiescent() {
+        if start || self.unit.quiescent() {
             self.effects.quiescent = Some(start);
         }
         self.unit.quiescent_until_ms = start.then(|| self.now_ms.wrapping_add(QUIESCENT_MS));
@@ -707,6 +712,15 @@ const fn passed(now_ms: u32, until_ms: u32) -> bool {
     now_ms.wrapping_sub(until_ms) < u32::MAX / 2
 }
 
+#[must_use]
+pub const fn remaining_until(until_ms: u32, now_ms: u32) -> Option<u32> {
+    if passed(now_ms, until_ms) {
+        None
+    } else {
+        Some(until_ms.wrapping_sub(now_ms))
+    }
+}
+
 pub const fn is_newer(candidate: u32, adopted: u32) -> bool {
     let ahead = candidate.wrapping_sub(adopted);
     ahead != 0 && ahead < u32::MAX / 2
@@ -853,7 +867,7 @@ mod tests {
     }
 
     fn snapshot(nvm: BusUnitNvm, revision: u32, acknowledged_wire_sequence: u32) -> BusUnitSnapshot {
-        BusUnitSnapshot { nvm, revision, acknowledged_wire_sequence }
+        BusUnitSnapshot { nvm, revision, acknowledged_wire_sequence, acknowledged_quiescence: 0 }
     }
 
     fn at(short: u8) -> BusUnitNvm {
@@ -1184,6 +1198,31 @@ mod tests {
         bench.device(Device103Address::Broadcast, Device103Command::StopQuiescentMode);
         assert!(!bench.unit.quiescent());
         assert_eq!(bench.effects.quiescent, Some(false));
+    }
+
+    #[test]
+    fn every_start_reports_and_moves_the_deadline_to_fifteen_minutes_from_itself() {
+        let mut bench = Bench::hydrated(at(2));
+        bench.device(Device103Address::Broadcast, Device103Command::StartQuiescentMode);
+        let first = bench.now_ms;
+        assert_eq!(bench.unit.quiescent_remaining_ms(first), Some(QUIESCENT_MS));
+        bench.now_ms = first + QUIESCENT_MS / 2;
+        bench.effects = UnitEffects::default();
+        bench.device(Device103Address::Broadcast, Device103Command::StartQuiescentMode);
+        let second = bench.now_ms;
+        assert_eq!(bench.effects.quiescent, Some(true));
+        assert_eq!(bench.unit.quiescent_remaining_ms(second), Some(QUIESCENT_MS));
+        assert_eq!(bench.unit.tick(first + QUIESCENT_MS).quiescent, None);
+        assert_eq!(bench.unit.quiescent_remaining_ms(second + QUIESCENT_MS - 1), Some(1));
+        assert_eq!(bench.unit.quiescent_remaining_ms(second + QUIESCENT_MS), None);
+    }
+
+    #[test]
+    fn a_stop_outside_quiescent_mode_reports_nothing() {
+        let mut bench = Bench::hydrated(at(2));
+        bench.device(Device103Address::Broadcast, Device103Command::StopQuiescentMode);
+        assert_eq!(bench.effects.quiescent, None);
+        assert_eq!(bench.unit.quiescent_remaining_ms(bench.now_ms), None);
     }
 
     #[test]
